@@ -82,7 +82,13 @@ export function BrowsePage() {
 
   // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来
   const cards = searching ? (found.data?.results ?? []) : (browse.data?.results ?? []);
-  const pending = searching ? found.isPending : browse.isPending && !browse.data;
+  // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着，
+  // 此时 isPending 是 false（手里有占位数据），isFetching 才表示真的在等。
+  // 只看 isPending 的话，点完筛选界面还是上一个分类的卡片、连骨架屏都不出 ——
+  // 用户看到的就是「点了半天什么都没发生」。
+  const pending = searching
+    ? found.isPending
+    : browse.isPending || (browse.isPlaceholderData && browse.isFetching);
   const failed = searching ? found.isError : browse.isError;
   const refetch = searching ? found.refetch : browse.refetch;
   // 请求成功返回但 success=false = 嗅探窗口没在超时内拿到卡片（站点慢或被限流），

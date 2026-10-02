@@ -125,7 +125,8 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
 
     // 全局队列保证同一窗口不会并发导航
     queue::global()
-        .run(|| async move {
+        .run(|token| async move {
+            let queue = queue::global();
             window::ensure(&app).map_err(|e| format!("创建嗅探窗口失败: {e}"))?;
             window::navigate(&app, &url_owned).map_err(|e| format!("导航失败: {e}"))?;
             log::info!("[Sniff] 打开 {url_owned}");
@@ -137,26 +138,35 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
             // eval 失败与「页面还没渲染完」在轮询眼里都是空结果，所以这里必须
             // 把原因记下来，否则真失败时只会看到一个没有解释的 15 秒超时。
             let logged = std::sync::atomic::AtomicBool::new(false);
-            let outcome = poller::poll_until(|| {
-                let app = app.clone();
-                let logged = &logged;
-                async move {
-                    match window::eval_json(&app, script) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            if !logged.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                                log::warn!("[Sniff] 脚本未返回: {e}");
+            let outcome = poller::poll_until(
+                || {
+                    let app = app.clone();
+                    let logged = &logged;
+                    async move {
+                        match window::eval_json(&app, script) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                if !logged.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                    log::warn!("[Sniff] 脚本未返回: {e}");
+                                }
+                                "[]".into()
                             }
-                            "[]".into()
                         }
                     }
-                }
-            })
+                },
+                // 用户在轮询途中又换了分类：立刻放手，别让他对着旧页面干等
+                move || queue.superseded(token),
+            )
             .await;
 
             // 超时与「页面确实没有卡片」对调用方是两回事：
             // 前者要提示重试，后者就是空列表，所以把成败一起带出去。
             let (results, success) = match outcome {
+                // 用户已经换了筛选，这个结果没人要，报错让前端安静丢弃即可
+                PollOutcome::Abandoned => {
+                    log::debug!("[Sniff] {url_owned} 轮询途中被新筛选取代");
+                    return Err("请求已被新的筛选取代".to_string());
+                }
                 PollOutcome::Got(raw) => {
                     let parsed = serde_json::from_str::<Vec<SeriesCard>>(&raw);
                     // serde 的报错里已带出错位置与原文片段，不用自己截断
@@ -221,6 +231,9 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
             })
         })
         .await
+        // 被更新的请求取代时返回 None：前端的 queryKey 已经变了，这个结果
+        // 出来也会被丢弃，没必要让用户再等它
+        .ok_or_else(|| "请求已被新的筛选取代".to_string())?
 }
 
 use std::time::Duration;
