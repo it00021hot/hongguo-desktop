@@ -38,7 +38,8 @@
     "loadFailed": "Failed to load",
     "downloadedBadge": "{count} downloaded",
     "totalCount": "{total} titles",
-    "resolving": "Opening…"
+    "resolving": "Opening…",
+    "timeout": "The site took too long to respond — timed out"
   },
   "search": {
     "placeholder": "Type a title, or paste a share link / series ID",
@@ -258,6 +259,7 @@
     "toggleTheme": "Toggle theme",
     "episodeCount": "{count} episodes",
     "progress": "Progress",
-    "skipToContent": "Skip to main content"
+    "skipToContent": "Skip to main content",
+    "retry": "Retry"
   }
 }

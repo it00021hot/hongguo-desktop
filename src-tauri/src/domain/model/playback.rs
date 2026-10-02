@@ -80,6 +80,10 @@ pub struct PlaybackHistoryItem {
     pub current_time: f64,
     /// 最后一次播放的毫秒时间戳，用于按最近排序
     pub updated_at: i64,
+    /// 剧名。历史要能独立渲染，不能靠前端再去关联剧集档案。
+    pub title: String,
+    /// 封面地址。
+    pub cover: String,
 }
 
 #[cfg(test)]

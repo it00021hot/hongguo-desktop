@@ -56,9 +56,32 @@ pub async fn resolve_play(
     // 兜底走在线流。vid 取自**剧集档案的分集表**（解析剧集时写入），
     // 不能查下载任务表：任务表只记下载进度，没下过的剧集在那里查不到 vid，
     // 结果就是「点开没下过的集永远播不了」。
-    let vid = episode_vid(&state.store.read(), &request.series_id, request.vid_index).ok_or_else(
-        || AppError::NotFound(format!("第 {} 集缺少 vid，请先解析该剧", request.vid_index)),
-    )?;
+    //
+    // 档案里查不到就当场解析一次。播放页会同时发「拉分集」和「起播」两个请求，
+    // 起播先到是常态；不在这儿补一次解析，第一下点开必然报「第 N 集缺少 vid」。
+    // 读锁必须在 await 之前放掉：parking_lot 的守卫不是 Send，跨 await 持有会让
+    // 整个 command future 失去 Send，tauri 在编译期就会拒绝。
+    let known = episode_vid(&state.store.read(), &request.series_id, request.vid_index);
+    let vid = match known {
+        Some(vid) => vid,
+        None => {
+            log::info!(
+                "[Play] {} 还没解析过，先解析出第 {} 集的 vid",
+                request.series_id,
+                request.vid_index
+            );
+            let proxy = state.settings().proxy;
+            let series = crate::service::series_service::resolver::resolve_series(
+                &request.series_id,
+                &proxy,
+            )
+            .await?;
+            crate::service::series_service::registry::upsert_and_persist(state, series)?;
+            episode_vid(&state.store.read(), &request.series_id, request.vid_index).ok_or_else(
+                || AppError::NotFound(format!("解析后仍找不到第 {} 集的 vid", request.vid_index)),
+            )?
+        }
+    };
 
     match online::prepare(&vid, state.settings()).await {
         Ok(url) => Ok(PlayResponse {

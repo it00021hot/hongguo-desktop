@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -84,6 +84,11 @@ export function BrowsePage() {
   const cards = searching ? (found.data?.results ?? []) : (browse.data?.results ?? []);
   const pending = searching ? found.isPending : browse.isPending && !browse.data;
   const failed = searching ? found.isError : browse.isError;
+  const refetch = searching ? found.refetch : browse.refetch;
+  // 请求成功返回但 success=false = 嗅探窗口没在超时内拿到卡片（站点慢或被限流），
+  // 和「这个分类确实一条都没有」要分开说，后者会让人白等重试。
+  const timedOut =
+    !failed && cards.length === 0 && !(searching ? found.data?.success : browse.data?.success);
 
   // 已下载集数：按剧聚合，供卡片角标使用
   const downloadedMap = useMemo(() => {
@@ -220,9 +225,19 @@ export function BrowsePage() {
           ))}
         </div>
       ) : cards.length === 0 ? (
-        <p className="text-muted-foreground py-16 text-center text-sm">
-          {searching ? t('search.empty') : t('browse.empty')}
-        </p>
+        // 嗅探超时和「这个分类真的没内容」是两回事：前者 success=false，
+        // 报成「暂时没有内容」会让用户以为是自己筛错了，实际重试一下就有了。
+        <div className="grid justify-items-center gap-3 py-16 text-center">
+          <p className="text-muted-foreground text-sm">
+            {timedOut ? t('browse.timeout') : searching ? t('search.empty') : t('browse.empty')}
+          </p>
+          {timedOut && (
+            <Button size="sm" variant="outline" onClick={() => void refetch()}>
+              <RotateCcw className="size-4" />
+              {t('common.retry')}
+            </Button>
+          )}
+        </div>
       ) : (
         <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onSelect={handleSelect} />
       )}

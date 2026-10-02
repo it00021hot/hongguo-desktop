@@ -201,7 +201,7 @@ function RecommendList({ items }: { items: RecommendItem[] }) {
               setTarget(item.seriesId, 1);
               void navigate({ to: '/player' });
             }}
-            className="group grid gap-1 text-left"
+            className="group grid cursor-pointer gap-1 text-left"
           >
             <span className="bg-muted relative block aspect-3/4 overflow-hidden rounded-md">
               {item.seriesCover && (

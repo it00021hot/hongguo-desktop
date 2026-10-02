@@ -49,9 +49,23 @@ mod tests {
     use super::*;
     use crate::app_state::AppState;
     use crate::domain::model::Series;
+    use std::path::PathBuf;
+
+    /// 把落盘目标指向临时目录。
+    ///
+    /// dismiss/dismiss_all 都会 save()。不隔离的话这些测试会**覆盖用户真实的
+    /// data.json**：AppState::default() 是空 store，测试一保存就等于把用户数据
+    /// 冲成一条假记录。drop 时自动还原。
+    fn scoped(tag: &str) -> (PathBuf, crate::store::paths::ScopedDataDir) {
+        let dir = std::env::temp_dir().join(format!("hg-series-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let guard = crate::store::paths::ScopedDataDir::new(&dir);
+        (dir, guard)
+    }
 
     #[test]
     fn dismiss_hides_the_series_from_the_visible_list() {
+        let (_dir, _scoped) = scoped("hide");
         let state = AppState::default();
         state.store.write().series.push(Series {
             series_id: "1".into(),
@@ -74,12 +88,14 @@ mod tests {
 
     #[test]
     fn dismissing_an_unknown_series_errors() {
+        let (_dir, _scoped) = scoped("unknown");
         let state = AppState::default();
         assert!(dismiss(&state, "999").is_err(), "找不到就不能假装删成功");
     }
 
     #[test]
     fn dismissing_twice_is_idempotent_in_effect() {
+        let (_dir, _scoped) = scoped("twice");
         let state = AppState::default();
         state.store.write().series.push(Series {
             series_id: "1".into(),
@@ -104,6 +120,7 @@ mod tests {
 
     #[test]
     fn dismiss_all_clears_the_whole_visible_list() {
+        let (_dir, _scoped) = scoped("all");
         let state = store_with(3);
         assert_eq!(dismiss_all(&state).unwrap(), 3);
         let store = state.store.read();
@@ -113,6 +130,7 @@ mod tests {
 
     #[test]
     fn dismiss_all_skips_already_dismissed() {
+        let (_dir, _scoped) = scoped("skip");
         let state = store_with(3);
         dismiss(&state, "0").unwrap();
 
@@ -122,6 +140,7 @@ mod tests {
 
     #[test]
     fn dismiss_all_on_empty_list_is_a_no_op() {
+        let (_dir, _scoped) = scoped("empty");
         let state = AppState::default();
         assert_eq!(dismiss_all(&state).unwrap(), 0);
     }

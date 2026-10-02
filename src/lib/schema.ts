@@ -215,6 +215,10 @@ export const playbackHistoryItemSchema = z.object({
   vidIndex: z.number().int().positive(),
   currentTime: z.number().nonnegative(),
   updatedAt: z.number(),
+  // 剧名与封面由后端一并带出。历史不依赖剧集列表：把一部剧从列表移除，
+  // 不该连带把它看过的记录也抹掉。
+  title: z.string(),
+  cover: z.string(),
 });
 
 export type PlaybackHistoryItem = z.infer<typeof playbackHistoryItemSchema>;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { History, Play, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,7 +18,6 @@ import {
   useClearPlaybackHistory,
   usePlaybackHistory,
   useRemovePlaybackRecord,
-  useSeriesList,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
@@ -35,7 +34,6 @@ export function ContinueWatching() {
   const navigate = useNavigate();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const { data: history } = usePlaybackHistory();
-  const { data: seriesList } = useSeriesList();
   const clearHistory = useClearPlaybackHistory();
   const removeRecord = useRemovePlaybackRecord();
   const [confirmClear, setConfirmClear] = useState(false);
@@ -54,17 +52,10 @@ export function ContinueWatching() {
     });
   };
 
-  /** 把历史与剧集档案对起来：档案给封面/标题，历史给看到第几集。 */
-  const items = useMemo(() => {
-    const byId = new Map((seriesList ?? []).map((s) => [s.seriesId, s]));
-    return (history ?? [])
-      .map((h) => {
-        const series = byId.get(h.seriesId);
-        if (!series) return null;
-        return { ...h, series };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [history, seriesList]);
+  // 剧名和封面后端已经带在 history 里，不再和剧集列表做关联：
+  // 之前靠 useSeriesList 关联，而那个列表过滤了 dismissed，于是用户从磁盘清理页
+  // 移除一部剧，它的观看记录就跟着整条消失了 —— 明明数据还在。
+  const items = history ?? [];
 
   if (items.length === 0) {
     return (
@@ -115,20 +106,15 @@ export function ContinueWatching() {
               }}
             >
               <div className="bg-muted relative aspect-3/4 w-full overflow-hidden">
-                {item.series.cover ? (
-                  <img
-                    src={item.series.cover}
-                    alt=""
-                    loading="lazy"
-                    className="size-full object-cover"
-                  />
+                {item.cover ? (
+                  <img src={item.cover} alt="" loading="lazy" className="size-full object-cover" />
                 ) : null}
                 <span className="bg-background/80 absolute right-2 bottom-2 grid size-8 place-items-center rounded-full opacity-0 transition-opacity group-hover:opacity-100">
                   <Play className="size-4" />
                 </span>
               </div>
               <div className="grid gap-1 p-2">
-                <p className="truncate text-sm font-medium">{item.series.title}</p>
+                <p className="truncate text-sm font-medium">{item.title}</p>
                 <div className="flex items-center gap-1.5">
                   <Badge variant="secondary" className="text-[10px]">
                     {tf('player.epShort', { index: item.vidIndex })}
@@ -146,11 +132,9 @@ export function ContinueWatching() {
             <button
               type="button"
               className="absolute top-1 right-1 z-10 grid size-7 place-items-center rounded-full text-white opacity-0 drop-shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
-              aria-label={tf('player.removeRecord', { title: item.series.title })}
+              aria-label={tf('player.removeRecord', { title: item.title })}
               title={t('player.removeRecordShort')}
-              onClick={() =>
-                setConfirmRemove({ seriesId: item.seriesId, title: item.series.title })
-              }
+              onClick={() => setConfirmRemove({ seriesId: item.seriesId, title: item.title })}
             >
               <X className="size-4" />
             </button>

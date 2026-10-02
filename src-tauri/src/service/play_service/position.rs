@@ -38,8 +38,18 @@ pub fn load(state: &State<'_, AppState>, series_id: &str, vid_index: u32) -> f64
 ///
 /// 只给「最近一集」而不是全部集次：列表要回答的是「我播过哪些剧、看到哪」，
 /// 逐集罗列反而看不出重点。
+///
+/// 剧名与封面在这里一并带出，**不过滤 dismissed**：观看记录回答的是「我看过
+/// 什么」，和「剧集列表里还留着这部剧」是两件事。让前端拿历史去关联剧集列表，
+/// 会导致用户从列表里移除一部剧就把它的观看记录一起抹掉。
 pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::PlaybackHistoryItem> {
-    history_of(&state.store.read().playback)
+    let data = state.store.read();
+    let titles: std::collections::HashMap<&str, (&str, &str)> = data
+        .series
+        .iter()
+        .map(|s| (s.series_id.as_str(), (s.title.as_str(), s.cover.as_str())))
+        .collect();
+    history_of(&data.playback, &titles)
 }
 
 /// 清除某部剧的观看记录（整部剧的进度表都删掉，不只是最近那一集）。
@@ -71,6 +81,7 @@ pub fn clear(state: &AppState) -> crate::error::AppResult<()> {
 /// 从播放进度表里取每部剧最近一集，按时间倒序。
 fn history_of(
     map: &crate::domain::model::PlaybackMap,
+    titles: &std::collections::HashMap<&str, (&str, &str)>,
 ) -> Vec<crate::domain::model::PlaybackHistoryItem> {
     use crate::domain::model::PlaybackHistoryItem;
 
@@ -81,11 +92,15 @@ fn history_of(
                 .iter()
                 .max_by_key(|(_, p)| p.updated_at)
                 .map(|(idx, p)| (*idx, p))?;
+            // 档案缺失就留空串：进度还在，条目照样要显示，只是没封面没剧名。
+            let (title, cover) = titles.get(series_id.as_str()).copied().unwrap_or(("", ""));
             Some(PlaybackHistoryItem {
                 series_id: series_id.clone(),
                 vid_index,
                 current_time: pos.current_time,
                 updated_at: pos.updated_at,
+                title: title.to_string(),
+                cover: cover.to_string(),
             })
         })
         .collect();
@@ -112,6 +127,35 @@ mod tests {
         dir
     }
 
+    /// 剧名/封面索引。测 `history_of` 的分集与排序时不需要它，空表即可。
+    fn titles() -> std::collections::HashMap<&'static str, (&'static str, &'static str)> {
+        std::collections::HashMap::new()
+    }
+
+    #[test]
+    fn history_carries_title_and_cover_even_when_series_is_dismissed() {
+        let mut map = PlaybackMap::new();
+        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
+
+        // 用户把这部剧从列表里移除了（dismissed），但看过就是看过，
+        // 记录不能跟着列表一起消失
+        let titles = std::collections::HashMap::from([("A", ("剧名", "封面"))]);
+        let items = history_of(&map, &titles);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "剧名");
+        assert_eq!(items[0].cover, "封面");
+    }
+
+    #[test]
+    fn history_without_a_registry_entry_keeps_the_item_with_blank_title() {
+        let mut map = PlaybackMap::new();
+        map.entry("B".into()).or_default().insert(1, at(10.0, 100));
+
+        let items = history_of(&map, &titles());
+        assert_eq!(items.len(), 1, "档案缺失也要显示，只是没剧名没封面");
+        assert!(items[0].title.is_empty());
+    }
+
     #[test]
     fn picks_the_most_recent_episode_per_series() {
         let mut map = PlaybackMap::new();
@@ -119,7 +163,7 @@ mod tests {
         map.entry("A".into()).or_default().insert(7, at(70.0, 900));
         map.get_mut("A").unwrap().insert(3, at(30.0, 500));
 
-        let items = history_of(&map);
+        let items = history_of(&map, &titles());
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].series_id, "A");
         assert_eq!(items[0].vid_index, 7, "应取更新时间最晚的那一集");
@@ -133,7 +177,7 @@ mod tests {
         map.entry("B".into()).or_default().insert(2, at(20.0, 900));
         map.entry("C".into()).or_default().insert(3, at(30.0, 500));
 
-        let items = history_of(&map);
+        let items = history_of(&map, &titles());
         assert_eq!(
             items
                 .iter()
@@ -145,7 +189,7 @@ mod tests {
 
     #[test]
     fn empty_map_gives_empty_history() {
-        assert!(history_of(&PlaybackMap::new()).is_empty());
+        assert!(history_of(&PlaybackMap::new(), &titles()).is_empty());
     }
 
     #[test]
@@ -177,7 +221,7 @@ mod tests {
         clear(&state).expect("清空历史不该失败");
 
         assert!(
-            history_of(&state.store.read().playback).is_empty(),
+            history_of(&state.store.read().playback, &titles()).is_empty(),
             "清空后不该再有历史（history() 读的就是这份表）"
         );
         let on_disk = crate::store::DataStore::load(&crate::store::paths::data_file());
@@ -196,7 +240,7 @@ mod tests {
 
         let state = AppState::default();
         clear(&state).expect("空历史重复清空不该报错");
-        assert!(history_of(&state.store.read().playback).is_empty());
+        assert!(history_of(&state.store.read().playback, &titles()).is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

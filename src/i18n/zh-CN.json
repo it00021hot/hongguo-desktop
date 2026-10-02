@@ -38,7 +38,8 @@
     "loadFailed": "加载失败",
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
-    "resolving": "正在打开…"
+    "resolving": "正在打开…",
+    "timeout": "网站响应太慢，加载超时"
   },
   "search": {
     "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
@@ -258,6 +259,7 @@
     "toggleTheme": "切换主题",
     "episodeCount": "{count} 集",
     "progress": "进度",
-    "skipToContent": "跳到主内容"
+    "skipToContent": "跳到主内容",
+    "retry": "重试"
   }
 }
