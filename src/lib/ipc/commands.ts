@@ -102,6 +102,8 @@ export const merge = {
     call<MergePreflight>('merge_preflight', { seriesId }, mergePreflightSchema),
   start: (seriesId: string, outputName: string, mode: MergeMode) =>
     call<MergeTask>('merge_series', { seriesId, outputName, mode }, mergeTaskSchema),
+  // 只删任务记录，合并产物是独立文件，不在删除范围内
+  remove: (id: string) => call<void>('delete_merge_task', { id }),
 };
 
 // ---------------------------------------------------------------- 播放
@@ -122,6 +124,7 @@ export const play = {
       undefined,
       playbackHistoryItemSchema.array(),
     ),
+  clearHistory: () => call<void>('clear_playback_history'),
 };
 
 // ---------------------------------------------------------------- 转码

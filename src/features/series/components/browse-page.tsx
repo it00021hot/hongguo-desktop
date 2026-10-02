@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -11,17 +12,42 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SeriesCardGrid } from './series-card-grid';
-import { SeriesDetailSheet } from './series-detail-sheet';
-import { useBrowseCategories, useBrowseList, useDownloadTasks, useSearch } from '@/lib/queries';
+import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
+import {
+  useBrowseCategories,
+  useBrowseList,
+  useDownloadTasks,
+  useResolveSeries,
+  useSearch,
+} from '@/lib/queries';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
+
+/**
+ * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
+ *
+ * 链接与 ID 走 resolve 链路、按剧名才走搜索：站内搜索只匹配剧名，
+ * 粘一段分享链接进去永远搜不到任何东西。
+ *
+ * 规则要窄而确定。分享语是整段自然语言（标题 + 链接 + 引导语），
+ * 判据只能锚在 `series_id=` 参数和 `http` 前缀上；ID 则必须是纯数字串，
+ * 且留足长度下限，否则「2024」这种词会被当成剧集号解析出不相干的东西。
+ */
+function detectInput(value: string): 'keyword' | 'resolve' {
+  const v = value.trim();
+  if (v.includes('series_id=') || v.startsWith('http')) return 'resolve';
+  if (/^\d{6,}$/.test(v.replace(/\s+/g, ''))) return 'resolve';
+  return 'keyword';
+}
 
 /**
  * 浏览页：顶部一个搜索框，下面是分类 + 题材分页浏览。
  *
  * 搜索与浏览共用同一块结果区（和官网一致）：提交关键词就原地切成搜索结果，
  * 清空或退出就回到分类列表，不再单独开一个搜索页。
+ *
+ * 搜索框同时是链接/ID 入口，删掉独立下载页后「粘贴分享链接」没有别的落点。
  */
 export function BrowsePage() {
   // 分类与题材直接读 zustand：本地 useState 拷贝只在首次挂载时取一次初值，
@@ -30,7 +56,7 @@ export function BrowsePage() {
   const genre = useUiStore((s) => s.lastGenre);
   const setFilter = useUiStore((s) => s.setBrowseFilter);
   const [page, setPage] = useState(1);
-  const [detail, setDetail] = useState<SeriesCard | null>(null);
+  const [detail, setDetail] = useState<SeriesRef | null>(null);
 
   const [keyword, setKeyword] = useState('');
   /** 已提交的搜索词：空串 = 浏览模式，非空 = 搜索模式 */
@@ -41,6 +67,7 @@ export function BrowsePage() {
   const browse = useBrowseList(category, genre, page);
   const found = useSearch(submitted);
   const { data: tasks } = useDownloadTasks();
+  const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
   // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来
   const cards = searching ? (found.data?.results ?? []) : (browse.data?.results ?? []);
@@ -78,9 +105,33 @@ export function BrowsePage() {
     setFilter(category, slug === 'all' ? '' : slug);
   };
 
+  // 链接/ID 直接解析并打开详情抽屉，抽屉内部会自己拉分集。
+  // 解析前先退出搜索模式，否则解析成功后列表还停在上一轮搜索结果上。
+  const handleSubmit = () => {
+    const value = keyword.trim();
+    if (!value) return;
+    setPage(1);
+    if (detectInput(value) === 'keyword') {
+      setSubmitted(value);
+      return;
+    }
+    setSubmitted('');
+    resolve(value, {
+      onSuccess: (series) =>
+        setDetail({
+          seriesId: series.seriesId,
+          seriesTitle: series.title,
+          cover: series.cover,
+          episodeCount: series.episodeCount,
+          tags: series.tags,
+        }),
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
   // 点卡片只打开详情抽屉：选集、立即播放、提交下载都在抽屉里做。
   // 这里再顺手跳转的话，抽屉会「刚打开就被路由切走」，用户连集数都来不及点。
-  const handlePlay = (card: SeriesCard) => setDetail(card);
+  const handleSelect = (card: SeriesCard) => setDetail(card);
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -89,8 +140,7 @@ export function BrowsePage() {
           className="flex min-w-64 flex-1 gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            setSubmitted(keyword.trim());
-            setPage(1);
+            handleSubmit();
           }}
         >
           <Input
@@ -100,10 +150,15 @@ export function BrowsePage() {
             aria-label={t('search.placeholder')}
             className="min-w-48 flex-1"
           />
-          <Button type="submit" disabled={!keyword.trim()}>
+          <Button type="submit" disabled={!keyword.trim() || resolving}>
             <Search className="size-4" />
             {t('search.submit')}
           </Button>
+          {resolving && (
+            <span className="text-muted-foreground self-center text-sm whitespace-nowrap">
+              {t('browse.resolving')}
+            </span>
+          )}
           {searching && (
             <Button type="button" variant="outline" onClick={exitSearch}>
               <X className="size-4" />
@@ -161,7 +216,7 @@ export function BrowsePage() {
           {searching ? t('search.empty') : t('browse.empty')}
         </p>
       ) : (
-        <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onPlay={handlePlay} />
+        <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onSelect={handleSelect} />
       )}
 
       {!searching && totalPages > 1 && (

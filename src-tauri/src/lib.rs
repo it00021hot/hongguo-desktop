@@ -72,12 +72,14 @@ pub fn run() {
             commands::download_cmd::delete_tasks,
             // 合并
             commands::merge_cmd::get_merge_tasks,
+            commands::merge_cmd::delete_merge_task,
             commands::merge_cmd::merge_preflight,
             commands::merge_cmd::merge_series,
             // 播放
             commands::play_cmd::play_series,
             commands::play_cmd::save_playback_position,
             commands::play_cmd::get_playback_history,
+            commands::play_cmd::clear_playback_history,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::clear_compat_cache,

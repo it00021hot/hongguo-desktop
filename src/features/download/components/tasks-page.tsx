@@ -59,6 +59,14 @@ export function TasksPage() {
     () => all.filter((task) => task.status === 'failed').map((task) => task.id),
     [all],
   );
+  const allIds = useMemo(() => all.map((task) => task.id), [all]);
+
+  // 三态：0 个 / 全部 / 一部分。只按当前可见列表算，不去碰翻页之外的任务
+  const selectedCount = allIds.filter((id) => selected.has(id)).length;
+  const allChecked: boolean | 'indeterminate' =
+    selectedCount === 0 ? false : selectedCount === allIds.length ? true : 'indeterminate';
+
+  const toggleAll = () => setSelected(allChecked === true ? new Set() : new Set(allIds));
 
   /** 选中项里已下载完成的字节数：只有这些删文件才真的能释放空间。 */
   const freeableFor = useMemo(
@@ -144,6 +152,9 @@ export function TasksPage() {
             <RotateCcw className="size-4" />
             {t('tasks.retryAll')}
           </Button>
+          <Button size="sm" variant="outline" disabled={all.length === 0} onClick={toggleAll}>
+            {allChecked === true ? t('tasks.deselectAll') : t('tasks.selectAll')}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -162,7 +173,13 @@ export function TasksPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10" />
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={allChecked}
+                    onCheckedChange={toggleAll}
+                    aria-label={allChecked === true ? t('tasks.deselectAll') : t('tasks.selectAll')}
+                  />
+                </TableHead>
                 <TableHead>{t('nav.tasks.title')}</TableHead>
                 <TableHead className="w-24">#</TableHead>
                 <TableHead className="w-28">{t('tasks.columns.status')}</TableHead>
@@ -280,8 +297,10 @@ function TaskRow({ task, checked, onToggle, onStop, onRetry, onOpenFolder, onDel
           {task.seriesTitle}
         </span>
         {task.error && (
-          <span className="text-destructive block truncate text-xs" title={task.error}>
-            {task.error}
+          // task.error 存的是 i18n key。老数据里存的是历史错误原文，
+          // t() 查不到会回落显示原串，正好当降级用，不做数据迁移
+          <span className="text-destructive block truncate text-xs" title={t(task.error)}>
+            {t(task.error)}
           </span>
         )}
       </TableCell>

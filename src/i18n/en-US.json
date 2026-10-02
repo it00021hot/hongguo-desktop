@@ -5,7 +5,6 @@
   },
   "nav": {
     "browse": { "title": "Browse", "description": "Search and discover dramas by category" },
-    "download": { "title": "Download", "description": "Pick episodes and queue them" },
     "player": { "title": "Player", "description": "Local and online playback" },
     "tasks": { "title": "Tasks", "description": "Queue, progress and merge" },
     "merge": { "title": "Merge", "description": "Combine episodes into one file" },
@@ -20,10 +19,11 @@
     "empty": "Nothing here yet",
     "loadFailed": "Failed to load",
     "downloadedBadge": "{count} downloaded",
-    "totalCount": "{total} titles"
+    "totalCount": "{total} titles",
+    "resolving": "Opening…"
   },
   "search": {
-    "placeholder": "Type a drama name",
+    "placeholder": "Type a title, or paste a share link / series ID",
     "submit": "Search",
     "exit": "Exit search",
     "resultCount": "{total} found",
@@ -33,9 +33,6 @@
     "langEn": "English"
   },
   "download": {
-    "inputLabel": "Share link or series ID",
-    "inputPlaceholder": "Paste an app share link, long text, or a numeric ID",
-    "resolve": "Resolve",
     "selectEpisodes": "Select episodes",
     "selectAll": "Select all",
     "invert": "Invert",
@@ -59,6 +56,8 @@
     "pauseAll": "Pause all",
     "retryAll": "Retry failed",
     "selectFailed": "Select failed",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
     "columns": { "status": "Status", "size": "Size" },
     "empty": "No download tasks yet",
     "status": {
@@ -91,6 +90,9 @@
     "noSeries": "No series selected",
     "epShort": "Ep {index}",
     "continueWatching": "Continue watching",
+    "clearHistory": "Clear history",
+    "clearHistoryConfirm": "Clear watch history?",
+    "clearHistoryDesc": "Watch progress for every series will be removed. Downloaded video files are not affected.",
     "historyEmpty": "Nothing played yet",
     "historyHint": "Open a drama from Browse or search and it will show up here",
     "play": "Play",
@@ -135,6 +137,9 @@
     "codecMismatch": "Episode {episode} has a different codec; quick merge would corrupt the file — use compat merge",
     "start": "Start merge",
     "started": "Merge queued",
+    "actions": { "remove": "Delete this merge record" },
+    "removeConfirm": "Delete this merge record?",
+    "removeDesc": "Only the task record is removed. The merged file stays in your download folder.",
     "status": {
       "pending": "Pending",
       "running": "Merging",
@@ -190,19 +195,19 @@
     "backendFfmpegSw": "ffmpeg software"
   },
   "error": {
-    "network": "Network request failed",
-    "emptyResponse": "Empty response from API (signature may have expired)",
-    "signer": "Signature computation failed",
-    "storeCorrupt": "Data file is corrupted",
-    "io": "File I/O failed",
-    "decrypt": "Decryption failed",
-    "media": "Media processing failed",
-    "sniff": "Browser sniffing failed",
-    "invalidArgs": "Invalid arguments",
-    "notFound": "Not found",
-    "cancelled": "Operation cancelled",
-    "internal": "Internal error",
-    "unknownCommand": "Call to {command} failed"
+    "network": "Cannot reach the server. Check your connection or the proxy in Settings.",
+    "emptyResponse": "The server returned nothing. Please try again in a moment.",
+    "signer": "The request could not be prepared. Please try again.",
+    "storeCorrupt": "Local records could not be read. Restart the app and try again.",
+    "io": "A file could not be read or written. Check your free disk space.",
+    "decrypt": "This episode cannot be played. Download it again and retry.",
+    "media": "This video could not be processed. Download the episode again.",
+    "sniff": "Could not load drama information. Check your connection or the proxy in Settings.",
+    "invalidArgs": "That action cannot be completed. Please try again.",
+    "notFound": "Nothing was found.",
+    "cancelled": "Cancelled",
+    "internal": "The operation failed. Please try again.",
+    "badPayload": "Unexpected data format. Please try again."
   },
   "common": {
     "confirm": "Confirm",

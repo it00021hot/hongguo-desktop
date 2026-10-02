@@ -3,9 +3,9 @@ import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { firstN, formatRange, lastN, parseRange } from '@/lib/range';
+import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
 import type { Episode } from '@/lib/schema';
 
@@ -114,21 +114,31 @@ export function EpisodePicker({ episodes, selected, onChange }: Props) {
       </div>
 
       <div className="max-h-64 scrollbar-thin overflow-y-auto rounded-md border p-2">
-        <div className="grid grid-cols-6 gap-1 sm:grid-cols-8 md:grid-cols-10">
+        {/*
+          每格只放集号，不带勾选框。
+          原来 10 列 × 勾选框 + 数字，抽屉 512px 宽时每格只剩约 50px，
+          扣掉勾选框和内边距后三位数集号被截成一位数——短剧动辄几百集。
+          列数也按容器定：宽度由抽屉决定，视口断点在这里没有参考价值。
+        */}
+        <div className="grid grid-cols-8 gap-1">
           {episodes.map((ep) => {
             const checked = selectedSet.has(ep.vidIndex);
             return (
-              <label
+              <button
                 key={ep.vidIndex}
-                className="hover:bg-accent flex cursor-pointer items-center gap-1 rounded px-1.5 py-1 text-sm tabular-nums"
+                type="button"
+                aria-pressed={checked}
+                aria-label={`${t('download.selectEpisodes')} ${ep.vidIndex}`}
+                onClick={() => toggle(ep.vidIndex)}
+                className={cn(
+                  'h-8 rounded-md border text-sm font-medium tabular-nums transition-colors',
+                  checked
+                    ? 'bg-primary text-primary-foreground border-transparent'
+                    : 'bg-background hover:bg-accent hover:text-accent-foreground',
+                )}
               >
-                <Checkbox
-                  checked={checked}
-                  onCheckedChange={() => toggle(ep.vidIndex)}
-                  aria-label={`${t('download.selectEpisodes')} ${ep.vidIndex}`}
-                />
-                <span className="truncate">{ep.vidIndex}</span>
-              </label>
+                {ep.vidIndex}
+              </button>
             );
           })}
         </div>

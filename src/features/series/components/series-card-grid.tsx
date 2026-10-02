@@ -1,27 +1,39 @@
-import { Play, Tv } from 'lucide-react';
+import { Tv } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { t, tf } from '@/i18n';
+import { tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
 
 interface Props {
   cards: SeriesCard[];
   /** 每部剧已下载的集数，用于卡片角标 */
   downloadedMap?: Record<string, number>;
-  onPlay: (card: SeriesCard) => void;
+  /** 选中这部剧：打开详情抽屉，而不是直接起播 */
+  onSelect: (card: SeriesCard) => void;
 }
 
 /** 剧集卡片网格。浏览页与搜索页共用。 */
-export function SeriesCardGrid({ cards, downloadedMap, onPlay }: Props) {
+export function SeriesCardGrid({ cards, downloadedMap, onSelect }: Props) {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((card) => {
         const downloaded = downloadedMap?.[card.seriesId] ?? 0;
         return (
+          // 整张卡可点。不用 <button> 包：button 的内容模型只允许 phrasing content，
+          // 而卡里有 <div> 和 <h3>，塞进去是非法嵌套。role="button" + tabIndex 是
+          // 可点击卡片的标准做法，<h3> 也能留在 article 里保住标题语义。
           <article
             key={card.seriesId}
-            className="group bg-card relative flex flex-col overflow-hidden rounded-xl border transition-shadow hover:shadow-md"
+            role="button"
+            tabIndex={0}
+            aria-label={card.seriesTitle}
+            onClick={() => onSelect(card)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return;
+              // 空格默认会滚动页面，按钮不该有滚动副作用
+              e.preventDefault();
+              onSelect(card);
+            }}
+            className="group bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
           >
             <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
               {card.cover ? (
@@ -52,18 +64,6 @@ export function SeriesCardGrid({ cards, downloadedMap, onPlay }: Props) {
                   {tf('common.episodeCount', { count: card.episodeCount })}
                 </span>
               )}
-
-              <Button
-                size="sm"
-                className={cn(
-                  'absolute inset-x-2 bottom-8 opacity-0 transition-opacity',
-                  'group-hover:opacity-100 focus-visible:opacity-100',
-                )}
-                onClick={() => onPlay(card)}
-              >
-                <Play className="size-4" />
-                {t('download.playNow')}
-              </Button>
             </div>
 
             <div className="flex flex-col gap-1.5 p-3">

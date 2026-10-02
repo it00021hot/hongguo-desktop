@@ -152,7 +152,10 @@ impl DownloadScheduler {
                     self.throttle.forget(&id);
                     let _ = app.emit(names::DOWNLOAD_STOPPED, &serde_json::json!({ "id": id }));
                 } else {
-                    queue.mark_failed(&id, &e.to_string());
+                    // 队列里记 i18n key，不记「网络请求失败: dns 错误」这种人话：
+                    // `DownloadTask.error` 是被前端直接渲染的，底层细节只该进日志。
+                    log::error!("[Download] 任务 {id} 失败: {e}");
+                    queue.mark_failed(&id, e.i18n_key());
                     self.throttle.forget(&id);
                     let _ = app.emit(
                         names::DOWNLOAD_FAILED,
@@ -252,6 +255,7 @@ fn persist(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::download_service::queue::DownloadQueue;
 
     #[test]
     fn cancel_flag_round_trips() {
@@ -283,5 +287,23 @@ mod tests {
         let s = DownloadScheduler::new();
         let state = AppState::default();
         assert!(s.claim_tasks(&state).is_empty());
+    }
+
+    #[test]
+    fn failed_task_records_i18n_key_not_internal_detail() {
+        // 模拟一次失败：调度器落进队列的就是 `e.i18n_key()`，
+        // 前端渲染的 DownloadTask.error 因此是 `error.*` 而不是中文串
+        let queue = DownloadQueue::new();
+        let t = queue.enqueue(DownloadTask::new("1", "剧", 1, "v", "第1集"));
+        let e = AppError::Network("dns 解析失败".into());
+
+        queue.mark_failed(&t.id, e.i18n_key());
+
+        let stored = &queue.get(&t.id).expect("任务还在队列里").error;
+        assert_eq!(stored, "error.network", "存进任务的应是可翻译的 key");
+        assert!(
+            !stored.contains("dns"),
+            "底层细节只该进日志，不该糊在界面上: {stored}"
+        );
     }
 }

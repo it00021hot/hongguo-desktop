@@ -1,8 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { History, Play } from 'lucide-react';
+import { History, Play, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { usePlaybackHistory, useSeriesList } from '@/lib/queries';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useClearPlaybackHistory, usePlaybackHistory, useSeriesList } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
 import { t, tf } from '@/i18n';
@@ -19,6 +30,8 @@ export function ContinueWatching() {
   const setTarget = usePlayerStore((s) => s.setTarget);
   const { data: history } = usePlaybackHistory();
   const { data: seriesList } = useSeriesList();
+  const clearHistory = useClearPlaybackHistory();
+  const [confirmClear, setConfirmClear] = useState(false);
 
   /** 把历史与剧集档案对起来：档案给封面/标题，历史给看到第几集。 */
   const items = useMemo(() => {
@@ -46,10 +59,22 @@ export function ContinueWatching() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <h2 className="flex items-center gap-2 text-sm font-semibold">
-        <History className="size-4" />
-        {t('player.continueWatching')}
-      </h2>
+      {/* 清空入口放在标题行：卡片本身是 <button>，按钮里再套按钮是非法 HTML */}
+      <div className="flex items-center gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <History className="size-4" />
+          {t('player.continueWatching')}
+        </h2>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-destructive ml-auto"
+          onClick={() => setConfirmClear(true)}
+        >
+          <Trash2 className="size-4" />
+          {t('player.clearHistory')}
+        </Button>
+      </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
         {items.map((item) => (
@@ -89,6 +114,21 @@ export function ContinueWatching() {
           </button>
         ))}
       </div>
+
+      <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('player.clearHistoryConfirm')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('player.clearHistoryDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => clearHistory.mutate()}>
+              {t('common.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

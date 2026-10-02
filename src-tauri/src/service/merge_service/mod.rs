@@ -12,6 +12,7 @@ pub mod quick;
 use std::path::PathBuf;
 
 use crate::app_state::AppState;
+use crate::error::{AppError, AppResult};
 
 /// 某剧可参与合并的分集，按集号升序。
 ///
@@ -30,10 +31,25 @@ pub fn done_inputs(state: &AppState, series_id: &str) -> Vec<(u32, PathBuf)> {
     )
 }
 
+/// 删除一条合并任务记录（只删记录，不删已产出的文件）。
+///
+/// 找不到就报 [`AppError::NotFound`]，与 `stop_download` / `retry_task` 同一口径：
+/// 返回 `Ok` 却什么都没删，调用方会以为删掉了。
+pub fn remove_task(state: &AppState, id: &str) -> AppResult<()> {
+    let mut data = state.store.write();
+    let before = data.merge_tasks.len();
+    data.merge_tasks.retain(|t| t.id != id);
+    if data.merge_tasks.len() == before {
+        return Err(AppError::NotFound(format!("合并任务 {id}")));
+    }
+    data.save(&crate::store::paths::data_file())
+        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::DownloadTask;
+    use crate::domain::model::{DownloadTask, MergeMode, MergeTask};
 
     /// 造一个指向真实临时文件、状态为已完成的分集。
     fn done_task(
@@ -96,6 +112,62 @@ mod tests {
             vec![1],
             "别的剧、文件已消失、未完成的集都不该进来"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_task_drops_only_that_record_and_persists() {
+        let dir = temp_dir("rmtask");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        let a = MergeTask::new("1", "剧", "out-a", MergeMode::Quick);
+        let b = MergeTask::new("2", "剧", "out-b", MergeMode::Quick);
+        state
+            .store
+            .write()
+            .merge_tasks
+            .extend([a.clone(), b.clone()]);
+
+        remove_task(&state, &a.id).expect("存在的记录应当删得掉");
+
+        // get_merge_tasks 读的就是这份列表
+        let left = state.store.read().merge_tasks.clone();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, b.id, "只删指定的那条");
+
+        let on_disk = crate::store::DataStore::load(&crate::store::paths::data_file());
+        assert_eq!(
+            on_disk.merge_tasks.len(),
+            1,
+            "删了要落盘，否则重启记录又回来"
+        );
+        assert_eq!(on_disk.merge_tasks[0].id, b.id);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_task_reports_not_found_for_unknown_id() {
+        let dir = temp_dir("rmtask-missing");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        let kept = MergeTask::new("1", "剧", "out", MergeMode::Quick);
+        state.store.write().merge_tasks.push(kept.clone());
+
+        let err = remove_task(&state, "no-such-id").expect_err("不存在的记录必须报错");
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "应与 stop_download 一样报 NotFound，实际: {err:?}"
+        );
+        assert_eq!(err.i18n_key(), "error.notFound");
+        assert_eq!(
+            state.store.read().merge_tasks.len(),
+            1,
+            "没删掉任何东西时不该动列表"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

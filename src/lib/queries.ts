@@ -235,6 +235,7 @@ export function useMergeActions() {
       }) => merge.start(seriesId, outputName, mode),
       onSuccess: invalidate,
     }),
+    remove: useMutation({ mutationFn: merge.remove, onSuccess: invalidate }),
   };
 }
 
@@ -285,6 +286,16 @@ export function useSavePosition() {
 
 export function usePlaybackHistory() {
   return useQuery({ queryKey: keys.playbackHistory, queryFn: play.history });
+}
+
+export function useClearPlaybackHistory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: play.clearHistory,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.playbackHistory });
+    },
+  });
 }
 
 export function useStorageUsage() {

@@ -42,6 +42,16 @@ pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::Playbac
     history_of(&state.store.read().playback)
 }
 
+/// 清空全部播放历史。
+///
+/// 空历史重复清空不算错误：这是一个「清掉」按钮，前端可能连点两次。
+pub fn clear(state: &AppState) -> crate::error::AppResult<()> {
+    let mut data = state.store.write();
+    data.playback.clear();
+    data.save(&crate::store::paths::data_file())
+        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
+}
+
 /// 从播放进度表里取每部剧最近一集，按时间倒序。
 fn history_of(
     map: &crate::domain::model::PlaybackMap,
@@ -71,12 +81,19 @@ fn history_of(
 mod tests {
     use super::*;
     use crate::domain::model::{PlaybackMap, PlaybackPosition};
+    use std::path::PathBuf;
 
     fn at(current_time: f64, updated_at: i64) -> PlaybackPosition {
         PlaybackPosition {
             updated_at,
             ..PlaybackPosition::new(current_time, 300.0)
         }
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hg-play-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
@@ -113,5 +130,58 @@ mod tests {
     #[test]
     fn empty_map_gives_empty_history() {
         assert!(history_of(&PlaybackMap::new()).is_empty());
+    }
+
+    #[test]
+    fn clear_empties_history_on_disk_too() {
+        let dir = temp_dir("clear");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        state
+            .store
+            .write()
+            .playback
+            .entry("A".into())
+            .or_default()
+            .insert(1, at(10.0, 100));
+        // 先把「有记录」的状态写进文件：否则「文件里是空的」这句断言没有对照，
+        // 清空没落盘它也一样成立
+        state
+            .store
+            .read()
+            .save(&crate::store::paths::data_file())
+            .unwrap();
+        assert!(
+            !crate::store::DataStore::load(&crate::store::paths::data_file())
+                .playback
+                .is_empty()
+        );
+
+        clear(&state).expect("清空历史不该失败");
+
+        assert!(
+            history_of(&state.store.read().playback).is_empty(),
+            "清空后不该再有历史（history() 读的就是这份表）"
+        );
+        let on_disk = crate::store::DataStore::load(&crate::store::paths::data_file());
+        assert!(
+            on_disk.playback.is_empty(),
+            "只清内存的话，重启后历史全回来了"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_empty_history_is_a_no_op() {
+        let dir = temp_dir("clear-empty");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        clear(&state).expect("空历史重复清空不该报错");
+        assert!(history_of(&state.store.read().playback).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

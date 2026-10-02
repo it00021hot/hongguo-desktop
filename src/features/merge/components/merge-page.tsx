@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Combine, Zap, Gauge } from 'lucide-react';
+import { Combine, Zap, Gauge, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Select,
   SelectContent,
@@ -35,8 +45,11 @@ export function MergePage() {
 
   const { data: preflight } = useMergePreflight(seriesId || null);
   const { data: tasks } = useMergeTasks();
-  const { start } = useMergeActions();
+  const { start, remove } = useMergeActions();
   useMergeEvents();
+
+  /** 待删除的合并任务 id：null 表示确认框没打开 */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const current = seriesList?.find((s) => s.seriesId === seriesId);
   const output = outputName || current?.title || '';
@@ -61,6 +74,14 @@ export function MergePage() {
         onError: (e) => toast.error(e.message),
       },
     );
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    remove.mutate(pendingDelete, {
+      onSuccess: () => setPendingDelete(null),
+      onError: (e) => toast.error(e.message),
+    });
   };
 
   return (
@@ -121,14 +142,18 @@ export function MergePage() {
           {/* 合并前校验。warnings 传的是 i18n key，这里带变量池逐条翻成当前语言。 */}
           {preflight && (
             <Alert variant={preflight.ok ? 'default' : 'warning'}>
-              <AlertTitle>
-                {preflight.episodeCount > 0
-                  ? `${tf('common.episodeCount', { count: preflight.episodeCount })} · ${formatBytes(preflight.estimatedSize)}`
-                  : t('merge.noDownloads')}
-                {/* freeSpace 为 null 是「查不到」，显示成 0 B 是在骗人，所以整段不出现 */}
-                {preflight.freeSpace !== null &&
-                  ` · ${tf('merge.freeSpace', { size: formatBytes(preflight.freeSpace) })}`}
-              </AlertTitle>
+              {/* 0 集时标题栏整块不渲染：没有集数也没有体积可汇总，
+                  而「没有已下载的分集」已经由下面的 warnings 说了，
+                  再写一遍就是同一句话在同一个 Alert 里出现两次。 */}
+              {preflight.episodeCount > 0 && (
+                <AlertTitle>
+                  {tf('common.episodeCount', { count: preflight.episodeCount })} ·{' '}
+                  {formatBytes(preflight.estimatedSize)}
+                  {/* freeSpace 为 null 是「查不到」，显示成 0 B 是在骗人，所以整段不出现 */}
+                  {preflight.freeSpace !== null &&
+                    ` · ${tf('merge.freeSpace', { size: formatBytes(preflight.freeSpace) })}`}
+                </AlertTitle>
+              )}
               {preflight.warnings.length > 0 && (
                 <AlertDescription>
                   {preflight.warnings
@@ -180,11 +205,32 @@ export function MergePage() {
                     {Math.round(task.percent)}%
                   </span>
                 )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setPendingDelete(task.id)}
+                  aria-label={t('merge.actions.remove')}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
               </div>
             ))}
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(o) => !o && setPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('merge.removeConfirm')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('merge.removeDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>{t('common.delete')}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

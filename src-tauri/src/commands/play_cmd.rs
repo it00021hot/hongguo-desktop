@@ -38,3 +38,9 @@ pub fn get_playback_history(
 ) -> Vec<crate::domain::model::PlaybackHistoryItem> {
     crate::service::play_service::position::history(&state)
 }
+
+/// 清空全部播放历史。
+#[tauri::command]
+pub fn clear_playback_history(state: State<'_, AppState>) -> AppResult<()> {
+    crate::service::play_service::position::clear(&state)
+}

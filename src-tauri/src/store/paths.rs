@@ -31,6 +31,46 @@ pub fn data_file() -> PathBuf {
     data_dir().join(DATA_FILE)
 }
 
+/// 单测期间把数据目录重定向到临时目录。
+///
+/// 服务层的落盘路径是写死的 [`data_file`]，直接测「有没有真的写进磁盘」就会
+/// 写进用户真实的 `%APPDATA%/hongguo-downloader/data.json`，把下载记录冲掉。
+///
+/// `HONGGUO_DATA_DIR` 是进程级的：两个用例各改各的会互相把对方的路径顶掉，
+/// 于是「断言写到 A 目录」的用例读到的是 B 的文件。所以这里带一把全局锁，
+/// 并在 drop 时还原原值——用例中途 panic 也不会把污染留给后面的测试。
+#[cfg(test)]
+pub(crate) struct ScopedDataDir {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl ScopedDataDir {
+    /// 指向 `dir` 并保证它存在。返回的守卫活着期间，本进程的数据读写全落在 `dir`。
+    pub(crate) fn new(dir: &std::path::Path) -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::fs::create_dir_all(dir).expect("创建测试数据目录");
+        let previous = std::env::var_os("HONGGUO_DATA_DIR");
+        std::env::set_var("HONGGUO_DATA_DIR", dir);
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for ScopedDataDir {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(v) => std::env::set_var("HONGGUO_DATA_DIR", v),
+            None => std::env::remove_var("HONGGUO_DATA_DIR"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

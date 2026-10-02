@@ -19,8 +19,19 @@ import { toast } from 'sonner';
 import { t, tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
 
+/**
+ * 抽屉只消费「身份 + 展示」这几项。
+ *
+ * 不直接用 SeriesCard：分享链接/ID 解析出来的剧没有嗅探链接，
+ * 为了满足类型去编一个空 url 只会让调用方以为它有意义。
+ */
+export type SeriesRef = Pick<
+  SeriesCard,
+  'seriesId' | 'seriesTitle' | 'cover' | 'episodeCount' | 'tags'
+>;
+
 interface Props {
-  card: SeriesCard | null;
+  card: SeriesRef | null;
   onOpenChange: (open: boolean) => void;
 }
 

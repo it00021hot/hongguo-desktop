@@ -10,12 +10,18 @@ use crate::app_state::AppState;
 use crate::domain::model::{MergeMode, MergePreflight, MergeStatus, MergeTask};
 use crate::error::{AppError, AppResult};
 use crate::service::download_service::events::names;
-use crate::service::merge_service::{compat, prepare, progress, quick};
+use crate::service::merge_service::{compat, prepare, progress, quick, remove_task};
 
 /// 全部合并任务。
 #[tauri::command]
 pub fn get_merge_tasks(state: State<'_, AppState>) -> Vec<MergeTask> {
     state.store.read().merge_tasks.clone()
+}
+
+/// 删除一条合并任务记录（只删记录，不删已产出的文件）。
+#[tauri::command]
+pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    remove_task(&state, &id)
 }
 
 /// 合并前校验。
@@ -78,7 +84,12 @@ pub fn merge_series(
             task.mark_completed(&path.to_string_lossy(), size);
             task.episode_count = count;
         }
-        Err(e) => task.mark_failed(&e.to_string()),
+        Err(e) => {
+            // 与下载任务同一个约定：记录里存 i18n key（前端会 t() 它），
+            // 内部细节只进日志。直接把 e.to_string() 存进去等于把后端术语糊给用户。
+            log::error!("[Merge] {} 合并失败: {e}", task.output_name);
+            task.mark_failed(e.i18n_key());
+        }
     }
     task.status = if task.error.is_empty() {
         MergeStatus::Completed
