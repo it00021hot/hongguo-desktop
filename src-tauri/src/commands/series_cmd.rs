@@ -68,3 +68,9 @@ pub async fn get_series_extras(series_id: String) -> crate::domain::model::Serie
 pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
     series_service::dismiss(&state, &series_id)
 }
+
+/// 一次性移除列表里的全部剧集，返回移除条数。
+#[tauri::command]
+pub fn remove_all_series(state: State<'_, AppState>) -> AppResult<usize> {
+    series_service::dismiss_all(&state)
+}

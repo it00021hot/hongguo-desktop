@@ -185,7 +185,11 @@
     "removeRecord": "从列表移除《{title}》",
     "removeRecordConfirm": "从列表移除《{title}》？",
     "removeRecordDesc": "只从列表里去掉这条记录，之后仍可通过剧名或分享链接重新下载。已下载的文件不受影响。",
-    "removedRecord": "已移除《{title}》的记录"
+    "removedRecord": "已移除《{title}》的记录",
+    "removeAllRecords": "全部移除记录",
+    "removeAllRecordsConfirm": "移除列表里的全部 {count} 部剧？",
+    "removeAllRecordsDesc": "只从列表里清空这些记录，已下载的文件不受影响。之后仍可通过剧名或分享链接重新下载。",
+    "removedAllRecords": "已移除 {count} 条记录"
   },
   "settings": {
     "downloadDir": "下载目录",

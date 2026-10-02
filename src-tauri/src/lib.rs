@@ -57,6 +57,7 @@ pub fn run() {
             commands::series_cmd::resolve_series,
             commands::series_cmd::get_series_extras,
             commands::series_cmd::remove_series,
+            commands::series_cmd::remove_all_series,
             // 浏览与搜索
             commands::browse_cmd::browse_categories,
             commands::browse_cmd::browse_list,

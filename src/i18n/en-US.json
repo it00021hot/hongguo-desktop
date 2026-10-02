@@ -185,7 +185,11 @@
     "removeRecord": "Remove {title} from the list",
     "removeRecordConfirm": "Remove {title} from the list?",
     "removeRecordDesc": "This only hides the record from the list. You can download it again by name or share link later, and already downloaded files are untouched.",
-    "removedRecord": "Removed the record for {title}"
+    "removedRecord": "Removed the record for {title}",
+    "removeAllRecords": "Remove all records",
+    "removeAllRecordsConfirm": "Remove all {count} series from the list?",
+    "removeAllRecordsDesc": "This only clears the records from the list. Already downloaded files are untouched, and you can download any of them again later by name or share link.",
+    "removedAllRecords": "Removed {count} records"
   },
   "settings": {
     "downloadDir": "Download folder",

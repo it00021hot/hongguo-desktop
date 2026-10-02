@@ -135,6 +135,17 @@ export function useRemoveSeries() {
   });
 }
 
+/** 一次性移除列表里的全部剧集，返回移除条数。 */
+export function useRemoveAllSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => series.removeAll(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.seriesList });
+    },
+  });
+}
+
 // ---------------------------------------------------------------- 下载
 
 /**

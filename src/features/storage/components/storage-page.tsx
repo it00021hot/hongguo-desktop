@@ -15,7 +15,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useRemoveSeries, useSeriesList, useStorageActions, useStorageUsage } from '@/lib/queries';
+import {
+  useRemoveAllSeries,
+  useRemoveSeries,
+  useSeriesList,
+  useStorageActions,
+  useStorageUsage,
+} from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { Series } from '@/lib/schema';
@@ -26,10 +32,12 @@ export function StoragePage() {
   const { data: seriesList } = useSeriesList();
   const { deleteSeries, deleteAll } = useStorageActions();
   const { mutate: removeSeries } = useRemoveSeries();
+  const { mutate: removeAllSeries } = useRemoveAllSeries();
   const [filter, setFilter] = useState('');
   const [confirmAll, setConfirmAll] = useState(false);
   // 移除记录不可撤销（后端是软删除，没有恢复入口），所以必须先确认
   const [confirmRemove, setConfirmRemove] = useState<Series | null>(null);
+  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
 
   const visible = (seriesList ?? []).filter((s) => {
     if (!filter.trim()) return true;
@@ -51,6 +59,16 @@ export function StoragePage() {
       onSuccess: () => {
         toast.success(tf('storage.removedRecord', { title }));
         setConfirmRemove(null);
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  const handleRemoveAll = () => {
+    removeAllSeries(undefined, {
+      onSuccess: (n) => {
+        toast.success(tf('storage.removedAllRecords', { count: n }));
+        setConfirmRemoveAll(false);
       },
       onError: (e) => toast.error(e.message),
     });
@@ -90,7 +108,20 @@ export function StoragePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t('storage.bySeries')}</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">{t('storage.bySeries')}</CardTitle>
+            {/* 搜索框过滤时不该「一键清空」被过滤后的子集——那会误伤没显示出来的 */}
+            {visible.length > 0 && filter.trim() === '' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto"
+                onClick={() => setConfirmRemoveAll(true)}
+              >
+                {t('storage.removeAllRecords')}
+              </Button>
+            )}
+          </div>
           <CardDescription>{t('storage.keepRecord')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -171,6 +202,23 @@ export function StoragePage() {
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleRemove}>
               {t('storage.removeRecordShort')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmRemoveAll} onOpenChange={(o) => !o && setConfirmRemoveAll(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {tf('storage.removeAllRecordsConfirm', { count: (seriesList ?? []).length })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('storage.removeAllRecordsDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRemoveAll}>
+              {t('storage.removeAllRecords')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
