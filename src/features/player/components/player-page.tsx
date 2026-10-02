@@ -180,11 +180,7 @@ function PlayerView() {
           setActiveDefinition(res.definition);
           setDefinitions(res.definitions);
           // 续播位置要在 metadata 加载后 seek
-          pendingSeek.current = res.error
-            ? 0
-            : keepPosition > 0
-              ? keepPosition
-              : res.resumeAt;
+          pendingSeek.current = res.error ? 0 : keepPosition > 0 ? keepPosition : res.resumeAt;
         },
         onError: (e) => {
           setError(e.message);

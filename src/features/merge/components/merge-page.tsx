@@ -58,9 +58,7 @@ export function MergePage() {
 
   // 已有任务在跑同一个输出名时禁用按钮。后端也会拦（见 merge_service::guard），
   // 但那是最后一道防线：真按下去只会得到一个报错 toast，界面却已经跳了两三次。
-  const busy = (tasks ?? []).some(
-    (t) => t.status === 'running' && t.outputName === output,
-  );
+  const busy = (tasks ?? []).some((t) => t.status === 'running' && t.outputName === output);
 
   // 一部都没下过时直接说清楚：下拉是空的，placeholder 只会让人以为是加载卡住了
   const noCandidates = !candidatesPending && (candidates?.length ?? 0) === 0;

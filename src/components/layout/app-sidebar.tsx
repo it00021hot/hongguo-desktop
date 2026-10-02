@@ -53,9 +53,7 @@ export function AppSidebar() {
           height={32}
           className="size-8 shrink-0 rounded-lg"
         />
-        {!collapsed && (
-          <p className="truncate text-sm font-semibold">{t('app.name')}</p>
-        )}
+        {!collapsed && <p className="truncate text-sm font-semibold">{t('app.name')}</p>}
       </div>
 
       <nav className="flex-1 space-y-1 p-2">

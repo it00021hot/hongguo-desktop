@@ -355,9 +355,7 @@ export function PlayerControls({
                 size="sm"
                 className={cn(CHROME_BUTTON, 'font-mono')}
                 disabled={definitions.length === 0}
-                title={
-                  definitions.length === 0 ? t('player.definitionLocalOnly') : undefined
-                }
+                title={definitions.length === 0 ? t('player.definitionLocalOnly') : undefined}
               >
                 <MonitorPlay className="size-4" />
                 {definition > 0 ? `${definition}P` : t('player.definitionAuto')}
@@ -376,8 +374,7 @@ export function PlayerControls({
                   className="justify-between"
                 >
                   <span className="font-mono">
-                    {d.value}P
-                    {/* 竖屏剧的宽高是反的，只报分辨率会误导 */}
+                    {d.value}P{/* 竖屏剧的宽高是反的，只报分辨率会误导 */}
                     {d.height > d.width && (
                       <span className="text-muted-foreground ml-2 text-xs">
                         {d.width}×{d.height}
