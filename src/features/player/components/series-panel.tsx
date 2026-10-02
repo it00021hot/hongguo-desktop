@@ -53,7 +53,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
   const slice = episodes.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
 
   return (
-    <aside className="flex w-80 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto pr-1">
+    <aside className="flex w-72 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto pr-1 sm:w-80 2xl:w-96">
       {series && <SeriesHeadline series={series} currentIndex={currentIndex} />}
 
       {extras?.intro && <Intro text={extras.intro} />}
@@ -193,7 +193,7 @@ function RecommendList({ items }: { items: RecommendItem[] }) {
   return (
     <section className="grid gap-2">
       <h3 className="text-sm font-semibold">{t('player.recommend')}</h3>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 2xl:grid-cols-4">
         {items.map((item) => (
           <button
             key={item.seriesId}

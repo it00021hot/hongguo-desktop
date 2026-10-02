@@ -88,7 +88,7 @@ export function ContinueWatching() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+      <div className="grid grid-cols-2 gap-4 min-[1800px]:grid-cols-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {items.map((item) => (
           // 卡片本身不是 button：button 里套 button 是非法 HTML，而「点卡片播放」
           // 和「单条清除」必须是两个独立可点区。改成 article + 整卡播放按钮，

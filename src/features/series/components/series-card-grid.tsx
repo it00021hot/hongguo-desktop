@@ -16,7 +16,7 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect }: Props) {
   return (
     // 列数一路加到 2xl：屏幕越宽应该一行塞下更多剧，而不是把每张卡放大到
     // 一屏只能看三张。断点按「卡片保持 ~200px 宽」来定。
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+    <div className="grid grid-cols-2 gap-4 min-[1800px]:grid-cols-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((card) => {
         const downloaded = downloadedMap?.[card.seriesId] ?? 0;
         return (
