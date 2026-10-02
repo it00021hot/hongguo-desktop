@@ -150,7 +150,7 @@
     "quickDesc": "原画质直拼，不重编码，无损且极快",
     "quickUnavailable": "各集编码不一致，快速合并不可用",
     "compat": "兼容合并",
-    "compatDesc": "转码为 H.264/AAC，任何播放器都能播（较慢）",
+    "compatDesc": "转换成通用格式，任何播放器都能播（较慢）",
     "outputName": "输出文件名",
     "freeSpace": "剩余 {size}",
     "noDownloads": "没有已下载的分集",
@@ -218,11 +218,11 @@
     "deleteAll": "删除全部已下载",
     "clearCompatCache": "清空转码缓存",
     "clearOnlineCache": "清空在线缓存",
-    "transcodeBackend": "转码后端",
-    "transcodeBackendHint": "装了 ffmpeg 会优先用它（可用硬件编码，速度快）；没装则用纯 Rust 软解，无需额外软件",
-    "backendRust": "纯 Rust 软解",
-    "backendFfmpegHw": "ffmpeg 硬件编码",
-    "backendFfmpegSw": "ffmpeg 软件编码"
+    "transcodeBackend": "转换方式",
+    "transcodeBackendHint": "兼容合并会把视频转成通用格式，装没装 ffmpeg 都能用：没装走软件转换，慢一些；装上会自动启用显卡加速，明显更快。两种方式产出的文件完全一样。",
+    "backendRust": "标准速度",
+    "backendFfmpegHw": "硬件加速",
+    "backendFfmpegSw": "软件加速"
   },
   "error": {
     "network": "连不上服务器，请检查网络连接或设置页里的代理",

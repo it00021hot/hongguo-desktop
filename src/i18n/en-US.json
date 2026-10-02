@@ -150,7 +150,7 @@
     "quickDesc": "Concatenate as-is, no re-encoding, lossless and fast",
     "quickUnavailable": "Episodes use different codecs, quick merge unavailable",
     "compat": "Compatible merge",
-    "compatDesc": "Transcode to H.264/AAC for any player (slower)",
+    "compatDesc": "Converts to a universal format any player can play (slower)",
     "outputName": "Output name",
     "freeSpace": "{size} free",
     "noDownloads": "No downloaded episodes",
@@ -218,11 +218,11 @@
     "deleteAll": "Delete everything downloaded",
     "clearCompatCache": "Clear transcode cache",
     "clearOnlineCache": "Clear stream cache",
-    "transcodeBackend": "Transcode backend",
-    "transcodeBackendHint": "Uses ffmpeg when installed (hardware encoding, fast); otherwise pure Rust software decoding with no extra software required",
-    "backendRust": "Pure Rust (software)",
-    "backendFfmpegHw": "ffmpeg hardware",
-    "backendFfmpegSw": "ffmpeg software"
+    "transcodeBackend": "Conversion mode",
+    "transcodeBackendHint": "Compat merge converts videos to a universal format and works with or without ffmpeg: without it, conversion is software-only and slower; install it to enable GPU acceleration, which is noticeably faster. Both produce identical files.",
+    "backendRust": "Standard speed",
+    "backendFfmpegHw": "Hardware accelerated",
+    "backendFfmpegSw": "Software accelerated"
   },
   "error": {
     "network": "Cannot reach the server. Check your connection or the proxy in Settings.",
