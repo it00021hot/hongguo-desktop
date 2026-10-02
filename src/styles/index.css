@@ -4,6 +4,16 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
+ * 浏览器给 `<button>` 的默认光标是箭头，不是手型 —— 视觉上完全看不出可点。
+ * 项目里有 50 多个原生 button（选集格子、侧栏折叠、卡片操作…），逐个加
+ * cursor-pointer 既吵又必然漏。放在这里一次解决；`:disabled` 排除掉，
+ * 禁用的按钮显示箭头才对。
+ */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/*
  * 设计令牌（oklch）。
  * 沿用现版的中文界面观感：中文字体栈在前，等宽字体用于文件名与进度数值。
  */
