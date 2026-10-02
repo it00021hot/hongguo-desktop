@@ -1,0 +1,112 @@
+//! 断点续播读写。
+
+use tauri::State;
+
+use crate::app_state::AppState;
+use crate::domain::model::PlaybackPosition;
+
+/// 保存播放位置。
+///
+/// `duration` 由前端回传——后端拿到流的时候还不知道总时长，
+/// 而「接近片尾就不续播」这条判断依赖它，不记就等于这道防线一直是空转的。
+pub fn save(
+    state: &State<'_, AppState>,
+    series_id: &str,
+    vid_index: u32,
+    current_time: f64,
+    duration: f64,
+) -> crate::error::AppResult<()> {
+    let mut data = state.store.write();
+    let entry = data.playback.entry(series_id.to_string()).or_default();
+    entry.insert(vid_index, PlaybackPosition::new(current_time, duration));
+    data.save(&crate::store::paths::data_file())
+        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
+}
+
+/// 读播放位置。接近片尾时返回 0（从头看）。
+pub fn load(state: &State<'_, AppState>, series_id: &str, vid_index: u32) -> f64 {
+    let data = state.store.read();
+    data.playback
+        .get(series_id)
+        .and_then(|m| m.get(&vid_index))
+        .filter(|p| !p.is_near_end())
+        .map(|p| p.current_time)
+        .unwrap_or(0.0)
+}
+
+/// 播放历史：每部剧最近一次看到的位置，按时间倒序。
+///
+/// 只给「最近一集」而不是全部集次：列表要回答的是「我播过哪些剧、看到哪」，
+/// 逐集罗列反而看不出重点。
+pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::PlaybackHistoryItem> {
+    history_of(&state.store.read().playback)
+}
+
+/// 从播放进度表里取每部剧最近一集，按时间倒序。
+fn history_of(map: &crate::domain::model::PlaybackMap) -> Vec<crate::domain::model::PlaybackHistoryItem> {
+    use crate::domain::model::PlaybackHistoryItem;
+
+    let mut items: Vec<PlaybackHistoryItem> = map
+        .iter()
+        .filter_map(|(series_id, episodes)| {
+            let (vid_index, pos) = episodes
+                .iter()
+                .max_by_key(|(_, p)| p.updated_at)
+                .map(|(idx, p)| (*idx, p))?;
+            Some(PlaybackHistoryItem {
+                series_id: series_id.clone(),
+                vid_index,
+                current_time: pos.current_time,
+                updated_at: pos.updated_at,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::model::{PlaybackMap, PlaybackPosition};
+
+    fn at(current_time: f64, updated_at: i64) -> PlaybackPosition {
+        PlaybackPosition {
+            updated_at,
+            ..PlaybackPosition::new(current_time, 300.0)
+        }
+    }
+
+    #[test]
+    fn picks_the_most_recent_episode_per_series() {
+        let mut map = PlaybackMap::new();
+        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
+        map.entry("A".into()).or_default().insert(7, at(70.0, 900));
+        map.get_mut("A").unwrap().insert(3, at(30.0, 500));
+
+        let items = history_of(&map);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].series_id, "A");
+        assert_eq!(items[0].vid_index, 7, "应取更新时间最晚的那一集");
+        assert_eq!(items[0].current_time, 70.0);
+    }
+
+    #[test]
+    fn sorts_series_by_last_watched_desc() {
+        let mut map = PlaybackMap::new();
+        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
+        map.entry("B".into()).or_default().insert(2, at(20.0, 900));
+        map.entry("C".into()).or_default().insert(3, at(30.0, 500));
+
+        let items = history_of(&map);
+        assert_eq!(
+            items.iter().map(|i| i.series_id.as_str()).collect::<Vec<_>>(),
+            ["B", "C", "A"]
+        );
+    }
+
+    #[test]
+    fn empty_map_gives_empty_history() {
+        assert!(history_of(&PlaybackMap::new()).is_empty());
+    }
+}

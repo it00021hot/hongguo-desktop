@@ -1,0 +1,132 @@
+import { useState } from 'react';
+import { HardDrive, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useSeriesList, useStorageActions, useStorageUsage } from '@/lib/queries';
+import { formatBytes } from '@/lib/format';
+import { t } from '@/i18n';
+
+/** 磁盘占用与清理。 */
+export function StoragePage() {
+  const { data: usage } = useStorageUsage();
+  const { data: seriesList } = useSeriesList();
+  const { deleteSeries, deleteAll } = useStorageActions();
+  const [filter, setFilter] = useState('');
+  const [confirmAll, setConfirmAll] = useState(false);
+
+  const visible = (seriesList ?? []).filter((s) => {
+    if (!filter.trim()) return true;
+    const kw = filter.trim().toLowerCase();
+    return s.title.toLowerCase().includes(kw);
+  });
+
+  const handleDelete = (seriesId: string, title: string) => {
+    deleteSeries.mutate(seriesId, {
+      onSuccess: (n) => toast.success(`${title} · ${t('storage.freed')} ${formatBytes(0)}`.replace(' 0 B', ` ${n} 个文件`)),
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <HardDrive className="size-4" />
+            {t('settings.storage')}
+          </CardTitle>
+          <CardDescription>{t('storage.desc')}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center gap-3">
+          <span className="text-2xl font-semibold tabular-nums">
+            {formatBytes(usage?.bytes ?? 0)}
+          </span>
+          <span className="text-muted-foreground text-sm">
+            {usage?.files ?? 0} {t('storage.files')}
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="ml-auto"
+            onClick={() => setConfirmAll(true)}
+          >
+            <Trash2 className="size-4" />
+            {t('settings.deleteAll')}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t('storage.bySeries')}</CardTitle>
+          <CardDescription>{t('storage.keepRecord')}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <Input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={t('player.seriesSearch')}
+          />
+
+          {visible.length === 0 ? (
+            <p className="text-muted-foreground py-8 text-center text-sm">{t('common.empty')}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {visible.map((s) => (
+                <div
+                  key={s.seriesId}
+                  className="flex items-center gap-2 rounded-md border px-3 py-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm">{s.title}</span>
+                  <Badge variant="secondary">{s.episodeCount}</Badge>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleDelete(s.seriesId, s.title)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('storage.deleteAllConfirm')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('storage.deleteAllDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                deleteAll.mutate(undefined, {
+                  onSuccess: (n) => toast.success(`${n}`),
+                  onError: (e) => toast.error(e.message),
+                })
+              }
+            >
+              {t('common.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

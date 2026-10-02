@@ -1,0 +1,27 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# 打包产物
+release/
+
+# TypeScript 增量编译缓存
+*.tsbuildinfo
+
+# 临时脚本
+fix_*.py
+
+# 开发期自动生成
+.tanstack/
+
+# 调试截图
+.shots/

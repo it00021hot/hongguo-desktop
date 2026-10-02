@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "最小权限集：只放行本应用真正需要的能力。",
+  "windows": ["main", "sniff"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-webview-close",
+    "core:webview:allow-set-webview-focus",
+    "core:event:default",
+    "dialog:allow-open",
+    "opener:allow-open-url",
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

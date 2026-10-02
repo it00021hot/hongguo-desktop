@@ -1,0 +1,95 @@
+[package]
+name = "hongguo-downloader"
+version = "2.0.0"
+description = "红果短剧全集批量下载器（Tauri 桌面版）"
+authors = ["hongguo-downloader contributors"]
+license = "GPL-3.0"
+edition = "2021"
+rust-version = "1.85"
+# src/bin 下还有签名探针，不指定的话 `tauri dev` 的 cargo run 不知道跑哪个
+default-run = "hongguo-downloader"
+
+[lib]
+name = "hongguo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "stream",
+    "gzip",
+] }
+futures-util = "0.3"
+bytes = "1"
+thiserror = "2"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+parking_lot = "0.12"
+rand = "0.9"
+base64 = "0.22"
+hex = "0.4"
+urlencoding = "2"
+md-5 = "0.10"
+sha2 = "0.10"
+sm3 = "0.3"
+aes = "0.8"
+ctr = "0.9"
+cbc = { version = "0.1", features = ["alloc"] }
+digest = "0.10"
+regex = "1"
+time = { version = "0.3", features = ["formatting", "macros"] }
+percent-encoding = "2"
+chrono = "0.4"
+dirs = "6"
+uuid = { version = "1", features = ["v4"] }
+rusty_h265 = "0.6.0"
+rusty_h264 = "0.16.0"
+rusty_aac = "0.5.0"
+muxide = "0.2.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# VideoToolbox 仅 macOS 可用；其它平台用 ffmpeg 或纯 Rust 软解
+videotoolbox = { version = "0.21", features = ["compression", "decompression"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_Media_DirectShow",
+    "Win32_System_Com",
+    "Win32_Foundation",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
+#
+# `rusty_h265-accel` 的去块滤波在帧边界有个过严的 `debug_assert`
+# （deblock.rs:331，水平边要求 x >= 4）。1080p 真实码流第一帧就踩到，
+# 结果 dev 下整个软解必然 panic，转码兜底这条路等于不存在。
+#
+# 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
+# 会整段跳过，实测 release 下 1080p 解码正常、帧数与样本数一致。
+# 不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
+[profile.dev.package.rusty_h265-accel]
+debug-assertions = false

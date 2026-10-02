@@ -1,0 +1,97 @@
+NOTICE —— 来源与修改说明
+=========================
+
+本软件（红果短剧下载器 / hongguo-downloader）是基于他人开源项目的**修改版本**。
+依照 GNU General Public License v3.0 第 5(a) 条，特此声明如下。
+
+一、上游项目
+------------
+名称   : hongguo-downloader（红果短剧全集批量下载器）
+仓库   : https://github.com/327044572/hongguo-downloader
+许可   : GNU General Public License v3.0
+
+二、修改声明
+------------
+本版本**对上游源码进行了重写**，修改时间自 2026 年 10 月起。
+
+本次为**架构级重写**：桌面外壳从 Electron + Node.js 迁移到 Tauri 2 + Rust，
+媒体处理从内置 FFmpeg 迁移到纯 Rust 编解码 crate，签名与解密内核从 JavaScript
+1:1 移植为 Rust。
+
+相对于上游版本，主要的修改内容如下：
+
+  1. 桌面外壳：Electron → Tauri 2 + Rust
+  2. 前端框架：手写 useState 页面 → TanStack Router / Query / Table + Zustand
+  3. UI 体系：自建组件 → shadcn/ui 官方组件（Tailwind CSS v4）
+  4. 签名内核：JavaScript → Rust 1:1 移植（x-gorgon / x-argus / x-medusa / x-helios）
+  5. 解密内核：CENC-AES-CTR 从 Node crypto 移植到 Rust aes/ctr crate
+  6. 媒体处理：移除内置 FFmpeg，改用纯 Rust crate（零外部二进制依赖）
+     - rusty_h265（HEVC 解码，Apache-2.0）
+     - rusty_h264（H.264 编码，BSD-2）
+     - rusty_aac（AAC 编解码，Apache-2.0）
+     - muxide（MP4 封装，MIT / Apache-2.0）
+  7. 自定义 URI 协议：Electron protocol.handle → Tauri 自定义 scheme + Range
+  8. 国际化：新增中英双语资源，面向用户的文案不再硬编码
+  9. 数据持久化：沿用单 JSON 文件 + 原子写，损坏时自动备份
+ 10. 保留上游全部功能：浏览、搜索、选集下载、在线播放、合并、清理、设置、下载管理
+
+  同时保留前次修改中的功能新增（浏览页、剧集搜索、播放器、在线播放、
+  兼容模式、一键合并、文件清理、网络代理等）。
+
+上述修改的完整记录可通过本仓库的提交历史查看。
+
+三、许可证
+----------
+
+本修改版本**整体继续以 GNU General Public License v3.0 授权**，
+许可证全文见本目录下的 `LICENSE` 文件。
+
+本版本不附加任何额外限制。
+
+四、对应源码
+------------
+
+GPLv3 第 6 条要求分发二进制时提供对应的完整源码。
+本软件为开源项目，完整源码见本仓库；如你是从别处获得本软件的二进制版本，
+可向分发者索取源码，或从本仓库获取。
+
+五、第三方组件
+--------------
+
+本软件包含以下第三方组件，其版权归各自作者所有：
+
+  运行时与框架
+    - Tauri 2                  Apache-2.0 / MIT
+    - Rust 标准库与生态        MIT / Apache-2.0
+
+  编解码（替代 FFmpeg，均为纯 Rust 实现，无 C 代码、无外部二进制）
+    - rusty_h265               Apache-2.0
+    - rusty_h264               BSD-2-Clause
+    - rusty_aac                Apache-2.0
+    - muxide                   MIT OR Apache-2.0
+
+  前端
+    - React / React DOM        MIT
+    - TanStack Router/Query/Table  MIT
+    - Zustand                  MIT
+    - Radix UI                 MIT
+    - Tailwind CSS             MIT
+    - lucide-react             ISC
+    - zod                      MIT
+    - sonner                   MIT
+    - react-hook-form          MIT
+    - class-variance-authority  Apache-2.0
+    - clsx                     MIT
+    - tailwind-merge           MIT
+
+  签名算法来源
+    - woshishiq1/drpys（签名算法移植来源）  GPL-3.0
+
+各组件许可证详情见 `THIRD-PARTY-NOTICES.md`。
+
+六、专利提示
+------------
+
+本软件包含 H.264 与 AAC 编码器（`rusty_h264` / `rusty_aac`）。
+这两种编码格式均涉及专利池。本项目以 BSD-2 / Apache-2.0 等宽松许可分发其
+实现，但**不授予任何专利许可**。若用于商业分发，请在发布前咨询知识产权律师。
