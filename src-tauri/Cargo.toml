@@ -57,23 +57,14 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 rusty_h265 = "0.6.0"
 rusty_h264 = "0.16.0"
-rusty_aac = "0.5.0"
 muxide = "0.2.5"
 # 合并前校验要问「输出卷还剩多少字节」。只开 disk：默认 feature 会把
 # component / network / system / user 一并拖进来，本项目一个都用不上。
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# VideoToolbox 仅 macOS 可用；其它平台用 ffmpeg 或纯 Rust 软解
-videotoolbox = { version = "0.21", features = ["compression", "decompression"] }
-
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
-    "Win32_Media_MediaFoundation",
-    "Win32_Media_DirectShow",
-    "Win32_System_Com",
-    "Win32_Foundation",
-] }
+# 这里刻意不列 videotoolbox / windows( Media Foundation ) / rusty_aac：
+# 平台硬编一律走 `media::ffmpeg` 的外部 ffmpeg 探测，音轨不解码（AAC 直通），
+# 三者都是零引用。写平台 FFI 的收益不抵「无法在 CI 里验证」的代价。
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

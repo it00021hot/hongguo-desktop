@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::error::{AppError, AppResult};
 use crate::media::demux::demux_file;
 
 /// 某一条轨道的编码指纹。全部字段相同才算同一条编码。
@@ -26,6 +27,31 @@ pub struct Consistency {
     pub consistent: bool,
     /// 第一个与第 1 集不一致的集号（`consistent` 为 true 时是 None）
     pub mismatch_episode: Option<u32>,
+}
+
+/// 软解路径的前置校验：只有 HEVC 能解。
+///
+/// 放在 `pipeline::transcode` 决定走软解之前调用。少了这一道，非 HEVC 的源
+/// （`avc1`，或平台在同一档位里给的 bytevc1 / bytevc2）会一路走到
+/// [`crate::media::hevc::read_parameter_sets`] 才抛「不是 HEVC 轨」——那句话
+/// 既没说为什么失败，也没说下一步能做什么，用户只能自己猜。
+///
+/// 判定复用 [`crate::media::hevc::is_hevc`]，与解码器入口保持同一份答案。
+pub fn ensure_softdecode_supported(path: &Path) -> AppResult<()> {
+    let demuxed = demux_file(path)?;
+    let track = demuxed
+        .video_track()
+        .ok_or_else(|| AppError::Media("没有视频轨".into()))?;
+
+    if crate::media::hevc::is_hevc(&track.info.codec) {
+        return Ok(());
+    }
+
+    Err(AppError::Media(format!(
+        "该集是 {} 编码，纯 Rust 软解只支持 HEVC。装 ffmpeg 后会自动改用硬件编码，\
+         或重新下载时选 h265 清晰度。",
+        track.info.codec
+    )))
 }
 
 /// 检查一批分集能否直接字节拼接。
@@ -317,5 +343,58 @@ mod tests {
 
         assert_eq!(check(&inputs).mismatch_episode, Some(2));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- 软解前置校验 ----
+
+    /// 只造一集并返回路径。
+    fn one(dir: &Path, vid_index: u32, tracks: &[TrackSpec]) -> PathBuf {
+        let path = dir.join(format!("{vid_index}.mp4"));
+        std::fs::write(&path, mp4(tracks)).unwrap();
+        path
+    }
+
+    #[test]
+    fn hevc_source_passes_the_softdecode_gate() {
+        let dir = temp_dir("gate-hevc");
+        let path = one(&dir, 1, &[TrackSpec::video(1, b"hvc1", 1920, 1080)]);
+        assert!(ensure_softdecode_supported(&path).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encrypted_hevc_source_also_passes() {
+        // CENC 解密只覆盖样本字节，stsd 里可能仍是 `encv`
+        let dir = temp_dir("gate-encv");
+        let path = one(&dir, 1, &[TrackSpec::video(1, b"encv", 1920, 1080)]);
+        assert!(ensure_softdecode_supported(&path).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn h264_source_reports_an_actionable_error() {
+        let dir = temp_dir("gate-avc1");
+        let path = one(&dir, 1, &[TrackSpec::video(1, b"avc1", 1920, 1080)]);
+
+        let err = ensure_softdecode_supported(&path).expect_err("H.264 源应被拦下");
+        let msg = err.to_string();
+        assert!(msg.contains("avc1"), "错误里要带上实际编码: {msg}");
+        assert!(msg.contains("只支持 HEVC"), "错误要说清限制: {msg}");
+        assert!(msg.contains("ffmpeg"), "错误要给出下一步: {msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn softdecode_gate_rejects_a_file_without_video_track() {
+        let dir = temp_dir("gate-novideo");
+        let path = one(&dir, 1, &[TrackSpec::audio(2, b"mp4a", 2, 44100)]);
+        let err = ensure_softdecode_supported(&path).expect_err("没有视频轨应报错");
+        assert!(err.to_string().contains("没有视频轨"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn softdecode_gate_errors_on_a_missing_file() {
+        assert!(ensure_softdecode_supported(Path::new("/definitely/not/here.mp4")).is_err());
     }
 }

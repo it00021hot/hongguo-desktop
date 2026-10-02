@@ -35,6 +35,15 @@ const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 /// Annex-B 起始码。
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
+/// 是否是 HEVC 轨：`hev1` / `hvc1`，以及解密后仍带 `encv` 标记的加密轨。
+///
+/// 判定只写这一份。解码前置校验（`codec_probe::ensure_softdecode_supported`）
+/// 和 [`read_parameter_sets`] 必须给出同一个答案，否则会出现「校验说不是 HEVC、
+/// 解析却仍当 HEVC 处理」这种自相矛盾的失败路径。
+pub fn is_hevc(codec: &str) -> bool {
+    codec.starts_with("hev") || codec.starts_with("hvc") || codec == "encv"
+}
+
 /// 从 MP4 读出 HEVC 参数集，拼成 Annex-B 前缀。
 ///
 /// 返回 `(Annex-B 前缀, 样本长度前缀字节数)`。
@@ -48,7 +57,7 @@ pub fn read_parameter_sets(path: &Path, track: &TrackInfo) -> AppResult<(Vec<u8>
     //    样本字节，不改这个字段（现版 JS 同样如此，改了反而会与 App 不一致）。
     //    真正的原始格式藏在 `frma` 里，但短剧的视频轨只有 HEVC 一种可能，
     //    所以这里把 `encv` 一并当作 HEVC 处理。
-    if !track.codec.starts_with("hev") && !track.codec.starts_with("hvc") && track.codec != "encv" {
+    if !is_hevc(&track.codec) {
         return Err(AppError::Media(format!(
             "不是 HEVC 轨（codec = {}）",
             track.codec
@@ -222,5 +231,19 @@ mod tests {
         let sample = vec![0x00, 0x00, 0x00, 0x02, 0xAB, 0xCD];
         let out = to_annexb(&sample, 4);
         assert_eq!(out, vec![0, 0, 0, 1, 0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn is_hevc_accepts_every_transport_form() {
+        for codec in ["hvc1", "hev1", "encv"] {
+            assert!(is_hevc(codec), "{codec} 应被当作 HEVC");
+        }
+    }
+
+    #[test]
+    fn is_hevc_rejects_other_codecs() {
+        for codec in ["avc1", "mp4a", "vvc1", ""] {
+            assert!(!is_hevc(codec), "{codec} 不该被当作 HEVC");
+        }
     }
 }

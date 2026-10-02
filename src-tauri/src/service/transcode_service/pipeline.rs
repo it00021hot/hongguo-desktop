@@ -56,6 +56,10 @@ pub fn transcode(
 
     // 分流 2：纯 Rust 软解
     if !used_ffmpeg {
+        // 源不是 HEVC 时在这里就把话说清楚。不加这道闸，错误会一路推迟到
+        // `media::transcode` 内部才抛「不是 HEVC 轨」，用户既不知道为什么
+        // 失败，也不知道装 ffmpeg 能解决。
+        crate::media::codec_probe::ensure_softdecode_supported(source)?;
         // 解码器内部的 unwind 兜底在 `media::transcode` 里，这里不再重复包一层
         crate::media::transcode::transcode_file(source, &target, options)?;
     }

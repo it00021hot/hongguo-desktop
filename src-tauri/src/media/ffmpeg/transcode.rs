@@ -8,7 +8,9 @@ use super::probe::ffmpeg_path;
 
 /// 转码一集：有 ffmpeg 走 ffmpeg，否则返回 `None` 让调用方回落软解。
 ///
-/// 参数对齐现版：H.264（crf 23）+ AAC 128k + yuv420p。
+/// 视频参数对齐现版：H.264（crf 23）+ yuv420p。音轨是**直通**（`-c:a copy`），
+/// 与软解路径的 AAC 搬运保持一致——源音轨解密后已是明文 AAC，重新编码既慢
+/// 又多一轮有损压缩，还会让「装不装 ffmpeg」产出两种不同的音频。
 pub fn transcode_with_ffmpeg(
     input: &std::path::Path,
     output: &std::path::Path,
@@ -68,9 +70,7 @@ pub fn transcode_with_ffmpeg(
         "-pix_fmt".to_string(),
         "yuv420p".to_string(),
         "-c:a".to_string(),
-        "aac".to_string(),
-        "-b:a".to_string(),
-        "128k".to_string(),
+        "copy".to_string(),
         temp.display().to_string(),
     ]);
 

@@ -109,15 +109,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "apple-cf"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acc8e8f378f5bbd99f5850a95e55cbfd20e14db63d1eee16a060528cf960876e"
-dependencies = [
- "doom-fish-utils",
-]
-
-[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -792,15 +783,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-queue"
-version = "0.3.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03e8bd762f7479489c70ed6c768ddca99d7296857de437a68dcb2a94365b3fae"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1068,16 +1050,6 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "tendril",
-]
-
-[[package]]
-name = "doom-fish-utils"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32707dcbfc8b3fd80d134a6d9e63f4f73ab6eece78192f0f213a192f08900c79"
-dependencies = [
- "crossbeam-queue",
- "futures-util",
 ]
 
 [[package]]
@@ -1769,7 +1741,6 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "reqwest 0.12.28",
- "rusty_aac",
  "rusty_h264",
  "rusty_h265",
  "serde",
@@ -1787,8 +1758,6 @@ dependencies = [
  "tokio-util",
  "urlencoding",
  "uuid",
- "videotoolbox",
- "windows",
 ]
 
 [[package]]
@@ -3530,12 +3499,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "rusty_aac"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ab980ffb66a559565d09dd6727ff2da7d2a39d2e8b6149e48af6908caa99b5"
-
-[[package]]
 name = "rusty_alloc"
 version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4978,16 +4941,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "videotoolbox"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e3873dc5eb56496b2dc65af88d46bc09ceabdb14d71d17128afe1181f1b0b8"
-dependencies = [
- "apple-cf",
- "doom-fish-utils",
-]
 
 [[package]]
 name = "vswhom"
