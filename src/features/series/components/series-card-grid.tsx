@@ -14,7 +14,9 @@ interface Props {
 /** 剧集卡片网格。浏览页与搜索页共用。 */
 export function SeriesCardGrid({ cards, downloadedMap, onSelect }: Props) {
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
+    // 列数一路加到 2xl：屏幕越宽应该一行塞下更多剧，而不是把每张卡放大到
+    // 一屏只能看三张。断点按「卡片保持 ~200px 宽」来定。
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
       {cards.map((card) => {
         const downloaded = downloadedMap?.[card.seriesId] ?? 0;
         return (
@@ -72,10 +74,12 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect }: Props) {
                 {card.seriesTitle}
               </p>
               {card.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
+                // 单行不折行：标签一旦换行，这张卡就比旁边高，整排参差不齐。
+                // 放不下就裁掉，悬停标题能看全。
+                <div className="flex flex-nowrap gap-1 overflow-hidden">
                   {/* 题材用实心 chip：outline 透明底贴在白卡片上像三个浮着的空框 */}
                   {card.tags.slice(0, 3).map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-[10px]">
+                    <Badge key={tag} variant="secondary" className="shrink-0 text-[10px]">
                       {tag}
                     </Badge>
                   ))}
