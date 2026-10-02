@@ -1,0 +1,24 @@
+# 软解提速的编译期开关。三个目标各按其**真实硬件下限**取值，
+# 宁可少拿收益，也不让老机器跑不起来。
+#
+# 收益从哪来：rusty_h264 / rusty_h265 的热内核自己跑
+# `is_x86_feature_detected!` 做运行期分发，这个 flag 对它们一点用都没有；
+# 吃到的是内核周围标量代码的自动向量化。
+# 实测 1080p 整集（HG_MEMTEST_FILE 门控测试，同一份码流）：
+#   基线 147.51s → num_ref_frames=1 125.77s → 再加本文件 116.17s（1.27×）
+#
+# 用 [target.<triple>] 而不是 [build]：后者对所有目标生效，写死
+# x86-64-v3 会让 aarch64 直接编译失败，而 bundle.targets 里有 dmg。
+
+# Windows x64：Haswell 2013+ / Zen 2015+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# Apple Silicon：M1 及以后的机器全都支持 apple-m1 这一档，不用再细分
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=apple-m1"]
+
+# Intel Mac：只上 v2（SSE4.2/POPCNT）。v3 的 AVX2 会挡掉 2012-2013 年的机器，
+# 而 tauri.conf.json 的 minimumSystemVersion 仍是 10.15，那些机器跑得动。
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=x86-64-v2"]

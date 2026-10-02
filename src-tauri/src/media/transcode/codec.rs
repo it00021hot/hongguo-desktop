@@ -159,6 +159,10 @@ impl EncoderState {
         // 必须等 flush 才吐数据。逐帧处理场景不需要前瞻，关掉更简单也更快。
         cfg.lookahead = 0;
         cfg.scenecut = 0;
+        // 单参考帧：编码占整条流水线 89%，而多参考帧（默认 3）对短剧这种
+        // 镜头运动不大的内容几乎没有收益。实测 1080p 编码 19.0 → 24.6 fps
+        //（1.30x），码流还小了 1%——两个方向都不亏。
+        cfg.num_ref_frames = 1;
 
         // framerate 在 Encoder::new(cfg) 之前取出来：new 消耗 cfg，之后就拿不到了
         let framerate = cfg.framerate;
