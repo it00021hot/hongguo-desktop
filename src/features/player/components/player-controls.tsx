@@ -186,7 +186,7 @@ export function PlayerControls({
       video.currentTime = next;
       setCurrent(next);
     },
-    [videoRef]
+    [videoRef],
   );
 
   const togglePlay = useCallback(() => {
@@ -204,7 +204,7 @@ export function PlayerControls({
       video.currentTime = next;
       setCurrent(next);
     },
-    [videoRef]
+    [videoRef],
   );
 
   const toggleMute = useCallback(() => {
@@ -221,8 +221,7 @@ export function PlayerControls({
   }, [stageRef]);
 
   // 画中画不是所有 WebView2 版本都支持，不支持就别摆一个点了的按钮
-  const pipSupported =
-    typeof document !== 'undefined' && document.pictureInPictureEnabled === true;
+  const pipSupported = document.pictureInPictureEnabled === true;
 
   const togglePip = useCallback(() => {
     const video = videoRef.current;
@@ -237,7 +236,7 @@ export function PlayerControls({
       if (!video) return;
       video.playbackRate = next;
     },
-    [videoRef]
+    [videoRef],
   );
 
   return (
@@ -325,25 +324,25 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
-              <Button
-                variant="ghost"
-                size="sm"
-                className={CHROME_BUTTON}
-                onClick={() => setPicking(true)}
-              >
-                <ListVideo className="size-4" />
-                {t('player.episodes')}
-              </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={CHROME_BUTTON}
+            onClick={() => setPicking(true)}
+          >
+            <ListVideo className="size-4" />
+            {t('player.episodes')}
+          </Button>
 
-              <Button
-                variant="ghost"
-                size="sm"
-                className={CHROME_BUTTON}
-                onClick={() => onDownloadingChange(true)}
-              >
-                <Download className="size-4" />
-                {t('player.download')}
-              </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={CHROME_BUTTON}
+            onClick={() => onDownloadingChange(true)}
+          >
+            <Download className="size-4" />
+            {t('player.download')}
+          </Button>
 
           {pipSupported && (
             <IconButton label={t('player.pictureInPicture')} onClick={togglePip}>
@@ -449,7 +448,7 @@ function ScrubBar({
     <div
       ref={trackRef}
       role="slider"
-      aria-label="进度"
+      aria-label={t('common.progress')}
       aria-valuemin={0}
       aria-valuemax={Math.floor(duration)}
       aria-valuenow={Math.floor(current)}

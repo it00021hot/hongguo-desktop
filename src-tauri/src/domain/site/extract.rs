@@ -13,13 +13,6 @@ pub fn pick_json_string(text: &str, key: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-/// 从任意文本里取第一个 URL。
-pub fn first_url(text: &str) -> Option<String> {
-    // 用 raw string 避免转义地狱：匹配 http(s) 开头、到空白或引号为止
-    let re = Regex::new(r#"https?://[^\s"'\\]+"#).ok()?;
-    re.find(text).map(|m| m.as_str().to_string())
-}
-
 /// 从分享文本里解析 `series_id`。
 ///
 /// 支持 App 分享链接、含引导文案的长文本、纯数字 ID。
@@ -47,14 +40,6 @@ mod tests {
     #[test]
     fn missing_field_is_none() {
         assert!(pick_json_string("<html></html>", "title").is_none());
-    }
-
-    #[test]
-    fn finds_first_url() {
-        let text = r#"see "https://cdn.example.com/a.mp4" and more"#;
-        assert!(first_url(text)
-            .unwrap()
-            .starts_with("https://cdn.example.com"));
     }
 
     #[test]

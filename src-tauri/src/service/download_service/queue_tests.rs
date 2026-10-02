@@ -120,10 +120,14 @@ fn restore_requeues_interrupted_tasks() {
 }
 
 #[test]
-fn adopt_file_backfills_missing_record() {
+fn finishing_a_task_after_pause_all_does_not_underflow_active() {
+    // pause_all 会把 active 直接清零，而在途任务随后才回来报告收尾。
+    // 计数器是 usize，硬减会下溢 panic。
     let q = DownloadQueue::new();
-    let mut t = task(5);
-    t.file_path = "D:/dl/5.mp4".into();
-    q.adopt_file(t, 1234);
-    assert_eq!(q.completed_path("1", 5).unwrap(), "D:/dl/5.mp4");
+    let a = q.enqueue(task(1));
+    q.mark_running(&a.id);
+    q.pause_all();
+    assert_eq!(q.status().active, 0);
+    q.mark_stopped(&a.id);
+    assert_eq!(q.status().active, 0);
 }

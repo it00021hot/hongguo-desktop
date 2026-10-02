@@ -2,6 +2,9 @@
 //!
 //! 流程：隐藏窗口加载官网页面 → 轮询执行嗅探脚本 → 解析出剧集卡片。
 //!
+//! 卡片数据取自页面内嵌的 `window._ROUTER_DATA`，不是 DOM 上的样式类名：
+//! 官网页面上能看到的卡片元素不带可依赖的类名，取标签与集数会全部落空。
+//!
 //! 三个关键设计（沿用现版）：
 //! - **串行队列**：同一窗口不能并发导航，后一次会打断前一次
 //! - **轮询超时**：SPA 加载完才有内容，15s 内每 400ms 重试
@@ -47,7 +50,7 @@ pub struct BrowseMeta {
     #[serde(default)]
     pub total: u32,
     #[serde(default)]
-    pub genres: Vec<Genre>,
+    pub genres: Vec<Category>,
 }
 
 fn one() -> u32 {
@@ -69,18 +72,12 @@ impl Default for BrowseMeta {
     }
 }
 
-/// 题材筛选项。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Genre {
-    pub slug: String,
-    pub label: String,
-}
-
-/// 嗅探结果。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// 嗅探结果。只出不进：Rust 侧从不反序列化它。
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SniffResult {
+    /// 轮询是否在超时前取到了卡片。超时为 `false`，
+    /// 让调用方能区分「页面确实没有结果」与「脚本一直没吐数据」
     pub success: bool,
     pub results: Vec<SeriesCard>,
     #[serde(default)]
@@ -89,7 +86,9 @@ pub struct SniffResult {
     pub meta: BrowseMeta,
 }
 
-/// 浏览分类。
+/// 浏览分类与题材筛选项。
+///
+/// 两者字段完全相同，拆成两个类型只会让后端声明与前端 schema 各多改一处。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
@@ -155,7 +154,9 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
             })
             .await;
 
-            let results = match outcome {
+            // 超时与「页面确实没有卡片」对调用方是两回事：
+            // 前者要提示重试，后者就是空列表，所以把成败一起带出去。
+            let (results, success) = match outcome {
                 PollOutcome::Got(raw) => {
                     let parsed = serde_json::from_str::<Vec<SeriesCard>>(&raw);
                     // serde 的报错里已带出错位置与原文片段，不用自己截断
@@ -171,7 +172,7 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
                             );
                         }
                     }
-                    parsed
+                    let cards = parsed
                         .unwrap_or_default()
                         .into_iter()
                         .map(|mut c| {
@@ -181,11 +182,12 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
                             }
                             c
                         })
-                        .collect()
+                        .collect();
+                    (cards, true)
                 }
                 PollOutcome::TimedOut => {
                     log::warn!("[Sniff] {url_owned} 超时未取到卡片");
-                    Vec::new()
+                    (Vec::new(), false)
                 }
             };
 
@@ -212,7 +214,7 @@ pub async fn run(app: &tauri::AppHandle, url: &str) -> Result<SniffResult, Strin
             };
 
             Ok(SniffResult {
-                success: true,
+                success,
                 results,
                 page_title,
                 meta,
@@ -311,5 +313,15 @@ mod tests {
         assert_eq!(card.episode_count, 0);
         assert!(card.tags.is_empty());
         assert_eq!(card.url, "");
+    }
+
+    #[test]
+    fn category_serves_both_browse_categories_and_genres() {
+        // 浏览分类与题材筛选项共用一个类型，两边必须发出同一种形状
+        let json = serde_json::to_value(&categories()[0]).unwrap();
+        assert_eq!(json["slug"], "real-drama");
+        assert_eq!(json["label"], "真人剧");
+        let round: Category = serde_json::from_value(json).unwrap();
+        assert_eq!(round.slug, "real-drama");
     }
 }

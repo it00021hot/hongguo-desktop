@@ -1,5 +1,5 @@
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
-import { useThemeStore } from '@/lib/stores/mod';
+import { useThemeStore } from '@/lib/stores/theme';
 
 function Toaster({ ...props }: ToasterProps) {
   const resolved = useThemeStore((s) => s.resolved());
@@ -10,7 +10,8 @@ function Toaster({ ...props }: ToasterProps) {
       position="bottom-right"
       toastOptions={{
         classNames: {
-          toast: 'group toast group-[.toaster]:bg-popover group-[.toaster]:text-popover-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg group-[.toaster]:rounded-lg',
+          toast:
+            'group toast group-[.toaster]:bg-popover group-[.toaster]:text-popover-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg group-[.toaster]:rounded-lg',
           description: 'group-[.toast]:text-muted-foreground',
         },
       }}

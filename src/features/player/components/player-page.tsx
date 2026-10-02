@@ -60,10 +60,12 @@ function PlayerView() {
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
 
-  const { data: settings } = useSettings();
+  const { data: settings, isPending: settingsPending } = useSettings();
   const { mutate: saveSettings } = useSaveSettings();
   const { deleteEpisode } = useStorageActions();
-  const autoNext = settings?.autoNextEpisode ?? true;
+  // 设置没加载完时先显示 false，但开关同时锁住：否则用户会在这个窗口里
+  // 拨动开关，把默认值当成后端真值写回去。
+  const autoNext = settings?.autoNextEpisode ?? false;
   const autoDelete = settings?.autoDeleteAfterPlay ?? false;
   const patchSettings = (next: Partial<Settings>) => {
     if (settings) saveSettings({ ...settings, ...next });
@@ -216,9 +218,11 @@ function PlayerView() {
 
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
-    // TS 还没把 store 里的 null 收窄掉，所以这里得自己挡一道
-    if (!seriesId || !vidIndex) return;
-    persist(videoRef.current?.currentTime ?? 0);
+    // TS 还没把 store 里的 null 收窄掉，所以这里得自己挡一道。
+    // 元素本身确实存在（ended 只能由它自己触发），但不写检查就只能写 `!`。
+    const video = videoRef.current;
+    if (!seriesId || !vidIndex || !video) return;
+    persist(video.currentTime);
     // 看完自动删：先清掉刚看完这集的本地文件，再决定连播下一集。
     // 没下载过的集本来就没有文件，后端返回 false，不提示。
     if (autoDelete) {
@@ -252,7 +256,7 @@ function PlayerView() {
   return (
     <div className="flex h-full gap-4 p-4">
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div ref={stageRef} className="bg-black relative min-h-0 flex-1 overflow-hidden rounded-lg">
+        <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
           {src ? (
             <>
               {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下选集/下载这类业务动作 */}
@@ -294,28 +298,28 @@ function PlayerView() {
         )}
 
         {/* 原生 controls 里已经有时间与进度条，这里不再重复一份 */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="ml-auto flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="auto-next"
-                checked={autoNext}
-                onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
-              />
-              <Label htmlFor="auto-next" className="text-sm">
-                {t('player.autoNext')}
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="auto-delete"
-                checked={autoDelete}
-                onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
-              />
-              <Label htmlFor="auto-delete" className="text-sm">
-                {t('player.autoDelete')}
-              </Label>
-            </div>
+        <div className="ml-auto flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="auto-next"
+              checked={autoNext}
+              disabled={settingsPending}
+              onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
+            />
+            <Label htmlFor="auto-next" className="text-sm">
+              {t('player.autoNext')}
+            </Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="auto-delete"
+              checked={autoDelete}
+              disabled={settingsPending}
+              onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
+            />
+            <Label htmlFor="auto-delete" className="text-sm">
+              {t('player.autoDelete')}
+            </Label>
           </div>
         </div>
 

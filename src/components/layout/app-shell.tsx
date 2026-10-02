@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen w-screen overflow-hidden">
       <a href="#content" className="skip-to-content">
-        跳到主内容
+        {t('common.skipToContent')}
       </a>
 
       <AppSidebar />
@@ -33,7 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <ThemeSwitch />
         </header>
 
-        <main id="content" className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
           {children}
         </main>
       </div>

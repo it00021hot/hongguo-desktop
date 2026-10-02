@@ -4,7 +4,7 @@
 //! 两者都挂在同一个 `impl DownloadQueue` 上，因此方法可以直接互相调用。
 
 use super::DownloadQueue;
-use crate::domain::model::{DownloadTask, QueueStatus, TaskStatus};
+use crate::domain::model::{QueueStatus, TaskStatus};
 
 impl DownloadQueue {
     /// 队列状态汇总。
@@ -34,23 +34,5 @@ impl DownloadQueue {
             .iter()
             .find(|t| t.series_id == series_id && t.vid_index == vid_index && t.is_done())
             .map(|t| t.file_path.clone())
-    }
-
-    /// 把某剧的磁盘文件补登记为任务（任务记录丢失时自愈）。
-    /// 补登记：磁盘上有文件但任务记录丢了（换机、data.json 损坏）。
-    pub fn adopt_file(&self, task: DownloadTask, size: u64) {
-        let mut guard = self.tasks.write();
-        if let Some(existing) = guard
-            .iter_mut()
-            .find(|t| t.series_id == task.series_id && t.vid_index == task.vid_index)
-        {
-            if !existing.is_done() {
-                existing.mark_completed(&task.file_path, size);
-            }
-        } else {
-            let mut t = task;
-            t.mark_completed(&t.file_path.clone(), size);
-            guard.push(t);
-        }
     }
 }

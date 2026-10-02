@@ -96,6 +96,23 @@ impl DataStore {
     }
 }
 
+/// 把下载队列快照写回数据文件。
+///
+/// 队列是内存态，落盘失败不必让用户的操作失败，但没有日志时「重启后任务
+/// 不见了」根本无从查起，所以这里一律记下来。`tag` 是调用方的模块名，
+/// 用来区分是哪条路径触发的落盘。
+///
+/// 先取队列快照再拿 store 写锁：反过来的话就是拿着 store 的写锁去排队队的读锁，
+/// 两条路径的加锁顺序会打架。
+pub fn persist_tasks(state: &crate::app_state::AppState, tag: &str) -> crate::error::AppResult<()> {
+    let tasks = state.queue().all();
+    let mut data = state.store.write();
+    data.tasks = tasks;
+    data.save(&paths::data_file())
+        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
+        .inspect_err(|e| log::error!("[{tag}] 落盘失败: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,7 +227,7 @@ mod tests {
         assert_eq!(store.settings.theme, "dark");
         assert_eq!(
             store.settings.proxy.mode,
-            crate::domain::model::ProxyMode::Manual
+            crate::domain::model::settings::ProxyMode::Manual
         );
         assert_eq!(store.tasks[0].series_id, "1");
         assert_eq!(store.tasks[0].vid_index, 2);

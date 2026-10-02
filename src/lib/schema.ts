@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 // ---------------------------------------------------------------- 剧集
 
-export const episodeSchema = z.object({
+const episodeSchema = z.object({
   vidIndex: z.number().int().positive(),
   vid: z.string(),
   title: z.string(),
@@ -30,7 +30,7 @@ export const seriesSchema = z.object({
 export type Series = z.infer<typeof seriesSchema>;
 
 /** 官网详情页底部的推荐短剧。 */
-export const recommendItemSchema = z.object({
+const recommendItemSchema = z.object({
   seriesId: z.string(),
   seriesName: z.string(),
   seriesCover: z.string(),
@@ -47,6 +47,7 @@ export const seriesExtrasSchema = z.object({
 
 export type SeriesExtras = z.infer<typeof seriesExtrasSchema>;
 
+/** 分类与题材是同一种结构（后端也合并成了一个类型），只留一份。 */
 export const categorySchema = z.object({
   slug: z.string(),
   label: z.string(),
@@ -54,14 +55,7 @@ export const categorySchema = z.object({
 
 export type Category = z.infer<typeof categorySchema>;
 
-export const genreSchema = z.object({
-  slug: z.string(),
-  label: z.string(),
-});
-
-export type Genre = z.infer<typeof genreSchema>;
-
-export const seriesCardSchema = z.object({
+const seriesCardSchema = z.object({
   seriesId: z.string(),
   seriesTitle: z.string(),
   cover: z.string(),
@@ -72,15 +66,13 @@ export const seriesCardSchema = z.object({
 
 export type SeriesCard = z.infer<typeof seriesCardSchema>;
 
-/** 浏览与搜索共用嗅探结果结构（后端 `sniff::SniffResult`）。 */
-export const browseMetaSchema = z.object({
+/** 浏览与搜索共用的嗅探结果结构（后端 `sniff::SniffResult`）。 */
+const browseMetaSchema = z.object({
   page: z.number().int().positive(),
   totalPages: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
-  genres: z.array(genreSchema),
+  genres: z.array(categorySchema),
 });
-
-export type BrowseMeta = z.infer<typeof browseMetaSchema>;
 
 export const sniffResultSchema = z.object({
   success: z.boolean(),
@@ -91,19 +83,9 @@ export const sniffResultSchema = z.object({
 
 export type SniffResult = z.infer<typeof sniffResultSchema>;
 
-/** 浏览页与搜索页都返回嗅探结果，语义一致。 */
-export const browseResultSchema = sniffResultSchema;
-export type BrowseResult = SniffResult;
-
 // ---------------------------------------------------------------- 下载任务
 
-export const taskStatusSchema = z.enum([
-  'pending',
-  'running',
-  'completed',
-  'failed',
-  'stopped',
-]);
+const taskStatusSchema = z.enum(['pending', 'running', 'completed', 'failed', 'stopped']);
 
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 
@@ -137,21 +119,23 @@ export const queueStatusSchema = z.object({
 
 export type QueueStatus = z.infer<typeof queueStatusSchema>;
 
-export const downloadProgressSchema = z.object({
-  id: z.string(),
-  downloaded: z.number().nonnegative(),
-  total: z.number().nonnegative(),
-  percent: z.number().min(0).max(100),
-});
-
-export type DownloadProgress = z.infer<typeof downloadProgressSchema>;
+/**
+ * 下载进度事件负载。
+ *
+ * 事件不走 zod 校验（`useEvent` 只做类型标注），所以这里只保留类型本身。
+ */
+export type DownloadProgress = {
+  id: string;
+  downloaded: number;
+  total: number;
+  percent: number;
+};
 
 // ---------------------------------------------------------------- 设置
 
-export const namingTemplateSchema = z.enum(['titleIndex', 'titleIndexEpisode', 'onlyTitle']);
-export type NamingTemplate = z.infer<typeof namingTemplateSchema>;
+const namingTemplateSchema = z.enum(['titleIndex', 'titleIndexEpisode', 'onlyTitle']);
 
-export const proxyConfigSchema = z.object({
+const proxyConfigSchema = z.object({
   mode: z.enum(['system', 'manual', 'direct']),
   url: z.string(),
 });
@@ -170,14 +154,6 @@ export const settingsSchema = z.object({
 
 export type Settings = z.infer<typeof settingsSchema>;
 
-export const proxyStatusSchema = z.object({
-  mode: z.enum(['system', 'manual', 'direct']),
-  effective: z.string(),
-  label: z.string(),
-});
-
-export type ProxyStatus = z.infer<typeof proxyStatusSchema>;
-
 export const proxyTestResultSchema = z.object({
   ok: z.boolean(),
   elapsedMs: z.number().nonnegative(),
@@ -188,7 +164,7 @@ export type ProxyTestResult = z.infer<typeof proxyTestResultSchema>;
 
 // ---------------------------------------------------------------- 合并
 
-export const mergeModeSchema = z.enum(['quick', 'compat']);
+const mergeModeSchema = z.enum(['quick', 'compat']);
 export type MergeMode = z.infer<typeof mergeModeSchema>;
 
 export const mergeTaskSchema = z.object({
@@ -212,21 +188,17 @@ export const mergePreflightSchema = z.object({
   ok: z.boolean(),
   episodeCount: z.number().int().nonnegative(),
   estimatedSize: z.number().nonnegative(),
-  freeSpace: z.number().nonnegative(),
+  // null 表示查不到剩余空间，跟「剩余 0 B」是两回事，不能混
+  freeSpace: z.number().int().nonnegative().nullable(),
+  // 快速合并是字节级顺序拼接，编码不一致会产出连索引都过不去的文件
   codecConsistent: z.boolean(),
+  codecMismatchEpisode: z.number().int().positive().nullable(),
   warnings: z.array(z.string()),
 });
 
 export type MergePreflight = z.infer<typeof mergePreflightSchema>;
 
 // ---------------------------------------------------------------- 播放与存储
-
-export const playRequestSchema = z.object({
-  seriesId: z.string(),
-  vidIndex: z.number().int().positive(),
-  filePath: z.string(),
-  preferOnline: z.boolean(),
-});
 
 export const playResponseSchema = z.object({
   url: z.string(),
@@ -262,18 +234,6 @@ export const decodeCapabilitySchema = z.object({
 
 export type DecodeCapability = z.infer<typeof decodeCapabilitySchema>;
 
-export const appInfoSchema = z.object({
-  version: z.string(),
-  brand: z.string(),
-  appName: z.string(),
-});
-
-export type AppInfo = z.infer<typeof appInfoSchema>;
-
-export const cacheStatusSchema = z.tuple([z.string(), z.number(), z.number()]);
-
-export const onlineCacheStatusSchema = z.tuple([z.number(), z.number()]);
-
 // ---------------------------------------------------------------- 错误
 
 /** Rust 侧 AppError 的序列化形状。 */
@@ -281,5 +241,3 @@ export const appErrorSchema = z.object({
   kind: z.string(),
   message: z.string(),
 });
-
-export type AppError = z.infer<typeof appErrorSchema>;

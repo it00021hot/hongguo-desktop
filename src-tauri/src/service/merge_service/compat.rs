@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use super::done_inputs;
 use super::progress::ProgressSink;
 use crate::app_state::AppState;
 use crate::domain::model::MergeTask;
@@ -25,16 +26,7 @@ pub fn compat_merge(
     task: &MergeTask,
     on_progress: &ProgressSink,
 ) -> AppResult<(PathBuf, u64, usize)> {
-    let queue = state.queue();
-    let inputs: Vec<(u32, PathBuf)> = crate::media::remux::sort_by_index(
-        &queue
-            .of_series(series_id)
-            .iter()
-            .filter(|t| t.is_done())
-            .map(|t| (t.vid_index, PathBuf::from(&t.file_path)))
-            .filter(|(_, p)| p.exists())
-            .collect::<Vec<_>>(),
-    );
+    let inputs = done_inputs(state, series_id);
 
     if inputs.is_empty() {
         return Err(AppError::Media("没有已下载的分集".into()));
@@ -53,8 +45,12 @@ pub fn compat_merge(
         match hit {
             Some(p) => transcoded.push(p),
             None => {
-                let result =
-                    pipeline::transcode(series_id, *vid_index, source, &TranscodeOptions::default())?;
+                let result = pipeline::transcode(
+                    series_id,
+                    *vid_index,
+                    source,
+                    &TranscodeOptions::default(),
+                )?;
                 transcoded.push(PathBuf::from(result.output_path));
             }
         }

@@ -21,7 +21,7 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> StorageUsage {
 #[tauri::command]
 pub fn delete_series_files(state: State<'_, AppState>, series_id: String) -> AppResult<usize> {
     let n = cleanup::delete_series(&state, &series_id)?;
-    after_cleanup(&state);
+    after_cleanup(&state)?;
     Ok(n)
 }
 
@@ -33,7 +33,7 @@ pub fn delete_episode_file(
     vid_index: u32,
 ) -> AppResult<bool> {
     let ok = cleanup::delete_episode(&state, &series_id, vid_index)?;
-    after_cleanup(&state);
+    after_cleanup(&state)?;
     Ok(ok)
 }
 
@@ -41,15 +41,11 @@ pub fn delete_episode_file(
 #[tauri::command]
 pub fn delete_all_downloaded(state: State<'_, AppState>) -> AppResult<usize> {
     let n = cleanup::delete_all(&state)?;
-    after_cleanup(&state);
+    after_cleanup(&state)?;
     Ok(n)
 }
 
 /// 清理后同步任务状态并落盘。
-fn after_cleanup(state: &State<'_, AppState>) {
-    let mut data = state.store.write();
-    data.tasks = state.queue().all();
-    if let Err(e) = data.save(&crate::store::paths::data_file()) {
-        log::error!("[Storage] 落盘失败: {e}");
-    }
+fn after_cleanup(state: &State<'_, AppState>) -> AppResult<()> {
+    crate::store::persist_tasks(state, "Storage")
 }

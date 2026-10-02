@@ -54,15 +54,10 @@ pub mod ticket;
 pub mod xargus;
 pub mod xgorgon;
 
-pub use aes_v3::AesV3;
-pub use device::{
-    device_field_str, device_proto, video_device, video_device_map, APP_ID, CHANNEL_ID, VIDEO_UA,
-};
-pub use helios::{assemble_helios, helios};
+// 统一出口：只导出 crate 内真正按 `crate::signer::X` 引用的符号，
+// 其余一律走 `signer::子模块::X`，避免出现没人用的转发。
+pub use device::{video_device, APP_ID, CHANNEL_ID, VIDEO_UA};
+pub use helios::helios;
 pub use medusa::build_medusa;
-pub use primitives::{get_iv, md5_hex_upper, md5_raw, sm3, sum_md5};
-pub use ticket::{
-    encode_query, resolve_ticket, sign_get, sign_post, sign_request, SignedRequest, API_ORIGIN,
-};
-pub use xargus::{branch_of, hash_f13};
-pub use xgorgon::x_gorgon;
+pub use primitives::md5_hex_upper;
+pub use ticket::{sign_get, sign_post};

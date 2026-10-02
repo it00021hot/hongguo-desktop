@@ -87,9 +87,5 @@ mod tests {
         let data = [0u8; 16];
         let out = sum_md5(&data);
         assert_eq!(out & 0b100, 0b100, "结果必须置位 bit2");
-        // u32((check | 4) ^ 0x1000000) 后 bit24 取决于 check|4 的 bit24
-        // 这里只验证恒等式本身
-        let check: u32 = 0x2022_0420;
-        let _ = check;
     }
 }

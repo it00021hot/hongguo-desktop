@@ -12,6 +12,8 @@
 
 use std::time::Duration;
 
+use reqwest::Proxy;
+
 use crate::error::{AppError, AppResult};
 
 /// 重试次数。
@@ -19,6 +21,32 @@ pub const MAX_RETRIES: u32 = 3;
 
 /// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
+
+/// 按配置构造 HTTP client。
+///
+/// 每次调用都按当前配置新建：用户改完代理设置立即生效，不必重启。
+/// API 解析、视频下载、在线播放都走它，所以它待在网络层而不是某个业务里。
+pub fn build_client(config: &crate::domain::model::ProxyConfig) -> AppResult<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(crate::signer::VIDEO_UA)
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10));
+
+    match config.resolved() {
+        Some(url) => {
+            let proxy =
+                Proxy::all(&url).map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
+            builder = builder.proxy(proxy);
+        }
+        None => {
+            builder = builder.no_proxy();
+        }
+    }
+
+    builder
+        .build()
+        .map_err(|e| AppError::Network(format!("构造 HTTP client 失败: {e}")))
+}
 
 /// 调用官方 App 接口，返回响应体字节。
 ///
@@ -31,7 +59,7 @@ pub async fn api_call(
     body: Option<Vec<u8>>,
     proxy: &crate::domain::model::ProxyConfig,
 ) -> AppResult<Vec<u8>> {
-    let client = crate::service::settings_service::proxy::build_client(proxy)?;
+    let client = build_client(proxy)?;
     let device = crate::signer::video_device();
     let mut last_err = String::new();
 
@@ -86,6 +114,7 @@ async fn send_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::model::settings::ProxyMode;
     use crate::domain::model::ProxyConfig;
     use crate::signer::{sign_get, sign_post, video_device};
 
@@ -110,6 +139,32 @@ mod tests {
     #[test]
     fn client_builds_for_default_proxy() {
         // 探针与测试都走默认代理，构造成功即说明配置可用
-        let _ = crate::service::settings_service::proxy::build_client(&ProxyConfig::default());
+        let _ = build_client(&ProxyConfig::default());
+    }
+
+    #[test]
+    fn direct_mode_builds_no_proxy_client() {
+        // 构造成功即说明直连配置被接受
+        let _ = build_client(&ProxyConfig {
+            mode: ProxyMode::Direct,
+            url: "http://127.0.0.1:7890".into(),
+        });
+    }
+
+    #[test]
+    fn manual_mode_builds_client() {
+        let _ = build_client(&ProxyConfig {
+            mode: ProxyMode::Manual,
+            url: "http://127.0.0.1:7890".into(),
+        });
+    }
+
+    #[test]
+    fn invalid_proxy_url_errors() {
+        let err = build_client(&ProxyConfig {
+            mode: ProxyMode::Manual,
+            url: "not a valid url".into(),
+        });
+        assert!(err.is_err(), "非法代理地址应报错而不是静默忽略");
     }
 }

@@ -153,7 +153,8 @@ pub(super) fn encode_h264(
         // lookahead 关闭时每帧都有输出；仍要跳过空块
         let au = encoder.encode(&frame);
         if !au.is_empty() {
-            let is_keyframe = i == 0 || i as u64 % u64::from(options.gop_size.max(1)) == 0;
+            let is_keyframe =
+                i == 0 || (i as u64).is_multiple_of(u64::from(options.gop_size.max(1)));
             out.push((pts, au, is_keyframe));
         }
     }

@@ -96,10 +96,10 @@ export function AppSidebar() {
           size="icon"
           onClick={toggle}
           className={cn('w-full', !collapsed && 'justify-start gap-2')}
-          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+          aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
         >
           {collapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
-          {!collapsed && <span className="text-sm">收起</span>}
+          {!collapsed && <span className="text-sm">{t('nav.collapse')}</span>}
         </Button>
       </div>
     </aside>

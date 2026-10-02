@@ -12,12 +12,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { SeriesCardGrid } from './series-card-grid';
 import { SeriesDetailSheet } from './series-detail-sheet';
-import {
-  useBrowseCategories,
-  useBrowseList,
-  useDownloadTasks,
-  useSearch,
-} from '@/lib/queries';
+import { useBrowseCategories, useBrowseList, useDownloadTasks, useSearch } from '@/lib/queries';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
@@ -29,15 +24,13 @@ import type { SeriesCard } from '@/lib/schema';
  * 清空或退出就回到分类列表，不再单独开一个搜索页。
  */
 export function BrowsePage() {
-  const lastCategory = useUiStore((s) => s.lastCategory);
-  const lastGenre = useUiStore((s) => s.lastGenre);
+  // 分类与题材直接读 zustand：本地 useState 拷贝只在首次挂载时取一次初值，
+  // 写成 state 就和 store 里的真值分家了。
+  const category = useUiStore((s) => s.lastCategory);
+  const genre = useUiStore((s) => s.lastGenre);
   const setFilter = useUiStore((s) => s.setBrowseFilter);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<SeriesCard | null>(null);
-
-  // 筛选状态存在 zustand 里，这里只做本地别名，避免每次读取都写 selector
-  const [category, setCategory] = useState(lastCategory);
-  const [genre, setGenre] = useState(lastGenre);
 
   const [keyword, setKeyword] = useState('');
   /** 已提交的搜索词：空串 = 浏览模式，非空 = 搜索模式 */
@@ -76,17 +69,13 @@ export function BrowsePage() {
 
   const handleCategory = (slug: string) => {
     exitSearch();
-    setCategory(slug);
-    setGenre('');
     setPage(1);
     setFilter(slug, '');
   };
 
   const handleGenre = (slug: string) => {
-    const next = slug === 'all' ? '' : slug;
-    setGenre(next);
     setPage(1);
-    setFilter(category, next);
+    setFilter(category, slug === 'all' ? '' : slug);
   };
 
   // 点卡片只打开详情抽屉：选集、立即播放、提交下载都在抽屉里做。
@@ -155,9 +144,7 @@ export function BrowsePage() {
         )}
 
         <span className="text-muted-foreground ml-auto text-sm">
-          {searching
-            ? tf('search.resultCount', { total })
-            : tf('browse.totalCount', { total })}
+          {searching ? tf('search.resultCount', { total }) : tf('browse.totalCount', { total })}
         </span>
       </div>
 
@@ -174,11 +161,7 @@ export function BrowsePage() {
           {searching ? t('search.empty') : t('browse.empty')}
         </p>
       ) : (
-        <SeriesCardGrid
-          cards={cards}
-          downloadedMap={downloadedMap}
-          onPlay={handlePlay}
-        />
+        <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onPlay={handlePlay} />
       )}
 
       {!searching && totalPages > 1 && (

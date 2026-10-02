@@ -1,7 +1,12 @@
 //! 卡片提取脚本。
 //!
-//! 只依赖链接里的 `series_id`（正则 `/series_id=\d{6,}/`），**不依赖站点样式类名**，
-//! 站点改版时不易失效。剧名优先取 `img[alt]`。
+//! 卡片数据不在 DOM 上，而在页面内嵌的 `window._ROUTER_DATA` 里
+//! （搜索页与分类页各自挂在不同路由键下，键名随改版会变）。
+//! 所以这里**按字段特征兜底**：递归找出同时带 `series_id` 与 `episode_cnt`
+//! 的对象，就认为它是一张卡片——不认路由键、不认样式类名。
+//!
+//! 搜索页的剧名是 `series_title`、标签是 `category_list[].name`；
+//! 分类页的剧名是 `series_name`、标签是 `tags`。两种都取。
 
 /// 卡片嗅探脚本。
 pub const SNIFFER_JS: &str = r#"
@@ -9,54 +14,47 @@ pub const SNIFFER_JS: &str = r#"
   try {
     const out = [];
     const seen = new Set();
-    const links = Array.from(document.querySelectorAll('a')).filter((a) =>
-      /series_id=\d{6,}/.test(a.getAttribute('href') || '')
-    );
-    for (const a of links) {
-      const m = (a.getAttribute('href') || '').match(/series_id=(\d{6,})/);
-      if (!m) continue;
-      const sid = m[1];
-      if (seen.has(sid)) continue;
-      seen.add(sid);
 
-      const img = a.querySelector('img');
-      let title = (img && img.getAttribute('alt')) || '';
-      if (!title) {
-        const t = a.querySelector('[class*="title"]');
-        title = (t ? t.textContent : a.textContent || '').trim();
+    const pickTags = (node) => {
+      const tags = [];
+      const add = (t) => {
+        const v = typeof t === 'string' ? t.trim() : '';
+        if (v && tags.indexOf(v) < 0) tags.push(v);
+      };
+      if (Array.isArray(node.tags)) for (const t of node.tags) add(t);
+      if (Array.isArray(node.category_list)) {
+        for (const c of node.category_list) add(typeof c === 'string' ? c : (c && c.name));
+      }
+      return tags.slice(0, 4);
+    };
+
+    const visit = (node) => {
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item);
+        return;
+      }
+      if (node === null || typeof node !== 'object') return;
+
+      const sid = node.series_id;
+      if (typeof sid === 'string' && sid && node.episode_cnt != null && !seen.has(sid)) {
+        seen.add(sid);
+        out.push({
+          series_id: sid,
+          series_title: String(node.series_name || node.series_title || '').trim(),
+          cover: node.series_cover || '',
+          episode_count: Number(node.episode_cnt) || 0,
+          tags: pickTags(node),
+          url: '',
+        });
       }
 
-      let cover = '';
-      const pic = a.querySelector('picture');
-      if (pic) {
-        const src = pic.querySelector('source[srcset]');
-        if (src) cover = (src.getAttribute('srcset') || '').split(' ')[0];
+      for (const key in node) {
+        const v = node[key];
+        if (v !== null && typeof v === 'object') visit(v);
       }
-      if (!cover && img) cover = img.getAttribute('src') || img.getAttribute('data-src') || '';
+    };
 
-      let episode_count = 0;
-      const epEl = a.querySelector('[class*="episode"]');
-      if (epEl) {
-        const em = (epEl.textContent || '').match(/(\d+)\s*集/);
-        if (em) episode_count = parseInt(em[1], 10);
-      }
-
-      const tags = Array.from(a.querySelectorAll('[class*="tag-text"]'))
-        .map((e) => (e.textContent || '').trim())
-        .filter(Boolean)
-        .slice(0, 4);
-
-      // snake_case：与原版 JS 脚本一致，后端 SeriesCard 的
-      // deserialize 侧就是按 snake_case 声明的
-      out.push({
-        series_id: sid,
-        series_title: title.trim(),
-        cover: cover,
-        episode_count: episode_count,
-        tags: tags,
-        url: '',
-      });
-    }
+    visit(window._ROUTER_DATA);
     return out;
   } catch (e) {
     return [];
@@ -76,8 +74,28 @@ mod tests {
     }
 
     #[test]
-    fn script_depends_on_series_id_not_class_names() {
-        assert!(SNIFFER_JS.contains(r"series_id=\d{6,}"));
+    fn script_reads_embedded_router_data_not_dom_classes() {
+        // 卡片数据是页面内嵌的 _ROUTER_DATA，DOM 上没有可依赖的类名
+        assert!(SNIFFER_JS.contains("_ROUTER_DATA"));
+        // 按字段特征认卡片：同时带 series_id 与 episode_cnt
+        assert!(SNIFFER_JS.contains("node.series_id"));
+        assert!(SNIFFER_JS.contains("node.episode_cnt"));
+        assert!(!SNIFFER_JS.contains("querySelector"));
+        assert!(!SNIFFER_JS.contains("[class*="));
+    }
+
+    #[test]
+    fn script_accepts_both_page_shapes() {
+        // 搜索页用 series_title + category_list，分类页用 series_name + tags
+        for token in [
+            "node.series_name",
+            "node.series_title",
+            "node.series_cover",
+            "node.category_list",
+            "node.tags",
+        ] {
+            assert!(SNIFFER_JS.contains(token), "缺少 {token}");
+        }
     }
 
     #[test]
@@ -87,6 +105,14 @@ mod tests {
         for key in ["series_id:", "series_title:", "episode_count:"] {
             assert!(SNIFFER_JS.contains(key), "缺少 {key}");
         }
+    }
+
+    #[test]
+    fn script_dedupes_cards_by_series_id() {
+        // 同一张卡片可能在页面数据里出现多次（推荐位 + 列表位），
+        // 重复项会让结果列表里出现重复剧
+        assert!(SNIFFER_JS.contains("seen.has(sid)"));
+        assert!(SNIFFER_JS.contains("seen.add(sid)"));
     }
 
     #[test]

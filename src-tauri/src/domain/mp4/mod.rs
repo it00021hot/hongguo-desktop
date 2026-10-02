@@ -7,6 +7,8 @@
 //! - [`deprotect`]：摘掉加密标记，还原成普通可播放的 MP4
 //! - [`decrypt_file`]：落盘解密
 //! - [`decrypt_buffer`]：内存解密（在线播放用）
+//!
+//! `fixtures` 只在测试构建里存在：解析层的测试要造 MP4 时共用同一份字节构造。
 
 pub mod r#box;
 pub mod cenc_info;
@@ -16,7 +18,5 @@ pub mod decrypt_file;
 pub mod deprotect;
 pub mod sample_table;
 
-pub use decrypt_file::decrypt_mp4_file;
-pub use deprotect::deprotect;
-pub use r#box::{build_box, find_box, parse_boxes, BoxHeader};
-pub use sample_table::{collect_tracks, TrackInfo};
+#[cfg(test)]
+pub mod fixtures;

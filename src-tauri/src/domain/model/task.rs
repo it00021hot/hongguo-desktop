@@ -19,11 +19,6 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    /// 终态不再参与调度。
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, TaskStatus::Completed | TaskStatus::Stopped)
-    }
-
     /// 调度器是否应当挑起这个任务。
     pub fn is_runnable(&self) -> bool {
         matches!(self, TaskStatus::Pending | TaskStatus::Failed)
@@ -158,15 +153,6 @@ pub struct QueueStatus {
     pub active: usize,
 }
 
-/// 下载进度事件载荷。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DownloadProgress {
-    pub id: String,
-    pub downloaded: u64,
-    pub total: u64,
-    pub percent: f64,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +184,14 @@ mod tests {
     }
 
     #[test]
+    fn completed_task_reports_full_percent() {
+        // 调度器的进度事件直接复用这个口径，完成态必须报到 100
+        let mut t = DownloadTask::new("1", "t", 1, "v", "");
+        t.mark_completed("a.mp4", 100);
+        assert_eq!(t.percent(), 100.0);
+    }
+
+    #[test]
     fn mark_completed_sets_path() {
         let mut t = DownloadTask::new("1", "t", 1, "v", "");
         t.temp_path = "a.enc.tmp".into();
@@ -220,12 +214,11 @@ mod tests {
 
     #[test]
     fn status_predicates() {
-        assert!(TaskStatus::Completed.is_terminal());
-        assert!(TaskStatus::Stopped.is_terminal());
-        assert!(!TaskStatus::Failed.is_terminal());
         assert!(TaskStatus::Pending.is_runnable());
         assert!(TaskStatus::Failed.is_runnable());
         assert!(!TaskStatus::Running.is_runnable());
+        assert!(!TaskStatus::Completed.is_runnable());
+        assert!(!TaskStatus::Stopped.is_runnable());
     }
 
     #[test]

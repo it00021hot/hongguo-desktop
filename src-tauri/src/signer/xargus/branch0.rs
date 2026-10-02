@@ -108,7 +108,7 @@ const BRANCH0_ROUNDS: [[u32; 11]; 6] = [
 /// 112 轮消息扩展。
 fn expand_words(data: &[u8]) -> Vec<u32> {
     let mut di: Vec<u32> = Vec::new();
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         di.push(u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
 

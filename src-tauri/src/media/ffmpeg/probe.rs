@@ -145,12 +145,11 @@ fn run(ffmpeg: &PathBuf, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-/// 当前解码/编码后端的可读描述，供 UI 展示。
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// 当前解码/编码后端的可读描述，供内部日志与转码流水线使用。
+///
+/// 不带 ffmpeg 路径：路径由 [`ffmpeg_path`] 直接给，塞进结构体只会多一个
+/// 没人读的字段。
 pub struct BackendInfo {
-    /// ffmpeg 路径（未找到为空）
-    pub ffmpeg: String,
     /// 选中的 H.264 编码器
     pub encoder: String,
     /// 实际生效的转码方式
@@ -160,13 +159,11 @@ pub struct BackendInfo {
 /// 取当前后端信息。
 pub fn backend_info() -> BackendInfo {
     match (ffmpeg_path(), h264_encoder()) {
-        (Some(p), Some(enc)) => BackendInfo {
-            ffmpeg: p.display().to_string(),
+        (Some(_), Some(enc)) => BackendInfo {
             encoder: enc.to_string(),
             transcode_with: format!("ffmpeg ({enc})"),
         },
         _ => BackendInfo {
-            ffmpeg: String::new(),
             encoder: String::new(),
             transcode_with: "rusty_h265 → rusty_h264".to_string(),
         },
@@ -192,7 +189,7 @@ mod tests {
     #[test]
     fn backend_info_matches_detection() {
         let info = backend_info();
-        if info.ffmpeg.is_empty() {
+        if ffmpeg_path().is_none() {
             assert_eq!(info.encoder, "", "无 ffmpeg 时不应报告编码器");
             assert!(info.transcode_with.contains("rusty_h265"), "应回落软解");
         } else {

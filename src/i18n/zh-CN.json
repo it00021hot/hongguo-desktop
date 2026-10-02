@@ -10,11 +10,12 @@
     "tasks": { "title": "下载管理", "description": "队列、进度与合并" },
     "merge": { "title": "一键合并", "description": "把分集合并为全集" },
     "storage": { "title": "磁盘清理", "description": "占用统计与文件清理" },
-    "settings": { "title": "设置", "description": "目录、命名、并发与代理" }
+    "settings": { "title": "设置", "description": "目录、命名、并发与代理" },
+    "collapse": "收起",
+    "expand": "展开"
   },
   "browse": {
     "category": "分类",
-    "genre": "题材",
     "allGenres": "全部题材",
     "empty": "这个分类下暂时没有内容",
     "loadFailed": "加载失败",
@@ -26,7 +27,10 @@
     "submit": "搜索",
     "exit": "退出搜索",
     "resultCount": "搜到 {total} 部",
-    "empty": "换个关键词试试"
+    "empty": "换个关键词试试",
+    "langLabel": "语言",
+    "langZh": "简体中文",
+    "langEn": "English"
   },
   "download": {
     "inputLabel": "分享链接或剧集 ID",
@@ -42,21 +46,20 @@
     "rangeLabel": "区间语法",
     "rangePlaceholder": "如 1-50 或 1-10, 25, 30-45",
     "rangeInvalid": "区间格式无法解析",
+    "formatSelection": "格式化选集",
     "selected": "已选 {count} 集",
     "submit": "开始下载",
     "submitting": "已加入队列 {count} 个任务",
     "playNow": "立即播放"
   },
   "tasks": {
-    "title": "下载管理",
     "queueStatus": "进行中 {running} · 等待 {pending} · 已完成 {completed} · 失败 {failed}",
     "concurrency": "并发 {active}/{limit}",
     "startAll": "一键启动",
     "pauseAll": "一键暂停",
     "retryAll": "重试全部失败",
     "selectFailed": "选中失败项",
-    "rescan": "扫描目录补登记",
-    "merge": "一键合并本剧",
+    "columns": { "status": "状态", "size": "大小" },
     "empty": "还没有下载任务",
     "status": {
       "pending": "等待中",
@@ -71,7 +74,6 @@
       "openFolder": "打开文件夹",
       "remove": "删除"
     },
-    "deleteWithFiles": "同时删除本地文件",
     "freeable": "可释放 {size}",
     "removeConfirm": "删除 {count} 个任务",
     "removeSummary": "其中 {done} 个已下载完成（约 {size}）。",
@@ -79,26 +81,19 @@
     "removeFilesWithSize": "同时删除本地文件（释放约 {size}）",
     "removeKeepHint": "不勾选则只移除任务记录，磁盘上的视频文件会保留（可在文件管理器里自行管理）。",
     "removeAndFiles": "删除任务和文件",
-    "removeOnly": "仅删除记录",
-    "removeFilesConfirm": "删除任务会同时删除本地文件，此操作不可撤销。"
+    "removeOnly": "仅删除记录"
   },
   "player": {
-    "title": "播放",
     "autoNext": "播完自动下一集",
-    "compatMode": "兼容模式",
     "autoDelete": "看完自动删",
     "autoDeleteDone": "第{index}集已看完，已删除本地文件",
-    "downloadUnfinished": "下载未完成集",
-    "mergeExport": "合并导出全集",
-    "switchSeries": "切换剧集",
     "seriesSearch": "搜索剧名",
+    "noSeries": "还没有选择剧集",
     "epShort": "第{index}集",
-    "lastWatchedAt": "上次看到第 {index} 集",
     "continueWatching": "继续观看",
     "historyEmpty": "还没有播放记录",
     "historyHint": "在浏览或搜索里点开一部剧，播过之后就会出现在这里",
     "play": "播放",
-    "pause": "暂停",
     "skipBack": "快退 5 秒",
     "skipForward": "快进 5 秒",
     "volume": "音量",
@@ -115,12 +110,12 @@
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
     "pictureInPicture": "画中画",
-    "noDownloaded": "还没有已下载的集",
-    "notDownloaded": "本集尚未下载",
-    "downloadAndPlay": "下载并播放",
-    "playOnline": "在线播放",
-    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集",
-    "positionSaved": "已记住播放位置"
+    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集"
+  },
+  "series": {
+    "loadFailed": "分集加载失败",
+    "resolveAgain": "重新解析",
+    "noEpisodes": "这部剧还没有分集信息"
   },
   "merge": {
     "title": "一键合并",
@@ -130,13 +125,16 @@
     "taskList": "合并任务",
     "quick": "快速合并",
     "quickDesc": "原画质直拼，不重编码，无损且极快",
+    "quickUnavailable": "各集编码不一致，快速合并不可用",
     "compat": "兼容合并",
     "compatDesc": "转码为 H.264/AAC，任何播放器都能播（较慢）",
     "outputName": "输出文件名",
+    "freeSpace": "剩余 {size}",
     "noDownloads": "没有已下载的分集",
-    "insufficientSpace": "磁盘空间不足",
+    "insufficientSpace": "磁盘剩余空间不足",
+    "codecMismatch": "第 {episode} 集编码与其它集不同，快速合并会损坏文件，请改用兼容合并",
     "start": "开始合并",
-    "empty": "还没有合并任务",
+    "started": "已加入合并队列",
     "status": {
       "pending": "等待中",
       "running": "合并中",
@@ -150,12 +148,11 @@
     "files": "个文件",
     "bySeries": "按剧清理",
     "keepRecord": "删除文件不会移除列表记录",
-    "freed": "已删除",
+    "freedFiles": "已删除 {count} 个文件",
     "deleteAllConfirm": "确定删除全部已下载文件？",
     "deleteAllDesc": "所有已下载的剧集文件都会被删除，剧集档案保留。此操作不可撤销。"
   },
   "settings": {
-    "title": "设置",
     "downloadDir": "下载目录",
     "downloadDirDesc": "文件会归档到「下载目录/红果短剧/剧名/」",
     "choose": "选择目录",
@@ -169,8 +166,6 @@
     "proxySystem": "跟随系统",
     "proxyManual": "手动指定",
     "proxyDirect": "强制直连",
-    "proxyUrl": "代理地址",
-    "proxyPresets": "常用端口",
     "testProxy": "测试连接",
     "testing": "测试中…",
     "testOk": "连接正常，耗时 {ms} 毫秒",
@@ -178,10 +173,10 @@
     "playback": "播放",
     "autoDelete": "看完自动删除",
     "autoNext": "播完自动下一集",
-    "theme": "主题",
     "themeAuto": "跟随系统",
     "themeLight": "亮色",
     "themeDark": "暗色",
+    "save": "保存",
     "saved": "设置已保存",
     "storage": "磁盘占用",
     "storageUsage": "{size} · {files} 个文件",
@@ -205,18 +200,20 @@
     "sniff": "浏览器嗅探失败",
     "invalidArgs": "参数错误",
     "notFound": "未找到",
-    "internal": "内部错误"
+    "cancelled": "操作已取消",
+    "internal": "内部错误",
+    "unknownCommand": "调用 {command} 失败"
   },
   "common": {
     "confirm": "确定",
     "cancel": "取消",
     "close": "关闭",
-    "retry": "重试",
     "delete": "删除",
     "loading": "加载中…",
     "empty": "暂无数据",
-    "copy": "复制",
-    "copied": "已复制",
-    "toggleTheme": "切换主题"
+    "toggleTheme": "切换主题",
+    "episodeCount": "{count} 集",
+    "progress": "进度",
+    "skipToContent": "跳到主内容"
   }
 }

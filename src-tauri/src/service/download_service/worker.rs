@@ -3,7 +3,7 @@
 //! 防损机制：先写 `.enc.tmp`，解密成功后才改名 `.mp4`，中途断网不会留下
 //! 残缺文件——下次重试能干净地从头再来。
 //!
-//! 设置（尤其代理）由调用方传入：worker 自己 `AppState::new()` 拿到的永远是
+//! 设置（尤其代理）由调用方传入：worker 自己 `AppState::default()` 拿到的永远是
 //! 默认值，会让用户在设置里配的代理失效。
 
 use std::path::{Path, PathBuf};
@@ -68,7 +68,7 @@ pub async fn download_episode(
     }
 
     let temp_path = temp_path_for(&episode.output_path);
-    let client = crate::service::settings_service::proxy::build_client(&episode.settings.proxy)?;
+    let client = crate::domain::api::client::build_client(&episode.settings.proxy)?;
 
     let resp = client
         .get(&episode.video_url)
@@ -93,7 +93,7 @@ pub async fn download_episode(
         if episode.cancelled.load(Ordering::SeqCst) {
             drop(file);
             let _ = std::fs::remove_file(&temp_path);
-            return Err(AppError::Io("已取消".into()));
+            return Err(AppError::Cancelled);
         }
         let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| AppError::Io(e.to_string()))?;

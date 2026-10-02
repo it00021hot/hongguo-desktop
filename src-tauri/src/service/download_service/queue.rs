@@ -237,11 +237,13 @@ impl DownloadQueue {
         *self.limit.read()
     }
 
-    /// 是否还有空位可调度。
+    /// 归还一个运行名额（任务收尾时调用）。
+    ///
+    /// 用 `saturating_sub` 而非硬减：`pause_all` 会把计数直接清零，
+    /// 而在途任务要等下一轮才回来报告收尾，硬减会在 usize 上 panic。
+    /// 读锁必须在写锁之前放开，否则 `parking_lot` 会自己等死。
     fn release_active(&self) {
-        let mut active = self.active.write();
-        if *active > 0 {
-            *active -= 1;
-        }
+        let next = self.active.read().saturating_sub(1);
+        *self.active.write() = next;
     }
 }

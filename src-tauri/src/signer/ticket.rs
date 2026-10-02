@@ -87,9 +87,11 @@ pub fn resolve_ticket(
 }
 
 /// 一次签名请求所需的全部材料。
+///
+/// 查询串不单独存一份：它已经原样拼在 `url` 里，单独再存一份只会让人
+/// 有机会只改其中一处，把「签过名的 query」与「实际发出的 query」拆开。
 pub struct SignedRequest {
     pub url: String,
-    pub query: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
 }
@@ -155,12 +157,7 @@ pub fn sign_request(
 
     headers.extend_from_slice(extra_headers);
 
-    SignedRequest {
-        url,
-        query,
-        headers,
-        body,
-    }
+    SignedRequest { url, headers, body }
 }
 
 fn device_field<'a>(device: &'a [(&'static str, &'static str)], key: &str) -> &'a str {
@@ -192,11 +189,6 @@ pub fn sign_get(pathname: &str, device: &[(&'static str, &'static str)]) -> Sign
     sign_request(pathname, None, device, &[])
 }
 
-/// 供测试与探针使用：直接取 query 的 SM3。
-pub fn query_sm3(query: &str) -> [u8; 32] {
-    sm3(query.as_bytes())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,17 +209,13 @@ mod tests {
     fn resolve_ticket_avoids_branch_1() {
         let device = video_device();
         for i in 0..30u64 {
-            let (_, _, ticket, khronos) = resolve_ticket(
+            let (_, _, ticket, _) = resolve_ticket(
                 "/novel/player/multi_video_detail/v1/",
                 None,
                 &device,
                 1_700_000_000_000 + i,
             );
-            let query = format!("x={ticket}");
-            let _ = khronos;
-            // 复算：query 参与 branch 判定，但此处只验证 ticket 递增
-            assert!(ticket >= 1_700_000_000_000 + i);
-            let _ = query;
+            assert!(ticket >= 1_700_000_000_000 + i, "ticket 应随时间戳递增");
         }
     }
 
@@ -269,5 +257,54 @@ mod tests {
         let signed = sign_get("/x/v1/", &device);
         assert!(signed.url.starts_with(API_ORIGIN));
         assert!(signed.url.contains("/x/v1/?"));
+    }
+
+    #[test]
+    fn resolve_ticket_url_ends_with_its_query() {
+        // url 必须原样带上签过名的那份 query：调用方不再单独持有 query，
+        // 一旦这里拼接分叉，x-gorgon / x-medusa 就会与实际发出的 query 不符
+        let device = video_device();
+        let (url, query, ticket, khronos) =
+            resolve_ticket("/x/v1/", None, &device, 1_700_000_000_000);
+        assert!(url.ends_with(&query), "url 应原样带出 query");
+        assert!(query.contains(&format!("_rticket={ticket}")));
+        assert!(query.contains(&format!("ts={khronos}")));
+    }
+
+    #[test]
+    fn signed_headers_match_the_query_in_url() {
+        let device = video_device();
+        let signed = sign_get("/x/v1/", &device);
+
+        let query = signed.url.split_once('?').expect("url 应带 query").1;
+        let params: Vec<(&str, &str)> = query
+            .split('&')
+            .map(|pair| pair.split_once('=').expect("参数应是 k=v"))
+            .collect();
+
+        let device_keys: Vec<&str> = device.iter().map(|(key, _)| *key).collect();
+        let query_keys: Vec<&str> = params.iter().map(|(key, _)| *key).collect();
+        assert_eq!(
+            query_keys[..device_keys.len()],
+            device_keys[..],
+            "设备参数顺序就是 query 顺序，改动会直接失配"
+        );
+
+        let header = |name: &str| {
+            signed
+                .headers
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_else(|| panic!("缺少签名头 {name}"))
+        };
+        assert_eq!(
+            params.get(device_keys.len()),
+            Some(&("ts", header("x-khronos")))
+        );
+        assert_eq!(
+            params.get(device_keys.len() + 1),
+            Some(&("_rticket", header("x-ss-req-ticket")))
+        );
     }
 }

@@ -18,26 +18,6 @@ pub fn get_merge_tasks(state: State<'_, AppState>) -> Vec<MergeTask> {
     state.store.read().merge_tasks.clone()
 }
 
-/// 删除一条合并记录。
-#[tauri::command]
-pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    let mut data = state.store.write();
-    data.merge_tasks.retain(|t| t.id != id);
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
-}
-
-/// 取消合并。
-#[tauri::command]
-pub fn cancel_merge(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    let mut data = state.store.write();
-    if let Some(t) = data.merge_tasks.iter_mut().find(|t| t.id == id) {
-        t.status = MergeStatus::Cancelled;
-    }
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
-}
-
 /// 合并前校验。
 #[tauri::command]
 pub fn merge_preflight(state: State<'_, AppState>, series_id: String) -> AppResult<MergePreflight> {
@@ -66,7 +46,7 @@ pub fn merge_series(
 
     let mut task = MergeTask::new(&series_id, &series_title, &output_name, mode);
     task.status = MergeStatus::Running;
-    persist_new(&state, &task);
+    upsert_in_memory(&state, &task);
     // 合并可能跑好几分钟，先广播「开始了」，UI 立刻能看到 running 状态
     let _ = app.emit(names::MERGE_TASK_ADDED, &task);
 
@@ -106,11 +86,13 @@ pub fn merge_series(
         MergeStatus::Failed
     };
 
-    // 覆盖刚才那条 pending/running 记录
-    let mut data = state.store.write();
-    data.merge_tasks.retain(|t| t.id != task.id);
-    data.merge_tasks.push(task.clone());
-    let _ = data.save(&crate::store::paths::data_file());
+    // 覆盖刚才那条 pending/running 记录，这次连同结果一起落盘
+    upsert_in_memory(&state, &task);
+    state
+        .store
+        .write()
+        .save(&crate::store::paths::data_file())
+        .map_err(|e| AppError::StoreCorrupt(e.to_string()))?;
 
     let _ = app.emit(
         if task.status == MergeStatus::Failed {
@@ -127,8 +109,10 @@ pub fn merge_series(
     Ok(task)
 }
 
-/// 先落一条 running 记录，让 UI 立刻能看到任务。
-fn persist_new(state: &State<'_, AppState>, task: &MergeTask) {
+/// 把任务写进内存里的合并列表（不落盘）。
+///
+/// 开始时先插一条 running 记录让 UI 立刻看到任务；跑完后再用同一条覆盖它。
+fn upsert_in_memory(state: &State<'_, AppState>, task: &MergeTask) {
     let mut data = state.store.write();
     data.merge_tasks.retain(|t| t.id != task.id);
     data.merge_tasks.push(task.clone());

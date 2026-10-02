@@ -91,7 +91,7 @@ export function DownloadPage() {
           <div>
             <h2 className="text-lg font-semibold">{resolved.title}</h2>
             <p className="text-muted-foreground text-sm">
-              {resolved.episodes.length} 集
+              {tf('common.episodeCount', { count: resolved.episodes.length })}
             </p>
           </div>
 

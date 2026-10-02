@@ -166,12 +166,8 @@ fn rebuild_stsd(stsd: &[u8], changed: &mut bool) -> Vec<u8> {
         if pos + 16 > stsd.len() {
             break;
         }
-        let size = u32::from_be_bytes([
-            stsd[pos],
-            stsd[pos + 1],
-            stsd[pos + 2],
-            stsd[pos + 3],
-        ]) as usize;
+        let size =
+            u32::from_be_bytes([stsd[pos], stsd[pos + 1], stsd[pos + 2], stsd[pos + 3]]) as usize;
         let end = if size == 0 { stsd.len() } else { pos + size };
         if size < 16 || end > stsd.len() {
             break;
@@ -194,14 +190,13 @@ fn rebuild_stsd(stsd: &[u8], changed: &mut bool) -> Vec<u8> {
 /// 加密入口 → 普通入口：改类型、摘掉保护信息。
 fn plain_entry(entry: &[u8]) -> Vec<u8> {
     // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底
-    let original = original_format(entry)
-        .unwrap_or_else(|| {
-            // encv 几乎总是 HEVC；其余按类型推断
-            match &entry[4..8] {
-                b"enca" => *b"mp4a",
-                _ => *b"hvc1",
-            }
-        });
+    let original = original_format(entry).unwrap_or_else(|| {
+        // encv 几乎总是 HEVC；其余按类型推断
+        match &entry[4..8] {
+            b"enca" => *b"mp4a",
+            _ => *b"hvc1",
+        }
+    });
 
     let mut children: Vec<u8> = Vec::with_capacity(entry.len());
     for b in parse_boxes(entry, 16, entry.len()) {
@@ -342,10 +337,7 @@ mod tests {
         let entry_size = entry.len() as u32;
         entry[..4].copy_from_slice(&entry_size.to_be_bytes());
 
-        let stsd = build_box(
-            b"stsd",
-            &cat(&[&[0u8; 4], &1u32.to_be_bytes(), &entry]),
-        );
+        let stsd = build_box(b"stsd", &cat(&[&[0u8; 4], &1u32.to_be_bytes(), &entry]));
         let stsz = build_box(
             b"stsz",
             &cat(&[
@@ -416,9 +408,7 @@ mod tests {
         let mp4 = encrypted_mp4(&[0x11u8; 64]);
         let out = deprotect(&mp4).expect("应能去除加密标记");
 
-        let has = |tag: &[u8; 4]| {
-            out.windows(4).any(|w| w == tag)
-        };
+        let has = |tag: &[u8; 4]| out.windows(4).any(|w| w == tag);
         assert!(has(b"hvc1"), "入口应还原成 hvc1");
         assert!(!has(b"encv"), "不该再出现 encv");
         assert!(!has(b"sinf"), "不该再出现 sinf");

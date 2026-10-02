@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, Trash2, Cpu, Zap } from 'lucide-react';
+import { FolderOpen, Cpu, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,7 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { useDecodeCapability, useSaveSettings, useSettings, useStorageUsage, useTestProxy } from '@/lib/queries';
+import {
+  useDecodeCapability,
+  useSaveSettings,
+  useSettings,
+  useStorageUsage,
+  useTestProxy,
+} from '@/lib/queries';
 import { app as appApi, transcode as transcodeApi } from '@/lib/ipc/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
@@ -34,15 +40,14 @@ export function SettingsPage() {
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
 
   if (isPending || !loaded) {
-    return <div className="p-6 text-muted-foreground text-sm">{t('common.loading')}</div>;
+    return <div className="text-muted-foreground p-6 text-sm">{t('common.loading')}</div>;
   }
 
   // 合并草稿与服务端值
   const current: Settings = { ...loaded, ...(draft ?? {}) };
   const effectiveProxyUrl = proxyUrl ?? current.proxy.url;
 
-  const patch = (next: Partial<Settings>) =>
-    setDraft((prev) => ({ ...(prev ?? {}), ...next }));
+  const patch = (next: Partial<Settings>) => setDraft((prev) => ({ ...(prev ?? {}), ...next }));
   const patchProxy = (next: Partial<Settings['proxy']>) =>
     setDraft((prev) => ({ ...(prev ?? {}), proxy: { ...current.proxy, ...next } }));
 
@@ -150,31 +155,12 @@ export function SettingsPage() {
           </Select>
 
           {current.proxy.mode === 'manual' && (
-            <>
-              <Input
-                value={effectiveProxyUrl}
-                onChange={(e) => setProxyUrl(e.target.value)}
-                placeholder="http://127.0.0.1:7890"
-                className="font-mono text-xs"
-              />
-              <div className="flex flex-wrap gap-1">
-                {[
-                  ['Clash', 'http://127.0.0.1:7890'],
-                  ['V2rayN', 'http://127.0.0.1:10809'],
-                  ['Shadowsocks', 'http://127.0.0.1:1080'],
-                  ['Burp', 'http://127.0.0.1:8080'],
-                ].map(([name, url]) => (
-                  <Button
-                    key={name}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setProxyUrl(url ?? '')}
-                  >
-                    {name}
-                  </Button>
-                ))}
-              </div>
-            </>
+            <Input
+              value={effectiveProxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="http://127.0.0.1:7890"
+              className="font-mono text-xs"
+            />
           )}
 
           <div className="flex items-center gap-2">
@@ -198,8 +184,8 @@ export function SettingsPage() {
               {testProxyMutation.isPending ? t('settings.testing') : t('settings.testProxy')}
             </Button>
             {testProxyMutation.data && (
-              <Badge variant={testProxyMutation.data?.ok ? 'success' : 'destructive'}>
-                {testProxyMutation.data?.elapsedMs} ms
+              <Badge variant={testProxyMutation.data.ok ? 'success' : 'destructive'}>
+                {testProxyMutation.data.elapsedMs} ms
               </Badge>
             )}
           </div>
@@ -231,7 +217,13 @@ export function SettingsPage() {
             <Cpu className="text-muted-foreground size-4" />
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
-              variant={capability?.h264HwEncoder ? 'success' : capability?.hasFfmpeg ? 'warning' : 'secondary'}
+              variant={
+                capability?.h264HwEncoder
+                  ? 'success'
+                  : capability?.hasFfmpeg
+                    ? 'warning'
+                    : 'secondary'
+              }
               className="ml-auto"
             >
               {backendLabel(capability)}
@@ -252,24 +244,13 @@ export function SettingsPage() {
               ? tf('settings.storageUsage', { size: formatBytes(usage.bytes), files: usage.files })
               : t('common.loading')}
           </p>
+          {/* 磁盘清理只在存储页提供，这里只读占用与缓存清理 */}
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => transcodeApi.clearOnlineCache()}
-            >
+            <Button size="sm" variant="outline" onClick={() => transcodeApi.clearOnlineCache()}>
               {t('settings.clearOnlineCache')}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => transcodeApi.clearCompatCache()}
-            >
+            <Button size="sm" variant="outline" onClick={() => transcodeApi.clearCompatCache()}>
               {t('settings.clearCompatCache')}
-            </Button>
-            <Button size="sm" variant="destructive" className="ml-auto">
-              <Trash2 className="size-4" />
-              {t('settings.deleteAll')}
             </Button>
           </div>
         </CardContent>
@@ -277,7 +258,7 @@ export function SettingsPage() {
 
       <div className="sticky bottom-4 flex justify-end">
         <Button onClick={submit} disabled={saveMutation.isPending}>
-          {t('settings.saved')}
+          {t('settings.save')}
         </Button>
       </div>
     </div>
@@ -292,7 +273,8 @@ function backendLabel(cap: DecodeCapability | undefined): string {
   return t('settings.backendFfmpegSw');
 }
 
-function ToggleRow({  id,
+function ToggleRow({
+  id,
   label,
   checked,
   onChange,

@@ -1,7 +1,6 @@
 import { Play, Tv } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
@@ -10,22 +9,11 @@ interface Props {
   cards: SeriesCard[];
   /** 每部剧已下载的集数，用于卡片角标 */
   downloadedMap?: Record<string, number>;
-  loading?: boolean;
   onPlay: (card: SeriesCard) => void;
 }
 
 /** 剧集卡片网格。浏览页与搜索页共用。 */
-export function SeriesCardGrid({ cards, downloadedMap, loading, onPlay }: Props) {
-  if (loading) {
-    return (
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
-        {Array.from({ length: 10 }, (_, i) => (
-          <Skeleton key={i} className="h-56" />
-        ))}
-      </div>
-    );
-  }
-
+export function SeriesCardGrid({ cards, downloadedMap, onPlay }: Props) {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-5">
       {cards.map((card) => {
@@ -61,7 +49,7 @@ export function SeriesCardGrid({ cards, downloadedMap, loading, onPlay }: Props)
 
               {card.episodeCount > 0 && (
                 <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white">
-                  {card.episodeCount} 集
+                  {tf('common.episodeCount', { count: card.episodeCount })}
                 </span>
               )}
 

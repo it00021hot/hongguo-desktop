@@ -36,7 +36,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
   const series: Series | undefined = seriesList?.find((s) => s.seriesId === seriesId);
 
   const byIndex = useMemo(() => {
-    const map: Record<number, { status?: string; filePath: string }> = {};
+    const map: Record<number, { status?: string }> = {};
     for (const task of tasks ?? []) {
       if (task.seriesId === seriesId) map[task.vidIndex] = task;
     }
@@ -51,7 +51,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
   const slice = episodes.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
 
   return (
-    <aside className="scrollbar-thin flex w-80 shrink-0 flex-col gap-4 overflow-y-auto pr-1">
+    <aside className="flex w-80 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto pr-1">
       {series && <SeriesHeadline series={series} currentIndex={currentIndex} />}
 
       {extras?.intro && <Intro text={extras.intro} />}
@@ -129,12 +129,7 @@ function Intro({ text }: { text: string }) {
   return (
     <section className="grid gap-1.5">
       <h3 className="text-sm font-semibold">{t('player.intro')}</h3>
-      <p
-        className={cn(
-          'text-muted-foreground text-xs leading-relaxed',
-          !open && 'line-clamp-2',
-        )}
-      >
+      <p className={cn('text-muted-foreground text-xs leading-relaxed', !open && 'line-clamp-2')}>
         {text}
       </p>
       {expandable && (

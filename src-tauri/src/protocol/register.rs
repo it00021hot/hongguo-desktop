@@ -99,10 +99,7 @@ mod tests {
     fn stream_url_uses_the_localhost_form_wry_requires() {
         // 直接写 hongguo-stream://<vid> 不会被 WebView2 拦下来，协议永远收不到请求
         let url = crate::protocol::stream_url("7687919221593885758");
-        assert_eq!(
-            url,
-            "http://hongguo-stream.localhost/7687919221593885758"
-        );
+        assert_eq!(url, "http://hongguo-stream.localhost/7687919221593885758");
     }
 
     #[test]

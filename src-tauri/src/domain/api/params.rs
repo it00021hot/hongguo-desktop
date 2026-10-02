@@ -1,8 +1,8 @@
 //! 官方 App 接口的请求体常量。
 //!
 //! ⚠️ 这些字段是**照抄现版**（`hongguo.js`）的实测值，改任何一个都会让服务端
-//! 返回 `Code: 110001`（签名对但参数错）。用 `cargo run --bin probe_api` 验证：
-//! 字节数 > 0 只说明签名过了，还要看 body 里 `code` 是不是 0。
+//! 返回 `Code: 110001`（签名对但参数错）。验证时开 `RUST_LOG=debug`：
+//! 响应字节数 > 0 只说明签名过了，还要看 body 里 `code` 是不是 0。
 
 use serde_json::{json, Value};
 

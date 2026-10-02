@@ -1,12 +1,5 @@
 import { useMemo, useState } from 'react';
-import {
-  Play,
-  Pause,
-  RotateCcw,
-  FolderOpen,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { Play, Pause, RotateCcw, FolderOpen, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -37,7 +30,10 @@ import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { DownloadTask, TaskStatus } from '@/lib/schema';
 
-const STATUS_VARIANT: Record<TaskStatus, 'secondary' | 'default' | 'success' | 'destructive' | 'warning'> = {
+const STATUS_VARIANT: Record<
+  TaskStatus,
+  'secondary' | 'default' | 'success' | 'destructive' | 'warning'
+> = {
   pending: 'secondary',
   running: 'default',
   completed: 'success',
@@ -81,7 +77,10 @@ export function TasksPage() {
   /** 弹窗里要展示的两项：已下载完成的集数、可释放字节 */
   const confirmFreeable = confirmDelete ? freeableFor(confirmDelete.ids) : 0;
   const completedCount = useMemo(
-    () => (confirmDelete ? all.filter((t) => confirmDelete.ids.includes(t.id) && t.status === 'completed').length : 0),
+    () =>
+      confirmDelete
+        ? all.filter((t) => confirmDelete.ids.includes(t.id) && t.status === 'completed').length
+        : 0,
     [all, confirmDelete],
   );
 
@@ -99,11 +98,16 @@ export function TasksPage() {
     const { ids, withFiles } = confirmDelete;
     actions.remove.mutate(
       { ids, withFiles },
-      { onSuccess: () => { setSelected(new Set()); setConfirmDelete(null); } },
+      {
+        onSuccess: () => {
+          setSelected(new Set());
+          setConfirmDelete(null);
+        },
+      },
     );
   };
   if (isPending) {
-    return <div className="p-6 text-muted-foreground text-sm">{t('common.loading')}</div>;
+    return <div className="text-muted-foreground p-6 text-sm">{t('common.loading')}</div>;
   }
 
   return (
@@ -118,7 +122,8 @@ export function TasksPage() {
                 failed: status.failed,
               })
             : ''}
-          {status && ` · ${tf('tasks.concurrency', { active: status.active, limit: status.limit })}`}
+          {status &&
+            ` · ${tf('tasks.concurrency', { active: status.active, limit: status.limit })}`}
         </div>
 
         <div className="ml-auto flex flex-wrap gap-2">
@@ -160,8 +165,8 @@ export function TasksPage() {
                 <TableHead className="w-10" />
                 <TableHead>{t('nav.tasks.title')}</TableHead>
                 <TableHead className="w-24">#</TableHead>
-                <TableHead className="w-28">{t('common.loading')}</TableHead>
-                <TableHead className="w-32">大小</TableHead>
+                <TableHead className="w-28">{t('tasks.columns.status')}</TableHead>
+                <TableHead className="w-32">{t('tasks.columns.size')}</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
@@ -175,9 +180,7 @@ export function TasksPage() {
                   onStop={() => actions.stop.mutate(task.id)}
                   onRetry={() => actions.retry.mutate(task.id)}
                   onOpenFolder={() => void appApi.openFolder(task.seriesId)}
-                  onDelete={(withFiles) =>
-                    setConfirmDelete({ ids: [task.id], withFiles })
-                  }
+                  onDelete={(withFiles) => setConfirmDelete({ ids: [task.id], withFiles })}
                 />
               ))}
             </TableBody>
@@ -213,8 +216,7 @@ export function TasksPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmDelete &&
-                tf('tasks.removeConfirm', { count: confirmDelete.ids.length })}
+              {confirmDelete && tf('tasks.removeConfirm', { count: confirmDelete.ids.length })}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="grid gap-3">
@@ -230,9 +232,7 @@ export function TasksPage() {
                   <Checkbox
                     checked={confirmDelete?.withFiles ?? false}
                     onCheckedChange={(v) =>
-                      setConfirmDelete((prev) =>
-                        prev ? { ...prev, withFiles: v === true } : prev,
-                      )
+                      setConfirmDelete((prev) => (prev ? { ...prev, withFiles: v === true } : prev))
                     }
                   />
                   <span>
@@ -304,12 +304,22 @@ function TaskRow({ task, checked, onToggle, onStop, onRetry, onOpenFolder, onDel
       <TableCell>
         <div className="flex gap-1">
           {task.status === 'running' && (
-            <Button size="icon" variant="ghost" onClick={onStop} aria-label={t('tasks.actions.stop')}>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onStop}
+              aria-label={t('tasks.actions.stop')}
+            >
               <Pause className="size-4" />
             </Button>
           )}
           {(task.status === 'failed' || task.status === 'stopped') && (
-            <Button size="icon" variant="ghost" onClick={onRetry} aria-label={t('tasks.actions.retry')}>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onRetry}
+              aria-label={t('tasks.actions.retry')}
+            >
               <RotateCcw className="size-4" />
             </Button>
           )}

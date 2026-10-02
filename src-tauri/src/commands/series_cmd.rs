@@ -1,10 +1,10 @@
-//! 剧集档案：列表、解析、移除。
+//! 剧集档案：列表与解析。
 
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::model::Series;
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::service::series_service;
 
 /// 剧集列表（不含被用户移除的）。
@@ -20,14 +20,22 @@ pub fn get_series_list(state: State<'_, AppState>) -> Vec<Series> {
 }
 
 /// 取某部剧的完整档案（含分集）。
+///
+/// 本地命中直接返回；搜索 / 浏览出来的剧从没被解析过，本地查不到时回落
+/// [`series_service::resolver::resolve_series`] 解析并登记——否则详情抽屉
+/// 只会拿到 `NotFound`，界面上一片空白。
 #[tauri::command]
-pub fn get_series_episodes(state: State<'_, AppState>, series_id: String) -> AppResult<Series> {
-    state
-        .store
-        .read()
-        .series(&series_id)
-        .cloned()
-        .ok_or_else(|| AppError::NotFound(format!("剧集 {series_id}")))
+pub async fn get_series_episodes(
+    state: State<'_, AppState>,
+    series_id: String,
+) -> AppResult<Series> {
+    if let Some(hit) = state.store.read().series(&series_id).cloned() {
+        return Ok(hit);
+    }
+    let proxy = state.store.read().settings.proxy.clone();
+    let series = series_service::resolver::resolve_series(&series_id, &proxy).await?;
+    series_service::registry::upsert_and_persist(&state, series.clone())?;
+    Ok(series)
 }
 
 /// 解析链接 / ID 为完整剧集档案并登记。
@@ -52,47 +60,5 @@ pub async fn get_series_extras(series_id: String) -> crate::domain::model::Serie
             log::warn!("[Series] 详情页附加信息取不到: {e}");
             Default::default()
         }
-    }
-}
-
-/// 从列表移除（不删本地文件）。
-#[tauri::command]
-pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
-    series_service::dismiss(&mut state.store.write(), &series_id)?;
-    persist(&state);
-    Ok(())
-}
-
-/// 恢复被移除的剧集。
-#[tauri::command]
-pub fn restore_dismissed_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
-    series_service::restore(&mut state.store.write(), &series_id)?;
-    persist(&state);
-    Ok(())
-}
-
-/// 已被移除的剧集数。
-#[tauri::command]
-pub fn dismissed_count(state: State<'_, AppState>) -> usize {
-    series_service::dismissed_list(&state.store.read()).len()
-}
-
-/// 清理没有任何分集记录的剧集档案。
-#[tauri::command]
-pub fn purge_empty_series(state: State<'_, AppState>) -> AppResult<usize> {
-    let mut data = state.store.write();
-    let before = data.series.len();
-    data.series.retain(|s| !s.episodes.is_empty());
-    let removed = before - data.series.len();
-    if removed > 0 {
-        data.save(&crate::store::paths::data_file())
-            .map_err(|e| AppError::StoreCorrupt(e.to_string()))?;
-    }
-    Ok(removed)
-}
-
-fn persist(state: &State<'_, AppState>) {
-    if let Err(e) = state.store.read().save(&crate::store::paths::data_file()) {
-        log::error!("[Series] 落盘失败: {e}");
     }
 }

@@ -58,12 +58,6 @@ pub async fn search_series(app: AppHandle, keyword: String) -> AppResult<sniff::
         .map_err(crate::error::AppError::Sniff)
 }
 
-/// 搜索窗口可见性（超时兜底时让用户自己操作）。
-#[tauri::command]
-pub fn set_search_window_visible(app: AppHandle, visible: bool) -> AppResult<()> {
-    sniff::window::set_visible(&app, visible).map_err(crate::error::AppError::Sniff)
-}
-
 /// 清洗 slug：只保留字母数字与连字符。
 fn sanitize_slug(input: &str, fallback: &str) -> String {
     let cleaned: String = input

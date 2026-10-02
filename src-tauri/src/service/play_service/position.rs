@@ -43,7 +43,9 @@ pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::Playbac
 }
 
 /// 从播放进度表里取每部剧最近一集，按时间倒序。
-fn history_of(map: &crate::domain::model::PlaybackMap) -> Vec<crate::domain::model::PlaybackHistoryItem> {
+fn history_of(
+    map: &crate::domain::model::PlaybackMap,
+) -> Vec<crate::domain::model::PlaybackHistoryItem> {
     use crate::domain::model::PlaybackHistoryItem;
 
     let mut items: Vec<PlaybackHistoryItem> = map
@@ -61,7 +63,7 @@ fn history_of(map: &crate::domain::model::PlaybackMap) -> Vec<crate::domain::mod
             })
         })
         .collect();
-    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
     items
 }
 
@@ -100,7 +102,10 @@ mod tests {
 
         let items = history_of(&map);
         assert_eq!(
-            items.iter().map(|i| i.series_id.as_str()).collect::<Vec<_>>(),
+            items
+                .iter()
+                .map(|i| i.series_id.as_str())
+                .collect::<Vec<_>>(),
             ["B", "C", "A"]
         );
     }

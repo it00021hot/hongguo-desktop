@@ -70,7 +70,7 @@ fn parse_esds(data: &[u8], start: usize, size: usize) -> Option<AudioFormat> {
     while p < end {
         let tag = data[p];
         p += 1;
-        let (len, used) = read_descriptor_len(data, p, end)?;
+        let (len, used) = read_descriptor_len(data, p)?;
         p += used;
         let body_end = (p + len).min(end);
 
@@ -99,7 +99,7 @@ fn parse_esds(data: &[u8], start: usize, size: usize) -> Option<AudioFormat> {
 }
 
 /// MPEG-4 描述符长度：每字节高位是续位，低 7 位是长度。
-fn read_descriptor_len(data: &[u8], p: usize, end: usize) -> Option<(usize, usize)> {
+fn read_descriptor_len(data: &[u8], p: usize) -> Option<(usize, usize)> {
     let mut len = 0usize;
     let mut used = 0usize;
     for _ in 0..4 {
@@ -107,7 +107,6 @@ fn read_descriptor_len(data: &[u8], p: usize, end: usize) -> Option<(usize, usiz
         used += 1;
         len = (len << 7) | (b & 0x7f) as usize;
         if b & 0x80 == 0 {
-            let _ = end;
             return Some((len, used));
         }
     }
@@ -262,17 +261,26 @@ mod tests {
     #[test]
     fn descriptor_len_single_byte() {
         let data = [0x03u8];
-        assert_eq!(read_descriptor_len(&data, 0, 1), Some((3, 1)));
+        assert_eq!(read_descriptor_len(&data, 0), Some((3, 1)));
     }
 
     #[test]
     fn descriptor_len_two_bytes() {
         let data = [0x81u8, 0x00u8];
-        assert_eq!(read_descriptor_len(&data, 0, 2), Some((128, 2)));
+        assert_eq!(read_descriptor_len(&data, 0), Some((128, 2)));
     }
 
     #[test]
     fn truncated_descriptor_returns_none() {
-        assert_eq!(read_descriptor_len(&[0x81], 0, 1), None);
+        assert_eq!(read_descriptor_len(&[0x81], 0), None);
+    }
+
+    #[test]
+    fn all_continuation_bytes_returns_none() {
+        // 描述符长度最多 4 字节，续位一直置 1 就是非法编码，不能无限读下去
+        assert_eq!(
+            read_descriptor_len(&[0x80, 0x80, 0x80, 0x80, 0x01], 0),
+            None
+        );
     }
 }

@@ -5,8 +5,8 @@ use tauri::State;
 use crate::app_state::AppState;
 use crate::domain::model::DownloadTask;
 
-/// 占用统计。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+/// 占用统计。只出不进。
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StorageUsage {
     /// 总字节
     pub bytes: u64,

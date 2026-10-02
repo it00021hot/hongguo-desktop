@@ -13,6 +13,6 @@ mod digest;
 mod md5_variant;
 
 pub use bits::{reverse_bits, rol32, ror32, ror64, u32, zigzag};
-pub use bytes::{be32, bxor, le32, read_u32_be, read_u32_le, xor_bytes};
+pub use bytes::{be32, bxor, le32, xor_bytes};
 pub use digest::{md5_hex_upper, md5_raw, sm3};
 pub use md5_variant::{get_iv, sum_md5};

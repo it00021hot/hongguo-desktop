@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "最小权限集：只放行本应用真正需要的能力。",
+  "description": "最小权限集：只放行本应用真正需要的能力。dialog / opener 由 Rust 侧 command 调插件，不走 JS IPC，故不需 ACL 授权。",
   "windows": ["main", "sniff"],
   "permissions": [
     "core:default",
@@ -13,10 +13,6 @@
     "core:webview:allow-create-webview-window",
     "core:webview:allow-webview-close",
     "core:webview:allow-set-webview-focus",
-    "core:event:default",
-    "dialog:allow-open",
-    "opener:allow-open-url",
-    "opener:allow-open-path",
-    "opener:allow-reveal-item-in-dir"
+    "core:event:default"
   ]
 }

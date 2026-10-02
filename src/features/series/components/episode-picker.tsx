@@ -101,19 +101,19 @@ export function EpisodePicker({ episodes, selected, onChange }: Props) {
             <Button
               size="sm"
               variant="ghost"
+              // 把当前勾选回填成区间串，不是复制到剪贴板
               onClick={() => setRangeText(formatRange(selected))}
-              title={t('common.copy')}
+              title={t('download.formatSelection')}
+              aria-label={t('download.formatSelection')}
             >
               <Check className="size-4" />
             </Button>
           )}
         </div>
-        {rangeError && (
-          <p className="text-destructive text-xs">{t('download.rangeInvalid')}</p>
-        )}
+        {rangeError && <p className="text-destructive text-xs">{t('download.rangeInvalid')}</p>}
       </div>
 
-      <div className="scrollbar-thin max-h-64 overflow-y-auto rounded-md border p-2">
+      <div className="max-h-64 scrollbar-thin overflow-y-auto rounded-md border p-2">
         <div className="grid grid-cols-6 gap-1 sm:grid-cols-8 md:grid-cols-10">
           {episodes.map((ep) => {
             const checked = selectedSet.has(ep.vidIndex);

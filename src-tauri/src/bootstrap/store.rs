@@ -9,7 +9,9 @@ pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
     let state = app.state::<AppState>();
     let path = crate::store::paths::data_file();
     let data = crate::store::DataStore::load(&path);
-    let settings = crate::service::settings_service::normalize(data.settings.clone());
+    // 启动时读出来的设置必须过一遍归一化：老版本可能存了越界的并发数
+    let settings = crate::service::settings_service::normalize(data.settings.clone())
+        .map_err(|e| tauri::Error::Anyhow(e.into()))?;
     let limit = settings.max_concurrency;
 
     *state.store.write() = data;

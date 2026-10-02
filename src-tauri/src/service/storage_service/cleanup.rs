@@ -14,7 +14,7 @@ pub fn delete_series(state: &State<'_, AppState>, series_id: &str) -> AppResult<
     let mut removed_ids: Vec<String> = Vec::new();
     for t in tasks.iter().filter(|t| t.is_done()) {
         let p = std::path::Path::new(&t.file_path);
-        if p.exists() && std::fs::remove_file(p).is_ok() {
+        if std::fs::remove_file(p).is_ok() {
             n += 1;
         }
         // 记录无条件跟着摘：本函数跑完，这些集在磁盘上已经没有文件了。
@@ -39,11 +39,7 @@ pub fn delete_episode(
     match path {
         Some(p) => {
             let path = std::path::Path::new(&p);
-            let ok = if path.exists() {
-                std::fs::remove_file(path).is_ok()
-            } else {
-                false
-            };
+            let ok = std::fs::remove_file(path).is_ok();
             // 记录必须跟文件一起没。留着 completed 记录，播放会照它去开本地文件，
             // 而文件已经不在 → 直接「媒体处理失败」，回落不到在线流。
             // 文件本来就缺（记录早发霉）时同样要摘，那是自愈。

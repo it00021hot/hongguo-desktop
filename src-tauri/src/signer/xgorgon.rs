@@ -152,7 +152,7 @@ mod tests {
             device.iter().map(|(k, v)| (*k, (*v).to_string())).collect();
         params.push(("ts", "1700000000".into()));
         params.push(("_rticket", "1700000000123".into()));
-        let query = crate::signer::encode_query(&params);
+        let query = crate::signer::ticket::encode_query(&params);
 
         let got = x_gorgon(&query, Some(br#"{"a":1}"#), 1_700_000_000, 0x1234);
         assert_eq!(got, "84043412400156f421453230d5ff1364e71df6105a4612699380");

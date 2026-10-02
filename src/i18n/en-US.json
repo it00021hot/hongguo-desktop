@@ -10,11 +10,12 @@
     "tasks": { "title": "Tasks", "description": "Queue, progress and merge" },
     "merge": { "title": "Merge", "description": "Combine episodes into one file" },
     "storage": { "title": "Storage", "description": "Usage stats and cleanup" },
-    "settings": { "title": "Settings", "description": "Directory, naming, concurrency, proxy" }
+    "settings": { "title": "Settings", "description": "Directory, naming, concurrency, proxy" },
+    "collapse": "Collapse",
+    "expand": "Expand"
   },
   "browse": {
     "category": "Category",
-    "genre": "Genre",
     "allGenres": "All genres",
     "empty": "Nothing here yet",
     "loadFailed": "Failed to load",
@@ -26,7 +27,10 @@
     "submit": "Search",
     "exit": "Exit search",
     "resultCount": "{total} found",
-    "empty": "No results, try another keyword"
+    "empty": "No results, try another keyword",
+    "langLabel": "Language",
+    "langZh": "Simplified Chinese",
+    "langEn": "English"
   },
   "download": {
     "inputLabel": "Share link or series ID",
@@ -42,21 +46,20 @@
     "rangeLabel": "Range syntax",
     "rangePlaceholder": "e.g. 1-50 or 1-10, 25, 30-45",
     "rangeInvalid": "Could not parse the range",
+    "formatSelection": "Format selection",
     "selected": "{count} selected",
     "submit": "Start download",
     "submitting": "Queued {count} tasks",
     "playNow": "Play now"
   },
   "tasks": {
-    "title": "Downloads",
     "queueStatus": "Running {running} · Pending {pending} · Done {completed} · Failed {failed}",
     "concurrency": "Concurrency {active}/{limit}",
     "startAll": "Start all",
     "pauseAll": "Pause all",
     "retryAll": "Retry failed",
     "selectFailed": "Select failed",
-    "rescan": "Rescan folder",
-    "merge": "Merge series",
+    "columns": { "status": "Status", "size": "Size" },
     "empty": "No download tasks yet",
     "status": {
       "pending": "Pending",
@@ -71,7 +74,6 @@
       "openFolder": "Open folder",
       "remove": "Delete"
     },
-    "deleteWithFiles": "Also delete local files",
     "freeable": "Frees {size}",
     "removeConfirm": "Delete {count} task(s)",
     "removeSummary": "{done} of them are downloaded (about {size}).",
@@ -79,25 +81,19 @@
     "removeFilesWithSize": "Also delete local files (frees about {size})",
     "removeKeepHint": "Unchecked, only the task records are removed; the video files stay on disk for you to manage.",
     "removeAndFiles": "Delete tasks and files",
-    "removeOnly": "Delete records only",
-    "removeFilesConfirm": "Deleting tasks will also remove local files. This cannot be undone."
+    "removeOnly": "Delete records only"
   },
   "player": {
-    "title": "Player",
     "autoNext": "Auto next episode",
     "autoDelete": "Delete after watching",
     "autoDeleteDone": "Episode {index} finished, local file deleted",
-    "downloadUnfinished": "Download remaining",
-    "mergeExport": "Merge full series",
-    "switchSeries": "Switch series",
     "seriesSearch": "Filter by name",
+    "noSeries": "No series selected",
     "epShort": "Ep {index}",
-    "lastWatchedAt": "Last watched: episode {index}",
     "continueWatching": "Continue watching",
     "historyEmpty": "Nothing played yet",
     "historyHint": "Open a drama from Browse or search and it will show up here",
     "play": "Play",
-    "pause": "Pause",
     "skipBack": "Back 5 seconds",
     "skipForward": "Forward 5 seconds",
     "volume": "Volume",
@@ -114,12 +110,12 @@
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
     "pictureInPicture": "Picture in picture",
-    "noDownloaded": "Nothing downloaded yet",
-    "notDownloaded": "This episode is not downloaded",
-    "downloadAndPlay": "Download and play",
-    "playOnline": "Stream",
-    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ previous/next",
-    "positionSaved": "Playback position saved"
+    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ previous/next"
+  },
+  "series": {
+    "loadFailed": "Failed to load episodes",
+    "resolveAgain": "Resolve again",
+    "noEpisodes": "No episode list for this series yet"
   },
   "merge": {
     "title": "Merge",
@@ -129,13 +125,16 @@
     "taskList": "Merge tasks",
     "quick": "Quick merge",
     "quickDesc": "Concatenate as-is, no re-encoding, lossless and fast",
+    "quickUnavailable": "Episodes use different codecs, quick merge unavailable",
     "compat": "Compatible merge",
     "compatDesc": "Transcode to H.264/AAC for any player (slower)",
     "outputName": "Output name",
+    "freeSpace": "{size} free",
     "noDownloads": "No downloaded episodes",
-    "insufficientSpace": "Not enough disk space",
+    "insufficientSpace": "Not enough free disk space",
+    "codecMismatch": "Episode {episode} has a different codec; quick merge would corrupt the file — use compat merge",
     "start": "Start merge",
-    "empty": "No merge tasks yet",
+    "started": "Merge queued",
     "status": {
       "pending": "Pending",
       "running": "Merging",
@@ -149,12 +148,11 @@
     "files": "files",
     "bySeries": "Clean up by series",
     "keepRecord": "Deleting files does not remove the list entry",
-    "freed": "deleted",
+    "freedFiles": "{count} files deleted",
     "deleteAllConfirm": "Delete everything downloaded?",
     "deleteAllDesc": "All downloaded files will be removed. Series records are kept. This cannot be undone."
   },
   "settings": {
-    "title": "Settings",
     "downloadDir": "Download folder",
     "downloadDirDesc": "Files go to <folder>/红果短剧/<title>/",
     "choose": "Choose folder",
@@ -168,8 +166,6 @@
     "proxySystem": "Follow system",
     "proxyManual": "Manual",
     "proxyDirect": "Direct",
-    "proxyUrl": "Proxy URL",
-    "proxyPresets": "Common ports",
     "testProxy": "Test connection",
     "testing": "Testing…",
     "testOk": "Connected in {ms} ms",
@@ -177,10 +173,10 @@
     "playback": "Playback",
     "autoDelete": "Delete after watching",
     "autoNext": "Auto next episode",
-    "theme": "Theme",
     "themeAuto": "System",
     "themeLight": "Light",
     "themeDark": "Dark",
+    "save": "Save",
     "saved": "Settings saved",
     "storage": "Disk usage",
     "storageUsage": "{size} · {files} files",
@@ -204,18 +200,20 @@
     "sniff": "Browser sniffing failed",
     "invalidArgs": "Invalid arguments",
     "notFound": "Not found",
-    "internal": "Internal error"
+    "cancelled": "Operation cancelled",
+    "internal": "Internal error",
+    "unknownCommand": "Call to {command} failed"
   },
   "common": {
     "confirm": "Confirm",
     "cancel": "Cancel",
     "close": "Close",
-    "retry": "Retry",
     "delete": "Delete",
     "loading": "Loading…",
     "empty": "No data",
-    "copy": "Copy",
-    "copied": "Copied",
-    "toggleTheme": "Toggle theme"
+    "toggleTheme": "Toggle theme",
+    "episodeCount": "{count} episodes",
+    "progress": "Progress",
+    "skipToContent": "Skip to main content"
   }
 }

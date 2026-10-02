@@ -34,22 +34,6 @@ pub fn ensure(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 显示 / 隐藏窗口（超时兜底时让用户自己操作）。
-pub fn set_visible(app: &AppHandle, visible: bool) -> Result<(), String> {
-    ensure(app)?;
-    let window = app
-        .get_webview_window(LABEL)
-        .ok_or_else(|| "嗅探窗口未创建".to_string())?;
-
-    if visible {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
-    } else {
-        window.hide().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// 在窗口里执行脚本并取回 JSON 结果。
 ///
 /// `eval_with_callback` 把求值结果序列化成 JSON 字符串传给回调。

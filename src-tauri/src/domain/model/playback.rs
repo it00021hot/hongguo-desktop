@@ -28,11 +28,6 @@ impl PlaybackPosition {
         }
     }
 
-    /// 刷新时间戳。
-    pub fn touch(&mut self) {
-        self.updated_at = chrono::Utc::now().timestamp_millis();
-    }
-
     /// 是否已接近片尾（剩余不足 10 秒或已看完 95%），此时不该续播。
     pub fn is_near_end(&self) -> bool {
         if self.duration > 0.0 && self.current_time / self.duration > 0.95 {
@@ -92,12 +87,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn position_touch_updates_timestamp() {
-        let mut p = PlaybackPosition::new(10.0, 100.0);
-        let before = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        p.touch();
-        assert!(p.updated_at >= before);
+    fn new_records_current_timestamp() {
+        // 续播进度按 updated_at 排序，构造时必须打上当前时间戳
+        let before = chrono::Utc::now().timestamp_millis();
+        let p = PlaybackPosition::new(10.0, 100.0);
+        assert!(p.updated_at >= before, "updated_at 应在构造时刷新");
     }
 
     #[test]

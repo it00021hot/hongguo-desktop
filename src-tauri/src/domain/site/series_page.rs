@@ -69,7 +69,9 @@ pub fn cover_from_html(html: &str) -> Option<String> {
 pub fn is_renderable_cover(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     let path = lower.split('?').next().unwrap_or(&lower);
-    path.ends_with(".webp") || path.ends_with(".png") || path.ends_with(".jpg")
+    path.ends_with(".webp")
+        || path.ends_with(".png")
+        || path.ends_with(".jpg")
         || path.ends_with(".jpeg")
 }
 
@@ -122,9 +124,10 @@ pub fn recommendations_from_html(html: &str) -> Vec<crate::domain::model::Recomm
     };
     let after = &segment[list_start..];
 
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(
-        &format!("{{\"videoList\":{}}}", take_array(after)),
-    ) else {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&format!(
+        "{{\"videoList\":{}}}",
+        take_array(after)
+    )) else {
         return Vec::new();
     };
     let Some(items) = value["videoList"].as_array() else {
@@ -225,7 +228,10 @@ mod tests {
     #[test]
     fn reads_intro_from_embedded_json() {
         let html = r#"{"series_intro":"前世是炮灰闺蜜，一朝重生。\n她绑定系统。"}"#;
-        assert_eq!(intro_from_html(html), "前世是炮灰闺蜜，一朝重生。 她绑定系统。");
+        assert_eq!(
+            intro_from_html(html),
+            "前世是炮灰闺蜜，一朝重生。 她绑定系统。"
+        );
     }
 
     #[test]
@@ -247,7 +253,10 @@ mod tests {
 
     #[test]
     fn reads_recommendations_from_the_real_escaping() {
-        let html = format!(r#"&quot;recommendations&quot;:{{{},&quot;seriesDetail&quot;:{{}}}}"#, REAL_ESCAPED);
+        let html = format!(
+            r#"&quot;recommendations&quot;:{{{},&quot;seriesDetail&quot;:{{}}}}"#,
+            REAL_ESCAPED
+        );
         let items = recommendations_from_html(&html);
         assert_eq!(items.len(), 1, "真实转义形态应能解析出推荐");
         assert_eq!(items[0].series_id, "1");

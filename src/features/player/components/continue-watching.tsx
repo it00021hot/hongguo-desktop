@@ -56,7 +56,7 @@ export function ContinueWatching() {
           <button
             key={item.seriesId}
             type="button"
-            className="group bg-card overflow-hidden rounded-lg border text-left transition-colors hover:border-foreground/30"
+            className="group bg-card hover:border-foreground/30 overflow-hidden rounded-lg border text-left transition-colors"
             onClick={() => {
               setTarget(item.seriesId, item.vidIndex);
               void navigate({ to: '/player' });

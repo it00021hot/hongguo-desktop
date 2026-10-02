@@ -24,13 +24,7 @@ interface Props {
  * 与下载页共用同一个选集器：几百集的剧不可能手点，
  * 「全选 / 区间语法 / 后 30 集」这些能力必须在这里也在。
  */
-export function DownloadSheet({
-  seriesId,
-  episodes,
-  defaultSelected,
-  open,
-  onOpenChange,
-}: Props) {
+export function DownloadSheet({ seriesId, episodes, defaultSelected, open, onOpenChange }: Props) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>(defaultSelected);
   const { start } = useDownloadActions();
@@ -52,7 +46,7 @@ export function DownloadSheet({
           void navigate({ to: '/tasks' });
         },
         onError: (e) => toast.error(e.message),
-      }
+      },
     );
   };
 

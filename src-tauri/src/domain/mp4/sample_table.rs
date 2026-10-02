@@ -17,6 +17,14 @@ pub struct TrackInfo {
     pub is_video: bool,
     /// 编码四字符码，如 `hvc1` / `avc1` / `mp4a`
     pub codec: String,
+    /// 视频编码分辨率（来自 VisualSampleEntry），音频轨为 0
+    pub width: u32,
+    /// 视频编码分辨率（来自 VisualSampleEntry），音频轨为 0
+    pub height: u32,
+    /// 音频声道数（来自 AudioSampleEntry），视频轨为 0
+    pub channels: u16,
+    /// 音频采样率 Hz（AudioSampleEntry 的 16.16 定点取整数部分），视频轨为 0
+    pub sample_rate: u32,
     /// 样本总数
     pub sample_count: u32,
     /// 每个样本的 [偏移, 大小]
@@ -37,13 +45,6 @@ pub struct TrackInfo {
     pub wide_offsets: bool,
     /// `stsc` 条目：`(first_chunk, samples_per_chunk)`，已按 first_chunk 升序
     pub stsc: Vec<(u32, u32)>,
-}
-
-impl TrackInfo {
-    /// 样本总字节数。
-    pub fn total_size(&self) -> u64 {
-        self.samples.iter().map(|(_, s)| s).sum()
-    }
 }
 
 /// 收集轨道信息。
@@ -109,7 +110,7 @@ fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
     let stbl_end = stbl.start + stbl.size;
     for b in parse_boxes(data, stbl.start, stbl_end) {
         match b.kind_str().as_str() {
-            "stsd" => info.codec = read_codec(data, b.start, b.size),
+            "stsd" => read_stsd(data, b.start, b.size, &mut info),
             "stsz" => read_stsz(data, b.start, b.size, &mut info),
             "stsc" => chunk_map::read_stsc(data, b.start, b.size, &mut info),
             "stco" => {
@@ -130,14 +131,36 @@ fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
     Some(info)
 }
 
-/// 从 `stsd` 读编码四字符码。
-fn read_codec(data: &[u8], start: usize, size: usize) -> String {
-    // 结构：version+flags(4) + entry_count(4) + [size(4) + format(4) + ...]
-    // 所以 format 在载荷偏移 12 处（4+4+4）
+/// 从 `stsd` 读编码四字符码与编码参数。
+///
+/// 布局：`version+flags(4) + entry_count(4) + entry[size(4) + format(4) + ...]`，
+/// 所以四字符码在载荷偏移 12 处，entry 载荷起点是 `start+16`。宽度/分辨率按
+/// VisualSampleEntry 读，声道/采样率按 AudioSampleEntry 读——两种 entry 的
+/// 固定字段位置不同，混着读会读出别的字段的值。
+///
+/// 读不到就留 0：平台偶发的畸形 box 不该让整条轨道解析失败。
+fn read_stsd(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     if start + 16 > start + size {
-        return String::new();
+        return;
     }
-    String::from_utf8_lossy(&data[start + 12..start + 16]).to_string()
+    info.codec = String::from_utf8_lossy(&data[start + 12..start + 16]).to_string();
+
+    if info.is_video {
+        // entry+24 是 width、entry+26 是 height
+        if start + 44 <= start + size {
+            info.width = u16::from_be_bytes([data[start + 40], data[start + 41]]) as u32;
+            info.height = u16::from_be_bytes([data[start + 42], data[start + 43]]) as u32;
+        }
+    } else {
+        // entry+16 是 channelcount
+        if start + 34 <= start + size {
+            info.channels = u16::from_be_bytes([data[start + 32], data[start + 33]]);
+        }
+        // entry+24 是 16.16 定点的 samplerate，整数部分在高 16 位
+        if start + 42 <= start + size {
+            info.sample_rate = u16::from_be_bytes([data[start + 40], data[start + 41]]) as u32;
+        }
+    }
 }
 
 /// 从 `stsz` 读每个样本大小。

@@ -173,7 +173,7 @@ impl DownloadScheduler {
 
 /// 判断错误是不是「用户取消」。
 fn is_cancelled(e: &AppError) -> bool {
-    matches!(e, AppError::Io(ref m) if m == "已取消")
+    matches!(e, AppError::Cancelled)
 }
 
 /// 一集的完整流程：取流地址 → 下载 → 解密。
@@ -220,13 +220,16 @@ async fn run_one(
     let app = app.clone();
     let on_progress = move |downloaded: u64, total: u64| {
         queue.update_progress(&task_id, downloaded, total);
+        // 百分比只有 [`DownloadTask::percent`] 一个口径：调度器自己再算一遍
+        // 的话，clamp 之类的修正迟早会只落在一处
+        let percent = queue.get(&task_id).map(|t| t.percent()).unwrap_or(0.0);
         let _ = app.emit(
             names::DOWNLOAD_PROGRESS,
             &serde_json::json!({
                 "id": task_id,
                 "downloaded": downloaded,
                 "total": total,
-                "percent": if total == 0 { 0.0 } else { downloaded as f64 / total as f64 * 100.0 },
+                "percent": percent,
             }),
         );
     };
@@ -241,12 +244,9 @@ async fn run_one(
 
 /// 把队列写回磁盘。
 fn persist(state: &AppState) {
-    let tasks = state.queue().all();
-    let mut data = state.store.write();
-    data.tasks = tasks;
-    if let Err(e) = data.save(&crate::store::paths::data_file()) {
-        log::error!("[Download] 落盘失败: {e}");
-    }
+    // 调度器跑在后台任务里，没有调用方能接住错误；
+    // 落盘失败已由 `persist_tasks` 记进日志，这里只需让它在这里终止。
+    let _ = crate::store::persist_tasks(state, "Download");
 }
 
 #[cfg(test)]
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn cancelled_error_is_recognized() {
-        assert!(is_cancelled(&AppError::Io("已取消".into())));
+        assert!(is_cancelled(&AppError::Cancelled));
         assert!(!is_cancelled(&AppError::Io("磁盘满了".into())));
         assert!(!is_cancelled(&AppError::Network("超时".into())));
     }

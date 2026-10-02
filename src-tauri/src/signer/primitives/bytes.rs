@@ -12,18 +12,6 @@ pub fn be32(value: u32) -> [u8; 4] {
     value.to_be_bytes()
 }
 
-/// 从字节数组读小端 u32。
-#[inline]
-pub fn read_u32_le(bytes: &[u8]) -> u32 {
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
-
-/// 从字节数组读大端 u32。
-#[inline]
-pub fn read_u32_be(bytes: &[u8]) -> u32 {
-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-}
-
 /// 逐字节异或，长度取较短者。
 pub fn bxor(a: &[u8], b: &[u8]) -> Vec<u8> {
     let n = a.len().min(b.len());
@@ -52,12 +40,6 @@ mod tests {
     fn le32_matches_js() {
         assert_eq!(le32(0x1234_5678), [0x78, 0x56, 0x34, 0x12]);
         assert_eq!(be32(0x1234_5678), [0x12, 0x34, 0x56, 0x78]);
-    }
-
-    #[test]
-    fn read_helpers_roundtrip() {
-        assert_eq!(read_u32_le(&le32(0xdead_beef)), 0xdead_beef);
-        assert_eq!(read_u32_be(&be32(0xdead_beef)), 0xdead_beef);
     }
 
     #[test]

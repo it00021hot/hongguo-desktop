@@ -8,7 +8,7 @@
 
 **Browse · Search · Batch Download · Stream · Merge · Clean Up**
 
-Pure-Rust decryption core · No external ffmpeg · Watermark-free · Stream without touching disk
+Pure-Rust decryption core · Installer bundles no external binaries · Watermark-free · Stream without touching disk
 
 [中文](./README.md) · [License](./LICENSE) · [NOTICE](./NOTICE)
 
@@ -23,8 +23,14 @@ Fanqie Novel / novelread).
 
 This version is a **full rewrite** of the Electron + Node.js original into **Tauri 2 + Rust**.
 It embeds the ByteDance short-drama API protocol and a **native CENC-AES-CTR streaming
-decryption engine**. All media processing is done by pure-Rust crates — **no FFmpeg or any
-other external binary is shipped**, cutting the installer from ~158 MB down to the ~70 MB range.
+decryption engine**. The installer **no longer ships FFmpeg or any other external binary**,
+cutting it from ~158 MB down to the ~70 MB range.
+
+**Decryption, demuxing and merging (remux) are done entirely by pure-Rust crates, with zero
+external dependencies.** The one exception is **HEVC → H.264 transcoding**, which has an
+optional accelerator: if ffmpeg happens to be installed on the system, the app switches to it
+automatically (NVENC / QSV / AMF / MF hardware encoders, close to real-time); otherwise it
+falls back to the pure-Rust software path. ffmpeg is always optional — never a prerequisite.
 
 > **Attribution**: This is a **modified version** of
 > [327044572/hongguo-downloader](https://github.com/327044572/hongguo-downloader)
@@ -37,22 +43,22 @@ other external binary is shipped**, cutting the installer from ~158 MB down to t
 
 ### Desktop
 
-| Layer | Choice |
-|---|---|
-| Shell | [Tauri 2](https://tauri.app) 2.12+ (Rust / system webview) |
-| Core | Rust 2021 · tokio · reqwest (rustls) |
+| Layer  | Choice                                                             |
+| ------ | ------------------------------------------------------------------ |
+| Shell  | [Tauri 2](https://tauri.app) 2.12+ (Rust / system webview)         |
+| Core   | Rust 2021 · tokio · reqwest (rustls)                               |
 | Codecs | `rusty_h265` `rusty_h264` `rusty_aac` `muxide` — **all pure Rust** |
 
 ### Frontend
 
-| Layer | Choice |
-|---|---|
-| Router | TanStack Router 1.168 (file-based) |
-| Server state | TanStack Query 5.99 |
-| Tables | TanStack Table 8.21 |
-| Client state | Zustand 5.0 |
-| UI | shadcn/ui (Radix UI) + Tailwind CSS v4 |
-| Language | TypeScript 6 · React 19 · Vite 8 |
+| Layer        | Choice                                 |
+| ------------ | -------------------------------------- |
+| Router       | TanStack Router 1.168 (file-based)     |
+| Server state | TanStack Query 5.99                    |
+| Tables       | TanStack Table 8.21                    |
+| Client state | Zustand 5.0                            |
+| UI           | shadcn/ui (Radix UI) + Tailwind CSS v4 |
+| Language     | TypeScript 6 · React 19 · Vite 8       |
 
 ---
 
@@ -107,6 +113,8 @@ other external binary is shipped**, cutting the installer from ~158 MB down to t
 
 - Download folder, naming template, max concurrency (applied immediately, no restart)
 - Proxy: follow system / manual (with common port presets) / force direct, with a connection test
+- **Transcode backend**: a live badge shows whether you are on pure-Rust software, ffmpeg
+  hardware, or ffmpeg software encoding
 - Bilingual UI (Chinese / English)
 
 ---
@@ -132,25 +140,17 @@ pnpm tauri:dev        # Vite + Tauri dev mode
 pnpm tauri:build      # bundles NSIS / DMG
 ```
 
-> **No FFmpeg setup required** — media processing is now pure Rust.
+> **No FFmpeg setup required** — decryption, demuxing and merging are pure Rust with zero
+> external dependencies. If ffmpeg happens to be installed, only the **HEVC → H.264 transcode**
+> step switches to it for speed (see "Compatibility mode" above); nothing breaks without it.
 
 ### Quality checks
 
 ```bash
-make test-rust        # cargo test (305 cases)
-make test             # vitest (28 cases)
-make lint             # clippy + ESLint + Prettier
+make test-rust        # cargo test
+make test             # vitest
+make lint             # ESLint + Prettier + cargo clippy (any failure fails the target)
 make typecheck        # tsc --noEmit
-```
-
-### Signature probe
-
-When a signature breaks, the server returns **HTTP 200 with a 0-byte body** (not an error
-status). Diagnose by byte count, not status code:
-
-```bash
-cd src-tauri
-cargo run --bin probe_api -- <series_id>
 ```
 
 ---
@@ -165,12 +165,17 @@ hongguo-downloader-tauri/
 │   ├── service/         # Application services (mirrors commands/)
 │   ├── commands/        # Thin Tauri command layer
 │   ├── protocol/        # Custom URI schemes (Range streaming)
-│   ├── media/           # Pure-Rust codecs
-│   └── sniff/           # Headless browser sniffing
+│   ├── media/           # Codecs (pure-Rust software + optional ffmpeg acceleration)
+│   ├── sniff/           # Headless browser sniffing
+│   ├── bootstrap/       # Startup wiring
+│   └── store/           # On-disk task archive
 └── src/
-    ├── routes/          # Six route pages
+    ├── routes/          # Seven route pages
     ├── features/        # Split by business domain
     ├── lib/             # IPC wrappers, schemas, stores
+    ├── hooks/           # Shared hooks
+    ├── i18n/            # Chinese / English message resources
+    ├── styles/          # Global styles
     └── components/      # shadcn/ui + layout
 ```
 
@@ -184,7 +189,8 @@ The official app API requires five signature headers per request: `x-gorgon`, `x
 `x-ladon`, `x-helios`, `x-medusa`. **When a signature is missing or wrong the server doesn't
 error — it returns HTTP 200 with a 0-byte body.** Checking only the status code will mislead you.
 
-Run `cargo run --bin probe_api` and inspect the **byte counts** per endpoint.
+Check the **response body size**, not the status code; for per-endpoint detail, launch the app
+with `RUST_LOG=debug`.
 
 ### Black screen with audio
 
@@ -205,4 +211,3 @@ one-for-one. Change any of them and signatures will be silently dropped.
 
 This project is a modified version of the upstream project; see
 [NOTICE](./NOTICE) and [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
-

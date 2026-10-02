@@ -1,9 +1,19 @@
 import { useCallback } from 'react';
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { app, browse, download, merge, play, search, series, settings, storage, transcode } from './ipc/commands';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  browse,
+  download,
+  merge,
+  play,
+  search,
+  series,
+  settings,
+  storage,
+  transcode,
+} from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
-import type { DownloadProgress, DownloadTask, QueueStatus } from './schema';
+import type { DownloadProgress, DownloadTask, MergeMode, QueueStatus } from './schema';
 
 /**
  * TanStack Query 的 key 工厂。
@@ -11,16 +21,16 @@ import type { DownloadProgress, DownloadTask, QueueStatus } from './schema';
  * 所有 key 必须从这里出，不要在组件里手写字符串——否则失效（invalidate）
  * 时容易漏掉某个 key，导致界面不刷新。
  */
-export const keys = {
-  appInfo: ['app-info'] as const,
+const keys = {
   settings: ['settings'] as const,
-  proxyStatus: ['proxy-status'] as const,
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
+  seriesExtras: (id: string) => ['series-extras', id] as const,
   playbackHistory: ['playback-history'] as const,
   tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,
+  mergePreflight: (id: string) => ['merge-preflight', id] as const,
   storageUsage: ['storage-usage'] as const,
   capability: ['decode-capability'] as const,
   browseCategories: ['browse-categories'] as const,
@@ -29,11 +39,7 @@ export const keys = {
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
 } satisfies Record<string, unknown>;
 
-// ---------------------------------------------------------------- 应用与设置
-
-export function useAppInfo() {
-  return useQuery({ queryKey: keys.appInfo, queryFn: app.getInfo, staleTime: Infinity });
-}
+// ---------------------------------------------------------------- 设置
 
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: settings.get });
@@ -45,14 +51,9 @@ export function useSaveSettings() {
     mutationFn: settings.save,
     onSuccess: (saved) => {
       qc.setQueryData(keys.settings, saved);
-      void qc.invalidateQueries({ queryKey: keys.proxyStatus });
       void qc.invalidateQueries({ queryKey: keys.queueStatus });
     },
   });
-}
-
-export function useProxyStatus() {
-  return useQuery({ queryKey: keys.proxyStatus, queryFn: settings.proxyStatus });
 }
 
 export function useTestProxy() {
@@ -75,28 +76,21 @@ export function useSeriesEpisodes(seriesId: string | null) {
 
 export function useSeriesExtras(seriesId: string) {
   return useQuery({
-    queryKey: ['series-extras', seriesId] as const,
+    queryKey: keys.seriesExtras(seriesId),
     queryFn: () => series.extras(seriesId),
     enabled: seriesId !== '',
     staleTime: 10 * 60_000,
   });
 }
 
-export function useRemoveSeries() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: series.remove,
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.seriesList });
-      void qc.invalidateQueries({ queryKey: keys.tasks });
-    },
-  });
-}
-
 // ---------------------------------------------------------------- 浏览与搜索
 
 export function useBrowseCategories() {
-  return useQuery({ queryKey: keys.browseCategories, queryFn: browse.categories, staleTime: Infinity });
+  return useQuery({
+    queryKey: keys.browseCategories,
+    queryFn: browse.categories,
+    staleTime: Infinity,
+  });
 }
 
 export function useBrowseList(category: string, genre: string, page: number) {
@@ -132,7 +126,28 @@ export function useResolveSeries() {
 
 // ---------------------------------------------------------------- 下载
 
+/**
+ * 下载任务列表。
+ *
+ * 进度事件每 500ms 一次，失效查询等于整表重拉一遍。这里就地合并进缓存：
+ * 任务集合变化仍然由 `useDownloadEvents` 触发重新请求，
+ * 纯进度更新只改对应任务的那两个字段，缓存里也只有一份真相。
+ */
 export function useDownloadTasks() {
+  const qc = useQueryClient();
+
+  const applyProgress = useCallback(
+    (p: DownloadProgress) => {
+      qc.setQueryData<DownloadTask[]>(keys.tasks, (tasks) =>
+        tasks?.map((task) =>
+          task.id === p.id ? { ...task, downloaded: p.downloaded, total: p.total } : task,
+        ),
+      );
+    },
+    [qc],
+  );
+  useEvent<DownloadProgress>(EVENTS.downloadProgress, applyProgress);
+
   return useQuery({ queryKey: keys.tasks, queryFn: download.tasks });
 }
 
@@ -148,40 +163,40 @@ export function useDownloadActions() {
   };
 
   return {
-    start: useMutation({ mutationFn: ({ seriesId, vids }: { seriesId: string; vids: number[] }) => download.start(seriesId, vids), onSuccess: invalidate }),
-    single: useMutation({ mutationFn: ({ seriesId, vidIndex }: { seriesId: string; vidIndex: number }) => download.single(seriesId, vidIndex), onSuccess: invalidate }),
+    start: useMutation({
+      mutationFn: ({ seriesId, vids }: { seriesId: string; vids: number[] }) =>
+        download.start(seriesId, vids),
+      onSuccess: invalidate,
+    }),
     stop: useMutation({ mutationFn: download.stop, onSuccess: invalidate }),
     retry: useMutation({ mutationFn: download.retry, onSuccess: invalidate }),
     retryMany: useMutation({ mutationFn: download.retryMany, onSuccess: invalidate }),
-    remove: useMutation({ mutationFn: ({ ids, withFiles }: { ids: string[]; withFiles: boolean }) => download.remove(ids, withFiles), onSuccess: invalidate }),
-    rescan: useMutation({ mutationFn: download.rescan, onSuccess: invalidate }),
+    remove: useMutation({
+      mutationFn: ({ ids, withFiles }: { ids: string[]; withFiles: boolean }) =>
+        download.remove(ids, withFiles),
+      onSuccess: invalidate,
+    }),
     pauseAll: useMutation({ mutationFn: download.pauseAll, onSuccess: invalidate }),
     resumeAll: useMutation({ mutationFn: download.resumeAll, onSuccess: invalidate }),
   };
 }
 
 /**
- * 订阅下载事件。
+ * 订阅下载任务的结构性事件。
  *
- * 进度事件很密集，这里只在「任务集合结构变化」时失效列表，
- * 纯进度更新由调用方本地维护，避免每秒刷一次整表。
+ * 进度事件不在这里：它由 `useDownloadTasks` 自己去合并，
+ * 在根布局再订一份等于同一事件被处理两遍。
  *
  * 注意：事件名数量固定，所以这里逐个显式调用 `useEvent`，
  * 不能放进循环——React Hooks 规则禁止在条件或循环里调 Hook。
  */
-export function useDownloadEvents(onProgress?: (p: DownloadProgress) => void) {
+export function useDownloadEvents() {
   const qc = useQueryClient();
   const invalidate = useCallback(() => {
     void qc.invalidateQueries({ queryKey: keys.tasks });
     void qc.invalidateQueries({ queryKey: keys.queueStatus });
   }, [qc]);
 
-  const handleProgress = useCallback(
-    (p: DownloadProgress) => onProgress?.(p),
-    [onProgress],
-  );
-
-  useEvent<DownloadProgress>(EVENTS.downloadProgress, handleProgress);
   useEvent<DownloadTask | null>(EVENTS.downloadTaskAdded, invalidate);
   useEvent<DownloadTask | null>(EVENTS.downloadCompleted, invalidate);
   useEvent<DownloadTask | null>(EVENTS.downloadFailed, invalidate);
@@ -197,7 +212,7 @@ export function useMergeTasks() {
 
 export function useMergePreflight(seriesId: string | null) {
   return useQuery({
-    queryKey: ['merge-preflight', seriesId],
+    queryKey: keys.mergePreflight(seriesId ?? ''),
     queryFn: () => merge.preflight(seriesId!),
     enabled: seriesId !== null,
   });
@@ -209,12 +224,17 @@ export function useMergeActions() {
 
   return {
     start: useMutation({
-      mutationFn: ({ seriesId, outputName, mode }: { seriesId: string; outputName: string; mode: 'quick' | 'compat' }) =>
-        merge.start(seriesId, outputName, mode),
+      mutationFn: ({
+        seriesId,
+        outputName,
+        mode,
+      }: {
+        seriesId: string;
+        outputName: string;
+        mode: MergeMode;
+      }) => merge.start(seriesId, outputName, mode),
       onSuccess: invalidate,
     }),
-    cancel: useMutation({ mutationFn: merge.cancel, onSuccess: invalidate }),
-    remove: useMutation({ mutationFn: merge.remove, onSuccess: invalidate }),
   };
 }
 
@@ -272,7 +292,11 @@ export function useStorageUsage() {
 }
 
 export function useDecodeCapability() {
-  return useQuery({ queryKey: keys.capability, queryFn: transcode.capability, staleTime: Infinity });
+  return useQuery({
+    queryKey: keys.capability,
+    queryFn: transcode.capability,
+    staleTime: Infinity,
+  });
 }
 
 export function useStorageActions() {
@@ -291,6 +315,3 @@ export function useStorageActions() {
     deleteAll: useMutation({ mutationFn: storage.deleteAll, onSuccess: invalidate }),
   };
 }
-
-export type { QueryKey, QueueStatus };
-

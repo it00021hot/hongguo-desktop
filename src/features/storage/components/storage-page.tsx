@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useSeriesList, useStorageActions, useStorageUsage } from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
-import { t } from '@/i18n';
+import { t, tf } from '@/i18n';
 
 /** 磁盘占用与清理。 */
 export function StoragePage() {
@@ -35,7 +35,7 @@ export function StoragePage() {
 
   const handleDelete = (seriesId: string, title: string) => {
     deleteSeries.mutate(seriesId, {
-      onSuccess: (n) => toast.success(`${title} · ${t('storage.freed')} ${formatBytes(0)}`.replace(' 0 B', ` ${n} 个文件`)),
+      onSuccess: (n) => toast.success(`${title} · ${tf('storage.freedFiles', { count: n })}`),
       onError: (e) => toast.error(e.message),
     });
   };
@@ -44,19 +44,22 @@ export function StoragePage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
             <HardDrive className="size-4" />
             {t('settings.storage')}
           </CardTitle>
           <CardDescription>{t('storage.desc')}</CardDescription>
         </CardHeader>
         <CardContent className="flex items-center gap-3">
+          {/* 加载中给占位而不是 0 B——「还没拿到数」和「真的清空了」不是一回事 */}
           <span className="text-2xl font-semibold tabular-nums">
-            {formatBytes(usage?.bytes ?? 0)}
+            {usage ? formatBytes(usage.bytes) : t('common.loading')}
           </span>
-          <span className="text-muted-foreground text-sm">
-            {usage?.files ?? 0} {t('storage.files')}
-          </span>
+          {usage && (
+            <span className="text-muted-foreground text-sm">
+              {usage.files} {t('storage.files')}
+            </span>
+          )}
           <Button
             variant="destructive"
             size="sm"
@@ -117,7 +120,7 @@ export function StoragePage() {
             <AlertDialogAction
               onClick={() =>
                 deleteAll.mutate(undefined, {
-                  onSuccess: (n) => toast.success(`${n}`),
+                  onSuccess: (n) => toast.success(tf('storage.freedFiles', { count: n })),
                   onError: (e) => toast.error(e.message),
                 })
               }

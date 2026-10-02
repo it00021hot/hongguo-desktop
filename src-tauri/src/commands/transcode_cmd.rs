@@ -1,4 +1,4 @@
-//! 转码能力查询与转码缓存管理。
+//! 转码能力查询与转码缓存清理。
 //!
 //! 这里只暴露「能力查询」和「缓存清理」——真正的转码实现在
 //! [`crate::media::transcode`]，由合并功能（`merge_service::compat`）驱动。
@@ -15,22 +15,10 @@ pub fn decode_capability() -> DecodeCapability {
     crate::media::capability::probe::detect()
 }
 
-/// 转码缓存状态：目录、文件数、总字节。
-#[tauri::command]
-pub fn compat_cache_status() -> (String, usize, u64) {
-    cache::status()
-}
-
 /// 清空转码缓存。
 #[tauri::command]
 pub fn clear_compat_cache() -> usize {
     cache::clear()
-}
-
-/// 在线流缓存状态。
-#[tauri::command]
-pub fn online_cache_status() -> (usize, u64) {
-    crate::service::play_service::online::status()
 }
 
 /// 清空在线流缓存。

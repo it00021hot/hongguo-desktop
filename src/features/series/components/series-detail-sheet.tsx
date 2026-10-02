@@ -29,11 +29,12 @@ export function SeriesDetailSheet({ card, onOpenChange }: Props) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>([]);
   const setTarget = usePlayerStore((s) => s.setTarget);
-  const { data: series, isPending } = useSeriesEpisodes(card?.seriesId ?? null);
+  const { data: series, isPending, isError, error } = useSeriesEpisodes(card?.seriesId ?? null);
   const { mutate: resolve } = useResolveSeries();
   const { start } = useDownloadActions();
 
   const open = card !== null;
+  const episodes = series?.episodes ?? [];
 
   const handleResolve = () => {
     if (!card) return;
@@ -67,9 +68,12 @@ export function SeriesDetailSheet({ card, onOpenChange }: Props) {
       <SheetContent side="right" className="w-full sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{card?.seriesTitle ?? ''}</SheetTitle>
-          <SheetDescription>
-            {card && card.episodeCount > 0 ? `${card.episodeCount} 集` : ''}
-          </SheetDescription>
+          {/* 嗅探结果常常不带集数，为空就不渲染 description 元素 */}
+          {card && card.episodeCount > 0 && (
+            <SheetDescription>
+              {tf('common.episodeCount', { count: card.episodeCount })}
+            </SheetDescription>
+          )}
         </SheetHeader>
 
         {card && card.tags.length > 0 && (
@@ -84,14 +88,33 @@ export function SeriesDetailSheet({ card, onOpenChange }: Props) {
 
         {isPending && <Skeleton className="h-40" />}
 
-        {series && series.episodes.length > 0 && (
+        {/* 搜索出来的剧本地可能还没 resolve 过，取分集会失败。
+            不给出口的话抽屉就是一片空白，用户以为功能坏了。 */}
+        {isError && (
+          <div className="grid gap-3 py-6 text-center">
+            <p className="text-destructive text-sm">
+              {t('series.loadFailed')}
+              {error instanceof Error && `: ${error.message}`}
+            </p>
+            <Button variant="outline" className="mx-auto" onClick={handleResolve}>
+              {t('series.resolveAgain')}
+            </Button>
+          </div>
+        )}
+
+        {!isPending && !isError && episodes.length === 0 && (
+          <div className="grid gap-3 py-6 text-center">
+            <p className="text-muted-foreground text-sm">{t('series.noEpisodes')}</p>
+            <Button variant="outline" className="mx-auto" onClick={handleResolve}>
+              {t('series.resolveAgain')}
+            </Button>
+          </div>
+        )}
+
+        {episodes.length > 0 && (
           <>
             <Separator />
-            <EpisodePicker
-              episodes={series.episodes}
-              selected={selected}
-              onChange={setSelected}
-            />
+            <EpisodePicker episodes={episodes} selected={selected} onChange={setSelected} />
           </>
         )}
 

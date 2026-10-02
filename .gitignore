@@ -11,9 +11,6 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/schemas/
 
-# 打包产物
-release/
-
 # TypeScript 增量编译缓存
 *.tsbuildinfo
 

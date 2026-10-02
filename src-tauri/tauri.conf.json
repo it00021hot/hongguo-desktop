@@ -48,7 +48,7 @@
     "copyright": "GPL-3.0",
     "category": "Video",
     "shortDescription": "红果短剧全集批量下载器",
-    "longDescription": "浏览、搜索、批量下载、在线播放、一键合并、磁盘清理。纯 Rust 解密内核，无外部依赖。",
+    "longDescription": "浏览、搜索、批量下载、在线播放、一键合并、磁盘清理。解密/解复用/合并为纯 Rust 零外部依赖，HEVC 转 H.264 可选调用系统 ffmpeg 加速，安装包不捆绑外部二进制。",
     "windows": {
       "nsis": {
         "installMode": "currentUser",

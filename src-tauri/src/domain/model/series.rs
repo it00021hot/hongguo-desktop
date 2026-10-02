@@ -67,40 +67,9 @@ pub struct Episode {
     pub file_stem: String,
 }
 
-impl Episode {
-    /// 集标题，缺失时回落到「第 N 集」。
-    pub fn display_title(&self) -> String {
-        if self.title.trim().is_empty() {
-            format!("第 {} 集", self.vid_index)
-        } else {
-            self.title.clone()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn episode_title_falls_back_to_index() {
-        let e = Episode {
-            vid_index: 7,
-            title: "  ".into(),
-            ..Default::default()
-        };
-        assert_eq!(e.display_title(), "第 7 集");
-    }
-
-    #[test]
-    fn episode_keeps_real_title() {
-        let e = Episode {
-            vid_index: 1,
-            title: "重生之我是你爹".into(),
-            ..Default::default()
-        };
-        assert_eq!(e.display_title(), "重生之我是你爹");
-    }
 
     #[test]
     fn series_roundtrips_through_json() {

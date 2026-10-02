@@ -63,7 +63,9 @@ pub async fn resolve_series(
 /// 官网详情页里的可显示封面。
 async fn web_cover(series_id: &str) -> Option<String> {
     let url = format!("https://hongguoduanju.com/detail?series_id={series_id}");
-    let html = crate::domain::site::fetch::fetch_site_html(&url).await.ok()?;
+    let html = crate::domain::site::fetch::fetch_site_html(&url)
+        .await
+        .ok()?;
     crate::domain::site::series_page::cover_from_html(&html)
 }
 

@@ -81,7 +81,7 @@ pub async fn fetch_plain(
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
 ) -> AppResult<Vec<u8>> {
-    let client = crate::service::settings_service::proxy::build_client(&settings.proxy)?;
+    let client = crate::domain::api::client::build_client(&settings.proxy)?;
 
     // CDN 对带 Referer 的请求直接 403，只带 App UA
     let resp = client
@@ -110,11 +110,6 @@ pub async fn fetch_plain(
     } else {
         Ok(body)
     }
-}
-
-/// 在线缓存状态。
-pub fn status() -> (usize, u64) {
-    cache().status()
 }
 
 /// 清空在线缓存。

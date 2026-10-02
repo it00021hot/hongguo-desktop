@@ -5,12 +5,10 @@ import type { EventName } from './types';
 /**
  * 订阅后端事件。
  *
- * 返回取消函数，调用方负责在 `useEffect` 清理里调用；或直接用 [`useEvent`]。
+ * 返回取消函数，由 `useEvent` 在 effect 清理时调用——外部不该直接用它，
+ * 那样很容易漏掉退订。
  */
-export async function on<T>(
-  name: EventName,
-  handler: (payload: T) => void,
-): Promise<UnlistenFn> {
+async function on<T>(name: EventName, handler: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (event) => handler(event.payload));
 }
 

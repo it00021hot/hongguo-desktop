@@ -27,38 +27,40 @@ pub fn serve(vid: &str, range_header: Option<&str>) -> Result<ProtocolResponse, 
     // 一个 12MB 的一集会打十几条，所以放 debug：排查「WebView 到底有没有
     // 请求这条协议」时用 RUST_LOG=debug 打开，日常不刷屏。
     log::debug!("[Stream] 请求 vid={vid} range={range_header:?}");
-    let entry = crate::service::play_service::online::cache().get(vid);
-    if entry.is_none() {
-        return Err(format!("没有正在准备的在线流: {vid}"));
-    }
-    let entry = entry.expect("刚判定过存在");
+    let entry = crate::service::play_service::online::cache()
+        .get(vid)
+        .ok_or_else(|| format!("没有正在准备的在线流: {vid}"))?;
 
     // 总大小要等 moov 到齐（计划就绪）才知道
     let size = wait_until(Duration::from_secs(WAIT_TIMEOUT_SECS), || {
-        *entry.size.lock() > 0
+        let size = *entry.size.lock();
+        (size > 0).then_some(size)
     })
-    .then(|| *entry.size.lock())
     .ok_or_else(|| "等待流就绪超时".to_string())?;
 
     // 等到请求区间已填充
     let range = parse_range(range_header, size);
     wait_until(Duration::from_secs(WAIT_TIMEOUT_SECS), || {
-        try_extract(&entry, range, size).is_some()
+        try_extract(&entry, range, size)
     })
-    .then(|| try_extract(&entry, range, size).expect("刚等到的数据仍然在"))
     .ok_or_else(|| "等待数据就绪超时".to_string())
 }
 
-/// 轮询等待条件成立。协议 handler 跑在专用工作线程上，轮询足够且简单可靠
+/// 轮询等待条件成立并取回结果，超时返回 `None`。
+///
+/// 返回值而不是 bool：数据面要的是「等到的那份数据」，让调用方拿到 bool 后
+/// 再求值一次，既可能求到不同的值，也逼着调用方写下 `.expect()`。
+///
+/// 协议 handler 跑在专用工作线程上，轮询足够且简单可靠
 /// （比在协议线程里架一套 tokio runtime 更不容易出死锁）。
-fn wait_until(timeout: std::time::Duration, mut cond: impl FnMut() -> bool) -> bool {
+fn wait_until<T>(timeout: std::time::Duration, mut cond: impl FnMut() -> Option<T>) -> Option<T> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if cond() {
-            return true;
+        if let Some(v) = cond() {
+            return Some(v);
         }
         if std::time::Instant::now() >= deadline {
-            return false;
+            return None;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -244,10 +246,7 @@ mod tests {
     fn stream_url_format() {
         let c = StreamCache::default();
         // 必须是 http://{scheme}.localhost 形式，否则 WebView2 不会请求
-        assert_eq!(
-            c.stream_url("v1"),
-            "http://hongguo-stream.localhost/v1"
-        );
+        assert_eq!(c.stream_url("v1"), "http://hongguo-stream.localhost/v1");
     }
 
     #[test]
@@ -292,7 +291,10 @@ mod tests {
         let (status, headers, body) = serve("v-closed", Some("bytes=100-199")).unwrap();
         assert_eq!(status, 206);
         assert_eq!(body.len(), 100);
-        assert_eq!(header(&headers, "Content-Range"), Some("bytes 100-199/4096"));
+        assert_eq!(
+            header(&headers, "Content-Range"),
+            Some("bytes 100-199/4096")
+        );
         assert_eq!(header(&headers, "Content-Length"), Some("100"));
     }
 
@@ -321,5 +323,20 @@ mod tests {
         assert_eq!(status, 416);
         assert_eq!(header(&headers, "Content-Range"), Some("bytes */100"));
         assert!(body.is_empty());
+    }
+
+    #[test]
+    fn wait_until_returns_the_value_not_just_a_flag() {
+        let mut polls = 0;
+        let got = wait_until(Duration::from_secs(5), || {
+            polls += 1;
+            (polls >= 2).then_some(42u32)
+        });
+        assert_eq!(got, Some(42));
+    }
+
+    #[test]
+    fn wait_until_gives_up_at_the_deadline() {
+        assert_eq!(wait_until(Duration::ZERO, || None::<u32>), None);
     }
 }

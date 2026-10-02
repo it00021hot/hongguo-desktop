@@ -1,14 +1,14 @@
-//! 下载任务的变更操作：提交、暂停、重试、删除、补登记。
+//! 下载任务的变更操作：提交、暂停、重试。
 //!
 //! 查询类在 mod.rs，这里只放会改状态的操作。
 
 use tauri::{AppHandle, Emitter, State};
 
-use super::names;
 use super::persist;
 use crate::app_state::AppState;
 use crate::domain::model::DownloadTask;
 use crate::error::{AppError, AppResult};
+use crate::service::download_service::events::names;
 
 /// 提交一批下载任务。
 ///
@@ -55,20 +55,9 @@ pub fn download_batch(
         );
     }
 
-    persist(&state);
+    persist(&state)?;
     crate::service::download_service::kick_from_handle(&app);
     Ok(added)
-}
-
-/// 下载单集。
-#[tauri::command]
-pub fn download_single_episode(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    series_id: String,
-    vid_index: u32,
-) -> AppResult<usize> {
-    download_batch(app, state, series_id, vec![vid_index])
 }
 
 /// 一键暂停：取消进行中的任务并清空待运行队列。
@@ -78,7 +67,7 @@ pub fn pause_all(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize>
     // 用户点「全部暂停」后进度条还在走。
     state.scheduler().pause_all();
     let n = state.queue().pause_all();
-    persist(&state);
+    persist(&state)?;
     let _ = app.emit(names::DOWNLOAD_QUEUE_CHANGED, &serde_json::json!({}));
     Ok(n)
 }
@@ -88,7 +77,7 @@ pub fn pause_all(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize>
 pub fn resume_all(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize> {
     state.scheduler().resume_all();
     let n = state.queue().resume_all();
-    persist(&state);
+    persist(&state)?;
     let _ = app.emit(names::DOWNLOAD_QUEUE_CHANGED, &serde_json::json!({}));
     crate::service::download_service::kick_from_handle(&app);
     Ok(n)
@@ -101,7 +90,7 @@ pub fn stop_download(app: AppHandle, state: State<'_, AppState>, task_id: String
         return Err(AppError::NotFound(format!("任务 {task_id}")));
     }
     state.queue().mark_stopped(&task_id);
-    persist(&state);
+    persist(&state)?;
     let _ = app.emit(
         names::DOWNLOAD_STOPPED,
         &serde_json::json!({ "id": task_id }),
@@ -120,7 +109,7 @@ pub fn retry_task(
         .queue()
         .retry(&task_id)
         .ok_or_else(|| AppError::NotFound(format!("任务 {task_id}")))?;
-    persist(&state);
+    persist(&state)?;
     let _ = app.emit(names::DOWNLOAD_QUEUE_CHANGED, &serde_json::json!({}));
     Ok(task)
 }
@@ -133,7 +122,7 @@ pub fn retry_tasks(
     task_ids: Vec<String>,
 ) -> AppResult<usize> {
     let n = state.queue().retry_many(&task_ids);
-    persist(&state);
+    persist(&state)?;
     let _ = app.emit(names::DOWNLOAD_QUEUE_CHANGED, &serde_json::json!({}));
     Ok(n)
 }

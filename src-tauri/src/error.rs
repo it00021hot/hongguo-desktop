@@ -36,6 +36,13 @@ pub enum AppError {
     #[error("未找到: {0}")]
     NotFound(String),
 
+    /// 用户主动取消（一键暂停 / 停止单个任务）。
+    ///
+    /// 单独成变体而不是塞进 [`AppError::Io`]：调度器要靠它把「取消」与
+    /// 「磁盘真出错了」分开处理，中文字面量匹配迟早会被翻译或格式化改掉。
+    #[error("已取消")]
+    Cancelled,
+
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
 }
@@ -54,6 +61,7 @@ impl AppError {
             AppError::Sniff(_) => "error.sniff",
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
+            AppError::Cancelled => "error.cancelled",
             AppError::Tauri(_) => "error.internal",
         }
     }
@@ -99,5 +107,15 @@ mod tests {
         let json = serde_json::to_string(&AppError::NotFound("剧集".into())).unwrap();
         assert!(json.contains("error.notFound"));
         assert!(json.contains("剧集"));
+    }
+
+    #[test]
+    fn cancelled_has_its_own_i18n_key() {
+        // 取消不是 IO 错误：前端要能把它和「磁盘满了」区别对待
+        assert_eq!(AppError::Cancelled.i18n_key(), "error.cancelled");
+        assert_ne!(
+            AppError::Cancelled.i18n_key(),
+            AppError::Io("x".into()).i18n_key()
+        );
     }
 }

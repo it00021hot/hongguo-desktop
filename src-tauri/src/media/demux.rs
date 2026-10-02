@@ -34,8 +34,15 @@ impl Demuxed {
 
 /// 从内存解复用。
 pub fn demux_bytes(data: &[u8]) -> AppResult<Demuxed> {
-    let tracks = collect_tracks(data)?;
+    // 两条失败路径都只把原因放进返回值，而调用方（合并前的编码一致性检查）
+    // 只能报告「第 N 集解析不出来」——具体坏在哪个 box 上就丢了。这里补一条日志，
+    // 否则线上遇到坏文件只能靠猜。
+    let tracks = collect_tracks(data).map_err(|e| {
+        log::error!("[Media] 解析轨道失败: {e}");
+        e
+    })?;
     if tracks.is_empty() {
+        log::error!("[Media] 容器里没有可用轨道");
         return Err(AppError::Media("没有可用轨道".into()));
     }
     Ok(Demuxed {

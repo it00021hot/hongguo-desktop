@@ -31,11 +31,6 @@ pub fn save_playback_position(
     )
 }
 
-#[tauri::command]
-pub fn get_playback_position(state: State<'_, AppState>, series_id: String, vid_index: u32) -> f64 {
-    crate::service::play_service::position::load(&state, &series_id, vid_index)
-}
-
 /// 播放历史（每部剧最近看到的一集，按时间倒序）。
 #[tauri::command]
 pub fn get_playback_history(

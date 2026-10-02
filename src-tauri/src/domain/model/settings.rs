@@ -96,14 +96,6 @@ impl ProxyConfig {
     }
 }
 
-/// 常见代理端口预设。
-pub const PROXY_PRESETS: &[(&str, &str)] = &[
-    ("Clash", "http://127.0.0.1:7890"),
-    ("V2rayN", "http://127.0.0.1:10809"),
-    ("Shadowsocks", "http://127.0.0.1:1080"),
-    ("Burp", "http://127.0.0.1:8080"),
-];
-
 /// 文件命名模板。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +110,40 @@ pub enum NamingTemplate {
     /// 仅剧名
     #[serde(alias = "OnlyTitle")]
     OnlyTitle,
+}
+
+/// 目录名长度上限。Windows 的整条路径有 260 字符限制，剧名给到 80
+/// 还能容下下载根目录、`<剧名> 合集.mp4` 与集号。
+const FOLDER_NAME_MAX: usize = 80;
+
+/// 清洗结果为空时的占位名。
+const UNNAMED: &str = "未命名";
+
+/// 清洗目录名：去掉路径分隔符与 Windows 保留字符，避免路径穿越。
+pub fn sanitize_folder_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches(['.', ' ']).to_string();
+    if trimmed.is_empty() {
+        UNNAMED.to_string()
+    } else {
+        trimmed.chars().take(FOLDER_NAME_MAX).collect()
+    }
+}
+
+/// 清洗文件名。
+///
+/// 规则与目录名完全一致，长度也就跟着 [`FOLDER_NAME_MAX`]：文件名是单段路径，
+/// 不必再为「红果短剧」子目录预留长度，所以没必要给一个更宽、上限更高的数字——
+/// 那只会让人以为文件名的上限与目录名不同。
+pub fn sanitize_file_name(name: &str) -> String {
+    sanitize_folder_name(name)
 }
 
 /// 应用设置。
@@ -183,9 +209,7 @@ impl Settings {
     pub fn series_dir(&self, series_title: &str) -> std::path::PathBuf {
         std::path::Path::new(&self.download_dir)
             .join("红果短剧")
-            .join(crate::service::series_service::sanitize_folder_name(
-                series_title,
-            ))
+            .join(sanitize_folder_name(series_title))
     }
 
     /// 按命名模板渲染文件名（不含扩展名）。
@@ -202,12 +226,12 @@ impl Settings {
             }
             NamingTemplate::OnlyTitle => series_title.to_string(),
         };
-        crate::service::series_service::sanitize_file_name(&base)
+        sanitize_file_name(&base)
     }
 }
 
 /// 代理连通性测试结果。只走 IPC，不落盘。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyTestResult {
     pub ok: bool,
@@ -388,9 +412,34 @@ mod tests {
     }
 
     #[test]
-    fn presets_are_valid_urls() {
-        for (name, url) in PROXY_PRESETS {
-            assert!(url.starts_with("http"), "{name}: {url}");
-        }
+    fn folder_name_strips_path_separators() {
+        assert_eq!(sanitize_folder_name("a/b\\c"), "a_b_c");
+        assert_eq!(sanitize_folder_name("我的:剧"), "我的_剧");
+    }
+
+    #[test]
+    fn folder_name_handles_empty_and_reserved() {
+        assert_eq!(sanitize_folder_name(""), "未命名");
+        assert_eq!(sanitize_folder_name("   "), "未命名");
+        assert_eq!(sanitize_folder_name("..."), "未命名");
+    }
+
+    #[test]
+    fn folder_name_strips_trailing_dot_and_space() {
+        // Windows 不允许目录名以点或空格结尾
+        assert_eq!(sanitize_folder_name("剧名. "), "剧名");
+    }
+
+    #[test]
+    fn folder_name_strips_control_chars() {
+        assert_eq!(sanitize_folder_name("剧\u{1}名"), "剧_名");
+    }
+
+    #[test]
+    fn names_are_length_bounded() {
+        let long = "剧".repeat(200);
+        assert_eq!(sanitize_folder_name(&long).chars().count(), FOLDER_NAME_MAX);
+        // 文件名复用同一套规则，上限也就同一个
+        assert_eq!(sanitize_file_name(&long), sanitize_folder_name(&long));
     }
 }

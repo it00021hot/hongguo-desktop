@@ -9,8 +9,6 @@
 //!    唯一的信号是「解出来的样本不是合法 NAL」。
 
 use super::av_base64;
-use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
-use aes::Aes128;
 
 use crate::error::{AppError, AppResult};
 
@@ -93,25 +91,6 @@ pub fn derive_key(spade_a: &[u8]) -> AppResult<[u8; 16]> {
     Ok(key)
 }
 
-/// AES-128 ECB 加密单块（用于密钥派生与自校验）。
-pub fn aes128_ecb_encrypt(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
-    let cipher = Aes128::new(GenericArray::from_slice(key));
-    let mut block = *GenericArray::from_slice(data);
-    cipher.encrypt_block(&mut block);
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&block);
-    out
-}
-/// AES-128 ECB 解密单块（CENC 的 `senc` 块使用）。
-pub fn aes128_ecb_decrypt(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
-    let cipher = Aes128::new(GenericArray::from_slice(key));
-    let mut block = *GenericArray::from_slice(data);
-    cipher.decrypt_block(&mut block);
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&block);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,24 +123,5 @@ mod tests {
 
     fn hex_of(b: &[u8]) -> String {
         b.iter().map(|x| format!("{x:02x}")).collect()
-    }
-
-    #[test]
-    fn ecb_encrypt_decrypt_roundtrip() {
-        let key = [0x2au8; 16];
-        let plain = [0x37u8; 16];
-        let cipher = aes128_ecb_encrypt(&key, &plain);
-        assert_ne!(cipher, plain, "密文不应等于明文");
-        assert_eq!(aes128_ecb_decrypt(&key, &cipher), plain);
-    }
-
-    #[test]
-    fn ecb_is_deterministic() {
-        let key = [0x11u8; 16];
-        let plain = [0x22u8; 16];
-        assert_eq!(
-            aes128_ecb_encrypt(&key, &plain),
-            aes128_ecb_encrypt(&key, &plain)
-        );
     }
 }

@@ -174,8 +174,7 @@
 
   /* 跳到主内容（键盘无障碍） */
   .skip-to-content {
-    @apply absolute top-2 left-2 z-50 -translate-y-16 rounded-md bg-primary px-4 py-2
-      text-sm text-primary-foreground transition-transform focus:translate-y-0;
+    @apply bg-primary text-primary-foreground absolute top-2 left-2 z-50 -translate-y-16 rounded-md px-4 py-2 text-sm transition-transform focus:translate-y-0;
   }
 }
 

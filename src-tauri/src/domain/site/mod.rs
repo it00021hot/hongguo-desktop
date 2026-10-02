@@ -5,5 +5,4 @@
 
 pub mod extract;
 pub mod fetch;
-pub mod play_url;
 pub mod series_page;

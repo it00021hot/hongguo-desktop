@@ -6,8 +6,6 @@
 //! ⚠️ 这是一组固定的实测设备参数。改这里等于换设备，换了之后签名仍然自洽，
 //!    但服务端可能对该档案做更严格的风控。建议整组一起替换，不要只改一两个字段。
 
-use std::collections::BTreeMap;
-
 use crate::signer::protobuf::{proto, FieldType, FieldValue};
 
 /// 应用 id 与渠道号，Medusa 密文里硬编码。
@@ -56,25 +54,6 @@ pub fn video_device() -> Vec<(&'static str, &'static str)> {
         ("player_so_load", "1"),
         ("is_android_pad_screen", "0"),
     ]
-}
-
-/// 设备档案为 Map 视图，供调用方按 key 取值（如 `device_id`）。
-pub fn video_device_map() -> BTreeMap<&'static str, &'static str> {
-    video_device().into_iter().collect()
-}
-
-/// 取设备档案中指定字段的值。
-pub fn device_field(device: &BTreeMap<&'static str, &'static str>, key: &str) -> &'static str {
-    device.get(key).copied().unwrap_or_default()
-}
-
-/// 取设备档案中指定字段的值（切片视图，供 signer 内部使用）。
-pub fn device_field_str<'a>(device: &'a [(&'static str, &'static str)], key: &str) -> &'a str {
-    device
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| *v)
-        .unwrap_or_default()
 }
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
@@ -175,19 +154,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn device_has_all_fields() {
-        let map = video_device_map();
-        assert_eq!(map.len(), 27);
-        assert_eq!(map.get("device_id"), Some(&"1905892595378490"));
-        assert_eq!(map.get("version_name"), Some(&"7.1.3.32"));
-    }
+    fn video_device_profile_is_stable() {
+        let device = video_device();
+        assert_eq!(device.len(), 27);
+        // 切片顺序就是 query 参数顺序，签名对它敏感，不能重排
+        assert_eq!(device[0], ("iid", "1905892595382586"));
+        assert_eq!(device[1], ("device_id", "1905892595378490"));
 
-    #[test]
-    fn ua_version_matches_device() {
-        // UA 里的系统版本 16 必须与 device.os_version 一致
-        let map = video_device_map();
+        let value_of = |key: &str| {
+            device
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, value)| *value)
+        };
+        assert_eq!(value_of("version_name"), Some("7.1.3.32"));
+        // UA 里的系统版本必须与设备档案的 os_version 一致
+        assert_eq!(value_of("os_version"), Some("16"));
         assert!(VIDEO_UA.contains("Android 16"));
-        assert_eq!(device_field(&map, "os_version"), "16");
+
+        let mut keys: Vec<&str> = device.iter().map(|(key, _)| *key).collect();
+        let total = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
     }
 
     #[test]

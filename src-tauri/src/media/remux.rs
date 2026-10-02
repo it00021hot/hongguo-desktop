@@ -22,8 +22,11 @@ pub fn sort_by_index(files: &[(u32, PathBuf)]) -> Vec<(u32, PathBuf)> {
 
 /// 流复制合并。
 ///
-/// 快速合并要求所有输入的编码一致（否则拼接出的文件会花屏），
-/// 调用方需先用 [`crate::service::merge_service::prepare`] 校验。
+/// 快速合并要求所有输入的编码一致：这里是整文件字节级顺序拼接，不重写索引，
+/// 容器结构或编码参数对不上时，产出的文件连索引都过不去。一致性由
+/// [`crate::media::codec_probe::check`] 探测，并在
+/// [`crate::service::merge_service::quick::quick_merge`] 上强制执行——本函数
+/// 只管按序拼接。
 pub fn concat_copy(inputs: &[PathBuf], output: &Path) -> AppResult<(u64, usize)> {
     if inputs.is_empty() {
         return Err(AppError::Media("没有待合并的文件".into()));

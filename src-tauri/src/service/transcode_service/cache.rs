@@ -28,25 +28,6 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-/// 缓存状态：目录、文件数、总字节。
-pub fn status() -> (String, usize, u64) {
-    let dir = compat_cache_dir();
-    let mut files = 0;
-    let mut bytes = 0u64;
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            if e.path().extension().and_then(|x| x.to_str()) != Some("mp4") {
-                continue;
-            }
-            if let Ok(m) = e.metadata() {
-                files += 1;
-                bytes += m.len();
-            }
-        }
-    }
-    (dir.to_string_lossy().to_string(), files, bytes)
-}
-
 /// 按 atime 淘汰到上限以下。
 pub fn trim() -> usize {
     let dir = compat_cache_dir();
@@ -119,13 +100,5 @@ mod tests {
         let p = cache_file("a/b:c", 1);
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(!name.contains('/') && !name.contains(':'));
-    }
-
-    #[test]
-    fn status_on_empty_dir() {
-        let (dir, files, bytes) = status();
-        assert!(dir.contains("compat-cache"));
-        // 目录可能不存在或为空，两种都算正常
-        let _ = (files, bytes);
     }
 }

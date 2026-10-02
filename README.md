@@ -8,7 +8,7 @@
 
 **浏览 · 搜索 · 批量下载 · 在线播放 · 一键合并 · 磁盘清理**
 
-纯 Rust 解密内核 · 无 ffmpeg 外部依赖 · 原画无水印 · 在线播放不落盘
+纯 Rust 解密内核 · 安装包不捆绑任何外部二进制 · 原画无水印 · 在线播放不落盘
 
 [English](./README.en.md) · [许可证](./LICENSE) · [修改声明](./NOTICE)
 
@@ -21,8 +21,13 @@
 面向 **红果短剧（番茄小说短剧频道 / novelread 系）** 的 Windows 与 macOS 桌面工具。
 
 本版本由 Electron + Node.js **完全重写为 Tauri 2 + Rust**：内置字节系短剧 API 协议与
-**CENC-AES-CTR 原生流式解密引擎**，媒体处理全部由纯 Rust crate 完成，**不再携带 FFmpeg
-等任何外部二进制**，安装包体积从 158 MB 降到 70 MB 量级。
+**CENC-AES-CTR 原生流式解密引擎**，**安装包不再捆绑 FFmpeg 等任何外部二进制**，体积从
+158 MB 降到 70 MB 量级。
+
+其中 **解密、解复用、合并（remux）全部由纯 Rust crate 完成，零外部依赖**；只有
+**HEVC → H.264 转码**这一步存在可选加速：检测到系统已装 ffmpeg 时自动改走它
+（可用 NVENC / QSV / AMF / MF 硬编码，速度接近实时），没装则回退纯 Rust 软解。
+ffmpeg 永远只是「本机恰好有就用」，不是运行前提。
 
 > **来源与修改声明**：本仓库基于 [327044572/hongguo-downloader](https://github.com/327044572/hongguo-downloader)
 > 的**修改版本**（重写自 2026 年 10 月起），依照 GPL-3.0 第 5(a) 条声明。
@@ -34,22 +39,22 @@
 
 ### 桌面端
 
-| 层 | 选型 |
-|---|---|
-| 桌面外壳 | [Tauri 2](https://tauri.app) 2.12+（Rust / 系统 WebView） |
-| 业务内核 | Rust 2021 · tokio · reqwest(rustls) |
-| 编解码 | `rusty_h265` `rusty_h264` `rusty_aac` `muxide`（**均为纯 Rust**） |
+| 层       | 选型                                                              |
+| -------- | ----------------------------------------------------------------- |
+| 桌面外壳 | [Tauri 2](https://tauri.app) 2.12+（Rust / 系统 WebView）         |
+| 业务内核 | Rust 2021 · tokio · reqwest(rustls)                               |
+| 编解码   | `rusty_h265` `rusty_h264` `rusty_aac` `muxide`（**均为纯 Rust**） |
 
 ### 前端
 
-| 层 | 选型 |
-|---|---|
-| 路由 | TanStack Router 1.168（文件路由） |
-| 服务端状态 | TanStack Query 5.99 |
-| 表格 | TanStack Table 8.21 |
-| 客户端状态 | Zustand 5.0 |
-| UI | shadcn/ui（Radix UI）+ Tailwind CSS v4 |
-| 语言 | TypeScript 6 · React 19 · Vite 8 |
+| 层         | 选型                                   |
+| ---------- | -------------------------------------- |
+| 路由       | TanStack Router 1.168（文件路由）      |
+| 服务端状态 | TanStack Query 5.99                    |
+| 表格       | TanStack Table 8.21                    |
+| 客户端状态 | Zustand 5.0                            |
+| UI         | shadcn/ui（Radix UI）+ Tailwind CSS v4 |
+| 语言       | TypeScript 6 · React 19 · Vite 8       |
 
 ---
 
@@ -100,6 +105,7 @@
 
 - 下载目录、文件命名模板、最大并发数（保存后立即生效，无需重启）
 - 网络代理：跟随系统 / 手动指定（含常用端口预设）/ 强制直连，支持连通性测试
+- **转码后端**：实时徽章显示当前走的是纯 Rust 软解、ffmpeg 硬件编码还是 ffmpeg 软件编码
 - 中英双语界面
 
 ---
@@ -125,24 +131,17 @@ pnpm tauri:dev        # Vite + Tauri 开发模式
 pnpm tauri:build      # 打包 NSIS / DMG
 ```
 
-> **无需准备 FFmpeg**——媒体处理已全部改为纯 Rust crate。
+> **无需安装 FFmpeg**——解密、解复用、合并是纯 Rust 零外部依赖，开箱即用。
+> 系统里如果恰好有 ffmpeg，只有「HEVC → H.264 转码」这一步会自动改用它来加速
+> （见上文「兼容模式」），没有它也不影响任何功能。
 
 ### 质量检查
 
 ```bash
-make test-rust        # cargo test（305 个用例）
-make test             # vitest（28 个用例）
-make lint             # clippy + ESLint + Prettier
+make test-rust        # cargo test
+make test             # vitest
+make lint             # ESLint + Prettier + cargo clippy（任一失败即失败）
 make typecheck        # tsc --noEmit
-```
-
-### 签名探针
-
-签名失效时服务端返回 **HTTP 200 + 0 字节**（不是错误码），排查要看字节数：
-
-```bash
-cd src-tauri
-cargo run --bin probe_api -- <series_id>
 ```
 
 ---
@@ -157,12 +156,17 @@ hongguo-downloader-tauri/
 │   ├── service/         # 应用服务（与 commands 同名同构）
 │   ├── commands/        # Tauri command 薄层
 │   ├── protocol/        # 自定义 URI 协议（Range 流）
-│   ├── media/           # 纯 Rust 编解码
-│   └── sniff/           # 内嵌浏览器嗅探
+│   ├── media/           # 编解码（纯 Rust 软解 + 可选 ffmpeg 加速）
+│   ├── sniff/           # 内嵌浏览器嗅探
+│   ├── bootstrap/       # 启动装配
+│   └── store/           # 磁盘任务存档
 └── src/
-    ├── routes/          # 六个路由页面
+    ├── routes/          # 七个路由页面
     ├── features/        # 按业务域拆分
     ├── lib/             # IPC 封装、schema、stores
+    ├── hooks/           # 通用 hooks
+    ├── i18n/            # 中英文案资源
+    ├── styles/          # 全局样式
     └── components/      # shadcn/ui + 布局
 ```
 
@@ -175,7 +179,7 @@ hongguo-downloader-tauri/
 官方 App 接口要求每个请求携带 `x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa`
 五个签名头。**签名缺失或算错时，服务端不报错，而是返回 HTTP 200 + 0 字节**——只看状态码会误判。
 
-用 `cargo run --bin probe_api` 逐端点看**字节数**来诊断。
+排查时看**响应体的字节数**而不是状态码；要逐端点的详细信息，用 `RUST_LOG=debug` 启动应用。
 
 ### 播放页黑屏但有声音
 
@@ -195,4 +199,3 @@ hongguo-downloader-tauri/
 
 本项目是上游项目的修改版本，修改声明见 [NOTICE](./NOTICE)，
 第三方组件声明见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
-
