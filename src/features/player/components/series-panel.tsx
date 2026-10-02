@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Check, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { useDownloadTasks, useSeriesExtras, useSeriesList } from '@/lib/queries';
+import { useDownloadTasks, useSeriesEpisodes, useSeriesExtras } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import type { RecommendItem, Series } from '@/lib/schema';
@@ -24,16 +24,18 @@ const PAGE_SIZE = 15;
  * 铺开既找不到当前集也看不出下载状态。
  */
 export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
-  const { data: seriesList } = useSeriesList();
   const { data: tasks } = useDownloadTasks();
   const { data: extras } = useSeriesExtras(seriesId);
+  // 剧集档案要从 useSeriesEpisodes 拿，不能扫 useSeriesList：
+  // 那个接口走的是 visible_series()，过滤掉了用户从磁盘清理页移除的剧，
+  // 于是这类剧的选集整段不渲染（`total > 0` 不成立），右侧只剩简介和推荐。
+  // useSeriesEpisodes 直接读单部档案、且本地没有会回落解析，不受移除标记影响。
+  const { data: series } = useSeriesEpisodes(seriesId);
   /**
    * 手动翻到哪一段。记下当时看的集号：一旦当前集变了（自动连播、点别的集），
    * 这个覆盖就作废，选集自动跟到当前集所在的那一段。
    */
   const [pageOverride, setPageOverride] = useState<{ page: number; at: number } | null>(null);
-
-  const series: Series | undefined = seriesList?.find((s) => s.seriesId === seriesId);
 
   const byIndex = useMemo(() => {
     const map: Record<number, { status?: string }> = {};
