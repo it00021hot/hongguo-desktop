@@ -140,10 +140,12 @@ export function ContinueWatching() {
               </div>
             </button>
 
-            <Button
-              size="icon"
-              variant="secondary"
-              className="absolute top-2 right-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            {/* 不要 Button 组件的任何底色：它会在封面上压出一块方斑，比图标本身还抢眼。
+                裸 button + 白色图标，深色投影保证在浅色封面上也看得见。
+                点击区仍然留 28px，太小的靶子不好点。 */}
+            <button
+              type="button"
+              className="absolute top-1 right-1 z-10 grid size-7 place-items-center rounded-full text-white opacity-0 drop-shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
               aria-label={tf('player.removeRecord', { title: item.series.title })}
               title={t('player.removeRecordShort')}
               onClick={() =>
@@ -151,7 +153,7 @@ export function ContinueWatching() {
               }
             >
               <X className="size-4" />
-            </Button>
+            </button>
           </article>
         ))}
       </div>
