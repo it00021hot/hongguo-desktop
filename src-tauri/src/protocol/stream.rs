@@ -337,15 +337,33 @@ mod tests {
     }
 
     #[test]
-    fn open_range_returns_filled_window() {
-        // 开放式 Range 是 <video> 起播的第一枪，必须给 206 + Content-Range
+    fn open_range_returns_everything_from_the_offset() {
+        // 开放式 Range 是 <video> 起播的第一枪，必须给 206 + Content-Range。
+        // 而且要一次给到文件末尾：整集早已在内存里，分段只会逼 <video> 反复
+        // 续取，seek 时请求乱序，WebView2 会直接报错。
         ready_stream("v-open", 1080, 4096);
         let (status, headers, body) = serve("v-open", 1080, Some("bytes=0-")).unwrap();
         assert_eq!(status, 206);
-        assert!(!body.is_empty());
-        let cr = header(&headers, "Content-Range").expect("开放式也要 Content-Range");
-        assert!(cr.starts_with("bytes 0-"), "实际: {cr}");
-        assert!(cr.ends_with("/4096"), "实际: {cr}");
+        assert_eq!(body.len(), 4096);
+        assert_eq!(header(&headers, "Content-Range"), Some("bytes 0-4095/4096"));
+        assert_eq!(header(&headers, "Content-Length"), Some("4096"));
+    }
+
+    #[test]
+    fn open_range_after_a_seek_also_reaches_the_end() {
+        // 切清晰度会按续播位置 seek，`bytes=X-` 落在文件中段。
+        ready_stream("v-seek", 1080, 4096);
+        let (status, _, _) = serve("v-seek", 1080, Some("bytes=1146880-")).unwrap();
+        assert_eq!(status, 416, "超出总长的偏移仍应是不可满足");
+
+        ready_stream("v-seek", 1080, 4096);
+        let (status, headers, body) = serve("v-seek", 1080, Some("bytes=3000-")).unwrap();
+        assert_eq!(status, 206);
+        assert_eq!(body.len(), 1096);
+        assert_eq!(
+            header(&headers, "Content-Range"),
+            Some("bytes 3000-4095/4096")
+        );
     }
 
     #[test]
