@@ -5,6 +5,7 @@
 //! 这里选择后者：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use super::done_inputs;
@@ -77,6 +78,14 @@ pub fn compat_merge(
     let slots: Mutex<Vec<Option<Result<PathBuf, AppError>>>> =
         Mutex::new((0..total).map(|_| None).collect());
 
+    // 已完成集数，供进度上报做**累计**。
+    //
+    // 这里原先报的是 `on_progress(1, total, task)` —— done 恒为 1，于是无论转完
+    // 几集前端收到的都是 1/total，只有收尾那次 `total/total` 才是真进度，
+    // 表现就是进度条卡在开头不动。多个工作线程并发时还要 `fetch_add` 才不会
+    // 互相覆盖。
+    let done = AtomicUsize::new(0);
+
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
         // 不用「起 threads 个线程各跑固定那几集」——集数少于核数时会漏，
@@ -112,7 +121,8 @@ pub fn compat_merge(
                     .map(|r| PathBuf::from(r.output_path)),
                 };
                 slots.lock().expect("结果锁中毒")[next] = Some(result);
-                on_progress(1, total, task);
+                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                on_progress(finished, total, task);
             });
         }
     });

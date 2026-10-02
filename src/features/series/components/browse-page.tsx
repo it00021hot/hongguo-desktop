@@ -230,7 +230,28 @@ export function BrowsePage() {
           {searching ? t('search.empty') : t('browse.empty')}
         </p>
       ) : (
-        <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onSelect={handleSelect} />
+        <SeriesCardGrid
+          cards={cards}
+          downloadedMap={downloadedMap}
+          onSelect={handleSelect}
+          trailing={
+            // 末行空位拿来放「下一页」，而不是留一个看起来像漏加载的白格子。
+            // 搜索页没有分页（官网那边就不分），所以只在浏览模式出现。
+            !searching && page < totalPages ? (
+              <button
+                type="button"
+                onClick={() => setPage((p) => p + 1)}
+                className="text-muted-foreground hover:text-foreground hover:border-foreground/30 focus-visible:outline-none flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors"
+              >
+                <ChevronRight className="size-6" />
+                {tf('browse.loadMore', {
+                  page: (browse.data?.meta.page ?? page) + 1,
+                  total: totalPages,
+                })}
+              </button>
+            ) : null
+          }
+        />
       )}
 
       {!searching && totalPages > 1 && (

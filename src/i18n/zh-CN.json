@@ -37,6 +37,7 @@
     "loadFailed": "加载失败",
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
+    "loadMore": "第 {page} / {total} 页",
     "resolving": "正在打开…"
   },
   "search": {
@@ -76,6 +77,7 @@
     "selectAll": "全选",
     "deselectAll": "取消全选",
     "columns": {
+      "episode": "集数",
       "status": "状态",
       "size": "大小"
     },

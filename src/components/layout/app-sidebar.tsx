@@ -43,8 +43,14 @@ export function AppSidebar() {
       )}
     >
       {/* 无边框窗口下这一块兼作拖拽区：用户抓着 logo 就能拖窗口。
-          mac 的交通灯钉在左上角（平台惯例），其余平台这块只做拖拽。 */}
-      <div data-tauri-drag-region className="flex h-14 items-center gap-2 border-b px-3">
+          mac 的交通灯钉在左上角（平台惯例），其余平台这块只做拖拽。
+
+          `deep` 不能省：Tauri 2.x 的裸 `data-tauri-drag-region` 只认自己，
+          点在 img / 标题文字上都不算拖拽（见 tauri 的 src/window/scripts/drag.js）。 */}
+      <div
+        data-tauri-drag-region="deep"
+        className="flex h-14 items-center gap-2 border-b px-3"
+      >
         {isMac() && <MacTrafficLights />}
         <img
           src="/app-icon.png"

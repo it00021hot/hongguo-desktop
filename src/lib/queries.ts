@@ -13,7 +13,13 @@ import {
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
-import type { DownloadProgress, DownloadTask, MergeMode, QueueStatus } from './schema';
+import type {
+  DownloadProgress,
+  DownloadTask,
+  MergeMode,
+  MergeTask,
+  QueueStatus,
+} from './schema';
 
 /**
  * TanStack Query 的 key 工厂。
@@ -287,7 +293,7 @@ export function useMergeActions() {
  * 订阅合并事件：进度、开始、完成、失败。
  *
  * 兼容合并要逐集转码，可能跑好几分钟，光靠 `useMergeTasks` 的一次性查询
- * 看不到过程。收尾事件同时触发失效查询，让列表拿到落盘后的最终状态。
+ * 看不到过程。收尾事件触发失效查询，让列表拿到落盘后的最终状态。
  */
 export function useMergeEvents() {
   const qc = useQueryClient();
@@ -295,7 +301,21 @@ export function useMergeEvents() {
     void qc.invalidateQueries({ queryKey: keys.mergeTasks });
   }, [qc]);
 
-  useEvent(EVENTS.mergeProgress, invalidate);
+  // 进度**不失效查询**，照下载那边的做法就地合并进缓存（见 useDownloadTasks）。
+  // 后端每完成一集才发一次 `merge-progress`，载荷里的 percent 是算好的；而
+  // store 里的 percent 恒为 0——合并中途没人写回 store。所以收到事件就重查，
+  // 查回来的还是 0，界面就永远停在「合并中…」，跟没订阅一样。
+  const applyProgress = useCallback(
+    (snapshot: MergeTask) => {
+      qc.setQueryData<MergeTask[]>(keys.mergeTasks, (tasks) =>
+        tasks?.map((task) =>
+          task.id === snapshot.id ? { ...task, percent: snapshot.percent } : task,
+        ),
+      );
+    },
+    [qc],
+  );
+  useEvent<MergeTask>(EVENTS.mergeProgress, applyProgress);
   useEvent(EVENTS.mergeTaskAdded, invalidate);
   useEvent(EVENTS.mergeCompleted, invalidate);
   useEvent(EVENTS.mergeFailed, invalidate);

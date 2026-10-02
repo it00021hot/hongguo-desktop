@@ -181,7 +181,7 @@ export function TasksPage() {
                   />
                 </TableHead>
                 <TableHead>{t('nav.tasks.title')}</TableHead>
-                <TableHead className="w-24">#</TableHead>
+                <TableHead className="w-24">{t('tasks.columns.episode')}</TableHead>
                 <TableHead className="w-28">{t('tasks.columns.status')}</TableHead>
                 <TableHead className="w-32">{t('tasks.columns.size')}</TableHead>
                 <TableHead className="w-20" />

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
@@ -220,10 +221,13 @@ export function MergePage() {
                     {formatBytes(task.outputSize)}
                   </span>
                 )}
-                {task.status === 'running' && task.percent > 0 && (
-                  <span className="text-muted-foreground font-mono text-xs">
-                    {Math.round(task.percent)}%
-                  </span>
+                {task.status === 'running' && (
+                  <div className="flex w-28 shrink-0 items-center gap-2">
+                    <Progress value={task.percent} />
+                    <span className="text-muted-foreground w-9 text-right font-mono text-xs tabular-nums">
+                      {Math.round(task.percent)}%
+                    </span>
+                  </div>
                 )}
                 <Button
                   size="icon"
