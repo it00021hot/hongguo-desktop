@@ -133,7 +133,12 @@
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
     "pictureInPicture": "画中画",
-    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集"
+    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集",
+    "removeRecordShort": "清除这条记录",
+    "removeRecord": "清除《{title}》的观看记录",
+    "removeRecordConfirm": "清除《{title}》的观看记录？",
+    "removeRecordDesc": "这部剧的观看进度会被清掉，下次打开从第一集开始。已下载的文件不受影响。",
+    "removedRecord": "已清除《{title}》的观看记录"
   },
   "series": {
     "loadFailed": "分集加载失败",

@@ -42,6 +42,22 @@ pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::Playbac
     history_of(&state.store.read().playback)
 }
 
+/// 清除某部剧的观看记录（整部剧的进度表都删掉，不只是最近那一集）。
+///
+/// 历史列表每部剧只显示最近一集，但进度表里存着所有看过的集次。
+/// 只删最近一集的话，下一次打开又会把更早的那一集顶上来，用户会以为没删掉。
+pub fn remove(state: &AppState, series_id: &str) -> crate::error::AppResult<()> {
+    let mut data = state.store.write();
+    // 走历史列表的剧可能还没被登记成档案，但进度表里一定有；找不到就说明本来就没有
+    if data.playback.remove(series_id).is_none() {
+        return Err(crate::error::AppError::NotFound(format!(
+            "观看记录 {series_id}"
+        )));
+    }
+    data.save(&crate::store::paths::data_file())
+        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
+}
+
 /// 清空全部播放历史。
 ///
 /// 空历史重复清空不算错误：这是一个「清掉」按钮，前端可能连点两次。
@@ -181,6 +197,49 @@ mod tests {
         let state = AppState::default();
         clear(&state).expect("空历史重复清空不该报错");
         assert!(history_of(&state.store.read().playback).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_drops_the_whole_series_not_just_the_latest_episode() {
+        let dir = temp_dir("remove-one");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        {
+            let mut map = state.store.write();
+            for idx in [1u32, 5, 9] {
+                map.playback
+                    .entry("A".into())
+                    .or_default()
+                    .insert(idx, at(1.0, idx as i64));
+            }
+            map.playback
+                .entry("B".into())
+                .or_default()
+                .insert(1, at(1.0, 1));
+        }
+
+        remove(&state, "A").unwrap();
+
+        let store = state.store.read();
+        assert!(
+            !store.playback.contains_key("A"),
+            "整部剧都要清掉，否则下一集会顶上来，用户以为没删"
+        );
+        assert!(store.playback.contains_key("B"), "别的剧不受影响");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_reports_not_found_for_unknown_series() {
+        let dir = temp_dir("remove-missing");
+        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+
+        let state = AppState::default();
+        assert!(remove(&state, "ZZZ").is_err(), "没有记录就不能假装删成功");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

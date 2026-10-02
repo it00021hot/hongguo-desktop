@@ -133,7 +133,12 @@
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
     "pictureInPicture": "Picture in picture",
-    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ previous/next"
+    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ previous/next",
+    "removeRecordShort": "Clear record",
+    "removeRecord": "Clear watch record for {title}",
+    "removeRecordConfirm": "Clear the watch record for {title}?",
+    "removeRecordDesc": "This series will start from episode 1 next time. Already downloaded files are untouched.",
+    "removedRecord": "Cleared the watch record for {title}"
   },
   "series": {
     "loadFailed": "Failed to load episodes",

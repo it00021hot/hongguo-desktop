@@ -320,6 +320,17 @@ export function useClearPlaybackHistory() {
   });
 }
 
+/** 清除某一部剧的观看记录。 */
+export function useRemovePlaybackRecord() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (seriesId: string) => play.removeRecord(seriesId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.playbackHistory });
+    },
+  });
+}
+
 export function useStorageUsage() {
   return useQuery({ queryKey: keys.storageUsage, queryFn: storage.usage });
 }

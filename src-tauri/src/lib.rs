@@ -81,6 +81,7 @@ pub fn run() {
             commands::play_cmd::play_series,
             commands::play_cmd::save_playback_position,
             commands::play_cmd::get_playback_history,
+            commands::play_cmd::remove_playback_record,
             commands::play_cmd::clear_playback_history,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,

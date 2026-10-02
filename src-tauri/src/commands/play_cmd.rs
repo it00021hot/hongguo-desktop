@@ -39,6 +39,12 @@ pub fn get_playback_history(
     crate::service::play_service::position::history(&state)
 }
 
+/// 清除某部剧的观看记录。
+#[tauri::command]
+pub fn remove_playback_record(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
+    crate::service::play_service::position::remove(&state, &series_id)
+}
+
 /// 清空全部播放历史。
 #[tauri::command]
 pub fn clear_playback_history(state: State<'_, AppState>) -> AppResult<()> {

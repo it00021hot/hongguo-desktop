@@ -127,6 +127,7 @@ export const play = {
       playbackHistoryItemSchema.array(),
     ),
   clearHistory: () => call<void>('clear_playback_history'),
+  removeRecord: (seriesId: string) => call<void>('remove_playback_record', { seriesId }),
 };
 
 // ---------------------------------------------------------------- 转码
