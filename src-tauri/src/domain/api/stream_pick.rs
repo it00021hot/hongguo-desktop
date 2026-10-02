@@ -44,6 +44,9 @@ impl PartialOrd for StreamScore {
     }
 }
 
+/// 编码器偏好排序里「排不进前两档」的编码器。
+const UNRANKED_CODEC: u8 = 2;
+
 /// 编码器偏好排序。
 ///
 /// 平台优先给 `h265` / `h264`，其次 `bytevc1`，其余（含 `bytevc2`）最后。
@@ -52,8 +55,36 @@ fn codec_rank(codec: &str) -> u8 {
     match codec {
         "h265" | "h264" | "h265_hvc1" | "hevc" | "hvc1" | "avc1" => 0,
         "bytevc1" => 1,
-        _ => 2,
+        _ => UNRANKED_CODEC,
     }
+}
+
+/// `video_meta.codec_type`，取不到按空串处理。
+fn codec_of(v: &Value) -> &str {
+    v.get("video_meta")
+        .and_then(|m| m.get("codec_type"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// 这条流能不能直接喂给播放器。
+///
+/// `bytevc2`（ByteVC 2）是字节跳动的私有编码：它的参数集装在私有 `bv2C` box 里
+/// 而不是标准 `hvcC`，而且码流里**没有** in-band 的 VPS/SPS/PPS。Chromium /
+/// WebView2 不认 `bv2C`，也**不会退软解**——容器照样解析得出时长、样本照样缓冲
+/// 到位，唯独送进解码器的码流缺参数集，硬件解码器直接
+/// `PIPELINE_ERROR_DECODE`（WebView 表现是「视频处理失败」黑屏，MediaError code=3）。
+///
+/// 平台是**按集**分配编码器的，所以这不是「低清晰度一律不能切」：同一部剧里
+/// 14/16 集的 720P 给的是标准 `bytevc1`（照常可切），而 12/13 集的 720P 只给
+/// `bytevc2`。判据必须落在每条流自己的 `codec_type` 上。
+///
+/// **没报编码器时按能播处理**。判据是「明确不可播才排除」而不是「不在白名单就
+/// 排除」：一集里所有流都缺 `codec_type` 时，严格白名单会一档都挑不出来，
+/// 表现从「少一个清晰度选项」升级成「整集播不了」。
+pub fn is_playable(v: &Value) -> bool {
+    let codec = codec_of(v);
+    codec.is_empty() || codec_rank(codec) < UNRANKED_CODEC
 }
 
 /// 计算一条流的分数。
@@ -136,10 +167,15 @@ fn definition_digits(s: &str) -> Option<u32> {
 /// 另立一个类型只会在中间多一层转换。
 pub use crate::domain::model::VideoDefinition as Definition;
 
-/// 列出一集提供的全部清晰度，按高到低。
+/// 列出一集**能播**的清晰度档位，按高到低。
 ///
 /// 同一档位通常有多条流（h265 / bytevc1 / bytevc2 各一条），菜单按档位
 /// 给一项即可，具体选哪条编码仍由 [`pick_stream_at`] 的择优规则决定。
+///
+/// 播不了的档位（见 [`is_playable`]）不进菜单：列出来让用户点，点了就是一次
+/// 黑屏。平台是**按集**分配编码器的——同一部剧里 14 集的 720P 给标准 `bytevc1`
+/// 能切，第 13 集的 720P 只给私有 `bytevc2`，所以这个过滤必须逐集判断，
+/// 不能按「分辨率越高越标准」这种想当然的规律写死。
 pub fn list_definitions(model: &Value) -> Vec<Definition> {
     let Some(list) = model.get("video_list").and_then(Value::as_array) else {
         return Vec::new();
@@ -147,6 +183,9 @@ pub fn list_definitions(model: &Value) -> Vec<Definition> {
     let mut seen: BTreeSet<Definition> = BTreeSet::new();
     for v in list {
         if v.get("main_url").and_then(Value::as_str).is_none() {
+            continue;
+        }
+        if !is_playable(v) {
             continue;
         }
         let score = stream_score(v);
@@ -185,11 +224,17 @@ pub struct PlayStream {
 /// `target` 为 `None` 时挑最高档（沿用 [`StreamScore`] 的完整择优规则）；
 /// 指定档位时在该档位内择优——同一档位的多条流编码器不同，仍要按
 /// 编码器偏好 > 码率 挑出最好的那条。
+///
+/// 播不了的流一律不参与挑选（见 [`is_playable`]），于是「切到平台没给的那档」
+/// 与「切到平台只给了私有编码的那档」走同一条回退路径：静默退回能播的最高档。
 pub fn pick_stream_at(model: &Value, target: Option<u32>) -> Option<PlayStream> {
     let list = model.get("video_list")?.as_array()?;
     let mut best: Option<(StreamScore, &Value)> = None;
     for v in list {
         if v.get("main_url").and_then(Value::as_str).is_none() {
+            continue;
+        }
+        if !is_playable(v) {
             continue;
         }
         let score = stream_score(v);
@@ -249,6 +294,20 @@ mod tests {
         })
     }
 
+    /// 同一档位有多条流时，优先取能播的那条。
+    fn multi_codec_model() -> Value {
+        json!({
+            "video_list": [
+                { "main_url": "https://cdn/720-private.mp4",
+                  "video_meta": { "definition": "720p", "vwidth": 1280, "vheight": 720,
+                                  "bitrate": 400000, "codec_type": "bytevc2" } },
+                { "main_url": "https://cdn/720-standard.mp4",
+                  "video_meta": { "definition": "720p", "vwidth": 1280, "vheight": 720,
+                                  "bitrate": 400000, "codec_type": "bytevc1" } }
+            ]
+        })
+    }
+
     #[test]
     fn picks_highest_definition_from_real_schema() {
         let s = pick_stream_at(&real_model(), None).unwrap();
@@ -259,21 +318,46 @@ mod tests {
     }
 
     #[test]
-    fn lists_every_definition_high_to_low() {
+    fn unplayable_definitions_are_kept_out_of_the_menu() {
+        // 实测：12/13 集的 720P 只有私有 bytevc2，点下去必定黑屏，
+        // 所以菜单里不能出现这一档。
         let defs = list_definitions(&real_model());
         assert_eq!(
             defs.iter().map(|d| d.value).collect::<Vec<_>>(),
-            vec![1080, 720, 360],
-            "菜单应按高到低列出全部档位"
+            vec![1080],
+            "只有 bytevc1 那档能进菜单"
         );
-        assert_eq!((defs[0].width, defs[0].height), (1080, 1920));
+    }
+
+    #[test]
+    fn a_standard_codec_in_the_same_definition_keeps_the_option_alive() {
+        // 平台按集分配编码器：14/16 集的 720P 给的是 bytevc1，菜单照常显示 720P
+        let defs = list_definitions(&multi_codec_model());
+        assert_eq!(defs.iter().map(|d| d.value).collect::<Vec<_>>(), vec![720]);
+    }
+
+    #[test]
+    fn picks_the_playable_stream_when_a_definition_has_several_codecs() {
+        let s = pick_stream_at(&multi_codec_model(), Some(720)).expect("720p 应可选");
+        assert_eq!(
+            s.url, "https://cdn/720-standard.mp4",
+            "同档位要挑能播的那条"
+        );
+        assert_eq!(s.codec.as_deref(), Some("bytevc1"));
+    }
+
+    #[test]
+    fn an_unplayable_definition_falls_back_to_the_best_playable_one() {
+        // 请求 720p，但这一集只给了私有 bytevc2 的 720p → 静默回退到 1080p，
+        // 而不是把一条播不了的流喂给解码器
+        let s = pick_stream_at(&real_model(), Some(720)).expect("应回退而不是报错");
+        assert_eq!(s.url, "https://cdn/1080.mp4");
+        assert_eq!(s.definition, 1080);
     }
 
     #[test]
     fn picks_the_requested_definition() {
-        let model = real_model();
-        let s = pick_stream_at(&model, Some(720)).expect("720p 应可选");
-        assert_eq!(s.url, "https://cdn/720.mp4");
+        let s = pick_stream_at(&multi_codec_model(), Some(720)).expect("720p 应可选");
         assert_eq!(s.definition, 720);
     }
 

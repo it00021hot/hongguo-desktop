@@ -302,12 +302,9 @@ function PlayerView() {
     if (autoNext && !downloading) stepEpisode(1);
   };
 
-  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+  const handleVideoError = () => {
     if (error) return;
-    const v = e.currentTarget;
-    setError(
-      `${t('error.media')} [code=${v.error?.code} msg=${v.error?.message} rs=${v.readyState} ns=${v.networkState} buf=${v.buffered.length} dur=${v.duration} src=${v.currentSrc}]`,
-    );
+    setError(t('error.media'));
   };
 
   if (!seriesId || !vidIndex) {
