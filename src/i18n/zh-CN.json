@@ -38,8 +38,7 @@
     "loadFailed": "加载失败",
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
-    "resolving": "正在打开…",
-    "timeout": "网站响应太慢，加载超时"
+    "resolving": "正在打开…"
   },
   "search": {
     "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
@@ -242,7 +241,6 @@
     "io": "文件读写失败，请检查磁盘剩余空间",
     "decrypt": "这一集无法播放，请重新下载后再试",
     "media": "视频处理失败，请重新下载这一集",
-    "sniff": "加载不到短剧信息，请检查网络连接或设置页里的代理",
     "invalidArgs": "这个操作没法完成，请重试",
     "notFound": "没有找到对应的内容",
     "cancelled": "操作已取消",
@@ -259,7 +257,6 @@
     "toggleTheme": "切换主题",
     "episodeCount": "{count} 集",
     "progress": "进度",
-    "skipToContent": "跳到主内容",
-    "retry": "重试"
+    "skipToContent": "跳到主内容"
   }
 }

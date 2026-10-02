@@ -12,7 +12,7 @@ import {
   seriesExtrasSchema,
   seriesSchema,
   settingsSchema,
-  sniffResultSchema,
+  browseResultSchema,
   storageUsageSchema,
   type Category,
   type DecodeCapability,
@@ -28,7 +28,7 @@ import {
   type Series,
   type SeriesExtras,
   type Settings,
-  type SniffResult,
+  type BrowseResult,
   type StorageUsage,
 } from '../schema';
 
@@ -74,11 +74,11 @@ export const series = {
 export const browse = {
   categories: () => call<Category[]>('browse_categories', undefined, categorySchema.array()),
   list: (category: string, genre: string | null, page: number) =>
-    call<SniffResult>('browse_list', { category, genre, page }, sniffResultSchema),
+    call<BrowseResult>('browse_list', { category, genre, page }, browseResultSchema),
 };
 
 export const search = {
-  run: (keyword: string) => call<SniffResult>('search_series', { keyword }, sniffResultSchema),
+  run: (keyword: string) => call<BrowseResult>('search_series', { keyword }, browseResultSchema),
 };
 
 // ---------------------------------------------------------------- 下载

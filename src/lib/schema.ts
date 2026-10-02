@@ -66,7 +66,7 @@ const seriesCardSchema = z.object({
 
 export type SeriesCard = z.infer<typeof seriesCardSchema>;
 
-/** 浏览与搜索共用的嗅探结果结构（后端 `sniff::SniffResult`）。 */
+/** 浏览与搜索共用的嗅探结果结构（后端 `sniff::BrowseResult`）。 */
 const browseMetaSchema = z.object({
   page: z.number().int().positive(),
   totalPages: z.number().int().nonnegative(),
@@ -74,14 +74,13 @@ const browseMetaSchema = z.object({
   genres: z.array(categorySchema),
 });
 
-export const sniffResultSchema = z.object({
-  success: z.boolean(),
+export const browseResultSchema = z.object({
   results: z.array(seriesCardSchema),
   pageTitle: z.string(),
   meta: browseMetaSchema,
 });
 
-export type SniffResult = z.infer<typeof sniffResultSchema>;
+export type BrowseResult = z.infer<typeof browseResultSchema>;
 
 // ---------------------------------------------------------------- 下载任务
 

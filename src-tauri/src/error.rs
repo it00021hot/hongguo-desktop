@@ -27,9 +27,6 @@ pub enum AppError {
     #[error("媒体处理失败: {0}")]
     Media(String),
 
-    #[error("浏览器嗅探失败: {0}")]
-    Sniff(String),
-
     #[error("参数错误: {0}")]
     InvalidArgs(String),
 
@@ -58,7 +55,6 @@ impl AppError {
             AppError::Io(_) => "error.io",
             AppError::Decrypt(_) => "error.decrypt",
             AppError::Media(_) => "error.media",
-            AppError::Sniff(_) => "error.sniff",
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",

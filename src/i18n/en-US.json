@@ -38,8 +38,7 @@
     "loadFailed": "Failed to load",
     "downloadedBadge": "{count} downloaded",
     "totalCount": "{total} titles",
-    "resolving": "Opening…",
-    "timeout": "The site took too long to respond — timed out"
+    "resolving": "Opening…"
   },
   "search": {
     "placeholder": "Type a title, or paste a share link / series ID",
@@ -242,7 +241,6 @@
     "io": "A file could not be read or written. Check your free disk space.",
     "decrypt": "This episode cannot be played. Download it again and retry.",
     "media": "This video could not be processed. Download the episode again.",
-    "sniff": "Could not load drama information. Check your connection or the proxy in Settings.",
     "invalidArgs": "That action cannot be completed. Please try again.",
     "notFound": "Nothing was found.",
     "cancelled": "Cancelled",
@@ -259,7 +257,6 @@
     "toggleTheme": "Toggle theme",
     "episodeCount": "{count} episodes",
     "progress": "Progress",
-    "skipToContent": "Skip to main content",
-    "retry": "Retry"
+    "skipToContent": "Skip to main content"
   }
 }

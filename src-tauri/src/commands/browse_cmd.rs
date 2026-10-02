@@ -1,27 +1,26 @@
-//! 浏览与搜索（走内嵌浏览器嗅探）。
+//! 浏览与搜索：抓官网页面，解析内嵌数据。
+//!
+//! 官网是服务端渲染的，卡片、分页、题材全在 `window._ROUTER_DATA` 里，
+//! 一次 GET 约 300ms。解析逻辑在 [`super::site::browse`]。
 
-use tauri::AppHandle;
-
-use crate::error::AppResult;
-use crate::sniff;
+use crate::domain::site::browse::{self, BrowseResult, Category};
+use crate::error::{AppError, AppResult};
 
 /// 浏览分类。
 #[tauri::command]
-pub fn browse_categories() -> Vec<sniff::Category> {
-    sniff::categories()
+pub fn browse_categories() -> Vec<Category> {
+    browse::categories()
 }
 
 /// 浏览分类页。
 ///
-/// `category` / `genre` 会拼进官网 URL，由嗅探窗口加载后提取卡片。
+/// `category` / `genre` 会拼进官网 URL，由抓取层直接解析该页。
 #[tauri::command]
 pub async fn browse_list(
-    app: AppHandle,
     category: String,
     genre: Option<String>,
     page: Option<u32>,
-) -> AppResult<sniff::SniffResult> {
-    // slug 只允许字母数字与连字符，防止拼出意外 URL
+) -> AppResult<BrowseResult> {
     let cat = sanitize_slug(&category, "real-drama");
     let gen = genre
         .as_deref()
@@ -29,7 +28,7 @@ pub async fn browse_list(
         .unwrap_or_default();
     let pg = page.unwrap_or(1).max(1);
 
-    let mut url = format!("{}/category/{cat}", sniff::window::SITE);
+    let mut url = format!("{}/category/{cat}", browse::SITE);
     if !gen.is_empty() {
         url.push('/');
         url.push_str(&gen);
@@ -38,24 +37,18 @@ pub async fn browse_list(
         url.push_str(&format!("?page={pg}"));
     }
 
-    sniff::run(&app, &url)
-        .await
-        .map_err(crate::error::AppError::Sniff)
+    browse::load(&url).await
 }
 
 /// 搜索剧集。
 #[tauri::command]
-pub async fn search_series(app: AppHandle, keyword: String) -> AppResult<sniff::SniffResult> {
+pub async fn search_series(keyword: String) -> AppResult<BrowseResult> {
     let kw = keyword.trim();
     if kw.is_empty() {
-        return Err(crate::error::AppError::InvalidArgs(
-            "请输入搜索关键词".into(),
-        ));
+        return Err(AppError::InvalidArgs("请输入搜索关键词".into()));
     }
-    let url = format!("{}/search/{}", sniff::window::SITE, urlencoding::encode(kw));
-    sniff::run(&app, &url)
-        .await
-        .map_err(crate::error::AppError::Sniff)
+    let url = format!("{}/search/{}", browse::SITE, urlencoding::encode(kw));
+    browse::load(&url).await
 }
 
 /// 清洗 slug：只保留字母数字与连字符。
@@ -97,6 +90,6 @@ mod tests {
 
     #[test]
     fn categories_has_three() {
-        assert_eq!(sniff::categories().len(), 3);
+        assert_eq!(browse::categories().len(), 3);
     }
 }

@@ -67,13 +67,10 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect }: Props) {
             </div>
 
             <div className="flex flex-col gap-1.5 p-3">
-              {/* 固定两行高度：剧名长短不一会让同排卡片的标签高低错落，看着更碎 */}
-              <h3
-                className="line-clamp-2 min-h-9 text-sm leading-snug font-semibold"
-                title={card.seriesTitle}
-              >
+              {/* 单行截断而不是折两行：卡片高度一致才好排，折行会把标签顶得高低不齐 */}
+              <p className="truncate text-sm font-semibold" title={card.seriesTitle}>
                 {card.seriesTitle}
-              </h3>
+              </p>
               {card.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {/* 题材用实心 chip：outline 透明底贴在白卡片上像三个浮着的空框 */}

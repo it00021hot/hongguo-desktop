@@ -16,13 +16,12 @@ mod media;
 mod protocol;
 mod service;
 mod signer;
-mod sniff;
 mod store;
 
 /// 运行应用。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 不装 logger 的话全树 `log::` 调用都是空操作，嗅探/下载失败会静默消失。
+    // 不装 logger 的话全树 `log::` 调用都是空操作，抓取/下载失败会静默消失。
     // 调试时用 RUST_LOG=debug 打开详细日志。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 

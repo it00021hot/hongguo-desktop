@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "最小权限集：只放行本应用真正需要的能力。dialog / opener 由 Rust 侧 command 调插件，不走 JS IPC，故不需 ACL 授权。",
-  "windows": ["main", "sniff"],
+  "description": "最小权限集：只放行本应用真正需要的能力。浏览/搜索改成直接抓官网 HTML，不再开隐藏 webview，所以这里没有任何 webview 与 dialog/opener 权限。",
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
@@ -10,9 +10,6 @@
     "core:window:allow-hide",
     "core:window:allow-set-focus",
     "core:window:allow-close",
-    "core:webview:allow-create-webview-window",
-    "core:webview:allow-webview-close",
-    "core:webview:allow-set-webview-focus",
     "core:event:default"
   ]
 }
