@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HardDrive, Trash2 } from 'lucide-react';
+import { HardDrive, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,17 +15,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useSeriesList, useStorageActions, useStorageUsage } from '@/lib/queries';
+import { useRemoveSeries, useSeriesList, useStorageActions, useStorageUsage } from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
+import type { Series } from '@/lib/schema';
 
 /** 磁盘占用与清理。 */
 export function StoragePage() {
   const { data: usage } = useStorageUsage();
   const { data: seriesList } = useSeriesList();
   const { deleteSeries, deleteAll } = useStorageActions();
+  const { mutate: removeSeries } = useRemoveSeries();
   const [filter, setFilter] = useState('');
   const [confirmAll, setConfirmAll] = useState(false);
+  // 移除记录不可撤销（后端是软删除，没有恢复入口），所以必须先确认
+  const [confirmRemove, setConfirmRemove] = useState<Series | null>(null);
 
   const visible = (seriesList ?? []).filter((s) => {
     if (!filter.trim()) return true;
@@ -36,6 +40,18 @@ export function StoragePage() {
   const handleDelete = (seriesId: string, title: string) => {
     deleteSeries.mutate(seriesId, {
       onSuccess: (n) => toast.success(`${title} · ${tf('storage.freedFiles', { count: n })}`),
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  const handleRemove = () => {
+    if (!confirmRemove) return;
+    const title = confirmRemove.title;
+    removeSeries(confirmRemove.seriesId, {
+      onSuccess: () => {
+        toast.success(tf('storage.removedRecord', { title }));
+        setConfirmRemove(null);
+      },
       onError: (e) => toast.error(e.message),
     });
   };
@@ -95,12 +111,24 @@ export function StoragePage() {
                 >
                   <span className="min-w-0 flex-1 truncate text-sm">{s.title}</span>
                   <Badge variant="secondary">{s.episodeCount}</Badge>
+                  {/* 两个动作要分得清：左边删磁盘上的文件（记录留着），右边把记录从列表里去掉 */}
                   <Button
                     size="sm"
                     variant="ghost"
+                    aria-label={tf('storage.deleteFilesOf', { title: s.title })}
+                    title={t('storage.deleteFiles')}
                     onClick={() => handleDelete(s.seriesId, s.title)}
                   >
                     <Trash2 className="size-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={tf('storage.removeRecord', { title: s.title })}
+                    title={t('storage.removeRecordShort')}
+                    onClick={() => setConfirmRemove(s)}
+                  >
+                    <XCircle className="size-4" />
                   </Button>
                 </div>
               ))}
@@ -126,6 +154,23 @@ export function StoragePage() {
               }
             >
               {t('common.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmRemove !== null} onOpenChange={(o) => !o && setConfirmRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmRemove && tf('storage.removeRecordConfirm', { title: confirmRemove.title })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('storage.removeRecordDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRemove}>
+              {t('storage.removeRecordShort')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

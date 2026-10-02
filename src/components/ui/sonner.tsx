@@ -8,6 +8,9 @@ function Toaster({ ...props }: ToasterProps) {
       theme={resolved}
       className="toaster group"
       position="bottom-right"
+      // 默认 4s 太黏：成功提示读完就没人看了，还挡住右下角内容。
+      // 真正需要用户停下来读的界面错误不靠 toast 承载。
+      duration={2500}
       toastOptions={{
         classNames: {
           toast:

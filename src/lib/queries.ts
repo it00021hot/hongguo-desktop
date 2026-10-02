@@ -124,6 +124,17 @@ export function useResolveSeries() {
   });
 }
 
+/** 从剧集列表移除一部剧。磁盘清理页的「移除记录」用它。 */
+export function useRemoveSeries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (seriesId: string) => series.remove(seriesId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.seriesList });
+    },
+  });
+}
+
 // ---------------------------------------------------------------- 下载
 
 /**

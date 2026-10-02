@@ -65,6 +65,7 @@ export const series = {
   resolve: (input: string) => call<Series>('resolve_series', { input }, seriesSchema),
   extras: (seriesId: string) =>
     call<SeriesExtras>('get_series_extras', { seriesId }, seriesExtrasSchema),
+  remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索

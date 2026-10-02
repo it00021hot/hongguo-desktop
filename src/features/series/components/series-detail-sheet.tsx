@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Play, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -32,13 +31,21 @@ export type SeriesRef = Pick<
 
 interface Props {
   card: SeriesRef | null;
+  /**
+   * 勾选集号由调用方持有，不放组件内部。
+   *
+   * 原因：换剧和关闭抽屉都要求「选择被清空」。放组件里就得用 effect 监听
+   * card 变化去重置，而本项目的 eslint 把 `set-state-in-effect` 设成了 error。
+   * 状态跟着「当前打开的是哪部剧」这个对象一起换掉，两个场景一次解决。
+   */
+  selected: number[];
+  onSelectedChange: (next: number[]) => void;
   onOpenChange: (open: boolean) => void;
 }
 
 /** 剧集详情抽屉：解析全集 → 选集 → 播放或下载。 */
-export function SeriesDetailSheet({ card, onOpenChange }: Props) {
+export function SeriesDetailSheet({ card, selected, onSelectedChange, onOpenChange }: Props) {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState<number[]>([]);
   const setTarget = usePlayerStore((s) => s.setTarget);
   const { data: series, isPending, isError, error } = useSeriesEpisodes(card?.seriesId ?? null);
   const { mutate: resolve } = useResolveSeries();
@@ -125,7 +132,7 @@ export function SeriesDetailSheet({ card, onOpenChange }: Props) {
         {episodes.length > 0 && (
           <>
             <Separator />
-            <EpisodePicker episodes={episodes} selected={selected} onChange={setSelected} />
+            <EpisodePicker episodes={episodes} selected={selected} onChange={onSelectedChange} />
           </>
         )}
 

@@ -62,3 +62,9 @@ pub async fn get_series_extras(series_id: String) -> crate::domain::model::Serie
         }
     }
 }
+
+/// 从剧集列表移除一部剧（不删本地文件，也不删已下载的任务记录）。
+#[tauri::command]
+pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
+    series_service::dismiss(&state, &series_id)
+}

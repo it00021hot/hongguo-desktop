@@ -4,12 +4,30 @@
     "tagline": "Browse · Search · Batch Download · Stream · Merge · Clean Up"
   },
   "nav": {
-    "browse": { "title": "Browse", "description": "Search and discover dramas by category" },
-    "player": { "title": "Player", "description": "Local and online playback" },
-    "tasks": { "title": "Tasks", "description": "Queue, progress and merge" },
-    "merge": { "title": "Merge", "description": "Combine episodes into one file" },
-    "storage": { "title": "Storage", "description": "Usage stats and cleanup" },
-    "settings": { "title": "Settings", "description": "Directory, naming, concurrency, proxy" },
+    "browse": {
+      "title": "Browse",
+      "description": "Search and discover dramas by category"
+    },
+    "player": {
+      "title": "Player",
+      "description": "Local and online playback"
+    },
+    "tasks": {
+      "title": "Tasks",
+      "description": "Queue, progress and merge"
+    },
+    "merge": {
+      "title": "Merge",
+      "description": "Combine episodes into one file"
+    },
+    "storage": {
+      "title": "Storage",
+      "description": "Usage stats and cleanup"
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "Directory, naming, concurrency, proxy"
+    },
     "collapse": "Collapse",
     "expand": "Expand"
   },
@@ -58,7 +76,10 @@
     "selectFailed": "Select failed",
     "selectAll": "Select all",
     "deselectAll": "Deselect all",
-    "columns": { "status": "Status", "size": "Size" },
+    "columns": {
+      "status": "Status",
+      "size": "Size"
+    },
     "empty": "No download tasks yet",
     "status": {
       "pending": "Pending",
@@ -137,7 +158,9 @@
     "codecMismatch": "Episode {episode} has a different codec; quick merge would corrupt the file — use compat merge",
     "start": "Start merge",
     "started": "Merge queued",
-    "actions": { "remove": "Delete this merge record" },
+    "actions": {
+      "remove": "Delete this merge record"
+    },
     "removeConfirm": "Delete this merge record?",
     "removeDesc": "Only the task record is removed. The merged file stays in your download folder.",
     "status": {
@@ -155,7 +178,14 @@
     "keepRecord": "Deleting files does not remove the list entry",
     "freedFiles": "{count} files deleted",
     "deleteAllConfirm": "Delete everything downloaded?",
-    "deleteAllDesc": "All downloaded files will be removed. Series records are kept. This cannot be undone."
+    "deleteAllDesc": "All downloaded files will be removed. Series records are kept. This cannot be undone.",
+    "deleteFiles": "Delete local files",
+    "deleteFilesOf": "Delete local files of {title}",
+    "removeRecordShort": "Remove record",
+    "removeRecord": "Remove {title} from the list",
+    "removeRecordConfirm": "Remove {title} from the list?",
+    "removeRecordDesc": "This only hides the record from the list. You can download it again by name or share link later, and already downloaded files are untouched.",
+    "removedRecord": "Removed the record for {title}"
   },
   "settings": {
     "downloadDir": "Download folder",

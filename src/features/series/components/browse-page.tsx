@@ -22,7 +22,7 @@ import {
 } from '@/lib/queries';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
-import type { SeriesCard } from '@/lib/schema';
+import type { Series, SeriesCard } from '@/lib/schema';
 
 /**
  * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
@@ -41,6 +41,17 @@ function detectInput(value: string): 'keyword' | 'resolve' {
   return 'keyword';
 }
 
+/** 解析接口返回的是 Series，抽屉只吃 SeriesRef，这里做一次字段改名。 */
+function toRef(series: Series): SeriesRef {
+  return {
+    seriesId: series.seriesId,
+    seriesTitle: series.title,
+    cover: series.cover,
+    episodeCount: series.episodeCount,
+    tags: series.tags,
+  };
+}
+
 /**
  * 浏览页：顶部一个搜索框，下面是分类 + 题材分页浏览。
  *
@@ -56,7 +67,7 @@ export function BrowsePage() {
   const genre = useUiStore((s) => s.lastGenre);
   const setFilter = useUiStore((s) => s.setBrowseFilter);
   const [page, setPage] = useState(1);
-  const [detail, setDetail] = useState<SeriesRef | null>(null);
+  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const [keyword, setKeyword] = useState('');
   /** 已提交的搜索词：空串 = 浏览模式，非空 = 搜索模式 */
@@ -117,21 +128,18 @@ export function BrowsePage() {
     }
     setSubmitted('');
     resolve(value, {
-      onSuccess: (series) =>
-        setDetail({
-          seriesId: series.seriesId,
-          seriesTitle: series.title,
-          cover: series.cover,
-          episodeCount: series.episodeCount,
-          tags: series.tags,
-        }),
+      onSuccess: (series) => openDetail(toRef(series)),
       onError: (e) => toast.error(e.message),
     });
   };
 
+  // 打开抽屉的唯一入口。勾选状态和「当前是哪部剧」绑在同一个对象上，
+  // 换剧时整体换掉、关闭时整体丢掉，两个场景共用这一处重置。
+  const openDetail = (card: SeriesRef) => setDetail({ card, selected: [] });
+
   // 点卡片只打开详情抽屉：选集、立即播放、提交下载都在抽屉里做。
   // 这里再顺手跳转的话，抽屉会「刚打开就被路由切走」，用户连集数都来不及点。
-  const handleSelect = (card: SeriesCard) => setDetail(card);
+  const handleSelect = (card: SeriesCard) => openDetail(card);
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -243,7 +251,14 @@ export function BrowsePage() {
         </div>
       )}
 
-      <SeriesDetailSheet card={detail} onOpenChange={(open) => !open && setDetail(null)} />
+      <SeriesDetailSheet
+        card={detail?.card ?? null}
+        selected={detail?.selected ?? []}
+        onSelectedChange={(next) =>
+          setDetail((prev) => (prev ? { ...prev, selected: next } : prev))
+        }
+        onOpenChange={(open) => !open && setDetail(null)}
+      />
     </div>
   );
 }

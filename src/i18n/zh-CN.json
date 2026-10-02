@@ -4,12 +4,30 @@
     "tagline": "浏览 · 搜索 · 批量下载 · 在线播放 · 一键合并 · 磁盘清理"
   },
   "nav": {
-    "browse": { "title": "浏览", "description": "搜索剧名，按分类与题材发现短剧" },
-    "player": { "title": "播放", "description": "本地与在线播放" },
-    "tasks": { "title": "下载管理", "description": "队列、进度与合并" },
-    "merge": { "title": "一键合并", "description": "把分集合并为全集" },
-    "storage": { "title": "磁盘清理", "description": "占用统计与文件清理" },
-    "settings": { "title": "设置", "description": "目录、命名、并发与代理" },
+    "browse": {
+      "title": "浏览",
+      "description": "搜索剧名，按分类与题材发现短剧"
+    },
+    "player": {
+      "title": "播放",
+      "description": "本地与在线播放"
+    },
+    "tasks": {
+      "title": "下载管理",
+      "description": "队列、进度与合并"
+    },
+    "merge": {
+      "title": "一键合并",
+      "description": "把分集合并为全集"
+    },
+    "storage": {
+      "title": "磁盘清理",
+      "description": "占用统计与文件清理"
+    },
+    "settings": {
+      "title": "设置",
+      "description": "目录、命名、并发与代理"
+    },
     "collapse": "收起",
     "expand": "展开"
   },
@@ -58,7 +76,10 @@
     "selectFailed": "选中失败项",
     "selectAll": "全选",
     "deselectAll": "取消全选",
-    "columns": { "status": "状态", "size": "大小" },
+    "columns": {
+      "status": "状态",
+      "size": "大小"
+    },
     "empty": "还没有下载任务",
     "status": {
       "pending": "等待中",
@@ -137,7 +158,9 @@
     "codecMismatch": "第 {episode} 集编码与其它集不同，快速合并会损坏文件，请改用兼容合并",
     "start": "开始合并",
     "started": "已加入合并队列",
-    "actions": { "remove": "删除这条合并记录" },
+    "actions": {
+      "remove": "删除这条合并记录"
+    },
     "removeConfirm": "删除这条合并记录？",
     "removeDesc": "只删除这条任务记录，已经生成的合并文件会原样留在下载目录里。",
     "status": {
@@ -155,7 +178,14 @@
     "keepRecord": "删除文件不会移除列表记录",
     "freedFiles": "已删除 {count} 个文件",
     "deleteAllConfirm": "确定删除全部已下载文件？",
-    "deleteAllDesc": "所有已下载的剧集文件都会被删除，剧集档案保留。此操作不可撤销。"
+    "deleteAllDesc": "所有已下载的剧集文件都会被删除，剧集档案保留。此操作不可撤销。",
+    "deleteFiles": "删除本地文件",
+    "deleteFilesOf": "删除《{title}》的本地文件",
+    "removeRecordShort": "移除记录",
+    "removeRecord": "从列表移除《{title}》",
+    "removeRecordConfirm": "从列表移除《{title}》？",
+    "removeRecordDesc": "只从列表里去掉这条记录，之后仍可通过剧名或分享链接重新下载。已下载的文件不受影响。",
+    "removedRecord": "已移除《{title}》的记录"
   },
   "settings": {
     "downloadDir": "下载目录",
