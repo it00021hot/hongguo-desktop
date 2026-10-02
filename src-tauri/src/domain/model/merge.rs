@@ -93,6 +93,24 @@ impl MergeTask {
     }
 }
 
+/// 一部可合并的剧。合并页的下拉列表用它。
+///
+/// 候选来自**下载队列**而不是剧集档案：合并真正吃的是队列里已完成、
+/// 文件仍在的分集（见 [`crate::service::merge_service::done_inputs`]）。
+/// 档案会被 `dismiss` 软删除（用户在磁盘清理页「移除记录」），
+/// 但本地文件和任务记录都还在，那部剧照样合得起来——
+/// 按档案取候选会让「下过的剧选不到、没下过的剧排在前面」。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeCandidate {
+    pub series_id: String,
+    pub series_title: String,
+    /// 可参与合并的集数（已完成且文件仍在）
+    pub episode_count: usize,
+    /// 已下载分集的字节数之和
+    pub total_size: u64,
+}
+
 /// 合并前校验结果。只走 IPC，不落盘。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

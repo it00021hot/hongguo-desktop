@@ -2,9 +2,8 @@
 
 use std::path::PathBuf;
 
-use tauri::State;
-
 use super::done_inputs;
+use super::guard::RunningMerge;
 use super::progress::ProgressSink;
 use crate::app_state::AppState;
 use crate::domain::model::MergeTask;
@@ -13,19 +12,28 @@ use crate::error::{AppError, AppResult};
 /// 快速合并某剧已下载的分集。
 ///
 /// 流复制没有「逐集」的天然边界——`concat_copy` 一次拼完，所以这里只在
-/// 开始前与结束后各报一次进度。
+/// 开始前与结束后各报一次进度。取消只能在开写前检查一次：拼接本身是
+/// 顺序字节拷贝，中途打断会留下半截文件。
+///
+/// 收 `&AppState` 而不是 command 的 `State<'_, _>`：合并在后台线程上跑，
+/// 那里拿不到 command 的生命周期借用（见 [`crate::commands::merge_cmd::merge_series`]）。
 pub fn quick_merge(
-    state: &State<'_, AppState>,
+    state: &AppState,
     series_id: &str,
     output_name: &str,
     task: &MergeTask,
     on_progress: &ProgressSink,
+    slot: &RunningMerge,
 ) -> AppResult<(PathBuf, u64, usize)> {
     let inputs = done_inputs(state, series_id);
 
     // 闸门放在执行点上，不放在 UI 上：绕过界面直接提交的命令请求同样要拦住，
     // 否则产出的就是一份索引都过不去的文件。
     ensure_codec_consistent(&inputs)?;
+
+    if slot.is_cancelled() {
+        return Err(AppError::Cancelled);
+    }
 
     let settings = state.settings();
     let dir = settings.series_dir(output_name);

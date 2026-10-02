@@ -1,7 +1,6 @@
 {
   "app": {
-    "name": "Hongguo Downloader",
-    "tagline": "Browse · Search · Batch Download · Stream · Merge · Clean Up"
+    "name": "Hongguo Downloader"
   },
   "nav": {
     "browse": {
@@ -122,13 +121,15 @@
     "volume": "Volume",
     "mute": "Mute",
     "playbackRate": "Playback speed",
+    "definition": "Quality",
+    "definitionAuto": "Auto",
+    "definitionLocalOnly": "Downloaded episodes have only the local quality",
     "episodes": "Episodes",
     "intro": "Synopsis",
     "introExpand": "Expand",
     "introCollapse": "Collapse",
     "recommend": "Recommended",
     "totalEpisodes": "{count} episodes",
-    "pickEpisode": "Pick an episode",
     "download": "Download",
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
@@ -150,6 +151,7 @@
     "subtitle": "Combine downloaded episodes into a single file",
     "selectSeries": "Series",
     "pickSeries": "Pick a series",
+    "noCandidates": "No downloaded episodes yet — download a few first, then come back to merge",
     "taskList": "Merge tasks",
     "quick": "Quick merge",
     "quickDesc": "Concatenate as-is, no re-encoding, lossless and fast",
@@ -162,7 +164,9 @@
     "insufficientSpace": "Not enough free disk space",
     "codecMismatch": "Episode {episode} has a different codec; quick merge would corrupt the file — use compat merge",
     "start": "Start merge",
-    "started": "Merge queued",
+    "running": "Merging…",
+    "started": "Merge started",
+    "interrupted": "Last merge was interrupted (app exited)",
     "actions": {
       "remove": "Delete this merge record"
     },
@@ -244,6 +248,7 @@
     "invalidArgs": "That action cannot be completed. Please try again.",
     "notFound": "Nothing was found.",
     "cancelled": "Cancelled",
+    "busy": "The previous task is still running. Please wait for it to finish.",
     "internal": "The operation failed. Please try again.",
     "badPayload": "Unexpected data format. Please try again."
   },
@@ -258,5 +263,12 @@
     "episodeCount": "{count} episodes",
     "progress": "Progress",
     "skipToContent": "Skip to main content"
+  },
+  "window": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "zoom": "Zoom",
+    "close": "Close"
   }
 }

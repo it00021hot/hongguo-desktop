@@ -30,6 +30,7 @@ const keys = {
   tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,
+  mergeCandidates: ['merge-candidates'] as const,
   mergePreflight: (id: string) => ['merge-preflight', id] as const,
   storageUsage: ['storage-usage'] as const,
   capability: ['decode-capability'] as const,
@@ -232,6 +233,27 @@ export function useMergeTasks() {
   return useQuery({ queryKey: keys.mergeTasks, queryFn: merge.tasks });
 }
 
+/**
+ * 可合并的剧列表。
+ *
+ * 候选是按下载队列算出来的，所以下载一完成就要重取：刚下完的那部剧
+ * 在这一刻才第一次成为可合并项。挂在下载收尾事件上而不是只靠进页面时拉一次，
+ * 否则用户下完切到合并页看到的还是「没有已下载的分集」。
+ */
+export function useMergeCandidates() {
+  const qc = useQueryClient();
+  const invalidate = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: keys.mergeCandidates });
+  }, [qc]);
+
+  useEvent(EVENTS.downloadTaskAdded, invalidate);
+  useEvent(EVENTS.downloadCompleted, invalidate);
+  useEvent(EVENTS.downloadStopped, invalidate);
+  useEvent(EVENTS.downloadQueueChanged, invalidate);
+
+  return useQuery({ queryKey: keys.mergeCandidates, queryFn: merge.candidates });
+}
+
 export function useMergePreflight(seriesId: string | null) {
   return useQuery({
     queryKey: keys.mergePreflight(seriesId ?? ''),
@@ -281,12 +303,26 @@ export function useMergeEvents() {
 
 // ---------------------------------------------------------------- 播放与存储
 
+/**
+ * 起播。
+ *
+ * preferOnline 恒为 true：已下载的那一集后端仍优先走本地文件，
+ * 没下载的走在线流——与原版一致，否则「点开没下过的集」永远播不了。
+ *
+ * `definition` 不传则取平台给的最高档；传了但平台没有这一档时后端自动回退，
+ * 响应里的 `definition` 是**实际生效**的那档，菜单以它为准。
+ */
 export function usePlay() {
   return useMutation({
-    // preferOnline 恒为 true：已下载的那一集后端仍优先走本地文件，
-    // 没下载的走在线流——与原版一致，否则「点开没下过的集」永远播不了
-    mutationFn: ({ seriesId, vidIndex }: { seriesId: string; vidIndex: number }) =>
-      play.series(seriesId, vidIndex, '', true),
+    mutationFn: ({
+      seriesId,
+      vidIndex,
+      definition,
+    }: {
+      seriesId: string;
+      vidIndex: number;
+      definition?: number;
+    }) => play.series(seriesId, vidIndex, '', true, definition),
   });
 }
 

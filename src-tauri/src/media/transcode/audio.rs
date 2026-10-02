@@ -4,6 +4,8 @@
 //! 不需要解码成 PCM 再重编码——省掉一整轮编解码，也就没有音质损失。
 //! 所以这里只需求出 AAC 封装 MP4 时必须声明的两个参数。
 
+use std::path::Path;
+
 use crate::domain::mp4::r#box::find_box;
 use crate::domain::mp4::sample_table::TrackInfo;
 use crate::error::{AppError, AppResult};
@@ -21,7 +23,27 @@ pub struct AudioFormat {
 ///
 /// 取不到时回落到 AAC 最常见的 44100Hz 立体声——源片源几乎都是这个规格，
 /// 猜错最多让播放器按默认参数解析，不至于整条轨播不出来。
-pub fn read_audio_format(data: &[u8], track: &TrackInfo) -> AppResult<AudioFormat> {
+///
+/// 自己开文件只读头部（`stbl` 恒在 moov 里，位置靠前）：
+/// 传整个文件进来会让调用方为了几个字节把上百 MB 的视频读进内存。
+pub fn read_audio_format(path: &Path, track: &TrackInfo) -> AppResult<AudioFormat> {
+    let need = track.stbl_offset + track.stbl_size;
+    let len = std::fs::metadata(path)
+        .map_err(|e| AppError::Io(e.to_string()))?
+        .len() as usize;
+    let head_len = need.min(len).min(8 * 1024 * 1024);
+    let mut data = vec![0u8; head_len];
+    {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
+        f.read_exact(&mut data)
+            .map_err(|e| AppError::Io(e.to_string()))?;
+    }
+    read_audio_format_from(&data, track)
+}
+
+/// 从已读入的字节里解析 AAC 参数（`read_audio_format` 的纯函数部分）。
+fn read_audio_format_from(data: &[u8], track: &TrackInfo) -> AppResult<AudioFormat> {
     let stsd = find_box(
         data,
         track.stbl_offset,

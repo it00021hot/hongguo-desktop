@@ -3,6 +3,7 @@ import {
   categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
+  mergeCandidateSchema,
   mergePreflightSchema,
   mergeTaskSchema,
   playbackHistoryItemSchema,
@@ -17,6 +18,7 @@ import {
   type Category,
   type DecodeCapability,
   type DownloadTask,
+  type MergeCandidate,
   type MergeMode,
   type MergePreflight,
   type MergeTask,
@@ -100,6 +102,8 @@ export const download = {
 
 export const merge = {
   tasks: () => call<MergeTask[]>('get_merge_tasks', undefined, mergeTaskSchema.array()),
+  candidates: () =>
+    call<MergeCandidate[]>('get_merge_candidates', undefined, mergeCandidateSchema.array()),
   preflight: (seriesId: string) =>
     call<MergePreflight>('merge_preflight', { seriesId }, mergePreflightSchema),
   start: (seriesId: string, outputName: string, mode: MergeMode) =>
@@ -111,10 +115,16 @@ export const merge = {
 // ---------------------------------------------------------------- 播放
 
 export const play = {
-  series: (seriesId: string, vidIndex: number, filePath = '', preferOnline = false) =>
+  series: (
+    seriesId: string,
+    vidIndex: number,
+    filePath = '',
+    preferOnline = false,
+    definition?: number,
+  ) =>
     call<PlayResponse>(
       'play_series',
-      { request: { seriesId, vidIndex, filePath, preferOnline } },
+      { request: { seriesId, vidIndex, filePath, preferOnline, definition: definition ?? null } },
       playResponseSchema,
     ),
   // duration 必须回传：后端靠它判断「接近片尾就不续播」，不记就等于没这道防线

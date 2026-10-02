@@ -40,6 +40,13 @@ pub enum AppError {
     #[error("已取消")]
     Cancelled,
 
+    /// 资源正被占用（如同一个输出的合并已经在跑）。
+    ///
+    /// 与 [`AppError::InvalidArgs`] 分开：这不是参数写错了，而是「现在不行、
+    /// 等一下」——前端要能提示用户稍后重试，而不是当成用法错误。
+    #[error("{0}")]
+    Busy(String),
+
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
 }
@@ -58,6 +65,7 @@ impl AppError {
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",
+            AppError::Busy(_) => "error.busy",
             AppError::Tauri(_) => "error.internal",
         }
     }

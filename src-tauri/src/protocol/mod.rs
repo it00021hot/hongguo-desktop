@@ -20,8 +20,23 @@ pub const STREAM_SCHEME: &str = "hongguo-stream";
 /// `http://{scheme}.…` 开头的请求拦下来再转回自定义协议来兜住这件事
 /// （见 wry 的 `custom_protocol_workaround`）。直接给 `<video src="hongguo-stream://…">`
 /// 不会触发协议处理器，表现就是「后端地址取到了、但永远黑屏、日志里一次请求都没有」。
-pub fn stream_url(vid: &str) -> String {
-    format!("http://{STREAM_SCHEME}.localhost/{vid}")
+///
+/// 档位必须在路径里，有两个作用：`<video>` 靠 URL 变化感知「换了资源」并重新加载；
+/// 它同时是缓存的键（见 [`stream`]），所以同一集的不同档位各占一份数据。
+pub fn stream_url(vid: &str, definition: u32) -> String {
+    format!("http://{STREAM_SCHEME}.localhost/s/{definition}/{vid}")
+}
+
+/// 从在线流 URL 的 path 里取回 `(档位, vid)`。
+///
+/// 解析不了返回 `None`：path 一定由 [`stream_url`] 生成，对不上就是有别处在乱拼
+/// URL，宁可明确报错也不要猜。
+pub fn parse_stream_path(path: &str) -> Option<(u32, &str)> {
+    let (definition, vid) = path
+        .trim_start_matches('/')
+        .strip_prefix("s/")?
+        .split_once('/')?;
+    Some((definition.parse().ok()?, vid))
 }
 
 /// 本地成品 URL。`encoded` 是文件路径的 base64url 编码。

@@ -75,16 +75,21 @@ impl Drop for ScopedDataDir {
 mod tests {
     use super::*;
 
+    /// 这两个用例读的是**进程级**的 `HONGGUO_DATA_DIR`，而服务层的用例会通过
+    /// [`ScopedDataDir`] 改它。不拿同一把锁的话，一次断言里的两次读可能落到
+    /// 两个不同目录上——随机失败（实测约 1/15 次）。
     #[test]
     fn data_file_is_inside_data_dir() {
-        assert_eq!(data_file().parent().unwrap(), data_dir());
+        let dir = std::env::temp_dir().join(format!("hg-paths-file-{}", std::process::id()));
+        let _scope = ScopedDataDir::new(&dir);
+        assert_eq!(data_file(), dir.join(DATA_FILE));
     }
 
     #[test]
     fn cache_dirs_are_separate() {
-        assert!(compat_cache_dir()
-            .to_string_lossy()
-            .contains("compat-cache"));
+        let dir = std::env::temp_dir().join(format!("hg-paths-cache-{}", std::process::id()));
+        let _scope = ScopedDataDir::new(&dir);
+        assert_eq!(compat_cache_dir(), dir.join("compat-cache"));
         assert_ne!(compat_cache_dir(), data_dir());
     }
 

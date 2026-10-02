@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useUiStore } from '@/lib/stores/ui';
 import { usePlayerStore } from '@/lib/stores/player';
+import { isMac } from '@/lib/platform';
+import { MacTrafficLights } from './window-controls';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -40,15 +42,19 @@ export function AppSidebar() {
         collapsed ? 'w-14' : 'w-56',
       )}
     >
-      <div className="flex h-14 items-center gap-2 border-b px-3">
-        <span className="bg-primary text-primary-foreground grid size-8 shrink-0 place-items-center rounded-lg text-sm font-semibold">
-          红
-        </span>
+      {/* 无边框窗口下这一块兼作拖拽区：用户抓着 logo 就能拖窗口。
+          mac 的交通灯钉在左上角（平台惯例），其余平台这块只做拖拽。 */}
+      <div data-tauri-drag-region className="flex h-14 items-center gap-2 border-b px-3">
+        {isMac() && <MacTrafficLights />}
+        <img
+          src="/app-icon.png"
+          alt=""
+          width={32}
+          height={32}
+          className="size-8 shrink-0 rounded-lg"
+        />
         {!collapsed && (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{t('app.name')}</p>
-            <p className="text-muted-foreground truncate text-xs">{t('app.tagline')}</p>
-          </div>
+          <p className="truncate text-sm font-semibold">{t('app.name')}</p>
         )}
       </div>
 

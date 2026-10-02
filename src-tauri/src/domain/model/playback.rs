@@ -49,6 +49,9 @@ pub struct PlayRequest {
     /// 优先在线播放（不落盘）
     #[serde(default)]
     pub prefer_online: bool,
+    /// 指定清晰度档位；不给则取平台提供的最高档
+    #[serde(default)]
+    pub definition: Option<u32>,
 }
 
 /// 播放地址响应。发给前端 `playResponseSchema`，键名 camelCase。
@@ -65,6 +68,25 @@ pub struct PlayResponse {
     pub resume_at: f64,
     #[serde(default)]
     pub error: String,
+    /// 实际生效的清晰度档位
+    #[serde(default)]
+    pub definition: u32,
+    /// 本集提供的全部档位，供切换菜单渲染
+    #[serde(default)]
+    pub definitions: Vec<VideoDefinition>,
+}
+
+/// 一档清晰度。发给前端 `videoDefinitionSchema`。
+///
+/// 派生 `Ord` 是为了在取流侧按 (档位, 宽, 高) 升序去重后再反转，
+/// 那样「高到低」就是一次反转，不必写比较函数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoDefinition {
+    /// 档位数值（1080 / 720 / 540…）
+    pub value: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// 播放历史的一条：某部剧最近一次看到的位置。
@@ -134,12 +156,31 @@ mod tests {
             online: true,
             resume_at: 12.5,
             error: String::new(),
+            definition: 1080,
+            definitions: vec![VideoDefinition {
+                value: 1080,
+                width: 1920,
+                height: 1080,
+            }],
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["url"], "hongguo-stream://v1");
         assert_eq!(v["online"], true);
         assert_eq!(v["resumeAt"], 12.5);
+        assert_eq!(v["definition"], 1080);
+        assert_eq!(v["definitions"][0]["value"], 1080);
         assert!(v.get("resume_at").is_none());
+    }
+
+    #[test]
+    fn play_request_accepts_a_definition() {
+        // 不带 definition 的旧调用要照常工作：None = 取最高档
+        let r: PlayRequest = serde_json::from_str(r#"{"seriesId":"1","vidIndex":2}"#).unwrap();
+        assert_eq!(r.definition, None);
+
+        let r: PlayRequest =
+            serde_json::from_str(r#"{"seriesId":"1","vidIndex":2,"definition":720}"#).unwrap();
+        assert_eq!(r.definition, Some(720));
     }
 
     #[test]

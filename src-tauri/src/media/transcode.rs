@@ -90,7 +90,7 @@ pub fn transcode_file(
     // length_size 决定样本的长度前缀宽度，转 Annex-B 时要用。
     let (annexb_prefix, length_size) = crate::media::hevc::read_parameter_sets(input, &video.info)?;
 
-    // 2) HEVC 解码 → YUV
+    // 2) HEVC 解码 → H.264 编码（流水线，见 `codec`）
     //
     // `rusty_h265-accel` 的去块滤波里有一处越界（`deblock.rs` 的 `ok` 判定
     // 覆盖不到某些边界段）。**release 构建不受影响**：它只是 `debug_assert!`，
@@ -99,8 +99,8 @@ pub fn transcode_file(
     //
     // 仍要包 `catch_unwind`：debug 构建会在这条断言上 panic，而直接崩掉
     // 整个应用比报错糟糕得多。release 下这层是纯保险。
-    let decode = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        codec::decode_hevc(input, &annexb_prefix, length_size, &video.info.samples)
+    let encoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        codec::decode_and_encode(input, &annexb_prefix, length_size, &video.info.samples, options)
     }))
     .map_err(|_| {
         AppError::Media(
@@ -109,24 +109,15 @@ pub fn transcode_file(
         )
     })??;
 
-    let (width, height, yuv_frames) = decode;
-
-    if yuv_frames.is_empty() {
-        return Err(AppError::Media("HEVC 解码没有产出任何帧".into()));
-    }
-
-    // 3) H.264 编码
-    let encoded = codec::encode_h264(&yuv_frames, width, height, options)?;
-
-    // 4) 音轨：解密后已是明文 AAC，按时间戳直接带过去
+    // 3) 音轨：解密后已是明文 AAC，按时间戳直接带过去
     let audio = collect_audio(input, &demuxed)?;
 
-    // 5) 封装成 MP4
+    // 4) 封装成 MP4
     let size = mux::mux_h264(
         output,
-        &encoded,
-        width,
-        height,
+        &encoded.units,
+        encoded.width,
+        encoded.height,
         audio.as_ref().map(|(f, s)| (*f, s.as_slice())),
         options,
     )?;
@@ -135,13 +126,13 @@ pub fn transcode_file(
         output_path: output.to_string_lossy().to_string(),
         output_size: size,
         elapsed_ms: started.elapsed().as_millis(),
-        frames: yuv_frames.len() as u64,
+        frames: encoded.frames as u64,
         decoder: "rusty_h265".into(),
         encoder: "rusty_h264".into(),
     })
 }
 
-/// HEVC 解码为 YUV 帧序列。
+/// 从文件读一段字节（解码样本用）。
 pub(super) fn read_range(path: &Path, offset: u64, size: u64) -> AppResult<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
@@ -172,22 +163,26 @@ fn collect_audio(
         return Ok(None);
     }
 
-    let data = std::fs::read(input).map_err(|e| AppError::Io(e.to_string()))?;
-    let format = audio::read_audio_format(&data, &track.info)?;
+    // 只读音轨样本所在的区间，不把整个文件读进来：
+    // 视频轨动辄几十上百 MB，整文件读一次会白占一份与转码无关的内存。
+    // 音轨样本按 offset 升序切段，顺序读文件正好顺带利用预读。
+    let format = audio::read_audio_format(input, &track.info)?;
 
     // AAC 每帧固定 1024 个采样，时间戳按累计秒数给
     let mut pts = 0.0f64;
     let mut samples = Vec::with_capacity(track.info.samples.len());
+    let mut file = std::fs::File::open(input).map_err(|e| AppError::Io(e.to_string()))?;
     for &(offset, size) in &track.info.samples {
-        let start = offset as usize;
-        let end = start + size as usize;
-        let frame = data
-            .get(start..end)
-            .ok_or_else(|| AppError::Media("音轨样本越界".into()))?;
+        use std::io::{Read, Seek, SeekFrom};
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        let mut frame = vec![0u8; size as usize];
+        file.read_exact(&mut frame)
+            .map_err(|e| AppError::Media(format!("读取音轨样本失败: {e}")))?;
         // MP4 里是裸 AAC 帧，muxide 要 ADTS framing，逐帧补头
         samples.push((
             pts,
-            audio::adts_frame(frame, format.sample_rate, format.channels),
+            audio::adts_frame(&frame, format.sample_rate, format.channels),
         ));
         pts += 1024.0 / f64::from(format.sample_rate.max(1));
     }

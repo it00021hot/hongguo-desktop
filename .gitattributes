@@ -1,0 +1,20 @@
+# 行尾必须显式钉死。
+#
+# 仓库之前没有这个文件，靠 Windows 的 core.autocrlf=true 转换。结果是
+# 「checkout 一次、整个工作区变 CRLF」，而 prettier 与 rustfmt 默认都要求 LF，
+# 于是 format:check 会在两次运行之间时好时坏 —— 门禁不可信。
+#
+# eol=lf 表示工作区里也一律 LF，不只是入库时转换。
+* text=auto eol=lf
+
+# 二进制：不做行尾转换，否则图标会被写坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary

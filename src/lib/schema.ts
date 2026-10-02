@@ -183,6 +183,16 @@ export const mergeTaskSchema = z.object({
 
 export type MergeTask = z.infer<typeof mergeTaskSchema>;
 
+/** 可合并的剧：后端按下载队列聚合，不是剧集档案。 */
+export const mergeCandidateSchema = z.object({
+  seriesId: z.string(),
+  seriesTitle: z.string(),
+  episodeCount: z.number().int().nonnegative(),
+  totalSize: z.number().nonnegative(),
+});
+
+export type MergeCandidate = z.infer<typeof mergeCandidateSchema>;
+
 export const mergePreflightSchema = z.object({
   ok: z.boolean(),
   episodeCount: z.number().int().nonnegative(),
@@ -199,11 +209,24 @@ export type MergePreflight = z.infer<typeof mergePreflightSchema>;
 
 // ---------------------------------------------------------------- 播放与存储
 
+/** 一档清晰度。 */
+export const videoDefinitionSchema = z.object({
+  value: z.number().int().positive(),
+  width: z.number().int().nonnegative(),
+  height: z.number().int().nonnegative(),
+});
+
+export type VideoDefinition = z.infer<typeof videoDefinitionSchema>;
+
 export const playResponseSchema = z.object({
   url: z.string(),
   online: z.boolean(),
   resumeAt: z.number().nonnegative(),
   error: z.string(),
+  // 实际生效的档位与本集可选的全部档位。
+  // 本地文件播放时 definitions 为空数组，前端据此隐藏切换菜单。
+  definition: z.number().int().nonnegative(),
+  definitions: z.array(videoDefinitionSchema),
 });
 
 export type PlayResponse = z.infer<typeof playResponseSchema>;

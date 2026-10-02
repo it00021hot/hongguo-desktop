@@ -5,13 +5,15 @@
 //! 三处各写一遍时迟早会漂移成三种口径。
 
 pub mod compat;
+pub mod guard;
 pub mod prepare;
 pub mod progress;
 pub mod quick;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app_state::AppState;
+use crate::domain::model::MergeCandidate;
 use crate::error::{AppError, AppResult};
 
 /// 某剧可参与合并的分集，按集号升序。
@@ -29,6 +31,47 @@ pub fn done_inputs(state: &AppState, series_id: &str) -> Vec<(u32, PathBuf)> {
             .filter(|(_, p)| p.exists())
             .collect::<Vec<_>>(),
     )
+}
+
+/// 可合并的剧列表，按可合并集数倒序。
+///
+/// 从下载队列聚合而不是读剧集档案：合并的输入是本地分集文件，
+/// 「档案还在不在」与「能不能合」是两件事。用户在磁盘清理页移除过记录的剧，
+/// 文件和任务都还在，照样该出现在这里；反过来一部集都没下的剧
+/// 出现在下拉里，选中后只会得到一句「没有已下载的分集」。
+///
+/// 剧名取自任务记录里的 `series_title`（提交下载时从档案抄的），
+/// 档案缺失时也还有名字，不会退化成一条空白的候选项。
+pub fn candidates(state: &AppState) -> Vec<MergeCandidate> {
+    let mut by_series: std::collections::HashMap<String, MergeCandidate> =
+        std::collections::HashMap::new();
+
+    for task in state.queue().all() {
+        if !task.is_done() || !Path::new(&task.file_path).exists() {
+            continue;
+        }
+        let entry = by_series
+            .entry(task.series_id.clone())
+            .or_insert_with(|| MergeCandidate {
+                series_id: task.series_id.clone(),
+                series_title: task.series_title.clone(),
+                episode_count: 0,
+                total_size: 0,
+            });
+        entry.episode_count += 1;
+        entry.total_size += std::fs::metadata(&task.file_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+    }
+
+    let mut list: Vec<MergeCandidate> = by_series.into_values().collect();
+    // 集数多的排前面：用户来这一页通常是要合并下得最全的那部
+    list.sort_by(|a, b| {
+        b.episode_count
+            .cmp(&a.episode_count)
+            .then_with(|| a.series_title.cmp(&b.series_title))
+    });
+    list
 }
 
 /// 删除一条合并任务记录（只删记录，不删已产出的文件）。
@@ -113,6 +156,93 @@ mod tests {
             "别的剧、文件已消失、未完成的集都不该进来"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 造一部已下载多集的剧，返回入队后的任务列表已就绪。
+    fn enqueue_series(
+        state: &AppState,
+        dir: &std::path::Path,
+        series_id: &str,
+        title: &str,
+        n: u32,
+    ) {
+        for idx in 1..=n {
+            let mut t = DownloadTask::new(series_id, title, idx, "v", "");
+            let path = dir.join(format!("{series_id}-{idx}.mp4"));
+            std::fs::write(&path, vec![b'x'; 10]).unwrap();
+            t.mark_completed(&path.to_string_lossy(), 10);
+            state.queue().enqueue(t);
+        }
+    }
+
+    #[test]
+    fn candidates_come_from_the_queue_not_the_series_registry() {
+        let dir = temp_dir("cand-registry");
+        let state = AppState::default();
+        enqueue_series(&state, &dir, "1", "下过的剧", 3);
+        // 档案被软删除（磁盘清理页「移除记录」）：文件和任务都还在，照样合得起来
+        state
+            .store
+            .write()
+            .series
+            .push(crate::domain::model::Series {
+                series_id: "1".into(),
+                title: "下过的剧".into(),
+                dismissed: true,
+                ..Default::default()
+            });
+        // 档案在但一集没下：不该出现在候选里
+        state
+            .store
+            .write()
+            .series
+            .push(crate::domain::model::Series {
+                series_id: "2".into(),
+                title: "没下过的剧".into(),
+                ..Default::default()
+            });
+
+        let got = candidates(&state);
+        assert_eq!(got.len(), 1, "只有真下载过的剧算候选: {got:?}");
+        assert_eq!(got[0].series_id, "1");
+        assert_eq!(
+            got[0].series_title, "下过的剧",
+            "剧名取自任务记录，不依赖档案"
+        );
+        assert_eq!(got[0].episode_count, 3);
+        assert_eq!(got[0].total_size, 30);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_skip_missing_files_and_sort_by_episode_count() {
+        let dir = temp_dir("cand-sort");
+        let state = AppState::default();
+        enqueue_series(&state, &dir, "1", "少", 1);
+        enqueue_series(&state, &dir, "2", "多", 5);
+
+        // 已完成但文件被用户在系统里删了：不能算进去
+        let mut orphan = DownloadTask::new("3", "孤儿", 1, "v", "");
+        orphan.mark_completed(&dir.join("orphan.mp4").to_string_lossy(), 10);
+        state.queue().enqueue(orphan);
+
+        let got = candidates(&state);
+        assert_eq!(
+            got.iter().map(|c| c.series_id.as_str()).collect::<Vec<_>>(),
+            ["2", "1"],
+            "集数多的排前面；文件已消失的剧不进候选"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn candidates_are_empty_without_downloads() {
+        let state = AppState::default();
+        state
+            .queue()
+            .enqueue(DownloadTask::new("1", "剧", 1, "v", ""));
+        assert!(candidates(&state).is_empty(), "没下载过就没有候选");
     }
 
     #[test]

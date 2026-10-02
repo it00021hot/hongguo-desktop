@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
   Gauge,
-  ListVideo,
   Maximize,
   Minimize,
+  MonitorPlay,
   Pause,
   PictureInPicture2,
   Play,
@@ -14,7 +14,6 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +25,7 @@ import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t } from '@/i18n';
 import { DownloadSheet } from './download-sheet';
-import type { Episode } from '@/lib/schema';
+import type { Episode, VideoDefinition } from '@/lib/schema';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
@@ -50,7 +49,6 @@ interface Props {
   seriesId: string;
   episodes: Episode[];
   currentIndex: number;
-  onSelectEpisode: (vidIndex: number) => void;
   /**
    * 下载面板是否打开。
    *
@@ -60,14 +58,31 @@ interface Props {
    */
   downloading: boolean;
   onDownloadingChange: (open: boolean) => void;
+  /** 当前实际生效的清晰度档位。0 = 本地文件或尚未取到 */
+  definition: number;
+  /** 本集提供的全部档位。只有一档时不渲染切换菜单 */
+  definitions: VideoDefinition[];
+  /**
+   * 当前播放地址。
+   *
+   * `<video>` 以它为 `key`，换清晰度就会**重建元素**。控件的事件监听必须
+   * 跟着重建：绑在旧元素上时，新元素的 `play` 事件收不到，
+   * 播放按钮就会一直卡在「暂停」图标。
+   */
+  src: string;
+  /** 选清晰度。`undefined` 表示交回后端自动取最高档 */
+  onDefinitionChange: (definition: number | undefined) => void;
 }
 
 /**
  * 自绘播放控件。
  *
- * 不用原生 `controls`：它既不跟主题，也放不下「下载到本地 / 选集」这类业务动作。
+ * 不用原生 `controls`：它既不跟主题，也放不下「下载到本地 / 清晰度」这类业务动作。
  * 媒体状态（进度、时长、音量、倍速）全部由本组件持有——原生控件撤掉后，
  * 没人再替我们发 `timeupdate`，状态只能自己接。
+ *
+ * 选集不在这里：右侧 `SeriesPanel` 已经常驻一整块选集区，
+ * 这里再放一个入口（无论按钮还是弹层）都与它重复，还会在窄窗口下撞在一起。
  */
 export function PlayerControls({
   videoRef,
@@ -75,9 +90,12 @@ export function PlayerControls({
   seriesId,
   episodes,
   currentIndex,
-  onSelectEpisode,
   downloading,
   onDownloadingChange,
+  definition,
+  definitions,
+  onDefinitionChange,
+  src,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -86,7 +104,6 @@ export function PlayerControls({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
-  const [picking, setPicking] = useState(false);
   /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
   const [chromeVisible, setChromeVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,7 +180,9 @@ export function PlayerControls({
     onMeta();
     onVolume();
     onRate();
-    onPauseEvt();
+    // 只在元素真的处于暂停时置位：新元素还没起播，`paused` 本来就是 true，
+    // 无脑调 onPauseEvt 会把「正在播」也刷成暂停。
+    if (video.paused) onPauseEvt();
 
     return () => {
       video.removeEventListener('timeupdate', onTime);
@@ -176,7 +195,9 @@ export function PlayerControls({
       video.removeEventListener('ratechange', onRate);
       document.removeEventListener('fullscreenchange', onFull);
     };
-  }, [videoRef]);
+    // `src` 进依赖：换清晰度时 `<video>` 以它为 key 被重建，
+    // 监听器不跟着重建就会一直绑在已卸载的旧元素上。
+  }, [videoRef, src]);
 
   const seekTo = useCallback(
     (ratio: number) => {
@@ -324,15 +345,50 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className={CHROME_BUTTON}
-            onClick={() => setPicking(true)}
-          >
-            <ListVideo className="size-4" />
-            {t('player.episodes')}
-          </Button>
+          {/* 清晰度切换。本地已下载的集只有一版，definitions 为空——
+              这时按钮照常出现但置灰并说明原因：直接不渲染会让用户以为
+              「这个功能本来就没有」，而在线流那一集它又出现了。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(CHROME_BUTTON, 'font-mono')}
+                disabled={definitions.length === 0}
+                title={
+                  definitions.length === 0 ? t('player.definitionLocalOnly') : undefined
+                }
+              >
+                <MonitorPlay className="size-4" />
+                {definition > 0 ? `${definition}P` : t('player.definitionAuto')}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>{t('player.definition')}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => onDefinitionChange(undefined)}>
+                {t('player.definitionAuto')}
+                {definition === 0 && <span className="ml-auto text-xs">✓</span>}
+              </DropdownMenuItem>
+              {definitions.map((d) => (
+                <DropdownMenuItem
+                  key={d.value}
+                  onSelect={() => onDefinitionChange(d.value)}
+                  className="justify-between"
+                >
+                  <span className="font-mono">
+                    {d.value}P
+                    {/* 竖屏剧的宽高是反的，只报分辨率会误导 */}
+                    {d.height > d.width && (
+                      <span className="text-muted-foreground ml-2 text-xs">
+                        {d.width}×{d.height}
+                      </span>
+                    )}
+                  </span>
+                  {definition === d.value && <span className="ml-auto text-xs">✓</span>}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Button
             variant="ghost"
@@ -355,30 +411,6 @@ export function PlayerControls({
           </IconButton>
         </div>
       </div>
-
-      <Sheet open={picking} onOpenChange={setPicking}>
-        <SheetContent side="bottom" className="max-h-[70vh]">
-          <SheetHeader>
-            <SheetTitle>{t('player.pickEpisode')}</SheetTitle>
-          </SheetHeader>
-          <div className="grid grid-cols-8 gap-1 overflow-y-auto py-2 md:grid-cols-12">
-            {episodes.map((ep) => (
-              <Button
-                key={ep.vidIndex}
-                variant={ep.vidIndex === currentIndex ? 'default' : 'outline'}
-                size="sm"
-                className="h-8 font-mono tabular-nums"
-                onClick={() => {
-                  onSelectEpisode(ep.vidIndex);
-                  setPicking(false);
-                }}
-              >
-                {ep.vidIndex}
-              </Button>
-            ))}
-          </div>
-        </SheetContent>
-      </Sheet>
 
       <DownloadSheet
         seriesId={seriesId}

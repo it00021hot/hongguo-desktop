@@ -24,7 +24,7 @@ import {
   writeVolume,
 } from '@/lib/playback-prefs';
 import { t, tf } from '@/i18n';
-import type { Settings } from '@/lib/schema';
+import type { Settings, VideoDefinition } from '@/lib/schema';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
 const SAVE_INTERVAL = 5_000;
@@ -49,6 +49,16 @@ function PlayerView() {
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
   const pendingSeek = useRef(0);
+  /**
+   * 最近一次的播放位置与时长，无论有没有真的落盘。
+   *
+   * 卸载时 `<video>` 已经先一步被卸载，从元素上再读 currentTime 是拿不到的；
+   * 内存里这份是唯一能在 cleanup 里用到的真值。
+   *
+   * `key` 记的是这份位置属于哪一集：组件按剧集整体重挂载，但 ref 不会重置，
+   * 不带 key 的话新一集会拿着上一集的秒数去续播。
+   */
+  const lastKnown = useRef({ key: '', time: 0, duration: 0 });
 
   // 切集 / 加载中都会让 <video> 被卸载重建，新元素的倍速音量静音
   // 一律回到默认值，所以「用户设的值」要存在这里，每次渲染后再贴回元素。
@@ -59,6 +69,7 @@ function PlayerView() {
   const seriesId = usePlayerStore((s) => s.seriesId);
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
+  const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
 
   const { data: settings, isPending: settingsPending } = useSettings();
   const { mutate: saveSettings } = useSaveSettings();
@@ -75,6 +86,16 @@ function PlayerView() {
   const [error, setError] = useState<string | null>(null);
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
   const [downloading, setDownloading] = useState(false);
+  /**
+   * 用户选的清晰度。`undefined` = 不指定，由后端取平台给的最高档。
+   *
+   * 存在组件里而不是 store：切集时应当回到「自动最高档」，
+   * 不同集提供的档位本来就不一样，把上一集的档位带过去多半要触发回退。
+   */
+  const [definition, setDefinition] = useState<number | undefined>(undefined);
+  /** 本集实际生效的档位与全部可选档位，由起播响应带回。 */
+  const [activeDefinition, setActiveDefinition] = useState(0);
+  const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
 
   const { mutate: play } = usePlay();
   const { mutate: savePosition } = useSavePosition();
@@ -91,34 +112,79 @@ function PlayerView() {
     [seriesId, vidIndex, setTarget],
   );
 
+  /**
+   * 记录播放位置。
+   *
+   * `force` 绕过节流：暂停、播完、离开页面这三种时刻之后不会再有下一次
+   * timeupdate，被节流挡掉就等于这一段进度永久丢失——「看了 3 秒就切走」
+   * 正好落在这 5 秒窗口里，回来又是 0。
+   */
   const persist = useCallback(
-    (time: number) => {
+    (time: number, force = false) => {
       if (!seriesId || !vidIndex) return;
       const now = Date.now();
-      if (now - lastSaved.current < SAVE_INTERVAL) return;
+      if (!force && now - lastSaved.current < SAVE_INTERVAL) return;
       lastSaved.current = now;
       // 时长直接从元素读：媒体状态归自绘控件管，这里不再维护第二份，
       // 免得两处对不上。后端靠它判断「接近片尾就别续播」。
       const video = videoRef.current;
       const total = video && Number.isFinite(video.duration) ? video.duration : 0;
+      lastKnown.current = { key: episodeKey, time, duration: total };
       savePosition({ seriesId, vidIndex, currentTime: time, duration: total });
     },
-    [seriesId, vidIndex, savePosition],
+    [seriesId, vidIndex, episodeKey, savePosition],
   );
 
-  // 切换剧集时重新取播放地址。
-  // 状态重置放在 Promise 回调里，避免 effect 体内同步 setState 触发级联渲染。
+  // 卸载 / 切集时补写最后一次。
+  //
+  // 只靠 timeupdate 的定时保存会丢掉最后一小段：用户看完直接点侧边栏
+  // 回列表，组件当场卸载，那 5 秒内攒下的位置一次都没落过盘。
+  // 这里读的是 lastKnown 而不是 videoRef —— cleanup 跑的时候 video 元素已经被卸载了。
+  useEffect(() => {
+    if (!seriesId || !vidIndex) return;
+    return () => {
+      const { key, time, duration } = lastKnown.current;
+      // 从头就没播过（加载失败、秒退）不写：否则会给从未看过的集
+      // 落一条 0 秒记录，把「继续观看」里凭空多出一张卡。
+      // key 对不上说明这份位置属于别的集，写进去就是串集。
+      if (key !== episodeKey || time <= 0) return;
+      savePosition({ seriesId, vidIndex, currentTime: time, duration });
+    };
+  }, [seriesId, vidIndex, episodeKey, savePosition]);
+
+  // 起播。依赖里带 definition：切清晰度要重新取流，
+  // 而 `<video src>` 换 URL 会重置 currentTime，所以先把当前位置存进
+  // pendingSeek —— 否则用户从 10 分钟处切到 720p 会被弹回片头。
   useEffect(() => {
     if (!seriesId || !vidIndex) return;
 
+    const video = videoRef.current;
+    if (video && video.currentTime > 0) {
+      lastKnown.current = {
+        key: episodeKey,
+        time: video.currentTime,
+        duration: Number.isFinite(video.duration) ? video.duration : lastKnown.current.duration,
+      };
+    }
+    // 切清晰度时续播位置要接着当前播放点，而不是回到「上次看的进度」——
+    // 那会把人从 10 分钟处弹回上次退出点，看着像「切清晰度丢了进度」。
+    // 只认属于本集的那份：换集后 lastKnown 里是上一集的秒数，拿来续播就串集了。
+    const keepPosition = lastKnown.current.key === episodeKey ? lastKnown.current.time : 0;
+
     play(
-      { seriesId, vidIndex },
+      { seriesId, vidIndex, definition },
       {
         onSuccess: (res) => {
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
+          setActiveDefinition(res.definition);
+          setDefinitions(res.definitions);
           // 续播位置要在 metadata 加载后 seek
-          pendingSeek.current = res.error ? 0 : res.resumeAt;
+          pendingSeek.current = res.error
+            ? 0
+            : keepPosition > 0
+              ? keepPosition
+              : res.resumeAt;
         },
         onError: (e) => {
           setError(e.message);
@@ -126,7 +192,7 @@ function PlayerView() {
         },
       },
     );
-  }, [seriesId, vidIndex, play]);
+  }, [seriesId, vidIndex, definition, episodeKey, play]);
 
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
@@ -222,7 +288,7 @@ function PlayerView() {
     // 元素本身确实存在（ended 只能由它自己触发），但不写检查就只能写 `!`。
     const video = videoRef.current;
     if (!seriesId || !vidIndex || !video) return;
-    persist(video.currentTime);
+    persist(video.currentTime, true);
     // 看完自动删：先清掉刚看完这集的本地文件，再决定连播下一集。
     // 没下载过的集本来就没有文件，后端返回 false，不提示。
     if (autoDelete) {
@@ -240,9 +306,12 @@ function PlayerView() {
     if (autoNext && !downloading) stepEpisode(1);
   };
 
-  const handleVideoError = () => {
+  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     if (error) return;
-    setError(t('error.media'));
+    const v = e.currentTarget;
+    setError(
+      `${t('error.media')} [code=${v.error?.code} msg=${v.error?.message} rs=${v.readyState} ns=${v.networkState} buf=${v.buffered.length} dur=${v.duration} src=${v.currentSrc}]`,
+    );
   };
 
   if (!seriesId || !vidIndex) {
@@ -259,15 +328,19 @@ function PlayerView() {
         <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
           {src ? (
             <>
-              {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下选集/下载这类业务动作 */}
+              {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
+                  key 绑 src：切清晰度时后端给出的流地址变了（地址里带档位），
+                  换元素才能保证 <video> 真的重新加载——只改 src 属性在
+                  WebView2 上不一定会触发重载，表现就是「点了 720p 画面不变」。 */}
               <video
+                key={src}
                 ref={videoRef}
                 src={src}
                 className="size-full"
                 autoPlay
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={(e) => persist(e.currentTarget.currentTime)}
-                onPause={(e) => persist(e.currentTarget.currentTime)}
+                onPause={(e) => persist(e.currentTarget.currentTime, true)}
                 onEnded={handleEnded}
                 onRateChange={handleRateChange}
                 onVolumeChange={handleVolumeChange}
@@ -279,9 +352,12 @@ function PlayerView() {
                 seriesId={seriesId}
                 episodes={currentSeries?.episodes ?? []}
                 currentIndex={vidIndex}
-                onSelectEpisode={(index) => setTarget(seriesId, index)}
                 downloading={downloading}
                 onDownloadingChange={setDownloading}
+                definition={activeDefinition}
+                definitions={definitions}
+                onDefinitionChange={setDefinition}
+                src={src}
               />
             </>
           ) : (

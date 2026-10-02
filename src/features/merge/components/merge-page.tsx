@@ -27,10 +27,10 @@ import {
 } from '@/components/ui/select';
 import {
   useMergeActions,
+  useMergeCandidates,
   useMergeEvents,
   useMergePreflight,
   useMergeTasks,
-  useSeriesList,
 } from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
@@ -38,7 +38,9 @@ import type { MergeMode } from '@/lib/schema';
 
 /** 一键合并：快速合并（流复制）与兼容合并（转码）。 */
 export function MergePage() {
-  const { data: seriesList } = useSeriesList();
+  // 候选项按「有已下载分集」聚合，不用剧集档案：档案被移除记录软删除后
+  // 本地文件仍在，那部剧照样合得起来。
+  const { data: candidates, isPending: candidatesPending } = useMergeCandidates();
   const [seriesId, setSeriesId] = useState('');
   const [outputName, setOutputName] = useState('');
   const [mode, setMode] = useState<MergeMode>('quick');
@@ -51,8 +53,17 @@ export function MergePage() {
   /** 待删除的合并任务 id：null 表示确认框没打开 */
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
-  const current = seriesList?.find((s) => s.seriesId === seriesId);
-  const output = outputName || current?.title || '';
+  const current = candidates?.find((s) => s.seriesId === seriesId);
+  const output = outputName || current?.seriesTitle || '';
+
+  // 已有任务在跑同一个输出名时禁用按钮。后端也会拦（见 merge_service::guard），
+  // 但那是最后一道防线：真按下去只会得到一个报错 toast，界面却已经跳了两三次。
+  const busy = (tasks ?? []).some(
+    (t) => t.status === 'running' && t.outputName === output,
+  );
+
+  // 一部都没下过时直接说清楚：下拉是空的，placeholder 只会让人以为是加载卡住了
+  const noCandidates = !candidatesPending && (candidates?.length ?? 0) === 0;
 
   // 快速合并是整文件字节级顺序拼接，编码不一致时产出的文件连索引都过不去
   const quickUnavailable =
@@ -68,8 +79,8 @@ export function MergePage() {
     start.mutate(
       { seriesId, outputName: output, mode: effectiveMode },
       {
-        // 任务刚入队状态恒为 pending，真正的进度由合并事件流更新，
-        // 这里只确认「提交成功」，别去判断永远不会成立的状态。
+        // 后端派发到后台线程后立刻返回 running 任务，真正的进度与成败
+        // 走合并事件流。所以这里只确认「已启动」，别去判断最终状态。
         onSuccess: () => toast.success(t('merge.started')),
         onError: (e) => toast.error(e.message),
       },
@@ -95,18 +106,26 @@ export function MergePage() {
           {/* 选剧 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="merge-series">{t('merge.selectSeries')}</Label>
-            <Select value={seriesId || undefined} onValueChange={setSeriesId}>
+            <Select
+              value={seriesId || undefined}
+              onValueChange={setSeriesId}
+              disabled={noCandidates || candidatesPending}
+            >
               <SelectTrigger id="merge-series" className="w-full">
                 <SelectValue placeholder={t('merge.pickSeries')} />
               </SelectTrigger>
               <SelectContent>
-                {(seriesList ?? []).map((s) => (
+                {(candidates ?? []).map((s) => (
                   <SelectItem key={s.seriesId} value={s.seriesId}>
-                    {s.title}
+                    {/* 带上可合并集数：一部剧下了几集是这里最该先看到的信息 */}
+                    {s.seriesTitle} · {tf('common.episodeCount', { count: s.episodeCount })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {noCandidates && (
+              <p className="text-muted-foreground text-sm">{t('merge.noCandidates')}</p>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -115,7 +134,7 @@ export function MergePage() {
               id="merge-output"
               value={output}
               onChange={(e) => setOutputName(e.target.value)}
-              placeholder={current?.title ?? ''}
+              placeholder={current?.seriesTitle ?? ''}
             />
           </div>
 
@@ -164,9 +183,12 @@ export function MergePage() {
             </Alert>
           )}
 
-          <Button onClick={handleStart} disabled={!seriesId || !output || !preflight?.episodeCount}>
+          <Button
+            onClick={handleStart}
+            disabled={busy || !seriesId || !output || !preflight?.episodeCount}
+          >
             <Combine className="size-4" />
-            {t('merge.start')}
+            {busy ? t('merge.running') : t('merge.start')}
           </Button>
         </CardContent>
       </Card>

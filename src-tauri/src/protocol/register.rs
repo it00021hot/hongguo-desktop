@@ -9,7 +9,7 @@
 
 use tauri::http::{Request, Response, StatusCode};
 
-use super::{local, stream, LOCAL_SCHEME, STREAM_SCHEME};
+use super::{local, parse_stream_path, stream, LOCAL_SCHEME, STREAM_SCHEME};
 
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
@@ -54,10 +54,17 @@ fn serve_local(request: &Request<Vec<u8>>, range: Option<String>) -> Response<Ve
 
 /// 供给在线流。
 fn serve_stream(request: &Request<Vec<u8>>, range: Option<String>) -> Response<Vec<u8>> {
-    // 转回后的 URI 是 `hongguo-stream://localhost/<vid>`：vid 在 path 上，
-    // host 恒为 localhost，所以只能取 path。
-    let vid = request.uri().path().trim_start_matches('/');
-    match stream::serve(vid, range.as_deref()) {
+    // 转回后的 URI 是 `hongguo-stream://localhost/s/{档位}/{vid}`：host 恒为
+    // localhost，档位与 vid 都在 path 上。档位不只是路由信息，它就是缓存的键，
+    // 决定这份请求去读哪一份数据。
+    let path = request.uri().path();
+    let Some((definition, vid)) = parse_stream_path(path) else {
+        return text_response(
+            StatusCode::BAD_REQUEST,
+            &format!("无法解析的流地址: {path}"),
+        );
+    };
+    match stream::serve(vid, definition, range.as_deref()) {
         Ok((status, headers, data)) => build_response(status, headers, data),
         Err(msg) => text_response(StatusCode::NOT_FOUND, &msg),
     }
@@ -98,16 +105,39 @@ mod tests {
     #[test]
     fn stream_url_uses_the_localhost_form_wry_requires() {
         // 直接写 hongguo-stream://<vid> 不会被 WebView2 拦下来，协议永远收不到请求
-        let url = crate::protocol::stream_url("7687919221593885758");
-        assert_eq!(url, "http://hongguo-stream.localhost/7687919221593885758");
+        let url = crate::protocol::stream_url("7687919221593885758", 1080);
+        assert_eq!(
+            url,
+            "http://hongguo-stream.localhost/s/1080/7687919221593885758"
+        );
     }
 
     #[test]
-    fn stream_vid_survives_the_round_trip() {
-        let url = crate::protocol::stream_url("v-42");
+    fn stream_url_changes_with_definition() {
+        // 同一集换清晰度时 URL 必须变，否则 <video> 认为资源没换、不会重新加载
+        let base = crate::protocol::stream_url("v-42", 1080);
+        assert_ne!(base, crate::protocol::stream_url("v-42", 720), "换档");
+    }
+
+    #[test]
+    fn stream_path_survives_the_round_trip() {
+        // 请求进来时 wry 已把 scheme 换回自定义协议，host 恒为 localhost，信息在 path 上
+        let url = crate::protocol::stream_url("v-42", 720);
         let uri: Uri = url.parse().expect("URL 应可解析");
-        // 请求进来时 wry 已把 scheme 换回自定义协议，host 恒为 localhost，vid 在 path 上
-        assert_eq!(uri.path().trim_start_matches('/'), "v-42");
+        assert_eq!(uri.path().trim_start_matches('/'), "s/720/v-42");
+        assert_eq!(
+            crate::protocol::parse_stream_path(uri.path()),
+            Some((720, "v-42")),
+            "带档位的 path 也要能取回档位与 vid"
+        );
+    }
+
+    #[test]
+    fn a_path_we_did_not_generate_is_rejected() {
+        // path 只可能由 stream_url 生成，对不上就明确报错，不去猜 vid
+        assert_eq!(crate::protocol::parse_stream_path("/v-42"), None);
+        assert_eq!(crate::protocol::parse_stream_path("/s/abc/v-42"), None);
+        assert_eq!(crate::protocol::parse_stream_path("/s/720"), None);
     }
 
     #[test]

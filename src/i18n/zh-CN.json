@@ -1,7 +1,6 @@
 {
   "app": {
-    "name": "红果短剧下载器",
-    "tagline": "浏览 · 搜索 · 批量下载 · 在线播放 · 一键合并 · 磁盘清理"
+    "name": "红果短剧下载器"
   },
   "nav": {
     "browse": {
@@ -122,13 +121,15 @@
     "volume": "音量",
     "mute": "静音",
     "playbackRate": "倍速",
+    "definition": "清晰度",
+    "definitionAuto": "自动",
+    "definitionLocalOnly": "已下载的集只有本地这一版清晰度",
     "episodes": "选集",
     "intro": "简介",
     "introExpand": "展开",
     "introCollapse": "收起",
     "recommend": "推荐短剧",
     "totalEpisodes": "全{count}集",
-    "pickEpisode": "选择集数",
     "download": "下载",
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
@@ -150,6 +151,7 @@
     "subtitle": "把已下载的分集合并为单个全集文件",
     "selectSeries": "选择剧集",
     "pickSeries": "请选择一部剧",
+    "noCandidates": "还没有已下载的分集，先去下载几集再来合并",
     "taskList": "合并任务",
     "quick": "快速合并",
     "quickDesc": "原画质直拼，不重编码，无损且极快",
@@ -162,7 +164,9 @@
     "insufficientSpace": "磁盘剩余空间不足",
     "codecMismatch": "第 {episode} 集编码与其它集不同，快速合并会损坏文件，请改用兼容合并",
     "start": "开始合并",
-    "started": "已加入合并队列",
+    "running": "合并中…",
+    "started": "开始合并",
+    "interrupted": "上次合并被中断（应用退出）",
     "actions": {
       "remove": "删除这条合并记录"
     },
@@ -244,6 +248,7 @@
     "invalidArgs": "这个操作没法完成，请重试",
     "notFound": "没有找到对应的内容",
     "cancelled": "操作已取消",
+    "busy": "上一个任务还在跑，请等它完成",
     "internal": "操作失败，请重试",
     "badPayload": "数据格式异常，请重试"
   },
@@ -258,5 +263,12 @@
     "episodeCount": "{count} 集",
     "progress": "进度",
     "skipToContent": "跳到主内容"
+  },
+  "window": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "向下还原",
+    "zoom": "全屏",
+    "close": "关闭"
   }
 }

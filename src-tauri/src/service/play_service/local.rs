@@ -17,17 +17,21 @@ pub async fn resolve_play(
     request: &PlayRequest,
 ) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index);
+    // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏
+    let local_response = |url: String, online: bool| PlayResponse {
+        url,
+        online,
+        resume_at,
+        error: String::new(),
+        definition: 0,
+        definitions: Vec::new(),
+    };
 
     // 调用方直接给了路径就用它
     if !request.file_path.trim().is_empty() {
         let url = crate::protocol::local::local_play_url(&request.file_path)
             .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(PlayResponse {
-            url,
-            online: false,
-            resume_at,
-            error: String::new(),
-        });
+        return Ok(local_response(url, false));
     }
 
     // 已下载的那一集走本地协议
@@ -37,12 +41,7 @@ pub async fn resolve_play(
 
     if let Some(path) = local {
         if let Some(url) = crate::protocol::local::local_play_url(&path) {
-            return Ok(PlayResponse {
-                url,
-                online: false,
-                resume_at,
-                error: String::new(),
-            });
+            return Ok(local_response(url, false));
         }
     }
 
@@ -83,18 +82,22 @@ pub async fn resolve_play(
         }
     };
 
-    match online::prepare(&vid, state.settings()).await {
-        Ok(url) => Ok(PlayResponse {
-            url,
+    match online::prepare(&vid, request.definition, state.settings()).await {
+        Ok(prepared) => Ok(PlayResponse {
+            url: prepared.url,
             online: true,
             resume_at,
             error: String::new(),
+            definition: prepared.definition,
+            definitions: prepared.definitions,
         }),
         Err(e) => Ok(PlayResponse {
             url: String::new(),
             online: true,
             resume_at,
             error: e.to_string(),
+            definition: 0,
+            definitions: Vec::new(),
         }),
     }
 }

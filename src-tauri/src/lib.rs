@@ -73,6 +73,7 @@ pub fn run() {
             commands::download_cmd::delete_tasks,
             // 合并
             commands::merge_cmd::get_merge_tasks,
+            commands::merge_cmd::get_merge_candidates,
             commands::merge_cmd::delete_merge_task,
             commands::merge_cmd::merge_preflight,
             commands::merge_cmd::merge_series,
