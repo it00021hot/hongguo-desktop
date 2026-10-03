@@ -194,13 +194,14 @@ async fn run_one(
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
 
-    // 2) 输出路径（锁只在这个同步块里用，取完立刻 drop）
-    let series_title = {
-        let data = state.store.read();
-        data.series(&task.series_id)
-            .map(|s| s.title.clone())
-            .unwrap_or_else(|| task.series_title.clone())
-    };
+    // 2) 输出路径（档案查询是单条 SQL，同步快查即回）
+    let series_title = state
+        .store
+        .series_by_id(&task.series_id)
+        .ok()
+        .flatten()
+        .map(|s| s.title)
+        .unwrap_or_else(|| task.series_title.clone());
     let file_name = settings.render_file_name(&task.series_title, task.vid_index, &task.ep_title);
     let output = settings
         .series_dir(&series_title)

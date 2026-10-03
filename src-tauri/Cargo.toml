@@ -64,6 +64,7 @@ muxide = "0.2.5"
 # 合并前校验要问「输出卷还剩多少字节」。只开 disk：默认 feature 会把
 # component / network / system / user 一并拖进来，本项目一个都用不上。
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
+turso = { version = "0.8.1", default-features = false }
 
 # 这里刻意不列 videotoolbox / windows( Media Foundation ) / rusty_aac：
 # 平台硬编一律走 `media::ffmpeg` 的外部 ffmpeg 探测，音轨不解码（AAC 直通），

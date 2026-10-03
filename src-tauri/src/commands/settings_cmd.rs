@@ -21,10 +21,8 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> AppResul
     // 并发上限立即应用到调度器
     state.queue().set_limit(normalized.max_concurrency);
 
-    // 落盘
-    let mut data = state.store.read().clone();
-    data.settings = normalized.clone();
-    data.save(&crate::store::paths::data_file())?;
+    // 落库
+    state.store.save_settings(&normalized)?;
 
     Ok(normalized)
 }

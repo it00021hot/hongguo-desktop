@@ -25,10 +25,19 @@ pub fn run() {
     // 调试时用 RUST_LOG=debug 打开详细日志。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // 数据库打不开（目录建不了、schema 迁移失败）就别带病起窗口：
+    // 用户在空库上改的设置，等下次旧库恢复时会静默丢掉。
+    let state = match store::Store::open(store::paths::db_file()) {
+        Ok(db) => std::sync::Arc::new(app_state::AppStateInner::with_db(db)),
+        Err(e) => {
+            log::error!("[Store] 数据库打开失败，终止启动: {e}");
+            std::process::exit(1);
+        }
+    };
+
     let builder = tauri::Builder::default()
         // 单实例锁要第一个注册：抢在窗口创建之前，第二个进程才不会拉起第二套 UI。
-        // 双开的直接危害是两个进程互写 data.json——原子写只保证单条不坏，
-        // 保证不了「后写的整份覆盖先写的整份」，下载记录会随机消失。
+        // 双开的直接危害是两个进程互写同一个存储——下载记录会随机消失。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -38,7 +47,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(app_state::AppState::default());
+        .manage(state);
 
     // 自定义协议要在 setup 之前注册（Builder 阶段）
     let builder = protocol::register::register(builder);

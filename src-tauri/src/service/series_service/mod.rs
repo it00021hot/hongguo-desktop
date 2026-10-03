@@ -11,37 +11,21 @@ use crate::error::{AppError, AppResult};
 /// 从剧集列表移除一部剧。
 ///
 /// 置 `dismissed` 而不是真的删记录：分集、下载任务、播放进度都还挂在它上面，
-/// 物理删除会把这些关联数据变成孤儿。`DataStore::visible_series` 会过滤掉
-/// 被移除的档案，所以用户视角上就是「从列表里没了」。
+/// 物理删除会把这些关联数据变成孤儿。列表查询会过滤掉被移除的档案，
+/// 所以用户视角上就是「从列表里没了」。
 pub fn dismiss(state: &crate::app_state::AppState, series_id: &str) -> AppResult<()> {
-    let mut data = state.store.write();
-    let series = data
-        .series
-        .iter_mut()
-        .find(|s| s.series_id == series_id)
-        .ok_or_else(|| AppError::NotFound(format!("剧集 {series_id}")))?;
-    series.dismissed = true;
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
+    if state.store.set_series_dismissed(series_id)? == 0 {
+        return Err(AppError::NotFound(format!("剧集 {series_id}")));
+    }
+    Ok(())
 }
 
 /// 一次性移除列表里的全部剧集，返回移除条数。
 ///
-/// 不让前端循环调 [`dismiss`]：每条都要重写一次 data.json，几百部剧就是几百次
-/// 全量序列化，中途失败还会留下半清理的状态。这里一次改完、落盘一次。
+/// 不让前端循环调 [`dismiss`]：一条 UPDATE 全改完，中途失败也不会
+/// 留下半清理的状态。
 pub fn dismiss_all(state: &crate::app_state::AppState) -> AppResult<usize> {
-    let mut data = state.store.write();
-    let mut removed = 0;
-    for series in data.series.iter_mut().filter(|s| !s.dismissed) {
-        series.dismissed = true;
-        removed += 1;
-    }
-    if removed == 0 {
-        return Ok(0);
-    }
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| AppError::StoreCorrupt(e.to_string()))?;
-    Ok(removed)
+    Ok(state.store.dismiss_all_series()? as usize)
 }
 
 #[cfg(test)]
@@ -49,88 +33,95 @@ mod tests {
     use super::*;
     use crate::app_state::AppState;
     use crate::domain::model::Series;
-    use std::path::PathBuf;
-
-    /// 把落盘目标指向临时目录。
-    ///
-    /// dismiss/dismiss_all 都会 save()。不隔离的话这些测试会**覆盖用户真实的
-    /// data.json**：AppState::default() 是空 store，测试一保存就等于把用户数据
-    /// 冲成一条假记录。drop 时自动还原。
-    fn scoped(tag: &str) -> (PathBuf, crate::store::paths::ScopedDataDir) {
-        let dir = std::env::temp_dir().join(format!("hg-series-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let guard = crate::store::paths::ScopedDataDir::new(&dir);
-        (dir, guard)
-    }
 
     #[test]
     fn dismiss_hides_the_series_from_the_visible_list() {
-        let (_dir, _scoped) = scoped("hide");
         let state = AppState::default();
-        state.store.write().series.push(Series {
-            series_id: "1".into(),
-            title: "剧".into(),
-            ..Default::default()
-        });
+        state
+            .store
+            .upsert_series(&Series {
+                series_id: "1".into(),
+                title: "剧".into(),
+                ..Default::default()
+            })
+            .unwrap();
 
         dismiss(&state, "1").unwrap();
 
-        let store = state.store.read();
         assert!(
-            store.visible_series().is_empty(),
+            state
+                .store
+                .series_all()
+                .unwrap()
+                .iter()
+                .all(|s| s.dismissed),
             "移除后不应再出现在可见列表"
         );
         assert!(
-            store.series("1").unwrap().dismissed,
+            state
+                .store
+                .series_by_id("1")
+                .unwrap()
+                .expect("记录还在")
+                .dismissed,
             "记录本身要留着，只标记移除"
         );
     }
 
     #[test]
     fn dismissing_an_unknown_series_errors() {
-        let (_dir, _scoped) = scoped("unknown");
         let state = AppState::default();
         assert!(dismiss(&state, "999").is_err(), "找不到就不能假装删成功");
     }
 
     #[test]
-    fn dismissing_twice_is_idempotent_in_effect() {
-        let (_dir, _scoped) = scoped("twice");
+    fn dismissing_twice_reports_not_found_but_record_stays() {
         let state = AppState::default();
-        state.store.write().series.push(Series {
-            series_id: "1".into(),
-            ..Default::default()
-        });
+        state
+            .store
+            .upsert_series(&Series {
+                series_id: "1".into(),
+                ..Default::default()
+            })
+            .unwrap();
         dismiss(&state, "1").unwrap();
-        // 第二次仍然成功：记录已在，重复标记移除没有副作用
-        dismiss(&state, "1").unwrap();
-        assert!(state.store.read().series("1").unwrap().dismissed);
+        // 第二次报 NotFound（0 行被改）——效果上幂等，记录状态不变
+        assert!(dismiss(&state, "1").is_err());
+        assert!(
+            state
+                .store
+                .series_by_id("1")
+                .unwrap()
+                .expect("记录还在")
+                .dismissed
+        );
     }
 
     fn store_with(count: usize) -> AppState {
         let state = AppState::default();
         for i in 0..count {
-            state.store.write().series.push(Series {
-                series_id: i.to_string(),
-                ..Default::default()
-            });
+            state
+                .store
+                .upsert_series(&Series {
+                    series_id: i.to_string(),
+                    ..Default::default()
+                })
+                .unwrap();
         }
         state
     }
 
     #[test]
     fn dismiss_all_clears_the_whole_visible_list() {
-        let (_dir, _scoped) = scoped("all");
         let state = store_with(3);
         assert_eq!(dismiss_all(&state).unwrap(), 3);
-        let store = state.store.read();
-        assert!(store.visible_series().is_empty());
-        assert_eq!(store.series.len(), 3, "记录本身要留着，只标记移除");
+        let all = state.store.series_all().unwrap();
+        assert!(all.iter().all(|s| s.dismissed));
+        assert_eq!(all.len(), 3, "记录本身要留着，只标记移除");
     }
 
     #[test]
     fn dismiss_all_skips_already_dismissed() {
-        let (_dir, _scoped) = scoped("skip");
         let state = store_with(3);
         dismiss(&state, "0").unwrap();
 
@@ -140,7 +131,6 @@ mod tests {
 
     #[test]
     fn dismiss_all_on_empty_list_is_a_no_op() {
-        let (_dir, _scoped) = scoped("empty");
         let state = AppState::default();
         assert_eq!(dismiss_all(&state).unwrap(), 0);
     }

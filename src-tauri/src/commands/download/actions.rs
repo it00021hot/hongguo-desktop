@@ -27,9 +27,7 @@ pub fn download_batch(
 
     let series = state
         .store
-        .read()
-        .series(&series_id)
-        .cloned()
+        .series_by_id(&series_id)?
         .ok_or_else(|| AppError::NotFound(format!("剧集 {series_id}")))?;
 
     let mut added = 0usize;

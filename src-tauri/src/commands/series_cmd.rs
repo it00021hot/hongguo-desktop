@@ -10,12 +10,14 @@ use crate::service::series_service;
 /// 剧集列表（不含被用户移除的）。
 #[tauri::command]
 pub fn get_series_list(state: State<'_, AppState>) -> Vec<Series> {
+    // 读失败时给空列表而不是报错：列表页不值得为存储抖动弹错误框，
+    // 下一次刷新自然会重试。
     state
         .store
-        .read()
-        .visible_series()
+        .series_all()
+        .unwrap_or_default()
         .into_iter()
-        .cloned()
+        .filter(|s| !s.dismissed)
         .collect()
 }
 
@@ -29,10 +31,10 @@ pub async fn get_series_episodes(
     state: State<'_, AppState>,
     series_id: String,
 ) -> AppResult<Series> {
-    if let Some(hit) = state.store.read().series(&series_id).cloned() {
+    if let Some(hit) = state.store.series_by_id(&series_id)? {
         return Ok(hit);
     }
-    let proxy = state.store.read().settings.proxy.clone();
+    let proxy = state.settings().proxy;
     let series = series_service::resolver::resolve_series(&series_id, &proxy).await?;
     series_service::registry::upsert_and_persist(&state, series.clone())?;
     Ok(series)
@@ -41,7 +43,7 @@ pub async fn get_series_episodes(
 /// 解析链接 / ID 为完整剧集档案并登记。
 #[tauri::command]
 pub async fn resolve_series(state: State<'_, AppState>, input: String) -> AppResult<Series> {
-    let proxy = state.store.read().settings.proxy.clone();
+    let proxy = state.settings().proxy;
     let series = series_service::resolver::resolve_series(&input, &proxy).await?;
     series_service::registry::upsert_and_persist(&state, series.clone())?;
     Ok(series)

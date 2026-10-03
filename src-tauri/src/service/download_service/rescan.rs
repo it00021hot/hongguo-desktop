@@ -40,7 +40,7 @@ pub struct RescanSummary {
 /// 悄悄改成已完成，比少登记一条更让人困惑。
 pub fn rescan_from_disk(state: &AppState) -> AppResult<RescanSummary> {
     let settings = state.settings();
-    let series_list: Vec<Series> = state.store.read().series.clone();
+    let series_list: Vec<Series> = state.store.series_all()?;
 
     let mut summary = RescanSummary {
         added: Vec::new(),
@@ -206,7 +206,7 @@ mod tests {
     }
 
     fn series_in(state: &AppState, series: Series) {
-        state.store.write().upsert_series(series);
+        state.store.upsert_series(&series).expect("测试库写入");
     }
 
     fn series_with(title: &str, episodes: Vec<u32>) -> Series {
