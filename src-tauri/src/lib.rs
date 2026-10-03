@@ -150,3 +150,61 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("启动失败");
 }
+
+/// 并发分配压力测试：与业务无关的纯 alloc/free 风暴。
+///
+/// 背景：`rusty_h264-common` 默认给整个测试进程强装了第三方分配器
+/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在
+/// 间歇性崩溃（表现为荒唐大小的分配失败 → abort）。这个测试用来
+/// 复现与回归验证：**只要它崩，就是分配器的锅**，别在业务代码里找。
+#[cfg(test)]
+mod alloc_stress {
+    use std::sync::Barrier;
+
+    /// 模拟 mp4 流式解密测试的分配指纹：高频短命小块（几十~几百字节）、
+    /// 精确 with_capacity、Vec 增长 realloc、周期性整块清空。
+    /// **与业务无关**——它若崩，唯一嫌疑就是进程级第三方分配器
+    /// （rusty_h264-common 默认强装的 rusty_alloc）。
+    #[test]
+    fn concurrent_alloc_free_storm_is_stable() {
+        const THREADS: usize = 16;
+        const ITERS: usize = 200_000;
+        let barrier = std::sync::Arc::new(Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut rng = (t as u64).wrapping_mul(0x9E3779B97F4A7C15) | 1;
+                    let mut total = 0usize;
+                    for _ in 0..ITERS {
+                        rng ^= rng << 13;
+                        rng ^= rng >> 7;
+                        rng ^= rng << 17;
+                        let n = 32 + (rng % 960) as usize;
+                        // 精确容量分配 + 局部写满（streaming_tests 的主模式）
+                        let mut v: Vec<(u64, u64)> = Vec::with_capacity(n / 16);
+                        for i in 0..n / 16 {
+                            v.push((rng.wrapping_add(i as u64), i as u64));
+                        }
+                        total = total.wrapping_add(v.len());
+                        // 短命小块换手
+                        let s = vec![0x5Au8; 8 + (rng % 128) as usize];
+                        total = total.wrapping_add(s.len());
+                        // 偶发增长式 realloc
+                        if rng.is_multiple_of(61) {
+                            let mut g = Vec::new();
+                            for _ in 0..64 {
+                                g.extend_from_slice(&s);
+                            }
+                            total = total.wrapping_add(g.len());
+                        }
+                    }
+                    total
+                })
+            })
+            .collect();
+        let sum: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();
+        assert!(sum > 0);
+    }
+}

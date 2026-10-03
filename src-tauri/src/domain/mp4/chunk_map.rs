@@ -18,12 +18,15 @@ pub(super) fn read_stsc(data: &[u8], start: usize, size: usize, info: &mut Track
     if size < 8 {
         return;
     }
-    let count = u32::from_be_bytes([
+    // 畸形 count 防御（口径同 timing::read_entry_count）：卡到 box 容量内
+    let count = (u32::from_be_bytes([
         data[start + 4],
         data[start + 5],
         data[start + 6],
         data[start + 7],
-    ]) as usize;
+    ]) as usize)
+        .min(size.saturating_sub(8) / 12)
+        .min(data.len());
 
     let mut entries = Vec::with_capacity(count);
     for i in 0..count {

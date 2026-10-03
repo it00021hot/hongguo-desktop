@@ -91,3 +91,21 @@ strip = true
 # 不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
+
+# 根治「测试高并发间歇崩」：rusty_h264-common 默认给整个进程强装第三方分配器
+# rusty_alloc 1.1.6（`rusty_alloc-api = "=1.1.6"` 锁死版本；rusty_h264 default 转发
+# global-alloc，feature unification 关不掉）。1.1.6 有并发 bug——多线程分配下整个
+# 进程间歇 abort（"memory allocation of 22906492240 bytes failed"），全量 cargo
+# test 默认并发 6 次崩 2 次，生产跑转码/在线播放同样暴露。
+#
+# 两层处理：
+# 1. vendor/rusty_h264_common —— patch rusty_h264-common 0.16.0，摘掉它的
+#    #[global_allocator]（进程回到 Rust 标准分配器，根治；上游如果哪天改用
+#    修好的 alloc 再整体撤掉）。
+# 2. vendor/rusty_alloc* —— rusty_alloc 2.2.2（2026-10-01，修了 9 月一连串
+#    并发问题）以 1.1.6 的版本号顶替。global-alloc feature 虽已不生效，
+#    但保留：将来谁把分配器装回去时用的也是修过的版本。
+[patch.crates-io]
+rusty_alloc = { path = "vendor/rusty_alloc" }
+rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
+rusty_h264-common = { path = "vendor/rusty_h264_common" }

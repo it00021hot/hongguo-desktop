@@ -24,7 +24,11 @@ pub(super) fn read_saiz(data: &[u8], start: usize, size: usize, info: &mut Track
     if count == 0 {
         return;
     }
-    let n = count as usize;
+    // 畸形 count 防御（口径同 timing::read_entry_count）：saiz 每条 1 字节，
+    // 卡到 box 容量内，不让预分配按声明值直接爆
+    let n = (count as usize)
+        .min(size.saturating_sub(9))
+        .min(data.len());
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let at = start + 9 + i;
@@ -51,12 +55,16 @@ pub(super) fn read_senc(data: &[u8], start: usize, size: usize, info: &mut Track
     if count_at + 4 > start + size {
         return;
     }
-    let count = u32::from_be_bytes([
+    // 畸形 count 防御（口径同 timing::read_entry_count）：每条 IV 8 字节，
+    // 卡到 box 容量内
+    let count = (u32::from_be_bytes([
         data[count_at],
         data[count_at + 1],
         data[count_at + 2],
         data[count_at + 3],
-    ]) as usize;
+    ]) as usize)
+        .min(size.saturating_sub(8) / 8)
+        .min(data.len());
 
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
