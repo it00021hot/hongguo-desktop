@@ -78,7 +78,7 @@
     "deselectAll": "Deselect all",
     "rescan": "Rescan disk",
     "rescanFound": "Recovered {count} download records from disk",
-    "rescanNone": "Nothing on disk needs recovering",
+    "rescanNone": "Nothing to recover. After a fresh install or wiped records, parse the series first (open its detail page via search, or paste a link), then rescan",
     "columns": {
       "episode": "Ep.",
       "status": "Status",

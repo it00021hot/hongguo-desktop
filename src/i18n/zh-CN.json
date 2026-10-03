@@ -78,7 +78,7 @@
     "deselectAll": "取消全选",
     "rescan": "扫描补登记",
     "rescanFound": "从磁盘补回 {count} 条下载记录",
-    "rescanNone": "磁盘上没有待补登记的文件",
+    "rescanNone": "没有可补登记的记录。如果是重装或记录被清空，先到搜索页解析那部剧（搜索点开详情或粘贴链接），再回来扫描",
     "columns": {
       "episode": "集数",
       "status": "状态",
