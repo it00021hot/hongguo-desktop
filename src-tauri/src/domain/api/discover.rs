@@ -233,8 +233,6 @@ mod tests {
 #[cfg(test)]
 mod probe {
     use super::*;
-    /// 预约页（新剧日历）。参数未破解，仅探测用。
-    const UNCOVER_SUBSCRIBE_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v1/";
 
     /// 真实接口探测（不进常规测试套件）：
     /// `cargo test probe_ -- --ignored --nocapture`
@@ -546,29 +544,86 @@ mod probe {
         }
     }
 
-    /// 预约日历参数破解的试验场：每轮改候选参数跑一次，code==0 即转正。
+    /// 预约日历：subscribe/list 带 need_calendar_schema=true（抓包形状）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_subscribe_calendar() {
+        let env = anon_env();
+        let q: Vec<(String, String)> = vec![
+            ("is_online", "true"),
+            ("limit", "20"),
+            ("need_calendar_schema", "true"),
+            ("offset", "0"),
+            ("subscribe_offset", "0"),
+            ("subscribe_order_type", "0"),
+            ("swipe_type", "0"),
+            ("tab_type", "13"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        match crate::domain::api::client::api_call_full(
+            crate::domain::api::danmaku::LQ_API_ORIGIN,
+            "/reading/user/subscribe/list/v1/",
+            None,
+            &q,
+            &env,
+        )
+        .await
+        {
+            Ok(b) => println!(
+                "[subscribe-cal] {}",
+                String::from_utf8_lossy(&b).chars().take(1200).collect::<String>()
+            ),
+            Err(e) => println!("[subscribe-cal] ERR {e}"),
+        }
+    }
+
+    /// 预约日历（uncover_subscribe）：GET on LQ + 日期范围（CalendarPage(ctx, start, end) 双 string 签名）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_uncover_subscribe() {
         let env = anon_env();
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let candidates: Vec<(&str, Value)> = vec![
-            ("need-calendar", serde_json::json!({ "need_calendar_schema": true })),
-            ("date", serde_json::json!({ "date": today })),
+        let week = chrono::Local::now()
+            .checked_add_days(chrono::Days::new(7))
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| today.clone());
+        let candidates: Vec<(&str, Vec<( &str, &str)>)> = vec![
+            ("range", vec![("start_date", &today), ("end_date", &week)]),
+            ("date", vec![("date", &today)]),
+            (
+                "full",
+                vec![
+                    ("is_online", "true"),
+                    ("limit", "20"),
+                    ("need_calendar_schema", "true"),
+                    ("offset", "0"),
+                    ("tab_type", "13"),
+                ],
+            ),
         ];
-        for (tag, biz) in candidates {
-            let body =
-                serde_json::to_vec(&serde_json::json!({ "biz_param": biz })).unwrap();
-            match api_call_full(API_ORIGIN, UNCOVER_SUBSCRIBE_PATH, Some(body), &[], &env).await {
-                Ok(bytes) => {
-                    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-                    println!(
-                        "[uncover/{tag}] {}",
-                        serde_json::to_string(&v).unwrap_or_default().chars().take(300).collect::<String>()
-                    );
-                }
+        for (tag, base) in candidates {
+            let q: Vec<(String, String)> = base
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            match crate::domain::api::client::api_call_full(
+                crate::domain::api::danmaku::LQ_API_ORIGIN,
+                "/reading/bookapi/search/uncover_subscribe/v1/",
+                None,
+                &q,
+                &env,
+            )
+            .await
+            {
+                Ok(b) => println!(
+                    "[uncover/{tag}] {}",
+                    String::from_utf8_lossy(&b).chars().take(700).collect::<String>()
+                ),
                 Err(e) => println!("[uncover/{tag}] ERR {e}"),
             }
         }
     }
+
 }
