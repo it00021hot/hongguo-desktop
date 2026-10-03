@@ -79,6 +79,53 @@ impl DeviceProfile {
         }
     }
 
+    /// 设备注册用的全新档案：73932 / Xiaomi 14 指纹，**不带** device_id/iid
+    ///（首次注册 query 里不能有空值形态的字段），cdid/openudid 由调用方
+    /// 生成后填入，与注册 body 的 JSON 指纹保持同一套。
+    #[allow(dead_code)]
+    pub fn fresh_register_profile(cdid: &str, openudid: &str) -> Self {
+        let ua = "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)";
+        let mut dev = Self::from_pairs(
+            &[
+                ("ac", "wifi"),
+                ("aid", "8662"),
+                ("app_name", "novelread"),
+                ("channel", "xiaomi_8662_64"),
+                ("compliance_status", "0"),
+                ("device_brand", "xiaomi"),
+                ("device_platform", "android"),
+                ("device_type", "23127PN0CC"),
+                ("dpi", "460"),
+                ("dragon_device_type", "phone"),
+                ("host_abi", "arm64-v8a"),
+                ("is_android_pad_screen", "0"),
+                ("language", "zh"),
+                ("manifest_version_code", "73932"),
+                ("os", "android"),
+                ("os_api", "34"),
+                ("os_version", "14"),
+                ("player_so_load", "1"),
+                ("pv_player", "73932"),
+                ("resolution", "1200*2670"),
+                ("ssmix", "a"),
+                ("update_version_code", "73932"),
+                ("version_code", "73932"),
+                ("version_name", "7.3.9.32"),
+            ],
+            ua,
+        );
+        dev.set("cdid", cdid);
+        dev.set("openudid", openudid);
+        dev
+    }
+
+    /// 移除字段（设备注册用：首次注册的 query 里不能带 `device_id=`/
+    /// `iid=` 空值形态，字段必须**不存在**而不是空值）。
+    #[allow(dead_code)]
+    pub fn remove(&mut self, key: &str) {
+        self.fields.retain(|(k, _)| k != key);
+    }
+
     /// 字段迭代（保序）。签名 query 与 Medusa 都从这里取值。
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.fields.iter().map(|(k, v)| (k.as_str(), v.as_str()))

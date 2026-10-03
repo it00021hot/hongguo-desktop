@@ -541,12 +541,12 @@ pub(crate) mod probe {
             ("cdid", "e9ca8ec4-bcbf-46e2-8e4c-281855bccaae"),
             ("channel", "xiaomi_8662_64"),
             ("device_brand", "xiaomi"),
-            ("device_id", "2169800441471882"),
+            ("device_id", "1694811517885562"),
             ("device_platform", "android"),
             ("device_type", "23127PN0CC"),
             ("dpi", "460"),
             ("host_abi", "arm64-v8a"),
-            ("iid", "2169800441475978"),
+            ("iid", "1694811517889658"),
             ("language", "zh"),
             ("manifest_version_code", "73932"),
             ("os", "android"),
@@ -572,7 +572,7 @@ pub(crate) mod probe {
             proxy: base.proxy.clone(),
             device: serde_json::from_value(v).unwrap(),
             cookie: Some(
-                "store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".into(),
+                "store-region=cn-gd; store-region-src=did; install_id=1694811517889658; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".into(),
             ),
         }
     }

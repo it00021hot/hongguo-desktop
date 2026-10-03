@@ -51,6 +51,7 @@ pub mod medusa;
 pub mod primitives;
 pub mod protobuf;
 pub mod ticket;
+pub mod tt_hash;
 pub mod xargus;
 pub mod xgorgon;
 

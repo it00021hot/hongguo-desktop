@@ -7,5 +7,6 @@ pub mod detail;
 pub mod params;
 pub mod play_url;
 pub mod rank;
+pub mod register;
 pub mod search;
 pub mod stream_pick;
