@@ -78,7 +78,7 @@ pub async fn fetch_feed(offset: i64, env: &ApiEnv) -> AppResult<FeedPage> {
 }
 
 /// 业务错误码检查。
-fn check_code(value: &Value) -> AppResult<()> {
+pub(super) fn check_code(value: &Value) -> AppResult<()> {
     if let Some(code) = value.get("code").and_then(Value::as_i64) {
         if code != 0 {
             let msg = value
@@ -134,7 +134,7 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
 
 /// category_schema 是 JSON 字符串：`[{"category_id":..,"name":"逆袭",...}]`，
 /// 取 name 做题材标签。解析失败给空表（标签是展示增强，不值得报错）。
-fn parse_tags(schema: Option<&Value>) -> Vec<String> {
+pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {
     let Some(s) = schema.and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -153,7 +153,7 @@ fn parse_tags(schema: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn str_field(v: &Value, key: &str) -> String {
+pub(super) fn str_field(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(Value::as_str)
         .unwrap_or_default()
@@ -161,7 +161,7 @@ fn str_field(v: &Value, key: &str) -> String {
 }
 
 /// 数字字段容忍字符串形态（平台对大数偶发走字符串）。
-fn int_field(v: &Value, key: &str) -> i64 {
+pub(super) fn int_field(v: &Value, key: &str) -> i64 {
     match v.get(key) {
         Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
         Some(Value::String(s)) => s.parse().unwrap_or(0),
@@ -169,7 +169,7 @@ fn int_field(v: &Value, key: &str) -> i64 {
     }
 }
 
-fn num_field(v: &Value, key: &str) -> f64 {
+pub(super) fn num_field(v: &Value, key: &str) -> f64 {
     match v.get(key) {
         Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
         Some(Value::String(s)) => s.parse().unwrap_or(0.0),

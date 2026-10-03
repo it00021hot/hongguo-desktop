@@ -100,6 +100,11 @@ pub fn run() {
             // 发现（推荐信息流）
             commands::discover_cmd::discover_feed,
             commands::discover_cmd::web_cover,
+            // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
+            commands::rank_cmd::rank_list,
+            commands::rank_cmd::new_drama_list,
+            commands::rank_cmd::search_series_cmd,
+            commands::rank_cmd::reservation_list,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             // 浏览与搜索

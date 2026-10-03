@@ -11,6 +11,7 @@ pub mod discover_cmd;
 pub mod download;
 pub mod merge_cmd;
 pub mod play_cmd;
+pub mod rank_cmd;
 pub mod series_cmd;
 pub mod settings_cmd;
 pub mod storage_cmd;
