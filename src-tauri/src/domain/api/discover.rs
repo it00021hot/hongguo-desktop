@@ -371,6 +371,170 @@ mod probe {
         }
     }
 
+    /// bookmall 重放（抓包参数）：GET + 全业务 query。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_bookmall_verified() {
+        let env = anon_env();
+        // 干净重放：设备字段全进 DeviceProfile（签名器只拼这一套），业务参数只留
+        // 非设备项，UA/版本与设备字段成套（hgplayer 形态）。
+        let pairs = vec![
+                ("ac", r#"wifi"#),
+                ("aid", r#"8662"#),
+                ("app_name", r#"novelread"#),
+                ("cdid", r#"e9ca8ec4-bcbf-46e2-8e4c-281855bccaae"#),
+                ("channel", r#"xiaomi_8662_64"#),
+                ("compliance_status", r#"0"#),
+                ("device_brand", r#"xiaomi"#),
+                ("device_id", r#"2169800441471882"#),
+                ("device_platform", r#"android"#),
+                ("device_type", r#"23127PN0CC"#),
+                ("dpi", r#"460"#),
+                ("dragon_device_type", r#"phone"#),
+                ("host_abi", r#"arm64-v8a"#),
+                ("iid", r#"2169800441475978"#),
+                ("is_android_pad_screen", r#"0"#),
+                ("language", r#"zh"#),
+                ("manifest_version_code", r#"73932"#),
+                ("need_personal_recommend", r#"1"#),
+                ("os", r#"android"#),
+                ("os_api", r#"34"#),
+                ("os_version", r#"14"#),
+                ("player_so_load", r#"1"#),
+                ("pv_player", r#"73932"#),
+                ("resolution", r#"1200*2670"#),
+                ("ssmix", r#"a"#),
+                ("update_version_code", r#"73932"#),
+                ("version_code", r#"73932"#),
+                ("version_name", r#"7.3.9.32"#),
+        ];
+        let mut v = serde_json::to_value(crate::signer::video_device()).unwrap();
+        v["fields"] = serde_json::Value::Array(
+            pairs
+                .into_iter()
+                .map(|(k, val): (&str, &str)| serde_json::json!([k, val]))
+                .collect(),
+        );
+        v["user_agent"] = serde_json::Value::String(
+            "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)".into(),
+        );
+        let _hg_env = crate::domain::api::client::ApiEnv {
+            proxy: env.proxy.clone(),
+            device: serde_json::from_value(v).unwrap(),
+            cookie: Some(
+                "store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".into(),
+            ),
+        };
+        // 对照：我们自己的静态档案，仅版本号升到 73932（UA 保留我们的机型）
+        let mut own = crate::signer::video_device();
+        for key in ["version_code", "manifest_version_code", "update_version_code", "pv_player"] {
+            own.set(key, "73932");
+        }
+        own.set("version_name", "7.3.9.32");
+        let mut ov = serde_json::to_value(&own).unwrap();
+        ov["user_agent"] = serde_json::Value::String(
+            "com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)".into(),
+        );
+        let own_dev: crate::signer::device::DeviceProfile = serde_json::from_value(ov).unwrap();
+        let env = crate::domain::api::client::ApiEnv {
+            proxy: env.proxy.clone(),
+            device: own_dev,
+            cookie: None,
+        };
+        let q: Vec<(String, String)> = vec![
+            ("auth_aweme", r#"true"#),
+            ("auth_backward", r#"true"#),
+            ("bottom_tab_type", r#"7"#),
+            ("client_req_type", r#"60"#),
+            ("device_level", r#"3"#),
+            ("disable_digg_stat", r#"false"#),
+            ("has_video_cache", r#"false"#),
+            ("is_horizontal_screen", r#"false"#),
+            ("landing_bottom_tab_type", r#"7"#),
+            ("last_tab_index", r#"0"#),
+            ("last_tab_type", r#"0"#),
+            ("offset", r#"0"#),
+            ("req_rank_category_id", r#"0"#),
+            ("screen_width_px", r#"1078"#),
+            ("session_id", r#""#),
+            ("stream_count", r#"[{"scene":"1","StreamCount":1,"StreamType":"1"}]"#),
+            ("tab_index", r#"0"#),
+            ("tab_type", r#"16"#),
+            ("video_type_preferences_str", r#"[]"#),
+        ]
+        .into_iter()
+        .map(|(k, v): (&str, &str)| (k.to_string(), v.to_string()))
+        .collect();
+
+        // 对照实验：hgplayer 抓包里的设备 cookie（install_id/ttreq 是
+        // 设备注册回执）。带与不带各打一次，隔离 ILLEGAL_ACCESS 的成因。
+        let mut with_cookie = env.clone();
+        with_cookie.cookie = Some("passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".to_string());
+        let no_cookie = crate::domain::api::client::api_call_full(
+            crate::domain::api::danmaku::LQ_API_ORIGIN,
+            "/reading/bookapi/bookmall/tab/v",
+            None,
+            &q,
+            &env,
+        )
+        .await;
+        match &no_cookie {
+            Ok(b) => {
+                let v: Value = serde_json::from_slice(b).unwrap_or(Value::Null);
+                println!(
+                    "[bookmall] no-cookie: code={:?} msg={:?}",
+                    v.get("code"), v.get("message")
+                );
+            }
+            Err(e) => println!("[bookmall] no-cookie ERR {e}"),
+        }
+        match crate::domain::api::client::api_call_full(
+            crate::domain::api::danmaku::LQ_API_ORIGIN,
+            "/reading/bookapi/bookmall/tab/v",
+            None,
+            &q,
+            &with_cookie,
+        )
+        .await
+        {
+            Ok(b) => {
+                std::fs::write("C:/Users/liu13/AppData/Local/Temp/hg_capture/bookmall.json", &b).ok();
+                let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
+                let tabs = v.pointer("/data/tab_item").and_then(Value::as_array).cloned().unwrap_or_default();
+                println!(
+                    "[bookmall] code={:?} tabs={:?}",
+                    v.get("code"),
+                    tabs.iter().map(|t| format!(
+                        "{}(type={},cells={})",
+                        t.get("title").and_then(Value::as_str).unwrap_or("?"),
+                        t.get("tab_type").and_then(Value::as_i64).unwrap_or(-1),
+                        t.get("cell_data").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0)
+                    )).collect::<Vec<_>>()
+                );
+                for t in &tabs {
+                    if let Some(cells) = t.get("cell_data").and_then(Value::as_array) {
+                        for c in cells {
+                            if let Some(inner) = c.get("cell_data").and_then(Value::as_array) {
+                                for x in inner {
+                                    if let Some(vd) = x.get("video_data").and_then(Value::as_array).and_then(|a| a.first()) {
+                                        println!(
+                                            "[bookmall] {} keys: {:?}",
+                                            t.get("title").and_then(Value::as_str).unwrap_or("?"),
+                                            vd.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()
+                                        );
+                                        println!("[bookmall] sample: {}", serde_json::to_string(vd).unwrap_or_default().chars().take(700).collect::<String>());
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => println!("[bookmall] ERR {e}"),
+        }
+    }
+
     /// 预约日历参数破解的试验场：每轮改候选参数跑一次，code==0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
