@@ -6,6 +6,7 @@
 use super::cenc_info;
 use super::chunk_map;
 use super::r#box::{find_box, parse_boxes};
+use super::timing;
 use crate::error::{AppError, AppResult};
 
 /// 视频轨的样本描述。
@@ -45,6 +46,16 @@ pub struct TrackInfo {
     pub wide_offsets: bool,
     /// `stsc` 条目：`(first_chunk, samples_per_chunk)`，已按 first_chunk 升序
     pub stsc: Vec<(u32, u32)>,
+    /// `stts` 游程：`(sample_count, sample_delta)`。时长轴的压缩表示
+    pub stts: Vec<(u32, u32)>,
+    /// `ctts` 游程：`(sample_count, composition_offset)`，**空表示没有这张表**
+    pub ctts: Vec<(u32, i32)>,
+    /// `stss` 同步样本号（1 起）。`None` = 没有这张表 = 全部样本都是关键帧
+    pub stss: Option<Vec<u32>>,
+    /// `mdhd` 的媒体时基
+    pub media_timescale: u32,
+    /// `mdhd` 的媒体时长（单位是 media_timescale）
+    pub media_duration: u64,
 }
 
 /// 收集轨道信息。
@@ -65,7 +76,10 @@ pub fn collect_tracks(data: &[u8]) -> AppResult<Vec<TrackInfo>> {
 }
 
 /// 收集单条轨道。
-fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
+///
+/// 从外部（合并的索引重写）传入 `trak` 的载荷区间即可复用同一份解析，
+/// 免得拼接与解复用对同一文件得出两份不一样的轨道信息。
+pub fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
     let mut info = TrackInfo {
         stbl_offset: 0,
         stbl_size: 0,
@@ -123,10 +137,17 @@ fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
             }
             "saiz" => cenc_info::read_saiz(data, b.start, b.size, &mut info),
             "senc" => cenc_info::read_senc(data, b.start, b.size, &mut info),
+            "stts" => timing::read_stts(data, b.start, b.size, &mut info),
+            "ctts" => timing::read_ctts(data, b.start, b.size, &mut info),
+            "stss" => timing::read_stss(data, b.start, b.size, &mut info),
             _ => {}
         }
     }
     chunk_map::resolve_sample_offsets(&mut info);
+
+    if let Some(mdhd) = find_box(data, start, end, "mdhd") {
+        timing::read_mdhd(data, mdhd.start, mdhd.size, &mut info);
+    }
 
     Some(info)
 }

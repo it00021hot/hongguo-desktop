@@ -15,6 +15,10 @@ pub struct BoxHeader {
     pub size: usize,
     /// 整个 box（含头部）的长度
     pub total_size: usize,
+    /// 头部本身的长度：常规 box 是 8，用 largesize 时是 16。
+    /// 要把 `[start, start+size]` 连头带尾原样取出来时需要它——
+    /// 直接减 8 会在 largesize box 上错位。
+    pub header_size: usize,
 }
 
 impl BoxHeader {
@@ -73,6 +77,7 @@ pub fn parse_boxes(data: &[u8], start: usize, end: usize) -> Vec<BoxHeader> {
             start: payload_start,
             size: payload_size,
             total_size: header_size + payload_size,
+            header_size,
         });
 
         pos = payload_start + payload_size;

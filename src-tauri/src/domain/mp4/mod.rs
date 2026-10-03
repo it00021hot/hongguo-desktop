@@ -17,6 +17,7 @@ pub mod decrypt_buffer;
 pub mod decrypt_file;
 pub mod deprotect;
 pub mod sample_table;
+pub mod timing;
 
 #[cfg(test)]
 pub mod fixtures;
