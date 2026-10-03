@@ -2,10 +2,13 @@
 //!
 //! 设计取舍：**装了 ffmpeg 就用它，没装就纯 Rust 软解**。
 //!
-//! - 有 ffmpeg：转码交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码，速度接近实时；
-//!   快速合并也用 `concat -c copy`，与现版行为一致。
+//! - 有 ffmpeg：HEVC → H.264 转码交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码，
+//!   速度接近实时。触发点只有「兼容合并」与「播放兼容兜底」两个。
 //! - 无 ffmpeg：完全回落到 `rusty_h265` + `rusty_h264` + `muxide`，
 //!   零外部依赖、纯 Rust，只是软解慢一些。
+//!
+//! 快速合并**不经过这里**：它走 `media::remux` 的纯 Rust 索引重写拼接，
+//! 无论装没装 ffmpeg 都不调它。
 //!
 //! 这样既保留了「不依赖额外软件」的特性，又让愿意装 ffmpeg 的用户拿到硬解速度，
 //! 且不必为每个平台写无法验证的 VideoToolbox / Media Foundation FFI。

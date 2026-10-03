@@ -201,6 +201,7 @@ export function useDownloadActions() {
     }),
     pauseAll: useMutation({ mutationFn: download.pauseAll, onSuccess: invalidate }),
     resumeAll: useMutation({ mutationFn: download.resumeAll, onSuccess: invalidate }),
+    rescan: useMutation({ mutationFn: download.rescan, onSuccess: invalidate }),
   };
 }
 

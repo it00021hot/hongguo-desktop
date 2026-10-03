@@ -458,6 +458,7 @@ function PlayerView() {
                 currentIndex={vidIndex}
                 downloading={downloading}
                 onDownloadingChange={setDownloading}
+                onStepEpisode={stepEpisode}
                 definition={activeDefinition}
                 definitions={definitions}
                 onDefinitionChange={setDefinition}

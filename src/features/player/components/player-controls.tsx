@@ -76,6 +76,8 @@ interface Props {
   src: string | null;
   /** 选清晰度。`undefined` 表示交回后端自动取最高档 */
   onDefinitionChange: (definition: number | undefined) => void;
+  /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
+  onStepEpisode: (delta: number) => void;
 }
 
 /**
@@ -85,8 +87,9 @@ interface Props {
  * 媒体状态（进度、时长、音量、倍速）全部由本组件持有——原生控件撤掉后，
  * 没人再替我们发 `timeupdate`，状态只能自己接。
  *
- * 选集不在这里：右侧 `SeriesPanel` 已经常驻一整块选集区，
- * 这里再放一个入口（无论按钮还是弹层）都与它重复，还会在窄窗口下撞在一起。
+ * 快进/快退不占按钮位，由快捷键 `←` `→` 承担；播放键旁的步进按钮是
+ * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集仍在右侧 `SeriesPanel`，
+ * 这里只给最常用的「接着看下一集」一个单击入口。
  */
 export function PlayerControls({
   videoRef,
@@ -100,6 +103,7 @@ export function PlayerControls({
   definitions,
   onDefinitionChange,
   src,
+  onStepEpisode,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -221,16 +225,10 @@ export function PlayerControls({
     else video.pause();
   }, [videoRef]);
 
-  const skip = useCallback(
-    (delta: number) => {
-      const video = videoRef.current;
-      if (!video) return;
-      const next = Math.min(Math.max(video.currentTime + delta, 0), video.duration || 0);
-      video.currentTime = next;
-      setCurrent(next);
-    },
-    [videoRef],
-  );
+  // 步进边界：第 1 集没有上一集；下一集要看分集表里是否真有下一号
+  // （表还没加载出来时不置灰，保持与 `↑` `↓` 一致的行为——点了由后端兜底）
+  const hasPrev = currentIndex > 1;
+  const hasNext = episodes.length === 0 || episodes.some((e) => e.vidIndex === currentIndex + 1);
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -292,10 +290,18 @@ export function PlayerControls({
         <IconButton label={t('player.play')} onClick={togglePlay}>
           {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
         </IconButton>
-        <IconButton label={t('player.skipBack')} onClick={() => skip(-5)}>
+        <IconButton
+          label={t('player.prevEpisode')}
+          disabled={!hasPrev}
+          onClick={() => onStepEpisode(-1)}
+        >
           <SkipBack className="size-4" />
         </IconButton>
-        <IconButton label={t('player.skipForward')} onClick={() => skip(5)}>
+        <IconButton
+          label={t('player.nextEpisode')}
+          disabled={!hasNext}
+          onClick={() => onStepEpisode(1)}
+        >
           <SkipForward className="size-4" />
         </IconButton>
 
@@ -427,18 +433,21 @@ export function PlayerControls({
 function IconButton({
   label,
   onClick,
+  disabled,
   children,
 }: {
   label: string;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <Button
       variant="ghost"
       size="icon"
-      className="size-8 bg-transparent text-white hover:bg-white/20 hover:text-white"
+      className="size-8 bg-transparent text-white hover:bg-white/20 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent"
       onClick={onClick}
+      disabled={disabled}
       title={label}
       aria-label={label}
     >

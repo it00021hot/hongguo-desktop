@@ -60,7 +60,16 @@ pub fn transcode(
             on_progress,
         };
         match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
-            Ok(()) => used_ffmpeg = true,
+            Ok(()) => {
+                // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
+                // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
+                if output_is_playable(&target) {
+                    used_ffmpeg = true;
+                } else {
+                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
+                    let _ = std::fs::remove_file(&target);
+                }
+            }
             Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
         }
     }
@@ -101,4 +110,63 @@ pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     let tracks = crate::media::demux::demux_file(path).ok()?;
     let v = tracks.video_track()?;
     (v.info.width > 0 && v.info.height > 0).then_some((v.info.width, v.info.height))
+}
+
+/// 转码产物是否真的可播：能解复用且有视频样本。
+///
+/// 与合并产物校验（`merge_service::compat`）同一口径：一个「有 moov、能打开、
+/// 只播得动前几秒」的坏文件用户看不出问题，只会觉得「功能有毛病」。
+fn output_is_playable(path: &Path) -> bool {
+    crate::media::demux::demux_file(path)
+        .ok()
+        .and_then(|d| d.video_track().map(|t| !t.info.samples.is_empty()))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn garbage_is_not_playable() {
+        let dir = std::env::temp_dir().join(format!("hg-pipeline-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("garbage.mp4");
+        std::fs::write(&p, b"definitely not an mp4").unwrap();
+        assert!(!output_is_playable(&p));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_real_mp4_with_video_samples_is_playable() {
+        use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+        let dir = std::env::temp_dir().join(format!("hg-pipeline-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("real.mp4");
+        std::fs::write(
+            &p,
+            mp4_with_samples(&[
+                TrackPlan::video(vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]]),
+                TrackPlan::audio(vec![vec![0, 0], vec![0, 0]]),
+            ]),
+        )
+        .unwrap();
+        assert!(output_is_playable(&p), "有视频样本的合法 MP4 应判可播");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn audio_only_output_is_not_playable() {
+        use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+        let dir = std::env::temp_dir()
+            .join(format!("hg-pipeline-audio-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("audio.mp4");
+        std::fs::write(&p, mp4_with_samples(&[TrackPlan::audio(vec![vec![0, 0]])])).unwrap();
+        assert!(
+            !output_is_playable(&p),
+            "没有视频样本的产物不能当转码成功"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

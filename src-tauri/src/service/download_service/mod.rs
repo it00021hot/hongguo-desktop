@@ -1,15 +1,17 @@
 //! 下载服务：任务生命周期编排。
 //!
-//! 职责分四块，各占一个文件：
+//! 职责分五块，各占一个文件：
 //! - [`queue`]：任务集合与状态流转
 //! - [`scheduler`]：后台调度，按并发上限派发任务
 //! - [`worker`]：单集执行（取流 → 下载 → 解密 → 落盘）
 //! - [`events`]：进度节流与事件发射
+//! - [`rescan`]：从磁盘文件补回丢失的任务记录
 //!
 //! 本文件只做组装：把调度器挂到全局状态上，供 command 层触发。
 
 pub mod events;
 pub mod queue;
+pub mod rescan;
 pub mod scheduler;
 pub mod worker;
 

@@ -45,7 +45,6 @@ pub struct EpisodeDownload<'a> {
     /// 直链（已签名）
     pub video_url: String,
     pub output_path: PathBuf,
-    pub user_agent: String,
     /// 是否为 CENC 加密流
     pub encrypted: bool,
     /// 加密流使用的密钥材料（`spade_a` 原始值）
@@ -70,19 +69,7 @@ pub async fn download_episode(
     let temp_path = temp_path_for(&episode.output_path);
     let client = crate::domain::api::client::build_client(&episode.settings.proxy)?;
 
-    let resp = client
-        .get(&episode.video_url)
-        .header("User-Agent", &episode.user_agent)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Network(format!(
-            "取流失败: HTTP {}",
-            resp.status()
-        )));
-    }
+    let resp = crate::domain::api::client::get_video_stream(&client, &episode.video_url).await?;
 
     let total = resp.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(&temp_path).map_err(|e| AppError::Io(e.to_string()))?;
@@ -216,7 +203,6 @@ mod tests {
             id: "t".into(),
             video_url: String::new(),
             output_path: dir.join("a.mp4"),
-            user_agent: String::new(),
             encrypted: true,
             key_material: vec![0u8; 16],
             settings: Settings::default(),

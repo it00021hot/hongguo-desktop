@@ -26,6 +26,16 @@ pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let builder = tauri::Builder::default()
+        // 单实例锁要第一个注册：抢在窗口创建之前，第二个进程才不会拉起第二套 UI。
+        // 双开的直接危害是两个进程互写 data.json——原子写只保证单条不坏，
+        // 保证不了「后写的整份覆盖先写的整份」，下载记录会随机消失。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(app_state::AppState::default());
@@ -36,8 +46,10 @@ pub fn run() {
     builder
         .setup(|app| {
             // 启动装配的顺序即依赖顺序：
-            // 先加载数据，再把待跑任务推入调度，最后探测转码能力。
+            // 先加载数据，再从磁盘补回丢失的任务记录，然后把待跑任务推入调度，
+            // 最后探测转码能力。
             bootstrap::store::init(app.handle())?;
+            bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
             bootstrap::transcoder::init()?;
             Ok(())
@@ -46,6 +58,7 @@ pub fn run() {
             // 应用
             commands::app_cmd::select_folder,
             commands::app_cmd::open_folder,
+            commands::app_cmd::open_external_page,
             // 设置
             commands::settings_cmd::get_settings,
             commands::settings_cmd::save_settings,
@@ -71,6 +84,7 @@ pub fn run() {
             commands::download_cmd::retry_task,
             commands::download_cmd::retry_tasks,
             commands::download_cmd::delete_tasks,
+            commands::download_cmd::rescan_downloads,
             // 合并
             commands::merge_cmd::get_merge_tasks,
             commands::merge_cmd::get_merge_candidates,

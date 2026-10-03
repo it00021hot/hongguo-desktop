@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, Cpu, Zap } from 'lucide-react';
+import { FolderOpen, Cpu, Zap, Copy, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -246,6 +246,44 @@ export function SettingsPage() {
             <p className="text-muted-foreground text-xs">
               {tf('settings.redetectDone', { backend: backendLabel(capability) })}
             </p>
+          )}
+          {/* 没装 ffmpeg 时给一条可照抄的安装路径：说清楚「不装也能用，只是慢」，
+              再把命令和下载页都递到手边 */}
+          {capability && !capability.hasFfmpeg && (
+            <div className="bg-muted/50 flex flex-col gap-2 rounded-md p-3 text-xs">
+              <p>{t('settings.ffmpegInstallHint')}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="bg-background rounded px-2 py-1 font-mono">
+                  winget install Gyan.FFmpeg
+                </code>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    void navigator.clipboard
+                      .writeText('winget install Gyan.FFmpeg')
+                      .then(() => toast.success(t('settings.commandCopied')))
+                      .catch(() => toast.error(t('settings.copyFailed')));
+                  }}
+                >
+                  <Copy className="size-4" />
+                  {t('settings.copyCommand')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    void appApi
+                      .openExternalPage('https://www.gyan.dev/ffmpeg/builds/')
+                      .catch((e: Error) => toast.error(e.message))
+                  }
+                >
+                  <ExternalLink className="size-4" />
+                  {t('settings.ffmpegDownloadPage')}
+                </Button>
+              </div>
+              <p className="text-muted-foreground">{t('settings.ffmpegInstallNote')}</p>
+            </div>
           )}
         </CardContent>
       </Card>

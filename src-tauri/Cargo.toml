@@ -20,6 +20,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。
+# 必须是第一个注册的插件（官方要求，锁要抢在窗口创建之前）。
+tauri-plugin-single-instance = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

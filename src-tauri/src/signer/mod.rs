@@ -56,7 +56,7 @@ pub mod xgorgon;
 
 // 统一出口：只导出 crate 内真正按 `crate::signer::X` 引用的符号，
 // 其余一律走 `signer::子模块::X`，避免出现没人用的转发。
-pub use device::{video_device, APP_ID, CHANNEL_ID, VIDEO_UA};
+pub use device::{video_device, APP_ID, CHANNEL_ID, VIDEO_REFERER, VIDEO_UA};
 pub use helios::helios;
 pub use medusa::build_medusa;
 pub use primitives::md5_hex_upper;

@@ -26,31 +26,63 @@ const ENCRYPTED_ENTRIES: &[&[u8; 4]] = &[b"encv", b"enca", b"encs", b"enct"];
 ///
 /// 返回重写后的完整文件字节。长度会变（通常变短）。
 pub fn deprotect(data: &[u8]) -> AppResult<Vec<u8>> {
-    let moov = find_box(data, 0, data.len(), "moov")
-        .ok_or_else(|| AppError::Media("文件里没有 moov，不是可解析的 MP4".into()))?;
-    let moov_start = moov.start - 8; // 载荷起点减去 8 字节头
-    let moov_end = moov.start + moov.size;
-
-    let Some(new_moov) = rebuild_video_stsd(data, moov_start, moov_end)? else {
+    let Some(rebuilt) = rebuild_moov_region(data, 0)? else {
         // 没有加密标记说明本来就是明文，原样返回——不是错误。
         // 整段已解密的流、或非 CENC 封装的流都会走到这里。
         log::info!("[DeProtect] 没有加密标记，按明文原样保留");
         return Ok(data.to_vec());
     };
-    let delta = new_moov.len() as i64 - (moov_end - moov_start) as i64;
-    if delta == 0 {
+    if rebuilt.bytes.len() == rebuilt.end - rebuilt.start {
         return Ok(data.to_vec());
     }
-    // 偏移表在 moov 内部，先在新的 moov 上平移，再拼回文件
-    let mut new_moov = new_moov;
-    shift_chunk_offsets(&mut new_moov, moov_end, delta);
-
     let mut out = Vec::with_capacity(data.len());
-    out.extend_from_slice(&data[..moov_start]);
-    out.extend_from_slice(&new_moov);
+    out.extend_from_slice(&data[..rebuilt.start]);
+    out.extend_from_slice(&rebuilt.bytes);
     // moov 之后的内容（mdat 等）原样跟上
-    out.extend_from_slice(&data[moov_end..]);
+    out.extend_from_slice(&data[rebuilt.end..]);
     Ok(out)
+}
+
+/// 重建后的 moov 及其在密文中的位置。
+pub struct RebuiltMoov {
+    /// 重建后的 moov box（含 8 字节头），stco 已按「原位替换」布局平移
+    pub bytes: Vec<u8>,
+    /// 旧 moov box 在**完整文件**中的起点（含头）
+    pub start: usize,
+    /// 旧 moov box 在完整文件中的结束偏移（不含）
+    pub end: usize,
+}
+
+/// 重建 moov：加密入口还原 + 摘保护 box + stco 平移。
+///
+/// `region` 是从旧 moov box 头开始的密文切片；`base` 是它在完整文件中的
+/// 绝对偏移——stco 里的值是绝对文件偏移，平移阈值必须用绝对值比，
+/// 只给切片时尾部-moov 的样本会被错误平移。
+///
+/// 「原位替换」指布局语义（新 moov 顶旧 moov 的位置，其后内容整体平移
+/// `新长 − 旧长`），既被 [`deprotect`] 用于整文件重写，也被流式解密
+/// （[`super::streaming`]）用于明文偏移映射。
+///
+/// 返回 `None` 表示没有加密标记，无需重建。
+pub fn rebuild_moov_region(region: &[u8], base: usize) -> AppResult<Option<RebuiltMoov>> {
+    let moov = find_box(region, 0, region.len(), "moov")
+        .ok_or_else(|| AppError::Media("文件里没有 moov，不是可解析的 MP4".into()))?;
+    let moov_start = moov.start - 8; // 载荷起点减去 8 字节头（相对 region）
+    let moov_end = moov.start + moov.size;
+
+    let Some(mut new_moov) = rebuild_video_stsd(region, moov_start, moov_end)? else {
+        return Ok(None);
+    };
+    let delta = new_moov.len() as i64 - (moov_end - moov_start) as i64;
+    if delta != 0 {
+        // 偏移表在 moov 内部，先在新的 moov 上平移，再拼回文件
+        shift_chunk_offsets(&mut new_moov, base + moov_end, delta);
+    }
+    Ok(Some(RebuiltMoov {
+        bytes: new_moov,
+        start: base + moov_start,
+        end: base + moov_end,
+    }))
 }
 
 /// 重建 moov：把视频轨 `stsd` 里的加密入口换成普通入口。

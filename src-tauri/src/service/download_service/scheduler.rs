@@ -211,7 +211,6 @@ async fn run_one(
         id: task.id.clone(),
         video_url: play.url,
         output_path: output.clone(),
-        user_agent: crate::signer::VIDEO_UA.to_string(),
         encrypted: play.encrypted,
         key_material: play.key_material,
         settings,

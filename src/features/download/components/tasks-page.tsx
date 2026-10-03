@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Play, Pause, RotateCcw, FolderOpen, Trash2, X } from 'lucide-react';
+import { Play, Pause, RotateCcw, FolderOpen, Trash2, X, ScanSearch } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -162,6 +163,22 @@ export function TasksPage() {
             onClick={() => setSelected(new Set(failedIds))}
           >
             {t('tasks.selectFailed')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={actions.rescan.isPending}
+            onClick={() =>
+              actions.rescan.mutate(undefined, {
+                onSuccess: (count) =>
+                  count > 0
+                    ? toast.success(tf('tasks.rescanFound', { count }))
+                    : toast.info(t('tasks.rescanNone')),
+              })
+            }
+          >
+            <ScanSearch className="size-4" />
+            {actions.rescan.isPending ? t('common.loading') : t('tasks.rescan')}
           </Button>
         </div>
       </div>

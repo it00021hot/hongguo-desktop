@@ -48,6 +48,8 @@ import {
 export const app = {
   selectFolder: () => call<string | null>('select_folder'),
   openFolder: (seriesId: string) => call<void>('open_folder', { seriesId }),
+  // 白名单网址（Rust 侧校验），设置页 ffmpeg 安装指引用
+  openExternalPage: (page: string) => call<void>('open_external_page', { page }),
 };
 
 // ---------------------------------------------------------------- 设置
@@ -96,6 +98,8 @@ export const download = {
     call<number>('delete_tasks', { taskIds, deleteFiles }),
   pauseAll: () => call<number>('pause_all'),
   resumeAll: () => call<number>('resume_all'),
+  // 磁盘上有文件但任务记录丢了：重新登记为已完成。返回补回条数。
+  rescan: () => call<number>('rescan_downloads'),
 };
 
 // ---------------------------------------------------------------- 合并

@@ -1,17 +1,29 @@
 //! 在线播放：取流 → 解密 → 推进内存流。
 //!
-//! 数据面在 [`crate::protocol::stream`]，这里只负责把明文推进去。
+//! 数据面在 [`crate::protocol::stream`]，这里只负责把数据推进去。
 //!
-//! ⚠️ 为什么不边下边解密：CENC 样本解密要先读 moov 里的样本表才能定位每个
-//!    样本的字节区间，moov 又可能在文件尾部。所以现在先整集取回再解密，
-//!    一次性交给 `serve`。**首帧要等整集下完**，比现版的渐进式播放慢，
-//!    但结果字节与落盘下载完全一致。
+//! 两条取流路径：
+//! - **渐进**（首选）：并行预取头部与尾部 → 凭 moov 建解密计划 → 注册进协议层
+//!   （此刻起即可应答 Range）→ 顺序填充余下字节。首帧只需等头 + 尾 + moov，
+//!   不必等整集；seek 到未下载区段时按 seek 提示跳转填充。
+//! - **整集**（回落）：CDN 不支持 Range、moov 定位失败等情形下，整集取回 +
+//!   解密后一次性交给协议，行为与本功能加入前完全一致。
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use futures_util::StreamExt;
 
 use crate::domain::model::{Settings, VideoDefinition};
 use crate::error::{AppError, AppResult};
-use crate::protocol::stream::StreamCache;
+use crate::protocol::stream::{ProgressiveStream, StreamCache};
+
+/// 头部预取量：覆盖 ftyp / mdat 头，让 demuxer 能算出 moov 位置。
+const HEAD_BYTES: u64 = 512 * 1024;
+/// 尾部预取量：moov 通常在文件末尾，2MB 足够装下常见短剧的 moov。
+const TAIL_BYTES: u64 = 2 * 1024 * 1024;
+/// 顺序填充的步长：每段一个 Range 请求，太小请求开销大，太大等待粒度粗。
+const FETCH_CHUNK: u64 = 4 * 1024 * 1024;
 
 /// 在线播放就绪后带回的档位信息。
 pub struct Prepared {
@@ -144,6 +156,10 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 }
 
 /// 下载一集、解密、整段推进缓存。
+///
+/// 先尝试渐进路径（首帧不等整集）；计划构建失败才回落整集路径，
+/// 回落后行为与旧版完全一致。注册成功后的填充阶段失败则直接上抛——
+/// 那时回落只会把整集再重下一遍，和今天的失败语义一样交给上层清理。
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
@@ -153,22 +169,170 @@ async fn fill(
     settings: &Settings,
 ) -> AppResult<()> {
     let reporter = ProgressReporter::new(app.clone(), vid.to_string());
-    let plain =
-        fetch_plain_with(play, settings, &|r, t, phase| reporter.report(r, t, phase)).await?;
 
-    if !c.store(vid, definition, &plain) {
-        log::info!(
-            "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",
-            plain.len()
-        );
-        reporter.done();
-        return Ok(());
+    match build_progressive(play, settings, &|r, t| reporter.report(r, t, "downloading")).await {
+        Ok((sparse, prog)) => {
+            if !c.set_progressive(vid, definition, prog.clone()) {
+                log::info!("[Online] {vid} 档位 {definition} 已有整集数据，渐进填充取消");
+                reporter.done();
+                return Ok(());
+            }
+            log::info!(
+                "[Online] {vid} 档位 {definition} 渐进流就绪（密文 {} 字节），开始顺序填充",
+                sparse.len()
+            );
+            fill_remaining(&sparse, &prog, play, settings, &reporter).await?;
+            reporter.done();
+            log::info!("[Online] {vid} 档位 {definition} 填充完成");
+            Ok(())
+        }
+        Err(e) => {
+            log::info!("[Online] {vid} 渐进取流不可用（{e}），回落整集路径");
+            let plain = fetch_plain_with(play, settings, &|r, t, phase| {
+                reporter.report(r, t, phase)
+            })
+            .await?;
+
+            if !c.store(vid, definition, &plain) {
+                log::info!(
+                    "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",
+                    plain.len()
+                );
+            }
+            reporter.done();
+            Ok(())
+        }
     }
-    log::info!(
-        "[Online] {vid} 档位 {definition} 就绪，{} 字节",
-        plain.len()
-    );
-    Ok(())
+}
+
+/// 渐进路径第一阶段：预取头尾、定位 moov、建计划、注册协议层。
+///
+/// 返回 `Err` 的所有情形都应回落整集路径（CDN 不支持 Range、找不到 moov、
+/// 样本表解析失败……）。这一阶段完成时协议层已可应答，错误只会发生在
+/// 「还没有任何对外可见状态」的时候，回落没有半成品要清理。
+async fn build_progressive(
+    play: &crate::domain::api::play_url::PlayInfo,
+    settings: &Settings,
+    report: &(dyn Fn(u64, u64) + Sync),
+) -> AppResult<(Arc<crate::domain::mp4::streaming::SparseBuffer>, Arc<ProgressiveStream>)> {
+    use crate::domain::api::client::{get_video_range, probe_video_len};
+    use crate::domain::mp4::streaming::{locate_moov, SparseBuffer, StreamingPlan};
+
+    let client = crate::domain::api::client::build_client(&settings.proxy)?;
+    let total = probe_video_len(&client, &play.url).await?;
+    let sparse = SparseBuffer::new(total);
+
+    // 头部：ftyp + mdat 头（demuxer 靠它算出 moov 在哪）
+    let head_len = HEAD_BYTES.min(total);
+    let head = get_video_range(&client, &play.url, 0, head_len - 1).await?;
+    sparse.write(0, &head);
+    report(sparse.downloaded(), total);
+
+    // 尾部：moov 所在（平台流 moov 在尾部是常态）
+    if total > head_len {
+        let tail_len = TAIL_BYTES.min(total - head_len);
+        let tail_from = total - tail_len;
+        let tail = get_video_range(&client, &play.url, tail_from, total - 1).await?;
+        sparse.write(tail_from, &tail);
+        report(sparse.downloaded(), total);
+    }
+
+    // 定位 moov：先头部再尾部；定位到但没取全就补一段
+    let located = locate_moov(
+        &sparse_snapshot(&sparse, 0, head_len),
+        0,
+        total,
+    )
+    .or_else(|| {
+        let tail_from = total - TAIL_BYTES.min(total.saturating_sub(head_len)).max(head_len);
+        locate_moov(&sparse_snapshot(&sparse, tail_from, total), tail_from, total)
+    });
+    let Some((moov_start, moov_size)) = located else {
+        return Err(AppError::Media("头尾预取里找不到 moov".into()));
+    };
+    if !sparse.covers(moov_start, moov_start + moov_size) {
+        let extra = get_video_range(&client, &play.url, moov_start, moov_start + moov_size - 1)
+            .await?;
+        sparse.write(moov_start, &extra);
+        report(sparse.downloaded(), total);
+    }
+    let region = sparse_snapshot(&sparse, moov_start, moov_start + moov_size);
+
+    let prog = if play.encrypted {
+        let key = crate::domain::crypto::key_derive::derive_key(&play.key_material)?;
+        let plan = StreamingPlan::build(&region, moov_start, total, &key)?;
+        let plain_len = plan.plain_len();
+        Arc::new(ProgressiveStream {
+            sparse: sparse.clone(),
+            plan: Some(Arc::new(plan)),
+            plain_len,
+            seek_hint: AtomicU64::new(0),
+        })
+    } else {
+        // 明文流（官网兜底链路）：明文就是密文，按需直供
+        Arc::new(ProgressiveStream {
+            sparse: sparse.clone(),
+            plan: None,
+            plain_len: total,
+            seek_hint: AtomicU64::new(0),
+        })
+    };
+    Ok((sparse, prog))
+}
+
+/// 渐进路径第二阶段：把余下字节按序填满，期间响应 seek 提示。
+async fn fill_remaining(
+    sparse: &Arc<crate::domain::mp4::streaming::SparseBuffer>,
+    prog: &Arc<ProgressiveStream>,
+    play: &crate::domain::api::play_url::PlayInfo,
+    settings: &Settings,
+    reporter: &ProgressReporter,
+) -> AppResult<()> {
+    use crate::domain::api::client::get_video_range;
+
+    let client = crate::domain::api::client::build_client(&settings.proxy)?;
+    let total = sparse.len();
+    let mut cursor = 0u64;
+    loop {
+        // seek 提示在密文上落在更前方时跳过去；跳过的洞由回绕补齐
+        let hint_plain = prog.seek_hint.load(Ordering::Acquire);
+        let hint_cipher = match &prog.plan {
+            // 尾部-moov 布局下 plain == cipher，头部布局按计划映射一次
+            Some(p) => p
+                .cipher_ranges_needed(hint_plain, hint_plain + 1)
+                .first()
+                .map(|(a, _)| *a)
+                .unwrap_or(hint_plain),
+            None => hint_plain,
+        };
+        if hint_cipher > cursor {
+            cursor = hint_cipher;
+        }
+
+        let Some((gap_start, gap_end)) = sparse.next_gap(cursor) else {
+            if sparse.downloaded() >= total {
+                return Ok(());
+            }
+            cursor = 0; // cursor 之后全满：回绕找剩下的洞
+            continue;
+        };
+        let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
+        let bytes = get_video_range(&client, &play.url, gap_start, fetch_end - 1).await?;
+        sparse.write(gap_start, &bytes);
+        reporter.report(sparse.downloaded(), total, "downloading");
+        cursor = fetch_end;
+    }
+}
+
+/// 从稀疏缓冲拷出一段（调用方保证已覆盖）。
+fn sparse_snapshot(
+    sparse: &crate::domain::mp4::streaming::SparseBuffer,
+    start: u64,
+    end: u64,
+) -> Vec<u8> {
+    let mut out = vec![0u8; (end - start) as usize];
+    sparse.read_into(start, &mut out);
+    out
 }
 
 /// 取一集并解密成明文字节（CDN 下载 + CENC 解密）。
@@ -251,19 +415,8 @@ pub async fn fetch_plain_with(
 ) -> AppResult<Vec<u8>> {
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
 
-    // CDN 对带 Referer 的请求直接 403，只带 App UA
-    let resp = client
-        .get(&play.url)
-        .header("User-Agent", crate::signer::VIDEO_UA)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    if !resp.status().is_success() {
-        return Err(AppError::Network(format!(
-            "取流失败: HTTP {}",
-            resp.status()
-        )));
-    }
+    // 首选裸 UA；个别 CDN 节点反过来要求 Referer，403 时在里面补上重试
+    let resp = crate::domain::api::client::get_video_stream(&client, &play.url).await?;
 
     // 拿不到 Content-Length 就发不了百分比，但「开始动了」这件事仍要告诉界面
     let total = resp.content_length().unwrap_or(0);

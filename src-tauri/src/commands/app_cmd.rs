@@ -32,3 +32,25 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>, series_id: String
         .reveal_item_in_dir(std::path::Path::new(&path))
         .map_err(|e| crate::error::AppError::Io(e.to_string()))
 }
+
+/// 用系统默认浏览器打开外部网址。
+///
+/// 只给固定的几个白名单网址用（设置页的 ffmpeg 安装指引），
+/// 不接受任意输入拼 URL，避免变成「前端想打开什么就打开什么」。
+#[tauri::command]
+pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    const ALLOWED: &[&str] = &[
+        "https://www.gyan.dev/ffmpeg/builds/",
+        "https://ffmpeg.org/download.html",
+    ];
+    if !ALLOWED.contains(&page.as_str()) {
+        return Err(crate::error::AppError::InvalidArgs(format!(
+            "不允许打开的网址: {page}"
+        )));
+    }
+    app.opener()
+        .open_url(page, None::<&str>)
+        .map_err(|e| crate::error::AppError::Io(e.to_string()))
+}

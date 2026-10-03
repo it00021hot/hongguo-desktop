@@ -19,6 +19,13 @@ pub const VIDEO_UA: &str = concat!(
     "QuicVersion:c67e9834 2025-09-08)"
 );
 
+/// 视频 CDN 403 时补上的官网 Referer（直链被拒的最后手段）。
+///
+/// CDN 的防盗链是两类规则并存：主流边缘对**任何**带 Referer 的请求直接 403
+/// （所以首选裸 UA），个别节点却反过来要求 Referer。遇到 403 补上它再试一次，
+/// 两类都能过。
+pub const VIDEO_REFERER: &str = "https://novelquickapp.com/";
+
 /// 短剧播放接口（video_model / video_detail）使用的设备档案。
 ///
 /// 用 `BTreeMap` 而非 JS 的对象字面量，**是为了保证 query 参数顺序稳定**——

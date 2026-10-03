@@ -77,6 +77,137 @@ pub async fn api_call(
     Err(AppError::EmptyResponse(last_err))
 }
 
+/// 请求视频 CDN 直链：只带 App UA，被 403 拒时补官网 Referer 重试一次。
+///
+/// 下载落盘（worker）与在线取流（play_service）都走这里，两边口径必须一致：
+/// 防盗链规则在同一时刻只有一种，一边能过一边过不了只能是实现漂移。
+pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
+    let send = |referer: bool| {
+        let mut req = client.get(url).header("User-Agent", crate::signer::VIDEO_UA);
+        if referer {
+            req = req.header("Referer", crate::signer::VIDEO_REFERER);
+        }
+        req
+    };
+
+    let first = send(false)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    if first.status().as_u16() != 403 {
+        return ensure_stream(url, first);
+    }
+
+    log::info!("[CDN] 直链被 403 拒（裸 UA），补 Referer 重试一次");
+    let second = send(true)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    ensure_stream(url, second)
+}
+
+/// 把非成功状态转成统一口径的错误。
+fn ensure_stream(url: &str, resp: reqwest::Response) -> AppResult<reqwest::Response> {
+    if resp.status().is_success() {
+        Ok(resp)
+    } else {
+        Err(AppError::Network(format!(
+            "取流失败: HTTP {}（{}）",
+            resp.status(),
+            host_of(url)
+        )))
+    }
+}
+
+/// 从 URL 里抠出主机名，失败就原样返回——只用于错误信息，不值得为它引入
+/// 完整的 URL 解析错误处理。
+fn host_of(url: &str) -> &str {
+    url.split("//")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .unwrap_or(url)
+}
+
+// ---------------------------------------------------------------- 视频 Range 请求
+
+/// 用 `Range: bytes=0-0` 探测直链总长。
+///
+/// 返回 `Err` 表示该 CDN 不支持 Range（回了 200）——流式取流的前提不成立，
+/// 调用方据此回落整集路径。
+pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
+    let resp = client
+        .get(url)
+        .header("User-Agent", crate::signer::VIDEO_UA)
+        .header("Range", "bytes=0-0")
+        .send()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err(AppError::Network(format!(
+            "CDN 不支持 Range 请求: HTTP {}",
+            resp.status()
+        )));
+    }
+    let cr = resp
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::Network("206 响应缺少 Content-Range".into()))?;
+    // 形如 `bytes 0-0/123456`；`*` 表示总量未知
+    cr.rsplit('/')
+        .next()
+        .and_then(|t| t.parse::<u64>().ok())
+        .filter(|t| *t > 0)
+        .ok_or_else(|| AppError::Network(format!("Content-Range 无法解析总长: {cr}")))
+}
+
+/// 取直链的一段密文 `[start, end]`（闭区间，按字节计）。
+///
+/// 与 [`get_video_stream`] 同一套头（裸 UA 优先、403 补 Referer）。
+/// 非 206 一律按不支持 Range 报错，交给调用方回落。
+pub async fn get_video_range(
+    client: &reqwest::Client,
+    url: &str,
+    start: u64,
+    end: u64,
+) -> AppResult<Vec<u8>> {
+    let send = |referer: bool| {
+        let mut req = client
+            .get(url)
+            .header("User-Agent", crate::signer::VIDEO_UA)
+            .header("Range", format!("bytes={start}-{end}"));
+        if referer {
+            req = req.header("Referer", crate::signer::VIDEO_REFERER);
+        }
+        req
+    };
+
+    let mut resp = send(false)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    if resp.status().as_u16() == 403 {
+        log::info!("[CDN] Range 请求被 403 拒（裸 UA），补 Referer 重试一次");
+        resp = send(true)
+            .send()
+            .await
+            .map_err(|e| AppError::Network(e.to_string()))?;
+    }
+    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err(AppError::Network(format!(
+            "CDN 不支持 Range 请求: HTTP {}",
+            resp.status()
+        )));
+    }
+    let mut bytes = Vec::with_capacity((end - start + 1) as usize);
+    use futures_util::StreamExt;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk.map_err(|e| AppError::Network(e.to_string()))?);
+    }
+    Ok(bytes)
+}
+
 /// 发一次请求。签名在此处生成，与请求方法在同一个分支里决定，不会错配。
 async fn send_once(
     client: &reqwest::Client,
@@ -166,5 +297,143 @@ mod tests {
             url: "not a valid url".into(),
         });
         assert!(err.is_err(), "非法代理地址应报错而不是静默忽略");
+    }
+
+    // ---------------------------------------------------------------- 视频 CDN 直链
+
+    /// 起一个只服务有限次请求的本地 HTTP 服务。
+    ///
+    /// 每个连接只读一个请求、回一个写死的响应就关连接（`Connection: close`，
+    /// 强制客户端为下一次请求新开连接——否则连接复用会让「第二个请求」
+    /// 仍然落在第一条 TCP 上，测试就等不到第二次 accept）。
+    fn serve_once(responses: Vec<&'static str>) -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for resp in responses {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).unwrap();
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+        addr
+    }
+
+    /// 接一个请求、记下原始文本、回 200。返回给断言用。
+    fn read_request_from(listener: std::net::TcpListener) -> String {
+        use std::io::{Read, Write};
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let n = sock.read(&mut buf).unwrap();
+        let text = String::from_utf8_lossy(&buf[..n]).to_string();
+        let _ =
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi");
+        text
+    }
+
+    #[tokio::test]
+    async fn video_stream_sends_bare_ua_first() {
+        // 第一个连接只用来观察请求头：不应带 Referer（带了会被主流 CDN 边缘 403）
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let observer = std::thread::spawn(move || read_request_from(listener));
+
+        let url = format!("http://{addr}/v.mp4");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = get_video_stream(&client, &url).await.expect("应成功");
+        assert!(resp.status().is_success());
+
+        let req = observer.join().unwrap();
+        assert!(!req.contains("Referer"), "首次请求不应带 Referer: {req}");
+        assert!(req.contains("GET /v.mp4"), "应请求指定路径: {req}");
+    }
+
+    #[tokio::test]
+    async fn video_stream_retries_with_referer_on_403() {
+        // 服务端：第一次裸 UA → 403；第二次带 Referer → 200。
+        // 两边各记下收到的请求头，验证「先裸、后补」的顺序。
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for is_403 in [true, false] {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let n = sock.read(&mut buf).unwrap();
+                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                recorder.lock().unwrap().push(text);
+                let (status, body) = if is_403 {
+                    ("403 Forbidden", "")
+                } else {
+                    ("200 OK", "hi")
+                };
+                let _ = sock.write_all(
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+
+        let url = format!("http://{addr}/v.mp4");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = get_video_stream(&client, &url)
+            .await
+            .expect("补 Referer 的重试应成功");
+        assert!(resp.status().is_success());
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "应恰好发生两次请求");
+        // http crate 会把头名转成小写发到线上，断言必须大小写不敏感
+        assert!(
+            !seen[0].to_ascii_lowercase().contains("referer"),
+            "首次请求不应带 Referer"
+        );
+        assert!(
+            seen[1].to_ascii_lowercase().contains("referer"),
+            "403 后的重试必须带 Referer"
+        );
+        assert!(
+            seen[1].contains(crate::signer::VIDEO_REFERER),
+            "Referer 应是官网地址: {}",
+            seen[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn video_stream_reports_error_when_both_attempts_fail() {
+        let addr = serve_once(vec![
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ]);
+        let url = format!("http://{addr}/v.mp4");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let err = get_video_stream(&client, &url)
+            .await
+            .expect_err("两次都 403 应报错");
+        assert!(
+            err.to_string().contains("取流失败"),
+            "错误信息应说明是取流失败: {err}"
+        );
+    }
+
+    #[test]
+    fn host_of_extracts_host() {
+        assert_eq!(
+            host_of("https://v.example.com/path?x=1"),
+            "v.example.com"
+        );
+        assert_eq!(host_of("not-a-url"), "not-a-url");
     }
 }
