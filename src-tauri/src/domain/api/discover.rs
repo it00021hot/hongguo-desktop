@@ -269,6 +269,17 @@ mod probe {
         assert!(overlap < p1.items.len(), "翻页必须换内容，不能重复同一页");
     }
 
+    /// 封面 URL 形态检查。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_feed_covers() {
+        let env = anon_env();
+        let p = fetch_feed(0, &env).await.expect("feed");
+        for item in p.items.iter().take(6) {
+            println!("[cover] {} | {}", item.series_id, item.cover);
+        }
+    }
+
     /// 弹幕/评论列表参数探测：code==0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

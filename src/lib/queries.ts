@@ -49,6 +49,7 @@ const keys = {
     ['browse-list', cat, genre, page] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
+  webCover: (seriesId: string) => ['web-cover', seriesId] as const,
 } satisfies Record<string, unknown>;
 
 // ---------------------------------------------------------------- 设置
@@ -175,6 +176,32 @@ export function useDanmaku(vid: string) {
     enabled: vid.includes(':'),
     staleTime: 10 * 60_000,
   });
+}
+
+// ---------------------------------------------------------------- 封面增强
+
+/** webp 封面懒加载：HEIC 源只在 HEVC 扩展齐全的机器上能显示，这里换成官网版。 */
+export function useWebCover(seriesId: string, sourceCover: string) {
+  const needs = !isRenderableCover(sourceCover);
+  return useQuery({
+    queryKey: keys.webCover(seriesId),
+    queryFn: () => discover.webCover(seriesId),
+    enabled: needs && seriesId !== '',
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+  });
+}
+
+/** WebView2 能直接渲染的封面格式（与后端 is_renderable_cover 同口径）。 */
+function isRenderableCover(url: string): boolean {
+  const path = url.split('?')[0] ?? url;
+  const lower = path.toLowerCase();
+  return (
+    lower.endsWith('.webp') ||
+    lower.endsWith('.png') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg')
+  );
 }
 
 // ---------------------------------------------------------------- 浏览与搜索

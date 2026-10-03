@@ -99,6 +99,7 @@ pub fn run() {
             commands::series_cmd::remove_all_series,
             // 发现（推荐信息流）
             commands::discover_cmd::discover_feed,
+            commands::discover_cmd::web_cover,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             // 浏览与搜索

@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 
 /// 当前 schema 版本。每次结构性变更（加表/加列）时 +1，
 /// 并在 [`MIGRATIONS`] 追加一段从上一版本到新版本的 SQL。
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
@@ -79,6 +79,15 @@ pub static MIGRATIONS: &[&str] = &[
         id         INTEGER PRIMARY KEY CHECK (id = 1),
         cookies    TEXT NOT NULL DEFAULT '',
         user_json  TEXT,
+        updated_at INTEGER NOT NULL
+    );
+    "#,
+    // v2 -> v3：webp 封面缓存。信息流的 HEIC 封面 WebView2 渲染不了，
+    // 官网详情页有 webp 版；按 series_id 缓存，一部剧只抓一次。
+    r#"
+    CREATE TABLE cover_cache (
+        series_id  TEXT PRIMARY KEY,
+        cover      TEXT NOT NULL,
         updated_at INTEGER NOT NULL
     );
     "#,

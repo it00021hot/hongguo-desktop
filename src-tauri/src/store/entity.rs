@@ -358,6 +358,39 @@ pub async fn save_device_profile(
     Ok(())
 }
 
+// ---------- cover_cache ----------
+
+/// 缓存的 webp 封面（miss 返回 None）。
+pub async fn web_cover(db: &Db, series_id: &str) -> AppResult<Option<String>> {
+    let mut rows = db
+        .conn()
+        .query(
+            "SELECT cover FROM cover_cache WHERE series_id = ?1",
+            [Value::Text(series_id.to_string())],
+        )
+        .await
+        .map_err(map_db_err)?;
+    let Some(row) = rows.next().await.map_err(map_db_err)? else {
+        return Ok(None);
+    };
+    Ok(Some(col_text(&row, 0)?))
+}
+
+/// 写缓存（UPSERT）。
+pub async fn save_web_cover(db: &Db, series_id: &str, cover: &str) -> AppResult<()> {
+    db.execute(
+        "INSERT INTO cover_cache (series_id, cover, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(series_id) DO UPDATE SET cover = excluded.cover, updated_at = excluded.updated_at",
+        [
+            Value::Text(series_id.to_string()),
+            Value::Text(cover.to_string()),
+            Value::Integer(chrono::Utc::now().timestamp_millis()),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
 // ---------- merge_tasks ----------
 
 /// 全部合并任务，按登记顺序。

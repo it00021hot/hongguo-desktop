@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { call } from './invoke';
 import {
   browseResultSchema,
@@ -82,6 +83,8 @@ export const series = {
 export const discover = {
   feed: (offset?: number) =>
     call<FeedPage>('discover_feed', offset != null ? { offset } : undefined, feedPageSchema),
+  webCover: (seriesId: string) =>
+    call<string | null>('web_cover', { seriesId }, z.string().nullable()),
 };
 
 // ---------------------------------------------------------------- 弹幕

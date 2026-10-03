@@ -233,6 +233,30 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::save_device_profile(db, &p).await }))
     }
 
+    // ---------- 封面缓存 ----------
+
+    pub fn web_cover(&self, series_id: &str) -> AppResult<Option<String>> {
+        let id = series_id.to_string();
+        self.exec(move |db| {
+            Box::pin(async move {
+                let id = &id;
+                entity::web_cover(db, id).await
+            })
+        })
+    }
+
+    pub fn save_web_cover(&self, series_id: &str, cover: &str) -> AppResult<()> {
+        let id = series_id.to_string();
+        let c = cover.to_string();
+        self.exec(move |db| {
+            Box::pin(async move {
+                let id = &id;
+                let c = &c;
+                entity::save_web_cover(db, id, c).await
+            })
+        })
+    }
+
     // ---------- 旧档迁移 ----------
 
     /// 导入旧 data.json 内容（幂等）。详见 [`entity::import_legacy`]。
