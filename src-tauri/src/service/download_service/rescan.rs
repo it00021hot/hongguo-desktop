@@ -191,11 +191,18 @@ mod tests {
     use super::*;
     use crate::domain::model::{Episode, TaskStatus};
 
-    fn temp_dir(tag: &str) -> PathBuf {
+    /// 临时目录 + **数据目录重定向守卫**。
+    ///
+    /// `rescan_from_disk` 补回任务时会真的落盘 data.json——不重定向的话，
+    /// 跑一次测试就把开发机的下载记录覆盖成测试夹具（剧名「我的剧」会
+    /// 出现在真实应用里，真踩过一次）。守卫必须在测试体内存活到结尾，
+    /// 所以和目录一起返回，调用方想省都省不掉。
+    fn sandbox(tag: &str) -> (PathBuf, crate::store::paths::ScopedDataDir) {
         let dir = std::env::temp_dir().join(format!("hg-rescan-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        let scope = crate::store::paths::ScopedDataDir::new(&dir);
+        (dir, scope)
     }
 
     fn series_in(state: &AppState, series: Series) {
@@ -255,7 +262,7 @@ mod tests {
 
     #[test]
     fn registers_files_missing_from_task_records() {
-        let root = temp_dir("basic");
+        let (root, _scope) = sandbox("basic");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![1, 2, 3]));
         state.replace_settings(settings_with_dir(&root));
@@ -299,7 +306,7 @@ mod tests {
 
     #[test]
     fn leaves_existing_task_records_alone() {
-        let root = temp_dir("existing");
+        let (root, _scope) = sandbox("existing");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![1, 2]));
         state.replace_settings(settings_with_dir(&root));
@@ -321,7 +328,7 @@ mod tests {
 
     #[test]
     fn skips_small_and_merge_outputs() {
-        let root = temp_dir("skip");
+        let (root, _scope) = sandbox("skip");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![1]));
         state.replace_settings(settings_with_dir(&root));
@@ -344,7 +351,7 @@ mod tests {
     #[test]
     fn title_index_episode_template_is_matched_exactly() {
         // 「剧名 007 标题」结尾不是数字，尾数扫描对它是盲的——必须靠精确寻址
-        let root = temp_dir("title-template");
+        let (root, _scope) = sandbox("title-template");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![7]));
         let mut settings = settings_with_dir(&root);
@@ -365,7 +372,7 @@ mod tests {
     #[test]
     fn prefers_task_record_dir_over_settings_derivation() {
         // 下载根目录后来改了：设置推导出的目录是空的，但任务记录里的旧路径还在
-        let root = temp_dir("moved-root");
+        let (root, _scope) = sandbox("moved-root");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![1, 2]));
         state.replace_settings(settings_with_dir(&root)); // 新根目录（无文件）
@@ -389,7 +396,7 @@ mod tests {
 
     #[test]
     fn series_without_dir_is_skipped() {
-        let root = temp_dir("no-dir");
+        let (root, _scope) = sandbox("no-dir");
         let state = AppState::default();
         series_in(&state, series_with("没下过的剧", vec![1]));
         state.replace_settings(settings_with_dir(&root));
