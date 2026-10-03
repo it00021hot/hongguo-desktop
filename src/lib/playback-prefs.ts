@@ -43,3 +43,25 @@ export const writeVolume = (volume: number): void => write(VOLUME_KEY, volume);
 
 export const readMuted = (): boolean => read(MUTED_KEY, 0, 0, 1) === 1;
 export const writeMuted = (muted: boolean): void => write(MUTED_KEY, muted ? 1 : 0);
+
+// ---------------------------------------------------------------- 弹幕开关
+
+const DANMAKU_KEY = 'hongguo.danmaku';
+
+/** 弹幕默认开。坏了或没存过都按开处理（多数人进来是想看弹幕的）。 */
+export function readDanmakuEnabled(): boolean {
+  try {
+    const v = window.localStorage.getItem(DANMAKU_KEY);
+    return v === null ? true : v === '1';
+  } catch {
+    return true;
+  }
+}
+
+export function writeDanmakuEnabled(on: boolean): void {
+  try {
+    window.localStorage.setItem(DANMAKU_KEY, on ? '1' : '0');
+  } catch {
+    // 隐私模式下丢这一条无所谓，本次会话内开关仍然生效
+  }
+}

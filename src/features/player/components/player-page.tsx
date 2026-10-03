@@ -5,6 +5,7 @@ import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
+import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { ContinueWatching } from './continue-watching';
 import {
@@ -12,15 +13,18 @@ import {
   useSavePosition,
   useSaveSettings,
   useCompatPlayback,
+  useDanmaku,
   useSeriesEpisodes,
   useSettings,
   useStorageActions,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import {
+  readDanmakuEnabled,
   readMuted,
   readPlaybackRate,
   readVolume,
+  writeDanmakuEnabled,
   writeMuted,
   writePlaybackRate,
   writeVolume,
@@ -125,6 +129,17 @@ function PlayerView() {
   );
   // 选集与「下载到本地」都要完整分集表，从剧集档案直接取
   const { data: currentSeries } = useSeriesEpisodes(seriesId);
+
+  // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存
+  const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
+  const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
+  const [danmakuOn, setDanmakuOn] = useState(() => readDanmakuEnabled());
+  const toggleDanmaku = useCallback(() => {
+    setDanmakuOn((on) => {
+      writeDanmakuEnabled(!on);
+      return !on;
+    });
+  }, []);
 
   /**
    * 兼容兜底。
@@ -450,6 +465,11 @@ function PlayerView() {
                 onVolumeChange={handleVolumeChange}
                 onError={handleVideoError}
               />
+              <DanmakuLayer
+                videoRef={videoRef}
+                items={danmakuQuery.data ?? []}
+                enabled={danmakuOn}
+              />
               <PlayerControls
                 videoRef={videoRef}
                 stageRef={stageRef}
@@ -463,6 +483,8 @@ function PlayerView() {
                 definitions={definitions}
                 onDefinitionChange={setDefinition}
                 src={playSrc}
+                danmakuOn={danmakuOn}
+                onToggleDanmaku={toggleDanmaku}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，

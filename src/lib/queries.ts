@@ -11,6 +11,7 @@ import {
   settings,
   storage,
   transcode,
+  danmaku as danmakuCmd,
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
@@ -47,6 +48,7 @@ const keys = {
   browseList: (cat: string, genre: string, page: number) =>
     ['browse-list', cat, genre, page] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
+  danmaku: (vid: string) => ['danmaku', vid] as const,
 } satisfies Record<string, unknown>;
 
 // ---------------------------------------------------------------- 设置
@@ -159,6 +161,20 @@ export function useFeed() {
     loadMore: () => load('more'),
     refresh: () => load('first'),
   };
+}
+
+// ---------------------------------------------------------------- 弹幕
+
+/** 一集的弹幕（按 vid 缓存；后端已按时间轴排序并拉全窗口）。 */
+export function useDanmaku(vid: string) {
+  const groupId = vid.split(':')[0] ?? '';
+  const bookId = vid.split(':')[1] ?? '';
+  return useQuery({
+    queryKey: keys.danmaku(vid),
+    queryFn: () => danmakuCmd.list(groupId, bookId),
+    enabled: vid.includes(':'),
+    staleTime: 10 * 60_000,
+  });
 }
 
 // ---------------------------------------------------------------- 浏览与搜索

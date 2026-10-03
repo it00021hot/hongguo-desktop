@@ -155,7 +155,8 @@
     "removeRecord": "清除《{title}》的观看记录",
     "removeRecordConfirm": "清除《{title}》的观看记录？",
     "removeRecordDesc": "这部剧的观看进度会被清掉，下次打开从第一集开始。已下载的文件不受影响。",
-    "removedRecord": "已清除《{title}》的观看记录"
+    "removedRecord": "已清除《{title}》的观看记录",
+    "danmaku": "弹幕"
   },
   "series": {
     "loadFailed": "分集加载失败",

@@ -104,11 +104,25 @@ pub async fn api_call_full(
     biz_query: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
+    api_call_full_with_headers(origin, pathname, body, biz_query, &[], env).await
+}
+
+/// [`api_call_full`] 的带额外头版本（commentapi 要 `x-reading-request`）。
+pub async fn api_call_full_with_headers(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    biz_query: &[(String, String)],
+    extra_headers: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
     let client = build_client(&env.proxy)?;
     let mut last_err = String::new();
 
     for attempt in 0..MAX_RETRIES {
-        match send_once(&client, origin, pathname, body.as_deref(), biz_query, env).await {
+        match send_once(&client, origin, pathname, body.as_deref(), biz_query, extra_headers, env)
+            .await
+        {
             Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
             Ok(_) => last_err = "接口返回空响应（签名可能失效）".to_string(),
             Err(e) => last_err = e.to_string(),
@@ -262,12 +276,15 @@ async fn send_once(
     pathname: &str,
     body: Option<&[u8]>,
     biz_query: &[(String, String)],
+    extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let extra: Vec<(String, String)> = match &env.cookie {
-        Some(c) if !c.is_empty() => vec![("Cookie".into(), c.clone())],
-        _ => Vec::new(),
-    };
+    let mut extra: Vec<(String, String)> = extra_headers.to_vec();
+    if let Some(c) = &env.cookie {
+        if !c.is_empty() {
+            extra.push(("Cookie".into(), c.clone()));
+        }
+    }
     let signed = match body {
         Some(bytes) => crate::signer::sign_request_with(
             origin,

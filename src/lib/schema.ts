@@ -320,3 +320,12 @@ export const feedPageSchema = z.object({
 
 export type FeedItem = z.infer<typeof feedItemSchema>;
 export type FeedPage = z.infer<typeof feedPageSchema>;
+
+/** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
+export const danmakuSchema = z.object({
+  commentId: z.string(),
+  text: z.string(),
+  offsetMs: z.number().int().nonnegative(),
+  diggCount: z.number(),
+});
+export type Danmaku = z.infer<typeof danmakuSchema>;

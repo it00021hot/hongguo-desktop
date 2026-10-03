@@ -317,6 +317,60 @@ mod probe {
         }
     }
 
+    /// 弹幕列表直连验证（抓包形状：vid 在路径里、参数在顶层、
+    /// x-reading-request 头 = ticket-random）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_danmaku_verified() {
+        let env = anon_env();
+        // 抓包锚点：hgplayer 续播的那集
+        let group_id = "7690197301075119166";
+        let book_id = "7690150906532219966";
+        let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
+        let body = serde_json::json!({
+            "aid": 8662,
+            "business_param": {
+                "book_id": book_id,
+                "need_danmaku_guide_type": [],
+                "playlet_item_duration": 60000,
+                "start_offset_time": 0,
+            },
+            "comment_source": 601,
+            "comment_type": 20,
+            "compliance_status": 0,
+            "count": 90,
+            "cursor": "",
+            "group_id": group_id,
+            "group_type": 30,
+            "server_channel": 1000,
+            "sort": 1,
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        // x-reading-request: {ticket_ms}-{random}
+        let ticket = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let rnd: u32 = rand::random();
+        let extra = [(
+            "x-reading-request".to_string(),
+            format!("{ticket}-{rnd}"),
+        )];
+        let origin = "https://api5-normal-lq.fqnovel.com";
+        match crate::domain::api::client::api_call_full_with_headers(
+            origin, &path, Some(bytes), &[], &extra, &env,
+        )
+        .await
+        {
+            Ok(b) => {
+                let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
+                let s = serde_json::to_string(&v).unwrap_or_default();
+                println!("[danmaku-ok] {}", s.chars().take(600).collect::<String>());
+            }
+            Err(e) => println!("[danmaku-ok] ERR {e}"),
+        }
+    }
+
     /// 预约日历参数破解的试验场：每轮改候选参数跑一次，code==0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

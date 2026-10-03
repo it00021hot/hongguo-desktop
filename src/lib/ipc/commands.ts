@@ -1,6 +1,7 @@
 import { call } from './invoke';
 import {
   browseResultSchema,
+  danmakuSchema,
   categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
@@ -17,6 +18,7 @@ import {
   settingsSchema,
   storageUsageSchema,
   type Category,
+  type Danmaku,
   type DecodeCapability,
   type DownloadTask,
   type FeedPage,
@@ -80,6 +82,13 @@ export const series = {
 export const discover = {
   feed: (offset?: number) =>
     call<FeedPage>('discover_feed', offset != null ? { offset } : undefined, feedPageSchema),
+};
+
+// ---------------------------------------------------------------- 弹幕
+
+export const danmaku = {
+  list: (groupId: string, bookId: string) =>
+    call<Danmaku[]>('danmaku_list', { groupId: groupId, bookId }, danmakuSchema.array()),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索

@@ -10,6 +10,7 @@ import {
   Play,
   SkipBack,
   SkipForward,
+  MessageSquareText,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -44,6 +45,9 @@ const CHROME_BUTTON = 'h-8 gap-1.5 bg-transparent text-white hover:bg-white/20 h
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** 弹幕开关（状态在播放页，控件只做展示与回调） */
+  danmakuOn: boolean;
+  onToggleDanmaku: () => void;
   /** 放大镜用的容器：全屏时进的是它，不是整个窗口 */
   stageRef: React.RefObject<HTMLDivElement | null>;
   seriesId: string;
@@ -93,6 +97,8 @@ interface Props {
  */
 export function PlayerControls({
   videoRef,
+  danmakuOn,
+  onToggleDanmaku,
   stageRef,
   seriesId,
   episodes,
@@ -311,6 +317,12 @@ export function PlayerControls({
 
         <div className="ml-auto flex items-center gap-1">
           <div className="group/vol flex items-center">
+            <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
+              <MessageSquareText
+                className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
+                aria-hidden
+              />
+            </IconButton>
             <IconButton label={t('player.mute')} onClick={toggleMute}>
               {muted || volume === 0 ? (
                 <VolumeX className="size-4" />
