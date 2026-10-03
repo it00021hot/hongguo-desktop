@@ -51,6 +51,29 @@ pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()
     remove_task(&state, &id)
 }
 
+/// 在文件管理器中打开某条合并任务的产物所在目录。
+///
+/// 合并完最顺手的下一步就是拿走成品：让用户自己去下载目录里翻
+/// `<下载根>/红果短剧/<剧名>/xxx 合集.mp4`，不如一键定位到它。
+#[tauri::command]
+pub fn open_merge_output(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let path = state
+        .store
+        .read()
+        .merge_tasks
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| t.output_path.clone())
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| AppError::NotFound(format!("合并任务 {id} 没有产物路径")))?;
+
+    app.opener()
+        .reveal_item_in_dir(std::path::Path::new(&path))
+        .map_err(|e| AppError::Io(e.to_string()))
+}
+
 /// 合并前校验。
 #[tauri::command]
 pub fn merge_preflight(state: State<'_, AppState>, series_id: String) -> AppResult<MergePreflight> {

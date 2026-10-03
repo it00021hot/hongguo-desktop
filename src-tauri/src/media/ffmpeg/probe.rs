@@ -226,6 +226,12 @@ fn pick_encoder() -> Option<Encoder> {
 /// 试编一帧，返回带硬件标记的结果。
 ///
 /// `force_hardware` 为真时额外加 `-hw_encoding 1`：只有它能编出帧，才算真硬件。
+///
+/// 测试帧用 256×256：**不能更小**。nvenc 对低于最小支持分辨率的帧直接拒绝
+/// （`Frame Dimension less than the minimum supported value`，GTX 1650 +
+/// 617 驱动上 64×64 实测触发），那会把完全能用的 nvenc 误判成不可用，
+/// 整机被压在软解上。256×256 对 nvenc/qsv/amf/mf 的下限都安全，试编耗时
+/// 仍在毫秒级。
 fn try_encoder(ffmpeg: &PathBuf, encoder: &'static str, force_hardware: bool) -> Option<Encoder> {
     let mut args: Vec<&str> = vec![
         "-hide_banner",
@@ -234,7 +240,7 @@ fn try_encoder(ffmpeg: &PathBuf, encoder: &'static str, force_hardware: bool) ->
         "-f",
         "lavfi",
         "-i",
-        "color=c=black:s=64x64:d=0.1",
+        "color=c=black:s=256x256:d=0.1",
         "-frames:v",
         "1",
         "-c:v",
@@ -294,6 +300,18 @@ mod tests {
     fn probe_does_not_panic() {
         // 探测在没装 ffmpeg 的机器上也应安全返回
         let _ = ffmpeg_path();
+    }
+
+    #[test]
+    fn the_test_frame_exceeds_encoder_minimums() {
+        // nvenc 拒绝低于最小支持分辨率的帧（GTX 1650 + 617 驱动实测 64×64
+        // 直接 InitializeEncoder failed），试编帧太小的后果是「明明有可用的
+        // 硬编码器却报软件」——曾真实发生过，钉住分辨率别再改小
+        let src = include_str!("probe.rs");
+        assert!(
+            src.contains("color=c=black:s=256x256"),
+            "试编测试帧必须 ≥256×256，当前源码里找不到该尺寸"
+        );
     }
 
     #[test]
@@ -357,3 +375,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+

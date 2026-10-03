@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Combine, Zap, Gauge, Trash2 } from 'lucide-react';
+import { Combine, Zap, Gauge, Trash2, FolderOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,7 +48,7 @@ export function MergePage() {
 
   const { data: preflight } = useMergePreflight(seriesId || null);
   const { data: tasks } = useMergeTasks();
-  const { start, remove } = useMergeActions();
+  const { start, remove, openOutput } = useMergeActions();
   useMergeEvents();
 
   /** 待删除的合并任务 id：null 表示确认框没打开 */
@@ -228,6 +228,19 @@ export function MergePage() {
                       {Math.round(task.percent)}%
                     </span>
                   </div>
+                )}
+                {/* 合并完最顺手的下一步就是拿走成品：一键定位到产物文件 */}
+                {task.status === 'completed' && task.outputPath && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    disabled={openOutput.isPending}
+                    onClick={() => openOutput.mutate(task.id)}
+                    aria-label={t('merge.actions.openOutput')}
+                    title={task.outputPath}
+                  >
+                    <FolderOpen className="size-4" />
+                  </Button>
                 )}
                 <Button
                   size="icon"

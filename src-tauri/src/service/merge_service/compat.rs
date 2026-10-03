@@ -91,6 +91,13 @@ pub fn compat_merge(
     // 正在转码的集数，用来把「集内」进度折成整体百分比
     let running = AtomicUsize::new(0);
 
+    // 硬编会话超订的自适应收敛（背景见 [`merge_threads`]）：
+    // 生效并行度从 threads 起步，一观察到「有硬编却走了软解」就收到 2。
+    // 收敛不影响已完成的集——软解产物同样是能播的 H.264，只是慢，不值得重做。
+    let live_cap = AtomicUsize::new(threads);
+    let active = AtomicUsize::new(0);
+    let hw_expected = crate::media::ffmpeg::h264_encoder().is_some_and(|e| e.hardware);
+
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
         // 不用「起 threads 个线程各跑固定那几集」——集数少于核数时会漏，
@@ -99,6 +106,22 @@ pub fn compat_merge(
             scope.spawn(|| loop {
                 if slot.is_cancelled() {
                     return;
+                }
+                // 拿活跃名额：live_cap 收敛后，多出来的线程在这里等而不是抢活。
+                // CAS 保证名额不超发；取消检查让等待线程能及时退出。
+                loop {
+                    if slot.is_cancelled() {
+                        return;
+                    }
+                    let a = active.load(Ordering::Relaxed);
+                    if a < live_cap.load(Ordering::Relaxed)
+                        && active
+                            .compare_exchange(a, a + 1, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                    {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 // 认领第一格还没被占的。认领与占位在**同一次持锁**里完成，
                 // 否则两个线程会同时看到同一格是空的，转同一集两遍。
@@ -112,7 +135,10 @@ pub fn compat_merge(
                         None => None,
                     }
                 };
-                let Some(next) = next else { return };
+                let Some(next) = next else {
+                    active.fetch_sub(1, Ordering::Relaxed);
+                    return;
+                };
 
                 let (vid_index, source) = &inputs[next];
                 let result = match cache::cached_path(series_id, *vid_index) {
@@ -134,13 +160,23 @@ pub fn compat_merge(
                             &TranscodeOptions::default(),
                             scale_to,
                             Some(cb),
-                        )
-                        .map(|r| PathBuf::from(r.output_path));
+                        );
+                        // 会话超订的信号：明明探测到硬编、这集却走了软解。
+                        // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
+                        // 也会触发（多收敛一次，代价只是后面保守些），可接受。
+                        if hw_expected && r.as_ref().is_ok_and(|t| t.decoder.contains("rusty"))
+                            && live_cap.fetch_min(2, Ordering::Relaxed) > 2
+                        {
+                            log::warn!(
+                                "[Merge] 硬编会话疑似超订（本集回落软解），并行度收敛到 2"
+                            );
+                        }
                         running.fetch_sub(1, Ordering::Relaxed);
-                        r
+                        r.map(|t| PathBuf::from(t.output_path))
                     }
                 };
                 slots.lock().expect("结果锁中毒")[next] = Some(result);
+                active.fetch_sub(1, Ordering::Relaxed);
                 let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
                 on_progress(finished, total, task);
             });
@@ -207,17 +243,21 @@ pub fn compat_merge(
 /// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
 ///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
 ///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
-/// - ffmpeg：编码器自己多线程，瓶颈变成 CPU 总量，铺到核数才有吞吐。
-///   实测 libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集
-///   提到约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
+/// - ffmpeg 硬编（nvenc 等）：编码在 GPU 上，CPU 只剩解码，铺 6 路吞吐最好
+///   （受核数约束）。**老 NVIDIA 驱动限制并发会话数（3~8 路不等）**，超限的
+///   那路开不了编码器、静默回落软解——所以线程数只是上限，真正生效的是
+///   [`live_cap`]：一观察到「有硬编却走了软解」就收敛，后续集不再超订。
+/// - ffmpeg 软编（libx264）：编码器自己多线程，瓶颈变成 CPU 总量。实测
+///   libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集提到
+///   约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
 fn merge_threads(episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let cap = if crate::media::ffmpeg::h264_encoder().is_some() {
-        (cores / 2).clamp(1, 4)
-    } else {
-        4
+    let cap = match crate::media::ffmpeg::h264_encoder() {
+        Some(e) if e.hardware => cores.clamp(1, 6),
+        Some(_) => (cores / 2).clamp(1, 4),
+        None => 4,
     };
     cap.min(episodes.max(1))
 }

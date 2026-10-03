@@ -180,6 +180,7 @@
     "started": "Merge started",
     "interrupted": "Last merge was interrupted (app exited)",
     "actions": {
+      "openOutput": "Open folder",
       "remove": "Delete this merge record"
     },
     "removeConfirm": "Delete this merge record?",

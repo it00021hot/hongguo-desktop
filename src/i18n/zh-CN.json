@@ -180,6 +180,7 @@
     "started": "开始合并",
     "interrupted": "上次合并被中断（应用退出）",
     "actions": {
+      "openOutput": "打开文件夹",
       "remove": "删除这条合并记录"
     },
     "removeConfirm": "删除这条合并记录？",

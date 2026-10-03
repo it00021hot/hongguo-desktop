@@ -114,6 +114,8 @@ export const merge = {
     call<MergeTask>('merge_series', { seriesId, outputName, mode }, mergeTaskSchema),
   // 只删任务记录，合并产物是独立文件，不在删除范围内
   remove: (id: string) => call<void>('delete_merge_task', { id }),
+  // 定位产物文件（打开所在文件夹并选中）
+  openOutput: (id: string) => call<void>('open_merge_output', { id }),
 };
 
 // ---------------------------------------------------------------- 播放

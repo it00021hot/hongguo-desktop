@@ -281,6 +281,8 @@ export function useMergeActions() {
       onSuccess: invalidate,
     }),
     remove: useMutation({ mutationFn: merge.remove, onSuccess: invalidate }),
+    // 打开产物所在文件夹：不改动任何数据，无需失效查询
+    openOutput: useMutation({ mutationFn: merge.openOutput }),
   };
 }
 
