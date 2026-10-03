@@ -3,6 +3,10 @@
     "name": "红果短剧下载器"
   },
   "nav": {
+    "home": {
+      "title": "首页",
+      "description": "官方推荐信息流与热榜"
+    },
     "browse": {
       "title": "浏览",
       "description": "搜索剧名，按分类与题材发现短剧"
@@ -291,5 +295,18 @@
     "restore": "向下还原",
     "zoom": "全屏",
     "close": "关闭"
+  },
+  "feed": {
+    "tabs": {
+      "recommend": "推荐",
+      "hot": "热榜"
+    },
+    "scoreTitle": "评分",
+    "loadFailed": "信息流加载失败",
+    "retry": "重试",
+    "loadingMore": "正在加载更多…",
+    "end": "没有更多了",
+    "resolving": "正在解析剧集…",
+    "resolveFailed": "剧集解析失败"
   }
 }

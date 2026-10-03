@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   browse,
+  discover,
   download,
   merge,
   play,
@@ -13,7 +14,15 @@ import {
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
-import type { DownloadProgress, DownloadTask, MergeMode, MergeTask, QueueStatus } from './schema';
+import type {
+  DownloadProgress,
+  DownloadTask,
+  FeedItem,
+  FeedPage,
+  MergeMode,
+  MergeTask,
+  QueueStatus,
+} from './schema';
 
 /**
  * TanStack Query 的 key 工厂。
@@ -82,6 +91,74 @@ export function useSeriesExtras(seriesId: string) {
     enabled: seriesId !== '',
     staleTime: 10 * 60_000,
   });
+}
+
+// ---------------------------------------------------------------- 发现（推荐信息流）
+
+/**
+ * 推荐信息流的手动翻页累积器。
+ *
+ * 不走 useQuery 缓存：分页是「不断往后拼」的会话流，缓存键要么爆炸
+ * （每页一个 key）要么丢上下文（只有最后一页）。这里自己持状态：
+ * pages 累积、nextOffset 前进、错误就地可重试。
+ */
+export function useFeed() {
+  const [pages, setPages] = useState<FeedPage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // 防抖并发的加载令牌：refresh 与 loadMore 竞争时旧请求的结果要作废
+  const tokenRef = useRef(0);
+
+  const load = useCallback(
+    async (mode: 'first' | 'more') => {
+      const token = ++tokenRef.current;
+      if (mode === 'first') setLoading(true);
+      else setLoadingMore(true);
+      setError(null);
+      const offset = mode === 'first' ? 0 : (pages.at(-1)?.nextOffset ?? 0);
+      try {
+        const page = await discover.feed(offset);
+        if (token !== tokenRef.current) return; // 已被更新的请求取代
+        setPages((prev) =>
+          mode === 'first'
+            ? [page]
+            : // 服务端偶发跨页重复（推荐位轮换），按 seriesId 去重
+              [...prev, page],
+        );
+      } catch (e) {
+        if (token !== tokenRef.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (token === tokenRef.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [pages],
+  );
+
+  /** 全部已拉取条目，按拉取顺序、seriesId 去重。 */
+  const items: FeedItem[] = [];
+  const seen = new Set<string>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (seen.has(item.seriesId)) continue;
+      seen.add(item.seriesId);
+      items.push(item);
+    }
+  }
+
+  return {
+    items,
+    hasMore: pages.at(-1)?.hasMore ?? false,
+    isLoading: loading,
+    isFetchingMore: loadingMore,
+    error,
+    loadMore: () => load('more'),
+    refresh: () => load('first'),
+  };
 }
 
 // ---------------------------------------------------------------- 浏览与搜索

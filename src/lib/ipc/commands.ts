@@ -1,5 +1,6 @@
 import { call } from './invoke';
 import {
+  browseResultSchema,
   categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
@@ -10,14 +11,15 @@ import {
   playResponseSchema,
   proxyTestResultSchema,
   queueStatusSchema,
+  feedPageSchema,
   seriesExtrasSchema,
   seriesSchema,
   settingsSchema,
-  browseResultSchema,
   storageUsageSchema,
   type Category,
   type DecodeCapability,
   type DownloadTask,
+  type FeedPage,
   type MergeCandidate,
   type MergeMode,
   type MergePreflight,
@@ -71,6 +73,13 @@ export const series = {
     call<SeriesExtras>('get_series_extras', { seriesId }, seriesExtrasSchema),
   remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
   removeAll: () => call<number>('remove_all_series'),
+};
+
+// ---------------------------------------------------------------- 发现（推荐信息流）
+
+export const discover = {
+  feed: (offset?: number) =>
+    call<FeedPage>('discover_feed', offset != null ? { offset } : undefined, feedPageSchema),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索

@@ -3,6 +3,10 @@
     "name": "Hongguo Downloader"
   },
   "nav": {
+    "home": {
+      "title": "Home",
+      "description": "Recommendations and trending"
+    },
     "browse": {
       "title": "Browse",
       "description": "Search and discover dramas by category"
@@ -291,5 +295,18 @@
     "restore": "Restore",
     "zoom": "Zoom",
     "close": "Close"
+  },
+  "feed": {
+    "tabs": {
+      "recommend": "For You",
+      "hot": "Trending"
+    },
+    "scoreTitle": "Score",
+    "loadFailed": "Failed to load the feed",
+    "retry": "Retry",
+    "loadingMore": "Loading more…",
+    "end": "No more items",
+    "resolving": "Resolving series…",
+    "resolveFailed": "Failed to resolve the series"
   }
 }

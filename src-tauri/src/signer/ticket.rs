@@ -50,11 +50,17 @@ pub fn encode_query(values: &[(&str, String)]) -> String {
 ///
 /// 返回 `(url, query, ticket, khronos)`。`origin` 参数化：业务 API 与
 /// passport / 设备注册走不同域名，签名只关心 pathname+query，域名不影响摘要。
-pub fn resolve_ticket(
+/// 带业务 query 的 ticket 解析。
+///
+///
+/// 业务参数插在设备参数之后、`ts`/`_rticket` 之前——位置本身也参与签名，
+/// 与 hgplayer 的实测顺序一致；调用方不再有机会在签名后改 query。
+pub fn resolve_ticket_with(
     origin: &str,
     pathname: &str,
     body: Option<&[u8]>,
     device: &DeviceProfile,
+    biz_query: &[(String, String)],
     base_ticket: u64,
 ) -> (String, String, u64, u32) {
     for offset in 0..MAX_TICKET_OFFSET {
@@ -64,6 +70,11 @@ pub fn resolve_ticket(
             .iter()
             .map(|(k, v)| (k, v.to_string()))
             .collect();
+        // 生命周期桥：biz_query 是调用方给的 owned 对，借成 &str 拼进同一张表
+        let biz_owned: Vec<(String, String)> = biz_query.to_vec();
+        for (k, v) in &biz_owned {
+            params.push((k.as_str(), v.clone()));
+        }
         params.push(("ts", khronos.to_string()));
         params.push(("_rticket", ticket.to_string()));
 
@@ -86,6 +97,10 @@ pub fn resolve_ticket(
         .iter()
         .map(|(k, v)| (k, v.to_string()))
         .collect();
+    let biz_owned: Vec<(String, String)> = biz_query.to_vec();
+    for (k, v) in &biz_owned {
+        params.push((k.as_str(), v.clone()));
+    }
     params.push(("ts", khronos.to_string()));
     params.push(("_rticket", ticket.to_string()));
     let query = encode_query(&params);
@@ -115,8 +130,20 @@ pub fn sign_request(
     device: &DeviceProfile,
     extra_headers: &[(String, String)],
 ) -> SignedRequest {
+    sign_request_with(origin, pathname, body, device, &[], extra_headers)
+}
+
+/// [`sign_request`] 的带业务 query 版本（reading 系接口的混合参数形态）。
+pub fn sign_request_with(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    device: &DeviceProfile,
+    biz_query: &[(String, String)],
+    extra_headers: &[(String, String)],
+) -> SignedRequest {
     let (url, query, ticket, khronos) =
-        resolve_ticket(origin, pathname, body.as_deref(), device, now_millis());
+        resolve_ticket_with(origin, pathname, body.as_deref(), device, biz_query, now_millis());
 
     let random = rand::random::<u16>();
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -209,11 +236,12 @@ mod tests {
     fn resolve_ticket_avoids_branch_1() {
         let device = video_device();
         for i in 0..30u64 {
-            let (_, _, ticket, _) = resolve_ticket(
+            let (_, _, ticket, _) = resolve_ticket_with(
                 API_ORIGIN,
                 "/novel/player/multi_video_detail/v1/",
                 None,
                 &device,
+                &[],
                 1_700_000_000_000 + i,
             );
             assert!(ticket >= 1_700_000_000_000 + i, "ticket 应随时间戳递增");
@@ -298,7 +326,7 @@ mod tests {
         // 一旦这里拼接分叉，x-gorgon / x-medusa 就会与实际发出的 query 不符
         let device = video_device();
         let (url, query, ticket, khronos) =
-            resolve_ticket(API_ORIGIN, "/x/v1/", None, &device, 1_700_000_000_000);
+            resolve_ticket_with(API_ORIGIN, "/x/v1/", None, &device, &[], 1_700_000_000_000);
         assert!(url.ends_with(&query), "url 应原样带出 query");
         assert!(query.contains(&format!("_rticket={ticket}")));
         assert!(query.contains(&format!("ts={khronos}")));

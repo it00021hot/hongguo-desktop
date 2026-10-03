@@ -97,6 +97,8 @@ pub fn run() {
             commands::series_cmd::get_series_extras,
             commands::series_cmd::remove_series,
             commands::series_cmd::remove_all_series,
+            // 发现（推荐信息流）
+            commands::discover_cmd::discover_feed,
             // 浏览与搜索
             commands::browse_cmd::browse_categories,
             commands::browse_cmd::browse_list,

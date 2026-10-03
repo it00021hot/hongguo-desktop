@@ -92,11 +92,23 @@ pub async fn api_call_at(
     body: Option<Vec<u8>>,
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
+    api_call_full(origin, pathname, body, &[], env).await
+}
+
+/// 全参数形态：origin + 业务 query + body。reading 系接口是混合参数
+/// （部分参数在 query、部分在 body 的 biz_param），都从这里走。
+pub async fn api_call_full(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    biz_query: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
     let client = build_client(&env.proxy)?;
     let mut last_err = String::new();
 
     for attempt in 0..MAX_RETRIES {
-        match send_once(&client, origin, pathname, body.as_deref(), env).await {
+        match send_once(&client, origin, pathname, body.as_deref(), biz_query, env).await {
             Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
             Ok(_) => last_err = "接口返回空响应（签名可能失效）".to_string(),
             Err(e) => last_err = e.to_string(),
@@ -249,6 +261,7 @@ async fn send_once(
     origin: &str,
     pathname: &str,
     body: Option<&[u8]>,
+    biz_query: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
     let extra: Vec<(String, String)> = match &env.cookie {
@@ -256,10 +269,22 @@ async fn send_once(
         _ => Vec::new(),
     };
     let signed = match body {
-        Some(bytes) => {
-            crate::signer::sign_request(origin, pathname, Some(bytes.to_vec()), &env.device, &extra)
-        }
-        None => crate::signer::sign_request(origin, pathname, None, &env.device, &extra),
+        Some(bytes) => crate::signer::sign_request_with(
+            origin,
+            pathname,
+            Some(bytes.to_vec()),
+            &env.device,
+            biz_query,
+            &extra,
+        ),
+        None => crate::signer::sign_request_with(
+            origin,
+            pathname,
+            None,
+            &env.device,
+            biz_query,
+            &extra,
+        ),
     };
 
     let mut req = match &signed.body {

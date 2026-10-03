@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as MergeRouteImport } from './routes/merge'
 import { Route as PlayerRouteImport } from './routes/player'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -19,6 +20,11 @@ import { Route as TasksRouteImport } from './routes/tasks'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrowseRoute = BrowseRouteImport.update({
+  id: '/browse',
+  path: '/browse',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MergeRoute = MergeRouteImport.update({
@@ -49,6 +55,7 @@ const TasksRoute = TasksRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
   '/player': typeof PlayerRoute
   '/settings': typeof SettingsRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
   '/player': typeof PlayerRoute
   '/settings': typeof SettingsRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
   '/player': typeof PlayerRoute
   '/settings': typeof SettingsRoute
@@ -74,12 +83,15 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
+  fullPaths:
+    '/' | '/browse' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
+  to:
+    '/' | '/browse' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
   id:
     | '__root__'
     | '/'
+    | '/browse'
     | '/merge'
     | '/player'
     | '/settings'
@@ -89,6 +101,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BrowseRoute: typeof BrowseRoute
   MergeRoute: typeof MergeRoute
   PlayerRoute: typeof PlayerRoute
   SettingsRoute: typeof SettingsRoute
@@ -103,6 +116,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/browse': {
+      id: '/browse'
+      path: '/browse'
+      fullPath: '/browse'
+      preLoaderRoute: typeof BrowseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/merge': {
@@ -145,6 +165,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BrowseRoute: BrowseRoute,
   MergeRoute: MergeRoute,
   PlayerRoute: PlayerRoute,
   SettingsRoute: SettingsRoute,

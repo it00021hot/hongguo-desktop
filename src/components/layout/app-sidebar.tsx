@@ -1,5 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
+  Flame,
   Compass,
   Play,
   ListChecks,
@@ -20,7 +21,8 @@ import { cn } from '@/lib/utils';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。 */
 export const NAV_ITEMS = [
-  { key: 'browse', to: '/', icon: Compass },
+  { key: 'home', to: '/', icon: Flame },
+  { key: 'browse', to: '/browse', icon: Compass },
   { key: 'player', to: '/player', icon: Play },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
   { key: 'merge', to: '/merge', icon: Combine },

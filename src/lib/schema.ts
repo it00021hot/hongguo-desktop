@@ -294,3 +294,29 @@ export const appErrorSchema = z.object({
   kind: z.string(),
   message: z.string(),
 });
+
+// ---------------------------------------------------------------- 发现（推荐信息流）
+
+/** 信息流的一条剧集卡片（Rust `discover::FeedItem` 的 camelCase 序列化）。 */
+export const feedItemSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  horizCover: z.string(),
+  vid: z.string(),
+  episodeCnt: z.number().int().nonnegative(),
+  playCnt: z.number(),
+  commentCount: z.number(),
+  score: z.number(),
+  tags: z.array(z.string()),
+});
+
+export const feedPageSchema = z.object({
+  items: z.array(feedItemSchema),
+  nextOffset: z.number(),
+  hasMore: z.boolean(),
+  sessionId: z.string(),
+});
+
+export type FeedItem = z.infer<typeof feedItemSchema>;
+export type FeedPage = z.infer<typeof feedPageSchema>;

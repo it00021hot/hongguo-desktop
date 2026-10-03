@@ -60,4 +60,4 @@ pub use device::{video_device, APP_ID, CHANNEL_ID, VIDEO_REFERER, VIDEO_UA};
 pub use helios::helios;
 pub use medusa::build_medusa;
 pub use primitives::md5_hex_upper;
-pub use ticket::{sign_request, API_ORIGIN};
+pub use ticket::{sign_request_with, API_ORIGIN};
