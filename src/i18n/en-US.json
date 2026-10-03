@@ -4,12 +4,16 @@
   },
   "nav": {
     "home": {
-      "title": "Home",
-      "description": "Recommendations and trending"
+      "title": "Discover",
+      "description": "Official feed & hot ranking"
+    },
+    "rank": {
+      "title": "Rankings",
+      "description": "Official rankings across 8 lists"
     },
     "browse": {
-      "title": "Browse",
-      "description": "Search and discover dramas by category"
+      "title": "Find",
+      "description": "Search and browse short dramas"
     },
     "player": {
       "title": "Player",
@@ -309,5 +313,34 @@
     "retry": "Retry",
     "loadingMore": "Loading more…",
     "end": "No more items"
+  },
+  "rank": {
+    "kind": {
+      "recommend": "Recommended",
+      "hotPlay": "Most Played",
+      "prestige": "Prestige",
+      "subscribe": "Most Awaited",
+      "newDrama": "Newcomers",
+      "hotSearch": "Trending",
+      "mustWatch": "Must Watch",
+      "followed": "Most Collected"
+    },
+    "loadFailed": "Failed to load ranking",
+    "empty": "Nothing on this list yet"
+  },
+  "newDrama": {
+    "tabs": {
+      "recommend": "New Releases",
+      "calendar": "Air Calendar"
+    },
+    "gender": {
+      "all": "All",
+      "male": "Male",
+      "female": "Female"
+    },
+    "loadFailed": "Failed to load new dramas",
+    "empty": "No releases on this day",
+    "online": "Online",
+    "upcoming": "Upcoming"
   }
 }

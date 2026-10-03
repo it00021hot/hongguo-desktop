@@ -4,7 +4,10 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::rank::{fetch_new_drama, fetch_rank, fetch_reservations, RankList, RankPage};
+use crate::domain::api::rank::{
+    fetch_new_calendar, fetch_new_drama, fetch_rank, fetch_reservations, CalendarPage, RankList,
+    RankPage,
+};
 use crate::domain::api::search::{search_series, SearchPage};
 use crate::error::AppResult;
 
@@ -88,6 +91,16 @@ pub async fn reservation_list(
 ) -> AppResult<RankPage> {
     let env = state.api_env();
     fetch_reservations(is_online.unwrap_or(true), &env).await
+}
+
+/// 上新日历（date 传返回值 dates 里的日期可切换，不传取默认日）。
+#[tauri::command]
+pub async fn new_drama_calendar(
+    state: State<'_, AppState>,
+    date: Option<String>,
+) -> AppResult<CalendarPage> {
+    let env = state.api_env();
+    fetch_new_calendar(date.as_deref(), &env).await
 }
 
 #[cfg(test)]

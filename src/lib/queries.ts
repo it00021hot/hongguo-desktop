@@ -6,8 +6,10 @@ import {
   download,
   merge,
   play,
+  rank,
   search,
   series,
+  seriesSearch,
   settings,
   storage,
   transcode,
@@ -23,6 +25,9 @@ import type {
   MergeMode,
   MergeTask,
   QueueStatus,
+  RankKind,
+  RankPage,
+  SearchPage,
 } from './schema';
 
 /**
@@ -50,6 +55,9 @@ const keys = {
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
+  rank: (kind: RankKind) => ['rank', kind] as const,
+  newCalendar: (date: string) => ['new-calendar', date] as const,
+  appSeriesSearch: (query: string) => ['app-series-search', query] as const,
 } satisfies Record<string, unknown>;
 
 // ---------------------------------------------------------------- 设置
@@ -202,6 +210,71 @@ export function isRenderableCover(url: string): boolean {
     lower.endsWith('.jpg') ||
     lower.endsWith('.jpeg')
   );
+}
+
+// ---------------------------------------------------------------- 排行榜 / 新剧
+
+/** 一个榜单（按 kind 缓存；榜单一天更新几次，10 分钟内不重打）。 */
+export function useRank(kind: RankKind) {
+  return useQuery({
+    queryKey: keys.rank(kind),
+    queryFn: () => rank.list(kind),
+    staleTime: 10 * 60_000,
+  });
+}
+
+/** 新剧推荐的手动翻页累积器（与 useFeed 同一套口径）。 */
+export function useNewDrama(gender: number) {
+  const [pages, setPages] = useState<RankPage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const tokenRef = useRef(0);
+
+  const load = useCallback(
+    async (mode: 'first' | 'more') => {
+      const token = ++tokenRef.current;
+      if (mode === 'first') setLoading(true);
+      else setLoadingMore(true);
+      setError(null);
+      // 每页固定 18 条，偏移按已拉条数算
+      const offset = mode === 'first' ? 0 : pages.reduce((n, p) => n + p.items.length, 0);
+      try {
+        const page = await rank.newDrama(gender, offset);
+        if (token !== tokenRef.current) return;
+        setPages((prev) => (mode === 'first' ? [page] : [...prev, page]));
+      } catch (e) {
+        if (token !== tokenRef.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (token === tokenRef.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [gender, pages],
+  );
+
+  const items = pages.flatMap((p) => p.items);
+
+  return {
+    items,
+    isLoading: loading,
+    isFetchingMore: loadingMore,
+    error,
+    loadMore: () => load('more'),
+    refresh: () => load('first'),
+  };
+}
+
+/** 上新日历（date 为空串取默认日）。 */
+export function useNewCalendar(date: string) {
+  return useQuery({
+    queryKey: keys.newCalendar(date),
+    queryFn: () => rank.calendar(date === '' ? undefined : date),
+    staleTime: 10 * 60_000,
+  });
 }
 
 // ---------------------------------------------------------------- 浏览与搜索
@@ -556,5 +629,73 @@ export function useStorageActions() {
       onSuccess: invalidate,
     }),
     deleteAll: useMutation({ mutationFn: storage.deleteAll, onSuccess: invalidate }),
+  };
+}
+
+// ---------------------------------------------------------------- 官方 App 搜索
+
+/**
+ * 官方 App 搜索的翻页累积器。
+ *
+ * 首页只有「精选」少数几条（平台搜索的固定形态），`hasMore` 翻页才是
+ * 完整列表，所以和 useFeed 一样手动累积；翻页必须带首页发放的 searchId。
+ */
+export function useSeriesSearchApp(query: string) {
+  const kw = query.trim();
+  const [pages, setPages] = useState<SearchPage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const tokenRef = useRef(0);
+
+  const load = useCallback(
+    async (mode: 'first' | 'more') => {
+      const token = ++tokenRef.current;
+      if (mode === 'first') setLoading(true);
+      else setLoadingMore(true);
+      setError(null);
+      try {
+        const last = pages.at(-1);
+        const page =
+          mode === 'first'
+            ? await seriesSearch.run(kw)
+            : await seriesSearch.run(kw, last?.nextOffset ?? 0, last?.searchId ?? '');
+        if (token !== tokenRef.current) return;
+        setPages((prev) => (mode === 'first' ? [page] : [...prev, page]));
+      } catch (e) {
+        if (token !== tokenRef.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (token === tokenRef.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [kw, pages],
+  );
+
+  const items = pages.flatMap((p) => p.items);
+  // 综合首页的精选与翻页列表有重复：按 seriesId 去重
+  const seen = new Set<string>();
+  const unique = items.filter((it) => {
+    if (seen.has(it.seriesId)) return false;
+    seen.add(it.seriesId);
+    return true;
+  });
+
+  return {
+    items: unique,
+    hasMore: pages.at(-1)?.hasMore ?? false,
+    isLoading: loading,
+    isFetchingMore: loadingMore,
+    error,
+    loadMore: () => load('more'),
+    search: () => load('first'),
+    reset: () => {
+      tokenRef.current += 1;
+      setPages([]);
+      setError(null);
+    },
   };
 }

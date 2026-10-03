@@ -329,3 +329,94 @@ export const danmakuSchema = z.object({
   diggCount: z.number(),
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
+
+// ---------------------------------------------------------------- 排行榜 / 新剧 / 上新日历
+
+/** 榜单条目（Rust `rank::RankItem`）。 */
+export const rankItemSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  vid: z.string(),
+  /** 榜单名次（从 1 起；0 表示接口没给，如预约榜） */
+  rank: z.number().int().nonnegative(),
+  /** "玄幻·全200集" 形态的副标题 */
+  subTitle: z.string(),
+  score: z.number(),
+  playCnt: z.number(),
+  episodeCnt: z.number().int().nonnegative(),
+  /** 榜单热点文案（"13707万最高热度"） */
+  recText: z.string(),
+  /** 次级信息（"258.7万收藏"） */
+  secondaryInfos: z.array(z.string()),
+  description: z.string(),
+  tags: z.array(z.string()),
+});
+export type RankItem = z.infer<typeof rankItemSchema>;
+
+export const rankPageSchema = z.object({
+  items: z.array(rankItemSchema),
+});
+export type RankPage = z.infer<typeof rankPageSchema>;
+
+/** 榜单标识（与 Rust `RankKind` 的 snake_case 序列化一致）。 */
+export const rankKindSchema = z.enum([
+  'recommend',
+  'hot_play',
+  'prestige',
+  'subscribe',
+  'new_drama',
+  'hot_search',
+  'must_watch',
+  'followed',
+]);
+export type RankKind = z.infer<typeof rankKindSchema>;
+
+/** 上新日历条目（Rust `rank::CalendarItem`）。 */
+export const calendarItemSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  vid: z.string(),
+  score: z.number(),
+  playCnt: z.number(),
+  episodeCnt: z.number().int().nonnegative(),
+  description: z.string(),
+  category: z.string(),
+  recTags: z.array(z.string()),
+  /** 排期上线时间（unix 秒；0 = 未定档） */
+  publishTime: z.number(),
+  isOnline: z.boolean(),
+});
+export type CalendarItem = z.infer<typeof calendarItemSchema>;
+
+export const calendarPageSchema = z.object({
+  items: z.array(calendarItemSchema),
+  /** "20261003" 形式的可选日期 */
+  dates: z.array(z.string()),
+  defaultDate: z.string(),
+});
+export type CalendarPage = z.infer<typeof calendarPageSchema>;
+
+/** App 搜索的一条结果（Rust `search::SearchResult`）。 */
+export const searchResultSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  vid: z.string(),
+  subTitle: z.string(),
+  score: z.number(),
+  playCnt: z.number(),
+  episodeCnt: z.number().int().nonnegative(),
+  description: z.string(),
+});
+export type SearchResult = z.infer<typeof searchResultSchema>;
+
+export const searchPageSchema = z.object({
+  items: z.array(searchResultSchema),
+  hasMore: z.boolean(),
+  nextOffset: z.number(),
+  /** 翻页会话 id（首页响应发放，翻页原样带回） */
+  searchId: z.string(),
+});
+export type SearchPage = z.infer<typeof searchPageSchema>;

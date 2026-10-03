@@ -13,7 +13,10 @@ import {
   playResponseSchema,
   proxyTestResultSchema,
   queueStatusSchema,
+  calendarPageSchema,
   feedPageSchema,
+  rankPageSchema,
+  searchPageSchema,
   seriesExtrasSchema,
   seriesSchema,
   settingsSchema,
@@ -37,6 +40,10 @@ import {
   type Settings,
   type BrowseResult,
   type StorageUsage,
+  type CalendarPage,
+  type RankKind,
+  type RankPage,
+  type SearchPage,
 } from '../schema';
 
 /**
@@ -104,6 +111,36 @@ export const browse = {
 
 export const search = {
   run: (keyword: string) => call<BrowseResult>('search_series', { keyword }, browseResultSchema),
+};
+
+// ---------------------------------------------------------------- 排行榜 / 新剧 / 搜索（官方 App API）
+
+export const rank = {
+  /** 拉一个榜单（kind 用 snake_case 标识，后端白名单校验）。 */
+  list: (kind: RankKind) => call<RankPage>('rank_list', { kind }, rankPageSchema),
+  /** 新剧推荐（gender: 2=全部；offset 步长 18）。 */
+  newDrama: (gender: number, offset?: number) =>
+    call<RankPage>('new_drama_list', { gender, offset: offset ?? 0 }, rankPageSchema),
+  /** 上新日历（date 传返回值 dates 里的日期，不传取默认日）。 */
+  calendar: (date?: string) =>
+    call<CalendarPage>(
+      'new_drama_calendar',
+      date != null ? { date } : undefined,
+      calendarPageSchema,
+    ),
+  /** 我的预约（匿名通常空表）。 */
+  reservations: (isOnline = true) =>
+    call<RankPage>('reservation_list', { isOnline }, rankPageSchema),
+};
+
+/** 官方 App 搜索（综合 tab，首页是精选少数，翻页才是完整列表）。 */
+export const seriesSearch = {
+  run: (query: string, offset?: number, searchId?: string) =>
+    call<SearchPage>(
+      'search_series_cmd',
+      offset != null && offset > 0 ? { query, offset, searchId: searchId ?? '' } : { query },
+      searchPageSchema,
+    ),
 };
 
 // ---------------------------------------------------------------- 下载

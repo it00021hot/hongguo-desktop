@@ -105,6 +105,7 @@ pub fn run() {
             commands::rank_cmd::new_drama_list,
             commands::rank_cmd::search_series_cmd,
             commands::rank_cmd::reservation_list,
+            commands::rank_cmd::new_drama_calendar,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             // 浏览与搜索

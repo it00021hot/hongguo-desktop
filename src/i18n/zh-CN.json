@@ -4,11 +4,15 @@
   },
   "nav": {
     "home": {
-      "title": "首页",
+      "title": "推荐",
       "description": "官方推荐信息流与热榜"
     },
+    "rank": {
+      "title": "排行榜",
+      "description": "官方八大榜单实时排名"
+    },
     "browse": {
-      "title": "浏览",
+      "title": "找剧",
       "description": "搜索剧名，按分类与题材发现短剧"
     },
     "player": {
@@ -309,5 +313,34 @@
     "retry": "重试",
     "loadingMore": "正在加载更多…",
     "end": "没有更多了"
+  },
+  "rank": {
+    "kind": {
+      "recommend": "推荐榜",
+      "hotPlay": "热播榜",
+      "prestige": "臻果榜",
+      "subscribe": "预约榜",
+      "newDrama": "新剧榜",
+      "hotSearch": "热搜榜",
+      "mustWatch": "必看榜",
+      "followed": "收藏榜"
+    },
+    "loadFailed": "榜单加载失败",
+    "empty": "这个榜单暂时没有内容"
+  },
+  "newDrama": {
+    "tabs": {
+      "recommend": "新剧推荐",
+      "calendar": "上新日历"
+    },
+    "gender": {
+      "all": "全部",
+      "male": "男频",
+      "female": "女频"
+    },
+    "loadFailed": "新剧加载失败",
+    "empty": "这一天没有上新",
+    "online": "已上线",
+    "upcoming": "待上线"
   }
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import {
   useBrowseList,
   useDownloadTasks,
   useResolveSeries,
-  useSearch,
+  useSeriesSearchApp,
 } from '@/lib/queries';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
@@ -77,20 +77,49 @@ export function BrowsePage() {
 
   const { data: categories } = useBrowseCategories();
   const browse = useBrowseList(category, genre, page);
-  const found = useSearch(submitted);
+  // 找剧搜索走官方 App API（站内官网搜索只匹配剧名且结果少；
+  // App 搜索是综合 tab，首页精选 + 翻页全量）
+  const found = useSeriesSearchApp(submitted);
   const { data: tasks } = useDownloadTasks();
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
-  // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来
-  const cards = searching ? (found.data?.results ?? []) : (browse.data?.results ?? []);
+  // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来。
+  // App 搜索条目转成官网卡形态喂同一块网格：subTitle（"脑洞·全273集"）
+  // 首段当题材 tag，url 无处消费填空串。
+  const cards = useMemo(() => {
+    if (!searching) return browse.data?.results ?? [];
+    return found.items.map((it) => ({
+      seriesId: it.seriesId,
+      seriesTitle: it.title,
+      cover: it.cover,
+      episodeCount: it.episodeCnt,
+      tags: it.subTitle.split('·').slice(0, 1).filter(Boolean),
+      url: '',
+    }));
+  }, [searching, browse.data, found.items]);
   // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着，
   // 此时 isPending 是 false（手里有占位数据），isFetching 才表示真的在等。
   // 只看 isPending 的话，点完筛选界面还是上一个分类的卡片、连骨架屏都不出 ——
   // 用户看到的就是「点了半天什么都没发生」。
   const pending = searching
-    ? found.isPending
+    ? found.isLoading
     : browse.isPending || (browse.isPlaceholderData && browse.isFetching);
-  const failed = searching ? found.isError : browse.isError;
+  const failed = searching ? found.error !== null : browse.isError;
+
+  // App 搜索首页是「精选」少数条目，hasMore 翻页才是全量列表；
+  // 结果还很少时自动续拉一页，避免用户看到 4 条就以为搜完了。
+  const searchStateRef = useRef(found);
+  useEffect(() => {
+    searchStateRef.current = found;
+  });
+  useEffect(() => {
+    if (!searching) return;
+    const f = searchStateRef.current;
+    if (f.hasMore && !f.isLoading && !f.isFetchingMore && f.items.length < 18) {
+      void f.loadMore();
+    }
+    // items.length 变化会再次进入：靠 isFetchingMore 挡住并发，靠 hasMore 收尾
+  }, [searching, found.items.length]);
 
   // 已下载集数：按剧聚合，供卡片角标使用
   const downloadedMap = useMemo(() => {
@@ -110,6 +139,7 @@ export function BrowsePage() {
   const exitSearch = () => {
     setSubmitted('');
     setKeyword('');
+    found.reset();
   };
 
   const handleCategory = (slug: string) => {
@@ -130,7 +160,9 @@ export function BrowsePage() {
     if (!value) return;
     setPage(1);
     if (detectInput(value) === 'keyword') {
+      found.reset();
       setSubmitted(value);
+      found.search();
       return;
     }
     setSubmitted('');

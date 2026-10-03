@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as MergeRouteImport } from './routes/merge'
+import { Route as NewRouteImport } from './routes/new'
 import { Route as PlayerRouteImport } from './routes/player'
+import { Route as RankRouteImport } from './routes/rank'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StorageRouteImport } from './routes/storage'
 import { Route as TasksRouteImport } from './routes/tasks'
@@ -32,9 +34,19 @@ const MergeRoute = MergeRouteImport.update({
   path: '/merge',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NewRoute = NewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlayerRoute = PlayerRouteImport.update({
   id: '/player',
   path: '/player',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RankRoute = RankRouteImport.update({
+  id: '/rank',
+  path: '/rank',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -57,7 +69,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
+  '/new': typeof NewRoute
   '/player': typeof PlayerRoute
+  '/rank': typeof RankRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -66,7 +80,9 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
+  '/new': typeof NewRoute
   '/player': typeof PlayerRoute
+  '/rank': typeof RankRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -76,7 +92,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
   '/merge': typeof MergeRoute
+  '/new': typeof NewRoute
   '/player': typeof PlayerRoute
+  '/rank': typeof RankRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -84,16 +102,34 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/browse' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
+    | '/'
+    | '/browse'
+    | '/merge'
+    | '/new'
+    | '/player'
+    | '/rank'
+    | '/settings'
+    | '/storage'
+    | '/tasks'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/browse' | '/merge' | '/player' | '/settings' | '/storage' | '/tasks'
+    | '/'
+    | '/browse'
+    | '/merge'
+    | '/new'
+    | '/player'
+    | '/rank'
+    | '/settings'
+    | '/storage'
+    | '/tasks'
   id:
     | '__root__'
     | '/'
     | '/browse'
     | '/merge'
+    | '/new'
     | '/player'
+    | '/rank'
     | '/settings'
     | '/storage'
     | '/tasks'
@@ -103,7 +139,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BrowseRoute: typeof BrowseRoute
   MergeRoute: typeof MergeRoute
+  NewRoute: typeof NewRoute
   PlayerRoute: typeof PlayerRoute
+  RankRoute: typeof RankRoute
   SettingsRoute: typeof SettingsRoute
   StorageRoute: typeof StorageRoute
   TasksRoute: typeof TasksRoute
@@ -132,11 +170,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MergeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/new': {
+      id: '/new'
+      path: '/new'
+      fullPath: '/new'
+      preLoaderRoute: typeof NewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/player': {
       id: '/player'
       path: '/player'
       fullPath: '/player'
       preLoaderRoute: typeof PlayerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rank': {
+      id: '/rank'
+      path: '/rank'
+      fullPath: '/rank'
+      preLoaderRoute: typeof RankRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -167,7 +219,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BrowseRoute: BrowseRoute,
   MergeRoute: MergeRoute,
+  NewRoute: NewRoute,
   PlayerRoute: PlayerRoute,
+  RankRoute: RankRoute,
   SettingsRoute: SettingsRoute,
   StorageRoute: StorageRoute,
   TasksRoute: TasksRoute,

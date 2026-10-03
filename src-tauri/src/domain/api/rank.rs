@@ -190,6 +190,142 @@ pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<Rank
     })
 }
 
+/// 上新日历的一条剧集。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarItem {
+    pub series_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub cover: String,
+    #[serde(default)]
+    pub vid: String,
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub play_cnt: i64,
+    #[serde(default)]
+    pub episode_cnt: u32,
+    /// 简介（video_desc）
+    #[serde(default)]
+    pub description: String,
+    /// 主分类（category，如 "逆袭"）
+    #[serde(default)]
+    pub category: String,
+    /// 热度文案（rec_tags[].content，如 "374万热度"）
+    #[serde(default)]
+    pub rec_tags: Vec<String>,
+    /// 排期上线时间（unix 秒；0 = 未定档）
+    #[serde(default)]
+    pub publish_time: i64,
+    /// 是否已上线
+    #[serde(default)]
+    pub is_online: bool,
+}
+
+/// 上新日历页。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarPage {
+    pub items: Vec<CalendarItem>,
+    /// 可选日期（"20261003" 形式，接口给前后各一周）
+    pub dates: Vec<String>,
+    /// 默认选中日期
+    #[serde(default)]
+    pub default_date: String,
+}
+
+/// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
+///
+/// `date` 传 `calendar_page.dates` 里的值可切换日期；抓包只覆盖了默认日期
+/// （不带 date 参数），切换参数若服务端不认，回退也是默认日期的数据，
+/// 不会报错。
+pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<CalendarPage> {
+    let mut q: Vec<(String, String)> = [
+        ("active_panel", "6"),
+        ("gender_type", "2"),
+        ("need_calendar_schema", "true"),
+        ("tab_style", "2"),
+        ("tab_type", "5"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    if let Some(d) = date {
+        q.push(("date".to_string(), d.to_string()));
+    }
+    let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析上新日历失败: {e}")))?;
+    check_code(&value)?;
+    parse_calendar(value.get("data"))
+}
+
+/// 解析 subscribe/list 日历形态的 data 节点。
+fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
+    let data = data.ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
+
+    let mut items = Vec::new();
+    for raw in data
+        .get("subscribe_items")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let sd = raw.get("subscribe_data").cloned().unwrap_or(Value::Null);
+        let Some(series_id) = sd.get("series_id").and_then(Value::as_str).filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        items.push(CalendarItem {
+            series_id: series_id.to_string(),
+            title: str_field(&sd, "title"),
+            cover: str_field(&sd, "cover"),
+            vid: str_field(&sd, "vid"),
+            score: num_field(&sd, "score"),
+            play_cnt: int_field(&sd, "play_cnt"),
+            episode_cnt: int_field(&sd, "episode_cnt").max(0) as u32,
+            description: str_field(&sd, "video_desc"),
+            category: str_field(raw, "category"),
+            rec_tags: raw
+                .get("rec_tags")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.get("content").and_then(Value::as_str))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            publish_time: int_field(raw, "schedule_publish_time"),
+            is_online: raw
+                .get("is_online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+
+    let cal = data.get("calendar_schema");
+    Ok(CalendarPage {
+        items,
+        dates: cal
+            .and_then(|c| c.get("date_list"))
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        default_date: cal
+            .and_then(|c| c.get("default_date"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 /// 遍历 `data` 下所有 `video_data` 数组（cell_data 是嵌套结构，逐块平铺）。
 fn collect_video_data(node: &Value, out: &mut Vec<Value>) {
     if let Some(arr) = node.as_array() {
@@ -335,6 +471,56 @@ mod tests {
         collect_video_data(&v, &mut out);
         assert_eq!(out.len(), 2);
     }
+
+    /// 抓包样本形状：subscribe_items + calendar_schema（日历形态）。
+    #[test]
+    fn parses_calendar_page() {
+        let data: Value = serde_json::json!({
+            "subscribe_items": [
+                {
+                    "is_online": true,
+                    "category": "逆袭",
+                    "schedule_publish_time": 1790957041,
+                    "rec_tags": [{ "content": "374万热度" }],
+                    "subscribe_data": {
+                        "series_id": "7683352559066549310",
+                        "title": "穿越古代搞军工",
+                        "cover": "https://x.heic",
+                        "vid": "7683354704205581337",
+                        "score": "8.4",
+                        "play_cnt": 970,
+                        "episode_cnt": 92,
+                        "video_desc": "绑定重工系统逆袭",
+                    }
+                },
+                { "subscribe_data": { "series_id": "" } }
+            ],
+            "calendar_schema": {
+                "date_list": ["20260926", "20261003", "20261010"],
+                "default_date": "20261003",
+            }
+        });
+        let page = parse_calendar(Some(&data)).unwrap();
+        assert_eq!(page.items.len(), 1, "空 series_id 要跳过");
+        let it = &page.items[0];
+        assert_eq!(it.title, "穿越古代搞军工");
+        assert_eq!(it.category, "逆袭");
+        assert_eq!(it.rec_tags, vec!["374万热度"]);
+        assert_eq!(it.publish_time, 1790957041);
+        assert!(it.is_online);
+        assert_eq!(it.score, 8.4);
+        assert_eq!(page.dates, vec!["20260926", "20261003", "20261010"]);
+        assert_eq!(page.default_date, "20261003");
+    }
+
+    #[test]
+    fn missing_calendar_schema_degrades_to_empty_dates() {
+        let data: Value = serde_json::json!({ "subscribe_items": [] });
+        let page = parse_calendar(Some(&data)).unwrap();
+        assert!(page.items.is_empty());
+        assert!(page.dates.is_empty());
+        assert_eq!(page.default_date, "");
+    }
 }
 
 #[cfg(test)]
@@ -436,5 +622,22 @@ pub(crate) mod probe {
         let env = anon_env();
         let page = fetch_reservations(true, &env).await.expect("预约列表");
         println!("[reservations] {} 条（匿名空表属正常）", page.items.len());
+    }
+
+    /// 上新日历直连：应返回日期列表 + 当日条目。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_new_calendar() {
+        let env = anon_env();
+        let page = fetch_new_calendar(None, &env).await.expect("上新日历");
+        println!(
+            "[calendar] dates={:?} default={:?} items={} #1={:?}",
+            page.dates.first().zip(page.dates.last()),
+            page.default_date,
+            page.items.len(),
+            page.items.first().map(|i| &i.title)
+        );
+        assert!(!page.dates.is_empty(), "日历应带日期列表");
+        assert!(!page.items.is_empty(), "当日应有上新条目");
     }
 }
