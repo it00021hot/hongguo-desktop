@@ -50,6 +50,7 @@ pub async fn prepare(
     vid: &str,
     definition: Option<u32>,
     settings: Settings,
+    env: &crate::domain::api::client::ApiEnv,
 ) -> AppResult<Prepared> {
     let vid = vid.trim();
     if vid.is_empty() {
@@ -77,7 +78,7 @@ pub async fn prepare(
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位
     // 才是缓存的键。贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let play =
-        crate::domain::api::play_url::fetch_play_url(vid, definition, &settings.proxy).await?;
+        crate::domain::api::play_url::fetch_play_url(vid, definition, env).await?;
     let want = play.definition;
     // 只记「不指定档位」那次解析到的结果。手动选过 720 之后再点「自动」，
     // 要的仍然是平台给的最高档，而不是上一次手动选的那档。

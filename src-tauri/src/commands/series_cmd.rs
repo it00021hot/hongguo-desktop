@@ -34,8 +34,8 @@ pub async fn get_series_episodes(
     if let Some(hit) = state.store.series_by_id(&series_id)? {
         return Ok(hit);
     }
-    let proxy = state.settings().proxy;
-    let series = series_service::resolver::resolve_series(&series_id, &proxy).await?;
+    let env = state.api_env();
+    let series = series_service::resolver::resolve_series(&series_id, &env).await?;
     series_service::registry::upsert_and_persist(&state, series.clone())?;
     Ok(series)
 }
@@ -43,8 +43,8 @@ pub async fn get_series_episodes(
 /// 解析链接 / ID 为完整剧集档案并登记。
 #[tauri::command]
 pub async fn resolve_series(state: State<'_, AppState>, input: String) -> AppResult<Series> {
-    let proxy = state.settings().proxy;
-    let series = series_service::resolver::resolve_series(&input, &proxy).await?;
+    let env = state.api_env();
+    let series = series_service::resolver::resolve_series(&input, &env).await?;
     series_service::registry::upsert_and_persist(&state, series.clone())?;
     Ok(series)
 }

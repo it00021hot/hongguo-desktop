@@ -69,10 +69,10 @@ pub async fn resolve_play(
                 request.series_id,
                 request.vid_index
             );
-            let proxy = state.settings().proxy;
+            let env = state.api_env();
             let series = crate::service::series_service::resolver::resolve_series(
                 &request.series_id,
-                &proxy,
+                &env,
             )
             .await?;
             crate::service::series_service::registry::upsert_and_persist(state, series)?;
@@ -82,7 +82,7 @@ pub async fn resolve_play(
         }
     };
 
-    match online::prepare(app, &vid, request.definition, state.settings()).await {
+    match online::prepare(app, &vid, request.definition, state.settings(), &state.api_env()).await {
         Ok(prepared) => Ok(PlayResponse {
             url: prepared.url,
             online: true,

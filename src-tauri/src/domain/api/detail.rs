@@ -25,7 +25,7 @@ pub struct EpisodeList {
 /// 取一部剧的分集列表。
 pub async fn fetch_episode_list(
     series_id: &str,
-    proxy: &crate::domain::model::ProxyConfig,
+    env: &super::client::ApiEnv,
 ) -> AppResult<EpisodeList> {
     let payload = serde_json::to_vec(&crate::domain::api::params::detail_payload(series_id))
         .map_err(|e| AppError::Signer(e.to_string()))?;
@@ -33,7 +33,7 @@ pub async fn fetch_episode_list(
     let bytes = crate::domain::api::client::api_call(
         crate::domain::api::params::DETAIL_PATH,
         Some(payload),
-        proxy,
+        env,
     )
     .await?;
 

@@ -6,6 +6,7 @@
 
 use base64::Engine;
 
+use crate::signer::device::DeviceProfile;
 use crate::signer::primitives::{be32, le32, md5_raw, sm3};
 use crate::signer::xargus::branch_of;
 use crate::signer::xgorgon::x_gorgon;
@@ -47,18 +48,22 @@ pub fn encode_query(values: &[(&str, String)]) -> String {
 
 /// 挑一个服务端接受的 ticket。
 ///
-/// 返回 `(url, query, ticket, khronos)`。
+/// 返回 `(url, query, ticket, khronos)`。`origin` 参数化：业务 API 与
+/// passport / 设备注册走不同域名，签名只关心 pathname+query，域名不影响摘要。
 pub fn resolve_ticket(
+    origin: &str,
     pathname: &str,
     body: Option<&[u8]>,
-    device: &[(&'static str, &'static str)],
+    device: &DeviceProfile,
     base_ticket: u64,
 ) -> (String, String, u64, u32) {
     for offset in 0..MAX_TICKET_OFFSET {
         let ticket = base_ticket + u64::from(offset);
         let khronos = (ticket / 1000) as u32;
-        let mut params: Vec<(&str, String)> =
-            device.iter().map(|(k, v)| (*k, (*v).to_string())).collect();
+        let mut params: Vec<(&str, String)> = device
+            .iter()
+            .map(|(k, v)| (k, v.to_string()))
+            .collect();
         params.push(("ts", khronos.to_string()));
         params.push(("_rticket", ticket.to_string()));
 
@@ -69,7 +74,7 @@ pub fn resolve_ticket(
         //    传原文会算出与实际 x-argus 不同的分支，抖动挑出的 ticket
         //    可能正好落在服务端不受理的 branch 1 上，表现为 HTTP 200 + 0 字节。
         if branch_of(&sm3(query.as_bytes()), &body_md5, &le32(khronos)) != 1 {
-            let url = format!("{API_ORIGIN}{pathname}?{query}");
+            let url = format!("{origin}{pathname}?{query}");
             return (url, query, ticket, khronos);
         }
     }
@@ -77,12 +82,14 @@ pub fn resolve_ticket(
     // 32 次都落在 branch 1：沿用最后一次的偏移（与 JS 一致）
     let ticket = base_ticket + u64::from(MAX_TICKET_OFFSET - 1);
     let khronos = (ticket / 1000) as u32;
-    let mut params: Vec<(&str, String)> =
-        device.iter().map(|(k, v)| (*k, (*v).to_string())).collect();
+    let mut params: Vec<(&str, String)> = device
+        .iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
     params.push(("ts", khronos.to_string()));
     params.push(("_rticket", ticket.to_string()));
     let query = encode_query(&params);
-    let url = format!("{API_ORIGIN}{pathname}?{query}");
+    let url = format!("{origin}{pathname}?{query}");
     (url, query, ticket, khronos)
 }
 
@@ -102,19 +109,20 @@ pub struct SignedRequest {
 ///    （包括 query 参数顺序、URL 编码方式、body 的字节内容）都会导致签名失配，
 ///    服务端静默丢弃（HTTP 200 + 空 body）。请勿在签完名之后再动 url / body。
 pub fn sign_request(
+    origin: &str,
     pathname: &str,
     body: Option<Vec<u8>>,
-    device: &[(&'static str, &'static str)],
+    device: &DeviceProfile,
     extra_headers: &[(String, String)],
 ) -> SignedRequest {
     let (url, query, ticket, khronos) =
-        resolve_ticket(pathname, body.as_deref(), device, now_millis());
+        resolve_ticket(origin, pathname, body.as_deref(), device, now_millis());
 
     let random = rand::random::<u16>();
     let b64 = base64::engine::general_purpose::STANDARD;
 
     let mut headers: Vec<(String, String)> = vec![
-        ("User-Agent".into(), crate::signer::VIDEO_UA.to_string()),
+        ("User-Agent".into(), device.user_agent().to_string()),
         (
             "Accept".into(),
             "application/json; charset=utf-8,application/x-protobuf".into(),
@@ -140,8 +148,8 @@ pub fn sign_request(
                 &url,
                 body.as_deref(),
                 khronos,
-                device_field(device, "device_id"),
-                device_field(device, "version_name"),
+                device.get("device_id"),
+                device.get("version_name"),
             ),
         ),
         ("x-tt-dt".into(), String::new()),
@@ -160,14 +168,6 @@ pub fn sign_request(
     SignedRequest { url, headers, body }
 }
 
-fn device_field<'a>(device: &'a [(&'static str, &'static str)], key: &str) -> &'a str {
-    device
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| *v)
-        .unwrap_or_default()
-}
-
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -175,18 +175,18 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// POST + 签名。
-pub fn sign_post(
-    pathname: &str,
-    payload: Vec<u8>,
-    device: &[(&'static str, &'static str)],
-) -> SignedRequest {
-    sign_request(pathname, Some(payload), device, &[])
+/// POST + 签名（默认业务 origin）。
+// M3 登录模块的便捷入口；当前仅测试引用，lib 构建下暂无消费者。
+#[allow(dead_code)]
+pub fn sign_post(pathname: &str, payload: Vec<u8>, device: &DeviceProfile) -> SignedRequest {
+    sign_request(API_ORIGIN, pathname, Some(payload), device, &[])
 }
 
-/// GET + 签名。
-pub fn sign_get(pathname: &str, device: &[(&'static str, &'static str)]) -> SignedRequest {
-    sign_request(pathname, None, device, &[])
+/// GET + 签名（默认业务 origin）。
+// 同 sign_post：M3 的便捷入口，当前仅测试引用。
+#[allow(dead_code)]
+pub fn sign_get(pathname: &str, device: &DeviceProfile) -> SignedRequest {
+    sign_request(API_ORIGIN, pathname, None, device, &[])
 }
 
 #[cfg(test)]
@@ -210,6 +210,7 @@ mod tests {
         let device = video_device();
         for i in 0..30u64 {
             let (_, _, ticket, _) = resolve_ticket(
+                API_ORIGIN,
                 "/novel/player/multi_video_detail/v1/",
                 None,
                 &device,
@@ -260,12 +261,44 @@ mod tests {
     }
 
     #[test]
+    fn sign_request_honors_custom_origin_and_profile_ua() {
+        // passport / 设备注册走别的域名；UA 必须取自档案而非全局常量，
+        // 注册来的档案换机型时 UA 要跟着换
+        let mut device = video_device();
+        device.set("device_id", "42");
+        let custom_ua = "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14)";
+        // 换 UA 不改字段：serde 打个补丁重建（等价于注册流程换机型档案）
+        let profile: crate::signer::device::DeviceProfile = {
+            let mut v = serde_json::to_value(&device).unwrap();
+            v["user_agent"] = serde_json::Value::String(custom_ua.into());
+            serde_json::from_value(v).unwrap()
+        };
+        let signed = sign_request(
+            "https://passport.example.com",
+            "/passport/mobile/send_code/v1/",
+            None,
+            &profile,
+            &[],
+        );
+        assert!(signed.url.starts_with("https://passport.example.com/passport/"));
+        let ua = signed
+            .headers
+            .iter()
+            .find(|(k, _)| k == "User-Agent")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert_eq!(ua, custom_ua);
+        // 设备参数照常进 query（含改过的 device_id）
+        assert!(signed.url.contains("device_id=42"));
+    }
+
+    #[test]
     fn resolve_ticket_url_ends_with_its_query() {
         // url 必须原样带上签过名的那份 query：调用方不再单独持有 query，
         // 一旦这里拼接分叉，x-gorgon / x-medusa 就会与实际发出的 query 不符
         let device = video_device();
         let (url, query, ticket, khronos) =
-            resolve_ticket("/x/v1/", None, &device, 1_700_000_000_000);
+            resolve_ticket(API_ORIGIN, "/x/v1/", None, &device, 1_700_000_000_000);
         assert!(url.ends_with(&query), "url 应原样带出 query");
         assert!(query.contains(&format!("_rticket={ticket}")));
         assert!(query.contains(&format!("ts={khronos}")));
@@ -282,7 +315,7 @@ mod tests {
             .map(|pair| pair.split_once('=').expect("参数应是 k=v"))
             .collect();
 
-        let device_keys: Vec<&str> = device.iter().map(|(key, _)| *key).collect();
+        let device_keys: Vec<&str> = device.iter().map(|(key, _)| key).collect();
         let query_keys: Vec<&str> = params.iter().map(|(key, _)| *key).collect();
         assert_eq!(
             query_keys[..device_keys.len()],

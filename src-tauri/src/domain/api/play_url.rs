@@ -35,7 +35,7 @@ pub struct PlayInfo {
 pub async fn fetch_play_url(
     vid: &str,
     definition: Option<u32>,
-    proxy: &crate::domain::model::ProxyConfig,
+    env: &super::client::ApiEnv,
 ) -> AppResult<PlayInfo> {
     let payload = serde_json::to_vec(&crate::domain::api::params::model_payload(vid))
         .map_err(|e| AppError::Signer(e.to_string()))?;
@@ -43,7 +43,7 @@ pub async fn fetch_play_url(
     let bytes = crate::domain::api::client::api_call(
         crate::domain::api::params::MODEL_PATH,
         Some(payload),
-        proxy,
+        env,
     )
     .await?;
 

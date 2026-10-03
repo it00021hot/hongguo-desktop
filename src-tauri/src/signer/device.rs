@@ -3,8 +3,11 @@
 //! 签名头与 query 参数必须来自同一份设备档案：Medusa 会把 device_id 和
 //! version_name 打进密文，服务端两边比对，不一致直接判为伪造。
 //!
-//! ⚠️ 这是一组固定的实测设备参数。改这里等于换设备，换了之后签名仍然自洽，
-//!    但服务端可能对该档案做更严格的风控。建议整组一起替换，不要只改一两个字段。
+//! 档案有 owned 形态 [`DeviceProfile`]（可从数据库装载、可被设备注册流程
+//! 改写字段）；`video_device()` 返回的是**实测可用的静态兜底档案**——
+//! 注册失败或未注册时用它，保证签名链路永远有自洽的设备可用。
+
+use serde::{Deserialize, Serialize};
 
 use crate::signer::protobuf::{proto, FieldType, FieldValue};
 
@@ -26,41 +29,105 @@ pub const VIDEO_UA: &str = concat!(
 /// 两类都能过。
 pub const VIDEO_REFERER: &str = "https://novelquickapp.com/";
 
-/// 短剧播放接口（video_model / video_detail）使用的设备档案。
+/// 一份设备档案。
 ///
-/// 用 `BTreeMap` 而非 JS 的对象字面量，**是为了保证 query 参数顺序稳定**——
-/// 签名是「URL 查询串 + body 字节 + 时间戳」的联合函数，参数顺序变化会导致失配。
-/// JS 对象对整数键会重排为升序，这里用字符串键 + 显式顺序表避免该问题。
-pub fn video_device() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("iid", "1905892595382586"),
-        ("device_id", "1905892595378490"),
-        ("ac", "wifi"),
-        ("channel", "update_64"),
-        ("aid", "8662"),
-        ("app_name", "novelread"),
-        ("version_code", "71332"),
-        ("version_name", "7.1.3.32"),
-        ("device_platform", "android"),
-        ("os", "android"),
-        ("ssmix", "a"),
-        ("device_type", "25053RT47C"),
-        ("device_brand", "Redmi"),
-        ("language", "zh"),
-        ("os_api", "36"),
-        ("os_version", "16"),
-        ("manifest_version_code", "71332"),
-        ("resolution", "1280*2772"),
-        ("dpi", "520"),
-        ("update_version_code", "71332"),
-        ("host_abi", "arm64-v8a"),
-        ("dragon_device_type", "phone"),
-        ("pv_player", "71332"),
-        ("compliance_status", "0"),
-        ("need_personal_recommend", "1"),
-        ("player_so_load", "1"),
-        ("is_android_pad_screen", "0"),
-    ]
+/// 字段是**保序**键值对：顺序就是签名 query 的参数顺序，签名对它敏感，
+/// 所以绝不排序、不去重，只按构造时的顺序搬运。
+/// `user_agent` 与字段必须成套（系统版本号两边一致），改机型要整组换。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceProfile {
+    #[serde(default)]
+    fields: Vec<(String, String)>,
+    #[serde(default = "default_user_agent")]
+    user_agent: String,
+}
+
+fn default_user_agent() -> String {
+    VIDEO_UA.to_string()
+}
+
+impl DeviceProfile {
+    /// 从静态键值对构造（测试与静态兜底档案用）。
+    pub fn from_pairs(pairs: &[(&'static str, &'static str)], user_agent: &str) -> Self {
+        Self {
+            fields: pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            user_agent: user_agent.to_string(),
+        }
+    }
+
+    /// 按 key 取字段值，缺 key 给空串（与旧 `device_field` 行为一致）。
+    pub fn get(&self, key: &str) -> &str {
+        self.fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_default()
+    }
+
+    /// 覆盖已有 key 的值。key 不存在时**追加在尾部**（注册流程补
+    /// cdid / openudid 等新字段用）；不排序。
+    // M2b 设备注册落位前的脚手架（当前仅测试引用）。
+    #[allow(dead_code)]
+    pub fn set(&mut self, key: &str, value: &str) {
+        if let Some(slot) = self.fields.iter_mut().find(|(k, _)| k == key) {
+            slot.1 = value.to_string();
+        } else {
+            self.fields.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    /// 字段迭代（保序）。签名 query 与 Medusa 都从这里取值。
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.fields.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// 与档案配套的 UA。
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+}
+
+/// 短剧播放接口（video_model / video_detail）使用的静态兜底设备档案。
+///
+/// 这是一组固定的实测设备参数：换掉之后签名仍然自洽，但服务端可能对
+/// 新档案做更严格的风控。字段顺序就是 query 顺序，**不要重排**——
+/// 签名是「URL 查询串 + body 字节 + 时间戳」的联合函数。
+pub fn video_device() -> DeviceProfile {
+    DeviceProfile::from_pairs(
+        &[
+            ("iid", "1905892595382586"),
+            ("device_id", "1905892595378490"),
+            ("ac", "wifi"),
+            ("channel", "update_64"),
+            ("aid", "8662"),
+            ("app_name", "novelread"),
+            ("version_code", "71332"),
+            ("version_name", "7.1.3.32"),
+            ("device_platform", "android"),
+            ("os", "android"),
+            ("ssmix", "a"),
+            ("device_type", "25053RT47C"),
+            ("device_brand", "Redmi"),
+            ("language", "zh"),
+            ("os_api", "36"),
+            ("os_version", "16"),
+            ("manifest_version_code", "71332"),
+            ("resolution", "1280*2772"),
+            ("dpi", "520"),
+            ("update_version_code", "71332"),
+            ("host_abi", "arm64-v8a"),
+            ("dragon_device_type", "phone"),
+            ("pv_player", "71332"),
+            ("compliance_status", "0"),
+            ("need_personal_recommend", "1"),
+            ("player_so_load", "1"),
+            ("is_android_pad_screen", "0"),
+        ],
+        VIDEO_UA,
+    )
 }
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
@@ -163,27 +230,58 @@ mod tests {
     #[test]
     fn video_device_profile_is_stable() {
         let device = video_device();
-        assert_eq!(device.len(), 27);
-        // 切片顺序就是 query 参数顺序，签名对它敏感，不能重排
-        assert_eq!(device[0], ("iid", "1905892595382586"));
-        assert_eq!(device[1], ("device_id", "1905892595378490"));
+        assert_eq!(device.iter().count(), 27);
+        // 迭代顺序就是 query 参数顺序，签名对它敏感，不能重排
+        let first: Vec<(&str, &str)> = device.iter().take(2).collect();
+        assert_eq!(
+            first,
+            vec![("iid", "1905892595382586"), ("device_id", "1905892595378490")]
+        );
 
-        let value_of = |key: &str| {
-            device
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, value)| *value)
-        };
-        assert_eq!(value_of("version_name"), Some("7.1.3.32"));
+        assert_eq!(device.get("version_name"), "7.1.3.32");
         // UA 里的系统版本必须与设备档案的 os_version 一致
-        assert_eq!(value_of("os_version"), Some("16"));
-        assert!(VIDEO_UA.contains("Android 16"));
+        assert_eq!(device.get("os_version"), "16");
+        assert!(device.user_agent().contains("Android 16"));
 
-        let mut keys: Vec<&str> = device.iter().map(|(key, _)| *key).collect();
+        let mut keys: Vec<&str> = device.iter().map(|(key, _)| key).collect();
         let total = keys.len();
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
+    }
+
+    #[test]
+    fn set_overrides_in_place_and_appends_new_keys() {
+        let mut device = video_device();
+        let idx = device.iter().position(|(k, _)| k == "device_id").unwrap();
+        device.set("device_id", "42");
+        // 覆盖发生在原位置，不改变字段顺序
+        assert_eq!(device.iter().nth(idx), Some(("device_id", "42")));
+        // 新 key 追加在尾部（注册流程补 cdid 等字段）
+        device.set("cdid", "abc");
+        assert_eq!(device.iter().last(), Some(("cdid", "abc")));
+        assert_eq!(device.iter().count(), 28);
+    }
+
+    #[test]
+    fn profile_roundtrips_through_serde() {
+        // 设备注册后档案要落库，serde 往返必须无损（含字段顺序）
+        let device = video_device();
+        let json = serde_json::to_string(&device).unwrap();
+        let back: DeviceProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(device, back);
+        let order: Vec<String> = back.iter().map(|(k, _)| k.to_string()).collect();
+        let order_before: Vec<String> = device.iter().map(|(k, _)| k.to_string()).collect();
+        assert_eq!(order, order_before);
+    }
+
+    #[test]
+    fn legacy_json_without_user_agent_falls_back() {
+        // schema 演进容错：旧档没有 user_agent 字段时回落到 VIDEO_UA
+        let json = r#"{"fields":[["aid","8662"]]}"#;
+        let back: DeviceProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(back.user_agent(), VIDEO_UA);
+        assert_eq!(back.get("aid"), "8662");
     }
 
     #[test]

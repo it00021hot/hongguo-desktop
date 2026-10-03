@@ -219,6 +219,20 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::delete_merge_task(db, &id).await }))
     }
 
+    // ---------- 设备档案 ----------
+
+    pub fn device_profile(&self) -> AppResult<Option<crate::signer::device::DeviceProfile>> {
+        self.exec(|db| Box::pin(entity::device_profile(db)))
+    }
+
+    pub fn save_device_profile(
+        &self,
+        profile: &crate::signer::device::DeviceProfile,
+    ) -> AppResult<()> {
+        let p = profile.clone();
+        self.exec(move |db| Box::pin(async move { entity::save_device_profile(db, &p).await }))
+    }
+
     // ---------- 旧档迁移 ----------
 
     /// 导入旧 data.json 内容（幂等）。详见 [`entity::import_legacy`]。

@@ -28,7 +28,25 @@ pub fn run() {
     // 数据库打不开（目录建不了、schema 迁移失败）就别带病起窗口：
     // 用户在空库上改的设置，等下次旧库恢复时会静默丢掉。
     let state = match store::Store::open(store::paths::db_file()) {
-        Ok(db) => std::sync::Arc::new(app_state::AppStateInner::with_db(db)),
+        Ok(db) => {
+            // 设备档案：库里没有就落一份静态兜底档案（设备注册 M2b 落位后，
+            // 这里读到的会是注册产物）。
+            let device = match db.device_profile() {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    let fallback = signer::video_device();
+                    if let Err(e) = db.save_device_profile(&fallback) {
+                        log::warn!("[Store] 静态设备档案落库失败（不影响启动）: {e}");
+                    }
+                    fallback
+                }
+                Err(e) => {
+                    log::warn!("[Store] 设备档案读取失败，用静态兜底: {e}");
+                    signer::video_device()
+                }
+            };
+            std::sync::Arc::new(app_state::AppStateInner::with_device(db, device))
+        }
         Err(e) => {
             log::error!("[Store] 数据库打开失败，终止启动: {e}");
             std::process::exit(1);

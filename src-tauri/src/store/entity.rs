@@ -324,6 +324,40 @@ pub async fn playback_latest_per_series(db: &Db) -> AppResult<Vec<LatestPlayback
     Ok(out)
 }
 
+// ---------- device_profile ----------
+
+/// 读设备档案。从未注册过（表空）返回 None，调用方用静态兜底档案。
+pub async fn device_profile(db: &Db) -> AppResult<Option<crate::signer::device::DeviceProfile>> {
+    let mut rows = db
+        .conn()
+        .query("SELECT json FROM device_profile WHERE id = 1", ())
+        .await
+        .map_err(map_db_err)?;
+    let Some(row) = rows.next().await.map_err(map_db_err)? else {
+        return Ok(None);
+    };
+    let json = col_text(&row, 0)?;
+    serde_json::from_str(&json)
+        .map(Some)
+        .map_err(|e| AppError::StoreCorrupt(format!("设备档案反序列化失败: {e}")))
+}
+
+/// 写设备档案（单行表）。
+pub async fn save_device_profile(
+    db: &Db,
+    profile: &crate::signer::device::DeviceProfile,
+) -> AppResult<()> {
+    let json = serde_json::to_string(profile)
+        .map_err(|e| AppError::StoreCorrupt(format!("设备档案序列化失败: {e}")))?;
+    db.execute(
+        "INSERT INTO device_profile (id, json) VALUES (1, ?1)
+         ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+        [Value::Text(json)],
+    )
+    .await?;
+    Ok(())
+}
+
 // ---------- merge_tasks ----------
 
 /// 全部合并任务，按登记顺序。

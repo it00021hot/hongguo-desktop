@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 
 /// 当前 schema 版本。每次结构性变更（加表/加列）时 +1，
 /// 并在 [`MIGRATIONS`] 追加一段从上一版本到新版本的 SQL。
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
@@ -62,6 +62,23 @@ pub static MIGRATIONS: &[&str] = &[
     CREATE TABLE merge_tasks (
         id         TEXT PRIMARY KEY,
         json       TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    "#,
+    // v1 -> v2：账号时代的基础表。
+    // - device_profile 单行表：设备注册（M2b）产出的档案整份 JSON 落这里，
+    //   启动装载，签名链路统一从 AppState 取。
+    // - session 单行表：登录态（M3）的 Cookie 与用户资料。先建表占位，
+    //   访问器随登录模块一起落。
+    r#"
+    CREATE TABLE device_profile (
+        id   INTEGER PRIMARY KEY CHECK (id = 1),
+        json TEXT NOT NULL
+    );
+    CREATE TABLE session (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        cookies    TEXT NOT NULL DEFAULT '',
+        user_json  TEXT,
         updated_at INTEGER NOT NULL
     );
     "#,

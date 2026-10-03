@@ -22,6 +22,8 @@ pub struct AppStateInner {
     pub store: Store,
     /// 当前设置（改后立即生效，无需重启）
     pub settings: RwLock<Settings>,
+    /// 当前设备档案（设备注册成功后被整体替换）
+    device: RwLock<crate::signer::device::DeviceProfile>,
     /// 下载队列
     pub queue: RwLock<Arc<DownloadQueue>>,
     scheduler: RwLock<Arc<DownloadScheduler>>,
@@ -34,9 +36,16 @@ impl AppStateInner {
     /// 用真实文件库构造（应用启动用）。打开失败（建不了库/迁移失败）
     /// 直接终止启动：带病运行等于让用户在新库上改设置，回头又换回旧库。
     pub fn with_db(store: Store) -> Self {
+        Self::with_device(store, crate::signer::video_device())
+    }
+
+    /// [`AppStateInner::with_db`] 的带设备版本（启动装配时传入库里
+    /// 装载好的档案；测试与默认路径用静态兜底档案）。
+    pub fn with_device(store: Store, device: crate::signer::device::DeviceProfile) -> Self {
         Self {
             store,
             settings: RwLock::new(Settings::default()),
+            device: RwLock::new(device),
             queue: RwLock::new(Arc::new(DownloadQueue::new())),
             scheduler: RwLock::new(Arc::new(DownloadScheduler::new())),
         }
@@ -76,6 +85,30 @@ impl AppStateInner {
     pub fn replace_settings(&self, next: Settings) -> Settings {
         let mut guard = self.settings.write();
         std::mem::replace(&mut *guard, next)
+    }
+
+    /// 当前设备档案快照。
+    pub fn device(&self) -> crate::signer::device::DeviceProfile {
+        self.device.read().clone()
+    }
+
+    /// 整体替换设备档案（设备注册成功时）。
+    // M2b 设备注册落位前的脚手架。
+    #[allow(dead_code)]
+    pub fn replace_device(&self, next: crate::signer::device::DeviceProfile) {
+        *self.device.write() = next;
+    }
+
+    /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。
+    ///
+    /// 快照语义是刻意的：一次调用链内环境不变，避免「签名用 A 设备、
+    /// 请求带 B Cookie」的半新半旧。登录态（M3）接入后 Cookie 从这里透出。
+    pub fn api_env(&self) -> crate::domain::api::client::ApiEnv {
+        crate::domain::api::client::ApiEnv {
+            proxy: self.settings().proxy,
+            device: self.device(),
+            cookie: None,
+        }
     }
 }
 

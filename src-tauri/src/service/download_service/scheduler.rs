@@ -190,7 +190,7 @@ async fn run_one(
 
     // 1) 取流地址（签名 + 清晰度择优）
     // 下载固定取最高档：清晰度切换是播放时的交互，下载侧没有这个概念
-    let play = crate::domain::api::play_url::fetch_play_url(&task.vid, None, &settings.proxy)
+    let play = crate::domain::api::play_url::fetch_play_url(&task.vid, None, &state.api_env())
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
 

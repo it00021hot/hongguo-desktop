@@ -48,23 +48,55 @@ pub fn build_client(config: &crate::domain::model::ProxyConfig) -> AppResult<req
         .map_err(|e| AppError::Network(format!("构造 HTTP client 失败: {e}")))
 }
 
+/// 一次官方 API 调用的全部环境：代理、设备档案、会话 Cookie。
+///
+/// 三者都从 `AppState` 快照而来（[`AppState::api_env`](crate::app_state::AppStateInner::api_env)），
+/// 调用链上以值传递，避免中途被设置修改后出现「签名用 A 设备、请求带 B Cookie」
+/// 之类的半新半旧状态。
+#[derive(Debug, Clone)]
+pub struct ApiEnv {
+    pub proxy: crate::domain::model::ProxyConfig,
+    pub device: crate::signer::device::DeviceProfile,
+    /// 会话 Cookie（`k=v; k=v` 形态）。未登录为 None。
+    /// Cookie 不参与签名，走 `extra_headers` 注入。
+    pub cookie: Option<String>,
+}
+
+impl ApiEnv {
+    /// 未登录的默认环境：静态兜底设备档案 + 默认 origin。
+    // M3 登录流程的对照基线；当前仅测试构造。
+    #[allow(dead_code)]
+    pub fn anonymous(proxy: crate::domain::model::ProxyConfig) -> Self {
+        Self {
+            proxy,
+            device: crate::signer::video_device(),
+            cookie: None,
+        }
+    }
+}
+
 /// 调用官方 App 接口，返回响应体字节。
 ///
 /// # 参数
 /// - `pathname`：以 `/` 开头的接口路径
 /// - `body`：请求体字节。`Some` 走 POST，`None` 走 GET
-/// - `proxy`：当前生效的代理配置
-pub async fn api_call(
+/// - `env`：代理 / 设备 / 会话
+pub async fn api_call(pathname: &str, body: Option<Vec<u8>>, env: &ApiEnv) -> AppResult<Vec<u8>> {
+    api_call_at(crate::signer::API_ORIGIN, pathname, body, env).await
+}
+
+/// 同 [`api_call`]，但 origin 可指定（passport / 设备注册走别的域名）。
+pub async fn api_call_at(
+    origin: &str,
     pathname: &str,
     body: Option<Vec<u8>>,
-    proxy: &crate::domain::model::ProxyConfig,
+    env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let client = build_client(proxy)?;
-    let device = crate::signer::video_device();
+    let client = build_client(&env.proxy)?;
     let mut last_err = String::new();
 
     for attempt in 0..MAX_RETRIES {
-        match send_once(&client, pathname, body.as_deref(), &device).await {
+        match send_once(&client, origin, pathname, body.as_deref(), env).await {
             Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
             Ok(_) => last_err = "接口返回空响应（签名可能失效）".to_string(),
             Err(e) => last_err = e.to_string(),
@@ -209,15 +241,25 @@ pub async fn get_video_range(
 }
 
 /// 发一次请求。签名在此处生成，与请求方法在同一个分支里决定，不会错配。
+///
+/// Cookie 不参与签名（字节面只覆盖 query + body + 时间戳），作为 extra_headers
+/// 在签名完成后注入——顺序上先签名后补 Cookie，不会被签进摘要里。
 async fn send_once(
     client: &reqwest::Client,
+    origin: &str,
     pathname: &str,
     body: Option<&[u8]>,
-    device: &[(&'static str, &'static str)],
+    env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
+    let extra: Vec<(String, String)> = match &env.cookie {
+        Some(c) if !c.is_empty() => vec![("Cookie".into(), c.clone())],
+        _ => Vec::new(),
+    };
     let signed = match body {
-        Some(bytes) => crate::signer::sign_post(pathname, bytes.to_vec(), device),
-        None => crate::signer::sign_get(pathname, device),
+        Some(bytes) => {
+            crate::signer::sign_request(origin, pathname, Some(bytes.to_vec()), &env.device, &extra)
+        }
+        None => crate::signer::sign_request(origin, pathname, None, &env.device, &extra),
     };
 
     let mut req = match &signed.body {
@@ -247,7 +289,8 @@ mod tests {
     use super::*;
     use crate::domain::model::settings::ProxyMode;
     use crate::domain::model::ProxyConfig;
-    use crate::signer::{sign_get, sign_post, video_device};
+    use crate::signer::video_device;
+    use crate::signer::ticket::{sign_get, sign_post};
 
     #[test]
     fn retry_count_is_sane() {

@@ -149,7 +149,7 @@ mod tests {
         // KSA 的 `s[i] = s[j]` 一旦被误写成 swap，这里立刻红。
         let device = crate::signer::device::video_device();
         let mut params: Vec<(&str, String)> =
-            device.iter().map(|(k, v)| (*k, (*v).to_string())).collect();
+            device.iter().map(|(k, v)| (k, v.to_string())).collect();
         params.push(("ts", "1700000000".into()));
         params.push(("_rticket", "1700000000123".into()));
         let query = crate::signer::ticket::encode_query(&params);
