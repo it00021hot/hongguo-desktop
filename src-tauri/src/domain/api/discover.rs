@@ -269,6 +269,54 @@ mod probe {
         assert!(overlap < p1.items.len(), "翻页必须换内容，不能重复同一页");
     }
 
+    /// 弹幕/评论列表参数探测：code==0 即转正。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_comment_list() {
+        let env = anon_env();
+        // 先从信息流拿一个真实 vid 做锚点
+        let feed = fetch_feed(0, &env).await.expect("信息流");
+        let vid = feed
+            .items
+            .iter()
+            .find(|i| !i.vid.is_empty())
+            .map(|i| i.vid.clone())
+            .expect("信息流里应有 vid");
+        println!("[danmaku] anchor vid={vid}");
+
+        let combos = [
+            ("https://lifeapi5-normal-lq.fqnovel.com", "/novel/commentapi/comment/list/"),
+            ("https://lifeapi5-normal-lq.fqnovel.com", "/novel/commentapi/comment/list/v1/"),
+            ("https://novel.snssdk.com", "/novel/commentapi/comment/list/v1/"),
+        ];
+        for (origin, path) in combos {
+            for (tag, biz) in [
+                ("group", serde_json::json!({ "group_id": vid, "count": 20, "offset": 0 })),
+                (
+                    "group-item",
+                    serde_json::json!({ "group_id": vid, "item_id": vid, "count": 20 }),
+                ),
+                (
+                    "group-ct2",
+                    serde_json::json!({ "group_id": vid, "count": 20, "comment_type": 2 }),
+                ),
+            ] {
+                let body = serde_json::to_vec(&serde_json::json!({ "biz_param": biz })).unwrap();
+                match api_call_full(origin, path, Some(body), &[], &env).await {
+                    Ok(bytes) => {
+                        let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                        println!(
+                            "[danmaku/{tag}@{origin}{}] {}",
+                            path,
+                            serde_json::to_string(&v).unwrap_or_default().chars().take(280).collect::<String>()
+                        );
+                    }
+                    Err(e) => println!("[danmaku/{tag}@{path}] ERR {e}"),
+                }
+            }
+        }
+    }
+
     /// 预约日历参数破解的试验场：每轮改候选参数跑一次，code==0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
