@@ -47,21 +47,30 @@ export function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 滚动到底自动翻页（推荐 tab 下才有意义；热榜也受益——池子变大）
+  // 滚动到底自动翻页（推荐 tab 下才有意义；热榜也受益——池子变大）。
+  // 观察器只建一次：feed 是每次渲染的新对象，进依赖的话每次渲染都会
+  // disconnect + 重新 observe——哨兵在视口内时重新 observe 会立刻回调，
+  // 形成「加载→渲染→重建→再加载」的级联，页面连续跳变（闪屏的来源）。
+  // 最新状态走 ref 镜像。
+  const feedRef = useRef(feed);
+  useEffect(() => {
+    feedRef.current = feed;
+  });
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && feed.hasMore && !feed.isLoading && !feed.isFetchingMore) {
-          void feed.loadMore();
+        const f = feedRef.current;
+        if (entries[0]?.isIntersecting && f.hasMore && !f.isLoading && !f.isFetchingMore) {
+          void f.loadMore();
         }
       },
       { rootMargin: '400px' },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [feed]);
+  }, []);
 
   const handleSelect = (item: FeedItem) => {
     // 信息流的剧多半没解析过档案：先 resolve（拉分集 + 登记）再开抽屉。

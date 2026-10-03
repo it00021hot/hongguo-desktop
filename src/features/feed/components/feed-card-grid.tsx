@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { Flame, MessageSquare, Star, Tv } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { t, tf } from '@/i18n';
-import { useWebCover } from '@/lib/queries';
+import { isRenderableCover, useWebCover } from '@/lib/queries';
 import type { FeedItem } from '@/lib/schema';
 
 interface Props {
@@ -49,7 +50,15 @@ interface CardProps {
 /** 单卡：封面经 webp 增强后渲染（HEIC 源在 WebView2 里是裂图）。 */
 function FeedCard({ item, rank, downloaded, onSelect }: CardProps) {
   const { data: webCover } = useWebCover(item.seriesId, item.cover);
-  const cover = webCover ?? item.cover;
+  // 源 HEIC 渲染不了且 webp 还在路上的过渡期，先不急着挂 <img>：
+  // 挂了也必然 onError，闪一下 TV 图标再换图反而更晃眼
+  const sourceRenderable = isRenderableCover(item.cover);
+  const cover = webCover ?? (sourceRenderable ? item.cover : '');
+  // 加载失败要受控且能自动复位：记住「失败时的那格 cover」，cover 换成
+  // webp 后对不上号即视为未失败（webp 晚到也能正常换图）。
+  const [brokenFor, setBrokenFor] = useState('');
+  const imgBroken = brokenFor !== '' && brokenFor === cover;
+  const showImg = cover !== '' && !imgBroken;
   return (
     <article
       role="button"
@@ -65,16 +74,13 @@ function FeedCard({ item, rank, downloaded, onSelect }: CardProps) {
       className="group bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
-        {cover ? (
+        {showImg ? (
           <img
             src={cover}
             alt={item.title}
             loading="lazy"
             className="size-full object-cover"
-            // HEIC 直出失败的兜底：抹掉 src 走 TV 图标（onError 不冒泡，就地处理）
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
+            onError={() => setBrokenFor(cover)}
           />
         ) : (
           <div className="text-muted-foreground grid size-full place-items-center">

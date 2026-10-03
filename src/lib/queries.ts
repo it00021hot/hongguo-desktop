@@ -193,7 +193,7 @@ export function useWebCover(seriesId: string, sourceCover: string) {
 }
 
 /** WebView2 能直接渲染的封面格式（与后端 is_renderable_cover 同口径）。 */
-function isRenderableCover(url: string): boolean {
+export function isRenderableCover(url: string): boolean {
   const path = url.split('?')[0] ?? url;
   const lower = path.toLowerCase();
   return (

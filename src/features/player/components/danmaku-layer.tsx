@@ -33,9 +33,11 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // rAF 闭包要读最新 items/enabled，用 ref 镜像避免反复重启循环
   const itemsRef = useRef(items);
-  itemsRef.current = items;
   const enabledRef = useRef(enabled);
-  enabledRef.current = enabled;
+  useEffect(() => {
+    itemsRef.current = items;
+    enabledRef.current = enabled;
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
