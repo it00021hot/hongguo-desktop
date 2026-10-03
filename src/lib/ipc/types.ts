@@ -14,6 +14,8 @@ export const EVENTS = {
   mergeTaskAdded: 'merge-task-added',
   mergeCompleted: 'merge-completed',
   mergeFailed: 'merge-failed',
+  onlinePlayProgress: 'online-play-progress',
+  compatPlayProgress: 'compat-play-progress',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

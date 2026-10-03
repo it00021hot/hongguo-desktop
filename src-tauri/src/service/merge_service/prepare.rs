@@ -66,7 +66,9 @@ fn warnings_for(
         warnings.push("merge.codecMismatch".to_string());
     }
     match free_space {
-        Some(free) if estimated_size > free => {
+        // 留 10% 余量：产物是边写边算的，估算与实际总有几 MB 的差；
+        // 卡在边界上失败比少判一点糟糕得多。
+        Some(free) if estimated_size + estimated_size / 10 > free => {
             warnings.push("merge.insufficientSpace".to_string());
         }
         // 余量够、或压根查不到余量，都没有要提示的事
@@ -230,10 +232,11 @@ mod tests {
 
     #[test]
     fn equal_size_and_free_space_fits() {
-        // 刚好放下不算不足，否则「差一个字节就报」纯属噪声
-        assert!(warnings_for(100, Some(100), None).is_empty());
+        // 10% 余量之内不算不足：产物是边写边算的，估算与实际总有几 MB 的差，
+        // 卡在边界上失败比少判一点糟糕得多
+        assert!(warnings_for(100, Some(110), None).is_empty());
         assert_eq!(
-            warnings_for(101, Some(100), None),
+            warnings_for(100, Some(109), None),
             vec!["merge.insufficientSpace".to_string()]
         );
     }

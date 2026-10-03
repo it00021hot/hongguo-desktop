@@ -1,14 +1,13 @@
 //! 转码流水线编排。
 //!
 //! 分流策略（整个媒体层的关键决策）：
-//! - **装了 ffmpeg** → 用 ffmpeg，可用 NVENC/QSV/AMF 硬编码，接近实时
+//! - **装了 ffmpeg** → 用 ffmpeg，有硬件编码器时接近实时
 //! - **没装 ffmpeg** → 纯 Rust（`rusty_h265` + `rusty_h264` + `muxide`），零外部依赖
 //!
 //! 两条路都产出 H.264 MP4，对上层完全一致；ffmpeg 存在但这次失败时
 //! 也会自动回落软解，不让用户卡死。
 //!
-//! 谁在用：合并功能的「兼容格式合并」（`merge_service::compat`）。
-//! 播放兜底已下线。
+//! 谁在用：合并功能的「兼容格式合并」（`merge_service::compat`）与播放兼容兜底。
 
 use std::path::Path;
 
@@ -17,11 +16,17 @@ use crate::media::transcode::{TranscodeOptions, TranscodeResult};
 use crate::service::transcode_service::cache;
 
 /// 转码一个文件。
+///
+/// `scale_to` 给出时把画面统一到该分辨率——短剧各集由平台分别编码，混着不同
+/// 分辨率是常态，不统一的话转码产物依然规格不一，拼接那一步照样过不去。
+/// `on_progress` 收到已编码秒数，用于把进度从「第 N/M 集」细化到集内百分比。
 pub fn transcode(
     series_id: &str,
     vid_index: u32,
     source: &Path,
     options: &TranscodeOptions,
+    scale_to: Option<(u32, u32)>,
+    on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> AppResult<TranscodeResult> {
     if !source.exists() {
         return Err(crate::error::AppError::NotFound(
@@ -48,7 +53,13 @@ pub fn transcode(
     // 分流 1：ffmpeg（含硬编码器）
     let mut used_ffmpeg = false;
     if let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
-        match crate::media::ffmpeg::transcode_with_ffmpeg(source, &target, encoder) {
+        let req = crate::media::ffmpeg::TranscodeRequest {
+            input: source,
+            output: &target,
+            scale_to,
+            on_progress,
+        };
+        match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
             Ok(()) => used_ffmpeg = true,
             Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
         }
@@ -83,4 +94,11 @@ pub fn transcode(
             "rusty_h264".to_string()
         },
     })
+}
+
+/// 某个文件的目标分辨率（宽高）。读不出来返回 `None`。
+pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
+    let tracks = crate::media::demux::demux_file(path).ok()?;
+    let v = tracks.video_track()?;
+    (v.info.width > 0 && v.info.height > 0).then_some((v.info.width, v.info.height))
 }

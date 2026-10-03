@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
+import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
@@ -10,6 +11,7 @@ import {
   usePlay,
   useSavePosition,
   useSaveSettings,
+  useCompatPlayback,
   useSeriesEpisodes,
   useSettings,
   useStorageActions,
@@ -24,7 +26,10 @@ import {
   writeVolume,
 } from '@/lib/playback-prefs';
 import { t, tf } from '@/i18n';
-import type { Settings, VideoDefinition } from '@/lib/schema';
+import { useEvent } from '@/lib/ipc/events';
+import { EVENTS } from '@/lib/ipc/types';
+import { formatBytes } from '@/lib/format';
+import type { CompatProgress, OnlineProgress, Settings, VideoDefinition } from '@/lib/schema';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
 const SAVE_INTERVAL = 5_000;
@@ -87,6 +92,13 @@ function PlayerView() {
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
   const [downloading, setDownloading] = useState(false);
   /**
+   * 在线取流/解密的进度。
+   *
+   * 整集取回 + 解密要等一会儿，这段时间里界面上原本只有一个转圈。
+   * 播未下载的集时这里显示「正在缓存 45%（54/120MB）」，用户才知道它在动。
+   */
+  const [buffering, setBuffering] = useState<OnlineProgress | null>(null);
+  /**
    * 用户选的清晰度。`undefined` = 不指定，由后端取平台给的最高档。
    *
    * 存在组件里而不是 store：切集时应当回到「自动最高档」，
@@ -99,8 +111,104 @@ function PlayerView() {
 
   const { mutate: play } = usePlay();
   const { mutate: savePosition } = useSavePosition();
+  const compatPlay = useCompatPlayback();
+
+  // 在线取流进度：只认当前这一集，换集后清掉。
+  useEvent<OnlineProgress>(
+    EVENTS.onlinePlayProgress,
+    useCallback(
+      (p: OnlineProgress) => {
+        setBuffering(p.key === episodeKey ? p : null);
+      },
+      [episodeKey],
+    ),
+  );
   // 选集与「下载到本地」都要完整分集表，从剧集档案直接取
   const { data: currentSeries } = useSeriesEpisodes(seriesId);
+
+  /**
+   * 兼容兜底。
+   *
+   * `videoWidth === 0` 而声音正常，是「系统解不了这一集编码」的确凿信号——
+   * 容器解析得出时长、样本照样缓冲到位，唯独送进解码器的码流缺参数集。
+   * 这时把这一集转成 H.264 换一条路走，产物落缓存，同一集只转一次。
+   *
+   * 状态一律带 `key`（集标识）并在**读时**过滤，而不是在换集时清空：
+   * 清空要在 effect 里同步 setState，会触发级联渲染（eslint 会拦）；
+   * 带 key 读时过滤则是天生正确的——上一集的产物自动失效，不需要谁去清它。
+   */
+  const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
+  const [compatProgress, setCompatProgress] = useState<{
+    key: string;
+    percent: number;
+    phase: string;
+  } | null>(null);
+  /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
+  const compatStarted = useRef(false);
+
+  /** 兜底产物地址，只认当前这一集 */
+  const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
+  /** 兜底进度，只认当前这一集 */
+  const compat = compatProgress?.key === episodeKey ? compatProgress : null;
+  /** 实际喂给 `<video>` 的地址：有兜底产物就用它 */
+  const playSrc = compatSrc ?? src;
+
+  useEvent<CompatProgress>(
+    EVENTS.compatPlayProgress,
+    useCallback((p: CompatProgress) => {
+      setCompatProgress({ key: p.key, percent: p.percent, phase: p.phase });
+    }, []),
+  );
+
+  const startCompat = useCallback(() => {
+    if (!seriesId || !vidIndex || compatStarted.current) return;
+    compatStarted.current = true;
+    setCompatProgress({ key: episodeKey, percent: 0, phase: 'downloading' });
+    const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
+    compatPlay.mutate(
+      { seriesId, vidIndex, vid: ep?.vid },
+      {
+        onSuccess: (r) => {
+          setCompatResult({ key: episodeKey, url: r.url });
+          setCompatProgress(null);
+          toast.success(
+            r.cached
+              ? t('player.compatCached')
+              : tf('player.compatDone', {
+                  backend: r.backend,
+                  seconds: Math.round(r.elapsedMs / 100),
+                }),
+          );
+        },
+        onError: (e) => {
+          setCompatProgress(null);
+          compatStarted.current = false;
+          toast.error(tf('player.compatFailed', { reason: e.message }));
+        },
+      },
+    );
+  }, [seriesId, vidIndex, episodeKey, currentSeries, compatPlay]);
+
+  // 解码失败探测：播放在走、画面出不来、且时间确实在推进。
+  // 三个条件缺一不可——刚起播那一瞬间 videoWidth 本来就是 0。
+  useEffect(() => {
+    if (!playSrc || compatSrc || error) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const timer = setInterval(() => {
+      if (v.videoWidth === 0 && !v.paused && v.currentTime > 0.3) {
+        clearInterval(timer);
+        startCompat();
+      }
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [playSrc, compatSrc, error, startCompat]);
+
+  // 换集就换一把「已兜底过」的记号：产物与进度都靠 key 自己失效，
+  // 这里只需允许新的一集再兜底一次。
+  useEffect(() => {
+    compatStarted.current = false;
+  }, [episodeKey]);
 
   const stepEpisode = useCallback(
     (delta: number) => {
@@ -319,16 +427,19 @@ function PlayerView() {
     <div className="flex h-full gap-4 p-4">
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
-          {src ? (
+          {playSrc ? (
             <>
               {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
                   key 绑 src：切清晰度时后端给出的流地址变了（地址里带档位），
                   换元素才能保证 <video> 真的重新加载——只改 src 属性在
                   WebView2 上不一定会触发重载，表现就是「点了 720p 画面不变」。 */}
               <video
-                key={src}
+                /* key 绑播放地址：切清晰度、以及兜底转成 H.264 之后地址都变了，
+                   换元素才能保证 <video> 真的重新加载——只改 src 属性在
+                   WebView2 上不一定会触发重载，表现就是「点了 720p 画面不变」。 */
+                key={playSrc}
                 ref={videoRef}
-                src={src}
+                src={playSrc}
                 className="size-full"
                 autoPlay
                 onLoadedMetadata={handleLoadedMetadata}
@@ -350,12 +461,41 @@ function PlayerView() {
                 definition={activeDefinition}
                 definitions={definitions}
                 onDefinitionChange={setDefinition}
-                src={src}
+                src={playSrc}
               />
+
+              {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
+                  不知道是卡住了还是在慢慢转。 */}
+              {compat && (
+                <div className="absolute inset-0 grid place-items-center bg-black/85 p-6 text-center text-sm text-neutral-200">
+                  <div className="flex w-full max-w-sm flex-col items-center gap-3">
+                    <p>
+                      {compat.phase === 'downloading'
+                        ? t('player.compatFetching')
+                        : tf('player.compatTranscoding', { percent: Math.floor(compat.percent) })}
+                    </p>
+                    <Progress
+                      value={compat.phase === 'downloading' ? 0 : compat.percent}
+                      className="h-1.5"
+                    />
+                    <span className="text-xs text-neutral-400">{t('player.compatHint')}</span>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="text-muted-foreground grid size-full place-items-center text-sm">
-              {error ?? t('common.loading')}
+              {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈 */}
+              {error ??
+                (buffering && buffering.phase !== 'ready'
+                  ? tf('player.buffering', {
+                      percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
+                      size:
+                        buffering.total > 0
+                          ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
+                          : formatBytes(buffering.received),
+                    })
+                  : t('common.loading'))}
             </div>
           )}
         </div>

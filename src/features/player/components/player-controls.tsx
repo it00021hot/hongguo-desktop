@@ -69,7 +69,11 @@ interface Props {
    * 跟着重建：绑在旧元素上时，新元素的 `play` 事件收不到，
    * 播放按钮就会一直卡在「暂停」图标。
    */
-  src: string;
+  /**
+   * 正在播的地址。**只用作 effect 依赖键**：切清晰度、或兜底转成 H.264 之后
+   * 地址都会变，监听器要跟着重建，所以必须是精确值而不是旧元素的。
+   */
+  src: string | null;
   /** 选清晰度。`undefined` 表示交回后端自动取最高档 */
   onDefinitionChange: (definition: number | undefined) => void;
 }

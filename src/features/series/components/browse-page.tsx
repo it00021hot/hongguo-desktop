@@ -241,7 +241,7 @@ export function BrowsePage() {
               <button
                 type="button"
                 onClick={() => setPage((p) => p + 1)}
-                className="text-muted-foreground hover:text-foreground hover:border-foreground/30 focus-visible:outline-none flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors"
+                className="text-muted-foreground hover:text-foreground hover:border-foreground/30 flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors focus-visible:outline-none"
               >
                 <ChevronRight className="size-6" />
                 {tf('browse.loadMore', {

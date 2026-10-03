@@ -13,13 +13,7 @@ import {
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
-import type {
-  DownloadProgress,
-  DownloadTask,
-  MergeMode,
-  MergeTask,
-  QueueStatus,
-} from './schema';
+import type { DownloadProgress, DownloadTask, MergeMode, MergeTask, QueueStatus } from './schema';
 
 /**
  * TanStack Query 的 key 工厂。
@@ -395,8 +389,34 @@ export function useDecodeCapability() {
   return useQuery({
     queryKey: keys.capability,
     queryFn: transcode.capability,
+    // 能力要跑 ffmpeg 试编一帧才能定，不随窗口聚焦重取
     staleTime: Infinity,
   });
+}
+
+/**
+ * 重新探测 ffmpeg。
+ *
+ * 装完 ffmpeg 之后**当前进程的环境变量不会更新**，不重探就一直报「未检测到」。
+ * 这条命令丢弃后端缓存重新探一次，比让用户去重启应用合理。
+ */
+export function useRedetectCapability() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: transcode.redetect,
+    onSuccess: (data) => {
+      qc.setQueryData(keys.capability, data);
+    },
+  });
+}
+
+/**
+ * 播放兼容兜底：把解不出来的一集转成 H.264。
+ *
+ * 只有在确认「有声音没画面」之后才调——提前转码等于白转。
+ */
+export function useCompatPlayback() {
+  return useMutation({ mutationFn: transcode.transcodeForPlayback });
 }
 
 export function useStorageActions() {

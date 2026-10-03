@@ -8,10 +8,11 @@ use crate::error::AppResult;
 
 #[tauri::command]
 pub async fn play_series(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     request: PlayRequest,
 ) -> AppResult<PlayResponse> {
-    crate::service::play_service::local::resolve_play(&state, &request).await
+    crate::service::play_service::local::resolve_play(&app, &state, &request).await
 }
 
 #[tauri::command]

@@ -49,28 +49,31 @@ pub fn compat_merge(
 
     // 逐集转码到缓存，再把缓存产物流复制拼接。
     //
-    // **并行度按实测定，不按理论定**（i5-13400 / 16 逻辑核，1080p 单集 54s）：
-    //
-    // | 并行度 | 4 集耗时 | 相对串行 216s |
-    // |--------|----------|----------------|
-    // | 1（串行） | 216s | 基准 |
-    // | 4       | 177s | 1.22× |
-    // | 16（满核） | 169s | 1.28× |
-    //
-    // 收益远小于预期，因为瓶颈是**单线程的 HEVC 解码**（`rusty_h265` 无任何
-    // 并行原语），而它吃的是内存带宽：4 路同时解就把带宽打满了，再加线程
-    // 也没用。`RUSTY_THREADS=1` 限制编码器内部线程后只快 5%，进一步印证
-    // 编码不是瓶颈。
-    //
-    // 这里仍取一个小并发（而不是 1）：串行时任一时刻只有一路在解，
-    // 解码与编码的访存可以重叠一点；4 路以上纯属抢带宽。
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .min(inputs.len())
-        .clamp(1, 4);
+    // **统一到第 1 集的分辨率**：短剧各集由平台**分别**编码，同一部剧里混着
+    // 1080p 与 720p 是常态。逐集转码但不缩放的话，产物依然规格不一，拼接那一步
+    // 照样过不去——实测一部 11 集的剧（10 集 1080p、1 集 720p）走到拼接才失败，
+    // 前面十几分钟的转码全白做。
+    let scale_to = pipeline::resolution_of(&inputs[0].1);
+    if let Some((w, h)) = scale_to {
+        let odd: Vec<u32> = inputs
+            .iter()
+            .filter(|(_, p)| pipeline::resolution_of(p).is_some_and(|(rw, rh)| rw != w || rh != h))
+            .map(|(i, _)| *i + 1)
+            .collect();
+        if !odd.is_empty() {
+            log::info!(
+                "[Merge] 第 {} 集分辨率与首集不同，将统一缩放到 {w}x{h}",
+                odd.iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            );
+        }
+    }
 
-    log::info!("[Merge] {output_name}：{total} 集，并行度 {threads}",);
+    // **并行度按后端定**，两条路的瓶颈完全不同。
+    let threads = merge_threads(inputs.len());
+    log::info!("[Merge] {output_name}：{total} 集，并行度 {threads}");
 
     // 每格存结果或错误。用 `Mutex<Vec<…>>` 而不是逐个切分切片：
     // 切片得靠 `split_at_mut` 一路拆引用，十几行下来比一把锁还难读；
@@ -85,6 +88,8 @@ pub fn compat_merge(
     // 表现就是进度条卡在开头不动。多个工作线程并发时还要 `fetch_add` 才不会
     // 互相覆盖。
     let done = AtomicUsize::new(0);
+    // 正在转码的集数，用来把「集内」进度折成整体百分比
+    let running = AtomicUsize::new(0);
 
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
@@ -112,13 +117,28 @@ pub fn compat_merge(
                 let (vid_index, source) = &inputs[next];
                 let result = match cache::cached_path(series_id, *vid_index) {
                     Some(p) => Ok(p),
-                    None => pipeline::transcode(
-                        series_id,
-                        *vid_index,
-                        source,
-                        &TranscodeOptions::default(),
-                    )
-                    .map(|r| PathBuf::from(r.output_path)),
+                    None => {
+                        running.fetch_add(1, Ordering::Relaxed);
+                        let on_eps = episode_progress(
+                            on_progress,
+                            done.load(Ordering::Relaxed),
+                            running.load(Ordering::Relaxed),
+                            total,
+                            task,
+                        );
+                        let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
+                        let r = pipeline::transcode(
+                            series_id,
+                            *vid_index,
+                            source,
+                            &TranscodeOptions::default(),
+                            scale_to,
+                            Some(cb),
+                        )
+                        .map(|r| PathBuf::from(r.output_path));
+                        running.fetch_sub(1, Ordering::Relaxed);
+                        r
+                    }
                 };
                 slots.lock().expect("结果锁中毒")[next] = Some(result);
                 let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -152,5 +172,142 @@ pub fn compat_merge(
     }
 
     let (size, count) = crate::media::remux::concat_copy(&transcoded, &output)?;
+
+    // 产物必须自己解得开才叫成功。流复制拼接对输入的一致性要求极高，
+    // 漏检一个条件就会得到一份「有 moov、能打开、但只播得动前几秒」的文件——
+    // 那种坏法用户看不出来，只会觉得「合并功能有问题」。
+    let verified = crate::media::demux::demux_file(&output).map_err(|e| {
+        let _ = std::fs::remove_file(&output);
+        AppError::Media(format!("合并产物校验失败，已删除该文件: {e}"))
+    })?;
+    if !verified
+        .video_track()
+        .is_some_and(|t| !t.info.samples.is_empty())
+    {
+        let _ = std::fs::remove_file(&output);
+        return Err(AppError::Media(
+            "合并产物里没有可用的视频样本，已删除该文件".into(),
+        ));
+    }
+    let frames: usize = verified
+        .tracks
+        .iter()
+        .filter(|t| t.info.is_video)
+        .map(|t| t.info.samples.len())
+        .sum();
+    log::info!(
+        "[Merge] {output_name} 完成：{count} 集 / {frames} 个视频样本 / {:.1}MB",
+        size as f64 / 1048576.0
+    );
     Ok((output, size, count))
+}
+
+/// 并行度按后端定：两条路的瓶颈完全不同。
+///
+/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
+///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
+///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
+/// - ffmpeg：编码器自己多线程，瓶颈变成 CPU 总量，铺到核数才有吞吐。
+///   实测 libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集
+///   提到约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
+fn merge_threads(episodes: usize) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let cap = if crate::media::ffmpeg::h264_encoder().is_some() {
+        (cores / 2).clamp(1, 4)
+    } else {
+        4
+    };
+    cap.min(episodes.max(1))
+}
+
+/// 集内进度：把 ffmpeg 报的「已编码秒数」折成整部合并的完成比例。
+///
+/// 多集并发时每集各报一次，整体比例 = (已完成集数 + 本集比例) / 总集数。
+fn episode_progress(
+    on_progress: &ProgressSink,
+    finished: usize,
+    running: usize,
+    total: usize,
+    task: &MergeTask,
+) -> impl Fn(f64) + Send + Sync + 'static {
+    let task = task.clone();
+    let sink = on_progress.clone();
+    move |ratio: f64| {
+        if !(0.0..=1.0).contains(&ratio) {
+            return;
+        }
+        let _ = running;
+        let done = finished as f64 + ratio;
+        on_fraction(&sink, done, total as f64, &task);
+    }
+}
+
+/// 把「已完成 n.x 集」折成 `ProgressSink` 的整数口径，并夹在 `0..total-1`。
+///
+/// 夹上界而不是报满：`total/total` 在合并里表示「转码全部完成、进入拼接」，
+/// 集内进度抢先报满会让进度条在还在转码时就显示 100%。
+fn on_fraction(sink: &ProgressSink, done: f64, total: f64, task: &MergeTask) {
+    if total <= 0.0 {
+        return;
+    }
+    let done = done.clamp(0.0, total);
+    let n = done.round() as usize;
+    sink(
+        n.min(total.round() as usize - 1),
+        total.round() as usize,
+        task,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::model::{DownloadTask, MergeMode, MergeTask};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    fn task() -> MergeTask {
+        MergeTask::new("s", "剧", "out", MergeMode::Compat)
+    }
+
+    #[test]
+    fn fraction_is_clamped_just_below_complete() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink: ProgressSink = {
+            let seen = seen.clone();
+            Arc::new(move |d, t, _| seen.lock().push((d, t)))
+        };
+        let task = task();
+        on_fraction(&sink, 3.5, 10.0, &task);
+        on_fraction(&sink, 9.9, 10.0, &task);
+        on_fraction(&sink, 12.0, 10.0, &task);
+        let got = seen.lock().clone();
+        assert_eq!(got.len(), 3);
+        assert!(
+            got.iter().all(|(d, t)| *d < *t),
+            "集内进度不能报满：满进度表示「开始拼接」了，实际: {got:?}"
+        );
+    }
+
+    #[test]
+    fn threads_never_exceed_the_episode_count() {
+        for n in [1usize, 2, 3, 10, 100] {
+            assert!(merge_threads(n) <= n, "{n} 集时并行度不应超过集数");
+            assert!(merge_threads(n) >= 1, "并行度至少为 1");
+        }
+    }
+
+    #[test]
+    fn a_single_episode_merge_runs_serially() {
+        let d = std::env::temp_dir().join(format!("hg-compat-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mut t = DownloadTask::new("s", "剧", 1, "v", "");
+        let p = d.join("1.mp4");
+        std::fs::write(&p, b"x").unwrap();
+        t.mark_completed(p.to_string_lossy().as_ref(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(merge_threads(1), 1);
+    }
 }

@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import {
   useDecodeCapability,
+  useRedetectCapability,
   useSaveSettings,
   useSettings,
   useStorageUsage,
@@ -32,6 +33,7 @@ export function SettingsPage() {
   const { data: loaded, isPending } = useSettings();
   const saveMutation = useSaveSettings();
   const { data: capability } = useDecodeCapability();
+  const redetect = useRedetectCapability();
   const { data: usage } = useStorageUsage();
   const testProxyMutation = useTestProxy();
 
@@ -228,8 +230,23 @@ export function SettingsPage() {
             >
               {backendLabel(capability)}
             </Badge>
+            {/* 装完 ffmpeg 不重启应用是看不到变化的：进程环境变量不会更新，
+                探测结果也被缓存着。给一条「重新检测」比让人去重启合理。 */}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={redetect.isPending}
+              onClick={() => redetect.mutate()}
+            >
+              {redetect.isPending ? t('common.loading') : t('settings.redetectBackend')}
+            </Button>
           </div>
           <p className="text-muted-foreground text-xs">{t('settings.transcodeBackendHint')}</p>
+          {redetect.isSuccess && (
+            <p className="text-muted-foreground text-xs">
+              {tf('settings.redetectDone', { backend: backendLabel(capability) })}
+            </p>
+          )}
         </CardContent>
       </Card>
 

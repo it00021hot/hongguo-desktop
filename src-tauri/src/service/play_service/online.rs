@@ -34,6 +34,7 @@ pub fn cache() -> &'static StreamCache {
 /// 缓存按 (vid, 档位) 分条目（见 [`crate::protocol::stream`]），所以切清晰度
 /// 既不用下载、也不会动到正在播的那一档：切回去直接命中内存里的旧数据。
 pub async fn prepare(
+    app: &tauri::AppHandle,
     vid: &str,
     definition: Option<u32>,
     settings: Settings,
@@ -91,8 +92,9 @@ pub async fn prepare(
     let owned = vid.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
+    let app = app.clone();
     tokio::spawn(async move {
-        let filled = fill(c, &owned, want, &play, &settings).await;
+        let filled = fill(&app, c, &owned, want, &play, &settings).await;
         // 取流权一直持有到数据落盘：中途放开会让并发的第二个请求以为
         // 「没人管这一档」而重新下一遍。
         c.end_fetch(&owned, want);
@@ -143,19 +145,23 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 
 /// 下载一集、解密、整段推进缓存。
 async fn fill(
+    app: &tauri::AppHandle,
     c: &StreamCache,
     vid: &str,
     definition: u32,
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
 ) -> AppResult<()> {
-    let plain = fetch_plain(play, settings).await?;
+    let reporter = ProgressReporter::new(app.clone(), vid.to_string());
+    let plain =
+        fetch_plain_with(play, settings, &|r, t, phase| reporter.report(r, t, phase)).await?;
 
     if !c.store(vid, definition, &plain) {
         log::info!(
             "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",
             plain.len()
         );
+        reporter.done();
         return Ok(());
     }
     log::info!(
@@ -171,6 +177,77 @@ async fn fill(
 pub async fn fetch_plain(
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
+) -> AppResult<Vec<u8>> {
+    fetch_plain_with(play, settings, &|_, _, _| {}).await
+}
+
+/// 在线播放进度上报器。
+///
+/// 复用下载服务那套节流（0.5% 或 500ms 才发一次）：取流是每秒好几 MB 的量，
+/// 每次都发会把 UI 线程打满。
+///
+/// 进度不是可选装饰：整集取回 + 解密期间界面上只有一个转圈，用户既看不出在动
+/// 还是卡住，也看不到还要多久。
+pub struct ProgressReporter {
+    app: tauri::AppHandle,
+    key: String,
+    throttle: crate::service::download_service::events::ProgressThrottle,
+}
+
+impl ProgressReporter {
+    pub fn new(app: tauri::AppHandle, key: String) -> Self {
+        Self {
+            app,
+            key,
+            throttle: Default::default(),
+        }
+    }
+
+    /// 报一次进度。`total` 为 0（CDN 没给 Content-Length）时不发百分比。
+    pub fn report(&self, received: u64, total: u64, phase: &str) {
+        let percent = if total > 0 {
+            received as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        if !self.throttle.should_send(&self.key, percent) {
+            return;
+        }
+        use tauri::Emitter;
+        let _ = self.app.emit(
+            crate::service::download_service::events::names::ONLINE_PROGRESS,
+            serde_json::json!({
+                "key": self.key,
+                "received": received,
+                "total": total,
+                "percent": percent.min(100.0),
+                "phase": phase,
+            }),
+        );
+    }
+
+    /// 100%：解密完成、缓冲就绪。
+    pub fn done(&self) {
+        self.throttle.forget(&self.key);
+        use tauri::Emitter;
+        let _ = self.app.emit(
+            crate::service::download_service::events::names::ONLINE_PROGRESS,
+            serde_json::json!({
+                "key": self.key,
+                "received": 0,
+                "total": 0,
+                "percent": 100.0,
+                "phase": "ready",
+            }),
+        );
+    }
+}
+
+/// 带进度回调的取流+解密。
+pub async fn fetch_plain_with(
+    play: &crate::domain::api::play_url::PlayInfo,
+    settings: &Settings,
+    progress: &(dyn Fn(u64, u64, &str) + Sync),
 ) -> AppResult<Vec<u8>> {
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
 
@@ -188,12 +265,20 @@ pub async fn fetch_plain(
         )));
     }
 
-    let mut body: Vec<u8> = Vec::new();
+    // 拿不到 Content-Length 就发不了百分比，但「开始动了」这件事仍要告诉界面
+    let total = resp.content_length().unwrap_or(0);
+    progress(0, total, "downloading");
+
+    let mut body: Vec<u8> = Vec::with_capacity(total as usize);
+    let mut received = 0u64;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
+        received += chunk.len() as u64;
         body.extend_from_slice(&chunk);
+        progress(received, total, "downloading");
     }
+    progress(received, total.max(received), "decrypting");
 
     if play.encrypted {
         let key = crate::domain::crypto::key_derive::derive_key(&play.key_material)?;

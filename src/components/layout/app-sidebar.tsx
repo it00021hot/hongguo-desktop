@@ -47,10 +47,7 @@ export function AppSidebar() {
 
           `deep` 不能省：Tauri 2.x 的裸 `data-tauri-drag-region` 只认自己，
           点在 img / 标题文字上都不算拖拽（见 tauri 的 src/window/scripts/drag.js）。 */}
-      <div
-        data-tauri-drag-region="deep"
-        className="flex h-14 items-center gap-2 border-b px-3"
-      >
+      <div data-tauri-drag-region="deep" className="flex h-14 items-center gap-2 border-b px-3">
         {isMac() && <MacTrafficLights />}
         <img
           src="/app-icon.png"

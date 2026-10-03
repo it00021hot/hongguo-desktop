@@ -85,6 +85,8 @@ pub fn run() {
             commands::play_cmd::clear_playback_history,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,
+            commands::transcode_cmd::redetect_capability,
+            commands::transcode_cmd::transcode_for_playback,
             commands::transcode_cmd::clear_compat_cache,
             commands::transcode_cmd::clear_online_cache,
             // 存储

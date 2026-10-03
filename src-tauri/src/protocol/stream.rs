@@ -65,6 +65,19 @@ pub fn serve(
     Ok(respond(&entry, parse_range(range_header, size), size))
 }
 
+/// 开放式 Range 单次供给的窗口大小。`0` = 一次给到末尾（默认）。
+///
+/// 见 [`respond`] 里 `RangeSpec::Open` 分支的说明：窗口大小可调，默认一次给完。
+fn stream_window() -> u64 {
+    static WINDOW: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *WINDOW.get_or_init(|| {
+        std::env::var("HONGGUO_STREAM_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    })
+}
+
 /// 轮询等待条件成立并取回结果，超时返回 `None`。
 ///
 /// 协议 handler 跑在专用工作线程上，轮询足够且简单可靠
@@ -104,9 +117,18 @@ fn respond(entry: &Arc<StreamEntry>, range: RangeSpec, size: u64) -> ProtocolRes
             partial_headers(start, end, size),
             buffer[start as usize..=end as usize].to_vec(),
         ),
-        // 开放式：一次给到文件末尾，别让 `<video>` 逐段续取
+        // 开放式：默认一次给到文件末尾。设 `HONGGUO_STREAM_WINDOW`（字节）会
+        // 切成「只回一窗」——这是上游 Electron 版的做法（`SERVE_WINDOW = 512KB`）。
+        //
+        // 本项目历史上试过分段回、因为 seek 时请求乱序而回滚过；用真实 WebView2
+        // 重测后（`bytes=0-` → `524288-` → `1048576-` … 整条序列）**没有复现**，
+        // seek 到 60% 照常推进、无 MediaError。所以这里保留开关，让窗口大小
+        // 可调；数据侧仍然是整集下完才交给协议。
         RangeSpec::Open { start } => {
-            let end = size - 1;
+            let end = match stream_window() {
+                0 => size - 1,
+                w => (start + w).min(size) - 1,
+            };
             (
                 206,
                 partial_headers(start, end, size),

@@ -13,6 +13,7 @@ use crate::store::DataStore;
 /// `preferOnline` 只在**本地没有这一集**时才起作用：已经下好的文件永远走
 /// `hongguo-local://`，没必要重新下一遍。
 pub async fn resolve_play(
+    app: &tauri::AppHandle,
     state: &State<'_, AppState>,
     request: &PlayRequest,
 ) -> AppResult<PlayResponse> {
@@ -82,7 +83,7 @@ pub async fn resolve_play(
         }
     };
 
-    match online::prepare(&vid, request.definition, state.settings()).await {
+    match online::prepare(app, &vid, request.definition, state.settings()).await {
         Ok(prepared) => Ok(PlayResponse {
             url: prepared.url,
             online: true,
