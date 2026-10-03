@@ -52,6 +52,13 @@ const SOFTWARE_ENCODERS: &[&str] = &["libx264", "h264_mf"];
 const WINGET_SCAN_DEPTH: usize = 6;
 
 fn detect() -> Option<PathBuf> {
+    // 调试/测试开关：强制按「未安装」处理，用于验证设置页的安装引导、
+    // 软解兜底与无 ffmpeg 的各条分支——不用真把 ffmpeg 卸了。
+    // 与 HONGGUO_DATA_DIR / HONGGUO_STREAM_WINDOW 同一套环境变量约定。
+    if std::env::var_os("HONGGUO_NO_FFMPEG").is_some() {
+        log::info!("[FFmpeg] HONGGUO_NO_FFMPEG 已设置，本次按未安装处理");
+        return None;
+    }
     // 1) PATH
     if let Some(p) = probe_command("ffmpeg") {
         return Some(p);

@@ -250,6 +250,9 @@ pub fn compat_merge(
 /// - ffmpeg 软编（libx264）：编码器自己多线程，瓶颈变成 CPU 总量。实测
 ///   libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集提到
 ///   约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
+///   ⚠️ 不要给并行实例加 `-threads N` 限线程——真机实测（i5-13400、真实
+///   剧集 4 路并行）默认线程 38.5s，限 `-threads 4` 反而 48.5s（慢 26%）：
+///   x264 默认线程数已经调得很好，限线程只会饿着每个编码器。
 fn merge_threads(episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
