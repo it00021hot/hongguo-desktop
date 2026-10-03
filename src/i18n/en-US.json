@@ -288,7 +288,9 @@
     "toggleTheme": "Toggle theme",
     "episodeCount": "{count} episodes",
     "progress": "Progress",
-    "skipToContent": "Skip to main content"
+    "skipToContent": "Skip to main content",
+    "resolving": "Resolving series…",
+    "resolveFailed": "Failed to resolve the series"
   },
   "window": {
     "minimize": "Minimize",
@@ -306,8 +308,6 @@
     "loadFailed": "Failed to load the feed",
     "retry": "Retry",
     "loadingMore": "Loading more…",
-    "end": "No more items",
-    "resolving": "Resolving series…",
-    "resolveFailed": "Failed to resolve the series"
+    "end": "No more items"
   }
 }

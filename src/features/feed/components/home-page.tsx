@@ -87,7 +87,8 @@ export function HomePage() {
           },
           selected: [],
         }),
-      onError: (e) => toast.error(t('feed.resolveFailed'), { description: String(e.message ?? e) }),
+      onError: (e) =>
+        toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
     });
   };
 

@@ -288,7 +288,9 @@
     "toggleTheme": "切换主题",
     "episodeCount": "{count} 集",
     "progress": "进度",
-    "skipToContent": "跳到主内容"
+    "skipToContent": "跳到主内容",
+    "resolving": "正在解析剧集…",
+    "resolveFailed": "剧集解析失败"
   },
   "window": {
     "minimize": "最小化",
@@ -306,8 +308,6 @@
     "loadFailed": "信息流加载失败",
     "retry": "重试",
     "loadingMore": "正在加载更多…",
-    "end": "没有更多了",
-    "resolving": "正在解析剧集…",
-    "resolveFailed": "剧集解析失败"
+    "end": "没有更多了"
   }
 }

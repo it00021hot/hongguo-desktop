@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ResolvingPill } from '@/components/resolving-pill';
 import { SeriesCardGrid } from './series-card-grid';
 import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
 import {
@@ -143,9 +144,24 @@ export function BrowsePage() {
   // 换剧时整体换掉、关闭时整体丢掉，两个场景共用这一处重置。
   const openDetail = (card: SeriesRef) => setDetail({ card, selected: [] });
 
-  // 点卡片只打开详情抽屉：选集、立即播放、提交下载都在抽屉里做。
-  // 这里再顺手跳转的话，抽屉会「刚打开就被路由切走」，用户连集数都来不及点。
-  const handleSelect = (card: SeriesCard) => openDetail(card);
+  // 点卡片先解析、拿到分集再开抽屉（与首页信息流同一交互）：
+  // 直接开抽屉的话，冷门剧的分集请求要几秒，用户面对的是一屏骨架
+  // 不知道在等什么；先给底部气泡，抽屉一开就是完整内容。
+  // 已解析过的剧在档案里直接命中，走这条路不增加可感知延迟。
+  const handleSelect = (card: SeriesCard) => {
+    resolve(card.seriesId, {
+      onSuccess: (series) =>
+        openDetail({
+          seriesId: series.seriesId,
+          seriesTitle: series.title,
+          // 解析结果可能带换好的 webp 封面，卡片原封面兜底
+          cover: series.cover || card.cover,
+          episodeCount: series.episodeCount || card.episodeCount,
+          tags: series.tags.length > 0 ? series.tags : card.tags,
+        }),
+      onError: (e) => toast.error(t('common.resolveFailed'), { description: e.message }),
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -286,6 +302,9 @@ export function BrowsePage() {
         }
         onOpenChange={(open) => !open && setDetail(null)}
       />
+
+      {/* 与首页同一交互：解析期间底部气泡，抽屉一开就是完整内容 */}
+      {resolving && <ResolvingPill />}
     </div>
   );
 }
