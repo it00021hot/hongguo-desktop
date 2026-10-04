@@ -35,7 +35,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "gzip",
 ] }
 futures-util = "0.3"
-flate2 = "1"
+# zlib-rs 后端：设备注册的 TT-Encrypt V5 要求 gzip 字节流与服务端 zlib
+# 逐字节一致，miniz_oxide 的流不同会被静默拒绝
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 bytes = "1"
 thiserror = "2"
 anyhow = "1"

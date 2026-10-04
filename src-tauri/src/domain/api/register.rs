@@ -18,14 +18,19 @@
 //! （`content-type: application/octet-stream;tt-data=a`）：
 //!
 //! ```text
-//! 输出 = magic(6, "tc"+v5) ‖ salt(32 随机) ‖ iv(16 明文) ‖ 分组加密(hash‖gz + PKCS7)
-//! key/iv = 魔改哈希( 魔改哈希(salt) ‖ ORD_LIST(64) ) 拆两半；
-//! 分组加密是自定义轮函数（hex_cf8 轮密钥 + hex_0a2 链式，非标准 AES）
+//! 输出 = magic(6, "tc"+v5) ‖ salt(32 随机) ‖ iv(16 随机，服务端按 header
+//!        里的 iv 解密，不校验派生) ‖ AES-128-CBC(payload + PKCS7)
+//! key = 魔改哈希( 魔改哈希(salt) ‖ ORD_LIST(64) )[0..16]；
+//! payload = 魔改哈希(gzip)[16..64]（48B 完整性哈希，**不是**前 48 字节，
+//! 取错窗口服务端重算不符即静默拒绝 device_id=0）‖ gzip(明文)；
+//! gzip 头的 XFL/OS 必须覆写为 00/00（zlib 家族头），flate2 默认的 02/ff 会被拒
 //! ```
 //!
 //! 算法与 hgplayer 的 `hg-go/pkg/crypto.TTEncryptV5`（Go 符号表）及
-//! TikTok 固件逆向的公开实现三方互证。历史教训：明文 form / gzip form
-//! 会被服务端静默降级成 `device_id:0`，必须走加密形态。
+//! TikTok 固件逆向的公开实现三方互证；`register_req_real.bin` 是真机
+//! 抓包的注册 body，`tt_v5_real_capture_roundtrip` 用它锁死解密链。
+//! 历史教训：明文 form / gzip form 会被服务端静默降级成 `device_id:0`，
+//! 必须走加密形态。
 
 use serde_json::{json, Value};
 
@@ -42,55 +47,57 @@ pub const REGISTER_PATH: &str = "/service/2/device_register/";
 /// TT-Encrypt V5 的 magic（"tc" + 版本 5 + 固定 3 字节）。
 const TT_MAGIC: [u8; 6] = [0x74, 0x63, 0x05, 0x10, 0x00, 0x00];
 
-/// TT-Encrypt V5 的哈希是魔改 SHA-256/512 混血（128 字节块、64 字节输出），
-/// 实现在 [`crate::signer::tt_hash`]（Python 参考实现机械翻译，对拍锁定）。
-fn tt_derive_key_iv(salt: &[u8]) -> ([u8; 16], [u8; 16]) {
+/// TT-Encrypt V5 加密：gzip → 前置完整性哈希 → PKCS7 → AES-CBC → 拼头。
+pub fn tt_encrypt_v5(plaintext: &[u8]) -> Vec<u8> {
+    tt_encrypt_v5_with_salt(plaintext, &rand::random())
+}
+
+/// 同 [`tt_encrypt_v5`]，但盐由调用方指定（对拍/复现用）。
+pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+
+    // gzip（mtime=0），随后把头部的 XFL/OS 两字节覆写为 0——参考实现
+    // （ttencrypt.py）与真机 App 的 gzip 头都是 00/00；flate2 默认写
+    // 02/ff，服务端按 zlib 家族头校验，不覆写会被静默拒绝
+    let mut gz = {
+        let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(plaintext).expect("gzip 写入内存不可能失败");
+        enc.finish().expect("gzip 收尾不可能失败")
+    };
+    gz[8] = 0;
+    gz[9] = 0;
+    // IV 随机并原样放进 header（服务端按 header 里的 IV 解密，不校验其
+    // 与 salt 的派生关系——真机与参考实现的 IV 均非派生值）
+    let iv: [u8; 16] = rand::random();
+    tt_encrypt_v5_full(&gz, salt, &iv)
+}
+
+/// 加密核心：gz 字节与 IV 均由调用方指定（对拍矩阵用——隔离 gz 字节流
+/// 与 IV 派生这两个独立变量）。
+pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
+    use aes::cipher::{BlockEncrypt, KeyInit};
+    use aes::Aes128;
+
     use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
+
+    // 盐 + 密钥派生。注意：派生的两次 calculate 与后面的完整性哈希
+    // 共用同一个 TtHashCore——参考实现的 CF 进位标志跨调用成链，拆开
+    // 就算不出同样的 key。
     let mut core = TtHashCore::new();
     let h1 = core.calculate(salt);
     let mut seed = h1;
     seed.extend_from_slice(&TT_ORD_LIST);
     let key_iv = core.calculate(&seed);
-    let mut key = [0u8; 16];
-    let mut iv = [0u8; 16];
-    key.copy_from_slice(&key_iv[..16]);
-    iv.copy_from_slice(&key_iv[16..32]);
-    (key, iv)
-}
-
-/// TT-Encrypt V5 加密：gzip → 前置完整性哈希 → PKCS7 → AES-CBC → 拼头。
-pub fn tt_encrypt_v5(plaintext: &[u8]) -> Vec<u8> {
-    use aes::cipher::{BlockEncrypt, KeyInit};
-    use aes::Aes128;
-    use flate2::write::GzEncoder;
-    use std::io::Write;
-
-    use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
-
-    // gzip（固定 mtime=0）
-    let gz = {
-        let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::best());
-        enc.write_all(plaintext).expect("gzip 写入内存不可能失败");
-        enc.finish().expect("gzip 收尾不可能失败")
-    };
-
-    // 盐 + 密钥派生。注意：派生的两次 calculate 与后面的完整性哈希
-    // 共用同一个 TtHashCore——参考实现的 CF 进位标志跨调用成链，拆开
-    // 就算不出同样的 key。
-    let salt: [u8; 32] = rand::random();
-    let mut core = TtHashCore::new();
-    let h1 = core.calculate(&salt);
-    let mut seed = h1;
-    seed.extend_from_slice(&TT_ORD_LIST);
-    let key_iv = core.calculate(&seed);
     let key_arr: [u8; 16] = key_iv[..16].try_into().unwrap();
-    let iv_arr: [u8; 16] = key_iv[16..32].try_into().unwrap();
+    let iv_arr: [u8; 16] = *iv;
 
-    // payload = 魔改哈希前 48 字节 ‖ gzip，再 PKCS7 填充
-    //（calculate 输出 64 字节，规范只取前 48——hgplayer 抓包实测
-    //  gzip 头恰在 payload offset 48 处）
-    let mut payload = core.calculate(&gz)[..48].to_vec();
-    payload.extend_from_slice(&gz);
+    // payload = 魔改哈希第 16..64 字节（48B）‖ gzip，再 PKCS7 填充。
+    // calculate 输出 64 字节，真机抓包实证完整性哈希取的是 **digest[16..64]**
+    // 而非前 48 字节（register_req_real.bin 对拍锁定）——取错窗口服务端
+    // 重算不匹配即静默拒绝（device_id=0）。
+    let mut payload = core.calculate(gz)[16..64].to_vec();
+    payload.extend_from_slice(gz);
     let pad = 16 - payload.len() % 16;
     payload.extend(std::iter::repeat(pad as u8).take(pad));
 
@@ -109,10 +116,83 @@ pub fn tt_encrypt_v5(plaintext: &[u8]) -> Vec<u8> {
 
     let mut result = Vec::with_capacity(6 + 32 + 16 + out.len());
     result.extend_from_slice(&TT_MAGIC);
-    result.extend_from_slice(&salt);
+    result.extend_from_slice(salt);
     result.extend_from_slice(&iv_arr);
     result.extend_from_slice(&out);
     result
+}
+
+/// TT-Encrypt V5 解密（对拍/取证用）：返回 (明文字节, 抓包里的 gz 字节)。
+///
+/// 解密链与加密完全对称：同一个 `TtHashCore` 实例按 salt → 派生 → gz 的
+/// 顺序重放三次 calculate（CF 进位链），并用 payload 前 48 字节校验
+/// 完整性哈希。
+pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use aes::cipher::{BlockDecrypt, KeyInit};
+    use aes::Aes128;
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
+
+    if body.len() < 6 + 32 + 16 + 16 || body[..6] != TT_MAGIC {
+        return Err(format!("不是 TT-Encrypt V5 包：len={} magic={:02x?}", body.len(), &body[..6.min(body.len())]));
+    }
+    let salt = &body[6..38];
+    let iv_arr: [u8; 16] = body[38..54].try_into().unwrap();
+    let ct = &body[54..];
+    if !ct.len().is_multiple_of(16) {
+        return Err(format!("密文长度 {} 不是 16 的倍数", ct.len()));
+    }
+
+    // 派生链重放（顺序必须与加密一致，CF 链跨调用）
+    let mut core = TtHashCore::new();
+    let h1 = core.calculate(salt);
+    let mut seed = h1;
+    seed.extend_from_slice(&TT_ORD_LIST);
+    let key_iv = core.calculate(&seed);
+    let key_arr: [u8; 16] = key_iv[..16].try_into().unwrap();
+
+    let cipher = Aes128::new((&key_arr).into());
+    let mut payload = Vec::with_capacity(ct.len());
+    let mut prev = iv_arr;
+    for chunk in ct.chunks(16) {
+        let mut blk: [u8; 16] = chunk.try_into().unwrap();
+        cipher.decrypt_block(aes::Block::from_mut_slice(&mut blk));
+        for (b, p) in blk.iter_mut().zip(&prev) {
+            *b ^= p;
+        }
+        payload.extend_from_slice(&blk);
+        prev.copy_from_slice(chunk);
+    }
+
+    // PKCS7 剥离
+    let pad = *payload.last().ok_or("空密文")? as usize;
+    if !(1..=16).contains(&pad) || payload.len() < pad || payload[payload.len() - pad..].iter().any(|&b| b as usize != pad) {
+        return Err(format!("PKCS7 填充非法：pad={pad}"));
+    }
+    payload.truncate(payload.len() - pad);
+
+    if payload.len() < 48 {
+        return Err(format!("payload 过短：{}", payload.len()));
+    }
+    let (app_hash, gz) = payload.split_at(48);
+
+    // 完整性哈希校验（CF 链上的第三次 calculate，取 digest[16..64]）
+    let calc_hash = &core.calculate(gz)[16..64];
+    if calc_hash != app_hash {
+        return Err(format!(
+            "完整性哈希不符：app={} calc={}",
+            app_hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            calc_hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+        ));
+    }
+
+    let mut plain = Vec::new();
+    GzDecoder::new(gz)
+        .read_to_end(&mut plain)
+        .map_err(|e| format!("gunzip 失败：{e}"))?;
+    Ok((plain, gz.to_vec()))
 }
 
 /// TT-Encrypt V5 的解密方向生产未用到（注册只加密），对拍用 Python
@@ -358,9 +438,11 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     let bytes = api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &reg_env).await?;
     let result = parse_register(&bytes)?;
     if result.device_id == "0" {
-        return Err(AppError::Media(
-            "注册被服务端静默拒绝（device_id=0），加密或指纹形态可能过期".into(),
-        ));
+        let text = String::from_utf8_lossy(&bytes);
+        return Err(AppError::Media(format!(
+            "注册被服务端静默拒绝（device_id=0），加密或指纹形态可能过期；原始响应: {}",
+            &text[..text.len().min(400)]
+        )));
     }
     Ok(result)
 }
@@ -368,6 +450,57 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 真实 App 抓包（register_req_real.bin，2026-10-03 真机注册 body）的
+    /// 离线闭环：解密 → 同盐重加密 → 必须逐字节复现原始 body。
+    /// 锁死「派生链 + AES-CBC + PKCS7 + gzip 字节流」与官方客户端一致。
+    #[test]
+    fn tt_v5_real_capture_roundtrip() {
+        let body = include_bytes!("testdata/register_req_real.bin");
+        let (plain, app_gz) = tt_decrypt_v5(body).expect("真实抓包应能解密");
+
+        // 解出的明文必须是合法 AppLog 注册 JSON
+        let v: serde_json::Value =
+            serde_json::from_slice(&plain).expect("解出的明文应是 JSON");
+        assert_eq!(v["magic_tag"], "ss_app_log", "magic_tag 不符");
+        assert_eq!(&app_gz[..2], &[0x1f, 0x8b], "payload 48 偏移处应是 gzip 流");
+
+        let salt: [u8; 32] = body[6..38].try_into().unwrap();
+        let re = tt_encrypt_v5_with_salt(&plain, &salt);
+
+        // 结构锁：同盐重加密必须复现 magic+salt 区与总长（IV 是随机的、
+        // gzip 字节流因压缩器而异，此两者服务端均不校验——服务端用
+        // header 里的 IV 解密并按 digest[16..64] 校验完整性哈希）
+        assert_eq!(&re[..38], &body[..38], "magic/salt 区不一致");
+        assert_eq!(re.len(), body.len(), "总长不一致（PKCS7 吸收 gz 差异后应相等）");
+
+        // 往返锁：重加密密文再次解密必须还原同一明文（加密自洽）
+        let (plain2, _) = tt_decrypt_v5(&re).expect("重加密密文应能自解");
+        assert_eq!(plain2, plain, "加解密往返不还原");
+    }
+
+    /// 「被服务端接受的注册 body」字节级复现锁：解密样本拿到 (gz, salt,
+    /// iv) 后重加密，必须逐字节相等。锁死 AES-CBC/PKCS7/hash 窗口/拼装
+    /// 全链路与真实接受形态一致（样本为 2026-10-03 服务端发号成功的
+    /// TT-Encrypt V5 body，解密需通过 digest[16..64] 校验）。
+    #[test]
+    fn tt_v5_reproduces_accepted_body() {
+        let hex = include_str!("testdata/py_enc_accepted.hex");
+        let hex = hex.trim();
+        let body: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let (plain, gz) = tt_decrypt_v5(&body).expect("被接受样本必须能解密（hash 窗口锁）");
+        let v: serde_json::Value =
+            serde_json::from_slice(&plain).expect("被接受样本明文应是 JSON");
+        assert_eq!(v["magic_tag"], "ss_app_log");
+
+        let salt: [u8; 32] = body[6..38].try_into().unwrap();
+        let iv: [u8; 16] = body[38..54].try_into().unwrap();
+        let re = tt_encrypt_v5_full(&gz, &salt, &iv);
+        assert_eq!(re, body, "同 (gz,salt,iv) 重加密必须逐字节复现被接受 body");
+    }
 
     /// 抓包样本形状：数字 + 字符串双形态并存。
     #[test]
@@ -650,6 +783,80 @@ mod probe {
             ),
             Err(e) => println!("[register-rust] ERR {e}"),
         }
+    }
+
+    /// 档案矩阵：节流假设检验。每个变体全新指纹+全新 body，间隔 2s。
+    /// P0=重放 py_fresh2（21:23 被接受的全新注册，验证端点与幂等重发）；
+    /// P1=静态档案签名（现状，若 0/0 而其他过 → 档案被节流）；
+    /// P2=fresh 档案（无 device_id/iid 字段，检验「需要已知设备」结论
+    /// 是否被空值字段污染）；P3=71332 档案去掉 id 字段。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_register_profile_matrix() {
+        use crate::signer::video_device;
+
+        let env0 = anon_env();
+
+        // P0：重放 py_fresh2
+        let dir = "C:/Users/liu13/AppData/Local/Temp/hg_capture";
+        if let (Ok(hex), Ok(meta_s)) = (
+            std::fs::read_to_string(format!("{dir}/py_fresh2.hex")),
+            std::fs::read_to_string(format!("{dir}/py_fresh2_meta.json")),
+        ) {
+            let hex = hex.trim();
+            let body: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+                .collect();
+            let meta: serde_json::Value = serde_json::from_str(&meta_s).unwrap();
+            let q = register_query(
+                meta["cdid"].as_str().unwrap(),
+                meta["openudid"].as_str().unwrap(),
+                meta["_rticket"].as_str().unwrap().parse().unwrap(),
+            );
+            match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env0).await {
+                Ok(b) => println!("[pm-P0重放] {}", &String::from_utf8_lossy(&b)[..160.min(b.len())]),
+                Err(e) => println!("[pm-P0重放] ERR {e}"),
+            }
+        } else {
+            println!("[pm-P0重放] 样本缺失，跳过");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // 变体发送器：全新指纹 + 指定签名档案
+        async fn send_fresh(tag: &str, env: &ApiEnv) {
+            match register_device(env).await {
+                Ok(r) => println!("[pm-{tag}] device_id={} new_user={}", r.device_id, r.new_user),
+                Err(e) => println!("[pm-{tag}] ERR {e}"),
+            }
+        }
+
+        // P1：静态档案（现状）
+        send_fresh("P1静态档案", &env0).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // P2：fresh 档案（73932，无 device_id/iid/cdid/openudid 字段）
+        let mut fresh = crate::signer::device::DeviceProfile::fresh_register_profile("", "");
+        fresh.remove("cdid");
+        fresh.remove("openudid");
+        let env2 = ApiEnv {
+            proxy: env0.proxy.clone(),
+            device: fresh,
+            cookie: None,
+        };
+        send_fresh("P2fresh档案", &env2).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // P3：71332 静态档案去掉 device_id/iid
+        let mut dev3 = video_device();
+        dev3.remove("device_id");
+        dev3.remove("iid");
+        let env3 = ApiEnv {
+            proxy: env0.proxy.clone(),
+            device: dev3,
+            cookie: None,
+        };
+        send_fresh("P3匿名71332", &env3).await;
     }
 
     fn urlencode(s: &str) -> String {
