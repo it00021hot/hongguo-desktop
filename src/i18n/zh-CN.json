@@ -11,6 +11,10 @@
       "title": "排行榜",
       "description": "官方八大榜单实时排名"
     },
+    "new": {
+      "title": "新剧",
+      "description": "上新日历与即将上线的新剧"
+    },
     "browse": {
       "title": "找剧",
       "description": "搜索剧名，按分类与题材发现短剧"

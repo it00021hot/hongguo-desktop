@@ -11,6 +11,10 @@
       "title": "Rankings",
       "description": "Official rankings across 8 lists"
     },
+    "new": {
+      "title": "New",
+      "description": "Release calendar and upcoming dramas"
+    },
     "browse": {
       "title": "Find",
       "description": "Search and browse short dramas"
