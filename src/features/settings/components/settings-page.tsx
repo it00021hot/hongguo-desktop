@@ -27,10 +27,11 @@ import { app as appApi, transcode as transcodeApi } from '@/lib/ipc/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { DecodeCapability, Settings } from '@/lib/schema';
+import { AccountCard } from './account-card';
 
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
 export function SettingsPage() {
-  const { data: loaded, isPending } = useSettings();
+  const { data: loaded, isPending, refetch: refetchSettings } = useSettings();
   const saveMutation = useSaveSettings();
   const { data: capability } = useDecodeCapability();
   const redetect = useRedetectCapability();
@@ -75,6 +76,9 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+      {/* 账户（短信登录） */}
+      <AccountCard account={current.account ?? null} onChanged={() => void refetchSettings()} />
+
       {/* 目录 */}
       <Card>
         <CardHeader>

@@ -269,7 +269,22 @@
     "transcodeBackendHint": "Compat merge converts videos to a universal format. Without ffmpeg it falls back to the pure-Rust decoder — slower but workable. With ffmpeg it is used automatically. The badge reports what was measured: GPU only when a real hardware encoder is available, otherwise software. If nothing changed after installing ffmpeg, hit Re-detect.",
     "backendRust": "Standard speed",
     "backendFfmpegHw": "Hardware accelerated",
-    "backendFfmpegSw": "Software accelerated"
+    "backendFfmpegSw": "Software accelerated",
+    "account": "Account",
+    "accountDesc": "Sign in with SMS code to unlock account features such as reservations",
+    "loginAction": "Sign in",
+    "loginSendCode": "Send code",
+    "loginResend": "Resend in {s}s",
+    "loginMobilePlaceholder": "Phone number",
+    "loginCodePlaceholder": "SMS code",
+    "loginSuccess": "Signed in: {name}",
+    "loginMfaTips": "SMS secondary verification required",
+    "loginMfaWaiting": "Waiting for SMS reply verification…",
+    "loginRefresh": "Refresh",
+    "loginSessionOk": "Session valid: {name}",
+    "logout": "Sign out",
+    "loggedOut": "Signed out",
+    "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control"
   },
   "error": {
     "network": "Cannot reach the server. Check your connection or the proxy in Settings.",

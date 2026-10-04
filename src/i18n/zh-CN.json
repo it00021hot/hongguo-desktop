@@ -269,7 +269,22 @@
     "transcodeBackendHint": "兼容合并会把视频转成通用格式。没装 ffmpeg 时走纯 Rust 软解，慢但够用；装上 ffmpeg 会自动改用它。徽章只反映实测结果：真能走显卡才显示「硬件加速」，否则显示「软件加速」。装完 ffmpeg 若没变化，点「重新检测」。",
     "backendRust": "标准速度",
     "backendFfmpegHw": "硬件加速",
-    "backendFfmpegSw": "软件加速"
+    "backendFfmpegSw": "软件加速",
+    "account": "账户",
+    "accountDesc": "短信验证码登录；登录后可使用预约等账号功能",
+    "loginAction": "登录",
+    "loginSendCode": "发送验证码",
+    "loginResend": "{s}s 后重发",
+    "loginMobilePlaceholder": "手机号",
+    "loginCodePlaceholder": "验证码",
+    "loginSuccess": "登录成功：{name}",
+    "loginMfaTips": "需要短信上行二次验证",
+    "loginMfaWaiting": "等待短信回复验证中…请按提示回复短信",
+    "loginRefresh": "刷新",
+    "loginSessionOk": "会话有效：{name}",
+    "logout": "退出登录",
+    "loggedOut": "已退出登录",
+    "loginRiskNote": "账号与设备永久绑定，换设备登录可能触发风控"
   },
   "error": {
     "network": "连不上服务器，请检查网络连接或设置页里的代理",

@@ -116,6 +116,28 @@ pub async fn api_call_full_with_headers(
     extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
+    api_call_full_response(origin, pathname, body, biz_query, extra_headers, env)
+        .await
+        .map(|r| r.bytes)
+}
+
+/// 响应体 + Set-Cookie（passport 登录捕获会话用，其余调用走
+/// [`api_call_full_with_headers`] 自动丢弃 cookie）。
+pub struct ApiCallResponse {
+    pub bytes: Vec<u8>,
+    /// Set-Cookie 原始行（`k=v; Path=/; ...` 形态，未清洗）。
+    pub set_cookies: Vec<String>,
+}
+
+/// 全参数 + Set-Cookie 捕获版本。
+pub async fn api_call_full_response(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    biz_query: &[(String, String)],
+    extra_headers: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<ApiCallResponse> {
     let client = build_client(&env.proxy)?;
     let mut last_err = String::new();
 
@@ -123,7 +145,7 @@ pub async fn api_call_full_with_headers(
         match send_once(&client, origin, pathname, body.as_deref(), biz_query, extra_headers, env)
             .await
         {
-            Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
+            Ok(resp) if !resp.bytes.is_empty() => return Ok(resp),
             Ok(_) => last_err = "接口返回空响应（签名可能失效）".to_string(),
             Err(e) => last_err = e.to_string(),
         }
@@ -278,7 +300,7 @@ async fn send_once(
     biz_query: &[(String, String)],
     extra_headers: &[(String, String)],
     env: &ApiEnv,
-) -> AppResult<Vec<u8>> {
+) -> AppResult<ApiCallResponse> {
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie {
         if !c.is_empty() {
@@ -319,11 +341,20 @@ async fn send_once(
     if !resp.status().is_success() {
         return Err(AppError::Network(format!("HTTP {}", resp.status())));
     }
+    let set_cookies = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_string))
+        .collect();
     let bytes = resp
         .bytes()
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
-    Ok(bytes.to_vec())
+    Ok(ApiCallResponse {
+        bytes: bytes.to_vec(),
+        set_cookies,
+    })
 }
 
 #[cfg(test)]

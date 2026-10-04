@@ -106,6 +106,13 @@ pub fn run() {
             commands::rank_cmd::search_series_cmd,
             commands::rank_cmd::reservation_list,
             commands::rank_cmd::new_drama_calendar,
+            // 登录
+            commands::login_cmd::login_send_code,
+            commands::login_cmd::login_sms_login,
+            commands::login_cmd::login_mfa_verify,
+            commands::login_cmd::login_status,
+            commands::login_cmd::login_user_info,
+            commands::login_cmd::login_logout,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             // 浏览与搜索

@@ -146,6 +146,25 @@ pub fn sanitize_file_name(name: &str) -> String {
     sanitize_folder_name(name)
 }
 
+/// 已登录账号的会话快照（短信登录成功后落库，业务请求带它取登录态）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountState {
+    /// 登录手机号（明文，仅本机存储）
+    pub mobile: String,
+    /// 会话 Cookie（`k=v; k=v`，附加到签名请求，不参与签名）
+    pub cookies: String,
+    /// 用户昵称（服务端返回，无则空）
+    #[serde(default)]
+    pub user_name: String,
+    /// 用户 id（字符串形态）
+    #[serde(default)]
+    pub user_id: String,
+    /// 登录时间（unix 秒）
+    #[serde(default)]
+    pub login_at: i64,
+}
+
 /// 应用设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +190,9 @@ pub struct Settings {
     /// 主题：auto / light / dark
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// 登录账号（未登录为 None）
+    #[serde(default)]
+    pub account: Option<AccountState>,
 }
 
 fn default_true() -> bool {
@@ -195,6 +217,7 @@ impl Default for Settings {
             auto_delete_after_play: false,
             auto_next_episode: true,
             theme: default_theme(),
+            account: None,
         }
     }
 }
@@ -387,6 +410,7 @@ mod tests {
             auto_delete_after_play: false,
             auto_next_episode: true,
             theme: "auto".into(),
+            account: None,
         };
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["downloadDir"], "D:\\dl");

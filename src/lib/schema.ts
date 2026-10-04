@@ -141,6 +141,17 @@ const proxyConfigSchema = z.object({
 
 export type ProxyConfig = z.infer<typeof proxyConfigSchema>;
 
+/** 已登录账号的会话快照（后端 Settings.account） */
+export const accountStateSchema = z.object({
+  mobile: z.string(),
+  cookies: z.string(),
+  userName: z.string(),
+  userId: z.string(),
+  loginAt: z.number(),
+});
+
+export type AccountState = z.infer<typeof accountStateSchema>;
+
 export const settingsSchema = z.object({
   downloadDir: z.string(),
   naming: namingTemplateSchema,
@@ -149,9 +160,35 @@ export const settingsSchema = z.object({
   autoDeleteAfterPlay: z.boolean(),
   autoNextEpisode: z.boolean(),
   theme: z.string(),
+  // 后端 serde(default)：旧库无此字段，前端宽松接收
+  account: accountStateSchema.nullable().optional(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
+
+// ---------------------------------------------------------------- 登录
+
+export const passportUserSchema = z.object({
+  userId: z.string(),
+  name: z.string(),
+  mobile: z.string(),
+});
+
+export type PassportUser = z.infer<typeof passportUserSchema>;
+
+/** 登录命令返回：成功 / 需要 MFA 上行短信验证 / MFA 等待中 */
+export const loginResultSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('success'), user: passportUserSchema }),
+  z.object({
+    kind: z.literal('mfa'),
+    retryTag: z.string(),
+    smsCodeKey: z.string(),
+    tips: z.string(),
+  }),
+  z.object({ kind: z.literal('mfaWaiting') }),
+]);
+
+export type LoginResult = z.infer<typeof loginResultSchema>;
 
 export const proxyTestResultSchema = z.object({
   ok: z.boolean(),

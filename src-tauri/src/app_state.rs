@@ -102,12 +102,18 @@ impl AppStateInner {
     /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。
     ///
     /// 快照语义是刻意的：一次调用链内环境不变，避免「签名用 A 设备、
-    /// 请求带 B Cookie」的半新半旧。登录态（M3）接入后 Cookie 从这里透出。
+    /// 请求带 B Cookie」的半新半旧。Cookie 从已登录账号设置透出，
+    /// 不参与签名（走 extra_headers 注入）。
     pub fn api_env(&self) -> crate::domain::api::client::ApiEnv {
+        let settings = self.settings();
         crate::domain::api::client::ApiEnv {
-            proxy: self.settings().proxy,
+            proxy: settings.proxy,
             device: self.device(),
-            cookie: None,
+            cookie: settings
+                .account
+                .as_ref()
+                .map(|a| a.cookies.clone())
+                .filter(|c| !c.is_empty()),
         }
     }
 }

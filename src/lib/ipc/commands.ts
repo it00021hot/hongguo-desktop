@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import { call } from './invoke';
 import {
+  accountStateSchema,
   browseResultSchema,
   danmakuSchema,
   categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
+  loginResultSchema,
   mergeCandidateSchema,
   mergePreflightSchema,
   mergeTaskSchema,
+  passportUserSchema,
   playbackHistoryItemSchema,
   playResponseSchema,
   proxyTestResultSchema,
@@ -21,15 +24,18 @@ import {
   seriesSchema,
   settingsSchema,
   storageUsageSchema,
+  type AccountState,
   type Category,
   type Danmaku,
   type DecodeCapability,
   type DownloadTask,
   type FeedPage,
+  type LoginResult,
   type MergeCandidate,
   type MergeMode,
   type MergePreflight,
   type MergeTask,
+  type PassportUser,
   type PlaybackHistoryItem,
   type PlayResponse,
   type ProxyConfig,
@@ -71,6 +77,24 @@ export const settings = {
   save: (next: Settings) => call<Settings>('save_settings', { settings: next }, settingsSchema),
   testProxy: (draft?: ProxyConfig) =>
     call<ProxyTestResult>('test_proxy', { draft: draft ?? null }, proxyTestResultSchema),
+};
+
+// ---------------------------------------------------------------- 登录
+
+export const login = {
+  sendCode: (mobile: string) => call<string>('login_send_code', { mobile }),
+  smsLogin: (mobile: string, code: string, mfa?: { retryTag: string; smsCodeKey: string }) =>
+    call<LoginResult>('login_sms_login', {
+      mobile,
+      code,
+      mfaRetryTag: mfa?.retryTag ?? null,
+      mfaSmsCodeKey: mfa?.smsCodeKey ?? null,
+    }, loginResultSchema),
+  mfaVerify: (retryTag: string, smsCodeKey: string, mobile: string) =>
+    call<LoginResult>('login_mfa_verify', { retryTag, smsCodeKey, mobile }, loginResultSchema),
+  status: () => call<AccountState | null>('login_status', undefined, accountStateSchema.nullable()),
+  userInfo: () => call<PassportUser>('login_user_info', undefined, passportUserSchema),
+  logout: () => call<void>('login_logout'),
 };
 
 // ---------------------------------------------------------------- 剧集
