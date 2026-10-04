@@ -132,6 +132,7 @@
     "compatCached": "Switched to the compatible format",
     "compatDone": "Converted with {backend} in {seconds}s — starting playback",
     "compatFailed": "Compat conversion failed: {reason}",
+    "danmakuFailed": "Danmaku failed to load (playback unaffected): {reason}",
     "epShort": "Ep {index}",
     "continueWatching": "Continue watching",
     "clearHistory": "Clear history",

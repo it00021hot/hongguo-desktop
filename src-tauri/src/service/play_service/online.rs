@@ -182,7 +182,28 @@ async fn fill(
                 "[Online] {vid} 档位 {definition} 渐进流就绪（密文 {} 字节），开始顺序填充",
                 sparse.len()
             );
-            fill_remaining(&sparse, &prog, play, settings, &reporter).await?;
+            // CDN 抖动（短读/断流）是常态而不是异常，整体重试而不是一次失败
+            // 就永远停在前沿——播放追上未填充区只能超时报错。
+            let mut last_err = None;
+            for attempt in 0..3 {
+                match fill_remaining(&sparse, &prog, play, settings, &reporter).await {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[Online] {vid} 档位 {definition} 填充第 {} 次中断: {e}",
+                            attempt + 1
+                        );
+                        last_err = Some(e);
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                return Err(e);
+            }
             reporter.done();
             log::info!("[Online] {vid} 档位 {definition} 填充完成");
             Ok(())
@@ -319,8 +340,23 @@ async fn fill_remaining(
         };
         let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
         let bytes = get_video_range(&client, &play.url, gap_start, fetch_end - 1).await?;
+        let want = fetch_end - gap_start;
+        let got = bytes.len() as u64;
+        if got == 0 {
+            // 空响应意味着 write 不会标记任何覆盖，cursor 又已越过这里——
+            // 只能靠回绕反复重试，等于静默空转。直接报错让上层看见。
+            return Err(AppError::Network(format!(
+                "CDN 区间 {gap_start}-{} 返回空响应",
+                fetch_end - 1
+            )));
+        }
+        if got != want {
+            log::info!("[Online] 填充区间 {gap_start}-{fetch_end} 短读：要 {want} 字节拿到 {got}");
+        }
         sparse.write(gap_start, &bytes);
-        reporter.report(sparse.downloaded(), total, "downloading");
+        let done = sparse.downloaded();
+        log::debug!("[Online] 填充区间 {gap_start}-{fetch_end} 完成（累计 {done}/{total}）");
+        reporter.report(done, total, "downloading");
         cursor = fetch_end;
     }
 }

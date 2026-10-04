@@ -16,7 +16,25 @@ pub async fn danmaku_list(
     book_id: String,
 ) -> AppResult<Vec<Danmaku>> {
     let env = state.api_env();
-    fetch_danmaku_all(&group_id, &book_id, &env).await
+    match fetch_danmaku_all(&group_id, &book_id, &env).await {
+        Ok(list) => {
+            let preview: Vec<String> = list
+                .iter()
+                .take(5)
+                .map(|d| format!("{}ms·{:?}", d.offset_ms, d.text))
+                .collect();
+            log::info!(
+                "[Danmaku] group={group_id} book={book_id} 拉到 {} 条{}",
+                list.len(),
+                if preview.is_empty() { String::new() } else { format!("（前几条: {}）", preview.join(" | ")) }
+            );
+            Ok(list)
+        }
+        Err(e) => {
+            log::warn!("[Danmaku] group={group_id} book={book_id} 拉取失败: {e}");
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]

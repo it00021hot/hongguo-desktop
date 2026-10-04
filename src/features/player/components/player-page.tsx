@@ -140,6 +140,12 @@ function PlayerView() {
       return !on;
     });
   }, []);
+  // 弹幕拉取失败不能静默：画面照常播，但用户该知道弹幕为什么没了
+  useEffect(() => {
+    if (danmakuQuery.isError) {
+      toast.error(tf('player.danmakuFailed', { reason: String(danmakuQuery.error) }));
+    }
+  }, [danmakuQuery.isError, danmakuQuery.error]);
 
   /**
    * 兼容兜底。
@@ -427,7 +433,10 @@ function PlayerView() {
 
   const handleVideoError = () => {
     if (error) return;
-    setError(t('error.media'));
+    // 带上浏览器给的 MediaError 编号：解码错(3)和网络错(2)的修法完全不同
+    const me = videoRef.current?.error;
+    const detail = me ? `（MediaError ${me.code}${me.message ? `: ${me.message}` : ''}）` : '';
+    setError(`${t('error.media')}${detail}`);
   };
 
   if (!seriesId || !vidIndex) {

@@ -132,6 +132,7 @@
     "compatCached": "已切换为兼容格式播放",
     "compatDone": "已转为兼容格式（{backend}，{seconds} 秒），开始播放",
     "compatFailed": "兼容格式转换失败：{reason}",
+    "danmakuFailed": "弹幕加载失败（不影响播放）：{reason}",
     "epShort": "第{index}集",
     "continueWatching": "继续观看",
     "clearHistory": "清空记录",

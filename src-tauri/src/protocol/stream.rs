@@ -86,22 +86,33 @@ pub fn serve(
     // 压根没有这一档：说明它已经被清掉了（或从没起播过）。
     // 这种情况必须立刻报错，不能进等待——等满 30 秒才告诉用户「没这流」，
     // 在切档的语境下就是一次白等。
-    let entry = c
-        .get(vid, definition)
-        .ok_or_else(|| format!("没有正在准备的在线流: {vid}@{definition}"))?;
+    let entry = match c.get(vid, definition) {
+        Some(e) => e,
+        None => {
+            // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
+            // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
+            log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
+            return Err(format!("没有正在准备的在线流: {vid}@{definition}"));
+        }
+    };
 
     // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
     // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
     // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
-    let mode = wait_until(Duration::from_secs(WAIT_TIMEOUT_SECS), || {
+    let mode = match wait_until(Duration::from_secs(WAIT_TIMEOUT_SECS), || {
         let prog = entry.progressive.lock().clone();
         if *entry.filled.lock() > 0 {
             Some(None)
         } else {
             prog.map(Some)
         }
-    })
-    .ok_or_else(|| "等待流就绪超时".to_string())?;
+    }) {
+        Some(m) => m,
+        None => {
+            log::warn!("[Stream] {vid}@{definition} 等待流就绪超时（{WAIT_TIMEOUT_SECS}s）");
+            return Err("等待流就绪超时".to_string());
+        }
+    };
 
     match mode {
         // 整集模式：size 只在 store 里从 0 变成真实值一次，之后再不变
@@ -147,6 +158,10 @@ fn serve_progressive(
         }
     }
     if !prog.sparse.wait_cover(&needed, Duration::from_secs(WAIT_TIMEOUT_SECS)) {
+        // 典型成因：填充线程停摆/被逐出后重填未到，播放追上了填充前沿
+        log::warn!(
+            "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
+        );
         return Err("等待流就绪超时".to_string());
     }
 
