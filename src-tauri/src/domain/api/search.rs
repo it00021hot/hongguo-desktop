@@ -208,13 +208,18 @@ mod probe {
     use super::*;
 
     /// 搜索直连：真实关键词 + 翻页衔接。
-    /// 抓包里 search 带 cookie（store-region 等），匿名形态空响应，用 hgplayer 设备档案。
+    ///
+    /// 2026-10-04：服务端按 install_id 风控（旧 id 0 字节拒），生产环境
+    /// 静态档案 + 匿名 Cookie 即可过——本用例与生产 api_env 同构。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_search_and_paginate() {
-        let env = super::super::rank::probe::hg_env(&ApiEnv::anonymous(
-            crate::domain::model::ProxyConfig::default(),
-        ));
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+        };
         let p1 = search_series("丧尸", 0, "", &env).await.expect("首页");
         println!(
             "[search] p1: {} 条, has_more={}, search_id={:?}, #1={:?}",

@@ -64,6 +64,20 @@ GET /reading/user/subscribe/list/v1/
 
 参数：`active_panel=6, gender_type=2, need_calendar_schema=true, tab_style=2, tab_type=5`
 
+**切日期：`target_date=YYYYMMDD`**（2026-10-04 抓 hgplayer 切日期锁定；此前试过的
+`date` 等 8 个候选名全部无效）。传它服务端只回该日条目，另附
+`calendar_loc_info{start_pos,end_pos,down_has_more,up_has_more}`。
+
+响应条目有**两种 schema**，服务端按请求形态分发：
+
+| 形态 | 触发条件 | 条目结构 |
+|------|---------|---------|
+| 嵌套 | 匿名请求（无 install_id Cookie） | `subscribe_data.{series_id,title,vid,score,...}` + 顶层 `category/rec_tags/schedule_publish_time/is_online` |
+| 扁平 | 带 install_id Cookie 或 target_date | 字段直接在条目上：`item_id,name,cover,item_desc,sub_title_list[],category,categories,schedule_publish_time,expected_publish_time,is_online`；**无 vid**（点击走 seriesId 解析详情） |
+
+首页（不带 target_date）返回默认日（今天）条目 + `calendar_schema.date_list`
+（前后各一周）+ `default_date`；条目跨日分布时 `has_more/next_offset` 翻页。
+
 ## 4. 找剧（筛选浏览）
 
 ```
@@ -89,9 +103,15 @@ GET /reading/bookapi/search/tab/v
 ```
 
 参数：`query=丧尸, tab_type=11, count=100, offset=0, use_correct=true,
-bookshelf_search_plan=4`
+bookshelf_search_plan=4, need_personal_recommend=1`
 
-翻页：`offset=N&passback=N&search_id={首响应返回的 search_id}`
+翻页：`offset=N&passback=N&search_id={首响应返回的 search_id}`（实测综合 tab
+首页只回 4~6 条，next_offset 顺延，第二页起 ~100 条/页）
+
+**风控要求（2026-10-04 实测）**：必须带有效 `install_id`（query 的 `iid` 与
+Cookie 的 `install_id` 一致 + `ttreq` 票）。失效 id 的表现是 **HTTP 200 + 0 字节**
+静默拒，且会连坐其他 reading 接口。请求头无 x-gorgon/x-argus/x-ladon
+（reading 轻签名：`x-ss-dp + x-reading-request + lc` 即可，多带也能过）。
 
 响应：`search_tabs[]`（tab_type: 综合=11 / 剧集=29 / 视频=30 / 讨论=31 /
 小说=1 / 用户=27 / 听书=2）。综合 tab 的 `data[]` 每条含 `video_data[]` 剧集数据，
@@ -113,10 +133,19 @@ subscribe_offset=0, subscribe_order_type=0, swipe_type=0, tab_type=13`
   才不报 ILLEGAL_ACCESS 110）
 - 历史/收藏/点赞页未抓（疑似本地存储或需登录，优先级低）
 - 登录（短信+扫码）最后做
+- 弹幕发送 `commentapi/comment/add` 未实现（拉取 `comment/list` 已落地）
 
 ## 抓包数据文件
 
-`C:\Users\liu13\AppData\Local\Temp\hg_capture\`
-- `flows.jsonl` 本轮完整抓包（resp_body b64+brotli）
-- `flows_run1.jsonl` / `flows_old.jsonl` 前两轮（resp 截断 6k）
-- `rank_must_watch.json` / `rank_hot_sc.json` 已解出的榜单样本
+历史轮次：`C:\Users\liu13\AppData\Local\Temp\hg_capture\`（易失，随时可能被清）
+
+**现行工作流（自持抓包）**：仓库 `captures/`（已 gitignore，持久保留）——
+
+- `addon.py` mitmproxy dump 脚本（目标域名过滤，输出 JSONL，MITM_OUT 可覆盖输出路径）
+- `flows-YYYYMMDD.jsonl` 按日分轮的抓包产物（req 头/参数/resp body b64+brotli）
+
+重放工作流：`mitmdump.exe -p 8080 -s captures/addon.py`（mitmproxy 12.2.3 在
+`%LocalAppData%\Programs\Python\Python314\Scripts\`，CA 已在
+`~/.mitmproxy\` 且系统已信任）→ 以 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:8080`
+环境变量启动 `C:\Users\liu13\Downloads\hongguo-v1.1.2-windows-amd64.exe`
+（Wails/Go 后端吃 env 代理）→ computer-use 驱动 UI 触发目标接口。

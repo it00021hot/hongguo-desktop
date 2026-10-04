@@ -233,15 +233,25 @@ pub struct CalendarPage {
     /// 默认选中日期
     #[serde(default)]
     pub default_date: String,
+    /// 还有下一页（一周的条目按排期升序分布在多页里）
+    #[serde(default)]
+    pub has_more: bool,
+    /// 下一页 offset（0 = 没有更多）
+    #[serde(default)]
+    pub next_offset: i64,
 }
 
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
 ///
-/// `date` 传 `calendar_page.dates` 里的值可切换日期；抓包只覆盖了默认日期
-/// （不带 date 参数），切换参数若服务端不认，回退也是默认日期的数据，
-/// 不会报错。
+/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 抓 hgplayer
+/// 切日期锁定：传它服务端只回该日条目）。此前实测 `date` 等 8 个候选名
+/// 全部被忽略，靠翻页收集兜底——那条路保留为 `target_date` 失效时的回退。
+///
+/// 响应条目有两种 schema，由服务端按请求形态分发（带 `install_id` Cookie
+/// 或 `target_date` 时是扁平形态）：嵌套 `subscribe_data.*` 与扁平
+/// `item_id/name/...`，[`parse_calendar_item`] 两种都吃。
 pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<CalendarPage> {
-    let mut q: Vec<(String, String)> = [
+    let base: Vec<(String, String)> = [
         ("active_panel", "6"),
         ("gender_type", "2"),
         ("need_calendar_schema", "true"),
@@ -251,14 +261,103 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    if let Some(d) = date {
-        q.push(("date".to_string(), d.to_string()));
+
+    let first = fetch_calendar_page(&base, env).await?;
+    let Some(target) = date.filter(|d| !d.is_empty() && *d != first.default_date) else {
+        return Ok(first);
+    };
+
+    // 主路径：target_date 直查。命中判据是首条目归属目标日——若服务端
+    // 某天忽略该参数，会退回默认日数据，此时走翻页兜底。
+    let mut q = base.clone();
+    q.push(("target_date".to_string(), target.to_string()));
+    if let Ok(page) = fetch_calendar_page(&q, env).await {
+        if page
+            .items
+            .first()
+            .is_some_and(|i| beijing_date(i.publish_time) == target)
+        {
+            // 目标日整日无上新时条目为空：解析成功即视为命中空日，
+            // 日期条兜底用首页的 schema（target 响应偶发缺 date_list）
+            let dates = if page.dates.is_empty() {
+                first.dates.clone()
+            } else {
+                page.dates
+            };
+            return Ok(CalendarPage {
+                dates,
+                default_date: first.default_date,
+                ..page
+            });
+        }
     }
-    let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
+
+    // 兜底：把目标日的条目从后续页里收集齐（越过目标日即停）
+    let mut picked: Vec<CalendarItem> = first
+        .items
+        .iter()
+        .filter(|i| beijing_date(i.publish_time) == target)
+        .cloned()
+        .collect();
+    let mut page = first;
+    for _ in 0..16 {
+        if !page.has_more || page.next_offset <= 0 {
+            break;
+        }
+        let passed = page
+            .items
+            .last()
+            .is_some_and(|i| beijing_date(i.publish_time).as_str() > target);
+        if passed {
+            break;
+        }
+        let mut q = base.clone();
+        q.push(("offset".to_string(), page.next_offset.to_string()));
+        page = fetch_calendar_page(&q, env).await?;
+        picked.extend(
+            page.items
+                .iter()
+                .filter(|i| beijing_date(i.publish_time) == target)
+                .cloned(),
+        );
+    }
+    Ok(CalendarPage {
+        dates: page.dates,
+        default_date: page.default_date,
+        items: picked,
+        has_more: false,
+        next_offset: 0,
+    })
+}
+
+/// 拉一页日历（subscribe/list 日历形态）。
+async fn fetch_calendar_page(q: &[(String, String)], env: &ApiEnv) -> AppResult<CalendarPage> {
+    let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析上新日历失败: {e}")))?;
     check_code(&value)?;
     parse_calendar(value.get("data"))
+}
+
+/// unix 秒 → 北京时区（UTC+8）的 "20261004" 形式日期。
+///
+/// 日历的日期桶按北京时间的"当天"划分；时间戳 0（未定档）不归任何一天。
+fn beijing_date(ts: i64) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    // Hinnant 的 civil_from_days：days 自 1970-01-01
+    let z = (ts + 8 * 3600).div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}{m:02}{d:02}")
 }
 
 /// 解析 subscribe/list 日历形态的 data 节点。
@@ -272,37 +371,9 @@ fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let sd = raw.get("subscribe_data").cloned().unwrap_or(Value::Null);
-        let Some(series_id) = sd.get("series_id").and_then(Value::as_str).filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        items.push(CalendarItem {
-            series_id: series_id.to_string(),
-            title: str_field(&sd, "title"),
-            cover: str_field(&sd, "cover"),
-            vid: str_field(&sd, "vid"),
-            score: num_field(&sd, "score"),
-            play_cnt: int_field(&sd, "play_cnt"),
-            episode_cnt: int_field(&sd, "episode_cnt").max(0) as u32,
-            description: str_field(&sd, "video_desc"),
-            category: str_field(raw, "category"),
-            rec_tags: raw
-                .get("rec_tags")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|t| t.get("content").and_then(Value::as_str))
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            publish_time: int_field(raw, "schedule_publish_time"),
-            is_online: raw
-                .get("is_online")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        });
+        if let Some(item) = parse_calendar_item(raw) {
+            items.push(item);
+        }
     }
 
     let cal = data.get("calendar_schema");
@@ -323,7 +394,82 @@ fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        has_more: data
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_offset: data
+            .get("next_offset")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
     })
+}
+
+/// 一条日历条目，两种 schema 都吃（2026-10-04 实测服务端按请求形态分发）：
+///
+/// - 嵌套形态（匿名请求）：`subscribe_data.{series_id,title,vid,...}` +
+///   顶层 `category/rec_tags/schedule_publish_time/is_online`；
+/// - 扁平形态（带 install_id Cookie 或 target_date）：字段直接在条目上
+///   （`item_id/name/cover/item_desc/sub_title_list/...`），没有 vid——
+///   前端点击走 seriesId 解析详情，vid 留空无害。
+fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
+    if let Some(sd) = raw.get("subscribe_data") {
+        let series_id = sd
+            .get("series_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())?;
+        return Some(CalendarItem {
+            series_id: series_id.to_string(),
+            title: str_field(sd, "title"),
+            cover: str_field(sd, "cover"),
+            vid: str_field(sd, "vid"),
+            score: num_field(sd, "score"),
+            play_cnt: int_field(sd, "play_cnt"),
+            episode_cnt: int_field(sd, "episode_cnt").max(0) as u32,
+            description: str_field(sd, "video_desc"),
+            category: str_field(raw, "category"),
+            rec_tags: string_array(raw, "rec_tags"),
+            publish_time: int_field(raw, "schedule_publish_time"),
+            is_online: raw
+                .get("is_online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+    let series_id = raw
+        .get("item_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?;
+    Some(CalendarItem {
+        series_id: series_id.to_string(),
+        title: str_field(raw, "name"),
+        cover: str_field(raw, "cover"),
+        vid: String::new(),
+        score: 0.0,
+        play_cnt: 0,
+        episode_cnt: 0,
+        description: str_field(raw, "item_desc"),
+        category: str_field(raw, "category"),
+        rec_tags: string_array(raw, "sub_title_list"),
+        publish_time: int_field(raw, "schedule_publish_time"),
+        is_online: raw
+            .get("is_online")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// `[{content: "..."}, ...]` 形态的标签数组 → 字符串数组。
+fn string_array(node: &Value, key: &str) -> Vec<String> {
+    node.get(key)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.get("content").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 遍历 `data` 下所有 `video_data` 数组（cell_data 是嵌套结构，逐块平铺）。
@@ -521,6 +667,49 @@ mod tests {
         assert!(page.dates.is_empty());
         assert_eq!(page.default_date, "");
     }
+
+    /// 2026-10-04 抓包形状：带 install_id Cookie / target_date 时服务端
+    /// 下发扁平条目（无 subscribe_data，无 vid）。
+    #[test]
+    fn parses_flat_calendar_items() {
+        let data: Value = serde_json::json!({
+            "subscribe_items": [
+                {
+                    "item_id": "7689087934082862104",
+                    "name": "聚宝仙盆之杂灵根才是真BOSS第十三季",
+                    "cover": "https://x.heic",
+                    "category": "逆袭",
+                    "categories": ["逆袭", "反转"],
+                    "is_online": false,
+                    "item_desc": "杂灵根弟子贺平生……",
+                    "sub_title_list": [
+                        { "content": "328.7万人预约" },
+                        { "content": "逆袭" }
+                    ],
+                    "schedule_publish_time": 1791216360
+                },
+                { "item_id": "" }
+            ],
+            "calendar_schema": {
+                "date_list": ["20260927", "20261011"],
+                "default_date": "20261004",
+            },
+            "has_more": true,
+            "next_offset": 24
+        });
+        let page = parse_calendar(Some(&data)).unwrap();
+        assert_eq!(page.items.len(), 1, "空 item_id 要跳过");
+        let it = &page.items[0];
+        assert_eq!(it.series_id, "7689087934082862104");
+        assert_eq!(it.title, "聚宝仙盆之杂灵根才是真BOSS第十三季");
+        assert_eq!(it.description, "杂灵根弟子贺平生……");
+        assert_eq!(it.rec_tags, vec!["328.7万人预约", "逆袭"]);
+        assert_eq!(it.publish_time, 1791216360);
+        assert!(!it.is_online);
+        assert!(it.vid.is_empty(), "扁平形态没有 vid，留空而非报错");
+        assert!(page.has_more);
+        assert_eq!(page.next_offset, 24);
+    }
 }
 
 #[cfg(test)]
@@ -533,20 +722,24 @@ pub(crate) mod probe {
 
     /// hgplayer 抓包里的已注册设备（bookmall 系在静态旧设备上报 110，
     /// 设备注册实现前用它验证端点形状）。
+    ///
+    /// 2026-10-04 更新：旧档案（device_id=1694…）当日搜索开始回 0 字节——
+    /// 服务端按 install_id 风控，旧 id 已失效；换当日 hgplayer 新注册的
+    /// 设备（captures/flows-20261004.jsonl）后恢复。
     pub fn hg_env(base: &ApiEnv) -> ApiEnv {
         let pairs: Vec<(&str, &str)> = vec![
             ("ac", "wifi"),
             ("aid", "8662"),
             ("app_name", "novelread"),
-            ("cdid", "e9ca8ec4-bcbf-46e2-8e4c-281855bccaae"),
+            ("cdid", "babf8a0e-8586-40ca-bb75-20a1a698b43f"),
             ("channel", "xiaomi_8662_64"),
             ("device_brand", "xiaomi"),
-            ("device_id", "1694811517885562"),
+            ("device_id", "2715158266032906"),
             ("device_platform", "android"),
             ("device_type", "23127PN0CC"),
             ("dpi", "460"),
             ("host_abi", "arm64-v8a"),
-            ("iid", "1694811517889658"),
+            ("iid", "2715158266282762"),
             ("language", "zh"),
             ("manifest_version_code", "73932"),
             ("os", "android"),
@@ -572,7 +765,7 @@ pub(crate) mod probe {
             proxy: base.proxy.clone(),
             device: serde_json::from_value(v).unwrap(),
             cookie: Some(
-                "store-region=cn-gd; store-region-src=did; install_id=1694811517889658; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".into(),
+                "store-region=cn-gd; store-region-src=did; install_id=2715158266282762; ttreq=1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874".into(),
             ),
         }
     }
@@ -639,5 +832,80 @@ pub(crate) mod probe {
         );
         assert!(!page.dates.is_empty(), "日历应带日期列表");
         assert!(!page.items.is_empty(), "当日应有上新条目");
+        // 对照：显式传一个非默认日期——修复后应翻页收集到该日条目
+        let other = page
+            .dates
+            .last()
+            .map(String::as_str)
+            .expect("至少一个日期");
+        let page2 = fetch_new_calendar(Some(other), &env).await.expect("指定日期日历");
+        println!(
+            "[calendar:{other}] items={} #1={:?} online_flags={:?}",
+            page2.items.len(),
+            page2.items.first().map(|i| &i.title),
+            page2.items.iter().map(|i| i.is_online).collect::<Vec<_>>()
+        );
+    }
+
+    /// 日历 `target_date` 直查：生产同款环境（静态档案 + 匿名 Cookie）下
+    /// 看响应形态与条目归属（2026-10-04 抓包锁定参数名后的转正实验）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_calendar_target_date() {
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+        };
+        let q: Vec<(String, String)> = [
+            ("active_panel", "6"),
+            ("gender_type", "2"),
+            ("need_calendar_schema", "true"),
+            ("tab_style", "2"),
+            ("tab_type", "5"),
+            ("target_date", "20261006"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, &env)
+            .await
+            .expect("target_date 请求");
+        let v: Value = serde_json::from_slice(&bytes).expect("JSON");
+        let data = &v["data"];
+        println!(
+            "[calendar:target] data 键 = {:?}",
+            data.as_object().map(|m| m.keys().collect::<Vec<_>>())
+        );
+        let items = data["subscribe_items"].as_array();
+        println!("[calendar:target] 条目数 = {:?}", items.map(Vec::len));
+        if let Some(first) = items.and_then(|arr| arr.first()) {
+            println!(
+                "[calendar:target] 首条目键 = {:?}",
+                first.as_object().map(|m| m.keys().collect::<Vec<_>>())
+            );
+            println!(
+                "[calendar:target] 有 subscribe_data = {}",
+                first.get("subscribe_data").is_some()
+            );
+        }
+        match parse_calendar(Some(data)) {
+            Ok(page) => {
+                let days: Vec<String> = page
+                    .items
+                    .iter()
+                    .map(|i| beijing_date(i.publish_time))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                println!(
+                    "[calendar:target] 解析 {} 条, 日期桶 = {days:?}, #1 = {:?}",
+                    page.items.len(),
+                    page.items.first().map(|i| &i.title)
+                );
+            }
+            Err(e) => println!("[calendar:target] 解析失败: {e}"),
+        }
     }
 }

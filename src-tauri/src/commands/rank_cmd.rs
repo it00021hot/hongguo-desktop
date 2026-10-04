@@ -74,13 +74,28 @@ pub async fn search_series_cmd(
         return Ok(SearchPage::default());
     }
     let env = state.api_env();
-    search_series(
+    match search_series(
         query,
         offset.unwrap_or(0),
         search_id.as_deref().unwrap_or(""),
         &env,
     )
     .await
+    {
+        Ok(page) => {
+            log::info!(
+                "[Search] query={query} offset={} 命中 {} 条 has_more={}",
+                offset.unwrap_or(0),
+                page.items.len(),
+                page.has_more
+            );
+            Ok(page)
+        }
+        Err(e) => {
+            log::warn!("[Search] query={query} 失败: {e}");
+            Err(e)
+        }
+    }
 }
 
 /// 我的预约（is_online=true 已上线 / false 待上线；匿名通常空表）。

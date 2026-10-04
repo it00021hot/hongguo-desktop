@@ -102,26 +102,79 @@ impl AppStateInner {
     /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。
     ///
     /// 快照语义是刻意的：一次调用链内环境不变，避免「签名用 A 设备、
-    /// 请求带 B Cookie」的半新半旧。Cookie 从已登录账号设置透出，
-    /// 不参与签名（走 extra_headers 注入）。
+    /// 请求带 B Cookie」的半新半旧。Cookie 不参与签名（走 extra_headers 注入）。
+    ///
+    /// Cookie 的组成是「账号字段优先、匿名兜底补缺」：reading 系接口按
+    /// `install_id` 风控，未登录也不能裸奔（2026-10-04 实测 0 字节拒）。
     pub fn api_env(&self) -> crate::domain::api::client::ApiEnv {
         let settings = self.settings();
+        let device = self.device();
+        let account_cookie = settings
+            .account
+            .as_ref()
+            .map(|a| a.cookies.as_str())
+            .filter(|c| !c.is_empty());
         crate::domain::api::client::ApiEnv {
             proxy: settings.proxy,
-            device: self.device(),
-            cookie: settings
-                .account
-                .as_ref()
-                .map(|a| a.cookies.clone())
-                .filter(|c| !c.is_empty()),
+            cookie: Some(merge_session_cookie(account_cookie, &device)),
+            device,
         }
     }
+}
+
+/// 合并会话 Cookie：匿名兜底（`install_id` / `store-region` / `ttreq`）打底，
+/// 账号字段（`sessionid` 等）覆盖同名字段。
+///
+/// 解析按 `k=v; k=v` 形态逐对处理，账号侧的分号后空格容忍；合并保序，
+/// 兜底字段在前、账号新增字段追加在后——与 hgplayer 抓包的 Cookie 顺序一致。
+fn merge_session_cookie(account: Option<&str>, device: &crate::signer::device::DeviceProfile) -> String {
+    let mut fields: Vec<(String, String)> =
+        crate::signer::device::anonymous_cookie(device)
+            .split("; ")
+            .filter_map(|p| p.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+            .collect();
+    if let Some(account) = account {
+        for pair in account.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+            if let Some((k, v)) = pair.split_once('=') {
+                match fields.iter_mut().find(|(ek, _)| ek == k) {
+                    Some(slot) => slot.1 = v.to_string(),
+                    None => fields.push((k.to_string(), v.to_string())),
+                }
+            }
+        }
+    }
+    fields
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn merge_cookie_anonymous_only_when_no_account() {
+        let device = crate::signer::video_device();
+        let cookie = merge_session_cookie(None, &device);
+        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
+        assert!(cookie.contains("store-region=cn-gd"));
+        assert!(cookie.contains("ttreq=1$"));
+        assert!(!cookie.contains("sessionid"), "匿名形态不应有会话字段");
+    }
+
+    #[test]
+    fn merge_cookie_account_overrides_and_extends() {
+        let device = crate::signer::video_device();
+        let cookie = merge_session_cookie(Some("sessionid=abc; store-region=cn-sh"), &device);
+        // 账号字段覆盖同名、追加新增，兜底字段保留
+        assert!(cookie.contains("store-region=cn-sh"), "账号属地应覆盖兜底值");
+        assert!(cookie.contains("sessionid=abc"));
+        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
+        // 形态合法：每段都是 k=v
+        assert!(cookie.split("; ").all(|p| p.split_once('=').is_some()));
+    }
     #[test]
     fn settings_snapshot_is_a_copy() {
         let state = AppState::default();

@@ -22,3 +22,6 @@ fix_*.py
 
 # 调试截图
 .shots/
+
+# 抓包产物（mitmproxy addon 输出，体积大不入库）
+captures/

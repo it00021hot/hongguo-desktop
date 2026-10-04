@@ -17,9 +17,9 @@ pub const CHANNEL_ID: &str = "1588093228";
 
 /// 与设备档案配套的 UA，二者的系统版本号必须一致。
 pub const VIDEO_UA: &str = concat!(
-    "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; ",
-    "Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 ",
-    "QuicVersion:c67e9834 2025-09-08)"
+    "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; ",
+    "Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 ",
+    "QuicVersion:462f352c 2026-08-31)"
 );
 
 /// 视频 CDN 403 时补上的官网 Referer（直链被拒的最后手段）。
@@ -143,37 +143,59 @@ impl DeviceProfile {
 /// 新档案做更严格的风控。字段顺序就是 query 顺序，**不要重排**——
 /// 签名是「URL 查询串 + body 字节 + 时间戳」的联合函数。
 pub fn video_device() -> DeviceProfile {
+    // 2026-10-04 抓包刷新（captures/flows-20261004.jsonl）：71332 旧档案的
+    // install_id 已被服务端风控清理——reading 系（搜索等）整段 0 字节拒。
+    // 与下方 ANON_TTREQ 同源，失效时重抓 hgplayer 并整组同换。
     DeviceProfile::from_pairs(
         &[
-            ("iid", "1905892595382586"),
-            ("device_id", "1905892595378490"),
+            ("iid", "2715158266282762"),
+            ("device_id", "2715158266032906"),
             ("ac", "wifi"),
-            ("channel", "update_64"),
+            ("channel", "xiaomi_8662_64"),
             ("aid", "8662"),
             ("app_name", "novelread"),
-            ("version_code", "71332"),
-            ("version_name", "7.1.3.32"),
+            ("cdid", "babf8a0e-8586-40ca-bb75-20a1a698b43f"),
+            ("version_code", "73932"),
+            ("version_name", "7.3.9.32"),
             ("device_platform", "android"),
             ("os", "android"),
             ("ssmix", "a"),
-            ("device_type", "25053RT47C"),
-            ("device_brand", "Redmi"),
+            ("device_type", "23127PN0CC"),
+            ("device_brand", "xiaomi"),
             ("language", "zh"),
-            ("os_api", "36"),
-            ("os_version", "16"),
-            ("manifest_version_code", "71332"),
-            ("resolution", "1280*2772"),
-            ("dpi", "520"),
-            ("update_version_code", "71332"),
+            ("os_api", "34"),
+            ("os_version", "14"),
+            ("manifest_version_code", "73932"),
+            ("resolution", "1200*2670"),
+            ("dpi", "460"),
+            ("update_version_code", "73932"),
             ("host_abi", "arm64-v8a"),
             ("dragon_device_type", "phone"),
-            ("pv_player", "71332"),
+            ("pv_player", "73932"),
             ("compliance_status", "0"),
             ("need_personal_recommend", "1"),
             ("player_so_load", "1"),
             ("is_android_pad_screen", "0"),
         ],
         VIDEO_UA,
+    )
+}
+
+/// 兜底档案配套的 `ttreq`（服务端按 install_id 发放的票）。
+///
+/// 与 [`video_device`] 同一次抓包而来：Cookie 里的 `install_id` 必须与档案
+/// 的 `iid` 一致，`ttreq` 也是设备维度的，所以两者要整组同换。设备注册
+/// 链路打通后，应改从注册响应的 Set-Cookie 里取自己的票。
+pub const ANON_TTREQ: &str = "1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874";
+
+/// 未登录时的匿名 Cookie：reading 系接口按 `install_id` 风控，缺它会被
+/// 静默拒（HTTP 200 + 0 字节）。`install_id` 从档案的 `iid` 派生，保证
+/// 换档案时始终一致；`store-region` 是实测的属地标记。
+pub fn anonymous_cookie(device: &DeviceProfile) -> String {
+    format!(
+        "store-region=cn-gd; store-region-src=did; install_id={}; ttreq={}",
+        device.get("iid"),
+        ANON_TTREQ
     )
 }
 
@@ -277,18 +299,18 @@ mod tests {
     #[test]
     fn video_device_profile_is_stable() {
         let device = video_device();
-        assert_eq!(device.iter().count(), 27);
+        assert_eq!(device.iter().count(), 28);
         // 迭代顺序就是 query 参数顺序，签名对它敏感，不能重排
         let first: Vec<(&str, &str)> = device.iter().take(2).collect();
         assert_eq!(
             first,
-            vec![("iid", "1905892595382586"), ("device_id", "1905892595378490")]
+            vec![("iid", "2715158266282762"), ("device_id", "2715158266032906")]
         );
 
-        assert_eq!(device.get("version_name"), "7.1.3.32");
+        assert_eq!(device.get("version_name"), "7.3.9.32");
         // UA 里的系统版本必须与设备档案的 os_version 一致
-        assert_eq!(device.get("os_version"), "16");
-        assert!(device.user_agent().contains("Android 16"));
+        assert_eq!(device.get("os_version"), "14");
+        assert!(device.user_agent().contains("Android 14"));
 
         let mut keys: Vec<&str> = device.iter().map(|(key, _)| key).collect();
         let total = keys.len();
@@ -298,16 +320,30 @@ mod tests {
     }
 
     #[test]
+    fn anonymous_cookie_matches_profile_iid() {
+        let device = video_device();
+        let cookie = anonymous_cookie(&device);
+        // install_id 必须与档案 iid 一致，否则服务端判为两个设备
+        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
+        assert!(cookie.starts_with("store-region=cn-gd"));
+        assert!(cookie.contains(&format!("ttreq={ANON_TTREQ}")));
+    }
+
+    #[test]
     fn set_overrides_in_place_and_appends_new_keys() {
         let mut device = video_device();
         let idx = device.iter().position(|(k, _)| k == "device_id").unwrap();
         device.set("device_id", "42");
         // 覆盖发生在原位置，不改变字段顺序
         assert_eq!(device.iter().nth(idx), Some(("device_id", "42")));
-        // 新 key 追加在尾部（注册流程补 cdid 等字段）
+        // 已存在的 key（cdid 已进兜底档案）走覆盖，不动顺序
+        let cdid_pos = device.iter().position(|(k, _)| k == "cdid").unwrap();
         device.set("cdid", "abc");
-        assert_eq!(device.iter().last(), Some(("cdid", "abc")));
-        assert_eq!(device.iter().count(), 28);
+        assert_eq!(device.iter().nth(cdid_pos), Some(("cdid", "abc")));
+        // 档案外的新 key 追加在尾部（注册流程补 openudid 等字段）
+        device.set("openudid", "xyz");
+        assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
+        assert_eq!(device.iter().count(), 29);
     }
 
     #[test]
