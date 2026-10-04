@@ -8,9 +8,13 @@ use crate::domain::api::login::{self, LoginOutcome, PassportUser, UpsmsState};
 use crate::domain::model::AccountState;
 use crate::error::{AppError, AppResult};
 
-/// 发送短信验证码。
+/// 发送短信验证码。返回 message + mobile_ticket（登录时必须回传 ticket
+/// 绑定发码会话，否则服务端报 1203 验证码无效）。
 #[tauri::command]
-pub async fn login_send_code(state: State<'_, AppState>, mobile: String) -> AppResult<String> {
+pub async fn login_send_code(
+    state: State<'_, AppState>,
+    mobile: String,
+) -> AppResult<login::SendCodeOutcome> {
     validate_mobile(&mobile)?;
     let env = state.api_env();
     login::send_sms_code(&env, &mobile).await
@@ -25,6 +29,7 @@ pub async fn login_sms_login(
     // MFA 重试上下文（上一次返回的 retryTag / smsCodeKey）
     mfa_retry_tag: Option<String>,
     mfa_sms_code_key: Option<String>,
+    mobile_ticket: Option<String>,
 ) -> AppResult<LoginResult> {
     validate_mobile(&mobile)?;
     if code.trim().is_empty() {
@@ -35,7 +40,15 @@ pub async fn login_sms_login(
         (Some(t), Some(k)) => Some((t.as_str(), k.as_str())),
         _ => None,
     };
-    match login::sms_login(&env, &mobile, code.trim(), mfa).await? {
+    match login::sms_login(
+        &env,
+        &mobile,
+        code.trim(),
+        mobile_ticket.as_deref(),
+        mfa,
+    )
+    .await?
+    {
         LoginOutcome::Success { cookies, user } => {
             let account = AccountState {
                 mobile: mobile.clone(),

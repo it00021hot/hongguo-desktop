@@ -8,6 +8,7 @@ import {
   decodeCapabilitySchema,
   downloadTaskSchema,
   loginResultSchema,
+  sendCodeOutcomeSchema,
   mergeCandidateSchema,
   mergePreflightSchema,
   mergeTaskSchema,
@@ -31,6 +32,7 @@ import {
   type DownloadTask,
   type FeedPage,
   type LoginResult,
+  type SendCodeOutcome,
   type MergeCandidate,
   type MergeMode,
   type MergePreflight,
@@ -82,14 +84,25 @@ export const settings = {
 // ---------------------------------------------------------------- 登录
 
 export const login = {
-  sendCode: (mobile: string) => call<string>('login_send_code', { mobile }),
-  smsLogin: (mobile: string, code: string, mfa?: { retryTag: string; smsCodeKey: string }) =>
-    call<LoginResult>('login_sms_login', {
-      mobile,
-      code,
-      mfaRetryTag: mfa?.retryTag ?? null,
-      mfaSmsCodeKey: mfa?.smsCodeKey ?? null,
-    }, loginResultSchema),
+  sendCode: (mobile: string) =>
+    call<SendCodeOutcome>('login_send_code', { mobile }, sendCodeOutcomeSchema),
+  smsLogin: (
+    mobile: string,
+    code: string,
+    ticket?: string,
+    mfa?: { retryTag: string; smsCodeKey: string },
+  ) =>
+    call<LoginResult>(
+      'login_sms_login',
+      {
+        mobile,
+        code,
+        mobileTicket: ticket ?? null,
+        mfaRetryTag: mfa?.retryTag ?? null,
+        mfaSmsCodeKey: mfa?.smsCodeKey ?? null,
+      },
+      loginResultSchema,
+    ),
   mfaVerify: (retryTag: string, smsCodeKey: string, mobile: string) =>
     call<LoginResult>('login_mfa_verify', { retryTag, smsCodeKey, mobile }, loginResultSchema),
   status: () => call<AccountState | null>('login_status', undefined, accountStateSchema.nullable()),

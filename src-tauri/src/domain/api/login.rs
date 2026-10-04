@@ -36,8 +36,9 @@ pub fn encode_mobile(mobile: &str) -> String {
 fn passport_query(mobile_enc: &str) -> Vec<(String, String)> {
     vec![
         ("mobile".into(), mobile_enc.into()),
-        // mix_mode：0 = mobile 是密文，1 = 明文（fqnovel passport 惯例）
-        ("mix_mode".into(), "0".into()),
+        // mix_mode：1 = mobile 是 XOR(0x05) hex 密文（真机实测：配 0 时
+        // 服务端把密文当明文解析成乱码，合法号码也报 1003 手机号错误）
+        ("mix_mode".into(), "1".into()),
     ]
 }
 
@@ -94,9 +95,22 @@ pub enum UpsmsState {
     Success { cookies: String, user: PassportUser },
 }
 
-/// 发送短信验证码。返回服务端 message（成功一般是「验证码已发送」类文案）。
-pub async fn send_sms_code(env: &ApiEnv, mobile: &str) -> AppResult<String> {
-    let q = passport_query(&encode_mobile(mobile));
+/// 发码结果：`mobile_ticket` 用于 sms_login 回传绑定发码会话（缺失时
+/// 服务端匹配不上发码记录，恒报 1203 验证码无效——真机实测）。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendCodeOutcome {
+    pub message: String,
+    #[serde(default)]
+    pub mobile_ticket: String,
+}
+
+/// 发送短信验证码。成功返回文案与 mobile_ticket（登录时要带上）。
+pub async fn send_sms_code(env: &ApiEnv, mobile: &str) -> AppResult<SendCodeOutcome> {
+    let mut q = passport_query(&encode_mobile(mobile));
+    // type：发码场景（真机实测：type=1 成功返回 retry_time=60；
+    // 24 报 1204、37 报 3052）。sms_login 不带 type——带了报 3052。
+    q.push(("type".into(), "1".into()));
     let resp = api_call_full_response(
         PASSPORT_ORIGIN,
         "/passport/mobile/send_code/v1/",
@@ -109,13 +123,20 @@ pub async fn send_sms_code(env: &ApiEnv, mobile: &str) -> AppResult<String> {
     let v: Value = serde_json::from_slice(&resp.bytes)
         .map_err(|e| AppError::Media(format!("send_code 响应不是 JSON: {e}")))?;
     check_error(&v, "发送验证码失败")?;
-    Ok(v
-        .get("data")
-        .and_then(|d| d.get("description"))
-        .or_else(|| v.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("验证码已发送")
-        .to_string())
+    let data = v.get("data");
+    Ok(SendCodeOutcome {
+        message: data
+            .and_then(|d| d.get("description"))
+            .or_else(|| v.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("验证码已发送")
+            .to_string(),
+        mobile_ticket: data
+            .and_then(|d| d.get("mobile_ticket"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// 短信验证码登录。MFA 场景传入 [`LoginOutcome::Mfa`] 的上下文重试。
@@ -123,10 +144,16 @@ pub async fn sms_login(
     env: &ApiEnv,
     mobile: &str,
     code: &str,
-    mfa: Option<(&str, &str)>, // (passport_mfa_retry_tag, sms_code_key)
+    mobile_ticket: Option<&str>, // send_code 返回的 ticket，绑定发码会话
+    mfa: Option<(&str, &str)>,   // (passport_mfa_retry_tag, sms_code_key)
 ) -> AppResult<LoginOutcome> {
     let mut q = passport_query(&encode_mobile(mobile));
     q.push(("code".into(), code.into()));
+    if let Some(t) = mobile_ticket {
+        if !t.is_empty() {
+            q.push(("mobile_ticket".into(), t.into()));
+        }
+    }
     if let Some((tag, key)) = mfa {
         q.push(("passport_mfa_retry_tag".into(), tag.into()));
         q.push(("sms_code_key".into(), key.into()));
@@ -298,26 +325,59 @@ mod tests {
     /// 号码而不下发短信。验证「域名/签名/query/XOR 编码/mix_mode」整条
     /// 链路：若返回的是「手机号相关错误」说明链路通；「参数错误」则编码
     /// 或 mix_mode 有误。
+    /// 真机/无效号段发码探测：HG_LOGIN_MOBILE 指定号码（真机会真实下发
+    /// 短信），缺省用无效号段 10000000000（服务端拒绝号码、不下发）。
     #[tokio::test]
-    #[ignore = "直连真实接口的探测用例（不下发短信）"]
+    #[ignore = "直连真实接口的探测用例"]
     async fn probe_send_code_invalid_number() {
-        use super::super::client::api_call_full_response;
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        let q = passport_query(&encode_mobile("10000000000"));
-        let resp = api_call_full_response(
-            PASSPORT_ORIGIN,
-            "/passport/mobile/send_code/v1/",
-            Some(Vec::new()),
-            &q,
-            &[],
-            &env,
-        )
-        .await
-        .expect("请求应可达");
-        let text = String::from_utf8_lossy(&resp.bytes);
-        println!("[probe] body: {}", &text[..text.len().min(500)]);
+        let mobile = std::env::var("HG_LOGIN_MOBILE").unwrap_or_else(|_| "10000000000".into());
+        println!("[probe] mobile: {mobile}");
+        let mut q = passport_query(&encode_mobile(&mobile));
+        q.push(("type".into(), "1".into()));
+        match send_sms_code(&env, &mobile).await {
+            Ok(out) => println!("[probe] 发码成功: {} ticket={}", out.message, out.mobile_ticket),
+            Err(e) => println!("[probe] 发码失败: {e}"),
+        }
+    }
+
+    /// 真机登录：HG_LOGIN_MOBILE + HG_LOGIN_CODE 环境变量。成功返回
+    /// 会话 cookie（打印前缀），并带 cookie 拉 user_info 验证会话可用。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_sms_login_real() {
+        let env0 = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let mobile =
+            std::env::var("HG_LOGIN_MOBILE").expect("HG_LOGIN_MOBILE 必填");
+        let code = std::env::var("HG_LOGIN_CODE").expect("HG_LOGIN_CODE 必填");
+        let ticket = std::env::var("HG_MOBILE_TICKET").ok();
+        match sms_login(&env0, &mobile, &code, ticket.as_deref(), None).await {
+            Ok(LoginOutcome::Success { cookies, user }) => {
+                println!(
+                    "[login] ✅ 成功 user={}({}) cookie {}B: {}…",
+                    user.name,
+                    user.user_id,
+                    cookies.len(),
+                    &cookies[..cookies.len().min(60)]
+                );
+                let env = crate::domain::api::client::ApiEnv {
+                    cookie: Some(cookies),
+                    ..env0
+                };
+                match user_info(&env).await {
+                    Ok(u) => println!("[login] user_info ✓ name={} id={}", u.name, u.user_id),
+                    Err(e) => println!("[login] user_info ✗ {e}"),
+                }
+            }
+            Ok(LoginOutcome::Mfa { retry_tag, sms_code_key, tips }) => {
+                println!("[login] MFA: tag={retry_tag} key={sms_code_key} tips={tips}");
+            }
+            Err(e) => println!("[login] ✗ {e}"),
+        }
     }
 
     /// 安全探测：sms_login 用无效号段 + 假验证码——服务端在号码校验
@@ -329,7 +389,7 @@ mod tests {
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        match sms_login(&env, "10000000000", "123456", None).await {
+        match sms_login(&env, "10000000000", "123456", None, None).await {
             Ok(outcome) => println!("[probe-sms] 意外成功: {outcome:?}"),
             Err(e) => println!("[probe-sms] 拒绝: {e}"),
         }
