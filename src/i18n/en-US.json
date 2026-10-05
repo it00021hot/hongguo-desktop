@@ -422,5 +422,15 @@
     "unknownTitle": "Unknown title",
     "watching": "Ep.{index}/{total} · {time}",
     "continue": "Continue"
+  },
+  "home": {
+    "prev": "Prev",
+    "next": "Next",
+    "episodes": "Episodes",
+    "detail": "Series details",
+    "openEpisodes": "Open episodes",
+    "preparing": "Preparing \"{title}\"…",
+    "playCount": "{count} plays",
+    "empty": "The feed is empty right now"
   }
 }

@@ -6,6 +6,15 @@ interface PlayerState {
   seriesId: string | null;
   /** 当前播放的集号 */
   vidIndex: number | null;
+  /** 弹幕设置面板开合（播放页/沉浸流共享，切集切剧不重置） */
+  danmakuPanelOpen: boolean;
+  setDanmakuPanelOpen: (open: boolean) => void;
+  /** 音量竖条浮层开合 */
+  volumeOpen: boolean;
+  setVolumeOpen: (open: boolean) => void;
+  /** 右侧选集面板开合（沉浸流默认隐藏，按钮呼出） */
+  seriesPanelOpen: boolean;
+  setSeriesPanelOpen: (open: boolean) => void;
   setTarget: (seriesId: string, vidIndex: number) => void;
   clear: () => void;
 }
@@ -23,6 +32,12 @@ interface PlayerState {
 export const usePlayerStore = create<PlayerState>((set) => ({
   seriesId: null,
   vidIndex: null,
+  danmakuPanelOpen: false,
+  setDanmakuPanelOpen: (open) => set({ danmakuPanelOpen: open }),
+  volumeOpen: false,
+  setVolumeOpen: (open) => set({ volumeOpen: open }),
+  seriesPanelOpen: false,
+  setSeriesPanelOpen: (open) => set({ seriesPanelOpen: open }),
   setTarget: (seriesId, vidIndex) => {
     // 目标持久化：刷新/重启后播放器能恢复到正在看的这部剧这集
     // （进度由本地播放档案的 resumeAt 接上，见 PlayerPage 的恢复逻辑）

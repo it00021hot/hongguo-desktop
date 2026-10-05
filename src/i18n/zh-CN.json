@@ -422,5 +422,15 @@
     "unknownTitle": "未知剧集",
     "watching": "看到第{index}集/共{total}集 {time}",
     "continue": "继续播放"
+  },
+  "home": {
+    "prev": "上一个",
+    "next": "下一个",
+    "episodes": "选集",
+    "detail": "剧集详情",
+    "openEpisodes": "打开选集",
+    "preparing": "正在准备《{title}》…",
+    "playCount": "{count}次播放",
+    "empty": "推荐流暂时为空"
   }
 }

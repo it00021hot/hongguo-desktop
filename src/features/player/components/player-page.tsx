@@ -36,6 +36,7 @@ import {
   type DanmakuDisplaySettings,
 } from '@/lib/playback-prefs';
 import { t, tf } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { useEvent } from '@/lib/ipc/events';
 import { EVENTS } from '@/lib/ipc/types';
 import { formatBytes } from '@/lib/format';
@@ -50,9 +51,9 @@ export function PlayerPage() {
   const setTarget = usePlayerStore((s) => s.setTarget);
   // 弹幕设置面板的开合放在这一层：切集时 PlayerView 整体重挂载，
   // 面板状态在这里才不会一集一开就被吃掉
-  const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
+
   // 音量竖条浮层同样在这层持有：切集重挂载不会把正开着的浮层收走
-  const [volumeOpen, setVolumeOpen] = useState(false);
+
 
   // 刷新/重启后内存 store 是空的：把上次播放目标读回来，
   // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）
@@ -72,10 +73,6 @@ export function PlayerPage() {
   return (
     <PlayerView
       key={`${seriesId}:${vidIndex}`}
-      danmakuPanelOpen={danmakuPanelOpen}
-      onDanmakuPanelOpenChange={setDanmakuPanelOpen}
-      volumeOpen={volumeOpen}
-      onVolumeOpenChange={setVolumeOpen}
     />
   );
 }
@@ -102,17 +99,8 @@ function PlayerEmptyState() {
   );
 }
 
-function PlayerView({
-  danmakuPanelOpen,
-  onDanmakuPanelOpenChange,
-  volumeOpen,
-  onVolumeOpenChange,
-}: {
-  danmakuPanelOpen: boolean;
-  onDanmakuPanelOpenChange: (open: boolean) => void;
-  volumeOpen: boolean;
-  onVolumeOpenChange: (open: boolean) => void;
-}) {
+export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 'sidebar' | 'overlay' }) {
+  const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
@@ -566,10 +554,6 @@ function PlayerView({
                 onToggleDanmaku={toggleDanmaku}
                 danmakuDisplay={danmakuDisplay}
                 onDanmakuDisplayChange={updateDanmakuDisplay}
-                danmakuPanelOpen={danmakuPanelOpen}
-                onDanmakuPanelOpenChange={onDanmakuPanelOpenChange}
-                volumeOpen={volumeOpen}
-                onVolumeOpenChange={onVolumeOpenChange}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
@@ -643,11 +627,27 @@ function PlayerView({
         <p className="text-muted-foreground text-xs">{t('player.keyboardHint')}</p>
       </div>
 
-      <SeriesPanel
-        seriesId={seriesId}
-        currentIndex={vidIndex}
-        onSelect={(index) => setTarget(seriesId, index)}
-      />
+      {seriesPanelMode === 'sidebar' ? (
+        <SeriesPanel
+          seriesId={seriesId}
+          currentIndex={vidIndex}
+          onSelect={(index) => setTarget(seriesId, index)}
+        />
+      ) : (
+        // 沉浸流：右侧选集默认隐藏，滑出浮层盖在画面上
+        <div
+          className={cn(
+            'absolute inset-y-0 right-0 z-30 transition-transform duration-200',
+            seriesPanelOpen ? 'translate-x-0' : 'translate-x-full',
+          )}
+        >
+          <SeriesPanel
+            seriesId={seriesId}
+            currentIndex={vidIndex}
+            onSelect={(index) => setTarget(seriesId, index)}
+          />
+        </div>
+      )}
     </div>
   );
 }

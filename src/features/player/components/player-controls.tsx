@@ -23,6 +23,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t } from '@/i18n';
@@ -53,12 +54,6 @@ interface Props {
   /** 弹幕显示设置与修改回调（透明度/字号/密度/显示区域） */
   danmakuDisplay: DanmakuDisplaySettings;
   onDanmakuDisplayChange: (patch: Partial<DanmakuDisplaySettings>) => void;
-  /** 面板开合在播放页持有：切集重挂载不把面板吃掉 */
-  danmakuPanelOpen: boolean;
-  onDanmakuPanelOpenChange: (open: boolean) => void;
-  /** 音量浮层开合在播放页持有：切集重挂载不把正开着的浮层收走 */
-  volumeOpen: boolean;
-  onVolumeOpenChange: (open: boolean) => void;
   /** 放大镜用的容器：全屏时进的是它，不是整个窗口 */
   stageRef: React.RefObject<HTMLDivElement | null>;
   seriesId: string;
@@ -112,10 +107,6 @@ export function PlayerControls({
   onToggleDanmaku,
   danmakuDisplay,
   onDanmakuDisplayChange,
-  danmakuPanelOpen,
-  onDanmakuPanelOpenChange,
-  volumeOpen,
-  onVolumeOpenChange,
   stageRef,
   seriesId,
   episodes,
@@ -135,6 +126,11 @@ export function PlayerControls({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
+  // 面板/浮层开合在全局播放 store：切集/切剧重挂载不丢
+  const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
+  const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
+  const volumeOpen = usePlayerStore((s) => s.volumeOpen);
+  const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
   /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
   const [chromeVisible, setChromeVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,11 +286,11 @@ export function PlayerControls({
   useEffect(() => {
     if (!danmakuPanelOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (!danmakuPanelRef.current?.contains(e.target as Node)) onDanmakuPanelOpenChange(false);
+      if (!danmakuPanelRef.current?.contains(e.target as Node)) setDanmakuPanelOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [danmakuPanelOpen, onDanmakuPanelOpenChange]);
+  }, [danmakuPanelOpen, setDanmakuPanelOpen]);
 
   const setVolumeValue = useCallback(
     (v: number) => {
@@ -365,8 +361,8 @@ export function PlayerControls({
               会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起 */}
           <div
             className="relative flex items-center"
-            onMouseEnter={() => onVolumeOpenChange(true)}
-            onMouseLeave={() => onVolumeOpenChange(false)}
+            onMouseEnter={() => setVolumeOpen(true)}
+            onMouseLeave={() => setVolumeOpen(false)}
           >
             <IconButton label={t('player.mute')} onClick={toggleMute}>
               {muted || volume === 0 ? (
@@ -397,7 +393,7 @@ export function PlayerControls({
           <div ref={danmakuPanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.danmakuSettings')}
-              onClick={() => onDanmakuPanelOpenChange(!danmakuPanelOpen)}
+              onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
             >
               <Settings2
                 className={`size-4 ${danmakuPanelOpen ? 'text-white' : 'text-white/70'}`}

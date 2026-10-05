@@ -1,164 +1,198 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Flame, Loader2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ListVideo, Loader2, Play, SkipBack, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { RefreshShade } from '@/components/refresh-shade';
-import { ResolvingPill } from '@/components/resolving-pill';
-import { SkeletonCardGrid } from '@/components/skeletons';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import { PlayerView } from '@/features/player/components/player-page';
 import {
-  SeriesDetailSheet,
-  type SeriesRef,
-} from '@/features/series/components/series-detail-sheet';
-import { FeedCardGrid } from './feed-card-grid';
-import { useDownloadTasks, useFeed, useResolveSeries } from '@/lib/queries';
-import { t } from '@/i18n';
-import type { FeedItem } from '@/lib/schema';
+  useFeed,
+  useResolveSeries,
+} from '@/lib/queries';
+import { usePlayerStore } from '@/lib/stores/player';
+import { t, tf } from '@/i18n';
 
 /**
- * 首页：官方推荐信息流。
+ * 首页：沉浸式播放器流（对齐第三方形态）。
  *
- * 两个视图共用同一批已拉取数据：推荐 = 拉取序（算法个性化排布），
- * 热榜 = 播放量重排（拉得越多池子越大、榜越实）。
- * 预约（新剧日历）接口参数未破解，登录体系落地后一并补上。
+ * 打开即播官方推荐流的第一部剧，底部「上一个/下一个」在信息流里切换；
+ * 剧集信息在视频下方，右侧选集面板**默认隐藏**（按钮呼出，滑出盖在画面上）。
+ *
+ * 播放器直接复用播放页的 `PlayerView`——弹幕/弹幕设置/音量/清晰度/倍速/
+ * 兼容转码全套能力同源，不会出现「沉浸流的播放器是简化版」。
+ * 每部剧进入时先 `resolve`（登记档案 + 拿分集）再设为播放目标，
+ * 续播进度由本地播放档案接上。
  */
 export function HomePage() {
   const feed = useFeed();
-  const { data: tasks } = useDownloadTasks();
+  const [feedIndex, setFeedIndex] = useState(0);
+  const current = feed.items[feedIndex];
+  const currentId = current?.seriesId;
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
-  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const setTarget = usePlayerStore((s) => s.setTarget);
+  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
+  const [detailOpen, setDetailOpen] = useState(false);
 
-  // 已下载集数角标
-  const downloadedMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const task of tasks ?? []) {
-      if (task.status !== 'completed') continue;
-      map[task.seriesId] = (map[task.seriesId] ?? 0) + 1;
-    }
-    return map;
-  }, [tasks]);
-
-  // 热榜：同一池子按播放量降序（拉过的都参与，榜随加载变实）
-  const hot = useMemo(() => [...feed.items].sort((a, b) => b.playCnt - a.playCnt), [feed.items]);
-
-  // 滚动到底自动翻页（推荐 tab 下才有意义；热榜也受益——池子变大）。
-  // 观察器只建一次：feed 是每次渲染的新对象，进依赖的话每次渲染都会
-  // disconnect + 重新 observe——哨兵在视口内时重新 observe 会立刻回调，
-  // 形成「加载→渲染→重建→再加载」的级联，页面连续跳变（闪屏的来源）。
-  // 最新状态走 ref 镜像。
-  const feedRef = useRef(feed);
+  // 当前剧变化（含首进）→ 解析登记并设为播放目标（从第 1 集开始，
+  // 看过的剧由后端 resumeAt 自动接续进度）
   useEffect(() => {
-    feedRef.current = feed;
-  });
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        const f = feedRef.current;
-        if (entries[0]?.isIntersecting && f.hasMore && !f.isLoading && !f.isFetchingMore) {
-          void f.loadMore();
-        }
-      },
-      { rootMargin: '400px' },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  const handleSelect = (item: FeedItem) => {
-    // 信息流的剧多半没解析过档案：先 resolve（拉分集 + 登记）再开抽屉。
-    // 失败要出提示而不是无声吞掉——点了没反应是最差的体验。
-    resolve(item.seriesId, {
-      onSuccess: (series) =>
-        setDetail({
-          card: {
-            seriesId: series.seriesId,
-            seriesTitle: series.title,
-            cover: series.cover || item.cover,
-            episodeCount: series.episodeCount,
-            tags: series.tags.length > 0 ? series.tags : item.tags,
-          },
-          selected: [],
-        }),
+    if (!currentId) return;
+    resolve(currentId, {
+      onSuccess: (series) => setTarget(series.seriesId, 1),
       onError: (e) =>
         toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
     });
-  };
+    // resolve/mutate 引用稳定，只需要跟当前剧走
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
-  const gridProps = { downloadedMap, onSelect: handleSelect };
+  // 快滑到信息流尾部时预取下一页
+  useEffect(() => {
+    if (feed.hasMore && !feed.isFetchingMore && feed.items.length - feedIndex <= 3) {
+      feed.loadMore();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedIndex, feed.items.length, feed.hasMore, feed.isFetchingMore]);
 
-  return (
-    <div className="flex flex-col gap-4">
-      <Tabs defaultValue="recommend">
-        <TabsList>
-          <TabsTrigger value="recommend">{t('feed.tabs.recommend')}</TabsTrigger>
-          <TabsTrigger value="hot">
-            <Flame className="mr-1 size-4" aria-hidden />
-            {t('feed.tabs.hot')}
-          </TabsTrigger>
-        </TabsList>
+  const next = useCallback(() => {
+    setFeedIndex((i) => Math.min(i + 1, feed.items.length - 1));
+  }, [feed.items.length]);
+  const prev = useCallback(() => setFeedIndex((i) => Math.max(i - 1, 0)), []);
 
-        <TabsContent value="recommend" className="mt-3">
-          <RefreshShade refreshing={feed.isRefreshing}>
-            {feed.isLoading ? (
-              <SkeletonCardGrid />
-            ) : feed.error ? (
-              <FeedError message={feed.error} onRetry={() => void feed.refresh()} />
-            ) : (
-              <FeedCardGrid items={feed.items} {...gridProps} />
-            )}
-          </RefreshShade>
-        </TabsContent>
-
-        <TabsContent value="hot" className="mt-3">
-          <RefreshShade refreshing={feed.isRefreshing}>
-            {/* 热榜与推荐共用加载状态：池子来自同一个流 */}
-            {feed.isLoading ? (
-              <SkeletonCardGrid />
-            ) : feed.error ? (
-              <FeedError message={feed.error} onRetry={() => void feed.refresh()} />
-            ) : (
-              <FeedCardGrid items={hot} ranked {...gridProps} />
-            )}
-          </RefreshShade>
-        </TabsContent>
-      </Tabs>
-
-      {/* 滚动哨兵 + 状态行 */}
-      <div ref={sentinelRef} className="h-px" aria-hidden />
-      {feed.isFetchingMore && (
-        <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('feed.loadingMore')}
-        </p>
-      )}
-      {!feed.isLoading && !feed.error && !feed.hasMore && feed.items.length > 0 && (
-        <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
-      )}
-      {resolving && <ResolvingPill />}
-
-      <SeriesDetailSheet
-        card={detail?.card ?? null}
-        selected={detail?.selected ?? []}
-        onSelectedChange={(next) => setDetail((d) => (d ? { ...d, selected: next } : d))}
-        onOpenChange={(open) => !open && setDetail(null)}
-      />
-    </div>
+  const tagsLine = useMemo(
+    () => (current ? current.tags.filter(Boolean).slice(0, 4).join('·') : ''),
+    [current],
   );
-}
 
-/** 信息流加载失败：说明 + 错误详情 + 重试。 */
-function FeedError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  if (feed.isLoading && feed.items.length === 0) {
+    return (
+      <div className="flex h-full flex-col gap-3 p-4">
+        <Skeleton className="min-h-0 flex-1 rounded-xl" />
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3 w-2/3" />
+      </div>
+    );
+  }
+  if (feed.error && feed.items.length === 0) {
+    return (
+      <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+        <p>{t('feed.loadFailed')}</p>
+        <p className="text-destructive text-xs">{feed.error}</p>
+        <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
+          <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+          {t('feed.retry')}
+        </Button>
+      </div>
+    );
+  }
+  if (!current) {
+    return (
+      <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
+        <p className="text-sm">{t('home.empty')}</p>
+        <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
+          {t('feed.retry')}
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-      <p>{t('feed.loadFailed')}</p>
-      <p className="text-destructive text-xs">{message}</p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        <RefreshCw className="mr-1 size-4" aria-hidden />
-        {t('feed.retry')}
-      </Button>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* 顶条：剧名 + 信息流切换 */}
+      <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-2">
+        <p className="truncate text-sm font-semibold">{current.title}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={feedIndex === 0}
+            onClick={prev}
+          >
+            <SkipBack className="size-4" />
+            {t('home.prev')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={feedIndex >= feed.items.length - 1 && !feed.hasMore}
+            onClick={next}
+          >
+            {t('home.next')}
+            <SkipForward className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* 播放器：完整能力（弹幕/设置/音量/清晰度/倍速/兼容转码） */}
+      <div className="relative min-h-0 flex-1">
+        <PlayerView seriesPanelMode="overlay" />
+        {/* 右侧选集：默认隐藏，按钮呼出滑出面板 */}
+        <Button
+          size="sm"
+          variant="outline"
+          className="absolute top-3 right-3 z-40 shadow-md"
+          onClick={() => setSeriesPanelOpen(true)}
+        >
+          <ListVideo className="size-4" aria-hidden />
+          {t('home.episodes')}
+        </Button>
+        {resolving && (
+          <div className="absolute inset-x-0 top-0 z-40 flex justify-center pt-3">
+            <p className="text-muted-foreground bg-card flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs shadow-lg">
+              {tf('home.preparing', { title: current.title })}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* 剧信息 */}
+      <div className="shrink-0 px-4 py-3">
+        <p className="truncate text-sm font-semibold">{current.title}</p>
+        <div className="text-muted-foreground mt-1 flex items-center gap-2 text-xs">
+          {tagsLine !== '' && <span className="truncate">{tagsLine}</span>}
+          {current.episodeCnt > 0 && (
+            <span className="shrink-0">{tf('common.episodeCount', { count: current.episodeCnt })}</span>
+          )}
+          {current.playCnt > 0 && (
+            <span className="shrink-0">{tf('home.playCount', { count: current.playCnt })}</span>
+          )}
+        </div>
+      </div>
+
+      {/* 选集/详情抽屉（默认隐藏） */}
+      {detailOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40"
+          onClick={() => setDetailOpen(false)}
+          aria-hidden
+        />
+      )}
+      {detailOpen && current && (
+        <div className="bg-card fixed inset-y-0 right-0 z-50 w-[420px] max-w-full overflow-y-auto border-l p-4 shadow-2xl">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-semibold">{t('home.detail')}</p>
+            <Button size="sm" variant="ghost" onClick={() => setDetailOpen(false)}>
+              {t('common.close')}
+            </Button>
+          </div>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            {current.tags.length > 0 && (
+              <span className="mr-2">{current.tags.join('·')}</span>
+            )}
+            {tf('common.episodeCount', { count: current.episodeCnt })}
+          </p>
+          <Button
+            size="sm"
+            className="mt-3 w-full"
+            onClick={() => {
+              setDetailOpen(false);
+              setSeriesPanelOpen(true);
+            }}
+          >
+            <Play className="mr-1 size-4" aria-hidden />
+            {t('home.openEpisodes')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
