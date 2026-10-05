@@ -60,10 +60,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {t(`nav.${navKey}.description`)}
               </p>
             </div>
-            {/* 页面级头部扩展位：页面经 portal 往这里挂内容（如排行榜的
-                内容 tab 与标题同行，hgplayer 同款）。空页面时整块随
-                justify-between 塌掉，不影响其他页。 */}
-            <div id="header-extra" className="ml-4 min-w-0 flex-1 self-stretch" />
             <div className="flex shrink-0 items-center">
               <ThemeSwitch />
               {!mac && <WindowButtons />}

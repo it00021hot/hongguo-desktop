@@ -38,9 +38,9 @@ const GENDERS: { value: number; labelKey: string }[] = [
   { value: 0, labelKey: 'newDrama.gender.female' },
 ];
 
-/** 官方同款下划线 tab（激活态主色脚标），推荐/日历两个 trigger 共用。 */
-const underlineTriggerCls =
-  'rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none';
+/** 底部贴条里的视图 tab（胶囊形态，选中 = 主色），覆盖 TabsTrigger 默认样式。 */
+const pillTriggerCls =
+  'h-auto flex-none rounded-full px-4 py-1.5 text-sm text-muted-foreground shadow-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none';
 
 export function NewDramaPage() {
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
@@ -72,44 +72,46 @@ export function NewDramaPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <Tabs defaultValue="recommend">
-        {/* 官方同款顶行：大标题 + 下划线 tab + 右侧频道胶囊 */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-6">
-            <h1 className="text-xl font-bold">{t('nav.new.title')}</h1>
-            <TabsList className="h-auto gap-5 rounded-none bg-transparent p-0">
-              <TabsTrigger value="recommend" className={underlineTriggerCls}>
-                {t('newDrama.tabs.recommend')}
-              </TabsTrigger>
-              <TabsTrigger value="calendar" className={underlineTriggerCls}>
-                {t('newDrama.tabs.calendar')}
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {GENDERS.map(({ value, labelKey }) => (
-              <Button
-                key={value}
-                size="sm"
-                variant={gender === value ? 'default' : 'outline'}
-                className="rounded-full px-4"
-                onClick={() => setGender(value)}
-              >
-                {t(labelKey)}
-              </Button>
-            ))}
-          </div>
+    // min-h-full + 底部 mt-auto：内容不足一屏时 tab 条也贴在页面底边
+    <div className="flex min-h-full flex-col">
+      <Tabs defaultValue="recommend" className="flex min-h-0 flex-1 flex-col gap-3">
+        {/* 顶行只留频道胶囊；页标题由 AppShell 顶栏负责，不重复。
+            mt-3 与 Tabs 的 gap-3 对称：胶囊行上下各留 12px，行内居中 */}
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          {GENDERS.map(({ value, labelKey }) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={gender === value ? 'default' : 'outline'}
+              className="rounded-full px-4"
+              onClick={() => setGender(value)}
+            >
+              {t(labelKey)}
+            </Button>
+          ))}
         </div>
 
-        <TabsContent value="recommend" className="mt-3">
+        <TabsContent value="recommend">
           <NewDramaRecommends gender={gender} onSelect={handleSelect} />
         </TabsContent>
 
-        <TabsContent value="calendar" className="mt-3">
+        <TabsContent value="calendar">
           <NewCalendarView onSelect={handleSelect} />
         </TabsContent>
+
+        {/* 视图 tab 条：贴着页面底部常驻（sticky，列表长时滚动中也钉在
+            底边）；选中态 = 主色胶囊，与排行榜底部内容 tab 同款。
+            TabsList 是 inline-flex，mx-auto 不生效，得用 flex 容器居中 */}
+        <div className="bg-background sticky bottom-0 z-10 mt-auto flex justify-center border-t py-2">
+          <TabsList className="h-auto gap-1 rounded-full p-1">
+            <TabsTrigger value="recommend" className={pillTriggerCls}>
+              {t('newDrama.tabs.recommend')}
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className={pillTriggerCls}>
+              {t('newDrama.tabs.calendar')}
+            </TabsTrigger>
+          </TabsList>
+        </div>
       </Tabs>
 
       <SeriesDetailSheet
