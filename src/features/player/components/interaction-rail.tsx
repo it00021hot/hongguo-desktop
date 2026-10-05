@@ -120,7 +120,7 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
   return (
     <div
       className={cn(
-        'absolute bottom-16 right-2 z-20 flex flex-col items-center gap-4',
+        'absolute right-2 top-[55%] z-20 flex -translate-y-1/2 flex-col items-center gap-4',
         'transition-opacity duration-300',
         visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
