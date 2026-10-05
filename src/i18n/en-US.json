@@ -201,6 +201,18 @@
       "shareCopied": "Share link copied",
       "shareFailed": "Copy failed",
       "send": "Send"
+    },
+    "comments": {
+      "title": "Comments",
+      "placeholder": "Say something…",
+      "empty": "No comments yet",
+      "loadFailed": "Failed to load comments (server unavailable)",
+      "anon": "Anonymous",
+      "justNow": "just now",
+      "minutesAgo": "{n} min ago",
+      "hoursAgo": "{n} h ago",
+      "yesterday": "yesterday",
+      "replies": "{n} replies"
     }
   },
   "series": {

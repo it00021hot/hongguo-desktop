@@ -392,6 +392,19 @@ export const danmakuSchema = z.object({
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
+/** 一条评论区评论（Rust `danmaku::CommentItem`）。 */
+export const commentItemSchema = z.object({
+  commentId: z.string(),
+  userName: z.string(),
+  avatar: z.string(),
+  text: z.string(),
+  createTime: z.number(),
+  diggCount: z.number(),
+  replyCount: z.number(),
+  userDigg: z.boolean(),
+});
+export type CommentItem = z.infer<typeof commentItemSchema>;
+
 /** 互动列表里的一条视频（Rust `interact::InteractionItem`，计数给右栏数字用）。 */
 export const interactionItemSchema = z.object({
   vid: z.string(),

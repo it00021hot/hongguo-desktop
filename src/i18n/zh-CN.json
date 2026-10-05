@@ -201,6 +201,18 @@
       "shareCopied": "分享链接已复制",
       "shareFailed": "复制失败",
       "send": "发送"
+    },
+    "comments": {
+      "title": "评论",
+      "placeholder": "留下你的精彩评论吧",
+      "empty": "还没有评论，来抢沙发",
+      "loadFailed": "评论加载失败（服务端暂时不可用）",
+      "anon": "匿名用户",
+      "justNow": "刚刚",
+      "minutesAgo": "{n} 分钟前",
+      "hoursAgo": "{n} 小时前",
+      "yesterday": "昨天",
+      "replies": "{n} 条回复"
     }
   },
   "series": {

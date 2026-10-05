@@ -3,6 +3,7 @@ import { call } from './invoke';
 import {
   accountStateSchema,
   browseResultSchema,
+  commentItemSchema,
   danmakuSchema,
   categorySchema,
   decodeCapabilitySchema,
@@ -28,6 +29,7 @@ import {
   watchHistoryPageSchema,
   type AccountState,
   type Category,
+  type CommentItem,
   type Danmaku,
   type DecodeCapability,
   type DownloadTask,
@@ -138,6 +140,9 @@ export const discover = {
 export const danmaku = {
   list: (groupId: string, bookId: string) =>
     call<Danmaku[]>('danmaku_list', { groupId: groupId, bookId }, danmakuSchema.array()),
+  /** 评论区（ct=4/src=4 形态，与弹幕同端点）。 */
+  comments: (groupId: string, bookId: string) =>
+    call<CommentItem[]>('comment_list', { groupId, bookId }, commentItemSchema.array()),
 };
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）

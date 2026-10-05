@@ -425,92 +425,6 @@ export function PlayerControls({
         <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
         <div className="ml-auto flex items-center gap-1">
-          <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
-            <MessageSquareText
-              className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
-              aria-hidden
-            />
-          </IconButton>
-
-          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
-              会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起 */}
-          <div
-            className="relative flex items-center"
-            onMouseEnter={() => setVolumeOpen(true)}
-            onMouseLeave={() => setVolumeOpen(false)}
-          >
-            <IconButton label={t('player.mute')} onClick={toggleMute}>
-              {muted || volume === 0 ? (
-                <VolumeX className="size-4" />
-              ) : (
-                <Volume2 className="size-4" />
-              )}
-            </IconButton>
-            {volumeOpen && (
-              // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
-              // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
-              // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
-              // 视觉留白放进浮层自己的 padding 里。
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm">
-                <div className="mb-1 text-center font-mono text-[10px] text-white/90">
-                  {Math.round((muted ? 0 : volume) * 100)}
-                </div>
-                <VerticalSlider
-                  value={muted ? 0 : volume}
-                  onChange={setVolumeValue}
-                  label={t('player.volume')}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
-          <div ref={danmakuPanelRef} className="relative flex items-center">
-            <IconButton
-              label={t('player.danmakuSettings')}
-              onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
-            >
-              <Settings2
-                className={`size-4 ${danmakuPanelOpen ? 'text-white' : 'text-white/70'}`}
-                aria-hidden
-              />
-            </IconButton>
-            {danmakuPanelOpen && (
-              <div className="absolute right-0 bottom-full mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
-                <div className="flex flex-col gap-4">
-                  <DisplaySlider
-                    label={t('player.danmakuOpacity')}
-                    value={danmakuDisplay.opacity}
-                    min={0.1}
-                    max={1}
-                    onChange={(v) => onDanmakuDisplayChange({ opacity: v })}
-                  />
-                  <DisplaySlider
-                    label={t('player.danmakuFontSize')}
-                    value={danmakuDisplay.fontScale}
-                    min={0.5}
-                    max={2}
-                    onChange={(v) => onDanmakuDisplayChange({ fontScale: v })}
-                  />
-                  <DisplaySlider
-                    label={t('player.danmakuDensity')}
-                    value={danmakuDisplay.density}
-                    min={0}
-                    max={1}
-                    onChange={(v) => onDanmakuDisplayChange({ density: v })}
-                  />
-                  <DisplaySlider
-                    label={t('player.danmakuArea')}
-                    value={danmakuDisplay.area}
-                    min={0.25}
-                    max={1}
-                    onChange={(v) => onDanmakuDisplayChange({ area: v })}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className={cn(CHROME_BUTTON, 'font-mono')}>
@@ -614,6 +528,95 @@ export function PlayerControls({
               <PictureInPicture2 className="size-4" />
             </IconButton>
           )}
+
+          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
+          <div ref={danmakuPanelRef} className="relative flex items-center">
+            <IconButton
+              label={t('player.danmakuSettings')}
+              onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
+            >
+              <Settings2
+                className={`size-4 ${danmakuPanelOpen ? 'text-white' : 'text-white/70'}`}
+                aria-hidden
+              />
+            </IconButton>
+            {danmakuPanelOpen && (
+              <div className="absolute right-0 bottom-full mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
+                <div className="flex flex-col gap-4">
+                  <DisplaySlider
+                    label={t('player.danmakuOpacity')}
+                    value={danmakuDisplay.opacity}
+                    min={0.1}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ opacity: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuFontSize')}
+                    value={danmakuDisplay.fontScale}
+                    min={0.5}
+                    max={2}
+                    onChange={(v) => onDanmakuDisplayChange({ fontScale: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuDensity')}
+                    value={danmakuDisplay.density}
+                    min={0}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ density: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuArea')}
+                    value={danmakuDisplay.area}
+                    min={0.25}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ area: v })}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+
+          <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
+            <MessageSquareText
+              className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
+              aria-hidden
+            />
+          </IconButton>
+
+
+          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
+              会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起 */}
+          <div
+            className="relative flex items-center"
+            onMouseEnter={() => setVolumeOpen(true)}
+            onMouseLeave={() => setVolumeOpen(false)}
+          >
+            <IconButton label={t('player.mute')} onClick={toggleMute}>
+              {muted || volume === 0 ? (
+                <VolumeX className="size-4" />
+              ) : (
+                <Volume2 className="size-4" />
+              )}
+            </IconButton>
+            {volumeOpen && (
+              // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
+              // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
+              // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
+              // 视觉留白放进浮层自己的 padding 里。
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm">
+                <div className="mb-1 text-center font-mono text-[10px] text-white/90">
+                  {Math.round((muted ? 0 : volume) * 100)}
+                </div>
+                <VerticalSlider
+                  value={muted ? 0 : volume}
+                  onChange={setVolumeValue}
+                  label={t('player.volume')}
+                />
+              </div>
+            )}
+          </div>
+
 
           <IconButton label={t('player.fullscreen')} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}

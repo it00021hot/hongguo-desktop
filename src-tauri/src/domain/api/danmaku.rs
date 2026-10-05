@@ -94,6 +94,29 @@ fn danmaku_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
     })
 }
 
+/// 评论区请求体（与弹幕同端点同构，**只差 comment_type 与 comment_source**；
+/// 2026-10-05 抓包 #82 实证：ct=4 + src=4 → 20 条 data_type=4 的评论）。
+fn comments_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
+    serde_json::json!({
+        "aid": 8662,
+        "business_param": {
+            "book_id": book_id,
+            "need_danmaku_guide_type": [],
+            "playlet_item_duration": 60000,
+            "start_offset_time": 0,
+        },
+        "comment_source": 4,
+        "comment_type": 4,
+        "compliance_status": 0,
+        "count": 20,
+        "cursor": cursor,
+        "group_id": group_id,
+        "group_type": 30,
+        "server_channel": 1000,
+        "sort": 1,
+    })
+}
+
 async fn fetch_danmaku_window(
     group_id: &str,
     book_id: &str,
@@ -162,6 +185,120 @@ async fn fetch_danmaku_window(
             .to_string(),
         items,
     })
+}
+
+/// 一条评论区评论（用户资料 / 计数 / 我的点赞态，见 2026-10-05 抓包样本）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentItem {
+    pub comment_id: String,
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub avatar: String,
+    pub text: String,
+    /// unix 秒
+    #[serde(default)]
+    pub create_time: i64,
+    #[serde(default)]
+    pub digg_count: i64,
+    #[serde(default)]
+    pub reply_count: i64,
+    #[serde(default)]
+    pub user_digg: bool,
+}
+
+/// 拉一集的**评论区**（ct=4/src=4，cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+pub async fn fetch_comments_all(
+    group_id: &str,
+    book_id: &str,
+    env: &ApiEnv,
+) -> AppResult<Vec<CommentItem>> {
+    let mut all: Vec<CommentItem> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut cursor = String::new();
+    for _ in 0..MAX_WINDOWS {
+        let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
+        let body = serde_json::to_vec(&comments_payload(group_id, book_id, &cursor))
+            .map_err(|e| AppError::Signer(e.to_string()))?;
+        let bytes =
+            super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
+        let v: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Media(format!("解析评论响应失败: {e}")))?;
+        if v.get("code").and_then(Value::as_i64) != Some(0) {
+            let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
+            return Err(AppError::Media(format!(
+                "评论接口返回 {}: {msg}",
+                v.get("code").and_then(Value::as_i64).unwrap_or(-1)
+            )));
+        }
+        let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
+        for entry in v
+            .pointer("/data/data_list")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            let Some(comment) = entry.get("comment") else { continue };
+            let comment_id = comment
+                .get("comment_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let text = comment
+                .pointer("/common/content/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if comment_id.is_empty() || text.is_empty() {
+                continue;
+            }
+            let base = comment.pointer("/common/user_info/base_info");
+            let item = CommentItem {
+                comment_id,
+                user_name: base
+                    .and_then(|b| b.get("user_name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                avatar: base
+                    .and_then(|b| b.get("expand_user_avatar"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                text,
+                create_time: comment
+                    .pointer("/common/create_timestamp")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                digg_count: comment
+                    .pointer("/stat/digg_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                reply_count: comment
+                    .pointer("/stat/reply_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                user_digg: comment
+                    .pointer("/user_action/user_digg")
+                    .and_then(Value::as_bool)
+                    == Some(true),
+            };
+            if seen.insert(item.comment_id.clone()) {
+                all.push(item);
+            }
+        }
+        let has_more = list_info.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+        cursor = list_info
+            .get("cursor")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !has_more || cursor.is_empty() {
+            break;
+        }
+    }
+    Ok(all)
 }
 
 #[cfg(test)]

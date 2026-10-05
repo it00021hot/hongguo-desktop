@@ -23,7 +23,6 @@ import {
   useWebCover,
 } from '@/lib/queries';
 import { t, tf } from '@/i18n';
-import { cn } from '@/lib/utils';
 import type { CalendarItem, RankItem } from '@/lib/schema';
 
 /**
@@ -38,6 +37,10 @@ const GENDERS: { value: number; labelKey: string }[] = [
   { value: 1, labelKey: 'newDrama.gender.male' },
   { value: 0, labelKey: 'newDrama.gender.female' },
 ];
+
+/** 官方同款下划线 tab（激活态主色脚标），推荐/日历两个 trigger 共用。 */
+const underlineTriggerCls =
+  'rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none';
 
 export function NewDramaPage() {
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
@@ -76,16 +79,10 @@ export function NewDramaPage() {
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold">{t('nav.new.title')}</h1>
             <TabsList className="h-auto gap-5 rounded-none bg-transparent p-0">
-              <TabsTrigger
-                value="recommend"
-                className="rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
-              >
+              <TabsTrigger value="recommend" className={underlineTriggerCls}>
                 {t('newDrama.tabs.recommend')}
               </TabsTrigger>
-              <TabsTrigger
-                value="calendar"
-                className="rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
-              >
+              <TabsTrigger value="calendar" className={underlineTriggerCls}>
                 {t('newDrama.tabs.calendar')}
               </TabsTrigger>
             </TabsList>
@@ -97,10 +94,7 @@ export function NewDramaPage() {
                 key={value}
                 size="sm"
                 variant={gender === value ? 'default' : 'outline'}
-                className={cn(
-                  'rounded-full px-4',
-                  gender === value && 'bg-red-500 text-white hover:bg-red-500/90',
-                )}
+                className="rounded-full px-4"
                 onClick={() => setGender(value)}
               >
                 {t(labelKey)}

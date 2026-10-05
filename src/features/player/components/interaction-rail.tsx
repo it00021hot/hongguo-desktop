@@ -21,6 +21,7 @@ import {
   useSeriesCollect,
   useVideoDigg,
 } from '@/lib/queries';
+import { usePlayerStore } from '@/lib/stores/player';
 
 interface InteractionRailProps {
   seriesId: string;
@@ -62,6 +63,7 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
   const digg = useVideoDigg();
   const collect = useSeriesCollect();
   const reserve = useReserveSeries();
+  const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
 
   const requireLogin = useCallback(() => {
     toast.info(t('player.interact.loginRequired'));
@@ -133,11 +135,10 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
         count={diggCount > 0 ? diggCount : undefined}
         onClick={onDigg}
       />
-      {/* 评论：评论区 UI 未做，先亮计数占位（弹幕发送在控制栏） */}
       <RailItem
         icon={<MessageSquareText className="size-7 drop-shadow-md" />}
         label={t('player.interact.comments')}
-        onClick={() => toast.info(t('player.interact.commentsSoon'))}
+        onClick={() => setCommentPanelOpen(true)}
       />
       <RailItem
         icon={

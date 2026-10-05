@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +58,26 @@ function normalizeTabs(tabs: RankTab[]): RankTab[] {
 
 /** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
+/** 把内容 tab 挂进 AppShell 顶栏的扩展位：与页标题同行垂直居中
+ *  （hgplayer 同款），页面内不再另占一行。顶栏先于页面提交进 DOM，
+ *  effect 里取节点必然拿得到；跨页导航时 portal 随本页卸载自动清空。 */
+function HeaderTabsPortal({ children }: { children: React.ReactNode }) {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    // 微任务里查节点：绕开 set-state-in-effect 的同步级联告警。
+    // 不能在 useState 初始化器里取——render 阶段顶栏还没提交进 DOM。
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setEl(document.getElementById('header-extra'));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!el) return null;
+  return createPortal(children, el);
+}
+
 export function RankPage() {
   const [selected, setSelected] = useState('all');
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
@@ -113,34 +134,38 @@ export function RankPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 内容 tab：加载中骨架占位；两级形态显示真 tab（登录一级形态
-          只有一个合成 tab，隐藏整行） */}
-      {showTabsRow && (
-        <div className="flex items-center gap-1 border-b pb-2">
-          {tabRow.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => switchTab(tab.id)}
-              className={cn(
-                'relative px-3 py-1.5 text-sm transition-colors',
-                tab.id === selected
-                  ? 'font-semibold text-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {tab.name}
-              {tab.id === selected && (
-                <span className="bg-primary absolute inset-x-2 -bottom-[9px] h-0.5 rounded-full" />
-              )}
-            </button>
-          ))}
-          {tabRow.length === 0 &&
-            Array.from({ length: 4 }, (_, i) => (
-              <Skeleton key={i} className="h-6 w-14 rounded-full" />
+      {/* 内容 tab：挂在顶栏标题行（hgplayer 同款）。加载中骨架占位；
+          两级形态显示真 tab（登录一级形态只有一个合成 tab，隐藏整行） */}
+      <HeaderTabsPortal>
+        {showTabsRow && (
+          <div className="flex h-full items-center gap-1">
+            {tabRow.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => switchTab(tab.id)}
+                className={cn(
+                  'relative flex h-full items-center px-3 text-sm transition-colors',
+                  tab.id === selected
+                    ? 'font-semibold text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {tab.name}
+                {tab.id === selected && (
+                  // 下划线贴着顶栏底边，与 header 的 border-b 重合成「从
+                  // 标题行垂下来的选中脚标」
+                  <span className="bg-primary absolute inset-x-2 bottom-0 h-0.5 rounded-full" />
+                )}
+              </button>
             ))}
-        </div>
-      )}
+            {tabRow.length === 0 &&
+              Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-6 w-14 rounded-full" />
+              ))}
+          </div>
+        )}
+      </HeaderTabsPortal>
 
       <div className="flex min-h-0 gap-4">
         {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位） */}

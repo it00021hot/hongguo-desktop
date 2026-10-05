@@ -11,6 +11,7 @@ import { SeriesPanel } from './series-panel';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { InteractionRail } from './interaction-rail';
+import { CommentPanel } from './comment-panel';
 import {
   usePlay,
   useSavePosition,
@@ -116,6 +117,8 @@ export function PlayerView({
   onWheelStep?: (dir: 1 | -1) => void;
 }) {
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
+  const commentPanelOpen = usePlayerStore((s) => s.commentPanelOpen);
+  const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
@@ -592,7 +595,7 @@ export function PlayerView({
                 key={playSrc}
                 ref={videoRef}
                 src={playSrc}
-                className="size-full"
+                className="size-full object-contain"
                 autoPlay
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={(e) => persist(e.currentTarget.currentTime)}
@@ -635,6 +638,14 @@ export function PlayerView({
                     </p>
                   )}
                 </div>
+              )}
+              {/* 沉浸流评论区：右侧滑出（💬 触发） */}
+              {seriesPanelMode === 'overlay' && commentPanelOpen && (
+                <CommentPanel
+                  seriesId={seriesId}
+                  vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                  onClose={() => setCommentPanelOpen(false)}
+                />
               )}
               {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出。
                   vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用。 */}

@@ -27,6 +27,7 @@ import {
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
 import type {
+  CommentItem,
   Danmaku,
   DownloadProgress,
   DownloadTask,
@@ -65,6 +66,7 @@ const keys = {
     ['browse-list', cat, genre, page] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
+  comments: (vid: string) => ['comments', vid] as const,
   interactState: ['interact-state'] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
   rank: (selected: string, sub: string, panel: string) =>
@@ -251,6 +253,47 @@ export function useSendDanmaku() {
           ...next,
           { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
         ].sort((a, b) => a.offsetMs - b.offsetMs);
+      });
+    },
+  });
+}
+
+/** 一集的评论区（ct=4/src=4；失败时报错由面板显示，不打断播放）。 */
+export function useComments(vid: string) {
+  const groupId = vid.split(':')[0] ?? '';
+  const bookId = vid.split(':')[1] ?? '';
+  return useQuery({
+    queryKey: keys.comments(vid),
+    queryFn: () => danmakuCmd.comments(groupId, bookId),
+    enabled: vid.includes(':'),
+    staleTime: 60_000,
+  });
+}
+
+/** 发评论：成功后乐观插入该集评论缓存顶部。 */
+export function useSendComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { vid: string; text: string }) => {
+      const [groupId, bookId] = input.vid.split(':');
+      return interactCmd.sendComment(groupId ?? '', bookId ?? '', input.text);
+    },
+    onSuccess: (commentId, input) => {
+      queryClient.setQueryData<CommentItem[]>(keys.comments(input.vid), (prev) => {
+        const next = prev ?? [];
+        return [
+          {
+            commentId,
+            userName: '我',
+            avatar: '',
+            text: input.text,
+            createTime: Math.floor(Date.now() / 1000),
+            diggCount: 0,
+            replyCount: 0,
+            userDigg: false,
+          },
+          ...next,
+        ];
       });
     },
   });

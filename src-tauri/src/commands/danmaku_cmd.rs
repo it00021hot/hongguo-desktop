@@ -3,7 +3,7 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::danmaku::{fetch_danmaku_all, Danmaku};
+use crate::domain::api::danmaku::{fetch_comments_all, fetch_danmaku_all, CommentItem, Danmaku};
 use crate::error::AppResult;
 
 /// 拉一集的全部弹幕（后端按 30 秒窗口循环到 has_more=false）。
@@ -35,6 +35,18 @@ pub async fn danmaku_list(
             Err(e)
         }
     }
+}
+
+
+/// 拉一集的**评论区**（ct=4/src=4，与弹幕同端点不同形态）。
+#[tauri::command]
+pub async fn comment_list(
+    state: State<'_, AppState>,
+    group_id: String,
+    book_id: String,
+) -> AppResult<Vec<CommentItem>> {
+    let env = state.api_env();
+    fetch_comments_all(&group_id, &book_id, &env).await
 }
 
 #[cfg(test)]

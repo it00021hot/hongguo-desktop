@@ -14,7 +14,9 @@ interface PlayerState {
   setVolumeOpen: (open: boolean) => void;
   /** 右侧选集面板开合（沉浸流默认隐藏，按钮呼出） */
   seriesPanelOpen: boolean;
+  commentPanelOpen: boolean;
   setSeriesPanelOpen: (open: boolean) => void;
+  setCommentPanelOpen: (open: boolean) => void;
   setTarget: (seriesId: string, vidIndex: number) => void;
   clear: () => void;
 }
@@ -37,7 +39,9 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   volumeOpen: false,
   setVolumeOpen: (open) => set({ volumeOpen: open }),
   seriesPanelOpen: false,
+  commentPanelOpen: false,
   setSeriesPanelOpen: (open) => set({ seriesPanelOpen: open }),
+  setCommentPanelOpen: (open) => set({ commentPanelOpen: open }),
   setTarget: (seriesId, vidIndex) => {
     // 目标持久化：刷新/重启后播放器能恢复到正在看的这部剧这集
     // （进度由本地播放档案的 resumeAt 接上，见 PlayerPage 的恢复逻辑）
