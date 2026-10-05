@@ -26,6 +26,11 @@ pub fn compat_cache_dir() -> PathBuf {
     data_dir().join("compat-cache")
 }
 
+/// 封面转码缓存目录（HEIC→JPEG 产物，按 URL 哈希寻址，可随时清）。
+pub fn cover_cache_dir() -> PathBuf {
+    data_dir().join("cover-cache")
+}
+
 /// 兼容转码缓存上限（沿用现版 4GB）。
 pub const COMPAT_CACHE_MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 

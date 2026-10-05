@@ -128,6 +128,10 @@ pub struct RankPanelRow {
 pub struct RankSubList {
     pub id: String,
     pub name: String,
+    /// 子榜描述行（sub_title，如 "10月4日已更新·基于红果观看/互动以及
+    /// 个人兴趣排序"；官方显示在子榜名旁）
+    #[serde(default)]
+    pub description: String,
     pub panel: Vec<RankPanelRow>,
 }
 
@@ -200,8 +204,14 @@ pub async fn fetch_rank_ex(
 ///
 /// 抓包结构（2026-10-05 captures/rank-selector-schema.json）：
 /// `outer_row.items[]`（内容 tab，selector_item_id）→ `sub_cell_selector.
-/// outer_row.items[]`（子榜）→ `panel_selector.inner_rows[]`（行 row_name +
-/// items[] 选项，selection_type=1 单选）。
+/// outer_row.items[]`（子榜，sub_title 为描述行）→ `panel_selector.
+/// inner_rows[]`（行 row_name + items[] 选项，selection_type=1 单选）。
+///
+/// 形态由**客户端版本号**决定（probe_rank_login_form 二分实证，与登录态
+/// 无关）：73932（7.3.9，hgplayer 1.1.3 内置红果版本）下发两级全量结构；
+/// 71332 老版本身份退化成扁平一级结构（无「全部」tab、面板分组丢失）。
+/// 设备档案已在启动时对齐版本（[`crate::signer::device::align_app_version`]），
+/// 一级形态的兼容归一保留在前端 normalizeTabs 里。
 fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
     let Some(tabs) = data
         .and_then(|d| d.get("cell_view"))
@@ -227,8 +237,8 @@ fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
                     arr.iter()
                         .filter_map(|sub| {
                             let sid = str_field(sub, "selector_item_id");
-                            // 登录态一级形态下 sub 层是筛选选项，「总榜」的
-                            // id 为空但必须保留（前端靠它渲染回退选项）
+                            // 一级形态（老版本身份）下 sub 层是筛选选项，
+                            // 「总榜」的 id 为空但必须保留（前端靠它渲染回退选项）
                             if sid.is_empty() && str_field(sub, "show_name") != "总榜" {
                                 return None;
                             }
@@ -265,6 +275,7 @@ fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
                             Some(RankSubList {
                                 id: sid,
                                 name: str_field(sub, "show_name"),
+                                description: str_field(sub, "sub_title"),
                                 panel,
                             })
                         })
@@ -308,21 +319,72 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
 ///
 /// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
 /// 匿名空表；与日历共用 [`parse_calendar_item`] 的双形态解析。
+///
+/// tab 角标计数不直接信响应的 `*_total_count`：该键在部分形态下缺失
+/// （解析层缺省为 0），这里翻页拉全后用全量条数兜底——请求本身按
+/// is_online 由服务端过滤，条数即该 tab 的真实总数。
 pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<CalendarPage> {
-    let q: Vec<(String, String)> = [
-        ("is_online", if is_online { "true" } else { "false" }),
-        ("limit", "20"),
-        ("offset", "0"),
-        ("subscribe_offset", "0"),
-        ("subscribe_order_type", "0"),
-        ("swipe_type", "0"),
-        ("tab_type", "13"),
-        ("need_calendar_schema", "false"),
-        ("session_id", reading_session_id()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect();
+    let mut merged = fetch_reservations_page(is_online, 0, env).await?;
+    let server_total = if is_online {
+        merged.online_total
+    } else {
+        merged.offline_total
+    };
+    // 翻页拉全；上限 20 页防服务端分页异常时失控，空页即止
+    for _ in 0..19 {
+        if !merged.has_more || merged.next_offset <= 0 {
+            break;
+        }
+        let next = fetch_reservations_page(is_online, merged.next_offset, env).await?;
+        if next.items.is_empty() {
+            break;
+        }
+        merged.items.extend(next.items);
+        merged.has_more = next.has_more;
+        merged.next_offset = next.next_offset;
+    }
+    Ok(finalize_reservations(merged, is_online, server_total))
+}
+
+/// 拉全收尾：角标计数用服务端 total（>0 时），缺失（0）则按全量条数
+/// 兜底；翻页在拉全后终结，has_more/next_offset 复位。
+fn finalize_reservations(
+    mut page: CalendarPage,
+    is_online: bool,
+    server_total: i64,
+) -> CalendarPage {
+    let count = if server_total > 0 {
+        server_total
+    } else {
+        page.items.len() as i64
+    };
+    if is_online {
+        page.online_total = count;
+    } else {
+        page.offline_total = count;
+    }
+    page.has_more = false;
+    page.next_offset = 0;
+    page
+}
+
+/// 拉一页预约列表（tab_type=13 形态，每页 20 条）。
+async fn fetch_reservations_page(
+    is_online: bool,
+    offset: i64,
+    env: &ApiEnv,
+) -> AppResult<CalendarPage> {
+    let q: Vec<(String, String)> = vec![
+        ("is_online".into(), if is_online { "true" } else { "false" }.into()),
+        ("limit".into(), "20".into()),
+        ("offset".into(), offset.to_string()),
+        ("subscribe_offset".into(), "0".into()),
+        ("subscribe_order_type".into(), "0".into()),
+        ("swipe_type".into(), "0".into()),
+        ("tab_type".into(), "13".into()),
+        ("need_calendar_schema".into(), "false".into()),
+        ("session_id".into(), reading_session_id().to_string()),
+    ];
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
@@ -796,6 +858,7 @@ mod tests {
                                     {
                                         "show_name": "推荐榜",
                                         "selector_item_id": "ranklist_hot_sc",
+                                        "sub_title": "10月4日已更新·基于红果观看/互动以及个人兴趣排序",
                                         "panel_selector": { "inner_rows": [
                                             {
                                                 "row_name": "综合",
@@ -846,6 +909,11 @@ mod tests {
         assert_eq!(tabs[0].subs.len(), 2);
         let sub = &tabs[0].subs[0];
         assert_eq!(sub.id, "ranklist_hot_sc");
+        assert_eq!(
+            sub.description,
+            "10月4日已更新·基于红果观看/互动以及个人兴趣排序",
+            "子榜描述行（sub_title）供官方同款排版用"
+        );
         assert_eq!(sub.panel.len(), 2);
         assert_eq!(sub.panel[0].name, "综合");
         // 「总榜」id 为空 = 清除筛选，也要在场（前端靠它渲染回退选项）
@@ -859,7 +927,8 @@ mod tests {
         assert!(parse_cell_selector(Some(&serde_json::json!({}))).is_empty());
     }
 
-    /// 登录态一级形态（2026-10-05 app 实连发现）：outer_row 直接是榜单，
+    /// 一级形态（老版本身份的退化结构，2026-10-05 probe 二分实证：由
+    /// version_code 决定、与登录态无关）：outer_row 直接是榜单，
     /// sub_cell_selector 是**筛选选项**（女频/男频/题材…，无 panel 层），
     /// 「总榜」选项 id 为空但要保留。
     #[test]
@@ -1050,6 +1119,27 @@ mod tests {
         assert_eq!(page.offline_total, 1, "待上线计数供 tab 徽标用");
     }
 
+    /// 服务端没回 `*_total_count`（该键部分形态缺失，解析层缺省 0）时，
+    /// 拉全收尾用全量条数兜底——角标不再恒 0。
+    #[test]
+    fn finalize_reservations_falls_back_to_item_count() {
+        let page = CalendarPage {
+            items: vec![CalendarItem::default(); 35],
+            online_total: 0,
+            offline_total: 0,
+            ..Default::default()
+        };
+        let online = finalize_reservations(page.clone(), true, 0);
+        assert_eq!(online.online_total, 35, "缺 total 时用条数兜底");
+        assert_eq!(online.offline_total, 0, "只写当前 tab 的计数");
+        assert!(!online.has_more);
+        assert_eq!(online.next_offset, 0);
+
+        let offline = finalize_reservations(page, false, 88);
+        assert_eq!(offline.offline_total, 88, "服务端 total 有效时优先");
+        assert_eq!(offline.online_total, 0);
+    }
+
     /// 预约操作的 body：gzip 可解回，JSON 字段与抓包形态一致。
     #[test]
     fn reserve_payload_roundtrips_through_gzip() {
@@ -1157,6 +1247,95 @@ pub(crate) mod probe {
             .unwrap_or_else(|| std::path::PathBuf::from("captures/rank-selector-schema.json"));
         std::fs::write(&out, &bytes).expect("写 captures/rank-selector-schema.json");
         println!("[rank-selector] {} bytes -> {}", bytes.len(), out.display());
+    }
+
+    /// 排行榜 cell_selector 形态二分：服务端是否按客户端版本号分发
+    /// 两级（内容 tab × 子榜 × 分组面板）/ 一级（扁平榜单）结构。
+    /// 用法：PROBE_DEVICE / PROBE_COOKIE 由真实库导出，
+    /// `PROBE_VARIANT=asis|v73932 cargo test probe_rank_login_form -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_login_form() {
+        let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
+        let account_cookie = std::env::var("PROBE_COOKIE").expect("PROBE_COOKIE");
+        let variant = std::env::var("PROBE_VARIANT").unwrap_or_else(|_| "asis".into());
+
+        let mut v: Value = serde_json::from_str(&device_json).expect("device json");
+        if variant == "v73932" {
+            let bump = [
+                ["version_code", "73932"],
+                ["version_name", "7.3.9.32"],
+                ["manifest_version_code", "73932"],
+                ["update_version_code", "73932"],
+            ];
+            let fields = v["fields"].as_array_mut().expect("fields");
+            for [k, val] in bump {
+                for f in fields.iter_mut() {
+                    if f[0].as_str() == Some(k) {
+                        f[1] = serde_json::json!(val);
+                    }
+                }
+            }
+        }
+        let device: crate::signer::device::DeviceProfile = serde_json::from_value(v).unwrap();
+        let cookie = format!(
+            "{}; {}",
+            crate::signer::device::anonymous_cookie(&device),
+            account_cookie
+        );
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            device,
+            cookie: Some(cookie),
+            x_tt_token: None,
+        };
+
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+            .await
+            .expect("榜单请求");
+        println!("[{variant}] tabs={} 第一层 id:", page.tabs.len());
+        for tab in &page.tabs {
+            let subs: Vec<&str> = tab.subs.iter().map(|s| s.name.as_str()).collect();
+            println!("  {:?} {:?} subs={:?}", tab.id, tab.name, subs);
+        }
+        println!("[{variant}] items={} #1={:?}", page.items.len(), page.items.first().map(|i| i.title.as_str()));
+    }
+
+    /// 排行榜 cell_selector 形态二分（补充）：老版本号 + 匿名（无会话），
+    /// 区分「版本号」与「登录会话」哪个才是 schema 分发开关。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_login_form_anon() {
+        let variant = std::env::var("PROBE_VARIANT").unwrap_or_else(|_| "asis".into());
+        let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
+        let mut v: Value = serde_json::from_str(&device_json).expect("device json");
+        if variant == "v73932" {
+            let fields = v["fields"].as_array_mut().expect("fields");
+            for f in fields.iter_mut() {
+                match f[0].as_str() {
+                    Some("version_code" | "manifest_version_code" | "update_version_code") => {
+                        f[1] = serde_json::json!("73932");
+                    }
+                    Some("version_name") => f[1] = serde_json::json!("7.3.9.32"),
+                    _ => {}
+                }
+            }
+        }
+        let device: crate::signer::device::DeviceProfile = serde_json::from_value(v).unwrap();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+            x_tt_token: None,
+        };
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+            .await
+            .expect("榜单请求");
+        println!("[anon/{variant}] tabs={} 第一层 id:", page.tabs.len());
+        for tab in &page.tabs {
+            let subs: Vec<&str> = tab.subs.iter().map(|s| s.name.as_str()).collect();
+            println!("  {:?} {:?} subs={:?}", tab.id, tab.name, subs);
+        }
     }
 
     /// 排行榜内容 tab「演员」形态验证（ranklist_celebrity，抓包没点到，

@@ -69,8 +69,6 @@ impl DeviceProfile {
 
     /// 覆盖已有 key 的值。key 不存在时**追加在尾部**（注册流程补
     /// cdid / openudid 等新字段用）；不排序。
-    // M2b 设备注册落位前的脚手架（当前仅测试引用）。
-    #[allow(dead_code)]
     pub fn set(&mut self, key: &str, value: &str) {
         if let Some(slot) = self.fields.iter_mut().find(|(k, _)| k == key) {
             slot.1 = value.to_string();
@@ -187,6 +185,27 @@ pub fn video_device() -> DeviceProfile {
 /// 的 `iid` 一致，`ttreq` 也是设备维度的，所以两者要整组同换。设备注册
 /// 链路打通后，应改从注册响应的 Set-Cookie 里取自己的票。
 pub const ANON_TTREQ: &str = "1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874";
+
+/// 当前客户端自报的版本身份（与 [`video_device`] / 注册模板同源：
+/// hgplayer 1.1.3 内置红果 7.3.9.32）。
+const APP_VERSION_FIELDS: [(&str, &str); 4] = [
+    ("version_code", "73932"),
+    ("version_name", "7.3.9.32"),
+    ("manifest_version_code", "73932"),
+    ("update_version_code", "73932"),
+];
+
+/// 把设备档案的「App 版本身份」对齐到当前版本（device_id/iid 身份不动）。
+///
+/// 服务端按自报 `version_code` 分发功能 schema：71332 老版本身份下排行榜
+/// `cell_selector` 退化成扁平一级结构（无「全部」内容 tab、面板分组丢失，
+/// 2026-10-05 `probe_rank_login_form` 二分实证），73932 才是全量两级结构。
+/// 真实设备升级 app 后同样只是自报新版本号，档案其余字段原样保留。
+pub fn align_app_version(profile: &mut DeviceProfile) {
+    for (k, v) in APP_VERSION_FIELDS {
+        profile.set(k, v);
+    }
+}
 
 /// 未登录时的匿名 Cookie：reading 系接口按 `install_id` 风控，缺它会被
 /// 静默拒（HTTP 200 + 0 字节）。`install_id` 从档案的 `iid` 派生，保证
@@ -351,6 +370,38 @@ mod tests {
         device.set("openudid", "xyz");
         assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
         assert_eq!(device.iter().count(), 29);
+    }
+
+    /// 旧档案（71332 时代遗留/注册）启动时对齐版本身份：四个版本字段
+    /// 原位覆盖，设备身份（device_id/iid/cdid）与其余字段不动——服务端
+    /// 按自报版本号分发功能 schema（排行榜选项表 71332 下退化为扁平）。
+    #[test]
+    fn align_app_version_bumps_only_version_fields() {
+        let mut legacy = DeviceProfile::from_pairs(
+            &[
+                ("iid", "1905892595382586"),
+                ("device_id", "1905892595378490"),
+                ("cdid", "abc-uuid"),
+                ("version_code", "71332"),
+                ("version_name", "7.1.3.32"),
+                ("manifest_version_code", "71332"),
+                ("update_version_code", "71332"),
+            ],
+            "com.phoenix.read/71332 test",
+        );
+        align_app_version(&mut legacy);
+        assert_eq!(legacy.get("version_code"), "73932");
+        assert_eq!(legacy.get("version_name"), "7.3.9.32");
+        assert_eq!(legacy.get("manifest_version_code"), "73932");
+        assert_eq!(legacy.get("update_version_code"), "73932");
+        // 身份字段原样
+        assert_eq!(legacy.get("iid"), "1905892595382586");
+        assert_eq!(legacy.get("device_id"), "1905892595378490");
+        assert_eq!(legacy.get("cdid"), "abc-uuid");
+        // 字段顺序不受影响（签名 query 顺序敏感的注释契约）
+        let mut keys: Vec<&str> = legacy.iter().map(|(k, _)| k).collect();
+        keys.truncate(3);
+        assert_eq!(keys, vec!["iid", "device_id", "cdid"]);
     }
 
     #[test]

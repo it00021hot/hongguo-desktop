@@ -1,15 +1,16 @@
 //! 自定义 URI 协议注册。
 //!
-//! 注册两个 scheme：
+//! 注册三个 scheme：
 //! - `hongguo-local://` —— 本地成品文件，支持 Range（拖进度条要用）
 //! - `hongguo-stream://` —— 在线播放的内存渐进流，同样支持 Range
+//! - `hongguo-cover://` —— HEIC 封面下载转 JPEG（磁盘缓存）
 //!
 //! 用异步 handler：可以挂起等待数据就绪（在线播放「边下边看」的基础），
 //! 而不是取不到就报错。
 
 use tauri::http::{Request, Response, StatusCode};
 
-use super::{local, parse_stream_path, stream, LOCAL_SCHEME, STREAM_SCHEME};
+use super::{cover, local, parse_stream_path, stream, COVER_SCHEME, LOCAL_SCHEME, STREAM_SCHEME};
 
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
@@ -25,6 +26,24 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                 responder.respond(serve_stream(&request, range));
             },
         )
+        .register_asynchronous_uri_scheme_protocol(COVER_SCHEME, move |_ctx, request, responder| {
+            // 首次命中的封面要下载 + ffmpeg 转码（秒级阻塞），丢到后台线程
+            // 出结果再回包——协议回调里不能同步等它
+            let path = request.uri().path().to_string();
+            tauri::async_runtime::spawn(async move {
+                let response = tauri::async_runtime::spawn_blocking(move || cover::serve(&path))
+                    .await
+                    .unwrap_or_else(|e| Err(format!("封面任务失败: {e}")));
+                let response = response.unwrap_or_else(|_| {
+                    (
+                        StatusCode::NOT_FOUND.as_u16(),
+                        Vec::new(),
+                        Vec::new(),
+                    )
+                });
+                responder.respond(build_response(response.0, response.1, response.2));
+            });
+        })
 }
 
 /// 取 `Range` 请求头。

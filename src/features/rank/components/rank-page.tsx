@@ -5,6 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RefreshShade } from '@/components/refresh-shade';
+import { ResolvingPill } from '@/components/resolving-pill';
+import { SkeletonRows } from '@/components/skeletons';
 import {
   SeriesDetailSheet,
   type SeriesRef,
@@ -16,12 +19,13 @@ import type { RankItem, RankSubList, RankTab } from '@/lib/schema';
 /**
  * 排行榜页（对齐 hgplayer 1.1.3 布局，2026-10-05 抓包）：
  * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
- * （panel_selected_items 单选）。
+ * （panel_selected_items 单选），子榜名旁带「N月N日已更新·基于…」描述行。
  *
- * 选项表由接口随行下发（响应 cell_selector）。服务端按登录态分发两种
- * 形态（同一结构、不同嵌套语义，normalizeTabs 统一）：
- * - 匿名两级：tab=内容分类 → sub=子榜 → panel=筛选行；
- * - 登录一级：tab=榜单 → sub=筛选选项平铺（panel 层不用）。
+ * 选项表由接口随行下发（响应 cell_selector）。形态由客户端自报版本号
+ * 决定（与登录态无关，设备档案已在后端对齐 73932），normalizeTabs 保留
+ * 一级形态兼容：
+ * - 两级（73932）：tab=内容分类 → sub=子榜（含分组筛选面板行）；
+ * - 一级（老版本身份，理论上不再出现）：tab=榜单 → sub=筛选选项平铺。
  *
  * 「演员」tab 响应无剧集数据（celebrity 形态），不提供入口。
  */
@@ -33,7 +37,7 @@ function normalizeTabs(tabs: RankTab[]): RankTab[] {
   if (tabs.some((tab) => tab.id === 'all')) {
     return tabs.filter((tab) => tab.id !== 'ranklist_celebrity' && tab.subs.length > 0);
   }
-  // 一级形态：榜单当子榜，其平铺选项包成单行「筛选」面板
+  // 一级形态（老版本身份，理论不再出现）：榜单当子榜，平铺选项包成单行面板
   return [
     {
       id: 'all',
@@ -41,6 +45,7 @@ function normalizeTabs(tabs: RankTab[]): RankTab[] {
       subs: tabs.map<RankSubList>((tab) => ({
         id: tab.id,
         name: tab.name,
+        description: '',
         panel:
           tab.subs.length > 0
             ? [{ name: t('rank.filter.title'), items: tab.subs.map((s) => ({ id: s.id, name: s.name })) }]
@@ -50,7 +55,7 @@ function normalizeTabs(tabs: RankTab[]): RankTab[] {
   ];
 }
 
-/** 首屏 schema 未到时 tab 行不渲染（一级/两级形态未知），避免形态跳变。 */
+/** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
 export function RankPage() {
   const [selected, setSelected] = useState('all');
@@ -63,20 +68,17 @@ export function RankPage() {
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const tabs = useMemo(() => normalizeTabs(data?.tabs ?? []), [data?.tabs]);
-  const showTabsRow = (data?.tabs ?? []).some((tab) => tab.id === 'all');
+  // 首屏加载中先显示 tab 行骨架；形态确定后仅两级形态显示
+  // （登录一级形态只有一个合成 tab，隐藏整行）；出错时不渲染
+  const showTabsRow =
+    data !== undefined ? data.tabs.some((tab) => tab.id === 'all') : isLoading;
   const currentTab = tabs.find((tab) => tab.id === selected);
   const currentSub = currentTab?.subs.find((s) => s.id === sub) ?? currentTab?.subs[0];
 
   // schema 到达（或登录态形态切换）后，当前 sub 不在新 tab 的子榜里时
-  // 落到第一个子榜（render 期调整 state 的官方模式，立即用新值重渲染）
-  if (currentTab && currentTab.subs.length > 0 && currentSub?.id !== sub) {
-    setSub(currentSub.id);
-    setPanel('');
-  }
-
-  // schema 到达（或登录态形态切换）后，当前 sub 不在新 tab 的子榜里时
-  // 落到第一个子榜（render 期调整 state 的官方模式，立即用新值重渲染）
-  if (currentTab && currentTab.subs.length > 0 && currentSub?.id !== sub) {
+  // 落到第一个子榜（render 期调整 state 的官方模式，立即用新值重渲染；
+  // subs 非空时 currentSub 必有值，undefined 只可能伴随空 subs）
+  if (currentTab && currentSub && currentSub.id !== sub) {
     setSub(currentSub.id);
     setPanel('');
   }
@@ -111,7 +113,8 @@ export function RankPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 内容 tab：仅两级形态显示（登录一级形态只有一个合成 tab，隐藏整行） */}
+      {/* 内容 tab：加载中骨架占位；两级形态显示真 tab（登录一级形态
+          只有一个合成 tab，隐藏整行） */}
       {showTabsRow && (
         <div className="flex items-center gap-1 border-b pb-2">
           {tabRow.map((tab) => (
@@ -132,11 +135,15 @@ export function RankPage() {
               )}
             </button>
           ))}
+          {tabRow.length === 0 &&
+            Array.from({ length: 4 }, (_, i) => (
+              <Skeleton key={i} className="h-6 w-14 rounded-full" />
+            ))}
         </div>
       )}
 
       <div className="flex min-h-0 gap-4">
-        {/* 左侧子榜竖排（hgplayer 同款形态） */}
+        {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位） */}
         <nav className="flex w-36 shrink-0 flex-col gap-1" aria-label={t('rank.subLists')}>
           {(currentTab?.subs ?? []).map((s) => (
             <button
@@ -157,13 +164,23 @@ export function RankPage() {
               {s.name}
             </button>
           ))}
+          {(currentTab?.subs.length ?? 0) === 0 &&
+            isLoading &&
+            Array.from({ length: 5 }, (_, i) => (
+              <Skeleton key={i} className="h-9 rounded-md" />
+            ))}
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          {/* 右上：子榜名 + 筛选面板入口 */}
+          {/* 右上：子榜名 + 描述行 + 筛选面板入口（官方同款排版） */}
           <div className="flex items-center justify-between gap-2">
-            <p className="text-muted-foreground text-sm">
-              {currentSub?.name ?? currentTab?.name ?? ''}
+            <p className="text-muted-foreground min-w-0 truncate text-sm">
+              <span>{currentSub?.name ?? currentTab?.name ?? ''}</span>
+              {currentSub?.description && (
+                <span className="text-muted-foreground/70 ml-2 text-xs">
+                  {currentSub.description}
+                </span>
+              )}
             </p>
             {currentSub && currentSub.panel.length > 0 && (
               <FilterPanelButton
@@ -175,11 +192,7 @@ export function RankPage() {
           </div>
 
           {isLoading ? (
-            <div className="flex flex-col gap-3">
-              {Array.from({ length: 8 }, (_, i) => (
-                <Skeleton key={i} className="h-24 rounded-xl" />
-              ))}
-            </div>
+            <SkeletonRows count={8} height="h-24 rounded-xl" />
           ) : error ? (
             <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
               <p>{t('rank.loadFailed')}</p>
@@ -190,21 +203,20 @@ export function RankPage() {
               </Button>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {(data?.items ?? []).map((item) => (
-                <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
-              ))}
-              {(data?.items.length ?? 0) === 0 && (
-                <p className="text-muted-foreground py-16 text-center text-sm">{t('rank.empty')}</p>
-              )}
-            </div>
-          )}
-
-          {isFetching && !isLoading && (
-            <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              {t('feed.loadingMore')}
-            </p>
+            /* 切子榜/筛选时 keepPreviousData 保住旧列表：降透明度禁点，
+               而不是闪骨架屏——旧内容可看但不可点 */
+            <RefreshShade refreshing={isFetching}>
+              <div className="flex flex-col gap-2">
+                {(data?.items ?? []).map((item) => (
+                  <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
+                ))}
+                {(data?.items.length ?? 0) === 0 && (
+                  <p className="text-muted-foreground py-16 text-center text-sm">
+                    {t('rank.empty')}
+                  </p>
+                )}
+              </div>
+            </RefreshShade>
           )}
         </div>
       </div>
@@ -216,7 +228,7 @@ export function RankPage() {
         onOpenChange={(open) => !open && setDetail(null)}
       />
 
-      {resolving && <ResolvingHint />}
+      {resolving && <ResolvingPill />}
     </div>
   );
 }
@@ -329,7 +341,12 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
   const showImg = cover !== '' && !imgBroken;
 
   const rankNo = item.rank > 0 ? item.rank : undefined;
-  const heat = item.recText !== '' ? item.recText : (item.secondaryInfos[0] ?? '');
+  // 官方条目双信息：🔥主热词（recText，如 "997万推荐"）+ 次信息（"4945万热度"）
+  const rec = item.recText;
+  const secondary = item.secondaryInfos.filter((s) => s !== '' && s !== rec);
+  // recText 缺失时次信息首位顶上火焰位（与旧展示兼容）
+  const badge = rec !== '' ? rec : (secondary[0] ?? '');
+  const extra = rec !== '' ? secondary : secondary.slice(1);
 
   return (
     <article
@@ -393,21 +410,17 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
         )}
       </div>
 
-      {heat !== '' && (
+      {badge !== '' && (
         <Badge variant="secondary" className="shrink-0 gap-1">
           <Flame className="size-3 text-orange-400" aria-hidden />
-          {heat}
+          {badge}
         </Badge>
       )}
+      {extra.length > 0 && (
+        <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
+          {extra.join(' ')}
+        </span>
+      )}
     </article>
-  );
-}
-
-function ResolvingHint() {
-  return (
-    <p className="text-muted-foreground bg-card fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-lg">
-      <Loader2 className="size-4 animate-spin" aria-hidden />
-      {t('browse.resolving')}
-    </p>
   );
 }

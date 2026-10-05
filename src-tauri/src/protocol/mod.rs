@@ -1,8 +1,10 @@
-//! 自定义 URI 协议：视频流与本地文件供给。
+//! 自定义 URI 协议：视频流、本地文件与封面转码供给。
 //!
 //! - [`local`]：`hongguo-local://` 本地成品文件（支持 Range 拖动）
 //! - [`stream`]：`hongguo-stream://` 在线播放的内存渐进流
+//! - [`cover`]：`hongguo-cover://` HEIC 封面下载转 JPEG（落盘缓存）
 
+pub mod cover;
 pub mod local;
 pub mod range;
 pub mod register;
@@ -12,6 +14,8 @@ pub mod stream;
 pub const LOCAL_SCHEME: &str = "hongguo-local";
 /// 在线流协议 scheme。
 pub const STREAM_SCHEME: &str = "hongguo-stream";
+/// 封面转码协议 scheme。
+pub const COVER_SCHEME: &str = "hongguo-cover";
 
 /// 在线流 URL。
 ///
