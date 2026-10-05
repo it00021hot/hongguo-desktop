@@ -89,25 +89,6 @@ pub struct VideoDefinition {
     pub height: u32,
 }
 
-/// 播放历史的一条：某部剧最近一次看到的位置。
-///
-/// 列表页要靠它排序并显示「上次看到第 N 集」，否则用户播过的剧只能靠重新搜。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaybackHistoryItem {
-    pub series_id: String,
-    /// 最近播放的集号
-    pub vid_index: u32,
-    /// 播到多少秒
-    pub current_time: f64,
-    /// 最后一次播放的毫秒时间戳，用于按最近排序
-    pub updated_at: i64,
-    /// 剧名。历史要能独立渲染，不能靠前端再去关联剧集档案。
-    pub title: String,
-    /// 封面地址。
-    pub cover: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

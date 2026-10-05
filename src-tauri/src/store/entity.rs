@@ -16,14 +16,6 @@ use crate::domain::model::{DownloadTask, MergeTask, PlaybackPosition, Series};
 use crate::error::{AppError, AppResult};
 use crate::store::db::Db;
 
-/// playback 历史查询的一行：某部剧最近播放的那一集。
-#[derive(Debug, Clone, PartialEq)]
-pub struct LatestPlayback {
-    pub series_id: String,
-    pub vid_index: u32,
-    pub position: PlaybackPosition,
-}
-
 // ---------- 取列小工具 ----------
 
 fn col_text(row: &turso::Row, i: usize) -> AppResult<String> {
@@ -268,60 +260,6 @@ pub async fn save_playback_position(
     )
     .await?;
     Ok(())
-}
-
-/// 删一部剧的全部进度，返回删除行数（0 = 本来就没有）。
-pub async fn remove_playback(db: &Db, series_id: &str) -> AppResult<u64> {
-    db.execute(
-        "DELETE FROM playback WHERE series_id = ?1",
-        [Value::Text(series_id.to_string())],
-    )
-    .await
-}
-
-/// 清空全部进度，返回删除行数。
-pub async fn clear_playback(db: &Db) -> AppResult<u64> {
-    db.execute("DELETE FROM playback", ()).await
-}
-
-/// 每部剧最近播放的那一集，按时间倒序。
-///
-/// 同一部剧同一毫秒写了两集的话 JOIN 会出两行，在 Rust 侧按 series_id
-/// 去重保留第一条（ORDER BY 已保证是最新的）。
-pub async fn playback_latest_per_series(db: &Db) -> AppResult<Vec<LatestPlayback>> {
-    let mut rows = db
-        .conn()
-        .query(
-            r#"
-            SELECT p.series_id, p.vid_index, p.current_time, p.duration, p.updated_at
-            FROM playback p
-            JOIN (SELECT series_id, MAX(updated_at) AS max_updated
-                  FROM playback GROUP BY series_id) m
-              ON m.series_id = p.series_id AND m.max_updated = p.updated_at
-            ORDER BY p.updated_at DESC
-            "#,
-            (),
-        )
-        .await
-        .map_err(map_db_err)?;
-    let mut out: Vec<LatestPlayback> = Vec::new();
-    while let Some(row) = rows.next().await.map_err(map_db_err)? {
-        let series_id = col_text(&row, 0)?;
-        if out.iter().any(|l| l.series_id == series_id) {
-            continue;
-        }
-        out.push(LatestPlayback {
-            series_id,
-            vid_index: u32::try_from(col_i64(&row, 1)?)
-                .map_err(|e| AppError::StoreCorrupt(format!("集号越界: {e}")))?,
-            position: PlaybackPosition {
-                current_time: col_f64(&row, 2)?,
-                duration: col_f64(&row, 3)?,
-                updated_at: col_i64(&row, 4)?,
-            },
-        });
-    }
-    Ok(out)
 }
 
 // ---------- device_profile ----------
@@ -601,14 +539,11 @@ mod tests {
                 playback_position(&db, "A", 1).await.unwrap().map(|p| p.current_time),
                 Some(20.0)
             );
-
-            let latest = playback_latest_per_series(&db).await.unwrap();
-            assert_eq!(latest.len(), 1, "一部剧只出一条");
-            assert_eq!(latest[0].vid_index, 2, "取最近更新的一集");
-            assert_eq!(latest[0].series_id, "A");
-
-            assert_eq!(remove_playback(&db, "A").await.unwrap(), 2, "整部剧两行都删");
-            assert_eq!(remove_playback(&db, "A").await.unwrap(), 0);
+            assert_eq!(
+                playback_position(&db, "A", 2).await.unwrap().map(|p| p.current_time),
+                Some(50.0),
+                "另一集的进度互不干扰"
+            );
         });
     }
 

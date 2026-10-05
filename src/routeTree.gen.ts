@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BrowseRouteImport } from './routes/browse'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as MergeRouteImport } from './routes/merge'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as PlayerRouteImport } from './routes/player'
@@ -28,6 +29,11 @@ const IndexRoute = IndexRouteImport.update({
 const BrowseRoute = BrowseRouteImport.update({
   id: '/browse',
   path: '/browse',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MergeRoute = MergeRouteImport.update({
@@ -74,6 +80,7 @@ const TasksRoute = TasksRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/history': typeof HistoryRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/history': typeof HistoryRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/browse': typeof BrowseRoute
+  '/history': typeof HistoryRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/browse'
+    | '/history'
     | '/merge'
     | '/new'
     | '/player'
@@ -125,6 +135,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/browse'
+    | '/history'
     | '/merge'
     | '/new'
     | '/player'
@@ -137,6 +148,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/browse'
+    | '/history'
     | '/merge'
     | '/new'
     | '/player'
@@ -150,6 +162,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BrowseRoute: typeof BrowseRoute
+  HistoryRoute: typeof HistoryRoute
   MergeRoute: typeof MergeRoute
   NewRoute: typeof NewRoute
   PlayerRoute: typeof PlayerRoute
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/browse'
       fullPath: '/browse'
       preLoaderRoute: typeof BrowseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/merge': {
@@ -238,6 +258,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BrowseRoute: BrowseRoute,
+  HistoryRoute: HistoryRoute,
   MergeRoute: MergeRoute,
   NewRoute: NewRoute,
   PlayerRoute: PlayerRoute,

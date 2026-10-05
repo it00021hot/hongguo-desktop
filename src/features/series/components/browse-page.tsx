@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,8 +10,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { RefreshShade } from '@/components/refresh-shade';
 import { ResolvingPill } from '@/components/resolving-pill';
+import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
 import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
 import {
@@ -97,14 +98,17 @@ export function BrowsePage() {
       url: '',
     }));
   }, [searching, browse.data, found.items]);
-  // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着，
-  // 此时 isPending 是 false（手里有占位数据），isFetching 才表示真的在等。
-  // 只看 isPending 的话，点完筛选界面还是上一个分类的卡片、连骨架屏都不出 ——
-  // 用户看到的就是「点了半天什么都没发生」。
-  const pending = searching
-    ? found.isLoading
-    : browse.isPending || (browse.isPlaceholderData && browse.isFetching);
+  // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着。
+  // 反馈分两层：真没数据（isPending，首次进某分类）才整块骨架屏；
+  // 手里有旧数据、后台在取新数据（isPlaceholderData && isFetching）时
+  // 旧内容降透明度禁点——切换即时可感，又不闪白屏。
+  const pending = searching ? found.isLoading : browse.isPending;
+  const refreshing = searching
+    ? found.isRefreshing
+    : browse.isPlaceholderData && browse.isFetching;
   const failed = searching ? found.error !== null : browse.isError;
+  // 提交按钮态：同一关键词还在搜索中就灰掉防连点；改了词不拦（允许直接重提）
+  const resubmitting = searching && found.isLoading && keyword.trim() === submitted;
 
   // App 搜索首页是「精选」少数条目，hasMore 翻页才是全量列表；
   // 结果还很少时自动续拉一页，避免用户看到 4 条就以为搜完了。
@@ -136,10 +140,11 @@ export function BrowsePage() {
   const totalPages = browse.data?.meta.totalPages ?? 0;
   const total = searching ? cards.length : (browse.data?.meta.total ?? 0);
 
+  // 退出搜索：置空提交词即可——浏览结果在 Query 缓存里秒回，
+  // 搜索结果留在缓存，重复搜索同一关键词也秒出不再重拉
   const exitSearch = () => {
     setSubmitted('');
     setKeyword('');
-    found.reset();
   };
 
   const handleCategory = (slug: string) => {
@@ -155,14 +160,13 @@ export function BrowsePage() {
 
   // 链接/ID 直接解析并打开详情抽屉，抽屉内部会自己拉分集。
   // 解析前先退出搜索模式，否则解析成功后列表还停在上一轮搜索结果上。
+  // 关键词搜索只改提交词：useSeriesSearchApp 随 queryKey 自动发起请求。
   const handleSubmit = () => {
     const value = keyword.trim();
     if (!value) return;
     setPage(1);
     if (detectInput(value) === 'keyword') {
-      found.reset();
       setSubmitted(value);
-      found.search();
       return;
     }
     setSubmitted('');
@@ -212,8 +216,12 @@ export function BrowsePage() {
             aria-label={t('search.placeholder')}
             className="min-w-48 flex-1"
           />
-          <Button type="submit" disabled={!keyword.trim() || resolving}>
-            <Search className="size-4" />
+          <Button type="submit" disabled={!keyword.trim() || resolving || resubmitting}>
+            {resubmitting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Search className="size-4" />
+            )}
             {t('search.submit')}
           </Button>
           {resolving && (
@@ -268,38 +276,36 @@ export function BrowsePage() {
       {failed && <p className="text-destructive text-sm">{t('browse.loadFailed')}</p>}
 
       {pending ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
-          {Array.from({ length: 10 }, (_, i) => (
-            <Skeleton key={i} className="h-56" />
-          ))}
-        </div>
+        <SkeletonCardGrid />
       ) : cards.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">
           {searching ? t('search.empty') : t('browse.empty')}
         </p>
       ) : (
-        <SeriesCardGrid
-          cards={cards}
-          downloadedMap={downloadedMap}
-          onSelect={handleSelect}
-          trailing={
-            // 末行空位拿来放「下一页」，而不是留一个看起来像漏加载的白格子。
-            // 搜索页没有分页（官网那边就不分），所以只在浏览模式出现。
-            !searching && page < totalPages ? (
-              <button
-                type="button"
-                onClick={() => setPage((p) => p + 1)}
-                className="text-muted-foreground hover:text-foreground hover:border-foreground/30 flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors focus-visible:outline-none"
-              >
-                <ChevronRight className="size-6" />
-                {tf('browse.loadMore', {
-                  page: (browse.data?.meta.page ?? page) + 1,
-                  total: totalPages,
-                })}
-              </button>
-            ) : null
-          }
-        />
+        <RefreshShade refreshing={refreshing}>
+          <SeriesCardGrid
+            cards={cards}
+            downloadedMap={downloadedMap}
+            onSelect={handleSelect}
+            trailing={
+              // 末行空位拿来放「下一页」，而不是留一个看起来像漏加载的白格子。
+              // 搜索页没有分页（官网那边就不分），所以只在浏览模式出现。
+              !searching && page < totalPages ? (
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => p + 1)}
+                  className="text-muted-foreground hover:text-foreground hover:border-foreground/30 flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors focus-visible:outline-none"
+                >
+                  <ChevronRight className="size-6" />
+                  {tf('browse.loadMore', {
+                    page: (browse.data?.meta.page ?? page) + 1,
+                    total: totalPages,
+                  })}
+                </button>
+              ) : null
+            }
+          />
+        </RefreshShade>
       )}
 
       {!searching && totalPages > 1 && (

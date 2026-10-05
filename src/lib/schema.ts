@@ -283,18 +283,29 @@ export const playResponseSchema = z.object({
 export type PlayResponse = z.infer<typeof playResponseSchema>;
 
 /** 播放历史的一条：某部剧最近看到的一集。 */
-export const playbackHistoryItemSchema = z.object({
+/** 云端观看历史的一条（Rust `history::WatchHistoryItem`，官方 App「历史」同源）。 */
+export const watchHistoryItemSchema = z.object({
   seriesId: z.string(),
-  vidIndex: z.number().int().positive(),
-  currentTime: z.number().nonnegative(),
-  updatedAt: z.number(),
-  // 剧名与封面由后端一并带出。历史不依赖剧集列表：把一部剧从列表移除，
-  // 不该连带把它看过的记录也抹掉。
   title: z.string(),
+  /** HEIC 签名 URL，前端走 hongguo-cover 代理渲染 */
   cover: z.string(),
+  vidIndex: z.number().int().nonnegative(),
+  vid: z.string(),
+  positionMs: z.number().nonnegative(),
+  durationMs: z.number().nonnegative(),
+  episodeCnt: z.number().int().nonnegative(),
+  updatedAtMs: z.number(),
 });
 
-export type PlaybackHistoryItem = z.infer<typeof playbackHistoryItemSchema>;
+export type WatchHistoryItem = z.infer<typeof watchHistoryItemSchema>;
+
+export const watchHistoryPageSchema = z.object({
+  items: z.array(watchHistoryItemSchema),
+  hasMore: z.boolean(),
+  nextOffset: z.number(),
+  total: z.number(),
+});
+export type WatchHistoryPage = z.infer<typeof watchHistoryPageSchema>;
 
 export const storageUsageSchema = z.object({
   bytes: z.number().nonnegative(),
@@ -423,6 +434,8 @@ export type RankPanelRow = z.infer<typeof rankPanelRowSchema>;
 export const rankSubListSchema = z.object({
   id: z.string(),
   name: z.string(),
+  /** 子榜描述行（如 "10月4日已更新·基于红果观看/互动以及个人兴趣排序"） */
+  description: z.string(),
   panel: z.array(rankPanelRowSchema),
 });
 export type RankSubList = z.infer<typeof rankSubListSchema>;

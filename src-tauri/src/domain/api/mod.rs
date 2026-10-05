@@ -7,6 +7,7 @@ pub mod detail;
 pub mod login;
 pub mod params;
 pub mod play_url;
+pub mod history;
 pub mod rank;
 pub mod register;
 pub mod search;

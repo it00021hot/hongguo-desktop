@@ -30,9 +30,14 @@ pub fn run() {
     let state = match store::Store::open(store::paths::db_file()) {
         Ok(db) => {
             // 设备档案：库里没有就落一份静态兜底档案（设备注册 M2b 落位后，
-            // 这里读到的会是注册产物）。
+            // 这里读到的会是注册产物）。旧档案的版本身份要对齐到当前客户端
+            // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
+            // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
             let device = match db.device_profile() {
-                Ok(Some(p)) => p,
+                Ok(Some(mut p)) => {
+                    signer::device::align_app_version(&mut p);
+                    p
+                }
                 Ok(None) => {
                     let fallback = signer::video_device();
                     if let Err(e) = db.save_device_profile(&fallback) {
@@ -107,6 +112,8 @@ pub fn run() {
             commands::rank_cmd::reservation_list,
             commands::rank_cmd::reservation_reserve,
             commands::rank_cmd::new_drama_calendar,
+            // 云端观看历史
+            commands::history_cmd::watch_history_list,
             // 登录
             commands::login_cmd::login_send_code,
             commands::login_cmd::login_sms_login,
@@ -142,9 +149,6 @@ pub fn run() {
             // 播放
             commands::play_cmd::play_series,
             commands::play_cmd::save_playback_position,
-            commands::play_cmd::get_playback_history,
-            commands::play_cmd::remove_playback_record,
-            commands::play_cmd::clear_playback_history,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,

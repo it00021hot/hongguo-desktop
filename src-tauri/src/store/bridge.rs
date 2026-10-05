@@ -22,7 +22,7 @@ use crate::domain::model::settings::Settings;
 use crate::domain::model::{DownloadTask, MergeTask, PlaybackPosition, Series};
 use crate::error::{AppError, AppResult};
 use crate::store::db::Db;
-use crate::store::entity::{self, LatestPlayback};
+use crate::store::entity;
 
 /// 一次投递到 DB 线程的活：拿一个连接克隆，跑一段异步逻辑。
 type Job = Box<dyn FnOnce(Db) -> BoxFuture<'static, ()> + Send + 'static>;
@@ -186,20 +186,6 @@ impl Store {
         self.exec(move |db| {
             Box::pin(async move { entity::save_playback_position(db, &id, vid_index, &p).await })
         })
-    }
-
-    /// 删一部剧的全部进度。返回 0 行时调用方应报 NotFound。
-    pub fn remove_playback(&self, series_id: &str) -> AppResult<u64> {
-        let id = series_id.to_string();
-        self.exec(move |db| Box::pin(async move { entity::remove_playback(db, &id).await }))
-    }
-
-    pub fn clear_playback(&self) -> AppResult<u64> {
-        self.exec(|db| Box::pin(entity::clear_playback(db)))
-    }
-
-    pub fn playback_latest_per_series(&self) -> AppResult<Vec<LatestPlayback>> {
-        self.exec(|db| Box::pin(entity::playback_latest_per_series(db)))
     }
 
     // ---------- merge ----------

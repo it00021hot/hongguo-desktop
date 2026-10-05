@@ -13,7 +13,6 @@ import {
   mergePreflightSchema,
   mergeTaskSchema,
   passportUserSchema,
-  playbackHistoryItemSchema,
   playResponseSchema,
   proxyTestResultSchema,
   queueStatusSchema,
@@ -25,6 +24,7 @@ import {
   seriesSchema,
   settingsSchema,
   storageUsageSchema,
+  watchHistoryPageSchema,
   type AccountState,
   type Category,
   type Danmaku,
@@ -38,7 +38,6 @@ import {
   type MergePreflight,
   type MergeTask,
   type PassportUser,
-  type PlaybackHistoryItem,
   type PlayResponse,
   type ProxyConfig,
   type ProxyTestResult,
@@ -51,6 +50,7 @@ import {
   type CalendarPage,
   type RankPage,
   type SearchPage,
+  type WatchHistoryPage,
 } from '../schema';
 
 /**
@@ -242,14 +242,14 @@ export const play = {
   // duration 必须回传：后端靠它判断「接近片尾就不续播」，不记就等于没这道防线
   savePosition: (seriesId: string, vidIndex: number, currentTime: number, duration: number) =>
     call<void>('save_playback_position', { seriesId, vidIndex, currentTime, duration }),
-  history: () =>
-    call<PlaybackHistoryItem[]>(
-      'get_playback_history',
-      undefined,
-      playbackHistoryItemSchema.array(),
-    ),
-  clearHistory: () => call<void>('clear_playback_history'),
-  removeRecord: (seriesId: string) => call<void>('remove_playback_record', { seriesId }),
+};
+
+// ---------------------------------------------------------------- 云端观看历史
+
+/** 云端观看历史（官方 App「历史」同源；登录后可用，匿名回空表）。 */
+export const watchHistory = {
+  list: (offset = 0) =>
+    call<WatchHistoryPage>('watch_history_list', { offset }, watchHistoryPageSchema),
 };
 
 // ---------------------------------------------------------------- 转码

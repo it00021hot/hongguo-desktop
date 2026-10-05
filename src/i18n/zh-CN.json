@@ -44,6 +44,10 @@
     "reservations": {
       "title": "预约",
       "description": "我的预约：已上线与待上线"
+    },
+    "history": {
+      "title": "历史",
+      "description": "云端同步的观看记录"
     }
   },
   "browse": {
@@ -169,7 +173,14 @@
     "removeRecordConfirm": "清除《{title}》的观看记录？",
     "removeRecordDesc": "这部剧的观看进度会被清掉，下次打开从第一集开始。已下载的文件不受影响。",
     "removedRecord": "已清除《{title}》的观看记录",
-    "danmaku": "弹幕"
+    "danmaku": "弹幕",
+    "empty": "还没有在播放的内容",
+    "emptyHint": "从推荐或历史里挑一部剧即可开始播放",
+    "danmakuSettings": "弹幕设置",
+    "danmakuOpacity": "不透明度",
+    "danmakuFontSize": "字体大小",
+    "danmakuDensity": "密度",
+    "danmakuArea": "显示区域"
   },
   "series": {
     "loadFailed": "分集加载失败",
@@ -323,7 +334,8 @@
     "progress": "进度",
     "skipToContent": "跳到主内容",
     "resolving": "正在解析剧集…",
-    "resolveFailed": "剧集解析失败"
+    "resolveFailed": "剧集解析失败",
+    "loadFailed": "加载失败"
   },
   "window": {
     "minimize": "最小化",
@@ -376,7 +388,9 @@
       "4": "周四",
       "5": "周五",
       "6": "周六"
-    }
+    },
+    "episodeTotal": "共{count}集",
+    "scoreSuffix": "分"
   },
   "reservation": {
     "tab": {
@@ -396,5 +410,17 @@
     "onlineBadge": "{date} 上线",
     "upcomingBadge": "{date} 上线",
     "publishAt": "{time} 上线"
+  },
+  "history": {
+    "title": "观看历史",
+    "empty": "还没有观看记录",
+    "emptyHint": "在官方客户端或本应用看过的短剧都会同步到这里",
+    "loadFailed": "观看历史加载失败",
+    "today": "今天",
+    "yesterday": "昨天",
+    "daysAgo": "{count} 天前",
+    "unknownTitle": "未知剧集",
+    "watching": "看到第{index}集/共{total}集 {time}",
+    "continue": "继续播放"
   }
 }

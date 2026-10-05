@@ -44,6 +44,10 @@
     "reservations": {
       "title": "Reservations",
       "description": "My reservations: online & upcoming"
+    },
+    "history": {
+      "title": "History",
+      "description": "Watch history synced from the cloud"
     }
   },
   "browse": {
@@ -169,7 +173,14 @@
     "removeRecordConfirm": "Clear the watch record for {title}?",
     "removeRecordDesc": "This series will start from episode 1 next time. Already downloaded files are untouched.",
     "removedRecord": "Cleared the watch record for {title}",
-    "danmaku": "Danmaku"
+    "danmaku": "Danmaku",
+    "empty": "Nothing is playing",
+    "emptyHint": "Pick a drama from Recommend or History to start",
+    "danmakuSettings": "Danmaku settings",
+    "danmakuOpacity": "Opacity",
+    "danmakuFontSize": "Font size",
+    "danmakuDensity": "Density",
+    "danmakuArea": "Display area"
   },
   "series": {
     "loadFailed": "Failed to load episodes",
@@ -323,7 +334,8 @@
     "progress": "Progress",
     "skipToContent": "Skip to main content",
     "resolving": "Resolving series…",
-    "resolveFailed": "Failed to resolve the series"
+    "resolveFailed": "Failed to resolve the series",
+    "loadFailed": "Failed to load"
   },
   "window": {
     "minimize": "Minimize",
@@ -376,7 +388,9 @@
       "4": "Thu",
       "5": "Fri",
       "6": "Sat"
-    }
+    },
+    "episodeTotal": "{count} eps",
+    "scoreSuffix": ""
   },
   "reservation": {
     "tab": {
@@ -396,5 +410,17 @@
     "onlineBadge": "Online {date}",
     "upcomingBadge": "Online {date}",
     "publishAt": "Online {time}"
+  },
+  "history": {
+    "title": "Watch history",
+    "empty": "Nothing watched yet",
+    "emptyHint": "Dramas watched in the official app or here show up here",
+    "loadFailed": "Failed to load watch history",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "daysAgo": "{count} days ago",
+    "unknownTitle": "Unknown title",
+    "watching": "Ep.{index}/{total} · {time}",
+    "continue": "Continue"
   }
 }

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ResolvingPill } from '@/components/resolving-pill';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import {
   SeriesDetailSheet,
@@ -40,16 +41,22 @@ export function ReservationPage() {
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
-  const tabs: { key: boolean; label: string; count: number }[] = [
+  // 角标计数：total 优先、条数兜底（后端已翻页拉全并兜底，这里双保险；
+  // 数据未到显示骨架点，不让 0 冒充「没有预约」）
+  const tabs: { key: boolean; label: string; count: number | null }[] = [
     {
       key: true,
       label: t('reservation.tab.online'),
-      count: onlineQ.data?.onlineTotal ?? onlineQ.data?.items.length ?? 0,
+      count: onlineQ.data
+        ? Math.max(onlineQ.data.onlineTotal, onlineQ.data.items.length)
+        : null,
     },
     {
       key: false,
       label: t('reservation.tab.offline'),
-      count: offlineQ.data?.offlineTotal ?? offlineQ.data?.items.length ?? 0,
+      count: offlineQ.data
+        ? Math.max(offlineQ.data.offlineTotal, offlineQ.data.items.length)
+        : null,
     },
   ];
 
@@ -87,7 +94,11 @@ export function ReservationPage() {
             )}
           >
             {tab.label}
-            <span className="ml-1.5 tabular-nums opacity-80">{tab.count}</span>
+            {tab.count === null ? (
+              <Skeleton className="ml-1.5 inline-block h-3 w-5 align-middle" />
+            ) : (
+              <span className="ml-1.5 tabular-nums opacity-80">{tab.count}</span>
+            )}
           </button>
         ))}
       </div>
@@ -134,12 +145,7 @@ export function ReservationPage() {
         onOpenChange={(open) => !open && setDetail(null)}
       />
 
-      {resolving && (
-        <p className="text-muted-foreground bg-card fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-lg">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('browse.resolving')}
-        </p>
-      )}
+      {resolving && <ResolvingPill />}
     </div>
   );
 }
@@ -225,8 +231,8 @@ function ReservationCard({
         {publishDate !== '' && (
           <span className="absolute bottom-0 left-0 bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
             {item.isOnline
-              ? t('reservation.onlineBadge', { date: publishDate })
-              : t('reservation.upcomingBadge', { date: publishDate })}
+              ? tf('reservation.onlineBadge', { date: publishDate })
+              : tf('reservation.upcomingBadge', { date: publishDate })}
           </span>
         )}
       </button>

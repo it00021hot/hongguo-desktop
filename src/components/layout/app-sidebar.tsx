@@ -2,10 +2,10 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import {
   Flame,
   Compass,
+  History,
   Trophy,
   Sparkles,
   BellRing,
-  Play,
   ListChecks,
   Combine,
   HardDrive,
@@ -16,20 +16,22 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useUiStore } from '@/lib/stores/ui';
-import { usePlayerStore } from '@/lib/stores/player';
 import { isMac } from '@/lib/platform';
 import { MacTrafficLights } from './window-controls';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
-/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。 */
+/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
+ *
+ * 播放页（/player）不设菜单入口：它只能由各页的「播放/继续播放」跳转进入，
+ * 独立菜单 + 页内历史与独立的历史页重复。 */
 export const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
   { key: 'rank', to: '/rank', icon: Trophy },
   { key: 'new', to: '/new', icon: Sparkles },
+  { key: 'history', to: '/history', icon: History },
   { key: 'reservations', to: '/reservations', icon: BellRing },
   { key: 'browse', to: '/browse', icon: Compass },
-  { key: 'player', to: '/player', icon: Play },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
   { key: 'merge', to: '/merge', icon: Combine },
   { key: 'storage', to: '/storage', icon: HardDrive },
@@ -39,7 +41,6 @@ export const NAV_ITEMS = [
 export function AppSidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggle = useUiStore((s) => s.toggleSidebar);
-  const clearTarget = usePlayerStore((s) => s.clear);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
@@ -75,11 +76,6 @@ export function AppSidebar() {
             <Link
               key={item.key}
               to={item.to}
-              // 「播放」项的含义是播放记录页。播放中点它必须清掉目标：
-              // 不清的话路由回到 /player 而 store 里还指着同一集，
-              // 渲染的还是同一个播放器——按钮看着能点，什么也没发生，
-              // 播完想换一部剧就没有回去的入口了。
-              onClick={item.key === 'player' ? clearTarget : undefined}
               className={cn(
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
                 active

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Flame, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import { RefreshShade } from '@/components/refresh-shade';
+import { ResolvingPill } from '@/components/resolving-pill';
+import { SkeletonCardGrid } from '@/components/skeletons';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   SeriesDetailSheet,
@@ -39,13 +41,6 @@ export function HomePage() {
 
   // 热榜：同一池子按播放量降序（拉过的都参与，榜随加载变实）
   const hot = useMemo(() => [...feed.items].sort((a, b) => b.playCnt - a.playCnt), [feed.items]);
-
-  // 首次进入自动加载
-  useEffect(() => {
-    void feed.refresh();
-    // refresh 是闭包，依赖它只会反复触发；这里只需要挂载时拉一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // 滚动到底自动翻页（推荐 tab 下才有意义；热榜也受益——池子变大）。
   // 观察器只建一次：feed 是每次渲染的新对象，进依赖的话每次渲染都会
@@ -106,25 +101,28 @@ export function HomePage() {
         </TabsList>
 
         <TabsContent value="recommend" className="mt-3">
-          {feed.isLoading ? (
-            <SkeletonGrid />
-          ) : feed.error ? (
-            <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-              <p>{t('feed.loadFailed')}</p>
-              <p className="text-destructive text-xs">{feed.error}</p>
-              <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
-                <RefreshCw className="mr-1 size-4" aria-hidden />
-                {t('feed.retry')}
-              </Button>
-            </div>
-          ) : (
-            <FeedCardGrid items={feed.items} {...gridProps} />
-          )}
+          <RefreshShade refreshing={feed.isRefreshing}>
+            {feed.isLoading ? (
+              <SkeletonCardGrid />
+            ) : feed.error ? (
+              <FeedError message={feed.error} onRetry={() => void feed.refresh()} />
+            ) : (
+              <FeedCardGrid items={feed.items} {...gridProps} />
+            )}
+          </RefreshShade>
         </TabsContent>
 
         <TabsContent value="hot" className="mt-3">
-          {/* 热榜与推荐共用加载状态：池子来自同一个流 */}
-          {feed.isLoading ? <SkeletonGrid /> : <FeedCardGrid items={hot} ranked {...gridProps} />}
+          <RefreshShade refreshing={feed.isRefreshing}>
+            {/* 热榜与推荐共用加载状态：池子来自同一个流 */}
+            {feed.isLoading ? (
+              <SkeletonCardGrid />
+            ) : feed.error ? (
+              <FeedError message={feed.error} onRetry={() => void feed.refresh()} />
+            ) : (
+              <FeedCardGrid items={hot} ranked {...gridProps} />
+            )}
+          </RefreshShade>
         </TabsContent>
       </Tabs>
 
@@ -139,12 +137,7 @@ export function HomePage() {
       {!feed.isLoading && !feed.error && !feed.hasMore && feed.items.length > 0 && (
         <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
       )}
-      {resolving && (
-        <p className="text-muted-foreground bg-card fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-lg">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('feed.resolving')}
-        </p>
-      )}
+      {resolving && <ResolvingPill />}
 
       <SeriesDetailSheet
         card={detail?.card ?? null}
@@ -156,16 +149,16 @@ export function HomePage() {
   );
 }
 
-function SkeletonGrid() {
+/** 信息流加载失败：说明 + 错误详情 + 重试。 */
+function FeedError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
-      {Array.from({ length: 10 }, (_, i) => (
-        <div key={i} className="flex flex-col gap-2">
-          <Skeleton className="aspect-[3/4] w-full rounded-xl" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-3 w-1/2" />
-        </div>
-      ))}
+    <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+      <p>{t('feed.loadFailed')}</p>
+      <p className="text-destructive text-xs">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw className="mr-1 size-4" aria-hidden />
+        {t('feed.retry')}
+      </Button>
     </div>
   );
 }

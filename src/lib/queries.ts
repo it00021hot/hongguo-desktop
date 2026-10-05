@@ -1,5 +1,11 @@
-import { useCallback, useRef, useState } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   browse,
   discover,
@@ -15,6 +21,7 @@ import {
   storage,
   transcode,
   danmaku as danmakuCmd,
+  watchHistory,
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
@@ -28,6 +35,7 @@ import type {
   QueueStatus,
   RankPage,
   SearchPage,
+  SearchResult,
 } from './schema';
 
 /**
@@ -38,11 +46,12 @@ import type {
  */
 const keys = {
   settings: ['settings'] as const,
+  feed: ['feed'] as const,
+  newDrama: (gender: number) => ['new-drama', gender] as const,
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
   seriesExtras: (id: string) => ['series-extras', id] as const,
-  playbackHistory: ['playback-history'] as const,
-  tasks: ['download-tasks'] as const,
+  watchHistory: ['watch-history'] as const,  tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,
   mergeCandidates: ['merge-candidates'] as const,
@@ -109,53 +118,64 @@ export function useSeriesExtras(seriesId: string) {
 
 // ---------------------------------------------------------------- 发现（推荐信息流）
 
+/** 无限滚动查询的最小结构面（只取页面消费的字段，避免深泛型签名）。 */
+interface InfiniteStream<TPage> {
+  data: { pages: TPage[] } | undefined;
+  error: Error | null;
+  hasNextPage: boolean;
+  isPending: boolean;
+  isFetching: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => Promise<unknown>;
+  refetch: () => Promise<unknown>;
+}
+
 /**
- * 推荐信息流的手动翻页累积器。
- *
- * 不走 useQuery 缓存：分页是「不断往后拼」的会话流，缓存键要么爆炸
- * （每页一个 key）要么丢上下文（只有最后一页）。这里自己持状态：
- * pages 累积、nextOffset 前进、错误就地可重试。
+ * 无限滚动流的通用出口：把 useInfiniteQuery 的结果包装成旧手动累积器
+ * 的形状（items/hasMore/isLoading/isFetchingMore/error/loadMore/refresh），
+ * 页面侧无感迁移。翻页失败不炸整页——旧内容还在，错误就地展示。
  */
-export function useFeed() {
-  const [pages, setPages] = useState<FeedPage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // 防抖并发的加载令牌：refresh 与 loadMore 竞争时旧请求的结果要作废
-  const tokenRef = useRef(0);
+function useInfiniteStream<TPage, TItem>(
+  query: InfiniteStream<TPage>,
+  flatten: (pages: TPage[]) => TItem[],
+) {
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const pages = query.data?.pages;
+  const items = useMemo(() => flatten(pages ?? []), [pages, flatten]);
 
-  const load = useCallback(
-    async (mode: 'first' | 'more') => {
-      const token = ++tokenRef.current;
-      if (mode === 'first') setLoading(true);
-      else setLoadingMore(true);
-      setError(null);
-      const offset = mode === 'first' ? 0 : (pages.at(-1)?.nextOffset ?? 0);
-      try {
-        const page = await discover.feed(offset);
-        if (token !== tokenRef.current) return; // 已被更新的请求取代
-        setPages((prev) =>
-          mode === 'first'
-            ? [page]
-            : // 服务端偶发跨页重复（推荐位轮换），按 seriesId 去重
-              [...prev, page],
-        );
-      } catch (e) {
-        if (token !== tokenRef.current) return;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (token === tokenRef.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [pages],
-  );
+  const loadMore = useCallback(() => {
+    if (!query.hasNextPage || query.isFetchingNextPage) return;
+    setLoadError(null);
+    query.fetchNextPage().catch((e: unknown) => {
+      setLoadError(e instanceof Error ? e.message : String(e));
+    });
+  }, [query]);
 
-  /** 全部已拉取条目，按拉取顺序、seriesId 去重。 */
-  const items: FeedItem[] = [];
+  const refresh = useCallback(() => {
+    setLoadError(null);
+    return query.refetch();
+  }, [query]);
+
+  return {
+    items,
+    hasMore: query.hasNextPage,
+    isLoading: query.isPending,
+    isRefreshing: query.isFetching && !query.isPending,
+    isFetchingMore: query.isFetchingNextPage,
+    error: query.error
+      ? query.error instanceof Error
+        ? query.error.message
+        : String(query.error)
+      : loadError,
+    loadMore,
+    refresh,
+  };
+}
+
+/** pages → 按拉取顺序、seriesId 去重的条目（推荐位轮换会跨页重复）。 */
+function feedItems(pages: FeedPage[]): FeedItem[] {
   const seen = new Set<string>();
+  const items: FeedItem[] = [];
   for (const page of pages) {
     for (const item of page.items) {
       if (seen.has(item.seriesId)) continue;
@@ -163,16 +183,24 @@ export function useFeed() {
       items.push(item);
     }
   }
+  return items;
+}
 
-  return {
-    items,
-    hasMore: pages.at(-1)?.hasMore ?? false,
-    isLoading: loading,
-    isFetchingMore: loadingMore,
-    error,
-    loadMore: () => load('more'),
-    refresh: () => load('first'),
-  };
+/**
+ * 推荐信息流（无限滚动）。
+ *
+ * pages 存在 Query 缓存里：切到其它路由再回来秒出已拉内容，不闪骨架屏；
+ * staleTime 内完全不重打，超时只后台刷新（配合 RefreshShade 无感过渡）。
+ */
+export function useFeed() {
+  const query = useInfiniteQuery({
+    queryKey: keys.feed,
+    queryFn: ({ pageParam }) => discover.feed(pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
+    staleTime: 5 * 60_000,
+  });
+  return useInfiniteStream(query, feedItems);
 }
 
 // ---------------------------------------------------------------- 弹幕
@@ -191,16 +219,36 @@ export function useDanmaku(vid: string) {
 
 // ---------------------------------------------------------------- 封面增强
 
-/** webp 封面懒加载：HEIC 源只在 HEVC 扩展齐全的机器上能显示，这里换成官网版。 */
+/** HEIC 封面的本地转码代理地址（hongguo-cover 协议的 http 形式，后端 ffmpeg 转 JPEG）。 */
+function coverProxyUrl(remote: string): string {
+  const bytes = new TextEncoder().encode(remote);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64 = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  return `http://hongguo-cover.localhost/c/${b64}`;
+}
+
+/**
+ * webp 封面懒加载：HEIC 源只在 HEVC 扩展齐全的机器上能直接渲染，先换成
+ * 官网版 webp；换不到的（未上线剧官网没有页面）落到 hongguo-cover 本地
+ * 转码代理（ffmpeg 下载 HEIC 转 JPEG，磁盘缓存）。两种途径都失败时
+ * `data` 为空，组件自己的 onError 占位图兜底。
+ */
 export function useWebCover(seriesId: string, sourceCover: string) {
   const needs = !isRenderableCover(sourceCover);
-  return useQuery({
+  const q = useQuery({
     queryKey: keys.webCover(seriesId),
     queryFn: () => discover.webCover(seriesId),
     enabled: needs && seriesId !== '',
     staleTime: Infinity,
     gcTime: 30 * 60_000,
+    retry: false,
   });
+  return {
+    data: needs
+      ? (q.data ?? (q.isSuccess || q.isError ? coverProxyUrl(sourceCover) : undefined))
+      : undefined,
+  };
 }
 
 /** WebView2 能直接渲染的封面格式（与后端 is_renderable_cover 同口径）。 */
@@ -230,49 +278,28 @@ export function useRank(selected: string, sub: string, panel: string) {
   });
 }
 
-/** 新剧推荐的手动翻页累积器（与 useFeed 同一套口径）。 */
+/** pages → 顺序条目（新剧推荐无推荐位轮换，直接平铺）。 */
+function newDramaItems(pages: RankPage[]) {
+  return pages.flatMap((p) => p.items);
+}
+
+/**
+ * 新剧推荐（无限滚动，按 gender 分缓存）。
+ *
+ * 每页固定 18 条，下一页 offset 按已拉条数累计；响应不带 has_more，
+ * 以空页为终点（旧实现会向空页无限续拉，这里顺手修正）。频道各存一份
+ * 缓存，切回看过的频道秒出。
+ */
 export function useNewDrama(gender: number) {
-  const [pages, setPages] = useState<RankPage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const tokenRef = useRef(0);
-
-  const load = useCallback(
-    async (mode: 'first' | 'more') => {
-      const token = ++tokenRef.current;
-      if (mode === 'first') setLoading(true);
-      else setLoadingMore(true);
-      setError(null);
-      // 每页固定 18 条，偏移按已拉条数算
-      const offset = mode === 'first' ? 0 : pages.reduce((n, p) => n + p.items.length, 0);
-      try {
-        const page = await rank.newDrama(gender, offset);
-        if (token !== tokenRef.current) return;
-        setPages((prev) => (mode === 'first' ? [page] : [...prev, page]));
-      } catch (e) {
-        if (token !== tokenRef.current) return;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (token === tokenRef.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [gender, pages],
-  );
-
-  const items = pages.flatMap((p) => p.items);
-
-  return {
-    items,
-    isLoading: loading,
-    isFetchingMore: loadingMore,
-    error,
-    loadMore: () => load('more'),
-    refresh: () => load('first'),
-  };
+  const query = useInfiniteQuery({
+    queryKey: keys.newDrama(gender),
+    queryFn: ({ pageParam }) => rank.newDrama(gender, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, allPages) =>
+      last.items.length > 0 ? allPages.reduce((n, p) => n + p.items.length, 0) : undefined,
+    staleTime: 10 * 60_000,
+  });
+  return useInfiniteStream(query, newDramaItems);
 }
 
 /** 上新日历（date 为空串取默认日；切日期保旧列表平滑过渡）。 */
@@ -579,31 +606,6 @@ export function useSavePosition() {
   });
 }
 
-export function usePlaybackHistory() {
-  return useQuery({ queryKey: keys.playbackHistory, queryFn: play.history });
-}
-
-export function useClearPlaybackHistory() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: play.clearHistory,
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.playbackHistory });
-    },
-  });
-}
-
-/** 清除某一部剧的观看记录。 */
-export function useRemovePlaybackRecord() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (seriesId: string) => play.removeRecord(seriesId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.playbackHistory });
-    },
-  });
-}
-
 export function useStorageUsage() {
   return useQuery({ queryKey: keys.storageUsage, queryFn: storage.usage });
 }
@@ -659,70 +661,54 @@ export function useStorageActions() {
   };
 }
 
+// ---------------------------------------------------------------- 云端观看历史
+
+/** 云端观看历史（官方 App「历史」同源；登录后可用，匿名回空表）。 */
+export function useWatchHistory() {
+  return useQuery({
+    queryKey: keys.watchHistory,
+    queryFn: () => watchHistory.list(),
+    staleTime: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------- 官方 App 搜索
 
+/** 综合首页的精选与翻页列表有重复：按 seriesId 去重。 */
+function appSearchItems(pages: SearchPage[]): SearchResult[] {
+  const seen = new Set<string>();
+  const items: SearchResult[] = [];
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (seen.has(item.seriesId)) continue;
+      seen.add(item.seriesId);
+      items.push(item);
+    }
+  }
+  return items;
+}
+
 /**
- * 官方 App 搜索的翻页累积器。
+ * 官方 App 搜索（无限滚动）。
  *
  * 首页只有「精选」少数几条（平台搜索的固定形态），`hasMore` 翻页才是
- * 完整列表，所以和 useFeed 一样手动累积；翻页必须带首页发放的 searchId。
+ * 完整列表；翻页必须带首页发放的 searchId。结果按关键词进缓存：
+ * 重复搜索同一关键词秒出，不再全量重拉。
  */
 export function useSeriesSearchApp(query: string) {
   const kw = query.trim();
-  const [pages, setPages] = useState<SearchPage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const tokenRef = useRef(0);
-
-  const load = useCallback(
-    async (mode: 'first' | 'more') => {
-      const token = ++tokenRef.current;
-      if (mode === 'first') setLoading(true);
-      else setLoadingMore(true);
-      setError(null);
-      try {
-        const last = pages.at(-1);
-        const page =
-          mode === 'first'
-            ? await seriesSearch.run(kw)
-            : await seriesSearch.run(kw, last?.nextOffset ?? 0, last?.searchId ?? '');
-        if (token !== tokenRef.current) return;
-        setPages((prev) => (mode === 'first' ? [page] : [...prev, page]));
-      } catch (e) {
-        if (token !== tokenRef.current) return;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (token === tokenRef.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [kw, pages],
-  );
-
-  const items = pages.flatMap((p) => p.items);
-  // 综合首页的精选与翻页列表有重复：按 seriesId 去重
-  const seen = new Set<string>();
-  const unique = items.filter((it) => {
-    if (seen.has(it.seriesId)) return false;
-    seen.add(it.seriesId);
-    return true;
+  const query_ = useInfiniteQuery({
+    queryKey: keys.appSeriesSearch(kw),
+    queryFn: ({ pageParam }) =>
+      pageParam.offset === 0
+        ? seriesSearch.run(kw)
+        : seriesSearch.run(kw, pageParam.offset, pageParam.searchId),
+    initialPageParam: { offset: 0, searchId: '' },
+    getNextPageParam: (last) =>
+      last.hasMore ? { offset: last.nextOffset, searchId: last.searchId } : undefined,
+    // 空关键词是浏览模式，不该发搜索请求
+    enabled: kw !== '',
+    staleTime: 5 * 60_000,
   });
-
-  return {
-    items: unique,
-    hasMore: pages.at(-1)?.hasMore ?? false,
-    isLoading: loading,
-    isFetchingMore: loadingMore,
-    error,
-    loadMore: () => load('more'),
-    search: () => load('first'),
-    reset: () => {
-      tokenRef.current += 1;
-      setPages([]);
-      setError(null);
-    },
-  };
+  return useInfiniteStream(query_, appSearchItems);
 }

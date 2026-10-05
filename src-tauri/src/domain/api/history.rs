@@ -1,0 +1,209 @@
+//! 云端观看历史（`read_history/list/v`，2026-10-05 抓包）。
+//!
+//! 官方 App 侧栏「历史」的数据源：账号维度的播放记录（含在官方客户端
+//! 看的），比本地播放档案全。query 只要 `limit/offset/query_soft_deleted`，
+//! 登录态必备（匿名回空表）。
+//!
+//! 注意字段形态：`vid`/`book_id` 在响应里是 JSON 数字，统一转成字符串
+//! 承载，避免 js 侧精度失真。
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::client::{api_call_reading, ApiEnv};
+use super::danmaku::LQ_API_ORIGIN;
+use crate::error::{AppError, AppResult};
+
+pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
+
+/// 一条云端观看记录。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchHistoryItem {
+    pub series_id: String,
+    pub title: String,
+    /// 封面（HEIC 签名 URL；前端走 hongguo-cover 代理渲染）
+    #[serde(default)]
+    pub cover: String,
+    /// 观看到第几集（0 起）
+    pub vid_index: i64,
+    /// 那一集的 vid（数字字段，转字符串承载）
+    #[serde(default)]
+    pub vid: String,
+    /// 观看进度（毫秒）
+    pub position_ms: i64,
+    /// 该集时长（毫秒；0 = 未知）
+    #[serde(default)]
+    pub duration_ms: i64,
+    /// 总集数
+    #[serde(default)]
+    pub episode_cnt: i64,
+    /// 最近观看时间（unix 毫秒）
+    pub updated_at_ms: i64,
+}
+
+/// 云端观看历史一页。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchHistoryPage {
+    pub items: Vec<WatchHistoryItem>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_offset: i64,
+    #[serde(default)]
+    pub total: i64,
+}
+
+/// 拉一页云端观看历史。
+pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
+    let q: Vec<(String, String)> = [
+        // 2026-10-05 抓包逐字段对齐（captures/flows-20261005.jsonl）。
+        // book_type=2 是**短剧过滤**的关键：缺了它会落进无名字的阅读历史
+        // 子集（audit 的 DEVICE_QS 过滤把这几个字段当设备参数藏了，
+        // 排查时必须 dump 抓包原文）。
+        ("book_type", "2"),
+        ("full_field", "false"),
+        ("is_first_load", "true"),
+        ("last_min_read_timestamp_ms", "0"),
+        // limit=0 = 全量（官方形态）
+        ("limit", "0"),
+        ("offset", offset.to_string().as_str()),
+        ("query_soft_deleted", "false"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    let bytes = api_call_reading(LQ_API_ORIGIN, READ_HISTORY_LIST_PATH, None, &q, env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析观看历史失败: {e}")))?;
+    super::discover::check_code(&value)?;
+    parse_history(value.get("data"))
+}
+
+fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
+    let data = data.ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
+    let mut items = Vec::new();
+    for raw in data
+        .get("data_list")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        // vid/book_id 在响应里是 JSON 数字，精度外的会失真，统一走字符串化
+        let series_id = raw
+            .get("book_id_str")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| raw.get("book_id").map(num_to_string).unwrap_or_default());
+        if series_id.is_empty() {
+            continue;
+        }
+        items.push(WatchHistoryItem {
+            series_id,
+            title: str_field(raw, "book_name"),
+            cover: str_field(raw, "thumb_url"),
+            vid_index: raw
+                .get("vid_index")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            vid: raw
+                .get("vid_str")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| raw.get("vid").map(num_to_string).unwrap_or_default()),
+            position_ms: raw
+                .get("current_play_position")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            duration_ms: raw.get("duration").and_then(Value::as_i64).unwrap_or_default(),
+            episode_cnt: raw
+                .get("episode_cnt")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            updated_at_ms: raw
+                .get("read_timestamp_ms")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+        });
+    }
+    Ok(WatchHistoryPage {
+        items,
+        has_more: data
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_offset: data
+            .get("next_offset")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        total: data.get("total").and_then(Value::as_i64).unwrap_or(0),
+    })
+}
+
+fn str_field(raw: &Value, key: &str) -> String {
+    raw.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// JSON 数字 → 字符串（u64 精度无损；浮点兜底去尾零）。
+fn num_to_string(v: &Value) -> String {
+    match v {
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod probe {
+    use super::*;
+
+    /// 实证云端历史真实返回（对号入座：同账号在 hgplayer 显示最近记录）。
+    /// `PROBE_DEVICE` / `PROBE_COOKIE` 由真实库导出；`PROBE_COOKIE_HG` /
+    /// `PROBE_TOKEN` 可选，用官方会话做对照。
+    /// `cargo test probe_watch_history -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_watch_history() {
+        let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
+        let account_cookie = std::env::var("PROBE_COOKIE").unwrap_or_default();
+        let hg_cookie = std::env::var("PROBE_COOKIE_HG").ok().filter(|c| !c.is_empty());
+        let hg_token = std::env::var("PROBE_TOKEN").ok().filter(|t| !t.is_empty());
+
+        let device: crate::signer::device::DeviceProfile =
+            serde_json::from_str(&device_json).expect("device json");
+        let mut device = device;
+        crate::signer::device::align_app_version(&mut device);
+        // 官方会话对照：抓包里 cookie 是逗号分隔（addon 形态），转分号
+        let cookie_raw = hg_cookie.unwrap_or(account_cookie);
+        let cookie = cookie_raw.replace(", ", "; ");
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            device,
+            cookie: Some(cookie),
+            x_tt_token: hg_token,
+        };
+        let page = fetch_watch_history(0, &env).await.expect("历史请求");
+        println!("[history] total={} items={}", page.total, page.items.len());
+        for it in page.items.iter().take(8) {
+            println!(
+                "  {:?} ep={} pos={}ms at={}",
+                it.title,
+                it.vid_index,
+                it.position_ms,
+                chrono_like(it.updated_at_ms)
+            );
+        }
+    }
+
+    /// unix 毫秒 → 本地可读时间（探测打印用，UTC+8 简化）。
+    fn chrono_like(ms: i64) -> String {
+        let dt = ms / 1000 + 8 * 3600;
+        let days = dt.div_euclid(86_400);
+        let rem = dt.rem_euclid(86_400);
+        format!("day+{days} {:02}:{:02}", rem / 3600, (rem % 3600) / 60)
+    }
+}

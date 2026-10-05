@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { BellRing, CalendarDays, Flame, Loader2, Star, Tv } from 'lucide-react';
+import { BellRing, Flame, Loader2, Star, Tv } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RefreshShade } from '@/components/refresh-shade';
+import { ResolvingPill } from '@/components/resolving-pill';
+import { SkeletonCardGrid, SkeletonRows } from '@/components/skeletons';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   SeriesDetailSheet,
@@ -20,6 +23,7 @@ import {
   useWebCover,
 } from '@/lib/queries';
 import { t, tf } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { CalendarItem, RankItem } from '@/lib/schema';
 
 /**
@@ -38,6 +42,8 @@ const GENDERS: { value: number; labelKey: string }[] = [
 export function NewDramaPage() {
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
+  // 频道筛选在页面层：官方把它放在标题行右侧，对推荐/日历两个视图都可见
+  const [gender, setGender] = useState(2);
 
   const handleSelect = (item: {
     seriesId: string;
@@ -65,16 +71,46 @@ export function NewDramaPage() {
   return (
     <div className="flex flex-col gap-4">
       <Tabs defaultValue="recommend">
-        <TabsList>
-          <TabsTrigger value="recommend">{t('newDrama.tabs.recommend')}</TabsTrigger>
-          <TabsTrigger value="calendar">
-            <CalendarDays className="mr-1 size-4" aria-hidden />
-            {t('newDrama.tabs.calendar')}
-          </TabsTrigger>
-        </TabsList>
+        {/* 官方同款顶行：大标题 + 下划线 tab + 右侧频道胶囊 */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-6">
+            <h1 className="text-xl font-bold">{t('nav.new.title')}</h1>
+            <TabsList className="h-auto gap-5 rounded-none bg-transparent p-0">
+              <TabsTrigger
+                value="recommend"
+                className="rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                {t('newDrama.tabs.recommend')}
+              </TabsTrigger>
+              <TabsTrigger
+                value="calendar"
+                className="rounded-none bg-transparent px-0 pb-2 text-sm text-muted-foreground shadow-none data-[state=active]:border-b-2 data-[state=active]:border-red-500 data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                {t('newDrama.tabs.calendar')}
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {GENDERS.map(({ value, labelKey }) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={gender === value ? 'default' : 'outline'}
+                className={cn(
+                  'rounded-full px-4',
+                  gender === value && 'bg-red-500 text-white hover:bg-red-500/90',
+                )}
+                onClick={() => setGender(value)}
+              >
+                {t(labelKey)}
+              </Button>
+            ))}
+          </div>
+        </div>
 
         <TabsContent value="recommend" className="mt-3">
-          <NewDramaRecommends onSelect={handleSelect} />
+          <NewDramaRecommends gender={gender} onSelect={handleSelect} />
         </TabsContent>
 
         <TabsContent value="calendar" className="mt-3">
@@ -89,19 +125,19 @@ export function NewDramaPage() {
         onOpenChange={(open) => !open && setDetail(null)}
       />
 
-      {resolving && (
-        <p className="text-muted-foreground bg-card fixed bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-lg">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('browse.resolving')}
-        </p>
-      )}
+      {resolving && <ResolvingPill />}
     </div>
   );
 }
 
-/** 新剧推荐：频道筛选 + 封面网格 + 滚动翻页。 */
-function NewDramaRecommends({ onSelect }: { onSelect: (item: RankItem) => void }) {
-  const [gender, setGender] = useState(2);
+/** 新剧推荐：封面网格 + 滚动翻页（频道筛选在页面标题行）。 */
+function NewDramaRecommends({
+  gender,
+  onSelect,
+}: {
+  gender: number;
+  onSelect: (item: RankItem) => void;
+}) {
   const feed = useNewDrama(gender);
   const { data: tasks } = useDownloadTasks();
 
@@ -114,14 +150,12 @@ function NewDramaRecommends({ onSelect }: { onSelect: (item: RankItem) => void }
     return map;
   }, [tasks]);
 
-  // 挂载即拉第一页（与 useFeed 相同的免循环依赖手法）
+  // 挂载与换频道的首拉由 useInfiniteQuery 随 queryKey 自动驱动；
+  // 这里只留哨兵回调用的最新状态镜像（feed 是每次渲染的新对象）
   const feedRef = useRef(feed);
   useEffect(() => {
     feedRef.current = feed;
   });
-  useEffect(() => {
-    void feedRef.current.refresh();
-  }, [gender]);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -142,49 +176,31 @@ function NewDramaRecommends({ onSelect }: { onSelect: (item: RankItem) => void }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        {GENDERS.map(({ value, labelKey }) => (
-          <Button
-            key={value}
-            size="sm"
-            variant={gender === value ? 'default' : 'outline'}
-            onClick={() => setGender(value)}
-          >
-            {t(labelKey)}
-          </Button>
-        ))}
-      </div>
-
-      {feed.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
-          {Array.from({ length: 9 }, (_, i) => (
-            <div key={i} className="flex flex-col gap-2">
-              <Skeleton className="aspect-[3/4] w-full rounded-xl" />
-              <Skeleton className="h-4 w-3/4" />
-            </div>
-          ))}
-        </div>
-      ) : feed.error ? (
-        <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-          <p>{t('newDrama.loadFailed')}</p>
-          <p className="text-destructive text-xs">{feed.error}</p>
-          <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
-            <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
-            {t('feed.retry')}
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
-          {feed.items.map((item) => (
-            <NewDramaCard
-              key={item.seriesId}
-              item={item}
-              downloaded={downloadedMap[item.seriesId] ?? 0}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
+      <RefreshShade refreshing={feed.isRefreshing}>
+        {feed.isLoading ? (
+          <SkeletonCardGrid count={9} />
+        ) : feed.error ? (
+          <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+            <p>{t('newDrama.loadFailed')}</p>
+            <p className="text-destructive text-xs">{feed.error}</p>
+            <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
+              <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+              {t('feed.retry')}
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
+            {feed.items.map((item) => (
+              <NewDramaCard
+                key={item.seriesId}
+                item={item}
+                downloaded={downloadedMap[item.seriesId] ?? 0}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )}
+      </RefreshShade>
 
       <div ref={sentinelRef} className="h-px" aria-hidden />
       {feed.isFetchingMore && (
@@ -244,6 +260,18 @@ function NewDramaCard({
             <Tv className="size-8" />
           </div>
         )}
+        {/* 官方同款封面角标：左下热度（黄）、右下总集数 */}
+        {item.recText !== '' && (
+          <span className="absolute bottom-1 left-1 flex items-center gap-0.5 text-[10px] font-semibold text-amber-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+            <Flame className="size-3" aria-hidden />
+            {item.recText}
+          </span>
+        )}
+        {item.episodeCnt > 0 && (
+          <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 py-0.5 text-[10px] text-white">
+            {tf('newDrama.episodeTotal', { count: item.episodeCnt })}
+          </span>
+        )}
         {downloaded > 0 && (
           <Badge
             variant="success"
@@ -254,19 +282,24 @@ function NewDramaCard({
           </Badge>
         )}
       </div>
-      <div className="flex flex-col gap-1 p-3">
+      {/* 官方同款信息排布：标题 / 分类标签 / 分数 */}
+      <div className="flex flex-col gap-1 p-2">
         <p className="truncate text-sm font-semibold" title={item.title}>
           {item.title}
         </p>
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
-          {item.score > 0 && (
-            <span className="flex items-center gap-0.5">
-              <Star className="size-3 text-amber-400" aria-hidden />
-              {item.score.toFixed(1)}
-            </span>
-          )}
-          {item.subTitle !== '' && <span className="truncate">{item.subTitle}</span>}
-        </div>
+        <p className="text-muted-foreground truncate text-xs">
+          {[...item.tags, item.subTitle !== '' ? item.subTitle.split('·')[0] : '']
+            .filter((x) => x !== '')
+            .slice(0, 4)
+            .join('·')}
+        </p>
+        {item.score > 0 && (
+          <p className="flex items-center gap-1 text-xs font-semibold">
+            <Star className="size-3.5 text-amber-400" aria-hidden />
+            {item.score.toFixed(1)}
+            {t('newDrama.scoreSuffix')}
+          </p>
+        )}
       </div>
     </article>
   );
@@ -283,53 +316,51 @@ function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void 
   return (
     <div className="flex flex-col gap-4">
       {/* 日期条常驻不参与 loading：切日期只换下方列表（keepPreviousData
-          平滑过渡），不会整页闪骨架屏 */}
-      <div className="flex flex-wrap gap-2">
-        {dates.map((d) => (
-          <Button
-            key={d}
-            size="sm"
-            variant={active === d ? 'default' : 'outline'}
-            className="flex-col gap-0 py-1"
-            onClick={() => setDate(d)}
-          >
-            <span className="text-[10px] leading-tight opacity-80">{formatWeekday(d)}</span>
-            <span className="text-sm leading-tight tabular-nums">{formatDayMonth(d)}</span>
-          </Button>
-        ))}
+          平滑过渡）；首屏日期未到时骨架占位，不留一条空行。
+          按钮官方同款：均匀铺满一行，星期小字 + 日期大字，选中主色底 */}
+      <div className="flex min-h-14 flex-wrap items-center gap-2">
+        {isLoading && dates.length === 0
+          ? Array.from({ length: 8 }, (_, i) => (
+              <Skeleton key={i} className="h-14 min-w-16 flex-1 rounded-lg" />
+            ))
+          : dates.map((d) => (
+              <Button
+                key={d}
+                size="sm"
+                variant={active === d ? 'default' : 'outline'}
+                className="h-14 min-w-14 flex-1 flex-col gap-0 rounded-lg px-1 py-1.5 sm:max-w-20"
+                onClick={() => setDate(d)}
+              >
+                <span className="text-[11px] leading-tight opacity-80">{formatWeekday(d)}</span>
+                <span className="text-sm font-semibold leading-tight tabular-nums">
+                  {formatDayMonth(d)}
+                </span>
+              </Button>
+            ))}
       </div>
 
-      {isLoading ? (
-        <div className="flex flex-col gap-3">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} className="h-20 rounded-xl" />
-          ))}
-        </div>
-      ) : error ? (
-        <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-          <p>{t('newDrama.loadFailed')}</p>
-          <p className="text-destructive text-xs">{error.message}</p>
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
-            {t('feed.retry')}
-          </Button>
-        </div>
-      ) : (data?.items.length ?? 0) === 0 ? (
-        <p className="text-muted-foreground py-16 text-center text-sm">{t('newDrama.empty')}</p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {(data?.items ?? []).map((item) => (
-            <CalendarRow key={item.seriesId} item={item} onSelect={onSelect} />
-          ))}
-        </div>
-      )}
-
-      {isFetching && !isLoading && (
-        <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('feed.loadingMore')}
-        </p>
-      )}
+      <RefreshShade refreshing={isFetching && !isLoading}>
+        {isLoading ? (
+          <SkeletonRows count={6} height="h-20 rounded-xl" />
+        ) : error ? (
+          <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+            <p>{t('newDrama.loadFailed')}</p>
+            <p className="text-destructive text-xs">{error.message}</p>
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>
+              <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+              {t('feed.retry')}
+            </Button>
+          </div>
+        ) : (data?.items.length ?? 0) === 0 ? (
+          <p className="text-muted-foreground py-16 text-center text-sm">{t('newDrama.empty')}</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {(data?.items ?? []).map((item) => (
+              <CalendarRow key={item.seriesId} item={item} onSelect={onSelect} />
+            ))}
+          </div>
+        )}
+      </RefreshShade>
     </div>
   );
 }
@@ -407,16 +438,20 @@ function CalendarRow({
             </Badge>
           )}
         </div>
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
-          {item.category !== '' && <span>{item.category}</span>}
+        {/* 官方同款：预约人数红色醒目，后跟分类/评分/集数 */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {heat !== '' && <span className="text-red-500 font-semibold">{heat}</span>}
+          {item.category !== '' && <span className="text-muted-foreground">{item.category}</span>}
           {item.score > 0 && (
-            <span className="flex items-center gap-0.5">
+            <span className="text-muted-foreground flex items-center gap-0.5">
               <Star className="size-3 text-amber-400" aria-hidden />
               {item.score.toFixed(1)}
             </span>
           )}
           {item.episodeCnt > 0 && (
-            <span>{tf('common.episodeCount', { count: item.episodeCnt })}</span>
+            <span className="text-muted-foreground">
+              {tf('common.episodeCount', { count: item.episodeCnt })}
+            </span>
           )}
         </div>
         {item.description !== '' && (
@@ -427,22 +462,22 @@ function CalendarRow({
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-1">
-        {heat !== '' && (
-          <Badge variant="secondary" className="gap-1">
-            <Flame className="size-3 text-orange-400" aria-hidden />
-            {heat}
-          </Badge>
-        )}
         {item.publishTime > 0 && (
           <span className="text-muted-foreground text-xs tabular-nums">
             {formatPublishTime(item.publishTime)}
           </span>
         )}
         {!item.isOnline && (
+          // 官方同款红色实心胶囊（品牌红，白字铃铛）
           <Button
             size="sm"
-            variant={reserved ? 'secondary' : 'outline'}
+            variant={reserved ? 'secondary' : 'default'}
             disabled={reserved || reserve.isPending}
+            className={
+              reserved
+                ? 'rounded-full'
+                : 'bg-red-500 hover:bg-red-500/90 rounded-full text-white'
+            }
             onClick={() => reserve.mutate()}
           >
             {reserve.isPending ? (

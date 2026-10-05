@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
+import { MonitorPlay } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
@@ -7,7 +10,6 @@ import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
-import { ContinueWatching } from './continue-watching';
 import {
   usePlay,
   useSavePosition,
@@ -20,14 +22,18 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import {
+  readDanmakuDisplay,
   readDanmakuEnabled,
+  readLastTarget,
   readMuted,
   readPlaybackRate,
   readVolume,
+  writeDanmakuDisplay,
   writeDanmakuEnabled,
   writeMuted,
   writePlaybackRate,
   writeVolume,
+  type DanmakuDisplaySettings,
 } from '@/lib/playback-prefs';
 import { t, tf } from '@/i18n';
 import { useEvent } from '@/lib/ipc/events';
@@ -41,19 +47,72 @@ const SAVE_INTERVAL = 5_000;
 export function PlayerPage() {
   const seriesId = usePlayerStore((s) => s.seriesId);
   const vidIndex = usePlayerStore((s) => s.vidIndex);
+  const setTarget = usePlayerStore((s) => s.setTarget);
+  // 弹幕设置面板的开合放在这一层：切集时 PlayerView 整体重挂载，
+  // 面板状态在这里才不会一集一开就被吃掉
+  const [danmakuPanelOpen, setDanmakuPanelOpen] = useState(false);
+  // 音量竖条浮层同样在这层持有：切集重挂载不会把正开着的浮层收走
+  const [volumeOpen, setVolumeOpen] = useState(false);
 
-  // 没在播时主区域就是「继续观看」——播放历史的入口必须在这里，
-  // 放进只在播放时才渲染的侧栏等于没做。
+  // 刷新/重启后内存 store 是空的：把上次播放目标读回来，
+  // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）
+  useEffect(() => {
+    if (seriesId) return;
+    const last = readLastTarget();
+    if (last) setTarget(last.seriesId, last.vidIndex);
+  }, [seriesId, setTarget]);
+
+  // 空态只做指路：观看记录在独立的历史页，播放入口在各内容页
   if (!seriesId || !vidIndex) {
-    return <ContinueWatching />;
+    return <PlayerEmptyState />;
   }
 
   // key 随剧集变化 → 切集时组件整体重建，播放/转码状态自然清零，
   // 不必在 effect 里同步 setState（那会触发级联渲染）。
-  return <PlayerView key={`${seriesId}:${vidIndex}`} />;
+  return (
+    <PlayerView
+      key={`${seriesId}:${vidIndex}`}
+      danmakuPanelOpen={danmakuPanelOpen}
+      onDanmakuPanelOpenChange={setDanmakuPanelOpen}
+      volumeOpen={volumeOpen}
+      onVolumeOpenChange={setVolumeOpen}
+    />
+  );
 }
 
-function PlayerView() {
+/** 未在播放时的占位：去推荐/历史挑一部剧即可开始。 */
+function PlayerEmptyState() {
+  const navigate = useNavigate();
+  return (
+    <div className="text-muted-foreground grid h-full place-items-center p-6">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <MonitorPlay className="size-10 opacity-40" aria-hidden />
+        <p className="text-sm">{t('player.empty')}</p>
+        <p className="text-xs opacity-70">{t('player.emptyHint')}</p>
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => void navigate({ to: '/history' })}>
+            {t('nav.history.title')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void navigate({ to: '/' })}>
+            {t('nav.home.title')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlayerView({
+  danmakuPanelOpen,
+  onDanmakuPanelOpenChange,
+  volumeOpen,
+  onVolumeOpenChange,
+}: {
+  danmakuPanelOpen: boolean;
+  onDanmakuPanelOpenChange: (open: boolean) => void;
+  volumeOpen: boolean;
+  onVolumeOpenChange: (open: boolean) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
@@ -134,6 +193,16 @@ function PlayerView() {
   const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
   const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
   const [danmakuOn, setDanmakuOn] = useState(() => readDanmakuEnabled());
+  const [danmakuDisplay, setDanmakuDisplay] = useState<DanmakuDisplaySettings>(
+    () => readDanmakuDisplay(),
+  );
+  const updateDanmakuDisplay = useCallback((patch: Partial<DanmakuDisplaySettings>) => {
+    setDanmakuDisplay((prev) => {
+      const next = { ...prev, ...patch };
+      writeDanmakuDisplay(next);
+      return next;
+    });
+  }, []);
   const toggleDanmaku = useCallback(() => {
     setDanmakuOn((on) => {
       writeDanmakuEnabled(!on);
@@ -478,6 +547,7 @@ function PlayerView() {
                 videoRef={videoRef}
                 items={danmakuQuery.data ?? []}
                 enabled={danmakuOn}
+                display={danmakuDisplay}
               />
               <PlayerControls
                 videoRef={videoRef}
@@ -494,6 +564,12 @@ function PlayerView() {
                 src={playSrc}
                 danmakuOn={danmakuOn}
                 onToggleDanmaku={toggleDanmaku}
+                danmakuDisplay={danmakuDisplay}
+                onDanmakuDisplayChange={updateDanmakuDisplay}
+                danmakuPanelOpen={danmakuPanelOpen}
+                onDanmakuPanelOpenChange={onDanmakuPanelOpenChange}
+                volumeOpen={volumeOpen}
+                onVolumeOpenChange={onVolumeOpenChange}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，

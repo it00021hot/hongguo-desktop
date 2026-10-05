@@ -9,6 +9,7 @@ pub use download as download_cmd;
 pub mod danmaku_cmd;
 pub mod discover_cmd;
 pub mod download;
+pub mod history_cmd;
 pub mod login_cmd;
 pub mod merge_cmd;
 pub mod play_cmd;

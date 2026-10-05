@@ -8,6 +8,8 @@ import { t } from '@/i18n';
 /** 由当前路径反查导航 key，用于顶栏标题。 */
 function navKeyFor(pathname: string): string {
   if (pathname === '/') return 'browse';
+  // 播放页不在侧栏菜单里（只能由播放入口跳转），标题单独指认
+  if (pathname.startsWith('/player')) return 'player';
   const hit = NAV_ITEMS.find((item) => item.to !== '/' && pathname.startsWith(item.to));
   return hit?.key ?? 'browse';
 }

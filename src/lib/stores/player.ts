@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { writeLastTarget } from '@/lib/playback-prefs';
 
 interface PlayerState {
   /** 当前播放的剧集 id */
@@ -22,6 +23,14 @@ interface PlayerState {
 export const usePlayerStore = create<PlayerState>((set) => ({
   seriesId: null,
   vidIndex: null,
-  setTarget: (seriesId, vidIndex) => set({ seriesId, vidIndex }),
-  clear: () => set({ seriesId: null, vidIndex: null }),
+  setTarget: (seriesId, vidIndex) => {
+    // 目标持久化：刷新/重启后播放器能恢复到正在看的这部剧这集
+    // （进度由本地播放档案的 resumeAt 接上，见 PlayerPage 的恢复逻辑）
+    writeLastTarget({ seriesId, vidIndex });
+    set({ seriesId, vidIndex });
+  },
+  clear: () => {
+    writeLastTarget(null);
+    set({ seriesId: null, vidIndex: null });
+  },
 }));
