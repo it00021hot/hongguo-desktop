@@ -58,7 +58,8 @@ pub async fn prepare(
     }
     let c = cache();
     // 一次只看一集：把别的集从内存里清掉。不清的话整季 250 集会把内存吃光。
-    c.keep_only(vid);
+    // 正在取流的豁免——那可能是沉浸流预取的下一部剧，清了就白取。
+    c.keep_only_protect_fetching(vid);
 
     // 不指定档位时用上一轮解析到的档位——缓存的键里必须有具体档位，
     // 否则无从查起。顺带让「拉分集」与「起播」两个并发请求认到同一条缓存，
@@ -127,6 +128,63 @@ fn prepared(c: &StreamCache, vid: &str, definition: u32) -> Option<Prepared> {
         definition,
         definitions,
     })
+}
+
+/// 预取一集的流（沉浸流「一切就下一部」的后台铺垫）。
+///
+/// 提前走完「取流表 + 建渐进流」这两步贵的前置，数据在后台渐进填充；
+/// 用户真滚过去时 `prepare` 会命中 `ready`（渐进条目注册即就绪），
+/// 立刻拿到流地址，首帧只等头部数据区间，不再黑屏干等。
+///
+/// 幂等：已有条目或已在取流时静默返回。失败同样静默——预取是锦上添花，
+/// 报错只会把噪音推给根本没请求这件事的前端。
+pub async fn prefetch_stream(
+    app: &tauri::AppHandle,
+    vid: &str,
+    settings: &Settings,
+    env: &crate::domain::api::client::ApiEnv,
+) -> AppResult<()> {
+    let vid = vid.trim();
+    if vid.is_empty() {
+        return Ok(());
+    }
+    let c = cache();
+    // 已解析过档位且条目在场/在取：无事可做
+    if let Some(want) = c.auto_definition(vid) {
+        if c.exists(vid, want) || c.is_fetching(vid, want) {
+            return Ok(());
+        }
+    }
+    let play = match crate::domain::api::play_url::fetch_play_url(vid, None, env).await {
+        Ok(p) => p,
+        Err(e) => {
+            log::info!("[Online] 预取 {vid} 取流表失败（忽略）: {e}");
+            return Ok(());
+        }
+    };
+    let want = play.definition;
+    c.remember_auto(vid, want);
+    if c.is_fetching(vid, want) || c.exists(vid, want) {
+        return Ok(());
+    }
+    if !c.begin_fetch(vid, want) {
+        return Ok(());
+    }
+    c.set_definitions(vid, want, &play.definitions);
+    log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");
+    let owned = vid.to_string();
+    let c = cache();
+    let app = app.clone();
+    let settings = settings.clone();
+    tokio::spawn(async move {
+        let filled = fill(&app, c, &owned, want, &play, &settings).await;
+        c.end_fetch(&owned, want);
+        if let Err(e) = filled {
+            log::warn!("[Online] 预取填充 {owned} 失败: {e}");
+            c.remove(&owned, want);
+        }
+    });
+    Ok(())
 }
 
 /// 等另一个请求把这一档取完，复用它的结果。

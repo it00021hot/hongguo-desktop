@@ -155,6 +155,7 @@ pub fn run() {
             commands::merge_cmd::merge_series,
             // 播放
             commands::play_cmd::play_series,
+            commands::play_cmd::play_prefetch,
             commands::play_cmd::save_playback_position,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,

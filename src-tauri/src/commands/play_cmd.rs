@@ -15,6 +15,37 @@ pub async fn play_series(
     crate::service::play_service::local::resolve_play(&app, &state, &request).await
 }
 
+/// 预取一部剧第 1 集的在线流（沉浸流「一切就下一部」）。
+///
+/// 幂等且静默：本地没档案就先解析登记（通常前端已预取过分集，这里秒回），
+/// 流已取/在取直接返回；取流表失败不报错——预取是优化，失败大不了现场取。
+#[tauri::command]
+pub async fn play_prefetch(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    series_id: String,
+) -> AppResult<()> {
+    let series = match state.store.series_by_id(&series_id)? {
+        Some(s) => s,
+        None => {
+            let env = state.api_env();
+            let s = crate::service::series_service::resolver::resolve_series(&series_id, &env)
+                .await?;
+            crate::service::series_service::registry::upsert_and_persist(&state, s.clone())?;
+            s
+        }
+    };
+    let Some(ep) = series.episodes.iter().find(|e| e.vid_index == 1) else {
+        return Ok(());
+    };
+    if ep.vid.is_empty() {
+        return Ok(());
+    }
+    let settings = state.settings();
+    let env = state.api_env();
+    crate::service::play_service::online::prefetch_stream(&app, &ep.vid, &settings, &env).await
+}
+
 #[tauri::command]
 pub fn save_playback_position(
     state: State<'_, AppState>,

@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PlayerView } from '@/features/player/components/player-page';
-import { useFeed, usePrefetchSeriesEpisodes, useResolveSeries } from '@/lib/queries';
+import { play } from '@/lib/ipc/commands';
+import {
+  useFeed,
+  usePrefetchSeriesEpisodes,
+  useSeriesEpisodes,
+} from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
-import { t, tf } from '@/i18n';
+import { t } from '@/i18n';
 
 /**
  * 首页：沉浸式播放器流（hgplayer 同款形态）。
@@ -23,28 +27,46 @@ export function HomePage() {
   const [feedIndex, setFeedIndex] = useState(0);
   const current = feed.items[feedIndex];
   const currentId = current?.seriesId;
-  const { mutate: resolve, isPending: resolving } = useResolveSeries();
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
 
-  // 当前剧变化（含首进）→ 解析登记并设为播放目标（从第 1 集开始，
-  // 看过的剧由后端 resumeAt 自动接续进度）
+  /**
+   * 当前剧的档案：走 `get_series_episodes`（本地命中秒回，缺失才回落解析），
+   * **不走 resolve_series**——那是每次都打网络的解析，预取的缓存它吃不到，
+   * 滚轮切剧会在「正在准备」上白等一拍。预取 effect 已经把下一部剧的
+   * 分集档案灌进同一份缓存，这里直接命中。
+   */
+  const { data: currentSeries } = useSeriesEpisodes(currentId ?? '');
+
+  // 档案就位 → 设为播放目标（从第 1 集开始，看过的剧由 resumeAt 接进度）
   useEffect(() => {
-    if (!currentId) return;
-    resolve(currentId, {
-      onSuccess: (series) => setTarget(series.seriesId, 1),
-      onError: (e) =>
-        toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
-    });
-    // resolve/mutate 引用稳定，只需要跟当前剧走
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId]);
+    if (!currentSeries) return;
+    setTarget(currentSeries.seriesId, 1);
+  }, [currentSeries, setTarget]);
 
   // 预取下一部剧（以及上一步回退目标）的分集档案：换剧时 resolve 秒回
   const nextItem = feed.items[feedIndex + 1];
   useEffect(() => {
     if (nextItem) prefetchEpisodes(nextItem.seriesId);
   }, [nextItem, prefetchEpisodes]);
+
+  // 预取下一部剧第 1 集的**流**（取流表 + 渐进填充）：滚过去时缓存已就绪，
+  // 首帧只等头部数据——hgplayer「一切就下一部」的同款做法。
+  // 延迟 1.5 秒让当前剧先把首帧吃下来，别抢带宽；同一部剧只取一次。
+  const streamPrefetched = useRef(new Set<string>());
+  useEffect(() => {
+    if (!nextItem) return;
+    const id = nextItem.seriesId;
+    if (streamPrefetched.current.has(id)) return;
+    streamPrefetched.current.add(id);
+    const timer = setTimeout(() => {
+      void play.prefetch(id).catch(() => {
+        // 失败不算数：下次这个剧再成为「下一部」时允许重试
+        streamPrefetched.current.delete(id);
+      });
+    }, 1_500);
+    return () => clearTimeout(timer);
+  }, [nextItem]);
 
   // 快滑到信息流尾部时预取下一页
   useEffect(() => {
@@ -102,14 +124,6 @@ export function HomePage() {
     <div className="relative h-full min-h-0">
       {/* 播放器铺满整页；滚轮/↑↓ 在沉浸流里切上一部/下一部剧 */}
       <PlayerView seriesPanelMode="overlay" onWheelStep={step} />
-      {resolving && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex justify-center pt-3">
-          <p className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/90 shadow-lg backdrop-blur-sm">
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            {tf('home.preparing', { title: current.title })}
-          </p>
-        </div>
-      )}
     </div>
   );
 }

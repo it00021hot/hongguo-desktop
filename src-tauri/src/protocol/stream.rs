@@ -423,11 +423,15 @@ impl StreamCache {
         });
     }
 
-    /// 只留下 `vid` 这一集的条目。
+    /// 同「只留一集」语义，但**正在取流的条目豁免**。
     ///
-    /// 一次只看一集，跨集缓存没有价值；不清的话整季 250 集会把内存吃光。
-    pub fn keep_only(&self, vid: &str) {
-        self.entries.lock().retain(|k, _| k.vid == vid);
+    /// 沉浸流会预取下一部剧的流（后台渐进填充中）；用户此时切集/换清晰度
+    /// 触发新的 `prepare`，无脑清理会把预取半途的条目清掉，
+    /// 等于白取一遍。豁免后预取能活到它被切上的那一刻。
+    pub fn keep_only_protect_fetching(&self, vid: &str) {
+        self.entries
+            .lock()
+            .retain(|k, entry| k.vid == vid || *entry.fetching.lock());
     }
 
     /// 这一集「不指定档位」时上次解析到的档位。
@@ -648,14 +652,20 @@ mod tests {
     }
 
     #[test]
-    fn keep_only_drops_other_episodes() {
-        // 一次只看一集：不清掉别的集，整季 250 集会把内存吃光
+    fn keep_only_drops_other_episodes_but_spares_fetching() {
+        // 一次只看一集：不清掉别的集，整季 250 集会把内存吃光；
+        // 正在取流的豁免（沉浸流预取的下一部剧不能被清）
         let c = StreamCache::default();
         c.store("ep1", 1080, &[0u8; 100]);
         c.store("ep2", 1080, &[0u8; 50]);
-        c.keep_only("ep2");
+        c.begin_fetch("ep3", 1080);
+        c.keep_only_protect_fetching("ep2");
         assert!(c.get("ep1", 1080).is_none());
         assert!(c.get("ep2", 1080).is_some());
+        assert!(c.get("ep3", 1080).is_some(), "取流中的预取条目豁免");
+        c.end_fetch("ep3", 1080);
+        c.keep_only_protect_fetching("ep2");
+        assert!(c.get("ep3", 1080).is_none(), "取流结束后不再豁免");
     }
 
     #[test]
