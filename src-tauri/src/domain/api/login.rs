@@ -150,16 +150,29 @@ fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
 
 /// 把 Set-Cookie 原始行洗成 `k=v; k=v`（剥掉 Path/Domain/Expires 等属性）。
 pub fn extract_cookie_pairs(set_cookies: &[String]) -> String {
-    let mut pairs = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for line in set_cookies {
         if let Some(kv) = line.split(';').next() {
             let kv = kv.trim();
-            if !kv.is_empty() && kv.contains('=') {
-                pairs.push(kv.to_string());
+            if let Some((k, v)) = kv.split_once('=') {
+                if k.is_empty() {
+                    continue;
+                }
+                // 服务端会对同一 cookie 多次下发（如 odin_tt），后值覆盖、
+                // 位置保持首现——否则落库串里同名 cookie 越叠越多
+                if let Some(slot) = pairs.iter_mut().find(|(ek, _)| ek == k) {
+                    slot.1 = v.to_string();
+                } else {
+                    pairs.push((k.to_string(), v.to_string()));
+                }
             }
         }
     }
-    pairs.join("; ")
+    pairs
+        .into_iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// 短信登录 / MFA 的结构化结果。
@@ -171,6 +184,8 @@ pub enum LoginOutcome {
         /// `k=v; k=v`（可直接放进 `ApiEnv::cookie`）
         cookies: String,
         user: PassportUser,
+        /// 响应头 `x-tt-token` 下发的长凭据（可空：个别响应不带）
+        token: String,
     },
     /// 需要短信上行 MFA 二次验证（error_code=2046）：带着上下文轮询
     /// [`upsms_verify`]，`Registered` 后用 [`mfa_relogin`] 换取会话。
@@ -370,7 +385,7 @@ pub async fn sms_login(
         env,
     )
     .await?;
-    parse_login_response(&resp.bytes, &resp.set_cookies)
+    parse_login_response(&resp.bytes, &resp.set_cookies, &resp.headers)
 }
 
 /// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key，
@@ -544,7 +559,11 @@ pub async fn user_info(env: &ApiEnv) -> AppResult<PassportUser> {
 }
 
 /// 解析登录响应：成功取 Set-Cookie + 用户信息；MFA 特征字段在场则走 MFA 分支。
-fn parse_login_response(bytes: &[u8], set_cookies: &[String]) -> AppResult<LoginOutcome> {
+fn parse_login_response(
+    bytes: &[u8],
+    set_cookies: &[String],
+    x_tt_token: &[(String, String)],
+) -> AppResult<LoginOutcome> {
     let v: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Auth(format!("sms_login 响应不是 JSON: {e}")))?;
 
@@ -611,9 +630,15 @@ fn parse_login_response(bytes: &[u8], set_cookies: &[String]) -> AppResult<Login
     if cookies.is_empty() {
         return Err(AppError::Auth("登录成功但未返回会话 cookie".into()));
     }
+    let token = x_tt_token
+        .iter()
+        .find(|(k, _)| k == "x-tt-token")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
     Ok(LoginOutcome::Success {
         cookies,
         user: parse_user(&v),
+        token,
     })
 }
 
@@ -750,16 +775,18 @@ mod tests {
                 )),
                 proxy: env0.proxy.clone(),
                 device: env0.device.clone(),
+                x_tt_token: None,
             }
         };
         match sms_login(&env, &mobile, &code, None).await {
-            Ok(LoginOutcome::Success { cookies, user }) => {
+            Ok(LoginOutcome::Success { cookies, user, token }) => {
                 println!(
-                    "[login] ✅ 成功 user={}({}) cookie {}B: {}…",
+                    "[login] ✅ 成功 user={}({}) cookie {}B: {}… token {}B",
                     user.name,
                     user.user_id,
                     cookies.len(),
-                    &cookies[..cookies.len().min(60)]
+                    &cookies[..cookies.len().min(60)],
+                    token.len()
                 );
                 let env = crate::domain::api::client::ApiEnv {
                     cookie: Some(cookies),
@@ -870,8 +897,8 @@ mod tests {
     fn parses_success_login_response() {
         let body = r#"{"error_code":0,"message":"success","data":{"user_id":7100012345678,"name":"红果用户","mobile":"138****0000"}}"#.as_bytes();
         let cookies = vec!["sessionid=s1; Path=/".to_string()];
-        match parse_login_response(body, &cookies) {
-            Ok(LoginOutcome::Success { cookies, user }) => {
+        match parse_login_response(body, &cookies, &[]) {
+            Ok(LoginOutcome::Success { cookies, user, .. }) => {
                 assert_eq!(cookies, "sessionid=s1");
                 assert_eq!(user.user_id, "7100012345678");
                 assert_eq!(user.name, "红果用户");
@@ -890,7 +917,7 @@ mod tests {
             "common_params":{"copywriting_key":"sms_login","ies_safety_diversion_tag":"mfa"},
             "verify_ways":[{"channel_mobile":"9515211003","mobile":"150******47","sms_content":"YZ","verify_way":"mobile_up_sms_verify"}],
             "verify_scene_desc":"为保证帐号安全，请完成身份验证"},"message":"error"}"#.as_bytes();
-        match parse_login_response(body, &[]) {
+        match parse_login_response(body, &[], &[]) {
             Ok(LoginOutcome::Mfa(ctx)) => {
                 assert_eq!(ctx.retry_tag, "1");
                 assert_eq!(ctx.sms_code_key, "fb2825d4c17fad783d28724dd8aebe5e");
@@ -927,7 +954,7 @@ mod tests {
             "passport_mfa_token=CjeRkKbStbWgOEQpGsdgfE0qpV8RtNI1eV77042U15V; Path=/; Domain=.fqnovel.com; HttpOnly".into(),
             "store-region=cn-gd; Path=/".into(),
         ];
-        match parse_login_response(body, &set_cookies) {
+        match parse_login_response(body, &set_cookies, &[]) {
             Ok(LoginOutcome::Mfa(ctx)) => {
                 assert_eq!(
                     ctx.mfa_token, "CjeRkKbStbWgOEQpGsdgfE0qpV8RtNI1eV77042U15V",
@@ -945,6 +972,7 @@ mod tests {
             proxy: crate::domain::model::ProxyConfig::default(),
             device: crate::signer::video_device(),
             cookie: cookie.map(str::to_string),
+            x_tt_token: None,
         };
         let env = with_mfa_cookie(&mk(Some("a=1; passport_mfa_token=old; b=2")), "new");
         assert_eq!(env.cookie.as_deref(), Some("a=1; b=2; passport_mfa_token=new"));
@@ -954,11 +982,48 @@ mod tests {
         assert_eq!(env.cookie.as_deref(), Some("a=1"), "空 token 不动 cookie");
     }
 
+    /// 登录响应头的 x-tt-token 要提取（Set-Cookie / body 里都没有）。
+    #[test]
+    fn extracts_x_tt_token_from_headers() {
+        let body = r#"{"error_code":0,"message":"success","data":{"user_id":1,"name":"u"}}"#.as_bytes();
+        let headers = vec![
+            ("content-type".to_string(), "application/json".to_string()),
+            (
+                "x-tt-token".to_string(),
+                "00ab--cd-3.0.3".to_string(),
+            ),
+        ];
+        let cookies = vec!["sessionid=s1; Path=/".to_string()];
+        match parse_login_response(body, &cookies, &headers) {
+            Ok(LoginOutcome::Success { token, .. }) => {
+                assert_eq!(token, "00ab--cd-3.0.3");
+            }
+            other => panic!("应解析为 Success，实际 {other:?}"),
+        }
+    }
+
+    /// 同名 cookie 多次下发（odin_tt）：后值覆盖、不叠罗汉（2026-10-05
+    /// 落库数据里 odin_tt 重复 3 次的修复回归）。
+    #[test]
+    fn dedupes_repeated_set_cookies() {
+        let lines = vec![
+            "odin_tt=aaa; Path=/; Domain=.fqnovel.com".to_string(),
+            "sessionid=s1; Path=/".to_string(),
+            "odin_tt=bbb; Path=/".to_string(),
+            "odin_tt=ccc; Path=/".to_string(),
+        ];
+        assert_eq!(
+            extract_cookie_pairs(&lines),
+            "odin_tt=ccc; sessionid=s1",
+            "后值覆盖且保持首现顺序"
+        );
+    }
+
     /// 常规失败（顶层 error_code 形态）。
     #[test]
     fn surfaces_error_code() {
         let body = r#"{"error_code":1201,"message":"验证码错误"}"#.as_bytes();
-        let err = parse_login_response(body, &[]).unwrap_err();
+        let err = parse_login_response(body, &[], &[]).unwrap_err();
         assert!(err.to_string().contains("1201"));
         assert!(err.to_string().contains("验证码错误"));
     }

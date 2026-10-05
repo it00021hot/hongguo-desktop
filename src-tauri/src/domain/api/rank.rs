@@ -1120,6 +1120,7 @@ pub(crate) mod probe {
             cookie: Some(
                 "store-region=cn-gd; store-region-src=did; install_id=2715158266282762; ttreq=1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874".into(),
             ),
+            x_tt_token: None,
         }
     }
 
@@ -1264,6 +1265,7 @@ pub(crate) mod probe {
             proxy: crate::domain::model::ProxyConfig::default(),
             cookie: Some(crate::signer::device::anonymous_cookie(&device)),
             device,
+            x_tt_token: None,
         };
         let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
             .await
@@ -1335,6 +1337,7 @@ pub(crate) mod probe {
                     proxy: crate::domain::model::ProxyConfig::default(),
                     device,
                     cookie: Some(c),
+                    x_tt_token: None,
                 }
             }
             _ => anon_env(),
@@ -1377,6 +1380,7 @@ pub(crate) mod probe {
             proxy: crate::domain::model::ProxyConfig::default(),
             device,
             cookie: Some(cookies),
+            x_tt_token: None,
         };
 
         reserve_series(&series, false, &env).await.expect("取消预约");
@@ -1444,6 +1448,7 @@ pub(crate) mod probe {
             proxy: crate::domain::model::ProxyConfig::default(),
             cookie: Some(crate::signer::device::anonymous_cookie(&device)),
             device,
+            x_tt_token: None,
         };
         let q: Vec<(String, String)> = [
             ("active_panel", "6"),

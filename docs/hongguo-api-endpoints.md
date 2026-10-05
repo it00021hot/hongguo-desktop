@@ -233,7 +233,25 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
    拿 cookie
 4. 退出登录**无网络请求**（hgplayer 纯本地清账号）
 
+## 会话有效期与 x-tt-token（2026-10-05 逆向 hgplayer + 落库数据）
+
+- **sessionid 有效期 60 天**：`sid_guard = <sessionid>|<登录时间戳>|5184000|<Expires>`
+  （5184000s = 60 天）。手机"登录一次在线很久"的直接原因。
+- **续约**：hgplayer 二进制无任何 refresh/auth 端点（passport 路径只有
+  send_code/sms_login/upsms）——token 里的 refresh 段不被主动使用，
+  最可能是服务端对活跃用户在响应头滑动续期（抓包 2h 窗口内凭据无变化，
+  未实证；将来可在 addon 记录响应头验证）。过期后重新短信登录。
+- **x-tt-token 双 token**：登录**响应头**下发 `00<access 195位>--<refresh
+  150位>-3.0.3`（Set-Cookie / body 里都没有）；请求带**前 56 位短形式**
+  （`00`+sessionid+22 位），hgplayer 每个请求都在场。我们已对齐：
+  `AccountState.token` 落库 → `ApiEnv.x_tt_token` → `send_once` 注入头。
+  旧账号该字段为空（不带），下次登录自动补上。
+- 登录态完整凭据：sessionid / sid_tt / sessionid_ss（同值）+ sid_guard +
+  uid_tt(_ss) + odin_tt + d_ticket + n_mh + session_tlb_tag 等 17 个 cookie
+  （`extract_cookie_pairs` 全收，同名后值覆盖）+ x-tt-token 头凭据。
+
 ## 已知未抓 / 待做
+
 
 - 设备注册 `POST log.snssdk.com/service/2/device_register/`（旧会话已抓到
   query 全指纹 + protobuf body + gzip 响应，尚未实现；bookmall 全家桶在新设备上

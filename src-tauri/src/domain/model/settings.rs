@@ -163,6 +163,10 @@ pub struct AccountState {
     /// 登录时间（unix 秒）
     #[serde(default)]
     pub login_at: i64,
+    /// x-tt-token 长凭据（登录响应头下发，`00<access>--<refresh>-3.0.3`
+    /// 形态；请求带它的前 56 位短形式。旧账号无此字段，下次登录补上）
+    #[serde(default)]
+    pub token: String,
 }
 
 /// 应用设置。

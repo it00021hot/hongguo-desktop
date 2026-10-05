@@ -204,6 +204,7 @@ mod probe {
             proxy: crate::domain::model::ProxyConfig::default(),
             cookie: Some(crate::signer::device::anonymous_cookie(&device)),
             device,
+            x_tt_token: None,
         };
         let p1 = search_series("丧尸", 0, "", &env).await.expect("首页");
         println!(

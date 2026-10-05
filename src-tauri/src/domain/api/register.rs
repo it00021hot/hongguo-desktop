@@ -433,7 +433,8 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         proxy: env.proxy.clone(),
         device: env.device.clone(),
         cookie: None,
-    };
+            x_tt_token: None,
+        };
 
     let bytes = api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &reg_env).await?;
     let result = parse_register(&bytes)?;
@@ -754,6 +755,7 @@ mod probe {
             proxy: anon_env().proxy,
             device: dev,
             cookie: None,
+            x_tt_token: None,
         };
         match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env).await {
             Ok(bytes) => {
@@ -843,6 +845,7 @@ mod probe {
             proxy: env0.proxy.clone(),
             device: fresh,
             cookie: None,
+            x_tt_token: None,
         };
         send_fresh("P2fresh档案", &env2).await;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -855,6 +858,7 @@ mod probe {
             proxy: env0.proxy.clone(),
             device: dev3,
             cookie: None,
+            x_tt_token: None,
         };
         send_fresh("P3匿名71332", &env3).await;
     }

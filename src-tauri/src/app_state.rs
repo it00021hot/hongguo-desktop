@@ -125,6 +125,13 @@ impl AppStateInner {
         crate::domain::api::client::ApiEnv {
             proxy: settings.proxy,
             cookie: Some(merge_session_cookie(account_cookie, &device)),
+            // x-tt-token（登录响应头凭据）：在账号里就带上，send_once 统一
+            // 以 56 位短形式注入请求头
+            x_tt_token: settings
+                .account
+                .as_ref()
+                .map(|a| a.token.clone())
+                .filter(|t| !t.is_empty()),
             device,
         }
     }

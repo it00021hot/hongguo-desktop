@@ -60,6 +60,9 @@ pub struct ApiEnv {
     /// 会话 Cookie（`k=v; k=v` 形态）。未登录为 None。
     /// Cookie 不参与签名，走 `extra_headers` 注入。
     pub cookie: Option<String>,
+    /// x-tt-token 长凭据（登录响应头下发；在场则以短形式随全部请求头
+    /// 携带，hgplayer 同款——这也是将来服务端滑动续期时新值的载体）
+    pub x_tt_token: Option<String>,
 }
 
 impl ApiEnv {
@@ -71,6 +74,7 @@ impl ApiEnv {
             proxy,
             device: crate::signer::video_device(),
             cookie: None,
+            x_tt_token: None,
         }
     }
 }
@@ -127,6 +131,9 @@ pub struct ApiCallResponse {
     pub bytes: Vec<u8>,
     /// Set-Cookie 原始行（`k=v; Path=/; ...` 形态，未清洗）。
     pub set_cookies: Vec<String>,
+    /// 全部响应头（小写名）。目前只为提取 `x-tt-token`（登录响应头
+    /// 下发的长凭据，Set-Cookie / body 里都没有）。
+    pub headers: Vec<(String, String)>,
 }
 
 /// reading 系（lq 域）统一调用入口：轻签名头 + POST body 一律 gzip。
@@ -361,6 +368,15 @@ async fn send_once(
             extra.push(("Cookie".into(), c.clone()));
         }
     }
+    // x-tt-token：登录响应头下发的凭据，短形式（前 56 位）随请求带——
+    // hgplayer 每个业务请求都在场（2026-10-05 抓包对齐；也是服务端
+    // 滑动续期时新值的下发载体）
+    if let Some(full) = &env.x_tt_token {
+        if !full.is_empty() {
+            let short: String = full.chars().take(56).collect();
+            extra.push(("x-tt-token".into(), short));
+        }
+    }
     let signed = match body {
         Some(bytes) => crate::signer::sign_request_with(
             origin,
@@ -401,6 +417,15 @@ async fn send_once(
         .iter()
         .filter_map(|v| v.to_str().ok().map(str::to_string))
         .collect();
+    let headers = resp
+        .headers()
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|v| (k.as_str().to_ascii_lowercase(), v.to_string()))
+        })
+        .collect();
     let bytes = resp
         .bytes()
         .await
@@ -408,6 +433,7 @@ async fn send_once(
     Ok(ApiCallResponse {
         bytes: bytes.to_vec(),
         set_cookies,
+        headers,
     })
 }
 

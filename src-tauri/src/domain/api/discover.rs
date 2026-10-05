@@ -433,6 +433,7 @@ mod probe {
             cookie: Some(
                 "store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".into(),
             ),
+            x_tt_token: None,
         };
         // 对照：我们自己的静态档案，仅版本号升到 73932（UA 保留我们的机型）
         let mut own = crate::signer::video_device();
@@ -449,6 +450,7 @@ mod probe {
             proxy: env.proxy.clone(),
             device: own_dev,
             cookie: None,
+            x_tt_token: None,
         };
         let q: Vec<(String, String)> = vec![
             ("auth_aweme", r#"true"#),

@@ -66,7 +66,7 @@ pub async fn login_sms_login(
         log::warn!("[Login] 登录失败: {e}");
     }
     match outcome? {
-        LoginOutcome::Success { cookies, user } => {
+        LoginOutcome::Success { cookies, user, token } => {
             log::info!("[Login] 登录成功: {} ({})", user.name, user.user_id);
             // 登录成功即消费掉 csrf / MFA 流程（一次性凭据）
             *state.login_csrf.write() = None;
@@ -77,6 +77,7 @@ pub async fn login_sms_login(
                 user_name: user.name.clone(),
                 user_id: user.user_id.clone(),
                 login_at: chrono::Utc::now().timestamp(),
+                token: token.clone(),
             };
             persist_account(&state, Some(account))?;
             Ok(LoginResult::Success { user })
@@ -126,7 +127,7 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                     let mut ctx = flow.ctx.clone();
                     ctx.mfa_token = mfa_token;
                     match login::mfa_relogin(&env, &flow.mobile, &flow.code, &ctx).await {
-                        Ok(LoginOutcome::Success { cookies, user }) => {
+                        Ok(LoginOutcome::Success { cookies, user, token }) => {
                             *state.login_mfa.write() = None;
                             *state.login_csrf.write() = None;
                             let account = AccountState {
@@ -135,6 +136,7 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                                 user_name: user.name.clone(),
                                 user_id: user.user_id.clone(),
                                 login_at: chrono::Utc::now().timestamp(),
+                                token,
                             };
                             if let Err(e) = persist_account(&state, Some(account)) {
                                 let _ = app.emit(
@@ -244,7 +246,7 @@ pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResu
         UpsmsState::Waiting => Ok(LoginResult::MfaWaiting),
         UpsmsState::Registered { .. } => {
             match login::mfa_relogin(&env, &flow.mobile, &flow.code, &flow.ctx).await? {
-                LoginOutcome::Success { cookies, user } => {
+                LoginOutcome::Success { cookies, user, token } => {
                     *state.login_mfa.write() = None;
                     *state.login_csrf.write() = None;
                     let account = AccountState {
@@ -253,6 +255,7 @@ pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResu
                         user_name: user.name.clone(),
                         user_id: user.user_id.clone(),
                         login_at: chrono::Utc::now().timestamp(),
+                        token,
                     };
                     persist_account(&state, Some(account))?;
                     Ok(LoginResult::Success { user })
