@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
   Gauge,
+  ListVideo,
   Maximize,
   Minimize,
   MonitorPlay,
@@ -26,7 +27,7 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { t } from '@/i18n';
+import { t, tf } from '@/i18n';
 import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import { DownloadSheet } from './download-sheet';
 import type { Episode, VideoDefinition } from '@/lib/schema';
@@ -88,6 +89,13 @@ interface Props {
   onDefinitionChange: (definition: number | undefined) => void;
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
+  /**
+   * 沉浸流模式的「选集」入口：给回调就在控制栏渲染按钮（hgplayer 同款
+   * 「选集 · 全N集」）。播放页右侧已有 SeriesPanel，不传即不渲染。
+   */
+  onToggleEpisodes?: () => void;
+  /** 选集按钮上显示的总集数（未知时不显示数字） */
+  episodesTotal?: number;
 }
 
 /**
@@ -118,6 +126,8 @@ export function PlayerControls({
   onDefinitionChange,
   src,
   onStepEpisode,
+  onToggleEpisodes,
+  episodesTotal,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -495,6 +505,20 @@ export function PlayerControls({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {onToggleEpisodes && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={CHROME_BUTTON}
+              onClick={onToggleEpisodes}
+            >
+              <ListVideo className="size-4" />
+              {episodesTotal
+                ? `${t('player.episodes')} · ${tf('player.totalEpisodes', { count: episodesTotal })}`
+                : t('player.episodes')}
+            </Button>
+          )}
 
           <Button
             variant="ghost"

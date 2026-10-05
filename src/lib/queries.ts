@@ -432,6 +432,23 @@ export function useSearch(keyword: string) {
   });
 }
 
+/** 预取一部剧的分集档案（本地缺失会回落解析并落库）——沉浸流切下一部剧时
+ * resolve 链路提前走完，切换只剩取流时间。 */
+export function usePrefetchSeriesEpisodes() {
+  const qc = useQueryClient();
+  return useCallback(
+    (seriesId: string) => {
+      if (!seriesId) return;
+      void qc.prefetchQuery({
+        queryKey: keys.seriesEpisodes(seriesId),
+        queryFn: () => series.episodes(seriesId),
+        staleTime: 5 * 60_000,
+      });
+    },
+    [qc],
+  );
+}
+
 export function useResolveSeries() {
   const qc = useQueryClient();
   return useMutation({

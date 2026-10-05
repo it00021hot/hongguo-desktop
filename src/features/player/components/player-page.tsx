@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
+import { EpisodePicker } from './episode-picker';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { InteractionRail } from './interaction-rail';
@@ -18,6 +19,7 @@ import {
   useCompatPlayback,
   useDanmaku,
   useSeriesEpisodes,
+  useSeriesExtras,
   useSettings,
   useStorageActions,
 } from '@/lib/queries';
@@ -100,8 +102,22 @@ function PlayerEmptyState() {
   );
 }
 
-export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 'sidebar' | 'overlay' }) {
+/** 播放器悬浮层（信息/互动栏）静止多久后淡出。与控制栏的 3 秒同款。 */
+const CHROME_HIDE_MS = 3_000;
+
+export function PlayerView({
+  seriesPanelMode = 'sidebar',
+  onWheelStep,
+}: {
+  seriesPanelMode?: 'sidebar' | 'overlay';
+  /**
+   * 沉浸流模式的滚轮/↑↓ 语义由宿主页给：首页是切**上一部/下一部剧**，
+   * 不给则回落为切上一集/下一集（播放页）。
+   */
+  onWheelStep?: (dir: 1 | -1) => void;
+}) {
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
+  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
@@ -177,6 +193,8 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
   );
   // 选集与「下载到本地」都要完整分集表，从剧集档案直接取
   const { data: currentSeries } = useSeriesEpisodes(seriesId);
+  // 简介只在沉浸流信息叠加里用（播放页右侧面板自己拉）
+  const { data: extras } = useSeriesExtras(seriesId ?? '');
 
   // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存
   const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
@@ -297,6 +315,48 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
       setTarget(seriesId, next);
     },
     [seriesId, vidIndex, setTarget],
+  );
+
+  // ---- 沉浸流悬浮层：静止 3 秒后信息/互动栏整体淡出，动一下鼠标即回 ----
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const chromeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wakeChrome = useCallback(() => {
+    setChromeVisible(true);
+    if (chromeTimer.current) clearTimeout(chromeTimer.current);
+    chromeTimer.current = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
+  }, []);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    stage.addEventListener('mousemove', wakeChrome);
+    stage.addEventListener('mouseenter', wakeChrome);
+    const onLeave = () => {
+      if (chromeTimer.current) clearTimeout(chromeTimer.current);
+      setChromeVisible(false);
+    };
+    stage.addEventListener('mouseleave', onLeave);
+    return () => {
+      stage.removeEventListener('mousemove', wakeChrome);
+      stage.removeEventListener('mouseenter', wakeChrome);
+      stage.removeEventListener('mouseleave', onLeave);
+      if (chromeTimer.current) clearTimeout(chromeTimer.current);
+    };
+  }, [wakeChrome]);
+
+  // ---- 滚轮切换（hgplayer 同款）：沉浸流=上一部/下一部剧，播放页=切集 ----
+  // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
+  const wheelLock = useRef(0);
+  const onStageWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (seriesPanelOpen || downloading) return;
+      const now = Date.now();
+      if (now - wheelLock.current < 400 || Math.abs(e.deltaY) < 15) return;
+      wheelLock.current = now;
+      const dir: 1 | -1 = e.deltaY > 0 ? 1 : -1;
+      if (onWheelStep) onWheelStep(dir);
+      else stepEpisode(dir);
+    },
+    [seriesPanelOpen, downloading, onWheelStep, stepEpisode],
   );
 
   /**
@@ -506,9 +566,21 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
   }
 
   return (
-    <div className="flex h-full gap-4 p-4">
+    <div
+      className={
+        // 沉浸流：视频铺满整页（无 padding/圆角/留白）， hgplayer 同款
+        seriesPanelMode === 'overlay' ? 'flex h-full min-h-0 flex-col' : 'flex h-full gap-4 p-4'
+      }
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
+        <div
+          ref={stageRef}
+          onWheel={onStageWheel}
+          className={cn(
+            'relative min-h-0 flex-1 overflow-hidden bg-black',
+            seriesPanelMode === 'sidebar' && 'rounded-lg',
+          )}
+        >
           {playSrc ? (
             <>
               {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
@@ -538,13 +610,42 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
                 enabled={danmakuOn}
                 display={danmakuDisplay}
               />
-              {/* 互动栏（发弹幕/点赞/收藏/预约）：悬浮画面右缘，不随控制栏隐没。
+              {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下，
+                  鼠标静止后随悬浮层一起淡出——不再占画面外的独立区域。 */}
+              {seriesPanelMode === 'overlay' && (
+                <div
+                  className={cn(
+                    'absolute bottom-14 left-3 z-10 max-w-[62%] transition-opacity duration-300',
+                    chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
+                  )}
+                >
+                  <p className="text-sm font-semibold text-white drop-shadow-md">
+                    @{currentSeries?.title ?? ''}
+                  </p>
+                  <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
+                    {tf('player.epShort', { index: vidIndex })}
+                    {currentSeries && currentSeries.episodeCount > 0 && (
+                      <span className="text-white/70">
+                        {' · '}
+                        {tf('player.totalEpisodes', { count: currentSeries.episodeCount })}
+                      </span>
+                    )}
+                  </p>
+                  {extras?.intro && (
+                    <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed text-white/70 drop-shadow-md">
+                      {extras.intro}
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* 互动栏（发弹幕/点赞/收藏/预约）：悬浮画面右缘，跟随悬浮层淡出。
                   vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用；
                   未就绪时传空串，组件内部自行禁用。 */}
               <InteractionRail
                 seriesId={seriesId}
                 vid={currentVid ? `${currentVid}:${seriesId}` : ''}
                 getCurrentMs={() => (videoRef.current?.currentTime ?? 0) * 1000}
+                visible={chromeVisible}
               />
               <PlayerControls
                 videoRef={videoRef}
@@ -563,6 +664,12 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
                 onToggleDanmaku={toggleDanmaku}
                 danmakuDisplay={danmakuDisplay}
                 onDanmakuDisplayChange={updateDanmakuDisplay}
+                onToggleEpisodes={
+                  seriesPanelMode === 'overlay'
+                    ? () => setSeriesPanelOpen(!seriesPanelOpen)
+                    : undefined
+                }
+                episodesTotal={currentSeries?.episodeCount}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
@@ -601,39 +708,45 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
           )}
         </div>
 
-        {error && (
-          <Card className="py-2 text-sm">
-            <span className="text-destructive">{error}</span>
-          </Card>
+        {/* 播放页（sidebar）才有的页面级杂物：错误条/自动连播开关/快捷键提示。
+            沉浸流里这些是「视频之外占一大片区域」的元凶，全部不上。 */}
+        {seriesPanelMode === 'sidebar' && (
+          <>
+            {error && (
+              <Card className="py-2 text-sm">
+                <span className="text-destructive">{error}</span>
+              </Card>
+            )}
+
+            {/* 原生 controls 里已经有时间与进度条，这里不再重复一份 */}
+            <div className="ml-auto flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="auto-next"
+                  checked={autoNext}
+                  disabled={settingsPending}
+                  onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
+                />
+                <Label htmlFor="auto-next" className="text-sm">
+                  {t('player.autoNext')}
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="auto-delete"
+                  checked={autoDelete}
+                  disabled={settingsPending}
+                  onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
+                />
+                <Label htmlFor="auto-delete" className="text-sm">
+                  {t('player.autoDelete')}
+                </Label>
+              </div>
+            </div>
+
+            <p className="text-muted-foreground text-xs">{t('player.keyboardHint')}</p>
+          </>
         )}
-
-        {/* 原生 controls 里已经有时间与进度条，这里不再重复一份 */}
-        <div className="ml-auto flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Switch
-              id="auto-next"
-              checked={autoNext}
-              disabled={settingsPending}
-              onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
-            />
-            <Label htmlFor="auto-next" className="text-sm">
-              {t('player.autoNext')}
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="auto-delete"
-              checked={autoDelete}
-              disabled={settingsPending}
-              onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
-            />
-            <Label htmlFor="auto-delete" className="text-sm">
-              {t('player.autoDelete')}
-            </Label>
-          </div>
-        </div>
-
-        <p className="text-muted-foreground text-xs">{t('player.keyboardHint')}</p>
       </div>
 
       {seriesPanelMode === 'sidebar' ? (
@@ -643,19 +756,16 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
           onSelect={(index) => setTarget(seriesId, index)}
         />
       ) : (
-        // 沉浸流：右侧选集默认隐藏，滑出浮层盖在画面上
-        <div
-          className={cn(
-            'absolute inset-y-0 right-0 z-30 transition-transform duration-200',
-            seriesPanelOpen ? 'translate-x-0' : 'translate-x-full',
-          )}
-        >
-          <SeriesPanel
+        // 沉浸流选集：视频中央的紧凑数字网格浮层（hgplayer 同款），
+        // 点浮层外任意处关闭
+        seriesPanelOpen && (
+          <EpisodePicker
             seriesId={seriesId}
             currentIndex={vidIndex}
             onSelect={(index) => setTarget(seriesId, index)}
+            onClose={() => setSeriesPanelOpen(false)}
           />
-        </div>
+        )
       )}
     </div>
   );

@@ -28,10 +28,12 @@ interface InteractionRailProps {
   vid: string;
   /** 读当前播放位置（发弹幕的时间轴），由 PlayerView 的 videoRef 提供 */
   getCurrentMs: () => number;
+  /** 播放器悬浮层可见性（鼠标静止 3 秒后整体淡出，动一下即回） */
+  visible?: boolean;
 }
 
 /** 画面右缘竖排互动栏（悬浮在 stage 内，不随控制栏隐没）。 */
-export function InteractionRail({ seriesId, vid, getCurrentMs }: InteractionRailProps) {
+export function InteractionRail({ seriesId, vid, getCurrentMs, visible = true }: InteractionRailProps) {
   const navigate = useNavigate();
   const { data: account } = useAccount();
   const loggedIn = !!account;
@@ -48,6 +50,9 @@ export function InteractionRail({ seriesId, vid, getCurrentMs }: InteractionRail
   const digg = useVideoDigg();
   const collect = useSeriesCollect();
   const reserve = useReserveSeries();
+  /** 弹幕输入开着时强制可见（打字时鼠标多半不动，别把输入框藏没了） */
+  const [composerOpen, setComposerOpen] = useState(false);
+  const railVisible = visible || composerOpen;
 
   const requireLogin = useCallback(() => {
     toast.info(t('player.interact.loginRequired'));
@@ -92,8 +97,21 @@ export function InteractionRail({ seriesId, vid, getCurrentMs }: InteractionRail
   };
 
   return (
-    <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1.5">
-      <DanmakuComposer vid={vid} getCurrentMs={getCurrentMs} disabled={!loggedIn} onNeedLogin={requireLogin} />
+    <div
+      className={cn(
+        'absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1.5',
+        'transition-opacity duration-300',
+        railVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
+      )}
+    >
+      <DanmakuComposer
+        vid={vid}
+        getCurrentMs={getCurrentMs}
+        disabled={!loggedIn}
+        onNeedLogin={requireLogin}
+        open={composerOpen}
+        onOpenChange={setComposerOpen}
+      />
       <RailButton
         icon={<Heart className={cn('size-5', digged && 'fill-red-500 text-red-500')} />}
         label={t('player.interact.like')}
@@ -149,13 +167,16 @@ function DanmakuComposer({
   getCurrentMs,
   disabled,
   onNeedLogin,
+  open,
+  onOpenChange,
 }: {
   vid: string;
   getCurrentMs: () => number;
   disabled: boolean;
   onNeedLogin: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const send = useSendDanmaku();
@@ -169,7 +190,7 @@ function DanmakuComposer({
         onSuccess: () => {
           toast.success(t('player.interact.danmakuSent'));
           setText('');
-          setOpen(false);
+          onOpenChange(false);
         },
         onError: (e) => toast.error(String(e)),
       },
@@ -191,7 +212,7 @@ function DanmakuComposer({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') setOpen(false);
+            if (e.key === 'Escape') onOpenChange(false);
           }}
           placeholder={t('player.interact.danmakuPlaceholder')}
           className="h-7 w-44 border-none bg-transparent text-sm text-white placeholder:text-neutral-400 focus-visible:ring-0"
@@ -213,7 +234,7 @@ function DanmakuComposer({
         active={open}
         onClick={() => {
           if (disabled) return onNeedLogin();
-          setOpen((v) => !v);
+          onOpenChange(!open);
           if (!open) setTimeout(() => inputRef.current?.focus(), 50);
         }}
       />
