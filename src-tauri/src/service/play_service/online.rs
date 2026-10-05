@@ -41,6 +41,12 @@ pub fn cache() -> &'static StreamCache {
     CACHE.get_or_init(StreamCache::default)
 }
 
+/// 填充门闸：同时只允许一路「下载+解密」。
+///
+/// 拿着门闸时才真正开始下载；等门闸的调用方在 `begin_fetch` 已登记取流权，
+/// 不会重复发请求。放在 fill 开头 acquire、函数结束自动释放。
+static FILL_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 /// 准备在线播放，返回流地址与档位信息。
 ///
 /// 缓存按 (vid, 档位) 分条目（见 [`crate::protocol::stream`]），所以切清晰度
@@ -219,6 +225,10 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// 先尝试渐进路径（首帧不等整集）；计划构建失败才回落整集路径，
 /// 回落后行为与旧版完全一致。注册成功后的填充阶段失败则直接上抛——
 /// 那时回落只会把整集再重下一遍，和今天的失败语义一样交给上层清理。
+///
+/// **全局串行**（[`FILL_GATE`]）：当前剧与预取的填充排队走，一次只填一路。
+/// 并发两路整集下载+解密会抢爆带宽与 CPU——用户实测卡死的那次，
+/// 当前剧与预取同时 fill 是最可疑的现场。
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
@@ -227,6 +237,7 @@ async fn fill(
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
 ) -> AppResult<()> {
+    let _gate = FILL_GATE.acquire().await;
     let reporter = ProgressReporter::new(app.clone(), vid.to_string());
 
     match build_progressive(play, settings, &|r, t| reporter.report(r, t, "downloading")).await {

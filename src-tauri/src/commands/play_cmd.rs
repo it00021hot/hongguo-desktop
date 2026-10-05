@@ -46,19 +46,27 @@ pub async fn play_prefetch(
     crate::service::play_service::online::prefetch_stream(&app, &ep.vid, &settings, &env).await
 }
 
+/// 同步 command 会占 **Tauri 主线程**——播放时每 5 秒一次的进度保存
+/// 与其它 IPC 在主线程排队，是「窗口未响应」的候选元凶。这里改 async
+/// 并把 DB 查询扔进阻塞线程池，主线程只做调度。
 #[tauri::command]
-pub fn save_playback_position(
+pub async fn save_playback_position(
     state: State<'_, AppState>,
     series_id: String,
     vid_index: u32,
     current_time: f64,
     duration: f64,
 ) -> AppResult<()> {
-    crate::service::play_service::position::save(
-        &state,
-        &series_id,
-        vid_index,
-        current_time,
-        duration,
-    )
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::service::play_service::position::save_store(
+            &store,
+            &series_id,
+            vid_index,
+            current_time,
+            duration,
+        )
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Network(format!("保存播放进度失败: {e}")))?
 }

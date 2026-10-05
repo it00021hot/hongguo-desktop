@@ -20,7 +20,25 @@ pub fn save(
     current_time: f64,
     duration: f64,
 ) -> crate::error::AppResult<()> {
-    state.store.save_playback_position(
+    save_store(
+        &state.store.clone(),
+        series_id,
+        vid_index,
+        current_time,
+        duration,
+    )
+}
+
+/// [`save`] 的 Store 直连版：command 侧把 DB 查询扔进阻塞线程池时用
+/// （同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
+pub fn save_store(
+    store: &crate::store::Store,
+    series_id: &str,
+    vid_index: u32,
+    current_time: f64,
+    duration: f64,
+) -> crate::error::AppResult<()> {
+    store.save_playback_position(
         series_id,
         vid_index,
         &PlaybackPosition::new(current_time, duration),

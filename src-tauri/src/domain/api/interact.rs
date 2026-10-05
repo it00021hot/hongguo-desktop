@@ -195,14 +195,27 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
     check_interact_code(&value)
 }
 
-/// best-effort 回显的互动状态：最近互动列表里点赞过的分集与收藏的剧。
+/// 互动列表里的一条视频（含互动**计数**，右侧栏数字直接用）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InteractionItem {
+    pub vid: String,
+    pub series_id: String,
+    pub user_digg: bool,
+    #[serde(default)]
+    pub digged_count: i64,
+    #[serde(default)]
+    pub followed: bool,
+    /// 追剧数（hgplayer 右栏 ☆ 下的 21.1万）
+    #[serde(default)]
+    pub followed_cnt: i64,
+}
+
+/// best-effort 回显的互动状态：最近互动过的视频列表。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InteractionState {
-    /// 点赞过的分集 vid 集合（最近 100 条内）
-    pub digged_vids: Vec<String>,
-    /// 收藏（追剧）中的 series_id 集合
-    pub collected_series: Vec<String>,
+    pub items: Vec<InteractionItem>,
 }
 
 /// 拉互动状态列表（`ugc/action/mget`，最近 100 条）。
@@ -231,27 +244,28 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let video = entry.get("video_data");
-        let Some(video) = video else { continue };
-        if video.get("user_digg").and_then(Value::as_bool) == Some(true) {
-            let vid = video.get("vid").and_then(Value::as_str).unwrap_or_default();
-            if !vid.is_empty() {
-                state.digged_vids.push(vid.to_string());
-            }
+        let Some(video) = entry.get("video_data") else { continue };
+        let vid = video.get("vid").and_then(Value::as_str).unwrap_or_default();
+        if vid.is_empty() {
+            continue;
         }
-        let followed = video
-            .pointer("/video_detail/followed")
-            .and_then(Value::as_bool)
-            == Some(true);
-        if followed {
-            let sid = video
+        let item = InteractionItem {
+            vid: vid.to_string(),
+            series_id: video
                 .get("series_id")
                 .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !sid.is_empty() {
-                state.collected_series.push(sid.to_string());
-            }
-        }
+                .unwrap_or_default()
+                .to_string(),
+            user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
+            digged_count: video.get("digged_count").and_then(Value::as_i64).unwrap_or(0),
+            followed: video.pointer("/video_detail/followed").and_then(Value::as_bool)
+                == Some(true),
+            followed_cnt: video
+                .pointer("/video_detail/followed_cnt")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        };
+        state.items.push(item);
     }
     Ok(state)
 }
@@ -340,9 +354,10 @@ mod probe {
 
         let state = fetch_interaction_state(&env).await.expect("互动状态");
         println!(
-            "[interact] digged={} collected={}",
-            state.digged_vids.len(),
-            state.collected_series.len()
+            "[interact] items={} digged={} followed={}",
+            state.items.len(),
+            state.items.iter().filter(|i| i.user_digg).count(),
+            state.items.iter().filter(|i| i.followed).count()
         );
     }
 }

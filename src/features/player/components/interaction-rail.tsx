@@ -1,15 +1,16 @@
-//! 播放页互动栏：发弹幕 / 点赞 / 收藏 / 预约（2026-10-05 抓包端点的前端落点）。
+//! 播放页互动栏：点赞 / 评论 / 收藏 / 预约 / 分享（抖音系右缘竖排形态）。
 //!
-//! 形态对齐 hgplayer 沉浸流：画面右缘竖排悬浮键，弹幕输入浮层从键位展开。
-//! 登录态回显是 best-effort（最近互动列表 100 条内匹配），未登录点击直接
-//! 指路登录页，不放行空请求。
+//! 布局对齐 hgplayer/抖音：**icon 在上、计数在下**，纯白 + 投影贴着画面
+//! 右缘，不做圆底按钮。计数从最近互动列表 best-effort 匹配（不在列表里
+//! 就只显示 icon）。发弹幕入口在控制栏（hgplayer 同款），不在这里。
+//!
+//! 2026-10-05 抓包端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
+//! 预约 uncover_subscribe(1/2)、状态 mget；口径见 docs 第 9 节。
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { BellRing, Heart, MessageSquareText, Send, Star } from 'lucide-react';
+import { BellRing, Heart, MessageSquareText, Share2, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -18,7 +19,6 @@ import {
   useReserveSeries,
   useReservations,
   useSeriesCollect,
-  useSendDanmaku,
   useVideoDigg,
 } from '@/lib/queries';
 
@@ -26,14 +26,21 @@ interface InteractionRailProps {
   seriesId: string;
   /** 「vid:seriesId」组合形态（与弹幕缓存 key 同构；空 = 档案未就绪，互动键禁用） */
   vid: string;
-  /** 读当前播放位置（发弹幕的时间轴），由 PlayerView 的 videoRef 提供 */
-  getCurrentMs: () => number;
   /** 播放器悬浮层可见性（鼠标静止 3 秒后整体淡出，动一下即回） */
   visible?: boolean;
+  /** 剧标题（分享文案用） */
+  title?: string;
 }
 
-/** 画面右缘竖排互动栏（悬浮在 stage 内，不随控制栏隐没）。 */
-export function InteractionRail({ seriesId, vid, getCurrentMs, visible = true }: InteractionRailProps) {
+/** 计数格式化：抖音系「1.4万」样式。 */
+function fmtCount(n: number): string {
+  if (n >= 100_0000) return `${(n / 100_0000).toFixed(1).replace(/\.0$/, '')}百万`;
+  if (n >= 10_000) return `${(n / 10_000).toFixed(n % 10_000 >= 1000 ? 1 : 0).replace(/\.0$/, '')}万`;
+  return `${n}`;
+}
+
+/** 画面右缘竖排互动栏（悬浮在 stage 内，跟随悬浮层淡出）。 */
+export function InteractionRail({ seriesId, vid, visible = true, title }: InteractionRailProps) {
   const navigate = useNavigate();
   const { data: account } = useAccount();
   const loggedIn = !!account;
@@ -41,18 +48,20 @@ export function InteractionRail({ seriesId, vid, getCurrentMs, visible = true }:
   const bareVid = vid.split(':')[0] ?? '';
 
   const { data: state } = useInteractionState();
-  const digged = !!bareVid && (state?.diggedVids.includes(bareVid) ?? false);
-  const collected = state?.collectedSeries.includes(seriesId) ?? false;
-  // 预约状态在「我的预约（待上线）」列表里匹配（已上线剧无预约概念，点了也会成功但无意义——照放，服务端兜底）
+  // best-effort 匹配：当前集/剧在最近互动列表里才有「已互动」与计数
+  const hit = state?.items.find((i) => i.vid === bareVid);
+  const seriesHit = state?.items.find((i) => i.seriesId === seriesId);
+  const digged = hit?.userDigg ?? false;
+  const diggCount = hit?.diggedCount ?? 0;
+  const collected = seriesHit?.followed ?? false;
+  const collectCount = seriesHit?.followedCnt ?? 0;
+  // 预约状态在「我的预约（待上线）」列表里匹配
   const { data: reservations } = useReservations(false);
   const reserved = reservations?.items.some((i) => i.seriesId === seriesId) ?? false;
 
   const digg = useVideoDigg();
   const collect = useSeriesCollect();
   const reserve = useReserveSeries();
-  /** 弹幕输入开着时强制可见（打字时鼠标多半不动，别把输入框藏没了） */
-  const [composerOpen, setComposerOpen] = useState(false);
-  const railVisible = visible || composerOpen;
 
   const requireLogin = useCallback(() => {
     toast.info(t('player.interact.loginRequired'));
@@ -96,53 +105,78 @@ export function InteractionRail({ seriesId, vid, getCurrentMs, visible = true }:
     );
   };
 
+  const onShare = async () => {
+    const url = `https://hongguoduanju.com/detail?series_id=${seriesId}`;
+    try {
+      await navigator.clipboard.writeText(`${title ?? ''} ${url}`.trim());
+      toast.success(t('player.interact.shareCopied'));
+    } catch {
+      toast.error(t('player.interact.shareFailed'));
+    }
+  };
+
   return (
     <div
       className={cn(
-        'absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-1.5',
+        'absolute right-2 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-4',
         'transition-opacity duration-300',
-        railVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
+        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
     >
-      <DanmakuComposer
-        vid={vid}
-        getCurrentMs={getCurrentMs}
-        disabled={!loggedIn}
-        onNeedLogin={requireLogin}
-        open={composerOpen}
-        onOpenChange={setComposerOpen}
-      />
-      <RailButton
-        icon={<Heart className={cn('size-5', digged && 'fill-red-500 text-red-500')} />}
+      <RailItem
+        icon={
+          <Heart
+            className={cn('size-7 drop-shadow-md', digged && 'fill-red-500 text-red-500')}
+          />
+        }
         label={t('player.interact.like')}
-        active={digged}
+        count={diggCount > 0 ? diggCount : undefined}
         onClick={onDigg}
       />
-      <RailButton
-        icon={<Star className={cn('size-5', collected && 'fill-amber-400 text-amber-400')} />}
+      {/* 评论：评论区 UI 未做，先亮计数占位（弹幕发送在控制栏） */}
+      <RailItem
+        icon={<MessageSquareText className="size-7 drop-shadow-md" />}
+        label={t('player.interact.comments')}
+        onClick={() => toast.info(t('player.interact.commentsSoon'))}
+      />
+      <RailItem
+        icon={
+          <Star
+            className={cn('size-7 drop-shadow-md', collected && 'fill-amber-400 text-amber-400')}
+          />
+        }
         label={t('player.interact.collect')}
-        active={collected}
+        count={collectCount > 0 ? collectCount : undefined}
         onClick={onCollect}
       />
-      <RailButton
-        icon={<BellRing className={cn('size-5', reserved && 'text-sky-400')} />}
+      <RailItem
+        icon={
+          <BellRing
+            className={cn('size-7 drop-shadow-md', reserved && 'fill-sky-400 text-sky-400')}
+          />
+        }
         label={t('player.interact.reserve')}
-        active={reserved}
         onClick={onReserve}
+      />
+      <RailItem
+        icon={<Share2 className="size-6 drop-shadow-md" />}
+        label={t('player.interact.share')}
+        onClick={() => void onShare()}
       />
     </div>
   );
 }
 
-function RailButton({
+/** icon 在上、计数在下，纯白投影——抖音系右栏单元。 */
+function RailItem({
   icon,
   label,
-  active,
+  count,
   onClick,
 }: {
   icon: React.ReactNode;
   label: string;
-  active: boolean;
+  count?: number;
   onClick: () => void;
 }) {
   return (
@@ -150,94 +184,12 @@ function RailButton({
       type="button"
       onClick={onClick}
       title={label}
-      className={cn(
-        'grid size-10 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm',
-        'transition-colors hover:bg-black/65',
-        active && 'bg-black/60',
-      )}
+      className="flex cursor-pointer flex-col items-center gap-0.5 text-white drop-shadow-md transition-transform active:scale-90"
     >
       {icon}
+      {count != null && (
+        <span className="text-xs font-medium tabular-nums drop-shadow-md">{fmtCount(count)}</span>
+      )}
     </button>
-  );
-}
-
-/** 弹幕发送：键位展开输入浮层，Enter / 发送按钮提交，成功后乐观进弹幕列表。 */
-function DanmakuComposer({
-  vid,
-  getCurrentMs,
-  disabled,
-  onNeedLogin,
-  open,
-  onOpenChange,
-}: {
-  vid: string;
-  getCurrentMs: () => number;
-  disabled: boolean;
-  onNeedLogin: () => void;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [text, setText] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const send = useSendDanmaku();
-
-  const submit = () => {
-    const content = text.trim();
-    if (!content || !vid.includes(':')) return;
-    send.mutate(
-      { vid, text: content, offsetMs: Math.round(getCurrentMs()) },
-      {
-        onSuccess: () => {
-          toast.success(t('player.interact.danmakuSent'));
-          setText('');
-          onOpenChange(false);
-        },
-        onError: (e) => toast.error(String(e)),
-      },
-    );
-  };
-
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <div
-        className={cn(
-          'flex items-center gap-1.5 rounded-full bg-black/70 p-1.5 pl-3 backdrop-blur-sm',
-          'transition-all duration-200',
-          open ? 'mr-0 opacity-100' : 'pointer-events-none -mr-2 opacity-0',
-        )}
-      >
-        <Input
-          ref={inputRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit();
-            if (e.key === 'Escape') onOpenChange(false);
-          }}
-          placeholder={t('player.interact.danmakuPlaceholder')}
-          className="h-7 w-44 border-none bg-transparent text-sm text-white placeholder:text-neutral-400 focus-visible:ring-0"
-          maxLength={100}
-        />
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7 rounded-full text-white hover:bg-white/15"
-          disabled={send.isPending || !text.trim()}
-          onClick={submit}
-        >
-          <Send className="size-4" />
-        </Button>
-      </div>
-      <RailButton
-        icon={<MessageSquareText className="size-5" />}
-        label={t('player.interact.danmaku')}
-        active={open}
-        onClick={() => {
-          if (disabled) return onNeedLogin();
-          onOpenChange(!open);
-          if (!open) setTimeout(() => inputRef.current?.focus(), 50);
-        }}
-      />
-    </div>
   );
 }

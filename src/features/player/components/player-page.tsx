@@ -8,7 +8,6 @@ import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
-import { EpisodePicker } from './episode-picker';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { InteractionRail } from './interaction-rail';
@@ -117,7 +116,6 @@ export function PlayerView({
   onWheelStep?: (dir: 1 | -1) => void;
 }) {
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
-  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
@@ -638,14 +636,13 @@ export function PlayerView({
                   )}
                 </div>
               )}
-              {/* 互动栏（发弹幕/点赞/收藏/预约）：悬浮画面右缘，跟随悬浮层淡出。
-                  vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用；
-                  未就绪时传空串，组件内部自行禁用。 */}
+              {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出。
+                  vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用。 */}
               <InteractionRail
                 seriesId={seriesId}
                 vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                getCurrentMs={() => (videoRef.current?.currentTime ?? 0) * 1000}
                 visible={chromeVisible}
+                title={currentSeries?.title}
               />
               <PlayerControls
                 videoRef={videoRef}
@@ -664,12 +661,8 @@ export function PlayerView({
                 onToggleDanmaku={toggleDanmaku}
                 danmakuDisplay={danmakuDisplay}
                 onDanmakuDisplayChange={updateDanmakuDisplay}
-                onToggleEpisodes={
-                  seriesPanelMode === 'overlay'
-                    ? () => setSeriesPanelOpen(!seriesPanelOpen)
-                    : undefined
-                }
-                episodesTotal={currentSeries?.episodeCount}
+                immersive={seriesPanelMode === 'overlay'}
+                onPickEpisode={(idx) => setTarget(seriesId, idx)}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
@@ -749,24 +742,14 @@ export function PlayerView({
         )}
       </div>
 
-      {seriesPanelMode === 'sidebar' ? (
+      {seriesPanelMode === 'sidebar' && (
         <SeriesPanel
           seriesId={seriesId}
           currentIndex={vidIndex}
           onSelect={(index) => setTarget(seriesId, index)}
         />
-      ) : (
-        // 沉浸流选集：视频中央的紧凑数字网格浮层（hgplayer 同款），
-        // 点浮层外任意处关闭
-        seriesPanelOpen && (
-          <EpisodePicker
-            seriesId={seriesId}
-            currentIndex={vidIndex}
-            onSelect={(index) => setTarget(seriesId, index)}
-            onClose={() => setSeriesPanelOpen(false)}
-          />
-        )
       )}
+      {/* 沉浸流的选集浮层在 PlayerControls 内（贴「选集」按钮向上弹） */}
     </div>
   );
 }

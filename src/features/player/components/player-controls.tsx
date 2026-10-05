@@ -16,6 +16,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -25,11 +26,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { usePlayerStore } from '@/lib/stores/player';
+import { useAccount, useSendDanmaku } from '@/lib/queries';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
 import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import { DownloadSheet } from './download-sheet';
+import { EpisodePicker } from './episode-picker';
 import type { Episode, VideoDefinition } from '@/lib/schema';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
@@ -90,12 +93,66 @@ interface Props {
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
   /**
-   * 沉浸流模式的「选集」入口：给回调就在控制栏渲染按钮（hgplayer 同款
-   * 「选集 · 全N集」）。播放页右侧已有 SeriesPanel，不传即不渲染。
+   * 沉浸流形态开关：为 true 时控制栏带「选集」入口（贴按钮向上弹的
+   * 数字网格，hgplayer 同款）。播放页右侧已有 SeriesPanel，不传即无。
    */
-  onToggleEpisodes?: () => void;
-  /** 选集按钮上显示的总集数（未知时不显示数字） */
-  episodesTotal?: number;
+  immersive?: boolean;
+  /** 选集浮层里点选某一集（跳集，由播放器接 store） */
+  onPickEpisode?: (vidIndex: number) => void;
+}
+
+/** 控制栏内的弹幕发送框（hgplayer 同款：常驻控制栏左段）。
+ *
+ * 输入 Enter / 点「发送」提交；offset 取控件自己持有的播放秒数（实时）。
+ * 未登录点发送给指路提示；vid 未就绪时静默忽略。 */
+function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
+  const [text, setText] = useState('');
+  const send = useSendDanmaku();
+  const { data: account } = useAccount();
+  const loggedIn = !!account;
+
+  const submit = () => {
+    const content = text.trim();
+    if (!content || send.isPending) return;
+    if (!loggedIn) {
+      toast.info(t('player.interact.loginRequired'));
+      return;
+    }
+    if (!vid.includes(':')) return;
+    send.mutate(
+      { vid, text: content, offsetMs: Math.round(currentSec * 1000) },
+      {
+        onSuccess: () => {
+          toast.success(t('player.interact.danmakuSent'));
+          setText('');
+        },
+        onError: (e) => toast.error(String(e)),
+      },
+    );
+  };
+
+  return (
+    <div className="ml-2 flex h-8 w-52 items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm">
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit();
+        }}
+        placeholder={t('player.interact.danmakuPlaceholder')}
+        className="h-full w-full min-w-0 bg-transparent text-xs text-white outline-none placeholder:text-white/50"
+        maxLength={100}
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!text.trim() || send.isPending}
+        className="grid h-6 shrink-0 cursor-pointer place-items-center rounded-full bg-red-500 px-2.5 text-xs text-white transition-opacity disabled:opacity-40"
+      >
+        {t('player.interact.send')}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -126,8 +183,8 @@ export function PlayerControls({
   onDefinitionChange,
   src,
   onStepEpisode,
-  onToggleEpisodes,
-  episodesTotal,
+  immersive,
+  onPickEpisode,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -141,6 +198,8 @@ export function PlayerControls({
   const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
   const volumeOpen = usePlayerStore((s) => s.volumeOpen);
   const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
+  const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
+  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
   const [chromeVisible, setChromeVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -153,9 +212,12 @@ export function PlayerControls({
    * 悬浮层跟随鼠标：进入视频区显示，静止 3 秒后隐藏，移出视频区立刻隐藏。
    *
    * 暂停时永远显示——画面停住却把控件也藏了，用户只会以为界面卡死。
-   * 这个「暂停时可见」用派生值算，不在 effect 里同步 setState。
+   * 选集浮层开着时也常显：浮层盖在控制栏上方，控制栏没了浮层就悬空。
    */
-  const chromeShown = paused || chromeVisible;
+  const chromeShown = paused || chromeVisible || seriesPanelOpen;
+
+  /** 当前集的 vid（发弹幕对象；档案未就绪为空串，发送时 guard） */
+  const currentVid = episodes.find((e) => e.vidIndex === currentIndex)?.vid ?? '';
 
   const showChrome = useCallback(() => {
     setChromeVisible(true);
@@ -359,6 +421,9 @@ export function PlayerControls({
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
+        {/* 弹幕发送框（hgplayer 同款位置：控制栏左段时间之后，常驻） */}
+        <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
+
         <div className="ml-auto flex items-center gap-1">
           <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
             <MessageSquareText
@@ -506,18 +571,32 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {onToggleEpisodes && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={CHROME_BUTTON}
-              onClick={onToggleEpisodes}
-            >
-              <ListVideo className="size-4" />
-              {episodesTotal
-                ? `${t('player.episodes')} · ${tf('player.totalEpisodes', { count: episodesTotal })}`
-                : t('player.episodes')}
-            </Button>
+          {immersive && (
+            <div className="relative flex items-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className={CHROME_BUTTON}
+                onClick={() => setSeriesPanelOpen(!seriesPanelOpen)}
+              >
+                <ListVideo className="size-4" />
+                {episodes.length > 0
+                  ? `${t('player.episodes')} · ${tf('player.totalEpisodes', { count: episodes.length })}`
+                  : t('player.episodes')}
+              </Button>
+              {seriesPanelOpen && (
+                // 贴着按钮向上弹（弹幕设置面板同款锚定）。宽度必须写死在
+                // wrapper 上——% 会相对按钮宽度塌缩，8 列网格直接挤死。
+                <div className="absolute right-0 bottom-full mb-3 w-[460px] max-w-[92vw] max-h-[62vh] overflow-y-auto scrollbar-thin">
+                  <EpisodePicker
+                    seriesId={seriesId}
+                    currentIndex={currentIndex}
+                    onSelect={(idx) => onPickEpisode?.(idx)}
+                    onClose={() => setSeriesPanelOpen(false)}
+                  />
+                </div>
+              )}
+            </div>
           )}
 
           <Button

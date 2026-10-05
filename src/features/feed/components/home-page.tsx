@@ -64,7 +64,7 @@ export function HomePage() {
         // 失败不算数：下次这个剧再成为「下一部」时允许重试
         streamPrefetched.current.delete(id);
       });
-    }, 1_500);
+    }, 3_000);
     return () => clearTimeout(timer);
   }, [nextItem]);
 
@@ -121,9 +121,14 @@ export function HomePage() {
   }
 
   return (
-    <div className="relative h-full min-h-0">
-      {/* 播放器铺满整页；滚轮/↑↓ 在沉浸流里切上一部/下一部剧 */}
-      <PlayerView seriesPanelMode="overlay" onWheelStep={step} />
+    // overflow-hidden + 绝对定位铺满：AppShell 的 main 是 overflow-y-auto
+    // （别的页面靠它滚），沉浸流内部任何 1px 超高都会冒出一条页面滚动条，
+    // 还会把滚轮切剧吃掉——这里整个锁死在视口内。
+    <div className="relative h-full min-h-0 overflow-hidden">
+      <div className="absolute inset-0">
+        {/* 播放器铺满整页；滚轮/↑↓ 在沉浸流里切上一部/下一部剧 */}
+        <PlayerView seriesPanelMode="overlay" onWheelStep={step} />
+      </div>
     </div>
   );
 }

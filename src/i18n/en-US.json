@@ -194,7 +194,13 @@
       "uncollected": "Removed from favorites",
       "reserved": "Reserved",
       "unreserved": "Reservation cancelled",
-      "loginRequired": "Sign in first to interact (Settings → Account)"
+      "loginRequired": "Sign in first to interact (Settings → Account)",
+      "comments": "Comments",
+      "commentsSoon": "Comments coming soon",
+      "share": "Share",
+      "shareCopied": "Share link copied",
+      "shareFailed": "Copy failed",
+      "send": "Send"
     }
   },
   "series": {

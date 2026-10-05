@@ -392,10 +392,20 @@ export const danmakuSchema = z.object({
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
+/** 互动列表里的一条视频（Rust `interact::InteractionItem`，计数给右栏数字用）。 */
+export const interactionItemSchema = z.object({
+  vid: z.string(),
+  seriesId: z.string(),
+  userDigg: z.boolean(),
+  diggedCount: z.number(),
+  followed: z.boolean(),
+  followedCnt: z.number(),
+});
+export type InteractionItem = z.infer<typeof interactionItemSchema>;
+
 /** 互动状态列表（Rust `interact::InteractionState`；best-effort 回显用）。 */
 export const interactionStateSchema = z.object({
-  diggedVids: z.array(z.string()),
-  collectedSeries: z.array(z.string()),
+  items: z.array(interactionItemSchema),
 });
 export type InteractionState = z.infer<typeof interactionStateSchema>;
 
