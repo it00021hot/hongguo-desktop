@@ -8,6 +8,7 @@ import {
   Pause,
   PictureInPicture2,
   Play,
+  Settings2,
   SkipBack,
   SkipForward,
   MessageSquareText,
@@ -25,6 +26,7 @@ import {
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t } from '@/i18n';
+import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import { DownloadSheet } from './download-sheet';
 import type { Episode, VideoDefinition } from '@/lib/schema';
 
@@ -48,6 +50,15 @@ interface Props {
   /** 弹幕开关（状态在播放页，控件只做展示与回调） */
   danmakuOn: boolean;
   onToggleDanmaku: () => void;
+  /** 弹幕显示设置与修改回调（透明度/字号/密度/显示区域） */
+  danmakuDisplay: DanmakuDisplaySettings;
+  onDanmakuDisplayChange: (patch: Partial<DanmakuDisplaySettings>) => void;
+  /** 面板开合在播放页持有：切集重挂载不把面板吃掉 */
+  danmakuPanelOpen: boolean;
+  onDanmakuPanelOpenChange: (open: boolean) => void;
+  /** 音量浮层开合在播放页持有：切集重挂载不把正开着的浮层收走 */
+  volumeOpen: boolean;
+  onVolumeOpenChange: (open: boolean) => void;
   /** 放大镜用的容器：全屏时进的是它，不是整个窗口 */
   stageRef: React.RefObject<HTMLDivElement | null>;
   seriesId: string;
@@ -99,6 +110,12 @@ export function PlayerControls({
   videoRef,
   danmakuOn,
   onToggleDanmaku,
+  danmakuDisplay,
+  onDanmakuDisplayChange,
+  danmakuPanelOpen,
+  onDanmakuPanelOpenChange,
+  volumeOpen,
+  onVolumeOpenChange,
   stageRef,
   seriesId,
   episodes,
@@ -121,6 +138,7 @@ export function PlayerControls({
   /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
   const [chromeVisible, setChromeVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const danmakuPanelRef = useRef<HTMLDivElement | null>(null);
 
   /** 拖动进度时不要让 timeupdate 把用户正在拖的位置冲掉 */
   const scrubbing = useRef(false);
@@ -268,6 +286,26 @@ export function PlayerControls({
     [videoRef],
   );
 
+  // 弹幕面板点外部关闭（面板在 ref 容器里，拖滑条不会误关）
+  useEffect(() => {
+    if (!danmakuPanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!danmakuPanelRef.current?.contains(e.target as Node)) onDanmakuPanelOpenChange(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [danmakuPanelOpen, onDanmakuPanelOpenChange]);
+
+  const setVolumeValue = useCallback(
+    (v: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      video.volume = v;
+      video.muted = v === 0;
+    },
+    [videoRef],
+  );
+
   return (
     <div
       className={cn(
@@ -316,13 +354,20 @@ export function PlayerControls({
         </span>
 
         <div className="ml-auto flex items-center gap-1">
-          <div className="group/vol flex items-center">
-            <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
-              <MessageSquareText
-                className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
-                aria-hidden
-              />
-            </IconButton>
+          <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
+            <MessageSquareText
+              className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
+              aria-hidden
+            />
+          </IconButton>
+
+          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
+              会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起 */}
+          <div
+            className="relative flex items-center"
+            onMouseEnter={() => onVolumeOpenChange(true)}
+            onMouseLeave={() => onVolumeOpenChange(false)}
+          >
             <IconButton label={t('player.mute')} onClick={toggleMute}>
               {muted || volume === 0 ? (
                 <VolumeX className="size-4" />
@@ -330,23 +375,69 @@ export function PlayerControls({
                 <Volume2 className="size-4" />
               )}
             </IconButton>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={muted ? 0 : volume}
-              onChange={(e) => {
-                const video = videoRef.current;
-                if (!video) return;
-                video.volume = Number(e.target.value);
-                video.muted = Number(e.target.value) === 0;
-              }}
-              aria-label={t('player.volume')}
-              // 厂商伪元素样式写在 index.css 的 .volume-range 里，
-              // Tailwind 变体压不住原生 range 的默认蓝色滑块
-              className="volume-range w-0 opacity-0 transition-all group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100"
-            />
+            {volumeOpen && (
+              // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
+              // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
+              // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
+              // 视觉留白放进浮层自己的 padding 里。
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm">
+                <div className="mb-1 text-center font-mono text-[10px] text-white/90">
+                  {Math.round((muted ? 0 : volume) * 100)}
+                </div>
+                <VerticalSlider
+                  value={muted ? 0 : volume}
+                  onChange={setVolumeValue}
+                  label={t('player.volume')}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
+          <div ref={danmakuPanelRef} className="relative flex items-center">
+            <IconButton
+              label={t('player.danmakuSettings')}
+              onClick={() => onDanmakuPanelOpenChange(!danmakuPanelOpen)}
+            >
+              <Settings2
+                className={`size-4 ${danmakuPanelOpen ? 'text-white' : 'text-white/70'}`}
+                aria-hidden
+              />
+            </IconButton>
+            {danmakuPanelOpen && (
+              <div className="absolute right-0 bottom-full mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
+                <div className="flex flex-col gap-4">
+                  <DisplaySlider
+                    label={t('player.danmakuOpacity')}
+                    value={danmakuDisplay.opacity}
+                    min={0.1}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ opacity: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuFontSize')}
+                    value={danmakuDisplay.fontScale}
+                    min={0.5}
+                    max={2}
+                    onChange={(v) => onDanmakuDisplayChange({ fontScale: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuDensity')}
+                    value={danmakuDisplay.density}
+                    min={0}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ density: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuArea')}
+                    value={danmakuDisplay.area}
+                    min={0.25}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ area: v })}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <DropdownMenu>
@@ -534,5 +625,99 @@ function ScrubBar({
         style={{ left: `${ratio * 100}%` }}
       />
     </div>
+  );
+}
+
+/**
+ * 竖向滑条（音量浮层用）。div 自绘而不是 `<input type=range>` 转向：
+ * 竖向 range 的厂商伪元素在 WebView2 上表现不可控，自绘三段（轨道/已填/
+ * 滑块）和 ScrubBar 同一套视觉。
+ */
+function VerticalSlider({
+  value,
+  onChange,
+  label,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  const ratioAt = (clientY: number) => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (rect.height <= 0) return 0;
+    // 竖向：顶部 = 1
+    return Math.min(Math.max(1 - (clientY - rect.top) / rect.height, 0), 1);
+  };
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(value * 100)}
+      tabIndex={0}
+      className="relative h-24 w-6 cursor-pointer"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        onChange(ratioAt(e.clientY));
+      }}
+      onPointerMove={(e) => {
+        if (e.buttons === 1) onChange(ratioAt(e.clientY));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowUp') onChange(Math.min(value + 0.05, 1));
+        if (e.key === 'ArrowDown') onChange(Math.max(value - 0.05, 0));
+      }}
+    >
+      <div className="absolute top-0 bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/25" />
+      <div
+        className="absolute bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white"
+        style={{ height: `${value * 100}%` }}
+      />
+      <div
+        className="absolute left-1/2 size-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white"
+        style={{ bottom: `${value * 100}%` }}
+      />
+    </div>
+  );
+}
+
+/** 弹幕设置面板的一行：label + 百分比 + 白色横滑条（复用 .volume-range 样式）。 */
+function DisplaySlider({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="flex items-center justify-between text-xs text-white/90">
+        {label}
+        <span className="font-mono text-white/70">{Math.round(value * 100)}%</span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={label}
+        className="volume-range w-full"
+      />
+    </label>
   );
 }

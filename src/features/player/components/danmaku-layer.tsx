@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react';
+import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import type { Danmaku } from '@/lib/schema';
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   items: Danmaku[];
   enabled: boolean;
+  /** 透明度 / 字号 / 密度 / 显示区域（用户可在弹幕设置面板里调） */
+  display: DanmakuDisplaySettings;
 }
 
 /** 一发已入场的弹幕：按视频时间轴定位，暂停自动冻结。 */
@@ -29,15 +32,22 @@ const FONT_MAX = 26;
  * 不需要单独监听 play/pause/ratechange。seek 由时间跳变检测兜底：
  * 重建 spawn 游标并清空已入场弹幕（旧位置的残留没有意义）。
  */
-export function DanmakuLayer({ videoRef, items, enabled }: Props) {
+export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  // rAF 闭包要读最新 items/enabled，用 ref 镜像避免反复重启循环
+  // rAF 闭包要读最新 items/enabled/display，用 ref 镜像避免反复重启循环
   const itemsRef = useRef(items);
   const enabledRef = useRef(enabled);
+  const displayRef = useRef(display);
+  /** resize 依赖 display（字号/显示区域），由 effect 触发重量 */
+  const resizeRef = useRef<() => void>(() => {});
   useEffect(() => {
     itemsRef.current = items;
     enabledRef.current = enabled;
+    displayRef.current = display;
   });
+  useEffect(() => {
+    resizeRef.current();
+  }, [display]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,6 +61,8 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
     let height = 0;
     let fontPx = 18;
     let lanes = MIN_LANES;
+    /** 弹幕实际占据的高度（显示区域比例），lane 只分布在这一段 */
+    let danmakuHeight = 0;
     let raf = 0;
     /** 弹幕源按 offsetMs 升序（后端已排），spawned 是「已入场」游标 */
     let spawned = 0;
@@ -62,10 +74,13 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
     const resize = () => {
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
+      const settings = displayRef.current;
       width = rect.width;
       height = rect.height;
-      fontPx = Math.round(Math.min(FONT_MAX, Math.max(FONT_MIN, height / 22)));
-      lanes = Math.max(MIN_LANES, Math.floor(height / (fontPx * 1.9)));
+      danmakuHeight = Math.round(height * settings.area);
+      const base = Math.min(FONT_MAX, Math.max(FONT_MIN, height / 22));
+      fontPx = Math.max(10, Math.round(base * settings.fontScale));
+      lanes = Math.max(MIN_LANES, Math.floor(danmakuHeight / (fontPx * 1.9)));
       laneFreeAt = new Array(lanes).fill(0);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -76,6 +91,7 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
       ctx.textBaseline = 'middle';
     };
     resize();
+    resizeRef.current = resize;
     const ro = new ResizeObserver(resize);
     ro.observe(container);
 
@@ -98,6 +114,7 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
       raf = requestAnimationFrame(tick);
       const t = video.currentTime;
       const src = itemsRef.current;
+      const settings = displayRef.current;
 
       // 时间倒跳或大幅前跳 = seek：重置游标（小抖动忽略）
       if (t < lastTime - 0.05 || t > lastTime + 1.5) resetCursor(t);
@@ -110,6 +127,9 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
           if (!d || d.offsetMs / 1000 > t) break;
           spawned += 1;
           if (!d.text) continue;
+          // 密度：按显示比例丢弃（随机均匀，不做确定性抽样——
+          // 丢的是「哪一条」无所谓，要的是「同屏条数按比例变稀」）
+          if (Math.random() > settings.density) continue;
           const textWidth = ctx.measureText(d.text).width;
           // 选一条「右端已让出足够空隙」的 lane；都不空就叠到最空那条
           let pick = 0;
@@ -139,20 +159,21 @@ export function DanmakuLayer({ videoRef, items, enabled }: Props) {
       ctx.clearRect(0, 0, width, height);
       if (!enabledRef.current) return;
       const speed = width / CROSS_SECONDS;
+      const laneHeight = danmakuHeight / lanes;
+      ctx.globalAlpha = settings.opacity;
       shots = shots.filter((s) => {
         const age = t - s.spawnAt;
         const x = width - age * speed;
         if (x + s.width < 0) return false;
-        const y = s.lane * (height / lanes) + height / lanes / 2;
+        const y = s.lane * laneHeight + laneHeight / 2;
         ctx.lineWidth = 2;
         ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-        ctx.globalAlpha = 0.9;
         ctx.strokeText(s.text, x, y);
         ctx.fillStyle = '#ffffff';
         ctx.fillText(s.text, x, y);
-        ctx.globalAlpha = 1;
         return true;
       });
+      ctx.globalAlpha = 1;
     };
     raf = requestAnimationFrame(tick);
 

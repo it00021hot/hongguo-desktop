@@ -65,3 +65,80 @@ export function writeDanmakuEnabled(on: boolean): void {
     // 隐私模式下丢这一条无所谓，本次会话内开关仍然生效
   }
 }
+
+// ---------------------------------------------------------------- 弹幕显示设置
+
+const DANMAKU_OPACITY_KEY = 'hongguo.danmakuOpacity';
+const DANMAKU_FONT_KEY = 'hongguo.danmakuFontScale';
+const DANMAKU_DENSITY_KEY = 'hongguo.danmakuDensity';
+const DANMAKU_AREA_KEY = 'hongguo.danmakuArea';
+
+/** 弹幕显示设置（透明度 / 字号 / 密度 / 显示区域），作用于渲染层。 */
+export interface DanmakuDisplaySettings {
+  /** 文字不透明度 0.1–1 */
+  opacity: number;
+  /** 字号缩放 0.5–2（1 = 按画面高度自适应的基准字号） */
+  fontScale: number;
+  /** 密度 0–1（1 = 全部显示，入场时按比例丢弃） */
+  density: number;
+  /** 显示区域 0.25–1（弹幕占据画面顶部的高度比例） */
+  area: number;
+}
+
+export const DANMAKU_DEFAULTS: DanmakuDisplaySettings = {
+  opacity: 0.9,
+  fontScale: 1,
+  density: 1,
+  area: 1,
+};
+
+export function readDanmakuDisplay(): DanmakuDisplaySettings {
+  return {
+    opacity: read(DANMAKU_OPACITY_KEY, DANMAKU_DEFAULTS.opacity, 0.1, 1),
+    fontScale: read(DANMAKU_FONT_KEY, DANMAKU_DEFAULTS.fontScale, 0.5, 2),
+    density: read(DANMAKU_DENSITY_KEY, DANMAKU_DEFAULTS.density, 0, 1),
+    area: read(DANMAKU_AREA_KEY, DANMAKU_DEFAULTS.area, 0.25, 1),
+  };
+}
+
+export function writeDanmakuDisplay(s: DanmakuDisplaySettings): void {
+  write(DANMAKU_OPACITY_KEY, s.opacity);
+  write(DANMAKU_FONT_KEY, s.fontScale);
+  write(DANMAKU_DENSITY_KEY, s.density);
+  write(DANMAKU_AREA_KEY, s.area);
+}
+
+// ---------------------------------------------------------------- 上次播放目标
+
+const LAST_TARGET_KEY = 'hongguo.lastTarget';
+
+export interface LastPlayTarget {
+  seriesId: string;
+  vidIndex: number;
+}
+
+/**
+ * 上次播放目标，供刷新/重启后恢复播放器（进度本身由本地播放档案的
+ * resumeAt 保证，这里只记「在看哪部哪集」）。
+ */
+export function readLastTarget(): LastPlayTarget | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_TARGET_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return typeof v?.seriesId === 'string' && v.seriesId !== '' && Number.isFinite(v?.vidIndex)
+      ? { seriesId: v.seriesId, vidIndex: v.vidIndex }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastTarget(target: LastPlayTarget | null): void {
+  try {
+    if (target) window.localStorage.setItem(LAST_TARGET_KEY, JSON.stringify(target));
+    else window.localStorage.removeItem(LAST_TARGET_KEY);
+  } catch {
+    // 恢复不了只是回到空态，不影响播放
+  }
+}
