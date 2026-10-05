@@ -183,10 +183,18 @@ pub fn sign_request_with(
     ];
 
     if let Some(b) = &body {
-        headers.push((
-            "Content-Type".into(),
-            "application/json; charset=UTF-8".into(),
-        ));
+        // 调用方显式给过 content-type（如 passport 系的 form 请求）就不
+        // 再叠默认 JSON——两个同名头会让服务端按第一个解析，form body
+        // 被当 JSON 读，业务字段全丢（2026-10-05 发码 1003 事故根因）
+        let has_ct = extra_headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+        if !has_ct {
+            headers.push((
+                "Content-Type".into(),
+                "application/json; charset=UTF-8".into(),
+            ));
+        }
         headers.push(("x-ss-stub".into(), crate::signer::md5_hex_upper(b)));
     }
 

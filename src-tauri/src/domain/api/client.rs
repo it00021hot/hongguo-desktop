@@ -129,6 +129,60 @@ pub struct ApiCallResponse {
     pub set_cookies: Vec<String>,
 }
 
+/// reading 系（lq 域）统一调用入口：轻签名头 + POST body 一律 gzip。
+///
+/// 1.1.3 全量抓包对齐：这族接口的 POST（弹幕/预约/筛选）全部
+/// `Content-Encoding: gzip`，GET/POST 都带 `x-ss-dp + lc +
+/// x-reading-request`。走 sinfonlineb 域的播放/推荐流是项目原有
+/// 验证形态（未压缩 + 全签名），不走这里。
+pub async fn api_call_reading(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    biz_query: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
+    let mut headers = reading_headers();
+    let body = match body {
+        Some(raw) if !raw.is_empty() => {
+            headers.push(("Content-Encoding".into(), "gzip".into()));
+            Some(gzip_bytes(&raw)?)
+        }
+        other => other,
+    };
+    api_call_full_with_headers(origin, pathname, body, biz_query, &headers, env).await
+}
+
+/// gzip 压缩（reading 系 POST body 的线上形态）。
+pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(raw)
+        .and_then(|_| encoder.finish())
+        .map_err(|e| AppError::Network(format!("gzip 压缩失败: {e}")))
+}
+
+/// reading 系接口的轻签名头（search / commentapi / 预约共用）。
+///
+/// 抓包实证：这族接口不带 x-gorgon/x-argus/x-ladon，只要
+/// `x-ss-dp + x-reading-request + lc`（多带签名头也能过）。
+/// `x-reading-request` 形如 `{ticket_ms}-{random u32}`。
+pub fn reading_headers() -> Vec<(String, String)> {
+    let ticket_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    vec![
+        ("x-ss-dp".into(), "8662".into()),
+        ("lc".into(), "101".into()),
+        (
+            "x-reading-request".into(),
+            format!("{ticket_ms}-{}", rand::random::<u32>()),
+        ),
+    ]
+}
+
 /// 全参数 + Set-Cookie 捕获版本。
 pub async fn api_call_full_response(
     origin: &str,

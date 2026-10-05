@@ -11,7 +11,19 @@ manifest_version_code=73932, app_name=**, channel=**, device_type=Xiaomi 14 系�
 device_id/iid/openudid/cdid, os=android, os_version, dpi=460, resolution,
 host_abi=arm64-v8a, _rticket={ms}, sim_region, msToken...`
 
-## 1. 排行榜（8 个榜单）
+**请求形态两族**（对齐时别混）：
+
+| | lq 域 reading 系 | sinfonlineb 域播放/推荐流 |
+|---|---|---|
+| 端点 | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作 | multi_video_model / landpage |
+| 头 | x-ss-dp + lc + x-reading-request（无 gorgon/argus） | 全签名五件套 |
+| POST body | **一律 gzip**（`Content-Encoding: gzip`） | 项目自有验证形态（未压缩，服务端两种都收） |
+
+⚠️ **参数必须逐值对齐抓包，不能凭"也能用"保留旧值**——教训：
+send_code 的 `type=1` 能发码但被服务端按"换绑"场景处理（目标号已绑定其它
+账号时报 1001），`type=3731` 才是短信登录发码场景（2026-10-04 实测）。
+
+## 1. 排行榜（内容 tab × 子榜 × 筛选面板）
 
 ```
 GET /reading/bookapi/bookmall/cell/change/v        # 注意 /v 不带斜杠
@@ -21,7 +33,21 @@ GET /reading/bookapi/bookmall/cell/change/v        # 注意 /v 不带斜杠
 category_id=0, cell_sub_id=0, client_req_type=2, client_template=2, gender=2,
 limit=0, offset=0, unlimited_selector_change_type=2`
 
-榜单切换参数 `sub_selected_items`：
+### 1.1 内容 tab 与子榜（2026-10-05 抓 hgplayer 1.1.3 锁定）
+
+顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，
+两者成对出现：
+
+| 内容 tab | selected_items        | 子榜 sub_selected_items（部分） |
+|---------|----------------------|--------------------------------|
+| 全部     | `all`                | `ranklist_hot_sc` 等 8 个（下表） |
+| 真人剧   | `human`              | `human_hot_sc` / `human_hot_play` / `human_new_rank` / `human_hot_search` / `human_must_watch` / `human_followed` |
+| 漫剧     | `comic_series_rank`  | `comic_series_hot_rank` / `comic_series_hot_play` / `comic_series_new_rank` / `comic_series_hot_search` |
+| AI剧     | `ai_playlet`         | `ai_playlet_hot_sc` 等 6 个 |
+| 演员     | `ranklist_celebrity` | 无子榜；**响应 video_data=0**（条目是演员形态），客户端剧集 UI 跳过 |
+| 系列剧   | `series_album`       | `series_album_hot_sc` / `series_album_new_rank`（新季榜） |
+
+「全部」tab 的 8 个子榜：
 
 | 榜单   | sub_selected_items       |
 |------|--------------------------|
@@ -33,6 +59,23 @@ limit=0, offset=0, unlimited_selector_change_type=2`
 | 热搜榜 | `ranklist_hot_search_sc` |
 | 必看榜 | `ranklist_must_watch`    |
 | 收藏榜 | `ranklist_followed`      |
+
+### 1.2 筛选面板（panel_selected_items）
+
+面板选中项用 `panel_selected_items` 传值，**单值**——hgplayer 抓包实测
+每次点击整组替换（女频→点古装后只剩 `cate_308`，不带 `gender_female`）：
+
+- 行「综合」：总榜（不传参）/ `gender_female` 女频 / `gender_male` 男频
+- 行「时代背景 / 主题情节 / 角色设定」：`cate_*`（古装=cate_308、
+  逆袭=cate_739、萌宝=cate_28…）
+- 漫剧子榜多一行「画风」：`style_*`（3d=style_1685…）
+
+**选项表由响应随行下发**：`data.cell_view.cell_selector.outer_row.items[]`
+（内容 tab）→ `sub_cell_selector.outer_row.items[]`（子榜）→
+`panel_selector.inner_rows[]`（筛选行，`row_name` 行名、`selection_type=1`
+单选、`items[].selector_item_id`，空 id = 总榜）。完整样本
+`captures/rank-selector-schema.json`。我们的实现（`rank.rs
+parse_cell_selector`）原样展开给前端渲染，不在前端硬编码选项。
 
 响应：`data.cell_view.cell_data[]`（每块=1 条，`cell_name="小卡"`、`show_type=505`），
 条目在 `video_data[]`：
@@ -126,6 +169,70 @@ GET /reading/user/subscribe/list/v1/
 参数：`is_online=true(已上线)|false(待上线), limit=20, offset=0,
 subscribe_offset=0, subscribe_order_type=0, swipe_type=0, tab_type=13`
 
+登录后条目为扁平形态（`item_id/name/has_subscribed/schedule_publish_time/...`），
+`data.online_total_count` / `offline_total_count` 是两栏计数。
+
+## 7. 预约 / 取消预约（2026-10-04 抓 hgplayer 1.1.3 实操锁定）
+
+```
+POST /reading/bookapi/search/uncover_subscribe/v
+```
+
+- **body 是 gzip 压缩的 JSON**（头带 `Content-Encoding: gzip`）：
+  `{"item_id": <series_id>, "item_type": 1, "op_type": 1 预约 / 2 取消,
+  "shark_param": {埋点上下文，不校验}, "wish_list_all_del": 0}`
+- query 只放设备指纹；reading 轻签名头（x-ss-dp/lc/x-reading-request）；
+  **必须带登录 cookie**，响应 `code==0` 即成功
+- ⚠️ hgplayer 的预约按钮由 **WebView 前端 fetch** 发出——Windows 上
+  Chromium 走**系统代理**而非进程 env 代理，抓它需临时把系统代理指向
+  mitmproxy（操作完记得还原用户的原代理）
+
+## 8. 短信登录（passport 系，1.1.3 真机实证）
+
+```
+POST /passport/mobile/send_code/v1/   mobile 密文 + type
+POST /passport/mobile/sms_login/      mobile/code 密文 + csrf cookie
+POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
+```
+
+- `mobile` / `code` 都是 **XOR(0x05) hex 密文**；mobile 密文须带
+  **`+86` 国码前缀**（不带按残缺号处理）；`mix_mode=1`
+- 发码响应 **Set-Cookie `passport_csrf_token`** = 会话绑定凭据，
+  sms_login 的 cookie 带上它（body **不传** mobile_ticket——1.1.3 实测）
+- `type`：发码场景参数，1 与 3731（1.1.3 实测值）都受理
+- 登录成功 Set-Cookie 下发会话全家桶：`sessionid`/`sid_tt`/`sid_guard`
+  （60 天）/`uid_tt`/`odin_tt`/`d_ticket`/`passport_mfa_token` 等
+- 参数放 query 还是 body form-urlencoded 均可（服务端都解析）；
+  发码对格式合法的号不做真实性校验（179 虚构号也发码成功）
+- 错码响应 `error_code=1202`（"验证码错误"，data.description 带文案）
+
+**MFA 上行短信流程**（换设备/风险登录触发，error_code=2046）：
+
+1. sms_login 返回 `data.biz_params.{passport_mfa_retry_tag, sms_code_key}`
+   + `encrypt_uid` + `event_params{log_id,verify_reason,verify_scene}` +
+   `common_params{copywriting_key,ies_safety_diversion_tag}` +
+   `verify_ways[]`（`mobile_up_sms_verify` 项含 `channel_mobile` 通道号与
+   `sms_content` 回复内容，如 回复 "YZ"）
+   **通道号陷阱（2026-10-05 实测）**：API 下发 `channel_mobile=9515211003`
+   （宁夏银川 95 扩展号段）——**回复到它服务端收不到**。hgplayer 1.1.3 把
+   `9515211003` 与 `10691859839103` 两个号码都硬编码在二进制里做替换，
+   真实可回复通道是 `10691859839103`（运营商 106 网关；抓包全量数据中
+   不存在该号码，只能来自客户端内置）。我们已在 `login.rs
+   real_upsms_channel` 做同款替换，未知号码透传（换号靠抓包发现）。
+2. 轮询 `POST /passport/upsms/verify/`：body 为 form（`biz_params` 是
+   JSON 串 + 上述上下文字段 + 常量 `new_authn_sdk_version=1.1.31`、
+   `request_tag_from=h5`，另有两个空值字段 `new_verify_flow=`、
+   `verify_ticket=`）；`error_code=1045` = 等待用户回复短信。
+   **MFA 会话绑定（2026-10-05 真机踩坑）**：触发 MFA 的 sms_login 响应
+   会 Set-Cookie `passport_mfa_token=<短token>`——轮询请求的 Cookie
+   **必须带它**，缺了服务端永远回 1045（回复短信也没用）
+3. 用户回复短信后轮询返回 `data.registered=true`（附 ticket，可忽略），
+   **该响应再 Set-Cookie 一个新的长 `passport_mfa_token`**——重登请求
+   必须带这个新值。**此时还没有会话**——再发一次 sms_login（原 code
+   密文 + `passport_mfa_retry_tag` 明文 + `sms_code_key` **密文**）成功
+   拿 cookie
+4. 退出登录**无网络请求**（hgplayer 纯本地清账号）
+
 ## 已知未抓 / 待做
 
 - 设备注册 `POST log.snssdk.com/service/2/device_register/`（旧会话已抓到
@@ -140,6 +247,14 @@ subscribe_offset=0, subscribe_order_type=0, swipe_type=0, tab_type=13`
 历史轮次：`C:\Users\liu13\AppData\Local\Temp\hg_capture\`（易失，随时可能被清）
 
 **现行工作流（自持抓包）**：仓库 `captures/`（已 gitignore，持久保留）——
+
+- `audit.py` **参数对齐审计（硬规矩：新接口/改接口必须先跑它逐字段对齐，
+  不许凭"大概有用"挑字段——2026-10-05 前 type=3731 / channel_mobile 替换 /
+  passport_mfa_token / new_verify_flow 空字段连续四次丢参后的整顿产物）**：
+  `python captures/audit.py [接口名过滤词]` 输出每个接口抓包在场的
+  query/form body 字段/cookie 键/关键头。注意 addon 存的 cookie 是逗号
+  分隔（audit 已兼容）。`d_ticket` 是服务端历史下发凭据（我们没有
+  来源），不算丢参。
 
 - `addon.py` mitmproxy dump 脚本（目标域名过滤，输出 JSONL，MITM_OUT 可覆盖输出路径）
 - `flows-YYYYMMDD.jsonl` 按日分轮的抓包产物（req 头/参数/resp body b64+brotli）

@@ -9,25 +9,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::client::{api_call_full_with_headers, ApiEnv};
+use super::client::{api_call_full_with_headers, reading_headers, ApiEnv};
 use super::danmaku::LQ_API_ORIGIN;
 use super::discover::{check_code, int_field, str_field};
 use crate::error::{AppError, AppResult};
-
-/// search 系要 reading 轻签名头（抓包：无 gorgon/argus/ladon，
-/// 多 x-ss-dp + x-reading-request，格式同 commentapi 的 ticket-random）。
-fn reading_headers() -> [(String, String); 3] {
-    let ticket = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let rnd: u32 = rand::random();
-    [
-        ("x-reading-request".to_string(), format!("{ticket}-{rnd}")),
-        ("x-ss-dp".to_string(), "8662".to_string()),
-        ("lc".to_string(), "101".to_string()),
-    ]
-}
 
 pub const SEARCH_TAB_PATH: &str = "/reading/bookapi/search/tab/v";
 

@@ -11,11 +11,10 @@
 //!
 //! 发送（comment/add）需要登录态，登录里程碑落地后再接。
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::client::{api_call_full_with_headers, ApiEnv};
+use super::client::ApiEnv;
 use crate::error::{AppError, AppResult};
 
 /// hgplayer 实测的 reading 系 API 主机（我们的视频接口走 sinfonlineb，
@@ -104,24 +103,8 @@ async fn fetch_danmaku_window(
     let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
     let body = serde_json::to_vec(&danmaku_payload(group_id, book_id, cursor))
         .map_err(|e| AppError::Signer(e.to_string()))?;
-    let ticket = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let extra = [(
-        "x-reading-request".to_string(),
-        format!("{ticket}-{}", rand::rng().random::<u32>()),
-    )];
-
-    let bytes = api_call_full_with_headers(
-        LQ_API_ORIGIN,
-        &path,
-        Some(body),
-        &[],
-        &extra,
-        env,
-    )
-    .await?;
+    // reading 系统一入口：轻签名头 + gzip body（1.1.3 抓包形态）
+    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析弹幕响应失败: {e}")))?;
     if v.get("code").and_then(Value::as_i64) != Some(0) {

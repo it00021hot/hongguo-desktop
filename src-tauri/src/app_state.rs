@@ -24,6 +24,12 @@ pub struct AppStateInner {
     pub settings: RwLock<Settings>,
     /// 当前设备档案（设备注册成功后被整体替换）
     device: RwLock<crate::signer::device::DeviceProfile>,
+    /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
+    /// 不落库：发码会话本身分钟级有效，重启即重新发码。
+    pub login_csrf: RwLock<Option<String>>,
+    /// MFA 上行短信验证的进行中流程（上下文 + 原始登录要素）。
+    /// 轮询到 registered 后用它自动重登；不落库。
+    pub login_mfa: RwLock<Option<crate::domain::api::login::MfaFlow>>,
     /// 下载队列
     pub queue: RwLock<Arc<DownloadQueue>>,
     scheduler: RwLock<Arc<DownloadScheduler>>,
@@ -46,6 +52,8 @@ impl AppStateInner {
             store,
             settings: RwLock::new(Settings::default()),
             device: RwLock::new(device),
+            login_csrf: RwLock::new(None),
+            login_mfa: RwLock::new(None),
             queue: RwLock::new(Arc::new(DownloadQueue::new())),
             scheduler: RwLock::new(Arc::new(DownloadScheduler::new())),
         }

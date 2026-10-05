@@ -192,8 +192,11 @@ pub const ANON_TTREQ: &str = "1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874";
 /// 静默拒（HTTP 200 + 0 字节）。`install_id` 从档案的 `iid` 派生，保证
 /// 换档案时始终一致；`store-region` 是实测的属地标记。
 pub fn anonymous_cookie(device: &DeviceProfile) -> String {
+    // passport_csrf_token 必须以空值字段在场（hgplayer 抓包形态）：
+    // 缺失时服务端把 send_code 走成「换绑检查」——目标号已绑定其它
+    // 账号就报 1001（2026-10-04 实测：补空值即恢复登录发码语义）
     format!(
-        "store-region=cn-gd; store-region-src=did; install_id={}; ttreq={}",
+        "passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id={}; ttreq={}",
         device.get("iid"),
         ANON_TTREQ
     )
@@ -325,7 +328,11 @@ mod tests {
         let cookie = anonymous_cookie(&device);
         // install_id 必须与档案 iid 一致，否则服务端判为两个设备
         assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
-        assert!(cookie.starts_with("store-region=cn-gd"));
+        assert!(
+            cookie.contains("passport_csrf_token=;"),
+            "空值 csrf 字段必须在场（缺失时 send_code 走换绑分支报 1001）"
+        );
+        assert!(cookie.contains("store-region=cn-gd"));
         assert!(cookie.contains(&format!("ttreq={ANON_TTREQ}")));
     }
 
