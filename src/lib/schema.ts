@@ -180,6 +180,8 @@ export type PassportUser = z.infer<typeof passportUserSchema>;
 export const sendCodeOutcomeSchema = z.object({
   message: z.string(),
   mobileTicket: z.string(),
+  /** 重发等待秒数（服务端 retry_time） */
+  retryTime: z.number().default(60),
 });
 
 export type SendCodeOutcome = z.infer<typeof sendCodeOutcomeSchema>;
@@ -191,6 +193,10 @@ export const loginResultSchema = z.discriminatedUnion('kind', [
     kind: z.literal('mfa'),
     retryTag: z.string(),
     smsCodeKey: z.string(),
+    /** 上行短信通道号（如 9515211003；提示文案已拼进 tips） */
+    channelMobile: z.string().default(''),
+    /** 要回复的短信内容（如 "YZ"） */
+    smsContent: z.string().default(''),
     tips: z.string(),
   }),
   z.object({ kind: z.literal('mfaWaiting') }),
@@ -399,23 +405,42 @@ export const rankItemSchema = z.object({
 });
 export type RankItem = z.infer<typeof rankItemSchema>;
 
+/** 筛选面板选项（id 为空 = 「总榜」，即清除筛选）。 */
+export const rankPanelItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type RankPanelItem = z.infer<typeof rankPanelItemSchema>;
+
+/** 面板一行（综合 / 时代背景 / 主题情节 / 角色设定…）。 */
+export const rankPanelRowSchema = z.object({
+  name: z.string(),
+  items: z.array(rankPanelItemSchema),
+});
+export type RankPanelRow = z.infer<typeof rankPanelRowSchema>;
+
+/** 内容 tab 下的一个子榜（自带筛选面板 schema）。 */
+export const rankSubListSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  panel: z.array(rankPanelRowSchema),
+});
+export type RankSubList = z.infer<typeof rankSubListSchema>;
+
+/** 顶部内容 tab（全部/真人剧/漫剧/AI剧/系列剧；演员榜无剧集数据不提供）。 */
+export const rankTabSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  subs: z.array(rankSubListSchema),
+});
+export type RankTab = z.infer<typeof rankTabSchema>;
+
 export const rankPageSchema = z.object({
   items: z.array(rankItemSchema),
+  /** 内容 tab → 子榜 → 筛选面板的选项表（响应 cell_selector 展开） */
+  tabs: z.array(rankTabSchema),
 });
 export type RankPage = z.infer<typeof rankPageSchema>;
-
-/** 榜单标识（与 Rust `RankKind` 的 snake_case 序列化一致）。 */
-export const rankKindSchema = z.enum([
-  'recommend',
-  'hot_play',
-  'prestige',
-  'subscribe',
-  'new_drama',
-  'hot_search',
-  'must_watch',
-  'followed',
-]);
-export type RankKind = z.infer<typeof rankKindSchema>;
 
 /** 上新日历条目（Rust `rank::CalendarItem`）。 */
 export const calendarItemSchema = z.object({
@@ -432,6 +457,8 @@ export const calendarItemSchema = z.object({
   /** 排期上线时间（unix 秒；0 = 未定档） */
   publishTime: z.number(),
   isOnline: z.boolean(),
+  /** 当前账号是否已预约（预约列表形态下发；日历形态恒 false） */
+  hasSubscribed: z.boolean(),
 });
 export type CalendarItem = z.infer<typeof calendarItemSchema>;
 
@@ -440,6 +467,11 @@ export const calendarPageSchema = z.object({
   /** "20261003" 形式的可选日期 */
   dates: z.array(z.string()),
   defaultDate: z.string(),
+  hasMore: z.boolean(),
+  nextOffset: z.number(),
+  /** 预约列表两个 tab 的计数（日历形态恒 0） */
+  onlineTotal: z.number(),
+  offlineTotal: z.number(),
 });
 export type CalendarPage = z.infer<typeof calendarPageSchema>;
 

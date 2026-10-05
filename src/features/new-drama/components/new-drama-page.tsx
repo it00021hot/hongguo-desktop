@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Flame, Loader2, Star, Tv } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { BellRing, CalendarDays, Flame, Loader2, Star, Tv } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,7 @@ import {
   SeriesDetailSheet,
   type SeriesRef,
 } from '@/features/series/components/series-detail-sheet';
+import { rank as rankApi } from '@/lib/ipc/commands';
 import {
   isRenderableCover,
   useDownloadTasks,
@@ -273,23 +275,26 @@ function NewDramaCard({
 /** 上新日历：日期条 + 当日上新列表（含未上线）。 */
 function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void }) {
   const [date, setDate] = useState('');
-  const { data, isLoading, error, refetch } = useNewCalendar(date);
+  const { data, isLoading, error, isFetching, refetch } = useNewCalendar(date);
   // 首次拿到日期列表后选中默认日（空串 = 默认日，这里显式化便于高亮）
   const active = date === '' ? (data?.defaultDate ?? '') : date;
   const dates = data?.dates ?? [];
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 日期条常驻不参与 loading：切日期只换下方列表（keepPreviousData
+          平滑过渡），不会整页闪骨架屏 */}
       <div className="flex flex-wrap gap-2">
         {dates.map((d) => (
           <Button
             key={d}
             size="sm"
             variant={active === d ? 'default' : 'outline'}
-            className="tabular-nums"
+            className="flex-col gap-0 py-1"
             onClick={() => setDate(d)}
           >
-            {formatDateChip(d)}
+            <span className="text-[10px] leading-tight opacity-80">{formatWeekday(d)}</span>
+            <span className="text-sm leading-tight tabular-nums">{formatDayMonth(d)}</span>
           </Button>
         ))}
       </div>
@@ -318,11 +323,18 @@ function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void 
           ))}
         </div>
       )}
+
+      {isFetching && !isLoading && (
+        <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+          {t('feed.loadingMore')}
+        </p>
+      )}
     </div>
   );
 }
 
-/** 日历一行：封面 | 标题/分类/简介 | 上线状态与热度。 */
+/** 日历一行：封面 | 标题/分类/简介 | 上线状态与热度 | 预约。 */
 function CalendarRow({
   item,
   onSelect,
@@ -330,6 +342,7 @@ function CalendarRow({
   item: CalendarItem;
   onSelect: (item: CalendarItem) => void;
 }) {
+  const qc = useQueryClient();
   const { data: webCover } = useWebCover(item.seriesId, item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
@@ -337,6 +350,18 @@ function CalendarRow({
   const imgBroken = brokenFor !== '' && brokenFor === cover;
   const showImg = cover !== '' && !imgBroken;
   const heat = item.recTags[0] ?? '';
+
+  // 日历形态响应不带预约态（has_subscribed 恒 false），本地记已点过的剧
+  const [reserved, setReserved] = useState(item.hasSubscribed);
+  const reserve = useMutation({
+    mutationFn: () => rankApi.reserve(item.seriesId, true),
+    onSuccess: () => {
+      setReserved(true);
+      toast.success(t('reservation.done'));
+      void qc.invalidateQueries({ queryKey: ['reservations'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   return (
     <article
@@ -413,13 +438,41 @@ function CalendarRow({
             {formatPublishTime(item.publishTime)}
           </span>
         )}
+        {!item.isOnline && (
+          <Button
+            size="sm"
+            variant={reserved ? 'secondary' : 'outline'}
+            disabled={reserved || reserve.isPending}
+            onClick={() => reserve.mutate()}
+          >
+            {reserve.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <BellRing className="size-4" aria-hidden />
+            )}
+            {reserved ? t('reservation.reserved') : t('reservation.action')}
+          </Button>
+        )}
       </div>
     </article>
   );
 }
 
+/** "20261003" → 今天/周几（hgplayer 日期条同款：今天显示「今天」，其余
+ *  显示星期；文案走 i18n，中英文各自成串）。 */
+function formatWeekday(d: string): string {
+  if (d.length !== 8) return '';
+  const today = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayKey = `${today.getFullYear()}${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
+  if (d === todayKey) return t('newDrama.today');
+  const dt = new Date(Number(d.slice(0, 4)), Number(d.slice(4, 6)) - 1, Number(d.slice(6, 8)));
+  if (Number.isNaN(dt.getTime())) return '';
+  return t(`newDrama.weekday.${dt.getDay()}`);
+}
+
 /** "20261003" → "10/3"。 */
-function formatDateChip(d: string): string {
+function formatDayMonth(d: string): string {
   if (d.length !== 8) return d;
   const month = Number(d.slice(4, 6));
   const day = Number(d.slice(6, 8));

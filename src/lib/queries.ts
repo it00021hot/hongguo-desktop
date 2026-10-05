@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   browse,
   discover,
   download,
+  login,
   merge,
   play,
   rank,
@@ -25,7 +26,6 @@ import type {
   MergeMode,
   MergeTask,
   QueueStatus,
-  RankKind,
   RankPage,
   SearchPage,
 } from './schema';
@@ -55,8 +55,11 @@ const keys = {
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
-  rank: (kind: RankKind) => ['rank', kind] as const,
+  rank: (selected: string, sub: string, panel: string) =>
+    ['rank', selected, sub, panel] as const,
   newCalendar: (date: string) => ['new-calendar', date] as const,
+  reservations: (isOnline: boolean) => ['reservations', isOnline] as const,
+  account: ['account'] as const,
   appSeriesSearch: (query: string) => ['app-series-search', query] as const,
 } satisfies Record<string, unknown>;
 
@@ -214,12 +217,16 @@ export function isRenderableCover(url: string): boolean {
 
 // ---------------------------------------------------------------- 排行榜 / 新剧
 
-/** 一个榜单（按 kind 缓存；榜单一天更新几次，10 分钟内不重打）。 */
-export function useRank(kind: RankKind) {
+/**
+ * 一个榜单（内容tab × 子榜 × 筛选 组合缓存；榜单一天更新几次，10 分钟内
+ * 不重打。切筛选时用 keepPreviousData 保住旧列表，避免整页闪 loading）。
+ */
+export function useRank(selected: string, sub: string, panel: string) {
   return useQuery({
-    queryKey: keys.rank(kind),
-    queryFn: () => rank.list(kind),
+    queryKey: keys.rank(selected, sub, panel),
+    queryFn: () => rank.list(selected, sub, panel),
     staleTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -268,12 +275,32 @@ export function useNewDrama(gender: number) {
   };
 }
 
-/** 上新日历（date 为空串取默认日）。 */
+/** 上新日历（date 为空串取默认日；切日期保旧列表平滑过渡）。 */
 export function useNewCalendar(date: string) {
   return useQuery({
     queryKey: keys.newCalendar(date),
     queryFn: () => rank.calendar(date === '' ? undefined : date),
     staleTime: 10 * 60_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** 我的预约（isOnline：已上线 / 待上线 tab）。 */
+export const RESERVATIONS_KEY_ROOT = ['reservations'] as const;
+export function useReservations(isOnline: boolean) {
+  return useQuery({
+    queryKey: keys.reservations(isOnline),
+    queryFn: () => rank.reservations(isOnline),
+    staleTime: 60_000,
+  });
+}
+
+/** 当前登录态（null = 未登录）；登录/退出后要主动失效。 */
+export function useAccount() {
+  return useQuery({
+    queryKey: keys.account,
+    queryFn: login.status,
+    staleTime: 30_000,
   });
 }
 

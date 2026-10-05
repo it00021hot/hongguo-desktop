@@ -1,53 +1,31 @@
 //! 排行榜 / 新剧 / 搜索 / 预约 command（2026-10-03 抓包端点）。
 
-use serde::Deserialize;
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::rank::{
-    fetch_new_calendar, fetch_new_drama, fetch_rank, fetch_reservations, CalendarPage, RankList,
-    RankPage,
+    fetch_new_calendar, fetch_new_drama, fetch_rank_ex, fetch_reservations, reserve_series,
+    CalendarPage, RankPage,
 };
 use crate::domain::api::search::{search_series, SearchPage};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
-/// 榜单标识（前端传 `sub_selected_items` 字符串，服务端校验白名单）。
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RankKind {
-    Recommend,
-    HotPlay,
-    Prestige,
-    Subscribe,
-    NewDrama,
-    HotSearch,
-    MustWatch,
-    Followed,
-}
-
-impl From<RankKind> for RankList {
-    fn from(k: RankKind) -> Self {
-        match k {
-            RankKind::Recommend => RankList::Recommend,
-            RankKind::HotPlay => RankList::HotPlay,
-            RankKind::Prestige => RankList::Prestige,
-            RankKind::Subscribe => RankList::Subscribe,
-            RankKind::NewDrama => RankList::NewDrama,
-            RankKind::HotSearch => RankList::HotSearch,
-            RankKind::MustWatch => RankList::MustWatch,
-            RankKind::Followed => RankList::Followed,
-        }
-    }
-}
-
-/// 拉一个榜单。
+/// 拉一个榜单（任意 tab × 子榜 × 筛选组合）。
+///
+/// - `selected`：内容 tab id（all/human/comic_series_rank/ai_playlet/
+///   series_album；ranklist_celebrity 为演员榜，无剧集数据，前端不提供）
+/// - `sub`：子榜 id（响应 tabs schema 下发，如 ranklist_hot_sc）
+/// - `panel`：筛选面板选中项（gender_female/cate_308…；None 或空 = 总榜）
 #[tauri::command]
 pub async fn rank_list(
     state: State<'_, AppState>,
-    kind: RankKind,
+    selected: String,
+    sub: String,
+    panel: Option<String>,
 ) -> AppResult<RankPage> {
+    let selected = if selected.trim().is_empty() { "all".into() } else { selected };
     let env = state.api_env();
-    fetch_rank(kind.into(), &env).await
+    fetch_rank_ex(&selected, &sub, panel.as_deref(), &env).await
 }
 
 /// 新剧推荐（gender: 2=全部；offset 翻页步长 18）。
@@ -98,14 +76,38 @@ pub async fn search_series_cmd(
     }
 }
 
-/// 我的预约（is_online=true 已上线 / false 待上线；匿名通常空表）。
+/// 我的预约（is_online=true 已上线 / false 待上线；匿名空表）。
 #[tauri::command]
 pub async fn reservation_list(
     state: State<'_, AppState>,
     is_online: Option<bool>,
-) -> AppResult<RankPage> {
+) -> AppResult<CalendarPage> {
     let env = state.api_env();
     fetch_reservations(is_online.unwrap_or(true), &env).await
+}
+
+/// 预约 / 取消预约（需要登录；series_id 为剧集 id）。
+#[tauri::command]
+pub async fn reservation_reserve(
+    state: State<'_, AppState>,
+    series_id: String,
+    reserve: Option<bool>,
+) -> AppResult<()> {
+    let series_id = series_id.trim().to_string();
+    if series_id.is_empty() {
+        return Err(AppError::Auth("剧集 id 不能为空".into()));
+    }
+    if state.settings().account.is_none() {
+        return Err(AppError::Auth("预约需要先登录".into()));
+    }
+    let env = state.api_env();
+    let reserve = reserve.unwrap_or(true);
+    reserve_series(&series_id, reserve, &env).await?;
+    log::info!(
+        "[Reserve] {} {series_id}",
+        if reserve { "预约" } else { "取消预约" }
+    );
+    Ok(())
 }
 
 /// 上新日历（date 传返回值 dates 里的日期可切换，不传取默认日）。
@@ -120,26 +122,23 @@ pub async fn new_drama_calendar(
 
 #[cfg(test)]
 mod tests {
-    use super::{RankKind, RankList};
-
     #[test]
     fn rank_commands_are_async() {
         // 直连接口的命令必须 async（与 discover_feed 同一条纪律）
         let src = include_str!("rank_cmd.rs");
-        for name in ["fn rank_list(", "fn new_drama_list(", "fn search_series_cmd(", "fn reservation_list("] {
+        for name in [
+            "fn rank_list(",
+            "fn new_drama_list(",
+            "fn search_series_cmd(",
+            "fn reservation_list(",
+            "fn reservation_reserve(",
+            "fn new_drama_calendar(",
+        ] {
             let sig = src
                 .lines()
                 .find(|l| l.contains(name))
                 .unwrap_or_else(|| panic!("找不到 {name}"));
             assert!(sig.contains("pub async fn"), "{name} 必须 async: {sig}");
         }
-    }
-
-    #[test]
-    fn rank_kind_deserializes_snake_case() {
-        let k: RankKind = serde_json::from_str("\"must_watch\"").unwrap();
-        assert_eq!(RankList::from(k).as_sub_selected(), "ranklist_must_watch");
-        let k: RankKind = serde_json::from_str("\"recommend\"").unwrap();
-        assert_eq!(RankList::from(k).as_sub_selected(), "ranklist_hot_sc");
     }
 }

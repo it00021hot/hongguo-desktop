@@ -1,42 +1,93 @@
-import { useState } from 'react';
-import { Flame, Loader2, Star, Tv } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   SeriesDetailSheet,
   type SeriesRef,
 } from '@/features/series/components/series-detail-sheet';
 import { isRenderableCover, useRank, useResolveSeries, useWebCover } from '@/lib/queries';
 import { t } from '@/i18n';
-import type { RankItem, RankKind } from '@/lib/schema';
+import type { RankItem, RankSubList, RankTab } from '@/lib/schema';
 
 /**
- * 排行榜页：官方 8 个榜单，tab 切换、榜单行列表。
+ * 排行榜页（对齐 hgplayer 1.1.3 布局，2026-10-05 抓包）：
+ * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
+ * （panel_selected_items 单选）。
  *
- * 榜单是有名次的序列，用「序号 + 行」而不是封面网格——名次本身就是
- * 用户要扫的第一信息（与 hgplayer 同形态）。点行 = 先解析再开详情抽屉，
- * 与首页信息流同一交互。
+ * 选项表由接口随行下发（响应 cell_selector）。服务端按登录态分发两种
+ * 形态（同一结构、不同嵌套语义，normalizeTabs 统一）：
+ * - 匿名两级：tab=内容分类 → sub=子榜 → panel=筛选行；
+ * - 登录一级：tab=榜单 → sub=筛选选项平铺（panel 层不用）。
+ *
+ * 「演员」tab 响应无剧集数据（celebrity 形态），不提供入口。
  */
 
-const RANK_TABS: { kind: RankKind; labelKey: string }[] = [
-  { kind: 'recommend', labelKey: 'rank.kind.recommend' },
-  { kind: 'hot_play', labelKey: 'rank.kind.hotPlay' },
-  { kind: 'prestige', labelKey: 'rank.kind.prestige' },
-  { kind: 'subscribe', labelKey: 'rank.kind.subscribe' },
-  { kind: 'new_drama', labelKey: 'rank.kind.newDrama' },
-  { kind: 'hot_search', labelKey: 'rank.kind.hotSearch' },
-  { kind: 'must_watch', labelKey: 'rank.kind.mustWatch' },
-  { kind: 'followed', labelKey: 'rank.kind.followed' },
-];
+/** 服务端两种 selector 形态归一成统一的「内容tab → 子榜(含筛选面板)」。 */
+function normalizeTabs(tabs: RankTab[]): RankTab[] {
+  if (tabs.length === 0) return [];
+  // 两级形态的标志是「全部」tab（id=all）；其余 tab id 都是内容分类
+  if (tabs.some((tab) => tab.id === 'all')) {
+    return tabs.filter((tab) => tab.id !== 'ranklist_celebrity' && tab.subs.length > 0);
+  }
+  // 一级形态：榜单当子榜，其平铺选项包成单行「筛选」面板
+  return [
+    {
+      id: 'all',
+      name: '全部',
+      subs: tabs.map<RankSubList>((tab) => ({
+        id: tab.id,
+        name: tab.name,
+        panel:
+          tab.subs.length > 0
+            ? [{ name: t('rank.filter.title'), items: tab.subs.map((s) => ({ id: s.id, name: s.name })) }]
+            : [],
+      })),
+    },
+  ];
+}
+
+/** 首屏 schema 未到时 tab 行不渲染（一级/两级形态未知），避免形态跳变。 */
 
 export function RankPage() {
-  const [kind, setKind] = useState<RankKind>('recommend');
-  const { data, isLoading, error, isFetching, refetch } = useRank(kind);
+  const [selected, setSelected] = useState('all');
+  // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
+  const [sub, setSub] = useState('ranklist_hot_sc');
+  // 筛选面板选中项（'' = 总榜，即无筛选）
+  const [panel, setPanel] = useState('');
+  const { data, isLoading, error, isFetching, refetch } = useRank(selected, sub, panel);
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
+
+  const tabs = useMemo(() => normalizeTabs(data?.tabs ?? []), [data?.tabs]);
+  const showTabsRow = (data?.tabs ?? []).some((tab) => tab.id === 'all');
+  const currentTab = tabs.find((tab) => tab.id === selected);
+  const currentSub = currentTab?.subs.find((s) => s.id === sub) ?? currentTab?.subs[0];
+
+  // schema 到达（或登录态形态切换）后，当前 sub 不在新 tab 的子榜里时
+  // 落到第一个子榜（render 期调整 state 的官方模式，立即用新值重渲染）
+  if (currentTab && currentTab.subs.length > 0 && currentSub?.id !== sub) {
+    setSub(currentSub.id);
+    setPanel('');
+  }
+
+  // schema 到达（或登录态形态切换）后，当前 sub 不在新 tab 的子榜里时
+  // 落到第一个子榜（render 期调整 state 的官方模式，立即用新值重渲染）
+  if (currentTab && currentTab.subs.length > 0 && currentSub?.id !== sub) {
+    setSub(currentSub.id);
+    setPanel('');
+  }
+
+  const switchTab = (id: string) => {
+    if (id === selected) return;
+    setSelected(id);
+    setPanel('');
+    const first = tabs.find((tab) => tab.id === id)?.subs[0];
+    setSub(first?.id ?? '');
+  };
 
   const handleSelect = (item: RankItem) => {
     resolve(item.seriesId, {
@@ -56,51 +107,107 @@ export function RankPage() {
     });
   };
 
+  const tabRow = showTabsRow ? tabs : [];
+
   return (
     <div className="flex flex-col gap-4">
-      <Tabs value={kind} onValueChange={(v) => setKind(v as RankKind)}>
-        {/* 8 个榜单横排，窄窗口下允许横向滚动（不换行挤压文字） */}
-        <TabsList className="flex-wrap">
-          {RANK_TABS.map(({ kind: k, labelKey }) => (
-            <TabsTrigger key={k} value={k}>
-              {t(labelKey)}
-            </TabsTrigger>
+      {/* 内容 tab：仅两级形态显示（登录一级形态只有一个合成 tab，隐藏整行） */}
+      {showTabsRow && (
+        <div className="flex items-center gap-1 border-b pb-2">
+          {tabRow.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => switchTab(tab.id)}
+              className={cn(
+                'relative px-3 py-1.5 text-sm transition-colors',
+                tab.id === selected
+                  ? 'font-semibold text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {tab.name}
+              {tab.id === selected && (
+                <span className="bg-primary absolute inset-x-2 -bottom-[9px] h-0.5 rounded-full" />
+              )}
+            </button>
           ))}
-        </TabsList>
-      </Tabs>
+        </div>
+      )}
 
-      {isLoading ? (
-        <div className="flex flex-col gap-3">
-          {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
+      <div className="flex min-h-0 gap-4">
+        {/* 左侧子榜竖排（hgplayer 同款形态） */}
+        <nav className="flex w-36 shrink-0 flex-col gap-1" aria-label={t('rank.subLists')}>
+          {(currentTab?.subs ?? []).map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => {
+                if (s.id === sub) return;
+                setSub(s.id);
+                setPanel('');
+              }}
+              className={cn(
+                'rounded-md px-3 py-2 text-left text-sm transition-colors',
+                s.id === sub
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )}
+            >
+              {s.name}
+            </button>
           ))}
-        </div>
-      ) : error ? (
-        <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-          <p>{t('rank.loadFailed')}</p>
-          <p className="text-destructive text-xs">{error.message}</p>
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            <RefreshButton />
-            {t('feed.retry')}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {(data?.items ?? []).map((item) => (
-            <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
-          ))}
-          {(data?.items.length ?? 0) === 0 && (
-            <p className="text-muted-foreground py-16 text-center text-sm">{t('rank.empty')}</p>
+        </nav>
+
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          {/* 右上：子榜名 + 筛选面板入口 */}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-sm">
+              {currentSub?.name ?? currentTab?.name ?? ''}
+            </p>
+            {currentSub && currentSub.panel.length > 0 && (
+              <FilterPanelButton
+                rows={currentSub.panel}
+                value={panel}
+                onPick={(id) => setPanel(id)}
+              />
+            )}
+          </div>
+
+          {isLoading ? (
+            <div className="flex flex-col gap-3">
+              {Array.from({ length: 8 }, (_, i) => (
+                <Skeleton key={i} className="h-24 rounded-xl" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+              <p>{t('rank.loadFailed')}</p>
+              <p className="text-destructive text-xs">{error.message}</p>
+              <Button variant="outline" size="sm" onClick={() => void refetch()}>
+                <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+                {t('feed.retry')}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {(data?.items ?? []).map((item) => (
+                <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
+              ))}
+              {(data?.items.length ?? 0) === 0 && (
+                <p className="text-muted-foreground py-16 text-center text-sm">{t('rank.empty')}</p>
+              )}
+            </div>
+          )}
+
+          {isFetching && !isLoading && (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              {t('feed.loadingMore')}
+            </p>
           )}
         </div>
-      )}
-
-      {isFetching && !isLoading && (
-        <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          {t('feed.loadingMore')}
-        </p>
-      )}
+      </div>
 
       <SeriesDetailSheet
         card={detail?.card ?? null}
@@ -110,6 +217,104 @@ export function RankPage() {
       />
 
       {resolving && <ResolvingHint />}
+    </div>
+  );
+}
+
+/** 「总榜 ▾」筛选按钮 + 弹出面板（row_name 分行，选项单选整组替换）。 */
+function FilterPanelButton({
+  rows,
+  value,
+  onPick,
+}: {
+  rows: { name: string; items: { id: string; name: string }[] }[];
+  value: string;
+  onPick: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectedName =
+    rows.flatMap((r) => r.items).find((it) => it.id === value && it.id !== '')?.name;
+
+  // 点击面板外部即收起（hgplayer 同款交互）
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Button variant="outline" size="sm" onClick={() => setOpen((o) => !o)}>
+        {selectedName ? (
+          <>
+            <SlidersHorizontal className="size-4" aria-hidden />
+            {selectedName}
+          </>
+        ) : (
+          <>
+            <SlidersHorizontal className="size-4" aria-hidden />
+            {rows[0]?.items.find((it) => it.id === '')?.name ?? t('rank.filter.all')}
+          </>
+        )}
+        <ChevronDown
+          className={cn('size-4 transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
+      </Button>
+
+      {open && (
+        <div className="bg-popover text-popover-foreground absolute right-0 z-20 mt-1 max-h-[60vh] w-96 overflow-y-auto rounded-lg border p-3 shadow-lg">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium">{t('rank.filter.title')}</p>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => setOpen(false)}
+              aria-label={t('common.close')}
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+          {value !== '' && (
+            <div className="mb-2 flex justify-end">
+              <Button variant="ghost" size="sm" onClick={() => onPick('')}>
+                {t('rank.filter.reset')}
+              </Button>
+            </div>
+          )}
+          <div className="flex flex-col gap-3">
+            {rows.map((row) => (
+              <div key={row.name} className="flex flex-col gap-1.5">
+                <p className="text-muted-foreground text-xs">{row.name}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {row.items.map((it) => (
+                    <button
+                      key={it.id === '' ? '__all__' : it.id}
+                      type="button"
+                      onClick={() => {
+                        onPick(it.id);
+                        setOpen(false);
+                      }}
+                      className={cn(
+                        'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                        it.id === value
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'hover:bg-accent hover:text-accent-foreground',
+                      )}
+                    >
+                      {it.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -196,10 +401,6 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
       )}
     </article>
   );
-}
-
-function RefreshButton() {
-  return <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />;
 }
 
 function ResolvingHint() {

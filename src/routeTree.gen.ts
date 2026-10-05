@@ -15,6 +15,7 @@ import { Route as MergeRouteImport } from './routes/merge'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as PlayerRouteImport } from './routes/player'
 import { Route as RankRouteImport } from './routes/rank'
+import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StorageRouteImport } from './routes/storage'
 import { Route as TasksRouteImport } from './routes/tasks'
@@ -49,6 +50,11 @@ const RankRoute = RankRouteImport.update({
   path: '/rank',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReservationsRoute = ReservationsRouteImport.update({
+  id: '/reservations',
+  path: '/reservations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
+  '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
+  '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
+  '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
   '/storage': typeof StorageRoute
   '/tasks': typeof TasksRoute
@@ -108,6 +117,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/player'
     | '/rank'
+    | '/reservations'
     | '/settings'
     | '/storage'
     | '/tasks'
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/player'
     | '/rank'
+    | '/reservations'
     | '/settings'
     | '/storage'
     | '/tasks'
@@ -130,6 +141,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/player'
     | '/rank'
+    | '/reservations'
     | '/settings'
     | '/storage'
     | '/tasks'
@@ -142,6 +154,7 @@ export interface RootRouteChildren {
   NewRoute: typeof NewRoute
   PlayerRoute: typeof PlayerRoute
   RankRoute: typeof RankRoute
+  ReservationsRoute: typeof ReservationsRoute
   SettingsRoute: typeof SettingsRoute
   StorageRoute: typeof StorageRoute
   TasksRoute: typeof TasksRoute
@@ -191,6 +204,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RankRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/reservations': {
+      id: '/reservations'
+      path: '/reservations'
+      fullPath: '/reservations'
+      preLoaderRoute: typeof ReservationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -222,6 +242,7 @@ const rootRouteChildren: RootRouteChildren = {
   NewRoute: NewRoute,
   PlayerRoute: PlayerRoute,
   RankRoute: RankRoute,
+  ReservationsRoute: ReservationsRoute,
   SettingsRoute: SettingsRoute,
   StorageRoute: StorageRoute,
   TasksRoute: TasksRoute,

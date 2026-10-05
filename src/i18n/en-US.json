@@ -40,7 +40,11 @@
       "description": "Directory, naming, concurrency, proxy"
     },
     "collapse": "Collapse",
-    "expand": "Expand"
+    "expand": "Expand",
+    "reservations": {
+      "title": "Reservations",
+      "description": "My reservations: online & upcoming"
+    }
   },
   "browse": {
     "category": "Category",
@@ -274,15 +278,20 @@
     "account": "Account",
     "accountDesc": "Sign in with SMS code to unlock account features such as reservations",
     "loginAction": "Sign in",
+    "loginTitle": "Sign in to Hongguo",
+    "loginPrompt": "Sign in to reserve dramas and sync history",
+    "loginMfaBackground": "Verification runs in the background; you can close this window. Sign-in completes automatically after you reply",
+    "loginMfaFailed": "Verification failed, please sign in again",
+    "loginBusy": "Signing in…",
     "loginSendCode": "Send code",
+    "codeSent": "Code sent, check your SMS (valid for {s}s)",
+    "loginSending": "Sending…",
     "loginResend": "Resend in {s}s",
     "loginMobilePlaceholder": "Phone number",
     "loginCodePlaceholder": "SMS code",
     "loginSuccess": "Signed in: {name}",
     "loginMfaTips": "SMS secondary verification required",
     "loginMfaWaiting": "Waiting for SMS reply verification…",
-    "loginRefresh": "Refresh",
-    "loginSessionOk": "Session valid: {name}",
     "logout": "Sign out",
     "loggedOut": "Signed out",
     "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control"
@@ -335,18 +344,14 @@
     "end": "No more items"
   },
   "rank": {
-    "kind": {
-      "recommend": "Recommended",
-      "hotPlay": "Most Played",
-      "prestige": "Prestige",
-      "subscribe": "Most Awaited",
-      "newDrama": "Newcomers",
-      "hotSearch": "Trending",
-      "mustWatch": "Must Watch",
-      "followed": "Most Collected"
+    "subLists": "Sub lists",
+    "filter": {
+      "title": "Filters",
+      "reset": "Clear filter",
+      "all": "Overall"
     },
     "loadFailed": "Failed to load ranking",
-    "empty": "Nothing on this list yet"
+    "empty": "Nothing in this list yet"
   },
   "newDrama": {
     "tabs": {
@@ -361,6 +366,35 @@
     "loadFailed": "Failed to load new dramas",
     "empty": "No releases on this day",
     "online": "Online",
-    "upcoming": "Upcoming"
+    "upcoming": "Upcoming",
+    "today": "Today",
+    "weekday": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    }
+  },
+  "reservation": {
+    "tab": {
+      "online": "Online",
+      "offline": "Upcoming"
+    },
+    "loadFailed": "Failed to load reservations",
+    "empty": "No reservations yet",
+    "emptyHint": "Tap Reserve on the release calendar and they will show up here",
+    "loginRequired": "Sign in to see your reservations",
+    "action": "Reserve",
+    "reserved": "Reserved",
+    "done": "Reserved",
+    "cancelled": "Reservation cancelled",
+    "cancel": "Cancel",
+    "watch": "Watch",
+    "onlineBadge": "Online {date}",
+    "upcomingBadge": "Online {date}",
+    "publishAt": "Online {time}"
   }
 }

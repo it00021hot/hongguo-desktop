@@ -15,6 +15,7 @@ export const EVENTS = {
   mergeCompleted: 'merge-completed',
   mergeFailed: 'merge-failed',
   onlinePlayProgress: 'online-play-progress',
+  loginMfaState: 'login-mfa-state',
   compatPlayProgress: 'compat-play-progress',
 } as const;
 

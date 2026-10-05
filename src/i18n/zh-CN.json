@@ -40,7 +40,11 @@
       "description": "目录、命名、并发与代理"
     },
     "collapse": "收起",
-    "expand": "展开"
+    "expand": "展开",
+    "reservations": {
+      "title": "预约",
+      "description": "我的预约：已上线与待上线"
+    }
   },
   "browse": {
     "category": "分类",
@@ -274,15 +278,20 @@
     "account": "账户",
     "accountDesc": "短信验证码登录；登录后可使用预约等账号功能",
     "loginAction": "登录",
+    "loginTitle": "登录红果账号",
+    "loginPrompt": "登录后可预约新剧、同步观看记录",
+    "loginMfaBackground": "验证在后台进行，关闭此窗口不影响；回复短信后将自动登录",
+    "loginMfaFailed": "验证失败，请重新登录",
+    "loginBusy": "登录中…",
     "loginSendCode": "发送验证码",
+    "codeSent": "验证码已发送，请查收短信（{s}s 内有效）",
+    "loginSending": "发送中…",
     "loginResend": "{s}s 后重发",
     "loginMobilePlaceholder": "手机号",
     "loginCodePlaceholder": "验证码",
     "loginSuccess": "登录成功：{name}",
     "loginMfaTips": "需要短信上行二次验证",
     "loginMfaWaiting": "等待短信回复验证中…请按提示回复短信",
-    "loginRefresh": "刷新",
-    "loginSessionOk": "会话有效：{name}",
     "logout": "退出登录",
     "loggedOut": "已退出登录",
     "loginRiskNote": "账号与设备永久绑定，换设备登录可能触发风控"
@@ -335,15 +344,11 @@
     "end": "没有更多了"
   },
   "rank": {
-    "kind": {
-      "recommend": "推荐榜",
-      "hotPlay": "热播榜",
-      "prestige": "臻果榜",
-      "subscribe": "预约榜",
-      "newDrama": "新剧榜",
-      "hotSearch": "热搜榜",
-      "mustWatch": "必看榜",
-      "followed": "收藏榜"
+    "subLists": "子榜列表",
+    "filter": {
+      "title": "筛选",
+      "reset": "清除筛选",
+      "all": "总榜"
     },
     "loadFailed": "榜单加载失败",
     "empty": "这个榜单暂时没有内容"
@@ -361,6 +366,35 @@
     "loadFailed": "新剧加载失败",
     "empty": "这一天没有上新",
     "online": "已上线",
-    "upcoming": "待上线"
+    "upcoming": "待上线",
+    "today": "今天",
+    "weekday": {
+      "0": "周日",
+      "1": "周一",
+      "2": "周二",
+      "3": "周三",
+      "4": "周四",
+      "5": "周五",
+      "6": "周六"
+    }
+  },
+  "reservation": {
+    "tab": {
+      "online": "已上线",
+      "offline": "待上线"
+    },
+    "loadFailed": "预约列表加载失败",
+    "empty": "还没有预约的短剧",
+    "emptyHint": "在上新日历点「预约」，上线时这里就能看到",
+    "loginRequired": "登录后才能查看预约列表",
+    "action": "预约",
+    "reserved": "已预约",
+    "done": "预约成功",
+    "cancelled": "已取消预约",
+    "cancel": "取消预约",
+    "watch": "看剧",
+    "onlineBadge": "{date} 上线",
+    "upcomingBadge": "{date} 上线",
+    "publishAt": "{time} 上线"
   }
 }

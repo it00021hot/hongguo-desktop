@@ -16,8 +16,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::OnceLock;
 
-use super::client::{api_call_full, ApiEnv};
+use super::client::{api_call_reading, ApiEnv};
 use super::discover::{check_code, int_field, num_field, str_field};
 use crate::error::{AppError, AppResult};
 use super::danmaku::LQ_API_ORIGIN;
@@ -29,49 +30,45 @@ pub const NEW_DRAMA_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/
 /// 预约列表与上新日历共用。
 pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
-/// 排行榜页的 8 个榜单（顺序即 UI 竖排自上而下）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RankList {
-    Recommend,
-    HotPlay,
-    Prestige,
-    Subscribe,
-    NewDrama,
-    HotSearch,
-    MustWatch,
-    Followed,
-}
-
-impl RankList {
-    /// 抓包得到的 `sub_selected_items` 标识。
-    pub fn as_sub_selected(self) -> &'static str {
-        match self {
-            RankList::Recommend => "ranklist_hot_sc",
-            RankList::HotPlay => "ranklist_hot_play_sc",
-            RankList::Prestige => "ranklist_prestige",
-            RankList::Subscribe => "ranklist_subscribe",
-            RankList::NewDrama => "ranklist_new_rank_sc",
-            RankList::HotSearch => "ranklist_hot_search_sc",
-            RankList::MustWatch => "ranklist_must_watch",
-            RankList::Followed => "ranklist_followed",
+/// reading 系会话标识（subscribe/list 抓包恒带；格式 `YYYYMMDDHHMMSS` +
+/// 20 位大写 hex，进程生命周期内一个——与真实客户端同款语义）。
+fn reading_session_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        use std::fmt::Write as _;
+        let mut tail = String::new();
+        for _ in 0..10 {
+            let _ = write!(tail, "{:02X}", rand::random::<u8>());
         }
-    }
-
-    /// 全部榜单（探测/测试遍历用；command 层按前端传的 kind 单独取）。
-    #[cfg(test)]
-    pub fn all() -> [RankList; 8] {
-        [
-            RankList::Recommend,
-            RankList::HotPlay,
-            RankList::Prestige,
-            RankList::Subscribe,
-            RankList::NewDrama,
-            RankList::HotSearch,
-            RankList::MustWatch,
-            RankList::Followed,
-        ]
-    }
+        format!(
+            "{}{}",
+            chrono::Local::now().format("%Y%m%d%H%M%S"),
+            tail
+        )
+    })
 }
+
+/// 预约 / 取消预约端点（2026-10-04 抓 hgplayer 1.1.3 实操锁定）。///
+/// `POST`，body 为 **gzip 压缩的 JSON**（带 `Content-Encoding: gzip`）：
+/// `{"item_id": <series_id>, "item_type": 1, "op_type": 1 预约 / 2 取消,
+/// "shark_param": {埋点上下文}, "wish_list_all_del": 0}`；query 只放
+/// 设备指纹，头是 reading 轻签名（无 gorgon/argus），**必须带登录
+/// cookie**。响应 `code==0` 即成功。
+pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v";
+
+/// 排行榜页的 8 个「全部」tab 子榜（probe 遍历用；生产路径的选项表由
+/// 响应 `cell_selector` schema 下发，前端直接用字符串 id）。
+#[cfg(test)]
+pub(crate) const ALL_TAB_SUBS: &[&str] = &[
+    "ranklist_hot_sc",
+    "ranklist_hot_play_sc",
+    "ranklist_prestige",
+    "ranklist_subscribe",
+    "ranklist_new_rank_sc",
+    "ranklist_hot_search_sc",
+    "ranklist_must_watch",
+    "ranklist_followed",
+];
 
 /// 榜单条目：比信息流卡片多排名与榜单文案。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -109,19 +106,69 @@ pub struct RankItem {
     pub tags: Vec<String>,
 }
 
+/// 排行榜筛选面板的一个选项（id 为空 = 「总榜」，清除筛选）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankPanelItem {
+    pub id: String,
+    pub name: String,
+}
+
+/// 筛选面板的一行（row_name：综合/时代背景/主题情节/角色设定…）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankPanelRow {
+    pub name: String,
+    pub items: Vec<RankPanelItem>,
+}
+
+/// 内容 tab 下的一个子榜（自带筛选面板 schema）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankSubList {
+    pub id: String,
+    pub name: String,
+    pub panel: Vec<RankPanelRow>,
+}
+
+/// 顶部内容 tab（全部/真人剧/漫剧/AI剧/演员/系列剧，2026-10-05 抓包 +
+/// `cell_selector` schema 锁定）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankTab {
+    pub id: String,
+    pub name: String,
+    pub subs: Vec<RankSubList>,
+}
+
 /// 一页榜单。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RankPage {
     pub items: Vec<RankItem>,
+    /// 内容 tab / 子榜 / 筛选面板的完整选项表（响应 cell_selector 原样
+    /// 展开，每次请求都随行下发；前端首次拿到后即可渲染整套筛选 UI）
+    #[serde(default)]
+    pub tabs: Vec<RankTab>,
 }
 
-/// 拉一个榜单（全量一次返回，无翻页；抓包 offset/limit 固定 0）。
-pub async fn fetch_rank(list: RankList, env: &ApiEnv) -> AppResult<RankPage> {
-    let q: Vec<(String, String)> = [
+/// 拉任意 tab × 子榜 × 筛选组合的榜单。
+///
+/// - `selected`：内容 tab 的 `selected_items`（all/human/comic_series_rank/
+///   ai_playlet/series_album…）
+/// - `sub`：子榜的 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
+/// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
+///   cate_308 / style_1685…；单值——hgplayer 抓包实测每次点击整组替换）
+pub async fn fetch_rank_ex(
+    selected: &str,
+    sub: &str,
+    panel: Option<&str>,
+    env: &ApiEnv,
+) -> AppResult<RankPage> {
+    let mut q: Vec<(String, String)> = [
         ("cell_id", "7470092475068071998"),
         ("tab_type", "26"),
-        ("selected_items", "all"),
+        ("selected_items", selected),
         ("category_id", "0"),
         ("cell_sub_id", "0"),
         ("client_req_type", "2"),
@@ -129,18 +176,108 @@ pub async fn fetch_rank(list: RankList, env: &ApiEnv) -> AppResult<RankPage> {
         ("gender", "2"),
         ("limit", "0"),
         ("offset", "0"),
-        ("sub_selected_items", list.as_sub_selected()),
+        ("sub_selected_items", sub),
+        // 面板 schema（unlimited_selector）随请求下发，抓包恒带 2
+        ("unlimited_selector_change_type", "2"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    let bytes = api_call_full(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
+    if let Some(p) = panel.filter(|p| !p.is_empty()) {
+        q.push(("panel_selected_items".to_string(), p.to_string()));
+    }
+    let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析榜单失败: {e}")))?;
     check_code(&value)?;
     Ok(RankPage {
         items: parse_rank_items(value.get("data"))?,
+        tabs: parse_cell_selector(value.get("data")),
     })
+}
+
+/// 展开响应 `data.cell_view.cell_selector` 的 tab → 子榜 → 面板选项表。
+///
+/// 抓包结构（2026-10-05 captures/rank-selector-schema.json）：
+/// `outer_row.items[]`（内容 tab，selector_item_id）→ `sub_cell_selector.
+/// outer_row.items[]`（子榜）→ `panel_selector.inner_rows[]`（行 row_name +
+/// items[] 选项，selection_type=1 单选）。
+fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
+    let Some(tabs) = data
+        .and_then(|d| d.get("cell_view"))
+        .and_then(|cv| cv.get("cell_selector"))
+        .and_then(|cs| cs.get("outer_row"))
+        .and_then(|r| r.get("items"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    tabs.iter()
+        .filter_map(|tab| {
+            let id = str_field(tab, "selector_item_id");
+            if id.is_empty() {
+                return None;
+            }
+            let subs = tab
+                .get("sub_cell_selector")
+                .and_then(|s| s.get("outer_row"))
+                .and_then(|r| r.get("items"))
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|sub| {
+                            let sid = str_field(sub, "selector_item_id");
+                            // 登录态一级形态下 sub 层是筛选选项，「总榜」的
+                            // id 为空但必须保留（前端靠它渲染回退选项）
+                            if sid.is_empty() && str_field(sub, "show_name") != "总榜" {
+                                return None;
+                            }
+                            let panel = sub
+                                .get("panel_selector")
+                                .and_then(|p| p.get("inner_rows"))
+                                .and_then(Value::as_array)
+                                .map(|rows| {
+                                    rows.iter()
+                                        .filter_map(|row| {
+                                            let items: Vec<RankPanelItem> = row
+                                                .get("items")
+                                                .and_then(Value::as_array)
+                                                .map(|arr| {
+                                                    arr.iter()
+                                                        .map(|it| RankPanelItem {
+                                                            id: str_field(it, "selector_item_id"),
+                                                            name: str_field(it, "show_name"),
+                                                        })
+                                                        .collect()
+                                                })
+                                                .unwrap_or_default();
+                                            if items.is_empty() {
+                                                return None;
+                                            }
+                                            Some(RankPanelRow {
+                                                name: str_field(row, "row_name"),
+                                                items,
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            Some(RankSubList {
+                                id: sid,
+                                name: str_field(sub, "show_name"),
+                                panel,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(RankTab {
+                name: str_field(tab, "show_name"),
+                id,
+                subs,
+            })
+        })
+        .collect()
 }
 
 /// 新剧推荐页（`cell_gender`：2=全部，其余见抓包；分页 offset/limit）。
@@ -157,17 +294,21 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    let bytes = api_call_full(LQ_API_ORIGIN, NEW_DRAMA_CELL_PATH, None, &q, env).await?;
+    let bytes = api_call_reading(LQ_API_ORIGIN, NEW_DRAMA_CELL_PATH, None, &q, env).await?;
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
     check_code(&value)?;
     Ok(RankPage {
         items: parse_rank_items(value.get("data"))?,
+        tabs: parse_cell_selector(value.get("data")),
     })
 }
 
 /// 预约列表（is_online=true 已上线 / false 待上线）。
-pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<RankPage> {
+///
+/// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
+/// 匿名空表；与日历共用 [`parse_calendar_item`] 的双形态解析。
+pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<CalendarPage> {
     let q: Vec<(String, String)> = [
         ("is_online", if is_online { "true" } else { "false" }),
         ("limit", "20"),
@@ -177,18 +318,44 @@ pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<Rank
         ("swipe_type", "0"),
         ("tab_type", "13"),
         ("need_calendar_schema", "false"),
+        ("session_id", reading_session_id()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
+    let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
     check_code(&value)?;
-    Ok(RankPage {
-        items: parse_rank_items(value.get("data"))?,
-    })
+    parse_calendar(value.get("data"))
 }
+
+/// 预约（reserve=true）或取消预约一部短剧。需要登录环境（env 带
+/// sessionid cookie），匿名调用会被服务端静默拒绝。
+pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> AppResult<()> {
+    let item_id: i64 = series_id
+        .parse()
+        .map_err(|_| AppError::Media(format!("剧集 id 不是数字: {series_id}")))?;
+    let payload = serde_json::json!({
+        "item_id": item_id,
+        "item_type": 1,
+        "op_type": if reserve { 1 } else { 2 },
+        // 埋点上下文（1.1.3 抓包原样字节对齐）
+        "shark_param": {
+            "enter_from": "BulletActivity",
+            "page_list": "MainFragmentActivity,BulletActivity",
+            "previous_page": "MainFragmentActivity",
+        },
+        "wish_list_all_del": 0,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造预约请求失败: {e}")))?;
+    let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_OP_PATH, Some(raw), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析预约响应失败: {e}")))?;
+    check_code(&value)
+}
+
 
 /// 上新日历的一条剧集。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -221,6 +388,9 @@ pub struct CalendarItem {
     /// 是否已上线
     #[serde(default)]
     pub is_online: bool,
+    /// 当前账号是否已预约（预约列表扁平形态下发；日历形态恒 false）
+    #[serde(default)]
+    pub has_subscribed: bool,
 }
 
 /// 上新日历页。
@@ -239,6 +409,11 @@ pub struct CalendarPage {
     /// 下一页 offset（0 = 没有更多）
     #[serde(default)]
     pub next_offset: i64,
+    /// 预约列表（tab_type=13）的两个 tab 计数；日历形态恒 0
+    #[serde(default)]
+    pub online_total: i64,
+    #[serde(default)]
+    pub offline_total: i64,
 }
 
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
@@ -257,6 +432,7 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
         ("need_calendar_schema", "true"),
         ("tab_style", "2"),
         ("tab_type", "5"),
+        ("session_id", reading_session_id()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -299,6 +475,7 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
         .filter(|i| beijing_date(i.publish_time) == target)
         .cloned()
         .collect();
+    let default_date = first.default_date.clone();
     let mut page = first;
     for _ in 0..16 {
         if !page.has_more || page.next_offset <= 0 {
@@ -323,16 +500,18 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
     }
     Ok(CalendarPage {
         dates: page.dates,
-        default_date: page.default_date,
+        default_date,
         items: picked,
         has_more: false,
         next_offset: 0,
+        online_total: 0,
+        offline_total: 0,
     })
 }
 
 /// 拉一页日历（subscribe/list 日历形态）。
 async fn fetch_calendar_page(q: &[(String, String)], env: &ApiEnv) -> AppResult<CalendarPage> {
-    let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, q, env).await?;
+    let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析上新日历失败: {e}")))?;
     check_code(&value)?;
@@ -402,6 +581,14 @@ fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
             .get("next_offset")
             .and_then(Value::as_i64)
             .unwrap_or(0),
+        online_total: data
+            .get("online_total_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        offline_total: data
+            .get("offline_total_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
     })
 }
 
@@ -434,6 +621,10 @@ fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
                 .get("is_online")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            has_subscribed: raw
+                .get("has_subscribed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         });
     }
     let series_id = raw
@@ -454,6 +645,10 @@ fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
         publish_time: int_field(raw, "schedule_publish_time"),
         is_online: raw
             .get("is_online")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        has_subscribed: raw
+            .get("has_subscribed")
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
@@ -586,6 +781,126 @@ mod tests {
         assert_eq!(it.sub_title, "玄幻·全200集");
     }
 
+    /// 抓包样本（2026-10-05 cell_selector）：tab → 子榜 → 面板行三层展开。
+    #[test]
+    fn parses_cell_selector_schema() {
+        let data: Value = serde_json::json!({
+            "cell_view": {
+                "cell_selector": {
+                    "outer_row": {
+                        "items": [
+                            {
+                                "show_name": "全部",
+                                "selector_item_id": "all",
+                                "sub_cell_selector": { "outer_row": { "items": [
+                                    {
+                                        "show_name": "推荐榜",
+                                        "selector_item_id": "ranklist_hot_sc",
+                                        "panel_selector": { "inner_rows": [
+                                            {
+                                                "row_name": "综合",
+                                                "selection_type": 1,
+                                                "items": [
+                                                    { "show_name": "总榜", "selector_item_id": "" },
+                                                    { "show_name": "女频", "selector_item_id": "gender_female", "is_selected": false },
+                                                    { "show_name": "男频", "selector_item_id": "gender_male" }
+                                                ]
+                                            },
+                                            {
+                                                "row_name": "时代背景",
+                                                "items": [
+                                                    { "show_name": "古装", "selector_item_id": "cate_308" },
+                                                    { "show_name": "校园", "selector_item_id": "cate_4" }
+                                                ]
+                                            }
+                                        ] }
+                                    },
+                                    { "show_name": "空面板子榜", "selector_item_id": "ranklist_subscribe" }
+                                ] }}
+                            },
+                            {
+                                "show_name": "漫剧",
+                                "selector_item_id": "comic_series_rank",
+                                "sub_cell_selector": { "outer_row": { "items": [
+                                    {
+                                        "show_name": "推荐榜",
+                                        "selector_item_id": "comic_series_hot_rank",
+                                        "panel_selector": { "inner_rows": [
+                                            { "row_name": "画风", "items": [
+                                                { "show_name": "3d", "selector_item_id": "style_1685" }
+                                            ] }
+                                        ] }
+                                    }
+                                ] }}
+                            },
+                            { "show_name": "无 id 项", "selector_item_id": "" }
+                        ]
+                    }
+                }
+            }
+        });
+        let tabs = parse_cell_selector(Some(&data));
+        assert_eq!(tabs.len(), 2, "空 id 的 tab 跳过");
+        assert_eq!(tabs[0].id, "all");
+        assert_eq!(tabs[0].name, "全部");
+        assert_eq!(tabs[0].subs.len(), 2);
+        let sub = &tabs[0].subs[0];
+        assert_eq!(sub.id, "ranklist_hot_sc");
+        assert_eq!(sub.panel.len(), 2);
+        assert_eq!(sub.panel[0].name, "综合");
+        // 「总榜」id 为空 = 清除筛选，也要在场（前端靠它渲染回退选项）
+        assert_eq!(sub.panel[0].items[0].name, "总榜");
+        assert_eq!(sub.panel[0].items[0].id, "");
+        assert_eq!(sub.panel[0].items[1].id, "gender_female");
+        assert_eq!(sub.panel[1].items[0].id, "cate_308");
+        assert!(tabs[0].subs[1].panel.is_empty(), "无面板的子榜收空表");
+        assert_eq!(tabs[1].subs[0].panel[0].items[0].id, "style_1685");
+        // 无 cell_selector 的响应（旧缓存/异常）不报错
+        assert!(parse_cell_selector(Some(&serde_json::json!({}))).is_empty());
+    }
+
+    /// 登录态一级形态（2026-10-05 app 实连发现）：outer_row 直接是榜单，
+    /// sub_cell_selector 是**筛选选项**（女频/男频/题材…，无 panel 层），
+    /// 「总榜」选项 id 为空但要保留。
+    #[test]
+    fn parses_flat_login_selector_schema() {
+        let data: Value = serde_json::json!({
+            "cell_view": {
+                "cell_selector": {
+                    "outer_row": {
+                        "items": [
+                            {
+                                "show_name": "推荐榜",
+                                "selector_item_id": "ranklist_hot_sc",
+                                "sub_cell_selector": { "outer_row": { "items": [
+                                    { "show_name": "总榜", "selector_item_id": "" },
+                                    { "show_name": "女频", "selector_item_id": "gender_female" },
+                                    { "show_name": "男频", "selector_item_id": "gender_male" },
+                                    { "show_name": "古装", "selector_item_id": "cate_308" }
+                                ] }}
+                            },
+                            {
+                                "show_name": "热搜榜",
+                                "selector_item_id": "ranklist_hot_search_sc",
+                                "sub_cell_selector": null
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+        let tabs = parse_cell_selector(Some(&data));
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].id, "ranklist_hot_sc");
+        assert_eq!(tabs[0].name, "推荐榜");
+        assert_eq!(tabs[0].subs.len(), 4, "空 id 的「总榜」要保留");
+        assert_eq!(tabs[0].subs[0].id, "");
+        assert_eq!(tabs[0].subs[0].name, "总榜");
+        assert_eq!(tabs[0].subs[1].id, "gender_female");
+        assert!(tabs[0].subs.iter().all(|s| s.panel.is_empty()), "一级形态无 panel 层");
+        assert!(tabs[1].subs.is_empty(), "无 sub_cell_selector 收空表");
+    }
+
     #[test]
     fn rank_items_sort_by_rank_missing_last() {
         let data: Value = serde_json::json!({
@@ -600,14 +915,6 @@ mod tests {
         let items = parse_rank_items(Some(&data)).unwrap();
         let ids: Vec<&str> = items.iter().map(|i| i.series_id.as_str()).collect();
         assert_eq!(ids, vec!["a", "b", "c"], "按名次排，缺名次殿后");
-    }
-
-    #[test]
-    fn rank_list_covers_all_eight() {
-        let subs: Vec<&str> = RankList::all().iter().map(|l| l.as_sub_selected()).collect();
-        assert_eq!(subs.len(), 8);
-        assert!(subs.contains(&"ranklist_hot_sc"));
-        assert!(subs.contains(&"ranklist_must_watch"));
     }
 
     #[test]
@@ -710,6 +1017,52 @@ mod tests {
         assert!(page.has_more);
         assert_eq!(page.next_offset, 24);
     }
+
+    /// 预约列表（tab_type=13）登录态响应：扁平条目 + has_subscribed。
+    #[test]
+    fn parses_reservation_list_with_subscribed_flag() {
+        let data: Value = serde_json::json!({
+            "subscribe_items": [
+                {
+                    "item_id": "7692797468404091929",
+                    "name": "道士下山：我在人间斩妖八百年第三季",
+                    "cover": "https://x.heic",
+                    "category": "奇幻",
+                    "is_online": false,
+                    "has_subscribed": true,
+                    "item_desc": "斩妖除魔……",
+                    "sub_title_list": [{ "content": "17.2万人预约" }],
+                    "schedule_publish_time": 1791334800
+                }
+            ],
+            "online_total_count": 0,
+            "offline_total_count": 1
+        });
+        let page = parse_calendar(Some(&data)).unwrap();
+        assert_eq!(page.items.len(), 1);
+        let it = &page.items[0];
+        assert_eq!(it.series_id, "7692797468404091929");
+        assert!(it.has_subscribed, "登录态预约列表应带 has_subscribed");
+        assert!(!it.is_online);
+        assert_eq!(it.publish_time, 1791334800);
+        assert!(page.dates.is_empty(), "预约列表无日历 schema");
+        assert_eq!(page.online_total, 0);
+        assert_eq!(page.offline_total, 1, "待上线计数供 tab 徽标用");
+    }
+
+    /// 预约操作的 body：gzip 可解回，JSON 字段与抓包形态一致。
+    #[test]
+    fn reserve_payload_roundtrips_through_gzip() {
+        let raw = br#"{"item_id":7692797468404091929,"item_type":1,"op_type":1}"#;
+        let gz = crate::domain::api::client::gzip_bytes(raw).expect("gzip");
+        assert_ne!(gz, raw.to_vec(), "应真的压缩了");
+        let mut back = flate2::read::GzDecoder::new(gz.as_slice());
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut back, &mut out).expect("解压");
+        assert_eq!(out, raw);
+        // 压缩流带 gzip 魔数 1f 8b（服务端按 Content-Encoding: gzip 解）
+        assert_eq!(&gz[..2], &[0x1f, 0x8b]);
+    }
 }
 
 #[cfg(test)]
@@ -770,26 +1123,187 @@ pub(crate) mod probe {
         }
     }
 
-    /// 排行榜直连：8 个榜单逐个打，code==0 且条目数 >0 即转正。
+    /// 排行榜筛选面板 schema 直连：dump 完整响应到 captures/，供提取
+    /// `unlimited_selector`（panel_selected_items 的选项 id 表，抓包响应被
+    /// addon 截断拿不全）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_selector_schema() {
+        let env = hg_env(&anon_env());
+        let q: Vec<(String, String)> = [
+            ("cell_id", "7470092475068071998"),
+            ("tab_type", "26"),
+            ("selected_items", "all"),
+            ("category_id", "0"),
+            ("cell_sub_id", "0"),
+            ("client_req_type", "2"),
+            ("client_template", "2"),
+            ("gender", "2"),
+            ("limit", "0"),
+            ("offset", "0"),
+            ("sub_selected_items", "ranklist_hot_sc"),
+            ("unlimited_selector_change_type", "2"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, &env)
+            .await
+            .expect("排行榜请求");
+        let out = std::env::current_dir()
+            .ok()
+            .map(|d| d.join("../captures/rank-selector-schema.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("captures/rank-selector-schema.json"));
+        std::fs::write(&out, &bytes).expect("写 captures/rank-selector-schema.json");
+        println!("[rank-selector] {} bytes -> {}", bytes.len(), out.display());
+    }
+
+    /// 排行榜内容 tab「演员」形态验证（ranklist_celebrity，抓包没点到，
+    /// 响应 cell_data 若不是剧集形态则前端跳过该 tab）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_celebrity() {
+        let env = hg_env(&anon_env());
+        let q: Vec<(String, String)> = [
+            ("cell_id", "7470092475068071998"),
+            ("tab_type", "26"),
+            ("selected_items", "ranklist_celebrity"),
+            ("category_id", "0"),
+            ("cell_sub_id", "0"),
+            ("client_req_type", "2"),
+            ("client_template", "2"),
+            ("gender", "2"),
+            ("limit", "0"),
+            ("offset", "0"),
+            ("unlimited_selector_change_type", "2"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, &env)
+            .await
+            .expect("演员榜请求");
+        let v: Value = serde_json::from_slice(&bytes).expect("JSON");
+        println!("[celebrity] code = {:?}", v.get("code"));
+        let data = &v["data"];
+        println!(
+            "[celebrity] data keys = {:?}",
+            data.as_object().map(|m| m.keys().collect::<Vec<_>>())
+        );
+        let mut raws = Vec::new();
+        collect_video_data(data, &mut raws);
+        println!("[celebrity] video_data 条数 = {}", raws.len());
+        if let Some(first) = raws.first() {
+            println!(
+                "[celebrity] 首条 keys = {:?}",
+                first.as_object().map(|m| m.keys().take(20).collect::<Vec<_>>())
+            );
+            println!(
+                "[celebrity] title = {:?}, series_id = {:?}, sub_title = {:?}",
+                first.get("title").and_then(Value::as_str),
+                first.get("series_id").and_then(Value::as_str),
+                first.get("sub_title").and_then(Value::as_str),
+            );
+        }
+    }
+
+    /// 筛选面板参数真连：同一子榜，总榜 vs 女频 vs 题材，条目应变化且带 tabs schema。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_panel_filter() {
+        let env = hg_env(&anon_env());
+        let base = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+            .await
+            .expect("总榜");
+        println!(
+            "[panel:总榜] {} 条 #1={:?} tabs={}",
+            base.items.len(),
+            base.items.first().map(|i| i.title.as_str()),
+            base.tabs.len()
+        );
+        assert!(!base.items.is_empty());
+        assert_eq!(base.tabs[0].id, "all", "tabs schema 应随行下发");
+
+        for p in ["gender_female", "gender_male", "cate_308"] {
+            let page = fetch_rank_ex("all", "ranklist_hot_sc", Some(p), &env)
+                .await
+                .unwrap_or_else(|e| panic!("panel={p}: {e}"));
+            println!(
+                "[panel:{p}] {} 条 #1={:?}",
+                page.items.len(),
+                page.items.first().map(|i| i.title.as_str())
+            );
+            assert!(!page.items.is_empty(), "panel={p} 不应为空");
+        }
+
+        // 内容 tab 切换（真人剧 / 漫剧 / 系列剧，抓包样本 id）
+        for (sel, sub) in [
+            ("human", "human_hot_sc"),
+            ("comic_series_rank", "comic_series_hot_rank"),
+            ("series_album", "series_album_hot_sc"),
+        ] {
+            let page = fetch_rank_ex(sel, sub, None, &env)
+                .await
+                .unwrap_or_else(|e| panic!("{sel}/{sub}: {e}"));
+            println!(
+                "[tab:{sel}] {} 条 #1={:?}",
+                page.items.len(),
+                page.items.first().map(|i| i.title.as_str())
+            );
+            assert!(!page.items.is_empty(), "{sel}/{sub} 不应为空");
+        }
+    }
+
+    /// app 生产同款设备（video_device + 匿名 cookie）下发的 selector schema：
+    /// 对照 hgplayer 档案——排查两端 tabs 是否一致（灰度可能按设备分发）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_selector_app_device() {
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+        };
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+            .await
+            .expect("app 同款设备榜单");
+        println!(
+            "[app-device:tabs] {:?}",
+            page.tabs
+                .iter()
+                .map(|t| (t.id.as_str(), t.name.as_str(), t.subs.len()))
+                .collect::<Vec<_>>()
+        );
+        println!(
+            "[app-device:subs] {:?}",
+            page.tabs[0]
+                .subs
+                .iter()
+                .map(|s| (s.id.as_str(), s.name.as_str(), s.panel.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// 排行榜直连：8 个「全部」tab 子榜逐个打，code==0 且条目数 >0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_all_lists() {
         let env = hg_env(&anon_env());
-        for list in RankList::all() {
-            match fetch_rank(list, &env).await {
+        for sub in ALL_TAB_SUBS {
+            match fetch_rank_ex("all", sub, None, &env).await {
                 Ok(page) => {
                     let top = page.items.first();
                     println!(
-                        "[rank/{:?}] {} 条, #1={:?} rank={:?} rec={:?}",
-                        list,
+                        "[rank/{sub}] {} 条, #1={:?} rank={:?} rec={:?}",
                         page.items.len(),
                         top.map(|i| i.title.as_str()).unwrap_or(""),
                         top.map(|i| i.rank).unwrap_or(0),
                         top.map(|i| i.rec_text.as_str()).unwrap_or(""),
                     );
-                    assert!(!page.items.is_empty(), "{list:?} 榜单不应为空");
+                    assert!(!page.items.is_empty(), "{sub} 榜单不应为空");
                 }
-                Err(e) => panic!("[rank/{list:?}] ERR {e}"),
+                Err(e) => panic!("[rank/{sub}] ERR {e}"),
             }
         }
     }
@@ -808,13 +1322,86 @@ pub(crate) mod probe {
         assert!(!page.items.is_empty());
     }
 
-    /// 预约列表直连（匿名应返回空表 code==0）。
+    /// 预约列表直连。匿名返回空表；设 HG_RESERVE_COOKIES（hgplayer
+    /// 登录 cookie）则验证两个 tab 的解析（已上线=嵌套、待上线=扁平，
+    /// 2026-10-04 实测同接口按 tab 分发两种 schema）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_reservations() {
-        let env = anon_env();
-        let page = fetch_reservations(true, &env).await.expect("预约列表");
-        println!("[reservations] {} 条（匿名空表属正常）", page.items.len());
+        let env = match std::env::var("HG_RESERVE_COOKIES") {
+            Ok(c) if !c.is_empty() => {
+                let device = crate::signer::video_device();
+                ApiEnv {
+                    proxy: crate::domain::model::ProxyConfig::default(),
+                    device,
+                    cookie: Some(c),
+                }
+            }
+            _ => anon_env(),
+        };
+        for tab in [true, false] {
+            let page = fetch_reservations(tab, &env)
+                .await
+                .unwrap_or_else(|e| panic!("预约列表(is_online={tab}): {e}"));
+            println!(
+                "[reservations:online={tab}] {} 条: {:?}",
+                page.items.len(),
+                page.items.iter().map(|i| i.title.as_str()).take(3).collect::<Vec<_>>()
+            );
+            if matches!(std::env::var("HG_RESERVE_COOKIES"), Ok(ref c) if !c.is_empty()) {
+                assert!(!page.items.is_empty(), "登录态 {tab} tab 不应为空");
+                assert!(
+                    page.items.iter().all(|i| i.has_subscribed),
+                    "登录态列表应带 has_subscribed"
+                );
+            }
+        }
+    }
+
+    /// 预约 / 取消预约往返直连（需要登录态）。
+    ///
+    /// HG_RESERVE_COOKIES 提供 hgplayer 的登录 cookie（从其
+    /// `hgplayer.db` 的 account 表或抓包 cookie 头提取）；HG_RESERVE_SERIES
+    /// 指定目标剧（缺省用 2026-10-04 抓包会话里预约的那部）。
+    /// 流程：取消 → 列表应为空 → 重新预约 → 列表应含该剧。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_reserve_roundtrip() {
+        let Ok(cookies) = std::env::var("HG_RESERVE_COOKIES") else {
+            panic!("HG_RESERVE_COOKIES 必填（hgplayer.db account 表的 cookies）");
+        };
+        let series = std::env::var("HG_RESERVE_SERIES")
+            .unwrap_or_else(|_| "7692797468404091929".into());
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            device,
+            cookie: Some(cookies),
+        };
+
+        reserve_series(&series, false, &env).await.expect("取消预约");
+        let page = fetch_reservations(false, &env).await.expect("取消后列表");
+        let gone = page.items.iter().all(|i| i.series_id != series);
+        println!(
+            "[reserve] 取消后待上线 {} 条, 目标剧已移除: {gone}",
+            page.items.len()
+        );
+        assert!(
+            gone,
+            "取消后不应仍在列表: {:?}",
+            page.items.iter().map(|i| &i.series_id).collect::<Vec<_>>()
+        );
+
+        reserve_series(&series, true, &env).await.expect("重新预约");
+        let page2 = fetch_reservations(false, &env).await.expect("预约后列表");
+        let it = page2.items.iter().find(|i| i.series_id == series);
+        println!(
+            "[reserve] 预约后待上线 {} 条, 目标剧: {:?}",
+            page2.items.len(),
+            it.map(|i| (&i.title, i.has_subscribed, i.is_online))
+        );
+        assert!(it.is_some(), "预约后应回到列表");
+        assert!(it.unwrap().has_subscribed, "列表应标记 has_subscribed");
     }
 
     /// 上新日历直连：应返回日期列表 + 当日条目。
@@ -869,7 +1456,7 @@ pub(crate) mod probe {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-        let bytes = api_call_full(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, &env)
+        let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, &env)
             .await
             .expect("target_date 请求");
         let v: Value = serde_json::from_slice(&bytes).expect("JSON");

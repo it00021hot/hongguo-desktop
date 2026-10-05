@@ -49,7 +49,6 @@ import {
   type BrowseResult,
   type StorageUsage,
   type CalendarPage,
-  type RankKind,
   type RankPage,
   type SearchPage,
 } from '../schema';
@@ -103,8 +102,9 @@ export const login = {
       },
       loginResultSchema,
     ),
-  mfaVerify: (retryTag: string, smsCodeKey: string, mobile: string) =>
-    call<LoginResult>('login_mfa_verify', { retryTag, smsCodeKey, mobile }, loginResultSchema),
+  mfaVerify: () => call<LoginResult>('login_mfa_verify', undefined, loginResultSchema),
+  /** 取消进行中的 MFA 验证（后台轮询随之停止） */
+  mfaCancel: () => call<void>('login_mfa_cancel', undefined),
   status: () => call<AccountState | null>('login_status', undefined, accountStateSchema.nullable()),
   userInfo: () => call<PassportUser>('login_user_info', undefined, passportUserSchema),
   logout: () => call<void>('login_logout'),
@@ -153,8 +153,16 @@ export const search = {
 // ---------------------------------------------------------------- 排行榜 / 新剧 / 搜索（官方 App API）
 
 export const rank = {
-  /** 拉一个榜单（kind 用 snake_case 标识，后端白名单校验）。 */
-  list: (kind: RankKind) => call<RankPage>('rank_list', { kind }, rankPageSchema),
+  /**
+   * 拉一个榜单（任意 内容tab × 子榜 × 筛选 组合）。
+   * selected/sub 用响应 tabs schema 下发的 id；panel 为空串 = 总榜（无筛选）。
+   */
+  list: (selected: string, sub: string, panel: string = '') =>
+    call<RankPage>(
+      'rank_list',
+      { selected, sub, panel: panel === '' ? undefined : panel },
+      rankPageSchema,
+    ),
   /** 新剧推荐（gender: 2=全部；offset 步长 18）。 */
   newDrama: (gender: number, offset?: number) =>
     call<RankPage>('new_drama_list', { gender, offset: offset ?? 0 }, rankPageSchema),
@@ -165,9 +173,12 @@ export const rank = {
       date != null ? { date } : undefined,
       calendarPageSchema,
     ),
-  /** 我的预约（匿名通常空表）。 */
+  /** 我的预约（匿名通常空表；登录后条目带 hasSubscribed）。 */
   reservations: (isOnline = true) =>
-    call<RankPage>('reservation_list', { isOnline }, rankPageSchema),
+    call<CalendarPage>('reservation_list', { isOnline }, calendarPageSchema),
+  /** 预约 / 取消预约（需要登录）。 */
+  reserve: (seriesId: string, reserve = true) =>
+    call<void>('reservation_reserve', { seriesId, reserve }),
 };
 
 /** 官方 App 搜索（综合 tab，首页是精选少数，翻页才是完整列表）。 */
