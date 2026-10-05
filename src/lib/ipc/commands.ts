@@ -7,6 +7,7 @@ import {
   categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
+  interactionStateSchema,
   loginResultSchema,
   sendCodeOutcomeSchema,
   mergeCandidateSchema,
@@ -30,6 +31,7 @@ import {
   type Danmaku,
   type DecodeCapability,
   type DownloadTask,
+  type InteractionState,
   type FeedPage,
   type LoginResult,
   type SendCodeOutcome,
@@ -136,6 +138,29 @@ export const discover = {
 export const danmaku = {
   list: (groupId: string, bookId: string) =>
     call<Danmaku[]>('danmaku_list', { groupId: groupId, bookId }, danmakuSchema.array()),
+};
+
+// ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）
+
+/** 互动操作（2026-10-05 抓包端点；全部要求登录态，匿名被服务端静默拒）。 */
+export const interact = {
+  /** 发一条弹幕（offsetMs = 视频内位置毫秒），返回服务端 comment_id。 */
+  sendDanmaku: (groupId: string, bookId: string, text: string, offsetMs: number) =>
+    call<string>('danmaku_send', { groupId, bookId, text, offsetMs }),
+  /** 发一条评论（评论区 UI 预留）。 */
+  sendComment: (groupId: string, bookId: string, text: string) =>
+    call<string>('comment_send', { groupId, bookId, text }),
+  /** 点赞 / 取消点赞一集（vid = 分集 id）。 */
+  videoDigg: (vid: string, seriesId: string, digg: boolean) =>
+    call<void>('video_digg', { vid, seriesId, digg }),
+  /** 点赞 / 取消点赞一条评论（评论区 UI 预留）。 */
+  commentDigg: (commentId: string, digg: boolean) =>
+    call<void>('comment_digg', { commentId, digg }),
+  /** 收藏（追剧）/ 取消收藏一部剧。 */
+  seriesCollect: (seriesId: string, collect: boolean) =>
+    call<void>('series_collect', { seriesId, collect }),
+  /** 最近互动列表（点赞过的 vid + 收藏的剧），回显是 best-effort 匹配。 */
+  state: () => call<InteractionState>('interaction_state', undefined, interactionStateSchema),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索

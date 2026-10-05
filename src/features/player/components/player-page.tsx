@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/card';
 import { SeriesPanel } from './series-panel';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
+import { InteractionRail } from './interaction-rail';
 import {
   usePlay,
   useSavePosition,
@@ -536,6 +537,14 @@ export function PlayerView({ seriesPanelMode = 'sidebar' }: { seriesPanelMode?: 
                 items={danmakuQuery.data ?? []}
                 enabled={danmakuOn}
                 display={danmakuDisplay}
+              />
+              {/* 互动栏（发弹幕/点赞/收藏/预约）：悬浮画面右缘，不随控制栏隐没。
+                  vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用；
+                  未就绪时传空串，组件内部自行禁用。 */}
+              <InteractionRail
+                seriesId={seriesId}
+                vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                getCurrentMs={() => (videoRef.current?.currentTime ?? 0) * 1000}
               />
               <PlayerControls
                 videoRef={videoRef}

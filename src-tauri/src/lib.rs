@@ -124,6 +124,13 @@ pub fn run() {
             commands::login_cmd::login_logout,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
+            // 互动（点赞/收藏/发弹幕，2026-10-05 抓包端点）
+            commands::interact_cmd::danmaku_send,
+            commands::interact_cmd::comment_send,
+            commands::interact_cmd::video_digg,
+            commands::interact_cmd::comment_digg,
+            commands::interact_cmd::series_collect,
+            commands::interact_cmd::interaction_state,
             // 浏览与搜索
             commands::browse_cmd::browse_categories,
             commands::browse_cmd::browse_list,

@@ -250,15 +250,92 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
   uid_tt(_ss) + odin_tt + d_ticket + n_mh + session_tlb_tag 等 17 个 cookie
   （`extract_cookie_pairs` 全收，同名后值覆盖）+ x-tt-token 头凭据。
 
+## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定）
+
+全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +
+**登录 cookie + x-tt-token**；重放实证无强签名校验（旧 `x-reading-request`
+也过，x-helios/x-medusa 不带也过）。响应 `code==0` 即成功。
+
+### 9.1 视频点赞 / 取消 `POST /novel/articleapi/do_action/v1/`
+
+```json
+{"action_category":1,"action_reason_remark":"like_click",
+ "action_type":3,
+ "business_param":{"book_id":0,"has_aigc_content":false,"modify_count":0,
+   "shark_param":{"enter_from":"MainFragmentActivity","page_list":"MainFragmentActivity","previous_page":""},
+   "video_id":"<series_id>"},
+ "object_id":"<vid>","object_type":6}
+```
+
+- `action_type`：**3 点赞 / 4 取消**；`object_type=6`（视频），`object_id=vid`（分集）
+- `business_param.video_id` 填的是 **series_id**（字段名与语义不符，照抄）
+- 点赞计数在响应 `action_cnt_data["<vid>"]`（服务端延迟统计，常为 0，别信）
+
+### 9.2 评论点赞 / 取消 `POST /novel/commentapi/comment/do_action/v1/`
+
+```json
+{"action_type":8,"business_param":{"shark_param":{...}},
+ "comment_type":4,"object_id":"<comment_id>","object_type":8}
+```
+
+`action_type`：**8 点赞 / 9 取消**；`object_type=8`（评论对象）。
+注意与 9.1 是**不同路径**（commentapi vs articleapi）。
+
+### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
+
+```json
+{"aid":8662,
+ "business_param":{"book_id":"<series_id>","ignore_urge_rule":false,
+   "offset":128912,
+   "shark_param":{"aid":"8662","enter_from":"MainFragmentActivity",
+     "page_list":"MainFragmentActivity","previous_page":"","type":"short_play"}},
+ "commit_source":1500,"data_type":20,
+ "group_id":"<vid>","group_type":30,"text":"..."}
+```
+
+- 与拉取同一评论体系：`group_id`=vid、`group_type=30`、`book_id`=series_id
+- **弹幕与普通评论只差三个字段**：
+
+| | 弹幕 | 评论 |
+|---|---|---|
+| data_type | 20 | 4 |
+| commit_source | 1500 | 3 |
+| business_param.offset | 播放位置 ms | 0 |
+
+响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
+乐观插入用 `expand.offset_time = offset`）。
+
+### 9.4 收藏（追剧/书架）`POST /reading/bookapi/bookshelf/video/update/v`
+
+```json
+{"is_cancelled":false,"shark_extra":{...埋点},
+ "update_bookshelf_video_list":[{"book_id":"<series_id>","book_type":2,
+   "modify_time":1791202503400,"video_shelf_operate_type":0}]}
+```
+
+- `video_shelf_operate_type`：**0 收藏 / 1 取消**；对象是 **series_id**
+  （`book_id` 字段），`book_type=2` 短剧
+- 列表查询是配套的 `GET /reading/bookapi/bookshelf/video/list/v?target_user_id=`
+  （响应只有 series_id + collect_time，要逐个 resolve 标题）
+
+### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
+
+query 业务参数：`action_type=3, count=100, offset=0,
+object_type_list=6,15,10`。返回**用户互动过的视频列表**（不是单集查询）：
+`data.mixed_data_list[].video_data{vid, series_id, user_digg, digged_count,
+user_digg_timestamp_ms, video_detail{followed, followed_cnt, series_title}}`。
+用途：打开播放页时 best-effort 回显「已赞/已追」状态（列表 100 条内匹配
+vid / series_id）；单集精确查询接口未抓到。
+
 ## 已知未抓 / 待做
 
 
 - 设备注册 `POST log.snssdk.com/service/2/device_register/`（旧会话已抓到
   query 全指纹 + protobuf body + gzip 响应，尚未实现；bookmall 全家桶在新设备上
   才不报 ILLEGAL_ACCESS 110）
-- 历史/收藏/点赞页未抓（疑似本地存储或需登录，优先级低）
 - 登录（短信+扫码）最后做
-- 弹幕发送 `commentapi/comment/add` 未实现（拉取 `comment/list` 已落地）
+- 评论区面板（comment/list 拉取形态已落地，评论发送/评论点赞接口见 9.2/9.3，
+  前端评论区 UI 未做）
 
 ## 抓包数据文件
 

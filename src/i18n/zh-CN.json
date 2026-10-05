@@ -180,7 +180,22 @@
     "danmakuOpacity": "不透明度",
     "danmakuFontSize": "字体大小",
     "danmakuDensity": "密度",
-    "danmakuArea": "显示区域"
+    "danmakuArea": "显示区域",
+    "interact": {
+      "like": "点赞",
+      "collect": "收藏",
+      "reserve": "预约",
+      "danmaku": "发弹幕",
+      "danmakuPlaceholder": "发条弹幕…",
+      "danmakuSent": "弹幕已发送",
+      "liked": "已点赞",
+      "undone": "已取消点赞",
+      "collected": "已收藏",
+      "uncollected": "已取消收藏",
+      "reserved": "预约成功",
+      "unreserved": "已取消预约",
+      "loginRequired": "互动需要先登录（设置页 → 账号）"
+    }
   },
   "series": {
     "loadFailed": "分集加载失败",

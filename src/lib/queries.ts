@@ -21,11 +21,13 @@ import {
   storage,
   transcode,
   danmaku as danmakuCmd,
+  interact as interactCmd,
   watchHistory,
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
 import { EVENTS } from './ipc/types';
 import type {
+  Danmaku,
   DownloadProgress,
   DownloadTask,
   FeedItem,
@@ -63,6 +65,7 @@ const keys = {
     ['browse-list', cat, genre, page] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
+  interactState: ['interact-state'] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
   rank: (selected: string, sub: string, panel: string) =>
     ['rank', selected, sub, panel] as const,
@@ -214,6 +217,73 @@ export function useDanmaku(vid: string) {
     queryFn: () => danmakuCmd.list(groupId, bookId),
     enabled: vid.includes(':'),
     staleTime: 10 * 60_000,
+  });
+}
+
+// ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕）
+
+/** 最近互动状态（登录后才拉；匿名接口静默拒）。 */
+export function useInteractionState() {
+  const { data: account } = useAccount();
+  return useQuery({
+    queryKey: keys.interactState,
+    queryFn: interactCmd.state,
+    enabled: !!account,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * 发弹幕：成功后把新弹幕乐观追加进该集的弹幕缓存（服务端列表有延迟，
+ * 不追的话用户发完看不见自己的弹幕）。
+ */
+export function useSendDanmaku() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { vid: string; text: string; offsetMs: number }) => {
+      const [groupId, bookId] = input.vid.split(':');
+      return interactCmd.sendDanmaku(groupId ?? '', bookId ?? '', input.text, input.offsetMs);
+    },
+    onSuccess: (commentId, input) => {
+      queryClient.setQueryData<Danmaku[]>(keys.danmaku(input.vid), (prev) => {
+        const next = prev ?? [];
+        return [
+          ...next,
+          { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
+        ].sort((a, b) => a.offsetMs - b.offsetMs);
+      });
+    },
+  });
+}
+
+/** 点赞 / 取消点赞一集。 */
+export function useVideoDigg() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { vid: string; seriesId: string; digg: boolean }) =>
+      interactCmd.videoDigg(input.vid, input.seriesId, input.digg),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.interactState }),
+  });
+}
+
+/** 收藏 / 取消收藏一部剧。 */
+export function useSeriesCollect() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { seriesId: string; collect: boolean }) =>
+      interactCmd.seriesCollect(input.seriesId, input.collect),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.interactState }),
+  });
+}
+
+/** 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。 */
+export function useReserveSeries() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { seriesId: string; reserve: boolean }) =>
+      rank.reserve(input.seriesId, input.reserve),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT }),
   });
 }
 

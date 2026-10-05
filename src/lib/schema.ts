@@ -392,6 +392,13 @@ export const danmakuSchema = z.object({
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
+/** 互动状态列表（Rust `interact::InteractionState`；best-effort 回显用）。 */
+export const interactionStateSchema = z.object({
+  diggedVids: z.array(z.string()),
+  collectedSeries: z.array(z.string()),
+});
+export type InteractionState = z.infer<typeof interactionStateSchema>;
+
 // ---------------------------------------------------------------- 排行榜 / 新剧 / 上新日历
 
 /** 榜单条目（Rust `rank::RankItem`）。 */

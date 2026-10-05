@@ -180,7 +180,22 @@
     "danmakuOpacity": "Opacity",
     "danmakuFontSize": "Font size",
     "danmakuDensity": "Density",
-    "danmakuArea": "Display area"
+    "danmakuArea": "Display area",
+    "interact": {
+      "like": "Like",
+      "collect": "Favorite",
+      "reserve": "Reserve",
+      "danmaku": "Danmaku",
+      "danmakuPlaceholder": "Type a danmaku…",
+      "danmakuSent": "Danmaku sent",
+      "liked": "Liked",
+      "undone": "Like removed",
+      "collected": "Added to favorites",
+      "uncollected": "Removed from favorites",
+      "reserved": "Reserved",
+      "unreserved": "Reservation cancelled",
+      "loginRequired": "Sign in first to interact (Settings → Account)"
+    }
   },
   "series": {
     "loadFailed": "Failed to load episodes",
