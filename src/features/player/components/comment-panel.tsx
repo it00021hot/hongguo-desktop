@@ -4,7 +4,7 @@
 //! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态
 //! （ct=4/src=4），服务端偶发 110001 时面板内显示错误可重试。
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,14 @@ function relativeTime(unixSec: number): string {
 }
 
 export function CommentPanel({ vid, onClose }: Props) {
+  // Esc 关闭（面板盖住互动栏按钮时这是最直接的退出路径）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const { data: account } = useAccount();
   const loggedIn = !!account;
   const { data: comments, isPending, error, refetch } = useComments(vid);
@@ -80,7 +88,7 @@ export function CommentPanel({ vid, onClose }: Props) {
   };
 
   return (
-    <div className="absolute inset-y-0 right-0 z-40 flex w-[360px] max-w-[85%] flex-col border-l border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm">
+    <div className="absolute bottom-14 right-0 z-40 flex h-[68%] w-[380px] max-w-[85%] flex-col rounded-tl-xl border-l border-t border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm">
       {/* 头部 */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
         <p className="text-sm font-semibold">
