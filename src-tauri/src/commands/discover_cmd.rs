@@ -18,7 +18,18 @@ pub async fn discover_feed(
     genre: Option<String>,
 ) -> AppResult<FeedPage> {
     let env = state.api_env();
-    fetch_feed(offset.unwrap_or(0), genre.as_deref(), &env).await
+    let result = fetch_feed(offset.unwrap_or(0), genre.as_deref(), &env).await;
+    match &result {
+        Ok(page) => log::info!(
+            "[Feed] genre={:?} offset={} -> {} 条, 首条: {}",
+            genre,
+            offset.unwrap_or(0),
+            page.items.len(),
+            page.items.first().map(|i| i.title.as_str()).unwrap_or("-")
+        ),
+        Err(e) => log::warn!("[Feed] genre={:?} offset={} 失败: {e}", genre, offset.unwrap_or(0)),
+    }
+    result
 }
 
 /// 取一部剧的可渲染（webp）封面。

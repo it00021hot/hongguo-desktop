@@ -245,16 +245,20 @@ export function HomePage() {
   const feedItems = feed.items;
   const hotItems = hot.data?.items ?? [];
   const freshItems = fresh.items;
+  // 「你的内容」种子只属于推荐 tab：漫剧/真人是显式类型 tab，头一条必须
+  // 是该类型的剧——种子(最近看过)排头会把刚看完的那部顶在前面，点 tab
+  // 看起来毫无反应(实测:刚看完动漫点真人,头部还是那部动漫)。
+  const activeSeeds = source === 'feed' ? seedItems : [];
   const items: StreamItem[] =
     isFeedSource
       ? [
-          ...seedItems,
+          ...activeSeeds,
           ...feedItems
             .filter(
               (i, idx, arr) =>
                 // 服务端翻页会重复下发同一批里的条目(实测第二页重复 10/18),
                 // 连种子一起按 seriesId 去重
-                !seedItems.some((seed) => seed.seriesId === i.seriesId) &&
+                !activeSeeds.some((seed) => seed.seriesId === i.seriesId) &&
                 arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
             )
             .map((i) => ({
