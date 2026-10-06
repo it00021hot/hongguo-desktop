@@ -250,6 +250,64 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
   uid_tt(_ss) + odin_tt + d_ticket + n_mh + session_tlb_tag 等 17 个 cookie
   （`extract_cookie_pairs` 全收，同名后值覆盖）+ x-tt-token 头凭据。
 
+## 用户资料（2026-10-07 实测打通）
+
+```
+GET /reading/user/info/v1/    ← lq 域（api5-normal-lq.fqnovel.com）+ 轻签名头 + 登录 cookie
+```
+
+- **host 陷阱**：这接口虽属 passport 语义，但挂在 reading 族统一的
+  `api5-normal-lq.fqnovel.com`（`LQ_API_ORIGIN` + `api_call_reading`）。
+  挂 novel.snssdk.com 上是 404（曾误挂，静默失败三天才发现）。
+- 响应 `data` 顶层含 `avatar_url` / `bg_img_url` / `name` / `screen_name`
+  / `sec_user_id` 等；`user_info()` 已解析 avatar_url → `AccountState`。
+- 另一来源：**sms_login 成功响应的 `data` 顶层同样带 `avatar_url`**（2026-10-04
+  抓包实证），登录时直接入库，无需二次请求。
+- 会话自检：`cargo test --lib probe_user_info_with_cookies -- --ignored
+  --nocapture`（`HG_LOGIN_COOKIES="k=v; ..."`），不发短信只读。
+- 头像 CDN 是 `p3.douyinpic.com` / `p9-passport.byteacctimg.com`，前端
+  CSP `img-src` 已含 `https:`，`<img>` 直连可显。
+
+## 找剧筛选面板（2026-10-07 抓 hgplayer 1.1.5 实操锁定）
+
+```
+POST /reading/distribution/category/landpage/v1/   # 与推荐流同端点
+{"need_selector_panel":false,"req_scene":"default","req_type":"only_panel"}
+```
+
+- 响应 `data.selector_rows[]`：`{type, row_name, items:[{selector_item_id, show_name}]}`
+- 八行：`genre`(体裁 short_play/comic_series/ai_series) `category_dim_theme`(主题 29)
+  `category_dim_role`(设定 42) `category_dim_epoch`(背景 11) `sort`(推荐
+  online_time/hot_score/hot_collect) `gender`(受众 1男/0女) `online_time`(时间 days_7/14/30/90)
+  `duration`(长度 duration_0_60/60_120/120_plus)
+- ⚠️ **面板按设备下发不齐**：同一份代码，匿名/带 cookie 探测都回 8 行，
+  app 设备档案只回 7 行（缺 duration）。但 `select_items.duration` 服务端
+  必认（实测 duration_0_60 过滤生效），前端缺行时合成兜底（选项 id 抓包锁定）
+- 内容请求（找剧/推荐流同款）：`client_req_type:3 + req_type:"only_content" +
+  limit:18 + offset + select_items`（每维单元素数组，空选给 `[]`）；
+  `session_id` 首页空串、翻页回传
+- 响应压缩：landpage 系是 **brotli**（抓包 jsonl 里 resp_body 是
+  b64(brotli(JSON))，addon.py 的 safe_text 会 b64 保真）
+
+## 相关作品·系列（2026-10-07 抓 hgplayer 1.1.5 详情页懒加载锁定）
+
+```
+GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
+    &scene=10&offset=0&limit=0&need_personal_recommend=1&bookstore_tab=0
+    &bookstore_tab_type=0&current_chapter_num=0&total_chapter_num=0&post_id=0
+    &is_horizontal_screen=false     ← reading 族轻签名头，lq 域
+```
+
+- **懒加载**：hgplayer 打开 series 页不请求，点「相关推荐」tab 才发
+- 响应 `data[]` cell 列表：`cell_name:"相关作品"`（14 条：同系列各季
+  `tag_info.text`=第1季/第2季… + 同 IP 作品）与 `"猜你喜欢"`（可为空）
+- 每项：`series_id/title/cover(~tplv-shrink:640:0.image，扩展名假、内容
+  JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
+  (0=未上线→「即将上线」)/video_desc/tag_info.text 角标`
+- 未上线（即将上线）条目 hgplayer 卡片带「预约」钮（预约接口已有）
+- 我们的落点：`detail.rs fetch_related_series` + `related_series` 命令 +
+  详情页「相关作品·系列」卡片行（`series-detail-page.tsx RelatedWorks`）
+
 ## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定；2026-10-06 抓 1.1.5 重锁）
 
 全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +

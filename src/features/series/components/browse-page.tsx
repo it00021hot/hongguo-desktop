@@ -3,28 +3,21 @@ import { ChevronLeft, ChevronRight, Loader2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { RefreshShade } from '@/components/refresh-shade';
 import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
 import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
 import {
-  useBrowseCategories,
-  useBrowseList,
+  useBrowsePage,
+  useBrowsePanel,
   useDownloadTasks,
   useResolveSeries,
   useSeriesSearchApp,
 } from '@/lib/queries';
-import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
-import type { Series, SeriesCard } from '@/lib/schema';
+import { cn } from '@/lib/utils';
+import type { BrowseFilters, FeedItem, Series, SeriesCard } from '@/lib/schema';
 
 /**
  * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
@@ -54,21 +47,71 @@ function toRef(series: Series): SeriesRef {
   };
 }
 
+/** App 筛选条目转官网卡形态喂同一块网格。 */
+function toCard(it: FeedItem): SeriesCard {
+  return {
+    seriesId: it.seriesId,
+    seriesTitle: it.title,
+    cover: it.cover,
+    episodeCount: it.episodeCnt,
+    tags: it.tags.slice(0, 3),
+    url: '',
+  };
+}
+
+/** 面板行 type → 行头标签（未知类型回落服务端行名去掉「全部」前缀）。 */
+const FILTER_LABEL_KEYS: Record<string, string> = {
+  genre: 'browse.fGenre',
+  category_dim_theme: 'browse.fTheme',
+  category_dim_role: 'browse.fRole',
+  category_dim_epoch: 'browse.fEpoch',
+  sort: 'browse.fSort',
+  gender: 'browse.fGender',
+  online_time: 'browse.fOnlineTime',
+  duration: 'browse.fDuration',
+};
+
+/** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
+ * 实测 select_items.duration 服务端必认）。 */
+const DURATION_FALLBACK = {
+  rowType: 'duration',
+  rowName: '全部长度',
+  items: [
+    { id: 'duration_0_60', name: '0-60分钟' },
+    { id: 'duration_60_120', name: '60-120分钟' },
+    { id: 'duration_120_plus', name: '120分钟以上' },
+  ],
+};
+
+function withDurationFallback(
+  rows: { rowType: string; rowName: string; items: { id: string; name: string }[] }[],
+) {
+  if (rows.some((r) => r.rowType === 'duration')) return rows;
+  return [...rows, DURATION_FALLBACK];
+}
+
 /**
- * 浏览页：顶部一个搜索框，下面是分类 + 题材分页浏览。
+ * 浏览页：顶部一个搜索框，下面是官方筛选面板 + 结果网格。
  *
- * 搜索与浏览共用同一块结果区（和官网一致）：提交关键词就原地切成搜索结果，
- * 清空或退出就回到分类列表，不再单独开一个搜索页。
+ * 数据走官方 App 的找剧接口（landpage 筛选面板 + 多维 select_items），
+ * 与第三方客户端同款：体裁/主题/设定/背景/推荐/受众/时间/长度八行，
+ * 每行单选，「全部」即空选；选项表随服务端下发，不写死。
  *
- * 搜索框同时是链接/ID 入口，删掉独立下载页后「粘贴分享链接」没有别的落点。
+ * 搜索与浏览共用同一块结果区：提交关键词就原地切成搜索结果，
+ * 清空或退出就回到筛选列表。
  */
 export function BrowsePage() {
-  // 分类与题材直接读 zustand：本地 useState 拷贝只在首次挂载时取一次初值，
-  // 写成 state 就和 store 里的真值分家了。
-  const category = useUiStore((s) => s.lastCategory);
-  const genre = useUiStore((s) => s.lastGenre);
-  const setFilter = useUiStore((s) => s.setBrowseFilter);
   const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState<BrowseFilters>({
+    genre: '',
+    theme: '',
+    role: '',
+    epoch: '',
+    sort: '',
+    gender: '',
+    onlineTime: '',
+    duration: '',
+  });
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const [keyword, setKeyword] = useState('');
@@ -76,8 +119,8 @@ export function BrowsePage() {
   const [submitted, setSubmitted] = useState('');
   const searching = submitted !== '';
 
-  const { data: categories } = useBrowseCategories();
-  const browse = useBrowseList(category, genre, page);
+  const panel = useBrowsePanel();
+  const browse = useBrowsePage(filters, page);
   // 找剧搜索走官方 App API（站内官网搜索只匹配剧名且结果少；
   // App 搜索是综合 tab，首页精选 + 翻页全量）
   const found = useSeriesSearchApp(submitted);
@@ -88,7 +131,7 @@ export function BrowsePage() {
   // App 搜索条目转成官网卡形态喂同一块网格：subTitle（"脑洞·全273集"）
   // 首段当题材 tag，url 无处消费填空串。
   const cards = useMemo(() => {
-    if (!searching) return browse.data?.results ?? [];
+    if (!searching) return (browse.data?.items ?? []).map(toCard);
     return found.items.map((it) => ({
       seriesId: it.seriesId,
       seriesTitle: it.title,
@@ -98,8 +141,8 @@ export function BrowsePage() {
       url: '',
     }));
   }, [searching, browse.data, found.items]);
-  // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着。
-  // 反馈分两层：真没数据（isPending，首次进某分类）才整块骨架屏；
+  // 换筛选/翻页时 queryKey 变了，placeholderData 把上一份结果留着。
+  // 反馈分两层：真没数据（isPending）才整块骨架屏；
   // 手里有旧数据、后台在取新数据（isPlaceholderData && isFetching）时
   // 旧内容降透明度禁点——切换即时可感，又不闪白屏。
   const pending = searching ? found.isLoading : browse.isPending;
@@ -135,10 +178,8 @@ export function BrowsePage() {
     return map;
   }, [tasks]);
 
-  // 分类与题材来自嗅探结果里的 meta
-  const genres = browse.data?.meta.genres ?? [];
-  const totalPages = browse.data?.meta.totalPages ?? 0;
-  const total = searching ? cards.length : (browse.data?.meta.total ?? 0);
+  const hasMore = browse.data?.hasMore ?? false;
+  const total = searching ? cards.length : 0;
 
   // 退出搜索：置空提交词即可——浏览结果在 Query 缓存里秒回，
   // 搜索结果留在缓存，重复搜索同一关键词也秒出不再重拉
@@ -147,15 +188,9 @@ export function BrowsePage() {
     setKeyword('');
   };
 
-  const handleCategory = (slug: string) => {
-    exitSearch();
+  const pick = (key: keyof BrowseFilters, value: string) => {
     setPage(1);
-    setFilter(slug, '');
-  };
-
-  const handleGenre = (slug: string) => {
-    setPage(1);
-    setFilter(category, slug === 'all' ? '' : slug);
+    setFilters((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
   };
 
   // 链接/ID 直接解析并打开详情抽屉，抽屉内部会自己拉分集。
@@ -237,41 +272,25 @@ export function BrowsePage() {
           )}
         </form>
 
-        {!searching && (
-          <>
-            <Select value={category} onValueChange={handleCategory}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder={t('browse.category')} />
-              </SelectTrigger>
-              <SelectContent>
-                {(categories ?? []).map((c) => (
-                  <SelectItem key={c.slug} value={c.slug}>
-                    {c.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={genre || 'all'} onValueChange={handleGenre}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder={t('browse.allGenres')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('browse.allGenres')}</SelectItem>
-                {genres.map((g) => (
-                  <SelectItem key={g.slug} value={g.slug}>
-                    {g.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
+        {!searching && total > 0 && (
+          <span className="text-muted-foreground ml-auto text-sm">
+            {tf('browse.totalCount', { total })}
+          </span>
         )}
-
-        <span className="text-muted-foreground ml-auto text-sm">
-          {searching ? tf('search.resultCount', { total }) : tf('browse.totalCount', { total })}
-        </span>
       </div>
+
+      {/* 官方筛选面板（第三方同款八行）：选项表服务端下发，空选即「全部」。
+          「长度」行部分设备不下发（2026-10-07 实测），但 select_items.duration
+          服务端必认——缺行时用抓包锁定的选项 id 合成兜底。 */}
+      {!searching && (
+        <FilterPanel
+          rows={withDurationFallback(panel.data ?? [])}
+          filters={filters}
+          loading={panel.isLoading}
+          failed={panel.isError}
+          onPick={pick}
+        />
+      )}
 
       {failed && <p className="text-destructive text-sm">{t('browse.loadFailed')}</p>}
 
@@ -290,17 +309,14 @@ export function BrowsePage() {
             trailing={
               // 末行空位拿来放「下一页」，而不是留一个看起来像漏加载的白格子。
               // 搜索页没有分页（官网那边就不分），所以只在浏览模式出现。
-              !searching && page < totalPages ? (
+              !searching && hasMore ? (
                 <button
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
                   className="text-muted-foreground hover:text-foreground hover:border-foreground/30 flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors focus-visible:outline-none"
                 >
                   <ChevronRight className="size-6" />
-                  {tf('browse.loadMore', {
-                    page: (browse.data?.meta.page ?? page) + 1,
-                    total: totalPages,
-                  })}
+                  {t('browse.nextPage')}
                 </button>
               ) : null
             }
@@ -308,7 +324,7 @@ export function BrowsePage() {
         </RefreshShade>
       )}
 
-      {!searching && totalPages > 1 && (
+      {!searching && (page > 1 || hasMore) && (
         <div className="flex items-center justify-center gap-3 py-2">
           <Button
             variant="outline"
@@ -318,14 +334,12 @@ export function BrowsePage() {
           >
             <ChevronLeft className="size-4" />
           </Button>
-          <span className="text-sm tabular-nums">
-            {browse.data?.meta.page ?? page} / {totalPages}
-          </span>
+          <span className="text-sm tabular-nums">{page}</span>
           <Button
             variant="outline"
             size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={!hasMore}
+            onClick={() => setPage((p) => p + 1)}
           >
             <ChevronRight className="size-4" />
           </Button>
@@ -343,6 +357,96 @@ export function BrowsePage() {
 
       {/* 与首页同一交互：解析期间底部气泡，抽屉一开就是完整内容 */}
       {resolving && <ResolvingPill />}
+    </div>
+  );
+}
+
+/**
+ * 筛选面板：八行维度，每行「全部」+ 服务端选项，单选。
+ * 行头标签按 type 映射 i18n（服务端 row_name 是中文，不适合多语言）。
+ */
+function FilterPanel({
+  rows,
+  filters,
+  loading,
+  failed,
+  onPick,
+}: {
+  rows: { rowType: string; rowName: string; items: { id: string; name: string }[] }[];
+  filters: BrowseFilters;
+  loading: boolean;
+  failed: boolean;
+  onPick: (key: keyof BrowseFilters, value: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
+        <Loader2 className="size-3.5 animate-spin" />
+        {t('common.loading')}
+      </div>
+    );
+  }
+  if (failed || rows.length === 0) return null;
+
+  const rowValue = (key: string): string => {
+    switch (key) {
+      case 'genre':
+        return filters.genre;
+      case 'category_dim_theme':
+        return filters.theme;
+      case 'category_dim_role':
+        return filters.role;
+      case 'category_dim_epoch':
+        return filters.epoch;
+      case 'sort':
+        return filters.sort;
+      case 'gender':
+        return filters.gender;
+      case 'online_time':
+        return filters.onlineTime;
+      case 'duration':
+        return filters.duration;
+      default:
+        return '';
+    }
+  };
+
+  const pill = (key: keyof BrowseFilters, id: string, label: string, active: boolean) => (
+    <button
+      key={id || '__all__'}
+      type="button"
+      onClick={() => onPick(key, id)}
+      aria-pressed={active}
+      className={cn(
+        'cursor-pointer rounded-full border px-3 py-0.5 text-xs transition-colors',
+        active
+          ? 'border-primary text-primary bg-primary/10 font-medium'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground border-border',
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="grid gap-1.5">
+      {rows.map((row) => {
+        const key = row.rowType as keyof BrowseFilters;
+        const current = rowValue(row.rowType);
+        const fallbackLabel =
+          FILTER_LABEL_KEYS[row.rowType] ?? row.rowName.replace(/^全部/, '');
+        return (
+          <div key={row.rowType} className="flex items-start gap-3 text-sm">
+            <span className="text-muted-foreground w-10 shrink-0 pt-1 text-xs">
+              {t(fallbackLabel)}
+            </span>
+            <div className="flex flex-wrap gap-x-1 gap-y-1.5">
+              {pill(key, '', t('browse.all'), current === '')}
+              {row.items.map((it) => pill(key, it.id, it.name, current === it.id))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

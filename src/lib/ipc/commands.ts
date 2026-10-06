@@ -4,6 +4,7 @@ import {
   accountStateSchema,
   bookshelfEntrySchema,
   browseResultSchema,
+  browseFiltersSchema,
   commentPageSchema,
   danmakuSchema,
   categorySchema,
@@ -22,7 +23,9 @@ import {
   calendarPageSchema,
   feedPageSchema,
   rankPageSchema,
+  relatedSeriesSchema,
   searchPageSchema,
+  selectorRowSchema,
   seriesExtrasSchema,
   seriesProgressSchema,
   seriesSchema,
@@ -31,6 +34,7 @@ import {
   watchHistoryPageSchema,
   type AccountState,
   type BookshelfEntry,
+  type BrowseFilters,
   type Category,
   type CommentPage,
   type Danmaku,
@@ -49,9 +53,11 @@ import {
   type ProxyConfig,
   type ProxyTestResult,
   type QueueStatus,
+  type RelatedSeries,
   type Series,
   type SeriesExtras,
   type SeriesProgress,
+  type SelectorRow,
   type Settings,
   type BrowseResult,
   type StorageUsage,
@@ -126,6 +132,9 @@ export const series = {
   resolve: (input: string) => call<Series>('resolve_series', { input }, seriesSchema),
   extras: (seriesId: string) =>
     call<SeriesExtras>('get_series_extras', { seriesId }, seriesExtrasSchema),
+  /** 相关作品·系列（同系列各季 + 同 IP；失败由上层静默降级） */
+  related: (seriesId: string) =>
+    call<RelatedSeries>('related_series', { seriesId }, relatedSeriesSchema),
   remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
   removeAll: () => call<number>('remove_all_series'),
 };
@@ -136,6 +145,16 @@ export const discover = {
   /** genre：'comic_series'=漫剧、'short_play'=真人剧、'ai_series'=AI剧；不传=全部 */
   feed: (offset?: number, genre?: string) =>
     call<FeedPage>('discover_feed', { offset: offset ?? 0, genre }, feedPageSchema),
+  /** 找剧筛选面板（八行维度选项） */
+  browsePanel: () => call<SelectorRow[]>('browse_panel', undefined, selectorRowSchema.array()),
+  /** 找剧一页结果（多维筛选，服务端过滤；sessionId 首页空串、翻页回传） */
+  browsePage: (filters: BrowseFilters, offset: number, sessionId = '') =>
+    call<FeedPage>(
+      // zod default 把 undefined 归一成空串，IPC 参数保持显式
+      'browse_page',
+      { filters: browseFiltersSchema.parse(filters), offset, sessionId },
+      feedPageSchema,
+    ),
   webCover: (seriesId: string) =>
     call<string | null>('web_cover', { seriesId }, z.string().nullable()),
 };

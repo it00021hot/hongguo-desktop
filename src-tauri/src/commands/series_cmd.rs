@@ -94,6 +94,19 @@ pub async fn get_series_extras(series_id: String) -> crate::domain::model::Serie
     }
 }
 
+/// 拉一部剧的相关作品·系列（同系列各季 + 同 IP，官方 plan 接口）。
+///
+/// 详情页「相关推荐」tab 顶部的内容；失败由前端静默降级（该模块本就
+/// 是增强项，不该为它报错打断推荐 tab）。
+#[tauri::command]
+pub async fn related_series(
+    state: State<'_, AppState>,
+    series_id: String,
+) -> AppResult<crate::domain::api::detail::RelatedSeries> {
+    let env = state.api_env();
+    crate::domain::api::detail::fetch_related_series(&series_id, &env).await
+}
+
 /// 从剧集列表移除一部剧（不删本地文件，也不删已下载的任务记录）。
 #[tauri::command]
 pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {

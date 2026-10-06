@@ -17,3 +17,10 @@ export function formatDuration(seconds: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
+
+/** 播放量人性化：1.2亿 / 3456万 / 8921。 */
+export function formatPlayCount(n: number): string {
+  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`;
+  if (n >= 10_000) return `${Math.round(n / 10_000)}万`;
+  return String(n);
+}

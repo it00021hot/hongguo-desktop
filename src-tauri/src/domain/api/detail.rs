@@ -9,6 +9,150 @@ use serde_json::Value;
 use crate::domain::model::Episode;
 use crate::error::{AppError, AppResult};
 
+/// 相关作品（同系列各季 + 同 IP 作品）。
+///
+/// 端点抓包实证（2026-10-07 hgplayer 1.1.5 详情页「相关推荐」tab 懒加载）：
+/// `GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
+/// &scene=10&...`（reading 族轻签名头，lq 域）。响应 `data[]` 是 cell 列表：
+/// `cell_name:"相关作品"` 的 cell 里 `video_data[]` 每项带 `tag_info.text`
+/// 角标（`第1季`/`同IP`/…）。
+pub const PLAN_PATH: &str = "/reading/bookapi/plan/v";
+
+/// 相关作品 / 猜你喜欢里的一条。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedItem {
+    pub series_id: String,
+    pub title: String,
+    pub cover: String,
+    /// 角标文案（`第1季`/`同IP`…，服务端下发，无则空）
+    pub tag: String,
+    /// 评分（0 = 无分）
+    pub score: f64,
+    pub play_cnt: i64,
+    /// 0 = 未上线（「即将上线」态）
+    pub episode_cnt: u32,
+    pub video_desc: String,
+}
+
+/// 详情页相关推荐 tab 的两块内容。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedSeries {
+    /// 相关作品·系列（同系列各季 + 同 IP）
+    pub works: Vec<RelatedItem>,
+    /// 猜你喜欢（plan 响应可能给空 cell，空时前端回落既有推荐源）
+    pub guess: Vec<RelatedItem>,
+}
+
+/// 拉一部剧的相关作品·系列。
+pub async fn fetch_related_series(
+    series_id: &str,
+    env: &super::client::ApiEnv,
+) -> AppResult<RelatedSeries> {
+    let biz_query: Vec<(String, String)> = [
+        ("book_id", series_id),
+        ("bookstore_tab", "0"),
+        ("bookstore_tab_type", "0"),
+        ("current_chapter_num", "0"),
+        ("from", "detail_page_more_related"),
+        ("is_horizontal_screen", "false"),
+        ("limit", "0"),
+        ("need_personal_recommend", "1"),
+        ("offset", "0"),
+        ("post_id", "0"),
+        ("scene", "10"),
+        ("total_chapter_num", "0"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+
+    let bytes = crate::domain::api::client::api_call_reading(
+        crate::domain::api::danmaku::LQ_API_ORIGIN,
+        PLAN_PATH,
+        None,
+        &biz_query,
+        env,
+    )
+    .await?;
+
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
+    parse_related_series(&value)
+}
+
+/// 解析 plan/v 响应为相关作品两块内容。
+fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
+    if let Some(code) = value.get("code").and_then(Value::as_i64) {
+        if code != 0 {
+            let msg = value
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误");
+            return Err(AppError::Media(format!("相关作品接口返回 {code}: {msg}")));
+        }
+    }
+
+    let mut related = RelatedSeries::default();
+    for cell in value
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let cell_name = cell.get("cell_name").and_then(Value::as_str).unwrap_or("");
+        let items = cell
+            .get("video_data")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|raw| {
+                        let series_id = raw.get("series_id").and_then(Value::as_str)?;
+                        if series_id.is_empty() {
+                            return None;
+                        }
+                        // 角标：tag_info.text；缺失且未上线时给「即将上线」
+                        let tag = raw
+                            .pointer("/tag_info/text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        let episode_cnt = int_field(raw, "episode_cnt").max(0) as u32;
+                        Some(RelatedItem {
+                            series_id: series_id.to_string(),
+                            title: str_field(raw, "title"),
+                            cover: str_field(raw, "cover"),
+                            tag: if tag.is_empty() && episode_cnt == 0 {
+                                "即将上线".to_string()
+                            } else {
+                                tag
+                            },
+                            // score 线上是字符串形态（"8.0"）
+                            score: raw
+                                .get("score")
+                                .and_then(Value::as_str)
+                                .and_then(|s| s.parse::<f64>().ok())
+                                .unwrap_or_else(|| {
+                                    raw.get("score").and_then(Value::as_f64).unwrap_or(0.0)
+                                }),
+                            play_cnt: int_field(raw, "play_cnt"),
+                            episode_cnt,
+                            video_desc: str_field(raw, "video_desc"),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        match cell_name {
+            "相关作品" => related.works = items,
+            "猜你喜欢" => related.guess = items,
+            _ => {}
+        }
+    }
+    Ok(related)
+}
+
 /// 一部剧的元信息 + 分集。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EpisodeList {
@@ -118,6 +262,25 @@ fn pick(value: &Value, keys: &[&str]) -> String {
         .to_string()
 }
 
+/// 字符串字段（缺失给空串）。
+fn str_field(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 数字字段（线上形态可能是字符串数字，缺失给 0）。
+fn int_field(v: &Value, key: &str) -> i64 {
+    v.get(key)
+        .map(|x| {
+            x.as_i64()
+                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,10 +348,54 @@ mod tests {
 
     #[test]
     fn business_code_errors() {
-        let v = json!({ "code": 101000, "message": "服务异常", "data": {} });
+        let v: Value = serde_json::json!({ "code": 101000, "message": "服务异常", "data": {} });
         let err = parse_episodes(&v).unwrap_err();
         assert!(err.to_string().contains("101000"));
     }
+
+    /// 相关作品解析：cell_name 分流 + tag_info 角标 + score 字符串形态
+    /// + 未上线兜底「即将上线」（2026-10-07 plan/v 抓包样本的形状）。
+    #[test]
+    fn parses_related_series_cells() {
+        let v: Value = serde_json::json!({
+            "code": 0,
+            "data": [
+                {
+                    "cell_name": "相关作品",
+                    "video_data": [
+                        {
+                            "series_id": "7664807332483697726",
+                            "title": "一年升一境凡人修仙之外门杂役",
+                            "cover": "https://cdn/c.jpg",
+                            "score": "8.0",
+                            "play_cnt": 5299902,
+                            "episode_cnt": 125,
+                            "video_desc": "只因凡品灵根",
+                            "tag_info": { "text": "第1季" }
+                        },
+                        {
+                            "series_id": "7664807332483697727",
+                            "title": "第四季",
+                            "episode_cnt": 0,
+                            "play_cnt": 0
+                        }
+                    ]
+                },
+                { "cell_name": "猜你喜欢", "video_data": [
+                    { "series_id": "999", "title": "别的剧", "episode_cnt": 10 }
+                ] }
+            ]
+        });
+        let rel = parse_related_series(&v).unwrap();
+        assert_eq!(rel.works.len(), 2);
+        assert_eq!(rel.works[0].tag, "第1季");
+        assert_eq!(rel.works[0].score, 8.0, "score 字符串形态要能读");
+        assert_eq!(rel.works[0].episode_cnt, 125);
+        assert_eq!(rel.works[1].tag, "即将上线", "无角标且未上线给兜底文案");
+        assert_eq!(rel.guess.len(), 1);
+        assert_eq!(rel.guess[0].series_id, "999");
+    }
+
 
     #[test]
     fn items_without_vid_are_skipped() {
@@ -261,5 +468,62 @@ mod probe {
             let n = s.matches(&format!("\"{key}\"")).count();
             println!("  响应中 \"{key}\" 出现 {n} 次");
         }
+    }
+}
+
+#[cfg(test)]
+mod probe2 {
+    use super::*;
+    /// 找 preload 详情响应里的「相关作品·系列」字段（hgplayer 详情页同款）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_detail_related_series() {
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let payload = serde_json::to_vec(
+            &crate::domain::api::params::detail_payload("7689382439004671038"),
+        )
+        .unwrap();
+        let bytes = crate::domain::api::client::api_call(
+            crate::domain::api::params::DETAIL_PATH,
+            Some(payload),
+            &env,
+        )
+        .await
+        .expect("detail");
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        let node = &v["data"]["7689382439004671038"];
+        let mut keys: Vec<_> = node.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        println!("[rel] data.<sid> keys: {keys:?}");
+        let vd = &node["video_data"];
+        let mut vkeys: Vec<_> = vd.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+        vkeys.sort();
+        println!("[rel] video_data keys: {vkeys:?}");
+        let s = serde_json::to_string(&v).unwrap();
+        for key in ["relation", "relate_series", "series_list", "season", "同IP", "相关", "recommend"] {
+            let n = s.matches(key).count();
+            if n > 0 { println!("  [{key}] x{n}"); }
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_related {
+    use super::*;
+    /// 相关作品·系列真连探测（2026-10-07 端点实装验证；多季剧才有多条）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_related_series_live() {
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let rel = fetch_related_series("7687961503718198334", &env).await.expect("相关作品");
+        println!("[related] works {} 条, guess {} 条", rel.works.len(), rel.guess.len());
+        for w in rel.works.iter().take(6) {
+            println!("  [{}] {} score={} {}集 play={}", w.tag, w.title, w.score, w.episode_cnt, w.play_cnt);
+        }
+        assert!(!rel.works.is_empty(), "多季剧必有相关作品");
     }
 }

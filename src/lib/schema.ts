@@ -167,6 +167,8 @@ export const accountStateSchema = z.object({
   mobile: z.string(),
   cookies: z.string(),
   userName: z.string(),
+  // 旧库/旧后端无此字段：宽松兜空串
+  avatarUrl: z.string().catch(''),
   userId: z.string(),
   loginAt: z.number(),
 });
@@ -193,6 +195,7 @@ export const passportUserSchema = z.object({
   userId: z.string(),
   name: z.string(),
   mobile: z.string(),
+  avatarUrl: z.string().catch(''),
 });
 
 export type PassportUser = z.infer<typeof passportUserSchema>;
@@ -405,6 +408,56 @@ export const feedPageSchema = z.object({
 
 export type FeedItem = z.infer<typeof feedItemSchema>;
 export type FeedPage = z.infer<typeof feedPageSchema>;
+
+// ---------------------------------------------------------------- 找剧（筛选浏览）
+
+/** 找剧筛选面板的一行（Rust `discover::SelectorRow`，rowType 即 select_items 的键）。 */
+export const selectorRowSchema = z.object({
+  rowType: z.string(),
+  /** 服务端行名（「全部体裁」…，行头「全部」态即空选） */
+  rowName: z.string(),
+  items: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+export type SelectorRow = z.infer<typeof selectorRowSchema>;
+
+/** 找剧的八维筛选条件（空串 = 全部）。 */
+export const browseFiltersSchema = z.object({
+  genre: z.string().default(''),
+  theme: z.string().default(''),
+  role: z.string().default(''),
+  epoch: z.string().default(''),
+  sort: z.string().default(''),
+  gender: z.string().default(''),
+  onlineTime: z.string().default(''),
+  duration: z.string().default(''),
+});
+
+export type BrowseFilters = z.infer<typeof browseFiltersSchema>;
+
+/** 详情页相关作品里的一条（Rust `detail::RelatedItem`）。 */
+export const relatedItemSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  /** 角标文案（第1季/同IP/即将上线，无则空） */
+  tag: z.string(),
+  score: z.number(),
+  playCnt: z.number(),
+  /** 0 = 未上线 */
+  episodeCnt: z.number().int().nonnegative(),
+  videoDesc: z.string(),
+});
+
+export const relatedSeriesSchema = z.object({
+  /** 相关作品·系列（同系列各季 + 同 IP） */
+  works: z.array(relatedItemSchema),
+  /** 猜你喜欢（可能为空，空时前端回落既有推荐源） */
+  guess: z.array(relatedItemSchema),
+});
+
+export type RelatedItem = z.infer<typeof relatedItemSchema>;
+export type RelatedSeries = z.infer<typeof relatedSeriesSchema>;
 
 /** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
 export const danmakuSchema = z.object({

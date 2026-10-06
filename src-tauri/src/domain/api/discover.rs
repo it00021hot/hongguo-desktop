@@ -107,6 +107,162 @@ pub async fn fetch_feed(offset: i64, genre: Option<&str>, env: &ApiEnv) -> AppRe
     parse_feed(value.get("data"))
 }
 
+// ---------------------------------------------------------------- 找剧（筛选浏览）
+
+/// 找剧筛选面板的一行（一个维度）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectorItem {
+    /// 选项 id（select_items 的取值，如 `short_play`/`cate_262`/`days_7`）
+    pub id: String,
+    /// 展示名（如 `真人剧`/`脑洞`/`7天内上新`）
+    pub name: String,
+}
+
+/// 找剧筛选面板的一行。`row_type` 即 select_items 的键
+/// （genre/category_dim_theme/category_dim_role/category_dim_epoch/
+/// sort/gender/online_time/duration）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectorRow {
+    pub row_type: String,
+    /// 服务端行名（`全部体裁`…，行头「全部」态即空选）
+    pub row_name: String,
+    pub items: Vec<SelectorItem>,
+}
+
+/// 找剧的筛选条件（每维至多一个选中值，空串/None = 全部）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BrowseFilters {
+    pub genre: String,
+    pub theme: String,
+    pub role: String,
+    pub epoch: String,
+    /// 推荐：`online_time`(最新上架)/`hot_score`(最高热度)/`hot_collect`(最高收藏)
+    pub sort: String,
+    /// 受众：`1`=男频 `0`=女频
+    pub gender: String,
+    /// 上新时间：`days_7`/`days_14`/`days_30`/`days_90`
+    pub online_time: String,
+    /// 长度：`duration_0_60`/`duration_60_120`/`duration_120_plus`
+    pub duration: String,
+}
+
+impl BrowseFilters {
+    /// select_items 请求形态：每维一个单元素数组（空选给空数组）。
+    fn to_select_items(&self) -> Value {
+        let one = |v: &str| {
+            if v.is_empty() {
+                Value::Array(vec![])
+            } else {
+                serde_json::json!([v])
+            }
+        };
+        serde_json::json!({
+            "category_dim_epoch": one(&self.epoch),
+            "category_dim_role": one(&self.role),
+            "category_dim_theme": one(&self.theme),
+            "duration": one(&self.duration),
+            "gender": one(&self.gender),
+            "genre": one(&self.genre),
+            "online_time": one(&self.online_time),
+            "sort": one(&self.sort),
+        })
+    }
+}
+
+/// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
+///
+/// 抓包形态（2026-10-07 hgplayer 1.1.5）：body 只有三个键，
+/// 响应 `data.selector_rows[]`。
+pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "need_selector_panel": false,
+        "req_scene": "default",
+        "req_type": "only_panel",
+    }))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
+    let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
+    check_code(&value)?;
+    let data = value
+        .get("data")
+        .ok_or_else(|| AppError::Media("面板响应缺少 data".into()))?;
+    parse_browse_panel(Some(data))
+}
+
+/// 解析面板 data 节点为 selector 行列表。
+fn parse_browse_panel(data: Option<&Value>) -> AppResult<Vec<SelectorRow>> {
+    let data = data.ok_or_else(|| AppError::Media("面板响应缺少 data".into()))?;
+    let mut rows = Vec::new();
+    for raw in data
+        .get("selector_rows")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let row_type = str_field(raw, "type");
+        if row_type.is_empty() {
+            continue;
+        }
+        let items = raw
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| {
+                        let id = it.get("selector_item_id").and_then(Value::as_str)?;
+                        Some(SelectorItem {
+                            id: id.to_string(),
+                            name: it
+                                .get("show_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or(id)
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        rows.push(SelectorRow {
+            row_type,
+            row_name: str_field(raw, "row_name"),
+            items,
+        });
+    }
+    Ok(rows)
+}
+
+/// 拉一页找剧结果（与推荐流同端点，多维 select_items 服务端过滤）。
+///
+/// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
+pub async fn fetch_browse(
+    filters: &BrowseFilters,
+    offset: i64,
+    session_id: &str,
+    env: &ApiEnv,
+) -> AppResult<FeedPage> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "client_req_type": 3,
+        "filter_ids": "",
+        "limit": 18,
+        "need_selector_panel": false,
+        "offset": offset,
+        "req_scene": "default",
+        "req_type": "only_content",
+        "select_items": filters.to_select_items(),
+        "session_id": session_id,
+    }))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
+    let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
+    check_code(&value)?;
+    parse_feed(value.get("data"))
+}
+
 /// 业务错误码检查。
 pub(super) fn check_code(value: &Value) -> AppResult<()> {
     if let Some(code) = value.get("code").and_then(Value::as_i64) {
@@ -258,6 +414,60 @@ mod tests {
     fn code_check_rejects_nonzero() {
         let v: Value = serde_json::json!({ "code": 100103, "message": "PARAM_INVALID" });
         assert!(check_code(&v).is_err());
+    }
+
+    /// 面板解析：行 type/row_name/选项 id+名（2026-10-07 抓包样本的形状）。
+    #[test]
+    fn parses_browse_panel_rows() {
+        let v: Value = serde_json::json!({
+            "code": 0,
+            "data": {
+                "selector_rows": [
+                    {
+                        "type": "genre",
+                        "row_name": "全部体裁",
+                        "selection_type": 2,
+                        "items": [
+                            { "selector_item_id": "short_play", "show_name": "真人剧" },
+                            { "selector_item_id": "comic_series", "show_name": "漫剧" },
+                            { "selector_item_id": "ai_series", "show_name": "AI剧" }
+                        ]
+                    },
+                    {
+                        "type": "sort",
+                        "row_name": "全部推荐",
+                        "items": [
+                            { "selector_item_id": "online_time", "show_name": "最新上架" }
+                        ]
+                    },
+                    { "type": "", "row_name": "坏行", "items": [] }
+                ]
+            }
+        });
+        let rows = parse_browse_panel(v.get("data")).unwrap();
+        assert_eq!(rows.len(), 2, "空 type 的行要跳过");
+        assert_eq!(rows[0].row_type, "genre");
+        assert_eq!(rows[0].items.len(), 3);
+        assert_eq!(rows[0].items[0].id, "short_play");
+        assert_eq!(rows[0].items[0].name, "真人剧");
+        assert_eq!(rows[1].row_type, "sort");
+    }
+
+    /// 筛选条件 → select_items：选中值包单元素数组，空选给空数组。
+    #[test]
+    fn browse_filters_build_select_items() {
+        let f = BrowseFilters {
+            genre: "comic_series".into(),
+            online_time: "days_7".into(),
+            ..Default::default()
+        };
+        let si = f.to_select_items();
+        assert_eq!(si["genre"], serde_json::json!(["comic_series"]));
+        assert_eq!(si["online_time"], serde_json::json!(["days_7"]));
+        assert_eq!(si["sort"], serde_json::json!([]));
+        // duration 维度也要在场（面板有「长度」行，2026-10-07 抓包）
+        assert!(si.get("duration").is_some());
+        assert_eq!(si["duration"], serde_json::json!([]));
     }
 }
 
@@ -871,5 +1081,84 @@ mod probe_genre {
                 println!("[genre] {name} 第二页: {} 条 重复={}", p2.items.len(), dup);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod probe_browse {
+    use super::*;
+    /// 找剧面板 + 首页结果真连探测（2026-10-07 端点实装后转正的验证）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_browse_panel_and_page() {
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let rows = fetch_browse_panel(&env).await.expect("面板");
+        for r in &rows {
+            println!("[browse] [{}] {} ({} 项)", r.row_type, r.row_name, r.items.len());
+        }
+        let filters = BrowseFilters {
+            genre: "comic_series".into(),
+            ..Default::default()
+        };
+        let page = fetch_browse(&filters, 0, "", &env).await.expect("找剧首页");
+        println!(
+            "[browse] 漫剧筛选首页 {} 条, has_more={}, 首条: {}",
+            page.items.len(),
+            page.has_more,
+            page.items.first().map(|i| i.title.as_str()).unwrap_or("-")
+        );
+        assert!(!rows.is_empty());
+        assert!(!page.items.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod probe_panel_cookie {
+    use super::*;
+    /// 带登录 cookie 的面板请求——对比匿名探测（8 行）验证服务端是否
+    /// 按登录态下发不同面板（app 实测只有 7 行，缺 duration）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_browse_panel_with_cookies() {
+        let mut env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let cookies = std::env::var("HG_LOGIN_COOKIES").unwrap_or_default();
+        if !cookies.is_empty() {
+            env.cookie = Some(cookies);
+        }
+        let rows = fetch_browse_panel(&env).await.expect("面板");
+        println!("[panel-cookie] {} 行: {:?}", rows.len(), rows.iter().map(|r| r.row_type.as_str()).collect::<Vec<_>>());
+    }
+}
+
+#[cfg(test)]
+mod probe_duration {
+    use super::*;
+    /// duration 维度筛选是否被服务端接受（面板可能按设备不下发该行，
+    /// 但 select_items 带它要有意义才算可用）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_browse_duration_filter() {
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let filters = BrowseFilters {
+            duration: "duration_0_60".into(),
+            ..Default::default()
+        };
+        let page = fetch_browse(&filters, 0, "", &env).await.expect("duration 筛选");
+        println!(
+            "[duration] 0-60分钟筛选: {} 条, has_more={}, 首条: {}",
+            page.items.len(),
+            page.has_more,
+            page.items.first().map(|i| i.title.as_str()).unwrap_or("-")
+        );
+        let all = fetch_browse(&BrowseFilters::default(), 0, "", &env)
+            .await
+            .expect("无筛选对照");
+        println!("[duration] 无筛选对照: {} 条", all.items.len());
     }
 }

@@ -126,10 +126,13 @@ pub fn run() {
             commands::series_cmd::get_series_episodes,
             commands::series_cmd::resolve_series,
             commands::series_cmd::get_series_extras,
+            commands::series_cmd::related_series,
             commands::series_cmd::remove_series,
             commands::series_cmd::remove_all_series,
-            // 发现（推荐信息流）
+            // 发现（推荐信息流 / 找剧筛选浏览）
             commands::discover_cmd::discover_feed,
+            commands::discover_cmd::browse_panel,
+            commands::discover_cmd::browse_page,
             commands::discover_cmd::web_cover,
             // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
             commands::rank_cmd::rank_list,

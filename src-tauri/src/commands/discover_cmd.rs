@@ -1,10 +1,40 @@
-//! 发现类 command：推荐信息流。
+//! 发现类 command：推荐信息流、找剧（筛选浏览）。
 
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::discover::{fetch_feed, FeedPage};
+use crate::domain::api::discover::{
+    fetch_browse, fetch_browse_panel, fetch_feed, BrowseFilters, FeedPage, SelectorRow,
+};
 use crate::error::AppResult;
+
+/// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
+#[tauri::command]
+pub async fn browse_panel(state: State<'_, AppState>) -> AppResult<Vec<SelectorRow>> {
+    let env = state.api_env();
+    fetch_browse_panel(&env).await
+}
+
+/// 拉一页找剧结果（多维筛选，服务端过滤）。
+///
+/// `filters` 八个维度各至多一个选中值（空串 = 全部）；`sessionId`
+/// 首页传空串，翻页传上一页响应里的值。
+#[tauri::command]
+pub async fn browse_page(
+    state: State<'_, AppState>,
+    filters: BrowseFilters,
+    offset: Option<i64>,
+    session_id: Option<String>,
+) -> AppResult<FeedPage> {
+    let env = state.api_env();
+    fetch_browse(
+        &filters,
+        offset.unwrap_or(0),
+        session_id.as_deref().unwrap_or(""),
+        &env,
+    )
+    .await
+}
 
 /// 拉一页推荐信息流（官方 body 协议，服务端按体裁过滤）。
 ///

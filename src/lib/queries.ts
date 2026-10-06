@@ -29,6 +29,7 @@ import { useEvent } from './ipc/events';
 import { isWindows } from './platform';
 import { EVENTS } from './ipc/types';
 import type {
+  BrowseFilters,
   CommentPage,
   Danmaku,
   DownloadProgress,
@@ -42,6 +43,9 @@ import type {
   SearchPage,
   SearchResult,
 } from './schema';
+
+/** 找剧一页条数（与官方 18/页对齐）。 */
+export const BROWSE_PAGE_SIZE = 18;
 
 /**
  * TanStack Query 的 key 工厂。
@@ -68,6 +72,10 @@ const keys = {
   browseCategories: ['browse-categories'] as const,
   browseList: (cat: string, genre: string, page: number) =>
     ['browse-list', cat, genre, page] as const,
+  browsePanel: ['browse-panel'] as const,
+  browsePage: (filters: BrowseFilters, page: number) =>
+    ['browse-page', filters, page] as const,
+  relatedSeries: (seriesId: string) => ['related-series', seriesId] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
@@ -606,6 +614,36 @@ export function useBrowseList(category: string, genre: string, page: number) {
     // 翻页时保留上一页数据，避免白屏
     placeholderData: (prev) => prev,
     staleTime: 30_000,
+  });
+}
+
+/** 找剧筛选面板：八行维度选项（选项表随服务端运营变化，拉一次长期用）。 */
+export function useBrowsePanel() {
+  return useQuery({
+    queryKey: keys.browsePanel,
+    queryFn: discover.browsePanel,
+    staleTime: Infinity,
+  });
+}
+
+/** 找剧一页结果（第 page 页 = offset (page-1)*18，与面板 limit 对齐）。 */
+export function useBrowsePage(filters: BrowseFilters, page: number) {
+  return useQuery({
+    queryKey: keys.browsePage(filters, page),
+    queryFn: () => discover.browsePage(filters, (page - 1) * BROWSE_PAGE_SIZE),
+    // 换筛选/翻页时保留旧结果降透明度，不整页白屏
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+  });
+}
+
+/** 详情页相关作品·系列（失败静默降级，不阻塞推荐 tab 的其他内容）。 */
+export function useRelatedSeries(seriesId: string) {
+  return useQuery({
+    queryKey: keys.relatedSeries(seriesId),
+    queryFn: () => series.related(seriesId),
+    staleTime: 10 * 60_000,
+    retry: false,
   });
 }
 

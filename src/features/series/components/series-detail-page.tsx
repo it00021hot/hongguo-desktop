@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FeedCardGrid } from '@/features/feed/components/feed-card-grid';
+import { formatPlayCount } from '@/lib/format';
 import {
   isRenderableCover,
   useAccount,
@@ -15,6 +16,7 @@ import {
   useFeed,
   useInteractionState,
   useRank,
+  useRelatedSeries,
   useResolveSeries,
   useSeriesCollect,
   useSeriesEpisodes,
@@ -27,7 +29,7 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { FeedItem, RankItem, RecommendItem } from '@/lib/schema';
+import type { FeedItem, RankItem, RecommendItem, RelatedItem } from '@/lib/schema';
 
 /**
  * 剧集详情页（/detail?seriesId=…）。
@@ -348,6 +350,8 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
             </TabsContent>
 
             <TabsContent value="recommend">
+              {/* 相关作品·系列（第三方同款）：同系列各季 + 同 IP，永远置顶 */}
+              <RelatedWorks seriesId={seriesId} />
               <RecommendSection
                 siteItems={extras?.recommendations ?? []}
                 feedCursor={feedCursor}
@@ -396,6 +400,84 @@ function siteToFeedItem(r: RecommendItem): FeedItem {
     tags: [],
     contentType: 0,
   };
+}
+
+/**
+ * 相关作品·系列（官方 plan 接口，第三方同款）：同系列各季（第1季/第2季…）
+ * 与同 IP 作品横排卡片。加载失败或没有相关作品就整块不渲染——
+ * 它是增强项，不值得占一个错误位。
+ */
+function RelatedWorks({ seriesId }: { seriesId: string }) {
+  const navigate = useNavigate();
+  const { data, isError } = useRelatedSeries(seriesId);
+  const works = data?.works ?? [];
+
+  if (isError || works.length === 0) return null;
+
+  const open = (id: string) => {
+    // 同一路由换 search 参数：整页数据随之换挡
+    void navigate({ to: '/detail', search: { seriesId: id } });
+  };
+
+  return (
+    <div className="grid gap-3 pb-4">
+      <h3 className="text-sm font-semibold">{t('detail.relatedWorks')}</h3>
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {works.map((w) => (
+          <RelatedCard key={w.seriesId} item={w} onOpen={open} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 相关作品卡片：封面（角标 + 评分）+ 两行剧名 + 集数/播放量。 */
+function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string) => void }) {
+  // plan 接口的封面是 byteimg tplv 链接，扩展名 .image 但内容是 JPEG——
+  // isRenderableCover 会误判，这里直连加载、失败再落 TV 兜底
+  const [coverFailed, setCoverFailed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(item.seriesId)}
+      className="w-28 shrink-0 cursor-pointer text-left"
+      title={item.videoDesc || item.title}
+    >
+      <div className="relative aspect-[3/4] overflow-hidden rounded-lg border bg-muted">
+        {!coverFailed && item.cover ? (
+          <img
+            src={item.cover}
+            alt=""
+            className="size-full object-cover"
+            onError={() => setCoverFailed(true)}
+          />
+        ) : (
+          <div className="text-muted-foreground grid size-full place-items-center">
+            <Tv className="size-6" aria-hidden />
+          </div>
+        )}
+        {item.tag && (
+          <span className="bg-primary text-primary-foreground absolute left-1 top-1 rounded px-1 py-0.5 text-[10px] leading-none">
+            {item.tag}
+          </span>
+        )}
+        {item.score > 0 && (
+          <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 py-0.5 text-[10px] leading-none text-amber-300">
+            {item.score.toFixed(1)}分
+          </span>
+        )}
+      </div>
+      <p className="mt-1.5 line-clamp-2 text-xs leading-snug">{item.title}</p>
+      <p className="text-muted-foreground mt-0.5 truncate text-[11px]">
+        {item.episodeCnt > 0
+          ? tf('detail.episodesCount', { count: item.episodeCnt })
+          : item.tag === '即将上线'
+            ? item.tag
+            : ''}
+        {item.playCnt > 0 && ` · ${formatPlayCount(item.playCnt)}${t('detail.plays')}`}
+      </p>
+    </button>
+  );
 }
 
 /**

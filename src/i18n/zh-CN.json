@@ -4,58 +4,45 @@
   },
   "nav": {
     "home": {
-      "title": "推荐",
-      "description": "官方推荐信息流与热榜"
+      "title": "推荐"
     },
     "rank": {
-      "title": "排行榜",
-      "description": "官方八大榜单实时排名"
+      "title": "排行榜"
     },
     "new": {
-      "title": "新剧",
-      "description": "上新日历与即将上线的新剧"
+      "title": "新剧"
     },
     "browse": {
-      "title": "找剧",
-      "description": "搜索剧名，按分类与题材发现短剧"
+      "title": "找剧"
     },
     "player": {
-      "title": "播放",
-      "description": "本地与在线播放"
+      "title": "播放"
     },
     "tasks": {
-      "title": "下载管理",
-      "description": "队列、进度与合并"
+      "title": "下载管理"
     },
     "merge": {
-      "title": "一键合并",
-      "description": "把分集合并为全集"
+      "title": "一键合并"
     },
     "storage": {
-      "title": "磁盘清理",
-      "description": "占用统计与文件清理"
+      "title": "磁盘清理"
     },
     "settings": {
-      "title": "设置",
-      "description": "目录、命名、并发与代理"
+      "title": "设置"
     },
     "collapse": "收起",
     "expand": "展开",
     "reservations": {
-      "title": "预约",
-      "description": "我的预约：已上线与待上线"
+      "title": "预约"
     },
     "history": {
-      "title": "历史",
-      "description": "云端同步的观看记录"
+      "title": "历史"
     },
     "collections": {
-      "title": "收藏",
-      "description": "书架里追的剧"
+      "title": "收藏"
     },
     "liked": {
-      "title": "点赞",
-      "description": "我赞过的视频"
+      "title": "点赞"
     },
     "accountFallback": "我的",
     "login": "登录",
@@ -72,7 +59,17 @@
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
     "loadMore": "第 {page} / {total} 页",
-    "resolving": "正在打开…"
+    "resolving": "正在打开…",
+    "fGenre": "体裁",
+    "fTheme": "主题",
+    "fRole": "设定",
+    "fEpoch": "背景",
+    "fSort": "推荐",
+    "fGender": "受众",
+    "fOnlineTime": "时间",
+    "fDuration": "长度",
+    "all": "全部",
+    "nextPage": "下一页"
   },
   "search": {
     "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
@@ -248,7 +245,6 @@
   },
   "merge": {
     "title": "一键合并",
-    "subtitle": "把已下载的分集合并为单个全集文件",
     "selectSeries": "选择剧集",
     "pickSeries": "请选择一部剧",
     "noCandidates": "还没有已下载的分集，先去下载几集再来合并",
@@ -303,7 +299,6 @@
   },
   "settings": {
     "downloadDir": "下载目录",
-    "downloadDirDesc": "文件会归档到「下载目录/红果短剧/剧名/」",
     "choose": "选择目录",
     "naming": "文件命名模板",
     "namingTitleIndex": "剧名 集数",
@@ -346,7 +341,6 @@
     "backendFfmpegHw": "硬件加速",
     "backendFfmpegSw": "软件加速",
     "account": "账户",
-    "accountDesc": "短信验证码登录；登录后可使用预约等账号功能",
     "loginAction": "登录",
     "loginTitle": "登录红果账号",
     "loginPrompt": "登录后可预约新剧、同步观看记录",
@@ -537,6 +531,8 @@
     "recFeed": "为你推荐",
     "recRank": "热播榜",
     "recSite": "官网推荐",
-    "recShuffle": "换一换"
+    "recShuffle": "换一换",
+    "relatedWorks": "相关作品 · 系列",
+    "plays": "播放"
   }
 }

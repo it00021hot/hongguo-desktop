@@ -4,58 +4,45 @@
   },
   "nav": {
     "home": {
-      "title": "Discover",
-      "description": "Official feed & hot ranking"
+      "title": "Discover"
     },
     "rank": {
-      "title": "Rankings",
-      "description": "Official rankings across 8 lists"
+      "title": "Rankings"
     },
     "new": {
-      "title": "New",
-      "description": "Release calendar and upcoming dramas"
+      "title": "New"
     },
     "browse": {
-      "title": "Find",
-      "description": "Search and browse short dramas"
+      "title": "Find"
     },
     "player": {
-      "title": "Player",
-      "description": "Local and online playback"
+      "title": "Player"
     },
     "tasks": {
-      "title": "Tasks",
-      "description": "Queue, progress and merge"
+      "title": "Tasks"
     },
     "merge": {
-      "title": "Merge",
-      "description": "Combine episodes into one file"
+      "title": "Merge"
     },
     "storage": {
-      "title": "Storage",
-      "description": "Usage stats and cleanup"
+      "title": "Storage"
     },
     "settings": {
-      "title": "Settings",
-      "description": "Directory, naming, concurrency, proxy"
+      "title": "Settings"
     },
     "collapse": "Collapse",
     "expand": "Expand",
     "reservations": {
-      "title": "Reservations",
-      "description": "My reservations: online & upcoming"
+      "title": "Reservations"
     },
     "history": {
-      "title": "History",
-      "description": "Watch history synced from the cloud"
+      "title": "History"
     },
     "collections": {
-      "title": "Collections",
-      "description": "Series on your bookshelf"
+      "title": "Collections"
     },
     "liked": {
-      "title": "Liked",
-      "description": "Videos you liked"
+      "title": "Liked"
     },
     "accountFallback": "Me",
     "login": "Sign in",
@@ -72,7 +59,17 @@
     "downloadedBadge": "{count} downloaded",
     "totalCount": "{total} titles",
     "loadMore": "Page {page} / {total}",
-    "resolving": "Opening…"
+    "resolving": "Opening…",
+    "fGenre": "Genre",
+    "fTheme": "Theme",
+    "fRole": "Trope",
+    "fEpoch": "Setting",
+    "fSort": "Sort",
+    "fGender": "Audience",
+    "fOnlineTime": "Freshness",
+    "fDuration": "Duration",
+    "all": "All",
+    "nextPage": "Next page"
   },
   "search": {
     "placeholder": "Type a title, or paste a share link / series ID",
@@ -248,7 +245,6 @@
   },
   "merge": {
     "title": "Merge",
-    "subtitle": "Combine downloaded episodes into a single file",
     "selectSeries": "Series",
     "pickSeries": "Pick a series",
     "noCandidates": "No downloaded episodes yet — download a few first, then come back to merge",
@@ -303,7 +299,6 @@
   },
   "settings": {
     "downloadDir": "Download folder",
-    "downloadDirDesc": "Files go to <folder>/红果短剧/<title>/",
     "choose": "Choose folder",
     "naming": "File naming",
     "namingTitleIndex": "Title + index",
@@ -346,7 +341,6 @@
     "backendFfmpegHw": "Hardware accelerated",
     "backendFfmpegSw": "Software accelerated",
     "account": "Account",
-    "accountDesc": "Sign in with SMS code to unlock account features such as reservations",
     "loginAction": "Sign in",
     "loginTitle": "Sign in to Hongguo",
     "loginPrompt": "Sign in to reserve dramas and sync history",
@@ -537,6 +531,8 @@
     "recFeed": "For You",
     "recRank": "Trending",
     "recSite": "Official picks",
-    "recShuffle": "Shuffle"
+    "recShuffle": "Shuffle",
+    "relatedWorks": "Related series",
+    "plays": " plays"
   }
 }

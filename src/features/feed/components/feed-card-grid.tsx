@@ -3,6 +3,7 @@ import { Flame, MessageSquare, Star, Tv } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { t, tf } from '@/i18n';
 import { isRenderableCover, useWebCover } from '@/lib/queries';
+import { formatPlayCount } from '@/lib/format';
 import type { FeedItem } from '@/lib/schema';
 
 interface Props {
@@ -13,13 +14,6 @@ interface Props {
   ranked?: boolean;
   onSelect: (item: FeedItem) => void;
   trailing?: React.ReactNode;
-}
-
-/** 播放量人性化：1.2亿 / 3456万 / 8921。 */
-function formatPlayCount(n: number): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`;
-  if (n >= 10_000) return `${Math.round(n / 10_000)}万`;
-  return String(n);
 }
 
 /** 信息流卡片网格（首页推荐 / 热榜共用）。 */
