@@ -69,7 +69,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             data-tauri-drag-region="deep"
             className="absolute right-0 top-0 z-50 flex h-14 items-center justify-end pr-2"
           >
-            <div className="flex shrink-0 items-center">
+            {/* 悬浮在视频画面上：无论应用是什么主题，这组按钮永远按暗色
+                配色渲染（局部强制 dark token）——亮色主题下前景色是近黑，
+                直接隐身在一帧黑画面/暗场景上（实测踩过）。 */}
+            <div className="dark flex shrink-0 items-center">
               <ThemeSwitch />
               {!mac && <WindowButtons />}
             </div>
