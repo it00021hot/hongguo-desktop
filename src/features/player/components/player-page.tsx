@@ -477,12 +477,6 @@ export function PlayerView({
    */
   const [live, setLive] = useState<{ key: string; on: boolean }>({ key: '', on: false });
   const [stalled, setStalled] = useState<{ key: string; on: boolean }>({ key: '', on: false });
-  /**
-   * 本组件内是否**曾经**有流出过画（跨切换保留，仅重挂载时归零）。
-   * 切换在途时旧画面还在播——加载胶囊不该盖上去把内容挤走；
-   * 只有「从没出过画」（真首载）或卡顿时才亮胶囊。
-   */
-  const [everLive, setEverLive] = useState(false);
   const videoLive = live.key === streamKey && live.on;
   /** waiting 后时间轴恢复推进（timeupdate）或重新出画即视为不卡 */
   const videoStalled = stalled.key === streamKey && stalled.on;
@@ -865,17 +859,13 @@ export function PlayerView({
                 onPlaying={() => {
                   // 真正出画/恢复出画：封面占位退场、卡顿态收掉
                   setLive({ key: streamKey, on: true });
-                  setEverLive(true);
                   setStalled({ key: streamKey, on: false });
                 }}
                 onPause={(e) => {
                   setPaused(true);
                   persist(e.currentTarget.currentTime, true);
                 }}
-                onLoadedData={() => {
-                  setLive({ key: streamKey, on: true });
-                  setEverLive(true);
-                }}
+                onLoadedData={() => setLive({ key: streamKey, on: true })}
                 // waiting：缓冲/seek 供不上数据，画面停住转黑——必须给出「在动」的信号，
                 // 否则网络一抖就是一帧黑屏挂在那里，观感等于卡死
                 onWaiting={() => setStalled({ key: streamKey, on: true })}
@@ -883,10 +873,7 @@ export function PlayerView({
                 onTimeUpdate={(e) => {
                   // playing 事件在个别 WebView 起播路径上不触发：封面退场
                   // 不能只靠它一路信号，时间轴真的走起来了也算出画
-                  if (e.currentTarget.currentTime > 0.1) {
-                    setLive({ key: streamKey, on: true });
-                    setEverLive(true);
-                  }
+                  if (e.currentTarget.currentTime > 0.1) setLive({ key: streamKey, on: true });
                   // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
                   setStalled({ key: streamKey, on: false });
                   persist(e.currentTarget.currentTime);
@@ -1063,23 +1050,15 @@ export function PlayerView({
                 </div>
               )}
 
-              {/* 流地址已就绪、首帧还没出画（解码/缓冲）的这一段也要有指示：
-                  只有封面垫着没有任何「正在动」的信号，观感就是卡死了。
-                  播放中途 waiting（网络抖动/seek 供数）同样收进来。 */}
-              {((!videoLive && !everLive) || (videoStalled && !paused)) && !compat && (
-                <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center p-6">
-                  <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                    {buffering && buffering.phase !== 'ready'
-                      ? tf('player.buffering', {
-                          percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
-                          size:
-                            buffering.total > 0
-                              ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
-                              : formatBytes(buffering.received),
-                        })
-                      : t('common.loading')}
-                  </span>
+              {/* 加载反馈 = 顶部 2px 细进度条（hg-loadbar，样式见 index.css）：
+                  切换在途/首帧未出/缓冲中任何一种未就绪都亮。中央的
+                  「正在缓冲 X%」胶囊按用户要求移除——它压在画面正中
+                  挡内容；细条贴边滑过，反馈有了、打扰没了。 */}
+              {(switching || !videoLive || videoStalled) && !compat && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 z-40 h-0.5">
+                  <div className="hg-loadbar-track">
+                    <div className="bg-primary hg-loadbar" />
+                  </div>
                 </div>
               )}
             </>

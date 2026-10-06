@@ -483,11 +483,25 @@ export function HomePage() {
     );
   }
 
+  // 切 tab 后首批在拉（旧画面继续播）：亮顶部细进度条给「正在切换」
+  // 的反馈——没有它就是「点了没反应」（用户实测反馈）。
+  const sourceBooting =
+    (isFeedSource && feed.isLoading) ||
+    (source === 'hot' && hot.isPending) ||
+    (source === 'new' && fresh.isLoading);
+
   return (
     // overflow-hidden + 绝对定位铺满：AppShell 的 main 是 overflow-y-auto
     // （别的页面靠它滚），沉浸流内部任何 1px 超高都会冒出一条页面滚动条，
     // 还会把滚轮切剧吃掉——这里整个锁死在视口内。
     <div className="relative h-full min-h-0 overflow-hidden">
+      {sourceBooting && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-0.5">
+          <div className="hg-loadbar-track">
+            <div className="bg-primary hg-loadbar" />
+          </div>
+        </div>
+      )}
       <div className="absolute inset-0">
         {/* 播放器铺满整页；滚轮/↑↓ 在当前 tab 源内切上一部/下一部剧；
             封面给播放器做占位——切剧的取流间隙显示下一部剧的封面而非黑屏 */}
