@@ -395,9 +395,12 @@ export function PlayerView({
     [seriesId, vidIndex, setTarget],
   );
 
-  // ---- 沉浸流悬浮层：静止 3 秒后信息/互动栏/控制栏整体淡出，动一下即回 ----
+  // ---- 沉浸流悬浮层：鼠标在画面内就常显，移出画面即隐藏 ----
+  // 第三方同款：光标停在画面上（哪怕一动不动）控制栏不该消失——
+  // 「3 秒不动就藏」逼着用户不停晃鼠标，反而更打扰。
   // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
   const [paused, setPaused] = useState(true);
+  const [stageHovered, setStageHovered] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
   /** 隐藏倒计时的代际号：每次唤醒递增，倒计时 effect 随之重启 */
   const [chromeTick, setChromeTick] = useState(0);
@@ -409,23 +412,29 @@ export function PlayerView({
     const stage = stageRef.current;
     if (!stage) return;
     stage.addEventListener('mousemove', wakeChrome);
-    stage.addEventListener('mouseenter', wakeChrome);
-    const onLeave = () => setChromeVisible(false);
+    const onEnter = () => {
+      setStageHovered(true);
+      setChromeVisible(true);
+    };
+    const onLeave = () => {
+      setStageHovered(false);
+      setChromeVisible(false);
+    };
+    stage.addEventListener('mouseenter', onEnter);
     stage.addEventListener('mouseleave', onLeave);
     return () => {
       stage.removeEventListener('mousemove', wakeChrome);
-      stage.removeEventListener('mouseenter', wakeChrome);
+      stage.removeEventListener('mouseenter', onEnter);
       stage.removeEventListener('mouseleave', onLeave);
     };
   }, [wakeChrome]);
-  // 隐藏倒计时。挂载即启动（此前只有鼠标动过才第一次启动——页面打开后不动
-  // 鼠标，简介/互动栏就永远悬着，这正是「没有空闲隐藏」的根源）；
-  // 暂停时不倒计时，画面停住却把界面全藏了只会像卡死。
+  // 隐藏倒计时：只管「光标不在画面上」的场景（键盘快捷键唤醒后没人动
+  // 鼠标，亮 3 秒再收）。光标在画面内（stageHovered）或暂停时常显不倒计时。
   useEffect(() => {
-    if (paused) return;
+    if (paused || stageHovered) return;
     const timer = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
     return () => clearTimeout(timer);
-  }, [paused, chromeTick]);
+  }, [paused, stageHovered, chromeTick]);
 
   // 悬浮层整体可见性：任一面板（选集/评论/弹幕设置/音量条）打开或暂停时常显，
   // 其余由上面的倒计时裁决。简介/互动栏/控制栏/顶部杂物全部吃这一个值，
