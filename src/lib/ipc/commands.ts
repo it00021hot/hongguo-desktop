@@ -133,8 +133,12 @@ export const series = {
 // ---------------------------------------------------------------- 发现（推荐信息流）
 
 export const discover = {
-  feed: (offset?: number) =>
-    call<FeedPage>('discover_feed', offset != null ? { offset } : undefined, feedPageSchema),
+  feed: (offset?: number, contentType = 0) =>
+    call<FeedPage>(
+      'discover_feed',
+      offset != null ? { offset, contentType } : { contentType },
+      feedPageSchema,
+    ),
   webCover: (seriesId: string) =>
     call<string | null>('web_cover', { seriesId }, z.string().nullable()),
 };

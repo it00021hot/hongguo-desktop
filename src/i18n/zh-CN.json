@@ -497,6 +497,8 @@
     "playCount": "{count}次播放",
     "empty": "推荐流暂时为空",
     "tabFeed": "推荐",
+    "tabComic": "漫剧",
+    "tabHuman": "真人",
     "tabHot": "热播",
     "tabNew": "新剧"
   },

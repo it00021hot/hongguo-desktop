@@ -392,6 +392,8 @@ export const feedItemSchema = z.object({
   commentCount: z.number(),
   score: z.number(),
   tags: z.array(z.string()),
+  /** 内容类型：1=真人剧，1004=漫剧（0/未知=不过滤） */
+  contentType: z.number(),
 });
 
 export const feedPageSchema = z.object({

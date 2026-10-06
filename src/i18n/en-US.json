@@ -497,6 +497,8 @@
     "playCount": "{count} plays",
     "empty": "The feed is empty right now",
     "tabFeed": "For You",
+    "tabComic": "Anime",
+    "tabHuman": "Live-action",
     "tabHot": "Trending",
     "tabNew": "New"
   },

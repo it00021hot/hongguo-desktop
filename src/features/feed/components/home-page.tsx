@@ -28,8 +28,15 @@ import { cn } from '@/lib/utils';
  * 真正切过去时只剩取流时间。
  */
 
-/** 顶部 tab 的三个源：官方推荐流 / 热播榜 / 新剧（全部频道）。 */
-type StreamSource = 'feed' | 'hot' | 'new';
+/** 顶部 tab 的五个源：推荐流（全部/漫剧/真人，同一接口按内容类型过滤） / 热播榜 / 新剧。 */
+type StreamSource = 'feed' | 'comic' | 'human' | 'hot' | 'new';
+
+/** 推荐流源 → 后端内容类型（0=全部，1=真人，1004=漫剧；见 discover.rs）。 */
+const FEED_CONTENT_TYPE: Partial<Record<StreamSource, number>> = {
+  feed: 0,
+  comic: 1004,
+  human: 1,
+};
 
 /** 源内一条：沉浸流只消费这几个身份字段。 */
 interface StreamItem {
@@ -42,6 +49,8 @@ interface StreamItem {
 
 const TABS: { id: StreamSource; labelKey: string }[] = [
   { id: 'feed', labelKey: 'home.tabFeed' },
+  { id: 'comic', labelKey: 'home.tabComic' },
+  { id: 'human', labelKey: 'home.tabHuman' },
   { id: 'hot', labelKey: 'home.tabHot' },
   { id: 'new', labelKey: 'home.tabNew' },
 ];
@@ -59,22 +68,24 @@ const ENTRY_PAGE = 12;
 const ENTRY_CAP = 8;
 const ENTRY_KEY = 'hongguo.feedEntry';
 
-function readEntry(): Record<'feed' | 'new', number> {
+type FeedEntryKey = 'feed' | 'comic' | 'human' | 'new';
+
+function readEntry(): Record<FeedEntryKey, number> {
+  const zero: Record<FeedEntryKey, number> = { feed: 0, comic: 0, human: 0, new: 0 };
   try {
-    const raw = JSON.parse(window.localStorage.getItem(ENTRY_KEY) ?? '') as Record<
-      'feed' | 'new',
-      number
+    const raw = JSON.parse(window.localStorage.getItem(ENTRY_KEY) ?? '') as Partial<
+      Record<FeedEntryKey, number>
     >;
-    return {
-      feed: Number.isFinite(raw.feed) && raw.feed >= 0 ? raw.feed : 0,
-      new: Number.isFinite(raw.new) && raw.new >= 0 ? raw.new : 0,
-    };
+    for (const k of Object.keys(zero) as FeedEntryKey[]) {
+      if (Number.isFinite(raw[k]) && (raw[k] as number) >= 0) zero[k] = raw[k] as number;
+    }
+    return zero;
   } catch {
-    return { feed: 0, new: 0 };
+    return zero;
   }
 }
 
-function writeEntry(v: Record<'feed' | 'new', number>): void {
+function writeEntry(v: Record<FeedEntryKey, number>): void {
   try {
     window.localStorage.setItem(ENTRY_KEY, JSON.stringify(v));
   } catch {
@@ -87,23 +98,46 @@ const entryCursor = readEntry();
 let advancedThisSession = false;
 
 /** 入口前进一批（到上限回绕）。返回前进后的值。 */
-function advanceEntry(key: 'feed' | 'new'): number {
+function advanceEntry(key: FeedEntryKey): number {
   const next = entryCursor[key] + ENTRY_PAGE;
   entryCursor[key] = next >= ENTRY_CAP * ENTRY_PAGE ? 0 : next;
   writeEntry(entryCursor);
   return entryCursor[key];
 }
 
+const SOURCE_KEY = 'hongguo.feedSource';
+
+function readSource(): StreamSource {
+  try {
+    const v = window.localStorage.getItem(SOURCE_KEY) as StreamSource | null;
+    if (v && TABS.some((t) => t.id === v)) return v;
+  } catch {
+    // 读不到就用默认
+  }
+  return 'feed';
+}
+
 export function HomePage() {
-  const [source, setSource] = useState<StreamSource>('feed');
+  const [source, setSource] = useState<StreamSource>(readSource);
+  const pickSource = (id: StreamSource) => {
+    setSource(id);
+    try {
+      window.localStorage.setItem(SOURCE_KEY, id);
+    } catch {
+      // 存不进只影响下次启动
+    }
+  };
   /** 每源独立游标：切 tab 回来还在上次刷到的位置（流式源从入口游标起步）。 */
   const [indexes, setIndexes] = useState<Record<StreamSource, number>>({
     feed: entryCursor.feed,
+    comic: entryCursor.comic,
+    human: entryCursor.human,
     hot: 0,
     new: entryCursor.new,
   });
 
-  const feed = useFeed();
+  const isFeedSource = FEED_CONTENT_TYPE[source] != null;
+  const feed = useFeed(FEED_CONTENT_TYPE[source] ?? 0);
   const hot = useRank('all', 'ranklist_hot_sc', '');
   const fresh = useNewDrama(2);
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
@@ -114,7 +148,7 @@ export function HomePage() {
   const hotItems = hot.data?.items ?? [];
   const freshItems = fresh.items;
   const items: StreamItem[] =
-    source === 'feed'
+    isFeedSource
       ? feedItems
       : source === 'hot'
         ? hotItems.map((i) => ({
@@ -131,10 +165,13 @@ export function HomePage() {
           }));
 
   // 尾部翻页能力（热榜是单页，没有更多）
-  const hasMore = source === 'feed' ? feed.hasMore : source === 'new' ? fresh.hasMore : false;
-  const isFetchingMore =
-    source === 'feed' ? feed.isFetchingMore : source === 'new' ? fresh.isFetchingMore : false;
-  const loadMore = source === 'feed' ? feed.loadMore : source === 'new' ? fresh.loadMore : null;
+  const hasMore = isFeedSource ? feed.hasMore : source === 'new' ? fresh.hasMore : false;
+  const isFetchingMore = isFeedSource
+    ? feed.isFetchingMore
+    : source === 'new'
+      ? fresh.isFetchingMore
+      : false;
+  const loadMore = isFeedSource ? feed.loadMore : source === 'new' ? fresh.loadMore : null;
 
   // 入口游标可能越界。推荐流保留「等下一批」：链式翻页通常一两页就位，
   // 画面继续播上一部等一下值得。**新剧源不等**——它的入口游标每次启动
@@ -142,7 +179,7 @@ export function HomePage() {
   // 表现就是「切新剧没反应」；直接落到当前列表尾部，后台继续把后面的
   // 页拉齐，随后自然往前走。
   const rawIndex = indexes[source];
-  const pending = source === 'feed' && hasMore && items.length <= rawIndex;
+  const pending = isFeedSource && hasMore && items.length <= rawIndex;
   const index = pending ? rawIndex : Math.min(rawIndex, Math.max(0, items.length - 1));
   const current = pending ? undefined : items[index];
   const currentId = current?.seriesId;
@@ -211,6 +248,8 @@ export function HomePage() {
     if (advancedThisSession) return;
     advancedThisSession = true;
     advanceEntry('feed');
+    advanceEntry('comic');
+    advanceEntry('human');
     advanceEntry('new');
   }, []);
 
@@ -231,7 +270,7 @@ export function HomePage() {
   // **重复点当前 tab = 换一批**（「再刷一组」的最直接入口）；热播榜是
   // 固定榜单，重点不换。
   const pickTab = (id: StreamSource) => {
-    setSource(id);
+    pickSource(id);
     if (id === source && id !== 'hot') {
       const next = advanceEntry(id);
       setIndexes((prev) => ({ ...prev, [id]: next }));

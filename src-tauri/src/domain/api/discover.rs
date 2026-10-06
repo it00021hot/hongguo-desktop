@@ -48,7 +48,15 @@ pub struct FeedItem {
     /// 题材标签（来自 category_schema 字符串的二次解析）
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 内容类型：1=真人剧，1004=漫剧（推荐流「按类型刷」的过滤键）
+    #[serde(default)]
+    pub content_type: i64,
 }
+
+/// content_type 的已知取值（探针实测；AI 剧等新类型出现时再补）。
+pub const CONTENT_TYPE_ALL: i64 = 0;
+pub const CONTENT_TYPE_HUMAN: i64 = 1;
+pub const CONTENT_TYPE_COMIC: i64 = 1004;
 
 /// 一页信息流。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -75,6 +83,46 @@ pub async fn fetch_feed(offset: i64, env: &ApiEnv) -> AppResult<FeedPage> {
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
     check_code(&value)?;
     parse_feed(value.get("data"))
+}
+
+/// 按内容类型过滤的推荐流：landpage 不认分类参数（实测全部忽略），
+/// 但条目带 `content_type`。要凑一批指定类型就得多翻几页（漫剧占比约
+/// 1/4，一批 12 条约需 3-4 页），这里在后端一次攒齐，前端照旧一次一页。
+///
+/// `content_type = 0`（[`CONTENT_TYPE_ALL`]）不过滤，退化为 [`fetch_feed`]。
+/// 翻页有上限（不让一次请求连环拉几十页），不够就给多少算多少；
+/// 返回的 `next_offset` 是**最后访问过的**页游标——前端续刷时从这里接着
+/// 攒，不会卡死在同一页。
+pub async fn fetch_feed_typed(
+    content_type: i64,
+    offset: i64,
+    env: &ApiEnv,
+) -> AppResult<FeedPage> {
+    if content_type == CONTENT_TYPE_ALL {
+        return fetch_feed(offset, env).await;
+    }
+    const MAX_PAGES: usize = 6;
+    const TARGET: usize = 12;
+    let mut items = Vec::new();
+    let mut cursor = offset;
+    let mut has_more = false;
+    for _ in 0..MAX_PAGES {
+        let page = fetch_feed(cursor, env).await?;
+        has_more = page.has_more;
+        cursor = page.next_offset;
+        items.extend(page.items.into_iter().filter(|i| i.content_type == content_type));
+        items.dedup_by(|a, b| a.series_id == b.series_id);
+        if items.len() >= TARGET || !has_more {
+            break;
+        }
+    }
+    items.truncate(TARGET);
+    Ok(FeedPage {
+        items,
+        has_more,
+        next_offset: cursor,
+        session_id: String::new(),
+    })
 }
 
 /// 业务错误码检查。
@@ -119,6 +167,7 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
             comment_count: int_field(raw, "comment_count"),
             score: num_field(raw, "score"),
             tags: parse_tags(raw.get("category_schema")),
+            content_type: int_field(raw, "content_type"),
         });
     }
     Ok(FeedPage {
@@ -238,6 +287,108 @@ mod probe {
     /// `cargo test probe_ -- --ignored --nocapture`
     fn anon_env() -> ApiEnv {
         ApiEnv::anonymous(crate::domain::model::ProxyConfig::default())
+    }
+
+    /// 推荐流内容分类参数探测：landpage 是否支持按内容类型（真人/漫剧/AI）
+    /// 过滤。返回条目的类型标记字段一并盘点——这是「推荐全是真人剧」
+    /// 问题的修法验证（hgplayer 走 multi_video_model 关联推荐，匿名设备
+    /// 拿不到个性化，landpage 分类过滤是可控替代）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_feed_content_type_params() {
+        let env = anon_env();
+        let try_case = |extra: Vec<(&str, String)>| -> Vec<(String, String)> {
+            let mut q = vec![("offset".to_string(), "0".to_string())];
+            for (k, v) in extra {
+                q.push((k.to_string(), v));
+            }
+            q
+        };
+        let cases: Vec<(&str, Vec<(&str, String)>)> = vec![
+            ("baseline", vec![]),
+            (
+                "category=comic_series_rank",
+                vec![("req_rank_category_id", "comic_series_rank".into())],
+            ),
+            (
+                "category=human",
+                vec![("req_rank_category_id", "human".into())],
+            ),
+            (
+                "category numeric=2",
+                vec![("req_rank_category_id", "2".into())],
+            ),
+            (
+                "video_type prefs comic",
+                vec![(
+                    "video_type_preferences_str",
+                    "[{\"video_type\":\"comic_series_rank\"}]".into(),
+                )],
+            ),
+            (
+                "tab_type comic",
+                vec![("tab_type", "32".into()), ("tab_index", "3".into())],
+            ),
+        ];
+        for (name, extra) in cases {
+            let body = serde_json::to_vec(&serde_json::json!({ "biz_param": {} })).unwrap();
+            let bytes = match super::super::client::api_call_full(
+                API_ORIGIN,
+                LANDPAGE_PATH,
+                Some(body),
+                &try_case(extra),
+                &env,
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    println!("[feed-type] {name}: ERR {e}");
+                    continue;
+                }
+            };
+            let v: Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    println!("[feed-type] {name}: 非JSON({})", e);
+                    continue;
+                }
+            };
+            let code = v.get("code").and_then(Value::as_i64);
+            let items = v
+                .pointer("/data/video_data")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            // 类型标记候选字段：条目级 video_type / sub_title_list / tags
+            let mut type_hits: Vec<String> = Vec::new();
+            for it in items.iter().take(8) {
+                for key in ["video_type", "category", "sub_title_list"] {
+                    if let Some(m) = it.get(key) {
+                        let s = match m {
+                            Value::String(s) => s.clone(),
+                            other => serde_json::to_string(other).unwrap_or_default(),
+                        };
+                        if s.len() < 120 && !type_hits.contains(&s) {
+                            type_hits.push(s);
+                        }
+                    }
+                }
+            }
+            let first_keys: Vec<String> = items
+                .first()
+                .and_then(|i| i.as_object().map(|o| o.keys().cloned().collect()))
+                .unwrap_or_default();
+            let typeish: Vec<&String> = first_keys
+                .iter()
+                .filter(|k| k.contains("type") || k.contains("category"))
+                .collect();
+            println!(
+                "[feed-type] {name}: code={code:?} items={} type_fields={typeish:?} markers={:?}",
+                items.len(),
+                &type_hits[..type_hits.len().min(6)]
+            );
+        }
     }
 
     #[tokio::test]
@@ -672,4 +823,35 @@ mod probe {
         }
     }
 
+}
+
+#[cfg(test)]
+mod probe_extra {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_feed_content_type_values() {
+        let env = ApiEnv::anonymous(crate::domain::model::ProxyConfig::default());
+        let body = serde_json::to_vec(&serde_json::json!({ "biz_param": {} })).unwrap();
+        let bytes = super::super::client::api_call_full(
+            API_ORIGIN,
+            LANDPAGE_PATH,
+            Some(body),
+            &[("offset".to_string(), "0".to_string())],
+            &env,
+        )
+        .await
+        .expect("feed");
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        let items = v.pointer("/data/video_data").and_then(Value::as_array).cloned().unwrap_or_default();
+        for it in items.iter() {
+            println!(
+                "[ctype] content_type={:?} tags={:?} title={:?}",
+                it.get("content_type"),
+                it.get("category_schema").and_then(Value::as_str).map(|s| &s[..s.len().min(90)]),
+                it.get("title").and_then(Value::as_str)
+            );
+        }
+    }
 }

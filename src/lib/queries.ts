@@ -51,7 +51,7 @@ import type {
  */
 const keys = {
   settings: ['settings'] as const,
-  feed: ['feed'] as const,
+  feed: (contentType: number) => ['feed', contentType] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
@@ -224,10 +224,10 @@ function feedItems(pages: FeedPage[]): FeedItem[] {
  * pages 存在 Query 缓存里：切到其它路由再回来秒出已拉内容，不闪骨架屏；
  * staleTime 内完全不重打，超时只后台刷新（配合 RefreshShade 无感过渡）。
  */
-export function useFeed() {
+export function useFeed(contentType = 0) {
   const query = useInfiniteQuery({
-    queryKey: keys.feed,
-    queryFn: ({ pageParam }) => discover.feed(pageParam),
+    queryKey: keys.feed(contentType),
+    queryFn: ({ pageParam }) => discover.feed(pageParam, contentType),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
     staleTime: 5 * 60_000,

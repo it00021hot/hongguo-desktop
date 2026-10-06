@@ -3,20 +3,22 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::discover::{fetch_feed, FeedPage};
+use crate::domain::api::discover::{fetch_feed_typed, FeedPage};
 use crate::error::AppResult;
 
-/// 拉一页推荐信息流。
+/// 拉一页推荐信息流（可按内容类型过滤）。
 ///
 /// `offset` 不给（或给 0）取首页；翻页传上一页的 `nextOffset`。
-/// 前端拿到的是 camelCase 序列化（`feedPageSchema`）。
+/// `contentType`：0=全部、1=真人剧、1004=漫剧——landpage 不认服务端
+/// 分类参数，过滤在后端多页攒批完成（见 `fetch_feed_typed`）。
 #[tauri::command]
 pub async fn discover_feed(
     state: State<'_, AppState>,
     offset: Option<i64>,
+    content_type: Option<i64>,
 ) -> AppResult<FeedPage> {
     let env = state.api_env();
-    fetch_feed(offset.unwrap_or(0), &env).await
+    fetch_feed_typed(content_type.unwrap_or(0), offset.unwrap_or(0), &env).await
 }
 
 /// 取一部剧的可渲染（webp）封面。
