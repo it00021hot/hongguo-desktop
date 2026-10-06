@@ -45,6 +45,45 @@ interface StreamItem {
   cover: string;
   /** 横版封面（信息流才有）：全屏窗口的占位图用它，竖版 3:4 拉伸铺满横屏会糊。 */
   horizCover: string;
+  /** 内容类型（信息流才有）：1=真人，1004=漫剧；口味统计的计数键 */
+  contentType: number;
+}
+
+/** 口味统计（localStorage 持久化）：看过哪类多，推荐 tab 就按哪类过滤。 */
+const TYPE_STATS_KEY = 'hongguo.typeStats';
+
+type TypeStats = Record<number, number>;
+
+function readTypeStats(): TypeStats {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(TYPE_STATS_KEY) ?? '') as TypeStats;
+    const out: TypeStats = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(k);
+      if (Number.isFinite(n) && n > 0 && Number.isFinite(v) && v > 0) out[n] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeTypeStats(v: TypeStats): void {
+  try {
+    window.localStorage.setItem(TYPE_STATS_KEY, JSON.stringify(v));
+  } catch {
+    // 存不进只影响下次启动的口味
+  }
+}
+
+/** 样本够多且一边倒时给出口味类型，否则 0（不过滤）。 */
+function dominantType(stats: TypeStats): number {
+  const total = Object.values(stats).reduce((a, b) => a + b, 0);
+  if (total < 5) return 0;
+  const sorted = Object.entries(stats).sort((a, b) => b[1] - a[1]);
+  const top = sorted[0];
+  if (!top) return 0;
+  return top[1] / total >= 0.6 ? Number(top[0]) : 0;
 }
 
 const TABS: { id: StreamSource; labelKey: string }[] = [
@@ -121,6 +160,8 @@ export function HomePage() {
   const [source, setSource] = useState<StreamSource>(readSource);
   const pickSource = (id: StreamSource) => {
     setSource(id);
+    const t = FEED_CONTENT_TYPE[id];
+    if (t === 1 || t === 1004) bumpType(t, 3);
     try {
       window.localStorage.setItem(SOURCE_KEY, id);
     } catch {
@@ -137,7 +178,23 @@ export function HomePage() {
   });
 
   const isFeedSource = FEED_CONTENT_TYPE[source] != null;
-  const feed = useFeed(FEED_CONTENT_TYPE[source] ?? 0);
+  /** 口味统计：看过（或主动选过）的类型记权重，推荐 tab 据此自适应过滤。 */
+  const [typeStats, setTypeStats] = useState<TypeStats>(readTypeStats);
+  const countedRef = useRef<Set<string>>(new Set());
+  const bumpType = useCallback((type: number, weight = 1) => {
+    if (type <= 0) return;
+    setTypeStats((prev) => ({ ...prev, [type]: (prev[type] ?? 0) + weight }));
+  }, []);
+  // updater 必须纯：落盘放 effect（hooks 编译器要求）
+  useEffect(() => {
+    writeTypeStats(typeStats);
+  }, [typeStats]);
+  // 推荐 tab 的语义 = 跟随口味：样本够多且集中时按主导类型过滤，
+  // 否则给官方混合流。漫剧/真人 tab 永远是显式指定的类型。
+  const recommendType = source === 'feed' ? dominantType(typeStats) : 0;
+  const feed = useFeed(
+    source === 'feed' ? recommendType : (FEED_CONTENT_TYPE[source] ?? 0),
+  );
   const hot = useRank('all', 'ranklist_hot_sc', '');
   const fresh = useNewDrama(2);
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
@@ -149,19 +206,27 @@ export function HomePage() {
   const freshItems = fresh.items;
   const items: StreamItem[] =
     isFeedSource
-      ? feedItems
+      ? feedItems.map((i) => ({
+          seriesId: i.seriesId,
+          title: i.title,
+          cover: i.cover,
+          horizCover: i.horizCover,
+          contentType: i.contentType,
+        }))
       : source === 'hot'
         ? hotItems.map((i) => ({
             seriesId: i.seriesId,
             title: i.title,
             cover: i.cover,
             horizCover: '',
+            contentType: 0,
           }))
         : freshItems.map((i) => ({
             seriesId: i.seriesId,
             title: i.title,
             cover: i.cover,
             horizCover: '',
+            contentType: 0,
           }));
 
   // 尾部翻页能力（热榜是单页，没有更多）
@@ -192,11 +257,16 @@ export function HomePage() {
    */
   const { data: currentSeries } = useSeriesEpisodes(currentId ?? '');
 
-  // 档案就位 → 设为播放目标（从第 1 集开始，看过的剧由 resumeAt 接进度）
+  // 档案就位 → 设为播放目标（从第 1 集开始，看过的剧由 resumeAt 接进度）。
+  // 顺带做口味记账：信息流条目每部只记一次（切回切出不重复加权）。
   useEffect(() => {
     if (!currentSeries) return;
     setTarget(currentSeries.seriesId, 1);
-  }, [currentSeries, setTarget]);
+    if (current && current.contentType > 0 && !countedRef.current.has(current.seriesId)) {
+      countedRef.current.add(current.seriesId);
+      bumpType(current.contentType);
+    }
+  }, [currentSeries, setTarget, current, bumpType]);
 
   // 占位封面：横版优先（竖版 3:4 被 object-cover 拉满横屏窗口=整屏发糊）；
   // 再挑 WebView 渲染得了的 URL。eagerProxy：HEIC 源不等 webp 网络请求，
@@ -253,15 +323,14 @@ export function HomePage() {
     advanceEntry('new');
   }, []);
 
-  const step = useCallback(
-    (dir: 1 | -1) => {
-      setIndexes((prev) => {
-        const max = Math.max(0, items.length - 1);
-        return { ...prev, [source]: Math.min(Math.max(prev[source] + dir, 0), max) };
-      });
-    },
-    [items.length, source],
-  );
+  // 不用手动 useCallback：依赖里的 source/长度每变一次本来就要新函数，
+  // React Compiler 能自动 memo；手动写反而和编译器打架（preserve-manual-memoization）。
+  const step = (dir: 1 | -1) => {
+    setIndexes((prev) => {
+      const max = Math.max(0, items.length - 1);
+      return { ...prev, [source]: Math.min(Math.max(prev[source] + dir, 0), max) };
+    });
+  };
 
   // 顶部 tab 胶囊条：渲染进播放器的 topChrome 插槽（跟随悬浮层淡出）。
   // 样式与排行榜/新剧的内容 tab 同一套主题语义色（选中 primary 底 +

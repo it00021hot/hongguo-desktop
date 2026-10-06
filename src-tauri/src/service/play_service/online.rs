@@ -261,10 +261,17 @@ async fn fill(
     settings: &Settings,
     prefetch: bool,
 ) -> AppResult<()> {
-    let cancelled = || !c.exists(vid, definition);
+    // 让位规则（不只看逐出）：用户滚走后条目虽被保留集留下（数据要保住，
+    // 弹回来秒切），但它的**下载**必须立即让位——串行队列只有一路，
+    // 被切走剧的整集下载拖住队头，当前剧就只能干等（「连滚几部后加载
+    // 很久」的根因）。预取（有界头部）除外。
+    let cancelled = || {
+        !c.exists(vid, definition)
+            || (!prefetch && c.current() != vid && !c.is_prefetch_marked(vid, definition))
+    };
     let _gate = FILL_GATE.acquire().await;
     if cancelled() {
-        log::info!("[Online] {vid} 已被切走，排队轮到时取消填充");
+        log::info!("[Online] {vid} 已被切走/让位，排队轮到时取消填充");
         return Ok(());
     }
     let reporter = ProgressReporter::new(app.clone(), vid.to_string());
@@ -375,7 +382,7 @@ pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
     let owned = vid.to_string();
     tokio::spawn(async move {
         let reporter = ProgressReporter::new(app.clone(), owned.clone());
-        let cancelled = || !c.exists(&owned, definition);
+        let cancelled = || !c.exists(&owned, definition) || c.current() != owned;
         let client = match crate::domain::api::client::build_client(&proxy) {
             Ok(cl) => cl,
             Err(e) => {
@@ -523,7 +530,7 @@ async fn fill_remaining_with_client(
     let mut cursor = 0u64;
     loop {
         if is_cancelled() {
-            log::info!("[Online] 填充中止（条目已被逐出）");
+            log::info!("[Online] 填充中止（条目已被逐出或已让位给当前集）");
             return Ok(());
         }
         // seek 提示在密文上落在更前方时跳过去；跳过的洞由回绕补齐

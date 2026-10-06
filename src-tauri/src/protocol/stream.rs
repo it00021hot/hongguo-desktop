@@ -584,6 +584,14 @@ impl StreamCache {
         self.prefetch.lock().retain(|(v, _)| v != vid);
     }
 
+    /// 这一条是否还在预取标记里（填充让位判定用）。
+    pub fn is_prefetch_marked(&self, vid: &str, definition: u32) -> bool {
+        self.prefetch
+            .lock()
+            .iter()
+            .any(|(v, d)| v == vid && *d == definition)
+    }
+
     /// 标记一条为预取（有界：超出 [`MAX_PREFETCH_MARKS`] 挤掉最老的）。
     pub fn mark_prefetch(&self, vid: &str, definition: u32) {
         let mut pf = self.prefetch.lock();
