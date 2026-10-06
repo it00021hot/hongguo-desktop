@@ -162,6 +162,12 @@ export function PlayerView({
    * 不带 key 的话新一集会拿着上一集的秒数去续播。
    */
   const lastKnown = useRef({ key: '', time: 0, duration: 0 });
+  /**
+   * 现在这条流属于哪一集（episodeKey）。信息流切剧时 play 请求在途、
+   * 旧流还在播（timeupdate 一直在来），不带这道闸会把旧画面的秒数
+   * 记到新剧头上——续播位置凭空串剧。
+   */
+  const srcKeyRef = useRef('');
 
   // 切集 / 加载中都会让 <video> 被卸载重建，新元素的倍速音量静音
   // 一律回到默认值，所以「用户设的值」要存在这里，每次渲染后再贴回元素。
@@ -281,6 +287,8 @@ export function PlayerView({
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它 */
   const playSrc = compatSrc ?? src;
+  /** 当前流的指纹：live/stalled 状态读时校验它，换流（切剧/切集/换清晰度）即失效 */
+  const streamKey = playSrc ?? '';
 
   useEvent<CompatProgress>(
     EVENTS.compatPlayProgress,
@@ -298,6 +306,7 @@ export function PlayerView({
       { seriesId, vidIndex, vid: ep?.vid },
       {
         onSuccess: (r) => {
+          srcKeyRef.current = episodeKey;
           setCompatResult({ key: episodeKey, url: r.url });
           setCompatProgress(null);
           toast.success(
@@ -394,8 +403,18 @@ export function PlayerView({
 
   /** 简介展开态：切剧重挂载自然收回。 */
   const [introExpanded, setIntroExpanded] = useState(false);
-  /** 当前 <video> 是否已真正出画（playing）：封面占位淡出的时机 */
-  const [videoLive, setVideoLive] = useState(false);
+  /**
+   * 当前流是否已出画 / 正在卡顿。两条状态都带流指纹（streamKey）：
+   * 信息流的 PlayerView 是复用的（不随切剧重建），不带指纹的话上一部剧
+   * 留下的「已出画」会原样漏给下一部——切剧黑屏期间加载胶囊和封面占位
+   * 全被跳过，正是「切剧=纯黑屏、一点反应都没有」的来源。
+   * 读时校验指纹：换流即失效，不用在 effect 里追着清 state。
+   */
+  const [live, setLive] = useState<{ key: string; on: boolean }>({ key: '', on: false });
+  const [stalled, setStalled] = useState<{ key: string; on: boolean }>({ key: '', on: false });
+  const videoLive = live.key === streamKey && live.on;
+  /** waiting 后时间轴恢复推进（timeupdate）或重新出画即视为不卡 */
+  const videoStalled = stalled.key === streamKey && stalled.on;
 
   // ---- 滚轮切换（hgplayer 同款）：沉浸流=上一部/下一部剧，播放页=切集 ----
   // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
@@ -444,6 +463,8 @@ export function PlayerView({
    */
   const persist = useCallback(
     (time: number, force = false) => {
+      // 流不是这一集的（信息流切剧、play 在途旧流还在播）：秒数不能串到新剧头上
+      if (srcKeyRef.current !== episodeKey) return;
       if (!seriesId || !vidIndex) return;
       const now = Date.now();
       if (!force && now - lastSaved.current < SAVE_INTERVAL) return;
@@ -499,7 +520,9 @@ export function PlayerView({
     if (!seriesId || !vidIndex) return;
 
     const video = videoRef.current;
-    if (video && video.currentTime > 0) {
+    // 只在元素里还是这一集的流时才续点（切清晰度场景）；信息流切剧时
+    // 元素里还是上一部剧的画面，读它的 currentTime 就是串剧
+    if (video && video.currentTime > 0 && srcKeyRef.current === episodeKey) {
       lastKnown.current = {
         key: episodeKey,
         time: video.currentTime,
@@ -515,6 +538,7 @@ export function PlayerView({
       { seriesId, vidIndex, definition },
       {
         onSuccess: (res) => {
+          srcKeyRef.current = episodeKey;
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
@@ -523,6 +547,7 @@ export function PlayerView({
           pendingSeek.current = res.error ? 0 : keepPosition > 0 ? keepPosition : res.resumeAt;
         },
         onError: (e) => {
+          srcKeyRef.current = '';
           setError(e.message);
           setSrc(null);
         },
@@ -708,16 +733,26 @@ export function PlayerView({
                   setPaused(false);
                   wakeChrome();
                 }}
+                onPlaying={() => {
+                  // 真正出画/恢复出画：封面占位退场、卡顿态收掉
+                  setLive({ key: streamKey, on: true });
+                  setStalled({ key: streamKey, on: false });
+                }}
                 onPause={(e) => {
                   setPaused(true);
                   persist(e.currentTarget.currentTime, true);
                 }}
-                onPlaying={() => setVideoLive(true)}
-                onLoadedData={() => setVideoLive(true)}
+                onLoadedData={() => setLive({ key: streamKey, on: true })}
+                // waiting：缓冲/seek 供不上数据，画面停住转黑——必须给出「在动」的信号，
+                // 否则网络一抖就是一帧黑屏挂在那里，观感等于卡死
+                onWaiting={() => setStalled({ key: streamKey, on: true })}
+                onCanPlay={() => setStalled({ key: streamKey, on: false })}
                 onTimeUpdate={(e) => {
                   // playing 事件在个别 WebView 起播路径上不触发：封面退场
                   // 不能只靠它一路信号，时间轴真的走起来了也算出画
-                  if (e.currentTarget.currentTime > 0.1) setVideoLive(true);
+                  if (e.currentTarget.currentTime > 0.1) setLive({ key: streamKey, on: true });
+                  // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
+                  setStalled({ key: streamKey, on: false });
                   persist(e.currentTarget.currentTime);
                 }}
                 onEnded={handleEnded}
@@ -885,8 +920,9 @@ export function PlayerView({
               )}
 
               {/* 流地址已就绪、首帧还没出画（解码/缓冲）的这一段也要有指示：
-                  只有封面垫着没有任何「正在动」的信号，观感就是卡死了。 */}
-              {!videoLive && !compat && (
+                  只有封面垫着没有任何「正在动」的信号，观感就是卡死了。
+                  播放中途 waiting（网络抖动/seek 供数）同样收进来。 */}
+              {(!videoLive || (videoStalled && !paused)) && !compat && (
                 <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center p-6">
                   <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
                     <Loader2 className="size-3.5 animate-spin" aria-hidden />
