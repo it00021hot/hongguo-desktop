@@ -281,6 +281,9 @@ pub struct BookshelfEntry {
     /// 收藏时间（unix 毫秒；0 = 服务端未给）
     #[serde(default)]
     pub collect_time_ms: i64,
+    /// 内容类型（1=真人，1004=漫剧；推荐流口味统计用）
+    #[serde(default)]
+    pub content_type: i64,
 }
 
 /// 拉账号的书架（收藏）列表。「我的收藏」页数据源；`target_user_id` 是
@@ -325,9 +328,14 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
             .iter()
             .find_map(|k| raw.get(*k).and_then(Value::as_i64))
             .unwrap_or(0);
+        let content_type = ["content_type", "video_type"]
+            .iter()
+            .find_map(|k| raw.get(*k).and_then(Value::as_i64))
+            .unwrap_or(0);
         items.push(BookshelfEntry {
             series_id,
             collect_time_ms,
+            content_type,
         });
     }
     Ok(items)

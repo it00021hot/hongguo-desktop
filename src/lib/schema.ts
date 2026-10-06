@@ -441,6 +441,8 @@ export type CommentPage = z.infer<typeof commentPageSchema>;
 export const bookshelfEntrySchema = z.object({
   seriesId: z.string(),
   collectTimeMs: z.number(),
+  /** 内容类型：1=真人，1004=漫剧（0=未知） */
+  contentType: z.number(),
 });
 export type BookshelfEntry = z.infer<typeof bookshelfEntrySchema>;
 

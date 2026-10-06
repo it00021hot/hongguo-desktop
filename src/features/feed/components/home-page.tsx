@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -14,6 +14,7 @@ import {
   useWebCover,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
+import { useAccount, useBookshelf, useWatchHistory } from '@/lib/queries';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -200,19 +201,60 @@ export function HomePage() {
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
 
+  // 登录后的「你的内容」种子：云端观看历史 + 书架（追更）排在推荐流最前
+  // ——同一个号打开就是你的剧，对齐第三方（它的首页就是书架/续看驱动）。
+  // 历史/书架条目没有横版封面与类型（书架有 content_type），标题等
+  // currentSeries 解析出来自然显示；未登录时种子为空，行为与从前一致。
+  const { data: account } = useAccount();
+  const { data: history } = useWatchHistory();
+  const { data: bookshelf } = useBookshelf();
+  const seedItems = useMemo<StreamItem[]>(() => {
+    if (!account) return [];
+    const seen = new Set<string>();
+    const out: StreamItem[] = [];
+    for (const h of history?.items ?? []) {
+      if (!h.seriesId || seen.has(h.seriesId)) continue;
+      seen.add(h.seriesId);
+      out.push({
+        seriesId: h.seriesId,
+        title: h.title,
+        cover: h.cover,
+        horizCover: '',
+        contentType: 0,
+      });
+    }
+    for (const b of bookshelf ?? []) {
+      if (!b.seriesId || seen.has(b.seriesId)) continue;
+      seen.add(b.seriesId);
+      out.push({
+        seriesId: b.seriesId,
+        title: '',
+        cover: '',
+        horizCover: '',
+        contentType: b.contentType,
+      });
+    }
+    return out;
+  }, [account, history, bookshelf]);
+
   // 三源统一成 StreamItem[]（rank/new 本身就是 RankItem，只取身份字段）
   const feedItems = feed.items;
   const hotItems = hot.data?.items ?? [];
   const freshItems = fresh.items;
   const items: StreamItem[] =
     isFeedSource
-      ? feedItems.map((i) => ({
-          seriesId: i.seriesId,
-          title: i.title,
-          cover: i.cover,
-          horizCover: i.horizCover,
-          contentType: i.contentType,
-        }))
+      ? [
+          ...seedItems,
+          ...feedItems
+            .filter((i) => !seedItems.some((seed) => seed.seriesId === i.seriesId))
+            .map((i) => ({
+              seriesId: i.seriesId,
+              title: i.title,
+              cover: i.cover,
+              horizCover: i.horizCover,
+              contentType: i.contentType,
+            })),
+        ]
       : source === 'hot'
         ? hotItems.map((i) => ({
             seriesId: i.seriesId,
@@ -255,7 +297,8 @@ export function HomePage() {
    * 滚轮切剧会在「正在准备」上白等一拍。预取 effect 已经把下一部剧的
    * 分集档案灌进同一份缓存，这里直接命中。
    */
-  const { data: currentSeries } = useSeriesEpisodes(currentId ?? '');
+  const seriesQuery = useSeriesEpisodes(currentId ?? '');
+  const currentSeries = seriesQuery.data;
 
   // 档案就位 → 设为播放目标（从第 1 集开始，看过的剧由 resumeAt 接进度）。
   // 顺带做口味记账：信息流条目每部只记一次（切回切出不重复加权）。
@@ -384,6 +427,20 @@ export function HomePage() {
         <Skeleton className="min-h-0 flex-1 rounded-xl" />
         <Skeleton className="h-4 w-1/3" />
         <Skeleton className="h-3 w-2/3" />
+      </div>
+    );
+  }
+  // 分集档案解析失败（含 Rust 重启后 invoke 挂起转超时）：必须给重试入口，
+  // 静默停在「还没有选择剧集」就是用户反复看到的那个神秘界面
+  if (seriesQuery.isError && current) {
+    return (
+      <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+        <p>{t('feed.loadFailed')}</p>
+        <p className="text-destructive text-xs">{String(seriesQuery.error)}</p>
+        <Button variant="outline" size="sm" onClick={() => void seriesQuery.refetch()}>
+          <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+          {t('feed.retry')}
+        </Button>
       </div>
     );
   }

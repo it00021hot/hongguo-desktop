@@ -119,7 +119,15 @@ export function useSeriesEpisodes(seriesId: string | null) {
   });
   return useQuery({
     queryKey: keys.seriesEpisodes(seriesId ?? ''),
-    queryFn: () => series.episodes(seriesId!),
+    // 挂起兜底：Rust 热重载重启会丢掉在途 invoke 的应答（promise 永不
+    // settle），30s 强制超时转成错误，让上层给出重试入口而不是永远空态
+    queryFn: () =>
+      Promise.race([
+        series.episodes(seriesId!),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('分集档案解析超时')), 30_000);
+        }),
+      ]),
     enabled: seriesId !== null,
   });
 }
