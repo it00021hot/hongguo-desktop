@@ -6,6 +6,13 @@ interface PlayerState {
   seriesId: string | null;
   /** 当前播放的集号 */
   vidIndex: number | null;
+  /**
+   * 选中剧连播（binge）：信息流里主动选了某集 = 要追这部，滚轮/↑↓
+   * 切集而不是换剧。null = 跟随信息流（滚动换剧）。
+   * 跟着剧走：setTarget 切到别的剧自动解除。
+   */
+  bingeSeriesId: string | null;
+  setBinge: (seriesId: string | null) => void;
   /** 弹幕设置面板开合（播放页/沉浸流共享，切集切剧不重置） */
   danmakuPanelOpen: boolean;
   setDanmakuPanelOpen: (open: boolean) => void;
@@ -34,6 +41,8 @@ interface PlayerState {
 export const usePlayerStore = create<PlayerState>((set) => ({
   seriesId: null,
   vidIndex: null,
+  bingeSeriesId: null,
+  setBinge: (seriesId) => set({ bingeSeriesId: seriesId }),
   danmakuPanelOpen: false,
   setDanmakuPanelOpen: (open) => set({ danmakuPanelOpen: open }),
   volumeOpen: false,
@@ -46,10 +55,15 @@ export const usePlayerStore = create<PlayerState>((set) => ({
     // 目标持久化：刷新/重启后播放器能恢复到正在看的这部剧这集
     // （进度由本地播放档案的 resumeAt 接上，见 PlayerPage 的恢复逻辑）
     writeLastTarget({ seriesId, vidIndex });
-    set({ seriesId, vidIndex });
+    set((s) => ({
+      seriesId,
+      vidIndex,
+      // 连播跟着剧走：切到别的剧自动解除锁定
+      bingeSeriesId: s.bingeSeriesId === seriesId ? s.bingeSeriesId : null,
+    }));
   },
   clear: () => {
     writeLastTarget(null);
-    set({ seriesId: null, vidIndex: null });
+    set({ seriesId: null, vidIndex: null, bingeSeriesId: null });
   },
 }));

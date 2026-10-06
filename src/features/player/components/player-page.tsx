@@ -186,6 +186,10 @@ export function PlayerView({
   const seriesId = usePlayerStore((s) => s.seriesId);
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
+  // 选中剧连播：锁定后滚轮/↑↓ 切集而不是跟随宿主页换剧
+  const bingeSeriesId = usePlayerStore((s) => s.bingeSeriesId);
+  const setBinge = usePlayerStore((s) => s.setBinge);
+  const inBinge = bingeSeriesId != null && bingeSeriesId === seriesId;
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
 
   const { data: settings, isPending: settingsPending } = useSettings();
@@ -201,6 +205,12 @@ export function PlayerView({
 
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 现在这条流属于哪一集（srcKeyRef 的 state 镜像，同点写入）。
+   * 渲染期据此判定「切换在途」：目标已变、新流未到——旧画面还在播，
+   * 但新剧的封面+加载胶囊要立即接管，否则用户看到的就是「切了没反应」。
+   */
+  const [srcKey, setSrcKey] = useState('');
   /**
    * 在线流断供的自动重试（带集指纹，读时校验，换集自动失效）。
    *
@@ -325,6 +335,8 @@ export function PlayerView({
       : baseSrc;
   /** 当前流的指纹：live/stalled 状态读时校验它，换流（切剧/切集/换清晰度）即失效 */
   const streamKey = playSrc ?? '';
+  /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
+  const switching = srcKey !== episodeKey;
 
   useEvent<CompatProgress>(
     EVENTS.compatPlayProgress,
@@ -343,6 +355,7 @@ export function PlayerView({
       {
         onSuccess: (r) => {
           srcKeyRef.current = episodeKey;
+          setSrcKey(episodeKey);
           setCompatResult({ key: episodeKey, url: r.url });
           setCompatProgress(null);
           toast.success(
@@ -389,10 +402,16 @@ export function PlayerView({
       if (!seriesId || !vidIndex) return;
       const next = vidIndex + delta;
       if (next < 1) return;
+      // 连播模式下滚到尾部要有交代，静默不动像坏了
+      const total = currentSeries?.episodes.length ?? 0;
+      if (total > 0 && next > total) {
+        toast.info(tf('player.lastEpisode', { index: total }));
+        return;
+      }
       setSlideDir(delta > 0 ? 1 : -1);
       setTarget(seriesId, next);
     },
-    [seriesId, vidIndex, setTarget],
+    [seriesId, vidIndex, currentSeries, setTarget],
   );
 
   // ---- 沉浸流悬浮层：鼠标在画面内就常显，移出画面即隐藏 ----
@@ -479,10 +498,12 @@ export function PlayerView({
       wheelLock.current = now;
       const dir: 1 | -1 = e.deltaY > 0 ? 1 : -1;
       setSlideDir(dir);
-      if (onWheelStep) onWheelStep(dir);
+      // 连播锁定时滚轮语义变为切集，不跟随宿主页换剧
+      if (inBinge) stepEpisode(dir);
+      else if (onWheelStep) onWheelStep(dir);
       else stepEpisode(dir);
     },
-    [seriesPanelOpen, downloading, onWheelStep, stepEpisode, wakeChrome],
+    [seriesPanelOpen, downloading, onWheelStep, stepEpisode, wakeChrome, inBinge],
   );
 
   // ---- 点击画面：唤醒悬浮层 + 抖音式播放/暂停 ----
@@ -586,6 +607,7 @@ export function PlayerView({
       {
         onSuccess: (res) => {
           srcKeyRef.current = episodeKey;
+          setSrcKey(episodeKey);
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
@@ -595,6 +617,7 @@ export function PlayerView({
         },
         onError: (e) => {
           srcKeyRef.current = '';
+          setSrcKey('');
           setError(e.message);
           setSrc(null);
         },
@@ -686,7 +709,8 @@ export function PlayerView({
           // 从详情/历史等**选定**剧进来 = 切上一集/下一集
           const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1;
           setSlideDir(dir);
-          if (onWheelStep) onWheelStep(dir);
+          if (inBinge) stepEpisode(dir);
+          else if (onWheelStep) onWheelStep(dir);
           else stepEpisode(dir);
           break;
         }
@@ -694,7 +718,7 @@ export function PlayerView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [stepEpisode, wakeChrome, onWheelStep]);
+  }, [stepEpisode, wakeChrome, onWheelStep, inBinge]);
 
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
@@ -750,7 +774,7 @@ export function PlayerView({
   // （playing）后交叉淡出。取流/解码的间隙里用户看到的是这部剧的封面而不是
   // 黑屏——「滚动切剧卡顿」的观感大头在这。取流中（!playSrc）同样垫着。
   const coverBackdrop = coverUrl ? (
-    <CoverBackdrop key={coverUrl} src={coverUrl} hidden={videoLive} />
+    <CoverBackdrop key={coverUrl} src={coverUrl} hidden={videoLive && !switching} />
   ) : null;
 
   return (
@@ -973,7 +997,9 @@ export function PlayerView({
                 pickerHint={onWheelStep ? t('player.pickerBingeHint') : undefined}
                 onPickEpisode={(idx) => {
                   setTarget(seriesId, idx);
-                  if (onWheelStep) void navigate({ to: '/player' });
+                  // 信息流里主动选了某集 = 要追这部：原地锁定本剧连播
+                  // （滚轮/↑↓ 切集 + 左上角亮出连播指示），画面无缝续播
+                  if (onWheelStep) setBinge(seriesId);
                 }}
               />
 
@@ -999,7 +1025,7 @@ export function PlayerView({
               {/* 流地址已就绪、首帧还没出画（解码/缓冲）的这一段也要有指示：
                   只有封面垫着没有任何「正在动」的信号，观感就是卡死了。
                   播放中途 waiting（网络抖动/seek 供数）同样收进来。 */}
-              {(!videoLive || (videoStalled && !paused)) && !compat && (
+              {(switching || !videoLive || (videoStalled && !paused)) && !compat && (
                 <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center p-6">
                   <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
                     <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -1072,6 +1098,18 @@ export function PlayerView({
             <span className="rounded-full border border-red-500/30 bg-red-950/90 px-3 py-1 text-xs text-red-200">
               {error}
             </span>
+          )}
+          {inBinge && (
+            <div className="flex items-center gap-2 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm">
+              <span>{t('player.bingeActive')}</span>
+              <button
+                type="button"
+                onClick={() => setBinge(null)}
+                className="cursor-pointer underline-offset-2 opacity-80 hover:underline hover:opacity-100"
+              >
+                {t('player.bingeExit')}
+              </button>
+            </div>
           )}
           <div className="flex shrink-0 items-center gap-3 rounded-full bg-black/45 px-3 py-1 backdrop-blur-sm">
             <div className="flex items-center gap-1.5">

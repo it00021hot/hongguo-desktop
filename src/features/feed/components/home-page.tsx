@@ -136,10 +136,13 @@ export function HomePage() {
     source === 'feed' ? feed.isFetchingMore : source === 'new' ? fresh.isFetchingMore : false;
   const loadMore = source === 'feed' ? feed.loadMore : source === 'new' ? fresh.loadMore : null;
 
-  // 入口游标可能越界（下一批还在拉）：pending 期间不切换播放目标——
-  // 画面继续播上一次的剧，等这一批拉到位再过去，不闪播流尾部。
+  // 入口游标可能越界。推荐流保留「等下一批」：链式翻页通常一两页就位，
+  // 画面继续播上一部等一下值得。**新剧源不等**——它的入口游标每次启动
+  // 都前进（上限 96），而列表一页才十几条，等游标追上要链式拉好几页，
+  // 表现就是「切新剧没反应」；直接落到当前列表尾部，后台继续把后面的
+  // 页拉齐，随后自然往前走。
   const rawIndex = indexes[source];
-  const pending = source !== 'hot' && hasMore && items.length <= rawIndex;
+  const pending = source === 'feed' && hasMore && items.length <= rawIndex;
   const index = pending ? rawIndex : Math.min(rawIndex, Math.max(0, items.length - 1));
   const current = pending ? undefined : items[index];
   const currentId = current?.seriesId;
