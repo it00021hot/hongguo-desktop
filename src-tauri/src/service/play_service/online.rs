@@ -63,16 +63,25 @@ pub async fn prepare(
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
     let c = cache();
-    // 记下当前集：keep_only 保它、预填礼让它、切走后旧填充据此自杀
+    // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀
     c.set_current(vid);
-    // 一次只看一集：把别的集从内存里清掉。不清的话整季 250 集会把内存吃光。
-    // 显式标记的预取（下一部剧）豁免。
-    c.keep_only_protect_fetching(vid);
+    // 一次只看一集的**语义下有界保留**：当前集全部档位 + 显式预取 + 最近几条。
+    // 全清的话，信息流切剧目标一弹，正在被 <video> 读的那条流就被逐掉，
+    // 播放追上缓冲前沿就是 30s 超时 + MediaError（「视频处理失败」根因）。
+    c.retain_playing_set(vid);
 
-    // 不指定档位时用上一轮解析到的档位——缓存的键里必须有具体档位，
-    // 否则无从查起。顺带让「拉分集」与「起播」两个并发请求认到同一条缓存，
-    // 而不是各下一遍。
-    if let Some(want) = definition.or_else(|| c.auto_definition(vid)) {
+    // 不指定档位时先认上一轮解析到的档位——缓存的键里必须有具体档位，
+    // 否则无从查起。连 auto 记录都没有（重启后第一次、预取还没走到），
+    // 就认领同 vid 任一已就绪的条目：有现成的流，别把取流表+建流+填头部
+    // 整条链路再走一遍。顺带让「拉分集」与「起播」两个并发请求认到同一条缓存。
+    let want = match definition.or_else(|| c.auto_definition(vid)) {
+        Some(w) => Some(w),
+        None => c.ready_any(vid).map(|(d, _)| {
+            c.remember_auto(vid, d);
+            d
+        }),
+    };
+    if let Some(want) = want {
         if let Some(hit) = prepared(c, vid, want) {
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(app, vid, want);

@@ -104,22 +104,39 @@ pub fn serve(
         }
     };
 
+    // 「这条流还是不是眼前这条」：条目被逐出或同键重建（新 Arc）后，手里这份
+    // 的填充必然已经死亡，继续等只会等满 30s——立即报错，让前端的自动重试
+    // 尽快接手（重新 prepare 命中新条目，续播位置不丢）。
+    let still_current = {
+        let vid = vid.to_string();
+        let entry = entry.clone();
+        move || {
+            c.get(&vid, definition)
+                .is_some_and(|e| Arc::ptr_eq(&e, &entry))
+        }
+    };
+
     // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
     // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
     // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
-    let mode = match wait_until(Duration::from_secs(WAIT_TIMEOUT_SECS), || {
+    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+    let mode = loop {
+        if !still_current() {
+            log::warn!("[Stream] {vid}@{definition} 等待就绪时条目已被逐出/重建，立即放弃");
+            return Err("在线流已被替换，请重试".to_string());
+        }
         let prog = entry.progressive.lock().clone();
         if *entry.filled.lock() > 0 {
-            Some(None)
-        } else {
-            prog.map(Some)
+            break None;
         }
-    }) {
-        Some(m) => m,
-        None => {
+        if let Some(p) = prog {
+            break Some(p);
+        }
+        if std::time::Instant::now() >= deadline {
             log::warn!("[Stream] {vid}@{definition} 等待流就绪超时（{WAIT_TIMEOUT_SECS}s）");
             return Err("等待流就绪超时".to_string());
         }
+        std::thread::sleep(Duration::from_millis(50));
     };
 
     match mode {
@@ -129,13 +146,17 @@ pub fn serve(
             let buffer = entry.buffer.lock();
             Ok(respond(&buffer, parse_range(range_header, size), size))
         }
-        Some(prog) => serve_progressive(&prog, range_header),
+        Some(prog) => serve_progressive(&prog, range_header, &still_current),
     }}
 
 /// 渐进模式应答：把明文 Range 映射回密文区间，等齐、解密、拼装。
+///
+/// `still_current` 为假（条目被逐出/同键重建）时立即放弃等待——手里的
+/// 渐进流已经没人喂了，等满超时只是把断流拖长成 30 秒黑屏。
 fn serve_progressive(
     prog: &Arc<ProgressiveStream>,
     range_header: Option<&str>,
+    still_current: &impl Fn() -> bool,
 ) -> Result<ProtocolResponse, String> {
     let plain_len = prog.plain_len;
     let (start, end) = match parse_range(range_header, plain_len) {
@@ -160,17 +181,29 @@ fn serve_progressive(
     // 等依赖的密文区间。等之前给取流线程留 seek 提示：开放式/闭式 Range
     // 落在尚未下载的前方时，顺序填充按提示跳过去，用户不用干等到下完
     let needed = prog.needed(start, end);
-    if !needed.iter().all(|(a, b)| prog.sparse.covers(*a, *b)) {
-        if let Some((first, _)) = needed.iter().find(|(a, b)| !prog.sparse.covers(*a, *b)) {
-            prog.seek_hint.fetch_max(*first, Ordering::Release);
+    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+    loop {
+        match needed.iter().find(|(a, b)| !prog.sparse.covers(*a, *b)) {
+            None => break,
+            // 未覆盖时持续更新 seek 提示：填充线程按提示跳过来，越早越准
+            Some((first, _)) => {
+                prog.seek_hint.fetch_max(*first, Ordering::Release);
+            }
         }
-    }
-    if !prog.sparse.wait_cover(&needed, Duration::from_secs(WAIT_TIMEOUT_SECS)) {
-        // 典型成因：填充线程停摆/被逐出后重填未到，播放追上了填充前沿
-        log::warn!(
-            "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
-        );
-        return Err("等待流就绪超时".to_string());
+        if !still_current() {
+            log::warn!(
+                "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
+            );
+            return Err("在线流已被替换，请重试".to_string());
+        }
+        if std::time::Instant::now() >= deadline {
+            // 典型成因：填充线程停摆，播放追上了填充前沿
+            log::warn!(
+                "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
+            );
+            return Err("等待流就绪超时".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 
     let mut body = vec![0u8; (end - start) as usize];
@@ -213,23 +246,6 @@ fn stream_window() -> u64 {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     })
-}
-
-/// 轮询等待条件成立并取回结果，超时返回 `None`。
-///
-/// 协议 handler 跑在专用工作线程上，轮询足够且简单可靠
-/// （比在协议线程里架一套 tokio runtime 更不容易出死锁）。
-fn wait_until<T>(timeout: std::time::Duration, mut cond: impl FnMut() -> Option<T>) -> Option<T> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if let Some(v) = cond() {
-            return Some(v);
-        }
-        if std::time::Instant::now() >= deadline {
-            return None;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
 }
 
 /// 按 Range 切一段数据出来（整集模式）。
@@ -282,7 +298,6 @@ fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
 }
 
 /// 一档正在准备的流。
-#[derive(Default)]
 struct StreamEntry {
     /// 已解密的明文缓冲（整集模式）
     buffer: Mutex<Vec<u8>>,
@@ -299,6 +314,33 @@ struct StreamEntry {
     /// 播放页会对同一集发两次 `play_series`（拉分集 + 起播），两次都去下载
     /// 就是白下一整集，所以第二个要转为等待而不是重复发起。
     fetching: Mutex<bool>,
+    /// 最近一次被用到的时刻（LRU 指纹）。`get`/创建即触碰：
+    /// 协议层每次 Range 请求都会读条目，这正是「这条流还在被播放器读」
+    /// 的最直接证据，逐出策略据此留人。
+    last_used: Mutex<std::time::Instant>,
+}
+
+impl Default for StreamEntry {
+    fn default() -> Self {
+        Self {
+            buffer: Mutex::new(Vec::new()),
+            filled: Mutex::new(0),
+            size: Mutex::new(0),
+            progressive: Mutex::new(None),
+            definitions: Mutex::new(Vec::new()),
+            fetching: Mutex::new(false),
+            last_used: Mutex::new(std::time::Instant::now()),
+        }
+    }
+}
+
+/// 条目的内存占位（字节）：渐进流按明文总长计，整集按落盘明文计。
+fn entry_weight(e: &StreamEntry) -> u64 {
+    if let Some(p) = &*e.progressive.lock() {
+        p.plain_len
+    } else {
+        *e.size.lock()
+    }
 }
 
 /// 缓存条目：同一集的不同清晰度各占一条。
@@ -317,13 +359,28 @@ pub struct StreamCache {
     /// 缓存按 (vid, 档位) 分条目，不指定档位就没有键可查。记下上一轮的答案，
     /// 下一个不带档位的请求就能直接命中，不必再发一次接口调用。
     auto: Mutex<HashMap<String, u32>>,
-    /// 当前正在看的 vid。prepare 时设置；keep_only 只保它 + 显式预取。
+    /// 当前正在看的 vid。prepare 时设置；逐出策略只保它 + 显式预取 + 最近几条。
     current: Mutex<String>,
-    /// 显式预取的那一档（沉浸流「下一部剧」）。只保这一条，不再 blanket
-    /// 豁免全部 fetching——否则被切走的前一集会拖着整集下载占住串行队列，
-    /// 当前集只能黑屏干等（2026-10-06「切集后一直黑屏」的根因）。
-    prefetch: Mutex<Option<(String, u32)>>,
+    /// 显式预取的档位（沉浸流「下一部剧」），有界（[`MAX_PREFETCH_MARKS`]），
+    /// 新标记挤掉最老的。逐出策略额外保这些条目；填充礼让也认它。
+    prefetch: Mutex<Vec<(String, u32)>>,
 }
+
+/// 除当前集与显式预取外，再保留几条最近用过的流。
+///
+/// 信息流切剧的目标会在毫秒级来回弹（快速滚动、tab 连点），挂载在
+/// `<video>` 上的流永远比「当前目标」旧一拍到两拍——只保当前集的旧策略
+/// 会把正在被读的流逐掉，播放追上缓冲前沿就是 30s 超时 + MediaError
+/// （2026-10-06「视频处理失败」的根因）。多留几条，弹动就打不穿缓存。
+const KEEP_RECENT: usize = 3;
+
+/// 预取标记的上限。首页同一时刻最多预取一部，快速连滚会短暂多出一两
+/// 个标记，上限取 2 足够，防止标记无界增长把逐出豁免变成内存漏洞。
+const MAX_PREFETCH_MARKS: usize = 2;
+
+/// 在线流缓存的总字节预算。当前集 + 预取 + 最近保留加起来超过它时，
+/// 从最旧的「非当前」条目开始逐出，直到回到预算内。
+const RETAIN_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 
 impl StreamCache {
     /// 取或创建一个条目。
@@ -332,22 +389,31 @@ impl StreamCache {
             vid: vid.to_string(),
             definition,
         };
-        let mut guard = self.entries.lock();
-        guard
+        let entry = self
+            .entries
+            .lock()
             .entry(key)
             .or_insert_with(|| Arc::new(StreamEntry::default()))
-            .clone()
+            .clone();
+        *entry.last_used.lock() = std::time::Instant::now();
+        entry
     }
 
-    /// 查一个条目。
+    /// 查一个条目。读到即触碰（LRU）：协议层的 Range 请求都走这里，
+    /// 「还在被播放器读」由这条路径自然记账。
     pub fn get(&self, vid: &str, definition: u32) -> Option<Arc<StreamEntry>> {
-        self.entries
+        let entry = self
+            .entries
             .lock()
             .get(&StreamKey {
                 vid: vid.to_string(),
                 definition,
             })
-            .cloned()
+            .cloned();
+        if let Some(e) = &entry {
+            *e.last_used.lock() = std::time::Instant::now();
+        }
+        entry
     }
 
     /// 这一档的条目是否还在（取流失败会被删掉）。
@@ -440,42 +506,107 @@ impl StreamCache {
             vid: vid.to_string(),
             definition,
         });
+        // 失败的预取不留标记：留着会让下一条预取被挤出界，还豁免一个不存在的条目
+        self.prefetch
+            .lock()
+            .retain(|(v, d)| v != vid || *d != definition);
     }
 
-    /// 同「只留一集」语义：只保当前集 + 显式预取的那一档。
+    /// 逐出策略（2026-10-06 二代）：换当前集时保留——
     ///
-    /// 不再 blanket 豁免全部 fetching（旧做法）：被切走的前一集若还在
-    /// 填充，会占住全局串行队列把当前集堵成黑屏——它的条目被逐出后，
-    /// 填充循环据 `exists` 自行中止，队列立刻让给当前集。
-    pub fn keep_only_protect_fetching(&self, vid: &str) {
-        let prefetch = self.prefetch.lock().clone();
-        self.entries.lock().retain(|k, _| {
-            k.vid == vid
-                || prefetch
-                    .as_ref()
-                    .map(|(v, d)| *v == k.vid && *d == k.definition)
-                    .unwrap_or(false)
-        });
+    /// 1. 当前 vid 的全部档位；
+    /// 2. 显式预取的条目（有界标记）；
+    /// 3. 最近用过的至多 [`KEEP_RECENT`] 条其它条目（LRU 指纹来自 `get`）；
+    ///
+    /// 之后按总字节预算（[`RETAIN_BUDGET_BYTES`]）从最旧的非当前条目继续逐。
+    ///
+    /// 为什么不只保当前集：信息流切剧的目标会毫秒级来回弹，挂载在
+    /// `<video>` 上的流永远比「当前目标」旧一到两拍——把它逐掉，播放
+    /// 追上缓冲前沿就是 30s 超时 + MediaError。但也不再 blanket 豁免全部
+    /// fetching：被切走太久、已经落到保留窗外的填充仍会据 `exists` 自行
+    /// 中止，串行队列照样立刻让给当前集。
+    pub fn retain_playing_set(&self, vid: &str) {
+        self.retain_with(vid, KEEP_RECENT, RETAIN_BUDGET_BYTES);
     }
 
-    /// 记下当前正在看的 vid（prepare 时调用；keep_only 与填充礼让据此判断）。
-    pub fn set_current(&self, vid: &str) {
-        *self.current.lock() = vid.to_string();
-        // 升格为当前的那条预取不再是预取
-        let mut pf = self.prefetch.lock();
-        if pf.as_ref().map(|(v, _)| v == vid).unwrap_or(false) {
-            *pf = None;
+    /// [`Self::retain_playing_set`] 的可注入形态（测试用）。
+    fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
+        let prefetch = self.prefetch.lock().clone();
+        let mut entries = self.entries.lock();
+        let is_marked =
+            |k: &StreamKey| prefetch.iter().any(|(v, d)| v == &k.vid && *d == k.definition);
+
+        // 候选逐出集：非当前、非预取。按最近使用降序，窗口外即逐出。
+        let mut others: Vec<(StreamKey, std::time::Instant, u64)> = entries
+            .iter()
+            .filter(|(k, _)| k.vid != vid && !is_marked(k))
+            .map(|(k, e)| {
+                (
+                    StreamKey {
+                        vid: k.vid.clone(),
+                        definition: k.definition,
+                    },
+                    *e.last_used.lock(),
+                    entry_weight(e),
+                )
+            })
+            .collect();
+        others.sort_by(|a, b| b.1.cmp(&a.1));
+        for (k, _, _) in others.iter().skip(keep_recent) {
+            entries.remove(k);
+        }
+
+        // 字节预算：从最旧的非当前条目开始逐，直到回到预算内。
+        // 预算优先于条数：刚被窗口留下的条目一样可能因预算出局。
+        let mut total: u64 = entries.values().map(|e| entry_weight(e)).sum();
+        if total <= budget {
+            return;
+        }
+        others.sort_by(|a, b| a.1.cmp(&b.1));
+        for (k, _, weight) in others {
+            if total <= budget {
+                break;
+            }
+            if entries.remove(&k).is_some() {
+                total = total.saturating_sub(weight);
+            }
         }
     }
 
-    /// 这一条是否被标记为预取。
+    /// 记下当前正在看的 vid（prepare 时调用；逐出策略与填充礼让据此判断）。
+    pub fn set_current(&self, vid: &str) {
+        *self.current.lock() = vid.to_string();
+        // 升格为当前的那(几)条预取不再是预取
+        self.prefetch.lock().retain(|(v, _)| v != vid);
+    }
+
+    /// 标记一条为预取（有界：超出 [`MAX_PREFETCH_MARKS`] 挤掉最老的）。
     pub fn mark_prefetch(&self, vid: &str, definition: u32) {
-        *self.prefetch.lock() = Some((vid.to_string(), definition));
+        let mut pf = self.prefetch.lock();
+        pf.retain(|(v, d)| v != vid || *d != definition);
+        pf.push((vid.to_string(), definition));
+        while pf.len() > MAX_PREFETCH_MARKS {
+            pf.remove(0);
+        }
     }
 
     /// 当前正在看的 vid。
     pub fn current(&self) -> String {
         self.current.lock().clone()
+    }
+
+    /// 同 vid 任一档位已就绪就带回 `(实际档位, 全部档位表)`。
+    ///
+    /// 「不指定档位」又没有 auto 记录时的兜底命中：条目键里必须带具体档位，
+    /// 查不到键不等于没有现成的流。宁可复用别的档位，也好过把取流表接口、
+    /// 建流、填头部整条链路再走一遍——那正是切剧黑屏待在身上的时间。
+    pub fn ready_any(&self, vid: &str) -> Option<(u32, Vec<VideoDefinition>)> {
+        let entries = self.entries.lock();
+        entries
+            .iter()
+            .filter(|(k, _)| k.vid == vid)
+            .find(|(_, e)| *e.filled.lock() > 0 || e.progressive.lock().is_some())
+            .map(|(k, e)| (k.definition, e.definitions.lock().clone()))
     }
 
     /// 预取条目是否需要「转正续填」：渐进已注册但远没填满，且没有填充方。
@@ -525,6 +656,7 @@ impl StreamCache {
     pub fn clear(&self) {
         self.entries.lock().clear();
         self.auto.lock().clear();
+        self.prefetch.lock().clear();
     }
 }
 
@@ -622,19 +754,28 @@ mod tests {
     }
 
     #[test]
-    fn wait_until_returns_the_value_not_just_a_flag() {
-        let mut polls = 0;
-        let got = wait_until(Duration::from_secs(5), || {
-            polls += 1;
-            (polls >= 2).then_some(42u32)
-        });
-        assert_eq!(got, Some(42));
+    fn serve_fails_fast_when_entry_is_replaced_midwait() {
+        // 等待中的条目被逐出/同键重建后，手里那份永远不会有数据（它的填充
+        // 已随逐出死亡）——必须立即报错让前端自动重试接手，而不是等满
+        // 30s 才把断流交给用户（「视频处理失败」那次事故的收尾半段）。
+        let c = crate::service::play_service::online::cache();
+        c.remove("v-stale", 1080);
+        // 建一个空条目（无明文、无渐进）：serve 会进等待
+        c.set_definitions("v-stale", 1080, &[]);
+        let handle = std::thread::spawn(|| serve("v-stale", 1080, Some("bytes=0-")));
+        std::thread::sleep(Duration::from_millis(300));
+        // 同键重建 = 「切走又切回触发的重取」竞态
+        c.remove("v-stale", 1080);
+        c.set_definitions("v-stale", 1080, &[]);
+        let started = std::time::Instant::now();
+        let result = handle.join().expect("serve 线程不应 panic");
+        assert!(result.is_err(), "被替换的流应报错而不是返回空数据");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "应快速失败，不该等满 30s 超时"
+        );
     }
 
-    #[test]
-    fn wait_until_gives_up_at_the_deadline() {
-        assert_eq!(wait_until(Duration::ZERO, || None::<u32>), None);
-    }
 
     // ---- 清晰度切换：一集的多个档位互不干扰 ----
 
@@ -721,29 +862,117 @@ mod tests {
         assert!(!c.is_fetching("b", 1080), "别的 vid 不受影响");
     }
 
-    #[test]
-    fn keep_only_drops_other_episodes_but_spares_marked_prefetch() {
-        // 一次只看一集：不清掉别的集，整季 250 集会把内存吃光。
-        // 只保当前集 + 显式标记的预取（沉浸流「下一部剧」）——不再 blanket
-        // 豁免全部 fetching：被切走的前一集若还在填充，会占住串行队列
-        // 把当前集堵成黑屏（2026-10-06 实测）。
-        let c = StreamCache::default();
-        c.store("ep1", 1080, &[0u8; 100]);
-        c.store("ep2", 1080, &[0u8; 50]);
-        c.begin_fetch("ep3", 1080);
-        c.mark_prefetch("ep3", 1080);
-        c.keep_only_protect_fetching("ep2");
-        assert!(c.get("ep1", 1080).is_none());
-        assert!(c.get("ep2", 1080).is_some());
-        assert!(c.get("ep3", 1080).is_some(), "显式预取豁免");
-        c.end_fetch("ep3", 1080);
-        c.keep_only_protect_fetching("ep2");
-        assert!(c.get("ep3", 1080).is_some(), "预取标记与取流标志无关");
+    /// 免触碰的存在性检查：`get` 会刷新 LRU 指纹，断言里用它才不打乱时序。
+    fn present(c: &StreamCache, vid: &str, definition: u32) -> bool {
+        c.entries
+            .lock()
+            .contains_key(&StreamKey {
+                vid: vid.to_string(),
+                definition,
+            })
+    }
 
-        // 没标预取的在途条目照样清（它的填充会据 exists 自行中止）
-        c.begin_fetch("ep4", 1080);
-        c.keep_only_protect_fetching("ep2");
-        assert!(c.get("ep4", 1080).is_none(), "未标预取的不豁免");
+    #[test]
+    fn retain_keeps_current_marks_and_a_few_recent_others() {
+        // 换当前集不再「只留一集」：信息流切剧目标会毫秒级来回弹，
+        // 正在被 <video> 读的流必须还活着。保留 = 当前集 + 显式预取 +
+        // 最近 KEEP_RECENT 条；窗口外的照样逐（填充据 exists 自行中止，
+        // 串行队列不会被打断的填充堵死）。
+        let c = StreamCache::default();
+        c.store("cur", 1080, &[0u8; 10]);
+        c.store("marked", 1080, &[0u8; 10]);
+        c.mark_prefetch("marked", 1080);
+        // o1 最旧 … o4 最新（Instant 分辨率可能高于睡眠时长，逐个拉开）
+        for v in ["o1", "o2", "o3", "o4"] {
+            c.store(v, 1080, &[0u8; 10]);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        c.retain_playing_set("cur");
+        assert!(present(&c, "cur", 1080), "当前集必留");
+        assert!(present(&c, "marked", 1080), "显式预取必留");
+        assert!(present(&c, "o4", 1080), "最近的在保留窗内");
+        assert!(present(&c, "o3", 1080), "最近的在保留窗内");
+        assert!(present(&c, "o2", 1080), "最近的在保留窗内");
+        assert!(present(&c, "o1", 1080) == false, "最旧的被逐出");
+
+        // 换当前集后，旧当前集降级为「最近用过」，在窗口内不会被新目标清掉
+        c.set_current("o4");
+        c.retain_playing_set("o4");
+        assert!(
+            present(&c, "cur", 1080),
+            "刚切走的上一部仍在保留窗内（挂载的 <video> 可能还在读它）"
+        );
+    }
+
+    #[test]
+    fn retain_window_evicts_oldest_beyond_keep_recent() {
+        let c = StreamCache::default();
+        c.store("big-cur", 1080, &vec![0u8; 10]);
+        for i in 0..6 {
+            c.store(&format!("f{i}"), 1080, &vec![0u8; 10]);
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        c.retain_playing_set("big-cur");
+        assert!(present(&c, "big-cur", 1080), "当前集必留");
+        // 窗口 3 条：最旧的 f0、f1、f2 出局，f3、f4、f5 留下
+        assert!(!present(&c, "f0", 1080));
+        assert!(!present(&c, "f1", 1080));
+        assert!(!present(&c, "f2", 1080));
+        assert!(present(&c, "f3", 1080));
+        assert!(present(&c, "f4", 1080));
+        assert!(present(&c, "f5", 1080));
+    }
+
+    #[test]
+    fn retain_budget_evicts_oldest_first_until_under_budget() {
+        // 预算优先于条数：总字节超预算时按最旧优先逐，当前集豁免。
+        let c = StreamCache::default();
+        c.store("cur", 1080, &vec![0u8; 30]);
+        for i in 0..4 {
+            c.store(&format!("b{i}"), 1080, &vec![0u8; 10]);
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        // 总量 70 > 预算 50：逐最旧的 b0、b1（各 10B）后回到 50
+        c.retain_with("cur", 4, 50);
+        assert!(present(&c, "cur", 1080), "当前集即便最大也豁免");
+        assert!(!present(&c, "b0", 1080));
+        assert!(!present(&c, "b1", 1080));
+        assert!(present(&c, "b2", 1080), "回到预算内就停手");
+        assert!(present(&c, "b3", 1080));
+    }
+
+    #[test]
+    fn prefetch_marks_are_bounded() {
+        // 标记无界会把逐出豁免变成内存漏洞：只留最新 MAX_PREFETCH_MARKS 个。
+        let c = StreamCache::default();
+        c.mark_prefetch("p1", 1080);
+        c.mark_prefetch("p2", 1080);
+        c.mark_prefetch("p3", 1080);
+        assert_eq!(c.prefetch.lock().len(), super::MAX_PREFETCH_MARKS);
+        assert!(
+            !c.prefetch
+                .lock()
+                .iter()
+                .any(|(v, _)| v == "p1"),
+            "最老的标记被挤出"
+        );
+        // 转正（set_current）与删除（remove）都要摘标记
+        c.set_current("p3");
+        assert!(c.prefetch.lock().iter().all(|(v, _)| v != "p3"));
+        c.mark_prefetch("p9", 720);
+        c.remove("p9", 720);
+        assert!(c.prefetch.lock().iter().all(|(v, _)| v != "p9"));
+    }
+
+    #[test]
+    fn ready_any_returns_any_ready_definition_of_the_same_vid() {
+        let c = StreamCache::default();
+        assert!(c.ready_any("v-any").is_none(), "没有条目时无值");
+        c.set_definitions("v-any", 720, &[]);
+        assert!(c.ready_any("v-any").is_none(), "只有档位表不算就绪");
+        c.store("v-any", 720, &[0u8; 8]);
+        let (def, _) = c.ready_any("v-any").expect("有明文条目就应命中");
+        assert_eq!(def, 720);
     }
 
     #[test]

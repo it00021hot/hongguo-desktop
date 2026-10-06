@@ -15,10 +15,10 @@ use super::{cover, local, parse_stream_path, stream, COVER_SCHEME, LOCAL_SCHEME,
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
 ///
 /// ⚠️ stream/local 的取数**必须丢到后台线程**：macOS 的 WKURLSchemeHandler
-/// 在**主线程**上调本回调，而流的供给会阻塞等待数据就绪（`wait_until`/
-/// `wait_cover`，最长 30s）——在回调里同步等，等于每次视频请求等数据就把
-/// 整个 UI 冻住（「快速滚动几下就卡死」的根因；Windows 的 WebView2 回调在
-/// 非 UI 线程，开发期从未暴露）。`responder` 本就设计为可跨线程回包。
+/// 在**主线程**上调本回调，而流的供给会阻塞等待数据就绪（轮询循环，最长
+/// 30s）——在回调里同步等，等于每次视频请求等数据就把整个 UI 冻住
+/// （「快速滚动几下就卡死」的根因；Windows 的 WebView2 回调在非 UI 线程，
+/// 开发期从未暴露）。`responder` 本就设计为可跨线程回包。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         .register_asynchronous_uri_scheme_protocol(LOCAL_SCHEME, move |_ctx, request, responder| {
