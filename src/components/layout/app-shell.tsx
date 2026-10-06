@@ -71,8 +71,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             {/* 悬浮在视频画面上：无论应用是什么主题，这组按钮永远按暗色
                 配色渲染（局部强制 dark token）——亮色主题下前景色是近黑，
-                直接隐身在一帧黑画面/暗场景上（实测踩过）。 */}
-            <div className="dark flex shrink-0 items-center">
+                直接隐身在一帧黑画面/暗场景上（实测踩过）。text-foreground
+                必须显式给：ghost 按钮没有自己的文字色，光有 .dark 变量
+                不够——color 属性还是会从根节点继承亮色文字。 */}
+            <div className="dark flex shrink-0 items-center text-foreground">
               <ThemeSwitch />
               {!mac && <WindowButtons />}
             </div>
