@@ -148,6 +148,14 @@ export function PlayerView({
   const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  /**
+   * 最近一次切换的方向（1=下一个/向下滚，-1=上一个）。滚轮/↑↓/连播在
+   * 触发切换时记下，流地址变化的那次渲染据此决定新内容从下边还是上边
+   * 滑入——抖音式「内容跟手」的过渡感全靠这一个方向的符号。
+   * 事件写 state 而不是 ref：切换动作到流交换之间必然隔至少一次渲染，
+   * 渲染期读到的一定是本次切换的方向（渲染期读 ref 会被 react-hooks 拦）。
+   */
+  const [slideDir, setSlideDir] = useState<1 | -1>(1);
   const lastSaved = useRef(0);
   /** 云端进度上报计数（配合 persist 的 5s 节流折算 ~1 分钟一次） */
   const cloudCounter = useRef(0);
@@ -372,6 +380,7 @@ export function PlayerView({
       if (!seriesId || !vidIndex) return;
       const next = vidIndex + delta;
       if (next < 1) return;
+      setSlideDir(delta > 0 ? 1 : -1);
       setTarget(seriesId, next);
     },
     [seriesId, vidIndex, setTarget],
@@ -451,6 +460,7 @@ export function PlayerView({
       if (now - wheelLock.current < 400 || Math.abs(e.deltaY) < 15) return;
       wheelLock.current = now;
       const dir: 1 | -1 = e.deltaY > 0 ? 1 : -1;
+      setSlideDir(dir);
       if (onWheelStep) onWheelStep(dir);
       else stepEpisode(dir);
     },
@@ -657,6 +667,7 @@ export function PlayerView({
           // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
           // 从详情/历史等**选定**剧进来 = 切上一集/下一集
           const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1;
+          setSlideDir(dir);
           if (onWheelStep) onWheelStep(dir);
           else stepEpisode(dir);
           break;
@@ -736,6 +747,19 @@ export function PlayerView({
           onClick={onStageClick}
           className="relative min-h-0 flex-1 overflow-hidden bg-black"
         >
+          {/* 抖音式切换过渡：key 绑「实际供数的流」（取流中旧流继续播，
+              动画精确落在新内容出画的那一帧），内容整体按方向滑入
+              （下一个从下、上一个从上）+淡入——配合封面占位读作「翻页」，
+              而不是硬切。方向在事件里先写进 state 再换目标：切换动作到
+              流地址交换之间必然隔至少一次渲染，这次渲染读到的符号就是
+              本次切换的方向。 */}
+          <div
+            key={playSrc ?? episodeKey}
+            className={cn(
+              'absolute inset-0 ease-out animate-in fade-in duration-300',
+              slideDir === -1 ? 'slide-in-from-top-10' : 'slide-in-from-bottom-10',
+            )}
+          >
           {playSrc ? (
             <>
               {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
@@ -1006,6 +1030,7 @@ export function PlayerView({
               </div>
             </>
           )}
+          </div>
         </div>
 
         {/* 页面级杂物的浮层化：错误条 / 连播开关压在画面顶部**靠左**排布。

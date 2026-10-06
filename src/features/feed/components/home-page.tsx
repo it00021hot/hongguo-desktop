@@ -240,7 +240,7 @@ export function HomePage() {
           type="button"
           onClick={() => pickTab(tab.id)}
           className={cn(
-            'cursor-pointer rounded-md px-3.5 py-1 text-[13px] transition-colors',
+            'cursor-pointer rounded-md px-3.5 py-1 text-[13px] transition-[color,background-color,transform] active:scale-95',
             source === tab.id
               ? 'bg-red-500/15 font-medium text-red-400'
               : 'text-white/75 hover:text-white',
