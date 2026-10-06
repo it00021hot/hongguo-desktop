@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import { useAccount, useAuthRefresh } from '@/lib/queries';
 import { login } from '@/lib/ipc/commands';
@@ -136,6 +137,8 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
   const { data: account } = useAccount();
   const refreshAuth = useAuthRefresh();
   const [loginOpen, setLoginOpen] = useState(false);
+  // 退出登录是危险动作：清掉本机登录态，先确认再执行
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
 
   const label = account?.userName?.trim() || t('nav.accountFallback');
 
@@ -170,6 +173,7 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       .then(() => {
         refreshAuth();
         toast.success(t('nav.loggedOut'));
+        setLogoutConfirm(false);
       })
       .catch((e) => toast.error(String(e)));
   };
@@ -188,7 +192,7 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
         <Button
           variant="ghost"
           size="icon"
-          onClick={logout}
+          onClick={() => setLogoutConfirm(true)}
           className={cn('text-muted-foreground size-7 w-full', !collapsed && 'justify-start gap-2')}
           title={t('nav.logout')}
         >
@@ -196,6 +200,14 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
           {!collapsed && <span className="text-xs">{t('nav.logout')}</span>}
         </Button>
       )}
+      <ConfirmDialog
+        open={logoutConfirm}
+        onOpenChange={setLogoutConfirm}
+        title={t('nav.logoutConfirmTitle')}
+        description={t('nav.logoutConfirmBody')}
+        confirmLabel={t('nav.logout')}
+        onConfirm={logout}
+      />
       <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} onSuccess={refreshAuth} />
     </>
   );

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { login as loginApi } from '@/lib/ipc/commands';
 import { t } from '@/i18n';
 import type { AccountState } from '@/lib/schema';
@@ -23,11 +24,13 @@ export function AccountCard({
   onChanged: () => void;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
 
   const logout = async () => {
     try {
       await loginApi.logout();
       toast.success(t('settings.loggedOut'));
+      setLogoutConfirm(false);
       onChanged();
     } catch (e) {
       toast.error((e as Error).message);
@@ -51,7 +54,7 @@ export function AccountCard({
               {account.mobile.slice(0, 3)}****{account.mobile.slice(7)}
             </span>
             <div className="ml-auto flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => void logout()}>
+              <Button variant="outline" size="sm" onClick={() => setLogoutConfirm(true)}>
                 <LogOut className="size-4" />
                 {t('settings.logout')}
               </Button>
@@ -66,6 +69,14 @@ export function AccountCard({
             </Button>
           </div>
         )}
+        <ConfirmDialog
+          open={logoutConfirm}
+          onOpenChange={setLogoutConfirm}
+          title={t('nav.logoutConfirmTitle')}
+          description={t('nav.logoutConfirmBody')}
+          confirmLabel={t('settings.logout')}
+          onConfirm={() => void logout()}
+        />
         <LoginDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}

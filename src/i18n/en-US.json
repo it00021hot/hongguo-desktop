@@ -60,6 +60,8 @@
     "accountFallback": "Me",
     "login": "Sign in",
     "logout": "Sign out",
+    "logoutConfirmTitle": "Log out?",
+    "logoutConfirmBody": "This clears the login state on this device and you will need to sign in again. Cloud data such as likes and collections is unaffected.",
     "loggedOut": "Signed out"
   },
   "browse": {
