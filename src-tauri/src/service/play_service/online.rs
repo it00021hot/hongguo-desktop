@@ -530,10 +530,18 @@ async fn fill_remaining_with_client(
     let mut cursor = 0u64;
     loop {
         if is_cancelled() {
-            log::info!("[Online] 填充中止（条目已被逐出或已让位给当前集）");
+            log::info!(
+                "[Online][probe] 填充中止: downloaded={}/{} cursor={cursor}",
+                sparse.downloaded(),
+                total
+            );
             return Ok(());
         }
-        // seek 提示在密文上落在更前方时跳过去；跳过的洞由回绕补齐
+        // seek 提示 = 播放器此刻正等着要的区间。**无条件对齐**（可回跳）：
+        // 旧逻辑只在提示「更靠前」时才跳，前向填充跳过的洞里若有所需
+        // 碎片，填充永远不回去补，serve 只能等满 30s 超时——正是
+        // 「填充停摆/在线播放中断」的根因。对齐到已覆盖处时 next_gap
+        // 自然给出其后的第一个洞，前向进度不受影响。
         let hint_plain = prog.seek_hint.load(Ordering::Acquire);
         let hint_cipher = match &prog.plan {
             // 尾部-moov 布局下 plain == cipher，头部布局按计划映射一次
@@ -544,7 +552,7 @@ async fn fill_remaining_with_client(
                 .unwrap_or(hint_plain),
             None => hint_plain,
         };
-        if hint_cipher > cursor {
+        if hint_plain > 0 {
             cursor = hint_cipher;
         }
 
@@ -558,8 +566,13 @@ async fn fill_remaining_with_client(
 
         let Some((gap_start, gap_end)) = sparse.next_gap(cursor) else {
             if sparse.downloaded() >= total {
+                log::info!("[Online][probe] 填充自然完成 downloaded={total}");
                 return Ok(());
             }
+            log::info!(
+                "[Online][probe] 回绕补洞: downloaded={} cursor={cursor}",
+                sparse.downloaded()
+            );
             cursor = 0; // cursor 之后全满：回绕找剩下的洞
             continue;
         };
@@ -573,7 +586,21 @@ async fn fill_remaining_with_client(
             continue;
         }
         let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
-        let bytes = get_video_range(client, cdn_url, gap_start, fetch_end - 1).await?;
+        // 探针（排查填充停摆用）：区间请求的始末都留痕，卡在哪一段一目了然
+        let probe_at = std::time::Instant::now();
+        log::debug!("[Online][probe] 区间 {gap_start}-{fetch_end} 请求开始");
+        let bytes = match get_video_range(client, cdn_url, gap_start, fetch_end - 1).await {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("[Online][probe] 区间 {gap_start}-{fetch_end} 失败({e:?})");
+                return Err(e);
+            }
+        };
+        log::info!(
+            "[Online][probe] 区间 {gap_start}-{fetch_end} 返回 {}B 耗时{}ms",
+            bytes.len(),
+            probe_at.elapsed().as_millis()
+        );
         let want = fetch_end - gap_start;
         let got = bytes.len() as u64;
         if got == 0 {
