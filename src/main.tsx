@@ -35,3 +35,5 @@ createRoot(container).render(
     </QueryClientProvider>
   </StrictMode>,
 );
+
+// dev-reload

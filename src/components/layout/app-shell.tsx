@@ -73,12 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             data-tauri-drag-region="deep"
             className="flex h-14 shrink-0 items-center justify-between gap-4 border-b pl-6"
           >
-            <div className="grid gap-0.5">
-              <h1 className="truncate text-base font-semibold">{t(`nav.${navKey}.title`)}</h1>
-              <p className="text-muted-foreground hidden truncate text-xs md:block">
-                {t(`nav.${navKey}.description`)}
-              </p>
-            </div>
+            <h1 className="truncate text-base font-semibold">{t(`nav.${navKey}.title`)}</h1>
             <div className="flex shrink-0 items-center">
               <ThemeSwitch />
               {!mac && <WindowButtons />}
