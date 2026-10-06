@@ -75,6 +75,7 @@ pub async fn login_sms_login(
                 mobile: mobile.clone(),
                 cookies,
                 user_name: user.name.clone(),
+                avatar_url: user.avatar_url.clone(),
                 user_id: user.user_id.clone(),
                 login_at: chrono::Utc::now().timestamp(),
                 token: token.clone(),
@@ -134,6 +135,7 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                                 mobile: flow.mobile.clone(),
                                 cookies,
                                 user_name: user.name.clone(),
+                                avatar_url: user.avatar_url.clone(),
                                 user_id: user.user_id.clone(),
                                 login_at: chrono::Utc::now().timestamp(),
                                 token,
@@ -253,6 +255,7 @@ pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResu
                         mobile: flow.mobile.clone(),
                         cookies,
                         user_name: user.name.clone(),
+                        avatar_url: user.avatar_url.clone(),
                         user_id: user.user_id.clone(),
                         login_at: chrono::Utc::now().timestamp(),
                         token,
@@ -317,6 +320,10 @@ pub async fn login_user_info(state: State<'_, AppState>) -> AppResult<PassportUs
     if let Some(mut acc) = state.settings().account {
         acc.user_name = user.name.clone();
         acc.user_id = user.user_id.clone();
+        // user_info 偶发不带头像时不清空已有值
+        if !user.avatar_url.is_empty() {
+            acc.avatar_url = user.avatar_url.clone();
+        }
         persist_account(&state, Some(acc))?;
     }
     Ok(user)

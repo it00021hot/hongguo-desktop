@@ -257,6 +257,9 @@ pub struct PassportUser {
     pub name: String,
     #[serde(default)]
     pub mobile: String,
+    /// 头像 URL（sms_login / user_info 响应的 data.avatar_url，无则空）
+    #[serde(default)]
+    pub avatar_url: String,
 }
 
 /// MFA 上行短信验证的轮询状态。
@@ -543,16 +546,17 @@ fn urlencode_component(s: &str) -> String {
 
 /// 登录后的当前用户信息（`/reading/user/info/v1/`，需要 cookie 环境）。
 pub async fn user_info(env: &ApiEnv) -> AppResult<PassportUser> {
-    let resp = api_call_full_response(
-        PASSPORT_ORIGIN,
+    // 抓包实证这族 reading 接口都在 lq 域（api5-normal-lq.fqnovel.com）、
+    // 走轻签名头；此前误挂 passport 域（novel.snssdk.com）上 404。
+    let bytes = super::client::api_call_reading(
+        super::danmaku::LQ_API_ORIGIN,
         "/reading/user/info/v1/",
         None,
-        &[],
         &[],
         env,
     )
     .await?;
-    let v: Value = serde_json::from_slice(&resp.bytes)
+    let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Auth(format!("user/info 响应不是 JSON: {e}")))?;
     check_error(&v, "读取用户信息失败")?;
     Ok(parse_user(&v))
@@ -696,12 +700,45 @@ fn parse_user(v: &Value) -> PassportUser {
         name: str_field(&inner, &["name", "user_name", "username", "nick_name"])
             .unwrap_or_default(),
         mobile: str_field(&inner, &["mobile"]).unwrap_or_default(),
+        avatar_url: str_field(&inner, &["avatar_url", "avatar"]).unwrap_or_default(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// parse_user 必须从登录响应 data 里带出头像 URL（2026-10-04 抓包
+    /// 样本：sms_login 的 data 顶层有 avatar_url；user_info 端点嵌套在
+    /// data.user_info 里，两种形态都兜）。
+    #[test]
+    fn parse_user_extracts_avatar_url() {
+        let sms_login = serde_json::json!({
+            "data": {
+                "app_id": 8662,
+                "user_id": 3836620877071530_i64,
+                "name": "用户1774591583619",
+                "avatar_url": "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5035712059~120x256.image",
+                "mobile": "15000000000"
+            }
+        });
+        let u = parse_user(&sms_login);
+        assert_eq!(u.avatar_url, "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5035712059~120x256.image");
+        assert_eq!(u.name, "用户1774591583619");
+
+        let user_info = serde_json::json!({
+            "data": { "user_info": {
+                "user_id": "2996633242445203",
+                "name": "用户1199378140235",
+                "avatar_url": "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image"
+            } }
+        });
+        let u2 = parse_user(&user_info);
+        assert_eq!(u2.avatar_url, "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image");
+
+        // 无头像不 panic，字段为空
+        assert_eq!(parse_user(&serde_json::json!({"data": {}})).avatar_url, "");
+    }
 
     /// 安全探测：无效号段（100 开头不是有效手机段）发码——服务端应拒绝
     /// 号码而不下发短信。验证「域名/签名/query/XOR 编码/mix_mode」整条
@@ -804,6 +841,24 @@ mod tests {
                 );
             }
             Err(e) => println!("[login] ✗ {e}"),
+        }
+    }
+
+    /// 安全探测：用现成会话 cookie 拉当前用户信息（不发短信、只读）。
+    ///HG_LOGIN_COOKIES="k=v; k=v" 指定 cookie；会话过期则打印错误。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_user_info_with_cookies() {
+        let mut env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        env.cookie = Some(std::env::var("HG_LOGIN_COOKIES").expect("HG_LOGIN_COOKIES 必填"));
+        match user_info(&env).await {
+            Ok(u) => println!(
+                "[probe-user] ✓ name={} id={} avatar={}",
+                u.name, u.user_id, u.avatar_url
+            ),
+            Err(e) => println!("[probe-user] ✗ {e}"),
         }
     }
 

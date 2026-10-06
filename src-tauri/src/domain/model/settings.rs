@@ -157,6 +157,9 @@ pub struct AccountState {
     /// 用户昵称（服务端返回，无则空）
     #[serde(default)]
     pub user_name: String,
+    /// 用户头像 URL（登录响应 data.avatar_url 下发，无则空）
+    #[serde(default)]
+    pub avatar_url: String,
     /// 用户 id（字符串形态）
     #[serde(default)]
     pub user_id: String,

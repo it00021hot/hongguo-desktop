@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { LogOut, LogIn, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { login as loginApi } from '@/lib/ipc/commands';
@@ -44,11 +44,17 @@ export function AccountCard({
           <UserRound className="size-4" />
           {t('settings.account')}
         </CardTitle>
-        <CardDescription>{t('settings.accountDesc')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {account ? (
           <div className="flex flex-wrap items-center gap-3">
+            {account.avatarUrl && (
+              <img
+                src={account.avatarUrl}
+                alt=""
+                className="size-8 rounded-full object-cover"
+              />
+            )}
             <Badge variant="secondary">{account.userName || account.userId}</Badge>
             <span className="text-muted-foreground font-mono text-xs">
               {account.mobile.slice(0, 3)}****{account.mobile.slice(7)}

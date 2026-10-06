@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
   Flame,
@@ -140,6 +140,19 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
   // 退出登录是危险动作：清掉本机登录态，先确认再执行
   const [logoutConfirm, setLogoutConfirm] = useState(false);
 
+  // 旧登录态库里没有头像：挂载后静默补拉一次 user_info（后端顺带刷新
+  // 昵称落库）。一次性 flag 兜底——若服务端就是不回头像，也不反复重试。
+  const avatarFetched = useRef(false);
+  const hasAccount = account != null;
+  useEffect(() => {
+    if (avatarFetched.current || !hasAccount || account?.avatarUrl) return;
+    avatarFetched.current = true;
+    login
+      .userInfo()
+      .then(() => refreshAuth())
+      .catch(() => {});
+  }, [hasAccount, account?.avatarUrl, refreshAuth]);
+
   const label = account?.userName?.trim() || t('nav.accountFallback');
 
   const row = (
@@ -155,7 +168,17 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       )}
       title={collapsed ? label : undefined}
     >
-      <UserRound className="size-4 shrink-0" />
+      {/* 有头像用官方头像（登录响应下发），没有退回通用图标——
+          这样折叠态下也能一眼分出登录/未登录 */}
+      {account?.avatarUrl ? (
+        <img
+          src={account.avatarUrl}
+          alt=""
+          className="size-5 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <UserRound className="size-4 shrink-0" />
+      )}
       {!collapsed && (
         <>
           <span className="truncate">{label}</span>
