@@ -2,8 +2,11 @@
 //!
 //! 实测口径（2026-10 直连探测锁定）：
 //! - 路径 `/reading/distribution/category/landpage/v1/`，**必须 POST**（GET 404）；
-//! - body 的 `biz_param` 内容被服务端忽略——**业务参数全在 URL query**
-//!   （`offset` 进 query 翻页生效、进 body 无效，同一批内容反复返回）；
+//! - **官方 body 协议**（2026-10-06 手机端抓包对齐）：业务参数全部在
+//!   POST body——`client_req_type/limit/offset/req_type:"only_content"/
+//!   select_items{genre:[...]}`。`genre` 取值：真人剧=short_play、
+//!   漫剧=comic_series、AI剧=ai_series（selector 面板的「体裁」维度，
+//!   服务端过滤，条目自带的 content_type 数字不可靠：1 里混着动漫）；
 //! - 响应信封 `{"code": 0, "data": {video_data[], next_offset, has_more, session_id}}`；
 //! - `video_data[].category_schema` 是**二次序列化的 JSON 字符串**（题材标签表）。
 //!
@@ -53,10 +56,10 @@ pub struct FeedItem {
     pub content_type: i64,
 }
 
-/// content_type 的已知取值（探针实测；AI 剧等新类型出现时再补）。
-pub const CONTENT_TYPE_ALL: i64 = 0;
-pub const CONTENT_TYPE_HUMAN: i64 = 1;
-pub const CONTENT_TYPE_COMIC: i64 = 1004;
+/// selector「体裁」维度（genre）的取值——官方推荐流的内容类型过滤键。
+pub const GENRE_HUMAN: &str = "short_play";
+pub const GENRE_COMIC: &str = "comic_series";
+pub const GENRE_AI: &str = "ai_series";
 
 /// 一页信息流。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -69,60 +72,39 @@ pub struct FeedPage {
     pub session_id: String,
 }
 
-/// 拉一页推荐信息流。
+/// 拉一页推荐信息流（官方 body 协议，genre 服务端过滤）。
 ///
 /// `offset` 传 0 取首页；翻页用上一页返回的 `next_offset`。
-pub async fn fetch_feed(offset: i64, env: &ApiEnv) -> AppResult<FeedPage> {
-    // 业务参数进 query（实测唯一生效的位置）；body 只是 POST 形状占位
-    let biz_query = vec![("offset".to_string(), offset.to_string())];
-    let body = serde_json::to_vec(&serde_json::json!({ "biz_param": {} }))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
+/// `genre`：`Some(GENRE_COMIC)` 只回漫剧、`Some(GENRE_HUMAN)` 只回真人剧，
+/// `None` 全部（官方「全部体裁」）。
+pub async fn fetch_feed(offset: i64, genre: Option<&str>, env: &ApiEnv) -> AppResult<FeedPage> {
+    let genre_ids: Vec<&str> = genre.into_iter().collect::<Vec<_>>();
+    let body = serde_json::to_vec(&serde_json::json!({
+        "client_req_type": 3,
+        "filter_ids": "",
+        "limit": 18,
+        "need_selector_panel": false,
+        "offset": offset,
+        "req_scene": "default",
+        "req_type": "only_content",
+        "select_items": {
+            "category_dim_epoch": [],
+            "category_dim_role": [],
+            "category_dim_theme": [],
+            "gender": [],
+            "genre": genre_ids,
+            "online_time": [],
+            "sort": []
+        },
+        "session_id": ""
+    }))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
 
-    let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &biz_query, env).await?;
+    let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
     check_code(&value)?;
     parse_feed(value.get("data"))
-}
-
-/// 按内容类型过滤的推荐流：landpage 不认分类参数（实测全部忽略），
-/// 但条目带 `content_type`。要凑一批指定类型就得多翻几页（漫剧占比约
-/// 1/4，一批 12 条约需 3-4 页），这里在后端一次攒齐，前端照旧一次一页。
-///
-/// `content_type = 0`（[`CONTENT_TYPE_ALL`]）不过滤，退化为 [`fetch_feed`]。
-/// 翻页有上限（不让一次请求连环拉几十页），不够就给多少算多少；
-/// 返回的 `next_offset` 是**最后访问过的**页游标——前端续刷时从这里接着
-/// 攒，不会卡死在同一页。
-pub async fn fetch_feed_typed(
-    content_type: i64,
-    offset: i64,
-    env: &ApiEnv,
-) -> AppResult<FeedPage> {
-    if content_type == CONTENT_TYPE_ALL {
-        return fetch_feed(offset, env).await;
-    }
-    const MAX_PAGES: usize = 6;
-    const TARGET: usize = 12;
-    let mut items = Vec::new();
-    let mut cursor = offset;
-    let mut has_more = false;
-    for _ in 0..MAX_PAGES {
-        let page = fetch_feed(cursor, env).await?;
-        has_more = page.has_more;
-        cursor = page.next_offset;
-        items.extend(page.items.into_iter().filter(|i| i.content_type == content_type));
-        items.dedup_by(|a, b| a.series_id == b.series_id);
-        if items.len() >= TARGET || !has_more {
-            break;
-        }
-    }
-    items.truncate(TARGET);
-    Ok(FeedPage {
-        items,
-        has_more,
-        next_offset: cursor,
-        session_id: String::new(),
-    })
 }
 
 /// 业务错误码检查。
@@ -395,16 +377,16 @@ mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_landpage_pagination() {
         let env = anon_env();
-        let p1 = fetch_feed(0, &env).await.expect("第一页");
+        let p1 = fetch_feed(0, None, &env).await.expect("第一页");
         println!(
             "[feed] page1: {} items, has_more={}, next_offset={}",
             p1.items.len(),
             p1.has_more,
             p1.next_offset
         );
-        let p2 = fetch_feed(p1.next_offset, &env)
+        let p2 = fetch_feed(p1.next_offset, None, &env)
             .await
-            .expect("第二页（query offset 翻页）");
+            .expect("第二页（body offset 翻页）");
         let ids1: Vec<&str> = p1.items.iter().map(|i| i.series_id.as_str()).collect();
         let ids2: Vec<&str> = p2.items.iter().map(|i| i.series_id.as_str()).collect();
         let overlap = ids1.iter().filter(|i| ids2.contains(i)).count();
@@ -423,7 +405,7 @@ mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_feed_covers() {
         let env = anon_env();
-        let p = fetch_feed(0, &env).await.expect("feed");
+        let p = fetch_feed(0, None, &env).await.expect("feed");
         for item in p.items.iter().take(6) {
             println!("[cover] {} | {}", item.series_id, item.cover);
         }
@@ -479,7 +461,7 @@ mod probe {
     async fn probe_comment_list() {
         let env = anon_env();
         // 先从信息流拿一个真实 vid 做锚点
-        let feed = fetch_feed(0, &env).await.expect("信息流");
+        let feed = fetch_feed(0, None, &env).await.expect("信息流");
         let vid = feed
             .items
             .iter()
@@ -852,6 +834,42 @@ mod probe_extra {
                 it.get("category_schema").and_then(Value::as_str).map(|s| &s[..s.len().min(90)]),
                 it.get("title").and_then(Value::as_str)
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_genre {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_feed_genre_filter() {
+        let env = ApiEnv::anonymous(crate::domain::model::ProxyConfig::default());
+        for (name, genre) in [
+            ("漫剧", Some(GENRE_COMIC)),
+            ("真人剧", Some(GENRE_HUMAN)),
+            ("全部", None),
+        ] {
+            let p1 = fetch_feed(0, genre, &env).await.expect("第一页");
+            println!(
+                "[genre] {name}: {} 条 hasMore={} next={}",
+                p1.items.len(),
+                p1.has_more,
+                p1.next_offset
+            );
+            for it in p1.items.iter().take(8) {
+                println!("[genre]   ct={:<4} {}", it.content_type, it.title);
+            }
+            if p1.has_more {
+                let p2 = fetch_feed(p1.next_offset, genre, &env).await.expect("第二页");
+                let dup = p2
+                    .items
+                    .iter()
+                    .filter(|b| p1.items.iter().any(|a| a.series_id == b.series_id))
+                    .count();
+                println!("[genre] {name} 第二页: {} 条 重复={}", p2.items.len(), dup);
+            }
         }
     }
 }

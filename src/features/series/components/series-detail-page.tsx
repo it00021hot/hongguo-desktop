@@ -416,7 +416,7 @@ function RecommendSection({
   onShuffle: () => void;
 }) {
   const navigate = useNavigate();
-  const feed = useFeed();
+  const feed = useFeed(undefined);
   const rank = useRank('all', 'ranklist_hot_sc', '');
   const [source, setSource] = useState<'feed' | 'rank' | 'site'>('feed');
 

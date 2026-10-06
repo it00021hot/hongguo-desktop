@@ -133,12 +133,9 @@ export const series = {
 // ---------------------------------------------------------------- 发现（推荐信息流）
 
 export const discover = {
-  feed: (offset?: number, contentType = 0) =>
-    call<FeedPage>(
-      'discover_feed',
-      offset != null ? { offset, contentType } : { contentType },
-      feedPageSchema,
-    ),
+  /** genre：'comic_series'=漫剧、'short_play'=真人剧、'ai_series'=AI剧；不传=全部 */
+  feed: (offset?: number, genre?: string) =>
+    call<FeedPage>('discover_feed', { offset: offset ?? 0, genre }, feedPageSchema),
   webCover: (seriesId: string) =>
     call<string | null>('web_cover', { seriesId }, z.string().nullable()),
 };

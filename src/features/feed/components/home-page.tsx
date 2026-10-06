@@ -32,11 +32,10 @@ import { cn } from '@/lib/utils';
 /** 顶部 tab 的五个源：推荐流（全部/漫剧/真人，同一接口按内容类型过滤） / 热播榜 / 新剧。 */
 type StreamSource = 'feed' | 'comic' | 'human' | 'hot' | 'new';
 
-/** 推荐流源 → 后端内容类型（0=全部，1=真人，1004=漫剧；见 discover.rs）。 */
-const FEED_CONTENT_TYPE: Partial<Record<StreamSource, number>> = {
-  feed: 0,
-  comic: 1004,
-  human: 1,
+/** 推荐流源 → 官方「体裁」过滤键（discover.rs 的 GENRE_*；推荐=不过滤）。 */
+const FEED_GENRE: Partial<Record<StreamSource, string>> = {
+  comic: 'comic_series',
+  human: 'short_play',
 };
 
 /** 源内一条：沉浸流只消费这几个身份字段。 */
@@ -46,22 +45,28 @@ interface StreamItem {
   cover: string;
   /** 横版封面（信息流才有）：全屏窗口的占位图用它，竖版 3:4 拉伸铺满横屏会糊。 */
   horizCover: string;
-  /** 内容类型（信息流才有）：1=真人，1004=漫剧；口味统计的计数键 */
-  contentType: number;
+  /** 该条目所属流的体裁键（'comic_series'/'short_play'；口味统计计数用） */
+  genre?: string;
 }
 
-/** 口味统计（localStorage 持久化）：看过哪类多，推荐 tab 就按哪类过滤。 */
+/** 口味统计（localStorage 持久化）：看过哪类多，推荐 tab 就按哪类过滤。
+ *  键是官方体裁 id（comic_series/short_play）；旧的数字键一律不认。 */
 const TYPE_STATS_KEY = 'hongguo.typeStats';
 
-type TypeStats = Record<number, number>;
+const KNOWN_GENRES = ['comic_series', 'short_play', 'ai_series'] as const;
+
+type TypeStats = Partial<Record<(typeof KNOWN_GENRES)[number], number>>;
 
 function readTypeStats(): TypeStats {
   try {
-    const raw = JSON.parse(window.localStorage.getItem(TYPE_STATS_KEY) ?? '') as TypeStats;
+    const raw = JSON.parse(window.localStorage.getItem(TYPE_STATS_KEY) ?? '') as Record<
+      string,
+      unknown
+    >;
     const out: TypeStats = {};
-    for (const [k, v] of Object.entries(raw)) {
-      const n = Number(k);
-      if (Number.isFinite(n) && n > 0 && Number.isFinite(v) && v > 0) out[n] = v;
+    for (const g of KNOWN_GENRES) {
+      const v = raw[g];
+      if (typeof v === 'number' && v > 0) out[g] = v;
     }
     return out;
   } catch {
@@ -77,14 +82,14 @@ function writeTypeStats(v: TypeStats): void {
   }
 }
 
-/** 样本够多且一边倒时给出口味类型，否则 0（不过滤）。 */
-function dominantType(stats: TypeStats): number {
-  const total = Object.values(stats).reduce((a, b) => a + b, 0);
-  if (total < 5) return 0;
-  const sorted = Object.entries(stats).sort((a, b) => b[1] - a[1]);
+/** 样本够多且一边倒时给出口味体裁，否则 undefined（不过滤）。 */
+function dominantGenre(stats: TypeStats): string | undefined {
+  const total = Object.values(stats).reduce((a, b) => a + (b ?? 0), 0);
+  if (total < 5) return undefined;
+  const sorted = Object.entries(stats).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
   const top = sorted[0];
-  if (!top) return 0;
-  return top[1] / total >= 0.6 ? Number(top[0]) : 0;
+  if (!top) return undefined;
+  return (top[1] ?? 0) / total >= 0.6 ? top[0] : undefined;
 }
 
 const TABS: { id: StreamSource; labelKey: string }[] = [
@@ -161,8 +166,7 @@ export function HomePage() {
   const [source, setSource] = useState<StreamSource>(readSource);
   const pickSource = (id: StreamSource) => {
     setSource(id);
-    const t = FEED_CONTENT_TYPE[id];
-    if (t === 1 || t === 1004) bumpType(t, 3);
+    bumpType(FEED_GENRE[id], 3);
     try {
       window.localStorage.setItem(SOURCE_KEY, id);
     } catch {
@@ -178,7 +182,7 @@ export function HomePage() {
     new: entryCursor.new,
   });
 
-  const isFeedSource = FEED_CONTENT_TYPE[source] != null;
+  const isFeedSource = source === 'feed' || FEED_GENRE[source] != null;
   /** 口味统计：看过（或主动选过）的类型记权重，推荐 tab 据此自适应过滤。 */
   const [typeStats, setTypeStats] = useState<TypeStats>(readTypeStats);
   /** 各推荐源的**取流起始偏移**(持久化游标):换一批/每次启动直接从
@@ -189,9 +193,10 @@ export function HomePage() {
     human: entryCursor.human,
   });
   const countedRef = useRef<Set<string>>(new Set());
-  const bumpType = useCallback((type: number, weight = 1) => {
-    if (type <= 0) return;
-    setTypeStats((prev) => ({ ...prev, [type]: (prev[type] ?? 0) + weight }));
+  const bumpType = useCallback((genre: string | undefined, weight = 1) => {
+    const g = KNOWN_GENRES.find((x) => x === genre);
+    if (!g) return;
+    setTypeStats((prev) => ({ ...prev, [g]: (prev[g] ?? 0) + weight }));
   }, []);
   // updater 必须纯：落盘放 effect（hooks 编译器要求）
   useEffect(() => {
@@ -199,11 +204,11 @@ export function HomePage() {
   }, [typeStats]);
   // 推荐 tab 的语义 = 跟随口味：样本够多且集中时按主导类型过滤，
   // 否则给官方混合流。漫剧/真人 tab 永远是显式指定的类型。
-  const recommendType = source === 'feed' ? dominantType(typeStats) : 0;
+  const recommendGenre = source === 'feed' ? dominantGenre(typeStats) : undefined;
   const activeFeedStart =
     source === 'feed' || source === 'comic' || source === 'human' ? feedStarts[source] : 0;
   const feed = useFeed(
-    source === 'feed' ? recommendType : (FEED_CONTENT_TYPE[source] ?? 0),
+    source === 'feed' ? recommendGenre : FEED_GENRE[source],
     activeFeedStart,
   );
   const hot = useRank('all', 'ranklist_hot_sc', '');
@@ -225,24 +230,13 @@ export function HomePage() {
     for (const h of history?.items ?? []) {
       if (!h.seriesId || seen.has(h.seriesId)) continue;
       seen.add(h.seriesId);
-      out.push({
-        seriesId: h.seriesId,
-        title: h.title,
-        cover: h.cover,
-        horizCover: '',
-        contentType: 0,
-      });
+      out.push({ seriesId: h.seriesId, title: h.title, cover: h.cover, horizCover: '' });
     }
     for (const b of bookshelf ?? []) {
       if (!b.seriesId || seen.has(b.seriesId)) continue;
       seen.add(b.seriesId);
-      out.push({
-        seriesId: b.seriesId,
-        title: '',
-        cover: '',
-        horizCover: '',
-        contentType: b.contentType,
-      });
+      // 书架的 content_type 数字语义不可靠(实测 1 混着动漫),不参与口味
+      out.push({ seriesId: b.seriesId, title: '', cover: '', horizCover: '' });
     }
     return out;
   }, [account, history, bookshelf]);
@@ -256,13 +250,19 @@ export function HomePage() {
       ? [
           ...seedItems,
           ...feedItems
-            .filter((i) => !seedItems.some((seed) => seed.seriesId === i.seriesId))
+            .filter(
+              (i, idx, arr) =>
+                // 服务端翻页会重复下发同一批里的条目(实测第二页重复 10/18),
+                // 连种子一起按 seriesId 去重
+                !seedItems.some((seed) => seed.seriesId === i.seriesId) &&
+                arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
+            )
             .map((i) => ({
               seriesId: i.seriesId,
               title: i.title,
               cover: i.cover,
               horizCover: i.horizCover,
-              contentType: i.contentType,
+              genre: source === 'feed' ? recommendGenre : FEED_GENRE[source],
             })),
         ]
       : source === 'hot'
@@ -271,14 +271,12 @@ export function HomePage() {
             title: i.title,
             cover: i.cover,
             horizCover: '',
-            contentType: 0,
           }))
         : freshItems.map((i) => ({
             seriesId: i.seriesId,
             title: i.title,
             cover: i.cover,
             horizCover: '',
-            contentType: 0,
           }));
 
   // 尾部翻页能力（热榜是单页，没有更多）
@@ -311,9 +309,9 @@ export function HomePage() {
   useEffect(() => {
     if (!currentSeries) return;
     setTarget(currentSeries.seriesId, 1);
-    if (current && current.contentType > 0 && !countedRef.current.has(current.seriesId)) {
+    if (current && current.genre && !countedRef.current.has(current.seriesId)) {
       countedRef.current.add(current.seriesId);
-      bumpType(current.contentType);
+      bumpType(current.genre);
     }
   }, [currentSeries, setTarget, current, bumpType]);
 
