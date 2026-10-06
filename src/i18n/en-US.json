@@ -395,7 +395,10 @@
     "maximize": "Maximize",
     "restore": "Restore",
     "zoom": "Zoom",
-    "close": "Close"
+    "close": "Close",
+    "exitTitle": "Quit the app?",
+    "exitBody": "Exiting stops ongoing download tasks. Playback progress is saved automatically.",
+    "exitConfirm": "Quit"
   },
   "feed": {
     "tabs": {

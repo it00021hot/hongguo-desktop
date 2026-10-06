@@ -1,9 +1,25 @@
+import { useCallback, useEffect, useState } from 'react';
 import { useRouterState } from '@tanstack/react-router';
+import { invoke } from '@tauri-apps/api/core';
 import { AppSidebar, NAV_ITEMS } from './app-sidebar';
 import { ThemeSwitch } from './theme-switch';
 import { WindowButtons } from './window-controls';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { buttonVariants } from '@/components/ui/button';
+import { useEvent } from '@/lib/ipc/events';
+import { EVENTS } from '@/lib/ipc/types';
 import { isMac } from '@/lib/platform';
 import { t } from '@/i18n';
+import { cn } from '@/lib/utils';
 
 /** 由当前路径反查导航 key，用于顶栏标题。 */
 function navKeyFor(pathname: string): string {
@@ -21,6 +37,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const immersive = pathname === '/';
   // mac 的交通灯在侧边栏左上（见 app-sidebar），主区不重复给一套
   const mac = isMac();
+
+  // 退出确认：后端把窗口关闭请求（自绘 ×/Alt+F4/任务栏）拦下来转成事件，
+  // 这里弹框问一声——退出会掐断正在跑的下载任务，不该一碰就没了。
+  // mark_window_ready 要等本组件挂载（监听就位）再调，后端才敢开始拦截。
+  const [exitOpen, setExitOpen] = useState(false);
+  useEffect(() => {
+    void invoke('mark_window_ready').catch(() => {});
+  }, []);
+  useEvent(EVENTS.closeRequested, useCallback(() => setExitOpen(true), []));
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
@@ -71,6 +96,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      <AlertDialog open={exitOpen} onOpenChange={setExitOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('window.exitTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('window.exitBody')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              className={cn(buttonVariants({ variant: 'destructive' }))}
+              onClick={() => void invoke('exit_app').catch(() => {})}
+            >
+              {t('window.exitConfirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

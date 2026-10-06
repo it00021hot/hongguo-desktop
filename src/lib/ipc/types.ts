@@ -18,6 +18,8 @@ export const EVENTS = {
   loginMfaState: 'login-mfa-state',
   compatPlayProgress: 'compat-play-progress',
   seriesArchiveUpdated: 'series-archive-updated',
+  // 只由 lib.rs 的 CloseRequested 拦截发出（下载事件之外的应用级事件）
+  closeRequested: 'close-requested',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

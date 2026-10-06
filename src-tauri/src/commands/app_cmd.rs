@@ -1,9 +1,18 @@
-//! 系统交互：选目录、打开目录。
+//! 系统交互：选目录、打开目录、窗口关闭的退出确认。
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
 use crate::error::AppResult;
+
+/// 窗口关闭拦截的「前端就绪」闸门：前端界面挂载完成后置位。
+///
+/// 之前就拦截的话，前端一旦没加载出来（白屏/崩溃），被拦下的关闭请求
+/// 永远没人应答，窗口就关不掉了——没 ready 就放行，宁可不确认也不能困住用户。
+pub type WindowCloseGate = Arc<AtomicBool>;
 
 /// 选择下载目录。
 #[tauri::command]
@@ -53,4 +62,21 @@ pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
     app.opener()
         .open_url(page, None::<&str>)
         .map_err(|e| crate::error::AppError::Io(e.to_string()))
+}
+
+/// 前端界面挂载完成：此后窗口关闭请求转交前端弹确认框，不再直接退出。
+///
+/// 退出是危险动作——正在跑的下载任务会被掐断，所以自绘 ×/Alt+F4/任务栏
+/// 关闭一律先问一声。lib.rs 的 CloseRequested 拦截只在本命令调用过之后生效。
+#[tauri::command]
+pub fn mark_window_ready(ready: State<'_, WindowCloseGate>) -> AppResult<()> {
+    ready.store(true, Ordering::Release);
+    Ok(())
+}
+
+/// 用户在退出确认框里选了「退出」：结束整个应用。
+#[tauri::command]
+pub fn exit_app(app: AppHandle) -> AppResult<()> {
+    app.exit(0);
+    Ok(())
 }

@@ -70,7 +70,9 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(state);
+        .manage(state)
+        // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
+        .manage(commands::app_cmd::WindowCloseGate::default());
 
     // 自定义协议要在 setup 之前注册（Builder 阶段）
     let builder = protocol::register::register(builder);
@@ -84,6 +86,28 @@ pub fn run() {
             bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
             bootstrap::transcoder::init()?;
+
+            // 窗口关闭一律先问前端：自绘 ×、Alt+F4、任务栏关闭都走
+            // CloseRequested，前端 ready 后拦截并让它弹退出确认框
+            // （退出会掐断正在跑的下载任务）；没 ready（前端白屏/崩溃）
+            // 就放行——宁可少问一句，绝不能把窗口变成关不掉。
+            use tauri::{Emitter, Manager};
+            use std::sync::atomic::Ordering;
+            if let Some(window) = app.get_webview_window("main") {
+                let ready = app
+                    .state::<commands::app_cmd::WindowCloseGate>()
+                    .inner()
+                    .clone();
+                let win = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if ready.load(Ordering::Acquire) {
+                            api.prevent_close();
+                            let _ = win.emit("close-requested", ());
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -91,6 +115,8 @@ pub fn run() {
             commands::app_cmd::select_folder,
             commands::app_cmd::open_folder,
             commands::app_cmd::open_external_page,
+            commands::app_cmd::mark_window_ready,
+            commands::app_cmd::exit_app,
             // 设置
             commands::settings_cmd::get_settings,
             commands::settings_cmd::save_settings,
