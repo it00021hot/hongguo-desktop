@@ -171,9 +171,9 @@ export function HomePage() {
   };
   /** 每源独立游标：切 tab 回来还在上次刷到的位置（流式源从入口游标起步）。 */
   const [indexes, setIndexes] = useState<Record<StreamSource, number>>({
-    feed: entryCursor.feed,
-    comic: entryCursor.comic,
-    human: entryCursor.human,
+    feed: 0,
+    comic: 0,
+    human: 0,
     hot: 0,
     new: entryCursor.new,
   });
@@ -181,6 +181,13 @@ export function HomePage() {
   const isFeedSource = FEED_CONTENT_TYPE[source] != null;
   /** 口味统计：看过（或主动选过）的类型记权重，推荐 tab 据此自适应过滤。 */
   const [typeStats, setTypeStats] = useState<TypeStats>(readTypeStats);
+  /** 各推荐源的**取流起始偏移**(持久化游标):换一批/每次启动直接从
+   *  偏移处取新批,而不是在已加载列表里往前走。 */
+  const [feedStarts, setFeedStarts] = useState<Record<'feed' | 'comic' | 'human', number>>({
+    feed: entryCursor.feed,
+    comic: entryCursor.comic,
+    human: entryCursor.human,
+  });
   const countedRef = useRef<Set<string>>(new Set());
   const bumpType = useCallback((type: number, weight = 1) => {
     if (type <= 0) return;
@@ -193,8 +200,11 @@ export function HomePage() {
   // 推荐 tab 的语义 = 跟随口味：样本够多且集中时按主导类型过滤，
   // 否则给官方混合流。漫剧/真人 tab 永远是显式指定的类型。
   const recommendType = source === 'feed' ? dominantType(typeStats) : 0;
+  const activeFeedStart =
+    source === 'feed' || source === 'comic' || source === 'human' ? feedStarts[source] : 0;
   const feed = useFeed(
     source === 'feed' ? recommendType : (FEED_CONTENT_TYPE[source] ?? 0),
+    activeFeedStart,
   );
   const hot = useRank('all', 'ranklist_hot_sc', '');
   const fresh = useNewDrama(2);
@@ -280,15 +290,11 @@ export function HomePage() {
       : false;
   const loadMore = isFeedSource ? feed.loadMore : source === 'new' ? fresh.loadMore : null;
 
-  // 入口游标可能越界。推荐流保留「等下一批」：链式翻页通常一两页就位，
-  // 画面继续播上一部等一下值得。**新剧源不等**——它的入口游标每次启动
-  // 都前进（上限 96），而列表一页才十几条，等游标追上要链式拉好几页，
-  // 表现就是「切新剧没反应」；直接落到当前列表尾部，后台继续把后面的
-  // 页拉齐，随后自然往前走。
+  // 入口换血改走「取流偏移」(见 feedStarts),索引不再承担跨批走路;
+  // 游标越界(新剧的持久游标)一律夹到已加载尾部,后台翻页跟上。
   const rawIndex = indexes[source];
-  const pending = isFeedSource && hasMore && items.length <= rawIndex;
-  const index = pending ? rawIndex : Math.min(rawIndex, Math.max(0, items.length - 1));
-  const current = pending ? undefined : items[index];
+  const index = Math.min(rawIndex, Math.max(0, items.length - 1));
+  const current = items[index];
   const currentId = current?.seriesId;
 
   /**
@@ -361,8 +367,6 @@ export function HomePage() {
     if (advancedThisSession) return;
     advancedThisSession = true;
     advanceEntry('feed');
-    advanceEntry('comic');
-    advanceEntry('human');
     advanceEntry('new');
   }, []);
 
@@ -383,7 +387,14 @@ export function HomePage() {
   // 固定榜单，重点不换。
   const pickTab = (id: StreamSource) => {
     pickSource(id);
-    if (id === source && id !== 'hot') {
+    if (id !== source || id === 'hot') return;
+    // 换一批:feed 系推进**取流偏移**(新批直达,索引回 0);
+    // 新剧源还是索引走路(它单页快,不值得换机制)
+    if (id === 'feed' || id === 'comic' || id === 'human') {
+      const next = advanceEntry(id);
+      setFeedStarts((prev) => ({ ...prev, [id]: next }));
+      setIndexes((prev) => ({ ...prev, [id]: 0 }));
+    } else if (id === 'new') {
       const next = advanceEntry(id);
       setIndexes((prev) => ({ ...prev, [id]: next }));
     }
@@ -460,8 +471,8 @@ export function HomePage() {
       </div>
     );
   }
-  // pending（下一批在拉）不是空态：画面继续播上一次的剧，拉到位自动过去
-  if (!current && !pending) {
+  // 首批在拉时不是空态：画面继续播上一次的剧，拉到位自动过去
+  if (!current && items.length === 0 && !isLoading) {
     return (
       <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
         <p className="text-sm">{t('home.empty')}</p>

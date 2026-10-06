@@ -51,7 +51,8 @@ import type {
  */
 const keys = {
   settings: ['settings'] as const,
-  feed: (contentType: number) => ['feed', contentType] as const,
+  feed: (contentType: number, startOffset: number) =>
+    ['feed', contentType, startOffset] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
@@ -232,11 +233,13 @@ function feedItems(pages: FeedPage[]): FeedItem[] {
  * pages 存在 Query 缓存里：切到其它路由再回来秒出已拉内容，不闪骨架屏；
  * staleTime 内完全不重打，超时只后台刷新（配合 RefreshShade 无感过渡）。
  */
-export function useFeed(contentType = 0) {
+export function useFeed(contentType = 0, startOffset = 0) {
   const query = useInfiniteQuery({
-    queryKey: keys.feed(contentType),
+    queryKey: keys.feed(contentType, startOffset),
     queryFn: ({ pageParam }) => discover.feed(pageParam, contentType),
-    initialPageParam: 0,
+    // 入口偏移直接作为首批游标:「每次打开/换一批换血」不再靠在已加载
+    // 列表里走路(类型流一批要在后端连翻 6 页,走路=长时间播旧内容)
+    initialPageParam: startOffset,
     getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
     staleTime: 5 * 60_000,
   });
