@@ -506,20 +506,25 @@ export function PlayerView({
     [seriesPanelOpen, downloading, onWheelStep, stepEpisode, wakeChrome, inBinge],
   );
 
-  // ---- 点击画面：唤醒悬浮层 + 抖音式播放/暂停 ----
-  // 唤醒原来只挂在 mousemove/滚轮上，鼠标停着直接点一下，控件永远不出来。
+  // ---- 点击画面：信息流里=选中本剧（进入切集模式）；选中后/播放页=播放/暂停 ----
+  // 第三方同款交互：未选中时单击视频=「选中这部剧」，此后滚轮/↑↓ 切集，
+  // Esc 退出选中回到换剧；选中状态下的单击回归传统的播放/暂停。
   // 控件/面板/互动栏（data-wheel-block 标记区）里的点击是它们自己的事，
-  // 不冒泡成「点画面暂停」。
+  // 不冒泡成选中/暂停。
   const onStageClick = useCallback(
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
       wakeChrome();
+      if (onWheelStep && !inBinge) {
+        setBinge(seriesId);
+        return;
+      }
       const video = videoRef.current;
       if (!video) return;
       if (video.paused) void video.play().catch(() => undefined);
       else video.pause();
     },
-    [wakeChrome],
+    [wakeChrome, onWheelStep, inBinge, setBinge, seriesId],
   );
 
   /**
@@ -686,6 +691,19 @@ export function PlayerView({
       if (el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
 
       switch (e.key) {
+        case 'Escape':
+          // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
+          // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
+          if (
+            inBinge &&
+            !seriesPanelOpen &&
+            !commentPanelOpen &&
+            !danmakuPanelOpen &&
+            !volumeOpen
+          ) {
+            setBinge(null);
+          }
+          break;
         case ' ':
           e.preventDefault();
           if (video.paused) void video.play();
@@ -718,7 +736,17 @@ export function PlayerView({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [stepEpisode, wakeChrome, onWheelStep, inBinge]);
+  }, [
+    stepEpisode,
+    wakeChrome,
+    onWheelStep,
+    inBinge,
+    setBinge,
+    seriesPanelOpen,
+    commentPanelOpen,
+    danmakuPanelOpen,
+    volumeOpen,
+  ]);
 
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
