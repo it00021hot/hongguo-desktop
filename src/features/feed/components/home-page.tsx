@@ -222,9 +222,9 @@ export function HomePage() {
   );
 
   // 顶部 tab 胶囊条：渲染进播放器的 topChrome 插槽（跟随悬浮层淡出）。
-  // 尺寸对齐第三方顶栏：大字号、实底、不加 backdrop-blur——磨砂+小字
-  // 在视频上就是「又小又糊」。**重复点当前 tab = 换一批**（「再刷一组」
-  // 的最直接入口）；热播榜是固定榜单，重点不换。
+  // 形态对齐第三方（hgplayer）：细边框半透明条 + 选中项淡红底红字——
+  // 整条压暗、字重轻，沉浸观看时存在感最低。**重复点当前 tab = 换一批**
+  // （「再刷一组」的最直接入口）；热播榜是固定榜单，重点不换。
   const pickTab = (id: StreamSource) => {
     setSource(id);
     if (id === source && id !== 'hot') {
@@ -233,17 +233,17 @@ export function HomePage() {
     }
   };
   const topChrome = (
-    <div className="flex items-center gap-1 rounded-full bg-black/60 p-1">
+    <div className="flex items-center gap-0.5 rounded-lg border border-white/15 bg-black/35 p-0.5">
       {TABS.map((tab) => (
         <button
           key={tab.id}
           type="button"
           onClick={() => pickTab(tab.id)}
           className={cn(
-            'cursor-pointer rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+            'cursor-pointer rounded-md px-3.5 py-1 text-[13px] transition-colors',
             source === tab.id
-              ? 'bg-white font-semibold text-neutral-900'
-              : 'text-white/85 hover:text-white',
+              ? 'bg-red-500/15 font-medium text-red-400'
+              : 'text-white/75 hover:text-white',
           )}
         >
           {t(tab.labelKey)}
