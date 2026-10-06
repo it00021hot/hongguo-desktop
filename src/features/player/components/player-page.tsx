@@ -313,7 +313,16 @@ export function PlayerView({
   /** 兜底进度，只认当前这一集 */
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它 */
-  const playSrc = compatSrc ?? src;
+  const baseSrc = compatSrc ?? src;
+  /**
+   * 重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应（自定义协议历史上
+   * 没带 no-store），同一个地址重试永远拿坏数据。后端处理器只解析 path，
+   * query 是纯缓存钉（后端已补 no-store，这层双保险兜老进程/旧缓存）。
+   */
+  const playSrc =
+    baseSrc && baseSrc.includes('hongguo-stream') && retryTick > 0
+      ? `${baseSrc}?r=${retryTick}`
+      : baseSrc;
   /** 当前流的指纹：live/stalled 状态读时校验它，换流（切剧/切集/换清晰度）即失效 */
   const streamKey = playSrc ?? '';
 

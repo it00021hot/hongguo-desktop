@@ -218,6 +218,8 @@ fn serve_progressive(
                 ("Content-Type".into(), "video/mp4".into()),
                 ("Accept-Ranges".into(), "bytes".into()),
                 ("Content-Length".into(), body.len().to_string()),
+                // 与 206 同理：流内容随时在变，禁掉 WebView2 的响应缓存
+                ("Cache-Control".into(), "no-store".into()),
             ],
             body,
         ))
@@ -260,6 +262,8 @@ fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
                 ("Content-Type".into(), "video/mp4".into()),
                 ("Accept-Ranges".into(), "bytes".into()),
                 ("Content-Length".into(), size.to_string()),
+                // 与 206 同理：禁掉 WebView2 的响应缓存
+                ("Cache-Control".into(), "no-store".into()),
             ],
             buffer.to_vec(),
         ),
@@ -693,6 +697,8 @@ mod tests {
         assert_eq!(header(&headers, "Content-Type"), Some("video/mp4"));
         assert_eq!(header(&headers, "Accept-Ranges"), Some("bytes"));
         assert_eq!(header(&headers, "Content-Length"), Some("4096"));
+        // 不许 WebView2 缓存：缓存到失败瞬间的坏响应，重试就永远拿坏数据
+        assert_eq!(header(&headers, "Cache-Control"), Some("no-store"));
     }
 
     #[test]
