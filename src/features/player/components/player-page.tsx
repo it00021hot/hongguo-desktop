@@ -1103,34 +1103,14 @@ export function PlayerView({
           </div>
         </div>
 
-        {/* 连播模式徽标：**常驻可见**（不跟悬浮层淡出）——它是当前滚动语义的
-            唯一信号，藏起来用户既不知道滚轮已变成切集、也找不到退出入口
-            （曾因随悬浮层淡出而「退出不了」）。z-30 压过常规悬浮层。 */}
-        {inBinge && (
-          <div
-            data-wheel-block
-            className="absolute left-3 top-3 z-30 flex items-center gap-2 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-lg"
-          >
-            <span>{t('player.bingeActive')}</span>
-            <button
-              type="button"
-              onClick={() => setBinge(null)}
-              className="cursor-pointer rounded-full underline-offset-2 opacity-80 hover:underline hover:opacity-100"
-            >
-              {t('player.bingeExit')}
-            </button>
-          </div>
-        )}
-
         {/* 页面级杂物的浮层化：错误条 / 连播开关压在画面顶部**靠左**排布。
             顶部居中是沉浸流的分类 tab 栏（topChrome 插槽），左上不能太宽，
             不然把 tab 挡死——快捷键提示从常驻位撤下（错误时才占这个位置）。 */}
         <div
           data-wheel-block
           className={cn(
-            'absolute left-3 z-20 flex items-center gap-2',
-            'transition-[opacity,top] duration-300',
-            inBinge ? 'top-14' : 'top-3',
+            'absolute left-3 top-3 z-20 flex items-center gap-2',
+            'transition-opacity duration-300',
             chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
         >

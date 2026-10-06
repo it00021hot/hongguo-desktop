@@ -180,8 +180,6 @@
     "recommend": "Recommended",
     "totalEpisodes": "{count} episodes",
     "pickerBingeHint": "Picking an episode selects this series: click the video to select too; scroll/↑↓ switch episodes; Esc exits",
-    "bingeActive": "Series selected",
-    "bingeExit": "Esc to exit",
     "lastEpisode": "Already at the last episode (#{index})",
     "download": "Download",
     "downloadToLocal": "Download to local",
