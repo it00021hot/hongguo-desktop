@@ -149,6 +149,8 @@
     "compatFetching": "Fetching this episode…",
     "compatTranscoding": "Cannot decode, converting to a compatible format {percent}%",
     "compatHint": "Playback resumes automatically once the conversion finishes",
+    "onlineInterrupted": "Online stream interrupted",
+    "retry": "Retry",
     "compatCached": "Switched to the compatible format",
     "compatDone": "Converted with {backend} in {seconds}s — starting playback",
     "compatFailed": "Compat conversion failed: {reason}",

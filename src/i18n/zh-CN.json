@@ -149,6 +149,8 @@
     "compatFetching": "正在取这一集…",
     "compatTranscoding": "画面解不出来，正在转成兼容格式 {percent}%",
     "compatHint": "转好后会自动接着播放，只需等待这一次",
+    "onlineInterrupted": "在线播放中断",
+    "retry": "重试",
     "compatCached": "已切换为兼容格式播放",
     "compatDone": "已转为兼容格式（{backend}，{seconds} 秒），开始播放",
     "compatFailed": "兼容格式转换失败：{reason}",

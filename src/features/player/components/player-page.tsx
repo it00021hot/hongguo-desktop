@@ -193,6 +193,18 @@ export function PlayerView({
 
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 在线流断供的自动重试（带集指纹，读时校验，换集自动失效）。
+   *
+   * 渐进流的数据面断了（切剧竞态、网络抖动）会让 <video> 报 MediaError；
+   * 重新 prepare 一次就能拿到新流，续播位置由 lastKnown 接上。每集只自动
+   * 兜一次——再失败多半不是抖动，亮出重试按钮交给用户。tick 进起播
+   * effect 的依赖驱动重新取流；配对的 setSrc(null) 把 <video> 卸载，
+   * 重挂载才会真的重新加载（URL 不变时只换 src 属性在 WebView2 上未必
+   * 触发重载）。
+   */
+  const [retry, setRetry] = useState<{ key: string; tick: number }>({ key: '', tick: 0 });
+  const retryTick = retry.key === episodeKey ? retry.tick : 0;
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
   const [downloading, setDownloading] = useState(false);
   /**
@@ -216,6 +228,13 @@ export function PlayerView({
   const { mutate: play } = usePlay();
   const { mutate: savePosition } = useSavePosition();
   const compatPlay = useCompatPlayback();
+
+  /** 重新取流接续播放（自动重试与手动重试按钮共用）。 */
+  const retryOnline = useCallback(() => {
+    setError(null);
+    setSrc(null);
+    setRetry((r) => ({ key: episodeKey, tick: (r.key === episodeKey ? r.tick : 0) + 1 }));
+  }, [episodeKey]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent<OnlineProgress>(
@@ -553,7 +572,7 @@ export function PlayerView({
         },
       },
     );
-  }, [seriesId, vidIndex, definition, episodeKey, play]);
+  }, [seriesId, vidIndex, definition, episodeKey, play, retryTick]);
 
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
@@ -677,7 +696,17 @@ export function PlayerView({
     // 带上浏览器给的 MediaError 编号：解码错(3)和网络错(2)的修法完全不同
     const me = videoRef.current?.error;
     const detail = me ? `（MediaError ${me.code}${me.message ? `: ${me.message}` : ''}）` : '';
-    setError(`${t('error.media')}${detail}`);
+    // 在线渐进流断供可自愈（重新 prepare 换新流接着播，位置不丢）：
+    // 每集只自动兜一次，兜底转码进行中不抢跑；本地文件/转码产物坏了
+    // 重试也是白搭，直接报错。在线的失败把 <video> 撤下来，换成封面 +
+    // 明确错误 + 重试按钮，不再是一根小小的报错条挂在冻结画面上。
+    const online = playSrc?.includes('hongguo-stream') ?? false;
+    if (online && !compatSrc && !compat && retryTick < 1) {
+      retryOnline();
+      return;
+    }
+    setError(`${online ? t('player.onlineInterrupted') : t('error.media')}${detail}`);
+    if (online) setSrc(null);
   };
 
   if (!seriesId || !vidIndex) {
@@ -944,20 +973,36 @@ export function PlayerView({
               {coverBackdrop}
               <div className="absolute inset-0 z-10 grid place-items-center p-6">
                 {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈；
-                    文案收进胶囊压在封面上，不再是一整屏裸字 */}
-                <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
-                  {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-                  {error ??
-                    (buffering && buffering.phase !== 'ready'
-                      ? tf('player.buffering', {
-                          percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
-                          size:
-                            buffering.total > 0
-                              ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
-                              : formatBytes(buffering.received),
-                        })
-                      : t('common.loading'))}
-                </span>
+                    文案收进胶囊压在封面上。自动重试耗尽的错误态再给一个
+                    手动重试入口——用户不该只能眼看黑屏干着急。 */}
+                <div className="flex flex-col items-center gap-3">
+                  <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
+                    {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                    {error ??
+                      (buffering && buffering.phase !== 'ready'
+                        ? tf('player.buffering', {
+                            percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
+                            size:
+                              buffering.total > 0
+                                ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
+                                : formatBytes(buffering.received),
+                          })
+                        : t('common.loading'))}
+                  </span>
+                  {error && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-wheel-block
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        retryOnline();
+                      }}
+                    >
+                      {t('player.retry')}
+                    </Button>
+                  )}
+                </div>
               </div>
             </>
           )}
