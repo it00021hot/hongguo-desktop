@@ -177,6 +177,7 @@
     "introCollapse": "收起",
     "recommend": "推荐短剧",
     "totalEpisodes": "全{count}集",
+    "pickerBingeHint": "选定集数后进入本剧连播：滚轮 / ↑↓ 切集，不再换剧",
     "download": "下载",
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",

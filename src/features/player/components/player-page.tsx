@@ -950,7 +950,13 @@ export function PlayerView({
                 onDanmakuDisplayChange={updateDanmakuDisplay}
                 immersive
                 visible={chromeShown}
-                onPickEpisode={(idx) => setTarget(seriesId, idx)}
+                // 信息流里主动点了某一级 = 要追这部：进入选中剧连播（/player，
+                // 滚轮/↑↓ 自动变为切集），而不是留在推荐流继续换剧
+                pickerHint={onWheelStep ? t('player.pickerBingeHint') : undefined}
+                onPickEpisode={(idx) => {
+                  setTarget(seriesId, idx);
+                  if (onWheelStep) void navigate({ to: '/player' });
+                }}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，

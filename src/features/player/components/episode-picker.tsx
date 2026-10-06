@@ -12,6 +12,8 @@ import { t, tf } from '@/i18n';
 interface Props {
   seriesId: string;
   currentIndex: number;
+  /** 底部提示文案（信息流里教「选一集 = 进入本剧连播」）；不传即无 */
+  hint?: string;
   onSelect: (vidIndex: number) => void;
   onClose: () => void;
 }
@@ -19,7 +21,7 @@ interface Props {
 /** 每个范围段的集数（hgplayer 同款 30 个一段）。 */
 const GROUP_SIZE = 30;
 
-export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Props) {
+export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose }: Props) {
   const { data: series } = useSeriesEpisodes(seriesId);
   const { data: tasks } = useDownloadTasks();
   /**
@@ -136,6 +138,12 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
           );
         })}
       </div>
+
+      {hint && (
+        <p className="text-neutral-500 mt-3 border-t border-neutral-800 pt-2.5 text-xs">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

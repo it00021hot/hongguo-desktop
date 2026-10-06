@@ -97,6 +97,11 @@ interface Props {
   /** 选集浮层里点选某一集（跳集，由播放器接 store） */
   onPickEpisode?: (vidIndex: number) => void;
   /**
+   * 选集浮层底部的提示文案（信息流里教「选一集 = 进入本剧连播」）。
+   * 播放页本来就在连播状态，不用教，不传即无。
+   */
+  pickerHint?: string;
+  /**
    * 悬浮层可见性（受控）。
    *
    * 裁决在 PlayerView：静止倒计时 / 暂停 / 任一面板打开都在那一层算好，
@@ -190,6 +195,7 @@ export function PlayerControls({
   onStepEpisode,
   immersive,
   onPickEpisode,
+  pickerHint,
   visible,
 }: Props) {
   const [current, setCurrent] = useState(0);
@@ -471,6 +477,7 @@ export function PlayerControls({
                   <EpisodePicker
                     seriesId={seriesId}
                     currentIndex={currentIndex}
+                    hint={pickerHint}
                     onSelect={(idx) => onPickEpisode?.(idx)}
                     onClose={() => setSeriesPanelOpen(false)}
                   />
