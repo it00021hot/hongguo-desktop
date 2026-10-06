@@ -70,3 +70,24 @@ pub async fn save_playback_position(
     .await
     .map_err(|e| crate::error::AppError::Network(format!("保存播放进度失败: {e}")))?
 }
+
+/// 一部剧最近看到的那一集（详情页「继续看」的数据源）。
+///
+/// 没看过（playback 表无记录）返回 None，前端回落云端观看历史。
+/// 读是单行查询，但同样走阻塞线程池，不给主线程添堵。
+#[tauri::command]
+pub async fn series_progress(
+    state: State<'_, AppState>,
+    series_id: String,
+) -> AppResult<Option<crate::domain::model::SeriesProgress>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.series_last_position(&series_id))
+        .await
+        .map_err(|e| crate::error::AppError::Network(format!("读取播放进度失败: {e}")))?
+        .map(|hit| hit.map(|(vid_index, p)| crate::domain::model::SeriesProgress {
+            vid_index,
+            current_time: p.current_time,
+            duration: p.duration,
+            updated_at: p.updated_at,
+        }))
+}

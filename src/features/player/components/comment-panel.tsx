@@ -1,18 +1,24 @@
 //! 沉浸流评论面板：右侧滑出（hgplayer 同款「评论 · N」列）。
 //!
 //! 列表（头像/昵称/文本/时间/♡）+ 底部发评论框；评论点赞走
-//! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态
-//! （ct=4/src=4），服务端偶发 110001 时面板内显示错误可重试。
+//! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态——
+//! 2026-10-06 抓包重锁：评论形态 business_param 是 need_count/req_type +
+//! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
+//! 评论总数（头部计数用）。
+//!
+//! 回复：发送走 reply/add 独立端点；回复**列表**服务端无拉取接口
+//! （probe 实证 aid 8662 无 handler，hgplayer 也不拉）——自己发的回复
+//! 本地追加展示，别人的回复只显示计数。
 
 import { useEffect, useState } from 'react';
-import { Heart, Loader2, X } from 'lucide-react';
+import { CornerDownRight, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { interact } from '@/lib/ipc/commands';
-import { useAccount, useComments, useSendComment } from '@/lib/queries';
+import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
 import type { CommentItem } from '@/lib/schema';
 
 interface Props {
@@ -33,6 +39,13 @@ function relativeTime(unixSec: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/** 本地追加的一条回复（自己发的；服务端暂无回复列表接口）。 */
+interface LocalReply {
+  text: string;
+  /** 回复「回复」时对方内容摘要（「回复 @xxx」展示用） */
+  replyTo?: string;
+}
+
 export function CommentPanel({ vid, onClose }: Props) {
   // Esc 关闭（面板盖住互动栏按钮时这是最直接的退出路径）
   useEffect(() => {
@@ -44,11 +57,30 @@ export function CommentPanel({ vid, onClose }: Props) {
   }, [onClose]);
   const { data: account } = useAccount();
   const loggedIn = !!account;
-  const { data: comments, isPending, error, refetch } = useComments(vid);
+  const {
+    data,
+    isPending,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useComments(vid);
+  // 翻页数据拍平；total 取第一页的 need_count 回传（互动栏同源）
+  const comments = data?.pages.flatMap((p) => p.items);
+  const total = data?.pages[0]?.total || comments?.length || 0;
   const send = useSendComment();
+  const sendReply = useSendReply();
   const [text, setText] = useState('');
   /** 本地点赞态覆盖（commentId → 点赞后）：列表 best-effort + 乐观 */
   const [liked, setLiked] = useState<Set<string>>(new Set());
+  /** 回复输入框展开在哪条评论上（空 = 无） */
+  const [replyTarget, setReplyTarget] = useState<string | null>(null);
+  /** 回复「回复」时被回复内容摘要（二级回复，仅展示语义） */
+  const [replyToReply, setReplyToReply] = useState<{ id: string; text: string } | null>(null);
+  const [replyText, setReplyText] = useState('');
+  /** 自己发的回复（commentId → 本地追加），服务端暂无回复列表可拉 */
+  const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
 
   const submit = () => {
     const content = text.trim();
@@ -62,6 +94,38 @@ export function CommentPanel({ vid, onClose }: Props) {
       {
         onSuccess: () => {
           setText('');
+        },
+        onError: (e) => toast.error(String(e)),
+      },
+    );
+  };
+
+  const submitReply = (parent: CommentItem) => {
+    const content = replyText.trim();
+    if (!content || sendReply.isPending) return;
+    if (!loggedIn) {
+      toast.info(t('player.interact.loginRequired'));
+      return;
+    }
+    sendReply.mutate(
+      {
+        vid,
+        replyToCommentId: parent.commentId,
+        replyToReplyId: replyToReply?.id,
+        text: content,
+      },
+      {
+        onSuccess: () => {
+          setLocalReplies((prev) => ({
+            ...prev,
+            [parent.commentId]: [
+              ...(prev[parent.commentId] ?? []),
+              { text: content, replyTo: replyToReply?.text },
+            ],
+          }));
+          setReplyText('');
+          setReplyTarget(null);
+          setReplyToReply(null);
         },
         onError: (e) => toast.error(String(e)),
       },
@@ -88,12 +152,15 @@ export function CommentPanel({ vid, onClose }: Props) {
   };
 
   return (
-    <div className="absolute bottom-14 right-0 z-40 flex h-[68%] w-[380px] max-w-[85%] flex-col rounded-tl-xl border-l border-t border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm">
+    <div
+      data-wheel-block
+      className="absolute bottom-14 right-0 z-40 flex h-[68%] w-[380px] max-w-[85%] flex-col rounded-tl-xl border-l border-t border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm"
+    >
       {/* 头部 */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
         <p className="text-sm font-semibold">
           {t('player.comments.title')}
-          {comments && <span className="ml-2 text-xs text-neutral-400">{comments.length}</span>}
+          {total > 0 && <span className="ml-2 text-xs text-neutral-400">{total}</span>}
         </p>
         <button
           type="button"
@@ -107,6 +174,13 @@ export function CommentPanel({ vid, onClose }: Props) {
 
       {/* 列表 */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-4 py-3">
+        {/* vid 未就绪（档案还没解析完）：查询是禁用态，别挂一个永转的圈 */}
+        {!vid.includes(':') ? (
+          <p className="text-muted-foreground py-10 text-center text-xs">
+            {t('player.comments.preparing')}
+          </p>
+        ) : (
+        <>
         {isPending && (
           <div className="grid place-items-center py-10 text-neutral-400">
             <Loader2 className="size-5 animate-spin" />
@@ -142,10 +216,73 @@ export function CommentPanel({ vid, onClose }: Props) {
                 </p>
                 <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
                   <span>{relativeTime(c.createTime)}</span>
+                  {/* 回复入口：服务端暂无回复列表接口，这里只做「回复他」+
+                      自己回复的本地展示；别人的回复数量只读 */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
+                      setReplyToReply(null);
+                      setReplyText('');
+                    }}
+                    className="cursor-pointer hover:text-neutral-300"
+                  >
+                    {t('player.comments.reply')}
+                  </button>
                   {c.replyCount > 0 && (
-                    <span>{tf('player.comments.replies', { n: c.replyCount })}</span>
+                    <span title={t('player.comments.repliesHiddenTip')}>
+                      {tf('player.comments.replies', { n: c.replyCount })}
+                    </span>
                   )}
                 </div>
+                {/* 自己发的回复（本地追加） */}
+                {(localReplies[c.commentId]?.length ?? 0) > 0 && (
+                  <div className="mt-1.5 flex flex-col gap-1.5 border-l-2 border-neutral-800 pl-2.5">
+                    {localReplies[c.commentId]!.map((r, i) => (
+                      <div key={i} className="text-xs leading-snug">
+                        <span className="mr-1 inline-flex items-center text-neutral-500">
+                          <CornerDownRight className="mr-0.5 inline size-3" />
+                          {t('player.comments.me')}
+                        </span>
+                        {r.replyTo && (
+                          <span className="mr-1 text-neutral-500">
+                            {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
+                          </span>
+                        )}
+                        <span className="whitespace-pre-wrap break-words">{r.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* 回复输入框 */}
+                {replyTarget === c.commentId && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <Input
+                      autoFocus
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') submitReply(c);
+                        if (e.key === 'Escape') setReplyTarget(null);
+                      }}
+                      placeholder={
+                        replyToReply
+                          ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
+                          : t('player.comments.replyToComment')
+                      }
+                      className="h-8 flex-1 border-none bg-neutral-800/80 text-xs text-white placeholder:text-neutral-500 focus-visible:ring-0"
+                      maxLength={200}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-8 shrink-0 bg-red-500 px-3 text-xs text-white hover:bg-red-500/90"
+                      disabled={!replyText.trim() || sendReply.isPending}
+                      onClick={() => submitReply(c)}
+                    >
+                      {t('player.interact.send')}
+                    </Button>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -167,6 +304,26 @@ export function CommentPanel({ vid, onClose }: Props) {
             </li>
           ))}
         </ul>
+        {/* 加载更多（翻页）：第一页秒开，剩余的按需续拉 */}
+        {hasNextPage && (
+          <div className="grid place-items-center py-3">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isFetchingNextPage}
+              onClick={() => void fetchNextPage()}
+            >
+              {isFetchingNextPage ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
+              ) : null}
+              {tf('player.comments.loadMore', {
+                n: Math.max(total - (comments?.length ?? 0), 0),
+              })}
+            </Button>
+          </div>
+        )}
+        </>
+        )}
       </div>
 
       {/* 底部发评论 */}

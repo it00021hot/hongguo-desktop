@@ -20,6 +20,8 @@ pub struct EpisodeList {
     pub cover: String,
     /// 分集，按 `vid_index` 升序
     pub episodes: Vec<Episode>,
+    /// 全剧收藏数（video_data.followed_cnt，右栏「☆ N」数据源）
+    pub followed_cnt: i64,
 }
 
 /// 取一部剧的分集列表。
@@ -81,6 +83,11 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
                     .unwrap_or_default()
                     .to_string(),
                 file_stem: String::new(),
+                comment_count: item
+                    .get("comment_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                digg_count: item.get("digged_count").and_then(Value::as_i64).unwrap_or(0),
             })
         })
         .collect();
@@ -96,6 +103,10 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
         title: pick(&video_data, &["series_title"]),
         cover,
         episodes,
+        followed_cnt: video_data
+            .get("followed_cnt")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
     })
 }
 
@@ -196,5 +207,59 @@ mod tests {
         ]}}}});
         let list = parse_episodes(&v).unwrap();
         assert_eq!(list.episodes[0].vid, "a", "缺 vid_index 视作 0，排最前");
+    }
+}
+
+#[cfg(test)]
+mod probe {
+    use super::*;
+
+    /// 详情响应里的公开计数盘点（信息流 landpage 的 comment_count 恒 0、
+    /// 无点赞/收藏数——hgplayer 右栏计数需要一个真实来源）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_detail_counts() {
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        let payload = serde_json::to_vec(
+            &crate::domain::api::params::detail_payload("7690883800057777177"),
+        )
+        .unwrap();
+        let bytes = crate::domain::api::client::api_call(
+            crate::domain::api::params::DETAIL_PATH,
+            Some(payload),
+            &env,
+        )
+        .await
+        .expect("detail");
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        let series = &v["data"]["7690883800057777177"];
+        let first_ep = &series["video_data"]["video_list"][0];
+        let keys: Vec<String> = first_ep
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        let count_keys: Vec<&String> =
+            keys.iter().filter(|k| k.contains("count") || k.contains("cnt")).collect();
+        println!("[detail-counts] 首集计数类键: {count_keys:?}");
+        for k in count_keys {
+            println!("  {k} = {}", first_ep[k]);
+        }
+        // followed_cnt 的路径定位（候选指针逐个试）
+        for ptr in [
+            "/video_data/followed_cnt",
+            "/video_data/video_detail/followed_cnt",
+            "/followed_cnt",
+        ] {
+            if let Some(v) = series.pointer(ptr) {
+                println!("  followed_cnt 路径: {ptr} = {v}");
+            }
+        }
+        let s = serde_json::to_string(series).unwrap_or_default();
+        for key in ["digged_count", "followed_cnt", "comment_count", "play_cnt"] {
+            let n = s.matches(&format!("\"{key}\"")).count();
+            println!("  响应中 \"{key}\" 出现 {n} 次");
+        }
     }
 }

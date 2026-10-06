@@ -94,16 +94,20 @@ fn danmaku_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
     })
 }
 
-/// 评论区请求体（与弹幕同端点同构，**只差 comment_type 与 comment_source**；
-/// 2026-10-05 抓包 #82 实证：ct=4 + src=4 → 20 条 data_type=4 的评论）。
+/// 评论区请求体（与弹幕同端点不同形态）。
+///
+/// 2026-10-06 抓 hgplayer 1.1.5 重锁：评论区形态与弹幕形态在服务端是
+/// **两套校验**——沿用 1.1.3 的弹幕形 business_param + server_channel=1000
+/// 会被拒（实测 103001 参数错误）；评论必须用 `need_count/req_type` +
+/// `server_channel=18`，且 `need_count: true` 让响应带上评论总数
+/// （`common_list_info.total`，互动栏评论计数的数据源）。
 fn comments_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
     serde_json::json!({
         "aid": 8662,
         "business_param": {
             "book_id": book_id,
-            "need_danmaku_guide_type": [],
-            "playlet_item_duration": 60000,
-            "start_offset_time": 0,
+            "need_count": true,
+            "req_type": 0,
         },
         "comment_source": 4,
         "comment_type": 4,
@@ -112,7 +116,7 @@ fn comments_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
         "cursor": cursor,
         "group_id": group_id,
         "group_type": 30,
-        "server_channel": 1000,
+        "server_channel": 18,
         "sort": 1,
     })
 }
@@ -208,95 +212,138 @@ pub struct CommentItem {
     pub user_digg: bool,
 }
 
-/// 拉一集的**评论区**（ct=4/src=4，cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+/// 评论区拉取结果：评论列表 + 评论总数（互动栏计数数据源）+ 翻页游标。
+///
+/// 2026-10-06 改版：**按页拉取**（一次一窗 20 条）——此前把整集全部
+/// 拉完才返回，热门集几百页要转圈半分钟（3716 条实测 ~30s），hgplayer
+/// 是第一页秒开。total 从第一页的 `common_list_info.total` 取。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentPage {
+    pub items: Vec<CommentItem>,
+    /// 该集评论总数（`common_list_info.total`，`need_count: true` 回传）
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_cursor: String,
+}
+
+/// 拉评论区的一页（cursor 传上一页返回的 next_cursor，首页传空）。
+pub async fn fetch_comments_page(
+    group_id: &str,
+    book_id: &str,
+    cursor: &str,
+    env: &ApiEnv,
+) -> AppResult<CommentPage> {
+    let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
+    let body = serde_json::to_vec(&comments_payload(group_id, book_id, cursor))
+        .map_err(|e| AppError::Signer(e.to_string()))?;
+    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析评论响应失败: {e}")))?;
+    if v.get("code").and_then(Value::as_i64) != Some(0) {
+        let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
+        return Err(AppError::Media(format!(
+            "评论接口返回 {}: {msg}",
+            v.get("code").and_then(Value::as_i64).unwrap_or(-1)
+        )));
+    }
+    let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
+    let mut page = CommentPage {
+        total: list_info.get("total").and_then(Value::as_i64).unwrap_or(0),
+        has_more: list_info.get("has_more").and_then(Value::as_bool).unwrap_or(false),
+        next_cursor: list_info
+            .get("cursor")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        items: Vec::new(),
+    };
+    for entry in v
+        .pointer("/data/data_list")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let Some(comment) = entry.get("comment") else { continue };
+        let comment_id = comment
+            .get("comment_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let text = comment
+            .pointer("/common/content/text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if comment_id.is_empty() || text.is_empty() {
+            continue;
+        }
+        let base = comment.pointer("/common/user_info/base_info");
+        page.items.push(CommentItem {
+            comment_id,
+            user_name: base
+                .and_then(|b| b.get("user_name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            avatar: base
+                .and_then(|b| b.get("expand_user_avatar"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            text,
+            create_time: comment
+                .pointer("/common/create_timestamp")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            digg_count: comment
+                .pointer("/stat/digg_count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            reply_count: comment
+                .pointer("/stat/reply_count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            user_digg: comment
+                .pointer("/user_action/user_digg")
+                .and_then(Value::as_bool)
+                == Some(true),
+        });
+    }
+    Ok(page)
+}
+
+/// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+///
+/// 热门集会拉几百页，command 层已改用 [`fetch_comments_page`] 按页返回；
+/// 本函数保留给 probe 全量对账用。
 pub async fn fetch_comments_all(
     group_id: &str,
     book_id: &str,
     env: &ApiEnv,
-) -> AppResult<Vec<CommentItem>> {
-    let mut all: Vec<CommentItem> = Vec::new();
+) -> AppResult<CommentPage> {
+    let mut all = CommentPage::default();
     let mut seen = std::collections::HashSet::new();
     let mut cursor = String::new();
     for _ in 0..MAX_WINDOWS {
-        let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
-        let body = serde_json::to_vec(&comments_payload(group_id, book_id, &cursor))
-            .map_err(|e| AppError::Signer(e.to_string()))?;
-        let bytes =
-            super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
-        let v: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| AppError::Media(format!("解析评论响应失败: {e}")))?;
-        if v.get("code").and_then(Value::as_i64) != Some(0) {
-            let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
-            return Err(AppError::Media(format!(
-                "评论接口返回 {}: {msg}",
-                v.get("code").and_then(Value::as_i64).unwrap_or(-1)
-            )));
+        let page = fetch_comments_page(group_id, book_id, &cursor, env).await?;
+        if all.total == 0 {
+            all.total = page.total;
         }
-        let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
-        for entry in v
-            .pointer("/data/data_list")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            let Some(comment) = entry.get("comment") else { continue };
-            let comment_id = comment
-                .get("comment_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let text = comment
-                .pointer("/common/content/text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            if comment_id.is_empty() || text.is_empty() {
-                continue;
-            }
-            let base = comment.pointer("/common/user_info/base_info");
-            let item = CommentItem {
-                comment_id,
-                user_name: base
-                    .and_then(|b| b.get("user_name"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                avatar: base
-                    .and_then(|b| b.get("expand_user_avatar"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                text,
-                create_time: comment
-                    .pointer("/common/create_timestamp")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                digg_count: comment
-                    .pointer("/stat/digg_count")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                reply_count: comment
-                    .pointer("/stat/reply_count")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                user_digg: comment
-                    .pointer("/user_action/user_digg")
-                    .and_then(Value::as_bool)
-                    == Some(true),
-            };
+        all.has_more = page.has_more;
+        all.next_cursor = page.next_cursor.clone();
+        for item in page.items {
             if seen.insert(item.comment_id.clone()) {
-                all.push(item);
+                all.items.push(item);
             }
         }
-        let has_more = list_info.get("has_more").and_then(Value::as_bool).unwrap_or(false);
-        cursor = list_info
-            .get("cursor")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if !has_more || cursor.is_empty() {
+        if !all.has_more || all.next_cursor.is_empty() {
             break;
         }
+        cursor = all.next_cursor.clone();
     }
     Ok(all)
 }
@@ -324,6 +371,23 @@ mod tests {
         let p = danmaku_payload("g", "b", r#"{"start_offset_time":30000,"end_offset_time":60000}"#);
         assert!(p["cursor"].as_str().unwrap().contains("end_offset_time"));
     }
+
+    #[test]
+    fn comments_payload_matches_capture_20261006() {
+        // 2026-10-06 抓 hgplayer 1.1.5：评论形态与弹幕形态分叉，
+        // 沿用弹幕形 business_param / server_channel=1000 会被 103001 拒
+        let p = comments_payload("g", "b", "");
+        assert_eq!(p["comment_type"], 4);
+        assert_eq!(p["comment_source"], 4);
+        assert_eq!(p["server_channel"], 18, "评论走 18，弹幕才是 1000");
+        assert_eq!(p["business_param"]["need_count"], true);
+        assert_eq!(p["business_param"]["req_type"], 0);
+        assert_eq!(p["count"], 20);
+        assert!(
+            p["business_param"].get("playlet_item_duration").is_none(),
+            "弹幕形字段混进评论体会 103001"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -343,5 +407,126 @@ mod probe {
         let mut sorted = all.clone();
         sorted.sort_by_key(|d| d.offset_ms);
         assert_eq!(all, sorted);
+    }
+
+    /// 评论区（ct=4/src=4）匿名可读性探测：2026-10-06 实录旧弹幕形态被拒
+    /// （103001），换 1.1.5 新形态（need_count/req_type/ch=18）后应恢复。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_comments_full() {
+        let env = ApiEnv::anonymous(crate::domain::model::ProxyConfig::default());
+        match fetch_comments_all("7690197301075119166", "7690150906532219966", &env).await {
+            Ok(page) => {
+                println!(
+                    "[comments-full] total={} items={} 首3: {:?}",
+                    page.total,
+                    page.items.len(),
+                    &page.items[..page.items.len().min(3)]
+                );
+            }
+            Err(e) => {
+                println!("[comments-full] ERR {e}");
+                panic!("评论区拉取失败：{e}");
+            }
+        }
+    }
+
+    /// 回复列表端点探测：hgplayer 1.1.5 实操里展开回复没有独立请求被抓到，
+    /// 端点未知——这里按同族 API 命名惯例穷举候选，code==0 即锁定。
+    /// 锚点（2026-10-06 抓包）：group=7690957575432457241 有 2 条回复的
+    /// 父评论 7693257216923468569（book=7690883800057777177）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_reply_list_candidates() {
+        let env = ApiEnv::anonymous(crate::domain::model::ProxyConfig::default());
+        let group = "7690957575432457241";
+        let book = "7690883800057777177";
+        let comment = "7693257216923468569";
+
+        // 候选：路径已锁定 /novel/commentapi/reply/list/{评论id}/v1/（二进制
+        // 字符串实证 + 404 分界），handler 按 (comment_source, comment_type)
+        // 注册——对 8662 已知 source {4,601}，扫 × type 组合。
+        let mut cases: Vec<(String, String, Value)> = Vec::new();
+        for (p, tag, body) in [
+            (
+                format!("/novel/commentapi/reply/list/{group}/v1/"),
+                "L group路径+body.comment_id".to_string(),
+                serde_json::json!({
+                    "aid": 8662,
+                    "business_param": {"book_id": book, "need_count": true},
+                    "comment_id": comment,
+                    "comment_source": 4,
+                    "comment_type": 4,
+                    "count": 20,
+                    "cursor": "",
+                    "group_id": group,
+                    "group_type": 30,
+                    "server_channel": 18,
+                }),
+            ),
+            (
+                format!("/novel/commentapi/reply/list/{comment}/"),
+                "M 无v1后缀".to_string(),
+                serde_json::json!({
+                    "aid": 8662,
+                    "business_param": {"book_id": book, "need_count": true},
+                    "comment_id": comment,
+                    "comment_source": 4,
+                    "comment_type": 4,
+                    "count": 20,
+                    "cursor": "",
+                    "group_id": group,
+                    "group_type": 30,
+                    "server_channel": 18,
+                }),
+            ),
+        ] {
+            cases.push((p, tag, body));
+        }
+        for (path, tag, body) in cases {
+            let raw = serde_json::to_vec(&body).unwrap();
+            match super::super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(raw), &[], &env)
+                .await
+            {
+                Ok(bytes) => {
+                    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                    let code = v.get("code").and_then(Value::as_i64).unwrap_or(-1);
+                    let mut detail = String::new();
+                    if code == 0 {
+                        // 打首条评论的 id / 回复链路字段，确认真的是回复列表
+                        match v.pointer("/data/data_list/0")
+                            .or_else(|| v.pointer("/data/reply_list/0"))
+                        {
+                            Some(entry) => {
+                                detail = format!(
+                                    " entry_keys={:?} comment_id={:?} reply_to={:?} text={:?}",
+                                    entry.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+                                    entry.pointer("/comment/comment_id").and_then(Value::as_str),
+                                    entry.pointer("/comment/expand/reply_to_comment_id").and_then(Value::as_str)
+                                        .or_else(|| entry.pointer("/comment/reply_to_comment_id").and_then(Value::as_str)),
+                                    entry.pointer("/comment/common/content/text").and_then(Value::as_str),
+                                );
+                            }
+                            None => {
+                                // 无列表条目时打印整个 data（J 这类变体可能是回复专用结构）
+                                let data = v.pointer("/data").cloned().unwrap_or(Value::Null);
+                                let s = serde_json::to_string(&data).unwrap_or_default();
+                                detail = format!(" data无列表，原文: {}", &s[..s.len().min(600)]);
+                            }
+                        }
+                    }
+                    let debug = v
+                        .pointer("/BaseResp/StatusMessage")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let debug_info = v
+                        .get("debug_info")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    println!("[reply-list/{tag}] code={code}{detail} msg={debug} debug_info={debug_info}");
+                }
+                Err(e) => println!("[reply-list/{tag}] ERR {e}"),
+            }
+        }
     }
 }

@@ -5,6 +5,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
 } from '@tanstack/react-query';
 import {
   browse,
@@ -25,9 +26,10 @@ import {
   watchHistory,
 } from './ipc/commands';
 import { useEvent } from './ipc/events';
+import { isWindows } from './platform';
 import { EVENTS } from './ipc/types';
 import type {
-  CommentItem,
+  CommentPage,
   Danmaku,
   DownloadProgress,
   DownloadTask,
@@ -54,6 +56,7 @@ const keys = {
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
   seriesExtras: (id: string) => ['series-extras', id] as const,
+  seriesProgress: (id: string) => ['series-progress', id] as const,
   watchHistory: ['watch-history'] as const,  tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,
@@ -68,6 +71,7 @@ const keys = {
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
   interactState: ['interact-state'] as const,
+  bookshelf: ['bookshelf'] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
   rank: (selected: string, sub: string, panel: string) =>
     ['rank', selected, sub, panel] as const,
@@ -105,6 +109,14 @@ export function useSeriesList() {
 }
 
 export function useSeriesEpisodes(seriesId: string | null) {
+  const queryClient = useQueryClient();
+  // 旧格式档案在 Rust 侧后台补计数，补完发事件——这里失效自己的缓存，
+  // 让计数无感浮现（档案本身早已秒回，不等这次刷新）
+  useEvent<string>(EVENTS.seriesArchiveUpdated, (id) => {
+    if (id && id === seriesId) {
+      void queryClient.invalidateQueries({ queryKey: keys.seriesEpisodes(id) });
+    }
+  });
   return useQuery({
     queryKey: keys.seriesEpisodes(seriesId ?? ''),
     queryFn: () => series.episodes(seriesId!),
@@ -118,6 +130,21 @@ export function useSeriesExtras(seriesId: string) {
     queryFn: () => series.extras(seriesId),
     enabled: seriesId !== '',
     staleTime: 10 * 60_000,
+  });
+}
+
+/**
+ * 一部剧最近看到的那一集（本地 playback 表，5 秒一写的真值）。
+ *
+ * 故意不给 staleTime：详情页每次挂载都要现读——「继续看第 N 集」停在旧集
+ * 的根源就是云端历史既滞后又有缓存，这里必须是本地最新值。
+ */
+export function useSeriesProgress(seriesId: string) {
+  return useQuery({
+    queryKey: keys.seriesProgress(seriesId),
+    queryFn: () => play.progress(seriesId),
+    enabled: seriesId !== '',
+    gcTime: 60_000,
   });
 }
 
@@ -258,19 +285,24 @@ export function useSendDanmaku() {
   });
 }
 
-/** 一集的评论区（ct=4/src=4；失败时报错由面板显示，不打断播放）。 */
+/**
+ * 一集的评论区（无限翻页：第一页秒回，面板底部「加载更多」续拉；
+ * total 取自第一页的 need_count 回传，失败时报错由面板显示不打断播放）。
+ */
 export function useComments(vid: string) {
   const groupId = vid.split(':')[0] ?? '';
   const bookId = vid.split(':')[1] ?? '';
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: keys.comments(vid),
-    queryFn: () => danmakuCmd.comments(groupId, bookId),
+    queryFn: ({ pageParam }) => danmakuCmd.comments(groupId, bookId, pageParam),
+    initialPageParam: '',
+    getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: vid.includes(':'),
     staleTime: 60_000,
   });
 }
 
-/** 发评论：成功后乐观插入该集评论缓存顶部。 */
+/** 发评论：成功后乐观插入第一页顶部，评论总数 +1。 */
 export function useSendComment() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -279,24 +311,109 @@ export function useSendComment() {
       return interactCmd.sendComment(groupId ?? '', bookId ?? '', input.text);
     },
     onSuccess: (commentId, input) => {
-      queryClient.setQueryData<CommentItem[]>(keys.comments(input.vid), (prev) => {
-        const next = prev ?? [];
-        return [
-          {
-            commentId,
-            userName: '我',
-            avatar: '',
-            text: input.text,
-            createTime: Math.floor(Date.now() / 1000),
-            diggCount: 0,
-            replyCount: 0,
-            userDigg: false,
-          },
-          ...next,
-        ];
-      });
+      queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+        keys.comments(input.vid),
+        (prev) => {
+          if (!prev) return prev;
+          const [first, ...rest] = prev.pages;
+          if (!first) return prev;
+          return {
+            ...prev,
+            pages: [
+              {
+                ...first,
+                total: first.total + 1,
+                items: [
+                  {
+                    commentId,
+                    userName: '我',
+                    avatar: '',
+                    text: input.text,
+                    createTime: Math.floor(Date.now() / 1000),
+                    diggCount: 0,
+                    replyCount: 0,
+                    userDigg: false,
+                  },
+                  ...first.items,
+                ],
+              },
+              ...rest,
+            ],
+          };
+        },
+      );
     },
   });
+}
+
+/**
+ * 回复一条评论（reply/add）。回复**列表**服务端暂无拉取接口
+ * （2026-10-06 probe 实证：reply/list 对 aid 8662 无 handler，hgplayer
+ * 同样不拉）——自己发的回复由评论面板本地追加展示。
+ */
+export function useSendReply() {
+  return useMutation({
+    mutationFn: (input: {
+      vid: string;
+      replyToCommentId: string;
+      replyToReplyId?: string;
+      text: string;
+    }) => {
+      const [groupId, bookId] = input.vid.split(':');
+      return interactCmd.sendReply(
+        groupId ?? '',
+        bookId ?? '',
+        input.replyToCommentId,
+        input.replyToReplyId ?? null,
+        input.text,
+      );
+    },
+  });
+}
+
+/** 书架（我的收藏）列表；登录后才拉。收藏/取消收藏后要失效。 */
+export function useBookshelf() {
+  const { data: account } = useAccount();
+  return useQuery({
+    queryKey: keys.bookshelf,
+    queryFn: interactCmd.bookshelf,
+    enabled: !!account,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * 剧集元信息（收藏/点赞等列表页用）：本地档案命中秒回，未收录的
+ * （如书架里从没看过的剧）回落 resolve_series 解析并进同一份缓存。
+ */
+export function useSeriesMeta(seriesId: string) {
+  return useQuery({
+    queryKey: keys.seriesEpisodes(seriesId),
+    queryFn: async () => {
+      try {
+        return await series.episodes(seriesId);
+      } catch {
+        return series.resolve(seriesId);
+      }
+    },
+    enabled: seriesId !== '',
+    staleTime: 10 * 60_000,
+  });
+}
+
+/**
+ * 登录/退出后的统一缓存刷新：账号态、互动回显、书架、预约一起失效。
+ * 任何登录成功/退出入口都该调（LoginDialog / 侧边栏账户区），否则
+ * 互动栏与列表页要等 staleTime 过期才翻面。
+ */
+export function useAuthRefresh() {
+  const qc = useQueryClient();
+  return useCallback(() => {
+    void qc.invalidateQueries({ queryKey: keys.account });
+    void qc.invalidateQueries({ queryKey: keys.interactState });
+    void qc.invalidateQueries({ queryKey: keys.bookshelf });
+    void qc.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT });
+  }, [qc]);
 }
 
 /** 点赞 / 取消点赞一集。 */
@@ -315,7 +432,10 @@ export function useSeriesCollect() {
   return useMutation({
     mutationFn: (input: { seriesId: string; collect: boolean }) =>
       interactCmd.seriesCollect(input.seriesId, input.collect),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.interactState }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.interactState });
+      void queryClient.invalidateQueries({ queryKey: keys.bookshelf });
+    },
   });
 }
 
@@ -332,13 +452,22 @@ export function useReserveSeries() {
 
 // ---------------------------------------------------------------- 封面增强
 
-/** HEIC 封面的本地转码代理地址（hongguo-cover 协议的 http 形式，后端 ffmpeg 转 JPEG）。 */
+/**
+ * HEIC 封面的本地转码代理地址（hongguo-cover 协议，后端 ffmpeg 转 JPEG）。
+ *
+ * URL 形态按平台：Windows 用 `http://{scheme}.localhost`（WebView2 拦截约定），
+ * macOS/Linux 用 `{scheme}://localhost`（WebKit 拦真 scheme）——与 Rust 侧
+ * `protocol::scheme_base` 同一套规矩，给错的表现是封面全挂。
+ */
 function coverProxyUrl(remote: string): string {
   const bytes = new TextEncoder().encode(remote);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const b64 = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-  return `http://hongguo-cover.localhost/c/${b64}`;
+  const base = isWindows()
+    ? 'http://hongguo-cover.localhost'
+    : 'hongguo-cover://localhost';
+  return `${base}/c/${b64}`;
 }
 
 /**
@@ -346,8 +475,12 @@ function coverProxyUrl(remote: string): string {
  * 官网版 webp；换不到的（未上线剧官网没有页面）落到 hongguo-cover 本地
  * 转码代理（ffmpeg 下载 HEIC 转 JPEG，磁盘缓存）。两种途径都失败时
  * `data` 为空，组件自己的 onError 占位图兜底。
+ *
+ * `eagerProxy`：不等 webp 结果、立即返回本地代理地址——给「切剧瞬间的
+ * 全屏占位」用，那里黑屏一秒都嫌长（代理首次要现转一次码，但转码是本地
+ * 活，通常比取流快）。卡片网格不要开：几十张图同时打代理会连环转码。
  */
-export function useWebCover(seriesId: string, sourceCover: string) {
+export function useWebCover(seriesId: string, sourceCover: string, eagerProxy = false) {
   const needs = !isRenderableCover(sourceCover);
   const q = useQuery({
     queryKey: keys.webCover(seriesId),
@@ -359,7 +492,8 @@ export function useWebCover(seriesId: string, sourceCover: string) {
   });
   return {
     data: needs
-      ? (q.data ?? (q.isSuccess || q.isError ? coverProxyUrl(sourceCover) : undefined))
+      ? (q.data ??
+        (eagerProxy || q.isSuccess || q.isError ? coverProxyUrl(sourceCover) : undefined))
       : undefined,
   };
 }

@@ -278,6 +278,50 @@ mod probe {
         }
     }
 
+    /// 信息流条目的**公开计数**字段盘点（hgplayer 未登录也显示
+    /// 点赞/评论/收藏数——数据源应是 feed 条目本身，与登录态无关）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_feed_counts() {
+        let env = anon_env();
+        // 直接取原始响应看字段
+        let biz_query = vec![("offset".to_string(), "0".to_string())];
+        let body = serde_json::to_vec(&serde_json::json!({ "biz_param": {} })).unwrap();
+        let bytes = super::super::client::api_call_full(
+            API_ORIGIN,
+            LANDPAGE_PATH,
+            Some(body),
+            &biz_query,
+            &env,
+        )
+        .await
+        .expect("feed 原始响应");
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        let first = &v["data"]["video_data"][0];
+        let keys: Vec<String> = first
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        let count_keys: Vec<&String> =
+            keys.iter().filter(|k| k.contains("count") || k.contains("cnt")).collect();
+        println!("[feed-counts] 条目全部计数类键: {count_keys:?}");
+        for k in count_keys {
+            println!("  {k} = {}", first[k]);
+        }
+        // 多打几条看 comment_count/digged_count 的典型值
+        if let Some(items) = v["data"]["video_data"].as_array() {
+            for it in items.iter().take(5) {
+                println!(
+                    "[feed-counts] {} digged={:?} comment={:?} followed={:?}",
+                    it["series_id"].as_str().unwrap_or("?"),
+                    it.get("digged_count"),
+                    it.get("comment_count"),
+                    it.get("followed_cnt"),
+                );
+            }
+        }
+    }
+
     /// 弹幕/评论列表参数探测：code==0 即转正。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

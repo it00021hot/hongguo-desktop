@@ -188,6 +188,15 @@ impl Store {
         })
     }
 
+    /// 一部剧最近看到的那一集（详情页「继续看」的真值来源）。
+    pub fn series_last_position(
+        &self,
+        series_id: &str,
+    ) -> AppResult<Option<(u32, PlaybackPosition)>> {
+        let id = series_id.to_string();
+        self.exec(move |db| Box::pin(async move { entity::series_last_position(db, &id).await }))
+    }
+
     // ---------- merge ----------
 
     pub fn merge_tasks(&self) -> AppResult<Vec<MergeTask>> {
@@ -280,8 +289,14 @@ mod tests {
 
     #[test]
     fn open_failure_reports_through_init_channel() {
-        // Windows 上保留字符做路径，打开必然失败
-        let err = Store::open("file?with<bad>chars|.db");
-        assert!(err.is_err(), "非法路径必须报错而不是带病运行");
+        // 用「普通文件下的子路径」构造必然失败：任何平台 open 都得到 ENOTDIR。
+        // （原来用 Windows 保留字符做路径，在 macOS 上完全合法——测试假失败
+        // 之外还会在工作目录里留下一个真库文件。）
+        let file = std::env::temp_dir().join(format!("hg-not-a-dir-{}", std::process::id()));
+        std::fs::write(&file, b"x").expect("造一个普通文件");
+        let bad = file.join("child.db");
+        let err = Store::open(bad.to_str().expect("临时路径是 UTF-8"));
+        assert!(err.is_err(), "非目录路径必须报错而不是带病运行");
+        let _ = std::fs::remove_file(&file);
     }
 }

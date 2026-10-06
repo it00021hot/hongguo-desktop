@@ -37,6 +37,9 @@ pub fn parse_series_from_html(html: &str, series_id: &str) -> AppResult<Series> 
             vid,
             title: String::new(),
             file_stem: String::new(),
+            // 官网 HTML 兜底解析拿不到计数，置 0（右栏计数不显示即可）
+            comment_count: 0,
+            digg_count: 0,
         })
         .collect();
 

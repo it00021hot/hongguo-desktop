@@ -43,6 +43,10 @@ const PROGRESSIVE_WINDOW: u64 = 4 * 1024 * 1024;
 /// 渐进式在线流：稀疏密文 + 解密计划，协议层按 Range 惰性解密。
 ///
 /// `plan` 为 `None` 表示未加密流（官网兜底链路），明文就是密文本身。
+///
+/// `cdn_url`/`proxy` 供「预取只填头部、转为当前集后续填余下」的恢复填充用
+/// （见 [`super::super::service` 侧 fill]）——没有它们，续填就得把取流表
+/// 那次接口调用整个重放一遍。
 pub struct ProgressiveStream {
     pub sparse: Arc<SparseBuffer>,
     pub plan: Option<Arc<StreamingPlan>>,
@@ -50,6 +54,10 @@ pub struct ProgressiveStream {
     pub plain_len: u64,
     /// serve 遇到未覆盖区间时置位，取流线程据此跳转填充（明文偏移）
     pub seek_hint: AtomicU64,
+    /// CDN 视频地址（恢复填充直接按 Range 续拉）
+    pub cdn_url: String,
+    /// 取流时的代理配置（恢复填充重建 client 用）
+    pub proxy: crate::domain::model::ProxyConfig,
 }
 
 impl ProgressiveStream {
@@ -309,6 +317,12 @@ pub struct StreamCache {
     /// 缓存按 (vid, 档位) 分条目，不指定档位就没有键可查。记下上一轮的答案，
     /// 下一个不带档位的请求就能直接命中，不必再发一次接口调用。
     auto: Mutex<HashMap<String, u32>>,
+    /// 当前正在看的 vid。prepare 时设置；keep_only 只保它 + 显式预取。
+    current: Mutex<String>,
+    /// 显式预取的那一档（沉浸流「下一部剧」）。只保这一条，不再 blanket
+    /// 豁免全部 fetching——否则被切走的前一集会拖着整集下载占住串行队列，
+    /// 当前集只能黑屏干等（2026-10-06「切集后一直黑屏」的根因）。
+    prefetch: Mutex<Option<(String, u32)>>,
 }
 
 impl StreamCache {
@@ -326,7 +340,7 @@ impl StreamCache {
     }
 
     /// 查一个条目。
-    fn get(&self, vid: &str, definition: u32) -> Option<Arc<StreamEntry>> {
+    pub fn get(&self, vid: &str, definition: u32) -> Option<Arc<StreamEntry>> {
         self.entries
             .lock()
             .get(&StreamKey {
@@ -356,8 +370,13 @@ impl StreamCache {
     /// 注册渐进式流（取流编排建好计划后调用）。
     ///
     /// 整集数据已经写进来的话返回 `false`（渐进条目作废），调用方据此停止填充。
+    /// 条目已被逐出（用户切走了）同样返回 `false` 且**不再重建**——重建一个
+    /// 没人要的条目只会让它的填充白占串行队列。
     pub fn set_progressive(&self, vid: &str, definition: u32, stream: Arc<ProgressiveStream>) -> bool {
-        let entry = self.get_or_create(vid, definition);
+        let Some(entry) = self.get(vid, definition) else {
+            log::info!("[Stream] {vid}@{definition} 已被逐出，渐进注册作废");
+            return false;
+        };
         let filled = entry.filled.lock();
         if *filled > 0 {
             return false;
@@ -423,15 +442,66 @@ impl StreamCache {
         });
     }
 
-    /// 同「只留一集」语义，但**正在取流的条目豁免**。
+    /// 同「只留一集」语义：只保当前集 + 显式预取的那一档。
     ///
-    /// 沉浸流会预取下一部剧的流（后台渐进填充中）；用户此时切集/换清晰度
-    /// 触发新的 `prepare`，无脑清理会把预取半途的条目清掉，
-    /// 等于白取一遍。豁免后预取能活到它被切上的那一刻。
+    /// 不再 blanket 豁免全部 fetching（旧做法）：被切走的前一集若还在
+    /// 填充，会占住全局串行队列把当前集堵成黑屏——它的条目被逐出后，
+    /// 填充循环据 `exists` 自行中止，队列立刻让给当前集。
     pub fn keep_only_protect_fetching(&self, vid: &str) {
-        self.entries
-            .lock()
-            .retain(|k, entry| k.vid == vid || *entry.fetching.lock());
+        let prefetch = self.prefetch.lock().clone();
+        self.entries.lock().retain(|k, _| {
+            k.vid == vid
+                || prefetch
+                    .as_ref()
+                    .map(|(v, d)| *v == k.vid && *d == k.definition)
+                    .unwrap_or(false)
+        });
+    }
+
+    /// 记下当前正在看的 vid（prepare 时调用；keep_only 与填充礼让据此判断）。
+    pub fn set_current(&self, vid: &str) {
+        *self.current.lock() = vid.to_string();
+        // 升格为当前的那条预取不再是预取
+        let mut pf = self.prefetch.lock();
+        if pf.as_ref().map(|(v, _)| v == vid).unwrap_or(false) {
+            *pf = None;
+        }
+    }
+
+    /// 这一条是否被标记为预取。
+    pub fn mark_prefetch(&self, vid: &str, definition: u32) {
+        *self.prefetch.lock() = Some((vid.to_string(), definition));
+    }
+
+    /// 当前正在看的 vid。
+    pub fn current(&self) -> String {
+        self.current.lock().clone()
+    }
+
+    /// 预取条目是否需要「转正续填」：渐进已注册但远没填满，且没有填充方。
+    pub fn needs_resume(&self, vid: &str, definition: u32) -> bool {
+        let Some(entry) = self.get(vid, definition) else {
+            return false;
+        };
+        if *entry.fetching.lock() {
+            return false;
+        }
+        let Some(prog) = entry.progressive.lock().clone() else {
+            return false;
+        };
+        prog.sparse.downloaded() < prog.sparse.len()
+    }
+
+    /// 取续填所需的数据面（稀疏缓冲 + 渐进计划）。仅 [`Self::needs_resume`]
+    /// 为真时有值；续填的编排（取流权/事件上报）在 play_service 侧。
+    pub fn resume_parts(
+        &self,
+        vid: &str,
+        definition: u32,
+    ) -> Option<(Arc<SparseBuffer>, Arc<ProgressiveStream>)> {
+        let entry = self.get(vid, definition)?;
+        let prog = entry.progressive.lock().clone()?;
+        Some((prog.sparse.clone(), prog))
     }
 
     /// 这一集「不指定档位」时上次解析到的档位。
@@ -652,20 +722,28 @@ mod tests {
     }
 
     #[test]
-    fn keep_only_drops_other_episodes_but_spares_fetching() {
-        // 一次只看一集：不清掉别的集，整季 250 集会把内存吃光；
-        // 正在取流的豁免（沉浸流预取的下一部剧不能被清）
+    fn keep_only_drops_other_episodes_but_spares_marked_prefetch() {
+        // 一次只看一集：不清掉别的集，整季 250 集会把内存吃光。
+        // 只保当前集 + 显式标记的预取（沉浸流「下一部剧」）——不再 blanket
+        // 豁免全部 fetching：被切走的前一集若还在填充，会占住串行队列
+        // 把当前集堵成黑屏（2026-10-06 实测）。
         let c = StreamCache::default();
         c.store("ep1", 1080, &[0u8; 100]);
         c.store("ep2", 1080, &[0u8; 50]);
         c.begin_fetch("ep3", 1080);
+        c.mark_prefetch("ep3", 1080);
         c.keep_only_protect_fetching("ep2");
         assert!(c.get("ep1", 1080).is_none());
         assert!(c.get("ep2", 1080).is_some());
-        assert!(c.get("ep3", 1080).is_some(), "取流中的预取条目豁免");
+        assert!(c.get("ep3", 1080).is_some(), "显式预取豁免");
         c.end_fetch("ep3", 1080);
         c.keep_only_protect_fetching("ep2");
-        assert!(c.get("ep3", 1080).is_none(), "取流结束后不再豁免");
+        assert!(c.get("ep3", 1080).is_some(), "预取标记与取流标志无关");
+
+        // 没标预取的在途条目照样清（它的填充会据 exists 自行中止）
+        c.begin_fetch("ep4", 1080);
+        c.keep_only_protect_fetching("ep2");
+        assert!(c.get("ep4", 1080).is_none(), "未标预取的不豁免");
     }
 
     #[test]
@@ -728,9 +806,14 @@ mod tests {
             plan: Some(Arc::new(plan)),
             plain_len,
             seek_hint: AtomicU64::new(0),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
         };
         let c = crate::service::play_service::online::cache();
         c.remove(vid, def);
+        // 渐进注册是非复活式的：fixture 先物化条目（prepare 的 begin_fetch 等价物）
+        assert!(c.begin_fetch(vid, def));
+        c.end_fetch(vid, def);
         assert!(c.set_progressive(vid, def, Arc::new(prog)));
         (sparse, cipher, reference, plain_len)
     }
@@ -796,8 +879,12 @@ mod tests {
             plan: None,
             plain_len: data.len() as u64,
             seek_hint: AtomicU64::new(0),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
         };
         c.remove("v-prog-raw", 720);
+        assert!(c.begin_fetch("v-prog-raw", 720));
+        c.end_fetch("v-prog-raw", 720);
         assert!(c.set_progressive("v-prog-raw", 720, Arc::new(prog)));
 
         let (status, _, body) = serve("v-prog-raw", 720, Some("bytes=100-199")).unwrap();
@@ -841,9 +928,31 @@ mod tests {
             plan: None,
             plain_len: 16,
             seek_hint: AtomicU64::new(0),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
         };
+        assert!(c.begin_fetch("v-prog-ready", 720));
+        c.end_fetch("v-prog-ready", 720);
         assert!(c.set_progressive("v-prog-ready", 720, Arc::new(prog)));
         assert!(c.ready("v-prog-ready", 720).is_some(), "注册即就绪");
+    }
+
+    #[test]
+    fn progressive_registration_does_not_resurrect_an_evicted_entry() {
+        // 条目被逐出 = 用户已切走：渐进注册必须作废（否则填充把没人要的
+        // 条目重新插回缓存，白占串行队列——切集黑屏链路的一环）
+        let c = crate::service::play_service::online::cache();
+        c.remove("v-prog-gone", 720);
+        let prog = ProgressiveStream {
+            sparse: SparseBuffer::new(16),
+            plan: None,
+            plain_len: 16,
+            seek_hint: AtomicU64::new(0),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
+        };
+        assert!(!c.set_progressive("v-prog-gone", 720, Arc::new(prog)));
+        assert!(c.get("v-prog-gone", 720).is_none(), "不得复活条目");
     }
 
     #[test]
@@ -851,12 +960,13 @@ mod tests {
         // 整集数据已写入后，渐进注册应被拒绝（回落路径赢了的情形）
         let c = StreamCache::default();
         c.store("v-race", 720, &[1u8; 8]);
-        let sparse = SparseBuffer::new(4);
         let prog = ProgressiveStream {
-            sparse,
+            sparse: SparseBuffer::new(4),
             plan: None,
             plain_len: 4,
             seek_hint: AtomicU64::new(0),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
         };
         assert!(!c.set_progressive("v-race", 720, Arc::new(prog)));
     }

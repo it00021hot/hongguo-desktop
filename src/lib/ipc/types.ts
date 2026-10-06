@@ -17,6 +17,7 @@ export const EVENTS = {
   onlinePlayProgress: 'online-play-progress',
   loginMfaState: 'login-mfa-state',
   compatPlayProgress: 'compat-play-progress',
+  seriesArchiveUpdated: 'series-archive-updated',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

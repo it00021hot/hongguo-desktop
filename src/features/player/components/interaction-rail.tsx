@@ -1,23 +1,22 @@
-//! 播放页互动栏：点赞 / 评论 / 收藏 / 预约 / 分享（抖音系右缘竖排形态）。
+//! 播放页互动栏：点赞 / 评论 / 收藏 / 分享（抖音系右缘竖排形态）。
 //!
 //! 布局对齐 hgplayer/抖音：**icon 在上、计数在下**，纯白 + 投影贴着画面
-//! 右缘，不做圆底按钮。计数从最近互动列表 best-effort 匹配（不在列表里
-//! 就只显示 icon）。发弹幕入口在控制栏（hgplayer 同款），不在这里。
+//! 右缘，不做圆底按钮。计数来自剧集档案的 detail 公开计数（匿名可见），
+//! 登录后 mget 兜底「已赞/已追」红标。预约在侧边栏「预约」页，不在这。
+//! 发弹幕入口在控制栏（hgplayer 同款），不在这里。
 //!
 //! 2026-10-05 抓包端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
-//! 预约 uncover_subscribe(1/2)、状态 mget；口径见 docs 第 9 节。
+//! 状态 mget；口径见 docs 第 9 节。
 
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { BellRing, Heart, MessageSquareText, Share2, Star } from 'lucide-react';
+import { Heart, MessageSquareText, Share2, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
   useAccount,
   useInteractionState,
-  useReserveSeries,
-  useReservations,
   useSeriesCollect,
   useVideoDigg,
 } from '@/lib/queries';
@@ -31,6 +30,12 @@ interface InteractionRailProps {
   visible?: boolean;
   /** 剧标题（分享文案用） */
   title?: string;
+  /** 该集评论数（剧集档案 detail 公开计数，匿名可见） */
+  commentCount?: number;
+  /** 该集点赞数（同上） */
+  diggCount?: number;
+  /** 全剧收藏数（同上） */
+  followCount?: number;
 }
 
 /** 计数格式化：抖音系「1.4万」样式。 */
@@ -41,7 +46,15 @@ function fmtCount(n: number): string {
 }
 
 /** 画面右缘竖排互动栏（悬浮在 stage 内，跟随悬浮层淡出）。 */
-export function InteractionRail({ seriesId, vid, visible = true, title }: InteractionRailProps) {
+export function InteractionRail({
+  seriesId,
+  vid,
+  visible = true,
+  title,
+  commentCount,
+  diggCount: publicDiggCount,
+  followCount: publicFollowCount,
+}: InteractionRailProps) {
   const navigate = useNavigate();
   const { data: account } = useAccount();
   const loggedIn = !!account;
@@ -49,20 +62,18 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
   const bareVid = vid.split(':')[0] ?? '';
 
   const { data: state } = useInteractionState();
-  // best-effort 匹配：当前集/剧在最近互动列表里才有「已互动」与计数
+  // best-effort 匹配：当前集/剧在最近互动列表里才有「已互动」红标
   const hit = state?.items.find((i) => i.vid === bareVid);
   const seriesHit = state?.items.find((i) => i.seriesId === seriesId);
   const digged = hit?.userDigg ?? false;
-  const diggCount = hit?.diggedCount ?? 0;
   const collected = seriesHit?.followed ?? false;
-  const collectCount = seriesHit?.followedCnt ?? 0;
-  // 预约状态在「我的预约（待上线）」列表里匹配
-  const { data: reservations } = useReservations(false);
-  const reserved = reservations?.items.some((i) => i.seriesId === seriesId) ?? false;
+  // 计数优先档案公开计数（detail 下发，匿名可见）；mget 命中值兜底
+  const diggCount = (publicDiggCount ?? 0) > 0 ? publicDiggCount! : (hit?.diggedCount ?? 0);
+  const collectCount =
+    (publicFollowCount ?? 0) > 0 ? publicFollowCount! : (seriesHit?.followedCnt ?? 0);
 
   const digg = useVideoDigg();
   const collect = useSeriesCollect();
-  const reserve = useReserveSeries();
   const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
 
   const requireLogin = useCallback(() => {
@@ -95,18 +106,6 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
     );
   };
 
-  const onReserve = () => {
-    if (!loggedIn) return requireLogin();
-    reserve.mutate(
-      { seriesId, reserve: !reserved },
-      {
-        onSuccess: () =>
-          toast.success(t(reserved ? 'player.interact.unreserved' : 'player.interact.reserved')),
-        onError: (e) => toast.error(String(e)),
-      },
-    );
-  };
-
   const onShare = async () => {
     const url = `https://hongguoduanju.com/detail?series_id=${seriesId}`;
     try {
@@ -119,6 +118,7 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
 
   return (
     <div
+      data-wheel-block
       className={cn(
         'absolute bottom-24 right-2 z-20 flex flex-col items-center gap-4',
         'transition-opacity duration-300',
@@ -138,6 +138,7 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
       <RailItem
         icon={<MessageSquareText className="size-7 drop-shadow-md" />}
         label={t('player.interact.comments')}
+        count={commentCount && commentCount > 0 ? commentCount : undefined}
         onClick={() => setCommentPanelOpen(true)}
       />
       <RailItem
@@ -149,15 +150,6 @@ export function InteractionRail({ seriesId, vid, visible = true, title }: Intera
         label={t('player.interact.collect')}
         count={collectCount > 0 ? collectCount : undefined}
         onClick={onCollect}
-      />
-      <RailItem
-        icon={
-          <BellRing
-            className={cn('size-7 drop-shadow-md', reserved && 'fill-sky-400 text-sky-400')}
-          />
-        }
-        label={t('player.interact.reserve')}
-        onClick={onReserve}
       />
       <RailItem
         icon={<Share2 className="size-6 drop-shadow-md" />}

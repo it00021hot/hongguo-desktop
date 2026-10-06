@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    collect_series, digg_comment, digg_video, fetch_interaction_state, send_comment, send_danmaku,
-    InteractionState,
+    collect_series, digg_comment, digg_video, fetch_bookshelf, fetch_interaction_state, send_comment,
+    send_danmaku, send_reply, BookshelfEntry, InteractionState,
 };
 use crate::error::AppResult;
 
@@ -32,7 +32,7 @@ pub async fn danmaku_send(
     Ok(cid)
 }
 
-/// 发一条评论（评论区 UI 预留；offset 恒 0）。
+/// 发一条评论（offset 恒 0）。返回 comment_id。
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
@@ -46,6 +46,45 @@ pub async fn comment_send(
         return Err(crate::error::AppError::Media("评论内容为空".into()));
     }
     send_comment(&group_id, &book_id, &text, &env).await
+}
+
+/// 回复一条评论（或一条回复）。`reply_to_reply_id` 回复「回复」时传
+/// 被回复的那条回复 id（多级），纯评论回复传空。返回 reply_id。
+#[tauri::command]
+pub async fn comment_reply(
+    state: State<'_, AppState>,
+    group_id: String,
+    book_id: String,
+    reply_to_comment_id: String,
+    reply_to_reply_id: Option<String>,
+    text: String,
+) -> AppResult<String> {
+    let env = state.api_env();
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(crate::error::AppError::Media("回复内容为空".into()));
+    }
+    send_reply(
+        &group_id,
+        &book_id,
+        &reply_to_comment_id,
+        reply_to_reply_id.as_deref(),
+        &text,
+        &env,
+    )
+    .await
+}
+
+/// 书架（我的收藏）列表。uid 取登录账号（未登录报错，前端不应调用）。
+#[tauri::command]
+pub async fn bookshelf_list(state: State<'_, AppState>) -> AppResult<Vec<BookshelfEntry>> {
+    let account = state
+        .settings()
+        .account
+        .filter(|a| !a.user_id.is_empty())
+        .ok_or_else(|| crate::error::AppError::Auth("未登录".into()))?;
+    let env = state.api_env();
+    fetch_bookshelf(&account.user_id, &env).await
 }
 
 /// 点赞 / 取消点赞一集（`vid`=分集 id，`seriesId` 进埋点字段）。

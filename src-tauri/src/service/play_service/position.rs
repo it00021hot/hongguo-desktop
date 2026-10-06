@@ -86,6 +86,35 @@ mod tests {
         (std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store)), dir)
     }
 
+    /// 「最近看到的那一集」按 updated_at 取最新：回看旧集再切回来，
+    /// 详情页的「继续看」要跟着最新的那行走，而不是集号最大的那行。
+    #[test]
+    fn series_last_position_follows_latest_row() {
+        let (state, dir) = file_state("lastpos");
+        state
+            .store
+            .save_playback_position("A", 1, &at(10.0, 100))
+            .unwrap();
+        state
+            .store
+            .save_playback_position("A", 2, &at(20.0, 200))
+            .unwrap();
+        // 回看第 1 集并更新得最晚：最新行是 (1, t=11)
+        state
+            .store
+            .save_playback_position("A", 1, &at(11.0, 300))
+            .unwrap();
+        let (vid, pos) = state.store.series_last_position("A").unwrap().unwrap();
+        assert_eq!(vid, 1, "updated_at 最新的行是第 1 集");
+        assert_eq!(pos.current_time, 11.0);
+        assert!(
+            state.store.series_last_position("ZZZ").unwrap().is_none(),
+            "没看过的剧返回 None（前端回落云端历史）"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 断点续播的持久化语义：保存后「重启」（重开同一文件库）还能读回；
     /// 接近片尾的记录视为看完，load 返回 0（从头看）。
     #[test]

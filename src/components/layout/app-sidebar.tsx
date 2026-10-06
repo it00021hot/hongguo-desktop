@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
   Flame,
@@ -6,15 +7,23 @@ import {
   Trophy,
   Sparkles,
   BellRing,
+  Star,
+  ThumbsUp,
   ListChecks,
   Combine,
   HardDrive,
   Settings,
   PanelLeftClose,
   PanelLeft,
+  UserRound,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { LoginDialog } from '@/features/settings/components/login-dialog';
+import { useAccount, useAuthRefresh } from '@/lib/queries';
+import { login } from '@/lib/ipc/commands';
+import { toast } from 'sonner';
 import { useUiStore } from '@/lib/stores/ui';
 import { isMac } from '@/lib/platform';
 import { MacTrafficLights } from './window-controls';
@@ -30,6 +39,8 @@ export const NAV_ITEMS = [
   { key: 'rank', to: '/rank', icon: Trophy },
   { key: 'new', to: '/new', icon: Sparkles },
   { key: 'history', to: '/history', icon: History },
+  { key: 'collections', to: '/collections', icon: Star },
+  { key: 'liked', to: '/liked', icon: ThumbsUp },
   { key: 'reservations', to: '/reservations', icon: BellRing },
   { key: 'browse', to: '/browse', icon: Compass },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
@@ -99,6 +110,11 @@ export function AppSidebar() {
         })}
       </nav>
 
+      {/* 我的 / 登录（hgplayer 同款贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
+      <div className="border-t p-2">
+        <AccountButton collapsed={collapsed} />
+      </div>
+
       <div className="border-t p-2">
         <Button
           variant="ghost"
@@ -112,5 +128,75 @@ export function AppSidebar() {
         </Button>
       </div>
     </aside>
+  );
+}
+
+/** 贴底账户入口：未登录「我的 / 登录」开登录弹窗；已登录显昵称 + 退出钮。 */
+function AccountButton({ collapsed }: { collapsed: boolean }) {
+  const { data: account } = useAccount();
+  const refreshAuth = useAuthRefresh();
+  const [loginOpen, setLoginOpen] = useState(false);
+
+  const label = account?.userName?.trim() || t('nav.accountFallback');
+
+  const row = (
+    <button
+      type="button"
+      onClick={() => {
+        if (!account) setLoginOpen(true);
+      }}
+      className={cn(
+        'text-sidebar-foreground hover:bg-sidebar-accent flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+        collapsed && 'justify-center px-0',
+        account && 'cursor-default',
+      )}
+      title={collapsed ? label : undefined}
+    >
+      <UserRound className="size-4 shrink-0" />
+      {!collapsed && (
+        <>
+          <span className="truncate">{label}</span>
+          {!account && (
+            <span className="text-primary ml-auto shrink-0 text-xs">{t('nav.login')}</span>
+          )}
+        </>
+      )}
+    </button>
+  );
+
+  const logout = () => {
+    void login
+      .logout()
+      .then(() => {
+        refreshAuth();
+        toast.success(t('nav.loggedOut'));
+      })
+      .catch((e) => toast.error(String(e)));
+  };
+
+  return (
+    <>
+      {collapsed ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{row}</TooltipTrigger>
+          <TooltipContent side="right">{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        row
+      )}
+      {account != null && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={logout}
+          className={cn('text-muted-foreground size-7 w-full', !collapsed && 'justify-start gap-2')}
+          title={t('nav.logout')}
+        >
+          <LogOut className="size-3.5" />
+          {!collapsed && <span className="text-xs">{t('nav.logout')}</span>}
+        </Button>
+      )}
+      <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} onSuccess={refreshAuth} />
+    </>
   );
 }

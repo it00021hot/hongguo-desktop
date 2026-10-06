@@ -38,9 +38,6 @@ import type { Episode, VideoDefinition } from '@/lib/schema';
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
 
-/** 播放中静止多久后隐藏控件（毫秒）。 */
-const HIDE_DELAY_MS = 3_000;
-
 /**
  * 控件按钮的统一样式。
  *
@@ -99,6 +96,14 @@ interface Props {
   immersive?: boolean;
   /** 选集浮层里点选某一集（跳集，由播放器接 store） */
   onPickEpisode?: (vidIndex: number) => void;
+  /**
+   * 悬浮层可见性（受控）。
+   *
+   * 裁决在 PlayerView：静止倒计时 / 暂停 / 任一面板打开都在那一层算好，
+   * 这里不再自养一套定时器——两套定时器各行其是时，就会出现
+   * 「控制栏还在、简介没了」或反过来的精神分裂。
+   */
+  visible: boolean;
 }
 
 /** 控制栏内的弹幕发送框（hgplayer 同款：常驻控制栏左段）。
@@ -132,7 +137,7 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
   };
 
   return (
-    <div className="ml-2 flex h-8 w-52 items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm">
+    <div className="ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -185,6 +190,7 @@ export function PlayerControls({
   onStepEpisode,
   immersive,
   onPickEpisode,
+  visible,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -200,54 +206,13 @@ export function PlayerControls({
   const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
-  /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const danmakuPanelRef = useRef<HTMLDivElement | null>(null);
 
   /** 拖动进度时不要让 timeupdate 把用户正在拖的位置冲掉 */
   const scrubbing = useRef(false);
 
-  /**
-   * 悬浮层跟随鼠标：进入视频区显示，静止 3 秒后隐藏，移出视频区立刻隐藏。
-   *
-   * 暂停时永远显示——画面停住却把控件也藏了，用户只会以为界面卡死。
-   * 选集浮层开着时也常显：浮层盖在控制栏上方，控制栏没了浮层就悬空。
-   */
-  const chromeShown = paused || chromeVisible || seriesPanelOpen;
-
   /** 当前集的 vid（发弹幕对象；档案未就绪为空串，发送时 guard） */
   const currentVid = episodes.find((e) => e.vidIndex === currentIndex)?.vid ?? '';
-
-  const showChrome = useCallback(() => {
-    setChromeVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setChromeVisible(false), HIDE_DELAY_MS);
-  }, []);
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage || paused) {
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      return;
-    }
-
-    // 初始状态就是可见的，这里只启动倒计时（不在 effect 里同步 setState）
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setChromeVisible(false), HIDE_DELAY_MS);
-
-    const onLeave = () => setChromeVisible(false);
-    stage.addEventListener('mousemove', showChrome);
-    stage.addEventListener('mouseenter', showChrome);
-    stage.addEventListener('mouseleave', onLeave);
-
-    return () => {
-      stage.removeEventListener('mousemove', showChrome);
-      stage.removeEventListener('mouseenter', showChrome);
-      stage.removeEventListener('mouseleave', onLeave);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-  }, [paused, showChrome, stageRef]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -376,15 +341,15 @@ export function PlayerControls({
 
   return (
     <div
+      data-wheel-block
       className={cn(
         // 纯悬浮：不要任何底色/渐变蒙版，就一组裸图标压在画面上。
         // 可读性靠白色 + 投影，不靠底板——底板一加就变成一条色块，破坏了画面。
         'absolute inset-x-0 bottom-0 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
         'drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
         'transition-opacity duration-200',
-        chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
+        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
-      onMouseMove={showChrome}
     >
       <ScrubBar
         current={current}
@@ -417,11 +382,12 @@ export function PlayerControls({
           <SkipForward className="size-4" />
         </IconButton>
 
-        <span className="ml-1 font-mono text-xs text-white/90 tabular-nums">
+        <span className="ml-1 shrink-0 font-mono text-xs text-white/90 whitespace-nowrap tabular-nums">
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
-        {/* 弹幕发送框（hgplayer 同款位置：控制栏左段时间之后，常驻） */}
+        {/* 弹幕发送框（hgplayer 同款位置：控制栏左段时间之后，常驻）。
+            w-52 在窄舞台下放不下，允许收缩到 w-32，输入框本身 min-w-0 兜底 */}
         <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
         <div className="ml-auto flex items-center gap-1">
@@ -432,7 +398,7 @@ export function PlayerControls({
                 {rate}x
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" data-wheel-block>
               <DropdownMenuLabel>{t('player.playbackRate')}</DropdownMenuLabel>
               {RATES.map((r) => (
                 <DropdownMenuItem key={r} onSelect={() => applyRate(r)}>
@@ -459,7 +425,7 @@ export function PlayerControls({
                 {definition > 0 ? `${definition}P` : t('player.definitionAuto')}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" data-wheel-block>
               <DropdownMenuLabel>{t('player.definition')}</DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => onDefinitionChange(undefined)}>
                 {t('player.definitionAuto')}

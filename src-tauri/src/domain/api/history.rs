@@ -15,6 +15,8 @@ use super::danmaku::LQ_API_ORIGIN;
 use crate::error::{AppError, AppResult};
 
 pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
+const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
+const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
 
 /// 一条云端观看记录。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -155,6 +157,106 @@ fn num_to_string(v: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
+}
+
+/// 观看进度上报（2026-10-06 抓 hgplayer 1.1.5 双接口逐字段锁定）：
+/// 官方客户端播片时同时打 `read_history/update` 与 `read_progress/upload`，
+/// 云端「历史」页的写入端。hgplayer 约每分钟一次 + 切集时触发。
+///
+/// 两接口字段形态刻意不同（照抓包原样）：update 里 book_id/vid 是 JSON
+/// **数字**，upload 里 book_id/item_id 是**字符串**；duration/retain 等
+/// hgplayer 传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
+/// 等于当时进度，这里同用 position_ms 承载（我们未单独累计观看时长）。
+pub async fn report_watch_progress(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    env: &ApiEnv,
+) -> AppResult<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let book_num = str_or_num(series_id);
+    let vid_num = str_or_num(vid);
+    let update_body = serde_json::json!({
+        "update_datas": [{
+            "book_id": book_num,
+            "book_type": 2,
+            "chapter_index": 0,
+            "current_play_position": position_ms,
+            "digged_count": 0,
+            "duration": 0,
+            "episode_cnt": 0,
+            "is_delete": false,
+            "is_interactive_game": false,
+            "is_listen_mode": false,
+            "is_multi_season": 0,
+            "meet_guide_comment_tag": false,
+            "origin_novel_book_id": 0,
+            "player_accumulate_total_time": position_ms,
+            "read_timestamp_ms": now,
+            "recent_reads": 0,
+            "retain_video_play_time": 0,
+            "season_index": 0,
+            "series_play_cnt": 0,
+            "tone_id": 0,
+            "update_timestamp_ms": now,
+            "use_soft_delete": false,
+            "user_digg": false,
+            "user_playlet_comment_flag": false,
+            "vid": vid_num,
+            "vid_index": vid_index,
+        }],
+    });
+    let upload_body = serde_json::json!({
+        "books": [{
+            "book_id": series_id,
+            "book_type": 2,
+            "channel_id": 0,
+            "check_timestamp": false,
+            "cur_channel_id": 0,
+            "current_play_time": position_ms,
+            "is_listen_mode": false,
+            "is_local_book": false,
+            "item_id": vid,
+            "listen_and_read": false,
+            "page_index": 0,
+            "page_progress_rate": 0,
+            "paragraph_offset": 0,
+            "player_cumulative_total_duration": position_ms,
+            "progress_type": 0,
+            "read_timestamp_ms": now,
+            "tone_id": 0,
+            "vid_index": vid_index,
+        }],
+    });
+
+    let update_raw = serde_json::to_vec(&update_body)
+        .map_err(|e| AppError::Media(format!("构造历史上报失败: {e}")))?;
+    let bytes = api_call_reading(LQ_API_ORIGIN, READ_HISTORY_UPDATE_PATH, Some(update_raw), &[], env)
+        .await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析历史上报响应失败: {e}")))?;
+    super::discover::check_code(&v)?;
+
+    let upload_raw = serde_json::to_vec(&upload_body)
+        .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
+    let bytes =
+        api_call_reading(LQ_API_ORIGIN, READ_PROGRESS_UPLOAD_PATH, Some(upload_raw), &[], env)
+            .await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
+    super::discover::check_code(&v)?;
+    Ok(())
+}
+
+/// 数字型 id 字段：可解析就发 JSON 数字（对齐抓包），否则原样字符串。
+fn str_or_num(s: &str) -> Value {
+    s.parse::<u64>()
+        .map(|n| serde_json::json!(n))
+        .unwrap_or_else(|_| serde_json::json!(s))
 }
 
 #[cfg(test)]

@@ -114,6 +114,7 @@ pub fn run() {
             commands::rank_cmd::new_drama_calendar,
             // 云端观看历史
             commands::history_cmd::watch_history_list,
+            commands::history_cmd::cloud_report_progress,
             // 登录
             commands::login_cmd::login_send_code,
             commands::login_cmd::login_sms_login,
@@ -125,13 +126,15 @@ pub fn run() {
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             commands::danmaku_cmd::comment_list,
-            // 互动（点赞/收藏/发弹幕，2026-10-05 抓包端点）
+            // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,
+            commands::interact_cmd::comment_reply,
             commands::interact_cmd::video_digg,
             commands::interact_cmd::comment_digg,
             commands::interact_cmd::series_collect,
             commands::interact_cmd::interaction_state,
+            commands::interact_cmd::bookshelf_list,
             // 浏览与搜索
             commands::browse_cmd::browse_categories,
             commands::browse_cmd::browse_list,
@@ -158,6 +161,7 @@ pub fn run() {
             commands::play_cmd::play_series,
             commands::play_cmd::play_prefetch,
             commands::play_cmd::save_playback_position,
+            commands::play_cmd::series_progress,
             // 转码（合并功能用；播放兜底已下线）
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,

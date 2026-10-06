@@ -162,7 +162,10 @@ mod tests {
         assert!(got.cached, "应当命中缓存");
         assert_eq!(got.elapsed_ms, 0, "命中缓存不耗时间");
         assert!(
-            got.url.starts_with("http://hongguo-local"),
+            got.url.starts_with(&format!(
+                "{}/f/",
+                crate::protocol::scheme_base(crate::protocol::LOCAL_SCHEME)
+            )),
             "实际: {}",
             got.url
         );

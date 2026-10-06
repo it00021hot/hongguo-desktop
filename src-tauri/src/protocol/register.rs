@@ -13,33 +13,39 @@ use tauri::http::{Request, Response, StatusCode};
 use super::{cover, local, parse_stream_path, stream, COVER_SCHEME, LOCAL_SCHEME, STREAM_SCHEME};
 
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
+///
+/// ⚠️ stream/local 的取数**必须丢到后台线程**：macOS 的 WKURLSchemeHandler
+/// 在**主线程**上调本回调，而流的供给会阻塞等待数据就绪（`wait_until`/
+/// `wait_cover`，最长 30s）——在回调里同步等，等于每次视频请求等数据就把
+/// 整个 UI 冻住（「快速滚动几下就卡死」的根因；Windows 的 WebView2 回调在
+/// 非 UI 线程，开发期从未暴露）。`responder` 本就设计为可跨线程回包。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         .register_asynchronous_uri_scheme_protocol(LOCAL_SCHEME, move |_ctx, request, responder| {
             let range = range_header(&request);
-            responder.respond(serve_local(&request, range));
+            let path = request.uri().path().to_string();
+            std::thread::spawn(move || {
+                responder.respond(serve_local(&path, range));
+            });
         })
         .register_asynchronous_uri_scheme_protocol(
             STREAM_SCHEME,
             move |_ctx, request, responder| {
                 let range = range_header(&request);
-                responder.respond(serve_stream(&request, range));
+                let path = request.uri().path().to_string();
+                std::thread::spawn(move || {
+                    responder.respond(serve_stream(&path, range));
+                });
             },
         )
         .register_asynchronous_uri_scheme_protocol(COVER_SCHEME, move |_ctx, request, responder| {
             // 首次命中的封面要下载 + ffmpeg 转码（秒级阻塞），丢到后台线程
             // 出结果再回包——协议回调里不能同步等它
             let path = request.uri().path().to_string();
-            tauri::async_runtime::spawn(async move {
-                let response = tauri::async_runtime::spawn_blocking(move || cover::serve(&path))
-                    .await
-                    .unwrap_or_else(|e| Err(format!("封面任务失败: {e}")));
+            std::thread::spawn(move || {
+                let response = cover::serve(&path);
                 let response = response.unwrap_or_else(|_| {
-                    (
-                        StatusCode::NOT_FOUND.as_u16(),
-                        Vec::new(),
-                        Vec::new(),
-                    )
+                    (StatusCode::NOT_FOUND.as_u16(), Vec::new(), Vec::new())
                 });
                 responder.respond(build_response(response.0, response.1, response.2));
             });
@@ -55,28 +61,25 @@ fn range_header(request: &Request<Vec<u8>>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 供给本地文件。
-fn serve_local(request: &Request<Vec<u8>>, range: Option<String>) -> Response<Vec<u8>> {
+/// 供给本地文件。`path` 是请求 URI 的 path（`/f/<b64>`）。
+fn serve_local(path: &str, range: Option<String>) -> Response<Vec<u8>> {
     // wry 把 `http://hongguo-local.localhost/f/<b64>` 转回 `hongguo-local://localhost/f/<b64>`，
     // 所以这里拿到的是 `/f/<b64>`，要去掉 `f/` 段才是编码后的路径。
-    let path = request
-        .uri()
-        .path()
+    let path = path
         .trim_start_matches('/')
         .strip_prefix("f/")
-        .unwrap_or_else(|| request.uri().path().trim_start_matches('/'));
+        .unwrap_or_else(|| path.trim_start_matches('/'));
     match local::serve(path, range.as_deref()) {
         Ok((status, headers, data)) => build_response(status, headers, data),
         Err(msg) => text_response(StatusCode::BAD_REQUEST, &msg),
     }
 }
 
-/// 供给在线流。
-fn serve_stream(request: &Request<Vec<u8>>, range: Option<String>) -> Response<Vec<u8>> {
-    // 转回后的 URI 是 `hongguo-stream://localhost/s/{档位}/{vid}`：host 恒为
+/// 供给在线流。`path` 是请求 URI 的 path（`/s/{档位}/{vid}`）。
+fn serve_stream(path: &str, range: Option<String>) -> Response<Vec<u8>> {
+    // wry 转回后的 URI 是 `hongguo-stream://localhost/s/{档位}/{vid}`：host 恒为
     // localhost，档位与 vid 都在 path 上。档位不只是路由信息，它就是缓存的键，
     // 决定这份请求去读哪一份数据。
-    let path = request.uri().path();
     let Some((definition, vid)) = parse_stream_path(path) else {
         return text_response(
             StatusCode::BAD_REQUEST,
@@ -122,13 +125,13 @@ mod tests {
     use tauri::http::Uri;
 
     #[test]
-    fn stream_url_uses_the_localhost_form_wry_requires() {
-        // 直接写 hongguo-stream://<vid> 不会被 WebView2 拦下来，协议永远收不到请求
+    fn stream_url_uses_the_platform_scheme_form() {
+        // Windows 走 http://{scheme}.localhost（WebView2 拦截约定），
+        // macOS/Linux 走 {scheme}://localhost（WKURLSchemeHandler/WebKit 拦真 scheme）。
+        // 形态给错的表现：<video> 拿到网络错误，MediaError 4 黑屏。
         let url = crate::protocol::stream_url("7687919221593885758", 1080);
-        assert_eq!(
-            url,
-            "http://hongguo-stream.localhost/s/1080/7687919221593885758"
-        );
+        let base = crate::protocol::scheme_base(crate::protocol::STREAM_SCHEME);
+        assert_eq!(url, format!("{base}/s/1080/7687919221593885758"));
     }
 
     #[test]
@@ -160,12 +163,10 @@ mod tests {
     }
 
     #[test]
-    fn local_url_uses_the_localhost_form_too() {
+    fn local_url_uses_the_platform_scheme_form() {
         let url = crate::protocol::local::local_play_url("D:\\a.mp4").unwrap();
-        assert!(
-            url.starts_with("http://hongguo-local.localhost/f/"),
-            "实际: {url}"
-        );
+        let base = crate::protocol::scheme_base(crate::protocol::LOCAL_SCHEME);
+        assert!(url.starts_with(&format!("{base}/f/")), "实际: {url}");
     }
 
     #[test]

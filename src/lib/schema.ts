@@ -13,6 +13,10 @@ const episodeSchema = z.object({
   vid: z.string(),
   title: z.string(),
   fileStem: z.string(),
+  /** 该集评论数（detail 公开计数；旧档案缓存缺省 0 = 不显示） */
+  commentCount: z.number().default(0),
+  /** 该集点赞数（detail 公开计数） */
+  diggCount: z.number().default(0),
 });
 
 export type Episode = z.infer<typeof episodeSchema>;
@@ -22,6 +26,8 @@ export const seriesSchema = z.object({
   title: z.string(),
   cover: z.string(),
   episodeCount: z.number().int().nonnegative(),
+  /** 全剧收藏数（detail 公开计数；0 = 不显示） */
+  followedCnt: z.number().default(0),
   tags: z.array(z.string()),
   episodes: z.array(episodeSchema),
   dismissed: z.boolean(),
@@ -46,6 +52,21 @@ export const seriesExtrasSchema = z.object({
 });
 
 export type SeriesExtras = z.infer<typeof seriesExtrasSchema>;
+
+/**
+ * 一部剧「最近看到的那一集」（Rust `playback::SeriesProgress`）。
+ *
+ * 本地 playback 表 5 秒一写，是「继续看第 N 集」的第一真值；
+ * 云端观看历史（约 1 分钟一报 + 缓存）只做没看过时的兜底。
+ */
+export const seriesProgressSchema = z.object({
+  vidIndex: z.number().int().positive(),
+  currentTime: z.number().nonnegative(),
+  duration: z.number().nonnegative(),
+  updatedAt: z.number(),
+});
+
+export type SeriesProgress = z.infer<typeof seriesProgressSchema>;
 
 /** 分类与题材是同一种结构（后端也合并成了一个类型），只留一份。 */
 export const categorySchema = z.object({
@@ -405,6 +426,22 @@ export const commentItemSchema = z.object({
 });
 export type CommentItem = z.infer<typeof commentItemSchema>;
 
+/** 评论区一页（Rust `danmaku::CommentPage`；total 是互动栏评论计数数据源）。 */
+export const commentPageSchema = z.object({
+  items: z.array(commentItemSchema),
+  total: z.number(),
+  hasMore: z.boolean(),
+  nextCursor: z.string(),
+});
+export type CommentPage = z.infer<typeof commentPageSchema>;
+
+/** 书架（收藏）列表里的一条（Rust `interact::BookshelfEntry`）。 */
+export const bookshelfEntrySchema = z.object({
+  seriesId: z.string(),
+  collectTimeMs: z.number(),
+});
+export type BookshelfEntry = z.infer<typeof bookshelfEntrySchema>;
+
 /** 互动列表里的一条视频（Rust `interact::InteractionItem`，计数给右栏数字用）。 */
 export const interactionItemSchema = z.object({
   vid: z.string(),
@@ -413,6 +450,7 @@ export const interactionItemSchema = z.object({
   diggedCount: z.number(),
   followed: z.boolean(),
   followedCnt: z.number(),
+  seriesTitle: z.string(),
 });
 export type InteractionItem = z.infer<typeof interactionItemSchema>;
 

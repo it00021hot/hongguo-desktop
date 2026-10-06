@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { login as loginApi } from '@/lib/ipc/commands';
 import { useEvent } from '@/lib/ipc/events';
+import { useAuthRefresh } from '@/lib/queries';
 import { t, tf } from '@/i18n';
 import type { LoginResult } from '@/lib/schema';
 
@@ -14,6 +15,9 @@ import type { LoginResult } from '@/lib/schema';
  * MFA 轮询在 **Rust 后台**（3s 一次，回复短信后自动登录并发
  * `login-mfa-state` 事件）——弹窗关掉也不丢状态，重新打开仍能看到
  * 等待中的验证；成功事件到达时若弹窗已关，用 toast 提示。
+ *
+ * 登录成功统一在这里失效账号相关缓存（useAuthRefresh）：互动栏/书架/
+ * 预约立刻翻面，不等 staleTime。
  */
 export function LoginDialog({
   open,
@@ -24,6 +28,7 @@ export function LoginDialog({
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
 }) {
+  const refreshAuth = useAuthRefresh();
   const [mobile, setMobile] = useState('');
   const [code, setCode] = useState('');
   // 发码倒计时按手机号维度：切号立即可发、切回恢复剩余时间
@@ -46,6 +51,7 @@ export function LoginDialog({
     if (payload.state === 'success') {
       setMfaTips(null);
       setCode('');
+      refreshAuth();
       toast.success(tf('settings.loginSuccess', { name: payload.name ?? '' }));
       onOpenChange(false);
       onSuccess();
@@ -93,6 +99,7 @@ export function LoginDialog({
       const r: LoginResult = await loginApi.smsLogin(mobile.trim(), code.trim());
       if (r.kind === 'success') {
         setCode('');
+        refreshAuth();
         toast.success(tf('settings.loginSuccess', { name: r.user.name || r.user.userId }));
         onOpenChange(false);
         onSuccess();

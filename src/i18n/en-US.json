@@ -48,7 +48,19 @@
     "history": {
       "title": "History",
       "description": "Watch history synced from the cloud"
-    }
+    },
+    "collections": {
+      "title": "Collections",
+      "description": "Series on your bookshelf"
+    },
+    "liked": {
+      "title": "Liked",
+      "description": "Videos you liked"
+    },
+    "accountFallback": "Me",
+    "login": "Sign in",
+    "logout": "Sign out",
+    "loggedOut": "Signed out"
   },
   "browse": {
     "category": "Category",
@@ -212,7 +224,15 @@
       "minutesAgo": "{n} min ago",
       "hoursAgo": "{n} h ago",
       "yesterday": "yesterday",
-      "replies": "{n} replies"
+      "replies": "{n} replies",
+      "reply": "Reply",
+      "replyToComment": "Reply to comment…",
+      "replyPlaceholder": "Reply to @{name}…",
+      "me": "Me",
+      "replyToPrefix": "Reply to",
+      "repliesHiddenTip": "Reply listing is not available server-side (hgplayer shows counts only)",
+      "loadMore": "Load more comments ({n} left)",
+      "preparing": "Preparing this episode…"
     }
   },
   "series": {
@@ -464,6 +484,48 @@
     "openEpisodes": "Open episodes",
     "preparing": "Preparing \"{title}\"…",
     "playCount": "{count} plays",
-    "empty": "The feed is empty right now"
+    "empty": "The feed is empty right now",
+    "tabFeed": "For You",
+    "tabHot": "Trending",
+    "tabNew": "New"
+  },
+  "collections": {
+    "loginRequired": "Sign in to view your bookshelf (synced with the official app)",
+    "loadFailed": "Failed to load collections",
+    "empty": "Nothing collected yet",
+    "emptyHint": "Tap ☆ on a series in the feed and it will show up here",
+    "removed": "Removed from bookshelf",
+    "unresolved": "Series {id}",
+    "episodeCount": "{n} episodes",
+    "resolvingHint": "Fetching series info…",
+    "remove": "Remove"
+  },
+  "liked": {
+    "loadFailed": "Failed to load likes",
+    "empty": "No likes yet",
+    "emptyHint": "Videos you ❤ in the feed will show up here",
+    "recentOnly": "Likes within the recent 100 interactions (same as official)",
+    "undo": "Undo like"
+  },
+  "detail": {
+    "back": "Back",
+    "followCount": "{count} followers",
+    "episodesCount": "{count} episodes",
+    "continueEpisode": "Continue EP {index}",
+    "playFirst": "Play from EP 1",
+    "collect": "Collect",
+    "collected": "Collected",
+    "tabEpisodes": "Episodes",
+    "tabComments": "Comments",
+    "tabRecommend": "Related",
+    "commentsEmpty": "No comments on this episode yet",
+    "replyCount": "{count} replies",
+    "recommendEmpty": "No recommendations yet",
+    "noSeries": "Missing series ID — open from the player or a list page",
+    "resolved": "Series resolved",
+    "recFeed": "For You",
+    "recRank": "Trending",
+    "recSite": "Official picks",
+    "recShuffle": "Shuffle"
   }
 }

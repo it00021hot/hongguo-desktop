@@ -46,10 +46,10 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
 
 /// 封面代理 URL。`remote` 是 HEIC 原图的 https 地址。
 ///
-/// 同样必须走 `http://{scheme}.localhost` 形式，原因见 [`super::stream_url`]。
+/// 形态按平台走 [`super::scheme_base`]，原因见其文档。
 pub fn cover_url(remote: &str) -> String {
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(remote);
-    format!("http://{}.localhost/c/{encoded}", super::COVER_SCHEME)
+    format!("{}/c/{encoded}", super::scheme_base(super::COVER_SCHEME))
 }
 
 /// 缓存文件路径：`cover-cache/<sha256(url)前16字节hex>.jpg`。

@@ -2,8 +2,9 @@ import { z } from 'zod';
 import { call } from './invoke';
 import {
   accountStateSchema,
+  bookshelfEntrySchema,
   browseResultSchema,
-  commentItemSchema,
+  commentPageSchema,
   danmakuSchema,
   categorySchema,
   decodeCapabilitySchema,
@@ -23,13 +24,15 @@ import {
   rankPageSchema,
   searchPageSchema,
   seriesExtrasSchema,
+  seriesProgressSchema,
   seriesSchema,
   settingsSchema,
   storageUsageSchema,
   watchHistoryPageSchema,
   type AccountState,
+  type BookshelfEntry,
   type Category,
-  type CommentItem,
+  type CommentPage,
   type Danmaku,
   type DecodeCapability,
   type DownloadTask,
@@ -48,6 +51,7 @@ import {
   type QueueStatus,
   type Series,
   type SeriesExtras,
+  type SeriesProgress,
   type Settings,
   type BrowseResult,
   type StorageUsage,
@@ -140,25 +144,44 @@ export const discover = {
 export const danmaku = {
   list: (groupId: string, bookId: string) =>
     call<Danmaku[]>('danmaku_list', { groupId: groupId, bookId }, danmakuSchema.array()),
-  /** 评论区（ct=4/src=4 形态，与弹幕同端点）。 */
-  comments: (groupId: string, bookId: string) =>
-    call<CommentItem[]>('comment_list', { groupId, bookId }, commentItemSchema.array()),
+  /** 评论区（ct=4/src=4 形态；一窗 20 条，cursor 翻页，返回列表+总数）。 */
+  comments: (groupId: string, bookId: string, cursor = '') =>
+    call<CommentPage>(
+      'comment_list',
+      { groupId, bookId, cursor: cursor || undefined },
+      commentPageSchema,
+    ),
 };
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）
 
-/** 互动操作（2026-10-05 抓包端点；全部要求登录态，匿名被服务端静默拒）。 */
+/** 互动操作（2026-10-05/06 抓包端点；全部要求登录态，匿名被服务端静默拒）。 */
 export const interact = {
   /** 发一条弹幕（offsetMs = 视频内位置毫秒），返回服务端 comment_id。 */
   sendDanmaku: (groupId: string, bookId: string, text: string, offsetMs: number) =>
     call<string>('danmaku_send', { groupId, bookId, text, offsetMs }),
-  /** 发一条评论（评论区 UI 预留）。 */
+  /** 发一条评论，返回 comment_id。 */
   sendComment: (groupId: string, bookId: string, text: string) =>
     call<string>('comment_send', { groupId, bookId, text }),
+  /** 回复一条评论（reply/add 独立端点）；回复「回复」时传 replyToReplyId。 */
+  sendReply: (
+    groupId: string,
+    bookId: string,
+    replyToCommentId: string,
+    replyToReplyId: string | null,
+    text: string,
+  ) =>
+    call<string>('comment_reply', {
+      groupId,
+      bookId,
+      replyToCommentId,
+      replyToReplyId: replyToReplyId ?? null,
+      text,
+    }),
   /** 点赞 / 取消点赞一集（vid = 分集 id）。 */
   videoDigg: (vid: string, seriesId: string, digg: boolean) =>
     call<void>('video_digg', { vid, seriesId, digg }),
-  /** 点赞 / 取消点赞一条评论（评论区 UI 预留）。 */
+  /** 点赞 / 取消点赞一条评论。 */
   commentDigg: (commentId: string, digg: boolean) =>
     call<void>('comment_digg', { commentId, digg }),
   /** 收藏（追剧）/ 取消收藏一部剧。 */
@@ -166,6 +189,8 @@ export const interact = {
     call<void>('series_collect', { seriesId, collect }),
   /** 最近互动列表（点赞过的 vid + 收藏的剧），回显是 best-effort 匹配。 */
   state: () => call<InteractionState>('interaction_state', undefined, interactionStateSchema),
+  /** 书架（我的收藏）列表，需要登录。 */
+  bookshelf: () => call<BookshelfEntry[]>('bookshelf_list', undefined, bookshelfEntrySchema.array()),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索
@@ -274,6 +299,9 @@ export const play = {
   // duration 必须回传：后端靠它判断「接近片尾就不续播」，不记就等于没这道防线
   savePosition: (seriesId: string, vidIndex: number, currentTime: number, duration: number) =>
     call<void>('save_playback_position', { seriesId, vidIndex, currentTime, duration }),
+  /** 一部剧最近看到的那一集（本地 playback 表真值；没看过返回 null） */
+  progress: (seriesId: string) =>
+    call<SeriesProgress | null>('series_progress', { seriesId }, seriesProgressSchema.nullable()),
 };
 
 // ---------------------------------------------------------------- 云端观看历史
@@ -282,6 +310,12 @@ export const play = {
 export const watchHistory = {
   list: (offset = 0) =>
     call<WatchHistoryPage>('watch_history_list', { offset }, watchHistoryPageSchema),
+  /**
+   * 观看进度云上报（read_history/update + read_progress/upload 双接口）。
+   * 后端匿名时静默跳过、失败只记日志——fire-and-forget 即可。
+   */
+  reportProgress: (seriesId: string, vid: string, vidIndex: number, positionMs: number) =>
+    call<void>('cloud_report_progress', { seriesId, vid, vidIndex, positionMs }),
 };
 
 // ---------------------------------------------------------------- 转码

@@ -236,6 +236,36 @@ pub async fn playback_position(
     }))
 }
 
+/// 读一部剧「最近看到的那一集」及其位置（按 updated_at 取最新一行）。
+///
+/// 详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，
+/// 永远比云端观看历史（约 1 分钟一报 + 接口缓存）新鲜。
+pub async fn series_last_position(
+    db: &Db,
+    series_id: &str,
+) -> AppResult<Option<(u32, PlaybackPosition)>> {
+    let mut rows = db
+        .conn()
+        .query(
+            "SELECT vid_index, \"current_time\", duration, updated_at FROM playback
+             WHERE series_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+            [Value::Text(series_id.to_string())],
+        )
+        .await
+        .map_err(map_db_err)?;
+    let Some(row) = rows.next().await.map_err(map_db_err)? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        col_i64(&row, 0)?.max(0) as u32,
+        PlaybackPosition {
+            current_time: col_f64(&row, 1)?,
+            duration: col_f64(&row, 2)?,
+            updated_at: col_i64(&row, 3)?,
+        },
+    )))
+}
+
 /// 写单集位置（最热写路径：前端 5 秒一次，单行 UPSERT）。
 pub async fn save_playback_position(
     db: &Db,

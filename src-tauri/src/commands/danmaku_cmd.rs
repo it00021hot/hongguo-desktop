@@ -3,7 +3,9 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::danmaku::{fetch_comments_all, fetch_danmaku_all, CommentItem, Danmaku};
+use crate::domain::api::danmaku::{
+    fetch_comments_page, fetch_danmaku_all, CommentPage, Danmaku,
+};
 use crate::error::AppResult;
 
 /// 拉一集的全部弹幕（后端按 30 秒窗口循环到 has_more=false）。
@@ -38,15 +40,33 @@ pub async fn danmaku_list(
 }
 
 
-/// 拉一集的**评论区**（ct=4/src=4，与弹幕同端点不同形态）。
+/// 拉一集的**评论区一页**（ct=4/src=4，一窗 20 条；cursor 翻页）。
+/// 返回列表 + 评论总数（`total` 是互动栏评论计数的数据源）+ 翻页游标——
+/// 第一页秒回，不再像旧版那样拉完整集才返回（热门集转圈 30s）。
 #[tauri::command]
 pub async fn comment_list(
     state: State<'_, AppState>,
     group_id: String,
     book_id: String,
-) -> AppResult<Vec<CommentItem>> {
+    cursor: Option<String>,
+) -> AppResult<CommentPage> {
     let env = state.api_env();
-    fetch_comments_all(&group_id, &book_id, &env).await
+    let cursor = cursor.unwrap_or_default();
+    match fetch_comments_page(&group_id, &book_id, &cursor, &env).await {
+        Ok(page) => {
+            log::info!(
+                "[Comments] group={group_id} book={book_id} cursor={} 拉到 {} 条 total={}",
+                if cursor.is_empty() { "首页" } else { "翻页" },
+                page.items.len(),
+                page.total
+            );
+            Ok(page)
+        }
+        Err(e) => {
+            log::warn!("[Comments] group={group_id} book={book_id} 拉取失败: {e}");
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]

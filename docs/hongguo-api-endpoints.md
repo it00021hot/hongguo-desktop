@@ -250,11 +250,36 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
   uid_tt(_ss) + odin_tt + d_ticket + n_mh + session_tlb_tag 等 17 个 cookie
   （`extract_cookie_pairs` 全收，同名后值覆盖）+ x-tt-token 头凭据。
 
-## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定）
+## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定；2026-10-06 抓 1.1.5 重锁）
 
 全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +
 **登录 cookie + x-tt-token**；重放实证无强签名校验（旧 `x-reading-request`
 也过，x-helios/x-medusa 不带也过）。响应 `code==0` 即成功。
+
+⚠️ **2026-10-06 口径漂移事故**：评论区 comment/list 沿用 1.1.3 形态
+（business_param 带弹幕字段 + server_channel=1000）被服务端拒
+（先报 110001 后报 103001），弹幕形态（comment_source=601）不受影响——
+**评论与弹幕在服务端是两套参数校验**，抓 1.1.5 实操重新锁定如下。
+
+### 9.0 评论区列表 `POST /novel/commentapi/comment/list/{group_id}/v1/`
+
+```json
+{"aid":8662,
+ "business_param":{"book_id":"<series_id>","need_count":true,"req_type":0},
+ "comment_source":4,"comment_type":4,"compliance_status":0,
+ "count":20,"cursor":"","group_id":"<vid>","group_type":30,
+ "server_channel":18,"sort":1}
+```
+
+- 与弹幕形态（见第 5 节 danmaku_payload）的差异：business_param 只有
+  `book_id/need_count/req_type` 三字段，`server_channel=18`（弹幕 1000）
+- `need_count: true` 让响应 `common_list_info.total` 带评论总数
+  （互动栏「💬 N」计数的数据源）
+- **回复列表服务端未部署**：`/novel/commentapi/reply/list/` 对 aid=8662
+  全 comment_source 均 `cannot found handler`（已穷举路径变体 + source
+  0~1500）；hgplayer 1.1.5 二进制里有该路径字符串但实操展开回复**不发
+  任何网络请求**——多级回复列表两端都不可用，只有 reply/add 能发
+  （hgplayer 同样只显示回复数）
 
 ### 9.1 视频点赞 / 取消 `POST /novel/articleapi/do_action/v1/`
 
@@ -293,6 +318,18 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
  "group_id":"<vid>","group_type":30,"text":"..."}
 ```
 
+### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
+
+```json
+{"aid":8662,
+ "business_param":{"book_id":"<series_id>","ignore_urge_rule":false,
+   "offset":128912,
+   "shark_param":{"aid":"8662","enter_from":"MainFragmentActivity",
+     "page_list":"MainFragmentActivity","previous_page":"","type":"short_play"}},
+ "commit_source":1500,"data_type":20,
+ "group_id":"<vid>","group_type":30,"text":"..."}
+```
+
 - 与拉取同一评论体系：`group_id`=vid、`group_type=30`、`book_id`=series_id
 - **弹幕与普通评论只差三个字段**：
 
@@ -302,8 +339,20 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
 | commit_source | 1500 | 3 |
 | business_param.offset | 播放位置 ms | 0 |
 
-响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
-乐观插入用 `expand.offset_time = offset`）。
+- **评论形态（data_type=4）business_param 另有四字段**（1.1.5 抓包补齐，
+  2026-10-06）：`has_aigc_content:false`、`log_extra:{}`、`preset_text_id:""`、
+  `text_feature:{}`，且 shark_param 是**素形态**（不带 aid/type——那俩是
+  弹幕专属）。实测带旧形态也能过，但按抓包原样对齐防风控收紧
+- 响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
+  乐观插入用 `expand.offset_time = offset`）
+
+### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定）
+
+回复**不走 comment/add 带回复字段**，是独立端点。body 与评论形态同构，
+另加顶层 `reply_to_comment_id`（被回复的评论 id）；回复「回复」再加
+顶层 `reply_to_reply_id`（响应回显有此字段，多级回复同端点）。
+差异字段：`commit_source: 9`（评论 3 / 弹幕 1500）。
+响应 id 在 `data.reply.reply_id`（注意不是 comment_info）。
 
 ### 9.4 收藏（追剧/书架）`POST /reading/bookapi/bookshelf/video/update/v`
 
@@ -315,8 +364,50 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
 
 - `video_shelf_operate_type`：**0 收藏 / 1 取消**；对象是 **series_id**
   （`book_id` 字段），`book_type=2` 短剧
+- shark_extra 补齐（1.1.5）：`inactive_type:"0"`、`is_active_behavior:"true"`
+  （字符串形态，与 enter_from 等并列）
 - 列表查询是配套的 `GET /reading/bookapi/bookshelf/video/list/v?target_user_id=`
-  （响应只有 series_id + collect_time，要逐个 resolve 标题）
+  （target_user_id = 登录 uid；2026-10-06 实测响应 `data.video_shelf_info[]`
+  条目字段未在带数据样本中取到——probe 实测我们的容错解析
+  （series_id/book_id/item_id 任一）命中 1 条真实收藏）
+
+### 9.4.1 观看进度云上报（2026-10-06 抓 1.1.5 锁定）
+
+官方客户端播片时同时打两个接口（约每分钟 + 切集时）：
+
+**`POST /reading/bookapi/read_history/update/v`** —— `book_id`/`vid` 是
+JSON **数字**（精度内直接发数字）：
+
+```json
+{"update_datas":[{"book_id":7690797206416133145,"book_type":2,
+  "chapter_index":0,"current_play_position":10000,"digged_count":0,
+  "duration":0,"episode_cnt":0,"is_delete":false,"is_interactive_game":false,
+  "is_listen_mode":false,"is_multi_season":0,"meet_guide_comment_tag":false,
+  "origin_novel_book_id":0,"player_accumulate_total_time":10000,
+  "read_timestamp_ms":1791266476339,"recent_reads":0,
+  "retain_video_play_time":0,"season_index":0,"series_play_cnt":0,
+  "tone_id":0,"update_timestamp_ms":1791266476339,"use_soft_delete":false,
+  "user_digg":false,"user_playlet_comment_flag":false,
+  "vid":7690802329313872921,"vid_index":0}]}
+```
+
+**`POST /reading/bookapi/read_progress/upload/v`** —— `book_id`/`item_id`
+是**字符串**：
+
+```json
+{"books":[{"book_id":"7690797206416133145","book_type":2,"channel_id":0,
+  "check_timestamp":false,"cur_channel_id":0,"current_play_time":10000,
+  "is_listen_mode":false,"is_local_book":false,
+  "item_id":"7690802329313872921","listen_and_read":false,"page_index":0,
+  "page_progress_rate":0,"paragraph_offset":0,
+  "player_cumulative_total_duration":10000,"progress_type":0,
+  "read_timestamp_ms":1791266476339,"tone_id":0,"vid_index":0}]}
+```
+
+- hgplayer 传 0 的字段（duration/retain/episode_cnt 等）照抄 0；
+  `player_accumulate_total_time` 样本里等于当时进度，我们同用 position_ms
+- 我们实现：`history.rs report_watch_progress` 一次打双接口，前端
+  persist 节流（~1 分钟 + 切集/退出），匿名后端静默跳过
 
 ### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
 

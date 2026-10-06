@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { MonitorPlay } from 'lucide-react';
+import { Loader2, MonitorPlay } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
-import { Card } from '@/components/ui/card';
-import { SeriesPanel } from './series-panel';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { InteractionRail } from './interaction-rail';
@@ -22,6 +20,7 @@ import {
   useSeriesExtras,
   useSettings,
   useStorageActions,
+  useWatchHistory,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import {
@@ -41,6 +40,7 @@ import {
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useEvent } from '@/lib/ipc/events';
+import { watchHistory } from '@/lib/ipc/commands';
 import { EVENTS } from '@/lib/ipc/types';
 import { formatBytes } from '@/lib/format';
 import type { CompatProgress, OnlineProgress, Settings, VideoDefinition } from '@/lib/schema';
@@ -49,9 +49,13 @@ import type { CompatProgress, OnlineProgress, Settings, VideoDefinition } from '
 const SAVE_INTERVAL = 5_000;
 
 export function PlayerPage() {
+  const navigate = useNavigate();
   const seriesId = usePlayerStore((s) => s.seriesId);
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
+  // 封面占位图：历史页带封面进来，取流间隙不至于黑屏（信息流入口由 HomePage 自带）
+  const { data: history } = useWatchHistory();
+  const coverUrl = history?.items.find((i) => i.seriesId === seriesId)?.cover;
   // 弹幕设置面板的开合放在这一层：切集时 PlayerView 整体重挂载，
   // 面板状态在这里才不会一集一开就被吃掉
 
@@ -59,14 +63,21 @@ export function PlayerPage() {
 
 
   // 刷新/重启后内存 store 是空的：把上次播放目标读回来，
-  // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）
+  // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）。
+  // 连上次播放目标都没有（首次启动/清过记录）：直接进推荐沉浸流——
+  // 打开就能播（第三方同款），而不是摆一个还要自己去找剧的空态；
+  // 推荐流里 ↑↓/滚轮 = 切剧，从详情/历史**选定**剧进来才是 ↑↓ = 切集。
   useEffect(() => {
     if (seriesId) return;
     const last = readLastTarget();
-    if (last) setTarget(last.seriesId, last.vidIndex);
-  }, [seriesId, setTarget]);
+    if (last) {
+      setTarget(last.seriesId, last.vidIndex);
+      return;
+    }
+    void navigate({ to: '/' });
+  }, [seriesId, setTarget, navigate]);
 
-  // 空态只做指路：观看记录在独立的历史页，播放入口在各内容页
+  // 兜底空态：正常只在重定向生效前闪一帧
   if (!seriesId || !vidIndex) {
     return <PlayerEmptyState />;
   }
@@ -76,6 +87,7 @@ export function PlayerPage() {
   return (
     <PlayerView
       key={`${seriesId}:${vidIndex}`}
+      coverUrl={coverUrl}
     />
   );
 }
@@ -106,22 +118,39 @@ function PlayerEmptyState() {
 const CHROME_HIDE_MS = 3_000;
 
 export function PlayerView({
-  seriesPanelMode = 'sidebar',
   onWheelStep,
+  coverUrl,
+  topChrome,
 }: {
-  seriesPanelMode?: 'sidebar' | 'overlay';
   /**
-   * 沉浸流模式的滚轮/↑↓ 语义由宿主页给：首页是切**上一部/下一部剧**，
-   * 不给则回落为切上一集/下一集（播放页）。
+   * 滚轮/↑↓ 的语义由宿主页给：首页（沉浸流）是切**上一部/下一部剧**，
+   * 不给则回落为切上一集/下一集（从历史/收藏等页进入时）。
    */
   onWheelStep?: (dir: 1 | -1) => void;
+  /**
+   * 封面占位图（信息流条目/历史记录都有）：切剧/起播的取流间隙垫在画面上，
+   * 首帧真正出画（playing）后交叉淡出——第三方「滚动秒切」的观感一半来自这里，
+   * 黑屏等待变成封面常驻，感知延迟只剩取流本身。
+   */
+  coverUrl?: string;
+  /**
+   * 压在画面顶部居中的悬浮内容（沉浸流的分类 tab 栏）。
+   * 跟随悬浮层一起淡出，data-wheel-block 标记：点击/滚动不冒泡成
+   * 「点画面暂停」「滚轮切剧」。
+   */
+  topChrome?: React.ReactNode;
 }) {
+  const navigate = useNavigate();
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const commentPanelOpen = usePlayerStore((s) => s.commentPanelOpen);
+  const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
+  const volumeOpen = usePlayerStore((s) => s.volumeOpen);
   const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const lastSaved = useRef(0);
+  /** 云端进度上报计数（配合 persist 的 5s 节流折算 ~1 分钟一次） */
+  const cloudCounter = useRef(0);
   const pendingSeek = useRef(0);
   /**
    * 最近一次的播放位置与时长，无论有没有真的落盘。
@@ -199,6 +228,8 @@ export function PlayerView({
 
   // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存
   const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
+  // 当前集的公开计数（detail 接口下发；右栏 ♥/💬 数字）
+  const currentEpisode = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
   const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
   const [danmakuOn, setDanmakuOn] = useState(() => readDanmakuEnabled());
   const [danmakuDisplay, setDanmakuDisplay] = useState<DanmakuDisplaySettings>(
@@ -318,37 +349,65 @@ export function PlayerView({
     [seriesId, vidIndex, setTarget],
   );
 
-  // ---- 沉浸流悬浮层：静止 3 秒后信息/互动栏整体淡出，动一下鼠标即回 ----
+  // ---- 沉浸流悬浮层：静止 3 秒后信息/互动栏/控制栏整体淡出，动一下即回 ----
+  // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
+  const [paused, setPaused] = useState(true);
   const [chromeVisible, setChromeVisible] = useState(true);
-  const chromeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 隐藏倒计时的代际号：每次唤醒递增，倒计时 effect 随之重启 */
+  const [chromeTick, setChromeTick] = useState(0);
   const wakeChrome = useCallback(() => {
     setChromeVisible(true);
-    if (chromeTimer.current) clearTimeout(chromeTimer.current);
-    chromeTimer.current = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
+    setChromeTick((n) => n + 1);
   }, []);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     stage.addEventListener('mousemove', wakeChrome);
     stage.addEventListener('mouseenter', wakeChrome);
-    const onLeave = () => {
-      if (chromeTimer.current) clearTimeout(chromeTimer.current);
-      setChromeVisible(false);
-    };
+    const onLeave = () => setChromeVisible(false);
     stage.addEventListener('mouseleave', onLeave);
     return () => {
       stage.removeEventListener('mousemove', wakeChrome);
       stage.removeEventListener('mouseenter', wakeChrome);
       stage.removeEventListener('mouseleave', onLeave);
-      if (chromeTimer.current) clearTimeout(chromeTimer.current);
     };
   }, [wakeChrome]);
+  // 隐藏倒计时。挂载即启动（此前只有鼠标动过才第一次启动——页面打开后不动
+  // 鼠标，简介/互动栏就永远悬着，这正是「没有空闲隐藏」的根源）；
+  // 暂停时不倒计时，画面停住却把界面全藏了只会像卡死。
+  useEffect(() => {
+    if (paused) return;
+    const timer = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
+    return () => clearTimeout(timer);
+  }, [paused, chromeTick]);
+
+  // 悬浮层整体可见性：任一面板（选集/评论/弹幕设置/音量条）打开或暂停时常显，
+  // 其余由上面的倒计时裁决。简介/互动栏/控制栏/顶部杂物全部吃这一个值，
+  // 不再各养一套定时器——控制栏弹出时简介同步抬升也是靠它。
+  const chromeShown =
+    paused ||
+    chromeVisible ||
+    seriesPanelOpen ||
+    commentPanelOpen ||
+    danmakuPanelOpen ||
+    volumeOpen;
+
+  /** 简介展开态：切剧重挂载自然收回。 */
+  const [introExpanded, setIntroExpanded] = useState(false);
+  /** 当前 <video> 是否已真正出画（playing）：封面占位淡出的时机 */
+  const [videoLive, setVideoLive] = useState(false);
 
   // ---- 滚轮切换（hgplayer 同款）：沉浸流=上一部/下一部剧，播放页=切集 ----
   // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
   const wheelLock = useRef(0);
   const onStageWheel = useCallback(
     (e: React.WheelEvent) => {
+      // 浮层（评论面板/选集/弹幕设置/倍速清晰度菜单）里的滚动是它自己在滚，
+      // 不冒泡成「切集」。控制栏与面板用 data-wheel-block 标记；Radix 菜单
+      // portal 到 body，真实 DOM 里不是舞台子孙，必须各自带标记才拦得住。
+      if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
+      // 滚轮也是「用户在场」：切剧/切集时唤醒悬浮层，让新一部的信息亮 3 秒
+      wakeChrome();
       if (seriesPanelOpen || downloading) return;
       const now = Date.now();
       if (now - wheelLock.current < 400 || Math.abs(e.deltaY) < 15) return;
@@ -357,7 +416,23 @@ export function PlayerView({
       if (onWheelStep) onWheelStep(dir);
       else stepEpisode(dir);
     },
-    [seriesPanelOpen, downloading, onWheelStep, stepEpisode],
+    [seriesPanelOpen, downloading, onWheelStep, stepEpisode, wakeChrome],
+  );
+
+  // ---- 点击画面：唤醒悬浮层 + 抖音式播放/暂停 ----
+  // 唤醒原来只挂在 mousemove/滚轮上，鼠标停着直接点一下，控件永远不出来。
+  // 控件/面板/互动栏（data-wheel-block 标记区）里的点击是它们自己的事，
+  // 不冒泡成「点画面暂停」。
+  const onStageClick = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
+      wakeChrome();
+      const video = videoRef.current;
+      if (!video) return;
+      if (video.paused) void video.play().catch(() => undefined);
+      else video.pause();
+    },
+    [wakeChrome],
   );
 
   /**
@@ -379,8 +454,18 @@ export function PlayerView({
       const total = video && Number.isFinite(video.duration) ? video.duration : 0;
       lastKnown.current = { key: episodeKey, time, duration: total };
       savePosition({ seriesId, vidIndex, currentTime: time, duration: total });
+      // 云端进度上报：登录后每 ~1 分钟一次（SAVE_INTERVAL 5s × 12），
+      // 与本地落盘同源同节流，fire-and-forget（后端匿名/失败都静默）。
+      cloudCounter.current += 1;
+      if (force || cloudCounter.current % 12 === 0) {
+        if (currentVid) {
+          void watchHistory
+            .reportProgress(seriesId, currentVid, vidIndex, Math.round(time * 1000))
+            .catch(() => {});
+        }
+      }
     },
-    [seriesId, vidIndex, episodeKey, savePosition],
+    [seriesId, vidIndex, episodeKey, savePosition, currentVid],
   );
 
   // 卸载 / 切集时补写最后一次。
@@ -397,8 +482,15 @@ export function PlayerView({
       // key 对不上说明这份位置属于别的集，写进去就是串集。
       if (key !== episodeKey || time <= 0) return;
       savePosition({ seriesId, vidIndex, currentTime: time, duration });
+      // 切集/退出的最后一次位置也推一份云端（匿名/失败后端静默）
+      const vid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
+      if (vid) {
+        void watchHistory
+          .reportProgress(seriesId, vid, vidIndex, Math.round(time * 1000))
+          .catch(() => {});
+      }
     };
-  }, [seriesId, vidIndex, episodeKey, savePosition]);
+  }, [seriesId, vidIndex, episodeKey, savePosition, currentSeries]);
 
   // 起播。依赖里带 definition：切清晰度要重新取流，
   // 而 `<video src>` 换 URL 会重置 currentTime，所以先把当前位置存进
@@ -506,25 +598,30 @@ export function PlayerView({
           break;
         case 'ArrowLeft':
           e.preventDefault();
+          wakeChrome();
           video.currentTime = Math.max(0, video.currentTime - 5);
           break;
         case 'ArrowRight':
           e.preventDefault();
+          wakeChrome();
           video.currentTime = Math.min(video.duration, video.currentTime + 5);
           break;
         case 'ArrowUp':
+        case 'ArrowDown': {
           e.preventDefault();
-          stepEpisode(-1);
+          wakeChrome();
+          // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
+          // 从详情/历史等**选定**剧进来 = 切上一集/下一集
+          const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1;
+          if (onWheelStep) onWheelStep(dir);
+          else stepEpisode(dir);
           break;
-        case 'ArrowDown':
-          e.preventDefault();
-          stepEpisode(1);
-          break;
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [stepEpisode]);
+  }, [stepEpisode, wakeChrome, onWheelStep]);
 
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
@@ -566,21 +663,24 @@ export function PlayerView({
     );
   }
 
+  // 封面占位：盖在 <video> 之上（z-[5] 压过视频、让位弹幕 z-10），首帧出画
+  // （playing）后交叉淡出。取流/解码的间隙里用户看到的是这部剧的封面而不是
+  // 黑屏——「滚动切剧卡顿」的观感大头在这。取流中（!playSrc）同样垫着。
+  const coverBackdrop = coverUrl ? (
+    <CoverBackdrop key={coverUrl} src={coverUrl} hidden={videoLive} />
+  ) : null;
+
   return (
-    <div
-      className={
-        // 沉浸流：视频铺满整页（无 padding/圆角/留白）， hgplayer 同款
-        seriesPanelMode === 'overlay' ? 'flex h-full min-h-0 flex-col' : 'flex h-full gap-4 p-4'
-      }
-    >
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
+    // 全模式一个视觉：视频区全出血贴边（无 padding/圆角/留白）。
+    // 从历史/收藏等页进入与首页沉浸流是**同一个播放器**，选集走控制栏的
+    // 「选集」弹层（immersive），不再维护第二套侧栏布局。
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <div
           ref={stageRef}
           onWheel={onStageWheel}
-          className={cn(
-            'relative min-h-0 flex-1 overflow-hidden bg-black',
-            seriesPanelMode === 'sidebar' && 'rounded-lg',
-          )}
+          onClick={onStageClick}
+          className="relative min-h-0 flex-1 overflow-hidden bg-black"
         >
           {playSrc ? (
             <>
@@ -595,65 +695,153 @@ export function PlayerView({
                 key={playSrc}
                 ref={videoRef}
                 src={playSrc}
-                className="size-full object-contain"
+                /* 绝对定位铺满舞台：WKWebView 在流式布局里会把 100% 高度的
+                   <video> 按固有纵横比撑大（1100 宽 → 1956 高），舞台裁切后
+                   表现为「画面放大、控件全被顶出窗口」（mac 长期已知 bug）。
+                   绝对定位把盒子钉死在舞台内，object-contain 只管留黑边。 */
+                className="absolute inset-0 size-full object-contain"
                 autoPlay
                 onLoadedMetadata={handleLoadedMetadata}
-                onTimeUpdate={(e) => persist(e.currentTarget.currentTime)}
-                onPause={(e) => persist(e.currentTarget.currentTime, true)}
+                onPlay={() => {
+                  // 恢复播放（含起播）也算「用户在场」：重新亮 3 秒再淡出，
+                  // 不然暂停期间常显的界面会在恢复的一瞬全部消失
+                  setPaused(false);
+                  wakeChrome();
+                }}
+                onPause={(e) => {
+                  setPaused(true);
+                  persist(e.currentTarget.currentTime, true);
+                }}
+                onPlaying={() => setVideoLive(true)}
+                onLoadedData={() => setVideoLive(true)}
+                onTimeUpdate={(e) => {
+                  // playing 事件在个别 WebView 起播路径上不触发：封面退场
+                  // 不能只靠它一路信号，时间轴真的走起来了也算出画
+                  if (e.currentTarget.currentTime > 0.1) setVideoLive(true);
+                  persist(e.currentTarget.currentTime);
+                }}
                 onEnded={handleEnded}
                 onRateChange={handleRateChange}
                 onVolumeChange={handleVolumeChange}
                 onError={handleVideoError}
               />
+              {coverBackdrop}
               <DanmakuLayer
                 videoRef={videoRef}
                 items={danmakuQuery.data ?? []}
                 enabled={danmakuOn}
                 display={danmakuDisplay}
               />
-              {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下，
-                  鼠标静止后随悬浮层一起淡出——不再占画面外的独立区域。 */}
-              {seriesPanelMode === 'overlay' && (
-                <div
-                  className={cn(
-                    'absolute bottom-14 left-3 z-10 max-w-[62%] transition-opacity duration-300',
-                    chromeVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
-                  )}
+              {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下。
+                  控制栏弹出时整体抬到控制栏上沿之上（bottom-28），隐藏时落回
+                  bottom-14——两者transition 联动，不再互相遮挡。 */}
+              <div
+                className={cn(
+                  'absolute left-3 z-10 max-w-[62%] transition-all duration-300',
+                  chromeShown ? 'bottom-28 opacity-100' : 'bottom-14 opacity-0 pointer-events-none',
+                )}
+              >
+                {/* 剧名 → 详情页。第三方同款交互：点标题离开播放器看档案/选集。
+                    stopPropagation：点标题不能同时触发「点画面暂停」。 */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void navigate({ to: '/detail', search: { seriesId } });
+                  }}
+                  className="cursor-pointer text-sm font-semibold text-white drop-shadow-md hover:underline"
+                  title={currentSeries?.title}
                 >
-                  <p className="text-sm font-semibold text-white drop-shadow-md">
-                    @{currentSeries?.title ?? ''}
-                  </p>
-                  <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
-                    {tf('player.epShort', { index: vidIndex })}
-                    {currentSeries && currentSeries.episodeCount > 0 && (
-                      <span className="text-white/70">
-                        {' · '}
-                        {tf('player.totalEpisodes', { count: currentSeries.episodeCount })}
-                      </span>
-                    )}
-                  </p>
-                  {extras?.intro && (
-                    <p className="text-muted-foreground mt-1 line-clamp-2 text-xs leading-relaxed text-white/70 drop-shadow-md">
+                  @{currentSeries?.title ?? ''}
+                </button>
+                <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
+                  {tf('player.epShort', { index: vidIndex })}
+                  {currentSeries && currentSeries.episodeCount > 0 && (
+                    <span className="text-white/70">
+                      {' · '}
+                      {tf('player.totalEpisodes', { count: currentSeries.episodeCount })}
+                    </span>
+                  )}
+                </p>
+                {extras?.intro && (
+                  <div className="mt-1 flex items-end gap-2">
+                    <p
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIntroExpanded((v) => !v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') setIntroExpanded((v) => !v);
+                      }}
+                      className={cn(
+                        'cursor-pointer text-xs leading-relaxed text-white/70 drop-shadow-md',
+                        !introExpanded && 'line-clamp-2',
+                      )}
+                    >
                       {extras.intro}
                     </p>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIntroExpanded((v) => !v);
+                      }}
+                      className="shrink-0 cursor-pointer pb-0.5 text-xs text-white/60 drop-shadow-md hover:text-white"
+                    >
+                      {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
+                  挡死（顶部让位给 tab），平时不打扰。 */}
+              {paused && !error && (
+                <div className="pointer-events-none absolute inset-x-0 top-[38%] z-10 flex justify-center">
+                  <span className="rounded-full bg-black/55 px-4 py-1.5 text-xs text-white/75 backdrop-blur-sm">
+                    {t('player.keyboardHint')}
+                  </span>
+                </div>
+              )}
+              {/* 顶部居中悬浮插槽（沉浸流分类 tab 栏）：跟随悬浮层淡出。
+                  居中用 flex 而不是 -translate-x-1/2——半像素变换会让文字
+                  整体落在亚像素位置，WebView 里渲染出来就是糊的。
+                  外层 pointer-events-none 让两侧空带照常点画面/滚轮；
+                  只有胶囊本体（data-wheel-block）拦截交互。 */}
+              {topChrome && (
+                <div
+                  className={cn(
+                    'pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center',
+                    'transition-opacity duration-300',
+                    chromeShown ? 'opacity-100' : 'opacity-0',
                   )}
+                >
+                  <div data-wheel-block className="pointer-events-auto">
+                    {topChrome}
+                  </div>
                 </div>
               )}
               {/* 沉浸流评论区：右侧滑出（💬 触发） */}
-              {seriesPanelMode === 'overlay' && commentPanelOpen && (
+              {commentPanelOpen && (
                 <CommentPanel
                   seriesId={seriesId}
                   vid={currentVid ? `${currentVid}:${seriesId}` : ''}
                   onClose={() => setCommentPanelOpen(false)}
                 />
               )}
-              {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出。
+              {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出；
+                  评论区面板打开时让位隐藏（面板就盖在右缘，Esc 或 💬 再开）。
                   vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用。 */}
               <InteractionRail
                 seriesId={seriesId}
                 vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                visible={chromeVisible}
+                visible={chromeShown && !commentPanelOpen}
                 title={currentSeries?.title}
+                // 公开计数来自剧集档案（detail 接口逐集下发），匿名可见
+                commentCount={currentEpisode?.commentCount}
+                diggCount={currentEpisode?.diggCount}
+                followCount={currentSeries?.followedCnt}
               />
               <PlayerControls
                 videoRef={videoRef}
@@ -672,14 +860,15 @@ export function PlayerView({
                 onToggleDanmaku={toggleDanmaku}
                 danmakuDisplay={danmakuDisplay}
                 onDanmakuDisplayChange={updateDanmakuDisplay}
-                immersive={seriesPanelMode === 'overlay'}
+                immersive
+                visible={chromeShown}
                 onPickEpisode={(idx) => setTarget(seriesId, idx)}
               />
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
-                  不知道是卡住了还是在慢慢转。 */}
+                  不知道是卡住了还是在慢慢转。z-30：压过封面占位。 */}
               {compat && (
-                <div className="absolute inset-0 grid place-items-center bg-black/85 p-6 text-center text-sm text-neutral-200">
+                <div className="absolute inset-0 z-30 grid place-items-center bg-black/85 p-6 text-center text-sm text-neutral-200">
                   <div className="flex w-full max-w-sm flex-col items-center gap-3">
                     <p>
                       {compat.phase === 'downloading'
@@ -694,73 +883,117 @@ export function PlayerView({
                   </div>
                 </div>
               )}
+
+              {/* 流地址已就绪、首帧还没出画（解码/缓冲）的这一段也要有指示：
+                  只有封面垫着没有任何「正在动」的信号，观感就是卡死了。 */}
+              {!videoLive && !compat && (
+                <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center p-6">
+                  <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    {buffering && buffering.phase !== 'ready'
+                      ? tf('player.buffering', {
+                          percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
+                          size:
+                            buffering.total > 0
+                              ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
+                              : formatBytes(buffering.received),
+                        })
+                      : t('common.loading')}
+                  </span>
+                </div>
+              )}
             </>
           ) : (
-            <div className="text-muted-foreground grid size-full place-items-center text-sm">
-              {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈 */}
-              {error ??
-                (buffering && buffering.phase !== 'ready'
-                  ? tf('player.buffering', {
-                      percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
-                      size:
-                        buffering.total > 0
-                          ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
-                          : formatBytes(buffering.received),
-                    })
-                  : t('common.loading'))}
-            </div>
+            <>
+              {coverBackdrop}
+              <div className="absolute inset-0 z-10 grid place-items-center p-6">
+                {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈；
+                    文案收进胶囊压在封面上，不再是一整屏裸字 */}
+                <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
+                  {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                  {error ??
+                    (buffering && buffering.phase !== 'ready'
+                      ? tf('player.buffering', {
+                          percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
+                          size:
+                            buffering.total > 0
+                              ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
+                              : formatBytes(buffering.received),
+                        })
+                      : t('common.loading'))}
+                </span>
+              </div>
+            </>
           )}
         </div>
 
-        {/* 播放页（sidebar）才有的页面级杂物：错误条/自动连播开关/快捷键提示。
-            沉浸流里这些是「视频之外占一大片区域」的元凶，全部不上。 */}
-        {seriesPanelMode === 'sidebar' && (
-          <>
-            {error && (
-              <Card className="py-2 text-sm">
-                <span className="text-destructive">{error}</span>
-              </Card>
-            )}
-
-            {/* 原生 controls 里已经有时间与进度条，这里不再重复一份 */}
-            <div className="ml-auto flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="auto-next"
-                  checked={autoNext}
-                  disabled={settingsPending}
-                  onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
-                />
-                <Label htmlFor="auto-next" className="text-sm">
-                  {t('player.autoNext')}
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="auto-delete"
-                  checked={autoDelete}
-                  disabled={settingsPending}
-                  onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
-                />
-                <Label htmlFor="auto-delete" className="text-sm">
-                  {t('player.autoDelete')}
-                </Label>
-              </div>
+        {/* 页面级杂物的浮层化：错误条 / 连播开关压在画面顶部**靠左**排布。
+            顶部居中是沉浸流的分类 tab 栏（topChrome 插槽），左上不能太宽，
+            不然把 tab 挡死——快捷键提示从常驻位撤下（错误时才占这个位置）。 */}
+        <div
+          data-wheel-block
+          className={cn(
+            'absolute left-3 top-3 z-20 flex items-center gap-2',
+            'transition-opacity duration-300',
+            chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
+          )}
+        >
+          {error && (
+            <span className="rounded-full border border-red-500/30 bg-red-950/90 px-3 py-1 text-xs text-red-200">
+              {error}
+            </span>
+          )}
+          <div className="flex shrink-0 items-center gap-3 rounded-full bg-black/45 px-3 py-1 backdrop-blur-sm">
+            <div className="flex items-center gap-1.5">
+              <Switch
+                id="auto-next"
+                checked={autoNext}
+                disabled={settingsPending}
+                onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
+              />
+              <Label htmlFor="auto-next" className="text-xs text-white/85">
+                {t('player.autoNext')}
+              </Label>
             </div>
-
-            <p className="text-muted-foreground text-xs">{t('player.keyboardHint')}</p>
-          </>
-        )}
+            <div className="flex items-center gap-1.5">
+              <Switch
+                id="auto-delete"
+                checked={autoDelete}
+                disabled={settingsPending}
+                onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
+              />
+              <Label htmlFor="auto-delete" className="text-xs text-white/85">
+                {t('player.autoDelete')}
+              </Label>
+            </div>
+          </div>
+        </div>
       </div>
-
-      {seriesPanelMode === 'sidebar' && (
-        <SeriesPanel
-          seriesId={seriesId}
-          currentIndex={vidIndex}
-          onSelect={(index) => setTarget(seriesId, index)}
-        />
-      )}
-      {/* 沉浸流的选集浮层在 PlayerControls 内（贴「选集」按钮向上弹） */}
     </div>
+  );
+}
+
+/**
+ * 封面占位图（裂图自愈）。
+ *
+ * 源图可能是 HEIC（部分 WebView 渲染不了），onError 后整层退场，不留一个
+ * 破图标压在画面上。`hidden` 是「视频已出画」：淡出而非卸载，切下一部剧时
+ * key 随 src 变化重挂载，broken/透明度状态自然归零。
+ */
+function CoverBackdrop({ src, hidden }: { src: string; hidden: boolean }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return null;
+  return (
+    <img
+      src={src}
+      alt=""
+      aria-hidden
+      onError={() => setBroken(true)}
+      className={cn(
+        'pointer-events-none absolute inset-0 z-[5] size-full object-cover object-top brightness-[0.55]',
+        'transition-opacity duration-500',
+        hidden ? 'opacity-0' : 'opacity-100',
+      )}
+    />
   );
 }

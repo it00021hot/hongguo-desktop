@@ -315,7 +315,7 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="sticky bottom-4 flex justify-end">
+      <div className="flex justify-end">
         <Button onClick={submit} disabled={saveMutation.isPending}>
           {t('settings.save')}
         </Button>

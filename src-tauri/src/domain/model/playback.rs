@@ -18,6 +18,25 @@ pub struct PlaybackPosition {
 
 /// 全部剧集的播放进度。
 pub type PlaybackMap = BTreeMap<String, BTreeMap<u32, PlaybackPosition>>;
+
+/// 一部剧「最近看到的那一集」。发给前端 `seriesProgressSchema`，camelCase。
+///
+/// 详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，
+/// 比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesProgress {
+    pub vid_index: u32,
+    /// 已播放秒数
+    pub current_time: f64,
+    /// 总时长（秒）
+    #[serde(default)]
+    pub duration: f64,
+    /// 最近更新（毫秒时间戳）
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
 impl PlaybackPosition {
     /// 构造位置。
     pub fn new(current_time: f64, duration: f64) -> Self {

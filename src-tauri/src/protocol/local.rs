@@ -140,7 +140,8 @@ mod tests {
     fn round_trips_url_and_path() {
         let p = "D:\\dl\\剧名 合集.mp4";
         let url = local_play_url(p).expect("mp4 应允许");
-        assert!(url.starts_with("http://hongguo-local.localhost/f/"));
+        let base = crate::protocol::scheme_base(crate::protocol::LOCAL_SCHEME);
+        assert!(url.starts_with(&format!("{base}/f/")));
         let raw = url.rsplit('/').next().expect("URL 末段是编码后的路径");
         assert_eq!(resolve_path(raw).unwrap(), PathBuf::from(p));
     }

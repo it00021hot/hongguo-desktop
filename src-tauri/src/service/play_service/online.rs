@@ -63,8 +63,10 @@ pub async fn prepare(
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
     let c = cache();
+    // 记下当前集：keep_only 保它、预填礼让它、切走后旧填充据此自杀
+    c.set_current(vid);
     // 一次只看一集：把别的集从内存里清掉。不清的话整季 250 集会把内存吃光。
-    // 正在取流的豁免——那可能是沉浸流预取的下一部剧，清了就白取。
+    // 显式标记的预取（下一部剧）豁免。
     c.keep_only_protect_fetching(vid);
 
     // 不指定档位时用上一轮解析到的档位——缓存的键里必须有具体档位，
@@ -72,6 +74,8 @@ pub async fn prepare(
     // 而不是各下一遍。
     if let Some(want) = definition.or_else(|| c.auto_definition(vid)) {
         if let Some(hit) = prepared(c, vid, want) {
+            // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
+            resume_fill(app, vid, want);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
             return Ok(hit);
         }
@@ -114,7 +118,7 @@ pub async fn prepare(
     let c = cache();
     let app = app.clone();
     tokio::spawn(async move {
-        let filled = fill(&app, c, &owned, want, &play, &settings).await;
+        let filled = fill(&app, c, &owned, want, &play, &settings, false).await;
         // 取流权一直持有到数据落盘：中途放开会让并发的第二个请求以为
         // 「没人管这一档」而重新下一遍。
         c.end_fetch(&owned, want);
@@ -177,13 +181,15 @@ pub async fn prefetch_stream(
         return Ok(());
     }
     c.set_definitions(vid, want, &play.definitions);
+    // 显式标记预取：keep_only 只豁免这一条，别让在途填充占住串行队列
+    c.mark_prefetch(vid, want);
     log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");
     let owned = vid.to_string();
     let c = cache();
     let app = app.clone();
     let settings = settings.clone();
     tokio::spawn(async move {
-        let filled = fill(&app, c, &owned, want, &play, &settings).await;
+        let filled = fill(&app, c, &owned, want, &play, &settings, true).await;
         c.end_fetch(&owned, want);
         if let Err(e) = filled {
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
@@ -229,6 +235,14 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// **全局串行**（[`FILL_GATE`]）：当前剧与预取的填充排队走，一次只填一路。
 /// 并发两路整集下载+解密会抢爆带宽与 CPU——用户实测卡死的那次，
 /// 当前剧与预取同时 fill 是最可疑的现场。
+///
+/// **可取消**（2026-10-06）：条目被逐出（用户切走）后填充立即中止让出队列——
+/// 否则被切走的前一集拖着整集下载占住串行通道，当前集黑屏干等到天荒地老。
+/// 每个分块边界都检查一次，最坏滞后一个分块（4MB）。
+///
+/// `prefetch = true` 时只填头部 [`PREFETCH_HEAD_BYTES`]（够首帧秒开），
+/// 余下等它升格为当前集后由 [`resume_fill`] 续——预取的意义是「切过去不用
+/// 黑屏等取流表 + moov」，不是提前背完整集。
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
@@ -236,14 +250,20 @@ async fn fill(
     definition: u32,
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
+    prefetch: bool,
 ) -> AppResult<()> {
+    let cancelled = || !c.exists(vid, definition);
     let _gate = FILL_GATE.acquire().await;
+    if cancelled() {
+        log::info!("[Online] {vid} 已被切走，排队轮到时取消填充");
+        return Ok(());
+    }
     let reporter = ProgressReporter::new(app.clone(), vid.to_string());
 
     match build_progressive(play, settings, &|r, t| reporter.report(r, t, "downloading")).await {
         Ok((sparse, prog)) => {
-            if !c.set_progressive(vid, definition, prog.clone()) {
-                log::info!("[Online] {vid} 档位 {definition} 已有整集数据，渐进填充取消");
+            if cancelled() || !c.set_progressive(vid, definition, prog.clone()) {
+                log::info!("[Online] {vid} 档位 {definition} 条目已失效，渐进填充取消");
                 reporter.done();
                 return Ok(());
             }
@@ -255,12 +275,29 @@ async fn fill(
             // 就永远停在前沿——播放追上未填充区只能超时报错。
             let mut last_err = None;
             for attempt in 0..3 {
-                match fill_remaining(&sparse, &prog, play, settings, &reporter).await {
+                if cancelled() {
+                    log::info!("[Online] {vid} 已被切走，中止填充");
+                    return Ok(());
+                }
+                match fill_remaining(
+                    &sparse,
+                    &prog,
+                    play,
+                    settings,
+                    &reporter,
+                    &cancelled,
+                    if prefetch { Some(PREFETCH_HEAD_BYTES) } else { None },
+                )
+                .await
+                {
                     Ok(()) => {
                         last_err = None;
                         break;
                     }
                     Err(e) => {
+                        if cancelled() {
+                            return Ok(());
+                        }
                         log::warn!(
                             "[Online] {vid} 档位 {definition} 填充第 {} 次中断: {e}",
                             attempt + 1
@@ -274,7 +311,10 @@ async fn fill(
                 return Err(e);
             }
             reporter.done();
-            log::info!("[Online] {vid} 档位 {definition} 填充完成");
+            log::info!(
+                "[Online] {vid} 档位 {definition} {}完成",
+                if prefetch { "预取头部 " } else { "填充 " }
+            );
             Ok(())
         }
         Err(e) => {
@@ -284,6 +324,9 @@ async fn fill(
             })
             .await?;
 
+            if cancelled() {
+                return Ok(());
+            }
             if !c.store(vid, definition, &plain) {
                 log::info!(
                     "[Online] {vid} 档位 {definition} 已有数据，丢弃重复的 {} 字节",
@@ -294,6 +337,60 @@ async fn fill(
             Ok(())
         }
     }
+}
+
+/// 预取只填的头部字节数：够 `<video>` 首帧 + 前几十秒，不背整集。
+/// 升格为当前集后由 [`resume_fill`] 续满。
+const PREFETCH_HEAD_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 预取条目升格为当前集后的**续填**：渐进已注册、URL/代理存在条目里，
+/// 直接把余下字节按序填满（当前集优先级，无窗口上限、不礼让）。
+///
+/// 没有它，预取只填头部的条目在被切上后，播放追上填充前沿就只能
+/// 30s 超时——「滚回来就黑屏」的另一半。
+pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
+    let c = cache();
+    if !c.needs_resume(vid, definition) {
+        return;
+    }
+    if !c.begin_fetch(vid, definition) {
+        return; // 已有填充方
+    }
+    let Some((sparse, prog)) = c.resume_parts(vid, definition) else {
+        c.end_fetch(vid, definition);
+        return;
+    };
+    let proxy = prog.proxy.clone();
+    let cdn_url = prog.cdn_url.clone();
+    let app = app.clone();
+    let owned = vid.to_string();
+    tokio::spawn(async move {
+        let reporter = ProgressReporter::new(app.clone(), owned.clone());
+        let cancelled = || !c.exists(&owned, definition);
+        let client = match crate::domain::api::client::build_client(&proxy) {
+            Ok(cl) => cl,
+            Err(e) => {
+                log::warn!("[Online] 续填 {owned} 建 client 失败: {e}");
+                c.end_fetch(&owned, definition);
+                return;
+            }
+        };
+        let result = fill_remaining_with_client(
+            &client,
+            &sparse,
+            &prog,
+            &cdn_url,
+            &reporter,
+            &cancelled,
+            None,
+        )
+        .await;
+        c.end_fetch(&owned, definition);
+        match result {
+            Ok(()) => log::info!("[Online] {owned} 续填完成"),
+            Err(e) => log::warn!("[Online] {owned} 续填中断（条目保留，可播已填部分）: {e}"),
+        }
+    });
 }
 
 /// 渐进路径第一阶段：预取头尾、定位 moov、建计划、注册协议层。
@@ -358,6 +455,8 @@ async fn build_progressive(
             plan: Some(Arc::new(plan)),
             plain_len,
             seek_hint: AtomicU64::new(0),
+            cdn_url: play.url.clone(),
+            proxy: settings.proxy.clone(),
         })
     } else {
         // 明文流（官网兜底链路）：明文就是密文，按需直供
@@ -366,25 +465,58 @@ async fn build_progressive(
             plan: None,
             plain_len: total,
             seek_hint: AtomicU64::new(0),
+            cdn_url: play.url.clone(),
+            proxy: settings.proxy.clone(),
         })
     };
     Ok((sparse, prog))
 }
 
 /// 渐进路径第二阶段：把余下字节按序填满，期间响应 seek 提示。
+///
+/// `is_cancelled` 在每个分块边界检查（条目被逐出 = 用户切走，立即收工让出
+/// 串行队列）；`stop_at` 给预填用（只填到该明文偏移，余下等转正续填）。
 async fn fill_remaining(
     sparse: &Arc<crate::domain::mp4::streaming::SparseBuffer>,
     prog: &Arc<ProgressiveStream>,
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
     reporter: &ProgressReporter,
+    is_cancelled: &(dyn Fn() -> bool + Send + Sync),
+    stop_at: Option<u64>,
+) -> AppResult<()> {
+    let client = crate::domain::api::client::build_client(&settings.proxy)?;
+    fill_remaining_with_client(
+        &client,
+        sparse,
+        prog,
+        &play.url,
+        reporter,
+        is_cancelled,
+        stop_at,
+    )
+    .await
+}
+
+/// [`fill_remaining`] 的注入形态：续填路径手里没有 PlayInfo/Settings，
+/// 只有渐进条目里存的 client 参数。
+async fn fill_remaining_with_client(
+    client: &reqwest::Client,
+    sparse: &Arc<crate::domain::mp4::streaming::SparseBuffer>,
+    prog: &Arc<ProgressiveStream>,
+    cdn_url: &str,
+    reporter: &ProgressReporter,
+    is_cancelled: &(dyn Fn() -> bool + Send + Sync),
+    stop_at: Option<u64>,
 ) -> AppResult<()> {
     use crate::domain::api::client::get_video_range;
-
-    let client = crate::domain::api::client::build_client(&settings.proxy)?;
     let total = sparse.len();
     let mut cursor = 0u64;
     loop {
+        if is_cancelled() {
+            log::info!("[Online] 填充中止（条目已被逐出）");
+            return Ok(());
+        }
         // seek 提示在密文上落在更前方时跳过去；跳过的洞由回绕补齐
         let hint_plain = prog.seek_hint.load(Ordering::Acquire);
         let hint_cipher = match &prog.plan {
@@ -400,6 +532,14 @@ async fn fill_remaining(
             cursor = hint_cipher;
         }
 
+        // 预填上限：只填头部，余下等转正续填
+        if let Some(limit) = stop_at {
+            if sparse.downloaded() >= limit.min(total) {
+                log::info!("[Online] 预填达到头部上限（{limit} 字节），余下等转正续填");
+                return Ok(());
+            }
+        }
+
         let Some((gap_start, gap_end)) = sparse.next_gap(cursor) else {
             if sparse.downloaded() >= total {
                 return Ok(());
@@ -407,8 +547,17 @@ async fn fill_remaining(
             cursor = 0; // cursor 之后全满：回绕找剩下的洞
             continue;
         };
+        // 上限截断：这个洞已越过预填线就不再拉
+        let gap_end = match stop_at {
+            Some(limit) => gap_end.min(limit),
+            None => gap_end,
+        };
+        if gap_start >= gap_end {
+            cursor = gap_end.max(cursor);
+            continue;
+        }
         let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
-        let bytes = get_video_range(&client, &play.url, gap_start, fetch_end - 1).await?;
+        let bytes = get_video_range(client, cdn_url, gap_start, fetch_end - 1).await?;
         let want = fetch_end - gap_start;
         let got = bytes.len() as u64;
         if got == 0 {
