@@ -40,11 +40,11 @@ pub fn quick_merge(
     let output = dir.join(format!("{output_name} 合集.mp4"));
 
     let total = inputs.len();
-    on_progress(0, total, task);
+    on_progress(0.0, total, task);
 
     let sorted: Vec<PathBuf> = inputs.into_iter().map(|(_, p)| p).collect();
     let (size, count) = crate::media::remux::concat_copy(&sorted, &output)?;
-    on_progress(total, total, task);
+    on_progress(total as f64, total, task);
     Ok((output, size, count))
 }
 

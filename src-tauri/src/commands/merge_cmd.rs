@@ -133,16 +133,29 @@ pub async fn merge_series(
     let _ = app.emit(names::MERGE_TASK_ADDED, &task);
 
     let emit_app = app.clone();
+    let store_app = state.inner().clone();
+    // 集内回调每帧都会来（30fps × 并行路数），按 1% 步进打闸：
+    // 事件与落库都只在新百分比跨档时发生，一集几十条封顶。
+    let last_step = std::sync::atomic::AtomicI64::new(i64::MIN);
     let on_progress: progress::ProgressSink = Arc::new(move |done, total, t| {
-        // 直接发填好 percent 的 MergeTask：前端已有的 schema 里就有这个字段，
-        // 不必为进度另造一套载荷类型。
-        let mut snapshot = t.clone();
-        snapshot.percent = if total == 0 {
+        let percent = if total == 0 {
             0.0
         } else {
-            (done as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+            (done / total as f64 * 100.0).clamp(0.0, 100.0)
         };
-        let _ = emit_app.emit(names::MERGE_PROGRESS, snapshot);
+        let step = (percent * 100.0).round() as i64;
+        if last_step.swap(step, std::sync::atomic::Ordering::Relaxed) == step {
+            return;
+        }
+        let mut snapshot = t.clone();
+        snapshot.percent = percent;
+        // 参与集数在任务登记时数不出来（要等合并内部盘点输入），
+        // 每次上报都带上，运行中的快照才不用一直挂着 0
+        snapshot.episode_count = total;
+        let _ = emit_app.emit(names::MERGE_PROGRESS, &snapshot);
+        // 进度同步落库：get_merge_tasks 中途就能看到，进程崩了重开
+        // 也至少能停在「最后跨过的那个百分点」
+        upsert_merge_task_owned(&store_app, &snapshot);
     });
 
     let inner = state.inner().clone();

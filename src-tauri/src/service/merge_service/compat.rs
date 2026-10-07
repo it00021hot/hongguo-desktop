@@ -5,7 +5,7 @@
 //! 这里选择后者：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use super::done_inputs;
@@ -97,15 +97,12 @@ pub fn compat_merge(
     let slots: Mutex<Vec<Option<Result<PathBuf, AppError>>>> =
         Mutex::new((0..total).map(|_| None).collect());
 
-    // 已完成集数，供进度上报做**累计**。
+    // 已完成集数与集内比例的全局账本，供进度上报做**小数累计**。
     //
-    // 这里原先报的是 `on_progress(1, total, task)` —— done 恒为 1，于是无论转完
-    // 几集前端收到的都是 1/total，只有收尾那次 `total/total` 才是真进度，
-    // 表现就是进度条卡在开头不动。多个工作线程并发时还要 `fetch_add` 才不会
-    // 互相覆盖。
-    let done = AtomicUsize::new(0);
-    // 正在转码的集数，用来把「集内」进度折成整体百分比
-    let running = AtomicUsize::new(0);
+    // 这里原先只报整数集数，单集合并的进度条从头卡到尾；且多线程并发时
+    // 各自报「done + 本集比例」会互相覆盖、进度来回跳，所以收进一个
+    // 原子账本统一折算（见 [`LiveProgress`]）。
+    let live = LiveProgress::new();
 
     // 硬编会话超订的自适应收敛（背景见 [`merge_threads`]）：
     // 生效并行度从 threads 起步，一观察到「预期硬编却走了软路」就收到 2。
@@ -159,15 +156,17 @@ pub fn compat_merge(
                 };
 
                 let (vid_index, source) = &inputs[next];
+                // 本集的集内记账（毫秒拆分的最近比例），完成时结算回账本
+                let last_ms = AtomicI64::new(0);
                 let result = match cache::cached_path(series_id, *vid_index) {
                     Some(p) => Ok(p),
                     None => {
-                        running.fetch_add(1, Ordering::Relaxed);
                         let on_eps = episode_progress(
-                            on_progress,
-                            done.load(Ordering::Relaxed),
-                            running.load(Ordering::Relaxed),
+                            &live,
+                            &last_ms,
+                            pipeline::episode_seconds(source),
                             total,
+                            on_progress,
                             task,
                         );
                         let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
@@ -189,14 +188,13 @@ pub fn compat_merge(
                                 "[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2"
                             );
                         }
-                        running.fetch_sub(1, Ordering::Relaxed);
                         r.map(|t| PathBuf::from(t.output_path))
                     }
                 };
                 slots.lock().unwrap_or_else(|p| p.into_inner())[next] = Some(result);
                 active.fetch_sub(1, Ordering::Relaxed);
-                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                on_progress(finished, total, task);
+                let finished = live.finish(last_ms.load(Ordering::Relaxed));
+                on_progress(finished as f64, total, task);
             });
         }
     });
@@ -217,7 +215,7 @@ pub fn compat_merge(
             None => return Err(AppError::Media("转码线程异常退出".into())),
         }
     }
-    on_progress(total, total, task);
+    on_progress(total as f64, total, task);
 
     // 拼接前再确认一次：最后几集转完到真正开写之间还有窗口
     if slot.is_cancelled() {
@@ -287,73 +285,121 @@ fn merge_threads(episodes: usize) -> usize {
     cap.min(episodes.max(1))
 }
 
-/// 集内进度：把 ffmpeg 报的「已编码秒数」折成整部合并的完成比例。
+/// 兼容合并的全局进度账本：「已完成整集数 + 在转各集的比例和」。
 ///
-/// 多集并发时每集各报一次，整体比例 = (已完成集数 + 本集比例) / 总集数。
-fn episode_progress(
-    on_progress: &ProgressSink,
-    finished: usize,
-    running: usize,
-    total: usize,
-    task: &MergeTask,
-) -> impl Fn(f64) + Send + Sync + 'static {
-    let task = task.clone();
-    let sink = on_progress.clone();
-    move |ratio: f64| {
-        if !(0.0..=1.0).contains(&ratio) {
-            return;
+/// 集内回调只看得到自己那一集，多线程并发时若各自报「done + 本集比例」，
+/// 后完成的前一集会把整体比例往回拽，进度条来回跳。所以各集只把**自己的**
+/// 比例增量汇入同一本原子账（毫秒拆分，1000 = 一集），读取时统一折算，
+/// 任何交错顺序下整体值都单调不减。
+struct LiveProgress {
+    /// 已完成的整集数
+    done: AtomicUsize,
+    /// 在转各集的比例和（毫单位；一集转完即从这里结转进 `done`）
+    inflight_milli: AtomicI64,
+}
+
+impl LiveProgress {
+    fn new() -> Self {
+        Self {
+            done: AtomicUsize::new(0),
+            inflight_milli: AtomicI64::new(0),
         }
-        let _ = running;
-        let done = finished as f64 + ratio;
-        on_fraction(&sink, done, total as f64, &task);
+    }
+
+    /// 一条集内上报：把该集最新比例汇入账本，返回整体「已完成集数」小数口径。
+    /// `last` 是这一集的记账格（记它上次汇入的毫单位数，增量才算得出来）。
+    fn update(&self, last: &AtomicI64, ratio: f64) -> f64 {
+        let milli = (ratio.clamp(0.0, 1.0) * 1000.0).round() as i64;
+        self.inflight_milli
+            .fetch_add(milli - last.load(Ordering::Relaxed), Ordering::Relaxed);
+        last.store(milli, Ordering::Relaxed);
+        self.snapshot()
+    }
+
+    /// 一集完成：把它在途的份额结转为整集，返回新的完成集数。
+    /// `last_milli` 传这一集记账格的终值；缓存命中的集没进过账，传 0。
+    fn finish(&self, last_milli: i64) -> usize {
+        if last_milli > 0 {
+            self.inflight_milli.fetch_sub(last_milli, Ordering::Relaxed);
+        }
+        self.done.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn snapshot(&self) -> f64 {
+        self.done.load(Ordering::Relaxed) as f64
+            + self.inflight_milli.load(Ordering::Relaxed) as f64 / 1000.0
     }
 }
 
-/// 把「已完成 n.x 集」折成 `ProgressSink` 的整数口径，并夹在 `0..total-1`。
-///
-/// 夹上界而不是报满：`total/total` 在合并里表示「转码全部完成、进入拼接」，
-/// 集内进度抢先报满会让进度条在还在转码时就显示 100%。
-fn on_fraction(sink: &ProgressSink, done: f64, total: f64, task: &MergeTask) {
-    if total <= 0.0 {
-        return;
+/// 集内进度：管线回调给「已编码秒数」，除以本集总时长折成比例，
+/// 再经 [`LiveProgress`] 汇成整体小数集数上报。时长读不出来的集
+/// 退化为按集粒度推进（完成一集跳一格），不再假装有集内进度。
+fn episode_progress<'a>(
+    live: &'a LiveProgress,
+    last: &'a AtomicI64,
+    episode_seconds: Option<f64>,
+    total: usize,
+    on_progress: &'a ProgressSink,
+    task: &'a MergeTask,
+) -> impl Fn(f64) + Send + Sync + 'a {
+    move |secs: f64| {
+        let Some(dur) = episode_seconds.filter(|d| *d > 0.0) else {
+            return;
+        };
+        let done = live.update(last, secs / dur);
+        on_progress(done, total, task);
     }
-    let done = done.clamp(0.0, total);
-    let n = done.round() as usize;
-    sink(
-        n.min(total.round() as usize - 1),
-        total.round() as usize,
-        task,
-    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{DownloadTask, MergeMode, MergeTask};
-    use parking_lot::Mutex;
-    use std::sync::Arc;
+    use crate::domain::model::DownloadTask;
 
-    fn task() -> MergeTask {
-        MergeTask::new("s", "剧", "out", MergeMode::Compat)
+    #[test]
+    fn single_episode_progress_climbs_fractionally() {
+        // 原实现把进度量化成整集，单集合并的进度条从头卡到尾——
+        // 集内比例必须能推进小数口径，完成时精确归一
+        let live = LiveProgress::new();
+        let last = AtomicI64::new(0);
+        assert_eq!(live.update(&last, 0.3), 0.3);
+        assert_eq!(live.update(&last, 0.9), 0.9);
+        assert_eq!(live.finish(last.load(Ordering::Relaxed)), 1);
+        assert_eq!(live.snapshot(), 1.0);
     }
 
     #[test]
-    fn fraction_is_clamped_just_below_complete() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink: ProgressSink = {
-            let seen = seen.clone();
-            Arc::new(move |d, t, _| seen.lock().push((d, t)))
-        };
-        let task = task();
-        on_fraction(&sink, 3.5, 10.0, &task);
-        on_fraction(&sink, 9.9, 10.0, &task);
-        on_fraction(&sink, 12.0, 10.0, &task);
-        let got = seen.lock().clone();
-        assert_eq!(got.len(), 3);
-        assert!(
-            got.iter().all(|(d, t)| *d < *t),
-            "集内进度不能报满：满进度表示「开始拼接」了，实际: {got:?}"
-        );
+    fn parallel_episodes_keep_progress_monotonic() {
+        let live = LiveProgress::new();
+        let a = AtomicI64::new(0);
+        let b = AtomicI64::new(0);
+        let mut prev = 0.0f64;
+        for step in [0.2, 0.5, 0.8] {
+            for last in [&a, &b] {
+                let snap = live.update(last, step);
+                assert!(
+                    snap >= prev,
+                    "并发上报的交错顺序不能让整体进度回退: {prev} -> {snap}"
+                );
+                prev = snap;
+            }
+        }
+        let done = live.finish(a.load(Ordering::Relaxed));
+        assert_eq!(done, 1, "A 集完成应记 1 集");
+        assert!(live.snapshot() >= prev, "结转不能让进度回退");
+        let _ = live.finish(b.load(Ordering::Relaxed));
+        assert_eq!(live.snapshot(), 2.0, "全部完成后应精确等于总集数");
+    }
+
+    #[test]
+    fn ratio_update_ignores_out_of_range_values() {
+        // 越界的比例按夹紧口径记账：每集记「当前比例」的绝对值，
+        // 上一笔报多了，下一笔自然把账减回去——账本始终等于各集当前比例之和
+        let live = LiveProgress::new();
+        let last = AtomicI64::new(0);
+        assert_eq!(live.update(&last, f64::NAN), 0.0);
+        assert_eq!(live.update(&last, 42.0), 1.0);
+        assert_eq!(live.update(&last, -1.0), 0.0, "回落到夹紧值 0，账随实报");
     }
 
     #[test]

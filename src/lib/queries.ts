@@ -966,9 +966,8 @@ export function useMergeEvents() {
   }, [qc]);
 
   // 进度**不失效查询**，照下载那边的做法就地合并进缓存（见 useDownloadTasks）。
-  // 后端每完成一集才发一次 `merge-progress`，载荷里的 percent 是算好的；而
-  // store 里的 percent 恒为 0——合并中途没人写回 store。所以收到事件就重查，
-  // 查回来的还是 0，界面就永远停在「合并中…」，跟没订阅一样。
+  // 后端按 1% 步进推送（集内回调在后端打了闸），载荷里 percent/episodeCount
+  // 都已填好且同步落了库；就地合并只是让界面即时跟上，不依赖下次重查。
   const applyProgress = useCallback(
     (snapshot: MergeTask) => {
       qc.setQueryData<MergeTask[]>(keys.mergeTasks, (tasks) =>

@@ -138,6 +138,16 @@ pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     (v.info.width > 0 && v.info.height > 0).then_some((v.info.width, v.info.height))
 }
 
+/// 源分集的总时长（秒）。把 [`transcode`] 的「已编码秒数」回调折成集内比例
+/// 时要用它做分母；读不出来（坏文件/无视频轨）返回 `None`。
+pub fn episode_seconds(path: &Path) -> Option<f64> {
+    let demuxed = crate::media::demux::demux_file(path).ok()?;
+    let v = demuxed.video_track()?;
+    let fps = v.info.average_framerate().filter(|f| *f > 0.0)?;
+    let n = v.info.samples.len();
+    (n > 0).then_some(n as f64 / fps)
+}
+
 /// 转码产物是否真的可播：能解复用且有视频样本。
 ///
 /// 与合并产物校验（`merge_service::compat`）同一口径：一个「有 moov、能打开、
