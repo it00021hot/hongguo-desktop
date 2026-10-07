@@ -64,6 +64,7 @@ static FILL_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 pub async fn prepare(
     app: &tauri::AppHandle,
     vid: &str,
+    progress_key: &str,
     definition: Option<u32>,
     settings: Settings,
     env: &crate::domain::api::client::ApiEnv,
@@ -94,7 +95,7 @@ pub async fn prepare(
     if let Some(want) = want {
         if let Some(hit) = prepared(c, vid, want) {
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
-            resume_fill(app, vid, want);
+            resume_fill(app, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
             return Ok(hit);
         }
@@ -133,11 +134,12 @@ pub async fn prepare(
         definitions: play.definitions.clone(),
     };
     let owned = vid.to_string();
+    let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
     let app = app.clone();
     tokio::spawn(async move {
-        let filled = fill(&app, c, &owned, want, &play, &settings, false).await;
+        let filled = fill(&app, c, &owned, &owned_key, want, &play, &settings, false).await;
         // 取流权一直持有到数据落盘：中途放开会让并发的第二个请求以为
         // 「没人管这一档」而重新下一遍。
         c.end_fetch(&owned, want);
@@ -170,6 +172,7 @@ fn prepared(c: &StreamCache, vid: &str, definition: u32) -> Option<Prepared> {
 pub async fn prefetch_stream(
     app: &tauri::AppHandle,
     vid: &str,
+    progress_key: &str,
     settings: &Settings,
     env: &crate::domain::api::client::ApiEnv,
 ) -> AppResult<()> {
@@ -204,11 +207,12 @@ pub async fn prefetch_stream(
     c.mark_prefetch(vid, want);
     log::info!("[Online] 预取 {vid} 档位 {want}，后台渐进填充开始");
     let owned = vid.to_string();
+    let owned_key = progress_key.to_string();
     let c = cache();
     let app = app.clone();
     let settings = settings.clone();
     tokio::spawn(async move {
-        let filled = fill(&app, c, &owned, want, &play, &settings, true).await;
+        let filled = fill(&app, c, &owned, &owned_key, want, &play, &settings, true).await;
         c.end_fetch(&owned, want);
         if let Err(e) = filled {
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
@@ -263,10 +267,12 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// 够首帧秒开），但上限是动态的：条目升格为当前集、或已有读者在等这一档，
 /// 上限即刻解除、同一条填充无缝续满——不必依赖 [`resume_fill`] 事后抢
 /// 取流权（预取尚未收工时它抢不到，那正是「播到头部上限就断流」的窗口）。
+#[allow(clippy::too_many_arguments)]
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
     vid: &str,
+    progress_key: &str,
     definition: u32,
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
@@ -285,7 +291,7 @@ async fn fill(
         log::info!("[Online] {vid} 已被切走/让位，排队轮到时取消填充");
         return Ok(());
     }
-    let reporter = ProgressReporter::new(app.clone(), vid.to_string());
+    let reporter = ProgressReporter::new(app.clone(), progress_key.to_string());
 
     match build_progressive(play, settings, &|r, t| reporter.report(r, t, "downloading")).await {
         Ok((sparse, prog)) => {
@@ -383,7 +389,7 @@ const PREFETCH_HEAD_BYTES: u64 = 8 * 1024 * 1024;
 ///
 /// 没有它，预取只填头部的条目在被切上后，播放追上填充前沿就只能
 /// 30s 超时——「滚回来就黑屏」的另一半。
-pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
+pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32, progress_key: &str) {
     let c = cache();
     if !c.needs_resume(vid, definition) {
         return;
@@ -399,8 +405,9 @@ pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
     let cdn_url = prog.cdn_url.clone();
     let app = app.clone();
     let owned = vid.to_string();
+    let owned_key = progress_key.to_string();
     tokio::spawn(async move {
-        let reporter = ProgressReporter::new(app.clone(), owned.clone());
+        let reporter = ProgressReporter::new(app.clone(), owned_key);
         let cancelled = || !c.exists(&owned, definition) || c.current() != owned;
         let client = match crate::domain::api::client::build_client(&proxy) {
             Ok(cl) => cl,
@@ -705,6 +712,9 @@ pub async fn fetch_plain(
 /// 还是卡住，也看不到还要多久。
 pub struct ProgressReporter {
     app: tauri::AppHandle,
+    /// 前端按 `{seriesId}:{vidIndex}` 过滤事件（episodeKey，与
+    /// compat-play-progress 同一格式）——曾经发裸 vid 导致「正在缓存 X%」
+    /// 永远匹配不上，别改回 vid。
     key: String,
     throttle: crate::service::download_service::events::ProgressThrottle,
 }

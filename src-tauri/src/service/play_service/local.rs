@@ -82,7 +82,9 @@ pub async fn resolve_play(
         }
     };
 
-    match online::prepare(app, &vid, request.definition, state.settings(), &state.api_env()).await {
+    // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
+    let progress_key = format!("{}:{}", request.series_id, request.vid_index);
+    match online::prepare(app, &vid, &progress_key, request.definition, state.settings(), &state.api_env()).await {
         Ok(prepared) => Ok(PlayResponse {
             url: prepared.url,
             online: true,

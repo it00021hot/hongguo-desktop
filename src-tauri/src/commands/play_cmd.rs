@@ -43,7 +43,14 @@ pub async fn play_prefetch(
     }
     let settings = state.settings();
     let env = state.api_env();
-    crate::service::play_service::online::prefetch_stream(&app, &ep.vid, &settings, &env).await
+    crate::service::play_service::online::prefetch_stream(
+        &app,
+        &ep.vid,
+        &format!("{series_id}:{}", ep.vid_index),
+        &settings,
+        &env,
+    )
+    .await
 }
 
 /// 同步 command 会占 **Tauri 主线程**——播放时每 5 秒一次的进度保存
