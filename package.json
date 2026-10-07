@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "knip": "knip",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "cdp": "node scripts/cdp.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.99.0",
