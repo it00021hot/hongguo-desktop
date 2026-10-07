@@ -45,7 +45,6 @@ pub fn mux_h264(
         Some((_, s)) => s,
         None => &[],
     };
-    let audio_len = audio.len();
     if let Some((fmt, _)) = audio_in {
         builder = builder.audio(
             // 源片源几乎都是 AAC-LC；profile 写错只会让播放器按默认 profile 试解
@@ -62,11 +61,19 @@ pub fn mux_h264(
     // 音视频必须**按时间戳交织**写入：
     //   - muxide 要求先落一帧视频才接受音频
     //   - 整段音频先写会导致播放器缓冲很久才出声，音画也容易不同步
+    // 源片音轨可以比视频轨先开始（红果片源实测：音频 0s、视频首帧
+    // 0.133s——AAC priming + 视频轨延迟起步）。muxide 的轨道模型不收
+    // 「早于首帧视频的音频」，这段头部本就该按 elst 语义裁掉（软解路径
+    // 视频 pts 从 0 生成所以从未触发；平台层真机文件直接全灭）。
+    let v0 = frames.first().map_or(0.0, |(pts, ..)| *pts);
+    let a_start = audio.partition_point(|(pts, _)| *pts < v0);
+    let audio = &audio[a_start..];
+    // 首样本仍强制视频，做一层与 pts 无关的保险
     let mut v_idx = 0usize;
     let mut a_idx = 0usize;
-    while v_idx < frames.len() || a_idx < audio_len {
+    while v_idx < frames.len() || a_idx < audio.len() {
         let take_video = match (frames.get(v_idx), audio.get(a_idx)) {
-            (Some((v_pts, ..)), Some((a_pts, _))) => v_pts <= a_pts,
+            (Some(_), Some(_)) => v_idx == 0 || frames[v_idx].0 <= audio[a_idx].0,
             (Some(_), None) => true,
             _ => false,
         };
