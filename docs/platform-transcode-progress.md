@@ -110,7 +110,13 @@ Windows MF 一轮（windows crate 绑定没错，错的全是**契约与实机�
 
 ## 待办（后续会话）
 
-- macOS 会话验证：`cargo check` 过一遍 `vt/mod.rs` 的三处改动（#6 关键帧语义、#7 双重释放、0.12 码率系数），有真机则跑 e2e。
+- **macOS VT 真机验收（定于 2026-10-09，Mac 明天才可用）**：`vt/mod.rs` 最近三处改动
+  （#6 关键帧语义、#7 双重释放防护、0.12 码率系数）目前只过了 `cargo check`，逻辑上对、
+  没踩过真机。真机到手后跑 `cargo test --lib e2e_tests`（平台通道用例自动启用），
+  顺带验一次兼容合并端到端。发 Mac 版前此处必须打勾。
+  环境面结论（无需额外安装）：VideoToolbox 是系统框架，Apple Silicon 全系与
+  2016+（Skylake 起）Intel Mac 自带 HEVC 硬解 + H.264 硬编，无 Windows 的扩展/OEM 差异；
+  「能播就能合」的对称性在 mac 上同样成立。
 - MF 解码侧如需硬解直通（NV12 DX 表面零拷贝进 NVENC），再做 D3D11 设备管理器——当前系统内存中转已达标（10s/集 ≈ 0.9s），属「需要时再做」。
 
 ## 真机合并验收（2026-10-07，Windows + HONGGUO_NO_FFMPEG=1）
