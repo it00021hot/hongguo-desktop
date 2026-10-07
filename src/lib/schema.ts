@@ -342,6 +342,8 @@ export type StorageUsage = z.infer<typeof storageUsageSchema>;
 export const decodeCapabilitySchema = z.object({
   hasFfmpeg: z.boolean(),
   h264HwEncoder: z.boolean(),
+  /** 平台原生硬编（VideoToolbox / Media Foundation），不依赖用户装 ffmpeg */
+  platformHwEncoder: z.boolean(),
 });
 
 /**

@@ -94,6 +94,94 @@ pub(super) fn read_mdhd(data: &[u8], start: usize, size: usize, info: &mut Track
     };
 }
 
+impl TrackInfo {
+    /// 每样本的**显示**时间戳（秒），由 `stts`/`ctts` 游程展开，整体平移到 0 起点。
+    ///
+    /// 数组按**解码序**（样本序）索引；带 B 帧的码流里显示序 ≠ 解码序，
+    /// 所以返回值**不保证**按数组下标递增——「解码器输出（显示）序下递增」
+    /// 才是不变量，由消费方（转码的编码输出侧）保证。组成偏移（`ctts`）
+    /// 直接加在解码时间上。没有 `stts`、时基为 0 或没有样本时返回空 `Vec`：
+    /// 容器没给时间轴，调用方回落到「样本号 / 默认帧率」的合成轴。
+    pub fn sample_pts(&self) -> Vec<f64> {
+        let total = self.samples.len();
+        if self.stts.is_empty() || self.media_timescale == 0 || total == 0 {
+            return Vec::new();
+        }
+        let timescale = f64::from(self.media_timescale);
+
+        // 展开到与样本数等长：表短于样本数时按最后一段 delta 延续，
+        // 表长于样本数时多出的段丢弃——两表描述本该是同一批样本，
+        // 不一致只出现在畸形文件上，能覆盖多少就覆盖多少。
+        let mut pts = Vec::with_capacity(total);
+        let mut cursor = 0u64;
+        let mut last_delta = 1u32;
+        let mut ctts = self
+            .ctts
+            .iter()
+            .flat_map(|&(c, o)| std::iter::repeat_n(o, c as usize));
+        for &(count, delta) in &self.stts {
+            last_delta = delta.max(1);
+            for _ in 0..count {
+                if pts.len() == total {
+                    break;
+                }
+                let offset = i64::from(ctts.next().unwrap_or(0));
+                let t = (cursor as i64 + offset) as f64 / timescale;
+                pts.push(t);
+                cursor += u64::from(delta);
+            }
+            if pts.len() == total {
+                break;
+            }
+        }
+        while pts.len() < total {
+            let t = cursor as f64 / timescale;
+            pts.push(t);
+            cursor += u64::from(last_delta);
+        }
+
+        // 负偏移（version 1 ctts）会让最早的显示时间落在 0 之前，而音轨与
+        // 封装层都从 0 起步：整体平移，等量平移不破坏任何相对时序
+        if let Some(min) = pts.iter().cloned().reduce(f64::min) {
+            if min < 0.0 {
+                for p in &mut pts {
+                    *p -= min;
+                }
+            }
+        }
+        pts
+    }
+
+    /// 从样本表推出的平均帧率（fps）。
+    ///
+    /// 没有 `stts` 或总时长为 0 时返回 `None`，调用方用默认帧率兜底。
+    pub fn average_framerate(&self) -> Option<f64> {
+        if self.stts.is_empty() || self.media_timescale == 0 {
+            return None;
+        }
+        let deltas: u64 = self
+            .stts
+            .iter()
+            .map(|&(c, d)| u64::from(c) * u64::from(d))
+            .sum();
+        if deltas == 0 {
+            return None;
+        }
+        let secs = deltas as f64 / f64::from(self.media_timescale);
+        // sample_count 由 stsz 填写；未填的合成结构按 samples 长度算
+        let frames = if self.sample_count > 0 {
+            self.sample_count.min(self.samples.len() as u32)
+        } else {
+            self.samples.len() as u32
+        };
+        if frames == 0 {
+            return None;
+        }
+        let fps = f64::from(frames) / secs;
+        (fps > 0.0 && fps.is_finite()).then_some(fps)
+    }
+}
+
 /// entry_count 所在偏移与 entry 宽度决定表里能读几条。
 fn read_entry_count(data: &[u8], start: usize, size: usize, entry_size: usize) -> usize {
     if size < 8 {

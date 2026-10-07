@@ -54,8 +54,9 @@ pub fn compat_merge(
     // 照样过不去——实测一部 11 集的剧（10 集 1080p、1 集 720p）走到拼接才失败，
     // 前面十几分钟的转码全白做。
     let scale_to = pipeline::resolution_of(&inputs[0].1);
+    let mut odd: Vec<u32> = Vec::new();
     if let Some((w, h)) = scale_to {
-        let odd: Vec<u32> = inputs
+        odd = inputs
             .iter()
             .filter(|(_, p)| pipeline::resolution_of(p).is_some_and(|(rw, rh)| rw != w || rh != h))
             .map(|(i, _)| *i + 1)
@@ -69,6 +70,21 @@ pub fn compat_merge(
                     .join("、")
             );
         }
+    }
+
+    // 缩放缺口快速失败：没有缩放能力的后端（纯 Rust 软解）遇上混合分辨率，
+    // 各集各转各的分辨率，最后死在拼接的宽高一致校验上——实测一部 11 集的
+    // 剧（10 集 1080p、1 集 720p）在软解上白转十几分钟才失败。把失败提到
+    // 转码之前，并告诉用户哪条路能解决。
+    if !odd.is_empty() && !crate::media::capability::scaling_available() {
+        return Err(AppError::Media(format!(
+            "第 {} 集分辨率与首集不一致，当前转码后端（纯 Rust 软解）不支持缩放，无法合并；\
+             安装 ffmpeg 或在支持硬件编码的机器上重试",
+            odd.iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("、")
+        )));
     }
 
     // **并行度按后端定**，两条路的瓶颈完全不同。
@@ -92,11 +108,11 @@ pub fn compat_merge(
     let running = AtomicUsize::new(0);
 
     // 硬编会话超订的自适应收敛（背景见 [`merge_threads`]）：
-    // 生效并行度从 threads 起步，一观察到「有硬编却走了软解」就收到 2。
+    // 生效并行度从 threads 起步，一观察到「预期硬编却走了软路」就收到 2。
     // 收敛不影响已完成的集——软解产物同样是能播的 H.264，只是慢，不值得重做。
     let live_cap = AtomicUsize::new(threads);
     let active = AtomicUsize::new(0);
-    let hw_expected = crate::media::ffmpeg::h264_encoder().is_some_and(|e| e.hardware);
+    let hw_expected = crate::media::capability::selected_backend().is_hardware();
 
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
@@ -163,14 +179,14 @@ pub fn compat_merge(
                             scale_to,
                             Some(cb),
                         );
-                        // 会话超订的信号：明明探测到硬编、这集却走了软解。
+                        // 会话超订的信号：预期硬编、这集却落在软路上。
                         // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
                         // 也会触发（多收敛一次，代价只是后面保守些），可接受。
-                        if hw_expected && r.as_ref().is_ok_and(|t| t.decoder.contains("rusty"))
+                        if hw_expected && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
                             && live_cap.fetch_min(2, Ordering::Relaxed) > 2
                         {
                             log::warn!(
-                                "[Merge] 硬编会话疑似超订（本集回落软解），并行度收敛到 2"
+                                "[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2"
                             );
                         }
                         running.fetch_sub(1, Ordering::Relaxed);
@@ -240,29 +256,33 @@ pub fn compat_merge(
     Ok((output, size, count))
 }
 
-/// 并行度按后端定：两条路的瓶颈完全不同。
+/// 并行度按后端定，几条路的瓶颈完全不同。
 ///
-/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
-///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
-///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
-/// - ffmpeg 硬编（nvenc 等）：编码在 GPU 上，CPU 只剩解码，铺 6 路吞吐最好
+/// - 平台硬编（VideoToolbox 等）：编码在 GPU 上，CPU 只剩解封装/拷贝，
+///   会话数同样有限（Apple 平台硬编会话有上限），铺 4 路保守起步，
+///   超了由 [`live_cap`] 收敛兜住。
+/// - ffmpeg 硬编（nvenc 等）：同是 GPU 会话受限，铺 6 路吞吐最好
 ///   （受核数约束）。**老 NVIDIA 驱动限制并发会话数（3~8 路不等）**，超限的
 ///   那路开不了编码器、静默回落软解——所以线程数只是上限，真正生效的是
-///   [`live_cap`]：一观察到「有硬编却走了软解」就收敛，后续集不再超订。
+///   [`live_cap`]：一观察到「预期硬编却走了软路」就收敛，后续集不再超订。
 /// - ffmpeg 软编（libx264）：编码器自己多线程，瓶颈变成 CPU 总量。实测
 ///   libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集提到
 ///   约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
 ///   ⚠️ 不要给并行实例加 `-threads N` 限线程——真机实测（i5-13400、真实
 ///   剧集 4 路并行）默认线程 38.5s，限 `-threads 4` 反而 48.5s（慢 26%）：
 ///   x264 默认线程数已经调得很好，限线程只会饿着每个编码器。
+/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
+///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
+///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
 fn merge_threads(episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let cap = match crate::media::ffmpeg::h264_encoder() {
-        Some(e) if e.hardware => cores.clamp(1, 6),
-        Some(_) => (cores / 2).clamp(1, 4),
-        None => 4,
+    let cap = match crate::media::capability::selected_backend() {
+        crate::media::Backend::Platform => cores.clamp(1, 4),
+        crate::media::Backend::FfmpegHw => cores.clamp(1, 6),
+        crate::media::Backend::FfmpegSw => (cores / 2).clamp(1, 4),
+        crate::media::Backend::Rust => 4,
     };
     cap.min(episodes.max(1))
 }

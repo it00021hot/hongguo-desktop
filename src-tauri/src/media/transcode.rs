@@ -28,7 +28,10 @@ pub struct TranscodeOptions {
     pub qp: u8,
     /// 关键帧间隔，对应 x264 默认 250
     pub gop_size: u32,
-    /// 帧率，用于码率控制与时间戳换算
+    /// 帧率，用于码率控制与时间戳换算。
+    ///
+    /// 只是**兜底值**：源样本表能推出平均帧率时（绝大多数正常片源）一律用
+    /// 真实值，逐帧时间戳也来自源时间轴；这个默认值只在容器没有 `stts` 时生效。
     pub framerate: f32,
 }
 
@@ -60,6 +63,8 @@ pub struct TranscodeResult {
     /// 实际使用的解码后端
     pub decoder: String,
     pub encoder: String,
+    /// 实际走的后端（并行度/超订信号以它为准，别再猜字符串）
+    pub backend: crate::media::Backend,
 }
 
 /// 一条音轨的采集结果：封装参数 + 逐帧 `(时间戳, ADTS 帧)`。
@@ -67,6 +72,30 @@ type AudioTrack = (audio::AudioFormat, Vec<(f64, Vec<u8>)>);
 
 /// 解码出的 YUV 帧：`(y, u, v, stride_y, stride_c)`。
 pub(super) type YuvFrame = (Vec<u8>, Vec<u8>, Vec<u8>, usize, usize);
+
+/// 源时间轴：逐样本显示时间与平均帧率。
+///
+/// 从样本表的 `stts`/`ctts` 展开（见 `domain::mp4::timing`）。空 `pts` 表示
+/// 容器没给时间轴，调用方回落到「样本号 / 默认帧率」的合成轴——那是
+/// 没有时间信息的畸形文件才走的路，正常片源一律用真实时间戳。
+pub(super) struct SourceTiming {
+    /// 每样本显示时间（秒），与样本表等长；空 = 无时间轴信息
+    pub pts: Vec<f64>,
+    /// 平均帧率，用于编码器码控提示与封装层声明
+    pub framerate: f32,
+}
+
+impl SourceTiming {
+    fn of(info: &crate::domain::mp4::sample_table::TrackInfo, fallback_framerate: f32) -> Self {
+        SourceTiming {
+            pts: info.sample_pts(),
+            framerate: info
+                .average_framerate()
+                .map(|f| f as f32)
+                .unwrap_or(fallback_framerate),
+        }
+    }
+}
 
 /// 执行转码：输入已解密的 MP4，输出可播放的 H.264 MP4。
 pub fn transcode_file(
@@ -90,6 +119,10 @@ pub fn transcode_file(
     // length_size 决定样本的长度前缀宽度，转 Annex-B 时要用。
     let (annexb_prefix, length_size) = crate::media::hevc::read_parameter_sets(input, &video.info)?;
 
+    // 源时间轴。固定 25fps 的合成时间轴曾是默认：源不是 25fps 时视频轨整体
+    // 变速、与按真实时间累计的音轨漂移。现在只有拿不到 stts 的畸形文件才回落。
+    let timing = SourceTiming::of(&video.info, options.framerate);
+
     // 2) HEVC 解码 → H.264 编码（流水线，见 `codec`）
     //
     // `rusty_h265-accel` 的去块滤波里有一处越界（`deblock.rs` 的 `ok` 判定
@@ -100,7 +133,14 @@ pub fn transcode_file(
     // 仍要包 `catch_unwind`：debug 构建会在这条断言上 panic，而直接崩掉
     // 整个应用比报错糟糕得多。release 下这层是纯保险。
     let encoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        codec::decode_and_encode(input, &annexb_prefix, length_size, &video.info.samples, options)
+        codec::decode_and_encode(
+            input,
+            &annexb_prefix,
+            length_size,
+            &video.info.samples,
+            options,
+            &timing,
+        )
     }))
     .map_err(|_| {
         AppError::Media(
@@ -112,14 +152,17 @@ pub fn transcode_file(
     // 3) 音轨：解密后已是明文 AAC，按时间戳直接带过去
     let audio = collect_audio(input, &demuxed)?;
 
-    // 4) 封装成 MP4
+    // 4) 封装成 MP4。封装层声明的帧率用源的实际平均帧率，
+    //    与逐帧真实 PTS 一致；拿不到时间轴时与 options 默认值相同。
+    let mut mux_options = options.clone();
+    mux_options.framerate = timing.framerate;
     let size = mux::mux_h264(
         output,
         &encoded.units,
         encoded.width,
         encoded.height,
         audio.as_ref().map(|(f, s)| (*f, s.as_slice())),
-        options,
+        &mux_options,
     )?;
 
     Ok(TranscodeResult {
@@ -129,7 +172,36 @@ pub fn transcode_file(
         frames: encoded.frames as u64,
         decoder: "rusty_h265".into(),
         encoder: "rusty_h264".into(),
+        backend: crate::media::Backend::Rust,
     })
+}
+
+/// 平台后端复用的「音轨直通 + 封装」入口。
+///
+/// 与软解路径共享同一套 [`collect_audio`] 与 [`mux::mux_h264`]——音轨不解码、
+/// AAC 直通、faststart 封装，任何后端产出的 MP4 完全同构。
+pub(super) fn mux_with_audio(
+    input: &Path,
+    demuxed: &crate::media::demux::Demuxed,
+    output: &Path,
+    units: &[(f64, Vec<u8>, bool)],
+    width: usize,
+    height: usize,
+    framerate: f32,
+) -> AppResult<u64> {
+    let audio = collect_audio(input, demuxed)?;
+    let options = TranscodeOptions {
+        framerate,
+        ..Default::default()
+    };
+    mux::mux_h264(
+        output,
+        units,
+        width,
+        height,
+        audio.as_ref().map(|(f, s)| (*f, s.as_slice())),
+        &options,
+    )
 }
 
 /// 从文件读一段字节（解码样本用）。

@@ -70,9 +70,12 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 turso = { version = "0.8.1", default-features = false }
 mouse_position = "0.1"
 
-# 这里刻意不列 videotoolbox / windows( Media Foundation ) / rusty_aac：
-# 平台硬编一律走 `media::ffmpeg` 的外部 ffmpeg 探测，音轨不解码（AAC 直通），
-# 三者都是零引用。写平台 FFI 的收益不抵「无法在 CI 里验证」的代价。
+# 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation），
+# 手写 FFI、零新依赖；ffmpeg 外部进程是平台硬编不可用时的中间回退，
+# 音轨一律不解码（AAC 直通）。曾经以「无法在 CI 里验证」为由回避平台 FFI，
+# 现在的验证策略：Apple Silicon 的 macOS CI 可真跑 VideoToolbox 端到端，
+# Windows 侧 CI 验枚举/参数层 + 本机 smoke，软解路径（rusty_h265/rusty_h264）
+# 永远兜底，产物一律过可播校验闸。
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

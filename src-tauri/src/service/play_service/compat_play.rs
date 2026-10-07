@@ -5,7 +5,8 @@
 //! H.264 落进兼容缓存，播放器改播转码产物。
 //!
 //! 为什么值得做：黑屏是「看不出为什么也改不了」的死局，而兜底只在这一集上
-//! 付一次转码的代价（之后命中缓存）。机器上没有 ffmpeg 时回落到纯 Rust 软解。
+//! 付一次转码的代价（之后命中缓存）。转码走 [`pipeline::transcode`] 的统一
+//! 分流链（平台硬编 → ffmpeg → 纯 Rust 软解）。
 //!
 //! 进度按已编码秒数上报到界面——转码一集要几十秒，没有进度用户只能等。
 
@@ -43,7 +44,9 @@ pub async fn ensure_compat(
         return Ok(CompatPlay {
             url,
             cached: true,
-            backend: crate::media::backend_info().transcode_with,
+            backend: crate::media::capability::selected_backend()
+                .decoder_label()
+                .to_string(),
             elapsed_ms: 0,
         });
     }
@@ -76,52 +79,36 @@ pub async fn ensure_compat(
     };
     report(0.0);
 
-    // 2) 转码。ffmpeg 优先（含硬编码器），没有就回纯 Rust 软解。
-    let used_ffmpeg = match crate::media::ffmpeg::h264_encoder() {
-        Some(encoder) => {
-            let req = crate::media::ffmpeg::TranscodeRequest {
-                input: &plain,
-                output: &target,
-                scale_to: None,
-                on_progress: Some(&report),
-            };
-            match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
-                Ok(()) => true,
-                Err(e) => {
-                    log::warn!("[Compat] ffmpeg 转码失败，回落软解: {e}");
-                    false
-                }
-            }
-        }
-        None => false,
-    };
+    // 2) 转码。分流链（平台硬编 → ffmpeg → 纯 Rust）在 pipeline 里只有一份，
+    //    这里必须走同一个入口——曾在这里复刻过一条 ffmpeg→软解的私有分流，
+    //    平台硬编接不进来，兼容播放永远拿不到硬编速度。
+    let result = crate::service::transcode_service::pipeline::transcode(
+        series_id,
+        vid_index,
+        &plain,
+        &Default::default(),
+        None,
+        Some(&report),
+    );
 
-    if !used_ffmpeg {
-        // 软解只认 HEVC，别的编码在这里就该说清楚
-        crate::media::codec_probe::ensure_softdecode_supported(&plain)?;
-        if is_temp {
-            let _ = std::fs::remove_file(&plain);
-        }
-        crate::media::transcode::transcode_file(&plain, &target, &Default::default())?;
-    } else if is_temp {
-        // 源明文只是中间产物，产物已经是 H.264 了
+    // 源明文只是中间产物，无论哪条路成功产物都已在缓存位上
+    if is_temp && result.is_ok() {
         let _ = std::fs::remove_file(&plain);
     }
+    let result = result?;
 
     on_progress(100.0);
-    cache::trim();
     let elapsed = started.elapsed();
-    let backend = crate::media::backend_info();
-    let url = crate::protocol::local::local_play_url(&target.to_string_lossy())
+    let url = crate::protocol::local::local_play_url(&result.output_path)
         .ok_or_else(|| AppError::Media("转码产物路径无法转成播放地址".into()))?;
     log::info!(
         "[Compat] 第 {vid_index} 集就绪：{}，耗时 {elapsed:?}",
-        backend.transcode_with
+        result.backend.decoder_label()
     );
     Ok(CompatPlay {
         url,
         cached: false,
-        backend: backend.transcode_with,
+        backend: result.backend.decoder_label().to_string(),
         elapsed_ms: elapsed.as_millis(),
     })
 }

@@ -223,7 +223,7 @@ export function SettingsPage() {
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
               variant={
-                capability?.h264HwEncoder
+                capability?.platformHwEncoder || capability?.h264HwEncoder
                   ? 'success'
                   : capability?.hasFfmpeg
                     ? 'warning'
@@ -331,9 +331,11 @@ export function SettingsPage() {
  */
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
-  if (!cap.hasFfmpeg) return t('settings.backendRust');
-  if (cap.h264HwEncoder) return t('settings.backendFfmpegHw');
-  return t('settings.backendFfmpegSw');
+  // 平台硬编（VideoToolbox / Media Foundation）与 ffmpeg 硬编同为「硬件加速」档：
+  // 标签按速度分档，不按实现分。
+  if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
+  if (cap.hasFfmpeg) return t('settings.backendFfmpegSw');
+  return t('settings.backendRust');
 }
 
 function ToggleRow({

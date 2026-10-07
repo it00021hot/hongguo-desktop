@@ -81,10 +81,11 @@ pub fn parse_boxes(data: &[u8], start: usize, end: usize) -> Vec<BoxHeader> {
         });
 
         pos = payload_start + payload_size;
-        // 防御性上限：box 数量不应超过字节数
-        if pos <= payload_start {
-            break;
-        }
+        // 不需要「防停滞」守卫：header_size ≥ 8，每次迭代 pos 至少前进 8，
+        // 唯一的特殊分支（size == 0 延伸到末尾）也会把 pos 推到 end。
+        // 曾经在这里放 `if pos <= payload_start { break }`，结果把**载荷为空
+        // 的合法 box**（比如恰好 8 字节的 `free`）误判成停滞，后续所有 box
+        // 直接消失——实测 ffmpeg 产出的文件就带这种 box。
     }
 
     out
@@ -121,6 +122,22 @@ pub fn build_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_box_does_not_stop_the_scan() {
+        // 回归钉住：恰好 8 字节的空 `free` box 曾被「防停滞」守卫误判，
+        // 其后的 mdat/moov 全部消失。ffmpeg 产出的文件就带这种 box。
+        let data: Vec<u8> = [
+            box_of("ftyp", b"xxxx"),
+            box_of("free", b""),
+            box_of("moov", b"real"),
+        ]
+        .concat();
+        let boxes = parse_boxes(&data, 0, data.len());
+        let kinds: Vec<String> = boxes.iter().map(|b| b.kind_str()).collect();
+        assert_eq!(kinds, ["ftyp", "free", "moov"], "实际: {kinds:?}");
+        assert!(find_box(&data, 0, data.len(), "moov").is_some());
+    }
 
     fn box_of(kind: &str, payload: &[u8]) -> Vec<u8> {
         let mut k = [0u8; 4];
