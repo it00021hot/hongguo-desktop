@@ -228,3 +228,28 @@ button:not(:disabled) {
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
+
+/* 播放器顶部的「加载中」细进度条（YouTube 同款形态）：切换剧/集/tab、
+ * 首帧加载、缓冲时给反馈，高度 2px 贴边滑过，绝不遮挡画面内容。 */
+.hg-loadbar-track {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.hg-loadbar {
+  height: 100%;
+  width: 30%;
+  border-radius: 9999px;
+  animation: hg-loadbar-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes hg-loadbar-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(440%);
+  }
+}

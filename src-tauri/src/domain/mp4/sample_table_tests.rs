@@ -157,3 +157,84 @@ fn single_chunk_offsets_advance_by_sample_size() {
     assert_eq!(info.samples, vec![(1024, 100), (1124, 200), (1324, 300)]);
     assert_eq!(info.samples.iter().map(|(_, size)| size).sum::<u64>(), 600);
 }
+
+/// 畸形巨 count 的回归锁：`vec![(0,size); count]` 按 count 直接预分配，
+/// 不卡上限时 0x5555_5555 这类 count = 一笔 22.9GB 的分配请求，进程直接 abort
+/// （2026-10 高并发测试间歇崩的根因之一）。防御后 count 被卡到切片字节数内。
+#[test]
+fn absurd_stsz_count_is_capped_not_allocated() {
+    // 定长分支：sample_size=256 | count=0x5555_5555
+    let mut payload = 256u32.to_be_bytes().to_vec();
+    payload.extend_from_slice(&0x5555_5555u32.to_be_bytes());
+    let stsz = full_box(b"stsz", &payload);
+
+    let mut info = TrackInfo::default();
+    read_stsz(&stsz, 8, stsz.len() - 8, &mut info);
+    assert_eq!(
+        info.samples.len(),
+        stsz.len(),
+        "count 必须被卡到切片字节数内"
+    );
+
+    // 变长分支：sample_size=0 | count=0x5555_5555 | 无数据
+    let mut payload = 0u32.to_be_bytes().to_vec();
+    payload.extend_from_slice(&0x5555_5555u32.to_be_bytes());
+    let stsz = full_box(b"stsz", &payload);
+
+    let mut info = TrackInfo::default();
+    read_stsz(&stsz, 8, stsz.len() - 8, &mut info);
+    assert!(info.samples.len() <= stsz.len());
+}
+
+/// stco 同款：巨 count 不得越过 box 容量与切片长度预分配。
+#[test]
+fn absurd_stco_count_is_capped() {
+    let mut payload = 0u32.to_be_bytes().to_vec(); // version+flags
+    payload.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // entry_count
+    let stco = full_box(b"stco", &payload);
+
+    let mut info = TrackInfo {
+        wide_offsets: false,
+        ..Default::default()
+    };
+    read_chunk_offsets(&stco, 8, stco.len() - 8, &mut info);
+    assert!(info.chunk_offsets.len() <= stco.len() / 4);
+}
+
+/// stsc / saiz / senc 的畸形 count 同款回归锁（防御后预分配都被卡在
+/// box 容量内，不管输入怎么烂都不该出现 GB 级分配请求）。
+#[test]
+fn absurd_entry_counts_are_capped_everywhere() {
+    use crate::domain::mp4::{cenc_info, chunk_map};
+
+    // stsc：version+flags(4) | count(4)=0xFFFFFFFF | 无 entries
+    let mut payload = 0u32.to_be_bytes().to_vec();
+    payload.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+    let stsc = full_box(b"stsc", &payload);
+    let mut info = TrackInfo::default();
+    chunk_map::read_stsc(&stsc, 8, stsc.len() - 8, &mut info);
+    assert!(info.stsc.len() <= stsc.len() / 12, "stsc count 未封顶");
+
+    // saiz：version/flags(4) | default_size(1) | count(4)=0xFFFFFFFF | 无 sizes
+    let mut payload = 0u32.to_be_bytes().to_vec();
+    payload.push(8u8);
+    payload.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+    let saiz = full_box(b"saiz", &payload);
+    let mut info = TrackInfo::default();
+    cenc_info::read_saiz(&saiz, 8, saiz.len() - 8, &mut info);
+    assert!(
+        info.aux_sizes.len() <= saiz.len().saturating_sub(8),
+        "saiz count 未封顶"
+    );
+
+    // senc：version/flags(4) | count(4)=0xFFFFFFFF | 无 IVs
+    let mut payload = 0u32.to_be_bytes().to_vec();
+    payload.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+    let senc = full_box(b"senc", &payload);
+    let mut info = TrackInfo::default();
+    cenc_info::read_senc(&senc, 8, senc.len() - 8, &mut info);
+    assert!(
+        info.sample_ivs.len() <= senc.len().saturating_sub(8) / 8,
+        "senc count 未封顶"
+    );
+}

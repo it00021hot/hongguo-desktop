@@ -195,12 +195,16 @@ fn read_stsz(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
         data[start + 6],
         data[start + 7],
     ]);
-    let count = u32::from_be_bytes([
+    // 畸形 count 防御（口径同 timing::read_entry_count）：条目数不可能超过
+    // 切片字节数，`vec![(0,size); count]` 按这个 count 直接预分配，不卡上限
+    // 会把几 GB 的分配请求直接砸进分配器（实测进程直接 abort）。
+    let count = (u32::from_be_bytes([
         data[start + 8],
         data[start + 9],
         data[start + 10],
         data[start + 11],
-    ]) as usize;
+    ]) as usize)
+        .min(data.len());
     info.sample_count = count as u32;
 
     info.samples = if sample_size != 0 {
@@ -228,15 +232,18 @@ fn read_chunk_offsets(data: &[u8], start: usize, size: usize, info: &mut TrackIn
     if size < 8 {
         return;
     }
-    let count = u32::from_be_bytes([
+    // stco 是 32 位偏移，co64 是 64 位；调用方已把 box 类型写进 info.wide_offsets
+    let wide = info.wide_offsets;
+    let entry = if wide { 8 } else { 4 };
+    // 同 read_stsz：count 卡到「box 容量与切片字节数」的较小者
+    let count = (u32::from_be_bytes([
         data[start + 4],
         data[start + 5],
         data[start + 6],
         data[start + 7],
-    ]) as usize;
-    // stco 是 32 位偏移，co64 是 64 位；调用方已把 box 类型写进 info.wide_offsets
-    let wide = info.wide_offsets;
-    let entry = if wide { 8 } else { 4 };
+    ]) as usize)
+        .min(size.saturating_sub(8) / entry)
+        .min(data.len());
 
     let mut chunks = Vec::with_capacity(count);
     for i in 0..count {

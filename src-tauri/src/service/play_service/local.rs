@@ -6,7 +6,7 @@ use super::{online, position};
 use crate::app_state::AppState;
 use crate::domain::model::{PlayRequest, PlayResponse};
 use crate::error::{AppError, AppResult};
-use crate::store::DataStore;
+use crate::store::Store;
 
 /// 解析播放请求。
 ///
@@ -59,9 +59,8 @@ pub async fn resolve_play(
     //
     // 档案里查不到就当场解析一次。播放页会同时发「拉分集」和「起播」两个请求，
     // 起播先到是常态；不在这儿补一次解析，第一下点开必然报「第 N 集缺少 vid」。
-    // 读锁必须在 await 之前放掉：parking_lot 的守卫不是 Send，跨 await 持有会让
-    // 整个 command future 失去 Send，tauri 在编译期就会拒绝。
-    let known = episode_vid(&state.store.read(), &request.series_id, request.vid_index);
+    // （Store 是 DB 线程门面，查询本身阻塞完成，没有「锁跨 await」问题。）
+    let known = episode_vid(&state.store, &request.series_id, request.vid_index);
     let vid = match known {
         Some(vid) => vid,
         None => {
@@ -70,20 +69,29 @@ pub async fn resolve_play(
                 request.series_id,
                 request.vid_index
             );
-            let proxy = state.settings().proxy;
-            let series = crate::service::series_service::resolver::resolve_series(
-                &request.series_id,
-                &proxy,
-            )
-            .await?;
+            let env = state.api_env();
+            let series =
+                crate::service::series_service::resolver::resolve_series(&request.series_id, &env)
+                    .await?;
             crate::service::series_service::registry::upsert_and_persist(state, series)?;
-            episode_vid(&state.store.read(), &request.series_id, request.vid_index).ok_or_else(
-                || AppError::NotFound(format!("解析后仍找不到第 {} 集的 vid", request.vid_index)),
-            )?
+            episode_vid(&state.store, &request.series_id, request.vid_index).ok_or_else(|| {
+                AppError::NotFound(format!("解析后仍找不到第 {} 集的 vid", request.vid_index))
+            })?
         }
     };
 
-    match online::prepare(app, &vid, request.definition, state.settings()).await {
+    // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
+    let progress_key = format!("{}:{}", request.series_id, request.vid_index);
+    match online::prepare(
+        app,
+        &vid,
+        &progress_key,
+        request.definition,
+        state.settings(),
+        &state.api_env(),
+    )
+    .await
+    {
         Ok(prepared) => Ok(PlayResponse {
             url: prepared.url,
             online: true,
@@ -106,10 +114,12 @@ pub async fn resolve_play(
 /// 从剧集档案的分集表里取某一集的 vid。
 ///
 /// 剧集档案是分集目录的唯一权威来源：`resolve_series` 拉到的分集（含 vid）
-/// 会写进 data.json。下载任务表只记进度，未下载的集在那里根本没有记录。
-fn episode_vid(store: &DataStore, series_id: &str, vid_index: u32) -> Option<String> {
+/// 会写进数据库。下载任务表只记进度，未下载的集在那里根本没有记录。
+fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Option<String> {
     store
-        .series(series_id)?
+        .series_by_id(series_id)
+        .ok()
+        .flatten()?
         .episodes
         .iter()
         .find(|e| e.vid_index == vid_index)
@@ -122,14 +132,16 @@ mod tests {
     use super::*;
     use crate::domain::model::{Episode, Series};
 
-    fn store_with(episodes: Vec<Episode>) -> DataStore {
-        let mut store = DataStore::empty();
-        store.upsert_series(Series {
-            series_id: "7687919221593885758".into(),
-            title: "二嫁有喜".into(),
-            episodes,
-            ..Default::default()
-        });
+    fn store_with(episodes: Vec<Episode>) -> Store {
+        let store = Store::open_memory().expect("测试内存库");
+        store
+            .upsert_series(&Series {
+                series_id: "7687919221593885758".into(),
+                title: "二嫁有喜".into(),
+                episodes,
+                ..Default::default()
+            })
+            .expect("写入测试档案");
         store
     }
 

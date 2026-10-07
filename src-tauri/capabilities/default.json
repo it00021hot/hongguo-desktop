@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "最小权限集：只放行本应用真正需要的能力。浏览/搜索改成直接抓官网 HTML，不再开隐藏 webview，所以这里没有任何 webview 与 dialog/opener 权限。窗口无边框（decorations: false），最小化/最大化/拖拽都由前端自绘按钮发起，全走 IPC，所以这几项必须显式放行——core:window:default 只含状态查询（is_maximized 等），不含动作命令。",
+  "description": "最小权限集：只放行本应用真正需要的能力。浏览/搜索改成直接抓官网 HTML，不再开隐藏 webview，所以这里没有任何 webview 与 dialog/opener 权限。窗口无边框（decorations: false），最小化/最大化/拖拽都由前端自绘按钮发起，全走 IPC，所以这几项必须显式放行——core:window:default 只含状态查询（is_maximized 等），不含动作命令。小屏播放是同一主窗口缩形（enter_mini_screen），没有第二个窗口。",
   "windows": ["main"],
   "permissions": [
     "core:default",

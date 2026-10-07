@@ -53,7 +53,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
   const slice = episodes.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
 
   return (
-    <aside className="flex w-72 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto pr-1 sm:w-80 2xl:w-96">
+    <aside className="flex w-72 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto border-l py-3 pr-1 pl-3 sm:w-80 2xl:w-96">
       {series && <SeriesHeadline series={series} currentIndex={currentIndex} />}
 
       {extras?.intro && <Intro text={extras.intro} />}

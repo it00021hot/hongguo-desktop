@@ -1,34 +1,55 @@
 {
   "app": {
-    "name": "红果短剧下载器"
+    "name": "红果短剧"
   },
   "nav": {
+    "home": {
+      "title": "推荐"
+    },
+    "rank": {
+      "title": "排行榜"
+    },
+    "new": {
+      "title": "新剧"
+    },
     "browse": {
-      "title": "浏览",
-      "description": "搜索剧名，按分类与题材发现短剧"
+      "title": "找剧"
     },
     "player": {
-      "title": "播放",
-      "description": "本地与在线播放"
+      "title": "播放"
     },
     "tasks": {
-      "title": "下载管理",
-      "description": "队列、进度与合并"
+      "title": "下载管理"
     },
     "merge": {
-      "title": "一键合并",
-      "description": "把分集合并为全集"
+      "title": "一键合并"
     },
     "storage": {
-      "title": "磁盘清理",
-      "description": "占用统计与文件清理"
+      "title": "磁盘清理"
     },
     "settings": {
-      "title": "设置",
-      "description": "目录、命名、并发与代理"
+      "title": "设置"
     },
     "collapse": "收起",
-    "expand": "展开"
+    "expand": "展开",
+    "reservations": {
+      "title": "预约"
+    },
+    "history": {
+      "title": "历史"
+    },
+    "collections": {
+      "title": "收藏"
+    },
+    "liked": {
+      "title": "点赞"
+    },
+    "accountFallback": "我的",
+    "login": "登录",
+    "logout": "退出登录",
+    "logoutConfirmTitle": "确定要退出登录吗？",
+    "logoutConfirmBody": "退出后清除本机登录状态，再次使用需要重新登录；点赞、收藏等云端数据不受影响。",
+    "loggedOut": "已退出登录"
   },
   "browse": {
     "category": "分类",
@@ -38,7 +59,18 @@
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
     "loadMore": "第 {page} / {total} 页",
-    "resolving": "正在打开…"
+    "resolving": "正在打开…",
+    "fGenre": "体裁",
+    "fTheme": "主题",
+    "fRole": "设定",
+    "fEpoch": "背景",
+    "fSort": "推荐",
+    "fGender": "受众",
+    "fOnlineTime": "时间",
+    "fDuration": "长度",
+    "all": "全部",
+    "nextPage": "下一页",
+    "filters": "筛选"
   },
   "search": {
     "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
@@ -108,18 +140,18 @@
     "removeOnly": "仅删除记录"
   },
   "player": {
-    "autoNext": "播完自动下一集",
-    "autoDelete": "看完自动删",
     "autoDeleteDone": "第{index}集已看完，已删除本地文件",
     "seriesSearch": "搜索剧名",
-    "noSeries": "还没有选择剧集",
     "buffering": "正在缓存 {percent}%（{size}）…",
     "compatFetching": "正在取这一集…",
     "compatTranscoding": "画面解不出来，正在转成兼容格式 {percent}%",
     "compatHint": "转好后会自动接着播放，只需等待这一次",
+    "onlineInterrupted": "在线播放中断",
+    "retry": "重试",
     "compatCached": "已切换为兼容格式播放",
     "compatDone": "已转为兼容格式（{backend}，{seconds} 秒），开始播放",
     "compatFailed": "兼容格式转换失败：{reason}",
+    "danmakuFailed": "弹幕加载失败（不影响播放）：{reason}",
     "epShort": "第{index}集",
     "continueWatching": "继续观看",
     "clearHistory": "清空记录",
@@ -142,16 +174,79 @@
     "introCollapse": "收起",
     "recommend": "推荐短剧",
     "totalEpisodes": "全{count}集",
+    "pickerBingeHint": "选定集数即选中本剧：单击画面也可选中，滚轮/↑↓ 切集，Esc 退出",
+    "lastEpisode": "已经是最后一集（第{index}集）了",
     "download": "下载",
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
-    "pictureInPicture": "画中画",
-    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集",
+    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 切剧/切集 · 单击画面选剧 · Esc 退出选剧",
     "removeRecordShort": "清除这条记录",
     "removeRecord": "清除《{title}》的观看记录",
     "removeRecordConfirm": "清除《{title}》的观看记录？",
     "removeRecordDesc": "这部剧的观看进度会被清掉，下次打开从第一集开始。已下载的文件不受影响。",
-    "removedRecord": "已清除《{title}》的观看记录"
+    "removedRecord": "已清除《{title}》的观看记录",
+    "danmaku": "弹幕",
+    "empty": "还没有在播放的内容",
+    "emptyHint": "从推荐或历史里挑一部剧即可开始播放",
+    "danmakuSettings": "弹幕设置",
+    "danmakuOpacity": "不透明度",
+    "danmakuFontSize": "字体大小",
+    "danmakuDensity": "密度",
+    "danmakuArea": "显示区域",
+    "interact": {
+      "like": "点赞",
+      "collect": "收藏",
+      "reserve": "预约",
+      "danmaku": "发弹幕",
+      "danmakuPlaceholder": "发条弹幕…",
+      "danmakuSent": "弹幕已发送",
+      "liked": "已点赞",
+      "undone": "已取消点赞",
+      "collected": "已收藏",
+      "uncollected": "已取消收藏",
+      "reserved": "预约成功",
+      "unreserved": "已取消预约",
+      "loginRequired": "互动需要先登录（设置页 → 账号）",
+      "comments": "评论",
+      "commentsSoon": "评论区即将开放",
+      "share": "分享",
+      "shareCopied": "分享链接已复制",
+      "shareFailed": "复制失败",
+      "send": "发送"
+    },
+    "comments": {
+      "title": "评论",
+      "placeholder": "留下你的精彩评论吧",
+      "empty": "还没有评论，来抢沙发",
+      "loadFailed": "评论加载失败（服务端暂时不可用）",
+      "anon": "匿名用户",
+      "justNow": "刚刚",
+      "minutesAgo": "{n} 分钟前",
+      "hoursAgo": "{n} 小时前",
+      "yesterday": "昨天",
+      "replies": "{n} 条回复",
+      "reply": "回复",
+      "replyToComment": "回复评论…",
+      "replyPlaceholder": "回复 @{name}…",
+      "me": "我",
+      "replyToPrefix": "回复",
+      "repliesHiddenTip": "官方暂未开放回复列表拉取（hgplayer 同样只显示数量）",
+      "loadMore": "加载更多评论（还有 {n} 条）",
+      "preparing": "正在准备这一集…"
+    },
+    "comingSoon": "即将上线",
+    "episodeNo": "第{index}集",
+    "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
+    "miniTitle": "红果短剧",
+    "miniWindow": "小屏播放",
+    "exitMiniScreen": "退出小屏",
+    "stopMiniScreen": "结束播放",
+    "pause": "暂停",
+    "progress": "播放进度",
+    "reserve": "预约",
+    "reserved": "已预约",
+    "unreserved": "已取消预约",
+    "pin": "置顶"
   },
   "series": {
     "loadFailed": "分集加载失败",
@@ -160,7 +255,6 @@
   },
   "merge": {
     "title": "一键合并",
-    "subtitle": "把已下载的分集合并为单个全集文件",
     "selectSeries": "选择剧集",
     "pickSeries": "请选择一部剧",
     "noCandidates": "还没有已下载的分集，先去下载几集再来合并",
@@ -215,7 +309,6 @@
   },
   "settings": {
     "downloadDir": "下载目录",
-    "downloadDirDesc": "文件会归档到「下载目录/红果短剧/剧名/」",
     "choose": "选择目录",
     "naming": "文件命名模板",
     "namingTitleIndex": "剧名 集数",
@@ -256,7 +349,26 @@
     "transcodeBackendHint": "兼容合并会把视频转成通用格式。没装 ffmpeg 时走纯 Rust 软解，慢但够用；装上 ffmpeg 会自动改用它。徽章只反映实测结果：真能走显卡才显示「硬件加速」，否则显示「软件加速」。装完 ffmpeg 若没变化，点「重新检测」。",
     "backendRust": "标准速度",
     "backendFfmpegHw": "硬件加速",
-    "backendFfmpegSw": "软件加速"
+    "backendFfmpegSw": "软件加速",
+    "account": "账户",
+    "loginAction": "登录",
+    "loginTitle": "登录红果账号",
+    "loginPrompt": "登录后可预约新剧、同步观看记录",
+    "loginMfaBackground": "验证在后台进行，关闭此窗口不影响；回复短信后将自动登录",
+    "loginMfaFailed": "验证失败，请重新登录",
+    "loginBusy": "登录中…",
+    "loginSendCode": "发送验证码",
+    "codeSent": "验证码已发送，请查收短信（{s}s 内有效）",
+    "loginSending": "发送中…",
+    "loginResend": "{s}s 后重发",
+    "loginMobilePlaceholder": "手机号",
+    "loginCodePlaceholder": "验证码",
+    "loginSuccess": "登录成功：{name}",
+    "loginMfaTips": "需要短信上行二次验证",
+    "loginMfaWaiting": "等待短信回复验证中…请按提示回复短信",
+    "logout": "退出登录",
+    "loggedOut": "已退出登录",
+    "loginRiskNote": "账号与设备永久绑定，换设备登录可能触发风控"
   },
   "error": {
     "network": "连不上服务器，请检查网络连接或设置页里的代理",
@@ -271,7 +383,8 @@
     "cancelled": "操作已取消",
     "busy": "上一个任务还在跑，请等它完成",
     "internal": "操作失败，请重试",
-    "badPayload": "数据格式异常，请重试"
+    "badPayload": "数据格式异常，请重试",
+    "storeLocked": "应用已在运行（可能被隐身模式隐藏了窗口），请从 Dock/任务栏打开它"
   },
   "common": {
     "confirm": "确定",
@@ -283,13 +396,160 @@
     "toggleTheme": "切换主题",
     "episodeCount": "{count} 集",
     "progress": "进度",
-    "skipToContent": "跳到主内容"
+    "skipToContent": "跳到主内容",
+    "resolving": "正在解析剧集…",
+    "resolveFailed": "剧集解析失败",
+    "loadFailed": "加载失败"
   },
   "window": {
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "向下还原",
     "zoom": "全屏",
-    "close": "关闭"
+    "close": "关闭",
+    "exitTitle": "确定要退出吗？",
+    "exitBody": "退出会中断正在进行的下载任务，播放进度已实时保存。",
+    "exitConfirm": "退出"
+  },
+  "feed": {
+    "tabs": {
+      "recommend": "推荐",
+      "hot": "热榜"
+    },
+    "scoreTitle": "评分",
+    "loadFailed": "信息流加载失败",
+    "retry": "重试",
+    "loadingMore": "正在加载更多…",
+    "end": "没有更多了"
+  },
+  "rank": {
+    "subLists": "子榜列表",
+    "filter": {
+      "title": "筛选",
+      "reset": "清除筛选",
+      "all": "总榜"
+    },
+    "loadFailed": "榜单加载失败",
+    "empty": "这个榜单暂时没有内容"
+  },
+  "newDrama": {
+    "tabs": {
+      "recommend": "新剧推荐",
+      "calendar": "上新日历"
+    },
+    "gender": {
+      "all": "全部",
+      "male": "男频",
+      "female": "女频"
+    },
+    "loadFailed": "新剧加载失败",
+    "empty": "这一天没有上新",
+    "online": "已上线",
+    "upcoming": "待上线",
+    "today": "今天",
+    "weekday": {
+      "0": "周日",
+      "1": "周一",
+      "2": "周二",
+      "3": "周三",
+      "4": "周四",
+      "5": "周五",
+      "6": "周六"
+    },
+    "episodeTotal": "共{count}集",
+    "scoreSuffix": "分"
+  },
+  "reservation": {
+    "tab": {
+      "online": "已上线",
+      "offline": "待上线"
+    },
+    "loadFailed": "预约列表加载失败",
+    "empty": "还没有预约的短剧",
+    "emptyHint": "在上新日历点「预约」，上线时这里就能看到",
+    "loginRequired": "登录后才能查看预约列表",
+    "action": "预约",
+    "reserved": "已预约",
+    "done": "预约成功",
+    "cancelled": "已取消预约",
+    "cancel": "取消预约",
+    "watch": "看剧",
+    "onlineBadge": "{date} 上线",
+    "upcomingBadge": "{date} 上线",
+    "publishAt": "{time} 上线"
+  },
+  "history": {
+    "title": "观看历史",
+    "empty": "还没有观看记录",
+    "emptyHint": "在官方客户端或本应用看过的短剧都会同步到这里",
+    "loadFailed": "观看历史加载失败",
+    "today": "今天",
+    "yesterday": "昨天",
+    "daysAgo": "{count} 天前",
+    "unknownTitle": "未知剧集",
+    "watching": "看到第{index}集/共{total}集 {time}",
+    "continue": "继续播放"
+  },
+  "home": {
+    "prev": "上一个",
+    "next": "下一个",
+    "episodes": "选集",
+    "detail": "剧集详情",
+    "openEpisodes": "打开选集",
+    "preparing": "正在准备《{title}》…",
+    "playCount": "{count}次播放",
+    "empty": "推荐流暂时为空",
+    "tabFeed": "推荐",
+    "tabComic": "漫剧",
+    "tabHuman": "真人",
+    "tabHot": "热播",
+    "tabNew": "新剧"
+  },
+  "collections": {
+    "loginRequired": "登录后可查看收藏（书架与官方 App 同步）",
+    "loadFailed": "收藏列表加载失败",
+    "empty": "还没有收藏",
+    "emptyHint": "在推荐页点 ☆ 收藏喜欢的剧，就会出现在这里",
+    "removed": "已取消收藏",
+    "unresolved": "剧集 {id}",
+    "episodeCount": "共 {n} 集",
+    "resolvingHint": "正在获取剧集信息…",
+    "remove": "取消收藏"
+  },
+  "liked": {
+    "loadFailed": "点赞列表加载失败",
+    "empty": "还没有点赞",
+    "emptyHint": "在推荐页点 ❤ 赞过的视频会出现在这里",
+    "recentOnly": "最近 100 条内的点赞（与官方口径一致）",
+    "undo": "取消赞"
+  },
+  "detail": {
+    "back": "返回",
+    "followCount": "{count}人追剧",
+    "episodesCount": "共{count}集",
+    "allEpisodesBadge": "全{count}集",
+    "continueEpisode": "继续看第 {index} 集",
+    "playFirst": "从第 1 集开始",
+    "collect": "收藏",
+    "collected": "已收藏",
+    "tabEpisodes": "选集",
+    "tabComments": "剧评",
+    "tabRecommend": "相关推荐",
+    "commentsEmpty": "这一集还没有评论",
+    "replyCount": "{count} 条回复",
+    "recommendEmpty": "暂时没有相关推荐",
+    "noSeries": "缺少剧集 ID，请从播放器或列表页进入",
+    "resolved": "已重新解析剧集",
+    "recFeed": "为你推荐",
+    "recRank": "热播榜",
+    "recSite": "官网推荐",
+    "recShuffle": "换一换",
+    "relatedWorks": "相关作品 · 系列",
+    "plays": "播放",
+    "guessYouLike": "猜你喜欢",
+    "ratingCount": "{count}人评分",
+    "scoreUnit": "分",
+    "heatValue": "红果热度值{count}",
+    "playsCount": "{count}次播放"
   }
 }

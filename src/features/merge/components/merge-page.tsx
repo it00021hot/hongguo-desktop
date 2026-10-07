@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Combine, Zap, Gauge, Trash2, FolderOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -99,7 +99,6 @@ export function MergePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t('merge.title')}</CardTitle>
-          <CardDescription>{t('merge.subtitle')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {/* 选剧 */}

@@ -51,6 +51,7 @@ pub mod medusa;
 pub mod primitives;
 pub mod protobuf;
 pub mod ticket;
+pub mod tt_hash;
 pub mod xargus;
 pub mod xgorgon;
 
@@ -60,4 +61,4 @@ pub use device::{video_device, APP_ID, CHANNEL_ID, VIDEO_REFERER, VIDEO_UA};
 pub use helios::helios;
 pub use medusa::build_medusa;
 pub use primitives::md5_hex_upper;
-pub use ticket::{sign_get, sign_post};
+pub use ticket::{sign_request_with, API_ORIGIN};

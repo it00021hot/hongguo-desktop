@@ -131,7 +131,7 @@ function WinButton({ label, onClick, danger, children }: WinButtonProps) {
       title={label}
       onClick={onClick}
       className={cn(
-        'text-foreground/80 hover:bg-accent hover:text-accent-foreground grid h-14 w-12 place-items-center transition-colors',
+        'text-foreground/80 hover:bg-accent hover:text-accent-foreground grid size-10 place-items-center transition-colors',
         danger && 'hover:bg-destructive hover:text-destructive-foreground',
       )}
     >

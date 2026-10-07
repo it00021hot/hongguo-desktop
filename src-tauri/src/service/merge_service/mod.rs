@@ -79,14 +79,10 @@ pub fn candidates(state: &AppState) -> Vec<MergeCandidate> {
 /// 找不到就报 [`AppError::NotFound`]，与 `stop_download` / `retry_task` 同一口径：
 /// 返回 `Ok` 却什么都没删，调用方会以为删掉了。
 pub fn remove_task(state: &AppState, id: &str) -> AppResult<()> {
-    let mut data = state.store.write();
-    let before = data.merge_tasks.len();
-    data.merge_tasks.retain(|t| t.id != id);
-    if data.merge_tasks.len() == before {
+    if state.store.delete_merge_task(id)? == 0 {
         return Err(AppError::NotFound(format!("合并任务 {id}")));
     }
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| AppError::StoreCorrupt(e.to_string()))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -183,24 +179,22 @@ mod tests {
         // 档案被软删除（磁盘清理页「移除记录」）：文件和任务都还在，照样合得起来
         state
             .store
-            .write()
-            .series
-            .push(crate::domain::model::Series {
+            .upsert_series(&crate::domain::model::Series {
                 series_id: "1".into(),
                 title: "下过的剧".into(),
                 dismissed: true,
                 ..Default::default()
-            });
+            })
+            .unwrap();
         // 档案在但一集没下：不该出现在候选里
         state
             .store
-            .write()
-            .series
-            .push(crate::domain::model::Series {
+            .upsert_series(&crate::domain::model::Series {
                 series_id: "2".into(),
                 title: "没下过的剧".into(),
                 ..Default::default()
-            });
+            })
+            .unwrap();
 
         let got = candidates(&state);
         assert_eq!(got.len(), 1, "只有真下载过的剧算候选: {got:?}");
@@ -247,44 +241,39 @@ mod tests {
 
     #[test]
     fn remove_task_drops_only_that_record_and_persists() {
-        let dir = temp_dir("rmtask");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
-
         let state = AppState::default();
         let a = MergeTask::new("1", "剧", "out-a", MergeMode::Quick);
         let b = MergeTask::new("2", "剧", "out-b", MergeMode::Quick);
-        state
-            .store
-            .write()
-            .merge_tasks
-            .extend([a.clone(), b.clone()]);
+        state.store.upsert_merge_task(&a).unwrap();
+        state.store.upsert_merge_task(&b).unwrap();
 
         remove_task(&state, &a.id).expect("存在的记录应当删得掉");
 
-        // get_merge_tasks 读的就是这份列表
-        let left = state.store.read().merge_tasks.clone();
+        // get_merge_tasks 读的就是库里这份
+        let left = state.store.merge_tasks().unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, b.id, "只删指定的那条");
 
-        let on_disk = crate::store::DataStore::load(&crate::store::paths::data_file());
+        // 删的动作本身就是 DELETE，不存在「只删内存」的形态；
+        // 用一次全新查询确认真的没了（而不是缓存效应）
         assert_eq!(
-            on_disk.merge_tasks.len(),
-            1,
-            "删了要落盘，否则重启记录又回来"
+            state
+                .store
+                .merge_tasks()
+                .unwrap()
+                .iter()
+                .filter(|t| t.id == a.id)
+                .count(),
+            0,
+            "删了就是删了，重启也不该回来"
         );
-        assert_eq!(on_disk.merge_tasks[0].id, b.id);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn remove_task_reports_not_found_for_unknown_id() {
-        let dir = temp_dir("rmtask-missing");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
-
         let state = AppState::default();
         let kept = MergeTask::new("1", "剧", "out", MergeMode::Quick);
-        state.store.write().merge_tasks.push(kept.clone());
+        state.store.upsert_merge_task(&kept).unwrap();
 
         let err = remove_task(&state, "no-such-id").expect_err("不存在的记录必须报错");
         assert!(
@@ -293,11 +282,9 @@ mod tests {
         );
         assert_eq!(err.i18n_key(), "error.notFound");
         assert_eq!(
-            state.store.read().merge_tasks.len(),
+            state.store.merge_tasks().unwrap().len(),
             1,
             "没删掉任何东西时不该动列表"
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

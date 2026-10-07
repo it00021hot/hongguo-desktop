@@ -77,7 +77,7 @@ pub async fn transcode_for_playback(
         };
         let settings = state.settings();
         let play =
-            crate::domain::api::play_url::fetch_play_url(&vid, None, &settings.proxy).await?;
+            crate::domain::api::play_url::fetch_play_url(&vid, None, &state.api_env()).await?;
         // 取流占前 20%，转码占后 80%：两段都动，但用户看到的是一条连续的进度
         emit(0.0, "downloading");
         let plain = crate::service::play_service::online::fetch_plain(&play, &settings).await?;

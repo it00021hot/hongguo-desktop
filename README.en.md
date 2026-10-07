@@ -1,4 +1,4 @@
-# 🎬 Hongguo Downloader (Tauri Desktop)
+# 🎬 Hongguo Desktop
 
 <div align="center">
 
@@ -158,7 +158,7 @@ make typecheck        # tsc --noEmit
 ## 📂 Project Structure
 
 ```text
-hongguo-downloader-tauri/
+hongguo-desktop/
 ├── src-tauri/src/
 │   ├── signer/          # ByteDance signatures (1:1 port; never edit the constants)
 │   ├── domain/          # Protocol, crypto, MP4 parsing

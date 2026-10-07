@@ -1,117 +1,49 @@
 //! 断点续播读写。
+//!
+//! 存储切到数据库后这里全是对 [`Store`] 的单行/单表操作：
+//! 保存是单行 UPSERT（播放期间每 5 秒一次也不再有整文件重写），
+//! 历史是「每部剧最新一集」的聚合查询 + 档案表取剧名封面。
 
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::model::PlaybackPosition;
 
-/// 保存播放位置。
+/// 保存播放位置（Store 直连版：command 侧把 DB 写入扔进阻塞线程池时用，
+/// 同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
 ///
 /// `duration` 由前端回传——后端拿到流的时候还不知道总时长，
 /// 而「接近片尾就不续播」这条判断依赖它，不记就等于这道防线一直是空转的。
-pub fn save(
-    state: &State<'_, AppState>,
+pub fn save_store(
+    store: &crate::store::Store,
     series_id: &str,
     vid_index: u32,
     current_time: f64,
     duration: f64,
 ) -> crate::error::AppResult<()> {
-    let mut data = state.store.write();
-    let entry = data.playback.entry(series_id.to_string()).or_default();
-    entry.insert(vid_index, PlaybackPosition::new(current_time, duration));
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
+    store.save_playback_position(
+        series_id,
+        vid_index,
+        &PlaybackPosition::new(current_time, duration),
+    )
 }
 
 /// 读播放位置。接近片尾时返回 0（从头看）。
 pub fn load(state: &State<'_, AppState>, series_id: &str, vid_index: u32) -> f64 {
-    let data = state.store.read();
-    data.playback
-        .get(series_id)
-        .and_then(|m| m.get(&vid_index))
+    state
+        .store
+        .playback_position(series_id, vid_index)
+        .ok()
+        .flatten()
         .filter(|p| !p.is_near_end())
         .map(|p| p.current_time)
         .unwrap_or(0.0)
 }
 
-/// 播放历史：每部剧最近一次看到的位置，按时间倒序。
-///
-/// 只给「最近一集」而不是全部集次：列表要回答的是「我播过哪些剧、看到哪」，
-/// 逐集罗列反而看不出重点。
-///
-/// 剧名与封面在这里一并带出，**不过滤 dismissed**：观看记录回答的是「我看过
-/// 什么」，和「剧集列表里还留着这部剧」是两件事。让前端拿历史去关联剧集列表，
-/// 会导致用户从列表里移除一部剧就把它的观看记录一起抹掉。
-pub fn history(state: &State<'_, AppState>) -> Vec<crate::domain::model::PlaybackHistoryItem> {
-    let data = state.store.read();
-    let titles: std::collections::HashMap<&str, (&str, &str)> = data
-        .series
-        .iter()
-        .map(|s| (s.series_id.as_str(), (s.title.as_str(), s.cover.as_str())))
-        .collect();
-    history_of(&data.playback, &titles)
-}
-
-/// 清除某部剧的观看记录（整部剧的进度表都删掉，不只是最近那一集）。
-///
-/// 历史列表每部剧只显示最近一集，但进度表里存着所有看过的集次。
-/// 只删最近一集的话，下一次打开又会把更早的那一集顶上来，用户会以为没删掉。
-pub fn remove(state: &AppState, series_id: &str) -> crate::error::AppResult<()> {
-    let mut data = state.store.write();
-    // 走历史列表的剧可能还没被登记成档案，但进度表里一定有；找不到就说明本来就没有
-    if data.playback.remove(series_id).is_none() {
-        return Err(crate::error::AppError::NotFound(format!(
-            "观看记录 {series_id}"
-        )));
-    }
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
-}
-
-/// 清空全部播放历史。
-///
-/// 空历史重复清空不算错误：这是一个「清掉」按钮，前端可能连点两次。
-pub fn clear(state: &AppState) -> crate::error::AppResult<()> {
-    let mut data = state.store.write();
-    data.playback.clear();
-    data.save(&crate::store::paths::data_file())
-        .map_err(|e| crate::error::AppError::StoreCorrupt(e.to_string()))
-}
-
-/// 从播放进度表里取每部剧最近一集，按时间倒序。
-fn history_of(
-    map: &crate::domain::model::PlaybackMap,
-    titles: &std::collections::HashMap<&str, (&str, &str)>,
-) -> Vec<crate::domain::model::PlaybackHistoryItem> {
-    use crate::domain::model::PlaybackHistoryItem;
-
-    let mut items: Vec<PlaybackHistoryItem> = map
-        .iter()
-        .filter_map(|(series_id, episodes)| {
-            let (vid_index, pos) = episodes
-                .iter()
-                .max_by_key(|(_, p)| p.updated_at)
-                .map(|(idx, p)| (*idx, p))?;
-            // 档案缺失就留空串：进度还在，条目照样要显示，只是没封面没剧名。
-            let (title, cover) = titles.get(series_id.as_str()).copied().unwrap_or(("", ""));
-            Some(PlaybackHistoryItem {
-                series_id: series_id.clone(),
-                vid_index,
-                current_time: pos.current_time,
-                updated_at: pos.updated_at,
-                title: title.to_string(),
-                cover: cover.to_string(),
-            })
-        })
-        .collect();
-    items.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
-    items
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PlaybackMap, PlaybackPosition};
+    use crate::domain::model::PlaybackPosition;
     use std::path::PathBuf;
 
     fn at(current_time: f64, updated_at: i64) -> PlaybackPosition {
@@ -127,163 +59,81 @@ mod tests {
         dir
     }
 
-    /// 剧名/封面索引。测 `history_of` 的分集与排序时不需要它，空表即可。
-    fn titles() -> std::collections::HashMap<&'static str, (&'static str, &'static str)> {
-        std::collections::HashMap::new()
+    /// 用磁盘文件库构造状态：历史/清空这类断言要验证「真的写进了库」，
+    /// 内存库与 AppState::default 够不到「重启还在」这条语义。
+    fn file_state(tag: &str) -> (AppState, PathBuf) {
+        let dir = temp_dir(tag);
+        let db = dir.join("test.db");
+        let _ = std::fs::remove_file(&db);
+        let store = crate::store::Store::open(&db).expect("打开测试文件库");
+        (
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store)),
+            dir,
+        )
     }
 
+    /// 「最近看到的那一集」按 updated_at 取最新：回看旧集再切回来，
+    /// 详情页的「继续看」要跟着最新的那行走，而不是集号最大的那行。
     #[test]
-    fn history_carries_title_and_cover_even_when_series_is_dismissed() {
-        let mut map = PlaybackMap::new();
-        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
-
-        // 用户把这部剧从列表里移除了（dismissed），但看过就是看过，
-        // 记录不能跟着列表一起消失
-        let titles = std::collections::HashMap::from([("A", ("剧名", "封面"))]);
-        let items = history_of(&map, &titles);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].title, "剧名");
-        assert_eq!(items[0].cover, "封面");
-    }
-
-    #[test]
-    fn history_without_a_registry_entry_keeps_the_item_with_blank_title() {
-        let mut map = PlaybackMap::new();
-        map.entry("B".into()).or_default().insert(1, at(10.0, 100));
-
-        let items = history_of(&map, &titles());
-        assert_eq!(items.len(), 1, "档案缺失也要显示，只是没剧名没封面");
-        assert!(items[0].title.is_empty());
-    }
-
-    #[test]
-    fn picks_the_most_recent_episode_per_series() {
-        let mut map = PlaybackMap::new();
-        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
-        map.entry("A".into()).or_default().insert(7, at(70.0, 900));
-        map.get_mut("A").unwrap().insert(3, at(30.0, 500));
-
-        let items = history_of(&map, &titles());
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].series_id, "A");
-        assert_eq!(items[0].vid_index, 7, "应取更新时间最晚的那一集");
-        assert_eq!(items[0].current_time, 70.0);
-    }
-
-    #[test]
-    fn sorts_series_by_last_watched_desc() {
-        let mut map = PlaybackMap::new();
-        map.entry("A".into()).or_default().insert(1, at(10.0, 100));
-        map.entry("B".into()).or_default().insert(2, at(20.0, 900));
-        map.entry("C".into()).or_default().insert(3, at(30.0, 500));
-
-        let items = history_of(&map, &titles());
-        assert_eq!(
-            items
-                .iter()
-                .map(|i| i.series_id.as_str())
-                .collect::<Vec<_>>(),
-            ["B", "C", "A"]
-        );
-    }
-
-    #[test]
-    fn empty_map_gives_empty_history() {
-        assert!(history_of(&PlaybackMap::new(), &titles()).is_empty());
-    }
-
-    #[test]
-    fn clear_empties_history_on_disk_too() {
-        let dir = temp_dir("clear");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
-
-        let state = AppState::default();
+    fn series_last_position_follows_latest_row() {
+        let (state, dir) = file_state("lastpos");
         state
             .store
-            .write()
-            .playback
-            .entry("A".into())
-            .or_default()
-            .insert(1, at(10.0, 100));
-        // 先把「有记录」的状态写进文件：否则「文件里是空的」这句断言没有对照，
-        // 清空没落盘它也一样成立
-        state
-            .store
-            .read()
-            .save(&crate::store::paths::data_file())
+            .save_playback_position("A", 1, &at(10.0, 100))
             .unwrap();
+        state
+            .store
+            .save_playback_position("A", 2, &at(20.0, 200))
+            .unwrap();
+        // 回看第 1 集并更新得最晚：最新行是 (1, t=11)
+        state
+            .store
+            .save_playback_position("A", 1, &at(11.0, 300))
+            .unwrap();
+        let (vid, pos) = state.store.series_last_position("A").unwrap().unwrap();
+        assert_eq!(vid, 1, "updated_at 最新的行是第 1 集");
+        assert_eq!(pos.current_time, 11.0);
         assert!(
-            !crate::store::DataStore::load(&crate::store::paths::data_file())
-                .playback
-                .is_empty()
-        );
-
-        clear(&state).expect("清空历史不该失败");
-
-        assert!(
-            history_of(&state.store.read().playback, &titles()).is_empty(),
-            "清空后不该再有历史（history() 读的就是这份表）"
-        );
-        let on_disk = crate::store::DataStore::load(&crate::store::paths::data_file());
-        assert!(
-            on_disk.playback.is_empty(),
-            "只清内存的话，重启后历史全回来了"
+            state.store.series_last_position("ZZZ").unwrap().is_none(),
+            "没看过的剧返回 None（前端回落云端历史）"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 断点续播的持久化语义：保存后「重启」（重开同一文件库）还能读回；
+    /// 接近片尾的记录视为看完，load 返回 0（从头看）。
     #[test]
-    fn clearing_empty_history_is_a_no_op() {
-        let dir = temp_dir("clear-empty");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
+    fn save_survives_reopen_and_load_skips_near_end() {
+        let (state, dir) = file_state("persist");
 
-        let state = AppState::default();
-        clear(&state).expect("空历史重复清空不该报错");
-        assert!(history_of(&state.store.read().playback, &titles()).is_empty());
+        state
+            .store
+            .save_playback_position("A", 1, &at(10.0, 100))
+            .unwrap();
+        state
+            .store
+            .save_playback_position("B", 1, &at(290.0, 100))
+            .unwrap();
 
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn remove_drops_the_whole_series_not_just_the_latest_episode() {
-        let dir = temp_dir("remove-one");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
-
-        let state = AppState::default();
         {
-            let mut map = state.store.write();
-            for idx in [1u32, 5, 9] {
-                map.playback
-                    .entry("A".into())
-                    .or_default()
-                    .insert(idx, at(1.0, idx as i64));
-            }
-            map.playback
-                .entry("B".into())
-                .or_default()
-                .insert(1, at(1.0, 1));
+            // 模拟「重启」：换一个指向同一文件的全新 Store 实例读
+            let reopened = crate::store::Store::open(dir.join("test.db")).expect("重开测试库");
+            let pos = reopened.playback_position("A", 1).unwrap();
+            assert!(pos.is_some(), "落库的进度换个连接也要读得到");
         }
 
-        remove(&state, "A").unwrap();
-
-        let store = state.store.read();
+        // load 是 store 直读的一层薄过滤（unwrap + 近片尾归零），这里按
+        // store 语义断言，绕开测试里构造不到的 tauri State
+        let a = state.store.playback_position("A", 1).unwrap().unwrap();
+        assert_eq!(a.current_time, 10.0, "续播位置原样读回");
+        assert!(!a.is_near_end());
+        let b = state.store.playback_position("B", 1).unwrap().unwrap();
+        assert!(b.is_near_end(), "接近片尾视为看完，load 会归零从头播");
         assert!(
-            !store.playback.contains_key("A"),
-            "整部剧都要清掉，否则下一集会顶上来，用户以为没删"
+            state.store.playback_position("ZZZ", 1).unwrap().is_none(),
+            "没记录的剧从头播"
         );
-        assert!(store.playback.contains_key("B"), "别的剧不受影响");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn remove_reports_not_found_for_unknown_series() {
-        let dir = temp_dir("remove-missing");
-        let _scoped = crate::store::paths::ScopedDataDir::new(&dir);
-
-        let state = AppState::default();
-        assert!(remove(&state, "ZZZ").is_err(), "没有记录就不能假装删成功");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

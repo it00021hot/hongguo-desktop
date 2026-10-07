@@ -37,6 +37,10 @@ pub fn parse_series_from_html(html: &str, series_id: &str) -> AppResult<Series> 
             vid,
             title: String::new(),
             file_stem: String::new(),
+            // 官网 HTML 兜底解析拿不到计数/时长，置 0（计数不显示、选集格无时长角标）
+            comment_count: 0,
+            digg_count: 0,
+            duration: 0,
         })
         .collect();
 

@@ -1,5 +1,5 @@
-import { Tv } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { SeriesCover } from '@/components/series-cover';
 import { tf } from '@/i18n';
 import type { SeriesCard } from '@/lib/schema';
 
@@ -47,18 +47,9 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect, trailing }: Pro
             className="group bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
           >
             <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
-              {card.cover ? (
-                <img
-                  src={card.cover}
-                  alt={card.seriesTitle}
-                  loading="lazy"
-                  className="size-full object-cover"
-                />
-              ) : (
-                <div className="text-muted-foreground grid size-full place-items-center">
-                  <Tv className="size-8" />
-                </div>
-              )}
+              {/* 封面统一走 SeriesCover：筛选流/搜索结果的封面是 HEIC 裸 URL，
+                  直挂 <img> 在 Windows（无 HEVC 扩展的 WebView2）上全是裂图 */}
+              <SeriesCover seriesId={card.seriesId} cover={card.cover} alt={card.seriesTitle} />
 
               {downloaded > 0 && (
                 <Badge

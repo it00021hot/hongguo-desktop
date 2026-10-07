@@ -1,27 +1,47 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
+  Flame,
   Compass,
-  Play,
+  History,
+  Trophy,
+  Sparkles,
+  BellRing,
+  Star,
+  ThumbsUp,
   ListChecks,
   Combine,
   HardDrive,
   Settings,
   PanelLeftClose,
   PanelLeft,
+  UserRound,
+  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { LoginDialog } from '@/features/settings/components/login-dialog';
+import { useAccount, useAuthRefresh } from '@/lib/queries';
+import { login } from '@/lib/ipc/commands';
+import { toast } from 'sonner';
 import { useUiStore } from '@/lib/stores/ui';
-import { usePlayerStore } from '@/lib/stores/player';
-import { isMac } from '@/lib/platform';
-import { MacTrafficLights } from './window-controls';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
-/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。 */
+/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
+ *
+ * 播放页（/player）不设菜单入口：它只能由各页的「播放/继续播放」跳转进入，
+ * 独立菜单 + 页内历史与独立的历史页重复。 */
 export const NAV_ITEMS = [
-  { key: 'browse', to: '/', icon: Compass },
-  { key: 'player', to: '/player', icon: Play },
+  { key: 'home', to: '/', icon: Flame },
+  { key: 'rank', to: '/rank', icon: Trophy },
+  { key: 'new', to: '/new', icon: Sparkles },
+  { key: 'history', to: '/history', icon: History },
+  { key: 'collections', to: '/collections', icon: Star },
+  { key: 'liked', to: '/liked', icon: ThumbsUp },
+  { key: 'reservations', to: '/reservations', icon: BellRing },
+  { key: 'browse', to: '/browse', icon: Compass },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
   { key: 'merge', to: '/merge', icon: Combine },
   { key: 'storage', to: '/storage', icon: HardDrive },
@@ -31,7 +51,6 @@ export const NAV_ITEMS = [
 export function AppSidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggle = useUiStore((s) => s.toggleSidebar);
-  const clearTarget = usePlayerStore((s) => s.clear);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
@@ -42,23 +61,8 @@ export function AppSidebar() {
         collapsed ? 'w-14' : 'w-56',
       )}
     >
-      {/* 无边框窗口下这一块兼作拖拽区：用户抓着 logo 就能拖窗口。
-          mac 的交通灯钉在左上角（平台惯例），其余平台这块只做拖拽。
-
-          `deep` 不能省：Tauri 2.x 的裸 `data-tauri-drag-region` 只认自己，
-          点在 img / 标题文字上都不算拖拽（见 tauri 的 src/window/scripts/drag.js）。 */}
-      <div data-tauri-drag-region="deep" className="flex h-14 items-center gap-2 border-b px-3">
-        {isMac() && <MacTrafficLights />}
-        <img
-          src="/app-icon.png"
-          alt=""
-          width={32}
-          height={32}
-          className="size-8 shrink-0 rounded-lg"
-        />
-        {!collapsed && <p className="truncate text-sm font-semibold">{t('app.name')}</p>}
-      </div>
-
+      {/* 顶栏（红绿灯/logo/应用名）横贯全宽，长在 AppShell 上——侧边栏
+          从顶栏下方开始，折叠不再影响顶部区域。 */}
       <nav className="flex-1 space-y-1 p-2">
         {NAV_ITEMS.map((item) => {
           const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);
@@ -67,11 +71,6 @@ export function AppSidebar() {
             <Link
               key={item.key}
               to={item.to}
-              // 「播放」项的含义是播放记录页。播放中点它必须清掉目标：
-              // 不清的话路由回到 /player 而 store 里还指着同一集，
-              // 渲染的还是同一个播放器——按钮看着能点，什么也没发生，
-              // 播完想换一部剧就没有回去的入口了。
-              onClick={item.key === 'player' ? clearTarget : undefined}
               className={cn(
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
                 active
@@ -89,11 +88,20 @@ export function AppSidebar() {
           return (
             <Tooltip key={item.key}>
               <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">{t(`nav.${item.key}.title`)}</TooltipContent>
+              {/* sideOffset 抬出 56px 侧栏：trigger 是整行 39px 宽，
+                  默认 offset=4 会让浮层压在侧栏边框上 */}
+              <TooltipContent side="right" sideOffset={10}>
+                {t(`nav.${item.key}.title`)}
+              </TooltipContent>
             </Tooltip>
           );
         })}
       </nav>
+
+      {/* 我的 / 登录（hgplayer 同款贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
+      <div className="border-t p-2">
+        <AccountButton collapsed={collapsed} />
+      </div>
 
       <div className="border-t p-2">
         <Button
@@ -108,5 +116,105 @@ export function AppSidebar() {
         </Button>
       </div>
     </aside>
+  );
+}
+
+/** 贴底账户入口：未登录「我的 / 登录」开登录弹窗；已登录显昵称 + 退出钮。 */
+function AccountButton({ collapsed }: { collapsed: boolean }) {
+  const { data: account } = useAccount();
+  const refreshAuth = useAuthRefresh();
+  const [loginOpen, setLoginOpen] = useState(false);
+  // 退出登录是危险动作：清掉本机登录态，先确认再执行
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+
+  // 旧登录态库里没有头像：挂载后静默补拉一次 user_info（后端顺带刷新
+  // 昵称落库）。一次性 flag 兜底——若服务端就是不回头像，也不反复重试。
+  const avatarFetched = useRef(false);
+  const hasAccount = account != null;
+  useEffect(() => {
+    if (avatarFetched.current || !hasAccount || account?.avatarUrl) return;
+    avatarFetched.current = true;
+    login
+      .userInfo()
+      .then(() => refreshAuth())
+      .catch(() => {});
+  }, [hasAccount, account?.avatarUrl, refreshAuth]);
+
+  const label = account?.userName?.trim() || t('nav.accountFallback');
+
+  const row = (
+    <button
+      type="button"
+      onClick={() => {
+        if (!account) setLoginOpen(true);
+      }}
+      className={cn(
+        'text-sidebar-foreground hover:bg-sidebar-accent flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+        collapsed && 'justify-center px-0',
+        account && 'cursor-default',
+      )}
+      // 折叠态由 Radix Tooltip 出标签：原生 title 会叠出第二层浮层
+    >
+      {/* 有头像用官方头像（登录响应下发），没有退回通用图标——
+          这样折叠态下也能一眼分出登录/未登录 */}
+      {account?.avatarUrl ? (
+        <img src={account.avatarUrl} alt="" className="size-5 shrink-0 rounded-full object-cover" />
+      ) : (
+        <UserRound className="size-4 shrink-0" />
+      )}
+      {!collapsed && (
+        <>
+          <span className="truncate">{label}</span>
+          {!account && (
+            <span className="text-primary ml-auto shrink-0 text-xs">{t('nav.login')}</span>
+          )}
+        </>
+      )}
+    </button>
+  );
+
+  const logout = () => {
+    void login
+      .logout()
+      .then(() => {
+        refreshAuth();
+        toast.success(t('nav.loggedOut'));
+        setLogoutConfirm(false);
+      })
+      .catch((e) => toast.error(String(e)));
+  };
+
+  return (
+    <>
+      {collapsed ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{row}</TooltipTrigger>
+          <TooltipContent side="right">{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        row
+      )}
+      {account != null && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setLogoutConfirm(true)}
+          className={cn('text-muted-foreground size-7 w-full', !collapsed && 'justify-start gap-2')}
+          title={t('nav.logout')}
+        >
+          <LogOut className="size-3.5" />
+          {!collapsed && <span className="text-xs">{t('nav.logout')}</span>}
+        </Button>
+      )}
+      <ConfirmDialog
+        open={logoutConfirm}
+        onOpenChange={setLogoutConfirm}
+        title={t('nav.logoutConfirmTitle')}
+        description={t('nav.logoutConfirmBody')}
+        confirmLabel={t('nav.logout')}
+        onConfirm={logout}
+      />
+      <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} onSuccess={refreshAuth} />
+    </>
   );
 }

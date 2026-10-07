@@ -12,3 +12,9 @@ export function isMac(): boolean {
   if (typeof navigator === 'undefined') return false;
   return navigator.userAgent.toLowerCase().includes('mac');
 }
+
+/** Windows 判定（自定义协议 URL 形态要用：WebView2 走 http://{scheme}.localhost）。 */
+export function isWindows(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.userAgent.toLowerCase().includes('windows');
+}

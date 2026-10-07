@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "红果短剧下载器",
+  "productName": "红果桌面版",
   "version": "2.0.0",
-  "identifier": "com.hongguo.downloader",
+  "identifier": "com.hongguo.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "红果短剧下载器",
+        "title": "红果短剧",
         "width": 1280,
         "height": 840,
         "minWidth": 1024,
@@ -28,7 +28,7 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "img-src": "'self' data: blob: https: http://asset.localhost",
+        "img-src": "'self' data: blob: https: http://asset.localhost hongguo-cover: http://hongguo-cover.localhost",
         "media-src": "'self' asset: http://asset.localhost hongguo-stream: http://hongguo-stream.localhost hongguo-local: http://hongguo-local.localhost",
         "connect-src": "'self' ipc: http://ipc.localhost https://*.qznovelvod.com https://*.byteimg.com https://*.bytecdn.cn"
       },
@@ -51,7 +51,7 @@
     ],
     "copyright": "GPL-3.0",
     "category": "Video",
-    "shortDescription": "红果短剧全集批量下载器",
+    "shortDescription": "红果短剧桌面客户端",
     "longDescription": "浏览、搜索、批量下载、在线播放、一键合并、磁盘清理。解密/解复用/合并为纯 Rust 零外部依赖，HEVC 转 H.264 可选调用系统 ffmpeg 加速，安装包不捆绑外部二进制。",
     "windows": {
       "nsis": {

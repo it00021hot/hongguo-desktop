@@ -1,61 +1,133 @@
-import { useRouterState } from '@tanstack/react-router';
-import { AppSidebar, NAV_ITEMS } from './app-sidebar';
+import { useCallback, useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { Pin } from 'lucide-react';
+import { AppSidebar } from './app-sidebar';
 import { ThemeSwitch } from './theme-switch';
-import { WindowButtons } from './window-controls';
+import { MacTrafficLights, WindowButtons } from './window-controls';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Button } from '@/components/ui/button';
+import { useEvent } from '@/lib/ipc/events';
+import { EVENTS } from '@/lib/ipc/types';
+import { useUiStore } from '@/lib/stores/ui';
+import { app as appApi } from '@/lib/ipc/commands';
 import { isMac } from '@/lib/platform';
 import { t } from '@/i18n';
+import { cn } from '@/lib/utils';
 
-/** 由当前路径反查导航 key，用于顶栏标题。 */
-function navKeyFor(pathname: string): string {
-  if (pathname === '/') return 'browse';
-  const hit = NAV_ITEMS.find((item) => item.to !== '/' && pathname.startsWith(item.to));
-  return hit?.key ?? 'browse';
-}
+/**
+ * 顶栏中部插槽的定位 id：沉浸流/排行榜/新剧把各自的分类 tab 栏 portal
+ * 进来（顶栏常驻薄行形态）。其他页面顶部不显示菜单名——导航位置由
+ * 侧边栏高亮表达，顶栏中部留空。
+ */
+export const TOP_BAR_SLOT_ID = 'topbar-slot';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const navKey = navKeyFor(pathname);
-  // mac 的交通灯在侧边栏左上（见 app-sidebar），主区不重复给一套
+  // mac 的交通灯在顶栏左端（平台惯例），其余平台顶栏右侧给窗口按钮
   const mac = isMac();
 
+  // 退出确认：后端把窗口关闭请求（自绘 ×/Alt+F4/任务栏）拦下来转成事件，
+  // 这里弹框问一声——退出会掐断正在跑的下载任务，不该一碰就没了。
+  // mark_window_ready 要等本组件挂载（监听就位）再调，后端才敢开始拦截。
+  const [exitOpen, setExitOpen] = useState(false);
+  useEffect(() => {
+    void invoke('mark_window_ready').catch(() => {});
+  }, []);
+  useEvent(
+    EVENTS.closeRequested,
+    useCallback(() => setExitOpen(true), []),
+  );
+
+  // 小屏播放（对齐 hgplayer De.mini 的 bare 布局）：侧栏与顶栏**全部**
+  // 藏掉，整个窗口只剩播放器（第三方小屏连标题栏都没有，窗口按钮由
+  // 紧凑控制条承担）；拖拽由播放页的顶部拖拽条负责。
+  const miniScreen = useUiStore((s) => s.miniScreen);
+  const pinned = useUiStore((s) => s.pinned);
+  const setPinned = useUiStore((s) => s.setPinned);
+
+  const togglePinned = useCallback(() => {
+    const next = !pinned;
+    void appApi
+      .setAlwaysOnTop(next)
+      .then(() => setPinned(next))
+      .catch(() => undefined);
+  }, [pinned, setPinned]);
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-screen w-screen flex-col overflow-hidden">
       <a href="#content" className="skip-to-content">
         {t('common.skipToContent')}
       </a>
 
-      <AppSidebar />
+      {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：红绿灯/
+            logo/应用名在左，中部是各页 portal 进来的分类 tab（无则留空，
+            页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
+            语言/窗口控件钉在右端。
+            小屏播放整个顶栏不渲染——第三方小屏是纯播放器，窗口钮/拖拽
+            由紧凑控制条与播放页拖拽条承担。
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* 窗口无边框，这行顶栏兼作拖拽区。按钮与主题切换在右侧成组，
-            不额外占一行标题栏——应用名侧边栏顶部已经有了。
+            顶栏在侧边栏**上方**而不是长在侧边栏里——侧边栏折叠不影响顶部，
+            播放/沉浸流时控件也固定在顶栏，不会被弹幕或画面内容盖住。
 
             ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
             自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
-            src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。
-            同样地，标题那两行**不能**再挂裸属性——它们会先于 header 命中并把
-            拖拽挡掉。按钮不受影响：drag.js 里 clickable 元素会直接阻断拖拽、
-            放行点击。 */}
+            src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。 */}
+      {!miniScreen && (
         <header
           data-tauri-drag-region="deep"
-          className="flex h-14 shrink-0 items-center justify-between gap-4 border-b pl-6"
+          className="bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b px-3"
         >
-          <div className="grid gap-0.5">
-            <h1 className="truncate text-base font-semibold">{t(`nav.${navKey}.title`)}</h1>
-            <p className="text-muted-foreground hidden truncate text-xs md:block">
-              {t(`nav.${navKey}.description`)}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center">
+          {mac && <MacTrafficLights />}
+          <img
+            src="/app-icon.png"
+            alt=""
+            width={24}
+            height={24}
+            className="size-6 shrink-0 rounded-md"
+          />
+          {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
+                左右组宽度不等（交通灯+logo vs 控件），flex-1 的「剩余空间
+                居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
+                transform（半像素平移会让文字发糊）。
+                容器 pointer-events-none：空白带不拦截、仍可拖窗；
+                tab 内容自己在 portal wrapper 里开 auto */}
+          <div
+            id={TOP_BAR_SLOT_ID}
+            className="pointer-events-none absolute inset-x-0 mx-auto flex w-fit items-center justify-center"
+          />
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {/* 置顶（hgplayer 标题栏同款）：钉住/取消整个窗口 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t('player.pin')}
+              title={t('player.pin')}
+              onClick={togglePinned}
+              className={cn(pinned && 'text-primary')}
+            >
+              <Pin className={cn('size-4', pinned && 'fill-current')} />
+            </Button>
             <ThemeSwitch />
             {!mac && <WindowButtons />}
           </div>
         </header>
+      )}
+
+      <div className="flex min-h-0 flex-1">
+        {!miniScreen && <AppSidebar />}
 
         <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
           {children}
         </main>
       </div>
+
+      <ConfirmDialog
+        open={exitOpen}
+        onOpenChange={setExitOpen}
+        title={t('window.exitTitle')}
+        description={t('window.exitBody')}
+        confirmLabel={t('window.exitConfirm')}
+        onConfirm={() => void invoke('exit_app').catch(() => {})}
+      />
     </div>
   );
 }

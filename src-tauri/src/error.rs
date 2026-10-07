@@ -18,6 +18,15 @@ pub enum AppError {
     #[error("数据文件损坏: {0}")]
     StoreCorrupt(String),
 
+    /// 数据库文件被另一个进程锁着（另一个实例还活着）。
+    ///
+    /// 与 [`AppError::StoreCorrupt`] 分开：锁冲突不是损坏，把「另一个实例
+    /// 正在运行」报成「数据文件损坏」会让人去删库。正常时序下第二个实例
+    /// 在单实例插件那里就该被劝退（见 lib.rs 的启动顺序注释），走到这一步
+    /// 说明持有者是僵尸进程或非常规启动。
+    #[error("数据库被占用: {0}")]
+    StoreLocked(String),
+
     #[error("文件读写失败: {0}")]
     Io(String),
 
@@ -26,6 +35,12 @@ pub enum AppError {
 
     #[error("媒体处理失败: {0}")]
     Media(String),
+
+    /// 登录 / 账号操作失败。transparent：消息本身已含完整语义
+    /// （如「登录失败 1202: 验证码错误」），不再套类别前缀；i18n 资源
+    /// 刻意**不提供** `error.auth` 译文，让前端落到后端原文透传。
+    #[error("{0}")]
+    Auth(String),
 
     #[error("参数错误: {0}")]
     InvalidArgs(String),
@@ -59,9 +74,11 @@ impl AppError {
             AppError::EmptyResponse(_) => "error.emptyResponse",
             AppError::Signer(_) => "error.signer",
             AppError::StoreCorrupt(_) => "error.storeCorrupt",
+            AppError::StoreLocked(_) => "error.storeLocked",
             AppError::Io(_) => "error.io",
             AppError::Decrypt(_) => "error.decrypt",
             AppError::Media(_) => "error.media",
+            AppError::Auth(_) => "error.auth",
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",

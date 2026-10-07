@@ -55,10 +55,7 @@ pub fn delete_tasks(
 ///
 /// 返回补回的条数。已有记录的集（无论状态）不动。
 #[tauri::command]
-pub fn rescan_downloads(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<usize> {
+pub fn rescan_downloads(app: AppHandle, state: State<'_, AppState>) -> AppResult<usize> {
     let summary = crate::service::download_service::rescan::rescan_from_disk(&state)?;
     for task in &summary.added {
         let _ = app.emit(

@@ -1,8 +1,8 @@
 [package]
-name = "hongguo-downloader"
+name = "hongguo-desktop"
 version = "2.0.0"
-description = "红果短剧全集批量下载器（Tauri 桌面版）"
-authors = ["hongguo-downloader contributors"]
+description = "红果短剧桌面客户端（Tauri 桌面版）"
+authors = ["hongguo-desktop contributors"]
 license = "GPL-3.0"
 edition = "2021"
 # 被 sysinfo 0.39.6 的 MSRV 抬上来的：该版本要求 1.95，本项目的代码本身用不到
@@ -35,6 +35,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "gzip",
 ] }
 futures-util = "0.3"
+# zlib-rs 后端：设备注册的 TT-Encrypt V5 要求 gzip 字节流与服务端 zlib
+# 逐字节一致，miniz_oxide 的流不同会被静默拒绝
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 bytes = "1"
 thiserror = "2"
 anyhow = "1"
@@ -64,10 +67,30 @@ muxide = "0.2.5"
 # 合并前校验要问「输出卷还剩多少字节」。只开 disk：默认 feature 会把
 # component / network / system / user 一并拖进来，本项目一个都用不上。
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
+turso = { version = "0.8.1", default-features = false }
+mouse_position = "0.1"
 
-# 这里刻意不列 videotoolbox / windows( Media Foundation ) / rusty_aac：
-# 平台硬编一律走 `media::ffmpeg` 的外部 ffmpeg 探测，音轨不解码（AAC 直通），
-# 三者都是零引用。写平台 FFI 的收益不抵「无法在 CI 里验证」的代价。
+# 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation）。
+# FFI 路线按 API 性质分：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs）；
+# Media Foundation 是 COM（虚表调用），手排虚表槽位错一个就是运行期崩——
+# 用 windows crate 的生成绑定（见下方 target 专属依赖，不新增外部 crate）。
+# ffmpeg 外部进程是平台硬编不可用时的中间回退，音轨一律不解码（AAC 直通）。
+# 验证策略：Apple Silicon 的 macOS CI 真跑 VideoToolbox 端到端；Windows 侧
+# 本机真机验收（GTX 1650：NVENC MFT + HEVC 扩展解码全链路 e2e 绿），CI 验
+# 纯逻辑层；软解路径（rusty_h265/rusty_h264）永远兜底，产物一律过可播校验闸。
+
+# Windows 平台硬编（Media Foundation）的 COM 绑定。选 windows crate 而不是
+# 手写虚表：MF 是 COM API（接口经虚表调用），与 macOS VideoToolbox 的纯 C
+# API 不同——手排虚表槽位错一个就是运行期崩到错误函数上。0.62 已在依赖图里
+# （tauri/wry/sysinfo 传递引入），声明为直接依赖不新增外部 crate，feature
+# 按需裁剪只编译用到的接口。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
@@ -90,3 +113,21 @@ strip = true
 # 不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
+
+# 根治「测试高并发间歇崩」：rusty_h264-common 默认给整个进程强装第三方分配器
+# rusty_alloc 1.1.6（`rusty_alloc-api = "=1.1.6"` 锁死版本；rusty_h264 default 转发
+# global-alloc，feature unification 关不掉）。1.1.6 有并发 bug——多线程分配下整个
+# 进程间歇 abort（"memory allocation of 22906492240 bytes failed"），全量 cargo
+# test 默认并发 6 次崩 2 次，生产跑转码/在线播放同样暴露。
+#
+# 两层处理：
+# 1. vendor/rusty_h264_common —— patch rusty_h264-common 0.16.0，摘掉它的
+#    #[global_allocator]（进程回到 Rust 标准分配器，根治；上游如果哪天改用
+#    修好的 alloc 再整体撤掉）。
+# 2. vendor/rusty_alloc* —— rusty_alloc 2.2.2（2026-10-01，修了 9 月一连串
+#    并发问题）以 1.1.6 的版本号顶替。global-alloc feature 虽已不生效，
+#    但保留：将来谁把分配器装回去时用的也是修过的版本。
+[patch.crates-io]
+rusty_alloc = { path = "vendor/rusty_alloc" }
+rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
+rusty_h264-common = { path = "vendor/rusty_h264_common" }

@@ -18,6 +18,25 @@ pub struct PlaybackPosition {
 
 /// 全部剧集的播放进度。
 pub type PlaybackMap = BTreeMap<String, BTreeMap<u32, PlaybackPosition>>;
+
+/// 一部剧「最近看到的那一集」。发给前端 `seriesProgressSchema`，camelCase。
+///
+/// 详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，
+/// 比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesProgress {
+    pub vid_index: u32,
+    /// 已播放秒数
+    pub current_time: f64,
+    /// 总时长（秒）
+    #[serde(default)]
+    pub duration: f64,
+    /// 最近更新（毫秒时间戳）
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
 impl PlaybackPosition {
     /// 构造位置。
     pub fn new(current_time: f64, duration: f64) -> Self {
@@ -87,25 +106,6 @@ pub struct VideoDefinition {
     pub value: u32,
     pub width: u32,
     pub height: u32,
-}
-
-/// 播放历史的一条：某部剧最近一次看到的位置。
-///
-/// 列表页要靠它排序并显示「上次看到第 N 集」，否则用户播过的剧只能靠重新搜。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaybackHistoryItem {
-    pub series_id: String,
-    /// 最近播放的集号
-    pub vid_index: u32,
-    /// 播到多少秒
-    pub current_time: f64,
-    /// 最后一次播放的毫秒时间戳，用于按最近排序
-    pub updated_at: i64,
-    /// 剧名。历史要能独立渲染，不能靠前端再去关联剧集档案。
-    pub title: String,
-    /// 封面地址。
-    pub cover: String,
 }
 
 #[cfg(test)]

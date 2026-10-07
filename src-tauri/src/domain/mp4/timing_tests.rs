@@ -152,3 +152,113 @@ fn a_truncated_mdhd_leaves_the_defaults_alone() {
     assert_eq!(info.media_timescale, 0, "读不满就不写，免得留下半套时间轴");
     assert_eq!(info.media_duration, 0);
 }
+
+/// 恒定帧率轨道：timescale 15360、delta 512 正是 30fps。
+fn cfr_info(samples: usize) -> TrackInfo {
+    let mut info = info_with_samples(samples);
+    info.sample_count = samples as u32;
+    info.media_timescale = 15_360;
+    info.stts = vec![(samples as u32, 512)];
+    info
+}
+
+#[test]
+fn sample_pts_are_real_seconds_for_cfr_sources() {
+    let info = cfr_info(90);
+
+    let pts = info.sample_pts();
+
+    assert_eq!(pts.len(), 90);
+    // 512/15360 = 1/30s
+    assert_eq!(pts[0], 0.0);
+    assert!((pts[1] - 1.0 / 30.0).abs() < 1e-9);
+    assert!((pts[89] - 89.0 / 30.0).abs() < 1e-9);
+    assert!(pts.windows(2).all(|w| w[1] > w[0]), "必须严格递增");
+}
+
+#[test]
+fn sample_pts_fold_in_ctts_offsets() {
+    // B 帧（version 1 负偏移）：解码序 I,P,B；显示序 I,B,P。
+    // pts = dts + ctts → 按数组下标是 [0, 2d, d]，**非单调**正是 B 帧的语义，
+    // 「显示序下递增」由消费方（解码器输出序）保证。
+    let mut info = cfr_info(3);
+    info.ctts = vec![(1, 0), (1, 512), (1, -512)];
+
+    let pts = info.sample_pts();
+    let d = 1.0 / 30.0;
+
+    assert_eq!(pts.len(), 3);
+    assert!((pts[0] - 0.0).abs() < 1e-9);
+    assert!(
+        (pts[1] - 2.0 * d).abs() < 1e-9,
+        "P 帧显示最晚，实际 {:?}",
+        pts
+    );
+    assert!((pts[2] - d).abs() < 1e-9, "B 帧提前显示，实际 {:?}", pts);
+    // 按显示时间排序后必须严格递增（负偏移平移不改相对次序）
+    let mut display = pts.clone();
+    display.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(display.windows(2).all(|w| w[1] > w[0]));
+}
+
+#[test]
+fn sample_pts_without_stts_is_empty() {
+    let mut info = info_with_samples(10);
+    info.media_timescale = 15_360;
+    assert!(info.sample_pts().is_empty(), "没有 stts 就没有时间轴");
+
+    let mut zero_ts = cfr_info(10);
+    zero_ts.media_timescale = 0;
+    assert!(zero_ts.sample_pts().is_empty(), "时基为 0 换算不出秒");
+}
+
+#[test]
+fn zero_delta_runs_surface_as_duplicates_for_the_output_side_to_fix() {
+    // 畸形表：一半样本 delta 为 0。展开层如实返回重复值——「输出序严格递增」
+    // 的不变量属于编码输出侧（codec.rs），这里不替它做决定
+    let mut info = info_with_samples(4);
+    info.media_timescale = 1_000;
+    info.stts = vec![(2, 0), (2, 500)];
+
+    let pts = info.sample_pts();
+
+    assert_eq!(pts.len(), 4);
+    // stts 语义：样本的 dts 是「排在它前面的 delta 」之和，所以
+    // delta 序列 [0,0,500,500] → dts = [0, 0, 0, 500]
+    assert_eq!(pts[0], 0.0);
+    assert_eq!(pts[1], 0.0, "delta=0 的畸形段如实产生重复值");
+    assert_eq!(pts[2], 0.0);
+    assert_eq!(pts[3], 0.5);
+}
+
+#[test]
+fn a_short_stts_table_extends_with_the_last_delta() {
+    let mut info = info_with_samples(5);
+    info.media_timescale = 1_000;
+    info.stts = vec![(3, 100)];
+
+    let pts = info.sample_pts();
+
+    assert_eq!(pts.len(), 5, "表短于样本数时按最后 delta 延续");
+    assert!(pts.windows(2).all(|w| w[1] > w[0]));
+}
+
+#[test]
+fn average_framerate_comes_out_of_the_sample_table() {
+    let mut info = cfr_info(150);
+    info.media_duration = 150 * 512;
+
+    assert!((info.average_framerate().unwrap() - 30.0).abs() < 1e-9);
+
+    let no_timing = info_with_samples(10);
+    assert_eq!(no_timing.average_framerate(), None, "没有 stts 推不出帧率");
+
+    let mut zero_delta = info_with_samples(4);
+    zero_delta.media_timescale = 1_000;
+    zero_delta.stts = vec![(4, 0)];
+    assert_eq!(
+        zero_delta.average_framerate(),
+        None,
+        "总时长为 0 推不出帧率"
+    );
+}

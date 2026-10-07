@@ -65,6 +65,16 @@ pub struct Episode {
     /// 落盘后的文件名（不含扩展名）
     #[serde(alias = "file_stem")]
     pub file_stem: String,
+    /// 该集评论数（detail 响应公开计数，右栏「💬 N」数据源；旧档案缓存缺省 0）
+    #[serde(default)]
+    pub comment_count: i64,
+    /// 该集点赞数（detail 响应公开计数，右栏「♥ N」数据源）
+    #[serde(default)]
+    pub digg_count: i64,
+    /// 该集时长（秒；detail 响应 video_list[].duration，详情页选集格展示用，
+    /// 旧档案缓存缺省 0）
+    #[serde(default)]
+    pub duration: i64,
 }
 
 #[cfg(test)]

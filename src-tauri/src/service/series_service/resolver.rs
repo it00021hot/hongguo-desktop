@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 /// 解析剧集：输入可以是分享链接、长文本或纯数字 ID。
 pub async fn resolve_series(
     input: &str,
-    proxy: &crate::domain::model::ProxyConfig,
+    env: &crate::domain::api::client::ApiEnv,
 ) -> AppResult<Series> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -23,7 +23,7 @@ pub async fn resolve_series(
     let series_id = crate::domain::site::extract::parse_series_id(trimmed)
         .ok_or_else(|| AppError::InvalidArgs("无法识别剧集 ID".into()))?;
 
-    match crate::domain::api::detail::fetch_episode_list(&series_id, proxy).await {
+    match crate::domain::api::detail::fetch_episode_list(&series_id, env).await {
         Ok(list) => {
             log::info!(
                 "[Series] 官方接口命中《{}》共 {} 集",
@@ -75,14 +75,18 @@ mod tests {
 
     #[tokio::test]
     async fn empty_input_errors() {
-        let p = crate::domain::model::ProxyConfig::default();
-        assert!(resolve_series("", &p).await.is_err());
-        assert!(resolve_series("   ", &p).await.is_err());
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        assert!(resolve_series("", &env).await.is_err());
+        assert!(resolve_series("   ", &env).await.is_err());
     }
 
     #[tokio::test]
     async fn unparsable_input_errors() {
-        let p = crate::domain::model::ProxyConfig::default();
-        assert!(resolve_series("随便一段文字", &p).await.is_err());
+        let env = crate::domain::api::client::ApiEnv::anonymous(
+            crate::domain::model::ProxyConfig::default(),
+        );
+        assert!(resolve_series("随便一段文字", &env).await.is_err());
     }
 }

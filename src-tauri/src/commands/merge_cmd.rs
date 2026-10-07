@@ -17,7 +17,7 @@ use crate::service::merge_service::{
 /// 全部合并任务。
 #[tauri::command]
 pub fn get_merge_tasks(state: State<'_, AppState>) -> Vec<MergeTask> {
-    state.store.read().merge_tasks.clone()
+    state.store.merge_tasks().unwrap_or_default()
 }
 
 /// 可合并的剧列表（有已下载分集的那些）。
@@ -38,8 +38,7 @@ pub fn get_merge_candidates(state: State<'_, AppState>) -> Vec<MergeCandidate> {
 pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()> {
     if let Some(task) = state
         .store
-        .read()
-        .merge_tasks
+        .merge_tasks()?
         .iter()
         .find(|t| t.id == id)
         .cloned()
@@ -61,8 +60,7 @@ pub fn open_merge_output(app: AppHandle, state: State<'_, AppState>, id: String)
 
     let path = state
         .store
-        .read()
-        .merge_tasks
+        .merge_tasks()?
         .iter()
         .find(|t| t.id == id)
         .map(|t| t.output_path.clone())
@@ -119,32 +117,45 @@ pub async fn merge_series(
         .or_else(|| {
             state
                 .store
-                .read()
-                .series(&series_id)
+                .series_by_id(&series_id)
+                .ok()
+                .flatten()
                 .map(|s| s.title.clone())
         })
         .unwrap_or_else(|| output_name.clone());
 
     let mut task = MergeTask::new(&series_id, &series_title, &output_name, mode);
     task.status = MergeStatus::Running;
-    upsert_in_memory(&state, &task);
-    // 开跑就落盘。跑到结束才落盘的话，进程一崩这十几分钟的进度就凭空消失，
+    // 开跑就落库。跑到结束才落的话，进程一崩这十几分钟的进度就凭空消失，
     // 用户重开应用既看不到「刚才合过」也看不到「合到哪了」。
-    persist_merge_task(&state);
+    upsert_merge_task(&state, &task);
     // 合并可能跑好几分钟，先广播「开始了」，UI 立刻能看到 running 状态
     let _ = app.emit(names::MERGE_TASK_ADDED, &task);
 
     let emit_app = app.clone();
+    let store_app = state.inner().clone();
+    // 集内回调每帧都会来（30fps × 并行路数），按 1% 步进打闸：
+    // 事件与落库都只在新百分比跨档时发生，一集几十条封顶。
+    let last_step = std::sync::atomic::AtomicI64::new(i64::MIN);
     let on_progress: progress::ProgressSink = Arc::new(move |done, total, t| {
-        // 直接发填好 percent 的 MergeTask：前端已有的 schema 里就有这个字段，
-        // 不必为进度另造一套载荷类型。
-        let mut snapshot = t.clone();
-        snapshot.percent = if total == 0 {
+        let percent = if total == 0 {
             0.0
         } else {
-            (done as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+            (done / total as f64 * 100.0).clamp(0.0, 100.0)
         };
-        let _ = emit_app.emit(names::MERGE_PROGRESS, snapshot);
+        let step = (percent * 100.0).round() as i64;
+        if last_step.swap(step, std::sync::atomic::Ordering::Relaxed) == step {
+            return;
+        }
+        let mut snapshot = t.clone();
+        snapshot.percent = percent;
+        // 参与集数在任务登记时数不出来（要等合并内部盘点输入），
+        // 每次上报都带上，运行中的快照才不用一直挂着 0
+        snapshot.episode_count = total;
+        let _ = emit_app.emit(names::MERGE_PROGRESS, &snapshot);
+        // 进度同步落库：get_merge_tasks 中途就能看到，进程崩了重开
+        // 也至少能停在「最后跨过的那个百分点」
+        upsert_merge_task_owned(&store_app, &snapshot);
     });
 
     let inner = state.inner().clone();
@@ -202,9 +213,8 @@ pub async fn merge_series(
             MergeStatus::Failed
         };
 
-        // 覆盖刚才那条 pending/running 记录，这次连同结果一起落盘
-        upsert_in_memory_owned(&state, &task);
-        persist_merge_task(&state);
+        // 覆盖刚才那条 pending/running 记录，这次连同结果一起落库
+        upsert_merge_task_owned(&state, &task);
 
         let _ = app.emit(
             if task.status == MergeStatus::Failed {
@@ -221,29 +231,21 @@ pub async fn merge_series(
     Ok(task)
 }
 
-/// 把任务写进内存里的合并列表（不落盘）。
-///
-/// 开始时先插一条 running 记录让 UI 立刻看到任务；跑完后再用同一条覆盖它。
-fn upsert_in_memory(state: &State<'_, AppState>, task: &MergeTask) {
-    upsert_in_memory_owned(state.inner(), task);
-}
-
-/// 落盘合并任务列表。失败只记日志。
+/// 把合并任务写进数据库。失败只记日志。
 ///
 /// 记录本身不是产物：为了写一条状态把整个任务判失败，会让用户以为
-/// 白转了十几分钟。
-pub(crate) fn persist_merge_task(state: &AppState) {
-    if let Err(e) = state.store.write().save(&crate::store::paths::data_file()) {
-        log::error!("[Merge] 合并记录落盘失败: {e}");
-    }
+/// 白转了十几分钟。开始时先插一条 running 记录让 UI 立刻看到任务；
+/// 跑完后再用同一条覆盖它。
+fn upsert_merge_task(state: &State<'_, AppState>, task: &MergeTask) {
+    upsert_merge_task_owned(state.inner(), task);
 }
 
-/// [`upsert_in_memory`] 的自有类型版本，供后台线程使用
+/// [`upsert_merge_task`] 的自有类型版本，供后台线程使用
 /// （后台线程拿不到 command 的 `State` 生命周期）。
-fn upsert_in_memory_owned(state: &AppState, task: &MergeTask) {
-    let mut data = state.store.write();
-    data.merge_tasks.retain(|t| t.id != task.id);
-    data.merge_tasks.push(task.clone());
+fn upsert_merge_task_owned(state: &AppState, task: &MergeTask) {
+    if let Err(e) = state.store.upsert_merge_task(task) {
+        log::error!("[Merge] 合并记录落库失败: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -286,14 +288,14 @@ mod tests {
         let state = AppState::default();
         let mut a = MergeTask::new("1", "剧", "out", MergeMode::Quick);
         a.status = MergeStatus::Running;
-        upsert_in_memory_owned(&state, &a);
+        upsert_merge_task_owned(&state, &a);
 
         let mut done = a.clone();
         done.mark_completed("out.mp4", 100);
         done.status = MergeStatus::Completed;
-        upsert_in_memory_owned(&state, &done);
+        upsert_merge_task_owned(&state, &done);
 
-        let tasks = state.store.read().merge_tasks.clone();
+        let tasks = state.store.merge_tasks().unwrap();
         assert_eq!(tasks.len(), 1, "同一条任务应被覆盖而不是追加");
         assert_eq!(tasks[0].status, MergeStatus::Completed);
     }

@@ -5,7 +5,7 @@
 //! 这里选择后者：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use super::done_inputs;
@@ -54,8 +54,9 @@ pub fn compat_merge(
     // 照样过不去——实测一部 11 集的剧（10 集 1080p、1 集 720p）走到拼接才失败，
     // 前面十几分钟的转码全白做。
     let scale_to = pipeline::resolution_of(&inputs[0].1);
+    let mut odd: Vec<u32> = Vec::new();
     if let Some((w, h)) = scale_to {
-        let odd: Vec<u32> = inputs
+        odd = inputs
             .iter()
             .filter(|(_, p)| pipeline::resolution_of(p).is_some_and(|(rw, rh)| rw != w || rh != h))
             .map(|(i, _)| *i + 1)
@@ -71,6 +72,21 @@ pub fn compat_merge(
         }
     }
 
+    // 缩放缺口快速失败：没有缩放能力的后端（纯 Rust 软解）遇上混合分辨率，
+    // 各集各转各的分辨率，最后死在拼接的宽高一致校验上——实测一部 11 集的
+    // 剧（10 集 1080p、1 集 720p）在软解上白转十几分钟才失败。把失败提到
+    // 转码之前，并告诉用户哪条路能解决。
+    if !odd.is_empty() && !crate::media::capability::scaling_available() {
+        return Err(AppError::Media(format!(
+            "第 {} 集分辨率与首集不一致，当前转码后端（纯 Rust 软解）不支持缩放，无法合并；\
+             安装 ffmpeg 或在支持硬件编码的机器上重试",
+            odd.iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("、")
+        )));
+    }
+
     // **并行度按后端定**，两条路的瓶颈完全不同。
     let threads = merge_threads(inputs.len());
     log::info!("[Merge] {output_name}：{total} 集，并行度 {threads}");
@@ -81,22 +97,19 @@ pub fn compat_merge(
     let slots: Mutex<Vec<Option<Result<PathBuf, AppError>>>> =
         Mutex::new((0..total).map(|_| None).collect());
 
-    // 已完成集数，供进度上报做**累计**。
+    // 已完成集数与集内比例的全局账本，供进度上报做**小数累计**。
     //
-    // 这里原先报的是 `on_progress(1, total, task)` —— done 恒为 1，于是无论转完
-    // 几集前端收到的都是 1/total，只有收尾那次 `total/total` 才是真进度，
-    // 表现就是进度条卡在开头不动。多个工作线程并发时还要 `fetch_add` 才不会
-    // 互相覆盖。
-    let done = AtomicUsize::new(0);
-    // 正在转码的集数，用来把「集内」进度折成整体百分比
-    let running = AtomicUsize::new(0);
+    // 这里原先只报整数集数，单集合并的进度条从头卡到尾；且多线程并发时
+    // 各自报「done + 本集比例」会互相覆盖、进度来回跳，所以收进一个
+    // 原子账本统一折算（见 [`LiveProgress`]）。
+    let live = LiveProgress::new();
 
     // 硬编会话超订的自适应收敛（背景见 [`merge_threads`]）：
-    // 生效并行度从 threads 起步，一观察到「有硬编却走了软解」就收到 2。
+    // 生效并行度从 threads 起步，一观察到「预期硬编却走了软路」就收到 2。
     // 收敛不影响已完成的集——软解产物同样是能播的 H.264，只是慢，不值得重做。
     let live_cap = AtomicUsize::new(threads);
     let active = AtomicUsize::new(0);
-    let hw_expected = crate::media::ffmpeg::h264_encoder().is_some_and(|e| e.hardware);
+    let hw_expected = crate::media::capability::selected_backend().is_hardware();
 
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
@@ -125,8 +138,10 @@ pub fn compat_merge(
                 }
                 // 认领第一格还没被占的。认领与占位在**同一次持锁**里完成，
                 // 否则两个线程会同时看到同一格是空的，转同一集两遍。
+                // 锁中毒只说明有线程 panic 过：持锁内只有整格读写，其余
+                // 格位仍然可信，恢复使用（空格在收集阶段自会报错）。
                 let next = {
-                    let mut g = slots.lock().expect("结果锁中毒");
+                    let mut g = slots.lock().unwrap_or_else(|p| p.into_inner());
                     match g.iter().position(|s| s.is_none()) {
                         Some(i) => {
                             g[i] = Some(Ok(PathBuf::new())); // 占位
@@ -141,15 +156,17 @@ pub fn compat_merge(
                 };
 
                 let (vid_index, source) = &inputs[next];
+                // 本集的集内记账（毫秒拆分的最近比例），完成时结算回账本
+                let last_ms = AtomicI64::new(0);
                 let result = match cache::cached_path(series_id, *vid_index) {
                     Some(p) => Ok(p),
                     None => {
-                        running.fetch_add(1, Ordering::Relaxed);
                         let on_eps = episode_progress(
-                            on_progress,
-                            done.load(Ordering::Relaxed),
-                            running.load(Ordering::Relaxed),
+                            &live,
+                            &last_ms,
+                            pipeline::episode_seconds(source),
                             total,
+                            on_progress,
                             task,
                         );
                         let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
@@ -161,31 +178,29 @@ pub fn compat_merge(
                             scale_to,
                             Some(cb),
                         );
-                        // 会话超订的信号：明明探测到硬编、这集却走了软解。
+                        // 会话超订的信号：预期硬编、这集却落在软路上。
                         // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
                         // 也会触发（多收敛一次，代价只是后面保守些），可接受。
-                        if hw_expected && r.as_ref().is_ok_and(|t| t.decoder.contains("rusty"))
+                        if hw_expected
+                            && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
                             && live_cap.fetch_min(2, Ordering::Relaxed) > 2
                         {
-                            log::warn!(
-                                "[Merge] 硬编会话疑似超订（本集回落软解），并行度收敛到 2"
-                            );
+                            log::warn!("[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2");
                         }
-                        running.fetch_sub(1, Ordering::Relaxed);
                         r.map(|t| PathBuf::from(t.output_path))
                     }
                 };
-                slots.lock().expect("结果锁中毒")[next] = Some(result);
+                slots.lock().unwrap_or_else(|p| p.into_inner())[next] = Some(result);
                 active.fetch_sub(1, Ordering::Relaxed);
-                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                on_progress(finished, total, task);
+                let finished = live.finish(last_ms.load(Ordering::Relaxed));
+                on_progress(finished as f64, total, task);
             });
         }
     });
 
     // 收集：按集号顺序取回，任一集失败就整体失败。
     // 取消要在拼接**之前**拦下来，否则会拼出一份不完整的「全集」。
-    let slots = slots.into_inner().expect("结果锁中毒");
+    let slots = slots.into_inner().unwrap_or_else(|p| p.into_inner());
     let mut transcoded: Vec<PathBuf> = Vec::with_capacity(total);
     for slot in slots {
         match slot {
@@ -199,7 +214,7 @@ pub fn compat_merge(
             None => return Err(AppError::Media("转码线程异常退出".into())),
         }
     }
-    on_progress(total, total, task);
+    on_progress(total as f64, total, task);
 
     // 拼接前再确认一次：最后几集转完到真正开写之间还有窗口
     if slot.is_cancelled() {
@@ -238,100 +253,152 @@ pub fn compat_merge(
     Ok((output, size, count))
 }
 
-/// 并行度按后端定：两条路的瓶颈完全不同。
+/// 并行度按后端定，几条路的瓶颈完全不同。
 ///
-/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
-///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
-///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
-/// - ffmpeg 硬编（nvenc 等）：编码在 GPU 上，CPU 只剩解码，铺 6 路吞吐最好
+/// - 平台硬编（VideoToolbox 等）：编码在 GPU 上，CPU 只剩解封装/拷贝，
+///   会话数同样有限（Apple 平台硬编会话有上限），铺 4 路保守起步，
+///   超了由 [`live_cap`] 收敛兜住。
+/// - ffmpeg 硬编（nvenc 等）：同是 GPU 会话受限，铺 6 路吞吐最好
 ///   （受核数约束）。**老 NVIDIA 驱动限制并发会话数（3~8 路不等）**，超限的
 ///   那路开不了编码器、静默回落软解——所以线程数只是上限，真正生效的是
-///   [`live_cap`]：一观察到「有硬编却走了软解」就收敛，后续集不再超订。
+///   [`live_cap`]：一观察到「预期硬编却走了软路」就收敛，后续集不再超订。
 /// - ffmpeg 软编（libx264）：编码器自己多线程，瓶颈变成 CPU 总量。实测
 ///   libx264 单集 7.1s，4 路并发时单集劣化到约 25s，但吞吐从 9.3s/集提到
 ///   约 6.3s/集。**并发度高会拉长单集耗时**，进度条停得更久，所以不铺满。
 ///   ⚠️ 不要给并行实例加 `-threads N` 限线程——真机实测（i5-13400、真实
 ///   剧集 4 路并行）默认线程 38.5s，限 `-threads 4` 反而 48.5s（慢 26%）：
 ///   x264 默认线程数已经调得很好，限线程只会饿着每个编码器。
+/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
+///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
+///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
 fn merge_threads(episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let cap = match crate::media::ffmpeg::h264_encoder() {
-        Some(e) if e.hardware => cores.clamp(1, 6),
-        Some(_) => (cores / 2).clamp(1, 4),
-        None => 4,
+    let cap = match crate::media::capability::selected_backend() {
+        crate::media::Backend::Platform => cores.clamp(1, 4),
+        crate::media::Backend::FfmpegHw => cores.clamp(1, 6),
+        crate::media::Backend::FfmpegSw => (cores / 2).clamp(1, 4),
+        crate::media::Backend::Rust => 4,
     };
     cap.min(episodes.max(1))
 }
 
-/// 集内进度：把 ffmpeg 报的「已编码秒数」折成整部合并的完成比例。
+/// 兼容合并的全局进度账本：「已完成整集数 + 在转各集的比例和」。
 ///
-/// 多集并发时每集各报一次，整体比例 = (已完成集数 + 本集比例) / 总集数。
-fn episode_progress(
-    on_progress: &ProgressSink,
-    finished: usize,
-    running: usize,
-    total: usize,
-    task: &MergeTask,
-) -> impl Fn(f64) + Send + Sync + 'static {
-    let task = task.clone();
-    let sink = on_progress.clone();
-    move |ratio: f64| {
-        if !(0.0..=1.0).contains(&ratio) {
-            return;
+/// 集内回调只看得到自己那一集，多线程并发时若各自报「done + 本集比例」，
+/// 后完成的前一集会把整体比例往回拽，进度条来回跳。所以各集只把**自己的**
+/// 比例增量汇入同一本原子账（毫秒拆分，1000 = 一集），读取时统一折算，
+/// 任何交错顺序下整体值都单调不减。
+struct LiveProgress {
+    /// 已完成的整集数
+    done: AtomicUsize,
+    /// 在转各集的比例和（毫单位；一集转完即从这里结转进 `done`）
+    inflight_milli: AtomicI64,
+}
+
+impl LiveProgress {
+    fn new() -> Self {
+        Self {
+            done: AtomicUsize::new(0),
+            inflight_milli: AtomicI64::new(0),
         }
-        let _ = running;
-        let done = finished as f64 + ratio;
-        on_fraction(&sink, done, total as f64, &task);
+    }
+
+    /// 一条集内上报：把该集最新比例汇入账本，返回整体「已完成集数」小数口径。
+    /// `last` 是这一集的记账格（记它上次汇入的毫单位数，增量才算得出来）。
+    fn update(&self, last: &AtomicI64, ratio: f64) -> f64 {
+        let milli = (ratio.clamp(0.0, 1.0) * 1000.0).round() as i64;
+        self.inflight_milli
+            .fetch_add(milli - last.load(Ordering::Relaxed), Ordering::Relaxed);
+        last.store(milli, Ordering::Relaxed);
+        self.snapshot()
+    }
+
+    /// 一集完成：把它在途的份额结转为整集，返回新的完成集数。
+    /// `last_milli` 传这一集记账格的终值；缓存命中的集没进过账，传 0。
+    fn finish(&self, last_milli: i64) -> usize {
+        if last_milli > 0 {
+            self.inflight_milli.fetch_sub(last_milli, Ordering::Relaxed);
+        }
+        self.done.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn snapshot(&self) -> f64 {
+        self.done.load(Ordering::Relaxed) as f64
+            + self.inflight_milli.load(Ordering::Relaxed) as f64 / 1000.0
     }
 }
 
-/// 把「已完成 n.x 集」折成 `ProgressSink` 的整数口径，并夹在 `0..total-1`。
-///
-/// 夹上界而不是报满：`total/total` 在合并里表示「转码全部完成、进入拼接」，
-/// 集内进度抢先报满会让进度条在还在转码时就显示 100%。
-fn on_fraction(sink: &ProgressSink, done: f64, total: f64, task: &MergeTask) {
-    if total <= 0.0 {
-        return;
+/// 集内进度：管线回调给「已编码秒数」，除以本集总时长折成比例，
+/// 再经 [`LiveProgress`] 汇成整体小数集数上报。时长读不出来的集
+/// 退化为按集粒度推进（完成一集跳一格），不再假装有集内进度。
+fn episode_progress<'a>(
+    live: &'a LiveProgress,
+    last: &'a AtomicI64,
+    episode_seconds: Option<f64>,
+    total: usize,
+    on_progress: &'a ProgressSink,
+    task: &'a MergeTask,
+) -> impl Fn(f64) + Send + Sync + 'a {
+    move |secs: f64| {
+        let Some(dur) = episode_seconds.filter(|d| *d > 0.0) else {
+            return;
+        };
+        let done = live.update(last, secs / dur);
+        on_progress(done, total, task);
     }
-    let done = done.clamp(0.0, total);
-    let n = done.round() as usize;
-    sink(
-        n.min(total.round() as usize - 1),
-        total.round() as usize,
-        task,
-    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{DownloadTask, MergeMode, MergeTask};
-    use parking_lot::Mutex;
-    use std::sync::Arc;
+    use crate::domain::model::DownloadTask;
 
-    fn task() -> MergeTask {
-        MergeTask::new("s", "剧", "out", MergeMode::Compat)
+    #[test]
+    fn single_episode_progress_climbs_fractionally() {
+        // 原实现把进度量化成整集，单集合并的进度条从头卡到尾——
+        // 集内比例必须能推进小数口径，完成时精确归一
+        let live = LiveProgress::new();
+        let last = AtomicI64::new(0);
+        assert_eq!(live.update(&last, 0.3), 0.3);
+        assert_eq!(live.update(&last, 0.9), 0.9);
+        assert_eq!(live.finish(last.load(Ordering::Relaxed)), 1);
+        assert_eq!(live.snapshot(), 1.0);
     }
 
     #[test]
-    fn fraction_is_clamped_just_below_complete() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink: ProgressSink = {
-            let seen = seen.clone();
-            Arc::new(move |d, t, _| seen.lock().push((d, t)))
-        };
-        let task = task();
-        on_fraction(&sink, 3.5, 10.0, &task);
-        on_fraction(&sink, 9.9, 10.0, &task);
-        on_fraction(&sink, 12.0, 10.0, &task);
-        let got = seen.lock().clone();
-        assert_eq!(got.len(), 3);
-        assert!(
-            got.iter().all(|(d, t)| *d < *t),
-            "集内进度不能报满：满进度表示「开始拼接」了，实际: {got:?}"
-        );
+    fn parallel_episodes_keep_progress_monotonic() {
+        let live = LiveProgress::new();
+        let a = AtomicI64::new(0);
+        let b = AtomicI64::new(0);
+        let mut prev = 0.0f64;
+        for step in [0.2, 0.5, 0.8] {
+            for last in [&a, &b] {
+                let snap = live.update(last, step);
+                assert!(
+                    snap >= prev,
+                    "并发上报的交错顺序不能让整体进度回退: {prev} -> {snap}"
+                );
+                prev = snap;
+            }
+        }
+        let done = live.finish(a.load(Ordering::Relaxed));
+        assert_eq!(done, 1, "A 集完成应记 1 集");
+        assert!(live.snapshot() >= prev, "结转不能让进度回退");
+        let _ = live.finish(b.load(Ordering::Relaxed));
+        assert_eq!(live.snapshot(), 2.0, "全部完成后应精确等于总集数");
+    }
+
+    #[test]
+    fn ratio_update_ignores_out_of_range_values() {
+        // 越界的比例按夹紧口径记账：每集记「当前比例」的绝对值，
+        // 上一笔报多了，下一笔自然把账减回去——账本始终等于各集当前比例之和
+        let live = LiveProgress::new();
+        let last = AtomicI64::new(0);
+        assert_eq!(live.update(&last, f64::NAN), 0.0);
+        assert_eq!(live.update(&last, 42.0), 1.0);
+        assert_eq!(live.update(&last, -1.0), 0.0, "回落到夹紧值 0，账随实报");
     }
 
     #[test]

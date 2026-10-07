@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
+  Eye,
   Gauge,
+  ListVideo,
   Maximize,
   Minimize,
   MonitorPlay,
   Pause,
   PictureInPicture2,
   Play,
+  Settings2,
   SkipBack,
   SkipForward,
+  MessageSquareText,
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -21,17 +26,18 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { usePlayerStore } from '@/lib/stores/player';
+import { useAccount, useSendDanmaku } from '@/lib/queries';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { t } from '@/i18n';
+import { t, tf } from '@/i18n';
+import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import { DownloadSheet } from './download-sheet';
+import { EpisodePicker } from './episode-picker';
 import type { Episode, VideoDefinition } from '@/lib/schema';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
-
-/** 播放中静止多久后隐藏控件（毫秒）。 */
-const HIDE_DELAY_MS = 3_000;
 
 /**
  * 控件按钮的统一样式。
@@ -44,6 +50,12 @@ const CHROME_BUTTON = 'h-8 gap-1.5 bg-transparent text-white hover:bg-white/20 h
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  /** 弹幕开关（状态在播放页，控件只做展示与回调） */
+  danmakuOn: boolean;
+  onToggleDanmaku: () => void;
+  /** 弹幕显示设置与修改回调（透明度/字号/密度/显示区域） */
+  danmakuDisplay: DanmakuDisplaySettings;
+  onDanmakuDisplayChange: (patch: Partial<DanmakuDisplaySettings>) => void;
   /** 放大镜用的容器：全屏时进的是它，不是整个窗口 */
   stageRef: React.RefObject<HTMLDivElement | null>;
   seriesId: string;
@@ -78,6 +90,91 @@ interface Props {
   onDefinitionChange: (definition: number | undefined) => void;
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
+  /**
+   * 进入小窗播放：主窗把当前进度落库后开置顶小窗并隐藏自己。
+   * 状态与取流编排都在播放页，这里只挂按钮。
+   */
+  onOpenMini: () => void;
+  /** 隐身模式开关（鼠标离开窗口自动隐藏 + 暂停）。状态在播放页。 */
+  incognito: boolean;
+  onToggleIncognito: () => void;
+  /**
+   * 沉浸流形态开关：为 true 时控制栏带「选集」入口（贴按钮向上弹的
+   * 数字网格，hgplayer 同款）。播放页右侧已有 SeriesPanel，不传即无。
+   */
+  immersive?: boolean;
+  /** 选集浮层里点选某一集（跳集，由播放器接 store） */
+  onPickEpisode?: (vidIndex: number) => void;
+  /**
+   * 选集浮层底部的提示文案（信息流里教「选一集 = 进入本剧连播」）。
+   * 播放页本来就在连播状态，不用教，不传即无。
+   */
+  pickerHint?: string;
+  /**
+   * 悬浮层可见性（受控）。
+   *
+   * 裁决在 PlayerView：静止倒计时 / 暂停 / 任一面板打开都在那一层算好，
+   * 这里不再自养一套定时器——两套定时器各行其是时，就会出现
+   * 「控制栏还在、简介没了」或反过来的精神分裂。
+   */
+  visible: boolean;
+  /** 指针进入/离开控制栏本体：悬在控制栏上时不许静止倒计时收起（宿主页裁决） */
+  onControlsEnter?: () => void;
+  onControlsLeave?: () => void;
+}
+
+/** 控制栏内的弹幕发送框（hgplayer 同款：常驻控制栏左段）。
+ *
+ * 输入 Enter / 点「发送」提交；offset 取控件自己持有的播放秒数（实时）。
+ * 未登录点发送给指路提示；vid 未就绪时静默忽略。 */
+function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
+  const [text, setText] = useState('');
+  const send = useSendDanmaku();
+  const { data: account } = useAccount();
+  const loggedIn = !!account;
+
+  const submit = () => {
+    const content = text.trim();
+    if (!content || send.isPending) return;
+    if (!loggedIn) {
+      toast.info(t('player.interact.loginRequired'));
+      return;
+    }
+    if (!vid.includes(':')) return;
+    send.mutate(
+      { vid, text: content, offsetMs: Math.round(currentSec * 1000) },
+      {
+        onSuccess: () => {
+          toast.success(t('player.interact.danmakuSent'));
+          setText('');
+        },
+        onError: (e) => toast.error(String(e)),
+      },
+    );
+  };
+
+  return (
+    <div className="ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit();
+        }}
+        placeholder={t('player.interact.danmakuPlaceholder')}
+        className="h-full w-full min-w-0 bg-transparent text-xs text-white outline-none placeholder:text-white/50"
+        maxLength={100}
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!text.trim() || send.isPending}
+        className="grid h-6 shrink-0 cursor-pointer place-items-center rounded-full bg-red-500 px-2.5 text-xs text-white transition-opacity disabled:opacity-40"
+      >
+        {t('player.interact.send')}
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -93,6 +190,10 @@ interface Props {
  */
 export function PlayerControls({
   videoRef,
+  danmakuOn,
+  onToggleDanmaku,
+  danmakuDisplay,
+  onDanmakuDisplayChange,
   stageRef,
   seriesId,
   episodes,
@@ -104,6 +205,15 @@ export function PlayerControls({
   onDefinitionChange,
   src,
   onStepEpisode,
+  onOpenMini,
+  incognito,
+  onToggleIncognito,
+  immersive,
+  onPickEpisode,
+  pickerHint,
+  visible,
+  onControlsEnter,
+  onControlsLeave,
 }: Props) {
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -112,50 +222,18 @@ export function PlayerControls({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
-  /** 悬浮层可见性：播放中无操作 3 秒后隐藏 */
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 面板/浮层开合在全局播放 store：切集/切剧重挂载不丢
+  const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
+  const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
+  const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
+  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
+  const danmakuPanelRef = useRef<HTMLDivElement | null>(null);
 
   /** 拖动进度时不要让 timeupdate 把用户正在拖的位置冲掉 */
   const scrubbing = useRef(false);
 
-  /**
-   * 悬浮层跟随鼠标：进入视频区显示，静止 3 秒后隐藏，移出视频区立刻隐藏。
-   *
-   * 暂停时永远显示——画面停住却把控件也藏了，用户只会以为界面卡死。
-   * 这个「暂停时可见」用派生值算，不在 effect 里同步 setState。
-   */
-  const chromeShown = paused || chromeVisible;
-
-  const showChrome = useCallback(() => {
-    setChromeVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setChromeVisible(false), HIDE_DELAY_MS);
-  }, []);
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage || paused) {
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      return;
-    }
-
-    // 初始状态就是可见的，这里只启动倒计时（不在 effect 里同步 setState）
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setChromeVisible(false), HIDE_DELAY_MS);
-
-    const onLeave = () => setChromeVisible(false);
-    stage.addEventListener('mousemove', showChrome);
-    stage.addEventListener('mouseenter', showChrome);
-    stage.addEventListener('mouseleave', onLeave);
-
-    return () => {
-      stage.removeEventListener('mousemove', showChrome);
-      stage.removeEventListener('mouseenter', showChrome);
-      stage.removeEventListener('mouseleave', onLeave);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-  }, [paused, showChrome, stageRef]);
+  /** 当前集的 vid（发弹幕对象；档案未就绪为空串，发送时 guard） */
+  const currentVid = episodes.find((e) => e.vidIndex === currentIndex)?.vid ?? '';
 
   useEffect(() => {
     const video = videoRef.current;
@@ -243,16 +321,6 @@ export function PlayerControls({
     else void stage.requestFullscreen().catch(() => undefined);
   }, [stageRef]);
 
-  // 画中画不是所有 WebView2 版本都支持，不支持就别摆一个点了的按钮
-  const pipSupported = document.pictureInPictureEnabled === true;
-
-  const togglePip = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (document.pictureInPictureElement) void document.exitPictureInPicture();
-    else void video.requestPictureInPicture().catch(() => undefined);
-  }, [videoRef]);
-
   const applyRate = useCallback(
     (next: number) => {
       const video = videoRef.current;
@@ -262,17 +330,39 @@ export function PlayerControls({
     [videoRef],
   );
 
+  // 弹幕面板点外部关闭（面板在 ref 容器里，拖滑条不会误关）
+  useEffect(() => {
+    if (!danmakuPanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!danmakuPanelRef.current?.contains(e.target as Node)) setDanmakuPanelOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [danmakuPanelOpen, setDanmakuPanelOpen]);
+
+  const setVolumeValue = useCallback(
+    (v: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      video.volume = v;
+      video.muted = v === 0;
+    },
+    [videoRef],
+  );
+
   return (
     <div
+      data-wheel-block
+      onMouseEnter={onControlsEnter}
+      onMouseLeave={onControlsLeave}
       className={cn(
         // 纯悬浮：不要任何底色/渐变蒙版，就一组裸图标压在画面上。
         // 可读性靠白色 + 投影，不靠底板——底板一加就变成一条色块，破坏了画面。
         'absolute inset-x-0 bottom-0 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
         'drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
         'transition-opacity duration-200',
-        chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
+        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
-      onMouseMove={showChrome}
     >
       <ScrubBar
         current={current}
@@ -305,38 +395,15 @@ export function PlayerControls({
           <SkipForward className="size-4" />
         </IconButton>
 
-        <span className="ml-1 font-mono text-xs text-white/90 tabular-nums">
+        <span className="ml-1 shrink-0 font-mono text-xs whitespace-nowrap text-white/90 tabular-nums">
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
-        <div className="ml-auto flex items-center gap-1">
-          <div className="group/vol flex items-center">
-            <IconButton label={t('player.mute')} onClick={toggleMute}>
-              {muted || volume === 0 ? (
-                <VolumeX className="size-4" />
-              ) : (
-                <Volume2 className="size-4" />
-              )}
-            </IconButton>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={muted ? 0 : volume}
-              onChange={(e) => {
-                const video = videoRef.current;
-                if (!video) return;
-                video.volume = Number(e.target.value);
-                video.muted = Number(e.target.value) === 0;
-              }}
-              aria-label={t('player.volume')}
-              // 厂商伪元素样式写在 index.css 的 .volume-range 里，
-              // Tailwind 变体压不住原生 range 的默认蓝色滑块
-              className="volume-range w-0 opacity-0 transition-all group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100"
-            />
-          </div>
+        {/* 弹幕发送框（hgplayer 同款位置：控制栏左段时间之后，常驻）。
+            w-52 在窄舞台下放不下，允许收缩到 w-32，输入框本身 min-w-0 兜底 */}
+        <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
+        <div className="ml-auto flex items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className={cn(CHROME_BUTTON, 'font-mono')}>
@@ -344,7 +411,7 @@ export function PlayerControls({
                 {rate}x
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" data-wheel-block>
               <DropdownMenuLabel>{t('player.playbackRate')}</DropdownMenuLabel>
               {RATES.map((r) => (
                 <DropdownMenuItem key={r} onSelect={() => applyRate(r)}>
@@ -371,7 +438,7 @@ export function PlayerControls({
                 {definition > 0 ? `${definition}P` : t('player.definitionAuto')}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" data-wheel-block>
               <DropdownMenuLabel>{t('player.definition')}</DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => onDefinitionChange(undefined)}>
                 {t('player.definitionAuto')}
@@ -397,6 +464,35 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {immersive && (
+            <div className="relative flex items-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className={CHROME_BUTTON}
+                onClick={() => setSeriesPanelOpen(!seriesPanelOpen)}
+              >
+                <ListVideo className="size-4" />
+                {episodes.length > 0
+                  ? `${t('player.episodes')} · ${tf('player.totalEpisodes', { count: episodes.length })}`
+                  : t('player.episodes')}
+              </Button>
+              {seriesPanelOpen && (
+                // 贴着按钮向上弹（弹幕设置面板同款锚定）。宽度必须写死在
+                // wrapper 上——% 会相对按钮宽度塌缩，8 列网格直接挤死。
+                <div className="absolute right-0 bottom-full mb-3 max-h-[62vh] w-[460px] max-w-[92vw] scrollbar-thin overflow-y-auto">
+                  <EpisodePicker
+                    seriesId={seriesId}
+                    currentIndex={currentIndex}
+                    hint={pickerHint}
+                    onSelect={(idx) => onPickEpisode?.(idx)}
+                    onClose={() => setSeriesPanelOpen(false)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <Button
             variant="ghost"
             size="sm"
@@ -407,11 +503,81 @@ export function PlayerControls({
             {t('player.download')}
           </Button>
 
-          {pipSupported && (
-            <IconButton label={t('player.pictureInPicture')} onClick={togglePip}>
-              <PictureInPicture2 className="size-4" />
+          {/* 小屏播放（对齐 hgplayer）：同一窗口缩成 480×270 落屏幕右下角，
+              播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
+          <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
+            <PictureInPicture2 className="size-4" />
+          </IconButton>
+
+          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
+          <div ref={danmakuPanelRef} className="relative flex items-center">
+            <IconButton
+              label={t('player.danmakuSettings')}
+              onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
+            >
+              <Settings2
+                className={`size-4 ${danmakuPanelOpen ? 'text-white' : 'text-white/70'}`}
+                aria-hidden
+              />
             </IconButton>
-          )}
+            {danmakuPanelOpen && (
+              <div className="absolute right-0 bottom-full mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
+                <div className="flex flex-col gap-4">
+                  <DisplaySlider
+                    label={t('player.danmakuOpacity')}
+                    value={danmakuDisplay.opacity}
+                    min={0.1}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ opacity: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuFontSize')}
+                    value={danmakuDisplay.fontScale}
+                    min={0.5}
+                    max={2}
+                    onChange={(v) => onDanmakuDisplayChange({ fontScale: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuDensity')}
+                    value={danmakuDisplay.density}
+                    min={0}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ density: v })}
+                  />
+                  <DisplaySlider
+                    label={t('player.danmakuArea')}
+                    value={danmakuDisplay.area}
+                    min={0.25}
+                    max={1}
+                    onChange={(v) => onDanmakuDisplayChange({ area: v })}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
+            <MessageSquareText
+              className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
+              aria-hidden
+            />
+          </IconButton>
+
+          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
+              会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起。
+              交互保持逻辑见 VolumePopup（pointer capture 伪 mouseleave 坑）。 */}
+          <VolumePopup
+            volume={volume}
+            muted={muted}
+            onToggleMute={toggleMute}
+            onSetVolume={setVolumeValue}
+          />
+
+          {/* 隐身模式（一只眼睛）：开启后鼠标离开窗口 → 整窗透明 + 暂停，
+              鼠标回来即恢复显示。看不该看的东西时的「闪避键」 */}
+          <IconButton label={t('player.incognito')} onClick={onToggleIncognito}>
+            <Eye className={`size-4 ${incognito ? 'text-white' : 'text-white/55'}`} aria-hidden />
+          </IconButton>
 
           <IconButton label={t('player.fullscreen')} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
@@ -521,6 +687,179 @@ function ScrubBar({
         className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 transition-opacity group-hover/bar:opacity-100"
         style={{ left: `${ratio * 100}%` }}
       />
+    </div>
+  );
+}
+
+/**
+ * 竖向滑条（音量浮层用）。div 自绘而不是 `<input type=range>` 转向：
+ * 竖向 range 的厂商伪元素在 WebView2 上表现不可控，自绘三段（轨道/已填/
+ * 滑块）和 ScrubBar 同一套视觉。
+ */
+function VerticalSlider({
+  value,
+  onChange,
+  label,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  const ratioAt = (clientY: number) => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (rect.height <= 0) return 0;
+    // 竖向：顶部 = 1
+    return Math.min(Math.max(1 - (clientY - rect.top) / rect.height, 0), 1);
+  };
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(value * 100)}
+      tabIndex={0}
+      className="relative h-24 w-6 cursor-pointer"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        onChange(ratioAt(e.clientY));
+      }}
+      onPointerMove={(e) => {
+        if (e.buttons === 1) onChange(ratioAt(e.clientY));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowUp') onChange(Math.min(value + 0.05, 1));
+        if (e.key === 'ArrowDown') onChange(Math.max(value - 0.05, 0));
+      }}
+    >
+      <div className="absolute top-0 bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/25" />
+      <div
+        className="absolute bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white"
+        style={{ height: `${value * 100}%` }}
+      />
+      <div
+        className="absolute left-1/2 size-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white"
+        style={{ bottom: `${value * 100}%` }}
+      />
+    </div>
+  );
+}
+
+/** 弹幕设置面板的一行：label + 百分比 + 白色横滑条（复用 .volume-range 样式）。 */
+function DisplaySlider({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="flex items-center justify-between text-xs text-white/90">
+        {label}
+        <span className="font-mono text-white/70">{Math.round(value * 100)}%</span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={label}
+        className="volume-range w-full"
+      />
+    </label>
+  );
+}
+
+/**
+ * 音量按钮 + 竖条浮层。
+ *
+ * 开合：hover 展开、移出收起——但滑条 `setPointerCapture` 会诱发本层**伪
+ * mouseleave**（点击/拖动音量的一瞬浮层被收走，想从 100 连点到 30 必须
+ * 反复重开）。对策：浮层内任何 pointerdown 置 hold，mouseleave 见 hold
+ * 不收；window pointerup 清 hold 后按指针落点裁决（还在按钮/浮层上就
+ * 保持，出去了才收）。
+ */
+function VolumePopup({
+  volume,
+  muted,
+  onToggleMute,
+  onSetVolume,
+}: {
+  volume: number;
+  muted: boolean;
+  onToggleMute: () => void;
+  onSetVolume: (v: number) => void;
+}) {
+  const volumeOpen = usePlayerStore((s) => s.volumeOpen);
+  const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const holdRef = useRef(false);
+
+  useEffect(() => {
+    const onUp = (e: PointerEvent) => {
+      if (!holdRef.current) return;
+      holdRef.current = false;
+      const { clientX: x, clientY: y } = e;
+      // capture 释放要等事件派发完：推一拍再查落点，elementFromPoint 才准
+      setTimeout(() => {
+        const hit = document.elementFromPoint(x, y);
+        const inside = hit != null && wrapRef.current?.contains(hit);
+        if (!inside) setVolumeOpen(false);
+      }, 0);
+    };
+    window.addEventListener('pointerup', onUp);
+    return () => window.removeEventListener('pointerup', onUp);
+  }, [setVolumeOpen]);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="relative flex items-center"
+      onMouseEnter={() => setVolumeOpen(true)}
+      onMouseLeave={() => {
+        if (holdRef.current) return;
+        setVolumeOpen(false);
+      }}
+    >
+      <IconButton label={t('player.mute')} onClick={onToggleMute}>
+        {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+      </IconButton>
+      {volumeOpen && (
+        // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
+        // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
+        // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
+        // 视觉留白放进浮层自己的 padding 里。
+        <div
+          className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm"
+          onPointerDownCapture={() => {
+            holdRef.current = true;
+          }}
+        >
+          <div className="mb-1 text-center font-mono text-[10px] text-white/90">
+            {Math.round((muted ? 0 : volume) * 100)}
+          </div>
+          <VerticalSlider
+            value={muted ? 0 : volume}
+            onChange={onSetVolume}
+            label={t('player.volume')}
+          />
+        </div>
+      )}
     </div>
   );
 }

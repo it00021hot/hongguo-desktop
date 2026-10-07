@@ -7,5 +7,10 @@
 
 use crate::domain::model::MergeTask;
 
-/// 一集完成时上报一次。
-pub type ProgressSink = std::sync::Arc<dyn Fn(usize, usize, &MergeTask) + Send + Sync>;
+/// 进度跨过步进时上报。
+///
+/// `done` 是整体「已完成集数」的**小数口径**：集内实时进度折进小数部分
+/// （1.35 = 第 2 集转了 35%），上层用它算百分比。`total` 是参与合并的集数——
+/// 任务登记时还数不出来（要等合并内部盘点输入），只有上报里带得出来，
+/// 上层顺手拿它填 `episode_count`。
+pub type ProgressSink = std::sync::Arc<dyn Fn(f64, usize, &MergeTask) + Send + Sync>;

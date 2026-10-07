@@ -1,11 +1,13 @@
 //! 转码流水线编排。
 //!
 //! 分流策略（整个媒体层的关键决策）：
+//! - **平台原生硬编可用**（VideoToolbox / Media Foundation）→ 接近实时
 //! - **装了 ffmpeg** → 用 ffmpeg，有硬件编码器时接近实时
-//! - **没装 ffmpeg** → 纯 Rust（`rusty_h265` + `rusty_h264` + `muxide`），零外部依赖
+//! - **都没有** → 纯 Rust（`rusty_h265` + `rusty_h264` + `muxide`），零外部依赖
 //!
-//! 两条路都产出 H.264 MP4，对上层完全一致；ffmpeg 存在但这次失败时
-//! 也会自动回落软解，不让用户卡死。
+//! 三条路都产出 H.264 MP4，对上层完全一致；上游失败时自动落回下一条，
+//! 不让用户卡死。实际走了哪条由 [`crate::media::Backend`] 报告，谁都不许
+//! 再拿字符串猜。
 //!
 //! 谁在用：合并功能的「兼容格式合并」（`merge_service::compat`）与播放兼容兜底。
 
@@ -42,40 +44,72 @@ pub fn transcode(
             output_size: meta.map(|m| m.len()).unwrap_or(0),
             elapsed_ms: 0,
             frames: 0,
-            decoder: crate::media::backend_info().transcode_with,
+            decoder: crate::media::capability::selected_backend()
+                .decoder_label()
+                .to_string(),
             encoder: String::new(),
+            backend: crate::media::capability::selected_backend(),
         });
     }
 
     let started = std::time::Instant::now();
     let target = cache::cache_file(series_id, vid_index);
 
-    // 分流 1：ffmpeg（含硬编码器）
-    let mut used_ffmpeg = false;
-    if let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
-        let req = crate::media::ffmpeg::TranscodeRequest {
+    // 分流 1：平台原生硬编（VideoToolbox / Media Foundation）。
+    // 不依赖用户装任何东西，随 GPU 驱动/系统提供；探测失败会静默落回 ffmpeg。
+    let mut backend = crate::media::Backend::Rust;
+    if let Some(done) =
+        crate::media::platform::transcode_h264(&crate::media::platform::PlatformRequest {
             input: source,
             output: &target,
             scale_to,
             on_progress,
-        };
-        match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
+        })
+    {
+        match done {
             Ok(()) => {
-                // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
-                // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
                 if output_is_playable(&target) {
-                    used_ffmpeg = true;
+                    backend = crate::media::Backend::Platform;
                 } else {
-                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
+                    log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
                     let _ = std::fs::remove_file(&target);
                 }
             }
-            Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
+            Err(e) => log::warn!("[Transcode] 平台硬编失败，尝试下一条路: {e}"),
         }
     }
 
-    // 分流 2：纯 Rust 软解
-    if !used_ffmpeg {
+    // 分流 2：ffmpeg（含硬编码器）
+    if backend == crate::media::Backend::Rust {
+        if let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
+            let req = crate::media::ffmpeg::TranscodeRequest {
+                input: source,
+                output: &target,
+                scale_to,
+                on_progress,
+            };
+            match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
+                Ok(()) => {
+                    // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
+                    // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
+                    if output_is_playable(&target) {
+                        backend = if encoder.hardware {
+                            crate::media::Backend::FfmpegHw
+                        } else {
+                            crate::media::Backend::FfmpegSw
+                        };
+                    } else {
+                        log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
+                        let _ = std::fs::remove_file(&target);
+                    }
+                }
+                Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
+            }
+        }
+    }
+
+    // 分流 3：纯 Rust 软解
+    if backend == crate::media::Backend::Rust {
         // 源不是 HEVC 时在这里就把话说清楚。不加这道闸，错误会一路推迟到
         // `media::transcode` 内部才抛「不是 HEVC 轨」，用户既不知道为什么
         // 失败，也不知道装 ffmpeg 能解决。
@@ -86,22 +120,20 @@ pub fn transcode(
 
     cache::trim();
 
-    let backend = crate::media::backend_info();
+    let backend_info = crate::media::ffmpeg::backend_info();
     Ok(TranscodeResult {
         output_size: std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0),
         output_path: target.to_string_lossy().to_string(),
         elapsed_ms: started.elapsed().as_millis(),
         frames: 0,
-        decoder: if used_ffmpeg {
-            backend.transcode_with
-        } else {
-            "rusty_h265".to_string()
+        decoder: backend.decoder_label().to_string(),
+        encoder: match backend {
+            crate::media::Backend::FfmpegHw | crate::media::Backend::FfmpegSw => {
+                backend_info.encoder
+            }
+            _ => String::new(),
         },
-        encoder: if used_ffmpeg {
-            backend.encoder
-        } else {
-            "rusty_h264".to_string()
-        },
+        backend,
     })
 }
 
@@ -110,6 +142,16 @@ pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     let tracks = crate::media::demux::demux_file(path).ok()?;
     let v = tracks.video_track()?;
     (v.info.width > 0 && v.info.height > 0).then_some((v.info.width, v.info.height))
+}
+
+/// 源分集的总时长（秒）。把 [`transcode`] 的「已编码秒数」回调折成集内比例
+/// 时要用它做分母；读不出来（坏文件/无视频轨）返回 `None`。
+pub fn episode_seconds(path: &Path) -> Option<f64> {
+    let demuxed = crate::media::demux::demux_file(path).ok()?;
+    let v = demuxed.video_track()?;
+    let fps = v.info.average_framerate().filter(|f| *f > 0.0)?;
+    let n = v.info.samples.len();
+    (n > 0).then_some(n as f64 / fps)
 }
 
 /// 转码产物是否真的可播：能解复用且有视频样本。
@@ -158,15 +200,12 @@ mod tests {
     #[test]
     fn audio_only_output_is_not_playable() {
         use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
-        let dir = std::env::temp_dir()
-            .join(format!("hg-pipeline-audio-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hg-pipeline-audio-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("audio.mp4");
         std::fs::write(&p, mp4_with_samples(&[TrackPlan::audio(vec![vec![0, 0]])])).unwrap();
-        assert!(
-            !output_is_playable(&p),
-            "没有视频样本的产物不能当转码成功"
-        );
+        assert!(!output_is_playable(&p), "没有视频样本的产物不能当转码成功");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+

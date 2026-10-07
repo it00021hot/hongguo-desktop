@@ -1,17 +1,16 @@
-//! ffmpeg 可选加速。
+//! ffmpeg 可选加速（分流链的第二层）。
 //!
-//! 设计取舍：**装了 ffmpeg 就用它，没装就纯 Rust 软解**。
+//! 完整分流顺序见 [`crate::service::transcode_service::pipeline`]：
+//! **平台硬编（`media::platform`）→ ffmpeg → 纯 Rust 软解**。本模块只负责
+//! 中间那层：
 //!
 //! - 有 ffmpeg：HEVC → H.264 转码交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码，
 //!   速度接近实时。触发点只有「兼容合并」与「播放兼容兜底」两个。
-//! - 无 ffmpeg：完全回落到 `rusty_h265` + `rusty_h264` + `muxide`，
+//! - 无 ffmpeg：落回 `rusty_h265` + `rusty_h264` + `muxide`，
 //!   零外部依赖、纯 Rust，只是软解慢一些。
 //!
 //! 快速合并**不经过这里**：它走 `media::remux` 的纯 Rust 索引重写拼接，
-//! 无论装没装 ffmpeg 都不调它。
-//!
-//! 这样既保留了「不依赖额外软件」的特性，又让愿意装 ffmpeg 的用户拿到硬解速度，
-//! 且不必为每个平台写无法验证的 VideoToolbox / Media Foundation FFI。
+//! 任何后端都不调它。
 //!
 //! 探测结果全局缓存，只查一次。
 
@@ -49,6 +48,7 @@ const SOFTWARE_ENCODERS: &[&str] = &["libx264", "h264_mf"];
 /// winget 的包目录形如
 /// `Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-9.0.2-full_build/bin/ffmpeg.exe`，
 /// 中间隔了两层；给 6 足够宽松，又不至于在异常深的目录上空转。
+#[cfg(target_os = "windows")]
 const WINGET_SCAN_DEPTH: usize = 6;
 
 fn detect() -> Option<PathBuf> {
@@ -382,4 +382,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
-

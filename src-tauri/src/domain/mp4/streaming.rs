@@ -246,12 +246,8 @@ pub fn locate_moov(buf: &[u8], base: u64, file_len: u64) -> Option<(u64, u64)> {
     let mut pos = 0usize;
     while let Some(rel) = find_fourcc(buf, b"moov", pos) {
         if rel >= 4 {
-            let size = u32::from_be_bytes([
-                buf[rel - 4],
-                buf[rel - 3],
-                buf[rel - 2],
-                buf[rel - 1],
-            ]) as u64;
+            let size =
+                u32::from_be_bytes([buf[rel - 4], buf[rel - 3], buf[rel - 2], buf[rel - 1]]) as u64;
             // size 为 0（到末尾）或 1（largesize）的 moov 罕见到不必支持
             if size >= 8 {
                 let abs = base + (rel - 4) as u64;
@@ -274,6 +270,44 @@ fn find_fourcc(buf: &[u8], needle: &[u8; 4], from: usize) -> Option<usize> {
         return None;
     }
     (from..=buf.len() - needle.len()).find(|&i| &buf[i..i + needle.len()] == needle)
+}
+
+/// 解析一段**从盒边界开始**的顶层盒表，返回最后一个「头部完整」的盒的
+/// 结束偏移（绝对坐标 = `base + 头部推算出的盒尾`）。
+///
+/// 盒本体允许伸出缓冲外——mdat 的 size 写在 8 字节头里，256KB 首探就
+/// 足够算出「mdat 之后 = 尾部 moov 的落点」，这正是 hgplayer 盒游走
+/// `it(f, f+64*1024)` 的跳转依据。size==1 按 largesize（16 字节头）解析；
+/// size==0（到 EOF）视同解析终止（hgplayer 的 Ht 同样不认）。
+pub fn top_boxes_end(buf: &[u8], base: u64) -> Option<u64> {
+    let mut pos = 0usize;
+    let mut end = base;
+    while pos + 8 <= buf.len() {
+        let mut size =
+            u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as u64;
+        let header = if size == 1 {
+            if pos + 16 > buf.len() {
+                break;
+            }
+            let mut wide = [0u8; 8];
+            wide.copy_from_slice(&buf[pos + 8..pos + 16]);
+            size = u64::from_be_bytes(wide);
+            16u64
+        } else {
+            8u64
+        };
+        // size==0（到 EOF）或损坏头：后面没法定位，就此打住
+        if size < header {
+            break;
+        }
+        end = base.saturating_add(pos as u64).saturating_add(size);
+        pos += size as usize;
+        // 盒体伸出缓冲（典型：256KB 首探里的巨型 mdat）——头部已算完
+        if pos > buf.len() {
+            break;
+        }
+    }
+    (end > base).then_some(end)
 }
 
 // ---------------------------------------------------------------- 稀疏缓冲
@@ -394,6 +428,62 @@ fn merge_run(runs: &mut Vec<(u64, u64)>, start: u64, end: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 造一个顶层盒字节段：`[size:4][type:4]` + size 大小的本体。
+    fn box_bytes(size: u64, kind: &[u8; 4], body_fill: u8) -> Vec<u8> {
+        let mut v = (size as u32).to_be_bytes().to_vec();
+        v.extend_from_slice(kind);
+        v.resize(v.len() + size.saturating_sub(8) as usize, body_fill);
+        v
+    }
+
+    #[test]
+    fn top_boxes_end_computes_mdat_end_from_header_alone() {
+        // 尾-moov 布局：ftyp(32) + 巨型 mdat(1_000_000) —— 缓冲里只有 mdat 头，
+        // 盒尾仍应从头部 size 算出（256KB 首探定位尾部 moov 的关键）
+        let mut buf = box_bytes(32, b"ftyp", 0);
+        buf.extend(box_bytes(1_000_000, b"mdat", 0)); // 本体被截断
+        assert_eq!(top_boxes_end(&buf, 0), Some(32 + 1_000_000));
+    }
+
+    #[test]
+    fn top_boxes_end_walks_complete_boxes() {
+        let mut buf = box_bytes(20, b"ftyp", 1);
+        buf.extend(box_bytes(40, b"free", 2));
+        buf.extend(box_bytes(60, b"mdat", 3));
+        assert_eq!(top_boxes_end(&buf, 0), Some(120));
+        // 非零 base（游走的第二段）：绝对坐标
+        assert_eq!(top_boxes_end(&buf, 5000), Some(5120));
+    }
+
+    #[test]
+    fn top_boxes_end_stops_on_zero_size_box() {
+        // size==0（到 EOF）不支持，视同解析终止：只算到前一个盒的尾
+        let mut buf = box_bytes(16, b"ftyp", 0);
+        let mut zero = 0u32.to_be_bytes().to_vec();
+        zero.extend_from_slice(b"mdat");
+        zero.extend_from_slice(&[0u8; 8]);
+        buf.extend(zero);
+        assert_eq!(top_boxes_end(&buf, 0), Some(16));
+    }
+
+    #[test]
+    fn top_boxes_end_parses_largesize_header() {
+        // size==1 → largesize(u64)：16 字节头，本体允许伸出缓冲
+        let mut v = 1u32.to_be_bytes().to_vec();
+        v.extend_from_slice(b"mdat");
+        v.extend_from_slice(&100_000u64.to_be_bytes());
+        v.extend_from_slice(&[0u8; 32]);
+        assert_eq!(top_boxes_end(&v, 0), Some(100_000));
+    }
+
+    #[test]
+    fn top_boxes_end_rejects_garbage() {
+        assert_eq!(top_boxes_end(&[], 0), None);
+        assert_eq!(top_boxes_end(&[1, 2, 3], 0), None);
+        // 头部 size 小于 8：损坏，解析终止
+        assert_eq!(top_boxes_end(&[0, 0, 0, 4, b'm', 0, 0, 0], 0), None);
+    }
 
     #[test]
     fn sparse_buffer_tracks_runs() {

@@ -56,8 +56,7 @@ pub fn delete_all(state: &State<'_, AppState>) -> AppResult<usize> {
     let mut n = 0;
     let series: Vec<String> = state
         .store
-        .read()
-        .series
+        .series_all()?
         .iter()
         .map(|s| s.series_id.clone())
         .collect();
@@ -71,9 +70,10 @@ pub fn delete_all(state: &State<'_, AppState>) -> AppResult<usize> {
 fn cleanup_merge_artifacts(state: &State<'_, AppState>, series_id: &str) {
     let title = state
         .store
-        .read()
-        .series(series_id)
-        .map(|s| s.title.clone())
+        .series_by_id(series_id)
+        .ok()
+        .flatten()
+        .map(|s| s.title)
         .unwrap_or_default();
     let dir = state.settings().series_dir(&title);
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -91,9 +91,10 @@ fn cleanup_merge_artifacts(state: &State<'_, AppState>, series_id: &str) {
 fn remove_empty_series_dir(state: &State<'_, AppState>, series_id: &str) {
     let title = state
         .store
-        .read()
-        .series(series_id)
-        .map(|s| s.title.clone())
+        .series_by_id(series_id)
+        .ok()
+        .flatten()
+        .map(|s| s.title)
         .unwrap_or_default();
     let dir = state.settings().series_dir(&title);
     if std::fs::read_dir(&dir)

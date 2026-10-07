@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { FolderOpen, Cpu, Zap, Copy, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -27,10 +27,11 @@ import { app as appApi, transcode as transcodeApi } from '@/lib/ipc/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { DecodeCapability, Settings } from '@/lib/schema';
+import { AccountCard } from './account-card';
 
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
 export function SettingsPage() {
-  const { data: loaded, isPending } = useSettings();
+  const { data: loaded, isPending, refetch: refetchSettings } = useSettings();
   const saveMutation = useSaveSettings();
   const { data: capability } = useDecodeCapability();
   const redetect = useRedetectCapability();
@@ -75,11 +76,13 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+      {/* 账户（短信登录） */}
+      <AccountCard account={current.account ?? null} onChanged={() => void refetchSettings()} />
+
       {/* 目录 */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t('settings.downloadDir')}</CardTitle>
-          <CardDescription>{t('settings.downloadDirDesc')}</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2">
           <Input
@@ -220,7 +223,7 @@ export function SettingsPage() {
             <span>{t('settings.transcodeBackend')}</span>
             <Badge
               variant={
-                capability?.h264HwEncoder
+                capability?.platformHwEncoder || capability?.h264HwEncoder
                   ? 'success'
                   : capability?.hasFfmpeg
                     ? 'warning'
@@ -311,7 +314,7 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="sticky bottom-4 flex justify-end">
+      <div className="flex justify-end">
         <Button onClick={submit} disabled={saveMutation.isPending}>
           {t('settings.save')}
         </Button>
@@ -328,9 +331,11 @@ export function SettingsPage() {
  */
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
-  if (!cap.hasFfmpeg) return t('settings.backendRust');
-  if (cap.h264HwEncoder) return t('settings.backendFfmpegHw');
-  return t('settings.backendFfmpegSw');
+  // 平台硬编（VideoToolbox / Media Foundation）与 ffmpeg 硬编同为「硬件加速」档：
+  // 标签按速度分档，不按实现分。
+  if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
+  if (cap.hasFfmpeg) return t('settings.backendFfmpegSw');
+  return t('settings.backendRust');
 }
 
 function ToggleRow({

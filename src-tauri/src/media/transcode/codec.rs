@@ -37,6 +37,7 @@ pub(super) fn decode_and_encode(
     length_size: usize,
     samples: &[(u64, u64)],
     options: &TranscodeOptions,
+    timing: &super::SourceTiming,
 ) -> AppResult<Encoded> {
     use rusty_h265::Decoder;
 
@@ -56,12 +57,14 @@ pub(super) fn decode_and_encode(
 
     // 把解码器当前可输出的帧全部喂进编码器。
     // `next_frame()` 返回 Err::Again 只是「暂时没有更多帧」，不是错误。
+    #[allow(clippy::too_many_arguments)]
     let drain = |decoder: &mut Decoder,
                  encoder: &mut Option<EncoderState>,
                  units: &mut Vec<(f64, Vec<u8>, bool)>,
                  width: &mut usize,
                  height: &mut usize,
-                 frame_index: &mut usize|
+                 frame_index: &mut usize,
+                 timing: &super::SourceTiming|
      -> AppResult<()> {
         while let Ok(frame) = decoder.next_frame() {
             if *width == 0 {
@@ -73,7 +76,11 @@ pub(super) fn decode_and_encode(
                 *encoder = Some(EncoderState::new(*width, *height, options)?);
             }
             let enc = encoder.as_mut().expect("上一行刚建好");
-            enc.push(&yuv, *frame_index, units);
+            // 推入样本时给的样本号会被解码器原样带回（B 帧重排也不乱），
+            // 用它索引源时间轴得到该帧的真实显示时间
+            let src = frame.pts.filter(|&i| i >= 0).map(|i| i as usize);
+            let pts = src.and_then(|i| timing.pts.get(i).copied());
+            enc.push(&yuv, pts, *frame_index, units);
             *frame_index += 1;
             // yuv 不出这个作用域就释放，不会在 Vec 里累积——这正是流水的意义
         }
@@ -102,6 +109,7 @@ pub(super) fn decode_and_encode(
             &mut width,
             &mut height,
             &mut frame_index,
+            timing,
         )?;
     }
 
@@ -113,6 +121,7 @@ pub(super) fn decode_and_encode(
         &mut width,
         &mut height,
         &mut frame_index,
+        timing,
     )?;
 
     if width == 0 || height == 0 {
@@ -142,6 +151,9 @@ struct EncoderState {
     height: usize,
     framerate: f32,
     gop: u64,
+    /// 已写入产物的前一帧显示时间。封装层要求严格递增，畸形源
+    /// （delta=0 的 stts、异常 ctts）可能给出重复或回退的时间，这里顶开
+    last_pts: Option<f64>,
 }
 
 impl EncoderState {
@@ -174,11 +186,21 @@ impl EncoderState {
             height: h,
             framerate,
             gop: u64::from(options.gop_size.max(1)),
+            last_pts: None,
         })
     }
 
     /// 喂一帧。用 `encode_planes` 直接借平面，避开 `YuvFrame` 的整帧复制。
-    fn push(&mut self, yuv: &YuvFrame, index: usize, units: &mut Vec<(f64, Vec<u8>, bool)>) {
+    ///
+    /// `pts` 是源时间轴上该帧的显示时间（秒）；`None` = 源没有时间轴，
+    /// 回落到「帧号 / 帧率」的合成时间。
+    fn push(
+        &mut self,
+        yuv: &YuvFrame,
+        pts: Option<f64>,
+        index: usize,
+        units: &mut Vec<(f64, Vec<u8>, bool)>,
+    ) {
         let (y, u, v, _sy, _sc) = yuv;
         let (w, h) = (self.width, self.height);
         // 尺寸与编码器不匹配时（解码分辨率变化）跳过并记日志
@@ -198,10 +220,18 @@ impl EncoderState {
             stride_y: w,
             stride_c: w / 2,
         };
-        let pts = index as f64 / f64::from(self.framerate);
+        let pts = pts.unwrap_or_else(|| index as f64 / f64::from(self.framerate));
         let au = self.inner.encode_planes(&planes).unwrap_or_default();
         if !au.is_empty() {
+            // 关键帧判定跟的是**编码器自己的 GOP**（scenecut=0 时 IDP 只按
+            // gop_size 落），标错会让封装层把不可独立解码的帧标成同步样本
             let is_keyframe = index == 0 || (index as u64).is_multiple_of(self.gop);
+            // 输出按显示序应递增；回退/重复的时间按半帧顶开（封装层的硬要求）
+            let pts = match self.last_pts {
+                Some(prev) if pts <= prev => prev + 0.5 / f64::from(self.framerate),
+                _ => pts,
+            };
+            self.last_pts = Some(pts);
             units.push((pts, au, is_keyframe));
         }
     }
@@ -210,7 +240,7 @@ impl EncoderState {
     fn finish(&mut self, units: &mut Vec<(f64, Vec<u8>, bool)>) {
         let tail = self.inner.flush();
         if !tail.is_empty() {
-            let pts = units.len() as f64 / f64::from(self.framerate);
+            let pts = units.last().map_or(0.0, |(p, _, _)| *p) + 1.0 / f64::from(self.framerate);
             units.push((pts, tail, false));
         }
     }

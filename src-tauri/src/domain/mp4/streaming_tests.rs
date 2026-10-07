@@ -76,11 +76,21 @@ fn build_trak(t: &EncTrack, payload_base: u64) -> Vec<u8> {
     // 单 chunk 装下全部样本：stsc = (first=1, per=样本数)
     let stsc = build_box(
         b"stsc",
-        &cat(&[&[0u8; 4], &u32b(1), &u32b(1), &u32b(t.samples.len() as u32), &u32b(1)]),
+        &cat(&[
+            &[0u8; 4],
+            &u32b(1),
+            &u32b(1),
+            &u32b(t.samples.len() as u32),
+            &u32b(1),
+        ]),
     );
     let stco = build_box(
         b"stco",
-        &cat(&[&[0u8; 4], &u32b(1), &u32b((payload_base + t.rel_offsets[0]) as u32)]),
+        &cat(&[
+            &[0u8; 4],
+            &u32b(1),
+            &u32b((payload_base + t.rel_offsets[0]) as u32),
+        ]),
     );
 
     let mut senc_payload = u32b(t.ivs.len() as u32);
@@ -204,8 +214,7 @@ pub(crate) fn assemble(moov_at_tail: bool) -> (Vec<u8>, Vec<u8>, [u8; 16]) {
 
 /// 从密文里截出 moov 区域（模拟尾部预取 / 头部缓冲）。
 fn moov_region_of(cipher: &[u8]) -> (Vec<u8>, u64) {
-    let (abs, size) = locate_moov(cipher, 0, cipher.len() as u64)
-        .expect("fixture 里应能定位 moov");
+    let (abs, size) = locate_moov(cipher, 0, cipher.len() as u64).expect("fixture 里应能定位 moov");
     (cipher[abs as usize..(abs + size) as usize].to_vec(), abs)
 }
 

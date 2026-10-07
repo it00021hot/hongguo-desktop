@@ -1,28 +1,29 @@
-import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Loader2, Search, SlidersHorizontal, X } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { RefreshShade } from '@/components/refresh-shade';
+import { ResolvingPill } from '@/components/resolving-pill';
+import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
 import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
 import {
-  useBrowseCategories,
-  useBrowseList,
+  useBrowseFeed,
+  useBrowsePanel,
   useDownloadTasks,
   useResolveSeries,
-  useSearch,
+  useSearchSuggest,
+  useSeriesSearchApp,
+  useWebCover,
 } from '@/lib/queries';
+import { usePlayerStore } from '@/lib/stores/player';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
-import type { Series, SeriesCard } from '@/lib/schema';
+import { cn } from '@/lib/utils';
+import type { BrowseFilters, FeedItem, Series, SeriesCard, SuggestItem } from '@/lib/schema';
 
 /**
  * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
@@ -52,21 +53,74 @@ function toRef(series: Series): SeriesRef {
   };
 }
 
+/** App 筛选条目转官网卡形态喂同一块网格。 */
+function toCard(it: FeedItem): SeriesCard {
+  return {
+    seriesId: it.seriesId,
+    seriesTitle: it.title,
+    cover: it.cover,
+    episodeCount: it.episodeCnt,
+    tags: it.tags.slice(0, 3),
+    url: '',
+  };
+}
+
+/** 面板行 type → 行头标签（未知类型回落服务端行名去掉「全部」前缀）。 */
+const FILTER_LABEL_KEYS: Record<string, string> = {
+  genre: 'browse.fGenre',
+  category_dim_theme: 'browse.fTheme',
+  category_dim_role: 'browse.fRole',
+  category_dim_epoch: 'browse.fEpoch',
+  sort: 'browse.fSort',
+  gender: 'browse.fGender',
+  online_time: 'browse.fOnlineTime',
+  duration: 'browse.fDuration',
+};
+
+/** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
+ * 实测 select_items.duration 服务端必认）。 */
+const DURATION_FALLBACK = {
+  rowType: 'duration',
+  rowName: '全部长度',
+  items: [
+    { id: 'duration_0_60', name: '0-60分钟' },
+    { id: 'duration_60_120', name: '60-120分钟' },
+    { id: 'duration_120_plus', name: '120分钟以上' },
+  ],
+};
+
+function withDurationFallback(
+  rows: { rowType: string; rowName: string; items: { id: string; name: string }[] }[],
+) {
+  if (rows.some((r) => r.rowType === 'duration')) return rows;
+  return [...rows, DURATION_FALLBACK];
+}
+
 /**
- * 浏览页：顶部一个搜索框，下面是分类 + 题材分页浏览。
+ * 浏览页：顶部一个搜索框，下面是官方筛选面板 + 结果网格。
  *
- * 搜索与浏览共用同一块结果区（和官网一致）：提交关键词就原地切成搜索结果，
- * 清空或退出就回到分类列表，不再单独开一个搜索页。
+ * 数据走官方 App 的找剧接口（landpage 筛选面板 + 多维 select_items），
+ * 与第三方客户端同款：体裁/主题/设定/背景/推荐/受众/时间/长度八行，
+ * 每行单选，「全部」即空选；选项表随服务端下发，不写死。
  *
- * 搜索框同时是链接/ID 入口，删掉独立下载页后「粘贴分享链接」没有别的落点。
+ * 搜索与浏览共用同一块结果区：提交关键词就原地切成搜索结果，
+ * 清空或退出就回到筛选列表。
  */
 export function BrowsePage() {
-  // 分类与题材直接读 zustand：本地 useState 拷贝只在首次挂载时取一次初值，
-  // 写成 state 就和 store 里的真值分家了。
-  const category = useUiStore((s) => s.lastCategory);
-  const genre = useUiStore((s) => s.lastGenre);
-  const setFilter = useUiStore((s) => s.setBrowseFilter);
-  const [page, setPage] = useState(1);
+  const navigate = useNavigate();
+  const setTarget = usePlayerStore((s) => s.setTarget);
+  const filtersCollapsed = useUiStore((s) => s.browseFiltersCollapsed);
+  const setBrowseFiltersCollapsed = useUiStore((s) => s.setBrowseFiltersCollapsed);
+  const [filters, setFilters] = useState<BrowseFilters>({
+    genre: '',
+    theme: '',
+    role: '',
+    epoch: '',
+    sort: '',
+    gender: '',
+    onlineTime: '',
+    duration: '',
+  });
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const [keyword, setKeyword] = useState('');
@@ -74,22 +128,107 @@ export function BrowsePage() {
   const [submitted, setSubmitted] = useState('');
   const searching = submitted !== '';
 
-  const { data: categories } = useBrowseCategories();
-  const browse = useBrowseList(category, genre, page);
-  const found = useSearch(submitted);
+  // ---- 输入联想（hgplayer 1.1.6 同款）：停 300ms 才发请求，
+  //      有 seriesId 的条目点击直进播放器，纯词条目回填发起搜索 ----
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(keyword), 300);
+    return () => clearTimeout(timer);
+  }, [keyword]);
+  const suggest = useSearchSuggest(debounced);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  const suggestions = suggest.data ?? [];
+  const showSuggest =
+    suggestOpen &&
+    !searching &&
+    keyword.trim().length >= 2 &&
+    keyword === debounced &&
+    suggestions.length > 0;
+  const pickSuggest = (item: SuggestItem) => {
+    setSuggestOpen(false);
+    if (item.seriesId) {
+      setTarget(item.seriesId, 1);
+      void navigate({ to: '/player' });
+      return;
+    }
+    setKeyword(item.word);
+    setSubmitted(item.word);
+  };
+
+  const panel = useBrowsePanel();
+  // 找剧流（无限滚动）：session_id 游标翻页，与 hgplayer 同款
+  const browse = useBrowseFeed(filters);
+  // 找剧搜索走官方 App API（站内官网搜索只匹配剧名且结果少；
+  // App 搜索是综合 tab，首页精选 + 翻页全量）
+  const found = useSeriesSearchApp(submitted);
   const { data: tasks } = useDownloadTasks();
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
-  // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来
-  const cards = searching ? (found.data?.results ?? []) : (browse.data?.results ?? []);
-  // 换分类/题材时 queryKey 变了，但 placeholderData 把上一份结果留着，
-  // 此时 isPending 是 false（手里有占位数据），isFetching 才表示真的在等。
-  // 只看 isPending 的话，点完筛选界面还是上一个分类的卡片、连骨架屏都不出 ——
-  // 用户看到的就是「点了半天什么都没发生」。
-  const pending = searching
-    ? found.isPending
-    : browse.isPending || (browse.isPlaceholderData && browse.isFetching);
-  const failed = searching ? found.isError : browse.isError;
+  // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来。
+  // App 搜索条目转成官网卡形态喂同一块网格：subTitle（"脑洞·全273集"）
+  // 首段当题材 tag，url 无处消费填空串。
+  const cards = useMemo(() => {
+    if (!searching) return browse.items.map(toCard);
+    return found.items.map((it) => ({
+      seriesId: it.seriesId,
+      seriesTitle: it.title,
+      cover: it.cover,
+      episodeCount: it.episodeCnt,
+      tags: it.subTitle.split('·').slice(0, 1).filter(Boolean),
+      url: '',
+    }));
+  }, [searching, browse.items, found.items]);
+  const pending = searching ? found.isLoading : browse.isLoading;
+  const refreshing = searching ? found.isRefreshing : browse.isRefreshing;
+  const failed = searching ? found.error !== null : browse.error !== null;
+  // 提交按钮态：同一关键词还在搜索中就灰掉防连点；改了词不拦（允许直接重提）
+  const resubmitting = searching && found.isLoading && keyword.trim() === submitted;
+
+  // 哨兵触发用的最新流状态镜像（browse 每次渲染是新对象）
+  const browseRef = useRef(browse);
+  useEffect(() => {
+    browseRef.current = browse;
+  });
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const b = browseRef.current;
+        if (
+          entries[0]?.isIntersecting &&
+          !searching &&
+          b.items.length > 0 &&
+          !b.isLoading &&
+          !b.isFetchingMore
+        ) {
+          void b.loadMore();
+        }
+      },
+      { rootMargin: '400px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+    // searching 进 deps：回调闭包里的它必须与当前模式同步，否则搜索中
+    // 哨兵还会用旧值触发分类流的 loadMore；重建 observer 的代价可忽略
+  }, [searching]);
+
+  // App 搜索首页是「精选」少数条目，hasMore 翻页才是全量列表；
+  // 结果还很少时自动续拉一页，避免用户看到 4 条就以为搜完了。
+  const searchStateRef = useRef(found);
+  useEffect(() => {
+    searchStateRef.current = found;
+  });
+  useEffect(() => {
+    if (!searching) return;
+    const f = searchStateRef.current;
+    if (f.hasMore && !f.isLoading && !f.isFetchingMore && f.items.length < 18) {
+      void f.loadMore();
+    }
+    // items.length 变化会再次进入：靠 isFetchingMore 挡住并发，靠 hasMore 收尾
+  }, [searching, found.items.length]);
 
   // 已下载集数：按剧聚合，供卡片角标使用
   const downloadedMap = useMemo(() => {
@@ -101,33 +240,31 @@ export function BrowsePage() {
     return map;
   }, [tasks]);
 
-  // 分类与题材来自嗅探结果里的 meta
-  const genres = browse.data?.meta.genres ?? [];
-  const totalPages = browse.data?.meta.totalPages ?? 0;
-  const total = searching ? cards.length : (browse.data?.meta.total ?? 0);
+  const total = cards.length;
 
+  // 退出搜索：置空提交词即可——浏览结果在 Query 缓存里秒回，
+  // 搜索结果留在缓存，重复搜索同一关键词也秒出不再重拉
   const exitSearch = () => {
     setSubmitted('');
     setKeyword('');
   };
 
-  const handleCategory = (slug: string) => {
-    exitSearch();
-    setPage(1);
-    setFilter(slug, '');
-  };
+  /** 已选筛选条件数（折叠徽标用；空选=全部不计） */
+  const activeFilterCount = useMemo(
+    () => Object.values(filters).filter((v) => v !== '').length,
+    [filters],
+  );
 
-  const handleGenre = (slug: string) => {
-    setPage(1);
-    setFilter(category, slug === 'all' ? '' : slug);
+  const pick = (key: keyof BrowseFilters, value: string) => {
+    setFilters((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
   };
 
   // 链接/ID 直接解析并打开详情抽屉，抽屉内部会自己拉分集。
   // 解析前先退出搜索模式，否则解析成功后列表还停在上一轮搜索结果上。
+  // 关键词搜索只改提交词：useSeriesSearchApp 随 queryKey 自动发起请求。
   const handleSubmit = () => {
     const value = keyword.trim();
     if (!value) return;
-    setPage(1);
     if (detectInput(value) === 'keyword') {
       setSubmitted(value);
       return;
@@ -143,29 +280,89 @@ export function BrowsePage() {
   // 换剧时整体换掉、关闭时整体丢掉，两个场景共用这一处重置。
   const openDetail = (card: SeriesRef) => setDetail({ card, selected: [] });
 
-  // 点卡片只打开详情抽屉：选集、立即播放、提交下载都在抽屉里做。
-  // 这里再顺手跳转的话，抽屉会「刚打开就被路由切走」，用户连集数都来不及点。
-  const handleSelect = (card: SeriesCard) => openDetail(card);
+  // 点卡片先解析、拿到分集再开抽屉（与首页信息流同一交互）：
+  // 直接开抽屉的话，冷门剧的分集请求要几秒，用户面对的是一屏骨架
+  // 不知道在等什么；先给底部气泡，抽屉一开就是完整内容。
+  // 已解析过的剧在档案里直接命中，走这条路不增加可感知延迟。
+  const handleSelect = (card: SeriesCard) => {
+    resolve(card.seriesId, {
+      onSuccess: (series) =>
+        openDetail({
+          seriesId: series.seriesId,
+          seriesTitle: series.title,
+          // 解析结果可能带换好的 webp 封面，卡片原封面兜底
+          cover: series.cover || card.cover,
+          episodeCount: series.episodeCount || card.episodeCount,
+          tags: series.tags.length > 0 ? series.tags : card.tags,
+        }),
+      onError: (e) => toast.error(t('common.resolveFailed'), { description: e.message }),
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4 p-6">
       <div className="flex flex-wrap items-center gap-2">
         <form
-          className="flex min-w-64 flex-1 gap-2"
+          className="relative flex min-w-64 flex-1 gap-2"
           onSubmit={(e) => {
             e.preventDefault();
+            setSuggestOpen(false);
             handleSubmit();
           }}
         >
-          <Input
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            placeholder={t('search.placeholder')}
-            aria-label={t('search.placeholder')}
-            className="min-w-48 flex-1"
-          />
-          <Button type="submit" disabled={!keyword.trim() || resolving}>
-            <Search className="size-4" />
+          <div className="relative min-w-48 flex-1">
+            <Input
+              value={keyword}
+              onChange={(e) => {
+                setKeyword(e.target.value);
+                setSuggestOpen(true);
+              }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setSuggestOpen(false)}
+              onKeyDown={(e) => {
+                if (!showSuggest) return;
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSuggestIndex((i) => (i + 1) % suggestions.length);
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSuggestIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+                } else if (e.key === 'Enter') {
+                  // 联想开着时 Enter 选中高亮条目，不再走提交搜索
+                  e.preventDefault();
+                  const picked = suggestions[suggestIndex] ?? suggestions[0];
+                  if (picked) pickSuggest(picked);
+                } else if (e.key === 'Escape') {
+                  setSuggestOpen(false);
+                }
+              }}
+              placeholder={t('search.placeholder')}
+              aria-label={t('search.placeholder')}
+              className="min-w-48 flex-1"
+              autoComplete="off"
+            />
+            {/* 联想下拉：条目用 onMouseDown(preventDefault) 选中——
+                比 blur 早一拍，点条目不会先把下拉收掉 */}
+            {showSuggest && (
+              <div className="bg-popover text-popover-foreground absolute inset-x-0 top-full z-30 mt-1 max-h-80 scrollbar-thin overflow-y-auto rounded-lg border shadow-lg">
+                {suggestions.slice(0, 8).map((item, i) => (
+                  <SuggestRow
+                    key={`${item.word}:${i}`}
+                    item={item}
+                    active={i === suggestIndex}
+                    onHover={() => setSuggestIndex(i)}
+                    onPick={pickSuggest}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          <Button type="submit" disabled={!keyword.trim() || resolving || resubmitting}>
+            {resubmitting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Search className="size-4" />
+            )}
             {t('search.submit')}
           </Button>
           {resolving && (
@@ -181,101 +378,78 @@ export function BrowsePage() {
           )}
         </form>
 
-        {!searching && (
-          <>
-            <Select value={category} onValueChange={handleCategory}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder={t('browse.category')} />
-              </SelectTrigger>
-              <SelectContent>
-                {(categories ?? []).map((c) => (
-                  <SelectItem key={c.slug} value={c.slug}>
-                    {c.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={genre || 'all'} onValueChange={handleGenre}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder={t('browse.allGenres')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('browse.allGenres')}</SelectItem>
-                {genres.map((g) => (
-                  <SelectItem key={g.slug} value={g.slug}>
-                    {g.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </>
+        {!searching && total > 0 && (
+          <span className="text-muted-foreground ml-auto text-sm">
+            {tf('browse.totalCount', { total })}
+          </span>
         )}
-
-        <span className="text-muted-foreground ml-auto text-sm">
-          {searching ? tf('search.resultCount', { total }) : tf('browse.totalCount', { total })}
-        </span>
       </div>
+
+      {/* 官方筛选面板（第三方同款八行，可整块折叠）：选项表服务端下发，
+          空选即「全部」。「长度」行部分设备不下发（2026-10-07 实测），但
+          select_items.duration 服务端必认——缺行时用抓包锁定的选项 id 合成兜底。
+          折叠态只留开关行：徽标显示已选条件数，一键展开不用从头找。 */}
+      {!searching && (
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => setBrowseFiltersCollapsed(!filtersCollapsed)}
+            aria-expanded={!filtersCollapsed}
+            className="text-muted-foreground hover:text-foreground flex w-fit cursor-pointer items-center gap-1.5 text-sm transition-colors"
+          >
+            <SlidersHorizontal className="size-4" aria-hidden />
+            {t('browse.filters')}
+            {activeFilterCount > 0 && (
+              <Badge variant="secondary" className="px-1.5 text-[10px]">
+                {activeFilterCount}
+              </Badge>
+            )}
+            <ChevronDown
+              className={cn('size-4 transition-transform', filtersCollapsed ? '' : 'rotate-180')}
+              aria-hidden
+            />
+          </button>
+          {!filtersCollapsed && (
+            <FilterPanel
+              rows={withDurationFallback(panel.data ?? [])}
+              filters={filters}
+              loading={panel.isLoading}
+              failed={panel.isError}
+              onPick={pick}
+            />
+          )}
+        </div>
+      )}
 
       {failed && <p className="text-destructive text-sm">{t('browse.loadFailed')}</p>}
 
       {pending ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-8">
-          {Array.from({ length: 10 }, (_, i) => (
-            <Skeleton key={i} className="h-56" />
-          ))}
-        </div>
+        <SkeletonCardGrid />
       ) : cards.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">
           {searching ? t('search.empty') : t('browse.empty')}
         </p>
       ) : (
-        <SeriesCardGrid
-          cards={cards}
-          downloadedMap={downloadedMap}
-          onSelect={handleSelect}
-          trailing={
-            // 末行空位拿来放「下一页」，而不是留一个看起来像漏加载的白格子。
-            // 搜索页没有分页（官网那边就不分），所以只在浏览模式出现。
-            !searching && page < totalPages ? (
-              <button
-                type="button"
-                onClick={() => setPage((p) => p + 1)}
-                className="text-muted-foreground hover:text-foreground hover:border-foreground/30 flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed text-sm transition-colors focus-visible:outline-none"
-              >
-                <ChevronRight className="size-6" />
-                {tf('browse.loadMore', {
-                  page: (browse.data?.meta.page ?? page) + 1,
-                  total: totalPages,
-                })}
-              </button>
-            ) : null
-          }
-        />
+        <RefreshShade refreshing={refreshing}>
+          {/* 无限滚动：不再翻页补位，条目持续累积填满网格，
+              「末行留空」的来源（18 条除不尽列数）自然消失 */}
+          <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onSelect={handleSelect} />
+        </RefreshShade>
       )}
 
-      {!searching && totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 py-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <span className="text-sm tabular-nums">
-            {browse.data?.meta.page ?? page} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
+      {!searching && cards.length > 0 && (
+        <>
+          <div ref={sentinelRef} className="h-px" aria-hidden />
+          {browse.isFetchingMore && (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              {t('feed.loadingMore')}
+            </p>
+          )}
+          {!browse.hasMore && !browse.isFetchingMore && (
+            <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
+          )}
+        </>
       )}
 
       <SeriesDetailSheet
@@ -286,6 +460,138 @@ export function BrowsePage() {
         }
         onOpenChange={(open) => !open && setDetail(null)}
       />
+
+      {/* 与首页同一交互：解析期间底部气泡，抽屉一开就是完整内容 */}
+      {resolving && <ResolvingPill />}
+    </div>
+  );
+}
+
+/** 联想行：封面缩略（HEIC 走 webp 转换）+ 剧名 + 摘要（热度行）。 */
+function SuggestRow({
+  item,
+  active,
+  onHover,
+  onPick,
+}: {
+  item: SuggestItem;
+  active: boolean;
+  onHover: () => void;
+  onPick: (item: SuggestItem) => void;
+}) {
+  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  return (
+    <button
+      type="button"
+      // mousedown + preventDefault：抢在输入框 blur 收起下拉之前选中
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onPick(item);
+      }}
+      onMouseEnter={onHover}
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors',
+        active ? 'bg-accent' : 'hover:bg-accent/60',
+      )}
+    >
+      <span className="bg-muted block size-10 shrink-0 overflow-hidden rounded-md">
+        {webCover && <img src={webCover} alt="" className="size-full object-cover" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{item.word}</span>
+        {item.abstract && (
+          <span className="text-muted-foreground block truncate text-xs">{item.abstract}</span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 筛选面板：八行维度，每行「全部」+ 服务端选项，单选。
+ * 行头标签按 type 映射 i18n（服务端 row_name 是中文，不适合多语言）。
+ */
+function FilterPanel({
+  rows,
+  filters,
+  loading,
+  failed,
+  onPick,
+}: {
+  rows: { rowType: string; rowName: string; items: { id: string; name: string }[] }[];
+  filters: BrowseFilters;
+  loading: boolean;
+  failed: boolean;
+  onPick: (key: keyof BrowseFilters, value: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
+        <Loader2 className="size-3.5 animate-spin" />
+        {t('common.loading')}
+      </div>
+    );
+  }
+  if (failed || rows.length === 0) return null;
+
+  const rowValue = (key: string): string => {
+    switch (key) {
+      case 'genre':
+        return filters.genre;
+      case 'category_dim_theme':
+        return filters.theme;
+      case 'category_dim_role':
+        return filters.role;
+      case 'category_dim_epoch':
+        return filters.epoch;
+      case 'sort':
+        return filters.sort;
+      case 'gender':
+        return filters.gender;
+      case 'online_time':
+        return filters.onlineTime;
+      case 'duration':
+        return filters.duration;
+      default:
+        return '';
+    }
+  };
+
+  const pill = (key: keyof BrowseFilters, id: string, label: string, active: boolean) => (
+    <button
+      key={id || '__all__'}
+      type="button"
+      onClick={() => onPick(key, id)}
+      aria-pressed={active}
+      className={cn(
+        'cursor-pointer rounded-full border px-3 py-0.5 text-xs transition-colors',
+        active
+          ? 'border-primary text-primary bg-primary/10 font-medium'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground border-border',
+      )}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="grid gap-1.5">
+      {rows.map((row) => {
+        const key = row.rowType as keyof BrowseFilters;
+        const current = rowValue(row.rowType);
+        const fallbackLabel = FILTER_LABEL_KEYS[row.rowType] ?? row.rowName.replace(/^全部/, '');
+        return (
+          <div key={row.rowType} className="flex items-start gap-3 text-sm">
+            <span className="text-muted-foreground w-10 shrink-0 pt-1 text-xs">
+              {t(fallbackLabel)}
+            </span>
+            <div className="flex flex-wrap gap-x-1 gap-y-1.5">
+              {pill(key, '', t('browse.all'), current === '')}
+              {row.items.map((it) => pill(key, it.id, it.name, current === it.id))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

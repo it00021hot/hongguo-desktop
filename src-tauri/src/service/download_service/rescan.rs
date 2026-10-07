@@ -40,7 +40,7 @@ pub struct RescanSummary {
 /// 悄悄改成已完成，比少登记一条更让人困惑。
 pub fn rescan_from_disk(state: &AppState) -> AppResult<RescanSummary> {
     let settings = state.settings();
-    let series_list: Vec<Series> = state.store.read().series.clone();
+    let series_list: Vec<Series> = state.store.series_all()?;
 
     let mut summary = RescanSummary {
         added: Vec::new(),
@@ -65,10 +65,7 @@ pub fn rescan_from_disk(state: &AppState) -> AppResult<RescanSummary> {
             if meta.len() < MIN_EPISODE_BYTES {
                 continue;
             }
-            let episode = series
-                .episodes
-                .iter()
-                .find(|e| e.vid_index == vid_index);
+            let episode = series.episodes.iter().find(|e| e.vid_index == vid_index);
             let mut task = DownloadTask::new(
                 &series.series_id,
                 &series.title,
@@ -206,7 +203,7 @@ mod tests {
     }
 
     fn series_in(state: &AppState, series: Series) {
-        state.store.write().upsert_series(series);
+        state.store.upsert_series(&series).expect("测试库写入");
     }
 
     fn series_with(title: &str, episodes: Vec<u32>) -> Series {
@@ -278,12 +275,7 @@ mod tests {
         assert_eq!(summary.added.len(), 3, "三个磁盘文件都应补登记");
 
         let got: Vec<u32> = {
-            let mut v: Vec<u32> = state
-                .queue()
-                .all()
-                .iter()
-                .map(|t| t.vid_index)
-                .collect();
+            let mut v: Vec<u32> = state.queue().all().iter().map(|t| t.vid_index).collect();
             v.sort();
             v
         };
@@ -340,10 +332,7 @@ mod tests {
         write_episode(&dir, "我的剧 合集.mp4");
 
         let summary = rescan_from_disk(&state).expect("扫描应成功");
-        assert!(
-            summary.added.is_empty(),
-            "残缺文件与合并产物都不该被登记"
-        );
+        assert!(summary.added.is_empty(), "残缺文件与合并产物都不该被登记");
 
         let _ = std::fs::remove_dir_all(&root);
     }

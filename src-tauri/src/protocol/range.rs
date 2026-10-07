@@ -84,6 +84,10 @@ pub fn partial_headers(start: u64, end: u64, total: u64) -> Vec<(String, String)
             format!("bytes {start}-{end}/{total}"),
         ),
         ("Content-Length".into(), (end - start + 1).to_string()),
+        // 不许 WebView2 缓存：流内容随时在变（逐出重建/填充推进），缓存到
+        // 失败瞬间的坏响应后，同一个 URL 怎么重试都拿坏数据
+        // （「在线播放中断、重试无效」的帮凶）。
+        ("Cache-Control".into(), "no-store".into()),
     ]
 }
 

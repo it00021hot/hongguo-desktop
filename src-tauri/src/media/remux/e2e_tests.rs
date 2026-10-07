@@ -368,6 +368,128 @@ fn ffmpeg_transcode_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 平台管线（允许回落软件会话）端到端：验证解码 → Annex-B → 封装本身。
+///
+/// 硬编在位与否由下一条用例负责；这条只回答「管线产出的文件对不对」，
+/// 所以任何 mac 都能跑（CI 含金量在这里：不依赖 GPU）。
+#[test]
+fn platform_pipeline_produces_playable_h264() {
+    let Some(mut all) = episodes() else { return };
+    let src = all.swap_remove(0);
+    let is_hevc = crate::media::demux::demux_file(&src)
+        .ok()
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| crate::media::hevc::is_hevc(&t.info.codec))
+        })
+        .unwrap_or(false);
+    if !is_hevc {
+        eprintln!("[e2e] 首集不是 HEVC，跳过平台管线用例");
+        return;
+    }
+    let dir = scratch("platform-vt-pipeline");
+    let out = dir.join("转码.mp4");
+
+    match crate::media::platform::transcode_h264_for_tests(
+        &crate::media::platform::PlatformRequest {
+            input: &src,
+            output: &out,
+            scale_to: None,
+            on_progress: None,
+        },
+    ) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => panic!("平台管线失败: {e}"),
+        None => panic!("HEVC 源却返回不可用"),
+    }
+
+    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    // 源带音轨时必须直通为 AAC；纯视频源（合成 fixture）产物同样纯视频
+    let src_has_audio = crate::media::demux::demux_file(&src)
+        .map(|d| d.audio_track().is_some())
+        .unwrap_or(false);
+    if src_has_audio {
+        assert_eq!(audio_codec(&out), "aac", "音轨应直通保留为 AAC");
+    }
+    let source = media_seconds(&src);
+    let got = media_seconds(&out);
+    assert!(
+        (got - source).abs() < source * 0.05,
+        "转码后时长 {got:.2}s 应接近源 {source:.2}s"
+    );
+    // 拼接硬约束的预演：第 2 集之后各集要在第 1 集的参数集下可解，
+    // 产物码流必须自带 SPS/PPS——这里只验「moov 与样本表自洽」
+    let verified = crate::media::demux::demux_file(&out).expect("产物应能再次解复用");
+    assert!(
+        verified
+            .video_track()
+            .is_some_and(|t| !t.info.samples.is_empty()),
+        "产物应有视频样本"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 平台硬编（VideoToolbox / Media Foundation）端到端：真实 HEVC 单集 → H.264。
+///
+/// 双重门控：`HONGGUO_E2E_DIR` + 平台硬编探测。Apple Silicon 的 macOS CI 上
+/// 硬编真实可用，这条会真跑；其余机器安静跳过。
+#[test]
+fn platform_transcode_produces_playable_h264() {
+    if !crate::media::platform::h264_hw_encoder_available() {
+        eprintln!("[e2e] 平台硬编不可用，跳过");
+        return;
+    }
+    let Some(mut all) = episodes() else { return };
+    let src = all.swap_remove(0);
+    // 平台路径只接 HEVC；H.264 源归 ffmpeg 直转，不在这条链上
+    let is_hevc = crate::media::demux::demux_file(&src)
+        .ok()
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| crate::media::hevc::is_hevc(&t.info.codec))
+        })
+        .unwrap_or(false);
+    if !is_hevc {
+        eprintln!("[e2e] 首集不是 HEVC，跳过平台路径用例");
+        return;
+    }
+    let dir = scratch("platform-vt");
+    let out = dir.join("转码.mp4");
+
+    let started = Instant::now();
+    match crate::media::platform::transcode_h264(&crate::media::platform::PlatformRequest {
+        input: &src,
+        output: &out,
+        scale_to: None,
+        on_progress: None,
+    }) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => panic!("平台硬编失败: {e}"),
+        None => panic!("探测说可用、执行却说不可用，前后矛盾"),
+    }
+    let elapsed = started.elapsed();
+
+    assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
+    let src_has_audio = crate::media::demux::demux_file(&src)
+        .map(|d| d.audio_track().is_some())
+        .unwrap_or(false);
+    if src_has_audio {
+        assert_eq!(audio_codec(&out), "aac", "音轨应直通保留为 AAC");
+    }
+
+    let source = media_seconds(&src);
+    let got = media_seconds(&out);
+    assert!(
+        (got - source).abs() < source * 0.05,
+        "转码后时长 {got:.2}s 应接近源 {source:.2}s"
+    );
+    println!(
+        "[e2e] 平台硬编转码 {source:.1}s 单集：{elapsed:.2?}，产物 {:.1}MB",
+        std::fs::metadata(&out).unwrap().len() as f64 / 1048576.0
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn softdecode_and_ffmpeg_output_are_both_decodable() {
     // ⚠️ 这条在 **debug 构建下极慢**（单线程软解 1080p，实测跑了几分钟还没出结果）。
