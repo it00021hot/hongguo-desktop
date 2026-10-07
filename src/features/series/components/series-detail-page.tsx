@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, Heart, Play, Star, Tv } from 'lucide-react';
+import { ArrowLeft, Bell, Heart, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SeriesCover } from '@/components/series-cover';
 import { formatPlayCount } from '@/lib/format';
 import {
-  isRenderableCover,
   useAccount,
   useBookshelf,
   useInteractionState,
@@ -24,7 +24,6 @@ import {
   useSeriesProgress,
   useVideoDigg,
   useWatchHistory,
-  useWebCover,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
@@ -464,9 +463,6 @@ function RelatedCard({
   /** 覆盖默认定宽（猜你喜欢网格里让卡片随格子伸缩） */
   className?: string;
 }) {
-  // plan 接口的封面是 byteimg tplv 链接，扩展名 .image 但内容是 JPEG——
-  // isRenderableCover 会误判，这里直连加载、失败再落 TV 兜底
-  const [coverFailed, setCoverFailed] = useState(false);
   const isUpcoming = item.episodeCnt === 0 || item.tag === '即将上线';
   return (
     <button
@@ -478,18 +474,9 @@ function RelatedCard({
       {/* 封面盒：宽高全部钉死（w-32 × 3:4），图 object-cover 裁切——
           封面原始比例五花八门，绝不能让它撑盒子（一上一下就是这么来的） */}
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
-        {!coverFailed && item.cover ? (
-          <img
-            src={item.cover}
-            alt=""
-            className="block size-full object-cover"
-            onError={() => setCoverFailed(true)}
-          />
-        ) : (
-          <div className="text-muted-foreground grid size-full place-items-center">
-            <Tv className="size-6" aria-hidden />
-          </div>
-        )}
+        {/* plan 接口的封面现已是 fqnovelpic HEIC 签名 URL（旧注释里的
+            byteimg JPEG 不会再出现），直挂必裂，统一走 SeriesCover */}
+        <SeriesCover seriesId={item.seriesId} cover={item.cover} alt={item.title} />
         {item.tag && (
           <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
             {item.tag}
@@ -576,10 +563,7 @@ function ResolveButton({ seriesId }: { seriesId: string }) {
   );
 }
 
-/**
- * 详情封面：与列表卡片同一套渲染口径——源图渲染不了（HEIC）先换官网 webp，
- * 再不行落 hongguo-cover 本地转码；两条路都没有就先占位，不挂必然裂图的 img。
- */
+/** 详情封面：统一走 SeriesCover（webp 增强 + 本地转码兜底 + 占位图）。 */
 function DetailCover({
   seriesId,
   cover,
@@ -589,13 +573,5 @@ function DetailCover({
   cover: string;
   name: string;
 }) {
-  const { data: webCover } = useWebCover(seriesId, cover);
-  const src = webCover ?? (isRenderableCover(cover) ? cover : '');
-  return src ? (
-    <img src={src} alt={name} className="size-full object-cover" />
-  ) : (
-    <div className="text-muted-foreground grid size-full place-items-center">
-      <Tv className="size-8" aria-hidden />
-    </div>
-  );
+  return <SeriesCover seriesId={seriesId} cover={cover} alt={name} />;
 }
