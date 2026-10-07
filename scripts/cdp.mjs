@@ -96,16 +96,19 @@ async function evaluate(send, expression) {
 
 /**
  * SPA 导航。vite HMR 全量重载会跟 location 赋值赛跑把路由抢回去，
- * 所以落点不对就再试——两次都失败才认输。
+ * 所以落点不对就再试——两次都失败才认输。落点用 pathname+search 整体比，
+ * 带 query 参数的深链（detail?seriesId=…）才能判准。
  */
 async function nav(send, route) {
   await send('Page.enable');
   for (let i = 0; i < 3; i++) {
     await evaluate(send, `location.href = ${JSON.stringify(APP_ORIGIN + route)}; 'nav'`);
     await new Promise((r) => setTimeout(r, 4000));
-    if ((await evaluate(send, 'location.pathname')) === route) return route;
+    if ((await evaluate(send, 'location.pathname + location.search')) === route) return route;
   }
-  throw new Error(`导航到 ${route} 失败，落地在 ${await evaluate(send, 'location.pathname')}`);
+  throw new Error(
+    `导航到 ${route} 失败，落地在 ${await evaluate(send, 'location.pathname + location.search')}`,
+  );
 }
 
 /** 图健康体检：返回 { imgs, broken, netFails }。 */
