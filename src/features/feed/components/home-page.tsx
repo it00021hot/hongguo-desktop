@@ -419,18 +419,40 @@ export function HomePage() {
     }
   };
 
-  const isLoading =
-    source === 'feed' ? feed.isLoading : source === 'hot' ? hot.isPending : fresh.isLoading;
-  const loadError =
-    source === 'feed'
-      ? feed.error
-      : source === 'hot'
-        ? hot.error
-          ? hot.error instanceof Error
-            ? hot.error.message
-            : String(hot.error)
-          : null
-        : fresh.error;
+  // 漫剧/真人走 feed 钩子，状态必须同源取——按 source 名逐个三元会让
+  // 这两个 tab 落到 fresh（新剧）的状态上：首批在拉时 isLoading 恒 false，
+  // 空态分支抢跑，表现就是「切类型秒变推荐流暂时为空」（实测复现）。
+  const isLoading = isFeedSource
+    ? feed.isLoading
+    : source === 'hot'
+      ? hot.isPending
+      : fresh.isLoading;
+  const loadError = isFeedSource
+    ? feed.error
+    : source === 'hot'
+      ? hot.error
+        ? hot.error instanceof Error
+          ? hot.error.message
+          : String(hot.error)
+        : null
+      : fresh.error;
+  // 重试当前源：feed 系重拉当前批；热榜重挂榜单；新剧重拉列表
+  const retrySource = () => {
+    if (isFeedSource) return void feed.refresh();
+    if (source === 'hot') return void hot.refetch();
+    return void fresh.refresh();
+  };
+  // 空态的重试对 feed 系必须是「换一批」：同一个 offset 重拉回来还是空，
+  // 只有推进入口游标才真的有机会拿到内容
+  const retryEmpty = () => {
+    if (source === 'feed' || source === 'comic' || source === 'human') {
+      const next = advanceEntry(source);
+      setFeedStarts((prev) => ({ ...prev, [source]: next }));
+      setIndexes((prev) => ({ ...prev, [source]: 0 }));
+      return;
+    }
+    retrySource();
+  };
 
   const playingId = usePlayerStore((s) => s.seriesId);
   // 切 tab 后新源首批在拉：**不整页换骨架屏**——store 里还播着上一部，
@@ -464,11 +486,7 @@ export function HomePage() {
       <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
         <p>{t('feed.loadFailed')}</p>
         <p className="text-destructive text-xs">{loadError}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => (source === 'feed' ? void feed.refresh() : undefined)}
-        >
+        <Button variant="outline" size="sm" onClick={retrySource}>
           <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
           {t('feed.retry')}
         </Button>
@@ -480,7 +498,7 @@ export function HomePage() {
     return (
       <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
         <p className="text-sm">{t('home.empty')}</p>
-        <Button variant="outline" size="sm" onClick={() => void feed.refresh()}>
+        <Button variant="outline" size="sm" onClick={retryEmpty}>
           {t('feed.retry')}
         </Button>
       </div>
