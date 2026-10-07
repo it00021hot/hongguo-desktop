@@ -16,7 +16,13 @@ function RootComponent() {
 
   return (
     <TooltipProvider>
-      {IS_MINI_WINDOW ? <Outlet /> : <AppShell><Outlet /></AppShell>}
+      {IS_MINI_WINDOW ? (
+        <Outlet />
+      ) : (
+        <AppShell>
+          <Outlet />
+        </AppShell>
+      )}
       <Toaster />
     </TooltipProvider>
   );

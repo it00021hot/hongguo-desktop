@@ -130,8 +130,7 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                     let range = range_header(&request);
                     let path = request.uri().path().to_string();
                     Box::new(move || {
-                        let served =
-                            catch_unwind(AssertUnwindSafe(|| serve_stream(&path, range)));
+                        let served = catch_unwind(AssertUnwindSafe(|| serve_stream(&path, range)));
                         responder.respond(match served {
                             Ok(response) => response,
                             Err(p) => panic_response(&p),
@@ -149,11 +148,9 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                     let served = catch_unwind(AssertUnwindSafe(|| cover::serve(&path)));
                     responder.respond(match served {
                         Ok(Ok((status, headers, body))) => build_response(status, headers, body),
-                        Ok(Err(_)) => build_response(
-                            StatusCode::NOT_FOUND.as_u16(),
-                            Vec::new(),
-                            Vec::new(),
-                        ),
+                        Ok(Err(_)) => {
+                            build_response(StatusCode::NOT_FOUND.as_u16(), Vec::new(), Vec::new())
+                        }
                         Err(p) => panic_response(&p),
                     });
                 })

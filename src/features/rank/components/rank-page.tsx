@@ -49,7 +49,12 @@ function normalizeTabs(tabs: RankTab[]): RankTab[] {
         description: '',
         panel:
           tab.subs.length > 0
-            ? [{ name: t('rank.filter.title'), items: tab.subs.map((s) => ({ id: s.id, name: s.name })) }]
+            ? [
+                {
+                  name: t('rank.filter.title'),
+                  items: tab.subs.map((s) => ({ id: s.id, name: s.name })),
+                },
+              ]
             : [],
       })),
     },
@@ -71,8 +76,7 @@ export function RankPage() {
   const tabs = useMemo(() => normalizeTabs(data?.tabs ?? []), [data?.tabs]);
   // 首屏加载中先显示 tab 行骨架；形态确定后仅两级形态显示
   // （登录一级形态只有一个合成 tab，隐藏整行）；出错时不渲染
-  const showTabsRow =
-    data !== undefined ? data.tabs.some((tab) => tab.id === 'all') : isLoading;
+  const showTabsRow = data !== undefined ? data.tabs.some((tab) => tab.id === 'all') : isLoading;
   const currentTab = tabs.find((tab) => tab.id === selected);
   const currentSub = currentTab?.subs.find((s) => s.id === sub) ?? currentTab?.subs[0];
 
@@ -120,11 +124,7 @@ export function RankPage() {
           schema 未到时先渲染胶囊骨架占位（形态未知，比空白好） */}
       <TopBarTabsPortal>
         {tabRow.map((tab) => (
-          <TopBarTab
-            key={tab.id}
-            active={tab.id === selected}
-            onClick={() => switchTab(tab.id)}
-          >
+          <TopBarTab key={tab.id} active={tab.id === selected} onClick={() => switchTab(tab.id)}>
             {tab.name}
           </TopBarTab>
         ))}
@@ -154,9 +154,7 @@ export function RankPage() {
           ))}
           {(currentTab?.subs.length ?? 0) === 0 &&
             isLoading &&
-            Array.from({ length: 5 }, (_, i) => (
-              <Skeleton key={i} className="h-9 rounded-md" />
-            ))}
+            Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-9 rounded-md" />)}
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -238,8 +236,9 @@ function FilterPanelButton({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const selectedName =
-    rows.flatMap((r) => r.items).find((it) => it.id === value && it.id !== '')?.name;
+  const selectedName = rows
+    .flatMap((r) => r.items)
+    .find((it) => it.id === value && it.id !== '')?.name;
 
   // 点击面板外部即收起（hgplayer 同款交互）
   useEffect(() => {

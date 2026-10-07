@@ -84,9 +84,7 @@ impl Store {
         init_rx
             .recv()
             .map_err(|_| AppError::StoreCorrupt("DB 线程初始化无响应".into()))??;
-        Ok(Self {
-            tx: Arc::new(tx),
-        })
+        Ok(Self { tx: Arc::new(tx) })
     }
 
     /// 投递一个活并阻塞等结果。通道断开（线程已退出）按存储故障上报。
@@ -268,9 +266,7 @@ mod tests {
     #[test]
     fn facade_roundtrips_through_the_db_thread() {
         let store = Store::open_memory().expect("内存库");
-        store
-            .save_settings(&Settings::default())
-            .expect("写设置");
+        store.save_settings(&Settings::default()).expect("写设置");
         assert!(store.settings().expect("读设置").is_some());
 
         // 同一 Store 的克隆共享同一个 DB 线程

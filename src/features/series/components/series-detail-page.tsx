@@ -49,8 +49,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   // 相关推荐总数（相关作品 + 猜你喜欢，plan 接口两格一并计）——tab 上的
   // 计数用；RelatedWorks 里还有一份同 key 的调用，react-query 共享缓存
   const { data: relatedData } = useRelatedSeries(seriesId || '');
-  const relatedTotal =
-    (relatedData?.works.length ?? 0) + (relatedData?.guess.length ?? 0);
+  const relatedTotal = (relatedData?.works.length ?? 0) + (relatedData?.guess.length ?? 0);
   const relatedGuess = relatedData?.guess ?? [];
   // 头部元信息（追剧/播放/季徽/标签/备案号，video_detail 接口），
   // 失败为 undefined：头部相应行不渲染，不打断页面
@@ -74,8 +73,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
       return localProgress.vidIndex;
     }
     if (!historyItem || historyItem.positionMs <= 0) return 1;
-    const ratio =
-      historyItem.durationMs > 0 ? historyItem.positionMs / historyItem.durationMs : 0;
+    const ratio = historyItem.durationMs > 0 ? historyItem.positionMs / historyItem.durationMs : 0;
     return ratio >= 0.95 ? 1 : historyItem.vidIndex;
   }, [localProgress, historyItem, series]);
 
@@ -123,7 +121,8 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
     digg.mutate(
       { vid: continueEp.vid, seriesId, digg: !digged },
       {
-        onSuccess: () => toast.success(t(digged ? 'player.interact.undone' : 'player.interact.liked')),
+        onSuccess: () =>
+          toast.success(t(digged ? 'player.interact.undone' : 'player.interact.liked')),
         onError: (e) => toast.error(String(e)),
       },
     );
@@ -198,12 +197,14 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
               <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-2 text-sm">
                 {reviewScore && (
                   <span className="flex items-baseline gap-1.5">
-                    <span className="text-amber-400 text-lg leading-none font-bold">
+                    <span className="text-lg leading-none font-bold text-amber-400">
                       {Number(reviewScore).toFixed(1)}
                       <span className="ml-0.5 text-xs font-semibold">分</span>
                     </span>
                     {reviewScoreCnt > 0 && (
-                      <span>{tf('detail.ratingCount', { count: formatPlayCount(reviewScoreCnt) })}</span>
+                      <span>
+                        {tf('detail.ratingCount', { count: formatPlayCount(reviewScoreCnt) })}
+                      </span>
                     )}
                   </span>
                 )}
@@ -270,7 +271,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   <button
                     type="button"
                     onClick={() => setIntroExpanded((v) => !v)}
-                    className="text-muted-foreground shrink-0 cursor-pointer pt-0.5 text-xs hover:text-foreground"
+                    className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer pt-0.5 text-xs"
                   >
                     {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
                   </button>
@@ -290,7 +291,10 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   onClick={onCollect}
                   className={cn(collected && 'text-amber-500')}
                 >
-                  <Star className={cn('size-4', collected && 'fill-amber-400 text-amber-400')} aria-hidden />
+                  <Star
+                    className={cn('size-4', collected && 'fill-amber-400 text-amber-400')}
+                    aria-hidden
+                  />
                   {t(collected ? 'detail.collected' : 'detail.collect')}
                 </Button>
                 <Button
@@ -299,7 +303,10 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   onClick={onDigg}
                   className={cn(digged && 'text-red-500')}
                 >
-                  <Heart className={cn('size-4', digged && 'fill-red-500 text-red-500')} aria-hidden />
+                  <Heart
+                    className={cn('size-4', digged && 'fill-red-500 text-red-500')}
+                    aria-hidden
+                  />
                   {t('player.interact.like')}
                 </Button>
               </div>
@@ -346,7 +353,9 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                       <span className="w-8 shrink-0 text-center font-mono text-sm font-semibold">
                         {ep.vidIndex}
                       </span>
-                      <span className="truncate text-sm">{ep.title || tf('player.epShort', { index: ep.vidIndex })}</span>
+                      <span className="truncate text-sm">
+                        {ep.title || tf('player.epShort', { index: ep.vidIndex })}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -359,7 +368,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   {t('detail.commentsEmpty')}
                 </p>
               ) : (
-                <ul className="divide-y divide-border">
+                <ul className="divide-border divide-y">
                   {comments.map((c) => (
                     <li key={c.commentId} className="flex gap-3 py-4">
                       <div className="bg-muted grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
@@ -381,7 +390,9 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                         </p>
                         <div className="text-muted-foreground mt-1 flex gap-4 text-xs">
                           <span>♥ {c.diggCount}</span>
-                          {c.replyCount > 0 && <span>{tf('detail.replyCount', { count: c.replyCount })}</span>}
+                          {c.replyCount > 0 && (
+                            <span>{tf('detail.replyCount', { count: c.replyCount })}</span>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -478,7 +489,7 @@ function RelatedCard({
             byteimg JPEG 不会再出现），直挂必裂，统一走 SeriesCover */}
         <SeriesCover seriesId={item.seriesId} cover={item.cover} alt={item.title} />
         {item.tag && (
-          <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
+          <span className="absolute top-1 left-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
             {item.tag}
           </span>
         )}
@@ -564,14 +575,6 @@ function ResolveButton({ seriesId }: { seriesId: string }) {
 }
 
 /** 详情封面：统一走 SeriesCover（webp 增强 + 本地转码兜底 + 占位图）。 */
-function DetailCover({
-  seriesId,
-  cover,
-  name,
-}: {
-  seriesId: string;
-  cover: string;
-  name: string;
-}) {
+function DetailCover({ seriesId, cover, name }: { seriesId: string; cover: string; name: string }) {
   return <SeriesCover seriesId={seriesId} cover={cover} alt={name} />;
 }

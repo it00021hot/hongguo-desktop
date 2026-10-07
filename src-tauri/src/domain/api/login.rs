@@ -107,7 +107,11 @@ fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
         ("charging", "1", false),
         ("cold_start_session_cnt_in_day", "100", false),
         ("cold_start_session_cnt_in_life", "76", false),
-        ("cold_start_session_id", "4357f7af-60c0-4a52-af34-473c59155de9", false),
+        (
+            "cold_start_session_id",
+            "4357f7af-60c0-4a52-af34-473c59155de9",
+            false,
+        ),
         ("compliance_status", "0", false),
         ("current_volume", "1", false),
         ("down_speed", "311565", false),
@@ -121,7 +125,11 @@ fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
         ("network_type", "4", false),
         ("normal_session_cnt_in_day", "182", false),
         ("normal_session_cnt_in_life", "270", false),
-        ("normal_session_id", "23661b98-eac9-4960-81a4-d8837826b43f%23160", false),
+        (
+            "normal_session_id",
+            "23661b98-eac9-4960-81a4-d8837826b43f%23160",
+            false,
+        ),
         ("player_so_load", "1", false),
         ("pv_player", "73932", false),
         ("screen_brightness", "963", false),
@@ -484,8 +492,7 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            if v
-                .pointer("/data/registered")
+            if v.pointer("/data/registered")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
@@ -508,7 +515,9 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
         _ => Err(AppError::Auth(format!(
             "MFA 验证失败 {}: {}",
             code,
-            v.get("message").and_then(Value::as_str).unwrap_or("未知错误")
+            v.get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误")
         ))),
     }
 }
@@ -518,13 +527,7 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
 fn form_urlencoded(pairs: &[(String, String)]) -> String {
     pairs
         .iter()
-        .map(|(k, v)| {
-            format!(
-                "{}={}",
-                urlencode_component(k),
-                urlencode_component(v)
-            )
-        })
+        .map(|(k, v)| format!("{}={}", urlencode_component(k), urlencode_component(v)))
         .collect::<Vec<_>>()
         .join("&")
 }
@@ -585,8 +588,9 @@ fn parse_login_response(
             .pointer("/data/verify_ways")
             .and_then(Value::as_array)
             .and_then(|ways| {
-                ways.iter()
-                    .find(|w| w.get("verify_way").and_then(Value::as_str) == Some("mobile_up_sms_verify"))
+                ways.iter().find(|w| {
+                    w.get("verify_way").and_then(Value::as_str) == Some("mobile_up_sms_verify")
+                })
             });
         let ctx = MfaContext {
             retry_tag: tag.to_string(),
@@ -599,11 +603,8 @@ fn parse_login_response(
                 .unwrap_or_else(|| "sms_login".into()),
             copywriting_key: str_field(&v, &["data.common_params.copywriting_key"])
                 .unwrap_or_else(|| "sms_login".into()),
-            diversion_tag: str_field(
-                &v,
-                &["data.common_params.ies_safety_diversion_tag"],
-            )
-            .unwrap_or_else(|| "mfa".into()),
+            diversion_tag: str_field(&v, &["data.common_params.ies_safety_diversion_tag"])
+                .unwrap_or_else(|| "mfa".into()),
             channel_mobile: way
                 .and_then(|w| w.get("channel_mobile"))
                 .and_then(Value::as_str)
@@ -723,7 +724,10 @@ mod tests {
             }
         });
         let u = parse_user(&sms_login);
-        assert_eq!(u.avatar_url, "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5035712059~120x256.image");
+        assert_eq!(
+            u.avatar_url,
+            "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5035712059~120x256.image"
+        );
         assert_eq!(u.name, "用户1774591583619");
 
         let user_info = serde_json::json!({
@@ -734,7 +738,10 @@ mod tests {
             } }
         });
         let u2 = parse_user(&user_info);
-        assert_eq!(u2.avatar_url, "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image");
+        assert_eq!(
+            u2.avatar_url,
+            "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image"
+        );
 
         // 无头像不 panic，字段为空
         assert_eq!(parse_user(&serde_json::json!({"data": {}})).avatar_url, "");
@@ -756,7 +763,8 @@ mod tests {
         // 是否依赖 install 注册/关联）；legacy 用 1694 旧档案。
         match std::env::var("HG_LOGIN_DEVICE").as_deref() {
             Ok("random") => {
-                let d = rand::random::<u64>() % 9_000_000_000_000_000_000 + 1_000_000_000_000_000_000;
+                let d =
+                    rand::random::<u64>() % 9_000_000_000_000_000_000 + 1_000_000_000_000_000_000;
                 env.device.set("device_id", &d.to_string());
                 env.device.set("iid", &(d + 1).to_string());
             }
@@ -779,7 +787,10 @@ mod tests {
             }
         }
         match send_sms_code(&env, &mobile).await {
-            Ok(out) => println!("[probe] 发码成功: {} ticket={}", out.message, out.mobile_ticket),
+            Ok(out) => println!(
+                "[probe] 发码成功: {} ticket={}",
+                out.message, out.mobile_ticket
+            ),
             Err(e) => println!("[probe] 发码失败: {e}"),
         }
     }
@@ -793,8 +804,7 @@ mod tests {
         let env0 = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        let mobile =
-            std::env::var("HG_LOGIN_MOBILE").expect("HG_LOGIN_MOBILE 必填");
+        let mobile = std::env::var("HG_LOGIN_MOBILE").expect("HG_LOGIN_MOBILE 必填");
         let Ok(code) = std::env::var("HG_LOGIN_CODE") else {
             // 第一段：只发码，打印 csrf 供第二段使用（短信真实下发）
             let out = send_sms_code(&env0, &mobile).await.expect("发码");
@@ -816,7 +826,11 @@ mod tests {
             }
         };
         match sms_login(&env, &mobile, &code, None).await {
-            Ok(LoginOutcome::Success { cookies, user, token }) => {
+            Ok(LoginOutcome::Success {
+                cookies,
+                user,
+                token,
+            }) => {
                 println!(
                     "[login] ✅ 成功 user={}({}) cookie {}B: {}… token {}B",
                     user.name,
@@ -882,10 +896,7 @@ mod tests {
     /// 前缀 `2e3d33` 与 hgplayer 抓包密文头一致。
     #[test]
     fn encodes_mobile_with_xor05() {
-        assert_eq!(
-            encode_mobile("13800138000"),
-            "2e3d3334363d353534363d353535"
-        );
+        assert_eq!(encode_mobile("13800138000"), "2e3d3334363d353534363d353535");
     }
 
     /// 验证码同套编码：'8'→3d '0'→35 '4'→34 '2'→32（1.1.3 抓包
@@ -902,9 +913,7 @@ mod tests {
     fn encodes_mfa_retry_params() {
         let key = "fb2825d4c17fad783d28724dd8aebe5e";
         let enc = encode_code(key);
-        let dec = |hex: &str| {
-            bytes_to_string(&bytes_from_hex(hex))
-        };
+        let dec = |hex: &str| bytes_to_string(&bytes_from_hex(hex));
         fn bytes_from_hex(hex: &str) -> Vec<u8> {
             (0..hex.len())
                 .step_by(2)
@@ -929,7 +938,10 @@ mod tests {
             out.starts_with("biz_params=%7B%22a%22"),
             "JSON 大括号/引号要转义: {out}"
         );
-        assert!(out.contains("copywriting_key=sms%20login"), "空格按 %20: {out}");
+        assert!(
+            out.contains("copywriting_key=sms%20login"),
+            "空格按 %20: {out}"
+        );
         assert!(out.contains('='), "k=v 形态");
     }
 
@@ -1030,7 +1042,10 @@ mod tests {
             x_tt_token: None,
         };
         let env = with_mfa_cookie(&mk(Some("a=1; passport_mfa_token=old; b=2")), "new");
-        assert_eq!(env.cookie.as_deref(), Some("a=1; b=2; passport_mfa_token=new"));
+        assert_eq!(
+            env.cookie.as_deref(),
+            Some("a=1; b=2; passport_mfa_token=new")
+        );
         let env = with_mfa_cookie(&mk(None), "t1");
         assert_eq!(env.cookie.as_deref(), Some("passport_mfa_token=t1"));
         let env = with_mfa_cookie(&mk(Some("a=1")), "");
@@ -1040,13 +1055,11 @@ mod tests {
     /// 登录响应头的 x-tt-token 要提取（Set-Cookie / body 里都没有）。
     #[test]
     fn extracts_x_tt_token_from_headers() {
-        let body = r#"{"error_code":0,"message":"success","data":{"user_id":1,"name":"u"}}"#.as_bytes();
+        let body =
+            r#"{"error_code":0,"message":"success","data":{"user_id":1,"name":"u"}}"#.as_bytes();
         let headers = vec![
             ("content-type".to_string(), "application/json".to_string()),
-            (
-                "x-tt-token".to_string(),
-                "00ab--cd-3.0.3".to_string(),
-            ),
+            ("x-tt-token".to_string(), "00ab--cd-3.0.3".to_string()),
         ];
         let cookies = vec!["sessionid=s1; Path=/".to_string()];
         match parse_login_response(body, &cookies, &headers) {
@@ -1101,7 +1114,11 @@ mod tests {
     /// upsms 1045 等待 / 0 成功。
     #[test]
     fn parses_upsms_states() {
-        let waiting: Value = serde_json::from_str(r#"{"error_code":1045,"message":"waiting"}"#).unwrap();
-        assert_eq!(waiting.get("error_code").and_then(Value::as_i64), Some(1045));
+        let waiting: Value =
+            serde_json::from_str(r#"{"error_code":1045,"message":"waiting"}"#).unwrap();
+        assert_eq!(
+            waiting.get("error_code").and_then(Value::as_i64),
+            Some(1045)
+        );
     }
 }

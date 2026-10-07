@@ -158,11 +158,7 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       {/* 有头像用官方头像（登录响应下发），没有退回通用图标——
           这样折叠态下也能一眼分出登录/未登录 */}
       {account?.avatarUrl ? (
-        <img
-          src={account.avatarUrl}
-          alt=""
-          className="size-5 shrink-0 rounded-full object-cover"
-        />
+        <img src={account.avatarUrl} alt="" className="size-5 shrink-0 rounded-full object-cover" />
       ) : (
         <UserRound className="size-4 shrink-0" />
       )}

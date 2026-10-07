@@ -105,19 +105,16 @@ impl Db {
     /// 传入 `":memory:"` 得到内存库，测试用。
     pub async fn open(path: impl AsRef<Path>) -> AppResult<Self> {
         let path = path.as_ref().to_string_lossy().into_owned();
-        let db: Database = Builder::new_local(&path)
-            .build()
-            .await
-            .map_err(|e| {
-                // 锁冲突单列：另一个实例还着库 ≠ 数据损坏，误报「文件损坏」
-                // 会引人去删库
-                let text = e.to_string();
-                if text.contains("Locking error") || text.contains("locked by another") {
-                    AppError::StoreLocked(format!("打开数据库失败: {text}"))
-                } else {
-                    AppError::StoreCorrupt(format!("打开数据库失败: {text}"))
-                }
-            })?;
+        let db: Database = Builder::new_local(&path).build().await.map_err(|e| {
+            // 锁冲突单列：另一个实例还着库 ≠ 数据损坏，误报「文件损坏」
+            // 会引人去删库
+            let text = e.to_string();
+            if text.contains("Locking error") || text.contains("locked by another") {
+                AppError::StoreLocked(format!("打开数据库失败: {text}"))
+            } else {
+                AppError::StoreCorrupt(format!("打开数据库失败: {text}"))
+            }
+        })?;
         let conn = db
             .connect()
             .map_err(|e| AppError::StoreCorrupt(format!("建立连接失败: {e}")))?;
@@ -289,7 +286,12 @@ mod tests {
             .expect("UPSERT");
 
             // 查询读回
-            let mut rows = db.conn().query("SELECT n, x, j FROM t WHERE k = ?1", [Value::Text("a".into())])
+            let mut rows = db
+                .conn()
+                .query(
+                    "SELECT n, x, j FROM t WHERE k = ?1",
+                    [Value::Text("a".into())],
+                )
                 .await
                 .expect("查询");
             let row = rows.next().await.expect("next 不报错").expect("有一行");
@@ -320,7 +322,10 @@ mod tests {
                 .await
                 .expect("查询 2");
             let row = rows.next().await.expect("next 不报错").expect("有一行");
-            assert!(row.get_value(0).expect("取 j").is_null(), "显式 excluded.j = NULL 应当写入 NULL");
+            assert!(
+                row.get_value(0).expect("取 j").is_null(),
+                "显式 excluded.j = NULL 应当写入 NULL"
+            );
         });
     }
 
@@ -328,7 +333,9 @@ mod tests {
     fn spike_transaction_rollback() {
         run(async {
             let db = Db::open(":memory:").await.expect("打开内存库");
-            db.execute("CREATE TABLE t (k TEXT PRIMARY KEY)", ()).await.expect("建表");
+            db.execute("CREATE TABLE t (k TEXT PRIMARY KEY)", ())
+                .await
+                .expect("建表");
 
             let err = db
                 .with_tx(|conn| async move {
@@ -345,7 +352,11 @@ mod tests {
             assert!(err.is_err(), "第二次插入同主键必须失败");
 
             // 回滚后表必须是空的
-            let mut rows = db.conn().query("SELECT COUNT(*) FROM t", ()).await.expect("count");
+            let mut rows = db
+                .conn()
+                .query("SELECT COUNT(*) FROM t", ())
+                .await
+                .expect("count");
             let row = rows.next().await.unwrap().unwrap();
             let c = row.get_value(0).unwrap();
             assert_eq!(c.as_integer().copied(), Some(0), "事务回滚后不应有残留行");

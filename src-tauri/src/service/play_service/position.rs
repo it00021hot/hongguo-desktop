@@ -66,7 +66,10 @@ mod tests {
         let db = dir.join("test.db");
         let _ = std::fs::remove_file(&db);
         let store = crate::store::Store::open(&db).expect("打开测试文件库");
-        (std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store)), dir)
+        (
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store)),
+            dir,
+        )
     }
 
     /// 「最近看到的那一集」按 updated_at 取最新：回看旧集再切回来，

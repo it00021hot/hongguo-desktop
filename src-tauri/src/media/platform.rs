@@ -8,10 +8,10 @@
 //! （试编帧不能小于 256×256，nvenc 曾在 64×64 上误判不可用）。
 //! 任何探测失败都安静地返回不可用，让分流链落到 ffmpeg/软解。
 
-#[cfg(target_os = "macos")]
-pub mod vt;
 #[cfg(target_os = "windows")]
 pub mod mf;
+#[cfg(target_os = "macos")]
+pub mod vt;
 
 use std::path::Path;
 

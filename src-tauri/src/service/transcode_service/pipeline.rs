@@ -44,7 +44,9 @@ pub fn transcode(
             output_size: meta.map(|m| m.len()).unwrap_or(0),
             elapsed_ms: 0,
             frames: 0,
-            decoder: crate::media::capability::selected_backend().decoder_label().to_string(),
+            decoder: crate::media::capability::selected_backend()
+                .decoder_label()
+                .to_string(),
             encoder: String::new(),
             backend: crate::media::capability::selected_backend(),
         });
@@ -56,12 +58,14 @@ pub fn transcode(
     // 分流 1：平台原生硬编（VideoToolbox / Media Foundation）。
     // 不依赖用户装任何东西，随 GPU 驱动/系统提供；探测失败会静默落回 ffmpeg。
     let mut backend = crate::media::Backend::Rust;
-    if let Some(done) = crate::media::platform::transcode_h264(&crate::media::platform::PlatformRequest {
-        input: source,
-        output: &target,
-        scale_to,
-        on_progress,
-    }) {
+    if let Some(done) =
+        crate::media::platform::transcode_h264(&crate::media::platform::PlatformRequest {
+            input: source,
+            output: &target,
+            scale_to,
+            on_progress,
+        })
+    {
         match done {
             Ok(()) => {
                 if output_is_playable(&target) {
@@ -124,7 +128,9 @@ pub fn transcode(
         frames: 0,
         decoder: backend.decoder_label().to_string(),
         encoder: match backend {
-            crate::media::Backend::FfmpegHw | crate::media::Backend::FfmpegSw => backend_info.encoder,
+            crate::media::Backend::FfmpegHw | crate::media::Backend::FfmpegSw => {
+                backend_info.encoder
+            }
             _ => String::new(),
         },
         backend,
@@ -194,15 +200,11 @@ mod tests {
     #[test]
     fn audio_only_output_is_not_playable() {
         use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
-        let dir = std::env::temp_dir()
-            .join(format!("hg-pipeline-audio-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hg-pipeline-audio-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("audio.mp4");
         std::fs::write(&p, mp4_with_samples(&[TrackPlan::audio(vec![vec![0, 0]])])).unwrap();
-        assert!(
-            !output_is_playable(&p),
-            "没有视频样本的产物不能当转码成功"
-        );
+        assert!(!output_is_playable(&p), "没有视频样本的产物不能当转码成功");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

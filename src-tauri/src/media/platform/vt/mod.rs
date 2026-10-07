@@ -115,10 +115,7 @@ unsafe fn make_test_frame(size: usize) -> AppResult<Pb> {
     ffi::CFRelease(attrs as ffi::CFTypeRef);
     os(st, "建探测帧")?;
     let pb = Pb(pb);
-    os(
-        ffi::CVPixelBufferLockBaseAddress(pb.0, 0),
-        "锁探测帧",
-    )?;
+    os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁探测帧")?;
     let base = ffi::CVPixelBufferGetBaseAddress(pb.0) as *mut u8;
     let stride = ffi::CVPixelBufferGetBytesPerRow(pb.0);
     for row in 0..size {
@@ -443,12 +440,7 @@ enum HwPolicy {
 
 impl Compressor {
     /// 建硬编 H.264 会话。
-    unsafe fn new(
-        width: usize,
-        height: usize,
-        bitrate: i32,
-        policy: HwPolicy,
-    ) -> AppResult<Self> {
+    unsafe fn new(width: usize, height: usize, bitrate: i32, policy: HwPolicy) -> AppResult<Self> {
         let spec = make_dict(&[(
             match policy {
                 HwPolicy::Require => {
@@ -531,8 +523,16 @@ impl Compressor {
             "设码率",
         );
         for (name, key, value) in [
-            ("MaxKeyFrameInterval", ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval, gop as ffi::CFTypeRef),
-            ("MaxFrameDelayCount", ffi::kVTCompressionPropertyKey_MaxFrameDelayCount, no_delay as ffi::CFTypeRef),
+            (
+                "MaxKeyFrameInterval",
+                ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                gop as ffi::CFTypeRef,
+            ),
+            (
+                "MaxFrameDelayCount",
+                ffi::kVTCompressionPropertyKey_MaxFrameDelayCount,
+                no_delay as ffi::CFTypeRef,
+            ),
         ] {
             let st = ffi::VTSessionSetProperty(session, key, value);
             if st != ffi::noErr {
@@ -819,9 +819,8 @@ fn process_frame(
             Some((w, h)) => (w, h),
             None => (src_w, src_h),
         };
-        *compressor = Some(unsafe {
-            Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps), policy)?
-        });
+        *compressor =
+            Some(unsafe { Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps), policy)? });
         *out_dims = Some((out_w, out_h));
     }
     let frame = match transfer.as_ref() {
@@ -982,13 +981,7 @@ fn run(
     // 4) 音轨直通 + 封装（与软解路径同一套代码，faststart）
     let (out_w, out_h) = out_dims.unwrap_or((video.width as usize, video.height as usize));
     crate::media::transcode::mux_with_audio(
-        req.input,
-        demuxed,
-        req.output,
-        &units,
-        out_w,
-        out_h,
-        fps as f32,
+        req.input, demuxed, req.output, &units, out_w, out_h, fps as f32,
     )?;
 
     log::info!(

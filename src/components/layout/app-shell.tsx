@@ -32,7 +32,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void invoke('mark_window_ready').catch(() => {});
   }, []);
-  useEvent(EVENTS.closeRequested, useCallback(() => setExitOpen(true), []));
+  useEvent(
+    EVENTS.closeRequested,
+    useCallback(() => setExitOpen(true), []),
+  );
 
   // 小屏播放（对齐 hgplayer De.mini 的 bare 布局）：侧栏与顶栏**全部**
   // 藏掉，整个窗口只剩播放器（第三方小屏连标题栏都没有，窗口按钮由
@@ -55,7 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-        {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：红绿灯/
+      {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：红绿灯/
             logo/应用名在左，中部是各页 portal 进来的分类 tab（无则留空，
             页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
             语言/窗口控件钉在右端。
@@ -68,63 +71,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
             自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
             src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。 */}
-        {!miniScreen && (
-          <header
-            data-tauri-drag-region="deep"
-            className="bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b px-3"
-          >
-            {mac && <MacTrafficLights />}
-            <img
-              src="/app-icon.png"
-              alt=""
-              width={24}
-              height={24}
-              className="size-6 shrink-0 rounded-md"
-            />
-            {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
+      {!miniScreen && (
+        <header
+          data-tauri-drag-region="deep"
+          className="bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b px-3"
+        >
+          {mac && <MacTrafficLights />}
+          <img
+            src="/app-icon.png"
+            alt=""
+            width={24}
+            height={24}
+            className="size-6 shrink-0 rounded-md"
+          />
+          {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
                 左右组宽度不等（交通灯+logo vs 控件），flex-1 的「剩余空间
                 居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
                 transform（半像素平移会让文字发糊）。
                 容器 pointer-events-none：空白带不拦截、仍可拖窗；
                 tab 内容自己在 portal wrapper 里开 auto */}
-            <div
-              id={TOP_BAR_SLOT_ID}
-              className="pointer-events-none absolute inset-x-0 mx-auto flex w-fit items-center justify-center"
-            />
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              {/* 置顶（hgplayer 标题栏同款）：钉住/取消整个窗口 */}
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t('player.pin')}
-                title={t('player.pin')}
-                onClick={togglePinned}
-                className={cn(pinned && 'text-primary')}
-              >
-                <Pin className={cn('size-4', pinned && 'fill-current')} />
-              </Button>
-              <ThemeSwitch />
-              {!mac && <WindowButtons />}
-            </div>
-          </header>
-        )}
+          <div
+            id={TOP_BAR_SLOT_ID}
+            className="pointer-events-none absolute inset-x-0 mx-auto flex w-fit items-center justify-center"
+          />
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {/* 置顶（hgplayer 标题栏同款）：钉住/取消整个窗口 */}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t('player.pin')}
+              title={t('player.pin')}
+              onClick={togglePinned}
+              className={cn(pinned && 'text-primary')}
+            >
+              <Pin className={cn('size-4', pinned && 'fill-current')} />
+            </Button>
+            <ThemeSwitch />
+            {!mac && <WindowButtons />}
+          </div>
+        </header>
+      )}
 
-        <div className="flex min-h-0 flex-1">
-          {!miniScreen && <AppSidebar />}
+      <div className="flex min-h-0 flex-1">
+        {!miniScreen && <AppSidebar />}
 
-          <main id="content" className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-            {children}
-          </main>
-        </div>
+        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
+          {children}
+        </main>
+      </div>
 
-        <ConfirmDialog
-          open={exitOpen}
-          onOpenChange={setExitOpen}
-          title={t('window.exitTitle')}
-          description={t('window.exitBody')}
-          confirmLabel={t('window.exitConfirm')}
-          onConfirm={() => void invoke('exit_app').catch(() => {})}
-        />
+      <ConfirmDialog
+        open={exitOpen}
+        onOpenChange={setExitOpen}
+        title={t('window.exitTitle')}
+        description={t('window.exitBody')}
+        confirmLabel={t('window.exitConfirm')}
+        onConfirm={() => void invoke('exit_app').catch(() => {})}
+      />
     </div>
   );
 }

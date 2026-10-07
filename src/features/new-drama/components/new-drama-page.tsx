@@ -74,10 +74,7 @@ export function NewDramaPage() {
     // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）
     <div className="flex min-h-full flex-col">
       <TopBarTabsPortal>
-        <TopBarTab
-          active={view === 'recommend'}
-          onClick={() => setView('recommend')}
-        >
+        <TopBarTab active={view === 'recommend'} onClick={() => setView('recommend')}>
           {t('newDrama.tabs.recommend')}
         </TopBarTab>
         <TopBarTab active={view === 'calendar'} onClick={() => setView('calendar')}>
@@ -322,7 +319,7 @@ function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void 
                 onClick={() => setDate(d)}
               >
                 <span className="text-[11px] leading-tight opacity-80">{formatWeekday(d)}</span>
-                <span className="text-sm font-semibold leading-tight tabular-nums">
+                <span className="text-sm leading-tight font-semibold tabular-nums">
                   {formatDayMonth(d)}
                 </span>
               </Button>
@@ -430,7 +427,7 @@ function CalendarRow({
         </div>
         {/* 官方同款：预约人数红色醒目，后跟分类/评分/集数 */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {heat !== '' && <span className="text-red-500 font-semibold">{heat}</span>}
+          {heat !== '' && <span className="font-semibold text-red-500">{heat}</span>}
           {item.category !== '' && <span className="text-muted-foreground">{item.category}</span>}
           {item.score > 0 && (
             <span className="text-muted-foreground flex items-center gap-0.5">
@@ -464,9 +461,7 @@ function CalendarRow({
             variant={reserved ? 'secondary' : 'default'}
             disabled={reserved || reserve.isPending}
             className={
-              reserved
-                ? 'rounded-full'
-                : 'bg-red-500 hover:bg-red-500/90 rounded-full text-white'
+              reserved ? 'rounded-full' : 'rounded-full bg-red-500 text-white hover:bg-red-500/90'
             }
             onClick={() => reserve.mutate()}
           >

@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    collect_series, digg_comment, digg_video, fetch_bookshelf, fetch_interaction_state, send_comment,
-    send_danmaku, send_reply, BookshelfEntry, InteractionState,
+    collect_series, digg_comment, digg_video, fetch_bookshelf, fetch_interaction_state,
+    send_comment, send_danmaku, send_reply, BookshelfEntry, InteractionState,
 };
 use crate::error::AppResult;
 

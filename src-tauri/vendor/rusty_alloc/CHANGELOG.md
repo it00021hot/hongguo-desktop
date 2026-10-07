@@ -11,13 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- *(prim)* macOS range_is_reserved via mach_vm_region, not mincore
-- *(blockmap)* clear a reused slot's map pointer -- stress_mt aborted on 4 CPUs
-- *(prim)* build on macOS -- mincore's out-vector type differs on Apple
+- _(prim)_ macOS range_is_reserved via mach_vm_region, not mincore
+- _(blockmap)_ clear a reused slot's map pointer -- stress_mt aborted on 4 CPUs
+- _(prim)_ build on macOS -- mincore's out-vector type differs on Apple
 
 ### Other
 
-- *(unsafe)* record the two macOS range_is_reserved sites; ratchet 963 -> 965
+- _(unsafe)_ record the two macOS range_is_reserved sites; ratchet 963 -> 965
 
 ## [2.2.1](https://github.com/Remade-With-Rust/rusty_alloc/compare/rusty_alloc-v2.2.0...rusty_alloc-v2.2.1) - 2026-09-25
 
@@ -393,7 +393,7 @@ front of it. Nothing else in the public API changed except the added
   rig it replaced the consumer's aligned container for **+63,780 bytes of
   stack** (both aligned, so the linker's gap cancels), and the footprint
   sketch runs on `Region<{ 64 * 1024 }>`: one segment, `65536 usable of
-  65536`. Against a round *unaligned* region the honest gain is +2,828 bytes
+65536`. Against a round _unaligned_ region the honest gain is +2,828 bytes
   of stack for the same usable heap: the alignment gap the linker leaves
   before an aligned static is charged to no section, so a `.bss` delta
   overstates it — the `Region` docs say so.
@@ -564,26 +564,26 @@ features, which is the overwhelming majority.
 
 ### Fixed
 
-- *(heap)* **`collect` could not reclaim a size class's last empty page.** The
+- _(heap)_ **`collect` could not reclaim a size class's last empty page.** The
   keep-one-page-per-bin reuse cache is `mi_page_retire`'s policy on the free
   path; `collect` had borrowed it, so no collect at any level could return a
   class's page to a different class. Upstream's `mi_heap_page_collect` frees an
   all-free page unconditionally ("this will free retired pages as well").
   Harmless at the default 32 MiB geometry, where 512 slices per segment absorb
   a cached page per class; severe where slices are scarce.
-- *(heap)* **nothing ever collected automatically.** `generic_collect` was
+- _(heap)_ **nothing ever collected automatically.** `generic_collect` was
   declared as an option with a default of 10,000 and read nowhere. It is now a
   per-heap countdown on the generic path, as upstream.
-- *(heap)* **the generic path reported OOM while holding reclaimable memory.**
+- _(heap)_ **the generic path reported OOM while holding reclaimable memory.**
   It now reclaims once and retries before returning null. Free on the happy
   path — it runs only when the allocation was about to fail.
-- *(segment)* an exclusive arena's huge-path allocations could escape to the OS
+- _(segment)_ an exclusive arena's huge-path allocations could escape to the OS
   instead of failing, diverging from `mi_segment_huge_page_alloc`.
-- *(arena)* the chunk bitmap scan stopped at the first word: an arena of more
+- _(arena)_ the chunk bitmap scan stopped at the first word: an arena of more
   than 32 chunks could not allocate past chunk 31.
-- *(heap)* `stats.segments` was not incremented on the huge path, so it did not
+- _(heap)_ `stats.segments` was not incremented on the huge path, so it did not
   balance `segments_freed`.
-- *(prim)* the fixed-region backend placed every allocation bottom-up, so one
+- _(prim)_ the fixed-region backend placed every allocation bottom-up, so one
   page-sized block below a segment boundary cost a whole segment of reach.
 
 ### Added
@@ -661,12 +661,12 @@ features, which is the overwhelming majority.
 
 ### Other
 
-- *(wasm)* dissolve the segment tax — slice-aligned segments and a free-slice pool (F2)
-- *(heap)* route every span-sized allocation in-segment — the segment tax, F1+F5
+- _(wasm)_ dissolve the segment tax — slice-aligned segments and a free-slice pool (F2)
+- _(heap)_ route every span-sized allocation in-segment — the segment tax, F1+F5
 
 ## [1.1.5](https://github.com/Remade-With-Rust/rusty_alloc/compare/rusty_alloc-v1.1.4...rusty_alloc-v1.1.5) - 2026-08-28
 
 ### Fixed
 
-- *(arena)* keep the public Arena shape, harden the adoption tests, own the census
-- *(wasm)* recycle freed segments — adopt-on-free arenas replace the no-op leak
+- _(arena)_ keep the public Arena shape, harden the adoption tests, own the census
+- _(wasm)_ recycle freed segments — adopt-on-free arenas replace the no-op leak

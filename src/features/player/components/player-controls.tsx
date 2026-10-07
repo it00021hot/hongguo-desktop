@@ -395,7 +395,7 @@ export function PlayerControls({
           <SkipForward className="size-4" />
         </IconButton>
 
-        <span className="ml-1 shrink-0 font-mono text-xs text-white/90 whitespace-nowrap tabular-nums">
+        <span className="ml-1 shrink-0 font-mono text-xs whitespace-nowrap text-white/90 tabular-nums">
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
@@ -480,7 +480,7 @@ export function PlayerControls({
               {seriesPanelOpen && (
                 // 贴着按钮向上弹（弹幕设置面板同款锚定）。宽度必须写死在
                 // wrapper 上——% 会相对按钮宽度塌缩，8 列网格直接挤死。
-                <div className="absolute right-0 bottom-full mb-3 w-[460px] max-w-[92vw] max-h-[62vh] overflow-y-auto scrollbar-thin">
+                <div className="absolute right-0 bottom-full mb-3 max-h-[62vh] w-[460px] max-w-[92vw] scrollbar-thin overflow-y-auto">
                   <EpisodePicker
                     seriesId={seriesId}
                     currentIndex={currentIndex}
@@ -556,14 +556,12 @@ export function PlayerControls({
             )}
           </div>
 
-
           <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
             <MessageSquareText
               className={`size-5 ${danmakuOn ? 'text-white' : 'text-white/40'}`}
               aria-hidden
             />
           </IconButton>
-
 
           {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
               会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起。
@@ -574,7 +572,6 @@ export function PlayerControls({
             onToggleMute={toggleMute}
             onSetVolume={setVolumeValue}
           />
-
 
           {/* 隐身模式（一只眼睛）：开启后鼠标离开窗口 → 整窗透明 + 暂停，
               鼠标回来即恢复显示。看不该看的东西时的「闪避键」 */}

@@ -66,10 +66,8 @@ pub fn resolve_ticket_with(
     for offset in 0..MAX_TICKET_OFFSET {
         let ticket = base_ticket + u64::from(offset);
         let khronos = (ticket / 1000) as u32;
-        let mut params: Vec<(&str, String)> = device
-            .iter()
-            .map(|(k, v)| (k, v.to_string()))
-            .collect();
+        let mut params: Vec<(&str, String)> =
+            device.iter().map(|(k, v)| (k, v.to_string())).collect();
         // 生命周期桥：biz_query 是调用方给的 owned 对，借成 &str 拼进同一张表
         let biz_owned: Vec<(String, String)> = biz_query.to_vec();
         for (k, v) in &biz_owned {
@@ -93,10 +91,7 @@ pub fn resolve_ticket_with(
     // 32 次都落在 branch 1：沿用最后一次的偏移（与 JS 一致）
     let ticket = base_ticket + u64::from(MAX_TICKET_OFFSET - 1);
     let khronos = (ticket / 1000) as u32;
-    let mut params: Vec<(&str, String)> = device
-        .iter()
-        .map(|(k, v)| (k, v.to_string()))
-        .collect();
+    let mut params: Vec<(&str, String)> = device.iter().map(|(k, v)| (k, v.to_string())).collect();
     let biz_owned: Vec<(String, String)> = biz_query.to_vec();
     for (k, v) in &biz_owned {
         params.push((k.as_str(), v.clone()));
@@ -142,8 +137,14 @@ pub fn sign_request_with(
     biz_query: &[(String, String)],
     extra_headers: &[(String, String)],
 ) -> SignedRequest {
-    let (url, query, ticket, khronos) =
-        resolve_ticket_with(origin, pathname, body.as_deref(), device, biz_query, now_millis());
+    let (url, query, ticket, khronos) = resolve_ticket_with(
+        origin,
+        pathname,
+        body.as_deref(),
+        device,
+        biz_query,
+        now_millis(),
+    );
 
     let random = rand::random::<u16>();
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -316,7 +317,9 @@ mod tests {
             &profile,
             &[],
         );
-        assert!(signed.url.starts_with("https://passport.example.com/passport/"));
+        assert!(signed
+            .url
+            .starts_with("https://passport.example.com/passport/"));
         let ua = signed
             .headers
             .iter()

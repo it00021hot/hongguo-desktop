@@ -32,7 +32,7 @@ export function TopBarTabsPortal({ children }: { children: React.ReactNode }) {
   if (!slot) return null;
   return createPortal(
     // pointer-events-auto：插槽容器是 none（空白带让给拖窗），内容自己接事件
-    <div className="scrollbar-none pointer-events-auto flex shrink-0 items-center gap-0.5 overflow-x-auto">
+    <div className="pointer-events-auto flex shrink-0 scrollbar-none items-center gap-0.5 overflow-x-auto">
       {children}
     </div>,
     slot,

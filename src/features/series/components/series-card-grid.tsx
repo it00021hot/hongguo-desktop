@@ -49,11 +49,7 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect, trailing }: Pro
             <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
               {/* 封面统一走 SeriesCover：筛选流/搜索结果的封面是 HEIC 裸 URL，
                   直挂 <img> 在 Windows（无 HEVC 扩展的 WebView2）上全是裂图 */}
-              <SeriesCover
-                seriesId={card.seriesId}
-                cover={card.cover}
-                alt={card.seriesTitle}
-              />
+              <SeriesCover seriesId={card.seriesId} cover={card.cover} alt={card.seriesTitle} />
 
               {downloaded > 0 && (
                 <Badge

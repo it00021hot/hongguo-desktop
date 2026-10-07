@@ -99,14 +99,14 @@ Windows MF 一轮（windows crate 绑定没错，错的全是**契约与实机�
 
 ## 关键文件
 
-| 文件 | 内容 |
-| --- | --- |
-| `src-tauri/src/media/backend.rs` | `Backend` 枚举与家族 |
-| `src-tauri/src/media/platform.rs` | 平台分发（`PlatformRequest` / `transcode_h264` / 探测 / 测试通道分发） |
-| `src-tauri/src/media/platform/vt/{mod,ffi}.rs` | VideoToolbox 后端（macOS） |
-| `src-tauri/src/media/platform/mf/mod.rs` | Media Foundation 后端（Windows：SourceReader 解码 + MFT 编码双契约） |
-| `src-tauri/src/domain/mp4/timing.rs` | `sample_pts` / `average_framerate` |
-| `src-tauri/src/service/transcode_service/pipeline.rs` | 三层分流唯一入口 |
+| 文件                                                  | 内容                                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------------------- |
+| `src-tauri/src/media/backend.rs`                      | `Backend` 枚举与家族                                                   |
+| `src-tauri/src/media/platform.rs`                     | 平台分发（`PlatformRequest` / `transcode_h264` / 探测 / 测试通道分发） |
+| `src-tauri/src/media/platform/vt/{mod,ffi}.rs`        | VideoToolbox 后端（macOS）                                             |
+| `src-tauri/src/media/platform/mf/mod.rs`              | Media Foundation 后端（Windows：SourceReader 解码 + MFT 编码双契约）   |
+| `src-tauri/src/domain/mp4/timing.rs`                  | `sample_pts` / `average_framerate`                                     |
+| `src-tauri/src/service/transcode_service/pipeline.rs` | 三层分流唯一入口                                                       |
 
 ## 待办（后续会话）
 
@@ -123,6 +123,7 @@ CDP 驱动全链路（下载 2 集 → compat 合并）：**MF 平台硬编层�
 另加「首样本强制视频」保险。修后两集平台层均一次通过。
 
 速度数据（GTX 1650，1080p30）：
+
 - ep1：12533 帧 / 71.5s ≈ **175 fps ≈ 5.8× 实时**；ep2：13886 帧 / 79.9s。
 - 单集合并端到端 ~72s（转码 + faststart 封装 + 可播校验），产物 366.6MB（源 HEVC ~40MB，
   H.264 码率保守是兼容格式的固有代价）。

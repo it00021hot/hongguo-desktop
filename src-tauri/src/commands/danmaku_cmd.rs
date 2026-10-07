@@ -29,7 +29,11 @@ pub async fn danmaku_list(
             log::info!(
                 "[Danmaku] group={group_id} book={book_id} 拉到 {} 条{}",
                 list.len(),
-                if preview.is_empty() { String::new() } else { format!("（前几条: {}）", preview.join(" | ")) }
+                if preview.is_empty() {
+                    String::new()
+                } else {
+                    format!("（前几条: {}）", preview.join(" | "))
+                }
             );
             Ok(list)
         }
@@ -39,7 +43,6 @@ pub async fn danmaku_list(
         }
     }
 }
-
 
 /// 拉一集的**评论区一页**（ct=4/src=4，一窗 20 条；cursor 翻页）。
 /// 返回列表 + 评论总数（`total` 是互动栏评论计数的数据源）+ 翻页游标——
@@ -57,7 +60,11 @@ pub async fn comment_list(
         Ok(page) => {
             log::info!(
                 "[Comments] group={group_id} book={book_id} cursor={} 拉到 {} 条 total={}",
-                if cursor.is_empty() { "首页" } else { "翻页" },
+                if cursor.is_empty() {
+                    "首页"
+                } else {
+                    "翻页"
+                },
                 page.items.len(),
                 page.total
             );

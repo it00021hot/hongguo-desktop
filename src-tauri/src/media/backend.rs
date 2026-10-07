@@ -46,7 +46,10 @@ mod tests {
     fn hardware_gates_on_where_the_encoder_actually_runs() {
         assert!(Backend::Platform.is_hardware());
         assert!(Backend::FfmpegHw.is_hardware());
-        assert!(!Backend::FfmpegSw.is_hardware(), "libx264 经 ffmpeg 也不是硬件");
+        assert!(
+            !Backend::FfmpegSw.is_hardware(),
+            "libx264 经 ffmpeg 也不是硬件"
+        );
         assert!(!Backend::Rust.is_hardware());
     }
 

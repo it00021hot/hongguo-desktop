@@ -142,12 +142,17 @@ impl AppStateInner {
 ///
 /// 解析按 `k=v; k=v` 形态逐对处理，账号侧的分号后空格容忍；合并保序，
 /// 兜底字段在前、账号新增字段追加在后——与 hgplayer 抓包的 Cookie 顺序一致。
-fn merge_session_cookie(account: Option<&str>, device: &crate::signer::device::DeviceProfile) -> String {
-    let mut fields: Vec<(String, String)> =
-        crate::signer::device::anonymous_cookie(device)
-            .split("; ")
-            .filter_map(|p| p.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-            .collect();
+fn merge_session_cookie(
+    account: Option<&str>,
+    device: &crate::signer::device::DeviceProfile,
+) -> String {
+    let mut fields: Vec<(String, String)> = crate::signer::device::anonymous_cookie(device)
+        .split("; ")
+        .filter_map(|p| {
+            p.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
+        .collect();
     if let Some(account) = account {
         for pair in account.split(';').map(str::trim).filter(|p| !p.is_empty()) {
             if let Some((k, v)) = pair.split_once('=') {
@@ -184,7 +189,10 @@ mod tests {
         let device = crate::signer::video_device();
         let cookie = merge_session_cookie(Some("sessionid=abc; store-region=cn-sh"), &device);
         // 账号字段覆盖同名、追加新增，兜底字段保留
-        assert!(cookie.contains("store-region=cn-sh"), "账号属地应覆盖兜底值");
+        assert!(
+            cookie.contains("store-region=cn-sh"),
+            "账号属地应覆盖兜底值"
+        );
         assert!(cookie.contains("sessionid=abc"));
         assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
         // 形态合法：每段都是 k=v
@@ -234,7 +242,11 @@ mod tests {
         let state = AppState::default();
         state
             .store
-            .save_playback_position("A", 1, &crate::domain::model::PlaybackPosition::new(1.0, 2.0))
+            .save_playback_position(
+                "A",
+                1,
+                &crate::domain::model::PlaybackPosition::new(1.0, 2.0),
+            )
             .expect("内存库写入");
         assert_eq!(
             state

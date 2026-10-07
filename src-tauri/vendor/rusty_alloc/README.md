@@ -37,10 +37,10 @@ Measured deterministically via callgrind instructions retired, x86-64 Linux,
 theirs; **lower is better**):
 
 | workload | vs mimalloc | vs jemalloc | vs glibc |
-|---|---:|---:|---:|
-| lua | **0.97** | **0.84** | 0.82 |
-| perl | **0.99** | **0.89** | 0.81 |
-| sqlite | **1.00** | **0.98** | 0.99 |
+| -------- | ----------: | ----------: | -------: |
+| lua      |    **0.97** |    **0.84** |     0.82 |
+| perl     |    **0.99** |    **0.89** |     0.81 |
+| sqlite   |    **1.00** |    **0.98** |     0.99 |
 
 We match mimalloc and come in **2–15% under jemalloc** (jemalloc 5.3.0) across
 all three real programs, and ~17% under glibc.
@@ -87,12 +87,12 @@ Builds `no_std` and runs as the `#[global_allocator]` on bare metal. Measured on
 a Seeed XIAO ESP32-S3 Sense at 240 MHz against `esp-alloc` 0.11 — nanoseconds
 per allocate/free pair, lower is better:
 
-| workload | `esp-alloc` | `rusty_alloc` | speedup |
-|---|---:|---:|---:|
-| 32 B alloc/free | 1,638 | **586** | **2.80x** |
-| 64 mixed blocks (8-512 B), batched | 1,792 | **824** | **2.17x** |
-| **churn: 64 live, random 8-512 B** | 3,987 | **1,002** | **3.98x** |
-| 2048 B alloc/free | 1,638 | **1,133** | **1.45x** |
+| workload                           | `esp-alloc` | `rusty_alloc` |   speedup |
+| ---------------------------------- | ----------: | ------------: | --------: |
+| 32 B alloc/free                    |       1,638 |       **586** | **2.80x** |
+| 64 mixed blocks (8-512 B), batched |       1,792 |       **824** | **2.17x** |
+| **churn: 64 live, random 8-512 B** |       3,987 |     **1,002** | **3.98x** |
+| 2048 B alloc/free                  |       1,638 |     **1,133** | **1.45x** |
 
 Both arms are one firmware source with `--cfg` picking the allocator, given
 equal budgets. A baseline arm with no allocator call measured 162 ns/op in both
@@ -197,7 +197,7 @@ Opt-in hardening for hostile-input services:
   per allocation (+0.6–1.8% whole-program).
 - **`blockmap`** — a per-page block-liveness map that catches a forged link
   landing on an already-live block, the one thing that closes R-005 (encoding
-  does not survive an attacker with a *read* primitive). Off by default on cost
+  does not survive an attacker with a _read_ primitive). Off by default on cost
   (~3× `secure`); switchable independently.
 
 Reports go through [SECURITY.md](https://github.com/remade-with-rust/rusty_alloc/blob/main/SECURITY.md)
@@ -207,12 +207,12 @@ and the [`unsafe` inventory](https://github.com/remade-with-rust/rusty_alloc/blo
 
 ## Features
 
-| feature | what |
-|---|---|
-| `debug_checks` | full invariant validation: list walks, span tiling, page canaries |
-| `secure` | encrypted free-list links + same-segment link bound; guard pages / guarded-object sampling available (opt-in via options). Flat ~15 instr/alloc (+0.6–1.8% whole-program) |
-| `blockmap` | per-page block-liveness map — catches a forged link handed out as a live block (closes R-005). Off by default on cost (~3× `secure`) |
-| `profile` | feature-gated path profiler |
+| feature        | what                                                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `debug_checks` | full invariant validation: list walks, span tiling, page canaries                                                                                                         |
+| `secure`       | encrypted free-list links + same-segment link bound; guard pages / guarded-object sampling available (opt-in via options). Flat ~15 instr/alloc (+0.6–1.8% whole-program) |
+| `blockmap`     | per-page block-liveness map — catches a forged link handed out as a live block (closes R-005). Off by default on cost (~3× `secure`)                                      |
+| `profile`      | feature-gated path profiler                                                                                                                                               |
 
 Statistics counters follow upstream's `MI_STAT` rule: present in debug builds,
 compiled out of release.
@@ -231,11 +231,11 @@ We build the core to production grade and open-source it so the community can
 extend it. No copyleft. No surprises. Just the tools we rely on, made faster and
 safer.
 
-| Project | What it is |
-|---|---|
-| 🎬 **[remade_ffmpeg_rs](https://github.com/Remade-With-Rust/remade_ffmpeg_rs)** | **Our FFmpeg alternative.** Drop-in `ffmpeg` and `ffprobe` binaries — demux → decode → filter → encode → mux, rebuilt as composable Rust crates with **zero GPL/LGPL**. Apache-2.0. `rusty_h264` is its H.264 codec. |
-| 🧠 **[FFAI](https://github.com/Remade-With-Rust/FFAI)** | **Our sister project: media *for* AI.** "The AI media toolkit, remade with rust." Embedded ASR + TTS (**Mercury**), OCR (**Carmenta**) and vision-language captioning (**Argus**) behind an ffmpeg-style, swap-by-name architecture — no Python, no CUDA. MIT OR Apache-2.0. |
-| 🌐 **[Mata Network](https://www.mata.network/)** | **The home page.** *"Stop sacrificing your privacy for convenience."* Sovereign, self-hostable privacy infrastructure — wallet & identity, password manager, contact manager, and a browser extension that stops information leaking as you browse. Remade With Rust is its open-source arm. |
+| Project                                                                         | What it is                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🎬 **[remade_ffmpeg_rs](https://github.com/Remade-With-Rust/remade_ffmpeg_rs)** | **Our FFmpeg alternative.** Drop-in `ffmpeg` and `ffprobe` binaries — demux → decode → filter → encode → mux, rebuilt as composable Rust crates with **zero GPL/LGPL**. Apache-2.0. `rusty_h264` is its H.264 codec.                                                                         |
+| 🧠 **[FFAI](https://github.com/Remade-With-Rust/FFAI)**                         | **Our sister project: media _for_ AI.** "The AI media toolkit, remade with rust." Embedded ASR + TTS (**Mercury**), OCR (**Carmenta**) and vision-language captioning (**Argus**) behind an ffmpeg-style, swap-by-name architecture — no Python, no CUDA. MIT OR Apache-2.0.                 |
+| 🌐 **[Mata Network](https://www.mata.network/)**                                | **The home page.** _"Stop sacrificing your privacy for convenience."_ Sovereign, self-hostable privacy infrastructure — wallet & identity, password manager, contact manager, and a browser extension that stops information leaking as you browse. Remade With Rust is its open-source arm. |
 
 → All projects: **[github.com/Remade-With-Rust](https://github.com/Remade-With-Rust)**
 
@@ -248,28 +248,29 @@ MIT. See `LICENSE` at the repository root.
 ---
 
 <!-- HARDENING-TABLE:BEGIN generated by use-protection-please — edit docs/plans/use-protection-please.md, not this block -->
+
 ## Hardening status
 
 **Tier** critical-path · **Audited** 2026-08-20 (survey) · **v1.0.0 gates** 14/15 · [Full checklist](https://github.com/remade-with-rust/rusty_alloc/blob/main/crates/rusty_alloc/docs/plans/use-protection-please.md)
 
 `██████████████████░░` **94%** &nbsp;·&nbsp; 34 Completed · 1 Scheduled · 1 Incomplete · 19 N/A
 
-| Phase | ✅ Completed | 🗓 Scheduled | ⬜ Incomplete | · N/A |
-|---|--:|--:|--:|--:|
-| 0 — Threat modeling | 2 | 0 | 0 | 0 |
-| 1 — Toolchain | 4 | 0 | 0 | 0 |
-| 2 — Supply chain | 8 | 0 | 0 | 0 |
-| 3 — Code level | 6 | 0 | 0 | 1 |
-| 4 — Static analysis | 1 | 0 | 0 | 0 |
-| 5 — Dynamic analysis | 3 | 0 | 0 | 0 |
-| 6 — Fuzzing and properties | 3 | 1 | 0 | 0 |
-| 7 — Formal verification | 1 | 0 | 0 | 0 |
-| 8 — Build and binary | 0 | 0 | 0 | 2 |
-| 9 — Runtime privilege | 0 | 0 | 0 | 1 |
-| 10 — Cryptography | 2 | 0 | 0 | 1 |
-| 11 — CI/CD, release, and operations | 4 | 0 | 1 | 0 |
-| 12 — Compliance controls | 0 | 0 | 0 | 14 |
-| **Total** | **34** | **1** | **1** | **19** |
+| Phase                               | ✅ Completed | 🗓 Scheduled | ⬜ Incomplete |  · N/A |
+| ----------------------------------- | -----------: | ----------: | ------------: | -----: |
+| 0 — Threat modeling                 |            2 |           0 |             0 |      0 |
+| 1 — Toolchain                       |            4 |           0 |             0 |      0 |
+| 2 — Supply chain                    |            8 |           0 |             0 |      0 |
+| 3 — Code level                      |            6 |           0 |             0 |      1 |
+| 4 — Static analysis                 |            1 |           0 |             0 |      0 |
+| 5 — Dynamic analysis                |            3 |           0 |             0 |      0 |
+| 6 — Fuzzing and properties          |            3 |           1 |             0 |      0 |
+| 7 — Formal verification             |            1 |           0 |             0 |      0 |
+| 8 — Build and binary                |            0 |           0 |             0 |      2 |
+| 9 — Runtime privilege               |            0 |           0 |             0 |      1 |
+| 10 — Cryptography                   |            2 |           0 |             0 |      1 |
+| 11 — CI/CD, release, and operations |            4 |           0 |             1 |      0 |
+| 12 — Compliance controls            |            0 |           0 |             0 |     14 |
+| **Total**                           |       **34** |       **1** |         **1** | **19** |
 
 **Next up** — H-27 Continuous fuzzing with no open crashes (2026-09-19 (30 days from the nightly job's first run))
 

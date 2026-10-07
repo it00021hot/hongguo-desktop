@@ -71,8 +71,9 @@ export function LoginDialog({
       .then((r) => {
         if (r.kind === 'mfa') setMfaTips(r.tips);
       })
-      .catch(() => {/* 无进行中的验证，正常 */}
-      );
+      .catch(() => {
+        /* 无进行中的验证，正常 */
+      });
   }, [open]);
 
   const sendCode = async () => {
@@ -121,7 +122,8 @@ export function LoginDialog({
 
   if (!open) return null;
 
-  const maskedMobile = mobile.length === 11 ? `${mobile.slice(0, 3)}****${mobile.slice(7)}` : mobile;
+  const maskedMobile =
+    mobile.length === 11 ? `${mobile.slice(0, 3)}****${mobile.slice(7)}` : mobile;
 
   return (
     <div

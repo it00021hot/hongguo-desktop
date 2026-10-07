@@ -57,7 +57,11 @@ pub async fn discover_feed(
             page.items.len(),
             page.items.first().map(|i| i.title.as_str()).unwrap_or("-")
         ),
-        Err(e) => log::warn!("[Feed] genre={:?} offset={} 失败: {e}", genre, offset.unwrap_or(0)),
+        Err(e) => log::warn!(
+            "[Feed] genre={:?} offset={} 失败: {e}",
+            genre,
+            offset.unwrap_or(0)
+        ),
     }
     result
 }
@@ -68,10 +72,7 @@ pub async fn discover_feed(
 /// 官网详情页有 webp 版。按 series_id 落库缓存——一部剧只抓一次官网，
 /// 之后全部走库。抓不到返回 null，卡片继续用 TV 兜底图标。
 #[tauri::command]
-pub async fn web_cover(
-    state: State<'_, AppState>,
-    series_id: String,
-) -> AppResult<Option<String>> {
+pub async fn web_cover(state: State<'_, AppState>, series_id: String) -> AppResult<Option<String>> {
     if let Some(hit) = state.store.web_cover(&series_id)? {
         return Ok(Some(hit));
     }

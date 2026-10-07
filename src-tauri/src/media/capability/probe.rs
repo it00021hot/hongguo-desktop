@@ -93,7 +93,8 @@ pub fn selected_backend() -> Backend {
 }
 
 fn platform_hw() -> bool {
-    !crate::media::platform::disabled_by_env() && crate::media::platform::h264_hw_encoder_available()
+    !crate::media::platform::disabled_by_env()
+        && crate::media::platform::h264_hw_encoder_available()
 }
 
 /// 当前机器的转码链路能否统一分辨率（缩放）。

@@ -231,7 +231,8 @@ pub fn serve(
             Ok(respond(&buffer, parse_range(range_header, size), size))
         }
         Some(prog) => serve_progressive(&prog, range_header, &still_current),
-    }}
+    }
+}
 
 /// 渐进模式应答：把明文 Range 映射回密文区间，等齐、解密、拼装。
 ///
@@ -529,7 +530,12 @@ impl StreamCache {
     /// 整集数据已经写进来的话返回 `false`（渐进条目作废），调用方据此停止填充。
     /// 条目已被逐出（用户切走了）同样返回 `false` 且**不再重建**——重建一个
     /// 没人要的条目只会让它的填充白占串行队列。
-    pub fn set_progressive(&self, vid: &str, definition: u32, stream: Arc<ProgressiveStream>) -> bool {
+    pub fn set_progressive(
+        &self,
+        vid: &str,
+        definition: u32,
+        stream: Arc<ProgressiveStream>,
+    ) -> bool {
         let Some(entry) = self.get(vid, definition) else {
             log::info!("[Stream] {vid}@{definition} 已被逐出，渐进注册作废");
             return false;
@@ -624,8 +630,11 @@ impl StreamCache {
     fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
         let prefetch = self.prefetch.lock().clone();
         let mut entries = self.entries.lock();
-        let is_marked =
-            |k: &StreamKey| prefetch.iter().any(|(v, d)| v == &k.vid && *d == k.definition);
+        let is_marked = |k: &StreamKey| {
+            prefetch
+                .iter()
+                .any(|(v, d)| v == &k.vid && *d == k.definition)
+        };
 
         // 候选逐出集：非当前、非预取。按最近使用降序，窗口外即逐出。
         let mut others: Vec<(StreamKey, std::time::Instant, u64)> = entries
@@ -877,7 +886,6 @@ mod tests {
         );
     }
 
-
     // ---- 清晰度切换：一集的多个档位互不干扰 ----
 
     #[test]
@@ -965,12 +973,10 @@ mod tests {
 
     /// 免触碰的存在性检查：`get` 会刷新 LRU 指纹，断言里用它才不打乱时序。
     fn present(c: &StreamCache, vid: &str, definition: u32) -> bool {
-        c.entries
-            .lock()
-            .contains_key(&StreamKey {
-                vid: vid.to_string(),
-                definition,
-            })
+        c.entries.lock().contains_key(&StreamKey {
+            vid: vid.to_string(),
+            definition,
+        })
     }
 
     #[test]
@@ -1051,10 +1057,7 @@ mod tests {
         c.mark_prefetch("p3", 1080);
         assert_eq!(c.prefetch.lock().len(), super::MAX_PREFETCH_MARKS);
         assert!(
-            !c.prefetch
-                .lock()
-                .iter()
-                .any(|(v, _)| v == "p1"),
+            !c.prefetch.lock().iter().any(|(v, _)| v == "p1"),
             "最老的标记被挤出"
         );
         // 转正（set_current）与删除（remove）都要摘标记

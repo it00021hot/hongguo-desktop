@@ -19,9 +19,9 @@ use serde_json::Value;
 use std::sync::OnceLock;
 
 use super::client::{api_call_reading, ApiEnv};
+use super::danmaku::LQ_API_ORIGIN;
 use super::discover::{check_code, int_field, num_field, str_field};
 use crate::error::{AppError, AppResult};
-use super::danmaku::LQ_API_ORIGIN;
 
 /// 排行榜（书城 cell 换一换，/v 无斜杠）。
 pub const RANK_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v";
@@ -40,11 +40,7 @@ fn reading_session_id() -> &'static str {
         for _ in 0..10 {
             let _ = write!(tail, "{:02X}", rand::random::<u8>());
         }
-        format!(
-            "{}{}",
-            chrono::Local::now().format("%Y%m%d%H%M%S"),
-            tail
-        )
+        format!("{}{}", chrono::Local::now().format("%Y%m%d%H%M%S"), tail)
     })
 }
 
@@ -191,8 +187,8 @@ pub async fn fetch_rank_ex(
         q.push(("panel_selected_items".to_string(), p.to_string()));
     }
     let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
-    let value: Value =
-        serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析榜单失败: {e}")))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析榜单失败: {e}")))?;
     check_code(&value)?;
     Ok(RankPage {
         items: parse_rank_items(value.get("data"))?,
@@ -306,8 +302,8 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
     let bytes = api_call_reading(LQ_API_ORIGIN, NEW_DRAMA_CELL_PATH, None, &q, env).await?;
-    let value: Value =
-        serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
     check_code(&value)?;
     Ok(RankPage {
         items: parse_rank_items(value.get("data"))?,
@@ -375,7 +371,10 @@ async fn fetch_reservations_page(
     env: &ApiEnv,
 ) -> AppResult<CalendarPage> {
     let q: Vec<(String, String)> = vec![
-        ("is_online".into(), if is_online { "true" } else { "false" }.into()),
+        (
+            "is_online".into(),
+            if is_online { "true" } else { "false" }.into(),
+        ),
         ("limit".into(), "20".into()),
         ("offset".into(), offset.to_string()),
         ("subscribe_offset".into(), "0".into()),
@@ -386,8 +385,8 @@ async fn fetch_reservations_page(
         ("session_id".into(), reading_session_id().to_string()),
     ];
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
-    let value: Value =
-        serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
     check_code(&value)?;
     parse_calendar(value.get("data"))
 }
@@ -417,7 +416,6 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
         .map_err(|e| AppError::Media(format!("解析预约响应失败: {e}")))?;
     check_code(&value)
 }
-
 
 /// 上新日历的一条剧集。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -639,10 +637,7 @@ fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
             .get("has_more")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        next_offset: data
-            .get("next_offset")
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        next_offset: data.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
         online_total: data
             .get("online_total_count")
             .and_then(Value::as_i64)
@@ -754,7 +749,10 @@ fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>> {
 
     let mut items = Vec::new();
     for raw in &raws {
-        let Some(series_id) = raw.get("series_id").and_then(Value::as_str).filter(|s| !s.is_empty())
+        let Some(series_id) = raw
+            .get("series_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
         else {
             continue;
         };
@@ -910,8 +908,7 @@ mod tests {
         let sub = &tabs[0].subs[0];
         assert_eq!(sub.id, "ranklist_hot_sc");
         assert_eq!(
-            sub.description,
-            "10月4日已更新·基于红果观看/互动以及个人兴趣排序",
+            sub.description, "10月4日已更新·基于红果观看/互动以及个人兴趣排序",
             "子榜描述行（sub_title）供官方同款排版用"
         );
         assert_eq!(sub.panel.len(), 2);
@@ -966,7 +963,10 @@ mod tests {
         assert_eq!(tabs[0].subs[0].id, "");
         assert_eq!(tabs[0].subs[0].name, "总榜");
         assert_eq!(tabs[0].subs[1].id, "gender_female");
-        assert!(tabs[0].subs.iter().all(|s| s.panel.is_empty()), "一级形态无 panel 层");
+        assert!(
+            tabs[0].subs.iter().all(|s| s.panel.is_empty()),
+            "一级形态无 panel 层"
+        );
         assert!(tabs[1].subs.is_empty(), "无 sub_cell_selector 收空表");
     }
 
@@ -988,7 +988,8 @@ mod tests {
 
     #[test]
     fn collect_walks_nested_cells() {
-        let v: Value = serde_json::json!({ "a": { "video_data": [1] }, "b": [ { "video_data": [2] } ] });
+        let v: Value =
+            serde_json::json!({ "a": { "video_data": [1] }, "b": [ { "video_data": [2] } ] });
         let mut out = Vec::new();
         collect_video_data(&v, &mut out);
         assert_eq!(out.len(), 2);
@@ -1298,7 +1299,11 @@ pub(crate) mod probe {
             let subs: Vec<&str> = tab.subs.iter().map(|s| s.name.as_str()).collect();
             println!("  {:?} {:?} subs={:?}", tab.id, tab.name, subs);
         }
-        println!("[{variant}] items={} #1={:?}", page.items.len(), page.items.first().map(|i| i.title.as_str()));
+        println!(
+            "[{variant}] items={} #1={:?}",
+            page.items.len(),
+            page.items.first().map(|i| i.title.as_str())
+        );
     }
 
     /// 排行榜 cell_selector 形态二分（补充）：老版本号 + 匿名（无会话），
@@ -1376,7 +1381,9 @@ pub(crate) mod probe {
         if let Some(first) = raws.first() {
             println!(
                 "[celebrity] 首条 keys = {:?}",
-                first.as_object().map(|m| m.keys().take(20).collect::<Vec<_>>())
+                first
+                    .as_object()
+                    .map(|m| m.keys().take(20).collect::<Vec<_>>())
             );
             println!(
                 "[celebrity] title = {:?}, series_id = {:?}, sub_title = {:?}",
@@ -1528,7 +1535,11 @@ pub(crate) mod probe {
             println!(
                 "[reservations:online={tab}] {} 条: {:?}",
                 page.items.len(),
-                page.items.iter().map(|i| i.title.as_str()).take(3).collect::<Vec<_>>()
+                page.items
+                    .iter()
+                    .map(|i| i.title.as_str())
+                    .take(3)
+                    .collect::<Vec<_>>()
             );
             if matches!(std::env::var("HG_RESERVE_COOKIES"), Ok(ref c) if !c.is_empty()) {
                 assert!(!page.items.is_empty(), "登录态 {tab} tab 不应为空");
@@ -1552,8 +1563,8 @@ pub(crate) mod probe {
         let Ok(cookies) = std::env::var("HG_RESERVE_COOKIES") else {
             panic!("HG_RESERVE_COOKIES 必填（hgplayer.db account 表的 cookies）");
         };
-        let series = std::env::var("HG_RESERVE_SERIES")
-            .unwrap_or_else(|_| "7692797468404091929".into());
+        let series =
+            std::env::var("HG_RESERVE_SERIES").unwrap_or_else(|_| "7692797468404091929".into());
         let device = crate::signer::video_device();
         let env = ApiEnv {
             proxy: crate::domain::model::ProxyConfig::default(),
@@ -1562,7 +1573,9 @@ pub(crate) mod probe {
             x_tt_token: None,
         };
 
-        reserve_series(&series, false, &env).await.expect("取消预约");
+        reserve_series(&series, false, &env)
+            .await
+            .expect("取消预约");
         let page = fetch_reservations(false, &env).await.expect("取消后列表");
         let gone = page.items.iter().all(|i| i.series_id != series);
         println!(
@@ -1603,12 +1616,10 @@ pub(crate) mod probe {
         assert!(!page.dates.is_empty(), "日历应带日期列表");
         assert!(!page.items.is_empty(), "当日应有上新条目");
         // 对照：显式传一个非默认日期——修复后应翻页收集到该日条目
-        let other = page
-            .dates
-            .last()
-            .map(String::as_str)
-            .expect("至少一个日期");
-        let page2 = fetch_new_calendar(Some(other), &env).await.expect("指定日期日历");
+        let other = page.dates.last().map(String::as_str).expect("至少一个日期");
+        let page2 = fetch_new_calendar(Some(other), &env)
+            .await
+            .expect("指定日期日历");
         println!(
             "[calendar:{other}] items={} #1={:?} online_flags={:?}",
             page2.items.len(),

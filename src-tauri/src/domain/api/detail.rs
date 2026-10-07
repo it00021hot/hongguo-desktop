@@ -147,9 +147,7 @@ fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
                         .get("score")
                         .and_then(Value::as_str)
                         .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or_else(|| {
-                            raw.get("score").and_then(Value::as_f64).unwrap_or(0.0)
-                        }),
+                        .unwrap_or_else(|| raw.get("score").and_then(Value::as_f64).unwrap_or(0.0)),
                     play_cnt: int_field(raw, "play_cnt"),
                     episode_cnt,
                     video_desc: str_field(raw, "video_desc"),
@@ -243,7 +241,10 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
                     .get("comment_count")
                     .and_then(Value::as_i64)
                     .unwrap_or(0),
-                digg_count: item.get("digged_count").and_then(Value::as_i64).unwrap_or(0),
+                digg_count: item
+                    .get("digged_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
             })
         })
         .collect();
@@ -301,7 +302,10 @@ pub struct SeriesMeta {
 }
 
 /// 拉详情页头部元信息。失败交调用方降级（头部缺这几行不影响主功能）。
-pub async fn fetch_series_meta(series_id: &str, env: &super::client::ApiEnv) -> AppResult<SeriesMeta> {
+pub async fn fetch_series_meta(
+    series_id: &str,
+    env: &super::client::ApiEnv,
+) -> AppResult<SeriesMeta> {
     // body 照抄抓包（audit 纪律）：screen_width_px 是字符串形态
     let body = serde_json::to_vec(&serde_json::json!({
         "biz_param": {
@@ -342,7 +346,11 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
     }
     let node = response
         .pointer(&format!("/data/{series_id}"))
-        .or_else(|| response.get("data").and_then(|d| d.as_object().and_then(|o| o.values().next())))
+        .or_else(|| {
+            response
+                .get("data")
+                .and_then(|d| d.as_object().and_then(|o| o.values().next()))
+        })
         .ok_or_else(|| AppError::Media("详情元信息响应里没有 data".into()))?;
     let vd = node.get("video_data").unwrap_or(node);
 
@@ -355,7 +363,10 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
         .and_then(Value::as_array)
     {
         for item in items {
-            let content = item.get("content").and_then(Value::as_str).unwrap_or_default();
+            let content = item
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if content.is_empty() {
                 continue;
             }
@@ -369,18 +380,30 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
 
     let sid = pick(vd, &["series_id_str", "series_id"]);
     Ok(SeriesMeta {
-        series_id: if sid.is_empty() { series_id.to_string() } else { sid },
+        series_id: if sid.is_empty() {
+            series_id.to_string()
+        } else {
+            sid
+        },
         title: pick(vd, &["series_title"]),
         cover: pick(vd, &["series_cover"]),
         followed_cnt: vd
             .get("followed_cnt")
             .and_then(Value::as_i64)
-            .or_else(|| vd.get("followed_cnt").and_then(Value::as_str).and_then(|s| s.parse().ok()))
+            .or_else(|| {
+                vd.get("followed_cnt")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse().ok())
+            })
             .unwrap_or(0),
         play_cnt: vd
             .get("series_play_cnt")
             .and_then(Value::as_i64)
-            .or_else(|| vd.get("series_play_cnt").and_then(Value::as_str).and_then(|s| s.parse().ok()))
+            .or_else(|| {
+                vd.get("series_play_cnt")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse().ok())
+            })
             .unwrap_or(0),
         record_number: vd
             .pointer("/record_info/record_number")
@@ -586,7 +609,6 @@ mod tests {
         assert_eq!(rel.guess[0].series_id, "999");
     }
 
-
     #[test]
     fn items_without_vid_are_skipped() {
         let v = json!({ "code": 0, "data": { "1": { "video_data": { "video_list": [
@@ -619,9 +641,9 @@ mod probe {
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        let payload = serde_json::to_vec(
-            &crate::domain::api::params::detail_payload("7690883800057777177"),
-        )
+        let payload = serde_json::to_vec(&crate::domain::api::params::detail_payload(
+            "7690883800057777177",
+        ))
         .unwrap();
         let bytes = crate::domain::api::client::api_call(
             crate::domain::api::params::DETAIL_PATH,
@@ -637,8 +659,10 @@ mod probe {
             .as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
-        let count_keys: Vec<&String> =
-            keys.iter().filter(|k| k.contains("count") || k.contains("cnt")).collect();
+        let count_keys: Vec<&String> = keys
+            .iter()
+            .filter(|k| k.contains("count") || k.contains("cnt"))
+            .collect();
         println!("[detail-counts] 首集计数类键: {count_keys:?}");
         for k in count_keys {
             println!("  {k} = {}", first_ep[k]);
@@ -678,30 +702,41 @@ mod probe2 {
             Ok(path) => {
                 let json = std::fs::read_to_string(&path).expect("读设备档案");
                 let device = serde_json::from_str(&json).expect("解析设备档案");
-                crate::domain::api::client::ApiEnv { proxy, device, cookie: None, x_tt_token: None }
+                crate::domain::api::client::ApiEnv {
+                    proxy,
+                    device,
+                    cookie: None,
+                    x_tt_token: None,
+                }
             }
             Err(_) => crate::domain::api::client::ApiEnv::anonymous(proxy),
         };
-        let sid = std::env::var("PROBE_SERIES_ID")
-            .unwrap_or_else(|_| "7685637575473630270".into());
+        let sid = std::env::var("PROBE_SERIES_ID").unwrap_or_else(|_| "7685637575473630270".into());
 
         let rel = fetch_related_series(&sid, &env).await.expect("plan");
         println!("[plan] works={} guess={}", rel.works.len(), rel.guess.len());
         for w in rel.works.iter().chain(rel.guess.iter()).take(6) {
-            println!("[plan]   {} | {} | tag={} score={} ep={} play={}", w.series_id, w.title, w.tag, w.score, w.episode_cnt, w.play_cnt);
+            println!(
+                "[plan]   {} | {} | tag={} score={} ep={} play={}",
+                w.series_id, w.title, w.tag, w.score, w.episode_cnt, w.play_cnt
+            );
         }
 
         match super::super::danmaku::fetch_series_comments_page(&sid, "", &env).await {
             Ok(page) => {
-                println!("[reviews] total={} score={:?} score_cnt={} tags={:?}",
-                    page.page.total, page.score, page.score_cnt, page.tags);
+                println!(
+                    "[reviews] total={} score={:?} score_cnt={} tags={:?}",
+                    page.page.total, page.score, page.score_cnt, page.tags
+                );
             }
             Err(e) => println!("[reviews] ERR: {e}"),
         }
 
         match fetch_series_meta(&sid, &env).await {
-            Ok(m) => println!("[meta] title={} followed={} play={} score? season={} tags={:?} record={}",
-                m.title, m.followed_cnt, m.play_cnt, m.season, m.tags, m.record_number),
+            Ok(m) => println!(
+                "[meta] title={} followed={} play={} score? season={} tags={:?} record={}",
+                m.title, m.followed_cnt, m.play_cnt, m.season, m.tags, m.record_number
+            ),
             Err(e) => println!("[meta] ERR: {e}"),
         }
 
@@ -717,18 +752,23 @@ mod probe2 {
             "series_id": sid,
         }))
         .unwrap();
-        let vd_bytes = crate::domain::api::client::api_call(
-            VIDEO_DETAIL_PATH, Some(payload), &env,
-        ).await.expect("video_detail");
+        let vd_bytes = crate::domain::api::client::api_call(VIDEO_DETAIL_PATH, Some(payload), &env)
+            .await
+            .expect("video_detail");
         let vd_raw = String::from_utf8_lossy(&vd_bytes).to_string();
         for key in ["\"score\"", "rating", "digg_cnt", "comment_count"] {
             let mut from = 0;
             for _ in 0..2 {
-                let Some(pos) = vd_raw[from..].find(key) else { break };
+                let Some(pos) = vd_raw[from..].find(key) else {
+                    break;
+                };
                 let at = from + pos;
                 let lo = at.saturating_sub(40);
                 let hi = (at + 100).min(vd_raw.len());
-                println!("[vdetail] {key} @ {at}: ...{}", vd_raw[lo..hi].replace(char::is_whitespace, " "));
+                println!(
+                    "[vdetail] {key} @ {at}: ...{}",
+                    vd_raw[lo..hi].replace(char::is_whitespace, " ")
+                );
                 from = at + 1;
             }
         }
@@ -761,9 +801,18 @@ mod probe2 {
         .await
         .expect("plan raw");
         let v: Value = serde_json::from_slice(&bytes).unwrap();
-        for cell in v.get("data").and_then(Value::as_array).into_iter().flatten() {
+        for cell in v
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let name = cell.get("cell_name").and_then(Value::as_str).unwrap_or("?");
-            let n = cell.get("video_data").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            let n = cell
+                .get("video_data")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
             println!("[plan raw] cell={name} items={n}");
             // cell 里的其它数组字段（hgplayer 的 guess_mvs tag 暗示猜你喜欢
             // 可能不走 video_data 而走专用字段）
@@ -775,9 +824,15 @@ mod probe2 {
                     if let Some(arr) = val.as_array() {
                         println!("[plan raw]   cell={name} arr {k} len={}", arr.len());
                         if let Some(first) = arr.first() {
-                            let keys: Vec<_> = first.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                            let keys: Vec<_> = first
+                                .as_object()
+                                .map(|o| o.keys().cloned().collect())
+                                .unwrap_or_default();
                             println!("[plan raw]     first keys: {keys:?}");
-                            println!("[plan raw]     first: {}", serde_json::to_string(first).unwrap_or_default());
+                            println!(
+                                "[plan raw]     first: {}",
+                                serde_json::to_string(first).unwrap_or_default()
+                            );
                         }
                     }
                 }
@@ -787,11 +842,16 @@ mod probe2 {
         for key in ["guess_mvs", "guess"] {
             let mut from = 0;
             for _ in 0..3 {
-                let Some(pos) = raw[from..].find(key) else { break };
+                let Some(pos) = raw[from..].find(key) else {
+                    break;
+                };
                 let at = from + pos;
                 let lo = at.saturating_sub(60);
                 let hi = (at + 120).min(raw.len());
-                println!("[plan raw] {key} @ {at}: ...{}...", raw[lo..hi].replace(char::is_whitespace, " "));
+                println!(
+                    "[plan raw] {key} @ {at}: ...{}...",
+                    raw[lo..hi].replace(char::is_whitespace, " ")
+                );
                 from = at + 1;
             }
         }
@@ -803,9 +863,9 @@ mod probe2 {
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        let payload = serde_json::to_vec(
-            &crate::domain::api::params::detail_payload("7689382439004671038"),
-        )
+        let payload = serde_json::to_vec(&crate::domain::api::params::detail_payload(
+            "7689382439004671038",
+        ))
         .unwrap();
         let bytes = crate::domain::api::client::api_call(
             crate::domain::api::params::DETAIL_PATH,
@@ -820,13 +880,26 @@ mod probe2 {
         keys.sort();
         println!("[rel] data.<sid> keys: {keys:?}");
         let vd = &node["video_data"];
-        let mut vkeys: Vec<_> = vd.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+        let mut vkeys: Vec<_> = vd
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
         vkeys.sort();
         println!("[rel] video_data keys: {vkeys:?}");
         let s = serde_json::to_string(&v).unwrap();
-        for key in ["relation", "relate_series", "series_list", "season", "同IP", "相关", "recommend"] {
+        for key in [
+            "relation",
+            "relate_series",
+            "series_list",
+            "season",
+            "同IP",
+            "相关",
+            "recommend",
+        ] {
             let n = s.matches(key).count();
-            if n > 0 { println!("  [{key}] x{n}"); }
+            if n > 0 {
+                println!("  [{key}] x{n}");
+            }
         }
     }
 }
@@ -841,10 +914,19 @@ mod probe_related {
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),
         );
-        let rel = fetch_related_series("7687961503718198334", &env).await.expect("相关作品");
-        println!("[related] works {} 条, guess {} 条", rel.works.len(), rel.guess.len());
+        let rel = fetch_related_series("7687961503718198334", &env)
+            .await
+            .expect("相关作品");
+        println!(
+            "[related] works {} 条, guess {} 条",
+            rel.works.len(),
+            rel.guess.len()
+        );
         for w in rel.works.iter().take(6) {
-            println!("  [{}] {} score={} {}集 play={}", w.tag, w.title, w.score, w.episode_cnt, w.play_cnt);
+            println!(
+                "  [{}] {} score={} {}集 play={}",
+                w.tag, w.title, w.score, w.episode_cnt, w.play_cnt
+            );
         }
         assert!(!rel.works.is_empty(), "多季剧必有相关作品");
     }

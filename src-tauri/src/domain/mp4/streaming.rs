@@ -246,12 +246,8 @@ pub fn locate_moov(buf: &[u8], base: u64, file_len: u64) -> Option<(u64, u64)> {
     let mut pos = 0usize;
     while let Some(rel) = find_fourcc(buf, b"moov", pos) {
         if rel >= 4 {
-            let size = u32::from_be_bytes([
-                buf[rel - 4],
-                buf[rel - 3],
-                buf[rel - 2],
-                buf[rel - 1],
-            ]) as u64;
+            let size =
+                u32::from_be_bytes([buf[rel - 4], buf[rel - 3], buf[rel - 2], buf[rel - 1]]) as u64;
             // size 为 0（到末尾）或 1（largesize）的 moov 罕见到不必支持
             if size >= 8 {
                 let abs = base + (rel - 4) as u64;

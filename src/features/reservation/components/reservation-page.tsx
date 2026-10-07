@@ -47,9 +47,7 @@ export function ReservationPage() {
     {
       key: true,
       label: t('reservation.tab.online'),
-      count: onlineQ.data
-        ? Math.max(onlineQ.data.onlineTotal, onlineQ.data.items.length)
-        : null,
+      count: onlineQ.data ? Math.max(onlineQ.data.onlineTotal, onlineQ.data.items.length) : null,
     },
     {
       key: false,
@@ -129,11 +127,7 @@ export function ReservationPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {(current.data?.items ?? []).map((item) => (
-            <ReservationCard
-              key={item.seriesId}
-              item={item}
-              onSelect={handleSelect}
-            />
+            <ReservationCard key={item.seriesId} item={item} onSelect={handleSelect} />
           ))}
         </div>
       )}
@@ -205,9 +199,7 @@ function ReservationCard({
   const tags = item.recTags.filter((x) => x !== '');
 
   return (
-    <article
-      className="bg-card hover:border-foreground/30 flex items-stretch gap-4 overflow-hidden rounded-xl border p-3 transition-colors hover:shadow-md"
-    >
+    <article className="bg-card hover:border-foreground/30 flex items-stretch gap-4 overflow-hidden rounded-xl border p-3 transition-colors hover:shadow-md">
       <button
         type="button"
         className="bg-muted relative aspect-[3/4] w-[92px] shrink-0 cursor-pointer overflow-hidden rounded-lg text-left"

@@ -54,7 +54,10 @@ pub enum MigrationOutcome {
 }
 
 /// 迁移入口。`json_path` 通常是 [`crate::store::paths::data_file`]。
-pub fn run(store: &super::bridge::Store, json_path: &Path) -> crate::error::AppResult<MigrationOutcome> {
+pub fn run(
+    store: &super::bridge::Store,
+    json_path: &Path,
+) -> crate::error::AppResult<MigrationOutcome> {
     if !json_path.exists() {
         return Ok(MigrationOutcome::NoLegacyFile);
     }
@@ -76,7 +79,11 @@ pub fn run(store: &super::bridge::Store, json_path: &Path) -> crate::error::AppR
         }
     };
 
-    let counts = (legacy.tasks.len(), legacy.series.len(), legacy.merge_tasks.len());
+    let counts = (
+        legacy.tasks.len(),
+        legacy.series.len(),
+        legacy.merge_tasks.len(),
+    );
     let playback_rows: usize = legacy.playback.values().map(|m| m.len()).sum();
     store.import_legacy(&legacy)?;
 
@@ -156,7 +163,13 @@ mod tests {
         let store = super::super::bridge::Store::open_memory().unwrap();
         let outcome = run(&store, &path).unwrap();
         match outcome {
-            MigrationOutcome::Migrated { tasks, series, playback, merges, renamed } => {
+            MigrationOutcome::Migrated {
+                tasks,
+                series,
+                playback,
+                merges,
+                renamed,
+            } => {
                 assert_eq!((tasks, series, playback, merges), (1, 1, 1, 0));
                 assert!(renamed, "迁移后必须改名留底");
             }
@@ -169,7 +182,10 @@ mod tests {
         assert_eq!(settings.max_concurrency, 5);
         assert_eq!(store.tasks().unwrap().len(), 1);
         assert_eq!(
-            store.playback_position("1", 2).unwrap().map(|p| p.current_time),
+            store
+                .playback_position("1", 2)
+                .unwrap()
+                .map(|p| p.current_time),
             Some(15.5)
         );
         assert!(store.series_by_id("1").unwrap().is_some());
@@ -192,7 +208,10 @@ mod tests {
         let path = temp_json("corrupt");
         std::fs::write(&path, b"{ not valid json").unwrap();
         let store = super::super::bridge::Store::open_memory().unwrap();
-        assert_eq!(run(&store, &path).unwrap(), MigrationOutcome::CorruptBackedUp);
+        assert_eq!(
+            run(&store, &path).unwrap(),
+            MigrationOutcome::CorruptBackedUp
+        );
         assert!(store.tasks().unwrap().is_empty(), "坏文件不导入任何东西");
 
         let dir = path.parent().unwrap();
@@ -208,11 +227,7 @@ mod tests {
     #[test]
     fn running_migration_again_is_idempotent() {
         let path = temp_json("twice");
-        std::fs::write(
-            &path,
-            r#"{"series": [{"series_id": "9", "title": "t"}]}"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"series": [{"series_id": "9", "title": "t"}]}"#).unwrap();
         let store = super::super::bridge::Store::open_memory().unwrap();
         run(&store, &path).unwrap();
         // 手工把文件改回原名，模拟「上次改名失败」
@@ -222,4 +237,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
-

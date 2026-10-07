@@ -108,8 +108,7 @@ pub async fn prepare(
 
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位
     // 才是缓存的键。贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
-    let play =
-        crate::domain::api::play_url::fetch_play_url(vid, definition, env).await?;
+    let play = crate::domain::api::play_url::fetch_play_url(vid, definition, env).await?;
     let want = play.definition;
     // 只记「不指定档位」那次解析到的结果。手动选过 720 之后再点「自动」，
     // 要的仍然是平台给的最高档，而不是上一次手动选的那档。
@@ -360,10 +359,9 @@ async fn fill(
         }
         Err(e) => {
             log::info!("[Online] {vid} 渐进取流不可用（{e}），回落整集路径");
-            let plain = fetch_plain_with(play, settings, &|r, t, phase| {
-                reporter.report(r, t, phase)
-            })
-            .await?;
+            let plain =
+                fetch_plain_with(play, settings, &|r, t, phase| reporter.report(r, t, phase))
+                    .await?;
 
             if cancelled() {
                 return Ok(());
@@ -449,7 +447,10 @@ async fn build_progressive(
     play: &crate::domain::api::play_url::PlayInfo,
     settings: &Settings,
     report: &(dyn Fn(u64, u64) + Sync),
-) -> AppResult<(Arc<crate::domain::mp4::streaming::SparseBuffer>, Arc<ProgressiveStream>)> {
+) -> AppResult<(
+    Arc<crate::domain::mp4::streaming::SparseBuffer>,
+    Arc<ProgressiveStream>,
+)> {
     use crate::domain::api::client::{get_video_range, probe_video_len};
     use crate::domain::mp4::streaming::{locate_moov, top_boxes_end, SparseBuffer, StreamingPlan};
 
@@ -493,8 +494,8 @@ async fn build_progressive(
     };
     // 精确补齐 moov 本体（首探/游走段只保证拿到它的头）
     if !sparse.covers(moov_start, moov_start + moov_size) {
-        let extra = get_video_range(&client, &play.url, moov_start, moov_start + moov_size - 1)
-            .await?;
+        let extra =
+            get_video_range(&client, &play.url, moov_start, moov_start + moov_size - 1).await?;
         sparse.write(moov_start, &extra);
         report(sparse.downloaded(), total);
     }
@@ -543,7 +544,16 @@ async fn fill_remaining(
     cap: &(dyn Fn() -> Option<u64> + Send + Sync),
 ) -> AppResult<()> {
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
-    fill_remaining_with_client(&client, sparse, prog, &play.url, reporter, is_cancelled, cap).await
+    fill_remaining_with_client(
+        &client,
+        sparse,
+        prog,
+        &play.url,
+        reporter,
+        is_cancelled,
+        cap,
+    )
+    .await
 }
 
 /// 调度器一次决策的结果。纯逻辑、无 I/O——回绕的终止性质在单测里钉死，
@@ -673,7 +683,10 @@ async fn fill_remaining_with_client(
         }
         sparse.write(gap_start, &bytes);
         let done = sparse.downloaded();
-        log::debug!("[Online] 填充区间 {gap_start}-{} 完成（累计 {done}/{total}）", gap_start + got);
+        log::debug!(
+            "[Online] 填充区间 {gap_start}-{} 完成（累计 {done}/{total}）",
+            gap_start + got
+        );
         reporter.report(done, total, "downloading");
         // 短读也按实际字节数推进前沿：缺口没填完就不越过它，下一轮从
         // 剩余处继续（旧版直接跳到 fetch_end，缺口被甩在前沿后面，
@@ -821,19 +834,13 @@ mod scheduler_tests {
         let sparse = crate::domain::mp4::streaming::SparseBuffer::new(100);
         sparse.write(50, &[0u8; 5]); // 50-55
         sparse.write(90, &[0u8; 10]); // 90-100
-        // 前沿在 90：其后全满、整集未满 → 回绕
+                                      // 前沿在 90：其后全满、整集未满 → 回绕
         assert!(matches!(next_target(&sparse, 90), Decision::Wrap));
         // 回绕到 0 后：第一个洞从 0 起
-        assert!(matches!(
-            next_target(&sparse, 0),
-            Decision::Fetch(0, 50)
-        ));
+        assert!(matches!(next_target(&sparse, 0), Decision::Fetch(0, 50)));
         // 模拟把 0-50 填上：下一个洞是 55-90，无需再回绕
         sparse.write(0, &[0u8; 50]);
-        assert!(matches!(
-            next_target(&sparse, 0),
-            Decision::Fetch(55, 90)
-        ));
+        assert!(matches!(next_target(&sparse, 0), Decision::Fetch(55, 90)));
         // 填满后任意前沿都直接 Done
         sparse.write(55, &[0u8; 35]);
         assert!(matches!(next_target(&sparse, 0), Decision::Done));

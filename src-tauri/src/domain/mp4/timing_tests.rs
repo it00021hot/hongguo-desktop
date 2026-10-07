@@ -189,7 +189,11 @@ fn sample_pts_fold_in_ctts_offsets() {
 
     assert_eq!(pts.len(), 3);
     assert!((pts[0] - 0.0).abs() < 1e-9);
-    assert!((pts[1] - 2.0 * d).abs() < 1e-9, "P 帧显示最晚，实际 {:?}", pts);
+    assert!(
+        (pts[1] - 2.0 * d).abs() < 1e-9,
+        "P 帧显示最晚，实际 {:?}",
+        pts
+    );
     assert!((pts[2] - d).abs() < 1e-9, "B 帧提前显示，实际 {:?}", pts);
     // 按显示时间排序后必须严格递增（负偏移平移不改相对次序）
     let mut display = pts.clone();
@@ -252,5 +256,9 @@ fn average_framerate_comes_out_of_the_sample_table() {
     let mut zero_delta = info_with_samples(4);
     zero_delta.media_timescale = 1_000;
     zero_delta.stts = vec![(4, 0)];
-    assert_eq!(zero_delta.average_framerate(), None, "总时长为 0 推不出帧率");
+    assert_eq!(
+        zero_delta.average_framerate(),
+        None,
+        "总时长为 0 推不出帧率"
+    );
 }

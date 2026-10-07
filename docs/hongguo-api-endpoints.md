@@ -14,11 +14,11 @@ host_abi=arm64-v8a, _rticket={ms}, sim_region, msToken...`
 
 **请求形态两族**（对齐时别混）：
 
-| | lq 域 reading 系 | sinfonlineb 域播放/推荐流 |
-|---|---|---|
-| 端点 | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作 | multi_video_model / landpage |
-| 头 | x-ss-dp + lc + x-reading-request（无 gorgon/argus） | 全签名五件套 |
-| POST body | **一律 gzip**（`Content-Encoding: gzip`） | 项目自有验证形态（未压缩，服务端两种都收） |
+|           | lq 域 reading 系                                    | sinfonlineb 域播放/推荐流                  |
+| --------- | --------------------------------------------------- | ------------------------------------------ |
+| 端点      | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作          | multi_video_model / landpage               |
+| 头        | x-ss-dp + lc + x-reading-request（无 gorgon/argus） | 全签名五件套                               |
+| POST body | **一律 gzip**（`Content-Encoding: gzip`）           | 项目自有验证形态（未压缩，服务端两种都收） |
 
 ⚠️ **参数必须逐值对齐抓包，不能凭"也能用"保留旧值**——教训：
 send_code 的 `type=1` 能发码但被服务端按"换绑"场景处理（目标号已绑定其它
@@ -39,19 +39,19 @@ limit=0, offset=0, unlimited_selector_change_type=2`
 顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，
 两者成对出现：
 
-| 内容 tab | selected_items        | 子榜 sub_selected_items（部分） |
-|---------|----------------------|--------------------------------|
-| 全部     | `all`                | `ranklist_hot_sc` 等 8 个（下表） |
+| 内容 tab | selected_items       | 子榜 sub_selected_items（部分）                                                                                   |
+| -------- | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 全部     | `all`                | `ranklist_hot_sc` 等 8 个（下表）                                                                                 |
 | 真人剧   | `human`              | `human_hot_sc` / `human_hot_play` / `human_new_rank` / `human_hot_search` / `human_must_watch` / `human_followed` |
-| 漫剧     | `comic_series_rank`  | `comic_series_hot_rank` / `comic_series_hot_play` / `comic_series_new_rank` / `comic_series_hot_search` |
-| AI剧     | `ai_playlet`         | `ai_playlet_hot_sc` 等 6 个 |
-| 演员     | `ranklist_celebrity` | 无子榜；**响应 video_data=0**（条目是演员形态），客户端剧集 UI 跳过 |
-| 系列剧   | `series_album`       | `series_album_hot_sc` / `series_album_new_rank`（新季榜） |
+| 漫剧     | `comic_series_rank`  | `comic_series_hot_rank` / `comic_series_hot_play` / `comic_series_new_rank` / `comic_series_hot_search`           |
+| AI剧     | `ai_playlet`         | `ai_playlet_hot_sc` 等 6 个                                                                                       |
+| 演员     | `ranklist_celebrity` | 无子榜；**响应 video_data=0**（条目是演员形态），客户端剧集 UI 跳过                                               |
+| 系列剧   | `series_album`       | `series_album_hot_sc` / `series_album_new_rank`（新季榜）                                                         |
 
 「全部」tab 的 8 个子榜：
 
 | 榜单   | sub_selected_items       |
-|------|--------------------------|
+| ------ | ------------------------ |
 | 推荐榜 | `ranklist_hot_sc`        |
 | 热播榜 | `ranklist_hot_play_sc`   |
 | 臻果榜 | `ranklist_prestige`      |
@@ -114,9 +114,9 @@ GET /reading/user/subscribe/list/v1/
 
 响应条目有**两种 schema**，服务端按请求形态分发：
 
-| 形态 | 触发条件 | 条目结构 |
-|------|---------|---------|
-| 嵌套 | 匿名请求（无 install_id Cookie） | `subscribe_data.{series_id,title,vid,score,...}` + 顶层 `category/rec_tags/schedule_publish_time/is_online` |
+| 形态 | 触发条件                            | 条目结构                                                                                                                                                                            |
+| ---- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 嵌套 | 匿名请求（无 install_id Cookie）    | `subscribe_data.{series_id,title,vid,score,...}` + 顶层 `category/rec_tags/schedule_publish_time/is_online`                                                                         |
 | 扁平 | 带 install_id Cookie 或 target_date | 字段直接在条目上：`item_id,name,cover,item_desc,sub_title_list[],category,categories,schedule_publish_time,expected_publish_time,is_online`；**无 vid**（点击走 seriesId 解析详情） |
 
 首页（不带 target_date）返回默认日（今天）条目 + `calendar_schema.date_list`
@@ -129,11 +129,25 @@ POST /reading/distribution/category/landpage/v1/   # 与首页推荐同端点，
 ```
 
 ```json
-{"client_req_type":3,"filter_ids":"","limit":18,"need_selector_panel":false,
- "offset":0,"req_scene":"default","req_type":"only_content",
- "select_items":{"category_dim_epoch":[],"category_dim_role":[],
-   "category_dim_theme":[],"gender":[],"genre":[],"online_time":[],"sort":[]},
- "session_id":"20261003165900B053FA3876D73D9E20A0"}
+{
+  "client_req_type": 3,
+  "filter_ids": "",
+  "limit": 18,
+  "need_selector_panel": false,
+  "offset": 0,
+  "req_scene": "default",
+  "req_type": "only_content",
+  "select_items": {
+    "category_dim_epoch": [],
+    "category_dim_role": [],
+    "category_dim_theme": [],
+    "gender": [],
+    "genre": [],
+    "online_time": [],
+    "sort": []
+  },
+  "session_id": "20261003165900B053FA3876D73D9E20A0"
+}
 ```
 
 **翻页形态（2026-10-07 抓 hgplayer 1.1.6 实锤）**：首页 `offset=0, session_id=""`，
@@ -184,6 +198,7 @@ need_personal_recommend=1, need_preload=true, search_source=1, tab_name=feed`。
 reading 轻签名 + 匿名 cookie 实测可用（probe_search_suggest 验证）。
 
 响应 `data.query_result_v2[]` 每条：
+
 - `name`（=剧名联想词）、`keyword`（=series_id）、`sug_abstract`
   （「第1季·玄幻·4105万热度」摘要行）
 - `search_high_light.rich_text`：`<em>关键词</em>` 高亮形态
@@ -211,7 +226,7 @@ POST /reading/bookapi/search/uncover_subscribe/v
 
 - **body 是 gzip 压缩的 JSON**（头带 `Content-Encoding: gzip`）：
   `{"item_id": <series_id>, "item_type": 1, "op_type": 1 预约 / 2 取消,
-  "shark_param": {埋点上下文，不校验}, "wish_list_all_del": 0}`
+"shark_param": {埋点上下文，不校验}, "wish_list_all_del": 0}`
 - query 只放设备指纹；reading 轻签名头（x-ss-dp/lc/x-reading-request）；
   **必须带登录 cookie**，响应 `code==0` 即成功
 - ⚠️ hgplayer 的预约按钮由 **WebView 前端 fetch** 发出——WebView
@@ -241,16 +256,16 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
 **MFA 上行短信流程**（换设备/风险登录触发，error_code=2046）：
 
 1. sms_login 返回 `data.biz_params.{passport_mfa_retry_tag, sms_code_key}`
-   + `encrypt_uid` + `event_params{log_id,verify_reason,verify_scene}` +
-   `common_params{copywriting_key,ies_safety_diversion_tag}` +
-   `verify_ways[]`（`mobile_up_sms_verify` 项含 `channel_mobile` 通道号与
-   `sms_content` 回复内容，如 回复 "YZ"）
-   **通道号陷阱（2026-10-05 实测）**：API 下发 `channel_mobile=9515211003`
-   （宁夏银川 95 扩展号段）——**回复到它服务端收不到**。hgplayer 1.1.3 把
-   `9515211003` 与 `10691859839103` 两个号码都硬编码在二进制里做替换，
-   真实可回复通道是 `10691859839103`（运营商 106 网关；抓包全量数据中
-   不存在该号码，只能来自客户端内置）。我们已在 `login.rs
-   real_upsms_channel` 做同款替换，未知号码透传（换号靠抓包发现）。
+   - `encrypt_uid` + `event_params{log_id,verify_reason,verify_scene}` +
+     `common_params{copywriting_key,ies_safety_diversion_tag}` +
+     `verify_ways[]`（`mobile_up_sms_verify` 项含 `channel_mobile` 通道号与
+     `sms_content` 回复内容，如 回复 "YZ"）
+     **通道号陷阱（2026-10-05 实测）**：API 下发 `channel_mobile=9515211003`
+     （宁夏银川 95 扩展号段）——**回复到它服务端收不到**。hgplayer 1.1.3 把
+     `9515211003` 与 `10691859839103` 两个号码都硬编码在二进制里做替换，
+     真实可回复通道是 `10691859839103`（运营商 106 网关；抓包全量数据中
+     不存在该号码，只能来自客户端内置）。我们已在 `login.rs
+real_upsms_channel` 做同款替换，未知号码透传（换号靠抓包发现）。
 2. 轮询 `POST /passport/upsms/verify/`：body 为 form（`biz_params` 是
    JSON 串 + 上述上下文字段 + 常量 `new_authn_sdk_version=1.1.31`、
    `request_tag_from=h5`，另有两个空值字段 `new_verify_flow=`、
@@ -274,7 +289,7 @@ POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
   最可能是服务端对活跃用户在响应头滑动续期（抓包 2h 窗口内凭据无变化，
   未实证；将来可在 addon 记录响应头验证）。过期后重新短信登录。
 - **x-tt-token 双 token**：登录**响应头**下发 `00<access 195位>--<refresh
-  150位>-3.0.3`（Set-Cookie / body 里都没有）；请求带**前 56 位短形式**
+150位>-3.0.3`（Set-Cookie / body 里都没有）；请求带**前 56 位短形式**
   （`00`+sessionid+22 位），hgplayer 每个请求都在场。我们已对齐：
   `AccountState.token` 落库 → `ApiEnv.x_tt_token` → `send_once` 注入头。
   旧账号该字段为空（不带），下次登录自动补上。
@@ -296,7 +311,7 @@ GET /reading/user/info/v1/    ← lq 域（api5-normal-lq.fqnovel.com）+ 轻签
 - 另一来源：**sms_login 成功响应的 `data` 顶层同样带 `avatar_url`**（2026-10-04
   抓包实证），登录时直接入库，无需二次请求。
 - 会话自检：`cargo test --lib probe_user_info_with_cookies -- --ignored
-  --nocapture`（`HG_LOGIN_COOKIES="k=v; ..."`），不发短信只读。
+--nocapture`（`HG_LOGIN_COOKIES="k=v; ..."`），不发短信只读。
 - 头像 CDN 是 `p3.douyinpic.com` / `p9-passport.byteacctimg.com`，前端
   CSP `img-src` 已含 `https:`，`<img>` 直连可显。
 
@@ -316,7 +331,7 @@ POST /reading/distribution/category/landpage/v1/   # 与推荐流同端点
   app 设备档案只回 7 行（缺 duration）。但 `select_items.duration` 服务端
   必认（实测 duration_0_60 过滤生效），前端缺行时合成兜底（选项 id 抓包锁定）
 - 内容请求（找剧/推荐流同款）：`client_req_type:3 + req_type:"only_content" +
-  limit:18 + offset + select_items`（每维单元素数组，空选给 `[]`）；
+limit:18 + offset + select_items`（每维单元素数组，空选给 `[]`）；
   `session_id` 首页空串、翻页回传
 - 响应压缩：landpage 系是 **brotli**（抓包 jsonl 里 resp_body 是
   b64(brotli(JSON))，addon.py 的 safe_text 会 b64 保真）
@@ -334,8 +349,8 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 - 响应 `data[]` cell 列表：`cell_name:"相关作品"`（14 条：同系列各季
   `tag_info.text`=第1季/第2季… + 同 IP 作品）与 `"猜你喜欢"`（可为空）
 - 每项：`series_id/title/cover(~tplv-shrink:640:0.image，扩展名假、内容
-  JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
-  (0=未上线→「即将上线」)/video_desc/tag_info.text 角标`
+JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
+(0=未上线→「即将上线」)/video_desc/tag_info.text 角标`
 - 未上线（即将上线）条目 hgplayer 卡片带「预约」钮（预约接口已有）
 - 我们的落点：`detail.rs fetch_related_series` + `related_series` 命令 +
   详情页「相关作品·系列」卡片行（`series-detail-page.tsx RelatedWorks`）
@@ -354,11 +369,19 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 ### 9.0 评论区列表 `POST /novel/commentapi/comment/list/{group_id}/v1/`
 
 ```json
-{"aid":8662,
- "business_param":{"book_id":"<series_id>","need_count":true,"req_type":0},
- "comment_source":4,"comment_type":4,"compliance_status":0,
- "count":20,"cursor":"","group_id":"<vid>","group_type":30,
- "server_channel":18,"sort":1}
+{
+  "aid": 8662,
+  "business_param": { "book_id": "<series_id>", "need_count": true, "req_type": 0 },
+  "comment_source": 4,
+  "comment_type": 4,
+  "compliance_status": 0,
+  "count": 20,
+  "cursor": "",
+  "group_id": "<vid>",
+  "group_type": 30,
+  "server_channel": 18,
+  "sort": 1
+}
 ```
 
 - 与弹幕形态（见第 5 节 danmaku_payload）的差异：business_param 只有
@@ -374,12 +397,24 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 ### 9.1 视频点赞 / 取消 `POST /novel/articleapi/do_action/v1/`
 
 ```json
-{"action_category":1,"action_reason_remark":"like_click",
- "action_type":3,
- "business_param":{"book_id":0,"has_aigc_content":false,"modify_count":0,
-   "shark_param":{"enter_from":"MainFragmentActivity","page_list":"MainFragmentActivity","previous_page":""},
-   "video_id":"<series_id>"},
- "object_id":"<vid>","object_type":6}
+{
+  "action_category": 1,
+  "action_reason_remark": "like_click",
+  "action_type": 3,
+  "business_param": {
+    "book_id": 0,
+    "has_aigc_content": false,
+    "modify_count": 0,
+    "shark_param": {
+      "enter_from": "MainFragmentActivity",
+      "page_list": "MainFragmentActivity",
+      "previous_page": ""
+    },
+    "video_id": "<series_id>"
+  },
+  "object_id": "<vid>",
+  "object_type": 6
+}
 ```
 
 - `action_type`：**3 点赞 / 4 取消**；`object_type=6`（视频），`object_id=vid`（分集）
@@ -399,23 +434,36 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 ### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
 
 ```json
-{"aid":8662,
- "business_param":{"book_id":"<series_id>","ignore_urge_rule":false,
-   "offset":128912,
-   "shark_param":{"aid":"8662","enter_from":"MainFragmentActivity",
-     "page_list":"MainFragmentActivity","previous_page":"","type":"short_play"}},
- "commit_source":1500,"data_type":20,
- "group_id":"<vid>","group_type":30,"text":"..."}
+{
+  "aid": 8662,
+  "business_param": {
+    "book_id": "<series_id>",
+    "ignore_urge_rule": false,
+    "offset": 128912,
+    "shark_param": {
+      "aid": "8662",
+      "enter_from": "MainFragmentActivity",
+      "page_list": "MainFragmentActivity",
+      "previous_page": "",
+      "type": "short_play"
+    }
+  },
+  "commit_source": 1500,
+  "data_type": 20,
+  "group_id": "<vid>",
+  "group_type": 30,
+  "text": "..."
+}
 ```
 
 - 与拉取同一评论体系：`group_id`=vid、`group_type=30`、`book_id`=series_id
 - **弹幕与普通评论只差三个字段**：
 
-| | 弹幕 | 评论 |
-|---|---|---|
-| data_type | 20 | 4 |
-| commit_source | 1500 | 3 |
-| business_param.offset | 播放位置 ms | 0 |
+|                       | 弹幕        | 评论 |
+| --------------------- | ----------- | ---- |
+| data_type             | 20          | 4    |
+| commit_source         | 1500        | 3    |
+| business_param.offset | 播放位置 ms | 0    |
 
 - **评论形态（data_type=4）business_param 另有四字段**（1.1.5 抓包补齐，
   2026-10-06）：`has_aigc_content:false`、`log_extra:{}`、`preset_text_id:""`、
@@ -457,29 +505,68 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 JSON **数字**（精度内直接发数字）：
 
 ```json
-{"update_datas":[{"book_id":7690797206416133145,"book_type":2,
-  "chapter_index":0,"current_play_position":10000,"digged_count":0,
-  "duration":0,"episode_cnt":0,"is_delete":false,"is_interactive_game":false,
-  "is_listen_mode":false,"is_multi_season":0,"meet_guide_comment_tag":false,
-  "origin_novel_book_id":0,"player_accumulate_total_time":10000,
-  "read_timestamp_ms":1791266476339,"recent_reads":0,
-  "retain_video_play_time":0,"season_index":0,"series_play_cnt":0,
-  "tone_id":0,"update_timestamp_ms":1791266476339,"use_soft_delete":false,
-  "user_digg":false,"user_playlet_comment_flag":false,
-  "vid":7690802329313872921,"vid_index":0}]}
+{
+  "update_datas": [
+    {
+      "book_id": 7690797206416133145,
+      "book_type": 2,
+      "chapter_index": 0,
+      "current_play_position": 10000,
+      "digged_count": 0,
+      "duration": 0,
+      "episode_cnt": 0,
+      "is_delete": false,
+      "is_interactive_game": false,
+      "is_listen_mode": false,
+      "is_multi_season": 0,
+      "meet_guide_comment_tag": false,
+      "origin_novel_book_id": 0,
+      "player_accumulate_total_time": 10000,
+      "read_timestamp_ms": 1791266476339,
+      "recent_reads": 0,
+      "retain_video_play_time": 0,
+      "season_index": 0,
+      "series_play_cnt": 0,
+      "tone_id": 0,
+      "update_timestamp_ms": 1791266476339,
+      "use_soft_delete": false,
+      "user_digg": false,
+      "user_playlet_comment_flag": false,
+      "vid": 7690802329313872921,
+      "vid_index": 0
+    }
+  ]
+}
 ```
 
 **`POST /reading/bookapi/read_progress/upload/v`** —— `book_id`/`item_id`
 是**字符串**：
 
 ```json
-{"books":[{"book_id":"7690797206416133145","book_type":2,"channel_id":0,
-  "check_timestamp":false,"cur_channel_id":0,"current_play_time":10000,
-  "is_listen_mode":false,"is_local_book":false,
-  "item_id":"7690802329313872921","listen_and_read":false,"page_index":0,
-  "page_progress_rate":0,"paragraph_offset":0,
-  "player_cumulative_total_duration":10000,"progress_type":0,
-  "read_timestamp_ms":1791266476339,"tone_id":0,"vid_index":0}]}
+{
+  "books": [
+    {
+      "book_id": "7690797206416133145",
+      "book_type": 2,
+      "channel_id": 0,
+      "check_timestamp": false,
+      "cur_channel_id": 0,
+      "current_play_time": 10000,
+      "is_listen_mode": false,
+      "is_local_book": false,
+      "item_id": "7690802329313872921",
+      "listen_and_read": false,
+      "page_index": 0,
+      "page_progress_rate": 0,
+      "paragraph_offset": 0,
+      "player_cumulative_total_duration": 10000,
+      "progress_type": 0,
+      "read_timestamp_ms": 1791266476339,
+      "tone_id": 0,
+      "vid_index": 0
+    }
+  ]
+}
 ```
 
 - hgplayer 传 0 的字段（duration/retain/episode_cnt 等）照抄 0；

@@ -326,7 +326,10 @@ mod tests {
         let first: Vec<(&str, &str)> = device.iter().take(2).collect();
         assert_eq!(
             first,
-            vec![("iid", "2715158266282762"), ("device_id", "2715158266032906")]
+            vec![
+                ("iid", "2715158266282762"),
+                ("device_id", "2715158266032906")
+            ]
         );
 
         assert_eq!(device.get("version_name"), "7.3.9.32");

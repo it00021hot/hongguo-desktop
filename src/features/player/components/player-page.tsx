@@ -61,7 +61,6 @@ export function PlayerPage() {
 
   // 音量竖条浮层同样在这层持有：切集重挂载不会把正开着的浮层收走
 
-
   // 刷新/重启后内存 store 是空的：把上次播放目标读回来，
   // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）。
   // 连上次播放目标都没有（首次启动/清过记录）：直接进推荐沉浸流——
@@ -84,12 +83,7 @@ export function PlayerPage() {
 
   // key 随剧集变化 → 切集时组件整体重建，播放/转码状态自然清零，
   // 不必在 effect 里同步 setState（那会触发级联渲染）。
-  return (
-    <PlayerView
-      key={`${seriesId}:${vidIndex}`}
-      coverUrl={coverUrl}
-    />
-  );
+  return <PlayerView key={`${seriesId}:${vidIndex}`} coverUrl={coverUrl} />;
 }
 
 /** 未在播放时的占位：去推荐/历史挑一部剧即可开始。 */
@@ -273,8 +267,8 @@ export function PlayerView({
   const currentEpisode = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
   const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
   const [danmakuOn, setDanmakuOn] = useState(() => readDanmakuEnabled());
-  const [danmakuDisplay, setDanmakuDisplay] = useState<DanmakuDisplaySettings>(
-    () => readDanmakuDisplay(),
+  const [danmakuDisplay, setDanmakuDisplay] = useState<DanmakuDisplaySettings>(() =>
+    readDanmakuDisplay(),
   );
   const updateDanmakuDisplay = useCallback((patch: Partial<DanmakuDisplaySettings>) => {
     setDanmakuDisplay((prev) => {
@@ -625,7 +619,6 @@ export function PlayerView({
       .catch(() => undefined);
   }, [pinned, setPinned]);
 
-
   // 卸载 / 切集时补写最后一次。
   //
   // 只靠 timeupdate 的定时保存会丢掉最后一小段：用户看完直接点侧边栏
@@ -860,7 +853,7 @@ export function PlayerView({
     // 一闪而过，读起来像出错——瞬态就该长得像瞬态。
     return (
       <div className="grid h-full place-items-center bg-black">
-        <Loader2 className="text-white/40 size-6 animate-spin" aria-label={t('common.loading')} />
+        <Loader2 className="size-6 animate-spin text-white/40" aria-label={t('common.loading')} />
       </div>
     );
   }
@@ -903,318 +896,319 @@ export function PlayerView({
           <div
             key={playSrc ?? episodeKey}
             className={cn(
-              'absolute inset-0 ease-out animate-in fade-in duration-300',
+              'animate-in fade-in absolute inset-0 duration-300 ease-out',
               slideDir === -1 ? 'slide-in-from-top-10' : 'slide-in-from-bottom-10',
             )}
           >
-          {playSrc ? (
-            <>
-              {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
+            {playSrc ? (
+              <>
+                {/* 自绘控件，不要原生 controls：它既不跟主题，也放不下下载/清晰度这类业务动作。
                   key 绑 src：切清晰度时后端给出的流地址变了（地址里带档位），
                   换元素才能保证 <video> 真的重新加载——只改 src 属性在
                   WebView2 上不一定会触发重载，表现就是「点了 720p 画面不变」。 */}
-              <video
-                /* key 绑播放地址：切清晰度、以及兜底转成 H.264 之后地址都变了，
+                <video
+                  /* key 绑播放地址：切清晰度、以及兜底转成 H.264 之后地址都变了，
                    换元素才能保证 <video> 真的重新加载——只改 src 属性在
                    WebView2 上不一定会触发重载，表现就是「点了 720p 画面不变」。 */
-                key={playSrc}
-                ref={videoRef}
-                src={playSrc}
-                /* 绝对定位铺满舞台：WKWebView 在流式布局里会把 100% 高度的
+                  key={playSrc}
+                  ref={videoRef}
+                  src={playSrc}
+                  /* 绝对定位铺满舞台：WKWebView 在流式布局里会把 100% 高度的
                    <video> 按固有纵横比撑大（1100 宽 → 1956 高），舞台裁切后
                    表现为「画面放大、控件全被顶出窗口」（mac 长期已知 bug）。
                    绝对定位把盒子钉死在舞台内，object-contain 只管留黑边。 */
-                className="absolute inset-0 size-full object-contain"
-                autoPlay
-                onLoadedMetadata={handleLoadedMetadata}
-                onPlay={() => {
-                  // 恢复播放（含起播）也算「用户在场」：重新亮 3 秒再淡出，
-                  // 不然暂停期间常显的界面会在恢复的一瞬全部消失
-                  setPaused(false);
-                  wakeChrome();
-                }}
-                onPlaying={() => {
-                  // 真正出画/恢复出画：封面占位退场、卡顿态收掉
-                  setLive({ key: streamKey, on: true });
-                  setStalled({ key: streamKey, on: false });
-                }}
-                onPause={(e) => {
-                  setPaused(true);
-                  persist(e.currentTarget.currentTime, true);
-                }}
-                onLoadedData={() => setLive({ key: streamKey, on: true })}
-                // waiting：缓冲/seek 供不上数据，画面停住转黑——必须给出「在动」的信号，
-                // 否则网络一抖就是一帧黑屏挂在那里，观感等于卡死
-                onWaiting={() => setStalled({ key: streamKey, on: true })}
-                onCanPlay={() => setStalled({ key: streamKey, on: false })}
-                onTimeUpdate={(e) => {
-                  // playing 事件在个别 WebView 起播路径上不触发：封面退场
-                  // 不能只靠它一路信号，时间轴真的走起来了也算出画
-                  if (e.currentTarget.currentTime > 0.1) setLive({ key: streamKey, on: true });
-                  // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
-                  setStalled({ key: streamKey, on: false });
-                  persist(e.currentTarget.currentTime);
-                }}
-                onEnded={handleEnded}
-                onRateChange={handleRateChange}
-                onVolumeChange={handleVolumeChange}
-                onError={handleVideoError}
-              />
-              {coverBackdrop}
-              <DanmakuLayer
-                videoRef={videoRef}
-                items={danmakuQuery.data ?? []}
-                enabled={danmakuOn}
-                display={danmakuDisplay}
-              />
-              {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下。
+                  className="absolute inset-0 size-full object-contain"
+                  autoPlay
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onPlay={() => {
+                    // 恢复播放（含起播）也算「用户在场」：重新亮 3 秒再淡出，
+                    // 不然暂停期间常显的界面会在恢复的一瞬全部消失
+                    setPaused(false);
+                    wakeChrome();
+                  }}
+                  onPlaying={() => {
+                    // 真正出画/恢复出画：封面占位退场、卡顿态收掉
+                    setLive({ key: streamKey, on: true });
+                    setStalled({ key: streamKey, on: false });
+                  }}
+                  onPause={(e) => {
+                    setPaused(true);
+                    persist(e.currentTarget.currentTime, true);
+                  }}
+                  onLoadedData={() => setLive({ key: streamKey, on: true })}
+                  // waiting：缓冲/seek 供不上数据，画面停住转黑——必须给出「在动」的信号，
+                  // 否则网络一抖就是一帧黑屏挂在那里，观感等于卡死
+                  onWaiting={() => setStalled({ key: streamKey, on: true })}
+                  onCanPlay={() => setStalled({ key: streamKey, on: false })}
+                  onTimeUpdate={(e) => {
+                    // playing 事件在个别 WebView 起播路径上不触发：封面退场
+                    // 不能只靠它一路信号，时间轴真的走起来了也算出画
+                    if (e.currentTarget.currentTime > 0.1) setLive({ key: streamKey, on: true });
+                    // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
+                    setStalled({ key: streamKey, on: false });
+                    persist(e.currentTarget.currentTime);
+                  }}
+                  onEnded={handleEnded}
+                  onRateChange={handleRateChange}
+                  onVolumeChange={handleVolumeChange}
+                  onError={handleVideoError}
+                />
+                {coverBackdrop}
+                <DanmakuLayer
+                  videoRef={videoRef}
+                  items={danmakuQuery.data ?? []}
+                  enabled={danmakuOn}
+                  display={danmakuDisplay}
+                />
+                {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下。
                   控制栏弹出时整体抬到控制栏上沿之上（bottom-28），隐藏时落回
                   bottom-14——两者transition 联动，不再互相遮挡。
                   小屏模式不用这坨：紧凑控件条自带收敛的剧名行。 */}
-              <div
-                className={cn(
-                  'absolute left-3 z-10 max-w-[62%] transition-all duration-300',
-                  chromeShown && !miniScreen
-                    ? 'bottom-28 opacity-100'
-                    : 'bottom-14 opacity-0 pointer-events-none',
-                )}
-              >
-                {/* 热度行（hgplayer 1.1.6 同款：剧名上方） */}
-                {overlayMeta?.heatText && (
-                  <p className="text-xs font-medium text-amber-300/90 drop-shadow-md">
-                    {overlayMeta.heatText}
-                  </p>
-                )}
-                {/* 剧名 → 详情页。第三方同款交互：点标题离开播放器看档案/选集。
-                    stopPropagation：点标题不能同时触发「点画面暂停」。 */}
-                <div className="flex items-center gap-1.5">
-                  {overlayMeta?.badge && (
-                    <span className="rounded-sm bg-red-500/90 px-1 py-px text-[10px] font-semibold text-white">
-                      {overlayMeta.badge}
-                    </span>
+                <div
+                  className={cn(
+                    'absolute left-3 z-10 max-w-[62%] transition-all duration-300',
+                    chromeShown && !miniScreen
+                      ? 'bottom-28 opacity-100'
+                      : 'pointer-events-none bottom-14 opacity-0',
                   )}
-                  {overlayMeta?.seasonTag && (
-                    <span className="rounded-sm bg-white/20 px-1 py-px text-[10px] font-semibold text-white">
-                      {overlayMeta.seasonTag}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void navigate({ to: '/detail', search: { seriesId } });
-                    }}
-                    className="cursor-pointer text-sm font-semibold text-white drop-shadow-md hover:underline"
-                    title={currentSeries?.title}
-                  >
-                    @{currentSeries?.title ?? ''}
-                  </button>
-                </div>
-                <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
-                  {tf('player.epShort', { index: vidIndex })}
-                  {currentSeries && currentSeries.episodeCount > 0 && (
-                    <span className="text-white/70">
-                      {' · '}
-                      {tf('player.totalEpisodes', { count: currentSeries.episodeCount })}
-                    </span>
-                  )}
-                </p>
-                {extras?.intro && (
-                  // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
-                  // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角
-                  <div className="mt-1 flex max-w-[36%] items-end gap-2">
-                    <p
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIntroExpanded((v) => !v);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') setIntroExpanded((v) => !v);
-                      }}
-                      className={cn(
-                        'cursor-pointer text-xs leading-relaxed text-white/70 drop-shadow-md',
-                        !introExpanded && 'line-clamp-2',
-                      )}
-                    >
-                      {extras.intro}
+                >
+                  {/* 热度行（hgplayer 1.1.6 同款：剧名上方） */}
+                  {overlayMeta?.heatText && (
+                    <p className="text-xs font-medium text-amber-300/90 drop-shadow-md">
+                      {overlayMeta.heatText}
                     </p>
+                  )}
+                  {/* 剧名 → 详情页。第三方同款交互：点标题离开播放器看档案/选集。
+                    stopPropagation：点标题不能同时触发「点画面暂停」。 */}
+                  <div className="flex items-center gap-1.5">
+                    {overlayMeta?.badge && (
+                      <span className="rounded-sm bg-red-500/90 px-1 py-px text-[10px] font-semibold text-white">
+                        {overlayMeta.badge}
+                      </span>
+                    )}
+                    {overlayMeta?.seasonTag && (
+                      <span className="rounded-sm bg-white/20 px-1 py-px text-[10px] font-semibold text-white">
+                        {overlayMeta.seasonTag}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setIntroExpanded((v) => !v);
+                        void navigate({ to: '/detail', search: { seriesId } });
                       }}
-                      className="shrink-0 cursor-pointer pb-0.5 text-xs text-white/60 drop-shadow-md hover:text-white"
+                      className="cursor-pointer text-sm font-semibold text-white drop-shadow-md hover:underline"
+                      title={currentSeries?.title}
                     >
-                      {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
+                      @{currentSeries?.title ?? ''}
                     </button>
                   </div>
-                )}
-              </div>
-              {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
-                  挡死（顶部让位给 tab），平时不打扰。小屏（480 宽）装不下。 */}
-              {paused && !error && !miniScreen && (
-                <div className="pointer-events-none absolute inset-x-0 top-[38%] z-10 flex justify-center">
-                  <span className="rounded-full bg-black/55 px-4 py-1.5 text-xs text-white/75 backdrop-blur-sm">
-                    {t('player.keyboardHint')}
-                  </span>
+                  <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
+                    {tf('player.epShort', { index: vidIndex })}
+                    {currentSeries && currentSeries.episodeCount > 0 && (
+                      <span className="text-white/70">
+                        {' · '}
+                        {tf('player.totalEpisodes', { count: currentSeries.episodeCount })}
+                      </span>
+                    )}
+                  </p>
+                  {extras?.intro && (
+                    // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
+                    // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角
+                    <div className="mt-1 flex max-w-[36%] items-end gap-2">
+                      <p
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIntroExpanded((v) => !v);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') setIntroExpanded((v) => !v);
+                        }}
+                        className={cn(
+                          'cursor-pointer text-xs leading-relaxed text-white/70 drop-shadow-md',
+                          !introExpanded && 'line-clamp-2',
+                        )}
+                      >
+                        {extras.intro}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIntroExpanded((v) => !v);
+                        }}
+                        className="shrink-0 cursor-pointer pb-0.5 text-xs text-white/60 drop-shadow-md hover:text-white"
+                      >
+                        {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-              {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽，
+                {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
+                  挡死（顶部让位给 tab），平时不打扰。小屏（480 宽）装不下。 */}
+                {paused && !error && !miniScreen && (
+                  <div className="pointer-events-none absolute inset-x-0 top-[38%] z-10 flex justify-center">
+                    <span className="rounded-full bg-black/55 px-4 py-1.5 text-xs text-white/75 backdrop-blur-sm">
+                      {t('player.keyboardHint')}
+                    </span>
+                  </div>
+                )}
+                {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽，
                   画面顶部不再有悬浮 tab 层） */}
-              {/* 沉浸流评论区：右侧滑出（💬 触发）；进小屏时已收起 */}
-              {commentPanelOpen && !miniScreen && (
-                <CommentPanel
-                  seriesId={seriesId}
-                  vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                  onClose={() => setCommentPanelOpen(false)}
-                />
-              )}
-              {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出；
+                {/* 沉浸流评论区：右侧滑出（💬 触发）；进小屏时已收起 */}
+                {commentPanelOpen && !miniScreen && (
+                  <CommentPanel
+                    seriesId={seriesId}
+                    vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                    onClose={() => setCommentPanelOpen(false)}
+                  />
+                )}
+                {/* 互动栏（点赞/评论/收藏/预约/分享，抖音系右缘形态）：跟随悬浮层淡出；
                   评论区面板打开时让位隐藏（面板就盖在右缘，Esc 或 💬 再开）。
                   vid 是「vid:seriesId」组合形态（与弹幕缓存 key 同构），组件内部自行拆用。 */}
-              <InteractionRail
-                seriesId={seriesId}
-                vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                visible={chromeShown && !commentPanelOpen && !miniScreen}
-                title={currentSeries?.title}
-                // 公开计数来自剧集档案（detail 接口逐集下发），匿名可见
-                commentCount={currentEpisode?.commentCount}
-                diggCount={currentEpisode?.diggCount}
-                followCount={currentSeries?.followedCnt}
-              />
-              {/* 控制栏大小屏两套形态，共用同一个 <video>（元素在上面，
-                  不随这里的切换卸载）——切大小屏播放零中断 */}
-              {miniScreen ? (
-                <MiniScreenControls
-                  videoRef={videoRef}
+                <InteractionRail
+                  seriesId={seriesId}
+                  vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                  visible={chromeShown && !commentPanelOpen && !miniScreen}
                   title={currentSeries?.title}
-                  intro={extras?.intro}
-                  vidIndex={vidIndex}
-                  total={currentSeries?.episodes.length ?? 0}
-                  hasNext={
-                    currentSeries?.episodes.some((e) => e.vidIndex === (vidIndex ?? 0) + 1) ?? false
-                  }
-                  onStepEpisode={(d) => stepEpisode(d)}
-                  onExpand={exitMini}
-                  onClose={stopMini}
-                  incognitoOn={incognito.on}
-                  onToggleIncognito={incognito.toggle}
-                  pinned={pinned}
-                  onTogglePinned={togglePinned}
-                  visible={chromeShown}
+                  // 公开计数来自剧集档案（detail 接口逐集下发），匿名可见
+                  commentCount={currentEpisode?.commentCount}
+                  diggCount={currentEpisode?.diggCount}
+                  followCount={currentSeries?.followedCnt}
                 />
-              ) : (
-              <PlayerControls
-                videoRef={videoRef}
-                stageRef={stageRef}
-                onControlsEnter={() => {
-                  setControlsHovered(true);
-                  wakeChrome();
-                }}
-                onControlsLeave={() => setControlsHovered(false)}
-                seriesId={seriesId}
-                episodes={currentSeries?.episodes ?? []}
-                currentIndex={vidIndex}
-                downloading={downloading}
-                onDownloadingChange={setDownloading}
-                onStepEpisode={stepEpisode}
-                onOpenMini={enterMini}
-                incognito={incognito.on}
-                onToggleIncognito={incognito.toggle}
-                definition={activeDefinition}
-                definitions={definitions}
-                onDefinitionChange={setDefinition}
-                src={playSrc}
-                danmakuOn={danmakuOn}
-                onToggleDanmaku={toggleDanmaku}
-                danmakuDisplay={danmakuDisplay}
-                onDanmakuDisplayChange={updateDanmakuDisplay}
-                immersive
-                visible={chromeShown}
-                // 信息流里主动点了某一级 = 要追这部：进入选中剧连播（/player，
-                // 滚轮/↑↓ 自动变为切集），而不是留在推荐流继续换剧
-                pickerHint={onWheelStep ? t('player.pickerBingeHint') : undefined}
-                onPickEpisode={(idx) => {
-                  setTarget(seriesId, idx);
-                  // 信息流里主动选了某集 = 要追这部：原地锁定本剧连播
-                  // （滚轮/↑↓ 切集 + 左上角亮出连播指示），画面无缝续播
-                  if (onWheelStep) setBinge(seriesId);
-                }}
-              />
-              )}
+                {/* 控制栏大小屏两套形态，共用同一个 <video>（元素在上面，
+                  不随这里的切换卸载）——切大小屏播放零中断 */}
+                {miniScreen ? (
+                  <MiniScreenControls
+                    videoRef={videoRef}
+                    title={currentSeries?.title}
+                    intro={extras?.intro}
+                    vidIndex={vidIndex}
+                    total={currentSeries?.episodes.length ?? 0}
+                    hasNext={
+                      currentSeries?.episodes.some((e) => e.vidIndex === (vidIndex ?? 0) + 1) ??
+                      false
+                    }
+                    onStepEpisode={(d) => stepEpisode(d)}
+                    onExpand={exitMini}
+                    onClose={stopMini}
+                    incognitoOn={incognito.on}
+                    onToggleIncognito={incognito.toggle}
+                    pinned={pinned}
+                    onTogglePinned={togglePinned}
+                    visible={chromeShown}
+                  />
+                ) : (
+                  <PlayerControls
+                    videoRef={videoRef}
+                    stageRef={stageRef}
+                    onControlsEnter={() => {
+                      setControlsHovered(true);
+                      wakeChrome();
+                    }}
+                    onControlsLeave={() => setControlsHovered(false)}
+                    seriesId={seriesId}
+                    episodes={currentSeries?.episodes ?? []}
+                    currentIndex={vidIndex}
+                    downloading={downloading}
+                    onDownloadingChange={setDownloading}
+                    onStepEpisode={stepEpisode}
+                    onOpenMini={enterMini}
+                    incognito={incognito.on}
+                    onToggleIncognito={incognito.toggle}
+                    definition={activeDefinition}
+                    definitions={definitions}
+                    onDefinitionChange={setDefinition}
+                    src={playSrc}
+                    danmakuOn={danmakuOn}
+                    onToggleDanmaku={toggleDanmaku}
+                    danmakuDisplay={danmakuDisplay}
+                    onDanmakuDisplayChange={updateDanmakuDisplay}
+                    immersive
+                    visible={chromeShown}
+                    // 信息流里主动点了某一级 = 要追这部：进入选中剧连播（/player，
+                    // 滚轮/↑↓ 自动变为切集），而不是留在推荐流继续换剧
+                    pickerHint={onWheelStep ? t('player.pickerBingeHint') : undefined}
+                    onPickEpisode={(idx) => {
+                      setTarget(seriesId, idx);
+                      // 信息流里主动选了某集 = 要追这部：原地锁定本剧连播
+                      // （滚轮/↑↓ 切集 + 左上角亮出连播指示），画面无缝续播
+                      if (onWheelStep) setBinge(seriesId);
+                    }}
+                  />
+                )}
 
-              {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
+                {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
                   不知道是卡住了还是在慢慢转。z-30：压过封面占位。 */}
-              {compat && (
-                <div className="absolute inset-0 z-30 grid place-items-center bg-black/85 p-6 text-center text-sm text-neutral-200">
-                  <div className="flex w-full max-w-sm flex-col items-center gap-3">
-                    <p>
-                      {compat.phase === 'downloading'
-                        ? t('player.compatFetching')
-                        : tf('player.compatTranscoding', { percent: Math.floor(compat.percent) })}
-                    </p>
-                    <Progress
-                      value={compat.phase === 'downloading' ? 0 : compat.percent}
-                      className="h-1.5"
-                    />
-                    <span className="text-xs text-neutral-400">{t('player.compatHint')}</span>
+                {compat && (
+                  <div className="absolute inset-0 z-30 grid place-items-center bg-black/85 p-6 text-center text-sm text-neutral-200">
+                    <div className="flex w-full max-w-sm flex-col items-center gap-3">
+                      <p>
+                        {compat.phase === 'downloading'
+                          ? t('player.compatFetching')
+                          : tf('player.compatTranscoding', { percent: Math.floor(compat.percent) })}
+                      </p>
+                      <Progress
+                        value={compat.phase === 'downloading' ? 0 : compat.percent}
+                        className="h-1.5"
+                      />
+                      <span className="text-xs text-neutral-400">{t('player.compatHint')}</span>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* 加载反馈 = 顶部 2px 细进度条（hg-loadbar，样式见 index.css）：
+                {/* 加载反馈 = 顶部 2px 细进度条（hg-loadbar，样式见 index.css）：
                   切换在途/首帧未出/缓冲中任何一种未就绪都亮。中央的
                   「正在缓冲 X%」胶囊按用户要求移除——它压在画面正中
                   挡内容；细条贴边滑过，反馈有了、打扰没了。 */}
-              {(switching || !videoLive || videoStalled) && !compat && (
-                <div className="pointer-events-none absolute inset-x-0 top-0 z-40 h-0.5">
-                  <div className="hg-loadbar-track">
-                    <div className="bg-primary hg-loadbar" />
+                {(switching || !videoLive || videoStalled) && !compat && (
+                  <div className="pointer-events-none absolute inset-x-0 top-0 z-40 h-0.5">
+                    <div className="hg-loadbar-track">
+                      <div className="bg-primary hg-loadbar" />
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {coverBackdrop}
-              <div className="absolute inset-0 z-10 grid place-items-center p-6">
-                {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈；
+                )}
+              </>
+            ) : (
+              <>
+                {coverBackdrop}
+                <div className="absolute inset-0 z-10 grid place-items-center p-6">
+                  {/* 缓冲时给的是「在动到哪了」，不是一个没头没尾的转圈；
                     文案收进胶囊压在封面上。自动重试耗尽的错误态再给一个
                     手动重试入口——用户不该只能眼看黑屏干着急。 */}
-                <div className="flex flex-col items-center gap-3">
-                  <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
-                    {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-                    {error ??
-                      (buffering && buffering.phase !== 'ready'
-                        ? tf('player.buffering', {
-                            percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
-                            size:
-                              buffering.total > 0
-                                ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
-                                : formatBytes(buffering.received),
-                          })
-                        : t('common.loading'))}
-                  </span>
-                  {error && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      data-wheel-block
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        retryOnline();
-                      }}
-                    >
-                      {t('player.retry')}
-                    </Button>
-                  )}
+                  <div className="flex flex-col items-center gap-3">
+                    <span className="flex items-center gap-2 rounded-full bg-black/60 px-4 py-1.5 text-xs text-white/85 backdrop-blur-sm">
+                      {!error && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                      {error ??
+                        (buffering && buffering.phase !== 'ready'
+                          ? tf('player.buffering', {
+                              percent: buffering.total > 0 ? Math.floor(buffering.percent) : 0,
+                              size:
+                                buffering.total > 0
+                                  ? `${formatBytes(buffering.received)} / ${formatBytes(buffering.total)}`
+                                  : formatBytes(buffering.received),
+                            })
+                          : t('common.loading'))}
+                    </span>
+                    {error && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-wheel-block
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          retryOnline();
+                        }}
+                      >
+                        {t('player.retry')}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
           </div>
         </div>
 
@@ -1225,7 +1219,7 @@ export function PlayerView({
         <div
           data-wheel-block
           className={cn(
-            'absolute right-3 top-3 z-20 flex items-center gap-2',
+            'absolute top-3 right-3 z-20 flex items-center gap-2',
             'transition-opacity duration-300',
             chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}

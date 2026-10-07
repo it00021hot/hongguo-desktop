@@ -1,12 +1,21 @@
 //! TTEncrypt V5 的魔改哈希与分组加密（Python 参考实现的机械翻译）。
 //! 函数体保持与参考实现逐句对应（不优化不改写），因此允许机械
 //! 翻译固有的风格告警。
-#![allow(clippy::assign_op_pattern, clippy::same_item_push,
-        clippy::range_plus_one, unused_assignments, unused_mut,
-        clippy::needless_range_loop, non_snake_case,
-        clippy::manual_repeat_n, clippy::uninlined_format_args,
-        unused_parens, clippy::needless_borrows_for_generic_args,
-        clippy::double_parens, dead_code)]
+#![allow(
+    clippy::assign_op_pattern,
+    clippy::same_item_push,
+    clippy::range_plus_one,
+    unused_assignments,
+    unused_mut,
+    clippy::needless_range_loop,
+    non_snake_case,
+    clippy::manual_repeat_n,
+    clippy::uninlined_format_args,
+    unused_parens,
+    clippy::needless_borrows_for_generic_args,
+    clippy::double_parens,
+    dead_code
+)]
 //!
 //! - TtHashCore::calculate：SHA-512 骨架的哈希变体（128 字节块、
 //!   64 字节输出），K/IV 被平台魔改，用本文件的表；
@@ -18,46 +27,41 @@
 
 /// 魔改 K 表（160 个 u32 = 80 个 u64）
 const K_TABLE: [u32; 160] = [
-3609767458, 1116352408, 602891725, 1899447441, 3964484399, 3049323471, 2173295548, 3921009573,
-4081628472, 961987163, 3053834265, 1508970993, 2937671579, 2453635748, 3664609560, 2870763221,
-2734883394, 3624381080, 1164996542, 310598401, 1323610764, 607225278, 3590304994, 1426881987,
-4068182383, 1925078388, 991336113, 2162078206, 633803317, 2614888103, 3479774868, 3248222580,
-2666613458, 3835390401, 944711139, 4022224774, 2341262773, 264347078, 2007800933, 604807628,
-1495990901, 770255983, 1856431235, 1249150122, 3175218132, 1555081692, 2198950837, 1996064986,
-3999719339, 2554220882, 766784016, 2821834349, 2566594879, 2952996808, 3203337956, 3210313671,
-1034457026, 3336571891, 2466948901, 3584528711, 3758326383, 113926993, 168717936, 338241895,
-1188179964, 666307205, 1546045734, 773529912, 1522805485, 1294757372, 2643833823, 1396182291,
-2343527390, 1695183700, 1014477480, 1986661051, 1206759142, 2177026350, 344077627, 2456956037,
-1290863460, 2730485921, 3158454273, 2820302411, 3505952657, 3259730800, 106217008, 3345764771,
-3606008344, 3516065817, 1432725776, 3600352804, 1467031594, 4094571909, 851169720, 275423344,
-3100823752, 430227734, 1363258195, 506948616, 3750685593, 659060556, 3785050280, 883997877,
-3318307427, 958139571, 3812723403, 1322822218, 2003034995, 1537002063, 3602036899, 1747873779,
-1575990012, 1955562222, 1125592928, 2024104815, 2716904306, 2227730452, 442776044, 2361852424,
-593698344, 2428436474, 3733110249, 2756734187, 2999351573, 3204031479, 3815920427, 3329325298,
-3928383900, 3391569614, 566280711, 3515267271, 3454069534, 3940187606, 4000239992, 4118630271,
-1914138554, 116418474, 2731055270, 174292421, 3203993006, 289380356, 320620315, 460393269,
-587496836, 685471733, 1086792851, 852142971, 365543100, 1017036298, 2618297676, 1126000580,
-3409855158, 1288033470, 4234509866, 1501505948, 987167468, 1607167915, 1246189591, 1816402316,
+    3609767458, 1116352408, 602891725, 1899447441, 3964484399, 3049323471, 2173295548, 3921009573,
+    4081628472, 961987163, 3053834265, 1508970993, 2937671579, 2453635748, 3664609560, 2870763221,
+    2734883394, 3624381080, 1164996542, 310598401, 1323610764, 607225278, 3590304994, 1426881987,
+    4068182383, 1925078388, 991336113, 2162078206, 633803317, 2614888103, 3479774868, 3248222580,
+    2666613458, 3835390401, 944711139, 4022224774, 2341262773, 264347078, 2007800933, 604807628,
+    1495990901, 770255983, 1856431235, 1249150122, 3175218132, 1555081692, 2198950837, 1996064986,
+    3999719339, 2554220882, 766784016, 2821834349, 2566594879, 2952996808, 3203337956, 3210313671,
+    1034457026, 3336571891, 2466948901, 3584528711, 3758326383, 113926993, 168717936, 338241895,
+    1188179964, 666307205, 1546045734, 773529912, 1522805485, 1294757372, 2643833823, 1396182291,
+    2343527390, 1695183700, 1014477480, 1986661051, 1206759142, 2177026350, 344077627, 2456956037,
+    1290863460, 2730485921, 3158454273, 2820302411, 3505952657, 3259730800, 106217008, 3345764771,
+    3606008344, 3516065817, 1432725776, 3600352804, 1467031594, 4094571909, 851169720, 275423344,
+    3100823752, 430227734, 1363258195, 506948616, 3750685593, 659060556, 3785050280, 883997877,
+    3318307427, 958139571, 3812723403, 1322822218, 2003034995, 1537002063, 3602036899, 1747873779,
+    1575990012, 1955562222, 1125592928, 2024104815, 2716904306, 2227730452, 442776044, 2361852424,
+    593698344, 2428436474, 3733110249, 2756734187, 2999351573, 3204031479, 3815920427, 3329325298,
+    3928383900, 3391569614, 566280711, 3515267271, 3454069534, 3940187606, 4000239992, 4118630271,
+    1914138554, 116418474, 2731055270, 174292421, 3203993006, 289380356, 320620315, 460393269,
+    587496836, 685471733, 1086792851, 852142971, 365543100, 1017036298, 2618297676, 1126000580,
+    3409855158, 1288033470, 4234509866, 1501505948, 987167468, 1607167915, 1246189591, 1816402316,
 ];
 
 /// 初始状态（16 个 u32 = 8 个 u64；hex_c52 输出时高低字交换）
 const TT_IV: [u32; 16] = [
-4089235720, 1779033703, 2227873595, 3144134277, 4271175723, 1013904242, 1595750129, 2773480762,
-2917565137, 1359893119, 725511199, 2600822924, 4215389547, 528734635, 327033209, 1541459225,
+    4089235720, 1779033703, 2227873595, 3144134277, 4271175723, 1013904242, 1595750129, 2773480762,
+    2917565137, 1359893119, 725511199, 2600822924, 4215389547, 528734635, 327033209, 1541459225,
 ];
 
 /// TT-Encrypt V5 密钥派生盐（与版本一起固定）
 pub const TT_ORD_LIST: [u8; 64] = [
-77, 212, 194, 230, 184, 49, 98, 9,
-14, 82, 179, 199, 166, 115, 59, 164,
-28, 178, 70, 43, 130, 154, 181, 138,
-25, 107, 57, 219, 87, 23, 117, 36,
-244, 155, 175, 127, 8, 232, 214, 141,
-38, 167, 46, 55, 193, 169, 90, 47,
-31, 5, 165, 24, 146, 174, 242, 148,
-151, 50, 182, 42, 56, 170, 221, 88,
+    77, 212, 194, 230, 184, 49, 98, 9, 14, 82, 179, 199, 166, 115, 59, 164, 28, 178, 70, 43, 130,
+    154, 181, 138, 25, 107, 57, 219, 87, 23, 117, 36, 244, 155, 175, 127, 8, 232, 214, 141, 38,
+    167, 46, 55, 193, 169, 90, 47, 31, 5, 165, 24, 146, 174, 242, 148, 151, 50, 182, 42, 56, 170,
+    221, 88,
 ];
-
 
 /// 带 CF 状态的核心（模拟 ARM 进位寄存器）
 pub struct TtHashCore {
@@ -73,11 +77,16 @@ impl Default for TtHashCore {
 
 impl TtHashCore {
     pub fn new() -> Self {
-        Self { cf: 0, block_bit_pos: 0 }
+        Self {
+            cf: 0,
+            block_bit_pos: 0,
+        }
     }
 
     #[inline]
-    fn chk(&self, x: u32) -> u32 { x }
+    fn chk(&self, x: u32) -> u32 {
+        x
+    }
 
     #[inline]
     fn lsrs(&mut self, x: u32, k: u32) -> u32 {
@@ -116,13 +125,19 @@ impl TtHashCore {
     }
 
     #[inline]
-    fn eors(&self, a: u32, b: u32) -> u32 { a ^ b }
+    fn eors(&self, a: u32, b: u32) -> u32 {
+        a ^ b
+    }
 
     #[inline]
-    fn ands(&self, a: u32, b: u32) -> u32 { a & b }
+    fn ands(&self, a: u32, b: u32) -> u32 {
+        a & b
+    }
 
     #[inline]
-    fn orrs(&self, a: u32, b: u32) -> u32 { a | b }
+    fn orrs(&self, a: u32, b: u32) -> u32 {
+        a | b
+    }
 
     #[inline]
     fn rrx(&mut self, x: u32) -> u32 {
@@ -139,7 +154,9 @@ impl TtHashCore {
     }
 
     #[inline]
-    fn utfx(&self, num: u32) -> u32 { num & 0xff }
+    fn utfx(&self, num: u32) -> u32 {
+        num & 0xff
+    }
 
     #[inline]
     fn hex_list(content: &[u32]) -> Vec<u8> {
@@ -231,800 +248,813 @@ impl TtHashCore {
 
     /// 消息调度（hex_27E 原样翻译）
     fn hex_27e(&mut self, mut p: Vec<u32>) -> Vec<u32> {
-let mut lr: u32 = 0;
-let mut r0: u32 = 0;
-let mut r10: u32 = 0;
-let mut r3: u32 = 0;
-let mut r4: u32 = 0;
-let mut r5: u32 = 0;
-let mut r6: u32 = 0;
-let mut r8: u32 = 0;
-let mut r9: u32 = 0;
-let mut p = p;
-			r6 = p[0];
-			r8 = p[1];
-			for i in 0..0x40 {
-				r0 = p[2 * i + 0x1c];
-				r5 = p[2 * i + 0x1d];
-				r4 = self.lsrs(r0, 0x13);
-				r3 = self.lsrs(r0, 0x1d);
-				lr = r4 | self.chk(r5) << 13;
-				r4 = self.lsls(r0, 3);
-				r4 = r4 | self.chk(r5) >> 29;
-				r3 = r3 | self.chk(r5) << 3;
-				r4 = r4 ^ self.chk(r0) >> 6;
-				lr = lr ^ r4;
-				r4 = self.lsrs(r5, 6);
-				r4 = r4 | self.chk(r0) << 26;
-				r9 = r3 ^ r4;
-				r4 = self.lsrs(r5, 0x13);
-				r0 = r4 | self.chk(r0) << 13;
-				r10 = p[2 * i + 0x12];
-				r3 = p[2 * i + 0x13];
-				r5 = p[2 * i + 0x2];
-				r4 = p[2 * i + 0x3];
-				r0 = r0 ^ r9;
-				r3 = self.adds(r3, r8);
-				r6 = self.adc(r6, r10);
-				r8 = self.adds(r3, r0);
-				lr = self.adc(lr, r6);
-				r6 = self.lsrs(r4, 7);
-				r3 = self.lsrs(r4, 8);
-				r6 = r6 | self.chk(r5) << 25;
-				r3 = r3 | self.chk(r5) << 24;
-				r3 = (self.eors(r3, r6));
-				r6 = self.lsrs(r5, 1);
-				r0 = (self.rrx(r4));
-				r0 = (self.eors(r0, r3));
-				r3 = r6 | self.chk(r4) << 31;
-				r6 = self.lsrs(r5, 8);
-				r0 = (self.adds(r0, r8));
-				r6 = r6 | self.chk(r4) << 24;
-				r8 = r4;
-				r6 = r6 ^ self.chk(r5) >> 7;
-				r3 = r3 ^ r6;
-				r6 = r5;
-				r3 = self.adc(r3, lr);
-				{ p.push(r3); p.push(r0); }
-			}
-		p
+        let mut lr: u32 = 0;
+        let mut r0: u32 = 0;
+        let mut r10: u32 = 0;
+        let mut r3: u32 = 0;
+        let mut r4: u32 = 0;
+        let mut r5: u32 = 0;
+        let mut r6: u32 = 0;
+        let mut r8: u32 = 0;
+        let mut r9: u32 = 0;
+        let mut p = p;
+        r6 = p[0];
+        r8 = p[1];
+        for i in 0..0x40 {
+            r0 = p[2 * i + 0x1c];
+            r5 = p[2 * i + 0x1d];
+            r4 = self.lsrs(r0, 0x13);
+            r3 = self.lsrs(r0, 0x1d);
+            lr = r4 | self.chk(r5) << 13;
+            r4 = self.lsls(r0, 3);
+            r4 = r4 | self.chk(r5) >> 29;
+            r3 = r3 | self.chk(r5) << 3;
+            r4 = r4 ^ self.chk(r0) >> 6;
+            lr = lr ^ r4;
+            r4 = self.lsrs(r5, 6);
+            r4 = r4 | self.chk(r0) << 26;
+            r9 = r3 ^ r4;
+            r4 = self.lsrs(r5, 0x13);
+            r0 = r4 | self.chk(r0) << 13;
+            r10 = p[2 * i + 0x12];
+            r3 = p[2 * i + 0x13];
+            r5 = p[2 * i + 0x2];
+            r4 = p[2 * i + 0x3];
+            r0 = r0 ^ r9;
+            r3 = self.adds(r3, r8);
+            r6 = self.adc(r6, r10);
+            r8 = self.adds(r3, r0);
+            lr = self.adc(lr, r6);
+            r6 = self.lsrs(r4, 7);
+            r3 = self.lsrs(r4, 8);
+            r6 = r6 | self.chk(r5) << 25;
+            r3 = r3 | self.chk(r5) << 24;
+            r3 = (self.eors(r3, r6));
+            r6 = self.lsrs(r5, 1);
+            r0 = (self.rrx(r4));
+            r0 = (self.eors(r0, r3));
+            r3 = r6 | self.chk(r4) << 31;
+            r6 = self.lsrs(r5, 8);
+            r0 = (self.adds(r0, r8));
+            r6 = r6 | self.chk(r4) << 24;
+            r8 = r4;
+            r6 = r6 ^ self.chk(r5) >> 7;
+            r3 = r3 ^ r6;
+            r6 = r5;
+            r3 = self.adc(r3, lr);
+            {
+                p.push(r3);
+                p.push(r0);
+            }
+        }
+        p
     }
 
     /// 压缩函数（hex_30A 原样翻译）
     fn hex_30a(&mut self, p0: [u32; 16], sched: &[u32]) -> [u32; 16] {
-let mut lr: u32 = 0;
-let mut r0: u32 = 0;
-let mut r1: u32 = 0;
-let mut r10: u32 = 0;
-let mut r11: u32 = 0;
-let mut r12: u32 = 0;
-let mut r2: u32 = 0;
-let mut r3: u32 = 0;
-let mut r4: u32 = 0;
-let mut r5: u32 = 0;
-let mut r6: u32 = 0;
-let mut r8: u32 = 0;
-let mut r9: u32 = 0;
-let mut v_350: u32 = 0;
-let mut v_354: u32 = 0;
-let mut v_358: u32 = 0;
-let mut v_35C: u32 = 0;
-let mut v_360: u32 = 0;
-let mut v_364: u32 = 0;
-let mut v_36C: u32 = 0;
-let mut v_370: u32 = 0;
-let mut v_374: u32 = 0;
-let mut v_378: u32 = 0;
-let mut v_37C: u32 = 0;
-let mut v_380: u32 = 0;
-let mut v_384: u32 = 0;
-let mut v_388: u32 = 0;
-let mut v_38C: u32 = 0;
-let mut v_390: u32 = 0;
-let mut v_398: u32 = 0;
-let mut v_39C: u32 = 0;
-let mut v_3A0: u32 = 0;
-let mut v_3A4: u32 = 0;
-let mut v_3A8: u32 = 0;
-let mut v_3AC: u32 = 0;
-let mut state = p0;
-			v_3A0 = state[7];
-			v_3A4 = state[6];
-			v_374 = state[5];
-			v_378 = state[4];
-			lr = state[0];
-			r12 = state[1];
-			v_39C = state[2];
-			v_398 = state[3];
-			v_3AC = state[11];
-			v_3A8 = state[10];
-			r9 = state[12];
-			r10 = state[13];
-			r5 = state[9];
-			r8 = state[8];
-			r4 = state[15];
-			r6 = state[14];
-			for index in 0..10 {
-				v_384 = r5;
-				r3 = K_TABLE[0x10 * index];
-				r1 = K_TABLE[0x10 * index + 2];
-				r2 = K_TABLE[0x10 * index + 1];
-				r3 = self.adds(r3, r6);
-				r6 = self.chk(r8) >> 14;
-				v_390 = r1;
-				r6 = r6 | self.chk(r5) << 18;
-				r1 = K_TABLE[0x10 * index + 3];
-				r0 = K_TABLE[0x10 * index + 4];
-				v_36C = r0;
-				r0 = self.adc(r2, r4);
-				r2 = self.lsrs(r5, 0x12);
-				r4 = self.lsrs(r5, 0xE);
-				r2 = r2 | self.chk(r8) << 14;
-				r4 = r4 | self.chk(r8) << 18;
-				r2 = self.eors(r2, r4);
-				r4 = self.lsls(r5, 0x17);
-				r4 = r4 | self.chk(r8) >> 9;
-				v_38C = r1;
-				r2 = self.eors(r2, r4);
-				r4 = self.chk(r8) >> 18;
-				r4 = r4 | self.chk(r5) << 14;
-				r6 = self.eors(r6, r4);
-				r4 = self.lsrs(r5, 9);
-				r4 = r4 | self.chk(r8) << 23;
-				v_354 = r8;
-				r6 = self.eors(r6, r4);
-				r3 = self.adds(r3, r6);
-				r0 = self.adcs(r0, r2);
-				r2 = sched[0x10 * index + 1];
-				r2 = self.adds(r2, r3);
-				r3 = sched[0x10 * index + 3];
-				r6 = sched[0x10 * index];
-				v_358 = r10;
-				r6 = self.adcs(r6, r0);
-				r0 = v_3AC;
-				v_360 = r3;
-				r0 = r0 ^ r10;
-				r3 = sched[0x10 * index + 2];
-				r0 = self.ands(r0, r5);
-				r1 = sched[0x10 * index + 5];
-				r4 = r0 ^ r10;
-				r0 = v_3A8;
-				v_364 = r1;
-				r0 = r0 ^ r9;
-				r1 = v_374;
-				r0 = r0 & r8;
-				r8 = v_39C;
-				r0 = r0 ^ r9;
-				v_35C = r3;
-				r10 = self.adds(r2, r0);
-				r0 = v_398;
-				r11 = self.adc(r6, r4);
-				r3 = v_378;
-				r2 = r0 | r12;
-				r6 = r0 & r12;
-				r2 = self.ands(r2, r1);
-				r1 = r0;
-				r2 = self.orrs(r2, r6);
-				r6 = r8 | lr;
-				r6 = self.ands(r6, r3);
-				r3 = r8 & lr;
-				r3 = self.orrs(r3, r6);
-				r6 = self.chk(r12) << 30;
-				r0 = self.chk(r12) >> 28;
-				r6 = r6 | self.chk(lr) >> 2;
-				r0 = r0 | self.chk(lr) << 4;
-				r4 = self.chk(lr) >> 28;
-				r0 = self.eors(r0, r6);
-				r6 = self.chk(r12) << 25;
-				r6 = r6 | self.chk(lr) >> 7;
-				r4 = r4 | self.chk(r12) << 4;
-				r0 = self.eors(r0, r6);
-				r6 = self.chk(r12) >> 2;
-				r6 = r6 | self.chk(lr) << 30;
-				r3 = self.adds(r3, r10);
-				r6 = r6 ^ r4;
-				r4 = self.chk(r12) >> 7;
-				r4 = r4 | self.chk(lr) << 25;
-				r2 = self.adc(r2, r11);
-				r6 = self.eors(r6, r4);
-				v_37C = r12;
-				r5 = self.adds(r3, r6);
-				r6 = self.adc(r2, r0);
-				r0 = r6 | r12;
-				r2 = r6 & r12;
-				r0 = self.ands(r0, r1);
-				r3 = self.lsrs(r6, 0x1C);
-				r0 = self.orrs(r0, r2);
-				r2 = self.lsls(r6, 0x1E);
-				r2 = r2 | self.chk(r5) >> 2;
-				r3 = r3 | self.chk(r5) << 4;
-				r2 = self.eors(r2, r3);
-				r3 = self.lsls(r6, 0x19);
-				r3 = r3 | self.chk(r5) >> 7;
-				r4 = self.lsrs(r5, 0x1C);
-				r3 = self.eors(r3, r2);
-				r2 = self.lsrs(r6, 2);
-				r2 = r2 | self.chk(r5) << 30;
-				r4 = r4 | self.chk(r6) << 4;
-				r2 = self.eors(r2, r4);
-				r4 = self.lsrs(r6, 7);
-				r4 = r4 | self.chk(r5) << 25;
-				r12 = r6;
-				r2 = self.eors(r2, r4);
-				r4 = r5 | lr;
-				r4 = r4 & r8;
-				r6 = r5 & lr;
-				r4 = self.orrs(r4, r6);
-				v_388 = r5;
-				r5 = self.adds(r2, r4);
-				r0 = self.adcs(r0, r3);
-				v_398 = r1;
-				r4 = r9;
-				v_350 = r0;
-				r0 = v_3A4;
-				r1 = v_3A0;
-				v_380 = lr;
-				lr = self.adds(r0, r10);
-				r9 = self.adc(r1, r11);
-				r0 = v_3AC;
-				r6 = self.chk(lr) >> 14;
-				r1 = v_384;
-				r3 = self.chk(r9) >> 18;
-				r2 = self.chk(r9) >> 14;
-				r3 = r3 | self.chk(lr) << 14;
-				r2 = r2 | self.chk(lr) << 18;
-				r2 = self.eors(r2, r3);
-				r3 = self.chk(r9) << 23;
-				r3 = r3 | self.chk(lr) >> 9;
-				r6 = r6 | self.chk(r9) << 18;
-				r2 = self.eors(r2, r3);
-				r3 = self.chk(lr) >> 18;
-				r3 = r3 | self.chk(r9) << 14;
-				v_39C = r8;
-				r3 = self.eors(r3, r6);
-				r6 = self.chk(r9) >> 9;
-				r6 = r6 | self.chk(lr) << 23;
-				r8 = v_354;
-				r3 = self.eors(r3, r6);
-				r6 = r0 ^ r1;
-				r6 = r6 & r9;
-				v_370 = r12;
-				r6 = self.eors(r6, r0);
-				r0 = v_3A8;
-				r1 = r0 ^ r8;
-				r1 = r1 & lr;
-				r1 = self.eors(r1, r0);
-				r0 = v_358;
-				r1 = self.adds(r1, r4);
-				r6 = self.adcs(r6, r0);
-				r0 = v_390;
-				r1 = self.adds(r1, r0);
-				r0 = v_38C;
-				r6 = self.adcs(r6, r0);
-				r0 = v_360;
-				r1 = self.adds(r1, r0);
-				r0 = v_35C;
-				r6 = self.adcs(r6, r0);
-				r1 = self.adds(r1, r3);
-				r3 = self.adc(r6, r2);
-				r2 = v_350;
-				r0 = self.adds(r5, r1);
-				r5 = v_37C;
-				r4 = self.adc(r2, r3);
-				v_390 = r4;
-				r2 = r4 | r12;
-				r6 = r4 & r12;
-				r2 = self.ands(r2, r5);
-				r5 = self.lsrs(r4, 0x1C);
-				r10 = r2 | r6;
-				r2 = self.lsls(r4, 0x1E);
-				r2 = r2 | self.chk(r0) >> 2;
-				r5 = r5 | self.chk(r0) << 4;
-				r2 = self.eors(r2, r5);
-				r5 = self.lsls(r4, 0x19);
-				r5 = r5 | self.chk(r0) >> 7;
-				r6 = self.lsrs(r0, 0x1C);
-				r12 = r2 ^ r5;
-				r2 = self.lsrs(r4, 2);
-				r2 = r2 | self.chk(r0) << 30;
-				r6 = r6 | self.chk(r4) << 4;
-				r2 = self.eors(r2, r6);
-				r6 = self.lsrs(r4, 7);
-				r4 = v_388;
-				r6 = r6 | self.chk(r0) << 25;
-				r5 = v_380;
-				r2 = self.eors(r2, r6);
-				r6 = r0 | r4;
-				r4 = self.ands(r4, r0);
-				r6 = self.ands(r6, r5);
-				v_38C = r0;
-				r4 = self.orrs(r4, r6);
-				r6 = lr ^ r8;
-				r0 = self.adds(r2, r4);
-				v_3A4 = r0;
-				r0 = self.adc(r12, r10);
-				v_3A0 = r0;
-				r0 = v_378;
-				r10 = self.adds(r1, r0);
-				r0 = v_374;
-				r6 = r6 & r10;
-				r1 = self.adc(r3, r0);
-				r5 = self.chk(r10) >> 14;
-				r0 = v_384;
-				r6 = r6 ^ r8;
-				r3 = self.lsrs(r1, 0x12);
-				r4 = self.lsrs(r1, 0xE);
-				r3 = r3 | self.chk(r10) << 14;
-				r4 = r4 | self.chk(r10) << 18;
-				r3 = self.eors(r3, r4);
-				r4 = self.lsls(r1, 0x17);
-				r4 = r4 | self.chk(r10) >> 9;
-				r5 = r5 | self.chk(r1) << 18;
-				r11 = r3 ^ r4;
-				r3 = self.chk(r10) >> 18;
-				r3 = r3 | self.chk(r1) << 14;
-				v_378 = r1;
-				r3 = self.eors(r3, r5);
-				r5 = self.lsrs(r1, 9);
-				r5 = r5 | self.chk(r10) << 23;
-				r3 = self.eors(r3, r5);
-				r5 = r9 ^ r0;
-				r5 = self.ands(r5, r1);
-				r1 = v_3A8;
-				r5 = self.eors(r5, r0);
-				r0 = v_36C;
-				r4 = self.adds(r0, r1);
-				r2 = K_TABLE[0x10 * index + 5];
-				r0 = v_3AC;
-				r2 = self.adcs(r2, r0);
-				r0 = v_364;
-				r4 = self.adds(r4, r0);
-				r12 = sched[0x10 * index + 4];
-				r0 = v_3A4;
-				r2 = self.adc(r2, r12);
-				r6 = self.adds(r6, r4);
-				r2 = self.adcs(r2, r5);
-				r3 = self.adds(r3, r6);
-				r11 = self.adc(r11, r2);
-				r1 = self.adds(r0, r3);
-				r0 = v_3A0;
-				r6 = v_390;
-				r4 = self.chk(r1) >> 28;
-				r0 = self.adc(r0, r11);
-				r5 = v_370;
-				r2 = r0 | r6;
-				r6 = self.ands(r6, r0);
-				r2 = self.ands(r2, r5);
-				r5 = self.lsrs(r0, 0x1C);
-				r12 = r2 | r6;
-				r6 = self.lsls(r0, 0x1E);
-				r6 = r6 | self.chk(r1) >> 2;
-				r5 = r5 | self.chk(r1) << 4;
-				r6 = self.eors(r6, r5);
-				r5 = self.lsls(r0, 0x19);
-				r5 = r5 | self.chk(r1) >> 7;
-				r4 = r4 | self.chk(r0) << 4;
-				r6 = self.eors(r6, r5);
-				r5 = self.lsrs(r0, 2);
-				r5 = r5 | self.chk(r1) << 30;
-				v_3AC = r0;
-				r5 = self.eors(r5, r4);
-				r4 = self.lsrs(r0, 7);
-				r0 = v_38C;
-				r4 = r4 | self.chk(r1) << 25;
-				r2 = v_388;
-				r5 = self.eors(r5, r4);
-				r4 = r1 | r0;
-				v_3A8 = r1;
-				r4 = self.ands(r4, r2);
-				r2 = r1 & r0;
-				r2 = self.orrs(r2, r4);
-				r0 = self.adds(r5, r2);
-				v_3A4 = r0;
-				r0 = self.adc(r6, r12);
-				v_3A0 = r0;
-				r0 = v_39C;
-				r2 = v_398;
-				r0 = self.adds(r0, r3);
-				v_39C = r0;
-				r11 = self.adc(r11, r2);
-				r4 = self.lsrs(r0, 0xE);
-				r3 = self.chk(r11) >> 18;
-				r6 = self.chk(r11) >> 14;
-				r3 = r3 | self.chk(r0) << 14;
-				r6 = r6 | self.chk(r0) << 18;
-				r3 = self.eors(r3, r6);
-				r6 = self.chk(r11) << 23;
-				r6 = r6 | self.chk(r0) >> 9;
-				r4 = r4 | self.chk(r11) << 18;
-				r1 = self.eors(r3, r6);
-				r6 = self.lsrs(r0, 0x12);
-				r6 = r6 | self.chk(r11) << 14;
-				r3 = r10 ^ lr;
-				r6 = self.eors(r6, r4);
-				r4 = self.chk(r11) >> 9;
-				r3 = self.ands(r3, r0);
-				r4 = r4 | self.chk(r0) << 23;
-				r5 = r6 ^ r4;
-				v_398 = r1;
-				r3 = r3 ^ lr;
-				r1 = v_378;
-				r6 = K_TABLE[0x10 * index + 6];
-				r12 = K_TABLE[0x10 * index + 7];
-				r4 = r1 ^ r9;
-				r0 = v_384;
-				r6 = self.adds(r6, r8);
-				r4 = r4 & r11;
-				r12 = self.adc(r12, r0);
-				r4 = r4 ^ r9;
-				r8 = sched[0x10 * index + 7];
-				r2 = sched[0x10 * index + 6];
-				r6 = self.adds(r6, r8);
-				r0 = v_398;
-				r2 = self.adc(r2, r12);
-				r3 = self.adds(r3, r6);
-				r2 = self.adcs(r2, r4);
-				r6 = self.adds(r3, r5);
-				r12 = self.adc(r2, r0);
-				r0 = v_3A4;
-				r4 = v_390;
-				r1 = self.adds(r0, r6);
-				r0 = v_3A0;
-				v_384 = r1;
-				r5 = self.adc(r0, r12);
-				r0 = v_3AC;
-				r8 = self.chk(r1) >> 28;
-				r2 = r5 | r0;
-				r3 = r8 | self.chk(r5) << 4;
-				r2 = self.ands(r2, r4);
-				r4 = r5 & r0;
-				r0 = r2 | r4;
-				r4 = self.lsls(r5, 0x1E);
-				r2 = self.lsrs(r5, 0x1C);
-				r4 = r4 | self.chk(r1) >> 2;
-				r2 = r2 | self.chk(r1) << 4;
-				v_3A0 = r0;
-				r2 = self.eors(r2, r4);
-				r4 = self.lsls(r5, 0x19);
-				r4 = r4 | self.chk(r1) >> 7;
-				r0 = v_3A8;
-				r2 = self.eors(r2, r4);
-				r4 = self.lsrs(r5, 2);
-				r4 = r4 | self.chk(r1) << 30;
-				r8 = r5;
-				r3 = self.eors(r3, r4);
-				r4 = self.lsrs(r5, 7);
-				r4 = r4 | self.chk(r1) << 25;
-				r5 = v_38C;
-				r3 = self.eors(r3, r4);
-				r4 = r1 | r0;
-				r4 = self.ands(r4, r5);
-				r5 = r1 & r0;
-				r4 = self.orrs(r4, r5);
-				v_36C = r8;
-				r0 = self.adds(r3, r4);
-				v_3A4 = r0;
-				r0 = v_3A0;
-				r0 = self.adcs(r0, r2);
-				v_3A0 = r0;
-				r0 = v_380;
-				r2 = v_37C;
-				r0 = self.adds(r0, r6);
-				r5 = self.adc(r12, r2);
-				v_37C = r5;
-				r4 = self.lsrs(r0, 0xE);
-				v_380 = r0;
-				r2 = self.lsrs(r5, 0x12);
-				r3 = self.lsrs(r5, 0xE);
-				r2 = r2 | self.chk(r0) << 14;
-				r3 = r3 | self.chk(r0) << 18;
-				r2 = self.eors(r2, r3);
-				r3 = self.lsls(r5, 0x17);
-				r3 = r3 | self.chk(r0) >> 9;
-				r4 = r4 | self.chk(r5) << 18;
-				r1 = r2 ^ r3;
-				r3 = self.lsrs(r0, 0x12);
-				r3 = r3 | self.chk(r5) << 14;
-				v_398 = r1;
-				r3 = self.eors(r3, r4);
-				r4 = self.lsrs(r5, 9);
-				r1 = v_378;
-				r4 = r4 | self.chk(r0) << 23;
-				r12 = r3 ^ r4;
-				r3 = sched[0x10 * index + 9];
-				r4 = r11 ^ r1;
-				r4 = self.ands(r4, r5);
-				r4 = self.eors(r4, r1);
-				r1 = v_39C;
-				r5 = r1 ^ r10;
-				r5 = self.ands(r5, r0);
-				r5 = r5 ^ r10;
-				r2 = K_TABLE[0x10 * index + 8];
-				r0 = self.adds(r2, lr);
-				r2 = K_TABLE[0x10 * index + 9];
-				r2 = self.adc(r2, r9);
-				r0 = self.adds(r0, r3);
-				r3 = sched[0x10 * index + 8];
-				r2 = self.adcs(r2, r3);
-				r0 = self.adds(r0, r5);
-				r2 = self.adcs(r2, r4);
-				r1 = self.adds(r0, r12);
-				r0 = v_398;
-				r3 = v_3AC;
-				r4 = self.adc(r2, r0);
-				r0 = v_3A4;
-				r6 = self.adds(r0, r1);
-				r0 = v_3A0;
-				v_3A4 = r6;
-				r0 = self.adcs(r0, r4);
-				v_3A0 = r0;
-				r2 = r0 | r8;
-				r2 = self.ands(r2, r3);
-				r3 = r0 & r8;
-				lr = r2 | r3;
-				r8 = r6;
-				r3 = self.lsls(r0, 0x1E);
-				r5 = self.lsrs(r0, 0x1C);
-				r3 = r3 | self.chk(r8) >> 2;
-				r5 = r5 | self.chk(r8) << 4;
-				r3 = self.eors(r3, r5);
-				r5 = self.lsls(r0, 0x19);
-				r5 = r5 | self.chk(r8) >> 7;
-				r2 = self.chk(r8) >> 28;
-				r12 = r3 ^ r5;
-				r5 = self.lsrs(r0, 2);
-				r5 = r5 | self.chk(r8) << 30;
-				r2 = r2 | self.chk(r0) << 4;
-				r2 = self.eors(r2, r5);
-				r5 = self.lsrs(r0, 7);
-				r3 = v_384;
-				r5 = r5 | self.chk(r8) << 25;
-				r6 = v_3A8;
-				r2 = self.eors(r2, r5);
-				r5 = r8 | r3;
-				r5 = self.ands(r5, r6);
-				r6 = r8 & r3;
-				r5 = self.orrs(r5, r6);
-				r0 = self.adds(r2, r5);
-				v_398 = r0;
-				r2 = v_388;
-				r12 = self.adc(r12, lr);
-				r0 = v_370;
-				r3 = self.adds(r1, r2);
-				r1 = v_380;
-				r8 = self.adc(r4, r0);
-				r0 = r3;
-				r2 = self.chk(r8) >> 18;
-				r3 = self.chk(r8) >> 14;
-				r2 = r2 | self.chk(r0) << 14;
-				r3 = r3 | self.chk(r0) << 18;
-				r2 = self.eors(r2, r3);
-				r3 = self.chk(r8) << 23;
-				r3 = r3 | self.chk(r0) >> 9;
-				r4 = self.lsrs(r0, 0xE);
-				lr = r2 ^ r3;
-				r3 = self.lsrs(r0, 0x12);
-				r3 = r3 | self.chk(r8) << 14;
-				r4 = r4 | self.chk(r8) << 18;
-				r3 = self.eors(r3, r4);
-				r4 = self.chk(r8) >> 9;
-				r4 = r4 | self.chk(r0) << 23;
-				r2 = r0;
-				r0 = v_37C;
-				r3 = self.eors(r3, r4);
-				v_388 = r2;
-				r4 = r0 ^ r11;
-				r0 = v_39C;
-				r4 = r4 & r8;
-				r5 = r1 ^ r0;
-				r4 = r4 ^ r11;
-				r5 = self.ands(r5, r2);
-				r5 = self.eors(r5, r0);
-				r6 = K_TABLE[0x10 * index + 10];
-				r1 = self.adds(r6, r10);
-				r6 = K_TABLE[0x10 * index + 11];
-				r0 = v_378;
-				r6 = self.adcs(r6, r0);
-				r2 = sched[0x10 * index + 11];
-				r1 = self.adds(r1, r2);
-				r2 = sched[0x10 * index + 10];
-				r0 = v_398;
-				r2 = self.adcs(r2, r6);
-				r1 = self.adds(r1, r5);
-				r2 = self.adcs(r2, r4);
-				r1 = self.adds(r1, r3);
-				r4 = self.adc(r2, lr);
-				r6 = v_3A0;
-				r0 = self.adds(r0, r1);
-				r9 = self.adc(r12, r4);
-				r3 = v_36C;
-				r2 = r9 | r6;
-				r5 = self.chk(r9) >> 28;
-				v_374 = r9;
-				r2 = self.ands(r2, r3);
-				r3 = r9 & r6;
-				r10 = r2 | r3;
-				r3 = self.chk(r9) << 30;
-				r3 = r3 | self.chk(r0) >> 2;
-				r5 = r5 | self.chk(r0) << 4;
-				r3 = self.eors(r3, r5);
-				r5 = self.chk(r9) << 25;
-				r5 = r5 | self.chk(r0) >> 7;
-				r6 = self.lsrs(r0, 0x1C);
-				r12 = r3 ^ r5;
-				r5 = self.chk(r9) >> 2;
-				r5 = r5 | self.chk(r0) << 30;
-				r6 = r6 | self.chk(r9) << 4;
-				r5 = self.eors(r5, r6);
-				r6 = self.chk(r9) >> 7;
-				r3 = v_3A4;
-				r6 = r6 | self.chk(r0) << 25;
-				r2 = v_384;
-				r5 = self.eors(r5, r6);
-				r6 = r0 | r3;
-				r6 = self.ands(r6, r2);
-				r2 = r0 & r3;
-				r2 = r2 | r6;
-				r2 = self.adds(r2, r5);
-				v_398 = r2;
-				r2 = self.adc(r12, r10);
-				v_378 = r2;
-				r2 = v_38C;
-				r12 = self.adds(r1, r2);
-				r1 = v_390;
-				lr = self.adc(r4, r1);
-				r4 = self.chk(r12) >> 14;
-				r1 = self.chk(lr) >> 18;
-				r2 = self.chk(lr) >> 14;
-				r1 = r1 | self.chk(r12) << 14;
-				r2 = r2 | self.chk(r12) << 18;
-				r1 = self.eors(r1, r2);
-				r2 = self.chk(lr) << 23;
-				r2 = r2 | self.chk(r12) >> 9;
-				r4 = r4 | self.chk(lr) << 18;
-				r1 = self.eors(r1, r2);
-				r2 = self.chk(r12) >> 18;
-				r2 = r2 | self.chk(lr) << 14;
-				v_390 = r1;
-				r2 = self.eors(r2, r4);
-				r4 = self.chk(lr) >> 9;
-				r1 = v_37C;
-				r4 = r4 | self.chk(r12) << 23;
-				r10 = r2 ^ r4;
-				r2 = v_388;
-				r4 = r8 ^ r1;
-				r4 = r4 & lr;
-				r4 = self.eors(r4, r1);
-				r1 = v_380;
-				r5 = r2 ^ r1;
-				r2 = v_39C;
-				r5 = r5 & r12;
-				r5 = self.eors(r5, r1);
-				r6 = K_TABLE[0x10 * index + 12];
-				r3 = K_TABLE[0x10 * index + 13];
-				r6 = self.adds(r6, r2);
-				r3 = self.adc(r3, r11);
-				r1 = sched[0x10 * index + 13];
-				r1 = self.adds(r1, r6);
-				r6 = sched[0x10 * index + 12];
-				r3 = self.adcs(r3, r6);
-				r1 = self.adds(r1, r5);
-				r3 = self.adcs(r3, r4);
-				r5 = self.adds(r1, r10);
-				r1 = v_390;
-				r2 = self.adc(r3, r1);
-				r1 = v_398;
-				r3 = v_3A0;
-				r10 = self.adds(r1, r5);
-				r1 = v_378;
-				v_378 = r0;
-				r11 = self.adc(r1, r2);
-				r6 = self.chk(r10) >> 28;
-				r1 = r11 | r9;
-				v_398 = r11;
-				r1 = self.ands(r1, r3);
-				r3 = r11 & r9;
-				r9 = r1 | r3;
-				r3 = self.chk(r11) << 30;
-				r4 = self.chk(r11) >> 28;
-				r3 = r3 | self.chk(r10) >> 2;
-				r4 = r4 | self.chk(r10) << 4;
-				r6 = r6 | self.chk(r11) << 4;
-				r3 = self.eors(r3, r4);
-				r4 = self.chk(r11) << 25;
-				r4 = r4 | self.chk(r10) >> 7;
-				r1 = v_3A4;
-				r3 = self.eors(r3, r4);
-				r4 = self.chk(r11) >> 2;
-				r4 = r4 | self.chk(r10) << 30;
-				v_39C = r10;
-				r4 = self.eors(r4, r6);
-				r6 = self.chk(r11) >> 7;
-				r6 = r6 | self.chk(r10) << 25;
-				r4 = self.eors(r4, r6);
-				r6 = r10 | r0;
-				r6 = self.ands(r6, r1);
-				r1 = r10 & r0;
-				r1 = self.orrs(r1, r6);
-				r10 = lr;
-				r0 = self.adds(r4, r1);
-				v_390 = r0;
-				r0 = self.adc(r3, r9);
-				v_38C = r0;
-				r0 = v_3A8;
-				r9 = r12;
-				r4 = self.adds(r5, r0);
-				r0 = v_3AC;
-				v_3A8 = r4;
-				r0 = self.adcs(r0, r2);
-				r3 = self.lsrs(r4, 0xE);
-				v_3AC = r0;
-				r1 = self.lsrs(r0, 0x12);
-				r2 = self.lsrs(r0, 0xE);
-				r1 = r1 | self.chk(r4) << 14;
-				r2 = r2 | self.chk(r4) << 18;
-				r1 = self.eors(r1, r2);
-				r2 = self.lsls(r0, 0x17);
-				r2 = r2 | self.chk(r4) >> 9;
-				r3 = r3 | self.chk(r0) << 18;
-				r11 = r1 ^ r2;
-				r2 = self.lsrs(r4, 0x12);
-				r2 = r2 | self.chk(r0) << 14;
-				r2 = self.eors(r2, r3);
-				r3 = self.lsrs(r0, 9);
-				r3 = r3 | self.chk(r4) << 23;
-				r2 = self.eors(r2, r3);
-				r3 = lr ^ r8;
-				r3 = self.ands(r3, r0);
-				r0 = v_388;
-				lr = r3 ^ r8;
-				r5 = r12 ^ r0;
-				r5 = self.ands(r5, r4);
-				r3 = r0;
-				r5 = self.eors(r5, r0);
-				r4 = K_TABLE[0x10 * index + 14];
-				r6 = K_TABLE[0x10 * index + 15];
-				r0 = v_380;
-				r4 = self.adds(r4, r0);
-				r0 = v_37C;
-				r6 = self.adcs(r6, r0);
-				r0 = sched[0x10 * index + 14];
-				r1 = sched[0x10 * index + 15];
-				r1 = self.adds(r1, r4);
-				r0 = self.adcs(r0, r6);
-				r1 = self.adds(r1, r5);
-				r0 = self.adc(r0, lr);
-				r1 = self.adds(r1, r2);
-				r2 = v_390;
-				r0 = self.adc(r0, r11);
-				r4 = r8;
-				lr = self.adds(r2, r1);
-				r2 = v_38C;
-				r6 = r3;
-				r12 = self.adc(r2, r0);
-				r2 = v_384;
-				r8 = self.adds(r1, r2);
-				r2 = v_36C;
-				r5 = self.adc(r0, r2);
-			}
-			let list_638 = [
-				self.chk(lr), self.chk(r12), self.chk(v_39C), self.chk(v_398),
-				self.chk(v_378), self.chk(v_374), self.chk(v_3A4), self.chk(v_3A0),
-				self.chk(r8), self.chk(r5), self.chk(v_3A8), self.chk(v_3AC),
-				self.chk(r9), self.chk(r10), self.chk(r6), self.chk(r4),
-			];
-			for i in 0..8 {
-				r0 = state[2 * i];
-				r1 = state[2 * i + 1];
-				r0 = self.adds(r0, list_638[2 * i]);
-				r1 = self.adcs(r1, list_638[2 * i + 1]);
-				state[2 * i] = r0;
-				state[2 * i + 1] = r1;
-			}
-		state
+        let mut lr: u32 = 0;
+        let mut r0: u32 = 0;
+        let mut r1: u32 = 0;
+        let mut r10: u32 = 0;
+        let mut r11: u32 = 0;
+        let mut r12: u32 = 0;
+        let mut r2: u32 = 0;
+        let mut r3: u32 = 0;
+        let mut r4: u32 = 0;
+        let mut r5: u32 = 0;
+        let mut r6: u32 = 0;
+        let mut r8: u32 = 0;
+        let mut r9: u32 = 0;
+        let mut v_350: u32 = 0;
+        let mut v_354: u32 = 0;
+        let mut v_358: u32 = 0;
+        let mut v_35C: u32 = 0;
+        let mut v_360: u32 = 0;
+        let mut v_364: u32 = 0;
+        let mut v_36C: u32 = 0;
+        let mut v_370: u32 = 0;
+        let mut v_374: u32 = 0;
+        let mut v_378: u32 = 0;
+        let mut v_37C: u32 = 0;
+        let mut v_380: u32 = 0;
+        let mut v_384: u32 = 0;
+        let mut v_388: u32 = 0;
+        let mut v_38C: u32 = 0;
+        let mut v_390: u32 = 0;
+        let mut v_398: u32 = 0;
+        let mut v_39C: u32 = 0;
+        let mut v_3A0: u32 = 0;
+        let mut v_3A4: u32 = 0;
+        let mut v_3A8: u32 = 0;
+        let mut v_3AC: u32 = 0;
+        let mut state = p0;
+        v_3A0 = state[7];
+        v_3A4 = state[6];
+        v_374 = state[5];
+        v_378 = state[4];
+        lr = state[0];
+        r12 = state[1];
+        v_39C = state[2];
+        v_398 = state[3];
+        v_3AC = state[11];
+        v_3A8 = state[10];
+        r9 = state[12];
+        r10 = state[13];
+        r5 = state[9];
+        r8 = state[8];
+        r4 = state[15];
+        r6 = state[14];
+        for index in 0..10 {
+            v_384 = r5;
+            r3 = K_TABLE[0x10 * index];
+            r1 = K_TABLE[0x10 * index + 2];
+            r2 = K_TABLE[0x10 * index + 1];
+            r3 = self.adds(r3, r6);
+            r6 = self.chk(r8) >> 14;
+            v_390 = r1;
+            r6 = r6 | self.chk(r5) << 18;
+            r1 = K_TABLE[0x10 * index + 3];
+            r0 = K_TABLE[0x10 * index + 4];
+            v_36C = r0;
+            r0 = self.adc(r2, r4);
+            r2 = self.lsrs(r5, 0x12);
+            r4 = self.lsrs(r5, 0xE);
+            r2 = r2 | self.chk(r8) << 14;
+            r4 = r4 | self.chk(r8) << 18;
+            r2 = self.eors(r2, r4);
+            r4 = self.lsls(r5, 0x17);
+            r4 = r4 | self.chk(r8) >> 9;
+            v_38C = r1;
+            r2 = self.eors(r2, r4);
+            r4 = self.chk(r8) >> 18;
+            r4 = r4 | self.chk(r5) << 14;
+            r6 = self.eors(r6, r4);
+            r4 = self.lsrs(r5, 9);
+            r4 = r4 | self.chk(r8) << 23;
+            v_354 = r8;
+            r6 = self.eors(r6, r4);
+            r3 = self.adds(r3, r6);
+            r0 = self.adcs(r0, r2);
+            r2 = sched[0x10 * index + 1];
+            r2 = self.adds(r2, r3);
+            r3 = sched[0x10 * index + 3];
+            r6 = sched[0x10 * index];
+            v_358 = r10;
+            r6 = self.adcs(r6, r0);
+            r0 = v_3AC;
+            v_360 = r3;
+            r0 = r0 ^ r10;
+            r3 = sched[0x10 * index + 2];
+            r0 = self.ands(r0, r5);
+            r1 = sched[0x10 * index + 5];
+            r4 = r0 ^ r10;
+            r0 = v_3A8;
+            v_364 = r1;
+            r0 = r0 ^ r9;
+            r1 = v_374;
+            r0 = r0 & r8;
+            r8 = v_39C;
+            r0 = r0 ^ r9;
+            v_35C = r3;
+            r10 = self.adds(r2, r0);
+            r0 = v_398;
+            r11 = self.adc(r6, r4);
+            r3 = v_378;
+            r2 = r0 | r12;
+            r6 = r0 & r12;
+            r2 = self.ands(r2, r1);
+            r1 = r0;
+            r2 = self.orrs(r2, r6);
+            r6 = r8 | lr;
+            r6 = self.ands(r6, r3);
+            r3 = r8 & lr;
+            r3 = self.orrs(r3, r6);
+            r6 = self.chk(r12) << 30;
+            r0 = self.chk(r12) >> 28;
+            r6 = r6 | self.chk(lr) >> 2;
+            r0 = r0 | self.chk(lr) << 4;
+            r4 = self.chk(lr) >> 28;
+            r0 = self.eors(r0, r6);
+            r6 = self.chk(r12) << 25;
+            r6 = r6 | self.chk(lr) >> 7;
+            r4 = r4 | self.chk(r12) << 4;
+            r0 = self.eors(r0, r6);
+            r6 = self.chk(r12) >> 2;
+            r6 = r6 | self.chk(lr) << 30;
+            r3 = self.adds(r3, r10);
+            r6 = r6 ^ r4;
+            r4 = self.chk(r12) >> 7;
+            r4 = r4 | self.chk(lr) << 25;
+            r2 = self.adc(r2, r11);
+            r6 = self.eors(r6, r4);
+            v_37C = r12;
+            r5 = self.adds(r3, r6);
+            r6 = self.adc(r2, r0);
+            r0 = r6 | r12;
+            r2 = r6 & r12;
+            r0 = self.ands(r0, r1);
+            r3 = self.lsrs(r6, 0x1C);
+            r0 = self.orrs(r0, r2);
+            r2 = self.lsls(r6, 0x1E);
+            r2 = r2 | self.chk(r5) >> 2;
+            r3 = r3 | self.chk(r5) << 4;
+            r2 = self.eors(r2, r3);
+            r3 = self.lsls(r6, 0x19);
+            r3 = r3 | self.chk(r5) >> 7;
+            r4 = self.lsrs(r5, 0x1C);
+            r3 = self.eors(r3, r2);
+            r2 = self.lsrs(r6, 2);
+            r2 = r2 | self.chk(r5) << 30;
+            r4 = r4 | self.chk(r6) << 4;
+            r2 = self.eors(r2, r4);
+            r4 = self.lsrs(r6, 7);
+            r4 = r4 | self.chk(r5) << 25;
+            r12 = r6;
+            r2 = self.eors(r2, r4);
+            r4 = r5 | lr;
+            r4 = r4 & r8;
+            r6 = r5 & lr;
+            r4 = self.orrs(r4, r6);
+            v_388 = r5;
+            r5 = self.adds(r2, r4);
+            r0 = self.adcs(r0, r3);
+            v_398 = r1;
+            r4 = r9;
+            v_350 = r0;
+            r0 = v_3A4;
+            r1 = v_3A0;
+            v_380 = lr;
+            lr = self.adds(r0, r10);
+            r9 = self.adc(r1, r11);
+            r0 = v_3AC;
+            r6 = self.chk(lr) >> 14;
+            r1 = v_384;
+            r3 = self.chk(r9) >> 18;
+            r2 = self.chk(r9) >> 14;
+            r3 = r3 | self.chk(lr) << 14;
+            r2 = r2 | self.chk(lr) << 18;
+            r2 = self.eors(r2, r3);
+            r3 = self.chk(r9) << 23;
+            r3 = r3 | self.chk(lr) >> 9;
+            r6 = r6 | self.chk(r9) << 18;
+            r2 = self.eors(r2, r3);
+            r3 = self.chk(lr) >> 18;
+            r3 = r3 | self.chk(r9) << 14;
+            v_39C = r8;
+            r3 = self.eors(r3, r6);
+            r6 = self.chk(r9) >> 9;
+            r6 = r6 | self.chk(lr) << 23;
+            r8 = v_354;
+            r3 = self.eors(r3, r6);
+            r6 = r0 ^ r1;
+            r6 = r6 & r9;
+            v_370 = r12;
+            r6 = self.eors(r6, r0);
+            r0 = v_3A8;
+            r1 = r0 ^ r8;
+            r1 = r1 & lr;
+            r1 = self.eors(r1, r0);
+            r0 = v_358;
+            r1 = self.adds(r1, r4);
+            r6 = self.adcs(r6, r0);
+            r0 = v_390;
+            r1 = self.adds(r1, r0);
+            r0 = v_38C;
+            r6 = self.adcs(r6, r0);
+            r0 = v_360;
+            r1 = self.adds(r1, r0);
+            r0 = v_35C;
+            r6 = self.adcs(r6, r0);
+            r1 = self.adds(r1, r3);
+            r3 = self.adc(r6, r2);
+            r2 = v_350;
+            r0 = self.adds(r5, r1);
+            r5 = v_37C;
+            r4 = self.adc(r2, r3);
+            v_390 = r4;
+            r2 = r4 | r12;
+            r6 = r4 & r12;
+            r2 = self.ands(r2, r5);
+            r5 = self.lsrs(r4, 0x1C);
+            r10 = r2 | r6;
+            r2 = self.lsls(r4, 0x1E);
+            r2 = r2 | self.chk(r0) >> 2;
+            r5 = r5 | self.chk(r0) << 4;
+            r2 = self.eors(r2, r5);
+            r5 = self.lsls(r4, 0x19);
+            r5 = r5 | self.chk(r0) >> 7;
+            r6 = self.lsrs(r0, 0x1C);
+            r12 = r2 ^ r5;
+            r2 = self.lsrs(r4, 2);
+            r2 = r2 | self.chk(r0) << 30;
+            r6 = r6 | self.chk(r4) << 4;
+            r2 = self.eors(r2, r6);
+            r6 = self.lsrs(r4, 7);
+            r4 = v_388;
+            r6 = r6 | self.chk(r0) << 25;
+            r5 = v_380;
+            r2 = self.eors(r2, r6);
+            r6 = r0 | r4;
+            r4 = self.ands(r4, r0);
+            r6 = self.ands(r6, r5);
+            v_38C = r0;
+            r4 = self.orrs(r4, r6);
+            r6 = lr ^ r8;
+            r0 = self.adds(r2, r4);
+            v_3A4 = r0;
+            r0 = self.adc(r12, r10);
+            v_3A0 = r0;
+            r0 = v_378;
+            r10 = self.adds(r1, r0);
+            r0 = v_374;
+            r6 = r6 & r10;
+            r1 = self.adc(r3, r0);
+            r5 = self.chk(r10) >> 14;
+            r0 = v_384;
+            r6 = r6 ^ r8;
+            r3 = self.lsrs(r1, 0x12);
+            r4 = self.lsrs(r1, 0xE);
+            r3 = r3 | self.chk(r10) << 14;
+            r4 = r4 | self.chk(r10) << 18;
+            r3 = self.eors(r3, r4);
+            r4 = self.lsls(r1, 0x17);
+            r4 = r4 | self.chk(r10) >> 9;
+            r5 = r5 | self.chk(r1) << 18;
+            r11 = r3 ^ r4;
+            r3 = self.chk(r10) >> 18;
+            r3 = r3 | self.chk(r1) << 14;
+            v_378 = r1;
+            r3 = self.eors(r3, r5);
+            r5 = self.lsrs(r1, 9);
+            r5 = r5 | self.chk(r10) << 23;
+            r3 = self.eors(r3, r5);
+            r5 = r9 ^ r0;
+            r5 = self.ands(r5, r1);
+            r1 = v_3A8;
+            r5 = self.eors(r5, r0);
+            r0 = v_36C;
+            r4 = self.adds(r0, r1);
+            r2 = K_TABLE[0x10 * index + 5];
+            r0 = v_3AC;
+            r2 = self.adcs(r2, r0);
+            r0 = v_364;
+            r4 = self.adds(r4, r0);
+            r12 = sched[0x10 * index + 4];
+            r0 = v_3A4;
+            r2 = self.adc(r2, r12);
+            r6 = self.adds(r6, r4);
+            r2 = self.adcs(r2, r5);
+            r3 = self.adds(r3, r6);
+            r11 = self.adc(r11, r2);
+            r1 = self.adds(r0, r3);
+            r0 = v_3A0;
+            r6 = v_390;
+            r4 = self.chk(r1) >> 28;
+            r0 = self.adc(r0, r11);
+            r5 = v_370;
+            r2 = r0 | r6;
+            r6 = self.ands(r6, r0);
+            r2 = self.ands(r2, r5);
+            r5 = self.lsrs(r0, 0x1C);
+            r12 = r2 | r6;
+            r6 = self.lsls(r0, 0x1E);
+            r6 = r6 | self.chk(r1) >> 2;
+            r5 = r5 | self.chk(r1) << 4;
+            r6 = self.eors(r6, r5);
+            r5 = self.lsls(r0, 0x19);
+            r5 = r5 | self.chk(r1) >> 7;
+            r4 = r4 | self.chk(r0) << 4;
+            r6 = self.eors(r6, r5);
+            r5 = self.lsrs(r0, 2);
+            r5 = r5 | self.chk(r1) << 30;
+            v_3AC = r0;
+            r5 = self.eors(r5, r4);
+            r4 = self.lsrs(r0, 7);
+            r0 = v_38C;
+            r4 = r4 | self.chk(r1) << 25;
+            r2 = v_388;
+            r5 = self.eors(r5, r4);
+            r4 = r1 | r0;
+            v_3A8 = r1;
+            r4 = self.ands(r4, r2);
+            r2 = r1 & r0;
+            r2 = self.orrs(r2, r4);
+            r0 = self.adds(r5, r2);
+            v_3A4 = r0;
+            r0 = self.adc(r6, r12);
+            v_3A0 = r0;
+            r0 = v_39C;
+            r2 = v_398;
+            r0 = self.adds(r0, r3);
+            v_39C = r0;
+            r11 = self.adc(r11, r2);
+            r4 = self.lsrs(r0, 0xE);
+            r3 = self.chk(r11) >> 18;
+            r6 = self.chk(r11) >> 14;
+            r3 = r3 | self.chk(r0) << 14;
+            r6 = r6 | self.chk(r0) << 18;
+            r3 = self.eors(r3, r6);
+            r6 = self.chk(r11) << 23;
+            r6 = r6 | self.chk(r0) >> 9;
+            r4 = r4 | self.chk(r11) << 18;
+            r1 = self.eors(r3, r6);
+            r6 = self.lsrs(r0, 0x12);
+            r6 = r6 | self.chk(r11) << 14;
+            r3 = r10 ^ lr;
+            r6 = self.eors(r6, r4);
+            r4 = self.chk(r11) >> 9;
+            r3 = self.ands(r3, r0);
+            r4 = r4 | self.chk(r0) << 23;
+            r5 = r6 ^ r4;
+            v_398 = r1;
+            r3 = r3 ^ lr;
+            r1 = v_378;
+            r6 = K_TABLE[0x10 * index + 6];
+            r12 = K_TABLE[0x10 * index + 7];
+            r4 = r1 ^ r9;
+            r0 = v_384;
+            r6 = self.adds(r6, r8);
+            r4 = r4 & r11;
+            r12 = self.adc(r12, r0);
+            r4 = r4 ^ r9;
+            r8 = sched[0x10 * index + 7];
+            r2 = sched[0x10 * index + 6];
+            r6 = self.adds(r6, r8);
+            r0 = v_398;
+            r2 = self.adc(r2, r12);
+            r3 = self.adds(r3, r6);
+            r2 = self.adcs(r2, r4);
+            r6 = self.adds(r3, r5);
+            r12 = self.adc(r2, r0);
+            r0 = v_3A4;
+            r4 = v_390;
+            r1 = self.adds(r0, r6);
+            r0 = v_3A0;
+            v_384 = r1;
+            r5 = self.adc(r0, r12);
+            r0 = v_3AC;
+            r8 = self.chk(r1) >> 28;
+            r2 = r5 | r0;
+            r3 = r8 | self.chk(r5) << 4;
+            r2 = self.ands(r2, r4);
+            r4 = r5 & r0;
+            r0 = r2 | r4;
+            r4 = self.lsls(r5, 0x1E);
+            r2 = self.lsrs(r5, 0x1C);
+            r4 = r4 | self.chk(r1) >> 2;
+            r2 = r2 | self.chk(r1) << 4;
+            v_3A0 = r0;
+            r2 = self.eors(r2, r4);
+            r4 = self.lsls(r5, 0x19);
+            r4 = r4 | self.chk(r1) >> 7;
+            r0 = v_3A8;
+            r2 = self.eors(r2, r4);
+            r4 = self.lsrs(r5, 2);
+            r4 = r4 | self.chk(r1) << 30;
+            r8 = r5;
+            r3 = self.eors(r3, r4);
+            r4 = self.lsrs(r5, 7);
+            r4 = r4 | self.chk(r1) << 25;
+            r5 = v_38C;
+            r3 = self.eors(r3, r4);
+            r4 = r1 | r0;
+            r4 = self.ands(r4, r5);
+            r5 = r1 & r0;
+            r4 = self.orrs(r4, r5);
+            v_36C = r8;
+            r0 = self.adds(r3, r4);
+            v_3A4 = r0;
+            r0 = v_3A0;
+            r0 = self.adcs(r0, r2);
+            v_3A0 = r0;
+            r0 = v_380;
+            r2 = v_37C;
+            r0 = self.adds(r0, r6);
+            r5 = self.adc(r12, r2);
+            v_37C = r5;
+            r4 = self.lsrs(r0, 0xE);
+            v_380 = r0;
+            r2 = self.lsrs(r5, 0x12);
+            r3 = self.lsrs(r5, 0xE);
+            r2 = r2 | self.chk(r0) << 14;
+            r3 = r3 | self.chk(r0) << 18;
+            r2 = self.eors(r2, r3);
+            r3 = self.lsls(r5, 0x17);
+            r3 = r3 | self.chk(r0) >> 9;
+            r4 = r4 | self.chk(r5) << 18;
+            r1 = r2 ^ r3;
+            r3 = self.lsrs(r0, 0x12);
+            r3 = r3 | self.chk(r5) << 14;
+            v_398 = r1;
+            r3 = self.eors(r3, r4);
+            r4 = self.lsrs(r5, 9);
+            r1 = v_378;
+            r4 = r4 | self.chk(r0) << 23;
+            r12 = r3 ^ r4;
+            r3 = sched[0x10 * index + 9];
+            r4 = r11 ^ r1;
+            r4 = self.ands(r4, r5);
+            r4 = self.eors(r4, r1);
+            r1 = v_39C;
+            r5 = r1 ^ r10;
+            r5 = self.ands(r5, r0);
+            r5 = r5 ^ r10;
+            r2 = K_TABLE[0x10 * index + 8];
+            r0 = self.adds(r2, lr);
+            r2 = K_TABLE[0x10 * index + 9];
+            r2 = self.adc(r2, r9);
+            r0 = self.adds(r0, r3);
+            r3 = sched[0x10 * index + 8];
+            r2 = self.adcs(r2, r3);
+            r0 = self.adds(r0, r5);
+            r2 = self.adcs(r2, r4);
+            r1 = self.adds(r0, r12);
+            r0 = v_398;
+            r3 = v_3AC;
+            r4 = self.adc(r2, r0);
+            r0 = v_3A4;
+            r6 = self.adds(r0, r1);
+            r0 = v_3A0;
+            v_3A4 = r6;
+            r0 = self.adcs(r0, r4);
+            v_3A0 = r0;
+            r2 = r0 | r8;
+            r2 = self.ands(r2, r3);
+            r3 = r0 & r8;
+            lr = r2 | r3;
+            r8 = r6;
+            r3 = self.lsls(r0, 0x1E);
+            r5 = self.lsrs(r0, 0x1C);
+            r3 = r3 | self.chk(r8) >> 2;
+            r5 = r5 | self.chk(r8) << 4;
+            r3 = self.eors(r3, r5);
+            r5 = self.lsls(r0, 0x19);
+            r5 = r5 | self.chk(r8) >> 7;
+            r2 = self.chk(r8) >> 28;
+            r12 = r3 ^ r5;
+            r5 = self.lsrs(r0, 2);
+            r5 = r5 | self.chk(r8) << 30;
+            r2 = r2 | self.chk(r0) << 4;
+            r2 = self.eors(r2, r5);
+            r5 = self.lsrs(r0, 7);
+            r3 = v_384;
+            r5 = r5 | self.chk(r8) << 25;
+            r6 = v_3A8;
+            r2 = self.eors(r2, r5);
+            r5 = r8 | r3;
+            r5 = self.ands(r5, r6);
+            r6 = r8 & r3;
+            r5 = self.orrs(r5, r6);
+            r0 = self.adds(r2, r5);
+            v_398 = r0;
+            r2 = v_388;
+            r12 = self.adc(r12, lr);
+            r0 = v_370;
+            r3 = self.adds(r1, r2);
+            r1 = v_380;
+            r8 = self.adc(r4, r0);
+            r0 = r3;
+            r2 = self.chk(r8) >> 18;
+            r3 = self.chk(r8) >> 14;
+            r2 = r2 | self.chk(r0) << 14;
+            r3 = r3 | self.chk(r0) << 18;
+            r2 = self.eors(r2, r3);
+            r3 = self.chk(r8) << 23;
+            r3 = r3 | self.chk(r0) >> 9;
+            r4 = self.lsrs(r0, 0xE);
+            lr = r2 ^ r3;
+            r3 = self.lsrs(r0, 0x12);
+            r3 = r3 | self.chk(r8) << 14;
+            r4 = r4 | self.chk(r8) << 18;
+            r3 = self.eors(r3, r4);
+            r4 = self.chk(r8) >> 9;
+            r4 = r4 | self.chk(r0) << 23;
+            r2 = r0;
+            r0 = v_37C;
+            r3 = self.eors(r3, r4);
+            v_388 = r2;
+            r4 = r0 ^ r11;
+            r0 = v_39C;
+            r4 = r4 & r8;
+            r5 = r1 ^ r0;
+            r4 = r4 ^ r11;
+            r5 = self.ands(r5, r2);
+            r5 = self.eors(r5, r0);
+            r6 = K_TABLE[0x10 * index + 10];
+            r1 = self.adds(r6, r10);
+            r6 = K_TABLE[0x10 * index + 11];
+            r0 = v_378;
+            r6 = self.adcs(r6, r0);
+            r2 = sched[0x10 * index + 11];
+            r1 = self.adds(r1, r2);
+            r2 = sched[0x10 * index + 10];
+            r0 = v_398;
+            r2 = self.adcs(r2, r6);
+            r1 = self.adds(r1, r5);
+            r2 = self.adcs(r2, r4);
+            r1 = self.adds(r1, r3);
+            r4 = self.adc(r2, lr);
+            r6 = v_3A0;
+            r0 = self.adds(r0, r1);
+            r9 = self.adc(r12, r4);
+            r3 = v_36C;
+            r2 = r9 | r6;
+            r5 = self.chk(r9) >> 28;
+            v_374 = r9;
+            r2 = self.ands(r2, r3);
+            r3 = r9 & r6;
+            r10 = r2 | r3;
+            r3 = self.chk(r9) << 30;
+            r3 = r3 | self.chk(r0) >> 2;
+            r5 = r5 | self.chk(r0) << 4;
+            r3 = self.eors(r3, r5);
+            r5 = self.chk(r9) << 25;
+            r5 = r5 | self.chk(r0) >> 7;
+            r6 = self.lsrs(r0, 0x1C);
+            r12 = r3 ^ r5;
+            r5 = self.chk(r9) >> 2;
+            r5 = r5 | self.chk(r0) << 30;
+            r6 = r6 | self.chk(r9) << 4;
+            r5 = self.eors(r5, r6);
+            r6 = self.chk(r9) >> 7;
+            r3 = v_3A4;
+            r6 = r6 | self.chk(r0) << 25;
+            r2 = v_384;
+            r5 = self.eors(r5, r6);
+            r6 = r0 | r3;
+            r6 = self.ands(r6, r2);
+            r2 = r0 & r3;
+            r2 = r2 | r6;
+            r2 = self.adds(r2, r5);
+            v_398 = r2;
+            r2 = self.adc(r12, r10);
+            v_378 = r2;
+            r2 = v_38C;
+            r12 = self.adds(r1, r2);
+            r1 = v_390;
+            lr = self.adc(r4, r1);
+            r4 = self.chk(r12) >> 14;
+            r1 = self.chk(lr) >> 18;
+            r2 = self.chk(lr) >> 14;
+            r1 = r1 | self.chk(r12) << 14;
+            r2 = r2 | self.chk(r12) << 18;
+            r1 = self.eors(r1, r2);
+            r2 = self.chk(lr) << 23;
+            r2 = r2 | self.chk(r12) >> 9;
+            r4 = r4 | self.chk(lr) << 18;
+            r1 = self.eors(r1, r2);
+            r2 = self.chk(r12) >> 18;
+            r2 = r2 | self.chk(lr) << 14;
+            v_390 = r1;
+            r2 = self.eors(r2, r4);
+            r4 = self.chk(lr) >> 9;
+            r1 = v_37C;
+            r4 = r4 | self.chk(r12) << 23;
+            r10 = r2 ^ r4;
+            r2 = v_388;
+            r4 = r8 ^ r1;
+            r4 = r4 & lr;
+            r4 = self.eors(r4, r1);
+            r1 = v_380;
+            r5 = r2 ^ r1;
+            r2 = v_39C;
+            r5 = r5 & r12;
+            r5 = self.eors(r5, r1);
+            r6 = K_TABLE[0x10 * index + 12];
+            r3 = K_TABLE[0x10 * index + 13];
+            r6 = self.adds(r6, r2);
+            r3 = self.adc(r3, r11);
+            r1 = sched[0x10 * index + 13];
+            r1 = self.adds(r1, r6);
+            r6 = sched[0x10 * index + 12];
+            r3 = self.adcs(r3, r6);
+            r1 = self.adds(r1, r5);
+            r3 = self.adcs(r3, r4);
+            r5 = self.adds(r1, r10);
+            r1 = v_390;
+            r2 = self.adc(r3, r1);
+            r1 = v_398;
+            r3 = v_3A0;
+            r10 = self.adds(r1, r5);
+            r1 = v_378;
+            v_378 = r0;
+            r11 = self.adc(r1, r2);
+            r6 = self.chk(r10) >> 28;
+            r1 = r11 | r9;
+            v_398 = r11;
+            r1 = self.ands(r1, r3);
+            r3 = r11 & r9;
+            r9 = r1 | r3;
+            r3 = self.chk(r11) << 30;
+            r4 = self.chk(r11) >> 28;
+            r3 = r3 | self.chk(r10) >> 2;
+            r4 = r4 | self.chk(r10) << 4;
+            r6 = r6 | self.chk(r11) << 4;
+            r3 = self.eors(r3, r4);
+            r4 = self.chk(r11) << 25;
+            r4 = r4 | self.chk(r10) >> 7;
+            r1 = v_3A4;
+            r3 = self.eors(r3, r4);
+            r4 = self.chk(r11) >> 2;
+            r4 = r4 | self.chk(r10) << 30;
+            v_39C = r10;
+            r4 = self.eors(r4, r6);
+            r6 = self.chk(r11) >> 7;
+            r6 = r6 | self.chk(r10) << 25;
+            r4 = self.eors(r4, r6);
+            r6 = r10 | r0;
+            r6 = self.ands(r6, r1);
+            r1 = r10 & r0;
+            r1 = self.orrs(r1, r6);
+            r10 = lr;
+            r0 = self.adds(r4, r1);
+            v_390 = r0;
+            r0 = self.adc(r3, r9);
+            v_38C = r0;
+            r0 = v_3A8;
+            r9 = r12;
+            r4 = self.adds(r5, r0);
+            r0 = v_3AC;
+            v_3A8 = r4;
+            r0 = self.adcs(r0, r2);
+            r3 = self.lsrs(r4, 0xE);
+            v_3AC = r0;
+            r1 = self.lsrs(r0, 0x12);
+            r2 = self.lsrs(r0, 0xE);
+            r1 = r1 | self.chk(r4) << 14;
+            r2 = r2 | self.chk(r4) << 18;
+            r1 = self.eors(r1, r2);
+            r2 = self.lsls(r0, 0x17);
+            r2 = r2 | self.chk(r4) >> 9;
+            r3 = r3 | self.chk(r0) << 18;
+            r11 = r1 ^ r2;
+            r2 = self.lsrs(r4, 0x12);
+            r2 = r2 | self.chk(r0) << 14;
+            r2 = self.eors(r2, r3);
+            r3 = self.lsrs(r0, 9);
+            r3 = r3 | self.chk(r4) << 23;
+            r2 = self.eors(r2, r3);
+            r3 = lr ^ r8;
+            r3 = self.ands(r3, r0);
+            r0 = v_388;
+            lr = r3 ^ r8;
+            r5 = r12 ^ r0;
+            r5 = self.ands(r5, r4);
+            r3 = r0;
+            r5 = self.eors(r5, r0);
+            r4 = K_TABLE[0x10 * index + 14];
+            r6 = K_TABLE[0x10 * index + 15];
+            r0 = v_380;
+            r4 = self.adds(r4, r0);
+            r0 = v_37C;
+            r6 = self.adcs(r6, r0);
+            r0 = sched[0x10 * index + 14];
+            r1 = sched[0x10 * index + 15];
+            r1 = self.adds(r1, r4);
+            r0 = self.adcs(r0, r6);
+            r1 = self.adds(r1, r5);
+            r0 = self.adc(r0, lr);
+            r1 = self.adds(r1, r2);
+            r2 = v_390;
+            r0 = self.adc(r0, r11);
+            r4 = r8;
+            lr = self.adds(r2, r1);
+            r2 = v_38C;
+            r6 = r3;
+            r12 = self.adc(r2, r0);
+            r2 = v_384;
+            r8 = self.adds(r1, r2);
+            r2 = v_36C;
+            r5 = self.adc(r0, r2);
+        }
+        let list_638 = [
+            self.chk(lr),
+            self.chk(r12),
+            self.chk(v_39C),
+            self.chk(v_398),
+            self.chk(v_378),
+            self.chk(v_374),
+            self.chk(v_3A4),
+            self.chk(v_3A0),
+            self.chk(r8),
+            self.chk(r5),
+            self.chk(v_3A8),
+            self.chk(v_3AC),
+            self.chk(r9),
+            self.chk(r10),
+            self.chk(r6),
+            self.chk(r4),
+        ];
+        for i in 0..8 {
+            r0 = state[2 * i];
+            r1 = state[2 * i + 1];
+            r0 = self.adds(r0, list_638[2 * i]);
+            r1 = self.adcs(r1, list_638[2 * i + 1]);
+            state[2 * i] = r0;
+            state[2 * i + 1] = r1;
+        }
+        state
     }
-
-
 }
 
 #[cfg(test)]

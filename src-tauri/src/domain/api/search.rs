@@ -100,11 +100,17 @@ pub async fn search_series(
         q.push(("passback".into(), offset.to_string()));
         q.push(("search_id".into(), search_id.to_string()));
     }
-    let bytes =
-        api_call_full_with_headers(LQ_API_ORIGIN, SEARCH_TAB_PATH, None, &q, &reading_headers(), env)
-            .await?;
-    let value: Value =
-        serde_json::from_slice(&bytes).map_err(|e| AppError::Media(format!("解析搜索失败: {e}")))?;
+    let bytes = api_call_full_with_headers(
+        LQ_API_ORIGIN,
+        SEARCH_TAB_PATH,
+        None,
+        &q,
+        &reading_headers(),
+        env,
+    )
+    .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析搜索失败: {e}")))?;
     check_code(&value)?;
     parse_search(&value)
 }
@@ -124,9 +130,15 @@ pub async fn search_suggest(q: &str, env: &ApiEnv) -> AppResult<Vec<SuggestItem>
         ("search_source".into(), "1".into()),
         ("tab_name".into(), "feed".into()),
     ];
-    let bytes =
-        api_call_full_with_headers(LQ_API_ORIGIN, SUGGEST_PATH, None, &query, &reading_headers(), env)
-            .await?;
+    let bytes = api_call_full_with_headers(
+        LQ_API_ORIGIN,
+        SUGGEST_PATH,
+        None,
+        &query,
+        &reading_headers(),
+        env,
+    )
+    .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析联想失败: {e}")))?;
     check_code(&value)?;
@@ -136,7 +148,9 @@ pub async fn search_suggest(q: &str, env: &ApiEnv) -> AppResult<Vec<SuggestItem>
 /// query_result_v2 → 联想条目。series_id 优先 video_data（带封面/vid 可直拨），
 /// 没有时退 keyword（纯词联想）。两者都缺的废条目跳过。
 fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
-    let data = value.get("data").ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
+    let data = value
+        .get("data")
+        .ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
     let mut items = Vec::new();
     for raw in data
         .get("query_result_v2")
@@ -168,7 +182,8 @@ fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
 }
 
 /// 从 `search_tabs` 里取综合 tab（tab_type=11）解析。
-fn parse_search(value: &Value) -> AppResult<SearchPage> {    let tabs = value
+fn parse_search(value: &Value) -> AppResult<SearchPage> {
+    let tabs = value
         .get("search_tabs")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::Media("响应缺少 search_tabs".into()))?;
@@ -191,8 +206,10 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {    let tabs = value
             _ => Vec::new(),
         };
         for raw in &vds {
-            let Some(series_id) =
-                raw.get("series_id").and_then(Value::as_str).filter(|s| !s.is_empty())
+            let Some(series_id) = raw
+                .get("series_id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
             else {
                 continue;
             };
@@ -210,11 +227,11 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {    let tabs = value
         }
     }
     Ok(SearchPage {
-        has_more: tab.get("has_more").and_then(Value::as_bool).unwrap_or(false),
-        next_offset: tab
-            .get("next_offset")
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        has_more: tab
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_offset: tab.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
         search_id: str_field(tab, "search_id"),
         items,
     })

@@ -55,7 +55,11 @@ fn map_db_err(e: turso::Error) -> AppError {
 
 /// 读设置。没有落过盘时返回 None（调用方用默认值）。
 pub async fn settings(db: &Db) -> AppResult<Option<Settings>> {
-    let mut rows = db.conn().query("SELECT json FROM settings WHERE id = 1", ()).await.map_err(map_db_err)?;
+    let mut rows = db
+        .conn()
+        .query("SELECT json FROM settings WHERE id = 1", ())
+        .await
+        .map_err(map_db_err)?;
     let Some(row) = rows.next().await.map_err(map_db_err)? else {
         return Ok(None);
     };
@@ -104,7 +108,9 @@ pub async fn tasks(db: &Db) -> AppResult<Vec<DownloadTask>> {
 pub async fn replace_tasks(db: &Db, snapshot: &[DownloadTask]) -> AppResult<()> {
     db.with_tx(|conn| async move {
         let conn = &conn;
-        conn.execute("DELETE FROM tasks", ()).await.map_err(map_db_err)?;
+        conn.execute("DELETE FROM tasks", ())
+            .await
+            .map_err(map_db_err)?;
         insert_tasks(conn, snapshot).await?;
         Ok(())
     })
@@ -222,7 +228,10 @@ pub async fn playback_position(
         .query(
             "SELECT \"current_time\", duration, updated_at FROM playback
              WHERE series_id = ?1 AND vid_index = ?2",
-            [Value::Text(series_id.to_string()), Value::Integer(vid_index as i64)],
+            [
+                Value::Text(series_id.to_string()),
+                Value::Integer(vid_index as i64),
+            ],
         )
         .await
         .map_err(map_db_err)?;
@@ -566,11 +575,17 @@ mod tests {
             save_playback_position(&db, "A", 1, &p1b).await.unwrap();
 
             assert_eq!(
-                playback_position(&db, "A", 1).await.unwrap().map(|p| p.current_time),
+                playback_position(&db, "A", 1)
+                    .await
+                    .unwrap()
+                    .map(|p| p.current_time),
                 Some(20.0)
             );
             assert_eq!(
-                playback_position(&db, "A", 2).await.unwrap().map(|p| p.current_time),
+                playback_position(&db, "A", 2)
+                    .await
+                    .unwrap()
+                    .map(|p| p.current_time),
                 Some(50.0),
                 "另一集的进度互不干扰"
             );
@@ -613,7 +628,9 @@ mod tests {
             }],
             playback: [(
                 "A".to_string(),
-                [(1u32, PlaybackPosition::new(5.0, 90.0))].into_iter().collect(),
+                [(1u32, PlaybackPosition::new(5.0, 90.0))]
+                    .into_iter()
+                    .collect(),
             )]
             .into_iter()
             .collect(),

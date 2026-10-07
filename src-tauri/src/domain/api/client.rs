@@ -203,8 +203,16 @@ pub async fn api_call_full_response(
     let mut last_err = String::new();
 
     for attempt in 0..MAX_RETRIES {
-        match send_once(&client, origin, pathname, body.as_deref(), biz_query, extra_headers, env)
-            .await
+        match send_once(
+            &client,
+            origin,
+            pathname,
+            body.as_deref(),
+            biz_query,
+            extra_headers,
+            env,
+        )
+        .await
         {
             Ok(resp) if !resp.bytes.is_empty() => return Ok(resp),
             Ok(_) => last_err = "接口返回空响应（签名可能失效）".to_string(),
@@ -224,7 +232,9 @@ pub async fn api_call_full_response(
 /// 防盗链规则在同一时刻只有一种，一边能过一边过不了只能是实现漂移。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
     let send = |referer: bool| {
-        let mut req = client.get(url).header("User-Agent", crate::signer::VIDEO_UA);
+        let mut req = client
+            .get(url)
+            .header("User-Agent", crate::signer::VIDEO_UA);
         if referer {
             req = req.header("Referer", crate::signer::VIDEO_REFERER);
         }
@@ -325,10 +335,7 @@ pub async fn get_video_range(
         match get_video_range_once(client, url, start, end).await {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
-                log::warn!(
-                    "[CDN] Range {start}-{end} 第 {} 次失败: {e}",
-                    attempt + 1
-                );
+                log::warn!("[CDN] Range {start}-{end} 第 {} 次失败: {e}", attempt + 1);
                 last_err = Some(e);
                 if attempt + 1 < 3 {
                     tokio::time::sleep(std::time::Duration::from_millis(300 * (attempt + 1))).await;
@@ -434,9 +441,7 @@ impl RangeCutter {
     /// 一个字节都没落到说明 start 越界，按错误处理。
     fn finish(self) -> AppResult<Vec<u8>> {
         if self.out.is_empty() {
-            return Err(AppError::Network(
-                "200 全量响应未覆盖请求区间的起点".into(),
-            ));
+            return Err(AppError::Network("200 全量响应未覆盖请求区间的起点".into()));
         }
         Ok(self.out)
     }
@@ -479,14 +484,9 @@ async fn send_once(
             biz_query,
             &extra,
         ),
-        None => crate::signer::sign_request_with(
-            origin,
-            pathname,
-            None,
-            &env.device,
-            biz_query,
-            &extra,
-        ),
+        None => {
+            crate::signer::sign_request_with(origin, pathname, None, &env.device, biz_query, &extra)
+        }
     };
 
     let mut req = match &signed.body {
@@ -535,8 +535,8 @@ mod tests {
     use super::*;
     use crate::domain::model::settings::ProxyMode;
     use crate::domain::model::ProxyConfig;
-    use crate::signer::video_device;
     use crate::signer::ticket::{sign_get, sign_post};
+    use crate::signer::video_device;
 
     #[test]
     fn range_cutter_slices_target_from_full_body() {
@@ -753,10 +753,7 @@ mod tests {
 
     #[test]
     fn host_of_extracts_host() {
-        assert_eq!(
-            host_of("https://v.example.com/path?x=1"),
-            "v.example.com"
-        );
+        assert_eq!(host_of("https://v.example.com/path?x=1"), "v.example.com");
         assert_eq!(host_of("not-a-url"), "not-a-url");
     }
 }

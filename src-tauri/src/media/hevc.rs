@@ -66,7 +66,10 @@ pub fn read_parameter_sets(path: &Path, track: &TrackInfo) -> AppResult<(Vec<u8>
 ///
 /// 平台解码器（VideoToolbox 的 `CMVideoFormatDescriptionCreateFrom…ParameterSets`）
 /// 要的就是这种「裸 NAL + 各自长度」的形态，走 Annex-B 反而要再剥一次起始码。
-pub fn read_parameter_set_nalus(path: &Path, track: &TrackInfo) -> AppResult<(Vec<Vec<u8>>, usize)> {
+pub fn read_parameter_set_nalus(
+    path: &Path,
+    track: &TrackInfo,
+) -> AppResult<(Vec<Vec<u8>>, usize)> {
     // ⚠️ CENC 加密后 stsd 的 format 是 `encv`，**不是** `hvc1`——解密只覆盖
     //    样本字节，不改这个字段（现版 JS 同样如此，改了反而会与 App 不一致）。
     //    真正的原始格式藏在 `frma` 里，但短剧的视频轨只有 HEVC 一种可能，

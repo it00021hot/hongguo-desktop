@@ -378,7 +378,10 @@ fn platform_pipeline_produces_playable_h264() {
     let src = all.swap_remove(0);
     let is_hevc = crate::media::demux::demux_file(&src)
         .ok()
-        .and_then(|d| d.video_track().map(|t| crate::media::hevc::is_hevc(&t.info.codec)))
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| crate::media::hevc::is_hevc(&t.info.codec))
+        })
         .unwrap_or(false);
     if !is_hevc {
         eprintln!("[e2e] 首集不是 HEVC，跳过平台管线用例");
@@ -441,7 +444,10 @@ fn platform_transcode_produces_playable_h264() {
     // 平台路径只接 HEVC；H.264 源归 ffmpeg 直转，不在这条链上
     let is_hevc = crate::media::demux::demux_file(&src)
         .ok()
-        .and_then(|d| d.video_track().map(|t| crate::media::hevc::is_hevc(&t.info.codec)))
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| crate::media::hevc::is_hevc(&t.info.codec))
+        })
         .unwrap_or(false);
     if !is_hevc {
         eprintln!("[e2e] 首集不是 HEVC，跳过平台路径用例");

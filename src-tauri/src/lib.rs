@@ -63,8 +63,8 @@ pub fn run() {
             // CloseRequested，前端 ready 后拦截并让它弹退出确认框
             // （退出会掐断正在跑的下载任务）；没 ready（前端白屏/崩溃）
             // 就放行——宁可少问一句，绝不能把窗口变成关不掉。
-            use tauri::{Emitter, Manager};
             use std::sync::atomic::Ordering;
+            use tauri::{Emitter, Manager};
             if let Some(window) = app.get_webview_window("main") {
                 let ready = app
                     .state::<commands::app_cmd::WindowCloseGate>()

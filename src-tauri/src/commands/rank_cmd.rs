@@ -23,7 +23,11 @@ pub async fn rank_list(
     sub: String,
     panel: Option<String>,
 ) -> AppResult<RankPage> {
-    let selected = if selected.trim().is_empty() { "all".into() } else { selected };
+    let selected = if selected.trim().is_empty() {
+        "all".into()
+    } else {
+        selected
+    };
     let env = state.api_env();
     fetch_rank_ex(&selected, &sub, panel.as_deref(), &env).await
 }
@@ -78,7 +82,10 @@ pub async fn search_series_cmd(
 
 /// 搜索联想（输入 2~3 字返回相关剧集；空词空表不打接口）。
 #[tauri::command]
-pub async fn search_suggest_cmd(state: State<'_, AppState>, q: String) -> AppResult<Vec<SuggestItem>> {
+pub async fn search_suggest_cmd(
+    state: State<'_, AppState>,
+    q: String,
+) -> AppResult<Vec<SuggestItem>> {
     let q = q.trim();
     if q.is_empty() {
         return Ok(Vec::new());

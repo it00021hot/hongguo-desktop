@@ -68,7 +68,11 @@ fn append_line(path: &Path, line: &str) {
         let _ = std::fs::write(path, line.as_bytes());
         return;
     }
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
         return;
     };
     let _ = file.write_all(line.as_bytes());

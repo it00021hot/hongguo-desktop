@@ -181,12 +181,11 @@ pub fn compat_merge(
                         // 会话超订的信号：预期硬编、这集却落在软路上。
                         // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
                         // 也会触发（多收敛一次，代价只是后面保守些），可接受。
-                        if hw_expected && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
+                        if hw_expected
+                            && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
                             && live_cap.fetch_min(2, Ordering::Relaxed) > 2
                         {
-                            log::warn!(
-                                "[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2"
-                            );
+                            log::warn!("[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2");
                         }
                         r.map(|t| PathBuf::from(t.output_path))
                     }

@@ -213,10 +213,7 @@ export function HomePage() {
   const recommendGenre = source === 'feed' ? dominantGenre(typeStats) : undefined;
   const activeFeedStart =
     source === 'feed' || source === 'comic' || source === 'human' ? feedStarts[source] : 0;
-  const feed = useFeed(
-    source === 'feed' ? recommendGenre : FEED_GENRE[source],
-    activeFeedStart,
-  );
+  const feed = useFeed(source === 'feed' ? recommendGenre : FEED_GENRE[source], activeFeedStart);
   const hot = useRank('all', 'ranklist_hot_sc', '');
   const fresh = useNewDrama(2);
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
@@ -255,42 +252,41 @@ export function HomePage() {
   // 是该类型的剧——种子(最近看过)排头会把刚看完的那部顶在前面，点 tab
   // 看起来毫无反应(实测:刚看完动漫点真人,头部还是那部动漫)。
   const activeSeeds = source === 'feed' ? seedItems : [];
-  const items: StreamItem[] =
-    isFeedSource
-      ? [
-          ...activeSeeds,
-          ...feedItems
-            .filter(
-              (i, idx, arr) =>
-                // 服务端翻页会重复下发同一批里的条目(实测第二页重复 10/18),
-                // 连种子一起按 seriesId 去重
-                !activeSeeds.some((seed) => seed.seriesId === i.seriesId) &&
-                arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
-            )
-            .map((i) => ({
-              seriesId: i.seriesId,
-              title: i.title,
-              cover: i.cover,
-              horizCover: i.horizCover,
-              genre: source === 'feed' ? recommendGenre : FEED_GENRE[source],
-              heatText: i.heatText,
-              seasonTag: i.seasonTag,
-              badge: i.badge,
-            })),
-        ]
-      : source === 'hot'
-        ? hotItems.map((i) => ({
+  const items: StreamItem[] = isFeedSource
+    ? [
+        ...activeSeeds,
+        ...feedItems
+          .filter(
+            (i, idx, arr) =>
+              // 服务端翻页会重复下发同一批里的条目(实测第二页重复 10/18),
+              // 连种子一起按 seriesId 去重
+              !activeSeeds.some((seed) => seed.seriesId === i.seriesId) &&
+              arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
+          )
+          .map((i) => ({
             seriesId: i.seriesId,
             title: i.title,
             cover: i.cover,
-            horizCover: '',
-          }))
-        : freshItems.map((i) => ({
-            seriesId: i.seriesId,
-            title: i.title,
-            cover: i.cover,
-            horizCover: '',
-          }));
+            horizCover: i.horizCover,
+            genre: source === 'feed' ? recommendGenre : FEED_GENRE[source],
+            heatText: i.heatText,
+            seasonTag: i.seasonTag,
+            badge: i.badge,
+          })),
+      ]
+    : source === 'hot'
+      ? hotItems.map((i) => ({
+          seriesId: i.seriesId,
+          title: i.title,
+          cover: i.cover,
+          horizCover: '',
+        }))
+      : freshItems.map((i) => ({
+          seriesId: i.seriesId,
+          title: i.title,
+          cover: i.cover,
+          horizCover: '',
+        }));
 
   // 尾部翻页能力（热榜是单页，没有更多）
   const hasMore = isFeedSource ? feed.hasMore : source === 'new' ? fresh.hasMore : false;
@@ -515,11 +511,7 @@ export function HomePage() {
       <div className="absolute inset-0">
         {/* 播放器铺满整页；滚轮/↑↓ 在当前 tab 源内切上一部/下一部剧；
             封面给播放器做占位——切剧的取流间隙显示下一部剧的封面而非黑屏 */}
-        <PlayerView
-          onWheelStep={step}
-          coverUrl={coverForPlayer}
-          overlayMeta={overlayMeta}
-        />
+        <PlayerView onWheelStep={step} coverUrl={coverForPlayer} overlayMeta={overlayMeta} />
       </div>
     </div>
   );

@@ -61,7 +61,8 @@ const keys = {
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
   seriesExtras: (id: string) => ['series-extras', id] as const,
   seriesProgress: (id: string) => ['series-progress', id] as const,
-  watchHistory: ['watch-history'] as const,  tasks: ['download-tasks'] as const,
+  watchHistory: ['watch-history'] as const,
+  tasks: ['download-tasks'] as const,
   queueStatus: ['queue-status'] as const,
   mergeTasks: ['merge-tasks'] as const,
   mergeCandidates: ['merge-candidates'] as const,
@@ -82,8 +83,7 @@ const keys = {
   interactState: ['interact-state'] as const,
   bookshelf: ['bookshelf'] as const,
   webCover: (seriesId: string) => ['web-cover', seriesId] as const,
-  rank: (selected: string, sub: string, panel: string) =>
-    ['rank', selected, sub, panel] as const,
+  rank: (selected: string, sub: string, panel: string) => ['rank', selected, sub, panel] as const,
   newCalendar: (date: string) => ['new-calendar', date] as const,
   reservations: (isOnline: boolean) => ['reservations', isOnline] as const,
   account: ['account'] as const,
@@ -530,8 +530,7 @@ export function useReserveSeries() {
   return useMutation({
     mutationFn: (input: { seriesId: string; reserve: boolean }) =>
       rank.reserve(input.seriesId, input.reserve),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT }),
   });
 }
 
@@ -549,9 +548,7 @@ function coverProxyUrl(remote: string): string {
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const b64 = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-  const base = isWindows()
-    ? 'http://hongguo-cover.localhost'
-    : 'hongguo-cover://localhost';
+  const base = isWindows() ? 'http://hongguo-cover.localhost' : 'hongguo-cover://localhost';
   return `${base}/c/${b64}`;
 }
 

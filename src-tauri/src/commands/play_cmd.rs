@@ -29,8 +29,8 @@ pub async fn play_prefetch(
         Some(s) => s,
         None => {
             let env = state.api_env();
-            let s = crate::service::series_service::resolver::resolve_series(&series_id, &env)
-                .await?;
+            let s =
+                crate::service::series_service::resolver::resolve_series(&series_id, &env).await?;
             crate::service::series_service::registry::upsert_and_persist(&state, s.clone())?;
             s
         }
@@ -91,10 +91,12 @@ pub async fn series_progress(
     tauri::async_runtime::spawn_blocking(move || store.series_last_position(&series_id))
         .await
         .map_err(|e| crate::error::AppError::Network(format!("读取播放进度失败: {e}")))?
-        .map(|hit| hit.map(|(vid_index, p)| crate::domain::model::SeriesProgress {
-            vid_index,
-            current_time: p.current_time,
-            duration: p.duration,
-            updated_at: p.updated_at,
-        }))
+        .map(|hit| {
+            hit.map(|(vid_index, p)| crate::domain::model::SeriesProgress {
+                vid_index,
+                current_time: p.current_time,
+                duration: p.duration,
+                updated_at: p.updated_at,
+            })
+        })
 }

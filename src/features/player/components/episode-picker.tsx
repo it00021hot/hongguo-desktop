@@ -101,7 +101,7 @@ export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose 
     <div
       role="dialog"
       aria-label={t('player.episodes')}
-      className="w-full overflow-y-auto scrollbar-thin rounded-xl bg-neutral-900/95 p-4 text-neutral-100 shadow-2xl backdrop-blur-sm"
+      className="w-full scrollbar-thin overflow-y-auto rounded-xl bg-neutral-900/95 p-4 text-neutral-100 shadow-2xl backdrop-blur-sm"
     >
       {/* 头部：选集 · 全N集 · 收起 */}
       <div className="mb-2 flex items-center justify-between">
@@ -145,7 +145,7 @@ export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose 
                 <span
                   key={item.seriesId}
                   title={t('player.comingSoon')}
-                  className="text-neutral-500 flex items-center gap-1 rounded-full border border-dashed border-neutral-700 px-2 py-0.5 text-xs"
+                  className="flex items-center gap-1 rounded-full border border-dashed border-neutral-700 px-2 py-0.5 text-xs text-neutral-500"
                 >
                   {item.tag}
                   <button
@@ -162,7 +162,7 @@ export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose 
                         },
                       );
                     }}
-                    className="text-amber-300 hover:text-amber-200 disabled:text-neutral-600 cursor-pointer disabled:cursor-default"
+                    className="cursor-pointer text-amber-300 hover:text-amber-200 disabled:cursor-default disabled:text-neutral-600"
                   >
                     <BellRing className="size-3" />
                     {reserved ? t('player.reserved') : t('player.reserve')}
@@ -176,7 +176,7 @@ export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose 
                 type="button"
                 onClick={() => switchSeason(item)}
                 title={item.title}
-                className="text-neutral-300 hover:bg-neutral-800 hover:text-white cursor-pointer rounded-full bg-neutral-800/80 px-2.5 py-0.5 text-xs transition-colors"
+                className="cursor-pointer rounded-full bg-neutral-800/80 px-2.5 py-0.5 text-xs text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
               >
                 {item.tag}
               </button>
@@ -241,9 +241,7 @@ export function EpisodePicker({ seriesId, currentIndex, hint, onSelect, onClose 
       </div>
 
       {hint && (
-        <p className="text-neutral-500 mt-3 border-t border-neutral-800 pt-2.5 text-xs">
-          {hint}
-        </p>
+        <p className="mt-3 border-t border-neutral-800 pt-2.5 text-xs text-neutral-500">{hint}</p>
       )}
     </div>
   );

@@ -26,9 +26,7 @@ pub(super) fn read_saiz(data: &[u8], start: usize, size: usize, info: &mut Track
     }
     // 畸形 count 防御（口径同 timing::read_entry_count）：saiz 每条 1 字节，
     // 卡到 box 容量内，不让预分配按声明值直接爆
-    let n = (count as usize)
-        .min(size.saturating_sub(9))
-        .min(data.len());
+    let n = (count as usize).min(size.saturating_sub(9)).min(data.len());
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let at = start + 9 + i;

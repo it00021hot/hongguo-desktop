@@ -344,7 +344,11 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
 fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
     let mut season = String::new();
     let mut heat = String::new();
-    for it in list.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+    for it in list
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         let Some(content) = it.get("content").and_then(Value::as_str) else {
             continue;
         };
@@ -359,7 +363,8 @@ fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
 
 /// category_schema 是 JSON 字符串：`[{"category_id":..,"name":"逆袭",...}]`，
 /// 取 name 做题材标签。解析失败给空表（标签是展示增强，不值得报错）。
-pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {    let Some(s) = schema.and_then(Value::as_str) else {
+pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {
+    let Some(s) = schema.and_then(Value::as_str) else {
         return Vec::new();
     };
     let Ok(parsed) = serde_json::from_str::<Value>(s) else {
@@ -682,8 +687,10 @@ mod probe {
             .as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
-        let count_keys: Vec<&String> =
-            keys.iter().filter(|k| k.contains("count") || k.contains("cnt")).collect();
+        let count_keys: Vec<&String> = keys
+            .iter()
+            .filter(|k| k.contains("count") || k.contains("cnt"))
+            .collect();
         println!("[feed-counts] 条目全部计数类键: {count_keys:?}");
         for k in count_keys {
             println!("  {k} = {}", first[k]);
@@ -718,13 +725,25 @@ mod probe {
         println!("[danmaku] anchor vid={vid}");
 
         let combos = [
-            ("https://lifeapi5-normal-lq.fqnovel.com", "/novel/commentapi/comment/list/"),
-            ("https://lifeapi5-normal-lq.fqnovel.com", "/novel/commentapi/comment/list/v1/"),
-            ("https://novel.snssdk.com", "/novel/commentapi/comment/list/v1/"),
+            (
+                "https://lifeapi5-normal-lq.fqnovel.com",
+                "/novel/commentapi/comment/list/",
+            ),
+            (
+                "https://lifeapi5-normal-lq.fqnovel.com",
+                "/novel/commentapi/comment/list/v1/",
+            ),
+            (
+                "https://novel.snssdk.com",
+                "/novel/commentapi/comment/list/v1/",
+            ),
         ];
         for (origin, path) in combos {
             for (tag, biz) in [
-                ("group", serde_json::json!({ "group_id": vid, "count": 20, "offset": 0 })),
+                (
+                    "group",
+                    serde_json::json!({ "group_id": vid, "count": 20, "offset": 0 }),
+                ),
                 (
                     "group-item",
                     serde_json::json!({ "group_id": vid, "item_id": vid, "count": 20 }),
@@ -741,7 +760,11 @@ mod probe {
                         println!(
                             "[danmaku/{tag}@{origin}{}] {}",
                             path,
-                            serde_json::to_string(&v).unwrap_or_default().chars().take(280).collect::<String>()
+                            serde_json::to_string(&v)
+                                .unwrap_or_default()
+                                .chars()
+                                .take(280)
+                                .collect::<String>()
                         );
                     }
                     Err(e) => println!("[danmaku/{tag}@{path}] ERR {e}"),
@@ -785,13 +808,15 @@ mod probe {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         let rnd: u32 = rand::random();
-        let extra = [(
-            "x-reading-request".to_string(),
-            format!("{ticket}-{rnd}"),
-        )];
+        let extra = [("x-reading-request".to_string(), format!("{ticket}-{rnd}"))];
         let origin = "https://api5-normal-lq.fqnovel.com";
         match crate::domain::api::client::api_call_full_with_headers(
-            origin, &path, Some(bytes), &[], &extra, &env,
+            origin,
+            &path,
+            Some(bytes),
+            &[],
+            &extra,
+            &env,
         )
         .await
         {
@@ -812,34 +837,34 @@ mod probe {
         // 干净重放：设备字段全进 DeviceProfile（签名器只拼这一套），业务参数只留
         // 非设备项，UA/版本与设备字段成套（hgplayer 形态）。
         let pairs = vec![
-                ("ac", r#"wifi"#),
-                ("aid", r#"8662"#),
-                ("app_name", r#"novelread"#),
-                ("cdid", r#"e9ca8ec4-bcbf-46e2-8e4c-281855bccaae"#),
-                ("channel", r#"xiaomi_8662_64"#),
-                ("compliance_status", r#"0"#),
-                ("device_brand", r#"xiaomi"#),
-                ("device_id", r#"2169800441471882"#),
-                ("device_platform", r#"android"#),
-                ("device_type", r#"23127PN0CC"#),
-                ("dpi", r#"460"#),
-                ("dragon_device_type", r#"phone"#),
-                ("host_abi", r#"arm64-v8a"#),
-                ("iid", r#"2169800441475978"#),
-                ("is_android_pad_screen", r#"0"#),
-                ("language", r#"zh"#),
-                ("manifest_version_code", r#"73932"#),
-                ("need_personal_recommend", r#"1"#),
-                ("os", r#"android"#),
-                ("os_api", r#"34"#),
-                ("os_version", r#"14"#),
-                ("player_so_load", r#"1"#),
-                ("pv_player", r#"73932"#),
-                ("resolution", r#"1200*2670"#),
-                ("ssmix", r#"a"#),
-                ("update_version_code", r#"73932"#),
-                ("version_code", r#"73932"#),
-                ("version_name", r#"7.3.9.32"#),
+            ("ac", r#"wifi"#),
+            ("aid", r#"8662"#),
+            ("app_name", r#"novelread"#),
+            ("cdid", r#"e9ca8ec4-bcbf-46e2-8e4c-281855bccaae"#),
+            ("channel", r#"xiaomi_8662_64"#),
+            ("compliance_status", r#"0"#),
+            ("device_brand", r#"xiaomi"#),
+            ("device_id", r#"2169800441471882"#),
+            ("device_platform", r#"android"#),
+            ("device_type", r#"23127PN0CC"#),
+            ("dpi", r#"460"#),
+            ("dragon_device_type", r#"phone"#),
+            ("host_abi", r#"arm64-v8a"#),
+            ("iid", r#"2169800441475978"#),
+            ("is_android_pad_screen", r#"0"#),
+            ("language", r#"zh"#),
+            ("manifest_version_code", r#"73932"#),
+            ("need_personal_recommend", r#"1"#),
+            ("os", r#"android"#),
+            ("os_api", r#"34"#),
+            ("os_version", r#"14"#),
+            ("player_so_load", r#"1"#),
+            ("pv_player", r#"73932"#),
+            ("resolution", r#"1200*2670"#),
+            ("ssmix", r#"a"#),
+            ("update_version_code", r#"73932"#),
+            ("version_code", r#"73932"#),
+            ("version_name", r#"7.3.9.32"#),
         ];
         let mut v = serde_json::to_value(crate::signer::video_device()).unwrap();
         v["fields"] = serde_json::Value::Array(
@@ -861,7 +886,12 @@ mod probe {
         };
         // 对照：我们自己的静态档案，仅版本号升到 73932（UA 保留我们的机型）
         let mut own = crate::signer::video_device();
-        for key in ["version_code", "manifest_version_code", "update_version_code", "pv_player"] {
+        for key in [
+            "version_code",
+            "manifest_version_code",
+            "update_version_code",
+            "pv_player",
+        ] {
             own.set(key, "73932");
         }
         own.set("version_name", "7.3.9.32");
@@ -892,7 +922,10 @@ mod probe {
             ("req_rank_category_id", r#"0"#),
             ("screen_width_px", r#"1078"#),
             ("session_id", r#""#),
-            ("stream_count", r#"[{"scene":"1","StreamCount":1,"StreamType":"1"}]"#),
+            (
+                "stream_count",
+                r#"[{"scene":"1","StreamCount":1,"StreamType":"1"}]"#,
+            ),
             ("tab_index", r#"0"#),
             ("tab_type", r#"16"#),
             ("video_type_preferences_str", r#"[]"#),
@@ -918,7 +951,8 @@ mod probe {
                 let v: Value = serde_json::from_slice(b).unwrap_or(Value::Null);
                 println!(
                     "[bookmall] no-cookie: code={:?} msg={:?}",
-                    v.get("code"), v.get("message")
+                    v.get("code"),
+                    v.get("message")
                 );
             }
             Err(e) => println!("[bookmall] no-cookie ERR {e}"),
@@ -937,29 +971,51 @@ mod probe {
                 std::fs::create_dir_all(&dir).ok();
                 std::fs::write(dir.join("bookmall.json"), &b).ok();
                 let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
-                let tabs = v.pointer("/data/tab_item").and_then(Value::as_array).cloned().unwrap_or_default();
+                let tabs = v
+                    .pointer("/data/tab_item")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 println!(
                     "[bookmall] code={:?} tabs={:?}",
                     v.get("code"),
-                    tabs.iter().map(|t| format!(
-                        "{}(type={},cells={})",
-                        t.get("title").and_then(Value::as_str).unwrap_or("?"),
-                        t.get("tab_type").and_then(Value::as_i64).unwrap_or(-1),
-                        t.get("cell_data").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0)
-                    )).collect::<Vec<_>>()
+                    tabs.iter()
+                        .map(|t| format!(
+                            "{}(type={},cells={})",
+                            t.get("title").and_then(Value::as_str).unwrap_or("?"),
+                            t.get("tab_type").and_then(Value::as_i64).unwrap_or(-1),
+                            t.get("cell_data")
+                                .and_then(Value::as_array)
+                                .map(|a| a.len())
+                                .unwrap_or(0)
+                        ))
+                        .collect::<Vec<_>>()
                 );
                 for t in &tabs {
                     if let Some(cells) = t.get("cell_data").and_then(Value::as_array) {
                         for c in cells {
                             if let Some(inner) = c.get("cell_data").and_then(Value::as_array) {
                                 for x in inner {
-                                    if let Some(vd) = x.get("video_data").and_then(Value::as_array).and_then(|a| a.first()) {
+                                    if let Some(vd) = x
+                                        .get("video_data")
+                                        .and_then(Value::as_array)
+                                        .and_then(|a| a.first())
+                                    {
                                         println!(
                                             "[bookmall] {} keys: {:?}",
                                             t.get("title").and_then(Value::as_str).unwrap_or("?"),
-                                            vd.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()
+                                            vd.as_object()
+                                                .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                                                .unwrap_or_default()
                                         );
-                                        println!("[bookmall] sample: {}", serde_json::to_string(vd).unwrap_or_default().chars().take(700).collect::<String>());
+                                        println!(
+                                            "[bookmall] sample: {}",
+                                            serde_json::to_string(vd)
+                                                .unwrap_or_default()
+                                                .chars()
+                                                .take(700)
+                                                .collect::<String>()
+                                        );
                                         return;
                                     }
                                 }
@@ -1001,7 +1057,10 @@ mod probe {
         {
             Ok(b) => println!(
                 "[subscribe-cal] {}",
-                String::from_utf8_lossy(&b).chars().take(1200).collect::<String>()
+                String::from_utf8_lossy(&b)
+                    .chars()
+                    .take(1200)
+                    .collect::<String>()
             ),
             Err(e) => println!("[subscribe-cal] ERR {e}"),
         }
@@ -1017,7 +1076,7 @@ mod probe {
             .checked_add_days(chrono::Days::new(7))
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| today.clone());
-        let candidates: Vec<(&str, Vec<( &str, &str)>)> = vec![
+        let candidates: Vec<(&str, Vec<(&str, &str)>)> = vec![
             ("range", vec![("start_date", &today), ("end_date", &week)]),
             ("date", vec![("date", &today)]),
             (
@@ -1047,13 +1106,15 @@ mod probe {
             {
                 Ok(b) => println!(
                     "[uncover/{tag}] {}",
-                    String::from_utf8_lossy(&b).chars().take(700).collect::<String>()
+                    String::from_utf8_lossy(&b)
+                        .chars()
+                        .take(700)
+                        .collect::<String>()
                 ),
                 Err(e) => println!("[uncover/{tag}] ERR {e}"),
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1075,12 +1136,18 @@ mod probe_extra {
         .await
         .expect("feed");
         let v: Value = serde_json::from_slice(&bytes).unwrap();
-        let items = v.pointer("/data/video_data").and_then(Value::as_array).cloned().unwrap_or_default();
+        let items = v
+            .pointer("/data/video_data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for it in items.iter() {
             println!(
                 "[ctype] content_type={:?} tags={:?} title={:?}",
                 it.get("content_type"),
-                it.get("category_schema").and_then(Value::as_str).map(|s| &s[..s.len().min(90)]),
+                it.get("category_schema")
+                    .and_then(Value::as_str)
+                    .map(|s| &s[..s.len().min(90)]),
                 it.get("title").and_then(Value::as_str)
             );
         }
@@ -1116,7 +1183,9 @@ mod probe_genre {
                 println!("[genre]   ct={:<4} {}", it.content_type, it.title);
             }
             if p1.has_more {
-                let p2 = fetch_feed(p1.next_offset, genre, &env).await.expect("第二页");
+                let p2 = fetch_feed(p1.next_offset, genre, &env)
+                    .await
+                    .expect("第二页");
                 let dup = p2
                     .items
                     .iter()
@@ -1140,7 +1209,12 @@ mod probe_browse {
         );
         let rows = fetch_browse_panel(&env).await.expect("面板");
         for r in &rows {
-            println!("[browse] [{}] {} ({} 项)", r.row_type, r.row_name, r.items.len());
+            println!(
+                "[browse] [{}] {} ({} 项)",
+                r.row_type,
+                r.row_name,
+                r.items.len()
+            );
         }
         let filters = BrowseFilters {
             genre: "comic_series".into(),
@@ -1174,7 +1248,11 @@ mod probe_panel_cookie {
             env.cookie = Some(cookies);
         }
         let rows = fetch_browse_panel(&env).await.expect("面板");
-        println!("[panel-cookie] {} 行: {:?}", rows.len(), rows.iter().map(|r| r.row_type.as_str()).collect::<Vec<_>>());
+        println!(
+            "[panel-cookie] {} 行: {:?}",
+            rows.len(),
+            rows.iter().map(|r| r.row_type.as_str()).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -1193,7 +1271,9 @@ mod probe_duration {
             duration: "duration_0_60".into(),
             ..Default::default()
         };
-        let page = fetch_browse(&filters, 0, "", &env).await.expect("duration 筛选");
+        let page = fetch_browse(&filters, 0, "", &env)
+            .await
+            .expect("duration 筛选");
         println!(
             "[duration] 0-60分钟筛选: {} 条, has_more={}, 首条: {}",
             page.items.len(),

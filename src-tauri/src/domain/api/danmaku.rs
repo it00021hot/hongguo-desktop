@@ -141,7 +141,10 @@ async fn fetch_danmaku_window(
             v.get("code").and_then(Value::as_i64).unwrap_or(-1)
         )));
     }
-    let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
+    let list_info = v
+        .pointer("/data/common_list_info")
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut items = Vec::new();
     for entry in v
         .pointer("/data/data_list")
@@ -149,7 +152,9 @@ async fn fetch_danmaku_window(
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let Some(comment) = entry.get("comment") else { continue };
+        let Some(comment) = entry.get("comment") else {
+            continue;
+        };
         let comment_id = comment
             .get("comment_id")
             .and_then(Value::as_str)
@@ -362,10 +367,16 @@ fn check_comment_code(v: &Value) -> AppResult<()> {
 
 /// 评论响应 → [`CommentPage`]（单集评论与剧级评论同构，共用）。
 fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
-    let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
+    let list_info = v
+        .pointer("/data/common_list_info")
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut page = CommentPage {
         total: list_info.get("total").and_then(Value::as_i64).unwrap_or(0),
-        has_more: list_info.get("has_more").and_then(Value::as_bool).unwrap_or(false),
+        has_more: list_info
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         next_cursor: list_info
             .get("cursor")
             .and_then(Value::as_str)
@@ -379,7 +390,9 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let Some(comment) = entry.get("comment") else { continue };
+        let Some(comment) = entry.get("comment") else {
+            continue;
+        };
         let comment_id = comment
             .get("comment_id")
             .and_then(Value::as_str)
@@ -448,7 +461,11 @@ mod tests {
 
     #[test]
     fn window_cursor_passthrough() {
-        let p = danmaku_payload("g", "b", r#"{"start_offset_time":30000,"end_offset_time":60000}"#);
+        let p = danmaku_payload(
+            "g",
+            "b",
+            r#"{"start_offset_time":30000,"end_offset_time":60000}"#,
+        );
         assert!(p["cursor"].as_str().unwrap().contains("end_offset_time"));
     }
 
@@ -529,7 +546,11 @@ mod probe {
         let all = fetch_danmaku_all("7690197301075119166", "7690150906532219966", &env)
             .await
             .expect("整集弹幕");
-        println!("[danmaku-full] {} 条，前 5: {:?}", all.len(), &all[..all.len().min(5)]);
+        println!(
+            "[danmaku-full] {} 条，前 5: {:?}",
+            all.len(),
+            &all[..all.len().min(5)]
+        );
         assert!(!all.is_empty(), "这一集实测有弹幕");
         // 时间轴升序（fetch_danmaku_all 已排序）
         let mut sorted = all.clone();
@@ -622,17 +643,26 @@ mod probe {
                     let mut detail = String::new();
                     if code == 0 {
                         // 打首条评论的 id / 回复链路字段，确认真的是回复列表
-                        match v.pointer("/data/data_list/0")
+                        match v
+                            .pointer("/data/data_list/0")
                             .or_else(|| v.pointer("/data/reply_list/0"))
                         {
                             Some(entry) => {
                                 detail = format!(
                                     " entry_keys={:?} comment_id={:?} reply_to={:?} text={:?}",
-                                    entry.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+                                    entry
+                                        .as_object()
+                                        .map(|o| o.keys().cloned().collect::<Vec<_>>()),
                                     entry.pointer("/comment/comment_id").and_then(Value::as_str),
-                                    entry.pointer("/comment/expand/reply_to_comment_id").and_then(Value::as_str)
-                                        .or_else(|| entry.pointer("/comment/reply_to_comment_id").and_then(Value::as_str)),
-                                    entry.pointer("/comment/common/content/text").and_then(Value::as_str),
+                                    entry
+                                        .pointer("/comment/expand/reply_to_comment_id")
+                                        .and_then(Value::as_str)
+                                        .or_else(|| entry
+                                            .pointer("/comment/reply_to_comment_id")
+                                            .and_then(Value::as_str)),
+                                    entry
+                                        .pointer("/comment/common/content/text")
+                                        .and_then(Value::as_str),
                                 );
                             }
                             None => {
@@ -647,10 +677,7 @@ mod probe {
                         .pointer("/BaseResp/StatusMessage")
                         .and_then(Value::as_str)
                         .unwrap_or("");
-                    let debug_info = v
-                        .get("debug_info")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
+                    let debug_info = v.get("debug_info").and_then(Value::as_str).unwrap_or("");
                     println!("[reply-list/{tag}] code={code}{detail} msg={debug} debug_info={debug_info}");
                 }
                 Err(e) => println!("[reply-list/{tag}] ERR {e}"),

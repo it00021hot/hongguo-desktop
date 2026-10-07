@@ -49,11 +49,7 @@ export function AccountCard({
         {account ? (
           <div className="flex flex-wrap items-center gap-3">
             {account.avatarUrl && (
-              <img
-                src={account.avatarUrl}
-                alt=""
-                className="size-8 rounded-full object-cover"
-              />
+              <img src={account.avatarUrl} alt="" className="size-8 rounded-full object-cover" />
             )}
             <Badge variant="secondary">{account.userName || account.userId}</Badge>
             <span className="text-muted-foreground font-mono text-xs">
@@ -83,11 +79,7 @@ export function AccountCard({
           confirmLabel={t('settings.logout')}
           onConfirm={() => void logout()}
         />
-        <LoginDialog
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          onSuccess={onChanged}
-        />
+        <LoginDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={onChanged} />
       </CardContent>
     </Card>
   );

@@ -344,7 +344,7 @@ export function BrowsePage() {
             {/* 联想下拉：条目用 onMouseDown(preventDefault) 选中——
                 比 blur 早一拍，点条目不会先把下拉收掉 */}
             {showSuggest && (
-              <div className="bg-popover text-popover-foreground scrollbar-thin absolute inset-x-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-lg border shadow-lg">
+              <div className="bg-popover text-popover-foreground absolute inset-x-0 top-full z-30 mt-1 max-h-80 scrollbar-thin overflow-y-auto rounded-lg border shadow-lg">
                 {suggestions.slice(0, 8).map((item, i) => (
                   <SuggestRow
                     key={`${item.word}:${i}`}
@@ -405,10 +405,7 @@ export function BrowsePage() {
               </Badge>
             )}
             <ChevronDown
-              className={cn(
-                'size-4 transition-transform',
-                filtersCollapsed ? '' : 'rotate-180',
-              )}
+              className={cn('size-4 transition-transform', filtersCollapsed ? '' : 'rotate-180')}
               aria-hidden
             />
           </button>
@@ -436,11 +433,7 @@ export function BrowsePage() {
         <RefreshShade refreshing={refreshing}>
           {/* 无限滚动：不再翻页补位，条目持续累积填满网格，
               「末行留空」的来源（18 条除不尽列数）自然消失 */}
-          <SeriesCardGrid
-            cards={cards}
-            downloadedMap={downloadedMap}
-            onSelect={handleSelect}
-          />
+          <SeriesCardGrid cards={cards} downloadedMap={downloadedMap} onSelect={handleSelect} />
         </RefreshShade>
       )}
 
@@ -586,8 +579,7 @@ function FilterPanel({
       {rows.map((row) => {
         const key = row.rowType as keyof BrowseFilters;
         const current = rowValue(row.rowType);
-        const fallbackLabel =
-          FILTER_LABEL_KEYS[row.rowType] ?? row.rowName.replace(/^全部/, '');
+        const fallbackLabel = FILTER_LABEL_KEYS[row.rowType] ?? row.rowName.replace(/^全部/, '');
         return (
           <div key={row.rowType} className="flex items-start gap-3 text-sm">
             <span className="text-muted-foreground w-10 shrink-0 pt-1 text-xs">

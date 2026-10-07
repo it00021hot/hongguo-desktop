@@ -70,21 +70,28 @@ pub async fn resolve_play(
                 request.vid_index
             );
             let env = state.api_env();
-            let series = crate::service::series_service::resolver::resolve_series(
-                &request.series_id,
-                &env,
-            )
-            .await?;
+            let series =
+                crate::service::series_service::resolver::resolve_series(&request.series_id, &env)
+                    .await?;
             crate::service::series_service::registry::upsert_and_persist(state, series)?;
-            episode_vid(&state.store, &request.series_id, request.vid_index).ok_or_else(
-                || AppError::NotFound(format!("解析后仍找不到第 {} 集的 vid", request.vid_index)),
-            )?
+            episode_vid(&state.store, &request.series_id, request.vid_index).ok_or_else(|| {
+                AppError::NotFound(format!("解析后仍找不到第 {} 集的 vid", request.vid_index))
+            })?
         }
     };
 
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
-    match online::prepare(app, &vid, &progress_key, request.definition, state.settings(), &state.api_env()).await {
+    match online::prepare(
+        app,
+        &vid,
+        &progress_key,
+        request.definition,
+        state.settings(),
+        &state.api_env(),
+    )
+    .await
+    {
         Ok(prepared) => Ok(PlayResponse {
             url: prepared.url,
             online: true,

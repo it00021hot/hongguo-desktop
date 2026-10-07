@@ -43,11 +43,10 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use windows::core::{Interface, GUID};
 use windows::Win32::Media::MediaFoundation::*;
-use windows::Win32::System::Variant::{VARIANT, VARIANT_0_0, VARIANT_0_0_0, VT_UI4};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL,
-    COINIT_MULTITHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Variant::{VARIANT, VARIANT_0_0, VARIANT_0_0_0, VT_UI4};
 
 use crate::domain::mp4::sample_table::TrackInfo;
 use crate::error::{AppError, AppResult};
@@ -118,7 +117,9 @@ fn probe_h264_hw_encoder() -> bool {
 fn probe_reports_hardware() -> AppResult<bool> {
     let decoders = enum_activates(
         MFT_CATEGORY_VIDEO_DECODER,
-        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_HARDWARE
+        MFT_ENUM_FLAG_SYNCMFT
+            | MFT_ENUM_FLAG_ASYNCMFT
+            | MFT_ENUM_FLAG_HARDWARE
             | MFT_ENUM_FLAG_SORTANDFILTER,
         Some(&type_info(MFMediaType_Video, MFVideoFormat_HEVC)),
         Some(&type_info(MFMediaType_Video, MFVideoFormat_NV12)),
@@ -285,7 +286,10 @@ fn secs_to_hns(s: f64) -> i64 {
 fn video_type(subtype: GUID) -> AppResult<IMFMediaType> {
     let t = hr(unsafe { MFCreateMediaType() }, "建媒体类型")?;
     unsafe {
-        hr(t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video), "设 major type")?;
+        hr(
+            t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video),
+            "设 major type",
+        )?;
         hr(t.SetGUID(&MF_MT_SUBTYPE, &subtype), "设 subtype")?;
     }
     Ok(t)
@@ -501,24 +505,17 @@ impl AsyncMft {
                         )))
                     }
                 };
-                let ty = MF_EVENT_TYPE(
-                    ev.GetType()
-                        .map_err(|e| {
-                            AppError::Media(format!(
-                                "Media Foundation 读事件类型失败（{e}）"
-                            ))
-                        })? as i32,
-                );
+                let ty = MF_EVENT_TYPE(ev.GetType().map_err(|e| {
+                    AppError::Media(format!("Media Foundation 读事件类型失败（{e}）"))
+                })? as i32);
                 match ty {
-                    METransformNeedInput => {
-                        match self.input_q.pop_front() {
-                            Some(s) => hr(self.xform.ProcessInput(0, &s, 0), "ProcessInput")?,
-                            None => {
-                                self.need_input = true;
-                                break;
-                            }
+                    METransformNeedInput => match self.input_q.pop_front() {
+                        Some(s) => hr(self.xform.ProcessInput(0, &s, 0), "ProcessInput")?,
+                        None => {
+                            self.need_input = true;
+                            break;
                         }
-                    }
+                    },
                     METransformHaveOutput => ready.push(self.pull_one()?),
                     METransformMarker => {}
                     METransformDrainComplete => {
@@ -744,8 +741,7 @@ impl Driver {
         match &mut self.inner {
             DriverInner::Sync(s) => unsafe {
                 hr(
-                    s.xform
-                        .ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0),
+                    s.xform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0),
                     "通知流结束",
                 )?;
                 hr(
@@ -817,10 +813,7 @@ impl Decoder {
                 "建 SourceReader",
             )?;
             let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
-            hr(
-                reader.SetStreamSelection(stream, true),
-                "选视频流",
-            )?;
+            hr(reader.SetStreamSelection(stream, true), "选视频流")?;
             let nv12 = video_type(MFVideoFormat_NV12)?;
             hr(
                 reader.SetCurrentMediaType(stream, None, &nv12),
@@ -851,7 +844,14 @@ impl Decoder {
             let mut sample = None;
             unsafe {
                 hr(
-                    self.reader.ReadSample(stream, 0, None, Some(&mut flags), None, Some(&mut sample)),
+                    self.reader.ReadSample(
+                        stream,
+                        0,
+                        None,
+                        Some(&mut flags),
+                        None,
+                        Some(&mut sample),
+                    ),
                     "ReadSample",
                 )?;
             }
@@ -1076,8 +1076,7 @@ impl Encoder {
         // in-box 软件编码器两种顺序都收。两种顺序各试一遍。
         let mut last = AppError::Media("编码 MFT 类型协商失败".into());
         for output_first in [true, false] {
-            match Self::negotiate_types(a, width, height, fps_num, fps_den, bitrate, output_first)
-            {
+            match Self::negotiate_types(a, width, height, fps_num, fps_den, bitrate, output_first) {
                 Ok(e) => return Ok(e),
                 Err(e) => last = e,
             }
@@ -1222,9 +1221,7 @@ impl Encoder {
             // 编码器输出格式实测不统一：h264_mf 直接吐 Annex-B（起始码
             // 开头），别的可能给 AVCC——按单元嗅探，别把 Annex-B 当 AVCC
             // 转换（长度字段走读会错读起始码，把 slice 整段丢掉）。
-            let mut annexb = if raw.starts_with(&[0, 0, 0, 1])
-                || raw.starts_with(&[0, 0, 1])
-            {
+            let mut annexb = if raw.starts_with(&[0, 0, 0, 1]) || raw.starts_with(&[0, 0, 1]) {
                 raw.clone()
             } else {
                 crate::media::hevc::to_annexb(&raw, 4)
@@ -1354,12 +1351,7 @@ fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
 // ————————————————————————————————————————————————————————————
 
 /// 下一帧的显示时间：按升序时间轴逐帧取，重复/回退按半帧顶开。
-fn next_pts(
-    sorted_pts: &[f64],
-    cursor: &mut usize,
-    last: &mut Option<f64>,
-    frame_dur: f64,
-) -> f64 {
+fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, frame_dur: f64) -> f64 {
     let mut p = sorted_pts
         .get(*cursor)
         .copied()
@@ -1521,7 +1513,13 @@ fn run(
         None => return Err(AppError::Media("HEVC 解码没有产出任何帧".into())),
     };
     encoder.finish()?;
-    emit_outputs(&mut encoder, &mut out_last, frame_dur, &mut units, req.on_progress)?;
+    emit_outputs(
+        &mut encoder,
+        &mut out_last,
+        frame_dur,
+        &mut units,
+        req.on_progress,
+    )?;
 
     if units.is_empty() {
         return Err(AppError::Media("平台硬编没有产出任何帧".into()));
@@ -1530,13 +1528,7 @@ fn run(
     // 4) 音轨直通 + 封装（与软解路径同一套代码，faststart）
     let (out_w, out_h) = out_dims.unwrap_or((video.width as usize, video.height as usize));
     crate::media::transcode::mux_with_audio(
-        req.input,
-        demuxed,
-        req.output,
-        &units,
-        out_w,
-        out_h,
-        fps as f32,
+        req.input, demuxed, req.output, &units, out_w, out_h, fps as f32,
     )?;
 
     log::info!(
@@ -1563,7 +1555,9 @@ mod tests {
     /// 同进程连续两次平台转码：第二次不能劣化（应用里用户连转多集）。
     #[test]
     fn consecutive_sessions_in_one_process() {
-        let Some(dir) = std::env::var_os("HONGGUO_E2E_DIR") else { return };
+        let Some(dir) = std::env::var_os("HONGGUO_E2E_DIR") else {
+            return;
+        };
         let src = std::path::Path::new(&dir).join("001.mp4");
         let out1 = std::env::temp_dir().join("hg-mf-twice-1.mp4");
         let run = |out: &std::path::Path| {
@@ -1637,13 +1631,6 @@ mod tests {
         ]
         .concat();
         let out = param_sets_annexb(&avcc);
-        assert_eq!(
-            out,
-            [[0, 0, 0, 1].to_vec(), vec![0x67, 0x11]].concat()
-        );
+        assert_eq!(out, [[0, 0, 0, 1].to_vec(), vec![0x67, 0x11]].concat());
     }
 }
-
-
-
-

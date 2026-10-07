@@ -14,12 +14,7 @@ import { Heart, MessageSquareText, Share2, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
-import {
-  useAccount,
-  useInteractionState,
-  useSeriesCollect,
-  useVideoDigg,
-} from '@/lib/queries';
+import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 
 interface InteractionRailProps {
@@ -41,7 +36,8 @@ interface InteractionRailProps {
 /** 计数格式化：抖音系「1.4万」样式。 */
 function fmtCount(n: number): string {
   if (n >= 100_0000) return `${(n / 100_0000).toFixed(1).replace(/\.0$/, '')}百万`;
-  if (n >= 10_000) return `${(n / 10_000).toFixed(n % 10_000 >= 1000 ? 1 : 0).replace(/\.0$/, '')}万`;
+  if (n >= 10_000)
+    return `${(n / 10_000).toFixed(n % 10_000 >= 1000 ? 1 : 0).replace(/\.0$/, '')}万`;
   return `${n}`;
 }
 
@@ -88,7 +84,8 @@ export function InteractionRail({
     digg.mutate(
       { vid: bareVid, seriesId, digg: !digged },
       {
-        onSuccess: () => toast.success(t(digged ? 'player.interact.undone' : 'player.interact.liked')),
+        onSuccess: () =>
+          toast.success(t(digged ? 'player.interact.undone' : 'player.interact.liked')),
         onError: (e) => toast.error(String(e)),
       },
     );
@@ -120,16 +117,14 @@ export function InteractionRail({
     <div
       data-wheel-block
       className={cn(
-        'absolute bottom-24 right-2 z-20 flex flex-col items-center gap-4',
+        'absolute right-2 bottom-24 z-20 flex flex-col items-center gap-4',
         'transition-opacity duration-300',
         visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
     >
       <RailItem
         icon={
-          <Heart
-            className={cn('size-7 drop-shadow-md', digged && 'fill-red-500 text-red-500')}
-          />
+          <Heart className={cn('size-7 drop-shadow-md', digged && 'fill-red-500 text-red-500')} />
         }
         label={t('player.interact.like')}
         count={diggCount > 0 ? diggCount : undefined}

@@ -156,8 +156,7 @@ export const series = {
   related: (seriesId: string) =>
     call<RelatedSeries>('related_series', { seriesId }, relatedSeriesSchema),
   /** 详情页头部元信息（追剧/播放/季徽/标签/备案号；失败前端静默降级）。 */
-  meta: (seriesId: string) =>
-    call<SeriesMeta>('series_meta', { seriesId }, seriesMetaSchema),
+  meta: (seriesId: string) => call<SeriesMeta>('series_meta', { seriesId }, seriesMetaSchema),
   remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
   removeAll: () => call<number>('remove_all_series'),
 };
@@ -240,7 +239,8 @@ export const interact = {
   /** 最近互动列表（点赞过的 vid + 收藏的剧），回显是 best-effort 匹配。 */
   state: () => call<InteractionState>('interaction_state', undefined, interactionStateSchema),
   /** 书架（我的收藏）列表，需要登录。 */
-  bookshelf: () => call<BookshelfEntry[]>('bookshelf_list', undefined, bookshelfEntrySchema.array()),
+  bookshelf: () =>
+    call<BookshelfEntry[]>('bookshelf_list', undefined, bookshelfEntrySchema.array()),
 };
 
 // ---------------------------------------------------------------- 浏览与搜索

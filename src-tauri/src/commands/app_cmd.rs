@@ -285,12 +285,12 @@ async fn incognito_watch(app: AppHandle, gen: u64) {
     use tauri::Emitter;
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(INCOGNITO_POLL_MS)).await;
-        if !INCOGNITO_ON.load(Ordering::Acquire)
-            || INCOGNITO_GEN.load(Ordering::Acquire) != gen
-        {
+        if !INCOGNITO_ON.load(Ordering::Acquire) || INCOGNITO_GEN.load(Ordering::Acquire) != gen {
             return;
         }
-        let Some(win) = active_window(&app) else { return };
+        let Some(win) = active_window(&app) else {
+            return;
+        };
         // 最小化是用户的显式动作，隐身不得插手：最小化后 is_visible 变
         // false，而光标多半还留在原窗口矩形里——不跳过的话每轮都会判成
         // 「鼠标回来了」把窗口 show 回来，表现为「隐身开着就最小化不了」

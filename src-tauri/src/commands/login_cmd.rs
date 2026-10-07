@@ -66,7 +66,11 @@ pub async fn login_sms_login(
         log::warn!("[Login] 登录失败: {e}");
     }
     match outcome? {
-        LoginOutcome::Success { cookies, user, token } => {
+        LoginOutcome::Success {
+            cookies,
+            user,
+            token,
+        } => {
             log::info!("[Login] 登录成功: {} ({})", user.name, user.user_id);
             // 登录成功即消费掉 csrf / MFA 流程（一次性凭据）
             *state.login_csrf.write() = None;
@@ -128,7 +132,11 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                     let mut ctx = flow.ctx.clone();
                     ctx.mfa_token = mfa_token;
                     match login::mfa_relogin(&env, &flow.mobile, &flow.code, &ctx).await {
-                        Ok(LoginOutcome::Success { cookies, user, token }) => {
+                        Ok(LoginOutcome::Success {
+                            cookies,
+                            user,
+                            token,
+                        }) => {
                             *state.login_mfa.write() = None;
                             *state.login_csrf.write() = None;
                             let account = AccountState {
@@ -147,7 +155,11 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                                 );
                                 return;
                             }
-                            log::info!("[Login] MFA 自动登录成功: {} ({})", user.name, user.user_id);
+                            log::info!(
+                                "[Login] MFA 自动登录成功: {} ({})",
+                                user.name,
+                                user.user_id
+                            );
                             let _ = app.emit(
                                 LOGIN_MFA_STATE,
                                 serde_json::json!({"state": "success", "name": user.name}),
@@ -215,7 +227,10 @@ fn with_csrf(
     let mut fields: Vec<(String, String)> = base
         .split("; ")
         .filter(|p| !p.is_empty())
-        .filter_map(|p| p.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|p| {
+            p.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect();
     for key in ["passport_csrf_token", "passport_csrf_token_default"] {
         match fields.iter_mut().find(|(k, _)| k == key) {
@@ -248,7 +263,11 @@ pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResu
         UpsmsState::Waiting => Ok(LoginResult::MfaWaiting),
         UpsmsState::Registered { .. } => {
             match login::mfa_relogin(&env, &flow.mobile, &flow.code, &flow.ctx).await? {
-                LoginOutcome::Success { cookies, user, token } => {
+                LoginOutcome::Success {
+                    cookies,
+                    user,
+                    token,
+                } => {
                     *state.login_mfa.write() = None;
                     *state.login_csrf.write() = None;
                     let account = AccountState {
@@ -345,7 +364,9 @@ pub fn login_logout(state: State<'_, AppState>) -> AppResult<()> {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum LoginResult {
     #[serde(rename_all = "camelCase")]
-    Success { user: PassportUser },
+    Success {
+        user: PassportUser,
+    },
     #[serde(rename_all = "camelCase")]
     Mfa {
         retry_tag: String,
@@ -359,12 +380,10 @@ pub enum LoginResult {
     MfaWaiting,
 }
 
-
 /// 手机号形态校验：11 位、1 开头、全数字（不做号段穷举，服务端会再校验）。
 fn validate_mobile(mobile: &str) -> AppResult<()> {
-    let ok = mobile.len() == 11
-        && mobile.starts_with('1')
-        && mobile.bytes().all(|b| b.is_ascii_digit());
+    let ok =
+        mobile.len() == 11 && mobile.starts_with('1') && mobile.bytes().all(|b| b.is_ascii_digit());
     if ok {
         Ok(())
     } else {
@@ -386,26 +405,26 @@ fn persist_account(state: &AppState, account: Option<AccountState>) -> AppResult
 mod tests {
     use super::*;
 
-/// Mfa 变体的序列化形状必须与前端 loginResultSchema 逐字段一致
-/// （一次 zod 校验失败事故的回归锁）。channel_mobile 用替换后的
-/// 真实通道号（parse 层已做 95→106 修正，这里锁序列化形状）。
-#[test]
-fn mfa_serializes_to_frontend_shape() {
-    let r = mfa_result(&crate::domain::api::login::MfaContext {
-        retry_tag: "1".into(),
-        sms_code_key: "k".into(),
-        channel_mobile: "10691859839103".into(),
-        sms_content: "YZ".into(),
-        tips: "回复 YZ 到 10691859839103".into(),
-        ..Default::default()
-    });
-    let j = serde_json::to_string(&r).unwrap();
-    println!("Mfa JSON = {j}");
-    assert!(j.contains(r#""kind":"mfa""#), "tag 必须是 mfa: {j}");
-    assert!(j.contains(r#""retryTag":"1""#), "字段必须 camelCase: {j}");
-    assert!(j.contains(r#""smsCodeKey":"k""#), "{j}");
-    assert!(j.contains(r#""channelMobile":"10691859839103""#), "{j}");
-    assert!(j.contains(r#""smsContent":"YZ""#), "{j}");
-    assert!(j.contains("10691859839103"), "{j}");
-}
+    /// Mfa 变体的序列化形状必须与前端 loginResultSchema 逐字段一致
+    /// （一次 zod 校验失败事故的回归锁）。channel_mobile 用替换后的
+    /// 真实通道号（parse 层已做 95→106 修正，这里锁序列化形状）。
+    #[test]
+    fn mfa_serializes_to_frontend_shape() {
+        let r = mfa_result(&crate::domain::api::login::MfaContext {
+            retry_tag: "1".into(),
+            sms_code_key: "k".into(),
+            channel_mobile: "10691859839103".into(),
+            sms_content: "YZ".into(),
+            tips: "回复 YZ 到 10691859839103".into(),
+            ..Default::default()
+        });
+        let j = serde_json::to_string(&r).unwrap();
+        println!("Mfa JSON = {j}");
+        assert!(j.contains(r#""kind":"mfa""#), "tag 必须是 mfa: {j}");
+        assert!(j.contains(r#""retryTag":"1""#), "字段必须 camelCase: {j}");
+        assert!(j.contains(r#""smsCodeKey":"k""#), "{j}");
+        assert!(j.contains(r#""channelMobile":"10691859839103""#), "{j}");
+        assert!(j.contains(r#""smsContent":"YZ""#), "{j}");
+        assert!(j.contains("10691859839103"), "{j}");
+    }
 }

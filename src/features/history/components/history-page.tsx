@@ -4,12 +4,7 @@ import { History, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  isRenderableCover,
-  useResolveSeries,
-  useWatchHistory,
-  useWebCover,
-} from '@/lib/queries';
+import { isRenderableCover, useResolveSeries, useWatchHistory, useWebCover } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
 import { t, tf } from '@/i18n';

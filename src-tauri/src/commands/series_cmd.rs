@@ -57,7 +57,9 @@ pub async fn get_series_episodes(
                         log::info!("[Series] {series_id} 旧档案已在后台补齐计数");
                         let _ = app.emit("series-archive-updated", &series_id);
                     }
-                    Err(e) => log::warn!("[Series] {series_id} 后台补计数失败（下次再看再试）: {e}"),
+                    Err(e) => {
+                        log::warn!("[Series] {series_id} 后台补计数失败（下次再看再试）: {e}")
+                    }
                 }
             });
         }

@@ -109,8 +109,8 @@ pub async fn send_reply(
     }
     let raw = serde_json::to_vec(&payload)
         .map_err(|e| AppError::Media(format!("构造回复请求失败: {e}")))?;
-    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, REPLY_ADD_PATH, Some(raw), &[], env)
-        .await?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, REPLY_ADD_PATH, Some(raw), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析回复响应失败: {e}")))?;
     check_interact_code(&value)?;
@@ -133,9 +133,15 @@ fn check_interact_code(value: &Value) -> AppResult<()> {
     let msg = value
         .get("message")
         .and_then(Value::as_str)
-        .or_else(|| value.pointer("/BaseResp/StatusMessage").and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .pointer("/BaseResp/StatusMessage")
+                .and_then(Value::as_str)
+        })
         .unwrap_or("未知错误");
-    Err(AppError::Auth(format!("互动操作被服务端拒绝（{code}）: {msg}")))
+    Err(AppError::Auth(format!(
+        "互动操作被服务端拒绝（{code}）: {msg}"
+    )))
 }
 
 /// comment/add 双形态（2026-10-06 抓 hgplayer 1.1.5 逐字段对齐）：
@@ -183,8 +189,9 @@ async fn comment_add(
     });
     let raw = serde_json::to_vec(&payload)
         .map_err(|e| AppError::Media(format!("构造弹幕/评论请求失败: {e}")))?;
-    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, COMMENT_ADD_PATH, Some(raw), &[], env)
-        .await?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, COMMENT_ADD_PATH, Some(raw), &[], env)
+            .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析弹幕/评论响应失败: {e}")))?;
     check_interact_code(&value)?;
@@ -387,8 +394,9 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
         ("offset".into(), "0".into()),
         ("object_type_list".into(), "6,15,10".into()),
     ];
-    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, UGC_MGET_PATH, None, &biz_query, env)
-        .await?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, UGC_MGET_PATH, None, &biz_query, env)
+            .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析互动状态失败: {e}")))?;
     if value.get("code").and_then(Value::as_i64) != Some(0) {
@@ -402,7 +410,9 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let Some(video) = entry.get("video_data") else { continue };
+        let Some(video) = entry.get("video_data") else {
+            continue;
+        };
         let vid = video.get("vid").and_then(Value::as_str).unwrap_or_default();
         if vid.is_empty() {
             continue;
@@ -415,8 +425,13 @@ pub async fn fetch_interaction_state(env: &ApiEnv) -> AppResult<InteractionState
                 .unwrap_or_default()
                 .to_string(),
             user_digg: video.get("user_digg").and_then(Value::as_bool) == Some(true),
-            digged_count: video.get("digged_count").and_then(Value::as_i64).unwrap_or(0),
-            followed: video.pointer("/video_detail/followed").and_then(Value::as_bool)
+            digged_count: video
+                .get("digged_count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            followed: video
+                .pointer("/video_detail/followed")
+                .and_then(Value::as_bool)
                 == Some(true),
             followed_cnt: video
                 .pointer("/video_detail/followed_cnt")
@@ -470,7 +485,9 @@ mod tests {
     fn state_parsing_tolerates_missing_fields() {
         let empty = serde_json::json!({"code": 0, "data": null});
         assert_eq!(
-            empty.pointer("/data/mixed_data_list").and_then(Value::as_array),
+            empty
+                .pointer("/data/mixed_data_list")
+                .and_then(Value::as_array),
             None,
             "空响应按无列表处理，不强解"
         );
@@ -490,7 +507,9 @@ mod probe {
         let cookie = std::env::var("HG_TEST_COOKIE").ok()?;
         let mut env = ApiEnv::anonymous(ProxyConfig::default());
         env.cookie = Some(cookie);
-        env.x_tt_token = std::env::var("HG_TEST_TOKEN").ok().filter(|t| !t.is_empty());
+        env.x_tt_token = std::env::var("HG_TEST_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty());
         Some(env)
     }
 
@@ -506,7 +525,9 @@ mod probe {
         let series = "7692006324439092248";
 
         digg_video(vid, series, true, &env).await.expect("点赞");
-        digg_video(vid, series, false, &env).await.expect("取消点赞");
+        digg_video(vid, series, false, &env)
+            .await
+            .expect("取消点赞");
 
         let cid = send_danmaku(vid, series, "probe 弹幕", 1000, &env)
             .await

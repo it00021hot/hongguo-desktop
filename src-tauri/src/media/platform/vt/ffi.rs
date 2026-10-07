@@ -6,7 +6,12 @@
 //!
 //! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、
 //! VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, dead_code)]
+#![allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    dead_code
+)]
 
 use std::os::raw::c_void;
 
@@ -195,8 +200,9 @@ extern "C" {
         sampleBufferOut: *mut CMSampleBufferRef,
     ) -> OSStatus;
     pub fn CMSampleBufferGetDataBuffer(sbuf: CMSampleBufferRef) -> CMBlockBufferRef;
-    pub fn CMSampleBufferGetFormatDescription(sbuf: CMSampleBufferRef)
-        -> CMVideoFormatDescriptionRef;
+    pub fn CMSampleBufferGetFormatDescription(
+        sbuf: CMSampleBufferRef,
+    ) -> CMVideoFormatDescriptionRef;
     pub fn CMSampleBufferGetNumSamples(sbuf: CMSampleBufferRef) -> CMItemCount;
     /// 编码器保留了我们传入的显示时间戳，这里原样读回
     pub fn CMSampleBufferGetOutputPresentationTimeStamp(sbuf: CMSampleBufferRef) -> CMTime;

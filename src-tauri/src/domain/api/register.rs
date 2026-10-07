@@ -1,8 +1,13 @@
 // 探测期的形态告警统一压制（启动接线后随清理移除）
-#![allow(dead_code, unused_mut, clippy::needless_range_loop,
-        clippy::double_parens, clippy::manual_repeat_n,
-        clippy::needless_borrows_for_generic_args,
-        clippy::range_plus_one)]
+#![allow(
+    dead_code,
+    unused_mut,
+    clippy::needless_range_loop,
+    clippy::double_parens,
+    clippy::manual_repeat_n,
+    clippy::needless_borrows_for_generic_args,
+    clippy::range_plus_one
+)]
 
 //! 设备注册：`POST log.snssdk.com/service/2/device_register/`。
 //!
@@ -136,7 +141,11 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
 
     if body.len() < 6 + 32 + 16 + 16 || body[..6] != TT_MAGIC {
-        return Err(format!("不是 TT-Encrypt V5 包：len={} magic={:02x?}", body.len(), &body[..6.min(body.len())]));
+        return Err(format!(
+            "不是 TT-Encrypt V5 包：len={} magic={:02x?}",
+            body.len(),
+            &body[..6.min(body.len())]
+        ));
     }
     let salt = &body[6..38];
     let iv_arr: [u8; 16] = body[38..54].try_into().unwrap();
@@ -168,7 +177,12 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
 
     // PKCS7 剥离
     let pad = *payload.last().ok_or("空密文")? as usize;
-    if !(1..=16).contains(&pad) || payload.len() < pad || payload[payload.len() - pad..].iter().any(|&b| b as usize != pad) {
+    if !(1..=16).contains(&pad)
+        || payload.len() < pad
+        || payload[payload.len() - pad..]
+            .iter()
+            .any(|&b| b as usize != pad)
+    {
         return Err(format!("PKCS7 填充非法：pad={pad}"));
     }
     payload.truncate(payload.len() - pad);
@@ -183,8 +197,14 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     if calc_hash != app_hash {
         return Err(format!(
             "完整性哈希不符：app={} calc={}",
-            app_hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-            calc_hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            app_hash
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+            calc_hash
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
         ));
     }
 
@@ -218,7 +238,10 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
         .map_err(|e| AppError::Media(format!("注册响应不是 JSON: {e}")))?;
     if let Some(code) = v.get("code").and_then(Value::as_i64) {
         if code != 0 {
-            let msg = v.get("message").and_then(Value::as_str).unwrap_or("未知错误");
+            let msg = v
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误");
             return Err(AppError::Media(format!("注册失败 {code}: {msg}")));
         }
     }
@@ -232,9 +255,17 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
             .unwrap_or_default()
     };
     let device_id = get_str("device_id_str");
-    let device_id = if device_id.is_empty() { get_str("device_id") } else { device_id };
+    let device_id = if device_id.is_empty() {
+        get_str("device_id")
+    } else {
+        device_id
+    };
     let install_id = get_str("install_id_str");
-    let install_id = if install_id.is_empty() { get_str("install_id") } else { install_id };
+    let install_id = if install_id.is_empty() {
+        get_str("install_id")
+    } else {
+        install_id
+    };
     if device_id.is_empty() {
         return Err(AppError::Media("注册响应缺少 device_id".into()));
     }
@@ -296,10 +327,7 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("version_code", "73932".into()),
         ("version_name", "7.3.9.32".into()),
     ];
-    pairs
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect()
+    pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
 /// 新设备指纹：cdid / openudid / clientudid / req_id 一次生成。
@@ -435,8 +463,8 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         proxy: env.proxy.clone(),
         device: env.device.clone(),
         cookie: None,
-            x_tt_token: None,
-        };
+        x_tt_token: None,
+    };
 
     let bytes = api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &reg_env).await?;
     let result = parse_register(&bytes)?;
@@ -463,8 +491,7 @@ mod tests {
         let (plain, app_gz) = tt_decrypt_v5(body).expect("真实抓包应能解密");
 
         // 解出的明文必须是合法 AppLog 注册 JSON
-        let v: serde_json::Value =
-            serde_json::from_slice(&plain).expect("解出的明文应是 JSON");
+        let v: serde_json::Value = serde_json::from_slice(&plain).expect("解出的明文应是 JSON");
         assert_eq!(v["magic_tag"], "ss_app_log", "magic_tag 不符");
         assert_eq!(&app_gz[..2], &[0x1f, 0x8b], "payload 48 偏移处应是 gzip 流");
 
@@ -475,7 +502,11 @@ mod tests {
         // gzip 字节流因压缩器而异，此两者服务端均不校验——服务端用
         // header 里的 IV 解密并按 digest[16..64] 校验完整性哈希）
         assert_eq!(&re[..38], &body[..38], "magic/salt 区不一致");
-        assert_eq!(re.len(), body.len(), "总长不一致（PKCS7 吸收 gz 差异后应相等）");
+        assert_eq!(
+            re.len(),
+            body.len(),
+            "总长不一致（PKCS7 吸收 gz 差异后应相等）"
+        );
 
         // 往返锁：重加密密文再次解密必须还原同一明文（加密自洽）
         let (plain2, _) = tt_decrypt_v5(&re).expect("重加密密文应能自解");
@@ -495,8 +526,7 @@ mod tests {
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
             .collect();
         let (plain, gz) = tt_decrypt_v5(&body).expect("被接受样本必须能解密（hash 窗口锁）");
-        let v: serde_json::Value =
-            serde_json::from_slice(&plain).expect("被接受样本明文应是 JSON");
+        let v: serde_json::Value = serde_json::from_slice(&plain).expect("被接受样本明文应是 JSON");
         assert_eq!(v["magic_tag"], "ss_app_log");
 
         let salt: [u8; 32] = body[6..38].try_into().unwrap();
@@ -560,7 +590,14 @@ mod probe {
             .collect::<Vec<_>>()
             .join("&");
 
-        match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body.into_bytes()), &q, &env).await
+        match api_call_full(
+            REGISTER_ORIGIN,
+            REGISTER_PATH,
+            Some(body.into_bytes()),
+            &q,
+            &env,
+        )
+        .await
         {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
@@ -594,7 +631,10 @@ mod probe {
 
         let mut pairs: Vec<(String, String)> = q.clone();
         pairs.extend([
-            ("cpu_model".into(), "Qualcomm Technologies, Inc SM8650".into()),
+            (
+                "cpu_model".into(),
+                "Qualcomm Technologies, Inc SM8650".into(),
+            ),
             ("density".into(), "2.75".into()),
             ("language".into(), "zh".into()),
             ("mc".into(), "5c:c9:d3:12:34:56".into()),
@@ -610,7 +650,14 @@ mod probe {
             .collect::<Vec<_>>()
             .join("&");
 
-        match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body.into_bytes()), &q, &env).await
+        match api_call_full(
+            REGISTER_ORIGIN,
+            REGISTER_PATH,
+            Some(body.into_bytes()),
+            &q,
+            &env,
+        )
+        .await
         {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes);
@@ -648,10 +695,7 @@ mod probe {
             .map(|(k, v)| format!("{}={}", k, urlencode(v)))
             .collect::<Vec<_>>()
             .join("&");
-        let mut gz = flate2::write::GzEncoder::new(
-            Vec::new(),
-            flate2::Compression::default(),
-        );
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(form.as_bytes()).unwrap();
         let body = gz.finish().unwrap();
 
@@ -686,18 +730,26 @@ mod probe {
     #[tokio::test]
     #[ignore = "需要先跑 python 生成 register_body.hex"]
     async fn probe_register_ttencript_v5() {
-        let hex = std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body.hex"))
-        .expect("先跑 python 生成 register_body.hex");
+        let hex =
+            std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body.hex"))
+                .expect("先跑 python 生成 register_body.hex");
         let hex = hex.trim();
         let body: Vec<u8> = (0..hex.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
             .collect();
-        println!("[register-v5] body {} 字节, magic {:?}", body.len(), &body[..6]);
+        println!(
+            "[register-v5] body {} 字节, magic {:?}",
+            body.len(),
+            &body[..6]
+        );
 
         // meta 里有与 body 配套的 cdid/openudid/时间戳（query 必须与 body 一致）
         let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body_meta.json")).unwrap(),
+            &std::fs::read_to_string(
+                crate::domain::api::capture_dir().join("register_body_meta.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let cdid = meta["cdid"].as_str().unwrap();
@@ -722,20 +774,27 @@ mod probe {
     #[tokio::test]
     #[ignore = "需要先跑 python 生成 register_body2.hex"]
     async fn probe_register_applog_json() {
-        let hex = std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body2.hex"))
-        .expect("先跑 python 生成 register_body2.hex");
+        let hex =
+            std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body2.hex"))
+                .expect("先跑 python 生成 register_body2.hex");
         let body: Vec<u8> = (0..hex.trim().len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&hex.trim()[i..i + 2], 16).unwrap())
             .collect();
 
         let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body2_meta.json"))
-                .unwrap(),
+            &std::fs::read_to_string(
+                crate::domain::api::capture_dir().join("register_body2_meta.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let now_ms = meta["_rticket"].as_str().unwrap().parse::<u64>().unwrap();
-        let q = register_query(meta["cdid"].as_str().unwrap(), meta["openudid"].as_str().unwrap(), now_ms);
+        let q = register_query(
+            meta["cdid"].as_str().unwrap(),
+            meta["openudid"].as_str().unwrap(),
+            now_ms,
+        );
 
         // 注册签名档案：device_id/iid 必须为空（服务端要发新的），
         // cdid/openudid 与 query/body 保持同一指纹
@@ -810,7 +869,10 @@ mod probe {
                 meta["_rticket"].as_str().unwrap().parse().unwrap(),
             );
             match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env0).await {
-                Ok(b) => println!("[pm-P0重放] {}", &String::from_utf8_lossy(&b)[..160.min(b.len())]),
+                Ok(b) => println!(
+                    "[pm-P0重放] {}",
+                    &String::from_utf8_lossy(&b)[..160.min(b.len())]
+                ),
                 Err(e) => println!("[pm-P0重放] ERR {e}"),
             }
         } else {
@@ -821,7 +883,10 @@ mod probe {
         // 变体发送器：全新指纹 + 指定签名档案
         async fn send_fresh(tag: &str, env: &ApiEnv) {
             match register_device(env).await {
-                Ok(r) => println!("[pm-{tag}] device_id={} new_user={}", r.device_id, r.new_user),
+                Ok(r) => println!(
+                    "[pm-{tag}] device_id={} new_user={}",
+                    r.device_id, r.new_user
+                ),
                 Err(e) => println!("[pm-{tag}] ERR {e}"),
             }
         }

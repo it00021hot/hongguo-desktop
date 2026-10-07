@@ -118,7 +118,10 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
                 .get("current_play_position")
                 .and_then(Value::as_i64)
                 .unwrap_or_default(),
-            duration_ms: raw.get("duration").and_then(Value::as_i64).unwrap_or_default(),
+            duration_ms: raw
+                .get("duration")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
             episode_cnt: raw
                 .get("episode_cnt")
                 .and_then(Value::as_i64)
@@ -135,10 +138,7 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
             .get("has_more")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        next_offset: data
-            .get("next_offset")
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        next_offset: data.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
         total: data.get("total").and_then(Value::as_i64).unwrap_or(0),
     })
 }
@@ -235,17 +235,28 @@ pub async fn report_watch_progress(
 
     let update_raw = serde_json::to_vec(&update_body)
         .map_err(|e| AppError::Media(format!("构造历史上报失败: {e}")))?;
-    let bytes = api_call_reading(LQ_API_ORIGIN, READ_HISTORY_UPDATE_PATH, Some(update_raw), &[], env)
-        .await?;
+    let bytes = api_call_reading(
+        LQ_API_ORIGIN,
+        READ_HISTORY_UPDATE_PATH,
+        Some(update_raw),
+        &[],
+        env,
+    )
+    .await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析历史上报响应失败: {e}")))?;
     super::discover::check_code(&v)?;
 
     let upload_raw = serde_json::to_vec(&upload_body)
         .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
-    let bytes =
-        api_call_reading(LQ_API_ORIGIN, READ_PROGRESS_UPLOAD_PATH, Some(upload_raw), &[], env)
-            .await?;
+    let bytes = api_call_reading(
+        LQ_API_ORIGIN,
+        READ_PROGRESS_UPLOAD_PATH,
+        Some(upload_raw),
+        &[],
+        env,
+    )
+    .await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
     super::discover::check_code(&v)?;
@@ -272,7 +283,9 @@ pub(crate) mod probe {
     async fn probe_watch_history() {
         let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
         let account_cookie = std::env::var("PROBE_COOKIE").unwrap_or_default();
-        let hg_cookie = std::env::var("PROBE_COOKIE_HG").ok().filter(|c| !c.is_empty());
+        let hg_cookie = std::env::var("PROBE_COOKIE_HG")
+            .ok()
+            .filter(|c| !c.is_empty());
         let hg_token = std::env::var("PROBE_TOKEN").ok().filter(|t| !t.is_empty());
 
         let device: crate::signer::device::DeviceProfile =

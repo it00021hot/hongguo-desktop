@@ -57,15 +57,8 @@ export function CommentPanel({ vid, onClose }: Props) {
   }, [onClose]);
   const { data: account } = useAccount();
   const loggedIn = !!account;
-  const {
-    data,
-    isPending,
-    error,
-    refetch,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useComments(vid);
+  const { data, isPending, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useComments(vid);
   // 翻页数据拍平；total 取第一页的 need_count 回传（互动栏同源）
   const comments = data?.pages.flatMap((p) => p.items);
   const total = data?.pages[0]?.total || comments?.length || 0;
@@ -154,7 +147,7 @@ export function CommentPanel({ vid, onClose }: Props) {
   return (
     <div
       data-wheel-block
-      className="absolute bottom-14 right-0 z-40 flex h-[68%] w-[380px] max-w-[85%] flex-col rounded-tl-xl border-l border-t border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm"
+      className="absolute right-0 bottom-14 z-40 flex h-[68%] w-[380px] max-w-[85%] flex-col rounded-tl-xl border-t border-l border-white/10 bg-neutral-950/95 text-neutral-100 shadow-2xl backdrop-blur-sm"
     >
       {/* 头部 */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
@@ -173,156 +166,165 @@ export function CommentPanel({ vid, onClose }: Props) {
       </div>
 
       {/* 列表 */}
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-4 py-3">
+      <div className="min-h-0 flex-1 scrollbar-thin overflow-y-auto px-4 py-3">
         {/* vid 未就绪（档案还没解析完）：查询是禁用态，别挂一个永转的圈 */}
         {!vid.includes(':') ? (
           <p className="text-muted-foreground py-10 text-center text-xs">
             {t('player.comments.preparing')}
           </p>
         ) : (
-        <>
-        {isPending && (
-          <div className="grid place-items-center py-10 text-neutral-400">
-            <Loader2 className="size-5 animate-spin" />
-          </div>
-        )}
-        {error && (
-          <div className="grid place-items-center gap-2 py-10 text-center text-xs text-neutral-400">
-            <p>{t('player.comments.loadFailed')}</p>
-            <Button size="sm" variant="outline" onClick={() => void refetch()}>
-              {t('feed.retry')}
-            </Button>
-          </div>
-        )}
-        {comments?.length === 0 && (
-          <p className="text-muted-foreground py-10 text-center text-xs">
-            {t('player.comments.empty')}
-          </p>
-        )}
-        <ul className="flex flex-col gap-4">
-          {(comments ?? []).map((c) => (
-            <li key={c.commentId} className="flex gap-2.5">
-              {c.avatar ? (
-                <img src={c.avatar} alt="" loading="lazy" className="size-8 shrink-0 rounded-full" />
-              ) : (
-                <div className="grid size-8 shrink-0 place-items-center rounded-full bg-neutral-700 text-xs">
-                  {(c.userName || '友').slice(0, 1)}
-                </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-xs text-neutral-400">{c.userName || t('player.comments.anon')}</p>
-                <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-snug">
-                  {c.text}
-                </p>
-                <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
-                  <span>{relativeTime(c.createTime)}</span>
-                  {/* 回复入口：服务端暂无回复列表接口，这里只做「回复他」+
+          <>
+            {isPending && (
+              <div className="grid place-items-center py-10 text-neutral-400">
+                <Loader2 className="size-5 animate-spin" />
+              </div>
+            )}
+            {error && (
+              <div className="grid place-items-center gap-2 py-10 text-center text-xs text-neutral-400">
+                <p>{t('player.comments.loadFailed')}</p>
+                <Button size="sm" variant="outline" onClick={() => void refetch()}>
+                  {t('feed.retry')}
+                </Button>
+              </div>
+            )}
+            {comments?.length === 0 && (
+              <p className="text-muted-foreground py-10 text-center text-xs">
+                {t('player.comments.empty')}
+              </p>
+            )}
+            <ul className="flex flex-col gap-4">
+              {(comments ?? []).map((c) => (
+                <li key={c.commentId} className="flex gap-2.5">
+                  {c.avatar ? (
+                    <img
+                      src={c.avatar}
+                      alt=""
+                      loading="lazy"
+                      className="size-8 shrink-0 rounded-full"
+                    />
+                  ) : (
+                    <div className="grid size-8 shrink-0 place-items-center rounded-full bg-neutral-700 text-xs">
+                      {(c.userName || '友').slice(0, 1)}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-neutral-400">
+                      {c.userName || t('player.comments.anon')}
+                    </p>
+                    <p className="mt-0.5 text-sm leading-snug break-words whitespace-pre-wrap">
+                      {c.text}
+                    </p>
+                    <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
+                      <span>{relativeTime(c.createTime)}</span>
+                      {/* 回复入口：服务端暂无回复列表接口，这里只做「回复他」+
                       自己回复的本地展示；别人的回复数量只读 */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
+                          setReplyToReply(null);
+                          setReplyText('');
+                        }}
+                        className="cursor-pointer hover:text-neutral-300"
+                      >
+                        {t('player.comments.reply')}
+                      </button>
+                      {c.replyCount > 0 && (
+                        <span title={t('player.comments.repliesHiddenTip')}>
+                          {tf('player.comments.replies', { n: c.replyCount })}
+                        </span>
+                      )}
+                    </div>
+                    {/* 自己发的回复（本地追加） */}
+                    {(localReplies[c.commentId]?.length ?? 0) > 0 && (
+                      <div className="mt-1.5 flex flex-col gap-1.5 border-l-2 border-neutral-800 pl-2.5">
+                        {localReplies[c.commentId]!.map((r, i) => (
+                          <div key={i} className="text-xs leading-snug">
+                            <span className="mr-1 inline-flex items-center text-neutral-500">
+                              <CornerDownRight className="mr-0.5 inline size-3" />
+                              {t('player.comments.me')}
+                            </span>
+                            {r.replyTo && (
+                              <span className="mr-1 text-neutral-500">
+                                {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
+                              </span>
+                            )}
+                            <span className="break-words whitespace-pre-wrap">{r.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* 回复输入框 */}
+                    {replyTarget === c.commentId && (
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <Input
+                          autoFocus
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') submitReply(c);
+                            if (e.key === 'Escape') setReplyTarget(null);
+                          }}
+                          placeholder={
+                            replyToReply
+                              ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
+                              : t('player.comments.replyToComment')
+                          }
+                          className="h-8 flex-1 border-none bg-neutral-800/80 text-xs text-white placeholder:text-neutral-500 focus-visible:ring-0"
+                          maxLength={200}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8 shrink-0 bg-red-500 px-3 text-xs text-white hover:bg-red-500/90"
+                          disabled={!replyText.trim() || sendReply.isPending}
+                          onClick={() => submitReply(c)}
+                        >
+                          {t('player.interact.send')}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
-                      setReplyToReply(null);
-                      setReplyText('');
-                    }}
-                    className="cursor-pointer hover:text-neutral-300"
+                    onClick={() => onDigg(c)}
+                    className={cn(
+                      'flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start pt-1 text-neutral-400 hover:text-white',
+                      (liked.has(c.commentId) || c.userDigg) && 'text-red-400',
+                    )}
+                    title={t('player.interact.like')}
                   >
-                    {t('player.comments.reply')}
-                  </button>
-                  {c.replyCount > 0 && (
-                    <span title={t('player.comments.repliesHiddenTip')}>
-                      {tf('player.comments.replies', { n: c.replyCount })}
-                    </span>
-                  )}
-                </div>
-                {/* 自己发的回复（本地追加） */}
-                {(localReplies[c.commentId]?.length ?? 0) > 0 && (
-                  <div className="mt-1.5 flex flex-col gap-1.5 border-l-2 border-neutral-800 pl-2.5">
-                    {localReplies[c.commentId]!.map((r, i) => (
-                      <div key={i} className="text-xs leading-snug">
-                        <span className="mr-1 inline-flex items-center text-neutral-500">
-                          <CornerDownRight className="mr-0.5 inline size-3" />
-                          {t('player.comments.me')}
-                        </span>
-                        {r.replyTo && (
-                          <span className="mr-1 text-neutral-500">
-                            {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
-                          </span>
-                        )}
-                        <span className="whitespace-pre-wrap break-words">{r.text}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* 回复输入框 */}
-                {replyTarget === c.commentId && (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <Input
-                      autoFocus
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') submitReply(c);
-                        if (e.key === 'Escape') setReplyTarget(null);
-                      }}
-                      placeholder={
-                        replyToReply
-                          ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
-                          : t('player.comments.replyToComment')
-                      }
-                      className="h-8 flex-1 border-none bg-neutral-800/80 text-xs text-white placeholder:text-neutral-500 focus-visible:ring-0"
-                      maxLength={200}
+                    <Heart
+                      className={cn(
+                        'size-4',
+                        (liked.has(c.commentId) || c.userDigg) && 'fill-red-400 text-red-400',
+                      )}
                     />
-                    <Button
-                      size="sm"
-                      className="h-8 shrink-0 bg-red-500 px-3 text-xs text-white hover:bg-red-500/90"
-                      disabled={!replyText.trim() || sendReply.isPending}
-                      onClick={() => submitReply(c)}
-                    >
-                      {t('player.interact.send')}
-                    </Button>
-                  </div>
-                )}
+                    {c.diggCount > 0 && (
+                      <span className="text-[10px] tabular-nums">{c.diggCount}</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {/* 加载更多（翻页）：第一页秒开，剩余的按需续拉 */}
+            {hasNextPage && (
+              <div className="grid place-items-center py-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isFetchingNextPage}
+                  onClick={() => void fetchNextPage()}
+                >
+                  {isFetchingNextPage ? (
+                    <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
+                  ) : null}
+                  {tf('player.comments.loadMore', {
+                    n: Math.max(total - (comments?.length ?? 0), 0),
+                  })}
+                </Button>
               </div>
-              <button
-                type="button"
-                onClick={() => onDigg(c)}
-                className={cn(
-                  'flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start pt-1 text-neutral-400 hover:text-white',
-                  (liked.has(c.commentId) || c.userDigg) && 'text-red-400',
-                )}
-                title={t('player.interact.like')}
-              >
-                <Heart
-                  className={cn(
-                    'size-4',
-                    (liked.has(c.commentId) || c.userDigg) && 'fill-red-400 text-red-400',
-                  )}
-                />
-                {c.diggCount > 0 && <span className="text-[10px] tabular-nums">{c.diggCount}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {/* 加载更多（翻页）：第一页秒开，剩余的按需续拉 */}
-        {hasNextPage && (
-          <div className="grid place-items-center py-3">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isFetchingNextPage}
-              onClick={() => void fetchNextPage()}
-            >
-              {isFetchingNextPage ? (
-                <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
-              ) : null}
-              {tf('player.comments.loadMore', {
-                n: Math.max(total - (comments?.length ?? 0), 0),
-              })}
-            </Button>
-          </div>
-        )}
-        </>
+            )}
+          </>
         )}
       </div>
 
