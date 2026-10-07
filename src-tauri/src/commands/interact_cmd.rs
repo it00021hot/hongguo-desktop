@@ -137,17 +137,13 @@ pub async fn interaction_state(state: State<'_, AppState>) -> AppResult<Interact
 mod tests {
     #[test]
     fn interact_commands_are_async() {
-        for (name, src) in [
-            ("danmaku_send", include_str!("interact_cmd.rs")),
-        ] {
-            let _ = name;
-            assert!(
-                src.contains("pub async fn danmaku_send(")
-                    && src.contains("pub async fn video_digg(")
-                    && src.contains("pub async fn series_collect(")
-                    && src.contains("pub async fn interaction_state("),
-                "{name} 模块应包含全部互动 command 的 async 签名"
-            );
-        }
+        let src = include_str!("interact_cmd.rs");
+        assert!(
+            src.contains("pub async fn danmaku_send(")
+                && src.contains("pub async fn video_digg(")
+                && src.contains("pub async fn series_collect(")
+                && src.contains("pub async fn interaction_state("),
+            "互动模块应包含全部互动 command 的 async 签名"
+        );
     }
 }

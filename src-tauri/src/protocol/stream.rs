@@ -994,7 +994,7 @@ mod tests {
         assert!(present(&c, "o4", 1080), "最近的在保留窗内");
         assert!(present(&c, "o3", 1080), "最近的在保留窗内");
         assert!(present(&c, "o2", 1080), "最近的在保留窗内");
-        assert!(present(&c, "o1", 1080) == false, "最旧的被逐出");
+        assert!(!present(&c, "o1", 1080), "最旧的被逐出");
 
         // 换当前集后，旧当前集降级为「最近用过」，在窗口内不会被新目标清掉
         c.set_current("o4");
@@ -1008,9 +1008,9 @@ mod tests {
     #[test]
     fn retain_window_evicts_oldest_beyond_keep_recent() {
         let c = StreamCache::default();
-        c.store("big-cur", 1080, &vec![0u8; 10]);
+        c.store("big-cur", 1080, &[0u8; 10]);
         for i in 0..6 {
-            c.store(&format!("f{i}"), 1080, &vec![0u8; 10]);
+            c.store(&format!("f{i}"), 1080, &[0u8; 10]);
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
         c.retain_playing_set("big-cur");
@@ -1028,9 +1028,9 @@ mod tests {
     fn retain_budget_evicts_oldest_first_until_under_budget() {
         // 预算优先于条数：总字节超预算时按最旧优先逐，当前集豁免。
         let c = StreamCache::default();
-        c.store("cur", 1080, &vec![0u8; 30]);
+        c.store("cur", 1080, &[0u8; 30]);
         for i in 0..4 {
-            c.store(&format!("b{i}"), 1080, &vec![0u8; 10]);
+            c.store(&format!("b{i}"), 1080, &[0u8; 10]);
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
         // 总量 70 > 预算 50：逐最旧的 b0、b1（各 10B）后回到 50
