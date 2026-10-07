@@ -35,11 +35,7 @@ impl Drop for RunningMerge {
     fn drop(&mut self) {
         // 顺手把取消标志置上：正常路径下线程已经跑完了，但 panic 或提前
         // return 时这里就是最后一道「别再往下写」保险。
-        if let Some(flag) = running()
-            .lock()
-            .expect("运行中任务表中毒")
-            .remove(&self.key)
-        {
+        if let Some(flag) = lock_running().remove(&self.key) {
             flag.store(true, Ordering::Relaxed);
         }
     }
@@ -53,9 +49,23 @@ fn running() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// 拿表锁，中毒则恢复。
+///
+/// 这把锁的用法是「持锁内只做整键插入/删除」——不存在改到一半的不变量，
+/// 中毒只是说明某条合并线程 panic 过（其 Drop 已把登记项清掉），表本身
+/// 仍是完好的。调用方里有跑在主线程上的同步 command（删除合并任务），
+/// 这里若跟着 panic 就会 abort 全进程：**一条后台线程的崩溃不允许升级成
+/// 整个应用的闪退**，所以恢复使用并记一笔日志。
+fn lock_running() -> std::sync::MutexGuard<'static, HashMap<String, Arc<AtomicBool>>> {
+    running().lock().unwrap_or_else(|poisoned| {
+        log::warn!("[Merge] 运行中任务表锁曾中毒（某条合并线程 panic 过），已恢复");
+        poisoned.into_inner()
+    })
+}
+
 /// 尝试占用一个输出名。已被占用时返回 `None`。
 pub fn try_acquire(output_name: &str) -> Option<RunningMerge> {
-    let mut guard = running().lock().expect("运行中任务表中毒");
+    let mut guard = lock_running();
     if guard.contains_key(output_name) {
         return None;
     }
@@ -73,11 +83,7 @@ pub fn try_acquire(output_name: &str) -> Option<RunningMerge> {
 /// 返回是否确实取消了一条。记录已删但线程已自己结束时就是 `false`，
 /// 这不算错误——调用方只是在清理，不必区分。
 pub fn cancel(output_name: &str) -> bool {
-    let flag = running()
-        .lock()
-        .expect("运行中任务表中毒")
-        .get(output_name)
-        .cloned();
+    let flag = lock_running().get(output_name).cloned();
     match flag {
         Some(flag) => {
             flag.store(true, Ordering::Relaxed);

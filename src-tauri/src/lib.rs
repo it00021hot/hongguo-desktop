@@ -10,6 +10,7 @@
 mod app_state;
 mod bootstrap;
 mod commands;
+mod diagnostics;
 mod domain;
 mod error;
 mod media;
@@ -24,6 +25,9 @@ pub fn run() {
     // 不装 logger 的话全树 `log::` 调用都是空操作，抓取/下载失败会静默消失。
     // 调试时用 RUST_LOG=debug 打开详细日志。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // panic 取证要抢在一切事故之前装好：主线程 FFI 回调里的 panic 会直接
+    // abort，stderr 又常常没接着终端，crash.log 是唯一能留下的现场。
+    diagnostics::install_panic_hook();
 
     // ⚠️ 启动顺序：**数据库在 .setup() 里打开，必须排在单实例插件之后**。
     // 插件在 Builder::build 阶段初始化并劝退第二个实例；若把开库放在这

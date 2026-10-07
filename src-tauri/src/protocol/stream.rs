@@ -642,7 +642,7 @@ impl StreamCache {
                 )
             })
             .collect();
-        others.sort_by(|a, b| b.1.cmp(&a.1));
+        others.sort_by_key(|(_, last_used, _)| std::cmp::Reverse(*last_used));
         for (k, _, _) in others.iter().skip(keep_recent) {
             entries.remove(k);
         }
@@ -653,7 +653,7 @@ impl StreamCache {
         if total <= budget {
             return;
         }
-        others.sort_by(|a, b| a.1.cmp(&b.1));
+        others.sort_by_key(|(_, last_used, _)| *last_used);
         for (k, _, weight) in others {
             if total <= budget {
                 break;

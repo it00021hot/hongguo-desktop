@@ -125,8 +125,10 @@ pub fn compat_merge(
                 }
                 // 认领第一格还没被占的。认领与占位在**同一次持锁**里完成，
                 // 否则两个线程会同时看到同一格是空的，转同一集两遍。
+                // 锁中毒只说明有线程 panic 过：持锁内只有整格读写，其余
+                // 格位仍然可信，恢复使用（空格在收集阶段自会报错）。
                 let next = {
-                    let mut g = slots.lock().expect("结果锁中毒");
+                    let mut g = slots.lock().unwrap_or_else(|p| p.into_inner());
                     match g.iter().position(|s| s.is_none()) {
                         Some(i) => {
                             g[i] = Some(Ok(PathBuf::new())); // 占位
@@ -175,7 +177,7 @@ pub fn compat_merge(
                         r.map(|t| PathBuf::from(t.output_path))
                     }
                 };
-                slots.lock().expect("结果锁中毒")[next] = Some(result);
+                slots.lock().unwrap_or_else(|p| p.into_inner())[next] = Some(result);
                 active.fetch_sub(1, Ordering::Relaxed);
                 let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
                 on_progress(finished, total, task);
@@ -185,7 +187,7 @@ pub fn compat_merge(
 
     // 收集：按集号顺序取回，任一集失败就整体失败。
     // 取消要在拼接**之前**拦下来，否则会拼出一份不完整的「全集」。
-    let slots = slots.into_inner().expect("结果锁中毒");
+    let slots = slots.into_inner().unwrap_or_else(|p| p.into_inner());
     let mut transcoded: Vec<PathBuf> = Vec::with_capacity(total);
     for slot in slots {
         match slot {

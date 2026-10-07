@@ -70,8 +70,10 @@ fn convert(remote: &str) -> Result<Vec<u8>, String> {
     let ffmpeg = crate::media::ffmpeg::probe::ffmpeg_path()
         .ok_or_else(|| "未检测到 ffmpeg，无法转码封面".to_string())?;
     let cache = cache_path(remote);
-    std::fs::create_dir_all(cache.parent().expect("缓存目录必有父级"))
-        .map_err(|e| format!("建封面缓存目录失败: {e}"))?;
+    let parent = cache
+        .parent()
+        .ok_or_else(|| "封面缓存路径缺少父目录".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("建封面缓存目录失败: {e}"))?;
     let tmp = cache.with_extension("jpg.tmp");
 
     let out = std::process::Command::new(ffmpeg)
