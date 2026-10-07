@@ -821,16 +821,27 @@ impl Decoder {
             )?;
             let cur = hr(reader.GetCurrentMediaType(stream), "读解码输出类型")?;
             let (w, h) = frame_size_of(&cur)?;
-            if (w, h) != (width, height) {
+            // 解码面尺寸 ≠ 轨道声明尺寸是常态而非异常：编码器按对齐取整
+            // （实测红果源声明 1922×1080，解码面 1928×1080）。原来严格相等
+            // 校验直接拒了这类源，平台层全灭、静默落到十几分钟一集的软解。
+            // 真正要拒的只有「解出来的画面比声明还小」（内容真缺了）或
+            // 离谱地大（参数装配错了）；对齐差交给缩放/合并的统一分辨率去收。
+            if w < width || h < height || w > width + 64 || h > height + 64 {
                 return Err(AppError::Media(format!(
-                    "解码分辨率 {w}x{h} 与轨道声明 {width}x{height} 不符"
+                    "解码分辨率 {w}x{h} 与轨道声明 {width}x{height} 相差过大"
                 )));
             }
-            let stride = type_stride(&cur, width);
+            let (w, h) = if (w, h) != (width, height) {
+                log::info!("[Platform/mf] 解码面 {w}x{h}，轨道声明 {width}x{height}，按解码面走");
+                (w, h)
+            } else {
+                (width, height)
+            };
+            let stride = type_stride(&cur, w);
             Ok(Decoder {
                 reader,
-                width,
-                height,
+                width: w,
+                height: h,
                 stride,
             })
         }
