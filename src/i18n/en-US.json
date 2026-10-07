@@ -527,6 +527,7 @@
     "back": "Back",
     "followCount": "{count} followers",
     "episodesCount": "{count} episodes",
+    "allEpisodesBadge": "All {count}",
     "continueEpisode": "Continue EP {index}",
     "playFirst": "Play from EP 1",
     "collect": "Collect",
@@ -546,6 +547,9 @@
     "relatedWorks": "Related series",
     "plays": " plays",
     "guessYouLike": "Guess you like",
-    "ratingCount": "{count} ratings"
+    "ratingCount": "{count} ratings",
+    "scoreUnit": "",
+    "heatValue": "Hot score {count}",
+    "playsCount": "{count} plays"
   }
 }

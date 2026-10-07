@@ -294,16 +294,19 @@ fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
 
 /// 剧级评论页 + 剧评分摘要。
 ///
-/// 2026-10-07 逆向 hgplayer（Reviews 绑定 → class Y）：评分/评分人数/
-/// 题材标签就在本接口响应的 `extra` 里——`book_info.score`（字符串形态
-/// "8.0"，空 = 暂无评分）、`score_cnt`、`book_info.tags`（逗号分隔串）。
-/// hgplayer 详情头部的「8.0分 1074人评分」即源于此。
+/// 评分/评分人数在本接口响应的 `extra` 里，字段是 **credibility_score /
+/// credibility_score_count**（2026-10-08 抓包实锤：《修仙：众人看我舔疯癫》
+/// `credibility_score=8.3`、`credibility_score_count=1247`，与 hgplayer
+/// 头部「8.3分 1247人评分」逐一吻合；同响应的 `book_info.score` 恒为空串，
+/// 此前读它导致头部评分永远不显示。score 是 JSON 数字形态，字符串也兜）。
+/// `book_info.tags`（逗号分隔串）是书维度的题材标签，与详情头部的
+/// secondary_infos 不是一套。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesReviewPage {
     #[serde(flatten)]
     pub page: CommentPage,
-    /// 剧评分（"8.0"；空串 = 暂无评分）
+    /// 剧评分（"8.3"；空串 = 暂无评分）
     #[serde(default)]
     pub score: String,
     /// 评分人数
@@ -328,13 +331,17 @@ pub async fn fetch_series_comments_page(
         .map_err(|e| AppError::Media(format!("解析剧评响应失败: {e}")))?;
     check_comment_code(&v)?;
     let page = parse_comment_page(&v)?;
+    // credibility_score 线上是**数字**形态（8.3），字符串/数字两种都兜
     let score = v
-        .pointer("/data/extra/book_info/score")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+        .pointer("/data/extra/credibility_score")
+        .map(|x| match x {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
     let score_cnt = v
-        .pointer("/data/extra/score_cnt")
+        .pointer("/data/extra/credibility_score_count")
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let tags = v

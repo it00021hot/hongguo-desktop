@@ -245,6 +245,8 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
                     .get("digged_count")
                     .and_then(Value::as_i64)
                     .unwrap_or(0),
+                // 时长（秒，整型；选集格「02:35」角标数据源）
+                duration: item.get("duration").and_then(Value::as_i64).unwrap_or(0),
             })
         })
         .collect();
@@ -293,6 +295,9 @@ pub struct SeriesMeta {
     pub followed_cnt: i64,
     /// 全剧播放量（series_play_cnt，150.8万次播放）
     pub play_cnt: i64,
+    /// 红果热度值（hot_score，3786万；2026-10-08 抓包实锤与 hgplayer
+    /// 头部「🔥红果热度值3786万」同源同值）
+    pub hot_score: i64,
     /// 备案号（record_info.record_number；响应里有 show 开关，前端恒显即可）
     pub record_number: String,
     /// 季徽（secondary_infos data_type=0 的 content，如「第1季」）
@@ -405,6 +410,15 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
                     .and_then(|s| s.parse().ok())
             })
             .unwrap_or(0),
+        hot_score: vd
+            .get("hot_score")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                vd.get("hot_score")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse().ok())
+            })
+            .unwrap_or(0),
         record_number: vd
             .pointer("/record_info/record_number")
             .and_then(Value::as_str)
@@ -454,8 +468,8 @@ mod tests {
                         ],
                         "abstract_tags": [],
                         "video_list": [
-                            { "vid": "v2", "vid_index": 2, "title": "第二集" },
-                            { "vid": "v1", "vid_index": 1, "title": "第一集" }
+                            { "vid": "v2", "vid_index": 2, "title": "第二集", "duration": 92 },
+                            { "vid": "v1", "vid_index": 1, "title": "第一集", "duration": 155 }
                         ]
                     }
                 }
@@ -472,6 +486,7 @@ mod tests {
         assert_eq!(list.episodes.len(), 2, "不能把 celebrities 当成分集");
         assert_eq!(list.episodes[0].vid, "v1", "应按 vid_index 升序");
         assert_eq!(list.episodes[0].title, "第一集");
+        assert_eq!(list.episodes[0].duration, 155, "时长（秒）随分集带出");
     }
 
     #[test]
@@ -521,6 +536,7 @@ mod tests {
                     "series_cover": "https://example/cover.heic",
                     "followed_cnt": "1069774",
                     "series_play_cnt": "5160926",
+                    "hot_score": 44270843,
                     "record_info": { "record_number": "（番茄）网微剧备字（2026）第847205号", "show": true },
                     "secondary_infos": [
                         { "content": "第1季", "data_type": 0, "highlight": true },
@@ -535,6 +551,7 @@ mod tests {
         assert_eq!(m.title, "序列：我一人即是黄昏议会");
         assert_eq!(m.followed_cnt, 1_069_774, "字符串形态计数要能解析");
         assert_eq!(m.play_cnt, 5_160_926);
+        assert_eq!(m.hot_score, 44_270_843, "热度值直取 hot_score");
         assert_eq!(m.season, "第1季");
         assert_eq!(m.tags, vec!["玄幻", "逆袭"], "data_type=3 才是题材标签");
         assert_eq!(m.record_number, "（番茄）网微剧备字（2026）第847205号");

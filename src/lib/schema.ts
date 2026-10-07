@@ -17,6 +17,8 @@ const episodeSchema = z.object({
   commentCount: z.number().default(0),
   /** 该集点赞数（detail 公开计数） */
   diggCount: z.number().default(0),
+  /** 该集时长（秒，选集格角标；旧档案缓存缺省 0 = 不显示） */
+  duration: z.number().default(0),
 });
 
 export type Episode = z.infer<typeof episodeSchema>;
@@ -476,6 +478,8 @@ export const seriesMetaSchema = z.object({
   followedCnt: z.number(),
   /** 全剧播放量（150.8万次播放） */
   playCnt: z.number(),
+  /** 红果热度值（hot_score，3786万；0 = 不显示。default 兜 Rust 未重编译的窗口期） */
+  hotScore: z.number().default(0),
   /** 备案号（（番茄）网微剧备字…，无则空） */
   recordNumber: z.string(),
   /** 季徽（「第1季」，secondary_infos data_type=0，无则空） */

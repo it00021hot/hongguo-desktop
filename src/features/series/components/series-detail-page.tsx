@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, Heart, Play, Star } from 'lucide-react';
+import { ArrowLeft, Bell, Flame, Heart, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SeriesCover } from '@/components/series-cover';
-import { formatPlayCount } from '@/lib/format';
+import { formatCountPrecise, formatDuration, formatPlayCount } from '@/lib/format';
 import {
   useAccount,
   useBookshelf,
@@ -194,50 +194,54 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
             <div className="min-w-0 flex-1">
               <h1 className="text-2xl font-bold">{series.title}</h1>
-              <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-2 text-sm">
+              {/* 统计行，排版对齐第三方：评分 评分人数 → 红果热度值 → 追剧 → 播放。
+                  评分来自剧评接口 extra（credibility_score），热度来自 video_detail
+                  （hot_score），两者缺失时该段不渲染不打断行 */}
+              <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 {reviewScore && (
                   <span className="flex items-baseline gap-1.5">
-                    <span className="text-lg leading-none font-bold text-amber-400">
+                    <span className="text-xl leading-none font-bold text-amber-400">
                       {Number(reviewScore).toFixed(1)}
-                      <span className="ml-0.5 text-xs font-semibold">分</span>
                     </span>
-                    {reviewScoreCnt > 0 && (
-                      <span>
-                        {tf('detail.ratingCount', { count: formatPlayCount(reviewScoreCnt) })}
-                      </span>
-                    )}
+                    <span>
+                      {t('detail.scoreUnit')}{' '}
+                      {tf('detail.ratingCount', { count: formatCountPrecise(reviewScoreCnt) })}
+                    </span>
                   </span>
                 )}
-                {series.episodeCount > 0 && (
-                  <span>
-                    {reviewScore && <span className="mr-2">·</span>}
-                    {tf('detail.episodesCount', { count: series.episodeCount })}
+                {meta && meta.hotScore > 0 && (
+                  <span className="flex items-center gap-1">
+                    <Flame className="size-4 text-red-500" aria-hidden />
+                    <span>
+                      {tf('detail.heatValue', { count: formatCountPrecise(meta.hotScore) })}
+                    </span>
                   </span>
                 )}
                 {meta && meta.followedCnt > 0 && (
                   <span>
-                    {series.episodeCount > 0 && <span className="mr-2">·</span>}
-                    {tf('detail.followCount', { count: meta.followedCnt })}
+                    {tf('detail.followCount', { count: formatCountPrecise(meta.followedCnt) })}
                   </span>
                 )}
                 {meta && meta.playCnt > 0 && (
                   <span>
-                    {(meta.followedCnt > 0 || series.episodeCount > 0) && (
-                      <span className="mr-2">·</span>
-                    )}
-                    {formatPlayCount(meta.playCnt)}
-                    {t('detail.plays')}
+                    {tf('detail.playsCount', { count: formatCountPrecise(meta.playCnt) })}
                   </span>
                 )}
               </div>
 
-              {/* 季徽（高亮）+ 题材标签（video_detail secondary_infos，
-                  官方详情页同款行）；档案自带的 tags 是解析兜底，meta 优先 */}
-              {(meta ? !!meta.season || meta.tags.length > 0 : series.tags.length > 0) ? (
+              {/* 季徽（高亮）+「全 N 集」+ 题材标签——行构成与第三方一致；
+                  题材来自 video_detail secondary_infos，档案自带 tags 是解析兜底 */}
+              {(meta ? !!meta.season || meta.tags.length > 0 : series.tags.length > 0) ||
+              series.episodes.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {meta?.season && (
                     <Badge variant="default" className="text-primary-foreground bg-red-500">
                       {meta.season}
+                    </Badge>
+                  )}
+                  {series.episodes.length > 0 && (
+                    <Badge variant="secondary">
+                      {tf('detail.allEpisodesBadge', { count: series.episodes.length })}
                     </Badge>
                   )}
                   {(meta?.tags ?? series.tags).map((tag) => (
@@ -247,10 +251,6 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                   ))}
                 </div>
               ) : null}
-
-              {meta?.recordNumber && (
-                <p className="text-muted-foreground/70 mt-3 text-xs">{meta.recordNumber}</p>
-              )}
 
               {intro && (
                 <div className="mt-4 flex items-start gap-3">
@@ -313,6 +313,11 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
             </div>
           </div>
 
+          {/* 备案号：第三方放在头部块之下、tab 之上（独立一行小字） */}
+          {meta?.recordNumber && (
+            <p className="text-muted-foreground/70 mt-4 text-xs">{meta.recordNumber}</p>
+          )}
+
           {/* 选集 / 剧评 / 相关推荐。
               推荐 tab 每次被打开都换一批（第三方同款）：feed 游标前进一页，
               第一次打开除外——第一批本来就是新的。 */}
@@ -340,6 +345,9 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+                  {/* 选集格对齐第三方：序号 + 第 N 集 + 右侧时长角标。
+                      接口的 title 是整句剧情简介（不是集名），照排会挤成一团，
+                      第三方同款做法是统一显示「第 N 集」 */}
                   {series.episodes.map((ep) => (
                     <button
                       key={ep.vidIndex}
@@ -354,8 +362,13 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                         {ep.vidIndex}
                       </span>
                       <span className="truncate text-sm">
-                        {ep.title || tf('player.epShort', { index: ep.vidIndex })}
+                        {tf('player.epShort', { index: ep.vidIndex })}
                       </span>
+                      {ep.duration > 0 && (
+                        <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
+                          {formatDuration(ep.duration)}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>

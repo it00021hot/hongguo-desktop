@@ -355,6 +355,23 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
 - 我们的落点：`detail.rs fetch_related_series` + `related_series` 命令 +
   详情页「相关作品·系列」卡片行（`series-detail-page.tsx RelatedWorks`）
 
+## 详情页头部数据面（2026-10-08 抓 hgplayer 1.1.3 详情页实锤）
+
+三个数据源拼出与 hgplayer 一致的头部（评分行/热度/徽标/选集时长）：
+
+- **评分 = 剧评接口（9.0 的 series 形态）`data.extra.credibility_score`
+  （JSON 数字 8.3）+ `credibility_score_count`（1247）**——与 hgplayer 头部
+  「8.3分 1247人评分」逐一吻合。⚠️ 同响应 `extra.book_info.score` **恒为
+  空串**（2026-10-07 曾误读它导致评分永远不显示）；`book_info.tags` 是书
+  维度标签，与详情头部徽标也不是一套
+- **红果热度值 = `video_detail`（第 6 节同端点）的 `hot_score`**（37860097
+  → 头部「红果热度值3786万」）；同响应 `video_list[].duration`（秒）是
+  选集格「02:35」角标
+- 头部徽标行构成：季徽（secondary_infos data_type=0，高亮）+「全 N 集」
+  （episode_cnt，前端合成）+ 题材（data_type=3）
+- 数字格式化口径（对齐 hgplayer）：万/亿一位小数、整数省小数点
+  （27.05万→27.1万、3786.01万→3786万；`formatCountPrecise`）
+
 ## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定；2026-10-06 抓 1.1.5 重锁）
 
 全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +

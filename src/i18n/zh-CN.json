@@ -527,6 +527,7 @@
     "back": "返回",
     "followCount": "{count}人追剧",
     "episodesCount": "共{count}集",
+    "allEpisodesBadge": "全{count}集",
     "continueEpisode": "继续看第 {index} 集",
     "playFirst": "从第 1 集开始",
     "collect": "收藏",
@@ -546,6 +547,9 @@
     "relatedWorks": "相关作品 · 系列",
     "plays": "播放",
     "guessYouLike": "猜你喜欢",
-    "ratingCount": "{count}人评分"
+    "ratingCount": "{count}人评分",
+    "scoreUnit": "分",
+    "heatValue": "红果热度值{count}",
+    "playsCount": "{count}次播放"
   }
 }

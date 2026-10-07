@@ -39,10 +39,11 @@ pub async fn get_series_episodes(
     series_id: String,
 ) -> AppResult<Series> {
     if let Some(hit) = state.store.series_by_id(&series_id)? {
+        // 缺计数或缺时长（分集时长 2026-10-08 才进档案）都算旧档案
         let stale = hit
             .episodes
             .first()
-            .map(|e| e.comment_count == 0 && e.digg_count == 0)
+            .map(|e| (e.comment_count == 0 && e.digg_count == 0) || e.duration == 0)
             .unwrap_or(false);
         if stale {
             let store = state.store.clone();
