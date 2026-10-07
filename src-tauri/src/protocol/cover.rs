@@ -3,8 +3,8 @@
 //! 红果系的条目封面全是 HEIC（fqnovelpic CDN 签名 URL；改扩展名/换
 //! tplv 模板一律 403，签名锁整个 path，2026-10-05 实测），WebView2 只在
 //! 装了 HEVC 扩展的机器上能直接渲染。这里把「下载 HEIC → ffmpeg 转
-//! JPEG」收进后端：前端 `<img>` 用 [`cover_url`] 即可，产物按 URL 哈希
-//! 落盘缓存，同一张封面只转一次。
+//! JPEG」收进后端：前端把原图 URL base64url 后拼 `{scheme}/c/{…}` 交给
+//! `<img>`，产物按 URL 哈希落盘缓存，同一张封面只转一次。
 //!
 //! 官方客户端（hgplayer）同样要过这一步——它抓包里的封面也是 HEIC，
 //! 能显示靠的是客户端自解，不是接口给了别的格式。
@@ -42,14 +42,6 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     std::fs::write(&tmp, &bytes).map_err(|e| format!("写封面缓存失败: {e}"))?;
     let _ = std::fs::rename(&tmp, &cache);
     Ok((200, headers(bytes.len()), bytes))
-}
-
-/// 封面代理 URL。`remote` 是 HEIC 原图的 https 地址。
-///
-/// 形态按平台走 [`super::scheme_base`]，原因见其文档。
-pub fn cover_url(remote: &str) -> String {
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(remote);
-    format!("{}/c/{encoded}", super::scheme_base(super::COVER_SCHEME))
 }
 
 /// 缓存文件路径：`cover-cache/<sha256(url)前16字节hex>.jpg`。

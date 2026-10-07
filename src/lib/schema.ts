@@ -395,6 +395,12 @@ export const feedItemSchema = z.object({
   commentCount: z.number(),
   score: z.number(),
   tags: z.array(z.string()),
+  /** 季角标（sub_title_list data_type=0，「第1季」；无则空串） */
+  seasonTag: z.string(),
+  /** 热度文本（sub_title_list data_type=27，「1705万」；无则空串） */
+  heatText: z.string(),
+  /** 官方运营角标（tag_info.text：「新剧/爆剧/红果首发」等；无则空串） */
+  badge: z.string(),
   /** 内容类型：1=真人剧，1004=漫剧（0/未知=不过滤） */
   contentType: z.number(),
 });
@@ -635,3 +641,16 @@ export const searchPageSchema = z.object({
   searchId: z.string(),
 });
 export type SearchPage = z.infer<typeof searchPageSchema>;
+
+/** 搜索联想条目（Rust `search::SuggestItem`，suggest/v 的 query_result_v2）。 */
+export const suggestItemSchema = z.object({
+  /** 联想词（= 剧名） */
+  word: z.string(),
+  /** 对应剧集 id；纯词联想为空串（前端回落为发起搜索） */
+  seriesId: z.string(),
+  vid: z.string(),
+  cover: z.string(),
+  /** 摘要行（「第1季·玄幻·4105万热度」） */
+  abstract: z.string(),
+});
+export type SuggestItem = z.infer<typeof suggestItemSchema>;

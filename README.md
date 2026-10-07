@@ -1,4 +1,4 @@
-# 🎬 红果短剧下载器（Tauri 桌面版）
+# 🎬 红果桌面版
 
 <div align="center">
 
@@ -150,7 +150,7 @@ make typecheck        # tsc --noEmit
 ## 📂 项目结构
 
 ```text
-hongguo-downloader-tauri/
+hongguo-desktop/
 ├── src-tauri/src/
 │   ├── signer/          # 字节系签名（1:1 移植，常量不可改）
 │   ├── domain/          # 协议、加密、MP4 解析

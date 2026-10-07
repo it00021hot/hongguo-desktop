@@ -1,4 +1,4 @@
-# 红果短剧下载器 —— 构建任务
+# 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
 .PHONY: help dev build test test-rust lint fmt typecheck clean release

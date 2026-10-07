@@ -49,6 +49,7 @@ const SOFTWARE_ENCODERS: &[&str] = &["libx264", "h264_mf"];
 /// winget 的包目录形如
 /// `Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-9.0.2-full_build/bin/ffmpeg.exe`，
 /// 中间隔了两层；给 6 足够宽松，又不至于在异常深的目录上空转。
+#[cfg(target_os = "windows")]
 const WINGET_SCAN_DEPTH: usize = 6;
 
 fn detect() -> Option<PathBuf> {

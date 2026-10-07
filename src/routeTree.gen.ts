@@ -16,6 +16,7 @@ import { Route as DetailRouteImport } from './routes/detail'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as LikedRouteImport } from './routes/liked'
 import { Route as MergeRouteImport } from './routes/merge'
+import { Route as MiniRouteImport } from './routes/mini'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as PlayerRouteImport } from './routes/player'
 import { Route as RankRouteImport } from './routes/rank'
@@ -57,6 +58,11 @@ const LikedRoute = LikedRouteImport.update({
 const MergeRoute = MergeRouteImport.update({
   id: '/merge',
   path: '/merge',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MiniRoute = MiniRouteImport.update({
+  id: '/mini',
+  path: '/mini',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NewRoute = NewRouteImport.update({
@@ -103,6 +109,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof HistoryRoute
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
+  '/mini': typeof MiniRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
@@ -119,6 +126,7 @@ export interface FileRoutesByTo {
   '/history': typeof HistoryRoute
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
+  '/mini': typeof MiniRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
@@ -136,6 +144,7 @@ export interface FileRoutesById {
   '/history': typeof HistoryRoute
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
+  '/mini': typeof MiniRoute
   '/new': typeof NewRoute
   '/player': typeof PlayerRoute
   '/rank': typeof RankRoute
@@ -154,6 +163,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/liked'
     | '/merge'
+    | '/mini'
     | '/new'
     | '/player'
     | '/rank'
@@ -170,6 +180,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/liked'
     | '/merge'
+    | '/mini'
     | '/new'
     | '/player'
     | '/rank'
@@ -186,6 +197,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/liked'
     | '/merge'
+    | '/mini'
     | '/new'
     | '/player'
     | '/rank'
@@ -203,6 +215,7 @@ export interface RootRouteChildren {
   HistoryRoute: typeof HistoryRoute
   LikedRoute: typeof LikedRoute
   MergeRoute: typeof MergeRoute
+  MiniRoute: typeof MiniRoute
   NewRoute: typeof NewRoute
   PlayerRoute: typeof PlayerRoute
   RankRoute: typeof RankRoute
@@ -261,6 +274,13 @@ declare module '@tanstack/react-router' {
       path: '/merge'
       fullPath: '/merge'
       preLoaderRoute: typeof MergeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mini': {
+      id: '/mini'
+      path: '/mini'
+      fullPath: '/mini'
+      preLoaderRoute: typeof MiniRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/new': {
@@ -323,6 +343,7 @@ const rootRouteChildren: RootRouteChildren = {
   HistoryRoute: HistoryRoute,
   LikedRoute: LikedRoute,
   MergeRoute: MergeRoute,
+  MiniRoute: MiniRoute,
   NewRoute: NewRoute,
   PlayerRoute: PlayerRoute,
   RankRoute: RankRoute,

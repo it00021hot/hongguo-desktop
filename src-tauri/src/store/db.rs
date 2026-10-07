@@ -5,7 +5,7 @@
 //! 本地内嵌形态（`Builder::new_local`）。刻意关闭 default features：
 //! mimalloc 是全局分配器不能让库替我们换；fts 暂时用不上。
 //!
-//! 并发模型：`Connection` 内部走连接级串行（SQLite 家族语义），
+//! 并发模型：`Connection` 内部走连接级串行（Turso 引擎语义），
 //! 多个 `connect()` 共享同一数据库文件由库自身做页级加锁，
 //! 因此 AppState 里不再需要 `RwLock<DataStore>`，仓储层拿 `Db` 的克隆即可。
 //!
@@ -108,7 +108,16 @@ impl Db {
         let db: Database = Builder::new_local(&path)
             .build()
             .await
-            .map_err(|e| AppError::StoreCorrupt(format!("打开数据库失败: {e}")))?;
+            .map_err(|e| {
+                // 锁冲突单列：另一个实例还着库 ≠ 数据损坏，误报「文件损坏」
+                // 会引人去删库
+                let text = e.to_string();
+                if text.contains("Locking error") || text.contains("locked by another") {
+                    AppError::StoreLocked(format!("打开数据库失败: {text}"))
+                } else {
+                    AppError::StoreCorrupt(format!("打开数据库失败: {text}"))
+                }
+            })?;
         let conn = db
             .connect()
             .map_err(|e| AppError::StoreCorrupt(format!("建立连接失败: {e}")))?;
@@ -151,10 +160,10 @@ impl Db {
     }
 
     /// 单个迁移步：DDL + 版本号写入同一事务。
-    /// SQLite 家族的 DDL 是事务性的，失败即整体回滚。
+    /// Turso 的 DDL 是事务性的，失败即整体回滚。
     ///
     /// 两个实现细节：
-    /// - `execute` 只跑**第一条**语句（SQLite 同款行为），多语句 DDL 必须走
+    /// - `execute` 只跑**第一条**语句（Turso 的既定语义），多语句 DDL 必须走
     ///   `execute_batch`（顺序执行、遇错即停，但不回滚——回滚由外层事务负责）。
     /// - PRAGMA 不接受绑定参数，版本号只能内联拼接；
     ///   `target` 是我们自己在 [`MIGRATIONS`] 索引上算出的 i64，不存在注入面。

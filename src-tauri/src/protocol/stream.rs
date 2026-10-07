@@ -52,12 +52,96 @@ pub struct ProgressiveStream {
     pub plan: Option<Arc<StreamingPlan>>,
     /// 明文总长（`plan` 为 `None` 时等于密文总长）
     pub plain_len: u64,
-    /// serve 遇到未覆盖区间时置位，取流线程据此跳转填充（明文偏移）
-    pub seek_hint: AtomicU64,
+    /// 等数据的读者登记表：填充调度器据此决定下一块下哪里（见 [`ReaderDemand`]）
+    pub demand: ReaderDemand,
     /// CDN 视频地址（恢复填充直接按 Range 续拉）
     pub cdn_url: String,
     /// 取流时的代理配置（恢复填充重建 client 用）
     pub proxy: crate::domain::model::ProxyConfig,
+}
+
+/// 读者需求登记表：serve 在等哪个区间，填充调度器就先下哪个区间。
+///
+/// 取代旧版的 `seek_hint: AtomicU64` 单值提示。单值提示有三处先天缺陷，
+/// 正是「回绕补洞死循环」的根因：
+/// - `fetch_max` 单调只升：播放器往回 seek 之后提示**降不下来**，
+///   填充永远追着一个不再需要的高位区间跑；
+/// - 从不清零：需求满足后提示还留在原地，持续把回绕后的游标顶回去，
+///   洞在提示之前时填充就在「回绕 → 顶回 → 回绕」里空转；
+/// - 标量只有一个位置：并发的读者（解封装探针 + 播放读）互相顶掉彼此。
+///
+/// 登记表把「谁在等哪段」原样交给调度器：回跳立即反映、满足即销、
+/// 多读者按到达顺序服务。填充侧的调度策略见
+/// `play_service::online::fill_remaining_with_client`。
+pub struct ReaderDemand {
+    /// 按到达顺序排列的登记（push 顺序即 FIFO 服务顺序）
+    inner: Mutex<Vec<Ticket>>,
+    next_id: AtomicU64,
+}
+
+/// 一次登记：某位读者声明需要的全部密文区间（可能多段）。
+struct Ticket {
+    id: u64,
+    ranges: Vec<(u64, u64)>,
+}
+
+impl Default for ReaderDemand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReaderDemand {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(Vec::new()),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    /// 登记一组需要的密文区间，返回注销凭据。重复登记同一区间会得到
+    /// 各自的凭据——调度器视角它们只是两个先到的同一诉求，无害。
+    pub fn register(&self, ranges: &[(u64, u64)]) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner.lock().push(Ticket {
+            id,
+            ranges: ranges.to_vec(),
+        });
+        id
+    }
+
+    /// 注销一条登记。就绪、超时、条目逐出都必须调：泄漏的登记只会让
+    /// 填充多下些终归要顺序下满的字节（正确性无碍），但会占着调度优先级。
+    pub fn unregister(&self, id: u64) {
+        self.inner.lock().retain(|t| t.id != id);
+    }
+
+    /// 是否还有未注销的读者（预取上限解绑的判定用，粗粒度即可）。
+    pub fn has_waiters(&self) -> bool {
+        !self.inner.lock().is_empty()
+    }
+
+    /// 最早到达、且仍有未覆盖区间的需求：返回它**区间内第一个洞**的起点。
+    ///
+    /// 传 `sparse` 而不是让调用方自己查覆盖：洞的定位必须和覆盖表在同一把
+    /// 锁的视野里做，否则「查完已就绪、实际又有洞」的竞态会把调度器指到
+    /// 已覆盖的位置空转一轮。全就绪（或无人等）返回 `None`，调度器退回
+    /// 顺序填充。
+    pub fn first_wanted(&self, sparse: &SparseBuffer) -> Option<u64> {
+        let tickets = self.inner.lock();
+        for t in tickets.iter() {
+            for (a, b) in t.ranges.iter() {
+                // 区间内的第一个洞：next_gap(a) 给出 a 起第一个未覆盖处，
+                // 落在 (a,b) 之外说明这段已就绪，试下一段
+                if let Some((gap, _)) = sparse.next_gap(*a) {
+                    if gap < *b {
+                        return Some(gap);
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 impl ProgressiveStream {
@@ -178,32 +262,35 @@ fn serve_progressive(
         }
     };
 
-    // 等依赖的密文区间。等之前给取流线程留 seek 提示：开放式/闭式 Range
-    // 落在尚未下载的前方时，顺序填充按提示跳过去，用户不用干等到下完
+    // 等依赖的密文区间。先把需求登记进 ReaderDemand（填充调度器据此
+    // 优先下这一段），再在覆盖表的条件变量上等：字节一落盘立即唤醒。
     let needed = prog.needed(start, end);
-    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
-    loop {
-        match needed.iter().find(|(a, b)| !prog.sparse.covers(*a, *b)) {
-            None => break,
-            // 未覆盖时持续更新 seek 提示：填充线程按提示跳过来，越早越准
-            Some((first, _)) => {
-                prog.seek_hint.fetch_max(*first, Ordering::Release);
+    if !prog.sparse.wait_cover(&needed, Duration::ZERO) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+        // 切片等待：数据到达由条件变量即时唤醒；切片只是给「条目被逐出」
+        // 与总超时留个检查点，不再是 50ms 轮询。
+        const WAIT_SLICE: Duration = Duration::from_millis(200);
+        let ticket = prog.demand.register(&needed);
+        let outcome = loop {
+            if prog.sparse.wait_cover(&needed, WAIT_SLICE) {
+                break Ok(());
             }
-        }
-        if !still_current() {
-            log::warn!(
-                "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
-            );
-            return Err("在线流已被替换，请重试".to_string());
-        }
-        if std::time::Instant::now() >= deadline {
-            // 典型成因：填充线程停摆，播放追上了填充前沿
-            log::warn!(
-                "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
-            );
-            return Err("等待流就绪超时".to_string());
-        }
-        std::thread::sleep(Duration::from_millis(50));
+            if !still_current() {
+                log::warn!(
+                    "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
+                );
+                break Err("在线流已被替换，请重试".to_string());
+            }
+            if std::time::Instant::now() >= deadline {
+                // 典型成因：填充线程停摆或网络断供，播放追上了填充前沿
+                log::warn!(
+                    "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
+                );
+                break Err("等待流就绪超时".to_string());
+            }
+        };
+        prog.demand.unregister(ticket);
+        outcome?;
     }
 
     let mut body = vec![0u8; (end - start) as usize];
@@ -302,7 +389,7 @@ fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
 }
 
 /// 一档正在准备的流。
-struct StreamEntry {
+pub struct StreamEntry {
     /// 已解密的明文缓冲（整集模式）
     buffer: Mutex<Vec<u8>>,
     /// 已填充到的位置（字节数）
@@ -1048,7 +1135,7 @@ mod tests {
             sparse: sparse.clone(),
             plan: Some(Arc::new(plan)),
             plain_len,
-            seek_hint: AtomicU64::new(0),
+            demand: ReaderDemand::new(),
             cdn_url: "https://cdn/example.mp4".into(),
             proxy: Default::default(),
         };
@@ -1121,7 +1208,7 @@ mod tests {
             sparse,
             plan: None,
             plain_len: data.len() as u64,
-            seek_hint: AtomicU64::new(0),
+            demand: ReaderDemand::new(),
             cdn_url: "https://cdn/example.mp4".into(),
             proxy: Default::default(),
         };
@@ -1136,28 +1223,34 @@ mod tests {
     }
 
     #[test]
-    fn progressive_leave_seek_hint_while_waiting() {
-        let (sparse, cipher, _reference, _len) = progressive_fixture("v-prog-hint", 720);
+    fn progressive_registers_demand_while_waiting() {
+        let (sparse, cipher, _reference, _len) = progressive_fixture("v-prog-demand", 720);
 
         let server = std::thread::spawn(move || {
-            let r = serve("v-prog-hint", 720, Some("bytes=10-19"));
+            let r = serve("v-prog-demand", 720, Some("bytes=10-19"));
             (r.is_ok(), r.map(|(_, _, b)| b.len()).unwrap_or(0))
         });
         std::thread::sleep(Duration::from_millis(150));
 
-        // 还在等的时候，seek 提示应指向缺口的起点
+        // 还在等的时候：应有读者登记，且第一个需求洞指向缺口的起点
         let c = crate::service::play_service::online::cache();
-        let hint = c
-            .get("v-prog-hint", 720)
+        let prog = c
+            .get("v-prog-demand", 720)
             .and_then(|e| e.progressive.lock().clone())
-            .map(|p| p.seek_hint.load(Ordering::Acquire))
-            .unwrap_or(0);
-        assert_eq!(hint, 10, "等待期间应留下 seek 提示");
+            .expect("渐进条目应在");
+        assert!(prog.demand.has_waiters(), "等待期间应留下需求登记");
+        assert_eq!(
+            prog.demand.first_wanted(&prog.sparse),
+            Some(10),
+            "第一个需求洞应在缺口起点"
+        );
 
         sparse.write(0, &cipher);
         let (ok, len) = server.join().unwrap();
         assert!(ok);
         assert_eq!(len, 10);
+        // 应答完成后登记销掉：残留的登记会占住调度优先级
+        assert!(!prog.demand.has_waiters(), "应答完成后登记应注销");
     }
 
     #[test]
@@ -1170,7 +1263,7 @@ mod tests {
             sparse,
             plan: None,
             plain_len: 16,
-            seek_hint: AtomicU64::new(0),
+            demand: ReaderDemand::new(),
             cdn_url: "https://cdn/example.mp4".into(),
             proxy: Default::default(),
         };
@@ -1190,7 +1283,7 @@ mod tests {
             sparse: SparseBuffer::new(16),
             plan: None,
             plain_len: 16,
-            seek_hint: AtomicU64::new(0),
+            demand: ReaderDemand::new(),
             cdn_url: "https://cdn/example.mp4".into(),
             proxy: Default::default(),
         };
@@ -1207,10 +1300,64 @@ mod tests {
             sparse: SparseBuffer::new(4),
             plan: None,
             plain_len: 4,
-            seek_hint: AtomicU64::new(0),
+            demand: ReaderDemand::new(),
             cdn_url: "https://cdn/example.mp4".into(),
             proxy: Default::default(),
         };
         assert!(!c.set_progressive("v-race", 720, Arc::new(prog)));
+    }
+
+    // ------------------------------------------------------------- 需求登记表
+
+    #[test]
+    fn reader_demand_serves_fifo_and_clears_on_unregister() {
+        let d = ReaderDemand::new();
+        let sparse = SparseBuffer::new(100);
+        sparse.write(0, &[0u8; 10]); // 0-10 就绪
+
+        let t1 = d.register(&[(0, 10)]); // 已就绪的区间
+        let t2 = d.register(&[(80, 90)]); // 后到的、未就绪
+        assert_eq!(
+            d.first_wanted(&sparse),
+            Some(80),
+            "就绪的登记跳过，轮到后到者"
+        );
+
+        d.unregister(t2);
+        assert_eq!(d.first_wanted(&sparse), None, "注销后不再指向它");
+        assert!(d.has_waiters(), "t1 仍在");
+        d.unregister(t1);
+        assert!(!d.has_waiters(), "全部注销后无等待者");
+    }
+
+    #[test]
+    fn reader_demand_lands_inside_mid_range_hole() {
+        // 需求区间头尾就绪、中段有洞：调度器应指到区间内的洞，而不是越过它
+        let d = ReaderDemand::new();
+        let sparse = SparseBuffer::new(100);
+        sparse.write(10, &[0u8; 10]); // 10-20
+        sparse.write(25, &[0u8; 5]); // 25-30
+        d.register(&[(10, 40)]);
+        assert_eq!(d.first_wanted(&sparse), Some(20));
+        sparse.write(20, &[0u8; 5]); // 20-25，区间前半补齐
+        assert_eq!(
+            d.first_wanted(&sparse),
+            Some(30),
+            "补齐后应指到区间内下一个洞"
+        );
+    }
+
+    #[test]
+    fn reader_demand_fifo_never_starves_early_reader() {
+        // 先到的读者没就绪前，后到者不能插队（多读者并发的公平性）
+        let d = ReaderDemand::new();
+        let sparse = SparseBuffer::new(100);
+        d.register(&[(60, 70)]);
+        d.register(&[(5, 10)]);
+        assert_eq!(
+            d.first_wanted(&sparse),
+            Some(60),
+            "先到者优先，即使它的区间更靠后"
+        );
     }
 }

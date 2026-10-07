@@ -115,8 +115,29 @@ function FeedCard({ item, rank, downloaded, onSelect }: CardProps) {
       </div>
 
       <div className="flex flex-col gap-1.5 p-3">
-        <p className="truncate text-sm font-semibold" title={item.title}>
-          {item.title}
+        {/* 热度行（hgplayer 1.1.6 同款：剧名上方显示热度文本，官方配火焰） */}
+        {item.heatText && (
+          <p className="text-muted-foreground flex items-center gap-1 text-xs">
+            <Flame className="size-3 text-orange-400" aria-hidden />
+            {item.heatText}
+          </p>
+        )}
+        <p className="flex items-center gap-1.5 text-sm font-semibold">
+          {/* 官方运营角标（新剧/爆剧/红果首发，hgplayer 1.1.6 同款剧名前标签） */}
+          {item.badge && (
+            <Badge variant="destructive" className="shrink-0 px-1.5 text-[10px]">
+              {item.badge}
+            </Badge>
+          )}
+          {/* 季角标（「第1季」，多季剧的身份提示） */}
+          {item.seasonTag && (
+            <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px]">
+              {item.seasonTag}
+            </Badge>
+          )}
+          <span className="truncate" title={item.title}>
+            {item.title}
+          </span>
         </p>
         <div className="text-muted-foreground flex items-center gap-2 text-xs">
           {item.score > 0 && (

@@ -18,6 +18,15 @@ pub enum AppError {
     #[error("数据文件损坏: {0}")]
     StoreCorrupt(String),
 
+    /// 数据库文件被另一个进程锁着（另一个实例还活着）。
+    ///
+    /// 与 [`AppError::StoreCorrupt`] 分开：锁冲突不是损坏，把「另一个实例
+    /// 正在运行」报成「数据文件损坏」会让人去删库。正常时序下第二个实例
+    /// 在单实例插件那里就该被劝退（见 lib.rs 的启动顺序注释），走到这一步
+    /// 说明持有者是僵尸进程或非常规启动。
+    #[error("数据库被占用: {0}")]
+    StoreLocked(String),
+
     #[error("文件读写失败: {0}")]
     Io(String),
 
@@ -65,6 +74,7 @@ impl AppError {
             AppError::EmptyResponse(_) => "error.emptyResponse",
             AppError::Signer(_) => "error.signer",
             AppError::StoreCorrupt(_) => "error.storeCorrupt",
+            AppError::StoreLocked(_) => "error.storeLocked",
             AppError::Io(_) => "error.io",
             AppError::Decrypt(_) => "error.decrypt",
             AppError::Media(_) => "error.media",

@@ -316,38 +316,6 @@ pub async fn fetch_comments_page(
     Ok(page)
 }
 
-/// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
-///
-/// 热门集会拉几百页，command 层已改用 [`fetch_comments_page`] 按页返回；
-/// 本函数保留给 probe 全量对账用。
-pub async fn fetch_comments_all(
-    group_id: &str,
-    book_id: &str,
-    env: &ApiEnv,
-) -> AppResult<CommentPage> {
-    let mut all = CommentPage::default();
-    let mut seen = std::collections::HashSet::new();
-    let mut cursor = String::new();
-    for _ in 0..MAX_WINDOWS {
-        let page = fetch_comments_page(group_id, book_id, &cursor, env).await?;
-        if all.total == 0 {
-            all.total = page.total;
-        }
-        all.has_more = page.has_more;
-        all.next_cursor = page.next_cursor.clone();
-        for item in page.items {
-            if seen.insert(item.comment_id.clone()) {
-                all.items.push(item);
-            }
-        }
-        if !all.has_more || all.next_cursor.is_empty() {
-            break;
-        }
-        cursor = all.next_cursor.clone();
-    }
-    Ok(all)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +361,38 @@ mod tests {
 #[cfg(test)]
 mod probe {
     use super::*;
+
+    /// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+    ///
+    /// 热门集会拉几百页，command 层已改用 [`fetch_comments_page`] 按页返回；
+    /// 本函数只服务 probe 全量对账，与生产代码无关。
+    async fn fetch_comments_all(
+        group_id: &str,
+        book_id: &str,
+        env: &ApiEnv,
+    ) -> AppResult<CommentPage> {
+        let mut all = CommentPage::default();
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = String::new();
+        for _ in 0..MAX_WINDOWS {
+            let page = fetch_comments_page(group_id, book_id, &cursor, env).await?;
+            if all.total == 0 {
+                all.total = page.total;
+            }
+            all.has_more = page.has_more;
+            all.next_cursor = page.next_cursor.clone();
+            for item in page.items {
+                if seen.insert(item.comment_id.clone()) {
+                    all.items.push(item);
+                }
+            }
+            if !all.has_more || all.next_cursor.is_empty() {
+                break;
+            }
+            cursor = all.next_cursor.clone();
+        }
+        Ok(all)
+    }
 
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

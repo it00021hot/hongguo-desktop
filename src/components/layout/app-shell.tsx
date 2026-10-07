@@ -1,30 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useRouterState } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
-import { AppSidebar, NAV_ITEMS } from './app-sidebar';
+import { AppSidebar } from './app-sidebar';
 import { ThemeSwitch } from './theme-switch';
-import { WindowButtons } from './window-controls';
+import { MacTrafficLights, WindowButtons } from './window-controls';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useEvent } from '@/lib/ipc/events';
 import { EVENTS } from '@/lib/ipc/types';
 import { isMac } from '@/lib/platform';
 import { t } from '@/i18n';
 
-/** 由当前路径反查导航 key，用于顶栏标题。 */
-function navKeyFor(pathname: string): string {
-  if (pathname === '/') return 'browse';
-  // 播放页不在侧栏菜单里（只能由播放入口跳转），标题单独指认
-  if (pathname.startsWith('/player')) return 'player';
-  const hit = NAV_ITEMS.find((item) => item.to !== '/' && pathname.startsWith(item.to));
-  return hit?.key ?? 'browse';
-}
+/**
+ * 顶栏中部插槽的定位 id：沉浸流/排行榜/新剧把各自的分类 tab 栏 portal
+ * 进来（顶栏常驻薄行形态）。其他页面顶部不显示菜单名——导航位置由
+ * 侧边栏高亮表达，顶栏中部留空。
+ */
+export const TOP_BAR_SLOT_ID = 'topbar-slot';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const navKey = navKeyFor(pathname);
-  // 沉浸流（/）：顶栏只留浮动的窗口按钮，56px 标题行还给画面
-  const immersive = pathname === '/';
-  // mac 的交通灯在侧边栏左上（见 app-sidebar），主区不重复给一套
+  // mac 的交通灯在顶栏左端（平台惯例），其余平台顶栏右侧给窗口按钮
   const mac = isMac();
 
   // 退出确认：后端把窗口关闭请求（自绘 ×/Alt+F4/任务栏）拦下来转成事件，
@@ -37,63 +30,66 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEvent(EVENTS.closeRequested, useCallback(() => setExitOpen(true), []));
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-screen w-screen flex-col overflow-hidden">
       <a href="#content" className="skip-to-content">
         {t('common.skipToContent')}
       </a>
 
-      <AppSidebar />
+        {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：红绿灯/
+            logo/应用名在左，中部是各页 portal 进来的分类 tab（无则留空，
+            页面标题不在此显示——导航位置由侧栏高亮表达），主题/语言/
+            窗口控件钉在右端。
 
-      <div className="relative flex min-w-0 flex-1 flex-col">
-        {/* 窗口无边框，这行顶栏兼作拖拽区。按钮与主题切换在右侧成组，
-            不额外占一行标题栏——应用名侧边栏顶部已经有了。
+            顶栏在侧边栏**上方**而不是长在侧边栏里——侧边栏折叠不影响顶部，
+            播放/沉浸流时控件也固定在顶栏，不会被弹幕或画面内容盖住。
 
             ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
             自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
-            src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。
+            src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。 */}
+        <header
+          data-tauri-drag-region="deep"
+          className="bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b px-3"
+        >
+          {mac && <MacTrafficLights />}
+          <img
+            src="/app-icon.png"
+            alt=""
+            width={24}
+            height={24}
+            className="size-6 shrink-0 rounded-md"
+          />
+          {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
+              左右组宽度不等（交通灯+logo vs 控件），flex-1 的「剩余空间
+              居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
+              transform（半像素平移会让文字发糊）。
+              容器 pointer-events-none：空白带不拦截、仍可拖窗；
+              tab 内容自己在 portal wrapper 里开 auto */}
+          <div
+            id={TOP_BAR_SLOT_ID}
+            className="pointer-events-none absolute inset-x-0 mx-auto flex w-fit items-center justify-center"
+          />
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <ThemeSwitch />
+            {!mac && <WindowButtons />}
+          </div>
+        </header>
 
-            沉浸流（/）：标题整行撤掉，窗口按钮浮在画面右上——56px 还给画面。 */}
-        {immersive ? (
-          <header
-            data-tauri-drag-region="deep"
-            className="absolute right-0 top-0 z-50 flex h-14 items-center justify-end pr-2"
-          >
-            {/* 悬浮在视频画面上：无论应用是什么主题，这组按钮永远按暗色
-                配色渲染（局部强制 dark token）——亮色主题下前景色是近黑，
-                直接隐身在一帧黑画面/暗场景上（实测踩过）。text-foreground
-                必须显式给：ghost 按钮没有自己的文字色，光有 .dark 变量
-                不够——color 属性还是会从根节点继承亮色文字。 */}
-            <div className="dark flex shrink-0 items-center text-foreground">
-              <ThemeSwitch />
-              {!mac && <WindowButtons />}
-            </div>
-          </header>
-        ) : (
-          <header
-            data-tauri-drag-region="deep"
-            className="flex h-14 shrink-0 items-center justify-between gap-4 border-b pl-6"
-          >
-            <h1 className="truncate text-base font-semibold">{t(`nav.${navKey}.title`)}</h1>
-            <div className="flex shrink-0 items-center">
-              <ThemeSwitch />
-              {!mac && <WindowButtons />}
-            </div>
-          </header>
-        )}
+        <div className="flex min-h-0 flex-1">
+          <AppSidebar />
 
-        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
-          {children}
-        </main>
-      </div>
+          <main id="content" className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+            {children}
+          </main>
+        </div>
 
-      <ConfirmDialog
-        open={exitOpen}
-        onOpenChange={setExitOpen}
-        title={t('window.exitTitle')}
-        description={t('window.exitBody')}
-        confirmLabel={t('window.exitConfirm')}
-        onConfirm={() => void invoke('exit_app').catch(() => {})}
-      />
+        <ConfirmDialog
+          open={exitOpen}
+          onOpenChange={setExitOpen}
+          title={t('window.exitTitle')}
+          description={t('window.exitBody')}
+          confirmLabel={t('window.exitConfirm')}
+          onConfirm={() => void invoke('exit_app').catch(() => {})}
+        />
     </div>
   );
 }

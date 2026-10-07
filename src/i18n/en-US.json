@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Hongguo Downloader"
+    "name": "HongGuo Drama"
   },
   "nav": {
     "home": {
@@ -69,7 +69,8 @@
     "fOnlineTime": "Freshness",
     "fDuration": "Duration",
     "all": "All",
-    "nextPage": "Next page"
+    "nextPage": "Next page",
+    "filters": "Filters"
   },
   "search": {
     "placeholder": "Type a title, or paste a share link / series ID",
@@ -139,11 +140,8 @@
     "removeOnly": "Delete records only"
   },
   "player": {
-    "autoNext": "Auto next episode",
-    "autoDelete": "Delete after watching",
     "autoDeleteDone": "Episode {index} finished, local file deleted",
     "seriesSearch": "Filter by name",
-    "noSeries": "No series selected",
     "buffering": "Buffering {percent}% ({size})…",
     "compatFetching": "Fetching this episode…",
     "compatTranscoding": "Cannot decode, converting to a compatible format {percent}%",
@@ -181,8 +179,7 @@
     "download": "Download",
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
-    "pictureInPicture": "Picture in picture",
-    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ previous/next",
+    "keyboardHint": "Space play/pause · ←→ seek 5s · ↑↓ switch series/episode · click to select · Esc to deselect",
     "removeRecordShort": "Clear record",
     "removeRecord": "Clear watch record for {title}",
     "removeRecordConfirm": "Clear the watch record for {title}?",
@@ -236,7 +233,19 @@
       "repliesHiddenTip": "Reply listing is not available server-side (hgplayer shows counts only)",
       "loadMore": "Load more comments ({n} left)",
       "preparing": "Preparing this episode…"
-    }
+    },
+    "backToMain": "Back to main window",
+    "comingSoon": "Coming soon",
+    "episodeNo": "Ep. {index}",
+    "incognito": "Incognito (hides when mouse leaves, reappears when it returns)",
+    "miniNoTarget": "Nothing to play",
+    "miniTitle": "Mini player",
+    "miniWindow": "Mini window",
+    "pause": "Pause",
+    "progress": "Playback progress",
+    "reserve": "Reserve",
+    "reserved": "Reserved",
+    "unreserved": "Reservation cancelled"
   },
   "series": {
     "loadFailed": "Failed to load episodes",
@@ -373,7 +382,8 @@
     "cancelled": "Cancelled",
     "busy": "The previous task is still running. Please wait for it to finish.",
     "internal": "The operation failed. Please try again.",
-    "badPayload": "Unexpected data format. Please try again."
+    "badPayload": "Unexpected data format. Please try again.",
+    "storeLocked": "The app is already running (its window may be hidden by incognito mode). Open it from the Dock/taskbar."
   },
   "common": {
     "confirm": "Confirm",

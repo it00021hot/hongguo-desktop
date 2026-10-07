@@ -9,28 +9,11 @@ use tauri::State;
 use crate::app_state::AppState;
 use crate::domain::model::PlaybackPosition;
 
-/// 保存播放位置。
+/// 保存播放位置（Store 直连版：command 侧把 DB 写入扔进阻塞线程池时用，
+/// 同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
 ///
 /// `duration` 由前端回传——后端拿到流的时候还不知道总时长，
 /// 而「接近片尾就不续播」这条判断依赖它，不记就等于这道防线一直是空转的。
-pub fn save(
-    state: &State<'_, AppState>,
-    series_id: &str,
-    vid_index: u32,
-    current_time: f64,
-    duration: f64,
-) -> crate::error::AppResult<()> {
-    save_store(
-        &state.store.clone(),
-        series_id,
-        vid_index,
-        current_time,
-        duration,
-    )
-}
-
-/// [`save`] 的 Store 直连版：command 侧把 DB 查询扔进阻塞线程池时用
-/// （同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
 pub fn save_store(
     store: &crate::store::Store,
     series_id: &str,
@@ -60,7 +43,7 @@ pub fn load(state: &State<'_, AppState>, series_id: &str, vid_index: u32) -> f64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PlaybackPosition, Series};
+    use crate::domain::model::PlaybackPosition;
     use std::path::PathBuf;
 
     fn at(current_time: f64, updated_at: i64) -> PlaybackPosition {

@@ -3,9 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Loader2, MonitorPlay } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
-import { Label } from '@/components/ui/label';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
 import { InteractionRail } from './interaction-rail';
@@ -13,7 +11,6 @@ import { CommentPanel } from './comment-panel';
 import {
   usePlay,
   useSavePosition,
-  useSaveSettings,
   useCompatPlayback,
   useDanmaku,
   useSeriesEpisodes,
@@ -40,10 +37,11 @@ import {
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useEvent } from '@/lib/ipc/events';
-import { watchHistory } from '@/lib/ipc/commands';
+import { app as appApi, play as playApi, watchHistory } from '@/lib/ipc/commands';
+import { useIncognitoMode } from './incognito';
 import { EVENTS } from '@/lib/ipc/types';
 import { formatBytes } from '@/lib/format';
-import type { CompatProgress, OnlineProgress, Settings, VideoDefinition } from '@/lib/schema';
+import type { CompatProgress, OnlineProgress, VideoDefinition } from '@/lib/schema';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
 const SAVE_INTERVAL = 5_000;
@@ -120,7 +118,7 @@ const CHROME_HIDE_MS = 3_000;
 export function PlayerView({
   onWheelStep,
   coverUrl,
-  topChrome,
+  overlayMeta,
 }: {
   /**
    * 滚轮/↑↓ 的语义由宿主页给：首页（沉浸流）是切**上一部/下一部剧**，
@@ -134,11 +132,11 @@ export function PlayerView({
    */
   coverUrl?: string;
   /**
-   * 压在画面顶部居中的悬浮内容（沉浸流的分类 tab 栏）。
-   * 跟随悬浮层一起淡出，data-wheel-block 标记：点击/滚动不冒泡成
-   * 「点画面暂停」「滚轮切剧」。
+   * 信息流条目自带的展示标记（热度文本/季角标/运营角标，档案接口没有
+   * 这几个字段，由宿主页按当前 seriesId 从流条目里挑出来递进来）。
+   * 热度在剧名上方，角标在剧名前。
    */
-  topChrome?: React.ReactNode;
+  overlayMeta?: { heatText?: string; seasonTag?: string; badge?: string };
 }) {
   const navigate = useNavigate();
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
@@ -192,16 +190,11 @@ export function PlayerView({
   const inBinge = bingeSeriesId != null && bingeSeriesId === seriesId;
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
 
-  const { data: settings, isPending: settingsPending } = useSettings();
-  const { mutate: saveSettings } = useSaveSettings();
+  const { data: settings } = useSettings();
   const { deleteEpisode } = useStorageActions();
-  // 设置没加载完时先显示 false，但开关同时锁住：否则用户会在这个窗口里
-  // 拨动开关，把默认值当成后端真值写回去。
-  const autoNext = settings?.autoNextEpisode ?? false;
+  // 设置没加载完时按默认值走：连播默认开、看完自动删默认关（与后端 Settings::default 一致）
+  const autoNext = settings?.autoNextEpisode ?? true;
   const autoDelete = settings?.autoDeleteAfterPlay ?? false;
-  const patchSettings = (next: Partial<Settings>) => {
-    if (settings) saveSettings({ ...settings, ...next });
-  };
 
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -414,15 +407,57 @@ export function PlayerView({
     [seriesId, vidIndex, currentSeries, setTarget],
   );
 
-  // ---- 沉浸流悬浮层：鼠标在画面内就常显，移出画面即隐藏 ----
-  // 第三方同款：光标停在画面上（哪怕一动不动）控制栏不该消失——
-  // 「3 秒不动就藏」逼着用户不停晃鼠标，反而更打扰。
+  // ---- 小窗播放：进度先落库 → 主窗暂停并隐藏 → 置顶小窗接续 ----
+  const openMini = useCallback(() => {
+    const video = videoRef.current;
+    const time = video?.currentTime ?? 0;
+    const duration = video && Number.isFinite(video.duration) ? video.duration : 0;
+    video?.pause();
+    if (!seriesId || !vidIndex) return;
+    // 小窗以这份位置续播（小窗的 play 响应 resumeAt 直接接上）
+    if (time > 0) savePosition({ seriesId, vidIndex, currentTime: time, duration });
+    void appApi.openMiniWindow(seriesId, vidIndex).catch((e: Error) => toast.error(e.message));
+  }, [seriesId, vidIndex, savePosition, videoRef]);
+
+  // 小窗关闭（后端 Destroyed 事件）：主窗回到台前，把播放目标对齐到
+  // 小窗刚落到后端的进度——小窗里可能已经连播了好几集，主窗原地不动
+  // 的话，画面还停在进小窗前的那一集那一秒。
+  useEvent(
+    EVENTS.miniClosed,
+    useCallback(() => {
+      if (!seriesId) return;
+      void playApi
+        .progress(seriesId)
+        .then((p) => {
+          if (!p) return;
+          if (p.vidIndex !== vidIndex) {
+            setTarget(seriesId, p.vidIndex);
+            return;
+          }
+          const video = videoRef.current;
+          if (video && p.currentTime > 0 && Math.abs(video.currentTime - p.currentTime) > 1) {
+            video.currentTime = p.currentTime;
+          }
+        })
+        .catch(() => {});
+    }, [seriesId, vidIndex, setTarget, videoRef]),
+  );
+
+  // ---- 隐身模式（与控制栏的 Eye 按钮共享状态）：鼠标离开窗口即
+  //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
+  const incognito = useIncognitoMode(videoRef);
+
+  // ---- 沉浸流悬浮层：静止 3 秒收起，动一下就唤醒；移出画面立即隐藏 ----
+  // 对齐 hgplayer 1.1.6 形态：光标停在画面上不动 3 秒，控制栏/点赞栏/剧名
+  // 照样收起（旧实现是「悬停常显」）；点击（含控制栏按钮）同样算「在场」，
+  // 重启 3 秒倒计时后自动隐藏。
   // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
   const [paused, setPaused] = useState(true);
-  const [stageHovered, setStageHovered] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
   /** 隐藏倒计时的代际号：每次唤醒递增，倒计时 effect 随之重启 */
   const [chromeTick, setChromeTick] = useState(0);
+  /** 指针悬在控制栏本体上：控件不许收（悬在控件上操作时静止超时收起=抢走） */
+  const [controlsHovered, setControlsHovered] = useState(false);
   const wakeChrome = useCallback(() => {
     setChromeVisible(true);
     setChromeTick((n) => n + 1);
@@ -431,29 +466,24 @@ export function PlayerView({
     const stage = stageRef.current;
     if (!stage) return;
     stage.addEventListener('mousemove', wakeChrome);
-    const onEnter = () => {
-      setStageHovered(true);
-      setChromeVisible(true);
-    };
-    const onLeave = () => {
-      setStageHovered(false);
-      setChromeVisible(false);
-    };
-    stage.addEventListener('mouseenter', onEnter);
+    // 点击唤醒：点控制栏按钮后鼠标未必再动，不给点击续命的话
+    // 按钮一点、倒计时一到期控件就消失，观感像被抢走
+    stage.addEventListener('pointerdown', wakeChrome);
+    const onLeave = () => setChromeVisible(false);
     stage.addEventListener('mouseleave', onLeave);
     return () => {
       stage.removeEventListener('mousemove', wakeChrome);
-      stage.removeEventListener('mouseenter', onEnter);
+      stage.removeEventListener('pointerdown', wakeChrome);
       stage.removeEventListener('mouseleave', onLeave);
     };
   }, [wakeChrome]);
-  // 隐藏倒计时：只管「光标不在画面上」的场景（键盘快捷键唤醒后没人动
-  // 鼠标，亮 3 秒再收）。光标在画面内（stageHovered）或暂停时常显不倒计时。
+  // 隐藏倒计时：播放中静止 3 秒即收（不再因光标悬停画面而常显）；
+  // 暂停 / 指针悬在控制栏上时常显不倒计时。
   useEffect(() => {
-    if (paused || stageHovered) return;
+    if (paused || controlsHovered) return;
     const timer = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
     return () => clearTimeout(timer);
-  }, [paused, stageHovered, chromeTick]);
+  }, [paused, controlsHovered, chromeTick]);
 
   // 悬浮层整体可见性：任一面板（选集/评论/弹幕设置/音量条）打开或暂停时常显，
   // 其余由上面的倒计时裁决。简介/互动栏/控制栏/顶部杂物全部吃这一个值，
@@ -461,6 +491,7 @@ export function PlayerView({
   const chromeShown =
     paused ||
     chromeVisible ||
+    controlsHovered ||
     seriesPanelOpen ||
     commentPanelOpen ||
     danmakuPanelOpen ||
@@ -791,9 +822,12 @@ export function PlayerView({
   };
 
   if (!seriesId || !vidIndex) {
+    // store 目标恢复（重启读档/切源首批）前的瞬态：中性黑场 + 加载圈。
+    // 曾经这里是「还没有选择剧集」的正式空态文案，刷新/切 tab 时它
+    // 一闪而过，读起来像出错——瞬态就该长得像瞬态。
     return (
-      <div className="grid h-full place-items-center p-6">
-        <p className="text-muted-foreground text-sm">{t('player.noSeries')}</p>
+      <div className="grid h-full place-items-center bg-black">
+        <Loader2 className="text-white/40 size-6 animate-spin" aria-label={t('common.loading')} />
       </div>
     );
   }
@@ -899,19 +933,37 @@ export function PlayerView({
                   chromeShown ? 'bottom-28 opacity-100' : 'bottom-14 opacity-0 pointer-events-none',
                 )}
               >
+                {/* 热度行（hgplayer 1.1.6 同款：剧名上方） */}
+                {overlayMeta?.heatText && (
+                  <p className="text-xs font-medium text-amber-300/90 drop-shadow-md">
+                    {overlayMeta.heatText}
+                  </p>
+                )}
                 {/* 剧名 → 详情页。第三方同款交互：点标题离开播放器看档案/选集。
                     stopPropagation：点标题不能同时触发「点画面暂停」。 */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void navigate({ to: '/detail', search: { seriesId } });
-                  }}
-                  className="cursor-pointer text-sm font-semibold text-white drop-shadow-md hover:underline"
-                  title={currentSeries?.title}
-                >
-                  @{currentSeries?.title ?? ''}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  {overlayMeta?.badge && (
+                    <span className="rounded-sm bg-red-500/90 px-1 py-px text-[10px] font-semibold text-white">
+                      {overlayMeta.badge}
+                    </span>
+                  )}
+                  {overlayMeta?.seasonTag && (
+                    <span className="rounded-sm bg-white/20 px-1 py-px text-[10px] font-semibold text-white">
+                      {overlayMeta.seasonTag}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void navigate({ to: '/detail', search: { seriesId } });
+                    }}
+                    className="cursor-pointer text-sm font-semibold text-white drop-shadow-md hover:underline"
+                    title={currentSeries?.title}
+                  >
+                    @{currentSeries?.title ?? ''}
+                  </button>
+                </div>
                 <p className="mt-0.5 text-xs text-white/85 drop-shadow-md">
                   {tf('player.epShort', { index: vidIndex })}
                   {currentSeries && currentSeries.episodeCount > 0 && (
@@ -962,24 +1014,8 @@ export function PlayerView({
                   </span>
                 </div>
               )}
-              {/* 顶部居中悬浮插槽（沉浸流分类 tab 栏）：跟随悬浮层淡出。
-                  居中用 flex 而不是 -translate-x-1/2——半像素变换会让文字
-                  整体落在亚像素位置，WebView 里渲染出来就是糊的。
-                  外层 pointer-events-none 让两侧空带照常点画面/滚轮；
-                  只有胶囊本体（data-wheel-block）拦截交互。 */}
-              {topChrome && (
-                <div
-                  className={cn(
-                    'pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center',
-                    'transition-opacity duration-300',
-                    chromeShown ? 'opacity-100' : 'opacity-0',
-                  )}
-                >
-                  <div data-wheel-block className="pointer-events-auto">
-                    {topChrome}
-                  </div>
-                </div>
-              )}
+              {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽，
+                  画面顶部不再有悬浮 tab 层） */}
               {/* 沉浸流评论区：右侧滑出（💬 触发） */}
               {commentPanelOpen && (
                 <CommentPanel
@@ -1004,12 +1040,20 @@ export function PlayerView({
               <PlayerControls
                 videoRef={videoRef}
                 stageRef={stageRef}
+                onControlsEnter={() => {
+                  setControlsHovered(true);
+                  wakeChrome();
+                }}
+                onControlsLeave={() => setControlsHovered(false)}
                 seriesId={seriesId}
                 episodes={currentSeries?.episodes ?? []}
                 currentIndex={vidIndex}
                 downloading={downloading}
                 onDownloadingChange={setDownloading}
                 onStepEpisode={stepEpisode}
+                onOpenMini={openMini}
+                incognito={incognito.on}
+                onToggleIncognito={incognito.toggle}
                 definition={activeDefinition}
                 definitions={definitions}
                 onDefinitionChange={setDefinition}
@@ -1103,13 +1147,14 @@ export function PlayerView({
           </div>
         </div>
 
-        {/* 页面级杂物的浮层化：错误条 / 连播开关压在画面顶部**靠左**排布。
-            顶部居中是沉浸流的分类 tab 栏（topChrome 插槽），左上不能太宽，
-            不然把 tab 挡死——快捷键提示从常驻位撤下（错误时才占这个位置）。 */}
+        {/* 页面级杂物的浮层化：错误条压在画面**右上角**——
+            左上贴着顶栏应用名会被读成「挡标题」，左下是剧名信息层，
+            右上只在评论区面板打开时让位。跟随悬浮层淡出。
+            连播/看完自动删不再在此放开关，统一去设置页改。 */}
         <div
           data-wheel-block
           className={cn(
-            'absolute left-3 top-3 z-20 flex items-center gap-2',
+            'absolute right-3 top-3 z-20 flex items-center gap-2',
             'transition-opacity duration-300',
             chromeShown ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
@@ -1119,30 +1164,6 @@ export function PlayerView({
               {error}
             </span>
           )}
-          <div className="flex shrink-0 items-center gap-3 rounded-full bg-black/45 px-3 py-1 backdrop-blur-sm">
-            <div className="flex items-center gap-1.5">
-              <Switch
-                id="auto-next"
-                checked={autoNext}
-                disabled={settingsPending}
-                onCheckedChange={(v) => patchSettings({ autoNextEpisode: v })}
-              />
-              <Label htmlFor="auto-next" className="text-xs text-white/85">
-                {t('player.autoNext')}
-              </Label>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Switch
-                id="auto-delete"
-                checked={autoDelete}
-                disabled={settingsPending}
-                onCheckedChange={(v) => patchSettings({ autoDeleteAfterPlay: v })}
-              />
-              <Label htmlFor="auto-delete" className="text-xs text-white/85">
-                {t('player.autoDelete')}
-              </Label>
-            </div>
-          </div>
         </div>
       </div>
     </div>

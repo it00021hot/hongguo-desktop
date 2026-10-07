@@ -16,6 +16,28 @@ use crate::error::{AppError, AppResult};
 
 pub const SEARCH_TAB_PATH: &str = "/reading/bookapi/search/tab/v";
 
+/// 搜索联想（2026-10-07 抓 hgplayer 1.1.6 锁定）。
+pub const SUGGEST_PATH: &str = "/reading/bookapi/search/suggest/v";
+
+/// 一条搜索联想（query_result_v2 形态）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestItem {
+    /// 联想词（= 剧名；v2 的 name）
+    pub word: String,
+    /// 对应剧集 id（= keyword；无 video_data 的纯词联想为空串，
+    /// 前端回落为「以该词发起搜索」）
+    #[serde(default)]
+    pub series_id: String,
+    #[serde(default)]
+    pub vid: String,
+    #[serde(default)]
+    pub cover: String,
+    /// 摘要行（「第1季·玄幻·4105万热度」，v2 的 sug_abstract）
+    #[serde(default, rename = "abstract")]
+    pub abstract_text: String,
+}
+
 /// 一条搜索结果（形状同榜单条目，省去榜单专属字段）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,9 +109,66 @@ pub async fn search_series(
     parse_search(&value)
 }
 
+/// 搜索联想：输入 2~3 个字即返回相关剧集（hgplayer 1.1.6 找剧搜索框同款）。
+///
+/// 业务参数全部在 query（逐值对齐 2026-10-07 抓包）：`q` 是查询词——
+/// 注意不是 search/tab 的 `query`。响应 `data.query_result_v2[]`。
+pub async fn search_suggest(q: &str, env: &ApiEnv) -> AppResult<Vec<SuggestItem>> {
+    let query: Vec<(String, String)> = vec![
+        ("q".into(), q.to_string()),
+        ("bookshelf_search_plan".into(), "4".into()),
+        ("bookstore_tab".into(), "16".into()),
+        ("count".into(), "0".into()),
+        ("need_personal_recommend".into(), "1".into()),
+        ("need_preload".into(), "true".into()),
+        ("search_source".into(), "1".into()),
+        ("tab_name".into(), "feed".into()),
+    ];
+    let bytes =
+        api_call_full_with_headers(LQ_API_ORIGIN, SUGGEST_PATH, None, &query, &reading_headers(), env)
+            .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析联想失败: {e}")))?;
+    check_code(&value)?;
+    parse_suggest(&value)
+}
+
+/// query_result_v2 → 联想条目。series_id 优先 video_data（带封面/vid 可直拨），
+/// 没有时退 keyword（纯词联想）。两者都缺的废条目跳过。
+fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
+    let data = value.get("data").ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
+    let mut items = Vec::new();
+    for raw in data
+        .get("query_result_v2")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let word = str_field(raw, "name");
+        if word.is_empty() {
+            continue;
+        }
+        let (series_id, vid, cover) = match raw.get("video_data") {
+            Some(vd) => (
+                str_field(vd, "series_id"),
+                str_field(vd, "vid"),
+                str_field(vd, "cover"),
+            ),
+            None => (str_field(raw, "keyword"), String::new(), String::new()),
+        };
+        items.push(SuggestItem {
+            word,
+            series_id,
+            vid,
+            cover,
+            abstract_text: str_field(raw, "sug_abstract"),
+        });
+    }
+    Ok(items)
+}
+
 /// 从 `search_tabs` 里取综合 tab（tab_type=11）解析。
-fn parse_search(value: &Value) -> AppResult<SearchPage> {
-    let tabs = value
+fn parse_search(value: &Value) -> AppResult<SearchPage> {    let tabs = value
         .get("search_tabs")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::Media("响应缺少 search_tabs".into()))?;
@@ -186,6 +265,30 @@ mod tests {
         assert!(validate_pagination(0, "").is_ok(), "首页无需 search_id");
         assert!(validate_pagination(6, "####11@x").is_ok());
     }
+
+    #[test]
+    fn parses_suggest_v2_items() {
+        let v: Value = serde_json::json!({
+            "code": 0,
+            "data": {
+                "query_key": "不死",
+                "query_result_v2": [
+                    { "name": "不死帝师", "keyword": "7644", "sug_abstract": "第1季·玄幻·4105万热度",
+                      "video_data": { "series_id": "7644", "vid": "99", "cover": "https://x/heic",
+                                      "title": "不死帝师" } },
+                    { "name": "纯词联想", "keyword": "纯词联想" },
+                    { "name": "", "keyword": "废条目" }
+                ]
+            }
+        });
+        let items = parse_suggest(&v).unwrap();
+        assert_eq!(items.len(), 2, "空 name 跳过");
+        assert_eq!(items[0].series_id, "7644");
+        assert_eq!(items[0].vid, "99");
+        assert_eq!(items[0].abstract_text, "第1季·玄幻·4105万热度");
+        assert_eq!(items[1].series_id, "纯词联想", "无 video_data 退 keyword");
+        assert_eq!(items[1].cover, "");
+    }
 }
 
 #[cfg(test)]
@@ -225,5 +328,31 @@ mod probe {
             println!("[search] p2: {} 条, overlap={overlap}", p2.items.len());
             assert!(overlap < p2.items.len(), "翻页不能重复同一页");
         }
+    }
+
+    /// 联想直连：真实关键词（2026-10-07 抓包形态对齐后验证）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_search_suggest() {
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+            x_tt_token: None,
+        };
+        let items = search_suggest("女帝", &env).await.expect("联想");
+        println!("[Suggest] 命中 {} 条", items.len());
+        for it in items.iter().take(3) {
+            println!(
+                "[Suggest] {} → series={} abstract={}",
+                it.word, it.series_id, it.abstract_text
+            );
+        }
+        assert!(!items.is_empty(), "「女帝」至少应有联想词");
+        assert!(
+            items.iter().any(|i| !i.series_id.is_empty()),
+            "至少一条带 series_id（可直拨播放）"
+        );
     }
 }

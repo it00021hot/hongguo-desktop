@@ -306,7 +306,40 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 ///
 /// 与 [`get_video_stream`] 同一套头（裸 UA 优先、403 补 Referer）。
 /// 非 206 一律按不支持 Range 报错，交给调用方回落。
+/// 取一段密文（`Range: bytes=start-end`，含两端）。
+///
+/// 对齐 hgplayer 取流 worker 的 `it()`：
+/// - **失败重试 3 次，退避 300ms×(第几次)**——CDN 抖动是常态；
+/// - **CDN 忽略 Range 回 200 全量时切片自愈**而不是报错（hgplayer 同款
+///   场景：`status===200 && n>0 ? subarray(n, i) : f`）。我们比它多做一步：
+///   边收边丢、收够即断，不为切 1MB 白拉整集；
+/// - 个别节点 403 裸 UA，补 Referer 重试一次（本应用独有的节点差异）。
 pub async fn get_video_range(
+    client: &reqwest::Client,
+    url: &str,
+    start: u64,
+    end: u64,
+) -> AppResult<Vec<u8>> {
+    let mut last_err = None;
+    for attempt in 0..3 {
+        match get_video_range_once(client, url, start, end).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                log::warn!(
+                    "[CDN] Range {start}-{end} 第 {} 次失败: {e}",
+                    attempt + 1
+                );
+                last_err = Some(e);
+                if attempt + 1 < 3 {
+                    tokio::time::sleep(std::time::Duration::from_millis(300 * (attempt + 1))).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AppError::Network("Range 请求重试耗尽".into())))
+}
+
+async fn get_video_range_once(
     client: &reqwest::Client,
     url: &str,
     start: u64,
@@ -334,19 +367,79 @@ pub async fn get_video_range(
             .await
             .map_err(|e| AppError::Network(e.to_string()))?;
     }
-    if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+    let status = resp.status();
+    if status != reqwest::StatusCode::PARTIAL_CONTENT && status != reqwest::StatusCode::OK {
         return Err(AppError::Network(format!(
-            "CDN 不支持 Range 请求: HTTP {}",
-            resp.status()
+            "CDN 不支持 Range 请求: HTTP {status}"
         )));
     }
-    let mut bytes = Vec::with_capacity((end - start + 1) as usize);
+
     use futures_util::StreamExt;
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        bytes.extend_from_slice(&chunk.map_err(|e| AppError::Network(e.to_string()))?);
+    if status == reqwest::StatusCode::PARTIAL_CONTENT {
+        // 206：响应体就是请求的那段（短读语义由调用方处理）
+        let mut bytes = Vec::with_capacity((end - start + 1) as usize);
+        while let Some(chunk) = stream.next().await {
+            bytes.extend_from_slice(&chunk.map_err(|e| AppError::Network(e.to_string()))?);
+        }
+        Ok(bytes)
+    } else {
+        // 200：CDN 忽略了 Range 回全量——边收边切，收满要的区间就断流
+        let mut cutter = RangeCutter::new(start, end);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
+            if cutter.push(&chunk) {
+                break; // 收够了，剩余字节不要了（提前断开连接）
+            }
+        }
+        cutter.finish()
     }
-    Ok(bytes)
+}
+
+/// 200 全量响应里切 `[start, end]` 的状态机（`push` 返回 true = 收够了）。
+///
+/// 独立成结构体是为了能单测：跳过 `start` 之前、取满 `end-start+1` 即止，
+/// 与到达顺序/分块边界无关。
+struct RangeCutter {
+    skip_left: u64,
+    want: usize,
+    out: Vec<u8>,
+}
+
+impl RangeCutter {
+    fn new(start: u64, end: u64) -> Self {
+        Self {
+            skip_left: start,
+            want: (end - start + 1) as usize,
+            out: Vec::new(),
+        }
+    }
+
+    /// 喂一段响应字节；true = 目标区间已收满，调用方应立即断流。
+    fn push(&mut self, chunk: &[u8]) -> bool {
+        let mut rest = chunk;
+        if self.skip_left > 0 {
+            let skip = (self.skip_left as usize).min(rest.len());
+            rest = &rest[skip..];
+            self.skip_left -= skip as u64;
+        }
+        if self.out.len() < self.want {
+            let take = (self.want - self.out.len()).min(rest.len());
+            self.out.extend_from_slice(&rest[..take]);
+        }
+        self.out.len() >= self.want
+    }
+
+    /// 取出切好的区间。全量响应比请求区间短时给到有多少（短读语义），
+    /// 一个字节都没落到说明 start 越界，按错误处理。
+    fn finish(self) -> AppResult<Vec<u8>> {
+        if self.out.is_empty() {
+            return Err(AppError::Network(
+                "200 全量响应未覆盖请求区间的起点".into(),
+            ));
+        }
+        Ok(self.out)
+    }
 }
 
 /// 发一次请求。签名在此处生成，与请求方法在同一个分支里决定，不会错配。
@@ -444,6 +537,40 @@ mod tests {
     use crate::domain::model::ProxyConfig;
     use crate::signer::video_device;
     use crate::signer::ticket::{sign_get, sign_post};
+
+    #[test]
+    fn range_cutter_slices_target_from_full_body() {
+        // 200 全量 [0..100)，要 [30..49]：跨多个分块喂入，收满即止
+        let body: Vec<u8> = (0..100u8).collect();
+        let mut cutter = RangeCutter::new(30, 49);
+        assert!(!cutter.push(&body[0..40]), "还差 10 字节");
+        assert!(cutter.push(&body[40..80]), "收满 20 字节即止");
+        assert_eq!(cutter.finish().unwrap(), &body[30..50]);
+    }
+
+    #[test]
+    fn range_cutter_from_zero_takes_head() {
+        let body: Vec<u8> = (0..255u8).collect();
+        let mut cutter = RangeCutter::new(0, 9);
+        assert!(cutter.push(&body));
+        assert_eq!(cutter.finish().unwrap(), &body[0..10]);
+    }
+
+    #[test]
+    fn range_cutter_short_body_gives_what_exists() {
+        // 全量响应比请求区间短：给到有多少（短读语义由调用方处理）
+        let body: Vec<u8> = vec![9u8; 5];
+        let mut cutter = RangeCutter::new(0, 99);
+        cutter.push(&body);
+        assert_eq!(cutter.finish().unwrap(), body);
+    }
+
+    #[test]
+    fn range_cutter_start_beyond_body_is_error() {
+        let mut cutter = RangeCutter::new(50, 60);
+        cutter.push(&[1u8; 10]);
+        assert!(cutter.finish().is_err(), "起点都没落到，必须报错");
+    }
 
     #[test]
     fn retry_count_is_sane() {

@@ -3,13 +3,13 @@
 //! 数据面在 [`crate::protocol::stream`]，这里只负责把数据推进去。
 //!
 //! 两条取流路径：
-//! - **渐进**（首选）：并行预取头部与尾部 → 凭 moov 建解密计划 → 注册进协议层
-//!   （此刻起即可应答 Range）→ 顺序填充余下字节。首帧只需等头 + 尾 + moov，
-//!   不必等整集；seek 到未下载区段时按 seek 提示跳转填充。
+//! - **渐进**（首选）：首探头部 256KB → 盒游走定位 moov → 精确补齐 → 建
+//!   解密计划 → 注册进协议层（此刻起即可应答 Range）→ 顺序填充余下字节
+//!   （探针序列对齐 hgplayer 取流 worker）。seek 到未下载区段时由读者需求
+//!   登记（ReaderDemand）驱动优先填充，回跳与前进一视同仁。
 //! - **整集**（回落）：CDN 不支持 Range、moov 定位失败等情形下，整集取回 +
 //!   解密后一次性交给协议，行为与本功能加入前完全一致。
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -18,12 +18,22 @@ use crate::domain::model::{Settings, VideoDefinition};
 use crate::error::{AppError, AppResult};
 use crate::protocol::stream::{ProgressiveStream, StreamCache};
 
-/// 头部预取量：覆盖 ftyp / mdat 头，让 demuxer 能算出 moov 位置。
-const HEAD_BYTES: u64 = 512 * 1024;
-/// 尾部预取量：moov 通常在文件末尾，2MB 足够装下常见短剧的 moov。
-const TAIL_BYTES: u64 = 2 * 1024 * 1024;
-/// 顺序填充的步长：每段一个 Range 请求，太小请求开销大，太大等待粒度粗。
-const FETCH_CHUNK: u64 = 4 * 1024 * 1024;
+/// 头部首探量，对齐 hgplayer 的 `it(0, 262144)`：ftyp + mdat 头都装得下，
+/// 顶层盒表从这里算出 moov 落点。
+const HEAD_BYTES: u64 = 256 * 1024;
+/// moov 不在首探里时的盒游走步进，对齐 hgplayer 的 `it(f, f+64*1024)`：
+/// 从「最后一个顶层盒的结束处」起探。
+const BOX_WALK_STEP: u64 = 64 * 1024;
+/// 盒游走最多轮数，对齐 hgplayer `Me()` 的 `for(i<4)`：正常尾-moov 布局
+/// 第一轮就命中，多轮只防非常规盒序（fragmented 之类）。
+const BOX_WALK_MAX: usize = 4;
+/// 顺序填充的步长：每段一个 Range 请求。
+///
+/// 1MB，对齐 hgplayer（第三方 Go+Wails 客户端）实测值——其前端 worker 按
+/// mp4 样本表分组拉流，单请求上限 `1<<20`（首探 256KB、盒游走 64KB 步进；
+/// 见 captures/hgplayer-116-frontend.js 的取流 worker）。分块越小，
+/// seek 需求打断顺序填充的粒度越细，回跳响应越快。
+const FETCH_CHUNK: u64 = 1024 * 1024;
 
 /// 在线播放就绪后带回的档位信息。
 pub struct Prepared {
@@ -249,9 +259,10 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// 否则被切走的前一集拖着整集下载占住串行通道，当前集黑屏干等到天荒地老。
 /// 每个分块边界都检查一次，最坏滞后一个分块（4MB）。
 ///
-/// `prefetch = true` 时只填头部 [`PREFETCH_HEAD_BYTES`]（够首帧秒开），
-/// 余下等它升格为当前集后由 [`resume_fill`] 续——预取的意义是「切过去不用
-/// 黑屏等取流表 + moov」，不是提前背完整集。
+/// `prefetch = true` 时是**有界**预填（默认只填 [`PREFETCH_HEAD_BYTES`]，
+/// 够首帧秒开），但上限是动态的：条目升格为当前集、或已有读者在等这一档，
+/// 上限即刻解除、同一条填充无缝续满——不必依赖 [`resume_fill`] 事后抢
+/// 取流权（预取尚未收工时它抢不到，那正是「播到头部上限就断流」的窗口）。
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
@@ -289,22 +300,28 @@ async fn fill(
             );
             // CDN 抖动（短读/断流）是常态而不是异常，整体重试而不是一次失败
             // 就永远停在前沿——播放追上未填充区只能超时报错。
+            // 预取的动态上限：升格为当前集或已有读者在等即解除（见 fill 文档）
+            let cap: Box<dyn Fn() -> Option<u64> + Send + Sync> = if prefetch {
+                let key = vid.to_string();
+                let prog_cap = prog.clone();
+                Box::new(move || {
+                    if cache().current() == key || prog_cap.demand.has_waiters() {
+                        None
+                    } else {
+                        Some(PREFETCH_HEAD_BYTES)
+                    }
+                })
+            } else {
+                Box::new(|| None)
+            };
             let mut last_err = None;
             for attempt in 0..3 {
                 if cancelled() {
                     log::info!("[Online] {vid} 已被切走，中止填充");
                     return Ok(());
                 }
-                match fill_remaining(
-                    &sparse,
-                    &prog,
-                    play,
-                    settings,
-                    &reporter,
-                    &cancelled,
-                    if prefetch { Some(PREFETCH_HEAD_BYTES) } else { None },
-                )
-                .await
+                match fill_remaining(&sparse, &prog, play, settings, &reporter, &cancelled, &cap)
+                    .await
                 {
                     Ok(()) => {
                         last_err = None;
@@ -319,7 +336,9 @@ async fn fill(
                             attempt + 1
                         );
                         last_err = Some(e);
-                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        // 退避对齐 hgplayer 取流 worker 的 it()：300ms×(第几次)
+                        let backoff = std::time::Duration::from_millis(300 * (attempt as u64 + 1));
+                        tokio::time::sleep(backoff).await;
                     }
                 }
             }
@@ -398,7 +417,7 @@ pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
             &cdn_url,
             &reporter,
             &cancelled,
-            None,
+            &|| None, // 续填只发生在当前集上：无上限，填满为止
         )
         .await;
         c.end_fetch(&owned, definition);
@@ -409,7 +428,12 @@ pub fn resume_fill(app: &tauri::AppHandle, vid: &str, definition: u32) {
     });
 }
 
-/// 渐进路径第一阶段：预取头尾、定位 moov、建计划、注册协议层。
+/// 渐进路径第一阶段：首探头部、盒游走定位 moov、精确补齐、建计划、注册协议层。
+///
+/// 探针序列对齐 hgplayer worker 的 `Me()`（见 captures/hgplayer-116-frontend.js）：
+/// 首探 256KB → 首探里没 moov 就从「最后一个顶层盒的结束处」64KB 步进游走
+/// （最多 4 轮）→ 精确区间拉 moov 本体。**不做固定尾部预取**——多下的字节
+/// 在 moov 拉完前纯属浪费首帧时间；尾部数据的即时性由读者需求登记保证。
 ///
 /// 返回 `Err` 的所有情形都应回落整集路径（CDN 不支持 Range、找不到 moov、
 /// 样本表解析失败……）。这一阶段完成时协议层已可应答，错误只会发生在
@@ -420,40 +444,47 @@ async fn build_progressive(
     report: &(dyn Fn(u64, u64) + Sync),
 ) -> AppResult<(Arc<crate::domain::mp4::streaming::SparseBuffer>, Arc<ProgressiveStream>)> {
     use crate::domain::api::client::{get_video_range, probe_video_len};
-    use crate::domain::mp4::streaming::{locate_moov, SparseBuffer, StreamingPlan};
+    use crate::domain::mp4::streaming::{locate_moov, top_boxes_end, SparseBuffer, StreamingPlan};
 
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
     let total = probe_video_len(&client, &play.url).await?;
     let sparse = SparseBuffer::new(total);
 
-    // 头部：ftyp + mdat 头（demuxer 靠它算出 moov 在哪）
+    // 首探 256KB：ftyp + mdat 头，顶层盒表从这里算出 moov 落点
     let head_len = HEAD_BYTES.min(total);
     let head = get_video_range(&client, &play.url, 0, head_len - 1).await?;
     sparse.write(0, &head);
     report(sparse.downloaded(), total);
 
-    // 尾部：moov 所在（平台流 moov 在尾部是常态）
-    if total > head_len {
-        let tail_len = TAIL_BYTES.min(total - head_len);
-        let tail_from = total - tail_len;
-        let tail = get_video_range(&client, &play.url, tail_from, total - 1).await?;
-        sparse.write(tail_from, &tail);
-        report(sparse.downloaded(), total);
+    // moov 定位：先看首探（head 布局），没有就盒游走（tail 布局常态第一轮命中）
+    let mut located = locate_moov(&head, 0, total);
+    if located.is_none() {
+        let mut walk_from = top_boxes_end(&head, 0);
+        for _ in 0..BOX_WALK_MAX {
+            let Some(from) = walk_from else { break };
+            if from >= total {
+                break;
+            }
+            let seg_end = (from + BOX_WALK_STEP).min(total);
+            let seg = get_video_range(&client, &play.url, from, seg_end - 1).await?;
+            // 游走段是真实文件字节，落进稀疏缓冲不浪费
+            sparse.write(from, &seg);
+            report(sparse.downloaded(), total);
+            if let Some(found) = locate_moov(&seg, from, total) {
+                located = Some(found);
+                break;
+            }
+            // 这段里没有：从本段最后一个顶层盒的结束处继续走
+            match top_boxes_end(&seg, from) {
+                Some(next) if next > from => walk_from = Some(next),
+                _ => break,
+            }
+        }
     }
-
-    // 定位 moov：先头部再尾部；定位到但没取全就补一段
-    let located = locate_moov(
-        &sparse_snapshot(&sparse, 0, head_len),
-        0,
-        total,
-    )
-    .or_else(|| {
-        let tail_from = total - TAIL_BYTES.min(total.saturating_sub(head_len)).max(head_len);
-        locate_moov(&sparse_snapshot(&sparse, tail_from, total), tail_from, total)
-    });
     let Some((moov_start, moov_size)) = located else {
-        return Err(AppError::Media("头尾预取里找不到 moov".into()));
+        return Err(AppError::Media("首探与盒游走都没找到 moov".into()));
     };
+    // 精确补齐 moov 本体（首探/游走段只保证拿到它的头）
     if !sparse.covers(moov_start, moov_start + moov_size) {
         let extra = get_video_range(&client, &play.url, moov_start, moov_start + moov_size - 1)
             .await?;
@@ -470,7 +501,7 @@ async fn build_progressive(
             sparse: sparse.clone(),
             plan: Some(Arc::new(plan)),
             plain_len,
-            seek_hint: AtomicU64::new(0),
+            demand: Default::default(),
             cdn_url: play.url.clone(),
             proxy: settings.proxy.clone(),
         })
@@ -480,7 +511,7 @@ async fn build_progressive(
             sparse: sparse.clone(),
             plan: None,
             plain_len: total,
-            seek_hint: AtomicU64::new(0),
+            demand: Default::default(),
             cdn_url: play.url.clone(),
             proxy: settings.proxy.clone(),
         })
@@ -488,10 +519,13 @@ async fn build_progressive(
     Ok((sparse, prog))
 }
 
-/// 渐进路径第二阶段：把余下字节按序填满，期间响应 seek 提示。
+/// 渐进路径第二阶段：把余下字节填满，期间响应读者需求。
 ///
-/// `is_cancelled` 在每个分块边界检查（条目被逐出 = 用户切走，立即收工让出
-/// 串行队列）；`stop_at` 给预填用（只填到该明文偏移，余下等转正续填）。
+/// [`fill_remaining_with_client`] 是三级调度器：需求优先 → 顺序前沿 →
+/// 收尾回绕。`is_cancelled` 在每个分块边界检查（条目被逐出 = 用户切走，
+/// 立即收工让出串行队列）。`cap` 是有界填充（预取）的动态上限：
+/// `Some(limit)` 时顺序填充到该字节数即收工，读者需求不受限；`None` 填满
+/// 整集。逐决策点求值，预取条目升格为当前集（或已有读者在等）的瞬间自动解除。
 async fn fill_remaining(
     sparse: &Arc<crate::domain::mp4::streaming::SparseBuffer>,
     prog: &Arc<ProgressiveStream>,
@@ -499,23 +533,50 @@ async fn fill_remaining(
     settings: &Settings,
     reporter: &ProgressReporter,
     is_cancelled: &(dyn Fn() -> bool + Send + Sync),
-    stop_at: Option<u64>,
+    cap: &(dyn Fn() -> Option<u64> + Send + Sync),
 ) -> AppResult<()> {
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
-    fill_remaining_with_client(
-        &client,
-        sparse,
-        prog,
-        &play.url,
-        reporter,
-        is_cancelled,
-        stop_at,
-    )
-    .await
+    fill_remaining_with_client(&client, sparse, prog, &play.url, reporter, is_cancelled, cap).await
 }
 
-/// [`fill_remaining`] 的注入形态：续填路径手里没有 PlayInfo/Settings，
-/// 只有渐进条目里存的 client 参数。
+/// 调度器一次决策的结果。纯逻辑、无 I/O——回绕的终止性质在单测里钉死，
+/// 填充循环只负责执行。
+enum Decision {
+    /// 下这一段 `[start, end)`
+    Fetch(u64, u64),
+    /// 决策点之后全满、洞在决策点之前：回绕到 0（只会发生一次，见 [`next_target`]）
+    Wrap,
+    /// 整集已覆盖，收工
+    Done,
+}
+
+/// 从 `frontier` 找下一个要下的洞；前沿之后全满但整集未满 → 回绕。
+///
+/// 回绕在下一轮 `next_gap(0)` 必能找到洞（否则整集已满、走 `Done` 分支），
+/// 所以 Wrap 之后紧跟一次实际下载，**不存在连续 Wrap 的路径**——旧版
+/// 「回绕补洞」被 seek_hint 顶回原地空转的死循环，从这里结构上排除。
+fn next_target(sparse: &crate::domain::mp4::streaming::SparseBuffer, frontier: u64) -> Decision {
+    match sparse.next_gap(frontier) {
+        Some((start, end)) => Decision::Fetch(start, end),
+        None if sparse.downloaded() < sparse.len() => Decision::Wrap,
+        None => Decision::Done,
+    }
+}
+
+/// 三级填充调度器：
+///
+/// 1. **需求优先**：任一等待中的读者（[`crate::protocol::stream::ReaderDemand`])
+///    的区间先填，按登记到达顺序（FIFO，多读者不互相饿死）；**回跳的 seek
+///    与前进的一视同仁**——旧版单调 `seek_hint` 降不下来、回绕又被它顶住
+///    的死循环，在机制上不再可能。
+/// 2. **顺序续填**：没有需求时从填充前沿向文件尾顺序填——正是播放的自然
+///    方向。前沿被需求跳走后留下的洞由第 3 级兜底。
+/// 3. **收尾回绕**：前沿到尾之后若还有洞（跳填留下的），从 0 扫一遍补齐。
+///    此时不可能有任何需求覆盖它——需求的优先级更高、且会即时打断回绕，
+///    所以回绕不会再被任何提示顶住。
+///
+/// 每个决策点要么发起一次下载（await）、要么返回；短读按实际字节数推进
+/// 前沿，不跳过缺口。不存在空转路径。
 async fn fill_remaining_with_client(
     client: &reqwest::Client,
     sparse: &Arc<crate::domain::mp4::streaming::SparseBuffer>,
@@ -523,68 +584,57 @@ async fn fill_remaining_with_client(
     cdn_url: &str,
     reporter: &ProgressReporter,
     is_cancelled: &(dyn Fn() -> bool + Send + Sync),
-    stop_at: Option<u64>,
+    cap: &(dyn Fn() -> Option<u64> + Send + Sync),
 ) -> AppResult<()> {
     use crate::domain::api::client::get_video_range;
     let total = sparse.len();
-    let mut cursor = 0u64;
+    let mut frontier = 0u64; // 顺序填充的前沿（密文偏移）
     loop {
         if is_cancelled() {
             log::info!(
-                "[Online][probe] 填充中止: downloaded={}/{} cursor={cursor}",
+                "[Online][probe] 填充中止: downloaded={}/{} frontier={frontier}",
                 sparse.downloaded(),
                 total
             );
             return Ok(());
         }
-        // seek 提示 = 播放器此刻正等着要的区间。**无条件对齐**（可回跳）：
-        // 旧逻辑只在提示「更靠前」时才跳，前向填充跳过的洞里若有所需
-        // 碎片，填充永远不回去补，serve 只能等满 30s 超时——正是
-        // 「填充停摆/在线播放中断」的根因。对齐到已覆盖处时 next_gap
-        // 自然给出其后的第一个洞，前向进度不受影响。
-        let hint_plain = prog.seek_hint.load(Ordering::Acquire);
-        let hint_cipher = match &prog.plan {
-            // 尾部-moov 布局下 plain == cipher，头部布局按计划映射一次
-            Some(p) => p
-                .cipher_ranges_needed(hint_plain, hint_plain + 1)
-                .first()
-                .map(|(a, _)| *a)
-                .unwrap_or(hint_plain),
-            None => hint_plain,
-        };
-        if hint_plain > 0 {
-            cursor = hint_cipher;
-        }
 
-        // 预填上限：只填头部，余下等转正续填
-        if let Some(limit) = stop_at {
+        // 决策 1：需求优先。跳到最早等待读者的第一个洞，前沿随之跟随
+        //（服务完这个洞之后顺序续填就从这里继续——正是播放所在的位置）。
+        let wanted = prog.demand.first_wanted(sparse);
+        if let Some(want) = wanted {
+            if want != frontier {
+                log::info!(
+                    "[Online] 读者需求优先：{want} 起有洞（顺序前沿在 {frontier}），跳转填充"
+                );
+            }
+            frontier = want;
+        } else if let Some(limit) = cap() {
+            // 决策 2 的有界形态（预取）：没有读者在等也不是当前集，
+            // 顺序填到上限就收工，串行队列让给真正在看的那一路。
             if sparse.downloaded() >= limit.min(total) {
-                log::info!("[Online] 预填达到头部上限（{limit} 字节），余下等转正续填");
+                log::info!("[Online] 预填达到上限（{limit} 字节），余下等转正续填");
                 return Ok(());
             }
         }
 
-        let Some((gap_start, gap_end)) = sparse.next_gap(cursor) else {
-            if sparse.downloaded() >= total {
+        // 决策 2/3：顺序前沿找洞，前沿之后全满则回绕。
+        let (gap_start, gap_end) = match next_target(sparse, frontier) {
+            Decision::Fetch(start, end) => (start, end),
+            Decision::Wrap => {
+                log::info!(
+                    "[Online][probe] 收尾回绕：前沿之后已满（downloaded={}/{}），从 0 补剩余的洞",
+                    sparse.downloaded(),
+                    total
+                );
+                frontier = 0;
+                continue;
+            }
+            Decision::Done => {
                 log::info!("[Online][probe] 填充自然完成 downloaded={total}");
                 return Ok(());
             }
-            log::info!(
-                "[Online][probe] 回绕补洞: downloaded={} cursor={cursor}",
-                sparse.downloaded()
-            );
-            cursor = 0; // cursor 之后全满：回绕找剩下的洞
-            continue;
         };
-        // 上限截断：这个洞已越过预填线就不再拉
-        let gap_end = match stop_at {
-            Some(limit) => gap_end.min(limit),
-            None => gap_end,
-        };
-        if gap_start >= gap_end {
-            cursor = gap_end.max(cursor);
-            continue;
-        }
         let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
         // 探针（排查填充停摆用）：区间请求的始末都留痕，卡在哪一段一目了然
         let probe_at = std::time::Instant::now();
@@ -604,8 +654,8 @@ async fn fill_remaining_with_client(
         let want = fetch_end - gap_start;
         let got = bytes.len() as u64;
         if got == 0 {
-            // 空响应意味着 write 不会标记任何覆盖，cursor 又已越过这里——
-            // 只能靠回绕反复重试，等于静默空转。直接报错让上层看见。
+            // 空响应意味着 write 不会标记任何覆盖，同一决策点会反复选中
+            // 这里——静默空转。直接报错让上层看见。
             return Err(AppError::Network(format!(
                 "CDN 区间 {gap_start}-{} 返回空响应",
                 fetch_end - 1
@@ -616,9 +666,12 @@ async fn fill_remaining_with_client(
         }
         sparse.write(gap_start, &bytes);
         let done = sparse.downloaded();
-        log::debug!("[Online] 填充区间 {gap_start}-{fetch_end} 完成（累计 {done}/{total}）");
+        log::debug!("[Online] 填充区间 {gap_start}-{} 完成（累计 {done}/{total}）", gap_start + got);
         reporter.report(done, total, "downloading");
-        cursor = fetch_end;
+        // 短读也按实际字节数推进前沿：缺口没填完就不越过它，下一轮从
+        // 剩余处继续（旧版直接跳到 fetch_end，缺口被甩在前沿后面，
+        // 只能指望回绕兜底——回绕又被 seek_hint 顶死，正是停摆根因）。
+        frontier = gap_start + got;
     }
 }
 
@@ -744,4 +797,57 @@ pub fn clear() -> usize {
     let (count, _) = cache().status();
     cache().clear();
     count
+}
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+
+    /// 回绕是一次决策而不是循环：Wrap 之后从 0 必能取到洞，全满则 Done。
+    /// 旧版死循环（回绕 → hint 顶回原地 → 再回绕）在这里不可能复现：
+    /// 决策函数没有任何可以「顶回」游标的外部状态。
+    #[test]
+    fn wrap_is_a_decision_not_a_loop() {
+        let sparse = crate::domain::mp4::streaming::SparseBuffer::new(100);
+        sparse.write(50, &[0u8; 5]); // 50-55
+        sparse.write(90, &[0u8; 10]); // 90-100
+        // 前沿在 90：其后全满、整集未满 → 回绕
+        assert!(matches!(next_target(&sparse, 90), Decision::Wrap));
+        // 回绕到 0 后：第一个洞从 0 起
+        assert!(matches!(
+            next_target(&sparse, 0),
+            Decision::Fetch(0, 50)
+        ));
+        // 模拟把 0-50 填上：下一个洞是 55-90，无需再回绕
+        sparse.write(0, &[0u8; 50]);
+        assert!(matches!(
+            next_target(&sparse, 0),
+            Decision::Fetch(55, 90)
+        ));
+        // 填满后任意前沿都直接 Done
+        sparse.write(55, &[0u8; 35]);
+        assert!(matches!(next_target(&sparse, 0), Decision::Done));
+        assert!(matches!(next_target(&sparse, 99), Decision::Done));
+    }
+
+    /// 需求登记（ReaderDemand）把洞指到前沿**之前**时，调度器跟着跳回去：
+    /// 这正是旧版单调 seek_hint 做不到的「回跳」。
+    #[test]
+    fn demand_points_backwards_into_early_hole() {
+        use crate::protocol::stream::ReaderDemand;
+
+        let sparse = crate::domain::mp4::streaming::SparseBuffer::new(100);
+        sparse.write(90, &[0u8; 10]); // 尾部已就绪（seek 到片尾之类的场景）
+        let d = ReaderDemand::new();
+        d.register(&[(10, 20)]); // 读者在等前沿之前的洞（回跳 seek）
+
+        let want = d.first_wanted(&sparse).expect("应定位到读者的洞");
+        assert_eq!(want, 10);
+        // 调度器把前沿对齐到需求：从 10 起的洞就是下一个目标，
+        // 而不是被任何高位状态顶回 90
+        assert!(matches!(
+            next_target(&sparse, want),
+            Decision::Fetch(10, 90)
+        ));
+    }
 }

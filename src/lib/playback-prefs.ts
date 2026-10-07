@@ -108,6 +108,27 @@ export function writeDanmakuDisplay(s: DanmakuDisplaySettings): void {
   write(DANMAKU_AREA_KEY, s.area);
 }
 
+// ---------------------------------------------------------------- 隐身模式
+
+const INCOGNITO_KEY = 'hongguo.incognito';
+
+/** 隐身模式默认关：开启后鼠标离开窗口即整窗透明 + 暂停。 */
+export function readIncognito(): boolean {
+  try {
+    return window.localStorage.getItem(INCOGNITO_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeIncognito(on: boolean): void {
+  try {
+    window.localStorage.setItem(INCOGNITO_KEY, on ? '1' : '0');
+  } catch {
+    // 存不进去只影响下次启动的初始状态，本次会话内开关照常生效
+  }
+}
+
 // ---------------------------------------------------------------- 上次播放目标
 
 const LAST_TARGET_KEY = 'hongguo.lastTarget';

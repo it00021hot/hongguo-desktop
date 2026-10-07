@@ -1,6 +1,7 @@
-# 红果官方 App API 端点清单（2026-10-03 抓包）
+# 红果官方 App API 端点清单（2026-10-03 起持续抓包）
 
-来源：hgplayer v1.1.2（第三方客户端，直连官方 API）经 mitmproxy 抓包实测，
+来源：hgplayer（第三方客户端，直连官方 API）经 mitmproxy 抓包实测
+（v1.1.2 起，现行 1.1.5），
 全部端点均在 `api5-normal-lq.fqnovel.com`，签名五件套
 （x-gorgon/x-argus/x-ladon/x-helios/x-medusa）+ `x-reading-request: {ticket_ms}-{random}` 头。
 响应普遍为 **brotli 压缩 JSON**（请求头带 `accept-encoding: gzip, deflate, br`）。
@@ -135,9 +136,24 @@ POST /reading/distribution/category/landpage/v1/   # 与首页推荐同端点，
  "session_id":"20261003165900B053FA3876D73D9E20A0"}
 ```
 
+**翻页形态（2026-10-07 抓 hgplayer 1.1.6 实锤）**：首页 `offset=0, session_id=""`，
+响应下发 `session_id` + `next_offset`；第 2 页起 `offset=next_offset 游标递增`
+且 **`session_id` 必须同值回传**（服务端按它记住筛选上下文）——用算术 offset +
+空 session_id 翻页会让结果集换源（条数与第三方对不上的根因）。
+`limit` 服务端按请求值发放（官方 18，我们用 20/页——probe 实证 20 条足额
+返回且 next_offset 跟着走）。
+
 筛选维度：`genre`(体裁) `category_dim_theme`(主题) `category_dim_role`(设定)
 `category_dim_epoch`(背景) `sort`(推荐/最新上架/最高热度/最高收藏)
 `gender`(受众 男频/女频) `online_time`(7/14/30/90 天内上新)。
+
+**条目标记字段（`video_data[]` 内，2026-10-07 实证）**：`sub_title_list[]`
+的 `data_type` 语义：**0=季文本**（「第1季」）、**3=分类**（「古装」，与
+category_schema 重复）、**27=热度文本**（「1705万」，官方配火焰图标
+`rec_icon_url`）——hgplayer 1.1.6 的剧名上方热度行/季角标同源。
+**`tag_info`（对象）是官方运营角标**：`{text:"红果首发/新剧/爆剧…",
+icon_url, enable, position}`（剧名前标签）；同名容器在 plan/v 里装的是
+「第N季/同IP」。`recommend_info`（JSON 串）含 `rank`（当前列表位次）。
 
 ## 5. 搜索
 
@@ -159,6 +175,21 @@ Cookie 的 `install_id` 一致 + `ttreq` 票）。失效 id 的表现是 **HTTP 
 响应：`search_tabs[]`（tab_type: 综合=11 / 剧集=29 / 视频=30 / 讨论=31 /
 小说=1 / 用户=27 / 听书=2）。综合 tab 的 `data[]` 每条含 `video_data[]` 剧集数据，
 `has_more`/`next_offset` 控制翻页。
+
+### 5.1 输入联想 `GET /reading/bookapi/search/suggest/v`（2026-10-07 抓 1.1.6 实操锁定）
+
+**查询词参数名是 `q`**（不是 search/tab 的 `query`），业务参数逐值对齐：
+`q=女帝, bookshelf_search_plan=4, bookstore_tab=16, count=0,
+need_personal_recommend=1, need_preload=true, search_source=1, tab_name=feed`。
+reading 轻签名 + 匿名 cookie 实测可用（probe_search_suggest 验证）。
+
+响应 `data.query_result_v2[]` 每条：
+- `name`（=剧名联想词）、`keyword`（=series_id）、`sug_abstract`
+  （「第1季·玄幻·4105万热度」摘要行）
+- `search_high_light.rich_text`：`<em>关键词</em>` 高亮形态
+- `video_data{series_id, vid, cover(HEIC), title, video_desc}`——带它的条目
+  可点击直拨播放；缺它的纯词条目只能回填搜索
+- 旧版 `query_result`（纯词数组）与 `suggest_result`（null）同时下发，不用
 
 ## 6. 我的预约
 
@@ -183,9 +214,10 @@ POST /reading/bookapi/search/uncover_subscribe/v
   "shark_param": {埋点上下文，不校验}, "wish_list_all_del": 0}`
 - query 只放设备指纹；reading 轻签名头（x-ss-dp/lc/x-reading-request）；
   **必须带登录 cookie**，响应 `code==0` 即成功
-- ⚠️ hgplayer 的预约按钮由 **WebView 前端 fetch** 发出——Windows 上
-  Chromium 走**系统代理**而非进程 env 代理，抓它需临时把系统代理指向
-  mitmproxy（操作完记得还原用户的原代理）
+- ⚠️ hgplayer 的预约按钮由 **WebView 前端 fetch** 发出——WebView
+  (Chromium) 不吃进程 env 代理，只认**系统代理**（Windows 系统代理 /
+  macOS 网络设置），抓它需临时把系统代理指向 mitmproxy
+  （操作完记得还原用户的原代理）
 
 ## 8. 短信登录（passport 系，1.1.3 真机实证）
 
@@ -376,18 +408,6 @@ GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
  "group_id":"<vid>","group_type":30,"text":"..."}
 ```
 
-### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
-
-```json
-{"aid":8662,
- "business_param":{"book_id":"<series_id>","ignore_urge_rule":false,
-   "offset":128912,
-   "shark_param":{"aid":"8662","enter_from":"MainFragmentActivity",
-     "page_list":"MainFragmentActivity","previous_page":"","type":"short_play"}},
- "commit_source":1500,"data_type":20,
- "group_id":"<vid>","group_type":30,"text":"..."}
-```
-
 - 与拉取同一评论体系：`group_id`=vid、`group_type=30`、`book_id`=series_id
 - **弹幕与普通评论只差三个字段**：
 
@@ -478,17 +498,23 @@ vid / series_id）；单集精确查询接口未抓到。
 
 ## 已知未抓 / 待做
 
-
-- 设备注册 `POST log.snssdk.com/service/2/device_register/`（旧会话已抓到
-  query 全指纹 + protobuf body + gzip 响应，尚未实现；bookmall 全家桶在新设备上
-  才不报 ILLEGAL_ACCESS 110）
-- 登录（短信+扫码）最后做
-- 评论区面板（comment/list 拉取形态已落地，评论发送/评论点赞接口见 9.2/9.3，
-  前端评论区 UI 未做）
+- 搜索联想 `suggest/v`：**已实现**（`search.rs search_suggest` +
+  `search_suggest_cmd`，probe 直连验证通过；找剧搜索框防抖 300ms 联想下拉，
+  点击直拨播放）
+- 推荐流 badge：**已实现**（`tag_info.text`，见第 4 节条目标记字段）
+- 设备注册 `POST log.snssdk.com/service/2/device_register/`：**已实现**
+  （`register.rs register_device`，tt_encrypt_v5 加密 body；签名档案须带
+  已激活的 device_id、body 用空指纹新号——服务端按 body 指纹发新号），
+  但**未接入主流程**（当前静态设备档案可用；待其被风控拒发号时再接）
+- 扫码登录：端点未抓到，未实现（短信登录含 MFA 上行短信已全量落地）
+- hgplayer 1.1.6 二进制里另有未接端点：`read_history/list/v`（云端历史
+  列表）、`comment/del/v1`（评论删除）、`book_pack_fields/v1`、
+  `user/share/short_url/`、`read_progress/list|get`——按需再抓
 
 ## 抓包数据文件
 
-历史轮次：`C:\Users\liu13\AppData\Local\Temp\hg_capture\`（易失，随时可能被清）
+历史轮次（旧 Windows 抓包机的系统临时目录 `hg_capture/`，易失可能已清，
+不再依赖）。
 
 **现行工作流（自持抓包）**：仓库 `captures/`（已 gitignore，持久保留）——
 
@@ -503,8 +529,12 @@ vid / series_id）；单集精确查询接口未抓到。
 - `addon.py` mitmproxy dump 脚本（目标域名过滤，输出 JSONL，MITM_OUT 可覆盖输出路径）
 - `flows-YYYYMMDD.jsonl` 按日分轮的抓包产物（req 头/参数/resp body b64+brotli）
 
-重放工作流：`mitmdump.exe -p 8080 -s captures/addon.py`（mitmproxy 12.2.3 在
-`%LocalAppData%\Programs\Python\Python314\Scripts\`，CA 已在
-`~/.mitmproxy\` 且系统已信任）→ 以 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:8080`
-环境变量启动 `C:\Users\liu13\Downloads\hongguo-v1.1.2-windows-amd64.exe`
-（Wails/Go 后端吃 env 代理）→ computer-use 驱动 UI 触发目标接口。
+重放工作流（Windows / macOS 通用）：
+
+1. `mitmdump -p 8080 -s captures/addon.py`（pip 装 mitmproxy ≥12；
+   首次运行在 `~/.mitmproxy/` 生成 CA 并信任进系统——macOS 钥匙串 /
+   Windows 证书存储）
+2. 从终端以 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:8080` 启动
+   hgplayer 1.1.5 可执行文件（Wails/Go 后端吃 env 代理，须从终端带
+   env 启动，GUI 方式不继承 shell 环境；路径按本机安装位置）
+3. computer-use 驱动 UI 触发目标接口

@@ -381,6 +381,9 @@ function rankToFeedItem(r: RankItem): FeedItem {
     commentCount: 0,
     score: r.score,
     tags: r.tags,
+    seasonTag: '',
+    heatText: r.recText,
+    badge: '',
     contentType: 0,
   };
 }
@@ -398,6 +401,9 @@ function siteToFeedItem(r: RecommendItem): FeedItem {
     commentCount: 0,
     score: 0,
     tags: [],
+    seasonTag: '',
+    heatText: '',
+    badge: '',
     contentType: 0,
   };
 }

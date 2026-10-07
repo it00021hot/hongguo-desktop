@@ -5,7 +5,11 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'src-tauri', 'routeTree.gen.ts', 'node_modules'] },
+  {
+    // captures/ 是逆向用的抓包产物与提取脚本（第三方混淆代码 + 数据），
+    // 不是本项目源码，lint 范围只覆盖 src 与脚本
+    ignores: ['dist', 'captures', 'src-tauri', 'routeTree.gen.ts', 'node_modules'],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

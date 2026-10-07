@@ -1,4 +1,4 @@
-//! 红果短剧下载器 —— 应用装配入口。
+//! 红果桌面版 —— 应用装配入口。
 //!
 //! 本文件只做「装配」：注册插件、注入状态、注册协议、挂载 command。
 //! 具体业务逻辑一律在 [`signer`] / [`domain`] / [`service`] 各自的模块里，
@@ -25,52 +25,19 @@ pub fn run() {
     // 调试时用 RUST_LOG=debug 打开详细日志。
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // 数据库打不开（目录建不了、schema 迁移失败）就别带病起窗口：
-    // 用户在空库上改的设置，等下次旧库恢复时会静默丢掉。
-    let state = match store::Store::open(store::paths::db_file()) {
-        Ok(db) => {
-            // 设备档案：库里没有就落一份静态兜底档案（设备注册 M2b 落位后，
-            // 这里读到的会是注册产物）。旧档案的版本身份要对齐到当前客户端
-            // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
-            // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
-            let device = match db.device_profile() {
-                Ok(Some(mut p)) => {
-                    signer::device::align_app_version(&mut p);
-                    p
-                }
-                Ok(None) => {
-                    let fallback = signer::video_device();
-                    if let Err(e) = db.save_device_profile(&fallback) {
-                        log::warn!("[Store] 静态设备档案落库失败（不影响启动）: {e}");
-                    }
-                    fallback
-                }
-                Err(e) => {
-                    log::warn!("[Store] 设备档案读取失败，用静态兜底: {e}");
-                    signer::video_device()
-                }
-            };
-            std::sync::Arc::new(app_state::AppStateInner::with_device(db, device))
-        }
-        Err(e) => {
-            log::error!("[Store] 数据库打开失败，终止启动: {e}");
-            std::process::exit(1);
-        }
-    };
-
+    // ⚠️ 启动顺序：**数据库在 .setup() 里打开，必须排在单实例插件之后**。
+    // 插件在 Builder::build 阶段初始化并劝退第二个实例；若把开库放在这
+    // 之前，再次启动（上一实例还活着——隐身隐藏/小窗模式现在很常见）
+    // 的进程会先撞上库锁，被误报成「数据文件损坏」然后退出。
     let builder = tauri::Builder::default()
-        // 单实例锁要第一个注册：抢在窗口创建之前，第二个进程才不会拉起第二套 UI。
-        // 双开的直接危害是两个进程互写同一个存储——下载记录会随机消失。
+        // 单实例锁要第一个注册：抢在窗口创建与数据库打开之前，第二个进程
+        // 才不会拉起第二套 UI / 撞库锁。双开的直接危害是两个进程互写同一
+        // 个存储——下载记录会随机消失。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            use tauri::Manager;
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            bring_back_active_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(state)
         // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
         .manage(commands::app_cmd::WindowCloseGate::default());
 
@@ -80,8 +47,9 @@ pub fn run() {
     builder
         .setup(|app| {
             // 启动装配的顺序即依赖顺序：
-            // 先加载数据，再从磁盘补回丢失的任务记录，然后把待跑任务推入调度，
-            // 最后探测转码能力。
+            // 先建应用状态（含数据库），再从磁盘补回丢失的任务记录，然后把
+            // 待跑任务推入调度，最后探测转码能力。
+            app.manage(build_app_state());
             bootstrap::store::init(app.handle())?;
             bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
@@ -117,6 +85,10 @@ pub fn run() {
             commands::app_cmd::open_external_page,
             commands::app_cmd::mark_window_ready,
             commands::app_cmd::exit_app,
+            commands::app_cmd::open_mini_window,
+            commands::app_cmd::close_mini_window,
+            commands::app_cmd::fit_mini_window,
+            commands::app_cmd::set_incognito,
             // 设置
             commands::settings_cmd::get_settings,
             commands::settings_cmd::save_settings,
@@ -138,6 +110,7 @@ pub fn run() {
             commands::rank_cmd::rank_list,
             commands::rank_cmd::new_drama_list,
             commands::rank_cmd::search_series_cmd,
+            commands::rank_cmd::search_suggest_cmd,
             commands::rank_cmd::reservation_list,
             commands::rank_cmd::reservation_reserve,
             commands::rank_cmd::new_drama_calendar,
@@ -203,8 +176,95 @@ pub fn run() {
             commands::storage_cmd::delete_episode_file,
             commands::storage_cmd::delete_all_downloaded,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动失败");
+        .build(tauri::generate_context!())
+        .expect("启动失败")
+        .run(|app, event| {
+            // macOS 点 Dock 图标：隐身模式把窗口整个藏起来后，鼠标唤不回
+            // （隐藏窗口不参与命中测试），Dock 是系统级的恢复入口。
+            // 主窗在小窗播放期间是故意隐藏的，这里只带回「活动的那个窗口」。
+            if let tauri::RunEvent::Reopen { .. } = event {
+                bring_back_active_window(app);
+            }
+        });
+}
+
+/// 把当前活动的窗口带回来（隐身 hide 后的恢复入口，Dock 点击/再次启动共用）。
+///
+/// 规则：**有小窗显小窗，否则显主窗**——
+/// - 小窗播放期间主窗是刻意隐藏的，无脑全显会破坏小窗模式；
+/// - 隐身藏的是哪个窗，哪个窗就是「活动的」：正常模式藏的是主窗（没有
+///   小窗在场），小窗模式藏的一定是小窗（主窗早已隐藏，鼠标离开事件
+///   只发生在可见的那个窗上）。
+fn bring_back_active_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let target = app
+        .get_webview_window("mini")
+        .or_else(|| app.get_webview_window("main"));
+    if let Some(w) = target {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// 打开数据库并组装应用状态。失败即终止启动（不带病起窗口：用户在空库
+/// 上改的设置，等下次旧库恢复时会静默丢掉）。
+///
+/// 只在 `.setup()` 里调用——必须晚于单实例插件，否则上一实例还活着时
+/// （隐身隐藏/小窗模式）这里会撞库锁。锁冲突给一次短暂重试（真双开的
+/// 败者本该在插件阶段就被劝退，走到这里多半是极端竞态），仍锁着就带着
+/// 明确指引退出，而不是误报「数据文件损坏」。
+fn build_app_state() -> std::sync::Arc<app_state::AppStateInner> {
+    let db = match open_store_with_lock_retry() {
+        Ok(db) => db,
+        Err(error::AppError::StoreLocked(e)) => {
+            log::error!(
+                "[Store] 数据库被占用，终止启动: {e}\n\
+                 另一个实例可能还在运行（隐身模式会把窗口整个藏掉）。\
+                 在 Dock/任务栏里找到它，或结束残留进程后再启动。"
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            log::error!("[Store] 数据库打开失败，终止启动: {e}");
+            std::process::exit(1);
+        }
+    };
+    // 设备档案：库里没有就落一份静态兜底档案（设备注册 M2b 落位后，
+    // 这里读到的会是注册产物）。旧档案的版本身份要对齐到当前客户端
+    // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
+    // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
+    let device = match db.device_profile() {
+        Ok(Some(mut p)) => {
+            signer::device::align_app_version(&mut p);
+            p
+        }
+        Ok(None) => {
+            let fallback = signer::video_device();
+            if let Err(e) = db.save_device_profile(&fallback) {
+                log::warn!("[Store] 静态设备档案落库失败（不影响启动）: {e}");
+            }
+            fallback
+        }
+        Err(e) => {
+            log::warn!("[Store] 设备档案读取失败，用静态兜底: {e}");
+            signer::video_device()
+        }
+    };
+    std::sync::Arc::new(app_state::AppStateInner::with_device(db, device))
+}
+
+/// 开库；被锁时稍等重试一次（覆盖两实例几乎同时启动、败者尚未退出的窗口期）。
+fn open_store_with_lock_retry() -> error::AppResult<store::Store> {
+    match store::Store::open(store::paths::db_file()) {
+        Ok(db) => Ok(db),
+        Err(error::AppError::StoreLocked(first)) => {
+            log::warn!("[Store] 数据库暂时被锁（{first}），1s 后重试一次");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            store::Store::open(store::paths::db_file())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴。

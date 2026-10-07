@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
 import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonCardGrid, SkeletonRows } from '@/components/skeletons';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import {
   SeriesDetailSheet,
   type SeriesRef,
@@ -38,15 +38,14 @@ const GENDERS: { value: number; labelKey: string }[] = [
   { value: 0, labelKey: 'newDrama.gender.female' },
 ];
 
-/** 底部贴条里的视图 tab（胶囊形态，选中 = 主色），覆盖 TabsTrigger 默认样式。 */
-const pillTriggerCls =
-  'h-auto flex-none rounded-full px-4 py-1.5 text-sm text-muted-foreground shadow-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none';
-
 export function NewDramaPage() {
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
   const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
   // 频道筛选在页面层：官方把它放在标题行右侧，对推荐/日历两个视图都可见
   const [gender, setGender] = useState(2);
+  // 视图 tab（推荐/日历）：状态自持——tab 胶囊 portal 进 AppShell 顶栏，
+  // 不能再依赖 Radix Tabs 的组件树上下文（Trigger 必须长在 Tabs 里）
+  const [view, setView] = useState<'recommend' | 'calendar'>('recommend');
 
   const handleSelect = (item: {
     seriesId: string;
@@ -72,11 +71,22 @@ export function NewDramaPage() {
   };
 
   return (
-    // min-h-full + 底部 mt-auto：内容不足一屏时 tab 条也贴在页面底边
+    // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）
     <div className="flex min-h-full flex-col">
-      <Tabs defaultValue="recommend" className="flex min-h-0 flex-1 flex-col gap-3">
-        {/* 顶行只留频道胶囊；页标题由 AppShell 顶栏负责，不重复。
-            mt-3 与 Tabs 的 gap-3 对称：胶囊行上下各留 12px，行内居中 */}
+      <TopBarTabsPortal>
+        <TopBarTab
+          active={view === 'recommend'}
+          onClick={() => setView('recommend')}
+        >
+          {t('newDrama.tabs.recommend')}
+        </TopBarTab>
+        <TopBarTab active={view === 'calendar'} onClick={() => setView('calendar')}>
+          {t('newDrama.tabs.calendar')}
+        </TopBarTab>
+      </TopBarTabsPortal>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
+        {/* 顶行只留频道胶囊；页标题由侧栏高亮表达，不重复 */}
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
           {GENDERS.map(({ value, labelKey }) => (
             <Button
@@ -91,28 +101,12 @@ export function NewDramaPage() {
           ))}
         </div>
 
-        <TabsContent value="recommend">
+        {view === 'recommend' ? (
           <NewDramaRecommends gender={gender} onSelect={handleSelect} />
-        </TabsContent>
-
-        <TabsContent value="calendar">
+        ) : (
           <NewCalendarView onSelect={handleSelect} />
-        </TabsContent>
-
-        {/* 视图 tab 条：贴着页面底部常驻（sticky，列表长时滚动中也钉在
-            底边）；选中态 = 主色胶囊，与排行榜底部内容 tab 同款。
-            TabsList 是 inline-flex，mx-auto 不生效，得用 flex 容器居中 */}
-        <div className="bg-background sticky bottom-0 z-10 mt-auto flex justify-center border-t py-2">
-          <TabsList className="h-auto gap-1 rounded-full p-1">
-            <TabsTrigger value="recommend" className={pillTriggerCls}>
-              {t('newDrama.tabs.recommend')}
-            </TabsTrigger>
-            <TabsTrigger value="calendar" className={pillTriggerCls}>
-              {t('newDrama.tabs.calendar')}
-            </TabsTrigger>
-          </TabsList>
-        </div>
-      </Tabs>
+        )}
+      </div>
 
       <SeriesDetailSheet
         card={detail?.card ?? null}

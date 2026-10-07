@@ -1,8 +1,8 @@
 [package]
-name = "hongguo-downloader"
+name = "hongguo-desktop"
 version = "2.0.0"
-description = "红果短剧全集批量下载器（Tauri 桌面版）"
-authors = ["hongguo-downloader contributors"]
+description = "红果短剧桌面客户端（Tauri 桌面版）"
+authors = ["hongguo-desktop contributors"]
 license = "GPL-3.0"
 edition = "2021"
 # 被 sysinfo 0.39.6 的 MSRV 抬上来的：该版本要求 1.95，本项目的代码本身用不到
@@ -68,6 +68,7 @@ muxide = "0.2.5"
 # component / network / system / user 一并拖进来，本项目一个都用不上。
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 turso = { version = "0.8.1", default-features = false }
+mouse_position = "0.1"
 
 # 这里刻意不列 videotoolbox / windows( Media Foundation ) / rusty_aac：
 # 平台硬编一律走 `media::ffmpeg` 的外部 ffmpeg 探测，音轨不解码（AAC 直通），

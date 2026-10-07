@@ -7,7 +7,7 @@ use crate::domain::api::rank::{
     fetch_new_calendar, fetch_new_drama, fetch_rank_ex, fetch_reservations, reserve_series,
     CalendarPage, RankPage,
 };
-use crate::domain::api::search::{search_series, SearchPage};
+use crate::domain::api::search::{search_series, search_suggest, SearchPage, SuggestItem};
 use crate::error::{AppError, AppResult};
 
 /// 拉一个榜单（任意 tab × 子榜 × 筛选组合）。
@@ -72,6 +72,27 @@ pub async fn search_series_cmd(
         Err(e) => {
             log::warn!("[Search] query={query} 失败: {e}");
             Err(e)
+        }
+    }
+}
+
+/// 搜索联想（输入 2~3 字返回相关剧集；空词空表不打接口）。
+#[tauri::command]
+pub async fn search_suggest_cmd(state: State<'_, AppState>, q: String) -> AppResult<Vec<SuggestItem>> {
+    let q = q.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let env = state.api_env();
+    match search_suggest(q, &env).await {
+        Ok(items) => {
+            log::debug!("[Suggest] q={q} 命中 {} 条", items.len());
+            Ok(items)
+        }
+        Err(e) => {
+            // 联想是纯增强：失败只记日志不上抛，输入框照常手动搜索
+            log::warn!("[Suggest] q={q} 失败: {e}");
+            Ok(Vec::new())
         }
     }
 }

@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
 import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonRows } from '@/components/skeletons';
+import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import {
   SeriesDetailSheet,
   type SeriesRef,
@@ -112,8 +113,23 @@ export function RankPage() {
   const tabRow = showTabsRow ? tabs : [];
 
   return (
-    // min-h-full + 底部 mt-auto：内容不足一屏时 tab 条也贴在页面底边
+    // 内容分类 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下），
+    // 页面里只剩子榜竖排 + 榜单内容
     <div className="flex min-h-full flex-col gap-4">
+      {/* 顶栏中部：内容 tab（全部/真人剧/漫剧/AI剧/系列剧）。
+          schema 未到时先渲染胶囊骨架占位（形态未知，比空白好） */}
+      <TopBarTabsPortal>
+        {tabRow.map((tab) => (
+          <TopBarTab
+            key={tab.id}
+            active={tab.id === selected}
+            onClick={() => switchTab(tab.id)}
+          >
+            {tab.name}
+          </TopBarTab>
+        ))}
+        {tabRow.length === 0 && <Skeleton className="h-6 w-64 rounded-full" />}
+      </TopBarTabsPortal>
       <div className="flex min-h-0 gap-4">
         {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位） */}
         <nav className="flex w-36 shrink-0 flex-col gap-1" aria-label={t('rank.subLists')}>
@@ -196,28 +212,7 @@ export function RankPage() {
       {/* 内容 tab 条：贴着页面底部常驻（sticky，列表长时滚动中也钉在底边）。
           居中胶囊组，选中态 = 主色胶囊（与左侧子榜选中同款）；
           两级形态才显示（登录一级形态只有一个合成 tab，隐藏整行） */}
-      {showTabsRow && (
-        <div className="bg-background sticky bottom-0 z-10 mt-auto border-t">
-          <div className="flex justify-center gap-1 py-2">
-            {tabRow.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => switchTab(tab.id)}
-                className={cn(
-                  'rounded-full px-4 py-1.5 text-sm transition-colors focus-visible:outline-none',
-                  tab.id === selected
-                    ? 'bg-primary text-primary-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                )}
-              >
-                {tab.name}
-              </button>
-            ))}
-            {tabRow.length === 0 && <Skeleton className="h-8 w-72 rounded-full" />}
-          </div>
-        </div>
-      )}
+      {/* 内容 tab 条已上移 AppShell 顶栏（本文件上方 TopBarTabsPortal） */}
 
       <SeriesDetailSheet
         card={detail?.card ?? null}

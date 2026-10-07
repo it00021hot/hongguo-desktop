@@ -96,7 +96,7 @@ macro_rules! println {
 
 /// Process-wide allocator (see the crate docs).
 ///
-/// PATCHED (hongguo-downloader): the `#[global_allocator]` install is removed.
+/// PATCHED (hongguo-desktop): the `#[global_allocator]` install is removed.
 /// rusty_alloc 1.1.6 (the version pinned here via rusty_alloc-api "=1.1.6") has
 /// concurrency bugs that abort the whole process under multi-threaded
 /// allocation -- our `cargo test` crashed intermittently with

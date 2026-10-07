@@ -51,15 +51,19 @@ pub struct FeedItem {
     /// 题材标签（来自 category_schema 字符串的二次解析）
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 季角标（sub_title_list data_type=0，「第1季」形态；hgplayer titleTag 同源）
+    #[serde(default)]
+    pub season_tag: String,
+    /// 热度文本（sub_title_list data_type=27，「1705万」形态，配火焰图标展示）
+    #[serde(default)]
+    pub heat_text: String,
+    /// 官方运营角标（tag_info.text：「新剧/爆剧/红果首发」等；2026-10-07 抓包实证）
+    #[serde(default)]
+    pub badge: String,
     /// 内容类型：1=真人剧，1004=漫剧（推荐流「按类型刷」的过滤键）
     #[serde(default)]
     pub content_type: i64,
 }
-
-/// selector「体裁」维度（genre）的取值——官方推荐流的内容类型过滤键。
-pub const GENRE_HUMAN: &str = "short_play";
-pub const GENRE_COMIC: &str = "comic_series";
-pub const GENRE_AI: &str = "ai_series";
 
 /// 一页信息流。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -75,8 +79,8 @@ pub struct FeedPage {
 /// 拉一页推荐信息流（官方 body 协议，genre 服务端过滤）。
 ///
 /// `offset` 传 0 取首页；翻页用上一页返回的 `next_offset`。
-/// `genre`：`Some(GENRE_COMIC)` 只回漫剧、`Some(GENRE_HUMAN)` 只回真人剧，
-/// `None` 全部（官方「全部体裁」）。
+/// `genre`：`Some("comic_series")` 只回漫剧、`Some("short_play")` 只回真人剧
+/// （selector「体裁」维度的取值，由前端字面量直传），`None` 全部（官方「全部体裁」）。
 pub async fn fetch_feed(offset: i64, genre: Option<&str>, env: &ApiEnv) -> AppResult<FeedPage> {
     let genre_ids: Vec<&str> = genre.into_iter().collect::<Vec<_>>();
     let body = serde_json::to_vec(&serde_json::json!({
@@ -238,6 +242,7 @@ fn parse_browse_panel(data: Option<&Value>) -> AppResult<Vec<SelectorRow>> {
 /// 拉一页找剧结果（与推荐流同端点，多维 select_items 服务端过滤）。
 ///
 /// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
+/// 每页 20 条（用户指定；响应 next_offset 游标会跟着走，翻页无算术依赖）。
 pub async fn fetch_browse(
     filters: &BrowseFilters,
     offset: i64,
@@ -247,7 +252,7 @@ pub async fn fetch_browse(
     let body = serde_json::to_vec(&serde_json::json!({
         "client_req_type": 3,
         "filter_ids": "",
-        "limit": 18,
+        "limit": 20,
         "need_selector_panel": false,
         "offset": offset,
         "req_scene": "default",
@@ -294,6 +299,17 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
         if series_id.is_empty() {
             continue;
         }
+        // sub_title_list：data_type 0=季文本 / 3=分类 / 27=热度（2026-10-07
+        // 抓包实证；分类沿用 category_schema 解析，这里只取季与热度）
+        let (season_tag, heat_text) = parse_sub_titles(raw.get("sub_title_list"));
+        // 官方运营角标：tag_info（同名字段在 plan/v 里是「第N季/同IP」，
+        // 在 landpage 信息流里是「新剧/爆剧/红果首发」，enable=false 不显）
+        let badge = raw
+            .pointer("/tag_info/text")
+            .and_then(Value::as_str)
+            .filter(|_| raw.pointer("/tag_info/enable").and_then(Value::as_bool) != Some(false))
+            .unwrap_or("")
+            .to_string();
         items.push(FeedItem {
             series_id: series_id.to_string(),
             title: str_field(raw, "title"),
@@ -305,6 +321,9 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
             comment_count: int_field(raw, "comment_count"),
             score: num_field(raw, "score"),
             tags: parse_tags(raw.get("category_schema")),
+            season_tag,
+            heat_text,
+            badge,
             content_type: int_field(raw, "content_type"),
         });
     }
@@ -319,10 +338,28 @@ fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
     })
 }
 
+/// sub_title_list → (季文本, 热度文本)。data_type 语义见 2026-10-07 抓包：
+/// 0=「第1季」形态、27=热度数值文本（官方配火焰图标）、3=分类（另有
+/// category_schema 承载，这里不取）。两条都算展示增强，缺了给空串。
+fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
+    let mut season = String::new();
+    let mut heat = String::new();
+    for it in list.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+        let Some(content) = it.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        match it.get("data_type").and_then(Value::as_i64) {
+            Some(0) if season.is_empty() => season = content.to_string(),
+            Some(27) if heat.is_empty() => heat = content.to_string(),
+            _ => {}
+        }
+    }
+    (season, heat)
+}
+
 /// category_schema 是 JSON 字符串：`[{"category_id":..,"name":"逆袭",...}]`，
 /// 取 name 做题材标签。解析失败给空表（标签是展示增强，不值得报错）。
-pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {
-    let Some(s) = schema.and_then(Value::as_str) else {
+pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {    let Some(s) = schema.and_then(Value::as_str) else {
         return Vec::new();
     };
     let Ok(parsed) = serde_json::from_str::<Value>(s) else {
@@ -896,7 +933,9 @@ mod probe {
         .await
         {
             Ok(b) => {
-                std::fs::write("C:/Users/liu13/AppData/Local/Temp/hg_capture/bookmall.json", &b).ok();
+                let dir = crate::domain::api::capture_dir();
+                std::fs::create_dir_all(&dir).ok();
+                std::fs::write(dir.join("bookmall.json"), &b).ok();
                 let v: Value = serde_json::from_slice(&b).unwrap_or(Value::Null);
                 let tabs = v.pointer("/data/tab_item").and_then(Value::as_array).cloned().unwrap_or_default();
                 println!(
@@ -1051,6 +1090,11 @@ mod probe_extra {
 #[cfg(test)]
 mod probe_genre {
     use super::*;
+
+    /// selector「体裁」维度（genre）的取值——官方推荐流的内容类型过滤键。
+    /// 生产链路里 genre 由前端字面量直传，常量只供 probe 对账引用。
+    const GENRE_HUMAN: &str = "short_play";
+    const GENRE_COMIC: &str = "comic_series";
 
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

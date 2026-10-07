@@ -415,12 +415,14 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     let body = tt_encrypt_v5(plain.as_bytes());
     // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
     if std::env::var("TT_DEBUG").is_ok() {
-        let _ = std::fs::write("C:/Users/liu13/AppData/Local/Temp/hg_capture/rust_reg_plain.json", &plain);
+        let dir = super::capture_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
         let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
-        let _ = std::fs::write("C:/Users/liu13/AppData/Local/Temp/hg_capture/rust_reg_body.hex", &hex);
+        let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
         let meta = serde_json::json!({"cdid": id.cdid, "openudid": id.openudid, "clientudid": id.clientudid, "req_id": id.req_id, "_rticket": now_ms.to_string(), "ts": (now_ms / 1000).to_string(), "first_launch_timestamp": ((now_ms - 12000) / 1000).to_string()});
         let _ = std::fs::write(
-            "C:/Users/liu13/AppData/Local/Temp/hg_capture/rust_reg_meta.json",
+            dir.join("rust_reg_meta.json"),
             serde_json::to_string(&meta).unwrap(),
         );
     }
@@ -684,9 +686,7 @@ mod probe {
     #[tokio::test]
     #[ignore = "需要先跑 python 生成 register_body.hex"]
     async fn probe_register_ttencript_v5() {
-        let hex = std::fs::read_to_string(
-            "C:/Users/liu13/AppData/Local/Temp/hg_capture/register_body.hex",
-        )
+        let hex = std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body.hex"))
         .expect("先跑 python 生成 register_body.hex");
         let hex = hex.trim();
         let body: Vec<u8> = (0..hex.len())
@@ -697,10 +697,7 @@ mod probe {
 
         // meta 里有与 body 配套的 cdid/openudid/时间戳（query 必须与 body 一致）
         let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(
-                "C:/Users/liu13/AppData/Local/Temp/hg_capture/register_body_meta.json",
-            )
-            .unwrap(),
+            &std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body_meta.json")).unwrap(),
         )
         .unwrap();
         let cdid = meta["cdid"].as_str().unwrap();
@@ -725,9 +722,7 @@ mod probe {
     #[tokio::test]
     #[ignore = "需要先跑 python 生成 register_body2.hex"]
     async fn probe_register_applog_json() {
-        let hex = std::fs::read_to_string(
-            "C:/Users/liu13/AppData/Local/Temp/hg_capture/register_body2.hex",
-        )
+        let hex = std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body2.hex"))
         .expect("先跑 python 生成 register_body2.hex");
         let body: Vec<u8> = (0..hex.trim().len())
             .step_by(2)
@@ -735,10 +730,8 @@ mod probe {
             .collect();
 
         let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(
-                "C:/Users/liu13/AppData/Local/Temp/hg_capture/register_body2_meta.json",
-            )
-            .unwrap(),
+            &std::fs::read_to_string(crate::domain::api::capture_dir().join("register_body2_meta.json"))
+                .unwrap(),
         )
         .unwrap();
         let now_ms = meta["_rticket"].as_str().unwrap().parse::<u64>().unwrap();
@@ -800,10 +793,10 @@ mod probe {
         let env0 = anon_env();
 
         // P0：重放 py_fresh2
-        let dir = "C:/Users/liu13/AppData/Local/Temp/hg_capture";
+        let dir = crate::domain::api::capture_dir();
         if let (Ok(hex), Ok(meta_s)) = (
-            std::fs::read_to_string(format!("{dir}/py_fresh2.hex")),
-            std::fs::read_to_string(format!("{dir}/py_fresh2_meta.json")),
+            std::fs::read_to_string(dir.join("py_fresh2.hex")),
+            std::fs::read_to_string(dir.join("py_fresh2_meta.json")),
         ) {
             let hex = hex.trim();
             let body: Vec<u8> = (0..hex.len())

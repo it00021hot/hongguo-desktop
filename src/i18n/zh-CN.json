@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "红果短剧下载器"
+    "name": "红果短剧"
   },
   "nav": {
     "home": {
@@ -69,7 +69,8 @@
     "fOnlineTime": "时间",
     "fDuration": "长度",
     "all": "全部",
-    "nextPage": "下一页"
+    "nextPage": "下一页",
+    "filters": "筛选"
   },
   "search": {
     "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
@@ -139,11 +140,8 @@
     "removeOnly": "仅删除记录"
   },
   "player": {
-    "autoNext": "播完自动下一集",
-    "autoDelete": "看完自动删",
     "autoDeleteDone": "第{index}集已看完，已删除本地文件",
     "seriesSearch": "搜索剧名",
-    "noSeries": "还没有选择剧集",
     "buffering": "正在缓存 {percent}%（{size}）…",
     "compatFetching": "正在取这一集…",
     "compatTranscoding": "画面解不出来，正在转成兼容格式 {percent}%",
@@ -181,8 +179,7 @@
     "download": "下载",
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
-    "pictureInPicture": "画中画",
-    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 上一集/下一集",
+    "keyboardHint": "空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 切剧/切集 · 单击画面选剧 · Esc 退出选剧",
     "removeRecordShort": "清除这条记录",
     "removeRecord": "清除《{title}》的观看记录",
     "removeRecordConfirm": "清除《{title}》的观看记录？",
@@ -236,7 +233,19 @@
       "repliesHiddenTip": "官方暂未开放回复列表拉取（hgplayer 同样只显示数量）",
       "loadMore": "加载更多评论（还有 {n} 条）",
       "preparing": "正在准备这一集…"
-    }
+    },
+    "backToMain": "返回主窗口",
+    "comingSoon": "即将上线",
+    "episodeNo": "第{index}集",
+    "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
+    "miniNoTarget": "没有可播放的内容",
+    "miniTitle": "小窗播放",
+    "miniWindow": "小窗播放",
+    "pause": "暂停",
+    "progress": "播放进度",
+    "reserve": "预约",
+    "reserved": "已预约",
+    "unreserved": "已取消预约"
   },
   "series": {
     "loadFailed": "分集加载失败",
@@ -373,7 +382,8 @@
     "cancelled": "操作已取消",
     "busy": "上一个任务还在跑，请等它完成",
     "internal": "操作失败，请重试",
-    "badPayload": "数据格式异常，请重试"
+    "badPayload": "数据格式异常，请重试",
+    "storeLocked": "应用已在运行（可能被隐身模式隐藏了窗口），请从 Dock/任务栏打开它"
   },
   "common": {
     "confirm": "确定",

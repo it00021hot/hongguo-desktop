@@ -44,9 +44,6 @@ import type {
   SearchResult,
 } from './schema';
 
-/** 找剧一页条数（与官方 18/页对齐）。 */
-export const BROWSE_PAGE_SIZE = 18;
-
 /**
  * TanStack Query 的 key 工厂。
  *
@@ -73,8 +70,7 @@ const keys = {
   browseList: (cat: string, genre: string, page: number) =>
     ['browse-list', cat, genre, page] as const,
   browsePanel: ['browse-panel'] as const,
-  browsePage: (filters: BrowseFilters, page: number) =>
-    ['browse-page', filters, page] as const,
+  browseFeed: (filters: BrowseFilters) => ['browse-feed', filters] as const,
   relatedSeries: (seriesId: string) => ['related-series', seriesId] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
@@ -626,15 +622,27 @@ export function useBrowsePanel() {
   });
 }
 
-/** 找剧一页结果（第 page 页 = offset (page-1)*18，与面板 limit 对齐）。 */
-export function useBrowsePage(filters: BrowseFilters, page: number) {
-  return useQuery({
-    queryKey: keys.browsePage(filters, page),
-    queryFn: () => discover.browsePage(filters, (page - 1) * BROWSE_PAGE_SIZE),
-    // 换筛选/翻页时保留旧结果降透明度，不整页白屏
-    placeholderData: (prev) => prev,
+/** 找剧筛选流（无限滚动）。
+ *
+ * 翻页必须回传首页发放的 `sessionId`（服务端按它记住筛选上下文）+
+ * 上一页的 `nextOffset` 游标——2026-10-07 抓 hgplayer 1.1.6 实证：
+ * limit=18、offset 0→18→36…、session_id 从第二页起同值回传。
+ * 旧的 (page-1)*18 算术 offset + 空串 session_id 会让结果集换源，
+ * 表现就是「条数和第三方对不上」。
+ */
+export function useBrowseFeed(filters: BrowseFilters) {
+  const query = useInfiniteQuery({
+    queryKey: keys.browseFeed(filters),
+    queryFn: ({ pageParam }) =>
+      pageParam.offset === 0
+        ? discover.browsePage(filters, 0)
+        : discover.browsePage(filters, pageParam.offset, pageParam.sessionId),
+    initialPageParam: { offset: 0, sessionId: '' },
+    getNextPageParam: (last) =>
+      last.hasMore ? { offset: last.nextOffset, sessionId: last.sessionId } : undefined,
     staleTime: 30_000,
   });
+  return useInfiniteStream(query, feedItems);
 }
 
 /** 详情页相关作品·系列（失败静默降级，不阻塞推荐 tab 的其他内容）。 */
@@ -1024,4 +1032,22 @@ export function useSeriesSearchApp(query: string) {
     staleTime: 5 * 60_000,
   });
   return useInfiniteStream(query_, appSearchItems);
+}
+
+/**
+ * 搜索联想（hgplayer 1.1.6 同款）：输入即查，30s 缓存重复输入秒出。
+ *
+ * 防抖在调用侧（组件里 300ms 才把词递进来），这里只管查；
+ * 失败后端已吞掉返回空表，下拉无感消失。
+ */
+export function useSearchSuggest(q: string) {
+  const kw = q.trim();
+  return useQuery({
+    queryKey: ['search-suggest', kw] as const,
+    queryFn: () => seriesSearch.suggest(kw),
+    // 至少 2 个字才值得打接口（单字联想噪声大）
+    enabled: kw.length >= 2,
+    staleTime: 30_000,
+    retry: false,
+  });
 }

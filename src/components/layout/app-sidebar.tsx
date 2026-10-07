@@ -26,8 +26,6 @@ import { useAccount, useAuthRefresh } from '@/lib/queries';
 import { login } from '@/lib/ipc/commands';
 import { toast } from 'sonner';
 import { useUiStore } from '@/lib/stores/ui';
-import { isMac } from '@/lib/platform';
-import { MacTrafficLights } from './window-controls';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
@@ -63,23 +61,8 @@ export function AppSidebar() {
         collapsed ? 'w-14' : 'w-56',
       )}
     >
-      {/* 无边框窗口下这一块兼作拖拽区：用户抓着 logo 就能拖窗口。
-          mac 的交通灯钉在左上角（平台惯例），其余平台这块只做拖拽。
-
-          `deep` 不能省：Tauri 2.x 的裸 `data-tauri-drag-region` 只认自己，
-          点在 img / 标题文字上都不算拖拽（见 tauri 的 src/window/scripts/drag.js）。 */}
-      <div data-tauri-drag-region="deep" className="flex h-14 items-center gap-2 border-b px-3">
-        {isMac() && <MacTrafficLights />}
-        <img
-          src="/app-icon.png"
-          alt=""
-          width={32}
-          height={32}
-          className="size-8 shrink-0 rounded-lg"
-        />
-        {!collapsed && <p className="truncate text-sm font-semibold">{t('app.name')}</p>}
-      </div>
-
+      {/* 顶栏（红绿灯/logo/应用名）横贯全宽，长在 AppShell 上——侧边栏
+          从顶栏下方开始，折叠不再影响顶部区域。 */}
       <nav className="flex-1 space-y-1 p-2">
         {NAV_ITEMS.map((item) => {
           const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);
@@ -105,7 +88,11 @@ export function AppSidebar() {
           return (
             <Tooltip key={item.key}>
               <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">{t(`nav.${item.key}.title`)}</TooltipContent>
+              {/* sideOffset 抬出 56px 侧栏：trigger 是整行 39px 宽，
+                  默认 offset=4 会让浮层压在侧栏边框上 */}
+              <TooltipContent side="right" sideOffset={10}>
+                {t(`nav.${item.key}.title`)}
+              </TooltipContent>
             </Tooltip>
           );
         })}
@@ -166,7 +153,7 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
         collapsed && 'justify-center px-0',
         account && 'cursor-default',
       )}
-      title={collapsed ? label : undefined}
+      // 折叠态由 Radix Tooltip 出标签：原生 title 会叠出第二层浮层
     >
       {/* 有头像用官方头像（登录响应下发），没有退回通用图标——
           这样折叠态下也能一眼分出登录/未登录 */}

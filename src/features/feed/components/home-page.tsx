@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/lib/ipc/commands';
 import {
@@ -16,7 +17,6 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { useAccount, useBookshelf, useWatchHistory } from '@/lib/queries';
 import { t } from '@/i18n';
-import { cn } from '@/lib/utils';
 
 /**
  * 首页：沉浸式播放器流（第三方同款形态）。
@@ -47,6 +47,12 @@ interface StreamItem {
   horizCover: string;
   /** 该条目所属流的体裁键（'comic_series'/'short_play'；口味统计计数用） */
   genre?: string;
+  /** 热度文本（信息流条目带，剧名上方展示；hgplayer 1.1.6 同款） */
+  heatText?: string;
+  /** 季角标（「第1季」；剧名前 pill） */
+  seasonTag?: string;
+  /** 官方运营角标（「新剧/爆剧/红果首发」；剧名前标签） */
+  badge?: string;
 }
 
 /** 口味统计（localStorage 持久化）：看过哪类多，推荐 tab 就按哪类过滤。
@@ -267,6 +273,9 @@ export function HomePage() {
               cover: i.cover,
               horizCover: i.horizCover,
               genre: source === 'feed' ? recommendGenre : FEED_GENRE[source],
+              heatText: i.heatText,
+              seasonTag: i.seasonTag,
+              badge: i.badge,
             })),
         ]
       : source === 'hot'
@@ -298,6 +307,20 @@ export function HomePage() {
   const index = Math.min(rawIndex, Math.max(0, items.length - 1));
   const current = items[index];
   const currentId = current?.seriesId;
+
+  // 信息流条目的展示标记（热度/季角标）：档案接口没有这两个字段，
+  // 只能从流条目上带给播放器叠加层。
+  const overlayMeta = useMemo(
+    () =>
+      current
+        ? {
+            heatText: current.heatText,
+            seasonTag: current.seasonTag,
+            badge: current.badge,
+          }
+        : undefined,
+    [current],
+  );
 
   /**
    * 当前剧的档案：走 `get_series_episodes`（本地命中秒回，缺失才回落解析），
@@ -381,12 +404,10 @@ export function HomePage() {
     });
   };
 
-  // 顶部 tab 胶囊条：渲染进播放器的 topChrome 插槽（跟随悬浮层淡出）。
-  // 样式与排行榜/新剧的内容 tab 同一套主题语义色（选中 primary 底 +
-  // primary-foreground 字，未选中 muted/accent hover）——全应用一个 tab
-  // 语言，自动跟随亮暗主题。画面上垫一层半透明黑保证可读。
-  // **重复点当前 tab = 换一批**（「再刷一组」的最直接入口）；热播榜是
-  // 固定榜单，重点不换。
+  // 分类 tab 现已 portal 进 AppShell 顶栏（见 TopBarTabs），不再悬浮画面。
+  // 样式与排行榜/新剧的内容 tab 同一套主题语义色——全应用一个 tab 语言，
+  // 自动跟随亮暗主题。**重复点当前 tab = 换一批**（「再刷一组」的最直接
+  // 入口）；热播榜是固定榜单，重点不换。
   const pickTab = (id: StreamSource) => {
     pickSource(id);
     if (id !== source || id === 'hot') return;
@@ -401,25 +422,6 @@ export function HomePage() {
       setIndexes((prev) => ({ ...prev, [id]: next }));
     }
   };
-  const topChrome = (
-    <div className="flex items-center gap-1 rounded-full bg-black/45 p-1">
-      {TABS.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          onClick={() => pickTab(tab.id)}
-          className={cn(
-            'cursor-pointer rounded-full px-4 py-1.5 text-sm transition-[color,background-color,transform] focus-visible:outline-none active:scale-95',
-            source === tab.id
-              ? 'bg-primary text-primary-foreground font-medium'
-              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-          )}
-        >
-          {t(tab.labelKey)}
-        </button>
-      ))}
-    </div>
-  );
 
   const isLoading =
     source === 'feed' ? feed.isLoading : source === 'hot' ? hot.isPending : fresh.isLoading;
@@ -434,7 +436,11 @@ export function HomePage() {
           : null
         : fresh.error;
 
-  if (isLoading && items.length === 0) {
+  const playingId = usePlayerStore((s) => s.seriesId);
+  // 切 tab 后新源首批在拉：**不整页换骨架屏**——store 里还播着上一部，
+  // 主树继续渲染 PlayerView 顶住画面，顶部细进度条已给「正在切换」反馈。
+  // 骨架屏只在冷启动（store 无目标、真的一无所有）才出现。
+  if (isLoading && items.length === 0 && !playingId) {
     return (
       <div className="flex h-full flex-col gap-3 p-4">
         <Skeleton className="min-h-0 flex-1 rounded-xl" />
@@ -497,6 +503,8 @@ export function HomePage() {
     // （别的页面靠它滚），沉浸流内部任何 1px 超高都会冒出一条页面滚动条，
     // 还会把滚轮切剧吃掉——这里整个锁死在视口内。
     <div className="relative h-full min-h-0 overflow-hidden">
+      {/* 分类 tab 进顶栏（薄行形态，画面上不再有悬浮 tab 层） */}
+      <TopBarTabs source={source} onPick={pickTab} />
       {sourceBooting && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-0.5">
           <div className="hg-loadbar-track">
@@ -507,8 +515,33 @@ export function HomePage() {
       <div className="absolute inset-0">
         {/* 播放器铺满整页；滚轮/↑↓ 在当前 tab 源内切上一部/下一部剧；
             封面给播放器做占位——切剧的取流间隙显示下一部剧的封面而非黑屏 */}
-        <PlayerView onWheelStep={step} coverUrl={coverForPlayer} topChrome={topChrome} />
+        <PlayerView
+          onWheelStep={step}
+          coverUrl={coverForPlayer}
+          overlayMeta={overlayMeta}
+        />
       </div>
     </div>
+  );
+}
+
+/**
+ * 分类 tab 栏（顶栏中部插槽，共享件见 top-bar-tabs.tsx）。
+ */
+function TopBarTabs({
+  source,
+  onPick,
+}: {
+  source: StreamSource;
+  onPick: (id: StreamSource) => void;
+}) {
+  return (
+    <TopBarTabsPortal>
+      {TABS.map((tab) => (
+        <TopBarTab key={tab.id} active={source === tab.id} onClick={() => onPick(tab.id)}>
+          {t(tab.labelKey)}
+        </TopBarTab>
+      ))}
+    </TopBarTabsPortal>
   );
 }
