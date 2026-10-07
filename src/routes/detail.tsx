@@ -7,15 +7,9 @@ import { SeriesDetailPage } from '@/features/series/components/series-detail-pag
  */
 export const Route = createFileRoute('/detail')({
   validateSearch: (search: Record<string, unknown>) => ({
-    // Router 默认 search 序列化会把纯数字 JSON.parse 成 number：应用内跳转
-    // 靠 stringify 的引号往返侥幸无事，分享/手输的裸数字深链会落到这——
-    // 统一收成 string，深链才真的可分享
-    seriesId:
-      typeof search.seriesId === 'string'
-        ? search.seriesId
-        : typeof search.seriesId === 'number'
-          ? String(search.seriesId)
-          : '',
+    // seriesId 一律字符串（main.tsx 的 parseSearch 已按字符串保真，
+    // 19 位纯数字 id 不会丢精度）；缺失给空串，由详情页指路
+    seriesId: typeof search.seriesId === 'string' ? search.seriesId : '',
   }),
   component: DetailRoute,
 });
