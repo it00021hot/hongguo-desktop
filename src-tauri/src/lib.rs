@@ -187,8 +187,14 @@ pub fn run() {
         .run(|app, event| {
             // macOS 点 Dock 图标：隐身模式把窗口整个藏起来后，鼠标唤不回
             // （隐藏窗口不参与命中测试），Dock 是系统级的恢复入口。
+            // `Reopen` 变体只存在于 macOS 构建。
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 bring_back_active_window(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app, &event);
             }
         });
 }

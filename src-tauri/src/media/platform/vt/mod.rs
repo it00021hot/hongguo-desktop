@@ -553,19 +553,6 @@ impl Compressor {
         ffi::CFRelease(gop as ffi::CFTypeRef);
         ffi::CFRelease(no_delay as ffi::CFTypeRef);
         required?;
-        let _ = ffi::VTSessionSetProperty(
-            session,
-            ffi::kVTCompressionPropertyKey_ProfileLevel,
-            ffi::kVTProfileLevel_H264_High_AutoLevel as ffi::CFTypeRef,
-        );
-        let _ = ffi::VTSessionSetProperty(
-            session,
-            ffi::kVTCompressionPropertyKey_RealTime,
-            ffi::kCFBooleanFalse as ffi::CFTypeRef,
-        );
-        ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
-        ffi::CFRelease(gop as ffi::CFTypeRef);
-        ffi::CFRelease(no_delay as ffi::CFTypeRef);
 
         Ok(Compressor {
             session,
@@ -646,8 +633,12 @@ impl Compressor {
         // media::hevc 是同一份实现
         let mut annexb = crate::media::hevc::to_annexb(raw, 4);
 
+        // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上
+        // （拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带
+        // 参数集才能在第 1 集 avcC 之下解码）。第三个布尔是 is_keyframe，
+        // 与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
         let sync = is_sync_sample(sb.0);
-        if !sync || self.parameter_sets.is_none() {
+        if sync || self.parameter_sets.is_none() {
             let desc = ffi::CMSampleBufferGetFormatDescription(sb.0);
             let params = parameter_sets_annexb(desc);
             if !params.is_empty() {
@@ -657,7 +648,7 @@ impl Compressor {
                 annexb.splice(0..0, params);
             }
         }
-        Ok((annexb, !sync))
+        Ok((annexb, sync))
     }
 }
 
@@ -775,11 +766,12 @@ impl Transfer {
 // 编排
 // ————————————————————————————————————————————————————————————
 
-/// 码率标定：VT 没有 CRF，按「0.1 bit/像素/帧」给出与 libx264 `-crf 23`
-/// 同档的码率（1080p25 ≈ 5.2 Mbps）。VMAF 复核流程与 h264_mf 的
-/// `-quality 60` 标定一致，偏差大时只调这个系数。
+/// 码率标定：VT 没有 CRF，按「0.12 bit/像素/帧」给出与 libx264 `-crf 23`
+/// 同档的码率（1080p25 ≈ 6.2 Mbps）。系数与 mf 侧同源——2026-10-07 在
+/// Windows 侧用 NVENC MFT + libvmaf 双源复核后从 0.1 提到 0.12（高运动
+/// 内容 CBR 偏低的收窄），VT 侧沿用同一档；偏差大时只调这个系数。
 fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
-    let bps = width as f64 * height as f64 * fps.max(1.0) * 0.1;
+    let bps = width as f64 * height as f64 * fps.max(1.0) * 0.12;
     bps.clamp(800_000.0, 12_000_000.0) as i32
 }
 
@@ -1013,9 +1005,9 @@ mod tests {
 
     #[test]
     fn bitrate_lands_in_the_crf23_band() {
-        // 1080p25 → 5.18 Mbps：与 libx264 crf23 的产物同档
+        // 1080p25 → 6.22 Mbps：与 libx264 crf23 的产物同档（0.12 系数）
         let b = bitrate_for(1920, 1080, 25.0);
-        assert!((4_900_000..=5_500_000).contains(&b), "实际 {b}");
+        assert!((5_900_000..=6_600_000).contains(&b), "实际 {b}");
         // 夹在合理区间
         assert_eq!(bitrate_for(1920, 1080, 240.0), 12_000_000);
         assert_eq!(bitrate_for(320, 180, 10.0), 800_000);

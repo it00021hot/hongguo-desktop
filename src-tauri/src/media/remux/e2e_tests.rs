@@ -387,7 +387,7 @@ fn platform_pipeline_produces_playable_h264() {
     let dir = scratch("platform-vt-pipeline");
     let out = dir.join("转码.mp4");
 
-    match crate::media::platform::vt::transcode_h264_for_tests(
+    match crate::media::platform::transcode_h264_for_tests(
         &crate::media::platform::PlatformRequest {
             input: &src,
             output: &out,

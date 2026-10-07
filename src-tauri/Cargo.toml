@@ -70,12 +70,27 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 turso = { version = "0.8.1", default-features = false }
 mouse_position = "0.1"
 
-# 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation），
-# 手写 FFI、零新依赖；ffmpeg 外部进程是平台硬编不可用时的中间回退，
-# 音轨一律不解码（AAC 直通）。曾经以「无法在 CI 里验证」为由回避平台 FFI，
-# 现在的验证策略：Apple Silicon 的 macOS CI 可真跑 VideoToolbox 端到端，
-# Windows 侧 CI 验枚举/参数层 + 本机 smoke，软解路径（rusty_h265/rusty_h264）
-# 永远兜底，产物一律过可播校验闸。
+# 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation）。
+# FFI 路线按 API 性质分：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs）；
+# Media Foundation 是 COM（虚表调用），手排虚表槽位错一个就是运行期崩——
+# 用 windows crate 的生成绑定（见下方 target 专属依赖，不新增外部 crate）。
+# ffmpeg 外部进程是平台硬编不可用时的中间回退，音轨一律不解码（AAC 直通）。
+# 验证策略：Apple Silicon 的 macOS CI 真跑 VideoToolbox 端到端；Windows 侧
+# 本机真机验收（GTX 1650：NVENC MFT + HEVC 扩展解码全链路 e2e 绿），CI 验
+# 纯逻辑层；软解路径（rusty_h265/rusty_h264）永远兜底，产物一律过可播校验闸。
+
+# Windows 平台硬编（Media Foundation）的 COM 绑定。选 windows crate 而不是
+# 手写虚表：MF 是 COM API（接口经虚表调用），与 macOS VideoToolbox 的纯 C
+# API 不同——手排虚表槽位错一个就是运行期崩到错误函数上。0.62 已在依赖图里
+# （tauri/wry/sysinfo 传递引入），声明为直接依赖不新增外部 crate，feature
+# 按需裁剪只编译用到的接口。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

@@ -85,3 +85,25 @@ pub fn clear_probe_cache() {
 pub fn disabled_by_env() -> bool {
     std::env::var_os("HONGGUO_NO_PLATFORM").is_some()
 }
+
+/// 仅测试构建：以「允许回落软件」的策略跑完整平台链路（解码/Annex-B/封装/
+/// 时间戳），让没有硬编的机器（含 CI）也能验证管线本身。
+///
+/// 分发到各平台的 `_for_tests` 入口——e2e 用例统一从这里走，不直接引用
+/// `vt::`/`mf::`（否则另一平台的测试构建编不过）。
+#[cfg(test)]
+pub(crate) fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
+    #[cfg(target_os = "macos")]
+    {
+        vt::transcode_h264_for_tests(req)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        mf::transcode_h264_for_tests(req)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = req;
+        None
+    }
+}

@@ -60,13 +60,17 @@ fn append_line(path: &Path, line: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // 超限则整文件重写：保最近现场，防崩溃风暴把磁盘写满。
+    // 不能在 append 句柄上 set_len(0) 续写——Windows 的写入位置仍指旧
+    // 文件末尾，会先垫一截 NUL 到旧长度再写（轮转后文件反而膨胀成 256KB）。
+    // 关掉句柄直接整文件覆盖，语义就是「只剩最新一条」。
+    if matches!(std::fs::metadata(path), Ok(meta) if meta.len() > CRASH_LOG_MAX_BYTES) {
+        let _ = std::fs::write(path, line.as_bytes());
+        return;
+    }
     let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
-    // 超限则整文件重写：保最近现场，防崩溃风暴把磁盘写满
-    if matches!(file.metadata(), Ok(meta) if meta.len() > CRASH_LOG_MAX_BYTES) {
-        let _ = file.set_len(0);
-    }
     let _ = file.write_all(line.as_bytes());
 }
 
