@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { DanmakuLayer } from './danmaku-layer';
 import { PlayerControls } from './player-controls';
+import { MiniScreenControls } from './mini-screen-controls';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
 import {
@@ -20,6 +21,7 @@ import {
   useWatchHistory,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
+import { useUiStore } from '@/lib/stores/ui';
 import {
   readDanmakuDisplay,
   readDanmakuEnabled,
@@ -37,7 +39,7 @@ import {
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useEvent } from '@/lib/ipc/events';
-import { app as appApi, play as playApi, watchHistory } from '@/lib/ipc/commands';
+import { app as appApi, watchHistory } from '@/lib/ipc/commands';
 import { useIncognitoMode } from './incognito';
 import { EVENTS } from '@/lib/ipc/types';
 import { formatBytes } from '@/lib/format';
@@ -144,6 +146,9 @@ export function PlayerView({
   const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
   const volumeOpen = usePlayerStore((s) => s.volumeOpen);
   const setCommentPanelOpen = usePlayerStore((s) => s.setCommentPanelOpen);
+  const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
+  const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
+  const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   /**
@@ -407,41 +412,8 @@ export function PlayerView({
     [seriesId, vidIndex, currentSeries, setTarget],
   );
 
-  // ---- 小窗播放：进度先落库 → 主窗暂停并隐藏 → 置顶小窗接续 ----
-  const openMini = useCallback(() => {
-    const video = videoRef.current;
-    const time = video?.currentTime ?? 0;
-    const duration = video && Number.isFinite(video.duration) ? video.duration : 0;
-    video?.pause();
-    if (!seriesId || !vidIndex) return;
-    // 小窗以这份位置续播（小窗的 play 响应 resumeAt 直接接上）
-    if (time > 0) savePosition({ seriesId, vidIndex, currentTime: time, duration });
-    void appApi.openMiniWindow(seriesId, vidIndex).catch((e: Error) => toast.error(e.message));
-  }, [seriesId, vidIndex, savePosition, videoRef]);
-
-  // 小窗关闭（后端 Destroyed 事件）：主窗回到台前，把播放目标对齐到
-  // 小窗刚落到后端的进度——小窗里可能已经连播了好几集，主窗原地不动
-  // 的话，画面还停在进小窗前的那一集那一秒。
-  useEvent(
-    EVENTS.miniClosed,
-    useCallback(() => {
-      if (!seriesId) return;
-      void playApi
-        .progress(seriesId)
-        .then((p) => {
-          if (!p) return;
-          if (p.vidIndex !== vidIndex) {
-            setTarget(seriesId, p.vidIndex);
-            return;
-          }
-          const video = videoRef.current;
-          if (video && p.currentTime > 0 && Math.abs(video.currentTime - p.currentTime) > 1) {
-            video.currentTime = p.currentTime;
-          }
-        })
-        .catch(() => {});
-    }, [seriesId, vidIndex, setTarget, videoRef]),
-  );
+  const miniScreen = useUiStore((s) => s.miniScreen);
+  const setMiniScreen = useUiStore((s) => s.setMiniScreen);
 
   // ---- 隐身模式（与控制栏的 Eye 按钮共享状态）：鼠标离开窗口即
   //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
@@ -592,6 +564,67 @@ export function PlayerView({
     },
     [seriesId, vidIndex, episodeKey, savePosition, currentVid],
   );
+
+  // ---- 小屏播放（对齐 hgplayer ng()/Op()）：同一窗口缩成 480×270 落 ----
+  //      到屏幕右下角，侧栏隐藏、控件换紧凑条——video 元素原地不动，
+  //      播放零中断（不暂停、不落库、不换页）
+
+  const enterMini = useCallback(() => {
+    // 大屏的浮层面板带不进 480×270 的小窗：进小屏前一并收掉
+    setCommentPanelOpen(false);
+    setDanmakuPanelOpen(false);
+    setVolumeOpen(false);
+    setSeriesPanelOpen(false);
+    setMiniScreen(true);
+    void appApi.enterMiniScreen().catch((e: Error) => toast.error(e.message));
+    // 信息流上下文（首页沉浸流内嵌本组件）：小窗里只装播放器——先强落
+    // 一次进度再跳纯播放页，/player 挂载后凭 resumeAt 精准接上
+    if (onWheelStep) {
+      const video = videoRef.current;
+      if (video) persist(video.currentTime, true);
+      void navigate({ to: '/player' });
+    }
+  }, [
+    setMiniScreen,
+    setCommentPanelOpen,
+    setDanmakuPanelOpen,
+    setVolumeOpen,
+    setSeriesPanelOpen,
+    onWheelStep,
+    navigate,
+    persist,
+    videoRef,
+  ]);
+
+  /** 退出小屏：恢复窗口几何，留在播放页继续看。 */
+  const exitMini = useCallback(() => {
+    setMiniScreen(false);
+    void appApi.exitMiniScreen().catch(() => undefined);
+  }, [setMiniScreen]);
+
+  /** 结束播放：退出小屏并回首页（小屏里唯一的「关掉」出口）。 */
+  const stopMini = useCallback(() => {
+    const video = videoRef.current;
+    if (video && !video.paused) {
+      video.pause(); // onPause 里会强制落一次进度
+    }
+    setMiniScreen(false);
+    void appApi.exitMiniScreen().catch(() => undefined);
+    void navigate({ to: '/' });
+  }, [navigate, setMiniScreen, videoRef]);
+
+  // 置顶（hgplayer De.pinned）：窗口级状态，大小屏共用同一个开关——
+  // 大屏顶栏与小屏紧凑条两个入口，切换的是同一个 set_always_on_top
+  const pinned = useUiStore((s) => s.pinned);
+  const setPinned = useUiStore((s) => s.setPinned);
+  const togglePinned = useCallback(() => {
+    const next = !pinned;
+    void appApi
+      .setAlwaysOnTop(next)
+      .then(() => setPinned(next))
+      .catch(() => undefined);
+  }, [pinned, setPinned]);
+
 
   // 卸载 / 切集时补写最后一次。
   //
@@ -851,6 +884,16 @@ export function PlayerView({
           onClick={onStageClick}
           className="relative min-h-0 flex-1 overflow-hidden bg-black"
         >
+          {/* 小屏的拖拽条：顶栏在小屏不渲染（第三方小屏是纯播放器），
+              窗口拖动职责移到这条 24px 顶带。stopPropagation：拖拽残留
+              的 click 不能触发「点画面暂停」。 */}
+          {miniScreen && (
+            <div
+              data-tauri-drag-region
+              onClick={(e) => e.stopPropagation()}
+              className="absolute inset-x-0 top-0 z-30 h-6"
+            />
+          )}
           {/* 抖音式切换过渡：key 绑「实际供数的流」（取流中旧流继续播，
               动画精确落在新内容出画的那一帧），内容整体按方向滑入
               （下一个从下、上一个从上）+淡入——配合封面占位读作「翻页」，
@@ -926,11 +969,14 @@ export function PlayerView({
               />
               {/* 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下。
                   控制栏弹出时整体抬到控制栏上沿之上（bottom-28），隐藏时落回
-                  bottom-14——两者transition 联动，不再互相遮挡。 */}
+                  bottom-14——两者transition 联动，不再互相遮挡。
+                  小屏模式不用这坨：紧凑控件条自带收敛的剧名行。 */}
               <div
                 className={cn(
                   'absolute left-3 z-10 max-w-[62%] transition-all duration-300',
-                  chromeShown ? 'bottom-28 opacity-100' : 'bottom-14 opacity-0 pointer-events-none',
+                  chromeShown && !miniScreen
+                    ? 'bottom-28 opacity-100'
+                    : 'bottom-14 opacity-0 pointer-events-none',
                 )}
               >
                 {/* 热度行（hgplayer 1.1.6 同款：剧名上方） */}
@@ -974,7 +1020,9 @@ export function PlayerView({
                   )}
                 </p>
                 {extras?.intro && (
-                  <div className="mt-1 flex items-end gap-2">
+                  // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
+                  // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角
+                  <div className="mt-1 flex max-w-[36%] items-end gap-2">
                     <p
                       role="button"
                       tabIndex={0}
@@ -1006,8 +1054,8 @@ export function PlayerView({
                 )}
               </div>
               {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
-                  挡死（顶部让位给 tab），平时不打扰。 */}
-              {paused && !error && (
+                  挡死（顶部让位给 tab），平时不打扰。小屏（480 宽）装不下。 */}
+              {paused && !error && !miniScreen && (
                 <div className="pointer-events-none absolute inset-x-0 top-[38%] z-10 flex justify-center">
                   <span className="rounded-full bg-black/55 px-4 py-1.5 text-xs text-white/75 backdrop-blur-sm">
                     {t('player.keyboardHint')}
@@ -1016,8 +1064,8 @@ export function PlayerView({
               )}
               {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽，
                   画面顶部不再有悬浮 tab 层） */}
-              {/* 沉浸流评论区：右侧滑出（💬 触发） */}
-              {commentPanelOpen && (
+              {/* 沉浸流评论区：右侧滑出（💬 触发）；进小屏时已收起 */}
+              {commentPanelOpen && !miniScreen && (
                 <CommentPanel
                   seriesId={seriesId}
                   vid={currentVid ? `${currentVid}:${seriesId}` : ''}
@@ -1030,13 +1078,35 @@ export function PlayerView({
               <InteractionRail
                 seriesId={seriesId}
                 vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                visible={chromeShown && !commentPanelOpen}
+                visible={chromeShown && !commentPanelOpen && !miniScreen}
                 title={currentSeries?.title}
                 // 公开计数来自剧集档案（detail 接口逐集下发），匿名可见
                 commentCount={currentEpisode?.commentCount}
                 diggCount={currentEpisode?.diggCount}
                 followCount={currentSeries?.followedCnt}
               />
+              {/* 控制栏大小屏两套形态，共用同一个 <video>（元素在上面，
+                  不随这里的切换卸载）——切大小屏播放零中断 */}
+              {miniScreen ? (
+                <MiniScreenControls
+                  videoRef={videoRef}
+                  title={currentSeries?.title}
+                  intro={extras?.intro}
+                  vidIndex={vidIndex}
+                  total={currentSeries?.episodes.length ?? 0}
+                  hasNext={
+                    currentSeries?.episodes.some((e) => e.vidIndex === (vidIndex ?? 0) + 1) ?? false
+                  }
+                  onStepEpisode={(d) => stepEpisode(d)}
+                  onExpand={exitMini}
+                  onClose={stopMini}
+                  incognitoOn={incognito.on}
+                  onToggleIncognito={incognito.toggle}
+                  pinned={pinned}
+                  onTogglePinned={togglePinned}
+                  visible={chromeShown}
+                />
+              ) : (
               <PlayerControls
                 videoRef={videoRef}
                 stageRef={stageRef}
@@ -1051,7 +1121,7 @@ export function PlayerView({
                 downloading={downloading}
                 onDownloadingChange={setDownloading}
                 onStepEpisode={stepEpisode}
-                onOpenMini={openMini}
+                onOpenMini={enterMini}
                 incognito={incognito.on}
                 onToggleIncognito={incognito.toggle}
                 definition={activeDefinition}
@@ -1074,6 +1144,7 @@ export function PlayerView({
                   if (onWheelStep) setBinge(seriesId);
                 }}
               />
+              )}
 
               {/* 兜底转码浮层。转一集要几十秒，没有它用户只能盯着黑屏，
                   不知道是卡住了还是在慢慢转。z-30：压过封面占位。 */}

@@ -1,26 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Heart, Play, RefreshCw, Star, Tv } from 'lucide-react';
+import { ArrowLeft, Bell, Heart, Play, Star, Tv } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FeedCardGrid } from '@/features/feed/components/feed-card-grid';
 import { formatPlayCount } from '@/lib/format';
 import {
   isRenderableCover,
   useAccount,
-  useComments,
-  useFeed,
+  useBookshelf,
   useInteractionState,
-  useRank,
   useRelatedSeries,
+  useReserveSeries,
   useResolveSeries,
   useSeriesCollect,
+  useSeriesComments,
   useSeriesEpisodes,
   useSeriesExtras,
+  useSeriesDetailMeta,
   useSeriesProgress,
   useVideoDigg,
   useWatchHistory,
@@ -29,7 +29,7 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { FeedItem, RankItem, RecommendItem, RelatedItem } from '@/lib/schema';
+import type { RelatedItem } from '@/lib/schema';
 
 /**
  * 剧集详情页（/detail?seriesId=…）。
@@ -47,6 +47,15 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const { data: extras } = useSeriesExtras(seriesId ?? '');
   const { data: localProgress } = useSeriesProgress(seriesId ?? '');
   const { data: history } = useWatchHistory();
+  // 相关推荐总数（相关作品 + 猜你喜欢，plan 接口两格一并计）——tab 上的
+  // 计数用；RelatedWorks 里还有一份同 key 的调用，react-query 共享缓存
+  const { data: relatedData } = useRelatedSeries(seriesId || '');
+  const relatedTotal =
+    (relatedData?.works.length ?? 0) + (relatedData?.guess.length ?? 0);
+  const relatedGuess = relatedData?.guess ?? [];
+  // 头部元信息（追剧/播放/季徽/标签/备案号，video_detail 接口），
+  // 失败为 undefined：头部相应行不渲染，不打断页面
+  const { data: meta } = useSeriesDetailMeta(seriesId);
   const historyItem = history?.items.find((i) => i.seriesId === seriesId);
 
   /**
@@ -81,7 +90,12 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const { data: account } = useAccount();
   const loggedIn = !!account;
   const { data: state } = useInteractionState();
-  const collected = state?.items.find((i) => i.seriesId === seriesId)?.followed ?? false;
+  const { data: bookshelf } = useBookshelf();
+  // 收藏态：互动回显列表是 best-effort（最近互动过的才有条目），
+  // 书架列表才是权威——两处任一命中即已收藏
+  const collected =
+    (state?.items.find((i) => i.seriesId === seriesId)?.followed ?? false) ||
+    (bookshelf?.some((b) => b.seriesId === seriesId) ?? false);
   const continueEp = series?.episodes.find((e) => e.vidIndex === continueIndex);
   const digged = state?.items.find((i) => i.vid === continueEp?.vid)?.userDigg ?? false;
   const digg = useVideoDigg();
@@ -116,20 +130,17 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
     );
   };
 
-  // ---- 剧评：跟着「继续看」那一集走（评论按集组织，与播放器评论区同源） ----
-  const commentVid = continueEp ? `${continueEp.vid}:${seriesId}` : '';
-  const { data: commentPages } = useComments(commentVid);
+  // ---- 剧评：**整部剧一条线**（group_type=1 形态，第三方同款）——
+  //      单集评论在播放器的 💬 面板里，两套评论分属不同 group_id ----
+  const { data: commentPages } = useSeriesComments(seriesId);
   const comments = commentPages?.pages.flatMap((p) => p.items) ?? [];
   const commentTotal = commentPages?.pages[0]?.total || comments.length;
+  // 头部评分（第一页 extra 携带；空 = 暂无评分，整行不渲染）
+  const reviewScore = commentPages?.pages[0]?.score || '';
+  const reviewScoreCnt = commentPages?.pages[0]?.scoreCnt ?? 0;
 
   const [introExpanded, setIntroExpanded] = useState(false);
   const intro = extras?.intro ?? '';
-
-  // ---- 推荐 tab：每次打开换一批（feed 游标前进），换一换同一动作 ----
-  /** feed 窗口游标（与首页沉浸流共享同一份推荐流缓存） */
-  const [feedCursor, setFeedCursor] = useState(0);
-  const recEverOpened = useRef(false);
-  const advanceFeed = useCallback(() => setFeedCursor((c) => c + REC_PAGE), []);
 
   // 未带 seriesId（直接敲路由）：只指路，不去解析
   if (!seriesId) {
@@ -186,23 +197,59 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
             <div className="min-w-0 flex-1">
               <h1 className="text-2xl font-bold">{series.title}</h1>
               <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-2 text-sm">
-                {series.followedCnt > 0 && (
-                  <span>{tf('detail.followCount', { count: series.followedCnt })}</span>
+                {reviewScore && (
+                  <span className="flex items-baseline gap-1.5">
+                    <span className="text-amber-400 text-lg leading-none font-bold">
+                      {Number(reviewScore).toFixed(1)}
+                      <span className="ml-0.5 text-xs font-semibold">分</span>
+                    </span>
+                    {reviewScoreCnt > 0 && (
+                      <span>{tf('detail.ratingCount', { count: formatPlayCount(reviewScoreCnt) })}</span>
+                    )}
+                  </span>
                 )}
-                {series.followedCnt > 0 && series.episodeCount > 0 && <span>·</span>}
                 {series.episodeCount > 0 && (
-                  <span>{tf('detail.episodesCount', { count: series.episodeCount })}</span>
+                  <span>
+                    {reviewScore && <span className="mr-2">·</span>}
+                    {tf('detail.episodesCount', { count: series.episodeCount })}
+                  </span>
+                )}
+                {meta && meta.followedCnt > 0 && (
+                  <span>
+                    {series.episodeCount > 0 && <span className="mr-2">·</span>}
+                    {tf('detail.followCount', { count: meta.followedCnt })}
+                  </span>
+                )}
+                {meta && meta.playCnt > 0 && (
+                  <span>
+                    {(meta.followedCnt > 0 || series.episodeCount > 0) && (
+                      <span className="mr-2">·</span>
+                    )}
+                    {formatPlayCount(meta.playCnt)}
+                    {t('detail.plays')}
+                  </span>
                 )}
               </div>
 
-              {series.tags.length > 0 && (
+              {/* 季徽（高亮）+ 题材标签（video_detail secondary_infos，
+                  官方详情页同款行）；档案自带的 tags 是解析兜底，meta 优先 */}
+              {(meta ? !!meta.season || meta.tags.length > 0 : series.tags.length > 0) ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {series.tags.map((tag) => (
+                  {meta?.season && (
+                    <Badge variant="default" className="text-primary-foreground bg-red-500">
+                      {meta.season}
+                    </Badge>
+                  )}
+                  {(meta?.tags ?? series.tags).map((tag) => (
                     <Badge key={tag} variant="secondary">
                       {tag}
                     </Badge>
                   ))}
                 </div>
+              ) : null}
+
+              {meta?.recordNumber && (
+                <p className="text-muted-foreground/70 mt-3 text-xs">{meta.recordNumber}</p>
               )}
 
               {intro && (
@@ -263,15 +310,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
           {/* 选集 / 剧评 / 相关推荐。
               推荐 tab 每次被打开都换一批（第三方同款）：feed 游标前进一页，
               第一次打开除外——第一批本来就是新的。 */}
-          <Tabs
-            defaultValue="episodes"
-            onValueChange={(v) => {
-              if (v !== 'recommend') return;
-              if (recEverOpened.current) advanceFeed();
-              else recEverOpened.current = true;
-            }}
-            className="mt-8"
-          >
+          <Tabs defaultValue="episodes" className="mt-8">
             <TabsList>
               <TabsTrigger value="episodes">
                 {t('detail.tabEpisodes')}
@@ -281,7 +320,10 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
                 {t('detail.tabComments')}
                 {commentTotal > 0 && ` ${commentTotal}`}
               </TabsTrigger>
-              <TabsTrigger value="recommend">{t('detail.tabRecommend')}</TabsTrigger>
+              <TabsTrigger value="recommend">
+                {t('detail.tabRecommend')}
+                {relatedTotal > 0 && ` ${relatedTotal}`}
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="episodes">
@@ -350,13 +392,11 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
             </TabsContent>
 
             <TabsContent value="recommend">
-              {/* 相关作品·系列（第三方同款）：同系列各季 + 同 IP，永远置顶 */}
-              <RelatedWorks seriesId={seriesId} />
-              <RecommendSection
-                siteItems={extras?.recommendations ?? []}
-                feedCursor={feedCursor}
-                onShuffle={advanceFeed}
-              />
+              {/* 相关推荐 tab = plan 接口的两格（第三方同款）：
+                  相关作品·系列 置顶，下面是 猜你喜欢；tab 计数也是两格之和。
+                  猜你喜欢空了就整块不渲染（hgplayer 同款），不塞别的内容。 */}
+              <RelatedWorks works={relatedData?.works ?? []} />
+              {relatedGuess.length > 0 && <GuessYouLike items={relatedGuess} />}
             </TabsContent>
           </Tabs>
         </>
@@ -365,60 +405,14 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   );
 }
 
-/** 推荐一页的条数：详情页网格一屏正好放下的量，换一换就是整屏换血。 */
-const REC_PAGE = 12;
-
-/** 榜单条目 → 信息流卡片形状（FeedCardGrid 只吃这个）。 */
-function rankToFeedItem(r: RankItem): FeedItem {
-  return {
-    seriesId: r.seriesId,
-    title: r.title,
-    cover: r.cover,
-    horizCover: '',
-    vid: r.vid,
-    episodeCnt: r.episodeCnt,
-    playCnt: r.playCnt,
-    commentCount: 0,
-    score: r.score,
-    tags: r.tags,
-    seasonTag: '',
-    heatText: r.recText,
-    badge: '',
-    contentType: 0,
-  };
-}
-
-/** 官网静态推荐 → 信息流卡片形状。 */
-function siteToFeedItem(r: RecommendItem): FeedItem {
-  return {
-    seriesId: r.seriesId,
-    title: r.seriesName,
-    cover: r.seriesCover,
-    horizCover: '',
-    vid: '',
-    episodeCnt: r.episodeCount,
-    playCnt: 0,
-    commentCount: 0,
-    score: 0,
-    tags: [],
-    seasonTag: '',
-    heatText: '',
-    badge: '',
-    contentType: 0,
-  };
-}
-
 /**
- * 相关作品·系列（官方 plan 接口，第三方同款）：同系列各季（第1季/第2季…）
- * 与同 IP 作品横排卡片。加载失败或没有相关作品就整块不渲染——
- * 它是增强项，不值得占一个错误位。
+ * 相关作品·系列（官方 plan 接口第一格）：同系列各季（第1季/第2季…）
+ * 与同 IP 作品横排卡片。没有相关作品就整块不渲染——它是增强项，
+ * 不值得占一个错误位。
  */
-function RelatedWorks({ seriesId }: { seriesId: string }) {
+function RelatedWorks({ works }: { works: RelatedItem[] }) {
   const navigate = useNavigate();
-  const { data, isError } = useRelatedSeries(seriesId);
-  const works = data?.works ?? [];
-
-  if (isError || works.length === 0) return null;
+  if (works.length === 0) return null;
 
   const open = (id: string) => {
     // 同一路由换 search 参数：整页数据随之换挡
@@ -428,7 +422,8 @@ function RelatedWorks({ seriesId }: { seriesId: string }) {
   return (
     <div className="grid gap-3 pb-4">
       <h3 className="text-sm font-semibold">{t('detail.relatedWorks')}</h3>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      {/* items-start：卡片高度随两行/一行剧名浮动，行内不许互相拉伸 */}
+      <div className="flex items-start gap-3 overflow-x-auto pb-2">
         {works.map((w) => (
           <RelatedCard key={w.seriesId} item={w} onOpen={open} />
         ))}
@@ -437,24 +432,57 @@ function RelatedWorks({ seriesId }: { seriesId: string }) {
   );
 }
 
+/**
+ * 猜你喜欢（官方 plan 接口第二格，第三方详情页同款）：响应式封面网格，
+ * 卡片与相关作品同一套（角标 + 评分 + 剧名 + 集数/播放量）。
+ */
+function GuessYouLike({ items }: { items: RelatedItem[] }) {
+  const navigate = useNavigate();
+  const open = (id: string) => {
+    void navigate({ to: '/detail', search: { seriesId: id } });
+  };
+  return (
+    <div className="grid gap-3">
+      <h3 className="text-sm font-semibold">{t('detail.guessYouLike')}</h3>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3">
+        {items.map((w) => (
+          <RelatedCard key={w.seriesId} item={w} onOpen={open} className="w-full" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 相关作品卡片：封面（角标 + 评分）+ 两行剧名 + 集数/播放量。 */
-function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string) => void }) {
+function RelatedCard({
+  item,
+  onOpen,
+  className,
+}: {
+  item: RelatedItem;
+  onOpen: (id: string) => void;
+  /** 覆盖默认定宽（猜你喜欢网格里让卡片随格子伸缩） */
+  className?: string;
+}) {
   // plan 接口的封面是 byteimg tplv 链接，扩展名 .image 但内容是 JPEG——
   // isRenderableCover 会误判，这里直连加载、失败再落 TV 兜底
   const [coverFailed, setCoverFailed] = useState(false);
+  const isUpcoming = item.episodeCnt === 0 || item.tag === '即将上线';
   return (
     <button
       type="button"
       onClick={() => onOpen(item.seriesId)}
-      className="w-28 shrink-0 cursor-pointer text-left"
+      className={cn('shrink-0 cursor-pointer text-left', className ?? 'w-32')}
       title={item.videoDesc || item.title}
     >
-      <div className="relative aspect-[3/4] overflow-hidden rounded-lg border bg-muted">
+      {/* 封面盒：宽高全部钉死（w-32 × 3:4），图 object-cover 裁切——
+          封面原始比例五花八门，绝不能让它撑盒子（一上一下就是这么来的） */}
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {!coverFailed && item.cover ? (
           <img
             src={item.cover}
             alt=""
-            className="size-full object-cover"
+            className="block size-full object-cover"
             onError={() => setCoverFailed(true)}
           />
         ) : (
@@ -463,7 +491,7 @@ function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string)
           </div>
         )}
         {item.tag && (
-          <span className="bg-primary text-primary-foreground absolute left-1 top-1 rounded px-1 py-0.5 text-[10px] leading-none">
+          <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
             {item.tag}
           </span>
         )}
@@ -482,113 +510,43 @@ function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string)
             : ''}
         {item.playCnt > 0 && ` · ${formatPlayCount(item.playCnt)}${t('detail.plays')}`}
       </p>
+      {isUpcoming && <ReserveButton seriesId={item.seriesId} />}
     </button>
   );
 }
 
-/**
- * 推荐 tab 的三源切换（第三方同款形态）：
- *
- * - **为你推荐**：官方推荐流（与首页沉浸流共享缓存），窗口游标翻页，
- *   「换一换」与「每次打开 tab」都前进一批——永远有没看过的剧；
- * - **热播榜**：rank 热榜子榜，带名次角标；
- * - **官网推荐**：详情页底部的静态相关推荐（extras），同剧固定。
- */
-function RecommendSection({
-  siteItems,
-  feedCursor,
-  onShuffle,
-}: {
-  siteItems: RecommendItem[];
-  feedCursor: number;
-  onShuffle: () => void;
-}) {
-  const navigate = useNavigate();
-  const feed = useFeed(undefined);
-  const rank = useRank('all', 'ranklist_hot_sc', '');
-  const [source, setSource] = useState<'feed' | 'rank' | 'site'>('feed');
-
-  const feedItems = feed.items.slice(feedCursor, feedCursor + REC_PAGE);
-
-  // 窗口接近尾部自动续拉推荐流（与首页沉浸流同一模式）
-  useEffect(() => {
-    if (source !== 'feed') return;
-    if (feed.hasMore && !feed.isFetchingMore && feed.items.length - (feedCursor + REC_PAGE) <= 3) {
-      feed.loadMore();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, feedCursor, feed.items.length, feed.hasMore, feed.isFetchingMore]);
-
-  const openDetail = (seriesId: string) => {
-    // 同一路由换 search 参数：整页数据随之换挡
-    void navigate({ to: '/detail', search: { seriesId } });
-  };
-
-  const sourcePill = (id: 'feed' | 'rank' | 'site', label: string) => (
+/** 未上线剧集的预约按钮（第三方同款粉胶囊；已预约变描边，再点取消）。 */
+function ReserveButton({ seriesId }: { seriesId: string }) {
+  const reserve = useReserveSeries();
+  const [reserved, setReserved] = useState(false);
+  return (
     <button
-      key={id}
       type="button"
-      onClick={() => setSource(id)}
+      onClick={(e) => {
+        e.stopPropagation(); // 别触发整卡跳详情
+        const next = !reserved;
+        reserve.mutate(
+          { seriesId, reserve: next },
+          {
+            onSuccess: () => {
+              setReserved(next);
+              toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved'));
+            },
+            onError: (err) => toast.error(String(err)),
+          },
+        );
+      }}
+      disabled={reserve.isPending}
       className={cn(
-        'cursor-pointer rounded-full border px-3 py-1 text-xs transition-colors',
-        source === id
-          ? 'bg-primary text-primary-foreground border-primary'
-          : 'text-muted-foreground hover:bg-accent',
+        'mt-1.5 flex w-full cursor-pointer items-center justify-center gap-1 rounded-full py-1 text-xs font-medium transition-colors',
+        reserved
+          ? 'border border-red-400/60 text-red-400'
+          : 'bg-red-500 text-white hover:bg-red-500/90',
       )}
     >
-      {label}
+      {!reserved && <Bell className="size-3" aria-hidden />}
+      {t(reserved ? 'player.reserved' : 'player.reserve')}
     </button>
-  );
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {sourcePill('feed', t('detail.recFeed'))}
-        {sourcePill('rank', t('detail.recRank'))}
-        {sourcePill('site', t('detail.recSite'))}
-        {source === 'feed' && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto gap-1.5"
-            onClick={onShuffle}
-            disabled={feed.isFetchingMore}
-          >
-            <RefreshCw className={cn('size-3.5', feed.isFetchingMore && 'animate-spin')} aria-hidden />
-            {t('detail.recShuffle')}
-          </Button>
-        )}
-      </div>
-
-      {source === 'feed' &&
-        (feedItems.length > 0 ? (
-          <FeedCardGrid items={feedItems} onSelect={(item) => openDetail(item.seriesId)} />
-        ) : (
-          <p className="text-muted-foreground py-10 text-center text-sm">
-            {feed.isLoading ? t('common.loading') : t('detail.recommendEmpty')}
-          </p>
-        ))}
-
-      {source === 'rank' && (
-        <FeedCardGrid
-          items={(rank.data?.items ?? []).map(rankToFeedItem)}
-          ranked
-          onSelect={(item) => openDetail(item.seriesId)}
-        />
-      )}
-
-      {source === 'site' &&
-        (siteItems.length > 0 ? (
-          <FeedCardGrid
-            items={siteItems.map(siteToFeedItem)}
-            onSelect={(item) => openDetail(item.seriesId)}
-          />
-        ) : (
-          <p className="text-muted-foreground py-10 text-center text-sm">
-            {t('detail.recommendEmpty')}
-          </p>
-        ))}
-    </div>
   );
 }
 

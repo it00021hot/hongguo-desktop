@@ -20,10 +20,8 @@ export const EVENTS = {
   seriesArchiveUpdated: 'series-archive-updated',
   // 只由 lib.rs 的 CloseRequested 拦截发出（下载事件之外的应用级事件）
   closeRequested: 'close-requested',
-  // 小窗销毁时由 app_cmd::open_mini_window 的事件监听发出（只发主窗）：
-  // 主窗播放器据此把进度对齐到小窗刚落到后端的位置
-  miniClosed: 'mini-closed',
-  // 隐身轮询器（set_incognito）发给目标窗口：visible=false 时前端暂停播放
+  // 隐身轮询器（set_incognito）发给主窗口：visible=false 暂停（只在隐身
+  // 触发暂停时记「欠播」），visible=true 续播
   incognitoVisibility: 'incognito-visibility',
 } as const;
 

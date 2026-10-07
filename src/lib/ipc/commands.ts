@@ -24,6 +24,8 @@ import {
   feedPageSchema,
   rankPageSchema,
   relatedSeriesSchema,
+  seriesReviewPageSchema,
+  seriesMetaSchema,
   searchPageSchema,
   suggestItemSchema,
   selectorRowSchema,
@@ -55,6 +57,8 @@ import {
   type ProxyTestResult,
   type QueueStatus,
   type RelatedSeries,
+  type SeriesReviewPage,
+  type SeriesMeta,
   type Series,
   type SeriesExtras,
   type SeriesProgress,
@@ -85,14 +89,15 @@ export const app = {
   openFolder: (seriesId: string) => call<void>('open_folder', { seriesId }),
   // 白名单网址（Rust 侧校验），设置页 ffmpeg 安装指引用
   openExternalPage: (page: string) => call<void>('open_external_page', { page }),
-  /** 小窗播放：为某集开置顶小窗并隐藏主窗（主窗恢复由小窗关闭事件完成） */
-  openMiniWindow: (seriesId: string, vidIndex: number) =>
-    call<void>('open_mini_window', { seriesId, vidIndex }),
-  /** 关闭小窗（返回主窗口） */
-  closeMiniWindow: () => call<void>('close_mini_window'),
-  /** 小窗尺寸对齐视频宽高比（起播后由小窗页调用，横屏剧=横窗零黑边） */
-  fitMiniWindow: (videoWidth: number, videoHeight: number) =>
-    call<void>('fit_mini_window', { videoWidth, videoHeight }),
+  /**
+   * 小屏播放（对齐 hgplayer）：**同一窗口**缩成 480×270 落到屏幕右下角，
+   * 播放不断；进入前的窗口几何由后端保存，exitMiniScreen 原样恢复
+   */
+  enterMiniScreen: () => call<void>('enter_mini_screen'),
+  /** 退出小屏：恢复进入前的窗口几何与最小尺寸约束 */
+  exitMiniScreen: () => call<void>('exit_mini_screen'),
+  /** 窗口置顶（对齐 hgplayer 的置顶按钮；窗口级状态，跨大小屏保持） */
+  setAlwaysOnTop: (enabled: boolean) => call<void>('set_always_on_top', { enabled }),
   /**
    * 隐身模式开关：开 = 后端起系统级光标轮询（鼠标脱离窗口隐藏、回到窗口
    * 区域自动重现）；关 = 停轮询并带回可能隐藏中的窗口
@@ -150,6 +155,9 @@ export const series = {
   /** 相关作品·系列（同系列各季 + 同 IP；失败由上层静默降级） */
   related: (seriesId: string) =>
     call<RelatedSeries>('related_series', { seriesId }, relatedSeriesSchema),
+  /** 详情页头部元信息（追剧/播放/季徽/标签/备案号；失败前端静默降级）。 */
+  meta: (seriesId: string) =>
+    call<SeriesMeta>('series_meta', { seriesId }, seriesMetaSchema),
   remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
   removeAll: () => call<number>('remove_all_series'),
 };
@@ -185,6 +193,13 @@ export const danmaku = {
       'comment_list',
       { groupId, bookId, cursor: cursor || undefined },
       commentPageSchema,
+    ),
+  /** 剧级评论（详情页「剧评」：group_type=1 形态；响应 extra 带评分摘要）。 */
+  seriesComments: (seriesId: string, cursor = '') =>
+    call<SeriesReviewPage>(
+      'series_comment_list',
+      { seriesId, cursor: cursor || undefined },
+      seriesReviewPageSchema,
     ),
 };
 

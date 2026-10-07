@@ -81,134 +81,144 @@ pub fn exit_app(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-/// 小窗播放：为当前这一集开一个置顶的独立小窗，主窗口随之隐藏。
-///
-/// 为什么不用浏览器原生画中画：PiP 窗口的尺寸/行为归系统管（默认偏小、
-/// 也藏不了主窗口），自建窗口尺寸可控（竖屏短剧给竖屏窗口）、能挂隐身
-/// 模式这类自定义行为。hgplayer（Wails）的小窗同理。
-///
-/// 小窗生命周期：关闭（自绘 × / `close_mini_window` / 随应用退出）时在
-/// `Destroyed` 里把主窗口带回来并给主窗发 `mini-closed`——主窗播放器
-/// 据此把进度对齐到小窗刚写到后端的位置。
-#[tauri::command]
-pub fn open_mini_window(app: AppHandle, series_id: String, vid_index: u32) -> AppResult<()> {
-    use tauri::{Emitter, Manager};
+// ---------------------------------------------------------------- 小屏播放
 
-    // 已开过：让小窗换到这一集（整页重载，进度链路走同一套 play/resumeAt），
-    // 并补一次主窗隐藏（用户可能又把主窗点出来了）
-    if let Some(mini) = app.get_webview_window("mini") {
-        let script = format!("location.replace('/mini?series={series_id}&index={vid_index}')");
-        let _ = mini.eval(&script);
-        let _ = mini.set_focus();
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.hide();
-        }
-        return Ok(());
-    }
-
-    let url = tauri::WebviewUrl::App(format!("/mini?series={series_id}&index={vid_index}").into());
-    let mini = tauri::WebviewWindowBuilder::new(&app, "mini", url)
-        .title("红果短剧 · 小窗")
-        // 起手按竖屏短剧给竖窗（常态）；起播后 fit_mini_window 按视频实际
-        // 宽高比校正——横屏剧自动变横窗，视频铺满没有黑边（hgplayer 同款）
-        .inner_size(424.0, 768.0)
-        // 下限只保控件摆得下；高度不设竖屏值，否则横屏窗被顶出黑边
-        .min_inner_size(320.0, 220.0)
-        .decorations(false)
-        .shadow(true)
-        .resizable(true)
-        .always_on_top(true)
-        .build()?;
-
-    // 小窗销毁（×、返回主窗、应用退出）→ 主窗回来 + 通知主窗对齐进度
-    let handle = app.clone();
-    mini.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            if let Some(main) = handle.get_webview_window("main") {
-                let _ = main.show();
-                let _ = main.set_focus();
-            }
-            let _ = handle.emit_to("main", "mini-closed", ());
-        }
-    });
-
-    // 开屏落角（画中画惯例位：右下角），不压任务栏/Dock——工作区由系统给
-    if let Some(mon) = mini
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| app.primary_monitor().ok().flatten())
-    {
-        let sf = mon.scale_factor();
-        let wa = mon.work_area();
-        // 与 inner_size(424×768) 对应的逻辑尺寸；fit_mini_window 校正比例后
-        // 角位依然成立（右下角锚定，改尺寸只会向左上伸缩）
-        let (w, h) = (424.0_f64, 768.0_f64);
-        const MARGIN: f64 = 16.0;
-        let x = wa.position.x as f64 / sf + wa.size.width as f64 / sf - w - MARGIN;
-        let y = wa.position.y as f64 / sf + wa.size.height as f64 / sf - h - MARGIN;
-        let _ = mini.set_position(tauri::LogicalPosition::new(x, y));
-    }
-
-    // 小窗就位后再藏主窗：先藏后建的话，建窗失败用户就两窗全无
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
-    }
-    Ok(())
+/// 小屏播放退出时要恢复的窗口几何（进入那一刻的快照，物理坐标）。
+#[derive(Clone, Copy)]
+struct SavedGeometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    maximized: bool,
 }
 
-/// 关闭小窗、回到主窗口（主窗恢复统一由小窗的 `Destroyed` 事件完成）。
-#[tauri::command]
-pub fn close_mini_window(app: AppHandle) -> AppResult<()> {
-    use tauri::Manager;
-    if let Some(mini) = app.get_webview_window("mini") {
-        let _ = mini.close();
-    }
-    Ok(())
+/// 进入小屏前的窗口几何。std 锁 + 中毒恢复（本文件既定纪律：持锁内只有
+/// 整体读写，恢复使用即可，不能让一次后台 panic 连环炸掉后续命令）。
+static MINI_RESTORE: std::sync::Mutex<Option<SavedGeometry>> = std::sync::Mutex::new(None);
+
+fn saved_geometry() -> std::sync::MutexGuard<'static, Option<SavedGeometry>> {
+    MINI_RESTORE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 小窗尺寸对齐视频宽高比（起播后由前端在 metadata 就绪时调用）。
+/// 小屏尺寸（对齐 hgplayer 的 Ud/Vd 常量）与落角边距。hgplayer 底部留 72
+/// 是给 Windows 任务栏的；macOS 工作区已扣掉 Dock，给 16 即可。
+const MINI_W: f64 = 480.0;
+const MINI_H: f64 = 270.0;
+const MINI_MARGIN: f64 = 16.0;
+/// 主窗口平时的最小尺寸（tauri.conf.json 的 minWidth/minHeight）。进小屏
+/// 必须先降到小屏尺寸以下，否则缩窗被最小值 clamp 住纹丝不动——
+/// hgplayer 进小屏前同样先 `WindowSetMinSize`。
+const MAIN_MIN: (f64, f64) = (1024.0, 680.0);
+
+/// 进入小屏播放（对齐 hgplayer 的「小屏播放」按钮 ng()/rw()）：
+/// **同一个窗口**缩成 480×270、落到工作区右下角——不另开窗口、不藏
+/// 主窗、不暂停，`<video>` 元素原地不动、播放零中断。
 ///
-/// 窗口比例 = 视频比例，视频铺满、零黑边（hgplayer 小窗形态）；竖屏剧
-/// 与横屏剧各自拿到合适的长宽。目标面积观感恒定（竖屏约 424×768 那一档），
-/// 并压进当前显示器的工作区。视频尺寸未知（0）时不动。
+/// 旧实现（独立置顶小窗 + 隐藏主窗）整套移除：主窗藏了但它的视频还在
+/// 响，两路声音叠着播，窗口管理也全乱了套——那是没有对照第三方的
+/// 杜撰设计。
 #[tauri::command]
-pub fn fit_mini_window(app: AppHandle, video_width: u32, video_height: u32) -> AppResult<()> {
+pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
     use tauri::Manager;
-    if video_width == 0 || video_height == 0 {
-        return Ok(());
-    }
-    let Some(mini) = app.get_webview_window("mini") else {
+    let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
-    let ratio = f64::from(video_width) / f64::from(video_height);
 
-    // 逻辑坐标下的屏幕可用区（HiDPI 下 monitor 物理尺寸要除以缩放系数）
-    let monitor = mini
+    // 幂等：已在小屏（有快照）就不重复缩，重复点按钮不该把大窗几何
+    // 覆盖成 480×270（否则退出小屏恢复的也是小屏尺寸）
+    if saved_geometry().is_some() {
+        return Ok(());
+    }
+
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return Ok(());
+    };
+    *saved_geometry() = Some(SavedGeometry {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+        maximized: win.is_maximized().unwrap_or(false),
+    });
+
+    let mon = win
         .current_monitor()
         .ok()
         .flatten()
         .or_else(|| app.primary_monitor().ok().flatten());
-    let (sw, sh) = monitor
-        .map(|m| {
-            let s = m.size();
-            let sf = m.scale_factor();
-            (s.width as f64 / sf, s.height as f64 / sf)
-        })
-        .unwrap_or((1512.0, 982.0));
+    let (left, top, right, bottom) = work_area_logical(mon.as_ref());
+    // 小工作区（外接竖屏等）放不下就压到放得下为止
+    let w = MINI_W.min(right - left - 2.0 * MINI_MARGIN);
+    let h = MINI_H.min(bottom - top - 2.0 * MINI_MARGIN);
 
-    let (w, h) = if ratio >= 1.0 {
-        // 横屏：高按屏幕四成上下、上限 520（再大就不叫小窗了）
-        let h = (sh * 0.42).clamp(240.0, 520.0);
-        (h * ratio, h)
-    } else {
-        // 竖屏：宽按屏幕四分之一上下、上限 440
-        let w = (sw * 0.28).clamp(320.0, 440.0);
-        (w, w / ratio)
-    };
-    let (w, h) = (w.min(sw * 0.9), h.min(sh * 0.9));
-    let _ = mini.set_size(tauri::LogicalSize::new(w, h));
+    let _ = win.set_min_size(Some(tauri::LogicalSize::new(w, h)));
+    let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    // 手动 min/max 而非 clamp：极小工作区下 min>max 时 clamp 会 panic
+    let x = (right - w - MINI_MARGIN).max(left);
+    let y = (bottom - h - MINI_MARGIN).max(top);
+    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    let _ = win.set_focus();
     Ok(())
+}
+
+/// 退出小屏：恢复进入前的窗口几何与最小尺寸约束。
+///
+/// 没有快照（应用启动就在小屏、或未进过）就只恢复 minSize 约束——
+/// 尺寸位置保持现状，不瞎动。
+#[tauri::command]
+pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let saved = saved_geometry().take();
+    let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
+    let Some(g) = saved else {
+        return Ok(());
+    };
+    let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
+    let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+    if g.maximized {
+        let _ = win.maximize();
+    }
+    Ok(())
+}
+
+/// 窗口置顶开关（对齐 hgplayer 的 De.pinned → WindowSetAlwaysOnTop）。
+///
+/// **窗口级**的会话内状态：大屏置顶后进小屏依然置顶，退出小屏也不清——
+/// 「钉住」是用户对整个窗口的意图，与窗口大小无关。
+#[tauri::command]
+pub fn set_always_on_top(app: AppHandle, enabled: bool) -> AppResult<()> {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_always_on_top(enabled);
+    }
+    Ok(())
+}
+
+/// 显示器工作区（逻辑坐标，`left/top/right/bottom`）。
+///
+/// monitor 的 work_area 是物理像素，HiDPI 下要除以缩放系数才是窗口 API
+/// 用的逻辑坐标。拿不到显示器时给一版 14" MacBook 的保守估值——宁小勿
+/// 出界，小窗被夹得小一点总比伸到屏幕外强。
+fn work_area_logical(mon: Option<&tauri::Monitor>) -> (f64, f64, f64, f64) {
+    match mon {
+        Some(m) => {
+            let sf = m.scale_factor();
+            let wa = m.work_area();
+            (
+                wa.position.x as f64 / sf,
+                wa.position.y as f64 / sf,
+                (wa.position.x + wa.size.width as i32) as f64 / sf,
+                (wa.position.y + wa.size.height as i32) as f64 / sf,
+            )
+        }
+        None => (0.0, 40.0, 1440.0, 875.0),
+    }
 }
 
 // ---------------------------------------------------------------- 隐身模式
@@ -230,16 +240,27 @@ const INCOGNITO_PAUSE_GRACE_MS: u64 = 80;
 
 /// 开关隐身模式（播放器的 Eye 按钮）。
 ///
-/// 开 = 启动光标轮询（以「活动的窗口」为目标：有小窗是小窗，否则主窗）；
-/// 关 = 停轮询，并立刻带回可能正处在隐藏态的窗口。
+/// 开 = 启动光标轮询（盯着主窗口）；关 = 停轮询，并立刻带回可能正处在
+/// 隐藏态的窗口。
 #[tauri::command]
 pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
-    INCOGNITO_ON.store(enabled, Ordering::Release);
+    use tauri::Emitter;
+
+    let was_on = INCOGNITO_ON.swap(enabled, Ordering::Release);
     if !enabled {
-        // 关掉的一瞬可能正处于隐身隐藏中：立刻恢复可见，否则窗口没人管
+        // 关掉的一瞬可能正处于隐身隐藏中：立刻恢复可见，否则窗口没人管。
+        // 之前开着（隐身暂停过）才补 visible:true——前端据此续播，与
+        // 「鼠标回来」同一语义；本来就没开时发它只会是无意义的空事件。
         if let Some(w) = active_window(&app) {
             let _ = w.show();
             let _ = w.set_focus();
+            if was_on {
+                let _ = app.emit_to(
+                    w.label(),
+                    "incognito-visibility",
+                    serde_json::json!({ "visible": true }),
+                );
+            }
         }
         return Ok(());
     }
@@ -254,10 +275,10 @@ pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
     Ok(())
 }
 
-/// 活动的窗口：有小窗是小窗，否则主窗（与 Dock 恢复同一裁决规则）。
+/// 隐身轮询的目标窗口：主窗口（小屏播放是同一窗口，无需再裁决）。
 fn active_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     use tauri::Manager;
-    app.get_webview_window("mini").or_else(|| app.get_webview_window("main"))
+    app.get_webview_window("main")
 }
 
 async fn incognito_watch(app: AppHandle, gen: u64) {
@@ -270,6 +291,13 @@ async fn incognito_watch(app: AppHandle, gen: u64) {
             return;
         }
         let Some(win) = active_window(&app) else { return };
+        // 最小化是用户的显式动作，隐身不得插手：最小化后 is_visible 变
+        // false，而光标多半还留在原窗口矩形里——不跳过的话每轮都会判成
+        // 「鼠标回来了」把窗口 show 回来，表现为「隐身开着就最小化不了」
+        // （2026-10-07 实测）。
+        if win.is_minimized().unwrap_or(false) {
+            continue;
+        }
         let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
             continue;
         };

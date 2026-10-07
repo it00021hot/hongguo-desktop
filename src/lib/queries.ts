@@ -42,6 +42,8 @@ import type {
   RankPage,
   SearchPage,
   SearchResult,
+  InteractionItem,
+  InteractionState,
 } from './schema';
 
 /**
@@ -72,6 +74,8 @@ const keys = {
   browsePanel: ['browse-panel'] as const,
   browseFeed: (filters: BrowseFilters) => ['browse-feed', filters] as const,
   relatedSeries: (seriesId: string) => ['related-series', seriesId] as const,
+  seriesMeta: (seriesId: string) => ['series-meta', seriesId] as const,
+  seriesComments: (seriesId: string) => ['series-comments', seriesId] as const,
   seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
@@ -437,6 +441,39 @@ export function useVideoDigg() {
   return useMutation({
     mutationFn: (input: { vid: string; seriesId: string; digg: boolean }) =>
       interactCmd.videoDigg(input.vid, input.seriesId, input.digg),
+    // 乐观更新：互动回显接口（ugc/action/mget）是「最近互动列表」，
+    // 剧集不在列表里时状态永远是 false——不乐观写的话按钮永不点亮、
+    // 二次点击也不会走取消分支（详情页「二次点击还是提示已收藏」事故）
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: keys.interactState });
+      const prev = queryClient.getQueryData<InteractionState>(keys.interactState);
+      queryClient.setQueryData<InteractionState>(keys.interactState, (old) => {
+        const items = old?.items ?? [];
+        const idx = items.findIndex((i) => i.vid === input.vid);
+        const patched = { ...items[idx], userDigg: input.digg } as InteractionItem;
+        return {
+          items:
+            idx >= 0
+              ? items.toSpliced(idx, 1, patched)
+              : [
+                  ...items,
+                  {
+                    vid: input.vid,
+                    seriesId: input.seriesId,
+                    userDigg: input.digg,
+                    diggedCount: 0,
+                    followed: false,
+                    followedCnt: 0,
+                    seriesTitle: '',
+                  },
+                ],
+        };
+      });
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(keys.interactState, ctx.prev);
+    },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.interactState }),
   });
 }
@@ -447,8 +484,41 @@ export function useSeriesCollect() {
   return useMutation({
     mutationFn: (input: { seriesId: string; collect: boolean }) =>
       interactCmd.seriesCollect(input.seriesId, input.collect),
+    // 乐观写 followed（详情页/互动栏的收藏态都从 interactState 匹配），
+    // 权威数据源是书架列表（onSuccess 里失效重拉）
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: keys.interactState });
+      const prev = queryClient.getQueryData<InteractionState>(keys.interactState);
+      queryClient.setQueryData<InteractionState>(keys.interactState, (old) => {
+        const items = old?.items ?? [];
+        const idx = items.findIndex((i) => i.seriesId === input.seriesId);
+        const patched = { ...items[idx], followed: input.collect } as InteractionItem;
+        return {
+          items:
+            idx >= 0
+              ? items.toSpliced(idx, 1, patched)
+              : [
+                  ...items,
+                  {
+                    vid: '',
+                    seriesId: input.seriesId,
+                    userDigg: false,
+                    diggedCount: 0,
+                    followed: input.collect,
+                    followedCnt: 0,
+                    seriesTitle: '',
+                  },
+                ],
+        };
+      });
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(keys.interactState, ctx.prev);
+    },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: keys.interactState });
+      // 收藏态的权威回显走书架列表；interactState 的回显是 best-effort，
+      // 不失效它——服务端列表延迟回带旧值会把乐观态顶回去（同一事故）
       void queryClient.invalidateQueries({ queryKey: keys.bookshelf });
     },
   });
@@ -652,6 +722,35 @@ export function useRelatedSeries(seriesId: string) {
     queryFn: () => series.related(seriesId),
     staleTime: 10 * 60_000,
     retry: false,
+  });
+}
+
+/**
+ * 详情页头部元信息（追剧数/播放量/季徽/题材标签/备案号）。
+ * 失败静默降级：头部缺这几行不影响主功能（与后端同一口径）。
+ * （与上面收藏/列表页的 useSeriesMeta 不同：那个回退 resolve 拿整档案。）
+ */
+export function useSeriesDetailMeta(seriesId: string) {
+  return useQuery({
+    queryKey: keys.seriesMeta(seriesId),
+    queryFn: () => series.meta(seriesId),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
+/**
+ * 剧级评论（详情页「剧评」tab：整部剧一条线，group_type=1 形态；
+ * total 就是 tab 上的「剧评 579」计数）。与单集评论区（播放器 💬）分库。
+ */
+export function useSeriesComments(seriesId: string) {
+  return useInfiniteQuery({
+    queryKey: keys.seriesComments(seriesId),
+    queryFn: ({ pageParam }) => danmakuCmd.seriesComments(seriesId, pageParam),
+    initialPageParam: '',
+    getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
+    enabled: !!seriesId,
+    staleTime: 60_000,
   });
 }
 

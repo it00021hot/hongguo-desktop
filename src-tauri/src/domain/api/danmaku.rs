@@ -243,6 +243,113 @@ pub async fn fetch_comments_page(
     let bytes = super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析评论响应失败: {e}")))?;
+    check_comment_code(&v)?;
+    parse_comment_page(&v)
+}
+
+/// 剧级评论（详情页「剧评」，整部剧一条线）。
+///
+/// 2026-10-07 抓 hgplayer 详情页锁定：同一端点换**形态**——`group_id` 是
+/// **series_id**（不是 vid）、`group_type=1`（书/剧维度）、`comment_source=1`、
+/// `comment_type=2`、`server_channel=34`；business_param 是另一组全量字段
+/// （照抄抓包，审计纪律）。响应与单集评论同构（common_list_info.total /
+/// data_list），解析复用。
+fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
+    serde_json::json!({
+        "aid": 8662,
+        "business_param": {
+            "book_id": group_id,
+            "comment_sort_debug": false,
+            "end_offset_time": 0,
+            "hit_interaction_data_migration_ab": false,
+            "is_last_episode": false,
+            "item_count": 0,
+            "max_item_count": 0,
+            "need_count": true,
+            "need_danmaku_occlusion_face_data": false,
+            "outflow_comment_count": 0,
+            "para_index": 0,
+            "playlet_consume_duration_ms": 0,
+            "playlet_item_consume_duration_ms": 0,
+            "playlet_item_duration": 0,
+            "read_item_count": 0,
+            "req_type": 0,
+            "start_offset_time": 0,
+        },
+        "comment_source": 1,
+        "comment_type": 2,
+        "count": 10,
+        "cursor": cursor,
+        "group_id": group_id,
+        "group_type": 1,
+        "server_channel": 34,
+        "sort": 1,
+    })
+}
+
+/// 剧级评论页 + 剧评分摘要。
+///
+/// 2026-10-07 逆向 hgplayer（Reviews 绑定 → class Y）：评分/评分人数/
+/// 题材标签就在本接口响应的 `extra` 里——`book_info.score`（字符串形态
+/// "8.0"，空 = 暂无评分）、`score_cnt`、`book_info.tags`（逗号分隔串）。
+/// hgplayer 详情头部的「8.0分 1074人评分」即源于此。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesReviewPage {
+    #[serde(flatten)]
+    pub page: CommentPage,
+    /// 剧评分（"8.0"；空串 = 暂无评分）
+    #[serde(default)]
+    pub score: String,
+    /// 评分人数
+    #[serde(default)]
+    pub score_cnt: i64,
+    /// 题材标签
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// 拉剧级评论的一页（详情页「剧评」tab 数据源 + 头部评分）。
+pub async fn fetch_series_comments_page(
+    series_id: &str,
+    cursor: &str,
+    env: &ApiEnv,
+) -> AppResult<SeriesReviewPage> {
+    let path = format!("/novel/commentapi/comment/list/{series_id}/v1/");
+    let body = serde_json::to_vec(&series_comments_payload(series_id, cursor))
+        .map_err(|e| AppError::Signer(e.to_string()))?;
+    let bytes = super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析剧评响应失败: {e}")))?;
+    check_comment_code(&v)?;
+    let page = parse_comment_page(&v)?;
+    let score = v
+        .pointer("/data/extra/book_info/score")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let score_cnt = v
+        .pointer("/data/extra/score_cnt")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let tags = v
+        .pointer("/data/extra/book_info/tags")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect();
+    Ok(SeriesReviewPage {
+        page,
+        score,
+        score_cnt,
+        tags,
+    })
+}
+
+fn check_comment_code(v: &Value) -> AppResult<()> {
     if v.get("code").and_then(Value::as_i64) != Some(0) {
         let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
         return Err(AppError::Media(format!(
@@ -250,6 +357,11 @@ pub async fn fetch_comments_page(
             v.get("code").and_then(Value::as_i64).unwrap_or(-1)
         )));
     }
+    Ok(())
+}
+
+/// 评论响应 → [`CommentPage`]（单集评论与剧级评论同构，共用）。
+fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
     let list_info = v.pointer("/data/common_list_info").cloned().unwrap_or(Value::Null);
     let mut page = CommentPage {
         total: list_info.get("total").and_then(Value::as_i64).unwrap_or(0),
@@ -355,6 +467,22 @@ mod tests {
             p["business_param"].get("playlet_item_duration").is_none(),
             "弹幕形字段混进评论体会 103001"
         );
+    }
+
+    #[test]
+    fn series_comments_payload_matches_capture_20261007() {
+        // 2026-10-07 抓 hgplayer 详情页：剧级评论换形态——group_id 是
+        // series_id、group_type=1、source=1/type=2/channel=34，
+        // business_param 是全量字段组（照抄抓包）
+        let p = series_comments_payload("7687941387362257982", "");
+        assert_eq!(p["group_type"], 1, "1 = 书/剧维度，30 是单集");
+        assert_eq!(p["comment_source"], 1);
+        assert_eq!(p["comment_type"], 2);
+        assert_eq!(p["server_channel"], 34);
+        assert_eq!(p["group_id"], "7687941387362257982");
+        assert_eq!(p["business_param"]["book_id"], "7687941387362257982");
+        assert_eq!(p["business_param"]["need_count"], true);
+        assert_eq!(p["count"], 10);
     }
 }
 

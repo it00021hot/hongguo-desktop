@@ -465,6 +465,24 @@ export const relatedSeriesSchema = z.object({
 export type RelatedItem = z.infer<typeof relatedItemSchema>;
 export type RelatedSeries = z.infer<typeof relatedSeriesSchema>;
 
+/** 详情页头部元信息（Rust `detail::SeriesMeta`，video_detail 接口）。 */
+export const seriesMetaSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  cover: z.string(),
+  /** 追剧数（44.7万人追剧） */
+  followedCnt: z.number(),
+  /** 全剧播放量（150.8万次播放） */
+  playCnt: z.number(),
+  /** 备案号（（番茄）网微剧备字…，无则空） */
+  recordNumber: z.string(),
+  /** 季徽（「第1季」，secondary_infos data_type=0，无则空） */
+  season: z.string(),
+  /** 题材标签（玄幻/逆袭…，secondary_infos data_type=3） */
+  tags: z.array(z.string()),
+});
+export type SeriesMeta = z.infer<typeof seriesMetaSchema>;
+
 /** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
 export const danmakuSchema = z.object({
   commentId: z.string(),
@@ -495,6 +513,21 @@ export const commentPageSchema = z.object({
   nextCursor: z.string(),
 });
 export type CommentPage = z.infer<typeof commentPageSchema>;
+
+/**
+ * 剧级评论页 + 剧评分摘要（Rust `danmaku::SeriesReviewPage`）。
+ * 评分/评分人数/题材标签在评论响应 extra 里（2026-10-07 逆向 hgplayer
+ * Reviews 锁定）——详情头部的「8.0分 1074人评分」数据源。
+ */
+export const seriesReviewPageSchema = z.object({
+  ...commentPageSchema.shape,
+  /** 剧评分（"8.0"；空串 = 暂无评分） */
+  score: z.string(),
+  /** 评分人数 */
+  scoreCnt: z.number(),
+  tags: z.array(z.string()),
+});
+export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;
 
 /** 书架（收藏）列表里的一条（Rust `interact::BookshelfEntry`）。 */
 export const bookshelfEntrySchema = z.object({

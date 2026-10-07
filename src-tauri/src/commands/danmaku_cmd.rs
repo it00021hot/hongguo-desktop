@@ -4,7 +4,8 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::danmaku::{
-    fetch_comments_page, fetch_danmaku_all, CommentPage, Danmaku,
+    fetch_comments_page, fetch_danmaku_all, fetch_series_comments_page, CommentPage, Danmaku,
+    SeriesReviewPage,
 };
 use crate::error::AppResult;
 
@@ -67,6 +68,21 @@ pub async fn comment_list(
             Err(e)
         }
     }
+}
+
+/// 拉**剧级评论**的一页（详情页「剧评」tab：整部剧一条线，不是单集评论）。
+///
+/// 2026-10-07 抓包锁定：同端点换形态——`group_type=1`、`comment_source=1`、
+/// `server_channel=34`，group_id 是 series_id。响应与单集评论同构。
+#[tauri::command]
+pub async fn series_comment_list(
+    state: State<'_, AppState>,
+    series_id: String,
+    cursor: Option<String>,
+) -> AppResult<SeriesReviewPage> {
+    let env = state.api_env();
+    let cursor = cursor.unwrap_or_default();
+    fetch_series_comments_page(&series_id, &cursor, &env).await
 }
 
 #[cfg(test)]

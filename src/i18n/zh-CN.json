@@ -234,18 +234,19 @@
       "loadMore": "加载更多评论（还有 {n} 条）",
       "preparing": "正在准备这一集…"
     },
-    "backToMain": "返回主窗口",
     "comingSoon": "即将上线",
     "episodeNo": "第{index}集",
     "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
-    "miniNoTarget": "没有可播放的内容",
-    "miniTitle": "小窗播放",
-    "miniWindow": "小窗播放",
+    "miniTitle": "红果短剧",
+    "miniWindow": "小屏播放",
+    "exitMiniScreen": "退出小屏",
+    "stopMiniScreen": "结束播放",
     "pause": "暂停",
     "progress": "播放进度",
     "reserve": "预约",
     "reserved": "已预约",
-    "unreserved": "已取消预约"
+    "unreserved": "已取消预约",
+    "pin": "置顶"
   },
   "series": {
     "loadFailed": "分集加载失败",
@@ -543,6 +544,8 @@
     "recSite": "官网推荐",
     "recShuffle": "换一换",
     "relatedWorks": "相关作品 · 系列",
-    "plays": "播放"
+    "plays": "播放",
+    "guessYouLike": "猜你喜欢",
+    "ratingCount": "{count}人评分"
   }
 }

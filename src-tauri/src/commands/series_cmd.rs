@@ -107,6 +107,18 @@ pub async fn related_series(
     crate::domain::api::detail::fetch_related_series(&series_id, &env).await
 }
 
+/// 详情页头部元信息（追剧数/播放量/季徽/题材标签/备案号，官方
+/// video_detail 接口；2026-10-07 抓 hgplayer 锁定）。失败静默降级——
+/// 头部缺这几行不该打断详情页主功能。
+#[tauri::command]
+pub async fn series_meta(
+    state: State<'_, AppState>,
+    series_id: String,
+) -> AppResult<crate::domain::api::detail::SeriesMeta> {
+    let env = state.api_env();
+    crate::domain::api::detail::fetch_series_meta(&series_id, &env).await
+}
+
 /// 从剧集列表移除一部剧（不删本地文件，也不删已下载的任务记录）。
 #[tauri::command]
 pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {

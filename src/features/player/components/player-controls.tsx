@@ -503,8 +503,8 @@ export function PlayerControls({
             {t('player.download')}
           </Button>
 
-          {/* 小窗播放：自建置顶小窗（主窗随之隐藏），不用浏览器原生 PiP——
-              原生 PiP 的窗口尺寸归系统管（默认偏小），也藏不了主窗 */}
+          {/* 小屏播放（对齐 hgplayer）：同一窗口缩成 480×270 落屏幕右下角，
+              播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
           <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
             <PictureInPicture2 className="size-4" />
           </IconButton>

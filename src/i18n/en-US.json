@@ -234,18 +234,19 @@
       "loadMore": "Load more comments ({n} left)",
       "preparing": "Preparing this episode…"
     },
-    "backToMain": "Back to main window",
     "comingSoon": "Coming soon",
     "episodeNo": "Ep. {index}",
     "incognito": "Incognito (hides when mouse leaves, reappears when it returns)",
-    "miniNoTarget": "Nothing to play",
-    "miniTitle": "Mini player",
-    "miniWindow": "Mini window",
+    "miniTitle": "Hongguo",
+    "miniWindow": "Mini screen",
+    "exitMiniScreen": "Exit mini screen",
+    "stopMiniScreen": "Stop playback",
     "pause": "Pause",
     "progress": "Playback progress",
     "reserve": "Reserve",
     "reserved": "Reserved",
-    "unreserved": "Reservation cancelled"
+    "unreserved": "Reservation cancelled",
+    "pin": "Always on top"
   },
   "series": {
     "loadFailed": "Failed to load episodes",
@@ -543,6 +544,8 @@
     "recSite": "Official picks",
     "recShuffle": "Shuffle",
     "relatedWorks": "Related series",
-    "plays": " plays"
+    "plays": " plays",
+    "guessYouLike": "Guess you like",
+    "ratingCount": "{count} ratings"
   }
 }

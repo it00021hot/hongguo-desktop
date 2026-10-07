@@ -102,48 +102,60 @@ fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
         .unwrap_or_default()
     {
         let cell_name = cell.get("cell_name").and_then(Value::as_str).unwrap_or("");
-        let items = cell
-            .get("video_data")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|raw| {
-                        let series_id = raw.get("series_id").and_then(Value::as_str)?;
-                        if series_id.is_empty() {
-                            return None;
-                        }
-                        // 角标：tag_info.text；缺失且未上线时给「即将上线」
-                        let tag = raw
-                            .pointer("/tag_info/text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string();
-                        let episode_cnt = int_field(raw, "episode_cnt").max(0) as u32;
-                        Some(RelatedItem {
-                            series_id: series_id.to_string(),
-                            title: str_field(raw, "title"),
-                            cover: str_field(raw, "cover"),
-                            tag: if tag.is_empty() && episode_cnt == 0 {
-                                "即将上线".to_string()
-                            } else {
-                                tag
-                            },
-                            // score 线上是字符串形态（"8.0"）
-                            score: raw
-                                .get("score")
-                                .and_then(Value::as_str)
-                                .and_then(|s| s.parse::<f64>().ok())
-                                .unwrap_or_else(|| {
-                                    raw.get("score").and_then(Value::as_f64).unwrap_or(0.0)
-                                }),
-                            play_cnt: int_field(raw, "play_cnt"),
-                            episode_cnt,
-                            video_desc: str_field(raw, "video_desc"),
-                        })
-                    })
-                    .collect()
+        // 猜你喜欢 cell 的条目不在自己的 video_data 里，而在 **cell_data[]**
+        // （二级 cell 列表，cell_name 形如「双列短剧」）各自的 video_data 里
+        // ——2026-10-07 活体探测实锤（此前只读 video_data 恒为 0 条）。
+        // hgplayer 二进制里 `json:"guess" guess_mvs` 即此结构。
+        let raw_items: Vec<&Value> = match cell.get("video_data").and_then(Value::as_array) {
+            Some(arr) if !arr.is_empty() => arr.iter().collect(),
+            _ => cell
+                .get("cell_data")
+                .and_then(Value::as_array)
+                .map(|subs| {
+                    subs.iter()
+                        .filter_map(|sub| sub.get("video_data").and_then(Value::as_array))
+                        .flatten()
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let items = raw_items
+            .iter()
+            .filter_map(|raw| {
+                let series_id = raw.get("series_id").and_then(Value::as_str)?;
+                if series_id.is_empty() {
+                    return None;
+                }
+                // 角标：tag_info.text；缺失且未上线时给「即将上线」
+                let tag = raw
+                    .pointer("/tag_info/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let episode_cnt = int_field(raw, "episode_cnt").max(0) as u32;
+                Some(RelatedItem {
+                    series_id: series_id.to_string(),
+                    title: str_field(raw, "title"),
+                    cover: str_field(raw, "cover"),
+                    tag: if tag.is_empty() && episode_cnt == 0 {
+                        "即将上线".to_string()
+                    } else {
+                        tag
+                    },
+                    // score 线上是字符串形态（"8.0"）
+                    score: raw
+                        .get("score")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or_else(|| {
+                            raw.get("score").and_then(Value::as_f64).unwrap_or(0.0)
+                        }),
+                    play_cnt: int_field(raw, "play_cnt"),
+                    episode_cnt,
+                    video_desc: str_field(raw, "video_desc"),
+                })
             })
-            .unwrap_or_default();
+            .collect();
         match cell_name {
             "相关作品" => related.works = items,
             "猜你喜欢" => related.guess = items,
@@ -262,6 +274,124 @@ fn pick(value: &Value, keys: &[&str]) -> String {
         .to_string()
 }
 
+// ---------------------------------------------------------------- 剧集元信息
+
+/// 详情页头部元信息端点（2026-10-07 抓 hgplayer 详情页锁定）：
+/// `POST /novel/player/video_detail/v1/`，body `{"biz_param":{…},"series_id"}`。
+/// 追剧数/播放量/季徽/题材标签/备案号都在这里——preload 分集接口不带这些。
+pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
+
+/// 详情页头部的剧集元信息（对齐 hgplayer 头部数据面）。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesMeta {
+    pub series_id: String,
+    pub title: String,
+    pub cover: String,
+    /// 追剧数（followed_cnt，44.7万人追剧）
+    pub followed_cnt: i64,
+    /// 全剧播放量（series_play_cnt，150.8万次播放）
+    pub play_cnt: i64,
+    /// 备案号（record_info.record_number；响应里有 show 开关，前端恒显即可）
+    pub record_number: String,
+    /// 季徽（secondary_infos data_type=0 的 content，如「第1季」）
+    pub season: String,
+    /// 题材标签（secondary_infos data_type=3 的 content：玄幻/逆袭/修真…）
+    pub tags: Vec<String>,
+}
+
+/// 拉详情页头部元信息。失败交调用方降级（头部缺这几行不影响主功能）。
+pub async fn fetch_series_meta(series_id: &str, env: &super::client::ApiEnv) -> AppResult<SeriesMeta> {
+    // body 照抄抓包（audit 纪律）：screen_width_px 是字符串形态
+    let body = serde_json::to_vec(&serde_json::json!({
+        "biz_param": {
+            "caller_scene": "single_col",
+            "detail_page_version": 1,
+            "disable_digg_stat": false,
+            "disable_video_relate_book": false,
+            "from_video_id": "",
+            "need_all_video_definition": false,
+            "need_mp4_align": false,
+            "screen_width_px": "1078",
+            "source": 4,
+            "use_os_player": false,
+            "use_server_dns": false,
+            "video_id_type": 1,
+        },
+        "series_id": series_id,
+    }))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
+
+    let bytes = super::client::api_call(VIDEO_DETAIL_PATH, Some(body), env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析详情元信息失败: {e}")))?;
+    parse_series_meta(&value, series_id)
+}
+
+/// 解析 video_detail 响应。字段在 `data[series_id]` 下（与 preload 的
+/// `video_data` 包一层不同，这个端点是平铺的），两层都兜一下。
+pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesMeta> {
+    if let Some(code) = response.get("code").and_then(Value::as_i64) {
+        if code != 0 {
+            let msg = response
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误");
+            return Err(AppError::Media(format!("详情元信息接口返回 {code}: {msg}")));
+        }
+    }
+    let node = response
+        .pointer(&format!("/data/{series_id}"))
+        .or_else(|| response.get("data").and_then(|d| d.as_object().and_then(|o| o.values().next())))
+        .ok_or_else(|| AppError::Media("详情元信息响应里没有 data".into()))?;
+    let vd = node.get("video_data").unwrap_or(node);
+
+    // secondary_infos：data_type 0 = 季徽（highlight），3 = 题材标签
+    let mut season = String::new();
+    let mut tags = Vec::new();
+    if let Some(items) = node
+        .pointer("/secondary_infos")
+        .or_else(|| vd.pointer("/secondary_infos"))
+        .and_then(Value::as_array)
+    {
+        for item in items {
+            let content = item.get("content").and_then(Value::as_str).unwrap_or_default();
+            if content.is_empty() {
+                continue;
+            }
+            match item.get("data_type").and_then(Value::as_i64) {
+                Some(0) if season.is_empty() => season = content.to_string(),
+                Some(3) => tags.push(content.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    let sid = pick(vd, &["series_id_str", "series_id"]);
+    Ok(SeriesMeta {
+        series_id: if sid.is_empty() { series_id.to_string() } else { sid },
+        title: pick(vd, &["series_title"]),
+        cover: pick(vd, &["series_cover"]),
+        followed_cnt: vd
+            .get("followed_cnt")
+            .and_then(Value::as_i64)
+            .or_else(|| vd.get("followed_cnt").and_then(Value::as_str).and_then(|s| s.parse().ok()))
+            .unwrap_or(0),
+        play_cnt: vd
+            .get("series_play_cnt")
+            .and_then(Value::as_i64)
+            .or_else(|| vd.get("series_play_cnt").and_then(Value::as_str).and_then(|s| s.parse().ok()))
+            .unwrap_or(0),
+        record_number: vd
+            .pointer("/record_info/record_number")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        season,
+        tags,
+    })
+}
+
 /// 字符串字段（缺失给空串）。
 fn str_field(v: &Value, key: &str) -> String {
     v.get(key)
@@ -355,6 +485,66 @@ mod tests {
 
     /// 相关作品解析：cell_name 分流 + tag_info 角标 + score 字符串形态
     /// + 未上线兜底「即将上线」（2026-10-07 plan/v 抓包样本的形状）。
+    #[test]
+    fn parses_series_meta_from_video_detail() {
+        // 2026-10-07 抓包样本：字段平铺在 data[sid] 下（无 video_data 包层），
+        // 计数字段是字符串形态；季徽 data_type=0，题材 data_type=3
+        let v: Value = serde_json::json!({
+            "code": 0,
+            "data": {
+                "7678641104899542041": {
+                    "series_id_str": "7678641104899542041",
+                    "series_title": "序列：我一人即是黄昏议会",
+                    "series_cover": "https://example/cover.heic",
+                    "followed_cnt": "1069774",
+                    "series_play_cnt": "5160926",
+                    "record_info": { "record_number": "（番茄）网微剧备字（2026）第847205号", "show": true },
+                    "secondary_infos": [
+                        { "content": "第1季", "data_type": 0, "highlight": true },
+                        { "content": "玄幻", "data_type": 3 },
+                        { "content": "逆袭", "data_type": 3 },
+                        { "content": "忽略项", "data_type": 9 }
+                    ]
+                }
+            }
+        });
+        let m = parse_series_meta(&v, "7678641104899542041").unwrap();
+        assert_eq!(m.title, "序列：我一人即是黄昏议会");
+        assert_eq!(m.followed_cnt, 1_069_774, "字符串形态计数要能解析");
+        assert_eq!(m.play_cnt, 5_160_926);
+        assert_eq!(m.season, "第1季");
+        assert_eq!(m.tags, vec!["玄幻", "逆袭"], "data_type=3 才是题材标签");
+        assert_eq!(m.record_number, "（番茄）网微剧备字（2026）第847205号");
+    }
+
+    #[test]
+    fn guess_cell_items_live_in_cell_data() {
+        // 2026-10-07 活体探测实锤：猜你喜欢 cell 的条目走 **cell_data[]**
+        // （二级 cell 各带 video_data），不是自己的 video_data——
+        // 只读 video_data 时猜你喜欢恒为 0 条（tab 计数 4 vs 第三方 33 事故）
+        let v: Value = serde_json::json!({
+            "code": 0,
+            "data": [
+                { "cell_name": "相关作品", "video_data": [
+                    { "series_id": "1", "title": "第二季", "episode_cnt": 52 }
+                ]},
+                { "cell_name": "猜你喜欢", "cell_data": [
+                    { "cell_name": "双列短剧", "video_data": [
+                        { "series_id": "2", "title": "A 剧", "score": "8.0", "play_cnt": 443041, "episode_cnt": 121 }
+                    ]},
+                    { "cell_name": "双列短剧", "video_data": [
+                        { "series_id": "3", "title": "B 剧" }
+                    ]}
+                ]}
+            ]
+        });
+        let rel = parse_related_series(&v).unwrap();
+        assert_eq!(rel.works.len(), 1);
+        assert_eq!(rel.guess.len(), 2, "cell_data 里的条目要拍平进猜你喜欢");
+        assert_eq!(rel.guess[0].score, 8.0);
+        assert_eq!(rel.guess[0].play_cnt, 443_041);
+    }
+
     #[test]
     fn parses_related_series_cells() {
         let v: Value = serde_json::json!({
@@ -474,9 +664,141 @@ mod probe {
 #[cfg(test)]
 mod probe2 {
     use super::*;
-    /// 找 preload 详情响应里的「相关作品·系列」字段（hgplayer 详情页同款）。
-    #[tokio::test]
+
+    /// 活体探测：plan/v 的真实 cell 结构 + 剧评响应 extra 的评分字段。
+    /// 用法：`PROBE_SERIES_ID=<id> cargo test probe_live -- --ignored --nocapture`
+    /// （默认疯神镇妖官）。probe_detail_related_series 是原有探测，见下。
     #[ignore = "直连真实接口的探测用例"]
+    #[tokio::test]
+    async fn probe_fengshen_live() {
+        let proxy = crate::domain::model::ProxyConfig::default();
+        // PROBE_DEVICE_FILE 给真实设备档案（默认静态兜底档案）：
+        // 评分/猜你喜欢疑随设备信任度下发，匿名静态档案拿到的是空。
+        let env = match std::env::var("PROBE_DEVICE_FILE") {
+            Ok(path) => {
+                let json = std::fs::read_to_string(&path).expect("读设备档案");
+                let device = serde_json::from_str(&json).expect("解析设备档案");
+                crate::domain::api::client::ApiEnv { proxy, device, cookie: None, x_tt_token: None }
+            }
+            Err(_) => crate::domain::api::client::ApiEnv::anonymous(proxy),
+        };
+        let sid = std::env::var("PROBE_SERIES_ID")
+            .unwrap_or_else(|_| "7685637575473630270".into());
+
+        let rel = fetch_related_series(&sid, &env).await.expect("plan");
+        println!("[plan] works={} guess={}", rel.works.len(), rel.guess.len());
+        for w in rel.works.iter().chain(rel.guess.iter()).take(6) {
+            println!("[plan]   {} | {} | tag={} score={} ep={} play={}", w.series_id, w.title, w.tag, w.score, w.episode_cnt, w.play_cnt);
+        }
+
+        match super::super::danmaku::fetch_series_comments_page(&sid, "", &env).await {
+            Ok(page) => {
+                println!("[reviews] total={} score={:?} score_cnt={} tags={:?}",
+                    page.page.total, page.score, page.score_cnt, page.tags);
+            }
+            Err(e) => println!("[reviews] ERR: {e}"),
+        }
+
+        match fetch_series_meta(&sid, &env).await {
+            Ok(m) => println!("[meta] title={} followed={} play={} score? season={} tags={:?} record={}",
+                m.title, m.followed_cnt, m.play_cnt, m.season, m.tags, m.record_number),
+            Err(e) => println!("[meta] ERR: {e}"),
+        }
+
+        // video_detail 原始响应里搜评分键（头部 8.0分 的可能来源）
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "biz_param": {
+                "caller_scene": "single_col", "detail_page_version": 1,
+                "disable_digg_stat": false, "disable_video_relate_book": false,
+                "from_video_id": "", "need_all_video_definition": false,
+                "need_mp4_align": false, "screen_width_px": "1078", "source": 4,
+                "use_os_player": false, "use_server_dns": false, "video_id_type": 1,
+            },
+            "series_id": sid,
+        }))
+        .unwrap();
+        let vd_bytes = crate::domain::api::client::api_call(
+            VIDEO_DETAIL_PATH, Some(payload), &env,
+        ).await.expect("video_detail");
+        let vd_raw = String::from_utf8_lossy(&vd_bytes).to_string();
+        for key in ["\"score\"", "rating", "digg_cnt", "comment_count"] {
+            let mut from = 0;
+            for _ in 0..2 {
+                let Some(pos) = vd_raw[from..].find(key) else { break };
+                let at = from + pos;
+                let lo = at.saturating_sub(40);
+                let hi = (at + 100).min(vd_raw.len());
+                println!("[vdetail] {key} @ {at}: ...{}", vd_raw[lo..hi].replace(char::is_whitespace, " "));
+                from = at + 1;
+            }
+        }
+
+        // 原始 plan 响应的 cell 名与条数（不经解析，防解析器吞内容）
+        let biz_query: Vec<(String, String)> = [
+            ("book_id", sid.as_str()),
+            ("bookstore_tab", "0"),
+            ("bookstore_tab_type", "0"),
+            ("current_chapter_num", "0"),
+            ("from", "detail_page_more_related"),
+            ("is_horizontal_screen", "false"),
+            ("limit", "0"),
+            ("need_personal_recommend", "1"),
+            ("offset", "0"),
+            ("post_id", "0"),
+            ("scene", "10"),
+            ("total_chapter_num", "0"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let bytes = crate::domain::api::client::api_call_reading(
+            super::super::danmaku::LQ_API_ORIGIN,
+            PLAN_PATH,
+            None,
+            &biz_query,
+            &env,
+        )
+        .await
+        .expect("plan raw");
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        for cell in v.get("data").and_then(Value::as_array).into_iter().flatten() {
+            let name = cell.get("cell_name").and_then(Value::as_str).unwrap_or("?");
+            let n = cell.get("video_data").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            println!("[plan raw] cell={name} items={n}");
+            // cell 里的其它数组字段（hgplayer 的 guess_mvs tag 暗示猜你喜欢
+            // 可能不走 video_data 而走专用字段）
+            if let Some(obj) = cell.as_object() {
+                for (k, val) in obj {
+                    if k == "video_data" || k == "cell_name" {
+                        continue;
+                    }
+                    if let Some(arr) = val.as_array() {
+                        println!("[plan raw]   cell={name} arr {k} len={}", arr.len());
+                        if let Some(first) = arr.first() {
+                            let keys: Vec<_> = first.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                            println!("[plan raw]     first keys: {keys:?}");
+                            println!("[plan raw]     first: {}", serde_json::to_string(first).unwrap_or_default());
+                        }
+                    }
+                }
+            }
+        }
+        let raw = String::from_utf8_lossy(&bytes).to_string();
+        for key in ["guess_mvs", "guess"] {
+            let mut from = 0;
+            for _ in 0..3 {
+                let Some(pos) = raw[from..].find(key) else { break };
+                let at = from + pos;
+                let lo = at.saturating_sub(60);
+                let hi = (at + 120).min(raw.len());
+                println!("[plan raw] {key} @ {at}: ...{}...", raw[lo..hi].replace(char::is_whitespace, " "));
+                from = at + 1;
+            }
+        }
+    }
+
+    #[ignore = "直连真实接口的探测用例"]
+    #[tokio::test]
     async fn probe_detail_related_series() {
         let env = crate::domain::api::client::ApiEnv::anonymous(
             crate::domain::model::ProxyConfig::default(),

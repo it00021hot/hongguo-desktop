@@ -89,9 +89,9 @@ pub fn run() {
             commands::app_cmd::open_external_page,
             commands::app_cmd::mark_window_ready,
             commands::app_cmd::exit_app,
-            commands::app_cmd::open_mini_window,
-            commands::app_cmd::close_mini_window,
-            commands::app_cmd::fit_mini_window,
+            commands::app_cmd::enter_mini_screen,
+            commands::app_cmd::exit_mini_screen,
+            commands::app_cmd::set_always_on_top,
             commands::app_cmd::set_incognito,
             // 设置
             commands::settings_cmd::get_settings,
@@ -103,6 +103,7 @@ pub fn run() {
             commands::series_cmd::resolve_series,
             commands::series_cmd::get_series_extras,
             commands::series_cmd::related_series,
+            commands::series_cmd::series_meta,
             commands::series_cmd::remove_series,
             commands::series_cmd::remove_all_series,
             // 发现（推荐信息流 / 找剧筛选浏览）
@@ -132,6 +133,7 @@ pub fn run() {
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             commands::danmaku_cmd::comment_list,
+            commands::danmaku_cmd::series_comment_list,
             // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,
@@ -185,26 +187,16 @@ pub fn run() {
         .run(|app, event| {
             // macOS 点 Dock 图标：隐身模式把窗口整个藏起来后，鼠标唤不回
             // （隐藏窗口不参与命中测试），Dock 是系统级的恢复入口。
-            // 主窗在小窗播放期间是故意隐藏的，这里只带回「活动的那个窗口」。
             if let tauri::RunEvent::Reopen { .. } = event {
                 bring_back_active_window(app);
             }
         });
 }
 
-/// 把当前活动的窗口带回来（隐身 hide 后的恢复入口，Dock 点击/再次启动共用）。
-///
-/// 规则：**有小窗显小窗，否则显主窗**——
-/// - 小窗播放期间主窗是刻意隐藏的，无脑全显会破坏小窗模式；
-/// - 隐身藏的是哪个窗，哪个窗就是「活动的」：正常模式藏的是主窗（没有
-///   小窗在场），小窗模式藏的一定是小窗（主窗早已隐藏，鼠标离开事件
-///   只发生在可见的那个窗上）。
+/// 把主窗口带回来（隐身 hide 后的恢复入口，Dock 点击/再次启动共用）。
 fn bring_back_active_window(app: &tauri::AppHandle) {
     use tauri::Manager;
-    let target = app
-        .get_webview_window("mini")
-        .or_else(|| app.get_webview_window("main"));
-    if let Some(w) = target {
+    if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
