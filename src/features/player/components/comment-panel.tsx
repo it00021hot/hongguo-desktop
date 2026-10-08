@@ -300,7 +300,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                               : t('player.comments.replyToComment')
                           }
                           maxLength={200}
-                          className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 py-1.5 text-xs whitespace-pre text-white"
+                          className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
                         />
                         <EmojiPickerButton
                           align="end"
@@ -371,7 +371,7 @@ export function CommentPanel({ vid, onClose }: Props) {
             onEnter={submit}
             placeholder={t('player.comments.placeholder')}
             maxLength={200}
-            className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 py-2 text-sm whitespace-pre text-white"
+            className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
           />
           <EmojiPickerButton
             align="end"

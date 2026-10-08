@@ -162,7 +162,7 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
   };
 
   return (
-    <div className="relative ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 overflow-hidden rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
+    <div className="relative ml-2 flex h-8 w-44 min-w-0 shrink items-center gap-1 overflow-hidden rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
       <RichEmojiInput
         ref={richRef}
         value={text}
@@ -170,7 +170,7 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
         onEnter={submit}
         placeholder={t('player.interact.danmakuPlaceholder')}
         maxLength={100}
-        className="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs whitespace-pre text-white"
+        className="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs leading-8 whitespace-pre text-white"
       />
       <EmojiPickerButton onPick={pickEmoji} />
       <button

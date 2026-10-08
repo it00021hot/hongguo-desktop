@@ -172,6 +172,9 @@ export function RichEmojiInput({
           next = next.slice(0, maxLength);
           renderValue(el, next);
         }
+        // 内容不溢出时把滚动归位：光标自动滚动可能把盒子停在「开头被
+        // 裁掉」的静止态（占位符/短文本显示成中间截断）
+        if (el.scrollWidth <= el.clientWidth) el.scrollLeft = 0;
         onChange(next);
       }}
       onKeyDown={(e) => {
