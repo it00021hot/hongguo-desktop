@@ -14,13 +14,13 @@ import { useEffect, useRef, useState } from 'react';
 import { CornerDownRight, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { insertEmojiCode, parseEmojiSegments } from '@/lib/danmaku-emoji';
+import { parseEmojiSegments } from '@/lib/danmaku-emoji';
 import { interact } from '@/lib/ipc/commands';
 import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
 import { EmojiPickerButton } from './emoji-picker';
+import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import type { CommentItem } from '@/lib/schema';
 
 interface Props {
@@ -99,9 +99,9 @@ export function CommentPanel({ vid, onClose }: Props) {
   const [replyText, setReplyText] = useState('');
   /** 自己发的回复（commentId → 本地追加），服务端暂无回复列表可拉 */
   const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
-  /** 发评论 / 回复输入框的 ref（表情插入要操作光标） */
-  const composerRef = useRef<HTMLInputElement | null>(null);
-  const replyInputRef = useRef<HTMLInputElement | null>(null);
+  /** 发评论 / 回复的富输入框 ref（表情插入走 ref 方法） */
+  const composerRef = useRef<RichEmojiInputHandle | null>(null);
+  const replyInputRef = useRef<RichEmojiInputHandle | null>(null);
 
   const submit = () => {
     const content = text.trim();
@@ -287,28 +287,24 @@ export function CommentPanel({ vid, onClose }: Props) {
                     {/* 回复输入框 */}
                     {replyTarget === c.commentId && (
                       <div className="mt-1.5 flex items-center gap-1.5">
-                        <Input
+                        <RichEmojiInput
                           ref={replyInputRef}
                           autoFocus
                           value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') submitReply(c);
-                            if (e.key === 'Escape') setReplyTarget(null);
-                          }}
+                          onChange={setReplyText}
+                          onEnter={() => submitReply(c)}
+                          onEscape={() => setReplyTarget(null)}
                           placeholder={
                             replyToReply
                               ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
                               : t('player.comments.replyToComment')
                           }
-                          className="h-8 flex-1 border-none bg-neutral-800/80 text-xs text-white placeholder:text-neutral-500 focus-visible:ring-0"
                           maxLength={200}
+                          className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 py-1.5 text-xs whitespace-pre text-white"
                         />
                         <EmojiPickerButton
                           align="end"
-                          onPick={(name) =>
-                            insertEmojiCode(replyInputRef.current, replyText, name, setReplyText)
-                          }
+                          onPick={(name) => replyInputRef.current?.insertEmoji(name)}
                         />
                         <Button
                           size="sm"
@@ -368,20 +364,18 @@ export function CommentPanel({ vid, onClose }: Props) {
       {/* 底部发评论 */}
       <div className="shrink-0 border-t border-white/10 p-3">
         <div className="flex items-center gap-2">
-          <Input
+          <RichEmojiInput
             ref={composerRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
-            }}
+            onChange={setText}
+            onEnter={submit}
             placeholder={t('player.comments.placeholder')}
-            className="h-9 flex-1 border-none bg-neutral-800/80 text-sm text-white placeholder:text-neutral-500 focus-visible:ring-0"
             maxLength={200}
+            className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 py-2 text-sm whitespace-pre text-white"
           />
           <EmojiPickerButton
             align="end"
-            onPick={(name) => insertEmojiCode(composerRef.current, text, name, setText)}
+            onPick={(name) => composerRef.current?.insertEmoji(name)}
           />
           <Button
             size="sm"

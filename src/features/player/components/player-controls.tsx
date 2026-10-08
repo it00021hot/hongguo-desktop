@@ -28,8 +28,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { usePlayerStore } from '@/lib/stores/player';
 import { useAccount, useSendDanmaku } from '@/lib/queries';
-import { insertEmojiCode } from '@/lib/danmaku-emoji';
 import { EmojiPickerButton } from './emoji-picker';
+import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
@@ -135,10 +135,10 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
   const send = useSendDanmaku();
   const { data: account } = useAccount();
   const loggedIn = !!account;
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const richRef = useRef<RichEmojiInputHandle | null>(null);
 
   const pickEmoji = (name: string) => {
-    insertEmojiCode(inputRef.current, text, name, setText);
+    richRef.current?.insertEmoji(name);
   };
 
   const submit = () => {
@@ -162,17 +162,15 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
   };
 
   return (
-    <div className="relative ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
-      <input
-        ref={inputRef}
+    <div className="relative ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 overflow-hidden rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
+      <RichEmojiInput
+        ref={richRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') submit();
-        }}
+        onChange={setText}
+        onEnter={submit}
         placeholder={t('player.interact.danmakuPlaceholder')}
-        className="h-full w-full min-w-0 bg-transparent text-xs text-white outline-none placeholder:text-white/50"
         maxLength={100}
+        className="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs whitespace-pre text-white"
       />
       <EmojiPickerButton onPick={pickEmoji} />
       <button

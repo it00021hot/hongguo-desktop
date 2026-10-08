@@ -253,3 +253,21 @@ button:not(:disabled) {
     transform: translateX(440%);
   }
 }
+
+/* 富表情输入框（弹幕发送 / 评论 / 回复）：contenteditable 实现，
+ * [名字] 表情代码即时渲染成内嵌图。value 是纯文本，:empty 时用
+ * data-placeholder 顶占位符（currentColor + 半透明，深浅底都成立）。 */
+.rich-emoji-input:empty::before {
+  content: attr(data-placeholder);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.rich-emoji-input img {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  margin: 0 1px;
+  object-fit: contain;
+  vertical-align: -0.22em;
+}
