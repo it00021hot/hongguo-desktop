@@ -121,10 +121,13 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 
+# CI 实测（Windows，2026-10）：fat LTO + 单 codegen 单元让 rustc 段 17-18 分钟，
+# 是发版流水线的大头。换 thin LTO + 默认并行单元后编译时间砍半以上；本项目的
+# 热点（编解码 SIMD、运行期指令集分发）都在独立 crate 里自带优化，自身代码是
+# 胶水层，跨 crate 全量优化收益本来就小。体积略涨（<5%），换发版速度值得。
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
+lto = "thin"
 panic = "abort"
 strip = true
 
