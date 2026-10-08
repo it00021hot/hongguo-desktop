@@ -8,7 +8,7 @@ import {
   Sparkles,
   BellRing,
   Star,
-  ThumbsUp,
+  Heart,
   ListChecks,
   Combine,
   HardDrive,
@@ -38,7 +38,8 @@ export const NAV_ITEMS = [
   { key: 'new', to: '/new', icon: Sparkles },
   { key: 'history', to: '/history', icon: History },
   { key: 'collections', to: '/collections', icon: Star },
-  { key: 'liked', to: '/liked', icon: ThumbsUp },
+  // 点赞用爱心：与播放页互动栏「点赞=❤」同一符号语言（原 ThumbsUp 不一致）
+  { key: 'liked', to: '/liked', icon: Heart },
   { key: 'reservations', to: '/reservations', icon: BellRing },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
   { key: 'merge', to: '/merge', icon: Combine },

@@ -3,7 +3,10 @@ import { useNavigate } from '@tanstack/react-router';
 import { History, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { ListSearch } from '@/components/list-search';
+import { matchListQuery } from '@/lib/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import { isRenderableCover, useResolveSeries, useWatchHistory, useWebCover } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
@@ -16,14 +19,39 @@ import type { WatchHistoryItem } from '@/lib/schema';
  * 469 条带名字带进度）。
  *
  * 点卡片跳播放器续播；封面是 HEIC 签名 URL，走 useWebCover 转码代理。
- * 本应用内观看的云端上报（read_history/update）尚未接线，暂只记本地。
+ * 顶部「全部/未看完/已看完」筛选与标题搜索对齐参考端 v1.1.6：
+ * 已看完 = episode_cnt>0 且已看到最后一集（参考端 History 页 p() 同款判定，
+ * 不看片内进度）。
  */
+
+type HistoryTab = 'all' | 'unfinished' | 'finished';
+
+/** 参考端同款「已看完」判定：看到最后一集即算，与片内进度无关。 */
+function isFinished(item: WatchHistoryItem): boolean {
+  return item.episodeCnt > 0 && item.vidIndex + 1 >= item.episodeCnt;
+}
+
+const TABS: { key: HistoryTab; labelKey: string }[] = [
+  { key: 'all', labelKey: 'history.tabAll' },
+  { key: 'unfinished', labelKey: 'history.tabUnfinished' },
+  { key: 'finished', labelKey: 'history.tabFinished' },
+];
 
 export function HistoryPage() {
   const navigate = useNavigate();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const { data, isLoading, error, refetch } = useWatchHistory();
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
+
+  const [tab, setTab] = useState<HistoryTab>('all');
+  const [query, setQuery] = useState('');
+
+  const items = data?.items ?? [];
+  const shown = items.filter((item) => {
+    if (tab === 'finished' && !isFinished(item)) return false;
+    if (tab === 'unfinished' && isFinished(item)) return false;
+    return matchListQuery(query, item.title, item.seriesId);
+  });
 
   const open = (item: WatchHistoryItem) => {
     resolve(item.seriesId, {
@@ -38,7 +66,7 @@ export function HistoryPage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 p-4">
         {Array.from({ length: 6 }, (_, i) => (
           <Skeleton key={i} className="h-28 rounded-xl" />
         ))}
@@ -47,7 +75,7 @@ export function HistoryPage() {
   }
   if (error) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-3 p-4 py-16">
         <p>{t('history.loadFailed')}</p>
         <p className="text-destructive text-xs">{error.message}</p>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>
@@ -57,10 +85,9 @@ export function HistoryPage() {
       </div>
     );
   }
-  const items = data?.items ?? [];
   if (items.length === 0) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-2 p-4 py-16">
         <History className="size-8 opacity-40" aria-hidden />
         <p className="text-sm">{t('history.empty')}</p>
         <p className="text-xs opacity-70">{t('history.emptyHint')}</p>
@@ -69,15 +96,56 @@ export function HistoryPage() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {items.map((item) => (
-        <HistoryRow
-          key={`${item.seriesId}:${item.updatedAtMs}`}
-          item={item}
-          onOpen={() => open(item)}
+    <div className="flex flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {TABS.map(({ key, labelKey }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={cn(
+                'rounded-full px-4 py-1.5 text-sm transition-colors',
+                tab === key
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'bg-muted text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+        <ListSearch
+          value={query}
+          onChange={setQuery}
+          placeholder={t('history.searchPlaceholder')}
         />
-      ))}
-      {resolving && <p className="text-muted-foreground text-sm">{t('common.resolving')}</p>}
+      </div>
+
+      {shown.length === 0 ? (
+        // 列表非空但被 tab/搜索滤空：给一行轻提示（文案区分场景）
+        <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
+          <History className="size-8 opacity-40" aria-hidden />
+          <p className="text-sm">
+            {query.trim() !== ''
+              ? t('common.searchNoMatch')
+              : tab === 'finished'
+                ? t('history.noMatchFinished')
+                : t('history.noMatchUnfinished')}
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {shown.map((item) => (
+            <HistoryRow
+              key={`${item.seriesId}:${item.updatedAtMs}`}
+              item={item}
+              onOpen={() => open(item)}
+            />
+          ))}
+          {resolving && <p className="text-muted-foreground text-sm">{t('common.resolving')}</p>}
+        </div>
+      )}
     </div>
   );
 }

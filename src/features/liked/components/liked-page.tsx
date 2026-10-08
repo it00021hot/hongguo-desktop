@@ -2,13 +2,16 @@
 //!
 //! 服务端没有「点赞列表」专用接口（2026-10-06 抓包确认 hgplayer 同样用
 //! mget 承载），条目带剧标题与点赞计数；超过 100 条的旧互动不在此列表
-//! （mget 上限，与 hgplayer 口径一致）。点击进播放器，支持就地取消赞。
+//! （mget 上限，与 hgplayer 口径一致）。卡片同「收藏」页网格形态
+//! （封面 3:4 + 悬浮续播/取消赞）；标题搜索框对齐参考端 v1.1.6。
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Heart, HeartOff, Loader2 } from 'lucide-react';
+import { Heart, HeartOff, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { ListSearch } from '@/components/list-search';
+import { matchListQuery } from '@/lib/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   isRenderableCover,
@@ -27,7 +30,18 @@ export function LikedPage() {
   const { data: state, isLoading, error, refetch } = useInteractionState();
   const digg = useVideoDigg();
 
+  const [query, setQuery] = useState('');
+  // mget 自带 seriesTitle，但缺失时卡片会回落 resolve——标题异步到位后
+  // 登记上来供过滤用（卡片卸载后登记值保留，不影响筛选）
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const registerTitle = useCallback((id: string, title: string) => {
+    setTitles((prev) => (prev[id] === title || title === '' ? prev : { ...prev, [id]: title }));
+  }, []);
+
   const liked = (state?.items ?? []).filter((i) => i.userDigg);
+  const shown = liked.filter((i) =>
+    matchListQuery(query, i.seriesTitle || titles[i.seriesId] || '', i.seriesId),
+  );
 
   const open = (item: InteractionItem) => {
     setTarget(item.seriesId, 1);
@@ -36,16 +50,16 @@ export function LikedPage() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col gap-3">
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} className="h-20 rounded-xl" />
+      <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {Array.from({ length: 10 }, (_, i) => (
+          <Skeleton key={i} className="aspect-[3/4] rounded-xl" />
         ))}
       </div>
     );
   }
   if (error) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-3 p-4 py-16">
         <p>{t('liked.loadFailed')}</p>
         <p className="text-destructive text-xs">{error.message}</p>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>
@@ -57,7 +71,7 @@ export function LikedPage() {
   }
   if (liked.length === 0) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-2 p-4 py-16">
         <Heart className="size-8 opacity-40" aria-hidden />
         <p className="text-sm">{t('liked.empty')}</p>
         <p className="text-xs opacity-70">{t('liked.emptyHint')}</p>
@@ -66,34 +80,45 @@ export function LikedPage() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-muted-foreground text-xs">{t('liked.recentOnly')}</p>
-      {liked.map((item) => (
-        <LikedRow
-          key={`${item.vid}:${item.seriesId}`}
-          item={item}
-          onOpen={() => open(item)}
-          onUndo={() =>
-            digg.mutate(
-              { vid: item.vid, seriesId: item.seriesId, digg: false },
-              { onError: (e) => toast.error(String(e)) },
-            )
-          }
-        />
-      ))}
+    <div className="flex flex-col gap-3 p-4">
+      <div className="flex justify-end">
+        <ListSearch value={query} onChange={setQuery} placeholder={t('liked.searchPlaceholder')} />
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {shown.map((item) => (
+          <LikedCard
+            key={`${item.vid}:${item.seriesId}`}
+            item={item}
+            onOpen={() => open(item)}
+            onTitle={registerTitle}
+            onUndo={() =>
+              digg.mutate(
+                { vid: item.vid, seriesId: item.seriesId, digg: false },
+                {
+                  onSuccess: () => toast.success(t('player.interact.undone')),
+                  onError: (e) => toast.error(String(e)),
+                },
+              )
+            }
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
-/** 点赞行：同「历史」页横排形态，标题/封面来自剧集档案（缺失时回落解析）。 */
-function LikedRow({
+/** 点赞卡：形态同「收藏」卡——封面 3:4 + 标题，悬浮出续播与「取消赞」；
+ * 次行保留本页特有信息：红心 + 该集点赞计数。 */
+function LikedCard({
   item,
   onOpen,
   onUndo,
+  onTitle,
 }: {
   item: InteractionItem;
   onOpen: () => void;
   onUndo: () => void;
+  onTitle: (id: string, title: string) => void;
 }) {
   const { data: meta } = useSeriesMeta(item.seriesId);
   const rawCover = meta?.cover ?? '';
@@ -104,55 +129,65 @@ function LikedRow({
   const showImg = cover !== '' && !imgBroken;
   const title = item.seriesTitle || meta?.title || '';
 
+  // 标题到位就登记给页面级过滤（mget 缺标题、靠 resolve 补的条目）
+  useEffect(() => {
+    if (title !== '') onTitle(item.seriesId, title);
+  }, [item.seriesId, title, onTitle]);
+
   return (
-    <article
-      role="button"
-      tabIndex={0}
-      aria-label={title}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        onOpen();
-      }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none"
-    >
-      <div className="bg-muted relative aspect-[3/4] w-[56px] shrink-0 overflow-hidden rounded-lg">
-        {showImg ? (
-          <img
-            src={cover}
-            alt={title}
-            loading="lazy"
-            className="size-full object-cover"
-            onError={() => setBrokenFor(cover)}
-          />
-        ) : (
-          <div className="text-muted-foreground grid size-full place-items-center">
-            <Heart className="size-4" />
-          </div>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <p className="truncate text-sm font-semibold" title={title}>
-          {title !== '' ? title : tf('collections.unresolved', { id: item.seriesId.slice(-6) })}
-        </p>
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
-          <Heart className="size-3.5 fill-red-400 text-red-400" aria-hidden />
-          <span className="tabular-nums">{item.diggedCount > 0 ? item.diggedCount : ''}</span>
-        </div>
-      </div>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="shrink-0"
-        onClick={(e) => {
-          e.stopPropagation();
-          onUndo();
+    <div className="group relative">
+      <article
+        role="button"
+        tabIndex={0}
+        aria-label={title}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          onOpen();
         }}
+        className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 cursor-pointer overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
       >
-        <HeartOff className="size-4" aria-hidden />
-        {t('liked.undo')}
-      </Button>
-    </article>
+        <div className="bg-muted relative aspect-[3/4]">
+          {showImg ? (
+            <img
+              src={cover}
+              alt={title}
+              loading="lazy"
+              className="size-full object-cover"
+              onError={() => setBrokenFor(cover)}
+            />
+          ) : (
+            <div className="text-muted-foreground grid size-full place-items-center">
+              <Heart className="size-5" />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/30" />
+          <div className="absolute inset-0 hidden place-items-center group-hover:grid">
+            <span className="bg-primary text-primary-foreground inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium">
+              <Play className="size-3.5" aria-hidden />
+              {t('history.continue')}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 p-2.5">
+          <p className="truncate text-sm font-semibold" title={title}>
+            {title !== '' ? title : tf('collections.unresolved', { id: item.seriesId.slice(-6) })}
+          </p>
+          <div className="text-muted-foreground flex items-center gap-1 text-xs">
+            <Heart className="size-3.5 fill-red-400 text-red-400" aria-hidden />
+            <span className="tabular-nums">{item.diggedCount > 0 ? item.diggedCount : ''}</span>
+          </div>
+        </div>
+      </article>
+      <button
+        type="button"
+        onClick={onUndo}
+        title={t('liked.undo')}
+        className="absolute top-2 right-2 hidden size-7 place-items-center rounded-full bg-black/60 text-white group-hover:grid hover:bg-black/80"
+      >
+        <HeartOff className="size-3.5" />
+      </button>
+    </div>
   );
 }

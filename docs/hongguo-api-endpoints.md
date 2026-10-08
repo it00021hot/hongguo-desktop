@@ -639,6 +639,28 @@ user_digg_timestamp_ms, video_detail{followed, followed_cnt, series_title}}`。
 用途：打开播放页时 best-effort 回显「已赞/已追」状态（列表 100 条内匹配
 vid / series_id）；单集精确查询接口未抓到。
 
+### 9.4.2 上报时机与历史页口径（2026-10-09 抓参考端 v1.1.6 实测）
+
+样本 `captures/flows-20261009-v116-history.jsonl`（便携版参考端挂 mitm
+全播放流程）。`read_history/update` + `read_progress/upload` 的触发点：
+
+- **起播 5s 首报**：成对双接口，`current_play_position` 恰为 5000；
+- **每 ~60s 播放时长**：仅 `read_progress/upload`（65s/126s 样本；暂停期间
+  不计时——65→126→(185 被暂停打断)）；
+- **暂停**（含开选集面板这类 UI 引发的暂停）：成对双接口，当前进度；
+- **切集**：旧集成对上报收尾位置 + 新集 `read_progress/get`，新集开播后
+  自己的 5s 里程碑再报；
+- **关窗口不上报**（最后一条流量就是最后事件的上报，无 close flush）。
+
+参考端实现是 JS 每 5s 调 Go `SaveProgress`（落本地库 + `progressUploader`
+协程批量上云）；本项目等价口径：persist 首次（~5s）即报 + 每 60s +
+force（暂停/切集/卸载）。
+
+「历史」页筛选口径（参考端 History 组件逆向）：**已看完 = episode_cnt>0
+且已看到最后一集**（`vid_index+1 >= episode_cnt`），与片内进度无关；
+未看完取反；搜索为纯客户端标题过滤（placeholder：搜索看过的剧/收藏的剧/
+点赞的剧/预约的剧）。
+
 ## 已知未抓 / 待做
 
 - 搜索联想 `suggest/v`：**已实现**（`search.rs search_suggest` +

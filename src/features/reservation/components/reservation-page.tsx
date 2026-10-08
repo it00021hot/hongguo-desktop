@@ -4,6 +4,8 @@ import { BellRing, CalendarClock, Loader2, LogIn, Play, Star, Tv } from 'lucide-
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ListSearch } from '@/components/list-search';
+import { matchListQuery } from '@/lib/list-filter';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
@@ -29,10 +31,15 @@ import type { CalendarItem } from '@/lib/schema';
 
 export function ReservationPage() {
   const [online, setOnline] = useState(true);
+  const [query, setQuery] = useState('');
   const { data: account } = useAccount();
   const onlineQ = useReservations(true);
   const offlineQ = useReservations(false);
   const current = online ? onlineQ : offlineQ;
+  // 标题搜索（对齐参考端 v1.1.6「搜索预约的剧」）：客户端过滤，条目自带标题
+  const shown = (current.data?.items ?? []).filter((item) =>
+    matchListQuery(query, item.title, item.seriesId),
+  );
 
   // 角标计数：total 优先、条数兜底（后端已翻页拉全并兜底，这里双保险；
   // 数据未到显示骨架点，不让 0 冒充「没有预约」）
@@ -55,28 +62,35 @@ export function ReservationPage() {
   const handleSelect = (item: CalendarItem) => playSeries(item.seriesId);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        {tabs.map((tab) => (
-          <button
-            key={String(tab.key)}
-            type="button"
-            onClick={() => setOnline(tab.key)}
-            className={cn(
-              'rounded-full px-4 py-1.5 text-sm transition-colors',
-              tab.key === online
-                ? 'bg-primary text-primary-foreground font-medium'
-                : 'bg-muted text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {tab.label}
-            {tab.count === null ? (
-              <Skeleton className="ml-1.5 inline-block h-3 w-5 align-middle" />
-            ) : (
-              <span className="ml-1.5 tabular-nums opacity-80">{tab.count}</span>
-            )}
-          </button>
-        ))}
+    <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={String(tab.key)}
+              type="button"
+              onClick={() => setOnline(tab.key)}
+              className={cn(
+                'rounded-full px-4 py-1.5 text-sm transition-colors',
+                tab.key === online
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'bg-muted text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {tab.label}
+              {tab.count === null ? (
+                <Skeleton className="ml-1.5 inline-block h-3 w-5 align-middle" />
+              ) : (
+                <span className="ml-1.5 tabular-nums opacity-80">{tab.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <ListSearch
+          value={query}
+          onChange={setQuery}
+          placeholder={t('reservation.searchPlaceholder')}
+        />
       </div>
 
       {account == null ? (
@@ -104,7 +118,7 @@ export function ReservationPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {(current.data?.items ?? []).map((item) => (
+          {shown.map((item) => (
             <ReservationCard key={item.seriesId} item={item} onSelect={handleSelect} />
           ))}
         </div>

@@ -414,10 +414,12 @@ export function PlayerView({
   //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
   const incognito = useIncognitoMode(videoRef);
 
-  // ---- 沉浸流悬浮层：静止 3 秒收起，动一下就唤醒；移出画面立即隐藏 ----
-  // 对齐 hgplayer 1.1.6 形态：光标停在画面上不动 3 秒，控制栏/点赞栏/剧名
-  // 照样收起（旧实现是「悬停常显」）；点击（含控制栏按钮）同样算「在场」，
+  // ---- 沉浸流悬浮层显隐（B站方案）----
+  // 在画面内移动 → 显示；移出画面 → 立即隐藏；移入画面 → 显示；
+  // 在画面内静止超 3 秒 → 隐藏。点击（含控制栏按钮）同样算「在场」，
   // 重启 3 秒倒计时后自动隐藏。
+  // 两个 B站同款例外：暂停态控制栏常驻（暂停就是用来看进度条的）；
+  // 指针悬在控制栏本体上不倒计时（音量/进度条拖动中不许收）。
   // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
   const [paused, setPaused] = useState(true);
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -432,6 +434,9 @@ export function PlayerView({
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
+    // B站四条里「移入显示」要显式接 mouseenter：从画面外重新进入时
+    // 若浏览器没派发 mousemove（如跨窗口边界缓入），控制栏也得亮出来
+    stage.addEventListener('mouseenter', wakeChrome);
     stage.addEventListener('mousemove', wakeChrome);
     // 点击唤醒：点控制栏按钮后鼠标未必再动，不给点击续命的话
     // 按钮一点、倒计时一到期控件就消失，观感像被抢走
@@ -439,6 +444,7 @@ export function PlayerView({
     const onLeave = () => setChromeVisible(false);
     stage.addEventListener('mouseleave', onLeave);
     return () => {
+      stage.removeEventListener('mouseenter', wakeChrome);
       stage.removeEventListener('mousemove', wakeChrome);
       stage.removeEventListener('pointerdown', wakeChrome);
       stage.removeEventListener('mouseleave', onLeave);
@@ -546,10 +552,12 @@ export function PlayerView({
       const total = video && Number.isFinite(video.duration) ? video.duration : 0;
       lastKnown.current = { key: episodeKey, time, duration: total };
       savePosition({ seriesId, vidIndex, currentTime: time, duration: total });
-      // 云端进度上报：登录后每 ~1 分钟一次（SAVE_INTERVAL 5s × 12），
-      // 与本地落盘同源同节流，fire-and-forget（后端匿名/失败都静默）。
+      // 云端进度上报（对齐参考端 v1.1.6 抓包 flows-20261009-v116-history.jsonl）：
+      // 起播 5 秒首报（cloudCounter===1，本集第一次 persist 正好在 ~5s），
+      // 之后每 ~60 秒一次（×12）；暂停/切集/卸载走 force。fire-and-forget
+      // （后端匿名/失败都静默）。
       cloudCounter.current += 1;
-      if (force || cloudCounter.current % 12 === 0) {
+      if (force || cloudCounter.current === 1 || cloudCounter.current % 12 === 0) {
         if (currentVid) {
           void watchHistory
             .reportProgress(seriesId, currentVid, vidIndex, Math.round(time * 1000))
@@ -626,6 +634,9 @@ export function PlayerView({
   // 回列表，组件当场卸载，那 5 秒内攒下的位置一次都没落过盘。
   // 这里读的是 lastKnown 而不是 videoRef —— cleanup 跑的时候 video 元素已经被卸载了。
   useEffect(() => {
+    // 每集重置云端上报计数：5 秒首报的里程碑按集算，不清零的话
+    // 切集后要等满 60 秒才有第一次上报（参考端切集后 5 秒即报）
+    cloudCounter.current = 0;
     if (!seriesId || !vidIndex) return;
     return () => {
       const { key, time, duration } = lastKnown.current;

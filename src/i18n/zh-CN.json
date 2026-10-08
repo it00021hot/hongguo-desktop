@@ -395,6 +395,7 @@
     "storeLocked": "应用已在运行（可能被隐身模式隐藏了窗口），请从 Dock/任务栏打开它"
   },
   "common": {
+    "searchNoMatch": "没有找到匹配的剧",
     "confirm": "确定",
     "cancel": "取消",
     "close": "关闭",
@@ -467,6 +468,7 @@
     "scoreSuffix": "分"
   },
   "reservation": {
+    "searchPlaceholder": "搜索预约的剧",
     "tab": {
       "online": "已上线",
       "offline": "待上线"
@@ -486,6 +488,12 @@
     "publishAt": "{time} 上线"
   },
   "history": {
+    "tabAll": "全部",
+    "tabUnfinished": "未看完",
+    "tabFinished": "已看完",
+    "searchPlaceholder": "搜索看过的剧",
+    "noMatchUnfinished": "没有未看完的剧",
+    "noMatchFinished": "还没有看完的剧",
     "title": "观看历史",
     "empty": "还没有观看记录",
     "emptyHint": "在官方客户端或本应用看过的短剧都会同步到这里",
@@ -511,6 +519,7 @@
     "tabHuman": "真人"
   },
   "collections": {
+    "searchPlaceholder": "搜索收藏的剧",
     "loginRequired": "登录后可查看收藏（书架与官方 App 同步）",
     "loadFailed": "收藏列表加载失败",
     "empty": "还没有收藏",
@@ -525,7 +534,7 @@
     "loadFailed": "点赞列表加载失败",
     "empty": "还没有点赞",
     "emptyHint": "在推荐页点 ❤ 赞过的视频会出现在这里",
-    "recentOnly": "最近 100 条内的点赞（与官方口径一致）",
+    "searchPlaceholder": "搜索点赞的剧",
     "undo": "取消赞"
   },
   "detail": {

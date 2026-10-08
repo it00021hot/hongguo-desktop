@@ -395,6 +395,7 @@
     "storeLocked": "The app is already running (its window may be hidden by incognito mode). Open it from the Dock/taskbar."
   },
   "common": {
+    "searchNoMatch": "No matching series",
     "confirm": "Confirm",
     "cancel": "Cancel",
     "close": "Close",
@@ -467,6 +468,7 @@
     "scoreSuffix": ""
   },
   "reservation": {
+    "searchPlaceholder": "Search reservations",
     "tab": {
       "online": "Online",
       "offline": "Upcoming"
@@ -486,6 +488,12 @@
     "publishAt": "Online {time}"
   },
   "history": {
+    "tabAll": "All",
+    "tabUnfinished": "Unfinished",
+    "tabFinished": "Finished",
+    "searchPlaceholder": "Search watched",
+    "noMatchUnfinished": "Nothing unfinished",
+    "noMatchFinished": "Nothing finished yet",
     "title": "Watch history",
     "empty": "Nothing watched yet",
     "emptyHint": "Dramas watched in the official app or here show up here",
@@ -511,6 +519,7 @@
     "tabHuman": "Live-action"
   },
   "collections": {
+    "searchPlaceholder": "Search favorites",
     "loginRequired": "Sign in to view your bookshelf (synced with the official app)",
     "loadFailed": "Failed to load collections",
     "empty": "Nothing collected yet",
@@ -525,7 +534,7 @@
     "loadFailed": "Failed to load likes",
     "empty": "No likes yet",
     "emptyHint": "Videos you ❤ in the feed will show up here",
-    "recentOnly": "Likes within the recent 100 interactions (same as official)",
+    "searchPlaceholder": "Search likes",
     "undo": "Undo like"
   },
   "detail": {

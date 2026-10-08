@@ -3,12 +3,15 @@
 //! 服务端条目只有 series_id + 收藏时间——标题封面走本地档案缓存，
 //! 未收录的自动回落 resolve_series；卡片同「历史」页形态，点击进播放器。
 //! 支持就地取消收藏（bookshelf update operate_type=1）。
+//! 标题搜索框对齐参考端 v1.1.6（客户端过滤，标题异步到位后登记）。
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, Play, Star, StarOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { ListSearch } from '@/components/list-search';
+import { matchListQuery } from '@/lib/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   isRenderableCover,
@@ -29,6 +32,18 @@ export function CollectionPage() {
   const { data: entries, isLoading, error, refetch } = useBookshelf();
   const collect = useSeriesCollect();
 
+  const [query, setQuery] = useState('');
+  // 书架条目本身无标题：卡片里 resolve 到位后登记上来供过滤用
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const registerTitle = useCallback((id: string, title: string) => {
+    setTitles((prev) => (prev[id] === title || title === '' ? prev : { ...prev, [id]: title }));
+  }, []);
+
+  const items = entries ?? [];
+  const shown = items.filter((entry) =>
+    matchListQuery(query, titles[entry.seriesId] ?? '', entry.seriesId),
+  );
+
   const open = (seriesId: string) => {
     setTarget(seriesId, 1);
     void navigate({ to: '/player' });
@@ -36,7 +51,7 @@ export function CollectionPage() {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {Array.from({ length: 10 }, (_, i) => (
           <Skeleton key={i} className="aspect-[3/4] rounded-xl" />
         ))}
@@ -47,7 +62,7 @@ export function CollectionPage() {
     const notLoggedIn = error.message.includes('未登录');
     if (notLoggedIn) {
       return (
-        <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+        <div className="text-muted-foreground flex flex-col items-center gap-3 p-4 py-16">
           <Star className="size-8 opacity-40" aria-hidden />
           <p className="text-sm">{t('collections.loginRequired')}</p>
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
@@ -58,7 +73,7 @@ export function CollectionPage() {
       );
     }
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-3 p-4 py-16">
         <p>{t('collections.loadFailed')}</p>
         <p className="text-destructive text-xs">{error.message}</p>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>
@@ -68,10 +83,9 @@ export function CollectionPage() {
     );
   }
 
-  const items = entries ?? [];
   if (items.length === 0) {
     return (
-      <div className="text-muted-foreground flex flex-col items-center gap-2 py-16">
+      <div className="text-muted-foreground flex flex-col items-center gap-2 p-4 py-16">
         <Star className="size-8 opacity-40" aria-hidden />
         <p className="text-sm">{t('collections.empty')}</p>
         <p className="text-xs opacity-70">{t('collections.emptyHint')}</p>
@@ -80,26 +94,36 @@ export function CollectionPage() {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-      {items.map((entry) => (
-        <CollectionCard
-          key={entry.seriesId}
-          entry={entry}
-          onOpen={() => open(entry.seriesId)}
-          onRemove={() => {
-            collect.mutate(
-              { seriesId: entry.seriesId, collect: false },
-              {
-                onSuccess: () => {
-                  toast.success(t('collections.removed'));
-                  refreshAuth();
-                },
-                onError: (e) => toast.error(String(e)),
-              },
-            );
-          }}
+    <div className="flex flex-col gap-3 p-4">
+      <div className="flex justify-end">
+        <ListSearch
+          value={query}
+          onChange={setQuery}
+          placeholder={t('collections.searchPlaceholder')}
         />
-      ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {shown.map((entry) => (
+          <CollectionCard
+            key={entry.seriesId}
+            entry={entry}
+            onOpen={() => open(entry.seriesId)}
+            onTitle={registerTitle}
+            onRemove={() => {
+              collect.mutate(
+                { seriesId: entry.seriesId, collect: false },
+                {
+                  onSuccess: () => {
+                    toast.success(t('collections.removed'));
+                    refreshAuth();
+                  },
+                  onError: (e) => toast.error(String(e)),
+                },
+              );
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -109,10 +133,12 @@ function CollectionCard({
   entry,
   onOpen,
   onRemove,
+  onTitle,
 }: {
   entry: BookshelfEntry;
   onOpen: () => void;
   onRemove: () => void;
+  onTitle: (id: string, title: string) => void;
 }) {
   const { data: meta } = useSeriesMeta(entry.seriesId);
   const rawCover = meta?.cover ?? '';
@@ -121,6 +147,12 @@ function CollectionCard({
   const [brokenFor, setBrokenFor] = useState('');
   const imgBroken = brokenFor !== '' && brokenFor === cover;
   const showImg = cover !== '' && !imgBroken;
+  const title = meta?.title ?? '';
+
+  // 标题到位就登记给页面级过滤（本地无档案、靠 resolve 补的条目）
+  useEffect(() => {
+    if (title !== '') onTitle(entry.seriesId, title);
+  }, [entry.seriesId, title, onTitle]);
 
   return (
     <div className="group relative">
