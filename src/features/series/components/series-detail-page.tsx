@@ -428,8 +428,8 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
 /**
  * 相关作品·系列（官方 plan 接口第一格）：同系列各季（第1季/第2季…）
- * 与同 IP 作品横排卡片。没有相关作品就整块不渲染——它是增强项，
- * 不值得占一个错误位。
+ * 与同 IP 作品。没有相关作品就整块不渲染——它是增强项，不值得占一个
+ * 错误位。
  */
 function RelatedWorks({ works }: { works: RelatedItem[] }) {
   const navigate = useNavigate();
@@ -443,8 +443,8 @@ function RelatedWorks({ works }: { works: RelatedItem[] }) {
   return (
     <div className="grid gap-3 pb-4">
       <h3 className="text-sm font-semibold">{t('detail.relatedWorks')}</h3>
-      {/* items-start：卡片高度随两行/一行剧名浮动，行内不许互相拉伸 */}
-      <div className="flex items-start gap-3 overflow-x-auto pb-2">
+      {/* 自适应网格与猜你喜欢同一套：一行放不下自动换行，不出横向滚动条 */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3">
         {works.map((w) => (
           <RelatedCard key={w.seriesId} item={w} onOpen={open} />
         ))}
@@ -467,7 +467,7 @@ function GuessYouLike({ items }: { items: RelatedItem[] }) {
       <h3 className="text-sm font-semibold">{t('detail.guessYouLike')}</h3>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3">
         {items.map((w) => (
-          <RelatedCard key={w.seriesId} item={w} onOpen={open} className="w-full" />
+          <RelatedCard key={w.seriesId} item={w} onOpen={open} />
         ))}
       </div>
     </div>
@@ -475,16 +475,7 @@ function GuessYouLike({ items }: { items: RelatedItem[] }) {
 }
 
 /** 相关作品卡片：封面（角标 + 评分）+ 两行剧名 + 集数/播放量。 */
-function RelatedCard({
-  item,
-  onOpen,
-  className,
-}: {
-  item: RelatedItem;
-  onOpen: (id: string) => void;
-  /** 覆盖默认定宽（猜你喜欢网格里让卡片随格子伸缩） */
-  className?: string;
-}) {
+function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string) => void }) {
   const isUpcoming = item.episodeCnt === 0 || item.tag === '即将上线';
   return (
     // 整张卡可点。不用 <button> 包：一是内容模型只允许 phrasing content
@@ -503,10 +494,10 @@ function RelatedCard({
         e.preventDefault();
         onOpen(item.seriesId);
       }}
-      className={cn('group flex shrink-0 cursor-pointer flex-col text-left', className ?? 'w-32')}
+      className="group flex w-full cursor-pointer flex-col text-left"
       title={item.videoDesc || item.title}
     >
-      {/* 封面盒：宽高全部钉死（w-32 × 3:4），图 object-cover 裁切——
+      {/* 封面盒：宽度随格子、高度锁 3:4，图 object-cover 裁切——
           封面原始比例五花八门，绝不能让它撑盒子（一上一下就是这么来的） */}
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {/* plan 接口的封面现已是 fqnovelpic HEIC 签名 URL（旧注释里的
