@@ -55,7 +55,9 @@ function serialize(el: HTMLElement): string {
   let out = '';
   for (const node of el.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) {
-      out += node.textContent ?? '';
+      // \u200B 是表情后的游标锚点（WebKit 对着不可编辑 img 放光标的垫片），
+      // 不属于用户内容
+      out += (node.textContent ?? '').replace(/\u200B/g, '');
     } else if (node instanceof HTMLImageElement) {
       out += node.alt;
     } else if (node instanceof HTMLBRElement) {
@@ -128,22 +130,39 @@ export function RichEmojiInput({
       img.contentEditable = 'false';
 
       const sel = window.getSelection();
-      const range =
-        savedRangeRef.current && el.contains(savedRangeRef.current.startContainer)
-          ? savedRangeRef.current
-          : null;
-      if (range && document.activeElement === el && sel) {
-        range.deleteContents();
-        range.insertNode(img);
-        range.setStartAfter(img);
-        range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } else {
-        // 失焦态（焦点在表情面板里）：先清掉残留光标节点（<br>），追加到末尾
-        if (serialize(el) === '') el.replaceChildren();
-        el.appendChild(img);
+      // 光标来源优先级：实时选区（字段持焦，配合选择器的 mousedown
+      // preventDefault 焦点纪律，这是常态）> 记录的旧光标 > 末尾
+      let range: Range | null = null;
+      if (sel?.rangeCount && document.activeElement === el && el.contains(sel.anchorNode)) {
+        range = sel.getRangeAt(0);
+      } else if (
+        savedRangeRef.current &&
+        el.contains(savedRangeRef.current.commonAncestorContainer)
+      ) {
+        range = savedRangeRef.current;
       }
+      if (!range) {
+        range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+      }
+      // 清空后残留的 <br> 会让占位符失效，先摘掉
+      for (const node of [...el.childNodes]) {
+        if (node instanceof HTMLBRElement) node.remove();
+      }
+      range.deleteContents();
+      range.insertNode(img);
+      // WebKit 痛点：光标紧贴不可编辑 img 时，后续输入会插到 img 前面——
+      // 垫一个零宽空格作游标锚点（serialize 时剥掉，不进 value）
+      const anchor = document.createTextNode('\u200B');
+      img.after(anchor);
+      range.setStart(anchor, 1);
+      range.collapse(true);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      el.focus();
+      savedRangeRef.current = range.cloneRange();
+
       let next = serialize(el);
       if (maxLength !== undefined && next.length > maxLength) next = next.slice(0, maxLength);
       if (serialize(el) !== next) renderValue(el, next);
