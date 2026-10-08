@@ -74,10 +74,12 @@ MP4 文件 ─IMFSourceReader→ NV12 系统内存帧（自动吃 HEVC 硬解/�
 7. **`vt/mod.rs` CFNumber 双重释放**（2026-10-07 晚已修，2026-10-08 macOS 全量单测过、clippy 0 警告）：`Compressor::new` 里 `ProfileLevel`/`RealTime` 设置与三个 CFNumber 的 `CFRelease` 整段重复出现两次，第二次是对已释放对象的重复释放。已删除重复段。⚠️ Windows 侧无法交叉编译验证（reqwest→rustls 的原生依赖需要 macOS C 工具链），macOS 会话需 `cargo check` 确认——已确认。
 8. **`vt/mod.rs` `is_sync_sample` 语义反了**（2026-10-08 macOS 真机首跑 e2e 即现，当日修复）：VT 编码输出同步帧**省略** `kCMSampleAttachmentKey_NotSync` 键（非同步帧才带 true），按「缺省即非同步」判会把首帧 IDR 标成非关键帧，muxide 拒收「first video frame must be a keyframe (IDR)」。已改为 Apple 惯例「键缺省或 false 即同步」（Apple 示例代码一律按 `!contains(key)` 判）。教训：对压缩**输出**样本，「宁缺毋滥」的保守方向恰好反了——它防的是 seek 标错，却先死在了 mux 入口校验上。
 9. **探测帧 256×256 会落错编码器实例**（2026-10-08 晚，放宽闸门后真实会话暴露）：VT 按分辨率挑编码器实例，256×256 的探测会话落到软编实例、`UsingHardwareAcceleratedVideoEncoder` 误报 false——本机（黑果 QuickSync）真实 1080p 会话明明是硬件（CPU 8% 跑 2× 实时/路）。探测帧改为 **1920×1080** 后结论翻转。教训与 ffmpeg 侧 nvenc「64×64 误判不可用」同源：探测形状必须贴近真实使用。
-10. **B 帧源的三连**（2026-10-08 晚，真实短剧集首跑即现，产物开头故事序错乱）：
+10. **B 帧源的四连**（2026-10-08 晚，真实短剧集首跑即现，产物开头故事序错乱）：
     - **解码吐出序≠显示序**：同步解码（回调在 `decode()` 内触发）没有 B 帧重排，吐出的是解码序；旧代码按「第 k 个吐出帧 = 第 k 小显示时间」配对，真实剧集（带 B 帧）整体错位。已改为**回调带回每帧自己的显示时间（喂入 PTS 原样回传），按 PTS 精确配对**，绝不信任吐出顺序。
+    - **编码器输入必须是显示序**：编码器契约按显示序收帧、自行构造 B 帧 GOP 并写 POC。把解码序直接喂进去，POC 会把解码序固化成显示序——产物按解码序播放（showinfo 呈现序 0, 0.533, 0.067…：标题帧闪现在转场前）。已改为**配对好的帧按容器时间槽顺序喂编码器**（槽内帧未到就继续解码下一样本，内存以重排窗口为界）。
     - **编码器 B 帧关不掉**：本机硬编会话对 `MaxFrameDelayCount=0` 和 `AllowFrameReordering=0` 都拒收（-12902），输出是解码序 + 非单调 PTS。旧 emit 的「递增兜底」把回退 PTS 硬顶开=打乱显示序。已去掉兜底，PTS 原样透传。
     - **mux 必须走 DTS**：muxide 对非单调 PTS 直接拒收，B 帧流按其契约走 `write_video_with_dts`，DTS=「第 k 小显示时间」（与 muxide 文档 I P B B → dts 0,1,2,3 示例同一公式）；B 帧流同时**关闭 faststart**——muxide 0.2.5 的 faststart 搬移假设写入序≈pts 序，解码序写入样本边界整段错位（回归测试 `bframe_decode_order_stream_survives_the_mux` 钉住）。上游无修复版本。
+    - **诊断方法论教训**：`-ss t`/`select=eq(n,k)` 在 B 帧文件上抽的是**解码序**帧——拿它和源的显示序比对，「乱序」「错位」的结论多半是伪影。判显示序只用两条：ffprobe 的 pts 集合比对，或 fps 滤镜按 pts 重排后的逐帧目检。VMAF 同理：两侧都必须先归到显示时间轴（fps=30）再配对——对齐后本机真实剧集 **VMAF 98.19**（vs 源，60s 段），与 NVENC 标定带吻合，0.12 系数在 VT 硬编上成立。
 11. **demux 只读头部 8MB**（2026-10-08 晚随 #10 暴露）：B 帧流关 faststart 后 moov 在文件尾，`demux_file` 的 8MB 头窗找不到 moov。已加「顶层 box 逐个跳读定位尾部 moov、整箱读回」的回退（`read_tail_moov`），回归测试 `tail_moov_is_found_when_faststart_is_off` 钉住。
 
 ## 验证状态（2026-10-07 晚，Windows / GTX 1650 / Win11 26200）

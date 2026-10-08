@@ -917,18 +917,55 @@ fn run(
         .scale_to
         .map(|(w, h)| ((w & !1) as usize, (h & !1) as usize));
 
-    // 2) 解码 → （缩放）→ 编码 流水。**帧与显示时间按 PTS 精确配对，
-    // 绝不信任吐出顺序**：解码走同步模式（回调在 decode() 内触发），
-    // 同步模式没有 B 帧重排——吐出的是解码序，带 B 帧的源显示序≠解码序
-    // （真实剧集首跑实证：标题帧被插进转场中间）。解码回调把喂入的显示
-    // 时间原样带回，这里逐样本按 PTS 认领自己的帧；认领不到（解码丢帧）
-    // 就跳过该槽——产物少一帧，顺序绝不被打乱。
+    // 2) 解码 → （缩放）→ 编码 流水。两个「顺序不可信」，各修各的：
+    //
+    // - **解码吐出序不可信**：同步解码（回调在 decode() 内触发）没有
+    //   B 帧重排，吐出的是解码序；解码回调把喂入的显示时间原样带回，
+    //   帧↔显示时间按 PTS 认领，绝不按吐出顺序排位。
+    // - **编码器输入必须是显示序**：编码器契约按显示序收帧、自行构造
+    //   B 帧 GOP 并写 POC。把解码序直接喂进去，POC 会把解码序固化成
+    //   显示序——产物按解码序播放（真实剧集实证：标题帧闪现在转场前，
+    //   showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序
+    //   喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
     let decoder = unsafe { Decompressor::new(&parameter_sets)? };
-    let mut pending: Vec<(Pb, f64)> = Vec::new();
+    let mut slot_times = source_pts.clone();
+    slot_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut ready: Vec<(Pb, f64)> = Vec::new();
     let mut units: Vec<(f64, Vec<u8>, bool)> = Vec::new();
     let mut transfer: Option<Transfer> = None;
     let mut compressor: Option<Compressor> = None;
     let mut out_dims: Option<(usize, usize)> = None;
+    let mut slot = 0usize;
+
+    let feed_ready_slots = |ready: &mut Vec<(Pb, f64)>,
+                            slot: &mut usize,
+                            transfer: &mut Option<Transfer>,
+                            compressor: &mut Option<Compressor>,
+                            out_dims: &mut Option<(usize, usize)>,
+                            units: &mut Vec<(f64, Vec<u8>, bool)>|
+     -> AppResult<()> {
+        while *slot < slot_times.len() {
+            let key = ptkey(slot_times[*slot]);
+            let Some(pos) = ready.iter().position(|(_, k)| ptkey(*k) == key) else {
+                break;
+            };
+            let (pb, pts) = ready.swap_remove(pos);
+            process_frame(
+                pb,
+                pts,
+                scale_to,
+                fps,
+                frame_dur,
+                transfer,
+                compressor,
+                out_dims,
+                units,
+                req.on_progress,
+            )?;
+            *slot += 1;
+        }
+        Ok(())
+    };
 
     for (i, &(offset, size)) in video.samples.iter().enumerate() {
         let raw = crate::media::transcode::read_range(req.input, offset, size)?;
@@ -937,42 +974,30 @@ fn run(
         }
         let pts = source_pts.get(i).copied().unwrap_or(0.0);
         unsafe { decoder.decode(&raw, pts, frame_dur)? };
-
-        let key = ptkey(pts);
-        let mut frame = None;
-        loop {
-            if let Some(pos) = pending.iter().position(|(_, k)| ptkey(*k) == key) {
-                frame = Some(pending.swap_remove(pos).0);
-                break;
-            }
-            let mut got = Vec::new();
-            decoder.drain(&mut got);
-            if got.is_empty() {
-                break;
-            }
-            pending.extend(got);
-        }
-        if let Some(pb) = frame {
-            process_frame(
-                pb,
-                pts,
-                scale_to,
-                fps,
-                frame_dur,
-                &mut transfer,
-                &mut compressor,
-                &mut out_dims,
-                &mut units,
-                req.on_progress,
-            )?;
-        }
+        decoder.drain(&mut ready);
+        feed_ready_slots(
+            &mut ready,
+            &mut slot,
+            &mut transfer,
+            &mut compressor,
+            &mut out_dims,
+            &mut units,
+        )?;
     }
     unsafe { decoder.finish()? };
-    // 收尾帧：正常情况此处应为空（同步解码逐帧结清）。万一有遗留，
-    // 按 PTS 排序补齐，顺序仍由时间轴保证。
-    decoder.drain(&mut pending);
-    pending.sort_by_key(|(_, pts)| ptkey(*pts));
-    for (pb, pts) in pending {
+    // 收尾：同步解码逐帧结清，此处正常应为空；万一有遗留，按时间槽补齐
+    decoder.drain(&mut ready);
+    feed_ready_slots(
+        &mut ready,
+        &mut slot,
+        &mut transfer,
+        &mut compressor,
+        &mut out_dims,
+        &mut units,
+    )?;
+    // 时间槽全过完后仍剩余的帧（源时间轴之外的重复/畸形）——按 PTS 排序追加
+    ready.sort_by_key(|(_, pts)| ptkey(*pts));
+    for (pb, pts) in ready {
         process_frame(
             pb,
             pts,
