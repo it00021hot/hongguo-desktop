@@ -1,59 +1,80 @@
-# 发版流水线：push tag（v2.0.0 这类）触发，双平台构建安装包并发布
-# GitHub Releases。TAURI_SIGNING_PRIVATE_KEY 在场时 tauri-action 会自动给
-# 更新包签名并生成 latest.json——应用内「检查更新」拉的就是
-# releases/latest/download/latest.json，所以发版即发更新，无需额外步骤。
-#
-# 版本号唯一来源是 tag：构建前把 tag 号写进 tauri.conf.json，仓库里的
-# version 字段只作开发期占位，不参与发版。
+# 发版流水线（结构对齐 qq-farm-rust 的成熟做法）：
+#   1. publish 矩阵双平台构建，tauri-action@v1 只负责构建+上传安装包与
+#      .sig（uploadUpdaterJson: false——它自带的 latest.json 在多平台并发
+#      下会互相覆盖，darwin 键说没就没）；
+#   2. updater-manifest job 在全部平台落幕后，用
+#      scripts/build-updater-manifest.py 从 Release 资产一次性组装
+#      latest.json 上传——应用内「检查更新」拉的就是它；
+#   3. checksums job 收尾出 SHA256SUMS。
+# 版本号唯一来源是 tag：构建前把 tag 号写进 tauri.conf.json。
+# 签名密钥环境变量统一剥 \r：GitHub secrets 经 Windows runner 中转可能
+# 带 CRLF，污染 minisign 私钥（qq-farm-rust 踩过的坑）。
 name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.0.1); defaults to the triggering ref"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  publish:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: windows-latest
-            args: ''
-          - platform: macos-latest
-            # universal：一个 dmg 同时覆盖 Intel 与 Apple Silicon
-            args: '--target universal-apple-darwin'
+          - name: macOS (universal)
+            platform: macos-latest
+            args: --target universal-apple-darwin
+            rust_target: aarch64-apple-darwin,x86_64-apple-darwin
+          - name: Windows
+            platform: windows-latest
+            args: ""
+            rust_target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_target }}
 
-      - uses: swatinem/rust-cache@v2
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.rust_target }}
 
-      - name: Install frontend dependencies
+      - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
       - name: Write tag version into tauri.conf.json
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           node -e "
             const fs = require('fs');
@@ -63,15 +84,74 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
           "
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Normalize updater signing env
+        id: signing
+        shell: bash
+        env:
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          KEY=$(printf '%s' "$RAW_KEY" | tr -d '\r')
+          {
+            echo "key<<EOF"
+            printf '%s\n' "$KEY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          PASS=$(printf '%s' "$RAW_PASSWORD" | tr -d '\r')
+          {
+            echo "password<<EOF"
+            printf '%s\n' "$PASS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.signing.outputs.key }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.signing.outputs.password }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: '红果桌面版 v__VERSION__'
-          releaseBody: '下载对应平台的安装包安装；已安装旧版本的话，应用内「检查更新」可直接升级。'
+          args: ${{ matrix.args }}
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: 红果桌面版 ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: 下载对应平台的安装包安装；已安装旧版本的话，应用内「检查更新」可直接升级。
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          uploadUpdaterJson: false
+          retryAttempts: 3
+
+  updater-manifest:
+    name: latest.json
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          python3 scripts/build-updater-manifest.py --self-test
+          python3 scripts/build-updater-manifest.py "$TAG"
+          gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+  checksums:
+    name: SHA256SUMS
+    needs: updater-manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets and upload SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir dist
+          gh release download "$TAG" --repo "${{ github.repository }}" --dir dist
+          cd dist
+          rm -f SHA256SUMS
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --repo "${{ github.repository }}" --clobber
