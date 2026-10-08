@@ -48,3 +48,25 @@ export const DANMAKU_EMOJI_LIST = DANMAKU_EMOJI_FILES.map(([name, file]) => ({
   name,
   url: URLS[`../assets/emoji/${file}`] ?? '',
 })).filter((e) => e.url !== '');
+
+/**
+ * 受控输入框的光标处插入 `[名字]` 代码（hgplayer insertAtCursor 同款）：
+ * value 先更新，rAF 等受控重渲染完成后再把焦点与光标落回插入点。
+ */
+export function insertEmojiCode(
+  el: HTMLInputElement | HTMLTextAreaElement | null,
+  current: string,
+  name: string,
+  setValue: (next: string) => void,
+): void {
+  const code = `[${name}]`;
+  const start = el?.selectionStart ?? current.length;
+  const end = el?.selectionEnd ?? current.length;
+  setValue(current.slice(0, start) + code + current.slice(end));
+  requestAnimationFrame(() => {
+    if (!el) return;
+    el.focus();
+    const pos = start + code.length;
+    el.setSelectionRange(pos, pos);
+  });
+}

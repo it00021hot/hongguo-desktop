@@ -19,8 +19,9 @@ const LANE_BUSY_S = 1.4;
 const LANE_GAP = 10;
 /** lane 数量按高度自适应的下限。 */
 const MIN_LANES = 4;
-const FONT_MIN = 15;
-const FONT_MAX = 26;
+/** 基准字号的缩放下限/上限：上限=hgplayer 默认 22px。 */
+const DM_FONT_MIN = 15;
+const DM_FONT_MAX = 22;
 
 /**
  * 弹幕渲染层（对齐 hgplayer 的 DOM 形态，替代旧 canvas）：
@@ -80,14 +81,16 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
     let boundVideo: HTMLVideoElement | null = null;
     let lastTime = 0;
     let lastPaused = false;
-    let lastRate = 1;
 
     const resize = () => {
       const rect = layer.getBoundingClientRect();
       const settings = displayRef.current;
       width = rect.width;
       height = rect.height;
-      const base = Math.min(FONT_MAX, Math.max(FONT_MIN, height / 22));
+      // 基准字号：hgplayer 默认 22px（设置范围 14–40）。旧公式 height/22
+      // 在桌面窗口会顶到 26px，大一号显得粗重「不够柔和」——小窗（小屏
+      // 播放）仍按高度缩放，上限钉在 22。
+      const base = Math.min(DM_FONT_MAX, Math.max(DM_FONT_MIN, height / 30));
       fontPx = Math.max(10, Math.round(base * settings.fontScale));
       // 泳道只分布在显示区域内（area = 占画面高度的比例）
       lanes = Math.max(MIN_LANES, Math.floor((height * settings.area) / (fontPx + LANE_GAP)));
@@ -156,8 +159,9 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
         ],
         { duration: CROSS_MS, easing: 'linear', fill: 'forwards' },
       );
-      // 倍速联动 + 暂停冻结（旧 canvas 实现锚视频时间轴，天然同步）
-      anim.playbackRate = video.playbackRate;
+      // 速度是固定的墙钟时长（hgplayer 同款：不随视频倍速变——它家滚多快
+      // 倍速下也滚多快）；只做暂停冻结。之前跟着 video.playbackRate 走，
+      // 2x 播放时弹幕快一倍，被用户指出「比第三方快太多」。
       if (video.paused) anim.pause();
       anim.onfinish = () => {
         el.remove();
@@ -175,7 +179,6 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
         if (video) {
           lastTime = video.currentTime;
           lastPaused = video.paused;
-          lastRate = video.playbackRate;
           resetCursor(lastTime);
         }
         return;
@@ -195,10 +198,6 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
           if (video.paused) a.pause();
           else a.play();
         }
-      }
-      if (video.playbackRate !== lastRate) {
-        lastRate = video.playbackRate;
-        for (const a of flights) a.updatePlaybackRate(video.playbackRate);
       }
       if (!enabledRef.current) return;
 

@@ -14,7 +14,6 @@ import {
   SkipBack,
   SkipForward,
   MessageSquareText,
-  Smile,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -29,7 +28,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { usePlayerStore } from '@/lib/stores/player';
 import { useAccount, useSendDanmaku } from '@/lib/queries';
-import { DANMAKU_EMOJI_LIST } from '@/lib/danmaku-emoji';
+import { insertEmojiCode } from '@/lib/danmaku-emoji';
+import { EmojiPickerButton } from './emoji-picker';
 import { formatDuration } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
@@ -132,37 +132,13 @@ interface Props {
  * 表情：hgplayer 同款 `[名字]` 代码——选择器插入代码，弹幕层渲染成图。 */
 function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
   const [text, setText] = useState('');
-  const [emojiOpen, setEmojiOpen] = useState(false);
   const send = useSendDanmaku();
   const { data: account } = useAccount();
   const loggedIn = !!account;
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // 点击面板外部即收起（同弹幕设置面板的交互）
-  useEffect(() => {
-    if (!emojiOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setEmojiOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [emojiOpen]);
-
-  // 光标处插入 `[名字]`（hgplayer insertAtCursor 同款）：受控 value 先更新，
-  // 提交后再把光标落回插入点——rAF 等受控重渲染完成
   const pickEmoji = (name: string) => {
-    const code = `[${name}]`;
-    const el = inputRef.current;
-    const start = el?.selectionStart ?? text.length;
-    const end = el?.selectionEnd ?? text.length;
-    setText(text.slice(0, start) + code + text.slice(end));
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      const pos = start + code.length;
-      el.setSelectionRange(pos, pos);
-    });
+    insertEmojiCode(inputRef.current, text, name, setText);
   };
 
   const submit = () => {
@@ -186,10 +162,7 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
   };
 
   return (
-    <div
-      ref={rootRef}
-      className="relative ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52"
-    >
+    <div className="relative ml-2 flex h-8 w-32 min-w-0 shrink items-center gap-1 rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
       <input
         ref={inputRef}
         value={text}
@@ -201,35 +174,7 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
         className="h-full w-full min-w-0 bg-transparent text-xs text-white outline-none placeholder:text-white/50"
         maxLength={100}
       />
-      <button
-        type="button"
-        title={t('player.danmakuEmoji')}
-        aria-label={t('player.danmakuEmoji')}
-        onClick={() => setEmojiOpen((o) => !o)}
-        className={`grid h-6 shrink-0 cursor-pointer place-items-center rounded-full px-1 transition-colors hover:text-white ${
-          emojiOpen ? 'text-white' : 'text-white/60'
-        }`}
-      >
-        <Smile className="size-4" aria-hidden />
-      </button>
-      {emojiOpen && (
-        <div className="absolute bottom-full left-0 z-20 mb-3 w-72 rounded-xl border border-white/10 bg-black/85 p-2 backdrop-blur-sm">
-          {/* hgplayer 同款网格：每格一张表情图，title 即 [名字] 代码 */}
-          <div className="grid max-h-44 grid-cols-8 gap-0.5 overflow-y-auto">
-            {DANMAKU_EMOJI_LIST.map((e) => (
-              <button
-                key={e.name}
-                type="button"
-                title={e.name}
-                onClick={() => pickEmoji(e.name.slice(1, -1))}
-                className="grid cursor-pointer place-items-center rounded-md p-1 transition-colors hover:bg-white/15"
-              >
-                <img src={e.url} alt={e.name} draggable={false} className="size-6 object-contain" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <EmojiPickerButton onPick={pickEmoji} />
       <button
         type="button"
         onClick={submit}

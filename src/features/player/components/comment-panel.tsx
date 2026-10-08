@@ -10,15 +10,17 @@
 //! （probe 实证 aid 8662 无 handler，hgplayer 也不拉）——自己发的回复
 //! 本地追加展示，别人的回复只显示计数。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CornerDownRight, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { insertEmojiCode, parseEmojiSegments } from '@/lib/danmaku-emoji';
 import { interact } from '@/lib/ipc/commands';
 import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
+import { EmojiPickerButton } from './emoji-picker';
 import type { CommentItem } from '@/lib/schema';
 
 interface Props {
@@ -37,6 +39,29 @@ function relativeTime(unixSec: number): string {
   if (diff < 172800) return t('player.comments.yesterday');
   const d = new Date(unixSec * 1000);
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 评论/回复文本：`[名字]` 表情代码渲染成图（hgplayer EmojiText 同款），
+ *  其余文本原样保留。 */
+function EmojiText({ text }: { text: string }) {
+  return (
+    <>
+      {parseEmojiSegments(text).map((seg, i) =>
+        seg.kind === 'text' ? (
+          <span key={i}>{seg.value}</span>
+        ) : (
+          <img
+            key={i}
+            src={seg.url}
+            alt={seg.value}
+            title={seg.value}
+            draggable={false}
+            className="mx-px inline-block size-[1.15em] object-contain align-[-0.18em]"
+          />
+        ),
+      )}
+    </>
+  );
 }
 
 /** 本地追加的一条回复（自己发的；服务端暂无回复列表接口）。 */
@@ -74,6 +99,9 @@ export function CommentPanel({ vid, onClose }: Props) {
   const [replyText, setReplyText] = useState('');
   /** 自己发的回复（commentId → 本地追加），服务端暂无回复列表可拉 */
   const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
+  /** 发评论 / 回复输入框的 ref（表情插入要操作光标） */
+  const composerRef = useRef<HTMLInputElement | null>(null);
+  const replyInputRef = useRef<HTMLInputElement | null>(null);
 
   const submit = () => {
     const content = text.trim();
@@ -212,7 +240,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                       {c.userName || t('player.comments.anon')}
                     </p>
                     <p className="mt-0.5 text-sm leading-snug break-words whitespace-pre-wrap">
-                      {c.text}
+                      <EmojiText text={c.text} />
                     </p>
                     <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
                       <span>{relativeTime(c.createTime)}</span>
@@ -249,7 +277,9 @@ export function CommentPanel({ vid, onClose }: Props) {
                                 {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
                               </span>
                             )}
-                            <span className="break-words whitespace-pre-wrap">{r.text}</span>
+                            <span className="break-words whitespace-pre-wrap">
+                              <EmojiText text={r.text} />
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -258,6 +288,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                     {replyTarget === c.commentId && (
                       <div className="mt-1.5 flex items-center gap-1.5">
                         <Input
+                          ref={replyInputRef}
                           autoFocus
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
@@ -272,6 +303,12 @@ export function CommentPanel({ vid, onClose }: Props) {
                           }
                           className="h-8 flex-1 border-none bg-neutral-800/80 text-xs text-white placeholder:text-neutral-500 focus-visible:ring-0"
                           maxLength={200}
+                        />
+                        <EmojiPickerButton
+                          align="end"
+                          onPick={(name) =>
+                            insertEmojiCode(replyInputRef.current, replyText, name, setReplyText)
+                          }
                         />
                         <Button
                           size="sm"
@@ -332,6 +369,7 @@ export function CommentPanel({ vid, onClose }: Props) {
       <div className="shrink-0 border-t border-white/10 p-3">
         <div className="flex items-center gap-2">
           <Input
+            ref={composerRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -340,6 +378,10 @@ export function CommentPanel({ vid, onClose }: Props) {
             placeholder={t('player.comments.placeholder')}
             className="h-9 flex-1 border-none bg-neutral-800/80 text-sm text-white placeholder:text-neutral-500 focus-visible:ring-0"
             maxLength={200}
+          />
+          <EmojiPickerButton
+            align="end"
+            onPick={(name) => insertEmojiCode(composerRef.current, text, name, setText)}
           />
           <Button
             size="sm"
