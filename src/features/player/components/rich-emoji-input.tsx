@@ -230,88 +230,164 @@ export function RichEmojiInput({
         // 全部交还输入法/默认行为，不做任何接管（isComposing 标准位 +
         // keyCode 229 老式双保险，WebKit 两者都会给）
         if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-        // 表情是不可编辑的内嵌 img，紧贴它的退格/删除在 WebKit 里行为
-        // 怪异：先无声吃掉零宽锚点（按一下没反应），再误伤相邻文字。
-        // 这里接管成「按可见单位删」：img 连同它的锚点一次删干净。
-        if (e.key === 'Backspace' || e.key === 'Delete') {
-          const el = elRef.current;
-          const sel = window.getSelection();
-          if (!el || !sel || !sel.isCollapsed || sel.rangeCount === 0) return;
-          const range = sel.getRangeAt(0);
-          if (!el.contains(range.startContainer)) return;
-          const { startContainer: c, startOffset: o } = range;
 
-          /** 光标某一侧的 img 单位（img + 其后零宽锚点） */
-          const imgAt = (node: Node | null): HTMLImageElement | null =>
-            node instanceof HTMLImageElement ? node : null;
+        const el = elRef.current;
+        const sel = window.getSelection();
+        if (!el || !sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        if (!el.contains(range.startContainer)) return;
+        const { startContainer: c, startOffset: o } = range;
+        const imgAt = (node: Node | null): HTMLImageElement | null =>
+          node instanceof HTMLImageElement ? node : null;
+        const isZWSP = (s: string | undefined) => s === '\u200B';
+        const setCaret = (container: Node, offset: number) => {
+          e.preventDefault();
+          const r = document.createRange();
+          r.setStart(container, Math.max(0, offset));
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+          savedRangeRef.current = r.cloneRange();
+        };
+
+        // ←→ 方向键：把光标位展平成有序槽位——文本逐字符一位；表情
+        // img + 其后零宽锚点合起来只给前/后两个边界位（锚点内部不放
+        // 停靠位，原生移动会卡在不可见的位置上），方向键只做「取相邻
+        // 槽位」，不再依赖 WebKit 的原生移动
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          const dir = e.key === 'ArrowRight' ? 1 : -1;
+          const slots: { container: Node; offset: number }[] = [];
+          for (const node of el.childNodes) {
+            if (node instanceof Text) {
+              if (node.data.length === 0) continue;
+              for (let i = 0; i <= node.data.length; i++) {
+                // 紧贴零宽锚点之后的位置不可见，不放停靠位
+                if (i > 0 && i < node.data.length && node.data.charAt(i - 1) === '\u200B') {
+                  continue;
+                }
+                slots.push({ container: node, offset: i });
+              }
+            } else if (imgAt(node)) {
+              const ns = node.nextSibling;
+              if (!(ns instanceof Text && ns.data.charAt(0) === '\u200B')) {
+                const idx = [...el.childNodes].indexOf(node);
+                slots.push({ container: el, offset: idx });
+                slots.push({ container: el, offset: idx + 1 });
+              }
+              // 有锚点：前/后边界位由锚点文本节点的循环给出
+            }
+          }
+          const cmp = (s: { container: Node; offset: number }) => {
+            const r = document.createRange();
+            r.setStart(s.container, s.offset);
+            r.collapse(true);
+            return r.compareBoundaryPoints(Range.START_TO_START, range);
+          };
+          let target: { container: Node; offset: number } | undefined;
+          const exact = slots.findIndex(
+            (s) => s.container === range.startContainer && s.offset === range.startOffset,
+          );
+          if (exact >= 0) {
+            target = slots[exact + dir];
+          } else if (dir === 1) {
+            // 光标停在槽位之间的不可见位置：取右方第一个槽位
+            target = slots.find((s) => cmp(s) > 0);
+          } else {
+            const reversed = [...slots].reverse();
+            target = reversed.find((s) => cmp(s) < 0);
+          }
+          // 端点或无槽位：光标原地（原生也到不了更远）
+          if (target) setCaret(target.container, target.offset);
+          else e.preventDefault();
+          return;
+        }
+
+        // Backspace/Delete：img 连同锚点零宽视作一个可见单位整块删，
+        // 光标落在删减后的正确位置；普通字符与扩选删除走浏览器默认
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          const forward = e.key === 'Delete';
           let img: HTMLImageElement | null = null;
-          let anchor: Text | null = null;
-          /** 删完后光标落位（text 末尾 / 字段某下标），null = 原地不动 */
+          /** 需要摘掉的零宽字符（节点 + 下标） */
+          let zwsp: { node: Text; index: number } | null = null;
+          /** 删完后光标落位；null = 原地 */
           let caret: { container: Node; offset: number } | null = null;
 
-          if (e.key === 'Backspace') {
-            if (c.nodeType === Node.TEXT_NODE) {
-              const t = c as Text;
-              if (o > 0 && t.data[o - 1] === '\u200B') {
-                img = imgAt(t.previousSibling);
-                anchor = img ? t : null;
+          if (c.nodeType === Node.TEXT_NODE) {
+            const t = c as Text;
+            if (!forward) {
+              if (o > 0 && isZWSP(t.data[o - 1])) {
+                // 紧前是锚点零宽：img 在节点首字符时的 previousSibling
+                if (o - 1 === 0) img = imgAt(t.previousSibling);
                 if (img) {
+                  zwsp = { node: t, index: o - 1 };
                   const before = img.previousSibling;
                   caret =
                     before && before.nodeType === Node.TEXT_NODE
                       ? { container: before, offset: (before as Text).data.length }
                       : { container: el, offset: [...el.childNodes].indexOf(img) };
                 }
-              } else if (o === 0) {
-                img = imgAt(t.previousSibling);
-                if (img) caret = { container: el, offset: [...el.childNodes].indexOf(img) };
+              } else if (o === 0 && imgAt(t.previousSibling)) {
+                img = t.previousSibling as HTMLImageElement;
+                const ps = img.previousSibling;
+                zwsp = ps instanceof Text && ps.data === '\u200B' ? { node: ps, index: 0 } : null;
+                caret = zwsp
+                  ? { container: el, offset: [...el.childNodes].indexOf(zwsp.node) }
+                  : { container: el, offset: [...el.childNodes].indexOf(img) };
               }
-            } else if (c === el && o > 0) {
-              img = imgAt(el.childNodes[o - 1] ?? null);
-              if (img) caret = { container: el, offset: [...el.childNodes].indexOf(img) };
+            } else {
+              if (o < t.data.length && isZWSP(t.data[o])) {
+                // 向前删先吃掉看不见的零宽：接管掉这次「无操作」
+                zwsp = { node: t, index: o };
+                caret = { container: t, offset: o };
+              } else if (o === t.data.length && imgAt(t.nextSibling)) {
+                img = t.nextSibling as HTMLImageElement;
+                const ns = img.nextSibling;
+                zwsp = ns instanceof Text && ns.data === '\u200B' ? { node: ns, index: 0 } : null;
+                caret = { container: t, offset: o };
+              }
             }
-          } else {
-            // Delete（向前删）：紧前零宽锚点视作无物，单位是光标之后的 img
-            if (c.nodeType === Node.TEXT_NODE) {
-              const t = c as Text;
-              if (o < t.data.length && t.data[o] === '\u200B') {
-                img = imgAt(t.nextSibling);
-                anchor = img ? t : null;
-              } else if (o === t.data.length) {
-                img = imgAt(t.nextSibling);
-                if (img) anchor = imgAt(img.nextSibling) ? (img.nextSibling as Text) : null;
-              }
-            } else if (c === el && o < el.childNodes.length) {
+          } else if (c === el) {
+            if (forward) {
               img = imgAt(el.childNodes[o] ?? null);
-              if (img) anchor = imgAt(img.nextSibling) ? (img.nextSibling as Text) : null;
+              if (img) {
+                const ns = img.nextSibling;
+                zwsp = ns instanceof Text && ns.data === '\u200B' ? { node: ns, index: 0 } : null;
+                caret = { container: el, offset: o };
+              }
+            } else {
+              img = imgAt(el.childNodes[o - 1] ?? null);
+              if (img) {
+                const ps = img.previousSibling;
+                zwsp = ps instanceof Text && ps.data === '\u200B' ? { node: ps, index: 0 } : null;
+                caret = zwsp
+                  ? { container: el, offset: [...el.childNodes].indexOf(zwsp.node) }
+                  : { container: el, offset: [...el.childNodes].indexOf(img) };
+              }
             }
           }
 
-          if (img) {
+          if (img || zwsp) {
             e.preventDefault();
-            img.remove();
-            anchor?.remove();
-            if (caret) {
-              const r = document.createRange();
-              r.setStart(caret.container, Math.max(0, caret.offset));
-              r.collapse(true);
-              sel.removeAllRanges();
-              sel.addRange(r);
-              savedRangeRef.current = r.cloneRange();
+            img?.remove();
+            if (zwsp) {
+              zwsp.node.deleteData(zwsp.index, 1);
+              if (zwsp.node.data === '' && zwsp.node.parentNode === el) zwsp.node.remove();
             }
+            if (caret) setCaret(caret.container, caret.offset);
             const next = serialize(el);
             if (next === '' && el.childNodes.length > 0) el.replaceChildren();
             onChange(next);
           }
-          // 没接管的（普通字符/扩选）走浏览器默认删除
           return;
         }
+
         if (e.key === 'Enter') {
           e.preventDefault();
           onEnter?.();
         }
         if (e.key === 'Escape') onEscape?.();
       }}
+
       onPaste={(e) => {
         // 只收纯文本：富文本粘贴会带进不可控的节点结构
         e.preventDefault();
