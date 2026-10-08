@@ -1374,7 +1374,7 @@ fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, fram
 }
 
 /// 一帧解码输出 →（缩放）→ 编码 → 收割产物。
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
 fn process_frame(
     frame: Nv12Frame,
     kind: EncoderKind,

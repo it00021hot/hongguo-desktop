@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# 提交前置检查：Rust 三目标零警告 + 忽略标签禁令 + 测试 + 前端 lint。
+#
+# 启用（克隆后执行一次）：
+#   git config core.hooksPath .githooks
+#
+# macOS 目标在本机是交叉检查：objc2-exception-helper 要 Apple 交叉 C 工具链
+#（没有），而 check/clippy 不链接——用占位 CC/AR 让它的 C 编译步骤假成功即可，
+# 不影响检查结果的正确性，也不影响 CI 上的真构建。
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+export CC_aarch64_apple_darwin=true AR_aarch64_apple_darwin=true
+export CC_x86_64_apple_darwin=true AR_x86_64_apple_darwin=true
+
+STRICT='-D warnings -D clippy::allow_attributes'
+
+echo '[pre-commit] cargo clippy（Windows 宿主）'
+(cd src-tauri && cargo clippy --all-targets -- $STRICT)
+
+echo '[pre-commit] cargo clippy（macOS aarch64 交叉）'
+(cd src-tauri && cargo clippy --target aarch64-apple-darwin --all-targets -- $STRICT)
+
+echo '[pre-commit] cargo clippy（macOS x86_64 交叉）'
+(cd src-tauri && cargo clippy --target x86_64-apple-darwin --all-targets -- $STRICT)
+
+echo '[pre-commit] cargo test（lib）'
+(cd src-tauri && cargo test --lib --quiet)
+
+echo '[pre-commit] eslint'
+pnpm exec eslint . --max-warnings=0
+
+echo '[pre-commit] 全部通过'

@@ -67,8 +67,8 @@ pub struct ApiEnv {
 
 impl ApiEnv {
     /// 未登录的默认环境：静态兜底设备档案 + 默认 origin。
-    // M3 登录流程的对照基线；当前仅测试构造。
-    #[allow(dead_code)]
+    /// 测试基线专用（生产走登录态/注册档案），接线后移回常规编译。
+    #[cfg(test)]
     pub fn anonymous(proxy: crate::domain::model::ProxyConfig) -> Self {
         Self {
             proxy,

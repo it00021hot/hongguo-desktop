@@ -42,11 +42,7 @@ use serde_json::{json, Value};
 use super::client::{api_call_full, ApiEnv};
 use crate::error::{AppError, AppResult};
 
-// 注册链路（register_device 及其 probe）当前仅在测试/探测中使用；
-// 启动链路接线（无档案时自动注册落库）落地后即可移除本 allow。
-#[allow(dead_code)]
 pub const REGISTER_ORIGIN: &str = "https://log.snssdk.com";
-#[allow(dead_code)]
 pub const REGISTER_PATH: &str = "/service/2/device_register/";
 
 /// TT-Encrypt V5 的 magic（"tc" + 版本 5 + 固定 3 字节）。

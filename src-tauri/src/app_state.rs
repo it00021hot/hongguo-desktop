@@ -100,12 +100,6 @@ impl AppStateInner {
         self.device.read().clone()
     }
 
-    /// 整体替换设备档案（设备注册成功时）。
-    // M2b 设备注册落位前的脚手架。
-    #[allow(dead_code)]
-    pub fn replace_device(&self, next: crate::signer::device::DeviceProfile) {
-        *self.device.write() = next;
-    }
 
     /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。
     ///

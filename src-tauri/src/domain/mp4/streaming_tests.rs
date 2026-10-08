@@ -44,8 +44,7 @@ fn enc_entry(video: bool) -> Vec<u8> {
     let schm = build_box(b"schm", &cat(&[&[0u8; 4], b"cenc", &[0u8; 4]]));
     let schi = build_box(b"schi", &build_box(b"tenc", &[0u8; 4]));
     let sinf = build_box(b"sinf", &cat(&[&frma, &schm, &schi]));
-    #[allow(non_snake_case)]
-    let hvcC = build_box(b"hvcC", &[0u8; 8]);
+    let hvc_c = build_box(b"hvcC", &[0u8; 8]);
 
     let mut entry = Vec::new();
     entry.extend_from_slice(&[0u8; 4]); // 大小占位
@@ -53,7 +52,7 @@ fn enc_entry(video: bool) -> Vec<u8> {
     entry.extend_from_slice(&[0u8; 6]); // 保留
     entry.extend_from_slice(&[0u8; 2]); // data_ref
     if video {
-        entry.extend_from_slice(&hvcC);
+        entry.extend_from_slice(&hvc_c);
     }
     entry.extend_from_slice(&sinf);
     let total = entry.len() as u32;

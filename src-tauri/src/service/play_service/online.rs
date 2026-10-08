@@ -265,7 +265,7 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// 够首帧秒开），但上限是动态的：条目升格为当前集、或已有读者在等这一档，
 /// 上限即刻解除、同一条填充无缝续满——不必依赖 [`resume_fill`] 事后抢
 /// 取流权（预取尚未收工时它抢不到，那正是「播到头部上限就断流」的窗口）。
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,

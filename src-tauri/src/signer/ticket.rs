@@ -118,6 +118,7 @@ pub struct SignedRequest {
 /// ⚠️ 签名是「URL + body + 时间戳」三者的联合函数，任一处在发出前被改动
 ///    （包括 query 参数顺序、URL 编码方式、body 的字节内容）都会导致签名失配，
 ///    服务端静默丢弃（HTTP 200 + 空 body）。请勿在签完名之后再动 url / body。
+#[cfg(test)]
 pub fn sign_request(
     origin: &str,
     pathname: &str,
@@ -213,14 +214,14 @@ fn now_millis() -> u64 {
 
 /// POST + 签名（默认业务 origin）。
 // M3 登录模块的便捷入口；当前仅测试引用，lib 构建下暂无消费者。
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn sign_post(pathname: &str, payload: Vec<u8>, device: &DeviceProfile) -> SignedRequest {
     sign_request(API_ORIGIN, pathname, Some(payload), device, &[])
 }
 
 /// GET + 签名（默认业务 origin）。
 // 同 sign_post：M3 的便捷入口，当前仅测试引用。
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn sign_get(pathname: &str, device: &DeviceProfile) -> SignedRequest {
     sign_request(API_ORIGIN, pathname, None, device, &[])
 }

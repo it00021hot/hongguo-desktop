@@ -100,7 +100,7 @@ pub const kCFNumberSInt32Type: CFIndex = 3;
 pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
 
 // —— CoreFoundation ——
-#[link(name = "CoreFoundation", kind = "framework")]
+#[link(name = "CoreFoundation", kind = "dylib")]
 unsafe extern "C" {
     pub static kCFAllocatorDefault: CFAllocatorRef;
     pub static kCFBooleanTrue: CFBooleanRef;
@@ -138,7 +138,7 @@ unsafe extern "C" {
 }
 
 // —— CoreMedia ——
-#[link(name = "CoreMedia", kind = "framework")]
+#[link(name = "CoreMedia", kind = "dylib")]
 unsafe extern "C" {
     pub static kCMTimeInvalid: CMTime;
     pub static kCMSampleAttachmentKey_NotSync: CFStringRef;
@@ -213,7 +213,7 @@ unsafe extern "C" {
 }
 
 // —— CoreVideo ——
-#[link(name = "CoreVideo", kind = "framework")]
+#[link(name = "CoreVideo", kind = "dylib")]
 unsafe extern "C" {
     pub static kCVPixelBufferPixelFormatTypeKey: CFStringRef;
     pub static kCVPixelBufferWidthKey: CFStringRef;
@@ -246,11 +246,11 @@ unsafe extern "C" {
         planeIndex: usize,
     ) -> usize;
     pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
-        -> usize;
+    -> usize;
 }
 
 // —— VideoToolbox ——
-#[link(name = "VideoToolbox", kind = "framework")]
+#[link(name = "VideoToolbox", kind = "dylib")]
 unsafe extern "C" {
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;

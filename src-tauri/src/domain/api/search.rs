@@ -464,6 +464,34 @@ mod probe {
         }
     }
 
+    /// 「道爷不悟道，杀妖涨修为，第一季」直连复现（用户报搜不出/加载失败）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_search_daoye() {
+        let device = crate::signer::video_device();
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            cookie: Some(crate::signer::device::anonymous_cookie(&device)),
+            device,
+            x_tt_token: None,
+        };
+        for q in [
+            "道爷不悟道，杀妖涨修为，第一季",
+            "道爷不悟道",
+            "道爷不悟道，杀妖涨修为",
+        ] {
+            match search_series(q, 0, "", &env).await {
+                Ok(p) => {
+                    println!("[daoye] q={q} → {} 条 has_more={}", p.items.len(), p.has_more);
+                    for it in p.items.iter().take(3) {
+                        println!("[daoye]   {} {}", it.series_id, it.title);
+                    }
+                }
+                Err(e) => println!("[daoye] q={q} → 失败: {e}"),
+            }
+        }
+    }
+
     /// 联想直连：真实关键词（2026-10-07 抓包形态对齐后验证）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

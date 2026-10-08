@@ -14,16 +14,20 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. v0.0.1); defaults to the triggering ref"
+        description: 'Tag to build (e.g. v0.0.1); defaults to the triggering ref'
         required: false
         type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   publish:

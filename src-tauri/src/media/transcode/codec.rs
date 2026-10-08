@@ -57,7 +57,6 @@ pub(super) fn decode_and_encode(
 
     // 把解码器当前可输出的帧全部喂进编码器。
     // `next_frame()` 返回 Err::Again 只是「暂时没有更多帧」，不是错误。
-    #[allow(clippy::too_many_arguments)]
     let drain = |decoder: &mut Decoder,
                  encoder: &mut Option<EncoderState>,
                  units: &mut Vec<(f64, Vec<u8>, bool)>,

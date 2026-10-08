@@ -27,13 +27,20 @@ test-rust:
 	cd src-tauri && cargo test
 
 # 质量闸门：一票否决。make 遇到非零退出就中止本 target 并让 make 整体失败，
-# 所以三道检查里任何一道挂掉都是红的。别用 `-` 前缀或 `|| true` 把失败吞掉。
+# 所以任何一道检查挂掉都是红的。别用 `-` 前缀或 `|| true` 把失败吞掉。
 # --all-targets 必须带：否则 #[cfg(test)] 里的代码根本不进 clippy 的检查范围。
+# macOS 双目标交叉 clippy：vt（VideoToolbox）等 cfg 门后的代码 Windows 宿主
+# 看不见，本次 v0.0.1 发版就是它带了 125 条警告上 CI。占位 CC/AR 只骗过
+# objc2-exception-helper 的 C 编译步骤，check/clippy 不链接、结果不受影响。
+# -D clippy::allow_attributes 是忽略标签禁令：#[allow] 直接拒；确需断言用
+# #[expect(reason)]——lint 不再触发时编译失败，杜绝过期放行。
 # 每行是独立 shell，`cd` 只对本行有效——这是对的，不要合并成一行。
 lint:
 	pnpm lint
 	pnpm format:check
-	cd src-tauri && cargo clippy --all-targets -- -D warnings
+	cd src-tauri && cargo clippy --all-targets -- -D warnings -D clippy::allow_attributes
+	cd src-tauri && CC_aarch64_apple_darwin=true AR_aarch64_apple_darwin=true cargo clippy --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cd src-tauri && CC_x86_64_apple_darwin=true AR_x86_64_apple_darwin=true cargo clippy --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 
 fmt:
 	cd src-tauri && cargo fmt

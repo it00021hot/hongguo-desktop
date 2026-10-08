@@ -1,0 +1,69 @@
+# 提交前置检查：Rust 三目标零警告（Windows 宿主 + macOS aarch64/x86_64 交叉）、
+# 忽略标签禁令（-D clippy::allow_attributes，#[allow] 直接拒；确需断言用
+# #[expect(reason)]，lint 不再触发时编译失败）、测试与前端 lint。
+# 启用：git config core.hooksPath .githooks
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            clippy_args: --all-targets
+          - platform: macos-latest
+            rust_target: aarch64-apple-darwin
+            clippy_args: --all-targets --target aarch64-apple-darwin
+          - platform: macos-latest
+            rust_target: x86_64-apple-darwin
+            clippy_args: --all-targets --target x86_64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.rust_target }}
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check and build frontend
+        run: pnpm build
+
+      - name: ESLint
+        run: pnpm exec eslint . --max-warnings=0
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Rust clippy（零警告 + 忽略标签禁令）
+        working-directory: src-tauri
+        run: cargo clippy ${{ matrix.clippy_args }} -- -D warnings -D clippy::allow_attributes

@@ -25,7 +25,7 @@
 mod ffi;
 
 use std::os::raw::c_void;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use parking_lot::RwLock;
@@ -111,45 +111,49 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
 /// 生产 1080p 会话 CPU 8% 跑 2× 实时/路，明显是硬件）。分辨率下限的教训
 /// 与 ffmpeg 侧 nvenc（64×64 误判不可用）同源：探测形状要贴近真实使用。
 unsafe fn probe_reports_hardware() -> AppResult<bool> {
-    let mut c = Compressor::new(1920, 1080, 6_000_000)?;
-    let frame = make_test_frame(1920)?;
-    c.encode(&frame, 0.0, 1.0 / 30.0)?;
-    c.finish()?;
-    let outputs = c.take_outputs();
-    drop(outputs);
-    c.using_hardware()
+    unsafe {
+        let mut c = Compressor::new(1920, 1080, 6_000_000)?;
+        let frame = make_test_frame(1920)?;
+        c.encode(&frame, 0.0, 1.0 / 30.0)?;
+        c.finish()?;
+        let outputs = c.take_outputs();
+        drop(outputs);
+        c.using_hardware()
+    }
 }
 
 /// 探测用的灰帧：NV12 平面铺 0x80（中性灰），避免未初始化内存进编码器。
 /// `width` 作宽度、1080 作高度（探测会话与生产会话同分辨率量级）。
 unsafe fn make_test_frame(width: usize) -> AppResult<Pb> {
-    let height = 1080;
-    let mut pb: ffi::CVPixelBufferRef = std::ptr::null_mut();
-    let attrs = iosurface_attrs();
-    let st = ffi::CVPixelBufferCreate(
-        ffi::kCFAllocatorDefault,
-        width,
-        height,
-        ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-        attrs,
-        &mut pb,
-    );
-    ffi::CFRelease(attrs as ffi::CFTypeRef);
-    os(st, "建探测帧")?;
-    let pb = Pb(pb);
-    os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁探测帧")?;
-    // 逐平面逐行铺 0x80。IOSurface 的整块分配不等于「stride×高×1.5」的
-    // 纸面加和（平面各自对齐）——按整块 memset 实测越界段错误。
-    for plane in 0..ffi::CVPixelBufferGetPlaneCount(pb.0) {
-        let base = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, plane) as *mut u8;
-        let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, plane);
-        let rows = ffi::CVPixelBufferGetHeightOfPlane(pb.0, plane);
-        for row in 0..rows {
-            std::ptr::write_bytes(base.add(row * stride), 0x80, stride);
+    unsafe {
+        let height = 1080;
+        let mut pb: ffi::CVPixelBufferRef = std::ptr::null_mut();
+        let attrs = iosurface_attrs();
+        let st = ffi::CVPixelBufferCreate(
+            ffi::kCFAllocatorDefault,
+            width,
+            height,
+            ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            attrs,
+            &mut pb,
+        );
+        ffi::CFRelease(attrs as ffi::CFTypeRef);
+        os(st, "建探测帧")?;
+        let pb = Pb(pb);
+        os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁探测帧")?;
+        // 逐平面逐行铺 0x80。IOSurface 的整块分配不等于「stride×高×1.5」的
+        // 纸面加和（平面各自对齐）——按整块 memset 实测越界段错误。
+        for plane in 0..ffi::CVPixelBufferGetPlaneCount(pb.0) {
+            let base = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, plane) as *mut u8;
+            let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, plane);
+            let rows = ffi::CVPixelBufferGetHeightOfPlane(pb.0, plane);
+            for row in 0..rows {
+                std::ptr::write_bytes(base.add(row * stride), 0x80, stride);
+            }
         }
+        ffi::CVPixelBufferUnlockBaseAddress(pb.0, 0);
+        Ok(pb)
     }
-    ffi::CVPixelBufferUnlockBaseAddress(pb.0, 0);
-    Ok(pb)
 }
 
 // ————————————————————————————————————————————————————————————
@@ -209,35 +213,41 @@ fn os(status: ffi::OSStatus, what: &str) -> AppResult<()> {
 
 /// 建一个小字典（键值都是借来的 CF 引用）。
 unsafe fn make_dict(entries: &[(ffi::CFTypeRef, ffi::CFTypeRef)]) -> ffi::CFMutableDictionaryRef {
-    let dict = ffi::CFDictionaryCreateMutable(
-        ffi::kCFAllocatorDefault,
-        entries.len() as isize,
-        ffi::kCFTypeDictionaryKeyCallBacks.as_ptr() as *const c_void,
-        ffi::kCFTypeDictionaryValueCallBacks.as_ptr() as *const c_void,
-    );
-    for (k, v) in entries {
-        ffi::CFDictionarySetValue(dict, *k, *v);
+    unsafe {
+        let dict = ffi::CFDictionaryCreateMutable(
+            ffi::kCFAllocatorDefault,
+            entries.len() as isize,
+            ffi::kCFTypeDictionaryKeyCallBacks.as_ptr() as *const c_void,
+            ffi::kCFTypeDictionaryValueCallBacks.as_ptr() as *const c_void,
+        );
+        for (k, v) in entries {
+            ffi::CFDictionarySetValue(dict, *k, *v);
+        }
+        dict
     }
-    dict
 }
 
 unsafe fn make_int(v: i32) -> ffi::CFNumberRef {
-    ffi::CFNumberCreate(
-        ffi::kCFAllocatorDefault,
-        ffi::kCFNumberSInt32Type,
-        &v as *const i32 as *const c_void,
-    )
+    unsafe {
+        ffi::CFNumberCreate(
+            ffi::kCFAllocatorDefault,
+            ffi::kCFNumberSInt32Type,
+            &v as *const i32 as *const c_void,
+        )
+    }
 }
 
 /// IOSurface 背板声明：让解码输出/缩放目标都是 GPU 可共享的像素缓冲
 unsafe fn iosurface_attrs() -> ffi::CFMutableDictionaryRef {
-    let empty = make_dict(&[]);
-    let attrs = make_dict(&[(
-        ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
-        empty as ffi::CFTypeRef,
-    )]);
-    ffi::CFRelease(empty as ffi::CFTypeRef);
-    attrs
+    unsafe {
+        let empty = make_dict(&[]);
+        let attrs = make_dict(&[(
+            ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
+            empty as ffi::CFTypeRef,
+        )]);
+        ffi::CFRelease(empty as ffi::CFTypeRef);
+        attrs
+    }
 }
 
 // ————————————————————————————————————————————————————————————
@@ -271,74 +281,79 @@ unsafe extern "C" fn decode_cb(
     pts: ffi::CMTime,
     _duration: ffi::CMTime,
 ) {
-    if status != ffi::noErr || image_buffer.is_null() {
-        return;
+    unsafe {
+        if status != ffi::noErr || image_buffer.is_null() {
+            return;
+        }
+        let tx = &*(refcon as *const Sender<(Pb, f64)>);
+        ffi::CFRetain(image_buffer as ffi::CFTypeRef);
+        // 帧连同它自己的显示时间一起上交——同步解码不做 B 帧重排，吐出的是
+        // 解码序，下游必须按这个 PTS 配对显示槽，绝不按吐出顺序排位
+        let _ = tx.send((Pb(image_buffer), cm_time_secs(pts)));
     }
-    let tx = &*(refcon as *const Sender<(Pb, f64)>);
-    ffi::CFRetain(image_buffer as ffi::CFTypeRef);
-    // 帧连同它自己的显示时间一起上交——同步解码不做 B 帧重排，吐出的是
-    // 解码序，下游必须按这个 PTS 配对显示槽，绝不按吐出顺序排位
-    let _ = tx.send((Pb(image_buffer), cm_time_secs(pts)));
 }
 
 impl Decompressor {
     /// 用 `hvcC` 参数集（VPS/SPS/PPS 裸 NAL）建同步解码会话，输出 NV12。
     unsafe fn new(parameter_sets: &[Vec<u8>]) -> AppResult<Self> {
-        let sizes: Vec<usize> = parameter_sets.iter().map(|n| n.len()).collect();
-        let ptrs: Vec<*const u8> = parameter_sets.iter().map(|n| n.as_ptr()).collect();
-        let mut format = std::ptr::null_mut();
-        os(
-            ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+        unsafe {
+            let sizes: Vec<usize> = parameter_sets.iter().map(|n| n.len()).collect();
+            let ptrs: Vec<*const u8> = parameter_sets.iter().map(|n| n.as_ptr()).collect();
+            let mut format = std::ptr::null_mut();
+            os(
+                ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                    ffi::kCFAllocatorDefault,
+                    parameter_sets.len(),
+                    ptrs.as_ptr(),
+                    sizes.as_ptr(),
+                    4,
+                    std::ptr::null(),
+                    &mut format,
+                ),
+                "建 HEVC 格式描述",
+            )?;
+
+            let pixel_format =
+                make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
+            let iosurface = iosurface_attrs();
+            let attrs = make_dict(&[
+                (
+                    ffi::kCVPixelBufferPixelFormatTypeKey as ffi::CFTypeRef,
+                    pixel_format as ffi::CFTypeRef,
+                ),
+                (
+                    ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
+                    iosurface as ffi::CFTypeRef,
+                ),
+            ]);
+
+            let (tx, rx) = channel::<(Pb, f64)>();
+            let boxed = Box::new(tx);
+            let record = ffi::VTDecompressionOutputCallbackRecord {
+                callback: Some(decode_cb),
+                refcon: &*boxed as *const Sender<(Pb, f64)> as *mut c_void,
+            };
+            let mut session: ffi::VTDecompressionSessionRef = std::ptr::null_mut();
+            let status = ffi::VTDecompressionSessionCreate(
                 ffi::kCFAllocatorDefault,
-                parameter_sets.len(),
-                ptrs.as_ptr(),
-                sizes.as_ptr(),
-                4,
+                format,
                 std::ptr::null(),
-                &mut format,
-            ),
-            "建 HEVC 格式描述",
-        )?;
+                attrs,
+                &record,
+                &mut session,
+            );
+            ffi::CFRelease(attrs as ffi::CFTypeRef);
+            ffi::CFRelease(iosurface as ffi::CFTypeRef);
+            ffi::CFRelease(pixel_format as ffi::CFTypeRef);
+            os(status, "建 HEVC 解码会话")?;
 
-        let pixel_format = make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
-        let iosurface = iosurface_attrs();
-        let attrs = make_dict(&[
-            (
-                ffi::kCVPixelBufferPixelFormatTypeKey as ffi::CFTypeRef,
-                pixel_format as ffi::CFTypeRef,
-            ),
-            (
-                ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
-                iosurface as ffi::CFTypeRef,
-            ),
-        ]);
-
-        let (tx, rx) = channel::<(Pb, f64)>();
-        let boxed = Box::new(tx);
-        let record = ffi::VTDecompressionOutputCallbackRecord {
-            callback: Some(decode_cb),
-            refcon: &*boxed as *const Sender<(Pb, f64)> as *mut c_void,
-        };
-        let mut session: ffi::VTDecompressionSessionRef = std::ptr::null_mut();
-        let status = ffi::VTDecompressionSessionCreate(
-            ffi::kCFAllocatorDefault,
-            format,
-            std::ptr::null(),
-            attrs,
-            &record,
-            &mut session,
-        );
-        ffi::CFRelease(attrs as ffi::CFTypeRef);
-        ffi::CFRelease(iosurface as ffi::CFTypeRef);
-        ffi::CFRelease(pixel_format as ffi::CFTypeRef);
-        os(status, "建 HEVC 解码会话")?;
-
-        Ok(Decompressor {
-            session,
-            format,
-            rx,
-            _tx: boxed,
-        })
+            Ok(Decompressor {
+                session,
+                format,
+                rx,
+                _tx: boxed,
+            })
+        }
     }
 
     /// 解一个样本（MP4 原样字节：长度前缀 NAL，不需要转 Annex-B）。
@@ -346,71 +361,78 @@ impl Decompressor {
     /// `pts_secs` 是该样本的显示时间：`DecodeFrame` 对**没有时间信息的样本**
     /// 直接回 kVTParameterErr（-12902），时间必须随样本给。
     unsafe fn decode(&self, sample: &[u8], pts_secs: f64, duration_secs: f64) -> AppResult<()> {
-        let mut block = std::ptr::null_mut();
-        os(
-            ffi::CMBlockBufferCreateWithMemoryBlock(
-                ffi::kCFAllocatorDefault,
+        unsafe {
+            let mut block = std::ptr::null_mut();
+            os(
+                ffi::CMBlockBufferCreateWithMemoryBlock(
+                    ffi::kCFAllocatorDefault,
+                    std::ptr::null_mut(),
+                    sample.len(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    sample.len(),
+                    0,
+                    &mut block,
+                ),
+                "建样本块",
+            )?;
+            os(
+                ffi::CMBlockBufferReplaceDataBytes(
+                    sample.as_ptr() as *const c_void,
+                    block,
+                    0,
+                    sample.len(),
+                ),
+                "填充样本块",
+            )?;
+            let size = sample.len();
+            const TS: i32 = 90_000;
+            let timing = ffi::CMSampleTimingInfo {
+                duration: ffi::CMTimeMake((duration_secs * f64::from(TS)).round() as i64, TS),
+                presentationTimeStamp: ffi::CMTimeMake(
+                    (pts_secs * f64::from(TS)).round() as i64,
+                    TS,
+                ),
+                decodeTimeStamp: ffi::kCMTimeInvalid,
+            };
+            let mut sbuf: ffi::CMSampleBufferRef = std::ptr::null_mut();
+            os(
+                ffi::CMSampleBufferCreateReady(
+                    ffi::kCFAllocatorDefault,
+                    block,
+                    self.format,
+                    1,
+                    1,
+                    &timing,
+                    1,
+                    &size,
+                    &mut sbuf,
+                ),
+                "建样本缓冲",
+            )?;
+            // 同步模式（不设异步标志）：输出回调在本次调用内触发
+            let mut info_flags = 0u32;
+            let status = ffi::VTDecompressionSessionDecodeFrame(
+                self.session,
+                sbuf,
+                ffi::kVTDecodeFrame_Synchronous,
                 std::ptr::null_mut(),
-                sample.len(),
-                std::ptr::null(),
-                std::ptr::null(),
-                0,
-                sample.len(),
-                0,
-                &mut block,
-            ),
-            "建样本块",
-        )?;
-        os(
-            ffi::CMBlockBufferReplaceDataBytes(
-                sample.as_ptr() as *const c_void,
-                block,
-                0,
-                sample.len(),
-            ),
-            "填充样本块",
-        )?;
-        let size = sample.len();
-        const TS: i32 = 90_000;
-        let timing = ffi::CMSampleTimingInfo {
-            duration: ffi::CMTimeMake((duration_secs * f64::from(TS)).round() as i64, TS),
-            presentationTimeStamp: ffi::CMTimeMake((pts_secs * f64::from(TS)).round() as i64, TS),
-            decodeTimeStamp: ffi::kCMTimeInvalid,
-        };
-        let mut sbuf: ffi::CMSampleBufferRef = std::ptr::null_mut();
-        os(
-            ffi::CMSampleBufferCreateReady(
-                ffi::kCFAllocatorDefault,
-                block,
-                self.format,
-                1,
-                1,
-                &timing,
-                1,
-                &size,
-                &mut sbuf,
-            ),
-            "建样本缓冲",
-        )?;
-        // 同步模式（不设异步标志）：输出回调在本次调用内触发
-        let mut info_flags = 0u32;
-        let status = ffi::VTDecompressionSessionDecodeFrame(
-            self.session,
-            sbuf,
-            ffi::kVTDecodeFrame_Synchronous,
-            std::ptr::null_mut(),
-            &mut info_flags,
-        );
-        ffi::CFRelease(sbuf as ffi::CFTypeRef);
-        os(status, "HEVC 解码")
+                &mut info_flags,
+            );
+            ffi::CFRelease(sbuf as ffi::CFTypeRef);
+            os(status, "HEVC 解码")
+        }
     }
 
     /// 结束解码并收尾帧。
     unsafe fn finish(&self) -> AppResult<()> {
-        os(
-            ffi::VTDecompressionSessionFinishDelayedFrames(self.session),
-            "收尾解码",
-        )
+        unsafe {
+            os(
+                ffi::VTDecompressionSessionFinishDelayedFrames(self.session),
+                "收尾解码",
+            )
+        }
     }
 
     /// 收走已就绪的输出帧（解码序——同步解码无重排，顺序不可信）。
@@ -450,12 +472,14 @@ unsafe extern "C" fn encode_cb(
     _info_flags: u32,
     sample_buffer: ffi::CMSampleBufferRef,
 ) {
-    if status != ffi::noErr || sample_buffer.is_null() {
-        return;
+    unsafe {
+        if status != ffi::noErr || sample_buffer.is_null() {
+            return;
+        }
+        let tx = &*(refcon as *const Sender<CmSb>);
+        ffi::CFRetain(sample_buffer as ffi::CFTypeRef);
+        let _ = tx.send(CmSb(sample_buffer));
     }
-    let tx = &*(refcon as *const Sender<CmSb>);
-    ffi::CFRetain(sample_buffer as ffi::CFTypeRef);
-    let _ = tx.send(CmSb(sample_buffer));
 }
 
 impl Compressor {
@@ -463,170 +487,179 @@ impl Compressor {
     /// 内置软编会话。曾经还有 `Require`（探测确认硬编后才放行生产），
     /// 软编会话转正后两态合一，探测的 hw/sw 结论只喂徽标与并行度。
     unsafe fn new(width: usize, height: usize, bitrate: i32) -> AppResult<Self> {
-        let spec = make_dict(&[(
-            ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
-                as ffi::CFTypeRef,
-            ffi::kCFBooleanTrue as ffi::CFTypeRef,
-        )]);
+        unsafe {
+            let spec = make_dict(&[(
+                ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
+                    as ffi::CFTypeRef,
+                ffi::kCFBooleanTrue as ffi::CFTypeRef,
+            )]);
 
-        // 源缓冲属性：NV12 + IOSurface。解码输出是同格式同尺寸的 IOSurface
-        // 背板缓冲，Apple Silicon 上编码器直接吃 GPU 表面，不过 CPU。
-        let pixel_format = make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
-        let w = make_int(width as i32);
-        let h = make_int(height as i32);
-        let iosurface = iosurface_attrs();
-        let source_attrs = make_dict(&[
-            (
-                ffi::kCVPixelBufferPixelFormatTypeKey as ffi::CFTypeRef,
-                pixel_format as ffi::CFTypeRef,
-            ),
-            (
-                ffi::kCVPixelBufferWidthKey as ffi::CFTypeRef,
-                w as ffi::CFTypeRef,
-            ),
-            (
-                ffi::kCVPixelBufferHeightKey as ffi::CFTypeRef,
-                h as ffi::CFTypeRef,
-            ),
-            (
-                ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
-                iosurface as ffi::CFTypeRef,
-            ),
-        ]);
+            // 源缓冲属性：NV12 + IOSurface。解码输出是同格式同尺寸的 IOSurface
+            // 背板缓冲，Apple Silicon 上编码器直接吃 GPU 表面，不过 CPU。
+            let pixel_format =
+                make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
+            let w = make_int(width as i32);
+            let h = make_int(height as i32);
+            let iosurface = iosurface_attrs();
+            let source_attrs = make_dict(&[
+                (
+                    ffi::kCVPixelBufferPixelFormatTypeKey as ffi::CFTypeRef,
+                    pixel_format as ffi::CFTypeRef,
+                ),
+                (
+                    ffi::kCVPixelBufferWidthKey as ffi::CFTypeRef,
+                    w as ffi::CFTypeRef,
+                ),
+                (
+                    ffi::kCVPixelBufferHeightKey as ffi::CFTypeRef,
+                    h as ffi::CFTypeRef,
+                ),
+                (
+                    ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
+                    iosurface as ffi::CFTypeRef,
+                ),
+            ]);
 
-        let (tx, rx) = channel::<CmSb>();
-        let boxed = Box::new(tx);
-        let mut session: ffi::VTCompressionSessionRef = std::ptr::null_mut();
-        let status = ffi::VTCompressionSessionCreate(
-            ffi::kCFAllocatorDefault,
-            width as i32,
-            height as i32,
-            ffi::kCMVideoCodecType_H264,
-            spec,
-            source_attrs,
-            std::ptr::null(),
-            Some(encode_cb),
-            &*boxed as *const Sender<CmSb> as *mut c_void,
-            &mut session,
-        );
-        ffi::CFRelease(source_attrs as ffi::CFTypeRef);
-        ffi::CFRelease(iosurface as ffi::CFTypeRef);
-        ffi::CFRelease(w as ffi::CFTypeRef);
-        ffi::CFRelease(h as ffi::CFTypeRef);
-        ffi::CFRelease(pixel_format as ffi::CFTypeRef);
-        ffi::CFRelease(spec as ffi::CFTypeRef);
-        os(status, "建 H.264 硬编会话")?;
+            let (tx, rx) = channel::<CmSb>();
+            let boxed = Box::new(tx);
+            let mut session: ffi::VTCompressionSessionRef = std::ptr::null_mut();
+            let status = ffi::VTCompressionSessionCreate(
+                ffi::kCFAllocatorDefault,
+                width as i32,
+                height as i32,
+                ffi::kCMVideoCodecType_H264,
+                spec,
+                source_attrs,
+                std::ptr::null(),
+                Some(encode_cb),
+                &*boxed as *const Sender<CmSb> as *mut c_void,
+                &mut session,
+            );
+            ffi::CFRelease(source_attrs as ffi::CFTypeRef);
+            ffi::CFRelease(iosurface as ffi::CFTypeRef);
+            ffi::CFRelease(w as ffi::CFTypeRef);
+            ffi::CFRelease(h as ffi::CFTypeRef);
+            ffi::CFRelease(pixel_format as ffi::CFTypeRef);
+            ffi::CFRelease(spec as ffi::CFTypeRef);
+            os(status, "建 H.264 硬编会话")?;
 
-        // 质量与码控。VT 没有 CRF：码率按分辨率×帧率标定（见 `bitrate_for`）。
-        // MaxFrameDelayCount=0 关掉帧延迟（也就没有 B 帧重排）：输出顺序=输入
-        // 顺序，pts 标注与 muxide 的「严格递增」要求都不受干扰——对齐软解
-        // 路径 rusty_h264 的 lookahead=0 + num_ref_frames=1。
-        // ProfileLevel 在个别第三方硬编上可能不吃：不致命，别让会话白建。
-        let bitrate_num = make_int(bitrate);
-        let gop = make_int(250);
-        let no_delay = make_int(0);
-        let no_reorder = make_int(0);
-        // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余
-        // 尽力而为——实测部分编码器拒收 MaxFrameDelayCount=0 / 自定义 profile。
-        // **AllowFrameReordering 必须关掉**：B 帧重排一旦被编码器打开（硬编
-        // 会话会拒收 MaxFrameDelayCount=0，本机实证），输出落进解码序 +
-        // 非单调 PTS，递增兜底只能把乱序帧顶到错误的时间上——产物帧序乱掉
-        // （真实剧集 B 帧流首跑即现）。下游 mux 的契约就是单调显示序。
-        let required = os(
-            ffi::VTSessionSetProperty(
-                session,
-                ffi::kVTCompressionPropertyKey_AverageBitRate,
-                bitrate_num as ffi::CFTypeRef,
-            ),
-            "设码率",
-        );
-        for (name, key, value) in [
-            (
-                "AllowFrameReordering",
-                ffi::kVTCompressionPropertyKey_AllowFrameReordering,
-                no_reorder as ffi::CFTypeRef,
-            ),
-            (
-                "MaxKeyFrameInterval",
-                ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
-                gop as ffi::CFTypeRef,
-            ),
-            (
-                "MaxFrameDelayCount",
-                ffi::kVTCompressionPropertyKey_MaxFrameDelayCount,
-                no_delay as ffi::CFTypeRef,
-            ),
-        ] {
-            let st = ffi::VTSessionSetProperty(session, key, value);
-            if st != ffi::noErr {
-                log::warn!("[Platform/vt] 编码器拒收 {name}（OSStatus {st}），用编码器默认值");
+            // 质量与码控。VT 没有 CRF：码率按分辨率×帧率标定（见 `bitrate_for`）。
+            // MaxFrameDelayCount=0 关掉帧延迟（也就没有 B 帧重排）：输出顺序=输入
+            // 顺序，pts 标注与 muxide 的「严格递增」要求都不受干扰——对齐软解
+            // 路径 rusty_h264 的 lookahead=0 + num_ref_frames=1。
+            // ProfileLevel 在个别第三方硬编上可能不吃：不致命，别让会话白建。
+            let bitrate_num = make_int(bitrate);
+            let gop = make_int(250);
+            let no_delay = make_int(0);
+            let no_reorder = make_int(0);
+            // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余
+            // 尽力而为——实测部分编码器拒收 MaxFrameDelayCount=0 / 自定义 profile。
+            // **AllowFrameReordering 必须关掉**：B 帧重排一旦被编码器打开（硬编
+            // 会话会拒收 MaxFrameDelayCount=0，本机实证），输出落进解码序 +
+            // 非单调 PTS，递增兜底只能把乱序帧顶到错误的时间上——产物帧序乱掉
+            // （真实剧集 B 帧流首跑即现）。下游 mux 的契约就是单调显示序。
+            let required = os(
+                ffi::VTSessionSetProperty(
+                    session,
+                    ffi::kVTCompressionPropertyKey_AverageBitRate,
+                    bitrate_num as ffi::CFTypeRef,
+                ),
+                "设码率",
+            );
+            for (name, key, value) in [
+                (
+                    "AllowFrameReordering",
+                    ffi::kVTCompressionPropertyKey_AllowFrameReordering,
+                    no_reorder as ffi::CFTypeRef,
+                ),
+                (
+                    "MaxKeyFrameInterval",
+                    ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                    gop as ffi::CFTypeRef,
+                ),
+                (
+                    "MaxFrameDelayCount",
+                    ffi::kVTCompressionPropertyKey_MaxFrameDelayCount,
+                    no_delay as ffi::CFTypeRef,
+                ),
+            ] {
+                let st = ffi::VTSessionSetProperty(session, key, value);
+                if st != ffi::noErr {
+                    log::warn!("[Platform/vt] 编码器拒收 {name}（OSStatus {st}），用编码器默认值");
+                }
             }
-        }
-        let _ = ffi::VTSessionSetProperty(
-            session,
-            ffi::kVTCompressionPropertyKey_ProfileLevel,
-            ffi::kVTProfileLevel_H264_High_AutoLevel as ffi::CFTypeRef,
-        );
-        let _ = ffi::VTSessionSetProperty(
-            session,
-            ffi::kVTCompressionPropertyKey_RealTime,
-            ffi::kCFBooleanFalse as ffi::CFTypeRef,
-        );
-        ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
-        ffi::CFRelease(gop as ffi::CFTypeRef);
-        ffi::CFRelease(no_delay as ffi::CFTypeRef);
-        required?;
+            let _ = ffi::VTSessionSetProperty(
+                session,
+                ffi::kVTCompressionPropertyKey_ProfileLevel,
+                ffi::kVTProfileLevel_H264_High_AutoLevel as ffi::CFTypeRef,
+            );
+            let _ = ffi::VTSessionSetProperty(
+                session,
+                ffi::kVTCompressionPropertyKey_RealTime,
+                ffi::kCFBooleanFalse as ffi::CFTypeRef,
+            );
+            ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
+            ffi::CFRelease(gop as ffi::CFTypeRef);
+            ffi::CFRelease(no_delay as ffi::CFTypeRef);
+            required?;
 
-        Ok(Compressor {
-            session,
-            rx,
-            _tx: boxed,
-            parameter_sets: None,
-        })
+            Ok(Compressor {
+                session,
+                rx,
+                _tx: boxed,
+                parameter_sets: None,
+            })
+        }
     }
 
     /// 编一帧（显示时间戳由调用方按源时间轴给）。
     unsafe fn encode(&mut self, frame: &Pb, pts_secs: f64, duration_secs: f64) -> AppResult<()> {
-        const TS: i32 = 90_000;
-        let pts = ffi::CMTimeMake((pts_secs * f64::from(TS)).round() as i64, TS);
-        let dur = ffi::CMTimeMake((duration_secs * f64::from(TS)).round() as i64, TS);
-        os(
-            ffi::VTCompressionSessionEncodeFrame(
-                self.session,
-                frame.0,
-                pts,
-                dur,
-                std::ptr::null(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            ),
-            "编码帧",
-        )
+        unsafe {
+            const TS: i32 = 90_000;
+            let pts = ffi::CMTimeMake((pts_secs * f64::from(TS)).round() as i64, TS);
+            let dur = ffi::CMTimeMake((duration_secs * f64::from(TS)).round() as i64, TS);
+            os(
+                ffi::VTCompressionSessionEncodeFrame(
+                    self.session,
+                    frame.0,
+                    pts,
+                    dur,
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                "编码帧",
+            )
+        }
     }
 
     /// 收尾并冲出尾帧。
     unsafe fn finish(&mut self) -> AppResult<()> {
-        os(
-            ffi::VTCompressionSessionCompleteFrames(self.session, ffi::kCMTimeInvalid),
-            "收尾编码",
-        )
+        unsafe {
+            os(
+                ffi::VTCompressionSessionCompleteFrames(self.session, ffi::kCMTimeInvalid),
+                "收尾编码",
+            )
+        }
     }
 
     /// 编码器自报是否真走了硬件（`UsingHardwareAcceleratedVideoEncoder`）。
     unsafe fn using_hardware(&self) -> AppResult<bool> {
-        let mut out: ffi::CFTypeRef = std::ptr::null();
-        let st = ffi::VTSessionCopyProperty(
-            self.session,
-            ffi::kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            ffi::kCFAllocatorDefault,
-            &mut out,
-        );
-        if st != ffi::noErr || out.is_null() {
-            return Ok(false);
+        unsafe {
+            let mut out: ffi::CFTypeRef = std::ptr::null();
+            let st = ffi::VTSessionCopyProperty(
+                self.session,
+                ffi::kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+                ffi::kCFAllocatorDefault,
+                &mut out,
+            );
+            if st != ffi::noErr || out.is_null() {
+                return Ok(false);
+            }
+            let hw = ffi::CFBooleanGetValue(out as ffi::CFBooleanRef) != 0;
+            ffi::CFRelease(out);
+            Ok(hw)
         }
-        let hw = ffi::CFBooleanGetValue(out as ffi::CFBooleanRef) != 0;
-        ffi::CFRelease(out);
-        Ok(hw)
     }
 
     /// 收走已就绪的编码输出（帧延迟已关：输出序=输入序）。
@@ -643,35 +676,37 @@ impl Compressor {
     /// 关键帧前插 SPS/PPS：拼接器重建 moov 时样本描述取自第 1 集，后续各集
     /// 的码流必须自带参数集才能在第 1 集的 avcC 之下解码。
     unsafe fn sample_to_unit(&mut self, sb: &CmSb) -> AppResult<(Vec<u8>, bool)> {
-        let block = ffi::CMSampleBufferGetDataBuffer(sb.0);
-        let mut data: *mut u8 = std::ptr::null_mut();
-        let mut at_offset = 0usize;
-        let mut total = 0usize;
-        os(
-            ffi::CMBlockBufferGetDataPointer(block, 0, &mut at_offset, &mut total, &mut data),
-            "读编码输出",
-        )?;
-        let raw = std::slice::from_raw_parts(data, total);
-        // VT 输出的 H.264 是 4 字节长度前缀（AVCC）；Annex-B 转换与
-        // media::hevc 是同一份实现
-        let mut annexb = crate::media::hevc::to_annexb(raw, 4);
+        unsafe {
+            let block = ffi::CMSampleBufferGetDataBuffer(sb.0);
+            let mut data: *mut u8 = std::ptr::null_mut();
+            let mut at_offset = 0usize;
+            let mut total = 0usize;
+            os(
+                ffi::CMBlockBufferGetDataPointer(block, 0, &mut at_offset, &mut total, &mut data),
+                "读编码输出",
+            )?;
+            let raw = std::slice::from_raw_parts(data, total);
+            // VT 输出的 H.264 是 4 字节长度前缀（AVCC）；Annex-B 转换与
+            // media::hevc 是同一份实现
+            let mut annexb = crate::media::hevc::to_annexb(raw, 4);
 
-        // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上
-        // （拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带
-        // 参数集才能在第 1 集 avcC 之下解码）。第三个布尔是 is_keyframe，
-        // 与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
-        let sync = is_sync_sample(sb.0);
-        if sync || self.parameter_sets.is_none() {
-            let desc = ffi::CMSampleBufferGetFormatDescription(sb.0);
-            let params = parameter_sets_annexb(desc);
-            if !params.is_empty() {
-                if self.parameter_sets.is_none() {
-                    self.parameter_sets = Some(params.clone());
+            // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上
+            // （拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带
+            // 参数集才能在第 1 集 avcC 之下解码）。第三个布尔是 is_keyframe，
+            // 与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
+            let sync = is_sync_sample(sb.0);
+            if sync || self.parameter_sets.is_none() {
+                let desc = ffi::CMSampleBufferGetFormatDescription(sb.0);
+                let params = parameter_sets_annexb(desc);
+                if !params.is_empty() {
+                    if self.parameter_sets.is_none() {
+                        self.parameter_sets = Some(params.clone());
+                    }
+                    annexb.splice(0..0, params);
                 }
-                annexb.splice(0..0, params);
             }
+            Ok((annexb, sync))
         }
-        Ok((annexb, sync))
     }
 }
 
@@ -680,58 +715,62 @@ impl Compressor {
 /// （Apple 示例代码一律按 `!contains(key)` 判）——首帧 IDR 不带这个键，
 /// 按「缺省即非同步」判会把首帧标成非关键帧，muxide 直接拒收。
 unsafe fn is_sync_sample(sb: ffi::CMSampleBufferRef) -> bool {
-    let array = ffi::CMSampleBufferGetSampleAttachmentsArray(sb, 0);
-    if array.is_null() {
-        return true;
+    unsafe {
+        let array = ffi::CMSampleBufferGetSampleAttachmentsArray(sb, 0);
+        if array.is_null() {
+            return true;
+        }
+        let dict = ffi::CFArrayGetValueAtIndex(array, 0) as ffi::CFDictionaryRef;
+        if dict.is_null() {
+            return true;
+        }
+        let value =
+            ffi::CFDictionaryGetValue(dict, ffi::kCMSampleAttachmentKey_NotSync as ffi::CFTypeRef);
+        if value.is_null() {
+            return true;
+        }
+        ffi::CFBooleanGetValue(value as ffi::CFBooleanRef) == 0
     }
-    let dict = ffi::CFArrayGetValueAtIndex(array, 0) as ffi::CFDictionaryRef;
-    if dict.is_null() {
-        return true;
-    }
-    let value =
-        ffi::CFDictionaryGetValue(dict, ffi::kCMSampleAttachmentKey_NotSync as ffi::CFTypeRef);
-    if value.is_null() {
-        return true;
-    }
-    ffi::CFBooleanGetValue(value as ffi::CFBooleanRef) == 0
 }
 
 /// 格式描述里的参数集（SPS/PPS 裸 NAL）拼成 Annex-B。
 unsafe fn parameter_sets_annexb(desc: ffi::CMVideoFormatDescriptionRef) -> Vec<u8> {
-    let mut out = Vec::new();
-    if desc.is_null() {
-        return out;
-    }
-    // 总数先探一次（pointer/size 传 NULL 即可）
-    let mut count = 0usize;
-    if ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-        desc,
-        0,
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-        &mut count,
-        std::ptr::null_mut(),
-    ) != ffi::noErr
-    {
-        return out;
-    }
-    for i in 0..count {
-        let mut ps: *const u8 = std::ptr::null();
-        let mut size = 0usize;
-        let st = ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-            desc,
-            i,
-            &mut ps,
-            &mut size,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        );
-        if st == ffi::noErr && !ps.is_null() && size > 0 {
-            out.extend_from_slice(&[0, 0, 0, 1]);
-            out.extend_from_slice(std::slice::from_raw_parts(ps, size));
+    unsafe {
+        let mut out = Vec::new();
+        if desc.is_null() {
+            return out;
         }
+        // 总数先探一次（pointer/size 传 NULL 即可）
+        let mut count = 0usize;
+        if ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+            desc,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut count,
+            std::ptr::null_mut(),
+        ) != ffi::noErr
+        {
+            return out;
+        }
+        for i in 0..count {
+            let mut ps: *const u8 = std::ptr::null();
+            let mut size = 0usize;
+            let st = ffi::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                desc,
+                i,
+                &mut ps,
+                &mut size,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            if st == ffi::noErr && !ps.is_null() && size > 0 {
+                out.extend_from_slice(&[0, 0, 0, 1]);
+                out.extend_from_slice(std::slice::from_raw_parts(ps, size));
+            }
+        }
+        out
     }
-    out
 }
 
 // ————————————————————————————————————————————————————————————
@@ -752,38 +791,42 @@ impl Drop for Transfer {
 
 impl Transfer {
     unsafe fn new(width: usize, height: usize) -> AppResult<Self> {
-        let mut session: ffi::VTPixelTransferSessionRef = std::ptr::null_mut();
-        os(
-            ffi::VTPixelTransferSessionCreate(ffi::kCFAllocatorDefault, &mut session),
-            "建像素搬移会话",
-        )?;
-        Ok(Transfer {
-            session,
-            width,
-            height,
-        })
+        unsafe {
+            let mut session: ffi::VTPixelTransferSessionRef = std::ptr::null_mut();
+            os(
+                ffi::VTPixelTransferSessionCreate(ffi::kCFAllocatorDefault, &mut session),
+                "建像素搬移会话",
+            )?;
+            Ok(Transfer {
+                session,
+                width,
+                height,
+            })
+        }
     }
 
     /// 缩到目标分辨率（NV12 → NV12，GPU 上完成）。
     unsafe fn scale(&self, src: &Pb) -> AppResult<Pb> {
-        let mut dst: ffi::CVPixelBufferRef = std::ptr::null_mut();
-        let attrs = iosurface_attrs();
-        let st = ffi::CVPixelBufferCreate(
-            ffi::kCFAllocatorDefault,
-            self.width,
-            self.height,
-            ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            attrs,
-            &mut dst,
-        );
-        ffi::CFRelease(attrs as ffi::CFTypeRef);
-        os(st, "建缩放目标缓冲")?;
-        let dst = Pb(dst);
-        os(
-            ffi::VTPixelTransferSessionTransferImage(self.session, src.0, dst.0),
-            "缩放帧",
-        )?;
-        Ok(dst)
+        unsafe {
+            let mut dst: ffi::CVPixelBufferRef = std::ptr::null_mut();
+            let attrs = iosurface_attrs();
+            let st = ffi::CVPixelBufferCreate(
+                ffi::kCFAllocatorDefault,
+                self.width,
+                self.height,
+                ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                attrs,
+                &mut dst,
+            );
+            ffi::CFRelease(attrs as ffi::CFTypeRef);
+            os(st, "建缩放目标缓冲")?;
+            let dst = Pb(dst);
+            os(
+                ffi::VTPixelTransferSessionTransferImage(self.session, src.0, dst.0),
+                "缩放帧",
+            )?;
+            Ok(dst)
+        }
     }
 }
 
@@ -802,7 +845,7 @@ fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
 
 /// 一帧解码输出 →（缩放）→ 编码 → 收割产物。`pts` 是该帧与源槽位配对
 /// 好的显示时间（见 run() 流水注释）。
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
 fn process_frame(
     pb: Pb,
     pts: f64,
@@ -850,7 +893,6 @@ fn process_frame(
 /// 显示时间读**输出样本自带的 PTS**（编码器保留编码时传入的时间戳），
 /// 不依赖「输出序=输入序」——个别编码器拒收 MaxFrameDelayCount=0 时可能
 /// 重排，arrival 序标时间会整体错位。递增兜底仍在：畸形时间按半帧顶开。
-#[allow(clippy::too_many_arguments)]
 fn emit_outputs(
     compressor: &mut Compressor,
     units: &mut Vec<(f64, Vec<u8>, bool)>,
