@@ -84,7 +84,7 @@ export function HistoryPage() {
 
 /** 历史行：官方同款「看到第N集/共M集 时长」进度徽标 + 继续播放。 */
 function HistoryRow({ item, onOpen }: { item: WatchHistoryItem; onOpen: () => void }) {
-  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
   const [brokenFor, setBrokenFor] = useState('');

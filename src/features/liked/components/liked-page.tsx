@@ -97,7 +97,7 @@ function LikedRow({
 }) {
   const { data: meta } = useSeriesMeta(item.seriesId);
   const rawCover = meta?.cover ?? '';
-  const { data: webCover } = useWebCover(item.seriesId, rawCover);
+  const { data: webCover } = useWebCover(rawCover);
   const cover = webCover ?? (isRenderableCover(rawCover) ? rawCover : '');
   const [brokenFor, setBrokenFor] = useState('');
   const imgBroken = brokenFor !== '' && brokenFor === cover;

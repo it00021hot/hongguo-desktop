@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 
 /// 当前 schema 版本。每次结构性变更（加表/加列）时 +1，
 /// 并在 [`MIGRATIONS`] 追加一段从上一版本到新版本的 SQL。
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
@@ -90,6 +90,11 @@ pub static MIGRATIONS: &[&str] = &[
         cover      TEXT NOT NULL,
         updated_at INTEGER NOT NULL
     );
+    "#,
+    // v3 -> v4：官网链路整体下线（数据一律走官方 App 接口），
+    // webp 封面缓存随之作废——HEIC 封面改由本地 hongguo-cover 协议现转。
+    r#"
+    DROP TABLE IF EXISTS cover_cache;
     "#,
 ];
 

@@ -336,7 +336,7 @@ function FilterPanelButton({
 
 /** 榜单一行：名次 | 封面 | 标题/副标题/简介 | 热度文案。 */
 function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem) => void }) {
-  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
   const [brokenFor, setBrokenFor] = useState('');

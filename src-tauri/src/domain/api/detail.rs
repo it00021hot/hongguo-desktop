@@ -51,7 +51,7 @@ pub struct RelatedSeries {
 /// `cell_data` 里的短剧子格稀少甚至为空，连打会逐次填充（2026-10-08
 /// 实测同进程 4 连打 guess 1→6→8→9）。客户端每次进详情页只打一次、
 /// 前端还带 10 分钟缓存，冷响应会原样上屏成「猜你喜欢消失」。
-/// 对策：guess 空时短间隔重试（最多 3 调），取首个非空结果；works
+/// 对策：guess 空时递增退避重试（至多 4 调），取首个非空结果；works
 /// 各次稳定不受影响，全空就退最后一次的响应。
 pub async fn fetch_related_series(
     series_id: &str,
@@ -76,9 +76,14 @@ pub async fn fetch_related_series(
     .collect();
 
     let mut last = RelatedSeries::default();
-    for attempt in 0..3u8 {
+    for attempt in 0..4u8 {
         if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            // 递增退避：400/700/1000ms。实测冷填充通常第二次就有数据，
+            // 连冷到第四次极罕见（间隔拉长给服务端填充留时间）。
+            tokio::time::sleep(std::time::Duration::from_millis(
+                400 + 300 * (attempt - 1) as u64,
+            ))
+            .await;
         }
         let bytes = crate::domain::api::client::api_call_reading(
             crate::domain::api::danmaku::LQ_API_ORIGIN,
@@ -322,6 +327,9 @@ pub struct SeriesMeta {
     pub season: String,
     /// 题材标签（secondary_infos data_type=3 的 content：玄幻/逆袭/修真…）
     pub tags: Vec<String>,
+    /// 剧情简介（series_intro，缺失退 video_desc/abstract；详情页与
+    /// 播放器简介面板共用，取代旧官网 extras 链路）
+    pub intro: String,
 }
 
 /// 拉详情页头部元信息。失败交调用方降级（头部缺这几行不影响主功能）。
@@ -444,6 +452,7 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
             .to_string(),
         season,
         tags,
+        intro: pick(vd, &["series_intro", "video_desc", "abstract"]),
     })
 }
 
@@ -552,6 +561,7 @@ mod tests {
                     "series_id_str": "7678641104899542041",
                     "series_title": "序列：我一人即是黄昏议会",
                     "series_cover": "https://example/cover.heic",
+                    "series_intro": "穿越者落地成盒，重启人生第二回合。",
                     "followed_cnt": "1069774",
                     "series_play_cnt": "5160926",
                     "hot_score": 44270843,
@@ -573,6 +583,7 @@ mod tests {
         assert_eq!(m.season, "第1季");
         assert_eq!(m.tags, vec!["玄幻", "逆袭"], "data_type=3 才是题材标签");
         assert_eq!(m.record_number, "（番茄）网微剧备字（2026）第847205号");
+        assert_eq!(m.intro, "穿越者落地成盒，重启人生第二回合。");
     }
 
     #[test]

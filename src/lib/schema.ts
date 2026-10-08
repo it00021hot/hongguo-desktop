@@ -37,24 +37,6 @@ export const seriesSchema = z.object({
 
 export type Series = z.infer<typeof seriesSchema>;
 
-/** 官网详情页底部的推荐短剧。 */
-const recommendItemSchema = z.object({
-  seriesId: z.string(),
-  seriesName: z.string(),
-  seriesCover: z.string(),
-  episodeCount: z.number().int().nonnegative(),
-});
-
-export type RecommendItem = z.infer<typeof recommendItemSchema>;
-
-/** 详情页附加信息：简介 + 推荐，按需取不落盘。 */
-export const seriesExtrasSchema = z.object({
-  intro: z.string(),
-  recommendations: z.array(recommendItemSchema),
-});
-
-export type SeriesExtras = z.infer<typeof seriesExtrasSchema>;
-
 /**
  * 一部剧「最近看到的那一集」（Rust `playback::SeriesProgress`）。
  *
@@ -70,15 +52,8 @@ export const seriesProgressSchema = z.object({
 
 export type SeriesProgress = z.infer<typeof seriesProgressSchema>;
 
-/** 分类与题材是同一种结构（后端也合并成了一个类型），只留一份。 */
-export const categorySchema = z.object({
-  slug: z.string(),
-  label: z.string(),
-});
-
-export type Category = z.infer<typeof categorySchema>;
-
-const seriesCardSchema = z.object({
+/** 找剧网格的卡片（App 搜索 / 筛选流条目统一转成这个形态喂网格）。 */
+export const seriesCardSchema = z.object({
   seriesId: z.string(),
   seriesTitle: z.string(),
   cover: z.string(),
@@ -88,22 +63,6 @@ const seriesCardSchema = z.object({
 });
 
 export type SeriesCard = z.infer<typeof seriesCardSchema>;
-
-/** 浏览与搜索共用的嗅探结果结构（后端 `sniff::BrowseResult`）。 */
-const browseMetaSchema = z.object({
-  page: z.number().int().positive(),
-  totalPages: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-  genres: z.array(categorySchema),
-});
-
-export const browseResultSchema = z.object({
-  results: z.array(seriesCardSchema),
-  pageTitle: z.string(),
-  meta: browseMetaSchema,
-});
-
-export type BrowseResult = z.infer<typeof browseResultSchema>;
 
 // ---------------------------------------------------------------- 下载任务
 
@@ -488,6 +447,8 @@ export const seriesMetaSchema = z.object({
   season: z.string(),
   /** 题材标签（玄幻/逆袭…，secondary_infos data_type=3） */
   tags: z.array(z.string()),
+  /** 剧情简介（series_intro，详情页与播放器简介面板共用） */
+  intro: z.string().default(''),
 });
 export type SeriesMeta = z.infer<typeof seriesMetaSchema>;
 

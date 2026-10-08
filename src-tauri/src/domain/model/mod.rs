@@ -15,6 +15,6 @@ pub use playback::{
 };
 // 浏览/搜索的卡片、分类、分页元数据归 sniff 模块所有：它们只是嗅探结果的
 // 传输结构，不是持久化领域模型（不进 data.json）。
-pub use series::{Episode, RecommendItem, Series, SeriesExtras};
+pub use series::{Episode, Series};
 pub use settings::{AccountState, ProxyConfig, ProxyTestResult, Settings};
 pub use task::{DownloadTask, QueueStatus, TaskStatus};

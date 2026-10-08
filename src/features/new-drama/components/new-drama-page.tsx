@@ -218,7 +218,7 @@ function NewDramaCard({
   downloaded: number;
   onSelect: (item: RankItem) => void;
 }) {
-  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
   const [brokenFor, setBrokenFor] = useState('');
@@ -370,7 +370,7 @@ function CalendarRow({
   onSelect: (item: CalendarItem) => void;
 }) {
   const qc = useQueryClient();
-  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
   const [brokenFor, setBrokenFor] = useState('');

@@ -14,8 +14,8 @@ import {
   useSavePosition,
   useCompatPlayback,
   useDanmaku,
+  useSeriesDetailMeta,
   useSeriesEpisodes,
-  useSeriesExtras,
   useSettings,
   useStorageActions,
   useWatchHistory,
@@ -258,8 +258,9 @@ export function PlayerView({
   );
   // 选集与「下载到本地」都要完整分集表，从剧集档案直接取
   const { data: currentSeries } = useSeriesEpisodes(seriesId);
-  // 简介只在沉浸流信息叠加里用（播放页右侧面板自己拉）
-  const { data: extras } = useSeriesExtras(seriesId ?? '');
+  // 简介只在沉浸流信息叠加里用（播放页右侧面板自己拉）：
+  // video_detail 接口的 series_intro，官方 App 详情页同源
+  const { data: meta } = useSeriesDetailMeta(seriesId ?? '');
 
   // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存
   const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
@@ -1016,7 +1017,7 @@ export function PlayerView({
                       </span>
                     )}
                   </p>
-                  {extras?.intro && (
+                  {meta?.intro && (
                     // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
                     // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角
                     <div className="mt-1 flex max-w-[36%] items-end gap-2">
@@ -1035,7 +1036,7 @@ export function PlayerView({
                           !introExpanded && 'line-clamp-2',
                         )}
                       >
-                        {extras.intro}
+                        {meta.intro}
                       </p>
                       <button
                         type="button"
@@ -1088,7 +1089,7 @@ export function PlayerView({
                   <MiniScreenControls
                     videoRef={videoRef}
                     title={currentSeries?.title}
-                    intro={extras?.intro}
+                    intro={meta?.intro}
                     vidIndex={vidIndex}
                     total={currentSeries?.episodes.length ?? 0}
                     hasNext={

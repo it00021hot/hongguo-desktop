@@ -19,7 +19,6 @@ import {
   useSeriesCollect,
   useSeriesComments,
   useSeriesEpisodes,
-  useSeriesExtras,
   useSeriesDetailMeta,
   useSeriesProgress,
   useVideoDigg,
@@ -34,8 +33,8 @@ import type { RelatedItem } from '@/lib/schema';
  * 剧集详情页（/detail?seriesId=…）。
  *
  * 播放器里点剧名进来：封面/统计/标签/简介 + 继续看 + 选集网格 + 剧评 +
- * 相关推荐。数据全部来自既有查询（分集档案 / extras / 观看历史 / 评论），
- * 不新增后端命令；「继续看第 N 集」的 N 从云端观看历史推。
+ * 相关推荐。数据全部来自官方 App 接口查询（分集档案 / meta / 观看历史 /
+ * 评论 / plan 相关推荐）；「继续看第 N 集」的 N 从云端观看历史推。
  */
 export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const navigate = useNavigate();
@@ -43,7 +42,6 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const setTarget = usePlayerStore((s) => s.setTarget);
 
   const { data: series, isPending, isError, error } = useSeriesEpisodes(seriesId || null);
-  const { data: extras } = useSeriesExtras(seriesId ?? '');
   const { data: localProgress } = useSeriesProgress(seriesId ?? '');
   const { data: history } = useWatchHistory();
   // 相关推荐总数（相关作品 + 猜你喜欢，plan 接口两格一并计）——tab 上的
@@ -51,7 +49,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const { data: relatedData } = useRelatedSeries(seriesId || '');
   const relatedTotal = (relatedData?.works.length ?? 0) + (relatedData?.guess.length ?? 0);
   const relatedGuess = relatedData?.guess ?? [];
-  // 头部元信息（追剧/播放/季徽/标签/备案号，video_detail 接口），
+  // 头部元信息（追剧/播放/季徽/标签/备案号/简介，video_detail 接口），
   // 失败为 undefined：头部相应行不渲染，不打断页面
   const { data: meta } = useSeriesDetailMeta(seriesId);
   const historyItem = history?.items.find((i) => i.seriesId === seriesId);
@@ -138,7 +136,7 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
   const reviewScoreCnt = commentPages?.pages[0]?.scoreCnt ?? 0;
 
   const [introExpanded, setIntroExpanded] = useState(false);
-  const intro = extras?.intro ?? '';
+  const intro = meta?.intro ?? '';
 
   // 未带 seriesId（直接敲路由）：只指路，不去解析
   if (!seriesId) {
@@ -186,10 +184,10 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
       {series && (
         <>
-          {/* 头部：封面 + 档案。对齐官网详情页的构图，数据全走本地档案/extras */}
+          {/* 头部：封面 + 档案。对齐第三方详情页构图，数据全走 App 接口 */}
           <div className="mt-4 flex gap-8">
             <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
-              <DetailCover seriesId={seriesId} cover={series.cover} name={series.title} />
+              <DetailCover cover={series.cover} name={series.title} />
             </div>
 
             <div className="min-w-0 flex-1">
@@ -500,7 +498,7 @@ function RelatedCard({
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {/* plan 接口的封面现已是 fqnovelpic HEIC 签名 URL（旧注释里的
             byteimg JPEG 不会再出现），直挂必裂，统一走 SeriesCover */}
-        <SeriesCover seriesId={item.seriesId} cover={item.cover} alt={item.title} />
+        <SeriesCover cover={item.cover} alt={item.title} />
         {item.tag && (
           <span className="absolute top-1 left-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
             {item.tag}
@@ -575,7 +573,7 @@ function ResolveButton({ seriesId }: { seriesId: string }) {
         resolve.mutate(seriesId, {
           onSuccess: () => {
             void qc.invalidateQueries({ queryKey: ['series-episodes', seriesId] });
-            void qc.invalidateQueries({ queryKey: ['series-extras', seriesId] });
+            void qc.invalidateQueries({ queryKey: ['series-meta', seriesId] });
             toast.success(t('detail.resolved'));
           },
           onError: (e) => toast.error(e.message),
@@ -587,7 +585,7 @@ function ResolveButton({ seriesId }: { seriesId: string }) {
   );
 }
 
-/** 详情封面：统一走 SeriesCover（webp 增强 + 本地转码兜底 + 占位图）。 */
-function DetailCover({ seriesId, cover, name }: { seriesId: string; cover: string; name: string }) {
-  return <SeriesCover seriesId={seriesId} cover={cover} alt={name} />;
+/** 详情封面：统一走 SeriesCover（本地转码代理 + 占位图）。 */
+function DetailCover({ cover, name }: { cover: string; name: string }) {
+  return <SeriesCover cover={cover} alt={name} />;
 }

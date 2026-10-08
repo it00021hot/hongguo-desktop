@@ -1,13 +1,10 @@
-import { z } from 'zod';
 import { call } from './invoke';
 import {
   accountStateSchema,
   bookshelfEntrySchema,
-  browseResultSchema,
   browseFiltersSchema,
   commentPageSchema,
   danmakuSchema,
-  categorySchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
   interactionStateSchema,
@@ -29,7 +26,6 @@ import {
   searchPageSchema,
   suggestItemSchema,
   selectorRowSchema,
-  seriesExtrasSchema,
   seriesProgressSchema,
   seriesSchema,
   settingsSchema,
@@ -38,7 +34,6 @@ import {
   type AccountState,
   type BookshelfEntry,
   type BrowseFilters,
-  type Category,
   type CommentPage,
   type Danmaku,
   type DecodeCapability,
@@ -60,11 +55,9 @@ import {
   type SeriesReviewPage,
   type SeriesMeta,
   type Series,
-  type SeriesExtras,
   type SeriesProgress,
   type SelectorRow,
   type Settings,
-  type BrowseResult,
   type StorageUsage,
   type CalendarPage,
   type RankPage,
@@ -150,8 +143,6 @@ export const series = {
   list: () => call<Series[]>('get_series_list'),
   episodes: (seriesId: string) => call<Series>('get_series_episodes', { seriesId }, seriesSchema),
   resolve: (input: string) => call<Series>('resolve_series', { input }, seriesSchema),
-  extras: (seriesId: string) =>
-    call<SeriesExtras>('get_series_extras', { seriesId }, seriesExtrasSchema),
   /** 相关作品·系列（同系列各季 + 同 IP；失败由上层静默降级） */
   related: (seriesId: string) =>
     call<RelatedSeries>('related_series', { seriesId }, relatedSeriesSchema),
@@ -177,8 +168,6 @@ export const discover = {
       { filters: browseFiltersSchema.parse(filters), offset, sessionId },
       feedPageSchema,
     ),
-  webCover: (seriesId: string) =>
-    call<string | null>('web_cover', { seriesId }, z.string().nullable()),
 };
 
 // ---------------------------------------------------------------- 弹幕
@@ -241,18 +230,6 @@ export const interact = {
   /** 书架（我的收藏）列表，需要登录。 */
   bookshelf: () =>
     call<BookshelfEntry[]>('bookshelf_list', undefined, bookshelfEntrySchema.array()),
-};
-
-// ---------------------------------------------------------------- 浏览与搜索
-
-export const browse = {
-  categories: () => call<Category[]>('browse_categories', undefined, categorySchema.array()),
-  list: (category: string, genre: string | null, page: number) =>
-    call<BrowseResult>('browse_list', { category, genre, page }, browseResultSchema),
-};
-
-export const search = {
-  run: (keyword: string) => call<BrowseResult>('search_series', { keyword }, browseResultSchema),
 };
 
 // ---------------------------------------------------------------- 排行榜 / 新剧 / 搜索（官方 App API）

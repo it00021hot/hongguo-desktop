@@ -107,7 +107,6 @@ pub fn run() {
             commands::series_cmd::get_series_list,
             commands::series_cmd::get_series_episodes,
             commands::series_cmd::resolve_series,
-            commands::series_cmd::get_series_extras,
             commands::series_cmd::related_series,
             commands::series_cmd::series_meta,
             commands::series_cmd::remove_series,
@@ -116,7 +115,6 @@ pub fn run() {
             commands::discover_cmd::discover_feed,
             commands::discover_cmd::browse_panel,
             commands::discover_cmd::browse_page,
-            commands::discover_cmd::web_cover,
             // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
             commands::rank_cmd::rank_list,
             commands::rank_cmd::new_drama_list,
@@ -149,10 +147,6 @@ pub fn run() {
             commands::interact_cmd::series_collect,
             commands::interact_cmd::interaction_state,
             commands::interact_cmd::bookshelf_list,
-            // 浏览与搜索
-            commands::browse_cmd::browse_categories,
-            commands::browse_cmd::browse_list,
-            commands::browse_cmd::search_series,
             // 下载
             commands::download_cmd::get_download_tasks,
             commands::download_cmd::get_queue_status,

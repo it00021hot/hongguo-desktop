@@ -3,10 +3,15 @@ import { useNavigate } from '@tanstack/react-router';
 import { Check, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { useDownloadTasks, useSeriesEpisodes, useSeriesExtras } from '@/lib/queries';
+import {
+  useDownloadTasks,
+  useRelatedSeries,
+  useSeriesDetailMeta,
+  useSeriesEpisodes,
+} from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
-import type { RecommendItem, Series } from '@/lib/schema';
+import type { RelatedItem, Series } from '@/lib/schema';
 
 interface Props {
   seriesId: string;
@@ -25,7 +30,11 @@ const PAGE_SIZE = 15;
  */
 export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
   const { data: tasks } = useDownloadTasks();
-  const { data: extras } = useSeriesExtras(seriesId);
+  // 简介与推荐全走 App 接口：video_detail 的 series_intro + plan 接口的
+  // 相关作品/猜你喜欢（官方详情页「相关推荐」同源，旧官网 extras 链路已拆）
+  const { data: meta } = useSeriesDetailMeta(seriesId);
+  const { data: related } = useRelatedSeries(seriesId);
+  const recommendations: RelatedItem[] = [...(related?.works ?? []), ...(related?.guess ?? [])];
   // 剧集档案要从 useSeriesEpisodes 拿，不能扫 useSeriesList：
   // 那个接口走的是 visible_series()，过滤掉了用户从磁盘清理页移除的剧，
   // 于是这类剧的选集整段不渲染（`total > 0` 不成立），右侧只剩简介和推荐。
@@ -56,7 +65,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
     <aside className="flex w-72 shrink-0 scrollbar-thin flex-col gap-4 overflow-y-auto border-l py-3 pr-1 pl-3 sm:w-80 2xl:w-96">
       {series && <SeriesHeadline series={series} currentIndex={currentIndex} />}
 
-      {extras?.intro && <Intro text={extras.intro} />}
+      {meta?.intro && <Intro text={meta.intro} />}
 
       {total > 0 && (
         <section className="grid gap-2">
@@ -112,7 +121,7 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
         </section>
       )}
 
-      <RecommendList items={extras?.recommendations ?? []} />
+      <RecommendList items={recommendations} />
     </aside>
   );
 }
@@ -184,7 +193,7 @@ function SeriesHeadline({ series, currentIndex }: { series: Series; currentIndex
   );
 }
 
-function RecommendList({ items }: { items: RecommendItem[] }) {
+function RecommendList({ items }: { items: RelatedItem[] }) {
   const navigate = useNavigate();
   const setTarget = usePlayerStore((s) => s.setTarget);
 
@@ -206,20 +215,15 @@ function RecommendList({ items }: { items: RecommendItem[] }) {
             className="group grid cursor-pointer gap-1 text-left"
           >
             <span className="bg-muted relative block aspect-3/4 overflow-hidden rounded-md">
-              {item.seriesCover && (
-                <img
-                  src={item.seriesCover}
-                  alt=""
-                  loading="lazy"
-                  className="size-full object-cover"
-                />
+              {item.cover && (
+                <img src={item.cover} alt="" loading="lazy" className="size-full object-cover" />
               )}
             </span>
-            <span className="line-clamp-2 text-[11px] leading-tight font-medium">
-              {item.seriesName}
-            </span>
+            <span className="line-clamp-2 text-[11px] leading-tight font-medium">{item.title}</span>
             <span className="text-muted-foreground text-[10px]">
-              {tf('player.totalEpisodes', { count: item.episodeCount })}
+              {item.episodeCnt > 0
+                ? tf('player.totalEpisodes', { count: item.episodeCnt })
+                : t('detail.upcoming')}
             </span>
           </button>
         ))}

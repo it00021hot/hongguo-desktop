@@ -81,22 +81,6 @@ pub async fn resolve_series(state: State<'_, AppState>, input: String) -> AppRes
     Ok(series)
 }
 
-/// 详情页附加信息（简介 + 推荐）。按需取，不落盘。
-#[tauri::command]
-pub async fn get_series_extras(series_id: String) -> crate::domain::model::SeriesExtras {
-    let url = format!("https://hongguoduanju.com/detail?series_id={series_id}");
-    match crate::domain::site::fetch::fetch_site_html(&url).await {
-        Ok(html) => crate::domain::model::SeriesExtras {
-            intro: crate::domain::site::series_page::intro_from_html(&html),
-            recommendations: crate::domain::site::series_page::recommendations_from_html(&html),
-        },
-        Err(e) => {
-            log::warn!("[Series] 详情页附加信息取不到: {e}");
-            Default::default()
-        }
-    }
-}
-
 /// 拉一部剧的相关作品·系列（同系列各季 + 同 IP，官方 plan 接口）。
 ///
 /// 详情页「相关推荐」tab 顶部的内容；失败由前端静默降级（该模块本就

@@ -27,29 +27,6 @@ pub struct Series {
     pub dismissed: bool,
 }
 
-/// 官网详情页的附加信息：简介 + 推荐。
-///
-/// 刻意**不落盘**：这两样都是「打开详情页时看一眼」的内容，
-/// 存进 data.json 只会发霉（旧剧集永远补不上），每次打开现取即可。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeriesExtras {
-    pub intro: String,
-    pub recommendations: Vec<RecommendItem>,
-}
-
-/// 官网详情页底部的推荐短剧。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecommendItem {
-    pub series_id: String,
-    pub series_name: String,
-    #[serde(default)]
-    pub series_cover: String,
-    #[serde(default)]
-    pub episode_count: u32,
-}
-
 /// 一集。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

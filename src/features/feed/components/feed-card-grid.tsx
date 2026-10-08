@@ -57,7 +57,7 @@ function FeedCard({ item, rank, downloaded, onSelect }: CardProps) {
       className="group bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex w-full cursor-pointer flex-col overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
-        <SeriesCover seriesId={item.seriesId} cover={item.cover} alt={item.title} />
+        <SeriesCover cover={item.cover} alt={item.title} />
 
         {downloaded > 0 && (
           <Badge

@@ -116,7 +116,7 @@ function CollectionCard({
 }) {
   const { data: meta } = useSeriesMeta(entry.seriesId);
   const rawCover = meta?.cover ?? '';
-  const { data: webCover } = useWebCover(entry.seriesId, rawCover);
+  const { data: webCover } = useWebCover(rawCover);
   const cover = webCover ?? (isRenderableCover(rawCover) ? rawCover : '');
   const [brokenFor, setBrokenFor] = useState('');
   const imgBroken = brokenFor !== '' && brokenFor === cover;

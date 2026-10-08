@@ -8,14 +8,12 @@ import {
   type InfiniteData,
 } from '@tanstack/react-query';
 import {
-  browse,
   discover,
   download,
   login,
   merge,
   play,
   rank,
-  search,
   series,
   seriesSearch,
   settings,
@@ -59,7 +57,6 @@ const keys = {
   newDrama: (gender: number) => ['new-drama', gender] as const,
   seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
-  seriesExtras: (id: string) => ['series-extras', id] as const,
   seriesProgress: (id: string) => ['series-progress', id] as const,
   watchHistory: ['watch-history'] as const,
   tasks: ['download-tasks'] as const,
@@ -69,20 +66,15 @@ const keys = {
   mergePreflight: (id: string) => ['merge-preflight', id] as const,
   storageUsage: ['storage-usage'] as const,
   capability: ['decode-capability'] as const,
-  browseCategories: ['browse-categories'] as const,
-  browseList: (cat: string, genre: string, page: number) =>
-    ['browse-list', cat, genre, page] as const,
   browsePanel: ['browse-panel'] as const,
   browseFeed: (filters: BrowseFilters) => ['browse-feed', filters] as const,
   relatedSeries: (seriesId: string) => ['related-series', seriesId] as const,
   seriesMeta: (seriesId: string) => ['series-meta', seriesId] as const,
   seriesComments: (seriesId: string) => ['series-comments', seriesId] as const,
-  seriesSearch: (keyword: string) => ['series-search', keyword] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
   interactState: ['interact-state'] as const,
   bookshelf: ['bookshelf'] as const,
-  webCover: (seriesId: string) => ['web-cover', seriesId] as const,
   rank: (selected: string, sub: string, panel: string) => ['rank', selected, sub, panel] as const,
   newCalendar: (date: string) => ['new-calendar', date] as const,
   reservations: (isOnline: boolean) => ['reservations', isOnline] as const,
@@ -138,15 +130,6 @@ export function useSeriesEpisodes(seriesId: string | null) {
         }),
       ]),
     enabled: seriesId !== null,
-  });
-}
-
-export function useSeriesExtras(seriesId: string) {
-  return useQuery({
-    queryKey: keys.seriesExtras(seriesId),
-    queryFn: () => series.extras(seriesId),
-    enabled: seriesId !== '',
-    staleTime: 10 * 60_000,
   });
 }
 
@@ -553,30 +536,20 @@ function coverProxyUrl(remote: string): string {
 }
 
 /**
- * webp 封面懒加载：HEIC 源只在 HEVC 扩展齐全的机器上能直接渲染，先换成
- * 官网版 webp；换不到的（未上线剧官网没有页面）落到 hongguo-cover 本地
- * 转码代理（ffmpeg 下载 HEIC 转 JPEG，磁盘缓存）。两种途径都失败时
- * `data` 为空，组件自己的 onError 占位图兜底。
+ * 封面增强：能直接渲染的格式给 undefined（组件原样加载源图）；HEIC 等
+ * WebView 解不了的源给 hongguo-cover 本地转码代理地址（ffmpeg 下载 HEIC
+ * 转 JPEG，磁盘缓存）。
  *
- * `eagerProxy`：不等 webp 结果、立即返回本地代理地址——给「切剧瞬间的
- * 全屏占位」用，那里黑屏一秒都嫌长（代理首次要现转一次码，但转码是本地
- * 活，通常比取流快）。卡片网格不要开：几十张图同时打代理会连环转码。
+ * 官网 webp 兜底链已整体拆除（2026-10-08：数据面一律走官方 App 接口），
+ * 封面只有「原图 / 本地代理」两条路，纯同步无查询。都失败时组件自己的
+ * onError 占位图兜底。
  */
-export function useWebCover(seriesId: string, sourceCover: string, eagerProxy = false) {
-  const needs = !isRenderableCover(sourceCover);
-  const q = useQuery({
-    queryKey: keys.webCover(seriesId),
-    queryFn: () => discover.webCover(seriesId),
-    enabled: needs && seriesId !== '',
-    staleTime: Infinity,
-    gcTime: 30 * 60_000,
-    retry: false,
-  });
+export function useWebCover(sourceCover: string) {
   return {
-    data: needs
-      ? (q.data ??
-        (eagerProxy || q.isSuccess || q.isError ? coverProxyUrl(sourceCover) : undefined))
-      : undefined,
+    data:
+      sourceCover !== '' && !isRenderableCover(sourceCover)
+        ? coverProxyUrl(sourceCover)
+        : undefined,
   };
 }
 
@@ -662,24 +635,6 @@ export function useAccount() {
 
 // ---------------------------------------------------------------- 浏览与搜索
 
-export function useBrowseCategories() {
-  return useQuery({
-    queryKey: keys.browseCategories,
-    queryFn: browse.categories,
-    staleTime: Infinity,
-  });
-}
-
-export function useBrowseList(category: string, genre: string, page: number) {
-  return useQuery({
-    queryKey: keys.browseList(category, genre, page),
-    queryFn: () => browse.list(category, genre, page),
-    // 翻页时保留上一页数据，避免白屏
-    placeholderData: (prev) => prev,
-    staleTime: 30_000,
-  });
-}
-
 /** 找剧筛选面板：八行维度选项（选项表随服务端运营变化，拉一次长期用）。 */
 export function useBrowsePanel() {
   return useQuery({
@@ -748,17 +703,6 @@ export function useSeriesComments(seriesId: string) {
     getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: !!seriesId,
     staleTime: 60_000,
-  });
-}
-
-export function useSearch(keyword: string) {
-  const kw = keyword.trim();
-  return useQuery({
-    queryKey: keys.seriesSearch(kw),
-    queryFn: () => search.run(kw),
-    // 关键词为空就是浏览模式，不该发嗅探请求
-    enabled: kw !== '',
-    staleTime: 5 * 60_000,
   });
 }
 

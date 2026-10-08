@@ -487,10 +487,8 @@ function SuggestRow({
   onHover: () => void;
   onPick: (item: SuggestItem) => void;
 }) {
-  // 封面闸门对齐 hgplayer（seriesId && cover）：纯词联想 keyword 也是剧集
-  // id，不设闸 useWebCover 会走官网兜底把图捞回来——第三方纯词行没有图。
-  // seriesId 传空串让 hook 的 enabled 直接短路，不发起查询。
-  const { data: webCover } = useWebCover(item.cover ? item.seriesId : '', item.cover);
+  // 封面闸门对齐 hgplayer（cover 有无）：纯词联想不渲染封面，只有放大镜。
+  const { data: webCover } = useWebCover(item.cover);
   return (
     <button
       type="button"

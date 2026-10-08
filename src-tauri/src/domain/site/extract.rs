@@ -1,17 +1,6 @@
-//! HTML 里的字段提取。
+//! 分享链接 / 文本里的剧集 ID 提取（纯解析，无网络）。
 
 use regex::Regex;
-
-/// 从文本里取第一个 `"key":"value"` 形式的字段。
-///
-/// 用于解析页面内嵌的 JSON 状态（Nuxt/Next 会把数据塞进 script 标签）。
-pub fn pick_json_string(text: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{key}\"\\s*:\\s*\"([^\"]*)\"");
-    let re = Regex::new(&pattern).ok()?;
-    re.captures(text)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-}
 
 /// 从分享文本里解析 `series_id`。
 ///
@@ -30,17 +19,6 @@ pub fn parse_series_id(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn picks_embedded_json_field() {
-        let html = r#"<script>{"title":"我的剧","cover":"x.jpg"}</script>"#;
-        assert_eq!(pick_json_string(html, "title").unwrap(), "我的剧");
-    }
-
-    #[test]
-    fn missing_field_is_none() {
-        assert!(pick_json_string("<html></html>", "title").is_none());
-    }
 
     #[test]
     fn parses_pure_number() {
