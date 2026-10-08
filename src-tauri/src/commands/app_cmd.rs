@@ -113,6 +113,45 @@ const MINI_MARGIN: f64 = 16.0;
 /// hgplayer 进小屏前同样先 `WindowSetMinSize`。
 const MAIN_MIN: (f64, f64) = (1024.0, 680.0);
 
+/// 藏/显 macOS 原生红绿灯的三颗圆点（小屏模式用）。
+///
+/// 刻意**不动 styleMask**：tao 的 `set_decorations` 是整体替换 styleMask，
+/// 会把 Overlay 全出血依赖的 `FullSizeContentView` 位一起抹掉——标题条重新
+/// 占位 28px、整个 app 内容被顶下去（外框实测 840→868）。而且它走 GCD 主
+/// 队列异步块，事后用 `set_title_bar_style` 补位是内联立即执行，永远先于
+/// 排队的替换落地、补不过它（探针实测 inner=840/outer=868 复证）。所以直接
+/// 对三颗 `NSWindowButton` setHidden：窗口结构零变化，尺寸语义全程稳定。
+/// hgplayer 小屏连标题栏都没有，480×270 的画面上再叠三颗圆点纯属多余；
+/// Windows 本就 decorations:false，无需此操作。
+fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
+    use objc2_app_kit::{NSWindow, NSWindowButton};
+    use tauri::Manager;
+
+    // NSWindow/NSButton 的方法不是线程安全的，落到主线程执行
+    let app = app.clone();
+    let _ = app.run_on_main_thread({
+        let app = app.clone();
+        move || {
+            let Some(win) = app.get_webview_window("main") else {
+                return;
+            };
+            let Ok(ptr) = win.ns_window() else {
+                return;
+            };
+            let ns_window = unsafe { &*(ptr as *const NSWindow) };
+            for kind in [
+                NSWindowButton::CloseButton,
+                NSWindowButton::MiniaturizeButton,
+                NSWindowButton::ZoomButton,
+            ] {
+                if let Some(btn) = ns_window.standardWindowButton(kind) {
+                    btn.setHidden(hidden);
+                }
+            }
+        }
+    });
+}
+
 /// 进入小屏播放（对齐 hgplayer 的「小屏播放」按钮 ng()/rw()）：
 /// **同一个窗口**缩成 480×270、落到工作区右下角——不另开窗口、不藏
 /// 主窗、不暂停，`<video>` 元素原地不动、播放零中断。
@@ -133,7 +172,11 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
         return Ok(());
     }
 
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+    // 快照用 inner_size（内容尺寸）：exit 的 set_size 语义就是「设内容
+    // 尺寸」，拿外框当内容还原会每圈漂移。红绿灯改为只 setHidden 后
+    // （见 set_traffic_lights_hidden）styleMask 全程不动，macOS 下外框
+    // 与内容恒等，与无框的 Windows/Linux 行为一致，快照精确往返。
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
         return Ok(());
     };
     *saved_geometry() = Some(SavedGeometry {
@@ -143,6 +186,11 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
         height: size.height,
         maximized: win.is_maximized().unwrap_or(false),
     });
+
+    // macOS：藏掉原生红绿灯（只 setHidden 三颗圆点，不动 styleMask，
+    // 理由见 set_traffic_lights_hidden）；退出时在 exit_mini_screen 里显回。
+    #[cfg(target_os = "macos")]
+    set_traffic_lights_hidden(&app, true);
 
     let mon = win
         .current_monitor()
@@ -174,11 +222,17 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
     let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
+    // 原生红绿灯无条件显回（macOS 小屏时被藏了，见 enter_mini_screen）——
+    // 放在「无快照提前 return」之前，异常路径也要还原。
+    #[cfg(target_os = "macos")]
+    set_traffic_lights_hidden(&app, false);
     let saved = saved_geometry().take();
     let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
     let Some(g) = saved else {
         return Ok(());
     };
+    // g.width/height 是进入时的内容尺寸（inner_size），与 set_size 语义
+    // 一致，见 enter_mini_screen 里的快照注释
     let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
     let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
     if g.maximized {

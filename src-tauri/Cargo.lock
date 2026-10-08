@@ -2203,6 +2203,8 @@ dependencies = [
  "md-5",
  "mouse_position",
  "muxide",
+ "objc2",
+ "objc2-app-kit",
  "parking_lot",
  "percent-encoding",
  "rand 0.9.5",

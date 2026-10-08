@@ -100,6 +100,22 @@ windows = { version = "0.62", features = [
     "Win32_System_Variant",
 ] }
 
+# macOS 原生红绿灯的藏/显（小屏模式）：直接对三颗 NSWindowButton setHidden，
+# 而不是 set_decorations 切 borderless——tao 的 set_decorations 是**整体替换
+# styleMask**，会把 Overlay 全出血依赖的 FullSizeContentView 位抹掉（标题条
+# 重新占位 28px、内容被顶下去，外框实测 840→868）。objc2 / objc2-app-kit 已
+# 在 tao 的依赖树里，同版本声明为直接依赖不新增外部 crate——与上面复用
+# windows crate 是同一思路。实现见 app_cmd 的 set_traffic_lights_hidden。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSButton",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 
