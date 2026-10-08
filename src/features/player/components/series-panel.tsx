@@ -134,8 +134,9 @@ export function SeriesPanel({ seriesId, currentIndex, onSelect }: Props) {
  */
 function Intro({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  // 两行装不下才给展开按钮；短简介不该挂一个点不开的「展开」
-  const expandable = text.length > 80;
+  // 两行装不下才给展开按钮。字符数阈值是 hgplayer 同款（它用 40）：
+  // 不量 DOM 就没有时序坑，宁滥勿缺——误报顶多多一个能点的按钮
+  const expandable = text.length > 40;
 
   return (
     <section className="grid gap-1.5">

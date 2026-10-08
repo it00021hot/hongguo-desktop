@@ -137,6 +137,10 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
 
   const [introExpanded, setIntroExpanded] = useState(false);
   const intro = meta?.intro ?? '';
+  // 展开按钮按字符数显隐（hgplayer 同款哲学：不量 DOM，宁滥勿缺——
+  // 80 字符在最窄正常窗口的三行容量之外，误报顶多多一个能点的按钮，
+  // 测量方案则要在长驻组件里跟 ref/effect 时序搏斗）
+  const introExpandable = intro.length > 80;
 
   // 未带 seriesId（直接敲路由）：只指路，不去解析
   if (!seriesId) {
@@ -253,26 +257,22 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
               {intro && (
                 <div className="mt-4 flex items-start gap-3">
                   <p
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setIntroExpanded((v) => !v)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') setIntroExpanded((v) => !v);
-                    }}
                     className={cn(
-                      'text-muted-foreground min-w-0 flex-1 cursor-pointer text-sm leading-relaxed',
+                      'text-muted-foreground min-w-0 flex-1 text-sm leading-relaxed',
                       !introExpanded && 'line-clamp-3',
                     )}
                   >
                     {intro}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setIntroExpanded((v) => !v)}
-                    className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer pt-0.5 text-xs"
-                  >
-                    {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
-                  </button>
+                  {introExpandable && (
+                    <button
+                      type="button"
+                      onClick={() => setIntroExpanded((v) => !v)}
+                      className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer pt-0.5 text-xs"
+                    >
+                      {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
+                    </button>
+                  )}
                 </div>
               )}
 

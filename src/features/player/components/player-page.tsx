@@ -1019,35 +1019,29 @@ export function PlayerView({
                   </p>
                   {meta?.intro && (
                     // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
-                    // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角
-                    <div className="mt-1 flex max-w-[36%] items-end gap-2">
+                    // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角。
+                    // 容器吃掉点击（防触发舞台暂停/继续），展开交互只在按钮上
+                    <div
+                      className="mt-1 flex max-w-[36%] items-end gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <p
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIntroExpanded((v) => !v);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') setIntroExpanded((v) => !v);
-                        }}
                         className={cn(
-                          'cursor-pointer text-xs leading-relaxed text-white/70 drop-shadow-md',
+                          'text-xs leading-relaxed text-white/70 drop-shadow-md',
                           !introExpanded && 'line-clamp-2',
                         )}
                       >
                         {meta.intro}
                       </p>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIntroExpanded((v) => !v);
-                        }}
-                        className="shrink-0 cursor-pointer pb-0.5 text-xs text-white/60 drop-shadow-md hover:text-white"
-                      >
-                        {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
-                      </button>
+                      {meta.intro.length > 40 && (
+                        <button
+                          type="button"
+                          onClick={() => setIntroExpanded((v) => !v)}
+                          className="shrink-0 cursor-pointer pb-0.5 text-xs text-white/60 drop-shadow-md hover:text-white"
+                        >
+                          {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
