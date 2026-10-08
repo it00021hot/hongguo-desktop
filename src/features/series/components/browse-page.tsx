@@ -320,6 +320,9 @@ export function BrowsePage() {
               onFocus={() => setSuggestOpen(true)}
               onBlur={() => setSuggestOpen(false)}
               onKeyDown={(e) => {
+                // 输入法组合中（拼音未上屏）：Enter 是字母上屏、方向键归
+                // 输入法——不碰联想/提交
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                 if (!showSuggest) return;
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();

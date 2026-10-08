@@ -179,6 +179,8 @@ export function LoginDialog({
                   className="flex-1"
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
                   onKeyDown={(e) => {
+                    // 输入法组合中的 Enter 是字母上屏，不是提交
+                    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                     if (e.key === 'Enter') void doLogin();
                   }}
                 />

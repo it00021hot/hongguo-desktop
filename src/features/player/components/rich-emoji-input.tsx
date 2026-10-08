@@ -84,6 +84,8 @@ export function RichEmojiInput({
   const elRef = useRef<HTMLDivElement | null>(null);
   /** 输入框最后持有的光标（失焦后仍可用于插入） */
   const savedRangeRef = useRef<Range | null>(null);
+  /** 输入法组合中（拼音未上屏）：期间不做任何 DOM 接管，避免搅乱组合 */
+  const composingRef = useRef(false);
 
   // 持续记录光标：表情面板打开时焦点被菜单拿走，插入要用这里存的位置
   useEffect(() => {
@@ -115,6 +117,39 @@ export function RichEmojiInput({
       savedRangeRef.current = null;
     }
   }, [value]);
+
+  /** DOM → value 同步：孤儿锚点清理/截断/滚动归位。输入法组合期间
+   *  跳过一切会动 DOM 的步骤（重建会打断拼音组合），只上报序列化。 */
+  const syncFromDom = () => {
+    const el = elRef.current;
+    if (!el) return;
+    if (!composingRef.current) {
+      // 孤儿锚点清理：零宽锚点的存在意义是「垫在 img 后面」，img 被
+      // 浏览器默认行为删掉后锚点就成了幽灵字符
+      for (const n of [...el.childNodes]) {
+        if (
+          n.nodeType === Node.TEXT_NODE &&
+          n.textContent === '\u200B' &&
+          !(n.previousSibling instanceof HTMLImageElement)
+        ) {
+          n.remove();
+        }
+      }
+    }
+    let next = serialize(el);
+    if (!composingRef.current) {
+      // 清空后残留的 <br> 会让 :empty 失效——序列化为空就归零 DOM
+      if (next === '' && el.childNodes.length > 0) el.replaceChildren();
+      if (maxLength !== undefined && next.length > maxLength) {
+        next = next.slice(0, maxLength);
+        renderValue(el, next);
+      }
+      // 内容不溢出时把滚动归位：光标自动滚动可能把盒子停在「开头被
+      // 裁掉」的静止态（占位符/短文本显示成中间截断）
+      if (el.scrollWidth <= el.clientWidth) el.scrollLeft = 0;
+    }
+    onChange(next);
+  };
 
   useImperativeHandle(ref, () => ({
     insertEmoji: (name: string) => {
@@ -181,33 +216,20 @@ export function RichEmojiInput({
       suppressContentEditableWarning
       data-placeholder={placeholder}
       className={cn('rich-emoji-input outline-none', className)}
-      onInput={() => {
-        const el = elRef.current;
-        if (!el) return;
-        // 孤儿锚点清理：零宽锚点的存在意义是「垫在 img 后面」，img 被
-        // 浏览器默认行为删掉后锚点就成了幽灵字符
-        for (const n of [...el.childNodes]) {
-          if (
-            n.nodeType === Node.TEXT_NODE &&
-            n.textContent === '\u200B' &&
-            !(n.previousSibling instanceof HTMLImageElement)
-          ) {
-            n.remove();
-          }
-        }
-        let next = serialize(el);
-        // 清空后残留的 <br> 会让 :empty 失效——序列化为空就归零 DOM
-        if (next === '' && el.childNodes.length > 0) el.replaceChildren();
-        if (maxLength !== undefined && next.length > maxLength) {
-          next = next.slice(0, maxLength);
-          renderValue(el, next);
-        }
-        // 内容不溢出时把滚动归位：光标自动滚动可能把盒子停在「开头被
-        // 裁掉」的静止态（占位符/短文本显示成中间截断）
-        if (el.scrollWidth <= el.clientWidth) el.scrollLeft = 0;
-        onChange(next);
+      onCompositionStart={() => {
+        composingRef.current = true;
       }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+        // 上屏后补一次完整同步（组合期间的 onChange 跳过了截断/清理）
+        syncFromDom();
+      }}
+      onInput={() => syncFromDom()}
       onKeyDown={(e) => {
+        // 输入法组合中：Enter 是「字母上屏」不是提交，退格是删拼音——
+        // 全部交还输入法/默认行为，不做任何接管（isComposing 标准位 +
+        // keyCode 229 老式双保险，WebKit 两者都会给）
+        if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         // 表情是不可编辑的内嵌 img，紧贴它的退格/删除在 WebKit 里行为
         // 怪异：先无声吃掉零宽锚点（按一下没反应），再误伤相邻文字。
         // 这里接管成「按可见单位删」：img 连同它的锚点一次删干净。
