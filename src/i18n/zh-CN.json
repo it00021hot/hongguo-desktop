@@ -406,7 +406,6 @@
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "向下还原",
-    "zoom": "全屏",
     "close": "关闭",
     "exitTitle": "确定要退出吗？",
     "exitBody": "退出会中断正在进行的下载任务，播放进度已实时保存。",

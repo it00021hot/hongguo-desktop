@@ -5,15 +5,25 @@ import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 /**
- * 窗口控制按钮组。
+ * 窗口控制按钮组（Windows / Linux 专用）。
  *
- * 窗口已是 `decorations: false`（见 tauri.conf.json），系统白条不再画，
- * 缩小/最大化/关闭由这里提供。
+ * 这两个平台窗口是 `decorations: false`（见 tauri.conf.json），系统白条
+ * 不再画，缩小/最大化/关闭由这里提供。
  *
- * **不单独占一行**：无处边框下再压一条只写着应用名的标题栏纯属浪费高度，
- * 而应用名侧边栏顶部已经有一份。所以两组按钮分别寄生在既有的结构上——
- * Windows 挂主区顶栏右端，macOS 交通灯挂侧边栏左上角——
- * 拖拽区则由这两处宿主的父容器提供（见 app-shell / app-sidebar）。
+ * **macOS 不走这里**：自绘红绿灯会把原生能力全部丢掉——绿键 hover 的
+ * 「移动并调整大小 / 填充与排列 / 全屏」菜单、标题栏双击缩放、原生的
+ * 拖拽手感和圆角阴影，都是圆点按钮画不出来的。mac 的窗口是原生红绿灯
+ * （tauri.macos.conf.json：decorations + titleBarStyle Overlay +
+ * hiddenTitle），小屏时由后端摘掉再还原（见 app_cmd 的 enter/exit_mini_screen）。
+ *
+ * Windows 组**不单独占一行**：无边框下再压一条只写着应用名的标题栏
+ * 纯属浪费高度，应用名侧边栏顶部已经有一份。按钮寄生在顶栏右端
+ * （见 app-shell），拖拽区由宿主的父容器提供。
+ *
+ * ⚠️ 平台配置合并是 RFC 7396（json_patch::merge）：**数组整体替换、
+ * 不按下标深合并**。所以 tauri.macos.conf.json 的 windows 数组必须带
+ * 完整窗口定义；改 tauri.conf.json 的窗口字段时要同步过去，否则 mac
+ * 上会静默回退旧值。
  */
 
 /** 最大化状态。系统侧的变化（拖边缘、Win+↑、任务栏点击）也要跟上。 */
@@ -67,48 +77,6 @@ export function WindowButtons() {
   );
 }
 
-/**
- * macOS 交通灯：三个圆点，顺序为 关闭 / 最小 / 全屏。
- *
- * 挂在侧边栏左上角而不是主区：mac 的交通灯历来在窗口左上，
- * 放到内容区右侧既不符合平台习惯，也会和页面内的按钮抢位置。
- */
-export function MacTrafficLights() {
-  const appWindow = getCurrentWindow();
-  const maximized = useMaximized();
-  const [hover, setHover] = useState<string | null>(null);
-
-  return (
-    <div
-      className="flex shrink-0 items-center gap-2"
-      onMouseEnter={() => setHover('bar')}
-      onMouseLeave={() => setHover(null)}
-    >
-      <MacDot
-        label={t('window.close')}
-        color="bg-[#ff5f57]"
-        active={hover === 'close'}
-        onClick={() => void appWindow.close()}
-        glyph="×"
-      />
-      <MacDot
-        label={t('window.minimize')}
-        color="bg-[#febc2e]"
-        active={hover === 'min'}
-        onClick={() => void appWindow.minimize()}
-        glyph="−"
-      />
-      <MacDot
-        label={maximized ? t('window.restore') : t('window.zoom')}
-        color="bg-[#28c840]"
-        active={hover === 'zoom'}
-        onClick={() => void appWindow.toggleMaximize()}
-        glyph="+"
-      />
-    </div>
-  );
-}
-
 interface WinButtonProps {
   label: string;
   onClick: () => void;
@@ -136,46 +104,6 @@ function WinButton({ label, onClick, danger, children }: WinButtonProps) {
       )}
     >
       {children}
-    </button>
-  );
-}
-
-interface MacDotProps {
-  /** 无障碍标签与 tooltip，走 i18n */
-  label: string;
-  /** 交通灯的固定色，三键靠色相区分 */
-  color: string;
-  /** hover 到本键时才显示符号 */
-  active: boolean;
-  onClick: () => void;
-  /** hover 时浮出的符号。与 label 分开：文案要翻译，符号是固定字形 */
-  glyph: string;
-}
-
-/** macOS 交通灯：纯色圆点，hover 才浮出符号。 */
-function MacDot({ label, color, active, onClick, glyph }: MacDotProps) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={cn(
-        'grid size-3 place-items-center rounded-full',
-        // 背景色必须显式给：写成 currentColor 会取到文字色，圆点直接变黑
-        color,
-        active && 'brightness-95',
-      )}
-    >
-      {/* 符号常驻 DOM，靠 opacity 控制显隐：hover 切换才不会重新挂载节点 */}
-      <span
-        className={cn(
-          'text-[9px] leading-none font-bold text-black/60 transition-opacity',
-          active ? 'opacity-100' : 'opacity-0',
-        )}
-      >
-        {glyph}
-      </span>
     </button>
   );
 }

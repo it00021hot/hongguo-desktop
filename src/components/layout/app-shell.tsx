@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Pin } from 'lucide-react';
 import { AppSidebar } from './app-sidebar';
 import { ThemeSwitch } from './theme-switch';
-import { MacTrafficLights, WindowButtons } from './window-controls';
+import { WindowButtons } from './window-controls';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { useEvent } from '@/lib/ipc/events';
@@ -22,7 +22,8 @@ import { cn } from '@/lib/utils';
 export const TOP_BAR_SLOT_ID = 'topbar-slot';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  // mac 的交通灯在顶栏左端（平台惯例），其余平台顶栏右侧给窗口按钮
+  // mac 用原生红绿灯（tauri.macos.conf.json：Overlay + hiddenTitle），
+  // 顶栏给它们让出左端位置；其余平台自绘窗口按钮挂顶栏右侧
   const mac = isMac();
 
   // 退出确认：后端把窗口关闭请求（自绘 ×/Alt+F4/任务栏）拦下来转成事件，
@@ -58,15 +59,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-      {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：红绿灯/
-            logo/应用名在左，中部是各页 portal 进来的分类 tab（无则留空，
-            页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
+      {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：原生红绿灯
+            （mac）/logo/应用名在左，中部是各页 portal 进来的分类 tab（无则
+            留空，页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
             语言/窗口控件钉在右端。
             小屏播放整个顶栏不渲染——第三方小屏是纯播放器，窗口钮/拖拽
-            由紧凑控制条与播放页拖拽条承担。
+            由紧凑控制条与播放页拖拽条承担（mac 的原生红绿灯也由后端在
+            enter_mini_screen 里一并摘掉）。
 
             顶栏在侧边栏**上方**而不是长在侧边栏里——侧边栏折叠不影响顶部，
             播放/沉浸流时控件也固定在顶栏，不会被弹幕或画面内容盖住。
+
+            mac 左内边距给原生红绿灯让位：trafficLightPosition x=12 起排，
+            三个 12pt 圆点 + 8pt 间距到 ~64px 收尾，76px 起排 logo 不贴不挤。
 
             ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
             自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
@@ -74,9 +79,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {!miniScreen && (
         <header
           data-tauri-drag-region="deep"
-          className="bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b px-3"
+          className={cn(
+            'bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b',
+            mac ? 'pl-[76px] pr-3' : 'px-3',
+          )}
         >
-          {mac && <MacTrafficLights />}
           <img
             src="/app-icon.png"
             alt=""
@@ -85,7 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="size-6 shrink-0 rounded-md"
           />
           {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
-                左右组宽度不等（交通灯+logo vs 控件），flex-1 的「剩余空间
+                左右组宽度不等（红绿灯位+logo vs 控件），flex-1 的「剩余空间
                 居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
                 transform（半像素平移会让文字发糊）。
                 容器 pointer-events-none：空白带不拦截、仍可拖窗；
