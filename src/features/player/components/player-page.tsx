@@ -743,9 +743,13 @@ export function PlayerView({
     const onKey = (e: KeyboardEvent) => {
       const video = videoRef.current;
       if (!video) return;
-      // 输入框里打字时不劫持按键
+      // 输入框里打字时不劫持按键：表单控件之外还要算上富文本输入
+      // （弹幕/评论输入是 contentEditable 的 div，←→/空格/↑↓ 是移动
+      // 光标和输入的一部分，不是快进快退/播放暂停/切集）
       const el = e.target as HTMLElement | null;
-      if (el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+      if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) {
+        return;
+      }
 
       switch (e.key) {
         case 'Escape':

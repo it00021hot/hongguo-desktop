@@ -75,6 +75,8 @@ export function CommentPanel({ vid, onClose }: Props) {
   // Esc 关闭（面板盖住互动栏按钮时这是最直接的退出路径）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 输入法组合中的 Esc 是取消拼音，不是关面板
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -102,6 +104,9 @@ export function CommentPanel({ vid, onClose }: Props) {
   /** 发评论 / 回复的富输入框 ref（表情插入走 ref 方法） */
   const composerRef = useRef<RichEmojiInputHandle | null>(null);
   const replyInputRef = useRef<RichEmojiInputHandle | null>(null);
+  /** 表情面板开合（底部发评论 / 回复行各一份） */
+  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
+  const [replyEmojiOpen, setReplyEmojiOpen] = useState(false);
 
   const submit = () => {
     const content = text.trim();
@@ -303,7 +308,9 @@ export function CommentPanel({ vid, onClose }: Props) {
                           className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
                         />
                         <EmojiPickerButton
-                          align="end"
+                          open={replyEmojiOpen}
+                          onToggle={() => setReplyEmojiOpen((o) => !o)}
+                          align="right"
                           onPick={(name) => replyInputRef.current?.insertEmoji(name)}
                         />
                         <Button
@@ -374,7 +381,9 @@ export function CommentPanel({ vid, onClose }: Props) {
             className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
           />
           <EmojiPickerButton
-            align="end"
+            open={composerEmojiOpen}
+            onToggle={() => setComposerEmojiOpen((o) => !o)}
+            align="right"
             onPick={(name) => composerRef.current?.insertEmoji(name)}
           />
           <Button
