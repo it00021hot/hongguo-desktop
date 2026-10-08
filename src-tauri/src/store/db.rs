@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 
 /// 当前 schema 版本。每次结构性变更（加表/加列）时 +1，
 /// 并在 [`MIGRATIONS`] 追加一段从上一版本到新版本的 SQL。
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
@@ -95,6 +95,20 @@ pub static MIGRATIONS: &[&str] = &[
     // webp 封面缓存随之作废——HEIC 封面改由本地 hongguo-cover 协议现转。
     r#"
     DROP TABLE IF EXISTS cover_cache;
+    "#,
+    // v4 -> v5：设备档案从单行表扩成多行（1=现役，2=上一代备份，10=
+    // bootstrap 元数据）。老表的 CHECK (id = 1) 锁死单行，SQLite 不能
+    // 直接删约束，按惯例重建表搬数据（对齐 hgplayer device.json + .bak
+    // 的「现役 + 上一代」双档案形态）。
+    r#"
+    CREATE TABLE device_profile_new (
+        id   INTEGER PRIMARY KEY,
+        json TEXT NOT NULL
+    );
+    INSERT INTO device_profile_new (id, json)
+        SELECT id, json FROM device_profile;
+    DROP TABLE device_profile;
+    ALTER TABLE device_profile_new RENAME TO device_profile;
     "#,
 ];
 

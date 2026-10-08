@@ -5,8 +5,8 @@
 //! 这里选择后者：内存占用恒定，且能复用单集转码的缓存。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
 use super::done_inputs;
 use super::guard::RunningMerge;
@@ -116,84 +116,88 @@ pub fn compat_merge(
         // 不用「起 threads 个线程各跑固定那几集」——集数少于核数时会漏，
         // 集数多于核数时又只能并发 threads 集。
         for _ in 0..threads {
-            scope.spawn(|| loop {
-                if slot.is_cancelled() {
-                    return;
-                }
-                // 拿活跃名额：live_cap 收敛后，多出来的线程在这里等而不是抢活。
-                // CAS 保证名额不超发；取消检查让等待线程能及时退出。
+            scope.spawn(|| {
                 loop {
                     if slot.is_cancelled() {
                         return;
                     }
-                    let a = active.load(Ordering::Relaxed);
-                    if a < live_cap.load(Ordering::Relaxed)
-                        && active
-                            .compare_exchange(a, a + 1, Ordering::Relaxed, Ordering::Relaxed)
-                            .is_ok()
-                    {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                // 认领第一格还没被占的。认领与占位在**同一次持锁**里完成，
-                // 否则两个线程会同时看到同一格是空的，转同一集两遍。
-                // 锁中毒只说明有线程 panic 过：持锁内只有整格读写，其余
-                // 格位仍然可信，恢复使用（空格在收集阶段自会报错）。
-                let next = {
-                    let mut g = slots.lock().unwrap_or_else(|p| p.into_inner());
-                    match g.iter().position(|s| s.is_none()) {
-                        Some(i) => {
-                            g[i] = Some(Ok(PathBuf::new())); // 占位
-                            Some(i)
+                    // 拿活跃名额：live_cap 收敛后，多出来的线程在这里等而不是抢活。
+                    // CAS 保证名额不超发；取消检查让等待线程能及时退出。
+                    loop {
+                        if slot.is_cancelled() {
+                            return;
                         }
-                        None => None,
-                    }
-                };
-                let Some(next) = next else {
-                    active.fetch_sub(1, Ordering::Relaxed);
-                    return;
-                };
-
-                let (vid_index, source) = &inputs[next];
-                // 本集的集内记账（毫秒拆分的最近比例），完成时结算回账本
-                let last_ms = AtomicI64::new(0);
-                let result = match cache::cached_path(series_id, *vid_index) {
-                    Some(p) => Ok(p),
-                    None => {
-                        let on_eps = episode_progress(
-                            &live,
-                            &last_ms,
-                            pipeline::episode_seconds(source),
-                            total,
-                            on_progress,
-                            task,
-                        );
-                        let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
-                        let r = pipeline::transcode(
-                            series_id,
-                            *vid_index,
-                            source,
-                            &TranscodeOptions::default(),
-                            scale_to,
-                            Some(cb),
-                        );
-                        // 会话超订的信号：预期硬编、这集却落在软路上。
-                        // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
-                        // 也会触发（多收敛一次，代价只是后面保守些），可接受。
-                        if hw_expected
-                            && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
-                            && live_cap.fetch_min(2, Ordering::Relaxed) > 2
+                        let a = active.load(Ordering::Relaxed);
+                        if a < live_cap.load(Ordering::Relaxed)
+                            && active
+                                .compare_exchange(a, a + 1, Ordering::Relaxed, Ordering::Relaxed)
+                                .is_ok()
                         {
-                            log::warn!("[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2");
+                            break;
                         }
-                        r.map(|t| PathBuf::from(t.output_path))
+                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
-                };
-                slots.lock().unwrap_or_else(|p| p.into_inner())[next] = Some(result);
-                active.fetch_sub(1, Ordering::Relaxed);
-                let finished = live.finish(last_ms.load(Ordering::Relaxed));
-                on_progress(finished as f64, total, task);
+                    // 认领第一格还没被占的。认领与占位在**同一次持锁**里完成，
+                    // 否则两个线程会同时看到同一格是空的，转同一集两遍。
+                    // 锁中毒只说明有线程 panic 过：持锁内只有整格读写，其余
+                    // 格位仍然可信，恢复使用（空格在收集阶段自会报错）。
+                    let next = {
+                        let mut g = slots.lock().unwrap_or_else(|p| p.into_inner());
+                        match g.iter().position(|s| s.is_none()) {
+                            Some(i) => {
+                                g[i] = Some(Ok(PathBuf::new())); // 占位
+                                Some(i)
+                            }
+                            None => None,
+                        }
+                    };
+                    let Some(next) = next else {
+                        active.fetch_sub(1, Ordering::Relaxed);
+                        return;
+                    };
+
+                    let (vid_index, source) = &inputs[next];
+                    // 本集的集内记账（毫秒拆分的最近比例），完成时结算回账本
+                    let last_ms = AtomicI64::new(0);
+                    let result = match cache::cached_path(series_id, *vid_index) {
+                        Some(p) => Ok(p),
+                        None => {
+                            let on_eps = episode_progress(
+                                &live,
+                                &last_ms,
+                                pipeline::episode_seconds(source),
+                                total,
+                                on_progress,
+                                task,
+                            );
+                            let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
+                            let r = pipeline::transcode(
+                                series_id,
+                                *vid_index,
+                                source,
+                                &TranscodeOptions::default(),
+                                scale_to,
+                                Some(cb),
+                            );
+                            // 会话超订的信号：预期硬编、这集却落在软路上。
+                            // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
+                            // 也会触发（多收敛一次，代价只是后面保守些），可接受。
+                            if hw_expected
+                                && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
+                                && live_cap.fetch_min(2, Ordering::Relaxed) > 2
+                            {
+                                log::warn!(
+                                    "[Merge] 硬编会话疑似超订（本集回落软路），并行度收敛到 2"
+                                );
+                            }
+                            r.map(|t| PathBuf::from(t.output_path))
+                        }
+                    };
+                    slots.lock().unwrap_or_else(|p| p.into_inner())[next] = Some(result);
+                    active.fetch_sub(1, Ordering::Relaxed);
+                    let finished = live.finish(last_ms.load(Ordering::Relaxed));
+                    on_progress(finished as f64, total, task);
+                }
             });
         }
     });

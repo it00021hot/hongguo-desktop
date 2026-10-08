@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::signer::protobuf::{proto, FieldType, FieldValue};
+use crate::signer::protobuf::{FieldType, FieldValue, proto};
 
 /// 应用 id 与渠道号，Medusa 密文里硬编码。
 pub const APP_ID: &str = "8662";
@@ -40,6 +40,11 @@ pub struct DeviceProfile {
     fields: Vec<(String, String)>,
     #[serde(default = "default_user_agent")]
     user_agent: String,
+    /// 设备维度的 `ttreq` 票（注册响应 Set-Cookie 下发，按 install_id 发放）。
+    /// None = 用静态兜底档案配套的 [`ANON_TTREQ`]。不进 `fields`——那是要
+    /// 参与签名 query 的，票只该出现在 Cookie。
+    #[serde(default)]
+    ttreq: Option<String>,
 }
 
 fn default_user_agent() -> String {
@@ -55,7 +60,13 @@ impl DeviceProfile {
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
                 .collect(),
             user_agent: user_agent.to_string(),
+            ttreq: None,
         }
+    }
+
+    /// 挂上注册响应下发的本设备 `ttreq` 票（覆盖语义，None 清除回兜底）。
+    pub fn set_ttreq(&mut self, ttreq: Option<String>) {
+        self.ttreq = ttreq.filter(|t| !t.is_empty());
     }
 
     /// 按 key 取字段值，缺 key 给空串（与旧 `device_field` 行为一致）。
@@ -120,7 +131,7 @@ impl DeviceProfile {
     /// 移除字段（设备注册用：首次注册的 query 里不能带 `device_id=`/
     /// `iid=` 空值形态，字段必须**不存在**而不是空值）。
     #[cfg(test)]
-pub fn remove(&mut self, key: &str) {
+    pub fn remove(&mut self, key: &str) {
         self.fields.retain(|(k, _)| k != key);
     }
 
@@ -213,11 +224,13 @@ pub fn align_app_version(profile: &mut DeviceProfile) {
 pub fn anonymous_cookie(device: &DeviceProfile) -> String {
     // passport_csrf_token 必须以空值字段在场（hgplayer 抓包形态）：
     // 缺失时服务端把 send_code 走成「换绑检查」——目标号已绑定其它
-    // 账号就报 1001（2026-10-04 实测：补空值即恢复登录发码语义）
+    // 账号就报 1001（2026-10-04 实测：补空值即恢复登录发码语义）。
+    // ttreq 按 install_id 发放：注册档案带自己的票，静态档案用配套常量。
+    let ttreq = device.ttreq.as_deref().unwrap_or(ANON_TTREQ);
     format!(
         "passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id={}; ttreq={}",
         device.get("iid"),
-        ANON_TTREQ
+        ttreq
     )
 }
 

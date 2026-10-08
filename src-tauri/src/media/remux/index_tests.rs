@@ -4,7 +4,7 @@
 //! 与交织顺序，不碰文件 IO——落盘与字节搬运在 `remux.rs` 的用例里验证。
 
 use super::*;
-use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+use crate::domain::mp4::fixtures::{TrackPlan, mp4_with_samples};
 
 fn samples(n: usize) -> Vec<Vec<u8>> {
     (0..n).map(|i| vec![(i % 251) as u8; 40 + i]).collect()

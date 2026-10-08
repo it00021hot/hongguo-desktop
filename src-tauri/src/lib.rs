@@ -65,6 +65,7 @@ pub fn run() {
             // 待跑任务推入调度，最后探测转码能力。
             app.manage(build_app_state());
             bootstrap::store::init(app.handle())?;
+            bootstrap::device::init(app.handle())?;
             bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
             bootstrap::transcoder::init()?;
@@ -83,10 +84,11 @@ pub fn run() {
                 let win = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                        && ready.load(Ordering::Acquire) {
-                            api.prevent_close();
-                            let _ = win.emit("close-requested", ());
-                        }
+                        && ready.load(Ordering::Acquire)
+                    {
+                        api.prevent_close();
+                        let _ = win.emit("close-requested", ());
+                    }
                 });
             }
             Ok(())
@@ -134,6 +136,9 @@ pub fn run() {
             commands::login_cmd::login_status,
             commands::login_cmd::login_user_info,
             commands::login_cmd::login_logout,
+            // 设备生命周期（状态 / 手动重注册）
+            commands::device_cmd::device_status,
+            commands::device_cmd::device_retry_register,
             // 弹幕
             commands::danmaku_cmd::danmaku_list,
             commands::danmaku_cmd::comment_list,
@@ -237,23 +242,13 @@ fn build_app_state() -> std::sync::Arc<app_state::AppStateInner> {
     // 这里读到的会是注册产物）。旧档案的版本身份要对齐到当前客户端
     // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
     // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
-    let device = match db.device_profile() {
-        Ok(Some(mut p)) => {
-            signer::device::align_app_version(&mut p);
-            p
-        }
-        Ok(None) => {
-            let fallback = signer::video_device();
-            if let Err(e) = db.save_device_profile(&fallback) {
-                log::warn!("[Store] 静态设备档案落库失败（不影响启动）: {e}");
-            }
-            fallback
-        }
-        Err(e) => {
-            log::warn!("[Store] 设备档案读取失败，用静态兜底: {e}");
-            signer::video_device()
-        }
-    };
+    // 阵亡名单/远古快照的淘汰重铺与启动后的健康探针、失效轮换都在
+    // [`bootstrap::device`]（对齐 hgplayer 的 deviceBootstrap）。
+    let (device, device_source) = bootstrap::device::adopt_sync(&db);
+    log::info!(
+        "[Device] 现役档案 iid={}（{device_source}）",
+        device.get("iid")
+    );
     std::sync::Arc::new(app_state::AppStateInner::with_device(db, device))
 }
 

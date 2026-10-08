@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use super::probe::{ffmpeg_path, Encoder};
+use super::probe::{Encoder, ffmpeg_path};
 use crate::error::{AppError, AppResult};
 
 /// 一次转码的输入。
@@ -136,11 +136,7 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
 }
 
 fn even(v: u32) -> u32 {
-    if v.is_multiple_of(2) {
-        v
-    } else {
-        v - 1
-    }
+    if v.is_multiple_of(2) { v } else { v - 1 }
 }
 
 /// 编码器专属质量参数。

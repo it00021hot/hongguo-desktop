@@ -206,9 +206,10 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
             // 指纹变了说明用户发起了新登录，旧循环退出
             let current = state.login_mfa.read().clone();
             if let Some(cur) = current
-                && (cur.ctx.retry_tag, cur.ctx.log_id) != fingerprint {
-                    return;
-                }
+                && (cur.ctx.retry_tag, cur.ctx.log_id) != fingerprint
+            {
+                return;
+            }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
     });

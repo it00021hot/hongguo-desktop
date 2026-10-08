@@ -57,7 +57,6 @@
     "downloadedBadge": "{count} downloaded",
     "totalCount": "{total} titles",
     "loadMore": "Page {page} / {total}",
-    "resolving": "Opening…",
     "fGenre": "Genre",
     "fTheme": "Theme",
     "fRole": "Trope",
@@ -71,7 +70,7 @@
     "filters": "Filters"
   },
   "search": {
-    "placeholder": "Type a title, or paste a share link / series ID",
+    "placeholder": "Type a title / keyword",
     "submit": "Search",
     "exit": "Exit search",
     "resultCount": "{total} found",
@@ -107,7 +106,7 @@
     "deselectAll": "Deselect all",
     "rescan": "Rescan disk",
     "rescanFound": "Recovered {count} download records from disk",
-    "rescanNone": "Nothing to recover. After a fresh install or wiped records, parse the series first (open its detail page via search, or paste a link), then rescan",
+    "rescanNone": "Nothing to recover. After a fresh install or wiped records, search the series and open its detail page first, then rescan",
     "columns": {
       "episode": "Ep.",
       "status": "Status",

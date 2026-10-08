@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::OnceLock;
 
-use super::client::{api_call_reading, ApiEnv};
+use super::client::{ApiEnv, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use super::discover::{check_code, int_field, num_field, str_field};
 use crate::error::{AppError, AppResult};
@@ -223,13 +223,14 @@ pub async fn fetch_recommend_feed(
     if session_id.is_empty() {
         let (cfg, mut page) = fetch_tab_first_page(tab, env).await?;
         // 首批偶发空批：带着 cr=4 下发的会话直接走 cell/change 补拉
-        if page.items.is_empty() && !page.session_id.is_empty()
+        if page.items.is_empty()
+            && !page.session_id.is_empty()
             && let Ok(fill) = recommend_cell_change(tab, &cfg, &page.session_id, 0, &[], env).await
-            {
-                page.items = fill.items;
-                page.has_more = fill.has_more;
-                page.next_offset = fill.next_offset;
-            }
+        {
+            page.items = fill.items;
+            page.has_more = fill.has_more;
+            page.next_offset = fill.next_offset;
+        }
         cache_tab_config_insert(tab, cfg);
         Ok(page)
     } else {
@@ -942,20 +943,20 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
             .items
             .first()
             .is_some_and(|i| beijing_date(i.publish_time) == target)
-        {
-            // 目标日整日无上新时条目为空：解析成功即视为命中空日，
-            // 日期条兜底用首页的 schema（target 响应偶发缺 date_list）
-            let dates = if page.dates.is_empty() {
-                first.dates.clone()
-            } else {
-                page.dates
-            };
-            return Ok(CalendarPage {
-                dates,
-                default_date: first.default_date,
-                ..page
-            });
-        }
+    {
+        // 目标日整日无上新时条目为空：解析成功即视为命中空日，
+        // 日期条兜底用首页的 schema（target 响应偶发缺 date_list）
+        let dates = if page.dates.is_empty() {
+            first.dates.clone()
+        } else {
+            page.dates
+        };
+        return Ok(CalendarPage {
+            dates,
+            default_date: first.default_date,
+            ..page
+        });
+    }
 
     // 兜底：把目标日的条目从后续页里收集齐（越过目标日即停）
     let mut picked: Vec<CalendarItem> = first

@@ -18,8 +18,8 @@
 //! `edts` / `mvex` / `udta` 一律丢弃：编辑列表指向各集自己的片段，合并后语义
 //! 已不成立；时长改由样本表决定，对本地播放没有影响。
 
-use crate::domain::mp4::r#box::{build_box, find_box, parse_boxes, BoxHeader};
-use crate::domain::mp4::sample_table::{collect_track, TrackInfo};
+use crate::domain::mp4::r#box::{BoxHeader, build_box, find_box, parse_boxes};
+use crate::domain::mp4::sample_table::{TrackInfo, collect_track};
 use crate::error::{AppError, AppResult};
 
 /// 一个输入文件里的一条轨道：解析结果 + 要原样搬进产物的 box。
@@ -389,11 +389,7 @@ fn track_duration(info: &TrackInfo) -> u64 {
         .iter()
         .map(|&(n, d)| u64::from(n) * u64::from(d))
         .sum();
-    if sum > 0 {
-        sum
-    } else {
-        info.media_duration
-    }
+    if sum > 0 { sum } else { info.media_duration }
 }
 
 /// 生成合并后的 `moov`。
@@ -413,11 +409,7 @@ pub fn build_moov(index: &MergeIndex, offsets: &[Vec<u64>], wide: bool) -> Vec<u
 /// 与 [`needs_wide_offsets`] 同源：`stco` 存不下偏移时，`mdat` 的长度同样
 /// 存不下。两个都升到 64 位，才不会出现「索引说得出、box 装不下」。
 pub fn mdat_header_len(wide: bool) -> usize {
-    if wide {
-        16
-    } else {
-        8
-    }
+    if wide { 16 } else { 8 }
 }
 
 /// `mdat` 载荷（媒体数据）的起始偏移。

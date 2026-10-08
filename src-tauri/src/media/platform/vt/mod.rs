@@ -845,7 +845,10 @@ fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
 
 /// 一帧解码输出 →（缩放）→ 编码 → 收割产物。`pts` 是该帧与源槽位配对
 /// 好的显示时间（见 run() 流水注释）。
-#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
+)]
 fn process_frame(
     pb: Pb,
     pts: f64,

@@ -4,10 +4,10 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::rank::{
-    fetch_new_calendar, fetch_new_drama, fetch_rank_ex, fetch_reservations, reserve_series,
-    CalendarPage, RankPage,
+    CalendarPage, RankPage, fetch_new_calendar, fetch_new_drama, fetch_rank_ex, fetch_reservations,
+    reserve_series,
 };
-use crate::domain::api::search::{search_series, search_suggest, SearchPage, SuggestItem};
+use crate::domain::api::search::{SearchPage, SuggestItem, search_series, search_suggest};
 use crate::error::{AppError, AppResult};
 
 /// 拉一个榜单（任意 tab × 子榜 × 筛选组合）。

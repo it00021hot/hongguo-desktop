@@ -13,8 +13,8 @@
 //! - 跨 `.await` 传递的一律用 owned 值（`Arc`、`String`、`PathBuf`）
 //! - 进度回调用 `Arc<dyn Fn + Send + Sync>` 持有，不借用栈上的闭包
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter};
@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter};
 use crate::app_state::AppState;
 use crate::domain::model::DownloadTask;
 use crate::error::{AppError, AppResult};
-use crate::service::download_service::events::{names, ProgressThrottle};
+use crate::service::download_service::events::{ProgressThrottle, names};
 use crate::service::download_service::worker::{self, EpisodeDownload, ProgressSink};
 
 /// 调度器。

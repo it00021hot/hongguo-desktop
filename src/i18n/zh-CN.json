@@ -57,7 +57,6 @@
     "downloadedBadge": "已下载 {count} 集",
     "totalCount": "共 {total} 部",
     "loadMore": "第 {page} / {total} 页",
-    "resolving": "正在打开…",
     "fGenre": "体裁",
     "fTheme": "主题",
     "fRole": "设定",
@@ -71,7 +70,7 @@
     "filters": "筛选"
   },
   "search": {
-    "placeholder": "输入剧名，或粘贴分享链接 / 剧集 ID",
+    "placeholder": "输入剧名 / 关键词",
     "submit": "搜索",
     "exit": "退出搜索",
     "resultCount": "搜到 {total} 部",
@@ -107,7 +106,7 @@
     "deselectAll": "取消全选",
     "rescan": "扫描补登记",
     "rescanFound": "从磁盘补回 {count} 条下载记录",
-    "rescanNone": "没有可补登记的记录。如果是重装或记录被清空，先到搜索页解析那部剧（搜索点开详情或粘贴链接），再回来扫描",
+    "rescanNone": "没有可补登记的记录。如果是重装或记录被清空，先到找剧搜出那部剧并点开详情，再回来扫描",
     "columns": {
       "episode": "集数",
       "status": "状态",

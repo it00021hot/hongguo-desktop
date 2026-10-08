@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use base64::Engine;
 
-use super::range::{parse_range, partial_headers, ProtocolResponse, RangeSpec};
+use super::range::{ProtocolResponse, RangeSpec, parse_range, partial_headers};
 
 /// 协议里允许播放的扩展名（小写）。
 const ALLOWED: &[&str] = &["mp4", "mkv", "webm", "mov", "m4v"];
@@ -175,9 +175,11 @@ mod tests {
         let (status, headers, body) = serve(raw, None).unwrap();
         assert_eq!(status, 200);
         assert_eq!(body.len(), 4096);
-        assert!(headers
-            .iter()
-            .any(|(k, v)| k == "Accept-Ranges" && v == "bytes"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "Accept-Ranges" && v == "bytes")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -194,9 +196,11 @@ mod tests {
         let (status, headers, body) = serve(raw, Some("bytes=100-199")).unwrap();
         assert_eq!(status, 206);
         assert_eq!(body.len(), 100);
-        assert!(headers
-            .iter()
-            .any(|(k, v)| k == "Content-Range" && v == "bytes 100-199/1000"));
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "Content-Range" && v == "bytes 100-199/1000")
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

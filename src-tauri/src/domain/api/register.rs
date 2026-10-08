@@ -37,9 +37,11 @@
 //! 历史教训：明文 form / gzip form 会被服务端静默降级成 `device_id:0`，
 //! 必须走加密形态。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::client::{api_call_full, ApiEnv};
+#[cfg(test)]
+use super::client::api_call_full;
+use super::client::{ApiEnv, api_call_full_response};
 use crate::error::{AppError, AppResult};
 
 pub const REGISTER_ORIGIN: &str = "https://log.snssdk.com";
@@ -77,10 +79,10 @@ pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
 /// 加密核心：gz 字节与 IV 均由调用方指定（对拍矩阵用——隔离 gz 字节流
 /// 与 IV 派生这两个独立变量）。
 pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{BlockCipherEncrypt, KeyInit};
     use aes::Aes128;
+    use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
-    use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
+    use crate::signer::tt_hash::{TT_ORD_LIST, TtHashCore};
 
     // 盐 + 密钥派生。注意：派生的两次 calculate 与后面的完整性哈希
     // 共用同一个 TtHashCore——参考实现的 CF 进位标志跨调用成链，拆开
@@ -129,12 +131,12 @@ pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> 
 /// 顺序重放三次 calculate（CF 进位链），并用 payload 前 48 字节校验
 /// 完整性哈希。
 pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-    use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use aes::Aes128;
+    use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use flate2::read::GzDecoder;
     use std::io::Read;
 
-    use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
+    use crate::signer::tt_hash::{TT_ORD_LIST, TtHashCore};
 
     if body.len() < 6 + 32 + 16 + 16 || body[..6] != TT_MAGIC {
         return Err(format!(
@@ -226,6 +228,17 @@ pub struct RegisterResult {
     pub server_time: i64,
     #[serde(default)]
     pub new_user: bool,
+    /// 本次注册使用的指纹（cdid/openudid 必须随档案长期携带：后续业务
+    /// query 的设备指纹要与服务端登记的注册指纹一致，hgplayer 的
+    /// device.json 也存这两项）。parse_register 不填，register_device 补。
+    #[serde(default)]
+    pub cdid: String,
+    #[serde(default)]
+    pub openudid: String,
+    /// 注册响应 Set-Cookie 下发的本设备 ttreq 票（按 install_id 发放；
+    /// 空 = 响应没带，沿用静态兜底票）。
+    #[serde(default)]
+    pub ttreq: String,
 }
 
 /// 解析注册响应（gzip 由 reqwest 解掉，这里只管 JSON）。
@@ -233,13 +246,14 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     let v: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Media(format!("注册响应不是 JSON: {e}")))?;
     if let Some(code) = v.get("code").and_then(Value::as_i64)
-        && code != 0 {
-            let msg = v
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未知错误");
-            return Err(AppError::Media(format!("注册失败 {code}: {msg}")));
-        }
+        && code != 0
+    {
+        let msg = v
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
+        return Err(AppError::Media(format!("注册失败 {code}: {msg}")));
+    }
     let get_str = |k: &str| {
         v.get(k)
             .map(|x| match x {
@@ -274,6 +288,10 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
             Some(Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
             _ => false,
         },
+        // 指纹与票由 register_device 补（parse 只有响应体，看不到请求侧身份）
+        cdid: String::new(),
+        openudid: String::new(),
+        ttreq: String::new(),
     })
 }
 
@@ -338,8 +356,22 @@ fn fresh_identity() -> FreshIdentity {
         let b: [u8; 16] = rand::random();
         format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6] & 0x0f | 0x40, b[7], b[8] & 0x3f | 0x80,
-            b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            b[0],
+            b[1],
+            b[2],
+            b[3],
+            b[4],
+            b[5],
+            b[6] & 0x0f | 0x40,
+            b[7],
+            b[8] & 0x3f | 0x80,
+            b[9],
+            b[10],
+            b[11],
+            b[12],
+            b[13],
+            b[14],
+            b[15]
         )
     }
     FreshIdentity {
@@ -461,10 +493,31 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         x_tt_token: None,
     };
 
-    let bytes = api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &reg_env).await?;
-    let result = parse_register(&bytes)?;
+    // Set-Cookie 捕获版：响应头会下发本设备自己的 ttreq 票（按新
+    // install_id 发放），要随档案长期携带——静态兜底票绑定的是静态 iid，
+    // 配新 iid 会出现「install_id 与票不同源」的 Cookie
+    let response = api_call_full_response(
+        REGISTER_ORIGIN,
+        REGISTER_PATH,
+        Some(body),
+        &q,
+        &[],
+        &reg_env,
+    )
+    .await?;
+    let mut result = parse_register(&response.bytes)?;
+    result.cdid = id.cdid.clone();
+    result.openudid = id.openudid.clone();
+    result.ttreq = response
+        .set_cookies
+        .iter()
+        .find_map(|c| {
+            let head = c.split(';').next()?.trim();
+            head.strip_prefix("ttreq=").map(|s| s.to_string())
+        })
+        .unwrap_or_default();
     if result.device_id == "0" {
-        let text = String::from_utf8_lossy(&bytes);
+        let text = String::from_utf8_lossy(&response.bytes);
         return Err(AppError::Media(format!(
             "注册被服务端静默拒绝（device_id=0），加密或指纹形态可能过期；原始响应: {}",
             &text[..text.len().min(400)]
@@ -933,8 +986,22 @@ mod probe {
         let b: [u8; 16] = rand::random();
         format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6] & 0x0f | 0x40, b[7], b[8] & 0x3f | 0x80,
-            b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+            b[0],
+            b[1],
+            b[2],
+            b[3],
+            b[4],
+            b[5],
+            b[6] & 0x0f | 0x40,
+            b[7],
+            b[8] & 0x3f | 0x80,
+            b[9],
+            b[10],
+            b[11],
+            b[12],
+            b[13],
+            b[14],
+            b[15]
         )
     }
 

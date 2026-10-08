@@ -4,7 +4,7 @@
 //! 私有函数与类型。
 
 use super::*;
-use crate::domain::mp4::fixtures::{full_box, mp4, TrackSpec};
+use crate::domain::mp4::fixtures::{TrackSpec, full_box, mp4};
 
 #[test]
 fn reads_stsz_variable_sizes() {

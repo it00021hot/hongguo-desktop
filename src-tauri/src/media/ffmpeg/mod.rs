@@ -4,4 +4,4 @@ pub mod probe;
 pub mod transcode;
 
 pub use probe::{backend_info, ffmpeg_path, h264_encoder};
-pub use transcode::{transcode_with_ffmpeg, TranscodeRequest};
+pub use transcode::{TranscodeRequest, transcode_with_ffmpeg};

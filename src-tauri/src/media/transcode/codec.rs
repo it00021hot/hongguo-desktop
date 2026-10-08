@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::error::{AppError, AppResult};
 
-use super::{read_range, TranscodeOptions, YuvFrame};
+use super::{TranscodeOptions, YuvFrame, read_range};
 
 /// 流水线产物：H.264 访问单元序列 + 视频参数。
 pub(super) struct Encoded {

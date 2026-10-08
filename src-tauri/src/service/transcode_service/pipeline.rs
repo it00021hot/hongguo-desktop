@@ -82,31 +82,32 @@ pub fn transcode(
 
     // 分流 2：ffmpeg（含硬编码器）
     if backend == crate::media::Backend::Rust
-        && let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
-            let req = crate::media::ffmpeg::TranscodeRequest {
-                input: source,
-                output: &target,
-                scale_to,
-                on_progress,
-            };
-            match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
-                Ok(()) => {
-                    // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
-                    // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
-                    if output_is_playable(&target) {
-                        backend = if encoder.hardware {
-                            crate::media::Backend::FfmpegHw
-                        } else {
-                            crate::media::Backend::FfmpegSw
-                        };
+        && let Some(encoder) = crate::media::ffmpeg::h264_encoder()
+    {
+        let req = crate::media::ffmpeg::TranscodeRequest {
+            input: source,
+            output: &target,
+            scale_to,
+            on_progress,
+        };
+        match crate::media::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
+            Ok(()) => {
+                // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
+                // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
+                if output_is_playable(&target) {
+                    backend = if encoder.hardware {
+                        crate::media::Backend::FfmpegHw
                     } else {
-                        log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
-                        let _ = std::fs::remove_file(&target);
-                    }
+                        crate::media::Backend::FfmpegSw
+                    };
+                } else {
+                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
+                    let _ = std::fs::remove_file(&target);
                 }
-                Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
             }
+            Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
         }
+    }
 
     // 分流 3：纯 Rust 软解
     if backend == crate::media::Backend::Rust {
@@ -186,7 +187,7 @@ mod tests {
 
     #[test]
     fn a_real_mp4_with_video_samples_is_playable() {
-        use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+        use crate::domain::mp4::fixtures::{TrackPlan, mp4_with_samples};
         let dir = std::env::temp_dir().join(format!("hg-pipeline-ok-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("real.mp4");
@@ -204,7 +205,7 @@ mod tests {
 
     #[test]
     fn audio_only_output_is_not_playable() {
-        use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+        use crate::domain::mp4::fixtures::{TrackPlan, mp4_with_samples};
         let dir = std::env::temp_dir().join(format!("hg-pipeline-audio-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("audio.mp4");

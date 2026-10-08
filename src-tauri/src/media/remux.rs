@@ -272,7 +272,7 @@ mod e2e_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+    use crate::domain::mp4::fixtures::{TrackPlan, mp4_with_samples};
     use crate::domain::mp4::sample_table::collect_tracks;
 
     fn temp_dir(tag: &str) -> PathBuf {

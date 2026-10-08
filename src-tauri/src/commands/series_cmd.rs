@@ -58,7 +58,8 @@ pub async fn get_series_episodes(
     Ok(series)
 }
 
-/// 解析链接 / ID 为完整剧集档案并登记。
+/// 解析剧集 ID 为完整剧集档案并登记（收藏/历史/详情的档案回退链路；
+/// 分享链接支持已随找剧输入框一起下线）。
 #[tauri::command]
 pub async fn resolve_series(state: State<'_, AppState>, input: String) -> AppResult<Series> {
     let env = state.api_env();

@@ -18,13 +18,13 @@
 //!    正是上述 spawn 失败的温床）；
 //! 3. serve 本身也 `catch_unwind`，炸了回 500，worker 与进程都活着。
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::http::{Request, Response, StatusCode};
 
-use super::{cover, local, parse_stream_path, stream, COVER_SCHEME, LOCAL_SCHEME, STREAM_SCHEME};
+use super::{COVER_SCHEME, LOCAL_SCHEME, STREAM_SCHEME, cover, local, parse_stream_path, stream};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 

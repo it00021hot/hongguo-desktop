@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::discover::{
-    fetch_browse, fetch_browse_panel, BrowseFilters, FeedPage, SelectorRow,
+    BrowseFilters, FeedPage, SelectorRow, fetch_browse, fetch_browse_panel,
 };
 use crate::domain::api::rank::fetch_recommend_feed;
 use crate::error::AppResult;

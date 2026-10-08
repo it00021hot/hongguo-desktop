@@ -1,7 +1,7 @@
 //! 云端观看历史 command。
 
 use crate::app_state::AppState;
-use crate::domain::api::history::{fetch_watch_history, report_watch_progress, WatchHistoryPage};
+use crate::domain::api::history::{WatchHistoryPage, fetch_watch_history, report_watch_progress};
 use crate::error::AppResult;
 use tauri::State;
 

@@ -7,8 +7,8 @@
 //! 默认值，会让用户在设置里配的代理失效。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::StreamExt;
 
@@ -152,9 +152,11 @@ mod tests {
 
     #[test]
     fn temp_path_of_extensionless_falls_back() {
-        assert!(temp_path_for(Path::new("weird"))
-            .to_string_lossy()
-            .ends_with("weird.enc.tmp"));
+        assert!(
+            temp_path_for(Path::new("weird"))
+                .to_string_lossy()
+                .ends_with("weird.enc.tmp")
+        );
     }
 
     #[test]

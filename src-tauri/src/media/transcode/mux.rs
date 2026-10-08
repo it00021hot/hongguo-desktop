@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::error::{AppError, AppResult};
 
-use super::audio::AudioFormat;
 use super::TranscodeOptions;
+use super::audio::AudioFormat;
 
 /// 音轨的封装参数与样本（时间戳秒, AAC 帧）。
 pub type AudioInput<'a> = (AudioFormat, &'a [(f64, Vec<u8>)]);
@@ -100,9 +100,10 @@ pub fn mux_h264(
                 let mut dts = dts_sorted[v_idx];
                 // 重复 PTS 的畸形源会把 DTS 顶成并列——按一个 1/90000 刻度顶开
                 if let Some(prev) = prev_dts
-                    && dts <= prev {
-                        dts = prev + 1.0 / 90_000.0;
-                    }
+                    && dts <= prev
+                {
+                    dts = prev + 1.0 / 90_000.0;
+                }
                 prev_dts = Some(dts);
                 muxer.write_video_with_dts(*pts, dts, data, *is_key)
             } else {

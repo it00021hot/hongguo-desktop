@@ -81,7 +81,7 @@ fn warnings_for(
 mod tests {
     use super::*;
     use crate::domain::model::{DownloadTask, Settings};
-    use crate::domain::mp4::fixtures::{mp4, TrackSpec};
+    use crate::domain::mp4::fixtures::{TrackSpec, mp4};
     use std::path::PathBuf;
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("hg-preflight-{tag}-{}", std::process::id()));

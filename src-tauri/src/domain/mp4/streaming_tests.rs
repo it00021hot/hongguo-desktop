@@ -9,10 +9,10 @@
 //! 视频样本上，双轨都解——XOR 组合律的用武之地）、非 16 字节对齐的
 //! 样本长度（37/129 这类奇数，检验区间解密的首块对齐）。
 
-use super::streaming::{locate_moov, SparseBuffer, StreamingPlan};
+use super::streaming::{SparseBuffer, StreamingPlan, locate_moov};
 use crate::domain::crypto::cenc;
-use crate::domain::mp4::decrypt_buffer::decrypt_mp4_buffer;
 use crate::domain::mp4::r#box::build_box;
+use crate::domain::mp4::decrypt_buffer::decrypt_mp4_buffer;
 
 fn cat(parts: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();

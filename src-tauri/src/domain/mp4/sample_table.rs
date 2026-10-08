@@ -3,9 +3,9 @@
 //! 从 `stbl` 里读出每个样本的偏移与大小，以及加密所需的 `saiz` / `saio` /
 //! `senc` 辅助信息。这是 CENC 解密的入口数据。
 
+use super::r#box::{find_box, parse_boxes};
 use super::cenc_info;
 use super::chunk_map;
-use super::r#box::{find_box, parse_boxes};
 use super::timing;
 use crate::error::{AppError, AppResult};
 

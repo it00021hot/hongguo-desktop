@@ -41,9 +41,10 @@ pub async fn resolve_play(
         .completed_path(&request.series_id, request.vid_index);
 
     if let Some(path) = local
-        && let Some(url) = crate::protocol::local::local_play_url(&path) {
-            return Ok(local_response(url, false));
-        }
+        && let Some(url) = crate::protocol::local::local_play_url(&path)
+    {
+        return Ok(local_response(url, false));
+    }
 
     if !request.prefer_online {
         return Err(AppError::NotFound(format!(

@@ -685,7 +685,9 @@ mod probe {
                         .and_then(Value::as_str)
                         .unwrap_or("");
                     let debug_info = v.get("debug_info").and_then(Value::as_str).unwrap_or("");
-                    println!("[reply-list/{tag}] code={code}{detail} msg={debug} debug_info={debug_info}");
+                    println!(
+                        "[reply-list/{tag}] code={code}{detail} msg={debug} debug_info={debug_info}"
+                    );
                 }
                 Err(e) => println!("[reply-list/{tag}] ERR {e}"),
             }

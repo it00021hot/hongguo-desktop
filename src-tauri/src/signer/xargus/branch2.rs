@@ -2,7 +2,7 @@
 //!
 //! 四组不同的非线性函数 / 移位表依次跑 16 轮，末尾附一个自定义累加和。
 
-use crate::signer::constants::{branch2_orders, BRANCH2_SV};
+use crate::signer::constants::{BRANCH2_SV, branch2_orders};
 use crate::signer::primitives::{le32, rol32, ror32, sum_md5, u32};
 
 fn md5_v3_step(

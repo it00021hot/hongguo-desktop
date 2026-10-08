@@ -216,6 +216,27 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::save_device_profile(db, &p).await }))
     }
 
+    /// 换档前把现役档案复制到备份行（见 [`entity::backup_device_profile`]）。
+    pub fn backup_device_profile(&self) -> AppResult<bool> {
+        self.exec(|db| Box::pin(entity::backup_device_profile(db)))
+    }
+
+    /// 读上一代备份档案（没有换过档返回 None）。
+    pub fn device_profile_backup(&self) -> AppResult<Option<crate::signer::device::DeviceProfile>> {
+        self.exec(|db| Box::pin(entity::device_profile_backup(db)))
+    }
+
+    /// 读 bootstrap 元数据（轮换来源、上次注册尝试；无则 None）。
+    pub fn device_meta_get(&self) -> AppResult<Option<serde_json::Value>> {
+        self.exec(|db| Box::pin(entity::device_meta_get(db)))
+    }
+
+    /// 写 bootstrap 元数据（整文档覆盖）。
+    pub fn device_meta_set(&self, meta: &serde_json::Value) -> AppResult<()> {
+        let meta = meta.clone();
+        self.exec(move |db| Box::pin(async move { entity::device_meta_set(db, &meta).await }))
+    }
+
     // ---------- 旧档迁移 ----------
 
     /// 导入旧 data.json 内容（幂等）。详见 [`entity::import_legacy`]。

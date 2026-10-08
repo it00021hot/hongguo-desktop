@@ -4,7 +4,7 @@
 //! 返回 `Code: 110001`（签名对但参数错）。验证时开 `RUST_LOG=debug`：
 //! 响应字节数 > 0 只说明签名过了，还要看 body 里 `code` 是不是 0。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// 分集详情接口路径。
 pub const DETAIL_PATH: &str = "/novel/player/multi_video_detail/preload/v1";

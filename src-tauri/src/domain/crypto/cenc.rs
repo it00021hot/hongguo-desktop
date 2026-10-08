@@ -8,8 +8,8 @@
 //!    所以 [`new_decryptor`] 收 8 字节，块计数器从 0 重新起算——
 //!    沿用 IV 的后半段会让 keystream 整体偏移，解出来全是噪声。
 
-use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::Aes128;
+use aes::cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr128BE;
 
 type Aes128Ctr = Ctr128BE<Aes128>;

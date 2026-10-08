@@ -6,6 +6,7 @@ pub mod app_cmd;
 // 下载 command 拆成 mod.rs（查询）与 actions.rs（变更）
 pub use download as download_cmd;
 pub mod danmaku_cmd;
+pub mod device_cmd;
 pub mod discover_cmd;
 pub mod download;
 pub mod history_cmd;
@@ -33,6 +34,7 @@ mod tests {
         const SOURCES: &[&str] = &[
             include_str!("app_cmd.rs"),
             include_str!("danmaku_cmd.rs"),
+            include_str!("device_cmd.rs"),
             include_str!("discover_cmd.rs"),
             include_str!("history_cmd.rs"),
             include_str!("interact_cmd.rs"),

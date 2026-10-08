@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::store::paths::{compat_cache_dir, COMPAT_CACHE_MAX_BYTES};
+use crate::store::paths::{COMPAT_CACHE_MAX_BYTES, compat_cache_dir};
 
 /// 某集的缓存文件名。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
@@ -15,11 +15,7 @@ pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
 pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
     let path = cache_file(series_id, vid_index);
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if size > 100 * 1024 {
-        Some(path)
-    } else {
-        None
-    }
+    if size > 100 * 1024 { Some(path) } else { None }
 }
 
 fn sanitize(id: &str) -> String {

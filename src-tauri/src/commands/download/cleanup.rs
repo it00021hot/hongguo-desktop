@@ -25,13 +25,14 @@ pub fn delete_tasks(
         let mut failed: Vec<String> = Vec::new();
         for id in &task_ids {
             if let Some(task) = state.queue().get(id)
-                && task.is_done() {
-                    let path = std::path::Path::new(&task.file_path);
-                    if let Err(e) = std::fs::remove_file(path) {
-                        failed.push(format!("{} ({e})", path.display()));
-                    }
-                    crate::service::download_service::worker::cleanup_temp(path);
+                && task.is_done()
+            {
+                let path = std::path::Path::new(&task.file_path);
+                if let Err(e) = std::fs::remove_file(path) {
+                    failed.push(format!("{} ({e})", path.display()));
                 }
+                crate::service::download_service::worker::cleanup_temp(path);
+            }
         }
         // 删不掉的文件（被播放器占用、权限不足）必须留痕：否则用户看到
         // 「已删除」却发现文件还在，只能靠猜。

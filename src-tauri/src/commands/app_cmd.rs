@@ -1,7 +1,7 @@
 //! 系统交互：选目录、打开目录、窗口关闭的退出确认。
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tauri::{AppHandle, State};
 
@@ -340,7 +340,9 @@ async fn incognito_watch(app: AppHandle, generation: u64) {
     use tauri::Emitter;
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(INCOGNITO_POLL_MS)).await;
-        if !INCOGNITO_ON.load(Ordering::Acquire) || INCOGNITO_GEN.load(Ordering::Acquire) != generation {
+        if !INCOGNITO_ON.load(Ordering::Acquire)
+            || INCOGNITO_GEN.load(Ordering::Acquire) != generation
+        {
             return;
         }
         let Some(win) = active_window(&app) else {

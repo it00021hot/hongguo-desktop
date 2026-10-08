@@ -122,7 +122,7 @@ fn signature_of(path: &Path) -> Option<Vec<TrackSignature>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::mp4::fixtures::{mp4, TrackSpec};
+    use crate::domain::mp4::fixtures::{TrackSpec, mp4};
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("hg-codec-probe-{tag}-{}", std::process::id()));

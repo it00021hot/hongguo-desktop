@@ -318,9 +318,11 @@ mod tests {
             &profile,
             &[],
         );
-        assert!(signed
-            .url
-            .starts_with("https://passport.example.com/passport/"));
+        assert!(
+            signed
+                .url
+                .starts_with("https://passport.example.com/passport/")
+        );
         let ua = signed
             .headers
             .iter()

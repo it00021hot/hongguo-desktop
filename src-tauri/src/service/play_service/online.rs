@@ -182,9 +182,10 @@ pub async fn prefetch_stream(
     let c = cache();
     // 已解析过档位且条目在场/在取：无事可做
     if let Some(want) = c.auto_definition(vid)
-        && (c.exists(vid, want) || c.is_fetching(vid, want)) {
-            return Ok(());
-        }
+        && (c.exists(vid, want) || c.is_fetching(vid, want))
+    {
+        return Ok(());
+    }
     let play = match crate::domain::api::play_url::fetch_play_url(vid, None, env).await {
         Ok(p) => p,
         Err(e) => {
@@ -265,7 +266,10 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
 /// 够首帧秒开），但上限是动态的：条目升格为当前集、或已有读者在等这一档，
 /// 上限即刻解除、同一条填充无缝续满——不必依赖 [`resume_fill`] 事后抢
 /// 取流权（预取尚未收工时它抢不到，那正是「播到头部上限就断流」的窗口）。
-#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
+)]
 async fn fill(
     app: &tauri::AppHandle,
     c: &StreamCache,
@@ -451,7 +455,7 @@ async fn build_progressive(
     Arc<ProgressiveStream>,
 )> {
     use crate::domain::api::client::{get_video_range, probe_video_len};
-    use crate::domain::mp4::streaming::{locate_moov, top_boxes_end, SparseBuffer, StreamingPlan};
+    use crate::domain::mp4::streaming::{SparseBuffer, StreamingPlan, locate_moov, top_boxes_end};
 
     let client = crate::domain::api::client::build_client(&settings.proxy)?;
     let total = probe_video_len(&client, &play.url).await?;
@@ -833,7 +837,7 @@ mod scheduler_tests {
         let sparse = crate::domain::mp4::streaming::SparseBuffer::new(100);
         sparse.write(50, &[0u8; 5]); // 50-55
         sparse.write(90, &[0u8; 10]); // 90-100
-                                      // 前沿在 90：其后全满、整集未满 → 回绕
+        // 前沿在 90：其后全满、整集未满 → 回绕
         assert!(matches!(next_target(&sparse, 90), Decision::Wrap));
         // 回绕到 0 后：第一个洞从 0 起
         assert!(matches!(next_target(&sparse, 0), Decision::Fetch(0, 50)));

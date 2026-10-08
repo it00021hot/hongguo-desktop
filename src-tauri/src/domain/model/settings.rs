@@ -11,11 +11,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum ProxyMode {
     /// 跟随系统环境变量
-    #[default]
     System,
     /// 手动指定
     Manual,
-    /// 强制直连（忽略环境变量）
+    /// 强制直连（忽略环境变量）。新装默认：本 app 直连官方 API 本就可达，
+    /// 跟随系统反而容易吃进代理软件的环境变量把请求带进不可控通路。
+    #[default]
     Direct,
 }
 
@@ -56,7 +57,7 @@ fn deserialize_mode<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ProxyMode,
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            mode: ProxyMode::System,
+            mode: ProxyMode::Direct,
             url: String::new(),
         }
     }
@@ -85,9 +86,10 @@ impl ProxyConfig {
                     "all_proxy",
                 ] {
                     if let Ok(v) = std::env::var(key)
-                        && !v.trim().is_empty() {
-                            return Some(v);
-                        }
+                        && !v.trim().is_empty()
+                    {
+                        return Some(v);
+                    }
                 }
                 None
             }

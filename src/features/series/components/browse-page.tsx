@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Search, SlidersHorizontal, X } from 'lucide-react';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RefreshShade } from '@/components/refresh-shade';
-import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
 import {
   useBrowseFeed,
   useBrowsePanel,
   useDownloadTasks,
-  useResolveSeries,
   useSearchSuggest,
   useSeriesSearchApp,
   useWebCover,
@@ -22,23 +19,6 @@ import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { BrowseFilters, FeedItem, SeriesCard, SuggestItem } from '@/lib/schema';
-
-/**
- * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
- *
- * 链接与 ID 走 resolve 链路、按剧名才走搜索：站内搜索只匹配剧名，
- * 粘一段分享链接进去永远搜不到任何东西。
- *
- * 规则要窄而确定。分享语是整段自然语言（标题 + 链接 + 引导语），
- * 判据只能锚在 `series_id=` 参数和 `http` 前缀上；ID 则必须是纯数字串，
- * 且留足长度下限，否则「2024」这种词会被当成剧集号解析出不相干的东西。
- */
-function detectInput(value: string): 'keyword' | 'resolve' {
-  const v = value.trim();
-  if (v.includes('series_id=') || v.startsWith('http')) return 'resolve';
-  if (/^\d{6,}$/.test(v.replace(/\s+/g, ''))) return 'resolve';
-  return 'keyword';
-}
 
 /** App 筛选条目转官网卡形态喂同一块网格。 */
 function toCard(it: FeedItem): SeriesCard {
@@ -147,7 +127,6 @@ export function BrowsePage() {
   // App 搜索是综合 tab，首页精选 + 翻页全量）
   const found = useSeriesSearchApp(submitted);
   const { data: tasks } = useDownloadTasks();
-  const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
   // 搜索模式下用搜索结果盖掉分类结果，退出搜索再换回来。
   // App 搜索条目转成官网卡形态喂同一块网格：subTitle（"脑洞·全273集"）
@@ -243,21 +222,12 @@ export function BrowsePage() {
     setFilters((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
   };
 
-  // 链接/ID 输入要先解析出剧集 id（顺带校验链接有效性），关键词搜索只改
-  // 提交词：useSeriesSearchApp 随 queryKey 自动发起请求。解析前先退出搜索
-  // 模式，否则解析成功后列表还停在上一轮搜索结果上。
+  // 关键词搜索只改提交词：useSeriesSearchApp 随 queryKey 自动发起请求。
+  // 站内搜索只匹配剧名——分享链接 / 剧集 ID 已不再支持，当成普通词搜即可。
   const handleSubmit = () => {
     const value = keyword.trim();
     if (!value) return;
-    if (detectInput(value) === 'keyword') {
-      setSubmitted(value);
-      return;
-    }
-    setSubmitted('');
-    resolve(value, {
-      onSuccess: (series) => playSeries(series.seriesId),
-      onError: (e) => toast.error(e.message),
-    });
+    setSubmitted(value);
   };
 
   // 点卡片直接跳播放：分集解析由播放页自己拉（失败有整页错误态），
@@ -325,7 +295,7 @@ export function BrowsePage() {
               </div>
             )}
           </div>
-          <Button type="submit" disabled={!keyword.trim() || resolving || resubmitting}>
+          <Button type="submit" disabled={!keyword.trim() || resubmitting}>
             {resubmitting ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
@@ -333,11 +303,6 @@ export function BrowsePage() {
             )}
             {t('search.submit')}
           </Button>
-          {resolving && (
-            <span className="text-muted-foreground self-center text-sm whitespace-nowrap">
-              {t('browse.resolving')}
-            </span>
-          )}
           {searching && (
             <Button type="button" variant="outline" onClick={exitSearch}>
               <X className="size-4" />
@@ -419,8 +384,6 @@ export function BrowsePage() {
           )}
         </>
       )}
-      {/* 与首页同一交互：解析期间底部气泡，抽屉一开就是完整内容 */}
-      {resolving && <ResolvingPill />}
     </div>
   );
 }

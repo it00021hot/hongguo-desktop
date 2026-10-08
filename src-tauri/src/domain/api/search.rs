@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::client::{api_call_full_with_headers, reading_headers, ApiEnv};
+use super::client::{ApiEnv, api_call_full_with_headers, reading_headers};
 use super::danmaku::LQ_API_ORIGIN;
 use super::discover::{check_code, int_field, str_field};
 use crate::error::{AppError, AppResult};
@@ -482,7 +482,11 @@ mod probe {
         ] {
             match search_series(q, 0, "", &env).await {
                 Ok(p) => {
-                    println!("[daoye] q={q} → {} 条 has_more={}", p.items.len(), p.has_more);
+                    println!(
+                        "[daoye] q={q} → {} 条 has_more={}",
+                        p.items.len(),
+                        p.has_more
+                    );
                     for it in p.items.iter().take(3) {
                         println!("[daoye]   {} {}", it.series_id, it.title);
                     }

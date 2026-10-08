@@ -41,12 +41,12 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
-use windows::core::{Interface, GUID};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED,
+    CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
 };
 use windows::Win32::System::Variant::{VARIANT, VARIANT_0_0, VARIANT_0_0_0, VT_UI4};
+use windows::core::{GUID, Interface};
 
 use crate::domain::mp4::sample_table::TrackInfo;
 use crate::error::{AppError, AppResult};
@@ -502,7 +502,7 @@ impl AsyncMft {
                     Err(e) => {
                         return Err(AppError::Media(format!(
                             "Media Foundation 事件循环失败（{e}）"
-                        )))
+                        )));
                     }
                 };
                 let ty = MF_EVENT_TYPE(ev.GetType().map_err(|e| {
@@ -526,10 +526,11 @@ impl AsyncMft {
                 }
             }
             if self.need_input
-                && let Some(s) = self.input_q.pop_front() {
-                    hr(self.xform.ProcessInput(0, &s, 0), "ProcessInput")?;
-                    self.need_input = false;
-                }
+                && let Some(s) = self.input_q.pop_front()
+            {
+                hr(self.xform.ProcessInput(0, &s, 0), "ProcessInput")?;
+                self.need_input = false;
+            }
         }
         Ok(())
     }
@@ -1240,9 +1241,10 @@ impl Encoder {
             let first = units.is_empty();
             if (keyframe || first)
                 && let Some(ps) = self.param_sets.as_deref()
-                    && !ps.is_empty() {
-                        annexb.splice(0..0, ps.iter().copied());
-                    }
+                && !ps.is_empty()
+            {
+                annexb.splice(0..0, ps.iter().copied());
+            }
             let _ = t;
             let pts = self.fed_pts.pop_front().unwrap_or(f64::NAN);
             units.push((pts, annexb, keyframe));
@@ -1366,15 +1368,19 @@ fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, fram
         .unwrap_or_else(|| last.unwrap_or(0.0) + frame_dur);
     *cursor += 1;
     if let Some(prev) = *last
-        && p <= prev {
-            p = prev + frame_dur * 0.5;
-        }
+        && p <= prev
+    {
+        p = prev + frame_dur * 0.5;
+    }
     *last = Some(p);
     p
 }
 
 /// 一帧解码输出 →（缩放）→ 编码 → 收割产物。
-#[expect(clippy::too_many_arguments, reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
+)]
 fn process_frame(
     frame: Nv12Frame,
     kind: EncoderKind,

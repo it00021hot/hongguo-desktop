@@ -1076,15 +1076,42 @@ mod tests {
     #[test]
     fn calculate_vectors_from_python() {
         let cases: Vec<(usize, &str)> = vec![
-            (0, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"),
-            (1, "e45bf5817ddf94aa2f7a407071f0eedc6beb98f768b4cd33d1176d44d1563a45a5d7212290eb7670c6786b13591aedac86478993895e8b24e612014abaa6ba04"),
-            (19, "ae31ede5ae0b51a4748d925137e39bebcb0d83df818ea9b308eeb1d9fcb913598aa6f54b55ee9239651010e3fb1db506d04f9c556ba535ffed41c41553dd392a"),
-            (32, "c3902ef600c188f0a9b0d32d5e78edf886d61887e698a81aab084c8f86dbfe6f5c4ba5a226e2b0313a837747c1a09a56b1ec9f52479b6f9959ac1b0d0c3d3465"),
-            (39, "08673ac2515372c2be09b1b82bdf334a875e536ad3d5749c7ed03cf8d819e1df89787441d69ea7a579d65345c5b0fd3466ec8efa5f32a3215d8054d917c30958"),
-            (100, "364662a2cfeefa210252f45394a87e9ab0d268fe0c448b7e60d69888c8506824fa142beff9a337045417b0bcc5d2e1cecd65223d4d1078cd12d52a2f57b92ed9"),
-            (127, "548c0b30880e6b0f3bfd75510c12e3ac1b1a0579c37868b18d793358fecaac2400c67021b109ccaa87e711cab67bb51762a20ac0f01c10c0b9680834033ff9ea"),
-            (128, "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1"),
-            (200, "cca3c0276046ef9f2897bdfc3ec330f77f4959914b1462bd581b232ddb3e9aa98acf5f5a2b21c7f49d2e43721daa61a2b5cee6af6052dfeb766e66ddb0d1719c"),
+            (
+                0,
+                "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            ),
+            (
+                1,
+                "e45bf5817ddf94aa2f7a407071f0eedc6beb98f768b4cd33d1176d44d1563a45a5d7212290eb7670c6786b13591aedac86478993895e8b24e612014abaa6ba04",
+            ),
+            (
+                19,
+                "ae31ede5ae0b51a4748d925137e39bebcb0d83df818ea9b308eeb1d9fcb913598aa6f54b55ee9239651010e3fb1db506d04f9c556ba535ffed41c41553dd392a",
+            ),
+            (
+                32,
+                "c3902ef600c188f0a9b0d32d5e78edf886d61887e698a81aab084c8f86dbfe6f5c4ba5a226e2b0313a837747c1a09a56b1ec9f52479b6f9959ac1b0d0c3d3465",
+            ),
+            (
+                39,
+                "08673ac2515372c2be09b1b82bdf334a875e536ad3d5749c7ed03cf8d819e1df89787441d69ea7a579d65345c5b0fd3466ec8efa5f32a3215d8054d917c30958",
+            ),
+            (
+                100,
+                "364662a2cfeefa210252f45394a87e9ab0d268fe0c448b7e60d69888c8506824fa142beff9a337045417b0bcc5d2e1cecd65223d4d1078cd12d52a2f57b92ed9",
+            ),
+            (
+                127,
+                "548c0b30880e6b0f3bfd75510c12e3ac1b1a0579c37868b18d793358fecaac2400c67021b109ccaa87e711cab67bb51762a20ac0f01c10c0b9680834033ff9ea",
+            ),
+            (
+                128,
+                "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1",
+            ),
+            (
+                200,
+                "cca3c0276046ef9f2897bdfc3ec330f77f4959914b1462bd581b232ddb3e9aa98acf5f5a2b21c7f49d2e43721daa61a2b5cee6af6052dfeb766e66ddb0d1719c",
+            ),
         ];
         for (n, expect) in cases {
             let input: Vec<u8> = (0..n).map(|i| ((i * 7 + 3) % 256) as u8).collect();

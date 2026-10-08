@@ -21,13 +21,13 @@
 //! 可覆盖）：给到底就等于要等整集，渐进失去意义。整集模式保持「一次给到底」。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use super::range::{parse_range, partial_headers, ProtocolResponse, RangeSpec};
+use super::range::{ProtocolResponse, RangeSpec, parse_range, partial_headers};
 use crate::domain::model::VideoDefinition;
 use crate::domain::mp4::streaming::{SparseBuffer, StreamingPlan};
 
@@ -134,9 +134,10 @@ impl ReaderDemand {
                 // 区间内的第一个洞：next_gap(a) 给出 a 起第一个未覆盖处，
                 // 落在 (a,b) 之外说明这段已就绪，试下一段
                 if let Some((gap, _)) = sparse.next_gap(*a)
-                    && gap < *b {
-                        return Some(gap);
-                    }
+                    && gap < *b
+                {
+                    return Some(gap);
+                }
             }
         }
         None

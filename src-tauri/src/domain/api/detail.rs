@@ -108,13 +108,14 @@ pub async fn fetch_related_series(
 /// 解析 plan/v 响应为相关作品两块内容。
 fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
     if let Some(code) = value.get("code").and_then(Value::as_i64)
-        && code != 0 {
-            let msg = value
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未知错误");
-            return Err(AppError::Media(format!("相关作品接口返回 {code}: {msg}")));
-        }
+        && code != 0
+    {
+        let msg = value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
+        return Err(AppError::Media(format!("相关作品接口返回 {code}: {msg}")));
+    }
 
     let mut related = RelatedSeries::default();
     for cell in value
@@ -223,13 +224,14 @@ pub async fn fetch_episode_list(
 /// 从 detail 响应里解析分集。
 pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
     if let Some(code) = response.get("code").and_then(Value::as_i64)
-        && code != 0 {
-            let msg = response
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未知错误");
-            return Err(AppError::Media(format!("详情接口返回 {code}: {msg}")));
-        }
+        && code != 0
+    {
+        let msg = response
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
+        return Err(AppError::Media(format!("详情接口返回 {code}: {msg}")));
+    }
 
     let data = response
         .get("data")
@@ -365,13 +367,14 @@ pub async fn fetch_series_meta(
 /// `video_data` 包一层不同，这个端点是平铺的），两层都兜一下。
 pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesMeta> {
     if let Some(code) = response.get("code").and_then(Value::as_i64)
-        && code != 0 {
-            let msg = response
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未知错误");
-            return Err(AppError::Media(format!("详情元信息接口返回 {code}: {msg}")));
-        }
+        && code != 0
+    {
+        let msg = response
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
+        return Err(AppError::Media(format!("详情元信息接口返回 {code}: {msg}")));
+    }
     let node = response
         .pointer(&format!("/data/{series_id}"))
         .or_else(|| {

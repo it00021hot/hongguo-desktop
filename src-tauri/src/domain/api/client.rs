@@ -462,17 +462,19 @@ async fn send_once(
 ) -> AppResult<ApiCallResponse> {
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie
-        && !c.is_empty() {
-            extra.push(("Cookie".into(), c.clone()));
-        }
+        && !c.is_empty()
+    {
+        extra.push(("Cookie".into(), c.clone()));
+    }
     // x-tt-token：登录响应头下发的凭据，短形式（前 56 位）随请求带——
     // hgplayer 每个业务请求都在场（2026-10-05 抓包对齐；也是服务端
     // 滑动续期时新值的下发载体）
     if let Some(full) = &env.x_tt_token
-        && !full.is_empty() {
-            let short: String = full.chars().take(56).collect();
-            extra.push(("x-tt-token".into(), short));
-        }
+        && !full.is_empty()
+    {
+        let short: String = full.chars().take(56).collect();
+        extra.push(("x-tt-token".into(), short));
+    }
     let signed = match body {
         Some(bytes) => crate::signer::sign_request_with(
             origin,
@@ -531,8 +533,8 @@ async fn send_once(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::settings::ProxyMode;
     use crate::domain::model::ProxyConfig;
+    use crate::domain::model::settings::ProxyMode;
     use crate::signer::ticket::{sign_get, sign_post};
     use crate::signer::video_device;
 

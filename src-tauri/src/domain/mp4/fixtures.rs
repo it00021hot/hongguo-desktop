@@ -122,7 +122,7 @@ fn audio_sample_entry(spec: &TrackSpec) -> Vec<u8> {
     payload.extend_from_slice(&spec.channels.to_be_bytes());
     payload.extend_from_slice(&16u16.to_be_bytes()); // samplesize
     payload.extend_from_slice(&[0u8; 4]); // pre_defined + reserved
-                                          // samplerate 是 16.16 定点，小数部分留 0
+    // samplerate 是 16.16 定点，小数部分留 0
     payload.extend_from_slice(&(spec.sample_rate << 16).to_be_bytes());
     payload.extend_from_slice(&[0u8; 4]); // 其余字段
     build_box(spec.codec, &payload)
@@ -329,9 +329,10 @@ fn build_trak(track_id: u32, plan: &TrackPlan, offsets: &[u64]) -> Vec<u8> {
         stbl.extend(ctts_box(comp));
     }
     if let Some(every) = plan.sync_every
-        && every > 0 {
-            stbl.extend(stss_box(plan.samples.len(), every));
-        }
+        && every > 0
+    {
+        stbl.extend(stss_box(plan.samples.len(), every));
+    }
     stbl.extend(stsc_one_per_chunk());
     stbl.extend(stsz_box(plan));
     stbl.extend(stco_box(offsets));

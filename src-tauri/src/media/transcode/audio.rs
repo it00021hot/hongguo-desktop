@@ -66,9 +66,10 @@ fn read_audio_format_from(data: &[u8], track: &TrackInfo) -> AppResult<AudioForm
             continue;
         }
         if let Some(esds) = find_box(data, candidate, entry_end, "esds")
-            && let Some(fmt) = parse_esds(data, esds.start, esds.size) {
-                return Ok(fmt);
-            }
+            && let Some(fmt) = parse_esds(data, esds.start, esds.size)
+        {
+            return Ok(fmt);
+        }
     }
 
     Ok(AudioFormat::default())

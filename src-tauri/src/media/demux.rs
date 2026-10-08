@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use crate::domain::mp4::sample_table::{collect_tracks, TrackInfo};
+use crate::domain::mp4::sample_table::{TrackInfo, collect_tracks};
 use crate::error::{AppError, AppResult};
 
 /// 一条可处理的轨道。
@@ -136,7 +136,7 @@ mod tests {
     fn tail_moov_is_found_when_faststart_is_off() {
         // B 帧流关 faststart 后 moov 在 mdat 之后：单个 9MB 样本把 mdat
         // 顶过 8MB 头部读窗，moov 落到头部窗外——必须能定位尾部 moov
-        use crate::domain::mp4::fixtures::{mp4_with_samples, TrackPlan};
+        use crate::domain::mp4::fixtures::{TrackPlan, mp4_with_samples};
         let dir = std::env::temp_dir().join(format!("hg-demux-tail-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("tail-moov.mp4");

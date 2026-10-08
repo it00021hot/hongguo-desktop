@@ -11,9 +11,9 @@ use base64::Engine;
 
 use crate::signer::aes_v3::AesV3;
 use crate::signer::constants::{medusa_aes_iv, medusa_aes_key, medusa_sign_key};
-use crate::signer::device::{device_proto, APP_ID, CHANNEL_ID};
+use crate::signer::device::{APP_ID, CHANNEL_ID, device_proto};
 use crate::signer::primitives::{le32, md5_raw, sm3, u32};
-use crate::signer::protobuf::{proto, FieldType, FieldValue};
+use crate::signer::protobuf::{FieldType, FieldValue, proto};
 use crate::signer::xargus::hash_f13;
 
 use rand::RngExt;

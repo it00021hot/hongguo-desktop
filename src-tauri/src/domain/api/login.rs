@@ -17,7 +17,7 @@
 
 use serde_json::Value;
 
-use super::client::{api_call_full_response, ApiEnv};
+use super::client::{ApiEnv, api_call_full_response};
 use crate::error::{AppError, AppResult};
 
 /// passport 与业务同域（hgplayer 实测基址 `https://novel.snssdk.com`）。
@@ -779,12 +779,13 @@ mod tests {
         // HG_PROXY=http://127.0.0.1:8080 时走本地 mitmdump（抓自己的请求
         // 与 hgplayer 抓包逐字节 diff）
         if let Ok(p) = std::env::var("HG_PROXY")
-            && !p.is_empty() {
-                env.proxy = crate::domain::model::settings::ProxyConfig {
-                    mode: crate::domain::model::settings::ProxyMode::Manual,
-                    url: p,
-                };
-            }
+            && !p.is_empty()
+        {
+            env.proxy = crate::domain::model::settings::ProxyConfig {
+                mode: crate::domain::model::settings::ProxyMode::Manual,
+                url: p,
+            };
+        }
         match send_sms_code(&env, &mobile).await {
             Ok(out) => println!(
                 "[probe] 发码成功: {} ticket={}",
