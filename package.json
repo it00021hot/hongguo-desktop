@@ -19,7 +19,8 @@
     "format:check": "prettier --check .",
     "knip": "knip",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "cdp": "node scripts/cdp.mjs"
+    "cdp": "node scripts/cdp.mjs",
+    "wd": "node scripts/webdriver.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.99.0",

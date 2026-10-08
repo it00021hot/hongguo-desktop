@@ -6,6 +6,13 @@
 
 本文记录启动方式、仓库自带的工具 `scripts/cdp.mjs`，以及自动化测试的判定口径。
 
+> **macOS 走 WebDriver，不走本文**：WKWebView 不是 Chromium，没有 CDP 端口；
+> 桌面目标的 Web Inspector 协议被 Apple 私有 entitlement 锁给 Safari，第三方
+> 桥接（inspect-webkit 等）只对 iOS 设备/模拟器有效。macOS 用 `scripts/webdriver.mjs`
+> （app 经 tauri-plugin-webdriver 在 127.0.0.1:4445 内嵌 W3C WebDriver 服务器，
+> debug 构建专属、直连即可），命令形与本文的 cdp.mjs 一一对应
+> （`pages/nav/eval/shot/probe`，另加 `click`）；probe 的差异见该脚本头注。
+
 ## 启动（唯一前提）
 
 ```bash
@@ -83,3 +90,18 @@ for r in . browse rank new history collections; do node scripts/cdp.mjs probe "$
 CDP 够用就 CDP（默认）：DOM/网络/截图/求值，可断言可自动化。
 必须走 computer-use 的场景：CDP 没开的已运行实例、原生窗口装饰/系统对话框、
 验证 UIA 可达性本身。
+
+## macOS 附注：Radix 组件的程序化交互（webdriver.mjs 同样适用）
+
+- **Radix Select（combobox）**：`pointerdown` 要带全字段（`button: 0, pointerId: 1,
+  isPrimary: true`）才会开弹层；选项在 portal 里的 `[role=option]`，pointerdown+click 选中。
+- **Radix Tabs**：合成 pointerdown/click 都可能不激活（`data-state` 不变），
+  可靠路径是 **focus 当前 tab + 派发 `ArrowRight`/`ArrowLeft` keydown**。
+- **React 受限 input**：必须走原生 setter 再派发 `input` 事件，直接赋值会被 React 回吐。
+- **点击触发重渲染的 eval**：点击派发后执行上下文可能随重渲染被销毁，返回值会丢
+  （拿到 `undefined`，点击是否生效全凭运气）。可靠模式是把点击挪出本上下文：
+  `setTimeout(() => el.click(), 0)` 后立刻 `return`，返回值必达、点击必派发。
+- **视频帧进不了截图**：WKWebView 的视频层不走页面合成（隐私设计），
+  `Page.captureScreenshot`/WebDriver screenshot 里视频区域恒黑。帧是否真的在
+  渲染用 `video.requestVideoFrameCallback` 验（只在帧被呈现时回调），播放状态
+  用 `currentTime`/`readyState`/`getVideoPlaybackQuality` 读。

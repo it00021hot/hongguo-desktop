@@ -45,6 +45,12 @@ pub fn run() {
         // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
         .manage(commands::app_cmd::WindowCloseGate::default());
 
+    // dev 专属自动化端口（127.0.0.1:4445）：macOS 的 WKWebView 没有对外调试
+    // 协议，W3C WebDriver 由 app 内嵌服务器实现（依赖无条件编译，cargo 不支持
+    // 按 debug_assertions 选依赖）。release 构建此行整体不存在，不留任何自动化面。
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_webdriver::init());
+
     // 自定义协议要在 setup 之前注册（Builder 阶段）
     let builder = protocol::register::register(builder);
 

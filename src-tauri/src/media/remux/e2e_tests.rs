@@ -368,10 +368,10 @@ fn ffmpeg_transcode_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 平台管线（允许回落软件会话）端到端：验证解码 → Annex-B → 封装本身。
+/// 平台管线端到端：验证解码 → Annex-B → 封装本身。
 ///
-/// 硬编在位与否由下一条用例负责；这条只回答「管线产出的文件对不对」，
-/// 所以任何 mac 都能跑（CI 含金量在这里：不依赖 GPU）。
+/// macOS 的生产入口就是「硬编优先、Apple 软编回落」，任何 mac 都能跑
+/// （CI 含金量在这里：不依赖 GPU）；测试分发器在 Windows 侧仍接软编通道。
 #[test]
 fn platform_pipeline_produces_playable_h264() {
     let Some(mut all) = episodes() else { return };
@@ -429,10 +429,11 @@ fn platform_pipeline_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 平台硬编（VideoToolbox / Media Foundation）端到端：真实 HEVC 单集 → H.264。
+/// 平台**硬编会话**端到端：真实 HEVC 单集 → H.264。
 ///
-/// 双重门控：`HONGGUO_E2E_DIR` + 平台硬编探测。Apple Silicon 的 macOS CI 上
-/// 硬编真实可用，这条会真跑；其余机器安静跳过。
+/// 生产入口已不区分硬软（`Enable` 策略），这条用「探测说有硬编」作门控，
+/// 专验硬编会话本身——Apple Silicon 的 macOS CI 上会真跑；其余机器安静跳过
+/// （软会话路径由上一条用例在任何 mac 上覆盖）。
 #[test]
 fn platform_transcode_produces_playable_h264() {
     if !crate::media::platform::h264_hw_encoder_available() {

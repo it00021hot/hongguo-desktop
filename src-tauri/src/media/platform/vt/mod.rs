@@ -1,4 +1,4 @@
-//! macOS VideoToolbox 硬编后端。
+//! macOS VideoToolbox 编码后端（硬编优先，无硬编回落 Apple 内置软编会话）。
 //!
 //! 链路与软解路径（`media::transcode`）逐段对应，只是「解码 → YUV → 编码」
 //! 被整体换成了 GPU 上的「解码 → NV12 CVPixelBuffer → 编码」，IOSurface
@@ -16,13 +16,14 @@
 //! 时间戳：逐帧显示时间来自源样本表（`stts`/`ctts` 展开），不再按固定帧率
 //! 合成——换后端顺手消灭第一类音画漂移。
 //!
-//! 探测纪律：`RequireHardware` 下建 256×256 会话，建不出来就是真没有硬编。
-//! 256×256 的下限与 ffmpeg 侧 nvenc 的教训一致（更小的探测帧会被最小分辨率
-//! 拒掉，把可用的硬编误判成不可用）。
+//! 探测只回答两个问题：会话能不能建（生产闸门——软编会话也算数）、
+//! 是不是硬件（能力徽标与并行度）。纪律与 ffmpeg 侧一致：「能建会话」
+//! 不算硬件，编码器自己说「我走了硬件」才算；256×256 的下限与 ffmpeg 侧
+//! nvenc 的教训一致（更小的探测帧会被最小分辨率拒掉，把可用的硬编误判成
+//! 不可用）。
 
 mod ffi;
 
-use std::collections::VecDeque;
 use std::os::raw::c_void;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Instant;
@@ -34,65 +35,84 @@ use crate::error::{AppError, AppResult};
 
 use super::PlatformRequest;
 
-static HW_ENCODER: RwLock<Option<bool>> = RwLock::new(None);
+/// 探测结果缓存：「会话能建吗」与「会话是不是硬件」分开回答——前者决定
+/// 生产链路是否走 VT（软编会话也算数），后者只喂能力徽标与并行度。
+#[derive(Clone, Copy)]
+struct ProbeAnswer {
+    /// VT 编码会话可建（硬件或 Apple 内置软编）
+    available: bool,
+    /// 实编一帧后编码器自报走了硬件
+    hardware: bool,
+}
 
-/// 平台硬编 H.264 编码器是否可用（探测结果缓存）。
+static PROBE: RwLock<Option<ProbeAnswer>> = RwLock::new(None);
+
+/// 平台编码层是否可用（VT 会话可建即真，含 Apple 软编会话）。
+pub fn encoder_available() -> bool {
+    probe_once().available
+}
+
+/// 平台**硬编**是否可用。不再是生产闸门，只喂能力徽标与并行度策略。
 pub fn h264_hw_encoder_available() -> bool {
-    let mut slot = HW_ENCODER.write();
+    probe_once().hardware
+}
+
+fn probe_once() -> ProbeAnswer {
+    let mut slot = PROBE.write();
     if slot.is_none() {
-        *slot = Some(probe_h264_hw_encoder());
+        *slot = Some(match unsafe { probe_reports_hardware() } {
+            Ok(hardware) => ProbeAnswer {
+                available: true,
+                hardware,
+            },
+            Err(e) => {
+                log::warn!("[Platform/vt] 平台编码探测失败，按不可用处理: {e}");
+                ProbeAnswer {
+                    available: false,
+                    hardware: false,
+                }
+            }
+        });
     }
-    slot.unwrap_or(false)
+    slot.unwrap_or(ProbeAnswer {
+        available: false,
+        hardware: false,
+    })
 }
 
 /// 丢弃探测缓存。
 pub fn clear_probe_cache() {
-    *HW_ENCODER.write() = None;
+    *PROBE.write() = None;
 }
 
-/// 平台硬编可用时执行转码；不可用返回 `None`（HEVC 以外的源也返回 `None`，
-/// 留给 ffmpeg/软解——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
+/// 平台编码层执行 HEVC→H.264 转码；HEVC 以外的源返回 `None`
+/// （留给 ffmpeg/软解——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
+///
+/// 闸门是「VT 会话能建」而不是「必须硬编」：会话有硬编走硬编，没有就落
+/// Apple 内置软编会话——后者仍然显著快于 ffmpeg 与纯 Rust 软解（本机 i7
+/// 实测 44.9s 集：VT 链 ≈5.9s，libx264 18.2s、纯 Rust 54s），且同样不依赖
+/// 用户装任何东西。会话真建不出来（罕见）由管线落回下一条路。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    if !h264_hw_encoder_available() {
-        return None;
-    }
     let demuxed = crate::media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
     if !crate::media::hevc::is_hevc(&video.info.codec) {
         return None;
     }
-    Some(run(req, &demuxed, &video.info, HwPolicy::Require))
-}
-
-/// 仅测试构建：以「允许回落软件」的策略跑完整链路，让没有硬编的机器
-/// 也能验证管线本身（解码/Annex-B/封装/时间戳）。硬件与否由探测测试另行验证。
-#[cfg(test)]
-pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    let demuxed = crate::media::demux::demux_file(req.input).ok()?;
-    let video = demuxed.video_track()?;
-    if !crate::media::hevc::is_hevc(&video.info.codec) {
-        return None;
-    }
-    Some(run(req, &demuxed, &video.info, HwPolicy::Enable))
-}
-
-fn probe_h264_hw_encoder() -> bool {
-    match unsafe { probe_reports_hardware() } {
-        Ok(hw) => hw,
-        Err(e) => {
-            log::warn!("[Platform/vt] 平台硬编探测失败，按不可用处理: {e}");
-            false
-        }
-    }
+    Some(run(req, &demuxed, &video.info))
 }
 
 /// 探测纪律与 ffmpeg 侧同一套：「能建会话」不算数，编码器自己说「我走了
 /// 硬件」才算。`RequireHardware` 在 Intel Mac 上常见 -12903 误报（明明有
 /// QuickSync 却枚举不到），所以用 `Enable`（允许硬件、不强制）建会话，
 /// **实编一帧**后读 `UsingHardwareAcceleratedVideoEncoder`。
+///
+/// 探测帧必须用**真实分辨率**（1080p）：VT 按分辨率挑编码器实例，小帧
+/// 会落到软编实例上、真实会话却是硬件——本机实证过（256×256 报 hw=false，
+/// 生产 1080p 会话 CPU 8% 跑 2× 实时/路，明显是硬件）。分辨率下限的教训
+/// 与 ffmpeg 侧 nvenc（64×64 误判不可用）同源：探测形状要贴近真实使用。
 unsafe fn probe_reports_hardware() -> AppResult<bool> {
-    let mut c = Compressor::new(256, 256, 1_000_000, HwPolicy::Enable)?;
-    let frame = make_test_frame(256)?;
+    let mut c = Compressor::new(1920, 1080, 6_000_000)?;
+    let frame = make_test_frame(1920)?;
     c.encode(&frame, 0.0, 1.0 / 30.0)?;
     c.finish()?;
     let outputs = c.take_outputs();
@@ -101,13 +121,15 @@ unsafe fn probe_reports_hardware() -> AppResult<bool> {
 }
 
 /// 探测用的灰帧：NV12 平面铺 0x80（中性灰），避免未初始化内存进编码器。
-unsafe fn make_test_frame(size: usize) -> AppResult<Pb> {
+/// `width` 作宽度、1080 作高度（探测会话与生产会话同分辨率量级）。
+unsafe fn make_test_frame(width: usize) -> AppResult<Pb> {
+    let height = 1080;
     let mut pb: ffi::CVPixelBufferRef = std::ptr::null_mut();
     let attrs = iosurface_attrs();
     let st = ffi::CVPixelBufferCreate(
         ffi::kCFAllocatorDefault,
-        size,
-        size,
+        width,
+        height,
         ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
         attrs,
         &mut pb,
@@ -116,10 +138,15 @@ unsafe fn make_test_frame(size: usize) -> AppResult<Pb> {
     os(st, "建探测帧")?;
     let pb = Pb(pb);
     os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁探测帧")?;
-    let base = ffi::CVPixelBufferGetBaseAddress(pb.0) as *mut u8;
-    let stride = ffi::CVPixelBufferGetBytesPerRow(pb.0);
-    for row in 0..size {
-        std::ptr::write_bytes(base.add(row * stride), 0x80, size * 3 / 2);
+    // 逐平面逐行铺 0x80。IOSurface 的整块分配不等于「stride×高×1.5」的
+    // 纸面加和（平面各自对齐）——按整块 memset 实测越界段错误。
+    for plane in 0..ffi::CVPixelBufferGetPlaneCount(pb.0) {
+        let base = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, plane) as *mut u8;
+        let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, plane);
+        let rows = ffi::CVPixelBufferGetHeightOfPlane(pb.0, plane);
+        for row in 0..rows {
+            std::ptr::write_bytes(base.add(row * stride), 0x80, stride);
+        }
     }
     ffi::CVPixelBufferUnlockBaseAddress(pb.0, 0);
     Ok(pb)
@@ -220,9 +247,9 @@ unsafe fn iosurface_attrs() -> ffi::CFMutableDictionaryRef {
 struct Decompressor {
     session: ffi::VTDecompressionSessionRef,
     format: ffi::CMVideoFormatDescriptionRef,
-    rx: Receiver<Pb>,
+    rx: Receiver<(Pb, f64)>,
     /// 回调 refcon 指进这个 Box，必须与 session 同生命周期
-    _tx: Box<Sender<Pb>>,
+    _tx: Box<Sender<(Pb, f64)>>,
 }
 
 impl Drop for Decompressor {
@@ -241,16 +268,17 @@ unsafe extern "C" fn decode_cb(
     status: ffi::OSStatus,
     _info_flags: u32,
     image_buffer: ffi::CVPixelBufferRef,
-    _pts: ffi::CMTime,
+    pts: ffi::CMTime,
     _duration: ffi::CMTime,
 ) {
     if status != ffi::noErr || image_buffer.is_null() {
         return;
     }
-    let tx = &*(refcon as *const Sender<Pb>);
+    let tx = &*(refcon as *const Sender<(Pb, f64)>);
     ffi::CFRetain(image_buffer as ffi::CFTypeRef);
-    // 接收端已撤时 send 报错——会话正在销毁，忽略即可
-    let _ = tx.send(Pb(image_buffer));
+    // 帧连同它自己的显示时间一起上交——同步解码不做 B 帧重排，吐出的是
+    // 解码序，下游必须按这个 PTS 配对显示槽，绝不按吐出顺序排位
+    let _ = tx.send((Pb(image_buffer), cm_time_secs(pts)));
 }
 
 impl Decompressor {
@@ -285,11 +313,11 @@ impl Decompressor {
             ),
         ]);
 
-        let (tx, rx) = channel::<Pb>();
+        let (tx, rx) = channel::<(Pb, f64)>();
         let boxed = Box::new(tx);
         let record = ffi::VTDecompressionOutputCallbackRecord {
             callback: Some(decode_cb),
-            refcon: &*boxed as *const Sender<Pb> as *mut c_void,
+            refcon: &*boxed as *const Sender<(Pb, f64)> as *mut c_void,
         };
         let mut session: ffi::VTDecompressionSessionRef = std::ptr::null_mut();
         let status = ffi::VTDecompressionSessionCreate(
@@ -385,10 +413,10 @@ impl Decompressor {
         )
     }
 
-    /// 收走已就绪的输出帧（显示序）。
-    fn drain(&self, out: &mut VecDeque<Pb>) {
-        while let Ok(pb) = self.rx.try_recv() {
-            out.push_back(pb);
+    /// 收走已就绪的输出帧（解码序——同步解码无重排，顺序不可信）。
+    fn drain(&self, out: &mut Vec<(Pb, f64)>) {
+        while let Ok(item) = self.rx.try_recv() {
+            out.push(item);
         }
     }
 }
@@ -430,26 +458,14 @@ unsafe extern "C" fn encode_cb(
     let _ = tx.send(CmSb(sample_buffer));
 }
 
-/// 会话的硬件策略：探测用 `Enable`（允许硬件、允许回落），真转码用
-/// `Require`（探测已经确认硬件在位，回落反而是 bug）。
-#[derive(Clone, Copy)]
-enum HwPolicy {
-    Require,
-    Enable,
-}
-
 impl Compressor {
-    /// 建硬编 H.264 会话。
-    unsafe fn new(width: usize, height: usize, bitrate: i32, policy: HwPolicy) -> AppResult<Self> {
+    /// 建 H.264 编码会话：`Enable` 策略——有硬编用硬编，没有就落 Apple
+    /// 内置软编会话。曾经还有 `Require`（探测确认硬编后才放行生产），
+    /// 软编会话转正后两态合一，探测的 hw/sw 结论只喂徽标与并行度。
+    unsafe fn new(width: usize, height: usize, bitrate: i32) -> AppResult<Self> {
         let spec = make_dict(&[(
-            match policy {
-                HwPolicy::Require => {
-                    ffi::kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder
-                }
-                HwPolicy::Enable => {
-                    ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
-                }
-            } as ffi::CFTypeRef,
+            ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
+                as ffi::CFTypeRef,
             ffi::kCFBooleanTrue as ffi::CFTypeRef,
         )]);
 
@@ -509,11 +525,13 @@ impl Compressor {
         let bitrate_num = make_int(bitrate);
         let gop = make_int(250);
         let no_delay = make_int(0);
+        let no_reorder = make_int(0);
         // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余
         // 尽力而为——实测部分编码器拒收 MaxFrameDelayCount=0 / 自定义 profile。
-        // 被拒的后果：GOP 用编码器默认（约 2s，与 250 帧同档），帧延迟用
-        // 编码器默认——时间戳标注读的是输出样本自带的 PTS（见 emit_outputs），
-        // 不依赖「无重排」假设。
+        // **AllowFrameReordering 必须关掉**：B 帧重排一旦被编码器打开（硬编
+        // 会话会拒收 MaxFrameDelayCount=0，本机实证），输出落进解码序 +
+        // 非单调 PTS，递增兜底只能把乱序帧顶到错误的时间上——产物帧序乱掉
+        // （真实剧集 B 帧流首跑即现）。下游 mux 的契约就是单调显示序。
         let required = os(
             ffi::VTSessionSetProperty(
                 session,
@@ -523,6 +541,11 @@ impl Compressor {
             "设码率",
         );
         for (name, key, value) in [
+            (
+                "AllowFrameReordering",
+                ffi::kVTCompressionPropertyKey_AllowFrameReordering,
+                no_reorder as ffi::CFTypeRef,
+            ),
             (
                 "MaxKeyFrameInterval",
                 ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
@@ -652,21 +675,23 @@ impl Compressor {
     }
 }
 
-/// `kCMSampleAttachmentKey_NotSync == false` 的样本才是可独立解码的同步样本。
-/// 键不存在时按非同步处理（宁缺毋滥：标错关键帧会毁掉产物的 seek）。
+/// VT 编码输出的同步样本判定：`kCMSampleAttachmentKey_NotSync` 缺省或为 false
+/// 即同步样本。压缩输出的约定是**非同步帧必带 NotSync=true，同步帧省略该键**
+/// （Apple 示例代码一律按 `!contains(key)` 判）——首帧 IDR 不带这个键，
+/// 按「缺省即非同步」判会把首帧标成非关键帧，muxide 直接拒收。
 unsafe fn is_sync_sample(sb: ffi::CMSampleBufferRef) -> bool {
     let array = ffi::CMSampleBufferGetSampleAttachmentsArray(sb, 0);
     if array.is_null() {
-        return false;
+        return true;
     }
     let dict = ffi::CFArrayGetValueAtIndex(array, 0) as ffi::CFDictionaryRef;
     if dict.is_null() {
-        return false;
+        return true;
     }
     let value =
         ffi::CFDictionaryGetValue(dict, ffi::kCMSampleAttachmentKey_NotSync as ffi::CFTypeRef);
     if value.is_null() {
-        return false;
+        return true;
     }
     ffi::CFBooleanGetValue(value as ffi::CFBooleanRef) == 0
 }
@@ -775,33 +800,15 @@ fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
     bps.clamp(800_000.0, 12_000_000.0) as i32
 }
 
-/// 下一帧的显示时间：按升序时间轴逐帧取，重复/回退按半帧顶开。
-fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, frame_dur: f64) -> f64 {
-    let mut p = sorted_pts
-        .get(*cursor)
-        .copied()
-        .unwrap_or_else(|| last.unwrap_or(0.0) + frame_dur);
-    *cursor += 1;
-    if let Some(prev) = *last {
-        if p <= prev {
-            p = prev + frame_dur * 0.5;
-        }
-    }
-    *last = Some(p);
-    p
-}
-
-/// 一帧解码输出 →（缩放）→ 编码 → 收割产物。
+/// 一帧解码输出 →（缩放）→ 编码 → 收割产物。`pts` 是该帧与源槽位配对
+/// 好的显示时间（见 run() 流水注释）。
 #[allow(clippy::too_many_arguments)]
 fn process_frame(
     pb: Pb,
-    policy: HwPolicy,
+    pts: f64,
     scale_to: Option<(usize, usize)>,
     fps: f64,
     frame_dur: f64,
-    sorted_pts: &[f64],
-    pts_cursor: &mut usize,
-    last_pts: &mut Option<f64>,
     transfer: &mut Option<Transfer>,
     compressor: &mut Option<Compressor>,
     out_dims: &mut Option<(usize, usize)>,
@@ -819,8 +826,14 @@ fn process_frame(
             Some((w, h)) => (w, h),
             None => (src_w, src_h),
         };
-        *compressor =
-            Some(unsafe { Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps), policy)? });
+        let c = unsafe { Compressor::new(out_w, out_h, bitrate_for(out_w, out_h, fps))? };
+        // 编码器自报硬编还是软编——只进日志，产物两边都是能播的 H.264
+        let hw = unsafe { c.using_hardware() }.unwrap_or(false);
+        log::info!(
+            "[Platform/vt] 编码会话已建（{out_w}x{out_h}）：{}",
+            if hw { "硬件" } else { "Apple 软编" }
+        );
+        *compressor = Some(c);
         *out_dims = Some((out_w, out_h));
     }
     let frame = match transfer.as_ref() {
@@ -828,9 +841,8 @@ fn process_frame(
         None => pb,
     };
     let compressor = compressor.as_mut().expect("上一行刚建好");
-    let pts = next_pts(sorted_pts, pts_cursor, last_pts, frame_dur);
     unsafe { compressor.encode(&frame, pts, frame_dur)? };
-    emit_outputs(compressor, last_pts, frame_dur, units, on_progress)
+    emit_outputs(compressor, units, on_progress)
 }
 
 /// 收割编码器已就绪的输出。
@@ -841,19 +853,16 @@ fn process_frame(
 #[allow(clippy::too_many_arguments)]
 fn emit_outputs(
     compressor: &mut Compressor,
-    last_pts: &mut Option<f64>,
-    frame_dur: f64,
     units: &mut Vec<(f64, Vec<u8>, bool)>,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> AppResult<()> {
     for sb in compressor.take_outputs() {
         let (annexb, keyframe) = unsafe { compressor.sample_to_unit(&sb) }?;
-        let raw = output_pts_secs(&sb);
-        let pts = match *last_pts {
-            Some(prev) if raw <= prev => prev + frame_dur * 0.5,
-            _ => raw,
-        };
-        *last_pts = Some(pts);
+        // PTS **原样透传**。解码侧按源时间轴精确配对后，发射序=解码序，
+        // 显示时间天然非单调——任何「回退顶开」都会把真实显示顺序打乱
+        // （真实剧集 B 帧流首跑实证：标题帧被顶进转场中间）。非单调交给
+        // muxide：按时间戳交织、写 ctts，这正是 MP4 B 帧的标准形态。
+        let pts = output_pts_secs(&sb);
         units.push((pts, annexb, keyframe));
         if let Some(cb) = on_progress {
             cb(pts);
@@ -862,9 +871,8 @@ fn emit_outputs(
     Ok(())
 }
 
-/// 输出样本的显示时间（秒）。timescale 非法时按 0 处理，交给递增兜底。
-fn output_pts_secs(sb: &CmSb) -> f64 {
-    let t = unsafe { ffi::CMSampleBufferGetOutputPresentationTimeStamp(sb.0) };
+/// CMTime → 秒。timescale 非法时按 0 处理，交给递增兜底。
+fn cm_time_secs(t: ffi::CMTime) -> f64 {
     if t.timescale <= 0 {
         0.0
     } else {
@@ -872,11 +880,21 @@ fn output_pts_secs(sb: &CmSb) -> f64 {
     }
 }
 
+/// 输出样本的显示时间（秒）。
+fn output_pts_secs(sb: &CmSb) -> f64 {
+    cm_time_secs(unsafe { ffi::CMSampleBufferGetOutputPresentationTimeStamp(sb.0) })
+}
+
+/// 显示时间 → 90000 刻度整数键：与 decode() 喂给 VT 的取整同一刻度，
+/// 解码回调带回的值可与源槽位精确相等，用作帧—时间槽的配对键。
+fn ptkey(secs: f64) -> i64 {
+    (secs * 90_000.0).round() as i64
+}
+
 fn run(
     req: &PlatformRequest<'_>,
     demuxed: &crate::media::demux::Demuxed,
     video: &TrackInfo,
-    policy: HwPolicy,
 ) -> AppResult<()> {
     let started = Instant::now();
 
@@ -889,29 +907,28 @@ fn run(
         .collect();
     let fps = video.average_framerate().unwrap_or(25.0);
     let frame_dur = 1.0 / fps;
-    // 解码输出按显示序出帧：显示时间按升序排列后逐帧对位
+    // 每个样本自己的显示时间（stts 累计 + ctts 合成偏移）；空表退化为按
+    // 平均帧率均摊。帧与时间槽的配对全靠它，见下面的流水注释。
     let mut source_pts = video.sample_pts();
-    let mut sorted_pts = source_pts.clone();
-    if sorted_pts.is_empty() {
-        let synthetic: Vec<f64> = (0..video.samples.len()).map(|i| i as f64 / fps).collect();
-        source_pts = synthetic.clone();
-        sorted_pts = synthetic;
-    } else {
-        sorted_pts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if source_pts.is_empty() {
+        source_pts = (0..video.samples.len()).map(|i| i as f64 / fps).collect();
     }
     let scale_to = req
         .scale_to
         .map(|(w, h)| ((w & !1) as usize, (h & !1) as usize));
 
-    // 2) 解码 → （缩放）→ 编码 流水
+    // 2) 解码 → （缩放）→ 编码 流水。**帧与显示时间按 PTS 精确配对，
+    // 绝不信任吐出顺序**：解码走同步模式（回调在 decode() 内触发），
+    // 同步模式没有 B 帧重排——吐出的是解码序，带 B 帧的源显示序≠解码序
+    // （真实剧集首跑实证：标题帧被插进转场中间）。解码回调把喂入的显示
+    // 时间原样带回，这里逐样本按 PTS 认领自己的帧；认领不到（解码丢帧）
+    // 就跳过该槽——产物少一帧，顺序绝不被打乱。
     let decoder = unsafe { Decompressor::new(&parameter_sets)? };
-    let mut pending: VecDeque<Pb> = VecDeque::new();
+    let mut pending: Vec<(Pb, f64)> = Vec::new();
     let mut units: Vec<(f64, Vec<u8>, bool)> = Vec::new();
     let mut transfer: Option<Transfer> = None;
     let mut compressor: Option<Compressor> = None;
     let mut out_dims: Option<(usize, usize)> = None;
-    let mut pts_cursor = 0usize;
-    let mut last_pts: Option<f64> = None;
 
     for (i, &(offset, size)) in video.samples.iter().enumerate() {
         let raw = crate::media::transcode::read_range(req.input, offset, size)?;
@@ -921,17 +938,27 @@ fn run(
         let pts = source_pts.get(i).copied().unwrap_or(0.0);
         unsafe { decoder.decode(&raw, pts, frame_dur)? };
 
-        decoder.drain(&mut pending);
-        while let Some(pb) = pending.pop_front() {
+        let key = ptkey(pts);
+        let mut frame = None;
+        loop {
+            if let Some(pos) = pending.iter().position(|(_, k)| ptkey(*k) == key) {
+                frame = Some(pending.swap_remove(pos).0);
+                break;
+            }
+            let mut got = Vec::new();
+            decoder.drain(&mut got);
+            if got.is_empty() {
+                break;
+            }
+            pending.extend(got);
+        }
+        if let Some(pb) = frame {
             process_frame(
                 pb,
-                policy,
+                pts,
                 scale_to,
                 fps,
                 frame_dur,
-                &sorted_pts,
-                &mut pts_cursor,
-                &mut last_pts,
                 &mut transfer,
                 &mut compressor,
                 &mut out_dims,
@@ -941,17 +968,17 @@ fn run(
         }
     }
     unsafe { decoder.finish()? };
+    // 收尾帧：正常情况此处应为空（同步解码逐帧结清）。万一有遗留，
+    // 按 PTS 排序补齐，顺序仍由时间轴保证。
     decoder.drain(&mut pending);
-    while let Some(pb) = pending.pop_front() {
+    pending.sort_by_key(|(_, pts)| ptkey(*pts));
+    for (pb, pts) in pending {
         process_frame(
             pb,
-            policy,
+            pts,
             scale_to,
             fps,
             frame_dur,
-            &sorted_pts,
-            &mut pts_cursor,
-            &mut last_pts,
             &mut transfer,
             &mut compressor,
             &mut out_dims,
@@ -966,13 +993,7 @@ fn run(
         None => return Err(AppError::Media("HEVC 解码没有产出任何帧".into())),
     };
     unsafe { compressor.finish()? };
-    emit_outputs(
-        &mut compressor,
-        &mut last_pts,
-        frame_dur,
-        &mut units,
-        req.on_progress,
-    )?;
+    emit_outputs(&mut compressor, &mut units, req.on_progress)?;
 
     if units.is_empty() {
         return Err(AppError::Media("平台硬编没有产出任何帧".into()));

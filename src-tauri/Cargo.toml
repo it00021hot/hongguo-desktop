@@ -23,6 +23,14 @@ tauri-plugin-opener = "2"
 # 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。
 # 必须是第一个注册的插件（官方要求，锁要抢在窗口创建之前）。
 tauri-plugin-single-instance = "2"
+# dev 调试通路：在 app 里内嵌 W3C WebDriver 服务器（127.0.0.1:4445），macOS 的
+# WKWebView 没有对外 CDP/远程调试协议（桌面目标被 Apple 私有 entitlement 锁给
+# Safari），这是官方推荐的等效调试通路。依赖无条件编译——cargo 不支持用
+# `debug_assertions` 选依赖（写了直接警告，行为因版本而异）；「只在 dev 暴露」
+# 由 lib.rs 里 `#[cfg(debug_assertions)]` 的注册点保证，release 不注册即无端口，
+# 未引用的代码随后被 lto+strip 剔除。驱动脚本见 scripts/webdriver.mjs，
+# 说明见 docs/webview-cdp-testing.md。
+tauri-plugin-webdriver = "0.2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -128,6 +136,11 @@ debug-assertions = false
 #    并发问题）以 1.1.6 的版本号顶替。global-alloc feature 虽已不生效，
 #    但保留：将来谁把分配器装回去时用的也是修过的版本。
 [patch.crates-io]
+# muxide 0.2.5 的 B 帧流封装有设计缺陷：interleave schedule 按 PTS 排序
+# 写 mdat，而 stco 按写入序、stsz/stts/ctts 按输入序构建——B 帧流表与
+# 数据互相矛盾，产物不可解（vendor 补丁把视频排序键改为 dts=解码序，
+# 无 B 帧的流 dts==pts 行为不变）。上游 0.2.5 为最新版，待修复后回收。
+muxide = { path = "vendor/muxide" }
 rusty_alloc = { path = "vendor/rusty_alloc" }
 rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
 rusty_h264-common = { path = "vendor/rusty_h264_common" }

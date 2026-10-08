@@ -225,7 +225,7 @@ export function SettingsPage() {
               variant={
                 capability?.platformHwEncoder || capability?.h264HwEncoder
                   ? 'success'
-                  : capability?.hasFfmpeg
+                  : capability?.platformEncoder || capability?.hasFfmpeg
                     ? 'warning'
                     : 'secondary'
               }
@@ -331,10 +331,10 @@ export function SettingsPage() {
  */
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
-  // 平台硬编（VideoToolbox / Media Foundation）与 ffmpeg 硬编同为「硬件加速」档：
-  // 标签按速度分档，不按实现分。
+  // 真硬件（平台硬编 / ffmpeg 硬编）才进「硬件加速」档；macOS 无硬编时
+  // VideoToolbox 走 Apple 软编会话——比 ffmpeg 快但编码仍在 CPU，归「软件加速」。
   if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
-  if (cap.hasFfmpeg) return t('settings.backendFfmpegSw');
+  if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
   return t('settings.backendRust');
 }
 

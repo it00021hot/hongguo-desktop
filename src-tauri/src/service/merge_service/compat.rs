@@ -255,9 +255,10 @@ pub fn compat_merge(
 
 /// 并行度按后端定，几条路的瓶颈完全不同。
 ///
-/// - 平台硬编（VideoToolbox 等）：编码在 GPU 上，CPU 只剩解封装/拷贝，
+/// - 平台层（VideoToolbox 等）：有硬编时编码在 GPU 上，CPU 只剩解封装/拷贝，
 ///   会话数同样有限（Apple 平台硬编会话有上限），铺 4 路保守起步，
-///   超了由 [`live_cap`] 收敛兜住。
+///   超了由 [`live_cap`] 收敛兜住；macOS 无硬编时是 Apple 软编会话——
+///   编码器自己就是多线程 CPU 大户，压到 2 路保交互。
 /// - ffmpeg 硬编（nvenc 等）：同是 GPU 会话受限，铺 6 路吞吐最好
 ///   （受核数约束）。**老 NVIDIA 驱动限制并发会话数（3~8 路不等）**，超限的
 ///   那路开不了编码器、静默回落软解——所以线程数只是上限，真正生效的是
@@ -276,7 +277,14 @@ fn merge_threads(episodes: usize) -> usize {
         .map(|n| n.get())
         .unwrap_or(1);
     let cap = match crate::media::capability::selected_backend() {
-        crate::media::Backend::Platform => cores.clamp(1, 4),
+        crate::media::Backend::Platform => {
+            if crate::media::platform::h264_hw_encoder_available() {
+                cores.clamp(1, 4)
+            } else {
+                // Apple 软编会话：编码吃满 CPU，2 路封顶
+                cores.clamp(1, 2)
+            }
+        }
         crate::media::Backend::FfmpegHw => cores.clamp(1, 6),
         crate::media::Backend::FfmpegSw => (cores / 2).clamp(1, 4),
         crate::media::Backend::Rust => 4,

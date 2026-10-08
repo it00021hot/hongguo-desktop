@@ -234,6 +234,19 @@ extern "C" {
     pub fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
     pub fn CVPixelBufferGetBaseAddress(pixelBuffer: CVPixelBufferRef) -> *mut c_void;
     pub fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVPixelBufferRef) -> usize;
+    // 平面级访问：IOSurface 背板下整块分配不等于「stride×高×1.5」的纸面
+    // 加和（平面各自对齐），按整块 memset 会越界——探测帧填充必须逐平面。
+    pub fn CVPixelBufferGetPlaneCount(pixelBuffer: CVPixelBufferRef) -> usize;
+    pub fn CVPixelBufferGetBaseAddressOfPlane(
+        pixelBuffer: CVPixelBufferRef,
+        planeIndex: usize,
+    ) -> *mut c_void;
+    pub fn CVPixelBufferGetBytesPerRowOfPlane(
+        pixelBuffer: CVPixelBufferRef,
+        planeIndex: usize,
+    ) -> usize;
+    pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
+        -> usize;
 }
 
 // —— VideoToolbox ——
@@ -244,6 +257,7 @@ extern "C" {
     pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxKeyFrameInterval: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxFrameDelayCount: CFStringRef;
+    pub static kVTCompressionPropertyKey_AllowFrameReordering: CFStringRef;
     pub static kVTCompressionPropertyKey_ProfileLevel: CFStringRef;
     pub static kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTCompressionPropertyKey_RealTime: CFStringRef;

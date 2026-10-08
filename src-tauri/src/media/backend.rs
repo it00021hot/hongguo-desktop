@@ -31,7 +31,7 @@ impl Backend {
     /// 解码/转码链路的稳定标识（日志与 `TranscodeResult.decoder`）。
     pub fn decoder_label(self) -> &'static str {
         match self {
-            Backend::Platform => "platform_hw",
+            Backend::Platform => "platform",
             Backend::FfmpegHw | Backend::FfmpegSw => "ffmpeg",
             Backend::Rust => "rusty_h265",
         }

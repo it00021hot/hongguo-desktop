@@ -1,7 +1,8 @@
 //! 能力探测。
 //!
 //! 探测的是「当前这台机器转码会走哪条路」：
-//! - 平台原生硬编可用（VideoToolbox / Media Foundation）→ 接近实时
+//! - 平台原生编码层可用（macOS：VT 会话可建即真，含 Apple 软编；Windows：
+//!   有硬件 MFT）→ 接近实时到中速（视硬编与否）
 //! - 有 ffmpeg 且选得到**真硬件**编码器 → 接近实时
 //! - 有 ffmpeg 但只有软件编码器 → 中速
 //! - 都没有 → 纯 Rust 软解，慢
@@ -20,8 +21,11 @@ pub struct DecodeCapability {
     pub has_ffmpeg: bool,
     /// ffmpeg 侧有**真正走硬件**的 H.264 编码器（nvenc/qsv/amf/能开 `-hw_encoding` 的 mf）
     pub h264_hw_encoder: bool,
-    /// 平台原生硬编可用（VideoToolbox / Media Foundation，随 GPU 驱动/系统提供，
-    /// 不依赖用户装任何东西）
+    /// 平台原生编码层可用（macOS：VT 会话可建即真，含 Apple 软编会话；
+    /// Windows：有硬件 MFT），不依赖用户装任何东西
+    pub platform_encoder: bool,
+    /// 平台原生**硬编**可用——只用于徽标「硬件加速」档与并行度，
+    /// 不是 macOS 生产闸门（软编会话同样进生产）
     pub platform_hw_encoder: bool,
 }
 
@@ -73,6 +77,7 @@ fn probe() -> DecodeCapability {
     DecodeCapability {
         has_ffmpeg,
         h264_hw_encoder: hardware,
+        platform_encoder: crate::media::platform::encoder_available(),
         platform_hw_encoder: crate::media::platform::h264_hw_encoder_available(),
     }
 }
@@ -80,9 +85,9 @@ fn probe() -> DecodeCapability {
 /// 当前机器分流链会选中的最佳后端（不实际转码）。
 ///
 /// 分流顺序与 [`crate::service::transcode_service::pipeline`] 一致：
-/// 平台硬编 → ffmpeg → 纯 Rust。并行度、超订预期都从这里的结论出发。
+/// 平台编码层 → ffmpeg → 纯 Rust。并行度、超订预期都从这里的结论出发。
 pub fn selected_backend() -> Backend {
-    if platform_hw() {
+    if platform_available() {
         return Backend::Platform;
     }
     match crate::media::ffmpeg::h264_encoder() {
@@ -92,9 +97,8 @@ pub fn selected_backend() -> Backend {
     }
 }
 
-fn platform_hw() -> bool {
-    !crate::media::platform::disabled_by_env()
-        && crate::media::platform::h264_hw_encoder_available()
+fn platform_available() -> bool {
+    !crate::media::platform::disabled_by_env() && crate::media::platform::encoder_available()
 }
 
 /// 当前机器的转码链路能否统一分辨率（缩放）。

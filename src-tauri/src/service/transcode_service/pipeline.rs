@@ -55,8 +55,9 @@ pub fn transcode(
     let started = std::time::Instant::now();
     let target = cache::cache_file(series_id, vid_index);
 
-    // 分流 1：平台原生硬编（VideoToolbox / Media Foundation）。
-    // 不依赖用户装任何东西，随 GPU 驱动/系统提供；探测失败会静默落回 ffmpeg。
+    // 分流 1：平台原生编码（macOS：VideoToolbox，硬编优先、Apple 软编回落；
+    // Windows：Media Foundation 硬编）。不依赖用户装任何东西；
+    // 会话建不出来/失败会静默落回 ffmpeg。
     let mut backend = crate::media::Backend::Rust;
     if let Some(done) =
         crate::media::platform::transcode_h264(&crate::media::platform::PlatformRequest {
@@ -159,10 +160,15 @@ pub fn episode_seconds(path: &Path) -> Option<f64> {
 /// 与合并产物校验（`merge_service::compat`）同一口径：一个「有 moov、能打开、
 /// 只播得动前几秒」的坏文件用户看不出问题，只会觉得「功能有毛病」。
 fn output_is_playable(path: &Path) -> bool {
-    crate::media::demux::demux_file(path)
-        .ok()
-        .and_then(|d| d.video_track().map(|t| !t.info.samples.is_empty()))
-        .unwrap_or(false)
+    match crate::media::demux::demux_file(path) {
+        Ok(d) => d.video_track().is_some_and(|t| !t.info.samples.is_empty()),
+        // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志
+        // 就只剩「为什么没用上硬编」的悬案（B 帧 ctts 形态曾踩过）
+        Err(e) => {
+            log::warn!("[Transcode] 产物校验：解复用失败: {e}");
+            false
+        }
+    }
 }
 
 #[cfg(test)]

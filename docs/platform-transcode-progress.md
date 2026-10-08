@@ -1,6 +1,11 @@
 # 转码链路平台硬编改造——进度记录
 
 > 2026-10-07 macOS VT 落地；2026-10-07 晚 Windows MF 落地（真机 GTX 1650 验收）。
+> 2026-10-08 macOS 真机验收通过（Intel 开发机，软会话通道；发现并修复 #8）。
+> 2026-10-08 晚 **决策变更：macOS 生产闸门放宽**——VT 会话可建即走（硬编优先，
+> Apple 软编会话兜底），不再要求探测到硬编；Windows MF 维持硬编闸门。
+> 真实剧集首跑连抓三个 B 帧相关 bug（#9 探测帧分辨率、#10 解码吐出序、#11 mux
+> B 帧封装），全部修复并有回归测试钉住；Apple Silicon 敞口关闭。
 > 决策、实现与验证状态的快照；后续会话从这里接续。
 
 ## 决策
@@ -65,8 +70,15 @@ MP4 文件 ─IMFSourceReader→ NV12 系统内存帧（自动吃 HEVC 硬解/�
 3. **软解 25fps 合成时间轴**（见阶段 0）。
 4. **`diagnostics.rs` 崩溃日志轮转在 Windows 上膨胀**：append 句柄上 `set_len(0)` 续写，Windows 的写入位置仍指旧文件末尾，先垫一截 NUL 再写——轮转后文件反而回到上限大小（分支首次在 Windows 跑测试暴露）。已改为关句柄整文件覆盖。
 5. **`lib.rs` 的 `RunEvent::Reopen` 是 macOS 专属变体**，Windows 构建编不过（分支首次 Windows 编译暴露）。已 cfg 门控。
-6. **`vt/mod.rs` 关键帧语义反转**（2026-10-07 晚已修，**待 macOS 真机验证**）：`sample_to_unit` 曾返回 `!sync` 作为关键帧布尔并给非关键帧前插参数集——`mux_h264` 的布尔语义是 `is_keyframe`（软解路径按 GOP 正确标记）。后果：stss 表标错（seek 落到不可独立解码的帧）、后续关键帧不带参数集。已改为 `sync` + 关键帧/首样本前插（与 mf 侧同构）。
-7. **`vt/mod.rs` CFNumber 双重释放**（2026-10-07 晚已修，**待 macOS 真机验证**）：`Compressor::new` 里 `ProfileLevel`/`RealTime` 设置与三个 CFNumber 的 `CFRelease` 整段重复出现两次，第二次是对已释放对象的重复释放。已删除重复段。⚠️ Windows 侧无法交叉编译验证（reqwest→rustls 的原生依赖需要 macOS C 工具链），macOS 会话需 `cargo check` 确认。
+6. **`vt/mod.rs` 关键帧语义反转**（2026-10-07 晚已修，2026-10-08 macOS 真机验证通过）：`sample_to_unit` 曾返回 `!sync` 作为关键帧布尔并给非关键帧前插参数集——`mux_h264` 的布尔语义是 `is_keyframe`（软解路径按 GOP 正确标记）。后果：stss 表标错（seek 落到不可独立解码的帧）、后续关键帧不带参数集。已改为 `sync` + 关键帧/首样本前插（与 mf 侧同构）。
+7. **`vt/mod.rs` CFNumber 双重释放**（2026-10-07 晚已修，2026-10-08 macOS 全量单测过、clippy 0 警告）：`Compressor::new` 里 `ProfileLevel`/`RealTime` 设置与三个 CFNumber 的 `CFRelease` 整段重复出现两次，第二次是对已释放对象的重复释放。已删除重复段。⚠️ Windows 侧无法交叉编译验证（reqwest→rustls 的原生依赖需要 macOS C 工具链），macOS 会话需 `cargo check` 确认——已确认。
+8. **`vt/mod.rs` `is_sync_sample` 语义反了**（2026-10-08 macOS 真机首跑 e2e 即现，当日修复）：VT 编码输出同步帧**省略** `kCMSampleAttachmentKey_NotSync` 键（非同步帧才带 true），按「缺省即非同步」判会把首帧 IDR 标成非关键帧，muxide 拒收「first video frame must be a keyframe (IDR)」。已改为 Apple 惯例「键缺省或 false 即同步」（Apple 示例代码一律按 `!contains(key)` 判）。教训：对压缩**输出**样本，「宁缺毋滥」的保守方向恰好反了——它防的是 seek 标错，却先死在了 mux 入口校验上。
+9. **探测帧 256×256 会落错编码器实例**（2026-10-08 晚，放宽闸门后真实会话暴露）：VT 按分辨率挑编码器实例，256×256 的探测会话落到软编实例、`UsingHardwareAcceleratedVideoEncoder` 误报 false——本机（黑果 QuickSync）真实 1080p 会话明明是硬件（CPU 8% 跑 2× 实时/路）。探测帧改为 **1920×1080** 后结论翻转。教训与 ffmpeg 侧 nvenc「64×64 误判不可用」同源：探测形状必须贴近真实使用。
+10. **B 帧源的三连**（2026-10-08 晚，真实短剧集首跑即现，产物开头故事序错乱）：
+    - **解码吐出序≠显示序**：同步解码（回调在 `decode()` 内触发）没有 B 帧重排，吐出的是解码序；旧代码按「第 k 个吐出帧 = 第 k 小显示时间」配对，真实剧集（带 B 帧）整体错位。已改为**回调带回每帧自己的显示时间（喂入 PTS 原样回传），按 PTS 精确配对**，绝不信任吐出顺序。
+    - **编码器 B 帧关不掉**：本机硬编会话对 `MaxFrameDelayCount=0` 和 `AllowFrameReordering=0` 都拒收（-12902），输出是解码序 + 非单调 PTS。旧 emit 的「递增兜底」把回退 PTS 硬顶开=打乱显示序。已去掉兜底，PTS 原样透传。
+    - **mux 必须走 DTS**：muxide 对非单调 PTS 直接拒收，B 帧流按其契约走 `write_video_with_dts`，DTS=「第 k 小显示时间」（与 muxide 文档 I P B B → dts 0,1,2,3 示例同一公式）；B 帧流同时**关闭 faststart**——muxide 0.2.5 的 faststart 搬移假设写入序≈pts 序，解码序写入样本边界整段错位（回归测试 `bframe_decode_order_stream_survives_the_mux` 钉住）。上游无修复版本。
+11. **demux 只读头部 8MB**（2026-10-08 晚随 #10 暴露）：B 帧流关 faststart 后 moov 在文件尾，`demux_file` 的 8MB 头窗找不到 moov。已加「顶层 box 逐个跳读定位尾部 moov、整箱读回」的回退（`read_tail_moov`），回归测试 `tail_moov_is_found_when_faststart_is_off` 钉住。
 
 ## 验证状态（2026-10-07 晚，Windows / GTX 1650 / Win11 26200）
 
@@ -110,13 +122,21 @@ Windows MF 一轮（windows crate 绑定没错，错的全是**契约与实机�
 
 ## 待办（后续会话）
 
-- **macOS VT 真机验收（定于 2026-10-09，Mac 明天才可用）**：`vt/mod.rs` 最近三处改动
-  （#6 关键帧语义、#7 双重释放防护、0.12 码率系数）目前只过了 `cargo check`，逻辑上对、
-  没踩过真机。真机到手后跑 `cargo test --lib e2e_tests`（平台通道用例自动启用），
-  顺带验一次兼容合并端到端。发 Mac 版前此处必须打勾。
-  环境面结论（无需额外安装）：VideoToolbox 是系统框架，Apple Silicon 全系与
-  2016+（Skylake 起）Intel Mac 自带 HEVC 硬解 + H.264 硬编，无 Windows 的扩展/OEM 差异；
-  「能播就能合」的对称性在 mac 上同样成立。
+- ~~macOS VT 真机验收~~ **已完成并升级（2026-10-08）**：
+  - 闸门放宽后本机（黑果 QuickSync）**真硬编会话已实际接客**：GUI 驱动下载 2 集
+    （HEVC 1080p）→ 兼容合并 → VT 硬件会话 12394+12521 帧全转 → 产物 782MB
+    （7.5Mbps 正中 0.12 系数）、830.9s/24915 帧、ffprobe 全量解码 0 NAL 错误、
+    显示序与源逐帧对应；Head 阶段另有过一次 14s（缓存命中）与多次完整重转。
+  - e2e 10/10（真实 HEVC 集）：`platform_transcode`（硬件门控）在本机**真跑通过**——
+    探测修分辨率后 hw=true，「AS 才能验硬编」的敞口当日关闭。
+  - `cargo test --lib` **623/0**（含三条新回归：B 帧封装、尾部 moov、规模复现）。
+  - **遗留（低优先）**：VMAF 真实内容标定暂缓——源 HEVC 的解码歧义（ffmpeg 软解
+    前段损坏/粉块 vs VT 正常，P hone 顺序 vs 容器 ctts 顺序疑似分歧）让「正确参考
+    解码」无法三方可信；0.12 系数暂沿用 NVENC 标定（本机 anime 类内容 7.5Mbps
+    余量极大）。需要标定时：用可信播放器逐帧比对源，或换合成源 + hwaccel 全链。
+  - macOS GUI 自动化：webdriver 方案已落地（tauri-plugin-webdriver debug 内嵌
+    4445 + scripts/webdriver.mjs），GUI 全链实测即由它驱动，见
+    docs/webview-cdp-testing.md 的 macOS 附注。
 - MF 解码侧如需硬解直通（NV12 DX 表面零拷贝进 NVENC），再做 D3D11 设备管理器——当前系统内存中转已达标（10s/集 ≈ 0.9s），属「需要时再做」。
 
 ## 真机合并验收（2026-10-07，Windows + HONGGUO_NO_FFMPEG=1）
