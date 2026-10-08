@@ -683,10 +683,18 @@ export const searchPageSchema = z.object({
 });
 export type SearchPage = z.infer<typeof searchPageSchema>;
 
+/** 联想词的一个渲染片段（hl=命中高亮，Rust 按服务端命中位切好）。 */
+const suggestPartSchema = z.object({
+  text: z.string(),
+  hl: z.boolean(),
+});
+
 /** 搜索联想条目（Rust `search::SuggestItem`，suggest/v 的 query_result_v2）。 */
 export const suggestItemSchema = z.object({
   /** 联想词（= 剧名） */
   word: z.string(),
+  /** 命中高亮切片；服务端没给高亮信息时为空（整体普通渲染） */
+  parts: z.array(suggestPartSchema).default([]),
   /** 对应剧集 id；纯词联想为空串（前端回落为发起搜索） */
   seriesId: z.string(),
   vid: z.string(),

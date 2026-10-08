@@ -46,6 +46,13 @@ pub struct RelatedSeries {
 }
 
 /// 拉一部剧的相关作品·系列。
+///
+/// 服务端对 plan/v 的**首次调用**下发冷响应——猜你喜欢 cell 还在但
+/// `cell_data` 里的短剧子格稀少甚至为空，连打会逐次填充（2026-10-08
+/// 实测同进程 4 连打 guess 1→6→8→9）。客户端每次进详情页只打一次、
+/// 前端还带 10 分钟缓存，冷响应会原样上屏成「猜你喜欢消失」。
+/// 对策：guess 空时短间隔重试（最多 3 调），取首个非空结果；works
+/// 各次稳定不受影响，全空就退最后一次的响应。
 pub async fn fetch_related_series(
     series_id: &str,
     env: &super::client::ApiEnv,
@@ -68,18 +75,29 @@ pub async fn fetch_related_series(
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
 
-    let bytes = crate::domain::api::client::api_call_reading(
-        crate::domain::api::danmaku::LQ_API_ORIGIN,
-        PLAN_PATH,
-        None,
-        &biz_query,
-        env,
-    )
-    .await?;
+    let mut last = RelatedSeries::default();
+    for attempt in 0..3u8 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        let bytes = crate::domain::api::client::api_call_reading(
+            crate::domain::api::danmaku::LQ_API_ORIGIN,
+            PLAN_PATH,
+            None,
+            &biz_query,
+            env,
+        )
+        .await?;
 
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
-    parse_related_series(&value)
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
+        let related = parse_related_series(&value)?;
+        if !related.guess.is_empty() {
+            return Ok(related);
+        }
+        last = related;
+    }
+    Ok(last)
 }
 
 /// 解析 plan/v 响应为相关作品两块内容。
@@ -817,6 +835,13 @@ mod probe2 {
         )
         .await
         .expect("plan raw");
+        // PROBE_DUMP_SET 时把原始响应落盘，供离线分析（服务端结构常变，
+        // 反复编译探测太慢）。
+        if let Ok(dir) = std::env::var("PROBE_DUMP") {
+            let path = std::path::Path::new(&dir).join("plan-raw.json");
+            std::fs::write(&path, &bytes).expect("写 plan-raw.json");
+            println!("[plan raw] dumped -> {}", path.display());
+        }
         let v: Value = serde_json::from_slice(&bytes).unwrap();
         for cell in v
             .get("data")

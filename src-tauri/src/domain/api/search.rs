@@ -19,12 +19,25 @@ pub const SEARCH_TAB_PATH: &str = "/reading/bookapi/search/tab/v";
 /// 搜索联想（2026-10-07 抓 hgplayer 1.1.6 锁定）。
 pub const SUGGEST_PATH: &str = "/reading/bookapi/search/suggest/v";
 
+/// 联想词的一个渲染片段（hgplayer 同款 TextPart：按命中位切开，
+/// hl=true 的片段前端上高亮色）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestPart {
+    pub text: String,
+    pub hl: bool,
+}
+
 /// 一条搜索联想（query_result_v2 形态）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuggestItem {
     /// 联想词（= 剧名；v2 的 name）
     pub word: String,
+    /// 命中高亮切片（search_high_light.high_light_position 切 name 所得；
+    /// 无高亮信息为空，前端整体按普通文本渲染）
+    #[serde(default)]
+    pub parts: Vec<SuggestPart>,
     /// 对应剧集 id（= keyword；无 video_data 的纯词联想为空串，
     /// 前端回落为「以该词发起搜索」）
     #[serde(default)]
@@ -171,6 +184,7 @@ fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
             None => (str_field(raw, "keyword"), String::new(), String::new()),
         };
         items.push(SuggestItem {
+            parts: highlight_parts(&word, raw.pointer("/search_high_light/high_light_position")),
             word,
             series_id,
             vid,
@@ -179,6 +193,59 @@ fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
         });
     }
     Ok(items)
+}
+
+/// high_light_position（`[[start,len]]`，按 unicode 字符计，抓包实证
+/// 「云渺：不死帝师」的「不死」= [3,2]）→ 把 word 切成 hl 片段。
+/// 位置越界/乱序按钳制+排序容错，切不出来的退空（前端整体普通渲染）。
+fn highlight_parts(word: &str, positions: Option<&Value>) -> Vec<SuggestPart> {
+    let chars: Vec<char> = word.chars().collect();
+    let mut ranges: Vec<(usize, usize)> = positions
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|p| {
+            let arr = p.as_array()?;
+            let start = arr.first()?.as_i64()?;
+            let len = arr.get(1)?.as_i64()?;
+            if start < 0 || len <= 0 {
+                return None;
+            }
+            Some((start as usize, len as usize))
+        })
+        .collect();
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+    ranges.sort_unstable();
+    let mut parts = Vec::new();
+    let mut cursor = 0;
+    for (start, len) in ranges {
+        let start = start.min(chars.len());
+        let end = start.saturating_add(len).min(chars.len());
+        if start < cursor || end <= start {
+            continue;
+        }
+        if start > cursor {
+            parts.push(SuggestPart {
+                text: chars[cursor..start].iter().collect(),
+                hl: false,
+            });
+        }
+        parts.push(SuggestPart {
+            text: chars[start..end].iter().collect(),
+            hl: true,
+        });
+        cursor = end;
+    }
+    if cursor < chars.len() {
+        parts.push(SuggestPart {
+            text: chars[cursor..].iter().collect(),
+            hl: false,
+        });
+    }
+    parts
 }
 
 /// 从 `search_tabs` 里取综合 tab（tab_type=11）解析。
@@ -291,6 +358,11 @@ mod tests {
                 "query_key": "不死",
                 "query_result_v2": [
                     { "name": "不死帝师", "keyword": "7644", "sug_abstract": "第1季·玄幻·4105万热度",
+                      "search_high_light": {
+                          "text": "不死帝师",
+                          "rich_text": "<em>不死</em>帝师",
+                          "high_light_position": [[0, 2]]
+                      },
                       "video_data": { "series_id": "7644", "vid": "99", "cover": "https://x/heic",
                                       "title": "不死帝师" } },
                     { "name": "纯词联想", "keyword": "纯词联想" },
@@ -303,8 +375,53 @@ mod tests {
         assert_eq!(items[0].series_id, "7644");
         assert_eq!(items[0].vid, "99");
         assert_eq!(items[0].abstract_text, "第1季·玄幻·4105万热度");
+        assert_eq!(
+            items[0].parts,
+            vec![
+                SuggestPart {
+                    text: "不死".into(),
+                    hl: true
+                },
+                SuggestPart {
+                    text: "帝师".into(),
+                    hl: false
+                },
+            ],
+            "命中位切成 hl 片段"
+        );
         assert_eq!(items[1].series_id, "纯词联想", "无 video_data 退 keyword");
         assert_eq!(items[1].cover, "");
+        assert!(items[1].parts.is_empty(), "无高亮信息 parts 空");
+    }
+
+    #[test]
+    fn highlight_parts_tolerates_bad_positions() {
+        // 非前缀命中 + 乱序/越界钳制（「云渺：不死帝师」抓包 = [3,2]）
+        let pos: Value = serde_json::json!([[3, 2], [99, 5], [1, 0], [-1, 2], [2, 1]]);
+        let parts = highlight_parts("云渺：不死帝师", Some(&pos));
+        assert_eq!(
+            parts,
+            vec![
+                SuggestPart {
+                    text: "云渺".into(),
+                    hl: false
+                },
+                SuggestPart {
+                    text: "：".into(),
+                    hl: true
+                },
+                SuggestPart {
+                    text: "不死".into(),
+                    hl: true
+                },
+                SuggestPart {
+                    text: "帝师".into(),
+                    hl: false
+                },
+            ],
+            "重叠/越界/非法位丢弃，其余按序切片"
+        );
+        assert!(highlight_parts("无高亮", None).is_empty());
     }
 }
 

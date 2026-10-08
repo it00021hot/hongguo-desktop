@@ -347,7 +347,7 @@ export function BrowsePage() {
             {/* 联想下拉：条目用 onMouseDown(preventDefault) 选中——
                 比 blur 早一拍，点条目不会先把下拉收掉 */}
             {showSuggest && (
-              <div className="bg-popover text-popover-foreground absolute inset-x-0 top-full z-30 mt-1 max-h-80 scrollbar-thin overflow-y-auto rounded-lg border shadow-lg">
+              <div className="bg-popover text-popover-foreground absolute inset-x-0 top-full z-30 mt-1.5 max-h-80 scrollbar-thin overflow-y-auto rounded-xl border p-1.5 shadow-lg">
                 {suggestions.slice(0, 8).map((item, i) => (
                   <SuggestRow
                     key={`${item.word}:${i}`}
@@ -470,7 +470,12 @@ export function BrowsePage() {
   );
 }
 
-/** 联想行：封面缩略（HEIC 走 webp 转换）+ 剧名 + 摘要（热度行）。 */
+/**
+ * 联想行，结构对齐 hgplayer：放大镜图标常驻（纯词行就只有它 + 词）；
+ * 带剧集的行前置竖版封面（40×54，HEIC 走 webp/转码链）；词按服务端
+ * 命中位切片、命中片段上高亮色（#ff7a1a ≈ orange-500）、rich 行加粗；
+ * 摘要行有才渲染。
+ */
 function SuggestRow({
   item,
   active,
@@ -482,7 +487,10 @@ function SuggestRow({
   onHover: () => void;
   onPick: (item: SuggestItem) => void;
 }) {
-  const { data: webCover } = useWebCover(item.seriesId, item.cover);
+  // 封面闸门对齐 hgplayer（seriesId && cover）：纯词联想 keyword 也是剧集
+  // id，不设闸 useWebCover 会走官网兜底把图捞回来——第三方纯词行没有图。
+  // seriesId 传空串让 hook 的 enabled 直接短路，不发起查询。
+  const { data: webCover } = useWebCover(item.cover ? item.seriesId : '', item.cover);
   return (
     <button
       type="button"
@@ -493,15 +501,33 @@ function SuggestRow({
       }}
       onMouseEnter={onHover}
       className={cn(
-        'flex w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors',
+        'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left transition-colors',
         active ? 'bg-accent' : 'hover:bg-accent/60',
       )}
     >
-      <span className="bg-muted block size-10 shrink-0 overflow-hidden rounded-md">
-        {webCover && <img src={webCover} alt="" className="size-full object-cover" />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{item.word}</span>
+      <Search className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+      {item.cover && webCover && (
+        <img
+          src={webCover}
+          alt=""
+          loading="lazy"
+          className="bg-muted h-[54px] w-10 shrink-0 rounded-md object-cover"
+        />
+      )}
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className={cn('block truncate text-sm', item.seriesId && 'font-semibold')}>
+          {item.parts.length > 0
+            ? item.parts.map((part, i) =>
+                part.hl ? (
+                  <span key={i} className="text-orange-500">
+                    {part.text}
+                  </span>
+                ) : (
+                  <span key={i}>{part.text}</span>
+                ),
+              )
+            : item.word}
+        </span>
         {item.abstract && (
           <span className="text-muted-foreground block truncate text-xs">{item.abstract}</span>
         )}
