@@ -500,9 +500,7 @@
     "empty": "The feed is empty right now",
     "tabFeed": "For You",
     "tabComic": "Anime",
-    "tabHuman": "Live-action",
-    "tabHot": "Trending",
-    "tabNew": "New"
+    "tabHuman": "Live-action"
   },
   "collections": {
     "loginRequired": "Sign in to view your bookshelf (synced with the official app)",

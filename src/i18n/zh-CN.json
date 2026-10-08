@@ -500,9 +500,7 @@
     "empty": "推荐流暂时为空",
     "tabFeed": "推荐",
     "tabComic": "漫剧",
-    "tabHuman": "真人",
-    "tabHot": "热播",
-    "tabNew": "新剧"
+    "tabHuman": "真人"
   },
   "collections": {
     "loginRequired": "登录后可查看收藏（书架与官方 App 同步）",

@@ -1,11 +1,12 @@
-//! 发现类 command：推荐信息流、找剧（筛选浏览）。
+//! 发现类 command：首页推荐流、找剧（筛选浏览）。
 
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::discover::{
-    fetch_browse, fetch_browse_panel, fetch_feed, BrowseFilters, FeedPage, SelectorRow,
+    fetch_browse, fetch_browse_panel, BrowseFilters, FeedPage, SelectorRow,
 };
+use crate::domain::api::rank::fetch_recommend_feed;
 use crate::error::AppResult;
 
 /// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
@@ -36,32 +37,37 @@ pub async fn browse_page(
     .await
 }
 
-/// 拉一页推荐信息流（官方 body 协议，服务端按体裁过滤）。
+/// 拉一页首页推荐流（书城换一换，hgplayer RecommendTab 同源）。
 ///
-/// `offset` 不给（或给 0）取首页；翻页传上一页的 `nextOffset`。
-/// `genre`：`comic_series`=漫剧、`short_play`=真人剧、`ai_series`=AI剧，
-/// 不传=全部体裁。
+/// `tab`：'16'=推荐、'36'=漫剧、'39'=真人剧（rank.rs fetch_recommend_feed
+/// 文档有 tab 表与两段式流程）。`sessionId` 首页传空串（走 bookmall/tab
+/// cr=4，响应下发会话与首批）；翻页传上一页的会话 + `offset`（上一页的
+/// nextOffset）+ `filterIds`（已下发过的 series_id，服务端排除已见——
+/// hgplayer 同款）。
 #[tauri::command]
-pub async fn discover_feed(
+pub async fn recommend_feed(
     state: State<'_, AppState>,
+    tab: String,
+    session_id: Option<String>,
     offset: Option<i64>,
-    genre: Option<String>,
+    filter_ids: Option<Vec<String>>,
 ) -> AppResult<FeedPage> {
     let env = state.api_env();
-    let result = fetch_feed(offset.unwrap_or(0), genre.as_deref(), &env).await;
+    let result = fetch_recommend_feed(
+        &tab,
+        session_id.as_deref().unwrap_or(""),
+        offset.unwrap_or(0),
+        filter_ids.as_deref().unwrap_or_default(),
+        &env,
+    )
+    .await;
     match &result {
         Ok(page) => log::info!(
-            "[Feed] genre={:?} offset={} -> {} 条, 首条: {}",
-            genre,
-            offset.unwrap_or(0),
+            "[Recommend] tab={tab} -> {} 条, 首条: {}",
             page.items.len(),
             page.items.first().map(|i| i.title.as_str()).unwrap_or("-")
         ),
-        Err(e) => log::warn!(
-            "[Feed] genre={:?} offset={} 失败: {e}",
-            genre,
-            offset.unwrap_or(0)
-        ),
+        Err(e) => log::warn!("[Recommend] tab={tab} 失败: {e}"),
     }
     result
 }
@@ -73,10 +79,12 @@ mod tests {
         // 直连真实接口的命令必须 async：同步 command 会占住主线程，
         // 接口慢时整个窗口卡死（与 merge_series 同一条纪律）
         let src = include_str!("discover_cmd.rs");
-        let sig = src
-            .lines()
-            .find(|l| l.contains("fn discover_feed("))
-            .expect("应能找到 discover_feed 的签名");
-        assert!(sig.contains("pub async fn"), "必须是 async: {sig}");
+        for name in ["recommend_feed", "browse_page"] {
+            let sig = src
+                .lines()
+                .find(|l| l.contains(&format!("fn {name}(")))
+                .unwrap_or_else(|| panic!("应能找到 {name} 的签名"));
+            assert!(sig.contains("pub async fn"), "必须是 async: {sig}");
+        }
     }
 }

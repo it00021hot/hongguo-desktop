@@ -32,16 +32,17 @@ import { cn } from '@/lib/utils';
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
  *
  * 播放页（/player）不设菜单入口：它只能由各页的「播放/继续播放」跳转进入，
- * 独立菜单 + 页内历史与独立的历史页重复。 */
+ * 独立菜单 + 页内历史与独立的历史页重复。找剧排第二（用户指定，
+ * 2026-10-08），紧跟首页推荐。 */
 export const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
+  { key: 'browse', to: '/browse', icon: Compass },
   { key: 'rank', to: '/rank', icon: Trophy },
   { key: 'new', to: '/new', icon: Sparkles },
   { key: 'history', to: '/history', icon: History },
   { key: 'collections', to: '/collections', icon: Star },
   { key: 'liked', to: '/liked', icon: ThumbsUp },
   { key: 'reservations', to: '/reservations', icon: BellRing },
-  { key: 'browse', to: '/browse', icon: Compass },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
   { key: 'merge', to: '/merge', icon: Combine },
   { key: 'storage', to: '/storage', icon: HardDrive },

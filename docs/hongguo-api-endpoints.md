@@ -34,6 +34,45 @@ GET /reading/bookapi/bookmall/cell/change/v        # 注意 /v 不带斜杠
 category_id=0, cell_sub_id=0, client_req_type=2, client_template=2, gender=2,
 limit=0, offset=0, unlimited_selector_change_type=2`
 
+### 1.0 首页推荐流（书城换一换，2026-10-08 抓包 + 逆向全量锁定）
+
+hgplayer 首页 Recommend 组件（前端 `d=M("16")`）的数据源，**两段式**：
+
+**首页（切 tab）**：`GET /reading/bookapi/bookmall/tab/v?client_req_type=4&tab_type=<T>`
+（启动首拉推荐 tab 用 cr=60，切 tab 用 cr=4；query 另带 bottom_tab_type=7/
+tab_index=0/screen_width_px=1078/stream_count 等桌面形态参数）
+
+- tab 表：**关注 45 / 漫剧 36 / 真人剧 39 / 推荐 16**，`tab_item[T]` 自带
+  `bookstore_id`（=cell/change 的 plan_id，**每 tab 不同**）+ 会话 `session_id`
+- ⚠️ **cell 要按内容选，不能按位置取**：`cell_data[]` 里 [0] 可能是空的
+  运营金刚位卡（show_type=583，tab36 实测），推荐流是**嵌套
+  `cell_data[].video_data[]` 非空**的那个 cell（cell_name=「猜你喜欢」，
+  show_type=407，其 cell_id 即 cell/change 的 cell_id）
+- 用推荐的 id 打 tab39 服务端回落混合池（全 1004 漫剧）——「真人 tab 全是
+  漫剧」的根因；取错 cell 则翻页恒空——「漫剧 tab 空批」的根因
+
+**翻页**：`GET /reading/bookapi/bookmall/cell/change/v`（cell_id + plan_id 用
+目标 tab 自己的）+ 三件套：`session_id`（首页下发）+ `offset`（**上一页响应
+的 next_offset**，0→6→12 递进）+ `filter_ids`（已下发过的 series_id 逗号表，
+服务端排除已见；抓包实锤翻页 0 重复）
+
+- 响应 `data`：`cell_view.cell_data[].video_data[]`（条目身份在
+  `video_detail`：series_title/series_cover(_uri)/series_id_str/episode_cnt/
+  series_play_cnt/content_type/category_schema）+ has_more/next_offset/session_id
+- **展示字段**（与 hgplayer 首页逐一对齐，2026-10-08 实操抓包）：
+  - 热度行（火焰图标+文案）= 条目级 `rec_tags[]` 的 `data_type=1` content
+    （「共217万人在追」「真人剧新番榜 No.4」「4920万热度」，多段拼接）
+  - 运营角标 pill = `video_detail.tag_info.text`（「新剧」，官方随 bg_color）
+  - `secondary_infos`：data_type 缺省/0=季徽（「第1季」）、3=题材、4=评分
+    （「9.6分」）
+- 内容按时间桶在服务端轮换，「换一批」= 新会话重拉（filter_ids 清空）
+- 我们的落点：`rank.rs fetch_recommend_feed`（两段式 + 配置进程缓存 +
+  抓包已知值兜底）+ `recommend_feed` 命令 + `useFeed` 三件套翻页
+- ⚠️ **曾用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回同一批
+  静态默认列表 + 翻页不回传 session 换源重复——「推荐一直是同一部剧」的
+  根因，2026-10-08 已整体迁到本端点
+
+
 ### 1.1 内容 tab 与子榜（2026-10-05 抓 hgplayer 1.1.3 锁定）
 
 顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，

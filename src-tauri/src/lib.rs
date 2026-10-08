@@ -111,8 +111,8 @@ pub fn run() {
             commands::series_cmd::series_meta,
             commands::series_cmd::remove_series,
             commands::series_cmd::remove_all_series,
-            // 发现（推荐信息流 / 找剧筛选浏览）
-            commands::discover_cmd::discover_feed,
+            // 发现（首页推荐流 / 找剧筛选浏览）
+            commands::discover_cmd::recommend_feed,
             commands::discover_cmd::browse_panel,
             commands::discover_cmd::browse_page,
             // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
