@@ -30,7 +30,11 @@ const router = createRouter({
     for (const [key, value] of Object.entries(search)) {
       if (value !== undefined) params.set(key, String(value));
     }
-    return params.toString();
+    // router 把返回值直接拼在 pathname 后（默认实现同款契约）：
+    // 带 `?` 前缀、空 search 返回空串。漏了 `?` 会拼出
+    // /detailseriesId=… 这种不存在的路径 → 整个详情页 Not Found
+    const s = params.toString();
+    return s ? `?${s}` : '';
   },
 });
 
