@@ -71,8 +71,10 @@ export function NewDramaPage() {
   };
 
   return (
-    // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）
-    <div className="flex min-h-full flex-col">
+    // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）。
+    // h-full 锁在视口内（同排行榜/首页）：页面自身不滚，频道胶囊行常驻，
+    // 只有视图内容（推荐网格/日历列表）在自己的滚动区里滚
+    <div className="flex h-full min-h-0 flex-col">
       <TopBarTabsPortal>
         <TopBarTab active={view === 'recommend'} onClick={() => setView('recommend')}>
           {t('newDrama.tabs.recommend')}
@@ -99,7 +101,8 @@ export function NewDramaPage() {
         </div>
 
         {view === 'recommend' ? (
-          <NewDramaRecommends gender={gender} onSelect={handleSelect} />
+          // key=gender：换频道重挂载，滚动归零（同排行榜切子榜的口径）
+          <NewDramaRecommends key={gender} gender={gender} onSelect={handleSelect} />
         ) : (
           <NewCalendarView onSelect={handleSelect} />
         )}
@@ -162,7 +165,9 @@ function NewDramaRecommends({
   }, []);
 
   return (
-    <div className="flex flex-col gap-4">
+    // 组件根即滚动区（页面唯一会滚的地方）；哨兵在滚动区内，
+    // IntersectionObserver 对 viewport 的判定会穿过滚动容器，翻页照常触发
+    <div className="flex min-h-0 flex-1 scrollbar-thin flex-col gap-4 overflow-y-auto">
       <RefreshShade refreshing={feed.isRefreshing}>
         {feed.isLoading ? (
           <SkeletonCardGrid count={9} />
@@ -301,7 +306,7 @@ function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void 
   const dates = data?.dates ?? [];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* 日期条常驻不参与 loading：切日期只换下方列表（keepPreviousData
           平滑过渡）；首屏日期未到时骨架占位，不留一条空行。
           按钮官方同款：均匀铺满一行，星期小字 + 日期大字，选中主色底 */}
@@ -326,28 +331,32 @@ function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void 
             ))}
       </div>
 
-      <RefreshShade refreshing={isFetching && !isLoading}>
-        {isLoading ? (
-          <SkeletonRows count={6} height="h-20 rounded-xl" />
-        ) : error ? (
-          <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-            <p>{t('newDrama.loadFailed')}</p>
-            <p className="text-destructive text-xs">{error.message}</p>
-            <Button variant="outline" size="sm" onClick={() => void refetch()}>
-              <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
-              {t('feed.retry')}
-            </Button>
-          </div>
-        ) : (data?.items.length ?? 0) === 0 ? (
-          <p className="text-muted-foreground py-16 text-center text-sm">{t('newDrama.empty')}</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {(data?.items ?? []).map((item) => (
-              <CalendarRow key={item.seriesId} item={item} onSelect={onSelect} />
-            ))}
-          </div>
-        )}
-      </RefreshShade>
+      {/* 列表滚动区（日期条下方唯一会滚的地方）：切日期用 key 重挂载
+          归零滚动——新的一天从第一条看起，不停在旧日期的滚动位置 */}
+      <div key={date} className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
+        <RefreshShade refreshing={isFetching && !isLoading}>
+          {isLoading ? (
+            <SkeletonRows count={6} height="h-20 rounded-xl" />
+          ) : error ? (
+            <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+              <p>{t('newDrama.loadFailed')}</p>
+              <p className="text-destructive text-xs">{error.message}</p>
+              <Button variant="outline" size="sm" onClick={() => void refetch()}>
+                <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+                {t('feed.retry')}
+              </Button>
+            </div>
+          ) : (data?.items.length ?? 0) === 0 ? (
+            <p className="text-muted-foreground py-16 text-center text-sm">{t('newDrama.empty')}</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {(data?.items ?? []).map((item) => (
+                <CalendarRow key={item.seriesId} item={item} onSelect={onSelect} />
+              ))}
+            </div>
+          )}
+        </RefreshShade>
+      </div>
     </div>
   );
 }

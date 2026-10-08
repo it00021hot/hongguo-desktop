@@ -118,8 +118,11 @@ export function RankPage() {
 
   return (
     // 内容分类 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下），
-    // 页面里只剩子榜竖排 + 榜单内容
-    <div className="flex min-h-full flex-col gap-4">
+    // 页面里只剩子榜竖排 + 榜单内容。
+    // h-full 锁在视口内：AppShell 的 main 是 overflow-y-auto，页面自身
+    // 不产生滚动——只有右侧榜单列表滚（同首页的锁法），左侧子榜分类
+    // 和子榜名/筛选行保持常驻。
+    <div className="flex h-full min-h-0 flex-col gap-4">
       {/* 顶栏中部：内容 tab（全部/真人剧/漫剧/AI剧/系列剧）。
           schema 未到时先渲染胶囊骨架占位（形态未知，比空白好） */}
       <TopBarTabsPortal>
@@ -130,9 +133,13 @@ export function RankPage() {
         ))}
         {tabRow.length === 0 && <Skeleton className="h-6 w-64 rounded-full" />}
       </TopBarTabsPortal>
-      <div className="flex min-h-0 gap-4">
-        {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位） */}
-        <nav className="flex w-36 shrink-0 flex-col gap-1" aria-label={t('rank.subLists')}>
+      <div className="flex min-h-0 flex-1 gap-4">
+        {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位）。
+            窗口过矮时子榜自己滚，不跟着右侧列表走 */}
+        <nav
+          className="flex w-36 shrink-0 scrollbar-thin flex-col gap-1 overflow-y-auto"
+          aria-label={t('rank.subLists')}
+        >
           {(currentTab?.subs ?? []).map((s) => (
             <button
               key={s.id}
@@ -177,33 +184,37 @@ export function RankPage() {
             )}
           </div>
 
-          {isLoading ? (
-            <SkeletonRows count={8} height="h-24 rounded-xl" />
-          ) : error ? (
-            <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
-              <p>{t('rank.loadFailed')}</p>
-              <p className="text-destructive text-xs">{error.message}</p>
-              <Button variant="outline" size="sm" onClick={() => void refetch()}>
-                <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
-                {t('feed.retry')}
-              </Button>
-            </div>
-          ) : (
-            /* 切子榜/筛选时 keepPreviousData 保住旧列表：降透明度禁点，
-               而不是闪骨架屏——旧内容可看但不可点 */
-            <RefreshShade refreshing={isFetching}>
-              <div className="flex flex-col gap-2">
-                {(data?.items ?? []).map((item) => (
-                  <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
-                ))}
-                {(data?.items.length ?? 0) === 0 && (
-                  <p className="text-muted-foreground py-16 text-center text-sm">
-                    {t('rank.empty')}
-                  </p>
-                )}
+          {/* 列表滚动区（页面唯一会滚的地方）：切子榜/筛选用 key 重挂载
+              归零滚动——新榜单从第 1 名看起，而不是停在旧榜单的滚动位置 */}
+          <div key={`${sub}:${panel}`} className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
+            {isLoading ? (
+              <SkeletonRows count={8} height="h-24 rounded-xl" />
+            ) : error ? (
+              <div className="text-muted-foreground flex flex-col items-center gap-3 py-16">
+                <p>{t('rank.loadFailed')}</p>
+                <p className="text-destructive text-xs">{error.message}</p>
+                <Button variant="outline" size="sm" onClick={() => void refetch()}>
+                  <Loader2 className="mr-1 size-4 animate-spin" aria-hidden />
+                  {t('feed.retry')}
+                </Button>
               </div>
-            </RefreshShade>
-          )}
+            ) : (
+              /* 切子榜/筛选时 keepPreviousData 保住旧列表：降透明度禁点，
+                 而不是闪骨架屏——旧内容可看但不可点 */
+              <RefreshShade refreshing={isFetching}>
+                <div className="flex flex-col gap-2">
+                  {(data?.items ?? []).map((item) => (
+                    <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
+                  ))}
+                  {(data?.items.length ?? 0) === 0 && (
+                    <p className="text-muted-foreground py-16 text-center text-sm">
+                      {t('rank.empty')}
+                    </p>
+                  )}
+                </div>
+              </RefreshShade>
+            )}
+          </div>
         </div>
       </div>
 
