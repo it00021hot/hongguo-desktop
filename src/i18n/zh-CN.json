@@ -193,6 +193,7 @@
     "danmakuFontSize": "字体大小",
     "danmakuDensity": "密度",
     "danmakuArea": "显示区域",
+    "danmakuEmoji": "表情",
     "interact": {
       "like": "点赞",
       "collect": "收藏",
@@ -346,7 +347,7 @@
     "copyFailed": "复制失败，请手动选中复制",
     "ffmpegDownloadPage": "打开下载页",
     "transcodeBackend": "转换方式",
-    "transcodeBackendHint": "兼容合并会把视频转成通用格式。没装 ffmpeg 时走纯 Rust 软解，慢但够用；装上 ffmpeg 会自动改用它。徽章只反映实测结果：真能走显卡才显示「硬件加速」，否则显示「软件加速」。装完 ffmpeg 若没变化，点「重新检测」。",
+    "transcodeBackendHint": "兼容合并会把视频转成通用格式。优先走系统自带编码：Mac 上 VideoToolbox 有硬编用硬编，没硬编用系统软编；Windows 用 Media Foundation 硬编或 ffmpeg。都没有才落到纯软解（慢但够用）。徽章按实测分档：真能走显卡才显示「硬件加速」。装完 ffmpeg 若没变化，点「重新检测」。",
     "backendRust": "标准速度",
     "backendFfmpegHw": "硬件加速",
     "backendFfmpegSw": "软件加速",

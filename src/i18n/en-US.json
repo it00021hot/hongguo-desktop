@@ -193,6 +193,7 @@
     "danmakuFontSize": "Font size",
     "danmakuDensity": "Density",
     "danmakuArea": "Display area",
+    "danmakuEmoji": "Emoji",
     "interact": {
       "like": "Like",
       "collect": "Favorite",
@@ -346,7 +347,7 @@
     "copyFailed": "Copy failed — please select and copy manually",
     "ffmpegDownloadPage": "Open download page",
     "transcodeBackend": "Conversion mode",
-    "transcodeBackendHint": "Compat merge converts videos to a universal format. Without ffmpeg it falls back to the pure-Rust decoder — slower but workable. With ffmpeg it is used automatically. The badge reports what was measured: GPU only when a real hardware encoder is available, otherwise software. If nothing changed after installing ffmpeg, hit Re-detect.",
+    "transcodeBackendHint": "Compat merge converts videos to a universal format. The built-in platform encoder is used first: on macOS VideoToolbox picks hardware when available and falls back to the system software encoder; on Windows that is Media Foundation hardware or ffmpeg. Pure software decoding is the last resort — slower but workable. The badge reports what was measured: GPU only when a real hardware encoder is available. If nothing changed after installing ffmpeg, hit Re-detect.",
     "backendRust": "Standard speed",
     "backendFfmpegHw": "Hardware accelerated",
     "backendFfmpegSw": "Software accelerated",
