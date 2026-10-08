@@ -101,7 +101,7 @@ pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
 
 // —— CoreFoundation ——
 #[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub static kCFAllocatorDefault: CFAllocatorRef;
     pub static kCFBooleanTrue: CFBooleanRef;
     pub static kCFBooleanFalse: CFBooleanRef;
@@ -139,7 +139,7 @@ extern "C" {
 
 // —— CoreMedia ——
 #[link(name = "CoreMedia", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub static kCMTimeInvalid: CMTime;
     pub static kCMSampleAttachmentKey_NotSync: CFStringRef;
 
@@ -214,7 +214,7 @@ extern "C" {
 
 // —— CoreVideo ——
 #[link(name = "CoreVideo", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub static kCVPixelBufferPixelFormatTypeKey: CFStringRef;
     pub static kCVPixelBufferWidthKey: CFStringRef;
     pub static kCVPixelBufferHeightKey: CFStringRef;
@@ -251,7 +251,7 @@ extern "C" {
 
 // —— VideoToolbox ——
 #[link(name = "VideoToolbox", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
