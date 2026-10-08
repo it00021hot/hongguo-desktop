@@ -184,6 +184,17 @@ export function RichEmojiInput({
       onInput={() => {
         const el = elRef.current;
         if (!el) return;
+        // 孤儿锚点清理：零宽锚点的存在意义是「垫在 img 后面」，img 被
+        // 浏览器默认行为删掉后锚点就成了幽灵字符
+        for (const n of [...el.childNodes]) {
+          if (
+            n.nodeType === Node.TEXT_NODE &&
+            n.textContent === '\u200B' &&
+            !(n.previousSibling instanceof HTMLImageElement)
+          ) {
+            n.remove();
+          }
+        }
         let next = serialize(el);
         // 清空后残留的 <br> 会让 :empty 失效——序列化为空就归零 DOM
         if (next === '' && el.childNodes.length > 0) el.replaceChildren();
@@ -197,6 +208,82 @@ export function RichEmojiInput({
         onChange(next);
       }}
       onKeyDown={(e) => {
+        // 表情是不可编辑的内嵌 img，紧贴它的退格/删除在 WebKit 里行为
+        // 怪异：先无声吃掉零宽锚点（按一下没反应），再误伤相邻文字。
+        // 这里接管成「按可见单位删」：img 连同它的锚点一次删干净。
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          const el = elRef.current;
+          const sel = window.getSelection();
+          if (!el || !sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+          const range = sel.getRangeAt(0);
+          if (!el.contains(range.startContainer)) return;
+          const { startContainer: c, startOffset: o } = range;
+
+          /** 光标某一侧的 img 单位（img + 其后零宽锚点） */
+          const imgAt = (node: Node | null): HTMLImageElement | null =>
+            node instanceof HTMLImageElement ? node : null;
+          let img: HTMLImageElement | null = null;
+          let anchor: Text | null = null;
+          /** 删完后光标落位（text 末尾 / 字段某下标），null = 原地不动 */
+          let caret: { container: Node; offset: number } | null = null;
+
+          if (e.key === 'Backspace') {
+            if (c.nodeType === Node.TEXT_NODE) {
+              const t = c as Text;
+              if (o > 0 && t.data[o - 1] === '\u200B') {
+                img = imgAt(t.previousSibling);
+                anchor = img ? t : null;
+                if (img) {
+                  const before = img.previousSibling;
+                  caret =
+                    before && before.nodeType === Node.TEXT_NODE
+                      ? { container: before, offset: (before as Text).data.length }
+                      : { container: el, offset: [...el.childNodes].indexOf(img) };
+                }
+              } else if (o === 0) {
+                img = imgAt(t.previousSibling);
+                if (img) caret = { container: el, offset: [...el.childNodes].indexOf(img) };
+              }
+            } else if (c === el && o > 0) {
+              img = imgAt(el.childNodes[o - 1] ?? null);
+              if (img) caret = { container: el, offset: [...el.childNodes].indexOf(img) };
+            }
+          } else {
+            // Delete（向前删）：紧前零宽锚点视作无物，单位是光标之后的 img
+            if (c.nodeType === Node.TEXT_NODE) {
+              const t = c as Text;
+              if (o < t.data.length && t.data[o] === '\u200B') {
+                img = imgAt(t.nextSibling);
+                anchor = img ? t : null;
+              } else if (o === t.data.length) {
+                img = imgAt(t.nextSibling);
+                if (img) anchor = imgAt(img.nextSibling) ? (img.nextSibling as Text) : null;
+              }
+            } else if (c === el && o < el.childNodes.length) {
+              img = imgAt(el.childNodes[o] ?? null);
+              if (img) anchor = imgAt(img.nextSibling) ? (img.nextSibling as Text) : null;
+            }
+          }
+
+          if (img) {
+            e.preventDefault();
+            img.remove();
+            anchor?.remove();
+            if (caret) {
+              const r = document.createRange();
+              r.setStart(caret.container, Math.max(0, caret.offset));
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+              savedRangeRef.current = r.cloneRange();
+            }
+            const next = serialize(el);
+            if (next === '' && el.childNodes.length > 0) el.replaceChildren();
+            onChange(next);
+          }
+          // 没接管的（普通字符/扩选）走浏览器默认删除
+          return;
+        }
         if (e.key === 'Enter') {
           e.preventDefault();
           onEnter?.();
