@@ -42,6 +42,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // 更新：签名校验的安装包经 GitHub Releases 的 latest.json 分发；
+        // 进程插件只用到 relaunch（下载完成后重启进新版本）
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
         .manage(commands::app_cmd::WindowCloseGate::default());
 
@@ -78,12 +82,11 @@ pub fn run() {
                     .clone();
                 let win = window.clone();
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        if ready.load(Ordering::Acquire) {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                        && ready.load(Ordering::Acquire) {
                             api.prevent_close();
                             let _ = win.emit("close-requested", ());
                         }
-                    }
                 });
             }
             Ok(())
@@ -104,13 +107,10 @@ pub fn run() {
             commands::settings_cmd::save_settings,
             commands::settings_cmd::test_proxy,
             // 剧集
-            commands::series_cmd::get_series_list,
             commands::series_cmd::get_series_episodes,
             commands::series_cmd::resolve_series,
             commands::series_cmd::related_series,
             commands::series_cmd::series_meta,
-            commands::series_cmd::remove_series,
-            commands::series_cmd::remove_all_series,
             // 发现（首页推荐流 / 找剧筛选浏览）
             commands::discover_cmd::recommend_feed,
             commands::discover_cmd::browse_panel,
@@ -178,6 +178,7 @@ pub fn run() {
             commands::transcode_cmd::clear_online_cache,
             // 存储
             commands::storage_cmd::get_storage_usage,
+            commands::storage_cmd::get_storage_series,
             commands::storage_cmd::delete_series_files,
             commands::storage_cmd::delete_episode_file,
             commands::storage_cmd::delete_all_downloaded,

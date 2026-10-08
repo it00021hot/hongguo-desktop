@@ -1,13 +1,13 @@
 [package]
 name = "hongguo-desktop"
-version = "2.0.0"
+version = "0.0.1"
 description = "红果短剧桌面客户端（Tauri 桌面版）"
 authors = ["hongguo-desktop contributors"]
 license = "GPL-3.0"
-edition = "2021"
-# 被 sysinfo 0.39.6 的 MSRV 抬上来的：该版本要求 1.95，本项目的代码本身用不到
-# 2024 edition 的特性，保持 edition = 2021 不动。
-rust-version = "1.95"
+edition = "2024"
+# MSRV 声明跟随当前 stable 工具链（1.99）。这是个应用不是库，MSRV 只影响
+# cargo 依赖解析的版本上限，实际开发与 CI 都跑最新 stable。
+rust-version = "1.99"
 
 [lib]
 name = "hongguo_lib"
@@ -36,8 +36,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
     "json",
     "stream",
     "gzip",
@@ -52,22 +52,22 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 parking_lot = "0.12"
-rand = "0.9"
-base64 = "0.22"
+rand = "0.10"
+base64 = "0.23"
 hex = "0.4"
 urlencoding = "2"
-md-5 = "0.10"
-sha2 = "0.10"
-sm3 = "0.3"
-aes = "0.8"
-ctr = "0.9"
-cbc = { version = "0.1", features = ["alloc"] }
-digest = "0.10"
+md-5 = "0.11"
+sha2 = "0.11"
+sm3 = "0.5"
+aes = "0.9"
+ctr = "0.10"
+cbc = { version = "0.2", features = ["alloc"] }
+digest = "0.11"
 regex = "1"
 time = { version = "0.3", features = ["formatting", "macros"] }
 percent-encoding = "2"
 chrono = "0.4"
-dirs = "6"
+dirs = "7"
 uuid = { version = "1", features = ["v4"] }
 rusty_h265 = "0.6.0"
 rusty_h264 = "0.16.0"
@@ -77,6 +77,8 @@ muxide = "0.2.5"
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 turso = { version = "0.8.1", default-features = false }
 mouse_position = "0.1"
+tauri-plugin-updater = "2.13.2"
+tauri-plugin-process = "2.4.0"
 
 # 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation）。
 # FFI 路线按 API 性质分：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs）；
@@ -160,3 +162,10 @@ muxide = { path = "vendor/muxide" }
 rusty_alloc = { path = "vendor/rusty_alloc" }
 rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
 rusty_h264-common = { path = "vendor/rusty_h264_common" }
+# tauri-plugin-webdriver 0.2.3 在 Windows 上声明 webview2-com 0.38 / windows
+# 0.61，而 tauri 2.12 已把 webview2-com 抬到 0.39（windows 0.62）——同一依赖图
+# 里两套 windows-core 类型不互通，插件 platform/windows.rs 拿 tauri 侧的
+# ICoreWebView2 配自家旧版 handler 直接编译失败（macOS 不受影响，webview2-com
+# 只进 Windows 目标）。vendor 补丁把三件套抬到 0.39/0.62 并适配 API 改动。
+# 上游 0.2.3 为最新版，待兼容版发布后回收。
+tauri-plugin-webdriver = { path = "vendor/tauri_plugin_webdriver" }

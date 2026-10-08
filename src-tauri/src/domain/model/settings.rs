@@ -84,11 +84,10 @@ impl ProxyConfig {
                     "ALL_PROXY",
                     "all_proxy",
                 ] {
-                    if let Ok(v) = std::env::var(key) {
-                        if !v.trim().is_empty() {
+                    if let Ok(v) = std::env::var(key)
+                        && !v.trim().is_empty() {
                             return Some(v);
                         }
-                    }
                 }
                 None
             }

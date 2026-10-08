@@ -1,0 +1,304 @@
+name: E2E Tests
+
+on: [ workflow_dispatch ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # End-to-end tests using WebdriverIO
+  e2e-tests:
+    name: e2e-tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+          version: "1.0"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples/tauri-app/src-tauri
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'examples/tauri-app/pnpm-lock.yaml'
+
+      - name: Install frontend dependencies
+        working-directory: examples/tauri-app
+        run: pnpm install
+
+      - name: Build Tauri app
+        working-directory: examples/tauri-app
+        run: pnpm tauri build --no-bundle
+
+      - name: Run e2e tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: examples/tauri-app
+        run: xvfb-run -a pnpm test:e2e
+
+      - name: Run e2e tests (macOS)
+        if: matrix.os == 'macos-latest'
+        working-directory: examples/tauri-app
+        run: pnpm test:e2e
+
+      - name: Run e2e tests (Windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: examples/tauri-app
+        run: pnpm test:e2e
+
+  # Android e2e tests
+  e2e-android:
+    name: e2e-tests (android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples/tauri-app/src-tauri
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'examples/tauri-app/pnpm-lock.yaml'
+
+      - name: Install frontend dependencies
+        working-directory: examples/tauri-app
+        run: pnpm install
+
+      - name: Build Android APK
+        working-directory: examples/tauri-app
+        run: pnpm tauri android build --target x86_64 --debug
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android e2e tests
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          emulator-boot-timeout: 900
+          script: |
+            adb install -r examples/tauri-app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+            cd examples/tauri-app && TAURI_TEST_PLATFORM=android pnpm test:e2e
+
+  # iOS e2e tests
+  e2e-ios:
+    name: e2e-tests (ios)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples/tauri-app/src-tauri
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'examples/tauri-app/pnpm-lock.yaml'
+
+      - name: Install frontend dependencies
+        working-directory: examples/tauri-app
+        run: pnpm install
+
+      - name: Build iOS app
+        working-directory: examples/tauri-app
+        run: pnpm tauri ios build --target aarch64-sim --debug
+
+      - name: Boot iOS Simulator
+        run: |
+          # List available simulators and find iPhone
+          xcrun simctl list devices available
+          SIMULATOR_ID=$(xcrun simctl list devices available | grep -E "iPhone (15|16)" | head -1 | grep -oE '[0-9A-Fa-f-]{36}')
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No iPhone simulator found, using first available"
+            SIMULATOR_ID=$(xcrun simctl list devices available | grep "iPhone" | head -1 | grep -oE '[0-9A-Fa-f-]{36}')
+          fi
+          echo "Using simulator: $SIMULATOR_ID"
+          xcrun simctl boot "$SIMULATOR_ID" || true
+          # Wait for simulator to fully boot
+          echo "Waiting for simulator to boot..."
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          # Give the simulator extra time to be fully ready for app launches
+          echo "Waiting for simulator to be ready for apps..."
+          sleep 10
+          echo "SIMULATOR_ID=$SIMULATOR_ID" >> $GITHUB_ENV
+
+      - name: Install and launch app on Simulator
+        working-directory: examples/tauri-app
+        run: |
+          # Show environment info
+          echo "=== Xcode version ==="
+          xcodebuild -version
+          echo "=== Simulator info ==="
+          xcrun simctl list devices booted
+
+          APP_PATH=$(find src-tauri/gen/apple/build -name "*.app" -type d | head -1)
+          echo "Installing app: $APP_PATH"
+          xcrun simctl install "$SIMULATOR_ID" "$APP_PATH"
+
+          # Get bundle ID from Info.plist
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print:CFBundleIdentifier" "$APP_PATH/Info.plist")
+          echo "Launching app with bundle ID: $BUNDLE_ID"
+
+          # Workaround for iOS 18.4-18.5 simulator bug with libswiftWebKit.dylib
+          # See: https://github.com/pichillilorenzo/flutter_inappwebview/issues/2636
+          echo "=== Setting up Swift library path workaround ==="
+          echo "Available runtimes:"
+          xcrun simctl list runtimes -v 2>/dev/null || true
+          # Extract the full path to the iOS runtime
+          RUNTIME_PATH=$(xcrun simctl list runtimes -v 2>/dev/null | grep -oE '/Library/Developer/CoreSimulator[^)]+iOS[^)]+\.simruntime' | head -1)
+          echo "Runtime path: $RUNTIME_PATH"
+          SWIFT_LIB_PATH="$RUNTIME_PATH/Contents/Resources/RuntimeRoot/System/Cryptexes/OS/usr/lib/swift"
+          echo "Swift lib path: $SWIFT_LIB_PATH"
+
+          # Launch the app with the library path fix (SIMCTL_CHILD_ prefix passes env to the app)
+          export SIMCTL_CHILD_DYLD_FALLBACK_LIBRARY_PATH="$SWIFT_LIB_PATH"
+          xcrun simctl launch "$SIMULATOR_ID" "$BUNDLE_ID"
+
+          # Give the app a moment to initialize
+          sleep 3
+          # Poll WebDriver server until ready (max 60 seconds)
+          echo "Waiting for WebDriver server..."
+          for i in {1..60}; do
+            if curl -s http://127.0.0.1:4445/status > /dev/null 2>&1; then
+              echo "WebDriver server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "WebDriver server did not start within 60s"
+              echo "=== Checking if app is running ==="
+              xcrun simctl spawn "$SIMULATOR_ID" launchctl list | grep -i tauri || echo "App not running"
+              echo "=== Checking ports ==="
+              lsof -i :4445 || echo "Nothing listening on port 4445"
+              echo "=== Device logs (last 2 min) ==="
+              xcrun simctl spawn "$SIMULATOR_ID" log show --last 2m --predicate 'process CONTAINS "tauri" OR eventMessage CONTAINS "tauri" OR eventMessage CONTAINS "webdriver"' --style compact 2>&1 | tail -100 || true
+              echo "=== Crash/termination logs ==="
+              xcrun simctl spawn "$SIMULATOR_ID" log show --last 2m --predicate 'eventMessage CONTAINS "terminated" OR eventMessage CONTAINS "crash" OR eventMessage CONTAINS "SIGKILL" OR eventMessage CONTAINS "SIGABRT"' --style compact 2>&1 | tail -50 || true
+              exit 1
+            fi
+            # Print progress every 10 seconds
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "Still waiting... ${i}s"
+              lsof -i :4445 || true
+            fi
+            sleep 1
+          done
+
+      - name: Run iOS e2e tests
+        working-directory: examples/tauri-app
+        run: TAURI_TEST_PLATFORM=ios pnpm test:e2e
+
+  # # Code coverage
+  # coverage:
+  #   name: code-coverage
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v7
+
+  #     - uses: awalsh128/cache-apt-pkgs-action@latest
+  #       with:
+  #         packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+  #         version: "1.0"
+
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         components: llvm-tools-preview
+
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         workspaces: |
+  #           .
+  #           examples/tauri-app/src-tauri
+
+  #     - uses: taiki-e/install-action@cargo-llvm-cov
+
+  #     - uses: pnpm/action-setup@v6
+  #       with:
+  #         version: 9
+
+  #     - uses: actions/setup-node@v7
+  #       with:
+  #         node-version: 22
+  #         cache: 'pnpm'
+  #         cache-dependency-path: 'examples/tauri-app/pnpm-lock.yaml'
+
+  #     - name: Install frontend dependencies
+  #       working-directory: examples/tauri-app
+  #       run: pnpm install
+
+  #     - name: Build frontend
+  #       working-directory: examples/tauri-app
+  #       run: pnpm build
+
+  #     - name: Generate coverage report
+  #       run: |
+  #         cargo llvm-cov --all-features --workspace \
+  #           --ignore-filename-regex='target/' \
+  #           --lcov --output-path lcov.info
+
+  #     - name: Upload coverage to Codecov
+  #       uses: codecov/codecov-action@v4
+  #       with:
+  #         files: lcov.info
+  #         fail_ci_if_error: false
+  #         verbose: true

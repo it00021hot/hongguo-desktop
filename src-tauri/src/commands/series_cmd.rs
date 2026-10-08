@@ -1,4 +1,4 @@
-//! 剧集档案：列表与解析。
+//! 剧集档案：详情解析与相关推荐。
 
 use tauri::{Emitter, State};
 
@@ -6,20 +6,6 @@ use crate::app_state::AppState;
 use crate::domain::model::Series;
 use crate::error::AppResult;
 use crate::service::series_service;
-
-/// 剧集列表（不含被用户移除的）。
-#[tauri::command]
-pub fn get_series_list(state: State<'_, AppState>) -> Vec<Series> {
-    // 读失败时给空列表而不是报错：列表页不值得为存储抖动弹错误框，
-    // 下一次刷新自然会重试。
-    state
-        .store
-        .series_all()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|s| !s.dismissed)
-        .collect()
-}
 
 /// 取某部剧的完整档案（含分集）。
 ///
@@ -104,16 +90,4 @@ pub async fn series_meta(
 ) -> AppResult<crate::domain::api::detail::SeriesMeta> {
     let env = state.api_env();
     crate::domain::api::detail::fetch_series_meta(&series_id, &env).await
-}
-
-/// 从剧集列表移除一部剧（不删本地文件，也不删已下载的任务记录）。
-#[tauri::command]
-pub fn remove_series(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
-    series_service::dismiss(&state, &series_id)
-}
-
-/// 一次性移除列表里的全部剧集，返回移除条数。
-#[tauri::command]
-pub fn remove_all_series(state: State<'_, AppState>) -> AppResult<usize> {
-    series_service::dismiss_all(&state)
 }

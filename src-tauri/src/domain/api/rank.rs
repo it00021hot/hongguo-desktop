@@ -223,14 +223,13 @@ pub async fn fetch_recommend_feed(
     if session_id.is_empty() {
         let (cfg, mut page) = fetch_tab_first_page(tab, env).await?;
         // 首批偶发空批：带着 cr=4 下发的会话直接走 cell/change 补拉
-        if page.items.is_empty() && !page.session_id.is_empty() {
-            if let Ok(fill) = recommend_cell_change(tab, &cfg, &page.session_id, 0, &[], env).await
+        if page.items.is_empty() && !page.session_id.is_empty()
+            && let Ok(fill) = recommend_cell_change(tab, &cfg, &page.session_id, 0, &[], env).await
             {
                 page.items = fill.items;
                 page.has_more = fill.has_more;
                 page.next_offset = fill.next_offset;
             }
-        }
         cache_tab_config_insert(tab, cfg);
         Ok(page)
     } else {
@@ -938,8 +937,8 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
     // 某天忽略该参数，会退回默认日数据，此时走翻页兜底。
     let mut q = base.clone();
     q.push(("target_date".to_string(), target.to_string()));
-    if let Ok(page) = fetch_calendar_page(&q, env).await {
-        if page
+    if let Ok(page) = fetch_calendar_page(&q, env).await
+        && page
             .items
             .first()
             .is_some_and(|i| beijing_date(i.publish_time) == target)
@@ -957,7 +956,6 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
                 ..page
             });
         }
-    }
 
     // 兜底：把目标日的条目从后续页里收集齐（越过目标日即停）
     let mut picked: Vec<CalendarItem> = first

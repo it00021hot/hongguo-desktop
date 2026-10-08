@@ -1,0 +1,77 @@
+# 发版流水线：push tag（v2.0.0 这类）触发，双平台构建安装包并发布
+# GitHub Releases。TAURI_SIGNING_PRIVATE_KEY 在场时 tauri-action 会自动给
+# 更新包签名并生成 latest.json——应用内「检查更新」拉的就是
+# releases/latest/download/latest.json，所以发版即发更新，无需额外步骤。
+#
+# 版本号唯一来源是 tag：构建前把 tag 号写进 tauri.conf.json，仓库里的
+# version 字段只作开发期占位，不参与发版。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            # universal：一个 dmg 同时覆盖 Intel 与 Apple Silicon
+            args: '--target universal-apple-darwin'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Write tag version into tauri.conf.json
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            c.version = process.env.VERSION.replace(/^v/, '');
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+          "
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: '红果桌面版 v__VERSION__'
+          releaseBody: '下载对应平台的安装包安装；已安装旧版本的话，应用内「检查更新」可直接升级。'
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

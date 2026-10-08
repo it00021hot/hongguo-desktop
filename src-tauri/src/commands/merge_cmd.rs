@@ -42,11 +42,9 @@ pub fn delete_merge_task(state: State<'_, AppState>, id: String) -> AppResult<()
         .iter()
         .find(|t| t.id == id)
         .cloned()
-    {
-        if guard::cancel(&task.output_name) {
+        && guard::cancel(&task.output_name) {
             log::info!("[Merge] 已请求取消 {}", task.output_name);
         }
-    }
     remove_task(&state, &id)
 }
 

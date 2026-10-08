@@ -1,18 +1,24 @@
 //! 磁盘占用与文件清理。
-//!
-//! 「移除列表」与「删除文件」是两个独立操作——这里分开暴露，
-//! 避免误删时无法恢复剧集档案。
 
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::error::AppResult;
-use crate::service::storage_service::{cleanup, usage, usage::StorageUsage};
+use crate::service::storage_service::{
+    cleanup, usage,
+    usage::{StorageSeriesUsage, StorageUsage},
+};
 
 /// 本地占用统计。
 #[tauri::command]
 pub fn get_storage_usage(state: State<'_, AppState>) -> StorageUsage {
     usage::usage(&state)
+}
+
+/// 按剧聚合的本地占用（清理页剧列表，只含磁盘上真有文件的剧）。
+#[tauri::command]
+pub fn get_storage_series(state: State<'_, AppState>) -> Vec<StorageSeriesUsage> {
+    usage::series_usage(&state)
 }
 
 /// 删除某部剧的全部本地文件（含合并产物与残留临时文件）。

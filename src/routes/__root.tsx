@@ -3,6 +3,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { AppShell } from '@/components/layout/app-shell';
+import { UpdateDialog } from '@/features/update/update-dialog';
+import { UpdateProvider } from '@/features/update/update-provider';
 import { useDownloadEvents } from '@/lib/queries';
 
 /** 小窗播放（label = "mini"）：不进应用壳——侧栏/顶栏/关闭确认都不属于它，
@@ -19,9 +21,13 @@ function RootComponent() {
       {IS_MINI_WINDOW ? (
         <Outlet />
       ) : (
-        <AppShell>
-          <Outlet />
-        </AppShell>
+        // 更新检查/弹层只在主窗口：小窗是纯播放器，不该弹更新框
+        <UpdateProvider>
+          <AppShell>
+            <Outlet />
+          </AppShell>
+          <UpdateDialog />
+        </UpdateProvider>
       )}
       <Toaster />
     </TooltipProvider>

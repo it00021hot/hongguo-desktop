@@ -81,8 +81,8 @@ pub fn transcode(
     }
 
     // 分流 2：ffmpeg（含硬编码器）
-    if backend == crate::media::Backend::Rust {
-        if let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
+    if backend == crate::media::Backend::Rust
+        && let Some(encoder) = crate::media::ffmpeg::h264_encoder() {
             let req = crate::media::ffmpeg::TranscodeRequest {
                 input: source,
                 output: &target,
@@ -107,7 +107,6 @@ pub fn transcode(
                 Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
             }
         }
-    }
 
     // 分流 3：纯 Rust 软解
     if backend == crate::media::Backend::Rust {

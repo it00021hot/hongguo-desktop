@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HardDrive, Trash2, XCircle } from 'lucide-react';
+import { HardDrive, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,29 +15,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  useRemoveAllSeries,
-  useRemoveSeries,
-  useSeriesList,
-  useStorageActions,
-  useStorageUsage,
-} from '@/lib/queries';
+import { useStorageActions, useStorageSeries, useStorageUsage } from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
-import type { Series } from '@/lib/schema';
 
-/** 磁盘占用与清理。 */
+/** 磁盘占用与清理。列表即下载管理里真有文件落在磁盘上的剧。 */
 export function StoragePage() {
   const { data: usage } = useStorageUsage();
-  const { data: seriesList } = useSeriesList();
+  const { data: seriesList } = useStorageSeries();
   const { deleteSeries, deleteAll } = useStorageActions();
-  const { mutate: removeSeries } = useRemoveSeries();
-  const { mutate: removeAllSeries } = useRemoveAllSeries();
   const [filter, setFilter] = useState('');
   const [confirmAll, setConfirmAll] = useState(false);
-  // 移除记录不可撤销（后端是软删除，没有恢复入口），所以必须先确认
-  const [confirmRemove, setConfirmRemove] = useState<Series | null>(null);
-  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false);
 
   const visible = (seriesList ?? []).filter((s) => {
     if (!filter.trim()) return true;
@@ -48,28 +36,6 @@ export function StoragePage() {
   const handleDelete = (seriesId: string, title: string) => {
     deleteSeries.mutate(seriesId, {
       onSuccess: (n) => toast.success(`${title} · ${tf('storage.freedFiles', { count: n })}`),
-      onError: (e) => toast.error(e.message),
-    });
-  };
-
-  const handleRemove = () => {
-    if (!confirmRemove) return;
-    const title = confirmRemove.title;
-    removeSeries(confirmRemove.seriesId, {
-      onSuccess: () => {
-        toast.success(tf('storage.removedRecord', { title }));
-        setConfirmRemove(null);
-      },
-      onError: (e) => toast.error(e.message),
-    });
-  };
-
-  const handleRemoveAll = () => {
-    removeAllSeries(undefined, {
-      onSuccess: (n) => {
-        toast.success(tf('storage.removedAllRecords', { count: n }));
-        setConfirmRemoveAll(false);
-      },
       onError: (e) => toast.error(e.message),
     });
   };
@@ -108,21 +74,7 @@ export function StoragePage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-base">{t('storage.bySeries')}</CardTitle>
-            {/* 搜索框过滤时不该「一键清空」被过滤后的子集——那会误伤没显示出来的 */}
-            {visible.length > 0 && filter.trim() === '' && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="ml-auto"
-                onClick={() => setConfirmRemoveAll(true)}
-              >
-                {t('storage.removeAllRecords')}
-              </Button>
-            )}
-          </div>
-          <CardDescription>{t('storage.keepRecord')}</CardDescription>
+          <CardTitle className="text-base">{t('storage.bySeries')}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Input
@@ -141,8 +93,12 @@ export function StoragePage() {
                   className="flex items-center gap-2 rounded-md border px-3 py-2"
                 >
                   <span className="min-w-0 flex-1 truncate text-sm">{s.title}</span>
-                  <Badge variant="secondary">{s.episodeCount}</Badge>
-                  {/* 两个动作要分得清：左边删磁盘上的文件（记录留着），右边把记录从列表里去掉 */}
+                  <Badge variant="secondary">
+                    {tf('storage.downloadedEpisodes', { count: s.files })}
+                  </Badge>
+                  <span className="text-muted-foreground w-16 text-right text-xs tabular-nums">
+                    {formatBytes(s.bytes)}
+                  </span>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -151,15 +107,6 @@ export function StoragePage() {
                     onClick={() => handleDelete(s.seriesId, s.title)}
                   >
                     <Trash2 className="size-4" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label={tf('storage.removeRecord', { title: s.title })}
-                    title={t('storage.removeRecordShort')}
-                    onClick={() => setConfirmRemove(s)}
-                  >
-                    <XCircle className="size-4" />
                   </Button>
                 </div>
               ))}
@@ -185,40 +132,6 @@ export function StoragePage() {
               }
             >
               {t('common.confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={confirmRemove !== null} onOpenChange={(o) => !o && setConfirmRemove(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {confirmRemove && tf('storage.removeRecordConfirm', { title: confirmRemove.title })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>{t('storage.removeRecordDesc')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemove}>
-              {t('storage.removeRecordShort')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={confirmRemoveAll} onOpenChange={(o) => !o && setConfirmRemoveAll(false)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {tf('storage.removeAllRecordsConfirm', { count: (seriesList ?? []).length })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>{t('storage.removeAllRecordsDesc')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemoveAll}>
-              {t('storage.removeAllRecords')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

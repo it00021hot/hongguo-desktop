@@ -81,7 +81,7 @@ pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
 /// 加密核心：gz 字节与 IV 均由调用方指定（对拍矩阵用——隔离 gz 字节流
 /// 与 IV 派生这两个独立变量）。
 pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockCipherEncrypt, KeyInit};
     use aes::Aes128;
 
     use crate::signer::tt_hash::{TtHashCore, TT_ORD_LIST};
@@ -114,7 +114,7 @@ pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> 
         for (b, p) in chunk.iter_mut().zip(&prev) {
             *b ^= p;
         }
-        cipher.encrypt_block(aes::Block::from_mut_slice(chunk));
+        cipher.encrypt_block((&mut *chunk).try_into().unwrap());
         out.extend_from_slice(chunk);
         prev.copy_from_slice(chunk);
     }
@@ -133,7 +133,7 @@ pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> 
 /// 顺序重放三次 calculate（CF 进位链），并用 payload 前 48 字节校验
 /// 完整性哈希。
 pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-    use aes::cipher::{BlockDecrypt, KeyInit};
+    use aes::cipher::{BlockCipherDecrypt, KeyInit};
     use aes::Aes128;
     use flate2::read::GzDecoder;
     use std::io::Read;
@@ -167,7 +167,7 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     let mut prev = iv_arr;
     for chunk in ct.chunks(16) {
         let mut blk: [u8; 16] = chunk.try_into().unwrap();
-        cipher.decrypt_block(aes::Block::from_mut_slice(&mut blk));
+        cipher.decrypt_block((&mut blk).into());
         for (b, p) in blk.iter_mut().zip(&prev) {
             *b ^= p;
         }
@@ -236,15 +236,14 @@ pub struct RegisterResult {
 pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     let v: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Media(format!("注册响应不是 JSON: {e}")))?;
-    if let Some(code) = v.get("code").and_then(Value::as_i64) {
-        if code != 0 {
+    if let Some(code) = v.get("code").and_then(Value::as_i64)
+        && code != 0 {
             let msg = v
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("未知错误");
             return Err(AppError::Media(format!("注册失败 {code}: {msg}")));
         }
-    }
     let get_str = |k: &str| {
         v.get(k)
             .map(|x| match x {

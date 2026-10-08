@@ -27,6 +27,7 @@ import { app as appApi, transcode as transcodeApi } from '@/lib/ipc/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { DecodeCapability, Settings } from '@/lib/schema';
+import { UpdateCard } from '@/features/update/update-card';
 import { AccountCard } from './account-card';
 
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
@@ -313,6 +314,9 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* 更新 */}
+      <UpdateCard />
 
       <div className="flex justify-end">
         <Button onClick={submit} disabled={saveMutation.isPending}>

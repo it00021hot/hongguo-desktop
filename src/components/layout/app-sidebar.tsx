@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useRouterState } from '@tanstack/react-router';
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   Flame,
   Compass,
@@ -16,15 +16,12 @@ import {
   PanelLeftClose,
   PanelLeft,
   UserRound,
-  LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import { useAccount, useAuthRefresh } from '@/lib/queries';
 import { login } from '@/lib/ipc/commands';
-import { toast } from 'sonner';
 import { useUiStore } from '@/lib/stores/ui';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -120,13 +117,13 @@ export function AppSidebar() {
   );
 }
 
-/** 贴底账户入口：未登录「我的 / 登录」开登录弹窗；已登录显昵称 + 退出钮。 */
+/** 贴底账户入口：未登录「我的 / 登录」开登录弹窗；已登录点头像进设置页
+ * （退出入口在设置页账户卡）。 */
 function AccountButton({ collapsed }: { collapsed: boolean }) {
   const { data: account } = useAccount();
   const refreshAuth = useAuthRefresh();
   const [loginOpen, setLoginOpen] = useState(false);
-  // 退出登录是危险动作：清掉本机登录态，先确认再执行
-  const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const navigate = useNavigate();
 
   // 旧登录态库里没有头像：挂载后静默补拉一次 user_info（后端顺带刷新
   // 昵称落库）。一次性 flag 兜底——若服务端就是不回头像，也不反复重试。
@@ -148,11 +145,11 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       type="button"
       onClick={() => {
         if (!account) setLoginOpen(true);
+        else void navigate({ to: '/settings' });
       }}
       className={cn(
         'text-sidebar-foreground hover:bg-sidebar-accent flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
         collapsed && 'justify-center px-0',
-        account && 'cursor-default',
       )}
       // 折叠态由 Radix Tooltip 出标签：原生 title 会叠出第二层浮层
     >
@@ -174,17 +171,6 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
     </button>
   );
 
-  const logout = () => {
-    void login
-      .logout()
-      .then(() => {
-        refreshAuth();
-        toast.success(t('nav.loggedOut'));
-        setLogoutConfirm(false);
-      })
-      .catch((e) => toast.error(String(e)));
-  };
-
   return (
     <>
       {collapsed ? (
@@ -195,26 +181,6 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       ) : (
         row
       )}
-      {account != null && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setLogoutConfirm(true)}
-          className={cn('text-muted-foreground size-7 w-full', !collapsed && 'justify-start gap-2')}
-          title={t('nav.logout')}
-        >
-          <LogOut className="size-3.5" />
-          {!collapsed && <span className="text-xs">{t('nav.logout')}</span>}
-        </Button>
-      )}
-      <ConfirmDialog
-        open={logoutConfirm}
-        onOpenChange={setLogoutConfirm}
-        title={t('nav.logoutConfirmTitle')}
-        description={t('nav.logoutConfirmBody')}
-        confirmLabel={t('nav.logout')}
-        onConfirm={logout}
-      />
       <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} onSuccess={refreshAuth} />
     </>
   );

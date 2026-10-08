@@ -149,16 +149,6 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::upsert_series(db, &s).await }))
     }
 
-    /// 返回 0 行时调用方应报 NotFound。
-    pub fn set_series_dismissed(&self, series_id: &str) -> AppResult<u64> {
-        let id = series_id.to_string();
-        self.exec(move |db| Box::pin(async move { entity::set_dismissed(db, &id).await }))
-    }
-
-    pub fn dismiss_all_series(&self) -> AppResult<u64> {
-        self.exec(|db| Box::pin(entity::dismiss_all(db)))
-    }
-
     // ---------- playback ----------
 
     pub fn playback_position(

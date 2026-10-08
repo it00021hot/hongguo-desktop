@@ -181,11 +181,10 @@ pub async fn prefetch_stream(
     }
     let c = cache();
     // 已解析过档位且条目在场/在取：无事可做
-    if let Some(want) = c.auto_definition(vid) {
-        if c.exists(vid, want) || c.is_fetching(vid, want) {
+    if let Some(want) = c.auto_definition(vid)
+        && (c.exists(vid, want) || c.is_fetching(vid, want)) {
             return Ok(());
         }
-    }
     let play = match crate::domain::api::play_url::fetch_play_url(vid, None, env).await {
         Ok(p) => p,
         Err(e) => {

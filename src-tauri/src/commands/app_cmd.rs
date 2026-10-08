@@ -123,6 +123,7 @@ const MAIN_MIN: (f64, f64) = (1024.0, 680.0);
 /// 对三颗 `NSWindowButton` setHidden：窗口结构零变化，尺寸语义全程稳定。
 /// hgplayer 小屏连标题栏都没有，480×270 的画面上再叠三颗圆点纯属多余；
 /// Windows 本就 decorations:false，无需此操作。
+#[cfg(target_os = "macos")]
 fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
     use objc2_app_kit::{NSWindow, NSWindowButton};
     use tauri::Manager;
@@ -319,12 +320,12 @@ pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
         return Ok(());
     }
     // 代次 +1 让可能仍在跑的旧轮询自杀，再起一条新循环
-    let gen = INCOGNITO_GEN.fetch_add(1, Ordering::Release) + 1;
+    let generation = INCOGNITO_GEN.fetch_add(1, Ordering::Release) + 1;
     // 同步 command 在主线程上执行，那里没有 Tokio 线程上下文，裸
     // `tokio::spawn` 会 panic（且 scheme/IPC 回调跨 objc 边界不能 unwind，
     // 直接 abort 闪退）——必须走 tauri 的全局运行时
     tauri::async_runtime::spawn(async move {
-        incognito_watch(app, gen).await;
+        incognito_watch(app, generation).await;
     });
     Ok(())
 }
@@ -335,11 +336,11 @@ fn active_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     app.get_webview_window("main")
 }
 
-async fn incognito_watch(app: AppHandle, gen: u64) {
+async fn incognito_watch(app: AppHandle, generation: u64) {
     use tauri::Emitter;
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(INCOGNITO_POLL_MS)).await;
-        if !INCOGNITO_ON.load(Ordering::Acquire) || INCOGNITO_GEN.load(Ordering::Acquire) != gen {
+        if !INCOGNITO_ON.load(Ordering::Acquire) || INCOGNITO_GEN.load(Ordering::Acquire) != generation {
             return;
         }
         let Some(win) = active_window(&app) else {

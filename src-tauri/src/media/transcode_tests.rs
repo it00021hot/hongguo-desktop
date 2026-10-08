@@ -214,7 +214,7 @@ fn peak_working_set_bytes() -> u64 {
         peak_pagefile_usage: usize,
     }
 
-    extern "system" {
+    unsafe extern "system" {
         fn GetCurrentProcess() -> isize;
         fn GetProcessMemoryInfo(
             process: isize,

@@ -7,3 +7,7 @@ src/routeTree.gen.ts
 dist/
 src-tauri/gen/
 src-tauri/target/
+
+# vendor 的第三方 crate 源码保持原样（patch 用，diff 越小越好）；
+# 不 ignore 的话 format:check 会红在别人的代码上
+src-tauri/vendor/

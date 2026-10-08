@@ -29,6 +29,7 @@ import {
   seriesProgressSchema,
   seriesSchema,
   settingsSchema,
+  storageSeriesUsageSchema,
   storageUsageSchema,
   watchHistoryPageSchema,
   type AccountState,
@@ -58,6 +59,7 @@ import {
   type SeriesProgress,
   type SelectorRow,
   type Settings,
+  type StorageSeriesUsage,
   type StorageUsage,
   type CalendarPage,
   type RankPage,
@@ -140,7 +142,6 @@ export const login = {
 // ---------------------------------------------------------------- 剧集
 
 export const series = {
-  list: () => call<Series[]>('get_series_list'),
   episodes: (seriesId: string) => call<Series>('get_series_episodes', { seriesId }, seriesSchema),
   resolve: (input: string) => call<Series>('resolve_series', { input }, seriesSchema),
   /** 相关作品·系列（同系列各季 + 同 IP；失败由上层静默降级） */
@@ -148,8 +149,6 @@ export const series = {
     call<RelatedSeries>('related_series', { seriesId }, relatedSeriesSchema),
   /** 详情页头部元信息（追剧/播放/季徽/标签/备案号；失败前端静默降级）。 */
   meta: (seriesId: string) => call<SeriesMeta>('series_meta', { seriesId }, seriesMetaSchema),
-  remove: (seriesId: string) => call<void>('remove_series', { seriesId }),
-  removeAll: () => call<number>('remove_all_series'),
 };
 
 // ---------------------------------------------------------------- 发现（首页推荐流 / 找剧）
@@ -373,6 +372,9 @@ export const transcode = {
 
 export const storage = {
   usage: () => call<StorageUsage>('get_storage_usage', undefined, storageUsageSchema),
+  /** 按剧聚合的占用（清理页列表，只含磁盘上真有文件的剧） */
+  seriesUsage: () =>
+    call<StorageSeriesUsage[]>('get_storage_series', undefined, storageSeriesUsageSchema.array()),
   deleteSeries: (seriesId: string) => call<number>('delete_series_files', { seriesId }),
   deleteEpisode: (seriesId: string, vidIndex: number) =>
     call<boolean>('delete_episode_file', { seriesId, vidIndex }),

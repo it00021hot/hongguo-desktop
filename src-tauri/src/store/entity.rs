@@ -180,7 +180,8 @@ pub async fn series_by_id(db: &Db, series_id: &str) -> AppResult<Option<Series>>
     Ok(Some(s))
 }
 
-/// 登记或更新档案。冲突时**保留 dismissed 标记**（重新拉取不能复活已移除的剧）。
+/// 登记或更新档案。冲突时**保留 dismissed 标记**（历史库里的移除标记
+/// 不能被重新拉取复活；新代码已没有写入入口，列只为兼容旧库保留）。
 pub async fn upsert_series(db: &Db, s: &Series) -> AppResult<()> {
     let json = serde_json::to_string(s)
         .map_err(|e| AppError::StoreCorrupt(format!("剧序列化失败: {e}")))?;
@@ -198,21 +199,6 @@ pub async fn upsert_series(db: &Db, s: &Series) -> AppResult<()> {
     )
     .await?;
     Ok(())
-}
-
-/// 标记移除。返回实际改变的行数（0 = 没这部剧，调用方报 NotFound）。
-pub async fn set_dismissed(db: &Db, series_id: &str) -> AppResult<u64> {
-    db.execute(
-        "UPDATE series SET dismissed = 1 WHERE series_id = ?1 AND dismissed = 0",
-        [Value::Text(series_id.to_string())],
-    )
-    .await
-}
-
-/// 一次性移除全部可见档案，返回移除条数。
-pub async fn dismiss_all(db: &Db) -> AppResult<u64> {
-    db.execute("UPDATE series SET dismissed = 1 WHERE dismissed = 0", ())
-        .await
 }
 
 // ---------- playback ----------
@@ -499,16 +485,19 @@ mod tests {
     fn series_upsert_preserves_dismissed_and_returns_by_id() {
         let db = mem_db();
         rt().block_on(async {
+            // dismissed 的写入入口已随「移除记录」功能下线，这里直接
+            // 构造一条带旧标记的档案，验证 upsert 不复活它
             let s = Series {
                 series_id: "1".into(),
                 title: "剧".into(),
+                dismissed: true,
                 ..Default::default()
             };
             upsert_series(&db, &s).await.unwrap();
-            assert_eq!(set_dismissed(&db, "1").await.unwrap(), 1);
 
             // 重新解析登记不复活
             let fresh = Series {
+                dismissed: false,
                 title: "剧（新版）".into(),
                 ..s.clone()
             };
@@ -516,9 +505,6 @@ mod tests {
             let back = series_by_id(&db, "1").await.unwrap().expect("应当还在");
             assert!(back.dismissed, "移除标记必须保留");
             assert_eq!(back.title, "剧（新版）");
-
-            // 重复 dismiss 返回 0 行（NotFound 判据）
-            assert_eq!(set_dismissed(&db, "1").await.unwrap(), 0);
         });
     }
 

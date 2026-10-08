@@ -81,18 +81,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           data-tauri-drag-region="deep"
           className={cn(
             'bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b',
-            mac ? 'pl-[76px] pr-3' : 'px-3',
+            mac ? 'pr-3 pl-[76px]' : 'px-3',
           )}
         >
-          <img
-            src="/app-icon.png"
-            alt=""
-            width={24}
-            height={24}
-            className="size-6 shrink-0 rounded-md"
-          />
           {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
-                左右组宽度不等（红绿灯位+logo vs 控件），flex-1 的「剩余空间
+                左右组宽度不等（红绿灯位 vs 控件），flex-1 的「剩余空间
                 居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
                 transform（半像素平移会让文字发糊）。
                 容器 pointer-events-none：空白带不拦截、仍可拖窗；

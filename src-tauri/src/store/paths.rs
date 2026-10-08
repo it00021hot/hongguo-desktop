@@ -68,7 +68,9 @@ impl ScopedDataDir {
         let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         std::fs::create_dir_all(dir).expect("创建测试数据目录");
         let previous = std::env::var_os("HONGGUO_DATA_DIR");
-        std::env::set_var("HONGGUO_DATA_DIR", dir);
+        // SAFETY: 测试专用。进程级 env 写入在 edition 2024 起标为 unsafe；
+        // 上面那把静态锁保证同进程的测试串行改这个变量，无并发窗口。
+        unsafe { std::env::set_var("HONGGUO_DATA_DIR", dir) };
         Self {
             _lock: lock,
             previous,
@@ -80,8 +82,9 @@ impl ScopedDataDir {
 impl Drop for ScopedDataDir {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(v) => std::env::set_var("HONGGUO_DATA_DIR", v),
-            None => std::env::remove_var("HONGGUO_DATA_DIR"),
+            // SAFETY: 同 new——锁还在持有期间（守卫尚未析构完），串行访问
+            Some(v) => unsafe { std::env::set_var("HONGGUO_DATA_DIR", v) },
+            None => unsafe { std::env::remove_var("HONGGUO_DATA_DIR") },
         }
     }
 }

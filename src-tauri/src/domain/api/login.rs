@@ -778,14 +778,13 @@ mod tests {
         println!("[probe] mobile: {mobile}");
         // HG_PROXY=http://127.0.0.1:8080 时走本地 mitmdump（抓自己的请求
         // 与 hgplayer 抓包逐字节 diff）
-        if let Ok(p) = std::env::var("HG_PROXY") {
-            if !p.is_empty() {
+        if let Ok(p) = std::env::var("HG_PROXY")
+            && !p.is_empty() {
                 env.proxy = crate::domain::model::settings::ProxyConfig {
                     mode: crate::domain::model::settings::ProxyMode::Manual,
                     url: p,
                 };
             }
-        }
         match send_sms_code(&env, &mobile).await {
             Ok(out) => println!(
                 "[probe] 发码成功: {} ticket={}",

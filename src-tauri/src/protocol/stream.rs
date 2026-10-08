@@ -133,11 +133,10 @@ impl ReaderDemand {
             for (a, b) in t.ranges.iter() {
                 // 区间内的第一个洞：next_gap(a) 给出 a 起第一个未覆盖处，
                 // 落在 (a,b) 之外说明这段已就绪，试下一段
-                if let Some((gap, _)) = sparse.next_gap(*a) {
-                    if gap < *b {
+                if let Some((gap, _)) = sparse.next_gap(*a)
+                    && gap < *b {
                         return Some(gap);
                     }
-                }
             }
         }
         None

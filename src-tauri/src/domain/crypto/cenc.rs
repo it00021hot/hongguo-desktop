@@ -48,7 +48,7 @@ fn counter_block(iv: &[u8; 8], block: u64) -> [u8; 16] {
 /// 正确性与 [`decrypt_sample`] 的对齐由测试锁住：`skip=0` 必须与整样本解密
 /// 逐字节一致，`skip=k` 必须等于整样本解密结果的第 k 字节起的切片。
 pub fn decrypt_range(key: &[u8; 16], iv: &[u8; 8], skip: usize, data: &mut [u8]) {
-    use aes::cipher::{BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockCipherEncrypt, KeyInit};
     let cipher = Aes128::new(key.into());
     let mut block = (skip / 16) as u64;
     let lead = skip % 16;

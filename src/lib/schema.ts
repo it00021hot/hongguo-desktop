@@ -299,6 +299,16 @@ export const storageUsageSchema = z.object({
 
 export type StorageUsage = z.infer<typeof storageUsageSchema>;
 
+/** 按剧聚合的磁盘占用（只含磁盘上真有文件的剧，来自下载任务记录）。 */
+export const storageSeriesUsageSchema = z.object({
+  seriesId: z.string(),
+  title: z.string(),
+  bytes: z.number().nonnegative(),
+  files: z.number().int().nonnegative(),
+});
+
+export type StorageSeriesUsage = z.infer<typeof storageSeriesUsageSchema>;
+
 /** 转码能力：探测「这台机器会走哪条路」。 */
 export const decodeCapabilitySchema = z.object({
   hasFfmpeg: z.boolean(),

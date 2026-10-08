@@ -16,7 +16,7 @@ use crate::signer::primitives::{le32, md5_raw, sm3, u32};
 use crate::signer::protobuf::{proto, FieldType, FieldValue};
 use crate::signer::xargus::hash_f13;
 
-use rand::Rng;
+use rand::RngExt;
 
 /// 用 SM3 派生的 key 对 message 做逐字节置换。
 pub fn xmxor(data: &[u8], key: &[u8]) -> Vec<u8> {

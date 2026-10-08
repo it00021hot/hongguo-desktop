@@ -483,7 +483,7 @@ impl SyncMft {
 /// 下一个入队样本直接补发——错过一个事件就永远喂不进了。
 struct AsyncMft {
     xform: IMFTransform,
-    gen: IMFMediaEventGenerator,
+    event_gen: IMFMediaEventGenerator,
     input_q: VecDeque<IMFSample>,
     need_input: bool,
     drained: bool,
@@ -496,7 +496,7 @@ impl AsyncMft {
     fn poll(&mut self, ready: &mut Vec<IMFSample>) -> AppResult<()> {
         unsafe {
             loop {
-                let ev = match self.gen.GetEvent(MF_EVENT_FLAG_NO_WAIT) {
+                let ev = match self.event_gen.GetEvent(MF_EVENT_FLAG_NO_WAIT) {
                     Ok(ev) => ev,
                     Err(e) if is_code(&e, MF_E_NO_EVENTS_AVAILABLE) => break,
                     Err(e) => {
@@ -525,12 +525,11 @@ impl AsyncMft {
                     _ => {}
                 }
             }
-            if self.need_input {
-                if let Some(s) = self.input_q.pop_front() {
+            if self.need_input
+                && let Some(s) = self.input_q.pop_front() {
                     hr(self.xform.ProcessInput(0, &s, 0), "ProcessInput")?;
                     self.need_input = false;
                 }
-            }
         }
         Ok(())
     }
@@ -625,10 +624,10 @@ impl Driver {
     fn new(activate: &IMFActivate) -> AppResult<(Self, IMFTransform)> {
         let (xform, is_async) = activate_transform(activate)?;
         let inner = if is_async {
-            let gen: IMFMediaEventGenerator = hr(xform.cast(), "取事件生成器")?;
+            let event_gen: IMFMediaEventGenerator = hr(xform.cast(), "取事件生成器")?;
             DriverInner::Async(AsyncMft {
                 xform: xform.clone(),
-                gen,
+                event_gen,
                 input_q: VecDeque::new(),
                 need_input: false,
                 drained: false,
@@ -1239,13 +1238,11 @@ impl Encoder {
             };
             // 关键帧（以及首个样本，无论标没标）前插 SPS/PPS
             let first = units.is_empty();
-            if keyframe || first {
-                if let Some(ps) = self.param_sets.as_deref() {
-                    if !ps.is_empty() {
+            if (keyframe || first)
+                && let Some(ps) = self.param_sets.as_deref()
+                    && !ps.is_empty() {
                         annexb.splice(0..0, ps.iter().copied());
                     }
-                }
-            }
             let _ = t;
             let pts = self.fed_pts.pop_front().unwrap_or(f64::NAN);
             units.push((pts, annexb, keyframe));
@@ -1368,11 +1365,10 @@ fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, fram
         .copied()
         .unwrap_or_else(|| last.unwrap_or(0.0) + frame_dur);
     *cursor += 1;
-    if let Some(prev) = *last {
-        if p <= prev {
+    if let Some(prev) = *last
+        && p <= prev {
             p = prev + frame_dur * 0.5;
         }
-    }
     *last = Some(p);
     p
 }

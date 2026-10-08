@@ -328,11 +328,10 @@ fn build_trak(track_id: u32, plan: &TrackPlan, offsets: &[u64]) -> Vec<u8> {
     if let Some(comp) = &plan.composition {
         stbl.extend(ctts_box(comp));
     }
-    if let Some(every) = plan.sync_every {
-        if every > 0 {
+    if let Some(every) = plan.sync_every
+        && every > 0 {
             stbl.extend(stss_box(plan.samples.len(), every));
         }
-    }
     stbl.extend(stsc_one_per_chunk());
     stbl.extend(stsz_box(plan));
     stbl.extend(stco_box(offsets));

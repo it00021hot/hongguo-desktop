@@ -101,11 +101,10 @@ pub fn find_box(data: &[u8], start: usize, end: usize, kind: &str) -> Option<Box
         if matches!(
             b.kind_str().as_str(),
             "moov" | "trak" | "mdia" | "minf" | "stbl" | "moof" | "traf" | "edts"
-        ) {
-            if let Some(found) = find_box(data, b.start, b.start + b.size, kind) {
+        )
+            && let Some(found) = find_box(data, b.start, b.start + b.size, kind) {
                 return Some(found);
             }
-        }
     }
     None
 }

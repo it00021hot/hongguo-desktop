@@ -142,13 +142,12 @@ impl TrackInfo {
 
         // 负偏移（version 1 ctts）会让最早的显示时间落在 0 之前，而音轨与
         // 封装层都从 0 起步：整体平移，等量平移不破坏任何相对时序
-        if let Some(min) = pts.iter().cloned().reduce(f64::min) {
-            if min < 0.0 {
+        if let Some(min) = pts.iter().cloned().reduce(f64::min)
+            && min < 0.0 {
                 for p in &mut pts {
                     *p -= min;
                 }
             }
-        }
         pts
     }
 

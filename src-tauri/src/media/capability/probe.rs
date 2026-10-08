@@ -158,8 +158,8 @@ mod tests {
     fn hardware_flag_is_not_derived_from_the_encoder_name() {
         // 回归钉住：曾经用 `encoder != "libx264"` 判硬件，
         // 于是 h264_mf（软件 MediaFoundation）被报成「硬件加速」。
-        if let Some(enc) = crate::media::ffmpeg::h264_encoder() {
-            if enc.name == "h264_mf" && !enc.hardware {
+        if let Some(enc) = crate::media::ffmpeg::h264_encoder()
+            && enc.name == "h264_mf" && !enc.hardware {
                 // 本机 h264_mf 只能软件编码：能力字段必须如实报 false
                 assert!(
                     !detect().h264_hw_encoder
@@ -167,6 +167,5 @@ mod tests {
                     "软件编码的 h264_mf 不能报成硬件"
                 );
             }
-        }
     }
 }

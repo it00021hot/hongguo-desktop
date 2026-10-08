@@ -238,15 +238,14 @@ pub async fn fetch_browse(
 
 /// 业务错误码检查。
 pub(super) fn check_code(value: &Value) -> AppResult<()> {
-    if let Some(code) = value.get("code").and_then(Value::as_i64) {
-        if code != 0 {
+    if let Some(code) = value.get("code").and_then(Value::as_i64)
+        && code != 0 {
             let msg = value
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("未知错误");
             return Err(AppError::Media(format!("接口返回 {code}: {msg}")));
         }
-    }
     Ok(())
 }
 

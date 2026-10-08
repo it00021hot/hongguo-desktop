@@ -54,7 +54,6 @@ const keys = {
   settings: ['settings'] as const,
   feed: (tab: string) => ['feed', tab] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
-  seriesList: ['series-list'] as const,
   seriesEpisodes: (id: string) => ['series-episodes', id] as const,
   seriesProgress: (id: string) => ['series-progress', id] as const,
   watchHistory: ['watch-history'] as const,
@@ -64,6 +63,7 @@ const keys = {
   mergeCandidates: ['merge-candidates'] as const,
   mergePreflight: (id: string) => ['merge-preflight', id] as const,
   storageUsage: ['storage-usage'] as const,
+  storageSeries: ['storage-series'] as const,
   capability: ['decode-capability'] as const,
   browsePanel: ['browse-panel'] as const,
   browseFeed: (filters: BrowseFilters) => ['browse-feed', filters] as const,
@@ -103,10 +103,6 @@ export function useTestProxy() {
 }
 
 // ---------------------------------------------------------------- 剧集
-
-export function useSeriesList() {
-  return useQuery({ queryKey: keys.seriesList, queryFn: series.list });
-}
 
 export function useSeriesEpisodes(seriesId: string | null) {
   const queryClient = useQueryClient();
@@ -738,35 +734,7 @@ export function usePrefetchSeriesEpisodes() {
 }
 
 export function useResolveSeries() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (input: string) => series.resolve(input),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.seriesList });
-    },
-  });
-}
-
-/** 从剧集列表移除一部剧。磁盘清理页的「移除记录」用它。 */
-export function useRemoveSeries() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (seriesId: string) => series.remove(seriesId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.seriesList });
-    },
-  });
-}
-
-/** 一次性移除列表里的全部剧集，返回移除条数。 */
-export function useRemoveAllSeries() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => series.removeAll(),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: keys.seriesList });
-    },
-  });
+  return useMutation({ mutationFn: (input: string) => series.resolve(input) });
 }
 
 // ---------------------------------------------------------------- 下载
@@ -984,6 +952,11 @@ export function useStorageUsage() {
   return useQuery({ queryKey: keys.storageUsage, queryFn: storage.usage });
 }
 
+/** 按剧聚合的磁盘占用（清理页剧列表，只含磁盘上真有文件的剧）。 */
+export function useStorageSeries() {
+  return useQuery({ queryKey: keys.storageSeries, queryFn: storage.seriesUsage });
+}
+
 export function useDecodeCapability() {
   return useQuery({
     queryKey: keys.capability,
@@ -1022,6 +995,7 @@ export function useStorageActions() {
   const qc = useQueryClient();
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: keys.storageUsage });
+    void qc.invalidateQueries({ queryKey: keys.storageSeries });
     void qc.invalidateQueries({ queryKey: keys.tasks });
   };
   return {

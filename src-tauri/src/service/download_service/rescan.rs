@@ -105,11 +105,10 @@ fn series_dir(state: &AppState, settings: &Settings, series: &Series) -> Option<
         if task.file_path.is_empty() {
             continue;
         }
-        if let Some(parent) = Path::new(&task.file_path).parent() {
-            if parent.is_dir() {
+        if let Some(parent) = Path::new(&task.file_path).parent()
+            && parent.is_dir() {
                 return Some(parent.to_path_buf());
             }
-        }
     }
     let dir = settings.series_dir(&series.title);
     dir.is_dir().then_some(dir)

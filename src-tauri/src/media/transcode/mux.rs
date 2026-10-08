@@ -99,11 +99,10 @@ pub fn mux_h264(
             let res = if has_bframes {
                 let mut dts = dts_sorted[v_idx];
                 // 重复 PTS 的畸形源会把 DTS 顶成并列——按一个 1/90000 刻度顶开
-                if let Some(prev) = prev_dts {
-                    if dts <= prev {
+                if let Some(prev) = prev_dts
+                    && dts <= prev {
                         dts = prev + 1.0 / 90_000.0;
                     }
-                }
                 prev_dts = Some(dts);
                 muxer.write_video_with_dts(*pts, dts, data, *is_key)
             } else {
