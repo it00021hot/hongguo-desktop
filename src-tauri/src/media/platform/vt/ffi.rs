@@ -2,7 +2,7 @@
 //!
 //! 只声明转码链路用到的符号。VideoToolbox 是纯 C API（CF 对象），
 //! 不需要 ObjC 运行时，手写声明比引 objc2 系省掉一整套版本依赖。
-//! `#[link(kind = "dylib")]` 在 Apple 目标上会以 `-framework` 链接。
+//! `#[link(kind = "framework")]` 在 Apple 目标上会以 `-framework` 链接。
 //!
 //! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、
 //! VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
@@ -100,7 +100,7 @@ pub const kCFNumberSInt32Type: CFIndex = 3;
 pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
 
 // —— CoreFoundation ——
-#[link(name = "CoreFoundation", kind = "dylib")]
+#[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     pub static kCFAllocatorDefault: CFAllocatorRef;
     pub static kCFBooleanTrue: CFBooleanRef;
@@ -138,7 +138,7 @@ unsafe extern "C" {
 }
 
 // —— CoreMedia ——
-#[link(name = "CoreMedia", kind = "dylib")]
+#[link(name = "CoreMedia", kind = "framework")]
 unsafe extern "C" {
     pub static kCMTimeInvalid: CMTime;
     pub static kCMSampleAttachmentKey_NotSync: CFStringRef;
@@ -213,7 +213,7 @@ unsafe extern "C" {
 }
 
 // —— CoreVideo ——
-#[link(name = "CoreVideo", kind = "dylib")]
+#[link(name = "CoreVideo", kind = "framework")]
 unsafe extern "C" {
     pub static kCVPixelBufferPixelFormatTypeKey: CFStringRef;
     pub static kCVPixelBufferWidthKey: CFStringRef;
@@ -250,7 +250,7 @@ unsafe extern "C" {
 }
 
 // —— VideoToolbox ——
-#[link(name = "VideoToolbox", kind = "dylib")]
+#[link(name = "VideoToolbox", kind = "framework")]
 unsafe extern "C" {
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;
