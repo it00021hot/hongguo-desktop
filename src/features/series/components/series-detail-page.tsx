@@ -487,10 +487,23 @@ function RelatedCard({
 }) {
   const isUpcoming = item.episodeCnt === 0 || item.tag === '即将上线';
   return (
-    <button
-      type="button"
+    // 整张卡可点。不用 <button> 包：一是内容模型只允许 phrasing content
+    // （卡里有 <p>，里面还可能嵌预约按钮），二是网格默认 stretch 拉齐行高时
+    // button 会把内容**垂直居中**——标题折行数不同的卡内容高不同、下移量
+    // 不同，整排一高一低。article + role="button" 与全站卡片网格同一做法，
+    // flex-col 保证内容永远从顶上排。
+    <article
+      role="button"
+      tabIndex={0}
+      aria-label={item.title}
       onClick={() => onOpen(item.seriesId)}
-      className={cn('shrink-0 cursor-pointer text-left', className ?? 'w-32')}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        // 空格默认会滚动页面，按钮不该有滚动副作用
+        e.preventDefault();
+        onOpen(item.seriesId);
+      }}
+      className={cn('group flex shrink-0 cursor-pointer flex-col text-left', className ?? 'w-32')}
       title={item.videoDesc || item.title}
     >
       {/* 封面盒：宽高全部钉死（w-32 × 3:4），图 object-cover 裁切——
@@ -520,7 +533,7 @@ function RelatedCard({
         {item.playCnt > 0 && ` · ${formatPlayCount(item.playCnt)}${t('detail.plays')}`}
       </p>
       {isUpcoming && <ReserveButton seriesId={item.seriesId} />}
-    </button>
+    </article>
   );
 }
 
