@@ -132,6 +132,7 @@ interface Props {
  * 表情：hgplayer 同款 `[名字]` 代码——选择器插入代码，弹幕层渲染成图。 */
 function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
   const [text, setText] = useState('');
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const send = useSendDanmaku();
   const { data: account } = useAccount();
   const loggedIn = !!account;
@@ -172,7 +173,11 @@ function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }
         maxLength={100}
         className="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs leading-8 whitespace-pre text-white"
       />
-      <EmojiPickerButton onPick={pickEmoji} />
+      <EmojiPickerButton
+        open={emojiOpen}
+        onToggle={() => setEmojiOpen((o) => !o)}
+        onPick={pickEmoji}
+      />
       <button
         type="button"
         onClick={submit}
