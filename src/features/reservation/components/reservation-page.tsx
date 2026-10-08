@@ -6,22 +6,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ResolvingPill } from '@/components/resolving-pill';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
-import {
-  SeriesDetailSheet,
-  type SeriesRef,
-} from '@/features/series/components/series-detail-sheet';
 import { rank as rankApi } from '@/lib/ipc/commands';
 import {
   isRenderableCover,
   RESERVATIONS_KEY_ROOT,
   useAccount,
   useReservations,
-  useResolveSeries,
   useWebCover,
 } from '@/lib/queries';
 import { t, tf, locale } from '@/i18n';
+import { usePlaySeries } from '@/lib/use-play-series';
 import type { CalendarItem } from '@/lib/schema';
 
 /**
@@ -38,8 +33,6 @@ export function ReservationPage() {
   const onlineQ = useReservations(true);
   const offlineQ = useReservations(false);
   const current = online ? onlineQ : offlineQ;
-  const { mutate: resolve, isPending: resolving } = useResolveSeries();
-  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   // 角标计数：total 优先、条数兜底（后端已翻页拉全并兜底，这里双保险；
   // 数据未到显示骨架点，不让 0 冒充「没有预约」）
@@ -58,23 +51,8 @@ export function ReservationPage() {
     },
   ];
 
-  const handleSelect = (item: CalendarItem) => {
-    resolve(item.seriesId, {
-      onSuccess: (series) =>
-        setDetail({
-          card: {
-            seriesId: series.seriesId,
-            seriesTitle: series.title,
-            cover: series.cover || item.cover,
-            episodeCount: series.episodeCount || item.episodeCnt,
-            tags: series.tags,
-          },
-          selected: [],
-        }),
-      onError: (e) =>
-        toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
-    });
-  };
+  const playSeries = usePlaySeries();
+  const handleSelect = (item: CalendarItem) => playSeries(item.seriesId);
 
   return (
     <div className="flex flex-col gap-4">
@@ -131,15 +109,6 @@ export function ReservationPage() {
           ))}
         </div>
       )}
-
-      <SeriesDetailSheet
-        card={detail?.card ?? null}
-        selected={detail?.selected ?? []}
-        onSelectedChange={(next) => setDetail((d) => (d ? { ...d, selected: next } : d))}
-        onOpenChange={(open) => !open && setDetail(null)}
-      />
-
-      {resolving && <ResolvingPill />}
     </div>
   );
 }

@@ -96,8 +96,7 @@
     "formatSelection": "Format selection",
     "selected": "{count} selected",
     "submit": "Start download",
-    "submitting": "Queued {count} tasks",
-    "playNow": "Play now"
+    "submitting": "Queued {count} tasks"
   },
   "tasks": {
     "queueStatus": "Running {running} · Pending {pending} · Done {completed} · Failed {failed}",

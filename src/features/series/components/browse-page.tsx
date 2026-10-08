@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Search, SlidersHorizontal, X } from 'lucide-react';
-import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +8,6 @@ import { RefreshShade } from '@/components/refresh-shade';
 import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
-import { SeriesDetailSheet, type SeriesRef } from './series-detail-sheet';
 import {
   useBrowseFeed,
   useBrowsePanel,
@@ -19,11 +17,11 @@ import {
   useSeriesSearchApp,
   useWebCover,
 } from '@/lib/queries';
-import { usePlayerStore } from '@/lib/stores/player';
+import { usePlaySeries } from '@/lib/use-play-series';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { BrowseFilters, FeedItem, Series, SeriesCard, SuggestItem } from '@/lib/schema';
+import type { BrowseFilters, FeedItem, SeriesCard, SuggestItem } from '@/lib/schema';
 
 /**
  * 判断输入框里装的是「站内搜索词」还是「要解析的剧」。
@@ -40,17 +38,6 @@ function detectInput(value: string): 'keyword' | 'resolve' {
   if (v.includes('series_id=') || v.startsWith('http')) return 'resolve';
   if (/^\d{6,}$/.test(v.replace(/\s+/g, ''))) return 'resolve';
   return 'keyword';
-}
-
-/** 解析接口返回的是 Series，抽屉只吃 SeriesRef，这里做一次字段改名。 */
-function toRef(series: Series): SeriesRef {
-  return {
-    seriesId: series.seriesId,
-    seriesTitle: series.title,
-    cover: series.cover,
-    episodeCount: series.episodeCount,
-    tags: series.tags,
-  };
 }
 
 /** App 筛选条目转官网卡形态喂同一块网格。 */
@@ -107,8 +94,6 @@ function withDurationFallback(
  * 清空或退出就回到筛选列表。
  */
 export function BrowsePage() {
-  const navigate = useNavigate();
-  const setTarget = usePlayerStore((s) => s.setTarget);
   const filtersCollapsed = useUiStore((s) => s.browseFiltersCollapsed);
   const setBrowseFiltersCollapsed = useUiStore((s) => s.setBrowseFiltersCollapsed);
   const [filters, setFilters] = useState<BrowseFilters>({
@@ -121,7 +106,6 @@ export function BrowsePage() {
     onlineTime: '',
     duration: '',
   });
-  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const [keyword, setKeyword] = useState('');
   /** 已提交的搜索词：空串 = 浏览模式，非空 = 搜索模式 */
@@ -145,11 +129,11 @@ export function BrowsePage() {
     keyword.trim().length >= 2 &&
     keyword === debounced &&
     suggestions.length > 0;
+  const playSeries = usePlaySeries();
   const pickSuggest = (item: SuggestItem) => {
     setSuggestOpen(false);
     if (item.seriesId) {
-      setTarget(item.seriesId, 1);
-      void navigate({ to: '/player' });
+      playSeries(item.seriesId);
       return;
     }
     setKeyword(item.word);
@@ -259,9 +243,9 @@ export function BrowsePage() {
     setFilters((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
   };
 
-  // 链接/ID 直接解析并打开详情抽屉，抽屉内部会自己拉分集。
-  // 解析前先退出搜索模式，否则解析成功后列表还停在上一轮搜索结果上。
-  // 关键词搜索只改提交词：useSeriesSearchApp 随 queryKey 自动发起请求。
+  // 链接/ID 输入要先解析出剧集 id（顺带校验链接有效性），关键词搜索只改
+  // 提交词：useSeriesSearchApp 随 queryKey 自动发起请求。解析前先退出搜索
+  // 模式，否则解析成功后列表还停在上一轮搜索结果上。
   const handleSubmit = () => {
     const value = keyword.trim();
     if (!value) return;
@@ -271,33 +255,14 @@ export function BrowsePage() {
     }
     setSubmitted('');
     resolve(value, {
-      onSuccess: (series) => openDetail(toRef(series)),
+      onSuccess: (series) => playSeries(series.seriesId),
       onError: (e) => toast.error(e.message),
     });
   };
 
-  // 打开抽屉的唯一入口。勾选状态和「当前是哪部剧」绑在同一个对象上，
-  // 换剧时整体换掉、关闭时整体丢掉，两个场景共用这一处重置。
-  const openDetail = (card: SeriesRef) => setDetail({ card, selected: [] });
-
-  // 点卡片先解析、拿到分集再开抽屉（与首页信息流同一交互）：
-  // 直接开抽屉的话，冷门剧的分集请求要几秒，用户面对的是一屏骨架
-  // 不知道在等什么；先给底部气泡，抽屉一开就是完整内容。
-  // 已解析过的剧在档案里直接命中，走这条路不增加可感知延迟。
-  const handleSelect = (card: SeriesCard) => {
-    resolve(card.seriesId, {
-      onSuccess: (series) =>
-        openDetail({
-          seriesId: series.seriesId,
-          seriesTitle: series.title,
-          // 解析结果可能带换好的 webp 封面，卡片原封面兜底
-          cover: series.cover || card.cover,
-          episodeCount: series.episodeCount || card.episodeCount,
-          tags: series.tags.length > 0 ? series.tags : card.tags,
-        }),
-      onError: (e) => toast.error(t('common.resolveFailed'), { description: e.message }),
-    });
-  };
+  // 点卡片直接跳播放：分集解析由播放页自己拉（失败有整页错误态），
+  // 这里不再经选集抽屉中转——下载也在播放器里做。
+  const handleSelect = (card: SeriesCard) => playSeries(card.seriesId);
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -454,16 +419,6 @@ export function BrowsePage() {
           )}
         </>
       )}
-
-      <SeriesDetailSheet
-        card={detail?.card ?? null}
-        selected={detail?.selected ?? []}
-        onSelectedChange={(next) =>
-          setDetail((prev) => (prev ? { ...prev, selected: next } : prev))
-        }
-        onOpenChange={(open) => !open && setDetail(null)}
-      />
-
       {/* 与首页同一交互：解析期间底部气泡，抽屉一开就是完整内容 */}
       {resolving && <ResolvingPill />}
     </div>

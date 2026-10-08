@@ -96,8 +96,7 @@
     "formatSelection": "格式化选集",
     "selected": "已选 {count} 集",
     "submit": "开始下载",
-    "submitting": "已加入队列 {count} 个任务",
-    "playNow": "立即播放"
+    "submitting": "已加入队列 {count} 个任务"
   },
   "tasks": {
     "queueStatus": "进行中 {running} · 等待 {pending} · 已完成 {completed} · 失败 {failed}",

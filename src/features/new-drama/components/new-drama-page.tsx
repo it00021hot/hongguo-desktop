@@ -6,23 +6,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
-import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonCardGrid, SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
-import {
-  SeriesDetailSheet,
-  type SeriesRef,
-} from '@/features/series/components/series-detail-sheet';
 import { rank as rankApi } from '@/lib/ipc/commands';
 import {
   isRenderableCover,
   useDownloadTasks,
   useNewCalendar,
   useNewDrama,
-  useResolveSeries,
   useWebCover,
 } from '@/lib/queries';
 import { t, tf } from '@/i18n';
+import { usePlaySeries } from '@/lib/use-play-series';
 import type { CalendarItem, RankItem } from '@/lib/schema';
 
 /**
@@ -39,36 +34,14 @@ const GENDERS: { value: number; labelKey: string }[] = [
 ];
 
 export function NewDramaPage() {
-  const { mutate: resolve, isPending: resolving } = useResolveSeries();
-  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
   // 频道筛选在页面层：官方把它放在标题行右侧，对推荐/日历两个视图都可见
   const [gender, setGender] = useState(2);
   // 视图 tab（推荐/日历）：状态自持——tab 胶囊 portal 进 AppShell 顶栏，
   // 不能再依赖 Radix Tabs 的组件树上下文（Trigger 必须长在 Tabs 里）
   const [view, setView] = useState<'recommend' | 'calendar'>('recommend');
 
-  const handleSelect = (item: {
-    seriesId: string;
-    title: string;
-    cover: string;
-    episodeCnt: number;
-  }) => {
-    resolve(item.seriesId, {
-      onSuccess: (series) =>
-        setDetail({
-          card: {
-            seriesId: series.seriesId,
-            seriesTitle: series.title,
-            cover: series.cover || item.cover,
-            episodeCount: series.episodeCount || item.episodeCnt,
-            tags: series.tags,
-          },
-          selected: [],
-        }),
-      onError: (e) =>
-        toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
-    });
-  };
+  const playSeries = usePlaySeries();
+  const handleSelect = (item: { seriesId: string }) => playSeries(item.seriesId);
 
   return (
     // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）。
@@ -107,15 +80,6 @@ export function NewDramaPage() {
           <NewCalendarView onSelect={handleSelect} />
         )}
       </div>
-
-      <SeriesDetailSheet
-        card={detail?.card ?? null}
-        selected={detail?.selected ?? []}
-        onSelectedChange={(next) => setDetail((d) => (d ? { ...d, selected: next } : d))}
-        onOpenChange={(open) => !open && setDetail(null)}
-      />
-
-      {resolving && <ResolvingPill />}
     </div>
   );
 }

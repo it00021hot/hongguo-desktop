@@ -1,19 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
-import { ResolvingPill } from '@/components/resolving-pill';
 import { SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
-import {
-  SeriesDetailSheet,
-  type SeriesRef,
-} from '@/features/series/components/series-detail-sheet';
-import { isRenderableCover, useRank, useResolveSeries, useWebCover } from '@/lib/queries';
+import { isRenderableCover, useRank, useWebCover } from '@/lib/queries';
+import { usePlaySeries } from '@/lib/use-play-series';
 import { t } from '@/i18n';
 import type { RankItem, RankSubList, RankTab } from '@/lib/schema';
 
@@ -70,8 +65,6 @@ export function RankPage() {
   // 筛选面板选中项（'' = 总榜，即无筛选）
   const [panel, setPanel] = useState('');
   const { data, isLoading, error, isFetching, refetch } = useRank(selected, sub, panel);
-  const { mutate: resolve, isPending: resolving } = useResolveSeries();
-  const [detail, setDetail] = useState<{ card: SeriesRef; selected: number[] } | null>(null);
 
   const tabs = useMemo(() => normalizeTabs(data?.tabs ?? []), [data?.tabs]);
   // 首屏加载中先显示 tab 行骨架；形态确定后仅两级形态显示
@@ -96,23 +89,8 @@ export function RankPage() {
     setSub(first?.id ?? '');
   };
 
-  const handleSelect = (item: RankItem) => {
-    resolve(item.seriesId, {
-      onSuccess: (series) =>
-        setDetail({
-          card: {
-            seriesId: series.seriesId,
-            seriesTitle: series.title,
-            cover: series.cover || item.cover,
-            episodeCount: series.episodeCount || item.episodeCnt,
-            tags: series.tags.length > 0 ? series.tags : item.tags,
-          },
-          selected: [],
-        }),
-      onError: (e) =>
-        toast.error(t('common.resolveFailed'), { description: String(e.message ?? e) }),
-    });
-  };
+  const playSeries = usePlaySeries();
+  const handleSelect = (item: RankItem) => playSeries(item.seriesId);
 
   const tabRow = showTabsRow ? tabs : [];
 
@@ -222,15 +200,6 @@ export function RankPage() {
           居中胶囊组，选中态 = 主色胶囊（与左侧子榜选中同款）；
           两级形态才显示（登录一级形态只有一个合成 tab，隐藏整行） */}
       {/* 内容 tab 条已上移 AppShell 顶栏（本文件上方 TopBarTabsPortal） */}
-
-      <SeriesDetailSheet
-        card={detail?.card ?? null}
-        selected={detail?.selected ?? []}
-        onSelectedChange={(next) => setDetail((d) => (d ? { ...d, selected: next } : d))}
-        onOpenChange={(open) => !open && setDetail(null)}
-      />
-
-      {resolving && <ResolvingPill />}
     </div>
   );
 }
