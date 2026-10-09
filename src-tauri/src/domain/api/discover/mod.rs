@@ -14,135 +14,31 @@
 //! 必填参数尚未破解（POST 报 100103 PARAM_INVALID，GET 404），探测用例
 //! 留在文末 `probe` 模块，待抓包补参后转正。
 
-use serde::{Deserialize, Serialize};
+mod model;
+mod parse;
+
 use serde_json::Value;
 
 use super::client::{ApiEnv, api_call_full};
 use crate::error::{AppError, AppResult};
 use crate::signer::API_ORIGIN;
 
+pub use model::{BrowseFilters, FeedItem, FeedPage, SelectorRow};
+// 保持既有公共路径 `discover::SelectorItem` 不变（crate 内暂无直接引用者）
+#[expect(
+    unused_imports,
+    reason = "SelectorItem 只被 SelectorRow 聚合引用，re-export 为兼容旧路径保留"
+)]
+pub use model::SelectorItem;
+pub(crate) use parse::{check_code, int_field, num_field, parse_tags, str_field};
+
+use parse::{parse_browse_panel, parse_feed};
+
 /// 推荐信息流落地页。
 pub const LANDPAGE_PATH: &str = "/reading/distribution/category/landpage/v1/";
 
-/// 信息流的一条剧集卡片。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeedItem {
-    pub series_id: String,
-    pub title: String,
-    /// 竖版封面（卡片网格用）
-    #[serde(default)]
-    pub cover: String,
-    /// 横版封面（详情头部可选用）
-    #[serde(default)]
-    pub horiz_cover: String,
-    /// 当前推荐位的 vid（直接起播用）
-    #[serde(default)]
-    pub vid: String,
-    #[serde(default)]
-    pub episode_cnt: u32,
-    /// 播放量（热榜排序键）
-    #[serde(default)]
-    pub play_cnt: i64,
-    #[serde(default)]
-    pub comment_count: i64,
-    #[serde(default)]
-    pub score: f64,
-    /// 题材标签（来自 category_schema 字符串的二次解析）
-    #[serde(default)]
-    pub tags: Vec<String>,
-    /// 季角标（sub_title_list data_type=0，「第1季」形态；hgplayer titleTag 同源）
-    #[serde(default)]
-    pub season_tag: String,
-    /// 热度文本（sub_title_list data_type=27，「1705万」形态，配火焰图标展示）
-    #[serde(default)]
-    pub heat_text: String,
-    /// 官方运营角标（tag_info.text：「新剧/爆剧/红果首发」等；2026-10-07 抓包实证）
-    #[serde(default)]
-    pub badge: String,
-    /// 内容类型：1=真人剧，1004=漫剧（推荐流「按类型刷」的过滤键）
-    #[serde(default)]
-    pub content_type: i64,
-}
-
-/// 一页信息流。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeedPage {
-    pub items: Vec<FeedItem>,
-    pub next_offset: i64,
-    pub has_more: bool,
-    #[serde(default)]
-    pub session_id: String,
-}
-
 // 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed，
 // 2026-10-08 对齐 hgplayer RecommendTab）；landpage 只服务找剧筛选浏览。
-
-// ---------------------------------------------------------------- 找剧（筛选浏览）
-
-/// 找剧筛选面板的一行（一个维度）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectorItem {
-    /// 选项 id（select_items 的取值，如 `short_play`/`cate_262`/`days_7`）
-    pub id: String,
-    /// 展示名（如 `真人剧`/`脑洞`/`7天内上新`）
-    pub name: String,
-}
-
-/// 找剧筛选面板的一行。`row_type` 即 select_items 的键
-/// （genre/category_dim_theme/category_dim_role/category_dim_epoch/
-/// sort/gender/online_time/duration）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectorRow {
-    pub row_type: String,
-    /// 服务端行名（`全部体裁`…，行头「全部」态即空选）
-    pub row_name: String,
-    pub items: Vec<SelectorItem>,
-}
-
-/// 找剧的筛选条件（每维至多一个选中值，空串/None = 全部）。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct BrowseFilters {
-    pub genre: String,
-    pub theme: String,
-    pub role: String,
-    pub epoch: String,
-    /// 推荐：`online_time`(最新上架)/`hot_score`(最高热度)/`hot_collect`(最高收藏)
-    pub sort: String,
-    /// 受众：`1`=男频 `0`=女频
-    pub gender: String,
-    /// 上新时间：`days_7`/`days_14`/`days_30`/`days_90`
-    pub online_time: String,
-    /// 长度：`duration_0_60`/`duration_60_120`/`duration_120_plus`
-    pub duration: String,
-}
-
-impl BrowseFilters {
-    /// select_items 请求形态：每维一个单元素数组（空选给空数组）。
-    fn to_select_items(&self) -> Value {
-        let one = |v: &str| {
-            if v.is_empty() {
-                Value::Array(vec![])
-            } else {
-                serde_json::json!([v])
-            }
-        };
-        serde_json::json!({
-            "category_dim_epoch": one(&self.epoch),
-            "category_dim_role": one(&self.role),
-            "category_dim_theme": one(&self.theme),
-            "duration": one(&self.duration),
-            "gender": one(&self.gender),
-            "genre": one(&self.genre),
-            "online_time": one(&self.online_time),
-            "sort": one(&self.sort),
-        })
-    }
-}
 
 /// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
 ///
@@ -163,48 +59,6 @@ pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
         .get("data")
         .ok_or_else(|| AppError::Media("面板响应缺少 data".into()))?;
     parse_browse_panel(Some(data))
-}
-
-/// 解析面板 data 节点为 selector 行列表。
-fn parse_browse_panel(data: Option<&Value>) -> AppResult<Vec<SelectorRow>> {
-    let data = data.ok_or_else(|| AppError::Media("面板响应缺少 data".into()))?;
-    let mut rows = Vec::new();
-    for raw in data
-        .get("selector_rows")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let row_type = str_field(raw, "type");
-        if row_type.is_empty() {
-            continue;
-        }
-        let items = raw
-            .get("items")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|it| {
-                        let id = it.get("selector_item_id").and_then(Value::as_str)?;
-                        Some(SelectorItem {
-                            id: id.to_string(),
-                            name: it
-                                .get("show_name")
-                                .and_then(Value::as_str)
-                                .unwrap_or(id)
-                                .to_string(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        rows.push(SelectorRow {
-            row_type,
-            row_name: str_field(raw, "row_name"),
-            items,
-        });
-    }
-    Ok(rows)
 }
 
 /// 拉一页找剧结果（与推荐流同端点，多维 select_items 服务端过滤）。
@@ -234,251 +88,6 @@ pub async fn fetch_browse(
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
     check_code(&value)?;
     parse_feed(value.get("data"))
-}
-
-/// 业务错误码检查。
-pub(super) fn check_code(value: &Value) -> AppResult<()> {
-    if let Some(code) = value.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("接口返回 {code}: {msg}")));
-    }
-    Ok(())
-}
-
-/// 解析 data 节点为 FeedPage。
-fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
-    let data = data.ok_or_else(|| AppError::Media("响应缺少 data".into()))?;
-    let mut items = Vec::new();
-    for raw in data
-        .get("video_data")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        // 缺 series_id 的条目没有落地价值（点不开、下不了）
-        let Some(series_id) = raw.get("series_id").and_then(Value::as_str) else {
-            continue;
-        };
-        if series_id.is_empty() {
-            continue;
-        }
-        // sub_title_list：data_type 0=季文本 / 3=分类 / 27=热度（2026-10-07
-        // 抓包实证；分类沿用 category_schema 解析，这里只取季与热度）
-        let (season_tag, heat_text) = parse_sub_titles(raw.get("sub_title_list"));
-        // 官方运营角标：tag_info（同名字段在 plan/v 里是「第N季/同IP」，
-        // 在 landpage 信息流里是「新剧/爆剧/红果首发」，enable=false 不显）
-        let badge = raw
-            .pointer("/tag_info/text")
-            .and_then(Value::as_str)
-            .filter(|_| raw.pointer("/tag_info/enable").and_then(Value::as_bool) != Some(false))
-            .unwrap_or("")
-            .to_string();
-        items.push(FeedItem {
-            series_id: series_id.to_string(),
-            title: str_field(raw, "title"),
-            cover: str_field(raw, "cover"),
-            horiz_cover: str_field(raw, "horiz_cover"),
-            vid: str_field(raw, "vid"),
-            episode_cnt: int_field(raw, "episode_cnt").max(0) as u32,
-            play_cnt: int_field(raw, "play_cnt"),
-            comment_count: int_field(raw, "comment_count"),
-            score: num_field(raw, "score"),
-            tags: parse_tags(raw.get("category_schema")),
-            season_tag,
-            heat_text,
-            badge,
-            content_type: int_field(raw, "content_type"),
-        });
-    }
-    Ok(FeedPage {
-        has_more: data
-            .get("has_more")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        next_offset: int_field(data, "next_offset"),
-        session_id: str_field(data, "session_id"),
-        items,
-    })
-}
-
-/// sub_title_list → (季文本, 热度文本)。data_type 语义见 2026-10-07 抓包：
-/// 0=「第1季」形态、27=热度数值文本（官方配火焰图标）、3=分类（另有
-/// category_schema 承载，这里不取）。两条都算展示增强，缺了给空串。
-fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
-    let mut season = String::new();
-    let mut heat = String::new();
-    for it in list
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        let Some(content) = it.get("content").and_then(Value::as_str) else {
-            continue;
-        };
-        match it.get("data_type").and_then(Value::as_i64) {
-            Some(0) if season.is_empty() => season = content.to_string(),
-            Some(27) if heat.is_empty() => heat = content.to_string(),
-            _ => {}
-        }
-    }
-    (season, heat)
-}
-
-/// category_schema 是 JSON 字符串：`[{"category_id":..,"name":"逆袭",...}]`，
-/// 取 name 做题材标签。解析失败给空表（标签是展示增强，不值得报错）。
-pub(super) fn parse_tags(schema: Option<&Value>) -> Vec<String> {
-    let Some(s) = schema.and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<Value>(s) else {
-        return Vec::new();
-    };
-    parsed
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| c.get("name").and_then(Value::as_str))
-                .take(4)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub(super) fn str_field(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-/// 数字字段容忍字符串形态（平台对大数偶发走字符串）。
-pub(super) fn int_field(v: &Value, key: &str) -> i64 {
-    match v.get(key) {
-        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
-        Some(Value::String(s)) => s.parse().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-pub(super) fn num_field(v: &Value, key: &str) -> f64 {
-    match v.get(key) {
-        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
-        Some(Value::String(s)) => s.parse().unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_feed_page_with_nested_category_schema() {
-        let data: Value = serde_json::json!({
-            "has_more": true,
-            "next_offset": 15,
-            "session_id": "s1",
-            "video_data": [
-                {
-                    "series_id": "1001",
-                    "title": "剧 A",
-                    "cover": "c",
-                    "horiz_cover": "h",
-                    "vid": "v1",
-                    "episode_cnt": 80,
-                    "play_cnt": "12345678",   // 字符串形态的大数
-                    "comment_count": 42,
-                    "score": 8.7,
-                    "category_schema": "[{\"category_id\":1,\"name\":\"逆袭\"},{\"category_id\":2,\"name\":\"穿越\"}]"
-                },
-                { "title": "没有 id 的废条目" }
-            ]
-        });
-        let page = parse_feed(Some(&data)).unwrap();
-        assert_eq!(page.items.len(), 1, "缺 series_id 的条目要跳过");
-        let item = &page.items[0];
-        assert_eq!(item.series_id, "1001");
-        assert_eq!(item.play_cnt, 12_345_678, "字符串数字要能读");
-        assert_eq!(item.score, 8.7);
-        assert_eq!(item.tags, vec!["逆袭", "穿越"]);
-        assert!(page.has_more);
-        assert_eq!(page.next_offset, 15);
-    }
-
-    #[test]
-    fn broken_category_schema_degrades_to_empty_tags() {
-        let data: Value = serde_json::json!({
-            "video_data": [{ "series_id": "1", "title": "t", "category_schema": "not json" }]
-        });
-        let page = parse_feed(Some(&data)).unwrap();
-        assert!(page.items[0].tags.is_empty());
-    }
-
-    #[test]
-    fn code_check_rejects_nonzero() {
-        let v: Value = serde_json::json!({ "code": 100103, "message": "PARAM_INVALID" });
-        assert!(check_code(&v).is_err());
-    }
-
-    /// 面板解析：行 type/row_name/选项 id+名（2026-10-07 抓包样本的形状）。
-    #[test]
-    fn parses_browse_panel_rows() {
-        let v: Value = serde_json::json!({
-            "code": 0,
-            "data": {
-                "selector_rows": [
-                    {
-                        "type": "genre",
-                        "row_name": "全部体裁",
-                        "selection_type": 2,
-                        "items": [
-                            { "selector_item_id": "short_play", "show_name": "真人剧" },
-                            { "selector_item_id": "comic_series", "show_name": "漫剧" },
-                            { "selector_item_id": "ai_series", "show_name": "AI剧" }
-                        ]
-                    },
-                    {
-                        "type": "sort",
-                        "row_name": "全部推荐",
-                        "items": [
-                            { "selector_item_id": "online_time", "show_name": "最新上架" }
-                        ]
-                    },
-                    { "type": "", "row_name": "坏行", "items": [] }
-                ]
-            }
-        });
-        let rows = parse_browse_panel(v.get("data")).unwrap();
-        assert_eq!(rows.len(), 2, "空 type 的行要跳过");
-        assert_eq!(rows[0].row_type, "genre");
-        assert_eq!(rows[0].items.len(), 3);
-        assert_eq!(rows[0].items[0].id, "short_play");
-        assert_eq!(rows[0].items[0].name, "真人剧");
-        assert_eq!(rows[1].row_type, "sort");
-    }
-
-    /// 筛选条件 → select_items：选中值包单元素数组，空选给空数组。
-    #[test]
-    fn browse_filters_build_select_items() {
-        let f = BrowseFilters {
-            genre: "comic_series".into(),
-            online_time: "days_7".into(),
-            ..Default::default()
-        };
-        let si = f.to_select_items();
-        assert_eq!(si["genre"], serde_json::json!(["comic_series"]));
-        assert_eq!(si["online_time"], serde_json::json!(["days_7"]));
-        assert_eq!(si["sort"], serde_json::json!([]));
-        // duration 维度也要在场（面板有「长度」行，2026-10-07 抓包）
-        assert!(si.get("duration").is_some());
-        assert_eq!(si["duration"], serde_json::json!([]));
-    }
 }
 
 #[cfg(test)]

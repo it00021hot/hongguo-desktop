@@ -15,10 +15,19 @@
 //! 洗成 `k=v; k=v` 后附加到业务请求（不参与签名）。风控提示：账号与
 //! 设备永久绑定，换设备或重复注册容易触发风控。
 
+mod mfa;
+mod model;
+
 use serde_json::Value;
 
+use mfa::real_upsms_channel;
 use super::client::{ApiEnv, api_call_full_response};
 use crate::error::{AppError, AppResult};
+
+pub use mfa::{mfa_relogin, upsms_verify};
+pub use model::{
+    LoginOutcome, MfaContext, MfaFlow, PassportUser, SendCodeOutcome, UpsmsState,
+};
 
 /// passport 与业务同域（hgplayer 实测基址 `https://novel.snssdk.com`）。
 pub const PASSPORT_ORIGIN: &str = "https://novel.snssdk.com";
@@ -183,127 +192,6 @@ pub fn extract_cookie_pairs(set_cookies: &[String]) -> String {
         .join("; ")
 }
 
-/// 短信登录 / MFA 的结构化结果。
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
-pub enum LoginOutcome {
-    /// 登录成功：会话 cookie + 服务端返回的用户信息。
-    Success {
-        /// `k=v; k=v`（可直接放进 `ApiEnv::cookie`）
-        cookies: String,
-        user: PassportUser,
-        /// 响应头 `x-tt-token` 下发的长凭据（可空：个别响应不带）
-        token: String,
-    },
-    /// 需要短信上行 MFA 二次验证（error_code=2046）：带着上下文轮询
-    /// [`upsms_verify`]，`Registered` 后用 [`mfa_relogin`] 换取会话。
-    Mfa(Box<MfaContext>),
-}
-
-/// MFA 上行短信验证的完整上下文（2026-10-04 hgplayer 1.1.3 真机抓包对齐）。
-///
-/// `retry_tag`/`sms_code_key` 来自 `data.biz_params`；`encrypt_uid` 与
-/// `event_params`/`common_params` 是 upsms 轮询 body 的原料；`verify_ways`
-/// 里 `mobile_up_sms_verify` 的通道号与回复内容用于 UI 提示。
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MfaContext {
-    pub retry_tag: String,
-    pub sms_code_key: String,
-    pub encrypt_uid: String,
-    pub log_id: String,
-    pub verify_reason: String,
-    pub verify_scene: String,
-    pub copywriting_key: String,
-    pub diversion_tag: String,
-    /// 上行短信通道号（如 9515211003）
-    pub channel_mobile: String,
-    /// 要回复的短信内容（如 "YZ"）
-    pub sms_content: String,
-    /// 验证提示文案
-    pub tips: String,
-    /// MFA 会话绑定 cookie（sms_login 触发 MFA 时 Set-Cookie 下发）。
-    /// 轮询与重登请求都必须带，否则服务端不认这次验证（2026-10-05
-    /// 用户真机踩坑：通道号对了仍永远 1045）。
-    #[serde(skip_serializing)]
-    pub mfa_token: String,
-}
-
-/// MFA 上行短信的**真实可回复通道号**。
-///
-/// API `verify_ways[].channel_mobile` 下发的是 9515211003（宁夏银川 95
-/// 扩展号段）——回复到它服务端收不到。hgplayer 1.1.3 把两个号码都硬编码
-/// 在二进制里做替换（10691859839103 = 运营商 106 网关真实通道，抓包全量
-/// 数据中不存在该号码，只能来自客户端内置）。2026-10-05 用户实测：按
-/// 95 号段回复无法通过 MFA，按 hgplayer 显示的 106 通道可以。
-const REAL_UPSMS_CHANNEL: &str = "10691859839103";
-const STUB_UPSMS_CHANNEL: &str = "9515211003";
-
-/// 上行短信通道号换成真实网关号（未知号码原样透传，服务端未来换号时
-/// 走抓包再对齐）。
-fn real_upsms_channel(api_channel: &str) -> &str {
-    if api_channel == STUB_UPSMS_CHANNEL {
-        REAL_UPSMS_CHANNEL
-    } else {
-        api_channel
-    }
-}
-
-/// 进行中的 MFA 流程：上下文 + 原始登录要素（registered 后自动重登用）。
-#[derive(Debug, Clone)]
-pub struct MfaFlow {
-    pub ctx: MfaContext,
-    pub mobile: String,
-    pub code: String,
-}
-
-/// 登录响应里的用户信息（字段按 fqnovel passport 惯例宽松解析）。
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PassportUser {
-    pub user_id: String,
-    pub name: String,
-    #[serde(default)]
-    pub mobile: String,
-    /// 头像 URL（sms_login / user_info 响应的 data.avatar_url，无则空）
-    #[serde(default)]
-    pub avatar_url: String,
-}
-
-/// MFA 上行短信验证的轮询状态。
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
-pub enum UpsmsState {
-    /// error_code=1045：用户还没回复短信，继续轮询
-    Waiting,
-    /// `data.registered=true`：MFA 通过——**还没有会话 cookie**，
-    /// 要用 [`mfa_relogin`] 重发登录换取。`mfa_token` 是本响应
-    /// Set-Cookie 下发的新 token，重登必须带上。
-    Registered {
-        #[serde(default)]
-        ticket: String,
-        #[serde(skip_serializing)]
-        mfa_token: String,
-    },
-}
-
-/// 发码结果。`mobile_ticket` 保留字段（1.1.2 时代形态）；1.1.3 实测
-/// 会话绑定改走 `passport_csrf_token` Cookie（`csrf_cookie`，不序列化
-/// 给前端，Rust 侧 AppState 暂存后在 sms_login 注入）。
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SendCodeOutcome {
-    pub message: String,
-    #[serde(default)]
-    pub mobile_ticket: String,
-    /// 重发等待秒数（服务端 retry_time，一般 60）
-    #[serde(default)]
-    pub retry_time: u32,
-    /// 发码响应 Set-Cookie 里的 `passport_csrf_token`（登录会话凭据）。
-    #[serde(skip)]
-    pub csrf_cookie: String,
-}
-
 /// 发送短信验证码。成功返回文案与 csrf 会话凭据。
 ///
 /// 形态（2026-10-04 抓包对齐）：query 只放 SDK 常量，设备+业务字段
@@ -397,129 +285,6 @@ pub async fn sms_login(
     )
     .await?;
     parse_login_response(&resp.bytes, &resp.set_cookies, &resp.headers)
-}
-
-/// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key，
-/// 成功即下发会话 cookie（1.1.3 抓包：hgplayer 轮询到 registered 后
-/// 自动发了这一次请求完成登录；cookie 带 registered 响应下发的
-/// 新 passport_mfa_token）。
-pub async fn mfa_relogin(
-    env: &ApiEnv,
-    mobile: &str,
-    code: &str,
-    ctx: &MfaContext,
-) -> AppResult<LoginOutcome> {
-    let env = with_mfa_cookie(env, &ctx.mfa_token);
-    sms_login(
-        &env,
-        mobile,
-        code,
-        Some((ctx.retry_tag.as_str(), ctx.sms_code_key.as_str())),
-    )
-    .await
-}
-
-/// 把 `passport_mfa_token` 覆盖进 env 的 Cookie（已有同名字段则替换，
-/// 没有/无 Cookie 则追加）。MFA 会话绑定全靠它。
-fn with_mfa_cookie(env: &ApiEnv, token: &str) -> ApiEnv {
-    let mut next = env.clone();
-    if token.is_empty() {
-        return next;
-    }
-    let base = next.cookie.take().unwrap_or_default();
-    let kept: Vec<&str> = base
-        .split("; ")
-        .filter(|kv| !kv.is_empty() && !kv.starts_with("passport_mfa_token="))
-        .collect();
-    let mut parts: Vec<String> = kept.iter().map(|s| s.to_string()).collect();
-    parts.push(format!("passport_mfa_token={token}"));
-    next.cookie = Some(parts.join("; "));
-    next
-}
-
-/// MFA 上行短信验证轮询（单次调用，前端 3 秒间隔重发）。
-///
-/// body 是 form-urlencoded 的 MFA 上下文（1.1.3 抓包字段齐全对齐），
-/// `biz_params` 为 JSON 串；成功判据是 `data.registered==true`（不是
-/// cookie——会话要靠 [`mfa_relogin`] 再发一次登录）。
-pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsState> {
-    let biz = serde_json::json!({
-        "passport_mfa_retry_tag": ctx.retry_tag,
-        "sms_code_key": ctx.sms_code_key,
-    });
-    let pairs: Vec<(String, String)> = [
-        ("biz_params", biz.to_string()),
-        ("copywriting_key", ctx.copywriting_key.clone()),
-        ("encrypt_uid", ctx.encrypt_uid.clone()),
-        ("ies_safety_diversion_tag", ctx.diversion_tag.clone()),
-        ("new_authn_sdk_log_id", ctx.log_id.clone()),
-        ("new_authn_sdk_verify_reason", ctx.verify_reason.clone()),
-        ("new_authn_sdk_verify_scene", ctx.verify_scene.clone()),
-        // 客户端常量（1.1.3 抓包原样，服务端不校验版本）
-        ("new_authn_sdk_version", "1.1.31".to_string()),
-        ("request_tag_from", "h5".to_string()),
-        ("verify_reason", ctx.verify_reason.clone()),
-        ("verify_scene", ctx.verify_scene.clone()),
-        // 抓包在场的两个空值字段（1.1.3 原样对齐，服务端可能参与
-        // 形态校验——type=3731 的教训：空也要带）
-        ("new_verify_flow", String::new()),
-        ("verify_ticket", String::new()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect();
-    let body = form_urlencoded(&pairs);
-
-    // MFA 会话绑定 cookie（缺它服务端永远回 1045）
-    let env = with_mfa_cookie(env, &ctx.mfa_token);
-    let q = passport_sdk_query(false);
-    let resp = api_call_full_response(
-        PASSPORT_ORIGIN,
-        "/passport/upsms/verify/",
-        Some(body.into_bytes()),
-        &q,
-        &[("content-type".into(), FORM_CONTENT_TYPE.into())],
-        &env,
-    )
-    .await?;
-    let v: Value = serde_json::from_slice(&resp.bytes)
-        .map_err(|e| AppError::Auth(format!("upsms/verify 响应不是 JSON: {e}")))?;
-    let code = error_code_of(&v);
-    match code {
-        0 => {
-            let ticket = v
-                .pointer("/data/ticket")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            if v.pointer("/data/registered")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                // registered 响应会 Set-Cookie 一个新的（长）token，
-                // 紧随其后的 mfa_relogin 必须带它
-                let mfa_token = extract_cookie_pairs(&resp.set_cookies)
-                    .split("; ")
-                    .find(|kv| kv.starts_with("passport_mfa_token="))
-                    .map(|kv| kv["passport_mfa_token=".len()..].to_string())
-                    .filter(|t| !t.is_empty())
-                    .unwrap_or_else(|| ctx.mfa_token.clone());
-                Ok(UpsmsState::Registered { ticket, mfa_token })
-            } else {
-                // code==0 但 registered 缺失：按等待处理（形态未见过，防御）
-                Ok(UpsmsState::Waiting)
-            }
-        }
-        // 1045：仍在等待用户回复短信（1.1.3 抓包实证）
-        1045 => Ok(UpsmsState::Waiting),
-        _ => Err(AppError::Auth(format!(
-            "MFA 验证失败 {}: {}",
-            code,
-            v.get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("未知错误")
-        ))),
-    }
 }
 
 /// form-urlencoded 编码（encodeURIComponent 语义；空格按 %20，
@@ -708,7 +473,6 @@ fn parse_user(v: &Value) -> PassportUser {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     /// parse_user 必须从登录响应 data 里带出头像 URL（2026-10-04 抓包
     /// 样本：sms_login 的 data 顶层有 avatar_url；user_info 端点嵌套在
     /// data.user_info 里，两种形态都兜）。
@@ -999,16 +763,6 @@ mod tests {
         }
     }
 
-    /// 通道号替换：只有已知的 95 号段替换，未知号码透传（服务端换号时
-    /// 靠抓包发现而不是被静默吞掉）。
-    #[test]
-    fn replaces_stub_upsms_channel_only() {
-        assert_eq!(real_upsms_channel("9515211003"), "10691859839103");
-        assert_eq!(real_upsms_channel("10691859839103"), "10691859839103");
-        assert_eq!(real_upsms_channel("1069000000001"), "1069000000001");
-        assert_eq!(real_upsms_channel(""), "");
-    }
-
     /// MFA 响应的 Set-Cookie 里有 `passport_mfa_token`——轮询与重登的
     /// 会话绑定全靠它（2026-10-05 真机踩坑：缺它永远 1045）。
     #[test]
@@ -1030,26 +784,6 @@ mod tests {
             }
             other => panic!("应解析为 Mfa，实际 {other:?}"),
         }
-    }
-
-    /// with_mfa_cookie：覆盖已有同名字段、无 Cookie 时新建、空 token 原样。
-    #[test]
-    fn merges_mfa_cookie_into_env() {
-        let mk = |cookie: Option<&str>| ApiEnv {
-            proxy: crate::domain::model::ProxyConfig::default(),
-            device: crate::signer::video_device(),
-            cookie: cookie.map(str::to_string),
-            x_tt_token: None,
-        };
-        let env = with_mfa_cookie(&mk(Some("a=1; passport_mfa_token=old; b=2")), "new");
-        assert_eq!(
-            env.cookie.as_deref(),
-            Some("a=1; b=2; passport_mfa_token=new")
-        );
-        let env = with_mfa_cookie(&mk(None), "t1");
-        assert_eq!(env.cookie.as_deref(), Some("passport_mfa_token=t1"));
-        let env = with_mfa_cookie(&mk(Some("a=1")), "");
-        assert_eq!(env.cookie.as_deref(), Some("a=1"), "空 token 不动 cookie");
     }
 
     /// 登录响应头的 x-tt-token 要提取（Set-Cookie / body 里都没有）。

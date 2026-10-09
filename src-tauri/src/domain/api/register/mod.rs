@@ -37,6 +37,10 @@
 //! 历史教训：明文 form / gzip form 会被服务端静默降级成 `device_id:0`，
 //! 必须走加密形态。
 
+mod model;
+
+pub use model::RegisterResult;
+
 use serde_json::{Value, json};
 
 #[cfg(test)]
@@ -211,34 +215,6 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         .read_to_end(&mut plain)
         .map_err(|e| format!("gunzip 失败：{e}"))?;
     Ok((plain, gz.to_vec()))
-}
-
-/// TT-Encrypt V5 的解密方向生产未用到（注册只加密），对拍用 Python
-/// 参考实现（ttencrypt.py 的 TT.decrypt）即可。
-/// 注册产物（gzip JSON 响应的解包）。
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterResult {
-    /// 新设备的 device_id（数字与字符串双形态，取字符串）
-    pub device_id: String,
-    pub install_id: String,
-    #[serde(default)]
-    pub device_token: String,
-    #[serde(default)]
-    pub server_time: i64,
-    #[serde(default)]
-    pub new_user: bool,
-    /// 本次注册使用的指纹（cdid/openudid 必须随档案长期携带：后续业务
-    /// query 的设备指纹要与服务端登记的注册指纹一致，hgplayer 的
-    /// device.json 也存这两项）。parse_register 不填，register_device 补。
-    #[serde(default)]
-    pub cdid: String,
-    #[serde(default)]
-    pub openudid: String,
-    /// 注册响应 Set-Cookie 下发的本设备 ttreq 票（按 install_id 发放；
-    /// 空 = 响应没带，沿用静态兜底票）。
-    #[serde(default)]
-    pub ttreq: String,
 }
 
 /// 解析注册响应（gzip 由 reqwest 解掉，这里只管 JSON）。
@@ -525,7 +501,6 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     }
     Ok(result)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,7 +510,7 @@ mod tests {
     /// 锁死「派生链 + AES-CBC + PKCS7 + gzip 字节流」与官方客户端一致。
     #[test]
     fn tt_v5_real_capture_roundtrip() {
-        let body = include_bytes!("testdata/register_req_real.bin");
+        let body = include_bytes!("../testdata/register_req_real.bin");
         let (plain, app_gz) = tt_decrypt_v5(body).expect("真实抓包应能解密");
 
         // 解出的明文必须是合法 AppLog 注册 JSON
@@ -567,7 +542,7 @@ mod tests {
     /// TT-Encrypt V5 body，解密需通过 digest[16..64] 校验）。
     #[test]
     fn tt_v5_reproduces_accepted_body() {
-        let hex = include_str!("testdata/py_enc_accepted.hex");
+        let hex = include_str!("../testdata/py_enc_accepted.hex");
         let hex = hex.trim();
         let body: Vec<u8> = (0..hex.len())
             .step_by(2)
