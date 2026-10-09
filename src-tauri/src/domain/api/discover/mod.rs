@@ -30,7 +30,9 @@ pub use model::{BrowseFilters, FeedItem, FeedPage, SelectorRow};
     reason = "SelectorItem 只被 SelectorRow 聚合引用，re-export 为兼容旧路径保留"
 )]
 pub use model::SelectorItem;
-pub(crate) use parse::{check_code, int_field, num_field, parse_tags, str_field};
+// JSON/字段助手已收敛进 utils::json（P3-C9）；这里再导出，保持
+// `super::discover::X` 的既有跨域引用路径不变（rank/search/… 共 6 域）。
+pub(crate) use crate::utils::json::{check_code, int_field, num_field, parse_tags, str_field};
 
 use parse::{parse_browse_panel, parse_feed};
 

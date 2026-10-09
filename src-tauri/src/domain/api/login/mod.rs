@@ -23,6 +23,8 @@ use serde_json::Value;
 use mfa::real_upsms_channel;
 use super::client::{ApiEnv, api_call_full_response};
 use crate::error::{AppError, AppResult};
+use crate::utils::json::str_field_paths;
+use crate::utils::url::encode_component;
 
 pub use mfa::{mfa_relogin, upsms_verify};
 pub use model::{
@@ -292,24 +294,9 @@ pub async fn sms_login(
 fn form_urlencoded(pairs: &[(String, String)]) -> String {
     pairs
         .iter()
-        .map(|(k, v)| format!("{}={}", urlencode_component(k), urlencode_component(v)))
+        .map(|(k, v)| format!("{}={}", encode_component(k), encode_component(v)))
         .collect::<Vec<_>>()
         .join("&")
-}
-
-/// 与 signer::ticket 同语义的组件转义（encodeURIComponent + `!'()` 补转义）。
-fn urlencode_component(s: &str) -> String {
-    const UNRESERVED: &str = "-_.!~*'()";
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        let ch = byte as char;
-        if ch.is_ascii_alphanumeric() || UNRESERVED.contains(ch) {
-            out.push(ch);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 /// 登录后的当前用户信息（`/reading/user/info/v1/`，需要 cookie 环境）。
@@ -360,15 +347,15 @@ fn parse_login_response(
         let ctx = MfaContext {
             retry_tag: tag.to_string(),
             sms_code_key: key.to_string(),
-            encrypt_uid: str_field(&v, &["data.encrypt_uid"]).unwrap_or_default(),
-            log_id: str_field(&v, &["data.event_params.log_id"]).unwrap_or_default(),
-            verify_reason: str_field(&v, &["data.event_params.verify_reason"])
+            encrypt_uid: str_field_paths(&v, &["data.encrypt_uid"]).unwrap_or_default(),
+            log_id: str_field_paths(&v, &["data.event_params.log_id"]).unwrap_or_default(),
+            verify_reason: str_field_paths(&v, &["data.event_params.verify_reason"])
                 .unwrap_or_else(|| "ato".into()),
-            verify_scene: str_field(&v, &["data.event_params.verify_scene"])
+            verify_scene: str_field_paths(&v, &["data.event_params.verify_scene"])
                 .unwrap_or_else(|| "sms_login".into()),
-            copywriting_key: str_field(&v, &["data.common_params.copywriting_key"])
+            copywriting_key: str_field_paths(&v, &["data.common_params.copywriting_key"])
                 .unwrap_or_else(|| "sms_login".into()),
-            diversion_tag: str_field(&v, &["data.common_params.ies_safety_diversion_tag"])
+            diversion_tag: str_field_paths(&v, &["data.common_params.ies_safety_diversion_tag"])
                 .unwrap_or_else(|| "mfa".into()),
             channel_mobile: way
                 .and_then(|w| w.get("channel_mobile"))
@@ -381,7 +368,7 @@ fn parse_login_response(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            tips: str_field(&v, &["data.verify_scene_desc", "data.description"])
+            tips: str_field_paths(&v, &["data.verify_scene_desc", "data.description"])
                 .or_else(|| v.get("message").and_then(Value::as_str).map(str::to_string))
                 .unwrap_or_default(),
             // MFA 会话 token：响应 Set-Cookie 下发，轮询/重登必带
@@ -438,24 +425,13 @@ fn check_error(v: &Value, prefix: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 按候选路径宽松取字符串字段。
-fn str_field(v: &Value, paths: &[&str]) -> Option<String> {
-    paths.iter().find_map(|p| {
-        let mut cur = v;
-        for seg in p.split('.') {
-            cur = cur.get(seg)?;
-        }
-        cur.as_str().map(str::to_string).filter(|s| !s.is_empty())
-    })
-}
-
 /// 宽松解析用户信息：fqnovel passport 的 data 结构在 sms_login 与
 /// user_info 两个端点上字段名略有出入（name/user_name），都兜住。
 fn parse_user(v: &Value) -> PassportUser {
     let data = v.get("data").cloned().unwrap_or_else(|| v.clone());
     let inner = data.get("user_info").cloned().unwrap_or(data);
     PassportUser {
-        user_id: str_field(&inner, &["user_id", "userId", "uid"])
+        user_id: str_field_paths(&inner, &["user_id", "userId", "uid"])
             .or_else(|| {
                 inner
                     .get("user_id")
@@ -463,10 +439,10 @@ fn parse_user(v: &Value) -> PassportUser {
                     .map(|n| n.to_string())
             })
             .unwrap_or_default(),
-        name: str_field(&inner, &["name", "user_name", "username", "nick_name"])
+        name: str_field_paths(&inner, &["name", "user_name", "username", "nick_name"])
             .unwrap_or_default(),
-        mobile: str_field(&inner, &["mobile"]).unwrap_or_default(),
-        avatar_url: str_field(&inner, &["avatar_url", "avatar"]).unwrap_or_default(),
+        mobile: str_field_paths(&inner, &["mobile"]).unwrap_or_default(),
+        avatar_url: str_field_paths(&inner, &["avatar_url", "avatar"]).unwrap_or_default(),
     }
 }
 
@@ -675,15 +651,10 @@ mod tests {
     /// MFA 响应下发的明文 key），retry_tag 保持明文。
     #[test]
     fn encodes_mfa_retry_params() {
+        use crate::utils::hex::decode;
         let key = "fb2825d4c17fad783d28724dd8aebe5e";
         let enc = encode_code(key);
-        let dec = |hex: &str| bytes_to_string(&bytes_from_hex(hex));
-        fn bytes_from_hex(hex: &str) -> Vec<u8> {
-            (0..hex.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-                .collect()
-        }
+        let dec = |hex: &str| bytes_to_string(&decode(hex));
         fn bytes_to_string(bs: &[u8]) -> String {
             bs.iter().map(|b| (b ^ 0x05) as char).collect()
         }

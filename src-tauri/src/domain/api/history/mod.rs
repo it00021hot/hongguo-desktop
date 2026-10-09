@@ -16,6 +16,8 @@ use serde_json::Value;
 use super::client::{ApiEnv, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use crate::error::{AppError, AppResult};
+use crate::utils::json::{check_code, str_field};
+use crate::utils::time::now_ms;
 
 pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
 const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
@@ -43,7 +45,7 @@ pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHi
     let bytes = api_call_reading(LQ_API_ORIGIN, READ_HISTORY_LIST_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析观看历史失败: {e}")))?;
-    super::discover::check_code(&value)?;
+    check_code(&value)?;
     parse_history(value.get("data"))
 }
 
@@ -107,13 +109,6 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
     })
 }
 
-fn str_field(raw: &Value, key: &str) -> String {
-    raw.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
 /// JSON 数字 → 字符串（u64 精度无损；浮点兜底去尾零）。
 fn num_to_string(v: &Value) -> String {
     match v {
@@ -138,10 +133,7 @@ pub async fn report_watch_progress(
     position_ms: i64,
     env: &ApiEnv,
 ) -> AppResult<()> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let now = now_ms();
     let book_num = str_or_num(series_id);
     let vid_num = str_or_num(vid);
     let update_body = serde_json::json!({
@@ -209,7 +201,7 @@ pub async fn report_watch_progress(
     .await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析历史上报响应失败: {e}")))?;
-    super::discover::check_code(&v)?;
+    check_code(&v)?;
 
     let upload_raw = serde_json::to_vec(&upload_body)
         .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
@@ -223,7 +215,7 @@ pub async fn report_watch_progress(
     .await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
-    super::discover::check_code(&v)?;
+    check_code(&v)?;
     Ok(())
 }
 

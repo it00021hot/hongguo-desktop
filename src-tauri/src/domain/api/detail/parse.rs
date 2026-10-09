@@ -5,18 +5,11 @@ use serde_json::Value;
 use super::model::{EpisodeList, RelatedItem, RelatedSeries, SeriesMeta};
 use crate::domain::model::Episode;
 use crate::error::{AppError, AppResult};
+use crate::utils::json::{check_code_in, int_field, str_field, str_field_any};
 
 /// 解析 plan/v 响应为相关作品两块内容。
 pub(super) fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
-    if let Some(code) = value.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("相关作品接口返回 {code}: {msg}")));
-    }
+    check_code_in(value, "相关作品接口")?;
 
     let mut related = RelatedSeries::default();
     for cell in value
@@ -89,15 +82,7 @@ pub(super) fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
 
 /// 从 detail 响应里解析分集。
 pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
-    if let Some(code) = response.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = response
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("详情接口返回 {code}: {msg}")));
-    }
+    check_code_in(response, "详情接口")?;
 
     let data = response
         .get("data")
@@ -145,10 +130,10 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
     }
     episodes.sort_by_key(|e| e.vid_index);
 
-    let cover = pick(&video_data, &["series_cover", "cover_url"]);
+    let cover = str_field_any(&video_data, &["series_cover", "cover_url"]);
     Ok(EpisodeList {
         series_id: sid.clone(),
-        title: pick(&video_data, &["series_title"]),
+        title: str_field_any(&video_data, &["series_title"]),
         cover,
         episodes,
         followed_cnt: video_data
@@ -158,26 +143,10 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
     })
 }
 
-/// 按候选字段名取第一个非空字符串。
-fn pick(value: &Value, keys: &[&str]) -> String {
-    keys.iter()
-        .find_map(|k| value.get(*k).and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_string()
-}
-
 /// 解析 video_detail 响应。字段在 `data[series_id]` 下（与 preload 的
 /// `video_data` 包一层不同，这个端点是平铺的），两层都兜一下。
 pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesMeta> {
-    if let Some(code) = response.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = response
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("详情元信息接口返回 {code}: {msg}")));
-    }
+    check_code_in(response, "详情元信息接口")?;
     let node = response
         .pointer(&format!("/data/{series_id}"))
         .or_else(|| {
@@ -212,15 +181,15 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
         }
     }
 
-    let sid = pick(vd, &["series_id_str", "series_id"]);
+    let sid = str_field_any(vd, &["series_id_str", "series_id"]);
     Ok(SeriesMeta {
         series_id: if sid.is_empty() {
             series_id.to_string()
         } else {
             sid
         },
-        title: pick(vd, &["series_title"]),
-        cover: pick(vd, &["series_cover"]),
+        title: str_field_any(vd, &["series_title"]),
+        cover: str_field_any(vd, &["series_cover"]),
         followed_cnt: vd
             .get("followed_cnt")
             .and_then(Value::as_i64)
@@ -255,28 +224,10 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
             .to_string(),
         season,
         tags,
-        intro: pick(vd, &["series_intro", "video_desc", "abstract"]),
+        intro: str_field_any(vd, &["series_intro", "video_desc", "abstract"]),
     })
 }
 
-/// 字符串字段（缺失给空串）。
-fn str_field(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-/// 数字字段（线上形态可能是字符串数字，缺失给 0）。
-fn int_field(v: &Value, key: &str) -> i64 {
-    v.get(key)
-        .map(|x| {
-            x.as_i64()
-                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
-                .unwrap_or(0)
-        })
-        .unwrap_or(0)
-}
 #[cfg(test)]
 mod tests {
     use super::*;

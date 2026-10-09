@@ -1,13 +1,14 @@
-//! 发现域的 JSON 解析（信息流 / 找剧面板组装）+ 跨域共享的字段与错误码助手。
+//! 发现域的 JSON 解析（信息流 / 找剧面板组装）。
 //!
-//! `check_code`/`str_field`/`int_field`/`num_field`/`parse_tags` 被本层多个
-//! 端点域复用（rank/recommend/search/calendar/new_drama/reservation/history），
-//! 经 discover 再导出供 `super::discover::X` 路径引用；P3-C9 收敛进 utils 层。
+//! 跨域共享的字段与错误码助手（check_code/str_field/int_field/num_field/
+//! parse_tags）已收敛进 `crate::utils::json`（P3-C9），经本域 mod.rs
+//! 再导出，保持 `super::discover::X` 的既有引用路径不变。
 
 use serde_json::Value;
 
 use super::model::{FeedItem, FeedPage, SelectorItem, SelectorRow};
 use crate::error::{AppError, AppResult};
+use crate::utils::json::{int_field, num_field, parse_tags, str_field};
 
 /// 解析面板 data 节点为 selector 行列表。
 pub(super) fn parse_browse_panel(data: Option<&Value>) -> AppResult<Vec<SelectorRow>> {
@@ -49,20 +50,6 @@ pub(super) fn parse_browse_panel(data: Option<&Value>) -> AppResult<Vec<Selector
         });
     }
     Ok(rows)
-}
-
-/// 业务错误码检查。
-pub(crate) fn check_code(value: &Value) -> AppResult<()> {
-    if let Some(code) = value.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("接口返回 {code}: {msg}")));
-    }
-    Ok(())
 }
 
 /// 解析 data 节点为 FeedPage。
@@ -144,51 +131,6 @@ fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
     (season, heat)
 }
 
-/// category_schema 是 JSON 字符串：`[{"category_id":..,"name":"逆袭",...}]`，
-/// 取 name 做题材标签。解析失败给空表（标签是展示增强，不值得报错）。
-pub(crate) fn parse_tags(schema: Option<&Value>) -> Vec<String> {
-    let Some(s) = schema.and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<Value>(s) else {
-        return Vec::new();
-    };
-    parsed
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| c.get("name").and_then(Value::as_str))
-                .take(4)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub(crate) fn str_field(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-/// 数字字段容忍字符串形态（平台对大数偶发走字符串）。
-pub(crate) fn int_field(v: &Value, key: &str) -> i64 {
-    match v.get(key) {
-        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
-        Some(Value::String(s)) => s.parse().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-pub(crate) fn num_field(v: &Value, key: &str) -> f64 {
-    match v.get(key) {
-        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
-        Some(Value::String(s)) => s.parse().unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,12 +175,6 @@ mod tests {
         });
         let page = parse_feed(Some(&data)).unwrap();
         assert!(page.items[0].tags.is_empty());
-    }
-
-    #[test]
-    fn code_check_rejects_nonzero() {
-        let v: Value = serde_json::json!({ "code": 100103, "message": "PARAM_INVALID" });
-        assert!(check_code(&v).is_err());
     }
 
     /// 面板解析：行 type/row_name/选项 id+名（2026-10-07 抓包样本的形状）。

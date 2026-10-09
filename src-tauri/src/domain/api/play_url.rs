@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::stream_pick::{Definition, list_definitions, pick_stream_at};
 use crate::error::{AppError, AppResult};
+use crate::utils::json::check_code;
 
 /// 一集的取流结果。
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -51,15 +52,7 @@ pub async fn fetch_play_url(
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
 
     // 业务错误码：签名对了但参数/内容不对会走这里
-    if let Some(code) = value.get("code").and_then(Value::as_i64)
-        && code != 0
-    {
-        let msg = value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(AppError::Media(format!("接口返回 {code}: {msg}")));
-    }
+    check_code(&value)?;
 
     // data[vid].video_model 是 JSON 字符串
     let item = value

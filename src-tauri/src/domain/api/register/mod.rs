@@ -585,6 +585,7 @@ mod probe {
     use super::*;
     use crate::domain::api::client::ApiEnv;
     use crate::domain::model::ProxyConfig;
+    use crate::utils::url::encode_rfc3986;
 
     fn anon_env() -> ApiEnv {
         ApiEnv::anonymous(ProxyConfig::default())
@@ -609,7 +610,7 @@ mod probe {
         // form 体 = query 全量 urlencode（经典注册形态）
         let body = q
             .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencode(v)))
+            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
             .collect::<Vec<_>>()
             .join("&");
 
@@ -669,7 +670,7 @@ mod probe {
 
         let body = pairs
             .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencode(v)))
+            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
             .collect::<Vec<_>>()
             .join("&");
 
@@ -715,7 +716,7 @@ mod probe {
 
         let form = q
             .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencode(v)))
+            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
             .collect::<Vec<_>>()
             .join("&");
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -942,19 +943,6 @@ mod probe {
             x_tt_token: None,
         };
         send_fresh("P3匿名71332", &env3).await;
-    }
-
-    fn urlencode(s: &str) -> String {
-        let mut out = String::new();
-        for b in s.bytes() {
-            match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'*' => {
-                    out.push(b as char)
-                }
-                _ => out.push_str(&format!("%{b:02X}")),
-            }
-        }
-        out
     }
 
     fn uuid_v4() -> String {

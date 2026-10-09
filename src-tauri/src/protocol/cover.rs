@@ -12,6 +12,8 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+use crate::utils::hex;
+
 use super::range::ProtocolResponse;
 
 /// 供给封面转码。
@@ -53,12 +55,8 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
 fn cache_path(remote: &str) -> std::path::PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(remote.as_bytes());
-    let digest = hex(&hasher.finalize());
+    let digest = hex::encode(&hasher.finalize());
     crate::store::paths::cover_cache_dir().join(format!("{digest}.jpg"))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn headers(len: usize) -> Vec<(String, String)> {

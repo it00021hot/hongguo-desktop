@@ -18,6 +18,7 @@ mod protocol;
 mod service;
 mod signer;
 mod store;
+mod utils;
 
 /// 运行应用。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
