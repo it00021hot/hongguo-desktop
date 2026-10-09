@@ -1,33 +1,23 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  Bell,
-  Check,
-  Flame,
-  Heart,
-  Hourglass,
-  Loader2,
-  Play,
-  Star,
-} from 'lucide-react';
+import { ArrowLeft, Flame, Heart, Hourglass, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SeriesCover } from '@/components/series-cover';
-import { formatCountPrecise, formatDuration, formatPlayCount } from '@/utils/format';
+import { GuessYouLike } from './guess-you-like';
+import { RelatedWorks } from './related-works';
+import { ReserveButton } from './reserve-button';
+import { ResolveButton } from './resolve-button';
+import { ReviewComposer } from './review-composer';
+import { formatCountPrecise, formatDuration } from '@/utils/format';
 import {
   useAccount,
   useBookshelf,
   useInteractionState,
   useRelatedSeries,
-  useReservations,
-  useReserveSeries,
-  useResolveSeries,
-  useSendSeriesReview,
   useSeriesCollect,
   useSeriesComments,
   useSeriesEpisodes,
@@ -39,7 +29,7 @@ import {
 import { usePlayerStore } from '@/stores/player';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import type { RelatedItem, Series } from '@/service/schema';
+import type { Series } from '@/service/schema';
 
 /**
  * 剧集详情页（/detail?seriesId=…）。
@@ -487,216 +477,6 @@ export function SeriesDetailPage({
         </>
       )}
     </div>
-  );
-}
-
-/**
- * 相关作品·系列（官方 plan 接口第一格）：同系列各季（第1季/第2季…）
- * 与同 IP 作品。没有相关作品就整块不渲染——它是增强项，不值得占一个
- * 错误位。
- */
-function RelatedWorks({ works }: { works: RelatedItem[] }) {
-  const navigate = useNavigate();
-  if (works.length === 0) return null;
-
-  const open = (id: string) => {
-    // 同一路由换 search 参数：整页数据随之换挡
-    void navigate({ to: '/detail', search: { seriesId: id } });
-  };
-
-  return (
-    <div className="grid gap-3 pb-4">
-      <h3 className="text-sm font-semibold">{t('detail.relatedWorks')}</h3>
-      {/* 自适应网格与猜你喜欢同一套：一行放不下自动换行，不出横向滚动条 */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3">
-        {works.map((w) => (
-          <RelatedCard key={w.seriesId} item={w} onOpen={open} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/**
- * 猜你喜欢（官方 plan 接口第二格，第三方详情页同款）：响应式封面网格，
- * 卡片与相关作品同一套（角标 + 评分 + 剧名 + 集数/播放量）。
- */
-function GuessYouLike({ items }: { items: RelatedItem[] }) {
-  const navigate = useNavigate();
-  const open = (id: string) => {
-    void navigate({ to: '/detail', search: { seriesId: id } });
-  };
-  return (
-    <div className="grid gap-3">
-      <h3 className="text-sm font-semibold">{t('detail.guessYouLike')}</h3>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-3">
-        {items.map((w) => (
-          <RelatedCard key={w.seriesId} item={w} onOpen={open} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** 相关作品卡片：封面（角标 + 评分）+ 两行剧名 + 集数/播放量。 */
-function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string) => void }) {
-  const isUpcoming = item.episodeCnt === 0 || item.tag === '即将上线';
-  return (
-    // 整张卡可点。不用 <button> 包：一是内容模型只允许 phrasing content
-    // （卡里有 <p>，里面还可能嵌预约按钮），二是网格默认 stretch 拉齐行高时
-    // button 会把内容**垂直居中**——标题折行数不同的卡内容高不同、下移量
-    // 不同，整排一高一低。article + role="button" 与全站卡片网格同一做法，
-    // flex-col 保证内容永远从顶上排。
-    <article
-      role="button"
-      tabIndex={0}
-      aria-label={item.title}
-      onClick={() => onOpen(item.seriesId)}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        // 空格默认会滚动页面，按钮不该有滚动副作用
-        e.preventDefault();
-        onOpen(item.seriesId);
-      }}
-      className="group flex w-full cursor-pointer flex-col text-left"
-      title={item.videoDesc || item.title}
-    >
-      {/* 封面盒：宽度随格子、高度锁 3:4，图 object-cover 裁切——
-          封面原始比例五花八门，绝不能让它撑盒子（一上一下就是这么来的） */}
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
-        {/* plan 接口的封面现已是 fqnovelpic HEIC 签名 URL（旧注释里的
-            byteimg JPEG 不会再出现），直挂必裂，统一走 SeriesCover */}
-        <SeriesCover cover={item.cover} alt={item.title} />
-        {item.tag && (
-          <span className="absolute top-1 left-1 rounded bg-black/50 px-1 py-0.5 text-[10px] leading-none text-white/95 backdrop-blur-[2px]">
-            {item.tag}
-          </span>
-        )}
-        {item.score > 0 && (
-          <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 py-0.5 text-[10px] leading-none text-amber-300">
-            {item.score.toFixed(1)}分
-          </span>
-        )}
-      </div>
-      <p className="mt-1.5 line-clamp-2 text-xs leading-snug">{item.title}</p>
-      <p className="text-muted-foreground mt-0.5 truncate text-[11px]">
-        {item.episodeCnt > 0
-          ? tf('detail.episodesCount', { count: item.episodeCnt })
-          : item.tag === '即将上线'
-            ? item.tag
-            : ''}
-        {item.playCnt > 0 && ` · ${formatPlayCount(item.playCnt)}${t('detail.plays')}`}
-      </p>
-      {isUpcoming && <ReserveButton seriesId={item.seriesId} />}
-    </article>
-  );
-}
-
-/** 未上线剧集的预约按钮（项目标准 outline 按钮，与收藏/点赞同一语言）。 */
-/** 剧评输入框（剧评 tab 顶部；回车/发布提交，成功后缓存失效重取置顶）。
- *  登录门槛走后端拒绝 + toast 指路（与互动按钮同一口径）。 */
-function ReviewComposer({ seriesId }: { seriesId: string }) {
-  const send = useSendSeriesReview(seriesId);
-  const [text, setText] = useState('');
-  const submit = () => {
-    const content = text.trim();
-    if (!content || send.isPending) return;
-    send.mutate(content, {
-      onSuccess: () => {
-        toast.success(t('detail.commentSent'));
-        setText('');
-      },
-      onError: (e) => toast.error(String(e)),
-    });
-  };
-  return (
-    <div className="mb-2 flex items-center gap-2">
-      <input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
-        }}
-        placeholder={t('detail.commentPlaceholder')}
-        maxLength={500}
-        className="bg-muted/50 focus-visible:ring-ring h-9 min-w-0 flex-1 rounded-full border px-4 text-sm outline-none focus-visible:ring-2"
-      />
-      <Button
-        size="sm"
-        className="shrink-0 gap-1"
-        disabled={!text.trim() || send.isPending}
-        onClick={submit}
-      >
-        {send.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-        {t('detail.commentSend')}
-      </Button>
-    </div>
-  );
-}
-
-function ReserveButton({ seriesId }: { seriesId: string }) {
-  const reserve = useReserveSeries();
-  // 初始态对号预约列表（两个 tab 都查：预约态跟剧走；mutation 成功会
-  // 失效列表缓存，这里随后跟上服务端真值）
-  const { data: offlineReservations } = useReservations(false);
-  const { data: onlineReservations } = useReservations(true);
-  const reserved =
-    (offlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false) ||
-    (onlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false);
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      className="gap-1"
-      disabled={reserve.isPending}
-      onClick={(e) => {
-        e.stopPropagation(); // 别触发整卡跳详情
-        const next = !reserved;
-        reserve.mutate(
-          { seriesId, reserve: next },
-          {
-            onSuccess: () =>
-              toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved')),
-            onError: (err) => toast.error(String(err)),
-          },
-        );
-      }}
-    >
-      {reserve.isPending ? (
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-      ) : reserved ? (
-        <Check className="size-4" aria-hidden />
-      ) : (
-        <Bell className="size-4" aria-hidden />
-      )}
-      {t(reserved ? 'player.reserved' : 'player.reserve')}
-    </Button>
-  );
-}
-
-/** 解析按钮（档案缺失/无分集时的出口）。解析完失效本页两份缓存，就地换挡。 */
-function ResolveButton({ seriesId }: { seriesId: string }) {
-  const qc = useQueryClient();
-  const resolve = useResolveSeries();
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="mx-auto"
-      disabled={resolve.isPending}
-      onClick={() =>
-        resolve.mutate(seriesId, {
-          onSuccess: () => {
-            void qc.invalidateQueries({ queryKey: ['series-episodes', seriesId] });
-            void qc.invalidateQueries({ queryKey: ['series-meta', seriesId] });
-            toast.success(t('detail.resolved'));
-          },
-          onError: (e) => toast.error(e.message),
-        })
-      }
-    >
-      {t('series.resolveAgain')}
-    </Button>
   );
 }
 
