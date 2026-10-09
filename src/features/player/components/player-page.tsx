@@ -10,7 +10,6 @@ import { MiniScreenControls } from './mini-screen-controls';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
 import {
-  useRelatedSeries,
   useDanmaku,
   useSeriesDetailMeta,
   useSeriesEpisodes,
@@ -30,6 +29,8 @@ import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
+import { useBingeRelay } from '../hooks/use-binge-relay';
+import { usePlayerOverlay } from '../hooks/use-player-overlay';
 
 export function PlayerPage() {
   const navigate = useNavigate();
@@ -91,9 +92,6 @@ function PlayerEmptyState() {
   );
 }
 
-/** 播放器悬浮层（信息/互动栏）静止多久后淡出。与控制栏的 3 秒同款。 */
-const CHROME_HIDE_MS = 3_000;
-
 export function PlayerView({
   onWheelStep,
   coverUrl,
@@ -139,10 +137,6 @@ export function PlayerView({
   const seriesId = usePlayerStore((s) => s.seriesId);
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
-  // 选中剧连播：锁定后滚轮/↑↓ 切集而不是跟随宿主页换剧
-  const bingeSeriesId = usePlayerStore((s) => s.bingeSeriesId);
-  const setBinge = usePlayerStore((s) => s.setBinge);
-  const inBinge = bingeSeriesId != null && bingeSeriesId === seriesId;
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
 
   const { data: settings } = useSettings();
@@ -213,78 +207,18 @@ export function PlayerView({
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
 
-  // ---- 剧终接力（hgplayer series-end 同款）----
-  // 本季最后一集播完（或连播中滚/点过末集）：优先自动接**下一季**第 1 集
-  // ——「相关作品·系列」（官方 plan 接口）里当前剧的下一条，即 hgplayer
-  // NextSeason 的数据面；没有下一季时：信息流上下文跟随宿主刷下一条推荐
-  // （hgplayer K() 的 X(1) 同款），纯播放页回落「猜你喜欢」第一条。
-  // 都落空才提示已是最后一集。起播时就拉好相关列表，剧终时通常已就绪。
-  const { data: related } = useRelatedSeries(seriesId ?? '');
-  /** 接力在途标记：setTarget 生效前后 ended 可能连发，防双跳 */
-  const seriesEndBusy = useRef(false);
-  // 接力完成后 seriesId 变化，重开闸门（信息流里 PlayerView 是复用的，
-  // 不随切剧重挂载，ref 不会自己归零）
-  useEffect(() => {
-    seriesEndBusy.current = false;
-  }, [seriesId]);
-
-  const advanceAfterSeriesEnd = useCallback(() => {
-    if (!seriesId || !vidIndex || seriesEndBusy.current) return;
-    seriesEndBusy.current = true;
-    const works = related?.works ?? [];
-    const idx = works.findIndex((w) => w.seriesId === seriesId);
-    const nextSeason = idx >= 0 ? works[idx + 1] : undefined;
-    if (nextSeason) {
-      // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集。信息流
-      // 上下文顺势进纯播放页（第三方 push play 路由同款）——信息流宿主的
-      // 游标/角标/滚轮语义都是按流条目算的，带进下一季只会错位
-      toast.success(tf('player.playNextSeason', { title: nextSeason.title }));
-      setSlideDir(1);
-      setTarget(nextSeason.seriesId, 1);
-      if (onWheelStep) void navigate({ to: '/player' });
-      return;
-    }
-    if (onWheelStep) {
-      // 信息流没有下一季：跟随宿主刷下一条推荐（hgplayer X(1) 同款；
-      // 已到底时宿主原地驻留）。未接管成功，闸门保持开
-      setSlideDir(1);
-      onWheelStep(1);
-      seriesEndBusy.current = false;
-      return;
-    }
-    const guess = related?.guess ?? [];
-    if (guess.length > 0) {
-      toast.info(tf('player.autoPlayRecommend', { title: guess[0]?.title ?? '' }));
-      setSlideDir(1);
-      setTarget(guess[0]!.seriesId, 1);
-      return;
-    }
-    seriesEndBusy.current = false;
-    toast.info(tf('player.lastEpisode', { index: currentSeries?.episodes.length ?? vidIndex }));
-  }, [seriesId, vidIndex, related, setTarget, onWheelStep, navigate, currentSeries]);
-
-  const stepEpisode = useCallback(
-    (delta: number) => {
-      if (!seriesId || !vidIndex) return;
-      const next = vidIndex + delta;
-      if (next < 1) return;
-      // 连播模式下滚到尾部要有交代，静默不动像坏了。墙上的处置走剧终接力
-      // （hgplayer Ns()→hc() series-end 同款：滚/点过末集也算剧终）；
-      // 下载面板开着不接力（切剧会把面板连同勾选一起吃掉），退回提示。
-      const total = currentSeries?.episodes.length ?? 0;
-      if (total > 0 && next > total) {
-        if (downloading) {
-          toast.info(tf('player.lastEpisode', { index: total }));
-          return;
-        }
-        advanceAfterSeriesEnd();
-        return;
-      }
-      setSlideDir(delta > 0 ? 1 : -1);
-      setTarget(seriesId, next);
-    },
-    [seriesId, vidIndex, currentSeries, downloading, setTarget, advanceAfterSeriesEnd],
-  );
+  // 剧终三级接力（下一季→宿主推荐/猜你喜欢）与连播锁定抽在
+  // use-binge-relay；setSlideDir 是「内容从哪边滑入」的方向信号，
+  // 滚轮/键盘/接力共同写入，state 留在本层给过渡动画读。
+  const { inBinge, setBinge, advanceAfterSeriesEnd, stepEpisode } = useBingeRelay({
+    seriesId,
+    vidIndex,
+    setTarget,
+    setSlideDir,
+    downloading,
+    onWheelStep,
+    currentSeries,
+  });
 
   const miniScreen = useUiStore((s) => s.miniScreen);
   const setMiniScreen = useUiStore((s) => s.setMiniScreen);
@@ -293,50 +227,15 @@ export function PlayerView({
   //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
   const incognito = useIncognitoMode(videoRef);
 
-  // ---- 沉浸流悬浮层显隐（B站方案）----
-  // 在画面内移动 → 显示；移出画面 → 立即隐藏；移入画面 → 显示；
-  // 在画面内静止超 3 秒 → 隐藏。点击（含控制栏按钮）同样算「在场」，
-  // 重启 3 秒倒计时后自动隐藏。
-  // 四条规则全走舞台 div 上的 React 事件（onMouseEnter/Move/Leave/PointerDown）。
-  // 不能用 effect + addEventListener：信息流是**同一个 PlayerView 先挂载、
-  // 播放目标后到位**的（首屏 store 空 → 先渲染中性空态，舞台还不存在），
-  // effect 挂载后读 stageRef.current 拿到 null 就直接返回，依赖又不再变，
-  // 绑定永久缺席——表现就是沉浸流里鼠标怎么动控制栏都不出来（播放页挂载时
-  // 已有目标所以是好的）。React 事件挂在根容器上，舞台什么时候出现都接得住。
-  // 两个 B站同款例外：暂停态控制栏常驻（暂停就是用来看进度条的）；
-  // 指针悬在控制栏本体上不倒计时（音量/进度条拖动中不许收）。
-  // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
-  const [paused, setPaused] = useState(true);
-  const [chromeVisible, setChromeVisible] = useState(true);
-  /** 隐藏倒计时的代际号：每次唤醒递增，倒计时 effect 随之重启 */
-  const [chromeTick, setChromeTick] = useState(0);
-  /** 指针悬在控制栏本体上：控件不许收（悬在控件上操作时静止超时收起=抢走） */
-  const [controlsHovered, setControlsHovered] = useState(false);
-  const wakeChrome = useCallback(() => {
-    setChromeVisible(true);
-    setChromeTick((n) => n + 1);
-  }, []);
-  /** 指针离开画面：立即收起，不等倒计时（B站同款）。 */
-  const hideChrome = useCallback(() => setChromeVisible(false), []);
-  // 隐藏倒计时：播放中静止 3 秒即收（不再因光标悬停画面而常显）；
-  // 暂停 / 指针悬在控制栏上时常显不倒计时。
-  useEffect(() => {
-    if (paused || controlsHovered) return;
-    const timer = setTimeout(() => setChromeVisible(false), CHROME_HIDE_MS);
-    return () => clearTimeout(timer);
-  }, [paused, controlsHovered, chromeTick]);
-
-  // 悬浮层整体可见性：任一面板（选集/评论/弹幕设置/音量条）打开或暂停时常显，
-  // 其余由上面的倒计时裁决。简介/互动栏/控制栏/顶部杂物全部吃这一个值，
-  // 不再各养一套定时器——控制栏弹出时简介同步抬升也是靠它。
-  const chromeShown =
-    paused ||
-    chromeVisible ||
-    controlsHovered ||
-    seriesPanelOpen ||
-    commentPanelOpen ||
-    danmakuPanelOpen ||
-    volumeOpen;
+  // ---- 沉浸流悬浮层显隐状态机（B站方案）抽在 use-player-overlay：
+  //      3s 倒计时 / 暂停常显 / 控件悬停不收在这里统一裁决
+  const { paused, setPaused, chromeShown, wakeChrome, hideChrome, setControlsHovered } =
+    usePlayerOverlay({
+      seriesPanelOpen,
+      commentPanelOpen,
+      danmakuPanelOpen,
+      volumeOpen,
+    });
 
   /** 简介展开态：切剧重挂载自然收回。 */
   const [introExpanded, setIntroExpanded] = useState(false);
@@ -453,7 +352,7 @@ export function PlayerView({
     setMiniScreen(false);
     setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
     void appApi.exitMiniScreen().catch(() => undefined);
-  }, [setMiniScreen]);
+  }, [setMiniScreen, setControlsHovered]);
 
   /** 结束播放：退出小屏并回首页（小屏里唯一的「关掉」出口）。 */
   const stopMini = useCallback(() => {
@@ -465,7 +364,7 @@ export function PlayerView({
     setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
     void appApi.exitMiniScreen().catch(() => undefined);
     void navigate({ to: '/' });
-  }, [navigate, setMiniScreen, videoRef]);
+  }, [navigate, setMiniScreen, setControlsHovered, videoRef]);
 
   // 置顶（hgplayer De.pinned）：窗口级状态，大小屏共用同一个开关——
   // 大屏顶栏与小屏紧凑条两个入口，切换的是同一个 set_always_on_top
