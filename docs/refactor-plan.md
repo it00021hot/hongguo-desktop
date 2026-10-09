@@ -1,6 +1,6 @@
 # hongguo-desktop 前后端重构计划
 
-> 分支：dev ｜ 状态：待执行
+> 分支：dev ｜ 状态：已执行完毕（P0~P6 全部落地，CDP 全路由 probe 与交互冒烟通过；执行记录见 git log 中的 P1~P6 阶段号提交）
 > 原则：功能保持不变、纯移动与逻辑拆分分提交、每步编译绿、bug 修复独立提交
 > 方案来源：GPT 最终版方案（参考 Skyroc 取舍后的 pages + features + service + components）结合本项目实际（Tauri 2 + React 19 + TanStack Router/Query + Zustand + Tailwind v4；Rust 后端分层已规范）；后端按「API 层全面目录化」执行。不做 monorepo、不搞每域五件套、不引入转发层等新抽象。
 
