@@ -51,7 +51,7 @@ import type {
  * 所有 key 必须从这里出，不要在组件里手写字符串——否则失效（invalidate）
  * 时容易漏掉某个 key，导致界面不刷新。
  */
-const keys = {
+export const keys = {
   settings: ['settings'] as const,
   feed: (tab: string) => ['feed', tab] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
@@ -154,6 +154,8 @@ interface InfiniteStream<TPage> {
   isPending: boolean;
   isFetching: boolean;
   isFetchingNextPage: boolean;
+  /** 最近一次数据落定时间（毫秒；过期判断用） */
+  dataUpdatedAt: number;
   fetchNextPage: () => Promise<unknown>;
   refetch: () => Promise<unknown>;
 }
@@ -190,6 +192,8 @@ function useInfiniteStream<TPage, TItem>(
     isLoading: query.isPending,
     isRefreshing: query.isFetching && !query.isPending,
     isFetchingMore: query.isFetchingNextPage,
+    /** 最近一次数据落定时间（过期判断用，如回首页换一批） */
+    dataUpdatedAt: query.dataUpdatedAt,
     error: query.error
       ? query.error instanceof Error
         ? query.error.message

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -7,6 +8,7 @@ import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/lib/ipc/commands';
 import {
   isRenderableCover,
+  keys,
   useAccount,
   useBookshelf,
   useFeed,
@@ -18,6 +20,7 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t } from '@/i18n';
+import type { Series } from '@/lib/schema';
 
 /**
  * 首页：沉浸式播放器流（第三方同款形态）。
@@ -103,6 +106,10 @@ export function HomePage() {
   const feed = useFeed(FEED_TAB[source]);
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
+  const playingId = usePlayerStore((s) => s.seriesId);
+  const setResumeHint = usePlayerStore((s) => s.setResumeHint);
+  /** 回首页恢复是否已尝试（一次性；见下方渲染期恢复块）。 */
+  const [restored, setRestored] = useState(false);
 
   // 登录后的「你的内容」种子：云端观看历史 + 书架（追更）排在推荐流最前
   // ——同一个号打开就是你的剧，对齐第三方（它的首页就是书架/续看驱动）。
@@ -162,10 +169,44 @@ export function HomePage() {
   const isFetchingMore = feed.isFetchingMore;
   const loadMore = feed.loadMore;
 
+  // ---- 回首页换一批（>5 分钟过期）但在播剧不动 ----
+  // 恢复（游标对回 store 目标剧）落定后，若推荐流已过期：重开会话取新
+  // 一批（hgplayer 换一批同款 reset 语义，原地重放只会是旧会话），游标
+  // 归零；在播剧由下方置顶钉住继续播，滚下去才是新一批。
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!restored || !playingId) return;
+    if (feed.isRefreshing || feed.isLoading) return;
+    if (!(feed.dataUpdatedAt > 0 && Date.now() - feed.dataUpdatedAt > 5 * 60_000)) return;
+    feed.restart();
+    // 游标归零放到微任务：effect 体里同步 setState 会触发 react-hooks 告警
+    queueMicrotask(() => setIndexes((prev) => ({ ...prev, [source]: 0 })));
+  }, [restored, playingId, feed, source, setIndexes]);
+
+  // 在播剧置顶钉：换一批后的新列表里通常没有它，「在播不动」靠把它插
+  // 在最前（标题/封面从档案缓存取，缺失给占位——起播走 store 目标，不受影响）
+  const playingPin = useMemo(() => {
+    if (!playingId || items.some((i) => i.seriesId === playingId)) return null;
+    const cached = queryClient.getQueryData<Series>(keys.seriesEpisodes(playingId));
+    return {
+      seriesId: playingId,
+      title: cached?.title ?? '',
+      cover: cached?.cover ?? '',
+      horizCover: '',
+      heatText: undefined,
+      seasonTag: undefined,
+      badge: undefined,
+    };
+  }, [playingId, items, queryClient]);
+  const displayItems = useMemo(
+    () => (playingPin ? [playingPin, ...items] : items),
+    [playingPin, items],
+  );
+
   // 游标越界(榜单/新剧源切换)夹到已加载尾部，后台翻页跟上。
   const rawIndex = indexes[source];
-  const index = Math.min(rawIndex, Math.max(0, items.length - 1));
-  const current = items[index];
+  const index = Math.min(rawIndex, Math.max(0, displayItems.length - 1));
+  const current = displayItems[index];
   const currentId = current?.seriesId;
 
   // 信息流条目的展示标记（热度/季角标）：档案接口没有这几个字段，
@@ -196,8 +237,6 @@ export function HomePage() {
   //   已在用同一查询，这里共享缓存
   const progressQuery = useSeriesProgress(currentId ?? '');
   const localProgress = progressQuery.data;
-  const playingId = usePlayerStore((s) => s.seriesId);
-  const setResumeHint = usePlayerStore((s) => s.setResumeHint);
 
   // 回首页恢复（切菜单回来不换视频）：store 目标剧还在信息流里 → 游标
   // 对回那部剧。信息流游标是本组件 state，切菜单重挂载会归零，不恢复的
@@ -205,7 +244,6 @@ export function HomePage() {
   // 渲染期 setState（官方 adjust 模式）：置位后本组件立即以新游标重渲染，
   // effect 只在最终提交后跑一次——起点决策自然对准恢复的那部剧，无需
   // 额外闩锁。只恢复一次：之后用户滚走再滚回，不再拽游标。
-  const [restored, setRestored] = useState(false);
   if (!restored && items.length > 0) {
     setRestored(true);
     if (playingId) {
