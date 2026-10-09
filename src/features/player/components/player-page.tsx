@@ -418,6 +418,12 @@ export function PlayerView({
   // 在画面内移动 → 显示；移出画面 → 立即隐藏；移入画面 → 显示；
   // 在画面内静止超 3 秒 → 隐藏。点击（含控制栏按钮）同样算「在场」，
   // 重启 3 秒倒计时后自动隐藏。
+  // 四条规则全走舞台 div 上的 React 事件（onMouseEnter/Move/Leave/PointerDown）。
+  // 不能用 effect + addEventListener：信息流是**同一个 PlayerView 先挂载、
+  // 播放目标后到位**的（首屏 store 空 → 先渲染中性空态，舞台还不存在），
+  // effect 挂载后读 stageRef.current 拿到 null 就直接返回，依赖又不再变，
+  // 绑定永久缺席——表现就是沉浸流里鼠标怎么动控制栏都不出来（播放页挂载时
+  // 已有目标所以是好的）。React 事件挂在根容器上，舞台什么时候出现都接得住。
   // 两个 B站同款例外：暂停态控制栏常驻（暂停就是用来看进度条的）；
   // 指针悬在控制栏本体上不倒计时（音量/进度条拖动中不许收）。
   // 暂停状态跟 <video> 走（onPlay/onPause），悬浮层的「常显」语义在这里统一裁决
@@ -431,25 +437,8 @@ export function PlayerView({
     setChromeVisible(true);
     setChromeTick((n) => n + 1);
   }, []);
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    // B站四条里「移入显示」要显式接 mouseenter：从画面外重新进入时
-    // 若浏览器没派发 mousemove（如跨窗口边界缓入），控制栏也得亮出来
-    stage.addEventListener('mouseenter', wakeChrome);
-    stage.addEventListener('mousemove', wakeChrome);
-    // 点击唤醒：点控制栏按钮后鼠标未必再动，不给点击续命的话
-    // 按钮一点、倒计时一到期控件就消失，观感像被抢走
-    stage.addEventListener('pointerdown', wakeChrome);
-    const onLeave = () => setChromeVisible(false);
-    stage.addEventListener('mouseleave', onLeave);
-    return () => {
-      stage.removeEventListener('mouseenter', wakeChrome);
-      stage.removeEventListener('mousemove', wakeChrome);
-      stage.removeEventListener('pointerdown', wakeChrome);
-      stage.removeEventListener('mouseleave', onLeave);
-    };
-  }, [wakeChrome]);
+  /** 指针离开画面：立即收起，不等倒计时（B站同款）。 */
+  const hideChrome = useCallback(() => setChromeVisible(false), []);
   // 隐藏倒计时：播放中静止 3 秒即收（不再因光标悬停画面而常显）；
   // 暂停 / 指针悬在控制栏上时常显不倒计时。
   useEffect(() => {
@@ -891,6 +880,15 @@ export function PlayerView({
           ref={stageRef}
           onWheel={onStageWheel}
           onClick={onStageClick}
+          // 「移入显示」显式接 mouseenter：从画面外重新进入时浏览器可能
+          // 没派发 mousemove（如跨窗口边界缓入），靠它兜底亮出控制栏
+          onMouseEnter={wakeChrome}
+          onMouseMove={wakeChrome}
+          // 点击也算在场：点控制栏按钮后鼠标未必再动，不续命的话
+          // 按钮一点、倒计时一到期控件就消失，观感像被抢走
+          onPointerDown={wakeChrome}
+          // 「移出隐藏」立即收起，不等倒计时
+          onMouseLeave={hideChrome}
           className="relative min-h-0 flex-1 overflow-hidden bg-black"
         >
           {/* 小屏的拖拽条：顶栏在小屏不渲染（第三方小屏是纯播放器），
