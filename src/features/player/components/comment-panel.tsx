@@ -16,10 +16,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { parseEmojiSegments } from '@/utils/danmaku-emoji';
 import { interact } from '@/service/commands';
 import { useAccount, useComments, useSendComment, useSendReply } from '@/service/queries';
 import { EmojiPickerButton } from './emoji-picker';
+import { EmojiText } from './emoji-text';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import type { CommentItem } from '@/service/schema';
 
@@ -39,29 +39,6 @@ function relativeTime(unixSec: number): string {
   if (diff < 172800) return t('player.comments.yesterday');
   const d = new Date(unixSec * 1000);
   return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-/** 评论/回复文本：`[名字]` 表情代码渲染成图（hgplayer EmojiText 同款），
- *  其余文本原样保留。 */
-function EmojiText({ text }: { text: string }) {
-  return (
-    <>
-      {parseEmojiSegments(text).map((seg, i) =>
-        seg.kind === 'text' ? (
-          <span key={i}>{seg.value}</span>
-        ) : (
-          <img
-            key={i}
-            src={seg.url}
-            alt={seg.value}
-            title={seg.value}
-            draggable={false}
-            className="mx-px inline-block size-[1.15em] object-contain align-[-0.18em]"
-          />
-        ),
-      )}
-    </>
-  );
 }
 
 /** 本地追加的一条回复（自己发的；服务端暂无回复列表接口）。 */
