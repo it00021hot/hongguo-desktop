@@ -690,10 +690,12 @@ function ScrubBar({
         if (e.key === 'ArrowRight') onSeek(Math.min(ratio + 5 / (duration || 1), 1));
       }}
     >
-      {/* 进度条同样固定白色系，不跟主题走 */}
-      <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/25" />
+      {/* 进度条固定白色系，不跟主题走。静止态 2px 半透明（细条贴着画面
+          不挡内容），悬停/拖动时涨到 4px 并提亮——B站/YouTube 同款的
+          「平时隐身、上手好用」。 */}
+      <div className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-white/20 transition-all duration-150 group-hover/bar:h-1" />
       <div
-        className="absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full bg-white"
+        className="absolute top-1/2 left-0 h-0.5 -translate-y-1/2 rounded-full bg-white/60 transition-all duration-150 group-hover/bar:h-1 group-hover/bar:bg-white/90"
         style={{ width: `${ratio * 100}%` }}
       />
       <div
