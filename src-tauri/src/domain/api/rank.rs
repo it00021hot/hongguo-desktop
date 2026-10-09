@@ -181,11 +181,7 @@ pub struct RankPage {
 /// - `sub`：子榜的 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
 /// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
 ///   cate_308 / style_1685…；单值——hgplayer 抓包实测每次点击整组替换）
-/// - `offset` / `session_id`：翻页游标（**2026-10-09 抓 hgplayer 滚动榜单
-///   实锤**：首页 offset=0 不带 session_id，响应下发 next_offset（步进 10）
-///   + session_id；翻页 offset=next_offset 并**回传同一 session_id**，其余
-///   参数原样。每页下发 20 条、相邻页重叠 10 条——客户端按 seriesId 去重。
-///   limit 恒 "0" 不参与分页，页长服务端固定。）
+/// - `offset` / `session_id`：翻页游标（**2026-10-09 抓 hgplayer 滚动榜单实锤**：首页 offset=0 不带 session_id，响应下发 next_offset（步进 10）+ session_id；翻页 offset=next_offset 并**回传同一 session_id**，其余参数原样。每页下发 20 条、相邻页重叠 10 条——客户端按 seriesId 去重；limit 恒 "0" 不参与分页，页长服务端固定）
 pub async fn fetch_rank_ex(
     selected: &str,
     sub: &str,

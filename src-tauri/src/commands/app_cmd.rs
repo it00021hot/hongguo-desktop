@@ -308,16 +308,16 @@ pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
         // 都会重发一次 setIncognito(false)，把最小化或被遮挡的窗口弹到最
         // 前面——听剧听得好好的窗口突然蹦到前台（2026-10-09 真机复现：
         // 失焦状态下 /player 重挂必抢前台）。
-        if was_on {
-            if let Some(w) = active_window(&app) {
-                let _ = w.show();
-                let _ = w.set_focus();
-                let _ = app.emit_to(
-                    w.label(),
-                    "incognito-visibility",
-                    serde_json::json!({ "visible": true }),
-                );
-            }
+        if was_on
+            && let Some(w) = active_window(&app)
+        {
+            let _ = w.show();
+            let _ = w.set_focus();
+            let _ = app.emit_to(
+                w.label(),
+                "incognito-visibility",
+                serde_json::json!({ "visible": true }),
+            );
         }
         return Ok(());
     }
