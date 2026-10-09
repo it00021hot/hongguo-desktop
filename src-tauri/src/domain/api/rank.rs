@@ -30,8 +30,11 @@ pub const NEW_DRAMA_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/
 /// 预约列表与上新日历共用。
 pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
-/// reading 系会话标识（subscribe/list 抓包恒带；格式 `YYYYMMDDHHMMSS` +
-/// 20 位大写 hex，进程生命周期内一个——与真实客户端同款语义）。
+/// reading 系会话标识（格式 `YYYYMMDDHHMMSS` + 20 位大写 hex，进程
+/// 生命周期内一个）。**只供上新日历使用**——预约列表绝不能带自造的
+/// session_id：服务端按它维护浏览会话快照，操作后的重读会命中操作前
+/// 的缓存（2026-10-09 实车归因，见 fetch_reservations 文档；当日抓包
+/// 实证 hgplayer 的列表请求从不带该参数）。
 fn reading_session_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
     ID.get_or_init(|| {
@@ -747,24 +750,38 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
 /// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
 /// 匿名空表；与日历共用 [`parse_calendar_item`] 的双形态解析。
 ///
+/// **session_id 协议（2026-10-09 实车归因）**：列表接口绝不能自造
+/// 进程级恒定 session_id——服务端按它维护浏览会话快照，操作
+/// （预约/取消）之后用同一个 session_id 再读，拿到的永远是操作前
+/// 的缓存列表，表现就是「取消预约无效」「新预约不出现」（探针实锤：
+/// 同一时刻去掉 session_id 立即读到新状态；hgplayer 的列表请求从不
+/// 带该参数，翻页时才续传响应下发的值）。所以首页不带，翻页续传
+/// 首页响应下发的 session_id。
+///
 /// tab 角标计数不直接信响应的 `*_total_count`：该键在部分形态下缺失
 /// （解析层缺省为 0），这里翻页拉全后用全量条数兜底——请求本身按
 /// is_online 由服务端过滤，条数即该 tab 的真实总数。
 pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<CalendarPage> {
-    let mut merged = fetch_reservations_page(is_online, 0, env).await?;
+    let mut merged = fetch_reservations_page(is_online, 0, None, env).await?;
     let server_total = if is_online {
         merged.online_total
     } else {
         merged.offline_total
     };
-    // 翻页拉全；上限 20 页防服务端分页异常时失控，空页即止
+    // 翻页拉全；上限 20 页防服务端分页异常时失控，空页即止。
+    // 续页 session_id 用首页响应下发的值（协议：响应下发、翻页续传）
+    let mut session_id = merged.session_id.clone();
     for _ in 0..19 {
         if !merged.has_more || merged.next_offset <= 0 {
             break;
         }
-        let next = fetch_reservations_page(is_online, merged.next_offset, env).await?;
+        let sid = Some(session_id.clone()).filter(|s| !s.is_empty());
+        let next = fetch_reservations_page(is_online, merged.next_offset, sid.as_deref(), env).await?;
         if next.items.is_empty() {
             break;
+        }
+        if session_id.is_empty() {
+            session_id = next.session_id.clone();
         }
         merged.items.extend(next.items);
         merged.has_more = next.has_more;
@@ -796,12 +813,18 @@ fn finalize_reservations(
 }
 
 /// 拉一页预约列表（tab_type=13 形态，每页 20 条）。
+///
+/// `session_id`：None = 首页（对齐 hgplayer：列表请求从不自带）；
+/// Some = 翻页续传首页响应下发的值。绝不能传进程级自造常量——服务端
+/// 按它维护会话快照，操作后的重读会命中操作前的缓存（fetch_reservations
+/// 文档有归因记录）。
 async fn fetch_reservations_page(
     is_online: bool,
     offset: i64,
+    session_id: Option<&str>,
     env: &ApiEnv,
 ) -> AppResult<CalendarPage> {
-    let q: Vec<(String, String)> = vec![
+    let mut q: Vec<(String, String)> = vec![
         (
             "is_online".into(),
             if is_online { "true" } else { "false" }.into(),
@@ -813,8 +836,10 @@ async fn fetch_reservations_page(
         ("swipe_type".into(), "0".into()),
         ("tab_type".into(), "13".into()),
         ("need_calendar_schema".into(), "false".into()),
-        ("session_id".into(), reading_session_id().to_string()),
     ];
+    if let Some(sid) = session_id {
+        q.push(("session_id".into(), sid.to_string()));
+    }
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_LIST_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析预约失败: {e}")))?;
@@ -905,6 +930,10 @@ pub struct CalendarPage {
     pub online_total: i64,
     #[serde(default)]
     pub offline_total: i64,
+    /// 服务端下发的浏览会话标识：翻页续传用（响应下发、翻页时带回；
+    /// 首页请求绝不能自带，否则命中服务端会话缓存——见 fetch_reservations）
+    #[serde(default)]
+    pub session_id: String,
 }
 
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
@@ -996,6 +1025,7 @@ pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<C
         next_offset: 0,
         online_total: 0,
         offline_total: 0,
+        session_id: String::new(),
     })
 }
 
@@ -1076,6 +1106,11 @@ fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
             .get("offline_total_count")
             .and_then(Value::as_i64)
             .unwrap_or(0),
+        session_id: data
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
