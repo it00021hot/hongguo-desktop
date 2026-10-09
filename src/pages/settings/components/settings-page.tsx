@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -29,6 +28,7 @@ import { t, tf } from '@/locales';
 import type { DecodeCapability, Settings } from '@/service/schema';
 import { UpdateCard } from '@/features/update/update-card';
 import { AccountCard } from './account-card';
+import { ToggleRow } from './toggle-row';
 
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
 export function SettingsPage() {
@@ -360,25 +360,4 @@ function backendLabel(cap: DecodeCapability | undefined): string {
   if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
   if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
   return t('settings.backendRust');
-}
-
-function ToggleRow({
-  id,
-  label,
-  checked,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
-      <Label htmlFor={id} className="cursor-pointer">
-        {label}
-      </Label>
-    </div>
-  );
 }
