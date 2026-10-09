@@ -128,31 +128,34 @@ export function HomePage() {
     return out;
   }, [account, history, bookshelf]);
 
-  // 三 tab 同一数据面，统一成 StreamItem[]
+  // 三 tab 同一数据面，统一成 StreamItem[]。
+  // useMemo 稳定身份：数组每渲染新建会让依赖它的 effect/哨兵反复重跑。
   const feedItems = feed.items;
   // 「你的内容」种子只属于推荐 tab：漫剧/真人是服务端类型 tab，头一条必须
   // 是该类型的剧——种子(最近看过)排头会把刚看完的那部顶在前面，点 tab
   // 看起来毫无反应(实测:刚看完动漫点真人,头部还是那部动漫)。
-  const activeSeeds = source === 'feed' ? seedItems : [];
-  const items: StreamItem[] = [
-    ...activeSeeds,
-    ...feedItems
-      .filter(
-        (i, idx, arr) =>
-          // 会话轮换后跨页偶发同条目，连种子一起按 seriesId 去重
-          !activeSeeds.some((seed) => seed.seriesId === i.seriesId) &&
-          arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
-      )
-      .map((i) => ({
-        seriesId: i.seriesId,
-        title: i.title,
-        cover: i.cover,
-        horizCover: i.horizCover,
-        heatText: i.heatText,
-        seasonTag: i.seasonTag,
-        badge: i.badge,
-      })),
-  ];
+  const items: StreamItem[] = useMemo(() => {
+    const activeSeeds = source === 'feed' ? seedItems : [];
+    return [
+      ...activeSeeds,
+      ...feedItems
+        .filter(
+          (i, idx, arr) =>
+            // 会话轮换后跨页偶发同条目，连种子一起按 seriesId 去重
+            !activeSeeds.some((seed) => seed.seriesId === i.seriesId) &&
+            arr.findIndex((x) => x.seriesId === i.seriesId) === idx,
+        )
+        .map((i) => ({
+          seriesId: i.seriesId,
+          title: i.title,
+          cover: i.cover,
+          horizCover: i.horizCover,
+          heatText: i.heatText,
+          seasonTag: i.seasonTag,
+          badge: i.badge,
+        })),
+    ];
+  }, [source, seedItems, feedItems]);
 
   // 尾部翻页能力（同会话 session 游标续拉）
   const hasMore = feed.hasMore;
@@ -196,6 +199,21 @@ export function HomePage() {
   const playingId = usePlayerStore((s) => s.seriesId);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
 
+  // 回首页恢复（切菜单回来不换视频）：store 目标剧还在信息流里 → 游标
+  // 对回那部剧。信息流游标是本组件 state，切菜单重挂载会归零，不恢复的
+  // 话起点决策会把目标换成第一部、正在看的视频被顶掉。
+  // 渲染期 setState（官方 adjust 模式）：置位后本组件立即以新游标重渲染，
+  // effect 只在最终提交后跑一次——起点决策自然对准恢复的那部剧，无需
+  // 额外闩锁。只恢复一次：之后用户滚走再滚回，不再拽游标。
+  const [restored, setRestored] = useState(false);
+  if (!restored && items.length > 0) {
+    setRestored(true);
+    if (playingId) {
+      const idx = items.findIndex((i) => i.seriesId === playingId);
+      if (idx > 0) setIndexes((prev) => ({ ...prev, [source]: idx }));
+    }
+  }
+
   // 档案 + 两路进度源就绪 → 定起点。看过快完的（≥95%）自动跳下一集。
   // 云端历史的集内位置塞进 resumeHint：播放器起播在本地没有该集播放
   // 档案（resumeAt=0）时用它 seek——跨客户端续播连进度都对上。
@@ -203,6 +221,8 @@ export function HomePage() {
   // 每部剧只在**成为当前剧**时定一次起点：正在看的时候历史刷新/进度
   // 上报不能把目标拽走（store 目标还停在本剧就直接让位）；滚走再滚回
   // 来时会重新对号本地档案，接的是你离开时的那集。
+  // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
+  // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
   useEffect(() => {
     if (!currentSeries) return;
     if (playingId === currentSeries.seriesId) return;
