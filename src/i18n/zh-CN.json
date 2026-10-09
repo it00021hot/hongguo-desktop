@@ -440,7 +440,8 @@
       "all": "总榜"
     },
     "loadFailed": "榜单加载失败",
-    "empty": "这个榜单暂时没有内容"
+    "empty": "这个榜单暂时没有内容",
+    "detail": "详情"
   },
   "newDrama": {
     "tabs": {

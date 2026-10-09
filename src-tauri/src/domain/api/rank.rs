@@ -110,6 +110,9 @@ pub struct RankItem {
     /// 当前账号已预约（榜单条目自带 online_subscribed；匿名恒 false）
     #[serde(default)]
     pub reserved: bool,
+    /// 季徽（sub_title_list 里「第N季」形态条目；标题旁小徽，无则空）
+    #[serde(default)]
+    pub season: String,
 }
 
 /// 排行榜筛选面板的一个选项（id 为空 = 「总榜」，清除筛选）。
@@ -1266,6 +1269,16 @@ fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>> {
                 .get("online_subscribed")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            season: raw
+                .get("sub_title_list")
+                .and_then(Value::as_array)
+                .and_then(|a| {
+                    a.iter()
+                        .filter_map(|x| x.get("content").and_then(Value::as_str))
+                        .find(|c| c.starts_with('第') && c.ends_with("季"))
+                        .map(str::to_string)
+                })
+                .unwrap_or_default(),
             episode_cnt: int_field(raw, "episode_cnt").max(0) as u32,
             rec_text,
             secondary_infos,

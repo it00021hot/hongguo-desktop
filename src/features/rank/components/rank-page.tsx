@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Bell, Check, ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
+import { Bell, Check, ChevronDown, Flame, Loader2, Play, SlidersHorizontal, Tv, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -89,18 +88,6 @@ export function RankPage() {
     setPanel('');
     const first = tabs.find((tab) => tab.id === id)?.subs[0];
     setSub(first?.id ?? '');
-  };
-
-  const playSeries = usePlaySeries();
-  const navigate = useNavigate();
-  // 未上线剧（预约榜）没有可播分集，点击进详情看档案/预约（hgplayer 同款）；
-  // 已上线照旧直接播
-  const handleSelect = (item: RankItem) => {
-    if (item.upcoming) {
-      void navigate({ to: '/detail', search: { seriesId: item.seriesId } });
-      return;
-    }
-    playSeries(item.seriesId);
   };
 
   const tabRow = showTabsRow ? tabs : [];
@@ -193,7 +180,7 @@ export function RankPage() {
               <RefreshShade refreshing={isFetching}>
                 <div className="flex flex-col gap-2">
                   {(data?.items ?? []).map((item) => (
-                    <RankRow key={item.seriesId} item={item} onSelect={handleSelect} />
+                    <RankRow key={item.seriesId} item={item} />
                   ))}
                   {(data?.items.length ?? 0) === 0 && (
                     <p className="text-muted-foreground py-16 text-center text-sm">
@@ -315,7 +302,9 @@ function FilterPanelButton({
 }
 
 /** 榜单一行：名次 | 封面 | 标题/副标题/简介 | 热度文案。 */
-function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem) => void }) {
+function RankRow({ item }: { item: RankItem }) {
+  const navigate = useNavigate();
+  const playSeries = usePlaySeries();
   const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
   const cover = webCover ?? (sourceRenderable ? item.cover : '');
@@ -327,6 +316,8 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
   const reserve = useReserveSeries();
   const [reserved, setReserved] = useState(item.reserved);
 
+  // 卡片一律进详情（hgplayer 同款：详情看档案，播放/预约是右侧明确动作）
+  const openDetail = () => void navigate({ to: '/detail', search: { seriesId: item.seriesId } });
   const onToggleReserve = () => {
     const next = !reserved;
     reserve.mutate(
@@ -342,23 +333,24 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
   };
 
   const rankNo = item.rank > 0 ? item.rank : undefined;
-  // 官方条目双信息：🔥主热词（recText，如 "997万推荐"）+ 次信息（"4945万热度"）
+  // 官方条目双信息：🔥主热词（recText，如 "995万推荐"）+ 次信息（"5490万热度"）
   const rec = item.recText;
   const secondary = item.secondaryInfos.filter((s) => s !== '' && s !== rec);
-  // recText 缺失时次信息首位顶上火焰位（与旧展示兼容）
-  const badge = rec !== '' ? rec : (secondary[0] ?? '');
-  const extra = rec !== '' ? secondary : secondary.slice(1);
+  // 元信息一行：副标题 · 评分 · 题材标签（hgplayer 同款行）
+  const meta = [item.subTitle, item.score > 0 ? item.score.toFixed(1) : '', ...item.tags]
+    .filter((s) => s !== '')
+    .join(' · ');
 
   return (
     <article
       role="button"
       tabIndex={0}
       aria-label={item.title}
-      onClick={() => onSelect(item)}
+      onClick={openDetail}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         e.preventDefault();
-        onSelect(item);
+        openDetail();
       }}
       className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none"
     >
@@ -373,7 +365,7 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
         </span>
       )}
 
-      <div className="bg-muted relative aspect-[3/4] w-16 shrink-0 overflow-hidden rounded-lg">
+      <div className="bg-muted relative aspect-[3/4] w-20 shrink-0 overflow-hidden rounded-lg">
         {showImg ? (
           <img
             src={cover}
@@ -390,65 +382,94 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <p className="truncate text-sm font-semibold" title={item.title}>
             {item.title}
           </p>
-          {item.score > 0 && (
-            <span className="text-muted-foreground flex shrink-0 items-center gap-0.5 text-xs">
-              <Star className="size-3 text-amber-400" aria-hidden />
-              {item.score.toFixed(1)}
+          {item.season !== '' && (
+            <span className="text-muted-foreground shrink-0 rounded border px-1 text-[10px] leading-4">
+              {item.season}
             </span>
           )}
         </div>
-        {item.subTitle !== '' && (
-          <p className="text-muted-foreground truncate text-xs">{item.subTitle}</p>
+        {meta !== '' && (
+          <p className="text-muted-foreground truncate text-xs">{meta}</p>
         )}
         {item.description !== '' && (
           <p className="text-muted-foreground/80 line-clamp-2 text-xs leading-relaxed">
             {item.description}
           </p>
         )}
+        {(rec !== '' || secondary.length > 0) && (
+          <p className="flex items-center gap-2 text-xs">
+            {rec !== '' && (
+              <span className="flex shrink-0 items-center gap-0.5 text-orange-400">
+                <Flame className="size-3" aria-hidden />
+                {rec}
+              </span>
+            )}
+            {secondary.length > 0 && (
+              <span className="text-muted-foreground truncate whitespace-nowrap">
+                {secondary.join('  ')}
+              </span>
+            )}
+          </p>
+        )}
       </div>
 
-      {badge !== '' && (
-        <Badge variant="secondary" className="shrink-0 gap-1">
-          <Flame className="size-3 text-orange-400" aria-hidden />
-          {badge}
-        </Badge>
-      )}
-      {extra.length > 0 && (
-        <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
-          {extra.join(' ')}
-        </span>
-      )}
-      {/* 行尾状态按钮（按剧状态分，不看榜单：hgplayer 同款）——未上线 =
-          预约/已预约胶囊（详情页同款粉胶囊样式），已上线 = 无（整行即播） */}
-      {item.upcoming && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation(); // 别触发整行跳详情
-            onToggleReserve();
-          }}
-          disabled={reserve.isPending}
-          className={cn(
-            'flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full px-3.5 text-xs font-medium transition-colors',
-            reserved
-              ? 'border border-red-400/60 text-red-400 hover:bg-red-400/10'
-              : 'bg-red-500 text-white hover:bg-red-500/90',
-          )}
-        >
-          {reserve.isPending ? (
-            <Loader2 className="size-3 animate-spin" aria-hidden />
-          ) : reserved ? (
-            <Check className="size-3" aria-hidden />
-          ) : (
-            <Bell className="size-3" aria-hidden />
-          )}
-          {t(reserved ? 'player.reserved' : 'player.reserve')}
-        </button>
-      )}
+      {/* 行尾动作列（按剧状态分）：未上线 = 预约/已预约胶囊；
+          已上线 = 播放胶囊 + 详情链接。卡片本体始终进详情 */}
+      <div className="flex shrink-0 flex-col items-stretch gap-1.5 self-center">
+        {item.upcoming ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleReserve();
+            }}
+            disabled={reserve.isPending}
+            className={cn(
+              'flex h-8 cursor-pointer items-center justify-center gap-1 rounded-full px-4 text-xs font-medium transition-colors',
+              reserved
+                ? 'border border-red-400/60 text-red-400 hover:bg-red-400/10'
+                : 'bg-red-500 text-white hover:bg-red-500/90',
+            )}
+          >
+            {reserve.isPending ? (
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : reserved ? (
+              <Check className="size-3" aria-hidden />
+            ) : (
+              <Bell className="size-3" aria-hidden />
+            )}
+            {t(reserved ? 'player.reserved' : 'player.reserve')}
+          </button>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              className="h-8 gap-1 rounded-full px-4 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                playSeries(item.seriesId);
+              }}
+            >
+              <Play className="size-3.5" aria-hidden />
+              {t('player.play')}
+            </Button>
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground cursor-pointer text-center text-xs transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                openDetail();
+              }}
+            >
+              {t('rank.detail')}
+            </button>
+          </>
+        )}
+      </div>
     </article>
   );
 }

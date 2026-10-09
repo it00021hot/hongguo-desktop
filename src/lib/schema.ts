@@ -561,6 +561,8 @@ export const rankItemSchema = z.object({
   upcoming: z.boolean(),
   /** 当前账号已预约（榜单条目 online_subscribed 下发） */
   reserved: z.boolean(),
+  /** 季徽（「第N季」，sub_title_list 提取；无则空串） */
+  season: z.string(),
 });
 export type RankItem = z.infer<typeof rankItemSchema>;
 

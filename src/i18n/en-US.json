@@ -440,7 +440,8 @@
       "all": "Overall"
     },
     "loadFailed": "Failed to load ranking",
-    "empty": "Nothing in this list yet"
+    "empty": "Nothing in this list yet",
+    "detail": "Details"
   },
   "newDrama": {
     "tabs": {
