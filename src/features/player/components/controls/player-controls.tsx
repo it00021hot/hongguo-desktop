@@ -1,3 +1,4 @@
+/** 自绘播放控件主体：媒体状态同步、菜单与面板编排；RATES/CHROME_BUTTON 为本组件专用常量。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
@@ -14,10 +15,7 @@ import {
   SkipBack,
   SkipForward,
   MessageSquareText,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -27,16 +25,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { usePlayerStore } from '@/stores/player';
-import { useAccount, useSendDanmaku } from '@/service/queries';
-import { EmojiPickerButton } from './emoji-picker';
-import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import { formatDuration } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
 import type { DanmakuDisplaySettings } from '@/utils/playback-prefs';
-import { DownloadSheet } from './download-sheet';
-import { EpisodePicker } from './episode-picker';
+import { DownloadSheet } from '../download-sheet';
+import { EpisodePicker } from '../episode-picker';
 import type { Episode, VideoDefinition } from '@/service/schema';
+import { DanmakuSendBox } from './danmaku-send-box';
+import { ScrubBar } from './scrub-bar';
+import { DisplaySlider } from './sliders';
+import { VolumePopup } from './volume-popup';
+import { IconButton } from './icon-button';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
@@ -123,71 +123,6 @@ interface Props {
   /** 指针进入/离开控制栏本体：悬在控制栏上时不许静止倒计时收起（宿主页裁决） */
   onControlsEnter?: () => void;
   onControlsLeave?: () => void;
-}
-
-/** 控制栏内的弹幕发送框（hgplayer 同款：常驻控制栏左段）。
- *
- * 输入 Enter / 点「发送」提交；offset 取控件自己持有的播放秒数（实时）。
- * 未登录点发送给指路提示；vid 未就绪时静默忽略。
- * 表情：hgplayer 同款 `[名字]` 代码——选择器插入代码，弹幕层渲染成图。 */
-function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
-  const [text, setText] = useState('');
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const send = useSendDanmaku();
-  const { data: account } = useAccount();
-  const loggedIn = !!account;
-  const richRef = useRef<RichEmojiInputHandle | null>(null);
-
-  const pickEmoji = (name: string) => {
-    richRef.current?.insertEmoji(name);
-  };
-
-  const submit = () => {
-    const content = text.trim();
-    if (!content || send.isPending) return;
-    if (!loggedIn) {
-      toast.info(t('player.interact.loginRequired'));
-      return;
-    }
-    if (!vid.includes(':')) return;
-    send.mutate(
-      { vid, text: content, offsetMs: Math.round(currentSec * 1000) },
-      {
-        onSuccess: () => {
-          toast.success(t('player.interact.danmakuSent'));
-          setText('');
-        },
-        onError: (e) => toast.error(String(e)),
-      },
-    );
-  };
-
-  return (
-    <div className="relative ml-2 flex h-8 w-44 min-w-0 shrink items-center gap-1 overflow-hidden rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52">
-      <RichEmojiInput
-        ref={richRef}
-        value={text}
-        onChange={setText}
-        onEnter={submit}
-        placeholder={t('player.interact.danmakuPlaceholder')}
-        maxLength={100}
-        className="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs leading-8 whitespace-pre text-white"
-      />
-      <EmojiPickerButton
-        open={emojiOpen}
-        onToggle={() => setEmojiOpen((o) => !o)}
-        onPick={pickEmoji}
-      />
-      <button
-        type="button"
-        onClick={submit}
-        disabled={!text.trim() || send.isPending}
-        className="grid h-6 shrink-0 cursor-pointer place-items-center rounded-full bg-red-500 px-2.5 text-xs text-white transition-opacity disabled:opacity-40"
-      >
-        {t('player.interact.send')}
-      </button>
-    </div>
-  );
 }
 
 /**
@@ -610,277 +545,6 @@ export function PlayerControls({
         open={downloading}
         onOpenChange={onDownloadingChange}
       />
-    </div>
-  );
-}
-
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="size-8 bg-transparent text-white hover:bg-white/20 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent"
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-    >
-      {children}
-    </Button>
-  );
-}
-
-/**
- * 可点击可拖动的进度条。
- *
- * 用 div 而不是 `<input type=range>`：要显示缓冲进度、要跟随容器宽度，
- * 而 range 的原生滑块样式在 WebView2 上跨版本表现不一致。小窗控制条
- * （mini-screen-controls）复用同一份，大小屏进度条一个口径。
- */
-export function ScrubBar({
-  current,
-  duration,
-  onSeek,
-  onScrubStart,
-  onScrubEnd,
-}: {
-  current: number;
-  duration: number;
-  onSeek: (ratio: number) => void;
-  onScrubStart: () => void;
-  onScrubEnd: () => void;
-}) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const ratio = duration > 0 ? Math.min(current / duration, 1) : 0;
-
-  const ratioAt = (clientX: number) => {
-    const track = trackRef.current;
-    if (!track) return 0;
-    const rect = track.getBoundingClientRect();
-    if (rect.width <= 0) return 0;
-    return (clientX - rect.left) / rect.width;
-  };
-
-  return (
-    <div
-      ref={trackRef}
-      role="slider"
-      aria-label={t('common.progress')}
-      aria-valuemin={0}
-      aria-valuemax={Math.floor(duration)}
-      aria-valuenow={Math.floor(current)}
-      tabIndex={0}
-      className="group/bar relative h-4 w-full cursor-pointer"
-      onPointerDown={(e) => {
-        if (duration <= 0) return;
-        e.currentTarget.setPointerCapture(e.pointerId);
-        onScrubStart();
-        onSeek(ratioAt(e.clientX));
-      }}
-      onPointerMove={(e) => {
-        if (e.buttons === 1 && duration > 0) onSeek(ratioAt(e.clientX));
-      }}
-      onPointerUp={() => onScrubEnd()}
-      onKeyDown={(e) => {
-        if (e.key === 'ArrowLeft') onSeek(Math.max(ratio - 5 / (duration || 1), 0));
-        if (e.key === 'ArrowRight') onSeek(Math.min(ratio + 5 / (duration || 1), 1));
-      }}
-    >
-      {/* 进度条固定白色系，不跟主题走。静止态 2px 半透明（细条贴着画面
-          不挡内容），悬停/拖动时涨到 4px 并提亮——B站/YouTube 同款的
-          「平时隐身、上手好用」。 */}
-      <div className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-white/20 transition-all duration-150 group-hover/bar:h-1" />
-      <div
-        className="absolute top-1/2 left-0 h-0.5 -translate-y-1/2 rounded-full bg-white/60 transition-all duration-150 group-hover/bar:h-1 group-hover/bar:bg-white/90"
-        style={{ width: `${ratio * 100}%` }}
-      />
-      <div
-        className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white opacity-0 transition-opacity group-hover/bar:opacity-100"
-        style={{ left: `${ratio * 100}%` }}
-      />
-    </div>
-  );
-}
-
-/**
- * 竖向滑条（音量浮层用）。div 自绘而不是 `<input type=range>` 转向：
- * 竖向 range 的厂商伪元素在 WebView2 上表现不可控，自绘三段（轨道/已填/
- * 滑块）和 ScrubBar 同一套视觉。
- */
-function VerticalSlider({
-  value,
-  onChange,
-  label,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  label: string;
-}) {
-  const trackRef = useRef<HTMLDivElement>(null);
-
-  const ratioAt = (clientY: number) => {
-    const track = trackRef.current;
-    if (!track) return 0;
-    const rect = track.getBoundingClientRect();
-    if (rect.height <= 0) return 0;
-    // 竖向：顶部 = 1
-    return Math.min(Math.max(1 - (clientY - rect.top) / rect.height, 0), 1);
-  };
-
-  return (
-    <div
-      ref={trackRef}
-      role="slider"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(value * 100)}
-      tabIndex={0}
-      className="relative h-24 w-6 cursor-pointer"
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        onChange(ratioAt(e.clientY));
-      }}
-      onPointerMove={(e) => {
-        if (e.buttons === 1) onChange(ratioAt(e.clientY));
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'ArrowUp') onChange(Math.min(value + 0.05, 1));
-        if (e.key === 'ArrowDown') onChange(Math.max(value - 0.05, 0));
-      }}
-    >
-      <div className="absolute top-0 bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/25" />
-      <div
-        className="absolute bottom-0 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white"
-        style={{ height: `${value * 100}%` }}
-      />
-      <div
-        className="absolute left-1/2 size-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white"
-        style={{ bottom: `${value * 100}%` }}
-      />
-    </div>
-  );
-}
-
-/** 弹幕设置面板的一行：label + 百分比 + 白色横滑条（复用 .volume-range 样式）。 */
-function DisplaySlider({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="flex items-center justify-between text-xs text-white/90">
-        {label}
-        <span className="font-mono text-white/70">{Math.round(value * 100)}%</span>
-      </span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={0.05}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={label}
-        className="volume-range w-full"
-      />
-    </label>
-  );
-}
-
-/**
- * 音量按钮 + 竖条浮层。
- *
- * 开合：hover 展开、移出收起——但滑条 `setPointerCapture` 会诱发本层**伪
- * mouseleave**（点击/拖动音量的一瞬浮层被收走，想从 100 连点到 30 必须
- * 反复重开）。对策：浮层内任何 pointerdown 置 hold，mouseleave 见 hold
- * 不收；window pointerup 清 hold 后按指针落点裁决（还在按钮/浮层上就
- * 保持，出去了才收）。
- */
-function VolumePopup({
-  volume,
-  muted,
-  onToggleMute,
-  onSetVolume,
-}: {
-  volume: number;
-  muted: boolean;
-  onToggleMute: () => void;
-  onSetVolume: (v: number) => void;
-}) {
-  const volumeOpen = usePlayerStore((s) => s.volumeOpen);
-  const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const holdRef = useRef(false);
-
-  useEffect(() => {
-    const onUp = (e: PointerEvent) => {
-      if (!holdRef.current) return;
-      holdRef.current = false;
-      const { clientX: x, clientY: y } = e;
-      // capture 释放要等事件派发完：推一拍再查落点，elementFromPoint 才准
-      setTimeout(() => {
-        const hit = document.elementFromPoint(x, y);
-        const inside = hit != null && wrapRef.current?.contains(hit);
-        if (!inside) setVolumeOpen(false);
-      }, 0);
-    };
-    window.addEventListener('pointerup', onUp);
-    return () => window.removeEventListener('pointerup', onUp);
-  }, [setVolumeOpen]);
-
-  return (
-    <div
-      ref={wrapRef}
-      className="relative flex items-center"
-      onMouseEnter={() => setVolumeOpen(true)}
-      onMouseLeave={() => {
-        if (holdRef.current) return;
-        setVolumeOpen(false);
-      }}
-    >
-      <IconButton label={t('player.mute')} onClick={onToggleMute}>
-        {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-      </IconButton>
-      {volumeOpen && (
-        // 浮层必须与按钮**几何贴合**（无 margin 间隙）：鼠标从按钮移向
-        // 浮层的路径一旦离开 wrapper 的后代区域，mouseleave 就会把
-        // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
-        // 视觉留白放进浮层自己的 padding 里。
-        <div
-          className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm"
-          onPointerDownCapture={() => {
-            holdRef.current = true;
-          }}
-        >
-          <div className="mb-1 text-center font-mono text-[10px] text-white/90">
-            {Math.round((muted ? 0 : volume) * 100)}
-          </div>
-          <VerticalSlider
-            value={muted ? 0 : volume}
-            onChange={onSetVolume}
-            label={t('player.volume')}
-          />
-        </div>
-      )}
     </div>
   );
 }

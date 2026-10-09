@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { DanmakuLayer } from './danmaku-layer';
-import { PlayerControls } from './player-controls';
+import { PlayerControls } from './controls/player-controls';
 import { MiniScreenControls } from './mini-screen-controls';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';

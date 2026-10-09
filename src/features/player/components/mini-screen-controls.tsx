@@ -15,7 +15,7 @@ import { formatDuration } from '@/utils/format';
 import { readPlaybackRate, writeMuted, writePlaybackRate } from '@/utils/playback-prefs';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { ScrubBar } from './player-controls';
+import { ScrubBar } from './controls/scrub-bar';
 
 /** 小屏里点一下倍速标签循环的档位（常用档，完整菜单回大屏）。 */
 const MINI_RATES = [1, 1.5, 2, 3];
