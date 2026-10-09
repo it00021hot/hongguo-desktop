@@ -1,7 +1,17 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, Check, Flame, Heart, Hourglass, Loader2, Play, Star } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bell,
+  Check,
+  Flame,
+  Heart,
+  Hourglass,
+  Loader2,
+  Play,
+  Star,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +27,7 @@ import {
   useReservations,
   useReserveSeries,
   useResolveSeries,
+  useSendSeriesReview,
   useSeriesCollect,
   useSeriesComments,
   useSeriesEpisodes,
@@ -425,6 +436,9 @@ export function SeriesDetailPage({
             </TabsContent>
 
             <TabsContent value="comments">
+              {/* 发评论：登录才能发（后端拒绝匿名）；回车或点发布提交，
+                  成功后失效剧评缓存，新评论重取首页自然置顶 */}
+              <ReviewComposer seriesId={seriesId} />
               {comments.length === 0 ? (
                 <p className="text-muted-foreground py-10 text-center text-sm">
                   {t('detail.commentsEmpty')}
@@ -580,6 +594,47 @@ function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string)
 }
 
 /** 未上线剧集的预约按钮（项目标准 outline 按钮，与收藏/点赞同一语言）。 */
+/** 剧评输入框（剧评 tab 顶部；回车/发布提交，成功后缓存失效重取置顶）。
+ *  登录门槛走后端拒绝 + toast 指路（与互动按钮同一口径）。 */
+function ReviewComposer({ seriesId }: { seriesId: string }) {
+  const send = useSendSeriesReview(seriesId);
+  const [text, setText] = useState('');
+  const submit = () => {
+    const content = text.trim();
+    if (!content || send.isPending) return;
+    send.mutate(content, {
+      onSuccess: () => {
+        toast.success(t('detail.commentSent'));
+        setText('');
+      },
+      onError: (e) => toast.error(String(e)),
+    });
+  };
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit();
+        }}
+        placeholder={t('detail.commentPlaceholder')}
+        maxLength={500}
+        className="bg-muted/50 focus-visible:ring-ring h-9 min-w-0 flex-1 rounded-full border px-4 text-sm outline-none focus-visible:ring-2"
+      />
+      <Button
+        size="sm"
+        className="shrink-0 gap-1"
+        disabled={!text.trim() || send.isPending}
+        onClick={submit}
+      >
+        {send.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+        {t('detail.commentSend')}
+      </Button>
+    </div>
+  );
+}
+
 function ReserveButton({ seriesId }: { seriesId: string }) {
   const reserve = useReserveSeries();
   // 初始态对号预约列表（两个 tab 都查：预约态跟剧走；mutation 成功会

@@ -193,6 +193,9 @@ export const danmaku = {
       { seriesId, cursor: cursor || undefined },
       seriesReviewPageSchema,
     ),
+  /** 发剧评（整剧维度 comment/add；需登录态）。返回新评论 id。 */
+  seriesReviewSend: (seriesId: string, text: string) =>
+    call<string>('series_review_send', { seriesId, text }),
 };
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）

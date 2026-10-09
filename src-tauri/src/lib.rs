@@ -143,6 +143,7 @@ pub fn run() {
             commands::danmaku_cmd::danmaku_list,
             commands::danmaku_cmd::comment_list,
             commands::danmaku_cmd::series_comment_list,
+            commands::danmaku_cmd::series_review_send,
             // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,

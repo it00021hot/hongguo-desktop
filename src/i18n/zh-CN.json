@@ -568,6 +568,9 @@
     "ratingCount": "{count}人评分",
     "scoreUnit": "分",
     "heatValue": "红果热度值{count}",
-    "playsCount": "{count}次播放"
+    "playsCount": "{count}次播放",
+    "commentPlaceholder": "写下你的剧评…",
+    "commentSend": "发布",
+    "commentSent": "剧评已发布"
   }
 }

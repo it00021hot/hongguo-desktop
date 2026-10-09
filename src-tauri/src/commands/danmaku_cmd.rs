@@ -5,9 +5,9 @@ use tauri::State;
 use crate::app_state::AppState;
 use crate::domain::api::danmaku::{
     CommentPage, Danmaku, SeriesReviewPage, fetch_comments_page, fetch_danmaku_all,
-    fetch_series_comments_page,
+    fetch_series_comments_page, send_series_review,
 };
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// 拉一集的全部弹幕（后端按 30 秒窗口循环到 has_more=false）。
 ///
@@ -90,6 +90,28 @@ pub async fn series_comment_list(
     let env = state.api_env();
     let cursor = cursor.unwrap_or_default();
     fetch_series_comments_page(&series_id, &cursor, &env).await
+}
+
+/// 发剧评（详情页「剧评」评论框；整剧维度，与 series_comment_list 同组）。
+/// 需登录态，匿名会被服务端拒绝（错误原样上抛给 toast）。
+#[tauri::command]
+pub async fn series_review_send(
+    state: State<'_, AppState>,
+    series_id: String,
+    text: String,
+) -> AppResult<String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(AppError::InvalidArgs("评论内容不能为空".into()));
+    }
+    if text.chars().count() > 500 {
+        return Err(AppError::InvalidArgs("评论最长 500 字".into()));
+    }
+    if state.settings().account.is_none() {
+        return Err(AppError::Auth("评论需要先登录".into()));
+    }
+    let env = state.api_env();
+    send_series_review(&series_id, &text, &env).await
 }
 
 #[cfg(test)]

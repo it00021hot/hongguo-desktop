@@ -739,6 +739,20 @@ export function useSeriesComments(seriesId: string) {
   });
 }
 
+/**
+ * 发剧评（详情页「剧评」评论框）。
+ *
+ * 成功后失效剧评缓存：第一页重取，新评论按时间排序自然置顶。
+ */
+export function useSendSeriesReview(seriesId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => danmakuCmd.seriesReviewSend(seriesId, text),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) }),
+  });
+}
+
 /** 预取一部剧的分集档案（本地缺失会回落解析并落库）——沉浸流切下一部剧时
  * resolve 链路提前走完，切换只剩取流时间。 */
 export function usePrefetchSeriesEpisodes() {

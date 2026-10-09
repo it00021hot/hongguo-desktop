@@ -24,14 +24,15 @@ use crate::error::{AppError, AppResult};
 
 const ARTICLE_DO_ACTION_PATH: &str = "/novel/articleapi/do_action/v1/";
 const COMMENT_DO_ACTION_PATH: &str = "/novel/commentapi/comment/do_action/v1/";
-const COMMENT_ADD_PATH: &str = "/novel/commentapi/comment/add/v1/";
+pub(super) const COMMENT_ADD_PATH: &str = "/novel/commentapi/comment/add/v1/";
 const REPLY_ADD_PATH: &str = "/novel/commentapi/reply/add/v1/";
 const BOOKSHELF_UPDATE_PATH: &str = "/reading/bookapi/bookshelf/video/update/v";
 const BOOKSHELF_LIST_PATH: &str = "/reading/bookapi/bookshelf/video/list/v";
 const UGC_MGET_PATH: &str = "/reading/ugc/action/mget/v";
 
 /// hgplayer 埋点上下文（抓包原样；服务端不校验，但对齐着带）。
-fn shark_param() -> Value {
+/// 剧评发送（danmaku.rs send_series_review）复用同一素形态。
+pub(crate) fn shark_param() -> Value {
     serde_json::json!({
         "enter_from": "MainFragmentActivity",
         "page_list": "MainFragmentActivity",

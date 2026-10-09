@@ -568,6 +568,9 @@
     "ratingCount": "{count} ratings",
     "scoreUnit": "",
     "heatValue": "Hot score {count}",
-    "playsCount": "{count} plays"
+    "playsCount": "{count} plays",
+    "commentPlaceholder": "Write a review…",
+    "commentSend": "Post",
+    "commentSent": "Review posted"
   }
 }

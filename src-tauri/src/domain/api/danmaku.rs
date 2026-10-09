@@ -361,6 +361,55 @@ pub async fn fetch_series_comments_page(
     })
 }
 
+/// 发剧评（详情页「剧评」tab 的评论框）。
+///
+/// 端点同单集评论（comment/add），但组维度照剧评拉取形态换：group_id=
+/// **series_id**、group_type=1、comment_source=1、comment_type=2、
+/// server_channel=34（与 [`series_comments_payload`] 同一维度，2026-10-07
+/// 抓包字段）；business_param 照评论形态（data_type=4）全量字段。
+/// 返回服务端分配的 comment_id。
+pub async fn send_series_review(series_id: &str, text: &str, env: &ApiEnv) -> AppResult<String> {
+    let payload = serde_json::json!({
+        "aid": 8662,
+        "business_param": {
+            "book_id": series_id,
+            "has_aigc_content": false,
+            "ignore_urge_rule": false,
+            "log_extra": {},
+            "offset": 0,
+            "preset_text_id": "",
+            "shark_param": super::interact::shark_param(),
+            "text_feature": {},
+        },
+        "comment_source": 1,
+        "comment_type": 2,
+        "commit_source": 9,
+        "data_type": 4,
+        "group_id": series_id,
+        "group_type": 1,
+        "server_channel": 34,
+        "text": text,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造剧评请求失败: {e}")))?;
+    let bytes = super::client::api_call_reading(
+        LQ_API_ORIGIN,
+        super::interact::COMMENT_ADD_PATH,
+        Some(raw),
+        &[],
+        env,
+    )
+    .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析剧评响应失败: {e}")))?;
+    check_comment_code(&value)?;
+    Ok(value
+        .pointer("/data/comment_info/comment_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 fn check_comment_code(v: &Value) -> AppResult<()> {
     if v.get("code").and_then(Value::as_i64) != Some(0) {
         let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
