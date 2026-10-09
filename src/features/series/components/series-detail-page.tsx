@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, Flame, Heart, Hourglass, Play, Star } from 'lucide-react';
+import { ArrowLeft, Bell, Check, Flame, Heart, Hourglass, Loader2, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -320,9 +320,7 @@ export function SeriesDetailPage({
                       <Hourglass className="size-4" aria-hidden />
                       {t('player.comingSoon')}
                     </span>
-                    <div className="w-32">
-                      <ReserveButton seriesId={seriesId} />
-                    </div>
+                    <ReserveButton seriesId={seriesId} />
                   </>
                 ) : (
                   <>
@@ -581,7 +579,7 @@ function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string)
   );
 }
 
-/** 未上线剧集的预约按钮（第三方同款粉胶囊；已预约变描边，再点取消）。 */
+/** 未上线剧集的预约按钮（项目标准 outline 按钮，与收藏/点赞同一语言）。 */
 function ReserveButton({ seriesId }: { seriesId: string }) {
   const reserve = useReserveSeries();
   // 初始态对号预约列表（两个 tab 都查：预约态跟剧走；mutation 成功会
@@ -592,32 +590,33 @@ function ReserveButton({ seriesId }: { seriesId: string }) {
     (offlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false) ||
     (onlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false);
   return (
-    <button
-      type="button"
+    <Button
+      size="sm"
+      variant="outline"
+      className="gap-1"
+      disabled={reserve.isPending}
       onClick={(e) => {
         e.stopPropagation(); // 别触发整卡跳详情
         const next = !reserved;
         reserve.mutate(
           { seriesId, reserve: next },
           {
-            onSuccess: () => {
-              toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved'));
-            },
+            onSuccess: () =>
+              toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved')),
             onError: (err) => toast.error(String(err)),
           },
         );
       }}
-      disabled={reserve.isPending}
-      className={cn(
-        'mt-1.5 flex w-full cursor-pointer items-center justify-center gap-1 rounded-full py-1 text-xs font-medium transition-colors',
-        reserved
-          ? 'border border-red-400/60 text-red-400'
-          : 'bg-red-500 text-white hover:bg-red-500/90',
-      )}
     >
-      {!reserved && <Bell className="size-3" aria-hidden />}
+      {reserve.isPending ? (
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+      ) : reserved ? (
+        <Check className="size-4" aria-hidden />
+      ) : (
+        <Bell className="size-4" aria-hidden />
+      )}
       {t(reserved ? 'player.reserved' : 'player.reserve')}
-    </button>
+    </Button>
   );
 }
 
