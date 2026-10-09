@@ -103,6 +103,13 @@ pub struct RankItem {
     /// 题材标签（category_schema 二次解析）
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 未上线（分集数为 0）。hgplayer 同款状态分支：未上线行显示预约
+    /// 按钮、已上线行显示播放按钮——按剧状态分，不看榜单 id
+    #[serde(default)]
+    pub upcoming: bool,
+    /// 当前账号已预约（榜单条目自带 online_subscribed；匿名恒 false）
+    #[serde(default)]
+    pub reserved: bool,
 }
 
 /// 排行榜筛选面板的一个选项（id 为空 = 「总榜」，清除筛选）。
@@ -1252,6 +1259,13 @@ fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>> {
             sub_title: str_field(raw, "sub_title"),
             score: num_field(raw, "score"),
             play_cnt: int_field(raw, "play_cnt"),
+            // 未上线判定：预约榜条目分集数为 0（已上线剧恒 >0；2026-10-09
+            // 抓包预约榜条目 episode_cnt=0/play_cnt=0，已上线条目 132 集）
+            upcoming: int_field(raw, "episode_cnt") == 0,
+            reserved: raw
+                .get("online_subscribed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             episode_cnt: int_field(raw, "episode_cnt").max(0) as u32,
             rec_text,
             secondary_infos,

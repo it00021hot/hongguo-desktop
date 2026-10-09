@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
+import { Bell, Check, ChevronDown, Flame, Loader2, SlidersHorizontal, Star, Tv, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -7,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
-import { isRenderableCover, useRank, useWebCover } from '@/lib/queries';
+import { isRenderableCover, useRank, useReserveSeries, useWebCover } from '@/lib/queries';
 import { usePlaySeries } from '@/lib/use-play-series';
 import { t } from '@/i18n';
 import type { RankItem, RankSubList, RankTab } from '@/lib/schema';
@@ -90,7 +92,16 @@ export function RankPage() {
   };
 
   const playSeries = usePlaySeries();
-  const handleSelect = (item: RankItem) => playSeries(item.seriesId);
+  const navigate = useNavigate();
+  // 未上线剧（预约榜）没有可播分集，点击进详情看档案/预约（hgplayer 同款）；
+  // 已上线照旧直接播
+  const handleSelect = (item: RankItem) => {
+    if (item.upcoming) {
+      void navigate({ to: '/detail', search: { seriesId: item.seriesId } });
+      return;
+    }
+    playSeries(item.seriesId);
+  };
 
   const tabRow = showTabsRow ? tabs : [];
 
@@ -311,6 +322,24 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
   const [brokenFor, setBrokenFor] = useState('');
   const imgBroken = brokenFor !== '' && brokenFor === cover;
   const showImg = cover !== '' && !imgBroken;
+  // 预约态本地乐观翻转（详情页 ReserveButton 同款；榜单条目自带
+  // online_subscribed 初始值，跨客户端操作过也能显示）
+  const reserve = useReserveSeries();
+  const [reserved, setReserved] = useState(item.reserved);
+
+  const onToggleReserve = () => {
+    const next = !reserved;
+    reserve.mutate(
+      { seriesId: item.seriesId, reserve: next },
+      {
+        onSuccess: () => {
+          setReserved(next);
+          toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved'));
+        },
+        onError: (err) => toast.error(String(err)),
+      },
+    );
+  };
 
   const rankNo = item.rank > 0 ? item.rank : undefined;
   // 官方条目双信息：🔥主热词（recText，如 "997万推荐"）+ 次信息（"4945万热度"）
@@ -392,6 +421,33 @@ function RankRow({ item, onSelect }: { item: RankItem; onSelect: (item: RankItem
         <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
           {extra.join(' ')}
         </span>
+      )}
+      {/* 行尾状态按钮（按剧状态分，不看榜单：hgplayer 同款）——未上线 =
+          预约/已预约胶囊（详情页同款粉胶囊样式），已上线 = 无（整行即播） */}
+      {item.upcoming && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation(); // 别触发整行跳详情
+            onToggleReserve();
+          }}
+          disabled={reserve.isPending}
+          className={cn(
+            'flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full px-3.5 text-xs font-medium transition-colors',
+            reserved
+              ? 'border border-red-400/60 text-red-400 hover:bg-red-400/10'
+              : 'bg-red-500 text-white hover:bg-red-500/90',
+          )}
+        >
+          {reserve.isPending ? (
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+          ) : reserved ? (
+            <Check className="size-3" aria-hidden />
+          ) : (
+            <Bell className="size-3" aria-hidden />
+          )}
+          {t(reserved ? 'player.reserved' : 'player.reserve')}
+        </button>
       )}
     </article>
   );

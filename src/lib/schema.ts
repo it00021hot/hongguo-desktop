@@ -557,6 +557,10 @@ export const rankItemSchema = z.object({
   secondaryInfos: z.array(z.string()),
   description: z.string(),
   tags: z.array(z.string()),
+  /** 未上线（分集数 0）：行内显示预约按钮、点击进详情而非播放 */
+  upcoming: z.boolean(),
+  /** 当前账号已预约（榜单条目 online_subscribed 下发） */
+  reserved: z.boolean(),
 });
 export type RankItem = z.infer<typeof rankItemSchema>;
 
