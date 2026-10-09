@@ -11,6 +11,7 @@ import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
 import {
   usePlay,
+  useRelatedSeries,
   useSavePosition,
   useCompatPlayback,
   useDanmaku,
@@ -390,21 +391,77 @@ export function PlayerView({
     compatStarted.current = false;
   }, [episodeKey]);
 
+  // ---- 剧终接力（hgplayer series-end 同款）----
+  // 本季最后一集播完（或连播中滚/点过末集）：优先自动接**下一季**第 1 集
+  // ——「相关作品·系列」（官方 plan 接口）里当前剧的下一条，即 hgplayer
+  // NextSeason 的数据面；没有下一季时：信息流上下文跟随宿主刷下一条推荐
+  // （hgplayer K() 的 X(1) 同款），纯播放页回落「猜你喜欢」第一条。
+  // 都落空才提示已是最后一集。起播时就拉好相关列表，剧终时通常已就绪。
+  const { data: related } = useRelatedSeries(seriesId ?? '');
+  /** 接力在途标记：setTarget 生效前后 ended 可能连发，防双跳 */
+  const seriesEndBusy = useRef(false);
+  // 接力完成后 seriesId 变化，重开闸门（信息流里 PlayerView 是复用的，
+  // 不随切剧重挂载，ref 不会自己归零）
+  useEffect(() => {
+    seriesEndBusy.current = false;
+  }, [seriesId]);
+
+  const advanceAfterSeriesEnd = useCallback(() => {
+    if (!seriesId || !vidIndex || seriesEndBusy.current) return;
+    seriesEndBusy.current = true;
+    const works = related?.works ?? [];
+    const idx = works.findIndex((w) => w.seriesId === seriesId);
+    const nextSeason = idx >= 0 ? works[idx + 1] : undefined;
+    if (nextSeason) {
+      // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集。信息流
+      // 上下文顺势进纯播放页（第三方 push play 路由同款）——信息流宿主的
+      // 游标/角标/滚轮语义都是按流条目算的，带进下一季只会错位
+      toast.success(tf('player.playNextSeason', { title: nextSeason.title }));
+      setSlideDir(1);
+      setTarget(nextSeason.seriesId, 1);
+      if (onWheelStep) void navigate({ to: '/player' });
+      return;
+    }
+    if (onWheelStep) {
+      // 信息流没有下一季：跟随宿主刷下一条推荐（hgplayer X(1) 同款；
+      // 已到底时宿主原地驻留）。未接管成功，闸门保持开
+      setSlideDir(1);
+      onWheelStep(1);
+      seriesEndBusy.current = false;
+      return;
+    }
+    const guess = related?.guess ?? [];
+    if (guess.length > 0) {
+      toast.info(tf('player.autoPlayRecommend', { title: guess[0]?.title ?? '' }));
+      setSlideDir(1);
+      setTarget(guess[0]!.seriesId, 1);
+      return;
+    }
+    seriesEndBusy.current = false;
+    toast.info(tf('player.lastEpisode', { index: currentSeries?.episodes.length ?? vidIndex }));
+  }, [seriesId, vidIndex, related, setTarget, onWheelStep, navigate, currentSeries]);
+
   const stepEpisode = useCallback(
     (delta: number) => {
       if (!seriesId || !vidIndex) return;
       const next = vidIndex + delta;
       if (next < 1) return;
-      // 连播模式下滚到尾部要有交代，静默不动像坏了
+      // 连播模式下滚到尾部要有交代，静默不动像坏了。墙上的处置走剧终接力
+      // （hgplayer Ns()→hc() series-end 同款：滚/点过末集也算剧终）；
+      // 下载面板开着不接力（切剧会把面板连同勾选一起吃掉），退回提示。
       const total = currentSeries?.episodes.length ?? 0;
       if (total > 0 && next > total) {
-        toast.info(tf('player.lastEpisode', { index: total }));
+        if (downloading) {
+          toast.info(tf('player.lastEpisode', { index: total }));
+          return;
+        }
+        advanceAfterSeriesEnd();
         return;
       }
       setSlideDir(delta > 0 ? 1 : -1);
       setTarget(seriesId, next);
     },
-    [seriesId, vidIndex, currentSeries, setTarget],
+    [seriesId, vidIndex, currentSeries, downloading, setTarget, advanceAfterSeriesEnd],
   );
 
   const miniScreen = useUiStore((s) => s.miniScreen);
@@ -837,7 +894,12 @@ export function PlayerView({
     }
     // 下载面板开着就连播：切集会让 PlayerView 带着 key 整体重挂载，
     // 面板连同勾选一起消失，用户刚选完的集就没了。
-    if (autoNext && !downloading) stepEpisode(1);
+    // 末集播完不是「没有下一集」，是剧终：走剧终接力（下一季 → 推荐）
+    if (autoNext && !downloading) {
+      const total = currentSeries?.episodes.length ?? 0;
+      if (total > 0 && vidIndex >= total) advanceAfterSeriesEnd();
+      else stepEpisode(1);
+    }
   };
 
   const handleVideoError = () => {
@@ -895,7 +957,12 @@ export function PlayerView({
           onPointerDown={wakeChrome}
           // 「移出隐藏」立即收起，不等倒计时
           onMouseLeave={hideChrome}
-          className="relative min-h-0 flex-1 overflow-hidden bg-black"
+          className={cn(
+            'relative min-h-0 flex-1 overflow-hidden bg-black',
+            // 悬浮层收起后光标跟着藏（B站同款）：控制栏不挡内容，光标也不许挡。
+            // 动一下鼠标 mousemove 先唤醒悬浮层，光标随之回来
+            !chromeShown && 'cursor-none',
+          )}
         >
           {/* 小屏的拖拽条：顶栏在小屏不渲染（第三方小屏是纯播放器），
               窗口拖动职责移到这条 24px 顶带。stopPropagation：拖拽残留

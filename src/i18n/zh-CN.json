@@ -172,6 +172,8 @@
     "totalEpisodes": "全{count}集",
     "pickerBingeHint": "选定集数即选中本剧：单击画面也可选中，滚轮/↑↓ 切集，Esc 退出",
     "lastEpisode": "已经是最后一集（第{index}集）了",
+    "playNextSeason": "即将播放下一季：{title}",
+    "autoPlayRecommend": "没有下一季，自动播放推荐：{title}",
     "download": "下载",
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",

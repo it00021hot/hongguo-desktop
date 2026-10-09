@@ -172,6 +172,8 @@
     "totalEpisodes": "{count} episodes",
     "pickerBingeHint": "Picking an episode selects this series: click the video to select too; scroll/↑↓ switch episodes; Esc exits",
     "lastEpisode": "Already at the last episode (#{index})",
+    "playNextSeason": "Up next season: {title}",
+    "autoPlayRecommend": "No next season — playing recommended: {title}",
     "download": "Download",
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
