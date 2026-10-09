@@ -275,13 +275,18 @@ export function PlayerControls({
     video.addEventListener('ratechange', onRate);
     document.addEventListener('fullscreenchange', onFull);
 
-    // 元素可能在挂载后才拿到 src 变化，进来先同步一次
+    // 元素可能在挂载后才拿到 src 变化，进来先同步一次。小屏切回大屏时
+    // 控件是对**正在播的流**挂载的（video 不随大小屏切换卸载），当前
+    // 时间不补同步的话进度条会先闪一拍 0:00
     onMeta();
+    onTime();
     onVolume();
     onRate();
-    // 只在元素真的处于暂停时置位：新元素还没起播，`paused` 本来就是 true，
-    // 无脑调 onPauseEvt 会把「正在播」也刷成暂停。
+    // 播放态双向同步：新元素还没起播时 `paused` 本来就是 true，无脑置位
+    // 会把「正在播」刷成暂停；反过来小屏切回大屏时元素**正在播**，`play`
+    // 事件不会再来了，不推一把按钮就永远停在暂停态（视频明明在走）
     if (video.paused) onPauseEvt();
+    else onPlay();
 
     return () => {
       video.removeEventListener('timeupdate', onTime);
