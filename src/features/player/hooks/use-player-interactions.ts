@@ -136,7 +136,11 @@ export function usePlayerInteractions(params: {
         case 'ArrowRight':
           e.preventDefault();
           wakeChrome();
-          video.currentTime = Math.min(video.duration, video.currentTime + 5);
+          // metadata 未加载时 duration 是 NaN，WebIDL 对 currentTime 赋
+          // NaN 会抛 TypeError——没有时长就先不钳制右边界
+          video.currentTime = Number.isFinite(video.duration)
+            ? Math.min(video.duration, video.currentTime + 5)
+            : video.currentTime + 5;
           break;
         case 'ArrowUp':
         case 'ArrowDown': {
