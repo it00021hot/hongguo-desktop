@@ -142,9 +142,7 @@ export function usePlaybackSource(params: {
     // 这一集的位置（resumeAt=0）时，用提示里的集内位置兜底。消费即清。
     const hint = resumeHint;
     const hintMs =
-      hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex
-        ? hint.positionMs / 1000
-        : 0;
+      hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex ? hint.positionMs / 1000 : 0;
 
     play(
       { seriesId, vidIndex, definition },

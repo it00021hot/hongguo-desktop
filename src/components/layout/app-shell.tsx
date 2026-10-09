@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
 import { useUiStore } from '@/stores/ui';
-import { app as appApi } from '@/service/commands';
+import { usePinWindow } from '@/hooks/use-pin-window';
 import { isMac } from '@/utils/platform';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
@@ -42,16 +42,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 藏掉，整个窗口只剩播放器（第三方小屏连标题栏都没有，窗口按钮由
   // 紧凑控制条承担）；拖拽由播放页的顶部拖拽条负责。
   const miniScreen = useUiStore((s) => s.miniScreen);
-  const pinned = useUiStore((s) => s.pinned);
-  const setPinned = useUiStore((s) => s.setPinned);
-
-  const togglePinned = useCallback(() => {
-    const next = !pinned;
-    void appApi
-      .setAlwaysOnTop(next)
-      .then(() => setPinned(next))
-      .catch(() => undefined);
-  }, [pinned, setPinned]);
+  // 置顶开关与播放器（大屏顶栏/小屏紧凑条两个入口）共用同一份实现
+  const { pinned, togglePinned } = usePinWindow();
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden">

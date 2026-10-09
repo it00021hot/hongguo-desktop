@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, MonitorPlay } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,6 +9,7 @@ import { PlayerControls } from './controls/player-controls';
 import { MiniScreenControls } from './mini-screen-controls';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
+import { CoverBackdrop } from './cover-backdrop';
 import {
   useDanmaku,
   useSeriesDetailMeta,
@@ -18,11 +19,9 @@ import {
   useWatchHistory,
 } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
-import { useUiStore } from '@/stores/ui';
 import { readLastTarget } from '@/utils/playback-prefs';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { app as appApi } from '@/service/commands';
 import { useIncognitoMode } from './incognito';
 import { formatBytes } from '@/utils/format';
 import { usePlaybackSource } from '../hooks/use-playback-source';
@@ -31,6 +30,9 @@ import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
 import { useBingeRelay } from '../hooks/use-binge-relay';
 import { usePlayerOverlay } from '../hooks/use-player-overlay';
+import { usePlayerInteractions } from '../hooks/use-player-interactions';
+import { useMiniWindow } from '../hooks/use-mini-window';
+import { usePinWindow } from '@/hooks/use-pin-window';
 
 export function PlayerPage() {
   const navigate = useNavigate();
@@ -220,9 +222,6 @@ export function PlayerView({
     currentSeries,
   });
 
-  const miniScreen = useUiStore((s) => s.miniScreen);
-  const setMiniScreen = useUiStore((s) => s.setMiniScreen);
-
   // ---- 隐身模式（与控制栏的 Eye 按钮共享状态）：鼠标离开窗口即
   //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
   const incognito = useIncognitoMode(videoRef);
@@ -252,55 +251,27 @@ export function PlayerView({
   /** waiting 后时间轴恢复推进（timeupdate）或重新出画即视为不卡 */
   const videoStalled = stalled.key === streamKey && stalled.on;
 
-  // ---- 滚轮切换（hgplayer 同款）：沉浸流=上一部/下一部剧，播放页=切集 ----
-  // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
-  const wheelLock = useRef(0);
-  const onStageWheel = useCallback(
-    (e: React.WheelEvent) => {
-      // 浮层（评论面板/选集/弹幕设置/倍速清晰度菜单）里的滚动是它自己在滚，
-      // 不冒泡成「切集」。控制栏与面板用 data-wheel-block 标记；Radix 菜单
-      // portal 到 body，真实 DOM 里不是舞台子孙，必须各自带标记才拦得住。
-      if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
-      // 滚轮也是「用户在场」：切剧/切集时唤醒悬浮层，让新一部的信息亮 3 秒
-      wakeChrome();
-      if (seriesPanelOpen || downloading) return;
-      const now = Date.now();
-      if (now - wheelLock.current < 400 || Math.abs(e.deltaY) < 15) return;
-      wheelLock.current = now;
-      const dir: 1 | -1 = e.deltaY > 0 ? 1 : -1;
-      setSlideDir(dir);
-      // 连播锁定时滚轮语义变为切集，不跟随宿主页换剧
-      if (inBinge) stepEpisode(dir);
-      else if (onWheelStep) onWheelStep(dir);
-      else stepEpisode(dir);
-    },
-    [seriesPanelOpen, downloading, onWheelStep, stepEpisode, wakeChrome, inBinge],
-  );
-
-  // ---- 点击画面：信息流里=选中本剧（进入切集模式）；选中后/播放页=播放/暂停 ----
-  // 第三方同款交互：未选中时单击视频=「选中这部剧」，此后滚轮/↑↓ 切集，
-  // Esc 退出选中回到换剧；选中状态下的单击回归传统的播放/暂停。
-  // 控件/面板/互动栏（data-wheel-block 标记区）里的点击是它们自己的事，
-  // 不冒泡成选中/暂停。
-  const onStageClick = useCallback(
-    (e: React.MouseEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
-      wakeChrome();
-      if (onWheelStep && !inBinge) {
-        setBinge(seriesId);
-        return;
-      }
-      const video = videoRef.current;
-      if (!video) return;
-      if (video.paused) void video.play().catch(() => undefined);
-      else video.pause();
-    },
-    [wakeChrome, onWheelStep, inBinge, setBinge, seriesId],
-  );
+  // ---- 舞台交互三套裁决（滚轮/点击/键盘）抽在 use-player-interactions：
+  //      沉浸流=换剧、选定剧/连播=切集的语义与 400ms 滚轮冷却都在那边
+  const { onStageWheel, onStageClick } = usePlayerInteractions({
+    videoRef,
+    seriesId,
+    setSlideDir,
+    seriesPanelOpen,
+    downloading,
+    inBinge,
+    stepEpisode,
+    onWheelStep,
+    wakeChrome,
+    setBinge,
+    commentPanelOpen,
+    danmakuPanelOpen,
+    volumeOpen,
+  });
 
   // 进度持久化（5s 节流落盘 + 云端上报节拍 + 卸载补写）抽在
-  // use-playback-progress；lastKnownRef/srcKeyRef 两把 ref 是它和取流侧
-  // （起播续点、startCompat 认流）共用的竞态防御，真值仍在这层持有。
+  // use-playback-progress；lastKnownRef/srcKeyRef 两把竞态防御 ref 的
+  // 真值在取流侧持有，这里经参数转入（起播续点、startCompat 认流共用）。
   const { persist } = usePlaybackProgress({
     videoRef,
     seriesId,
@@ -312,142 +283,20 @@ export function PlayerView({
     currentSeries,
   });
 
-  // ---- 小屏播放（对齐 hgplayer ng()/Op()）：同一窗口缩成 480×270 落 ----
-  //      到屏幕右下角，侧栏隐藏、控件换紧凑条——video 元素原地不动，
-  //      播放零中断（不暂停、不落库、不换页）
-
-  const enterMini = useCallback(() => {
-    // 大屏的浮层面板带不进 480×270 的小窗：进小屏前一并收掉
-    setCommentPanelOpen(false);
-    setDanmakuPanelOpen(false);
-    setVolumeOpen(false);
-    setSeriesPanelOpen(false);
-    // 悬停态跟着旧控制栏一起卸载：组件卸载不触发 mouseleave，残留 true 会让
-    // 小屏里鼠标已经离开画面、控制条却常显不收
-    setControlsHovered(false);
-    setMiniScreen(true);
-    void appApi.enterMiniScreen().catch((e: Error) => toast.error(e.message));
-    // 信息流上下文（首页沉浸流内嵌本组件）：小窗里只装播放器——先强落
-    // 一次进度再跳纯播放页，/player 挂载后凭 resumeAt 精准接上
-    if (onWheelStep) {
-      const video = videoRef.current;
-      if (video) persist(video.currentTime, true);
-      void navigate({ to: '/player' });
-    }
-  }, [
-    setMiniScreen,
+  // 小屏进出（enterMini/exitMini/stopMini）抽在 use-mini-window；
+  // 置顶开关抽在 src/hooks/use-pin-window 与 AppShell 顶栏共用——
+  // 大屏顶栏与小屏紧凑条两个入口，切换的是同一个 set_always_on_top。
+  const { miniScreen, enterMini, exitMini, stopMini } = useMiniWindow({
+    videoRef,
+    persist,
+    onWheelStep,
+    setControlsHovered,
     setCommentPanelOpen,
     setDanmakuPanelOpen,
     setVolumeOpen,
     setSeriesPanelOpen,
-    setControlsHovered,
-    onWheelStep,
-    navigate,
-    persist,
-    videoRef,
-  ]);
-
-  /** 退出小屏：恢复窗口几何，留在播放页继续看。 */
-  const exitMini = useCallback(() => {
-    setMiniScreen(false);
-    setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
-    void appApi.exitMiniScreen().catch(() => undefined);
-  }, [setMiniScreen, setControlsHovered]);
-
-  /** 结束播放：退出小屏并回首页（小屏里唯一的「关掉」出口）。 */
-  const stopMini = useCallback(() => {
-    const video = videoRef.current;
-    if (video && !video.paused) {
-      video.pause(); // onPause 里会强制落一次进度
-    }
-    setMiniScreen(false);
-    setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
-    void appApi.exitMiniScreen().catch(() => undefined);
-    void navigate({ to: '/' });
-  }, [navigate, setMiniScreen, setControlsHovered, videoRef]);
-
-  // 置顶（hgplayer De.pinned）：窗口级状态，大小屏共用同一个开关——
-  // 大屏顶栏与小屏紧凑条两个入口，切换的是同一个 set_always_on_top
-  const pinned = useUiStore((s) => s.pinned);
-  const setPinned = useUiStore((s) => s.setPinned);
-  const togglePinned = useCallback(() => {
-    const next = !pinned;
-    void appApi
-      .setAlwaysOnTop(next)
-      .then(() => setPinned(next))
-      .catch(() => undefined);
-  }, [pinned, setPinned]);
-
-  // 键盘快捷键：空格 / ←→ / ↑↓。依赖显式列出，避免每次渲染重绑。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const video = videoRef.current;
-      if (!video) return;
-      // 输入框里打字时不劫持按键：表单控件之外还要算上富文本输入
-      // （弹幕/评论输入是 contentEditable 的 div，←→/空格/↑↓ 是移动
-      // 光标和输入的一部分，不是快进快退/播放暂停/切集）
-      const el = e.target as HTMLElement | null;
-      if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) {
-        return;
-      }
-
-      switch (e.key) {
-        case 'Escape':
-          // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
-          // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
-          if (
-            inBinge &&
-            !seriesPanelOpen &&
-            !commentPanelOpen &&
-            !danmakuPanelOpen &&
-            !volumeOpen
-          ) {
-            setBinge(null);
-          }
-          break;
-        case ' ':
-          e.preventDefault();
-          if (video.paused) void video.play();
-          else video.pause();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          wakeChrome();
-          video.currentTime = Math.max(0, video.currentTime - 5);
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          wakeChrome();
-          video.currentTime = Math.min(video.duration, video.currentTime + 5);
-          break;
-        case 'ArrowUp':
-        case 'ArrowDown': {
-          e.preventDefault();
-          wakeChrome();
-          // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
-          // 从详情/历史等**选定**剧进来 = 切上一集/下一集
-          const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1;
-          setSlideDir(dir);
-          if (inBinge) stepEpisode(dir);
-          else if (onWheelStep) onWheelStep(dir);
-          else stepEpisode(dir);
-          break;
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [
-    stepEpisode,
-    wakeChrome,
-    onWheelStep,
-    inBinge,
-    setBinge,
-    seriesPanelOpen,
-    commentPanelOpen,
-    danmakuPanelOpen,
-    volumeOpen,
-  ]);
+  });
+  const { pinned, togglePinned } = usePinWindow();
 
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
@@ -895,30 +744,5 @@ export function PlayerView({
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * 封面占位图（裂图自愈）。
- *
- * 源图可能是 HEIC（部分 WebView 渲染不了），onError 后整层退场，不留一个
- * 破图标压在画面上。`hidden` 是「视频已出画」：淡出而非卸载，切下一部剧时
- * key 随 src 变化重挂载，broken/透明度状态自然归零。
- */
-function CoverBackdrop({ src, hidden }: { src: string; hidden: boolean }) {
-  const [broken, setBroken] = useState(false);
-  if (broken) return null;
-  return (
-    <img
-      src={src}
-      alt=""
-      aria-hidden
-      onError={() => setBroken(true)}
-      className={cn(
-        'pointer-events-none absolute inset-0 z-[5] size-full object-cover object-top brightness-[0.55]',
-        'transition-opacity duration-500',
-        hidden ? 'opacity-0' : 'opacity-100',
-      )}
-    />
   );
 }
