@@ -272,14 +272,42 @@ mod tests {
 
     #[test]
     fn open_failure_reports_through_init_channel() {
-        // 用「普通文件下的子路径」构造必然失败：任何平台 open 都得到 ENOTDIR。
-        // （原来用 Windows 保留字符做路径，在 macOS 上完全合法——测试假失败
-        // 之外还会在工作目录里留下一个真库文件。）
+        // 用「普通文件下的子路径」构造必然失败：建目录与 open 都得到
+        // ENOTDIR/NOTFOUND 族错误。（原来用 Windows 保留字符做路径，在
+        // macOS 上完全合法——测试假失败之外还会在工作目录里留下一个真库文件。）
+        // 除报错本身外还钉死分类：这是环境问题不是损坏，必须走 Io 而不是
+        // StoreCorrupt——「数据损坏」会引人去删库。
         let file = std::env::temp_dir().join(format!("hg-not-a-dir-{}", std::process::id()));
         std::fs::write(&file, b"x").expect("造一个普通文件");
         let bad = file.join("child.db");
         let err = Store::open(bad.to_str().expect("临时路径是 UTF-8"));
-        assert!(err.is_err(), "非目录路径必须报错而不是带病运行");
+        match err {
+            Err(AppError::Io(_)) => {}
+            other => panic!("非目录路径必须报 Io（不是 StoreCorrupt）且不得带病运行: {other:?}"),
+        }
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn open_creates_missing_parent_dirs_for_fresh_install() {
+        // v0.1.0 回归：全新安装时数据目录整条不存在，Turso 的 build() 不建
+        // 父目录，开库报 I/O entity not found 被映射成「数据损坏」直接
+        // exit(1)——窗口未起即退，表现为装完即闪退。开库必须自建目录。
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("时钟正常")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("hg-fresh-install-{}-{nanos}", std::process::id()));
+        let db_path = base.join("data/hongguo.db");
+        {
+            let store = Store::open(&db_path).expect("父目录缺失应自动创建并打开成功");
+            store.save_settings(&Settings::default()).expect("写设置");
+            assert!(
+                store.settings().expect("读设置").is_some(),
+                "建好的库应立即可用"
+            );
+        }
+        assert!(db_path.is_file(), "库文件应已落盘");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

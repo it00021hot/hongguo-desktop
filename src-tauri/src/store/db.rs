@@ -124,12 +124,27 @@ impl Db {
     /// 传入 `":memory:"` 得到内存库，测试用。
     pub async fn open(path: impl AsRef<Path>) -> AppResult<Self> {
         let path = path.as_ref().to_string_lossy().into_owned();
+        // 全新安装时数据目录整条不存在，而 Turso 的 build() 只建文件不建
+        // 父目录，直接报 I/O entity not found——曾被映射成「数据损坏」
+        // 引人删库，v0.1.0 全新装机因此必闪退。这里是所有文件库开库的
+        // 唯一收口，建目录收进来，其余落盘方（缓存/下载/诊断）本就各自
+        // create_dir_all。
+        if path != ":memory:" {
+            if let Some(dir) = Path::new(&path).parent() {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
+            }
+        }
         let db: Database = Builder::new_local(&path).build().await.map_err(|e| {
-            // 锁冲突单列：另一个实例还着库 ≠ 数据损坏，误报「文件损坏」
-            // 会引人去删库
+            // 报错按因分类，别把环境问题一律报成「数据损坏」引人删库。
+            // 锁冲突单列（另一个实例还着库）；I/O 族（NotFound /
+            // PermissionDenied 等）是文件系统层面打不开，数据本身未必坏；
+            // 剩下的（Corrupt/NotAdb）才是真损坏。
             let text = e.to_string();
             if text.contains("Locking error") || text.contains("locked by another") {
                 AppError::StoreLocked(format!("打开数据库失败: {text}"))
+            } else if matches!(&e, turso::Error::IoError(..)) {
+                AppError::Io(format!("打开数据库失败: {text}"))
             } else {
                 AppError::StoreCorrupt(format!("打开数据库失败: {text}"))
             }
