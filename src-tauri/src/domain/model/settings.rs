@@ -195,7 +195,7 @@ pub struct Settings {
     /// 播完自动下一集
     #[serde(default = "default_true", alias = "auto_next_episode")]
     pub auto_next_episode: bool,
-    /// 主题：auto / light / dark
+    /// 主题：auto / light / dark（默认 dark——黑色是应用的默认观感）
     #[serde(default = "default_theme")]
     pub theme: String,
     /// 登录账号（未登录为 None）
@@ -208,7 +208,7 @@ fn default_true() -> bool {
 }
 
 fn default_theme() -> String {
-    "auto".to_string()
+    "dark".to_string()
 }
 
 impl Default for Settings {

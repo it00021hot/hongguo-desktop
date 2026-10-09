@@ -22,7 +22,8 @@ interface UiState {
 export const useUiStore = create<UiState>()(
   persist(
     (set, get) => ({
-      sidebarCollapsed: false,
+      // 默认折叠：图标窄栏是默认形态（用户展开后持久化记住）
+      sidebarCollapsed: true,
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
       browseFiltersCollapsed: false,
       setBrowseFiltersCollapsed: (collapsed) => set({ browseFiltersCollapsed: collapsed }),
