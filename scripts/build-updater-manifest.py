@@ -34,8 +34,11 @@ def norm(name: str) -> str:
     return name.replace(" ", ".").lower()
 
 
-def asset_api_url(repo: str, asset_id: int) -> str:
-    return f"https://api.github.com/repos/{repo}/releases/assets/{asset_id}"
+def asset_download_url(repo: str, tag: str, name: str) -> str:
+    # 更新器清单必须用**免认证直链**（302 到 S3）。api.github.com 的 assets
+    # 端点匿名有 60 次/小时限流且要求 octet-stream Accept，更新器默认请求
+    # 打过去就是 403 Forbidden（v0.2.0 首发实测翻车）。
+    return f"https://github.com/{repo}/releases/download/{tag}/{name}"
 
 
 def classify_sig(name: str) -> list[str]:
@@ -136,9 +139,12 @@ def main() -> int:
         if companion is None:
             raise SystemExit(f"no updater bundle for signature {name}")
         sig_text = download_sig(repo, int(asset["id"]))
+        companion_name_str = companion.get("name") or companion.get("label") or ""
+        if not companion_name_str:
+            raise SystemExit(f"companion asset for {name} has no name")
         entry = {
             "signature": sig_text,
-            "url": asset_api_url(repo, int(companion["id"])),
+            "url": asset_download_url(repo, tag, companion_name_str),
         }
         for key in keys:
             platforms[key] = entry
