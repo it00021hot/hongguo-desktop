@@ -42,6 +42,8 @@ export function MiniScreenControls({
   pinned,
   onTogglePinned,
   visible,
+  onControlsEnter,
+  onControlsLeave,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   title?: string;
@@ -57,6 +59,9 @@ export function MiniScreenControls({
   pinned: boolean;
   onTogglePinned: () => void;
   visible: boolean;
+  /** 指针悬在控制条本体上：上报外层停掉隐藏倒计时（B站同款，悬在控件上不许收） */
+  onControlsEnter: () => void;
+  onControlsLeave: () => void;
 }) {
   const [paused, setPaused] = useState(true);
   const [current, setCurrent] = useState(0);
@@ -125,6 +130,8 @@ export function MiniScreenControls({
   return (
     <div
       onClick={(e) => e.stopPropagation()}
+      onMouseEnter={onControlsEnter}
+      onMouseLeave={onControlsLeave}
       className={cn(
         'absolute inset-x-0 bottom-0 z-20 flex flex-col gap-1 bg-gradient-to-t from-black/75 to-transparent px-3 pt-6 pb-1.5 text-white',
         'transition-opacity duration-200',

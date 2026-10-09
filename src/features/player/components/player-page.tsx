@@ -567,6 +567,9 @@ export function PlayerView({
     setDanmakuPanelOpen(false);
     setVolumeOpen(false);
     setSeriesPanelOpen(false);
+    // 悬停态跟着旧控制栏一起卸载：组件卸载不触发 mouseleave，残留 true 会让
+    // 小屏里鼠标已经离开画面、控制条却常显不收
+    setControlsHovered(false);
     setMiniScreen(true);
     void appApi.enterMiniScreen().catch((e: Error) => toast.error(e.message));
     // 信息流上下文（首页沉浸流内嵌本组件）：小窗里只装播放器——先强落
@@ -582,6 +585,7 @@ export function PlayerView({
     setDanmakuPanelOpen,
     setVolumeOpen,
     setSeriesPanelOpen,
+    setControlsHovered,
     onWheelStep,
     navigate,
     persist,
@@ -591,6 +595,7 @@ export function PlayerView({
   /** 退出小屏：恢复窗口几何，留在播放页继续看。 */
   const exitMini = useCallback(() => {
     setMiniScreen(false);
+    setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
     void appApi.exitMiniScreen().catch(() => undefined);
   }, [setMiniScreen]);
 
@@ -601,6 +606,7 @@ export function PlayerView({
       video.pause(); // onPause 里会强制落一次进度
     }
     setMiniScreen(false);
+    setControlsHovered(false); // 同 enterMini：悬停态别跨大小屏残留
     void appApi.exitMiniScreen().catch(() => undefined);
     void navigate({ to: '/' });
   }, [navigate, setMiniScreen, videoRef]);
@@ -1107,6 +1113,12 @@ export function PlayerView({
                     pinned={pinned}
                     onTogglePinned={togglePinned}
                     visible={chromeShown}
+                    // B站同款：悬在小屏控制条上不许收（静止 3 秒收起对控件操作是抢走）
+                    onControlsEnter={() => {
+                      setControlsHovered(true);
+                      wakeChrome();
+                    }}
+                    onControlsLeave={() => setControlsHovered(false)}
                   />
                 ) : (
                   <PlayerControls
