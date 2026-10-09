@@ -36,7 +36,12 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
         return Ok((200, headers(bytes.len()), bytes));
     }
 
-    let bytes = convert(&remote)?;
+    let bytes = convert(&remote).map_err(|e| {
+        // 曾几何时这里是静默 404：全机封面挂光日志里一个字都没有。
+        // 失败要留痕——URL 哈希级缓存后只发生一次，噪声可控。
+        log::warn!("[Cover] 封面转码失败: {e} ({remote})");
+        e
+    })?;
     // 先写临时文件再改名：转一半的图不该被缓存住
     let tmp = cache.with_extension("jpg.tmp");
     std::fs::write(&tmp, &bytes).map_err(|e| format!("写封面缓存失败: {e}"))?;
@@ -65,10 +70,11 @@ fn headers(len: usize) -> Vec<(String, String)> {
     ]
 }
 
-/// 下载 HEIC 并转成 JPEG（ffmpeg 直接吃 http 输入，一步到位）。
+/// 下载 HEIC 并转成 JPEG。能力阶梯与兼容合并转码同构：
+/// 平台（Windows WIC；macOS 的 WebKit 原生可解、前端根本不进本代理）→
+/// ffmpeg → 纯 Rust 软解（[`crate::media::heif`]）——没有 ffmpeg 的机器
+/// 封面照常可用，这正是 2026-10-09 全挂事故的修复。
 fn convert(remote: &str) -> Result<Vec<u8>, String> {
-    let ffmpeg = crate::media::ffmpeg::probe::ffmpeg_path()
-        .ok_or_else(|| "未检测到 ffmpeg，无法转码封面".to_string())?;
     let cache = cache_path(remote);
     let parent = cache
         .parent()
@@ -76,30 +82,89 @@ fn convert(remote: &str) -> Result<Vec<u8>, String> {
     std::fs::create_dir_all(parent).map_err(|e| format!("建封面缓存目录失败: {e}"))?;
     let tmp = cache.with_extension("jpg.tmp");
 
-    let out = std::process::Command::new(ffmpeg)
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            // 网络输入 10 秒读超时（微秒）：CDN 抖动不该把 <img> 挂死
-            "-rw_timeout",
-            "10000000",
-            "-i",
-            remote,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-f",
-            "image2",
-        ])
-        .arg(&tmp)
-        .output()
-        .map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("封面转码失败: {}", stderr.trim()));
+    // WIC 和软解都要先拿到字节；ffmpeg 自己拉 URL。只有真的走到某一级
+    // 才下载，下一级复用同一份
+    let mut downloaded: Option<Vec<u8>> = None;
+
+    // 1) 平台级：WIC（HEIF/HEVC 扩展在则走系统解码器；扩展没有会缓存
+    //    「不可用」，本进程内不再尝试，「重新检测」清缓存）
+    #[cfg(target_os = "windows")]
+    if let Some(result) = crate::media::platform::wic::heic_to_jpeg(bytes_of(&mut downloaded, remote)?) {
+        match result {
+            Ok(bytes) => return Ok(bytes),
+            Err(msg) => log::warn!("[Cover] WIC 平台解码失败，落 ffmpeg/软解: {msg}"),
+        }
     }
-    std::fs::read(&tmp).map_err(|e| format!("读取转码产物失败: {e}"))
+
+    // 2) ffmpeg 级：直接吃 http 输入，一步到位
+    if let Some(ffmpeg) = crate::media::ffmpeg::probe::ffmpeg_path() {
+        let out = std::process::Command::new(ffmpeg)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                // 网络输入 10 秒读超时（微秒）：CDN 抖动不该把 <img> 挂死
+                "-rw_timeout",
+                "10000000",
+                "-i",
+                remote,
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-f",
+                "image2",
+            ])
+            .arg(&tmp)
+            .output()
+            .map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
+        if out.status.success() {
+            return std::fs::read(&tmp).map_err(|e| format!("读取转码产物失败: {e}"));
+        }
+        let _ = std::fs::remove_file(&tmp);
+        log::warn!(
+            "[Cover] ffmpeg 转码失败，落纯软解: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    // 3) 纯软解级：HEIF 解析 + rusty_h265 + JPEG，零外部依赖
+    let heic = bytes_of(&mut downloaded, remote)?;
+    crate::media::heif::decode_primary_to_jpeg(heic).map_err(|e| format!("HEIC 软解失败: {e}"))
+}
+
+/// 惰性下载：第一级需要字节的才发请求，之后各级复用。
+fn bytes_of<'a>(slot: &'a mut Option<Vec<u8>>, remote: &str) -> Result<&'a [u8], String> {
+    if slot.is_none() {
+        *slot = Some(http_get(remote)?);
+    }
+    Ok(slot.as_deref().expect("刚填充过"))
+}
+
+/// 同步 GET。worker 线程上没有 runtime：借用 DB 线程同款 current_thread
+/// 内联 runtime 跑一段 async（reqwest 本身是异步 API）。
+fn http_get(remote: &str) -> Result<Vec<u8>, String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("构建下载 runtime 失败: {e}"))?;
+    rt.block_on(async {
+        let resp = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0")
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?
+            .get(remote)
+            .send()
+            .await
+            .map_err(|e| format!("下载封面失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("封面 CDN 返回 {}", resp.status()));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("读取封面响应失败: {e}"))?;
+        Ok(bytes.to_vec())
+    })
 }

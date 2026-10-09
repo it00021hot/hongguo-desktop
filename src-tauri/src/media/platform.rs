@@ -14,6 +14,9 @@
 pub mod mf;
 #[cfg(target_os = "macos")]
 pub mod vt;
+// WIC：Windows 的封面平台级静图解码（HEIF/HEIC 扩展在则走系统解码器）
+#[cfg(target_os = "windows")]
+pub mod wic;
 
 use std::path::Path;
 
@@ -104,7 +107,11 @@ pub fn clear_probe_cache() {
     #[cfg(target_os = "macos")]
     vt::clear_probe_cache();
     #[cfg(target_os = "windows")]
-    mf::clear_probe_cache();
+    {
+        mf::clear_probe_cache();
+        // WIC 的 HEIF 解码器探测缓存一并清（封面平台级，见 platform/wic）
+        wic::clear_probe_cache();
+    }
 }
 
 /// 测试开关：强制按「平台硬编不可用」处理，验证回退链。

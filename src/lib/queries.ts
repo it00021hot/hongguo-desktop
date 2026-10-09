@@ -567,12 +567,15 @@ export function useWebCover(sourceCover: string) {
 export function isRenderableCover(url: string): boolean {
   const path = url.split('?')[0] ?? url;
   const lower = path.toLowerCase();
-  return (
-    lower.endsWith('.webp') ||
-    lower.endsWith('.png') ||
-    lower.endsWith('.jpg') ||
-    lower.endsWith('.jpeg')
-  );
+  if (lower.endsWith('.webp') || lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    return true;
+  }
+  // HEIC：Windows 的 WebView2 没有 HEIF 扩展就解不了，必须走代理；
+  // macOS 的 WKWebView 原生可解（系统能力，VT/ImageIO 一层），直挂原图。
+  if (lower.endsWith('.heic') && navigator.platform.toUpperCase().includes('MAC')) {
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------- 排行榜 / 新剧

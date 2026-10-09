@@ -32,8 +32,8 @@ use crate::error::{AppError, AppResult};
 /// + compressorname(32) + depth(2) + pre_defined(2)
 const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 
-/// Annex-B 起始码。
-const START_CODE: [u8; 4] = [0, 0, 0, 1];
+/// Annex-B 起始码（HEIF 封面软解同样使用）。
+pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 /// 是否是 HEVC 轨：`hev1` / `hvc1`，以及解密后仍带 `encv` 标记的加密轨。
 ///
@@ -84,7 +84,14 @@ pub fn read_parameter_set_nalus(
     // 找 hvcC：它在 stsd 的 sample entry 里
     let sample_entry = find_hvc_c(path, track)?;
     let hvcc = read_box_payload(path, sample_entry.0, sample_entry.1)?;
+    param_nalus_from_hvcc(&hvcc)
+}
 
+/// 解析 hvcC **载荷**（box header 之后的部分）：参数集 NAL 数组 + 长度前缀字节数。
+///
+/// MP4（stsd sample entry）与 HEIF（ipco 属性）里的 hvcC 载荷布局完全一致，
+/// 封面软解（[`crate::media::heif`]）与此共用这一份解析。
+pub fn param_nalus_from_hvcc(hvcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
     // hvcC 固定头 23 字节，其后才是参数集数组
     if hvcc.len() < 23 {
         return Err(AppError::Media("hvcC 长度异常".into()));

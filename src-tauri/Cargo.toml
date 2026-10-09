@@ -99,7 +99,16 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_Ole",
     "Win32_System_Variant",
+    # WIC 静图解码：封面的平台级通路（HEIF/HEVC 扩展在则走系统解码器）
+    "Win32_Graphics_Imaging",
+    # 内存流：HEIC 字节 → IStream → WIC 解码器
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Memory",
 ] }
+
+# 封面纯软解级的 JPEG 编码（media/heif）：纯 Rust、零 unsafe，RGB 直入。
+# 只需要「一帧 → JPEG」这一步，不引 image 全家桶。
+jpeg-encoder = "0.6"
 
 # macOS 原生红绿灯的藏/显（小屏模式）：直接对三颗 NSWindowButton setHidden，
 # 而不是 set_decorations 切 borderless——tao 的 set_decorations 是**整体替换
