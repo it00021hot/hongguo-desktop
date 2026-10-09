@@ -12,7 +12,6 @@ import { CommentPanel } from './comment-panel';
 import {
   usePlay,
   useRelatedSeries,
-  useSavePosition,
   useCompatPlayback,
   useDanmaku,
   useSeriesDetailMeta,
@@ -24,30 +23,24 @@ import {
 import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import {
-  readDanmakuDisplay,
-  readDanmakuEnabled,
   readLastTarget,
   readMuted,
   readPlaybackRate,
   readVolume,
-  writeDanmakuDisplay,
-  writeDanmakuEnabled,
   writeMuted,
   writePlaybackRate,
   writeVolume,
-  type DanmakuDisplaySettings,
 } from '@/utils/playback-prefs';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { useEvent } from '@/service/tauri/events';
-import { app as appApi, watchHistory } from '@/service/commands';
+import { app as appApi } from '@/service/commands';
 import { useIncognitoMode } from './incognito';
 import { EVENTS } from '@/service/tauri/types';
 import { formatBytes } from '@/utils/format';
 import type { CompatProgress, OnlineProgress, VideoDefinition } from '@/service/schema';
-
-/** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
-const SAVE_INTERVAL = 5_000;
+import { usePlaybackProgress } from '../hooks/use-playback-progress';
+import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
 
 export function PlayerPage() {
   const navigate = useNavigate();
@@ -154,9 +147,6 @@ export function PlayerView({
    * 渲染期读到的一定是本次切换的方向（渲染期读 ref 会被 react-hooks 拦）。
    */
   const [slideDir, setSlideDir] = useState<1 | -1>(1);
-  const lastSaved = useRef(0);
-  /** 云端进度上报计数（配合 persist 的 5s 节流折算 ~1 分钟一次） */
-  const cloudCounter = useRef(0);
   const pendingSeek = useRef(0);
   /**
    * 最近一次的播放位置与时长，无论有没有真的落盘。
@@ -167,7 +157,7 @@ export function PlayerView({
    * `key` 记的是这份位置属于哪一集：组件按剧集整体重挂载，但 ref 不会重置，
    * 不带 key 的话新一集会拿着上一集的秒数去续播。
    */
-  const lastKnown = useRef({ key: '', time: 0, duration: 0 });
+  const lastKnownRef = useRef({ key: '', time: 0, duration: 0 });
   /**
    * 现在这条流属于哪一集（episodeKey）。信息流切剧时 play 请求在途、
    * 旧流还在播（timeupdate 一直在来），不带这道闸会把旧画面的秒数
@@ -210,7 +200,7 @@ export function PlayerView({
    * 在线流断供的自动重试（带集指纹，读时校验，换集自动失效）。
    *
    * 渐进流的数据面断了（切剧竞态、网络抖动）会让 <video> 报 MediaError；
-   * 重新 prepare 一次就能拿到新流，续播位置由 lastKnown 接上。每集只自动
+   * 重新 prepare 一次就能拿到新流，续播位置由 lastKnownRef 接上。每集只自动
    * 兜一次——再失败多半不是抖动，亮出重试按钮交给用户。tick 进起播
    * effect 的依赖驱动重新取流；配对的 setSrc(null) 把 <video> 卸载，
    * 重挂载才会真的重新加载（URL 不变时只换 src 属性在 WebView2 上未必
@@ -239,7 +229,6 @@ export function PlayerView({
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
 
   const { mutate: play } = usePlay();
-  const { mutate: savePosition } = useSavePosition();
   const compatPlay = useCompatPlayback();
 
   /** 重新取流接续播放（自动重试与手动重试按钮共用）。 */
@@ -270,23 +259,7 @@ export function PlayerView({
   // 当前集的公开计数（detail 接口下发；右栏 ♥/💬 数字）
   const currentEpisode = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
   const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
-  const [danmakuOn, setDanmakuOn] = useState(() => readDanmakuEnabled());
-  const [danmakuDisplay, setDanmakuDisplay] = useState<DanmakuDisplaySettings>(() =>
-    readDanmakuDisplay(),
-  );
-  const updateDanmakuDisplay = useCallback((patch: Partial<DanmakuDisplaySettings>) => {
-    setDanmakuDisplay((prev) => {
-      const next = { ...prev, ...patch };
-      writeDanmakuDisplay(next);
-      return next;
-    });
-  }, []);
-  const toggleDanmaku = useCallback(() => {
-    setDanmakuOn((on) => {
-      writeDanmakuEnabled(!on);
-      return !on;
-    });
-  }, []);
+  const { danmakuOn, danmakuDisplay, updateDanmakuDisplay, toggleDanmaku } = useDanmakuSettings();
   // 弹幕拉取失败不能静默：画面照常播，但用户该知道弹幕为什么没了
   useEffect(() => {
     if (danmakuQuery.isError) {
@@ -579,42 +552,19 @@ export function PlayerView({
     [wakeChrome, onWheelStep, inBinge, setBinge, seriesId],
   );
 
-  /**
-   * 记录播放位置。
-   *
-   * `force` 绕过节流：暂停、播完、离开页面这三种时刻之后不会再有下一次
-   * timeupdate，被节流挡掉就等于这一段进度永久丢失——「看了 3 秒就切走」
-   * 正好落在这 5 秒窗口里，回来又是 0。
-   */
-  const persist = useCallback(
-    (time: number, force = false) => {
-      // 流不是这一集的（信息流切剧、play 在途旧流还在播）：秒数不能串到新剧头上
-      if (srcKeyRef.current !== episodeKey) return;
-      if (!seriesId || !vidIndex) return;
-      const now = Date.now();
-      if (!force && now - lastSaved.current < SAVE_INTERVAL) return;
-      lastSaved.current = now;
-      // 时长直接从元素读：媒体状态归自绘控件管，这里不再维护第二份，
-      // 免得两处对不上。后端靠它判断「接近片尾就别续播」。
-      const video = videoRef.current;
-      const total = video && Number.isFinite(video.duration) ? video.duration : 0;
-      lastKnown.current = { key: episodeKey, time, duration: total };
-      savePosition({ seriesId, vidIndex, currentTime: time, duration: total });
-      // 云端进度上报（对齐参考端 v1.1.6 抓包 flows-20261009-v116-history.jsonl）：
-      // 起播 5 秒首报（cloudCounter===1，本集第一次 persist 正好在 ~5s），
-      // 之后每 ~60 秒一次（×12）；暂停/切集/卸载走 force。fire-and-forget
-      // （后端匿名/失败都静默）。
-      cloudCounter.current += 1;
-      if (force || cloudCounter.current === 1 || cloudCounter.current % 12 === 0) {
-        if (currentVid) {
-          void watchHistory
-            .reportProgress(seriesId, currentVid, vidIndex, Math.round(time * 1000))
-            .catch(() => {});
-        }
-      }
-    },
-    [seriesId, vidIndex, episodeKey, savePosition, currentVid],
-  );
+  // 进度持久化（5s 节流落盘 + 云端上报节拍 + 卸载补写）抽在
+  // use-playback-progress；lastKnownRef/srcKeyRef 两把 ref 是它和取流侧
+  // （起播续点、startCompat 认流）共用的竞态防御，真值仍在这层持有。
+  const { persist } = usePlaybackProgress({
+    videoRef,
+    seriesId,
+    vidIndex,
+    episodeKey,
+    srcKeyRef,
+    lastKnownRef,
+    currentVid,
+    currentSeries,
+  });
 
   // ---- 小屏播放（对齐 hgplayer ng()/Op()）：同一窗口缩成 480×270 落 ----
   //      到屏幕右下角，侧栏隐藏、控件换紧凑条——video 元素原地不动，
@@ -682,33 +632,6 @@ export function PlayerView({
       .catch(() => undefined);
   }, [pinned, setPinned]);
 
-  // 卸载 / 切集时补写最后一次。
-  //
-  // 只靠 timeupdate 的定时保存会丢掉最后一小段：用户看完直接点侧边栏
-  // 回列表，组件当场卸载，那 5 秒内攒下的位置一次都没落过盘。
-  // 这里读的是 lastKnown 而不是 videoRef —— cleanup 跑的时候 video 元素已经被卸载了。
-  useEffect(() => {
-    // 每集重置云端上报计数：5 秒首报的里程碑按集算，不清零的话
-    // 切集后要等满 60 秒才有第一次上报（参考端切集后 5 秒即报）
-    cloudCounter.current = 0;
-    if (!seriesId || !vidIndex) return;
-    return () => {
-      const { key, time, duration } = lastKnown.current;
-      // 从头就没播过（加载失败、秒退）不写：否则会给从未看过的集
-      // 落一条 0 秒记录，把「继续观看」里凭空多出一张卡。
-      // key 对不上说明这份位置属于别的集，写进去就是串集。
-      if (key !== episodeKey || time <= 0) return;
-      savePosition({ seriesId, vidIndex, currentTime: time, duration });
-      // 切集/退出的最后一次位置也推一份云端（匿名/失败后端静默）
-      const vid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
-      if (vid) {
-        void watchHistory
-          .reportProgress(seriesId, vid, vidIndex, Math.round(time * 1000))
-          .catch(() => {});
-      }
-    };
-  }, [seriesId, vidIndex, episodeKey, savePosition, currentSeries]);
-
   // 起播。依赖里带 definition：切清晰度要重新取流，
   // 而 `<video src>` 换 URL 会重置 currentTime，所以先把当前位置存进
   // pendingSeek —— 否则用户从 10 分钟处切到 720p 会被弹回片头。
@@ -719,16 +642,16 @@ export function PlayerView({
     // 只在元素里还是这一集的流时才续点（切清晰度场景）；信息流切剧时
     // 元素里还是上一部剧的画面，读它的 currentTime 就是串剧
     if (video && video.currentTime > 0 && srcKeyRef.current === episodeKey) {
-      lastKnown.current = {
+      lastKnownRef.current = {
         key: episodeKey,
         time: video.currentTime,
-        duration: Number.isFinite(video.duration) ? video.duration : lastKnown.current.duration,
+        duration: Number.isFinite(video.duration) ? video.duration : lastKnownRef.current.duration,
       };
     }
     // 切清晰度时续播位置要接着当前播放点，而不是回到「上次看的进度」——
     // 那会把人从 10 分钟处弹回上次退出点，看着像「切清晰度丢了进度」。
-    // 只认属于本集的那份：换集后 lastKnown 里是上一集的秒数，拿来续播就串集了。
-    const keepPosition = lastKnown.current.key === episodeKey ? lastKnown.current.time : 0;
+    // 只认属于本集的那份：换集后 lastKnownRef 里是上一集的秒数，拿来续播就串集了。
+    const keepPosition = lastKnownRef.current.key === episodeKey ? lastKnownRef.current.time : 0;
 
     // 跨客户端续播提示（信息流从云端历史定的起点）：本地播放档案没有
     // 这一集的位置（resumeAt=0）时，用提示里的集内位置兜底。消费即清。
