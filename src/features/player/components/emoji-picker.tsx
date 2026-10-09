@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Smile } from 'lucide-react';
-import { DANMAKU_EMOJI_LIST } from '@/lib/danmaku-emoji';
-import { t } from '@/i18n';
+import { DANMAKU_EMOJI_LIST } from '@/utils/danmaku-emoji';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /**

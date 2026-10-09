@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SeriesCover } from '@/components/series-cover';
-import { formatCountPrecise, formatDuration, formatPlayCount } from '@/lib/format';
+import { formatCountPrecise, formatDuration, formatPlayCount } from '@/utils/format';
 import {
   useAccount,
   useBookshelf,
@@ -36,8 +36,8 @@ import {
   useVideoDigg,
   useWatchHistory,
 } from '@/service/queries';
-import { usePlayerStore } from '@/lib/stores/player';
-import { t, tf } from '@/i18n';
+import { usePlayerStore } from '@/stores/player';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import type { RelatedItem, Series } from '@/service/schema';
 

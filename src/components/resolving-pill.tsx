@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { t } from '@/i18n';
+import { t } from '@/locales';
 
 /**
  * 底部悬浮的「正在解析剧集」提示，全局多处共用。

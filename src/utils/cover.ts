@@ -1,4 +1,4 @@
-import { isWindows } from '@/lib/platform';
+import { isWindows } from '@/utils/platform';
 
 /**
  * 封面增强工具（无业务依赖的纯函数）。

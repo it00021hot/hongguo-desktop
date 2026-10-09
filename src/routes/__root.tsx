@@ -7,8 +7,8 @@ import { AppShell } from '@/components/layout/app-shell';
 import { UpdateDialog } from '@/features/update/update-dialog';
 import { UpdateProvider } from '@/features/update/update-provider';
 import { useDownloadEvents } from '@/service/queries';
-import { useLocaleStore } from '@/lib/stores/locale';
-import { t } from '@/i18n';
+import { useLocaleStore } from '@/stores/locale';
+import { t } from '@/locales';
 
 /** 小窗播放（label = "mini"）：不进应用壳——侧栏/顶栏/关闭确认都不属于它，
  *  整个窗口就是播放器本体。窗口 label 是静态事实，模块加载时判一次即可。 */

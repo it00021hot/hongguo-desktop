@@ -16,8 +16,8 @@ import {
   useWebCover,
 } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { t, tf } from '@/i18n';
-import { usePlaySeries } from '@/lib/use-play-series';
+import { t, tf } from '@/locales';
+import { usePlaySeries } from '@/hooks/use-play-series';
 import type { CalendarItem, RankItem } from '@/service/schema';
 
 /**

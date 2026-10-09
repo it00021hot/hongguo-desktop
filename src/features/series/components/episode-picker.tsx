@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { firstN, formatRange, lastN, parseRange } from '@/lib/range';
+import { firstN, formatRange, lastN, parseRange } from '@/utils/range';
 import { cn } from '@/lib/utils';
-import { t, tf } from '@/i18n';
+import { t, tf } from '@/locales';
 import type { Episode } from '@/service/schema';
 
 interface Props {

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { parseEmojiSegments } from '@/lib/danmaku-emoji';
-import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
+import { parseEmojiSegments } from '@/utils/danmaku-emoji';
+import type { DanmakuDisplaySettings } from '@/utils/playback-prefs';
 import type { Danmaku } from '@/service/schema';
 
 interface Props {

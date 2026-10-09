@@ -11,9 +11,9 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { formatDuration } from '@/lib/format';
-import { readPlaybackRate, writeMuted, writePlaybackRate } from '@/lib/playback-prefs';
-import { t, tf } from '@/i18n';
+import { formatDuration } from '@/utils/format';
+import { readPlaybackRate, writeMuted, writePlaybackRate } from '@/utils/playback-prefs';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { ScrubBar } from './player-controls';
 

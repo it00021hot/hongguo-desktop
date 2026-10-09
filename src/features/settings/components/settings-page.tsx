@@ -24,8 +24,8 @@ import {
   useTestProxy,
 } from '@/service/queries';
 import { app as appApi, transcode as transcodeApi } from '@/service/commands';
-import { formatBytes } from '@/lib/format';
-import { t, tf } from '@/i18n';
+import { formatBytes } from '@/utils/format';
+import { t, tf } from '@/locales';
 import type { DecodeCapability, Settings } from '@/service/schema';
 import { UpdateCard } from '@/features/update/update-card';
 import { AccountCard } from './account-card';

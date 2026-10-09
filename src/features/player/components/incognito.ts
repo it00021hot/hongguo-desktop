@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { app as appApi } from '@/service/commands';
 import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
-import { readIncognito, writeIncognito } from '@/lib/playback-prefs';
+import { readIncognito, writeIncognito } from '@/utils/playback-prefs';
 
 /**
  * 隐身模式：开启后**鼠标脱离窗口 → 隐藏 + 暂停；鼠标回到窗口区域 →

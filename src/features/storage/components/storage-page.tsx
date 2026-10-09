@@ -16,8 +16,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useStorageActions, useStorageSeries, useStorageUsage } from '@/service/queries';
-import { formatBytes } from '@/lib/format';
-import { t, tf } from '@/i18n';
+import { formatBytes } from '@/utils/format';
+import { t, tf } from '@/locales';
 
 /** 磁盘占用与清理。列表即下载管理里真有文件落在磁盘上的剧。 */
 export function StoragePage() {

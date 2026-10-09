@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { SeriesCover } from '@/components/series-cover';
-import { tf } from '@/i18n';
+import { tf } from '@/locales';
 import type { SeriesCard } from '@/service/schema';
 
 interface Props {

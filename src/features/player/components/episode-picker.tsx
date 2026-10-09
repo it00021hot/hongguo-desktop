@@ -16,8 +16,8 @@ import {
   useReservations,
   useSeriesEpisodes,
 } from '@/service/queries';
-import { usePlayerStore } from '@/lib/stores/player';
-import { t, tf } from '@/i18n';
+import { usePlayerStore } from '@/stores/player';
+import { t, tf } from '@/locales';
 import type { RelatedItem } from '@/service/schema';
 
 interface Props {

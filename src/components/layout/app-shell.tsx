@@ -8,10 +8,10 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
-import { useUiStore } from '@/lib/stores/ui';
+import { useUiStore } from '@/stores/ui';
 import { app as appApi } from '@/service/commands';
-import { isMac } from '@/lib/platform';
-import { t } from '@/i18n';
+import { isMac } from '@/utils/platform';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /**

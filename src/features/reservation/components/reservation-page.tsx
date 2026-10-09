@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
-import { matchListQuery } from '@/lib/list-filter';
+import { matchListQuery } from '@/utils/list-filter';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
@@ -17,8 +17,8 @@ import {
   useWebCover,
 } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { t, tf, locale } from '@/i18n';
-import { usePlaySeries } from '@/lib/use-play-series';
+import { t, tf, locale } from '@/locales';
+import { usePlaySeries } from '@/hooks/use-play-series';
 import type { CalendarItem } from '@/service/schema';
 
 /**

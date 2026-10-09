@@ -14,9 +14,9 @@ import {
   useSeriesSearchApp,
   useWebCover,
 } from '@/service/queries';
-import { usePlaySeries } from '@/lib/use-play-series';
-import { useUiStore } from '@/lib/stores/ui';
-import { t, tf } from '@/i18n';
+import { usePlaySeries } from '@/hooks/use-play-series';
+import { useUiStore } from '@/stores/ui';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import type { BrowseFilters, FeedItem, SeriesCard, SuggestItem } from '@/service/schema';
 

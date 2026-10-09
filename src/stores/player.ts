@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { writeLastTarget } from '@/lib/playback-prefs';
+import { writeLastTarget } from '@/utils/playback-prefs';
 
 interface PlayerState {
   /** 当前播放的剧集 id */

@@ -4,14 +4,14 @@ import { History, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
-import { matchListQuery } from '@/lib/list-filter';
+import { matchListQuery } from '@/utils/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useResolveSeries, useWatchHistory, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { usePlayerStore } from '@/lib/stores/player';
-import { formatDuration } from '@/lib/format';
-import { t, tf } from '@/i18n';
+import { usePlayerStore } from '@/stores/player';
+import { formatDuration } from '@/utils/format';
+import { t, tf } from '@/locales';
 import type { WatchHistoryItem } from '@/service/schema';
 
 /**

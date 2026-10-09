@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { locale, setLocale, type Locale } from '@/i18n';
+import { locale, setLocale, type Locale } from '@/locales';
 
 interface LocaleState {
   locale: Locale;

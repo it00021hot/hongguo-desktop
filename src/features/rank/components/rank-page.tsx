@@ -10,8 +10,8 @@ import { SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { useRank, useReserveSeries, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { usePlaySeries } from '@/lib/use-play-series';
-import { t } from '@/i18n';
+import { usePlaySeries } from '@/hooks/use-play-series';
+import { t } from '@/locales';
 import type { RankItem, RankSubList, RankTab } from '@/service/schema';
 
 /**

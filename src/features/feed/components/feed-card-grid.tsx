@@ -1,8 +1,8 @@
 import { Flame, MessageSquare, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { SeriesCover } from '@/components/series-cover';
-import { t, tf } from '@/i18n';
-import { formatPlayCount } from '@/lib/format';
+import { t, tf } from '@/locales';
+import { formatPlayCount } from '@/utils/format';
 import type { FeedItem } from '@/service/schema';
 
 interface Props {

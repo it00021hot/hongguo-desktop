@@ -1,5 +1,5 @@
 import { Toaster as Sonner, type ToasterProps } from 'sonner';
-import { useThemeStore } from '@/lib/stores/theme';
+import { useThemeStore } from '@/stores/theme';
 
 function Toaster({ ...props }: ToasterProps) {
   const resolved = useThemeStore((s) => s.resolved());

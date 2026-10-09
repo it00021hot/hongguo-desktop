@@ -27,8 +27,8 @@ import {
 } from '@/components/ui/table';
 import { useDownloadActions, useDownloadTasks, useQueueStatus } from '@/service/queries';
 import { app as appApi } from '@/service/commands';
-import { formatBytes } from '@/lib/format';
-import { t, tf } from '@/i18n';
+import { formatBytes } from '@/utils/format';
+import { t, tf } from '@/locales';
 import type { DownloadTask, TaskStatus } from '@/service/schema';
 
 const STATUS_VARIANT: Record<

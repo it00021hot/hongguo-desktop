@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { t } from '@/i18n';
+import { t } from '@/locales';
 
 /**
  * 通用二次确认框：危险动作统一的「取消 + 红色确认」形态。

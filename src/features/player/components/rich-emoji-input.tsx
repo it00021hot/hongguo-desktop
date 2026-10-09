@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useRef } from 'react';
-import { parseEmojiSegments } from '@/lib/danmaku-emoji';
+import { parseEmojiSegments } from '@/utils/danmaku-emoji';
 import { cn } from '@/lib/utils';
 
 /**

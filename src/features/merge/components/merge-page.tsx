@@ -33,8 +33,8 @@ import {
   useMergePreflight,
   useMergeTasks,
 } from '@/service/queries';
-import { formatBytes } from '@/lib/format';
-import { t, tf } from '@/i18n';
+import { formatBytes } from '@/utils/format';
+import { t, tf } from '@/locales';
 import type { MergeMode } from '@/service/schema';
 
 /** 一键合并：快速合并（流复制）与兼容合并（转码）。 */

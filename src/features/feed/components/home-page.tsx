@@ -8,8 +8,8 @@ import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/service/commands';
 import { keys, useAccount, useBookshelf, useFeed, usePrefetchSeriesEpisodes, useSeriesEpisodes, useSeriesProgress, useWatchHistory, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { usePlayerStore } from '@/lib/stores/player';
-import { t } from '@/i18n';
+import { usePlayerStore } from '@/stores/player';
+import { t } from '@/locales';
 import type { Series } from '@/service/schema';
 
 /**

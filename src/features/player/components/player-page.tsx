@@ -21,8 +21,8 @@ import {
   useStorageActions,
   useWatchHistory,
 } from '@/service/queries';
-import { usePlayerStore } from '@/lib/stores/player';
-import { useUiStore } from '@/lib/stores/ui';
+import { usePlayerStore } from '@/stores/player';
+import { useUiStore } from '@/stores/ui';
 import {
   readDanmakuDisplay,
   readDanmakuEnabled,
@@ -36,14 +36,14 @@ import {
   writePlaybackRate,
   writeVolume,
   type DanmakuDisplaySettings,
-} from '@/lib/playback-prefs';
-import { t, tf } from '@/i18n';
+} from '@/utils/playback-prefs';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { useEvent } from '@/service/tauri/events';
 import { app as appApi, watchHistory } from '@/service/commands';
 import { useIncognitoMode } from './incognito';
 import { EVENTS } from '@/service/tauri/types';
-import { formatBytes } from '@/lib/format';
+import { formatBytes } from '@/utils/format';
 import type { CompatProgress, OnlineProgress, VideoDefinition } from '@/service/schema';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */

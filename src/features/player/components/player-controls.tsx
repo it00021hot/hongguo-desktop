@@ -26,14 +26,14 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { usePlayerStore } from '@/lib/stores/player';
+import { usePlayerStore } from '@/stores/player';
 import { useAccount, useSendDanmaku } from '@/service/queries';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
-import { formatDuration } from '@/lib/format';
+import { formatDuration } from '@/utils/format';
 import { cn } from '@/lib/utils';
-import { t, tf } from '@/i18n';
-import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
+import { t, tf } from '@/locales';
+import type { DanmakuDisplaySettings } from '@/utils/playback-prefs';
 import { DownloadSheet } from './download-sheet';
 import { EpisodePicker } from './episode-picker';
 import type { Episode, VideoDefinition } from '@/service/schema';

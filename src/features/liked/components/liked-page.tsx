@@ -11,7 +11,7 @@ import { Heart, HeartOff, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
-import { matchListQuery } from '@/lib/list-filter';
+import { matchListQuery } from '@/utils/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useInteractionState,
@@ -20,8 +20,8 @@ import {
   useWebCover,
 } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
-import { usePlayerStore } from '@/lib/stores/player';
-import { t, tf } from '@/i18n';
+import { usePlayerStore } from '@/stores/player';
+import { t, tf } from '@/locales';
 import type { InteractionItem } from '@/service/schema';
 
 export function LikedPage() {

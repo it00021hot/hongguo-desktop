@@ -22,8 +22,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import { useAccount, useAuthRefresh } from '@/service/queries';
 import { login } from '@/service/commands';
-import { useUiStore } from '@/lib/stores/ui';
-import { t } from '@/i18n';
+import { useUiStore } from '@/stores/ui';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。

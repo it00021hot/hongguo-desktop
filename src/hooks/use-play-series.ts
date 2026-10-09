@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 
-import { usePlayerStore } from '@/lib/stores/player';
+import { usePlayerStore } from '@/stores/player';
 
 /**
  * 「点卡片/联想词 → 直接播放」的统一路径：登记播放目标并跳播放页。

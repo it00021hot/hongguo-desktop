@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appErrorSchema } from '../schema';
-import { t } from '@/i18n';
+import { t } from '@/locales';
 
 /**
  * 类型化 invoke 封装。
