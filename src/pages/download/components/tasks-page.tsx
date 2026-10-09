@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Play, Pause, RotateCcw, FolderOpen, Trash2, X, ScanSearch } from 'lucide-react';
+import { Play, Pause, RotateCcw, Trash2, X, ScanSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import {
@@ -17,30 +15,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useDownloadActions, useDownloadTasks, useQueueStatus } from '@/service/queries';
 import { app as appApi } from '@/service/commands';
 import { formatBytes } from '@/utils/format';
 import { t, tf } from '@/locales';
-import type { DownloadTask, TaskStatus } from '@/service/schema';
-
-const STATUS_VARIANT: Record<
-  TaskStatus,
-  'secondary' | 'default' | 'success' | 'destructive' | 'warning'
-> = {
-  pending: 'secondary',
-  running: 'default',
-  completed: 'success',
-  failed: 'destructive',
-  stopped: 'warning',
-};
+import { TaskRow } from './task-row';
 
 export function TasksPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -288,97 +268,5 @@ export function TasksPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-interface RowProps {
-  task: DownloadTask;
-  checked: boolean;
-  onToggle: () => void;
-  onStop: () => void;
-  onRetry: () => void;
-  onOpenFolder: () => void;
-  onDelete: (withFiles: boolean) => void;
-}
-
-function TaskRow({ task, checked, onToggle, onStop, onRetry, onOpenFolder, onDelete }: RowProps) {
-  const percent = task.total > 0 ? (task.downloaded / task.total) * 100 : 0;
-
-  return (
-    <TableRow data-state={checked ? 'selected' : undefined}>
-      <TableCell>
-        <Checkbox checked={checked} onCheckedChange={onToggle} aria-label={task.id} />
-      </TableCell>
-      <TableCell className="max-w-64">
-        <span className="block truncate" title={task.seriesTitle}>
-          {task.seriesTitle}
-        </span>
-        {task.error && (
-          // task.error 存的是 i18n key。老数据里存的是历史错误原文，
-          // t() 查不到会回落显示原串，正好当降级用，不做数据迁移
-          <span className="text-destructive block truncate text-xs" title={t(task.error)}>
-            {t(task.error)}
-          </span>
-        )}
-      </TableCell>
-      <TableCell className="tabular-nums">{task.vidIndex}</TableCell>
-      <TableCell>
-        <Badge variant={STATUS_VARIANT[task.status]}>{t(`tasks.status.${task.status}`)}</Badge>
-      </TableCell>
-      <TableCell className="font-mono text-xs tabular-nums">
-        {task.status === 'running' ? (
-          <div className="flex flex-col gap-1">
-            <Progress value={percent} />
-            <span className="text-muted-foreground">
-              {formatBytes(task.downloaded)} / {formatBytes(task.total)}
-            </span>
-          </div>
-        ) : (
-          formatBytes(task.total)
-        )}
-      </TableCell>
-      <TableCell>
-        <div className="flex gap-1">
-          {task.status === 'running' && (
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={onStop}
-              aria-label={t('tasks.actions.stop')}
-            >
-              <Pause className="size-4" />
-            </Button>
-          )}
-          {(task.status === 'failed' || task.status === 'stopped') && (
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={onRetry}
-              aria-label={t('tasks.actions.retry')}
-            >
-              <RotateCcw className="size-4" />
-            </Button>
-          )}
-          {task.status === 'completed' && (
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={onOpenFolder}
-              aria-label={t('tasks.actions.openFolder')}
-            >
-              <FolderOpen className="size-4" />
-            </Button>
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={() => onDelete(false)}
-            aria-label={t('tasks.actions.remove')}
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        </div>
-      </TableCell>
-    </TableRow>
   );
 }
