@@ -124,10 +124,21 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # 是发版流水线的大头。换 thin LTO + 默认并行单元后编译时间砍半以上；本项目的
 # 热点（编解码 SIMD、运行期指令集分发）都在独立 crate 里自带优化，自身代码是
 # 胶水层，跨 crate 全量优化收益本来就小。体积略涨（<5%），换发版速度值得。
+#
+# ⚠️ 绝不能加 panic = "abort"（2026-10-09 小窗闪退实录）。abort 策略让两类
+# catch 机制在 release 里静默失效，而 dev 默认 unwind——线上和开发行为分裂：
+# 1. wry 的 WKURLSchemeHandler 回包用 objc2::exception::catch 兜 NSException；
+#    abort 下 catch 的着陆垫被替换成 panic_cannot_unwind，ObjC 异常直接
+#    abort——进小窗 resize 时 WebKit 取消 in-flight 流请求，worker 回包撞上
+#    已停止的 task 即抛异常，v0.1.0 装机版小窗必闪退（crash.log: "panic in a
+#    function that cannot unwind"，线程 hongguo-proto-stream-1）。
+# 2. protocol/register.rs 的 catch_unwind 三层防线整体变 no-op——协议路径上
+#    任何一个 panic 都从「一条请求回 500」升级成全进程 abort，2026-10-07
+#    那次「回调 panic → abort → 僵尸进程锁库」的教训在 release 里等于没修。
+# 代价是二进制略大（unwind 表）与微弱性能差，换正确性，值。
 [profile.release]
 opt-level = 3
 lto = "thin"
-panic = "abort"
 strip = true
 
 # 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
