@@ -6,13 +6,14 @@ import { Input } from '@/components/ui/input';
 import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonCardGrid } from '@/components/skeletons';
 import { SeriesCardGrid } from './series-card-grid';
+import { FilterPanel } from './filter-panel';
+import { SuggestRow } from './suggest-row';
 import {
   useBrowseFeed,
   useBrowsePanel,
   useDownloadTasks,
   useSearchSuggest,
   useSeriesSearchApp,
-  useWebCover,
 } from '@/service/queries';
 import { usePlaySeries } from '@/hooks/use-play-series';
 import { useUiStore } from '@/stores/ui';
@@ -31,18 +32,6 @@ function toCard(it: FeedItem): SeriesCard {
     url: '',
   };
 }
-
-/** 面板行 type → 行头标签（未知类型回落服务端行名去掉「全部」前缀）。 */
-const FILTER_LABEL_KEYS: Record<string, string> = {
-  genre: 'browse.fGenre',
-  category_dim_theme: 'browse.fTheme',
-  category_dim_role: 'browse.fRole',
-  category_dim_epoch: 'browse.fEpoch',
-  sort: 'browse.fSort',
-  gender: 'browse.fGender',
-  online_time: 'browse.fOnlineTime',
-  duration: 'browse.fDuration',
-};
 
 /** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
  * 实测 select_items.duration 服务端必认）。 */
@@ -388,159 +377,6 @@ export function BrowsePage() {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-/**
- * 联想行，结构对齐 hgplayer：放大镜图标常驻（纯词行就只有它 + 词）；
- * 带剧集的行前置竖版封面（40×54，HEIC 走 webp/转码链）；词按服务端
- * 命中位切片、命中片段上高亮色（#ff7a1a ≈ orange-500）、rich 行加粗；
- * 摘要行有才渲染。
- */
-function SuggestRow({
-  item,
-  active,
-  onHover,
-  onPick,
-}: {
-  item: SuggestItem;
-  active: boolean;
-  onHover: () => void;
-  onPick: (item: SuggestItem) => void;
-}) {
-  // 封面闸门对齐 hgplayer（cover 有无）：纯词联想不渲染封面，只有放大镜。
-  const { data: webCover } = useWebCover(item.cover);
-  return (
-    <button
-      type="button"
-      // mousedown + preventDefault：抢在输入框 blur 收起下拉之前选中
-      onMouseDown={(e) => {
-        e.preventDefault();
-        onPick(item);
-      }}
-      onMouseEnter={onHover}
-      className={cn(
-        'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left transition-colors',
-        active ? 'bg-accent' : 'hover:bg-accent/60',
-      )}
-    >
-      <Search className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
-      {item.cover && webCover && (
-        <img
-          src={webCover}
-          alt=""
-          loading="lazy"
-          className="bg-muted h-[54px] w-10 shrink-0 rounded-md object-cover"
-        />
-      )}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className={cn('block truncate text-sm', item.seriesId && 'font-semibold')}>
-          {item.parts.length > 0
-            ? item.parts.map((part, i) =>
-                part.hl ? (
-                  <span key={i} className="text-orange-500">
-                    {part.text}
-                  </span>
-                ) : (
-                  <span key={i}>{part.text}</span>
-                ),
-              )
-            : item.word}
-        </span>
-        {item.abstract && (
-          <span className="text-muted-foreground block truncate text-xs">{item.abstract}</span>
-        )}
-      </span>
-    </button>
-  );
-}
-
-/**
- * 筛选面板：八行维度，每行「全部」+ 服务端选项，单选。
- * 行头标签按 type 映射 i18n（服务端 row_name 是中文，不适合多语言）。
- */
-function FilterPanel({
-  rows,
-  filters,
-  loading,
-  failed,
-  onPick,
-}: {
-  rows: { rowType: string; rowName: string; items: { id: string; name: string }[] }[];
-  filters: BrowseFilters;
-  loading: boolean;
-  failed: boolean;
-  onPick: (key: keyof BrowseFilters, value: string) => void;
-}) {
-  if (loading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
-        <Loader2 className="size-3.5 animate-spin" />
-        {t('common.loading')}
-      </div>
-    );
-  }
-  if (failed || rows.length === 0) return null;
-
-  const rowValue = (key: string): string => {
-    switch (key) {
-      case 'genre':
-        return filters.genre;
-      case 'category_dim_theme':
-        return filters.theme;
-      case 'category_dim_role':
-        return filters.role;
-      case 'category_dim_epoch':
-        return filters.epoch;
-      case 'sort':
-        return filters.sort;
-      case 'gender':
-        return filters.gender;
-      case 'online_time':
-        return filters.onlineTime;
-      case 'duration':
-        return filters.duration;
-      default:
-        return '';
-    }
-  };
-
-  const pill = (key: keyof BrowseFilters, id: string, label: string, active: boolean) => (
-    <button
-      key={id || '__all__'}
-      type="button"
-      onClick={() => onPick(key, id)}
-      aria-pressed={active}
-      className={cn(
-        'cursor-pointer rounded-full border px-3 py-0.5 text-xs transition-colors',
-        active
-          ? 'border-primary text-primary bg-primary/10 font-medium'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground border-border',
-      )}
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <div className="grid gap-1.5">
-      {rows.map((row) => {
-        const key = row.rowType as keyof BrowseFilters;
-        const current = rowValue(row.rowType);
-        const fallbackLabel = FILTER_LABEL_KEYS[row.rowType] ?? row.rowName.replace(/^全部/, '');
-        return (
-          <div key={row.rowType} className="flex items-start gap-3 text-sm">
-            <span className="text-muted-foreground w-10 shrink-0 pt-1 text-xs">
-              {t(fallbackLabel)}
-            </span>
-            <div className="flex flex-wrap gap-x-1 gap-y-1.5">
-              {pill(key, '', t('browse.all'), current === '')}
-              {row.items.map((it) => pill(key, it.id, it.name, current === it.id))}
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
