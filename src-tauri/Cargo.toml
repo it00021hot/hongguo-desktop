@@ -79,6 +79,12 @@ mouse_position = "0.1"
 tauri-plugin-updater = "2.13.2"
 tauri-plugin-process = "2.4.0"
 
+# 封面纯软解级的 JPEG 编码（media/heif）：纯 Rust、零 unsafe，RGB 直入。
+# 只需要「一帧 → JPEG」这一步，不引 image 全家桶。**跨平台主依赖**——
+# heif.rs 无条件编译，放进 target 专属表会在另一侧直接缺 crate（03029e8
+# 曾误挂 windows 表导致 macOS dev 构建失败）。
+jpeg-encoder = "0.6"
+
 # 平台硬编走 `media::platform`（macOS VideoToolbox / Windows Media Foundation）。
 # FFI 路线按 API 性质分：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs）；
 # Media Foundation 是 COM（虚表调用），手排虚表槽位错一个就是运行期崩——
@@ -105,10 +111,6 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Memory",
 ] }
-
-# 封面纯软解级的 JPEG 编码（media/heif）：纯 Rust、零 unsafe，RGB 直入。
-# 只需要「一帧 → JPEG」这一步，不引 image 全家桶。
-jpeg-encoder = "0.6"
 
 # macOS 原生红绿灯的藏/显（小屏模式）：直接对三颗 NSWindowButton setHidden，
 # 而不是 set_decorations 切 borderless——tao 的 set_decorations 是**整体替换
