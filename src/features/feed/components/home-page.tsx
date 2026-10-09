@@ -7,6 +7,8 @@ import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/lib/ipc/commands';
 import {
   isRenderableCover,
+  useAccount,
+  useBookshelf,
   useFeed,
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
@@ -15,7 +17,6 @@ import {
   useWebCover,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
-import { useAccount, useBookshelf, useWatchHistory } from '@/lib/queries';
 import { t } from '@/i18n';
 
 /**
@@ -108,7 +109,7 @@ export function HomePage() {
   // 历史/书架条目没有横版封面，标题等 currentSeries 解析出来自然显示；
   // 未登录时种子为空，行为与从前一致。
   const { data: account } = useAccount();
-  const { data: history } = useWatchHistory();
+  const { data: history, isPending: historyPending } = useWatchHistory();
   const { data: bookshelf } = useBookshelf();
   const seedItems = useMemo<StreamItem[]>(() => {
     if (!account) return [];
@@ -192,7 +193,6 @@ export function HomePage() {
   //   已在用同一查询，这里共享缓存
   const progressQuery = useSeriesProgress(currentId ?? '');
   const localProgress = progressQuery.data;
-  const { data: history, isPending: historyPending } = useWatchHistory();
   const playingId = usePlayerStore((s) => s.seriesId);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
 
