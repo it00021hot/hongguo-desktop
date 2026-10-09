@@ -129,11 +129,11 @@ impl Db {
         // 引人删库，v0.1.0 全新装机因此必闪退。这里是所有文件库开库的
         // 唯一收口，建目录收进来，其余落盘方（缓存/下载/诊断）本就各自
         // create_dir_all。
-        if path != ":memory:" {
-            if let Some(dir) = Path::new(&path).parent() {
-                std::fs::create_dir_all(dir)
-                    .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
-            }
+        if path != ":memory:"
+            && let Some(dir) = Path::new(&path).parent()
+        {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
         }
         let db: Database = Builder::new_local(&path).build().await.map_err(|e| {
             // 报错按因分类，别把环境问题一律报成「数据损坏」引人删库。
