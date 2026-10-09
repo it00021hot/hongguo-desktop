@@ -274,6 +274,7 @@ export const watchHistoryItemSchema = z.object({
   title: z.string(),
   /** HEIC 签名 URL，前端走 hongguo-cover 代理渲染 */
   cover: z.string(),
+  /** 观看到第几集（1 起 = 第 1 集；第三方写的 0 基记录按第 1 集钳制展示） */
   vidIndex: z.number().int().nonnegative(),
   vid: z.string(),
   positionMs: z.number().nonnegative(),

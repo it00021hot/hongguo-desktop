@@ -27,7 +27,10 @@ pub struct WatchHistoryItem {
     /// 封面（HEIC 签名 URL；前端走 hongguo-cover 代理渲染）
     #[serde(default)]
     pub cover: String,
-    /// 观看到第几集（0 起）
+    /// 观看到第几集（**1 起**；2026-10-09 实证：云端行的 vid 与该集 vid
+    /// 一一对应——18 集完结剧的行 vid_index=18、vid=第 18 集 vid。
+    /// ⚠️ 第三方 hgplayer 上报 0 基，云端两种基混杂：消费方对 0 按
+    /// 「第 1 集」钳制）
     pub vid_index: i64,
     /// 那一集的 vid（数字字段，转字符串承载）
     #[serde(default)]

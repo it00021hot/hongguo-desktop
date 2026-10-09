@@ -28,7 +28,7 @@ type HistoryTab = 'all' | 'unfinished' | 'finished';
 
 /** 参考端同款「已看完」判定：看到最后一集即算，与片内进度无关。 */
 function isFinished(item: WatchHistoryItem): boolean {
-  return item.episodeCnt > 0 && item.vidIndex + 1 >= item.episodeCnt;
+  return item.episodeCnt > 0 && Math.max(1, item.vidIndex) >= item.episodeCnt;
 }
 
 const TABS: { key: HistoryTab; labelKey: string }[] = [
@@ -56,8 +56,11 @@ export function HistoryPage() {
   const open = (item: WatchHistoryItem) => {
     resolve(item.seriesId, {
       onSuccess: () => {
-        // 云端 vid_index 0 起（第一集=0），播放器 store 是 1 起（0=无目标）
-        setTarget(item.seriesId, item.vidIndex + 1);
+        // 云端 vid_index 1 起（2026-10-09 实证：云端行的 vid 与该集 vid
+        // 一一对应，双魂共生 vid_index=18 即第 18/18 集；第三方 hgplayer
+        // 写入的是 0 基，历史数据可能混有 0——钳到第 1 集）。播放器
+        // store 同为 1 起（0=无目标）
+        setTarget(item.seriesId, Math.max(1, item.vidIndex));
         void navigate({ to: '/player' });
       },
       onError: (e) => toast.error(t('common.resolveFailed'), { description: e.message }),
@@ -195,11 +198,11 @@ function HistoryRow({ item, onOpen }: { item: WatchHistoryItem; onOpen: () => vo
           <span className="bg-primary/10 text-primary rounded px-1.5 py-0.5 font-medium">
             {item.durationMs > 0
               ? tf('history.watching', {
-                  index: item.vidIndex + 1,
+                  index: Math.max(1, item.vidIndex),
                   total: item.episodeCnt > 0 ? item.episodeCnt : '–',
                   time: formatDuration(item.positionMs / 1000),
                 })
-              : tf('player.epShort', { index: item.vidIndex + 1 })}
+              : tf('player.epShort', { index: Math.max(1, item.vidIndex) })}
           </span>
           <span className="text-muted-foreground">{formatTimeAgo(item.updatedAtMs)}</span>
         </div>
