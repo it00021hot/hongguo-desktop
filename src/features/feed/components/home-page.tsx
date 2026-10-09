@@ -214,9 +214,10 @@ export function HomePage() {
     }
   }
 
-  // 档案 + 两路进度源就绪 → 定起点。看过快完的（≥95%）自动跳下一集。
-  // 云端历史的集内位置塞进 resumeHint：播放器起播在本地没有该集播放
-  // 档案（resumeAt=0）时用它 seek——跨客户端续播连进度都对上。
+  // 档案 + 两路进度源就绪 → 定起点。看过 >3 秒就续播那一集的那个位置，
+  // 不看片尾（2026-10-09 用户口径）。云端历史的集内位置塞进 resumeHint：
+  // 播放器起播在本地没有该集播放档案（resumeAt=0）时用它 seek——跨客户
+  // 端续播连进度都对上。
   //
   // 每部剧只在**成为当前剧**时定一次起点：正在看的时候历史刷新/进度
   // 上报不能把目标拽走（store 目标还停在本剧就直接让位）；滚走再滚回
@@ -228,28 +229,16 @@ export function HomePage() {
     if (playingId === currentSeries.seriesId) return;
     if (progressQuery.isPending || historyPending) return;
 
-    const episodes = currentSeries.episodes;
-    const hasNext = (n: number) => episodes.some((e) => e.vidIndex === n);
     let idx = 1;
     let positionMs = 0;
 
-    if (localProgress) {
-      const ratio =
-        localProgress.duration > 0
-          ? localProgress.currentTime / localProgress.duration
-          : 0;
-      if (ratio >= 0.95) {
-        idx = hasNext(localProgress.vidIndex + 1) ? localProgress.vidIndex + 1 : 1;
-      } else {
-        idx = localProgress.vidIndex;
-      }
+    // >3 秒都续播（不看片尾）：本地档案优先，云端历史兜底
+    if (localProgress && localProgress.currentTime > 3) {
+      idx = localProgress.vidIndex;
     } else {
       const h = history?.items.find((i) => i.seriesId === currentSeries.seriesId);
-      if (h) {
+      if (h && h.positionMs > 3000) {
         idx = Math.max(1, h.vidIndex);
-        if (h.durationMs > 0 && h.positionMs / h.durationMs >= 0.95) {
-          idx = hasNext(idx + 1) ? idx + 1 : 1;
-        }
         positionMs = h.positionMs;
       }
     }

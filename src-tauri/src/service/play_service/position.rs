@@ -12,8 +12,8 @@ use crate::domain::model::PlaybackPosition;
 /// 保存播放位置（Store 直连版：command 侧把 DB 写入扔进阻塞线程池时用，
 /// 同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
 ///
-/// `duration` 由前端回传——后端拿到流的时候还不知道总时长，
-/// 而「接近片尾就不续播」这条判断依赖它，不记就等于这道防线一直是空转的。
+/// `duration` 由前端回传——后端拿到流的时候还不知道总时长；
+/// 它供展示与前端「看完跳下一集」之类的比例计算使用。
 pub fn save_store(
     store: &crate::store::Store,
     series_id: &str,
@@ -28,14 +28,15 @@ pub fn save_store(
     )
 }
 
-/// 读播放位置。接近片尾时返回 0（从头看）。
+/// 读播放位置。看过超过 3 秒就续播那个位置（2026-10-09 用户口径：
+/// 不管片尾——原「接近片尾归零」防线已废，位置保存原本就为它存在）。
 pub fn load(state: &State<'_, AppState>, series_id: &str, vid_index: u32) -> f64 {
     state
         .store
         .playback_position(series_id, vid_index)
         .ok()
         .flatten()
-        .filter(|p| !p.is_near_end())
+        .filter(|p| p.is_resumable())
         .map(|p| p.current_time)
         .unwrap_or(0.0)
 }
@@ -102,9 +103,9 @@ mod tests {
     }
 
     /// 断点续播的持久化语义：保存后「重启」（重开同一文件库）还能读回；
-    /// 接近片尾的记录视为看完，load 返回 0（从头看）。
+    /// 看过 >3 秒的记录无论多接近片尾都续播那个位置（用户口径：不管片尾）。
     #[test]
-    fn save_survives_reopen_and_load_skips_near_end() {
+    fn save_survives_reopen_and_load_resumes_over_three_seconds() {
         let (state, dir) = file_state("persist");
 
         state
@@ -115,6 +116,10 @@ mod tests {
             .store
             .save_playback_position("B", 1, &at(290.0, 100))
             .unwrap();
+        state
+            .store
+            .save_playback_position("C", 1, &at(2.0, 100))
+            .unwrap();
 
         {
             // 模拟「重启」：换一个指向同一文件的全新 Store 实例读
@@ -123,13 +128,16 @@ mod tests {
             assert!(pos.is_some(), "落库的进度换个连接也要读得到");
         }
 
-        // load 是 store 直读的一层薄过滤（unwrap + 近片尾归零），这里按
+        // load 是 store 直读的一层薄过滤（unwrap + >3 秒续播），这里按
         // store 语义断言，绕开测试里构造不到的 tauri State
         let a = state.store.playback_position("A", 1).unwrap().unwrap();
         assert_eq!(a.current_time, 10.0, "续播位置原样读回");
-        assert!(!a.is_near_end());
+        assert!(a.is_resumable());
+        // 不看片尾：290/300 接近结束也照样续播
         let b = state.store.playback_position("B", 1).unwrap().unwrap();
-        assert!(b.is_near_end(), "接近片尾视为看完，load 会归零从头播");
+        assert!(b.is_resumable(), "接近片尾也要续播那个位置");
+        let c = state.store.playback_position("C", 1).unwrap().unwrap();
+        assert!(!c.is_resumable(), "≤3 秒从头播");
         assert!(
             state.store.playback_position("ZZZ", 1).unwrap().is_none(),
             "没记录的剧从头播"

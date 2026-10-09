@@ -100,20 +100,19 @@ export function SeriesDetailPage({
    * 只做本地没记录时的兜底——否则就会出现「都看到第二集了还停在第一集」。
    * 看完（≥95%，与后端 is_near_end 同口径）指到下一集，没有下一集回第 1 集。
    */
+  /**
+   * 「继续看」的集号。本地 playback 表是第一真值（播放期间 5 秒一写，
+   * 切集立即更新）；云端观看历史既滞后（约 1 分钟一报）又有查询缓存，
+   * 只做本地没记录时的兜底——否则就会出现「都看到第二集了还停在第一集」。
+   * 看过 >3 秒就续播那一集的那个位置，不看片尾（2026-10-09 用户口径，
+   * 与后端 resumeAt 同口径：位置 ≤3 秒视为没看过，从头播）。
+   */
   const continueIndex = useMemo(() => {
-    if (localProgress) {
-      const ratio =
-        localProgress.duration > 0 ? localProgress.currentTime / localProgress.duration : 0;
-      if (ratio >= 0.95) {
-        const hasNext = series?.episodes.some((e) => e.vidIndex === localProgress.vidIndex + 1);
-        return hasNext ? localProgress.vidIndex + 1 : 1;
-      }
-      return localProgress.vidIndex;
-    }
-    if (!historyItem || historyItem.positionMs <= 0) return 1;
-    const ratio = historyItem.durationMs > 0 ? historyItem.positionMs / historyItem.durationMs : 0;
-    return ratio >= 0.95 ? 1 : historyItem.vidIndex;
-  }, [localProgress, historyItem, series]);
+    if (localProgress && localProgress.currentTime > 3) return localProgress.vidIndex;
+    if (historyItem && historyItem.positionMs > 3000) return Math.max(1, historyItem.vidIndex);
+    if (localProgress) return localProgress.vidIndex;
+    return 1;
+  }, [localProgress, historyItem]);
 
   const playEpisode = (idx: number) => {
     if (!seriesId) return;

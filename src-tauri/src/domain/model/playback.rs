@@ -47,12 +47,11 @@ impl PlaybackPosition {
         }
     }
 
-    /// 是否已接近片尾（剩余不足 10 秒或已看完 95%），此时不该续播。
-    pub fn is_near_end(&self) -> bool {
-        if self.duration > 0.0 && self.current_time / self.duration > 0.95 {
-            return true;
-        }
-        self.duration > 0.0 && (self.duration - self.current_time) < 10.0
+    /// 是否值得续播：看过超过 3 秒就接上那个位置。
+    /// （2026-10-09 用户口径：只要超过三秒都需播放，不管片尾——原
+    /// 「接近片尾不续播」的 95%/剩余 10 秒防线已废。）
+    pub fn is_resumable(&self) -> bool {
+        self.current_time > 3.0
     }
 }
 
@@ -121,12 +120,14 @@ mod tests {
     }
 
     #[test]
-    fn near_end_detection() {
-        assert!(PlaybackPosition::new(96.0, 100.0).is_near_end());
-        assert!(PlaybackPosition::new(95.0, 100.0).is_near_end());
-        assert!(!PlaybackPosition::new(10.0, 100.0).is_near_end());
-        // 时长未知时不判定
-        assert!(!PlaybackPosition::new(999.0, 0.0).is_near_end());
+    fn resumable_when_over_three_seconds() {
+        assert!(!PlaybackPosition::new(2.0, 100.0).is_resumable(), "≤3 秒从头播");
+        assert!(PlaybackPosition::new(3.5, 100.0).is_resumable());
+        // 不看片尾：95%+、临近结束的记录照样续播
+        assert!(PlaybackPosition::new(96.0, 100.0).is_resumable());
+        assert!(PlaybackPosition::new(299.0, 300.0).is_resumable());
+        // 时长未知也按已播秒数判定
+        assert!(PlaybackPosition::new(999.0, 0.0).is_resumable());
     }
 
     #[test]
