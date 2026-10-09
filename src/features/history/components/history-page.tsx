@@ -54,15 +54,15 @@ export function HistoryPage() {
   });
 
   // 渐进渲染：几百行一次性挂载是菜单点击卡顿的来源（实测 489 行 ~300ms
-  // 主线程阻塞）。首批 60 行秒出，滚动到底部由哨兵续载，语义不变
+  // 主线程阻塞）。首批 20 行秒出，滚动到底部由哨兵续载，语义不变
   // （筛选/搜索仍作用于全量 shown）。
-  const [visibleCount, setVisibleCount] = useState(60);
+  const [visibleCount, setVisibleCount] = useState(20);
   // tab/搜索变化时重置批量（渲染期调整 state 的官方模式，避免 effect 级联）
   const [prevFilterKey, setPrevFilterKey] = useState('');
   const filterKey = `${tab}:${query}`;
   if (prevFilterKey !== filterKey) {
     setPrevFilterKey(filterKey);
-    setVisibleCount(60);
+    setVisibleCount(20);
   }
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -71,7 +71,7 @@ export function HistoryPage() {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          setVisibleCount((n) => (n < shown.length ? n + 80 : n));
+          setVisibleCount((n) => (n < shown.length ? n + 40 : n));
         }
       },
       { rootMargin: '600px' },

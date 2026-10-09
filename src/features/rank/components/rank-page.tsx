@@ -90,6 +90,32 @@ export function RankPage() {
     setSub(first?.id ?? '');
   };
 
+  // 渐进渲染（历史页同款）：榜单一次可到百条，整表挂载白卡切换瞬间。
+  // 首批 20 行 + 哨兵续载；子榜/筛选切换重置批量
+  const [visibleCount, setVisibleCount] = useState(20);
+  const [prevListKey, setPrevListKey] = useState('');
+  const listKey = `${selected}:${sub}:${panel}`;
+  if (prevListKey !== listKey) {
+    setPrevListKey(listKey);
+    setVisibleCount(20);
+  }
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const listItems = data?.items ?? [];
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((n) => (n < listItems.length ? n + 40 : n));
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
   const tabRow = showTabsRow ? tabs : [];
 
   return (
@@ -179,10 +205,12 @@ export function RankPage() {
                  而不是闪骨架屏——旧内容可看但不可点 */
               <RefreshShade refreshing={isFetching}>
                 <div className="flex flex-col gap-2">
-                  {(data?.items ?? []).map((item) => (
+                  {listItems.slice(0, visibleCount).map((item) => (
                     <RankRow key={item.seriesId} item={item} />
                   ))}
-                  {(data?.items.length ?? 0) === 0 && (
+                  {/* 续载哨兵（600px 提前量） */}
+                  {visibleCount < listItems.length && <div ref={sentinelRef} className="h-px" />}
+                  {listItems.length === 0 && (
                     <p className="text-muted-foreground py-16 text-center text-sm">
                       {t('rank.empty')}
                     </p>
@@ -364,7 +392,7 @@ function RankRow({ item }: { item: RankItem }) {
         e.preventDefault();
         openDetail();
       }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none"
+      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none [content-visibility:auto] [contain-intrinsic-size:auto_112px]"
     >
       {rankNo !== undefined && (
         <span

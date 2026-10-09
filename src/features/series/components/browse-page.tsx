@@ -370,9 +370,13 @@ export function BrowsePage() {
         </RefreshShade>
       )}
 
+      {/* 哨兵必须**常驻**：effect 依赖只有 searching，若条件渲染（数据到位后才
+          挂载），首帧时 ref 为 null 直接返回，之后依赖不变 effect 不再跑——
+          观察器永久缺席，懒加载死（实测：浏览模式滚到底不续载）。守卫都在
+          回调里，哨兵多挂一个空 div 无害。 */}
+      <div ref={sentinelRef} className="h-px" aria-hidden />
       {!searching && cards.length > 0 && (
         <>
-          <div ref={sentinelRef} className="h-px" aria-hidden />
           {browse.isFetchingMore && (
             <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
               <Loader2 className="size-4 animate-spin" aria-hidden />
