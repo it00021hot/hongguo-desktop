@@ -644,9 +644,10 @@ function IconButton({
  * 可点击可拖动的进度条。
  *
  * 用 div 而不是 `<input type=range>`：要显示缓冲进度、要跟随容器宽度，
- * 而 range 的原生滑块样式在 WebView2 上跨版本表现不一致。
+ * 而 range 的原生滑块样式在 WebView2 上跨版本表现不一致。小窗控制条
+ * （mini-screen-controls）复用同一份，大小屏进度条一个口径。
  */
-function ScrubBar({
+export function ScrubBar({
   current,
   duration,
   onSeek,
