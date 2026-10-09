@@ -71,6 +71,10 @@ src/
 
 ## 二、后端目标结构（src-tauri/src/，行数为现状）
 
+分层职责一览：`commands`(IPC 命令层) → `service`(业务编排层) → `domain/api`(外部接口客户端层) + `store`(数据访问层) + `domain/model`(领域模型)；`utils`(工具层,新增) 独立被各层引用；`signer/media/protocol` 为专项能力层；`bootstrap` 只做启动装配。
+
+utils 准入标准：无业务语义、不依赖 AppState/领域类型、纯函数可单测；域内部细节（如 mp4 的 `u32_at/u64_at` 字节读取）留在域内共享，不上提。
+
 ```
 src-tauri/src/
 ├── lib.rs(325) main.rs app_state.rs error.rs diagnostics.rs   # 不动(装配/横切)
@@ -112,19 +116,29 @@ src-tauri/src/
 │       ├── progressive.rs  # ProgressiveStream + serve/HTTP Range 响应 + 窗口策略
 │       └── cache.rs        # StreamCache 全局 LRU(淘汰权重/内存预算)
 │
-└── store/
-    ├── db.rs(455) bridge.rs(313) json_migrate.rs(239) paths.rs recover.rs mod.rs  # 不动
-    └── entity/          # ← entity.rs(689) 按聚合拆(与 domain/model 对齐):
-        ├── mod.rs       #   traits/re-export
-        ├── settings.rs  task.rs  series.rs  playback.rs  merge.rs
+├── store/
+│   ├── db.rs(455) bridge.rs(313) json_migrate.rs(239) paths.rs recover.rs mod.rs  # 不动
+│   └── entity/          # ← entity.rs(689) 按聚合拆(与 domain/model 对齐):
+│       ├── mod.rs       #   traits/re-export
+│       └── settings.rs  task.rs  series.rs  playback.rs  merge.rs
+│
+└── utils/               # ★ 新增工具层: 无业务语义纯函数、零业务依赖,只被引用不引用业务层
+    ├── mod.rs
+    ├── json.rs          # ← 收敛四处重复的 JSON 取值: str_field(detail:460/login:677/discover:353/
+    │                    #   history:149 各写一份)、int_field(discover:361/detail:468 重复)、
+    │                    #   num_field、pick(detail:296) → 统一一套签名并补单测
+    ├── time.rs          # ← beijing_date(rank.rs:1098)、now_ms(bootstrap/device.rs:73)、
+    │                    #   now_millis(signer/ticket.rs:208) 三处时间函数收敛
+    ├── hex.rs           # ← hex(protocol/cover.rs:60) + bytes_from_hex(login.rs:917) 成对 encode/decode
+    └── url.rs           # ← urlencode_component(login.rs:536)、urlencode(register.rs:972) 统一 percent 编码
 ```
 
-## 三、阶段划分（每步编译绿、独立 commit，预计 18~22 个提交）
+## 三、阶段划分（每步编译绿、独立 commit，预计 19~23 个提交）
 
 - **P0 基线**（不提交）：pnpm typecheck/test/lint/knip + cargo check/test/clippy 记录存量告警；快照 routeTree 路由集合用于迁移后 diff。
 - **P1 service 层**：C1 lib/ipc→service/tauri、commands/schema 按域拆；C2 queries.ts 按域拆入 service/queries/，coverProxyUrl 等纯函数移 utils/cover.ts，删旧入口。
 - **P2 基础平移**：C3 stores/locales/utils/hooks 平移 + components.json、eslint、knip 配置更新；C4 路由并入 pages/（vite.config.ts 改 routesDirectory 与 generatedRouteTree），纯页面域 features 迁 pages/，routeTree 重新生成并 diff 确认路由集合不变。
-- **P3 后端**：C5 rank.rs 大拆(5 域目录)；C6 login/register/detail/discover 目录化；C7 danmaku/interact/search/stream_pick/history 目录化；C8 protocol/stream 与 store/entity 拆分；C9 clippy 存量清理。mod.rs re-export 保持公共路径尽量稳定，commands/service 引用同步更新。
+- **P3 后端**：C5 rank.rs 大拆(5 域目录)；C6 login/register/detail/discover 目录化；C7 danmaku/interact/search/stream_pick/history 目录化；C8 protocol/stream 与 store/entity 拆分；C9 抽取 utils 工具层(json/time/hex/url 收敛各处重复实现并补单测，删除域内旧副本)；C10 clippy 存量清理。mod.rs re-export 保持公共路径尽量稳定，commands/service 引用同步更新。
 - **P4 player 分解**（最高风险，小步走）：C10 player-controls 拆一组件一文件；C11~C14 player-page.tsx 抽 hooks（结构见 features/player 树），渲染结构不动、只做逻辑搬家；togglePinned 去重为 hooks/use-pin-window。
 - **P5 其他大文件**（每页一 commit）：series-detail(706/8 组件)、browse(546)、rank(513)、new-drama(481)、home(470)、comment-panel(401)、rich-emoji-input(400)、settings(384)、tasks(384)；同名 episode-picker.tsx 冲突随迁移自然消解。
 - **P6 收尾**：knip 清死代码、lint/prettier 全绿、pnpm build + cargo test/clippy 全量通过；更新 README/docs 结构说明；`pnpm tauri:dev` GUI 冒烟（首页→详情→起播→切集/清晰度→弹幕→下载/合并→设置→历史/收藏），播放体验最终请用户验收。
