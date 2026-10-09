@@ -218,20 +218,23 @@ make assets         # regenerate icons / macOS name localization (offline)
 hongguo-desktop/
 ├── src-tauri/src/
 │   ├── signer/          # ByteDance request signing (constants are black-box locked, don't edit)
-│   ├── domain/          # Official API clients, CENC crypto, MP4 box parsing & streaming plan
+│   ├── domain/          # Official API clients (api/ one directory per endpoint domain), CENC crypto, MP4 parsing
 │   ├── service/         # App services: download scheduler, playback, merge, transcode, storage…
 │   ├── commands/        # Thin Tauri command layer (~80 commands, mirrors service/)
 │   ├── protocol/        # Custom URI schemes (streaming / local files / cover proxy)
 │   ├── media/           # Codecs & transcode pipeline (platform HW → ffmpeg → pure Rust)
-│   ├── store/           # Turso embedded database (entities / migrations / recovery)
+│   ├── store/           # Turso embedded database (entity/ split by aggregate / migrations / recovery)
+│   ├── utils/           # Pure helpers without business semantics (json / time / hex / url)
 │   └── bootstrap/       # Startup wiring (store → device → rescan → queue → transcode probe)
 └── src/
-    ├── routes/          # 14 route pages
-    ├── features/        # Split by business domain (player / rank / feed / download / …)
-    ├── lib/             # IPC wrappers, zod schemas, stores
-    ├── components/      # shadcn/ui + layout
+    ├── pages/           # TanStack file routes (thin shells) + page implementations nearby
+    ├── features/        # Complex capability domains (player engine / auto update)
+    ├── service/         # IPC wrappers (tauri/) + commands + queries + zod contracts (schema/)
+    ├── stores/          # zustand client state
+    ├── components/      # shadcn/ui + layout + shared display components
     ├── hooks/           # Shared hooks
-    ├── i18n/            # Chinese / English message resources
+    ├── locales/         # Chinese / English message resources
+    ├── utils/           # Pure helpers (format / range / cover / playback-prefs…)
     └── styles/          # Global styles
 ```
 
