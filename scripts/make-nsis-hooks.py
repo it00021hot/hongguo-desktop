@@ -142,8 +142,14 @@ Var HG_OldName
     StrCpy $HG_OldName "${PRODUCTNAME}"
   ${EndIf}
   ${If} $HG_OldName != $AppShortcutName
-    ; $AppStartMenuFolder 为空时路径会变成双反斜杠，Windows 一样认
+    ; 开始菜单快捷方式可能落在两处：配置了 STARTMENUFOLDER 时在
+    ; $SMPROGRAMS\\$AppStartMenuFolder 子目录；没配置（本项目）时模板直接建在
+    ; $SMPROGRAMS 根目录。注意这时 $AppStartMenuFolder 并不为空——MUI2 的兜底
+    ; 默认值是 $(^Name)（被上面 LangString 按语言本地化），拼出来的子目录根本
+    ; 不存在，只探子目录会让改名永远静默失效（实测踩过）。两处都探，与模板
+    ; 卸载段/迁移逻辑一致；FileExists 各自把关，探空自然跳过。
     !insertmacro HG_RENAME_SHORTCUT "$SMPROGRAMS\\$AppStartMenuFolder" "$HG_OldName"
+    !insertmacro HG_RENAME_SHORTCUT "$SMPROGRAMS" "$HG_OldName"
     !insertmacro HG_RENAME_SHORTCUT "$DESKTOP" "$HG_OldName"
   ${EndIf}
 
