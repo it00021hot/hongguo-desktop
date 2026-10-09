@@ -13,6 +13,13 @@ interface PlayerState {
    */
   bingeSeriesId: string | null;
   setBinge: (seriesId: string | null) => void;
+  /**
+   * 跨客户端续播提示：云端历史有进度、本地播放档案没有时，信息流把
+   * 「该看哪一集 + 集内位置」放这里，播放器起播无本地 resumeAt 时消费。
+   * 消费即清；不匹配当前集的残留提示会被忽略（无害）。
+   */
+  resumeHint: { seriesId: string; vidIndex: number; positionMs: number } | null;
+  setResumeHint: (hint: { seriesId: string; vidIndex: number; positionMs: number } | null) => void;
   /** 弹幕设置面板开合（播放页/沉浸流共享，切集切剧不重置） */
   danmakuPanelOpen: boolean;
   setDanmakuPanelOpen: (open: boolean) => void;
@@ -43,6 +50,8 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   vidIndex: null,
   bingeSeriesId: null,
   setBinge: (seriesId) => set({ bingeSeriesId: seriesId }),
+  resumeHint: null,
+  setResumeHint: (hint) => set({ resumeHint: hint }),
   danmakuPanelOpen: false,
   setDanmakuPanelOpen: (open) => set({ danmakuPanelOpen: open }),
   volumeOpen: false,

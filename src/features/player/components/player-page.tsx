@@ -187,6 +187,8 @@ export function PlayerView({
   // 选中剧连播：锁定后滚轮/↑↓ 切集而不是跟随宿主页换剧
   const bingeSeriesId = usePlayerStore((s) => s.bingeSeriesId);
   const setBinge = usePlayerStore((s) => s.setBinge);
+  const resumeHint = usePlayerStore((s) => s.resumeHint);
+  const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
   const inBinge = bingeSeriesId != null && bingeSeriesId === seriesId;
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
 
@@ -728,6 +730,14 @@ export function PlayerView({
     // 只认属于本集的那份：换集后 lastKnown 里是上一集的秒数，拿来续播就串集了。
     const keepPosition = lastKnown.current.key === episodeKey ? lastKnown.current.time : 0;
 
+    // 跨客户端续播提示（信息流从云端历史定的起点）：本地播放档案没有
+    // 这一集的位置（resumeAt=0）时，用提示里的集内位置兜底。消费即清。
+    const hint = resumeHint;
+    const hintMs =
+      hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex
+        ? hint.positionMs / 1000
+        : 0;
+
     play(
       { seriesId, vidIndex, definition },
       {
@@ -738,8 +748,16 @@ export function PlayerView({
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
           setDefinitions(res.definitions);
-          // 续播位置要在 metadata 加载后 seek
-          pendingSeek.current = res.error ? 0 : keepPosition > 0 ? keepPosition : res.resumeAt;
+          // 续播位置要在 metadata 加载后 seek。优先级：本会话播放点 >
+          // 本地播放档案 resumeAt > 云端历史提示（跨客户端进度）
+          pendingSeek.current = res.error
+            ? 0
+            : keepPosition > 0
+              ? keepPosition
+              : res.resumeAt > 0
+                ? res.resumeAt
+                : hintMs;
+          if (!res.error && hintMs > 0) clearResumeHint();
         },
         onError: (e) => {
           srcKeyRef.current = '';
@@ -749,7 +767,7 @@ export function PlayerView({
         },
       },
     );
-  }, [seriesId, vidIndex, definition, episodeKey, play, retryTick]);
+  }, [seriesId, vidIndex, definition, episodeKey, play, retryTick, resumeHint, clearResumeHint]);
 
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;

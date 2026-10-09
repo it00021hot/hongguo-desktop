@@ -10,6 +10,8 @@ import {
   useFeed,
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
+  useSeriesProgress,
+  useWatchHistory,
   useWebCover,
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
@@ -184,12 +186,68 @@ export function HomePage() {
    */
   const seriesQuery = useSeriesEpisodes(currentId ?? '');
   const currentSeries = seriesQuery.data;
+  // 两路进度源（官方 App「跟上历史进度」同款）：
+  // - 本地播放档案：本应用 5 秒一写的真值（毫秒级 IPC）
+  // - 云端观看历史：跨客户端（hgplayer / 官方 App 看过的也算），种子区
+  //   已在用同一查询，这里共享缓存
+  const progressQuery = useSeriesProgress(currentId ?? '');
+  const localProgress = progressQuery.data;
+  const { data: history, isPending: historyPending } = useWatchHistory();
+  const playingId = usePlayerStore((s) => s.seriesId);
+  const setResumeHint = usePlayerStore((s) => s.setResumeHint);
 
-  // 档案就位 → 设为播放目标（从第 1 集开始，看过的剧由 resumeAt 接进度）。
+  // 档案 + 两路进度源就绪 → 定起点。看过快完的（≥95%）自动跳下一集。
+  // 云端历史的集内位置塞进 resumeHint：播放器起播在本地没有该集播放
+  // 档案（resumeAt=0）时用它 seek——跨客户端续播连进度都对上。
+  //
+  // 每部剧只在**成为当前剧**时定一次起点：正在看的时候历史刷新/进度
+  // 上报不能把目标拽走（store 目标还停在本剧就直接让位）；滚走再滚回
+  // 来时会重新对号本地档案，接的是你离开时的那集。
   useEffect(() => {
     if (!currentSeries) return;
-    setTarget(currentSeries.seriesId, 1);
-  }, [currentSeries, setTarget]);
+    if (playingId === currentSeries.seriesId) return;
+    if (progressQuery.isPending || historyPending) return;
+
+    const episodes = currentSeries.episodes;
+    const hasNext = (n: number) => episodes.some((e) => e.vidIndex === n);
+    let idx = 1;
+    let positionMs = 0;
+
+    if (localProgress) {
+      const ratio =
+        localProgress.duration > 0
+          ? localProgress.currentTime / localProgress.duration
+          : 0;
+      if (ratio >= 0.95) {
+        idx = hasNext(localProgress.vidIndex + 1) ? localProgress.vidIndex + 1 : 1;
+      } else {
+        idx = localProgress.vidIndex;
+      }
+    } else {
+      const h = history?.items.find((i) => i.seriesId === currentSeries.seriesId);
+      if (h) {
+        idx = Math.max(1, h.vidIndex);
+        if (h.durationMs > 0 && h.positionMs / h.durationMs >= 0.95) {
+          idx = hasNext(idx + 1) ? idx + 1 : 1;
+        }
+        positionMs = h.positionMs;
+      }
+    }
+
+    setTarget(currentSeries.seriesId, idx);
+    if (positionMs > 3000) {
+      setResumeHint({ seriesId: currentSeries.seriesId, vidIndex: idx, positionMs });
+    }
+  }, [
+    currentSeries,
+    playingId,
+    localProgress,
+    progressQuery.isPending,
+    history,
+    historyPending,
+    setTarget,
+    setResumeHint,
+  ]);
 
   // 占位封面：横版优先（竖版 3:4 被 object-cover 拉满横屏窗口=整屏发糊）；
   // 再挑 WebView 渲染得了的 URL。eagerProxy：HEIC 源不等 webp 网络请求，
@@ -266,7 +324,6 @@ export function HomePage() {
   // 重试 = 重拉当前会话（失败重试不是换一批，keep 语义分离）
   const retrySource = () => feed.refresh();
 
-  const playingId = usePlayerStore((s) => s.seriesId);
   // 切 tab 后新源首批在拉：**不整页换骨架屏**——store 里还播着上一部，
   // 主树继续渲染 PlayerView 顶住画面，顶部细进度条已给「正在切换」反馈。
   // 骨架屏只在冷启动（store 无目标、真的一无所有）才出现。
