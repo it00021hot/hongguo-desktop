@@ -303,12 +303,32 @@ export function SettingsPage() {
               ? tf('settings.storageUsage', { size: formatBytes(usage.bytes), files: usage.files })
               : t('common.loading')}
           </p>
-          {/* 磁盘清理只在存储页提供，这里只读占用与缓存清理 */}
+          {/* 磁盘清理只在存储页提供，这里只读占用与缓存清理。
+              点击必须有回音：成功报清理条数，失败弹错误——此前是纯
+              fire-and-forget，用户眼里就是「点了没反应」。 */}
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => transcodeApi.clearOnlineCache()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                transcodeApi.clearOnlineCache().then(
+                  (n) => toast.success(tf('settings.clearedCache', { count: n })),
+                  (e) => toast.error(e.message),
+                )
+              }
+            >
               {t('settings.clearOnlineCache')}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => transcodeApi.clearCompatCache()}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                transcodeApi.clearCompatCache().then(
+                  (n) => toast.success(tf('settings.clearedCache', { count: n })),
+                  (e) => toast.error(e.message),
+                )
+              }
+            >
               {t('settings.clearCompatCache')}
             </Button>
           </div>

@@ -347,6 +347,7 @@
     "deleteAll": "Delete everything downloaded",
     "clearCompatCache": "Clear transcode cache",
     "clearOnlineCache": "Clear stream cache",
+    "clearedCache": "Cleared {count} cache entries",
     "redetectBackend": "Re-detect",
     "redetectDone": "Done — now: {backend}.",
     "ffmpegInstallHint": "Optionally install ffmpeg (free & open source) to speed up compat merging — it is picked up automatically, with hardware encoding when an NVIDIA/AMD/Intel GPU is present. Everything works without it, just slower.",

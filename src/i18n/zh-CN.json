@@ -347,6 +347,7 @@
     "deleteAll": "删除全部已下载",
     "clearCompatCache": "清空转码缓存",
     "clearOnlineCache": "清空在线缓存",
+    "clearedCache": "已清理 {count} 项缓存",
     "redetectBackend": "重新检测",
     "redetectDone": "检测完成，当前为「{backend}」。",
     "ffmpegInstallHint": "想让兼容合并提速可以装 ffmpeg（免费开源）：装上后转码自动改走它，有 N/A/Intel 显卡时还能用硬件编码。不装也完全能用，只是转码慢一些。",
