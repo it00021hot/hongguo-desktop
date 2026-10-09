@@ -757,7 +757,7 @@ export function PlayerView({
               : res.resumeAt > 0
                 ? res.resumeAt
                 : hintMs;
-          if (!res.error && hintMs > 0) clearResumeHint();
+          if (!res.error && hintMs > 0) clearResumeHint(null);
         },
         onError: (e) => {
           srcKeyRef.current = '';
