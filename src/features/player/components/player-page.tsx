@@ -20,7 +20,7 @@ import {
   useSettings,
   useStorageActions,
   useWatchHistory,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { useUiStore } from '@/lib/stores/ui';
 import {

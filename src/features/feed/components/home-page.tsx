@@ -6,18 +6,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/service/commands';
-import {
-  isRenderableCover,
-  keys,
-  useAccount,
-  useBookshelf,
-  useFeed,
-  usePrefetchSeriesEpisodes,
-  useSeriesEpisodes,
-  useSeriesProgress,
-  useWatchHistory,
-  useWebCover,
-} from '@/lib/queries';
+import { keys, useAccount, useBookshelf, useFeed, usePrefetchSeriesEpisodes, useSeriesEpisodes, useSeriesProgress, useWatchHistory, useWebCover } from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t } from '@/i18n';
 import type { Series } from '@/service/schema';

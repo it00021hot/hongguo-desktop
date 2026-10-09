@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { login as loginApi } from '@/service/commands';
 import { useEvent } from '@/service/tauri/events';
-import { useAuthRefresh } from '@/lib/queries';
+import { useAuthRefresh } from '@/service/queries';
 import { t, tf } from '@/i18n';
 import type { LoginResult } from '@/service/schema';
 

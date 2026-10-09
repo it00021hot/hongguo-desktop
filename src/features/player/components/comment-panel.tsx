@@ -18,7 +18,7 @@ import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { parseEmojiSegments } from '@/lib/danmaku-emoji';
 import { interact } from '@/service/commands';
-import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
+import { useAccount, useComments, useSendComment, useSendReply } from '@/service/queries';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import type { CommentItem } from '@/service/schema';

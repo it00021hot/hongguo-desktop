@@ -6,7 +6,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { AppShell } from '@/components/layout/app-shell';
 import { UpdateDialog } from '@/features/update/update-dialog';
 import { UpdateProvider } from '@/features/update/update-provider';
-import { useDownloadEvents } from '@/lib/queries';
+import { useDownloadEvents } from '@/service/queries';
 import { useLocaleStore } from '@/lib/stores/locale';
 import { t } from '@/i18n';
 

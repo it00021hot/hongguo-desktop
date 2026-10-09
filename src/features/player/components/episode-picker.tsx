@@ -15,7 +15,7 @@ import {
   useReserveSeries,
   useReservations,
   useSeriesEpisodes,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import type { RelatedItem } from '@/service/schema';

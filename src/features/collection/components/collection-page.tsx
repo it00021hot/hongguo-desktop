@@ -13,14 +13,8 @@ import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
 import { matchListQuery } from '@/lib/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  isRenderableCover,
-  useAuthRefresh,
-  useBookshelf,
-  useSeriesCollect,
-  useSeriesMeta,
-  useWebCover,
-} from '@/lib/queries';
+import { useAuthRefresh, useBookshelf, useSeriesCollect, useSeriesMeta, useWebCover } from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import type { BookshelfEntry } from '@/service/schema';

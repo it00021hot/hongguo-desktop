@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { usePlayerStore } from '@/lib/stores/player';
-import { useAccount, useSendDanmaku } from '@/lib/queries';
+import { useAccount, useSendDanmaku } from '@/service/queries';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 import { formatDuration } from '@/lib/format';

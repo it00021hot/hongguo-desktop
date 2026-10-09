@@ -35,7 +35,7 @@ import {
   useSeriesProgress,
   useVideoDigg,
   useWatchHistory,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';

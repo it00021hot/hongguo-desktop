@@ -22,7 +22,7 @@ import {
   useSettings,
   useStorageUsage,
   useTestProxy,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { app as appApi, transcode as transcodeApi } from '@/service/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';

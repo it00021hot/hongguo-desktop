@@ -13,7 +13,7 @@ import {
   useSearchSuggest,
   useSeriesSearchApp,
   useWebCover,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { usePlaySeries } from '@/lib/use-play-series';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';

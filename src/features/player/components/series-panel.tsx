@@ -8,7 +8,7 @@ import {
   useRelatedSeries,
   useSeriesDetailMeta,
   useSeriesEpisodes,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import type { RelatedItem, Series } from '@/service/schema';

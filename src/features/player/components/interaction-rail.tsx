@@ -15,7 +15,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/lib/queries';
+import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/service/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 
 // ── 抖音系实心图标（自绘；激活态类优先于 fill/stroke 属性，直接生效） ──

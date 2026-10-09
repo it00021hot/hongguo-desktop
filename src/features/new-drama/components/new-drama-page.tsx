@@ -10,12 +10,12 @@ import { SkeletonCardGrid, SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { rank as rankApi } from '@/service/commands';
 import {
-  isRenderableCover,
   useDownloadTasks,
   useNewCalendar,
   useNewDrama,
   useWebCover,
-} from '@/lib/queries';
+} from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 import { t, tf } from '@/i18n';
 import { usePlaySeries } from '@/lib/use-play-series';
 import type { CalendarItem, RankItem } from '@/service/schema';

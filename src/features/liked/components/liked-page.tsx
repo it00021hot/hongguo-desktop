@@ -14,12 +14,12 @@ import { ListSearch } from '@/components/list-search';
 import { matchListQuery } from '@/lib/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  isRenderableCover,
   useInteractionState,
   useSeriesMeta,
   useVideoDigg,
   useWebCover,
-} from '@/lib/queries';
+} from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import type { InteractionItem } from '@/service/schema';

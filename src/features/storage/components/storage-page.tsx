@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useStorageActions, useStorageSeries, useStorageUsage } from '@/lib/queries';
+import { useStorageActions, useStorageSeries, useStorageUsage } from '@/service/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 

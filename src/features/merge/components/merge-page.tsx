@@ -32,7 +32,7 @@ import {
   useMergeEvents,
   useMergePreflight,
   useMergeTasks,
-} from '@/lib/queries';
+} from '@/service/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
 import type { MergeMode } from '@/service/schema';

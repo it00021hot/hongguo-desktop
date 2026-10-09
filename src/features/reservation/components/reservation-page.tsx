@@ -11,12 +11,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import { rank as rankApi } from '@/service/commands';
 import {
-  isRenderableCover,
   RESERVATIONS_KEY_ROOT,
   useAccount,
   useReservations,
   useWebCover,
-} from '@/lib/queries';
+} from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 import { t, tf, locale } from '@/i18n';
 import { usePlaySeries } from '@/lib/use-play-series';
 import type { CalendarItem } from '@/service/schema';
