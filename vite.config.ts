@@ -11,8 +11,8 @@ export default defineConfig({
   plugins: [
     tanstackRouter({
       target: 'react',
-      routesDirectory: './src/routes',
-      generatedRouteTree: './src/routeTree.gen.ts',
+      routesDirectory: './src/pages',
+      generatedRouteTree: './src/pages/routeTree.gen.ts',
     }),
     react(),
     tailwindcss(),

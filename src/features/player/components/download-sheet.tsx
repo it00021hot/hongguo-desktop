@@ -4,7 +4,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { EpisodePicker } from '@/features/series/components/episode-picker';
+import { EpisodePicker } from '@/pages/series/components/episode-picker';
 import { useDownloadActions } from '@/service/queries';
 import { t, tf } from '@/locales';
 import type { Episode } from '@/service/schema';

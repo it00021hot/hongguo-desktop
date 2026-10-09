@@ -8,7 +8,7 @@ import { ListSearch } from '@/components/list-search';
 import { matchListQuery } from '@/utils/list-filter';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
-import { LoginDialog } from '@/features/settings/components/login-dialog';
+import { LoginDialog } from '@/pages/settings/components/login-dialog';
 import { rank as rankApi } from '@/service/commands';
 import {
   RESERVATIONS_KEY_ROOT,

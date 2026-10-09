@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LoginDialog } from '@/features/settings/components/login-dialog';
+import { LoginDialog } from '@/pages/settings/components/login-dialog';
 import { useAccount, useAuthRefresh } from '@/service/queries';
 import { login } from '@/service/commands';
 import { useUiStore } from '@/stores/ui';

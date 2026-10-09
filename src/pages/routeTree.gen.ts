@@ -8,21 +8,21 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as BrowseRouteImport } from './routes/browse'
-import { Route as CollectionsRouteImport } from './routes/collections'
-import { Route as DetailRouteImport } from './routes/detail'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as LikedRouteImport } from './routes/liked'
-import { Route as MergeRouteImport } from './routes/merge'
-import { Route as NewRouteImport } from './routes/new'
-import { Route as PlayerRouteImport } from './routes/player'
-import { Route as RankRouteImport } from './routes/rank'
-import { Route as ReservationsRouteImport } from './routes/reservations'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as StorageRouteImport } from './routes/storage'
-import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as rootRouteImport } from './__root'
+import { Route as IndexRouteImport } from './index'
+import { Route as BrowseRouteImport } from './browse'
+import { Route as CollectionsRouteImport } from './collections'
+import { Route as DetailRouteImport } from './detail'
+import { Route as HistoryRouteImport } from './history'
+import { Route as LikedRouteImport } from './liked'
+import { Route as MergeRouteImport } from './merge'
+import { Route as NewRouteImport } from './new'
+import { Route as PlayerRouteImport } from './player'
+import { Route as RankRouteImport } from './rank'
+import { Route as ReservationsRouteImport } from './reservations'
+import { Route as SettingsRouteImport } from './settings'
+import { Route as StorageRouteImport } from './storage'
+import { Route as TasksRouteImport } from './tasks'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',

@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { SeriesDetailPage } from '@/features/series/components/series-detail-page';
+import { SeriesDetailPage } from '@/pages/series/components/series-detail-page';
 
 /**
  * 剧集详情页。seriesId 走 search 参数（可收藏/可分享的深链）：
