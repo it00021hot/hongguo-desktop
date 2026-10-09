@@ -303,13 +303,15 @@ pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
 
     let was_on = INCOGNITO_ON.swap(enabled, Ordering::Release);
     if !enabled {
-        // 关掉的一瞬可能正处于隐身隐藏中：立刻恢复可见，否则窗口没人管。
-        // 之前开着（隐身暂停过）才补 visible:true——前端据此续播，与
-        // 「鼠标回来」同一语义；本来就没开时发它只会是无意义的空事件。
-        if let Some(w) = active_window(&app) {
-            let _ = w.show();
-            let _ = w.set_focus();
-            if was_on {
+        // 只有隐身**真的开着过**才需要收回窗口。挂载同步（隐身本来就没开）
+        // 绝不能 show+focus：播放页每次重挂载（剧终接力/自动连播后的导航）
+        // 都会重发一次 setIncognito(false)，把最小化或被遮挡的窗口弹到最
+        // 前面——听剧听得好好的窗口突然蹦到前台（2026-10-09 真机复现：
+        // 失焦状态下 /player 重挂必抢前台）。
+        if was_on {
+            if let Some(w) = active_window(&app) {
+                let _ = w.show();
+                let _ = w.set_focus();
                 let _ = app.emit_to(
                     w.label(),
                     "incognito-visibility",

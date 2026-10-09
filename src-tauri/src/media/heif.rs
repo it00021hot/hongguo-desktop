@@ -4,6 +4,11 @@
 //! 平台解码器都没有的机器靠它保证封面可用——2026-10-09 真机实测：无
 //! ffmpeg 机器上封面曾全军覆没（协议层静默 404）。
 //!
+//! 平台态：Windows 上是 WIC 之后的真兜底；macOS 上通常**休眠**——
+//! WKWebView 原生解 HEIC，前端不进代理，本级因此也轮不到。但模块跨平台
+//! 无条件编译（依赖 jpeg-encoder 同为主依赖，见 Cargo.toml）：代理入口是
+//! 通用的，留一条纯软解兜底零成本，macOS CI 侧还顺带持续编译测试它。
+//!
 //! 「HEIC = HEVC 进 HEIF 容器」：`meta` box 里 `pitm` 选主 item、`iinf`
 //! 声明类型（hvc1）、`ipco` 存属性（hvcC 参数集）、`iloc` 给出 mdat 里的
 //! 字节区间——与 MP4 的 stsd/sample 机制同源，所以参数集解析与视频管线
