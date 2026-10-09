@@ -64,6 +64,7 @@ export function RankPage() {
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
   const [sub, setSub] = useState('ranklist_hot_sc');
   // 筛选面板选中项（'' = 总榜，即无筛选）
+  const [panel, setPanel] = useState('');
   const rank = useRank(selected, sub, panel);
   const { items: listItems, isLoading, error, isFetching, refetch } = rank;
 
