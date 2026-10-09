@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "红果短剧",
+        "title": "Hongguo",
         "width": 1280,
         "height": 840,
         "minWidth": 1024,
@@ -57,11 +57,18 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"]
+        "languages": ["English", "SimpChinese", "TradChinese"],
+        "template": "nsis/installer.nsi",
+        "installerHooks": "nsis/installer-hooks.nsh"
       }
     },
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "files": {
+        "Resources/en.lproj/InfoPlist.strings": "i18n/en.lproj/InfoPlist.strings",
+        "Resources/zh-Hans.lproj/InfoPlist.strings": "i18n/zh-Hans.lproj/InfoPlist.strings",
+        "Resources/zh-Hant.lproj/InfoPlist.strings": "i18n/zh-Hant.lproj/InfoPlist.strings"
+      }
     }
   },
   "plugins": {

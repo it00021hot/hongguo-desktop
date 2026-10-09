@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "HongGuo Drama"
+    "name": "Hongguo"
   },
   "nav": {
     "home": {
@@ -296,7 +296,7 @@
     "deleteFilesOf": "Delete local files of {title}"
   },
   "update": {
-    "appTitle": "Hongguo Desktop",
+    "appTitle": "Hongguo",
     "versionLine": "Version {version}",
     "upToDate": "Up to date",
     "newVersionAvailable": "New version {version}",

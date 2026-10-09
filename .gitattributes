@@ -18,3 +18,14 @@
 *.woff binary
 *.woff2 binary
 *.mp4 binary
+
+# macOS 应用名本地化文件是 UTF-16LE + BOM（Apple 工具链的要求，参考实现
+# 微信那份就是 UTF-16）。显式标 binary，不靠「内容里有 NUL 所以被判成
+# 二进制」这个隐式行为——一旦哪天被判成文本，上面那条 eol=lf 就会往
+# UTF-16 流里插 LF 字节，整份文件损坏，而表现是「系统静默忽略本地化、
+# 应用名不生效」，不报错、极难排查。内容由 scripts/make-macos-lproj.py
+# 生成，读脚本比读二进制 diff 快。
+#
+# 模式不带斜杠：gitattributes 里含 `/` 的模式会在仓库根锚定，那样
+# `*.lproj/...` 匹配不到 `src-tauri/i18n/...`（实测会静默不生效）。
+InfoPlist.strings binary

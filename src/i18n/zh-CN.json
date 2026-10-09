@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "红果短剧"
+    "name": "红果播放器"
   },
   "nav": {
     "home": {
@@ -234,7 +234,7 @@
     "comingSoon": "即将上线",
     "episodeNo": "第{index}集",
     "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
-    "miniTitle": "红果短剧",
+    "miniTitle": "红果播放器",
     "miniWindow": "小屏播放",
     "exitMiniScreen": "退出小屏",
     "stopMiniScreen": "结束播放",
@@ -296,7 +296,7 @@
     "deleteFilesOf": "删除《{title}》的本地文件"
   },
   "update": {
-    "appTitle": "红果桌面版",
+    "appTitle": "红果播放器",
     "versionLine": "版本 {version}",
     "upToDate": "已是最新版本",
     "newVersionAvailable": "有新版本 {version}",

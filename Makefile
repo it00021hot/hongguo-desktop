@@ -1,7 +1,7 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev build test test-rust lint fmt typecheck clean release
+.PHONY: help dev build test test-rust lint fmt typecheck clean release assets nsis
 
 help:
 	@echo "dev        启动开发模式（Vite + Tauri）"
@@ -12,6 +12,8 @@ help:
 	@echo "fmt        Rust 格式化"
 	@echo "typecheck  TypeScript 类型检查"
 	@echo "release    打包发布版（NSIS / MSI / DMG / APP / DEB / AppImage）"
+	@echo "assets     重新生成图标与名称本地化（改名/换图后跑，离线）"
+	@echo "nsis      同步 Windows 安装器模板（升级 Tauri 后跑，需联网）"
 	@echo "clean      清理构建产物"
 
 dev:
@@ -44,6 +46,20 @@ lint:
 
 fmt:
 	cd src-tauri && cargo fmt
+
+# 生成物：图标（含 macOS 标准留白）、macOS 名称本地化、Windows 安装器脚本。
+# 都是「生成后提交」的产物——构建不依赖本机 Python/ImageMagick/网络，
+# 改名或换 logo 后重跑一次即可。脚本各自带详细说明。
+assets:
+	python3 scripts/make-icons.py
+	python3 scripts/make-macos-lproj.py
+	python3 scripts/make-nsis-hooks.py
+
+# 同步 Windows 安装器模板：从 GitHub 拉取与 @tauri-apps/cli 同版本的官方
+# NSIS 模板，套上快捷方式显示名的本地化补丁。升级 Tauri 后必须重跑，
+# 否则模板停留在旧版本（--check 可判断是否需要重跑）。需要联网。
+nsis:
+	python3 scripts/sync-nsis-template.py
 
 typecheck:
 	pnpm typecheck

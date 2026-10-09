@@ -3,7 +3,7 @@
   "app": {
     "windows": [
       {
-        "title": "红果短剧",
+        "title": "Hongguo",
         "width": 1280,
         "height": 840,
         "minWidth": 1024,
@@ -14,7 +14,10 @@
         "decorations": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 12, "y": 16 },
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 16
+        },
         "transparent": false,
         "shadow": true
       }

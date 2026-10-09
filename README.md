@@ -172,6 +172,16 @@ hongguo-desktop/
 
 ---
 
+## 🌐 应用名称与本地化
+
+应用在系统里显示的名字（Dock / Finder / 快捷方式 /「应用和功能」）跟随系统语言：
+中文显示「红果播放器」，英文显示 `Hongguo`。包名与可执行文件固定为 `Hongguo`
+不本地化（改名等于换了应用，会影响更新与单实例识别）。
+
+macOS 走 `.lproj/InfoPlist.strings`，Windows 走安装器钩子——两者的实现、
+编码要求与验证手法见 [`docs/app-naming.md`](docs/app-naming.md)。
+改名或换图标后跑 `make assets`（离线）；升级 Tauri 后跑 `make nsis`。
+
 ## ❓ 常见问题
 
 ### 拉不到剧集 / 接口返回空响应
