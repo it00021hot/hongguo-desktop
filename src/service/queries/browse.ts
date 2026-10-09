@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
-import { discover } from '../commands/discover';
+import { discover } from '../commands';
 import type { BrowseFilters } from '../schema';
 import { feedItems } from './feed';
 import { keys, useInfiniteStream } from './common';

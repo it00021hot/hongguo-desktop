@@ -10,12 +10,7 @@ import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/pages/settings/components/login-dialog';
 import { rank as rankApi } from '@/service/commands';
-import {
-  RESERVATIONS_KEY_ROOT,
-  useAccount,
-  useReservations,
-  useWebCover,
-} from '@/service/queries';
+import { RESERVATIONS_KEY_ROOT, useAccount, useReservations, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
 import { t, tf, locale } from '@/locales';
 import { usePlaySeries } from '@/hooks/use-play-series';

@@ -13,7 +13,7 @@ export const bookshelfEntrySchema = z.object({
 export type BookshelfEntry = z.infer<typeof bookshelfEntrySchema>;
 
 /** 互动列表里的一条视频（Rust `interact::InteractionItem`，计数给右栏数字用）。 */
-export const interactionItemSchema = z.object({
+const interactionItemSchema = z.object({
   vid: z.string(),
   seriesId: z.string(),
   userDigg: z.boolean(),

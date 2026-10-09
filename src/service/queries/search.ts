@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 
-import { seriesSearch } from '../commands/search';
+import { seriesSearch } from '../commands';
 import type { SearchPage, SearchResult } from '../schema';
 import { keys, useInfiniteStream } from './common';
 

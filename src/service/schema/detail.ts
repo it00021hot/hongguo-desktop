@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** 详情页相关作品里的一条（Rust `detail::RelatedItem`）。 */
-export const relatedItemSchema = z.object({
+const relatedItemSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   cover: z.string(),

@@ -13,12 +13,7 @@ import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
 import { matchListQuery } from '@/utils/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  useInteractionState,
-  useSeriesMeta,
-  useVideoDigg,
-  useWebCover,
-} from '@/service/queries';
+import { useInteractionState, useSeriesMeta, useVideoDigg, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/player';
 import { t, tf } from '@/locales';

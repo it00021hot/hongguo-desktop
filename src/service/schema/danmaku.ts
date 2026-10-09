@@ -13,7 +13,7 @@ export const danmakuSchema = z.object({
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
 /** 一条评论区评论（Rust `danmaku::CommentItem`）。 */
-export const commentItemSchema = z.object({
+const commentItemSchema = z.object({
   commentId: z.string(),
   userName: z.string(),
   avatar: z.string(),

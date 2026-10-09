@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { watchHistory } from '../commands/watch-history';
+import { watchHistory } from '../commands';
 import { keys } from './common';
 
 // ---------------------------------------------------------------- 云端观看历史

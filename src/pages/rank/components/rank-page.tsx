@@ -40,9 +40,7 @@ export function RankPage() {
   const tabs = useMemo(() => normalizeTabs(rank.tabs), [rank.tabs]);
   // 首屏加载中先显示 tab 行骨架；形态确定后仅两级形态显示
   // （登录一级形态只有一个合成 tab，隐藏整行）；出错时不渲染
-  const showTabsRow = rank.tabs.length > 0
-    ? rank.tabs.some((tab) => tab.id === 'all')
-    : isLoading;
+  const showTabsRow = rank.tabs.length > 0 ? rank.tabs.some((tab) => tab.id === 'all') : isLoading;
   const currentTab = tabs.find((tab) => tab.id === selected);
   const currentSub = currentTab?.subs.find((s) => s.id === sub) ?? currentTab?.subs[0];
 
@@ -199,4 +197,3 @@ export function RankPage() {
     </div>
   );
 }
-

@@ -42,11 +42,6 @@ export function PlayerPage() {
   // 封面占位图：历史页带封面进来，取流间隙不至于黑屏（信息流入口由 HomePage 自带）
   const { data: history } = useWatchHistory();
   const coverUrl = history?.items.find((i) => i.seriesId === seriesId)?.cover;
-  // 弹幕设置面板的开合放在这一层：切集时 PlayerView 整体重挂载，
-  // 面板状态在这里才不会一集一开就被吃掉
-
-  // 音量竖条浮层同样在这层持有：切集重挂载不会把正开着的浮层收走
-
   // 刷新/重启后内存 store 是空的：把上次播放目标读回来，
   // 播放器直接续播（进度由本地播放档案的 resumeAt 接上）。
   // 连上次播放目标都没有（首次启动/清过记录）：直接进推荐沉浸流——

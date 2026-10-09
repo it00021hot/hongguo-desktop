@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { storage } from '../commands/storage';
+import { storage } from '../commands';
 import { keys } from './common';
 
 // ---------------------------------------------------------------- 存储

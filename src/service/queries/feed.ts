@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 
-import { discover } from '../commands/discover';
+import { discover } from '../commands';
 import type { FeedItem, FeedPage } from '../schema';
 import { keys, useInfiniteStream } from './common';
 

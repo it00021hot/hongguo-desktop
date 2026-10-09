@@ -1,8 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { interact as interactCmd } from '../commands/interact';
-import { login } from '../commands/login';
+import { interact as interactCmd, login } from '../commands';
 import type { InteractionItem, InteractionState } from '../schema';
 import { RESERVATIONS_KEY_ROOT } from './rank';
 import { keys } from './common';

@@ -12,6 +12,8 @@ import { coverProxyUrl, isRenderableCover } from '@/utils/cover';
 export function useWebCover(sourceCover: string) {
   return {
     data:
-      sourceCover !== '' && !isRenderableCover(sourceCover) ? coverProxyUrl(sourceCover) : undefined,
+      sourceCover !== '' && !isRenderableCover(sourceCover)
+        ? coverProxyUrl(sourceCover)
+        : undefined,
   };
 }

@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** App 搜索的一条结果（Rust `search::SearchResult`）。 */
-export const searchResultSchema = z.object({
+const searchResultSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   cover: z.string(),

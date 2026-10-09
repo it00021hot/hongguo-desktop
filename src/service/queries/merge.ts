@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { merge } from '../commands/merge';
+import { merge } from '../commands';
 import { useEvent } from '../tauri/events';
 import { EVENTS } from '../tauri/types';
 import type { MergeMode, MergeTask } from '../schema';

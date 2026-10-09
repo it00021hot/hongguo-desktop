@@ -1,10 +1,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { danmaku as danmakuCmd } from '../commands/danmaku';
-import { interact as interactCmd } from '../commands/interact';
+import { danmaku as danmakuCmd, interact as interactCmd } from '../commands';
 import type { CommentPage, Danmaku } from '../schema';
 import { keys } from './common';
-
 
 // ---------------------------------------------------------------- 弹幕与评论（缓存管理域）
 

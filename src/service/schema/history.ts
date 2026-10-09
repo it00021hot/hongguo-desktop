@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** 云端观看历史的一条（Rust `history::WatchHistoryItem`，官方 App「历史」同源）。 */
-export const watchHistoryItemSchema = z.object({
+const watchHistoryItemSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   /** HEIC 签名 URL，前端走 hongguo-cover 代理渲染 */

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { download } from '../commands/download';
+import { download } from '../commands';
 import { useEvent } from '../tauri/events';
 import { EVENTS } from '../tauri/types';
 import type { DownloadProgress, DownloadTask, QueueStatus } from '../schema';

@@ -5,7 +5,17 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/service/commands';
-import { keys, useAccount, useBookshelf, useFeed, usePrefetchSeriesEpisodes, useSeriesEpisodes, useSeriesProgress, useWatchHistory, useWebCover } from '@/service/queries';
+import {
+  keys,
+  useAccount,
+  useBookshelf,
+  useFeed,
+  usePrefetchSeriesEpisodes,
+  useSeriesEpisodes,
+  useSeriesProgress,
+  useWatchHistory,
+  useWebCover,
+} from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/locales';

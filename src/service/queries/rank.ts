@@ -1,8 +1,13 @@
 import { useMutation } from '@tanstack/react-query';
 
-import { rank } from '../commands/rank';
+import { rank } from '../commands';
 import type { RankItem, RankPage } from '../schema';
-import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { keys, useInfiniteStream } from './common';
 

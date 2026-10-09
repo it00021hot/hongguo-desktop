@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** 榜单条目（Rust `rank::RankItem`）。 */
-export const rankItemSchema = z.object({
+const rankItemSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   cover: z.string(),
@@ -32,21 +32,19 @@ export const rankItemSchema = z.object({
 export type RankItem = z.infer<typeof rankItemSchema>;
 
 /** 筛选面板选项（id 为空 = 「总榜」，即清除筛选）。 */
-export const rankPanelItemSchema = z.object({
+const rankPanelItemSchema = z.object({
   id: z.string(),
   name: z.string(),
 });
-export type RankPanelItem = z.infer<typeof rankPanelItemSchema>;
 
 /** 面板一行（综合 / 时代背景 / 主题情节 / 角色设定…）。 */
-export const rankPanelRowSchema = z.object({
+const rankPanelRowSchema = z.object({
   name: z.string(),
   items: z.array(rankPanelItemSchema),
 });
-export type RankPanelRow = z.infer<typeof rankPanelRowSchema>;
 
 /** 内容 tab 下的一个子榜（自带筛选面板 schema）。 */
-export const rankSubListSchema = z.object({
+const rankSubListSchema = z.object({
   id: z.string(),
   name: z.string(),
   /** 子榜描述行（如 "10月4日已更新·基于红果观看/互动以及个人兴趣排序"） */
@@ -56,7 +54,7 @@ export const rankSubListSchema = z.object({
 export type RankSubList = z.infer<typeof rankSubListSchema>;
 
 /** 顶部内容 tab（全部/真人剧/漫剧/AI剧/系列剧；演员榜无剧集数据不提供）。 */
-export const rankTabSchema = z.object({
+const rankTabSchema = z.object({
   id: z.string(),
   name: z.string(),
   subs: z.array(rankSubListSchema),
@@ -76,7 +74,7 @@ export const rankPageSchema = z.object({
 export type RankPage = z.infer<typeof rankPageSchema>;
 
 /** 上新日历条目（Rust `rank::CalendarItem`）。 */
-export const calendarItemSchema = z.object({
+const calendarItemSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   cover: z.string(),

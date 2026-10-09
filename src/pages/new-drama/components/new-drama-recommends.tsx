@@ -90,9 +90,13 @@ export function NewDramaRecommends({
           {t('feed.loadingMore')}
         </p>
       )}
-      {!feed.isLoading && !feed.error && feed.items.length > 0 && !feed.isFetchingMore && !feed.hasMore && (
-        <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
-      )}
+      {!feed.isLoading &&
+        !feed.error &&
+        feed.items.length > 0 &&
+        !feed.isFetchingMore &&
+        !feed.hasMore && (
+          <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
+        )}
     </div>
   );
 }

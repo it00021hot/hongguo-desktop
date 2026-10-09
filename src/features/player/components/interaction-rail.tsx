@@ -183,9 +183,7 @@ export function InteractionRail({
     >
       <RailItem
         icon={
-          <DouyinStarIcon
-            className={cn('size-7', collected && 'fill-amber-400 text-amber-400')}
-          />
+          <DouyinStarIcon className={cn('size-7', collected && 'fill-amber-400 text-amber-400')} />
         }
         label={t('player.interact.collect')}
         text={collectCount > 0 ? fmtCount(collectCount) : undefined}
@@ -199,9 +197,7 @@ export function InteractionRail({
         onClick={() => setCommentPanelOpen(true)}
       />
       <RailItem
-        icon={
-          <DouyinHeartIcon className={cn('size-7', digged && 'fill-red-500 text-red-500')} />
-        }
+        icon={<DouyinHeartIcon className={cn('size-7', digged && 'fill-red-500 text-red-500')} />}
         label={t('player.interact.like')}
         text={diggCount > 0 ? fmtCount(diggCount) : undefined}
         onClick={onDigg}

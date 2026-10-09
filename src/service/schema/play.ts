@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** 一档清晰度。 */
-export const videoDefinitionSchema = z.object({
+const videoDefinitionSchema = z.object({
   value: z.number().int().positive(),
   width: z.number().int().nonnegative(),
   height: z.number().int().nonnegative(),
@@ -41,17 +41,16 @@ export const decodeCapabilitySchema = z.object({
  * 整集取回 + 解密期间界面上原本只有一个转圈，用户既看不出在动还是卡住，
  * 也看不到还要多久。这个事件把「已收 / 总量 / 百分比 / 阶段」送上来。
  */
-export const onlineProgressSchema = z.object({
+export type OnlineProgress = {
   /** 缓存键，格式是 `{seriesId}:{vidIndex}` */
-  key: z.string(),
-  received: z.number(),
+  key: string;
+  received: number;
   /** CDN 没给 Content-Length 时为 0，此时不显示百分比 */
-  total: z.number(),
-  percent: z.number(),
+  total: number;
+  percent: number;
   /** downloading | decrypting | ready */
-  phase: z.enum(['downloading', 'decrypting', 'ready']),
-});
-export type OnlineProgress = z.infer<typeof onlineProgressSchema>;
+  phase: 'downloading' | 'decrypting' | 'ready';
+};
 
 /** 播放兼容兜底的转码进度。 */
 export type CompatProgress = {

@@ -1,8 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { play } from '../commands/play';
-import { series } from '../commands/series';
+import { play, series } from '../commands';
 import { useEvent } from '../tauri/events';
 import { EVENTS } from '../tauri/types';
 import { keys } from './common';

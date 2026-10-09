@@ -72,7 +72,6 @@ tab_index=0/screen_width_px=1078/stream_count 等桌面形态参数）
   静态默认列表 + 翻页不回传 session 换源重复——「推荐一直是同一部剧」的
   根因，2026-10-08 已整体迁到本端点
 
-
 ### 1.1 内容 tab 与子榜（2026-10-05 抓 hgplayer 1.1.3 锁定）
 
 顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，

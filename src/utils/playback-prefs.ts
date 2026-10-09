@@ -85,7 +85,7 @@ export interface DanmakuDisplaySettings {
   area: number;
 }
 
-export const DANMAKU_DEFAULTS: DanmakuDisplaySettings = {
+const DANMAKU_DEFAULTS: DanmakuDisplaySettings = {
   opacity: 0.9,
   fontScale: 1,
   density: 1,

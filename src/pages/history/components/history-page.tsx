@@ -203,7 +203,7 @@ function HistoryRow({ item, onOpen }: { item: WatchHistoryItem; onOpen: () => vo
         e.preventDefault();
         onOpen();
       }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none [content-visibility:auto] [contain-intrinsic-size:auto_104px]"
+      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors [contain-intrinsic-size:auto_104px] [content-visibility:auto] hover:shadow-md focus-visible:outline-none"
     >
       <div className="bg-muted relative aspect-[3/4] w-[72px] shrink-0 overflow-hidden rounded-lg">
         {showImg ? (

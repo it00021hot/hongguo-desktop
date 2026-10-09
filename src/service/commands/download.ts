@@ -1,5 +1,10 @@
 import { call } from '../tauri/invoke';
-import { downloadTaskSchema, queueStatusSchema, type DownloadTask, type QueueStatus } from '../schema';
+import {
+  downloadTaskSchema,
+  queueStatusSchema,
+  type DownloadTask,
+  type QueueStatus,
+} from '../schema';
 
 // ---------------------------------------------------------------- 下载
 

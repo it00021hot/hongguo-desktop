@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { play } from '../commands/play';
-import { transcode } from '../commands/transcode';
+import { play, transcode } from '../commands';
 import { keys } from './common';
 
 // ---------------------------------------------------------------- 播放与转码

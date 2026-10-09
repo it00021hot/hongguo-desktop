@@ -3,7 +3,7 @@
  *
  * 页面从这里拿全部服务端数据 hooks；key 工厂与无限滚动封装在 common。
  */
-export { keys, useInfiniteStream } from './common';
+export { keys } from './common';
 export { useSettings, useSaveSettings, useTestProxy } from './settings';
 export {
   useSeriesEpisodes,

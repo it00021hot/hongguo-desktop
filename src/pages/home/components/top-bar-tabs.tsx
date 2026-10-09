@@ -1,4 +1,4 @@
-/** 首页内容区分类 tab 栏：portal 进 AppShell 顶栏中部（共享插槽件见 components/layout/top-bar-tabs）。 */
+/** 首页内容区分类 tab 栏：portal 进 AppShell 顶栏中部（portal 进 components/layout/top-bar-tabs 的共享插槽）。 */
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { t } from '@/locales';
 

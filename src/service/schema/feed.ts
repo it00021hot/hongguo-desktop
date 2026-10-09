@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 /** 信息流的一条剧集卡片（Rust `discover::FeedItem` 的 camelCase 序列化）。 */
-export const feedItemSchema = z.object({
+const feedItemSchema = z.object({
   seriesId: z.string(),
   title: z.string(),
   cover: z.string(),

@@ -73,7 +73,7 @@ export function RankRow({ item }: { item: RankItem }) {
         e.preventDefault();
         openDetail();
       }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none [content-visibility:auto] [contain-intrinsic-size:auto_112px]"
+      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors [contain-intrinsic-size:auto_112px] [content-visibility:auto] hover:shadow-md focus-visible:outline-none"
     >
       {rankNo !== undefined && (
         <span
@@ -113,9 +113,7 @@ export function RankRow({ item }: { item: RankItem }) {
             </span>
           )}
         </div>
-        {meta !== '' && (
-          <p className="text-muted-foreground truncate text-xs">{meta}</p>
-        )}
+        {meta !== '' && <p className="text-muted-foreground truncate text-xs">{meta}</p>}
         {item.description !== '' && (
           <p className="text-muted-foreground/80 line-clamp-2 text-xs leading-relaxed">
             {item.description}
