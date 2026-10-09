@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { PlayerView } from '@/features/player/components/player-page';
 import { play } from '@/service/commands';
 import { keys, useAccount, useBookshelf, useFeed, usePrefetchSeriesEpisodes, useSeriesEpisodes, useSeriesProgress, useWatchHistory, useWebCover } from '@/service/queries';
@@ -11,6 +10,8 @@ import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/locales';
 import type { Series } from '@/service/schema';
+import { TABS, TopBarTabs } from './top-bar-tabs';
+import type { StreamSource } from './top-bar-tabs';
 
 /**
  * 首页：沉浸式播放器流（第三方同款形态）。
@@ -25,9 +26,6 @@ import type { Series } from '@/service/schema';
  * 切换要快：当前剧进入时就预取下一部的分集档案与流（本地缺失自动回落解析），
  * 真正切过去时只剩取流时间。
  */
-
-/** 顶部 tab 的三个源（书城 cell 换一换：推荐 16 / 漫剧 36 / 真人剧 39）。 */
-type StreamSource = 'feed' | 'comic' | 'human';
 
 /**
  * 推荐流源 → 书城 cell 换一换的 tab_type（hgplayer bookmall/tab 下发：
@@ -53,12 +51,6 @@ interface StreamItem {
   /** 官方运营角标（「新剧/爆剧/红果首发」；剧名前标签） */
   badge?: string;
 }
-
-const TABS: { id: StreamSource; labelKey: string }[] = [
-  { id: 'feed', labelKey: 'home.tabFeed' },
-  { id: 'comic', labelKey: 'home.tabComic' },
-  { id: 'human', labelKey: 'home.tabHuman' },
-];
 
 const SOURCE_KEY = 'hongguo.feedSource';
 
@@ -435,26 +427,5 @@ export function HomePage() {
         <PlayerView onWheelStep={step} coverUrl={coverForPlayer} overlayMeta={overlayMeta} />
       </div>
     </div>
-  );
-}
-
-/**
- * 分类 tab 栏（顶栏中部插槽，共享件见 top-bar-tabs.tsx）。
- */
-function TopBarTabs({
-  source,
-  onPick,
-}: {
-  source: StreamSource;
-  onPick: (id: StreamSource) => void;
-}) {
-  return (
-    <TopBarTabsPortal>
-      {TABS.map((tab) => (
-        <TopBarTab key={tab.id} active={source === tab.id} onClick={() => onPick(tab.id)}>
-          {t(tab.labelKey)}
-        </TopBarTab>
-      ))}
-    </TopBarTabsPortal>
   );
 }
