@@ -29,7 +29,12 @@ pub async fn get_series_episodes(
         let stale = hit
             .episodes
             .first()
-            .map(|e| (e.comment_count == 0 && e.digg_count == 0) || e.duration == 0)
+            .map(|e| {
+                (e.comment_count == 0 && e.digg_count == 0)
+                    || e.duration == 0
+                    // 收藏数 2026-10-09 才进档案：旧档后台补齐后右栏「☆ N」浮现
+                    || hit.followed_cnt == 0
+            })
             .unwrap_or(false);
         if stale {
             let store = state.store.clone();

@@ -17,6 +17,10 @@ pub struct Series {
     pub cover: String,
     #[serde(default, alias = "episode_count")]
     pub episode_count: u32,
+    /// 全剧收藏数（detail 响应 video_data.followed_cnt，右栏「☆ N」数据源；
+    /// 旧档案缓存缺省 0 = 不显示）
+    #[serde(default)]
+    pub followed_cnt: i64,
     #[serde(default)]
     pub tags: Vec<String>,
     /// 完整分集（拉取后写入）

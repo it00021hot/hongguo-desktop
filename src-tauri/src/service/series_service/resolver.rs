@@ -36,6 +36,7 @@ pub async fn resolve_series(
         title: list.title,
         cover: list.cover,
         episode_count: list.episodes.len() as u32,
+        followed_cnt: list.followed_cnt,
         episodes: list.episodes,
         tags: Vec::new(),
         dismissed: false,
