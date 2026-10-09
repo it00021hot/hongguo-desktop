@@ -64,13 +64,15 @@ export function RankPage() {
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
   const [sub, setSub] = useState('ranklist_hot_sc');
   // 筛选面板选中项（'' = 总榜，即无筛选）
-  const [panel, setPanel] = useState('');
-  const { data, isLoading, error, isFetching, refetch } = useRank(selected, sub, panel);
+  const rank = useRank(selected, sub, panel);
+  const { items: listItems, isLoading, error, isFetching, refetch } = rank;
 
-  const tabs = useMemo(() => normalizeTabs(data?.tabs ?? []), [data?.tabs]);
+  const tabs = useMemo(() => normalizeTabs(rank.tabs), [rank.tabs]);
   // 首屏加载中先显示 tab 行骨架；形态确定后仅两级形态显示
   // （登录一级形态只有一个合成 tab，隐藏整行）；出错时不渲染
-  const showTabsRow = data !== undefined ? data.tabs.some((tab) => tab.id === 'all') : isLoading;
+  const showTabsRow = rank.tabs.length > 0
+    ? rank.tabs.some((tab) => tab.id === 'all')
+    : isLoading;
   const currentTab = tabs.find((tab) => tab.id === selected);
   const currentSub = currentTab?.subs.find((s) => s.id === sub) ?? currentTab?.subs[0];
 
@@ -90,25 +92,16 @@ export function RankPage() {
     setSub(first?.id ?? '');
   };
 
-  // 渐进渲染（历史页同款）：榜单一次可到百条，整表挂载白卡切换瞬间。
-  // 首批 20 行 + 哨兵续载；子榜/筛选切换重置批量
-  const [visibleCount, setVisibleCount] = useState(20);
-  const [prevListKey, setPrevListKey] = useState('');
-  const listKey = `${selected}:${sub}:${panel}`;
-  if (prevListKey !== listKey) {
-    setPrevListKey(listKey);
-    setVisibleCount(20);
-  }
+  // 滚动续载：哨兵进视口（600px 提前量）就向服务端翻下一页（每页 20 条，
+  // 按抓包协议 offset=next_offset + 回传 session_id）。API 分页天然一批
+  // 20 条，不再需要客户端渲染批量。
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const listItems = data?.items ?? [];
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisibleCount((n) => (n < listItems.length ? n + 40 : n));
-        }
+        if (entries.some((e) => e.isIntersecting)) rank.loadMore();
       },
       { rootMargin: '600px' },
     );
@@ -205,11 +198,18 @@ export function RankPage() {
                  而不是闪骨架屏——旧内容可看但不可点 */
               <RefreshShade refreshing={isFetching}>
                 <div className="flex flex-col gap-2">
-                  {listItems.slice(0, visibleCount).map((item) => (
+                  {listItems.map((item) => (
                     <RankRow key={item.seriesId} item={item} />
                   ))}
-                  {/* 续载哨兵（600px 提前量） */}
-                  {visibleCount < listItems.length && <div ref={sentinelRef} className="h-px" />}
+                  {/* 续载哨兵：常驻（滚动容器内 600px 提前量触发服务端翻页）。
+                      到底后（!hasMore）不移除也无妨——回调里 loadMore 自会空转 */}
+                  <div ref={sentinelRef} className="h-px" aria-hidden />
+                  {rank.isFetchingMore && (
+                    <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                      {t('feed.loadingMore')}
+                    </p>
+                  )}
                   {listItems.length === 0 && (
                     <p className="text-muted-foreground py-16 text-center text-sm">
                       {t('rank.empty')}

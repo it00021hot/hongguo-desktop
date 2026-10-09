@@ -10,7 +10,7 @@ use crate::domain::api::rank::{
 use crate::domain::api::search::{SearchPage, SuggestItem, search_series, search_suggest};
 use crate::error::{AppError, AppResult};
 
-/// 拉一个榜单（任意 tab × 子榜 × 筛选组合）。
+/// 拉一个榜单（任意 tab × 子榜 × 筛选组合；offset 游标翻页，每页 20 条）。
 ///
 /// - `selected`：内容 tab id（all/human/comic_series_rank/ai_playlet/
 ///   series_album；ranklist_celebrity 为演员榜，无剧集数据，前端不提供）
@@ -22,6 +22,8 @@ pub async fn rank_list(
     selected: String,
     sub: String,
     panel: Option<String>,
+    offset: Option<i64>,
+    session_id: Option<String>,
 ) -> AppResult<RankPage> {
     let selected = if selected.trim().is_empty() {
         "all".into()
@@ -29,7 +31,15 @@ pub async fn rank_list(
         selected
     };
     let env = state.api_env();
-    fetch_rank_ex(&selected, &sub, panel.as_deref(), &env).await
+    fetch_rank_ex(
+        &selected,
+        &sub,
+        panel.as_deref(),
+        offset.unwrap_or(0),
+        session_id.as_deref().unwrap_or(""),
+        &env,
+    )
+    .await
 }
 
 /// 新剧推荐（gender: 2=全部；offset 翻页步长 18）。

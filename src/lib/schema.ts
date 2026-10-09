@@ -602,6 +602,11 @@ export const rankPageSchema = z.object({
   items: z.array(rankItemSchema),
   /** 内容 tab → 子榜 → 筛选面板的选项表（响应 cell_selector 展开） */
   tabs: z.array(rankTabSchema),
+  /** 分页游标（每页固定 20 条、相邻页重叠 10 条需去重；has_more=false 到底） */
+  hasMore: z.boolean().default(false),
+  nextOffset: z.number().default(0),
+  /** 浏览会话标识：翻页原样回传（服务端按它维持榜单上下文） */
+  sessionId: z.string().default(''),
 });
 export type RankPage = z.infer<typeof rankPageSchema>;
 

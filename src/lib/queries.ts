@@ -37,6 +37,7 @@ import type {
   MergeMode,
   MergeTask,
   QueueStatus,
+  RankItem,
   RankPage,
   SearchPage,
   SearchResult,
@@ -603,14 +604,51 @@ export function isRenderableCover(url: string): boolean {
 /**
  * 一个榜单（内容tab × 子榜 × 筛选 组合缓存；榜单一天更新几次，10 分钟内
  * 不重打。切筛选时用 keepPreviousData 保住旧列表，避免整页闪 loading）。
+ *
+ * 无限滚动（**2026-10-09 抓 hgplayer 滚动榜单实锤的协议**）：每页固定
+ * 20 条（limit 参数恒 "0" 不参与），首页 offset=0 不带 session_id；翻页
+ * offset=响应的 next_offset（步进 10）并回传响应的 session_id。相邻页
+ * 重叠 10 条——按 seriesId 去重。tabs 取首页（选项表每页随行下发）。
  */
 export function useRank(selected: string, sub: string, panel: string) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: keys.rank(selected, sub, panel),
-    queryFn: () => rank.list(selected, sub, panel),
+    queryFn: ({ pageParam }) =>
+      rank.list(selected, sub, panel, pageParam.offset, pageParam.sessionId),
+    initialPageParam: { offset: 0, sessionId: '' },
+    getNextPageParam: (last) =>
+      last.hasMore && last.nextOffset > 0
+        ? { offset: last.nextOffset, sessionId: last.sessionId }
+        : undefined,
     staleTime: 10 * 60_000,
     placeholderData: keepPreviousData,
   });
+
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    const out: RankItem[] = [];
+    for (const page of query.data?.pages ?? []) {
+      for (const item of page.items) {
+        if (seen.has(item.seriesId)) continue;
+        seen.add(item.seriesId);
+        out.push(item);
+      }
+    }
+    return out;
+  }, [query.data]);
+  const tabs = query.data?.pages[0]?.tabs ?? [];
+
+  return {
+    items,
+    tabs,
+    isLoading: query.isPending,
+    isFetching: query.isFetching,
+    error: query.error,
+    refetch: () => query.refetch(),
+    hasMore: query.hasNextPage,
+    isFetchingMore: query.isFetchingNextPage,
+    loadMore: () => void query.fetchNextPage().catch(() => undefined),
+  };
 }
 
 /** pages → 顺序条目（新剧推荐无推荐位轮换，直接平铺）。 */

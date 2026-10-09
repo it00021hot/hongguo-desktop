@@ -163,6 +163,15 @@ pub struct RankPage {
     /// 展开，每次请求都随行下发；前端首次拿到后即可渲染整套筛选 UI）
     #[serde(default)]
     pub tabs: Vec<RankTab>,
+    /// 分页游标（每页固定 20 条；has_more=false 或 next_offset=0 到底）
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_offset: i64,
+    /// 浏览会话标识：首页响应下发、翻页原样回传（服务端按它维持榜单
+    /// 上下文，2026-10-09 抓包实锤）
+    #[serde(default)]
+    pub session_id: String,
 }
 
 /// 拉任意 tab × 子榜 × 筛选组合的榜单。
@@ -172,10 +181,17 @@ pub struct RankPage {
 /// - `sub`：子榜的 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
 /// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
 ///   cate_308 / style_1685…；单值——hgplayer 抓包实测每次点击整组替换）
+/// - `offset` / `session_id`：翻页游标（**2026-10-09 抓 hgplayer 滚动榜单
+///   实锤**：首页 offset=0 不带 session_id，响应下发 next_offset（步进 10）
+///   + session_id；翻页 offset=next_offset 并**回传同一 session_id**，其余
+///   参数原样。每页下发 20 条、相邻页重叠 10 条——客户端按 seriesId 去重。
+///   limit 恒 "0" 不参与分页，页长服务端固定。）
 pub async fn fetch_rank_ex(
     selected: &str,
     sub: &str,
     panel: Option<&str>,
+    offset: i64,
+    session_id: &str,
     env: &ApiEnv,
 ) -> AppResult<RankPage> {
     let mut q: Vec<(String, String)> = [
@@ -187,8 +203,9 @@ pub async fn fetch_rank_ex(
         ("client_req_type", "2"),
         ("client_template", "2"),
         ("gender", "2"),
+        // 抓包原样：limit 恒 "0"（页长服务端固定 20，limit 参数不参与）
         ("limit", "0"),
-        ("offset", "0"),
+        ("offset", &offset.to_string()),
         ("sub_selected_items", sub),
         // 面板 schema（unlimited_selector）随请求下发，抓包恒带 2
         ("unlimited_selector_change_type", "2"),
@@ -199,13 +216,30 @@ pub async fn fetch_rank_ex(
     if let Some(p) = panel.filter(|p| !p.is_empty()) {
         q.push(("panel_selected_items".to_string(), p.to_string()));
     }
+    if !session_id.is_empty() {
+        q.push(("session_id".to_string(), session_id.to_string()));
+    }
     let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析榜单失败: {e}")))?;
     check_code(&value)?;
+    let data = value.get("data");
     Ok(RankPage {
-        items: parse_rank_items(value.get("data"))?,
-        tabs: parse_cell_selector(value.get("data")),
+        items: parse_rank_items(data)?,
+        tabs: parse_cell_selector(data),
+        has_more: data
+            .and_then(|d| d.get("has_more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_offset: data
+            .and_then(|d| d.get("next_offset"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        session_id: data
+            .and_then(|d| d.get("session_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -749,9 +783,23 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
     check_code(&value)?;
+    let data = value.get("data");
     Ok(RankPage {
-        items: parse_rank_items(value.get("data"))?,
-        tabs: parse_cell_selector(value.get("data")),
+        items: parse_rank_items(data)?,
+        tabs: parse_cell_selector(data),
+        has_more: data
+            .and_then(|d| d.get("has_more"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_offset: data
+            .and_then(|d| d.get("next_offset"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        session_id: data
+            .and_then(|d| d.get("session_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -1725,6 +1773,59 @@ pub(crate) mod probe {
         ApiEnv::anonymous(crate::domain::model::ProxyConfig::default())
     }
 
+    /// 临时探测：榜单 cell 的 limit/offset 分页行为（用后即删）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_rank_paging() {
+        let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
+        let mut device: crate::signer::device::DeviceProfile =
+            serde_json::from_str(&device_json).expect("device json");
+        crate::signer::device::align_app_version(&mut device);
+        let env = ApiEnv {
+            proxy: crate::domain::model::ProxyConfig::default(),
+            device,
+            cookie: None,
+            x_tt_token: None,
+        };
+        for (limit, offset) in [(0i64, 0i64), (50, 0), (20, 20), (20, 40)] {
+            let q: Vec<(String, String)> = [
+                ("cell_id", "7470092475068071998"),
+                ("tab_type", "26"),
+                ("selected_items", "all"),
+                ("category_id", "0"),
+                ("cell_sub_id", "0"),
+                ("client_req_type", "2"),
+                ("client_template", "2"),
+                ("gender", "2"),
+                ("limit", &limit.to_string()),
+                ("offset", &offset.to_string()),
+                ("sub_selected_items", "ranklist_subscribe"),
+                ("unlimited_selector_change_type", "2"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+            match api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, &env).await {
+                Ok(bytes) => {
+                    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+                    let data = v.get("data");
+                    let count = data
+                        .map(|d| {
+                            d.to_string().matches("series_id").count()
+                        })
+                        .unwrap_or(0);
+                    println!(
+                        "[limit={limit} offset={offset}] keys={:?} next_offset={:?} has_more={:?} series_id_hits={count}",
+                        data.map(|d| d.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()).unwrap_or_default(),
+                        data.and_then(|d| d.get("next_offset")).cloned(),
+                        data.and_then(|d| d.get("has_more")).cloned(),
+                    );
+                }
+                Err(e) => println!("[limit={limit} offset={offset}] ERR {e}"),
+            }
+        }
+    }
+
     /// hgplayer 抓包里的已注册设备（bookmall 系在静态旧设备上报 110，
     /// 设备注册实现前用它验证端点形状）。
     ///
@@ -1852,7 +1953,7 @@ pub(crate) mod probe {
             x_tt_token: None,
         };
 
-        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, 0, "", &env)
             .await
             .expect("榜单请求");
         println!("[{variant}] tabs={} 第一层 id:", page.tabs.len());
@@ -1894,7 +1995,7 @@ pub(crate) mod probe {
             device,
             x_tt_token: None,
         };
-        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, 0, "", &env)
             .await
             .expect("榜单请求");
         println!("[anon/{variant}] tabs={} 第一层 id:", page.tabs.len());
@@ -1960,7 +2061,7 @@ pub(crate) mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_panel_filter() {
         let env = hg_env(&anon_env());
-        let base = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+        let base = fetch_rank_ex("all", "ranklist_hot_sc", None, 0, "", &env)
             .await
             .expect("总榜");
         println!(
@@ -1973,7 +2074,7 @@ pub(crate) mod probe {
         assert_eq!(base.tabs[0].id, "all", "tabs schema 应随行下发");
 
         for p in ["gender_female", "gender_male", "cate_308"] {
-            let page = fetch_rank_ex("all", "ranklist_hot_sc", Some(p), &env)
+            let page = fetch_rank_ex("all", "ranklist_hot_sc", Some(p), 0, "", &env)
                 .await
                 .unwrap_or_else(|e| panic!("panel={p}: {e}"));
             println!(
@@ -1990,7 +2091,7 @@ pub(crate) mod probe {
             ("comic_series_rank", "comic_series_hot_rank"),
             ("series_album", "series_album_hot_sc"),
         ] {
-            let page = fetch_rank_ex(sel, sub, None, &env)
+            let page = fetch_rank_ex(sel, sub, None, 0, "", &env)
                 .await
                 .unwrap_or_else(|e| panic!("{sel}/{sub}: {e}"));
             println!(
@@ -2014,7 +2115,7 @@ pub(crate) mod probe {
             device,
             x_tt_token: None,
         };
-        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, &env)
+        let page = fetch_rank_ex("all", "ranklist_hot_sc", None, 0, "", &env)
             .await
             .expect("app 同款设备榜单");
         println!(
@@ -2040,7 +2141,7 @@ pub(crate) mod probe {
     async fn probe_rank_all_lists() {
         let env = hg_env(&anon_env());
         for sub in ALL_TAB_SUBS {
-            match fetch_rank_ex("all", sub, None, &env).await {
+            match fetch_rank_ex("all", sub, None, 0, "", &env).await {
                 Ok(page) => {
                     let top = page.items.first();
                     println!(

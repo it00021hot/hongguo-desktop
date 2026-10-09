@@ -246,10 +246,16 @@ export const rank = {
    * 拉一个榜单（任意 内容tab × 子榜 × 筛选 组合）。
    * selected/sub 用响应 tabs schema 下发的 id；panel 为空串 = 总榜（无筛选）。
    */
-  list: (selected: string, sub: string, panel: string = '') =>
+  list: (selected: string, sub: string, panel: string = '', offset = 0, sessionId = '') =>
     call<RankPage>(
       'rank_list',
-      { selected, sub, panel: panel === '' ? undefined : panel },
+      {
+        selected,
+        sub,
+        panel: panel === '' ? undefined : panel,
+        offset: offset || undefined,
+        sessionId: sessionId || undefined,
+      },
       rankPageSchema,
     ),
   /** 新剧推荐（gender: 2=全部；offset 步长 18）。 */
