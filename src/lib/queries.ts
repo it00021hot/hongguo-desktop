@@ -517,13 +517,33 @@ export function useSeriesCollect() {
   });
 }
 
-/** 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。 */
+/**
+ * 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。
+ *
+ * 成功后两件事：刷新预约列表（权威源）；**就地翻新榜单缓存里该条的
+ * reserved 位**——cell 接口的 online_subscribed 是响应时刻快照，不翻新的
+ * 话切个子榜回来（10 分钟 staleTime 内命中缓存）预约态就「丢」了。
+ */
 export function useReserveSeries() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { seriesId: string; reserve: boolean }) =>
       rank.reserve(input.seriesId, input.reserve),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT }),
+    onSuccess: (_data, input) => {
+      void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT });
+      for (const query of queryClient.getQueryCache().findAll({ queryKey: ['rank'] })) {
+        queryClient.setQueryData<RankPage>(query.queryKey, (page) =>
+          page
+            ? {
+                ...page,
+                items: page.items.map((i) =>
+                  i.seriesId === input.seriesId ? { ...i, reserved: input.reserve } : i,
+                ),
+              }
+            : page,
+        );
+      }
+    },
   });
 }
 

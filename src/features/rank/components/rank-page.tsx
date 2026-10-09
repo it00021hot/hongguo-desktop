@@ -316,8 +316,20 @@ function RankRow({ item }: { item: RankItem }) {
   const reserve = useReserveSeries();
   const [reserved, setReserved] = useState(item.reserved);
 
-  // 卡片一律进详情（hgplayer 同款：详情看档案，播放/预约是右侧明确动作）
-  const openDetail = () => void navigate({ to: '/detail', search: { seriesId: item.seriesId } });
+  // 卡片一律进详情（hgplayer 同款：详情看档案，播放/预约是右侧明确动作）。
+  // 带上榜单自带的档案快照：未上线剧详情解析分集必然失败，prefill 支撑
+  // 详情页渲染「即将上线」降级视图（而非整页报错）
+  const openDetail = () =>
+    void navigate({
+      to: '/detail',
+      search: {
+        seriesId: item.seriesId,
+        title: item.title,
+        cover: item.cover,
+        tags: item.tags.join(','),
+        desc: item.description,
+      },
+    });
   const onToggleReserve = () => {
     const next = !reserved;
     reserve.mutate(

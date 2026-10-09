@@ -14,6 +14,7 @@ import {
   useBookshelf,
   useInteractionState,
   useRelatedSeries,
+  useReservations,
   useReserveSeries,
   useResolveSeries,
   useSeriesCollect,
@@ -35,8 +36,17 @@ import type { RelatedItem } from '@/lib/schema';
  * 播放器里点剧名进来：封面/统计/标签/简介 + 继续看 + 选集网格 + 剧评 +
  * 相关推荐。数据全部来自官方 App 接口查询（分集档案 / meta / 观看历史 /
  * 评论 / plan 相关推荐）；「继续看第 N 集」的 N 从云端观看历史推。
+ *
+ * `prefill`：来源页（榜单行）的档案快照。未上线剧解析分集必然失败，
+ * 有 prefill 时错误分支渲染「即将上线」降级视图（档案 + 预约按钮）。
  */
-export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
+export function SeriesDetailPage({
+  seriesId,
+  prefill,
+}: {
+  seriesId: string;
+  prefill?: { title: string; cover: string; tags: string; desc: string };
+}) {
   const navigate = useNavigate();
   const router = useRouter();
   const setTarget = usePlayerStore((s) => s.setTarget);
@@ -176,7 +186,37 @@ export function SeriesDetailPage({ seriesId }: { seriesId: string }) {
         </div>
       )}
 
-      {isError && (
+      {isError && prefill ? (
+        /* 未上线剧的降级视图：分集解析必然失败（平台无分集可给），用来源页
+           带来的档案快照渲染「即将上线」档案页 + 预约按钮，而不是整页报错 */
+        <div className="mt-4 flex gap-8">
+          <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
+            <DetailCover cover={prefill.cover} name={prefill.title} />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-3">
+            <h1 className="text-2xl font-bold">{prefill.title}</h1>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="default" className="bg-red-500 text-primary-foreground">
+                {t('player.comingSoon')}
+              </Badge>
+              {prefill.tags
+                .split(',')
+                .filter(Boolean)
+                .map((tag) => (
+                  <Badge key={tag} variant="secondary">
+                    {tag}
+                  </Badge>
+                ))}
+            </div>
+            {prefill.desc !== '' && (
+              <p className="text-muted-foreground text-sm leading-relaxed">{prefill.desc}</p>
+            )}
+            <div className="mt-2 w-40">
+              <ReserveButton seriesId={seriesId} />
+            </div>
+          </div>
+        </div>
+      ) : isError && (
         <div className="grid gap-3 py-16 text-center">
           <p className="text-destructive text-sm">
             {t('series.loadFailed')}
@@ -531,7 +571,13 @@ function RelatedCard({ item, onOpen }: { item: RelatedItem; onOpen: (id: string)
 /** 未上线剧集的预约按钮（第三方同款粉胶囊；已预约变描边，再点取消）。 */
 function ReserveButton({ seriesId }: { seriesId: string }) {
   const reserve = useReserveSeries();
-  const [reserved, setReserved] = useState(false);
+  // 初始态对号预约列表（两个 tab 都查：预约态跟剧走；mutation 成功会
+  // 失效列表缓存，这里随后跟上服务端真值）
+  const { data: offlineReservations } = useReservations(false);
+  const { data: onlineReservations } = useReservations(true);
+  const reserved =
+    (offlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false) ||
+    (onlineReservations?.items.some((i) => i.seriesId === seriesId) ?? false);
   return (
     <button
       type="button"
@@ -542,7 +588,6 @@ function ReserveButton({ seriesId }: { seriesId: string }) {
           { seriesId, reserve: next },
           {
             onSuccess: () => {
-              setReserved(next);
               toast.success(t(next ? 'player.interact.reserved' : 'player.interact.unreserved'));
             },
             onError: (err) => toast.error(String(err)),
