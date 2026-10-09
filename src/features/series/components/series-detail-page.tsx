@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bell, Flame, Heart, Play, Star } from 'lucide-react';
+import { ArrowLeft, Bell, Flame, Heart, Hourglass, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +28,7 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { RelatedItem } from '@/lib/schema';
+import type { RelatedItem, Series } from '@/lib/schema';
 
 /**
  * 剧集详情页（/detail?seriesId=…）。
@@ -63,6 +63,25 @@ export function SeriesDetailPage({
   // 失败为 undefined：头部相应行不渲染，不打断页面
   const { data: meta } = useSeriesDetailMeta(seriesId);
   const historyItem = history?.items.find((i) => i.seriesId === seriesId);
+
+  // 未上线剧（来源页带档案 prefill）：解析分集必然失败（平台无分集可给），
+  // 合成一个 0 集档案走**正常渲染流**（hgplayer 同构：详情页不分支，只是
+  // 动作行换「即将上线 + 预约」、选集 tab 自然落在「暂无分集信息」）
+  const upcomingSeries: Series | undefined =
+    !series && isError && prefill
+      ? {
+          seriesId,
+          title: prefill.title,
+          cover: prefill.cover,
+          episodeCount: 0,
+          followedCnt: 0,
+          tags: prefill.tags.split(',').filter(Boolean),
+          episodes: [],
+          dismissed: false,
+        }
+      : undefined;
+  const activeSeries = series ?? upcomingSeries;
+  const upcoming = upcomingSeries != null;
 
   /**
    * 「继续看」的集号。本地 playback 表是第一真值（播放期间 5 秒一写，
@@ -146,7 +165,8 @@ export function SeriesDetailPage({
   const reviewScoreCnt = commentPages?.pages[0]?.scoreCnt ?? 0;
 
   const [introExpanded, setIntroExpanded] = useState(false);
-  const intro = meta?.intro ?? '';
+  // 简介：meta 的 series_intro 优先；未上线合成档案回落 prefill 的描述
+  const intro = meta?.intro ?? (upcoming ? (prefill?.desc ?? '') : '');
   // 展开按钮按字符数显隐（hgplayer 同款哲学：不量 DOM，宁滥勿缺——
   // 80 字符在最窄正常窗口的三行容量之外，误报顶多多一个能点的按钮，
   // 测量方案则要在长驻组件里跟 ref/effect 时序搏斗）
@@ -186,37 +206,7 @@ export function SeriesDetailPage({
         </div>
       )}
 
-      {isError && prefill ? (
-        /* 未上线剧的降级视图：分集解析必然失败（平台无分集可给），用来源页
-           带来的档案快照渲染「即将上线」档案页 + 预约按钮，而不是整页报错 */
-        <div className="mt-4 flex gap-8">
-          <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
-            <DetailCover cover={prefill.cover} name={prefill.title} />
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-3">
-            <h1 className="text-2xl font-bold">{prefill.title}</h1>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant="default" className="bg-red-500 text-primary-foreground">
-                {t('player.comingSoon')}
-              </Badge>
-              {prefill.tags
-                .split(',')
-                .filter(Boolean)
-                .map((tag) => (
-                  <Badge key={tag} variant="secondary">
-                    {tag}
-                  </Badge>
-                ))}
-            </div>
-            {prefill.desc !== '' && (
-              <p className="text-muted-foreground text-sm leading-relaxed">{prefill.desc}</p>
-            )}
-            <div className="mt-2 w-40">
-              <ReserveButton seriesId={seriesId} />
-            </div>
-          </div>
-        </div>
-      ) : isError && (
+      {isError && !upcomingSeries && (
         <div className="grid gap-3 py-16 text-center">
           <p className="text-destructive text-sm">
             {t('series.loadFailed')}
@@ -226,16 +216,16 @@ export function SeriesDetailPage({
         </div>
       )}
 
-      {series && (
+      {activeSeries && (
         <>
           {/* 头部：封面 + 档案。对齐第三方详情页构图，数据全走 App 接口 */}
           <div className="mt-4 flex gap-8">
             <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
-              <DetailCover cover={series.cover} name={series.title} />
+              <DetailCover cover={activeSeries.cover} name={activeSeries.title} />
             </div>
 
             <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-bold">{series.title}</h1>
+              <h1 className="text-2xl font-bold">{activeSeries.title}</h1>
               {/* 统计行，排版对齐第三方：评分 评分人数 → 红果热度值 → 追剧 → 播放。
                   评分来自剧评接口 extra（credibility_score），热度来自 video_detail
                   （hot_score），两者缺失时该段不渲染不打断行 */}
@@ -272,21 +262,26 @@ export function SeriesDetailPage({
               </div>
 
               {/* 季徽（高亮）+「全 N 集」+ 题材标签——行构成与第三方一致；
-                  题材来自 video_detail secondary_infos，档案自带 tags 是解析兜底 */}
-              {(meta ? !!meta.season || meta.tags.length > 0 : series.tags.length > 0) ||
-              series.episodes.length > 0 ? (
+                  题材来自 video_detail secondary_infos，档案自带 tags 是解析兜底。
+                  未上线剧红底「全 0 集」（hgplayer 同款，0 集也要亮出来） */}
+              {(meta ? !!meta.season || meta.tags.length > 0 : activeSeries.tags.length > 0) ||
+              activeSeries.episodes.length > 0 ||
+              upcoming ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {meta?.season && (
                     <Badge variant="default" className="text-primary-foreground bg-red-500">
                       {meta.season}
                     </Badge>
                   )}
-                  {series.episodes.length > 0 && (
-                    <Badge variant="secondary">
-                      {tf('detail.allEpisodesBadge', { count: series.episodes.length })}
+                  {(upcoming || activeSeries.episodes.length > 0) && (
+                    <Badge
+                      variant={upcoming ? 'default' : 'secondary'}
+                      className={upcoming ? 'text-primary-foreground bg-red-500' : ''}
+                    >
+                      {tf('detail.allEpisodesBadge', { count: activeSeries.episodes.length })}
                     </Badge>
                   )}
-                  {(meta?.tags ?? series.tags).map((tag) => (
+                  {(meta?.tags ?? activeSeries.tags).map((tag) => (
                     <Badge key={tag} variant="secondary">
                       {tag}
                     </Badge>
@@ -317,36 +312,52 @@ export function SeriesDetailPage({
               )}
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
-                <Button size="sm" onClick={() => playEpisode(continueIndex)}>
-                  <Play className="size-4" aria-hidden />
-                  {continueIndex > 1
-                    ? tf('detail.continueEpisode', { index: continueIndex })
-                    : t('detail.playFirst')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onCollect}
-                  className={cn(collected && 'text-amber-500')}
-                >
-                  <Star
-                    className={cn('size-4', collected && 'fill-amber-400 text-amber-400')}
-                    aria-hidden
-                  />
-                  {t(collected ? 'detail.collected' : 'detail.collect')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onDigg}
-                  className={cn(digged && 'text-red-500')}
-                >
-                  <Heart
-                    className={cn('size-4', digged && 'fill-red-500 text-red-500')}
-                    aria-hidden
-                  />
-                  {t('player.interact.like')}
-                </Button>
+                {upcoming ? (
+                  /* 未上线：动作行换「⏳ 即将上线 + 预约」（hgplayer 同款），
+                     播放/收藏/点赞无从谈起 */
+                  <>
+                    <span className="flex items-center gap-1.5 text-sm font-medium text-red-500">
+                      <Hourglass className="size-4" aria-hidden />
+                      {t('player.comingSoon')}
+                    </span>
+                    <div className="w-32">
+                      <ReserveButton seriesId={seriesId} />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Button size="sm" onClick={() => playEpisode(continueIndex)}>
+                      <Play className="size-4" aria-hidden />
+                      {continueIndex > 1
+                        ? tf('detail.continueEpisode', { index: continueIndex })
+                        : t('detail.playFirst')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onCollect}
+                      className={cn(collected && 'text-amber-500')}
+                    >
+                      <Star
+                        className={cn('size-4', collected && 'fill-amber-400 text-amber-400')}
+                        aria-hidden
+                      />
+                      {t(collected ? 'detail.collected' : 'detail.collect')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={onDigg}
+                      className={cn(digged && 'text-red-500')}
+                    >
+                      <Heart
+                        className={cn('size-4', digged && 'fill-red-500 text-red-500')}
+                        aria-hidden
+                      />
+                      {t('player.interact.like')}
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -363,7 +374,8 @@ export function SeriesDetailPage({
             <TabsList>
               <TabsTrigger value="episodes">
                 {t('detail.tabEpisodes')}
-                {series.episodes.length > 0 && ` ${series.episodes.length}`}
+                {(upcoming || activeSeries.episodes.length > 0) &&
+                  ` ${activeSeries.episodes.length}`}
               </TabsTrigger>
               <TabsTrigger value="comments">
                 {t('detail.tabComments')}
@@ -376,17 +388,18 @@ export function SeriesDetailPage({
             </TabsList>
 
             <TabsContent value="episodes">
-              {series.episodes.length === 0 ? (
+              {activeSeries.episodes.length === 0 ? (
                 <div className="grid gap-3 py-10 text-center">
                   <p className="text-muted-foreground text-sm">{t('series.noEpisodes')}</p>
-                  <ResolveButton seriesId={seriesId} />
+                  {/* 未上线剧没有可解析的分集，重试无意义，只给文案 */}
+                  {!upcoming && <ResolveButton seriesId={seriesId} />}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                   {/* 选集格对齐第三方：序号 + 第 N 集 + 右侧时长角标。
                       接口的 title 是整句剧情简介（不是集名），照排会挤成一团，
                       第三方同款做法是统一显示「第 N 集」 */}
-                  {series.episodes.map((ep) => (
+                  {activeSeries.episodes.map((ep) => (
                     <button
                       key={ep.vidIndex}
                       type="button"
