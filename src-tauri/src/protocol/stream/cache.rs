@@ -374,6 +374,9 @@ impl StreamCache {
     }
 
     /// 缓存状态：(条目数, 已缓存字节)。
+    ///
+    /// 字节口径只含整集模式的明文缓冲（filled）；渐进条目驻留的稀疏内存
+    /// 不计入，统计偏小——当前唯一生产消费方只读条目数，够用。
     pub fn status(&self) -> (usize, u64) {
         let guard = self.entries.lock();
         let bytes: u64 = guard.values().map(|e| *e.filled.lock()).sum();

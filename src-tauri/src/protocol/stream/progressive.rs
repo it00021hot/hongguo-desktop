@@ -226,8 +226,10 @@ fn serve_progressive(
         RangeSpec::Full => (0, plain_len),
         RangeSpec::Closed { start, end } => (start, end + 1),
         RangeSpec::Open { start } => {
-            let window = progressive_window();
-            (start, (start + window).min(plain_len))
+            // 窗口 0 与整集模式的 stream_window 同义：一次给到末尾。
+            // 不能原样参与加法——end==start 会让下方 end-1 下溢（start=0
+            // 时 debug panic，release 出非法 Content-Range）
+            (start, open_range_end(start, progressive_window(), plain_len))
         }
         RangeSpec::Unsatisfiable => {
             return Ok((
@@ -293,6 +295,7 @@ fn serve_progressive(
 }
 
 /// 渐进模式的开放 Range 窗口大小，可用 `HONGGUO_STREAM_WINDOW` 覆盖。
+/// `0` = 一次给到末尾（与整集模式 [`stream_window`] 同义）。
 fn progressive_window() -> u64 {
     static WINDOW: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *WINDOW.get_or_init(|| {
@@ -301,6 +304,15 @@ fn progressive_window() -> u64 {
             .and_then(|v| v.parse().ok())
             .unwrap_or(PROGRESSIVE_WINDOW)
     })
+}
+
+/// 开放式 Range 的本次供给终点：窗口 0 给到末尾，否则按窗口截断。
+fn open_range_end(start: u64, window: u64, plain_len: u64) -> u64 {
+    if window == 0 {
+        plain_len
+    } else {
+        (start + window).min(plain_len)
+    }
 }
 
 /// 开放式 Range 单次供给的窗口大小。`0` = 一次给到末尾（默认）。
@@ -371,6 +383,18 @@ fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
 mod tests {
     use super::*;
     use crate::protocol::stream::StreamCache;
+
+    /// 回归：`HONGGUO_STREAM_WINDOW=0` 曾让开放 Range 的 end==start，
+    /// `end-1` 在 start=0 时 u64 下溢（debug panic / release 非法头）。
+    /// 现约定窗口 0 与整集模式同义：一次给到末尾。
+    #[test]
+    fn zero_window_means_till_end_not_underflow() {
+        assert_eq!(open_range_end(0, 0, 1_000), 1_000);
+        assert_eq!(open_range_end(500, 0, 1_000), 1_000);
+        assert_eq!(open_range_end(0, 100, 1_000), 100);
+        assert_eq!(open_range_end(900, 100, 1_000), 1_000);
+        assert_eq!(open_range_end(999, 100, 1_000), 1_000);
+    }
 
     /// 造一个「已填好 size + 全部字节」的条目。
     fn ready_stream(vid: &str, definition: u32, len: usize) {
