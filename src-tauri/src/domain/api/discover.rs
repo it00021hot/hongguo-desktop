@@ -76,7 +76,7 @@ pub struct FeedPage {
     pub session_id: String,
 }
 
-// 首页推荐流已迁移到书城 cell 换一换（rank.rs fetch_recommend_feed，
+// 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed，
 // 2026-10-08 对齐 hgplayer RecommendTab）；landpage 只服务找剧筛选浏览。
 
 // ---------------------------------------------------------------- 找剧（筛选浏览）
