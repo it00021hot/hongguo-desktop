@@ -1,10 +1,11 @@
 # 第三方组件许可声明 / Third-Party Notices
 
 本项目使用了以下第三方组件。其版权与许可条款归各自作者所有。
-本项目自身以 **GPL-3.0** 授权，详见 `LICENSE`。
+本项目自身以 **PolyForm Noncommercial 1.0.0** 授权（仅限非商业用途），详见 `LICENSE`。
 
 This project uses the following third-party components. Their copyrights and licenses
-remain with their respective authors. This project itself is licensed under **GPL-3.0**.
+remain with their respective authors. This project itself is licensed under
+**PolyForm Noncommercial 1.0.0** (noncommercial use only).
 
 ---
 
@@ -50,24 +51,21 @@ remain with their respective authors. This project itself is licensed under **GP
 
 ## 五、前端 / Frontend
 
-| 组件                                                                | 用途                                   | 许可       |
-| ------------------------------------------------------------------- | -------------------------------------- | ---------- |
-| [React](https://react.dev)                                          | UI 运行时                              | MIT        |
-| [TanStack Router](https://tanstack.com/router)                      | 路由                                   | MIT        |
-| [TanStack Query](https://tanstack.com/query)                        | 服务端状态                             | MIT        |
-| [TanStack Table](https://tanstack.com/table)                        | 表格                                   | MIT        |
-| [Zustand](https://github.com/pmndrs/zustand)                        | 客户端状态                             | MIT        |
-| [Radix UI](https://www.radix-ui.com)                                | 无障碍组件原语                         | MIT        |
-| [Tailwind CSS](https://tailwindcss.com)                             | 原子化 CSS                             | MIT        |
-| [shadcn/ui](https://ui.shadcn.com)                                  | 组件源码（复制到项目内，无运行时依赖） | MIT        |
-| [class-variance-authority](https://github.com/joe-bell/cva)         | 组件变体                               | Apache-2.0 |
-| [clsx](https://github.com/lukeed/clsx)                              | 类名合并                               | MIT        |
-| [tailwind-merge](https://github.com/dcastil/tailwind-merge)         | Tailwind 类名合并                      | MIT        |
-| [lucide-react](https://lucide.dev)                                  | 图标                                   | ISC        |
-| [sonner](https://github.com/emilkowalski/sonner)                    | 通知                                   | MIT        |
-| [react-hook-form](https://react-hook-form.com)                      | 表单                                   | MIT        |
-| [@hookform/resolvers](https://github.com/react-hook-form/resolvers) | 校验器桥接                             | MIT        |
-| [zod](https://zod.dev)                                              | 运行时类型校验                         | MIT        |
+| 组件                                                        | 用途                                   | 许可       |
+| ----------------------------------------------------------- | -------------------------------------- | ---------- |
+| [React](https://react.dev)                                  | UI 运行时                              | MIT        |
+| [TanStack Router](https://tanstack.com/router)              | 路由                                   | MIT        |
+| [TanStack Query](https://tanstack.com/query)                | 服务端状态                             | MIT        |
+| [Zustand](https://github.com/pmndrs/zustand)                | 客户端状态                             | MIT        |
+| [Radix UI](https://www.radix-ui.com)                        | 无障碍组件原语                         | MIT        |
+| [Tailwind CSS](https://tailwindcss.com)                     | 原子化 CSS                             | MIT        |
+| [shadcn/ui](https://ui.shadcn.com)                          | 组件源码（复制到项目内，无运行时依赖） | MIT        |
+| [class-variance-authority](https://github.com/joe-bell/cva) | 组件变体                               | Apache-2.0 |
+| [clsx](https://github.com/lukeed/clsx)                      | 类名合并                               | MIT        |
+| [tailwind-merge](https://github.com/dcastil/tailwind-merge) | Tailwind 类名合并                      | MIT        |
+| [lucide-react](https://lucide.dev)                          | 图标                                   | ISC        |
+| [sonner](https://github.com/emilkowalski/sonner)            | 通知                                   | MIT        |
+| [zod](https://zod.dev)                                      | 运行时类型校验                         | MIT        |
 
 ## 六、构建工具 / Build Tooling
 
@@ -86,8 +84,10 @@ remain with their respective authors. This project itself is licensed under **GP
 | ------------------------------------------------------------------- | ------------------------------------------- | ------- |
 | [woshishiq1/drpys](https://github.com/woshishiq1/drpys) @ `22261ad` | `spider/js/红果果[短].js`，签名算法移植来源 | GPL-3.0 |
 
-本项目的 `src-tauri/src/signer/` 目录下的签名实现为该源文件的 **1:1 移植**，
-未做任何数值改动。作为 GPL-3.0 项目的组成部分继续以 GPL-3.0 授权。
+本项目的 `src-tauri/src/signer/` 目录下的签名常量与部分算法实现为该源文件的移植，
+未做数值改动。该部分来源于 GPL-3.0 项目，其 **GPL-3.0 授权义务独立存在且不可撤销**，
+不随本项目整体许可证（PolyForm Noncommercial 1.0.0）而改变；如需将该部分用于
+商业用途，须自行另行取得相应授权。
 
 ---
 
@@ -100,4 +100,4 @@ remain with their respective authors. This project itself is licensed under **GP
 - BSD-2-Clause：https://opensource.org/licenses/BSD-2-Clause
 - ISC：https://opensource.org/licenses/ISC-0BSD
 
-本项目自身许可文本见 `LICENSE`，修改声明见 `NOTICE`。
+本项目自身许可文本见 `LICENSE`，项目声明与免责条款见 `NOTICE`。

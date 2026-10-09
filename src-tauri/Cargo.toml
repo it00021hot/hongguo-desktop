@@ -3,7 +3,7 @@ name = "hongguo-desktop"
 version = "0.1.0"
 description = "红果短剧桌面客户端（Tauri 桌面版）"
 authors = ["hongguo-desktop contributors"]
-license = "GPL-3.0"
+license = "PolyForm-Noncommercial-1.0.0"
 edition = "2024"
 # MSRV 声明跟随当前 stable 工具链（1.99）。这是个应用不是库，MSRV 只影响
 # cargo 依赖解析的版本上限，实际开发与 CI 都跑最新 stable。

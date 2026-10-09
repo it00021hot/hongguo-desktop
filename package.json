@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "license": "GPL-3.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "description": "红果短剧桌面客户端（Windows / macOS）",
   "scripts": {
     "dev": "vite",
