@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { parseEmojiSegments } from '@/lib/danmaku-emoji';
 import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
-import type { Danmaku } from '@/lib/schema';
+import type { Danmaku } from '@/service/schema';
 
 interface Props {
   videoRef: React.RefObject<HTMLVideoElement | null>;

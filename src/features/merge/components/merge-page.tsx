@@ -35,7 +35,7 @@ import {
 } from '@/lib/queries';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
-import type { MergeMode } from '@/lib/schema';
+import type { MergeMode } from '@/service/schema';
 
 /** 一键合并：快速合并（流复制）与兼容合并（转码）。 */
 export function MergePage() {

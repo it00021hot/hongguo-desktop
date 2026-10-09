@@ -17,11 +17,11 @@ import { Button } from '@/components/ui/button';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { parseEmojiSegments } from '@/lib/danmaku-emoji';
-import { interact } from '@/lib/ipc/commands';
+import { interact } from '@/service/commands';
 import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
-import type { CommentItem } from '@/lib/schema';
+import type { CommentItem } from '@/service/schema';
 
 interface Props {
   seriesId: string;

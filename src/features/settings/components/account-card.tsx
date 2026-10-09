@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { login as loginApi } from '@/lib/ipc/commands';
+import { login as loginApi } from '@/service/commands';
 import { t } from '@/i18n';
-import type { AccountState } from '@/lib/schema';
+import type { AccountState } from '@/service/schema';
 import { LoginDialog } from './login-dialog';
 
 /**

@@ -39,12 +39,12 @@ import {
 } from '@/lib/playback-prefs';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { useEvent } from '@/lib/ipc/events';
-import { app as appApi, watchHistory } from '@/lib/ipc/commands';
+import { useEvent } from '@/service/tauri/events';
+import { app as appApi, watchHistory } from '@/service/commands';
 import { useIncognitoMode } from './incognito';
-import { EVENTS } from '@/lib/ipc/types';
+import { EVENTS } from '@/service/tauri/types';
 import { formatBytes } from '@/lib/format';
-import type { CompatProgress, OnlineProgress, VideoDefinition } from '@/lib/schema';
+import type { CompatProgress, OnlineProgress, VideoDefinition } from '@/service/schema';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
 const SAVE_INTERVAL = 5_000;

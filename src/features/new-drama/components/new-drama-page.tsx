@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonCardGrid, SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
-import { rank as rankApi } from '@/lib/ipc/commands';
+import { rank as rankApi } from '@/service/commands';
 import {
   isRenderableCover,
   useDownloadTasks,
@@ -18,7 +18,7 @@ import {
 } from '@/lib/queries';
 import { t, tf } from '@/i18n';
 import { usePlaySeries } from '@/lib/use-play-series';
-import type { CalendarItem, RankItem } from '@/lib/schema';
+import type { CalendarItem, RankItem } from '@/service/schema';
 
 /**
  * 新剧页：新剧推荐 + 上新日历两个视图。

@@ -23,7 +23,7 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
-import type { BookshelfEntry } from '@/lib/schema';
+import type { BookshelfEntry } from '@/service/schema';
 
 export function CollectionPage() {
   const navigate = useNavigate();

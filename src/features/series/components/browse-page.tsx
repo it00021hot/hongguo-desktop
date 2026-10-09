@@ -18,7 +18,7 @@ import { usePlaySeries } from '@/lib/use-play-series';
 import { useUiStore } from '@/lib/stores/ui';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { BrowseFilters, FeedItem, SeriesCard, SuggestItem } from '@/lib/schema';
+import type { BrowseFilters, FeedItem, SeriesCard, SuggestItem } from '@/service/schema';
 
 /** App 筛选条目转官网卡形态喂同一块网格。 */
 function toCard(it: FeedItem): SeriesCard {

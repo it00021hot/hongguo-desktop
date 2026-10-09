@@ -9,7 +9,7 @@ import { matchListQuery } from '@/lib/list-filter';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
-import { rank as rankApi } from '@/lib/ipc/commands';
+import { rank as rankApi } from '@/service/commands';
 import {
   isRenderableCover,
   RESERVATIONS_KEY_ROOT,
@@ -19,7 +19,7 @@ import {
 } from '@/lib/queries';
 import { t, tf, locale } from '@/i18n';
 import { usePlaySeries } from '@/lib/use-play-series';
-import type { CalendarItem } from '@/lib/schema';
+import type { CalendarItem } from '@/service/schema';
 
 /**
  * 我的预约（对齐 hgplayer 1.1.3）：已上线 / 待上线两个 tab（带计数），

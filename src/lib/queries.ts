@@ -22,10 +22,10 @@ import {
   danmaku as danmakuCmd,
   interact as interactCmd,
   watchHistory,
-} from './ipc/commands';
-import { useEvent } from './ipc/events';
+} from '@/service/commands';
+import { useEvent } from '@/service/tauri/events';
 import { isWindows } from './platform';
-import { EVENTS } from './ipc/types';
+import { EVENTS } from '@/service/tauri/types';
 import type {
   BrowseFilters,
   CommentPage,
@@ -43,7 +43,7 @@ import type {
   SearchResult,
   InteractionItem,
   InteractionState,
-} from './schema';
+} from '@/service/schema';
 
 /**
  * TanStack Query 的 key 工厂。

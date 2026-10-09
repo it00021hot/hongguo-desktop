@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LoginDialog } from '@/features/settings/components/login-dialog';
 import { useAccount, useAuthRefresh } from '@/lib/queries';
-import { login } from '@/lib/ipc/commands';
+import { login } from '@/service/commands';
 import { useUiStore } from '@/lib/stores/ui';
 import { t } from '@/i18n';
 import { cn } from '@/lib/utils';

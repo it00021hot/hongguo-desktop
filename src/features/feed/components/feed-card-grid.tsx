@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { SeriesCover } from '@/components/series-cover';
 import { t, tf } from '@/i18n';
 import { formatPlayCount } from '@/lib/format';
-import type { FeedItem } from '@/lib/schema';
+import type { FeedItem } from '@/service/schema';
 
 interface Props {
   items: FeedItem[];

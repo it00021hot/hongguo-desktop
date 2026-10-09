@@ -39,7 +39,7 @@ import {
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { RelatedItem, Series } from '@/lib/schema';
+import type { RelatedItem, Series } from '@/service/schema';
 
 /**
  * 剧集详情页（/detail?seriesId=…）。

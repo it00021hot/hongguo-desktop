@@ -11,7 +11,7 @@ import { isRenderableCover, useResolveSeries, useWatchHistory, useWebCover } fro
 import { usePlayerStore } from '@/lib/stores/player';
 import { formatDuration } from '@/lib/format';
 import { t, tf } from '@/i18n';
-import type { WatchHistoryItem } from '@/lib/schema';
+import type { WatchHistoryItem } from '@/service/schema';
 
 /**
  * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，

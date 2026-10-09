@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { firstN, formatRange, lastN, parseRange } from '@/lib/range';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/i18n';
-import type { Episode } from '@/lib/schema';
+import type { Episode } from '@/service/schema';
 
 interface Props {
   episodes: Episode[];

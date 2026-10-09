@@ -36,7 +36,7 @@ import { t, tf } from '@/i18n';
 import type { DanmakuDisplaySettings } from '@/lib/playback-prefs';
 import { DownloadSheet } from './download-sheet';
 import { EpisodePicker } from './episode-picker';
-import type { Episode, VideoDefinition } from '@/lib/schema';
+import type { Episode, VideoDefinition } from '@/service/schema';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];

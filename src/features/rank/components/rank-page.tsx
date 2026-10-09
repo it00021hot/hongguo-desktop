@@ -11,7 +11,7 @@ import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { isRenderableCover, useRank, useReserveSeries, useWebCover } from '@/lib/queries';
 import { usePlaySeries } from '@/lib/use-play-series';
 import { t } from '@/i18n';
-import type { RankItem, RankSubList, RankTab } from '@/lib/schema';
+import type { RankItem, RankSubList, RankTab } from '@/service/schema';
 
 /**
  * 排行榜页（对齐 hgplayer 1.1.3 布局，2026-10-05 抓包）：

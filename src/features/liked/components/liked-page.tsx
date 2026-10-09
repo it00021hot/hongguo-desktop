@@ -22,7 +22,7 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
-import type { InteractionItem } from '@/lib/schema';
+import type { InteractionItem } from '@/service/schema';
 
 export function LikedPage() {
   const navigate = useNavigate();

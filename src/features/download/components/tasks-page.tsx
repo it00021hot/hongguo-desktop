@@ -26,10 +26,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useDownloadActions, useDownloadTasks, useQueueStatus } from '@/lib/queries';
-import { app as appApi } from '@/lib/ipc/commands';
+import { app as appApi } from '@/service/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
-import type { DownloadTask, TaskStatus } from '@/lib/schema';
+import type { DownloadTask, TaskStatus } from '@/service/schema';
 
 const STATUS_VARIANT: Record<
   TaskStatus,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { app as appApi } from '@/lib/ipc/commands';
-import { useEvent } from '@/lib/ipc/events';
-import { EVENTS } from '@/lib/ipc/types';
+import { app as appApi } from '@/service/commands';
+import { useEvent } from '@/service/tauri/events';
+import { EVENTS } from '@/service/tauri/types';
 import { readIncognito, writeIncognito } from '@/lib/playback-prefs';
 
 /**

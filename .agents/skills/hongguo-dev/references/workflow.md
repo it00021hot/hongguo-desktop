@@ -10,17 +10,17 @@
 
 Makefile 是入口（`make help` 看全量）：
 
-| 命令 | 作用 |
-|---|---|
-| `make dev` | `pnpm tauri dev`，Vite + Tauri 联调 |
-| `make build` | 前端产物（`tsc -b && vite build`） |
-| `make test` / `make test-rust` | vitest / cargo test |
-| `make lint` | **质量闸门、一票否决**：ESLint + Prettier + cargo clippy×3 |
-| `make typecheck` | `pnpm typecheck`（app + node 两个 tsconfig） |
-| `make release` | `pnpm tauri build`（NSIS/DMG/APP，产出 updater 工件） |
-| `make assets` | 改名/换 logo 后重新生成图标与名称本地化（离线，产物提交入库） |
-| `make nsis` | 升级 Tauri 后同步 Windows 安装器模板（需联网） |
-| `make fmt` / `make clean` | cargo fmt / 清理 dist 与 target |
+| 命令                           | 作用                                                          |
+| ------------------------------ | ------------------------------------------------------------- |
+| `make dev`                     | `pnpm tauri dev`，Vite + Tauri 联调                           |
+| `make build`                   | 前端产物（`tsc -b && vite build`）                            |
+| `make test` / `make test-rust` | vitest / cargo test                                           |
+| `make lint`                    | **质量闸门、一票否决**：ESLint + Prettier + cargo clippy×3    |
+| `make typecheck`               | `pnpm typecheck`（app + node 两个 tsconfig）                  |
+| `make release`                 | `pnpm tauri build`（NSIS/DMG/APP，产出 updater 工件）         |
+| `make assets`                  | 改名/换 logo 后重新生成图标与名称本地化（离线，产物提交入库） |
+| `make nsis`                    | 升级 Tauri 后同步 Windows 安装器模板（需联网）                |
+| `make fmt` / `make clean`      | cargo fmt / 清理 dist 与 target                               |
 
 前端另有 `pnpm knip`（死代码检查，重构后必跑）。Rust 日志：`RUST_LOG=debug`（env_logger，默认 info）。
 

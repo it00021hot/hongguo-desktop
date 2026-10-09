@@ -45,7 +45,7 @@ export function useSaveSettings() {
   return useMutation({
     mutationFn: settings.save,
     onSuccess: (saved) => {
-      qc.setQueryData(keys.settings, saved);                    // 已知结果直接写
+      qc.setQueryData(keys.settings, saved); // 已知结果直接写
       void qc.invalidateQueries({ queryKey: keys.queueStatus }); // 派生数据失效
     },
   });

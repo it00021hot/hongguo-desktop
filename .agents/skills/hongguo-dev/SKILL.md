@@ -9,15 +9,15 @@ Tauri 2 桌面应用（Windows/macOS）。前端 `src/`：React 19 + TS + Vite +
 
 ## 按任务读对应参考文档
 
-| 你要做的事 | 先读 |
-|---|---|
-| 环境搭建 / 日常命令 / 调试 / 提交 / 发版 | `references/workflow.md` |
-| 新增（或改动）IPC 命令、事件、外部 API 端点 | `references/ipc.md` |
-| 写前端：组件、hooks、查询、store、样式、i18n、路由 | `references/frontend.md` |
-| 写后端：command、service、store、迁移、测试 | `references/backend.md` |
-| 对接官方 App 接口（抓包/端点/参数） | `docs/hongguo-api-endpoints.md`（仓库文档，改 domain/api 前必读） |
-| 动转码/平台硬编（media/platform） | `docs/platform-transcode-progress.md`（仓库文档，动前必读） |
-| 执行重构计划 | `docs/refactor-plan.md` + 见下文「重构执行」 |
+| 你要做的事                                         | 先读                                                              |
+| -------------------------------------------------- | ----------------------------------------------------------------- |
+| 环境搭建 / 日常命令 / 调试 / 提交 / 发版           | `references/workflow.md`                                          |
+| 新增（或改动）IPC 命令、事件、外部 API 端点        | `references/ipc.md`                                               |
+| 写前端：组件、hooks、查询、store、样式、i18n、路由 | `references/frontend.md`                                          |
+| 写后端：command、service、store、迁移、测试        | `references/backend.md`                                           |
+| 对接官方 App 接口（抓包/端点/参数）                | `docs/hongguo-api-endpoints.md`（仓库文档，改 domain/api 前必读） |
+| 动转码/平台硬编（media/platform）                  | `docs/platform-transcode-progress.md`（仓库文档，动前必读）       |
+| 执行重构计划                                       | `docs/refactor-plan.md` + 见下文「重构执行」                      |
 
 参考文档没覆盖的判断，回到两条元规则：**同一段逻辑只有一个明确归属**；**不为目录整齐制造转发文件**。
 

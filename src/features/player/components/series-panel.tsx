@@ -11,7 +11,7 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t, tf } from '@/i18n';
-import type { RelatedItem, Series } from '@/lib/schema';
+import type { RelatedItem, Series } from '@/service/schema';
 
 interface Props {
   seriesId: string;

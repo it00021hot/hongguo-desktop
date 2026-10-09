@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { PlayerView } from '@/features/player/components/player-page';
-import { play } from '@/lib/ipc/commands';
+import { play } from '@/service/commands';
 import {
   isRenderableCover,
   keys,
@@ -20,7 +20,7 @@ import {
 } from '@/lib/queries';
 import { usePlayerStore } from '@/lib/stores/player';
 import { t } from '@/i18n';
-import type { Series } from '@/lib/schema';
+import type { Series } from '@/service/schema';
 
 /**
  * 首页：沉浸式播放器流（第三方同款形态）。

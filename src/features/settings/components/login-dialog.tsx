@@ -3,11 +3,11 @@ import { Loader2, Send, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { login as loginApi } from '@/lib/ipc/commands';
-import { useEvent } from '@/lib/ipc/events';
+import { login as loginApi } from '@/service/commands';
+import { useEvent } from '@/service/tauri/events';
 import { useAuthRefresh } from '@/lib/queries';
 import { t, tf } from '@/i18n';
-import type { LoginResult } from '@/lib/schema';
+import type { LoginResult } from '@/service/schema';
 
 /**
  * 登录弹窗（hgplayer 同款形态）：表单 → MFA 上行短信等待 → 自动登录。

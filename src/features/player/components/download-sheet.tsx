@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { EpisodePicker } from '@/features/series/components/episode-picker';
 import { useDownloadActions } from '@/lib/queries';
 import { t, tf } from '@/i18n';
-import type { Episode } from '@/lib/schema';
+import type { Episode } from '@/service/schema';
 
 interface Props {
   seriesId: string;

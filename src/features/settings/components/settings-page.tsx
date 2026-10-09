@@ -23,10 +23,10 @@ import {
   useStorageUsage,
   useTestProxy,
 } from '@/lib/queries';
-import { app as appApi, transcode as transcodeApi } from '@/lib/ipc/commands';
+import { app as appApi, transcode as transcodeApi } from '@/service/commands';
 import { formatBytes } from '@/lib/format';
 import { t, tf } from '@/i18n';
-import type { DecodeCapability, Settings } from '@/lib/schema';
+import type { DecodeCapability, Settings } from '@/service/schema';
 import { UpdateCard } from '@/features/update/update-card';
 import { AccountCard } from './account-card';
 
