@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { History, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
@@ -51,6 +51,33 @@ export function HistoryPage() {
     if (tab === 'finished' && !isFinished(item)) return false;
     if (tab === 'unfinished' && isFinished(item)) return false;
     return matchListQuery(query, item.title, item.seriesId);
+  });
+
+  // 渐进渲染：几百行一次性挂载是菜单点击卡顿的来源（实测 489 行 ~300ms
+  // 主线程阻塞）。首批 60 行秒出，滚动到底部由哨兵续载，语义不变
+  // （筛选/搜索仍作用于全量 shown）。
+  const [visibleCount, setVisibleCount] = useState(60);
+  // tab/搜索变化时重置批量（渲染期调整 state 的官方模式，避免 effect 级联）
+  const [prevFilterKey, setPrevFilterKey] = useState('');
+  const filterKey = `${tab}:${query}`;
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey);
+    setVisibleCount(60);
+  }
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((n) => (n < shown.length ? n + 80 : n));
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
   });
 
   const open = (item: WatchHistoryItem) => {
@@ -139,13 +166,15 @@ export function HistoryPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {shown.map((item) => (
+          {shown.slice(0, visibleCount).map((item) => (
             <HistoryRow
               key={`${item.seriesId}:${item.updatedAtMs}`}
               item={item}
               onOpen={() => open(item)}
             />
           ))}
+          {/* 续载哨兵：滚近底部（600px 提前量）继续渲染下一批 */}
+          {visibleCount < shown.length && <div ref={sentinelRef} className="h-px" />}
           {resolving && <p className="text-muted-foreground text-sm">{t('common.resolving')}</p>}
         </div>
       )}
@@ -173,7 +202,7 @@ function HistoryRow({ item, onOpen }: { item: WatchHistoryItem; onOpen: () => vo
         e.preventDefault();
         onOpen();
       }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none"
+      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors hover:shadow-md focus-visible:outline-none [content-visibility:auto] [contain-intrinsic-size:auto_104px]"
     >
       <div className="bg-muted relative aspect-[3/4] w-[72px] shrink-0 overflow-hidden rounded-lg">
         {showImg ? (
