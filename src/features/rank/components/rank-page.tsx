@@ -417,38 +417,35 @@ function RankRow({ item }: { item: RankItem }) {
         )}
       </div>
 
-      {/* 行尾动作列（按剧状态分）：未上线 = 预约/已预约胶囊；
-          已上线 = 播放胶囊 + 详情链接。卡片本体始终进详情 */}
+      {/* 行尾动作列（按剧状态分）：未上线 = 预约/已预约；已上线 = 播放 +
+          详情链接。按钮统一定位风格（与历史页「继续播放」同款 outline）。 */}
       <div className="flex shrink-0 flex-col items-stretch gap-1.5 self-center">
         {item.upcoming ? (
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 gap-1"
+            disabled={reserve.isPending}
             onClick={(e) => {
               e.stopPropagation();
               onToggleReserve();
             }}
-            disabled={reserve.isPending}
-            className={cn(
-              'flex h-8 cursor-pointer items-center justify-center gap-1 rounded-full px-4 text-xs font-medium transition-colors',
-              reserved
-                ? 'border border-red-400/60 text-red-400 hover:bg-red-400/10'
-                : 'bg-red-500 text-white hover:bg-red-500/90',
-            )}
           >
             {reserve.isPending ? (
-              <Loader2 className="size-3 animate-spin" aria-hidden />
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
             ) : reserved ? (
-              <Check className="size-3" aria-hidden />
+              <Check className="size-3.5" aria-hidden />
             ) : (
-              <Bell className="size-3" aria-hidden />
+              <Bell className="size-3.5" aria-hidden />
             )}
             {t(reserved ? 'player.reserved' : 'player.reserve')}
-          </button>
+          </Button>
         ) : (
           <>
             <Button
               size="sm"
-              className="h-8 gap-1 rounded-full px-4 text-xs"
+              variant="outline"
+              className="shrink-0 gap-1"
               onClick={(e) => {
                 e.stopPropagation();
                 playSeries(item.seriesId);
