@@ -17,8 +17,9 @@ import { keys, useInfiniteStream } from './common';
 export const RESERVATIONS_KEY_ROOT = ['reservations'] as const;
 
 /**
- * 一个榜单（内容tab × 子榜 × 筛选 组合缓存；榜单一天更新几次，10 分钟内
- * 不重打。切筛选时用 keepPreviousData 保住旧列表，避免整页闪 loading）。
+ * 一个榜单（内容tab × 子榜 × 筛选 组合缓存；社交态数据不缓存——
+ * 2026-10-10 定规，每次挂载重拉。切筛选时用 keepPreviousData 保住
+ * 旧列表，避免整页闪 loading）。
  *
  * 无限滚动（**2026-10-09 抓 hgplayer 滚动榜单实锤的协议**）：每页固定
  * 20 条（limit 参数恒 "0" 不参与），首页 offset=0 不带 session_id；翻页
@@ -35,7 +36,7 @@ export function useRank(selected: string, sub: string, panel: string) {
       last.hasMore && last.nextOffset > 0
         ? { offset: last.nextOffset, sessionId: last.sessionId }
         : undefined,
-    staleTime: 10 * 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
   });
 
@@ -85,7 +86,7 @@ export function useNewDrama(gender: number) {
     initialPageParam: 0,
     getNextPageParam: (last, allPages) =>
       last.items.length > 0 ? allPages.reduce((n, p) => n + p.items.length, 0) : undefined,
-    staleTime: 10 * 60_000,
+    staleTime: 0,
   });
   return useInfiniteStream(query, newDramaItems);
 }
@@ -95,7 +96,7 @@ export function useNewCalendar(date: string) {
   return useQuery({
     queryKey: keys.newCalendar(date),
     queryFn: () => rank.calendar(date === '' ? undefined : date),
-    staleTime: 10 * 60_000,
+    staleTime: 0,
     placeholderData: keepPreviousData,
   });
 }
@@ -113,8 +114,8 @@ export function useReservations(isOnline: boolean) {
  * 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。
  *
  * 成功后两件事：刷新预约列表（权威源）；**就地翻新榜单缓存里该条的
- * reserved 位**——cell 接口的 online_subscribed 是响应时刻快照，不翻新的
- * 话切个子榜回来（10 分钟 staleTime 内命中缓存）预约态就「丢」了。
+ * reserved 位**——cell 接口的 online_subscribed 是响应时刻快照，不翻新
+ * 的话当前挂载页到下次重拉前预约态不翻面（榜单 staleTime 0，重挂即自愈）。
  */
 export function useReserveSeries() {
   const queryClient = useQueryClient();

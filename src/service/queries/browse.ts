@@ -7,12 +7,13 @@ import { keys, useInfiniteStream } from './common';
 
 // ---------------------------------------------------------------- 浏览与搜索
 
-/** 找剧筛选面板：八行维度选项（选项表随服务端运营变化，拉一次长期用）。 */
+/** 找剧筛选面板：八行维度选项（选项表随服务端运营变化，每次打开重拉——
+ *  运营数据不缓存，2026-10-10 定规）。 */
 export function useBrowsePanel() {
   return useQuery({
     queryKey: keys.browsePanel,
     queryFn: discover.browsePanel,
-    staleTime: Infinity,
+    staleTime: 0,
   });
 }
 
@@ -34,7 +35,7 @@ export function useBrowseFeed(filters: BrowseFilters) {
     initialPageParam: { offset: 0, sessionId: '' },
     getNextPageParam: (last) =>
       last.hasMore ? { offset: last.nextOffset, sessionId: last.sessionId } : undefined,
-    staleTime: 30_000,
+    staleTime: 0,
   });
   return useInfiniteStream(query, feedItems);
 }

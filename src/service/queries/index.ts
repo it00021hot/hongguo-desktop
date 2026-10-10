@@ -22,10 +22,13 @@ export {
   useSendComment,
   useSendReply,
   useCommentReplies,
+  useCommentDigg,
+  useReplyDigg,
   useReviewReplies,
   useSeriesComments,
   useSendSeriesReview,
   useReviewDigg,
+  useReviewReplyDigg,
   useSendReviewReply,
 } from './danmaku';
 export {

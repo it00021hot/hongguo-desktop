@@ -1,12 +1,16 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
 import { danmaku as danmakuCmd, interact as interactCmd } from '../commands';
-import type { CommentPage, Danmaku, SeriesReviewPage } from '../schema';
+import type { CommentPage, Danmaku, ReplyPage, SeriesReviewPage } from '../schema';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 弹幕与评论（缓存管理域）
+// ---------------------------------------------------------------- 弹幕与评论
+// 社交态数据一律不缓存（staleTime 0，每次挂载重拉——2026-10-10 定规：
+// 全站用户在产生数据，缓存 1 秒都是旧值；缓存只保留封面/视频流/登录
+// 信息这类不变或重资产）。乐观写回只解决「自己操作后到重拉之间」的
+// 即时反馈，数据新鲜度全靠每次打开重拉。
 
-/** 一集的弹幕（按 vid 缓存；后端已按时间轴排序并拉全窗口）。 */
+/** 一集的弹幕（按 vid；后端已按时间轴排序并拉全窗口）。 */
 export function useDanmaku(vid: string) {
   const groupId = vid.split(':')[0] ?? '';
   const bookId = vid.split(':')[1] ?? '';
@@ -14,7 +18,7 @@ export function useDanmaku(vid: string) {
     queryKey: keys.danmaku(vid),
     queryFn: () => danmakuCmd.list(groupId, bookId),
     enabled: vid.includes(':'),
-    staleTime: 10 * 60_000,
+    staleTime: 0,
   });
 }
 
@@ -54,7 +58,7 @@ export function useComments(vid: string) {
     initialPageParam: '',
     getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: vid.includes(':'),
-    staleTime: 60_000,
+    staleTime: 0,
   });
 }
 
@@ -132,7 +136,7 @@ export function useCommentReplies(vid: string, commentId: string, enabled: boole
     initialPageParam: '',
     getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: enabled && vid.includes(':') && !!commentId,
-    staleTime: 60_000,
+    staleTime: 0,
   });
 }
 
@@ -144,7 +148,95 @@ export function useReviewReplies(seriesId: string, commentId: string, enabled: b
     initialPageParam: '',
     getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: enabled && !!seriesId && !!commentId,
-    staleTime: 60_000,
+    staleTime: 0,
+  });
+}
+
+/**
+ * 单集评论点赞 / 取消（do_action object_type=8 形态）。
+ *
+ * 乐观写**评论列表缓存**（diggCount ±1 / userDigg），失败回滚——服务端
+ * 读写即时同步（2026-10-10 CDP 实测），此前「旁路 state ±1」面板一关
+ * 就丢，重开在 staleTime 内拿旧缓存会回跳（194→195 的根因）。
+ */
+export function useCommentDigg(vid: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { commentId: string; digg: boolean }) =>
+      interactCmd.commentDigg(input.commentId, input.digg),
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: keys.comments(vid) });
+      const prev = queryClient.getQueryData<InfiniteData<CommentPage, string>>(keys.comments(vid));
+      if (prev) {
+        queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+          keys.comments(vid),
+          (draft) =>
+            draft && {
+              ...draft,
+              pages: draft.pages.map((p) => ({
+                ...p,
+                items: p.items.map((c) =>
+                  c.commentId === input.commentId
+                    ? {
+                        ...c,
+                        userDigg: input.digg,
+                        diggCount: Math.max(0, c.diggCount + (input.digg ? 1 : -1)),
+                      }
+                    : c,
+                ),
+              })),
+            },
+        );
+      }
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(keys.comments(vid), ctx.prev);
+    },
+  });
+}
+
+/**
+ * 单集评论的**回复**点赞 / 取消——与评论点赞同端点同形态，
+ * `object_id` 传 reply_id（2026-10-10 抓包实锤；CDP 实测读写即时同步）。
+ *
+ * 乐观写该评论的回复缓存，失败回滚。
+ */
+export function useReplyDigg(vid: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { commentId: string; replyId: string; digg: boolean }) =>
+      interactCmd.commentDigg(input.replyId, input.digg),
+    onMutate: async (input) => {
+      const key = keys.commentReplies(vid, input.commentId);
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<InfiniteData<ReplyPage, string>>(key);
+      if (prev) {
+        queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+          key,
+          (draft) =>
+            draft && {
+              ...draft,
+              pages: draft.pages.map((p) => ({
+                ...p,
+                items: p.items.map((r) =>
+                  r.replyId === input.replyId
+                    ? {
+                        ...r,
+                        userDigg: input.digg,
+                        diggCount: Math.max(0, r.diggCount + (input.digg ? 1 : -1)),
+                      }
+                    : r,
+                ),
+              })),
+            },
+        );
+      }
+      return { prev, key };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(ctx.key, ctx.prev);
+    },
   });
 }
 
@@ -159,7 +251,7 @@ export function useSeriesComments(seriesId: string) {
     initialPageParam: '',
     getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
     enabled: !!seriesId,
-    staleTime: 60_000,
+    staleTime: 0,
   });
 }
 
@@ -170,7 +262,7 @@ export function useSeriesComments(seriesId: string) {
  * 插入第一页（hgplayer 同款 unshift）：服务端列表有索引延迟且排序
  * 未必把新条目放回第一页，重取会让用户「找不到自己刚发的」
  * （2026-10-10 实测反馈）。不做立即 invalidate——本地那条一直在列表
- * 头，缓存按 staleTime 自然过期后下次进入与服务器对齐。
+ * 头，staleTime 0 下次进入即重拉与服务器对齐。
  */
 export function useSendSeriesReview(seriesId: string) {
   const queryClient = useQueryClient();
@@ -243,6 +335,51 @@ export function useReviewDigg(seriesId: string) {
     },
     onError: (_e, _input, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(keys.seriesComments(seriesId), ctx.prev);
+    },
+  });
+}
+
+/**
+ * 剧评的**回复**点赞 / 取消——注意**不是**剧评形态：回复点赞与评论点赞
+ * 同端点（object_type=8 / comment_type=4），`object_id` 传 reply_id
+ * （2026-10-10 CDP 实测对剧评回复即时生效；此前误走 review_digg 是错端点）。
+ *
+ * 乐观写该剧评的回复缓存，失败回滚。
+ */
+export function useReviewReplyDigg(seriesId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { commentId: string; replyId: string; digg: boolean }) =>
+      interactCmd.commentDigg(input.replyId, input.digg),
+    onMutate: async (input) => {
+      const key = keys.reviewReplies(seriesId, input.commentId);
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<InfiniteData<ReplyPage, string>>(key);
+      if (prev) {
+        queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+          key,
+          (draft) =>
+            draft && {
+              ...draft,
+              pages: draft.pages.map((p) => ({
+                ...p,
+                items: p.items.map((r) =>
+                  r.replyId === input.replyId
+                    ? {
+                        ...r,
+                        userDigg: input.digg,
+                        diggCount: Math.max(0, r.diggCount + (input.digg ? 1 : -1)),
+                      }
+                    : r,
+                ),
+              })),
+            },
+        );
+      }
+      return { prev, key };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(ctx.key, ctx.prev);
     },
   });
 }

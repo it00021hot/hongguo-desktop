@@ -8,14 +8,15 @@ import { keys } from './common';
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 书架）
 
-/** 最近互动状态（登录后才拉；匿名接口静默拒）。 */
+/** 最近互动状态（登录后才拉；匿名接口静默拒）。回显带全站计数，
+ *  属社交态数据——每次挂载重拉，不缓存（2026-10-10 定规）。 */
 export function useInteractionState() {
   const { data: account } = useAccount();
   return useQuery({
     queryKey: keys.interactState,
     queryFn: interactCmd.state,
     enabled: !!account,
-    staleTime: 60_000,
+    staleTime: 0,
   });
 }
 
