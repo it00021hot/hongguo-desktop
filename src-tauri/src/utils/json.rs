@@ -74,9 +74,17 @@ pub(crate) fn str_field_paths(v: &Value, paths: &[&str]) -> Option<String> {
 }
 
 /// 数字字段容忍字符串形态（平台对大数偶发走字符串），缺失给 0。
+///
+/// 量级超限不归零（known-issues B7）：超 i64 的 u64 饱和到 i64::MAX、
+/// 浮点形态截断——字段在位说明服务端发了数，静默给 0 会把「播 9500 万」
+/// 变成「播 0」这类展示事故；字符串解析失败才是真正的脏数据，维持 0。
 pub(crate) fn int_field(v: &Value, key: &str) -> i64 {
     match v.get(key) {
-        Some(Value::Number(n)) => n.as_i64().unwrap_or(0),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_u64().map(|u| u.min(i64::MAX as u64) as i64))
+            .or_else(|| n.as_f64().map(|f| f as i64))
+            .unwrap_or(0),
         Some(Value::String(s)) => s.parse().unwrap_or(0),
         _ => 0,
     }
@@ -132,7 +140,7 @@ mod tests {
         assert_eq!(int_field(&v, "a"), 42);
         assert_eq!(int_field(&v, "b"), 12_345_678, "字符串形态的大数要能读");
         assert_eq!(int_field(&v, "c"), 0);
-        assert_eq!(int_field(&v, "d"), 0, "非整型数字给 0");
+        assert_eq!(int_field(&v, "d"), 1, "浮点形态截断（B7：字段在位不归零）");
         assert_eq!(int_field(&v, "absent"), 0);
     }
 
@@ -206,5 +214,31 @@ mod tests {
         assert!(parse_tags(Some(&json!("not json"))).is_empty());
         assert!(parse_tags(Some(&json!(5))).is_empty());
         assert!(parse_tags(None).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod b7_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn int_field_saturates_out_of_range_u64() {
+        let v = json!({ "n": 18_446_744_073_709_551_615u64 });
+        assert_eq!(int_field(&v, "n"), i64::MAX, "超 i64 的 u64 饱和，不归零");
+    }
+
+    #[test]
+    fn int_field_truncates_float_form() {
+        let v = json!({ "n": 8.0 });
+        assert_eq!(int_field(&v, "n"), 8, "浮点形态截断，不归零");
+    }
+
+    #[test]
+    fn int_field_garbage_string_and_missing_stay_zero() {
+        let v = json!({ "bad": "不是数字", "n": 42 });
+        assert_eq!(int_field(&v, "bad"), 0);
+        assert_eq!(int_field(&v, "missing"), 0);
+        assert_eq!(int_field(&v, "n"), 42);
     }
 }

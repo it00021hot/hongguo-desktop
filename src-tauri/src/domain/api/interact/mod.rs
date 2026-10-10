@@ -255,6 +255,8 @@ pub async fn digg_comment(comment_id: &str, digg: bool, env: &ApiEnv) -> AppResu
 /// 收藏（追剧/进书架）或取消收藏一部剧。对象是 series_id。
 pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> AppResult<()> {
     let payload = serde_json::json!({
+        // 信封常量，抓包（2026-10-06）原样：取消收藏的语义不在这里，
+        // 在 update_bookshelf_video_list[].video_shelf_operate_type（0 收/1 取消）
         "is_cancelled": false,
         "shark_extra": {
             "enter_from": "MainFragmentActivity",
@@ -322,9 +324,14 @@ pub async fn fetch_bookshelf(target_user_id: &str, env: &ApiEnv) -> AppResult<Ve
         if series_id.is_empty() {
             continue;
         }
-        let collect_time_ms = ["collect_time", "collect_time_ms", "create_time"]
+        // 时间量级防错（known-issues B6）：候选字段秒/毫秒形态可能并存，
+        // 按值判量级（1e12 ≈ 2001 年起的毫秒时间戳）——毫秒原样用，
+        // 秒形态 ×1000，字段名顺序不再决定正确性。
+        let collect_time_ms = ["collect_time_ms", "collect_time", "create_time"]
             .iter()
-            .find_map(|k| raw.get(*k).and_then(Value::as_i64))
+            .filter_map(|k| raw.get(*k).and_then(Value::as_i64))
+            .map(|v| if v > 1_000_000_000_000 { v } else { v * 1000 })
+            .next()
             .unwrap_or(0);
         let content_type = ["content_type", "video_type"]
             .iter()
