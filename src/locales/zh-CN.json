@@ -229,7 +229,9 @@
       "replyPlaceholder": "回复 @{name}…",
       "me": "我",
       "replyToPrefix": "回复",
-      "repliesHiddenTip": "官方暂未开放回复列表拉取（hgplayer 同样只显示数量）",
+      "expandReplies": "展开 {n} 条回复",
+      "collapseReplies": "收起回复",
+      "moreReplies": "展开更多回复",
       "loadMore": "加载更多评论（还有 {n} 条）",
       "preparing": "正在准备这一集…"
     },
@@ -579,6 +581,15 @@
     "reviewSent": "剧评已发布（{score} 分）",
     "avgRating": "剧均评分",
     "noRating": "暂无评分",
-    "loadMoreReviews": "加载更多剧评"
+    "loadMoreReviews": "加载更多剧评",
+    "like": "点赞",
+    "reply": "回复",
+    "replySent": "回复已发送",
+    "replyToComment": "回复剧评…",
+    "replyPlaceholder": "回复 @{name}…",
+    "replyToPrefix": "回复",
+    "expandReplies": "展开 {n} 条回复",
+    "collapseReplies": "收起回复",
+    "moreReplies": "展开更多回复"
   }
 }

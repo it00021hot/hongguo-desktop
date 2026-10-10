@@ -2,17 +2,28 @@
  * 剧评列表（详情页「剧评」tab 内容）。
  *
  * 三块结构对齐 hgplayer 剧评页（2026-10-10 抓包对齐）：
- * - 剧均评分块（extra.book_info.score + score_cnt；空 = 暂无评分）
+ * - 剧均评分块（credibility_score + score_cnt；空 = 暂无评分）
  * - 发评框（评分星级 + 表情 + 文本，见 ReviewComposer）
- * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）与评分后缀文案
- *   （"观看1小时后点评"），滚动到底自动翻页（游标 = 响应 cursor 原样回传）
+ * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）、评分后缀文案、
+ *   ♡ 点赞（do_action object_type=2 剧评形态）与「回复 / 展开 N 条回复」
+ *   （reply/add 剧评形态 commit_source=13 + reply/list src=501），滚动到底
+ *   自动翻页（游标 = 响应 cursor 原样回传）
  */
-import { useEffect, useRef } from 'react';
-import { Loader2, Star } from 'lucide-react';
-import { useSeriesComments } from '@/service/queries';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Heart, Loader2, Star } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  useReviewDigg,
+  useReviewReplies,
+  useSendReviewReply,
+  useSeriesComments,
+} from '@/service/queries';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { formatCountPrecise } from '@/utils/format';
+import { EmojiText } from '@/components/common/emoji/emoji-text';
+import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
+import type { ReplyItem } from '@/service/schema';
 import { ReviewComposer } from './review-composer';
 
 /** 十分制评分 → 5 星展示（"7" → 3.5 星；半星用填充比例表达）。 */
@@ -36,6 +47,143 @@ function ScoreStars({ score }: { score: string }) {
         />
       ))}
     </span>
+  );
+}
+
+/** 一条剧评回复行（回复点赞与评论点赞同形态，object_id 传 reply_id）。 */
+function ReviewReplyRow({
+  reply,
+  liked,
+  onDigg,
+  onReplyTo,
+}: {
+  reply: ReplyItem;
+  liked: Set<string>;
+  onDigg: (id: string, digg: boolean) => void;
+  onReplyTo: (reply: ReplyItem) => void;
+}) {
+  const isLiked = liked.has(reply.replyId) || reply.userDigg;
+  return (
+    <div className="flex gap-2">
+      <div className="bg-muted grid size-6 shrink-0 place-items-center overflow-hidden rounded-full text-[10px]">
+        {reply.avatar ? (
+          <img src={reply.avatar} alt="" loading="lazy" className="size-full object-cover" />
+        ) : (
+          (reply.userName[0] ?? '?')
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-muted-foreground text-[11px]">
+          {reply.userName || t('player.comments.anon')}
+          {reply.replyToName && (
+            <span className="ml-1 opacity-70">
+              {t('detail.replyToPrefix')} @{reply.replyToName}
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-xs leading-snug break-words whitespace-pre-wrap">
+          <EmojiText text={reply.text} />
+        </p>
+        <div className="text-muted-foreground mt-0.5 flex items-center gap-3 text-[10px]">
+          <span>{new Date(reply.createTime * 1000).toLocaleDateString()}</span>
+          <button
+            type="button"
+            onClick={() => onReplyTo(reply)}
+            className="hover:text-foreground cursor-pointer"
+          >
+            {t('detail.reply')}
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onDigg(reply.replyId, !isLiked)}
+        className={cn(
+          'text-muted-foreground hover:text-foreground flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start',
+          isLiked && 'text-red-500',
+        )}
+        title={t('detail.like')}
+      >
+        <Heart className={cn('size-3', isLiked && 'fill-red-500 text-red-500')} />
+        {reply.diggCount > 0 && <span className="text-[9px] tabular-nums">{reply.diggCount}</span>}
+      </button>
+    </div>
+  );
+}
+
+/** 「展开 N 条回复」区（剧评维度 src=501/ch=34，展开才拉首页）。 */
+function ReviewReplySection({
+  seriesId,
+  commentId,
+  replyCount,
+  liked,
+  onDigg,
+  onReplyTo,
+}: {
+  seriesId: string;
+  commentId: string;
+  replyCount: number;
+  liked: Set<string>;
+  onDigg: (id: string, digg: boolean) => void;
+  onReplyTo: (reply: ReplyItem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useReviewReplies(
+    seriesId,
+    commentId,
+    open,
+  );
+  const replies = data?.pages.flatMap((p) => p.items) ?? [];
+  if (replyCount <= 0) return null;
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1 text-xs"
+      >
+        {open ? (
+          <>
+            {t('detail.collapseReplies')}
+            <ChevronDown className="size-3 rotate-180" />
+          </>
+        ) : (
+          <>
+            {tf('detail.expandReplies', { n: replyCount })}
+            <ChevronDown className="size-3" />
+          </>
+        )}
+      </button>
+      {open && (
+        <div className="border-border mt-2 flex flex-col gap-2.5 border-l-2 pl-3">
+          {isPending && (
+            <div className="text-muted-foreground grid place-items-center py-2">
+              <Loader2 className="size-3.5 animate-spin" />
+            </div>
+          )}
+          {replies.map((r) => (
+            <ReviewReplyRow
+              key={r.replyId}
+              reply={r}
+              liked={liked}
+              onDigg={onDigg}
+              onReplyTo={onReplyTo}
+            />
+          ))}
+          {hasNextPage && (
+            <button
+              type="button"
+              disabled={isFetchingNextPage}
+              onClick={() => void fetchNextPage()}
+              className="text-muted-foreground hover:text-foreground flex w-fit cursor-pointer items-center gap-1 text-xs disabled:opacity-60"
+            >
+              {isFetchingNextPage && <Loader2 className="size-3 animate-spin" aria-hidden />}
+              {t('detail.moreReplies')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -66,12 +214,47 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
     return () => io.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  // 点赞：useReviewDigg 乐观更新缓存；liked 集合是本地已点覆盖（防回包漂移）
+  const digg = useReviewDigg(seriesId);
+  const [liked, setLiked] = useState<Set<string>>(new Set());
+  const onDigg = (id: string, next: boolean) => {
+    setLiked((prev) => {
+      const s = new Set(prev);
+      if (next) s.add(id);
+      else s.delete(id);
+      return s;
+    });
+    digg.mutate({ reviewId: id, digg: next }, { onError: (e) => toast.error(String(e)) });
+  };
+
+  // 回复：剧评形态 reply/add（commit_source=13）；回复「回复」带 replyToReplyId
+  const sendReply = useSendReviewReply(seriesId);
+  const [replyTarget, setReplyTarget] = useState<string | null>(null);
+  const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const submitReply = (reviewId: string) => {
+    const content = replyText.trim();
+    if (!content || sendReply.isPending) return;
+    sendReply.mutate(
+      { replyToCommentId: reviewId, replyToReplyId: replyToReply?.id, text: content },
+      {
+        onSuccess: () => {
+          setReplyText('');
+          setReplyTarget(null);
+          setReplyToReply(null);
+          toast.success(t('detail.replySent'));
+        },
+        onError: (e) => toast.error(String(e)),
+      },
+    );
+  };
+
   return (
     <>
       <ReviewComposer seriesId={seriesId} />
       {/* 剧均评分块（hgplayer 同款：9.0 大字 + 星 + 人数 + 标签统计 pill；
           剧均本体 = credibility_score，评分人数 = credibility_score_count） */}
-      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3">
+      <div className="border-border mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3">
         {reviewScore ? (
           <>
             <div className="flex items-baseline gap-2">
@@ -109,40 +292,96 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
         </p>
       ) : (
         <ul className="divide-border divide-y">
-          {comments.map((c) => (
-            <li key={c.commentId} className="flex gap-3 py-4">
-              <div className="bg-muted grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
-                {c.avatar ? (
-                  <img src={c.avatar} alt="" className="size-full object-cover" />
-                ) : (
-                  (c.userName[0] ?? '?')
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="truncate text-sm font-medium">{c.userName}</span>
-                  {c.score && <ScoreStars score={c.score} />}
-                  <span className="text-muted-foreground shrink-0 text-xs">
-                    {new Date(c.createTime * 1000).toLocaleDateString()}
-                  </span>
-                  {c.scoreSuffixText && (
-                    <span className="text-muted-foreground/70 shrink-0 text-xs">
-                      {c.scoreSuffixText}
+          {comments.map((c) => {
+            const isLiked = liked.has(c.commentId) || c.userDigg;
+            return (
+              <li key={c.commentId} className="flex gap-3 py-4">
+                <div className="bg-muted grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
+                  {c.avatar ? (
+                    <img src={c.avatar} alt="" className="size-full object-cover" />
+                  ) : (
+                    (c.userName[0] ?? '?')
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="truncate text-sm font-medium">{c.userName}</span>
+                    {c.score && <ScoreStars score={c.score} />}
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {new Date(c.createTime * 1000).toLocaleDateString()}
                     </span>
+                    {c.scoreSuffixText && (
+                      <span className="text-muted-foreground/70 shrink-0 text-xs">
+                        {c.scoreSuffixText}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm leading-relaxed break-words whitespace-pre-wrap">
+                    <EmojiText text={c.text} />
+                  </p>
+                  <div className="text-muted-foreground mt-1.5 flex items-center gap-4 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => onDigg(c.commentId, !isLiked)}
+                      className={cn(
+                        'hover:text-foreground flex cursor-pointer items-center gap-1',
+                        isLiked && 'text-red-500',
+                      )}
+                      title={t('detail.like')}
+                    >
+                      <Heart className={cn('size-3.5', isLiked && 'fill-red-500 text-red-500')} />
+                      {c.diggCount > 0 && <span className="tabular-nums">{c.diggCount}</span>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
+                        setReplyToReply(null);
+                        setReplyText('');
+                      }}
+                      className="hover:text-foreground cursor-pointer"
+                    >
+                      {t('detail.reply')}
+                    </button>
+                  </div>
+                  {/* 回复列表（剧评维度）：展开按需拉取；回复行可二级回复 */}
+                  <ReviewReplySection
+                    seriesId={seriesId}
+                    commentId={c.commentId}
+                    replyCount={c.replyCount}
+                    liked={liked}
+                    onDigg={onDigg}
+                    onReplyTo={(r) => {
+                      setReplyTarget(c.commentId);
+                      setReplyToReply({ id: r.replyId, name: r.userName });
+                      setReplyText('');
+                    }}
+                  />
+                  {/* 回复输入框 */}
+                  {replyTarget === c.commentId && (
+                    <EmojiSendBox
+                      autoFocus
+                      value={replyText}
+                      onChange={setReplyText}
+                      onSubmit={() => submitReply(c.commentId)}
+                      onEscape={() => setReplyTarget(null)}
+                      placeholder={
+                        replyToReply
+                          ? tf('detail.replyPlaceholder', { name: replyToReply.name })
+                          : t('detail.replyToComment')
+                      }
+                      maxLength={200}
+                      pending={sendReply.isPending}
+                      pickerAlign="left"
+                      className="mt-2 gap-1.5"
+                      inputClassName="bg-muted h-8 min-w-0 flex-1 rounded-md px-3 text-xs leading-8 whitespace-pre"
+                      sendClassName="h-8 px-3 text-xs"
+                    />
                   )}
                 </div>
-                <p className="mt-1 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                  {c.text}
-                </p>
-                <div className="text-muted-foreground mt-1 flex gap-4 text-xs">
-                  <span>♥ {c.diggCount}</span>
-                  {c.replyCount > 0 && (
-                    <span>{tf('detail.replyCount', { count: c.replyCount })}</span>
-                  )}
-                </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
       {/* 懒加载哨兵 + 拉取中指示 */}

@@ -267,6 +267,103 @@ pub async fn digg_comment(comment_id: &str, digg: bool, env: &ApiEnv) -> AppResu
     check_interact_code(&value)
 }
 
+/// 点赞 / 取消点赞一条**剧评**（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+///
+/// 与评论点赞（[`digg_comment`])同路径但三处形态不同，照抓包别合并：
+/// `object_type=2`（评论 8）、`comment_type=2`（评论 4）、
+/// **`business_param` 是空对象**（评论带 shark_param）。
+pub async fn digg_review(review_id: &str, digg: bool, env: &ApiEnv) -> AppResult<()> {
+    let payload = serde_json::json!({
+        "action_type": comment_digg_action_type(digg),
+        "business_param": {},
+        "comment_type": 2,
+        "object_id": review_id,
+        "object_type": 2,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造剧评点赞请求失败: {e}")))?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, COMMENT_DO_ACTION_PATH, Some(raw), &[], env)
+            .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析剧评点赞响应失败: {e}")))?;
+    check_interact_code(&value)
+}
+
+/// 回复一条**剧评**或剧评的回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+///
+/// 与单集评论回复（[`send_reply`]）同端点（reply/add）但换剧评形态：
+/// `commit_source=13`（评论回复 9）、`data_type=2`、`group_type=1`、
+/// **顶层不带 aid**，business_param 是剧评发送同款全量字段组
+/// （score 恒 0——评分只随剧评本体走）。回复「回复」时
+/// `reply_to_reply_id` 传被回复那条的 reply_id。返回 reply_id。
+pub async fn send_review_reply(
+    series_id: &str,
+    reply_to_comment_id: &str,
+    reply_to_reply_id: Option<&str>,
+    text: &str,
+    env: &ApiEnv,
+) -> AppResult<String> {
+    let mut payload = serde_json::json!({
+        "business_param": {
+            "book_id": series_id,
+            "from_famous_comment_id": 0,
+            "has_aigc_content": false,
+            "ignore_urge_rule": false,
+            "is_confirm_request": false,
+            "log_extra": {},
+            "offset": 0,
+            "read_item_cnt": 0,
+            "score": 0,
+            "support_para_audio_play": false,
+            "text_feature": {},
+            "video_is_muted": 0,
+        },
+        "commit_source": 13,
+        "data_type": 2,
+        "group_id": series_id,
+        "group_type": 1,
+        "reply_to_comment_id": reply_to_comment_id,
+        "text": text,
+    });
+    if let Some(rr) = reply_to_reply_id.filter(|s| !s.is_empty()) {
+        payload["reply_to_reply_id"] = serde_json::json!(rr);
+    }
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造剧评回复请求失败: {e}")))?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, REPLY_ADD_PATH, Some(raw), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析剧评回复响应失败: {e}")))?;
+    check_interact_code(&value)?;
+    Ok(value
+        .pointer("/data/reply/reply_id")
+        .or_else(|| value.pointer("/data/comment_info/comment_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// 删除自己的评论 / 剧评 / 回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+///
+/// `service_id`：**2 = 剧评，4 = 评论/回复**（抓包两例）；`data_type` 恒 9
+/// （删除语义，与发送侧 data_type 无关）。响应 `code==0` 即成功。
+pub async fn delete_comment(comment_id: &str, service_id: i64, env: &ApiEnv) -> AppResult<()> {
+    const DEL_PATH: &str = "/novel/commentapi/comment/del/v1/";
+    let payload = serde_json::json!({
+        "comment_id": comment_id,
+        "data_type": 9,
+        "service_id": service_id,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造删除请求失败: {e}")))?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, DEL_PATH, Some(raw), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析删除响应失败: {e}")))?;
+    check_interact_code(&value)
+}
+
 /// 收藏（追剧/进书架）或取消收藏一部剧。对象是 series_id。
 pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> AppResult<()> {
     let payload = serde_json::json!({
@@ -465,6 +562,45 @@ mod tests {
         // bookshelf: 0 收藏 / 1 取消（抓包锁定）
         assert_eq!(shelf_operate_type(true), 0);
         assert_eq!(shelf_operate_type(false), 1);
+    }
+
+    #[test]
+    fn review_like_shape_anchors_20261010() {
+        // 2026-10-10 抓 hgplayer 1.1.8 剧评点赞实操：与评论点赞三处不同，
+        // 照抓包锚死（object_type 2 / comment_type 2 / business_param 空对象）
+        let src = include_str!("mod.rs");
+        assert!(
+            src.contains("\"object_type\": 2,"),
+            "剧评点赞 object_type=2（评论是 8）"
+        );
+        assert!(
+            src.contains("\"business_param\": {},"),
+            "剧评点赞 business_param 是空对象（评论带 shark_param）"
+        );
+    }
+
+    #[test]
+    fn review_reply_shape_anchors_20261010() {
+        // 2026-10-10 抓 hgplayer 1.1.8 剧评回复实操：commit_source=13
+        // （评论回复 9 / 剧评发送 12）+ data_type=2 + 顶层无 aid +
+        // business_param 带 score:0 全量字段组
+        let src = include_str!("mod.rs");
+        assert!(
+            src.contains("\"commit_source\": 13,"),
+            "剧评回复 commit_source=13"
+        );
+        for needle in [
+            "\"from_famous_comment_id\": 0,",
+            "\"is_confirm_request\": false,",
+            "\"read_item_cnt\": 0,",
+            "\"score\": 0,",
+            "\"support_para_audio_play\": false,",
+            "\"video_is_muted\": 0,",
+        ] {
+            assert!(src.contains(needle), "剧评回复 business_param 缺锚点 {needle}");
+        }
+        // delete 形态锚点：data_type 恒 9（删除语义），service_id 由参数分流
+        assert!(src.contains("\"data_type\": 9,"), "删除 data_type=9");
     }
 
     #[test]

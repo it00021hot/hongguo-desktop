@@ -95,3 +95,47 @@ pub struct CommentTagStat {
     pub tag_name: String,
     pub count: i64,
 }
+
+/// 一条回复（reply/list 条目，2026-10-10 抓 hgplayer 1.1.8 实操解码）。
+///
+/// 响应里回复体在键名大写的 `Common` 下（上游序列化怪癖，解析处已归一）；
+/// 身份键是 `reply_id`（不是 comment_id）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyItem {
+    pub reply_id: String,
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub avatar: String,
+    pub text: String,
+    /// unix 秒（Common.create_timestamp）
+    #[serde(default)]
+    pub create_time: i64,
+    #[serde(default)]
+    pub digg_count: i64,
+    #[serde(default)]
+    pub user_digg: bool,
+    /// 被回复人昵称（reply_to_user_info.user_name，「回复 @xxx」展示用；
+    /// 回复评论本条时为空）
+    #[serde(default)]
+    pub reply_to_name: String,
+    /// 多级回复标记：回复「回复」时是被回复那条的 reply_id
+    #[serde(default)]
+    pub reply_to_reply_id: String,
+}
+
+/// 回复列表一页（`data.comment_list_info.{cursor,has_more,total}` +
+/// `data.reply_list[]`）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyPage {
+    pub items: Vec<ReplyItem>,
+    /// 该评论的回复总数（comment_list_info.total）
+    #[serde(default)]
+    pub total: i64,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_cursor: String,
+}

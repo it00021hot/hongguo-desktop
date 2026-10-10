@@ -105,11 +105,15 @@ export function useSendComment() {
 }
 
 /**
- * 回复一条评论（reply/add）。回复**列表**服务端暂无拉取接口
- * （2026-10-06 probe 实证：reply/list 对 aid 8662 无 handler，hgplayer
- * 同样不拉）——自己发的回复由评论面板本地追加展示。
+ * 回复一条评论（reply/add）。
+ *
+ * 回复**列表**自 2026-10-10 起可用（hgplayer 1.1.8 抓包锁定 reply/list
+ * 独立端点，见 [`useCommentReplies`]）——发送成功后失效该评论的回复
+ * 缓存，下次展开即含新回复；面板侧同时本地追加一份（服务端列表有
+ * 延迟，不等重取就能看见自己那条）。
  */
 export function useSendReply() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: {
       vid: string;
@@ -126,6 +130,40 @@ export function useSendReply() {
         input.text,
       );
     },
+    onSuccess: (_replyId, input) => {
+      void queryClient.invalidateQueries({
+        queryKey: keys.commentReplies(input.vid, input.replyToCommentId),
+      });
+    },
+  });
+}
+
+/**
+ * 一条单集评论的回复列表（按需拉取：`enabled` 传「是否展开」）。
+ * 一页 10 条，面板内「展开更多回复」续拉（cursor 数字串原样回传）。
+ */
+export function useCommentReplies(vid: string, commentId: string, enabled: boolean) {
+  const groupId = vid.split(':')[0] ?? '';
+  const bookId = vid.split(':')[1] ?? '';
+  return useInfiniteQuery({
+    queryKey: keys.commentReplies(vid, commentId),
+    queryFn: ({ pageParam }) => danmakuCmd.commentReplies(groupId, bookId, commentId, pageParam),
+    initialPageParam: '',
+    getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
+    enabled: enabled && vid.includes(':') && !!commentId,
+    staleTime: 60_000,
+  });
+}
+
+/** 一条剧评的回复列表（详情页剧评区；参数语义同 [`useCommentReplies`]）。 */
+export function useReviewReplies(seriesId: string, commentId: string, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: keys.reviewReplies(seriesId, commentId),
+    queryFn: ({ pageParam }) => danmakuCmd.reviewReplies(seriesId, commentId, pageParam),
+    initialPageParam: '',
+    getNextPageParam: (last) => (last.hasMore && last.nextCursor ? last.nextCursor : undefined),
+    enabled: enabled && !!seriesId && !!commentId,
+    staleTime: 60_000,
   });
 }
 
@@ -156,5 +194,73 @@ export function useSendSeriesReview(seriesId: string) {
       danmakuCmd.seriesReviewSend(seriesId, input.text, input.score),
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) }),
+  });
+}
+
+/**
+ * 剧评点赞 / 取消（comment/do_action object_type=2 形态）。
+ *
+ * 乐观更新剧评缓存里的 diggCount / userDigg，失败回滚并由调用方 toast。
+ */
+export function useReviewDigg(seriesId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reviewId: string; digg: boolean }) =>
+      interactCmd.reviewDigg(input.reviewId, input.digg),
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: keys.seriesComments(seriesId) });
+      const prev = queryClient.getQueryData<InfiniteData<CommentPage, string>>(
+        keys.seriesComments(seriesId),
+      );
+      if (prev) {
+        queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+          keys.seriesComments(seriesId),
+          (draft) =>
+            draft && {
+              ...draft,
+              pages: draft.pages.map((p) => ({
+                ...p,
+                items: p.items.map((c) =>
+                  c.commentId === input.reviewId
+                    ? {
+                        ...c,
+                        userDigg: input.digg,
+                        diggCount: Math.max(0, c.diggCount + (input.digg ? 1 : -1)),
+                      }
+                    : c,
+                ),
+              })),
+            },
+        );
+      }
+      return { prev };
+    },
+    onError: (_e, _input, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(keys.seriesComments(seriesId), ctx.prev);
+    },
+  });
+}
+
+/**
+ * 回复一条剧评（或剧评的回复，reply/add 剧评形态 commit_source=13）。
+ *
+ * 成功后失效该剧评的回复缓存 + 剧评列表（replyCount 计数）。
+ */
+export function useSendReviewReply(seriesId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { replyToCommentId: string; replyToReplyId?: string; text: string }) =>
+      interactCmd.reviewReplySend(
+        seriesId,
+        input.replyToCommentId,
+        input.replyToReplyId ?? null,
+        input.text,
+      ),
+    onSuccess: (_replyId, input) => {
+      void queryClient.invalidateQueries({
+        queryKey: keys.reviewReplies(seriesId, input.replyToCommentId),
+      });
+      void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) });
+    },
   });
 }

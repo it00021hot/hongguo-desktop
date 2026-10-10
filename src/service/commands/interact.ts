@@ -34,9 +34,30 @@ export const interact = {
   /** 点赞 / 取消点赞一集（vid = 分集 id）。 */
   videoDigg: (vid: string, seriesId: string, digg: boolean) =>
     call<void>('video_digg', { vid, seriesId, digg }),
-  /** 点赞 / 取消点赞一条评论。 */
+  /** 点赞 / 取消点赞一条评论（object_type=8；**回复的点赞同款形态**，
+   *  object_id 传 reply_id——2026-10-10 抓包实锤）。 */
   commentDigg: (commentId: string, digg: boolean) =>
     call<void>('comment_digg', { commentId, digg }),
+  /** 点赞 / 取消点赞一条剧评（object_type=2 / comment_type=2 / 空埋点，
+   *  与评论点赞三处不同，2026-10-10 抓包锁定）。 */
+  reviewDigg: (reviewId: string, digg: boolean) => call<void>('review_digg', { reviewId, digg }),
+  /** 回复一条剧评（reply/add 剧评形态 commit_source=13）；
+   *  回复「回复」时传 replyToReplyId。 */
+  reviewReplySend: (
+    seriesId: string,
+    replyToCommentId: string,
+    replyToReplyId: string | null,
+    text: string,
+  ) =>
+    call<string>('review_reply_send', {
+      seriesId,
+      replyToCommentId,
+      replyToReplyId: replyToReplyId ?? null,
+      text,
+    }),
+  /** 删除自己的评论/剧评/回复（serviceId：2 = 剧评，4 = 评论/回复）。 */
+  deleteComment: (commentId: string, serviceId: 2 | 4) =>
+    call<void>('comment_delete', { commentId, serviceId }),
   /** 收藏（追剧）/ 取消收藏一部剧。 */
   seriesCollect: (seriesId: string, collect: boolean) =>
     call<void>('series_collect', { seriesId, collect }),

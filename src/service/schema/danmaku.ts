@@ -54,3 +54,28 @@ export const seriesReviewPageSchema = z.object({
   tagStats: z.array(z.object({ tagName: z.string(), count: z.number() })).default([]),
 });
 export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;
+
+/** 一条回复（Rust `danmaku::ReplyItem`；reply/list 2026-10-10 抓包形态）。 */
+export const replyItemSchema = z.object({
+  replyId: z.string(),
+  userName: z.string(),
+  avatar: z.string(),
+  text: z.string(),
+  createTime: z.number(),
+  diggCount: z.number(),
+  userDigg: z.boolean(),
+  /** 被回复人昵称（回复评论本条时为空串） */
+  replyToName: z.string().default(''),
+  /** 多级回复标记：回复「回复」时是被回复那条的 replyId */
+  replyToReplyId: z.string().default(''),
+});
+export type ReplyItem = z.infer<typeof replyItemSchema>;
+
+/** 回复列表一页（Rust `danmaku::ReplyPage`；total 是该评论的回复总数）。 */
+export const replyPageSchema = z.object({
+  items: z.array(replyItemSchema),
+  total: z.number(),
+  hasMore: z.boolean(),
+  nextCursor: z.string(),
+});
+export type ReplyPage = z.infer<typeof replyPageSchema>;

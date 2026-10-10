@@ -7,8 +7,9 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    BookshelfEntry, InteractionState, collect_series, digg_comment, digg_video, fetch_bookshelf,
-    fetch_interaction_state, send_comment, send_danmaku, send_reply,
+    BookshelfEntry, InteractionState, collect_series, delete_comment, digg_comment, digg_review,
+    digg_video, fetch_bookshelf, fetch_interaction_state, send_comment, send_danmaku, send_reply,
+    send_review_reply,
 };
 use crate::error::AppResult;
 
@@ -110,6 +111,54 @@ pub async fn comment_digg(
 ) -> AppResult<()> {
     let env = state.api_env();
     digg_comment(&comment_id, digg, &env).await
+}
+
+/// 点赞 / 取消点赞一条**剧评**（object_type=2 形态，与评论点赞不同路径参数）。
+#[tauri::command]
+pub async fn review_digg(
+    state: State<'_, AppState>,
+    review_id: String,
+    digg: bool,
+) -> AppResult<()> {
+    let env = state.api_env();
+    digg_review(&review_id, digg, &env).await
+}
+
+/// 回复一条**剧评**或剧评的回复（剧评形态 commit_source=13）。
+/// `reply_to_reply_id` 回复「回复」时传那条回复的 reply_id，纯剧评回复传空。
+#[tauri::command]
+pub async fn review_reply_send(
+    state: State<'_, AppState>,
+    series_id: String,
+    reply_to_comment_id: String,
+    reply_to_reply_id: Option<String>,
+    text: String,
+) -> AppResult<String> {
+    let env = state.api_env();
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(crate::error::AppError::Media("回复内容为空".into()));
+    }
+    send_review_reply(
+        &series_id,
+        &reply_to_comment_id,
+        reply_to_reply_id.as_deref(),
+        &text,
+        &env,
+    )
+    .await
+}
+
+/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复
+/// （2026-10-10 抓包锁定）。
+#[tauri::command]
+pub async fn comment_delete(
+    state: State<'_, AppState>,
+    comment_id: String,
+    service_id: i64,
+) -> AppResult<()> {
+    let env = state.api_env();
+    delete_comment(&comment_id, service_id, &env).await
 }
 
 /// 收藏（追剧）或取消收藏一部剧。

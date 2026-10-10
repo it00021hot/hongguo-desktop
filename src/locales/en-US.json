@@ -229,7 +229,9 @@
       "replyPlaceholder": "Reply to @{name}…",
       "me": "Me",
       "replyToPrefix": "Reply to",
-      "repliesHiddenTip": "Reply listing is not available server-side (hgplayer shows counts only)",
+      "expandReplies": "Show {n} replies",
+      "collapseReplies": "Hide replies",
+      "moreReplies": "Show more replies",
       "loadMore": "Load more comments ({n} left)",
       "preparing": "Preparing this episode…"
     },
@@ -579,6 +581,15 @@
     "reviewSent": "Review posted ({score} pts)",
     "avgRating": "Avg rating",
     "noRating": "No ratings yet",
-    "loadMoreReviews": "Load more reviews"
+    "loadMoreReviews": "Load more reviews",
+    "like": "Like",
+    "reply": "Reply",
+    "replySent": "Reply sent",
+    "replyToComment": "Reply to review…",
+    "replyPlaceholder": "Reply to @{name}…",
+    "replyToPrefix": "Reply to",
+    "expandReplies": "Show {n} replies",
+    "collapseReplies": "Hide replies",
+    "moreReplies": "Show more replies"
   }
 }

@@ -27,6 +27,11 @@ export const keys = {
   relatedSeries: (seriesId: string) => ['related-series', seriesId] as const,
   seriesMeta: (seriesId: string) => ['series-meta', seriesId] as const,
   seriesComments: (seriesId: string) => ['series-comments', seriesId] as const,
+  /** 单集评论的回复列表（展开「N 条回复」时按需拉取） */
+  commentReplies: (vid: string, commentId: string) => ['comment-replies', vid, commentId] as const,
+  /** 剧评的回复列表 */
+  reviewReplies: (seriesId: string, commentId: string) =>
+    ['review-replies', seriesId, commentId] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
   interactState: ['interact-state'] as const,

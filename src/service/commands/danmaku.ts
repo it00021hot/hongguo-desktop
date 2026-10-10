@@ -2,9 +2,11 @@ import { call } from '../tauri/invoke';
 import {
   commentPageSchema,
   danmakuSchema,
+  replyPageSchema,
   seriesReviewPageSchema,
   type CommentPage,
   type Danmaku,
+  type ReplyPage,
   type SeriesReviewPage,
 } from '../schema';
 
@@ -19,6 +21,23 @@ export const danmaku = {
       'comment_list',
       { groupId, bookId, cursor: cursor || undefined },
       commentPageSchema,
+    ),
+  /**
+   * 一条单集评论的回复列表（reply/list 独立端点，评论维度 src=504/ch=18，
+   * 2026-10-10 抓 hgplayer 1.1.8 锁定）。cursor 翻页（数字串原样回传）。
+   */
+  commentReplies: (groupId: string, bookId: string, commentId: string, cursor = '') =>
+    call<ReplyPage>(
+      'comment_replies',
+      { groupId, bookId, commentId, cursor: cursor || undefined },
+      replyPageSchema,
+    ),
+  /** 一条剧评的回复列表（剧评维度 src=501/ch=34，同上）。 */
+  reviewReplies: (seriesId: string, commentId: string, cursor = '') =>
+    call<ReplyPage>(
+      'review_replies',
+      { seriesId, commentId, cursor: cursor || undefined },
+      replyPageSchema,
     ),
   /** 剧级评论（详情页「剧评」：group_type=1 形态；响应 extra 带评分摘要）。 */
   seriesComments: (seriesId: string, cursor = '') =>

@@ -21,8 +21,12 @@ export {
   useComments,
   useSendComment,
   useSendReply,
+  useCommentReplies,
+  useReviewReplies,
   useSeriesComments,
   useSendSeriesReview,
+  useReviewDigg,
+  useSendReviewReply,
 } from './danmaku';
 export {
   useInteractionState,
