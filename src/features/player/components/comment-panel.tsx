@@ -549,7 +549,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                           pickerAlign="right"
                           className="mt-1.5 gap-1.5"
                           inputClassName="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
-                          sendClassName="h-8 bg-red-500 px-3 text-xs hover:bg-red-500/90"
+                          sendClassName="h-8 px-3 text-xs"
                         />
                       )}
                     </div>
@@ -604,7 +604,7 @@ export function CommentPanel({ vid, onClose }: Props) {
           pending={send.isPending}
           pickerAlign="right"
           inputClassName="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
-          sendClassName="h-9 bg-red-500 px-4 hover:bg-red-500/90"
+          sendClassName="h-9 px-4"
         />
       </div>
 

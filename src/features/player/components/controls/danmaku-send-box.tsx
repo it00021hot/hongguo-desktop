@@ -48,7 +48,7 @@ export function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: n
       pickerAlign="left"
       className="relative ml-2 h-8 w-44 min-w-0 shrink gap-1 overflow-hidden rounded-full bg-white/15 pr-1 pl-3 backdrop-blur-sm sm:w-52"
       inputClassName="h-full min-w-0 flex-1 scrollbar-none overflow-x-auto text-xs leading-8 whitespace-pre text-white"
-      sendClassName="h-6 cursor-pointer rounded-full bg-red-500 px-2.5 text-xs text-white shadow-none hover:bg-red-500 disabled:opacity-40"
+      sendClassName="h-6 rounded-full px-2.5 text-xs"
     />
   );
 }

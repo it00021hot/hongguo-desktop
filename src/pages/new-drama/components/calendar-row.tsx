@@ -114,14 +114,12 @@ export function CalendarRow({
           </span>
         )}
         {!item.isOnline && (
-          // 官方同款红色实心胶囊（品牌红，白字铃铛）
+          // 播放器之外的按钮走项目主题（primary 单色），不模仿 hgplayer 品牌红
           <Button
             size="sm"
             variant={reserved ? 'secondary' : 'default'}
             disabled={reserved || reserve.isPending}
-            className={
-              reserved ? 'rounded-full' : 'rounded-full bg-red-500 text-white hover:bg-red-500/90'
-            }
+            className="rounded-full"
             onClick={() => reserve.mutate()}
           >
             {reserve.isPending ? (
