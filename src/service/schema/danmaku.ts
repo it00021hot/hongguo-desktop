@@ -12,8 +12,9 @@ export const danmakuSchema = z.object({
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
-/** 一条评论区评论（Rust `danmaku::CommentItem`）。 */
-const commentItemSchema = z.object({
+/** 一条评论区评论（Rust `danmaku::CommentItem`）。发送响应校验复用
+ *  （comment/reply/剧评发送现在返回完整对象，commands 层要 parse）。 */
+export const commentItemSchema = z.object({
   commentId: z.string(),
   /** 作者 uid（删除入口对比登录 uid 用；匿名/缺失为空串） */
   userId: z.string().default(''),
