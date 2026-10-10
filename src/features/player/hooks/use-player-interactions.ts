@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useShortcutsStore } from '@/stores/shortcuts';
 
 /**
  * 舞台三套交互裁决：滚轮切换、点击画面、键盘快捷键。
@@ -96,7 +97,9 @@ export function usePlayerInteractions(params: {
     [wakeChrome, onWheelStep, inBinge, setBinge, seriesId, videoRef],
   );
 
-  // 键盘快捷键：空格 / ←→ / ↑↓。依赖显式列出，避免每次渲染重绑。
+  // 键盘快捷键：映射可在设置页自定义（默认空格 / ←→ / ↑↓，抖音网页版同款）。
+  // 依赖显式列出，避免每次渲染重绑。
+  const shortcutKeys = useShortcutsStore((s) => s.keys);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const video = videoRef.current;
@@ -109,62 +112,58 @@ export function usePlayerInteractions(params: {
         return;
       }
 
-      switch (e.key) {
-        case 'Escape':
-          // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
-          // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
-          if (
-            inBinge &&
-            !seriesPanelOpen &&
-            !commentPanelOpen &&
-            !danmakuPanelOpen &&
-            !volumeOpen
-          ) {
-            setBinge(null);
-          }
-          break;
-        case ' ':
-          e.preventDefault();
-          // 空格续播/暂停也要亮一下悬浮层：play 事件不再负责唤醒（分不清
-          // 用户动作和自动起播），而空格没有 pointerdown/mousemove 这类
-          // 天然唤醒路径，得显式算「用户在场」
-          wakeChrome();
-          if (video.paused) void video.play();
-          else video.pause();
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          wakeChrome();
-          video.currentTime = Math.max(0, video.currentTime - 5);
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          wakeChrome();
-          // metadata 未加载时 duration 是 NaN，WebIDL 对 currentTime 赋
-          // NaN 会抛 TypeError——没有时长就先不钳制右边界
-          video.currentTime = Number.isFinite(video.duration)
-            ? Math.min(video.duration, video.currentTime + 5)
-            : video.currentTime + 5;
-          break;
-        case 'ArrowUp':
-        case 'ArrowDown': {
-          e.preventDefault();
-          wakeChrome();
-          // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
-          // 从详情/历史等**选定**剧进来 = 切上一集/下一集
-          const dir: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1;
-          setSlideDir(dir);
-          if (inBinge) stepEpisode(dir);
-          else if (onWheelStep) onWheelStep(dir);
-          else stepEpisode(dir);
-          break;
+      // Esc 固定管「退出选中」——面板语义按键，不随自定义映射
+      if (e.key === 'Escape') {
+        // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
+        // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
+        if (inBinge && !seriesPanelOpen && !commentPanelOpen && !danmakuPanelOpen && !volumeOpen) {
+          setBinge(null);
         }
+        return;
+      }
+
+      const step = (dir: 1 | -1) => {
+        e.preventDefault();
+        wakeChrome();
+        // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
+        // 从详情/历史等**选定**剧进来 = 切上一集/下一集
+        setSlideDir(dir);
+        if (inBinge) stepEpisode(dir);
+        else if (onWheelStep) onWheelStep(dir);
+        else stepEpisode(dir);
+      };
+
+      if (e.key === shortcutKeys.playPause) {
+        e.preventDefault();
+        // 空格续播/暂停也要亮一下悬浮层：play 事件不再负责唤醒（分不清
+        // 用户动作和自动起播），而空格没有 pointerdown/mousemove 这类
+        // 天然唤醒路径，得显式算「用户在场」
+        wakeChrome();
+        if (video.paused) void video.play();
+        else video.pause();
+      } else if (e.key === shortcutKeys.seekBack) {
+        e.preventDefault();
+        wakeChrome();
+        video.currentTime = Math.max(0, video.currentTime - 5);
+      } else if (e.key === shortcutKeys.seekForward) {
+        e.preventDefault();
+        wakeChrome();
+        // metadata 未加载时 duration 是 NaN，WebIDL 对 currentTime 赋
+        // NaN 会抛 TypeError——没有时长就先不钳制右边界
+        video.currentTime = Number.isFinite(video.duration)
+          ? Math.min(video.duration, video.currentTime + 5)
+          : video.currentTime + 5;
+      } else if (e.key === shortcutKeys.stepNext) {
+        step(1);
+      } else if (e.key === shortcutKeys.stepPrev) {
+        step(-1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // ref/setState 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
   }, [
+    shortcutKeys,
     stepEpisode,
     wakeChrome,
     onWheelStep,

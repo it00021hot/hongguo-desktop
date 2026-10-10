@@ -29,6 +29,7 @@ import { readLastTarget } from '@/utils/playback-prefs';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { useIncognitoMode } from './incognito';
+import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
@@ -264,6 +265,13 @@ export function PlayerView({
   // ---- 隐身模式（与控制栏的 Eye 按钮共享状态）：鼠标离开窗口即
   //      整窗透明 + 暂停，鼠标回来恢复显示（见 incognito.ts 的机制说明） ----
   const incognito = useIncognitoMode(videoRef);
+
+  // ---- 最小化自动暂停（设置可关）：窗口最小化即暂停，恢复继续；
+  //      与隐身模式的欠账模型各自独立 ----
+  useMinimizeAutoPause({
+    videoRef,
+    enabled: settings?.pauseOnMinimize ?? true,
+  });
 
   // ---- 沉浸流悬浮层显隐状态机（B站方案）抽在 use-player-overlay：
   //      3s 倒计时 / 暂停常显 / 控件悬停不收在这里统一裁决；

@@ -28,6 +28,7 @@ import { t, tf } from '@/locales';
 import type { DecodeCapability, Settings } from '@/service/schema';
 import { UpdateCard } from '@/features/update/update-card';
 import { AccountCard } from './account-card';
+import { ShortcutCard } from './shortcut-card';
 import { ToggleRow } from './toggle-row';
 
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
@@ -218,6 +219,12 @@ export function SettingsPage() {
             checked={current.autoDeleteAfterPlay}
             onChange={(v) => patch({ autoDeleteAfterPlay: v })}
           />
+          <ToggleRow
+            id="pause-on-minimize"
+            label={t('settings.pauseOnMinimize')}
+            checked={current.pauseOnMinimize}
+            onChange={(v) => patch({ pauseOnMinimize: v })}
+          />
 
           <div className="bg-muted/50 flex flex-wrap items-center gap-2 rounded-md p-3 text-sm">
             <Cpu className="text-muted-foreground size-4" />
@@ -291,6 +298,9 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 快捷键（前端偏好，立即生效不走保存按钮） */}
+      <ShortcutCard />
 
       {/* 存储 */}
       <Card>

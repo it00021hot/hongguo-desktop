@@ -202,6 +202,9 @@ pub struct Settings {
     /// 播完自动下一集
     #[serde(default = "default_true", alias = "auto_next_episode")]
     pub auto_next_episode: bool,
+    /// 最小化自动暂停，恢复窗口后继续播（对齐 hgplayer）
+    #[serde(default = "default_true", alias = "pause_on_minimize")]
+    pub pause_on_minimize: bool,
     /// 主题：auto / light / dark（默认 dark——黑色是应用的默认观感）
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -231,6 +234,7 @@ impl Default for Settings {
             proxy: ProxyConfig::default(),
             auto_delete_after_play: false,
             auto_next_episode: true,
+            pause_on_minimize: true,
             theme: default_theme(),
             account: None,
         }
@@ -424,6 +428,7 @@ mod tests {
             },
             auto_delete_after_play: false,
             auto_next_episode: true,
+            pause_on_minimize: true,
             theme: "auto".into(),
             account: None,
         };
@@ -432,6 +437,7 @@ mod tests {
         assert_eq!(v["maxConcurrency"], 4);
         assert_eq!(v["autoDeleteAfterPlay"], false);
         assert_eq!(v["autoNextEpisode"], true);
+        assert_eq!(v["pauseOnMinimize"], true);
         assert_eq!(v["naming"], "titleIndex");
         assert_eq!(v["proxy"]["mode"], "direct");
         assert!(v.get("download_dir").is_none());

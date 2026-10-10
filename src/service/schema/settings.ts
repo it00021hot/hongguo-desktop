@@ -38,6 +38,8 @@ export const settingsSchema = z.object({
   proxy: proxyConfigSchema,
   autoDeleteAfterPlay: z.boolean(),
   autoNextEpisode: z.boolean(),
+  // 后端 serde(default)：旧库无此字段，前端宽松接收
+  pauseOnMinimize: z.boolean().catch(true),
   theme: z.string(),
   // 后端 serde(default)：旧库无此字段，前端宽松接收
   account: accountStateSchema.nullable().optional(),
