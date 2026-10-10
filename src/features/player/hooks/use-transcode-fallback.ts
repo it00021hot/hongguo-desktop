@@ -49,11 +49,7 @@ export function useTranscodeFallback(params: {
   const compatPlay = useCompatPlayback();
 
   const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
-  const [compatProgress, setCompatProgress] = useState<{
-    key: string;
-    percent: number;
-    phase: string;
-  } | null>(null);
+  const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
   /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
   const compatStarted = useRef(false);
 
@@ -78,7 +74,7 @@ export function useTranscodeFallback(params: {
   useEvent<CompatProgress>(
     EVENTS.compatPlayProgress,
     useCallback((p: CompatProgress) => {
-      setCompatProgress({ key: p.key, percent: p.percent, phase: p.phase });
+      setCompatProgress(p);
     }, []),
   );
 
