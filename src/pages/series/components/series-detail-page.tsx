@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { ArrowLeft, Flame, Heart, Hourglass, Play, Star } from 'lucide-react';
 import { toast } from 'sonner';
@@ -158,13 +158,8 @@ export function SeriesDetailPage({
   const reviewScore = commentPages?.pages[0]?.score || '';
   const reviewScoreCnt = commentPages?.pages[0]?.scoreCnt ?? 0;
 
-  const [introExpanded, setIntroExpanded] = useState(false);
   // 简介：meta 的 series_intro 优先；未上线合成档案回落 prefill 的描述
   const intro = meta?.intro ?? (upcoming ? (prefill?.desc ?? '') : '');
-  // 展开按钮按字符数显隐（hgplayer 同款哲学：不量 DOM，宁滥勿缺——
-  // 80 字符在最窄正常窗口的三行容量之外，误报顶多多一个能点的按钮，
-  // 测量方案则要在长驻组件里跟 ref/effect 时序搏斗）
-  const introExpandable = intro.length > 80;
 
   // 未带 seriesId（直接敲路由）：只指路，不去解析
   if (!seriesId) {
@@ -283,26 +278,9 @@ export function SeriesDetailPage({
                 </div>
               ) : null}
 
+              {/* 简介常驻全文（无收起/展开） */}
               {intro && (
-                <div className="mt-4 flex items-start gap-3">
-                  <p
-                    className={cn(
-                      'text-muted-foreground min-w-0 flex-1 text-sm leading-relaxed',
-                      !introExpanded && 'line-clamp-3',
-                    )}
-                  >
-                    {intro}
-                  </p>
-                  {introExpandable && (
-                    <button
-                      type="button"
-                      onClick={() => setIntroExpanded((v) => !v)}
-                      className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer pt-0.5 text-xs"
-                    >
-                      {introExpanded ? t('player.introCollapse') : t('player.introExpand')}
-                    </button>
-                  )}
-                </div>
+                <p className="text-muted-foreground mt-4 text-sm leading-relaxed">{intro}</p>
               )}
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
