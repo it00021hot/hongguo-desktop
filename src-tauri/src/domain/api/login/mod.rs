@@ -606,10 +606,24 @@ mod tests {
         );
         env.cookie = Some(std::env::var("HG_LOGIN_COOKIES").expect("HG_LOGIN_COOKIES 必填"));
         match user_info(&env).await {
-            Ok(u) => println!(
-                "[probe-user] ✓ name={} id={} avatar={}",
-                u.name, u.user_id, u.avatar_url
-            ),
+            Ok(u) => {
+                println!(
+                    "[probe-user] ✓ name={} id={} avatar={}",
+                    u.name, u.user_id, u.avatar_url
+                );
+                // 原始响应全字段（排查账号资料字段用：红果号/昵称/头像来源）
+                let raw = crate::domain::api::client::api_call_reading(
+                    crate::domain::api::danmaku::LQ_API_ORIGIN,
+                    "/reading/user/info/v1/",
+                    None,
+                    &[],
+                    &env,
+                )
+                .await
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+                .unwrap_or_else(|e| format!("<raw 拉取失败: {e}>"));
+                println!("[probe-user] raw: {raw}");
+            }
             Err(e) => println!("[probe-user] ✗ {e}"),
         }
     }
