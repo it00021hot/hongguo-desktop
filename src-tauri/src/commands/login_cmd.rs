@@ -338,7 +338,10 @@ pub async fn login_user_info(state: State<'_, AppState>) -> AppResult<PassportUs
     let user = login::user_info(&env).await?;
     if let Some(mut acc) = state.settings().account {
         acc.user_name = user.name.clone();
-        acc.user_id = user.user_id.clone();
+        // ⚠️ user_id 绝不能在这里刷新：user_info 端点返回的是
+        // encode_user_id 加密形态（#c1967_… 71 字符），数字 uid 只在
+        // sms_login 响应里——覆盖后「删除自己的评论」的 isMine 判定
+        // （对比评论作者数字 user_id）永远不成立（2026-10-10 实测事故）
         // user_info 偶发不带头像时不清空已有值
         if !user.avatar_url.is_empty() {
             acc.avatar_url = user.avatar_url.clone();

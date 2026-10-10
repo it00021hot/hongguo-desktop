@@ -39,8 +39,13 @@ export function EmojiPickerButton({
     const btn = rootRef.current?.querySelector('button');
     const r = btn?.getBoundingClientRect();
     if (r) {
+      const PANEL_W = 288; // w-72
+      // 视口内 clamp：回复框贴右缘时右对齐锚会把面板推出窗口外被裁
+      // （用户实测截图形态），左右都留 8px 边距
+      const raw = align === 'right' ? r.right - PANEL_W : r.left;
+      const left = Math.min(Math.max(raw, 8), window.innerWidth - PANEL_W - 8);
       setAnchor({
-        left: align === 'right' ? r.right - 288 : r.left,
+        left,
         bottom: window.innerHeight - r.top + 8,
       });
     }

@@ -636,6 +636,139 @@ mod probe {
     }
 
     #[tokio::test]
+    #[ignore = "直连真实接口的探测用例（需要 HG_TEST_COOKIE 登录态；无 HG_TEST_TOKEN 时顺便验证无 token 的互动可行性）"]
+    async fn probe_review_interactions() {
+        let Some(env) = login_env() else {
+            println!("[review-interact] 未设 HG_TEST_COOKIE，跳过");
+            return;
+        };
+        println!(
+            "[review-interact] x_tt_token={}（空 = 验证无 token 形态）",
+            if env.x_tt_token.is_some() { "在场" } else { "缺失" }
+        );
+        // 锚点取 2026-10-10 抓包：剧评 7693600825641861912（book=7691228619774905368），
+        // 评论 7693242834317837081（vid=7691249364097829913）
+        let book = "7691228619774905368";
+        let review = "7693600825641861912";
+        let comment = "7693242834317837081";
+
+        match digg_review(review, true, &env).await {
+            Ok(()) => println!("[review-interact] 剧评点赞 OK"),
+            Err(e) => println!("[review-interact] 剧评点赞 ERR: {e}"),
+        }
+        match digg_review(review, false, &env).await {
+            Ok(()) => println!("[review-interact] 剧评取消点赞 OK"),
+            Err(e) => println!("[review-interact] 剧评取消点赞 ERR: {e}"),
+        }
+        match digg_comment(comment, true, &env).await {
+            Ok(()) => println!("[review-interact] 评论点赞 OK"),
+            Err(e) => println!("[review-interact] 评论点赞 ERR: {e}"),
+        }
+        match digg_comment(comment, false, &env).await {
+            Ok(()) => println!("[review-interact] 评论取消点赞 OK"),
+            Err(e) => println!("[review-interact] 评论取消点赞 ERR: {e}"),
+        }
+        match send_review_reply(book, review, None, "probe 剧评回复", &env).await {
+            Ok(rid) => {
+                println!("[review-interact] 剧评回复 OK reply_id={rid}");
+                match delete_comment(&rid, 4, &env).await {
+                    Ok(()) => println!("[review-interact] 回复删除 OK（清理痕迹）"),
+                    Err(e) => println!("[review-interact] 回复删除 ERR: {e}"),
+                }
+            }
+            Err(e) => println!("[review-interact] 剧评回复 ERR: {e}"),
+        }
+        // 回复列表读取（匿名也应可读；带登录态对照）
+        let page = crate::domain::api::danmaku::fetch_review_replies(book, review, "", &env)
+            .await
+            .expect("剧评回复列表");
+        println!(
+            "[review-interact] 剧评回复列表 total={} got={}",
+            page.total,
+            page.items.len()
+        );
+    }
+
+    /// **运行时等价环境复现**：从 `.hg-runtime-settings.json`（python 从
+    /// 应用 db 导出）读账号 + 代理，完全复刻 `AppState::api_env()` 的
+    /// merge_session_cookie 合并链路（匿名兜底打底 + 账号覆盖）。
+    /// UI 里互动失败而裸 cookie probe 成功时，用这个对照定位差异。
+    fn runtime_env() -> Option<ApiEnv> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".hg-runtime-settings.json");
+        let raw = std::fs::read_to_string(path).ok()?;
+        let v: Value = serde_json::from_str(&raw).ok()?;
+        let proxy = v
+            .pointer("/proxy")
+            .cloned()
+            .map(|p| serde_json::from_value(p).unwrap_or_default())
+            .unwrap_or_default();
+        let cookie = v
+            .pointer("/account/cookies")
+            .and_then(Value::as_str)
+            .filter(|c| !c.is_empty());
+        let device = crate::signer::video_device();
+        // 复刻 merge_session_cookie：匿名兜底 + 账号覆盖（读 app_state 的
+        // 私有函数不可行，测试里等价重写——两处必须同步改）
+        let mut fields: Vec<(String, String)> = crate::signer::device::anonymous_cookie(&device)
+            .split("; ")
+            .filter_map(|p| p.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+            .collect();
+        if let Some(account) = cookie {
+            for pair in account.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+                if let Some((k, v)) = pair.split_once('=') {
+                    match fields.iter_mut().find(|(ek, _)| ek == k) {
+                        Some(slot) => slot.1 = v.to_string(),
+                        None => fields.push((k.to_string(), v.to_string())),
+                    }
+                }
+            }
+        }
+        Some(ApiEnv {
+            proxy,
+            device,
+            cookie: Some(
+                fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ),
+            x_tt_token: None,
+        })
+    }
+
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例（复刻运行时 api_env 合并链路；需先导出 .hg-runtime-settings.json）"]
+    async fn probe_runtime_env_interactions() {
+        let Some(env) = runtime_env() else {
+            println!("[runtime-env] 未找到 .hg-runtime-settings.json，跳过");
+            return;
+        };
+        let has_sid = env.cookie.as_deref().unwrap_or("").contains("sessionid");
+        println!(
+            "[runtime-env] cookie={} 字节 sessionid={} x_tt_token={}",
+            env.cookie.as_deref().map(|c| c.len()).unwrap_or(0),
+            has_sid,
+            if env.x_tt_token.is_some() { "在场" } else { "缺失" }
+        );
+        // 与 UI 完全同参：剧评点赞/回复（锚点 = 抓包同一条剧评）
+        let book = "7691228619774905368";
+        let review = "7693600825641861912";
+        match digg_review(review, true, &env).await {
+            Ok(()) => println!("[runtime-env] 剧评点赞 OK"),
+            Err(e) => println!("[runtime-env] 剧评点赞 ERR: {e}"),
+        }
+        match send_review_reply(book, review, None, "probe 运行时等价回复", &env).await {
+            Ok(rid) => {
+                println!("[runtime-env] 剧评回复 OK reply_id={rid}");
+                let _ = delete_comment(&rid, 4, &env).await;
+            }
+            Err(e) => println!("[runtime-env] 剧评回复 ERR: {e}"),
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "直连真实接口的探测用例（需要 HG_TEST_COOKIE 登录态）"]
     async fn probe_interaction_roundtrip() {
         let Some(env) = login_env() else {
