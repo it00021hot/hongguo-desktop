@@ -83,6 +83,9 @@ pub async fn fetch_browse(
         "req_type": "only_content",
         "select_items": filters.to_select_items(),
         "session_id": session_id,
+        // 完结状态筛选（2026-10-11 逆向 hgplayer 1.1.8 Category）：客户端
+        // 合成的「完结状态」行选中值走 body 顶层，空串=全部
+        "creation_status": filters.creation_status,
     }))
     .map_err(|e| AppError::Signer(e.to_string()))?;
     let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &[], env).await?;

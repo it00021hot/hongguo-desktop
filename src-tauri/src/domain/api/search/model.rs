@@ -54,6 +54,13 @@ pub struct SearchResult {
     pub episode_cnt: u32,
     #[serde(default)]
     pub description: String,
+    /// 副标题列表（「脑洞」「玄幻」「4105万热度」…；响应里是 JSON 字符串
+    /// 或数组双形态，解析端已归一）——搜索结果卡片的标签行数据源
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 热度行（sub_title_list 里含「热度」的那条，如「4105万热度」）
+    #[serde(default)]
+    pub heat_text: String,
 }
 
 /// 一页搜索结果。

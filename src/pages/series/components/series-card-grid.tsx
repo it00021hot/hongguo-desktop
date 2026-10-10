@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import { Flame } from 'lucide-react';
 import { SeriesCover } from '@/components/series-cover';
 import { tf } from '@/locales';
 import type { SeriesCard } from '@/service/schema';
@@ -73,6 +74,13 @@ export function SeriesCardGrid({ cards, downloadedMap, onSelect, trailing }: Pro
               <p className="truncate text-sm font-semibold" title={card.seriesTitle}>
                 {card.seriesTitle}
               </p>
+              {(card.heatText ?? '') !== '' && (
+                // 热度行（搜索结果卡；榜单行同款橙色 Flame 语言）
+                <p className="text-xs font-medium text-orange-500">
+                  <Flame className="mr-0.5 inline size-3.5 align-[-2px]" aria-hidden />
+                  {card.heatText}
+                </p>
+              )}
               {card.tags.length > 0 && (
                 // 单行不折行：标签一旦换行，这张卡就比旁边高，整排参差不齐。
                 // 放不下就裁掉，悬停标题能看全。

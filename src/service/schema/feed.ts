@@ -55,6 +55,8 @@ export const browseFiltersSchema = z.object({
   gender: z.string().default(''),
   onlineTime: z.string().default(''),
   duration: z.string().default(''),
+  // 完结状态（hgplayer 1.1.8 同款客户端合成行；后端透传 body.creation_status）
+  creationStatus: z.string().default(''),
 });
 
 export type BrowseFilters = z.infer<typeof browseFiltersSchema>;

@@ -101,6 +101,29 @@ export function FilterPanel({
           </div>
         );
       })}
+      {/* 完结状态（hgplayer 1.1.8 同款客户端合成行，服务端 rows 不含）：
+          选中值走请求体顶层 creation_status（creation_status_0 已完结 /
+          creation_status_1 连载中） */}
+      <div className="flex items-start gap-3 text-sm">
+        <span className="text-muted-foreground w-10 shrink-0 pt-1 text-xs">
+          {t('browse.fCreation')}
+        </span>
+        <div className="flex flex-wrap gap-x-1 gap-y-1.5">
+          {pill('creationStatus', '', t('browse.all'), filters.creationStatus === '')}
+          {pill(
+            'creationStatus',
+            'creation_status_0',
+            t('browse.creationFinished'),
+            filters.creationStatus === 'creation_status_0',
+          )}
+          {pill(
+            'creationStatus',
+            'creation_status_1',
+            t('browse.creationOngoing'),
+            filters.creationStatus === 'creation_status_1',
+          )}
+        </div>
+      </div>
     </div>
   );
 }

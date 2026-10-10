@@ -16,6 +16,7 @@ import {
   useSeriesSearchApp,
 } from '@/service/queries';
 import { usePlaySeries } from '@/hooks/use-play-series';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import { useUiStore } from '@/stores/ui';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ function toCard(it: FeedItem): SeriesCard {
     cover: it.cover,
     episodeCount: it.episodeCnt,
     tags: it.tags.slice(0, 3),
+    heatText: it.heatText,
     url: '',
   };
 }
@@ -65,7 +67,8 @@ function withDurationFallback(
 export function BrowsePage() {
   const filtersCollapsed = useUiStore((s) => s.browseFiltersCollapsed);
   const setBrowseFiltersCollapsed = useUiStore((s) => s.setBrowseFiltersCollapsed);
-  const [filters, setFilters] = useState<BrowseFilters>({
+  // 筛选条件会话级保留（hgplayer 1.1.7 同款：去播放再回来筛选还在）
+  const [filters, setFilters] = useSessionState<BrowseFilters>('hongguo.browse.filters', {
     genre: '',
     theme: '',
     role: '',
@@ -74,6 +77,7 @@ export function BrowsePage() {
     gender: '',
     onlineTime: '',
     duration: '',
+    creationStatus: '',
   });
 
   const [keyword, setKeyword] = useState('');
@@ -127,13 +131,22 @@ export function BrowsePage() {
       seriesTitle: it.title,
       cover: it.cover,
       episodeCount: it.episodeCnt,
-      tags: it.subTitle.split('·').slice(0, 1).filter(Boolean),
+      // 真标签来自 series_sub_title_list（hgplayer 1.1.6 同款：题材标签
+      // + 热度行）；列表缺失时回落 subTitle 首段
+      tags: it.tags.length > 0 ? it.tags : it.subTitle.split('·').slice(0, 1).filter(Boolean),
+      heatText: it.heatText,
       url: '',
     }));
   }, [searching, browse.items, found.items]);
   const pending = searching ? found.isLoading : browse.isLoading;
   const refreshing = searching ? found.isRefreshing : browse.isRefreshing;
   const failed = searching ? found.error !== null : browse.error !== null;
+  // 返回保留浏览位置：页面滚动容器是 app-shell 的 #content（本页无内部滚动）
+  useScrollRestore(
+    'hongguo.browse.scroll',
+    () => document.getElementById('content'),
+    !pending && cards.length > 0,
+  );
   // 提交按钮态：同一关键词还在搜索中就灰掉防连点；改了词不拦（允许直接重提）
   const resubmitting = searching && found.isLoading && keyword.trim() === submitted;
 

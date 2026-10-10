@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -7,6 +7,7 @@ import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonRows } from '@/components/skeletons';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { useRank } from '@/service/queries';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import { t } from '@/locales';
 import { FilterPanelButton } from './filter-panel-button';
 import { RankRow } from './rank-row';
@@ -29,11 +30,12 @@ import { normalizeTabs } from './normalize-tabs';
 /** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
 export function RankPage() {
-  const [selected, setSelected] = useState('all');
+  // 选中态会话级保留（hgplayer 1.1.7 同款：去播放再回来榜单还在原位置）
+  const [selected, setSelected] = useSessionState('hongguo.rank.selected', 'all');
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
-  const [sub, setSub] = useState('ranklist_hot_sc');
+  const [sub, setSub] = useSessionState('hongguo.rank.sub', 'ranklist_hot_sc');
   // 筛选面板选中项（'' = 总榜，即无筛选）
-  const [panel, setPanel] = useState('');
+  const [panel, setPanel] = useSessionState('hongguo.rank.panel', '');
   const rank = useRank(selected, sub, panel);
   const { items: listItems, isLoading, error, isFetching, refetch } = rank;
 
@@ -149,8 +151,9 @@ export function RankPage() {
           </div>
 
           {/* 列表滚动区（页面唯一会滚的地方）：切子榜/筛选用 key 重挂载
-              归零滚动——新榜单从第 1 名看起，而不是停在旧榜单的滚动位置 */}
-          <div key={`${sub}:${panel}`} className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
+              归零滚动——新榜单从第 1 名看起，而不是停在旧榜单的滚动位置。
+              去播放再回来时（同 sub/panel）恢复上次滚动位置 */}
+          <RankListScroll sub={sub} panel={panel} ready={!isLoading && listItems.length > 0}>
             {isLoading ? (
               <SkeletonRows count={8} height="h-24 rounded-xl" />
             ) : error ? (
@@ -187,7 +190,7 @@ export function RankPage() {
                 </div>
               </RefreshShade>
             )}
-          </div>
+          </RankListScroll>
         </div>
       </div>
 
@@ -195,6 +198,32 @@ export function RankPage() {
           居中胶囊组，选中态 = 主色胶囊（与左侧子榜选中同款）；
           两级形态才显示（登录一级形态只有一个合成 tab，隐藏整行） */}
       {/* 内容 tab 条已上移 AppShell 顶栏（本文件上方 TopBarTabsPortal） */}
+    </div>
+  );
+}
+
+/** 榜单滚动容器：保留 key 重挂载归零的语义，另在「去播放再回来」时
+ *  （同 sub/panel 的重挂载）恢复上次滚动位置。 */
+function RankListScroll({
+  sub,
+  panel,
+  ready,
+  children,
+}: {
+  sub: string;
+  panel: string;
+  ready: boolean;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useScrollRestore('hongguo.rank.scroll', () => ref.current, ready);
+  return (
+    <div
+      key={`${sub}:${panel}`}
+      ref={ref}
+      className="min-h-0 flex-1 scrollbar-thin overflow-y-auto"
+    >
+      {children}
     </div>
   );
 }

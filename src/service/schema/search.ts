@@ -14,6 +14,9 @@ const searchResultSchema = z.object({
   playCnt: z.number(),
   episodeCnt: z.number().int().nonnegative(),
   description: z.string(),
+  // series_sub_title_list 归一结果（旧后端可能缺：宽松兜空）
+  tags: z.array(z.string()).catch([]),
+  heatText: z.string().catch(''),
 });
 export type SearchResult = z.infer<typeof searchResultSchema>;
 

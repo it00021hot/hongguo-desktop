@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonCardGrid } from '@/components/skeletons';
 import { useDownloadTasks, useNewDrama } from '@/service/queries';
+import { useScrollRestore } from '@/hooks/use-scroll-restore';
 import { t } from '@/locales';
 import type { RankItem } from '@/service/schema';
 import { NewDramaCard } from './new-drama-card';
@@ -19,6 +20,14 @@ export function NewDramaRecommends({
 }) {
   const feed = useNewDrama(gender);
   const { data: tasks } = useDownloadTasks();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // 返回保留浏览位置（组件根即滚动容器）；换频道 key 重挂载归零的语义
+  // 不受影响——scrollKey 带 gender，同一频道回来才恢复
+  useScrollRestore(
+    `hongguo.new.scroll:${gender}`,
+    () => rootRef.current,
+    !feed.isLoading && feed.items.length > 0,
+  );
 
   const downloadedMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -56,7 +65,10 @@ export function NewDramaRecommends({
   return (
     // 组件根即滚动区（页面唯一会滚的地方）；哨兵在滚动区内，
     // IntersectionObserver 对 viewport 的判定会穿过滚动容器，翻页照常触发
-    <div className="flex min-h-0 flex-1 scrollbar-thin flex-col gap-4 overflow-y-auto">
+    <div
+      ref={rootRef}
+      className="flex min-h-0 flex-1 scrollbar-thin flex-col gap-4 overflow-y-auto"
+    >
       <RefreshShade refreshing={feed.isRefreshing}>
         {feed.isLoading ? (
           <SkeletonCardGrid count={9} />

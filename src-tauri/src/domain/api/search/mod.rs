@@ -217,6 +217,7 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
             else {
                 continue;
             };
+            let (tags, heat_text) = parse_sub_titles(raw);
             items.push(SearchResult {
                 series_id: series_id.to_string(),
                 title: str_field(raw, "title"),
@@ -227,6 +228,8 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
                 play_cnt: int_field(raw, "play_cnt"),
                 episode_cnt: int_field(raw, "episode_cnt").max(0) as u32,
                 description: str_field(raw, "video_desc"),
+                tags,
+                heat_text,
             });
         }
     }
@@ -239,6 +242,28 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
         search_id: str_field(tab, "search_id"),
         items,
     })
+}
+
+/// `series_sub_title_list` 双形态归一（hgplayer 1.1.8 hotText 同语义）：
+/// 响应里可能是 JSON **字符串**（内嵌数组）也可能直接是数组；返回全部
+/// 条目 + 含「热度」的那条（搜索结果卡的热度行）。
+fn parse_sub_titles(raw: &Value) -> (Vec<String>, String) {
+    let field = raw.get("series_sub_title_list");
+    let entries: Vec<String> = match field {
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        Some(Value::String(s)) => serde_json::from_str::<Vec<String>>(s).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let heat = entries
+        .iter()
+        .find(|e| e.contains("热度"))
+        .cloned()
+        .unwrap_or_default();
+    (entries, heat)
 }
 
 #[cfg(test)]
@@ -285,6 +310,27 @@ mod tests {
         assert!(err.to_string().contains("search_id"));
         assert!(validate_pagination(0, "").is_ok(), "首页无需 search_id");
         assert!(validate_pagination(6, "####11@x").is_ok());
+    }
+
+    /// series_sub_title_list 双形态（2026-10-11 逆向 hgplayer hotText）：
+    /// JSON 字符串内嵌数组或直接数组，都要归一；热度行取含「热度」的那条。
+    #[test]
+    fn sub_title_list_dual_shape_and_heat() {
+        let raw = serde_json::json!({ "series_sub_title_list": "[\"脑洞\",\"玄幻\",\"4105万热度\"]" });
+        let (tags, heat) = parse_sub_titles(&raw);
+        assert_eq!(tags, vec!["脑洞", "玄幻", "4105万热度"]);
+        assert_eq!(heat, "4105万热度");
+
+        let raw = serde_json::json!({ "series_sub_title_list": ["奇幻", "800万热度"] });
+        let (tags, heat) = parse_sub_titles(&raw);
+        assert_eq!(tags, vec!["奇幻", "800万热度"]);
+        assert_eq!(heat, "800万热度");
+
+        let (tags, heat) = parse_sub_titles(&serde_json::json!({}));
+        assert!(tags.is_empty() && heat.is_empty());
+        let (tags, heat) = parse_sub_titles(&serde_json::json!({ "series_sub_title_list": ["脑洞", "玄幻"] }));
+        assert_eq!(tags, vec!["脑洞", "玄幻"]);
+        assert!(heat.is_empty(), "没有含「热度」的条目时热度行为空");
     }
 
     #[test]

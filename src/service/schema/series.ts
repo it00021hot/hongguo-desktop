@@ -57,5 +57,7 @@ export type SeriesCard = {
   cover: string;
   episodeCount: number;
   tags: string[];
+  /** 热度行（「4105万热度」；搜索结果卡有，筛选流卡片暂无） */
+  heatText?: string;
   url: string;
 };
