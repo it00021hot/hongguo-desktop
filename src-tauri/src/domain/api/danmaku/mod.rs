@@ -211,7 +211,7 @@ pub async fn fetch_comments_page(
 /// （照抄抓包，审计纪律）。响应与单集评论同构（common_list_info.total /
 /// data_list），解析复用。
 fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "aid": 8662,
         "business_param": {
             "book_id": group_id,
@@ -235,12 +235,17 @@ fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
         "comment_source": 1,
         "comment_type": 2,
         "count": 10,
-        "cursor": cursor,
         "group_id": group_id,
         "group_type": 1,
         "server_channel": 34,
         "sort": 1,
-    })
+    });
+    // 首屏不带 cursor 键（2026-10-10 抓包实锤：cursor 缺省，翻页才回传
+    // 响应下发的 `{"session_id":..,"offset":N}` JSON 串原样）
+    if !cursor.is_empty() {
+        payload["cursor"] = Value::String(cursor.to_string());
+    }
+    payload
 }
 
 /// 拉剧级评论的一页（详情页「剧评」tab 数据源 + 头部评分）。
@@ -279,41 +284,63 @@ pub async fn fetch_series_comments_page(
         .filter(|t| !t.is_empty())
         .map(str::to_string)
         .collect();
+    // 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分——剧评 tab
+    // 顶部「剧均评分」块数据源，2026-10-10 抓包锁定）
+    let avg_score = v
+        .pointer("/data/extra/book_info/score")
+        .map(|x| match x {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
     Ok(SeriesReviewPage {
         page,
         score,
         score_cnt,
         tags,
+        avg_score,
     })
 }
 
-/// 发剧评（详情页「剧评」tab 的评论框）。
+/// 发剧评（详情页「剧评」tab 的评论框，带评分）。
 ///
-/// 端点同单集评论（comment/add），但组维度照剧评拉取形态换：group_id=
-/// **series_id**、group_type=1、comment_source=1、comment_type=2、
-/// server_channel=34（与 [`series_comments_payload`] 同一维度，2026-10-07
-/// 抓包字段）；business_param 照评论形态（data_type=4）全量字段。
+/// 参数照 hgplayer 1.1.6 抓包逐字段对齐（2026-10-10，用户实测发满分
+/// 剧评「好看」抓包）：剧评形态是 **data_type=2 / commit_source=12 /
+/// comment_type=0**，评分放在 business_param.score（**十分制**，5 星
+/// ×2）；列表侧参数（comment_source/comment_type/server_channel）与
+/// 回复侧 commit_source=9 都会被服务端 103008「无社区功能」拒收。
 /// 返回服务端分配的 comment_id。
-pub async fn send_series_review(series_id: &str, text: &str, env: &ApiEnv) -> AppResult<String> {
+pub async fn send_series_review(
+    series_id: &str,
+    text: &str,
+    score: i64,
+    env: &ApiEnv,
+) -> AppResult<String> {
     let payload = serde_json::json!({
-        "aid": 8662,
         "business_param": {
+            "aigc_template_id": "",
+            "aigc_template_text": "",
             "book_id": series_id,
+            "comment_tag_list": [],
+            "from_famous_comment_id": 0,
             "has_aigc_content": false,
             "ignore_urge_rule": false,
-            "log_extra": {},
+            "is_confirm_request": false,
             "offset": 0,
-            "preset_text_id": "",
-            "shark_param": super::interact::shark_param(),
+            "read_item_cnt": 0,
+            "score": score,
+            "support_para_audio_play": false,
             "text_feature": {},
+            "video_is_muted": 0,
         },
-        "comment_source": 1,
-        "comment_type": 2,
-        "commit_source": 9,
-        "data_type": 4,
+        "comment_type": 0,
+        "commit_source": 12,
+        "data_type": 2,
         "group_id": series_id,
         "group_type": 1,
-        "server_channel": 34,
+        "image_data": [],
+        "rich_text": [],
         "text": text,
     });
     let raw = serde_json::to_vec(&payload)
@@ -418,6 +445,20 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
                 .pointer("/user_action/user_digg")
                 .and_then(Value::as_bool)
                 == Some(true),
+            // 剧评评分（expand.score 十分制字符串 + 后缀文案）；单集评论无 expand.score 恒空
+            score: comment
+                .pointer("/expand/score")
+                .map(|x| match x {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default(),
+            score_suffix_text: comment
+                .pointer("/expand/score_suffix_text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         });
     }
     Ok(page)
@@ -426,6 +467,23 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 剧评发送形态抓包锚点（known-issues 后续对齐，2026-10-10 hgplayer
+    /// 1.1.6 实测发满分剧评）：data_type=2 / commit_source=12 /
+    /// comment_type=0，评分在 business_param.score（十分制）。任何改形
+    /// 都会被服务端 103008「无社区功能」拒收。
+    #[test]
+    fn review_send_payload_anchors() {
+        let src = include_str!("mod.rs");
+        for (needle, why) in [
+            (r#""commit_source": 12"#, "剧评发送 commit_source=12（评论 3 / 弹幕 1500 / 回复 9 都不对）"),
+            (r#""data_type": 2,"#, "剧评 data_type=2（评论 4 / 弹幕 20）"),
+            (r#""comment_type": 0,"#, "剧评 comment_type=0"),
+            (r#""score": score,"#, "评分在 business_param.score（十分制，5 星 ×2）"),
+        ] {
+            assert!(src.contains(needle), "{}：缺少锚点 {}", why, needle);
+        }
+    }
 
     #[test]
     fn payload_shape_matches_capture() {

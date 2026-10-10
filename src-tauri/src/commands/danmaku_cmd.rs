@@ -93,12 +93,14 @@ pub async fn series_comment_list(
 }
 
 /// 发剧评（详情页「剧评」评论框；整剧维度，与 series_comment_list 同组）。
-/// 需登录态，匿名会被服务端拒绝（错误原样上抛给 toast）。
+/// score 为十分制评分（5 星 ×2，1–10）。需登录态，匿名会被服务端拒绝
+/// （错误原样上抛给 toast）。
 #[tauri::command]
 pub async fn series_review_send(
     state: State<'_, AppState>,
     series_id: String,
     text: String,
+    score: i64,
 ) -> AppResult<String> {
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -107,11 +109,14 @@ pub async fn series_review_send(
     if text.chars().count() > 500 {
         return Err(AppError::InvalidArgs("评论最长 500 字".into()));
     }
+    if !(1..=10).contains(&score) {
+        return Err(AppError::InvalidArgs("评分需在 1–10 星（5 星制 ×2）".into()));
+    }
     if state.settings().account.is_none() {
         return Err(AppError::Auth("评论需要先登录".into()));
     }
     let env = state.api_env();
-    send_series_review(&series_id, &text, &env).await
+    send_series_review(&series_id, &text, score, &env).await
 }
 
 #[cfg(test)]

@@ -34,6 +34,12 @@ pub struct CommentItem {
     pub reply_count: i64,
     #[serde(default)]
     pub user_digg: bool,
+    /// 剧评评分（expand.score，"7" 十分制字符串；单集评论恒空串）
+    #[serde(default)]
+    pub score: String,
+    /// 评分后缀文案（expand.score_suffix_text，"观看1小时后点评"；单集评论恒空串）
+    #[serde(default)]
+    pub score_suffix_text: String,
 }
 
 /// 评论区拉取结果：评论列表 + 评论总数（互动栏计数数据源）+ 翻页游标。
@@ -77,4 +83,7 @@ pub struct SeriesReviewPage {
     /// 题材标签
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分）
+    #[serde(default)]
+    pub avg_score: String,
 }
