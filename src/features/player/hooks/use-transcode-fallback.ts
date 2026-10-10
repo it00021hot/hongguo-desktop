@@ -47,6 +47,8 @@ export function useTranscodeFallback(params: {
     currentSeries,
   } = params;
   const compatPlay = useCompatPlayback();
+  /** mutate 引用恒定；整个 mutation 对象每渲染都是新的，进依赖会重置探测计时 */
+  const mutateCompat = compatPlay.mutate;
 
   const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
@@ -83,7 +85,7 @@ export function useTranscodeFallback(params: {
     compatStarted.current = true;
     setCompatProgress({ key: episodeKey, percent: 0, phase: 'downloading' });
     const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
-    compatPlay.mutate(
+    mutateCompat(
       { seriesId, vidIndex, vid: ep?.vid },
       {
         onSuccess: (r) => {
@@ -108,7 +110,7 @@ export function useTranscodeFallback(params: {
       },
     );
     // ref 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
-  }, [seriesId, vidIndex, episodeKey, currentSeries, compatPlay, srcKeyRef, setSrcKey]);
+  }, [seriesId, vidIndex, episodeKey, currentSeries, mutateCompat, srcKeyRef, setSrcKey]);
 
   // 解码失败探测：播放在走、画面出不来、且时间确实在推进。
   // 三个条件缺一不可——刚起播那一瞬间 videoWidth 本来就是 0。

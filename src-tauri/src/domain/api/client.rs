@@ -234,7 +234,10 @@ pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<
     let send = |referer: bool| {
         let mut req = client
             .get(url)
-            .header("User-Agent", crate::signer::VIDEO_UA);
+            .header("User-Agent", crate::signer::VIDEO_UA)
+            // MP4 已经压缩，HTTP gzip 会破坏 Range 偏移并可能让 reqwest
+            // 在读响应体时解压失败。视频必须按原始字节收取。
+            .header(reqwest::header::ACCEPT_ENCODING, "identity");
         if referer {
             req = req.header("Referer", crate::signer::VIDEO_REFERER);
         }
@@ -289,6 +292,7 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
     let resp = client
         .get(url)
         .header("User-Agent", crate::signer::VIDEO_UA)
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header("Range", "bytes=0-0")
         .send()
         .await
@@ -356,6 +360,7 @@ async fn get_video_range_once(
         let mut req = client
             .get(url)
             .header("User-Agent", crate::signer::VIDEO_UA)
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header("Range", format!("bytes={start}-{end}"));
         if referer {
             req = req.header("Referer", crate::signer::VIDEO_REFERER);
@@ -673,6 +678,32 @@ mod tests {
         let req = observer.join().unwrap();
         assert!(!req.contains("Referer"), "首次请求不应带 Referer: {req}");
         assert!(req.contains("GET /v.mp4"), "应请求指定路径: {req}");
+        assert!(
+            req.to_ascii_lowercase()
+                .contains("accept-encoding: identity"),
+            "视频流应禁用 HTTP 内容压缩，保持 MP4 原始字节: {req}"
+        );
+    }
+
+    #[tokio::test]
+    async fn video_range_requests_identity_encoding() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let observer = std::thread::spawn(move || read_request_from(listener));
+
+        let url = format!("http://{addr}/v.mp4");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let bytes = get_video_range(&client, &url, 0, 1)
+            .await
+            .expect("测试服务器返回完整的两字节响应");
+        assert_eq!(bytes, b"hi");
+
+        let req = observer.join().unwrap().to_ascii_lowercase();
+        assert!(
+            req.contains("accept-encoding: identity"),
+            "视频 Range 请求必须保持原始字节: {req}"
+        );
+        assert!(req.contains("range: bytes=0-1"), "应保留 Range: {req}");
     }
 
     #[tokio::test]
