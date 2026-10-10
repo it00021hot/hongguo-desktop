@@ -74,6 +74,9 @@ export const interact = {
   /** 收藏（追剧）/ 取消收藏一部剧。 */
   seriesCollect: (seriesId: string, collect: boolean) =>
     call<void>('series_collect', { seriesId, collect }),
+  /** 批量收藏/取消收藏（一请求多条目，hgplayer 1.1.8 RemoveFavorites 同款）。 */
+  seriesCollectBatch: (entries: { seriesId: string; collect: boolean }[]) =>
+    call<void>('series_collect_batch', { entries }),
   /** 最近互动列表（点赞过的 vid + 收藏的剧），回显是 best-effort 匹配。 */
   state: () => call<InteractionState>('interaction_state', undefined, interactionStateSchema),
   /** 书架（我的收藏）列表，需要登录。 */

@@ -65,6 +65,9 @@
     "fGender": "Audience",
     "fOnlineTime": "Freshness",
     "fDuration": "Duration",
+    "fCreation": "Status",
+    "creationFinished": "Completed",
+    "creationOngoing": "Ongoing",
     "all": "All",
     "nextPage": "Next page",
     "filters": "Filters"
@@ -346,6 +349,18 @@
     "playback": "Playback",
     "autoDelete": "Delete after watching",
     "autoNext": "Auto next episode",
+    "pauseOnMinimize": "Auto-pause when minimized",
+    "shortcuts": "Player shortcuts",
+    "shortcutsHint": "Click a binding then press the new key to set it; Esc cancels. Esc during playback always exits selection.",
+    "resetKeys": "Reset defaults",
+    "keyPlayPause": "Play / pause",
+    "keySeekBack": "Rewind 5s",
+    "keySeekForward": "Forward 5s",
+    "keyStepPrev": "Previous episode / series",
+    "keyStepNext": "Next episode / series",
+    "keyCapturing": "Press a key…",
+    "keySpace": "Space",
+    "keyConflict": "\"{key}\" is already used by another action",
     "themeAuto": "System",
     "themeLight": "Light",
     "themeDark": "Dark",
@@ -406,6 +421,18 @@
     "internal": "The operation failed. Please try again.",
     "badPayload": "Unexpected data format. Please try again.",
     "storeLocked": "The app is already running (its window may be hidden by incognito mode). Open it from the Dock/taskbar."
+  },
+  "batch": {
+    "manage": "Manage",
+    "exitManage": "Done",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "selectedCount": "{count} selected",
+    "deleteSelected": "Delete selected",
+    "deleting": "Deleting…",
+    "confirmBody": "{count} items will be deleted. This cannot be undone.",
+    "done": "Deleted {count} items",
+    "partialFail": "Some deletions failed: {error}"
   },
   "common": {
     "searchNoMatch": "No matching series",
@@ -486,6 +513,7 @@
   },
   "reservation": {
     "searchPlaceholder": "Search reservations",
+    "batchCancelTitle": "Delete selected reservations?",
     "tab": {
       "online": "Online",
       "offline": "Upcoming"
@@ -509,6 +537,7 @@
     "tabUnfinished": "Unfinished",
     "tabFinished": "Finished",
     "searchPlaceholder": "Search watched",
+    "deleteConfirmTitle": "Delete selected watch history?",
     "noMatchUnfinished": "Nothing unfinished",
     "noMatchFinished": "Nothing finished yet",
     "title": "Watch history",
@@ -545,14 +574,19 @@
     "unresolved": "Series {id}",
     "episodeCount": "{n} episodes",
     "resolvingHint": "Fetching series info…",
-    "remove": "Remove"
+    "remove": "Remove",
+    "filterAll": "All",
+    "filterReal": "Live action",
+    "filterComic": "Animated",
+    "batchRemoveTitle": "Remove selected from bookshelf?"
   },
   "liked": {
     "loadFailed": "Failed to load likes",
     "empty": "No likes yet",
     "emptyHint": "Videos you ❤ in the feed will show up here",
     "searchPlaceholder": "Search likes",
-    "undo": "Undo like"
+    "undo": "Undo like",
+    "batchUndoTitle": "Undo selected likes?"
   },
   "detail": {
     "back": "Back",

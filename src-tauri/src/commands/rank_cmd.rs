@@ -6,7 +6,7 @@ use crate::app_state::AppState;
 use crate::domain::api::calendar::{CalendarPage, fetch_new_calendar};
 use crate::domain::api::new_drama::fetch_new_drama;
 use crate::domain::api::rank::{RankPage, fetch_rank_ex};
-use crate::domain::api::reservation::{fetch_reservations, reserve_series};
+use crate::domain::api::reservation::{delete_reservations, fetch_reservations, reserve_series};
 use crate::domain::api::search::{SearchPage, SuggestItem, search_series, search_suggest};
 use crate::error::{AppError, AppResult};
 
@@ -145,6 +145,26 @@ pub async fn reservation_reserve(
         "[Reserve] {} {series_id}",
         if reserve { "预约" } else { "取消预约" }
     );
+    Ok(())
+}
+
+/// 批量删除预约（subscribe_delete，hgplayer 1.1.8 同款；需要登录）。
+#[tauri::command]
+pub async fn reservations_delete(
+    state: State<'_, AppState>,
+    item_ids: Vec<String>,
+    all_select: Option<bool>,
+    not_del_item_ids: Option<Vec<String>>,
+    is_online: Option<bool>,
+) -> AppResult<()> {
+    if state.settings().account.is_none() {
+        return Err(AppError::Auth("预约删除需要先登录".into()));
+    }
+    let env = state.api_env();
+    let all_select = all_select.unwrap_or(false);
+    let not_del = not_del_item_ids.unwrap_or_default();
+    delete_reservations(&item_ids, all_select, &not_del, is_online.unwrap_or(true), &env).await?;
+    log::info!("[Reserve] 批量删除 {} 条预约", item_ids.len());
     Ok(())
 }
 

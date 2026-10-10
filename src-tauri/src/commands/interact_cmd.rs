@@ -3,15 +3,24 @@
 //! 全部要求登录态（cookie + x-tt-token 随 `api_env` 走），匿名调用会被
 //! 服务端静默拒绝——前端应在未登录时禁用入口而非放行重试。
 
+use serde::Deserialize;
 use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    BookshelfEntry, CommentItem, InteractionState, ReplyItem, collect_series, delete_comment,
-    digg_comment, digg_review, digg_video, fetch_bookshelf, fetch_interaction_state, send_comment,
-    send_danmaku, send_reply, send_review_reply,
+    BookshelfEntry, CommentItem, InteractionState, ReplyItem, collect_series, collect_series_batch,
+    delete_comment, digg_comment, digg_review, digg_video, fetch_bookshelf,
+    fetch_interaction_state, send_comment, send_danmaku, send_reply, send_review_reply,
 };
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+
+/// 批量收藏/取消收藏的单条引用。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesCollectRef {
+    pub series_id: String,
+    pub collect: bool,
+}
 
 /// 发一条弹幕。`groupId`=分集 vid，`bookId`=series_id，`offsetMs`=视频内
 /// 位置（毫秒）。返回服务端 comment_id（本地乐观插入用）。
@@ -173,6 +182,26 @@ pub async fn series_collect(
     let env = state.api_env();
     collect_series(&series_id, collect, &env).await?;
     log::info!("[Interact] collect series={series_id} on={collect}");
+    Ok(())
+}
+
+/// 批量收藏/取消收藏（一个请求携带多条目，hgplayer 1.1.8 RemoveFavorites 同款）。
+#[tauri::command]
+pub async fn series_collect_batch(
+    state: State<'_, AppState>,
+    entries: Vec<SeriesCollectRef>,
+) -> AppResult<()> {
+    if state.settings().account.is_none() {
+        return Err(AppError::Auth("收藏需要先登录".into()));
+    }
+    let env = state.api_env();
+    let pairs: Vec<(String, bool)> = entries
+        .into_iter()
+        .map(|e| (e.series_id, e.collect))
+        .collect();
+    let n = pairs.len();
+    collect_series_batch(&pairs, &env).await?;
+    log::info!("[Interact] batch collect {n} entries");
     Ok(())
 }
 

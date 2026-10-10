@@ -7,12 +7,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Heart, HeartOff, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ListSearch } from '@/components/list-search';
 import { matchListQuery } from '@/utils/list-filter';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import { BatchBar, ManageToggle, PickDot } from '@/components/batch-manage';
+import { useBatchSelect } from '@/hooks/use-batch-select';
+import { interact as interactCmd } from '@/service/commands';
+import { keys } from '@/service/queries/common';
 import { useInteractionState, useSeriesMeta, useVideoDigg, useWebCover } from '@/service/queries';
 import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/player';
@@ -22,8 +28,28 @@ import type { InteractionItem } from '@/service/schema';
 export function LikedPage() {
   const navigate = useNavigate();
   const setTarget = usePlayerStore((s) => s.setTarget);
+  const queryClient = useQueryClient();
   const { data: state, isLoading, error, refetch } = useInteractionState();
   const digg = useVideoDigg();
+  // 批量管理（hgplayer v1.1.6 同款）：多选后逐条取消赞（官方无批量点赞
+  // 端点，do_action 单条语义；全跑完统一回显 + 汇总失败数）
+  const batch = useBatchSelect();
+  const batchUndo = useMutation({
+    mutationFn: async (items: InteractionItem[]) => {
+      const results = await Promise.allSettled(
+        items.map((i) => interactCmd.videoDigg(i.vid, i.seriesId, false)),
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed > 0) throw new Error(`${failed}/${items.length}`);
+      return items.length;
+    },
+    onSuccess: (n) => {
+      toast.success(tf('batch.done', { count: n }));
+      batch.exit();
+      void queryClient.invalidateQueries({ queryKey: keys.interactState });
+    },
+    onError: (e: Error) => toast.error(tf('batch.partialFail', { error: e.message })),
+  });
 
   const [query, setQuery] = useState('');
   // mget 自带 seriesTitle，但缺失时卡片会回落 resolve——标题异步到位后
@@ -76,14 +102,18 @@ export function LikedPage() {
 
   return (
     <div className="flex flex-col gap-3 p-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
         <ListSearch value={query} onChange={setQuery} placeholder={t('liked.searchPlaceholder')} />
+        <ManageToggle managing={batch.managing} onEnter={batch.enter} onExit={batch.exit} />
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {shown.map((item) => (
           <LikedCard
             key={`${item.vid}:${item.seriesId}`}
             item={item}
+            managing={batch.managing}
+            picked={batch.selected.has(item.vid)}
+            onPick={() => batch.toggle(item.vid)}
             onOpen={() => open(item)}
             onTitle={registerTitle}
             onUndo={() =>
@@ -98,19 +128,36 @@ export function LikedPage() {
           />
         ))}
       </div>
+      {batch.managing && (
+        <BatchBar
+          count={batch.selected.size}
+          total={shown.length}
+          deleting={batchUndo.isPending}
+          deleteLabel={t('liked.undo')}
+          confirmTitle={t('liked.batchUndoTitle')}
+          onToggleAll={() => batch.toggleAll(shown.map((i) => i.vid))}
+          onDelete={() => batchUndo.mutate(shown.filter((i) => batch.selected.has(i.vid)))}
+        />
+      )}
     </div>
   );
 }
 
 /** 点赞卡：形态同「收藏」卡——封面 3:4 + 标题，悬浮出续播与「取消赞」；
- * 次行保留本页特有信息：红心 + 该集点赞计数。 */
+ * 次行保留本页特有信息：红心 + 该集点赞计数。管理模式下角标多选。 */
 function LikedCard({
   item,
+  managing,
+  picked,
+  onPick,
   onOpen,
   onUndo,
   onTitle,
 }: {
   item: InteractionItem;
+  managing: boolean;
+  picked: boolean;
+  onPick: () => void;
   onOpen: () => void;
   onUndo: () => void;
   onTitle: (id: string, title: string) => void;
@@ -129,19 +176,24 @@ function LikedCard({
     if (title !== '') onTitle(item.seriesId, title);
   }, [item.seriesId, title, onTitle]);
 
+  const open = () => (managing ? onPick() : onOpen());
+
   return (
     <div className="group relative">
       <article
         role="button"
         tabIndex={0}
         aria-label={title}
-        onClick={onOpen}
+        onClick={open}
         onKeyDown={(e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return;
           e.preventDefault();
-          onOpen();
+          open();
         }}
-        className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 cursor-pointer overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none"
+        className={cn(
+          'bg-card hover:border-foreground/30 focus-visible:border-foreground/30 cursor-pointer overflow-hidden rounded-xl border text-left transition-colors hover:shadow-md focus-visible:outline-none',
+          picked && 'border-primary/60 bg-primary/5',
+        )}
       >
         <div className="bg-muted relative aspect-[3/4]">
           {showImg ? (
@@ -164,6 +216,11 @@ function LikedCard({
               {t('history.continue')}
             </span>
           </div>
+          {managing && (
+            <div className="absolute top-2 left-2">
+              <PickDot checked={picked} onToggle={onPick} />
+            </div>
+          )}
         </div>
         <div className="flex flex-col gap-1 p-2.5">
           <p className="truncate text-sm font-semibold" title={title}>
@@ -175,14 +232,16 @@ function LikedCard({
           </div>
         </div>
       </article>
-      <button
-        type="button"
-        onClick={onUndo}
-        title={t('liked.undo')}
-        className="absolute top-2 right-2 hidden size-7 place-items-center rounded-full bg-black/60 text-white group-hover:grid hover:bg-black/80"
-      >
-        <HeartOff className="size-3.5" />
-      </button>
+      {!managing && (
+        <button
+          type="button"
+          onClick={onUndo}
+          title={t('liked.undo')}
+          className="absolute top-2 right-2 hidden size-7 place-items-center rounded-full bg-black/60 text-white group-hover:grid hover:bg-black/80"
+        >
+          <HeartOff className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

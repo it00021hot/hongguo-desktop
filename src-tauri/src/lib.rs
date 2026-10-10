@@ -125,9 +125,11 @@ pub fn run() {
             commands::rank_cmd::search_suggest_cmd,
             commands::rank_cmd::reservation_list,
             commands::rank_cmd::reservation_reserve,
+            commands::rank_cmd::reservations_delete,
             commands::rank_cmd::new_drama_calendar,
             // 云端观看历史
             commands::history_cmd::watch_history_list,
+            commands::history_cmd::watch_history_delete,
             commands::history_cmd::cloud_report_progress,
             // 登录
             commands::login_cmd::login_send_code,
@@ -157,6 +159,7 @@ pub fn run() {
             commands::interact_cmd::review_reply_send,
             commands::interact_cmd::comment_delete,
             commands::interact_cmd::series_collect,
+            commands::interact_cmd::series_collect_batch,
             commands::interact_cmd::interaction_state,
             commands::interact_cmd::bookshelf_list,
             // 下载

@@ -13,4 +13,7 @@ export const watchHistory = {
    */
   reportProgress: (seriesId: string, vid: string, vidIndex: number, positionMs: number) =>
     call<void>('cloud_report_progress', { seriesId, vid, vidIndex, positionMs }),
+  /** 批量删除云端历史（read_history/update 的 is_delete+use_soft_delete 形态）。 */
+  delete: (items: { seriesId: string; vid: string; vidIndex: number }[]) =>
+    call<void>('watch_history_delete', { items }),
 };

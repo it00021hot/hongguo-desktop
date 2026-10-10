@@ -110,6 +110,26 @@ export function useReservations(isOnline: boolean) {
   });
 }
 
+/** 批量删除预约（subscribe_delete；两个 tab 的列表一起失效）。 */
+export function useReservationsDelete() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      itemIds: string[];
+      allSelect?: boolean;
+      notDelItemIds?: string[];
+      isOnline: boolean;
+    }) =>
+      rank.deleteReservations(
+        input.itemIds,
+        input.allSelect ?? false,
+        input.notDelItemIds ?? [],
+        input.isOnline,
+      ),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: RESERVATIONS_KEY_ROOT }),
+  });
+}
+
 /**
  * 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。
  *

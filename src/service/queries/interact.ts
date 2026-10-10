@@ -135,6 +135,16 @@ export function useSeriesCollect() {
   });
 }
 
+/** 批量取消收藏（批量管理用；权威回显走书架列表失效重拉）。 */
+export function useSeriesCollectBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (entries: { seriesId: string; collect: boolean }[]) =>
+      interactCmd.seriesCollectBatch(entries),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.bookshelf }),
+  });
+}
+
 /** 当前登录态（null = 未登录）；登录/退出后要主动失效。 */
 export function useAccount() {
   return useQuery({

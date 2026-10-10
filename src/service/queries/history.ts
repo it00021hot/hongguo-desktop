@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { watchHistory } from '../commands';
 import { keys } from './common';
@@ -11,5 +11,15 @@ export function useWatchHistory() {
     queryKey: keys.watchHistory,
     queryFn: () => watchHistory.list(),
     staleTime: 30_000,
+  });
+}
+
+/** 批量删除云端历史；成功后失效历史列表。 */
+export function useWatchHistoryDelete() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { seriesId: string; vid: string; vidIndex: number }[]) =>
+      watchHistory.delete(items),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.watchHistory }),
   });
 }

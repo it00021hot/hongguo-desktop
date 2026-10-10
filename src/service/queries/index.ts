@@ -37,6 +37,7 @@ export {
   useAuthRefresh,
   useVideoDigg,
   useSeriesCollect,
+  useSeriesCollectBatch,
   useAccount,
 } from './interact';
 export {
@@ -45,6 +46,7 @@ export {
   useNewDrama,
   useNewCalendar,
   useReservations,
+  useReservationsDelete,
   useReserveSeries,
 } from './rank';
 export { useBrowsePanel, useBrowseFeed } from './browse';
@@ -70,5 +72,5 @@ export {
   useCompatPlayback,
 } from './play';
 export { useStorageUsage, useStorageSeries, useStorageActions } from './storage';
-export { useWatchHistory } from './history';
+export { useWatchHistory, useWatchHistoryDelete } from './history';
 export { useWebCover } from './cover';

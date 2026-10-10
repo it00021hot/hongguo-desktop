@@ -19,6 +19,9 @@ use crate::error::{AppError, AppResult};
 /// cookie**。响应 `code==0` 即成功。
 pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v";
 
+/// 批量删除预约端点（2026-10-11 逆向 hgplayer 1.1.8 API 注册表锁定）。
+pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
+
 /// 预约列表（is_online=true 已上线 / false 待上线）。
 ///
 /// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
@@ -153,6 +156,48 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
     let bytes = api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_OP_PATH, Some(raw), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析预约响应失败: {e}")))?;
+    check_code(&value)
+}
+
+/// 批量删除预约（2026-10-11 逆向 hgplayer 1.1.8 subscribe_delete 逐字段锁定）：
+/// `POST /reading/user/subscribe/delete/v`，body
+/// `{item_id:[数字], all_select:false, not_del_item_id:[], is_online, tab_type:13}`。
+/// item_id 即 subscribe 列表条目的 series_id（与 reserve_series 同源）。
+pub async fn delete_reservations(
+    item_ids: &[String],
+    all_select: bool,
+    not_del_item_ids: &[String],
+    is_online: bool,
+    env: &ApiEnv,
+) -> AppResult<()> {
+    if !all_select && item_ids.is_empty() {
+        return Ok(());
+    }
+    let to_num = |s: &str| -> AppResult<i64> {
+        s.parse()
+            .map_err(|_| AppError::Media(format!("剧集 id 不是数字: {s}")))
+    };
+    let ids = item_ids
+        .iter()
+        .map(|s| to_num(s))
+        .collect::<AppResult<Vec<i64>>>()?;
+    let not_del = not_del_item_ids
+        .iter()
+        .map(|s| to_num(s))
+        .collect::<AppResult<Vec<i64>>>()?;
+    let payload = serde_json::json!({
+        "item_id": ids,
+        "all_select": all_select,
+        "not_del_item_id": not_del,
+        "is_online": is_online,
+        "tab_type": 13,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造批量删预约请求失败: {e}")))?;
+    let bytes =
+        api_call_reading(LQ_API_ORIGIN, SUBSCRIBE_DELETE_PATH, Some(raw), &[], env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析批量删预约响应失败: {e}")))?;
     check_code(&value)
 }
 

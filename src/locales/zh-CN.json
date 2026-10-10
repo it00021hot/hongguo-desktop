@@ -65,6 +65,9 @@
     "fGender": "受众",
     "fOnlineTime": "时间",
     "fDuration": "长度",
+    "fCreation": "状态",
+    "creationFinished": "已完结",
+    "creationOngoing": "连载中",
     "all": "全部",
     "nextPage": "下一页",
     "filters": "筛选"
@@ -346,6 +349,18 @@
     "playback": "播放",
     "autoDelete": "看完自动删除",
     "autoNext": "播完自动下一集",
+    "pauseOnMinimize": "最小化时自动暂停",
+    "shortcuts": "播放器快捷键",
+    "shortcutsHint": "点击按键后按下新键完成设置，Esc 取消。播放中的 Esc 固定用于退出选中。",
+    "resetKeys": "恢复默认",
+    "keyPlayPause": "播放 / 暂停",
+    "keySeekBack": "快退 5 秒",
+    "keySeekForward": "快进 5 秒",
+    "keyStepPrev": "上一集 / 上一部",
+    "keyStepNext": "下一集 / 下一部",
+    "keyCapturing": "按下新按键…",
+    "keySpace": "空格",
+    "keyConflict": "「{key}」已被其他动作占用",
     "themeAuto": "跟随系统",
     "themeLight": "亮色",
     "themeDark": "暗色",
@@ -406,6 +421,18 @@
     "internal": "操作失败，请重试",
     "badPayload": "数据格式异常，请重试",
     "storeLocked": "应用已在运行（可能被隐身模式隐藏了窗口），请从 Dock/任务栏打开它"
+  },
+  "batch": {
+    "manage": "管理",
+    "exitManage": "退出管理",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "selectedCount": "已选 {count} 项",
+    "deleteSelected": "删除所选",
+    "deleting": "删除中…",
+    "confirmBody": "将删除选中的 {count} 项，删除后不可恢复。",
+    "done": "已删除 {count} 项",
+    "partialFail": "部分删除失败：{error}"
   },
   "common": {
     "searchNoMatch": "没有找到匹配的剧",
@@ -486,6 +513,7 @@
   },
   "reservation": {
     "searchPlaceholder": "搜索预约的剧",
+    "batchCancelTitle": "批量删除预约？",
     "tab": {
       "online": "已上线",
       "offline": "待上线"
@@ -509,6 +537,7 @@
     "tabUnfinished": "未看完",
     "tabFinished": "已看完",
     "searchPlaceholder": "搜索看过的剧",
+    "deleteConfirmTitle": "批量删除观看历史？",
     "noMatchUnfinished": "没有未看完的剧",
     "noMatchFinished": "还没有看完的剧",
     "title": "观看历史",
@@ -545,14 +574,19 @@
     "unresolved": "剧集 {id}",
     "episodeCount": "共 {n} 集",
     "resolvingHint": "正在获取剧集信息…",
-    "remove": "取消收藏"
+    "remove": "取消收藏",
+    "filterAll": "全部",
+    "filterReal": "真人剧",
+    "filterComic": "漫剧",
+    "batchRemoveTitle": "批量取消收藏？"
   },
   "liked": {
     "loadFailed": "点赞列表加载失败",
     "empty": "还没有点赞",
     "emptyHint": "在推荐页点 ❤ 赞过的视频会出现在这里",
     "searchPlaceholder": "搜索点赞的剧",
-    "undo": "取消赞"
+    "undo": "取消赞",
+    "batchUndoTitle": "批量取消点赞？"
   },
   "detail": {
     "back": "返回",

@@ -410,6 +410,49 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
     check_interact_code(&value)
 }
 
+/// 批量收藏/取消收藏（2026-10-11 逆向 hgplayer 1.1.8 RemoveFavorites：
+/// 同一 `update_bookshelf_video_list` 携带多条目，一请求完成批量）。
+/// `(series_id, collect)` 对；信封与单条完全同形。
+pub async fn collect_series_batch(entries: &[(String, bool)], env: &ApiEnv) -> AppResult<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let list: Vec<Value> = entries
+        .iter()
+        .map(|(series_id, collect)| {
+            serde_json::json!({
+                "book_id": series_id,
+                "book_type": 2,
+                "modify_time": now,
+                "video_shelf_operate_type": shelf_operate_type(*collect),
+            })
+        })
+        .collect();
+    let payload = serde_json::json!({
+        "is_cancelled": false,
+        "shark_extra": {
+            "enter_from": "MainFragmentActivity",
+            "inactive_type": "0",
+            "is_active_behavior": "true",
+            "page_list": "MainFragmentActivity",
+            "previous_page": "",
+        },
+        "update_bookshelf_video_list": list,
+    });
+    let raw = serde_json::to_vec(&payload)
+        .map_err(|e| AppError::Media(format!("构造批量收藏请求失败: {e}")))?;
+    let bytes =
+        super::client::api_call_reading(LQ_API_ORIGIN, BOOKSHELF_UPDATE_PATH, Some(raw), &[], env)
+            .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析批量收藏响应失败: {e}")))?;
+    check_interact_code(&value)
+}
+
 /// 拉账号的书架（收藏）列表。「我的收藏」页数据源；`target_user_id` 是
 /// 登录用户 uid（AccountState.user_id，2026-10-06 抓包同款 query）。
 ///
