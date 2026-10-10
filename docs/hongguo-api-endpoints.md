@@ -664,14 +664,23 @@ business_param 照抓包全量。**首屏不带 cursor 键**；翻页回传上�
 报错语义与参数错误毫无关系，只能逐字段对照抓包排除（2026-10-10 实测：
 同账号单集评论可发、剧评被拒，最终定位是形态差异）。
 
-### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定；2026-10-10 抓 1.1.8 复核 + 补剧评形态）
+### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定；2026-10-10 抓 1.1.8 复核 + 补剧评形态 + 响应解剖）
 
 回复**不走 comment/add 带回复字段**，是独立端点。body 与评论形态同构，
 另加顶层 `reply_to_comment_id`（被回复的评论 id）；回复「回复」再加
 顶层 `reply_to_reply_id`（被回复的那条回复 id，多级同端点——2026-10-10
 抓包两维度都实证该键）。
 差异字段：`commit_source: 9`（评论 3 / 弹幕 1500）。
-响应 id 在 `data.reply.reply_id`（注意不是 comment_info）。
+
+**响应是完整回复对象回显（2026-10-10 解剖，重要）**：`data.reply` 与
+reply/list 条目**同构**——`Common.{content.text, create_timestamp,
+user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
+`stat`、`user_action`、`reply_id`、`reply_to_*` 全带（user_tag 还带
+「我」标记）。hgplayer 把这个对象**直接插进回复列表**当 UI 数据源
+——只取 reply_id 手拼条目会缺头像/昵称/userId（删除按钮判定失效），
+效果与第三方两样（本项目 2026-10-10 返工实录）。comment/add 同理：
+响应 `data.comment_info` 是完整评论对象（含 `expand.score` 剧评评分
+回显），前端直插列表。
 
 **剧评回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）**——同端点换剧评
 形态，与单集评论回复的差异照抄：
