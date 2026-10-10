@@ -126,18 +126,19 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
   const [loginOpen, setLoginOpen] = useState(false);
   const navigate = useNavigate();
 
-  // 旧登录态库里没有头像：挂载后静默补拉一次 user_info（后端顺带刷新
-  // 昵称落库）。一次性 flag 兜底——若服务端就是不回头像，也不反复重试。
-  const avatarFetched = useRef(false);
+  // 登录态资料以 user_info 为准：每次启动挂载后静默拉一次，后端比对
+  // 落库（换过头像/昵称就跟上；rawProfile 是红果号 biz_user_id 的唯一
+  // 来源，也一并补齐）。一次性 flag 防重——失败不重试，下次启动再说。
+  const profileFetched = useRef(false);
   const hasAccount = account != null;
   useEffect(() => {
-    if (avatarFetched.current || !hasAccount || account?.avatarUrl) return;
-    avatarFetched.current = true;
+    if (profileFetched.current || !hasAccount) return;
+    profileFetched.current = true;
     login
       .userInfo()
       .then(() => refreshAuth())
       .catch(() => {});
-  }, [hasAccount, account?.avatarUrl, refreshAuth]);
+  }, [hasAccount, refreshAuth]);
 
   const label = account?.userName?.trim() || t('nav.accountFallback');
 
