@@ -54,7 +54,8 @@ pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<Cale
             break;
         }
         let sid = Some(session_id.clone()).filter(|s| !s.is_empty());
-        let next = fetch_reservations_page(is_online, merged.next_offset, sid.as_deref(), env).await?;
+        let next =
+            fetch_reservations_page(is_online, merged.next_offset, sid.as_deref(), env).await?;
         if next.items.is_empty() || next.next_offset <= merged.next_offset {
             break;
         }
@@ -157,8 +158,8 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::calendar::CalendarItem;
+    use super::*;
 
     /// 预约列表（tab_type=13）登录态响应：扁平条目 + has_subscribed。
     #[test]

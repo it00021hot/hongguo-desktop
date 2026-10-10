@@ -88,7 +88,14 @@ pub async fn fetch_rank_ex(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    dedup_rank_page(&mut items, if session_id.is_empty() { &resp_session } else { session_id });
+    dedup_rank_page(
+        &mut items,
+        if session_id.is_empty() {
+            &resp_session
+        } else {
+            session_id
+        },
+    );
     Ok(RankPage {
         items,
         tabs: parse_cell_selector(data),
@@ -120,10 +127,7 @@ fn dedup_rank_page(items: &mut Vec<RankItem>, session_id: &str) {
         std::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>,
     > = std::sync::OnceLock::new();
     const RANK_SEEN_SESSIONS: usize = 32;
-    let mut map = SEEN
-        .get_or_init(std::sync::Mutex::default)
-        .lock()
-        .unwrap();
+    let mut map = SEEN.get_or_init(std::sync::Mutex::default).lock().unwrap();
     if !map.contains_key(session_id) && map.len() >= RANK_SEEN_SESSIONS {
         map.clear();
     }
@@ -516,7 +520,11 @@ mod tests {
         });
         let tabs = parse_cell_selector(Some(&data));
         assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].subs.len(), 1, "空 id 叶子保留（文案是「全部」不是「总榜」）");
+        assert_eq!(
+            tabs[0].subs.len(),
+            1,
+            "空 id 叶子保留（文案是「全部」不是「总榜」）"
+        );
         assert_eq!(tabs[0].subs[0].name, "全部");
     }
 
@@ -537,7 +545,9 @@ mod tests {
         let mut page = vec![item("b"), item("c"), item("b")];
         dedup_rank_page(&mut page, "sess-1");
         assert_eq!(
-            page.iter().map(|i| i.series_id.as_str()).collect::<Vec<_>>(),
+            page.iter()
+                .map(|i| i.series_id.as_str())
+                .collect::<Vec<_>>(),
             ["c"],
             "重叠的 b 与页内重复的 b 都去掉"
         );
@@ -672,13 +682,15 @@ pub(crate) mod probe {
                     let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
                     let data = v.get("data");
                     let count = data
-                        .map(|d| {
-                            d.to_string().matches("series_id").count()
-                        })
+                        .map(|d| d.to_string().matches("series_id").count())
                         .unwrap_or(0);
                     println!(
                         "[limit={limit} offset={offset}] keys={:?} next_offset={:?} has_more={:?} series_id_hits={count}",
-                        data.map(|d| d.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()).unwrap_or_default(),
+                        data.map(|d| d
+                            .as_object()
+                            .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                            .unwrap_or_default())
+                            .unwrap_or_default(),
                         data.and_then(|d| d.get("next_offset")).cloned(),
                         data.and_then(|d| d.get("has_more")).cloned(),
                     );

@@ -12,18 +12,21 @@
 //! 统一用我们自己的 [`jpeg_encoder`]，与纯软解级（[`crate::media::heif`]）
 //! 共享同一产物口径。
 
-use windows::Win32::Graphics::Imaging::{
-    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGR, IWICBitmapDecoder,
-    IWICFormatConverter, IWICImagingFactory, WICBitmapDitherTypeNone,
-    WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
-};
 use windows::Win32::Foundation::{GlobalFree, WINCODEC_ERR_COMPONENTNOTFOUND};
+use windows::Win32::Graphics::Imaging::{
+    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGR, IWICBitmapDecoder, IWICFormatConverter,
+    IWICImagingFactory, WICBitmapDitherTypeNone, WICBitmapPaletteTypeCustom,
+    WICDecodeMetadataCacheOnDemand,
+};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 
 /// 「本机没有 HEIF 解码器」的探测缓存：false = 还没试过或已重置。
-static HEIC_DECODER_MISSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HEIC_DECODER_MISSING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// 清除探测缓存（「重新检测」按钮的钩子，与 MF/VT 同一批次）。
 pub fn clear_probe_cache() {
@@ -150,7 +153,12 @@ fn map_factory_error(e: windows::core::Error) -> HeicError {
 fn encode_jpeg(rgb: Vec<u8>, width: usize, height: usize) -> Result<Vec<u8>, HeicError> {
     let mut out = Vec::new();
     let enc = jpeg_encoder::Encoder::new(&mut out, 85);
-    enc.encode(&rgb, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
-        .map_err(|e| HeicError::Decode(format!("JPEG 编码失败: {e}")))?;
+    enc.encode(
+        &rgb,
+        width as u16,
+        height as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )
+    .map_err(|e| HeicError::Decode(format!("JPEG 编码失败: {e}")))?;
     Ok(out)
 }

@@ -129,7 +129,9 @@ async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabCo
                 return Ok(cfg);
             }
             Err(e) => {
-                log::warn!("[Recommend] tab={tab} 配置复验失败（{e}），沿用 {TAB_CONFIG_TTL:?} 前的旧值");
+                log::warn!(
+                    "[Recommend] tab={tab} 配置复验失败（{e}），沿用 {TAB_CONFIG_TTL:?} 前的旧值"
+                );
                 return Ok(cached.cfg);
             }
         }

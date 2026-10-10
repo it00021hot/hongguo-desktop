@@ -6,16 +6,13 @@
 //!    （如 `"1080p"`）。顶层没有 `definition` / `bitrate` / 宽高——
 //!    照着旧 schema 读会全部取到 0，择优退化成「永远选第一条」（360p）。
 
-
 mod model;
 
 pub use model::{PlayStream, StreamScore};
 
-
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-
 
 /// 编码器偏好排序里「排不进前两档」的编码器。
 const UNRANKED_CODEC: u8 = 2;

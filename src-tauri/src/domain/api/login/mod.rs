@@ -20,16 +20,14 @@ mod model;
 
 use serde_json::Value;
 
-use mfa::real_upsms_channel;
 use super::client::{ApiEnv, api_call_full_response};
 use crate::error::{AppError, AppResult};
 use crate::utils::json::str_field_paths;
 use crate::utils::url::encode_component;
+use mfa::real_upsms_channel;
 
 pub use mfa::{mfa_relogin, upsms_verify};
-pub use model::{
-    LoginOutcome, MfaContext, MfaFlow, PassportUser, SendCodeOutcome, UpsmsState,
-};
+pub use model::{LoginOutcome, MfaContext, MfaFlow, PassportUser, SendCodeOutcome, UpsmsState};
 
 /// passport 与业务同域（hgplayer 实测基址 `https://novel.snssdk.com`）。
 pub const PASSPORT_ORIGIN: &str = "https://novel.snssdk.com";
@@ -815,5 +813,4 @@ mod tests {
         assert!(err.to_string().contains("1003"));
         assert!(err.to_string().contains("手机号错误"));
     }
-
 }

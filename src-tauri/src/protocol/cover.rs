@@ -87,7 +87,9 @@ fn convert(remote: &str) -> Result<Vec<u8>, String> {
     // 1) 平台级：WIC（HEIF/HEVC 扩展在则走系统解码器；扩展没有会缓存
     //    「不可用」，本进程内不再尝试，「重新检测」清缓存）
     #[cfg(target_os = "windows")]
-    if let Some(result) = crate::media::platform::wic::heic_to_jpeg(bytes_of(&mut downloaded, remote)?) {
+    if let Some(result) =
+        crate::media::platform::wic::heic_to_jpeg(bytes_of(&mut downloaded, remote)?)
+    {
         match result {
             Ok(bytes) => return Ok(bytes),
             Err(msg) => log::warn!("[Cover] WIC 平台解码失败，落 ffmpeg/软解: {msg}"),

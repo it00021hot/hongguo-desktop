@@ -22,7 +22,7 @@
 use rusty_h265::Decoder;
 
 use crate::error::{AppError, AppResult};
-use crate::media::hevc::{param_nalus_from_hvcc, to_annexb, START_CODE};
+use crate::media::hevc::{START_CODE, param_nalus_from_hvcc, to_annexb};
 
 /// 解出主 item 并编码为 JPEG（质量 85）。
 pub fn decode_primary_to_jpeg(data: &[u8]) -> AppResult<Vec<u8>> {
@@ -30,9 +30,7 @@ pub fn decode_primary_to_jpeg(data: &[u8]) -> AppResult<Vec<u8>> {
     let (param_nalus, length_size) = param_nalus_from_hvcc(item.hvcc)?;
 
     // hvc1 条目与 MP4 样本同构：长度前缀 NAL 串，参数集只在 hvcC 里
-    let mut annexb = Vec::with_capacity(
-        item.data.len() + 16 + params_len(&param_nalus),
-    );
+    let mut annexb = Vec::with_capacity(item.data.len() + 16 + params_len(&param_nalus));
     for nalu in &param_nalus {
         annexb.extend_from_slice(&START_CODE);
         annexb.extend_from_slice(nalu);
@@ -130,7 +128,10 @@ impl<'a> PrimaryHvc1<'a> {
         if payload.is_empty() {
             return Err(AppError::Media("HEIF 主 item 数据为空".into()));
         }
-        Ok(Self { hvcc, data: payload })
+        Ok(Self {
+            hvcc,
+            data: payload,
+        })
     }
 }
 
@@ -147,8 +148,8 @@ fn boxes_in(data: &[u8], start: usize, end: usize) -> impl Iterator<Item = BoxRe
         if pos + 8 > end {
             return None;
         }
-        let mut size = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as u64;
+        let mut size =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as u64;
         let mut header = 8usize;
         if size == 1 {
             // largesize：8 字节扩展
@@ -173,12 +174,7 @@ fn boxes_in(data: &[u8], start: usize, end: usize) -> impl Iterator<Item = BoxRe
         if (size as usize) < header || pos + size as usize > end {
             return None;
         }
-        let typ = [
-            data[pos + 4],
-            data[pos + 5],
-            data[pos + 6],
-            data[pos + 7],
-        ];
+        let typ = [data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]];
         let b = BoxRef {
             typ,
             payload: pos + header..pos + size as usize,
@@ -228,13 +224,28 @@ fn parse_iloc(payload: &[u8], primary_id: u32) -> AppResult<Option<(u64, u64)>> 
     let offset_size = (payload[4] >> 4) as usize;
     let length_size = (payload[4] & 0x0F) as usize;
     let base_offset_size = (payload[5] >> 4) as usize;
-    let index_size = if version >= 1 { (payload[5] & 0x0F) as usize } else { 0 };
+    let index_size = if version >= 1 {
+        (payload[5] & 0x0F) as usize
+    } else {
+        0
+    };
 
-    let mut c = Cursor { buf: payload, pos: 6 };
-    let item_count = if version < 2 { c.u16()? as u64 } else { c.u32()? as u64 };
+    let mut c = Cursor {
+        buf: payload,
+        pos: 6,
+    };
+    let item_count = if version < 2 {
+        c.u16()? as u64
+    } else {
+        c.u32()? as u64
+    };
 
     for _ in 0..item_count {
-        let id = if version < 2 { c.u16()? as u64 } else { c.u32()? as u64 };
+        let id = if version < 2 {
+            c.u16()? as u64
+        } else {
+            c.u32()? as u64
+        };
         // v1/v2 在 item_ID 后直接是 construction_method——中间没有 reserved
         // （真机样本钉过：base=808 正好是 mdat 数据起点，少读一个 u16 全对齐）
         let construction_method = if version >= 1 { c.u16()? } else { 0 };
@@ -255,9 +266,9 @@ fn parse_iloc(payload: &[u8], primary_id: u32) -> AppResult<Option<(u64, u64)>> 
                     ));
                 }
                 // base_offset 与 extent_offset 是相加关系，不是拼接
-                let absolute = base_offset.checked_add(offset).ok_or_else(|| {
-                    AppError::Media("HEIF iloc 偏移溢出".into())
-                })?;
+                let absolute = base_offset
+                    .checked_add(offset)
+                    .ok_or_else(|| AppError::Media("HEIF iloc 偏移溢出".into()))?;
                 return Ok(Some((absolute, length)));
             }
         }
@@ -345,7 +356,10 @@ fn yuv420_to_rgb(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut rgb = vec![0u8; w * h * 3];
     for row in 0..h {
         let yr = &y[row * w..(row + 1) * w];
-        let (ur, vr) = (&u[(row / 2) * cw..(row / 2 + 1) * cw], &v[(row / 2) * cw..(row / 2 + 1) * cw]);
+        let (ur, vr) = (
+            &u[(row / 2) * cw..(row / 2 + 1) * cw],
+            &v[(row / 2) * cw..(row / 2 + 1) * cw],
+        );
         for col in 0..w {
             // 先各自 >>13 归一到 0..255 / ±127 量级，再乘矩阵系数——
             // 否则「Y 放大 × 矩阵系数」两级定点连乘会溢出 i32
@@ -367,8 +381,13 @@ fn yuv420_to_rgb(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
 fn encode_jpeg(rgb: Vec<u8>, width: usize, height: usize) -> AppResult<Vec<u8>> {
     let mut out = Vec::new();
     let enc = jpeg_encoder::Encoder::new(&mut out, 85);
-    enc.encode(&rgb, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
-        .map_err(|e| AppError::Media(format!("JPEG 编码失败: {e}")))?;
+    enc.encode(
+        &rgb,
+        width as u16,
+        height as u16,
+        jpeg_encoder::ColorType::Rgb,
+    )
+    .map_err(|e| AppError::Media(format!("JPEG 编码失败: {e}")))?;
     Ok(out)
 }
 
@@ -383,7 +402,12 @@ fn read_u32(buf: &[u8], pos: usize) -> Option<u32> {
     if pos + 4 > buf.len() {
         return None;
     }
-    Some(u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]))
+    Some(u32::from_be_bytes([
+        buf[pos],
+        buf[pos + 1],
+        buf[pos + 2],
+        buf[pos + 3],
+    ]))
 }
 
 #[cfg(test)]

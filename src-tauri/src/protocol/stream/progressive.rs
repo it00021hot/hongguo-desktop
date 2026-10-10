@@ -229,7 +229,10 @@ fn serve_progressive(
             // 窗口 0 与整集模式的 stream_window 同义：一次给到末尾。
             // 不能原样参与加法——end==start 会让下方 end-1 下溢（start=0
             // 时 debug panic，release 出非法 Content-Range）
-            (start, open_range_end(start, progressive_window(), plain_len))
+            (
+                start,
+                open_range_end(start, progressive_window(), plain_len),
+            )
         }
         RangeSpec::Unsatisfiable => {
             return Ok((
