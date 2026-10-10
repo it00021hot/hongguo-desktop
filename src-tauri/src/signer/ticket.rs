@@ -20,8 +20,9 @@ const MAX_TICKET_OFFSET: u32 = 32;
 
 /// 查询串编码：与 Python 的 `urlencode` 行为一致。
 ///
-/// 分两步：先用 `encodeURIComponent` 语义转义，再对 `!'()` 额外转义。
-/// 这两步**不可省略**——签名是 query 字符串的联合函数，编码方式变化即失配。
+/// 单步 `encodeURIComponent` 语义转义：unreserved 集合（含 `!'()`）原样
+/// 保留，其余转义。编码方式**不可改**——签名是 query 字符串的联合函数，
+/// 编码变化即失配。
 fn encode_component(item: &str) -> String {
     // encodeURIComponent 的 unreserved 集合：A-Z a-z 0-9 - _ . ! ~ * ' ( )
     const UNRESERVED: &str = "-_.!~*'()";

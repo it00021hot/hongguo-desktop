@@ -51,7 +51,7 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     Ok((200, headers(bytes.len()), bytes))
 }
 
-/// 缓存文件路径：`cover-cache/<sha256(url)前16字节hex>.jpg`。
+/// 缓存文件路径：`cover-cache/<sha256(url) 全量 32 字节的 hex>.jpg`。
 fn cache_path(remote: &str) -> std::path::PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(remote.as_bytes());

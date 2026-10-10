@@ -1,8 +1,9 @@
 //! 注册域数据模型（device_register 响应解包出的注册产物）。
 
-/// TT-Encrypt V5 的解密方向生产未用到（注册只加密），对拍用 Python
-/// 参考实现（ttencrypt.py 的 TT.decrypt）即可。
 /// 注册产物（gzip JSON 响应的解包）。
+///
+/// 备注：TT-Encrypt V5 的解密方向生产未用到（注册只加密），对拍用 Python
+/// 参考实现（ttencrypt.py 的 TT.decrypt）即可。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterResult {
