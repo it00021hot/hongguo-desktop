@@ -331,23 +331,33 @@ export function PlayerControls({
       className={cn(
         // 纯悬浮：不要任何底色/渐变蒙版，就一组裸图标压在画面上。
         // 可读性靠白色 + 投影，不靠底板——底板一加就变成一条色块，破坏了画面。
-        'absolute inset-x-0 bottom-0 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
+        //
+        // 投影是 filter：非 none 的 filter 会把本层变成 stacking context，
+        // 从这里向上弹的浮层（选集/弹幕设置/音量）的 z-30 全被困在层内、
+        // 整棵按 z:auto 参与舞台排序，重叠区压不过 z-10 信息层/z-20 互动栏
+        // ——悬浮无手形、点击算「外部」直接关浮层（2026-10-10 选集网格
+        // 下两排点不了就是它）。所以 root 必须自带 z-30 抬整层；同时
+        // pointer-events-none 让出指针（透明 padding 不截获悬停/点击/滚轮，
+        // 也不反过来盖住互动栏底端），两行内容可见时 auto 接回。
+        'pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
         'drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
       )}
     >
-      <ScrubBar
-        current={current}
-        duration={duration}
-        onScrubStart={() => {
-          scrubbing.current = true;
-        }}
-        onScrubEnd={() => {
-          scrubbing.current = false;
-        }}
-        onSeek={seekTo}
-      />
+      <div className={cn(visible && 'pointer-events-auto')}>
+        <ScrubBar
+          current={current}
+          duration={duration}
+          onScrubStart={() => {
+            scrubbing.current = true;
+          }}
+          onScrubEnd={() => {
+            scrubbing.current = false;
+          }}
+          onSeek={seekTo}
+        />
+      </div>
 
-      <div className="flex items-center gap-1">
+      <div className={cn('flex items-center gap-1', visible && 'pointer-events-auto')}>
         <IconButton label={t('player.play')} onClick={togglePlay}>
           {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
         </IconButton>
