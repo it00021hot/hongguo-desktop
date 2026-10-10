@@ -35,6 +35,15 @@ function toCard(it: FeedItem): SeriesCard {
   };
 }
 
+/** 播放数 → 短格式（12606352 → 「1260.6万播放」）；搜索卡热度行用。
+ *  服务端给不了搜索结果的标签/热度列表，播放数是同位信息。 */
+function formatPlayCount(n: number): string {
+  if (n <= 0) return '';
+  const wan = n / 10_000;
+  const count = wan >= 1 ? `${wan.toFixed(1).replace(/\.0$/, '')}万` : String(n);
+  return tf('browse.playCount', { count });
+}
+
 /** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
  * 实测 select_items.duration 服务端必认）。 */
 const DURATION_FALLBACK = {
@@ -131,10 +140,11 @@ export function BrowsePage() {
       seriesTitle: it.title,
       cover: it.cover,
       episodeCount: it.episodeCnt,
-      // 真标签来自 series_sub_title_list（hgplayer 1.1.6 同款：题材标签
-      // + 热度行）；列表缺失时回落 subTitle 首段
+      // 2026-10-11 dev 实测：综合 tab 的 cell 不带 sub_title/sub_title_list，
+      // 真标签拿不到（空数组），热度行回落播放数（hgplayer 1.1.6「搜索
+      // 结果显示封面与热度」同位）
       tags: it.tags.length > 0 ? it.tags : it.subTitle.split('·').slice(0, 1).filter(Boolean),
-      heatText: it.heatText,
+      heatText: it.heatText || formatPlayCount(it.playCnt),
       url: '',
     }));
   }, [searching, browse.items, found.items]);

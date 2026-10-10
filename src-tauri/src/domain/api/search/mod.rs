@@ -244,11 +244,15 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
     })
 }
 
-/// `series_sub_title_list` 双形态归一（hgplayer 1.1.8 hotText 同语义）：
-/// 响应里可能是 JSON **字符串**（内嵌数组）也可能直接是数组；返回全部
-/// 条目 + 含「热度」的那条（搜索结果卡的热度行）。
+/// 副标题列表双键名双形态归一（2026-10-11 dev 实测修正）：hgplayer 的
+/// rawSeries 叫 `series_sub_title_list`（JSON 字符串内嵌数组形态），
+/// 本项目抓包台账里推荐流/榜单条目是 `sub_title_list[]`（直数组形态，
+/// 见台账「条目标记字段」）——两个键都认，谁在场用谁。热度行取含
+/// 「热度」的那条（hgplayer hotText 同语义，搜索结果卡的热度行）。
 fn parse_sub_titles(raw: &Value) -> (Vec<String>, String) {
-    let field = raw.get("series_sub_title_list");
+    let field = raw
+        .get("series_sub_title_list")
+        .or_else(|| raw.get("sub_title_list"));
     let entries: Vec<String> = match field {
         Some(Value::Array(a)) => a
             .iter()

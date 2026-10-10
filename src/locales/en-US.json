@@ -68,6 +68,7 @@
     "fCreation": "Status",
     "creationFinished": "Completed",
     "creationOngoing": "Ongoing",
+    "playCount": "{count} plays",
     "all": "All",
     "nextPage": "Next page",
     "filters": "Filters"
