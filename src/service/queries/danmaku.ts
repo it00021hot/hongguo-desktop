@@ -67,6 +67,8 @@ export function useSendComment() {
       return interactCmd.sendComment(groupId ?? '', bookId ?? '', input.text);
     },
     onSuccess: (commentId, input) => {
+      // 乐观条目带上登录 uid：删除入口按 userId 判「自己的评论」
+      const userId = queryClient.getQueryData<{ userId: string }>(keys.account)?.userId ?? '';
       queryClient.setQueryData<InfiniteData<CommentPage, string>>(
         keys.comments(input.vid),
         (prev) => {
@@ -82,6 +84,7 @@ export function useSendComment() {
                 items: [
                   {
                     commentId,
+                    userId,
                     userName: '我',
                     avatar: '',
                     text: input.text,

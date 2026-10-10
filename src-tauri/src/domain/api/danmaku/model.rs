@@ -21,6 +21,8 @@ pub struct Danmaku {
 pub struct CommentItem {
     pub comment_id: String,
     #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
     pub user_name: String,
     #[serde(default)]
     pub avatar: String,
@@ -104,6 +106,8 @@ pub struct CommentTagStat {
 #[serde(rename_all = "camelCase")]
 pub struct ReplyItem {
     pub reply_id: String,
+    #[serde(default)]
+    pub user_id: String,
     #[serde(default)]
     pub user_name: String,
     #[serde(default)]

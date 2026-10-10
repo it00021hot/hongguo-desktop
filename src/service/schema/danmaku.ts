@@ -15,6 +15,8 @@ export type Danmaku = z.infer<typeof danmakuSchema>;
 /** 一条评论区评论（Rust `danmaku::CommentItem`）。 */
 const commentItemSchema = z.object({
   commentId: z.string(),
+  /** 作者 uid（删除入口对比登录 uid 用；匿名/缺失为空串） */
+  userId: z.string().default(''),
   userName: z.string(),
   avatar: z.string(),
   text: z.string(),
@@ -58,6 +60,8 @@ export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;
 /** 一条回复（Rust `danmaku::ReplyItem`；reply/list 2026-10-10 抓包形态）。 */
 export const replyItemSchema = z.object({
   replyId: z.string(),
+  /** 作者 uid（删除入口对比登录 uid 用；缺失为空串） */
+  userId: z.string().default(''),
   userName: z.string(),
   avatar: z.string(),
   text: z.string(),

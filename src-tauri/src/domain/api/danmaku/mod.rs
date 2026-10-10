@@ -428,6 +428,14 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
         let base = comment.pointer("/common/user_info/base_info");
         page.items.push(CommentItem {
             comment_id,
+            // 删除入口要对比登录 uid；user_id 在 user_info 层（base_info 兜底，
+            // 匿名样本两层都可能缺，缺了前端就不显示删除钮）
+            user_id: comment
+                .pointer("/common/user_info/user_id")
+                .or_else(|| comment.pointer("/common/user_info/base_info/user_id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             user_name: base
                 .and_then(|b| b.get("user_name"))
                 .and_then(Value::as_str)
@@ -604,6 +612,16 @@ fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
         let base = common.and_then(|c| c.pointer("/user_info/base_info"));
         page.items.push(ReplyItem {
             reply_id,
+            // 同 CommentItem：删除入口对比 uid 用（回复在两层都有，
+            // user_info 层优先）
+            user_id: common
+                .and_then(|c| c.pointer("/user_info/user_id"))
+                .or_else(|| {
+                    common.and_then(|c| c.pointer("/user_info/base_info/user_id"))
+                })
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             user_name: base
                 .and_then(|b| b.get("user_name"))
                 .and_then(Value::as_str)
@@ -782,10 +800,13 @@ mod tests {
                     "Common": {
                         "content": {"text": "好[送花]"},
                         "create_timestamp": 1791575272,
-                        "user_info": {"base_info": {
-                            "user_name": "路人甲",
-                            "expand_user_avatar": "https://x/a.webp",
-                        }},
+                        "user_info": {
+                            "user_id": "1968541249580363",
+                            "base_info": {
+                                "user_name": "路人甲",
+                                "expand_user_avatar": "https://x/a.webp",
+                            },
+                        },
                     },
                     "expand": {},
                     "reply_id": "r1",
@@ -803,6 +824,7 @@ mod tests {
         assert_eq!(page.next_cursor, "10");
         let r = &page.items[0];
         assert_eq!(r.reply_id, "r1");
+        assert_eq!(r.user_id, "1968541249580363");
         assert_eq!(r.text, "好[送花]");
         assert_eq!(r.user_name, "路人甲");
         assert_eq!(r.digg_count, 3);

@@ -14,7 +14,10 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, CornerDownRight, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { interact } from '@/service/commands';
@@ -25,9 +28,10 @@ import {
   useSendComment,
   useSendReply,
 } from '@/service/queries';
+import { keys } from '@/service/queries/common';
 import { EmojiText } from '@/components/common/emoji/emoji-text';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
-import type { CommentItem, ReplyItem } from '@/service/schema';
+import type { CommentItem, CommentPage, ReplyItem, ReplyPage } from '@/service/schema';
 
 interface Props {
   seriesId: string;
@@ -55,19 +59,25 @@ interface LocalReply {
 }
 
 /** 一条回复行：头像 / 昵称 / 回复@谁 / 表情文本 / 时间 / ♡（回复点赞与
- *  评论点赞同形态，object_id 传 reply_id——2026-10-10 抓包实锤）。 */
+ *  评论点赞同形态，object_id 传 reply_id——2026-10-10 抓包实锤）。
+ *  自己的回复（userId 对上登录 uid）带删除入口。 */
 function ReplyRow({
   reply,
   liked,
+  myUserId,
   onDigg,
   onReplyTo,
+  onDelete,
 }: {
   reply: ReplyItem;
   liked: Set<string>;
+  myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
+  onDelete: (reply: ReplyItem) => void;
 }) {
   const isLiked = liked.has(reply.replyId) || reply.userDigg;
+  const isMine = !!myUserId && reply.userId === myUserId;
   return (
     <div className="flex gap-2">
       {reply.avatar ? (
@@ -98,6 +108,15 @@ function ReplyRow({
           >
             {t('player.comments.reply')}
           </button>
+          {isMine && (
+            <button
+              type="button"
+              onClick={() => onDelete(reply)}
+              className="cursor-pointer hover:text-red-400"
+            >
+              {t('common.delete')}
+            </button>
+          )}
         </div>
       </div>
       <button
@@ -123,16 +142,20 @@ function ReplySection({
   replyCount,
   localReplies,
   liked,
+  myUserId,
   onDigg,
   onReplyTo,
+  onDeleteReply,
 }: {
   vid: string;
   commentId: string;
   replyCount: number;
   localReplies: LocalReply[];
   liked: Set<string>;
+  myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
+  onDeleteReply: (reply: ReplyItem) => void;
 }) {
   const [open, setOpen] = useState(false);
   const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useCommentReplies(
@@ -174,8 +197,10 @@ function ReplySection({
               key={r.replyId}
               reply={r}
               liked={liked}
+              myUserId={myUserId}
               onDigg={onDigg}
               onReplyTo={onReplyTo}
+              onDelete={onDeleteReply}
             />
           ))}
           {/* 自己发的回复（本地追加，服务端列表有延迟） */}
@@ -243,6 +268,50 @@ export function CommentPanel({ vid, onClose }: Props) {
   const [replyText, setReplyText] = useState('');
   /** 自己发的回复（commentId → 本地追加），服务端列表有延迟先上屏 */
   const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
+  /** 待确认删除的目标（comment/del service_id=4；parentId 在场 = 回复） */
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; parentId?: string } | null>(null);
+  const queryClient = useQueryClient();
+  const myUserId = account?.userId ?? '';
+
+  /** 删除自己的评论 / 回复（本地摘除，免重取整列表）。 */
+  const confirmDelete = () => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    if (!target) return;
+    interact
+      .deleteComment(target.id, 4)
+      .then(() => {
+        if (target.parentId) {
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.commentReplies(vid, target.parentId),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.filter((r) => r.replyId !== target.id),
+                })),
+              },
+          );
+        } else {
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.comments(vid),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p, i) => ({
+                  ...p,
+                  total: i === 0 ? Math.max(0, p.total - 1) : p.total,
+                  items: p.items.filter((c) => c.commentId !== target.id),
+                })),
+              },
+          );
+          if (replyTarget === target.id) setReplyTarget(null);
+        }
+        toast.success(t('common.deleted'));
+      })
+      .catch((e) => toast.error(String(e)));
+  };
 
   const submit = () => {
     const content = text.trim();
@@ -371,6 +440,7 @@ export function CommentPanel({ vid, onClose }: Props) {
             <ul className="flex flex-col gap-4">
               {(comments ?? []).map((c) => {
                 const isLiked = liked.has(c.commentId) || c.userDigg;
+                const isMine = !!myUserId && c.userId === myUserId;
                 return (
                   <li key={c.commentId} className="flex gap-2.5">
                     {c.avatar ? (
@@ -405,6 +475,15 @@ export function CommentPanel({ vid, onClose }: Props) {
                         >
                           {t('player.comments.reply')}
                         </button>
+                        {isMine && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget({ id: c.commentId })}
+                            className="cursor-pointer hover:text-red-400"
+                          >
+                            {t('common.delete')}
+                          </button>
+                        )}
                       </div>
                       {/* 回复列表（2026-10-10 起 reply/list 可用）：展开按需拉取，
                     自己发的回复本地追加；回复行的「回复」走二级回复 */}
@@ -414,8 +493,12 @@ export function CommentPanel({ vid, onClose }: Props) {
                         replyCount={c.replyCount}
                         localReplies={localReplies[c.commentId] ?? []}
                         liked={liked}
+                        myUserId={myUserId}
                         onDigg={onDigg}
                         onReplyTo={(r) => openReplyTo(c.commentId, r)}
+                        onDeleteReply={(r) =>
+                          setDeleteTarget({ id: r.replyId, parentId: c.commentId })
+                        }
                       />
                       {/* 回复输入框 */}
                       {replyTarget === c.commentId && (
@@ -493,6 +576,16 @@ export function CommentPanel({ vid, onClose }: Props) {
           sendClassName="h-9 bg-red-500 px-4 hover:bg-red-500/90"
         />
       </div>
+
+      {/* 删除确认（comment/del service_id=4：评论与回复同款） */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('common.deleteConfirmTitle')}
+        description={t('common.deleteConfirmDesc')}
+        confirmLabel={t('common.delete')}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

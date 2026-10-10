@@ -12,18 +12,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Heart, Loader2, Star } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import {
+  useAccount,
   useReviewDigg,
   useReviewReplies,
   useSendReviewReply,
   useSeriesComments,
 } from '@/service/queries';
+import { keys } from '@/service/queries/common';
+import { interact } from '@/service/commands';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { formatCountPrecise } from '@/utils/format';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmojiText } from '@/components/common/emoji/emoji-text';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
-import type { ReplyItem } from '@/service/schema';
+import type { CommentPage, ReplyItem, ReplyPage } from '@/service/schema';
 import { ReviewComposer } from './review-composer';
 
 /** 十分制评分 → 5 星展示（"7" → 3.5 星；半星用填充比例表达）。 */
@@ -50,19 +56,25 @@ function ScoreStars({ score }: { score: string }) {
   );
 }
 
-/** 一条剧评回复行（回复点赞与评论点赞同形态，object_id 传 reply_id）。 */
+/** 一条剧评回复行（回复点赞与评论点赞同形态，object_id 传 reply_id）。
+ *  自己的回复（userId 对上登录 uid）带删除入口。 */
 function ReviewReplyRow({
   reply,
   liked,
+  myUserId,
   onDigg,
   onReplyTo,
+  onDelete,
 }: {
   reply: ReplyItem;
   liked: Set<string>;
+  myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
+  onDelete: (reply: ReplyItem) => void;
 }) {
   const isLiked = liked.has(reply.replyId) || reply.userDigg;
+  const isMine = !!myUserId && reply.userId === myUserId;
   return (
     <div className="flex gap-2">
       <div className="bg-muted grid size-6 shrink-0 place-items-center overflow-hidden rounded-full text-[10px]">
@@ -93,6 +105,15 @@ function ReviewReplyRow({
           >
             {t('detail.reply')}
           </button>
+          {isMine && (
+            <button
+              type="button"
+              onClick={() => onDelete(reply)}
+              className="cursor-pointer hover:text-red-500"
+            >
+              {t('common.delete')}
+            </button>
+          )}
         </div>
       </div>
       <button
@@ -117,15 +138,19 @@ function ReviewReplySection({
   commentId,
   replyCount,
   liked,
+  myUserId,
   onDigg,
   onReplyTo,
+  onDeleteReply,
 }: {
   seriesId: string;
   commentId: string;
   replyCount: number;
   liked: Set<string>;
+  myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
+  onDeleteReply: (reply: ReplyItem) => void;
 }) {
   const [open, setOpen] = useState(false);
   const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useReviewReplies(
@@ -166,8 +191,10 @@ function ReviewReplySection({
               key={r.replyId}
               reply={r}
               liked={liked}
+              myUserId={myUserId}
               onDigg={onDigg}
               onReplyTo={onReplyTo}
+              onDelete={onDeleteReply}
             />
           ))}
           {hasNextPage && (
@@ -249,6 +276,54 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
     );
   };
 
+  // 删除自己的剧评（service_id=2）/ 回复（service_id=4）；本地摘除免重取
+  const { data: account } = useAccount();
+  const myUserId = account?.userId ?? '';
+  const queryClient = useQueryClient();
+  /** 待确认删除目标：serviceId 2 = 剧评本体，4 = 回复（parentId 在场） */
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    serviceId: 2 | 4;
+    parentId?: string;
+  } | null>(null);
+  const confirmDelete = () => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    if (!target) return;
+    interact
+      .deleteComment(target.id, target.serviceId)
+      .then(() => {
+        if (target.serviceId === 4 && target.parentId) {
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.reviewReplies(seriesId, target.parentId),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.filter((r) => r.replyId !== target.id),
+                })),
+              },
+          );
+        } else {
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.seriesComments(seriesId),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.filter((c) => c.commentId !== target.id),
+                })),
+              },
+          );
+          if (replyTarget === target.id) setReplyTarget(null);
+        }
+        toast.success(t('common.deleted'));
+      })
+      .catch((e) => toast.error(String(e)));
+  };
+
   return (
     <>
       <ReviewComposer seriesId={seriesId} />
@@ -294,6 +369,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
         <ul className="divide-border divide-y">
           {comments.map((c) => {
             const isLiked = liked.has(c.commentId) || c.userDigg;
+            const isMine = !!myUserId && c.userId === myUserId;
             return (
               <li key={c.commentId} className="flex gap-3 py-4">
                 <div className="bg-muted grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
@@ -343,6 +419,15 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
                     >
                       {t('detail.reply')}
                     </button>
+                    {isMine && (
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget({ id: c.commentId, serviceId: 2 })}
+                        className="cursor-pointer hover:text-red-500"
+                      >
+                        {t('common.delete')}
+                      </button>
+                    )}
                   </div>
                   {/* 回复列表（剧评维度）：展开按需拉取；回复行可二级回复 */}
                   <ReviewReplySection
@@ -350,12 +435,16 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
                     commentId={c.commentId}
                     replyCount={c.replyCount}
                     liked={liked}
+                    myUserId={myUserId}
                     onDigg={onDigg}
                     onReplyTo={(r) => {
                       setReplyTarget(c.commentId);
                       setReplyToReply({ id: r.replyId, name: r.userName });
                       setReplyText('');
                     }}
+                    onDeleteReply={(r) =>
+                      setDeleteTarget({ id: r.replyId, serviceId: 4, parentId: c.commentId })
+                    }
                   />
                   {/* 回复输入框 */}
                   {replyTarget === c.commentId && (
@@ -392,6 +481,15 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
           {t('detail.loadMoreReviews')}
         </div>
       )}
+      {/* 删除确认（comment/del：剧评 service_id=2 / 回复 4） */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('common.deleteConfirmTitle')}
+        description={t('common.deleteConfirmDesc')}
+        confirmLabel={t('common.delete')}
+        onConfirm={confirmDelete}
+      />
     </>
   );
 }
