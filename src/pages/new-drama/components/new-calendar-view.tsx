@@ -7,11 +7,10 @@ import { RefreshShade } from '@/components/refresh-shade';
 import { SkeletonRows } from '@/components/skeletons';
 import { useNewCalendar } from '@/service/queries';
 import { t } from '@/locales';
-import type { CalendarItem } from '@/service/schema';
 import { CalendarRow } from './calendar-row';
 
 /** 上新日历：日期条 + 当日上新列表（含未上线）。 */
-export function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) => void }) {
+export function NewCalendarView() {
   const [date, setDate] = useState('');
   const { data, isLoading, error, isFetching, refetch } = useNewCalendar(date);
   // 首次拿到日期列表后选中默认日（空串 = 默认日，这里显式化便于高亮）
@@ -64,7 +63,7 @@ export function NewCalendarView({ onSelect }: { onSelect: (item: CalendarItem) =
           ) : (
             <div className="flex flex-col gap-2">
               {(data?.items ?? []).map((item) => (
-                <CalendarRow key={item.seriesId} item={item} onSelect={onSelect} />
+                <CalendarRow key={item.seriesId} item={item} />
               ))}
             </div>
           )}

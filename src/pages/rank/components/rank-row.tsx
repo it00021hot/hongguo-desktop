@@ -1,11 +1,11 @@
 /** 榜单行卡片：进详情为主动作，右侧按上线状态给播放/预约。 */
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Bell, Check, Flame, Loader2, Play, Tv } from 'lucide-react';
+import { Bell, Check, Flame, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { useReserveSeries, useWebCover } from '@/service/queries';
-import { isRenderableCover } from '@/utils/cover';
+import { SeriesRowCard } from '@/components/series-row-card';
+import { useReserveSeries } from '@/service/queries';
 import { usePlaySeries } from '@/hooks/use-play-series';
 import { t } from '@/locales';
 import type { RankItem } from '@/service/schema';
@@ -14,12 +14,6 @@ import type { RankItem } from '@/service/schema';
 export function RankRow({ item }: { item: RankItem }) {
   const navigate = useNavigate();
   const playSeries = usePlaySeries();
-  const { data: webCover } = useWebCover(item.cover);
-  const sourceRenderable = isRenderableCover(item.cover);
-  const cover = webCover ?? (sourceRenderable ? item.cover : '');
-  const [brokenFor, setBrokenFor] = useState('');
-  const imgBroken = brokenFor !== '' && brokenFor === cover;
-  const showImg = cover !== '' && !imgBroken;
   // 预约态本地乐观翻转（详情页 ReserveButton 同款；榜单条目自带
   // online_subscribed 初始值，跨客户端操作过也能显示）
   const reserve = useReserveSeries();
@@ -63,63 +57,35 @@ export function RankRow({ item }: { item: RankItem }) {
     .join(' · ');
 
   return (
-    <article
-      role="button"
-      tabIndex={0}
-      aria-label={item.title}
-      onClick={openDetail}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        openDetail();
-      }}
-      className="bg-card hover:border-foreground/30 focus-visible:border-foreground/30 flex cursor-pointer items-center gap-4 rounded-xl border p-3 text-left transition-colors [contain-intrinsic-size:auto_112px] [content-visibility:auto] hover:shadow-md focus-visible:outline-none"
-    >
-      {rankNo !== undefined && (
-        <span
-          className={`w-8 shrink-0 text-center text-2xl font-black tabular-nums ${
-            rankNo <= 3 ? 'text-amber-500' : 'text-muted-foreground/50'
-          }`}
-          aria-hidden
-        >
-          {rankNo}
-        </span>
-      )}
-
-      <div className="bg-muted relative aspect-[3/4] w-20 shrink-0 overflow-hidden rounded-lg">
-        {showImg ? (
-          <img
-            src={cover}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover"
-            onError={() => setBrokenFor(cover)}
-          />
-        ) : (
-          <div className="text-muted-foreground grid size-full place-items-center">
-            <Tv className="size-5" />
-          </div>
-        )}
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-1.5">
-          <p className="truncate text-sm font-semibold" title={item.title}>
-            {item.title}
-          </p>
-          {item.season !== '' && (
-            <span className="text-muted-foreground shrink-0 rounded border px-1 text-[10px] leading-4">
-              {item.season}
-            </span>
-          )}
-        </div>
-        {meta !== '' && <p className="text-muted-foreground truncate text-xs">{meta}</p>}
-        {item.description !== '' && (
-          <p className="text-muted-foreground/80 line-clamp-2 text-xs leading-relaxed">
-            {item.description}
-          </p>
-        )}
-        {(rec !== '' || secondary.length > 0) && (
+    <SeriesRowCard
+      cover={item.cover}
+      title={item.title}
+      onOpen={openDetail}
+      leading={
+        rankNo !== undefined ? (
+          <span
+            className={`w-8 shrink-0 text-center text-2xl font-black tabular-nums ${
+              rankNo <= 3 ? 'text-amber-500' : 'text-muted-foreground/50'
+            }`}
+            aria-hidden
+          >
+            {rankNo}
+          </span>
+        ) : undefined
+      }
+      titleExtra={
+        item.season !== '' ? (
+          <span className="text-muted-foreground shrink-0 rounded border px-1 text-[10px] leading-4">
+            {item.season}
+          </span>
+        ) : undefined
+      }
+      metaLine={
+        meta !== '' ? <p className="text-muted-foreground truncate text-xs">{meta}</p> : undefined
+      }
+      description={item.description}
+      heatLine={
+        rec !== '' || secondary.length > 0 ? (
           <p className="flex items-center gap-2 text-xs">
             {rec !== '' && (
               <span className="flex shrink-0 items-center gap-0.5 text-orange-400">
@@ -133,13 +99,10 @@ export function RankRow({ item }: { item: RankItem }) {
               </span>
             )}
           </p>
-        )}
-      </div>
-
-      {/* 行尾动作列（按剧状态分）：未上线 = 预约/已预约；已上线 = 播放 +
-          详情链接。按钮统一定位风格（与历史页「继续播放」同款 outline）。 */}
-      <div className="flex shrink-0 flex-col items-stretch gap-1.5 self-center">
-        {item.upcoming ? (
+        ) : undefined
+      }
+      actions={
+        item.upcoming ? (
           <Button
             size="sm"
             variant="outline"
@@ -184,8 +147,8 @@ export function RankRow({ item }: { item: RankItem }) {
               {t('rank.detail')}
             </button>
           </>
-        )}
-      </div>
-    </article>
+        )
+      }
+    />
   );
 }

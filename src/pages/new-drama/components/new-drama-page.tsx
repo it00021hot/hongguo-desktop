@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { t } from '@/locales';
@@ -5,6 +6,7 @@ import { usePlaySeries } from '@/hooks/use-play-series';
 import { useSessionState } from '@/hooks/use-scroll-restore';
 import { NewCalendarView } from './new-calendar-view';
 import { NewDramaRecommends } from './new-drama-recommends';
+import type { RankItem } from '@/service/schema';
 
 /**
  * 新剧页：新剧推荐 + 上新日历两个视图。
@@ -31,7 +33,30 @@ export function NewDramaPage() {
   );
 
   const playSeries = usePlaySeries();
-  const handleSelect = (item: { seriesId: string }) => playSeries(item.seriesId);
+  const navigate = useNavigate();
+  // 点击分流（对齐排行榜预约榜口径）：未上线剧进详情——详情解析分集必然
+  // 失败，带上行内档案快照撑起「即将上线」降级视图 + 预约；已上线直接播
+  const goDetailUpcoming = (item: {
+    seriesId: string;
+    title: string;
+    cover: string;
+    tags?: string[];
+    description: string;
+  }) =>
+    void navigate({
+      to: '/detail',
+      search: {
+        seriesId: item.seriesId,
+        title: item.title,
+        cover: item.cover,
+        tags: (item.tags ?? []).join(','),
+        desc: item.description,
+      },
+    });
+  const handleSelect = (item: RankItem) => {
+    if (item.upcoming) goDetailUpcoming(item);
+    else playSeries(item.seriesId);
+  };
 
   return (
     // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）。
@@ -67,7 +92,7 @@ export function NewDramaPage() {
           // key=gender：换频道重挂载，滚动归零（同排行榜切子榜的口径）
           <NewDramaRecommends key={gender} gender={gender} onSelect={handleSelect} />
         ) : (
-          <NewCalendarView onSelect={handleSelect} />
+          <NewCalendarView />
         )}
       </div>
     </div>
