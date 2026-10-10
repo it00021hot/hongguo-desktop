@@ -237,6 +237,10 @@
       "preparing": "正在准备这一集…"
     },
     "comingSoon": "即将上线",
+    "comingSoonBadge": "预告",
+    "seriesList": "系列剧",
+    "nowPlaying": "播放中",
+    "exitBinge": "退出本剧连播，回到自动换剧",
     "episodeNo": "第{index}集",
     "incognito": "隐身模式（鼠标离开隐藏，回到窗口位置即恢复显示）",
     "miniTitle": "红果播放器",

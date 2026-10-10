@@ -237,6 +237,10 @@
       "preparing": "Preparing this episode…"
     },
     "comingSoon": "Coming soon",
+    "comingSoonBadge": "Soon",
+    "seriesList": "Series",
+    "nowPlaying": "Playing",
+    "exitBinge": "Exit this series and resume feed",
     "episodeNo": "Ep. {index}",
     "incognito": "Incognito (hides when mouse leaves, reappears when it returns)",
     "miniTitle": "Hongguo",

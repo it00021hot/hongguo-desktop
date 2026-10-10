@@ -24,10 +24,31 @@ export function usePlayerOverlay(params: {
   commentPanelOpen: boolean;
   danmakuPanelOpen: boolean;
   volumeOpen: boolean;
+  /**
+   * 挂载时悬浮层是否点亮。自动连播切集（handleEnded → 重挂载）传 false：
+   * 静默起步——不亮控制栏/光标，等用户真的动鼠标再亮。paused 初值同步视同
+   * 「在播」，否则 paused=true 的常显规则会让操作栏照样亮出来（正是
+   * 「自动下一集抢占鼠标」的来源）；真实 play/pause 事件随后纠偏。
+   */
+  startVisible?: boolean;
+  /**
+   * 静默期硬开关（自动连播打点 → 新集首播/用户真实输入之间）。为 true 时
+   * chromeShown 直接判 false——幻影 mousemove、装载期 pause、悬停残留这类
+   * 噪声源各自打补丁堵不完，统一在这里一票否决；显式打开的面板（选集/
+   * 评论/弹幕设置/音量）不受影响。
+   */
+  silenced?: boolean;
 }) {
-  const { seriesPanelOpen, commentPanelOpen, danmakuPanelOpen, volumeOpen } = params;
-  const [paused, setPaused] = useState(true);
-  const [chromeVisible, setChromeVisible] = useState(true);
+  const {
+    seriesPanelOpen,
+    commentPanelOpen,
+    danmakuPanelOpen,
+    volumeOpen,
+    startVisible = true,
+    silenced = false,
+  } = params;
+  const [paused, setPaused] = useState(!startVisible);
+  const [chromeVisible, setChromeVisible] = useState(startVisible);
   /** 隐藏倒计时的代际号：每次唤醒递增，倒计时 effect 随之重启 */
   const [chromeTick, setChromeTick] = useState(0);
   /** 指针悬在控制栏本体上：控件不许收（悬在控件上操作时静止超时收起=抢走） */
@@ -49,14 +70,10 @@ export function usePlayerOverlay(params: {
   // 悬浮层整体可见性：任一面板（选集/评论/弹幕设置/音量条）打开或暂停时常显，
   // 其余由上面的倒计时裁决。简介/互动栏/控制栏/顶部杂物全部吃这一个值，
   // 不再各养一套定时器——控制栏弹出时简介同步抬升也是靠它。
-  const chromeShown =
-    paused ||
-    chromeVisible ||
-    controlsHovered ||
-    seriesPanelOpen ||
-    commentPanelOpen ||
-    danmakuPanelOpen ||
-    volumeOpen;
+  const panelOpen = seriesPanelOpen || commentPanelOpen || danmakuPanelOpen || volumeOpen;
+  const chromeShown = silenced
+    ? panelOpen
+    : paused || chromeVisible || controlsHovered || panelOpen;
 
   return { paused, setPaused, chromeShown, wakeChrome, hideChrome, setControlsHovered };
 }

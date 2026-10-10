@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Loader2, MonitorPlay } from 'lucide-react';
 import { toast } from 'sonner';
@@ -37,6 +37,7 @@ import { useBingeRelay } from '../hooks/use-binge-relay';
 import { usePlayerOverlay } from '../hooks/use-player-overlay';
 import { usePlayerInteractions } from '../hooks/use-player-interactions';
 import { useMiniWindow } from '../hooks/use-mini-window';
+import { isAutoAdvanceStart, isPickerClickCooldown, markAutoAdvance } from '../playback-signals';
 import { usePinWindow } from '@/hooks/use-pin-window';
 
 export function PlayerPage() {
@@ -94,6 +95,9 @@ function PlayerEmptyState() {
   );
 }
 
+/** 自动连播静默硬上限：主闸门是「首播之前不唤醒」，这只兜起播失败的死局。 */
+const QUIET_WINDOW_MS = 8_000;
+
 export function PlayerView({
   onWheelStep,
   coverUrl,
@@ -129,6 +133,33 @@ export function PlayerView({
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   /**
+   * 自动连播静默起步：handleEnded 切集时打了点，这次挂载若是它带来的，
+   * 悬浮层以「无人操作」起步——不亮控制栏、不亮光标，起播的 play 事件
+   * 也不唤醒（用户感知就是上一集安安静静接到下一集）。useState 初始化器
+   * 只在挂载时求值一次，之后的重渲染与本次无关。
+   */
+  const [quietStart] = useState(isAutoAdvanceStart());
+  /**
+   * 静默期开关（喂给 usePlayerOverlay 的 silenced，chromeShown 一票否决）：
+   * 从自动连播打点起，到新集首播（onPlay）或用户真实输入（点击/滚轮/按键）
+   * 为止。期间一切噪声都点不亮任何悬浮层。挂载即静默走同一份 state。
+   */
+  const [quietArmed, setQuietArmed] = useState(quietStart);
+  /**
+   * 静默窗截止时刻（硬上限兜底）。光标停在画面上时，切集会把舞台里的
+   * DOM 换掉两回（换加载占位、换新流的 <video>）——每回 Chromium 都会
+   * 向新元素**补发 mouseenter/mousemove**（悬停重算，指针其实没动）。
+   * 新流什么时候出画取决于取流快慢，所以主闸门是「首播之前一律静默」
+   * （见 wakeOnMove/playedOnceRef），这个定时窗只兜自动起播失败的情形：
+   * 超时后移动照常唤醒，用户不会被困在没有控制栏的黑屏里。
+   * 布防放 useLayoutEffect：它在提交内同步跑完，先于浏览器派发幻影事件
+   * 的那个任务（Date.now() 不许进渲染期，purity 规则也这么要求）。
+   */
+  const quietUntilRef = useRef(0);
+  useLayoutEffect(() => {
+    if (quietStart) quietUntilRef.current = Date.now() + QUIET_WINDOW_MS;
+  }, [quietStart]);
+  /**
    * 最近一次切换的方向（1=下一个/向下滚，-1=上一个）。滚轮/↑↓/连播在
    * 触发切换时记下，流地址变化的那次渲染据此决定新内容从下边还是上边
    * 滑入——抖音式「内容跟手」的过渡感全靠这一个方向的符号。
@@ -140,6 +171,14 @@ export function PlayerView({
   const vidIndex = usePlayerStore((s) => s.vidIndex);
   const setTarget = usePlayerStore((s) => s.setTarget);
   const episodeKey = seriesId && vidIndex ? `${seriesId}:${vidIndex}` : '';
+  /**
+   * 本集是否已经真正播起来过。两个用途：
+   * - 首播前的 pause 是新元素装载噪声，不算暂停（见 onPause）；
+   * - 首播之前移动类事件不唤醒悬浮层（幻影 mousemove，见 wakeOnMove）。
+   * 归零点在 handleEnded（同步、事件处理器内）：信息流里 PlayerView 跨集
+   * 复用，若靠 effect 归零，被动 effect 跑完前幻影事件会读到上一集的 true。
+   */
+  const playedOnceRef = useRef(false);
 
   const { data: settings } = useSettings();
   const { deleteEpisode } = useStorageActions();
@@ -227,14 +266,28 @@ export function PlayerView({
   const incognito = useIncognitoMode(videoRef);
 
   // ---- 沉浸流悬浮层显隐状态机（B站方案）抽在 use-player-overlay：
-  //      3s 倒计时 / 暂停常显 / 控件悬停不收在这里统一裁决
+  //      3s 倒计时 / 暂停常显 / 控件悬停不收在这里统一裁决；
+  //      静默期（quietArmed）下 chromeShown 被 silenced 一票否决
   const { paused, setPaused, chromeShown, wakeChrome, hideChrome, setControlsHovered } =
     usePlayerOverlay({
       seriesPanelOpen,
       commentPanelOpen,
       danmakuPanelOpen,
       volumeOpen,
+      startVisible: !quietStart,
+      silenced: quietArmed,
     });
+
+  // 静默期的两类唤醒闸门：silenced 在源头兜底（见上），这里再拦一层让
+  // wakeChrome 连状态都不被噪声污染（否则静默一解除，残留的 chromeVisible
+  // 会立刻把悬浮层顶出来）；点击/滚轮/按键是铁证，解除静默并正常唤醒
+  const wakeOnMove = useCallback(() => {
+    if (playedOnceRef.current || Date.now() >= quietUntilRef.current) wakeChrome();
+  }, [wakeChrome]);
+  const wakeOnInput = useCallback(() => {
+    setQuietArmed(false);
+    wakeChrome();
+  }, [wakeChrome]);
 
   /** 简介展开态：切剧重挂载自然收回。 */
   const [introExpanded, setIntroExpanded] = useState(false);
@@ -262,12 +315,25 @@ export function PlayerView({
     inBinge,
     stepEpisode,
     onWheelStep,
-    wakeChrome,
+    wakeChrome: wakeOnInput,
     setBinge,
     commentPanelOpen,
     danmakuPanelOpen,
     volumeOpen,
   });
+
+  /**
+   * 选集浮层刚关闭的一瞬，跟手/连击的点击会落到舞台上——浮层已卸载，
+   * data-wheel-block 拦不住，就成了无意识的播放/暂停切换（选集选着选着
+   * 视频停了，多半是它）。短窗内的舞台点击一律忽略。
+   */
+  const onStageClickGuarded = useCallback(
+    (e: React.MouseEvent) => {
+      if (isPickerClickCooldown()) return;
+      onStageClick(e);
+    },
+    [onStageClick],
+  );
 
   // 进度持久化（5s 节流落盘 + 云端上报节拍 + 卸载补写）抽在
   // use-playback-progress；lastKnownRef/srcKeyRef 两把竞态防御 ref 的
@@ -321,6 +387,15 @@ export function PlayerView({
     // 面板连同勾选一起消失，用户刚选完的集就没了。
     // 末集播完不是「没有下一集」，是剧终：走剧终接力（下一季 → 推荐）
     if (autoNext && !downloading) {
+      // 自动连播打点：新视图静默起步（不亮操作栏/光标），见 playback-signals。
+      // 信息流里 PlayerView 是复用的（不重挂载），静默窗要在同一实例里续上，
+      // 盖住流交换时补发的幻影 mousemove——两种上下文都得有这扇窗。
+      // playedOnce 同步归零也在这一拍：被动 effect 归零跑得比幻影事件慢，
+      // 会把上一集的「已播过」漏给新一集的静默闸门。
+      markAutoAdvance();
+      playedOnceRef.current = false;
+      quietUntilRef.current = Date.now() + QUIET_WINDOW_MS;
+      setQuietArmed(true);
       const total = currentSeries?.episodes.length ?? 0;
       if (total > 0 && vidIndex >= total) advanceAfterSeriesEnd();
       else stepEpisode(1);
@@ -372,14 +447,14 @@ export function PlayerView({
         <div
           ref={stageRef}
           onWheel={onStageWheel}
-          onClick={onStageClick}
+          onClick={onStageClickGuarded}
           // 「移入显示」显式接 mouseenter：从画面外重新进入时浏览器可能
           // 没派发 mousemove（如跨窗口边界缓入），靠它兜底亮出控制栏
-          onMouseEnter={wakeChrome}
-          onMouseMove={wakeChrome}
+          onMouseEnter={wakeOnMove}
+          onMouseMove={wakeOnMove}
           // 点击也算在场：点控制栏按钮后鼠标未必再动，不续命的话
           // 按钮一点、倒计时一到期控件就消失，观感像被抢走
-          onPointerDown={wakeChrome}
+          onPointerDown={wakeOnInput}
           // 「移出隐藏」立即收起，不等倒计时
           onMouseLeave={hideChrome}
           className={cn(
@@ -424,10 +499,14 @@ export function PlayerView({
                   autoPlay
                   onLoadedMetadata={handleLoadedMetadata}
                   onPlay={() => {
-                    // 恢复播放（含起播）也算「用户在场」：重新亮 3 秒再淡出，
-                    // 不然暂停期间常显的界面会在恢复的一瞬全部消失
+                    // 这里不再唤醒悬浮层：play 事件分不清「用户按的播放」还是
+                    // 「切集后的自动起播」，而后者亮操作栏正是「自动下一集抢占
+                    // 鼠标」的来源。用户路径各有天然唤醒（点击=舞台 pointerdown、
+                    // 空格=快捷键里显式唤醒），这里只管同步播放态。
+                    // 首播同时解除静默：新集画面已经在走了
+                    playedOnceRef.current = true;
+                    setQuietArmed(false);
                     setPaused(false);
-                    wakeChrome();
                   }}
                   onPlaying={() => {
                     // 真正出画/恢复出画：封面占位退场、卡顿态收掉
@@ -435,6 +514,12 @@ export function PlayerView({
                     setStalled({ key: streamKey, on: false });
                   }}
                   onPause={(e) => {
+                    // 首播之前的 pause 是新元素的装载噪声（自动起播落定前
+                    // 引擎会先发一记），它会把「暂停常显」点亮——控制栏和
+                    // 快捷键提示闪一下，正是「自动切集亮控件」的另一半。
+                    // 静默起步时 UI 本来就视同在播，噪声直接忽略；正常进入
+                    // 时初值就是暂停态，忽略它也不改变任何显示。
+                    if (!playedOnceRef.current) return;
                     setPaused(true);
                     persist(e.currentTarget.currentTime, true);
                   }}
@@ -475,6 +560,8 @@ export function PlayerView({
                   introExpanded={introExpanded}
                   setIntroExpanded={setIntroExpanded}
                   navigate={navigate}
+                  inBinge={inBinge}
+                  onExitBinge={() => setBinge(null)}
                 />
                 {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
                   挡死（顶部让位给 tab），平时不打扰。小屏（480 宽）装不下。 */}

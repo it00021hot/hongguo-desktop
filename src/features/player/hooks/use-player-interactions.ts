@@ -125,6 +125,10 @@ export function usePlayerInteractions(params: {
           break;
         case ' ':
           e.preventDefault();
+          // 空格续播/暂停也要亮一下悬浮层：play 事件不再负责唤醒（分不清
+          // 用户动作和自动起播），而空格没有 pointerdown/mousemove 这类
+          // 天然唤醒路径，得显式算「用户在场」
+          wakeChrome();
           if (video.paused) void video.play();
           else video.pause();
           break;
