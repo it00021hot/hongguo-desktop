@@ -208,11 +208,26 @@ async fn comment_add(
 
 /// 点赞 / 取消点赞一集视频。`vid`=分集 id（object_id），`series_id` 进
 /// business_param.video_id（抓包里它填的是剧 id，字段名与语义不符，照抄）。
+/// articleapi 点赞动作码：3 赞 / 4 取消（2026-10-05/06 抓包锁定）。
+fn video_digg_action_type(digg: bool) -> i64 {
+    if digg { 3 } else { 4 }
+}
+
+/// commentapi 评论点赞动作码：8 赞 / 9 取消（抓包锁定）。
+fn comment_digg_action_type(digg: bool) -> i64 {
+    if digg { 8 } else { 9 }
+}
+
+/// 书架操作码：0 收藏 / 1 取消（抓包锁定）。
+fn shelf_operate_type(collect: bool) -> i64 {
+    if collect { 0 } else { 1 }
+}
+
 pub async fn digg_video(vid: &str, series_id: &str, digg: bool, env: &ApiEnv) -> AppResult<()> {
     let payload = serde_json::json!({
         "action_category": 1,
         "action_reason_remark": "like_click",
-        "action_type": if digg { 3 } else { 4 },
+        "action_type": video_digg_action_type(digg),
         "business_param": {
             "book_id": 0,
             "has_aigc_content": false,
@@ -236,7 +251,7 @@ pub async fn digg_video(vid: &str, series_id: &str, digg: bool, env: &ApiEnv) ->
 /// 点赞 / 取消点赞一条评论（评论区 UI 后续接入）。
 pub async fn digg_comment(comment_id: &str, digg: bool, env: &ApiEnv) -> AppResult<()> {
     let payload = serde_json::json!({
-        "action_type": if digg { 8 } else { 9 },
+        "action_type": comment_digg_action_type(digg),
         "business_param": { "shark_param": shark_param() },
         "comment_type": 4,
         "object_id": comment_id,
@@ -273,7 +288,7 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
-            "video_shelf_operate_type": if collect { 0 } else { 1 },
+            "video_shelf_operate_type": shelf_operate_type(collect),
         }],
     });
     let raw = serde_json::to_vec(&payload)
@@ -437,20 +452,19 @@ mod tests {
 
     #[test]
     fn digg_action_types_match_capture() {
-        // articleapi: 3 赞 / 4 取消；commentapi: 8 赞 / 9 取消（抓包锁定）
-        let video_on = if true { 3 } else { 4 };
-        let video_off = if false { 3 } else { 4 };
-        let comment_on = if true { 8 } else { 9 };
-        let comment_off = if false { 8 } else { 9 };
-        assert_eq!((video_on, video_off), (3, 4));
-        assert_eq!((comment_on, comment_off), (8, 9));
+        // articleapi: 3 赞 / 4 取消；commentapi: 8 赞 / 9 取消（抓包锁定）。
+        // 断言打在请求构造实际调用的选择函数上，字面量改了这里就红。
+        assert_eq!(video_digg_action_type(true), 3);
+        assert_eq!(video_digg_action_type(false), 4);
+        assert_eq!(comment_digg_action_type(true), 8);
+        assert_eq!(comment_digg_action_type(false), 9);
     }
 
     #[test]
     fn shelf_operate_types_match_capture() {
         // bookshelf: 0 收藏 / 1 取消（抓包锁定）
-        assert_eq!(if true { 0 } else { 1 }, 0);
-        assert_eq!(if false { 0 } else { 1 }, 1);
+        assert_eq!(shelf_operate_type(true), 0);
+        assert_eq!(shelf_operate_type(false), 1);
     }
 
     #[test]

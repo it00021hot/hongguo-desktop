@@ -118,7 +118,17 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
     .await?;
     let v: Value = serde_json::from_slice(&resp.bytes)
         .map_err(|e| AppError::Auth(format!("upsms/verify 响应不是 JSON: {e}")))?;
-    let code = error_code_of(&v);
+    interpret_upsms_response(&v, &resp.set_cookies, &ctx.mfa_token)
+}
+
+/// 解读 upsms/verify 的响应（纯函数，[`upsms_verify`] 的判据集中在此，
+/// 便于离线测试真实路径）。
+fn interpret_upsms_response(
+    v: &Value,
+    set_cookies: &[String],
+    ctx_mfa_token: &str,
+) -> AppResult<UpsmsState> {
+    let code = error_code_of(v);
     match code {
         0 => {
             let ticket = v
@@ -132,12 +142,12 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
             {
                 // registered 响应会 Set-Cookie 一个新的（长）token，
                 // 紧随其后的 mfa_relogin 必须带它
-                let mfa_token = extract_cookie_pairs(&resp.set_cookies)
+                let mfa_token = extract_cookie_pairs(set_cookies)
                     .split("; ")
                     .find(|kv| kv.starts_with("passport_mfa_token="))
                     .map(|kv| kv["passport_mfa_token=".len()..].to_string())
                     .filter(|t| !t.is_empty())
-                    .unwrap_or_else(|| ctx.mfa_token.clone());
+                    .unwrap_or_else(|| ctx_mfa_token.to_string());
                 Ok(UpsmsState::Registered { ticket, mfa_token })
             } else {
                 // code==0 但 registered 缺失：按等待处理（形态未见过，防御）
@@ -168,6 +178,40 @@ mod tests {
         assert_eq!(real_upsms_channel("10691859839103"), "10691859839103");
         assert_eq!(real_upsms_channel("1069000000001"), "1069000000001");
         assert_eq!(real_upsms_channel(""), "");
+    }
+
+    /// 回归（known-issues T2）：upsms 响应解读打真实判据函数——
+    /// 1045 等待 / registered+新 token 成功 / 其他码报错。
+    #[test]
+    fn interprets_upsms_response_states() {
+        let waiting = serde_json::json!({"error_code": 1045, "message": "waiting"});
+        assert!(matches!(
+            interpret_upsms_response(&waiting, &[], "old").unwrap(),
+            UpsmsState::Waiting
+        ));
+
+        let registered = serde_json::json!({
+            "data": { "registered": true, "ticket": "tk" }
+        });
+        let cookies = vec!["passport_mfa_token=new-tok; Path=/; HttpOnly".to_string()];
+        match interpret_upsms_response(&registered, &cookies, "old").unwrap() {
+            UpsmsState::Registered { ticket, mfa_token } => {
+                assert_eq!(ticket, "tk");
+                assert_eq!(mfa_token, "new-tok", "要吃 Set-Cookie 下发的新 token");
+            }
+            other => panic!("期望 Registered，实际 {other:?}"),
+        }
+
+        // code==0 但 registered 缺失：按等待处理（防御形态）
+        let ambiguous = serde_json::json!({"data": {}});
+        assert!(matches!(
+            interpret_upsms_response(&ambiguous, &[], "old").unwrap(),
+            UpsmsState::Waiting
+        ));
+
+        let rejected = serde_json::json!({"data": {"error_code": 1003}, "message": "手机号错误"});
+        let err = interpret_upsms_response(&rejected, &[], "old").unwrap_err();
+        assert!(err.to_string().contains("1003"));
     }
 
     /// with_mfa_cookie：覆盖已有同名字段、无 Cookie 时新建、空 token 原样。

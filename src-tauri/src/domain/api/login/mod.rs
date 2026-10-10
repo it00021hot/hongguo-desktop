@@ -816,14 +816,4 @@ mod tests {
         assert!(err.to_string().contains("手机号错误"));
     }
 
-    /// upsms 1045 等待 / 0 成功。
-    #[test]
-    fn parses_upsms_states() {
-        let waiting: Value =
-            serde_json::from_str(r#"{"error_code":1045,"message":"waiting"}"#).unwrap();
-        assert_eq!(
-            waiting.get("error_code").and_then(Value::as_i64),
-            Some(1045)
-        );
-    }
 }
