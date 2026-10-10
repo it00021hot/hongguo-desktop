@@ -527,6 +527,49 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
 - 响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
   乐观插入用 `expand.offset_time = offset`）
 
+### 9.3.2 剧评（整剧评论）列表 + 发送（2026-10-10 抓 hgplayer 1.1.6 锁定）
+
+**列表** = 同端点换形态：`POST /novel/commentapi/comment/list/<series_id>/v1/`，
+body 与 9.3 拉取同族但维度换剧：`group_id=<series_id>`、`group_type=1`、
+`comment_source=1`、`comment_type=2`、`server_channel=34`、`count=10`、`sort=1`、
+business_param 照抓包全量。**首屏不带 cursor 键**；翻页回传上一页响应
+`common_list_info.cursor` 的 JSON 串原样：`{"session_id":"…","offset":10}`
+（每页 +10，服务端按 session 维持上下文）。
+
+响应：`common_list_info.{total, has_more, cursor, log_extra}` +
+`data_list[].{comment, data_type}`；每条评分在 `comment.expand.score`
+（**十分制字符串**，"7"/"9"/"10"）与 `comment.expand.score_suffix_text`
+（"观看1小时后点评"——官方按观看时长生成的后缀）；列表级
+`data.extra.book_info.score` = **剧均评分**（"8.6"；空串 = 暂无评分）、
+`data.extra.score_cnt` = 评分人数、`collectors_count`。
+
+**发送** = `POST /novel/commentapi/comment/add/v1/`，形态与评论/弹幕完全
+不同（照抄抓包，一个字段都别改）：
+
+```json
+{
+  "business_param": {
+    "aigc_template_id": "", "aigc_template_text": "",
+    "book_id": "<series_id>", "comment_tag_list": [],
+    "from_famous_comment_id": 0, "has_aigc_content": false,
+    "ignore_urge_rule": false, "is_confirm_request": false,
+    "offset": 0, "read_item_cnt": 0,
+    "score": 10,                       // ★ 十分制评分（5 星 ×2）随发送走
+    "support_para_audio_play": false, "text_feature": {}, "video_is_muted": 0
+  },
+  "comment_type": 0,                   // 评论 4/弹幕 20——剧评是 0
+  "commit_source": 12,                 // 评论 3/弹幕 1500/回复 9——剧评是 12
+  "data_type": 2,                      // 评论 4/弹幕 20——剧评是 2
+  "group_id": "<series_id>", "group_type": 1,
+  "image_data": [], "rich_text": [], "text": "…"
+}
+```
+
+⚠️ 教训：发送侧误带列表侧参数（comment_source/comment_type/server_channel）
+或回复侧 commit_source=9，服务端返回 **103008「无社区功能」** 拒收——
+报错语义与参数错误毫无关系，只能逐字段对照抓包排除（2026-10-10 实测：
+同账号单集评论可发、剧评被拒，最终定位是形态差异）。
+
 ### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定）
 
 回复**不走 comment/add 带回复字段**，是独立端点。body 与评论形态同构，

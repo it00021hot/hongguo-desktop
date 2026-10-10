@@ -110,7 +110,9 @@ pub async fn series_review_send(
         return Err(AppError::InvalidArgs("评论最长 500 字".into()));
     }
     if !(1..=10).contains(&score) {
-        return Err(AppError::InvalidArgs("评分需在 1–10 星（5 星制 ×2）".into()));
+        return Err(AppError::InvalidArgs(
+            "评分需在 1–10 星（5 星制 ×2）".into(),
+        ));
     }
     if state.settings().account.is_none() {
         return Err(AppError::Auth("评论需要先登录".into()));

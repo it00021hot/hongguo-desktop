@@ -476,10 +476,16 @@ mod tests {
     fn review_send_payload_anchors() {
         let src = include_str!("mod.rs");
         for (needle, why) in [
-            (r#""commit_source": 12"#, "剧评发送 commit_source=12（评论 3 / 弹幕 1500 / 回复 9 都不对）"),
+            (
+                r#""commit_source": 12"#,
+                "剧评发送 commit_source=12（评论 3 / 弹幕 1500 / 回复 9 都不对）",
+            ),
             (r#""data_type": 2,"#, "剧评 data_type=2（评论 4 / 弹幕 20）"),
             (r#""comment_type": 0,"#, "剧评 comment_type=0"),
-            (r#""score": score,"#, "评分在 business_param.score（十分制，5 星 ×2）"),
+            (
+                r#""score": score,"#,
+                "评分在 business_param.score（十分制，5 星 ×2）",
+            ),
         ] {
             assert!(src.contains(needle), "{}：缺少锚点 {}", why, needle);
         }
