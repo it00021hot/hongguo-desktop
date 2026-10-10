@@ -55,7 +55,7 @@ pub async fn ensure_compat(
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
-    let temp = crate::service::download_service::worker::temp_path_for(&target);
+    let temp = plaintext_temp_path_for(&target);
     let started = std::time::Instant::now();
 
     // 1) 落到一个可解复用的明文文件
@@ -91,8 +91,8 @@ pub async fn ensure_compat(
         Some(&report),
     );
 
-    // 源明文只是中间产物，无论哪条路成功产物都已在缓存位上
-    if is_temp && result.is_ok() {
+    // 源明文只是中间产物，转码成功或失败都要清理，避免残留敏感媒体数据。
+    if is_temp {
         let _ = std::fs::remove_file(&plain);
     }
     let result = result?;
@@ -111,6 +111,15 @@ pub async fn ensure_compat(
         backend: result.backend.decoder_label().to_string(),
         elapsed_ms: elapsed.as_millis(),
     })
+}
+
+/// 兼容播放的明文输入临时文件，必须与转码流水线的输出临时文件区分。
+fn plaintext_temp_path_for(target: &Path) -> PathBuf {
+    let stem = target
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("compat");
+    target.with_file_name(format!("{stem}.plain.tmp"))
 }
 
 /// 视频轨时长（秒）。读不出来返回 `None`。
@@ -132,6 +141,37 @@ pub enum CompatSource<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plaintext_source_temp_is_distinct_from_ffmpeg_output_temp() {
+        let target = cache::cache_file("s", 22);
+        // 兼容播放的明文输入不能与流水线为最终输出创建的临时文件重名。
+        let source = plaintext_temp_path_for(&target);
+        let ffmpeg_output = crate::service::download_service::worker::temp_path_for(&target);
+        assert_ne!(source, ffmpeg_output, "ffmpeg 会把自己的临时输出误认成输入");
+    }
+
+    #[tokio::test]
+    async fn plaintext_source_temp_is_removed_when_transcode_fails() {
+        let dir =
+            std::env::temp_dir().join(format!("hg-compat-temp-cleanup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = crate::store::paths::ScopedDataDir::new(&dir);
+        let target = cache::cache_file("cleanup", 1);
+        let source_temp = plaintext_temp_path_for(&target);
+
+        let result = ensure_compat(
+            "cleanup",
+            1,
+            CompatSource::PlainBytes(vec![1, 2, 3]),
+            &|_| {},
+        )
+        .await;
+
+        assert!(result.is_err(), "无效媒体数据应当转码失败");
+        assert!(!source_temp.exists(), "失败后不能残留明文临时文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn a_cached_compat_file_short_circuits() {

@@ -241,6 +241,7 @@ export function PlayerView({
   const { mutate: play } = usePlay();
   const { mutate: savePosition } = useSavePosition();
   const compatPlay = useCompatPlayback();
+  const mutateCompat = compatPlay.mutate;
 
   /** 重新取流接续播放（自动重试与手动重试按钮共用）。 */
   const retryOnline = useCallback(() => {
@@ -346,7 +347,7 @@ export function PlayerView({
     compatStarted.current = true;
     setCompatProgress({ key: episodeKey, percent: 0, phase: 'downloading' });
     const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
-    compatPlay.mutate(
+    mutateCompat(
       { seriesId, vidIndex, vid: ep?.vid },
       {
         onSuccess: (r) => {
@@ -370,7 +371,7 @@ export function PlayerView({
         },
       },
     );
-  }, [seriesId, vidIndex, episodeKey, currentSeries, compatPlay]);
+  }, [seriesId, vidIndex, episodeKey, currentSeries, mutateCompat]);
 
   // 解码失败探测：播放在走、画面出不来、且时间确实在推进。
   // 三个条件缺一不可——刚起播那一瞬间 videoWidth 本来就是 0。
