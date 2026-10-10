@@ -139,7 +139,6 @@ function ReviewReplySection({
   replyCount,
   liked,
   myUserId,
-  localReplies,
   open,
   onToggle,
   onDigg,
@@ -151,8 +150,6 @@ function ReviewReplySection({
   replyCount: number;
   liked: Set<string>;
   myUserId: string;
-  /** 自己发的回复（本地先上屏；id 供服务端列表迟到后去重） */
-  localReplies: { id?: string; text: string; replyTo?: string }[];
   open: boolean;
   onToggle: () => void;
   onDigg: (id: string, digg: boolean) => void;
@@ -162,9 +159,6 @@ function ReviewReplySection({
   const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
     useReviewReplies(seriesId, commentId, open);
   const replies = data?.pages.flatMap((p) => p.items) ?? [];
-  // 服务端列表迟到后按本地已追加的 reply_id 去重
-  const localIds = new Set(localReplies.map((r) => r.id).filter(Boolean));
-  const serverReplies = replies.filter((r) => !localIds.has(r.replyId));
   if (replyCount <= 0) return null;
   return (
     <div className="mt-1.5">
@@ -201,7 +195,7 @@ function ReviewReplySection({
               {t('detail.repliesLoadFailed')}
             </button>
           )}
-          {serverReplies.map((r) => (
+          {replies.map((r) => (
             <ReviewReplyRow
               key={r.replyId}
               reply={r}
@@ -211,22 +205,6 @@ function ReviewReplySection({
               onReplyTo={onReplyTo}
               onDelete={onDeleteReply}
             />
-          ))}
-          {/* 自己发的回复（本地追加，服务端列表有延迟） */}
-          {localReplies.map((r, i) => (
-            <div key={`local-${i}`} className="text-xs leading-snug">
-              <span className="text-muted-foreground mr-1 inline-flex items-center">
-                {t('player.comments.me')}
-              </span>
-              {r.replyTo && (
-                <span className="text-muted-foreground mr-1">
-                  {t('detail.replyToPrefix')}@{r.replyTo.slice(0, 12)}
-                </span>
-              )}
-              <span className="break-words whitespace-pre-wrap">
-                <EmojiText text={r.text} />
-              </span>
-            </div>
           ))}
           {hasNextPage && (
             <button
@@ -290,10 +268,6 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 自己发的回复（剧评 id → 本地先上屏；服务端列表有索引延迟） */
-  const [localReplies, setLocalReplies] = useState<
-    Record<string, { id?: string; text: string; replyTo?: string }[]>
-  >({});
   /** 展开了回复区的剧评（受控：发送成功强制展开，对齐 hgplayer） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (reviewId: string, open: boolean) =>
@@ -309,14 +283,48 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
     sendReply.mutate(
       { replyToCommentId: reviewId, replyToReplyId: replyToReply?.id, text: content },
       {
-        onSuccess: (replyId) => {
-          setLocalReplies((prev) => ({
-            ...prev,
-            [reviewId]: [
-              ...(prev[reviewId] ?? []),
-              { id: replyId, text: content, replyTo: replyToReply?.name },
-            ],
-          }));
+        onSuccess: (reply) => {
+          // 服务端回显的完整回复对象直接进缓存（头像/昵称/uid/时间齐全），
+          // 父剧评 replyCount +1
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.reviewReplies(seriesId, reviewId),
+            (prev) => {
+              if (!prev) {
+                return {
+                  pages: [{ items: [reply], total: 1, hasMore: false, nextCursor: '' }],
+                  pageParams: [''],
+                };
+              }
+              const [first, ...rest] = prev.pages;
+              if (!first) return prev;
+              return {
+                ...prev,
+                pages: [
+                  {
+                    ...first,
+                    items: first.items.some((r) => r.replyId === reply.replyId)
+                      ? first.items
+                      : [...first.items, reply],
+                    total: first.total + 1,
+                  },
+                  ...rest,
+                ],
+              };
+            },
+          );
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.seriesComments(seriesId),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.map((c) =>
+                    c.commentId === reviewId ? { ...c, replyCount: c.replyCount + 1 } : c,
+                  ),
+                })),
+              },
+          );
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
@@ -488,7 +496,6 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
                     replyCount={c.replyCount}
                     liked={liked}
                     myUserId={myUserId}
-                    localReplies={localReplies[c.commentId] ?? []}
                     open={openReplies.has(c.commentId)}
                     onToggle={() => setReplySectionOpen(c.commentId, !openReplies.has(c.commentId))}
                     onDigg={onDigg}

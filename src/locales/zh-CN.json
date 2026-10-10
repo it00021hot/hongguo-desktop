@@ -386,7 +386,8 @@
     "loginMfaWaiting": "等待短信回复验证中…请按提示回复短信",
     "logout": "退出登录",
     "loggedOut": "已退出登录",
-    "loginRiskNote": "账号与设备永久绑定，换设备登录可能触发风控"
+    "loginRiskNote": "账号与设备永久绑定，换设备登录可能触发风控",
+    "hongguoId": "红果号"
   },
   "error": {
     "network": "连不上服务器，请检查网络连接或设置页里的代理",

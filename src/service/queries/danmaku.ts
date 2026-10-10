@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
 import { danmaku as danmakuCmd, interact as interactCmd } from '../commands';
-import type { CommentPage, Danmaku } from '../schema';
+import type { CommentPage, Danmaku, SeriesReviewPage } from '../schema';
 import { keys } from './common';
 
 // ---------------------------------------------------------------- 弹幕与评论（缓存管理域）
@@ -58,7 +58,10 @@ export function useComments(vid: string) {
   });
 }
 
-/** 发评论：成功后乐观插入第一页顶部，评论总数 +1。 */
+/** 发评论：成功后把**服务端回显的完整评论对象**置顶插入第一页
+ * （含 userId/头像/昵称——手拼条目缺这些，删除按钮出不来、样式两样），
+ * 评论总数 +1。
+ */
 export function useSendComment() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -66,9 +69,7 @@ export function useSendComment() {
       const [groupId, bookId] = input.vid.split(':');
       return interactCmd.sendComment(groupId ?? '', bookId ?? '', input.text);
     },
-    onSuccess: (commentId, input) => {
-      // 乐观条目带上登录 uid：删除入口按 userId 判「自己的评论」
-      const userId = queryClient.getQueryData<{ userId: string }>(keys.account)?.userId ?? '';
+    onSuccess: (comment, input) => {
       queryClient.setQueryData<InfiniteData<CommentPage, string>>(
         keys.comments(input.vid),
         (prev) => {
@@ -81,22 +82,9 @@ export function useSendComment() {
               {
                 ...first,
                 total: first.total + 1,
-                items: [
-                  {
-                    commentId,
-                    userId,
-                    userName: '我',
-                    avatar: '',
-                    text: input.text,
-                    createTime: Math.floor(Date.now() / 1000),
-                    diggCount: 0,
-                    replyCount: 0,
-                    userDigg: false,
-                    score: '',
-                    scoreSuffixText: '',
-                  },
-                  ...first.items,
-                ],
+                items: first.items.some((c) => c.commentId === comment.commentId)
+                  ? first.items
+                  : [comment, ...first.items],
               },
               ...rest,
             ],
@@ -108,15 +96,10 @@ export function useSendComment() {
 }
 
 /**
- * 回复一条评论（reply/add）。
- *
- * 回复**列表**自 2026-10-10 起可用（hgplayer 1.1.8 抓包锁定 reply/list
- * 独立端点，见 [`useCommentReplies`]）——发送成功后失效该评论的回复
- * 缓存，下次展开即含新回复；面板侧同时本地追加一份（服务端列表有
- * 延迟，不等重取就能看见自己那条）。
+ * 回复一条评论（reply/add）。返回**服务端回显的完整回复对象**——
+ * 调用方直接插进回复缓存（头像/昵称/uid/时间齐全，删除按钮立即可用）。
  */
 export function useSendReply() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: {
       vid: string;
@@ -132,11 +115,6 @@ export function useSendReply() {
         input.replyToReplyId ?? null,
         input.text,
       );
-    },
-    onSuccess: (_replyId, input) => {
-      void queryClient.invalidateQueries({
-        queryKey: keys.commentReplies(input.vid, input.replyToCommentId),
-      });
     },
   });
 }
@@ -188,15 +166,40 @@ export function useSeriesComments(seriesId: string) {
 /**
  * 发剧评（详情页「剧评」评论框）。
  *
- * 成功后失效剧评缓存：第一页重取，新评论按时间排序自然置顶。
+ * 成功后把**服务端回显的完整剧评对象**（expand.score 回显评分）置顶
+ * 插入第一页（hgplayer 同款 unshift）：服务端列表有索引延迟且排序
+ * 未必把新条目放回第一页，重取会让用户「找不到自己刚发的」
+ * （2026-10-10 实测反馈）。不做立即 invalidate——本地那条一直在列表
+ * 头，缓存按 staleTime 自然过期后下次进入与服务器对齐。
  */
 export function useSendSeriesReview(seriesId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { text: string; score: number }) =>
       danmakuCmd.seriesReviewSend(seriesId, input.text, input.score),
-    onSuccess: () =>
-      void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) }),
+    onSuccess: (comment) => {
+      queryClient.setQueryData<InfiniteData<SeriesReviewPage, string>>(
+        keys.seriesComments(seriesId),
+        (prev) => {
+          if (!prev) return prev;
+          const [first, ...rest] = prev.pages;
+          if (!first) return prev;
+          return {
+            ...prev,
+            pages: [
+              {
+                ...first,
+                total: first.total + 1,
+                items: first.items.some((c) => c.commentId === comment.commentId)
+                  ? first.items
+                  : [comment, ...first.items],
+              },
+              ...rest,
+            ],
+          };
+        },
+      );
+    },
   });
 }
 
@@ -246,11 +249,9 @@ export function useReviewDigg(seriesId: string) {
 
 /**
  * 回复一条剧评（或剧评的回复，reply/add 剧评形态 commit_source=13）。
- *
- * 成功后失效该剧评的回复缓存 + 剧评列表（replyCount 计数）。
+ * 返回**服务端回显的完整回复对象**——调用方直接插进该剧评的回复缓存。
  */
 export function useSendReviewReply(seriesId: string) {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { replyToCommentId: string; replyToReplyId?: string; text: string }) =>
       interactCmd.reviewReplySend(
@@ -259,11 +260,5 @@ export function useSendReviewReply(seriesId: string) {
         input.replyToReplyId ?? null,
         input.text,
       ),
-    onSuccess: (_replyId, input) => {
-      void queryClient.invalidateQueries({
-        queryKey: keys.reviewReplies(seriesId, input.replyToCommentId),
-      });
-      void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) });
-    },
   });
 }

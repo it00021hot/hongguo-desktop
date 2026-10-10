@@ -12,7 +12,7 @@
 //! 自己发的回复仍本地追加一份（服务端列表有延迟）。
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, CornerDownRight, Heart, Loader2, X } from 'lucide-react';
+import { ChevronDown, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
@@ -51,13 +51,12 @@ function relativeTime(unixSec: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-/** 本地追加的一条回复（自己发的；服务端列表有延迟，先上屏）。
- *  id 是 reply/add 返回的 reply_id——服务端列表迟到后按它去重。 */
-interface LocalReply {
-  id?: string;
-  text: string;
-  /** 回复「回复」时对方内容摘要（「回复 @xxx」展示用） */
-  replyTo?: string;
+/** 本地点赞态覆盖（评论/回复 id → 点赞后）。delta 是计数偏移——
+ *  服务端计数有延迟，点了不变数字会被当成「没效果」（2026-10-10
+ *  用户实测反馈），hgplayer 同款本地 ±1。 */
+interface DiggOverride {
+  liked: boolean;
+  delta: number;
 }
 
 /** 一条回复行：头像 / 昵称 / 回复@谁 / 表情文本 / 时间 / ♡（回复点赞与
@@ -65,20 +64,22 @@ interface LocalReply {
  *  自己的回复（userId 对上登录 uid）带删除入口。 */
 function ReplyRow({
   reply,
-  liked,
+  diggState,
   myUserId,
   onDigg,
   onReplyTo,
   onDelete,
 }: {
   reply: ReplyItem;
-  liked: Set<string>;
+  diggState: Record<string, DiggOverride>;
   myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
   onDelete: (reply: ReplyItem) => void;
 }) {
-  const isLiked = liked.has(reply.replyId) || reply.userDigg;
+  const ovr = diggState[reply.replyId];
+  const isLiked = ovr?.liked ?? reply.userDigg;
+  const count = reply.diggCount + (ovr?.delta ?? 0);
   const isMine = !!myUserId && reply.userId === myUserId;
   return (
     <div className="flex gap-2">
@@ -131,7 +132,7 @@ function ReplyRow({
         title={t('player.interact.like')}
       >
         <Heart className={cn('size-3', isLiked && 'fill-red-400 text-red-400')} />
-        {reply.diggCount > 0 && <span className="text-[9px] tabular-nums">{reply.diggCount}</span>}
+        {count > 0 && <span className="text-[9px] tabular-nums">{count}</span>}
       </button>
     </div>
   );
@@ -144,8 +145,7 @@ function ReplySection({
   vid,
   commentId,
   replyCount,
-  localReplies,
-  liked,
+  diggState,
   myUserId,
   open,
   onToggle,
@@ -156,8 +156,7 @@ function ReplySection({
   vid: string;
   commentId: string;
   replyCount: number;
-  localReplies: LocalReply[];
-  liked: Set<string>;
+  diggState: Record<string, DiggOverride>;
   myUserId: string;
   open: boolean;
   onToggle: () => void;
@@ -168,9 +167,6 @@ function ReplySection({
   const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
     useCommentReplies(vid, commentId, open);
   const replies = data?.pages.flatMap((p) => p.items) ?? [];
-  // 服务端列表迟到后会把刚发的回复也带回来，按本地已追加的 reply_id 去重
-  const localIds = new Set(localReplies.map((r) => r.id).filter(Boolean));
-  const serverReplies = replies.filter((r) => !localIds.has(r.replyId));
   return (
     <div className="mt-1">
       {replyCount > 0 && (
@@ -208,33 +204,16 @@ function ReplySection({
               {t('player.comments.repliesLoadFailed')}
             </button>
           )}
-          {serverReplies.map((r) => (
+          {replies.map((r) => (
             <ReplyRow
               key={r.replyId}
               reply={r}
-              liked={liked}
+              diggState={diggState}
               myUserId={myUserId}
               onDigg={onDigg}
               onReplyTo={onReplyTo}
               onDelete={onDeleteReply}
             />
-          ))}
-          {/* 自己发的回复（本地追加，服务端列表有延迟） */}
-          {localReplies.map((r, i) => (
-            <div key={`local-${i}`} className="text-xs leading-snug">
-              <span className="mr-1 inline-flex items-center text-neutral-500">
-                <CornerDownRight className="mr-0.5 inline size-3" />
-                {t('player.comments.me')}
-              </span>
-              {r.replyTo && (
-                <span className="mr-1 text-neutral-500">
-                  {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
-                </span>
-              )}
-              <span className="break-words whitespace-pre-wrap">
-                <EmojiText text={r.text} />
-              </span>
-            </div>
           ))}
           {hasNextPage && (
             <button
@@ -274,16 +253,15 @@ export function CommentPanel({ vid, onClose }: Props) {
   const send = useSendComment();
   const sendReply = useSendReply();
   const [text, setText] = useState('');
-  /** 本地点赞态覆盖（评论/回复 id → 点赞后）：列表 best-effort + 乐观 */
-  const [liked, setLiked] = useState<Set<string>>(new Set());
+  /** 本地点赞态覆盖（评论/回复 id → 点赞后 + 计数偏移）：
+   *  服务端计数有延迟，本地 ±1 才有反馈（hgplayer 同款） */
+  const [diggState, setDiggState] = useState<Record<string, DiggOverride>>({});
   /** 回复输入框展开在哪条评论上（空 = 无） */
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
   /** 回复「回复」时被回复对象（二级回复；name 供占位文案，id 供
    *  reply_to_reply_id） */
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 自己发的回复（commentId → 本地追加），服务端列表有延迟先上屏 */
-  const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
   /** 展开了回复区的评论（受控：回复发送成功后强制展开，对齐 hgplayer） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (commentId: string, open: boolean) =>
@@ -371,14 +349,48 @@ export function CommentPanel({ vid, onClose }: Props) {
         text: content,
       },
       {
-        onSuccess: (replyId) => {
-          setLocalReplies((prev) => ({
-            ...prev,
-            [parent.commentId]: [
-              ...(prev[parent.commentId] ?? []),
-              { id: replyId, text: content, replyTo: replyToReply?.name },
-            ],
-          }));
+        onSuccess: (reply) => {
+          // 服务端回显的完整回复对象直接进缓存（头像/昵称/uid/时间齐全，
+          // hgplayer 同款）；同时父评论 replyCount +1
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.commentReplies(vid, parent.commentId),
+            (prev) => {
+              if (!prev) {
+                return {
+                  pages: [{ items: [reply], total: 1, hasMore: false, nextCursor: '' }],
+                  pageParams: [''],
+                };
+              }
+              const [first, ...rest] = prev.pages;
+              if (!first) return prev;
+              return {
+                ...prev,
+                pages: [
+                  {
+                    ...first,
+                    items: first.items.some((r) => r.replyId === reply.replyId)
+                      ? first.items
+                      : [...first.items, reply],
+                    total: first.total + 1,
+                  },
+                  ...rest,
+                ],
+              };
+            },
+          );
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.comments(vid),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.map((c) =>
+                    c.commentId === parent.commentId ? { ...c, replyCount: c.replyCount + 1 } : c,
+                  ),
+                })),
+              },
+          );
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
@@ -390,23 +402,26 @@ export function CommentPanel({ vid, onClose }: Props) {
     );
   };
 
-  /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。 */
+  /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。
+   *  先行乐观置位（含计数 ±1），失败回滚并 toast——服务端计数延迟大，
+   *  等回包再改数字用户会当成「没效果」。 */
   const onDigg = (id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
       return;
     }
-    interact
-      .commentDigg(id, nextLiked)
-      .then(() => {
-        setLiked((prev) => {
-          const next = new Set(prev);
-          if (nextLiked) next.add(id);
-          else next.delete(id);
-          return next;
-        });
-      })
-      .catch((e) => toast.error(String(e)));
+    const prevAll = diggState;
+    setDiggState((prev) => ({
+      ...prev,
+      [id]: {
+        liked: nextLiked,
+        delta: (prev[id]?.delta ?? 0) + (nextLiked ? 1 : -1),
+      },
+    }));
+    interact.commentDigg(id, nextLiked).catch((e) => {
+      setDiggState(prevAll);
+      toast.error(String(e));
+    });
   };
 
   /** 回复某条回复（二级回复）：定位到所属评论的回复框并带上 @ 对方。 */
@@ -466,7 +481,9 @@ export function CommentPanel({ vid, onClose }: Props) {
             )}
             <ul className="flex flex-col gap-4">
               {(comments ?? []).map((c) => {
-                const isLiked = liked.has(c.commentId) || c.userDigg;
+                const ovr = diggState[c.commentId];
+                const isLiked = ovr?.liked ?? c.userDigg;
+                const diggCount = Math.max(0, c.diggCount + (ovr?.delta ?? 0));
                 const isMine = !!myUserId && c.userId === myUserId;
                 return (
                   <li key={c.commentId} className="flex gap-2.5">
@@ -512,14 +529,13 @@ export function CommentPanel({ vid, onClose }: Props) {
                           </button>
                         )}
                       </div>
-                      {/* 回复列表（2026-10-10 起 reply/list 可用）：展开按需拉取，
-                    自己发的回复本地追加；回复行的「回复」走二级回复 */}
+                      {/* 回复列表（2026-10-10 起 reply/list 可用）：展开按需拉取；
+                    回复行的「回复」走二级回复，新回复直接进缓存 */}
                       <ReplySection
                         vid={vid}
                         commentId={c.commentId}
                         replyCount={c.replyCount}
-                        localReplies={localReplies[c.commentId] ?? []}
-                        liked={liked}
+                        diggState={diggState}
                         myUserId={myUserId}
                         open={openReplies.has(c.commentId)}
                         onToggle={() =>
@@ -563,8 +579,8 @@ export function CommentPanel({ vid, onClose }: Props) {
                       title={t('player.interact.like')}
                     >
                       <Heart className={cn('size-4', isLiked && 'fill-red-400 text-red-400')} />
-                      {c.diggCount > 0 && (
-                        <span className="text-[10px] tabular-nums">{c.diggCount}</span>
+                      {diggCount > 0 && (
+                        <span className="text-[10px] tabular-nums">{diggCount}</span>
                       )}
                     </button>
                   </li>

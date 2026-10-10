@@ -19,6 +19,8 @@ mod model;
 
 pub use model::{BookshelfEntry, InteractionItem, InteractionState};
 
+pub use super::danmaku::{CommentItem, ReplyItem};
+
 use serde_json::Value;
 
 use super::client::ApiEnv;
@@ -57,7 +59,7 @@ fn shark_param_danmaku_add() -> Value {
 
 /// 发弹幕（`data_type=20`）。`group_id`=分集 vid，`book_id`=series_id，
 /// `offset_ms` 是弹幕在视频内的时间轴位置（与拉取侧 `expand.offset_time`
-/// 同单位）。返回服务端分配的 comment_id。
+/// 同单位）。返回服务端分配的 comment_id（弹幕层只要 id 乐观插入）。
 pub async fn send_danmaku(
     group_id: &str,
     book_id: &str,
@@ -65,23 +67,41 @@ pub async fn send_danmaku(
     offset_ms: u64,
     env: &ApiEnv,
 ) -> AppResult<String> {
-    comment_add(group_id, book_id, text, 20, 1500, offset_ms, env).await
+    Ok(comment_add(group_id, book_id, text, 20, 1500, offset_ms, env)
+        .await?
+        .comment_id)
 }
 
-/// 发评论（`data_type=4`，offset 恒 0）。返回 comment_id。
+/// 发评论（`data_type=4`，offset 恒 0）。返回**服务端回显的完整评论对象**
+/// （comment/add 响应的 comment_info 与列表条目同构，2026-10-10 抓包
+/// 实锤：头像/昵称/uid/时间全带）——前端直接插入列表，别手拼条目
+/// （手拼缺 userId 删除按钮出不来，缺头像昵称样式和服务端条目两样）。
 pub async fn send_comment(
     group_id: &str,
     book_id: &str,
     text: &str,
     env: &ApiEnv,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     comment_add(group_id, book_id, text, 4, 3, 0, env).await
+}
+
+/// reply/add 响应 → [`ReplyItem`]（`data.reply` 与 reply/list 条目同构；
+/// 老响应形态兜 `data.comment_info`）。
+fn parse_reply_response(value: &Value) -> AppResult<ReplyItem> {
+    let raw = value
+        .pointer("/data/reply")
+        .or_else(|| value.pointer("/data/comment_info"))
+        .ok_or_else(|| AppError::Media("回复响应缺少 reply 对象".into()))?;
+    super::danmaku::parse_reply_item(raw)
+        .ok_or_else(|| AppError::Media("回复响应对象字段不全".into()))
 }
 
 /// 回复一条评论或回复（独立端点 `reply/add`，2026-10-06 抓包锁定——
 /// **不走 comment/add 带回复字段**）。`reply_to_comment_id` 是被回复的
 /// 评论 id；回复「回复」时 `reply_to_reply_id` 传被回复的那条回复 id
-/// （响应回显有此字段，多级回复同端点）。
+/// （响应回显有此字段，多级回复同端点）。返回**服务端回显的完整回复
+/// 对象**（头像/昵称/uid/时间齐全——hgplayer 就是把这个对象直接插进
+/// 回复列表，2026-10-10 对照抓包对齐）。
 pub async fn send_reply(
     group_id: &str,
     book_id: &str,
@@ -89,7 +109,7 @@ pub async fn send_reply(
     reply_to_reply_id: Option<&str>,
     text: &str,
     env: &ApiEnv,
-) -> AppResult<String> {
+) -> AppResult<ReplyItem> {
     let mut payload = serde_json::json!({
         "aid": 8662,
         "business_param": {
@@ -118,12 +138,7 @@ pub async fn send_reply(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析回复响应失败: {e}")))?;
     check_interact_code(&value)?;
-    Ok(value
-        .pointer("/data/reply/reply_id")
-        .or_else(|| value.pointer("/data/comment_info/comment_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+    parse_reply_response(&value)
 }
 
 /// 互动接口的服务端拒绝用 `Auth` 变体透传原文（`error.auth` 刻意无译文，
@@ -162,7 +177,7 @@ async fn comment_add(
     commit_source: i64,
     offset_ms: u64,
     env: &ApiEnv,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     let business_param = if data_type == 20 {
         serde_json::json!({
             "book_id": book_id,
@@ -199,11 +214,13 @@ async fn comment_add(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析弹幕/评论响应失败: {e}")))?;
     check_interact_code(&value)?;
-    Ok(value
-        .pointer("/data/comment_info/comment_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+    // 响应是完整 comment_info（与列表条目同构）——整体返回，弹幕侧取
+    // comment_id，评论侧直接插入列表（2026-10-10 抓包对齐）
+    let raw = value
+        .pointer("/data/comment_info")
+        .ok_or_else(|| AppError::Media("发送响应缺少 comment_info".into()))?;
+    super::danmaku::parse_comment_item(raw)
+        .ok_or_else(|| AppError::Media("发送响应对象字段不全".into()))
 }
 
 /// 点赞 / 取消点赞一集视频。`vid`=分集 id（object_id），`series_id` 进
@@ -303,7 +320,7 @@ pub async fn send_review_reply(
     reply_to_reply_id: Option<&str>,
     text: &str,
     env: &ApiEnv,
-) -> AppResult<String> {
+) -> AppResult<ReplyItem> {
     let mut payload = serde_json::json!({
         "business_param": {
             "book_id": series_id,
@@ -336,12 +353,7 @@ pub async fn send_review_reply(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析剧评回复响应失败: {e}")))?;
     check_interact_code(&value)?;
-    Ok(value
-        .pointer("/data/reply/reply_id")
-        .or_else(|| value.pointer("/data/comment_info/comment_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+    parse_reply_response(&value)
 }
 
 /// 删除自己的评论 / 剧评 / 回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
@@ -676,9 +688,12 @@ mod probe {
             Err(e) => println!("[review-interact] 评论取消点赞 ERR: {e}"),
         }
         match send_review_reply(book, review, None, "probe 剧评回复", &env).await {
-            Ok(rid) => {
-                println!("[review-interact] 剧评回复 OK reply_id={rid}");
-                match delete_comment(&rid, 4, &env).await {
+            Ok(reply) => {
+                println!(
+                    "[review-interact] 剧评回复 OK id={} user={} text={}",
+                    reply.reply_id, reply.user_name, reply.text
+                );
+                match delete_comment(&reply.reply_id, 4, &env).await {
                     Ok(()) => println!("[review-interact] 回复删除 OK（清理痕迹）"),
                     Err(e) => println!("[review-interact] 回复删除 ERR: {e}"),
                 }
@@ -774,9 +789,9 @@ mod probe {
             Err(e) => println!("[runtime-env] 剧评点赞 ERR: {e}"),
         }
         match send_review_reply(book, review, None, "probe 运行时等价回复", &env).await {
-            Ok(rid) => {
-                println!("[runtime-env] 剧评回复 OK reply_id={rid}");
-                let _ = delete_comment(&rid, 4, &env).await;
+            Ok(reply) => {
+                println!("[runtime-env] 剧评回复 OK id={}", reply.reply_id);
+                let _ = delete_comment(&reply.reply_id, 4, &env).await;
             }
             Err(e) => println!("[runtime-env] 剧评回复 ERR: {e}"),
         }
@@ -806,19 +821,23 @@ mod probe {
         let ccid = send_comment(vid, series, "probe 评论", &env)
             .await
             .expect("发评论（1.1.5 新形态）");
-        println!("[interact] comment comment_id={ccid}");
+        println!("[interact] comment comment_id={}", ccid.comment_id);
 
-        let rid = send_reply(vid, series, &ccid, None, "probe 回复", &env)
+        let reply = send_reply(vid, series, &ccid.comment_id, None, "probe 回复", &env)
             .await
             .expect("回复（reply/add 独立端点）");
-        println!("[interact] reply reply_id={rid}");
+        println!("[interact] reply reply_id={}", reply.reply_id);
 
         // 删除闭环（comment/del，2026-10-10 抓包形态）：把自己刚发的
         // 评论和回复删掉——既验证端点又清理 probe 痕迹
-        delete_comment(&ccid, 4, &env).await.expect("删除评论");
-        println!("[interact] comment {ccid} deleted");
-        delete_comment(&rid, 4, &env).await.expect("删除回复");
-        println!("[interact] reply {rid} deleted");
+        delete_comment(&ccid.comment_id, 4, &env)
+            .await
+            .expect("删除评论");
+        println!("[interact] comment {} deleted", ccid.comment_id);
+        delete_comment(&reply.reply_id, 4, &env)
+            .await
+            .expect("删除回复");
+        println!("[interact] reply {} deleted", reply.reply_id);
 
         collect_series(series, true, &env).await.expect("收藏");
         collect_series(series, false, &env).await.expect("取消收藏");

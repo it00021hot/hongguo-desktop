@@ -326,7 +326,7 @@ pub async fn send_series_review(
     text: &str,
     score: i64,
     env: &ApiEnv,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     let payload = serde_json::json!({
         "business_param": {
             "aigc_template_id": "",
@@ -366,11 +366,12 @@ pub async fn send_series_review(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析剧评响应失败: {e}")))?;
     check_comment_code(&value)?;
-    Ok(value
-        .pointer("/data/comment_info/comment_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+    // 响应是完整 comment_info（expand.score 回显评分"10"、头像昵称 uid
+    // 齐全）——整体返回，前端直接置顶插入（2026-10-10 抓包对齐）
+    let raw = value
+        .pointer("/data/comment_info")
+        .ok_or_else(|| AppError::Media("剧评发送响应缺少 comment_info".into()))?;
+    parse_comment_item(raw).ok_or_else(|| AppError::Media("剧评发送响应对象字段不全".into()))
 }
 
 fn check_comment_code(v: &Value) -> AppResult<()> {
@@ -382,6 +383,76 @@ fn check_comment_code(v: &Value) -> AppResult<()> {
         )));
     }
     Ok(())
+}
+
+/// 单条评论对象（`data_list[].comment` 或发送响应的 `comment_info`，
+/// 两者同构）→ [`CommentItem`]。id/文本缺失返回 None（列表侧跳过、
+/// 发送侧报错由调用方处理）。
+pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
+    let comment_id = comment
+        .get("comment_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let text = comment
+        .pointer("/common/content/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if comment_id.is_empty() || text.is_empty() {
+        return None;
+    }
+    let base = comment.pointer("/common/user_info/base_info");
+    Some(CommentItem {
+        comment_id,
+        // 删除入口要对比登录 uid；user_id 在 user_info 层（base_info 兜底，
+        // 匿名样本两层都可能缺，缺了前端就不显示删除钮）
+        user_id: comment
+            .pointer("/common/user_info/user_id")
+            .or_else(|| comment.pointer("/common/user_info/base_info/user_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        user_name: base
+            .and_then(|b| b.get("user_name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        avatar: base
+            .and_then(|b| b.get("expand_user_avatar"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        text,
+        create_time: comment
+            .pointer("/common/create_timestamp")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        digg_count: comment
+            .pointer("/stat/digg_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        reply_count: comment
+            .pointer("/stat/reply_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        user_digg: comment.pointer("/user_action/user_digg").and_then(Value::as_bool) == Some(true),
+        // 剧评评分（expand.score 十分制字符串 + 后缀文案）；单集评论无 expand.score 恒空。
+        // 发送响应同样回显（2026-10-10 抓包：剧评发送后 comment_info.expand.score="10"）
+        score: comment
+            .pointer("/expand/score")
+            .map(|x| match x {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => String::new(),
+            })
+            .unwrap_or_default(),
+        score_suffix_text: comment
+            .pointer("/expand/score_suffix_text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// 评论响应 → [`CommentPage`]（单集评论与剧级评论同构，共用）。
@@ -412,72 +483,9 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
         let Some(comment) = entry.get("comment") else {
             continue;
         };
-        let comment_id = comment
-            .get("comment_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let text = comment
-            .pointer("/common/content/text")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if comment_id.is_empty() || text.is_empty() {
-            continue;
+        if let Some(item) = parse_comment_item(comment) {
+            page.items.push(item);
         }
-        let base = comment.pointer("/common/user_info/base_info");
-        page.items.push(CommentItem {
-            comment_id,
-            // 删除入口要对比登录 uid；user_id 在 user_info 层（base_info 兜底，
-            // 匿名样本两层都可能缺，缺了前端就不显示删除钮）
-            user_id: comment
-                .pointer("/common/user_info/user_id")
-                .or_else(|| comment.pointer("/common/user_info/base_info/user_id"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            user_name: base
-                .and_then(|b| b.get("user_name"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            avatar: base
-                .and_then(|b| b.get("expand_user_avatar"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            text,
-            create_time: comment
-                .pointer("/common/create_timestamp")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            digg_count: comment
-                .pointer("/stat/digg_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            reply_count: comment
-                .pointer("/stat/reply_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            user_digg: comment
-                .pointer("/user_action/user_digg")
-                .and_then(Value::as_bool)
-                == Some(true),
-            // 剧评评分（expand.score 十分制字符串 + 后缀文案）；单集评论无 expand.score 恒空
-            score: comment
-                .pointer("/expand/score")
-                .map(|x| match x {
-                    Value::String(s) => s.clone(),
-                    Value::Number(n) => n.to_string(),
-                    _ => String::new(),
-                })
-                .unwrap_or_default(),
-            score_suffix_text: comment
-                .pointer("/expand/score_suffix_text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        });
     }
     Ok(page)
 }
@@ -570,6 +578,68 @@ async fn fetch_replies(path: &str, body: Vec<u8>, env: &ApiEnv) -> AppResult<Rep
     parse_reply_page(&v)
 }
 
+/// 单条回复对象（reply/list 条目或 reply/add 发送响应的 `data.reply`，
+/// 两者同构）→ [`ReplyItem`]。id/文本缺失返回 None。
+pub(crate) fn parse_reply_item(reply: &Value) -> Option<ReplyItem> {
+    let reply_id = reply
+        .get("reply_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    // Common 大写是实测形态；小写兜一层防上游将来统一
+    let common = reply.get("Common").or_else(|| reply.get("common"));
+    let text = common
+        .and_then(|c| c.pointer("/content/text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if reply_id.is_empty() || text.is_empty() {
+        return None;
+    }
+    let base = common.and_then(|c| c.pointer("/user_info/base_info"));
+    Some(ReplyItem {
+        reply_id,
+        // 同 CommentItem：删除入口对比 uid 用（回复在两层都有，
+        // user_info 层优先）
+        user_id: common
+            .and_then(|c| c.pointer("/user_info/user_id"))
+            .or_else(|| common.and_then(|c| c.pointer("/user_info/base_info/user_id")))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        user_name: base
+            .and_then(|b| b.get("user_name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        avatar: base
+            .and_then(|b| b.get("expand_user_avatar"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        text,
+        create_time: common
+            .and_then(|c| c.get("create_timestamp"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        digg_count: reply
+            .pointer("/stat/digg_count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        user_digg: reply.pointer("/user_action/user_digg").and_then(Value::as_bool) == Some(true),
+        reply_to_name: reply
+            .pointer("/reply_to_user_info/base_info/user_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        reply_to_reply_id: reply
+            .get("reply_to_reply_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 /// reply/list 响应 → [`ReplyPage`]。
 ///
 /// 结构与 comment/list 不同：条目在 `data.reply_list[]`（不是 data_list），
@@ -599,66 +669,9 @@ fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
         .map(Vec::as_slice)
         .unwrap_or_default()
     {
-        let reply_id = reply
-            .get("reply_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        // Common 大写是实测形态；小写兜一层防上游将来统一
-        let common = reply.get("Common").or_else(|| reply.get("common"));
-        let text = common
-            .and_then(|c| c.pointer("/content/text"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if reply_id.is_empty() || text.is_empty() {
-            continue;
+        if let Some(item) = parse_reply_item(reply) {
+            page.items.push(item);
         }
-        let base = common.and_then(|c| c.pointer("/user_info/base_info"));
-        page.items.push(ReplyItem {
-            reply_id,
-            // 同 CommentItem：删除入口对比 uid 用（回复在两层都有，
-            // user_info 层优先）
-            user_id: common
-                .and_then(|c| c.pointer("/user_info/user_id"))
-                .or_else(|| common.and_then(|c| c.pointer("/user_info/base_info/user_id")))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            user_name: base
-                .and_then(|b| b.get("user_name"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            avatar: base
-                .and_then(|b| b.get("expand_user_avatar"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            text,
-            create_time: common
-                .and_then(|c| c.get("create_timestamp"))
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            digg_count: reply
-                .pointer("/stat/digg_count")
-                .and_then(Value::as_i64)
-                .unwrap_or(0),
-            user_digg: reply
-                .pointer("/user_action/user_digg")
-                .and_then(Value::as_bool)
-                == Some(true),
-            reply_to_name: reply
-                .pointer("/reply_to_user_info/base_info/user_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            reply_to_reply_id: reply
-                .get("reply_to_reply_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        });
     }
     Ok(page)
 }

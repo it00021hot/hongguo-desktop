@@ -7,9 +7,9 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    BookshelfEntry, InteractionState, collect_series, delete_comment, digg_comment, digg_review,
-    digg_video, fetch_bookshelf, fetch_interaction_state, send_comment, send_danmaku, send_reply,
-    send_review_reply,
+    BookshelfEntry, CommentItem, InteractionState, ReplyItem, collect_series, delete_comment,
+    digg_comment, digg_review, digg_video, fetch_bookshelf, fetch_interaction_state, send_comment,
+    send_danmaku, send_reply, send_review_reply,
 };
 use crate::error::AppResult;
 
@@ -33,14 +33,15 @@ pub async fn danmaku_send(
     Ok(cid)
 }
 
-/// 发一条评论（offset 恒 0）。返回 comment_id。
+/// 发一条评论（offset 恒 0）。返回**服务端回显的完整评论对象**
+/// （头像/昵称/uid/时间齐全）——前端直接插列表顶部。
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
     group_id: String,
     book_id: String,
     text: String,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -50,7 +51,8 @@ pub async fn comment_send(
 }
 
 /// 回复一条评论（或一条回复）。`reply_to_reply_id` 回复「回复」时传
-/// 被回复的那条回复 id（多级），纯评论回复传空。返回 reply_id。
+/// 被回复的那条回复 id（多级），纯评论回复传空。返回**服务端回显的
+/// 完整回复对象**——前端直接插回复区（hgplayer 同款）。
 #[tauri::command]
 pub async fn comment_reply(
     state: State<'_, AppState>,
@@ -59,7 +61,7 @@ pub async fn comment_reply(
     reply_to_comment_id: String,
     reply_to_reply_id: Option<String>,
     text: String,
-) -> AppResult<String> {
+) -> AppResult<ReplyItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -133,7 +135,7 @@ pub async fn review_reply_send(
     reply_to_comment_id: String,
     reply_to_reply_id: Option<String>,
     text: String,
-) -> AppResult<String> {
+) -> AppResult<ReplyItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
     if text.is_empty() {

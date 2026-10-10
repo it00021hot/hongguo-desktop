@@ -4,8 +4,9 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::danmaku::{
-    CommentPage, Danmaku, ReplyPage, SeriesReviewPage, fetch_comment_replies, fetch_comments_page,
-    fetch_danmaku_all, fetch_review_replies, fetch_series_comments_page, send_series_review,
+    CommentItem, CommentPage, Danmaku, ReplyPage, SeriesReviewPage, fetch_comment_replies,
+    fetch_comments_page, fetch_danmaku_all, fetch_review_replies, fetch_series_comments_page,
+    send_series_review,
 };
 use crate::error::{AppError, AppResult};
 
@@ -101,7 +102,7 @@ pub async fn series_review_send(
     series_id: String,
     text: String,
     score: i64,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err(AppError::InvalidArgs("评论内容不能为空".into()));

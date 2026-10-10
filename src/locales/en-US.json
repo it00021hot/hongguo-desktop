@@ -386,7 +386,8 @@
     "loginMfaWaiting": "Waiting for SMS reply verification…",
     "logout": "Sign out",
     "loggedOut": "Signed out",
-    "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control"
+    "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control",
+    "hongguoId": "Hongguo ID"
   },
   "error": {
     "network": "Cannot reach the server. Check your connection or the proxy in Settings.",

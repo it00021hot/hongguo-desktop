@@ -1,9 +1,11 @@
 import { call } from '../tauri/invoke';
 import {
+  commentItemSchema,
   commentPageSchema,
   danmakuSchema,
   replyPageSchema,
   seriesReviewPageSchema,
+  type CommentItem,
   type CommentPage,
   type Danmaku,
   type ReplyPage,
@@ -48,9 +50,9 @@ export const danmaku = {
     ),
   /**
    * 发剧评（整剧维度 comment/add；需登录态）。score 为十分制评分
-   * （5 星 ×2，hgplayer 1.1.6 抓包：评分随发送走 business_param.score）。
-   * 返回新评论 id。
+   * （5 星 ×2）。返回**服务端回显的完整剧评对象**（含 expand.score
+   * 回显与头像昵称）——前端直接置顶插入。
    */
   seriesReviewSend: (seriesId: string, text: string, score: number) =>
-    call<string>('series_review_send', { seriesId, text, score }),
+    call<CommentItem>('series_review_send', { seriesId, text, score }, commentItemSchema),
 };
