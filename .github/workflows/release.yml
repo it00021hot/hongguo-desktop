@@ -6,6 +6,8 @@
 #      scripts/build-updater-manifest.py 从 Release 资产一次性组装
 #      latest.json 上传——应用内「检查更新」拉的就是它；
 #   3. checksums job 收尾出 SHA256SUMS。
+# Release 说明与 latest.json 的 notes 都取自 CHANGELOG.md 当前版本段落
+# （Extract release notes step），段落缺失直接失败：更新内容必填。
 # 版本号唯一来源是 tag：构建前把 tag 号写进 tauri.conf.json。
 # 签名密钥环境变量统一剥 \r：GitHub secrets 经 Windows runner 中转可能
 # 带 CRLF，污染 minisign 私钥（qq-farm-rust 踩过的坑）。
@@ -92,6 +94,31 @@ jobs:
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
           "
 
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        shell: bash
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${RAW_TAG#v}"
+          BODY=$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (p) exit
+              if (index($0, "## [" ver "]") == 1) p = 1
+              next
+            }
+            p
+          ' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            echo "::error::CHANGELOG.md 缺少 [${VERSION}] 段落——发版前必须先补更新说明" >&2
+            exit 1
+          fi
+          {
+            echo "body<<CHANGELOG_BODY_EOF"
+            printf '%s\n' "$BODY"
+            echo "CHANGELOG_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Normalize updater signing env
         id: signing
         shell: bash
@@ -122,7 +149,7 @@ jobs:
           args: ${{ matrix.args }}
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: 红果桌面版 ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: 下载对应平台的安装包安装；已安装旧版本的话，应用内「检查更新」可直接升级。
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: false
