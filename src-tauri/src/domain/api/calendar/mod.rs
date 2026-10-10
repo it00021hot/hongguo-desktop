@@ -5,7 +5,6 @@
 mod model;
 
 use serde_json::Value;
-use std::sync::OnceLock;
 
 use super::client::{ApiEnv, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
@@ -18,108 +17,89 @@ pub use model::{CalendarItem, CalendarPage};
 /// 预约列表与上新日历共用。
 pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
-/// reading 系会话标识（格式 `YYYYMMDDHHMMSS` + 20 位大写 hex，进程
-/// 生命周期内一个）。**只供上新日历使用**——预约列表绝不能带自造的
-/// session_id：服务端按它维护浏览会话快照，操作后的重读会命中操作前
-/// 的缓存（2026-10-09 实车归因，见 fetch_reservations 文档；当日抓包
-/// 实证 hgplayer 的列表请求从不带该参数）。
-fn reading_session_id() -> &'static str {
-    static ID: OnceLock<String> = OnceLock::new();
-    ID.get_or_init(|| {
-        use std::fmt::Write as _;
-        let mut tail = String::new();
-        for _ in 0..10 {
-            let _ = write!(tail, "{:02X}", rand::random::<u8>());
-        }
-        format!("{}{}", chrono::Local::now().format("%Y%m%d%H%M%S"), tail)
-    })
-}
-
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
 ///
-/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 抓 hgplayer
-/// 切日期锁定：传它服务端只回该日条目）。此前实测 `date` 等 8 个候选名
-/// 全部被忽略，靠翻页收集兜底——那条路保留为 `target_date` 失效时的回退。
+/// 2026-10-11 抓 hgplayer 1.1.8 实流对齐（captures/flows-calendar-align.jsonl），
+/// 三处此前不知道的差异：
+/// - **首页请求不带 `target_date`，但必须带 `need_personal_recommend=1`**——
+///   缺了它服务端回的是「全部定档剧」混排（含大量已上线），条目集与第三方
+///   完全对不上；带上后回「个性化预约推荐」混排（未上线 + 人预约数）；
+/// - **翻页三键齐传 `offset` + `subscribe_offset`（同值）+ `session_id`（响应
+///   回传）**——只传 offset 服务端无视，永远回同一页（死循环同页实测）；
+/// - **响应是多天混排，按 `default_date`/选中日过滤后才是一天的条目**——
+///   他家首页响应照样 has_more=true，滚到底第二页回来无新增才显示
+///   「没有更多了」。
 ///
-/// 响应条目有两种 schema，由服务端按请求形态分发（带 `install_id` Cookie
-/// 或 `target_date` 时是扁平形态）：嵌套 `subscribe_data.*` 与扁平
-/// `item_id/name/...`，[`parse_calendar_item`] 两种都吃。
+/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 抓 hgplayer
+/// 切日期锁定；他家翻页时也始终在参）。响应条目有两种 schema（嵌套
+/// `subscribe_data.*` / 扁平 `item_id/name...`），[`parse_calendar_item`] 都吃。
 pub async fn fetch_new_calendar(date: Option<&str>, env: &ApiEnv) -> AppResult<CalendarPage> {
     let base: Vec<(String, String)> = [
         ("active_panel", "6"),
         ("gender_type", "2"),
         ("need_calendar_schema", "true"),
+        ("need_personal_recommend", "1"),
         ("tab_style", "2"),
         ("tab_type", "5"),
-        ("session_id", reading_session_id()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
 
-    let first = fetch_calendar_page(&base, env).await?;
-    let Some(target) = date.filter(|d| !d.is_empty() && *d != first.default_date) else {
-        return Ok(first);
+    // 首页（默认日）不带 target_date（hgplayer 首页实测无此键）；切日期才带
+    let target = match date {
+        Some(d) if !d.is_empty() => Some(d.to_string()),
+        _ => None,
     };
-
-    // 主路径：target_date 直查。命中判据是首条目归属目标日——若服务端
-    // 某天忽略该参数，会退回默认日数据，此时走翻页兜底。
     let mut q = base.clone();
-    q.push(("target_date".to_string(), target.to_string()));
-    if let Ok(page) = fetch_calendar_page(&q, env).await
-        && page
-            .items
-            .first()
-            .is_some_and(|i| beijing_date(i.publish_time) == target)
-    {
-        // 目标日整日无上新时条目为空：解析成功即视为命中空日，
-        // 日期条兜底用首页的 schema（target 响应偶发缺 date_list）
-        let dates = if page.dates.is_empty() {
-            first.dates.clone()
-        } else {
-            page.dates
-        };
-        return Ok(CalendarPage {
-            dates,
-            default_date: first.default_date,
-            ..page
-        });
+    if let Some(d) = &target {
+        q.push(("target_date".to_string(), d.clone()));
     }
-
-    // 兜底：把目标日的条目从后续页里收集齐（越过目标日即停）
-    let mut picked: Vec<CalendarItem> = first
-        .items
-        .iter()
-        .filter(|i| beijing_date(i.publish_time) == target)
-        .cloned()
-        .collect();
+    let first = fetch_calendar_page(&q, env).await?;
+    let schema_dates = first.dates.clone();
+    // 展示日：显式选择的日期，或首页 schema 的 default_date（混排按它过滤）
+    let active_day = target.clone().unwrap_or_else(|| first.default_date.clone());
     let default_date = first.default_date.clone();
+
+    // 翻页吃满（offset + subscribe_offset 同值 + session_id 回传；上限 16 页
+    // 防服务端游标异常打穿）；翻页时 target_date 始终在参（hgplayer 同款）
+    let mut all = first.items.clone();
     let mut page = first;
     for _ in 0..16 {
         if !page.has_more || page.next_offset <= 0 {
             break;
         }
-        let passed = page
-            .items
-            .last()
-            .is_some_and(|i| beijing_date(i.publish_time).as_str() > target);
-        if passed {
-            break;
-        }
         let mut q = base.clone();
+        q.push(("target_date".to_string(), active_day.clone()));
         q.push(("offset".to_string(), page.next_offset.to_string()));
+        q.push(("subscribe_offset".to_string(), page.next_offset.to_string()));
+        if !page.session_id.is_empty() {
+            q.push(("session_id".to_string(), page.session_id.clone()));
+        }
         page = fetch_calendar_page(&q, env).await?;
-        picked.extend(
-            page.items
-                .iter()
-                .filter(|i| beijing_date(i.publish_time) == target)
-                .cloned(),
-        );
+        all.extend(page.items.clone());
     }
+
+    // 混排按展示日过滤（他家 UI 同款口径）；服务端已按日返回时过滤是空操作
+    let mut items: Vec<CalendarItem> = all
+        .iter()
+        .filter(|i| beijing_date(i.publish_time) == active_day)
+        .cloned()
+        .collect();
+    // 过滤后为空但原始非空：beijing_date 解析不了 publish_time（未定档条目）
+    // 会全被滤掉——保留原始顺序兜底，避免某天误显示为空
+    if items.is_empty() && !all.is_empty() && target.is_none() {
+        items = all;
+    }
+    let dates = if schema_dates.is_empty() {
+        page.dates.clone()
+    } else {
+        schema_dates
+    };
     Ok(CalendarPage {
-        dates: page.dates,
+        dates,
         default_date,
-        items: picked,
+        items,
         has_more: false,
         next_offset: 0,
         online_total: 0,
@@ -134,7 +114,15 @@ async fn fetch_calendar_page(q: &[(String, String)], env: &ApiEnv) -> AppResult<
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析上新日历失败: {e}")))?;
     check_code(&value)?;
-    parse_calendar(value.get("data"))
+    let page = parse_calendar(value.get("data"))?;
+    log::info!(
+        "[Calendar] q={q:?} -> items={} has_more={} next={} first={:?}",
+        page.items.len(),
+        page.has_more,
+        page.next_offset,
+        page.items.first().map(|i| (&i.title, i.is_online))
+    );
+    Ok(page)
 }
 
 /// 解析 subscribe/list 日历形态的 data 节点。

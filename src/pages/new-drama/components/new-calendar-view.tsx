@@ -94,6 +94,10 @@ export function NewCalendarView() {
               ))}
               {/* 续载哨兵：滚近底部（600px 提前量）继续渲染下一批 */}
               {visibleCount < items.length && <div ref={sentinelRef} className="h-px" />}
+              {/* 当日条目穷尽：hgplayer 同款「没有更多了」尾标 */}
+              {!isLoading && items.length > 0 && visibleCount >= items.length && (
+                <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
+              )}
             </div>
           )}
         </RefreshShade>
