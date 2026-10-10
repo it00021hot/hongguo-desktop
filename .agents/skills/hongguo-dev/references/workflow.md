@@ -63,6 +63,8 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 - 开发在 **dev 分支**；`main` 只进验收过的内容。
 - Conventional commits + 中文描述：`feat(player): …`、`fix(feed): …`、`refactor(service): …`、`docs: …`。
 - 纯移动/结构拆分与行为修改**分开提交**；bug 修复独立 `fix:` 并写明根因。
+- **禁止用 Python 脚本改项目代码，改代码只准 Edit/Write 工具**——没有状态管理，会静默丢写入、混入错字（本仓库多次事故）。Python 照常可以写辅助工具（范例：`captures/addon.py` 抓包、`captures/audit.py` 参数审计，放工具目录正常提交）；一次性分析的临时脚本用完即删。
+- **提交前的门禁命令必须裸跑确认退出码**——`pnpm x | tail && commit` 这类管道会吞掉失败，曾把坏状态带进提交。Windows 下写文件后有可见性延迟：写完等 1 秒再验证。
 - 每 commit 编译绿：前端 `pnpm typecheck && pnpm test && pnpm lint`；后端 `cargo check && cargo test`。阶段收尾跑 `make lint` 全闸门 + `pnpm build`。
 - 播放器（features/player）改动收尾做冒烟：首页→详情→起播→切集/清晰度→弹幕。
 

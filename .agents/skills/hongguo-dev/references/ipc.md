@@ -27,10 +27,10 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> AppResult<StorageUsage> 
 **④ 前端 schema + 命令封装**：
 
 ```ts
-// lib/schema.ts：与 Rust serde 模型对齐（Rust 侧 #[serde(rename_all = "camelCase")]）
+// service/schema/<域>.ts：与 Rust serde 模型对齐（Rust 侧 #[serde(rename_all = "camelCase")]），统一出口 service/schema/index.ts
 export const storageUsageSchema = z.object({ total: z.number(), series: z.array(...) });
 
-// lib/ipc/commands.ts：全部 IPC 调用集中于此，组件不许直接 invoke
+// service/commands/<域>.ts：全部 IPC 调用按域集中于此，组件不许直接 invoke
 export const storage = {
   usage: () => call<StorageUsage>('get_storage_usage', undefined, storageUsageSchema),
 };
@@ -62,7 +62,7 @@ pub mod names {
 }
 ```
 
-**前端**：`lib/ipc/types.ts` 的 `EVENTS` 常量逐条对齐（两端必须同步改），消费用 `useEvent`（自动退订，handler 要 `useCallback`）：
+**前端**：`service/tauri/types.ts` 的 `EVENTS` 常量逐条对齐（两端必须同步改），消费用 `useEvent`（自动退订，handler 要 `useCallback`）：
 
 ```ts
 useEvent<DownloadProgress>(EVENTS.downloadProgress, applyProgress);

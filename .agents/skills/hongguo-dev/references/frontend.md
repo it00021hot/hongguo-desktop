@@ -1,14 +1,14 @@
 # 前端开发规范
 
-## 目录归属判定（先探测结构状态）
+## 目录归属判定
 
-仓库正从旧结构迁往 `docs/refactor-plan.md` 的目标结构。动手前看目录：已是 `src/pages/ + src/service/` 按新规则；还是 `src/routes/ + src/lib/` 就按现状就近，别往旧巨石文件（`lib/queries.ts`）里堆新代码。新规则按顺序自问，命中即止：
+重构已于 2026-10 完成并定型（依据 `docs/refactor-plan.md`）：`pages/ + features/{player,update} + service/ + stores/locales/utils/hooks` 就是当前且唯一的结构。新代码按顺序自问，命中即止：
 
 1. 只服务一个路由页面 → `pages/<域>/` 就近（复杂页面才有 components/hooks 子目录）
 2. 复杂、跨页面复用的能力 → `features/`（player/update 这类体量才配进）
-3. 和 Rust 交互/服务端数据 → `service/`（旧结构 `lib/ipc` + `lib/queries.ts`）
+3. 和 Rust 交互/服务端数据 → `service/`（tauri/ 封装、commands/ 域封装、queries/ 查询、schema/ 契约）
 4. 跨页 hook → `hooks/`；全局客户端状态 → `stores/`；无业务纯函数 → `utils/`
-5. shadcn 件 `components/ui/`（别手改生成风格）；布局壳 `components/layout/`；跨页展示件 `components/common/`
+5. shadcn 件 `components/ui/`（别手改生成风格）；布局壳 `components/layout/`；跨页展示件 `components/common/`（含 emoji/ 表情输入族）
 6. `cn()` 只在 `lib/utils.ts`，别另起一份
 
 反面清单：不建巨石文件；不造只有一行转发的包装层；同一业务规则不许两份实现。
@@ -24,7 +24,7 @@
 - 函数组件 + hooks，无 class。一个文件多个小组件是历史欠账，新文件一组件一文件。
 - 注释风格：解释「为什么」而不是「做什么」——本仓库的注释是决策记录（如 ui store 里「miniScreen/pinned 不持久化：窗口几何的存/恢复在后端」），照这个密度写。
 - 错误展示用 sonner toast；文案一律走 i18n，不硬编码中文字符串。
-- 乐观更新型交互（点赞/收藏）用 react-query 的 `onMutate` 模式（范例在 `queries.ts` 的 interact 域）。
+- 乐观更新型交互（点赞/收藏）用 react-query 的 `onMutate` 模式（范例在 `service/queries/interact.ts`）。
 
 ## TanStack Query（服务端状态唯一去处）
 
@@ -91,7 +91,7 @@ export const useUiStore = create<UiState>()(
 - Tailwind v4 CSS-first：设计令牌（oklch）在 `src/styles/index.css`，**没有 tailwind.config**；暗色靠 `<html class="dark">` 的 `@custom variant`。
 - 组件内原子类 + `cn()`（clsx + tailwind-merge）；shadcn 件用 cva 变体。自定义全局类（`hg-loadbar`、`scrollbar-thin` 等）写在 index.css，不散落。
 - 新颜色用现有令牌（`bg-background`、`text-muted-foreground`…），别写裸 hex——亮暗主题会漏。
-- **按钮/新 UI 必须保持项目风格**（2026-10-10 用户定规）：按钮一律 shadcn `Button` 的 variant（默认 primary）+ 语义令牌类，**禁止硬编码色值覆盖**（`bg-red-500`、裸 hex 之类）。唯一例外：播放器控制栏/互动栏/评论面板内部维持既有的 hgplayer 红色皮肤（`bg-red-500` 是那里的一部分），播放器之外的新组件（详情页/列表页/设置页…）不许模仿。做法：先看 `components/ui/button` 的 variant 与相邻页面同类组件的皮肤，照抄而不是自创。
+- **按钮/新 UI 必须保持项目风格**：按钮一律 shadcn `Button` 的 variant（默认 primary）+ 语义令牌类，**禁止硬编码色值覆盖**（`bg-red-500`、裸 hex 之类）。唯一例外：播放器控制栏/互动栏/评论面板内部维持既有的 hgplayer 红色皮肤（`bg-red-500` 是那里的一部分），播放器之外的新组件（详情页/列表页/设置页…）不许模仿。做法：先看 `components/ui/button` 的 variant 与相邻页面同类组件的皮肤，照抄而不是自创。
 
 ## 前端测试
 
@@ -101,4 +101,4 @@ export const useUiStore = create<UiState>()(
 
 ## 播放器专项（features/player）
 
-最敏感区域：取流/转码兜底/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 hooks（重构后）或 player-page.tsx（重构前）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。
+最敏感区域：取流/转码兜底/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 `features/player/hooks/`（use-playback-source / use-transcode-fallback / use-playback-progress / use-binge-relay / use-player-overlay / use-player-interactions / use-mini-window / use-danmaku-settings）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。

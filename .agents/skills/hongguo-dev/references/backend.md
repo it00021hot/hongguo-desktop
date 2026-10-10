@@ -6,7 +6,7 @@
 lib.rs（只装配：插件/状态/协议/命令注册；模块全私有）
 ├─ commands/*_cmd.rs    # 薄：参数校验 + 转调 service，与 service 同名同构
 ├─ service/*_service/   # 业务编排（一个服务一个目录）
-├─ domain/api/*         # 官方 API 端点客户端（改前必读 docs/hongguo-api-endpoints.md）
+├─ domain/api/<域>/     # 官方 API 端点客户端，每域一目录（mod+model[+parse]；改前必读 docs/hongguo-api-endpoints.md）
 ├─ domain/model/*       # serde 领域模型（与前端 zod schema 对齐）
 ├─ signer/              # 请求签名，JS 1:1 移植，禁改写法
 ├─ store/{db,entity,bridge}.rs  # Turso 内嵌库
