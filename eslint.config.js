@@ -40,7 +40,7 @@ export default tseslint.config(
   },
   {
     // 路由文件导出的 `Route` 由 TanStack Router 生成器消费，不是组件
-    files: ['src/routes/**/*.tsx'],
+    files: ['src/pages/**/*.tsx'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },

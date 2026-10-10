@@ -72,7 +72,6 @@ tab_index=0/screen_width_px=1078/stream_count 等桌面形态参数）
   静态默认列表 + 翻页不回传 session 换源重复——「推荐一直是同一部剧」的
   根因，2026-10-08 已整体迁到本端点
 
-
 ### 1.1 内容 tab 与子榜（2026-10-05 抓 hgplayer 1.1.3 锁定）
 
 顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，
@@ -444,11 +443,74 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
   `book_id/need_count/req_type` 三字段，`server_channel=18`（弹幕 1000）
 - `need_count: true` 让响应 `common_list_info.total` 带评论总数
   （互动栏「💬 N」计数的数据源）
-- **回复列表服务端未部署**：`/novel/commentapi/reply/list/` 对 aid=8662
-  全 comment_source 均 `cannot found handler`（已穷举路径变体 + source
-  0~1500）；hgplayer 1.1.5 二进制里有该路径字符串但实操展开回复**不发
-  任何网络请求**——多级回复列表两端都不可用，只有 reply/add 能发
-  （hgplayer 同样只显示回复数）
+- ~~回复列表服务端未部署~~ **2026-10-10 推翻**：hgplayer 1.1.8 起回复
+  列表可用（独立端点 reply/list，见 9.0.1）；1.1.5 时代「无 handler」
+  是服务端后上线了该能力
+
+### 9.0.1 回复列表 `POST /novel/commentapi/reply/list/{comment_id}/v1/`（2026-10-10 抓 hgplayer 1.1.8 全量锁定）
+
+**路径参数是被展开的评论/剧评 id**（不是 group_id）。两个维度同一端点
+但请求形态两套，逐字段照抄：
+
+**单集评论维度**（group_type=30，`group_id`=vid）：
+
+```json
+{
+  "aid": 8662,
+  "business_param": { "book_id": "<series_id>", "need_count": false },
+  "comment_id": "<comment_id>",
+  "comment_source": 504,
+  "comment_type": 4,
+  "compliance_status": 0,
+  "count": 10,
+  "cursor": "",
+  "group_id": "<vid>",
+  "group_type": 30,
+  "server_channel": 18
+}
+```
+
+**剧评维度**（group_type=1，`group_id`=series_id）：
+
+```json
+{
+  "business_param": { "book_id": "<series_id>", "need_count": true, "real_level": 2 },
+  "comment_id": "<comment_id>",
+  "comment_source": 501,
+  "comment_type": 2,
+  "count": 10,
+  "group_id": "<series_id>",
+  "group_type": 1,
+  "server_channel": 34
+}
+```
+
+- **两维度分叉点**：comment_source（504 评论 / 501 剧评）、comment_type
+  （4/2）、server_channel（18/34）、顶层 aid（评论维度带，剧评维度不带）、
+  compliance_status（只有评论维度带）、business_param（剧评多 `real_level:2`）
+- **cursor 纪律**：评论维度首页是**显式空串**；剧评维度**首屏不带 cursor
+  键**（与 comment/list 剧评形态同款纪律）。翻页都是把响应
+  `comment_list_info.cursor` 的数字串（"10"/"20"…）原样回传；剧评维度
+  `need_count` 首页 true、翻页 false（两维度翻页形态都抓包实证）
+- **响应结构与 comment/list 不同**：`data.{comment, comment_list_info,
+extra, reply_list}`——分页在 `comment_list_info.{cursor,has_more,total}`
+  （不是 common_list_info），条目在 `reply_list[]`（不是 data_list）
+- **回复条目**：`{Common, expand, reply_id, reply_to_comment_id,
+reply_to_reply_id, reply_to_user_info, stat, sub_reply, user_action}`——
+  ⚠️ 回复体在键名**大写的 `Common`** 下（上游序列化怪癖，解析兼容大小写）；
+  `Common.content.text`（含 `[表情]` 代码）、`Common.user_info.base_info`、
+  `Common.create_timestamp`；点赞数在顶层 `stat.digg_count`、我的点赞态在
+  顶层 `user_action.user_digg`（不在 Common 里）
+- `reply_to_user_info.base_info.user_name` 是被回复人昵称（「回复 @xxx」）；
+  `reply_to_reply_id` 非空 = 这是对「回复」的回复（多级）
+- 列表数据源（数据面字段）：`expand.score`/`score_suffix_text` 也在
+  `data.comment.expand`（剧评本体）在场
+
+### 9.0.2 回复的点赞 = 评论点赞同款（2026-10-10 抓包实锤）
+
+对一条**回复**点赞就是 9.2 的评论形态（`object_type=8`、`comment_type=4`、
+business_param 带 shark_param），`object_id` 传 **reply_id**——实测抓包
+（回复 id 7693411634417959705 的赞/取消走的就是这形态）。无独立端点。
 
 ### 9.1 视频点赞 / 取消 `POST /novel/articleapi/do_action/v1/`
 
@@ -486,6 +548,27 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
 
 `action_type`：**8 点赞 / 9 取消**；`object_type=8`（评论对象）。
 注意与 9.1 是**不同路径**（commentapi vs articleapi）。
+**1.1.8 复核（2026-10-10 抓包）**：形态与 1.1.3 逐字段一致，响应
+`code=0, data=null`；对**回复**点赞也是这形态（object_id 传 reply_id，
+见 9.0.2）。
+
+### 9.2.1 剧评点赞 / 取消（2026-10-10 抓 hgplayer 1.1.8 实操锁定）
+
+同端点换剧评形态，**三处与评论点赞不同，照抓包别合并**：
+
+```json
+{
+  "action_type": 8,
+  "business_param": {},
+  "comment_type": 2,
+  "object_id": "<review_id>",
+  "object_type": 2
+}
+```
+
+- `object_type=2`（评论是 8）、`comment_type=2`（评论是 4）、
+  **`business_param` 是空对象**（评论带 shark_param）
+- 取消点赞 = `action_type: 9`，其余不变（抓包实锤）
 
 ### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
 
@@ -528,13 +611,123 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
 - 响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
   乐观插入用 `expand.offset_time = offset`）
 
-### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定）
+### 9.3.2 剧评（整剧评论）列表 + 发送（2026-10-10 抓 hgplayer 1.1.6 锁定）
+
+**列表** = 同端点换形态：`POST /novel/commentapi/comment/list/<series_id>/v1/`，
+body 与 9.3 拉取同族但维度换剧：`group_id=<series_id>`、`group_type=1`、
+`comment_source=1`、`comment_type=2`、`server_channel=34`、`count=10`、`sort=1`、
+business_param 照抓包全量。**首屏不带 cursor 键**；翻页回传上一页响应
+`common_list_info.cursor` 的 JSON 串原样：`{"session_id":"…","offset":10}`
+（每页 +10，服务端按 session 维持上下文）。
+
+响应：`common_list_info.{total, has_more, cursor, log_extra}` +
+`data_list[].{comment, data_type}`；每条评分在 `comment.expand.score`
+（**十分制字符串**，"7"/"9"/"10"）与 `comment.expand.score_suffix_text`
+（"观看1小时后点评"——官方按观看时长生成的后缀）；列表级
+`data.extra.book_info.score` = **剧均评分**（"8.6"；空串 = 暂无评分）、
+`data.extra.score_cnt` = 评分人数、`collectors_count`。
+
+**发送** = `POST /novel/commentapi/comment/add/v1/`，形态与评论/弹幕完全
+不同（照抄抓包，一个字段都别改）：
+
+```json
+{
+  "business_param": {
+    "aigc_template_id": "",
+    "aigc_template_text": "",
+    "book_id": "<series_id>",
+    "comment_tag_list": [],
+    "from_famous_comment_id": 0,
+    "has_aigc_content": false,
+    "ignore_urge_rule": false,
+    "is_confirm_request": false,
+    "offset": 0,
+    "read_item_cnt": 0,
+    "score": 10, // ★ 十分制评分（5 星 ×2）随发送走
+    "support_para_audio_play": false,
+    "text_feature": {},
+    "video_is_muted": 0
+  },
+  "comment_type": 0, // 评论 4/弹幕 20——剧评是 0
+  "commit_source": 12, // 评论 3/弹幕 1500/回复 9——剧评是 12
+  "data_type": 2, // 评论 4/弹幕 20——剧评是 2
+  "group_id": "<series_id>",
+  "group_type": 1,
+  "image_data": [],
+  "rich_text": [],
+  "text": "…"
+}
+```
+
+⚠️ 教训：发送侧误带列表侧参数（comment_source/comment_type/server_channel）
+或回复侧 commit_source=9，服务端返回 **103008「无社区功能」** 拒收——
+报错语义与参数错误毫无关系，只能逐字段对照抓包排除（2026-10-10 实测：
+同账号单集评论可发、剧评被拒，最终定位是形态差异）。
+
+### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓 1.1.5 锁定；2026-10-10 抓 1.1.8 复核 + 补剧评形态 + 响应解剖）
 
 回复**不走 comment/add 带回复字段**，是独立端点。body 与评论形态同构，
 另加顶层 `reply_to_comment_id`（被回复的评论 id）；回复「回复」再加
-顶层 `reply_to_reply_id`（响应回显有此字段，多级回复同端点）。
+顶层 `reply_to_reply_id`（被回复的那条回复 id，多级同端点——2026-10-10
+抓包两维度都实证该键）。
 差异字段：`commit_source: 9`（评论 3 / 弹幕 1500）。
-响应 id 在 `data.reply.reply_id`（注意不是 comment_info）。
+
+**响应是完整回复对象回显（2026-10-10 解剖，重要）**：`data.reply` 与
+reply/list 条目**同构**——`Common.{content.text, create_timestamp,
+user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
+`stat`、`user_action`、`reply_id`、`reply_to_*` 全带（user_tag 还带
+「我」标记）。hgplayer 把这个对象**直接插进回复列表**当 UI 数据源
+——只取 reply_id 手拼条目会缺头像/昵称/userId（删除按钮判定失效），
+效果与第三方两样（本项目 2026-10-10 返工实录）。comment/add 同理：
+响应 `data.comment_info` 是完整评论对象（含 `expand.score` 剧评评分
+回显），前端直插列表。
+
+**剧评回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）**——同端点换剧评
+形态，与单集评论回复的差异照抄：
+
+```json
+{
+  "business_param": {
+    "book_id": "<series_id>",
+    "from_famous_comment_id": 0,
+    "has_aigc_content": false,
+    "ignore_urge_rule": false,
+    "is_confirm_request": false,
+    "log_extra": {},
+    "offset": 0,
+    "read_item_cnt": 0,
+    "score": 0,
+    "support_para_audio_play": false,
+    "text_feature": {},
+    "video_is_muted": 0
+  },
+  "commit_source": 13,
+  "data_type": 2,
+  "group_id": "<series_id>",
+  "group_type": 1,
+  "reply_to_comment_id": "<review_id>",
+  "text": "…"
+}
+```
+
+- `commit_source=13`（评论回复 9 / 剧评本体发送 12 / 剧评回复 13——
+  四个值各管一摊，别混）；`data_type=2`、`group_type=1`
+- **顶层不带 aid**（评论维度回复带 `aid:8662`，剧评维度不带）
+- business_param 是剧评发送同款全量字段组，`score` 恒 0（评分只随
+  剧评本体走）；回复「回复」加顶层 `reply_to_reply_id`（抓包实锤）
+- 表情以 `[名字]` 文本码直接进 `text`（`[爱慕]` 实测入库原样），
+  服务端无表情特殊字段
+
+### 9.3.3 删除自己的评论 / 剧评 / 回复 `POST /novel/commentapi/comment/del/v1/`（2026-10-10 抓 hgplayer 1.1.8 实操锁定）
+
+```json
+{ "comment_id": "<id>", "data_type": 9, "service_id": 2 }
+```
+
+- `data_type` **恒 9**（删除语义，与发送侧 data_type 无关）
+- `service_id`：**2 = 剧评，4 = 评论/回复**（两例抓包；与列表响应里
+  `common.service_id` 的取值同源）
+- 响应 `code=0` + `BaseResp.StatusCode=0` 即成功，data 为 null
 
 ### 9.4 收藏（追剧/书架）`POST /reading/bookapi/bookshelf/video/update/v`
 
@@ -672,9 +865,16 @@ force（暂停/切集/卸载）。
   已激活的 device_id、body 用空指纹新号——服务端按 body 指纹发新号），
   但**未接入主流程**（当前静态设备档案可用；待其被风控拒发号时再接）
 - 扫码登录：端点未抓到，未实现（短信登录含 MFA 上行短信已全量落地）
-- hgplayer 1.1.6 二进制里另有未接端点：`read_history/list/v`（云端历史
-  列表）、`comment/del/v1`（评论删除）、`book_pack_fields/v1`、
+- ~~hgplayer 1.1.6 二进制里的未接端点~~ 2026-10-10 已补齐：
+  `reply/list`（回复列表，9.0.1）、`comment/del`（删除，9.3.3）、
+  剧评点赞（9.2.1）、剧评回复（9.3.1 剧评形态）——全部抓包锁定并落地；
+  剩余未接：`read_history/list/v`（云端历史列表）、`book_pack_fields/v1`、
   `user/share/short_url/`、`read_progress/list|get`——按需再抓
+- **表情方案（前端，无网络请求）**：hgplayer 前端内置 53 张本地 webp
+  （base64 内联 bundle），`[名字]` 文本码查表替换 `<img>`（正则
+  `/\[[^\[\]\s]{1,8}\]/g`，未匹配原样保留）；发送侧无表情 API 字段，
+  文本码直接进 text。本项目同方案已落地（`src/assets/emoji/` +
+  `utils/danmaku-emoji.ts` + `EmojiText`）
 
 ## 抓包数据文件
 

@@ -6,22 +6,37 @@
 //! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
 //! 评论总数（头部计数用）。
 //!
-//! 回复：发送走 reply/add 独立端点；回复**列表**服务端无拉取接口
-//! （probe 实证 aid 8662 无 handler，hgplayer 也不拉）——自己发的回复
-//! 本地追加展示，别人的回复只显示计数。
+//! 回复：发送走 reply/add 独立端点；回复**列表**自 2026-10-10 抓
+//! hgplayer 1.1.8 起可用（reply/list 独立端点，评论维度 src=504/ch=18，
+//! 此前「服务端无接口」的结论作废）——「展开 N 条回复」原地内联展开
+//! （不隐藏其他评论），自己发的回复仍本地追加一份（服务端列表有延迟）。
+//! 回复行格式对齐 hgplayer（2026-10-10 截图）：`回复 @xxx：` 前缀在
+//! 正文行（@ 浅蓝高亮）、相对时间（N 天前）、头像 32px。
 
-import { useEffect, useRef, useState } from 'react';
-import { CornerDownRight, Heart, Loader2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { t, tf } from '@/i18n';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { parseEmojiSegments } from '@/lib/danmaku-emoji';
-import { interact } from '@/lib/ipc/commands';
-import { useAccount, useComments, useSendComment, useSendReply } from '@/lib/queries';
-import { EmojiPickerButton } from './emoji-picker';
-import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
-import type { CommentItem } from '@/lib/schema';
+import { interact } from '@/service/commands';
+import {
+  useAccount,
+  useCommentDigg,
+  useCommentReplies,
+  useComments,
+  useReplyDigg,
+  useSendComment,
+  useSendReply,
+} from '@/service/queries';
+import { dedupBy, keys } from '@/service/queries/common';
+import { relativeTime } from '@/utils/relative-time';
+import { EmojiText } from '@/components/common/emoji/emoji-text';
+import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
+import type { CommentItem, CommentPage, ReplyItem, ReplyPage } from '@/service/schema';
 
 interface Props {
   seriesId: string;
@@ -29,46 +44,174 @@ interface Props {
   onClose: () => void;
 }
 
-/** 相对时间（评论区样式：xx 分钟前 / 昨天 / 日期）。 */
-function relativeTime(unixSec: number): string {
-  const diff = Date.now() / 1000 - unixSec;
-  if (unixSec <= 0) return '';
-  if (diff < 60) return t('player.comments.justNow');
-  if (diff < 3600) return tf('player.comments.minutesAgo', { n: Math.floor(diff / 60) });
-  if (diff < 86400) return tf('player.comments.hoursAgo', { n: Math.floor(diff / 3600) });
-  if (diff < 172800) return t('player.comments.yesterday');
-  const d = new Date(unixSec * 1000);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-/** 评论/回复文本：`[名字]` 表情代码渲染成图（hgplayer EmojiText 同款），
- *  其余文本原样保留。 */
-function EmojiText({ text }: { text: string }) {
+/** 一条回复行：头像 / 昵称 / 表情文本 / 时间 / ♡（回复点赞与
+ *  评论点赞同形态，object_id 传 reply_id——2026-10-10 抓包实锤；
+ *  显示直读回复缓存，点赞乐观写缓存——服务端读写即时同步，无需旁路态）。
+ *  自己的回复（userId 对上登录 uid）带删除入口。 */
+function ReplyRow({
+  reply,
+  myUserId,
+  onDigg,
+  onReplyTo,
+  onDelete,
+}: {
+  reply: ReplyItem;
+  myUserId: string;
+  onDigg: (id: string, digg: boolean) => void;
+  onReplyTo: (reply: ReplyItem) => void;
+  onDelete: (reply: ReplyItem) => void;
+}) {
+  const isLiked = reply.userDigg;
+  const count = reply.diggCount;
+  const isMine = !!myUserId && reply.userId === myUserId;
   return (
-    <>
-      {parseEmojiSegments(text).map((seg, i) =>
-        seg.kind === 'text' ? (
-          <span key={i}>{seg.value}</span>
-        ) : (
-          <img
-            key={i}
-            src={seg.url}
-            alt={seg.value}
-            title={seg.value}
-            draggable={false}
-            className="mx-px inline-block size-[1.15em] object-contain align-[-0.18em]"
-          />
-        ),
+    <div className="flex gap-2">
+      {reply.avatar ? (
+        <img src={reply.avatar} alt="" loading="lazy" className="size-8 shrink-0 rounded-full" />
+      ) : (
+        <div className="grid size-8 shrink-0 place-items-center rounded-full bg-neutral-700 text-xs">
+          {(reply.userName || '友').slice(0, 1)}
+        </div>
       )}
-    </>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] text-neutral-400">
+          {reply.userName || t('player.comments.anon')}
+        </p>
+        <p className="mt-0.5 text-xs leading-snug break-words whitespace-pre-wrap">
+          {reply.replyToName && (
+            <span className="text-neutral-500">
+              {t('player.comments.replyToPrefix')}{' '}
+              <span className="text-[#7BB4E8]">@{reply.replyToName}</span>：
+            </span>
+          )}
+          <EmojiText text={reply.text} />
+        </p>
+        <div className="mt-0.5 flex items-center gap-3 text-[10px] text-neutral-500">
+          <span>{relativeTime(reply.createTime)}</span>
+          <button
+            type="button"
+            onClick={() => onReplyTo(reply)}
+            className="cursor-pointer hover:text-neutral-300"
+          >
+            {t('player.comments.reply')}
+          </button>
+          {isMine && (
+            <button
+              type="button"
+              onClick={() => onDelete(reply)}
+              className="cursor-pointer hover:text-red-400"
+            >
+              {t('common.delete')}
+            </button>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onDigg(reply.replyId, !isLiked)}
+        className={cn(
+          'flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start text-neutral-400 hover:text-white',
+          isLiked && 'text-red-400',
+        )}
+        title={t('player.interact.like')}
+      >
+        <Heart className={cn('size-3', isLiked && 'fill-red-400 text-red-400')} />
+        {count > 0 && <span className="text-[9px] tabular-nums">{count}</span>}
+      </button>
+    </div>
   );
 }
 
-/** 本地追加的一条回复（自己发的；服务端暂无回复列表接口）。 */
-interface LocalReply {
-  text: string;
-  /** 回复「回复」时对方内容摘要（「回复 @xxx」展示用） */
-  replyTo?: string;
+/** 「展开 N 条回复」区：原地内联展开（其他评论仍在列表里，hgplayer
+ *  同款），展开才拉首页，一页 10 条，hasMore 续拉。开合受控于父组件
+ *  ——回复发送成功后强制展开，让本地追加的那条立刻可见（折叠时发
+ *  回复 = 「没效果」的根源）。 */
+function ReplySection({
+  vid,
+  commentId,
+  replyCount,
+  myUserId,
+  open,
+  onToggle,
+  onDigg,
+  onReplyTo,
+  onDeleteReply,
+}: {
+  vid: string;
+  commentId: string;
+  replyCount: number;
+  myUserId: string;
+  open: boolean;
+  onToggle: () => void;
+  onDigg: (id: string, digg: boolean) => void;
+  onReplyTo: (reply: ReplyItem) => void;
+  onDeleteReply: (reply: ReplyItem) => void;
+}) {
+  const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
+    useCommentReplies(vid, commentId, open);
+  const replies = dedupBy(data?.pages.flatMap((p) => p.items) ?? [], (r) => r.replyId);
+  return (
+    <div className="mt-1">
+      {replyCount > 0 && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex cursor-pointer items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-200"
+        >
+          {open ? (
+            <>
+              {t('player.comments.collapseReplies')}
+              <ChevronDown className="size-3 rotate-180" />
+            </>
+          ) : (
+            <>
+              {tf('player.comments.expandReplies', { n: replyCount })}
+              <ChevronDown className="size-3" />
+            </>
+          )}
+        </button>
+      )}
+      {open && (
+        <div className="mt-1.5 flex flex-col gap-2 border-l-2 border-neutral-800 pl-2.5">
+          {isPending && (
+            <div className="grid place-items-center py-2 text-neutral-500">
+              <Loader2 className="size-3.5 animate-spin" />
+            </div>
+          )}
+          {error && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="cursor-pointer text-left text-[11px] text-neutral-500 hover:text-neutral-300"
+            >
+              {t('player.comments.repliesLoadFailed')}
+            </button>
+          )}
+          {replies.map((r) => (
+            <ReplyRow
+              key={r.replyId}
+              reply={r}
+              myUserId={myUserId}
+              onDigg={onDigg}
+              onReplyTo={onReplyTo}
+              onDelete={onDeleteReply}
+            />
+          ))}
+          {hasNextPage && (
+            <button
+              type="button"
+              disabled={isFetchingNextPage}
+              onClick={() => void fetchNextPage()}
+              className="flex w-fit cursor-pointer items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-200 disabled:opacity-60"
+            >
+              {isFetchingNextPage && <Loader2 className="size-3 animate-spin" aria-hidden />}
+              {t('player.comments.moreReplies')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CommentPanel({ vid, onClose }: Props) {
@@ -86,27 +229,97 @@ export function CommentPanel({ vid, onClose }: Props) {
   const loggedIn = !!account;
   const { data, isPending, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useComments(vid);
-  // 翻页数据拍平；total 取第一页的 need_count 回传（互动栏同源）
-  const comments = data?.pages.flatMap((p) => p.items);
+  // 翻页数据拍平 + 按 commentId 去重（服务端相邻页重叠条目）；total 取
+  // 第一页的 need_count 回传（互动栏同源）
+  const comments = useMemo(
+    () => dedupBy(data?.pages.flatMap((p) => p.items) ?? [], (c) => c.commentId),
+    [data],
+  );
   const total = data?.pages[0]?.total || comments?.length || 0;
   const send = useSendComment();
   const sendReply = useSendReply();
+  /** 点赞（缓存写回型乐观更新，hooks 内失败回滚）：评论与回复分走
+   *  两个 hook——回复的乐观值要写进所属评论的回复缓存，key 不同 */
+  const commentDigg = useCommentDigg(vid);
+  const replyDigg = useReplyDigg(vid);
   const [text, setText] = useState('');
-  /** 本地点赞态覆盖（commentId → 点赞后）：列表 best-effort + 乐观 */
-  const [liked, setLiked] = useState<Set<string>>(new Set());
   /** 回复输入框展开在哪条评论上（空 = 无） */
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
-  /** 回复「回复」时被回复内容摘要（二级回复，仅展示语义） */
-  const [replyToReply, setReplyToReply] = useState<{ id: string; text: string } | null>(null);
+  /** 回复「回复」时被回复对象（二级回复；name 供占位文案，id 供
+   *  reply_to_reply_id） */
+  const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 自己发的回复（commentId → 本地追加），服务端暂无回复列表可拉 */
-  const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
-  /** 发评论 / 回复的富输入框 ref（表情插入走 ref 方法） */
-  const composerRef = useRef<RichEmojiInputHandle | null>(null);
-  const replyInputRef = useRef<RichEmojiInputHandle | null>(null);
-  /** 表情面板开合（底部发评论 / 回复行各一份） */
-  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
-  const [replyEmojiOpen, setReplyEmojiOpen] = useState(false);
+  /** 展开了回复区的评论（受控：回复发送成功后强制展开，对齐 hgplayer） */
+  const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
+  const setReplySectionOpen = (commentId: string, open: boolean) =>
+    setOpenReplies((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(commentId);
+      else next.delete(commentId);
+      return next;
+    });
+  /** 待确认删除的目标（comment/del service_id=4；parentId 在场 = 回复） */
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; parentId?: string } | null>(null);
+  const queryClient = useQueryClient();
+  const myUserId = account?.userId ?? '';
+
+  /** 删除自己的评论 / 回复（本地摘除，免重取整列表）。 */
+  const confirmDelete = () => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    if (!target) return;
+    interact
+      .deleteComment(target.id, 4)
+      .then(() => {
+        if (target.parentId) {
+          // 回复：回复缓存摘除 + total-1，父评论 replyCount-1——与发送
+          // 成功的 +1 对称；此前漏了计数，「展开 N 条」与实际条数对不上
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.commentReplies(vid, target.parentId),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p, i) => ({
+                  ...p,
+                  total: i === 0 ? Math.max(0, p.total - 1) : p.total,
+                  items: p.items.filter((r) => r.replyId !== target.id),
+                })),
+              },
+          );
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.comments(vid),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.map((c) =>
+                    c.commentId === target.parentId
+                      ? { ...c, replyCount: Math.max(0, c.replyCount - 1) }
+                      : c,
+                  ),
+                })),
+              },
+          );
+        } else {
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.comments(vid),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p, i) => ({
+                  ...p,
+                  total: i === 0 ? Math.max(0, p.total - 1) : p.total,
+                  items: p.items.filter((c) => c.commentId !== target.id),
+                })),
+              },
+          );
+          if (replyTarget === target.id) setReplyTarget(null);
+        }
+        toast.success(t('common.deleted'));
+      })
+      .catch((e) => toast.error(String(e)));
+  };
 
   const submit = () => {
     const content = text.trim();
@@ -141,40 +354,89 @@ export function CommentPanel({ vid, onClose }: Props) {
         text: content,
       },
       {
-        onSuccess: () => {
-          setLocalReplies((prev) => ({
-            ...prev,
-            [parent.commentId]: [
-              ...(prev[parent.commentId] ?? []),
-              { text: content, replyTo: replyToReply?.text },
-            ],
-          }));
+        onSuccess: (reply) => {
+          // 服务端回显的完整回复对象直接进缓存（头像/昵称/uid/时间齐全，
+          // hgplayer 同款：新回复以普通条目出现，replyToName 驱动
+          // 「回复 @xxx：」前缀）；同时父评论 replyCount +1
+          queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
+            keys.commentReplies(vid, parent.commentId),
+            (prev) => {
+              if (!prev) {
+                return {
+                  pages: [{ items: [reply], total: 1, hasMore: false, nextCursor: '' }],
+                  pageParams: [''],
+                };
+              }
+              const [first, ...rest] = prev.pages;
+              if (!first) return prev;
+              return {
+                ...prev,
+                pages: [
+                  {
+                    ...first,
+                    items: first.items.some((r) => r.replyId === reply.replyId)
+                      ? first.items
+                      : [...first.items, reply],
+                    total: first.total + 1,
+                  },
+                  ...rest,
+                ],
+              };
+            },
+          );
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.comments(vid),
+            (prev) =>
+              prev && {
+                ...prev,
+                pages: prev.pages.map((p) => ({
+                  ...p,
+                  items: p.items.map((c) =>
+                    c.commentId === parent.commentId ? { ...c, replyCount: c.replyCount + 1 } : c,
+                  ),
+                })),
+              },
+          );
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
+          // hgplayer 同款：发送成功强制展开回复区，让新回复立刻可见
+          setReplySectionOpen(parent.commentId, true);
         },
         onError: (e) => toast.error(String(e)),
       },
     );
   };
 
-  const onDigg = (item: CommentItem) => {
+  /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。
+   *  乐观写进对应 query 缓存（hooks 内失败回滚 + 调用方 toast）——
+   *  显示值直读缓存，面板重开不再回跳旧值（2026-10-10 用户实测）。 */
+  const onCommentDigg = (id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
       return;
     }
-    const nextLiked = !liked.has(item.commentId);
-    interact
-      .commentDigg(item.commentId, nextLiked)
-      .then(() => {
-        setLiked((prev) => {
-          const next = new Set(prev);
-          if (nextLiked) next.add(item.commentId);
-          else next.delete(item.commentId);
-          return next;
-        });
-      })
-      .catch((e) => toast.error(String(e)));
+    commentDigg.mutate(
+      { commentId: id, digg: nextLiked },
+      { onError: (e) => toast.error(String(e)) },
+    );
+  };
+  const onReplyDigg = (parentId: string, id: string, nextLiked: boolean) => {
+    if (!loggedIn) {
+      toast.info(t('player.interact.loginRequired'));
+      return;
+    }
+    replyDigg.mutate(
+      { commentId: parentId, replyId: id, digg: nextLiked },
+      { onError: (e) => toast.error(String(e)) },
+    );
+  };
+
+  /** 回复某条回复（二级回复）：定位到所属评论的回复框并带上 @ 对方。 */
+  const openReplyTo = (commentId: string, reply: ReplyItem) => {
+    setReplyTarget(commentId);
+    setReplyToReply({ id: reply.replyId, name: reply.userName || t('player.comments.anon') });
+    setReplyText('');
   };
 
   return (
@@ -226,125 +488,111 @@ export function CommentPanel({ vid, onClose }: Props) {
               </p>
             )}
             <ul className="flex flex-col gap-4">
-              {(comments ?? []).map((c) => (
-                <li key={c.commentId} className="flex gap-2.5">
-                  {c.avatar ? (
-                    <img
-                      src={c.avatar}
-                      alt=""
-                      loading="lazy"
-                      className="size-8 shrink-0 rounded-full"
-                    />
-                  ) : (
-                    <div className="grid size-8 shrink-0 place-items-center rounded-full bg-neutral-700 text-xs">
-                      {(c.userName || '友').slice(0, 1)}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-neutral-400">
-                      {c.userName || t('player.comments.anon')}
-                    </p>
-                    <p className="mt-0.5 text-sm leading-snug break-words whitespace-pre-wrap">
-                      <EmojiText text={c.text} />
-                    </p>
-                    <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
-                      <span>{relativeTime(c.createTime)}</span>
-                      {/* 回复入口：服务端暂无回复列表接口，这里只做「回复他」+
-                      自己回复的本地展示；别人的回复数量只读 */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
-                          setReplyToReply(null);
-                          setReplyText('');
-                        }}
-                        className="cursor-pointer hover:text-neutral-300"
-                      >
-                        {t('player.comments.reply')}
-                      </button>
-                      {c.replyCount > 0 && (
-                        <span title={t('player.comments.repliesHiddenTip')}>
-                          {tf('player.comments.replies', { n: c.replyCount })}
-                        </span>
-                      )}
-                    </div>
-                    {/* 自己发的回复（本地追加） */}
-                    {(localReplies[c.commentId]?.length ?? 0) > 0 && (
-                      <div className="mt-1.5 flex flex-col gap-1.5 border-l-2 border-neutral-800 pl-2.5">
-                        {localReplies[c.commentId]!.map((r, i) => (
-                          <div key={i} className="text-xs leading-snug">
-                            <span className="mr-1 inline-flex items-center text-neutral-500">
-                              <CornerDownRight className="mr-0.5 inline size-3" />
-                              {t('player.comments.me')}
-                            </span>
-                            {r.replyTo && (
-                              <span className="mr-1 text-neutral-500">
-                                {t('player.comments.replyToPrefix')}@{r.replyTo.slice(0, 12)}
-                              </span>
-                            )}
-                            <span className="break-words whitespace-pre-wrap">
-                              <EmojiText text={r.text} />
-                            </span>
-                          </div>
-                        ))}
+              {(comments ?? []).map((c) => {
+                const isLiked = c.userDigg;
+                const diggCount = c.diggCount;
+                const isMine = !!myUserId && c.userId === myUserId;
+                return (
+                  <li key={c.commentId} className="flex gap-2.5">
+                    {c.avatar ? (
+                      <img
+                        src={c.avatar}
+                        alt=""
+                        loading="lazy"
+                        className="size-8 shrink-0 rounded-full"
+                      />
+                    ) : (
+                      <div className="grid size-8 shrink-0 place-items-center rounded-full bg-neutral-700 text-xs">
+                        {(c.userName || '友').slice(0, 1)}
                       </div>
                     )}
-                    {/* 回复输入框 */}
-                    {replyTarget === c.commentId && (
-                      <div className="mt-1.5 flex items-center gap-1.5">
-                        <RichEmojiInput
-                          ref={replyInputRef}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-neutral-400">
+                        {c.userName || t('player.comments.anon')}
+                      </p>
+                      <p className="mt-0.5 text-sm leading-snug break-words whitespace-pre-wrap">
+                        <EmojiText text={c.text} />
+                      </p>
+                      <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
+                        <span>{relativeTime(c.createTime)}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyTarget(replyTarget === c.commentId ? null : c.commentId);
+                            setReplyToReply(null);
+                            setReplyText('');
+                          }}
+                          className="cursor-pointer hover:text-neutral-300"
+                        >
+                          {t('player.comments.reply')}
+                        </button>
+                        {isMine && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget({ id: c.commentId })}
+                            className="cursor-pointer hover:text-red-400"
+                          >
+                            {t('common.delete')}
+                          </button>
+                        )}
+                      </div>
+                      {/* 回复列表（2026-10-10 起 reply/list 可用）：原地内联
+                    展开，其他评论不隐藏；回复行「回复」走二级回复，新回复
+                    直接进缓存 */}
+                      <ReplySection
+                        vid={vid}
+                        commentId={c.commentId}
+                        replyCount={c.replyCount}
+                        myUserId={myUserId}
+                        open={openReplies.has(c.commentId)}
+                        onToggle={() =>
+                          setReplySectionOpen(c.commentId, !openReplies.has(c.commentId))
+                        }
+                        onDigg={(id, d) => onReplyDigg(c.commentId, id, d)}
+                        onReplyTo={(r) => openReplyTo(c.commentId, r)}
+                        onDeleteReply={(r) =>
+                          setDeleteTarget({ id: r.replyId, parentId: c.commentId })
+                        }
+                      />
+                      {/* 回复输入框 */}
+                      {replyTarget === c.commentId && (
+                        <EmojiSendBox
                           autoFocus
                           value={replyText}
                           onChange={setReplyText}
-                          onEnter={() => submitReply(c)}
+                          onSubmit={() => submitReply(c)}
                           onEscape={() => setReplyTarget(null)}
                           placeholder={
                             replyToReply
-                              ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
+                              ? tf('player.comments.replyPlaceholder', { name: replyToReply.name })
                               : t('player.comments.replyToComment')
                           }
                           maxLength={200}
-                          className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
+                          pending={sendReply.isPending}
+                          pickerAlign="right"
+                          className="mt-1.5 gap-1.5"
+                          inputClassName="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
+                          sendClassName="h-8 px-3 text-xs"
                         />
-                        <EmojiPickerButton
-                          open={replyEmojiOpen}
-                          onToggle={() => setReplyEmojiOpen((o) => !o)}
-                          align="right"
-                          onPick={(name) => replyInputRef.current?.insertEmoji(name)}
-                        />
-                        <Button
-                          size="sm"
-                          className="h-8 shrink-0 bg-red-500 px-3 text-xs text-white hover:bg-red-500/90"
-                          disabled={!replyText.trim() || sendReply.isPending}
-                          onClick={() => submitReply(c)}
-                        >
-                          {t('player.interact.send')}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onDigg(c)}
-                    className={cn(
-                      'flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start pt-1 text-neutral-400 hover:text-white',
-                      (liked.has(c.commentId) || c.userDigg) && 'text-red-400',
-                    )}
-                    title={t('player.interact.like')}
-                  >
-                    <Heart
-                      className={cn(
-                        'size-4',
-                        (liked.has(c.commentId) || c.userDigg) && 'fill-red-400 text-red-400',
                       )}
-                    />
-                    {c.diggCount > 0 && (
-                      <span className="text-[10px] tabular-nums">{c.diggCount}</span>
-                    )}
-                  </button>
-                </li>
-              ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onCommentDigg(c.commentId, !isLiked)}
+                      className={cn(
+                        'flex shrink-0 cursor-pointer flex-col items-center gap-0.5 self-start pt-1 text-neutral-400 hover:text-white',
+                        isLiked && 'text-red-400',
+                      )}
+                      title={t('player.interact.like')}
+                    >
+                      <Heart className={cn('size-4', isLiked && 'fill-red-400 text-red-400')} />
+                      {diggCount > 0 && (
+                        <span className="text-[10px] tabular-nums">{diggCount}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             {/* 加载更多（翻页）：第一页秒开，剩余的按需续拉 */}
             {hasNextPage && (
@@ -370,32 +618,28 @@ export function CommentPanel({ vid, onClose }: Props) {
 
       {/* 底部发评论 */}
       <div className="shrink-0 border-t border-white/10 p-3">
-        <div className="flex items-center gap-2">
-          <RichEmojiInput
-            ref={composerRef}
-            value={text}
-            onChange={setText}
-            onEnter={submit}
-            placeholder={t('player.comments.placeholder')}
-            maxLength={200}
-            className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
-          />
-          <EmojiPickerButton
-            open={composerEmojiOpen}
-            onToggle={() => setComposerEmojiOpen((o) => !o)}
-            align="right"
-            onPick={(name) => composerRef.current?.insertEmoji(name)}
-          />
-          <Button
-            size="sm"
-            className="h-9 shrink-0 bg-red-500 px-4 text-white hover:bg-red-500/90"
-            disabled={!text.trim() || send.isPending}
-            onClick={submit}
-          >
-            {t('player.interact.send')}
-          </Button>
-        </div>
+        <EmojiSendBox
+          value={text}
+          onChange={setText}
+          onSubmit={submit}
+          placeholder={t('player.comments.placeholder')}
+          maxLength={200}
+          pending={send.isPending}
+          pickerAlign="right"
+          inputClassName="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
+          sendClassName="h-9 px-4"
+        />
       </div>
+
+      {/* 删除确认（comment/del service_id=4：评论与回复同款） */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={t('common.deleteConfirmTitle')}
+        description={t('common.deleteConfirmDesc')}
+        confirmLabel={t('common.delete')}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { t, tf } from '@/i18n';
+import { t, tf } from '@/locales';
 import { useUpdate } from './update-context';
 
 /** 设置页的更新卡片（对齐 hgplayer 的 about 卡）：标题 + 版本行 + 右侧

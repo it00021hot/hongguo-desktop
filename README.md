@@ -188,20 +188,23 @@ make assets         # 重新生成图标 / macOS 名称本地化（离线）
 hongguo-desktop/
 ├── src-tauri/src/
 │   ├── signer/          # 字节系请求签名（常量黑盒锁定，勿改）
-│   ├── domain/          # 官方 App 接口客户端、CENC 解密、MP4 盒解析与流式解密计划
+│   ├── domain/          # 官方 App 接口客户端（api/ 按端点域目录化）、CENC 解密、MP4 解析
 │   ├── service/         # 应用服务：下载调度、播放编排、合并、转码、存储清理……
 │   ├── commands/        # Tauri command 薄层（约 80 个，与 service 同名同构）
 │   ├── protocol/        # 自定义 URI scheme（流式播放 / 本地文件 / 封面代理）
 │   ├── media/           # 编解码与转码管线（平台硬编 → ffmpeg → 纯 Rust）
-│   ├── store/           # Turso 内嵌数据库（实体 / 迁移链 / 坏档恢复）
+│   ├── store/           # Turso 内嵌数据库（entity/ 按聚合拆分 / 迁移链 / 坏档恢复）
+│   ├── utils/           # 无业务语义的纯函数（json / time / hex / url）
 │   └── bootstrap/       # 启动装配（存储 → 设备 → 重扫描 → 队列 → 转码探测）
 └── src/
-    ├── routes/          # 14 个页面路由
-    ├── features/        # 按业务域拆分（player / rank / feed / download / …）
-    ├── lib/             # IPC 封装、zod schema、stores
-    ├── components/      # shadcn/ui + 布局
-    ├── hooks/           # 通用 hooks
-    ├── i18n/            # 中英文案资源
+    ├── pages/           # TanStack 文件路由（薄壳）+ 页面实现就近放置
+    ├── features/        # 复杂能力域（player 播放引擎 / update 自动更新）
+    ├── service/         # IPC 封装（tauri/）+ 命令（commands/）+ 查询（queries/）+ zod 契约（schema/）
+    ├── stores/          # zustand 客户端状态
+    ├── components/      # shadcn/ui + 布局 + 跨页展示件
+    ├── hooks/           # 跨页通用 hooks
+    ├── locales/         # 中英文案资源
+    ├── utils/           # 无业务纯函数（format / range / cover / playback-prefs…）
     └── styles/          # 全局样式
 ```
 

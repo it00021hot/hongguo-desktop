@@ -18,6 +18,7 @@ mod protocol;
 mod service;
 mod signer;
 mod store;
+mod utils;
 
 /// 运行应用。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -144,12 +145,17 @@ pub fn run() {
             commands::danmaku_cmd::comment_list,
             commands::danmaku_cmd::series_comment_list,
             commands::danmaku_cmd::series_review_send,
+            commands::danmaku_cmd::comment_replies,
+            commands::danmaku_cmd::review_replies,
             // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,
             commands::interact_cmd::comment_reply,
             commands::interact_cmd::video_digg,
             commands::interact_cmd::comment_digg,
+            commands::interact_cmd::review_digg,
+            commands::interact_cmd::review_reply_send,
+            commands::interact_cmd::comment_delete,
             commands::interact_cmd::series_collect,
             commands::interact_cmd::interaction_state,
             commands::interact_cmd::bookshelf_list,

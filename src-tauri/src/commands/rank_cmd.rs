@@ -3,10 +3,10 @@
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::domain::api::rank::{
-    CalendarPage, RankPage, fetch_new_calendar, fetch_new_drama, fetch_rank_ex, fetch_reservations,
-    reserve_series,
-};
+use crate::domain::api::calendar::{CalendarPage, fetch_new_calendar};
+use crate::domain::api::new_drama::fetch_new_drama;
+use crate::domain::api::rank::{RankPage, fetch_rank_ex};
+use crate::domain::api::reservation::{fetch_reservations, reserve_series};
 use crate::domain::api::search::{SearchPage, SuggestItem, search_series, search_suggest};
 use crate::error::{AppError, AppResult};
 

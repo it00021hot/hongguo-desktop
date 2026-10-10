@@ -96,15 +96,24 @@ async function evaluate(send, expression) {
 
 /**
  * SPA 导航。vite HMR 全量重载会跟 location 赋值赛跑把路由抢回去，
- * 所以落点不对就再试——两次都失败才认输。落点用 pathname+search 整体比，
- * 带 query 参数的深链（detail?seriesId=…）才能判准。
+ * 所以落点不对就再试——两次都失败才认输。落点按 pathname 判准、
+ * search 只要求「包含请求的 query」：validateSearch 会给缺省参数补
+ * 归一化默认值（如 /detail 补 title=&cover=…），整 URL 严格相等会误判。
  */
 async function nav(send, route) {
   await send('Page.enable');
+  const [path, query] = route.split('?');
   for (let i = 0; i < 3; i++) {
     await evaluate(send, `location.href = ${JSON.stringify(APP_ORIGIN + route)}; 'nav'`);
     await new Promise((r) => setTimeout(r, 4000));
-    if ((await evaluate(send, 'location.pathname + location.search')) === route) return route;
+    const landed = await evaluate(send, 'location.pathname + location.search');
+    if (landed === route) return route;
+    if (
+      landed.split('?')[0] === path &&
+      (query === undefined || landed.split('?')[1]?.includes(query))
+    ) {
+      return landed;
+    }
   }
   throw new Error(
     `导航到 ${route} 失败，落地在 ${await evaluate(send, 'location.pathname + location.search')}`,

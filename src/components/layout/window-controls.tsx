@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, Copy, X } from 'lucide-react';
-import { t } from '@/i18n';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /**

@@ -121,7 +121,10 @@ mod tests {
 
     #[test]
     fn resumable_when_over_three_seconds() {
-        assert!(!PlaybackPosition::new(2.0, 100.0).is_resumable(), "≤3 秒从头播");
+        assert!(
+            !PlaybackPosition::new(2.0, 100.0).is_resumable(),
+            "≤3 秒从头播"
+        );
         assert!(PlaybackPosition::new(3.5, 100.0).is_resumable());
         // 不看片尾：95%+、临近结束的记录照样续播
         assert!(PlaybackPosition::new(96.0, 100.0).is_resumable());

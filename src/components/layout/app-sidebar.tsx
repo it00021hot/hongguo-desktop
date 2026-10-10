@@ -19,11 +19,11 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { LoginDialog } from '@/features/settings/components/login-dialog';
-import { useAccount, useAuthRefresh } from '@/lib/queries';
-import { login } from '@/lib/ipc/commands';
-import { useUiStore } from '@/lib/stores/ui';
-import { t } from '@/i18n';
+import { LoginDialog } from '@/pages/settings/components/login-dialog';
+import { useAccount, useAuthRefresh } from '@/service/queries';
+import { login } from '@/service/commands';
+import { useUiStore } from '@/stores/ui';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils';
  * 播放页（/player）不设菜单入口：它只能由各页的「播放/继续播放」跳转进入，
  * 独立菜单 + 页内历史与独立的历史页重复。找剧排第二（用户指定，
  * 2026-10-08），紧跟首页推荐。 */
-export const NAV_ITEMS = [
+const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
   { key: 'browse', to: '/browse', icon: Compass },
   { key: 'rank', to: '/rank', icon: Trophy },

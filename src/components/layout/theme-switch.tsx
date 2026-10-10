@@ -6,9 +6,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useThemeStore, type Theme } from '@/lib/stores/theme';
-import { useLocaleStore } from '@/lib/stores/locale';
-import { t } from '@/i18n';
+import { useThemeStore, type Theme } from '@/stores/theme';
+import { useLocaleStore } from '@/stores/locale';
+import { t } from '@/locales';
 
 const THEMES: { value: Theme; labelKey: string }[] = [
   { value: 'auto', labelKey: 'settings.themeAuto' },

@@ -297,7 +297,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("时钟正常")
             .as_nanos();
-        let base = std::env::temp_dir().join(format!("hg-fresh-install-{}-{nanos}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("hg-fresh-install-{}-{nanos}", std::process::id()));
         let db_path = base.join("data/hongguo.db");
         {
             let store = Store::open(&db_path).expect("父目录缺失应自动创建并打开成功");

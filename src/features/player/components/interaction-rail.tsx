@@ -13,10 +13,11 @@
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { t } from '@/i18n';
+import { t } from '@/locales';
 import { cn } from '@/lib/utils';
-import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/lib/queries';
-import { usePlayerStore } from '@/lib/stores/player';
+import { ChromeSurface } from './chrome-surface';
+import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/service/queries';
+import { usePlayerStore } from '@/stores/player';
 
 // ── 抖音系实心图标（自绘；激活态类优先于 fill/stroke 属性，直接生效） ──
 
@@ -173,19 +174,14 @@ export function InteractionRail({
 
   // 顺序对齐抖音：收藏 → 评论 → 点赞 → 分享
   return (
-    <div
+    <ChromeSurface
+      shown={visible}
       data-wheel-block
-      className={cn(
-        'absolute right-2 bottom-24 z-20 flex flex-col items-center gap-4',
-        'transition-opacity duration-300',
-        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
-      )}
+      className="absolute right-2 bottom-24 z-20 flex flex-col items-center gap-4"
     >
       <RailItem
         icon={
-          <DouyinStarIcon
-            className={cn('size-7', collected && 'fill-amber-400 text-amber-400')}
-          />
+          <DouyinStarIcon className={cn('size-7', collected && 'fill-amber-400 text-amber-400')} />
         }
         label={t('player.interact.collect')}
         text={collectCount > 0 ? fmtCount(collectCount) : undefined}
@@ -199,9 +195,7 @@ export function InteractionRail({
         onClick={() => setCommentPanelOpen(true)}
       />
       <RailItem
-        icon={
-          <DouyinHeartIcon className={cn('size-7', digged && 'fill-red-500 text-red-500')} />
-        }
+        icon={<DouyinHeartIcon className={cn('size-7', digged && 'fill-red-500 text-red-500')} />}
         label={t('player.interact.like')}
         text={diggCount > 0 ? fmtCount(diggCount) : undefined}
         onClick={onDigg}
@@ -212,7 +206,7 @@ export function InteractionRail({
         text={t('player.interact.share')}
         onClick={() => void onShare()}
       />
-    </div>
+    </ChromeSurface>
   );
 }
 

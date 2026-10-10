@@ -12,6 +12,8 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+use crate::utils::hex;
+
 use super::range::ProtocolResponse;
 
 /// 供给封面转码。
@@ -49,16 +51,12 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     Ok((200, headers(bytes.len()), bytes))
 }
 
-/// 缓存文件路径：`cover-cache/<sha256(url)前16字节hex>.jpg`。
+/// 缓存文件路径：`cover-cache/<sha256(url) 全量 32 字节的 hex>.jpg`。
 fn cache_path(remote: &str) -> std::path::PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(remote.as_bytes());
-    let digest = hex(&hasher.finalize());
+    let digest = hex::encode(&hasher.finalize());
     crate::store::paths::cover_cache_dir().join(format!("{digest}.jpg"))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn headers(len: usize) -> Vec<(String, String)> {
@@ -89,7 +87,9 @@ fn convert(remote: &str) -> Result<Vec<u8>, String> {
     // 1) 平台级：WIC（HEIF/HEVC 扩展在则走系统解码器；扩展没有会缓存
     //    「不可用」，本进程内不再尝试，「重新检测」清缓存）
     #[cfg(target_os = "windows")]
-    if let Some(result) = crate::media::platform::wic::heic_to_jpeg(bytes_of(&mut downloaded, remote)?) {
+    if let Some(result) =
+        crate::media::platform::wic::heic_to_jpeg(bytes_of(&mut downloaded, remote)?)
+    {
         match result {
             Ok(bytes) => return Ok(bytes),
             Err(msg) => log::warn!("[Cover] WIC 平台解码失败，落 ffmpeg/软解: {msg}"),

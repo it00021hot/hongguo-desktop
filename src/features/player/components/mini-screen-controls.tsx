@@ -11,11 +11,12 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { formatDuration } from '@/lib/format';
-import { readPlaybackRate, writeMuted, writePlaybackRate } from '@/lib/playback-prefs';
-import { t, tf } from '@/i18n';
+import { formatDuration } from '@/utils/format';
+import { readPlaybackRate, writeMuted, writePlaybackRate } from '@/utils/playback-prefs';
+import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { ScrubBar } from './player-controls';
+import { ScrubBar } from './controls/scrub-bar';
+import { ChromeSurface } from './chrome-surface';
 
 /** 小屏里点一下倍速标签循环的档位（常用档，完整菜单回大屏）。 */
 const MINI_RATES = [1, 1.5, 2, 3];
@@ -129,15 +130,12 @@ export function MiniScreenControls({
   };
 
   return (
-    <div
+    <ChromeSurface
+      shown={visible}
       onClick={(e) => e.stopPropagation()}
       onMouseEnter={onControlsEnter}
       onMouseLeave={onControlsLeave}
-      className={cn(
-        'absolute inset-x-0 bottom-0 z-20 flex flex-col gap-1 bg-gradient-to-t from-black/75 to-transparent px-3 pt-6 pb-1.5 text-white',
-        'transition-opacity duration-200',
-        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
-      )}
+      className="absolute inset-x-0 bottom-0 z-20 flex flex-col gap-1 bg-gradient-to-t from-black/75 to-transparent px-3 pt-6 pb-1.5 text-white"
     >
       {/* 剧名/集数/简介贴着进度条上方（第三方小屏同款三行形态），宽度
           收敛 + 截断（小屏 480 宽，长剧名长简介都不挡画面） */}
@@ -214,7 +212,7 @@ export function MiniScreenControls({
           </MiniButton>
         </div>
       </div>
-    </div>
+    </ChromeSurface>
   );
 }
 

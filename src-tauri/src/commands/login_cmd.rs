@@ -83,8 +83,11 @@ pub async fn login_sms_login(
                 user_id: user.user_id.clone(),
                 login_at: chrono::Utc::now().timestamp(),
                 token: token.clone(),
+                raw_login: user.raw.clone(),
+                raw_profile: String::new(),
             };
             persist_account(&state, Some(account))?;
+            refresh_profile_after_login(state.inner().clone());
             Ok(LoginResult::Success { user })
         }
         LoginOutcome::Mfa(ctx) => {
@@ -147,6 +150,8 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                                 user_id: user.user_id.clone(),
                                 login_at: chrono::Utc::now().timestamp(),
                                 token,
+                                raw_login: user.raw.clone(),
+                                raw_profile: String::new(),
                             };
                             if let Err(e) = persist_account(&state, Some(account)) {
                                 let _ = app.emit(
@@ -155,6 +160,7 @@ fn spawn_mfa_polling(app: tauri::AppHandle, state: AppState) {
                                 );
                                 return;
                             }
+                            refresh_profile_after_login(state.clone());
                             log::info!(
                                 "[Login] MFA 自动登录成功: {} ({})",
                                 user.name,
@@ -278,8 +284,11 @@ pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResu
                         user_id: user.user_id.clone(),
                         login_at: chrono::Utc::now().timestamp(),
                         token,
+                        raw_login: user.raw.clone(),
+                        raw_profile: String::new(),
                     };
                     persist_account(&state, Some(account))?;
+                    refresh_profile_after_login(state.inner().clone());
                     Ok(LoginResult::Success { user })
                 }
                 LoginOutcome::Mfa(ctx) => {
@@ -338,11 +347,26 @@ pub async fn login_user_info(state: State<'_, AppState>) -> AppResult<PassportUs
     let user = login::user_info(&env).await?;
     if let Some(mut acc) = state.settings().account {
         acc.user_name = user.name.clone();
-        acc.user_id = user.user_id.clone();
+        // ⚠️ user_id 绝不能直接用响应里的 user_id 刷新：user_info 端点返回的
+        // 是 encode_user_id 加密形态（#c1967_… 71 字符），数字 uid 只在
+        // sms_login 响应里——覆盖会让「删除自己的评论」的 isMine 判定
+        // （对比评论作者数字 user_id）永远不成立（2026-10-10 实测事故）。
+        // 但存量坏值可以从本响应的 req_id（字段名伪装的数字 uid，
+        // 2026-10-10 实测与 sms_login 的数字 user_id 同值）就地自愈，
+        // 不用退出重登。
+        if (acc.user_id.contains('#') || acc.user_id.is_empty())
+            && let Some(numeric) = login::numeric_uid_from_raw(&user.raw)
+        {
+            log::info!("[Login] user_id 数字形态自愈（req_id）: {numeric}");
+            acc.user_id = numeric;
+        }
         // user_info 偶发不带头像时不清空已有值
         if !user.avatar_url.is_empty() {
             acc.avatar_url = user.avatar_url.clone();
         }
+        // 原文整体落库：红果号（biz_user_id）/vip_info 等 60+ 长尾字段
+        // 按需从 raw_profile 读取，不再为个别字段加解析路径
+        acc.raw_profile = user.raw.clone();
         persist_account(&state, Some(acc))?;
     }
     Ok(user)
@@ -392,6 +416,35 @@ fn validate_mobile(mobile: &str) -> AppResult<()> {
 }
 
 /// 账号设置写入（None = 清空登录态）。
+/// 登录成功后跟进刷新用户资料（best-effort）：sms_login 响应给的是
+/// **默认昵称 + 低清头像**（`用户17xxx` + 120x256），真昵称/高清头像/
+/// raw_profile（红果号等长尾字段）都在 user_info——不跟进的话设置页
+/// 显示的就是默认档案（2026-10-10 用户实测「跟手机对不上」）。
+/// 失败只记日志：登录本身已成功，资料拉不下来不该让登录报错。
+fn refresh_profile_after_login(state: crate::app_state::AppState) {
+    tauri::async_runtime::spawn(async move {
+        match login::user_info(&state.api_env()).await {
+            Ok(user) => {
+                if let Some(mut acc) = state.settings().account {
+                    if !user.name.is_empty() {
+                        acc.user_name = user.name;
+                    }
+                    if !user.avatar_url.is_empty() {
+                        acc.avatar_url = user.avatar_url;
+                    }
+                    acc.raw_profile = user.raw;
+                    if let Err(e) = persist_account(&state, Some(acc)) {
+                        log::warn!("[Login] 登录后资料刷新落库失败: {e}");
+                    } else {
+                        log::info!("[Login] 登录后资料已刷新（user_info）");
+                    }
+                }
+            }
+            Err(e) => log::warn!("[Login] 登录后资料刷新失败（不影响登录态）: {e}"),
+        }
+    });
+}
+
 fn persist_account(state: &AppState, account: Option<AccountState>) -> AppResult<()> {
     let mut settings = state.settings();
     settings.account = account;

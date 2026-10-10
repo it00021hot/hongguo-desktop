@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-desktop"
-version = "0.1.0"
+version = "0.4.0"
 description = "红果短剧桌面客户端（Tauri 桌面版）"
 authors = ["hongguo-desktop contributors"]
 license = "PolyForm-Noncommercial-1.0.0"

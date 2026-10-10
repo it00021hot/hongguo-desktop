@@ -94,7 +94,7 @@ CDP 够用就 CDP（默认）：DOM/网络/截图/求值，可断言可自动化
 ## macOS 附注：Radix 组件的程序化交互（webdriver.mjs 同样适用）
 
 - **Radix Select（combobox）**：`pointerdown` 要带全字段（`button: 0, pointerId: 1,
-  isPrimary: true`）才会开弹层；选项在 portal 里的 `[role=option]`，pointerdown+click 选中。
+isPrimary: true`）才会开弹层；选项在 portal 里的 `[role=option]`，pointerdown+click 选中。
 - **Radix Tabs**：合成 pointerdown/click 都可能不激活（`data-state` 不变），
   可靠路径是 **focus 当前 tab + 派发 `ArrowRight`/`ArrowLeft` keydown**。
 - **React 受限 input**：必须走原生 setter 再派发 `input` 事件，直接赋值会被 React 回吐。

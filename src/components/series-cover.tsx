@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Tv } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { isRenderableCover, useWebCover } from '@/lib/queries';
+import { useWebCover } from '@/service/queries';
+import { isRenderableCover } from '@/utils/cover';
 
 interface SeriesCoverProps {
   /** 接口给的原始封面 URL，红果系条目多为 HEIC（WebView2 直挂必裂） */

@@ -25,6 +25,7 @@ use crate::domain::api::search::search_series;
 use crate::error::AppError;
 use crate::signer::device::{DeviceProfile, align_app_version, video_device};
 use crate::store::Store;
+use crate::utils::time::now_ms;
 
 /// 已被服务端风控清理、必须从库里淘汰的静态档案 install_id（2026-10-04
 /// 实测旧 71332 档案 reading 系整段 0 字节拒）。**今后每次淘汰静态档案，
@@ -68,13 +69,6 @@ pub struct DeviceStatus {
     pub backup_iid: Option<String>,
     pub last_register_attempt_ms: Option<i64>,
     pub last_register_error: Option<String>,
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 fn read_meta(store: &Store) -> BootstrapMeta {

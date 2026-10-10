@@ -1,7 +1,10 @@
 # TanStack Router 由 @tanstack/router-plugin 在 vite 构建时重新生成，
 # 文件头自己就写着「You should NOT make any changes in this file」。
 # 格式化它没有意义：跑一次 `pnpm build` 就被覆盖回去，format:check 会永久红。
-src/routeTree.gen.ts
+src/pages/routeTree.gen.ts
+
+# 锁文件是 pnpm 生成的机器产物
+pnpm-lock.yaml
 
 # 构建产物
 dist/

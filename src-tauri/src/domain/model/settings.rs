@@ -171,6 +171,13 @@ pub struct AccountState {
     /// 形态；请求带它的前 56 位短形式。旧账号无此字段，下次登录补上）
     #[serde(default)]
     pub token: String,
+    /// sms_login 响应原文（JSON 整体落库；长尾字段按需读取。旧账号为空）
+    #[serde(default)]
+    pub raw_login: String,
+    /// user_info 响应原文（JSON 整体落库；含 biz_user_id 红果号、
+    /// req_id 数字 uid、vip_info 等 60+ 字段，账号资料刷新时更新）
+    #[serde(default)]
+    pub raw_profile: String,
 }
 
 /// 应用设置。

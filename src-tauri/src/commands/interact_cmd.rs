@@ -7,8 +7,9 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::interact::{
-    BookshelfEntry, InteractionState, collect_series, digg_comment, digg_video, fetch_bookshelf,
-    fetch_interaction_state, send_comment, send_danmaku, send_reply,
+    BookshelfEntry, CommentItem, InteractionState, ReplyItem, collect_series, delete_comment,
+    digg_comment, digg_review, digg_video, fetch_bookshelf, fetch_interaction_state, send_comment,
+    send_danmaku, send_reply, send_review_reply,
 };
 use crate::error::AppResult;
 
@@ -32,14 +33,15 @@ pub async fn danmaku_send(
     Ok(cid)
 }
 
-/// 发一条评论（offset 恒 0）。返回 comment_id。
+/// 发一条评论（offset 恒 0）。返回**服务端回显的完整评论对象**
+/// （头像/昵称/uid/时间齐全）——前端直接插列表顶部。
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
     group_id: String,
     book_id: String,
     text: String,
-) -> AppResult<String> {
+) -> AppResult<CommentItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -49,7 +51,8 @@ pub async fn comment_send(
 }
 
 /// 回复一条评论（或一条回复）。`reply_to_reply_id` 回复「回复」时传
-/// 被回复的那条回复 id（多级），纯评论回复传空。返回 reply_id。
+/// 被回复的那条回复 id（多级），纯评论回复传空。返回**服务端回显的
+/// 完整回复对象**——前端直接插回复区（hgplayer 同款）。
 #[tauri::command]
 pub async fn comment_reply(
     state: State<'_, AppState>,
@@ -58,7 +61,7 @@ pub async fn comment_reply(
     reply_to_comment_id: String,
     reply_to_reply_id: Option<String>,
     text: String,
-) -> AppResult<String> {
+) -> AppResult<ReplyItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -110,6 +113,54 @@ pub async fn comment_digg(
 ) -> AppResult<()> {
     let env = state.api_env();
     digg_comment(&comment_id, digg, &env).await
+}
+
+/// 点赞 / 取消点赞一条**剧评**（object_type=2 形态，与评论点赞不同路径参数）。
+#[tauri::command]
+pub async fn review_digg(
+    state: State<'_, AppState>,
+    review_id: String,
+    digg: bool,
+) -> AppResult<()> {
+    let env = state.api_env();
+    digg_review(&review_id, digg, &env).await
+}
+
+/// 回复一条**剧评**或剧评的回复（剧评形态 commit_source=13）。
+/// `reply_to_reply_id` 回复「回复」时传那条回复的 reply_id，纯剧评回复传空。
+#[tauri::command]
+pub async fn review_reply_send(
+    state: State<'_, AppState>,
+    series_id: String,
+    reply_to_comment_id: String,
+    reply_to_reply_id: Option<String>,
+    text: String,
+) -> AppResult<ReplyItem> {
+    let env = state.api_env();
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(crate::error::AppError::Media("回复内容为空".into()));
+    }
+    send_review_reply(
+        &series_id,
+        &reply_to_comment_id,
+        reply_to_reply_id.as_deref(),
+        &text,
+        &env,
+    )
+    .await
+}
+
+/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复
+/// （2026-10-10 抓包锁定）。
+#[tauri::command]
+pub async fn comment_delete(
+    state: State<'_, AppState>,
+    comment_id: String,
+    service_id: i64,
+) -> AppResult<()> {
+    let env = state.api_env();
+    delete_comment(&comment_id, service_id, &env).await
 }
 
 /// 收藏（追剧）或取消收藏一部剧。

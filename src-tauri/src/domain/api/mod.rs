@@ -1,5 +1,6 @@
 //! 官方 App 接口。
 
+pub mod calendar;
 pub mod client;
 pub mod danmaku;
 pub mod detail;
@@ -7,10 +8,13 @@ pub mod discover;
 pub mod history;
 pub mod interact;
 pub mod login;
+pub mod new_drama;
 pub mod params;
 pub mod play_url;
 pub mod rank;
+pub mod recommend;
 pub mod register;
+pub mod reservation;
 pub mod search;
 pub mod stream_pick;
 

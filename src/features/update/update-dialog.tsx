@@ -8,7 +8,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { t, tf } from '@/i18n';
+import { t, tf } from '@/locales';
 import { useUpdate } from './update-context';
 
 /** 全局更新弹层（对齐 hgplayer UpdateLayer）：下载在后台走，关掉弹层不中断，
