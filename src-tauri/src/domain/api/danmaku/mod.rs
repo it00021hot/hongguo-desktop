@@ -13,7 +13,7 @@
 
 mod model;
 
-pub use model::{CommentItem, CommentPage, Danmaku, SeriesReviewPage};
+pub use model::{CommentTagStat, CommentItem, CommentPage, Danmaku, SeriesReviewPage};
 
 use serde_json::Value;
 
@@ -284,14 +284,22 @@ pub async fn fetch_series_comments_page(
         .filter(|t| !t.is_empty())
         .map(str::to_string)
         .collect();
-    // 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分——剧评 tab
-    // 顶部「剧均评分」块数据源，2026-10-10 抓包锁定）
-    let avg_score = v
-        .pointer("/data/extra/book_info/score")
-        .map(|x| match x {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            _ => String::new(),
+    // 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行，
+    // 2026-10-10 抓包锁定；剧均评分本体 = 上面的 credibility_score）
+    let tag_stats = v
+        .pointer("/data/extra/filter_tag")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|t| CommentTagStat {
+                    tag_name: t
+                        .get("tag_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    count: t.get("count").and_then(Value::as_i64).unwrap_or(0),
+                })
+                .collect()
         })
         .unwrap_or_default();
     Ok(SeriesReviewPage {
@@ -299,7 +307,7 @@ pub async fn fetch_series_comments_page(
         score,
         score_cnt,
         tags,
-        avg_score,
+        tag_stats,
     })
 }
 

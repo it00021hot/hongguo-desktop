@@ -43,6 +43,8 @@ make release      # 打包发布版
 8. **启动顺序**：单实例插件必须第一个注册、数据库在 `.setup()` 里晚于它打开，否则二次启动撞库锁会被误报「数据损坏」。
 9. **signer/ 是 JS 1:1 移植，禁改写法**；vendor/ 四个 patch 依赖有「上游修复后回收」约定。
 10. **开发在 dev 分支**，conventional commits + 中文描述；纯移动/结构拆分与行为修改分开提交。
+11. **新 UI 必须保持项目风格**：按钮一律 shadcn `Button` variant + 语义令牌，禁止硬编码色值（`bg-red-500` 等）——唯一例外是播放器控制栏/互动栏/评论面板的 hgplayer 红色皮肤；详见 `references/frontend.md` 样式节。
+12. **对接官方接口禁止猜参数**——照 `docs/hongguo-api-endpoints.md` 抓包逐字段对齐（audit.py 出参数表），103008「无社区功能」这类报错八成是形态不对而不是权限。
 
 ## 重构执行
 

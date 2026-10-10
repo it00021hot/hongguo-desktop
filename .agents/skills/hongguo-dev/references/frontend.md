@@ -91,6 +91,7 @@ export const useUiStore = create<UiState>()(
 - Tailwind v4 CSS-first：设计令牌（oklch）在 `src/styles/index.css`，**没有 tailwind.config**；暗色靠 `<html class="dark">` 的 `@custom variant`。
 - 组件内原子类 + `cn()`（clsx + tailwind-merge）；shadcn 件用 cva 变体。自定义全局类（`hg-loadbar`、`scrollbar-thin` 等）写在 index.css，不散落。
 - 新颜色用现有令牌（`bg-background`、`text-muted-foreground`…），别写裸 hex——亮暗主题会漏。
+- **按钮/新 UI 必须保持项目风格**（2026-10-10 用户定规）：按钮一律 shadcn `Button` 的 variant（默认 primary）+ 语义令牌类，**禁止硬编码色值覆盖**（`bg-red-500`、裸 hex 之类）。唯一例外：播放器控制栏/互动栏/评论面板内部维持既有的 hgplayer 红色皮肤（`bg-red-500` 是那里的一部分），播放器之外的新组件（详情页/列表页/设置页…）不许模仿。做法：先看 `components/ui/button` 的 variant 与相邻页面同类组件的皮肤，照抄而不是自创。
 
 ## 前端测试
 

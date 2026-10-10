@@ -83,7 +83,15 @@ pub struct SeriesReviewPage {
     /// 题材标签
     #[serde(default)]
     pub tags: Vec<String>,
-    /// 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分）
+    /// 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行）
     #[serde(default)]
-    pub avg_score: String,
+    pub tag_stats: Vec<CommentTagStat>,
+}
+
+/// 剧评标签统计一条（extra.filter_tag，2026-10-10 抓包对齐）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentTagStat {
+    pub tag_name: String,
+    pub count: i64,
 }

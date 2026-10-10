@@ -83,7 +83,7 @@ export function ReviewComposer({ seriesId }: { seriesId: string }) {
         pickerAlign="right"
         className="gap-3"
         inputClassName="bg-muted/50 focus-visible:ring-ring h-16 min-w-0 flex-1 resize-none overflow-y-auto whitespace-pre-wrap rounded-md border px-3 py-2 text-sm leading-6"
-        sendClassName="h-9 gap-1 bg-red-500 px-4 hover:bg-red-500/90"
+        sendClassName="h-9 gap-1 px-4"
       />
     </div>
   );

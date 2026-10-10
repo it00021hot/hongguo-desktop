@@ -549,19 +549,29 @@ business_param 照抓包全量。**首屏不带 cursor 键**；翻页回传上�
 ```json
 {
   "business_param": {
-    "aigc_template_id": "", "aigc_template_text": "",
-    "book_id": "<series_id>", "comment_tag_list": [],
-    "from_famous_comment_id": 0, "has_aigc_content": false,
-    "ignore_urge_rule": false, "is_confirm_request": false,
-    "offset": 0, "read_item_cnt": 0,
-    "score": 10,                       // ★ 十分制评分（5 星 ×2）随发送走
-    "support_para_audio_play": false, "text_feature": {}, "video_is_muted": 0
+    "aigc_template_id": "",
+    "aigc_template_text": "",
+    "book_id": "<series_id>",
+    "comment_tag_list": [],
+    "from_famous_comment_id": 0,
+    "has_aigc_content": false,
+    "ignore_urge_rule": false,
+    "is_confirm_request": false,
+    "offset": 0,
+    "read_item_cnt": 0,
+    "score": 10, // ★ 十分制评分（5 星 ×2）随发送走
+    "support_para_audio_play": false,
+    "text_feature": {},
+    "video_is_muted": 0
   },
-  "comment_type": 0,                   // 评论 4/弹幕 20——剧评是 0
-  "commit_source": 12,                 // 评论 3/弹幕 1500/回复 9——剧评是 12
-  "data_type": 2,                      // 评论 4/弹幕 20——剧评是 2
-  "group_id": "<series_id>", "group_type": 1,
-  "image_data": [], "rich_text": [], "text": "…"
+  "comment_type": 0, // 评论 4/弹幕 20——剧评是 0
+  "commit_source": 12, // 评论 3/弹幕 1500/回复 9——剧评是 12
+  "data_type": 2, // 评论 4/弹幕 20——剧评是 2
+  "group_id": "<series_id>",
+  "group_type": 1,
+  "image_data": [],
+  "rich_text": [],
+  "text": "…"
 }
 ```
 

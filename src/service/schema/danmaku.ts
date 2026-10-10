@@ -50,7 +50,7 @@ export const seriesReviewPageSchema = z.object({
   /** 评分人数 */
   scoreCnt: z.number(),
   tags: z.array(z.string()),
-  /** 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分，2026-10-10 抓包） */
-  avgScore: z.string().default(''),
+  /** 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行，2026-10-10 抓包） */
+  tagStats: z.array(z.object({ tagName: z.string(), count: z.number() })).default([]),
 });
 export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;

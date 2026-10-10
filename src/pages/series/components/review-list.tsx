@@ -44,8 +44,9 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const pages = data?.pages;
   const comments = pages?.flatMap((p) => p.items) ?? [];
   const first = pages?.[0];
-  const avgScore = first?.avgScore ?? '';
+  const reviewScore = first?.score ?? '';
   const scoreCnt = first?.scoreCnt ?? 0;
+  const tagStats = first?.tagStats ?? [];
 
   // 滚动懒加载（browse-page 同款哨兵）：剧评 tab 在页面主滚动流里，
   // 哨兵进入视口即续拉下一页（游标 = 上一页响应的 cursor 原样回传）
@@ -68,15 +69,28 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   return (
     <>
       <ReviewComposer seriesId={seriesId} />
-      {/* 剧均评分块（hgplayer 同款：星星 + 分值 + 评分人数；空 = 暂无评分） */}
-      <div className="bg-muted/40 mb-2 flex items-center gap-3 rounded-lg border px-4 py-3">
-        {avgScore ? (
+      {/* 剧均评分块（hgplayer 同款：9.0 大字 + 星 + 人数 + 标签统计 pill；
+          剧均本体 = credibility_score，评分人数 = credibility_score_count） */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3">
+        {reviewScore ? (
           <>
-            <ScoreStars score={avgScore} />
-            <span className="text-lg font-semibold">{Number(avgScore).toFixed(1)}</span>
-            <span className="text-muted-foreground text-xs">
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl leading-none font-bold text-amber-500">
+                {Number(reviewScore).toFixed(1)}
+              </span>
+              <ScoreStars score={reviewScore} />
+            </div>
+            <span className="text-muted-foreground text-sm">
               {tf('detail.ratingCount', { count: formatCountPrecise(scoreCnt) })}
             </span>
+            {tagStats.map((tag) => (
+              <span
+                key={tag.tagName}
+                className="bg-muted rounded-full px-3 py-1 text-xs whitespace-nowrap"
+              >
+                {tag.tagName} {tag.count}
+              </span>
+            ))}
           </>
         ) : (
           <>
