@@ -15,6 +15,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
+import { ChromeSurface } from './chrome-surface';
 import { useAccount, useInteractionState, useSeriesCollect, useVideoDigg } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 
@@ -173,13 +174,10 @@ export function InteractionRail({
 
   // 顺序对齐抖音：收藏 → 评论 → 点赞 → 分享
   return (
-    <div
+    <ChromeSurface
+      shown={visible}
       data-wheel-block
-      className={cn(
-        'absolute right-2 bottom-24 z-20 flex flex-col items-center gap-4',
-        'transition-opacity duration-300',
-        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
-      )}
+      className="absolute right-2 bottom-24 z-20 flex flex-col items-center gap-4"
     >
       <RailItem
         icon={
@@ -208,7 +206,7 @@ export function InteractionRail({
         text={t('player.interact.share')}
         onClick={() => void onShare()}
       />
-    </div>
+    </ChromeSurface>
   );
 }
 
