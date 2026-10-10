@@ -22,6 +22,10 @@ const commentItemSchema = z.object({
   diggCount: z.number(),
   replyCount: z.number(),
   userDigg: z.boolean(),
+  /** 剧评评分（expand.score，"7" 十分制字符串；单集评论恒空串） */
+  score: z.string().default(''),
+  /** 评分后缀文案（"观看1小时后点评"；单集评论恒空串） */
+  scoreSuffixText: z.string().default(''),
 });
 export type CommentItem = z.infer<typeof commentItemSchema>;
 
@@ -46,5 +50,7 @@ export const seriesReviewPageSchema = z.object({
   /** 评分人数 */
   scoreCnt: z.number(),
   tags: z.array(z.string()),
+  /** 剧均评分（extra.book_info.score，"8.6"；空串 = 暂无评分，2026-10-10 抓包） */
+  avgScore: z.string().default(''),
 });
 export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;

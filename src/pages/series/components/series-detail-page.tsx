@@ -11,7 +11,7 @@ import { GuessYouLike } from './guess-you-like';
 import { RelatedWorks } from './related-works';
 import { ReserveButton } from './reserve-button';
 import { ResolveButton } from './resolve-button';
-import { ReviewComposer } from './review-composer';
+import { ReviewList } from './review-list';
 import { formatCountPrecise, formatDuration } from '@/utils/format';
 import {
   useAccount,
@@ -419,45 +419,9 @@ export function SeriesDetailPage({
             </TabsContent>
 
             <TabsContent value="comments">
-              {/* 发评论：登录才能发（后端拒绝匿名）；回车或点发布提交，
-                  成功后失效剧评缓存，新评论重取首页自然置顶 */}
-              <ReviewComposer seriesId={seriesId} />
-              {comments.length === 0 ? (
-                <p className="text-muted-foreground py-10 text-center text-sm">
-                  {t('detail.commentsEmpty')}
-                </p>
-              ) : (
-                <ul className="divide-border divide-y">
-                  {comments.map((c) => (
-                    <li key={c.commentId} className="flex gap-3 py-4">
-                      <div className="bg-muted grid size-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
-                        {c.avatar ? (
-                          <img src={c.avatar} alt="" className="size-full object-cover" />
-                        ) : (
-                          (c.userName[0] ?? '?')
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="truncate text-sm font-medium">{c.userName}</span>
-                          <span className="text-muted-foreground shrink-0 text-xs">
-                            {new Date(c.createTime * 1000).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm leading-relaxed break-words whitespace-pre-wrap">
-                          {c.text}
-                        </p>
-                        <div className="text-muted-foreground mt-1 flex gap-4 text-xs">
-                          <span>♥ {c.diggCount}</span>
-                          {c.replyCount > 0 && (
-                            <span>{tf('detail.replyCount', { count: c.replyCount })}</span>
-                          )}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {/* 剧均评分块 + 发评框（评分/表情）+ 滚动懒加载列表，
+                  整体在 ReviewList（2026-10-10 抓包对齐 hgplayer 剧评页） */}
+              <ReviewList seriesId={seriesId} />
             </TabsContent>
 
             <TabsContent value="recommend">

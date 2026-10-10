@@ -89,6 +89,8 @@ export function useSendComment() {
                     diggCount: 0,
                     replyCount: 0,
                     userDigg: false,
+                    score: '',
+                    scoreSuffixText: '',
                   },
                   ...first.items,
                 ],
@@ -150,7 +152,8 @@ export function useSeriesComments(seriesId: string) {
 export function useSendSeriesReview(seriesId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (text: string) => danmakuCmd.seriesReviewSend(seriesId, text),
+    mutationFn: (input: { text: string; score: number }) =>
+      danmakuCmd.seriesReviewSend(seriesId, input.text, input.score),
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: keys.seriesComments(seriesId) }),
   });

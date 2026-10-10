@@ -27,7 +27,11 @@ export const danmaku = {
       { seriesId, cursor: cursor || undefined },
       seriesReviewPageSchema,
     ),
-  /** 发剧评（整剧维度 comment/add；需登录态）。返回新评论 id。 */
-  seriesReviewSend: (seriesId: string, text: string) =>
-    call<string>('series_review_send', { seriesId, text }),
+  /**
+   * 发剧评（整剧维度 comment/add；需登录态）。score 为十分制评分
+   * （5 星 ×2，hgplayer 1.1.6 抓包：评分随发送走 business_param.score）。
+   * 返回新评论 id。
+   */
+  seriesReviewSend: (seriesId: string, text: string, score: number) =>
+    call<string>('series_review_send', { seriesId, text, score }),
 };

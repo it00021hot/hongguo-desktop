@@ -571,6 +571,14 @@
     "playsCount": "{count}次播放",
     "commentPlaceholder": "写下你的剧评…",
     "commentSend": "发布",
-    "commentSent": "剧评已发布"
+    "commentSent": "剧评已发布",
+    "myRating": "我的评分",
+    "rateStar": "评 {n} 星",
+    "ratedSuffix": "已选评分，发布后生效",
+    "reviewSend": "发表剧评",
+    "reviewSent": "剧评已发布（{score} 分）",
+    "avgRating": "剧均评分",
+    "noRating": "暂无评分",
+    "loadMoreReviews": "加载更多剧评"
   }
 }

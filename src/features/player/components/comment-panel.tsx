@@ -10,7 +10,7 @@
 //! （probe 实证 aid 8662 无 handler，hgplayer 也不拉）——自己发的回复
 //! 本地追加展示，别人的回复只显示计数。
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CornerDownRight, Heart, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -18,9 +18,8 @@ import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { interact } from '@/service/commands';
 import { useAccount, useComments, useSendComment, useSendReply } from '@/service/queries';
-import { EmojiPickerButton } from './emoji-picker';
-import { EmojiText } from './emoji-text';
-import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
+import { EmojiText } from '@/components/common/emoji/emoji-text';
+import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
 import type { CommentItem } from '@/service/schema';
 
 interface Props {
@@ -78,12 +77,6 @@ export function CommentPanel({ vid, onClose }: Props) {
   const [replyText, setReplyText] = useState('');
   /** 自己发的回复（commentId → 本地追加），服务端暂无回复列表可拉 */
   const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
-  /** 发评论 / 回复的富输入框 ref（表情插入走 ref 方法） */
-  const composerRef = useRef<RichEmojiInputHandle | null>(null);
-  const replyInputRef = useRef<RichEmojiInputHandle | null>(null);
-  /** 表情面板开合（底部发评论 / 回复行各一份） */
-  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
-  const [replyEmojiOpen, setReplyEmojiOpen] = useState(false);
 
   const submit = () => {
     const content = text.trim();
@@ -268,37 +261,24 @@ export function CommentPanel({ vid, onClose }: Props) {
                     )}
                     {/* 回复输入框 */}
                     {replyTarget === c.commentId && (
-                      <div className="mt-1.5 flex items-center gap-1.5">
-                        <RichEmojiInput
-                          ref={replyInputRef}
-                          autoFocus
-                          value={replyText}
-                          onChange={setReplyText}
-                          onEnter={() => submitReply(c)}
-                          onEscape={() => setReplyTarget(null)}
-                          placeholder={
-                            replyToReply
-                              ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
-                              : t('player.comments.replyToComment')
-                          }
-                          maxLength={200}
-                          className="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
-                        />
-                        <EmojiPickerButton
-                          open={replyEmojiOpen}
-                          onToggle={() => setReplyEmojiOpen((o) => !o)}
-                          align="right"
-                          onPick={(name) => replyInputRef.current?.insertEmoji(name)}
-                        />
-                        <Button
-                          size="sm"
-                          className="h-8 shrink-0 bg-red-500 px-3 text-xs text-white hover:bg-red-500/90"
-                          disabled={!replyText.trim() || sendReply.isPending}
-                          onClick={() => submitReply(c)}
-                        >
-                          {t('player.interact.send')}
-                        </Button>
-                      </div>
+                      <EmojiSendBox
+                        autoFocus
+                        value={replyText}
+                        onChange={setReplyText}
+                        onSubmit={() => submitReply(c)}
+                        onEscape={() => setReplyTarget(null)}
+                        placeholder={
+                          replyToReply
+                            ? tf('player.comments.replyPlaceholder', { name: replyToReply.text })
+                            : t('player.comments.replyToComment')
+                        }
+                        maxLength={200}
+                        pending={sendReply.isPending}
+                        pickerAlign="right"
+                        className="mt-1.5 gap-1.5"
+                        inputClassName="h-8 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-xs leading-8 whitespace-pre text-white"
+                        sendClassName="h-8 bg-red-500 px-3 text-xs hover:bg-red-500/90"
+                      />
                     )}
                   </div>
                   <button
@@ -347,31 +327,17 @@ export function CommentPanel({ vid, onClose }: Props) {
 
       {/* 底部发评论 */}
       <div className="shrink-0 border-t border-white/10 p-3">
-        <div className="flex items-center gap-2">
-          <RichEmojiInput
-            ref={composerRef}
-            value={text}
-            onChange={setText}
-            onEnter={submit}
-            placeholder={t('player.comments.placeholder')}
-            maxLength={200}
-            className="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
-          />
-          <EmojiPickerButton
-            open={composerEmojiOpen}
-            onToggle={() => setComposerEmojiOpen((o) => !o)}
-            align="right"
-            onPick={(name) => composerRef.current?.insertEmoji(name)}
-          />
-          <Button
-            size="sm"
-            className="h-9 shrink-0 bg-red-500 px-4 text-white hover:bg-red-500/90"
-            disabled={!text.trim() || send.isPending}
-            onClick={submit}
-          >
-            {t('player.interact.send')}
-          </Button>
-        </div>
+        <EmojiSendBox
+          value={text}
+          onChange={setText}
+          onSubmit={submit}
+          placeholder={t('player.comments.placeholder')}
+          maxLength={200}
+          pending={send.isPending}
+          pickerAlign="right"
+          inputClassName="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
+          sendClassName="h-9 bg-red-500 px-4 hover:bg-red-500/90"
+        />
       </div>
     </div>
   );

@@ -571,6 +571,14 @@
     "playsCount": "{count} plays",
     "commentPlaceholder": "Write a review…",
     "commentSend": "Post",
-    "commentSent": "Review posted"
+    "commentSent": "Review posted",
+    "myRating": "My rating",
+    "rateStar": "Rate {n} stars",
+    "ratedSuffix": "Selected, applied on post",
+    "reviewSend": "Post review",
+    "reviewSent": "Review posted ({score} pts)",
+    "avgRating": "Avg rating",
+    "noRating": "No ratings yet",
+    "loadMoreReviews": "Load more reviews"
   }
 }
