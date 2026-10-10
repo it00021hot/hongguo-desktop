@@ -66,7 +66,7 @@ export function VolumePopup({
         // 浮层整个卸载——间隙就是「想移过去却直接隐藏」的元凶。
         // 视觉留白放进浮层自己的 padding 里。
         <div
-          className="absolute bottom-full left-1/2 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm"
+          className="absolute bottom-full left-1/2 z-30 -translate-x-1/2 rounded-lg bg-black/80 px-3 pt-1 pb-3 backdrop-blur-sm"
           onPointerDownCapture={() => {
             holdRef.current = true;
           }}
