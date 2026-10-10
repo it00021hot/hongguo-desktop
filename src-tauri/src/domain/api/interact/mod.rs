@@ -597,7 +597,10 @@ mod tests {
             "\"support_para_audio_play\": false,",
             "\"video_is_muted\": 0,",
         ] {
-            assert!(src.contains(needle), "剧评回复 business_param 缺锚点 {needle}");
+            assert!(
+                src.contains(needle),
+                "剧评回复 business_param 缺锚点 {needle}"
+            );
         }
         // delete 形态锚点：data_type 恒 9（删除语义），service_id 由参数分流
         assert!(src.contains("\"data_type\": 9,"), "删除 data_type=9");
@@ -644,7 +647,11 @@ mod probe {
         };
         println!(
             "[review-interact] x_tt_token={}（空 = 验证无 token 形态）",
-            if env.x_tt_token.is_some() { "在场" } else { "缺失" }
+            if env.x_tt_token.is_some() {
+                "在场"
+            } else {
+                "缺失"
+            }
         );
         // 锚点取 2026-10-10 抓包：剧评 7693600825641861912（book=7691228619774905368），
         // 评论 7693242834317837081（vid=7691249364097829913）
@@ -694,8 +701,8 @@ mod probe {
     /// merge_session_cookie 合并链路（匿名兜底打底 + 账号覆盖）。
     /// UI 里互动失败而裸 cookie probe 成功时，用这个对照定位差异。
     fn runtime_env() -> Option<ApiEnv> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(".hg-runtime-settings.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".hg-runtime-settings.json");
         let raw = std::fs::read_to_string(path).ok()?;
         let v: Value = serde_json::from_str(&raw).ok()?;
         let proxy = v
@@ -712,7 +719,10 @@ mod probe {
         // 私有函数不可行，测试里等价重写——两处必须同步改）
         let mut fields: Vec<(String, String)> = crate::signer::device::anonymous_cookie(&device)
             .split("; ")
-            .filter_map(|p| p.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+            .filter_map(|p| {
+                p.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
             .collect();
         if let Some(account) = cookie {
             for pair in account.split(';').map(str::trim).filter(|p| !p.is_empty()) {
@@ -750,7 +760,11 @@ mod probe {
             "[runtime-env] cookie={} 字节 sessionid={} x_tt_token={}",
             env.cookie.as_deref().map(|c| c.len()).unwrap_or(0),
             has_sid,
-            if env.x_tt_token.is_some() { "在场" } else { "缺失" }
+            if env.x_tt_token.is_some() {
+                "在场"
+            } else {
+                "缺失"
+            }
         );
         // 与 UI 完全同参：剧评点赞/回复（锚点 = 抓包同一条剧评）
         let book = "7691228619774905368";

@@ -65,6 +65,11 @@ pub struct PassportUser {
     /// 头像 URL（sms_login / user_info 响应的 data.avatar_url，无则空）
     #[serde(default)]
     pub avatar_url: String,
+    /// 响应原文（JSON body 整体随身；红果号 biz_user_id 等长尾字段按需
+    /// 从中读——user_info 有 60+ 字段只解析 4 个，为个别字段加解析路径
+    /// 不如存原文）
+    #[serde(default)]
+    pub raw: String,
 }
 
 /// MFA 上行短信验证的轮询状态。

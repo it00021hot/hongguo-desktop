@@ -312,7 +312,8 @@ pub async fn user_info(env: &ApiEnv) -> AppResult<PassportUser> {
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Auth(format!("user/info 响应不是 JSON: {e}")))?;
     check_error(&v, "读取用户信息失败")?;
-    Ok(parse_user(&v))
+    let raw = String::from_utf8_lossy(&bytes).to_string();
+    Ok(parse_user(&v, &raw))
 }
 
 /// 解析登录响应：成功取 Set-Cookie + 用户信息；MFA 特征字段在场则走 MFA 分支。
@@ -323,6 +324,7 @@ fn parse_login_response(
 ) -> AppResult<LoginOutcome> {
     let v: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Auth(format!("sms_login 响应不是 JSON: {e}")))?;
+    let raw = String::from_utf8_lossy(bytes).to_string();
 
     // MFA 特征（1.1.3 实测嵌套在 data.biz_params；顶层形态做兼容）：
     // passport_mfa_retry_tag 与 sms_code_key 成对出现即 MFA
@@ -392,7 +394,7 @@ fn parse_login_response(
         .unwrap_or_default();
     Ok(LoginOutcome::Success {
         cookies,
-        user: parse_user(&v),
+        user: parse_user(&v, &raw),
         token,
     })
 }
@@ -423,9 +425,28 @@ fn check_error(v: &Value, prefix: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 从 user_info 响应原文提取数字 uid——字段名 `req_id` 是伪装，
+/// 2026-10-10 实测值与 sms_login 的数字 user_id 同值（3836620877071530）。
+/// 用于给存量账号里被加密形态（`#c1967_…`）污染的 `AccountState.user_id`
+/// 自愈，免去退出重登。
+pub fn numeric_uid_from_raw(raw: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(raw).ok()?;
+    let rid = v.pointer("/data/req_id").or_else(|| v.get("req_id"))?;
+    // 只认数字形态（JSON 数字或纯数字串），加密串/空值不收
+    match rid {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {
+            Some(s.clone())
+        }
+        _ => None,
+    }
+}
+
 /// 宽松解析用户信息：fqnovel passport 的 data 结构在 sms_login 与
 /// user_info 两个端点上字段名略有出入（name/user_name），都兜住。
-fn parse_user(v: &Value) -> PassportUser {
+/// `raw` 是响应原文——随身落库，长尾字段（红果号 biz_user_id 等）
+/// 由使用方从原文按需读取。
+fn parse_user(v: &Value, raw: &str) -> PassportUser {
     let data = v.get("data").cloned().unwrap_or_else(|| v.clone());
     let inner = data.get("user_info").cloned().unwrap_or(data);
     PassportUser {
@@ -441,12 +462,46 @@ fn parse_user(v: &Value) -> PassportUser {
             .unwrap_or_default(),
         mobile: str_field_paths(&inner, &["mobile"]).unwrap_or_default(),
         avatar_url: str_field_paths(&inner, &["avatar_url", "avatar"]).unwrap_or_default(),
+        raw: raw.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 数字 uid 自愈：user_info 原文里 req_id 是伪装字段名（2026-10-10
+    /// 实测值 = sms_login 的数字 user_id）；加密串/空值不收。
+    #[test]
+    fn numeric_uid_from_raw_matches_capture() {
+        let raw = r##"{"code":0,"data":{"req_id":3836620877071530,"user_id":"#c1967_xxx","biz_user_id":194002051671}}"##;
+        assert_eq!(
+            numeric_uid_from_raw(raw).as_deref(),
+            Some("3836620877071530"),
+            "req_id 数字形态是数字 uid 的可靠来源"
+        );
+        // 字符串数字也收（形态鲁棒）
+        assert_eq!(
+            numeric_uid_from_raw(r#"{"data":{"req_id":"3836620877071530"}}"#).as_deref(),
+            Some("3836620877071530")
+        );
+        // 加密串 / 缺字段 / 非 JSON：一律 None（宁缺毋滥，别把坏值写库）
+        assert_eq!(
+            numeric_uid_from_raw(r##"{"data":{"req_id":"#c1967_x"}}"##),
+            None
+        );
+        assert_eq!(numeric_uid_from_raw(r#"{"data":{}}"#), None);
+        assert_eq!(numeric_uid_from_raw("not-json"), None);
+    }
+
+    /// parse_user 的 raw 随身：原文进 PassportUser，落库管道直接取用。
+    #[test]
+    fn parse_user_carries_raw_body() {
+        let v = serde_json::json!({"data": {"user_id": 1, "name": "u"}});
+        let raw = r#"{"code":0,"data":{"user_id":1}}"#;
+        assert_eq!(parse_user(&v, raw).raw, raw);
+    }
+
     /// parse_user 必须从登录响应 data 里带出头像 URL（2026-10-04 抓包
     /// 样本：sms_login 的 data 顶层有 avatar_url；user_info 端点嵌套在
     /// data.user_info 里，两种形态都兜）。
@@ -461,7 +516,7 @@ mod tests {
                 "mobile": "15000000000"
             }
         });
-        let u = parse_user(&sms_login);
+        let u = parse_user(&sms_login, "");
         assert_eq!(
             u.avatar_url,
             "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5035712059~120x256.image"
@@ -475,14 +530,17 @@ mod tests {
                 "avatar_url": "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image"
             } }
         });
-        let u2 = parse_user(&user_info);
+        let u2 = parse_user(&user_info, "");
         assert_eq!(
             u2.avatar_url,
             "https://p9-passport.byteacctimg.com/img/mosaic-legacy/3791/5070639578~120x256.image"
         );
 
         // 无头像不 panic，字段为空
-        assert_eq!(parse_user(&serde_json::json!({"data": {}})).avatar_url, "");
+        assert_eq!(
+            parse_user(&serde_json::json!({"data": {}}), "").avatar_url,
+            ""
+        );
     }
 
     /// 安全探测：无效号段（100 开头不是有效手机段）发码——服务端应拒绝

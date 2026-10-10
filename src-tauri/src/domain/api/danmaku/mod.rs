@@ -14,7 +14,7 @@
 mod model;
 
 pub use model::{
-    CommentTagStat, CommentItem, CommentPage, Danmaku, ReplyItem, ReplyPage, SeriesReviewPage,
+    CommentItem, CommentPage, CommentTagStat, Danmaku, ReplyItem, ReplyPage, SeriesReviewPage,
 };
 
 use serde_json::Value;
@@ -541,8 +541,10 @@ pub async fn fetch_comment_replies(
     env: &ApiEnv,
 ) -> AppResult<ReplyPage> {
     let path = format!("/novel/commentapi/reply/list/{comment_id}/v1/");
-    let body = serde_json::to_vec(&comment_replies_payload(group_id, book_id, comment_id, cursor))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
+    let body = serde_json::to_vec(&comment_replies_payload(
+        group_id, book_id, comment_id, cursor,
+    ))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
     fetch_replies(&path, body, env).await
 }
 
@@ -580,7 +582,10 @@ fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
         .unwrap_or(Value::Null);
     let mut page = ReplyPage {
         total: info.get("total").and_then(Value::as_i64).unwrap_or(0),
-        has_more: info.get("has_more").and_then(Value::as_bool).unwrap_or(false),
+        has_more: info
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         next_cursor: info
             .get("cursor")
             .and_then(Value::as_str)
@@ -616,9 +621,7 @@ fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
             // user_info 层优先）
             user_id: common
                 .and_then(|c| c.pointer("/user_info/user_id"))
-                .or_else(|| {
-                    common.and_then(|c| c.pointer("/user_info/base_info/user_id"))
-                })
+                .or_else(|| common.and_then(|c| c.pointer("/user_info/base_info/user_id")))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
@@ -778,14 +781,20 @@ mod tests {
         assert_eq!(p["group_id"], "s");
         assert_eq!(p["comment_id"], "c");
         assert_eq!(p["business_param"]["real_level"], 2);
-        assert_eq!(p["business_param"]["need_count"], true, "首页 need_count=true");
+        assert_eq!(
+            p["business_param"]["need_count"], true,
+            "首页 need_count=true"
+        );
         assert!(
             p.get("cursor").is_none(),
             "剧评维度首屏不带 cursor 键（评论维度才是显式空串）"
         );
         let p2 = review_replies_payload("s", "c", "20");
         assert_eq!(p2["cursor"], "20");
-        assert_eq!(p2["business_param"]["need_count"], false, "翻页 need_count=false");
+        assert_eq!(
+            p2["business_param"]["need_count"], false,
+            "翻页 need_count=false"
+        );
     }
 
     #[test]
@@ -930,10 +939,15 @@ mod probe {
             review.items.first().map(|r| (&r.reply_id, &r.text)),
         );
         if review.has_more {
-            let page2 = fetch_review_replies(book, "7693600825641861912", &review.next_cursor, &env)
-                .await
-                .expect("剧评回复第2页");
-            println!("[reply-review#2] got={} cursor={}", page2.items.len(), page2.next_cursor);
+            let page2 =
+                fetch_review_replies(book, "7693600825641861912", &review.next_cursor, &env)
+                    .await
+                    .expect("剧评回复第2页");
+            println!(
+                "[reply-review#2] got={} cursor={}",
+                page2.items.len(),
+                page2.next_cursor
+            );
         }
 
         let comment =

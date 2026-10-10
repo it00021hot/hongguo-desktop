@@ -4,9 +4,8 @@ use tauri::State;
 
 use crate::app_state::AppState;
 use crate::domain::api::danmaku::{
-    CommentPage, Danmaku, ReplyPage, SeriesReviewPage, fetch_comment_replies,
-    fetch_comments_page, fetch_danmaku_all, fetch_review_replies, fetch_series_comments_page,
-    send_series_review,
+    CommentPage, Danmaku, ReplyPage, SeriesReviewPage, fetch_comment_replies, fetch_comments_page,
+    fetch_danmaku_all, fetch_review_replies, fetch_series_comments_page, send_series_review,
 };
 use crate::error::{AppError, AppResult};
 

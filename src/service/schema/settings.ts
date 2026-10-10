@@ -21,6 +21,12 @@ export const accountStateSchema = z.object({
   avatarUrl: z.string().catch(''),
   userId: z.string(),
   loginAt: z.number(),
+  /** x-tt-token 长凭据（旧账号为空） */
+  token: z.string().catch(''),
+  /** sms_login 响应原文（JSON；红果号等长尾字段按需读取，旧账号为空） */
+  rawLogin: z.string().catch(''),
+  /** user_info 响应原文（JSON；含 biz_user_id 红果号 / vip_info 等） */
+  rawProfile: z.string().catch(''),
 });
 
 export type AccountState = z.infer<typeof accountStateSchema>;
