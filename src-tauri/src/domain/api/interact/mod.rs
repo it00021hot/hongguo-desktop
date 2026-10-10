@@ -666,6 +666,13 @@ mod probe {
             .expect("回复（reply/add 独立端点）");
         println!("[interact] reply reply_id={rid}");
 
+        // 删除闭环（comment/del，2026-10-10 抓包形态）：把自己刚发的
+        // 评论和回复删掉——既验证端点又清理 probe 痕迹
+        delete_comment(&ccid, 4, &env).await.expect("删除评论");
+        println!("[interact] comment {ccid} deleted");
+        delete_comment(&rid, 4, &env).await.expect("删除回复");
+        println!("[interact] reply {rid} deleted");
+
         collect_series(series, true, &env).await.expect("收藏");
         collect_series(series, false, &env).await.expect("取消收藏");
 
