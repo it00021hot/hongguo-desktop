@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { BatchBar, ManageToggle, PickDot } from '@/components/batch-manage';
 import { useBatchSelect } from '@/hooks/use-batch-select';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import { interact as interactCmd } from '@/service/commands';
 import { keys } from '@/service/queries/common';
 import { useInteractionState, useSeriesMeta, useVideoDigg, useWebCover } from '@/service/queries';
@@ -51,7 +52,8 @@ export function LikedPage() {
     onError: (e: Error) => toast.error(tf('batch.partialFail', { error: e.message })),
   });
 
-  const [query, setQuery] = useState('');
+  // 搜索词会话级保留；返回保留浏览位置（页面滚在 #content）
+  const [query, setQuery] = useSessionState('hongguo.liked.query', '');
   // mget 自带 seriesTitle，但缺失时卡片会回落 resolve——标题异步到位后
   // 登记上来供过滤用（卡片卸载后登记值保留，不影响筛选）
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -62,6 +64,11 @@ export function LikedPage() {
   const liked = (state?.items ?? []).filter((i) => i.userDigg);
   const shown = liked.filter((i) =>
     matchListQuery(query, i.seriesTitle || titles[i.seriesId] || '', i.seriesId),
+  );
+  useScrollRestore(
+    'hongguo.liked.scroll',
+    () => document.getElementById('content'),
+    !isLoading && shown.length > 0,
   );
 
   const open = (item: InteractionItem) => {

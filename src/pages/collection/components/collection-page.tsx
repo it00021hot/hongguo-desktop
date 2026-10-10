@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { BatchBar, ManageToggle, PickDot } from '@/components/batch-manage';
 import { useBatchSelect } from '@/hooks/use-batch-select';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import {
   useAuthRefresh,
   useBookshelf,
@@ -55,8 +56,8 @@ export function CollectionPage() {
   const batch = useBatchSelect();
   const batchCollect = useSeriesCollectBatch();
 
-  const [query, setQuery] = useState('');
-  const [typeTab, setTypeTab] = useState<TypeTab>('all');
+  const [query, setQuery] = useSessionState('hongguo.collections.query', '');
+  const [typeTab, setTypeTab] = useSessionState<TypeTab>('hongguo.collections.typeTab', 'all');
   // 书架条目本身无标题：卡片里 resolve 到位后登记上来供过滤用
   const [titles, setTitles] = useState<Record<string, string>>({});
   const registerTitle = useCallback((id: string, title: string) => {
@@ -68,6 +69,12 @@ export function CollectionPage() {
     (entry) =>
       matchTypeTab(typeTab, entry) &&
       matchListQuery(query, titles[entry.seriesId] ?? '', entry.seriesId),
+  );
+  // 返回保留浏览位置（页面滚在 app-shell 的 #content）
+  useScrollRestore(
+    'hongguo.collections.scroll',
+    () => document.getElementById('content'),
+    !isLoading && shown.length > 0,
   );
 
   const open = (seriesId: string) => {

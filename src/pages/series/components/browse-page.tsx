@@ -89,9 +89,10 @@ export function BrowsePage() {
     creationStatus: '',
   });
 
-  const [keyword, setKeyword] = useState('');
+  // 搜索词与模式会话级保留：去播放再回来搜索结果还在（退出搜索即回到筛选流）
+  const [keyword, setKeyword] = useSessionState('hongguo.browse.keyword', '');
   /** 已提交的搜索词：空串 = 浏览模式，非空 = 搜索模式 */
-  const [submitted, setSubmitted] = useState('');
+  const [submitted, setSubmitted] = useSessionState('hongguo.browse.submitted', '');
   const searching = submitted !== '';
 
   // ---- 输入联想（hgplayer 1.1.6 同款）：停 300ms 才发请求，

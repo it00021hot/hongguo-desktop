@@ -73,20 +73,22 @@ export function NewDramaPage() {
       </TopBarTabsPortal>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3">
-        {/* 顶行只留频道胶囊；页标题由侧栏高亮表达，不重复 */}
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-          {GENDERS.map(({ value, labelKey }) => (
-            <Button
-              key={value}
-              size="sm"
-              variant={gender === value ? 'default' : 'outline'}
-              className="rounded-full px-4"
-              onClick={() => setGender(value)}
-            >
-              {t(labelKey)}
-            </Button>
-          ))}
-        </div>
+        {/* 频道胶囊只属于新剧推荐（cell_gender 是推荐流参数，日历不分频道） */}
+        {view === 'recommend' && (
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            {GENDERS.map(({ value, labelKey }) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={gender === value ? 'default' : 'outline'}
+                className="rounded-full px-4"
+                onClick={() => setGender(value)}
+              >
+                {t(labelKey)}
+              </Button>
+            ))}
+          </div>
+        )}
 
         {view === 'recommend' ? (
           // key=gender：换频道重挂载，滚动归零（同排行榜切子榜的口径）

@@ -15,6 +15,7 @@ import {
 } from '@/service/queries';
 import { BatchBar, ManageToggle, PickDot } from '@/components/batch-manage';
 import { useBatchSelect } from '@/hooks/use-batch-select';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import { isRenderableCover } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/player';
 import { formatDuration } from '@/utils/format';
@@ -51,8 +52,9 @@ export function HistoryPage() {
   const { data, isLoading, error, refetch } = useWatchHistory();
   const { mutate: resolve, isPending: resolving } = useResolveSeries();
 
-  const [tab, setTab] = useState<HistoryTab>('all');
-  const [query, setQuery] = useState('');
+  // tab/搜索词会话级保留（进详情再返回停在离开时的 tab）
+  const [tab, setTab] = useSessionState<HistoryTab>('hongguo.history.tab', 'all');
+  const [query, setQuery] = useSessionState('hongguo.history.query', '');
   // 批量管理（hgplayer v1.1.6 同款「管理」）：多选后批量删除云端历史
   const batch = useBatchSelect();
   const deleteMutation = useWatchHistoryDelete();
@@ -63,6 +65,12 @@ export function HistoryPage() {
     if (tab === 'unfinished' && isFinished(item)) return false;
     return matchListQuery(query, item.title, item.seriesId);
   });
+  // 返回保留浏览位置（页面滚在 app-shell 的 #content）
+  useScrollRestore(
+    'hongguo.history.scroll',
+    () => document.getElementById('content'),
+    !isLoading && shown.length > 0,
+  );
 
   // 渐进渲染：几百行一次性挂载是菜单点击卡顿的来源（实测 489 行 ~300ms
   // 主线程阻塞）。首批 20 行秒出，滚动到底部由哨兵续载，语义不变

@@ -13,6 +13,7 @@ import { LoginDialog } from '@/pages/settings/components/login-dialog';
 import { rank as rankApi } from '@/service/commands';
 import { BatchBar, ManageToggle, PickDot } from '@/components/batch-manage';
 import { useBatchSelect } from '@/hooks/use-batch-select';
+import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import {
   RESERVATIONS_KEY_ROOT,
   useAccount,
@@ -36,8 +37,10 @@ import type { CalendarItem } from '@/service/schema';
  */
 
 export function ReservationPage() {
-  const [online, setOnline] = useState(true);
-  const [query, setQuery] = useState('');
+  // tab/搜索词会话级保留：进详情再返回，停在离开时的 tab（此前回落到
+  // 已上线 tab，是返回体验的头号槽点）
+  const [online, setOnline] = useSessionState('hongguo.reservation.tab', true);
+  const [query, setQuery] = useSessionState('hongguo.reservation.query', '');
   const { data: account } = useAccount();
   const onlineQ = useReservations(true);
   const offlineQ = useReservations(false);
@@ -48,6 +51,12 @@ export function ReservationPage() {
   // 标题搜索（对齐参考端 v1.1.6「搜索预约的剧」）：客户端过滤，条目自带标题
   const shown = (current.data?.items ?? []).filter((item) =>
     matchListQuery(query, item.title, item.seriesId),
+  );
+  // 返回保留浏览位置（页面滚在 app-shell 的 #content）
+  useScrollRestore(
+    'hongguo.reservation.scroll',
+    () => document.getElementById('content'),
+    !current.isLoading && shown.length > 0,
   );
 
   // 角标计数：total 优先、条数兜底（后端已翻页拉全并兜底，这里双保险；
