@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BellRing, CalendarClock, Loader2, LogIn, Play, Star, Tv } from 'lucide-react';
 import { toast } from 'sonner';
@@ -27,7 +28,9 @@ import type { CalendarItem } from '@/service/schema';
 /**
  * 我的预约（对齐 hgplayer 1.1.3）：已上线 / 待上线两个 tab（带计数），
  * 卡片 = 封面（左下上线日期角标 / 右下集数角标）+ 标题 + 简介一行 +
- * 分类标签。待上线条目可直接取消预约；已上线点击进详情。
+ * 分类标签。卡片一律进详情（排行榜预约榜同款口径，未上线剧落地
+ * 「即将上线」降级视图）；行尾动作列已上线 = 播放 + 详情，
+ * 未上线 = 取消预约。
  *
  * 预约列表接口需要登录，匿名返回空表——未登录时给登录入口而不是空列表。
  */
@@ -63,9 +66,6 @@ export function ReservationPage() {
         : null,
     },
   ];
-
-  const playSeries = usePlaySeries();
-  const handleSelect = (item: CalendarItem) => playSeries(item.seriesId);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -135,7 +135,6 @@ export function ReservationPage() {
                 managing={batch.managing}
                 picked={batch.selected.has(item.seriesId)}
                 onPick={() => batch.toggle(item.seriesId)}
-                onSelect={handleSelect}
               />
             ))}
           </div>
@@ -201,20 +200,21 @@ function NotLoggedIn() {
 }
 
 /** 预约卡：封面（角标）+ 标题/简介/标签 + 上线信息 / 取消预约。
- *  管理模式下 pick 在场：行首圆钮多选，点击卡=切换选中。 */
+ *  卡片一律进详情（排行榜预约榜同款口径：未上线剧落地「即将上线」
+ *  降级视图，行内档案快照 prefill）；管理模式下点击卡 = 切换选中。 */
 function ReservationCard({
   item,
   managing,
   picked,
   onPick,
-  onSelect,
 }: {
   item: CalendarItem;
   managing: boolean;
   picked: boolean;
   onPick: () => void;
-  onSelect: (item: CalendarItem) => void;
 }) {
+  const navigate = useNavigate();
+  const playSeries = usePlaySeries();
   const qc = useQueryClient();
   const { data: webCover } = useWebCover(item.cover);
   const sourceRenderable = isRenderableCover(item.cover);
@@ -232,9 +232,23 @@ function ReservationCard({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // 详情带上行内档案快照：未上线剧详情解析分集必然失败，prefill 支撑
+  // 详情页渲染「即将上线」降级视图（而非整页报错）
+  const openDetail = () =>
+    void navigate({
+      to: '/detail',
+      search: {
+        seriesId: item.seriesId,
+        title: item.title,
+        cover: item.cover,
+        tags: item.recTags.join(','),
+        desc: item.description,
+      },
+    });
+
   const publishDate = item.publishTime > 0 ? formatOnlineDate(item.publishTime) : '';
   const tags = item.recTags.filter((x) => x !== '');
-  const select = () => (managing ? onPick() : onSelect(item));
+  const select = () => (managing ? onPick() : openDetail());
 
   return (
     <article
@@ -316,12 +330,26 @@ function ReservationCard({
       </div>
 
       {!managing && (
-        <div className="flex shrink-0 flex-col items-end justify-center gap-2">
+        <div className="flex shrink-0 flex-col items-stretch justify-center gap-1.5">
           {item.isOnline ? (
-            <Button size="sm" variant="outline" onClick={() => onSelect(item)}>
-              <Play className="size-4" aria-hidden />
-              {t('reservation.watch')}
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1"
+                onClick={() => playSeries(item.seriesId)}
+              >
+                <Play className="size-3.5" aria-hidden />
+                {t('player.play')}
+              </Button>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground cursor-pointer text-center text-xs transition-colors"
+                onClick={openDetail}
+              >
+                {t('rank.detail')}
+              </button>
+            </>
           ) : (
             <Button
               size="sm"
