@@ -73,7 +73,21 @@ fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
 }
 
 /// 配置进程内缓存（首页 cr=4 与翻页共享；失败回落抓包已知值）。
-type TabConfigCache = std::sync::Mutex<std::collections::HashMap<String, RecommendTabConfig>>;
+///
+/// 条目带时间戳做 TTL 过期（known-issues B3）：cell_id/bookstore_id 原本
+/// 按服务端常量假设永不重取，运营调整后只能靠重启恢复。现在超过
+/// [`TAB_CONFIG_TTL`] 后下次使用会先重取一次，重取失败继续用旧值
+/// （stale-while-error）——翻页不会因此重打配置请求。
+#[derive(Clone)]
+struct CachedTabConfig {
+    cfg: RecommendTabConfig,
+    at: std::time::Instant,
+}
+
+/// 配置复验间隔：服务端常量假设下 1 小时重验一次足够及时，开销可忽略。
+const TAB_CONFIG_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+type TabConfigCache = std::sync::Mutex<std::collections::HashMap<String, CachedTabConfig>>;
 static TAB_CONFIG_CACHE: std::sync::OnceLock<TabConfigCache> = std::sync::OnceLock::new();
 
 fn cache_tab_config_insert(tab: &str, cfg: RecommendTabConfig) {
@@ -81,10 +95,16 @@ fn cache_tab_config_insert(tab: &str, cfg: RecommendTabConfig) {
         .get_or_init(TabConfigCache::default)
         .lock()
         .unwrap()
-        .insert(tab.to_string(), cfg);
+        .insert(
+            tab.to_string(),
+            CachedTabConfig {
+                cfg,
+                at: std::time::Instant::now(),
+            },
+        );
 }
 
-fn cached_tab_config(tab: &str) -> Option<RecommendTabConfig> {
+fn cached_tab_config(tab: &str) -> Option<CachedTabConfig> {
     TAB_CONFIG_CACHE
         .get_or_init(TabConfigCache::default)
         .lock()
@@ -93,11 +113,26 @@ fn cached_tab_config(tab: &str) -> Option<RecommendTabConfig> {
         .cloned()
 }
 
-/// 解析 tab 的 cell 配置：优先进程缓存，否则现场取（bookmall/tab cr=4），
-/// 再不行回落抓包已知值（同样缓存住，免得每页都重试配置请求）。
+/// 解析 tab 的 cell 配置：进程缓存命中且未过期直接用；过期先重取一次，
+/// 重取失败沿用旧值（stale-while-error）。无缓存时现场取（bookmall/tab
+/// cr=4），再不行回落抓包已知值（同样缓存住，免得每页都重试配置请求）。
 async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabConfig> {
-    if let Some(v) = cached_tab_config(tab) {
-        return Ok(v);
+    if let Some(cached) = cached_tab_config(tab) {
+        if cached.at.elapsed() < TAB_CONFIG_TTL {
+            return Ok(cached.cfg);
+        }
+        // 过期：重取一次做复验；失败不抛——旧值总比回落已知值新
+        match fetch_tab_first_page(tab, env).await {
+            Ok((cfg, _)) => {
+                log::info!("[Recommend] tab={tab} 配置过期已复验更新");
+                cache_tab_config_insert(tab, cfg.clone());
+                return Ok(cfg);
+            }
+            Err(e) => {
+                log::warn!("[Recommend] tab={tab} 配置复验失败（{e}），沿用 {TAB_CONFIG_TTL:?} 前的旧值");
+                return Ok(cached.cfg);
+            }
+        }
     }
     let fetched = match fetch_tab_first_page(tab, env).await {
         Ok((cfg, _)) => Some(cfg),

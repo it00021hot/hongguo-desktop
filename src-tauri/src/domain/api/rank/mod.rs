@@ -43,7 +43,7 @@ pub(crate) const ALL_TAB_SUBS: &[&str] = &[
 /// - `sub`：子榜的 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
 /// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
 ///   cate_308 / style_1685…；单值——hgplayer 抓包实测每次点击整组替换）
-/// - `offset` / `session_id`：翻页游标（**2026-10-09 抓 hgplayer 滚动榜单实锤**：首页 offset=0 不带 session_id，响应下发 next_offset（步进 10）+ session_id；翻页 offset=next_offset 并**回传同一 session_id**，其余参数原样。每页下发 20 条、相邻页重叠 10 条——客户端按 seriesId 去重；limit 恒 "0" 不参与分页，页长服务端固定）
+/// - `offset` / `session_id`：翻页游标（**2026-10-09 抓 hgplayer 滚动榜单实锤**：首页 offset=0 不带 session_id，响应下发 next_offset（步进 10）+ session_id；翻页 offset=next_offset 并**回传同一 session_id**，其余参数原样。每页下发 20 条、相邻页重叠 10 条——重叠由本模块按 session_id 记账去重（见 [`dedup_rank_page`]），前端拿到的页间已不重叠）
 pub async fn fetch_rank_ex(
     selected: &str,
     sub: &str,
@@ -82,8 +82,15 @@ pub async fn fetch_rank_ex(
         .map_err(|e| AppError::Media(format!("解析榜单失败: {e}")))?;
     check_code(&value)?;
     let data = value.get("data");
+    let mut items = parse_rank_items(data)?;
+    let resp_session = data
+        .and_then(|d| d.get("session_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    dedup_rank_page(&mut items, if session_id.is_empty() { &resp_session } else { session_id });
     Ok(RankPage {
-        items: parse_rank_items(data)?,
+        items,
         tabs: parse_cell_selector(data),
         has_more: data
             .and_then(|d| d.get("has_more"))
@@ -93,12 +100,35 @@ pub async fn fetch_rank_ex(
             .and_then(|d| d.get("next_offset"))
             .and_then(Value::as_i64)
             .unwrap_or(0),
-        session_id: data
-            .and_then(|d| d.get("session_id"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        session_id: resp_session,
     })
+}
+
+/// 会话级翻页去重（known-issues B4）。
+///
+/// 服务端每页固定 20 条、相邻页重叠 10 条，去重原是前端义务——但那是
+/// 「每个调用点都必须记得」的隐含契约。这里在后端按 session_id 记账已
+/// 下发的 series_id，把「页间不重叠」变成接口自身的保证；已下载页在内存
+/// 里的开销按会话封顶（[`RANK_SEEN_SESSIONS`]），超出即整体重置（会话
+/// 本来就是短命的浏览上下文，重置最坏情况是下一页出现一次重叠，前端
+/// 兜底仍在）。
+fn dedup_rank_page(items: &mut Vec<RankItem>, session_id: &str) {
+    if session_id.is_empty() {
+        return;
+    }
+    static SEEN: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    > = std::sync::OnceLock::new();
+    const RANK_SEEN_SESSIONS: usize = 32;
+    let mut map = SEEN
+        .get_or_init(std::sync::Mutex::default)
+        .lock()
+        .unwrap();
+    if !map.contains_key(session_id) && map.len() >= RANK_SEEN_SESSIONS {
+        map.clear();
+    }
+    let seen = map.entry(session_id.to_string()).or_default();
+    items.retain(|it| seen.insert(it.series_id.clone()));
 }
 
 /// 展开响应 `data.cell_view.cell_selector` 的 tab → 子榜 → 面板选项表。
@@ -488,6 +518,33 @@ mod tests {
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].subs.len(), 1, "空 id 叶子保留（文案是「全部」不是「总榜」）");
         assert_eq!(tabs[0].subs[0].name, "全部");
+    }
+
+    /// 回归（known-issues B4）：相邻页重叠 10 条由后端按 session_id 记账
+    /// 去重，前端拿到的页间不再有重复；无会话（首页）不去重。
+    #[test]
+    fn dedup_rank_page_by_session() {
+        fn item(id: &str) -> RankItem {
+            RankItem {
+                series_id: id.into(),
+                ..Default::default()
+            }
+        }
+        let mut page = vec![item("a"), item("b")];
+        dedup_rank_page(&mut page, "sess-1");
+        assert_eq!(page.len(), 2, "新会话全收");
+
+        let mut page = vec![item("b"), item("c"), item("b")];
+        dedup_rank_page(&mut page, "sess-1");
+        assert_eq!(
+            page.iter().map(|i| i.series_id.as_str()).collect::<Vec<_>>(),
+            ["c"],
+            "重叠的 b 与页内重复的 b 都去掉"
+        );
+
+        let mut page = vec![item("a"), item("d")];
+        dedup_rank_page(&mut page, "");
+        assert_eq!(page.len(), 2, "无会话（首页）不去重");
     }
 
     #[test]
