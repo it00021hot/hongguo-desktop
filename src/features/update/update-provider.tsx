@@ -55,6 +55,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     [runCheck],
   );
 
+  // 只下载不安装：装不装、什么时候装，由用户在 downloaded 态点「立即更新」决定
   const startDownload = useCallback(() => {
     if (!available) return;
     setPhase('downloading');
@@ -62,7 +63,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     receivedRef.current = 0;
     totalRef.current = 0;
     void available
-      .downloadAndInstall((event) => {
+      .download((event) => {
         switch (event.event) {
           case 'Started':
             totalRef.current = event.data.contentLength ?? 0;
@@ -80,7 +81,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
             break;
         }
       })
-      .then(() => setPhase('ready'))
+      .then(() => setPhase('downloaded'))
       .catch((e) => {
         setPhase('error');
         toast.error(tf('update.downloadFailed', { error: String(e) }));
@@ -92,9 +93,18 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     setDialogOpen(false);
   }, [available]);
 
-  const restartToUpdate = useCallback(() => {
-    void relaunch();
-  }, []);
+  // Windows 上 install() 拉起静默安装器后本进程随即退出，后面的 relaunch
+  // 跑不到；macOS 换好二进制要靠 relaunch 重启——两端都兜住
+  const installUpdate = useCallback(() => {
+    if (!available) return;
+    available
+      .install()
+      .then(() => relaunch())
+      .catch((e) => {
+        setPhase('error');
+        toast.error(tf('update.installFailed', { error: String(e) }));
+      });
+  }, [available]);
 
   // 启动静默检查一次（失败保持安静——还没有 release 时 404 是常态）；
   // 版本号只用于卡片副行，取不到不挡功能。setState 都发生在网络回调里，
@@ -119,7 +129,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       checkForUpdate,
       startDownload,
       dismiss,
-      restartToUpdate,
+      installUpdate,
     }),
     [
       phase,
@@ -131,7 +141,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       checkForUpdate,
       startDownload,
       dismiss,
-      restartToUpdate,
+      installUpdate,
     ],
   );
 

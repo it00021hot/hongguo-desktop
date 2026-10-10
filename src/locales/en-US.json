@@ -315,14 +315,15 @@
     "viewNewVersion": "View new version",
     "checkFailed": "Update check failed: {error}",
     "dialogTitle": "New version {version}",
-    "downloadAndInstall": "Download and update",
+    "download": "Download update",
     "downloading": "Downloading {progress}%",
-    "ready": "Restart to update",
+    "installNow": "Update now",
     "retry": "Retry",
     "later": "Later",
     "downloadingNote": "Downloading in the background; you can keep using the app.",
-    "readyNote": "Download complete. The app restarts to finish the update; settings and login state are kept.",
+    "downloadedNote": "Update downloaded. Click \"Update now\" to install and restart — your settings and login state are kept.",
     "downloadFailed": "Download failed: {error}",
+    "installFailed": "Install failed: {error}",
     "noChangelog": "No release notes."
   },
   "settings": {

@@ -315,14 +315,15 @@
     "viewNewVersion": "查看新版本",
     "checkFailed": "检查更新失败：{error}",
     "dialogTitle": "发现新版本 {version}",
-    "downloadAndInstall": "下载并更新",
+    "download": "下载更新",
     "downloading": "下载中 {progress}%",
-    "ready": "立即更新",
+    "installNow": "立即更新",
     "retry": "重试",
     "later": "稍后",
     "downloadingNote": "正在后台下载，可以先继续使用。",
-    "readyNote": "已下载完成，更新时程序会自动重启，设置和登录状态都会保留。",
+    "downloadedNote": "更新包已下载完成，点「立即更新」才会安装并重启，设置和登录状态都会保留。",
     "downloadFailed": "下载失败：{error}",
+    "installFailed": "安装失败：{error}",
     "noChangelog": "暂无更新说明"
   },
   "settings": {

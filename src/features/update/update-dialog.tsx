@@ -11,7 +11,8 @@ import {
 import { t, tf } from '@/locales';
 import { useUpdate } from './update-context';
 
-/** 全局更新弹层（对齐 hgplayer UpdateLayer）：下载在后台走，关掉弹层不中断，
+/** 全局更新弹层：发现新版先亮出更新内容，用户点「下载更新」才开始下载
+ *  （只下载不安装，关掉弹层不中断）；下载完成后点「立即更新」才安装重启。
  *  重开入口是设置卡的「查看新版本」。 */
 export function UpdateDialog() {
   const {
@@ -21,13 +22,13 @@ export function UpdateDialog() {
     dialogOpen,
     setDialogOpen,
     startDownload,
-    restartToUpdate,
+    installUpdate,
     dismiss,
   } = useUpdate();
   if (!available) return null;
 
   // 主按钮状态机；downloading 原地禁用（下载已由 startDownload 持有，
-  // 不需要点击做任何事）
+  // 不需要点击做任何事）；error 的重试回到重新下载
   let actionLabel: string;
   let onAction: () => void;
   let actionDisabled = false;
@@ -37,16 +38,16 @@ export function UpdateDialog() {
       actionDisabled = true;
       onAction = () => {};
       break;
-    case 'ready':
-      actionLabel = t('update.ready');
-      onAction = restartToUpdate;
+    case 'downloaded':
+      actionLabel = t('update.installNow');
+      onAction = installUpdate;
       break;
     case 'error':
       actionLabel = t('update.retry');
       onAction = startDownload;
       break;
     default:
-      actionLabel = t('update.downloadAndInstall');
+      actionLabel = t('update.download');
       onAction = startDownload;
   }
 
@@ -69,9 +70,9 @@ export function UpdateDialog() {
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {(phase === 'downloading' || phase === 'ready') && (
+        {(phase === 'downloading' || phase === 'downloaded') && (
           <p className="text-muted-foreground text-sm">
-            {phase === 'downloading' ? t('update.downloadingNote') : t('update.readyNote')}
+            {phase === 'downloading' ? t('update.downloadingNote') : t('update.downloadedNote')}
           </p>
         )}
         <AlertDialogFooter>
