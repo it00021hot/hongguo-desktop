@@ -1,12 +1,22 @@
+import { coverProxyUrl } from '@/utils/cover';
+
 /**
- * 字节系图片 CDN（`~tplv-<模板>.<格式>` 后缀即输出格式）的格式改写。
+ * 头像 CDN 地址规整（评论/回复/剧评数据层统一过这里）。
  *
- * WebView2/Chromium 没有 HEIC 解码器——评论/剧评头像里的
- * `~tplv-obj.heic` 请求 200 但解码失败，整排黑圆（hgplayer 是手机
- * App，靠系统解码所以没事）。把后缀改成 `.jpeg` 让 CDN 服务端转码：
- * 2026-10-10 curl 实证同一 URL `.heic` 返回 image/heic、`.jpeg` 返回
- * image/jpeg（.webp/.png 同理可用）。
+ * 真实地址形态繁多（2026-10-10 抓样 20 条：http 签名 jpeg / https jpeg /
+ * png 模板 / 无扩展名哈希 / .heic 五种），单一「换后缀」覆盖不了：
+ *
+ * 1. `http://` → `https://`：fqnovelpic 签名 URL 同签名 https 直接 200
+ *    （curl 实证）；打包版 CSP `img-src` 没有 `http:`、macOS ATS 也拦 http。
+ * 2. `.heic` 后缀 → `.jpeg`：tplv 模板后缀即输出格式，CDN 服务端转码，
+ *    WebView2 实测可解（裸 heic 请求 200 但无解码器）。
+ * 3. 其余没有显式可渲染扩展名的（无扩展名哈希、passport 的 `.image` 等）→
+ *    hongguo-cover 本地代理：后端魔数嗅探，jpeg/png/webp 原样透传，
+ *    真是 HEIC 走既有转码阶梯，产物落盘缓存。
  */
-export function heicUrlToJpeg(url: string): string {
-  return url.endsWith('.heic') ? `${url.slice(0, -5)}.jpeg` : url;
+export function normalizeAvatarUrl(url: string): string {
+  if (!url) return url;
+  let u = url.startsWith('http://') ? `https://${url.slice(7)}` : url;
+  if (u.toLowerCase().endsWith('.heic')) u = `${u.slice(0, -5)}.jpeg`;
+  return /\.(jpeg|jpg|png|webp)(\?|$)/i.test(u) ? u : coverProxyUrl(u);
 }

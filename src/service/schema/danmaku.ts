@@ -2,7 +2,7 @@
  * 与 Rust serde 模型对应的 zod schema（弹幕 / 评论域）。
  */
 import { z } from 'zod';
-import { heicUrlToJpeg } from '@/utils/image-url';
+import { normalizeAvatarUrl } from '@/utils/image-url';
 
 /** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
 export const danmakuSchema = z.object({
@@ -20,8 +20,8 @@ export const commentItemSchema = z.object({
   /** 作者 uid（删除入口对比登录 uid 用；匿名/缺失为空串） */
   userId: z.string().default(''),
   userName: z.string(),
-  /** 头像 CDN 直链；.heic 数据层改写 .jpeg（WebView2 无 HEIC 解码器） */
-  avatar: z.string().transform(heicUrlToJpeg),
+  /** 头像 CDN 地址规整（http→https/heic→jpeg/未知格式走本地代理） */
+  avatar: z.string().transform(normalizeAvatarUrl),
   text: z.string(),
   createTime: z.number(),
   diggCount: z.number(),
@@ -66,8 +66,8 @@ export const replyItemSchema = z.object({
   /** 作者 uid（删除入口对比登录 uid 用；缺失为空串） */
   userId: z.string().default(''),
   userName: z.string(),
-  /** 头像 CDN 直链；.heic 数据层改写 .jpeg（WebView2 无 HEIC 解码器） */
-  avatar: z.string().transform(heicUrlToJpeg),
+  /** 头像 CDN 地址规整（http→https/heic→jpeg/未知格式走本地代理） */
+  avatar: z.string().transform(normalizeAvatarUrl),
   text: z.string(),
   createTime: z.number(),
   diggCount: z.number(),
