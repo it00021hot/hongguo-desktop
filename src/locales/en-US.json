@@ -222,6 +222,7 @@
       "justNow": "just now",
       "minutesAgo": "{n} min ago",
       "hoursAgo": "{n} h ago",
+      "daysAgo": "{n} d ago",
       "yesterday": "yesterday",
       "replies": "{n} replies",
       "reply": "Reply",

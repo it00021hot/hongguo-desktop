@@ -58,6 +58,23 @@ interface InfiniteStream<TPage> {
 }
 
 /**
+ * 翻页流按业务 id 去重：服务端相邻分页会重叠条目（榜单实测相邻页重叠
+ * 10 条，评论/剧评分页同样有），不去重 React 直接报 duplicate key 且
+ * 同一条目重复渲染。flatMap 之后、进列表之前必过这一道。
+ */
+export function dedupBy<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const k = keyOf(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
  * 无限滚动流的通用出口：把 useInfiniteQuery 的结果包装成旧手动累积器
  * 的形状（items/hasMore/isLoading/isFetchingMore/error/loadMore/refresh），
  * 页面侧无感迁移。翻页失败不炸整页——旧内容还在，错误就地展示。

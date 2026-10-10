@@ -9,7 +9,7 @@
  *   （reply/add 剧评形态 commit_source=13 + reply/list src=501），滚动到底
  *   自动翻页（游标 = 响应 cursor 原样回传）
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Heart, Loader2, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -18,14 +18,16 @@ import {
   useAccount,
   useReviewDigg,
   useReviewReplies,
+  useReviewReplyDigg,
   useSendReviewReply,
   useSeriesComments,
 } from '@/service/queries';
-import { keys } from '@/service/queries/common';
+import { dedupBy, keys } from '@/service/queries/common';
 import { interact } from '@/service/commands';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { formatCountPrecise } from '@/utils/format';
+import { relativeTime } from '@/utils/relative-time';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmojiText } from '@/components/common/emoji/emoji-text';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
@@ -56,28 +58,27 @@ function ScoreStars({ score }: { score: string }) {
   );
 }
 
-/** 一条剧评回复行（回复点赞与评论点赞同形态，object_id 传 reply_id）。
- *  自己的回复（userId 对上登录 uid）带删除入口。 */
+/** 一条剧评回复行（回复点赞**不是**剧评形态——与评论点赞同端点，
+ *  object_id 传 reply_id，2026-10-10 CDP 实测即时生效；显示直读回复
+ *  缓存，点赞乐观写缓存）。自己的回复（userId 对上登录 uid）带删除入口。 */
 function ReviewReplyRow({
   reply,
-  liked,
   myUserId,
   onDigg,
   onReplyTo,
   onDelete,
 }: {
   reply: ReplyItem;
-  liked: Set<string>;
   myUserId: string;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
   onDelete: (reply: ReplyItem) => void;
 }) {
-  const isLiked = liked.has(reply.replyId) || reply.userDigg;
+  const isLiked = reply.userDigg;
   const isMine = !!myUserId && reply.userId === myUserId;
   return (
     <div className="flex gap-2">
-      <div className="bg-muted grid size-6 shrink-0 place-items-center overflow-hidden rounded-full text-[10px]">
+      <div className="bg-muted grid size-8 shrink-0 place-items-center overflow-hidden rounded-full text-xs">
         {reply.avatar ? (
           <img src={reply.avatar} alt="" loading="lazy" className="size-full object-cover" />
         ) : (
@@ -87,17 +88,17 @@ function ReviewReplyRow({
       <div className="min-w-0 flex-1">
         <p className="text-muted-foreground text-[11px]">
           {reply.userName || t('player.comments.anon')}
-          {reply.replyToName && (
-            <span className="ml-1 opacity-70">
-              {t('detail.replyToPrefix')} @{reply.replyToName}
-            </span>
-          )}
         </p>
         <p className="mt-0.5 text-xs leading-snug break-words whitespace-pre-wrap">
+          {reply.replyToName && (
+            <span className="text-muted-foreground">
+              {t('detail.replyToPrefix')} @{reply.replyToName}：
+            </span>
+          )}
           <EmojiText text={reply.text} />
         </p>
         <div className="text-muted-foreground mt-0.5 flex items-center gap-3 text-[10px]">
-          <span>{new Date(reply.createTime * 1000).toLocaleDateString()}</span>
+          <span>{relativeTime(reply.createTime)}</span>
           <button
             type="button"
             onClick={() => onReplyTo(reply)}
@@ -137,7 +138,6 @@ function ReviewReplySection({
   seriesId,
   commentId,
   replyCount,
-  liked,
   myUserId,
   open,
   onToggle,
@@ -148,7 +148,6 @@ function ReviewReplySection({
   seriesId: string;
   commentId: string;
   replyCount: number;
-  liked: Set<string>;
   myUserId: string;
   open: boolean;
   onToggle: () => void;
@@ -158,7 +157,7 @@ function ReviewReplySection({
 }) {
   const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
     useReviewReplies(seriesId, commentId, open);
-  const replies = data?.pages.flatMap((p) => p.items) ?? [];
+  const replies = dedupBy(data?.pages.flatMap((p) => p.items) ?? [], (r) => r.replyId);
   if (replyCount <= 0) return null;
   return (
     <div className="mt-1.5">
@@ -199,7 +198,6 @@ function ReviewReplySection({
             <ReviewReplyRow
               key={r.replyId}
               reply={r}
-              liked={liked}
               myUserId={myUserId}
               onDigg={onDigg}
               onReplyTo={onReplyTo}
@@ -226,7 +224,12 @@ function ReviewReplySection({
 export function ReviewList({ seriesId }: { seriesId: string }) {
   const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useSeriesComments(seriesId);
   const pages = data?.pages;
-  const comments = pages?.flatMap((p) => p.items) ?? [];
+  // 按 commentId 去重：服务端相邻分页重叠条目，不去重 React 报 duplicate
+  // key 且同一条重复渲染（2026-10-10 实测 228 条里 38 组重复）
+  const comments = useMemo(
+    () => dedupBy(pages?.flatMap((p) => p.items) ?? [], (c) => c.commentId),
+    [pages],
+  );
   const first = pages?.[0];
   const reviewScore = first?.score ?? '';
   const scoreCnt = first?.scoreCnt ?? 0;
@@ -250,17 +253,18 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
     return () => io.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // 点赞：useReviewDigg 乐观更新缓存；liked 集合是本地已点覆盖（防回包漂移）
+  // 点赞：useReviewDigg 乐观更新剧评缓存（显示直读 c.userDigg，无需旁路态）；
+  // 回复点赞走 useReviewReplyDigg（评论形态端点，不是剧评形态）
   const digg = useReviewDigg(seriesId);
-  const [liked, setLiked] = useState<Set<string>>(new Set());
+  const reviewReplyDigg = useReviewReplyDigg(seriesId);
   const onDigg = (id: string, next: boolean) => {
-    setLiked((prev) => {
-      const s = new Set(prev);
-      if (next) s.add(id);
-      else s.delete(id);
-      return s;
-    });
     digg.mutate({ reviewId: id, digg: next }, { onError: (e) => toast.error(String(e)) });
+  };
+  const onReplyDigg = (parentId: string, id: string, next: boolean) => {
+    reviewReplyDigg.mutate(
+      { commentId: parentId, replyId: id, digg: next },
+      { onError: (e) => toast.error(String(e)) },
+    );
   };
 
   // 回复：剧评形态 reply/add（commit_source=13）；回复「回复」带 replyToReplyId
@@ -354,14 +358,32 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
       .deleteComment(target.id, target.serviceId)
       .then(() => {
         if (target.serviceId === 4 && target.parentId) {
+          // 回复：回复缓存摘除 + total-1，父剧评 replyCount-1——与发送
+          // 成功的 +1 对称；此前漏了计数，「展开 N 条」与实际条数对不上
           queryClient.setQueryData<InfiniteData<ReplyPage, string>>(
             keys.reviewReplies(seriesId, target.parentId),
             (prev) =>
               prev && {
                 ...prev,
+                pages: prev.pages.map((p, i) => ({
+                  ...p,
+                  total: i === 0 ? Math.max(0, p.total - 1) : p.total,
+                  items: p.items.filter((r) => r.replyId !== target.id),
+                })),
+              },
+          );
+          queryClient.setQueryData<InfiniteData<CommentPage, string>>(
+            keys.seriesComments(seriesId),
+            (prev) =>
+              prev && {
+                ...prev,
                 pages: prev.pages.map((p) => ({
                   ...p,
-                  items: p.items.filter((r) => r.replyId !== target.id),
+                  items: p.items.map((c) =>
+                    c.commentId === target.parentId
+                      ? { ...c, replyCount: Math.max(0, c.replyCount - 1) }
+                      : c,
+                  ),
                 })),
               },
           );
@@ -371,8 +393,9 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
             (prev) =>
               prev && {
                 ...prev,
-                pages: prev.pages.map((p) => ({
+                pages: prev.pages.map((p, i) => ({
                   ...p,
+                  total: i === 0 ? Math.max(0, p.total - 1) : p.total,
                   items: p.items.filter((c) => c.commentId !== target.id),
                 })),
               },
@@ -428,7 +451,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
       ) : (
         <ul className="divide-border divide-y">
           {comments.map((c) => {
-            const isLiked = liked.has(c.commentId) || c.userDigg;
+            const isLiked = c.userDigg;
             const isMine = !!myUserId && c.userId === myUserId;
             return (
               <li key={c.commentId} className="flex gap-3 py-4">
@@ -494,11 +517,10 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
                     seriesId={seriesId}
                     commentId={c.commentId}
                     replyCount={c.replyCount}
-                    liked={liked}
                     myUserId={myUserId}
                     open={openReplies.has(c.commentId)}
                     onToggle={() => setReplySectionOpen(c.commentId, !openReplies.has(c.commentId))}
-                    onDigg={onDigg}
+                    onDigg={(id, d) => onReplyDigg(c.commentId, id, d)}
                     onReplyTo={(r) => {
                       setReplyTarget(c.commentId);
                       setReplyToReply({ id: r.replyId, name: r.userName });
