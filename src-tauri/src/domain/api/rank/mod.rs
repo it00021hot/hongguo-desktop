@@ -139,8 +139,12 @@ pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
                         .filter_map(|sub| {
                             let sid = str_field(sub, "selector_item_id");
                             // 一级形态（老版本身份）下 sub 层是筛选选项，
-                            // 「总榜」的 id 为空但必须保留（前端靠它渲染回退选项）
-                            if sid.is_empty() && str_field(sub, "show_name") != "总榜" {
+                            // 「总榜」的 id 为空但必须保留（前端靠它渲染回退
+                            // 选项）。判定用结构而非文案——服务端改「总榜」
+                            // 二字时按文案过滤会静默丢掉回退选项：空 id 但带
+                            // panel_selector 的才是异常（二级子榜必须有 id），
+                            // 空 id 叶子按「全部」哨兵保留。
+                            if sid.is_empty() && sub.get("panel_selector").is_some() {
                                 return None;
                             }
                             let panel = sub
@@ -453,6 +457,37 @@ mod tests {
             "一级形态无 panel 层"
         );
         assert!(tabs[1].subs.is_empty(), "无 sub_cell_selector 收空表");
+    }
+
+    /// 回归（known-issues B2）：空 id 条目的取舍按结构判定，不依赖
+    /// 服务端文案——「总榜」改名后空 id 叶子选项仍要保留；空 id 却带
+    /// panel_selector 的是异常二级子榜，无论叫什么都丢。
+    #[test]
+    fn empty_id_kept_by_structure_not_by_label() {
+        let data: Value = serde_json::json!({
+            "cell_view": { "cell_selector": { "outer_row": { "items": [
+                {
+                    "show_name": "推荐榜",
+                    "selector_item_id": "ranklist_hot_sc",
+                    "sub_cell_selector": { "outer_row": { "items": [
+                        { "show_name": "全部", "selector_item_id": "" },
+                        {
+                            "show_name": "异常空 id 子榜",
+                            "selector_item_id": "",
+                            "panel_selector": { "inner_rows": [
+                                { "row_name": "画风", "items": [
+                                    { "show_name": "3d", "selector_item_id": "style_1685" }
+                                ] }
+                            ] }
+                        }
+                    ] }}
+                }
+            ] } } }
+        });
+        let tabs = parse_cell_selector(Some(&data));
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].subs.len(), 1, "空 id 叶子保留（文案是「全部」不是「总榜」）");
+        assert_eq!(tabs[0].subs[0].name, "全部");
     }
 
     #[test]

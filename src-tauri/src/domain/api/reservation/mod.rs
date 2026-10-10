@@ -45,19 +45,27 @@ pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<Cale
     // 翻页拉全；上限 20 页防服务端分页异常时失控，空页即止。
     // 续页 session_id 用首页响应下发的值（协议：响应下发、翻页续传）
     let mut session_id = merged.session_id.clone();
+    // 服务端分页异常的防线：offset 不前进即止；series_id 去重
+    // （重复页最多浪费一页请求，不会把角标计数撑大）
+    let mut seen: std::collections::HashSet<String> =
+        merged.items.iter().map(|i| i.series_id.clone()).collect();
     for _ in 0..19 {
         if !merged.has_more || merged.next_offset <= 0 {
             break;
         }
         let sid = Some(session_id.clone()).filter(|s| !s.is_empty());
         let next = fetch_reservations_page(is_online, merged.next_offset, sid.as_deref(), env).await?;
-        if next.items.is_empty() {
+        if next.items.is_empty() || next.next_offset <= merged.next_offset {
             break;
         }
         if session_id.is_empty() {
             session_id = next.session_id.clone();
         }
-        merged.items.extend(next.items);
+        merged.items.extend(
+            next.items
+                .into_iter()
+                .filter(|i| seen.insert(i.series_id.clone())),
+        );
         merged.has_more = next.has_more;
         merged.next_offset = next.next_offset;
     }
