@@ -31,12 +31,14 @@ import { t, tf } from '@/locales';
 import type { DanmakuDisplaySettings } from '@/utils/playback-prefs';
 import { DownloadSheet } from '../download-sheet';
 import { EpisodePicker } from '../episode-picker';
+import { ChromeSurface } from '../chrome-surface';
 import type { Episode, VideoDefinition } from '@/service/schema';
 import { DanmakuSendBox } from './danmaku-send-box';
 import { ScrubBar } from './scrub-bar';
 import { DisplaySlider } from './sliders';
 import { VolumePopup } from './volume-popup';
 import { IconButton } from './icon-button';
+import { markPickerClosed } from '../../playback-signals';
 
 /** 倍速档位与主流播放器一致，用户不用猜。 */
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
@@ -171,6 +173,8 @@ export function PlayerControls({
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const danmakuPanelRef = useRef<HTMLDivElement | null>(null);
+  /** 选集按钮 + 浮层的锚点容器：点外部关闭时用它排除「点在选集按钮上」 */
+  const seriesAnchorRef = useRef<HTMLDivElement | null>(null);
 
   /** 拖动进度时不要让 timeupdate 把用户正在拖的位置冲掉 */
   const scrubbing = useRef(false);
@@ -263,10 +267,14 @@ export function PlayerControls({
   }, [videoRef]);
 
   const toggleFullscreen = useCallback(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
+    // 全屏进的是**稳定存活的祖先**（应用壳的 main#content），不是舞台本身：
+    // 舞台随切集带 key 整体重挂载，全屏元素一被移出文档浏览器就退出全屏——
+    // 自动下一集播着播着自己跳回窗口模式，就是这儿来的。main 不随路由/
+    // 切集卸载，全屏状态自然跨集保留；视觉不变（播放页舞台本来就铺满 main）。
+    const target = (stageRef.current?.closest('main') as HTMLElement | null) ?? stageRef.current;
+    if (!target) return;
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void stage.requestFullscreen().catch(() => undefined);
+    else void target.requestFullscreen().catch(() => undefined);
   }, [stageRef]);
 
   const applyRate = useCallback(
@@ -288,6 +296,22 @@ export function PlayerControls({
     return () => document.removeEventListener('mousedown', onDown);
   }, [danmakuPanelOpen, setDanmakuPanelOpen]);
 
+  // 选集浮层点外部关闭。选中集数**不关**浮层（hgplayer 同款：连选连跳），
+  // 浮层常驻在鼠标下方，后续点击都落在浮层内部，永远到不了舞台——
+  // 「选着选着视频暂停了」的穿透从结构上不可能再发生。
+  // mousedown 先关、click 后到：关浮层打进点击冷却，这一下不会变成暂停。
+  useEffect(() => {
+    if (!seriesPanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!seriesAnchorRef.current?.contains(e.target as Node)) {
+        markPickerClosed();
+        setSeriesPanelOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [seriesPanelOpen, setSeriesPanelOpen]);
+
   const setVolumeValue = useCallback(
     (v: number) => {
       const video = videoRef.current;
@@ -299,7 +323,8 @@ export function PlayerControls({
   );
 
   return (
-    <div
+    <ChromeSurface
+      shown={visible}
       data-wheel-block
       onMouseEnter={onControlsEnter}
       onMouseLeave={onControlsLeave}
@@ -308,8 +333,6 @@ export function PlayerControls({
         // 可读性靠白色 + 投影，不靠底板——底板一加就变成一条色块，破坏了画面。
         'absolute inset-x-0 bottom-0 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
         'drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
-        'transition-opacity duration-200',
-        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
     >
       <ScrubBar
@@ -352,7 +375,11 @@ export function PlayerControls({
         <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
         <div className="ml-auto flex items-center gap-1">
-          <DropdownMenu>
+          {/* modal={false}：modal 菜单开着时会把整个 body 设成
+              pointer-events:none（只有弹层自己豁免），控件重挂载撞上它就是
+              大片区域悬浮不灵/点不动——选集浮层底下两排点不了就是它。非模态
+              菜单不动 body，行为对齐普通弹层（点外部/选中即收）。 */}
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className={cn(CHROME_BUTTON, 'font-mono')}>
                 <Gauge className="size-4" />
@@ -373,7 +400,7 @@ export function PlayerControls({
           {/* 清晰度切换。本地已下载的集只有一版，definitions 为空——
               这时按钮照常出现但置灰并说明原因：直接不渲染会让用户以为
               「这个功能本来就没有」，而在线流那一集它又出现了。 */}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -413,7 +440,7 @@ export function PlayerControls({
           </DropdownMenu>
 
           {immersive && (
-            <div className="relative flex items-center">
+            <div ref={seriesAnchorRef} className="relative flex items-center">
               <Button
                 variant="ghost"
                 size="sm"
@@ -428,13 +455,20 @@ export function PlayerControls({
               {seriesPanelOpen && (
                 // 贴着按钮向上弹（弹幕设置面板同款锚定）。宽度必须写死在
                 // wrapper 上——% 会相对按钮宽度塌缩，8 列网格直接挤死。
-                <div className="absolute right-0 bottom-full mb-3 max-h-[62vh] w-[460px] max-w-[92vw] scrollbar-thin overflow-y-auto">
+                // z-30 压过互动栏(z-20)：浮层打开时 chromeShown 恒真、互动栏
+                // 可见且可悬停，不抬层它会盖住浮层右下几列按钮（悬浮不吃、
+                // 点击被吃）。所有从控制栏向上弹的浮层统一 z-30。
+                <div className="absolute right-0 bottom-full z-30 mb-3 max-h-[62vh] w-[460px] max-w-[92vw] scrollbar-thin overflow-y-auto">
                   <EpisodePicker
                     seriesId={seriesId}
                     currentIndex={currentIndex}
                     hint={pickerHint}
                     onSelect={(idx) => onPickEpisode?.(idx)}
-                    onClose={() => setSeriesPanelOpen(false)}
+                    onClose={() => {
+                      // 打点给舞台点击冷却用（浮层一关，跟手点击别变暂停）
+                      markPickerClosed();
+                      setSeriesPanelOpen(false);
+                    }}
                   />
                 </div>
               )}
@@ -469,7 +503,7 @@ export function PlayerControls({
               />
             </IconButton>
             {danmakuPanelOpen && (
-              <div className="absolute right-0 bottom-full mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
+              <div className="absolute right-0 bottom-full z-30 mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
                 <div className="flex flex-col gap-4">
                   <DisplaySlider
                     label={t('player.danmakuOpacity')}
@@ -540,6 +574,6 @@ export function PlayerControls({
         open={downloading}
         onOpenChange={onDownloadingChange}
       />
-    </div>
+    </ChromeSurface>
   );
 }
