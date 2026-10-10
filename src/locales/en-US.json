@@ -232,6 +232,7 @@
       "expandReplies": "Show {n} replies",
       "collapseReplies": "Hide replies",
       "moreReplies": "Show more replies",
+      "repliesLoadFailed": "Failed to load replies, tap to retry",
       "loadMore": "Load more comments ({n} left)",
       "preparing": "Preparing this episode…"
     },
@@ -593,6 +594,7 @@
     "replyToPrefix": "Reply to",
     "expandReplies": "Show {n} replies",
     "collapseReplies": "Hide replies",
-    "moreReplies": "Show more replies"
+    "moreReplies": "Show more replies",
+    "repliesLoadFailed": "Failed to load replies, tap to retry"
   }
 }

@@ -51,8 +51,10 @@ function relativeTime(unixSec: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-/** 本地追加的一条回复（自己发的；服务端列表有延迟，先上屏） */
+/** 本地追加的一条回复（自己发的；服务端列表有延迟，先上屏）。
+ *  id 是 reply/add 返回的 reply_id——服务端列表迟到后按它去重。 */
 interface LocalReply {
+  id?: string;
   text: string;
   /** 回复「回复」时对方内容摘要（「回复 @xxx」展示用） */
   replyTo?: string;
@@ -135,7 +137,9 @@ function ReplyRow({
   );
 }
 
-/** 「展开 N 条回复」区：展开才拉首页，一页 10 条，hasMore 续拉。 */
+/** 「展开 N 条回复」区：展开才拉首页，一页 10 条，hasMore 续拉。
+ *  开合受控于父组件——hgplayer 同款：回复发送成功后强制展开，让
+ *  本地追加的那条立刻可见（折叠时发回复 = 「没效果」的根源）。 */
 function ReplySection({
   vid,
   commentId,
@@ -143,6 +147,8 @@ function ReplySection({
   localReplies,
   liked,
   myUserId,
+  open,
+  onToggle,
   onDigg,
   onReplyTo,
   onDeleteReply,
@@ -153,23 +159,24 @@ function ReplySection({
   localReplies: LocalReply[];
   liked: Set<string>;
   myUserId: string;
+  open: boolean;
+  onToggle: () => void;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
   onDeleteReply: (reply: ReplyItem) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useCommentReplies(
-    vid,
-    commentId,
-    open,
-  );
+  const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
+    useCommentReplies(vid, commentId, open);
   const replies = data?.pages.flatMap((p) => p.items) ?? [];
+  // 服务端列表迟到后会把刚发的回复也带回来，按本地已追加的 reply_id 去重
+  const localIds = new Set(localReplies.map((r) => r.id).filter(Boolean));
+  const serverReplies = replies.filter((r) => !localIds.has(r.replyId));
   return (
     <div className="mt-1">
       {replyCount > 0 && (
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={onToggle}
           className="flex cursor-pointer items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-200"
         >
           {open ? (
@@ -192,7 +199,16 @@ function ReplySection({
               <Loader2 className="size-3.5 animate-spin" />
             </div>
           )}
-          {replies.map((r) => (
+          {error && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="cursor-pointer text-left text-[11px] text-neutral-500 hover:text-neutral-300"
+            >
+              {t('player.comments.repliesLoadFailed')}
+            </button>
+          )}
+          {serverReplies.map((r) => (
             <ReplyRow
               key={r.replyId}
               reply={r}
@@ -268,6 +284,15 @@ export function CommentPanel({ vid, onClose }: Props) {
   const [replyText, setReplyText] = useState('');
   /** 自己发的回复（commentId → 本地追加），服务端列表有延迟先上屏 */
   const [localReplies, setLocalReplies] = useState<Record<string, LocalReply[]>>({});
+  /** 展开了回复区的评论（受控：回复发送成功后强制展开，对齐 hgplayer） */
+  const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
+  const setReplySectionOpen = (commentId: string, open: boolean) =>
+    setOpenReplies((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(commentId);
+      else next.delete(commentId);
+      return next;
+    });
   /** 待确认删除的目标（comment/del service_id=4；parentId 在场 = 回复） */
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; parentId?: string } | null>(null);
   const queryClient = useQueryClient();
@@ -346,17 +371,19 @@ export function CommentPanel({ vid, onClose }: Props) {
         text: content,
       },
       {
-        onSuccess: () => {
+        onSuccess: (replyId) => {
           setLocalReplies((prev) => ({
             ...prev,
             [parent.commentId]: [
               ...(prev[parent.commentId] ?? []),
-              { text: content, replyTo: replyToReply?.name },
+              { id: replyId, text: content, replyTo: replyToReply?.name },
             ],
           }));
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
+          // hgplayer 同款：发送成功强制展开回复区，让新回复立刻可见
+          setReplySectionOpen(parent.commentId, true);
         },
         onError: (e) => toast.error(String(e)),
       },
@@ -494,6 +521,10 @@ export function CommentPanel({ vid, onClose }: Props) {
                         localReplies={localReplies[c.commentId] ?? []}
                         liked={liked}
                         myUserId={myUserId}
+                        open={openReplies.has(c.commentId)}
+                        onToggle={() =>
+                          setReplySectionOpen(c.commentId, !openReplies.has(c.commentId))
+                        }
                         onDigg={onDigg}
                         onReplyTo={(r) => openReplyTo(c.commentId, r)}
                         onDeleteReply={(r) =>

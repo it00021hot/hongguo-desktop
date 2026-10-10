@@ -148,23 +148,26 @@ function ReviewReplySection({
   replyCount: number;
   liked: Set<string>;
   myUserId: string;
+  /** 自己发的回复（本地先上屏；id 供服务端列表迟到后去重） */
+  localReplies: { id?: string; text: string; replyTo?: string }[];
+  open: boolean;
+  onToggle: () => void;
   onDigg: (id: string, digg: boolean) => void;
   onReplyTo: (reply: ReplyItem) => void;
   onDeleteReply: (reply: ReplyItem) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const { data, isPending, isFetchingNextPage, hasNextPage, fetchNextPage } = useReviewReplies(
-    seriesId,
-    commentId,
-    open,
-  );
+  const { data, isPending, error, refetch, isFetchingNextPage, hasNextPage, fetchNextPage } =
+    useReviewReplies(seriesId, commentId, open);
   const replies = data?.pages.flatMap((p) => p.items) ?? [];
+  // 服务端列表迟到后按本地已追加的 reply_id 去重
+  const localIds = new Set(localReplies.map((r) => r.id).filter(Boolean));
+  const serverReplies = replies.filter((r) => !localIds.has(r.replyId));
   if (replyCount <= 0) return null;
   return (
     <div className="mt-1.5">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggle}
         className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1 text-xs"
       >
         {open ? (
@@ -186,7 +189,16 @@ function ReviewReplySection({
               <Loader2 className="size-3.5 animate-spin" />
             </div>
           )}
-          {replies.map((r) => (
+          {error && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="text-muted-foreground hover:text-foreground cursor-pointer text-left text-xs"
+            >
+              {t('detail.repliesLoadFailed')}
+            </button>
+          )}
+          {serverReplies.map((r) => (
             <ReviewReplyRow
               key={r.replyId}
               reply={r}
@@ -196,6 +208,22 @@ function ReviewReplySection({
               onReplyTo={onReplyTo}
               onDelete={onDeleteReply}
             />
+          ))}
+          {/* 自己发的回复（本地追加，服务端列表有延迟） */}
+          {localReplies.map((r, i) => (
+            <div key={`local-${i}`} className="text-xs leading-snug">
+              <span className="text-muted-foreground mr-1 inline-flex items-center">
+                {t('player.comments.me')}
+              </span>
+              {r.replyTo && (
+                <span className="text-muted-foreground mr-1">
+                  {t('detail.replyToPrefix')}@{r.replyTo.slice(0, 12)}
+                </span>
+              )}
+              <span className="break-words whitespace-pre-wrap">
+                <EmojiText text={r.text} />
+              </span>
+            </div>
           ))}
           {hasNextPage && (
             <button
@@ -259,17 +287,38 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
+  /** 自己发的回复（剧评 id → 本地先上屏；服务端列表有索引延迟） */
+  const [localReplies, setLocalReplies] = useState<
+    Record<string, { id?: string; text: string; replyTo?: string }[]>
+  >({});
+  /** 展开了回复区的剧评（受控：发送成功强制展开，对齐 hgplayer） */
+  const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
+  const setReplySectionOpen = (reviewId: string, open: boolean) =>
+    setOpenReplies((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(reviewId);
+      else next.delete(reviewId);
+      return next;
+    });
   const submitReply = (reviewId: string) => {
     const content = replyText.trim();
     if (!content || sendReply.isPending) return;
     sendReply.mutate(
       { replyToCommentId: reviewId, replyToReplyId: replyToReply?.id, text: content },
       {
-        onSuccess: () => {
+        onSuccess: (replyId) => {
+          setLocalReplies((prev) => ({
+            ...prev,
+            [reviewId]: [
+              ...(prev[reviewId] ?? []),
+              { id: replyId, text: content, replyTo: replyToReply?.name },
+            ],
+          }));
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
-          toast.success(t('detail.replySent'));
+          // hgplayer 同款：发送成功强制展开回复区，新回复立刻可见
+          setReplySectionOpen(reviewId, true);
         },
         onError: (e) => toast.error(String(e)),
       },
@@ -429,13 +478,16 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
                       </button>
                     )}
                   </div>
-                  {/* 回复列表（剧评维度）：展开按需拉取；回复行可二级回复 */}
+                  {/* 回复列表（剧评维度）：展开按需拉取；自己发的回复本地追加 */}
                   <ReviewReplySection
                     seriesId={seriesId}
                     commentId={c.commentId}
                     replyCount={c.replyCount}
                     liked={liked}
                     myUserId={myUserId}
+                    localReplies={localReplies[c.commentId] ?? []}
+                    open={openReplies.has(c.commentId)}
+                    onToggle={() => setReplySectionOpen(c.commentId, !openReplies.has(c.commentId))}
                     onDigg={onDigg}
                     onReplyTo={(r) => {
                       setReplyTarget(c.commentId);

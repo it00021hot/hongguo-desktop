@@ -232,6 +232,7 @@
       "expandReplies": "展开 {n} 条回复",
       "collapseReplies": "收起回复",
       "moreReplies": "展开更多回复",
+      "repliesLoadFailed": "回复加载失败，点重试",
       "loadMore": "加载更多评论（还有 {n} 条）",
       "preparing": "正在准备这一集…"
     },
@@ -593,6 +594,7 @@
     "replyToPrefix": "回复",
     "expandReplies": "展开 {n} 条回复",
     "collapseReplies": "收起回复",
-    "moreReplies": "展开更多回复"
+    "moreReplies": "展开更多回复",
+    "repliesLoadFailed": "回复加载失败，点重试"
   }
 }
