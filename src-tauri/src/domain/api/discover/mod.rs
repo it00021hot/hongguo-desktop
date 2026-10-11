@@ -67,13 +67,16 @@ pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
 ///
 /// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
 /// 每页 20 条（用户指定；响应 next_offset 游标会跟着走，翻页无算术依赖）。
+///
+/// 2026-10-11 抓 hgplayer 1.1.8 实流对齐：`creation_status` 仅在选中时在参，
+/// 全部选省略整个键（他家不发空串）。
 pub async fn fetch_browse(
     filters: &BrowseFilters,
     offset: i64,
     session_id: &str,
     env: &ApiEnv,
 ) -> AppResult<FeedPage> {
-    let body = serde_json::to_vec(&serde_json::json!({
+    let mut body = serde_json::json!({
         "client_req_type": 3,
         "filter_ids": "",
         "limit": 20,
@@ -83,10 +86,13 @@ pub async fn fetch_browse(
         "req_type": "only_content",
         "select_items": filters.to_select_items(),
         "session_id": session_id,
-        // 完结状态筛选（2026-10-11 逆向 hgplayer 1.1.8 Category）：客户端
-        // 合成的「完结状态」行选中值走 body 顶层，空串=全部
-        "creation_status": filters.creation_status,
-    }))
+    });
+    // 完结状态筛选（hgplayer 1.1.8 同款）：客户端合成的「完结状态」行选中值
+    // 走 body 顶层；全部选时不发该键（抓包实锤他家省略）
+    if !filters.creation_status.is_empty() {
+        body["creation_status"] = serde_json::Value::String(filters.creation_status.clone());
+    }
+    let body = serde_json::to_vec(&body)
     .map_err(|e| AppError::Signer(e.to_string()))?;
     let bytes = api_call_full(API_ORIGIN, LANDPAGE_PATH, Some(body), &[], env).await?;
     let value: Value = serde_json::from_slice(&bytes)
