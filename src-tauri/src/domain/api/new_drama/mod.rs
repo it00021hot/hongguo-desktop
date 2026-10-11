@@ -34,6 +34,8 @@ pub async fn fetch_new_drama(
         ("change_type", "1"),
         ("client_req_type", "1"),
         ("limit", "18"),
+        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；个性化混排）
+        ("need_personal_recommend", "1"),
         ("offset", offset.to_string().as_str()),
     ]
     .into_iter()

@@ -297,6 +297,9 @@ async fn recommend_cell_change(
         ("client_req_type", "2"),
         ("client_template", "7"),
         ("limit", "0"),
+        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；缺了服务端
+        // 回非个性化混排，条目集与第三方对不上）
+        ("need_personal_recommend", "1"),
         ("offset", &offset.to_string()),
         ("plan_id", cfg.bookstore_id.as_str()),
         ("tab_type", tab),

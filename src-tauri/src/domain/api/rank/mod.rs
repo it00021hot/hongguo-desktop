@@ -61,8 +61,10 @@ pub async fn fetch_rank_ex(
         ("client_req_type", "2"),
         ("client_template", "2"),
         ("gender", "2"),
-        // 抓包原样：limit 恒 "0"（页长服务端固定 20，limit 参数不参与）
+        // 抓包原样：limit 恒 "0"（页长服务端定，limit 参数不参与）
         ("limit", "0"),
+        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；个性化混排）
+        ("need_personal_recommend", "1"),
         ("offset", &offset.to_string()),
         ("sub_selected_items", sub),
         // 面板 schema（unlimited_selector）随请求下发，抓包恒带 2
