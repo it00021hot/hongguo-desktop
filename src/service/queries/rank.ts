@@ -82,10 +82,15 @@ function newDramaItems(pages: RankPage[]) {
 export function useNewDrama(gender: number) {
   const query = useInfiniteQuery({
     queryKey: keys.newDrama(gender),
-    queryFn: ({ pageParam }) => rank.newDrama(gender, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (last, allPages) =>
-      last.items.length > 0 ? allPages.reduce((n, p) => n + p.items.length, 0) : undefined,
+    // pageParam 结构化：offset + 上一页回传的 session_id（抓包实锤翻页
+    // 必须回传；首页不传）
+    queryFn: ({ pageParam }) => rank.newDrama(gender, pageParam.offset, pageParam.sessionId),
+    initialPageParam: { offset: 0, sessionId: '' },
+    getNextPageParam: (last, allPages) => {
+      if (last.items.length === 0) return undefined;
+      const offset = allPages.reduce((n, p) => n + p.items.length, 0);
+      return { offset, sessionId: last.sessionId };
+    },
     staleTime: 0,
   });
   return useInfiniteStream(query, newDramaItems);

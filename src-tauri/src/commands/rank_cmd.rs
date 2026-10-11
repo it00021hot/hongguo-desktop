@@ -42,15 +42,22 @@ pub async fn rank_list(
     .await
 }
 
-/// 新剧推荐（gender: 2=全部；offset 翻页步长 18）。
+/// 新剧推荐（gender: 2=全部；offset 翻页步长 18；session_id 翻页回传）。
 #[tauri::command]
 pub async fn new_drama_list(
     state: State<'_, AppState>,
     gender: Option<i64>,
     offset: Option<i64>,
+    session_id: Option<String>,
 ) -> AppResult<RankPage> {
     let env = state.api_env();
-    fetch_new_drama(gender.unwrap_or(2), offset.unwrap_or(0), &env).await
+    fetch_new_drama(
+        gender.unwrap_or(2),
+        offset.unwrap_or(0),
+        session_id.as_deref(),
+        &env,
+    )
+    .await
 }
 
 /// 找剧搜索（首页 offset=0 且不传 search_id；翻页传上一页返回值）。

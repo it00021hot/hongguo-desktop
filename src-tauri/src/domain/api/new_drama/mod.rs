@@ -17,8 +17,17 @@ use crate::error::{AppError, AppResult};
 pub const NEW_DRAMA_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/";
 
 /// 新剧推荐页（`cell_gender`：2=全部，其余见抓包；分页 offset/limit）。
-pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResult<RankPage> {
-    let q: Vec<(String, String)> = [
+/// 新剧推荐页（`cell_gender`：2=全部，其余见抓包；分页 offset/limit）。
+///
+/// 翻页必须回传上一页响应的 `session_id`（2026-10-11 抓 hgplayer 1.1.8
+/// 实流：第二页起 session_id 每页都在参；首页不传）。
+pub async fn fetch_new_drama(
+    gender: i64,
+    offset: i64,
+    session_id: Option<&str>,
+    env: &ApiEnv,
+) -> AppResult<RankPage> {
+    let mut q: Vec<(String, String)> = [
         ("cell_id", "7431550523368554558"),
         ("selected_items", "firstonlinetime_new"),
         ("cell_gender", gender.to_string().as_str()),
@@ -30,6 +39,9 @@ pub async fn fetch_new_drama(gender: i64, offset: i64, env: &ApiEnv) -> AppResul
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
+    if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+        q.push(("session_id".to_string(), sid.to_string()));
+    }
     let bytes = api_call_reading(LQ_API_ORIGIN, NEW_DRAMA_CELL_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析新剧失败: {e}")))?;
@@ -64,7 +76,7 @@ pub(crate) mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_new_drama() {
         let env = hg_env(&anon_env());
-        let page = fetch_new_drama(2, 0, &env).await.expect("新剧推荐");
+        let page = fetch_new_drama(2, 0, None, &env).await.expect("新剧推荐");
         println!(
             "[new-drama] {} 条, #1={:?}",
             page.items.len(),
