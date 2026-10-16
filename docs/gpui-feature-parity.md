@@ -43,6 +43,18 @@
 | 1 | 侧栏账户区：Tauri 已登录点头像进设置页（退出在设置页账户卡）；GPUI 曾直接「退出登录」、无头像/昵称 | `app-sidebar.tsx:160-210` vs `shell.rs` render_sidebar | ✅ 2026-10-17（头像/昵称/点心进设置页；登录墙统一 toast+切设置页） |
 | 2 | UI 偏好持久化：Tauri 持久化 `sidebarCollapsed`（默认折叠）/`aibotPopupOn`/`browseFiltersCollapsed` | `src/stores/ui.ts` | ✅ 2026-10-17（`ui_prefs.rs` 三项齐） |
 | 3 | 更新通道：GPUI 设置页自述「暂未接入更新通道」 | `settings.rs:1196` | 待定（GPUI 未入发布管线，先确认是否要求对齐） |
+| 4 | 主题切换：Tauri 顶栏三档（`theme-switch.tsx`：跟随系统/亮色/暗色，persist `hongguo-theme`，默认 auto）；GPUI 原为固定深色 | `src/stores/theme.ts`、`src/components/layout/theme-switch.tsx` | ✅ 2026-10-17（`ui_prefs.theme` + 设置页「外观」卡；auto 观察窗口外观实时跟随；显式档位钉住窗口外观）。**入口位置是有意偏差**：Tauri 在顶栏，GPUI 顶栏是平台拖拽区（自绘可点控件会被原生命中测试判成拖拽吞掉，见 `shell.rs` render_title_bar 注释） |
+| 5 | 界面语言切换：Tauri 顶栏中/英切换（`ThemeSwitch` 同排的 Languages 菜单，`src/locales/` 两份文案） | `theme-switch.tsx:44-57` | ⏳ 待裁决：GPUI 全量文案是硬编码中文，做 i18n 是全仓文案扫一遍的大工程；先确认是否要求对齐 |
+
+附注（顶栏结构偏差，一并留给用户裁决）：Tauri 顶栏 = 固定常显的分类 tab 槽 +
+置顶钮 + 主题/语言 + 窗口钮；GPUI 顶栏是组件库 TitleBar（整条为平台拖拽区），
+只能放不可点内容——分类 tab 因此仍在舞台顶部悬浮层、置顶/主题入口分散在
+舞台/设置页。要完全对齐需要上游支持「拖拽区内的可点控件」（gpui-kit
+`TitleBar` 目前只会把整条标 Drag），或自绘标题栏并自己实现拖拽/双击最大化。
+
+附注（主题默认变化）：本次后 GPUI 默认「跟随系统」（= Tauri 默认 auto 口径）；
+本机 Windows 当前为浅色应用外观，所以 GPUI 壳开箱即浅色，想要深色在设置页
+选「暗色」即可（此前是硬编码深色）。
 
 ### 本轮顺带修复（验证中发现）
 
