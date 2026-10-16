@@ -222,6 +222,8 @@ impl super::HomeView {
             player.pause();
             // 暂停 = 用户在场，系统可以休眠；主流播放器同语义
             crate::play_activity::set_active(false);
+            // 暂停 = force 落盘 + 补一条观看历史（Tauri persist(force) 同款）
+            self.save_progress_now();
         }
         self.wake_controls(cx);
         cx.notify();

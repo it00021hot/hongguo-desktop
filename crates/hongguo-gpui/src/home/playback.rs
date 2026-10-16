@@ -36,6 +36,9 @@ struct PlayRequest {
     start_override: Option<f64>,
 }
 
+/// 观看历史首报门槛（秒）：起播 ≥5 秒才记第一条（Tauri 同款，防噪点）。
+const HISTORY_FIRST_REPORT_SECS: f64 = 5.0;
+
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
     /// 越过第 1 集原地不动；滚过末集 = 剧终，走剧终接力（下一季 → 信息流
@@ -346,6 +349,10 @@ impl super::HomeView {
                         }
                         handle.set_volume(view.volume);
                         handle.set_muted(view.muted);
+                        // 换引擎前的 force 落盘 + 观看历史（Tauri 切集
+                        // persist(force) 同款）：旧引擎与旧 now 还在手里，
+                        // 读数有效；首次起播 player 为空自然跳过
+                        view.save_progress_now();
                         view.player = Some(handle);
                         // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
                         // 别的剧即解除，同剧连播保持
@@ -494,6 +501,7 @@ impl super::HomeView {
                 definitions: prepared.definitions,
                 definition: prepared.definition,
                 vid: ep.vid.clone(),
+                cover: item.cover.clone(),
             },
         ))
     }
@@ -899,12 +907,17 @@ impl super::HomeView {
             return;
         }
         self.last_save = Instant::now();
-        self.save_progress_now();
+        self.save_progress_inner(false);
     }
 
     /// 立即落一次进度（不带节流）：关小屏等「要走了」的时刻强制落，
-    /// 别让最后一段播放丢在节流窗里（Tauri onPause 强落同款）。
+    /// 别让最后一段播放丢在节流窗里（Tauri onPause 强落同款）；同时强制
+    /// 记一条观看历史（切集/暂停/离开的 force 路径，Tauri 同款）。
     pub(super) fn save_progress_now(&mut self) {
+        self.save_progress_inner(true);
+    }
+
+    fn save_progress_inner(&mut self, force_history: bool) {
         let Some((handle, now)) = self.player.as_ref().zip(self.now.clone()) else {
             return;
         };
@@ -916,5 +929,56 @@ impl super::HomeView {
             })
             .await;
         });
+        self.record_watch_history(force_history);
+    }
+
+    /// 观看历史记录（issue #10）：本地必记 + 登录态顺路上报云端（走
+    /// `history_service::record`，与 Tauri record_watch_history 命令同一段
+    /// service）。节奏与 Tauri `use-playback-progress` 的实际行为一致：
+    /// **起播 ≥5 秒首报一次**，之后由 force 事件（暂停/切集/离开）补记；
+    /// <5 秒的掠过一律不记（防「快滑一路全是 1 秒噪点行」）。
+    fn record_watch_history(&mut self, force: bool) {
+        let Some((handle, now)) = self.player.as_ref().zip(self.now.clone()) else {
+            return;
+        };
+        let (pos, dur) = (handle.position_secs(), handle.duration_secs());
+        if pos < HISTORY_FIRST_REPORT_SECS || now.vid.trim().is_empty() {
+            return;
+        }
+        let key = format!("{}:{}", now.series_id, now.vid_index);
+        if self.history_report_key != key {
+            self.history_report_key = key;
+            self.history_reported = 0;
+        }
+        if !force && self.history_reported > 0 {
+            return;
+        }
+        self.history_reported += 1;
+        let item = hongguo_common::model::LocalHistoryItem {
+            series_id: now.series_id.clone(),
+            title: now.title.clone(),
+            cover: now.cover.clone(),
+            vid_index: now.vid_index,
+            vid: now.vid.clone(),
+            position_ms: (pos * 1000.0).round() as i64,
+            duration_ms: (dur * 1000.0).round() as i64,
+            episode_cnt: now.episode_count as u32,
+            updated_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+        };
+        let state = Arc::clone(&self.state);
+        bridge::spawn(async move {
+            if let Err(e) = hongguo_service::history_service::record(&state, &item).await {
+                log::warn!("[Home] 观看历史记录失败（忽略）: {e}");
+            }
+        });
+        log::debug!(
+            "[Home] 观看历史记录 #{}（{}:{}, {pos:.1}s）",
+            self.history_reported,
+            now.series_id,
+            now.vid_index
+        );
     }
 }

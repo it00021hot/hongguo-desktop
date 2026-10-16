@@ -117,6 +117,8 @@ struct NowPlaying {
     definition: u32,
     /// 本集的 vid（弹幕 group_id）
     vid: String,
+    /// 封面 URL（观看历史记录用；直播流条目自带，档案回填的流可能为空）
+    cover: String,
 }
 
 // ---------------------------------------------------------------- 视图
@@ -401,6 +403,11 @@ pub struct HomeView {
 
     wheel_at: Option<Instant>,
     last_save: Instant,
+    /// 观看历史记录节拍（issue #10 节奏对齐 Tauri）：键 = series:集号，
+    /// 切集清零；本集已记录次数（起播 ≥5 秒首报一次，之后由 force 事件
+    /// ——暂停/切集/离开——补记，与 Tauri 实际行为一致）。
+    history_report_key: String,
+    history_reported: u64,
     /// 播放快捷键的焦点锚：键盘事件只派发给焦点子树，舞台持有一个
     /// FocusHandle（见 render_stage），首次渲染播种、点舞台带回。
     focus: gpui_kit::FocusHandle,
@@ -598,6 +605,8 @@ impl HomeView {
             progress_bounds: Rc::new(Cell::new(None)),
             wheel_at: None,
             last_save: Instant::now(),
+            history_report_key: String::new(),
+            history_reported: 0,
             focus: cx.focus_handle(),
             focus_seeded: false,
             shortcut_keys: prefs.keys.clone(),

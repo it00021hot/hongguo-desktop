@@ -131,6 +131,7 @@ impl HomeView {
             definitions: fx::definitions(),
             definition: 1080,
             vid: "preview-vid".into(),
+            cover: String::new(),
         });
         self.controls_until = Some(
             Instant::now() + std::time::Duration::from_secs(super::controls::CONTROLS_HOLD_SECS),

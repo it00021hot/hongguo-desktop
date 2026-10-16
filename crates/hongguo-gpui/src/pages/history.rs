@@ -1,10 +1,12 @@
 //! 观看历史页（Tauri `/history` = `history-page.tsx` 的 GPUI 对齐）。
 //!
-//! 云端观看记录（read_history/list，book_type=2 短剧过滤）：行式列表
-//! （封面 + 标题 + 进度徽标 + 相对时间 + 继续播放），顶部「全部/未看完/
-//! 已看完」筛选与标题搜索，管理模式下多选批量删除。数据与操作走
-//! `hongguo_api::history`（fetch_watch_history / delete_watch_history），
-//! 与 Tauri 的 watch_history 系列 command 同一段。
+//! **双模式**（Tauri issue #10 同款）：登录 = 云端观看记录
+//! （read_history/list，book_type=2 短剧过滤，跨设备）；未登录 = 本地
+//! 观看记录（播放时已落库，删除只动本机，页面顶部给「未登录」提示行）。
+//! 行式列表（封面 + 标题 + 进度徽标 + 相对时间 + 继续播放），顶部
+//! 「全部/未看完/已看完」筛选与标题搜索，管理模式下多选批量删除
+//! （云端一条请求；本地逐剧删）。云端数据与操作走 `hongguo_api::history`，
+//! 本地走 `hongguo_store`，与 Tauri 的 history command 同一段。
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -21,6 +23,7 @@ use gpui_kit::{
     App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
 };
 use hongguo_api::history::WatchHistoryItem;
+use hongguo_common::model::LocalHistoryItem;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
@@ -66,6 +69,21 @@ fn is_finished(item: &WatchHistoryItem) -> bool {
     item.episode_cnt > 0 && item.vid_index.max(1) >= item.episode_cnt
 }
 
+/// 本地条目 → 渲染行（字段与云端同形；u32 集号升为 i64 统一口径）。
+fn row_from_local(item: &LocalHistoryItem) -> WatchHistoryItem {
+    WatchHistoryItem {
+        series_id: item.series_id.clone(),
+        title: item.title.clone(),
+        cover: item.cover.clone(),
+        vid_index: i64::from(item.vid_index),
+        vid: item.vid.clone(),
+        position_ms: item.position_ms,
+        duration_ms: item.duration_ms,
+        episode_cnt: i64::from(item.episode_cnt),
+        updated_at_ms: item.updated_at_ms,
+    }
+}
+
 enum Phase {
     Loading,
     Failed(String),
@@ -87,6 +105,8 @@ pub(crate) struct HistoryView {
     /// 渐进渲染：首批 20 行，「加载更多」按钮每批 +40（Tauri 用滚动哨兵
     /// 自动续载；GPUI 先给显式入口，语义相同、列表长度不设上限）。
     visible_count: usize,
+    /// 预览种子用的登录态开关（真实壳恒 false，以 settings 的 account 为准）。
+    preview_logged_in: bool,
 }
 
 impl HistoryView {
@@ -115,10 +135,17 @@ impl HistoryView {
             deleting: false,
             loading: false,
             visible_count: 20,
+            preview_logged_in: false,
         }
     }
 
-    /// 拉云端历史（首屏一页，与 Tauri watchHistory.list() 同款）。
+    /// 登录态（settings 里有账号即已登录，与首页同口径）。
+    fn logged_in(&self) -> bool {
+        self.state.settings().account.is_some() || self.preview_logged_in
+    }
+
+    /// 拉历史（双模式，Tauri 同款）：登录 = 云端首屏一页；未登录 = 本地
+    /// 观看记录（播放时已落库，全量读）。
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
         if self.loading {
             return;
@@ -128,6 +155,41 @@ impl HistoryView {
             self.phase = Phase::Loading;
         }
         cx.notify();
+        if !self.logged_in() {
+            // 本地模式（issue #10）
+            let state = Arc::clone(&self.state);
+            let rx = bridge::spawn(async move {
+                tokio::task::spawn_blocking(move || state.store.local_history_list())
+                    .await
+                    .expect("阻塞池 join")
+            });
+            cx.spawn(async move |this, cx| {
+                let result = rx.await.expect("tokio 桥不会丢弃发送端");
+                this.update(cx, |view, cx| {
+                    view.loading = false;
+                    match result {
+                        Ok(items) => {
+                            log::info!("[History] GPUI 壳本地模式 -> {} 条", items.len());
+                            view.items = items.iter().map(row_from_local).collect();
+                            view.selected.clear();
+                            view.visible_count = 20;
+                            view.phase = Phase::Loaded;
+                            view.load_covers(&view.items.clone(), cx);
+                        }
+                        Err(e) => {
+                            log::warn!("[History] GPUI 壳本地读取失败: {e}");
+                            if view.items.is_empty() {
+                                view.phase = Phase::Failed(format!("{e}"));
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
             let env = state.api_env();
@@ -185,7 +247,8 @@ impl HistoryView {
         }
     }
 
-    /// 批量删除云端历史（一个请求，Tauri useWatchHistoryDelete 同款）。
+    /// 批量删除历史：云端一条请求（useWatchHistoryDelete 同款）；本地逐剧
+    /// 删（useLocalHistoryDelete 同款）。
     fn batch_delete(&mut self, cx: &mut Context<Self>) {
         if self.deleting {
             return;
@@ -202,10 +265,20 @@ impl HistoryView {
         self.deleting = true;
         cx.notify();
         let total = refs.len();
-        let state = Arc::clone(&self.state);
+        let local_mode = !self.logged_in();
+        let state_local = Arc::clone(&self.state);
+        let state_cloud = Arc::clone(&self.state);
+        let ids: Vec<String> = refs.iter().map(|(sid, _, _)| sid.clone()).collect();
         let rx = bridge::spawn(async move {
-            let env = state.api_env();
-            hongguo_api::history::delete_watch_history(&refs, &env).await
+            if local_mode {
+                // 本地模式：逐剧删（只动本机，Tauri localDelete 同款）
+                tokio::task::spawn_blocking(move || state_local.store.delete_local_history(&ids))
+                    .await
+                    .expect("阻塞池 join")
+            } else {
+                let env = state_cloud.api_env();
+                hongguo_api::history::delete_watch_history(&refs, &env).await
+            }
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
@@ -484,10 +557,13 @@ impl HistoryView {
     }
 
     /// 预览种子（screenshot feature）：灌假历史行，跳过网络。
-    /// `history-empty` = 空态；`history-manage` = 管理模式（前两条已选）。
+    /// `history-empty` = 空态；`history-manage` = 管理模式（前两条已选）；
+    /// `history-local` = 未登录本地模式（顶部提示行）。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_preview_seed(&mut self, scene: &str, cx: &mut Context<Self>) {
         let empty = scene == "history-empty";
+        // 本地模式场景之外都按登录态出图（本地场景留给提示行形态）
+        self.preview_logged_in = scene != "history-local";
         self.phase = Phase::Loaded;
         self.loading = false;
         self.items = if empty {
@@ -641,6 +717,17 @@ impl gpui_kit::Render for HistoryView {
         };
         let toolbar = (matches!(self.phase, Phase::Loaded) && !self.items.is_empty())
             .then(|| self.render_toolbar(cx));
+        // 未登录提示行（issue #10）：本地模式可记可管、数据不上云
+        let local_hint = (!self.logged_in() && !self.items.is_empty()).then(|| {
+            let theme = cx.theme();
+            div()
+                .w_full()
+                .px_4()
+                .pt_3()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("未登录：观看记录保存在本机，登录后自动同步到云端")
+        });
         let batch_bar = self.managing.then(|| {
             let total = self.visible_items(cx).len();
             BatchBar::new(self.selected.len(), total, self.deleting, "删除所选")
@@ -667,6 +754,7 @@ impl gpui_kit::Render for HistoryView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("history-page")
+            .children(local_hint)
             .children(toolbar.map(|t| div().w_full().px_4().pt_4().child(t)))
             .child(body)
             .children(batch_bar)

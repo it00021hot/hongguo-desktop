@@ -307,6 +307,14 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "history-manage",
             font_scale: 1.,
         },
+        PreviewCase {
+            name: "history-local-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "history-local",
+            font_scale: 1.,
+        },
         // —— 预约 ——
         PreviewCase {
             name: "reservation-light",
