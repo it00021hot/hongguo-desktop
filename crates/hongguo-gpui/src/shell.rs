@@ -731,6 +731,15 @@ impl Shell {
         self.feed.update(cx, |home, cx| home.debug_open_login(cx));
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=suggest`，配
+    /// `HONGGUO_PAGE=browse`）：往找剧页搜索框灌关键词——联想走真实接口，
+    /// 抓帧拍的是真实下拉列表（含封面缩略图与命中高亮）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_fill_browse_keyword(&self, window: &mut Window, cx: &mut App) {
+        self.browse
+            .update(cx, |view, cx| view.debug_fill_keyword("斗罗", window, cx));
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。

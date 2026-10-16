@@ -15,7 +15,7 @@ use hongguo_api::discover::{FeedItem, SelectorItem, SelectorRow};
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::{BookshelfEntry, FollowUpdateItem, InteractionItem};
 use hongguo_api::rank::RankItem;
-use hongguo_api::search::SearchResult;
+use hongguo_api::search::{SearchResult, SuggestItem};
 use hongguo_common::model::{
     DownloadTask, FollowNotice, MergeCandidate, MergeMode, MergePreflight, MergeStatus, MergeTask,
     NOTICE_KIND_FOLLOW, NOTICE_KIND_ONLINE, TaskStatus, VideoDefinition,
@@ -401,6 +401,40 @@ pub(crate) fn search_results() -> Vec<SearchResult> {
             description: String::new(),
             tags: vec!["都市".into()],
             heat_text: String::new(),
+        })
+        .collect()
+}
+
+/// 找剧页：搜索联想（4 条，第 1、3 条带命中高亮切片——预览里看高亮片段
+/// 与摘要行的排布；条目带 seriesId 时与纯词条目的渲染差异也在这里显形）。
+pub(crate) fn suggest_items() -> Vec<SuggestItem> {
+    SERIES
+        .iter()
+        .take(4)
+        .enumerate()
+        .map(|(i, (sid, title, _))| SuggestItem {
+            word: (*title).into(),
+            parts: if i % 2 == 0 {
+                vec![
+                    hongguo_api::search::SuggestPart {
+                        text: title.chars().next().map(String::from).unwrap_or_default(),
+                        hl: true,
+                    },
+                    hongguo_api::search::SuggestPart {
+                        text: title.chars().skip(1).collect(),
+                        hl: false,
+                    },
+                ]
+            } else {
+                Vec::new()
+            },
+            series_id: if i == 3 { String::new() } else { (*sid).into() },
+            vid: String::new(),
+            cover: format!("browse://cover-{i}"),
+            abstract_text: format!("第{}季·都市·{}万热度", i + 1, 862 + i * 137),
+            book_title: String::new(),
+            book_cover: String::new(),
+            book_score: String::new(),
         })
         .collect()
 }

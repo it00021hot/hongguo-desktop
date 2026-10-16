@@ -126,6 +126,10 @@ pub(crate) struct BrowseView {
     // —— 联想（简化形态：输入框下方行式列表，点击即选）——
     suggest_items: Vec<SuggestItem>,
     suggest_seq: u64,
+    /// 联想键盘导航（Tauri browse-page onKeyDown 同款）：高亮下标 + 开合态
+    /// （Esc 收起；下次输入重开）。
+    suggest_index: usize,
+    suggest_open: bool,
     // —— 封面与下载角标 ——
     covers: HashMap<String, Arc<RenderImage>>,
     covers_pending: HashSet<String>,
@@ -139,11 +143,26 @@ impl BrowseView {
         cx: &mut Context<Self>,
     ) -> Self {
         let keyword = cx.new(|cx| InputState::new(window, cx).placeholder("输入剧名 / 关键词"));
-        // 输入变化 → 更新联想（300ms 防抖在延迟任务里做）
+        // 输入变化 → 更新联想（300ms 防抖在延迟任务里做）；聚焦重开、失焦
+        // 收起（Tauri browse-page onFocus/onBlur → setSuggestOpen 同款）
         cx.subscribe(&keyword, |this, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.refresh_suggest(cx);
-                cx.notify();
+            match event {
+                InputEvent::Change => {
+                    // 一次新输入 = 重开联想并回到首条高亮
+                    this.suggest_open = true;
+                    this.suggest_index = 0;
+                    this.refresh_suggest(cx);
+                    cx.notify();
+                }
+                InputEvent::Focus => {
+                    this.suggest_open = true;
+                    cx.notify();
+                }
+                InputEvent::Blur => {
+                    this.suggest_open = false;
+                    cx.notify();
+                }
+                _ => {}
             }
         })
         .detach();
@@ -170,6 +189,8 @@ impl BrowseView {
             search_failed: false,
             suggest_items: Vec::new(),
             suggest_seq: 0,
+            suggest_index: 0,
+            suggest_open: false,
             covers: HashMap::new(),
             covers_pending: HashSet::new(),
             downloaded: HashMap::new(),
@@ -280,6 +301,7 @@ impl BrowseView {
 
     /// 提交搜索：App 综合 tab 搜索；首页精选不足 18 条时自动续拉一页。
     fn submit_search(&mut self, cx: &mut Context<Self>) {
+        self.suggest_open = false;
         let value = self.keyword.read(cx).value().trim().to_string();
         if value.is_empty() {
             return;
@@ -369,6 +391,7 @@ impl BrowseView {
         let seq = self.suggest_seq;
         if kw.chars().count() < 2 || !self.submitted.is_empty() {
             self.suggest_items.clear();
+            self.suggest_open = false;
             return;
         }
         let state = Arc::clone(&self.state);
@@ -392,6 +415,14 @@ impl BrowseView {
                     return; // 过期结果丢弃
                 }
                 view.suggest_items = result.unwrap_or_default();
+                // 有封面的条目拉缩略图（纯词条目没有封面，只出放大镜图标）
+                let covers: Vec<String> = view
+                    .suggest_items
+                    .iter()
+                    .map(|item| item.cover.clone())
+                    .filter(|url| !url.is_empty())
+                    .collect();
+                view.load_covers(&covers, cx);
                 cx.notify();
             });
         })
@@ -400,6 +431,7 @@ impl BrowseView {
 
     fn pick_suggest(&mut self, item: SuggestItem, window: &mut Window, cx: &mut Context<Self>) {
         self.suggest_items.clear();
+        self.suggest_open = false;
         if !item.series_id.is_empty() {
             self.play_series(item.series_id.clone(), cx);
             return;
@@ -482,9 +514,67 @@ impl BrowseView {
         } else {
             self.feed_items.len()
         };
+        // 联想开合（Tauri showSuggest 同款闸门：非搜索态 + 输入 ≥2 字 + 有词）
+        let show_suggest = self.suggest_open
+            && !self.suggest_items.is_empty()
+            && !searching
+            && self.keyword.read(cx).value().trim().chars().count() >= 2;
         v_flex()
             .w_full()
             .gap_1()
+            // 联想键盘导航（Tauri browse-page 输入框 onKeyDown 同款）：↑↓ 高亮
+            // 循环、Enter 选中高亮条（无联想时提交搜索）、Esc 收起。
+            //
+            // 挂冒泡相即可——输入框在 "Input" key context 里自带 MoveUp/
+            // MoveDown/Enter/Escape 绑定，行为断言（tests/browse_suggest_keys.rs）
+            // 证实：绑定派发之后按键仍会冒泡到祖先 listener，且单行输入里
+            // ↑↓ 不挪光标；Enter 的 action 只补发 InputEvent::PressEnter
+            //（本页不订阅该事件，故不会与这里的选择动作并行）。
+            .on_key_down(
+                cx.listener(|this, ev: &gpui_kit::KeyDownEvent, window, cx| {
+                    let key = ev.keystroke.key.as_str();
+                    let suggest_live = this.suggest_open && !this.suggest_items.is_empty();
+                    match key {
+                        "down" | "up" => {
+                            if suggest_live {
+                                let len = this.suggest_items.len();
+                                this.suggest_index = if key == "down" {
+                                    (this.suggest_index + 1) % len
+                                } else {
+                                    (this.suggest_index + len - 1) % len
+                                };
+                                cx.stop_propagation();
+                                cx.notify();
+                            }
+                        }
+                        "enter" => {
+                            if suggest_live {
+                                let at = this
+                                    .suggest_index
+                                    .min(this.suggest_items.len().saturating_sub(1));
+                                let item = this
+                                    .suggest_items
+                                    .get(at)
+                                    .cloned()
+                                    .or_else(|| this.suggest_items.first().cloned());
+                                if let Some(item) = item {
+                                    this.pick_suggest(item, window, cx);
+                                }
+                            } else {
+                                // 联想没开：Enter = 提交搜索（Tauri 表单 onSubmit 同款）
+                                this.submit_search(cx);
+                            }
+                            cx.stop_propagation();
+                        }
+                        "escape" if this.suggest_open => {
+                            this.suggest_open = false;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        _ => {}
+                    }
+                }),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -493,9 +583,38 @@ impl BrowseView {
                     .gap_2()
                     .child(
                         div()
+                            .relative()
                             .flex_1()
                             .min_w(gpui_kit::px(256.0))
-                            .child(Input::new(&self.keyword)),
+                            .child(Input::new(&self.keyword))
+                            // 联想下拉：锚在输入框正下方（Tauri Popover
+                            // side=bottom align=start sideOffset=6 同款），
+                            // deferred 提到后续兄弟之上绘制——否则会被下面的
+                            // 卡片网格压住
+                            .children(show_suggest.then(|| {
+                                gpui_kit::deferred(
+                                    v_flex()
+                                        .id("browse-suggest-list")
+                                        .absolute()
+                                        .top(gpui_kit::relative(1.0))
+                                        .left_0()
+                                        .right_0()
+                                        .mt(gpui_kit::px(6.0))
+                                        .max_h(gpui_kit::px(320.0))
+                                        .overflow_y_scroll()
+                                        .rounded(gpui_kit::px(12.0))
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .bg(theme.popover)
+                                        .p_1p5()
+                                        .children(
+                                            self.suggest_items.iter().take(8).enumerate().map(
+                                                |(i, item)| self.render_suggest_row(i, item, cx),
+                                            ),
+                                        ),
+                                )
+                                .with_priority(1)
+                            })),
                     )
                     .child(
                         Button::new("browse-submit")
@@ -521,48 +640,98 @@ impl BrowseView {
                             .child(SharedString::from(format!("共 {total} 部")))
                     })),
             )
-            // 联想（简化形态：行式列表，点击即选）
-            .children((!self.suggest_items.is_empty()).then(|| {
-                v_flex()
-                    .w_full()
-                    .max_w(gpui_kit::px(560.0))
-                    .rounded(gpui_kit::px(8.0))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.group_box)
-                    .p_1p5()
-                    .gap_0p5()
-                    .children(self.suggest_items.iter().take(8).map(|item| {
-                        let item = item.clone();
-                        let click_item = item.clone();
-                        h_flex()
-                            .id(ElementId::from(format!("browse-suggest-{}", item.word)))
-                            .items_center()
-                            .gap_2()
-                            .rounded(gpui_kit::px(6.0))
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.secondary))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.pick_suggest(click_item.clone(), window, cx);
-                            }))
-                            .child(
-                                gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Search)
-                                    .small()
-                                    .text_color(theme.muted_foreground),
-                            )
-                            .child(SharedString::from(item.word.clone()))
-                            .children((!item.abstract_text.is_empty()).then(|| {
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .truncate()
-                                    .child(SharedString::from(item.abstract_text.clone()))
-                            }))
-                    }))
+            .into_any_element()
+    }
+
+    /// 单条联想行（Tauri `suggest-row.tsx` 同款）：放大镜 + 有封面的行前置
+    /// 竖版缩略图（40×54）+ 命中高亮词条 + 摘要行；命中片段上 warm 令牌，
+    /// 带剧集的条目词条加粗。
+    fn render_suggest_row(
+        &self,
+        index: usize,
+        item: &SuggestItem,
+        cx: &Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        let active = index
+            == self
+                .suggest_index
+                .min(self.suggest_items.len().saturating_sub(1));
+        let cover = self.covers.get(&item.cover).cloned();
+        let word: gpui_kit::AnyElement = if item.parts.is_empty() {
+            div()
+                .truncate()
+                .child(SharedString::from(item.word.clone()))
+                .into_any_element()
+        } else {
+            h_flex()
+                .overflow_hidden()
+                .children(item.parts.iter().map(|part| {
+                    div()
+                        .truncate()
+                        .when(part.hl, |s| s.text_color(crate::tokens::warm()))
+                        .child(SharedString::from(part.text.clone()))
+                }))
+                .into_any_element()
+        };
+        h_flex()
+            .id(ElementId::from(format!("browse-suggest-{}", item.word)))
+            .items_center()
+            .gap(gpui_kit::px(10.0))
+            .rounded(gpui_kit::px(8.0))
+            .px(gpui_kit::px(10.0))
+            .py(gpui_kit::px(7.0))
+            .text_sm()
+            .cursor_pointer()
+            .when(active, |s| s.bg(theme.accent))
+            .hover(|s| s.bg(theme.accent))
+            // 悬停即改高亮（Tauri onHover={setSuggestIndex} 同款）
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered && this.suggest_index != index {
+                    this.suggest_index = index;
+                    cx.notify();
+                }
             }))
+            .on_click({
+                let picked = item.clone();
+                cx.listener(move |this, _, window, cx| {
+                    this.pick_suggest(picked.clone(), window, cx);
+                })
+            })
+            .child(
+                gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Search)
+                    .small()
+                    .text_color(theme.muted_foreground),
+            )
+            .children(cover.map(|bitmap| {
+                img(ImageSource::Render(bitmap))
+                    .w(gpui_kit::px(40.0))
+                    .h(gpui_kit::px(54.0))
+                    .flex_shrink_0()
+                    .rounded(gpui_kit::px(6.0))
+                    .object_fit(ObjectFit::Cover)
+                    .bg(theme.muted)
+            }))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(gpui_kit::px(0.0))
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .when(!item.series_id.is_empty(), |s| {
+                                s.font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            })
+                            .child(word),
+                    )
+                    .children((!item.abstract_text.is_empty()).then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .truncate()
+                            .child(SharedString::from(item.abstract_text.clone()))
+                    })),
+            )
             .into_any_element()
     }
 
@@ -775,7 +944,8 @@ impl BrowseView {
                             .items_center()
                             .gap_1()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            // 热度行走业务令牌（Tauri 卡片同款 text-warm）
+                            .text_color(crate::tokens::warm())
                             .child(
                                 gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Flame)
                                     .small(),
@@ -810,6 +980,12 @@ impl BrowseView {
             self.submitted = "命运".into();
             self.search_items = crate::preview::fixtures::search_results();
         }
+        if scene == "browse-suggest" {
+            // 联想列表：开态 + 高亮第二条（验高亮底色与行高，不走网络）
+            self.suggest_items = crate::preview::fixtures::suggest_items();
+            self.suggest_open = true;
+            self.suggest_index = 1;
+        }
         if scene != "browse-empty" {
             self.feed_items = items;
         }
@@ -822,6 +998,26 @@ impl BrowseView {
             self.covers
                 .insert(item.cover.clone(), crate::preview::fixtures::cover(6 + i));
         }
+        cx.notify();
+    }
+
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=suggest`，配
+    /// `HONGGUO_PAGE=browse`）：往搜索框灌一个真实关键词——300ms 防抖后走
+    /// 真实联想接口，抓帧拍的是真实列表与首条高亮。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_fill_keyword(
+        &mut self,
+        keyword: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // `set_value` 是静默写值（emit_events=false，不派 InputEvent::Change），
+        // 所以这里手动补上 Change 分支该做的事：开联想 + 归零高亮 + 起防抖。
+        self.keyword
+            .update(cx, |input, cx| input.set_value(keyword, window, cx));
+        self.suggest_open = true;
+        self.suggest_index = 0;
+        self.refresh_suggest(cx);
         cx.notify();
     }
 }

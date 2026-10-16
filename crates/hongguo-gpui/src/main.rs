@@ -32,6 +32,7 @@ mod preview;
 mod screenshot;
 mod shell;
 mod toast;
+mod tokens;
 mod ui_prefs;
 #[cfg(target_os = "windows")]
 mod win32;

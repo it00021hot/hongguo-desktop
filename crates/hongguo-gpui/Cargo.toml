@@ -32,6 +32,11 @@ required-features = ["screenshot"]
 name = "tab_click_repro"
 required-features = ["screenshot"]
 
+# 找剧页搜索联想的键盘派发断言（同上，进程内走真实按键派发路径）。
+[[test]]
+name = "browse_suggest_keys"
+required-features = ["screenshot"]
+
 # 预览场景矩阵的覆盖率断言（纯数据，不出图、不碰窗口）：scenes.rs 自洽、
 # 经 #[path] 源文件级引入（bin 无 lib 目标，集成测试进不了 crate 内部）。
 # 不依赖 test-support，默认构建即可跑。

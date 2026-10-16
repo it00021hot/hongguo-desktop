@@ -646,7 +646,8 @@ impl RankView {
                                         .flex_shrink_0()
                                         .items_center()
                                         .gap_0p5()
-                                        .text_color(theme.muted_foreground)
+                                        // 推荐语（热度）走业务令牌（Tauri 榜单行 text-warm）
+                                        .text_color(crate::tokens::warm())
                                         .child(
                                             gpui_kit::component::Icon::new(
                                                 gpui_kit::assets::IconName::Flame,

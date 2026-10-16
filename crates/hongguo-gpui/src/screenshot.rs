@@ -31,7 +31,9 @@ pub(crate) fn install(
     // 要验 UI 视觉（图标/布局）就开这个。
     let pause_ui = std::env::var("HONGGUO_SHOT_PAUSE").is_ok();
     // HONGGUO_SHOT_PANEL=downloads：抓帧前打开下载面板（验任务行 UI）；
-    // =picker：打开选集浮层系列剧 tab（验季卡片/预约按钮）。
+    // =picker：打开选集浮层系列剧 tab（验季卡片/预约按钮）；
+    // =suggest（配 HONGGUO_PAGE=browse）：往搜索框灌关键词，拍真实联想
+    // 下拉（300ms 防抖 → 真实接口，连封面缩略图一起验）。
     let panel = std::env::var("HONGGUO_SHOT_PANEL").unwrap_or_default();
 
     cx.spawn(async move |cx| {
@@ -39,25 +41,35 @@ pub(crate) fn install(
         if pause_ui {
             feed.update(cx, |shell, cx| shell.debug_pause_player(cx));
         }
-        match panel.as_str() {
-            "downloads" => {
-                feed.update(cx, |shell, cx| shell.debug_open_downloads(cx));
-            }
-            "picker" => {
-                feed.update(cx, |shell, cx| shell.debug_open_picker(cx));
-            }
-            "comments" => {
-                feed.update(cx, |shell, cx| shell.debug_open_comments(cx));
-            }
-            "mention" => {
-                feed.update(cx, |shell, cx| shell.debug_open_mention(cx));
-            }
-            "login" => {
-                feed.update(cx, |shell, cx| shell.debug_open_login(cx));
-            }
-            _ => {}
-        }
         for i in 1..=count {
+            // 面板开关放在本回合里：`suggest` 要往输入框灌值，得有 Window。
+            if i == 1 {
+                match panel.as_str() {
+                    "downloads" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_downloads(cx));
+                    }
+                    "picker" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_picker(cx));
+                    }
+                    "comments" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_comments(cx));
+                    }
+                    "mention" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_mention(cx));
+                    }
+                    "login" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_login(cx));
+                    }
+                    "suggest" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| {
+                                shell.debug_fill_browse_keyword(window, cx);
+                            });
+                        });
+                    }
+                    _ => {}
+                }
+            }
             let shot = window.update(cx, |_, window, cx| {
                 // 必须先强制重绘：窗口被遮挡/失焦时 AppKit 会暂停绘制，
                 // rendered_frame 会停在上一帧——直接取图会拿到陈旧画面
