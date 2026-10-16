@@ -138,6 +138,7 @@ impl StorageView {
                 .description("所有已下载的剧集文件都会被删除，剧集档案保留。此操作不可撤销。")
                 .ok_text("确定")
                 .cancel_text("取消")
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| view.delete_all_now(window, cx));

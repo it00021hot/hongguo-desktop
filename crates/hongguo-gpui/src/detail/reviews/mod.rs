@@ -446,6 +446,7 @@ impl DetailView {
                 .description("删除后不可恢复。")
                 .ok_text("删除")
                 .cancel_text("取消")
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
                     view.update(cx, |view, cx| {

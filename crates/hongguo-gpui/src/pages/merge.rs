@@ -372,6 +372,7 @@ impl MergeView {
                 .description("只删除这条任务记录，已经生成的合并文件会原样留在下载目录里。")
                 .ok_text("删除")
                 .cancel_text("取消")
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| view.remove_task(&task, window, cx));

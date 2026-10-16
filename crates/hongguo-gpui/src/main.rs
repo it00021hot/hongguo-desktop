@@ -141,12 +141,7 @@ fn main() {
                 gpui_kit::size(gpui_kit::px(win_w), gpui_kit::px(win_h)),
                 cx,
             );
-            // 默认构建用不到这个句柄（只有 screenshot feature 抓帧要），
-            // 关掉 feature 时按「有意不用」放行，别为一个变量把 feature 拧到反。
-            #[cfg_attr(
-                not(feature = "screenshot"),
-                expect(unused_variables, reason = "句柄只有 screenshot feature 用")
-            )]
+            // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
             let (shell_window, shell) = gpui_kit::open_window(
                 // 无边框（Tauri decorations:false 同款）：以组件库 TitleBar
                 // 的窗口选项为基底——标题栏自绘、拖拽与窗口钮走平台原生命中
@@ -172,6 +167,11 @@ fn main() {
             )
             .expect("窗口创建失败");
             shell.update(cx, |shell, cx| shell.activate(cx));
+            // 退出确认：窗口关闭先问一句（Tauri CloseRequested → 确认框同款）。
+            // 挂在实体就位之后——守卫回调要用壳的弱引用。
+            let _ = shell_window.update(cx, |_, window, cx| {
+                shell.update(cx, |shell, cx| shell.install_close_guard(window, cx));
+            });
             // 图形链路取证：HONGGUO_SHOT=… 时进程内抓帧存 PNG（见截图模块头注释）
             #[cfg(feature = "screenshot")]
             screenshot::install(shell_window, shell.clone(), cx);

@@ -292,6 +292,7 @@ impl ReservationView {
                 .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
                 .ok_text("确定")
                 .cancel_text("取消")
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
                     view.update(cx, |view, cx| view.batch_delete(cx));

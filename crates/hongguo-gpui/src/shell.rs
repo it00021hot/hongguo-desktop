@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::tooltip::Tooltip;
@@ -209,6 +210,10 @@ pub struct Shell {
     detail_series: Option<String>,
     /// 侧栏追更未读角标（本地通知未读数；未登录恒 0）。
     follow_unread: usize,
+    /// 退出确认框已经弹过（Tauri CloseRequested 的「已问过」闸门）：再收到
+    /// 关闭请求就直接放行——宁可少问一句，绝不把窗口变成关不掉的
+    ///（Tauri「前端未就绪就放行」同精神）。
+    exit_asked: bool,
     /// 账号头像（avatar_url 拉取；账号变化时重拉，登出清空）。
     account_avatar: Option<Arc<RenderImage>>,
     account_avatar_url: Option<String>,
@@ -452,6 +457,7 @@ impl Shell {
             detail: None,
             detail_series: None,
             follow_unread: 0,
+            exit_asked: false,
             account_avatar: None,
             account_avatar_url: None,
             account_avatar_pending: false,
@@ -928,6 +934,59 @@ impl Shell {
     }
 
     // —— 渲染 ——
+
+    /// 窗口关闭一律先问一句（Tauri `CloseRequested` → 前端确认框同款：自绘
+    /// ×、Alt+F4、任务栏关闭都走这里；退出会掐断正在跑的下载任务）。
+    /// 弹过还来（用户再点一次 ×）直接放行——宁可少问一句，绝不把窗口变成
+    /// 关不掉的（Tauri 前端未就绪放行同精神）。
+    /// 由 `main.rs` 在壳实体就位后挂上（`Shell::new` 里拿不到自身弱引用）。
+    pub(crate) fn install_close_guard(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(shell) = this.upgrade() else {
+                return true; // 壳都没了：别拦
+            };
+            if shell.read(cx).exit_asked {
+                log::info!("[Shell] 退出确认已弹过，本次关闭直接放行");
+                return true;
+            }
+            // `Entity::update` 不会失败（实体在手）；弹窗就地在本次窗口
+            // 回调里开（同一次 update 内，不再跨帧）
+            shell.update(cx, |shell, cx| {
+                shell.exit_asked = true;
+                let view = cx.entity();
+                window.open_alert_dialog(cx, move |dialog, _window, _cx| {
+                    let view = view.clone();
+                    let view_cancel = view.clone();
+                    dialog
+                        .title("确定要退出吗？")
+                        .description("退出会中断正在进行的下载任务，播放进度已实时保存。")
+                        .ok_text("退出")
+                        .cancel_text("取消")
+                        // 组件库的取消钮默认不显示（show_cancel=false）：只
+                        // 设文案不给按钮 = 确认框没有取消键（Tauri 确认框
+                        // 是「取消 + 确认」两键，Esc 只是额外通道）
+                        .show_cancel(true)
+                        .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                        .on_ok(move |_, _window, cx| {
+                            log::info!("[Shell] 用户在退出确认框里选了退出");
+                            cx.quit();
+                            true
+                        })
+                        // 取消/点背景关掉：把闸门放回未问状态，下次关闭
+                        // 还会再问（Tauri 取消后对话框收起 = 下次照问）
+                        .on_cancel(move |_, _window, cx| {
+                            view_cancel.update(cx, |shell, cx| {
+                                shell.exit_asked = false;
+                                cx.notify();
+                            });
+                            true
+                        })
+                });
+            });
+            false // 拦下这次关闭，等确认框结果
+        });
+    }
 
     /// 顶栏（组件库 TitleBar）：应用名居左，窗口钮（组件在非 macOS 自动
     /// 附上并标 WindowControlArea）居右。**不放任何自绘可点控件**——组件

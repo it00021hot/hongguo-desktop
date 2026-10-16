@@ -119,6 +119,17 @@ pub(crate) fn install(
                             feed.update(cx, |shell, cx| shell.debug_portrait_full(window, cx));
                         });
                     }
+                    // 退出确认：投一个真 WM_CLOSE（等同点 × / Alt+F4），
+                    // 期望窗口**没关**且确认框在抓帧里可见。
+                    "close-test" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            if let Some(hwnd) = crate::win32::hwnd_of(window) {
+                                log::info!("[CloseProbe] 投递 WM_CLOSE");
+                                crate::win32::post_close(hwnd);
+                            }
+                            let _ = cx;
+                        });
+                    }
                     _ => {}
                 }
             }

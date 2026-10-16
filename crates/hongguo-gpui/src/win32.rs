@@ -317,6 +317,16 @@ pub(crate) fn send_key_chord(mods: u32, vk: u32) {
     }
 }
 
+/// 投递一次 WM_CLOSE（取证探针用：验退出确认拦截是否真的吃住窗口关闭请求，
+/// 不是模拟业务行为）。
+#[cfg(feature = "screenshot")]
+pub(crate) fn post_close(hwnd: isize) {
+    // SAFETY：句柄来自 gpui 的 platform window；消息是常量
+    unsafe {
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    }
+}
+
 /// 懒建消息窗口（幂等）。类注册一次，窗口句柄缓存在静态里。
 fn message_window() -> Result<isize, String> {
     static HWND: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
@@ -387,6 +397,8 @@ fn wide(s: &str) -> Vec<u16> {
 
 const HWND_MESSAGE: isize = -3;
 const WM_HOTKEY: u32 = 0x0312;
+#[cfg(feature = "screenshot")]
+const WM_CLOSE: u32 = 0x0010;
 
 type WndProc = unsafe extern "system" fn(isize, u32, usize, isize) -> isize;
 
@@ -430,6 +442,8 @@ unsafe extern "system" {
     unsafe fn UnregisterHotKey(hwnd: isize, id: i32) -> i32;
     #[cfg(feature = "screenshot")]
     unsafe fn keybd_event(bvk: u8, scan: u8, flags: u32, extra: usize);
+    #[cfg(feature = "screenshot")]
+    unsafe fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
 }
 
 // SAFETY：全部是 user32 / dwmapi 的标准函数签名（Windows 契约保真）。

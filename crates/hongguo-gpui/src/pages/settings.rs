@@ -650,6 +650,9 @@ impl SettingsView {
                 .description("退出后将无法预约新剧与同步观看记录，可随时重新登录。")
                 .ok_text("退出登录")
                 .cancel_text("取消")
+                // 组件库取消钮默认不显示：不给 show_cancel，确认框就没有
+                // 取消键（Tauri 确认框是「取消 + 确认」两键）
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| view.logout(window, cx));
