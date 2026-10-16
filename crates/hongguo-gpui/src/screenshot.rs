@@ -107,6 +107,18 @@ pub(crate) fn install(
                             feed.update(cx, |shell, cx| shell.debug_set_boss_key(window, cx));
                         });
                     }
+                    // 竖屏：按当前在播档位收窄窗口（拍竖条形态 + 紧凑条）。
+                    "portrait" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_enter_portrait(window, cx));
+                        });
+                    }
+                    // 竖屏铺满档：撑满工作区高（验档位几何与按钮态）。
+                    "portrait-full" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_portrait_full(window, cx));
+                        });
+                    }
                     _ => {}
                 }
             }

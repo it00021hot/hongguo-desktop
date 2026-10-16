@@ -92,6 +92,7 @@ pub(crate) mod minimize;
 pub(crate) mod overlay;
 pub(crate) mod picker;
 pub(crate) mod playback;
+pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
 pub(crate) mod season;
@@ -373,6 +374,13 @@ pub struct HomeView {
     /// 小屏播放态（Tauri miniScreen 同款）：Some 是进入前的几何快照。
     /// 同窗缩放语义——不换窗口、不暂停，只缩窗口 + 换紧凑控制条。
     mini: Option<crate::mini::SavedGeometry>,
+    /// 竖屏播放态（Tauri portrait 同款）：Some 是进入前的几何快照。
+    /// 与小屏同一套机制（同窗收窄成竖条 + 紧凑控制条竖屏形态）。
+    portrait: Option<crate::mini::SavedGeometry>,
+    /// 竖屏铺满档（Tauri portraitFull 同款；只在竖屏中有意义）。
+    portrait_full: bool,
+    /// 上次落窗用的竖屏比例（变化 >1% 才重适配，Tauri REFIT_DELTA 同值）。
+    portrait_aspect_last: f64,
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
@@ -606,6 +614,9 @@ impl HomeView {
             minimize_owed: false,
             fullscreen: false,
             mini: None,
+            portrait: None,
+            portrait_full: false,
+            portrait_aspect_last: 0.0,
             immersive: false,
             pinned: false,
             downloads: Arc::new(Vec::new()),
@@ -1028,6 +1039,10 @@ impl gpui_kit::Render for HomeView {
                 log::warn!("[Home] 纹理回收失败: {e}");
             }
         }
+        // 竖屏重适配：换集/换清晰度后档位尺寸变了就按新比例重落窗（比例
+        // 变化 ≤1% 不动）。挂在这里是因为它是「起播完成后」唯一一定有
+        // Window 的钩子——起播的异步收尾处拿不到 Window。
+        self.refit_portrait(window, cx);
         // render_* 要 &mut cx，先取（theme 借的是 cx 的不可变引用）。
         // 分类 tab 已移入壳顶栏（Shell render_title_bar），舞台从 tab 行
         // 下方起排改为吃满内容区（Tauri 沉浸流同款）。

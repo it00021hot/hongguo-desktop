@@ -100,9 +100,13 @@ impl super::HomeView {
                             )
                             .on_click({
                                 let sid = now.series_id.clone();
-                                cx.listener(move |_, _, _, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     // 点剧名 → 应用内详情页（壳订阅事件切目的
-                                    // 地）；stop_propagation 防触发画面暂停
+                                    // 地）；stop_propagation 防触发画面暂停。
+                                    // 离开播放页先退竖屏（Tauri 路由离开 =
+                                    // exitPortraitScreen 同款；竖条几何是单份
+                                    // 快照，带走会写坏小屏/竖屏的还原基线）
+                                    this.exit_portrait(window, cx);
                                     cx.stop_propagation();
                                     cx.emit(super::HomeEvent::OpenDetail(sid.clone()));
                                 })

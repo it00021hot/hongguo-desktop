@@ -432,9 +432,14 @@ impl super::HomeView {
         // 控制条（底部悬浮，鼠标活动时可见）；小屏换紧凑条（Tauri
         // MiniScreenControls 同款，与同一套状态源协作）
         let in_mini = self.mini.is_some();
+        // 竖屏也是「紧凑形态」：控制条走竖屏形态，浮层/互动栏同小屏收起
+        //（Tauri portrait 的 visible 门控与 miniScreen 同列）
+        let in_portrait = self.portrait.is_some();
         let controls = (self.engine_ready() && self.controls_visible()).then(|| {
             if in_mini {
                 self.render_mini_controls(cx)
+            } else if in_portrait {
+                self.render_portrait_controls(cx)
             } else {
                 self.render_controls(cx)
             }
@@ -534,11 +539,16 @@ impl super::HomeView {
                         this.step(1, cx);
                     } else if key == keys.step_prev && this.mini.is_none() {
                         this.step(-1, cx);
-                    // F = 播放器全屏（真沉浸：OS 全屏 + chrome 全藏）
+                    // F = 播放器全屏（真沉浸：OS 全屏 + chrome 全藏）；竖屏里
+                    // 让位给铺满档（Tauri：竖屏中全屏键语义换成铺满切换）
                     } else if key == "f" {
-                        this.toggle_immersive_fullscreen(window, cx);
+                        if this.portrait.is_some() {
+                            this.toggle_portrait_full(window, cx);
+                        } else {
+                            this.toggle_immersive_fullscreen(window, cx);
+                        }
                     // Esc 固定管「退出选中」（Tauri 同款语义）：小屏 →
-                    // 沉浸全屏 → 浮层面板 → 连播锁定，逐层退出
+                    // 沉浸全屏 → 浮层面板 → 竖屏铺满 → 连播锁定，逐层退出
                     } else if key == "escape" {
                         if this.mini.is_some() {
                             this.exit_mini(window, cx);
@@ -553,6 +563,10 @@ impl super::HomeView {
                             // 评论面板开着 Esc 先关面板（Tauri 面板自带 Esc
                             // 监听同序；面板守卫期间不退连播）
                             this.close_comments_panel(cx);
+                        } else if this.portrait_full {
+                            // 竖屏铺满先退铺满回竖条（Tauri portraitFull 分支
+                            // 同序：面板之后、退出选中之前）
+                            this.toggle_portrait_full(window, cx);
                         } else if this.in_binge() {
                             this.binge = None;
                         }

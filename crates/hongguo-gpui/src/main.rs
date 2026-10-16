@@ -28,6 +28,7 @@ mod mini;
 mod pages;
 mod play_activity;
 mod playback_prefs;
+mod portrait;
 mod preview;
 #[cfg(feature = "screenshot")]
 mod screenshot;

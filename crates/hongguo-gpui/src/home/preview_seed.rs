@@ -70,6 +70,12 @@ impl HomeView {
                 self.mini = Some(crate::mini::preview_geometry());
                 crate::mini::set_active(true);
             }
+            "portrait" => {
+                // 竖屏窄条：几何快照是占位（预览不还原窗口），active 旗子
+                // 让壳把侧栏藏掉、控制条走竖屏形态（Tauri portrait 同列）
+                self.portrait = Some(crate::mini::preview_geometry());
+                crate::portrait::set_active(true);
+            }
             "error" => {
                 let feed = self
                     .feeds

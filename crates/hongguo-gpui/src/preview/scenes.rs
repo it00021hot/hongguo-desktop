@@ -580,6 +580,15 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "mini",
             font_scale: 1.,
         },
+        // —— 竖屏（窄条播放器形态：侧栏藏、顶栏在、控制条竖屏档）——
+        PreviewCase {
+            name: "portrait-light",
+            mode: ThemeMode::Light,
+            width: 388.,
+            height: 840.,
+            scene: "portrait",
+            font_scale: 1.,
+        },
         // —— 字号缩放（125% / 150%，对齐系统 DPI 变化下的布局）——
         PreviewCase {
             name: "feed-125-light",

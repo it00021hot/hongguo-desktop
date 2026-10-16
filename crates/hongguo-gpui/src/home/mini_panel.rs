@@ -219,6 +219,11 @@ impl super::HomeView {
         if self.mini.is_some() || self.player.is_none() {
             return;
         }
+        // 竖屏的几何快照是单份的：进小屏前必须先把竖屏退掉，否则小屏快照
+        // 记的是竖条几何（Tauri use-portrait-window 同款守卫）
+        if self.portrait.is_some() {
+            self.exit_portrait(window, cx);
+        }
         if window.is_fullscreen() {
             window.toggle_fullscreen();
             self.fullscreen = false;
@@ -274,7 +279,7 @@ impl super::HomeView {
     }
 
     /// 小屏里点倍速标签循环档位（Tauri MINI_RATES 同款，完整菜单回大屏）。
-    fn cycle_rate_mini(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn cycle_rate_mini(&mut self, cx: &mut Context<Self>) {
         const MINI_RATES: [f64; 4] = [1.0, 1.5, 2.0, 3.0];
         let next = match MINI_RATES.iter().position(|r| (r - self.rate).abs() < 0.01) {
             Some(i) => MINI_RATES[(i + 1) % MINI_RATES.len()],

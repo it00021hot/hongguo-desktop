@@ -38,15 +38,26 @@ pub(crate) struct SavedGeometry {
     maximized: bool,
 }
 
-/// 进入小屏：快照 → 缩放落位（工作区右下角，小工作区压到放得下为止）。
-/// 几何不可得时返回 `None`，调用方保持原状（与 Tauri 幂等注释同口径：
-/// 已在小屏时调用方不得再进来，否则快照会被 480×270 覆盖）。
-pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<SavedGeometry> {
+/// 几何快照 + 是否最大化（竖屏要用「最大化进竖屏直接进铺满档」，小屏只用快照）。
+/// 几何不可得返回 `None`，调用方保持原状。
+pub(crate) fn snapshot(window: &Window) -> Option<(SavedGeometry, bool)> {
     let saved = SavedGeometry {
         rect: outer_rect(window)?,
         #[cfg(target_os = "windows")]
         maximized: window.is_maximized(),
     };
+    #[cfg(target_os = "windows")]
+    let maximized = saved.maximized;
+    #[cfg(not(target_os = "windows"))]
+    let maximized = false;
+    Some((saved, maximized))
+}
+
+/// 进入小屏：快照 → 缩放落位（工作区右下角，小工作区压到放得下为止）。
+/// 几何不可得时返回 `None`，调用方保持原状（与 Tauri 幂等注释同口径：
+/// 已在小屏时调用方不得再进来，否则快照会被 480×270 覆盖）。
+pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<SavedGeometry> {
+    let (saved, _) = snapshot(window)?;
     place_mini(window, cx)?;
     Some(saved)
 }

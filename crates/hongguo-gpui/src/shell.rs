@@ -815,6 +815,24 @@ impl Shell {
             .update(cx, |view, cx| view.debug_set_boss_key(&spec, window, cx));
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=portrait`）：
+    /// 进竖屏（几何按当前在播档位收窄），抓帧拍竖条形态。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_enter_portrait(&self, window: &mut Window, cx: &mut App) {
+        self.feed
+            .update(cx, |home, cx| home.enter_portrait(window, cx));
+    }
+
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=portrait-full`）：
+    /// 进竖屏后切铺满档（验撑满工作区高的几何与铺满态按钮）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_portrait_full(&self, window: &mut Window, cx: &mut App) {
+        self.feed.update(cx, |home, cx| {
+            home.enter_portrait(window, cx);
+            home.toggle_portrait_full(window, cx);
+        });
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。
@@ -1168,12 +1186,15 @@ impl gpui_kit::Render for Shell {
         // 同款，拖窗走播放页拖拽条）与播放器沉浸全屏（播放器全屏按钮/F
         // 进入；顶栏最大化钮是另一档「应用全屏」，chrome 保留，对齐 Tauri）
         let in_mini = crate::mini::is_active();
+        // 竖屏：侧栏藏掉、顶栏保留（Tauri app-shell 的 `!miniScreen &&
+        // !playerFullscreen && !portrait` 门控同款——竖条只放播放器）
+        let in_portrait = crate::portrait::is_active();
         let immersive = self.feed.read(cx).immersive_fullscreen();
         let chrome_hidden = in_mini || immersive;
         // 先建好所有吃 cx 的闭包/子渲染，再取 theme（theme 借 cx，两者不能
         // 交叠——闭包里要 &mut Context）
         let title_bar = (!chrome_hidden).then(|| self.render_title_bar());
-        let sidebar = (!chrome_hidden).then(|| self.render_sidebar(cx));
+        let sidebar = (!chrome_hidden && !in_portrait).then(|| self.render_sidebar(cx));
         let content = self.render_content(cx);
         let theme = cx.theme();
         v_flex()

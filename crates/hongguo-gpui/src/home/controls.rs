@@ -1045,6 +1045,19 @@ impl super::HomeView {
                             })),
                     )
                     .child(
+                        // 竖屏播放（Tauri 控制栏竖屏钮同位）：窗口收窄成按视频
+                        // 宽高比算宽的竖条，竖屏视频刚好包住画面不留两侧黑边。
+                        // 竖屏中的控件换成紧凑条竖屏形态，这里只做「进入」入口
+                        Button::new("stage-portrait")
+                            .icon(gpui_kit::assets::IconName::RectangleVertical)
+                            .ghost()
+                            .small()
+                            .tooltip("竖屏播放")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_portrait(window, cx);
+                            })),
+                    )
+                    .child(
                         // 播放器全屏（真沉浸：OS 全屏 + chrome 全藏；顶栏最大化钮是
                         // 另一档「应用全屏」chrome 保留）；图标随状态换
                         Button::new("stage-fullscreen")
