@@ -90,7 +90,14 @@ pub(super) struct SourceFeed {
     pub(super) loading: bool,
     pub(super) fetching_more: bool,
     pub(super) failed: Option<String>,
+    /// 首批（含换一批）落定时刻：「回首页过期换一批」的判定源
+    /// （Tauri react-query dataUpdatedAt 同语义）。
+    loaded_at: Option<std::time::Instant>,
 }
+
+/// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批
+/// （Tauri `FEED_STALE_MS` 同款）。
+pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 impl super::HomeView {
     // —— 数据：推荐流 ——
@@ -140,6 +147,7 @@ impl super::HomeView {
                             feed.has_more = page.has_more;
                             feed.items = page.items.iter().map(StreamItem::from).collect();
                             feed.failed = None;
+                            feed.loaded_at = Some(std::time::Instant::now());
                         }
                         // 取证：dump 开关时把整页封面都预载落盘（离线对拍用）
                         if std::env::var("HONGGUO_DUMP_COVER").is_ok() {
@@ -384,6 +392,15 @@ impl super::HomeView {
             self.pin_hold,
             self.now.as_ref(),
         )
+    }
+
+    /// 当前 tab 的流是否过期（从未加载 = 不过期——首载由 `load_feed` 负责，
+    /// 这里只服务「回首页过期换一批」的判定）。
+    pub(super) fn feed_stale(&self) -> bool {
+        self.feeds
+            .get(&self.active)
+            .and_then(|f| f.loaded_at)
+            .is_some_and(|t| t.elapsed() >= FEED_STALE)
     }
 
     /// 游标位置（展示列表下标，夹到已加载范围）。语义**对齐 Tauri**：游标是

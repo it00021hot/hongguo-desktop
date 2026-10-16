@@ -115,6 +115,23 @@ impl super::HomeView {
     /// 信息流还没就位时不动，首批落定的冷启动钩子（after_feed_loaded）
     /// 会接管。
     pub(crate) fn resume_if_idle(&mut self, cx: &mut Context<Self>) {
+        // 回首页的过期换一批（Tauri FEED_STALE_MS 同款）：流数据比 5 分钟
+        // 更旧就重开会话取新一批——在播剧由 pin_hold 钉在最前继续播（走
+        // 同部剧重走起点决策的通道），滚下去才是新一批。没有在播目标
+        // （冷启动首次）不换，与 Tauri 的 `playingId` 闸同位。
+        if self.now.is_some() && self.feed_stale() {
+            log::info!("[Home] 回首页：流已过期（>5 分钟），换一批（在播不动）");
+            self.pin_hold = true;
+            self.load_feed(self.active.clone(), true, cx);
+            // 刷新会清列表并把游标归零：目标仍是「在播的那部」，把游标对回
+            // 它在展示列表里的位置（已被换出则 pin 在最前，通常即 0；还在
+            // 种子/新列表里则对到那一位）——Tauri 重挂载后的游标恢复同语义
+            if let Some(sid) = self.now.as_ref().map(|n| n.series_id.clone())
+                && let Some(pos) = self.display_items().iter().position(|i| i.series_id == sid)
+            {
+                self.set_cursor(pos);
+            }
+        }
         if self.engine_ready() || self.switching {
             return;
         }
