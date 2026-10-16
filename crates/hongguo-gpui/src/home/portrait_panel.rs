@@ -138,6 +138,14 @@ impl super::HomeView {
         crate::portrait::fit(window, aspect, self.portrait_full, cx);
     }
 
+    /// 取证辅助（screenshot feature）：把「上次比例」清零，逼下一帧的
+    /// [`Self::refit_portrait`] 真跑一遍（验重适配路径本身，而不是等素材
+    /// 恰好换比例）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_force_portrait_refit(&mut self) {
+        self.portrait_aspect_last = 0.0;
+    }
+
     /// 竖屏紧凑控制条（Tauri `MiniScreenControls variant="portrait"` 对齐）：
     /// 与小屏同一套按钮与状态源，差别是**无剧名/集数块**（竖条里剧名/简介
     /// 由信息层承担）、无置顶（顶栏常驻，置顶钮在顶栏/大屏控制栏）、多一个

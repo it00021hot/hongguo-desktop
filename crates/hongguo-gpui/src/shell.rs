@@ -821,6 +821,10 @@ impl Shell {
     pub(crate) fn debug_enter_portrait(&self, window: &mut Window, cx: &mut App) {
         self.feed
             .update(cx, |home, cx| home.enter_portrait(window, cx));
+        // 顺带逼一次重适配路径（清零「上次比例」→ 下一帧 render 里的
+        // refit_portrait 必跑），验「render 期派发窗口操作」这条不炸
+        self.feed
+            .update(cx, |home, _| home.debug_force_portrait_refit());
     }
 
     /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=portrait-full`）：
