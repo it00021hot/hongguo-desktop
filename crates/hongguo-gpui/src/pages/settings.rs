@@ -47,7 +47,7 @@ pub(crate) enum SettingsEvent {
 
 /// 可自定义的播放器动作（与 Tauri ShortcutAction 同集）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShortcutAction {
+pub(crate) enum ShortcutAction {
     PlayPause,
     SeekBack,
     SeekForward,
@@ -56,7 +56,7 @@ enum ShortcutAction {
 }
 
 impl ShortcutAction {
-    const ALL: [ShortcutAction; 5] = [
+    pub(crate) const ALL: [ShortcutAction; 5] = [
         ShortcutAction::PlayPause,
         ShortcutAction::SeekBack,
         ShortcutAction::SeekForward,
@@ -64,7 +64,7 @@ impl ShortcutAction {
         ShortcutAction::StepNext,
     ];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             ShortcutAction::PlayPause => "播放 / 暂停",
             ShortcutAction::SeekBack => "快退 5 秒",
@@ -74,7 +74,7 @@ impl ShortcutAction {
         }
     }
 
-    fn get(self, keys: &crate::playback_prefs::ShortcutKeys) -> &str {
+    pub(crate) fn get(self, keys: &crate::playback_prefs::ShortcutKeys) -> &str {
         match self {
             ShortcutAction::PlayPause => &keys.play_pause,
             ShortcutAction::SeekBack => &keys.seek_back,
@@ -93,6 +93,13 @@ impl ShortcutAction {
             ShortcutAction::StepNext => keys.step_next = value,
         }
     }
+}
+
+/// 捕获态目标：播放器动作键 / 老板键组合（两者都 Esc 取消；纯修饰键忽略）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureTarget {
+    Shortcut(ShortcutAction),
+    BossKey,
 }
 
 /// GPUI keystroke 键名 → 可读标签（Tauri shortcutKeyLabel 同款）。
@@ -137,8 +144,8 @@ pub(crate) struct SettingsView {
     account_avatar: Option<Arc<RenderImage>>,
     /// 快捷键映射（设置页与播放器共用一份；改动即存即生效）。
     shortcut_keys: crate::playback_prefs::ShortcutKeys,
-    /// 正在捕获按键的动作（Esc 取消；纯修饰键忽略）。
-    capturing: Option<ShortcutAction>,
+    /// 正在捕获的按键目标（Esc 取消；纯修饰键忽略）。
+    capturing: Option<CaptureTarget>,
     /// 捕获焦点锚：进入捕获态后由根元素接管键盘。
     keys_focus: gpui_kit::FocusHandle,
     /// 主题偏好（Tauri 的主题切换在顶栏；GPUI 顶栏是原生拖拽区，入口落在
@@ -571,6 +578,26 @@ impl SettingsView {
         if next.proxy.mode == ProxyMode::Manual {
             next.proxy.url = self.proxy_input.read(cx).value().trim().to_string();
         }
+        // 老板键冲突拦截（Tauri submit 同款：全局组合在应用内会同时触发
+        // 播放器动作，存了就是坏状态）
+        let conflicts = crate::boss_key::conflicts(&next.boss_key, &self.shortcut_keys);
+        if !conflicts.is_empty() {
+            window.push_notification(
+                Notification::error(format!(
+                    "老板键与播放器快捷键「{}」冲突：先调整老板键或播放器快捷键再保存",
+                    conflicts.join("、")
+                )),
+                cx,
+            );
+            return;
+        }
+        // 老板键先注册后落库（Tauri save_settings 同序：注册失败整个保存不
+        // 提交——先落库的话错误返回了坏键却已入库，重启后照样注册不上）
+        if let Err(e) = crate::boss_key::apply(&next.boss_key) {
+            log::warn!("[BossKey] {e}");
+            window.push_notification(Notification::error(format!("保存失败：{e}")), cx);
+            return;
+        }
         self.saving = true;
         cx.notify();
         match hongguo_service::settings_service::save(&self.state, next) {
@@ -654,7 +681,7 @@ impl SettingsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(action) = self.capturing else {
+        let Some(target) = self.capturing else {
             return;
         };
         let key = ev.keystroke.key.to_lowercase();
@@ -669,6 +696,30 @@ impl SettingsView {
         ) {
             return;
         }
+        // 老板键：全局组合必须带 Ctrl/Cmd 或 Alt（Tauri acceleratorFromEvent
+        // 同口径），值写进设置草稿（保存时先注册后落库）。
+        if target == CaptureTarget::BossKey {
+            let mods = &ev.keystroke.modifiers;
+            let Some(spec) = crate::boss_key::accel::accelerator_from_keystroke(
+                &key,
+                mods.control || mods.platform,
+                mods.alt,
+                mods.shift,
+            ) else {
+                window.push_notification(
+                    Notification::error("这个键不支持做老板键（需 Ctrl/Cmd 或 Alt 修饰）"),
+                    cx,
+                );
+                return; // 保持捕获态，换一个再试
+            };
+            self.patch(cx, |s| s.boss_key = spec);
+            self.capturing = None;
+            cx.notify();
+            return;
+        }
+        let CaptureTarget::Shortcut(action) = target else {
+            return;
+        };
         if let Some(owner) = ShortcutAction::ALL
             .iter()
             .find(|a| **a != action && a.get(&self.shortcut_keys) == key)
@@ -703,6 +754,75 @@ impl SettingsView {
             .expect("阻塞池 join")
         });
         let _ = cx;
+    }
+
+    /// 老板键卡（Tauri `BossKeyCard` 同款）：全局快捷键隐藏/恢复整个窗口。
+    /// 值进设置草稿，保存时先注册后落库；冲突（末段裸键撞播放器键）当场提示
+    /// 并在保存时拦截。Tauri 侧也没有「清除」入口，这里不另造。
+    fn render_boss_key_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        let boss = self.current().boss_key;
+        let capturing = self.capturing == Some(CaptureTarget::BossKey);
+        let display = if boss.trim().is_empty() {
+            "关闭".to_string()
+        } else {
+            crate::boss_key::accel::display(&boss)
+        };
+        let conflicts = crate::boss_key::conflicts(&boss, &self.shortcut_keys);
+        let button = Button::new("settings-boss-key")
+            .label(if capturing {
+                "按下组合键…"
+            } else {
+                display.as_str()
+            })
+            .outline()
+            .small();
+        let button = if capturing {
+            button.text_color(theme.primary)
+        } else {
+            button
+        };
+        card(cx)
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .child("全局快捷键"),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_sm().child("老板键"))
+                    .child(button.on_click(cx.listener(|this, _, window, cx| {
+                        this.capturing = Some(CaptureTarget::BossKey);
+                        window.focus(&this.keys_focus, cx);
+                        cx.notify();
+                    }))),
+            )
+            .children((!conflicts.is_empty()).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(theme.danger)
+                    .child(SharedString::from(format!(
+                        "与播放器快捷键「{}」冲突：该组合在应用内按下会同时触发播放器操作",
+                        conflicts.join("、")
+                    )))
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("一键隐藏/恢复整个窗口，隐藏时自动暂停播放。保存后生效；快捷键被其他程序占用时保存会失败，换一个即可。需带 Ctrl/Cmd 或 Alt 修饰。"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("全局快捷键在应用不在前台时也能触发，与仅应用内生效的播放快捷键相互独立。"),
+            )
+            .into_any_element()
     }
 
     fn render_shortcut_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -740,7 +860,7 @@ impl SettingsView {
                     .child("点击按键后按下新键完成设置，Esc 取消。播放中的 Esc 固定用于退出选中。"),
             )
             .children(ShortcutAction::ALL.map(|action| {
-                let capturing = self.capturing == Some(action);
+                let capturing = self.capturing == Some(CaptureTarget::Shortcut(action));
                 let label = if capturing {
                     "按下新按键…".to_string()
                 } else {
@@ -762,7 +882,7 @@ impl SettingsView {
                     .py_1()
                     .child(div().text_sm().child(action.label()))
                     .child(button.on_click(cx.listener(move |this, _, window, cx| {
-                        this.capturing = Some(action);
+                        this.capturing = Some(CaptureTarget::Shortcut(action));
                         window.focus(&this.keys_focus, cx);
                         cx.notify();
                     })))
@@ -1269,6 +1389,22 @@ impl SettingsView {
 impl gpui_kit::EventEmitter<SettingsEvent> for SettingsView {}
 
 impl SettingsView {
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=boss-set`，配
+    /// `HONGGUO_BOSS_KEY=<accelerator>`）：走**真实保存路径**写老板键
+    /// （先注册后落库 + 冲突拦截都在 save 里），保存结果只落日志。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_set_boss_key(
+        &mut self,
+        spec: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.patch(cx, |s| s.boss_key = spec.to_string());
+        self.save(window, cx);
+        let saved = self.state.settings().boss_key;
+        log::info!("[BossProbe] 写入 {spec:?} 后，库里的老板键 = {saved:?}");
+    }
+
     /// 预览种子（screenshot feature）：灌假占用/缓存/能力与表单值。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_preview_seed(
@@ -1351,6 +1487,7 @@ impl gpui_kit::Render for SettingsView {
                 .child(separator(cx))
                 .child(self.render_playback_card(cx))
                 .child(self.render_shortcut_card(cx))
+                .child(self.render_boss_key_card(cx))
                 .child(self.render_storage_card(cx))
                 .child(self.render_update_card(cx))
                 .child(

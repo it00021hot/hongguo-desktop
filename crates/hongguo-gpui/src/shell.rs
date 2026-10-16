@@ -486,6 +486,45 @@ impl Shell {
         }
         shell.refresh_follow_unread(cx);
         shell.ensure_account_avatar(cx);
+        // 老板键轮询：全局快捷键注册在 win32 自建的消息窗口上，WM_HOTKEY
+        // 只能在轮询里递进 GPUI（窗口过程跑在主线程消息循环里，拿不到
+        // GPUI 上下文）。窗口过程是「按下沿置位」，100ms 一拍不会漏。
+        #[cfg(target_os = "windows")]
+        if let Some(hwnd) = crate::win32::hwnd_of(window) {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                    if !crate::boss_key::take_fired() {
+                        continue;
+                    }
+                    // 先查可见性：ShowWindow 放实体更新之外——它同步派发
+                    // WM_SHOWWINDOW/WM_ACTIVATE，gpui 的窗口过程要更新窗口
+                    // 状态，在 update 里调用会撞借用（实测日志刷
+                    // 「RefCell already borrowed」六连）。
+                    let visible = crate::win32::is_window_visible(hwnd);
+                    let ok = this
+                        .update(cx, |shell, cx| {
+                            shell.boss_key_playback(!visible, cx);
+                        })
+                        .is_ok();
+                    if !ok {
+                        return;
+                    }
+                    if visible {
+                        crate::win32::hide(hwnd);
+                    } else {
+                        crate::win32::show_foreground(hwnd);
+                    }
+                    log::info!(
+                        "[BossKey] 老板键切换：窗口{}",
+                        if visible { "隐藏" } else { "显示" }
+                    );
+                }
+            })
+            .detach();
+        }
         // 跟随系统：系统外观切换（Windows 主题 / macOS 外观）时重算主题档。
         // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
         cx.observe_window_appearance(window, |this, window, cx| {
@@ -496,6 +535,15 @@ impl Shell {
         })
         .detach();
         shell
+    }
+
+    /// 老板键触发的播放处置（Tauri 前端 `boss-key-hidden` 事件同款）：
+    /// 隐藏即暂停（声音不漏）、恢复时把暂停着的续上。窗口藏显由调用方在
+    /// 实体更新之外做（见 `Shell::new` 的轮询注释）。
+    #[cfg(target_os = "windows")]
+    fn boss_key_playback(&self, hidden: bool, cx: &mut Context<Self>) {
+        self.feed
+            .update(cx, |home, cx| home.boss_key_hidden(hidden, cx));
     }
 
     /// 切换目的地并触发进入钩子（侧栏点击与 `HONGGUO_PAGE` 取证开关共用）。
@@ -756,6 +804,15 @@ impl Shell {
     pub(crate) fn debug_fill_browse_keyword(&self, window: &mut Window, cx: &mut App) {
         self.browse
             .update(cx, |view, cx| view.debug_fill_keyword("斗罗", window, cx));
+    }
+
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=boss-set`）：
+    /// 走真实保存路径写老板键（注册 → 落库；冲突则拦截）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_set_boss_key(&self, window: &mut Window, cx: &mut App) {
+        let spec = std::env::var("HONGGUO_BOSS_KEY").unwrap_or_default();
+        self.settings_page
+            .update(cx, |view, cx| view.debug_set_boss_key(&spec, window, cx));
     }
 
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，

@@ -7,6 +7,7 @@
 //!   1. 祖先的冒泡 listener 仍能收到这四个键（联想导航靠它工作）；
 //!   2. 单行输入里 ↑↓ 不挪光标（输入框的 MoveUp/MoveDown 是空动作），
 //!      Enter 的 action 只补发 InputEvent::PressEnter（找剧页不订阅它）。
+//!
 //! 结论变了就是 gpui 升级改了派发语义，找剧页的键盘导航要一起复查。
 //!
 //! 需要 gpui 的 test-support（`screenshot` feature 已连带开启），运行方式：

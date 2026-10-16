@@ -67,6 +67,46 @@ pub(crate) fn install(
                             });
                         });
                     }
+                    // 长页面整页入镜的补充手段：窗口最多涨到屏幕高，再往下
+                    // 的卡片只能滚出来（HONGGUO_SHOT_SCROLL=<像素>）。
+                    "scroll" => {
+                        let dy = std::env::var("HONGGUO_SHOT_SCROLL")
+                            .ok()
+                            .and_then(|v| v.parse::<f32>().ok())
+                            .unwrap_or(800.0);
+                        let _ = window.update(cx, |_, window, cx| {
+                            // 先派一次鼠标移动把命中测试摆到页面中部，再滚
+                            let size = window.viewport_size();
+                            let center = gpui_kit::point(size.width / 2.0, size.height / 2.0);
+                            window.dispatch_event(
+                                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                                    position: center,
+                                    pressed_button: None,
+                                    modifiers: Default::default(),
+                                }),
+                                cx,
+                            );
+                            window.dispatch_event(
+                                gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                                    position: center,
+                                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                        gpui_kit::px(0.0),
+                                        gpui_kit::px(-dy),
+                                    )),
+                                    modifiers: Default::default(),
+                                    touch_phase: gpui_kit::TouchPhase::Started,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
+                    // 老板键：走真实保存路径（注册 → 落库；冲突则当场拦截）。
+                    // 抓帧拍通知条，日志拍库里的值。
+                    "boss-set" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_boss_key(window, cx));
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -99,6 +139,43 @@ pub(crate) fn install(
                 }
             }
             cx.background_executor().timer(interval).await;
+        }
+        // HONGGUO_BOSS_PROBE=<accelerator>：老板键链路探针——合成该组合键，
+        // 系统派 WM_HOTKEY → 轮询藏窗/显窗。按键靠**启动时的设置注册**生效，
+        // 验的是「设置里存过 → 启动注册 → 系统认下 → 藏显」这条真实链。
+        // 结果只落日志；抓帧循环之后跑，隐藏窗口不影响已拍完的图。
+        #[cfg(target_os = "windows")]
+        if let Ok(spec) = std::env::var("HONGGUO_BOSS_PROBE") {
+            use crate::boss_key::accel;
+            log::info!("[BossProbe] 探针组合 {spec}（应为启动注册生效的那个）");
+            let hk = accel::parse(&spec).expect("探针组合必然可解析");
+            let hwnd = window
+                .update(cx, |_, window, _| crate::win32::hwnd_of(window))
+                .ok()
+                .flatten();
+            let initial = hwnd.map(crate::win32::is_window_visible);
+            log::info!("[BossProbe] 初始可见={initial:?}（隐藏启动时 false，属启动方式而非功能）");
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            crate::win32::send_key_chord(hk.mods, hk.vk);
+            cx.background_executor()
+                .timer(Duration::from_millis(700))
+                .await;
+            if let Some(hwnd) = hwnd {
+                log::info!(
+                    "[BossProbe] 第一次按下后 可见={}（期望与初始相反）",
+                    crate::win32::is_window_visible(hwnd)
+                );
+                crate::win32::send_key_chord(hk.mods, hk.vk);
+                cx.background_executor()
+                    .timer(Duration::from_millis(700))
+                    .await;
+                log::info!(
+                    "[BossProbe] 第二次按下后 可见={}（期望回到初始）",
+                    crate::win32::is_window_visible(hwnd)
+                );
+            }
         }
     })
     .detach();

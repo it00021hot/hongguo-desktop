@@ -13,6 +13,18 @@
 //! macOS：gpui 侧无按窗口藏显实现，先降级为不支持（与 mini 的 Apple 侧
 //! 缺口同口径），后续补 FFI。
 
+/// 一拍判定得出的窗口动作。**必须在实体更新之外执行**：ShowWindow 会同步
+/// 派发 WM_SHOWWINDOW/WM_ACTIVATE，gpui 的窗口过程要更新窗口状态，在 update
+/// 里调用会撞借用（实测日志刷「RefCell already borrowed」六连）。
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IncognitoStep {
+    /// 鼠标离开：窗口藏起（播放已在判定里暂停）。
+    Hide,
+    /// 鼠标回来：窗口原地重现、不夺焦点（播放已在判定里补上）。
+    ShowNoActivate,
+}
+
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 
@@ -24,6 +36,25 @@ use gpui_kit::prelude::*;
 const POLL_MS: u64 = 120;
 
 impl super::HomeView {
+    /// 老板键：窗口被隐藏/恢复时的播放处置（Tauri 前端 `boss-key-hidden`
+    /// 事件同款）——隐藏即暂停（声音不漏），恢复时把暂停着的续上。
+    /// 窗口藏显由调用方（壳）做，这里只管播放。
+    #[cfg_attr(
+        not(target_os = "windows"),
+        expect(unused_variables, reason = "老板键只有 Windows 侧有注册实现")
+    )]
+    pub(crate) fn boss_key_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        let Some(player) = &self.player else {
+            return;
+        };
+        if hidden {
+            player.pause();
+        } else if player.is_paused() {
+            player.resume();
+        }
+        cx.notify();
+    }
+
     /// 开关隐身模式。开 = 起光标轮询（盯着本窗口）；关 = 停轮询，立刻把
     /// 可能正处在隐藏态的窗口带回前台并补上欠账（Tauri set_incognito(false)
     /// 同款——它对「挂载同步」的防重入在这里不存在：本壳只有这一个开关入口，
@@ -83,12 +114,19 @@ impl super::HomeView {
                 cx.background_executor()
                     .timer(Duration::from_millis(POLL_MS))
                     .await;
-                let mut keep_going = false;
-                let ok = this
-                    .update(cx, |view, cx| keep_going = view.incognito_tick(hwnd, cx))
-                    .is_ok();
-                if !ok || !keep_going {
+                let Some((keep_going, step)) = this
+                    .update(cx, |view, cx| view.incognito_tick(hwnd, cx))
+                    .ok()
+                else {
+                    return; // 视图已死
+                };
+                if !keep_going {
                     return;
+                }
+                match step {
+                    Some(IncognitoStep::Hide) => crate::win32::hide(hwnd),
+                    Some(IncognitoStep::ShowNoActivate) => crate::win32::show_no_activate(hwnd),
+                    None => {}
                 }
             }
         })
@@ -96,40 +134,45 @@ impl super::HomeView {
     }
 
     /// 一拍判定（主线程）：光标在窗口矩形内 == 窗口可见态 → 无事发生；
-    /// 不一致才动。返回 `false` = 轮询该收了（开关已翻 false / 视图已死）。
+    /// 不一致才动。返回 `(是否继续轮询, 需要调用方执行的窗口动作)`；播放的
+    /// 暂停/续播在这拍里就地做掉，窗口藏显交回调用方（见 [`IncognitoStep`]）。
     #[cfg(target_os = "windows")]
-    fn incognito_tick(&mut self, hwnd: isize, cx: &mut Context<Self>) -> bool {
+    fn incognito_tick(
+        &mut self,
+        hwnd: isize,
+        cx: &mut Context<Self>,
+    ) -> (bool, Option<IncognitoStep>) {
         if !self.incognito {
             self.incognito_polling = false;
-            return false;
+            return (false, None);
         }
         // 最小化是用户的显式动作，隐身不得插手：最小化后光标多半还留在原
         // 窗口矩形里，不跳过会每拍都判成「回来了」把窗口 show 回来
         //（Tauri 2026-10-07 实测「隐身开着就最小化不了」）
         if crate::win32::is_iconic(hwnd) {
-            return true;
+            return (true, None);
         }
         let Some((cx_pos, cy_pos)) = crate::win32::cursor_pos() else {
-            return true; // 光标位置拿不到：本轮不动，绝不基于未知状态藏窗
+            return (true, None); // 光标位置拿不到：本轮不动，绝不基于未知状态藏窗
         };
         let Some((x, y, w, h)) = crate::win32::window_rect(hwnd) else {
-            return true;
+            return (true, None);
         };
         let inside = cx_pos >= x && cy_pos >= y && cx_pos < x + w && cy_pos < y + h;
         let visible = crate::win32::is_window_visible(hwnd);
         if inside == visible {
-            return true;
+            return (true, None);
         }
-        if inside {
+        let step = if inside {
             // 鼠标回来了：窗口原地重现（不夺焦点就不打断用户手上的事），
             // 补上欠的那次播放
-            crate::win32::show_no_activate(hwnd);
             if self.incognito_owed {
                 self.incognito_owed = false;
                 if let Some(player) = &self.player {
                     player.resume();
                 }
             }
+            IncognitoStep::ShowNoActivate
         } else {
             // 鼠标走了：先暂停再藏。暂停同步落在引擎上（音频设备停消费），
             // 不需要 Tauri 的 80ms 送达窗——那是给 IPC 通知前端的余量
@@ -139,9 +182,9 @@ impl super::HomeView {
                     player.pause();
                 }
             }
-            crate::win32::hide(hwnd);
-        }
+            IncognitoStep::Hide
+        };
         cx.notify();
-        true
+        (true, Some(step))
     }
 }

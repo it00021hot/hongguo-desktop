@@ -14,6 +14,7 @@
 //! 范围：浏览类操作（推荐流 / 排行榜，含封面、加载与失败态）。剧集详情与
 //! 播放（帧流 → GPU 纹理）是 §5.3 spike，另行立项。
 
+mod boss_key;
 mod bridge;
 mod cover_img;
 mod danmaku_emoji;
@@ -94,6 +95,11 @@ fn main() {
     // 互不锁库（实测并存时后启动者因库锁直接退出）。
     hongguo_store::paths::set_shell_data_root("hongguo-gpui");
     let state = build_app_state();
+    // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。失败只记
+    // 日志——快捷键被占用不该拦启动，用户进设置换一个即可。
+    if let Err(e) = boss_key::apply(&state.settings().boss_key) {
+        log::warn!("[BossKey] {e}（进设置换一个快捷键）");
+    }
 
     // 资产源必须接上：gpui 的 SvgRenderer 从 App 的 AssetSource 读 SVG——
     // 不接的话**所有纯图标按钮都是空壳**（按钮在、图标没了，实测控制条
@@ -119,10 +125,19 @@ fn main() {
                     gpui_kit::component::ThemeMode::Dark => gpui_kit::WindowAppearance::Dark,
                 }));
             }
+            // 默认窗口与 Tauri conf 同参（1280×840，最小 1024×680）；
+            // 取证开关 HONGGUO_WINDOW=宽x高 可临时放大（长页面整页入镜，
+            // 抓帧走 render_to_image，不要求窗口在屏幕上放得下）
+            let (win_w, win_h) = std::env::var("HONGGUO_WINDOW")
+                .ok()
+                .and_then(|v| {
+                    let (w, h) = v.split_once('x')?;
+                    Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
+                })
+                .unwrap_or((1280., 840.));
             let bounds = gpui_kit::Bounds::centered(
                 None,
-                // 默认窗口与 Tauri conf 同参（1280×840，最小 1024×680）
-                gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
+                gpui_kit::size(gpui_kit::px(win_w), gpui_kit::px(win_h)),
                 cx,
             );
             // 默认构建用不到这个句柄（只有 screenshot feature 抓帧要），
