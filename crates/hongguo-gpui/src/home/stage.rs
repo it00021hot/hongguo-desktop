@@ -615,6 +615,57 @@ impl super::HomeView {
                         .child(format!("第{}集", now.vid_index))
                 }),
             )
+            // 沉浸流底部「观看完整短剧 · 全N集」横条（Tauri player-page 同款）：
+            // 进入选中剧连播态（滚轮/↑↓=切集）的**唯一手动入口**，已选中
+            // 不渲染；显隐跟随播放控件，小屏不渲染（与互动栏同口径）。
+            // 悬停滚轮拦下：横条上滚动不切剧（Tauri data-wheel-block 同款）。
+            .children(
+                (!in_mini && !self.in_binge() && self.controls_visible() && self.now.is_some())
+                    .then(|| {
+                        let now = self.now.as_ref().expect("条件里已验 now 在");
+                        let episodes = if now.episode_count > 0 {
+                            format!(" · 全{}集", now.episode_count)
+                        } else {
+                            String::new()
+                        };
+                        h_flex()
+                            .id("binge-entry")
+                            .absolute()
+                            .left_3()
+                            .right_3()
+                            .bottom(gpui_kit::px(56.0))
+                            .justify_center()
+                            .gap_2()
+                            .rounded(gpui_kit::px(8.0))
+                            .bg(gpui_kit::rgba(0x00000099))
+                            .hover(|s| s.bg(gpui_kit::rgba(0x000000bf)))
+                            .px_3()
+                            .py_2p5()
+                            .text_sm()
+                            .text_color(gpui_kit::rgb(0xffffff))
+                            .cursor_pointer()
+                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                // 选中这部剧 = 连播锁定（切集）；同为「用户在场」
+                                // 信号，唤醒悬浮层让左上角连播指示亮出来
+                                if let Some(now) = this.now.clone() {
+                                    this.binge = Some(now.series_id);
+                                }
+                                this.wake_controls(cx);
+                                cx.stop_propagation();
+                            }))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .child(SharedString::from(format!("观看完整短剧{episodes}"))),
+                            )
+                            .child(
+                                Icon::new(IconName::ChevronRight)
+                                    .small()
+                                    .text_color(gpui_kit::rgba(0xffffff99)),
+                            )
+                    }),
+            )
             // 分类 tab（Tauri 顶栏 portal 的悬浮形态）：舞台顶部居中，与
             // 左上连播胶囊同一行，显隐跟随悬浮层总闸；小屏不渲染。列表由
             // 服务端下发（self.tabs，回落三件套见 feed::Source）。tab 的

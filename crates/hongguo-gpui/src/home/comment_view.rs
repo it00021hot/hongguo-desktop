@@ -25,6 +25,11 @@ impl super::HomeView {
     pub(super) fn render_comment_panel(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let loading = self.comments_loading && self.comments.is_empty();
         let comment_input = self.comment_input.clone();
+        // @提及候选弹层开关（Tauri mentionOpen 同款：输入以 `@词` 结尾即弹）
+        let mention_open = comment_input
+            .as_ref()
+            .map(|i| mention_query_open(&i.read(cx).value()))
+            .unwrap_or(false);
         let reply_target = self
             .reply_to
             .as_ref()
@@ -34,9 +39,11 @@ impl super::HomeView {
         v_flex()
             .id("comment-panel")
             .absolute()
-            .top_0()
             .right_0()
-            .bottom_0()
+            // Tauri comment-panel 的几何同款：bottom-14（56px，让开控制条）
+            // + h-[68%]。此前铺到舞台底、输入行被控制条压住点不到。
+            .bottom(gpui_kit::px(56.0))
+            .h(gpui_kit::relative(0.68))
             .w(gpui_kit::px(380.0))
             .bg(gpui_kit::rgba(0x171717f2))
             .on_mouse_down(
@@ -128,6 +135,129 @@ impl super::HomeView {
                     .gap_2()
                     .border_t_1()
                     .border_color(gpui_kit::rgba(0x262626ff))
+                    // @提及候选弹层（Tauri CommentPanel 同款：横排候选 +
+                    // AI 头像角标 + 「Ai」后缀；点选→延迟写入输入框）。
+                    // 表情选择器/候选都在输入行上方；无候选时给提示行。
+                    .children(mention_open.then(|| {
+                        let candidates: Vec<gpui_kit::AnyElement> = if self.mention_pending {
+                            vec![
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_3()
+                                    .py_2p5()
+                                    .child(gpui_kit::component::spinner::Spinner::new().small())
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(gpui_kit::rgba(0xffffff99))
+                                            .child("正在获取可 @ 的用户…"),
+                                    )
+                                    .into_any_element(),
+                            ]
+                        } else if self.mention_users.is_empty() {
+                            vec![
+                                div()
+                                    .px_3()
+                                    .py_2p5()
+                                    .text_xs()
+                                    .text_color(gpui_kit::rgba(0xffffff99))
+                                    .child(if self.logged_in() {
+                                        "小果AI 暂时不在提及列表里"
+                                    } else {
+                                        "互动需要先登录（设置页 → 账号）"
+                                    })
+                                    .into_any_element(),
+                            ]
+                        } else {
+                            self.mention_users
+                                .iter()
+                                .map(|u| {
+                                    let (uid, name, avatar, bot) = (
+                                        u.user_id.clone(),
+                                        u.user_name.clone(),
+                                        u.avatar.clone(),
+                                        u.is_ai_bot,
+                                    );
+                                    let click_name = name.clone();
+                                    v_flex()
+                                        .id(ElementId::from(format!("mention-{uid}")))
+                                        .w(gpui_kit::px(56.0))
+                                        .items_center()
+                                        .gap_1()
+                                        .rounded(gpui_kit::px(6.0))
+                                        .p_1()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(gpui_kit::rgba(0xffffff1a)))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            // 选中 = 记提及对象 + 排一段待插入
+                                            // 文本（render 期 set_value，见
+                                            // home/mod.rs 的延迟写入）
+                                            this.mention_user =
+                                                Some((uid.clone(), click_name.clone()));
+                                            this.mention_insert =
+                                                Some(format!("@{click_name}\u{FFFC} "));
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .child(self.render_avatar(&avatar, &name, 44.0))
+                                                .children(bot.then(|| {
+                                                    // AI 角标：橙底白勾（Tauri 同位）
+                                                    div()
+                                                        .absolute()
+                                                        .right(gpui_kit::px(-2.0))
+                                                        .bottom(gpui_kit::px(-2.0))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .size(gpui_kit::px(16.0))
+                                                        .rounded_full()
+                                                        .bg(gpui_kit::rgb(0xf97316))
+                                                        .child(
+                                                            Icon::new(
+                                                                gpui_kit::assets::IconName::Check,
+                                                            )
+                                                            .with_size(gpui_kit::px(10.0))
+                                                            .text_color(gpui_kit::rgb(0xffffff)),
+                                                        )
+                                                })),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_0p5()
+                                                .text_size(gpui_kit::px(11.0))
+                                                .text_color(gpui_kit::rgba(0xffffffe6))
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .child(SharedString::from(name.clone())),
+                                                )
+                                                .children(bot.then(|| {
+                                                    div()
+                                                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                                        .text_color(gpui_kit::rgb(0xfbbf24))
+                                                        .child("Ai")
+                                                })),
+                                        )
+                                        .into_any_element()
+                                })
+                                .collect()
+                        };
+                        h_flex()
+                            .id("mention-popup")
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .rounded(gpui_kit::px(8.0))
+                            .border_1()
+                            .border_color(gpui_kit::rgba(0xffffff1a))
+                            .bg(gpui_kit::rgb(0x262626))
+                            .p_2()
+                            .children(candidates)
+                    }))
                     .children((!reply_target.is_empty()).then(|| {
                         h_flex()
                             .items_center()
@@ -357,6 +487,53 @@ impl super::HomeView {
     }
 
     /// 评论列表一行：头像占位（昵称首字圆形）/昵称/文本/相对时间/♡。
+    /// 评论正文：`@名字\u{FFFC}` 提及前缀染蓝（AI bot 名字补琥珀「Ai」
+    /// 后缀——Tauri 的渐变文字在 GPUI 用单色近似），其余按 `[名字]`
+    /// 表情分段内联（与弹幕共用一套 parse）。面板属 hgplayer 皮肤域，
+    /// 固定色值属硬红线 11 的播放器豁免。
+    fn render_comment_text(&self, text: &str) -> gpui_kit::AnyElement {
+        let ai_name = self
+            .mention_users
+            .iter()
+            .find(|u| u.is_ai_bot)
+            .map(|u| u.user_name.clone())
+            .unwrap_or_else(|| "小果".to_string());
+        let (prefix, rest) = match parse_mention_prefix(text) {
+            Some((name, rest)) => (Some(name), rest),
+            None => (None, text),
+        };
+        let mut row = div().flex().flex_wrap().items_center();
+        if let Some(name) = prefix {
+            row = row.child(
+                h_flex()
+                    .items_center()
+                    .mr_1()
+                    .text_color(gpui_kit::rgb(0x38bdf8))
+                    .child(SharedString::from(format!("@{name}")))
+                    .children((name == ai_name).then(|| {
+                        div()
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .text_color(gpui_kit::rgb(0xfbbf24))
+                            .child("Ai")
+                    })),
+            );
+        }
+        for seg in crate::danmaku_emoji::parse_emoji_segments(rest) {
+            row = row.child(match seg {
+                crate::danmaku_emoji::EmojiSegment::Text(t) => {
+                    div().child(SharedString::from(t)).into_any_element()
+                }
+                crate::danmaku_emoji::EmojiSegment::Emoji(img) => {
+                    gpui_kit::img(gpui_kit::ImageSource::Render(img))
+                        .size(gpui_kit::px(18.0))
+                        .object_fit(gpui_kit::ObjectFit::Contain)
+                        .into_any_element()
+                }
+            });
+        }
+        row.into_any_element()
+    }
+
     fn render_comment_row(&self, c: &CommentItem, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let cid = c.comment_id.clone();
         let is_mine = !self.my_user_id().is_empty() && c.user_id == self.my_user_id();
@@ -399,7 +576,7 @@ impl super::HomeView {
                                 div()
                                     .text_sm()
                                     .text_color(gpui_kit::rgba(0xffffffe6))
-                                    .child(SharedString::from(c.text.clone())),
+                                    .child(self.render_comment_text(&c.text)),
                             )
                             .child(
                                 h_flex()
@@ -505,6 +682,14 @@ impl super::HomeView {
                 v_flex()
                     .pl_10()
                     .gap_2()
+                    // 「思考中…」占位（Tauri pendingAi 同款）：@小果 提及评论
+                    // 发出后回复区强制展开，轮询到 AI 回复即撤
+                    .children(self.ai_pending.iter().any(|(id, _)| id == &cid).then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(gpui_kit::rgba(0xffffff73))
+                            .child("思考中…")
+                    }))
                     .children((loading && items.is_empty()).then(|| {
                         div()
                             .text_xs()
@@ -651,10 +836,12 @@ impl super::HomeView {
             }))
             .into_any_element()
     }
+}
 
+#[cfg(feature = "screenshot")]
+impl super::HomeView {
     /// 取证辅助（screenshot feature 的 HONGGUO_SHOT_PANEL=comments）：
     /// 打开评论面板与表情选择器（无人值守抓网格 UI）。
-    #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_comments(&mut self, cx: &mut Context<Self>) {
         self.comments_panel_open = true;
         self.emoji_picker_open = true;
@@ -662,4 +849,55 @@ impl super::HomeView {
         self.load_comments_first_page(cx);
         cx.notify();
     }
+
+    /// 取证辅助（HONGGUO_SHOT_PANEL=mention）：打开评论面板，拉 @提及候选
+    /// 并往输入框排入「@」——渲染期 set_value 后弹层即开（无人值守抓
+    /// @候选弹层 UI）。
+    pub(crate) fn debug_open_mention(&mut self, cx: &mut Context<Self>) {
+        self.comments_panel_open = true;
+        self.controls_until = Some(Instant::now() + Duration::from_secs(CONTROLS_HOLD_SECS));
+        self.load_comments_first_page(cx);
+        self.load_mention_users(cx);
+        self.mention_insert = Some("@".to_string());
+        cx.notify();
+    }
+}
+
+/// 输入以 `@词` 结尾 = 提及候选弹层开着（Tauri 同款触发：打 @ 即弹；
+/// `\u{FFFC}` 是提及段结尾占位符，含它说明已插入、不再触发）。手写匹配
+/// （不引 regex）：`(^|\s)@[^\s@\u{FFFC}]*$` 同口径。
+fn mention_query_open(text: &str) -> bool {
+    let Some(at) = text.rfind('@') else {
+        return false;
+    };
+    let after = &text[at + 1..];
+    if after.contains('\u{FFFC}') {
+        return false;
+    }
+    // @ 前必须是串首或空白
+    if at > 0
+        && !text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace)
+    {
+        return false;
+    }
+    // @ 之后到串尾不许再有空白 / @ / 占位符
+    !after
+        .chars()
+        .any(|c| c.is_whitespace() || c == '@' || c == '\u{FFFC}')
+}
+
+/// 提取 `@名字\u{FFFC}` 提及前缀（Tauri CommentText 的
+/// `/^@([^\s\u{FFFC}]+)\u{FFFC}\s*/` 同口径），返回（名字, 余下正文）。
+fn parse_mention_prefix(text: &str) -> Option<(String, &str)> {
+    let rest = text.strip_prefix('@')?;
+    let end = rest.find('\u{FFFC}')?;
+    let name = &rest[..end];
+    if name.is_empty() || name.chars().any(|c| c.is_whitespace() || c == '@') {
+        return None;
+    }
+    let after = &rest[end + '\u{FFFC}'.len_utf8()..];
+    Some((name.to_string(), after.trim_start()))
 }

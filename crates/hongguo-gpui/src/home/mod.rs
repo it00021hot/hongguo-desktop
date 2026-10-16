@@ -323,6 +323,19 @@ pub struct HomeView {
     comment_input: Option<Entity<InputState>>,
     comment_sending: bool,
     comment_clear_input: bool,
+    /// @提及候选（relation/list，含 AI bot「小果」）；按剧缓存一次。
+    mention_users: Arc<Vec<hongguo_api::interact::MentionUser>>,
+    mention_loaded_for: Option<String>,
+    mention_pending: bool,
+    /// 已插入待发送的提及对象 (uid, name)；发送成功即清。
+    mention_user: Option<(String, String)>,
+    /// 待写入输入框的提及段（候选点击 → render 期 set_value，形如
+    /// `@名字\u{FFFC} `；set_value 要 window，不能就地写）。
+    mention_insert: Option<String>,
+    /// @小果 提及评论的 AI 回复轮询（Tauri aiPending 同款）：
+    /// (评论 id, 起始时刻)；120s 未等到放弃。
+    ai_pending: Vec<(String, Instant)>,
+    ai_polling: bool,
     /// 评论面板的表情选择器开着（笑脸按钮 toggle；连选不关面板）。
     emoji_picker_open: bool,
     // —— 壳内登录（SMS；Tauri 登录页对齐的最小面）——
@@ -566,6 +579,13 @@ impl HomeView {
             comment_input: Some(cx.new(|cx| InputState::new(window, cx).placeholder("说点什么…"))),
             comment_sending: false,
             comment_clear_input: false,
+            mention_users: Arc::new(Vec::new()),
+            mention_loaded_for: None,
+            mention_pending: false,
+            mention_user: None,
+            mention_insert: None,
+            ai_pending: Vec::new(),
+            ai_polling: false,
             emoji_picker_open: false,
             login_panel_open: false,
             login_mobile: Some(
@@ -1025,6 +1045,22 @@ impl gpui_kit::Render for HomeView {
         {
             self.danmaku_clear_input = false;
             input.update(cx, |state, cx| state.set_value("", window, cx));
+        }
+        // 评论输入框的延迟写入（set_value 要 window）：
+        // 1) 发送成功清空——comment_clear_input 此前只置位没人消费（发完
+        //    不清，与 Tauri 不一致），一并修掉；
+        // 2) 提及插入（候选点击 → 追加 `@名字\u{FFFC} `）
+        if let Some(input) = &self.comment_input {
+            if self.comment_clear_input {
+                self.comment_clear_input = false;
+                self.mention_user = None;
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            } else if let Some(segment) = self.mention_insert.take() {
+                let current = input.read(cx).value().to_string();
+                input.update(cx, |state, cx| {
+                    state.set_value(format!("{current}{segment}"), window, cx)
+                });
+            }
         }
         // 下载任务快照刷新（render_stage 是 &self，写不进去；借这里的 &mut）
         if self.downloads_open {

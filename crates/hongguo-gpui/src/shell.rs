@@ -707,6 +707,12 @@ impl Shell {
             .update(cx, |home, cx| home.debug_open_comments(cx));
     }
 
+    /// 取证辅助（screenshot feature）：打开评论面板并派发 @提及弹层。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_mention(&self, cx: &mut App) {
+        self.feed.update(cx, |home, cx| home.debug_open_mention(cx));
+    }
+
     /// 取证辅助（screenshot feature）：打开登录面板。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_login(&self, cx: &mut App) {

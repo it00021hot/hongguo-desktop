@@ -751,6 +751,9 @@ impl super::HomeView {
                 .find(|i| i.series_id == now.series_id)
                 .cloned()
             {
+                // 自动连播完成本集 = 进入选中剧连播态（Tauri player-page
+                // autoNext 分支 setBinge 同款）：滚轮/↑↓ 从这里起切集
+                self.binge = Some(now.series_id.clone());
                 self.play_target(item, Some(next_idx), None, cx);
                 return;
             }
