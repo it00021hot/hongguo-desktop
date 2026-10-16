@@ -395,7 +395,9 @@ impl Shell {
         .detach();
         // 取证开关：HONGGUO_RANK=1 直接开在排行榜页（无头验证封面用）；
         // HONGGUO_TAB=36/39 直接开在漫剧/真人源（tab 数据链取证用）；
-        // HONGGUO_PAGE=browse|new|history|… 直接开在对应目的地（逐页点检）。
+        // HONGGUO_PAGE=browse|new|history|… 直接开在对应目的地（逐页点检）；
+        // HONGGUO_DETAIL=<site> / HONGGUO_CREATOR=<uid> 直接开在详情/创作者
+        // 页（这两页不在侧栏，无开关时无人值守到不了）。
         // 预览进程有自己的目的地种子，不吃这些环境变量（可能残留）
         let page_start = (!crate::preview::is_active())
             .then(|| std::env::var("HONGGUO_PAGE").ok())
@@ -447,6 +449,19 @@ impl Shell {
         };
         if let Some(page) = page_start {
             shell.enter_dest(page, cx);
+        }
+        if !crate::preview::is_active() {
+            if let Ok(sid) = std::env::var("HONGGUO_DETAIL")
+                && !sid.is_empty()
+            {
+                shell.open_detail(sid, cx);
+            } else if let Ok(uid) = std::env::var("HONGGUO_CREATOR")
+                && !uid.is_empty()
+            {
+                shell.creator.update(cx, |view, cx| view.load(uid, cx));
+                shell.dest = Dest::Creator;
+                cx.notify();
+            }
         }
         shell.refresh_follow_unread(cx);
         shell.ensure_account_avatar(cx);

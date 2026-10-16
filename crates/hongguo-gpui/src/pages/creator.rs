@@ -350,7 +350,9 @@ impl CreatorView {
         div()
             .id(ElementId::from(format!("creator-work-{}", work.series_id)))
             .group("creator-work")
-            .w(gpui_kit::px(172.0))
+            // 卡片宽度对齐 Tauri 网格密度（xl:grid-cols-5 @ max-w-6xl ≈
+            // 205px/列；172 会把「全N集 · 热度 · 播放」行挤出截断）
+            .w(gpui_kit::px(200.0))
             .flex_shrink_0()
             .rounded(gpui_kit::px(12.0))
             .overflow_hidden()
@@ -373,7 +375,7 @@ impl CreatorView {
                 div()
                     .relative()
                     .w_full()
-                    .h(gpui_kit::px(229.0))
+                    .h(gpui_kit::px(267.0))
                     .children(cover.map(|bitmap| {
                         img(ImageSource::Render(bitmap))
                             .size_full()
