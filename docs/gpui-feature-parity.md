@@ -120,6 +120,21 @@
   并强制展开）/ 回复点赞（评论形态端点，Tauri 实测口径）/ 删除（AlertDialog
   确认；剧评 service_id=2、回复 service_id=4，本地摘除免重取）；正文按
   `[表情]` 内联渲染。真机数据目检：♥计数 + 回复钮渲染正确。
+- ✅ 2026-10-17 找剧页搜索联想对齐 Tauri：
+  - 键盘导航（Tauri 输入框 onKeyDown 同款）：↑↓ 高亮循环 / Enter 选中高亮条
+    （无联想时提交搜索）/ Esc 收起 / 悬停改高亮；聚焦重开、失焦收起。
+    派发语义已用进程内断言钉死（`tests/browse_suggest_keys.rs`）：gpui 的
+    「绑定（action）先、key listener 后」顺序下，祖先的冒泡 `on_key_down`
+    仍能收到这四个键，且单行输入里 ↑↓ 不挪光标（无 Tauri 的 preventDefault
+    也能等价）。**打字输入走平台 WM_CHAR**，不受这条拦截影响。
+  - 下拉形态对齐：绝对定位锚在输入框正下方（Tauri Popover
+    side=bottom/sideOffset=6/锚宽同款）、`deferred` 提到卡片网格之上绘制、
+    max-h 320 + 滚动、popover 底色。行内容补全：有封面的行前置 40×54 竖版
+    缩略图（走既有 HEIC 转码封面链）、命中片段上 warm 令牌、带剧集的条目
+    加粗、摘要行保留。
+  - 顺带收编业务语义色：新增 `tokens.rs`（对齐 CSS 的 `--warm`，暗色档 =
+    orange-400），找剧卡片热度行与榜单推荐语从 muted 灰改为 warm——Tauri 这两处
+    用的是 `text-warm`，此前 GPUI 少了一层色。`hot`/`star` 待同法收编。
 - 顶栏分类 tab：Tauri = 固定顶栏 portal 常显；GPUI = 舞台顶部悬浮、随悬浮层显隐
   （`home/stage.rs` 注释自述为适配 TitleBar 拖拽区的有意形态）。**待用户裁决**是否改为
   常显顶栏（需要自绘标题栏拖拽区）。
