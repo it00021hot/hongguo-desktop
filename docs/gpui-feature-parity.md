@@ -50,16 +50,13 @@
 | 8 | 退出确认：Tauri `CloseRequested` → 前端确认框（自绘 ×/Alt+F4/任务栏关闭都问一句）；GPUI 关窗直接退 | `crates/hongguo-tauri/src/lib.rs:107-113`、`app-shell.tsx:189-194` | ✅ 2026-10-17（`Shell::install_close_guard`：弹「确定要退出吗？/ 退出会中断正在进行的下载任务…」，取消复位闸门、弹过还来放行；真机投 WM_CLOSE 验过窗口未被关掉、文案与两键同 Tauri） |
 | 9 | 单实例：Tauri `tauri-plugin-single-instance`（第二次启动前置已有窗口）；GPUI 第二次启动撞库锁 → 报错退出（用户视角「点图标没反应」） | `crates/hongguo-tauri/src/lib.rs:38-40,288-295` | ✅ 2026-10-17（`src/single_instance.rs`：命名互斥体 + 命名事件；第二进程置位即退、**早于开库**；首实例轮询消费 → 显示 + 还原最小化 + 聚焦。真机 A/B 双启验证） |
 | 10 | 看完自动删除：设置页开关 `autoDeleteAfterPlay` 在 Tauri 播放到底时真删本地成品文件（`player-page.tsx:409-420` + `delete_episode`）；GPUI 的同一开关**无任何消费方**（死开关） | `crates/hongguo-gpui/src/home/playback.rs`（改前全仓仅设置页引用） | ✅ 2026-10-17（`advance_after_end` 顶部接上，同 Tauri 顺序：先删再连播；复用 service `cleanup::delete_episode`。真机：预置 completed 任务 + 探针文件，4 倍速播到底 → 文件被删 + 提示条 + 连播照常） |
+| 11 | 本地成品播放：Tauri「本地成品优先，其次在线流」（`play_service::local::resolve_play`，已下载的集走 `hongguo-local://`，离线可播/秒开）；GPUI 起播链只走 `online::prepare`，全仓无一处读 `completed_path` | `crates/hongguo-service/src/play_service/local.rs` vs `crates/hongguo-gpui/src/home/playback.rs` | ✅ 2026-10-17（引擎加字节层 `ByteSource`（Online/Local）+ `PlaySource` 公开面；壳起播先查 `completed_path` 且文件确在 → 本地播放，档位表为空；陈旧记录回落在线流）。真机：640×360 本地 HEVC 样本 → 「头部就绪 0ms / 640x360 1ch」+ 彩条截图；播完连播回在线流同轮验证 |
 
 ### 下一步（本轮发现，尚未开工）
 
-- **本地成品播放缺失**：Tauri 的播放地址解析是「本地成品优先，其次在线流」
- （`hongguo-service/src/play_service/local.rs::resolve_play`：已下载的那一集走
- `hongguo-local://`，离线可播、秒开）；GPUI 的起播链直接调
- `play_service::online::prepare`（`home/playback.rs`），**全仓没有任何地方读
- `completed_path`** —— 已下载的集在 GPUI 里仍走在线流（离线播不了，也不享受
- 本地秒开）。要补得给 `hongguo-playback` 加本地文件源（现有 source.rs 只按
- 样本表从 `hongguo-stream` 取字节），属引擎级改动，单独一批做。
+- `PlayRequest.file_path` 直传路径那条分支（Tauri `resolve_play` 的第一段：
+ 调用方直接给成品路径，合并产物/指定文件用）GPUI 尚无对应入口——先用
+ `completed_path`（队列命中）覆盖了常规路径，等确认合并产物那条链谁在用再补。
 
 ### 顺带修（本轮验证中发现）
 
