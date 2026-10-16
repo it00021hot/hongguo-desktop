@@ -28,13 +28,13 @@
 
 附注：`hongguo-api::detail` 补导出 `SeriesCreator`（纯导出，无行为变更——GPUI 预览 fixtures 需要构造该类型）。
 
-## W3 详情 / 播放语义缺口（代码自述）
+## W3 详情 / 播放语义缺口（代码自述）—— ✅ 2026-10-17（#1/#2 落地，#3 待做）
 
 | # | 差距 | 证据 | 状态 |
 | - | ---- | ---- | ---- |
-| 1 | 详情页「云端观看历史兜底」未接 | `detail/mod.rs:237`、`liked.rs:385`（同族） | 待做 |
-| 2 | 剧终接力跨季 / 换批语义未对齐 | `home/mod.rs:12`、`home/playback.rs:619` | 待做 |
-| 3 | MFA 风控自动轮询未移植 | `gpui-review-checklist.md`「已知边界」 | 待做 |
+| 1 | 详情页「云端观看历史兜底」未接 | 原 `detail/mod.rs` 自述 | ✅ 三段决策（本地>3s → 云端>3s → 本地≤3s 仍算看到）与 Tauri continueIndex 同口径；列表页 (1,0) 起点经首页云端复核 |
+| 2 | 剧终接力跨季 / 换批语义未对齐 | 原 `playback.rs` 自述 | ✅ `home/season.rs`（季号解析 + 下一季挑选）+ 接力链路（下一季 → 信息流下一条）；下载面板闸与滚过末集同款；`tests/season_relay.rs` 覆盖 |
+| 3 | MFA 风控自动轮询未移植 | `gpui-review-checklist.md`「已知边界」 | 待做（service 已有轮询事件，壳侧 UI 走事件已接；核对是否还差触发路径） |
 
 ## W4 壳级行为
 
