@@ -11,7 +11,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ImageSource, ObjectFit, SharedString, Window, div, img};
+use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, Window, div, img};
 use hongguo_api::interact::{collect_series, digg_video};
 
 use super::DetailView;
@@ -160,6 +160,7 @@ impl DetailView {
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(intro))
                     }))
+                    .child(self.render_creators(cx))
                     .child(if self.upcoming {
                         // 未上线降级视图（Tauri prefill 同款）：动作行换
                         // 「即将上线 + 预约（已预约可再点取消）」
@@ -271,6 +272,94 @@ impl DetailView {
                     }),
             )
             .into_any_element()
+    }
+
+    /// 出品方 / 演职员（Tauri `series-detail-page.tsx` creators 块同款：
+    /// 头像 + 名字 + 角色行，点击跳创作者主页；无 uid 的旧条目仅展示）。
+    pub(super) fn render_creators(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        let Some(meta) = &self.meta else {
+            return div().into_any_element();
+        };
+        if meta.creators.is_empty() {
+            return div().into_any_element();
+        }
+        let mut row = h_flex().mt_4().flex_wrap().items_center().gap_3();
+        for creator in &meta.creators {
+            let clickable = !creator.user_id.is_empty();
+            let avatar_view = match self.images.get(&creator.avatar).cloned() {
+                Some(image) => img(ImageSource::Render(image))
+                    .size_7()
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .object_fit(ObjectFit::Cover)
+                    .into_any_element(),
+                None => h_flex()
+                    .size_7()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(theme.muted)
+                    .child(
+                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::UserRound)
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .into_any_element(),
+            };
+            let mut chip = div()
+                .id(ElementId::from(format!(
+                    "detail-creator-{}-{}",
+                    creator.user_id, creator.name
+                )))
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
+                .py_1()
+                .pr_3()
+                .pl_1()
+                .tooltip({
+                    let name = creator.name.clone();
+                    move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(SharedString::from(format!(
+                            "看「{name}」的主页"
+                        )))
+                        .build(window, cx)
+                    }
+                });
+            if clickable {
+                let uid = creator.user_id.clone();
+                chip = chip
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.secondary_hover))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(super::DetailEvent::OpenCreator(uid.clone()));
+                    }));
+            }
+            row = row.child(
+                chip.child(avatar_view).child(
+                    v_flex()
+                        .items_start()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                .child(SharedString::from(creator.name.clone())),
+                        )
+                        .children((!creator.role.is_empty()).then(|| {
+                            div()
+                                .text_size(gpui_kit::px(10.0))
+                                .text_color(theme.muted_foreground)
+                                .child(SharedString::from(creator.role.clone()))
+                        })),
+                ),
+            );
+        }
+        row.into_any_element()
     }
 
     /// 备案号（头部块之下、tab 之上独立一行小字；空 = meta 未给不渲染）。

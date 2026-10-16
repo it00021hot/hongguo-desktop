@@ -381,6 +381,31 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "follows-notices",
             font_scale: 1.,
         },
+        // —— 创作者主页 ——
+        PreviewCase {
+            name: "creator-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "creator",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-empty-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator-empty",
+            font_scale: 1.,
+        },
         // —— 下载管理 ——
         PreviewCase {
             name: "tasks-light",

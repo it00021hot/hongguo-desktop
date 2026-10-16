@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui_kit::RenderImage;
 use hongguo_api::calendar::CalendarItem;
-use hongguo_api::danmaku::CommentItem;
+use hongguo_api::danmaku::{CommentItem, CreatorProfile, CreatorWork};
 use hongguo_api::detail::RelatedItem;
 use hongguo_api::discover::{FeedItem, SelectorItem, SelectorRow};
 use hongguo_api::history::WatchHistoryItem;
@@ -262,6 +262,34 @@ pub(crate) fn follow_notices() -> Vec<FollowNotice> {
             read: true,
         },
     ]
+}
+
+/// 创作者页：资料头（头像由种子的合成封面充当）。
+pub(crate) fn creator_profile() -> CreatorProfile {
+    CreatorProfile {
+        user_id: "2007062623837002".into(),
+        user_name: "林间剧场".into(),
+        avatar: String::new(), // 预览头像直接灌 avatar 位图
+        description: "专注都市逆袭题材的短剧出品方，代表作《命运契约》《重生之千金归来》。".into(),
+    }
+}
+
+/// 创作者页：作品（6 部，剧名/热度取 SERIES 池，集数与播放量错开）。
+pub(crate) fn creator_works() -> Vec<CreatorWork> {
+    SERIES
+        .iter()
+        .enumerate()
+        .map(|(i, (sid, title, _))| CreatorWork {
+            series_id: (*sid).into(),
+            title: (*title).into(),
+            cover: String::new(), // 预览封面直接灌 covers
+            intro: String::new(),
+            episode_cnt: 24 + i as i64 * 12,
+            play_cnt: 3_120_000 + i as i64 * 456_000,
+            hot: 31_820_000 - i as i64 * 3_000_000,
+            tags: Vec::new(),
+        })
+        .collect()
 }
 
 /// 找剧页：筛选面板（体裁/主题/推荐 + 服务端八行里的代表性三行）。

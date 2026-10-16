@@ -45,6 +45,9 @@ pub(crate) enum DetailEvent {
         vid_index: u32,
         start_secs: f64,
     },
+    /// 点「出品方/演职员」芯片 → 创作者主页（壳切页；详情页实体保留，
+    /// 返回时原地恢复）。
+    OpenCreator(String),
 }
 
 /// 来源页（预约列表/榜单行）带来的档案快照。未上线剧解析分集必然失败
@@ -218,7 +221,22 @@ impl DetailView {
                 match result {
                     Ok((series, meta, upcoming)) => {
                         view.load_image(series.cover.clone(), cx);
+                        // 出品方/演职员头像随 meta 预取（头部芯片用；先收集
+                        // URL 再改 view，避免同时借 self.meta）
+                        let creator_avatars: Vec<String> = meta
+                            .as_ref()
+                            .map(|m| {
+                                m.creators
+                                    .iter()
+                                    .map(|c| c.avatar.clone())
+                                    .filter(|a| !a.is_empty())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         view.meta = meta;
+                        for url in creator_avatars {
+                            view.load_image(url, cx);
+                        }
                         view.series = Some(Arc::new(series));
                         view.upcoming = upcoming;
                         if !upcoming {

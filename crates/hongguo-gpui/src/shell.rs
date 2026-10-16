@@ -28,6 +28,7 @@ use crate::home::HomeEvent;
 use crate::home::HomeView;
 use crate::pages::browse::{BrowseEvent, BrowseView};
 use crate::pages::collections::{CollectionEvent, CollectionView};
+use crate::pages::creator::{CreatorEvent, CreatorView};
 use crate::pages::follows::{FollowsEvent, FollowsView};
 use crate::pages::history::{HistoryEvent, HistoryView};
 use crate::pages::liked::{LikedEvent, LikedView};
@@ -58,6 +59,8 @@ pub(crate) enum Dest {
     Settings,
     /// 应用内详情页（不在侧栏：播放页点剧名 / 播放入口进入）。
     Detail,
+    /// 创作者主页（不在侧栏：详情页出品方/演职员芯片进入）。
+    Creator,
 }
 
 impl Dest {
@@ -94,6 +97,7 @@ impl Dest {
             Dest::Settings => "设置",
             // 不在侧栏（播放页进入），仅兜匹配
             Dest::Detail => "详情",
+            Dest::Creator => "创作者",
         }
     }
 
@@ -113,6 +117,7 @@ impl Dest {
             Dest::Storage => IconName::HardDrive,
             Dest::Settings => IconName::Settings,
             Dest::Detail => IconName::Info,
+            Dest::Creator => IconName::UserRound,
         }
     }
 
@@ -154,6 +159,7 @@ impl Dest {
             Dest::Storage => View::Storage,
             Dest::Merge => View::Merge,
             Dest::Detail => View::Detail,
+            Dest::Creator => View::Creator,
         }
     }
 }
@@ -174,6 +180,7 @@ enum View {
     Storage,
     Merge,
     Detail,
+    Creator,
 }
 
 /// 壳窗口实体：持有各视图实体，切换当前目的地。服务面由视图各自持有。
@@ -194,6 +201,7 @@ pub struct Shell {
     settings_page: Entity<SettingsView>,
     storage: Entity<StorageView>,
     merge: Entity<MergeView>,
+    creator: Entity<CreatorView>,
     detail: Option<Entity<DetailView>>,
     /// 详情页当前加载的剧（同剧重复点击不重载）。
     detail_series: Option<String>,
@@ -220,6 +228,7 @@ impl Shell {
         let storage = cx.new(|cx| StorageView::new(state.clone(), window, cx));
         let merge = cx.new(|cx| MergeView::new(state.clone(), window, cx));
         let follows = cx.new(|cx| FollowsView::new(state.clone(), window, cx));
+        let creator = cx.new(|_cx| CreatorView::new(state.clone()));
         // 播放页 → 详情页：HomeView 发事件，壳切目的地（页面间不互相持有）
         cx.subscribe(&feed, |this, _, event: &HomeEvent, cx| match event {
             HomeEvent::OpenDetail(series_id) => this.open_detail(series_id.clone(), cx),
@@ -359,6 +368,17 @@ impl Shell {
             }
         })
         .detach();
+        cx.subscribe(&creator, |this, _, event: &CreatorEvent, cx| {
+            match event.clone() {
+                CreatorEvent::Play {
+                    series_id,
+                    vid_index,
+                    start_secs,
+                } => this.start_play(series_id, vid_index, start_secs, cx),
+                CreatorEvent::Back => this.close_creator(cx),
+            }
+        })
+        .detach();
         // 壳级服务事件：独立订阅一条广播（与 HomeView 的通道互不抢）。
         // 追更提醒到达 → 侧栏角标刷新 + 追更页列表翻面。
         let mut shell_events = crate::events::subscribe(&state);
@@ -417,6 +437,7 @@ impl Shell {
             settings_page,
             storage,
             merge,
+            creator,
             detail: None,
             detail_series: None,
             follow_unread: 0,
@@ -618,7 +639,25 @@ impl Shell {
                 });
                 cx.notify();
             }
+            // 出品方/演职员芯片 → 创作者主页（详情实体保留，返回原地恢复）
+            DetailEvent::OpenCreator(user_id) => {
+                self.creator.update(cx, |view, cx| view.load(user_id, cx));
+                self.dest = Dest::Creator;
+                cx.notify();
+            }
         }
+    }
+
+    /// 创作者主页返回：回来源详情页（实体保留原样）；没有详情来源时回首页
+    /// 续播（与详情返回同语义）。
+    fn close_creator(&mut self, cx: &mut Context<Self>) {
+        if self.detail.is_some() && self.detail_series.is_some() {
+            self.dest = Dest::Detail;
+        } else {
+            self.dest = Dest::Home;
+            self.feed.update(cx, |home, cx| home.resume_if_idle(cx));
+        }
+        cx.notify();
     }
 
     /// 给 main 的启动回调：把窗口提到前台。
@@ -736,6 +775,10 @@ impl Shell {
                 detail.update(cx, |view, cx| view.debug_preview_seed(scene, cx));
             }
             self.detail_series = Some("7100000".into());
+        } else if scene.starts_with("creator") {
+            self.dest = Dest::Creator;
+            self.creator
+                .update(cx, |view, cx| view.debug_preview_seed(scene, cx));
         } else {
             self.dest = Dest::Home;
             self.feed
@@ -987,6 +1030,7 @@ impl Shell {
             View::Settings => self.settings_page.clone().into_any_element(),
             View::Storage => self.storage.clone().into_any_element(),
             View::Merge => self.merge.clone().into_any_element(),
+            View::Creator => self.creator.clone().into_any_element(),
             View::Detail => self
                 .detail
                 .as_ref()
