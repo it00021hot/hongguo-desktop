@@ -38,8 +38,8 @@ struct PlayRequest {
 
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
-    /// 越过第 1 集原地不动；滚过末集 = 剧终，跟随宿主刷下一部（本实现无
-    /// 下一季接力，与信息流回落路径一致）。
+    /// 越过第 1 集原地不动；滚过末集 = 剧终，走剧终接力（下一季 → 信息流
+    /// 下一条推荐）。
     pub(super) fn step_episode(&mut self, dir: i32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
             return;
@@ -49,7 +49,8 @@ impl super::HomeView {
             return;
         }
         if next as usize > now.episode_count {
-            self.step(1, cx);
+            // 滚过末集也算剧终（Tauri Ns()→hc() 同款）
+            self.advance_after_series_end(cx);
             return;
         }
         if let Some(item) = self
@@ -335,6 +336,9 @@ impl super::HomeView {
                             view.binge = None;
                         }
                         view.load_intro(now.series_id.clone(), cx);
+                        // 剧终接力的下一季数据面随起播预取（Tauri 起播时
+                        // 拉好相关列表同款；剧终时通常已就绪）
+                        view.load_related_seasons(now.series_id.clone(), cx);
                         // 互动数据：集级公开计数（档案）+ mget 最近互动
                         view.load_episode_counts(&now, cx);
                         view.load_interact_state(cx);
@@ -680,8 +684,14 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 连播：下一集；末集接流内下一部（剧终接力的跨季/换批语义后续对齐）。
+    /// 连播：下一集；末集走剧终接力（下一季 → 信息流下一条推荐）。
     pub(super) fn advance_after_end(&mut self, cx: &mut Context<Self>) {
+        // 下载面板开着不自动连播（Tauri `autoNext && !downloading` 同款：
+        // 面板挂着用户刚选完的集，切集/切剧会把勾选连同面板一起吃掉）——
+        // 停在末帧等用户。
+        if self.downloads_open {
+            return;
+        }
         self.frame = None;
         #[cfg(target_os = "windows")]
         self.clear_frame_image();
@@ -720,6 +730,50 @@ impl super::HomeView {
                 return;
             }
         }
+        self.advance_after_series_end(cx);
+    }
+
+    /// 剧终接力（Tauri useBingeRelay.advanceAfterSeriesEnd 同款）：优先接
+    /// **下一季**第 1 集（相关作品按季号挑「大于当前季的最小已上线季」），
+    /// 没有下一季则跟随宿主（信息流）刷下一条推荐。本壳宿主恒为信息流，
+    /// Tauri 无宿主签名下的「猜你喜欢」分支不适用。
+    fn advance_after_series_end(&mut self, cx: &mut Context<Self>) {
+        let Some(now) = self.now.clone() else {
+            self.step(1, cx);
+            return;
+        };
+        // 下载面板开着不接力（同连播闸）——退回提示，静默不动像坏了
+        if self.downloads_open {
+            self.show_toast(format!("已经是最后一集（第{}集）了", now.episode_count), cx);
+            return;
+        }
+        // 下一季数据面：起播时已预取（plan/v 相关作品；未到/拉失败 = 空表）
+        let works = self
+            .related_seasons
+            .get(&now.series_id)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(next) =
+            crate::home::season::pick_next_season(&works, &now.series_id, &now.title)
+        {
+            // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集，
+            // 连播锁定延续到新季
+            self.show_toast(format!("即将播放下一季：{}", next.title), cx);
+            self.binge = Some(next.series_id.clone());
+            self.play_target(
+                StreamItem {
+                    series_id: next.series_id.clone(),
+                    title: next.title.clone(),
+                    cover: next.cover.clone(),
+                    ..Default::default()
+                },
+                Some(1),
+                None,
+                cx,
+            );
+            return;
+        }
+        // 没有下一季：跟随信息流刷下一条推荐（已到底时宿主原地驻留）
         self.step(1, cx);
     }
 

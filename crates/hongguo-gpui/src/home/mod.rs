@@ -94,6 +94,7 @@ pub(crate) mod picker;
 pub(crate) mod playback;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
+pub(crate) mod season;
 pub(crate) mod stage;
 
 /// 当前在播的剧（overlay 与进度落盘的身份）。

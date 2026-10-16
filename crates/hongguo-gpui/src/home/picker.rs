@@ -26,7 +26,7 @@ impl super::HomeView {
     /// 拉当前剧的相关作品·系列（plan/v；每剧一次，失败静默可重试）。
     /// 季卡片数据源：works 里季号可解析的条目（当前剧由浮层渲染时从
     /// 档案合成插头部，与 Tauri seasons memo 同构）。
-    fn load_related_seasons(&mut self, series_id: String, cx: &mut Context<Self>) {
+    pub(super) fn load_related_seasons(&mut self, series_id: String, cx: &mut Context<Self>) {
         if self.related_seasons.contains_key(&series_id)
             || !self.related_loading.insert(series_id.clone())
         {
@@ -60,16 +60,6 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 「第N季」→ 季号（Tauri seasonNoFromTag 同款正则）。
-    fn season_no(tag: &str) -> Option<u32> {
-        let rest = tag.strip_prefix("第")?;
-        let no: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if no.is_empty() || !rest[no.len()..].starts_with("季") {
-            return None;
-        }
-        no.parse().ok()
-    }
-
     /// 季列表合成（Tauri seasons memo 同构）：plan 只回其他季，当前季
     /// 缺失时从档案合成插头部；按季号排序（服务端顺序不可信）。
     fn seasons_of(&self) -> (String, Vec<(RelatedItem, u32)>) {
@@ -84,7 +74,9 @@ impl super::HomeView {
             .unwrap_or_default();
         let mut out: Vec<(RelatedItem, u32)> = works
             .iter()
-            .filter_map(|w| Self::season_no(&w.tag).map(|no| (w.clone(), no)))
+            .filter_map(|w| {
+                crate::home::season::season_no_from_tag(&w.tag).map(|no| (w.clone(), no))
+            })
             .collect();
         if !out.iter().any(|(w, _)| w.series_id == *sid) {
             // 当前季缺失：从档案合成（tag/playCnt 档案没有，卡片留空即可）
