@@ -5,8 +5,9 @@
 //! 标题 + 评分/热度/追剧/播放统计行 + 季徽/全集数/题材标签 + 简介 + 动作行
 //! 播放/收藏/点赞）→ 备案号 → 三 tab（选集 / 剧评 / 相关推荐）。数据全部
 //! 走官方 App 接口（分集档案 / video_detail meta / 剧评分页 / plan 相关
-//! 推荐）——「继续看第 N 集」的 N 从本地播放档案推（service 同一段
-//! resolve_entry 决策），云端观看历史兜底未做（Tauri 有，差异见页尾注释）。
+//! 推荐）——「继续看第 N 集」的 N 按 Tauri 详情页 continueIndex 同口径三段
+//! 决策：本地断点 >3 秒优先，云端观看历史 >3 秒兜底，本地有记录（≤3 秒）
+//! 仍视作看到那一集从头播。
 //!
 //! 未上线剧：Tauri 靠来源页 prefill 合成 0 集档案走降级视图；GPUI 的入口
 //! （首页/排行榜）只传 series_id 没有 prefill，解析失败一律落错误态 +
@@ -29,6 +30,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, RenderImage, div};
 use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedSeries;
+use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::InteractionItem;
 use hongguo_common::model::Series;
 use hongguo_service::app_state::AppStateInner;
@@ -108,6 +110,8 @@ pub(crate) struct DetailView {
     /// 追更态（跟随列表首页本地判成员；未登录/未查到 = None）与在途翻转。
     follow_is_on: Option<bool>,
     follow_pending: bool,
+    /// 云端观看历史（登录可见；「继续看」的兜底源，Tauri 详情页同款）。
+    history: Vec<WatchHistoryItem>,
 }
 
 impl DetailView {
@@ -139,6 +143,7 @@ impl DetailView {
             digg_pending: false,
             follow_is_on: None,
             follow_pending: false,
+            history: Vec::new(),
         }
     }
 
@@ -181,6 +186,7 @@ impl DetailView {
         self.digg_pending = false;
         self.follow_is_on = None;
         self.follow_pending = false;
+        self.history.clear();
         self.loading = true;
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
@@ -214,6 +220,23 @@ impl DetailView {
                 .ok();
             Ok::<_, hongguo_common::AppError>((series, meta, upcoming))
         });
+        // 云端观看历史（「继续看」兜底源；登录才有数据，匿名回空表）——
+        // 与档案并行各拉各的，晚到只是一拍刷新按钮文案
+        let state_history = Arc::clone(&self.state);
+        let rx_history = bridge::spawn(async move {
+            let env = state_history.api_env();
+            hongguo_api::history::fetch_watch_history(0, &env).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx_history.await.expect("tokio 桥不会丢弃发送端");
+            if let Ok(page) = result {
+                let _ = this.update(cx, |view, cx| {
+                    view.history = page.items;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
@@ -259,16 +282,34 @@ impl DetailView {
         .detach();
     }
 
-    /// 「继续看」目标集与起点（本地播放档案 >3 秒续播，service 同一段
-    /// resolve_entry 决策；Tauri 另有云端观看历史兜底，GPUI 未接）。
+    /// 「继续看」目标集与起点（Tauri `series-detail-page.tsx` 的
+    /// continueIndex 同口径三段决策）：
+    /// 1) 本地断点 >3 秒 → 那集那位置（第一真值，播放中 5 秒一写）；
+    /// 2) 云端观看历史 >3 秒 → 云端那集那位置（本地 ≤3 秒也按没看过让位）；
+    /// 3) 本地有记录（≤3 秒）→ 仍视作看到这一集，从头播（详情页特例）；
+    /// 4) 都没有 → 第 1 集从头。
     fn resume_entry(&self) -> (u32, f64) {
-        hongguo_service::play_service::resume::resolve_entry(
-            &self.state.store,
-            &self.series_id,
-            &[],
-        )
-        .ok()
-        .unwrap_or((1, 0.0))
+        let local = self
+            .state
+            .store
+            .series_last_position(&self.series_id)
+            .ok()
+            .flatten();
+        if let Some((idx, pos)) = &local
+            && pos.is_resumable()
+        {
+            return (*idx, pos.current_time);
+        }
+        let threshold_ms = (hongguo_common::model::playback::RESUME_THRESHOLD_SECS * 1000.0) as i64;
+        if let Some(h) = self.history.iter().find(|h| h.series_id == self.series_id)
+            && h.position_ms > threshold_ms
+        {
+            return (h.vid_index.max(1) as u32, h.position_ms as f64 / 1000.0);
+        }
+        if let Some((idx, _)) = local {
+            return (idx, 0.0);
+        }
+        (1, 0.0)
     }
 
     /// 登录与否（settings 里有账号即已登录，与首页互动栏同口径）。

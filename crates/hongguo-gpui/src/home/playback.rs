@@ -624,6 +624,22 @@ impl super::HomeView {
         start_secs: f64,
         cx: &mut Context<Self>,
     ) {
+        // 起点复核（Tauri 首页「成为当前剧」effect 同款）：列表页调用方只
+        // 拿得到本地档案，云端观看历史 >3 秒时用云端位置兜底——传上来的
+        // (1, 0.0) 正是「本地没有可续播记录」的形态，显式续播/换集
+        // （idx>1 或带位置）不受影响。
+        let (vid_index, start_secs) = if vid_index == 1 && start_secs == 0.0 {
+            match hongguo_service::play_service::resume::resolve_entry(
+                &self.state.store,
+                &series_id,
+                self.history.as_deref().unwrap_or(&[]),
+            ) {
+                Ok((idx, pos)) if idx > 1 || pos > 0.0 => (idx, pos),
+                _ => (vid_index, start_secs),
+            }
+        } else {
+            (vid_index, start_secs)
+        };
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
         let done = bridge::spawn(async move {

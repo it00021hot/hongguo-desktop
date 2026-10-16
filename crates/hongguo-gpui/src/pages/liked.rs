@@ -381,8 +381,8 @@ impl LikedView {
                             if this.managing {
                                 this.toggle_selected(&vid, cx);
                             } else {
-                                // 续播决策与详情页同一段 resolve_entry
-                                // （本地播放档案；云端历史兜底未接）
+                                // 起点决策与详情页同一段 resolve_entry（本地
+                                // 档案）；(1,0) 形态由首页复核云端历史兜底
                                 let (vid_index, start_secs) =
                                     hongguo_service::play_service::resume::resolve_entry(
                                         &this.state.store,
