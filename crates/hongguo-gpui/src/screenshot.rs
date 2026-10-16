@@ -130,6 +130,13 @@ pub(crate) fn install(
                             let _ = cx;
                         });
                     }
+                    // 看完自动删：打开开关（真实保存路径），让在播的这集播到
+                    // 底——验「文件被删 + 提示条」。
+                    "auto-delete" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_auto_delete(window, cx));
+                        });
+                    }
                     _ => {}
                 }
             }

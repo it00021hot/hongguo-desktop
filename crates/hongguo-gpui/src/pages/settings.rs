@@ -1408,6 +1408,16 @@ impl SettingsView {
         log::info!("[BossProbe] 写入 {spec:?} 后，库里的老板键 = {saved:?}");
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=auto-delete`）：
+    /// 走真实保存路径打开「看完自动删除」——验播放到底时真删本地文件。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_set_auto_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.patch(cx, |s| s.auto_delete_after_play = true);
+        self.save(window, cx);
+        let saved = self.state.settings().auto_delete_after_play;
+        log::info!("[AutoDelete] 保存后 库里的看完自动删 = {saved}");
+    }
+
     /// 预览种子（screenshot feature）：灌假占用/缓存/能力与表单值。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_preview_seed(

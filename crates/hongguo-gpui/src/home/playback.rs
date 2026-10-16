@@ -709,8 +709,45 @@ impl super::HomeView {
         .detach();
     }
 
+    /// 看完自动删（设置页「看完自动删除」）：删掉刚看完那集的本地文件，
+    /// 删到了才提示。文件删除 + 任务记录摘除都在 service 的 cleanup 里，
+    /// 与 Tauri `deleteEpisode` 同源；同步文件 IO 走阻塞池，不堵 UI 线程。
+    fn auto_delete_finished_episode(&mut self, cx: &mut Context<Self>) {
+        if !self.state.settings().auto_delete_after_play {
+            return;
+        }
+        let Some(now) = &self.now else {
+            return;
+        };
+        let (series_id, vid_index) = (now.series_id.clone(), now.vid_index);
+        let state = Arc::clone(&self.state);
+        let rx = bridge::spawn(async move {
+            tokio::task::spawn_blocking(move || {
+                hongguo_service::storage_service::cleanup::delete_episode(
+                    &state, &series_id, vid_index,
+                )
+            })
+            .await
+            .unwrap_or(Ok(false))
+        });
+        cx.spawn(async move |this, cx| {
+            let deleted = rx.await.unwrap_or(Ok(false)).unwrap_or(false);
+            if !deleted {
+                return;
+            }
+            let _ = this.update(cx, |view, cx| {
+                view.show_toast(format!("第{vid_index}集已看完，已删除本地文件"), cx);
+            });
+        })
+        .detach();
+    }
+
     /// 连播：下一集；末集走剧终接力（下一季 → 信息流下一条推荐）。
     pub(super) fn advance_after_end(&mut self, cx: &mut Context<Self>) {
+        // 看完自动删（Tauri handleEnded 的 autoDelete 同序：先删刚看完这集的
+        // 本地文件，再决定连播——下载面板开着也照删，删除不依赖连播）。
+        // 没下载过的集本来就没有文件，`delete_episode` 返回 false，不提示。
+        self.auto_delete_finished_episode(cx);
         // 下载面板开着不自动连播（Tauri `autoNext && !downloading` 同款：
         // 面板挂着用户刚选完的集，切集/切剧会把勾选连同面板一起吃掉）——
         // 停在末帧等用户。

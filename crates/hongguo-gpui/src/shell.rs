@@ -855,6 +855,14 @@ impl Shell {
         });
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=auto-delete`）：
+    /// 打开「看完自动删除」（走真实保存路径），供播放到底的行为取证。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_set_auto_delete(&self, window: &mut Window, cx: &mut App) {
+        self.settings_page
+            .update(cx, |view, cx| view.debug_set_auto_delete(window, cx));
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。
