@@ -1,4 +1,5 @@
-//! 壳级 UI 偏好（GPUI）：侧栏折叠态 / 追更提醒弹出开关。
+//! 壳级 UI 偏好（GPUI）：侧栏折叠态 / 追更提醒弹出开关 / 找剧筛选折叠态 /
+//! 主题偏好。
 //!
 //! 语义对齐 Tauri 的 zustand `hongguo-ui` persist（localStorage，见
 //! `src/stores/ui.ts` 的 partialize）——纯 UI 偏好不进业务库；用数据目录下
@@ -10,14 +11,58 @@ use std::path::Path;
 /// 数据目录下的文件名。
 pub(crate) const FILE_NAME: &str = "gpui-ui-prefs";
 
+/// 主题偏好（Tauri `hongguo-theme` store 同款三档）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThemePref {
+    /// 跟随系统（默认，Tauri `theme: 'auto'` 同款）。
+    Auto,
+    Light,
+    Dark,
+}
+
+impl ThemePref {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            ThemePref::Auto => "auto",
+            ThemePref::Light => "light",
+            ThemePref::Dark => "dark",
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "light" => ThemePref::Light,
+            "dark" => ThemePref::Dark,
+            _ => ThemePref::Auto,
+        }
+    }
+
+    /// 偏好 → 实际主题档（`auto` 由系统外观决定）。
+    pub(crate) fn resolve(
+        self,
+        appearance: gpui_kit::WindowAppearance,
+    ) -> gpui_kit::component::ThemeMode {
+        use gpui_kit::WindowAppearance as A;
+        match self {
+            ThemePref::Light => gpui_kit::component::ThemeMode::Light,
+            ThemePref::Dark => gpui_kit::component::ThemeMode::Dark,
+            ThemePref::Auto => match appearance {
+                A::Light | A::VibrantLight => gpui_kit::component::ThemeMode::Light,
+                _ => gpui_kit::component::ThemeMode::Dark,
+            },
+        }
+    }
+}
+
 /// UI 偏好。默认值与 Tauri 一致：侧栏默认折叠（用户展开后持久化记住）、
-/// 追更提醒默认弹出。
+/// 追更提醒默认弹出、主题跟随系统。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UiPrefs {
     pub(crate) sidebar_collapsed: bool,
     pub(crate) aibot_popup_on: bool,
     /// 找剧筛选面板折叠态（Tauri `browseFiltersCollapsed` 同款）。
     pub(crate) browse_filters_collapsed: bool,
+    pub(crate) theme: ThemePref,
 }
 
 impl Default for UiPrefs {
@@ -26,6 +71,7 @@ impl Default for UiPrefs {
             sidebar_collapsed: true,
             aibot_popup_on: true,
             browse_filters_collapsed: false,
+            theme: ThemePref::Auto,
         }
     }
 }
@@ -44,6 +90,7 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
             "sidebar_collapsed" => prefs.sidebar_collapsed = value.trim() == "true",
             "aibot_popup_on" => prefs.aibot_popup_on = value.trim() == "true",
             "browse_filters_collapsed" => prefs.browse_filters_collapsed = value.trim() == "true",
+            "theme" => prefs.theme = ThemePref::parse(value.trim()),
             _ => {}
         }
     }
@@ -54,8 +101,11 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
 pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
     let tmp = path.with_extension("tmp");
     let text = format!(
-        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\n",
-        prefs.sidebar_collapsed, prefs.aibot_popup_on, prefs.browse_filters_collapsed
+        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\n",
+        prefs.sidebar_collapsed,
+        prefs.aibot_popup_on,
+        prefs.browse_filters_collapsed,
+        prefs.theme.as_str()
     );
     if std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))

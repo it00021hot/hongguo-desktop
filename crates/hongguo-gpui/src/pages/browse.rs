@@ -669,7 +669,7 @@ impl BrowseView {
                 .children(item.parts.iter().map(|part| {
                     div()
                         .truncate()
-                        .when(part.hl, |s| s.text_color(crate::tokens::warm()))
+                        .when(part.hl, |s| s.text_color(crate::tokens::warm(theme.mode)))
                         .child(SharedString::from(part.text.clone()))
                 }))
                 .into_any_element()
@@ -945,7 +945,7 @@ impl BrowseView {
                             .gap_1()
                             .text_xs()
                             // 热度行走业务令牌（Tauri 卡片同款 text-warm）
-                            .text_color(crate::tokens::warm())
+                            .text_color(crate::tokens::warm(theme.mode))
                             .child(
                                 gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Flame)
                                     .small(),

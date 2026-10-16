@@ -188,6 +188,8 @@ pub struct Shell {
     dest: Dest,
     state: Arc<AppStateInner>,
     sidebar_collapsed: bool,
+    /// 主题偏好（auto 时随系统外观重算；设置页改动即存即生效）。
+    theme: crate::ui_prefs::ThemePref,
     feed: Entity<HomeView>,
     rank: Entity<RankView>,
     browse: Entity<BrowseView>,
@@ -342,6 +344,10 @@ impl Shell {
                     this.feed
                         .update(cx, |home, cx| home.reload_shortcut_keys(keys, cx));
                 }
+                SettingsEvent::ThemeChanged(pref) => {
+                    // auto 观察者按这个字段判据；显式档位不需观察
+                    this.theme = *pref;
+                }
             },
         )
         .detach();
@@ -421,11 +427,14 @@ impl Shell {
             }
             Dest::Home
         };
+        // UI 偏好盘上有就按盘上（Tauri 默认折叠、展开后持久化记住；主题默认
+        // auto，开窗前的应用见 main.rs）
+        let ui_prefs = crate::ui_prefs::load();
         let mut shell = Self {
             dest,
             state,
-            // UI 偏好盘上有就按盘上（Tauri 默认折叠、展开后持久化记住）
-            sidebar_collapsed: crate::ui_prefs::load().sidebar_collapsed,
+            sidebar_collapsed: ui_prefs.sidebar_collapsed,
+            theme: ui_prefs.theme,
             feed,
             rank,
             browse,
@@ -477,6 +486,15 @@ impl Shell {
         }
         shell.refresh_follow_unread(cx);
         shell.ensure_account_avatar(cx);
+        // 跟随系统：系统外观切换（Windows 主题 / macOS 外观）时重算主题档。
+        // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
+        cx.observe_window_appearance(window, |this, window, cx| {
+            if this.theme == crate::ui_prefs::ThemePref::Auto {
+                let mode = this.theme.resolve(window.appearance());
+                gpui_kit::component::Theme::change(mode, None, cx);
+            }
+        })
+        .detach();
         shell
     }
 

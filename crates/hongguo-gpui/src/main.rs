@@ -106,8 +106,19 @@ fn main() {
             gpui_kit::init(cx);
             // 封面是 CDN 签名 URL：gpui 图片缓存需要一个 HTTP 客户端才能拉远程资源。
             http_client::ReqwestClient::install(cx);
-            // 客户端视觉身份是深色（与 Tauri 壳一致）；后续接跟随系统。
-            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            // 主题偏好（Tauri `hongguo-theme` store 同款三档）：auto 跟随系统
+            // 外观（开窗前就能从平台拿到），light/dark 为显式覆盖——显式档位
+            // 同时把窗口外观钉给平台（macOS 窗口边框跟随；Windows 无操作），
+            // auto 则保持不钉，系统切换时观察者会重算（见 Shell::new）。
+            let theme_pref = crate::ui_prefs::load().theme;
+            let theme_mode = theme_pref.resolve(cx.window_appearance());
+            gpui_kit::component::Theme::change(theme_mode, None, cx);
+            if theme_pref != crate::ui_prefs::ThemePref::Auto {
+                cx.set_window_appearance(Some(match theme_mode {
+                    gpui_kit::component::ThemeMode::Light => gpui_kit::WindowAppearance::Light,
+                    gpui_kit::component::ThemeMode::Dark => gpui_kit::WindowAppearance::Dark,
+                }));
+            }
             let bounds = gpui_kit::Bounds::centered(
                 None,
                 // 默认窗口与 Tauri conf 同参（1280×840，最小 1024×680）

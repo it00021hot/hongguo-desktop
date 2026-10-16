@@ -41,6 +41,8 @@ pub(crate) enum SettingsEvent {
     Login,
     /// 快捷键映射变更：壳转给首页播放器（值同时已落盘）。
     ShortcutKeys(crate::playback_prefs::ShortcutKeys),
+    /// 主题偏好变更（值同时已落盘；壳据此更新 auto 观察者的判据）。
+    ThemeChanged(crate::ui_prefs::ThemePref),
 }
 
 /// 可自定义的播放器动作（与 Tauri ShortcutAction 同集）。
@@ -139,6 +141,9 @@ pub(crate) struct SettingsView {
     capturing: Option<ShortcutAction>,
     /// 捕获焦点锚：进入捕获态后由根元素接管键盘。
     keys_focus: gpui_kit::FocusHandle,
+    /// 主题偏好（Tauri 的主题切换在顶栏；GPUI 顶栏是原生拖拽区，入口落在
+    /// 设置页——三档语义与 Tauri `hongguo-theme` store 相同）。
+    theme: crate::ui_prefs::ThemePref,
 }
 
 fn naming_index(naming: NamingTemplate) -> usize {
@@ -293,11 +298,31 @@ impl SettingsView {
             shortcut_keys: crate::playback_prefs::ShortcutKeys::default(),
             capturing: None,
             keys_focus: cx.focus_handle(),
+            theme: crate::ui_prefs::load().theme,
         }
     }
 
     fn current(&self) -> Settings {
         self.draft.clone().unwrap_or_else(|| self.state.settings())
+    }
+
+    /// 切换主题：立即应用 + 落盘 + 通知壳（auto 观察者换判据）。
+    fn set_theme(&mut self, pref: crate::ui_prefs::ThemePref, cx: &mut Context<Self>) {
+        use crate::ui_prefs::ThemePref;
+        self.theme = pref;
+        let mut prefs = crate::ui_prefs::load();
+        prefs.theme = pref;
+        crate::ui_prefs::save(prefs);
+        let mode = pref.resolve(cx.window_appearance());
+        gpui_kit::component::Theme::change(mode, None, cx);
+        // 显式档位把窗口外观钉给平台（macOS 窗口边框跟随）；auto 交还系统
+        cx.set_window_appearance(match pref {
+            ThemePref::Auto => None,
+            ThemePref::Light => Some(gpui_kit::WindowAppearance::Light),
+            ThemePref::Dark => Some(gpui_kit::WindowAppearance::Dark),
+        });
+        cx.emit(SettingsEvent::ThemeChanged(pref));
+        cx.notify();
     }
 
     fn patch(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Settings)) {
@@ -975,6 +1000,46 @@ impl SettingsView {
             .into_any_element()
     }
 
+    /// 外观卡：主题三档（跟随系统 / 亮色 / 暗色）。Tauri 把入口放在顶栏，
+    /// GPUI 顶栏是平台拖拽区（自绘控件会被命中测试判成拖拽吞掉），入口落
+    /// 在设置页；档位语义与 `hongguo-theme` store 相同。
+    fn render_appearance_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        use crate::ui_prefs::ThemePref;
+        let theme = cx.theme();
+        let option = |id: &'static str, label: &'static str, value: ThemePref| {
+            let selected = self.theme == value;
+            let button = Button::new(id).label(label).small();
+            let button = if selected {
+                button.secondary()
+            } else {
+                button.ghost()
+            };
+            button.on_click(cx.listener(move |this, _, _, cx| this.set_theme(value, cx)))
+        };
+        card(cx)
+            .child(
+                div()
+                    .text_base()
+                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                    .child("外观"),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(option("settings-theme-auto", "跟随系统", ThemePref::Auto))
+                    .child(option("settings-theme-light", "亮色", ThemePref::Light))
+                    .child(option("settings-theme-dark", "暗色", ThemePref::Dark)),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("跟随系统时随 Windows / macOS 的外观设置自动切换。"),
+            )
+            .into_any_element()
+    }
+
     fn render_playback_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let current = self.current();
@@ -1279,6 +1344,7 @@ impl gpui_kit::Render for SettingsView {
                 .p_6()
                 .gap_4()
                 .child(self.render_account_card(cx))
+                .child(self.render_appearance_card(cx))
                 .child(self.render_dir_card(cx))
                 .child(self.render_naming_card(cx))
                 .child(self.render_proxy_card(cx))

@@ -9,8 +9,13 @@
 //! 现状只有 `warm` 收编完（找剧页热度/联想命中、榜单推荐语）；`hot` /
 //! `star` 仍散在各页裸色值（0xfacc15 / 0xef4444 一族），待一并收编。
 
-/// warm：热度数值/计数、联想命中片段（暗色档 = orange-400）。
-/// 亮色档是 orange-500 `oklch(0.705 0.213 47.604)`。
-pub(crate) fn warm() -> gpui_kit::Rgba {
-    gpui_kit::rgba(0xfb923cff)
+/// warm：热度数值/计数、联想命中片段。
+/// 暗色档 = orange-400 `oklch(0.75 0.183 55.934)`；亮色档 = orange-500
+/// `oklch(0.705 0.213 47.604)`。
+pub(crate) fn warm(mode: gpui_kit::component::ThemeMode) -> gpui_kit::Rgba {
+    if mode.is_dark() {
+        gpui_kit::rgba(0xfb923cff)
+    } else {
+        gpui_kit::rgba(0xf97316ff)
+    }
 }
