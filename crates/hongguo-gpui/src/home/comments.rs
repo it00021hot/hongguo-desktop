@@ -433,6 +433,16 @@ impl super::HomeView {
         cx.notify();
     }
 
+    /// 关评论面板（Esc 分层用：面板开着时 Esc 先关它、不退连播——
+    /// Tauri comment-panel 自带 Esc 监听同序）。
+    pub(super) fn close_comments_panel(&mut self, cx: &mut Context<Self>) {
+        if self.comments_panel_open {
+            self.comments_panel_open = false;
+            self.wake_controls(cx);
+            cx.notify();
+        }
+    }
+
     /// 回复点赞（乐观 ±1 + 红心翻转，失败回滚；与评论点赞同一 do_action）。
     pub(super) fn toggle_reply_digg(&mut self, reply_id: String, cx: &mut Context<Self>) {
         if !self.logged_in() {

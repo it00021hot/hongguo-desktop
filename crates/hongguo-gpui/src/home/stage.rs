@@ -549,6 +549,10 @@ impl super::HomeView {
                             this.picker_group_override = None;
                         } else if this.dm_panel_open {
                             this.dm_panel_open = false;
+                        } else if this.comments_panel_open {
+                            // 评论面板开着 Esc 先关面板（Tauri 面板自带 Esc
+                            // 监听同序；面板守卫期间不退连播）
+                            this.close_comments_panel(cx);
                         } else if this.in_binge() {
                             this.binge = None;
                         }
