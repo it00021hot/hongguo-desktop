@@ -154,7 +154,8 @@ impl BrowseView {
             filters: BrowseFilters::default(),
             panel_rows: None,
             panel_failed: false,
-            filters_collapsed: false,
+            // 折叠态持久化（Tauri zustand browseFiltersCollapsed 同款）
+            filters_collapsed: crate::ui_prefs::load().browse_filters_collapsed,
             feed_items: Vec::new(),
             feed_next_offset: 0,
             feed_session_id: String::new(),
@@ -852,6 +853,9 @@ impl gpui_kit::Render for BrowseView {
                             .id("browse-filter-toggle")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.filters_collapsed = !this.filters_collapsed;
+                                let mut prefs = crate::ui_prefs::load();
+                                prefs.browse_filters_collapsed = this.filters_collapsed;
+                                crate::ui_prefs::save(prefs);
                                 cx.notify();
                             }))
                             .child(

@@ -28,20 +28,20 @@
 
 附注：`hongguo-api::detail` 补导出 `SeriesCreator`（纯导出，无行为变更——GPUI 预览 fixtures 需要构造该类型）。
 
-## W3 详情 / 播放语义缺口（代码自述）—— ✅ 2026-10-17（#1/#2 落地，#3 待做）
+## W3 详情 / 播放语义缺口（代码自述）—— ✅ 2026-10-17 全部落地
 
 | # | 差距 | 证据 | 状态 |
 | - | ---- | ---- | ---- |
 | 1 | 详情页「云端观看历史兜底」未接 | 原 `detail/mod.rs` 自述 | ✅ 三段决策（本地>3s → 云端>3s → 本地≤3s 仍算看到）与 Tauri continueIndex 同口径；列表页 (1,0) 起点经首页云端复核 |
 | 2 | 剧终接力跨季 / 换批语义未对齐 | 原 `playback.rs` 自述 | ✅ `home/season.rs`（季号解析 + 下一季挑选）+ 接力链路（下一季 → 信息流下一条）；下载面板闸与滚过末集同款；`tests/season_relay.rs` 覆盖 |
-| 3 | MFA 风控自动轮询未移植 | `gpui-review-checklist.md`「已知边界」 | 待做（service 已有轮询事件，壳侧 UI 走事件已接；核对是否还差触发路径） |
+| 3 | MFA 风控自动轮询未移植 | `gpui-review-checklist.md`「已知边界」（旧） | ✅ 复核确认**已闭环**：轮询在 service（`login_service/flow.rs:83` 起 `spawn_mfa_polling`），壳经事件泵接 Waiting/Failed/Success 三态（`home/auth.rs` on_login_mfa_event）；旧清单描述已过期 |
 
 ## W4 壳级行为
 
 | # | 差距 | 证据 | 状态 |
 | - | ---- | ---- | ---- |
 | 1 | 侧栏账户区：Tauri 已登录点头像进设置页（退出在设置页账户卡）；GPUI 曾直接「退出登录」、无头像/昵称 | `app-sidebar.tsx:160-210` vs `shell.rs` render_sidebar | ✅ 2026-10-17（头像/昵称/点心进设置页；登录墙统一 toast+切设置页） |
-| 2 | UI 偏好持久化：Tauri 持久化 `sidebarCollapsed`（默认折叠）/`aibotPopupOn` | `src/stores/ui.ts` | ✅ 2026-10-17（`ui_prefs.rs`）；`browseFiltersCollapsed` 仍为内存态（待补） |
+| 2 | UI 偏好持久化：Tauri 持久化 `sidebarCollapsed`（默认折叠）/`aibotPopupOn`/`browseFiltersCollapsed` | `src/stores/ui.ts` | ✅ 2026-10-17（`ui_prefs.rs` 三项齐） |
 | 3 | 更新通道：GPUI 设置页自述「暂未接入更新通道」 | `settings.rs:1196` | 待定（GPUI 未入发布管线，先确认是否要求对齐） |
 
 ### 本轮顺带修复（验证中发现）

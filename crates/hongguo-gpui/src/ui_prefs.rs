@@ -16,6 +16,8 @@ pub(crate) const FILE_NAME: &str = "gpui-ui-prefs";
 pub(crate) struct UiPrefs {
     pub(crate) sidebar_collapsed: bool,
     pub(crate) aibot_popup_on: bool,
+    /// 找剧筛选面板折叠态（Tauri `browseFiltersCollapsed` 同款）。
+    pub(crate) browse_filters_collapsed: bool,
 }
 
 impl Default for UiPrefs {
@@ -23,6 +25,7 @@ impl Default for UiPrefs {
         Self {
             sidebar_collapsed: true,
             aibot_popup_on: true,
+            browse_filters_collapsed: false,
         }
     }
 }
@@ -40,6 +43,7 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
         match key.trim() {
             "sidebar_collapsed" => prefs.sidebar_collapsed = value.trim() == "true",
             "aibot_popup_on" => prefs.aibot_popup_on = value.trim() == "true",
+            "browse_filters_collapsed" => prefs.browse_filters_collapsed = value.trim() == "true",
             _ => {}
         }
     }
@@ -50,8 +54,8 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
 pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
     let tmp = path.with_extension("tmp");
     let text = format!(
-        "sidebar_collapsed={}\naibot_popup_on={}\n",
-        prefs.sidebar_collapsed, prefs.aibot_popup_on
+        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\n",
+        prefs.sidebar_collapsed, prefs.aibot_popup_on, prefs.browse_filters_collapsed
     );
     if std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))
