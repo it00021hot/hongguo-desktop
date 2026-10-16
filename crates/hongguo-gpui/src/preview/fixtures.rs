@@ -645,6 +645,8 @@ pub(crate) fn rank_tabs() -> Vec<hongguo_api::rank::RankTab> {
                 } else {
                     Vec::new()
                 },
+                // 月榜历史行（b588e92 起 schema 必填；假数据不带）
+                background: Vec::new(),
             })
             .collect()
     };
