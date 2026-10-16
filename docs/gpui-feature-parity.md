@@ -59,12 +59,33 @@
 | 1 | 小屏落位 / 置顶只有 Win32 | `mini.rs:210` | 待做 |
 | 2 | 隐身模式窗口藏显只有 Win32 | `home/incognito.rs`（非 Windows 分支降级） | 待做 |
 
-## W6 播放器性能（对照 gpui-video-player）
+## W6 播放器性能（对照 gpui-video-player）—— 2026-10-17 对照完成（见下）
 
-- 参照 `https://github.com/cijiugechu/gpui-video-player` 提取可借鉴点（取流节奏 / 解码管线 /
-  帧上屏路径 / 音频 / 倍速变调），出「优化项 + 收益 + 风险」清单后按序实施。
-- 红线：不得引入需要外部安装的运行时（一个安装包直接可用）；新依赖先报告后动。
-- 已知未结：倍速切换卡顿（hongguo-playback；历史遗留项）。
+对照对象：[cijiugechu/gpui-video-player](https://github.com/cijiugechu/gpui-video-player)
+（已 clone 到本机临时目录逐层阅读）。**结论先行**：该项目的可迁移技法我们
+已全部具备；其底座（GStreamer）需要系统安装运行时，按「一个安装包直接可用」
+红线**不可引入**。
+
+| 参考项目技法 | 对应证据 | 本项目现状 |
+| --- | --- | --- |
+| 逐帧 `RenderImage` 必须显式 `cx.drop_image` 回收，否则图集（GPU）只增不减（其 `docs/video-memory.md`：数百 MB→GB） | 它 `element.rs` 的 `paint_render_image` | ✅ 已实现：`home/mod.rs` 回收队列 + `stage.rs`「gpui 纹理只增不删」注释 + render 内 `window.drop_image` |
+| macOS 走 `CVPixelBuffer` + `paint_surface` 绕开图集（IOSurface/Metal 零拷贝） | 其 `element.rs` macOS 分支 | ✅ 已实现：`FrameBuffer::CVPixelBuffer` 直通 surface（2026-10-13 实测定案） |
+| 帧缓冲有界（`VecDeque` 裁到 capacity，防 UI 停滞时堆积） | 其 `video.rs` frame_buffer | ✅ 更优：`latest_frame()` 最新帧覆盖式握手（不堆积、天然丢旧帧）；解码侧另有各自有界队列 |
+| 转换按“显示需要”出图（其 `yuv` crate 软件转换 + encode 面） | 其 `video.rs` 转换段 | ✅ 已实现：`nv12_to_rgba_bt709_scaled` 按舞台尺寸最近邻缩放 + 行并行 + 定点整数数学（`hongguo-media/nv12_rgba.rs`） |
+| 倍速改采样/变速 | GStreamer `set_speed`（无 scaletempo 时音调会走样） | ✅ 更优：WSOLA 变速不变调（`wsola.rs`）+ 分级换速时钟（`audio.rs`：旧速率内容放完再换轴，防音画错位） |
+
+**真机实测（本机，临时数据根，2.0 倍速，2026-10-17）**：
+
+- `gpui-playback-prefs` 预置 `rate=2.0` → 实际生效：107.7s 的集 54s 播完（日志时间线核对）；
+- 全程无「缓冲低水位」（仅起播预热 1 次）、无同步偏差告警（仅每集「第 0 帧」启动一拍 -0.4~-0.56s，为起播瞬态）；
+- 帧转换 2.4–5.7ms/帧（1224×689 输出，1920×1080 源），每秒约 58 帧转换+重绘（满 60fps 节奏）；
+- 连播切集（epoch=2/3）正常，无卡死。
+
+**剩余候选优化（证据在手，收益/风险已评，暂不动）**：
+
+1. 起播首帧"画面落后"瞬态（-0.4~-0.56s，仅第 0 帧）：可在首帧出画时把时钟 base 重锚到首帧 pts；影响面小、收益有限（用户感知约半秒声先画后），留待有实感反馈再做。
+2. NV12→RGBA 的 SIMD 化（当前 2.4–5.7ms/帧 @1224×689）：仅在 4K 舞台/超大窗口下可能逼近 16.6ms 预算；届时可上 `safe_arch`/手写 SSE2；现在无收益场景，不加依赖。
+3. 倍速卡顿（历史遗留项）：本次 2 倍速 100s 实测未见欠载/漂移复现；疑似已被「分级换速 + 帧转换下沉 + WSOLA」一组修复覆盖。**需要用户耳朵复核**：若仍卡，`RUST_LOG=debug` 抓 `[Playback][feeder]` 与 `[Playback][sync]` 日志定位。
 
 ## W7 全量交互 / 布局对拍（持续）
 
