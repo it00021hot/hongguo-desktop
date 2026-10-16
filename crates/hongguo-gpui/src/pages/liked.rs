@@ -475,7 +475,7 @@ impl LikedView {
                                             gpui_kit::assets::IconName::Heart,
                                         )
                                         .small()
-                                        .text_color(gpui_kit::rgba(0xef4444ff)),
+                                        .text_color(crate::tokens::hot(theme.mode)),
                                     )
                                     .child(SharedString::from(if item.digged_count > 0 {
                                         item.digged_count.to_string()

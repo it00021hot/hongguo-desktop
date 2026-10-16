@@ -93,13 +93,16 @@ impl DetailView {
             .into_any_element()
     }
 
-    /// 相关卡（related-card.tsx 同位：封面 3:4 + 角标左上 + 标题 + 评分/播放）。
+    /// 相关卡（related-card.tsx 同位：封面 3:4 + 左上题材角标 + 右下评分角标
+    /// （星色）+ 标题 + 集数/播放行）。
     fn related_card(&self, item: &RelatedItem, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let cover = self.images.get(&item.cover).cloned();
         let mut stats: Vec<String> = Vec::new();
-        if item.score > 0.0 {
-            stats.push(format!("{:.1}分", item.score));
+        if item.episode_cnt > 0 {
+            stats.push(format!("全{}集", item.episode_cnt));
+        } else if item.tag == "即将上线" {
+            stats.push("即将上线".to_string());
         }
         if item.play_cnt > 0 {
             stats.push(format!("{}次播放", Self::fmt_count(item.play_cnt)));
@@ -143,6 +146,20 @@ impl DetailView {
                             .bg(gpui_kit::rgba(0x000000aa))
                             .text_color(gpui_kit::rgb(0xffffff))
                             .child(SharedString::from(item.tag.clone()))
+                    }))
+                    .children((item.score > 0.0).then(|| {
+                        div()
+                            .absolute()
+                            .right_1()
+                            .bottom_1()
+                            .px_1()
+                            .py_0p5()
+                            .rounded(gpui_kit::px(4.0))
+                            .bg(gpui_kit::rgba(0x00000099))
+                            .text_size(gpui_kit::px(10.0))
+                            // 评分角标走 star（Tauri related-card text-star 同款）
+                            .text_color(crate::tokens::star(theme.mode))
+                            .child(SharedString::from(format!("{:.1}分", item.score)))
                     })),
             )
             .child(

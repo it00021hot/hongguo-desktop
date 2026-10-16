@@ -87,7 +87,7 @@ impl super::super::DetailView {
                                     .gap_1()
                                     .cursor_pointer()
                                     .text_color(if digged {
-                                        hot_color().into()
+                                        hot_color(theme.mode).into()
                                     } else {
                                         theme.muted_foreground
                                     })
@@ -195,7 +195,7 @@ impl super::super::DetailView {
                         Icon::new(gpui_kit::assets::IconName::Star)
                             .size_5()
                             .text_color(if s <= shown {
-                                star_color().into()
+                                star_color(theme.mode).into()
                             } else {
                                 theme.muted_foreground
                             }),
@@ -314,7 +314,7 @@ impl super::super::DetailView {
                         div()
                             .text_xl()
                             .font_weight(gpui_kit::FontWeight::BOLD)
-                            .text_color(gpui_kit::rgba(0xfacc15ff))
+                            .text_color(crate::tokens::star(theme.mode))
                             .child(format!(
                                 "{:.1}",
                                 self.reviews_score.parse::<f64>().unwrap_or(0.0)
@@ -403,8 +403,9 @@ impl super::super::DetailView {
                                                     .px_1p5()
                                                     .rounded(gpui_kit::px(4.0))
                                                     .text_xs()
-                                                    .bg(gpui_kit::rgba(0xfacc1526))
-                                                    .text_color(gpui_kit::rgba(0xfacc15ff))
+                                                    .bg(crate::tokens::star(theme.mode)
+                                                        .opacity(0.15))
+                                                    .text_color(crate::tokens::star(theme.mode))
                                                     .child(SharedString::from(format!(
                                                         "{}分",
                                                         c.score
@@ -443,7 +444,7 @@ impl super::super::DetailView {
                                                     .gap_1()
                                                     .cursor_pointer()
                                                     .text_color(if digged {
-                                                        hot_color().into()
+                                                        hot_color(theme.mode).into()
                                                     } else {
                                                         theme.muted_foreground
                                                     })

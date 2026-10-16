@@ -17,13 +17,13 @@ use hongguo_api::interact::{collect_series, digg_video};
 use super::DetailView;
 use crate::bridge;
 
-/// hgplayer 皮肤色（硬红线 11 的播放器豁免口径，与首页互动栏同源）：
-/// 星 = 收藏/评分，红 = 热度/点赞。
-pub(super) fn star_color() -> gpui_kit::Rgba {
-    gpui_kit::rgba(0xfacc15ff)
+/// 星 = 收藏/评分，红 = 热度/点赞——都走业务语义令牌（Tauri 详情页
+/// `text-star` / `text-hot` 同款；亮暗分档在 `tokens` 里）。
+pub(super) fn star_color(mode: gpui_kit::component::ThemeMode) -> gpui_kit::Rgba {
+    crate::tokens::star(mode)
 }
-pub(super) fn hot_color() -> gpui_kit::Rgba {
-    gpui_kit::rgba(0xef4444ff)
+pub(super) fn hot_color(mode: gpui_kit::component::ThemeMode) -> gpui_kit::Rgba {
+    crate::tokens::hot(mode)
 }
 
 impl DetailView {
@@ -231,7 +231,7 @@ impl DetailView {
                                     .label(if collected { "已收藏" } else { "收藏" })
                                     .outline()
                                     .text_color(if collected {
-                                        star_color().into()
+                                        star_color(theme.mode).into()
                                     } else {
                                         theme.foreground
                                     })
@@ -246,7 +246,7 @@ impl DetailView {
                                     .label("点赞")
                                     .outline()
                                     .text_color(if digged {
-                                        hot_color().into()
+                                        hot_color(theme.mode).into()
                                     } else {
                                         theme.foreground
                                     })
@@ -391,7 +391,8 @@ impl DetailView {
             .rounded_full()
             .text_xs()
             .when(hot, |s| {
-                s.bg(hot_color()).text_color(gpui_kit::rgb(0xffffff))
+                s.bg(hot_color(theme.mode))
+                    .text_color(gpui_kit::rgb(0xffffff))
             })
             .when(!hot, |s| {
                 s.bg(theme.secondary).text_color(theme.muted_foreground)

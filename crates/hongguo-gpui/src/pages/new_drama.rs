@@ -483,7 +483,8 @@ impl NewDramaView {
                             .gap_0p5()
                             .text_size(gpui_kit::px(10.0))
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .text_color(gpui_kit::rgb(0xffffffff))
+                            // 封面角标热度走 star（Tauri 卡片 text-star 同款）
+                            .text_color(crate::tokens::star(theme.mode))
                             .child(
                                 gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Flame)
                                     .small(),
@@ -539,7 +540,7 @@ impl NewDramaView {
                             .child(
                                 gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)
                                     .small()
-                                    .text_color(gpui_kit::rgba(0xfacc15ff)),
+                                    .text_color(crate::tokens::star(theme.mode)),
                             )
                             .child(SharedString::from(format!("{:.1}分", item.score)))
                     })),
@@ -628,7 +629,8 @@ impl NewDramaView {
                             .children(item.rec_tags.first().map(|heat| {
                                 div()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .text_color(theme.primary)
+                                    // 预约人气走 hot（Tauri 日历行 text-hot 同款）
+                                    .text_color(crate::tokens::hot(theme.mode))
                                     .child(SharedString::from(heat.clone()))
                             }))
                             .children((!item.category.is_empty()).then(|| {

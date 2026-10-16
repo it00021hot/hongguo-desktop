@@ -534,7 +534,8 @@ impl RankView {
         let cover = self.covers.get(&item.cover).cloned();
         let reserved = self.reserved_of(item);
         let rank_color: gpui_kit::Hsla = if item.rank <= 3 {
-            gpui_kit::rgba(0xfacc15ff).into() // 星语言（与详情页 star_color 同源）
+            // 星语言（Tauri 榜单前三 text-star 同款）
+            crate::tokens::star(theme.mode).into()
         } else {
             theme.muted_foreground
         };

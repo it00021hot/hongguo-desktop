@@ -572,7 +572,7 @@ impl ReservationView {
                                             gpui_kit::assets::IconName::Star,
                                         )
                                         .small()
-                                        .text_color(gpui_kit::rgba(0xfacc15ff)),
+                                        .text_color(crate::tokens::star(theme.mode)),
                                     )
                                     .child(SharedString::from(format!("{:.1}", item.score)))
                             })),
