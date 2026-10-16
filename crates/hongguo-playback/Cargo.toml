@@ -29,3 +29,7 @@ tokio = { version = "1", features = ["rt", "sync", "time"] }
 cpal = "0.15"
 # 解码 PCM → 输出回调之间的无锁环形缓冲。
 ringbuf = "0.4"
+
+[dev-dependencies]
+# 造 MP4 样本（test-support 门控的 fixtures）：本地成品源测试用。
+hongguo-video = { path = "../hongguo-video", features = ["test-support"] }

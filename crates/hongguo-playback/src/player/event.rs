@@ -24,11 +24,22 @@ pub enum PlayerEvent {
     Failed(String),
 }
 
+/// 播放源：在线流或本地成品文件。
+///
+/// 本地成品 = 已下载的那一集（Tauri `play_service::local::resolve_play` 的
+/// 「本地优先」对位）：离线可播、秒开，且**没有档位概念**（本地只有一版，
+/// 清晰度菜单该是空的）。
+#[derive(Clone, Debug)]
+pub enum PlaySource {
+    /// 在线流：调用方已 `prepare` 过，缓存里有这一档。
+    Online { vid: String, definition: u32 },
+    /// 本地成品文件路径。
+    Local { path: std::path::PathBuf },
+}
+
 /// 打开参数。
 pub struct OpenOptions {
-    /// 流的 vid（调用方已 `prepare`，缓存里有这一档）。
-    pub vid: String,
-    pub definition: u32,
+    pub source: PlaySource,
     /// 起播媒体时间（秒）：续播位置。0 = 从头。
     pub start_secs: f64,
     /// 起播倍速（用户偏好）：引擎**出生即按它走**——WSOLA 从第一包就按目标

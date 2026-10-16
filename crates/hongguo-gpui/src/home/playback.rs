@@ -475,10 +475,38 @@ impl super::HomeView {
             ep.vid,
             start_secs
         );
-        let prepared = prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
+        // 本地成品优先（Tauri `play_service::local::resolve_play` 同款）：这一集
+        // 已经下好就直接读本地文件——离线可播、秒开，且没有档位概念（本地只有
+        // 一版，清晰度菜单该是灰的）。记录里路径存在但文件没了（陈旧记录）时
+        // 回落在在线流；在线分流（prepare）只在真的没有本地成品时才走。
+        let local_path = state
+            .queue()
+            .completed_path(&item.series_id, ep.vid_index)
+            .filter(|p| !p.trim().is_empty() && std::path::Path::new(p).is_file());
+        let (source, definitions, definition) = match local_path {
+            Some(path) => {
+                log::info!("[Home] 本地成品命中，走本地播放：{path}");
+                (
+                    hongguo_playback::PlaySource::Local { path: path.into() },
+                    Vec::new(),
+                    0u32,
+                )
+            }
+            None => {
+                let prepared =
+                    prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
+                (
+                    hongguo_playback::PlaySource::Online {
+                        vid: ep.vid.clone(),
+                        definition: prepared.definition,
+                    },
+                    prepared.definitions,
+                    prepared.definition,
+                )
+            }
+        };
         let handle = hongguo_playback::open(OpenOptions {
-            vid: ep.vid.clone(),
-            definition: prepared.definition,
+            source,
             start_secs,
             rate,
             events,
@@ -498,8 +526,8 @@ impl super::HomeView {
                 heat_text: item.heat_text,
                 season_tag: item.season_tag,
                 badge: item.badge,
-                definitions: prepared.definitions,
-                definition: prepared.definition,
+                definitions,
+                definition,
                 vid: ep.vid.clone(),
                 cover: item.cover.clone(),
             },

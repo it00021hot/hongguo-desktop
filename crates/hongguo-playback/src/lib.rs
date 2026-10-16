@@ -25,7 +25,9 @@ mod audio;
 pub mod player;
 mod resample;
 mod source;
+#[cfg(test)]
+mod source_tests;
 mod video;
 mod wsola;
 
-pub use player::{OpenOptions, PlayerEvent, PlayerHandle, open};
+pub use player::{OpenOptions, PlaySource, PlayerEvent, PlayerHandle, open};

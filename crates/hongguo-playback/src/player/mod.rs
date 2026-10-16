@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 
 use crate::audio::Clock;
 
-pub use event::{OpenOptions, PlayerEvent};
+pub use event::{OpenOptions, PlaySource, PlayerEvent};
 pub use handle::{MAX_RATE, MIN_RATE, PlayerHandle};
 pub use open::open;
 

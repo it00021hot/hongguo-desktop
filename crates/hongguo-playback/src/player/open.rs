@@ -8,12 +8,12 @@ use std::time::Duration;
 use hongguo_video::sample_table::TrackInfo;
 
 use crate::audio::{AudioOut, Clock, RingFeed};
-use crate::source::{SampleSource, open_stream};
+use crate::source::{ByteSource, SampleSource, open_stream};
 use crate::video;
 
 use super::Shared;
 use super::feeder::audio_feeder;
-use super::{OpenOptions, PlayerHandle};
+use super::{OpenOptions, PlaySource, PlayerHandle};
 
 /// 打开并起播。必须在 tokio 运行时上下文内 await（引擎任务经 `tokio::spawn`
 /// 挂在调用方的运行时上）。
@@ -23,7 +23,14 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
     // 起播链任何一段卡住，界面上都只是「一直转圈」——三个阶段各自打点，
     // 卡在哪一段一目了然（实测有过音频设备打开前静默两位数的秒数）。
     let t0 = std::time::Instant::now();
-    let meta = open_stream(&opts.vid, opts.definition).await?;
+    let source = match &opts.source {
+        PlaySource::Online { vid, definition } => ByteSource::Online {
+            vid: vid.clone(),
+            definition: *definition,
+        },
+        PlaySource::Local { path } => ByteSource::local(path)?,
+    };
+    let meta = open_stream(&source).await?;
     let video_info = meta.video;
     log::info!(
         "[Playback] 头部就绪（{}ms）：{}x{} 音频{}",
@@ -89,8 +96,7 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
                     &shared,
                     &audio_slot,
                     *pair,
-                    &opts.vid,
-                    opts.definition,
+                    source.clone(),
                     info,
                     opts.start_secs,
                 )
@@ -111,7 +117,7 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
             );
             let shared = Arc::clone(&shared);
             let slot = Arc::clone(&audio_slot);
-            let (vid, definition) = (opts.vid.clone(), opts.definition);
+            let source_for_audio = source.clone();
             let audio_info = meta.audio.clone();
             tasks.push(tokio::spawn(async move {
                 let Ok(Some(pair)) = rx.await else {
@@ -126,7 +132,7 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
                 // 接管点 = 当前已经播到的位置：视频先走了，音频从这里接上
                 let at = shared.now();
                 log::info!("[Playback] 音频设备迟到接管（从 {at:.1}s 接上）");
-                adopt_audio(&shared, &slot, pair, &vid, definition, info, at).await;
+                adopt_audio(&shared, &slot, pair, source_for_audio, info, at).await;
             }));
         }
     }
@@ -143,7 +149,7 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
             width: info.width as usize,
             height: info.height as usize,
         };
-        let source = SampleSource::new(&opts.vid, opts.definition, Arc::new(info.samples.clone()));
+        let source = SampleSource::new(source.clone(), Arc::new(info.samples.clone()));
         let start = opts.start_secs;
         tasks.push(tokio::spawn(async move {
             video::run(shared, source, info, decoder_init, start).await;
@@ -169,8 +175,7 @@ async fn adopt_audio(
     shared: &Arc<Shared>,
     slot: &Arc<parking_lot::Mutex<Option<AudioOut>>>,
     pair: (AudioOut, RingFeed),
-    vid: &str,
-    definition: u32,
+    source: ByteSource,
     info: TrackInfo,
     start_secs: f64,
 ) {
@@ -189,7 +194,7 @@ async fn adopt_audio(
     let (prime_tx, prime_rx) = tokio::sync::oneshot::channel();
     let feeder = {
         let shared = Arc::clone(shared);
-        let source = SampleSource::new(vid, definition, Arc::new(info.samples.clone()));
+        let source = SampleSource::new(source.clone(), Arc::new(info.samples.clone()));
         let start = start_secs;
         // 喂送任务挂在调用方的运行时上（`open` 的契约）；接管路径同样已在
         // tokio 上下文内（引擎任务都是），直接 spawn

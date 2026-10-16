@@ -5,6 +5,7 @@
 //! 调用次数：视频 1MB 够 1-2s，音频 1MB 够一分钟量级。
 
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
@@ -16,6 +17,93 @@ const WINDOW: u64 = 1024 * 1024;
 /// ——「头部就绪 200-260ms」的主体就是那 2-4 个串行往返，4MB 一窗通常
 /// 1-2 轮就齐。样本读取仍用 1MB（顺序消费，大窗只多占内存）。
 const HEAD_WINDOW: u64 = 4 * 1024 * 1024;
+
+/// 播放数据源：在线流（`(vid, 档位)` 走 `hongguo-stream` 缓存）或本地成品
+/// 文件。
+///
+/// 本地成品 = 「已下载的那一集」（Tauri `hongguo-local://` 的同位形态）：
+/// 字节从磁盘来、无档位概念、离线可播。引擎只认「按样本表取字节」这件事，
+/// 两种源在字节层同构——所以源抽象放在这一层，上面（样本表 / 解码 / 时钟）
+/// 一行不用改。
+#[derive(Clone)]
+pub(crate) enum ByteSource {
+    Online {
+        vid: String,
+        definition: u32,
+    },
+    Local {
+        /// 已打开的成品文件 + 顺序读保护（样本按序读，偶发乱序靠锁串行化）。
+        file: Arc<Mutex<std::fs::File>>,
+        len: u64,
+    },
+}
+
+impl ByteSource {
+    /// 打开本地成品。失败（文件不在/没权限）由调用方回落在在线流。
+    pub(crate) fn local(path: &std::path::Path) -> AppResult<Self> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| AppError::Media(format!("本地成品打不开（{}）: {e}", path.display())))?;
+        let len = file
+            .metadata()
+            .map_err(|e| AppError::Media(format!("本地成品读不到长度: {e}")))?
+            .len();
+        Ok(Self::Local {
+            file: Arc::new(Mutex::new(file)),
+            len,
+        })
+    }
+
+    /// 源总长（在线：`bytes=0-0` 的 Content-Range；本地：文件长度）。
+    pub(crate) async fn total(&self) -> AppResult<u64> {
+        match self {
+            Self::Online { vid, definition } => probe_total(vid, *definition).await,
+            Self::Local { len, .. } => Ok(*len),
+        }
+    }
+
+    /// 取一段明文字节（闭区间）。本地读走阻塞池；`cancelled` 只在等待期间
+    /// 检查——本地盘读很快，不需要 serve 那套读者登记。
+    pub(crate) async fn read(
+        &self,
+        start: u64,
+        end: u64,
+        cancelled: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> AppResult<Vec<u8>> {
+        match self {
+            Self::Online { vid, definition } => {
+                read_range(vid.clone(), *definition, start, end, cancelled).await
+            }
+            Self::Local { file, .. } => {
+                let file = Arc::clone(file);
+                tokio::task::spawn_blocking(move || {
+                    if cancelled() {
+                        return Ok(Vec::new());
+                    }
+                    let mut f = file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    use std::io::{Read, Seek, SeekFrom};
+                    f.seek(SeekFrom::Start(start))
+                        .map_err(|e| AppError::Media(format!("本地成品定位失败: {e}")))?;
+                    let want = (end.saturating_sub(start) + 1) as usize;
+                    let mut buf = vec![0u8; want];
+                    let mut read = 0usize;
+                    while read < want {
+                        let n = f
+                            .read(&mut buf[read..])
+                            .map_err(|e| AppError::Media(format!("本地成品读取失败: {e}")))?;
+                        if n == 0 {
+                            break;
+                        }
+                        read += n;
+                    }
+                    buf.truncate(read);
+                    Ok(buf)
+                })
+                .await
+                .map_err(|e| AppError::Internal(format!("阻塞池 join: {e}")))?
+            }
+        }
+    }
+}
 
 /// 流的静态信息（moov 解析产物）。
 pub(crate) struct StreamMeta {
@@ -29,8 +117,8 @@ pub(crate) struct StreamMeta {
 }
 
 /// 从缓存流里读头部直到样本表完整（moov 落在头部，渐进注册已保证就绪）。
-pub(crate) async fn open_stream(vid: &str, definition: u32) -> AppResult<StreamMeta> {
-    let total = probe_total(vid, definition).await?;
+pub(crate) async fn open_stream(source: &ByteSource) -> AppResult<StreamMeta> {
+    let total = source.total().await?;
     let mut head: Vec<u8> = Vec::new();
     let mut cursor = 0u64;
     for _ in 0..16 {
@@ -39,14 +127,7 @@ pub(crate) async fn open_stream(vid: &str, definition: u32) -> AppResult<StreamM
             break;
         }
         let want = HEAD_WINDOW.min(total - cursor);
-        let chunk = read_range(
-            vid.to_string(),
-            definition,
-            cursor,
-            cursor + want - 1,
-            || false,
-        )
-        .await?;
+        let chunk = source.read(cursor, cursor + want - 1, || false).await?;
         if chunk.is_empty() {
             break;
         }
@@ -99,18 +180,16 @@ async fn probe_total(vid: &str, definition: u32) -> AppResult<u64> {
 
 /// 读样本 idx 的字节（窗口缓存：顺序读命中，乱序读自动重灌）。
 pub(crate) struct SampleSource {
-    vid: String,
-    definition: u32,
+    source: ByteSource,
     samples: Arc<Vec<(u64, u64)>>,
     buf: Vec<u8>,
     buf_at: u64,
 }
 
 impl SampleSource {
-    pub(crate) fn new(vid: &str, definition: u32, samples: Arc<Vec<(u64, u64)>>) -> Self {
+    pub(crate) fn new(source: ByteSource, samples: Arc<Vec<(u64, u64)>>) -> Self {
         Self {
-            vid: vid.to_string(),
-            definition,
+            source,
             samples,
             buf: Vec::new(),
             buf_at: u64::MAX,
@@ -149,14 +228,10 @@ impl SampleSource {
         let end = offset + size; // 开区间
         if !(offset >= self.buf_at && end <= self.buf_at + self.buf.len() as u64) {
             self.buf_at = offset;
-            self.buf = read_range(
-                self.vid.clone(),
-                self.definition,
-                offset,
-                offset + WINDOW - 1,
-                cancelled,
-            )
-            .await?;
+            self.buf = self
+                .source
+                .read(offset, offset + WINDOW - 1, cancelled)
+                .await?;
         }
         let start = (offset - self.buf_at) as usize;
         self.buf
