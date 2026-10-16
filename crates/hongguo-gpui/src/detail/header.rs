@@ -9,9 +9,9 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
-use gpui_kit::component::{ActiveTheme, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ImageSource, ObjectFit, SharedString, Window, div, img};
 use hongguo_api::interact::{collect_series, digg_video};
 
 use super::DetailView;
@@ -194,9 +194,9 @@ impl DetailView {
                             )
                             .into_any_element()
                     } else {
-                        // 动作行：播放/继续播放 + 收藏 + 点赞（Tauri 同三键；
-                        // 未登录点互动静默忽略——与首页互动栏同口径，Tauri
-                        // 是 toast + 去设置页，壳无对应路由暂分叉）
+                        // 动作行：播放/继续播放 + 收藏 + 点赞 + 追更（仅连载
+                        // 中显示）。未登录点收藏/点赞静默忽略——待对齐 Tauri
+                        // 的 toast + 去设置页；追更的登录墙已有回音。
                         h_flex()
                             .mt_5()
                             .items_center()
@@ -253,6 +253,20 @@ impl DetailView {
                                         this.toggle_digg(cx);
                                     }))
                             })
+                            .children((self.follow_visible()).then(|| {
+                                let on = self.follow_is_on.unwrap_or(false);
+                                Button::new("detail-follow")
+                                    .icon(gpui_kit::assets::IconName::Tv)
+                                    .label(if on { "已追更" } else { "追更" })
+                                    .outline()
+                                    .when(on, |b| {
+                                        b.border_color(theme.primary).text_color(theme.primary)
+                                    })
+                                    .disabled(self.follow_pending)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_follow(window, cx);
+                                    }))
+                            }))
                             .into_any_element()
                     }),
             )
@@ -393,6 +407,80 @@ impl DetailView {
         })
         .detach();
         cx.notify();
+    }
+
+    /// 「追更」按钮显隐：官方只在连载剧（series_status=0）出追更钮——
+    /// 完结剧「全 N 集」无钮（2026-10-15 实包口径，Tauri 同款）。
+    pub(super) fn follow_visible(&self) -> bool {
+        !self.upcoming && self.meta.as_ref().is_some_and(|m| m.series_status == 0)
+    }
+
+    /// 「是否已追」查询（跟随列表首页本地判成员，service 同一段；
+    /// 未登录不查——点击时给登录墙回音）。
+    pub(super) fn load_follow_state(&mut self, cx: &mut Context<Self>) {
+        self.follow_is_on = None;
+        if self.state.settings().account.is_none() {
+            return;
+        }
+        let state = Arc::clone(&self.state);
+        let sid = self.series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::is_following(&state, &sid).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                if let Ok(on) = result {
+                    view.follow_is_on = Some(on);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 追更切换（乐观翻转；失败回滚并透传错误原文；未登录给登录墙回音）。
+    pub(super) fn toggle_follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.follow_pending {
+            return;
+        }
+        if self.state.settings().account.is_none() {
+            window.push_notification(Notification::error("登录后才能追更"), cx);
+            return;
+        }
+        let next = !self.follow_is_on.unwrap_or(false);
+        self.follow_is_on = Some(next);
+        self.follow_pending = true;
+        cx.notify();
+        let state = Arc::clone(&self.state);
+        let sid = self.series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::toggle(&state, &sid, next).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update_in(cx, |view, window, cx| {
+                view.follow_pending = false;
+                match result {
+                    Ok(()) => window.push_notification(
+                        Notification::success(if next {
+                            "已追更，更新了会提醒你"
+                        } else {
+                            "已取消追更"
+                        }),
+                        cx,
+                    ),
+                    Err(e) => {
+                        // 失败回滚（下次重查拿服务端真相）
+                        view.follow_is_on = Some(!next);
+                        log::warn!("[Detail] 追更失败: {e}");
+                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 未上线降级视图的预约切换（Tauri prefill 视图「预约」按钮同款：

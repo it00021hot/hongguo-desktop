@@ -59,6 +59,10 @@ use feed::{SourceFeed, StreamItem};
 pub(crate) enum HomeEvent {
     /// 点剧名 → 打开应用内详情页。
     OpenDetail(String),
+    /// 登录/登出成功：壳刷新头像与追更未读角标（账号态变化的唯一推送口）。
+    AccountChanged,
+    /// 互动登录墙：切到设置页（账号卡登录入口；Tauri requireLogin 同款）。
+    OpenSettings,
 }
 
 /// 视频转换目标尺寸的跨线程打包（(w,h) ⇄ u64；Arc<AtomicU64> 共享给
@@ -273,6 +277,14 @@ pub struct HomeView {
     follow_count: i64,
     digg_pending: bool,
     collect_pending: bool,
+    /// 当前剧连载状态（video_detail series_status：0=连载中 1=已完结；
+    /// 互动栏追更键显隐判定源，meta 未到 = None）。
+    series_status: Option<i64>,
+    /// 当前剧追更态（跟随列表首页本地判成员；未登录/未到 = None）。
+    follow_is_on: Option<bool>,
+    follow_pending: bool,
+    /// 每剧 (followed_cnt, series_status) 会话内缓存（load_intro 顺带）。
+    series_meta_cache: HashMap<String, (i64, i64)>,
     /// 评论面板开着。
     comments_panel_open: bool,
     /// 当前集评论（已拍平去重；每次进集重拉——社交态不缓存复用）。
@@ -520,6 +532,10 @@ impl HomeView {
             follow_count: 0,
             digg_pending: false,
             collect_pending: false,
+            series_status: None,
+            follow_is_on: None,
+            follow_pending: false,
+            series_meta_cache: HashMap::new(),
             comments_panel_open: false,
             comments: Arc::new(Vec::new()),
             comments_total: 0,

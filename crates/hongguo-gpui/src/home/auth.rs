@@ -56,6 +56,7 @@ impl super::HomeView {
         self.mfa_retry = None;
         self.login_message = Some("已退出登录".to_string());
         log::info!("[Login] 已退出登录");
+        cx.emit(super::HomeEvent::AccountChanged);
         cx.notify();
     }
 
@@ -142,6 +143,7 @@ impl super::HomeView {
                     // 账号落库与资料刷新（真昵称/高清头像）由 service 的
                     // complete_login 后台完成——壳不再自行跟进
                     view.login_message = Some(format!("登录成功：{}", user.name));
+                    cx.emit(super::HomeEvent::AccountChanged);
                     cx.notify();
                 }
                 Ok(LoginResult::Mfa {
@@ -181,6 +183,7 @@ impl super::HomeView {
                 self.login_busy = false;
                 self.mfa_retry = None;
                 self.login_message = Some(format!("登录成功：{name}"));
+                cx.emit(super::HomeEvent::AccountChanged);
             }
             LoginMfaStateEvent::Failed {
                 message_kind,

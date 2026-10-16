@@ -1,8 +1,7 @@
 //! 壳窗口：持久侧栏导航 + 顶栏 + 内容区视图切换（Tauri `app-shell` /
 //! `app-sidebar` 的 GPUI 对齐形态）。
 //!
-//! 侧栏目的地对齐 Tauri 客户端的信息架构（12 项）：已有页（首页沉浸流 /
-//! 排行榜）接真数据，未实现页给「建设中」空态——形态先行，页面逐个补。
+//! 侧栏目的地对齐 Tauri 客户端的信息架构（13 项，逐页接真数据）。
 //! 可折叠：展开 224px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
 //! Tauri collapsed 同款）。贴底账户区（登录面板复用首页的）+ 折叠钮。
 //!
@@ -18,14 +17,18 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{App, ElementId, Entity, Window, div};
+use gpui_kit::{
+    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
+};
 use hongguo_service::app_state::AppStateInner;
+use hongguo_service::events::ServiceEvent;
 
 use crate::detail::{DetailEvent, DetailView};
 use crate::home::HomeEvent;
 use crate::home::HomeView;
 use crate::pages::browse::{BrowseEvent, BrowseView};
 use crate::pages::collections::{CollectionEvent, CollectionView};
+use crate::pages::follows::{FollowsEvent, FollowsView};
 use crate::pages::history::{HistoryEvent, HistoryView};
 use crate::pages::liked::{LikedEvent, LikedView};
 use crate::pages::merge::MergeView;
@@ -47,6 +50,7 @@ pub(crate) enum Dest {
     History,
     Collections,
     Liked,
+    Follows,
     Reservations,
     Tasks,
     Merge,
@@ -57,7 +61,7 @@ pub(crate) enum Dest {
 }
 
 impl Dest {
-    const ALL: [Dest; 12] = [
+    const ALL: [Dest; 13] = [
         Dest::Home,
         Dest::Browse,
         Dest::Rank,
@@ -65,6 +69,7 @@ impl Dest {
         Dest::History,
         Dest::Collections,
         Dest::Liked,
+        Dest::Follows,
         Dest::Reservations,
         Dest::Tasks,
         Dest::Merge,
@@ -81,6 +86,7 @@ impl Dest {
             Dest::History => "历史",
             Dest::Collections => "收藏",
             Dest::Liked => "点赞",
+            Dest::Follows => "追更",
             Dest::Reservations => "预约",
             Dest::Tasks => "下载管理",
             Dest::Merge => "一键合并",
@@ -100,6 +106,7 @@ impl Dest {
             Dest::History => IconName::ClockArrowDown,
             Dest::Collections => IconName::Star,
             Dest::Liked => IconName::Heart,
+            Dest::Follows => IconName::Tv,
             Dest::Reservations => IconName::BellRing,
             Dest::Tasks => IconName::ListChecks,
             Dest::Merge => IconName::Combine,
@@ -120,6 +127,7 @@ impl Dest {
             "history" => Some(Dest::History),
             "collections" => Some(Dest::Collections),
             "liked" => Some(Dest::Liked),
+            "follows" => Some(Dest::Follows),
             "reservations" => Some(Dest::Reservations),
             "tasks" => Some(Dest::Tasks),
             "merge" => Some(Dest::Merge),
@@ -129,7 +137,7 @@ impl Dest {
         }
     }
 
-    /// 目的地 → 壳内视图（12 页 + 详情全部实现，无空态兜底）。
+    /// 目的地 → 壳内视图（13 页 + 详情全部实现，无空态兜底）。
     fn view(self) -> View {
         match self {
             Dest::Home => View::Home,
@@ -138,6 +146,7 @@ impl Dest {
             Dest::New => View::New,
             Dest::Liked => View::Liked,
             Dest::Collections => View::Collections,
+            Dest::Follows => View::Follows,
             Dest::History => View::History,
             Dest::Reservations => View::Reservations,
             Dest::Tasks => View::Tasks,
@@ -157,6 +166,7 @@ enum View {
     New,
     Liked,
     Collections,
+    Follows,
     History,
     Reservations,
     Tasks,
@@ -177,6 +187,7 @@ pub struct Shell {
     new_drama: Entity<NewDramaView>,
     liked: Entity<LikedView>,
     collections: Entity<CollectionView>,
+    follows: Entity<FollowsView>,
     history: Entity<HistoryView>,
     reservations: Entity<ReservationView>,
     tasks: Entity<TasksView>,
@@ -186,6 +197,12 @@ pub struct Shell {
     detail: Option<Entity<DetailView>>,
     /// 详情页当前加载的剧（同剧重复点击不重载）。
     detail_series: Option<String>,
+    /// 侧栏追更未读角标（本地通知未读数；未登录恒 0）。
+    follow_unread: usize,
+    /// 账号头像（avatar_url 拉取；账号变化时重拉，登出清空）。
+    account_avatar: Option<Arc<RenderImage>>,
+    account_avatar_url: Option<String>,
+    account_avatar_pending: bool,
 }
 
 impl Shell {
@@ -202,9 +219,14 @@ impl Shell {
         let settings_page = cx.new(|cx| SettingsView::new(state.clone(), window, cx));
         let storage = cx.new(|cx| StorageView::new(state.clone(), window, cx));
         let merge = cx.new(|cx| MergeView::new(state.clone(), window, cx));
+        let follows = cx.new(|cx| FollowsView::new(state.clone(), window, cx));
         // 播放页 → 详情页：HomeView 发事件，壳切目的地（页面间不互相持有）
         cx.subscribe(&feed, |this, _, event: &HomeEvent, cx| match event {
             HomeEvent::OpenDetail(series_id) => this.open_detail(series_id.clone(), cx),
+            // 登录/登出：头像与追更角标跟着账号走
+            HomeEvent::AccountChanged => this.on_account_changed(cx),
+            // 互动登录墙：切设置页（账号卡登录入口）
+            HomeEvent::OpenSettings => this.enter_dest(Dest::Settings, cx),
         })
         .detach();
         // 点赞/收藏卡「继续播放」：壳切回首页沉浸流起播（与详情页同通道）
@@ -314,6 +336,43 @@ impl Shell {
             },
         )
         .detach();
+        cx.subscribe(&follows, |this, _, event: &FollowsEvent, cx| {
+            match event.clone() {
+                FollowsEvent::Play {
+                    series_id,
+                    vid_index,
+                    start_secs,
+                } => this.start_play(series_id, vid_index, start_secs, cx),
+                FollowsEvent::OpenDetail { series_id, prefill } => {
+                    this.open_detail_with_prefill(series_id, Some(prefill), cx);
+                }
+                FollowsEvent::Login => {
+                    // 切回首页开登录面板（Tauri 弹 LoginDialog 的同位入口）
+                    this.dest = Dest::Home;
+                    this.feed.update(cx, |home, cx| {
+                        home.resume_if_idle(cx);
+                        home.toggle_login_panel(cx);
+                    });
+                    cx.notify();
+                }
+                FollowsEvent::NoticesChanged => this.refresh_follow_unread(cx),
+            }
+        })
+        .detach();
+        // 壳级服务事件：独立订阅一条广播（与 HomeView 的通道互不抢）。
+        // 追更提醒到达 → 侧栏角标刷新 + 追更页列表翻面。
+        let mut shell_events = crate::events::subscribe(&state);
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = shell_events.recv().await {
+                let ok = this
+                    .update(cx, |shell, cx| shell.on_service_event(event, cx))
+                    .is_ok();
+                if !ok {
+                    break;
+                }
+            }
+        })
+        .detach();
         // 取证开关：HONGGUO_RANK=1 直接开在排行榜页（无头验证封面用）；
         // HONGGUO_TAB=36/39 直接开在漫剧/真人源（tab 数据链取证用）；
         // HONGGUO_PAGE=browse|new|history|… 直接开在对应目的地（逐页点检）。
@@ -343,13 +402,15 @@ impl Shell {
         let mut shell = Self {
             dest,
             state,
-            sidebar_collapsed: false,
+            // UI 偏好盘上有就按盘上（Tauri 默认折叠、展开后持久化记住）
+            sidebar_collapsed: crate::ui_prefs::load().sidebar_collapsed,
             feed,
             rank,
             browse,
             new_drama,
             liked,
             collections,
+            follows,
             history,
             reservations,
             tasks,
@@ -358,10 +419,16 @@ impl Shell {
             merge,
             detail: None,
             detail_series: None,
+            follow_unread: 0,
+            account_avatar: None,
+            account_avatar_url: None,
+            account_avatar_pending: false,
         };
         if let Some(page) = page_start {
             shell.enter_dest(page, cx);
         }
+        shell.refresh_follow_unread(cx);
+        shell.ensure_account_avatar(cx);
         shell
     }
 
@@ -381,6 +448,10 @@ impl Shell {
             Dest::New => self.new_drama.update(cx, NewDramaView::load),
             Dest::Liked => self.liked.update(cx, LikedView::load),
             Dest::Collections => self.collections.update(cx, CollectionView::load),
+            Dest::Follows => {
+                self.follows.update(cx, FollowsView::load);
+                self.refresh_follow_unread(cx);
+            }
             Dest::History => self.history.update(cx, HistoryView::load),
             Dest::Reservations => self.reservations.update(cx, ReservationView::load),
             Dest::Tasks => self.tasks.update(cx, TasksView::load),
@@ -390,6 +461,79 @@ impl Shell {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// 追更未读角标刷新（本地通知未读数；未登录恒 0，Tauri 单入口口径）。
+    fn refresh_follow_unread(&mut self, cx: &mut Context<Self>) {
+        let count = if self.state.settings().account.is_some() {
+            hongguo_service::follow_service::notices(&self.state)
+                .map(|ns| ns.iter().filter(|n| !n.read).count())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        self.follow_unread = count;
+        cx.notify();
+    }
+
+    /// 壳级服务事件消费（独立通道；与 HomeView 的事件循环互不影响）。
+    fn on_service_event(&mut self, event: ServiceEvent, cx: &mut Context<Self>) {
+        if let ServiceEvent::FollowNotices(_) = event {
+            // 新提醒：角标刷新 + 追更页列表翻面（数据在本地库，一次小读；
+            // 页面在不在前台都刷新，回到页面即最新）
+            self.refresh_follow_unread(cx);
+            self.follows
+                .update(cx, |view, cx| view.on_notices_arrived(cx));
+        }
+    }
+
+    /// 账号变化（登录/登出）：头像重拉 + 追更角标重算。
+    fn on_account_changed(&mut self, cx: &mut Context<Self>) {
+        self.account_avatar_url = None;
+        self.ensure_account_avatar(cx);
+        self.refresh_follow_unread(cx);
+    }
+
+    /// 账号头像加载：账号在且 URL 没拉过才拉一次（登录/换头像后重拉，
+    /// 登出即清）；下载失败留空退回通用图标。
+    fn ensure_account_avatar(&mut self, cx: &mut Context<Self>) {
+        let Some(account) = self.state.settings().account else {
+            self.account_avatar = None;
+            self.account_avatar_url = None;
+            return;
+        };
+        let url = account.avatar_url;
+        if url.is_empty() || self.account_avatar_url.as_deref() == Some(url.as_str()) {
+            return;
+        }
+        if self.account_avatar_pending {
+            return;
+        }
+        self.account_avatar_pending = true;
+        let rx = crate::cover_img::fetch(url.clone());
+        cx.spawn(async move |this, cx| {
+            let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |shell, cx| {
+                shell.account_avatar_pending = false;
+                if let Ok(bytes) = bytes
+                    && let Ok(decoded) = image::load_from_memory(&bytes)
+                {
+                    shell.account_avatar = Some(Arc::new(crate::image_upload::render_image(
+                        decoded.to_rgba8(),
+                    )));
+                    shell.account_avatar_url = Some(url);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 侧栏折叠态落盘（`ui_prefs` 读-改-写，Tauri zustand persist 同语义）。
+    fn persist_sidebar_collapsed(&self) {
+        let mut prefs = crate::ui_prefs::load();
+        prefs.sidebar_collapsed = self.sidebar_collapsed;
+        crate::ui_prefs::save(prefs);
     }
 
     /// 页面「继续播放」的统一入口：切回首页沉浸流起播（详情页播放同通道，
@@ -549,6 +693,10 @@ impl Shell {
             self.dest = Dest::Reservations;
             self.reservations
                 .update(cx, |view, cx| view.debug_preview_seed(scene, cx));
+        } else if scene.starts_with("follows") {
+            self.dest = Dest::Follows;
+            self.follows
+                .update(cx, |view, cx| view.debug_preview_seed(scene, cx));
         } else if scene.starts_with("tasks") {
             self.dest = Dest::Tasks;
             self.tasks
@@ -614,14 +762,38 @@ impl Shell {
             .into_any_element()
     }
 
-    /// 侧栏（Tauri app-sidebar 对齐）：12 目的地，展开 224px 图标+文字、
-    /// 折叠 56px 纯图标（tooltip 出标签）；贴底账户区 + 折叠钮。
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+    /// 侧栏（Tauri app-sidebar 对齐）：13 目的地，展开 224px 图标+文字、
+    /// 折叠 56px 纯图标（tooltip 出标签）；追更带未读角标；贴底账户区
+    /// （头像/昵称；已登录点进设置页）+ 折叠钮。
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let collapsed = self.sidebar_collapsed;
-        let logged_in = self.state.settings().account.is_some();
+        // 头像懒加载守卫：账号在且 URL 变化才触发一次（幂等）
+        self.ensure_account_avatar(cx);
+        let theme = cx.theme();
+        let account = self.state.settings().account;
+        let logged_in = account.is_some();
+        let unread = self.follow_unread;
+        let avatar = self.account_avatar.clone();
+        let account_label = account
+            .as_ref()
+            .map(|a| {
+                if a.user_name.is_empty() {
+                    "我的".to_string()
+                } else {
+                    a.user_name.clone()
+                }
+            })
+            .unwrap_or_else(|| "我的".to_string());
         let item = |dest: Dest| {
             let active = self.dest == dest;
+            let badge = (dest == Dest::Follows && unread > 0).then_some(unread);
+            let badge_text = |n: usize| {
+                if n > 99 {
+                    "99+".to_string()
+                } else {
+                    n.to_string()
+                }
+            };
             let row = div()
                 .id(ElementId::from(format!("nav-{}", dest.label())))
                 .flex()
@@ -647,15 +819,46 @@ impl Shell {
                     this.enter_dest(dest, cx);
                 }))
                 .child(
-                    gpui_kit::component::Icon::new(dest.icon())
-                        .small()
-                        .text_color(if active {
-                            theme.foreground
-                        } else {
-                            theme.muted_foreground
-                        }),
+                    div()
+                        .relative()
+                        .flex_shrink_0()
+                        .child(
+                            gpui_kit::component::Icon::new(dest.icon())
+                                .small()
+                                .text_color(if active {
+                                    theme.foreground
+                                } else {
+                                    theme.muted_foreground
+                                }),
+                        )
+                        // 折叠态：小角标压在图标右上（Tauri 同款）
+                        .children((collapsed && badge.is_some()).then(|| {
+                            div()
+                                .absolute()
+                                .top(gpui_kit::px(-6.0))
+                                .right(gpui_kit::px(-8.0))
+                                .rounded_full()
+                                .bg(theme.danger)
+                                .px_1()
+                                .text_size(gpui_kit::px(9.0))
+                                .text_color(theme.danger_foreground)
+                                .child(SharedString::from(badge_text(badge.unwrap_or(0))))
+                        })),
                 )
-                .when(!collapsed, |s| s.child(dest.label()));
+                .when(!collapsed, |s| s.child(dest.label()))
+                // 展开态：数字胶囊贴行尾（Tauri 同款）
+                .children((!collapsed && badge.is_some()).then(|| {
+                    div()
+                        .ml_auto()
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(theme.danger)
+                        .px_1p5()
+                        .py_0p5()
+                        .text_size(gpui_kit::px(10.0))
+                        .text_color(theme.danger_foreground)
+                        .child(SharedString::from(badge_text(badge.unwrap_or(0))))
+                }));
             if collapsed {
                 row.tooltip(move |window, cx| Tooltip::new(dest.label()).build(window, cx))
             } else {
@@ -674,8 +877,8 @@ impl Shell {
             .id("shell-sidebar")
             .overflow_y_scroll()
             .children(Dest::ALL.map(item))
-            // 贴底账户区（Tauri AccountButton 同位）：未登录开登录面板，
-            // 已登录直接退出（GPUI 无设置页，退出入口沿用在侧）
+            // 贴底账户区（Tauri AccountButton 同位）：未登录开登录面板；
+            // 已登录点进设置页（退出登录在设置页账户卡，Tauri 同款）
             .child(
                 div()
                     .border_t_1()
@@ -697,21 +900,40 @@ impl Shell {
                             .hover(|s| s.bg(theme.secondary_hover))
                             .when(collapsed, |s| s.justify_center().px_0())
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.feed.update(cx, |home, cx| {
-                                    if logged_in {
-                                        home.login_logout(cx);
-                                    } else {
+                                if logged_in {
+                                    this.enter_dest(Dest::Settings, cx);
+                                } else {
+                                    // 登录面板长在首页舞台：先切回首页再开
+                                    this.dest = Dest::Home;
+                                    this.feed.update(cx, |home, cx| {
+                                        home.resume_if_idle(cx);
                                         home.toggle_login_panel(cx);
-                                    }
-                                });
+                                    });
+                                    cx.notify();
+                                }
                             }))
-                            .child(
-                                gpui_kit::component::Icon::new(IconName::UserRound)
+                            .child(match avatar {
+                                Some(image) => img(ImageSource::Render(image))
+                                    .size_5()
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .object_fit(ObjectFit::Cover)
+                                    .into_any_element(),
+                                None => gpui_kit::component::Icon::new(IconName::UserRound)
                                     .small()
-                                    .text_color(theme.muted_foreground),
-                            )
+                                    .text_color(theme.muted_foreground)
+                                    .into_any_element(),
+                            })
                             .when(!collapsed, |s| {
-                                s.child(if logged_in { "退出登录" } else { "登录" })
+                                s.child(account_label.clone())
+                                    .children((!logged_in).then(|| {
+                                        div()
+                                            .ml_auto()
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(theme.primary)
+                                            .child("登录")
+                                    }))
                             }),
                     ),
             )
@@ -728,6 +950,7 @@ impl Shell {
                             .tooltip("展开")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sidebar_collapsed = false;
+                                this.persist_sidebar_collapsed();
                                 cx.notify();
                             }))
                             .into_any_element()
@@ -740,6 +963,7 @@ impl Shell {
                             .tooltip("收起")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sidebar_collapsed = true;
+                                this.persist_sidebar_collapsed();
                                 cx.notify();
                             }))
                             .into_any_element()
@@ -756,6 +980,7 @@ impl Shell {
             View::New => self.new_drama.clone().into_any_element(),
             View::Liked => self.liked.clone().into_any_element(),
             View::Collections => self.collections.clone().into_any_element(),
+            View::Follows => self.follows.clone().into_any_element(),
             View::History => self.history.clone().into_any_element(),
             View::Reservations => self.reservations.clone().into_any_element(),
             View::Tasks => self.tasks.clone().into_any_element(),

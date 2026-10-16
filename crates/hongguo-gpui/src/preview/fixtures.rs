@@ -13,12 +13,12 @@ use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedItem;
 use hongguo_api::discover::{FeedItem, SelectorItem, SelectorRow};
 use hongguo_api::history::WatchHistoryItem;
-use hongguo_api::interact::{BookshelfEntry, InteractionItem};
+use hongguo_api::interact::{BookshelfEntry, FollowUpdateItem, InteractionItem};
 use hongguo_api::rank::RankItem;
 use hongguo_api::search::SearchResult;
 use hongguo_common::model::{
-    DownloadTask, MergeCandidate, MergeMode, MergePreflight, MergeStatus, MergeTask, TaskStatus,
-    VideoDefinition,
+    DownloadTask, FollowNotice, MergeCandidate, MergeMode, MergePreflight, MergeStatus, MergeTask,
+    NOTICE_KIND_FOLLOW, NOTICE_KIND_ONLINE, TaskStatus, VideoDefinition,
 };
 use hongguo_service::storage_service::usage::{StorageSeriesUsage, StorageUsage};
 
@@ -198,6 +198,70 @@ pub(crate) fn reservation_items(online: bool) -> Vec<CalendarItem> {
             has_subscribed: true,
         })
         .collect()
+}
+
+/// 追更页：6 条追更条目（追平/未看/已完结交错，集数错开）。
+pub(crate) fn follow_items() -> Vec<FollowUpdateItem> {
+    SERIES
+        .iter()
+        .enumerate()
+        .map(|(i, (sid, title, _))| FollowUpdateItem {
+            series_id: (*sid).into(),
+            title: (*title).into(),
+            cover: String::new(), // 预览封面直接灌 covers
+            episode_cnt: 24 + i as i64 * 12,
+            latest_watched_vid_index: match i % 3 {
+                0 => 0,
+                1 => 10,
+                _ => (24 + i as i64 * 12).min(30),
+            },
+            finished: i == 2 || i == 5,
+            has_watched_latest_episode: i == 2 || i == 5,
+            follow_update_at: 1_792_100_000 - i as i64 * 86_400,
+        })
+        .collect()
+}
+
+/// 追更页「更新提醒」：4 条通知（追更更新 / 预约上线交错，两条未读）。
+pub(crate) fn follow_notices() -> Vec<FollowNotice> {
+    vec![
+        FollowNotice {
+            id: 4,
+            kind: NOTICE_KIND_FOLLOW.into(),
+            series_id: SERIES[0].0.into(),
+            title: SERIES[0].1.into(),
+            detail: "追的剧更新了，新增 2 集（共 216 集）".into(),
+            at: 1_792_041_548,
+            read: false,
+        },
+        FollowNotice {
+            id: 3,
+            kind: NOTICE_KIND_ONLINE.into(),
+            series_id: SERIES[3].0.into(),
+            title: SERIES[3].1.into(),
+            detail: "预约的《我在长安当神探》已上线，去看看".into(),
+            at: 1_791_955_148,
+            read: false,
+        },
+        FollowNotice {
+            id: 2,
+            kind: NOTICE_KIND_FOLLOW.into(),
+            series_id: SERIES[1].0.into(),
+            title: SERIES[1].1.into(),
+            detail: "追的剧更新了，新增 4 集（共 88 集）".into(),
+            at: 1_791_782_000,
+            read: true,
+        },
+        FollowNotice {
+            id: 1,
+            kind: NOTICE_KIND_FOLLOW.into(),
+            series_id: SERIES[4].0.into(),
+            title: SERIES[4].1.into(),
+            detail: "追的剧更新了，新增 1 集（共 60 集）".into(),
+            at: 1_791_609_200,
+            read: true,
+        },
+    ]
 }
 
 /// 找剧页：筛选面板（体裁/主题/推荐 + 服务端八行里的代表性三行）。

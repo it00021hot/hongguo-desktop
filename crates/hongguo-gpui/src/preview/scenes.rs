@@ -340,6 +340,47 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "reservation-empty",
             font_scale: 1.,
         },
+        // —— 追更 ——
+        PreviewCase {
+            name: "follows-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "follows",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-empty-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-empty",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-manage-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-manage",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-notices-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-notices",
+            font_scale: 1.,
+        },
         // —— 下载管理 ——
         PreviewCase {
             name: "tasks-light",

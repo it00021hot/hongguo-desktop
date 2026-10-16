@@ -138,6 +138,9 @@ impl HomeView {
         self.ep_comment_count = 3716;
         self.ep_digg_count = 5678;
         self.follow_count = 999;
+        // 追更键显隐（series_status=0 连载中）与已追态：预览里给全开
+        self.series_status = Some(0);
+        self.follow_is_on = Some(true);
     }
 
     /// 预填输入框（`set_value` 要 window，种子阶段正好有）。

@@ -477,11 +477,21 @@ impl super::HomeView {
         ))
     }
 
-    /// 拉当前剧的简介与全剧收藏数（video_detail 的 series_intro /
-    /// followed_cnt，Tauri useSeriesDetailMeta 同源）：装饰性信息，失败
-    /// 静默降级、允许重试；每剧只拉一次（Tauri staleTime 10 分钟同语义
-    /// 的会话内缓存）。followed_cnt 是互动栏「收藏」键的计数源。
+    /// 拉当前剧的简介、全剧收藏数与连载状态（video_detail 的 series_intro /
+    /// followed_cnt / series_status，Tauri useSeriesDetailMeta 同源）：装饰性
+    /// 信息，失败静默降级、允许重试；每剧只拉一次（会话内缓存，Tauri
+    /// staleTime 10 分钟同语义）。followed_cnt 是互动栏「收藏」键的计数源；
+    /// series_status 决定「追更」键显隐。
     fn load_intro(&mut self, series_id: String, cx: &mut Context<Self>) {
+        // 切剧即重置上一部残值（计数/连载态/追更态），缓存命中就直接回填
+        self.follow_count = 0;
+        self.series_status = None;
+        self.follow_is_on = None;
+        if let Some((followed_cnt, status)) = self.series_meta_cache.get(&series_id) {
+            self.follow_count = *followed_cnt;
+            self.series_status = Some(*status);
+        }
+        self.load_follow_state(series_id.clone(), cx);
         if self.intros.contains_key(&series_id) || !self.intros_pending.insert(series_id.clone()) {
             return;
         }
@@ -491,23 +501,61 @@ impl super::HomeView {
             let sid = series_id.clone();
             hongguo_api::detail::fetch_series_meta(&sid, &env)
                 .await
-                .map(|meta| (sid.clone(), meta.intro, meta.followed_cnt))
+                .map(|meta| {
+                    (
+                        sid.clone(),
+                        meta.intro,
+                        meta.followed_cnt,
+                        meta.series_status,
+                    )
+                })
                 .map_err(|e| (sid, e))
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, _| match result {
-                Ok((sid, intro, followed_cnt)) => {
+                Ok((sid, intro, followed_cnt, series_status)) => {
                     view.intros_pending.remove(&sid);
                     if !intro.is_empty() {
                         view.intros.insert(sid.clone(), intro);
                     }
-                    view.follow_count = followed_cnt;
+                    view.series_meta_cache
+                        .insert(sid.clone(), (followed_cnt, series_status));
+                    // 快速切剧时响应会迟到：只在仍是当前剧时落 UI
+                    if view.now.as_ref().is_some_and(|n| n.series_id == sid) {
+                        view.follow_count = followed_cnt;
+                        view.series_status = Some(series_status);
+                    }
                 }
                 Err((sid, e)) => {
                     // 失败不算数：允许下次起播重试（rank.rs 同款记一条 warn）
                     view.intros_pending.remove(&sid);
                     log::warn!("[Home] {sid} 简介拉取失败，下次起播重试：{e}");
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 当前剧追更态（跟随列表首页本地判成员，service 同一段）：登录才查；
+    /// 切剧时已重置为 None，回填前核对剧没被切走。
+    fn load_follow_state(&mut self, series_id: String, cx: &mut Context<Self>) {
+        if self.state.settings().account.is_none() {
+            return;
+        }
+        let state = Arc::clone(&self.state);
+        let sid = series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::is_following(&state, &sid).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                if view.now.as_ref().is_some_and(|n| n.series_id == series_id)
+                    && let Ok(on) = result
+                {
+                    view.follow_is_on = Some(on);
+                    cx.notify();
                 }
             });
         })

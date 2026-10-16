@@ -102,6 +102,9 @@ pub(crate) struct DetailView {
     interact_items: Arc<Vec<InteractionItem>>,
     collect_pending: bool,
     digg_pending: bool,
+    /// 追更态（跟随列表首页本地判成员；未登录/未查到 = None）与在途翻转。
+    follow_is_on: Option<bool>,
+    follow_pending: bool,
 }
 
 impl DetailView {
@@ -131,6 +134,8 @@ impl DetailView {
             interact_items: Arc::new(Vec::new()),
             collect_pending: false,
             digg_pending: false,
+            follow_is_on: None,
+            follow_pending: false,
         }
     }
 
@@ -171,6 +176,8 @@ impl DetailView {
         self.interact_items = Arc::new(Vec::new());
         self.collect_pending = false;
         self.digg_pending = false;
+        self.follow_is_on = None;
+        self.follow_pending = false;
         self.loading = true;
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
@@ -220,6 +227,7 @@ impl DetailView {
                             view.load_reviews_first_page(cx);
                             view.load_related(cx);
                             view.load_interact_state(cx);
+                            view.load_follow_state(cx);
                         }
                     }
                     Err(e) => {
