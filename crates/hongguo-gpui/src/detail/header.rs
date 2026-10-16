@@ -19,7 +19,7 @@ use crate::bridge;
 
 /// hgplayer 皮肤色（硬红线 11 的播放器豁免口径，与首页互动栏同源）：
 /// 星 = 收藏/评分，红 = 热度/点赞。
-fn star_color() -> gpui_kit::Rgba {
+pub(super) fn star_color() -> gpui_kit::Rgba {
     gpui_kit::rgba(0xfacc15ff)
 }
 fn hot_color() -> gpui_kit::Rgba {

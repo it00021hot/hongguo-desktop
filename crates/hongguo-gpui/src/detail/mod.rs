@@ -27,7 +27,7 @@ use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, RenderImage, div};
+use gpui_kit::{App, Entity, RenderImage, div};
 use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedSeries;
 use hongguo_api::history::WatchHistoryItem;
@@ -112,6 +112,18 @@ pub(crate) struct DetailView {
     follow_pending: bool,
     /// 云端观看历史（登录可见；「继续看」的兜底源，Tauri 详情页同款）。
     history: Vec<WatchHistoryItem>,
+    // —— 剧评发评框（Tauri ReviewComposer：评分 + 表情 + 文本）——
+    /// 剧评输入框（懒建：DetailView::new 没有 window，首个 render 里补）。
+    review_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    /// 我的评分（1–5 星，0 = 未选——未选禁发，score 是剧评身份的一部分）。
+    review_stars: u8,
+    review_hover_stars: u8,
+    review_emoji_open: bool,
+    review_sending: bool,
+    /// 发送成功后的清空（set_value 要 window，render 期补执行）。
+    review_clear_input: bool,
+    /// Enter 提交请求（订阅回调没有 window，转交 render 执行）。
+    review_submit_pending: bool,
 }
 
 impl DetailView {
@@ -144,6 +156,13 @@ impl DetailView {
             follow_is_on: None,
             follow_pending: false,
             history: Vec::new(),
+            review_input: None,
+            review_stars: 0,
+            review_hover_stars: 0,
+            review_emoji_open: false,
+            review_sending: false,
+            review_clear_input: false,
+            review_submit_pending: false,
         }
     }
 
@@ -152,6 +171,12 @@ impl DetailView {
     /// react-query 各 query 独立降级同口径。
     pub(crate) fn load(&mut self, series_id: String, cx: &mut Context<Self>) {
         self.load_with_prefill(series_id, None, cx);
+    }
+
+    /// 程序化切换下半区 tab（取证开关 `HONGGUO_DETAIL_TAB` 用）。
+    pub(crate) fn select_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
+        self.tab = tab;
+        cx.notify();
     }
 
     /// 装载（可带来源页 prefill）：解析失败且有 prefill 时走「即将上线」
@@ -187,6 +212,13 @@ impl DetailView {
         self.follow_is_on = None;
         self.follow_pending = false;
         self.history.clear();
+        self.review_stars = 0;
+        self.review_hover_stars = 0;
+        self.review_emoji_open = false;
+        self.review_sending = false;
+        self.review_submit_pending = false;
+        // 换剧清空输入框（懒建之后才有效；值随渲染期 set_value 落）
+        self.review_clear_input = self.review_input.is_some();
         self.loading = true;
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
@@ -471,9 +503,41 @@ fn synthesize_upcoming_series(series_id: &str, prefill: &DetailPrefill) -> Serie
 impl gpui_kit::Render for DetailView {
     fn render(
         &mut self,
-        _window: &mut gpui_kit::Window,
+        window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
+        // 剧评输入框懒建：DetailView::new 拿不到 window（壳在事件回调里
+        // cx.new 创建本视图），首个 render 才有——建一次并挂 Enter 提交。
+        if self.review_input.is_none() {
+            let input = cx.new(|cx| {
+                gpui_kit::component::input::InputState::new(window, cx).placeholder("写下你的剧评…")
+            });
+            cx.subscribe(
+                &input,
+                |this, _, event: &gpui_kit::component::input::InputEvent, cx| {
+                    if matches!(
+                        event,
+                        gpui_kit::component::input::InputEvent::PressEnter { .. }
+                    ) {
+                        // 订阅回调没有 window（登录墙/回执要它），转交 render 执行
+                        this.review_submit_pending = true;
+                    }
+                    cx.notify();
+                },
+            )
+            .detach();
+            self.review_input = Some(input);
+        }
+        if let Some(input) = &self.review_input {
+            if self.review_clear_input {
+                self.review_clear_input = false;
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            }
+            if self.review_submit_pending {
+                self.review_submit_pending = false;
+                self.submit_review(window, cx);
+            }
+        }
         self.render_page(cx)
     }
 }

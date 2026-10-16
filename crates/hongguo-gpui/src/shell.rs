@@ -455,6 +455,18 @@ impl Shell {
                 && !sid.is_empty()
             {
                 shell.open_detail(sid, cx);
+                // 取证：直接落在指定下半区 tab（默认选集）——剧评发评框/
+                // 相关推荐的无头截图入口
+                if let Ok(tab) = std::env::var("HONGGUO_DETAIL_TAB")
+                    && let Some(detail) = &shell.detail
+                {
+                    let tab = match tab.as_str() {
+                        "reviews" => crate::detail::DetailTab::Reviews,
+                        "related" => crate::detail::DetailTab::Related,
+                        _ => crate::detail::DetailTab::Episodes,
+                    };
+                    detail.update(cx, |view, cx| view.select_tab(tab, cx));
+                }
             } else if let Ok(uid) = std::env::var("HONGGUO_CREATOR")
                 && !uid.is_empty()
             {
