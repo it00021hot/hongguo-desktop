@@ -33,6 +33,7 @@ mod preview;
 #[cfg(feature = "screenshot")]
 mod screenshot;
 mod shell;
+mod single_instance;
 mod toast;
 mod tokens;
 mod ui_prefs;
@@ -95,6 +96,13 @@ fn main() {
     // （%APPDATA%\hongguo-gpui，与 hongguo-downloader 无任何交集），
     // 互不锁库（实测并存时后启动者因库锁直接退出）。
     hongguo_store::paths::set_shell_data_root("hongguo-gpui");
+    // 单实例：已有实例在跑就请它把窗口带到前台，自己安静退出（Tauri
+    // single-instance 插件同语义）。必须早于开库——上一个实例可能正持库锁
+    //（隐身藏窗/小屏/竖屏形态都在跑），撞锁退出会让用户看到「点图标没反应」。
+    if !single_instance::claim() {
+        log::info!("[Shell] 已有实例在运行：已请求它前置窗口，本进程退出");
+        return;
+    }
     let state = build_app_state();
     // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。失败只记
     // 日志——快捷键被占用不该拦启动，用户进设置换一个即可。

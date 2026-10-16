@@ -327,6 +327,62 @@ pub(crate) fn post_close(hwnd: isize) {
     }
 }
 
+/// 单实例门闩：命名互斥体表征「本进程是唯一实例」，命名事件承载
+/// 「第二次启动请求把窗口带到前台」。
+///
+/// gpui 没有单实例设施，Tauri 侧走 `tauri-plugin-single-instance`——那边第二
+/// 次启动会让插件回调前置已有窗口，而这里是「第二个进程置位事件、首个实例的
+/// 轮询消费」：同一语义，零新依赖。**必须早于数据库打开**（上一个实例可能正
+/// 持库锁：隐身藏窗/小屏形态都在跑）。
+static SINGLETON: std::sync::Mutex<Option<(isize, isize)>> = std::sync::Mutex::new(None);
+
+/// 尝试成为唯一实例。首个实例返回 `Some(事件句柄)`（供轮询前置请求）；
+/// 已有实例在跑则置位它的事件、返回 `None`（调用方安静退出）。
+pub(crate) fn claim_single_instance() -> Option<isize> {
+    let mutex_name = wide("HongguoGpui.SingleInstance");
+    let event_name = wide("HongguoGpui.SingleInstance.Focus");
+    // SAFETY：两个名字都是本次调用自造的 NUL 结尾 UTF-16；句柄配对关闭
+    unsafe {
+        let mutex = CreateMutexW(0, 1, mutex_name.as_ptr());
+        if mutex == 0 {
+            log::warn!("[Shell] 单实例互斥体创建失败，按独占启动继续");
+            return None;
+        }
+        let already = GetLastError() == ERROR_ALREADY_EXISTS;
+        let event = CreateEventW(0, 1, 0, event_name.as_ptr());
+        log::info!("[Shell] 单实例：mutex={mutex} event={event} already={already}");
+        if already {
+            if event != 0 {
+                let ok = SetEvent(event);
+                log::info!("[Shell] 单实例：置位前置事件 ok={ok}");
+                CloseHandle(event);
+            }
+            CloseHandle(mutex);
+            return None;
+        }
+        *SINGLETON
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((mutex, event));
+        (event != 0).then_some(event)
+    }
+}
+
+/// 首个实例的轮询消费：第二次启动是否请求前置窗口（读后复位）。
+/// 事件没拿到（创建失败）时恒 false——不蹦「永远前置不了」的空转。
+pub(crate) fn take_focus_request(event: isize) -> bool {
+    if event == 0 {
+        return false;
+    }
+    // SAFETY：event 是本进程 create/claim 出来的事件句柄
+    unsafe {
+        if WaitForSingleObject(event, 0) != WAIT_OBJECT_0 {
+            return false;
+        }
+        ResetEvent(event);
+    }
+    true
+}
+
 /// 懒建消息窗口（幂等）。类注册一次，窗口句柄缓存在静态里。
 fn message_window() -> Result<isize, String> {
     static HWND: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
@@ -397,6 +453,10 @@ fn wide(s: &str) -> Vec<u16> {
 
 const HWND_MESSAGE: isize = -3;
 const WM_HOTKEY: u32 = 0x0312;
+/// `GetLastError`：命名对象已存在（第二次启动）。
+const ERROR_ALREADY_EXISTS: u32 = 183;
+/// `WaitForSingleObject`：对象已置位。
+const WAIT_OBJECT_0: u32 = 0;
 #[cfg(feature = "screenshot")]
 const WM_CLOSE: u32 = 0x0010;
 
@@ -440,6 +500,18 @@ unsafe extern "system" {
     unsafe fn DefWindowProcW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
     unsafe fn RegisterHotKey(hwnd: isize, id: i32, mods: u32, vk: u32) -> i32;
     unsafe fn UnregisterHotKey(hwnd: isize, id: i32) -> i32;
+    unsafe fn CreateMutexW(attrs: isize, initial_owner: i32, name: *const u16) -> isize;
+    unsafe fn CreateEventW(
+        attrs: isize,
+        manual_reset: i32,
+        initial_state: i32,
+        name: *const u16,
+    ) -> isize;
+    unsafe fn SetEvent(event: isize) -> i32;
+    unsafe fn ResetEvent(event: isize) -> i32;
+    unsafe fn WaitForSingleObject(handle: isize, millis: u32) -> u32;
+    unsafe fn CloseHandle(handle: isize) -> i32;
+    unsafe fn GetLastError() -> u32;
     #[cfg(feature = "screenshot")]
     unsafe fn keybd_event(bvk: u8, scan: u8, flags: u32, extra: usize);
     #[cfg(feature = "screenshot")]

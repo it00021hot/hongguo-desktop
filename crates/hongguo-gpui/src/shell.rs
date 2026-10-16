@@ -502,6 +502,18 @@ impl Shell {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
+                    // 第二次启动请求前置窗口（单实例；Tauri bring_back_active_window
+                    // 同款：显示 + 还原最小化 + 聚焦）
+                    if crate::single_instance::take_focus_request() {
+                        if crate::win32::is_iconic(hwnd) {
+                            crate::win32::show_window(hwnd, crate::win32::SW_RESTORE);
+                        }
+                        crate::win32::show_foreground(hwnd);
+                        log::info!(
+                            "[Shell] 第二次启动请求：窗口已带到前台（可见={}）",
+                            crate::win32::is_window_visible(hwnd)
+                        );
+                    }
                     if !crate::boss_key::take_fired() {
                         continue;
                     }
