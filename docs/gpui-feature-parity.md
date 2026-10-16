@@ -46,6 +46,7 @@
 | 4 | 主题切换：Tauri 顶栏三档（`theme-switch.tsx`：跟随系统/亮色/暗色，persist `hongguo-theme`，默认 auto）；GPUI 原为固定深色 | `src/stores/theme.ts`、`src/components/layout/theme-switch.tsx` | ✅ 2026-10-17（`ui_prefs.theme` + 设置页「外观」卡；auto 观察窗口外观实时跟随；显式档位钉住窗口外观）。**入口位置是有意偏差**：Tauri 在顶栏，GPUI 顶栏是平台拖拽区（自绘可点控件会被原生命中测试判成拖拽吞掉，见 `shell.rs` render_title_bar 注释） |
 | 5 | 界面语言切换：Tauri 顶栏中/英切换（`ThemeSwitch` 同排的 Languages 菜单，`src/locales/` 两份文案） | `theme-switch.tsx:44-57` | ⏳ 待裁决：GPUI 全量文案是硬编码中文，做 i18n 是全仓文案扫一遍的大工程；先确认是否要求对齐 |
 | 6 | 老板键：Tauri `boss_key_cmd.rs` 自述「GPUI 壳无此层（全局快捷键插件是 Tauri 侧能力）」——设置页无卡片、无注册 | `crates/hongguo-tauri/src/commands/boss_key_cmd.rs` 头注释；`boss-key-card.tsx` | ✅ 2026-10-17（`src/boss_key/`：accelerator 解析/捕获/冲突纯函数 + win32 自建消息窗口接 WM_HOTKEY；设置页「全局快捷键」卡；先注册后落库 + 冲突拦截）。真机验过保存/启动注册/合成按键藏显/冲突拦截四条路径。macOS 侧仅缺 FFI（设置时会明确报错，不做假生效） |
+| 7 | 竖屏播放：Tauri `enter/exit/fit_portrait_screen` + `set_portrait_full` 与 `use-portrait-window` 的竖条形态；GPUI 无 | `window_cmd.rs:230-370`、`use-portrait-window.ts`、`MiniScreenControls variant="portrait"` | ✅ 2026-10-17（`src/portrait/`：几何纯函数 + Win32 落窗；控制栏竖屏钮；竖屏紧凑条；侧栏藏/顶栏留；F→铺满、Esc 铺满→竖条；离开播放页先退竖屏）。真机验过 1280×840→388×840 与铺满 642×1392。macOS 侧只缩不挪（Apple FFI 后补，与小屏同缺口） |
 
 附注（本轮顺带修）：`ShowWindow` 在实体更新里调用会同步派发 WM_*，gpui 的窗口
 过程要更新窗口状态 → 撞借用（实测日志刷「RefCell already borrowed」六连）。
