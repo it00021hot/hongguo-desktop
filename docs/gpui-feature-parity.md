@@ -19,12 +19,14 @@
 | 5 | 侧栏追更未读角标 | `app-sidebar.tsx:60,76` | ✅ 折叠/展开两种形态；FollowNotices 事件 + 已读变化同步 |
 | 6 | 更新提醒 OS 弹窗 | `app-shell.tsx:53-64`（Web Notification） | ⏳ 选型待定（可能要新依赖，先报告再动）；当前：事件已进壳，追更页列表/角标实时刷新 |
 
-## W2 创作者主页（Tauri 有整页，GPUI 缺）
+## W2 创作者主页（Tauri 有整页，GPUI 缺）—— ✅ 2026-10-17 全部落地
 
 | # | 差距 | 证据 | 状态 |
 | - | ---- | ---- | ---- |
-| 1 | 详情页缺「出品方 / 演职员」行与点入 | `series-detail-page.tsx:298-312`；GPUI `detail/` 无 creator 字样 | 待做 |
-| 2 | `/creator` 整页未建 | `src/pages/creator/components/creator-home-page.tsx`；api 函数在 `hongguo-api/src/danmaku/`（profile/works） | 待做 |
+| 1 | 详情页缺「出品方 / 演职员」行与点入 | `series-detail-page.tsx:298-312` | ✅ `detail/header.rs` render_creators（头像/名字/角色 pill；无 uid 仅展示不可点；头像随 meta 预取） |
+| 2 | `/creator` 整页未建 | `src/pages/creator/components/creator-home-page.tsx` | ✅ `pages/creator.rs`（资料头独立降级 / 作品网格 3:4 卡 / 游标翻页 / 空态 / 失败重试；点击起播回首页沉浸流；返回回来源详情页） |
+
+附注：`hongguo-api::detail` 补导出 `SeriesCreator`（纯导出，无行为变更——GPUI 预览 fixtures 需要构造该类型）。
 
 ## W3 详情 / 播放语义缺口（代码自述）
 
