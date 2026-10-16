@@ -22,7 +22,7 @@ use crate::bridge;
 pub(super) fn star_color() -> gpui_kit::Rgba {
     gpui_kit::rgba(0xfacc15ff)
 }
-fn hot_color() -> gpui_kit::Rgba {
+pub(super) fn hot_color() -> gpui_kit::Rgba {
     gpui_kit::rgba(0xef4444ff)
 }
 

@@ -124,6 +124,21 @@ pub(crate) struct DetailView {
     review_clear_input: bool,
     /// Enter 提交请求（订阅回调没有 window，转交 render 执行）。
     review_submit_pending: bool,
+    // —— 剧评互动（Tauri ReviewList 同款：点赞 / 回复线程 / 删除）——
+    /// 剧评点赞的本地乐观覆盖（key = 剧评 id）。
+    review_digg_override: std::collections::HashMap<String, bool>,
+    /// 剧评回复线程：review_id → 已拉回复（懒加载）与游标/展开/加载态。
+    review_replies: std::collections::HashMap<String, Arc<Vec<hongguo_api::danmaku::ReplyItem>>>,
+    review_replies_cursor: std::collections::HashMap<String, String>,
+    review_replies_open: std::collections::HashSet<String>,
+    review_replies_loading: std::collections::HashSet<String>,
+    /// 回复目标（review_id, 回复「回复」时的 (reply_id, 名字)）。
+    review_reply_target: Option<(String, Option<(String, String)>)>,
+    review_reply_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    review_reply_clear: bool,
+    review_reply_submit_pending: bool,
+    review_reply_sending: bool,
+    review_deleting: bool,
 }
 
 impl DetailView {
@@ -163,6 +178,17 @@ impl DetailView {
             review_sending: false,
             review_clear_input: false,
             review_submit_pending: false,
+            review_digg_override: std::collections::HashMap::new(),
+            review_replies: std::collections::HashMap::new(),
+            review_replies_cursor: std::collections::HashMap::new(),
+            review_replies_open: std::collections::HashSet::new(),
+            review_replies_loading: std::collections::HashSet::new(),
+            review_reply_target: None,
+            review_reply_input: None,
+            review_reply_clear: false,
+            review_reply_submit_pending: false,
+            review_reply_sending: false,
+            review_deleting: false,
         }
     }
 
@@ -219,6 +245,17 @@ impl DetailView {
         self.review_submit_pending = false;
         // 换剧清空输入框（懒建之后才有效；值随渲染期 set_value 落）
         self.review_clear_input = self.review_input.is_some();
+        // 剧评互动状态随换剧清零
+        self.review_digg_override.clear();
+        self.review_replies.clear();
+        self.review_replies_cursor.clear();
+        self.review_replies_open.clear();
+        self.review_replies_loading.clear();
+        self.review_reply_target = None;
+        self.review_reply_sending = false;
+        self.review_reply_submit_pending = false;
+        self.review_reply_clear = self.review_reply_input.is_some();
+        self.review_deleting = false;
         self.loading = true;
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
@@ -528,6 +565,26 @@ impl gpui_kit::Render for DetailView {
             .detach();
             self.review_input = Some(input);
         }
+        // 剧评回复输入框（同款懒建；Enter 提交走 pending 转交 render）
+        if self.review_reply_input.is_none() {
+            let input = cx.new(|cx| {
+                gpui_kit::component::input::InputState::new(window, cx).placeholder("回复…")
+            });
+            cx.subscribe(
+                &input,
+                |this, _, event: &gpui_kit::component::input::InputEvent, cx| {
+                    if matches!(
+                        event,
+                        gpui_kit::component::input::InputEvent::PressEnter { .. }
+                    ) {
+                        this.review_reply_submit_pending = true;
+                    }
+                    cx.notify();
+                },
+            )
+            .detach();
+            self.review_reply_input = Some(input);
+        }
         if let Some(input) = &self.review_input {
             if self.review_clear_input {
                 self.review_clear_input = false;
@@ -536,6 +593,16 @@ impl gpui_kit::Render for DetailView {
             if self.review_submit_pending {
                 self.review_submit_pending = false;
                 self.submit_review(window, cx);
+            }
+        }
+        if let Some(input) = &self.review_reply_input {
+            if self.review_reply_clear {
+                self.review_reply_clear = false;
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            }
+            if self.review_reply_submit_pending {
+                self.review_reply_submit_pending = false;
+                self.submit_review_reply(window, cx);
             }
         }
         self.render_page(cx)
