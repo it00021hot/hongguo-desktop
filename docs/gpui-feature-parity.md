@@ -48,6 +48,7 @@
 | 6 | 老板键：Tauri `boss_key_cmd.rs` 自述「GPUI 壳无此层（全局快捷键插件是 Tauri 侧能力）」——设置页无卡片、无注册 | `crates/hongguo-tauri/src/commands/boss_key_cmd.rs` 头注释；`boss-key-card.tsx` | ✅ 2026-10-17（`src/boss_key/`：accelerator 解析/捕获/冲突纯函数 + win32 自建消息窗口接 WM_HOTKEY；设置页「全局快捷键」卡；先注册后落库 + 冲突拦截）。真机验过保存/启动注册/合成按键藏显/冲突拦截四条路径。macOS 侧仅缺 FFI（设置时会明确报错，不做假生效） |
 | 7 | 竖屏播放：Tauri `enter/exit/fit_portrait_screen` + `set_portrait_full` 与 `use-portrait-window` 的竖条形态；GPUI 无 | `window_cmd.rs:230-370`、`use-portrait-window.ts`、`MiniScreenControls variant="portrait"` | ✅ 2026-10-17（`src/portrait/`：几何纯函数 + Win32 落窗；控制栏竖屏钮；竖屏紧凑条；侧栏藏/顶栏留；F→铺满、Esc 铺满→竖条；离开播放页先退竖屏）。真机验过 1280×840→388×840 与铺满 642×1392。macOS 侧只缩不挪（Apple FFI 后补，与小屏同缺口） |
 | 8 | 退出确认：Tauri `CloseRequested` → 前端确认框（自绘 ×/Alt+F4/任务栏关闭都问一句）；GPUI 关窗直接退 | `crates/hongguo-tauri/src/lib.rs:107-113`、`app-shell.tsx:189-194` | ✅ 2026-10-17（`Shell::install_close_guard`：弹「确定要退出吗？/ 退出会中断正在进行的下载任务…」，取消复位闸门、弹过还来放行；真机投 WM_CLOSE 验过窗口未被关掉、文案与两键同 Tauri） |
+| 9 | 单实例：Tauri `tauri-plugin-single-instance`（第二次启动前置已有窗口）；GPUI 第二次启动撞库锁 → 报错退出（用户视角「点图标没反应」） | `crates/hongguo-tauri/src/lib.rs:38-40,288-295` | ✅ 2026-10-17（`src/single_instance.rs`：命名互斥体 + 命名事件；第二进程置位即退、**早于开库**；首实例轮询消费 → 显示 + 还原最小化 + 聚焦。真机 A/B 双启验证） |
 
 ### 顺带修（本轮验证中发现）
 
