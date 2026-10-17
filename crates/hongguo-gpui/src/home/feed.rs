@@ -292,12 +292,57 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 云端历史（推荐 tab 种子 + 起点兜底）。登录才有数据，匿名回空表。
+    /// 观看历史（推荐 tab 种子 + 起点兜底）——**历史源按登录态切换**
+    ///（Tauri `88f5edf` 同款）：登录读云端（跨端续播），匿名读本地记录。
+    /// 匿名也发起云端查询会拿回设备级历史行（设备上做过的测试残留），
+    /// 命中看过的剧就一律「续播」到那条记录的集数。
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
         if self.history_pending {
             return;
         }
         self.history_pending = true;
+        if self.state.settings().account.is_none() {
+            let state = Arc::clone(&self.state);
+            let rx = bridge::spawn(async move {
+                tokio::task::spawn_blocking(move || state.store.local_history_list())
+                    .await
+                    .expect("阻塞池 join")
+            });
+            cx.spawn(async move |this, cx| {
+                let result = rx.await.expect("tokio 桥不会丢弃发送端");
+                let Ok(items) = result else {
+                    return;
+                };
+                let _ = this.update(cx, |view, cx| {
+                    log::info!(
+                        "[Home] 匿名：历史源取本地记录（{} 条，Tauri 88f5edf 同款）",
+                        items.len()
+                    );
+                    view.history = Some(
+                        items
+                            .into_iter()
+                            .map(|it| hongguo_api::history::WatchHistoryItem {
+                                series_id: it.series_id,
+                                title: it.title,
+                                cover: it.cover,
+                                vid_index: it.vid_index as i64,
+                                vid: it.vid,
+                                position_ms: it.position_ms,
+                                duration_ms: it.duration_ms,
+                                episode_cnt: it.episode_cnt as i64,
+                                updated_at_ms: it.updated_at_ms,
+                            })
+                            .collect(),
+                    );
+                    // 「你的内容」种子到位（书架随后续上）
+                    view.merge_seeds(cx);
+                    view.load_seeds_meta(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
             let env = state.api_env();
