@@ -88,6 +88,38 @@
  调用方直接给成品路径，合并产物/指定文件用）GPUI 尚无对应入口——先用
  `completed_path`（队列命中）覆盖了常规路径，等确认合并产物那条链谁在用再补。
 
+## W8 并排对拍（真实 Tauri 壳 vs GPUI，2026-10-17）
+
+验收口径「测试效果和 Tauri 一致、可同时启动验证」的落地动作：**不再只对代码，
+直接对渲染结果**。
+
+对拍方法（可复现）：
+
+1. 本 worktree 编译 Tauri 壳：`cargo build -p hongguo-desktop`；
+2. `pnpm dev`（Vite 1420）+ `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
+   启动 `target/debug/hongguo-desktop.exe`；
+3. `node scripts/cdp.mjs shot <route> <png>` 抓 Tauri 各页；播放器状态用 CDP
+   `Input.dispatchMouseEvent`（可信输入）点画面暂停后截图；
+4. GPUI 用 `HONGGUO_PAGE=… / HONGGUO_DETAIL=… / HONGGUO_SHOT_PAUSE=1` 抓同位截图；
+5. 同尺寸（1280×840）逐页目检 + 关键几何用 DOM `getBoundingClientRect` 对齐。
+
+本轮到位的差异（分两提交：`5599d94`、`f0398d2`）：
+
+| 页面 | 差异 | 处理 |
+| --- | --- | --- |
+| 顶栏 | tab 槽中心 646（绝对层按内容盒定位，bar 有 12px 左内边距） | 去掉 bar 左内边距 → 中心 639.5（窗口中线 640） |
+| 找剧 | 搜索框被多余的 `flex_1` 占位块挤到 ~512px；卡片固定 196px | 删占位块（输入框回到 flex-1，~1010px）；按 Tauri `SeriesCardGrid` 断点算列数（2/3/4/5/8），1280 下卡宽 221（Tauri 220），封面 3:4 |
+| 新剧 | 频道胶囊贴右 | 改贴左——Tauri 代码写 `justify-end` 但 ToggleGroup 是 inline-flex 宽度收缩、真机渲染贴左，按真机截图对齐 |
+| 详情 | 播放钮「立即播放/继续播放 第N集」无图标；下半区 tab 是下划线样式 | 文案改 Tauri 原文「从第 1 集开始 / 继续看第 N 集」+ Play 图标；tab 改 Tauri `TabsList` 分段控件（muted 底槽 + active 抬起胶囊） |
+| 设置 | 多一张「外观」卡（旧顶栏放不了控件时的替代入口）；登录钮非实心 | 删外观卡（顶栏外观菜单已就位，Tauri 设置页无此卡）；登录钮 primary |
+| 控制栏 | 发送钮 ghost 纯文本；弹幕开关带常驻底色；全屏用斜向 icon | primary 胶囊；自绘透明底开关钮；Maximize/Minimize 四角 icon |
+
+同轮目检一致的页面：排行榜 / 下载任务 / 存储 / 合并 / 首页沉浸播放器
+（信息块、互动栏、连播横条、快捷键提示、控制栏顺序与几何）。
+
+已知非差异：倍速/主题/筛选折叠等**持久化状态**两边各自保存，截图可能不同
+（如 Tauri 存了 2x、GPUI 默认 1x）；语言入口仍缺（W1#5 待裁决）。
+
 ### 顺带修（本轮验证中发现）
 
 - **全部确认框缺「取消」键**：组件库 `AlertDialog` 的取消钮默认不显示
