@@ -607,10 +607,10 @@ impl gpui_kit::Render for HistoryView {
             Phase::Failed(msg) => {
                 let detail = msg.clone();
                 let theme = cx.theme();
+                // Tauri ErrorState（Empty py-16）：流内顶部对齐
                 v_flex()
-                    .flex_1()
                     .items_center()
-                    .justify_center()
+                    .py_16()
                     .gap_3()
                     .child(
                         div()

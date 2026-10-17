@@ -587,10 +587,10 @@ impl gpui_kit::Render for LikedView {
                 Phase::Failed(msg) => {
                     let detail = msg.clone();
                     let theme = cx.theme();
+                    // Tauri ErrorState 也是 Empty（流内 py-16 顶部对齐）
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .gap_3()
                         .child(
                             div()

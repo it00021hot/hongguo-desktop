@@ -609,10 +609,10 @@ impl gpui_kit::Render for CollectionView {
                     .into_any_element(),
                 Phase::LoginRequired => {
                     let theme = cx.theme();
+                    // Tauri ErrorState（Empty py-16）：流内顶部对齐
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .gap_3()
                         .child(
                             gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)
@@ -636,9 +636,8 @@ impl gpui_kit::Render for CollectionView {
                     let detail = msg.clone();
                     let theme = cx.theme();
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .gap_3()
                         .child(
                             div()

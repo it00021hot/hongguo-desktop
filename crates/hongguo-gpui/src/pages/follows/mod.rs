@@ -498,10 +498,10 @@ impl gpui_kit::Render for FollowsView {
         let logged_in = self.logged_in();
         let body = if !logged_in {
             let theme = cx.theme();
+            // Tauri ErrorState（Empty py-16）：流内顶部对齐
             v_flex()
-                .flex_1()
                 .items_center()
-                .justify_center()
+                .py_16()
                 .gap_3()
                 .child(
                     gpui_kit::component::Icon::new(gpui_kit::assets::IconName::LogIn)
