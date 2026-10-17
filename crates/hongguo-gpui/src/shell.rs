@@ -878,6 +878,18 @@ impl Shell {
         self.feed.update(cx, |home, cx| home.enter_mini(window, cx));
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=related-upcoming`，
+    /// 配 `HONGGUO_DETAIL=<sid>`）：在当前详情页走一次「未上线相关推荐」点击
+    /// 路径，验 prefill 兜住「解析失败 → 即将上线降级视图」。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_upcoming_related(&self, cx: &mut App) {
+        if let Some(detail) = &self.detail {
+            detail.update(cx, |view, cx| view.debug_open_upcoming_related(cx));
+        } else {
+            log::warn!("[Shot] related-upcoming 需要 HONGGUO_DETAIL=<sid> 先打开详情页");
+        }
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。

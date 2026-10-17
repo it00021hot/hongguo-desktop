@@ -147,6 +147,10 @@ pub(crate) fn install(
                             feed.update(cx, |shell, cx| shell.debug_enter_mini(window, cx));
                         });
                     }
+                    // 未上线相关推荐：走 open_related 真实路径（验 prefill 降级）。
+                    "related-upcoming" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_upcoming_related(cx));
+                    }
                     _ => {}
                 }
             }

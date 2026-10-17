@@ -15,6 +15,44 @@ use super::DetailView;
 use crate::bridge;
 
 impl DetailView {
+    /// 相关推荐卡 → 本页换载。**必带档案快照 prefill**（Tauri
+    /// `relatedDetailSearch` / `a21ddf2` 同款）：未上线剧解析分集必然失败，
+    /// 缺 prefill 会整页报错；带上就走「即将上线 + 预约」降级视图。
+    /// 点击与取证探针共用这一段。
+    pub(super) fn open_related(&mut self, item: &RelatedItem, cx: &mut Context<Self>) {
+        let prefill = super::DetailPrefill {
+            title: item.title.clone(),
+            cover: item.cover.clone(),
+            tags: if item.tag.is_empty() {
+                Vec::new()
+            } else {
+                vec![item.tag.clone()]
+            },
+            desc: item.video_desc.clone(),
+            reserved: false,
+        };
+        self.series_id.clear();
+        self.load_with_prefill(item.series_id.clone(), Some(prefill), cx);
+    }
+
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=related-upcoming`）：
+    /// 走同一条 `open_related` 路径打开一条「平台上不存在的未上线剧」——
+    /// 验 prefill 兜住「解析失败 → 即将上线降级视图」而不是整页报错。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_upcoming_related(&mut self, cx: &mut Context<Self>) {
+        let item = RelatedItem {
+            series_id: "9999999999999999999".into(),
+            title: "预告新剧（未上线样例）".into(),
+            cover: String::new(),
+            tag: "即将上线".into(),
+            score: 0.0,
+            play_cnt: 0,
+            episode_cnt: 0,
+            video_desc: "平台未上线、无分集可解析：详情页应走即将上线降级视图。".into(),
+        };
+        self.open_related(&item, cx);
+    }
+
     /// 拉相关推荐（plan 冷响应递增退避在 API 层已做；失败整 tab 留空）。
     pub(super) fn load_related(&mut self, cx: &mut Context<Self>) {
         let sid = self.series_id.clone();
@@ -115,12 +153,8 @@ impl DetailView {
             .w(gpui_kit::px(116.0))
             .cursor_pointer()
             .on_click({
-                let sid = item.series_id.clone();
-                cx.listener(move |this, _, _, cx| {
-                    let sid = sid.clone();
-                    this.series_id.clear();
-                    this.load(sid, cx);
-                })
+                let item = item.clone();
+                cx.listener(move |this, _, _, cx| this.open_related(&item, cx))
             })
             .child(
                 div()
