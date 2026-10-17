@@ -25,9 +25,12 @@ mod home;
 mod http_client;
 mod i18n;
 mod image_upload;
+#[cfg(target_os = "macos")]
+mod macos;
 mod mini;
 mod pages;
 mod pill_tab;
+mod platform;
 mod play_activity;
 mod playback_prefs;
 mod portrait;

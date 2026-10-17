@@ -108,7 +108,7 @@ pub(super) unsafe fn make_int(v: i32) -> ffi::CFNumberRef {
 /// IOSurface 背板声明：让解码输出/缩放目标都是 GPU 可共享的像素缓冲
 pub(super) unsafe fn iosurface_attrs() -> ffi::CFMutableDictionaryRef {
     unsafe {
-        let empty = make_dict(&[]);
+        let empty = empty_dict();
         let attrs = make_dict(&[(
             ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
             empty as ffi::CFTypeRef,
@@ -116,6 +116,11 @@ pub(super) unsafe fn iosurface_attrs() -> ffi::CFMutableDictionaryRef {
         ffi::CFRelease(empty as ffi::CFTypeRef);
         attrs
     }
+}
+
+/// 空 CF 字典（`kCVPixelBufferIOSurfacePropertiesKey` 的取值形态）。
+pub(super) unsafe fn empty_dict() -> ffi::CFMutableDictionaryRef {
+    unsafe { make_dict(&[]) }
 }
 
 // ————————————————————————————————————————————————————————————

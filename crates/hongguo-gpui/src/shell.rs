@@ -505,11 +505,14 @@ impl Shell {
         }
         shell.refresh_follow_unread(cx);
         shell.ensure_account_avatar(cx);
-        // 老板键轮询：全局快捷键注册在 win32 自建的消息窗口上，WM_HOTKEY
-        // 只能在轮询里递进 GPUI（窗口过程跑在主线程消息循环里，拿不到
-        // GPUI 上下文）。窗口过程是「按下沿置位」，100ms 一拍不会漏。
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = crate::win32::hwnd_of(window) {
+        // 壳级轮询：全局快捷键（老板键）与「第二次启动前置窗口」。
+        // 两项能力都由平台层提供（`SHELL_POLLER`）——macOS 尚未实现注册与
+        // 单实例前置，不空转一条每秒 10 拍的循环。
+        //
+        // WM_HOTKEY 只能在轮询里递进 GPUI（窗口过程跑在主线程消息循环里，
+        // 拿不到 GPUI 上下文），窗口过程是「按下沿置位」，100ms 一拍不会漏。
+        if crate::platform::SHELL_POLLER {
+            let handle = window.window_handle();
             cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor()
@@ -517,24 +520,26 @@ impl Shell {
                         .await;
                     // 第二次启动请求前置窗口（单实例；Tauri bring_back_active_window
                     // 同款：显示 + 还原最小化 + 聚焦）
-                    if crate::single_instance::take_focus_request() {
-                        if crate::win32::is_iconic(hwnd) {
-                            crate::win32::show_window(hwnd, crate::win32::SW_RESTORE);
-                        }
-                        crate::win32::show_foreground(hwnd);
-                        log::info!(
-                            "[Shell] 第二次启动请求：窗口已带到前台（可见={}）",
-                            crate::win32::is_window_visible(hwnd)
-                        );
+                    if crate::platform::take_focus_request() {
+                        let shown = handle
+                            .update(cx, |_, window, _| {
+                                crate::platform::restore_from_minimized(window);
+                                crate::platform::show_foreground(window);
+                                crate::platform::visibility(window)
+                            })
+                            .unwrap_or(false);
+                        log::info!("[Shell] 第二次启动请求：窗口已带到前台（可见={shown}）");
                     }
                     if !crate::boss_key::take_fired() {
                         continue;
                     }
-                    // 先查可见性：ShowWindow 放实体更新之外——它同步派发
-                    // WM_SHOWWINDOW/WM_ACTIVATE，gpui 的窗口过程要更新窗口
-                    // 状态，在 update 里调用会撞借用（实测日志刷
-                    // 「RefCell already borrowed」六连）。
-                    let visible = crate::win32::is_window_visible(hwnd);
+                    // 先查可见性：藏显放实体更新之外——它同步派发窗口消息，
+                    // gpui 的窗口过程要更新窗口状态，在 update 里调用会撞
+                    // 借用（实测日志刷「RefCell already borrowed」六连）。
+                    let Ok(visible) = handle.update(cx, |_, window, _| crate::platform::visibility(window))
+                    else {
+                        return; // 窗口已关
+                    };
                     let ok = this
                         .update(cx, |shell, cx| {
                             shell.boss_key_playback(!visible, cx);
@@ -543,11 +548,13 @@ impl Shell {
                     if !ok {
                         return;
                     }
-                    if visible {
-                        crate::win32::hide(hwnd);
-                    } else {
-                        crate::win32::show_foreground(hwnd);
-                    }
+                    let _ = handle.update(cx, |_, window, _| {
+                        if visible {
+                            crate::platform::hide(window);
+                        } else {
+                            crate::platform::show_foreground(window);
+                        }
+                    });
                     log::info!(
                         "[BossKey] 老板键切换：窗口{}",
                         if visible { "隐藏" } else { "显示" }
@@ -571,7 +578,6 @@ impl Shell {
     /// 老板键触发的播放处置（Tauri 前端 `boss-key-hidden` 事件同款）：
     /// 隐藏即暂停（声音不漏）、恢复时把暂停着的续上。窗口藏显由调用方在
     /// 实体更新之外做（见 `Shell::new` 的轮询注释）。
-    #[cfg(target_os = "windows")]
     fn boss_key_playback(&self, hidden: bool, cx: &mut Context<Self>) {
         self.feed
             .update(cx, |home, cx| home.boss_key_hidden(hidden, cx));
@@ -1327,7 +1333,7 @@ impl Shell {
                 }),
             )
             .on_mouse_move(
-                cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, cx| {
+                cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, _cx| {
                     let Some(start) = this.toolbar_drag else {
                         return;
                     };
@@ -1344,7 +1350,7 @@ impl Shell {
                             // gpui 的借用（隐身藏显 ShowWindow 同款坑，见
                             // `home/incognito.rs` 的 IncognitoStep 模式）。
                             // 延迟一拍只是微秒级，物理按键仍按着，移动循环照进
-                            cx.spawn(async move |_this, _cx| {
+                            _cx.spawn(async move |_this, _cx| {
                                 if let Some(hwnd) = hwnd {
                                     crate::win32::start_window_move(hwnd);
                                 }
@@ -1356,7 +1362,7 @@ impl Shell {
                     }
                 }),
             )
-            .on_double_click(cx.listener(|this, _, window, cx| {
+            .on_double_click(cx.listener(|this, _, window, _cx| {
                 this.toolbar_drag = None;
                 // macOS 要的是系统标题栏双击语义（含「移动并调整大小」等
                 // 原生行为）；其余平台切最大化。同样挪出实体更新（见上）
@@ -1367,7 +1373,7 @@ impl Shell {
                 #[cfg(target_os = "windows")]
                 {
                     let hwnd = crate::win32::hwnd_of(window);
-                    cx.spawn(async move |_this, _cx| {
+                    _cx.spawn(async move |_this, _cx| {
                         if let Some(hwnd) = hwnd {
                             crate::win32::toggle_maximize(hwnd);
                         }

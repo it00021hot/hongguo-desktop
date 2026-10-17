@@ -1,16 +1,13 @@
 //! 舞台渲染：tab 顶栏、沉浸舞台（封面占位层 / 视频槽二选一）、信息叠加层、
-//! Windows 的 NV12→RGBA 渲染产物管理与封面懒加载。
+//! 封面懒加载。视频像素载体（macOS 零拷贝 surface / Windows RGBA 上传）在
+//! [`super::video_surface`]——本文件不写平台分支。
 
 use std::rc::Rc;
 use std::sync::Arc;
-#[cfg(target_os = "windows")]
-use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui_kit::AnimationExt as _;
-#[cfg(target_os = "windows")]
-use gpui_kit::RenderImage;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
@@ -20,10 +17,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-#[cfg(target_os = "macos")]
-use gpui_kit::surface;
 use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
-use hongguo_media_platform_api::video::{FrameBuffer, VideoFrame};
 
 use super::danmaku::DM_LANE_GAP;
 use super::feed::StreamItem;
@@ -106,119 +100,6 @@ impl super::HomeView {
                 )
                 .into_any_element(),
         )
-    }
-
-    /// 换上新渲染产物，旧图送进回收队列（见 `retired_images` 头注释：
-    /// gpui 纹理只增不删，必须显式 `drop_image`）。
-    #[cfg(target_os = "windows")]
-    pub(super) fn set_frame_image(&mut self, image: Arc<RenderImage>) {
-        // 兜底上限：render 排不上队（后台/卡顿）时，回收队列也不能无界涨
-        //（被挤掉的旧图其纹理可能滞留图集，代价有界：≤16 × 输出尺寸）
-        const RETIRED_KEEP: usize = 16;
-        while self.retired_images.len() >= RETIRED_KEEP {
-            self.retired_images.remove(0);
-        }
-        if let Some(old) = self.frame_image.replace(image) {
-            self.retired_images.push(old);
-        }
-    }
-
-    /// 渲染产物退场（切剧/连播），旧图同样进回收队列。
-    #[cfg(target_os = "windows")]
-    pub(super) fn clear_frame_image(&mut self) {
-        if let Some(old) = self.frame_image.take() {
-            self.retired_images.push(old);
-        }
-    }
-
-    /// contain 适配：源 (w,h) 缩进目标盒（不放大、保宽高比、至少 2px）。
-    #[cfg(target_os = "windows")]
-    fn contain_fit(w: usize, h: usize, box_w: usize, box_h: usize) -> (usize, usize) {
-        let scale = (box_w as f64 / w as f64)
-            .min(box_h as f64 / h as f64)
-            .min(1.0);
-        (
-            (w as f64 * scale).round().max(2.0) as usize,
-            (h as f64 * scale).round().max(2.0) as usize,
-        )
-    }
-
-    /// cover 适配（小屏形态）：源 (w,h) 铺满目标盒（保宽高比、允许放大；
-    /// 溢出部分由显示端的 `ObjectFit::Cover` 裁掉）——Tauri 小屏
-    /// `object-cover` 同款，竖屏剧在小窗里不留黑边。
-    #[cfg(target_os = "windows")]
-    fn cover_fit(w: usize, h: usize, box_w: usize, box_h: usize) -> (usize, usize) {
-        let scale = (box_w as f64 / w as f64).max(box_h as f64 / h as f64);
-        (
-            (w as f64 * scale).round().max(2.0) as usize,
-            (h as f64 * scale).round().max(2.0) as usize,
-        )
-    }
-
-    /// Windows 渲染转换：NV12（BT.709 limited）→ RGBA 图像，**按舞台显示
-    /// 尺寸缩放输出**（见 `video_target` 头注释）。转换跑在本事件任务线程。
-    #[cfg(target_os = "windows")]
-    pub(super) fn render_image_of(
-        frame: &VideoFrame,
-        target: (usize, usize),
-        cover: bool,
-    ) -> Option<Arc<RenderImage>> {
-        // Windows 目标上 FrameBuffer 只有 Nv12 一个变体（可驳尽，同 mac 侧
-        // CVPixelBuffer 的口径）
-        static CONVERTED: AtomicU32 = AtomicU32::new(0);
-        let t0 = Instant::now();
-        let FrameBuffer::Nv12(nv12) = &frame.buffer;
-        let (tw, th) = if cover {
-            Self::cover_fit(nv12.width, nv12.height, target.0, target.1)
-        } else {
-            Self::contain_fit(nv12.width, nv12.height, target.0, target.1)
-        };
-        let rgba = hongguo_media::nv12_rgba::nv12_to_rgba_bt709_scaled(
-            &nv12.data,
-            nv12.stride,
-            nv12.width,
-            nv12.height,
-            tw,
-            th,
-        );
-        let buf = image::RgbaImage::from_raw(tw as u32, th as u32, rgba)?;
-        // 取证开关：HONGGUO_DUMP_NV12=<前缀> 时第 0/200/600 帧落盘 NV12 +
-        // 我们的转换 PNG（与 ffmpeg 参照对拍用；多时刻采样，抓"某些帧才
-        // 错"类问题——首帧对不代表全程对）
-        static DUMPED: AtomicU32 = AtomicU32::new(0);
-        let n_dump = DUMPED.fetch_add(1, Ordering::Relaxed);
-        if n_dump.is_multiple_of(500)
-            && let Ok(prefix) = std::env::var("HONGGUO_DUMP_NV12")
-        {
-            let tag = if n_dump == 0 {
-                "f0".to_string()
-            } else {
-                format!("f{n_dump}")
-            };
-            let _ = std::fs::write(
-                std::path::PathBuf::from(&prefix).with_extension(format!("{tag}.nv12")),
-                nv12.data.as_slice(),
-            );
-            let _ = buf
-                .save(std::path::PathBuf::from(&prefix).with_extension(format!("{tag}.ours.png")));
-            log::info!(
-                "[Home] NV12 取证 #{n_dump} 已落盘：{prefix}.{tag}.nv12/.ours.png（{}×{} stride {}，转换目标 {tw}×{th}）",
-                nv12.width,
-                nv12.height,
-                nv12.stride
-            );
-        }
-        let image = Arc::new(crate::image_upload::render_image(buf));
-        let n = CONVERTED.fetch_add(1, Ordering::Relaxed);
-        if n < 3 || n.is_multiple_of(200) {
-            log::info!(
-                "[Home] NV12→RGBA 转换 #{n} 耗时 {:.1}ms（{tw}×{th}，源 {}×{}）",
-                t0.elapsed().as_secs_f64() * 1000.0,
-                nv12.width,
-                nv12.height
-            );
-        }
-        Some(image)
     }
 
     /// 懒加载当前/目标剧的封面（全屏占位用）。
@@ -336,33 +217,21 @@ impl super::HomeView {
             ObjectFit::Contain
         };
         // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
-        // contain 保宽高比在转换端算）
-        #[cfg(target_os = "windows")]
+        // contain 保宽高比在转换端算）。小屏的适配模式跟着形态走
+        //（Tauri `miniScreen ? 'object-cover' : 'object-contain'` 同款）。
         if let Some([w, h, ..]) = self.stage_rects.get()
             && w >= 2.0
             && h >= 2.0
         {
-            self.video_target
-                .store(super::pack_size(w as usize, h as usize), Ordering::Relaxed);
+            self.video_surface.set_target(w as usize, h as usize);
         }
-        // 小屏的适配模式跟着形态走（Tauri `miniScreen ? 'object-cover' :
-        // 'object-contain'` 同款）：转换线程按它算输出尺寸，显示端按它裁切。
-        #[cfg(target_os = "windows")]
-        self.video_cover
-            .store(self.mini.is_some(), Ordering::Relaxed);
+        self.video_surface.set_cover(self.mini.is_some());
         // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
         // 一行钉死——排障不用再猜是事件没到还是渲染没跟上。带舞台尺寸
         //（FFI 缩放后布局是否跟随重排，小屏排障靠它）。
         if self.stage_diag_at.get().elapsed() >= Duration::from_secs(STAGE_DIAG_EVERY_SECS) {
             self.stage_diag_at.set(Instant::now());
-            #[cfg(target_os = "windows")]
-            let image_state = format!(
-                "image={}（待回收 {}）",
-                self.frame_image.is_some(),
-                self.retired_images.len()
-            );
-            #[cfg(not(target_os = "windows"))]
-            let image_state = "image=n/a".to_string();
+            let image_state = self.video_surface.status();
             let stage_size = self
                 .stage_rects
                 .get()
@@ -432,33 +301,6 @@ impl super::HomeView {
         //   转成 RGBA 后按普通图像渲染（img 同款 object-contain）。
         // 外层 div 接点击切暂停（对齐 Tauri 点击画面暂停/继续）：控制条是
         // 兄弟层，点它不会冒泡到这里。
-        #[cfg(target_os = "macos")]
-        let video_layer = |frame: &VideoFrame| -> gpui_kit::AnyElement {
-            // Apple 目标上 FrameBuffer 只有 CVPixelBuffer 一个变体（可驳尽）。
-            // 解码侧是 core-video 的 TCFType 包装，gpui 0.3.9 起要 objc2 的
-            // CFRetained：借裸指针 CFRetain 一次（等价原先 clone 的 +1），
-            // 所有权交给 surface。
-            use core_foundation::base::TCFType as _;
-            let FrameBuffer::CVPixelBuffer(buffer) = &frame.buffer;
-            let pixel_buffer = unsafe {
-                objc2_core_foundation::CFRetained::retain(std::ptr::NonNull::new_unchecked(
-                    buffer.as_concrete_TypeRef() as *mut objc2_core_video::CVPixelBuffer,
-                ))
-            };
-            surface(pixel_buffer)
-                .absolute()
-                .size_full()
-                .object_fit(video_fit)
-                .into_any_element()
-        };
-        #[cfg(target_os = "windows")]
-        let video_layer = |image: &Arc<RenderImage>| -> gpui_kit::AnyElement {
-            img(ImageSource::Render(Arc::clone(image)))
-                .absolute()
-                .size_full()
-                .object_fit(video_fit)
-                .into_any_element()
-        };
         let video: gpui_kit::AnyElement = if video_ready {
             div()
                 .absolute()
@@ -476,21 +318,11 @@ impl super::HomeView {
                     this.wake_on_input(cx);
                     this.toggle_pause(cx);
                 }))
+                // 像素载体由 [`video_surface`] 统一：macOS 直接采样解码帧的
+                // CVPixelBuffer，Windows 用后台转好的 RGBA 图像。
                 .child({
-                    #[cfg(target_os = "macos")]
-                    {
-                        let frame = self.frame.as_ref().expect("video_ready 已验帧在");
-                        video_layer(frame)
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        match &self.frame_image {
-                            Some(image) => video_layer(image),
-                            // 转换产物还没到（首帧事件与转换同拍到达，这里
-                            // 只是防御）：画黑，下一帧事件就补上
-                            None => div().into_any_element(),
-                        }
-                    }
+                    let frame = self.frame.as_ref().expect("video_ready 已验帧在");
+                    self.video_surface.layer(frame, video_fit)
                 })
                 .into_any_element()
         } else {

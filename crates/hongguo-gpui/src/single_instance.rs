@@ -38,18 +38,12 @@ pub(crate) fn claim() -> bool {
     }
 }
 
-/// 首个实例的轮询消费：是否有人请求前置窗口（读后复位）。
+/// 首个实例的轮询消费：是否有人请求前置窗口（读后复位）。仅 Windows 有实现。
+#[cfg(target_os = "windows")]
 pub(crate) fn take_focus_request() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let event = EVENT
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .unwrap_or(0);
-        crate::win32::take_focus_request(event)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        false
-    }
+    let event = EVENT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or(0);
+    crate::win32::take_focus_request(event)
 }

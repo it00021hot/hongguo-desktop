@@ -81,8 +81,10 @@ pub struct DecoderInit<'a> {
     /// 轨道声明分辨率（MF 输入类型要帧尺寸；VT 自行从参数集读）。
     pub width: usize,
     pub height: usize,
-    /// 请求 FullRange NV12（VT 侧语义；MF 侧输出恒 limited，由渲染转换
-    /// 端按 BT.709 limited 处理，两端观感一致）。
+    /// 请求 FullRange NV12。**macOS 已不消费**：VT 恒按硬件原生 '420v'
+    /// （视频区间）输出并由渲染端直接采样（请求 '420f' 会让 VT 逐帧插入
+    /// 色域换算，实测吞吐差一个数量级）；Windows MF 输出恒 limited，由渲染
+    /// 转换端按 BT.709 limited 处理。字段保留在契约里供其它平台实现使用。
     pub full_range: bool,
 }
 

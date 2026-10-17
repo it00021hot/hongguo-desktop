@@ -129,3 +129,21 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
     "CVImageBuffer",
     "CVPixelBuffer",
 ] }
+# 窗口原语（macos.rs）：小屏落位/置顶/竖屏几何/隐身藏显。objc2 与
+# objc2-app-kit 的版本跟 gpui-pre-macos 一致，同在该依赖树里，不新增外部
+# crate；只开用到的类，别拉整套 AppKit 绑定。
+raw-window-handle = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSApplication",
+    "NSEvent",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSGeometry",
+    # 播放期活动断言（play_activity.rs）：NSProcessInfo + 原因字符串
+    "NSProcessInfo",
+    "NSString",
+] }

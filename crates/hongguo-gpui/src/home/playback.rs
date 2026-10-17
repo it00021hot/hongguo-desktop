@@ -101,8 +101,7 @@ impl super::HomeView {
         // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
         // 定格帧是「同剧切集」专属，离开时一并落下）
         self.frame = None;
-        #[cfg(target_os = "windows")]
-        self.clear_frame_image();
+        self.video_surface.clear();
         self.hold_last_frame = false;
         self.switching = false;
         self.buffering = false;
@@ -304,8 +303,7 @@ impl super::HomeView {
             .is_some_and(|n| n.series_id == item.series_id);
         if !same_series {
             self.frame = None;
-            #[cfg(target_os = "windows")]
-            self.clear_frame_image();
+            self.video_surface.clear();
         }
         self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
@@ -319,17 +317,15 @@ impl super::HomeView {
 
         let state = Arc::clone(&self.state);
         let history = self.history.clone().unwrap_or_default();
-        let (events, rx) = mpsc::channel::<PlayerEvent>(64);
+        // 事件通道容量**必须小**：Frame 事件各背一帧（1080p NV12
+        // CVPixelBuffer ≈ 3MB），64 深度在宿主一时跟不上时就压着近 200MB
+        // 的 IOSurface 不还（解码器的输出池也跟着膨胀）。8 帧 ≈ 0.27s 的
+        // 内容量，足够吸收正常抖动；更深只会把「晚显示」变成「内存涨」。
+        // 宿主侧另有 batch 合并，控制事件（Buffering/Ended/…）依旧按序处理。
+        let (events, rx) = mpsc::channel::<PlayerEvent>(8);
         let epoch = self.epoch.load(Ordering::Relaxed);
         let epoch_shared = Arc::clone(&self.epoch);
         // 事件循环先于引擎起：Channel 关闭（引擎丢弃 → 发送端清零）即自然退出
-        #[cfg(target_os = "windows")]
-        let video_target = Arc::clone(&self.video_target);
-        #[cfg(target_os = "windows")]
-        let video_cover = Arc::clone(&self.video_cover);
-        #[cfg(target_os = "windows")]
-        self.spawn_event_loop(epoch, epoch_shared, rx, video_target, video_cover, cx);
-        #[cfg(not(target_os = "windows"))]
         self.spawn_event_loop(epoch, epoch_shared, rx, cx);
         let done = bridge::spawn(Self::play_task(
             state,

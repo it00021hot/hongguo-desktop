@@ -4,6 +4,7 @@
 //! 逐行对齐 Tauri `window_cmd::fit_portrait` 与前端 `use-portrait-window`：
 //! 宽高比带手机形地板、普通档高度最多吃工作区高的 70%、x 居中于**当前
 //! 窗口**（铺满档居中于工作区）、宽溢出工作区时反推高度。
+//!
 
 /// 宽高比 ≥0.9（近方形/横屏）不算竖屏比：竖屏只对竖版内容有意义
 ///（hgplayer Em/cu 同款口径）。
@@ -15,7 +16,7 @@ const PHONE_LIKE_ASPECT: f64 = 9.0 / 19.5;
 /// 不参与 fit 计算）。
 pub(crate) const PORTRAIT_MIN_W: f64 = 360.0;
 /// 普通档高度上限系数（Tauri PORTRAIT_DEFAULT_HEIGHT_RATIO 同参）。
-pub(crate) const PORTRAIT_HEIGHT_RATIO: f64 = 0.7;
+const PORTRAIT_HEIGHT_RATIO: f64 = 0.7;
 
 /// 视频尺寸（宽, 高）→ 竖屏窗口宽高比（Tauri `portraitAspectOf` 同款）。
 pub(crate) fn aspect_of_video(width: usize, height: usize) -> f64 {
@@ -31,7 +32,7 @@ pub(crate) fn aspect_of_video(width: usize, height: usize) -> f64 {
     }
 }
 
-/// 一次 fit 需要的输入（逻辑像素）。
+/// 一次 fit 需要的输入（逻辑像素）。两端落窗路径共用。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FitInput {
     /// 视频宽高比（w/h，已过 `aspect_of_video`）。
@@ -44,7 +45,8 @@ pub(crate) struct FitInput {
     pub(crate) work: (f64, f64, f64, f64),
 }
 
-/// 算出竖屏窗口矩形（x, y, w, h）。
+/// 算出竖屏窗口矩形（x, y, w, h）。两端落窗路径共用（macOS 在调用前
+/// 把 AppKit 坐标翻成 top-left 语义）。
 pub(crate) fn fit_rect(input: FitInput) -> (f64, f64, f64, f64) {
     let FitInput {
         aspect,
