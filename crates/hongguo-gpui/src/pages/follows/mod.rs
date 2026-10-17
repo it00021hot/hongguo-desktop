@@ -461,6 +461,8 @@ impl FollowsView {
     }
 
     /// 点一条提醒：标已读 + 跳播放（Tauri open 同序：先读后播）。
+    /// 起点从已加载的追更列表对号该剧行（服务端已看集数，零网络），
+    /// 列表没这行（如预约上线提醒）回落本地断点。
     pub(super) fn open_notice(&mut self, notice: &FollowNotice, cx: &mut Context<Self>) {
         if !notice.read {
             if let Err(e) =
@@ -472,7 +474,12 @@ impl FollowsView {
             self.refresh_notices(cx);
             cx.emit(FollowsEvent::NoticesChanged);
         }
-        self.play_series(&notice.series_id, cx);
+        let watched = self
+            .items
+            .iter()
+            .find(|i| i.series_id == notice.series_id)
+            .map(|i| i.latest_watched_vid_index);
+        self.play_series(&notice.series_id, watched, cx);
     }
 
     /// 刷新本地通知列表（同步读 store：follow_notice 是小表，进页面/变更时读）。
@@ -520,11 +527,30 @@ impl FollowsView {
         });
     }
 
-    pub(super) fn play_series(&self, series_id: &str, cx: &mut Context<Self>) {
-        let (vid_index, start_secs) =
-            hongguo_service::play_service::resume::resolve_entry(&self.state.store, series_id, &[])
-                .ok()
-                .unwrap_or((1, 0.0));
+    /// 起播起点：追更列表条目自带服务端记录的已看集数（`watched_index`，
+    /// 跨端进度的权威快照）——本地档案集号**更新**才让位本地（进度不回退，
+    /// 位置由 resumeAt 接）；服务端没给（None/0）回落本地断点 → 第 1 集。
+    /// 不走 [`resolve_entry`]：它吃云端历史行，这里没有——追更记录本身就是
+    /// 服务端进度的另一份下发。
+    pub(super) fn play_series(
+        &self,
+        series_id: &str,
+        watched_index: Option<i64>,
+        cx: &mut Context<Self>,
+    ) {
+        let local = self
+            .state
+            .store
+            .series_last_position(series_id)
+            .ok()
+            .flatten()
+            .filter(|(_, p)| p.is_resumable());
+        let (vid_index, start_secs) = match (local, watched_index.filter(|&n| n > 0)) {
+            (Some((idx, p)), Some(watched)) if idx as i64 >= watched => (idx, p.current_time),
+            (_, Some(watched)) => (watched.max(1) as u32, 0.0),
+            (Some((idx, p)), None) => (idx, p.current_time),
+            (None, None) => (1, 0.0),
+        };
         cx.emit(FollowsEvent::Play {
             series_id: series_id.to_string(),
             vid_index,

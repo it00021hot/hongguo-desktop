@@ -250,6 +250,7 @@ impl super::FollowsView {
             // 动作列（管理态不渲染）
             .children((!managing).then(|| {
                 let sid = item.series_id.clone();
+                let watched = item.latest_watched_vid_index;
                 let finished = item.finished;
                 v_flex()
                     .flex_shrink_0()
@@ -262,7 +263,7 @@ impl super::FollowsView {
                             .outline()
                             .small()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.play_series(&sid, cx);
+                                this.play_series(&sid, Some(watched), cx);
                             })),
                     )
                     // 已完结剧不再追更（无新集可等；Tauri 同款隐藏）

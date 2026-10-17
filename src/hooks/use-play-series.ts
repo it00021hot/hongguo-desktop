@@ -11,13 +11,17 @@ import { usePlayerStore } from '@/stores/player';
  *
  * 不预解析分集——首页的 useSeriesEpisodes 自带回落解析与整页加载
  * 反馈（选集表/加载失败态都在那边），调用方只管表达意图。
+ *
+ * `vidIndex` 不传 = 只点名剧（追更/收藏/预约这些不知道该看哪集的入口），
+ * store 记 0，起点由首页的起点决策补上（本地档案 vs 云端历史取新，
+ * issue #11：追更识别到 80 集却从第 1 集播的根源就是这里硬编码 1）。
  */
 export function usePlaySeries() {
   const navigate = useNavigate();
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const setBinge = usePlayerStore((s) => s.setBinge);
-  return (seriesId: string, vidIndex = 1) => {
-    requestGoto(seriesId, vidIndex);
+  return (seriesId: string, vidIndex?: number) => {
+    requestGoto(seriesId, vidIndex ?? 0);
     setBinge(seriesId);
     void navigate({ to: '/' });
   };

@@ -100,6 +100,8 @@ export function HomePage() {
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const playingId = usePlayerStore((s) => s.seriesId);
+  // store 目标的集号（0 = 只点名了剧，集号待本组件的起点决策补上）
+  const storeVidIndex = usePlayerStore((s) => s.vidIndex);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
   /** 回首页恢复是否已尝试（一次性；见下方渲染期恢复块）。 */
   const [restored, setRestored] = useState(false);
@@ -291,17 +293,18 @@ export function HomePage() {
   // 播放器起播在本地没有该集播放档案（resumeAt=0）时用它 seek——跨客户
   // 端续播连进度都对上。
   //
-  // 每部剧只在**成为当前剧**时定一次起点：正在看的时候历史刷新/进度
-  // 上报不能把目标拽走（store 目标还停在本剧就直接让位）；滚走再滚回
-  // 来时会重新对号本地档案，接的是你离开时的那集。
+  // 让位条件 = 目标剧一致**且**集号已指定（>0）：正在看的时候历史刷新/
+  // 进度上报不能把目标拽走；而追更/收藏/预约这些只点名剧的入口
+  // （vidIndex=0）要靠这里跑起点决策补上集号（issue #11）。滚走再滚
+  // 回来时会重新对号本地档案，接的是你离开时的那集。
   // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
   // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
   useEffect(() => {
     if (!currentSeries) return;
-    if (playingId === currentSeries.seriesId) return;
+    if (playingId === currentSeries.seriesId && (storeVidIndex ?? 0) > 0) return;
     if (progressQuery.isPending || historyPending) return;
 
-    // >3 秒都续播（不看片尾）：本地档案优先，观看历史兜底（共享决策，
+    // >3 秒都续播（不看片尾）：本地档案 vs 云端历史取新者（共享决策，
     // 与详情页「继续看」/后端 resolve_entry 同口径）
     const entry = resolveResumeEntry(
       localProgress,
@@ -319,6 +322,7 @@ export function HomePage() {
   }, [
     currentSeries,
     playingId,
+    storeVidIndex,
     localProgress,
     progressQuery.isPending,
     historyItems,
