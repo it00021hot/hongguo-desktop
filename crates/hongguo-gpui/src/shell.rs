@@ -250,6 +250,8 @@ impl Shell {
             HomeEvent::AccountChanged => this.on_account_changed(cx),
             // 互动登录墙：切设置页（账号卡登录入口）
             HomeEvent::OpenSettings => this.enter_dest(Dest::Settings, cx),
+            // 下载提交成功：切下载任务页（Tauri navigate('/tasks') 同款）
+            HomeEvent::OpenTasks => this.enter_dest(Dest::Tasks, cx),
         })
         .detach();
         // 点赞/收藏卡「继续播放」：壳切回首页沉浸流起播（与详情页同通道）
@@ -793,9 +795,9 @@ impl Shell {
 
     /// 取证辅助（screenshot feature）：打开下载面板。
     #[cfg(feature = "screenshot")]
-    pub(crate) fn debug_open_downloads(&self, cx: &mut App) {
+    pub(crate) fn debug_open_downloads(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.feed
-            .update(cx, |home, cx| home.debug_open_downloads(cx));
+            .update(cx, |home, cx| home.debug_open_downloads(window, cx));
     }
 
     /// 取证辅助（screenshot feature）：打开选集浮层系列剧 tab。
@@ -1570,6 +1572,10 @@ impl gpui_kit::Render for Shell {
         // 交叠——闭包里要 &mut Context）
         let toolbar = (!chrome_hidden).then(|| self.render_toolbar(window, cx));
         let sidebar = (!chrome_hidden && !in_portrait).then(|| self.render_sidebar(cx));
+        // 下载浮层（Tauri Sheet 固定整窗底边）：横贯侧栏，由壳层渲染
+        let download_sheet = self
+            .feed
+            .update(cx, |view, cx| view.render_downloads_sheet(cx));
         let content = self.render_content(cx);
         let theme = cx.theme();
         v_flex()
@@ -1591,5 +1597,6 @@ impl gpui_kit::Render for Shell {
                         v_flex().flex_1().min_w_0().child(content),
                     ),
             )
+            .children(download_sheet)
     }
 }

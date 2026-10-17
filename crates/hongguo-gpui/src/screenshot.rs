@@ -30,7 +30,7 @@ pub(crate) fn install(
     // ——控制条 3s 自隐、互动栏随它显隐，无人值守抓帧永远抓不到 UI；
     // 要验 UI 视觉（图标/布局）就开这个。
     let pause_ui = std::env::var("HONGGUO_SHOT_PAUSE").is_ok();
-    // HONGGUO_SHOT_PANEL=downloads：抓帧前打开下载面板（验任务行 UI）；
+    // HONGGUO_SHOT_PANEL=downloads：抓帧前打开「下载到本地」选集浮层；
     // =picker：打开选集浮层系列剧 tab（验季卡片/预约按钮）；
     // =suggest（配 HONGGUO_PAGE=browse）：往搜索框灌关键词，拍真实联想
     // 下拉（300ms 防抖 → 真实接口，连封面缩略图一起验）。
@@ -48,7 +48,9 @@ pub(crate) fn install(
             if i == 1 {
                 match panel.as_str() {
                     "downloads" => {
-                        feed.update(cx, |shell, cx| shell.debug_open_downloads(cx));
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_open_downloads(window, cx));
+                        });
                     }
                     "picker" => {
                         feed.update(cx, |shell, cx| shell.debug_open_picker(cx));

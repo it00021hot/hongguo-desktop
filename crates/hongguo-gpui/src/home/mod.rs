@@ -66,6 +66,8 @@ pub(crate) enum HomeEvent {
     AccountChanged,
     /// 互动登录墙：切到设置页（账号卡登录入口；Tauri requireLogin 同款）。
     OpenSettings,
+    /// 下载提交成功：切下载任务页（Tauri `navigate('/tasks')` 同款）。
+    OpenTasks,
 }
 
 /// 视频转换目标尺寸的跨线程打包（(w,h) ⇄ u64；Arc<AtomicU64> 共享给
@@ -86,6 +88,7 @@ pub(crate) mod comments;
 pub(crate) mod controls;
 pub(crate) mod danmaku;
 pub(crate) mod downloads;
+pub(crate) mod downloads_range;
 pub(crate) mod feed;
 pub(crate) mod fmt;
 pub(crate) mod hevc_prompt;
@@ -363,8 +366,14 @@ pub struct HomeView {
     /// 删除请求在途（防重复提交）。
     comment_deleting: bool,
     // —— 下载 ——
-    /// 下载面板开着。
+    /// 下载面板（「下载到本地」选集浮层）开着。
     downloads_open: bool,
+    /// 浮层里已勾选的集号（升序；默认 = 在播这一集）。
+    download_selected: Vec<u32>,
+    /// 区间语法输入框（Tauri `EpisodeRangePicker` 同款）。
+    download_range: Entity<InputState>,
+    /// 区间串解析不出任何集号（Tauri `rangeError` 同义）。
+    download_range_error: bool,
     /// 隐身模式（Tauri incognito 同语义，见 [`incognito`]）：开着时光标
     /// 脱离窗口 → 暂停 + 整窗藏起，回到窗口矩形 → 原地重现 + 续播。
     incognito: bool,
@@ -625,6 +634,10 @@ impl HomeView {
             comment_delete_target: None,
             comment_deleting: false,
             downloads_open: false,
+            download_selected: Vec::new(),
+            download_range: cx
+                .new(|cx| InputState::new(window, cx).placeholder("如 1-50 或 1-10, 25, 30-45")),
+            download_range_error: false,
             incognito: prefs.incognito,
             incognito_owed: false,
             #[cfg(target_os = "windows")]
@@ -999,6 +1012,19 @@ impl HomeView {
             )
             .detach();
         }
+        // 下载浮层的区间语法：输入即解析（Tauri `applyRange` 同款——
+        // 部分能解析就采用能解析的部分，全部解析不出才标红）
+        cx.subscribe(
+            &self.download_range,
+            |this: &mut Self, input: Entity<InputState>, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let text = input.read(cx).value().to_string();
+                this.apply_download_range(&text, cx);
+            },
+        )
+        .detach();
     }
 
     /// 引擎事件循环（每个引擎一个，epoch 封口：换剧后陈旧事件自然断流）。

@@ -595,6 +595,8 @@ impl super::HomeView {
                         } else if this.picker_open {
                             this.picker_open = false;
                             this.picker_group_override = None;
+                        } else if this.downloads_open {
+                            this.close_downloads(cx);
                         } else if this.dm_panel_open {
                             this.dm_panel_open = false;
                         } else if this.comments_panel_open {
@@ -625,11 +627,7 @@ impl super::HomeView {
             .children(rail)
             .children(comment_panel)
             .children(hevc_prompt)
-            // 下载面板（右侧滑出；字段快照由 Render::render 顶层刷新）；小屏不带
-            .children(
-                (self.downloads_open && !in_mini && self.engine_ready())
-                    .then(|| self.render_downloads_panel(cx)),
-            )
+            // 「下载到本地」浮层在壳层整窗渲染（见 `downloads.rs` 头注释）
             .children(buffering_badge)
             // 连播锁定指示 + 返回（Tauri immersive-info-overlay 同款：左上
             // 「< 第N集」，点它解除锁定；显隐跟随悬浮层总闸）；小屏不渲染

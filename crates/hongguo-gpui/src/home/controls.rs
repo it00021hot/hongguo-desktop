@@ -812,7 +812,11 @@ impl super::HomeView {
                             .label("下载")
                             .ghost()
                             .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_downloads(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.toggle_downloads(window, cx)
+                                }),
+                            ),
                     )
                     .child(
                         // 小屏播放（Tauri onOpenMini 同款）：**同一个窗口**缩成
