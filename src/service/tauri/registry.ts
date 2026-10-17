@@ -89,6 +89,7 @@ export const COMMANDS = {
     args: z.object({ aspect: z.number(), full: z.boolean() }),
     response: voidResp,
   },
+  set_traffic_lights_visible: { args: z.object({ visible: z.boolean() }), response: voidResp },
   set_incognito: { args: z.object({ enabled: z.boolean() }), response: voidResp },
   /** 关闭拦截就位（app-shell 监听挂上后调用，后端才开始拦 CloseRequested） */
   mark_window_ready: { args: noArgs, response: voidResp },

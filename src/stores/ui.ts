@@ -31,6 +31,12 @@ interface UiState {
    *  窗口高）。只在 portrait 为真时有意义。 */
   portraitFull: boolean;
   setPortraitFull: (on: boolean) => void;
+  /** 播放模式「窗口化无边框」（hgplayer 播放页 bare 布局同款）：顶栏/
+   *  侧栏全藏但**不进 OS 全屏**，窗口保持原几何；macOS 红绿灯一并藏
+   *  （setTrafficLightsVisible，后端 FRAMELESS 标记与小屏退出协调）。
+   *  瞬态：不持久化，重启即常规窗口；只在播放 surface 上成立。 */
+  playerFrameless: boolean;
+  setPlayerFrameless: (on: boolean) => void;
 }
 
 /** 纯 UI 偏好：折叠状态。不含业务数据。 */
@@ -54,6 +60,8 @@ export const useUiStore = create<UiState>()(
       setPortrait: (on) => set({ portrait: on, ...(on ? {} : { portraitFull: false }) }),
       portraitFull: false,
       setPortraitFull: (on) => set({ portraitFull: on }),
+      playerFrameless: false,
+      setPlayerFrameless: (on) => set({ playerFrameless: on }),
     }),
     // miniScreen/pinned/windowFullscreen/portrait 不持久化：窗口几何的存/恢复
     // 在后端（enter/exit_mini_screen、enter/exit_portrait_screen），置顶与

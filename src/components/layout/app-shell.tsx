@@ -97,6 +97,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     select: (s) => s.pathname === '/',
   });
   const playerFullscreen = windowFullscreen && playerSurface;
+  // 播放模式「窗口化无边框」（hgplayer 播放页 bare 布局同款）：chrome 全藏
+  // 但不进 OS 全屏，整窗只剩画面——与沉浸全屏同一视觉，窗口保持原几何。
+  const frameless = useUiStore((s) => s.playerFrameless);
+  const playerFrameless = frameless && playerSurface;
   // 竖屏只在沉浸流成立：离开即自动退出，
   // 窄条窗口配常规页面布局没法用（hgplayer 路由监听同款语义；退出实现
   // 收在 features/player 的 use-portrait-window，这里只做路由侧触发）
@@ -104,6 +108,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!playerSurface && useUiStore.getState().portrait) {
       useUiStore.getState().setPortrait(false);
       void appApi.exitPortraitScreen().catch(() => undefined);
+    }
+  }, [playerSurface]);
+  // 无边框同竖屏：只在播放 surface 成立，离开即退出并把 macOS 红绿灯
+  // 显回（chrome 条件翻面就回不来了，必须在这里收尾）
+  useEffect(() => {
+    if (!playerSurface && useUiStore.getState().playerFrameless) {
+      useUiStore.getState().setPlayerFrameless(false);
+      void appApi.setTrafficLightsVisible(true).catch(() => undefined);
     }
   }, [playerSurface]);
   // 置顶开关与播放器（大屏顶栏/小屏紧凑条两个入口）共用同一份实现
@@ -132,7 +144,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
             自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
             src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。 */}
-      {!miniScreen && !playerFullscreen && (
+      {!miniScreen && !playerFullscreen && !playerFrameless && (
         <header
           data-tauri-drag-region="deep"
           className={cn(
@@ -177,7 +189,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {!miniScreen && !playerFullscreen && !portrait && <AppSidebar />}
+        {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <AppSidebar />}
 
         <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
           {children}

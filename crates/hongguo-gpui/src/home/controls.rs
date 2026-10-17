@@ -1091,6 +1091,23 @@ impl super::HomeView {
                             })),
                     )
                     .child(
+                        // 无边框播放（Tauri 控制栏同位新增，issue #11）：chrome 全藏
+                        // 但不进 OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。
+                        // 与全屏互斥（toggle 内部裁决）
+                        Button::new("stage-frameless")
+                            .icon(gpui_kit::assets::IconName::Frame)
+                            .ghost()
+                            .small()
+                            .tooltip(crate::i18n::t(if self.frameless {
+                                "player.exitFrameless"
+                            } else {
+                                "player.frameless"
+                            }))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_frameless(window, cx);
+                            })),
+                    )
+                    .child(
                         // 播放器全屏（真沉浸：OS 全屏 + chrome 全藏；顶栏最大化钮是
                         // 另一档「应用全屏」chrome 保留）；图标随状态换
                         Button::new("stage-fullscreen")

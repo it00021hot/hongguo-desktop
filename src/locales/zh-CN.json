@@ -210,6 +210,8 @@
     "downloadToLocal": "下载到本地",
     "fullscreen": "全屏",
     "fullscreenFailed": "全屏切换失败：{error}",
+    "frameless": "无边框窗口",
+    "exitFrameless": "退出无边框窗口",
     "portrait": "竖屏播放",
     "exitPortrait": "退出竖屏",
     "portraitFill": "竖屏铺满屏幕高度",

@@ -376,6 +376,10 @@ pub struct HomeView {
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
+    /// 无边框播放（hgplayer 播放页 bare 布局同款，issue #11）：chrome 全藏
+    /// 但**不进 OS 全屏**，窗口保持原几何；macOS 红绿灯一并藏
+    /// （[`crate::macos`]）。与 [`Self::immersive`] 互斥。
+    frameless: bool,
     /// 窗口钉住（Tauri usePinWindow 同款：窗口级会话态，大小屏共用）。
     pinned: bool,
     /// 下载任务快照（每次渲染从队列读，进度靠 Frame 事件驱动的重渲染刷新）。
@@ -616,6 +620,7 @@ impl HomeView {
             hevc_prompt_dismissed: false,
             hevc_installing: false,
             immersive: false,
+            frameless: false,
             pinned: false,
             downloads: Arc::new(Vec::new()),
             done_vids: Arc::new(Vec::new()),
@@ -915,8 +920,26 @@ impl HomeView {
         cx.notify();
     }
 
+    /// chrome（顶栏/侧栏）是否该藏：沉浸全屏或无边框播放任一开着就算——
+    /// Shell 据此整窗只剩画面（Tauri playerFullscreen || playerFrameless
+    /// 同一条件，名字保留沉浸语义）。
     pub(crate) fn immersive_fullscreen(&self) -> bool {
-        self.immersive
+        self.immersive || self.frameless
+    }
+
+    /// 无边框播放（控制栏按钮 / Esc 退出）：chrome 全藏但**不进 OS 全屏**，
+    /// 窗口保持原几何（hgplayer 播放页 bare 布局同款）。与沉浸全屏互斥——
+    /// 开无边框先退 OS 全屏。macOS 红绿灯一并藏（Tauri 同款只 setHidden
+    /// 三颗圆点不动 styleMask，见 [`crate::macos`]）。
+    pub(super) fn toggle_frameless(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next = !self.frameless;
+        if next && self.immersive {
+            self.toggle_immersive_fullscreen(window, cx);
+        }
+        self.frameless = next;
+        crate::macos::set_traffic_lights_hidden(window, next);
+        self.wake_controls(cx);
+        cx.notify();
     }
 
     /// 置顶窗口（顶栏入口与小屏紧凑条共用；FFI 成功才翻状态，两边不各说
@@ -932,11 +955,16 @@ impl HomeView {
 
     /// 播放器全屏（控制条按钮 / F / Esc）：OS 全屏 + chrome（顶栏/侧栏）
     /// 全藏 = 真沉浸。与「应用全屏」（顶栏最大化钮，chrome 保留）分层。
+    /// 与无边框播放互斥：进全屏先退无边框（红绿灯显回，全屏由系统接管）。
     pub(super) fn toggle_immersive_fullscreen(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.frameless && !self.immersive {
+            self.frameless = false;
+            crate::macos::set_traffic_lights_hidden(window, false);
+        }
         self.immersive = !self.immersive;
         window.toggle_fullscreen();
         self.wake_controls(cx);
@@ -1170,81 +1198,81 @@ impl gpui_kit::Render for HomeView {
             None
         };
         let body = match notice {
-                Some(msg) => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(msg),
-                    )
-                    .child(
-                        Button::new("home-retry")
-                            .label(crate::i18n::t("common.retry"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.load_feed(this.active.clone(), false, cx);
-                            })),
-                    )
-                    .into_any_element(),
-                None => self
-                    .render_stage(window, cx)
-                    .id("home-stage")
-                    .on_mouse_move(cx.listener(|this, _: &gpui_kit::MouseMoveEvent, _, cx| {
-                        this.wake_controls(cx);
-                    }))
-                    // 指针离开画面（含鼠标直接甩出窗口）：立即收——控制栏
-                    // hover 位一并清掉，不然「指针最后停在控制栏上时甩出窗」
-                    // 会永久常显，得点一下别处才收
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        this.pointer_on_stage = *hovered;
-                        if !hovered {
-                            this.controls_hovered = false;
-                            this.volume_hovered = false;
-                            this.volume_popup_hovered = false;
-                            this.volume_popup_open = false;
-                            if this.controls_until.is_some() {
-                                this.controls_until = None;
-                            }
-                            cx.notify();
+            Some(msg) => v_flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(msg),
+                )
+                .child(
+                    Button::new("home-retry")
+                        .label(crate::i18n::t("common.retry"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.load_feed(this.active.clone(), false, cx);
+                        })),
+                )
+                .into_any_element(),
+            None => self
+                .render_stage(window, cx)
+                .id("home-stage")
+                .on_mouse_move(cx.listener(|this, _: &gpui_kit::MouseMoveEvent, _, cx| {
+                    this.wake_controls(cx);
+                }))
+                // 指针离开画面（含鼠标直接甩出窗口）：立即收——控制栏
+                // hover 位一并清掉，不然「指针最后停在控制栏上时甩出窗」
+                // 会永久常显，得点一下别处才收
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    this.pointer_on_stage = *hovered;
+                    if !hovered {
+                        this.controls_hovered = false;
+                        this.volume_hovered = false;
+                        this.volume_popup_hovered = false;
+                        this.volume_popup_open = false;
+                        if this.controls_until.is_some() {
+                            this.controls_until = None;
                         }
-                    }))
-                    .on_scroll_wheel(cx.listener(
-                        |this, ev: &gpui_kit::ScrollWheelEvent, window, cx| {
-                            // 小屏里滚轮不切剧（纯播放器语义，同 ↑↓ 守卫）
-                            if this.mini.is_some() {
-                                return;
-                            }
-                            // 滚轮也是「用户在场」（真实输入）：切剧/切集时唤醒
-                            // 悬浮层（Tauri wakeChrome 同款，面板守卫之前就亮；
-                            // 静默期滚轮同样解除——它不是指针晃动）
-                            this.wake_on_input(cx);
-                            // 面板开着不抢滚动：选集/下载是 Tauri
-                            // seriesPanelOpen/downloading 的显式守卫；评论面板
-                            // 在 Tauri 靠 data-wheel-block 拦——面板类统一在
-                            // 舞台层守卫（条状区域见各自根节点的滚轮拦截）
-                            if this.picker_open || this.comments_panel_open || this.downloads_open {
-                                return;
-                            }
-                            // Tauri 同参：|Δy|<15 忽略；方向同 Tauri
-                            //（deltaY>0=下滚=下一部，y<0 即下一部）
-                            let y = ev.delta.pixel_delta(window.line_height()).y.to_f64();
-                            if y.abs() < 15.0 {
-                                return;
-                            }
-                            // 400ms 冷却吃掉一次惯性滚动的连发。裁决在舞台层
-                            // 而不是 step() 里：连播切集路径同样要冷却，而键盘
-                            // ↑↓（Tauri 同款）不吃这把滚轮锁
-                            if !this.wheel_cooldown_ready() {
-                                return;
-                            }
-                            this.step(if y < 0.0 { 1 } else { -1 }, cx);
-                        },
-                    ))
-                    .into_any_element(),
-            };
+                        cx.notify();
+                    }
+                }))
+                .on_scroll_wheel(cx.listener(
+                    |this, ev: &gpui_kit::ScrollWheelEvent, window, cx| {
+                        // 小屏里滚轮不切剧（纯播放器语义，同 ↑↓ 守卫）
+                        if this.mini.is_some() {
+                            return;
+                        }
+                        // 滚轮也是「用户在场」（真实输入）：切剧/切集时唤醒
+                        // 悬浮层（Tauri wakeChrome 同款，面板守卫之前就亮；
+                        // 静默期滚轮同样解除——它不是指针晃动）
+                        this.wake_on_input(cx);
+                        // 面板开着不抢滚动：选集/下载是 Tauri
+                        // seriesPanelOpen/downloading 的显式守卫；评论面板
+                        // 在 Tauri 靠 data-wheel-block 拦——面板类统一在
+                        // 舞台层守卫（条状区域见各自根节点的滚轮拦截）
+                        if this.picker_open || this.comments_panel_open || this.downloads_open {
+                            return;
+                        }
+                        // Tauri 同参：|Δy|<15 忽略；方向同 Tauri
+                        //（deltaY>0=下滚=下一部，y<0 即下一部）
+                        let y = ev.delta.pixel_delta(window.line_height()).y.to_f64();
+                        if y.abs() < 15.0 {
+                            return;
+                        }
+                        // 400ms 冷却吃掉一次惯性滚动的连发。裁决在舞台层
+                        // 而不是 step() 里：连播切集路径同样要冷却，而键盘
+                        // ↑↓（Tauri 同款）不吃这把滚轮锁
+                        if !this.wheel_cooldown_ready() {
+                            return;
+                        }
+                        this.step(if y < 0.0 { 1 } else { -1 }, cx);
+                    },
+                ))
+                .into_any_element(),
+        };
         v_flex()
             .size_full()
             .bg(theme.background)

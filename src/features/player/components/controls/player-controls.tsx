@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
   Eye,
+  Frame,
   Gauge,
   ListVideo,
   Maximize,
@@ -25,8 +26,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useWindowFullscreen } from '@/hooks/use-window-fullscreen';
+import { useWindowFullscreen, applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { usePlayerStore } from '@/stores/player';
+import { useUiStore } from '@/stores/ui';
+import { app as appApi } from '@/service/commands';
 import { formatDuration } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
@@ -168,6 +171,25 @@ export function PlayerControls({
   const [rate, setRate] = useState(1);
   // 全屏：窗口级真值（Esc/绿按钮变化经 useWindowFullscreenSync 回流）
   const { fullscreen, toggleFullscreen } = useWindowFullscreen();
+  // 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏不进 OS 全屏。
+  // 与全屏互斥——点全屏先退无边框，点无边框先退全屏
+  const frameless = useUiStore((s) => s.playerFrameless);
+  const setFrameless = useUiStore((s) => s.setPlayerFrameless);
+  const toggleFrameless = () => {
+    const next = !frameless;
+    if (next && useUiStore.getState().windowFullscreen) {
+      void applyWindowFullscreen(false).catch(() => undefined);
+    }
+    setFrameless(next);
+    void appApi.setTrafficLightsVisible(!next).catch(() => undefined);
+  };
+  const onToggleFullscreen = () => {
+    if (!fullscreen && useUiStore.getState().playerFrameless) {
+      setFrameless(false);
+      void appApi.setTrafficLightsVisible(true).catch(() => undefined);
+    }
+    toggleFullscreen();
+  };
   // 面板/浮层开合在全局播放 store：切集/切剧重挂载不丢
   const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
   const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
@@ -565,7 +587,16 @@ export function PlayerControls({
             <RectangleVertical className="size-4" />
           </IconButton>
 
-          <IconButton label={t('player.fullscreen')} onClick={toggleFullscreen}>
+          {/* 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏但不进
+              OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。与全屏互斥 */}
+          <IconButton
+            label={t(frameless ? 'player.exitFrameless' : 'player.frameless')}
+            onClick={toggleFrameless}
+          >
+            <Frame className={cn('size-4', frameless && 'text-white')} aria-hidden />
+          </IconButton>
+
+          <IconButton label={t('player.fullscreen')} onClick={onToggleFullscreen}>
             {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
           </IconButton>
         </div>

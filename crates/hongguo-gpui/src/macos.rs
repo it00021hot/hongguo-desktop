@@ -15,7 +15,7 @@
 
 use gpui_kit::Window;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindow};
+use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindow, NSWindowButton};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// gpui 窗口背后的 `NSWindow`。
@@ -102,6 +102,24 @@ pub(crate) fn set_topmost(window: &Window, on: bool) -> bool {
     };
     win.setLevel(level);
     true
+}
+
+/// 藏/显原生红绿灯的三颗圆点（无边框播放模式用；Tauri 壳 `window_cmd.rs`
+/// 同口径——只 setHidden，**不动 styleMask**：整体替换会抹掉 Overlay 全出血
+/// 依赖的 `FullSizeContentView` 位，窗口尺寸语义跟着漂）。
+pub(crate) fn set_traffic_lights_hidden(window: &Window, hidden: bool) {
+    let Some(win) = ns_window_of(window) else {
+        return;
+    };
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        if let Some(btn) = win.standardWindowButton(kind) {
+            btn.setHidden(hidden);
+        }
+    }
 }
 
 /// 全局光标位置（AppKit 全局坐标，点；左下原点，与 [`frame`] 同空间）。

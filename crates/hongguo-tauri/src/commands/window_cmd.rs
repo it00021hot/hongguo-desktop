@@ -40,6 +40,27 @@ const MINI_MIN: (f64, f64) = (360.0, 180.0);
 /// 同款（#5：常态也允许缩到迷你尺寸，进出小屏只差几何与控制条形态）。
 const MAIN_MIN: (f64, f64) = (MINI_W, MINI_H);
 
+// ---------------------------------------------------------------- 无边框播放
+
+/// 播放模式「窗口化无边框」开着的标记（前端控制栏开关，会话态）：小屏
+/// 退出显回红绿灯时要不要重新藏，由它说了算——否则无边框播放进出一次
+/// 小屏，圆点就在纯画面上复活了。
+static FRAMELESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 藏/显 macOS 原生红绿灯（无边框播放模式的开关；小屏的藏显走同一实现）。
+///
+/// 刻意**不动 styleMask**（缘由见 [`set_traffic_lights_hidden`] 的注释）：
+/// 只 setHidden 三颗圆点，窗口圆角/阴影/边缘缩放全部保留。Windows/Linux
+/// 本就 decorations:false，命令照常成功、无实际操作。
+#[tauri::command]
+pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()> {
+    use std::sync::atomic::Ordering;
+    FRAMELESS.store(!visible, Ordering::Release);
+    #[cfg(target_os = "macos")]
+    set_traffic_lights_hidden(&app, !visible);
+    Ok(())
+}
+
 /// 藏/显 macOS 原生红绿灯的三颗圆点（小屏模式用）。
 ///
 /// 刻意**不动 styleMask**：tao 的 `set_decorations` 是整体替换 styleMask，
@@ -152,10 +173,14 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
     let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
-    // 原生红绿灯无条件显回（macOS 小屏时被藏了，见 enter_mini_screen）——
-    // 放在「无快照提前 return」之前，异常路径也要还原。
+    // 原生红绿灯按模式显回（macOS 小屏时被藏了，见 enter_mini_screen）——
+    // 放在「无快照提前 return」之前，异常路径也要还原。无边框播放开着时
+    // 保持隐藏：圆点不该在纯画面上复活（FRAMELESS 标记见其定义处）。
     #[cfg(target_os = "macos")]
-    set_traffic_lights_hidden(&app, false);
+    {
+        use std::sync::atomic::Ordering;
+        set_traffic_lights_hidden(&app, FRAMELESS.load(Ordering::Acquire));
+    }
     let saved = saved_geometry().take();
     let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
     let Some(g) = saved else {

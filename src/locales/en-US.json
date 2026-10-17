@@ -210,6 +210,8 @@
     "downloadToLocal": "Download to local",
     "fullscreen": "Fullscreen",
     "fullscreenFailed": "Failed to toggle fullscreen: {error}",
+    "frameless": "Frameless window",
+    "exitFrameless": "Exit frameless window",
     "portrait": "Portrait mode",
     "exitPortrait": "Exit portrait mode",
     "portraitFill": "Fill screen height",

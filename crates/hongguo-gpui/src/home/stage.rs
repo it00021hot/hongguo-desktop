@@ -493,6 +493,10 @@ impl super::HomeView {
                             this.exit_mini(window, cx);
                         } else if this.immersive {
                             this.toggle_immersive_fullscreen(window, cx);
+                        } else if this.frameless {
+                            // 无边框先退回常规窗口（红绿灯显回；chrome 随
+                            // immersive_fullscreen() 翻面），再轮到浮层
+                            this.toggle_frameless(window, cx);
                         } else if this.picker_open {
                             this.picker_open = false;
                             this.picker_group_override = None;

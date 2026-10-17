@@ -153,6 +153,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::window_cmd::exit_portrait_screen,
             commands::window_cmd::fit_portrait_screen,
             commands::window_cmd::set_portrait_full,
+            commands::window_cmd::set_traffic_lights_visible,
             commands::incognito_cmd::set_incognito,
             // 设置
             commands::settings_cmd::get_settings,
