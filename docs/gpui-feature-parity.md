@@ -56,15 +56,31 @@
 | 14 | 顶部 2px 加载细条：Tauri `loadbar.tsx` + `hg-loadbar`（切换在途/首帧未出/缓冲中亮，30% 胶囊 1.1s 循环滑动）；GPUI 只有中央 spinner 与右上「缓冲中」角标 | `loadbar.tsx` + `index.css:252-273` | ✅ 2026-10-17（stage 顶部同款细条；用 gpui `Animation` 驱动循环滑动，不依赖播放帧率）。真机：对切换间隙逐帧扫顶部像素行，只有间隙那一帧命中亮条，间隙外 14 帧全无 |
 | 15 | 暂停时的快捷键提示：Tauri `keyboard-hint.tsx`（38% 高度居中胶囊，小屏/竖屏/错误态不渲染）；GPUI 无 | `keyboard-hint.tsx:6-16` | ✅ 2026-10-17（stage 同款胶囊，文案取 Tauri 同一条静态提示）。真机 `HONGGUO_SHOT_PAUSE=1` 抓帧在位 |
 
-### 已知能力边界（非疏漏，登记在案）
+### 已闭环的能力边界（原「已知边界」逐项清零）
 
-- **无 HEVC 扩展机器的 H.264 播放**：Tauri 的 `<video>`（WebView2/Chromium）H.264
-  天然可播，缺扩展时选流会优先挑 H.264（`DecoderCapability::NoHevc`）并直接播；
-  GPUI 自研引擎的**解码器与轨道闸门都是 HEVC 专用**（`HevcDecoder` +
-  `open_stream` 的「只接 HEVC 轨」），H.264/合并产物在 GPUI 里播不了。修它等于
-  给引擎加 H.264 解码（平台层解码器 + AVCC 初始化 + 闸门放宽），属引擎级新特性。
-  当前对策：proactive 安装引导（W4#13）——装扩展后全链恢复，且与「一个安装包
-  直接可运行」的约束不冲突（扩展是系统商店包、不随应用分发）。
+- **H.264 播放（无 HEVC 扩展机器的在线降档流 / 合并产物 / 任意 avc1 文件）**
+  —— ✅ 2026-10-17 引擎级补齐（`fdb4ed1` + `c9db36b`）。原边界：Tauri 的
+  `<video>`（WebView2/Chromium）H.264 天然可播，缺扩展时选流会优先挑 H.264
+  （`DecoderCapability::NoHevc`）并直接播；GPUI 自研引擎的解码器与轨道闸门
+  都是 HEVC 专用（`HevcDecoder` + `open_stream` 的「只接 HEVC 轨」），
+  H.264/合并产物在 GPUI 里播不了。现实现：
+  - `hongguo-media::h264`：avcC 记录解析（SPS/PPS 裸 NAL + 长度前缀字节数 +
+    整条 avcC 载荷），与 `hevc` 模块同构；
+  - 平台契约：`DecoderInit` 带 `codec` 与 `sequence_header`（hvcC/avcC 归一），
+    解码器类型 `HevcDecoder` → `VideoFrameDecoder`（两端同名，不再是 HEVC 专用）；
+  - Windows MF：解码 subtype 按编码选（`MFVideoFormat_H264` / `_HEVC`），H.264
+    走同一套 Annex-B 转换与带内参数集保险；**按 `MF_MT_GEOMETRIC_APERTURE`
+    裁编码 padding**——实测 x264 把 360 宽码到 368，MF 按编码尺寸出帧，
+    不裁时画面右缘一条绿边（本机 ffmpeg 造 avc1 样本复现并修掉）；
+  - macOS VT：`CMVideoFormatDescriptionCreateFromH264ParameterSets` 建会话
+    （转码链显式按 HEVC 建，行为不变）；本机无 Mac，双目标交叉 clippy 过，
+    真机播放待测；
+  - 诊断：`头部就绪` 与 `批量预取命中` 日志带编码（HEVC / H.264）。
+  - 真机证据：ffmpeg 造 360×640 avc1 本地成品 → 「本地成品命中」→「选中解码器
+    Microsoft H264 Video Decoder MFT（H.264）」→ 首帧 360x640、截图无绿边；
+    在线 HEVC 路径同轮回归正常。proactive 安装引导（W4#13）保留——在线测试
+    账号的 1080 档实测只有 bytevc1/HEVC 系流（`HONGGUO_NO_HEVC=1` 下选流
+    走末选兜底），缺扩展机器的在线兜底仍要靠它。
 
 ### 下一步（本轮发现，尚未开工）
 
