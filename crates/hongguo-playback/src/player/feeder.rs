@@ -27,9 +27,11 @@ fn asc_aot(asc: &[u8]) -> Option<u32> {
     }
 }
 
-/// 音频预填包数：设备启动前先解这么多包推进缓冲（AAC 一包 1024 帧 ≈ 23ms，
-/// 8 包 ≈ 186ms）。不预填就启动设备的话，开局先放一段欠载静音。
+/// 起播预填的包数下限：小环/短流时也别等太久（见 [`AUDIO_PRIME_SECS`]）。
 const AUDIO_PRIME_PACKETS: usize = 8;
+
+/// 预填包数上限：环一直填不满（采样率错配、流损坏）时不能无限等。
+const AUDIO_PRIME_MAX_PACKETS: usize = 512;
 
 /// 缓冲低水位：环形缓冲低于这个秒数 → 暂停设备 + Buffering（设备绝不
 /// 空转放静音——主流一致，宁停不响空洞）。
@@ -37,6 +39,14 @@ pub(super) const BUFFER_LOW_SECS: f64 = 0.25;
 
 /// 缓冲高水位：回填到这个秒数才恢复播放（滞回避免抖动）。
 const BUFFER_HIGH_SECS: f64 = 0.6;
+
+/// 起播预填目标（秒，设备域）：**填到高水位才启动设备**。
+///
+/// 以前按固定 8 包（AAC 一包 23ms 媒体，倍速下更短）就放行设备——环里
+/// 只有几十毫秒，设备一启动就低于低水位，立刻触发「缓冲中 → 回填 →
+/// 恢复」的假事件。每次起播/换集都会闪一下，倍速越高越短、越必现。
+/// 预填到高水位后，设备起步就有滞回区间可用，不再有启动瞬态。
+const AUDIO_PRIME_SECS: f64 = BUFFER_HIGH_SECS;
 
 /// 喂送循环的游标账本：冲流收口状态（重预填包计数 + 是否在冲流中）与
 /// 样本游标。seek 重定位一次改写全部三样，收拢一处免得散参乱序。
@@ -86,8 +96,8 @@ async fn feeder_relocate(
 /// 好的 PCM 源源不断放进缓冲。附带三件事：seek 重定位（冲流协议）、rebuffer
 /// 水位状态机、播完后的挂钟接管。
 ///
-/// `primed`：预填够 [`AUDIO_PRIME_PACKETS`] 包时发一记信号（调用方据此启动
-/// 设备，保证设备一响就有真实数据）。
+/// `primed`：预填到 [`AUDIO_PRIME_SECS`]（高水位）时发一记信号（调用方
+/// 据此启动设备，保证设备一响就有真实数据、且不会立刻触发低水位）。
 pub(super) async fn audio_feeder(
     shared: Arc<Shared>,
     mut feed: RingFeed,
@@ -146,6 +156,9 @@ pub(super) async fn audio_feeder(
     let total = pts.len().min(source.len());
 
     let mut primed = primed;
+    // 预填阶段：水位状态机不判（环低于低水位是正常中间态，判了就是每次
+    // 起播都发一次假 Buffering）。
+    let mut priming = primed.is_some();
     // seek 广播的记账位（独立于视频循环，见 Shared::seek_broadcast）
     let mut seek_gen = 0u64;
     // 临时诊断累计：解码入量 / WSOLA 出量 / 冲流丢弃量（解码域帧）
@@ -250,14 +263,25 @@ pub(super) async fn audio_feeder(
         {
             cursor.flush_pending = false;
         }
-        // 预填够一截就放行设备（见 AUDIO_PRIME_PACKETS）
-        if let Some(tx) = primed.take()
-            && cursor.pushed >= AUDIO_PRIME_PACKETS
-        {
-            let _ = tx.send(());
+        // 预填够高水位就放行设备（见 AUDIO_PRIME_SECS）
+        if priming {
+            let enough = feed.buffered_secs() >= AUDIO_PRIME_SECS
+                || cursor.pushed >= AUDIO_PRIME_MAX_PACKETS;
+            if enough {
+                priming = false;
+                if let Some(tx) = primed.take() {
+                    log::info!(
+                        "[Playback] 音频预填完成（{:.2}s，{} 包），设备可以起跑",
+                        feed.buffered_secs(),
+                        cursor.pushed
+                    );
+                    let _ = tx.send(());
+                }
+            }
         }
-        // 水位状态机（冲流期间不判：环里混着待丢弃的旧数据）
-        if !cursor.flush_pending {
+        // 水位状态机（冲流期间不判：环里混着待丢弃的旧数据；预填期间不判：
+        // 还没起播，环浅是正常中间态）
+        if !cursor.flush_pending && !priming {
             let ring_secs = feed.buffered_secs();
             if ring_secs <= BUFFER_LOW_SECS && feed.set_starved(true) {
                 log::info!("[Playback] 缓冲低水位（{ring_secs:.2}s），暂停设备等填充");

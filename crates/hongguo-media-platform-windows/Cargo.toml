@@ -20,6 +20,9 @@ log = "0.4"
 parking_lot = "0.12"
 # 封面 WIC 级解码后的 JPEG 编码（与 hongguo-media 的 heif 软解级同一产物口径）。
 jpeg-encoder = "0.6"
+# 音频输出（WASAPI 共享模式）：Windows 没有 macOS 的输入作用域授权语义，
+# cpal 这边是干净的（macOS 改走 AudioToolbox，见 platform-macos::audio_output）。
+cpal = "0.15"
 
 # 本 crate 只在 Windows 目标上编译出内容（其余目标为空壳）；平台专属依赖
 # 全部进本表，macOS 宿主上连依赖都不构建。

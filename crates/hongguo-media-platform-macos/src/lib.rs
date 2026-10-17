@@ -6,16 +6,20 @@
 //!   编解码之间零拷贝
 //! - AudioToolbox（[`audio`]）：AAC 解码（AudioConverter，mpv 的 coreaudio
 //!   AAC 解码同款）
+//! - AudioToolbox 输出（[`audio_output`]）：默认输出单元，output-only——
+//!   不碰输入作用域，因此不会触发麦克风授权（cpal 的 macOS 后端会）
 //!
 //! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform`
 //! 按编译目标选择本 crate；本 crate 不依赖门面（反向即 Cargo 依赖环）。
 //! 其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
 pub mod audio;
+pub mod audio_output;
 pub mod video;
 mod vt;
 
 pub use audio::AacDecoder;
+pub use audio_output::MacAudioOutput;
 pub use video::VideoFrameDecoder;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码（硬编优先，软编回落）。
