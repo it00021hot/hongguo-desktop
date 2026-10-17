@@ -141,6 +141,12 @@ pub(crate) fn install(
                     "next-series" => {
                         feed.update(cx, |shell, cx| shell.debug_next_series(cx));
                     }
+                    // 小屏：收缩到 480×270（验铺满裁切/紧凑条）。
+                    "mini" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_enter_mini(window, cx));
+                        });
+                    }
                     _ => {}
                 }
             }

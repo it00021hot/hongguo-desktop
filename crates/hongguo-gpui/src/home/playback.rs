@@ -326,7 +326,9 @@ impl super::HomeView {
         #[cfg(target_os = "windows")]
         let video_target = Arc::clone(&self.video_target);
         #[cfg(target_os = "windows")]
-        self.spawn_event_loop(epoch, epoch_shared, rx, video_target, cx);
+        let video_cover = Arc::clone(&self.video_cover);
+        #[cfg(target_os = "windows")]
+        self.spawn_event_loop(epoch, epoch_shared, rx, video_target, video_cover, cx);
         #[cfg(not(target_os = "windows"))]
         self.spawn_event_loop(epoch, epoch_shared, rx, cx);
         let done = bridge::spawn(Self::play_task(

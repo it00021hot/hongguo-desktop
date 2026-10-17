@@ -69,19 +69,36 @@ impl super::HomeView {
         )
     }
 
+    /// cover 适配（小屏形态）：源 (w,h) 铺满目标盒（保宽高比、允许放大；
+    /// 溢出部分由显示端的 `ObjectFit::Cover` 裁掉）——Tauri 小屏
+    /// `object-cover` 同款，竖屏剧在小窗里不留黑边。
+    #[cfg(target_os = "windows")]
+    fn cover_fit(w: usize, h: usize, box_w: usize, box_h: usize) -> (usize, usize) {
+        let scale = (box_w as f64 / w as f64).max(box_h as f64 / h as f64);
+        (
+            (w as f64 * scale).round().max(2.0) as usize,
+            (h as f64 * scale).round().max(2.0) as usize,
+        )
+    }
+
     /// Windows 渲染转换：NV12（BT.709 limited）→ RGBA 图像，**按舞台显示
     /// 尺寸缩放输出**（见 `video_target` 头注释）。转换跑在本事件任务线程。
     #[cfg(target_os = "windows")]
     pub(super) fn render_image_of(
         frame: &VideoFrame,
         target: (usize, usize),
+        cover: bool,
     ) -> Option<Arc<RenderImage>> {
         // Windows 目标上 FrameBuffer 只有 Nv12 一个变体（可驳尽，同 mac 侧
         // CVPixelBuffer 的口径）
         static CONVERTED: AtomicU32 = AtomicU32::new(0);
         let t0 = Instant::now();
         let FrameBuffer::Nv12(nv12) = &frame.buffer;
-        let (tw, th) = Self::contain_fit(nv12.width, nv12.height, target.0, target.1);
+        let (tw, th) = if cover {
+            Self::cover_fit(nv12.width, nv12.height, target.0, target.1)
+        } else {
+            Self::contain_fit(nv12.width, nv12.height, target.0, target.1)
+        };
         let rgba = hongguo_media::nv12_rgba::nv12_to_rgba_bt709_scaled(
             &nv12.data,
             nv12.stride,
@@ -237,6 +254,13 @@ impl super::HomeView {
         // 由 play_target 按「同剧」置位、新集首帧/失败时落下；切剧不置位，
         // 走的仍是「立刻换新剧封面」。
         let video_ready = self.frame.is_some() && (!self.switching || self.hold_last_frame);
+        // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
+        // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
+        let video_fit = if self.mini.is_some() {
+            ObjectFit::Cover
+        } else {
+            ObjectFit::Contain
+        };
         // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
         // contain 保宽高比在转换端算）
         #[cfg(target_os = "windows")]
@@ -247,6 +271,11 @@ impl super::HomeView {
             self.video_target
                 .store(super::pack_size(w as usize, h as usize), Ordering::Relaxed);
         }
+        // 小屏的适配模式跟着形态走（Tauri `miniScreen ? 'object-cover' :
+        // 'object-contain'` 同款）：转换线程按它算输出尺寸，显示端按它裁切。
+        #[cfg(target_os = "windows")]
+        self.video_cover
+            .store(self.mini.is_some(), Ordering::Relaxed);
         // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
         // 一行钉死——排障不用再猜是事件没到还是渲染没跟上。带舞台尺寸
         //（FFI 缩放后布局是否跟随重排，小屏排障靠它）。
@@ -345,7 +374,7 @@ impl super::HomeView {
             surface(pixel_buffer)
                 .absolute()
                 .size_full()
-                .object_fit(ObjectFit::Contain)
+                .object_fit(video_fit)
                 .into_any_element()
         };
         #[cfg(target_os = "windows")]
@@ -353,7 +382,7 @@ impl super::HomeView {
             img(ImageSource::Render(Arc::clone(image)))
                 .absolute()
                 .size_full()
-                .object_fit(ObjectFit::Contain)
+                .object_fit(video_fit)
                 .into_any_element()
         };
         let video: gpui_kit::AnyElement = if video_ready {

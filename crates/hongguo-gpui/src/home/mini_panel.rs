@@ -215,7 +215,7 @@ impl super::HomeView {
     /// 进入小屏（Tauri enterMini 同款）：浮层全收 + **同一个窗口**缩成
     /// 480×270 落工作区右下角（`crate::mini`，播放零中断）。全屏先进
     /// 全屏退出——几何快照才有意义。
-    pub(super) fn enter_mini(&mut self, window: &mut gpui_kit::Window, cx: &mut Context<Self>) {
+    pub(crate) fn enter_mini(&mut self, window: &mut gpui_kit::Window, cx: &mut Context<Self>) {
         if self.mini.is_some() || self.player.is_none() {
             return;
         }

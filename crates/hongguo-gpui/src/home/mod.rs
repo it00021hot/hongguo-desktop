@@ -186,6 +186,11 @@ pub struct HomeView {
     /// 浪费：转换 CPU、图集纹理、回收压力都按面积走（8.3MB → ~1.3MB）。
     #[cfg(target_os = "windows")]
     video_target: Arc<AtomicU64>,
+    /// 转换产物是否按「铺满裁切」（cover）适配：小屏形态为真——Tauri 小屏
+    /// 把视频 `object-cover` 拉满 480×270（竖屏剧在小窗里也不留黑边），
+    /// 其余形态 object-contain 留黑边。转换线程读它，舞台渲染写它。
+    #[cfg(target_os = "windows")]
+    video_cover: Arc<std::sync::atomic::AtomicBool>,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
     /// 切换目标（switching 时 overlay 显示它的封面与标题）。
@@ -503,6 +508,8 @@ impl HomeView {
             retired_images: Vec::new(),
             #[cfg(target_os = "windows")]
             video_target: Arc::new(AtomicU64::new(pack_size(1280, 720))),
+            #[cfg(target_os = "windows")]
+            video_cover: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             stage_diag_at: Cell::new(Instant::now()),
             pending_title: None,
             play_error: None,
@@ -963,6 +970,7 @@ impl HomeView {
         epoch_shared: Arc<AtomicU64>,
         mut events: mpsc::Receiver<PlayerEvent>,
         #[cfg(target_os = "windows")] video_target: Arc<AtomicU64>,
+        #[cfg(target_os = "windows")] video_cover: Arc<std::sync::atomic::AtomicBool>,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -997,9 +1005,12 @@ impl HomeView {
                     let converted = match &event {
                         PlayerEvent::Frame(frame) => {
                             let target = unpack_size(video_target.load(Ordering::Relaxed));
+                            let cover = video_cover.load(Ordering::Relaxed);
                             let frame = frame.clone();
                             cx.background_executor()
-                                .spawn(async move { Self::render_image_of(&frame, target) })
+                                .spawn(async move {
+                                    Self::render_image_of(&frame, target, cover)
+                                })
                                 .await
                         }
                         _ => None,
