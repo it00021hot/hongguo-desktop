@@ -386,7 +386,7 @@ impl NewDramaView {
                         let active = view == tab;
                         let button = Button::new(format!("new-tab-{label}")).label(label).small();
                         let button = if active {
-                            button.secondary()
+                            button.primary()
                         } else {
                             button.ghost()
                         };
@@ -430,7 +430,7 @@ impl NewDramaView {
                             .label(label)
                             .small();
                         let button = if active {
-                            button.secondary()
+                            button.primary()
                         } else {
                             button.ghost()
                         };
@@ -922,7 +922,7 @@ impl gpui_kit::Render for NewDramaView {
                                                 ))
                                                 .small();
                                             let button = if active {
-                                                button.secondary()
+                                                button.primary()
                                             } else {
                                                 button.ghost()
                                             };

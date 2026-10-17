@@ -380,7 +380,9 @@ impl HistoryView {
                     .label(tab.label())
                     .small();
                 let button = if active {
-                    button.secondary()
+                    // Tauri ToggleGroupItem：选中 bg-primary text-primary-foreground
+                    //（深色主题白底胶囊）；secondary 是深灰胶囊，对比度与真机不同
+                    button.primary()
                 } else {
                     button.ghost()
                 };

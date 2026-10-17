@@ -416,7 +416,7 @@ impl ReservationView {
                     .label(format!("{label} {count}"))
                     .small();
                 let button = if active {
-                    button.secondary()
+                    button.primary()
                 } else {
                     button.ghost()
                 };

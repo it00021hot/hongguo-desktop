@@ -779,7 +779,8 @@ impl HomeView {
                         .label(self.tab_label(&s))
                         .small();
                     let button = if active {
-                        button.secondary()
+                        // Tauri TopBarTab：选中 bg-primary text-primary-foreground
+                        button.primary()
                     } else {
                         button.ghost()
                     };

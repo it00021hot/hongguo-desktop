@@ -382,7 +382,8 @@ impl RankView {
                         .label(tab.name.clone())
                         .small();
                     let button = if active {
-                        button.secondary()
+                        // 顶栏 tab 选中态 = Tauri TopBarTab 的 bg-primary 胶囊
+                        button.primary()
                     } else {
                         button.ghost()
                     };

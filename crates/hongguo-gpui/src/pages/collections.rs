@@ -357,7 +357,8 @@ impl CollectionView {
                     .label(tab.label())
                     .small();
                 let button = if active {
-                    button.secondary()
+                    // 选中胶囊走 primary（Tauri data-[state=on]:bg-primary 同款）
+                    button.primary()
                 } else {
                     button.ghost()
                 };
