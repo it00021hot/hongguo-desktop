@@ -837,8 +837,10 @@ impl gpui_kit::Render for RankView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("rank-page")
-            .p_4()
-            .gap_3()
+            // Tauri rank-page 根节点无内边距（`flex h-full min-h-0 flex-col
+            // gap-4`）：子榜贴侧栏、内容行贴右缘。GPUI 原来 p_4 把整页内缩
+            // 16px（并排对拍 sub-nav 67 vs 56、首行 232 vs 219）
+            .gap_4()
             .child(
                 h_flex()
                     .w_full()
