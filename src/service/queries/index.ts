@@ -59,6 +59,7 @@ export {
   useNewDrama,
   useNewCalendar,
   useReservations,
+  useReservationsFillAll,
   useReservationsDelete,
   useReserveSeries,
 } from './rank';

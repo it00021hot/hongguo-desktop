@@ -45,12 +45,40 @@ pub(crate) enum ReservationEvent {
 }
 
 /// 一个 tab 的数据面（两条查询各自独立加载/失败，Tauri 双 query 同构）。
+/// 列表单页懒翻页（issue #11：串行拉全曾让「已上线」首屏等 5–8 秒）——
+/// 游标三件套记翻页状态，加载更多续拉。
 #[derive(Default)]
 struct TabData {
     items: Option<Vec<CalendarItem>>,
     total: i64,
     loading: bool,
     failed: Option<String>,
+    /// 翻页游标（首页响应下发，翻页续传；空 = 首页请求不带）。
+    cursor: String,
+    /// 下一页 offset 与是否有下页（服务端下发）。
+    next_offset: i64,
+    has_more: bool,
+    loading_more: bool,
+}
+
+impl TabData {
+    /// 角标计数：服务端 total 优先，条数兜底（`*_total_count` 在部分
+    /// 形态下缺失，解析层缺省 0）。
+    fn count(&self) -> i64 {
+        self.total
+            .max(self.items.as_deref().map_or(0, |items| items.len() as i64))
+    }
+
+    /// 续拉追加（series_id 去重：相邻页可能重叠条目）。
+    fn extend_page(&mut self, new_items: Vec<CalendarItem>) {
+        let items = self.items.get_or_insert_with(Vec::new);
+        for item in new_items {
+            if items.iter().any(|i| i.series_id == item.series_id) {
+                continue;
+            }
+            items.push(item);
+        }
+    }
 }
 
 pub(crate) struct ReservationView {
@@ -88,9 +116,9 @@ impl ReservationView {
         let search = cx.new(|cx| {
             InputState::new(window, cx).placeholder(crate::i18n::t("reservation.searchPlaceholder"))
         });
-        cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+        cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
-                cx.notify();
+                this.on_search_changed(cx);
             }
         })
         .detach();
@@ -110,7 +138,9 @@ impl ReservationView {
         }
     }
 
-    /// 拉两个 tab 的预约列表（角标计数两条都要，Tauri 双 query 同款）。
+    /// 拉两个 tab 的预约列表首页（角标计数两条都要，Tauri 双 query 同款）。
+    /// 单页即回（Tauri 同构懒翻页）：此前一次性串行拉全，预约上百部时
+    /// 首屏要等几十个请求——issue #11 的「已上线 5–8 秒才出来」。
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
         let account = self.state.settings().account.clone();
         if account.is_none() {
@@ -136,52 +166,115 @@ impl ReservationView {
         }
         cx.notify();
         for online in [true, false] {
-            let state = Arc::clone(&self.state);
-            let rx = bridge::spawn(async move {
-                let env = state.api_env();
-                hongguo_api::reservation::fetch_reservations(online, &env).await
-            });
-            cx.spawn(async move |this, cx| {
-                let result = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
+            self.fetch_tab(online, 0, String::new(), false, cx);
+        }
+    }
+
+    /// 当前 tab 加载更多（进行中/没有下页时忽略；搜索态的后台补齐同入口）。
+    pub(crate) fn load_more(&mut self, cx: &mut Context<Self>) {
+        {
+            let tab = self.current_mut();
+            if !tab.has_more || tab.loading_more || tab.loading {
+                return;
+            }
+            if tab.items.is_some() {
+                tab.loading_more = true;
+            }
+        }
+        let (offset, cursor) = {
+            let tab = self.current();
+            (tab.next_offset, tab.cursor.clone())
+        };
+        cx.notify();
+        self.fetch_tab(self.online_tab, offset, cursor, true, cx);
+    }
+
+    /// 搜索词变化：非空时对当前 tab 后台补齐剩余页——搜索要对全量条目
+    /// 过滤（hgplayer「正在加载全部记录…」同款语义），普通浏览一页懒翻。
+    pub(crate) fn on_search_changed(&mut self, cx: &mut Context<Self>) {
+        let q = self.search.read(cx).value().trim().to_lowercase();
+        if !q.is_empty() {
+            self.load_more(cx);
+        }
+    }
+
+    /// 拉一个 tab 的一页（`extend=false` 首页替换并取封面 / `true` 续拉追加）。
+    fn fetch_tab(
+        &mut self,
+        online: bool,
+        offset: i64,
+        session_id: String,
+        extend: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let state = Arc::clone(&self.state);
+        let rx = bridge::spawn(async move {
+            let env = state.api_env();
+            hongguo_api::reservation::fetch_reservations_page(
+                online,
+                offset,
+                Some(session_id.as_str()).filter(|s| !s.is_empty()),
+                &env,
+            )
+            .await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            this.update(cx, |view, cx| {
+                let Ok(page) = result else {
+                    let e = result.unwrap_err();
+                    log::warn!("[Reservations] GPUI 壳失败 online={online}: {e}");
                     let tab = if online {
                         &mut view.online
                     } else {
                         &mut view.offline
                     };
                     tab.loading = false;
-                    match result {
-                        Ok(page) => {
-                            log::info!(
-                                "[Reservations] GPUI 壳 online={online} -> {} 条",
-                                page.items.len()
-                            );
-                            tab.total = if online {
-                                page.online_total
-                            } else {
-                                page.offline_total
-                            }
-                            .max(page.items.len() as i64);
-                            if online {
-                                view.online.items = Some(page.items.clone());
-                            } else {
-                                view.offline.items = Some(page.items.clone());
-                            }
-                            view.load_covers(&page.items, cx);
-                        }
-                        Err(e) => {
-                            log::warn!("[Reservations] GPUI 壳失败 online={online}: {e}");
-                            if tab.items.is_none() {
-                                tab.failed = Some(crate::i18n::app_error_text(&e));
-                            }
-                        }
+                    tab.loading_more = false;
+                    if tab.items.is_none() {
+                        tab.failed = Some(crate::i18n::app_error_text(&e));
                     }
                     cx.notify();
-                })
-                .ok();
+                    return;
+                };
+                log::info!(
+                    "[Reservations] GPUI 壳 online={online} -> {} 条",
+                    page.items.len()
+                );
+                // 首页先取封面再动 tab 借用；解构终结 page，游标三件套随后写回
+                let hongguo_api::calendar::CalendarPage {
+                    items,
+                    session_id,
+                    next_offset,
+                    has_more,
+                    online_total,
+                    offline_total,
+                    ..
+                } = page;
+                if !extend {
+                    view.load_covers(&items, cx);
+                }
+                let tab = if online {
+                    &mut view.online
+                } else {
+                    &mut view.offline
+                };
+                tab.loading = false;
+                tab.loading_more = false;
+                if extend {
+                    tab.extend_page(items);
+                } else {
+                    tab.total = if online { online_total } else { offline_total };
+                    tab.items = Some(items);
+                }
+                tab.cursor = session_id;
+                tab.next_offset = next_offset;
+                tab.has_more = has_more && next_offset > 0;
+                cx.notify();
             })
-            .detach();
-        }
+            .ok();
+        })
+        .detach();
     }
 
     /// 逐条取封面（条目自带上线封面 URL）。
@@ -342,6 +435,14 @@ impl ReservationView {
         }
     }
 
+    fn current_mut(&mut self) -> &mut TabData {
+        if self.online_tab {
+            &mut self.online
+        } else {
+            &mut self.offline
+        }
+    }
+
     fn current_items(&self) -> Vec<CalendarItem> {
         self.current().items.clone().unwrap_or_default()
     }
@@ -427,7 +528,7 @@ impl ReservationView {
             .into_any_element()
     }
 
-    /// 两个 tab 按钮（数量取自各自 TabData；加载中显示省略号）。
+    /// 两个 tab 按钮（数量取各自 TabData；加载中显示省略号）。
     fn render_tab_pair(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         h_flex()
             .items_center()
@@ -442,7 +543,7 @@ impl ReservationView {
                 let count = if data.loading {
                     "…".to_string()
                 } else {
-                    data.total.to_string()
+                    data.count().to_string()
                 };
                 let active = self.online_tab == online;
                 let button = Button::new(format!("reservations-tab-{online}"))
@@ -752,12 +853,14 @@ impl ReservationView {
             items: Some(online_items),
             loading: false,
             failed: None,
+            ..Default::default()
         };
         self.offline = TabData {
             total: offline_items.len() as i64,
             items: Some(offline_items),
             loading: false,
             failed: None,
+            ..Default::default()
         };
         if scene == "reservation-manage" {
             self.managing = true;
@@ -874,20 +977,39 @@ impl gpui_kit::Render for ReservationView {
             } else {
                 let managing = self.managing;
                 let visible = self.visible_items(cx);
+                let has_more = self.current().has_more;
+                let loading_more = self.current().loading_more;
+                let mut column = v_flex()
+                    .w_full()
+                    .gap_2()
+                    .children(visible.iter().map(|item| {
+                        let picked = self.selected.contains(&item.series_id);
+                        self.render_row(item, managing, picked, cx)
+                    }));
+                if has_more {
+                    // 加载更多（Tauri 哨兵懒翻页的 GPUI 同语义入口；搜索态的
+                    // 后台补齐也走同一 load_more，按钮只是手动兜底）
+                    column = column.child(
+                        h_flex().w_full().justify_center().pt_2().child(
+                            Button::new("reservations-more")
+                                .label(if loading_more {
+                                    crate::i18n::t("common.loading")
+                                } else {
+                                    crate::i18n::t("follow.loadMore")
+                                })
+                                .outline()
+                                .small()
+                                .disabled(loading_more)
+                                .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
+                        ),
+                    );
+                }
                 div()
                     .id("reservations-list")
                     .flex_1()
                     .overflow_y_scroll()
                     .p_4()
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .gap_2()
-                            .children(visible.iter().map(|item| {
-                                let picked = self.selected.contains(&item.series_id);
-                                self.render_row(item, managing, picked, cx)
-                            })),
-                    )
+                    .child(column)
                     .into_any_element()
             }
         };

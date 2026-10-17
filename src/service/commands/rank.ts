@@ -37,8 +37,16 @@ export const rank = {
       ...(offset ? { offset } : {}),
       ...(sessionId ? { sessionId } : {}),
     }),
-  /** 我的预约（匿名通常空表；登录后条目带 hasSubscribed）。 */
-  reservations: (isOnline = true) => call('reservation_list', { isOnline }),
+  /**
+   * 我的预约一页（匿名通常空表；登录后条目带 hasSubscribed）。
+   * offset/sessionId 翻页续传（响应下发回传），与上新日历同构。
+   */
+  reservations: (isOnline = true, offset = 0, sessionId = '') =>
+    call('reservation_list', {
+      isOnline,
+      ...(offset ? { offset } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    }),
   /** 预约 / 取消预约（需要登录）。 */
   reserve: (seriesId: string, reserve = true) => call('reservation_reserve', { seriesId, reserve }),
   /** 批量删除预约（subscribe_delete，hgplayer 1.1.8 同款；需要登录）。 */

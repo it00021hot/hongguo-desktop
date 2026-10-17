@@ -5,7 +5,7 @@ use tauri::State;
 use hongguo_api::calendar::{CalendarPage, fetch_new_calendar};
 use hongguo_api::new_drama::fetch_new_drama;
 use hongguo_api::rank::{RankPage, RankReq, fetch_rank_ex};
-use hongguo_api::reservation::{delete_reservations, fetch_reservations, reserve_series};
+use hongguo_api::reservation::{delete_reservations, fetch_reservations_page, reserve_series};
 use hongguo_api::search::{SearchPage, SuggestItem, search_series, search_suggest};
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
@@ -129,14 +129,26 @@ pub async fn search_suggest_cmd(
     }
 }
 
-/// 我的预约（is_online=true 已上线 / false 待上线；匿名空表）。
+/// 我的预约一页（is_online=true 已上线 / false 待上线；匿名空表）。
+///
+/// 单页即回，`offset`/`sessionId` 翻页续传（响应下发回传）——预约页
+/// 懒翻页用；此前后端一次性串行拉全，预约上百部时首屏要等几十个请求
+/// （issue #11 的「已上线 5–8 秒」）。
 #[tauri::command]
 pub async fn reservation_list(
     state: State<'_, AppState>,
     is_online: Option<bool>,
+    offset: Option<i64>,
+    session_id: Option<String>,
 ) -> AppResult<CalendarPage> {
     let env = state.api_env();
-    fetch_reservations(is_online.unwrap_or(true), &env).await
+    fetch_reservations_page(
+        is_online.unwrap_or(true),
+        offset.unwrap_or(0),
+        session_id.as_deref().filter(|s| !s.is_empty()),
+        &env,
+    )
+    .await
 }
 
 /// 预约 / 取消预约（需要登录；series_id 为剧集 id）。

@@ -371,7 +371,11 @@ export const COMMANDS = {
     response: calendarPageSchema,
   },
   reservation_list: {
-    args: z.object({ isOnline: z.boolean() }),
+    args: z.object({
+      isOnline: z.boolean(),
+      offset: z.number().optional(),
+      sessionId: z.string().optional(),
+    }),
     response: calendarPageSchema,
   },
   reservation_reserve: {
