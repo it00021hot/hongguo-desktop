@@ -511,6 +511,12 @@ impl super::HomeView {
             .then(|| self.render_interaction_rail(cx));
         let comment_panel =
             (!in_mini && self.comments_panel_open).then(|| self.render_comment_panel(cx));
+        // HEVC 安装引导（Tauri HevcInstallCard floating 形态）：本机解不了
+        // HEVC 且本会话没点过「暂不安装」时才出现——GPUI 选流已提前降档到
+        // H.264，它是「提画质」的主动提示，不是失败后的补救卡
+        let hevc_prompt = (!hongguo_service::capability_service::hevc_playable()
+            && !self.hevc_prompt_dismissed)
+            .then(|| self.render_hevc_prompt(cx));
         let rects = Rc::clone(&self.stage_rects);
         v_flex()
             .flex_1()
@@ -589,6 +595,7 @@ impl super::HomeView {
             .children(overlay)
             .children(rail)
             .children(comment_panel)
+            .children(hevc_prompt)
             // 下载面板（右侧滑出；字段快照由 Render::render 顶层刷新）；小屏不带
             .children(
                 (self.downloads_open && !in_mini && self.engine_ready())

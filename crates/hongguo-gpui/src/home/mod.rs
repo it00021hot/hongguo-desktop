@@ -85,6 +85,7 @@ pub(crate) mod danmaku;
 pub(crate) mod downloads;
 pub(crate) mod feed;
 pub(crate) mod fmt;
+pub(crate) mod hevc_prompt;
 pub(crate) mod incognito;
 pub(crate) mod interact;
 pub(crate) mod mini_panel;
@@ -384,6 +385,11 @@ pub struct HomeView {
     /// 同剧切集保留上一集末帧顶住画面（Tauri `use-frame-hold` 同款：切集
     /// 全程不闪封面，直到新集首帧出画；切剧仍立刻走封面）。
     hold_last_frame: bool,
+    /// 缺 HEVC 扩展的安装引导：本会话点过「暂不安装」就不再打扰（Tauri
+    /// `hevcSession.markDismissed` 的模块级会话语义）。
+    hevc_prompt_dismissed: bool,
+    /// HEVC 扩展安装中（按钮转「下载安装中…」并禁用）。
+    hevc_installing: bool,
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
@@ -621,6 +627,8 @@ impl HomeView {
             portrait_full: false,
             portrait_aspect_last: 0.0,
             hold_last_frame: false,
+            hevc_prompt_dismissed: false,
+            hevc_installing: false,
             immersive: false,
             pinned: false,
             downloads: Arc::new(Vec::new()),
