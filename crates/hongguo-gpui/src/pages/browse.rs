@@ -632,7 +632,6 @@ impl BrowseView {
                                 this.exit_search(window, cx);
                             }))
                     }))
-                    .child(div().flex_1())
                     .children((!searching && total > 0).then(|| {
                         div()
                             .text_sm()
@@ -857,7 +856,13 @@ impl BrowseView {
     }
 
     /// 一张结果卡（浏览/搜索共用；字段差异在调用方已归一）。
-    fn render_card(&self, card: CardView<'_>, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn render_card(
+        &self,
+        card: CardView<'_>,
+        card_w: f32,
+        cover_h: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let CardView {
             series_id,
             title,
@@ -877,7 +882,9 @@ impl BrowseView {
             .collect();
         v_flex()
             .id(ElementId::from(format!("browse-card-{series_id}")))
-            .w(gpui_kit::px(196.0))
+            // 宽度跟网格列走（Tauri `w-full` + 响应式列数）：固定 196px 在
+            // 1280 窗口下比 Tauri 的 220px 窄一截（并排对拍可见）
+            .w(gpui_kit::px(card_w))
             .overflow_hidden()
             .rounded(gpui_kit::px(12.0))
             .border_1()
@@ -895,7 +902,7 @@ impl BrowseView {
                 div()
                     .relative()
                     .w_full()
-                    .h(gpui_kit::px(261.0))
+                    .h(gpui_kit::px(cover_h))
                     .flex_shrink_0()
                     .overflow_hidden()
                     .bg(theme.secondary)
@@ -1025,7 +1032,22 @@ impl BrowseView {
 impl gpui_kit::EventEmitter<BrowseEvent> for BrowseView {}
 
 impl gpui_kit::Render for BrowseView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 结果网格列数 = Tauri SeriesCardGrid 的响应式断点（2/3/4/5/8 列，
+        // sm/md/lg/2xl）：卡片宽度按列宽铺满，1280 窗口下 5 列 220px 与
+        // Tauri 同宽
+        let viewport_w = window.viewport_size().width.as_f32();
+        let grid_cols = if viewport_w >= 1536.0 {
+            8
+        } else if viewport_w >= 1024.0 {
+            5
+        } else if viewport_w >= 768.0 {
+            4
+        } else if viewport_w >= 640.0 {
+            3
+        } else {
+            2
+        };
         let searching = !self.submitted.is_empty();
         let search_row = self.render_search_row(cx);
         // 筛选区先建（内部有 cx 闭包，不能与后面取的 theme 借用交叠）
@@ -1097,6 +1119,13 @@ impl gpui_kit::Render for BrowseView {
                 self.feed_items.len(),
             )
         };
+        // 网格卡宽 = 列宽（Tauri SeriesCardGrid 的卡片铺满格子）；封面按 3:4
+        // 固定高。侧栏 56 + 页面左右 p_6 各 24 从视口宽里扣掉
+        let content_w = (viewport_w - 56.0 - 48.0).max(240.0);
+        // 减 1px 吸收除不尽/滚动条误差，保证一行正好排满 grid_cols 张
+        let card_w =
+            (((content_w - (grid_cols as f32 - 1.0) * 16.0) / grid_cols as f32) - 1.0).max(120.0);
+        let cover_h = card_w * 4.0 / 3.0;
         let grid: Vec<gpui_kit::AnyElement> = if searching {
             self.search_items
                 .iter()
@@ -1124,6 +1153,8 @@ impl gpui_kit::Render for BrowseView {
                             heat: &heat,
                             tags: &tags,
                         },
+                        card_w,
+                        cover_h,
                         cx,
                     )
                 })
@@ -1141,6 +1172,8 @@ impl gpui_kit::Render for BrowseView {
                             heat: &item.heat_text,
                             tags: &item.tags,
                         },
+                        card_w,
+                        cover_h,
                         cx,
                     )
                 })

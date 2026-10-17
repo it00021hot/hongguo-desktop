@@ -28,34 +28,48 @@ impl DetailView {
             v_flex()
                 .mt_8()
                 .child(
-                    h_flex()
-                        .gap_6()
-                        .border_b_1()
-                        .border_color(theme.secondary)
-                        .children(tabs.map(|(tab, label, count)| {
-                            let active = self.tab == tab;
-                            div()
-                                .id(ElementId::from(format!("detail-tab-{:?}", tab)))
-                                .pb_2()
-                                .text_sm()
-                                .cursor_pointer()
-                                .when(active, |s| {
-                                    s.border_b_2()
-                                        .border_color(theme.foreground)
-                                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                        .text_color(theme.foreground)
-                                })
-                                .when(!active, |s| s.text_color(theme.muted_foreground))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.tab = tab;
-                                    cx.notify();
-                                }))
-                                .child(if count > 0 {
-                                    format!("{label} {count}")
-                                } else {
-                                    label.to_string()
-                                })
-                        })),
+                    // Tauri `TabsList` 同款分段控件：muted 底槽（h-9、p-[3px]、
+                    // rounded-lg）里一枚 active 抬起胶囊（bg-background、
+                    // rounded-md）。此前是下划线 tab——并排对拍可见不一致
+                    h_flex().child(
+                        h_flex()
+                            .id("detail-tabs")
+                            .h(gpui_kit::px(36.0))
+                            .p(gpui_kit::px(3.0))
+                            .items_center()
+                            .rounded(gpui_kit::px(10.0))
+                            .bg(theme.muted)
+                            .children(tabs.map(|(tab, label, count)| {
+                                let active = self.tab == tab;
+                                div()
+                                    .id(ElementId::from(format!("detail-tab-{:?}", tab)))
+                                    .h_full()
+                                    .px_2()
+                                    .py_1()
+                                    .flex()
+                                    .items_center()
+                                    .rounded(gpui_kit::px(8.0))
+                                    .text_sm()
+                                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .when(active, |s| {
+                                        s.bg(theme.background).text_color(theme.foreground)
+                                    })
+                                    .when(!active, |s| {
+                                        s.text_color(theme.muted_foreground)
+                                            .hover(|h| h.text_color(theme.foreground))
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.tab = tab;
+                                        cx.notify();
+                                    }))
+                                    .child(if count > 0 {
+                                        format!("{label} {count}")
+                                    } else {
+                                        label.to_string()
+                                    })
+                            })),
+                    ),
                 )
                 .child(match self.tab {
                     DetailTab::Episodes => self.render_episode_grid(cx),

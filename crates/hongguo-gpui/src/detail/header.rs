@@ -205,10 +205,13 @@ impl DetailView {
                             .gap_2()
                             .child(
                                 Button::new("detail-play")
+                                    .icon(gpui_kit::assets::IconName::Play)
                                     .label(if resume_ep > 1 {
-                                        format!("继续播放 第{}集", resume_ep)
+                                        // Tauri `detail.continueEpisode` / `playFirst`
+                                        // 原文（含数字两侧空格），并排对拍逐字对齐
+                                        format!("继续看第 {resume_ep} 集")
                                     } else {
-                                        "立即播放".to_string()
+                                        "从第 1 集开始".to_string()
                                     })
                                     .primary()
                                     .on_click(cx.listener(move |this, _, _, cx| {

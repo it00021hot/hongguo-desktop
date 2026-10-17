@@ -1202,8 +1202,10 @@ impl Shell {
             .bg(bg)
             .border_b_1()
             .border_color(border)
-            // macOS 给原生红绿灯让位（Tauri pl-[76px] 同款）
-            .pl(gpui_kit::px(if mac { 76.0 } else { 12.0 }))
+            // 左右不留内边距：绝对定位的 tab 槽按内容盒定位，留出左内边距
+            // 会把槽整体推偏几个像素（Tauri 的 inset-x-0 按边框盒，居中在
+            // 整窗中线）。顶栏左侧本就不放内容（Tauri 同为空），macOS 的
+            // 原生红绿灯不受影响
             .pr_0()
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
             .on_mouse_down(

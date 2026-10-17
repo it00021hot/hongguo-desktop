@@ -987,6 +987,8 @@ impl SettingsView {
                             .icon(gpui_kit::assets::IconName::LogIn)
                             .label("登录")
                             .small()
+                            // Tauri 账户卡的登录是默认 primary 实心钮（深色主题下白底）
+                            .primary()
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.emit(SettingsEvent::Login);
                             })),
@@ -1119,46 +1121,6 @@ impl SettingsView {
                                 .text_color(theme.danger)
                         }
                     })),
-            )
-            .into_any_element()
-    }
-
-    /// 外观卡：主题三档（跟随系统 / 亮色 / 暗色）。Tauri 把入口放在顶栏，
-    /// GPUI 顶栏是平台拖拽区（自绘控件会被命中测试判成拖拽吞掉），入口落
-    /// 在设置页；档位语义与 `hongguo-theme` store 相同。
-    fn render_appearance_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        use crate::ui_prefs::ThemePref;
-        let theme = cx.theme();
-        let option = |id: &'static str, label: &'static str, value: ThemePref| {
-            let selected = self.theme == value;
-            let button = Button::new(id).label(label).small();
-            let button = if selected {
-                button.secondary()
-            } else {
-                button.ghost()
-            };
-            button.on_click(cx.listener(move |this, _, _, cx| this.set_theme(value, cx)))
-        };
-        card(cx)
-            .child(
-                div()
-                    .text_base()
-                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .child("外观"),
-            )
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(option("settings-theme-auto", "跟随系统", ThemePref::Auto))
-                    .child(option("settings-theme-light", "亮色", ThemePref::Light))
-                    .child(option("settings-theme-dark", "暗色", ThemePref::Dark)),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child("跟随系统时随 Windows / macOS 的外观设置自动切换。"),
             )
             .into_any_element()
     }
@@ -1495,7 +1457,6 @@ impl gpui_kit::Render for SettingsView {
                 .p_6()
                 .gap_4()
                 .child(self.render_account_card(cx))
-                .child(self.render_appearance_card(cx))
                 .child(self.render_dir_card(cx))
                 .child(self.render_naming_card(cx))
                 .child(self.render_proxy_card(cx))
