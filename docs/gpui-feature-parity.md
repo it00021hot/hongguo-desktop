@@ -51,6 +51,7 @@
 | 9 | 单实例：Tauri `tauri-plugin-single-instance`（第二次启动前置已有窗口）；GPUI 第二次启动撞库锁 → 报错退出（用户视角「点图标没反应」） | `crates/hongguo-tauri/src/lib.rs:38-40,288-295` | ✅ 2026-10-17（`src/single_instance.rs`：命名互斥体 + 命名事件；第二进程置位即退、**早于开库**；首实例轮询消费 → 显示 + 还原最小化 + 聚焦。真机 A/B 双启验证） |
 | 10 | 看完自动删除：设置页开关 `autoDeleteAfterPlay` 在 Tauri 播放到底时真删本地成品文件（`player-page.tsx:409-420` + `delete_episode`）；GPUI 的同一开关**无任何消费方**（死开关） | `crates/hongguo-gpui/src/home/playback.rs`（改前全仓仅设置页引用） | ✅ 2026-10-17（`advance_after_end` 顶部接上，同 Tauri 顺序：先删再连播；复用 service `cleanup::delete_episode`。真机：预置 completed 任务 + 探针文件，4 倍速播到底 → 文件被删 + 提示条 + 连播照常） |
 | 11 | 本地成品播放：Tauri「本地成品优先，其次在线流」（`play_service::local::resolve_play`，已下载的集走 `hongguo-local://`，离线可播/秒开）；GPUI 起播链只走 `online::prepare`，全仓无一处读 `completed_path` | `crates/hongguo-service/src/play_service/local.rs` vs `crates/hongguo-gpui/src/home/playback.rs` | ✅ 2026-10-17（引擎加字节层 `ByteSource`（Online/Local）+ `PlaySource` 公开面；壳起播先查 `completed_path` 且文件确在 → 本地播放，档位表为空；陈旧记录回落在线流）。真机：640×360 本地 HEVC 样本 → 「头部就绪 0ms / 640x360 1ch」+ 彩条截图；播完连播回在线流同轮验证 |
+| 12 | 同剧切集不闪封面：Tauri `use-frame-hold` 的显隐真值表（切集定格上一帧顶住、切剧立刻走封面）；GPUI 一切换就清帧 → 每次切集闪封面（Tauri 已修、GPUI 带着） | `src/features/player/hooks/use-frame-hold.ts`（含 `use-frame-hold.test.ts`）vs `home/stage.rs` video_ready | ✅ 2026-10-17（`hold_last_frame`：play_target 按同剧判定保留/清帧；新集首帧、失败、离开首页落下）。真机：切集间隙拍到定格末帧、切剧拍到新剧封面（`HONGGUO_SHOT_PANEL=next-series` 探针） |
 
 ### 下一步（本轮发现，尚未开工）
 
