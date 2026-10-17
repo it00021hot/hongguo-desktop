@@ -72,6 +72,8 @@ impl super::HomeView {
                 if first {
                     log::info!("[Home] 首帧进入 view——video_ready 即为 true");
                 }
+                // 新集首帧出画：定格帧交棒（Tauri FrameHold 淡出同款）
+                self.hold_last_frame = false;
                 self.frame = Some(frame);
                 self.save_progress_maybe();
                 // 弹幕 tick：入场 + 在飞推进（Frame 事件即渲染节拍）
@@ -88,6 +90,8 @@ impl super::HomeView {
             }
             PlayerEvent::Failed(msg) => {
                 self.buffering = false;
+                // 失败落封面：定格帧此时只会盖住错误态（Tauri 真值表 error 档）
+                self.hold_last_frame = false;
                 // 引擎致命失败即自停（shutdown），封面背后不会再有画面——
                 // 失败必须落可见错误态：只写 pending_title 的话，那行小徽标
                 // 随 switching 消失，用户看到的就是「无声无息卡在封面」

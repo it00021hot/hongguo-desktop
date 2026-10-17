@@ -863,6 +863,14 @@ impl Shell {
             .update(cx, |view, cx| view.debug_set_auto_delete(window, cx));
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=next-series`）：
+    /// 切到信息流下一条（换剧）——验切剧走封面、不留上一部的定格帧。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_next_series(&mut self, cx: &mut App) {
+        self.dest = Dest::Home;
+        self.feed.update(cx, |home, cx| home.step(1, cx));
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。

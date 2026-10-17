@@ -98,9 +98,12 @@ impl super::HomeView {
         // 设备释放、事件通道关闭（循环自灭）
         self.epoch.fetch_add(1, Ordering::Relaxed);
         self.player = None;
+        // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
+        // 定格帧是「同剧切集」专属，离开时一并落下）
         self.frame = None;
         #[cfg(target_os = "windows")]
         self.clear_frame_image();
+        self.hold_last_frame = false;
         self.switching = false;
         self.buffering = false;
         self.scrubbing = None;
@@ -179,7 +182,7 @@ impl super::HomeView {
 
     /// 滚轮切剧。连播锁定时语义变为切集，不跟随换剧（冷却见
     /// [`Self::wheel_cooldown_ready`]，由舞台层滚轮入口先行裁决）。
-    pub(super) fn step(&mut self, dir: i32, cx: &mut Context<Self>) {
+    pub(crate) fn step(&mut self, dir: i32, cx: &mut Context<Self>) {
         if self.in_binge() {
             // Tauri 同款：滚轮也是「用户在场」，切集时唤醒悬浮层
             self.wake_controls(cx);
@@ -291,10 +294,20 @@ impl super::HomeView {
                 }
             });
         }
-        // 旧的帧立即退场：切换期间画面上是新目标的封面，不是上一部的残帧
-        self.frame = None;
-        #[cfg(target_os = "windows")]
-        self.clear_frame_image();
+        // 旧帧退场（Tauri use-frame-hold 同款真值表）：
+        // - 切剧：立刻走新剧封面，上一部的残帧绝不许跨剧泄漏；
+        // - 同剧切集/换清晰度：保留上一集末帧顶住画面（`hold_last_frame`），
+        //   新集首帧出画即接棒——这才是「切集不闪封面」。
+        let same_series = self
+            .now
+            .as_ref()
+            .is_some_and(|n| n.series_id == item.series_id);
+        if !same_series {
+            self.frame = None;
+            #[cfg(target_os = "windows")]
+            self.clear_frame_image();
+        }
+        self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
             "正在准备…".to_string()
         } else {
@@ -782,9 +795,8 @@ impl super::HomeView {
         if self.downloads_open {
             return;
         }
-        self.frame = None;
-        #[cfg(target_os = "windows")]
-        self.clear_frame_image();
+        // 帧不清：同剧连播由 `play_target` 按「同剧切集」保住末帧顶住画面
+        //（Tauri use-frame-hold 同款；切下一季/信息流下一条时那边会清）。
         // 防重入：Ended 只在时钟走完才发，但引擎收尾、通道重连都可能让同一集
         // 的 Ended 再来一次——那时 vid_index 还停在旧值，会把刚起播的下一集
         // 又推进一格（连着跳集，看着就是「内容来回变」）。切换途中直接吞掉。

@@ -137,6 +137,10 @@ pub(crate) fn install(
                             feed.update(cx, |shell, cx| shell.debug_set_auto_delete(window, cx));
                         });
                     }
+                    // 切剧：验「换剧立刻走新剧封面」（上一部定格帧不跨剧泄漏）。
+                    "next-series" => {
+                        feed.update(cx, |shell, cx| shell.debug_next_series(cx));
+                    }
                     _ => {}
                 }
             }

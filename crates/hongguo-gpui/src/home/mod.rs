@@ -381,6 +381,9 @@ pub struct HomeView {
     portrait_full: bool,
     /// 上次落窗用的竖屏比例（变化 >1% 才重适配，Tauri REFIT_DELTA 同值）。
     portrait_aspect_last: f64,
+    /// 同剧切集保留上一集末帧顶住画面（Tauri `use-frame-hold` 同款：切集
+    /// 全程不闪封面，直到新集首帧出画；切剧仍立刻走封面）。
+    hold_last_frame: bool,
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
@@ -617,6 +620,7 @@ impl HomeView {
             portrait: None,
             portrait_full: false,
             portrait_aspect_last: 0.0,
+            hold_last_frame: false,
             immersive: false,
             pinned: false,
             downloads: Arc::new(Vec::new()),

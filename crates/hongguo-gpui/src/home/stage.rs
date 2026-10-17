@@ -232,7 +232,10 @@ impl super::HomeView {
         cx: &Context<Self>,
     ) -> gpui_kit::Div {
         let theme = cx.theme();
-        let video_ready = self.frame.is_some() && !self.switching;
+        // 同剧切集期间定格帧继续上屏（Tauri FrameHold 同款）：`hold_last_frame`
+        // 由 play_target 按「同剧」置位、新集首帧/失败时落下；切剧不置位，
+        // 走的仍是「立刻换新剧封面」。
+        let video_ready = self.frame.is_some() && (!self.switching || self.hold_last_frame);
         // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
         // contain 保宽高比在转换端算）
         #[cfg(target_os = "windows")]
