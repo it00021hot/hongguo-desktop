@@ -585,7 +585,11 @@ impl super::HomeView {
                                             .is_none_or(|i| i.read(cx).value().trim().is_empty());
                                         Button::new("stage-danmaku-send")
                                             .label("发送")
-                                            .ghost()
+                                            // Tauri EmojiSendBox 的发送钮是默认
+                                            // primary（深色主题白底胶囊），空文本
+                                            // 时整体 50% 透明——ghost 文本态与真机
+                                            // 不一致（并排对拍）
+                                            .primary()
                                             .small()
                                             .rounded_full()
                                             .disabled(empty || self.danmaku_sending)
@@ -899,21 +903,24 @@ impl super::HomeView {
                         //——直接写 hover 精修会 panic（div 只许设一次 hover，
                         // 组件内部已设），不写则指针停在按钮上时状态变化不可见
                         //（用户实测「移走鼠标才变化」的根因）
-                        Button::new("stage-danmaku")
-                            .icon(gpui_kit::assets::IconName::MessageSquareText)
-                            .ghost()
-                            .small()
-                            .selected(self.danmaku_on)
-                            .tooltip(if self.danmaku_on {
-                                "关闭弹幕"
-                            } else {
-                                "开启弹幕"
-                            })
+                        // 自绘开关钮（Tauri IconButton 同款）：透明底、开=纯白
+                        // 图标、关=40% 白，hover 铺 20% 白。组件 `selected` 态
+                        // 会带一块常驻底色，与 Tauri 真机不一致（并排对拍）
+                        div()
+                            .id("stage-danmaku")
+                            .flex()
+                            .w(gpui_kit::px(32.0))
+                            .h(gpui_kit::px(28.0))
+                            .justify_center()
+                            .items_center()
+                            .rounded(gpui_kit::px(6.0))
+                            .cursor_pointer()
                             .text_color(if self.danmaku_on {
                                 gpui_kit::rgba(0xffffffff)
                             } else {
                                 gpui_kit::rgba(0xffffff66)
                             })
+                            .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.danmaku_on = !this.danmaku_on;
                                 // 关=清屏+游标落当前位（重开不补放积压）；落盘
@@ -930,6 +937,12 @@ impl super::HomeView {
                                 this.persist_prefs();
                                 cx.notify();
                             }))
+                            .child(
+                                gpui_kit::component::Icon::new(
+                                    gpui_kit::assets::IconName::MessageSquareText,
+                                )
+                                .small(),
+                            )
                     })
                     .child({
                         // 音量（Tauri VolumePopup 同款）：图标按钮单击=静音切换；
@@ -1048,9 +1061,10 @@ impl super::HomeView {
                         // 另一档「应用全屏」chrome 保留）；图标随状态换
                         Button::new("stage-fullscreen")
                             .icon(if self.fullscreen {
-                                gpui_kit::assets::IconName::Minimize2
+                                // Tauri 用四角收拢/张开的 Minimize/Maximize
+                                gpui_kit::assets::IconName::Minimize
                             } else {
-                                gpui_kit::assets::IconName::Maximize2
+                                gpui_kit::assets::IconName::Maximize
                             })
                             .ghost()
                             .small()
