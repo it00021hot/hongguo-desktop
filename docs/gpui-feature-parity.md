@@ -59,6 +59,9 @@
 - `PlayRequest.file_path` 直传路径那条分支（Tauri `resolve_play` 的第一段：
  调用方直接给成品路径，合并产物/指定文件用）GPUI 尚无对应入口——先用
  `completed_path`（队列命中）覆盖了常规路径，等确认合并产物那条链谁在用再补。
+- 顶部 2px 加载细条（Tauri `loadbar.tsx` / `hg-loadbar`：切换在途/首帧未出/
+  缓冲中亮；中央「正在缓冲 X%」胶囊已按用户要求移除）。GPUI 只有中央 spinner
+  与右上「缓冲中」角标，没有这条细条——属可见的形态差异，待做。
 
 ### 顺带修（本轮验证中发现）
 
