@@ -38,11 +38,35 @@ pub fn stream_retry_backoff(attempt: u32) -> Duration {
     Duration::from_millis(300 * (attempt as u64 + 1))
 }
 
-/// 按配置构造 HTTP client。
+/// 按配置取 HTTP client（进程级按解析后的代理地址缓存）。
 ///
-/// 每次调用都按当前配置新建：用户改完代理设置立即生效，不必重启。
-/// API 解析、视频下载、在线播放都走它，所以它待在网络层而不是某个业务里。
+/// `reqwest::Client` 自带连接池，**每次新建等于把 TLS 握手/代理连接全部
+/// 付一遍**——预约页翻页、榜单连打这类连续请求被整体放大（issue #11 的
+/// 「已上线 5–8 秒」里相当一块在这）。缓存键是解析后的代理地址：用户改
+/// 代理设置即得到新 client（旧连接池随引用释放），免重启；构造失败不缓存，
+/// 下次调用重试。
 pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<reqwest::Client> {
+    static CLIENTS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
+    > = std::sync::OnceLock::new();
+    let key = config.resolved().unwrap_or_default();
+    let clients = CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut guard = clients
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = guard.get(&key) {
+        return Ok(client.clone());
+    }
+    let client = build_client_uncached(config)?;
+    guard.insert(key, client.clone());
+    Ok(client)
+}
+
+/// 真构造（`build_client` 的缓存未命中分支）：UA 与超时是全局契约，
+/// 不随代理配置变。
+fn build_client_uncached(
+    config: &hongguo_common::model::ProxyConfig,
+) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .user_agent(hongguo_signer::VIDEO_UA)
         .timeout(Duration::from_secs(30))
