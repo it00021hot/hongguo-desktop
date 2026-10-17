@@ -779,6 +779,35 @@ impl super::HomeView {
                         .into_any_element()
                 }),
             )
+            // 暂停时的快捷键提示胶囊（Tauri KeyboardHint 同款：38% 高度居中、
+            // 不拦鼠标；小屏/竖屏装不下不渲染，错误态让位错误条）。文案与
+            // Tauri 同一条静态提示（那边快捷键同样可自定义，提示也是默认键位口径）。
+            .children(
+                (self.player.as_ref().is_some_and(|p| p.is_paused())
+                    && self.play_error.is_none()
+                    && !in_mini
+                    && !in_portrait)
+                    .then(|| {
+                        div()
+                            .absolute()
+                            .top(gpui_kit::relative(0.38))
+                            .left_0()
+                            .right_0()
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .rounded_full()
+                                    .bg(gpui_kit::rgba(0x0000008c))
+                                    .px_4()
+                                    .py_1p5()
+                                    .text_xs()
+                                    .text_color(gpui_kit::rgba(0xffffffbf))
+                                    .child("空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 切剧/切集 · 单击画面选剧 · Esc 退出选剧"),
+                            )
+                            .into_any_element()
+                    }),
+            )
             // 弹幕设置面板开着：同款捕获层（点齿轮外的任意处=关闭；齿轮
             // 本体在层下面，点击被层拦下即「点了只关闭」，与 Tauri 点外
             // 关闭语义一致）
