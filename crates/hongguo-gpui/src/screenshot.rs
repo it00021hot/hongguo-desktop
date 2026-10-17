@@ -37,6 +37,9 @@ pub(crate) fn install(
     let panel = std::env::var("HONGGUO_SHOT_PANEL").unwrap_or_default();
 
     cx.spawn(async move |cx| {
+        // scroll-return 探针：第 1 轮滚一把、第 2 轮往返一次（见循环内注释）
+        #[allow(unused_mut, reason = "只有 scroll-return 分支会置位")]
+        let mut scroll_ok = false;
         cx.background_executor().timer(start_delay).await;
         if pause_ui {
             feed.update(cx, |shell, cx| shell.debug_pause_player(cx));
@@ -151,8 +154,54 @@ pub(crate) fn install(
                     "related-upcoming" => {
                         feed.update(cx, |shell, cx| shell.debug_open_upcoming_related(cx));
                     }
+                    // 浏览位置保留：先滚一把（第 1 张 = 滚动后），下一张前
+                    //「去首页再回来」，比对两张是否同一位置（Tauri
+                    // use-scroll-restore 的会话级记忆同题）。
+                    "scroll-return" => {
+                        scroll_ok = {
+                            let dy = std::env::var("HONGGUO_SHOT_SCROLL")
+                                .ok()
+                                .and_then(|v| v.parse::<f32>().ok())
+                                .unwrap_or(900.0);
+                            let _ = window.update(cx, |_, window, cx| {
+                                let size = window.viewport_size();
+                                let center = gpui_kit::point(size.width / 2.0, size.height / 2.0);
+                                window.dispatch_event(
+                                    gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                                        position: center,
+                                        pressed_button: None,
+                                        modifiers: Default::default(),
+                                    }),
+                                    cx,
+                                );
+                                window.dispatch_event(
+                                    gpui_kit::PlatformInput::ScrollWheel(
+                                        gpui_kit::ScrollWheelEvent {
+                                            position: center,
+                                            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                                gpui_kit::px(0.0),
+                                                gpui_kit::px(-dy),
+                                            )),
+                                            modifiers: Default::default(),
+                                            touch_phase: gpui_kit::TouchPhase::Started,
+                                        },
+                                    ),
+                                    cx,
+                                );
+                            });
+                            true
+                        };
+                    }
                     _ => {}
                 }
+            }
+            // 第二轮：离开再回来，验滚动位置是否保住（Tauri sessionStorage 同题）
+            if i == 2 && scroll_ok {
+                let home = std::env::var("HONGGUO_SCROLL_HOME").unwrap_or_else(|_| "home".into());
+                let back = std::env::var("HONGGUO_SCROLL_BACK").unwrap_or_else(|_| "browse".into());
+                feed.update(cx, |shell, cx| shell.debug_switch_dest(&home, cx));
+                feed.update(cx, |shell, cx| shell.debug_switch_dest(&back, cx));
+                log::info!("[ScrollProbe] 已往返 {home} → {back}");
             }
             let shot = window.update(cx, |_, window, cx| {
                 // 必须先强制重绘：窗口被遮挡/失焦时 AppKit 会暂停绘制，

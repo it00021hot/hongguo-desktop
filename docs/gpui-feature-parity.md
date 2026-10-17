@@ -202,6 +202,14 @@ ShowWindow」的既有写法未动（已实测可用，属另一批次）。
   形态视频 `cover` 拉满 480×270（竖屏剧在小窗不留黑边），其余形态仍
   `contain`；转换端加 `cover_fit`、显示端按形态选 `ObjectFit`。真机：本地
   360×640 样本进小屏，彩条贴满窗口。
+- ✅ 2026-10-17 相关推荐跳详情补 prefill（对齐 Tauri `a21ddf2` /
+  `relatedDetailSearch`）：`open_related` 必带 title/cover/tags/desc 快照，
+  未上线剧走「即将上线 + 预约」降级视图而不是整页报错；`HONGGUO_SHOT_PANEL=
+  related-upcoming` 真机拍到降级视图。
+- 🔍 2026-10-17 浏览位置保留（Tauri `use-scroll-restore` sessionStorage 口径：
+  去播放再回列表保留位置）——GPUI 用 `HONGGUO_SHOT_PANEL=scroll-return`
+  （滚一把 → 往返首页 → 再抓帧）核对：前后两张截图逐像素同位置，
+  gpui 的元素状态按 ElementId 跨挂载保留，**无需对齐动作**。
 - 顶栏分类 tab：Tauri = 固定顶栏 portal 常显；GPUI = 舞台顶部悬浮、随悬浮层显隐
   （`home/stage.rs` 注释自述为适配 TitleBar 拖拽区的有意形态）。**待用户裁决**是否改为
   常显顶栏（需要自绘标题栏拖拽区）。

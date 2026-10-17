@@ -890,6 +890,15 @@ impl Shell {
         }
     }
 
+    /// 取证辅助（screenshot feature）：按 `HONGGUO_PAGE` 的键切目的地
+    ///（验「去播放再回来」的浏览位置保留）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_switch_dest(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(dest) = Dest::from_key(key) {
+            self.enter_dest(dest, cx);
+        }
+    }
+
     /// 预览种子分发（screenshot feature）：rank 场景切到排行榜并灌假榜单，
     /// 其余全走首页。未知场景键的错误向上传（矩阵写错键名启动即报，
     /// 开发工具宁可显性失败）。
