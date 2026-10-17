@@ -1,5 +1,5 @@
-//! HEVC 解码：同步解码会话（[`Decompressor`]，VTDecompressionSession）与
-//! 播放末端的逐帧解码器（[`HevcFrameDecoder`] / [`DecodedFrame`]）。
+//! HEVC / H.264 解码：同步解码会话（[`Decompressor`]，VTDecompressionSession）
+//! 与播放末端的逐帧解码器（[`FrameDecoder`] / [`DecodedFrame`]）。
 //!
 //! 解码输出回调 [`decode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>`
 //! 队列——回调与所属类型必须同文件。
@@ -10,6 +10,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use core_video::pixel_buffer::{CVPixelBuffer, CVPixelBufferRef};
 
 use hongguo_common::AppResult;
+use hongguo_media_platform_api::video::VideoCodec;
 
 use super::ffi;
 use super::pipeline::cm_time_secs;
@@ -23,7 +24,7 @@ use super::pixel::{Pb, Transfer, iosurface_attrs, make_dict, make_int, os};
 ///
 /// 排障必需：软解在 1080p HEVC 上是 46.8ms/帧（实时线 33ms），表现是
 /// 「画面越播越落后音频」，而日志里光看「首帧正常」根本看不出来。
-unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef) {
+unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef, label: &str) {
     unsafe {
         let mut value: ffi::CFTypeRef = std::ptr::null();
         let status = ffi::VTSessionCopyProperty(
@@ -36,7 +37,7 @@ unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef) {
             let hw = ffi::CFBooleanGetValue(value as ffi::CFBooleanRef) != 0;
             ffi::CFRelease(value);
             log::info!(
-                "[Platform/vt] HEVC 解码会话：{}",
+                "[Platform/vt] {label} 解码会话：{}",
                 if hw {
                     "硬件解码"
                 } else {
@@ -89,28 +90,53 @@ unsafe extern "C" fn decode_cb(
 }
 
 impl Decompressor {
-    /// 用 `hvcC` 参数集（VPS/SPS/PPS 裸 NAL）建同步解码会话，输出 NV12。
+    /// 用参数集（HEVC 的 VPS/SPS/PPS，或 H.264 的 SPS/PPS，均为裸 NAL）建
+    /// 同步解码会话，输出 NV12。
     ///
     /// `full_range` 选输出像素区间：`false` = VideoRange（'420v'，转码链
     /// 既定格式）；`true` = FullRange（'420f'，GPU 合成器直采样要求的形态，
-    /// 见 [`HevcFrameDecoder`]）。
-    pub(super) unsafe fn new(parameter_sets: &[Vec<u8>], full_range: bool) -> AppResult<Self> {
+    /// 见 [`FrameDecoder`]）。
+    pub(super) unsafe fn new(
+        codec: VideoCodec,
+        parameter_sets: &[Vec<u8>],
+        full_range: bool,
+    ) -> AppResult<Self> {
         unsafe {
+            let label = match codec {
+                VideoCodec::Hevc => "HEVC",
+                VideoCodec::H264 => "H.264",
+            };
             let sizes: Vec<usize> = parameter_sets.iter().map(|n| n.len()).collect();
             let ptrs: Vec<*const u8> = parameter_sets.iter().map(|n| n.as_ptr()).collect();
             let mut format = std::ptr::null_mut();
-            os(
-                ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                    ffi::kCFAllocatorDefault,
-                    parameter_sets.len(),
-                    ptrs.as_ptr(),
-                    sizes.as_ptr(),
-                    4,
-                    std::ptr::null(),
-                    &mut format,
-                ),
-                "建 HEVC 格式描述",
-            )?;
+            // 两种编码的参数集顺序各有讲究：HEVC 要 VPS/SPS/PPS，H.264 要
+            // SPS/PPS（引擎侧提取函数按这个次序给出）。样本长度前缀恒 4
+            // （hvcC/avcC 声明的 length_size，引擎侧提取时已归一校验）。
+            match codec {
+                VideoCodec::Hevc => os(
+                    ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                        ffi::kCFAllocatorDefault,
+                        parameter_sets.len(),
+                        ptrs.as_ptr(),
+                        sizes.as_ptr(),
+                        4,
+                        std::ptr::null(),
+                        &mut format,
+                    ),
+                    "建 HEVC 格式描述",
+                )?,
+                VideoCodec::H264 => os(
+                    ffi::CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                        ffi::kCFAllocatorDefault,
+                        parameter_sets.len(),
+                        ptrs.as_ptr(),
+                        sizes.as_ptr(),
+                        4,
+                        &mut format,
+                    ),
+                    "建 H.264 格式描述",
+                )?,
+            };
 
             let pixel_format = make_int(if full_range {
                 ffi::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -157,8 +183,8 @@ impl Decompressor {
             ffi::CFRelease(attrs as ffi::CFTypeRef);
             ffi::CFRelease(iosurface as ffi::CFTypeRef);
             ffi::CFRelease(pixel_format as ffi::CFTypeRef);
-            os(status, "建 HEVC 解码会话")?;
-            log_hardware(session);
+            os(status, "建解码会话")?;
+            log_hardware(session, label);
 
             Ok(Decompressor {
                 session,
@@ -319,15 +345,16 @@ impl std::fmt::Debug for DecodedFrame {
     }
 }
 
-/// HEVC 逐帧解码器（播放末端；转码链走 [`super::transcode_h264`]，不经这里）。
+/// HEVC / H.264 逐帧解码器（播放末端；转码链走 [`super::transcode_h264`]，
+/// 不经这里）。
 ///
-/// 同步解码：[`HevcFrameDecoder::decode`] 返回即该样本的全部输出已就绪。
+/// 同步解码：[`FrameDecoder::decode`] 返回即该样本的全部输出已就绪。
 /// 帧经 NV12 CVPixelBuffer（IOSurface 背板）交付，GPU 可直接采样——
 /// GPUI 的 `surface()` 元素零拷贝上屏就吃这个形态。
 ///
 /// `full_range = true` 时请求 FullRange NV12（'420f'）：GPU 合成器的
 /// YCbCr shader 断言全区间；转码链保持 '420v' 不受影响。
-pub struct HevcFrameDecoder {
+pub struct FrameDecoder {
     inner: Decompressor,
     /// 420f 转换会话：VT 对部分片源不理会 FullRange 请求（输出仍 '420v'），
     /// 而 GPU 合成器断言全区间——首帧发现格式不符时按需建会话转换。
@@ -338,13 +365,17 @@ pub struct HevcFrameDecoder {
 // VT 解码会话与格式描述都是 CF 对象，CoreFoundation 引用计数线程安全，
 // Apple 文档明示会话可跨线程使用；内部通道（Receiver/Box<Sender>）本身
 // Send。跨线程约束（async 任务里持解码器）由本声明给出。
-unsafe impl Send for HevcFrameDecoder {}
+unsafe impl Send for FrameDecoder {}
 
-impl HevcFrameDecoder {
-    /// 用参数集（`hvcC` 裸 NAL：VPS/SPS/PPS）建解码会话。
-    pub fn open(parameter_sets: &[Vec<u8>], full_range: bool) -> AppResult<Self> {
+impl FrameDecoder {
+    /// 用参数集（HEVC 的 VPS/SPS/PPS 或 H.264 的 SPS/PPS，裸 NAL）建解码会话。
+    pub fn open(
+        codec: VideoCodec,
+        parameter_sets: &[Vec<u8>],
+        full_range: bool,
+    ) -> AppResult<Self> {
         Ok(Self {
-            inner: unsafe { Decompressor::new(parameter_sets, full_range)? },
+            inner: unsafe { Decompressor::new(codec, parameter_sets, full_range)? },
             full_range_transfer: None,
             actual_format_logged: false,
         })

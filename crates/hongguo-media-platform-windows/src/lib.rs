@@ -1,8 +1,8 @@
 #![cfg(target_os = "windows")]
 //! Windows 平台原生实现（hongguo-media-platform-windows crate）。
 //!
-//! - Media Foundation（[`mf`]）：HEVC 硬解（播放 / 转码）→ NV12 → H.264
-//!   编码（硬件 MFT 优先；软编 h264_mf 仅测试通道），AAC 解码 MFT
+//! - Media Foundation（[`mf`]）：HEVC / H.264 播放解码 + HEVC 转码硬解 →
+//!   NV12 → H.264 编码（硬件 MFT 优先；软编 h264_mf 仅测试通道），AAC 解码 MFT
 //! - WIC（[`cover`]）：HEIC 封面平台级静图解码（HEIF/HEVC 扩展在则走系统
 //!   解码器，运行时探测、可失败静默）
 //!
@@ -17,7 +17,7 @@ pub mod video;
 
 pub use audio::AacDecoder;
 pub use cover::heic_to_jpeg;
-pub use video::HevcDecoder;
+pub use video::VideoFrameDecoder;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码。
 ///

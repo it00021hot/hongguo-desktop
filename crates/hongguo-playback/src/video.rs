@@ -1,4 +1,4 @@
-//! 视频轨：VT 逐帧解码 + 按主时钟、**按显示序**上屏。
+//! 视频轨：平台逐帧解码（HEVC / H.264，VT / MF）+ 按主时钟、**按显示序**上屏。
 //!
 //! 解码从**起点前的最近关键帧**起步（关键帧之前的样本是必需参考帧，产物
 //! 帧按 PTS 过滤掉不上屏）。节奏对主时钟：`now() >= 帧显示时间` 才发出去。
@@ -15,7 +15,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hongguo_common::AppResult;
-use hongguo_media_platform::platform::video::{DecoderInit, HevcDecoder, VideoFrame};
+use hongguo_media_platform::platform::video::{
+    DecoderInit, VideoCodec, VideoFrame, VideoFrameDecoder,
+};
 use hongguo_video::sample_table::TrackInfo;
 
 use crate::player::{PlayerEvent, Shared};
@@ -53,18 +55,22 @@ pub(crate) fn start_index(info: &TrackInfo, start_secs: f64) -> usize {
 /// 平台解码器初始化参数的 owned 形态（视频任务跨执行器搬运；借用形态见
 /// `platform::video::DecoderInit`）。
 pub(crate) struct DecoderInitOwned {
+    pub(crate) codec: VideoCodec,
     pub(crate) parameter_sets: Vec<Vec<u8>>,
-    pub(crate) hvcc: Option<Vec<u8>>,
+    /// 序列头原始载荷（HEVC 的 hvcC / H.264 的 avcC；Windows MF 的形态，
+    /// macOS VT 不吃）。
+    pub(crate) sequence_header: Option<Vec<u8>>,
     pub(crate) length_size: usize,
     pub(crate) width: usize,
     pub(crate) height: usize,
 }
 
 impl DecoderInitOwned {
-    fn open(&self) -> AppResult<HevcDecoder> {
-        HevcDecoder::open(DecoderInit {
+    fn open(&self) -> AppResult<VideoFrameDecoder> {
+        VideoFrameDecoder::open(DecoderInit {
+            codec: self.codec,
             parameter_sets: &self.parameter_sets,
-            hvcc: self.hvcc.as_deref(),
+            sequence_header: self.sequence_header.as_deref(),
             length_size: self.length_size,
             width: self.width,
             height: self.height,

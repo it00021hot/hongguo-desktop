@@ -21,4 +21,4 @@ pub use audio::AudioDecoder;
 pub use transcode::PlatformRequest;
 #[cfg(target_os = "windows")]
 pub use video::Nv12Plane;
-pub use video::{DecoderInit, FrameBuffer, VideoDecoder, VideoFrame};
+pub use video::{DecoderInit, FrameBuffer, VideoCodec, VideoDecoder, VideoFrame};

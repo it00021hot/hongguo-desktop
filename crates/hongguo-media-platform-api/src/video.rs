@@ -6,7 +6,7 @@
 //! 实现以固有方法给出，decode/finish 为契约行为）；具体类型分居
 //! `hongguo-media-platform-macos` / `hongguo-media-platform-windows`，
 //! 门面 `hongguo-media-platform` 按编译目标 re-export
-//! （`hongguo_media_platform::platform::video::HevcDecoder`）。
+//! （`hongguo_media_platform::platform::video::VideoFrameDecoder`）。
 //!
 //! 统一调用契约不代表统一底层内存布局：macOS 的 CVPixelBuffer 路径与
 //! Windows 的 NV12 系统内存帧路径各自保留优势，下游按具体类型静态分发。
@@ -58,13 +58,24 @@ pub struct Nv12Plane {
     pub height: usize,
 }
 
+/// 视频编码：解码侧要按它选 MFT / VT 会话与序列头形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoCodec {
+    /// H.265（HEVC）：序列头是 hvcC。
+    Hevc,
+    /// H.264（AVC）：序列头是 avcC。
+    H264,
+}
+
 /// 建解码器的参数。
 pub struct DecoderInit<'a> {
+    pub codec: VideoCodec,
     /// 参数集裸 NAL（VPS/SPS/PPS）：macOS VT 的指定形态。
     pub parameter_sets: &'a [Vec<u8>],
-    /// hvcC 原始载荷：Windows MF 的 `MF_MT_MPEG_SEQUENCE_HEADER` 形态。
-    /// 两端各自只认自己那份，缺了对应端会走带内参数集等兜底。
-    pub hvcc: Option<&'a [u8]>,
+    /// 序列头原始载荷（HEVC 的 hvcC / H.264 的 avcC）：Windows MF 的
+    /// `MF_MT_MPEG_SEQUENCE_HEADER` 形态。两端各自只认自己那份，缺了对应端
+    /// 会走带内参数集等兜底。
+    pub sequence_header: Option<&'a [u8]>,
     /// 样本的 NAL 长度前缀字节数（带内参数集前插时用，1–4）。
     pub length_size: usize,
     /// 轨道声明分辨率（MF 输入类型要帧尺寸；VT 自行从参数集读）。
@@ -75,10 +86,10 @@ pub struct DecoderInit<'a> {
     pub full_range: bool,
 }
 
-/// 帧流解码器契约：有状态会话的生命周期与行为。
+/// 帧流解码器契约（HEVC / H.264）：有状态会话的生命周期与行为。
 ///
 /// 构造（open）由各平台实现以固有方法给出——参数形态两端不同（VT 吃
-/// 裸参数集，MF 吃 hvcC + 帧尺寸），强行统一构造签名只会把平台细节
+/// 裸参数集，MF 吃序列头 + 帧尺寸），强行统一构造签名只会把平台细节
 /// 泄进契约。本 trait 约束的是会话行为：逐样本解码与冲尾。
 pub trait VideoDecoder: Send {
     /// 解一个样本（MP4 长度前缀 NAL 原样字节），返回本次产生的帧（解码序，

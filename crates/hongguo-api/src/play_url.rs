@@ -67,7 +67,15 @@ pub async fn fetch_play_url(
     if let Some((at, play)) = batch_cache().lock().remove(vid)
         && at.elapsed() < BATCH_TTL
     {
-        log::info!("[PlayUrl] {vid} 命中批量预取（定义 {}）", play.definition);
+        log::info!(
+            "[PlayUrl] {vid} 命中批量预取（定义 {}，编码 {}）",
+            play.definition,
+            if play.codec.is_empty() {
+                "未标"
+            } else {
+                &play.codec
+            }
+        );
         return Ok(play);
     }
     batch_cache().lock().remove(vid);

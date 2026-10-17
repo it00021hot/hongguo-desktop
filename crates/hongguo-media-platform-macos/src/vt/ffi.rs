@@ -184,6 +184,18 @@ unsafe extern "C" {
         extensions: CFDictionaryRef,
         formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
     ) -> OSStatus;
+    /// H.264 参数集建格式描述。参数集顺序必须是 SPS 在前、PPS 在后；
+    /// `NALUnitHeaderLength` 传样本长度前缀字节数（本仓库的 MP4 样本恒 4）。
+    /// 与 HEVC 版本不同：没有 `extensions` 参数，输出类型是
+    /// `CMFormatDescriptionRef`（两者都是 `*mut c_void`）。
+    pub fn CMVideoFormatDescriptionCreateFromH264ParameterSets(
+        allocator: CFAllocatorRef,
+        parameterSetCount: usize,
+        parameterSetPointers: *const *const u8,
+        parameterSetSizes: *const usize,
+        NALUnitHeaderLength: i32,
+        formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
+    ) -> OSStatus;
     /// H.264 描述里的参数集（SPS/PPS）。总数经 `parameterSetCountOut` 返回，
     /// 没有独立的 Count 函数。
     pub fn CMVideoFormatDescriptionGetH264ParameterSetAtIndex(

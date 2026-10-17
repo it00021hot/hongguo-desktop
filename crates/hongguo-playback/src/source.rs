@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use hongguo_common::{AppError, AppResult};
+use hongguo_media_platform::platform::video::VideoCodec;
 use hongguo_video::sample_table::TrackInfo;
 
 /// 单次 serve 拉取的窗口大小（对齐填充的分块口径）。
@@ -109,9 +110,12 @@ impl ByteSource {
 pub(crate) struct StreamMeta {
     pub video: TrackInfo,
     pub audio: Option<TrackInfo>,
+    /// 视频轨编码（选解码会话与序列头形态用）。
+    pub video_codec: VideoCodec,
     pub video_parameter_sets: Vec<Vec<u8>>,
-    /// hvcC 原始载荷（Windows MF 的序列头形态；macOS 不用）。
-    pub video_hvcc: Option<Vec<u8>>,
+    /// 序列头原始载荷（HEVC 的 hvcC / H.264 的 avcC；Windows MF 的形态，
+    /// macOS 不用）。
+    pub video_sequence_header: Option<Vec<u8>>,
     /// 样本 NAL 长度前缀字节数（带内参数集前插用）。
     pub video_length_size: usize,
 }
@@ -136,29 +140,43 @@ pub(crate) async fn open_stream(source: &ByteSource) -> AppResult<StreamMeta> {
         if let Ok(demuxed) = hongguo_media::demux::demux_bytes(&head)
             && let Some(video) = demuxed.video_track()
         {
-            if hongguo_media::hevc::is_hevc(&video.info.codec) {
-                let (nalus, length_size) =
-                    hongguo_media::hevc::param_nalus_from_head(&head, &video.info)?;
-                // hvcC 原始载荷尽力而为：Windows MF 走它做序列头，取不到
-                // 时解码端有带内参数集兜底
-                let hvcc = hongguo_media::hevc::hvcc_payload_from_head(&head, &video.info)
-                    .map_err(|e| {
-                        log::debug!("[Playback] hvcC 载荷取不到（走带内兜底）: {e}");
-                        e
-                    })
-                    .ok();
-                return Ok(StreamMeta {
-                    audio: demuxed.audio_track().map(|t| t.info.clone()),
-                    video_parameter_sets: nalus,
-                    video_hvcc: hvcc,
-                    video_length_size: length_size,
-                    video: video.info.clone(),
-                });
-            }
-            return Err(AppError::Media(format!(
-                "播放引擎只接 HEVC 轨（codec = {}）",
-                video.info.codec
-            )));
+            // 序列头原始载荷尽力而为：Windows MF 走它做序列头，取不到时
+            // 解码端有带内参数集兜底
+            let (codec, (nalus, length_size), sequence_header) =
+                if hongguo_media::hevc::is_hevc(&video.info.codec) {
+                    let (nalus, length_size) =
+                        hongguo_media::hevc::param_nalus_from_head(&head, &video.info)?;
+                    let hvcc = hongguo_media::hevc::hvcc_payload_from_head(&head, &video.info)
+                        .map_err(|e| {
+                            log::debug!("[Playback] hvcC 载荷取不到（走带内兜底）: {e}");
+                            e
+                        })
+                        .ok();
+                    (VideoCodec::Hevc, (nalus, length_size), hvcc)
+                } else if hongguo_media::h264::is_h264(&video.info.codec) {
+                    let (nalus, length_size) =
+                        hongguo_media::h264::param_nalus_from_head(&head, &video.info)?;
+                    let avcc = hongguo_media::h264::avcc_payload_from_head(&head, &video.info)
+                        .map_err(|e| {
+                            log::debug!("[Playback] avcC 载荷取不到（走带内兜底）: {e}");
+                            e
+                        })
+                        .ok();
+                    (VideoCodec::H264, (nalus, length_size), avcc)
+                } else {
+                    return Err(AppError::Media(format!(
+                        "播放引擎只接 HEVC / H.264 轨（codec = {}）",
+                        video.info.codec
+                    )));
+                };
+            return Ok(StreamMeta {
+                audio: demuxed.audio_track().map(|t| t.info.clone()),
+                video_codec: codec,
+                video_parameter_sets: nalus,
+                video_sequence_header: sequence_header,
+                video_length_size: length_size,
+                video: video.info.clone(),
+            });
         }
     }
     Err(AppError::Media("头部拿不到完整样本表（moov）".into()))

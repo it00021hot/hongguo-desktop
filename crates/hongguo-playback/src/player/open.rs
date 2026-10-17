@@ -33,10 +33,14 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
     let meta = open_stream(&source).await?;
     let video_info = meta.video;
     log::info!(
-        "[Playback] 头部就绪（{}ms）：{}x{} 音频{}",
+        "[Playback] 头部就绪（{}ms）：{}x{} {} 音频{}",
         t0.elapsed().as_millis(),
         video_info.width,
         video_info.height,
+        match meta.video_codec {
+            hongguo_media_platform::platform::video::VideoCodec::Hevc => "HEVC",
+            hongguo_media_platform::platform::video::VideoCodec::H264 => "H.264",
+        },
         meta.audio
             .as_ref()
             .map(|a| format!(" {}ch {}Hz", a.channels, a.sample_rate))
@@ -143,8 +147,9 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
         let shared = Arc::clone(&shared);
         let info = video_info.clone();
         let decoder_init = video::DecoderInitOwned {
+            codec: meta.video_codec,
             parameter_sets: meta.video_parameter_sets.clone(),
-            hvcc: meta.video_hvcc.clone(),
+            sequence_header: meta.video_sequence_header.clone(),
             length_size: meta.video_length_size,
             width: info.width as usize,
             height: info.height as usize,
