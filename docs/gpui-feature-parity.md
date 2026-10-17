@@ -102,11 +102,34 @@
 挪到实体更新之外；`mini`/`home/controls` 里同类「监听器内直接 SetWindowPos/
 ShowWindow」的既有写法未动（已实测可用，属另一批次）。
 
-附注（顶栏结构偏差，一并留给用户裁决）：Tauri 顶栏 = 固定常显的分类 tab 槽 +
-置顶钮 + 主题/语言 + 窗口钮；GPUI 顶栏是组件库 TitleBar（整条为平台拖拽区），
-只能放不可点内容——分类 tab 因此仍在舞台顶部悬浮层、置顶/主题入口分散在
-舞台/设置页。要完全对齐需要上游支持「拖拽区内的可点控件」（gpui-kit
-`TitleBar` 目前只会把整条标 Drag），或自绘标题栏并自己实现拖拽/双击最大化。
+### 顶栏结构（原「留待裁决」项，2026-10-17 已自绘落地，`aa54522`）
+
+自绘 44px 顶栏（Tauri `app-shell` header 逐项对齐）：
+
+- 分类 tab 槽：首页/排行榜/新剧的分类 tab 从舞台悬浮层与页面上移入顶栏
+  （Tauri `TopBarTabsPortal` 同位；竖屏隐藏槽，Tauri 4376496 同款）；
+- 右端：置顶（与小屏紧凑条共用状态）、外观三档菜单（跟随系统/亮色/暗色，
+  与设置页同一段 `ThemePref` 实现）、窗口钮（Min/Max/Close 走
+  WindowControlArea 交给 OS 原生处理——关闭照旧过 WM_CLOSE 退出确认守卫；
+  macOS 不画窗口钮、给原生红绿灯留 76px）；
+- 拖窗/双击：gpui 的 `start_window_move` 在 Windows 是 trait 默认空实现
+  （gpui-pre-windows 未覆写），只能走 win32 `ReleaseCapture +
+  WM_NCLBUTTONDOWN(HTCAPTION)`，且必须挪出实体更新执行（事件当口同步派发
+  WM_* 会撞 gpui 借用——隐身 ShowWindow 同款坑）；双击走 win32 切最大化；
+- 控制栏里的置顶钮随之退场（Tauri 正常播放控制栏没有这一项）。
+
+为什么组件库 TitleBar 做不到：它为 Windows 把整条 bar 标成
+`WindowControlArea::Drag`（OS 级 HTCAPTION），而 gpui 的 window-control
+命中回调按插入（绘制）序返回第一个命中——父级 Drag 永远压过子控件；自绘后
+不给 bar 标 Drag、拖拽走手动路径，控件点击才进得来（`tests/toolbar_click.rs`
+扫描式回归钉住）。
+
+真机取证（真实系统点击，逐项）：切 tab（源切换日志 + 截图）、置顶（日志）、
+外观菜单开合与暗色生效（截图）、窗口钮最小化/最大化（IsIconic/IsZoomed）、
+拖窗（窗口位移 122,79）、双击最大化、关闭钮弹退出确认框。
+
+有意保留的差异：顶栏左侧不画应用名（Tauri 顶栏同样为空）；设置页「外观卡」
+作为主题第二入口保留（Tauri 只在顶栏）；语言切换（W1#5）仍是待裁决项。
 
 附注（主题默认变化）：本次后 GPUI 默认「跟随系统」（= Tauri 默认 auto 口径）；
 本机 Windows 当前为浅色应用外观，所以 GPUI 壳开箱即浅色，想要深色在设置页
