@@ -194,8 +194,8 @@ mod imp {
 mod imp {
     use std::sync::Arc;
 
-    use gpui_kit::{ObjectFit, RenderImage, Window};
     use gpui_kit::prelude::*;
+    use gpui_kit::{ObjectFit, RenderImage, Window};
     use hongguo_media_platform_api::video::{FrameBuffer, VideoFrame};
 
     pub(super) struct Imp;
@@ -315,8 +315,8 @@ fn render_image_of(
             std::path::PathBuf::from(&prefix).with_extension(format!("{tag}.nv12")),
             nv12.data.as_slice(),
         );
-        let _ = buf
-            .save(std::path::PathBuf::from(&prefix).with_extension(format!("{tag}.ours.png")));
+        let _ =
+            buf.save(std::path::PathBuf::from(&prefix).with_extension(format!("{tag}.ours.png")));
         log::info!(
             "[Home] NV12 取证 #{n_dump} 已落盘：{prefix}.{tag}.nv12/.ours.png（{}×{} stride {}，转换目标 {tw}×{th}）",
             nv12.width,

@@ -438,5 +438,4 @@ impl FrameDecoder {
             .map(|(inner, pts_secs)| DecodedFrame { inner, pts_secs })
             .collect()
     }
-
 }

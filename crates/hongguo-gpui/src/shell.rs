@@ -536,7 +536,8 @@ impl Shell {
                     // 先查可见性：藏显放实体更新之外——它同步派发窗口消息，
                     // gpui 的窗口过程要更新窗口状态，在 update 里调用会撞
                     // 借用（实测日志刷「RefCell already borrowed」六连）。
-                    let Ok(visible) = handle.update(cx, |_, window, _| crate::platform::visibility(window))
+                    let Ok(visible) =
+                        handle.update(cx, |_, window, _| crate::platform::visibility(window))
                     else {
                         return; // 窗口已关
                     };

@@ -271,7 +271,14 @@ impl AudioOutputStream for AudioQueueStream {
                 AudioQueuePause(self.queue)
             }
         };
-        os(status, if playing { "启动输出" } else { "暂停输出" })
+        os(
+            status,
+            if playing {
+                "启动输出"
+            } else {
+                "暂停输出"
+            },
+        )
     }
 }
 
@@ -343,12 +350,10 @@ impl AudioOutputHost for MacAudioOutput {
             return Err(e);
         }
 
-        let byte_size =
-            (f64::from(format.sample_rate) * BUFFER_SECS).round() as u32 * 4 * channels;
+        let byte_size = (f64::from(format.sample_rate) * BUFFER_SECS).round() as u32 * 4 * channels;
         for index in 0..BUFFER_COUNT {
             let mut buffer: AudioQueueBufferRef = std::ptr::null_mut();
-            let status =
-                unsafe { AudioQueueAllocateBuffer(queue, byte_size, &mut buffer) };
+            let status = unsafe { AudioQueueAllocateBuffer(queue, byte_size, &mut buffer) };
             if let Err(e) = os(status, "分配输出缓冲") {
                 unsafe {
                     AudioQueueDispose(queue, 1);

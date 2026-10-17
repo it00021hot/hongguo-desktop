@@ -167,11 +167,7 @@ pub(crate) fn portrait_geometry(
 }
 
 /// 落窗：SetWindowPos 设的是外框，内容尺寸要按四向边偏移外扩。
-pub(crate) fn apply_frame(
-    window: &Window,
-    cx: &gpui_kit::App,
-    (x, y, w, h): (f64, f64, f64, f64),
-) {
+pub(crate) fn apply_frame(window: &Window, cx: &gpui_kit::App, (x, y, w, h): (f64, f64, f64, f64)) {
     let Some(hwnd) = hwnd_of(window) else {
         return;
     };

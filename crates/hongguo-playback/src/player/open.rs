@@ -129,11 +129,10 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
             let volume = f32::from_bits(shared.volume.load(Ordering::Relaxed));
             let muted = shared.muted.load(Ordering::Relaxed);
             let attempt_info = info.clone();
-            let attempt = tokio::task::spawn_blocking(move || {
-                audio_attempt(&attempt_info, volume, muted)
-            })
-            .await
-            .expect("音频建流阻塞池 join");
+            let attempt =
+                tokio::task::spawn_blocking(move || audio_attempt(&attempt_info, volume, muted))
+                    .await
+                    .expect("音频建流阻塞池 join");
             let t_audio = std::time::Instant::now();
             match attempt {
                 AudioAttempt::Ready(pair) => {
@@ -215,10 +214,7 @@ async fn adopt_audio(
     // 迟到接管（视频已经在播）时先把画面闸在接管点：接下来要建喂送、等
     // 预填，这段时间若让视频继续走，音频却从「准备开始时」的位置起播，
     // 声画就永久错开一整段准备时长（倍速下还按倍速放大）。
-    let late_takeover = !matches!(
-        &*shared.clock_gate.lock(),
-        super::ClockGate::Waiting { .. }
-    );
+    let late_takeover = !matches!(&*shared.clock_gate.lock(), super::ClockGate::Waiting { .. });
     if late_takeover {
         shared.hold_at(start_secs);
         log::info!("[Playback] 音频接管中：视频暂挂在 {start_secs:.2}s 等音频就绪");
