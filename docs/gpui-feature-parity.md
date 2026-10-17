@@ -54,6 +54,17 @@
 | 12 | 同剧切集不闪封面：Tauri `use-frame-hold` 的显隐真值表（切集定格上一帧顶住、切剧立刻走封面）；GPUI 一切换就清帧 → 每次切集闪封面（Tauri 已修、GPUI 带着） | `src/features/player/hooks/use-frame-hold.ts`（含 `use-frame-hold.test.ts`）vs `home/stage.rs` video_ready | ✅ 2026-10-17（`hold_last_frame`：play_target 按同剧判定保留/清帧；新集首帧、失败、离开首页落下）。真机：切集间隙拍到定格末帧、切剧拍到新剧封面（`HONGGUO_SHOT_PANEL=next-series` 探针） |
 | 13 | 缺 HEVC 扩展的安装引导：Tauri `HevcInstallCard` 两档（失败后的居中主卡 + 提前告知的底部悬浮卡，附 `hevc-session` 会话记忆与一键安装 service）；GPUI 选流虽已提前降档 H.264，但对用户完全沉默 | `hevc-install-card.tsx` + `hevc-session.ts` + `capability_service::install_hevc_extension` | ✅ 2026-10-17（`home/hevc_prompt.rs` 做 proactive 一档：底部悬浮卡 + 一键安装 + 暂不安装会话记忆；文案按 GPUI 实际形态改写——不是「有声音没画面」而是「当前是降档 H.264」）。真机 `HONGGUO_NO_HEVC=1` 拍到卡片与两键 |
 | 14 | 顶部 2px 加载细条：Tauri `loadbar.tsx` + `hg-loadbar`（切换在途/首帧未出/缓冲中亮，30% 胶囊 1.1s 循环滑动）；GPUI 只有中央 spinner 与右上「缓冲中」角标 | `loadbar.tsx` + `index.css:252-273` | ✅ 2026-10-17（stage 顶部同款细条；用 gpui `Animation` 驱动循环滑动，不依赖播放帧率）。真机：对切换间隙逐帧扫顶部像素行，只有间隙那一帧命中亮条，间隙外 14 帧全无 |
+| 15 | 暂停时的快捷键提示：Tauri `keyboard-hint.tsx`（38% 高度居中胶囊，小屏/竖屏/错误态不渲染）；GPUI 无 | `keyboard-hint.tsx:6-16` | ✅ 2026-10-17（stage 同款胶囊，文案取 Tauri 同一条静态提示）。真机 `HONGGUO_SHOT_PAUSE=1` 抓帧在位 |
+
+### 已知能力边界（非疏漏，登记在案）
+
+- **无 HEVC 扩展机器的 H.264 播放**：Tauri 的 `<video>`（WebView2/Chromium）H.264
+  天然可播，缺扩展时选流会优先挑 H.264（`DecoderCapability::NoHevc`）并直接播；
+  GPUI 自研引擎的**解码器与轨道闸门都是 HEVC 专用**（`HevcDecoder` +
+  `open_stream` 的「只接 HEVC 轨」），H.264/合并产物在 GPUI 里播不了。修它等于
+  给引擎加 H.264 解码（平台层解码器 + AVCC 初始化 + 闸门放宽），属引擎级新特性。
+  当前对策：proactive 安装引导（W4#13）——装扩展后全链恢复，且与「一个安装包
+  直接可运行」的约束不冲突（扩展是系统商店包、不随应用分发）。
 
 ### 下一步（本轮发现，尚未开工）
 
