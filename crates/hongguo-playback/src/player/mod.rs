@@ -12,7 +12,6 @@ mod event;
 mod feeder;
 mod handle;
 mod open;
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -22,6 +21,13 @@ use crate::audio::{AudioDevice, Clock};
 pub use event::{OpenOptions, PlaySource, PlayerEvent};
 pub use handle::{MAX_RATE, MIN_RATE, PlayerHandle};
 pub use open::open;
+
+/// 音频起播看门狗的等待上限：设备启动在 HAL 层迟迟不返回时，超过它就让
+/// 画面按挂钟继续走（无声播放），绝不让界面冻在首帧。
+///
+/// 8 秒是「用户还能忍、但不至于误伤慢设备」的折中：正常 CoreAudio 建流在
+/// 几十毫秒内完成；本机 USB 声卡卡死时栈停在 `DoIONodeConnect` 超过一分钟。
+const AUDIO_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// 起播闸：首帧就绪前主时钟与音频设备都不走。
 ///
@@ -83,17 +89,56 @@ pub(crate) struct Shared {
     /// 已接上的音频设备（没有音频时为 None）：seek 重新武装起播闸要用它
     /// 在下一帧出画前把设备停住（否则 seek 预滚期间时钟又白跑一截）。
     pub audio_device: parking_lot::Mutex<Option<Arc<AudioDevice>>>,
+    /// 音频起播看门狗的截止标记（None = 没有待判定的起播）。
+    pub audio_start_deadline: parking_lot::Mutex<Option<AudioStartDeadline>>,
     pub events: mpsc::Sender<PlayerEvent>,
+}
+
+/// 音频起播看门狗的记账：到 `at` 还没出声就换成挂钟，从 `anchor` 重新起步。
+#[derive(Clone, Copy)]
+pub(crate) struct AudioStartDeadline {
+    at: std::time::Instant,
+    anchor: f64,
+    rate: f64,
 }
 
 impl Shared {
     /// 当前播放位置（主时钟）。视频循环与进度上报都走这里，时钟被换掉后
     /// 各处的读数自动跟上。
     pub(crate) fn now(&self) -> f64 {
+        self.check_audio_start();
         if self.hold.load(Ordering::Relaxed) {
             return *self.start_anchor.lock();
         }
         self.clock.lock().now()
+    }
+
+    /// 音频起播看门狗（见 [`Self::arm_audio_start_watchdog`]）：到点仍没出声
+    /// 就换成挂钟。由 [`Self::now`] 顺带执行——视频循环每 3ms 一轮，粒度足够。
+    fn check_audio_start(&self) {
+        let deadline = *self.audio_start_deadline.lock();
+        let Some(deadline) = deadline else {
+            return;
+        };
+        let clock = Arc::clone(&*self.clock.lock());
+        // 已经出声，或主时钟已被换走（音频迟到接管/音频播完切挂钟）：
+        // 都说明这条看门狗不再适用。
+        if clock.has_advanced() || clock.is_wall() {
+            *self.audio_start_deadline.lock() = None;
+            return;
+        }
+        if std::time::Instant::now() < deadline.at {
+            return;
+        }
+        let wall = Arc::new(Clock::wall());
+        wall.set_rate(deadline.rate, 0.0);
+        wall.reset(deadline.anchor);
+        *self.clock.lock() = wall;
+        *self.audio_start_deadline.lock() = None;
+        log::warn!(
+            "[Playback] 音频设备 {}s 内未出声（HAL 卡住），回退挂钟继续无声播放",
+            AUDIO_START_TIMEOUT.as_secs()
+        );
     }
 
     /// 把时钟闸在 `secs`：视频停在这一帧等音频/seek 重定位完成。
@@ -118,6 +163,11 @@ impl Shared {
     /// 时间不算数。音频已就绪时换成音频时钟并 reset 到同一起点：环里预填的
     /// 正是从起点开始的 PCM，设备一起跑，声画就对齐。持有 `clock_gate`
     /// 完成全部动作（同步锁，不跨 await）。
+    ///
+    /// **音频起不来不能冻住画面**：CoreAudio 的设备启动在 HAL 层可能长时间
+    /// 不返回（本机 USB 声卡实测 `AudioQueueStart` 卡在 `DoIONodeConnect`
+    /// 超过一分钟）。所以换到音频时钟后起一条看门狗：`AUDIO_START_TIMEOUT`
+    /// 内没收到带真实帧的回调，就退回挂钟——无声也要能正常看。
     pub(crate) fn start_clock(&self) {
         // 首帧出画即放行（音频已注册时下面同时起跑设备）
         self.hold.store(false, Ordering::Relaxed);
@@ -134,6 +184,7 @@ impl Shared {
                 *self.clock.lock() = clock;
                 device.activate();
                 log::info!("[Playback] 首帧就绪：音频时钟起跑（锚点 {anchor:.2}s）");
+                self.arm_audio_start_watchdog(anchor);
             }
             None => {
                 // 无音频（或设备迟到）：主时钟重锚到起点。迟到接管自己的
@@ -143,6 +194,22 @@ impl Shared {
                 log::info!("[Playback] 首帧就绪：挂钟重锚（{anchor:.2}s）");
             }
         }
+    }
+
+    /// 音频起播看门狗：设备迟迟不出声就回退挂钟（见 [`Self::start_clock`]）。
+    ///
+    /// 做法是给主时钟贴一个「超时时刻」标记，由**视频循环**（本来每 3ms
+    /// 一轮）在 [`Self::now`] 里判定——不另起线程、不多一把锁：
+    ///
+    /// - 音频时钟在标记到点前收到过真实帧 → 标记清掉，正常走音频时钟；
+    /// - 到点仍一帧未推进 → 主时钟换成挂钟，从锚点继续（无声播放）。
+    fn arm_audio_start_watchdog(&self, anchor: f64) {
+        let rate = self.rate();
+        *self.audio_start_deadline.lock() = Some(AudioStartDeadline {
+            at: std::time::Instant::now() + AUDIO_START_TIMEOUT,
+            anchor,
+            rate,
+        });
     }
 
     /// seek 后重新武装起播闸：下一帧出画前时钟与设备都不走。

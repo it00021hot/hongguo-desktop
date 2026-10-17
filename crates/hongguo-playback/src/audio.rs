@@ -25,6 +25,8 @@ pub(crate) struct Clock {
     consumed: AtomicU64,
     /// 设备引线（帧）：这批样本从回调到 DAC 的提前量。≤ consumed。
     lead: AtomicU64,
+    /// 是否收到过带真实帧的回调（设备真的出过声）。见 [`Clock::has_advanced`]。
+    advanced: AtomicBool,
     /// base（媒体秒）、倍速与待生效的换速：换速时 rebase，必须原子地一起动。
     state: Mutex<ClockState>,
     /// 无音频模式：起点挂钟。
@@ -54,6 +56,7 @@ impl Clock {
             sample_rate: u64::from(sample_rate),
             consumed: AtomicU64::new(0),
             lead: AtomicU64::new(0),
+            advanced: AtomicBool::new(false),
             state: Mutex::new(ClockState {
                 base: 0.0,
                 rate: 1.0,
@@ -68,6 +71,7 @@ impl Clock {
             sample_rate: 0,
             consumed: AtomicU64::new(0),
             lead: AtomicU64::new(0),
+            advanced: AtomicBool::new(true),
             state: Mutex::new(ClockState {
                 base: 0.0,
                 rate: 1.0,
@@ -98,6 +102,16 @@ impl Clock {
         let consumed = self.consumed.load(Ordering::Relaxed);
         let lead = self.lead.load(Ordering::Relaxed).min(consumed);
         st.base + (consumed - lead) as f64 / self.sample_rate as f64 * st.rate
+    }
+
+    /// 设备是否已经真的出过声（收到过带真实帧的回调）。
+    ///
+    /// 起播看门狗用它判定「音频起来了没有」：CoreAudio 的设备启动在 HAL 层
+    /// 可能长时间不返回（本机 USB 声卡实测 `AudioQueueStart` 卡在
+    /// `DoIONodeConnect` 超过一分钟），不能无限等——否则时钟永远停在锚点、
+    /// 画面一帧都不动。
+    pub(crate) fn has_advanced(&self) -> bool {
+        self.advanced.load(Ordering::Relaxed)
     }
 
     /// 换倍速。
@@ -154,6 +168,9 @@ impl Clock {
     fn advance(&self, frames: u64, lead: u64) {
         let consumed = self.consumed.fetch_add(frames, Ordering::Relaxed) + frames;
         self.lead.store(lead, Ordering::Relaxed);
+        if frames > 0 {
+            self.advanced.store(true, Ordering::Relaxed);
+        }
         // 检查与取走同一把锁：UI 线程的 set_rate 在锁外，不会插进检查与
         // 生效之间把阈值换掉
         let mut st = self.state.lock();

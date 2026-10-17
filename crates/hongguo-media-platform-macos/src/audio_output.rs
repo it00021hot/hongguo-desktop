@@ -213,13 +213,12 @@ fn os(status: OSStatus, what: &str) -> AppResult<()> {
     }
 }
 
-/// 渲染回调：`(缓冲样本位, 设备引线帧数)`。提为命名类型（clippy
-/// type_complexity）。
-type RenderCallback = Box<dyn FnMut(&mut [f32], u32) + Send>;
+/// 渲染闭包：设备域交错 f32 + 设备引线（帧）。
+type RenderFn = Box<dyn FnMut(&mut [f32], u32) + Send>;
 
 /// 回调闭包与引线参数的载体（`user_data` 指向它）。
 struct QueueState {
-    render: RenderCallback,
+    render: RenderFn,
     /// 一个缓冲的帧数（设备引线口径）。
     lead_frames: u32,
 }

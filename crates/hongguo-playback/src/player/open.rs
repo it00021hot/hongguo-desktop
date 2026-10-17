@@ -75,6 +75,7 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
         hold: AtomicBool::new(false),
         clock_gate: parking_lot::Mutex::new(super::ClockGate::Waiting { audio: None }),
         audio_device: parking_lot::Mutex::new(None),
+        audio_start_deadline: parking_lot::Mutex::new(None),
         events: opts.events,
     });
     let audio_slot: Arc<parking_lot::Mutex<Option<AudioOut>>> =
@@ -124,6 +125,10 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
                 );
                 return;
             };
+            if audio_disabled_by_env() {
+                log::info!("[Playback] HONGGUO_MUTE_AUDIO 已设置：跳过音频设备，按挂钟播放");
+                return;
+            }
             // 建流本身是阻塞调用（含 20ms 轮询与 HAL 等待），放阻塞池，
             // 别占异步 worker
             let volume = f32::from_bits(shared.volume.load(Ordering::Relaxed));
@@ -264,10 +269,15 @@ async fn adopt_audio(
         *shared.audio_device.lock() = Some(Arc::clone(&out.device));
         *slot.lock() = Some(out);
         shared.release_hold();
+        // 设备启动在 HAL 层可能长时间不返回（本机 USB 声卡实测卡在
+        // DoIONodeConnect 超一分钟）。武装看门狗：到点仍无真实帧就退回挂钟，
+        // 无声也要能继续看——否则画面冻在这一帧。
+        shared.arm_audio_start_watchdog(start_secs);
         log::info!("[Playback] 音频接管完成：设备起跑、画面放行（{start_secs:.2}s）");
         drop(feeder);
         return;
     }
+    let mut armed_watchdog = false;
     {
         let mut gate = shared.clock_gate.lock();
         match &mut *gate {
@@ -279,9 +289,14 @@ async fn adopt_audio(
                 // 解码，且 gate 已由 start_clock 翻开）。就地起跑。
                 *shared.clock.lock() = Arc::clone(&clock);
                 out.device.activate();
+                armed_watchdog = true;
                 log::info!("[Playback] 音频设备迟到就绪：立即接管时钟");
             }
         }
+    }
+    if armed_watchdog {
+        // 同迟到接管：设备启动可能卡在 HAL，到点无真实帧就退回挂钟。
+        shared.arm_audio_start_watchdog(start_secs);
     }
     *shared.audio_device.lock() = Some(Arc::clone(&out.device));
     *slot.lock() = Some(out);
@@ -320,6 +335,16 @@ const AUDIO_TIMEOUT_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 static AUDIO_LAST_ATTEMPT_MS: AtomicU64 = AtomicU64::new(0);
 /// 上一次尝试是以「超时」收场的（HAL 卡住的强信号）。
 static AUDIO_LAST_TIMED_OUT: AtomicBool = AtomicBool::new(false);
+
+/// 诊断开关：完全跳过音频设备（主时钟退化为挂钟）。
+///
+/// 用途是**把音频从视频排查里摘出去**——系统音频服务卡住时（`coreaudiod`
+/// 卡死，连系统自带 `afplay` 都播不出声），任何音频调用都会拖住起播链，
+/// 让人误判成视频问题。与 `HONGGUO_NO_HEVC` / `HONGGUO_NO_FFMPEG` 同一套
+/// 「开发机全链验收」约定，不影响正式构建的行为。
+fn audio_disabled_by_env() -> bool {
+    std::env::var_os("HONGGUO_MUTE_AUDIO").is_some()
+}
 
 /// 现在的 Unix 毫秒。
 fn now_millis() -> u64 {

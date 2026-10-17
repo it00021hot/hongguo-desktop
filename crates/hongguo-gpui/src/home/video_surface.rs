@@ -204,13 +204,6 @@ mod imp {
     #[derive(Clone, Copy)]
     pub(crate) struct ConversionHandle;
 
-    pub(super) fn convert_with(
-        _handle: &ConversionHandle,
-        _frame: &VideoFrame,
-    ) -> Option<Arc<RenderImage>> {
-        None
-    }
-
     impl Imp {
         pub(super) fn new() -> Self {
             Self
@@ -266,7 +259,12 @@ fn unpack(packed: u64) -> (usize, usize) {
 }
 
 /// 后台转换入口（事件循环在后台线程池里 await）：Windows 把 NV12 转成
-/// RGBA 并按句柄里的目标尺寸缩放；macOS 不需要转换，返回 `None`。
+/// RGBA 并按句柄里的目标尺寸缩放。
+///
+/// **只有 Windows 有这个函数**：macOS 是零拷贝 surface，事件循环里不该出现
+/// 任何「spawn 到后台再 await」的按帧等待——后台线程被占住时会把整条事件
+/// 循环卡死（实测：首帧过后画面再不更新，而引擎侧仍在 30fps 上屏）。
+#[cfg(target_os = "windows")]
 pub(crate) fn convert_frame(
     handle: &imp::ConversionHandle,
     frame: &VideoFrame,

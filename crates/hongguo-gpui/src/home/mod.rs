@@ -1065,9 +1065,12 @@ impl HomeView {
                     if matches!(event, PlayerEvent::Frame(_)) && Some(i) != last_frame {
                         continue;
                     }
-                    // 像素载体转换在后台线程池（Windows 才有活；awaiting 期间
-                    // 主线程照常跑布局/绘制/输入）。macOS 零拷贝，直接返回 None。
-                    // 转换句柄在循环外取一次（原子共享），每帧不再回主线程。
+                    // 像素载体转换（仅 Windows 需要：NV12→RGBA 上传纹理）。
+                    // macOS 是 CVPixelBuffer 零拷贝，**必须完全不碰这条路径**——
+                    // 每帧 spawn 到后台执行器再 await，在后台线程被别的任务
+                    // 占住时会把整个事件循环卡死（实测：首帧过后画面就再也不
+                    // 更新，引擎侧仍在 30fps 上屏）。
+                    #[cfg(target_os = "windows")]
                     let converted = match &event {
                         PlayerEvent::Frame(frame) => {
                             let frame = frame.clone();
@@ -1080,6 +1083,11 @@ impl HomeView {
                         }
                         _ => None,
                     };
+                    #[cfg(not(target_os = "windows"))]
+                    let converted: Option<Arc<gpui_kit::RenderImage>> = {
+                        let _ = convert_handle;
+                        None
+                    };
                     let ok = this
                         .update(cx, |view, cx| {
                             if view.epoch.load(Ordering::Relaxed) != epoch {
@@ -1089,11 +1097,22 @@ impl HomeView {
                                 );
                                 return;
                             }
+                            // 周期哨兵：这条涨而 `render #` 不涨 = 事件到了、重绘
+                            // 没被调度（窗口遮挡/合成器不请求帧）。
+                            static HANDLED: AtomicU32 = AtomicU32::new(0);
+                            let h = HANDLED.fetch_add(1, Ordering::Relaxed);
+                            if h.is_multiple_of(100) {
+                                log::info!(
+                                    "[Home] 事件已处理 #{h}（epoch={epoch}，帧槽={}）",
+                                    view.frame.is_some()
+                                );
+                            }
                             view.video_surface.adopt(converted);
                             view.on_player_event(event, cx);
                         })
                         .is_ok();
                     if !ok {
+                        log::warn!("[Home] 事件投递失败（视图已销毁），事件循环退出");
                         break 'batch;
                     }
                 }
