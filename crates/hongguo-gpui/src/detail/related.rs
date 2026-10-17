@@ -5,6 +5,9 @@
 use std::sync::Arc;
 
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Disableable;
+use gpui_kit::component::Sizable;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -138,19 +141,27 @@ impl DetailView {
         let cover = self.images.get(&item.cover).cloned();
         let mut stats: Vec<String> = Vec::new();
         if item.episode_cnt > 0 {
-            stats.push(format!("全{}集", item.episode_cnt));
+            // Tauri related-card：detail.episodesCount =「共N集」
+            stats.push(format!("共{}集", item.episode_cnt));
         } else if item.tag == "即将上线" {
             stats.push("即将上线".to_string());
         }
         if item.play_cnt > 0 {
-            stats.push(format!("{}次播放", Self::fmt_count(item.play_cnt)));
+            // Tauri：formatPlayCount + detail.plays =「N万播放」
+            stats.push(format!("{}播放", Self::fmt_count(item.play_cnt)));
         }
+        let is_upcoming = item.episode_cnt == 0 || item.tag == "即将上线";
+        let reserve_id = item.series_id.clone();
+        let reserved = self.related_reserved.contains(&reserve_id);
+        let reserve_pending = self.related_reserve_pending.contains(&reserve_id);
         div()
             .id(ElementId::from(format!(
                 "detail-related-{}",
                 item.series_id
             )))
-            .w(gpui_kit::px(116.0))
+            // Tauri 网格 repeat(auto-fill,minmax(128px,1fr)) 在 1280 窗口下
+            // 是 7 列 145px；固定 116 会挤成 9 列（并排对拍可见）
+            .w(gpui_kit::px(145.0))
             .cursor_pointer()
             .on_click({
                 let item = item.clone();
@@ -159,7 +170,7 @@ impl DetailView {
             .child(
                 div()
                     .relative()
-                    .h(gpui_kit::px(154.0))
+                    .h(gpui_kit::px(193.0))
                     .w_full()
                     .overflow_hidden()
                     .rounded(gpui_kit::px(8.0))
@@ -199,9 +210,11 @@ impl DetailView {
             .child(
                 div()
                     .mt_1p5()
-                    .text_sm()
+                    // Tauri：text-xs + line-clamp-2（两行标题）
+                    .text_xs()
                     .line_height(gpui_kit::relative(1.3))
-                    .truncate()
+                    .h(gpui_kit::px(32.0))
+                    .overflow_hidden()
                     .child(SharedString::from(item.title.clone())),
             )
             .child(
@@ -210,6 +223,27 @@ impl DetailView {
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(stats.join(" · "))),
             )
+            // 未上线剧的预约钮（Tauri RelatedCard 的 ReserveButton 同款：
+            // 乐观翻转；点击不触发整卡跳详情）
+            .children(is_upcoming.then(|| {
+                Button::new(format!("related-reserve-{reserve_id}"))
+                    .icon(if reserved {
+                        gpui_kit::assets::IconName::Check
+                    } else {
+                        gpui_kit::assets::IconName::Bell
+                    })
+                    .label(if reserved { "已预约" } else { "预约" })
+                    .outline()
+                    .small()
+                    .disabled(reserve_pending)
+                    .on_click({
+                        let reserve_id = reserve_id.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_related_reserve(reserve_id.clone(), cx);
+                        })
+                    })
+            }))
             .into_any_element()
     }
 }

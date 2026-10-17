@@ -60,8 +60,9 @@ impl DetailView {
                                             .hover(|h| h.text_color(theme.foreground))
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.tab = tab;
-                                        cx.notify();
+                                        // 统一走 select_tab：相关推荐 tab 要顺带
+                                        // 拉预约态（未上线卡的预约钮数据源）
+                                        this.select_tab(tab, cx);
                                     }))
                                     .child(if count > 0 {
                                         format!("{label} {count}")

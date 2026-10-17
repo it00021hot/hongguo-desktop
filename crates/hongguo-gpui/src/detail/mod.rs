@@ -24,7 +24,9 @@ mod tabs;
 use std::sync::Arc;
 
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Entity, RenderImage, div};
@@ -105,6 +107,13 @@ pub(crate) struct DetailView {
     reviews_loading: bool,
     // —— 相关推荐（plan 接口两格）——
     related: Option<Arc<RelatedSeries>>,
+    /// 相关推荐卡上的预约态（未上线剧的「预约」按钮；进入相关 tab 时拉取，
+    /// Tauri `useReservations(false/true)` 两个 tab 都查的口径）
+    related_reserved: std::collections::HashSet<String>,
+    /// 相关推荐预约在途（防连点）
+    related_reserve_pending: std::collections::HashSet<String>,
+    /// 预约列表已拉过（会话内一次）
+    related_reserve_loaded: bool,
     // —— 互动（收藏/点赞）：mget 回显列表是 best-effort，未命中按未互动 ——
     interact_items: Arc<Vec<InteractionItem>>,
     collect_pending: bool,
@@ -169,6 +178,9 @@ impl DetailView {
             reviews_has_more: false,
             reviews_loading: false,
             related: None,
+            related_reserved: std::collections::HashSet::new(),
+            related_reserve_pending: std::collections::HashSet::new(),
+            related_reserve_loaded: false,
             interact_items: Arc::new(Vec::new()),
             collect_pending: false,
             digg_pending: false,
@@ -206,7 +218,93 @@ impl DetailView {
     /// 程序化切换下半区 tab（取证开关 `HONGGUO_DETAIL_TAB` 用）。
     pub(crate) fn select_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
         self.tab = tab;
+        if tab == DetailTab::Related {
+            self.load_related_reservations(cx);
+        }
         cx.notify();
+    }
+
+    /// 相关推荐卡的预约态：预约列表（离线 + 在线两个 tab，Tauri ReserveButton
+    /// 两处都查同口径）拉一次；未登录不拉（按钮点击走登录回执）。
+    pub(super) fn load_related_reservations(&mut self, cx: &mut Context<Self>) {
+        if self.related_reserve_loaded || !self.logged_in() {
+            return;
+        }
+        self.related_reserve_loaded = true;
+        let state = Arc::clone(&self.state);
+        let rx = bridge::spawn(async move {
+            let env = state.api_env();
+            let offline = hongguo_api::reservation::fetch_reservations(false, &env).await;
+            let online = hongguo_api::reservation::fetch_reservations(true, &env).await;
+            let mut ids = std::collections::HashSet::new();
+            for page in [offline, online].into_iter().flatten() {
+                for item in page.items {
+                    ids.insert(item.series_id);
+                }
+            }
+            ids
+        });
+        cx.spawn(async move |this, cx| {
+            let ids = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                view.related_reserved.extend(ids);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 相关推荐卡「预约/已预约」切换（Tauri ReserveButton 同款：乐观翻转、
+    /// 失败回滚、成功 toast；按钮点击不触发整卡跳详情）。
+    pub(super) fn toggle_related_reserve(&mut self, series_id: String, cx: &mut Context<Self>) {
+        if self.related_reserve_pending.contains(&series_id) {
+            return;
+        }
+        if !self.logged_in() {
+            return;
+        }
+        let next = !self.related_reserved.contains(&series_id);
+        self.related_reserve_pending.insert(series_id.clone());
+        if next {
+            self.related_reserved.insert(series_id.clone());
+        } else {
+            self.related_reserved.remove(&series_id);
+        }
+        cx.notify();
+        let state = Arc::clone(&self.state);
+        let sid = series_id.clone();
+        let rx = bridge::spawn(async move {
+            let env = state.api_env();
+            hongguo_api::reservation::reserve_series(&sid, next, &env).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update_in(cx, |view, window, cx| {
+                view.related_reserve_pending.remove(&series_id);
+                match result {
+                    Ok(()) => window.push_notification(
+                        Notification::success(if next {
+                            "预约成功"
+                        } else {
+                            "已取消预约"
+                        }),
+                        cx,
+                    ),
+                    Err(e) => {
+                        // 回滚乐观态
+                        if next {
+                            view.related_reserved.remove(&series_id);
+                        } else {
+                            view.related_reserved.insert(series_id.clone());
+                        }
+                        log::warn!("[Detail] 相关推荐预约失败: {e}");
+                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 装载（可带来源页 prefill）：解析失败且有 prefill 时走「即将上线」
@@ -237,6 +335,9 @@ impl DetailView {
         self.reviews_cursor.clear();
         self.reviews_has_more = false;
         self.related = None;
+        self.related_reserved.clear();
+        self.related_reserve_pending.clear();
+        self.related_reserve_loaded = false;
         self.interact_items = Arc::new(Vec::new());
         self.collect_pending = false;
         self.digg_pending = false;
