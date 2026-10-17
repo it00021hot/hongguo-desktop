@@ -53,15 +53,13 @@
 | 11 | 本地成品播放：Tauri「本地成品优先，其次在线流」（`play_service::local::resolve_play`，已下载的集走 `hongguo-local://`，离线可播/秒开）；GPUI 起播链只走 `online::prepare`，全仓无一处读 `completed_path` | `crates/hongguo-service/src/play_service/local.rs` vs `crates/hongguo-gpui/src/home/playback.rs` | ✅ 2026-10-17（引擎加字节层 `ByteSource`（Online/Local）+ `PlaySource` 公开面；壳起播先查 `completed_path` 且文件确在 → 本地播放，档位表为空；陈旧记录回落在线流）。真机：640×360 本地 HEVC 样本 → 「头部就绪 0ms / 640x360 1ch」+ 彩条截图；播完连播回在线流同轮验证 |
 | 12 | 同剧切集不闪封面：Tauri `use-frame-hold` 的显隐真值表（切集定格上一帧顶住、切剧立刻走封面）；GPUI 一切换就清帧 → 每次切集闪封面（Tauri 已修、GPUI 带着） | `src/features/player/hooks/use-frame-hold.ts`（含 `use-frame-hold.test.ts`）vs `home/stage.rs` video_ready | ✅ 2026-10-17（`hold_last_frame`：play_target 按同剧判定保留/清帧；新集首帧、失败、离开首页落下）。真机：切集间隙拍到定格末帧、切剧拍到新剧封面（`HONGGUO_SHOT_PANEL=next-series` 探针） |
 | 13 | 缺 HEVC 扩展的安装引导：Tauri `HevcInstallCard` 两档（失败后的居中主卡 + 提前告知的底部悬浮卡，附 `hevc-session` 会话记忆与一键安装 service）；GPUI 选流虽已提前降档 H.264，但对用户完全沉默 | `hevc-install-card.tsx` + `hevc-session.ts` + `capability_service::install_hevc_extension` | ✅ 2026-10-17（`home/hevc_prompt.rs` 做 proactive 一档：底部悬浮卡 + 一键安装 + 暂不安装会话记忆；文案按 GPUI 实际形态改写——不是「有声音没画面」而是「当前是降档 H.264」）。真机 `HONGGUO_NO_HEVC=1` 拍到卡片与两键 |
+| 14 | 顶部 2px 加载细条：Tauri `loadbar.tsx` + `hg-loadbar`（切换在途/首帧未出/缓冲中亮，30% 胶囊 1.1s 循环滑动）；GPUI 只有中央 spinner 与右上「缓冲中」角标 | `loadbar.tsx` + `index.css:252-273` | ✅ 2026-10-17（stage 顶部同款细条；用 gpui `Animation` 驱动循环滑动，不依赖播放帧率）。真机：对切换间隙逐帧扫顶部像素行，只有间隙那一帧命中亮条，间隙外 14 帧全无 |
 
 ### 下一步（本轮发现，尚未开工）
 
 - `PlayRequest.file_path` 直传路径那条分支（Tauri `resolve_play` 的第一段：
  调用方直接给成品路径，合并产物/指定文件用）GPUI 尚无对应入口——先用
  `completed_path`（队列命中）覆盖了常规路径，等确认合并产物那条链谁在用再补。
-- 顶部 2px 加载细条（Tauri `loadbar.tsx` / `hg-loadbar`：切换在途/首帧未出/
-  缓冲中亮；中央「正在缓冲 X%」胶囊已按用户要求移除）。GPUI 只有中央 spinner
-  与右上「缓冲中」角标，没有这条细条——属可见的形态差异，待做。
 
 ### 顺带修（本轮验证中发现）
 

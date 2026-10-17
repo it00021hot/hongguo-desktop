@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use gpui_kit::AnimationExt as _;
 #[cfg(target_os = "windows")]
 use gpui_kit::RenderImage;
 use gpui_kit::component::ActiveTheme;
@@ -837,6 +838,40 @@ impl super::HomeView {
                     .into_any_element()
             }))
             .children(controls)
+            // 顶部 2px 加载细条（Tauri loadbar 同款）：切换在途 / 首帧未出 /
+            // 缓冲中亮，30% 宽的胶囊在轨道里循环滑动（CSS keyframes 同参：
+            // 1.1s 从 -110% 滑到 +440%，按胶囊自身宽计 = 轨道的 -0.33→1.32）。
+            // 用 gpui 的 Animation 驱动：它有独立的连续帧请求，不依赖播放帧率
+            //（切换间隙恰好没有帧可驱动重绘）。
+            .children(
+                (self.switching || self.frame.is_none() || self.buffering).then(|| {
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(gpui_kit::px(2.0))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .h_full()
+                                .w(gpui_kit::relative(0.30))
+                                .rounded(gpui_kit::px(9999.0))
+                                .bg(theme.primary)
+                                .with_animation(
+                                    "hg-loadbar",
+                                    gpui_kit::Animation::new(std::time::Duration::from_millis(
+                                        1100,
+                                    ))
+                                    .repeat(),
+                                    |el, t| el.left(gpui_kit::relative(-0.33 + 1.65 * t)),
+                                ),
+                        )
+                        .into_any_element()
+                }),
+            )
             // 选集浮层本体（最顶层；自身拦鼠标，点击不落到捕获层）
             .children(
                 (self.picker_open && !in_mini && self.engine_ready())
