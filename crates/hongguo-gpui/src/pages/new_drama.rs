@@ -75,9 +75,15 @@ pub(crate) struct NewDramaView {
 
 impl NewDramaView {
     pub(crate) fn new(state: Arc<AppStateInner>) -> Self {
+        // 取证开关（HONGGUO_NEW_TAB=calendar）：直接落在上新日历视图
+        let start_calendar = std::env::var("HONGGUO_NEW_TAB").is_ok_and(|v| v == "calendar");
         Self {
             state,
-            view: ViewTab::Recommend,
+            view: if start_calendar {
+                ViewTab::Calendar
+            } else {
+                ViewTab::Recommend
+            },
             gender: 2,
             items: Vec::new(),
             next_offset: 0,
@@ -105,6 +111,8 @@ impl NewDramaView {
         self.refresh_downloaded();
         if self.view == ViewTab::Recommend && self.items.is_empty() && !self.loading {
             self.load_recommend(false, cx);
+        } else if self.view == ViewTab::Calendar && !self.cal_loaded {
+            self.load_calendar(None, false, cx);
         }
     }
 
@@ -583,8 +591,9 @@ impl NewDramaView {
             .p_3()
             .child(
                 div()
-                    .w(gpui_kit::px(72.0))
-                    .h(gpui_kit::px(96.0))
+                    // Tauri SeriesRowCard：封面 w-20（80）× 3:4（107）
+                    .w(gpui_kit::px(80.0))
+                    .h(gpui_kit::px(107.0))
                     .flex_shrink_0()
                     .overflow_hidden()
                     .rounded(gpui_kit::px(8.0))
@@ -602,7 +611,7 @@ impl NewDramaView {
                 v_flex()
                     .min_w_0()
                     .flex_1()
-                    .gap_1p5()
+                    .gap_1()
                     .child(
                         h_flex()
                             .items_center()
@@ -655,14 +664,28 @@ impl NewDramaView {
                                     .child(SharedString::from(item.category.clone()))
                             }))
                             .children((item.score > 0.0).then(|| {
-                                div()
-                                    .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(format!("{:.1}分", item.score)))
+                                // Tauri calendar-row：星标 + 数字（不留「分」）
+                                h_flex()
+                                    .items_center()
+                                    .gap(gpui_kit::px(2.0))
+                                    .child(
+                                        gpui_kit::component::Icon::new(
+                                            gpui_kit::assets::IconName::Star,
+                                        )
+                                        .size_3()
+                                        .text_color(crate::tokens::star(theme.mode)),
+                                    )
+                                    .child(
+                                        div().text_color(theme.muted_foreground).child(
+                                            SharedString::from(format!("{:.1}", item.score)),
+                                        ),
+                                    )
                             }))
                             .children((item.episode_cnt > 0).then(|| {
+                                // Tauri common.episodeCount =「{count} 集」（带空格）
                                 div()
                                     .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(format!("共{}集", item.episode_cnt)))
+                                    .child(SharedString::from(format!("{} 集", item.episode_cnt)))
                             })),
                     )
                     .children((!item.description.is_empty()).then(|| {
@@ -785,148 +808,181 @@ impl gpui_kit::Render for NewDramaView {
         let muted_fg = theme.muted_foreground;
         let root_bg = theme.background;
         let root_fg = theme.foreground;
-        let body: gpui_kit::AnyElement =
-            if self.view == ViewTab::Recommend {
-                if self.loading && self.items.is_empty() {
-                    h_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .py_8()
-                        .child(Spinner::new().small())
-                        .into_any_element()
-                } else if self.failed && self.items.is_empty() {
-                    v_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .gap_3()
-                        .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
-                        .child(
-                            Button::new("new-retry").label("重试").on_click(
-                                cx.listener(|this, _, _, cx| this.load_recommend(false, cx)),
-                            ),
-                        )
-                        .into_any_element()
-                } else if self.items.is_empty() {
-                    v_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .child(div().text_sm().text_color(muted_fg).child("暂无新剧"))
-                        .into_any_element()
-                } else {
-                    let items = self.items.clone();
-                    let has_more = self.has_more;
-                    let loading = self.loading;
-                    div()
-                        .id("new-recommend")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .gap_4()
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .flex_wrap()
-                                        .items_start()
-                                        .gap_4()
-                                        .children(
-                                            items
-                                                .iter()
-                                                .map(|item| self.render_recommend_card(item, cx)),
-                                        ),
-                                )
-                                .children((has_more).then(|| {
-                                    h_flex().w_full().justify_center().child(
-                                        Button::new("new-more")
-                                            .label(if loading {
-                                                "正在加载更多…"
-                                            } else {
-                                                "加载更多"
-                                            })
-                                            .ghost()
-                                            .small()
-                                            .disabled(loading)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.load_recommend(true, cx);
-                                            })),
-                                    )
-                                }))
-                                .children((!has_more).then(|| {
-                                    h_flex().w_full().justify_center().py_2().child(
-                                        div().text_sm().text_color(muted_fg).child("没有更多了"),
-                                    )
-                                })),
-                        )
-                        .into_any_element()
-                }
+        let body: gpui_kit::AnyElement = if self.view == ViewTab::Recommend {
+            if self.loading && self.items.is_empty() {
+                h_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .py_8()
+                    .child(Spinner::new().small())
+                    .into_any_element()
+            } else if self.failed && self.items.is_empty() {
+                v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
+                    .child(
+                        Button::new("new-retry")
+                            .label("重试")
+                            .on_click(cx.listener(|this, _, _, cx| this.load_recommend(false, cx))),
+                    )
+                    .into_any_element()
+            } else if self.items.is_empty() {
+                v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(div().text_sm().text_color(muted_fg).child("暂无新剧"))
+                    .into_any_element()
             } else {
-                // 日历视图
-                if self.cal_loading && self.cal_items.is_empty() {
-                    h_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .py_8()
-                        .child(Spinner::new().small())
-                        .into_any_element()
-                } else if self.cal_failed && self.cal_items.is_empty() {
-                    v_flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .gap_3()
-                        .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
-                        .child(Button::new("new-cal-retry").label("重试").on_click(
-                            cx.listener(|this, _, _, cx| this.load_calendar(None, false, cx)),
-                        ))
-                        .into_any_element()
-                } else {
-                    let selected = self.cal_selected.clone();
-                    let dates = self.cal_dates.clone();
-                    let rows: Vec<CalendarItem> = self
-                        .cal_items
-                        .iter()
-                        .filter(|i| selected.is_empty() || selected_date_of(i) == selected)
-                        .cloned()
-                        .collect();
-                    let has_more = self.cal_has_more;
-                    let loading = self.cal_loading;
-                    let empty = rows.is_empty();
-                    div()
-                        .id("new-calendar")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .flex_wrap()
-                                        .items_center()
-                                        .gap_2()
-                                        .pb_1()
-                                        .children(dates.iter().map(|date| {
-                                            let date = date.clone();
-                                            let active = date == selected;
-                                            let button = Button::new(format!("new-date-{date}"))
-                                                .label(format!(
-                                                    "{}\n{}",
-                                                    weekday_label(&date),
-                                                    day_month(&date)
-                                                ))
-                                                .small();
-                                            let button = if active {
-                                                button.primary()
-                                            } else {
-                                                button.ghost()
-                                            };
-                                            button.on_click(cx.listener(move |this, _, _, cx| {
+                let items = self.items.clone();
+                let has_more = self.has_more;
+                let loading = self.loading;
+                div()
+                    .id("new-recommend")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_4()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .flex_wrap()
+                                    .items_start()
+                                    .gap_4()
+                                    .children(
+                                        items
+                                            .iter()
+                                            .map(|item| self.render_recommend_card(item, cx)),
+                                    ),
+                            )
+                            .children((has_more).then(|| {
+                                h_flex().w_full().justify_center().child(
+                                    Button::new("new-more")
+                                        .label(if loading {
+                                            "正在加载更多…"
+                                        } else {
+                                            "加载更多"
+                                        })
+                                        .ghost()
+                                        .small()
+                                        .disabled(loading)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.load_recommend(true, cx);
+                                        })),
+                                )
+                            }))
+                            .children((!has_more).then(|| {
+                                h_flex()
+                                    .w_full()
+                                    .justify_center()
+                                    .py_2()
+                                    .child(div().text_sm().text_color(muted_fg).child("没有更多了"))
+                            })),
+                    )
+                    .into_any_element()
+            }
+        } else {
+            // 日历视图
+            if self.cal_loading && self.cal_items.is_empty() {
+                h_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .py_8()
+                    .child(Spinner::new().small())
+                    .into_any_element()
+            } else if self.cal_failed && self.cal_items.is_empty() {
+                v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
+                    .child(Button::new("new-cal-retry").label("重试").on_click(
+                        cx.listener(|this, _, _, cx| this.load_calendar(None, false, cx)),
+                    ))
+                    .into_any_element()
+            } else {
+                let selected = self.cal_selected.clone();
+                let dates = self.cal_dates.clone();
+                let rows: Vec<CalendarItem> = self
+                    .cal_items
+                    .iter()
+                    .filter(|i| selected.is_empty() || selected_date_of(i) == selected)
+                    .cloned()
+                    .collect();
+                let has_more = self.cal_has_more;
+                let loading = self.cal_loading;
+                let empty = rows.is_empty();
+                div()
+                    .id("new-calendar")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_2()
+                                    .pb_1()
+                                    .children(dates.iter().map(|date| {
+                                        let date = date.clone();
+                                        let active = date == selected;
+                                        // Tauri 日期钮：h-14 min-w-14 flex-1 max-w-20
+                                        // 的描边卡片，选中 primary 实底（原来只是
+                                        // 文字/小胶囊，卡片形态缺失）
+                                        div()
+                                            .id(ElementId::from(format!("new-date-{date}")))
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .justify_center()
+                                            .h(gpui_kit::px(56.0))
+                                            .min_w(gpui_kit::px(56.0))
+                                            .max_w(gpui_kit::px(80.0))
+                                            .flex_1()
+                                            .rounded(gpui_kit::px(8.0))
+                                            .border_1()
+                                            .px(gpui_kit::px(4.0))
+                                            .py(gpui_kit::px(6.0))
+                                            .cursor_pointer()
+                                            .when(active, |s| {
+                                                s.bg(theme.primary)
+                                                    .border_color(theme.primary)
+                                                    .text_color(theme.primary_foreground)
+                                            })
+                                            .when(!active, |s| {
+                                                s.bg(theme.background)
+                                                    .border_color(theme.border)
+                                                    .text_color(theme.foreground)
+                                                    .hover(|h| h.bg(theme.accent))
+                                            })
+                                            .child(
+                                                div()
+                                                    .text_size(gpui_kit::px(11.0))
+                                                    .line_height(gpui_kit::relative(1.2))
+                                                    .child(SharedString::from(weekday_label(
+                                                        &date,
+                                                    ))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                                    .line_height(gpui_kit::relative(1.2))
+                                                    .child(SharedString::from(day_month(&date))),
+                                            )
+                                            .on_click(cx.listener(move |this, _, _, cx| {
                                                 if this.cal_selected == date {
                                                     return;
                                                 }
@@ -938,61 +994,63 @@ impl gpui_kit::Render for NewDramaView {
                                                 this.load_calendar(Some(date.clone()), false, cx);
                                                 cx.notify();
                                             }))
+                                    })),
+                            )
+                            .children(if empty && has_more {
+                                vec![
+                                    h_flex()
+                                        .w_full()
+                                        .justify_center()
+                                        .py_8()
+                                        .child(Spinner::new().small())
+                                        .into_any_element(),
+                                ]
+                            } else if empty {
+                                vec![
+                                    v_flex()
+                                        .w_full()
+                                        .items_center()
+                                        .py_16()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(muted_fg)
+                                                .child("这一天没有上新"),
+                                        )
+                                        .into_any_element(),
+                                ]
+                            } else {
+                                rows.iter()
+                                    .map(|item| self.render_calendar_row(item, cx))
+                                    .collect()
+                            })
+                            .children((has_more && !empty).then(|| {
+                                h_flex().w_full().justify_center().child(
+                                    Button::new("new-cal-more")
+                                        .label(if loading {
+                                            "正在加载更多…"
+                                        } else {
+                                            "加载更多"
+                                        })
+                                        .ghost()
+                                        .small()
+                                        .disabled(loading)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.load_calendar(None, true, cx);
                                         })),
                                 )
-                                .children(if empty && has_more {
-                                    vec![
-                                        h_flex()
-                                            .w_full()
-                                            .justify_center()
-                                            .py_8()
-                                            .child(Spinner::new().small())
-                                            .into_any_element(),
-                                    ]
-                                } else if empty {
-                                    vec![
-                                        v_flex()
-                                            .w_full()
-                                            .items_center()
-                                            .py_16()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(muted_fg)
-                                                    .child("这一天没有上新"),
-                                            )
-                                            .into_any_element(),
-                                    ]
-                                } else {
-                                    rows.iter()
-                                        .map(|item| self.render_calendar_row(item, cx))
-                                        .collect()
-                                })
-                                .children((has_more && !empty).then(|| {
-                                    h_flex().w_full().justify_center().child(
-                                        Button::new("new-cal-more")
-                                            .label(if loading {
-                                                "正在加载更多…"
-                                            } else {
-                                                "加载更多"
-                                            })
-                                            .ghost()
-                                            .small()
-                                            .disabled(loading)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.load_calendar(None, true, cx);
-                                            })),
-                                    )
-                                }))
-                                .children((!has_more && !empty).then(|| {
-                                    h_flex().w_full().justify_center().py_2().child(
-                                        div().text_sm().text_color(muted_fg).child("没有更多了"),
-                                    )
-                                })),
-                        )
-                        .into_any_element()
-                }
-            };
+                            }))
+                            .children((!has_more && !empty).then(|| {
+                                h_flex()
+                                    .w_full()
+                                    .justify_center()
+                                    .py_2()
+                                    .child(div().text_sm().text_color(muted_fg).child("没有更多了"))
+                            })),
+                    )
+                    .into_any_element()
+            }
+        };
         v_flex()
             .size_full()
             .bg(root_bg)
