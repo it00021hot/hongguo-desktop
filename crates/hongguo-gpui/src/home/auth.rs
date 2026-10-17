@@ -7,6 +7,7 @@ use std::time::Duration;
 #[cfg(feature = "screenshot")]
 use std::time::Instant;
 
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
@@ -251,6 +252,20 @@ impl super::HomeView {
     /// 表单 + 登录按钮。点遮罩收起。
     pub(super) fn render_login_panel(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let account = self.state.settings().account;
+        // 按钮门槛与 Tauri 登录弹窗同款：手机号 11 位、验证码 ≥4 位
+        let mobile = self
+            .login_mobile
+            .as_ref()
+            .map(|i| i.read(cx).value().trim().to_string())
+            .unwrap_or_default();
+        let code = self
+            .login_code
+            .as_ref()
+            .map(|i| i.read(cx).value().trim().to_string())
+            .unwrap_or_default();
+        let mobile_ok = mobile.len() == 11 && mobile.starts_with('1');
+        let code_ok = code.len() >= 4;
+        let theme = cx.theme();
         v_flex()
             .absolute()
             .inset_0()
@@ -269,24 +284,55 @@ impl super::HomeView {
                 let mobile_input = self.login_mobile.clone();
                 let code_input = self.login_code.clone();
                 v_flex()
-                    .w(gpui_kit::px(300.0))
-                    .p_5()
-                    .gap_3()
-                    .rounded(gpui_kit::px(12.0))
+                    // Tauri 登录弹窗 512×383（DialogContent max-w-sm + p-6）
+                    .w(gpui_kit::px(512.0))
+                    .p_6()
+                    .gap_4()
+                    .rounded(gpui_kit::px(10.0))
                     .bg(gpui_kit::rgb(0x1f1f1f))
                     .on_mouse_down(
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
+                    // 头部：标题 + 说明 + 关闭（Tauri DialogHeader 同构）
                     .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .text_color(gpui_kit::rgb(0xffffff))
-                            .child(match &account {
-                                Some(a) => SharedString::from(format!("账号：{}", a.user_name)),
-                                None => "登录红果".into(),
-                            }),
+                        h_flex()
+                            .items_start()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .text_size(gpui_kit::px(18.0))
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                            .text_color(theme.foreground)
+                                            .child(match &account {
+                                                Some(a) => SharedString::from(format!(
+                                                    "账号：{}",
+                                                    a.user_name
+                                                )),
+                                                None => "登录红果账号".into(),
+                                            }),
+                                    )
+                                    .children(account.is_none().then(|| {
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child("登录后可预约新剧、同步观看记录")
+                                    })),
+                            )
+                            .child(
+                                Button::new("login-close")
+                                    .icon(gpui_kit::assets::IconName::X)
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.login_panel_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .when_some(account.clone(), |s, a| {
                         s.child(
@@ -308,31 +354,43 @@ impl super::HomeView {
                         )
                     })
                     .when(account.is_none(), |s| {
-                        s.children(
-                            mobile_input
-                                .as_ref()
-                                .map(|input| Input::new(input).h(gpui_kit::px(32.0)).text_sm()),
+                        s.child(
+                            // 手机号：字段标签 + 输入（Tauri FieldLabel 同款）
+                            v_flex()
+                                .gap_1p5()
+                                .child(div().text_sm().text_color(theme.foreground).child("手机号"))
+                                .children(
+                                    mobile_input
+                                        .as_ref()
+                                        .map(|input| Input::new(input).h(gpui_kit::px(36.0))),
+                                ),
                         )
                         .child(
-                            h_flex()
-                                .items_center()
-                                .gap_2()
-                                .children(code_input.as_ref().map(|input| {
-                                    Input::new(input).flex_1().h(gpui_kit::px(32.0)).text_sm()
-                                }))
+                            v_flex()
+                                .gap_1p5()
+                                .child(div().text_sm().text_color(theme.foreground).child("验证码"))
                                 .child(
-                                    Button::new("login-send-code")
-                                        .label(if self.login_busy {
-                                            "发送中…"
-                                        } else {
-                                            "发送验证码"
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .disabled(self.login_busy)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.login_send_code(cx);
-                                        })),
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .children(code_input.as_ref().map(|input| {
+                                            Input::new(input).flex_1().h(gpui_kit::px(36.0))
+                                        }))
+                                        .child(
+                                            Button::new("login-send-code")
+                                                .icon(gpui_kit::assets::IconName::Send)
+                                                .label(if self.login_busy {
+                                                    "发送中…"
+                                                } else {
+                                                    "发送验证码"
+                                                })
+                                                .outline()
+                                                .small()
+                                                .disabled(self.login_busy || !mobile_ok)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.login_send_code(cx);
+                                                })),
+                                        ),
                                 ),
                         )
                         .child(
@@ -343,11 +401,18 @@ impl super::HomeView {
                                     "登录"
                                 })
                                 .primary()
-                                .small()
-                                .disabled(self.login_busy)
+                                .w_full()
+                                .disabled(self.login_busy || !mobile_ok || !code_ok)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.login_submit(cx);
                                 })),
+                        )
+                        .child(
+                            // Tauri loginRiskNote 原文
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("账号与设备永久绑定，换设备登录可能触发风控"),
                         )
                     })
                     .children(self.login_message.clone().map(|msg| {

@@ -624,10 +624,9 @@ impl HomeView {
             ai_polling: false,
             emoji_picker_open: false,
             login_panel_open: false,
-            login_mobile: Some(
-                cx.new(|cx| InputState::new(window, cx).placeholder("手机号（11 位）")),
-            ),
-            login_code: Some(cx.new(|cx| InputState::new(window, cx).placeholder("验证码"))),
+            // 字段标签在卡片里（Tauri FieldLabel 同款），输入框不再塞占位文案
+            login_mobile: Some(cx.new(|cx| InputState::new(window, cx))),
+            login_code: Some(cx.new(|cx| InputState::new(window, cx))),
             login_busy: false,
             login_message: None,
             mfa_retry: None,
