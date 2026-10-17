@@ -69,7 +69,7 @@ pub(crate) fn parse(spec: &str) -> Result<Hotkey, String> {
         .filter(|p| !p.is_empty())
         .collect();
     let Some((core, mods)) = parts.split_last() else {
-        return Err("老板键为空".to_string());
+        return Err(crate::i18n::t("settings.bossKeyEmpty"));
     };
     let mut bits = 0u32;
     for m in mods {
@@ -79,14 +79,20 @@ pub(crate) fn parse(spec: &str) -> Result<Hotkey, String> {
             "super" | "win" => MOD_WIN,
             "alt" | "option" => MOD_ALT,
             "shift" => MOD_SHIFT,
-            other => return Err(format!("不认识的修饰键「{other}」")),
+            other => {
+                return Err(crate::i18n::tf(
+                    "settings.bossKeyUnknownModifier",
+                    &[("key", other)],
+                ));
+            }
         };
     }
     // 全局快捷键必须带 Ctrl/Cmd 或 Alt（Tauri 侧同口径：防劫持打字）
     if bits & (MOD_CONTROL | MOD_ALT) == 0 {
-        return Err("全局快捷键需要 Ctrl/Cmd 或 Alt 修饰".to_string());
+        return Err(crate::i18n::t("settings.bossKeyNeedsModifier"));
     }
-    let vk = vk_of(core).ok_or_else(|| format!("暂不支持这个键「{core}」"))?;
+    let vk = vk_of(core)
+        .ok_or_else(|| crate::i18n::tf("settings.bossKeyUnknownKey", &[("key", core)]))?;
     Ok(Hotkey {
         mods: bits | MOD_NOREPEAT,
         vk,

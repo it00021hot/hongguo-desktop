@@ -139,7 +139,11 @@ impl RenderOnce for BatchBar {
             .child(
                 Button::new("batch-select-all")
                     .icon(gpui_kit::assets::IconName::ListChecks)
-                    .label(if all_picked { "取消全选" } else { "全选" })
+                    .label(if all_picked {
+                        crate::i18n::t("batch.deselectAll")
+                    } else {
+                        crate::i18n::t("batch.selectAll")
+                    })
                     .ghost()
                     .small()
                     .disabled(total == 0)
@@ -153,14 +157,17 @@ impl RenderOnce for BatchBar {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(SharedString::from(format!("已选 {count} 项"))),
+                    .child(SharedString::from(crate::i18n::tf(
+                        "batch.selectedCount",
+                        &[("count", &count.to_string())],
+                    ))),
             )
             .child(div().flex_1())
             .child(
                 Button::new("batch-delete")
                     .icon(gpui_kit::assets::IconName::Trash)
                     .label(if self.deleting {
-                        SharedString::from("删除中…")
+                        SharedString::from(crate::i18n::t("batch.deleting"))
                     } else {
                         self.delete_label
                     })

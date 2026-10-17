@@ -29,7 +29,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, RenderImage, div};
+use gpui_kit::{App, Entity, RenderImage, Window, div};
 use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedSeries;
 use hongguo_api::history::WatchHistoryItem;
@@ -49,6 +49,8 @@ pub(crate) enum DetailEvent {
         vid_index: u32,
         start_secs: f64,
     },
+    /// 互动登录墙：与 Tauri 详情页 requireLogin 同序，提示后进设置页账号卡。
+    OpenSettings,
     /// 点「出品方/演职员」芯片 → 创作者主页（壳切页；详情页实体保留，
     /// 返回时原地恢复）。
     OpenCreator(String),
@@ -154,6 +156,21 @@ pub(crate) struct DetailView {
 }
 
 impl DetailView {
+    /// 语言切换：刷新剧评/回复输入框 placeholder，保留草稿。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.review_input {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(crate::i18n::t("detail.commentPlaceholder"), window, cx);
+            });
+        }
+        if let Some(input) = &self.review_reply_input {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(crate::i18n::t("detail.replyToComment"), window, cx);
+            });
+        }
+        cx.notify();
+    }
+
     pub(crate) fn new(state: Arc<AppStateInner>, _cx: &mut App) -> Self {
         Self {
             state,
@@ -256,11 +273,20 @@ impl DetailView {
 
     /// 相关推荐卡「预约/已预约」切换（Tauri ReserveButton 同款：乐观翻转、
     /// 失败回滚、成功 toast；按钮点击不触发整卡跳详情）。
-    pub(super) fn toggle_related_reserve(&mut self, series_id: String, cx: &mut Context<Self>) {
+    pub(super) fn toggle_related_reserve(
+        &mut self,
+        series_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.related_reserve_pending.contains(&series_id) {
             return;
         }
         if !self.logged_in() {
+            window.push_notification(
+                Notification::info(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
             return;
         }
         let next = !self.related_reserved.contains(&series_id);
@@ -284,9 +310,9 @@ impl DetailView {
                 match result {
                     Ok(()) => window.push_notification(
                         Notification::success(if next {
-                            "预约成功"
+                            crate::i18n::t("reservation.done")
                         } else {
-                            "已取消预约"
+                            crate::i18n::t("reservation.cancelled")
                         }),
                         cx,
                     ),
@@ -298,7 +324,14 @@ impl DetailView {
                             view.related_reserved.insert(series_id.clone());
                         }
                         log::warn!("[Detail] 相关推荐预约失败: {e}");
-                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -570,16 +603,16 @@ impl DetailView {
                         .text_sm()
                         .text_color(theme.muted_foreground)
                         .child(if self.loading {
-                            "加载中…"
+                            crate::i18n::t("common.loading")
                         } else if self.load_failed {
-                            "加载失败"
+                            crate::i18n::t("common.loadFailed")
                         } else {
-                            "暂无内容"
+                            crate::i18n::t("common.empty")
                         }),
                 )
                 .children(self.load_failed.then(|| {
                     Button::new("detail-retry")
-                        .label("重试")
+                        .label(crate::i18n::t("common.retry"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             let sid = this.series_id.clone();
                             // 强制重走装载：先清态再 load
@@ -613,11 +646,26 @@ impl DetailView {
     /// 计数人性化（详情页头部精度）：万/亿带一位小数、整数省略小数点
     /// （Tauri formatCountPrecise / hgplayer 头部同口径）。
     fn fmt_count(n: i64) -> String {
-        if n >= 100_000_000 {
-            return format!("{:.1}亿", n as f64 / 100_000_000.0).replace(".0", "");
-        }
-        if n >= 10_000 {
-            return format!("{:.1}万", n as f64 / 10_000.0).replace(".0", "");
+        match crate::i18n::locale() {
+            crate::i18n::Locale::ZhCn => {
+                if n >= 100_000_000 {
+                    return format!("{:.1}亿", n as f64 / 100_000_000.0).replace(".0", "");
+                }
+                if n >= 10_000 {
+                    return format!("{:.1}万", n as f64 / 10_000.0).replace(".0", "");
+                }
+            }
+            crate::i18n::Locale::EnUs => {
+                if n >= 1_000_000_000 {
+                    return format!("{:.1}B", n as f64 / 1_000_000_000.0).replace(".0", "");
+                }
+                if n >= 1_000_000 {
+                    return format!("{:.1}M", n as f64 / 1_000_000.0).replace(".0", "");
+                }
+                if n >= 1_000 {
+                    return format!("{:.1}K", n as f64 / 1_000.0).replace(".0", "");
+                }
+            }
         }
         format!("{n}")
     }
@@ -654,7 +702,7 @@ impl gpui_kit::Render for DetailView {
         if self.review_input.is_none() {
             let input = cx.new(|cx| {
                 gpui_kit::component::input::TextareaState::new(window, cx)
-                    .placeholder("写下你的剧评…")
+                    .placeholder(crate::i18n::t("detail.commentPlaceholder"))
                     // Enter 发表、Shift+Enter 换行（Tauri 富文本输入 onEnter 同款）
                     .submit_on_enter(true)
             });
@@ -677,7 +725,8 @@ impl gpui_kit::Render for DetailView {
         // 剧评回复输入框（同款懒建；Enter 提交走 pending 转交 render）
         if self.review_reply_input.is_none() {
             let input = cx.new(|cx| {
-                gpui_kit::component::input::InputState::new(window, cx).placeholder("回复…")
+                gpui_kit::component::input::InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("detail.replyToComment"))
             });
             cx.subscribe(
                 &input,

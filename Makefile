@@ -53,18 +53,27 @@ test-rust:
 # objc2-exception-helper 的 C 编译步骤，check/clippy 不链接、结果不受影响。
 # -D clippy::allow_attributes 是忽略标签禁令：#[allow] 直接拒；确需断言用
 # #[expect(reason)]——lint 不再触发时编译失败，杜绝过期放行。
+#
+# Windows 的 make 走 cmd.exe，recipe 里的 `VAR=value command` 是 POSIX
+# 语法（会被当成不存在的程序）。用 make export 注入交叉目标的占位 CC/AR，
+# 让 Windows 与 Unix 共用同一条 recipe。
+export CC_aarch64_apple_darwin := true
+export AR_aarch64_apple_darwin := true
+export CC_x86_64_apple_darwin := true
+export AR_x86_64_apple_darwin := true
+
 lint:
 	pnpm lint
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-	# macOS 双目标交叉：排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
-	# build script 里 bindgen Apple 框架头文件，Windows 宿主没有 macOS SDK
-	# 生不出来（真 macOS 环境原生 clippy 不受影响，CI 的 macOS job 覆盖）。
-	# hongguo-playback 同理：cpal → coreaudio-sys 0.2.18 对 Apple 目标无条件
-	# bindgen（要 libclang + macOS SDK），本机生不出来；macOS 覆盖由 Mac 本机
-	# 与 CI 承担，Windows 宿主那条仍全量含它。
-	CC_aarch64_apple_darwin=true AR_aarch64_apple_darwin=true cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	CC_x86_64_apple_darwin=true AR_x86_64_apple_darwin=true cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+# macOS 双目标交叉：排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
+# build script 里 bindgen Apple 框架头文件，Windows 宿主没有 macOS SDK
+# 生不出来（真 macOS 环境原生 clippy 不受影响，CI 的 macOS job 覆盖）。
+# hongguo-playback 同理：cpal → coreaudio-sys 0.2.18 对 Apple 目标无条件
+# bindgen（要 libclang + macOS SDK），本机生不出来；macOS 覆盖由 Mac 本机
+# 与 CI 承担，Windows 宿主那条仍全量含它。
+	cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 
 fmt:
 	cargo fmt --all

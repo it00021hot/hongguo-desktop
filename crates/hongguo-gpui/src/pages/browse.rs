@@ -51,14 +51,14 @@ struct CardView<'a> {
 /// 服务端行名去掉「全部」前缀）。
 fn row_label(row_type: &str, row_name: &str) -> String {
     match row_type {
-        "genre" => "体裁".into(),
-        "category_dim_theme" => "主题".into(),
-        "category_dim_role" => "设定".into(),
-        "category_dim_epoch" => "背景".into(),
-        "sort" => "推荐".into(),
-        "gender" => "受众".into(),
-        "online_time" => "时间".into(),
-        "duration" => "长度".into(),
+        "genre" => crate::i18n::t("browse.fGenre"),
+        "category_dim_theme" => crate::i18n::t("browse.fTheme"),
+        "category_dim_role" => crate::i18n::t("browse.fRole"),
+        "category_dim_epoch" => crate::i18n::t("browse.fEpoch"),
+        "sort" => crate::i18n::t("browse.fSort"),
+        "gender" => crate::i18n::t("browse.fGender"),
+        "online_time" => crate::i18n::t("browse.fOnlineTime"),
+        "duration" => crate::i18n::t("browse.fDuration"),
         other => {
             let stripped = row_name.trim_start_matches("全部");
             if stripped.is_empty() {
@@ -137,12 +137,22 @@ pub(crate) struct BrowseView {
 }
 
 impl BrowseView {
+    /// 语言切换：刷新搜索框 placeholder，保留已输入关键词。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.keyword.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("search.placeholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let keyword = cx.new(|cx| InputState::new(window, cx).placeholder("输入剧名 / 关键词"));
+        let keyword = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("search.placeholder"))
+        });
         // 输入变化 → 更新联想（300ms 防抖在延迟任务里做）；聚焦重开、失焦
         // 收起（Tauri browse-page onFocus/onBlur → setSuggestOpen 同款）
         cx.subscribe(&keyword, |this, _, event: &InputEvent, cx| {
@@ -619,24 +629,26 @@ impl BrowseView {
                     .child(
                         Button::new("browse-submit")
                             .icon(gpui_kit::assets::IconName::Search)
-                            .label("搜索")
+                            .label(crate::i18n::t("search.submit"))
                             .disabled(self.keyword.read(cx).value().trim().is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.submit_search(cx))),
                     )
                     .children(searching.then(|| {
                         Button::new("browse-exit-search")
                             .icon(gpui_kit::assets::IconName::X)
-                            .label("退出搜索")
+                            .label(crate::i18n::t("search.exit"))
                             .outline()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.exit_search(window, cx);
                             }))
                     }))
                     .children((!searching && total > 0).then(|| {
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(format!("共 {total} 部")))
+                        div().text_sm().text_color(theme.muted_foreground).child(
+                            SharedString::from(crate::i18n::tf(
+                                "browse.totalCount",
+                                &[("total", &total.to_string())],
+                            )),
+                        )
                     })),
             )
             .into_any_element()
@@ -743,7 +755,7 @@ impl BrowseView {
             let mut pills: Vec<gpui_kit::AnyElement> = vec![pill(
                 cx,
                 ElementId::from(format!("browse-all-{}", row.row_type)),
-                "全部".to_string(),
+                crate::i18n::t("browse.all"),
                 current.is_empty(),
                 {
                     let row_type = row.row_type.clone();
@@ -798,7 +810,7 @@ impl BrowseView {
             let mut pills: Vec<gpui_kit::AnyElement> = vec![pill(
                 cx,
                 "browse-all-creation".into(),
-                "全部".to_string(),
+                crate::i18n::t("browse.all"),
                 current.is_empty(),
                 cx.listener(|this, _, _, cx| {
                     if this.filters.creation_status.is_empty() {
@@ -809,15 +821,21 @@ impl BrowseView {
                 }),
             )];
             for (id, label) in [
-                ("creation_status_0", "已完结"),
-                ("creation_status_1", "连载中"),
+                (
+                    "creation_status_0",
+                    crate::i18n::t("browse.creationFinished"),
+                ),
+                (
+                    "creation_status_1",
+                    crate::i18n::t("browse.creationOngoing"),
+                ),
             ] {
                 let selected = current == id;
                 let id_owned = id.to_string();
                 pills.push(pill(
                     cx,
                     ElementId::from(format!("browse-creation-{id}")),
-                    label.to_string(),
+                    label,
                     selected,
                     cx.listener(move |this, _, _, cx| {
                         if this.filters.creation_status == id_owned {
@@ -840,7 +858,7 @@ impl BrowseView {
                             .pt_1()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("状态"),
+                            .child(crate::i18n::t("browse.fCreation")),
                     )
                     .child(h_flex().flex_wrap().gap_1().py_0p5().children(pills))
                     .into_any_element(),
@@ -931,7 +949,10 @@ impl BrowseView {
                             .py_0p5()
                             .text_xs()
                             .text_color(gpui_kit::rgb(0xffffffff))
-                            .child(SharedString::from(format!("全 {episode_count} 集")))
+                            .child(SharedString::from(crate::i18n::tf(
+                                "detail.allEpisodesBadge",
+                                &[("count", &episode_count.to_string())],
+                            )))
                     })),
             )
             .child(
@@ -1082,7 +1103,7 @@ impl gpui_kit::Render for BrowseView {
                                 )
                                 .small(),
                             )
-                            .child("筛选")
+                            .child(crate::i18n::t("browse.filters"))
                             .children((active_filters > 0).then(|| {
                                 Tag::secondary()
                                     .child(SharedString::from(active_filters.to_string()))
@@ -1140,7 +1161,10 @@ impl gpui_kit::Render for BrowseView {
                         item.tags.clone()
                     };
                     let heat = if item.heat_text.is_empty() && item.play_cnt > 0 {
-                        format!("{}播放", format_play_count(item.play_cnt))
+                        crate::i18n::tf(
+                            "browse.playCount",
+                            &[("count", &format_play_count(item.play_cnt))],
+                        )
                     } else {
                         item.heat_text.clone()
                     };
@@ -1196,9 +1220,9 @@ impl gpui_kit::Render for BrowseView {
             h_flex().w_full().justify_center().py_2().child(
                 Button::new("browse-load-more")
                     .label(if loading_more {
-                        "正在加载更多…"
+                        crate::i18n::t("feed.loadingMore")
                     } else {
-                        "加载更多"
+                        crate::i18n::t("follow.loadMore")
                     })
                     .ghost()
                     .small()
@@ -1231,9 +1255,9 @@ impl gpui_kit::Render for BrowseView {
                             .text_sm()
                             .text_color(theme.danger)
                             .child(if searching {
-                                "搜索失败"
+                                crate::i18n::t("browse.searchFailed")
                             } else {
-                                "加载失败"
+                                crate::i18n::t("browse.loadFailed")
                             })
                     }))
                     .child(if loading {
@@ -1250,9 +1274,9 @@ impl gpui_kit::Render for BrowseView {
                             .py_16()
                             .child(div().text_sm().text_color(theme.muted_foreground).child(
                                 if searching {
-                                    "换个关键词试试"
+                                    crate::i18n::t("search.empty")
                                 } else {
-                                    "这个分类下暂时没有内容"
+                                    crate::i18n::t("browse.empty")
                                 },
                             ))
                             .into_any_element()
@@ -1271,7 +1295,7 @@ impl gpui_kit::Render for BrowseView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("没有更多了"),
+                                .child(crate::i18n::t("follow.noMore")),
                         )
                     })),
             )

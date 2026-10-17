@@ -7,12 +7,13 @@ use std::sync::Arc;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
+use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
-use hongguo_api::detail::{RelatedItem, fetch_related_series};
+use hongguo_api::detail::{RelatedItem, RelatedSeries, fetch_related_series};
 
 use super::DetailView;
 use crate::bridge;
@@ -66,7 +67,7 @@ impl DetailView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| match result {
+            let _ = this.update_in(cx, |view, window, cx| match result {
                 Ok(related) => {
                     for item in related.works.iter().chain(related.guess.iter()) {
                         view.load_image(item.cover.clone(), cx);
@@ -74,7 +75,23 @@ impl DetailView {
                     view.related = Some(Arc::new(related));
                     cx.notify();
                 }
-                Err(e) => log::warn!("[Detail] 相关推荐拉取失败: {e}"),
+                Err(e) => {
+                    log::warn!("[Detail] 相关推荐拉取失败: {e}");
+                    // 失败不能停在「加载中…」：Tauri 由 QueryCache 弹错后空表，
+                    // GPUI 用空 RelatedSeries 落到同一空态，并给一次 toast。
+                    view.related = Some(Arc::new(RelatedSeries {
+                        works: Vec::new(),
+                        guess: Vec::new(),
+                    }));
+                    window.push_notification(
+                        gpui_kit::component::notification::Notification::error(crate::i18n::tf(
+                            "common.failedWith",
+                            &[("message", &crate::i18n::app_error_text(&e))],
+                        )),
+                        cx,
+                    );
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -86,7 +103,7 @@ impl DetailView {
                 .mt_4()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("加载中…")
+                .child(crate::i18n::t("common.loading"))
                 .into_any_element();
         };
         v_flex()
@@ -95,7 +112,7 @@ impl DetailView {
             .children((!related.works.is_empty()).then(|| {
                 v_flex()
                     .gap_3()
-                    .child(Self::section_title("相关作品·系列"))
+                    .child(Self::section_title(&crate::i18n::t("detail.relatedWorks")))
                     .child(
                         h_flex()
                             .flex_wrap()
@@ -106,7 +123,7 @@ impl DetailView {
             .children((!related.guess.is_empty()).then(|| {
                 v_flex()
                     .gap_3()
-                    .child(Self::section_title("猜你喜欢"))
+                    .child(Self::section_title(&crate::i18n::t("detail.guessYouLike")))
                     .child(
                         h_flex()
                             .flex_wrap()
@@ -120,7 +137,7 @@ impl DetailView {
                         .py_6()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("暂无相关推荐")
+                        .child(crate::i18n::t("detail.recommendEmpty"))
                 }),
             )
             .into_any_element()
@@ -142,13 +159,19 @@ impl DetailView {
         let mut stats: Vec<String> = Vec::new();
         if item.episode_cnt > 0 {
             // Tauri related-card：detail.episodesCount =「共N集」
-            stats.push(format!("共{}集", item.episode_cnt));
+            stats.push(crate::i18n::tf(
+                "detail.episodesCount",
+                &[("count", &item.episode_cnt.to_string())],
+            ));
         } else if item.tag == "即将上线" {
-            stats.push("即将上线".to_string());
+            stats.push(crate::i18n::t("player.comingSoon"));
         }
         if item.play_cnt > 0 {
             // Tauri：formatPlayCount + detail.plays =「N万播放」
-            stats.push(format!("{}播放", Self::fmt_count(item.play_cnt)));
+            stats.push(crate::i18n::tf(
+                "browse.playCount",
+                &[("count", &Self::fmt_count(item.play_cnt))],
+            ));
         }
         let is_upcoming = item.episode_cnt == 0 || item.tag == "即将上线";
         let reserve_id = item.series_id.clone();
@@ -204,7 +227,11 @@ impl DetailView {
                             .text_size(gpui_kit::px(10.0))
                             // 评分角标走 star（Tauri related-card text-star 同款）
                             .text_color(crate::tokens::star(theme.mode))
-                            .child(SharedString::from(format!("{:.1}分", item.score)))
+                            .child(SharedString::from(format!(
+                                "{:.1}{}",
+                                item.score,
+                                crate::i18n::t("detail.scoreUnit")
+                            )))
                     })),
             )
             .child(
@@ -232,15 +259,19 @@ impl DetailView {
                     } else {
                         gpui_kit::assets::IconName::Bell
                     })
-                    .label(if reserved { "已预约" } else { "预约" })
+                    .label(if reserved {
+                        crate::i18n::t("reservation.reserved")
+                    } else {
+                        crate::i18n::t("reservation.action")
+                    })
                     .outline()
                     .small()
                     .disabled(reserve_pending)
                     .on_click({
                         let reserve_id = reserve_id.clone();
-                        cx.listener(move |this, _, _, cx| {
+                        cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.toggle_related_reserve(reserve_id.clone(), cx);
+                            this.toggle_related_reserve(reserve_id.clone(), window, cx);
                         })
                     })
             }))

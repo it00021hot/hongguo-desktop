@@ -58,15 +58,16 @@ impl super::super::DetailView {
                     .gap_0p5()
                     .child(div().text_xs().text_color(theme.muted_foreground).child(
                         SharedString::from(if r.user_name.is_empty() {
-                            "匿名用户".to_string()
+                            crate::i18n::t("player.comments.anon")
                         } else {
                             r.user_name.clone()
                         }),
                     ))
                     .child(div().text_sm().child(SharedString::from(format!(
-                        "回复 @{}：{}",
+                        "{} @{}：{}",
+                        crate::i18n::t("detail.replyToPrefix"),
                         if r.reply_to_name.is_empty() {
-                            "原评论".to_string()
+                            crate::i18n::t("player.comments.originalComment")
                         } else {
                             r.reply_to_name.clone()
                         },
@@ -94,10 +95,11 @@ impl super::super::DetailView {
                                     .hover(|s| s.text_color(theme.foreground))
                                     .on_click({
                                         let (p, rid) = (parent_id.clone(), rid.clone());
-                                        cx.listener(move |this, _, _, cx| {
+                                        cx.listener(move |this, _, window, cx| {
                                             this.toggle_review_reply_digg(
                                                 p.clone(),
                                                 rid.clone(),
+                                                window,
                                                 cx,
                                             );
                                         })
@@ -122,7 +124,7 @@ impl super::super::DetailView {
                                             cx,
                                         );
                                     }))
-                                    .child("回复")
+                                    .child(crate::i18n::t("detail.reply"))
                             })
                             .children(mine.then(|| {
                                 let (p, rid) = (parent_id.clone(), rid.clone());
@@ -140,7 +142,7 @@ impl super::super::DetailView {
                                             cx,
                                         );
                                     }))
-                                    .child("删除")
+                                    .child(crate::i18n::t("common.delete"))
                             })),
                     ),
             )
@@ -165,7 +167,7 @@ impl super::super::DetailView {
             div()
                 .text_sm()
                 .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .child("我的评分"),
+                .child(crate::i18n::t("detail.myRating")),
         );
         for s in 1..=5u8 {
             stars = stars.child(
@@ -206,7 +208,7 @@ impl super::super::DetailView {
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child("已选评分，发布后生效")
+                .child(crate::i18n::t("detail.ratedSuffix"))
         }));
         let mut card = v_flex()
             .rounded(gpui_kit::px(8.0))
@@ -250,9 +252,9 @@ impl super::super::DetailView {
                     .child(
                         Button::new("review-send")
                             .label(if self.review_sending {
-                                "发布中…"
+                                crate::i18n::t("common.sending")
                             } else {
-                                "发表剧评"
+                                crate::i18n::t("detail.reviewSend")
                             })
                             .small()
                             .disabled(!can_send)
@@ -346,14 +348,17 @@ impl super::super::DetailView {
                             .children((!has_score).then(|| score_stars("0", theme)))
                             .child(div().text_sm().text_color(theme.muted_foreground).child(
                                 if has_score && self.reviews_score_cnt > 0 {
-                                    format!(
-                                        "{}人评分",
-                                        DetailView::fmt_count(self.reviews_score_cnt)
+                                    crate::i18n::tf(
+                                        "detail.ratingCount",
+                                        &[(
+                                            "count",
+                                            &DetailView::fmt_count(self.reviews_score_cnt),
+                                        )],
                                     )
                                 } else if has_score {
-                                    "剧均评分".to_string()
+                                    crate::i18n::t("detail.avgRating")
                                 } else {
-                                    "暂无评分".to_string()
+                                    crate::i18n::t("detail.noRating")
                                 },
                             ))
                             .children(self.reviews_tag_stats.iter().map(|tag| {
@@ -494,9 +499,10 @@ impl super::super::DetailView {
                                                     .hover(|s| s.text_color(theme.foreground))
                                                     .on_click({
                                                         let rid = rid.clone();
-                                                        cx.listener(move |this, _, _, cx| {
+                                                        cx.listener(move |this, _, window, cx| {
                                                             this.toggle_review_digg(
                                                                 rid.clone(),
+                                                                window,
                                                                 cx,
                                                             );
                                                         })
@@ -531,7 +537,7 @@ impl super::super::DetailView {
                                                             );
                                                         })
                                                     })
-                                                    .child("回复"),
+                                                    .child(crate::i18n::t("detail.reply")),
                                             )
                                             .children(is_mine.then(|| {
                                                 let rid = rid.clone();
@@ -553,7 +559,7 @@ impl super::super::DetailView {
                                                             );
                                                         },
                                                     ))
-                                                    .child("删除")
+                                                    .child(crate::i18n::t("common.delete"))
                                             }))
                                             .children((reply_count > 0).then(|| {
                                                 let rid = rid.clone();
@@ -574,9 +580,14 @@ impl super::super::DetailView {
                                                         },
                                                     ))
                                                     .child(if replies_open {
-                                                        "收起回复".to_string()
+                                                        crate::i18n::t(
+                                                            "detail.collapseReplies",
+                                                        )
                                                     } else {
-                                                        format!("展开 {reply_count} 条回复")
+                                                        crate::i18n::tf(
+                                                            "detail.expandReplies",
+                                                            &[("n", &reply_count.to_string())],
+                                                        )
                                                     })
                                             })),
                                     ),
@@ -590,7 +601,7 @@ impl super::super::DetailView {
                                 div()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child("加载中…"),
+                                    .child(crate::i18n::t("common.loading")),
                             );
                         }
                         for r in &replies {
@@ -605,9 +616,9 @@ impl super::super::DetailView {
                                     .text_color(theme.muted_foreground)
                                     .hover(|s| s.text_color(theme.foreground))
                                     .child(if loading {
-                                        "加载中…"
+                                        crate::i18n::t("common.loading")
                                     } else {
-                                        "展开更多回复"
+                                        crate::i18n::t("detail.moreReplies")
                                     })
                                     .on_click({
                                         let rid = rid.clone();
@@ -647,9 +658,9 @@ impl super::super::DetailView {
                                     "review-reply-send-{rid}"
                                 )))
                                 .label(if self.review_reply_sending {
-                                    "发送中…"
+                                    crate::i18n::t("common.sending")
                                 } else {
-                                    "回复"
+                                    crate::i18n::t("detail.reply")
                                 })
                                 .small()
                                 .disabled(
@@ -664,7 +675,7 @@ impl super::super::DetailView {
                                 Button::new(ElementId::from(format!(
                                     "review-reply-cancel-{rid}"
                                 )))
-                                .label("取消")
+                                .label(crate::i18n::t("common.cancel"))
                                 .ghost()
                                 .small()
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -676,7 +687,10 @@ impl super::super::DetailView {
                                 div()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(format!("回复 @{name}")))
+                                    .child(SharedString::from(format!(
+                                        "{} @{name}",
+                                        crate::i18n::t("detail.replyToPrefix")
+                                    )))
                             }))
                     }))
                     .into_any_element()
@@ -689,9 +703,9 @@ impl super::super::DetailView {
                     .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(if self.reviews_loading {
-                        "加载中…"
+                        crate::i18n::t("common.loading")
                     } else {
-                        "暂无剧评"
+                        crate::i18n::t("detail.reviewsEmpty")
                     })
             }))
             // 加载更多（Tauri 是滚动懒加载；GPUI 详情页滚动容器裁判复杂，
@@ -700,9 +714,9 @@ impl super::super::DetailView {
                 (self.reviews_has_more && !self.reviews.is_empty()).then(|| {
                     Button::new("detail-reviews-more")
                         .label(if self.reviews_loading {
-                            "加载中…"
+                            crate::i18n::t("common.loading")
                         } else {
-                            "加载更多剧评"
+                            crate::i18n::t("detail.loadMoreReviews")
                         })
                         .secondary()
                         .small()

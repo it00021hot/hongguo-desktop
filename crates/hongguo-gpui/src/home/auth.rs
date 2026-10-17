@@ -22,6 +22,8 @@ use super::controls::CONTROLS_HOLD_SECS;
 use crate::bridge;
 use hongguo_service::login_service::flow::LoginResult;
 
+const DEFAULT_RETRY_SECS: u32 = 60;
+
 impl super::HomeView {
     /// 登录态（settings 账号卡片的 user_id 非空）。
     pub(super) fn logged_in(&self) -> bool {
@@ -55,7 +57,7 @@ impl super::HomeView {
         // 侧栏直接登出，按卸载语义先停播落进度）
         self.release_for_leave(cx);
         self.mfa_retry = None;
-        self.login_message = Some("已退出登录".to_string());
+        self.login_message = Some(crate::i18n::t("settings.loggedOut"));
         log::info!("[Login] 已退出登录");
         cx.emit(super::HomeEvent::AccountChanged);
         cx.notify();
@@ -69,7 +71,7 @@ impl super::HomeView {
         };
         let mobile = input.read(cx).value().trim().to_string();
         if mobile.len() != 11 || !mobile.starts_with('1') || self.login_busy {
-            self.login_message = Some("手机号格式不正确".into());
+            self.login_message = Some(crate::i18n::t("settings.loginInvalidMobile"));
             cx.notify();
             return;
         }
@@ -87,11 +89,24 @@ impl super::HomeView {
                     Ok(outcome) => {
                         // csrf 凭据已由 service 暂存（提交时消费），壳不再经手
                         log::info!("[Login] 发码成功: {}", outcome.message);
-                        view.login_message = Some(format!("{}（注意查收短信）", outcome.message));
+                        let wait = if outcome.retry_time > 0 {
+                            outcome.retry_time
+                        } else {
+                            DEFAULT_RETRY_SECS
+                        }
+                        .to_string();
+                        view.login_message = Some(crate::i18n::tf(
+                            "settings.codeSent",
+                            &[("s", wait.as_str())],
+                        ));
                     }
                     Err(e) => {
                         log::warn!("[Login] 发码失败: {e}");
-                        view.login_message = Some(format!("发码失败：{e}"));
+                        let message = crate::i18n::app_error_text(&e);
+                        view.login_message = Some(crate::i18n::tf(
+                            "settings.loginSendFailed",
+                            &[("message", message.as_str())],
+                        ));
                     }
                 }
                 cx.notify();
@@ -113,7 +128,7 @@ impl super::HomeView {
         let mobile = mobile_input.read(cx).value().trim().to_string();
         let code = code_input.read(cx).value().trim().to_string();
         if mobile.len() != 11 || !mobile.starts_with('1') {
-            self.login_message = Some("手机号格式不正确".into());
+            self.login_message = Some(crate::i18n::t("settings.loginInvalidMobile"));
             cx.notify();
             return;
         }
@@ -134,7 +149,11 @@ impl super::HomeView {
                 Err(e) => {
                     view.login_busy = false;
                     log::warn!("[Login] 登录失败: {e}");
-                    view.login_message = Some(format!("登录失败：{e}"));
+                    let message = crate::i18n::app_error_text(&e);
+                    view.login_message = Some(crate::i18n::tf(
+                        "settings.loginFailed",
+                        &[("message", message.as_str())],
+                    ));
                     cx.notify();
                 }
                 Ok(LoginResult::Success { user }) => {
@@ -143,7 +162,10 @@ impl super::HomeView {
                     log::info!("[Login] 登录成功: {} ({})", user.name, user.user_id);
                     // 账号落库与资料刷新（真昵称/高清头像）由 service 的
                     // complete_login 后台完成——壳不再自行跟进
-                    view.login_message = Some(format!("登录成功：{}", user.name));
+                    view.login_message = Some(crate::i18n::tf(
+                        "settings.loginSuccess",
+                        &[("name", user.name.as_str())],
+                    ));
                     cx.emit(super::HomeEvent::AccountChanged);
                     cx.notify();
                 }
@@ -183,7 +205,10 @@ impl super::HomeView {
             LoginMfaStateEvent::Success { name } => {
                 self.login_busy = false;
                 self.mfa_retry = None;
-                self.login_message = Some(format!("登录成功：{name}"));
+                self.login_message = Some(crate::i18n::tf(
+                    "settings.loginSuccess",
+                    &[("name", name.as_str())],
+                ));
                 cx.emit(super::HomeEvent::AccountChanged);
             }
             LoginMfaStateEvent::Failed {
@@ -193,9 +218,9 @@ impl super::HomeView {
                 self.login_busy = false;
                 self.mfa_retry = None;
                 self.login_message = Some(if message_kind == "settings.loginMfaTimeout" {
-                    "5 分钟未确认，登录已超时退出".into()
+                    crate::i18n::t("settings.loginMfaTimeout")
                 } else {
-                    format!("登录失败：{message}")
+                    crate::i18n::tf("settings.loginFailed", &[("message", message.as_str())])
                 });
             }
             LoginMfaStateEvent::Waiting { server_tip } => {
@@ -309,18 +334,20 @@ impl super::HomeView {
                                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                             .text_color(theme.foreground)
                                             .child(match &account {
-                                                Some(a) => SharedString::from(format!(
-                                                    "账号：{}",
-                                                    a.user_name
+                                                Some(a) => SharedString::from(crate::i18n::tf(
+                                                    "settings.accountId",
+                                                    &[("id", a.user_name.as_str())],
                                                 )),
-                                                None => "登录红果账号".into(),
+                                                None => SharedString::from(crate::i18n::t(
+                                                    "settings.loginTitle",
+                                                )),
                                             }),
                                     )
                                     .children(account.is_none().then(|| {
                                         div()
                                             .text_sm()
                                             .text_color(theme.muted_foreground)
-                                            .child("登录后可预约新剧、同步观看记录")
+                                            .child(crate::i18n::t("settings.loginPrompt"))
                                     })),
                             )
                             .child(
@@ -343,7 +370,7 @@ impl super::HomeView {
                         )
                         .child(
                             Button::new("login-logout")
-                                .label("退出登录")
+                                .label(crate::i18n::t("settings.logout"))
                                 .danger()
                                 .small()
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -358,7 +385,12 @@ impl super::HomeView {
                             // 手机号：字段标签 + 输入（Tauri FieldLabel 同款）
                             v_flex()
                                 .gap_1p5()
-                                .child(div().text_sm().text_color(theme.foreground).child("手机号"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child(crate::i18n::t("settings.loginMobilePlaceholder")),
+                                )
                                 .children(
                                     mobile_input
                                         .as_ref()
@@ -368,7 +400,12 @@ impl super::HomeView {
                         .child(
                             v_flex()
                                 .gap_1p5()
-                                .child(div().text_sm().text_color(theme.foreground).child("验证码"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child(crate::i18n::t("settings.loginCodePlaceholder")),
+                                )
                                 .child(
                                     h_flex()
                                         .items_center()
@@ -380,9 +417,9 @@ impl super::HomeView {
                                             Button::new("login-send-code")
                                                 .icon(gpui_kit::assets::IconName::Send)
                                                 .label(if self.login_busy {
-                                                    "发送中…"
+                                                    crate::i18n::t("settings.loginSending")
                                                 } else {
-                                                    "发送验证码"
+                                                    crate::i18n::t("settings.loginSendCode")
                                                 })
                                                 .outline()
                                                 .small()
@@ -396,9 +433,9 @@ impl super::HomeView {
                         .child(
                             Button::new("login-submit")
                                 .label(if self.mfa_retry.is_some() {
-                                    "重试登录"
+                                    crate::i18n::t("settings.loginRetry")
                                 } else {
-                                    "登录"
+                                    crate::i18n::t("settings.loginAction")
                                 })
                                 .primary()
                                 .w_full()
@@ -412,7 +449,7 @@ impl super::HomeView {
                             div()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
-                                .child("账号与设备永久绑定，换设备登录可能触发风控"),
+                                .child(crate::i18n::t("settings.loginRiskNote")),
                         )
                     })
                     .children(self.login_message.clone().map(|msg| {

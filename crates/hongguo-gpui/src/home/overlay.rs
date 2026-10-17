@@ -117,13 +117,24 @@ impl super::HomeView {
             .child(
                 div()
                     .mt_0p5()
+                    // Tauri 这里是一个 <p> 内联 <span>；GPUI 必须显式 flex，
+                    // 否则第二个 div 会换行成「Ep. 1 / · 53 episodes」。
+                    .flex()
+                    .items_center()
                     .text_xs()
                     .text_color(gpui_kit::rgba(0xffffffd9))
-                    .child(format!("第{}集", now.vid_index))
+                    .child(crate::i18n::tf(
+                        "player.episodeNo",
+                        &[("index", &now.vid_index.to_string())],
+                    ))
                     .children((now.episode_count > 0).then(|| {
-                        div()
-                            .text_color(gpui_kit::rgba(0xffffffb3))
-                            .child(format!(" · 全{}集", now.episode_count))
+                        div().text_color(gpui_kit::rgba(0xffffffb3)).child(format!(
+                            " · {}",
+                            crate::i18n::tf(
+                                "player.totalEpisodes",
+                                &[("count", &now.episode_count.to_string())],
+                            )
+                        ))
                     })),
             )
             .children(intro.map(|intro| {
@@ -172,7 +183,11 @@ impl super::HomeView {
                                     cx.notify();
                                 }))
                             })
-                            .child(if expanded { "收起" } else { "展开" })
+                            .child(if expanded {
+                                crate::i18n::t("player.introCollapse")
+                            } else {
+                                crate::i18n::t("player.introExpand")
+                            })
                     }))
             }))
             .into_any_element()

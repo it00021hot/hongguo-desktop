@@ -13,7 +13,6 @@ use std::sync::Arc;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -355,7 +354,9 @@ impl NewDramaView {
                 Ok(()) => {
                     view.reserved_local.insert(series_id);
                     window.push_notification(
-                        gpui_kit::component::notification::Notification::success("预约成功"),
+                        gpui_kit::component::notification::Notification::success(crate::i18n::t(
+                            "reservation.done",
+                        )),
                         cx,
                     );
                     cx.notify();
@@ -363,8 +364,9 @@ impl NewDramaView {
                 Err(e) => {
                     log::warn!("[New] 预约失败: {e}");
                     window.push_notification(
-                        gpui_kit::component::notification::Notification::error(format!(
-                            "预约失败：{e}"
+                        gpui_kit::component::notification::Notification::error(crate::i18n::tf(
+                            "common.failedWith",
+                            &[("message", &crate::i18n::app_error_text(&e))],
                         )),
                         cx,
                     );
@@ -384,20 +386,23 @@ impl NewDramaView {
             h_flex()
                 .id("top-new-tabs")
                 .items_center()
-                .gap_1()
+                .gap_0p5()
                 .children(
                     [
-                        (ViewTab::Recommend, "新剧推荐"),
-                        (ViewTab::Calendar, "上新日历"),
+                        (
+                            ViewTab::Recommend,
+                            crate::i18n::t("newDrama.tabs.recommend"),
+                        ),
+                        (ViewTab::Calendar, crate::i18n::t("newDrama.tabs.calendar")),
                     ]
                     .map(|(tab, label)| {
                         let active = view == tab;
-                        let button = Button::new(format!("new-tab-{label}")).label(label).small();
-                        let button = if active {
-                            button.primary()
-                        } else {
-                            button.ghost()
-                        };
+                        let button = crate::pill_tab::pill_tab(
+                            format!("new-tab-{label}"),
+                            label,
+                            active,
+                            cx,
+                        );
                         button.on_click(cx.listener(move |this, _, _, cx| {
                             if this.view == tab {
                                 return;
@@ -432,16 +437,19 @@ impl NewDramaView {
                 .items_center()
                 .gap_2()
                 .children(
-                    [(2, "全部"), (1, "男频"), (0, "女频")].map(|(value, label)| {
+                    [
+                        (2, crate::i18n::t("newDrama.gender.all")),
+                        (1, crate::i18n::t("newDrama.gender.male")),
+                        (0, crate::i18n::t("newDrama.gender.female")),
+                    ]
+                    .map(|(value, label)| {
                         let active = gender == value;
-                        let button = Button::new(format!("new-gender-{label}"))
-                            .label(label)
-                            .small();
-                        let button = if active {
-                            button.primary()
-                        } else {
-                            button.ghost()
-                        };
+                        let button = crate::pill_tab::pill_tab(
+                            format!("new-gender-{label}"),
+                            label,
+                            active,
+                            cx,
+                        );
                         button.on_click(cx.listener(move |this, _, _, cx| {
                             this.switch_gender(value, cx);
                         }))
@@ -469,14 +477,14 @@ impl NewDramaView {
         let tags: Vec<String> = tags.into_iter().filter(|t| !t.is_empty()).take(4).collect();
         v_flex()
             .id(ElementId::from(format!("new-card-{}", item.series_id)))
-            .w(gpui_kit::px(196.0))
+            .w_full()
             .overflow_hidden()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(theme.radius_lg)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .cursor_pointer()
-            .hover(|s| s.border_color(theme.foreground))
+            .hover(|s| s.border_color(theme.foreground.opacity(0.3)).shadow_md())
             .on_click({
                 let item = item.clone();
                 cx.listener(move |this, _, _, cx| {
@@ -487,7 +495,7 @@ impl NewDramaView {
                 div()
                     .relative()
                     .w_full()
-                    .h(gpui_kit::px(261.0))
+                    .aspect_ratio(3.0 / 4.0)
                     .flex_shrink_0()
                     .overflow_hidden()
                     .bg(theme.secondary)
@@ -526,14 +534,18 @@ impl NewDramaView {
                             .py_0p5()
                             .text_size(gpui_kit::px(10.0))
                             .text_color(gpui_kit::rgb(0xffffffff))
-                            .child(SharedString::from(format!("共{}集", item.episode_cnt)))
+                            .child(SharedString::from(crate::i18n::tf(
+                                "newDrama.episodeTotal",
+                                &[("count", &item.episode_cnt.to_string())],
+                            )))
                     }))
                     .children((downloaded > 0).then(|| {
-                        div()
-                            .absolute()
-                            .top_2()
-                            .right_2()
-                            .child(Tag::success().child(SharedString::from(downloaded.to_string())))
+                        div().absolute().top_2().right_2().child(status_badge(
+                            downloaded.to_string(),
+                            theme.success.opacity(0.15),
+                            theme.success,
+                            theme.radius,
+                        ))
                     })),
             )
             .child(
@@ -563,10 +575,14 @@ impl NewDramaView {
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(
                                 gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)
-                                    .small()
+                                    .size_3p5()
                                     .text_color(crate::tokens::star(theme.mode)),
                             )
-                            .child(SharedString::from(format!("{:.1}分", item.score)))
+                            .child(SharedString::from(format!(
+                                "{:.1}{}",
+                                item.score,
+                                crate::i18n::t("newDrama.scoreSuffix")
+                            )))
                     })),
             )
             .into_any_element()
@@ -580,15 +596,25 @@ impl NewDramaView {
         let theme = cx.theme();
         let cover = self.covers.get(&item.cover).cloned();
         let reserved = item.has_subscribed || self.reserved_local.contains(&item.series_id);
+        let card_item = item.clone();
         h_flex()
             .id(ElementId::from(format!("new-cal-{}", item.series_id)))
             .items_center()
             .gap_4()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(theme.radius_lg)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .p_3()
+            .cursor_pointer()
+            .hover(|s| s.border_color(theme.foreground.opacity(0.3)).shadow_md())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_detail(
+                    card_item.series_id.clone(),
+                    calendar_prefill(&card_item, reserved),
+                    cx,
+                );
+            }))
             .child(
                 div()
                     // Tauri SeriesRowCard：封面 w-20（80）× 3:4（107）
@@ -596,9 +622,8 @@ impl NewDramaView {
                     .h(gpui_kit::px(107.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(8.0))
+                    .rounded(theme.radius + gpui_kit::px(2.0))
                     .bg(theme.secondary)
-                    .cursor_pointer()
                     .child(match cover {
                         Some(bitmap) => img(ImageSource::Render(bitmap))
                             .size_full()
@@ -618,31 +643,25 @@ impl NewDramaView {
                             .gap_2()
                             .child(
                                 div()
-                                    .id(ElementId::from(format!(
-                                        "new-cal-title-{}",
-                                        item.series_id
-                                    )))
                                     .truncate()
                                     .text_sm()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .cursor_pointer()
-                                    .on_click({
-                                        let item = item.clone();
-                                        let reserved_for_title = reserved;
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.open_detail(
-                                                item.series_id.clone(),
-                                                calendar_prefill(&item, reserved_for_title),
-                                                cx,
-                                            );
-                                        })
-                                    })
                                     .child(SharedString::from(item.title.clone())),
                             )
                             .child(if item.is_online {
-                                Tag::success().child("已上线")
+                                status_badge(
+                                    crate::i18n::t("newDrama.online"),
+                                    theme.success.opacity(0.15),
+                                    theme.success,
+                                    theme.radius,
+                                )
                             } else {
-                                Tag::secondary().child("待上线")
+                                status_badge(
+                                    crate::i18n::t("newDrama.upcoming"),
+                                    theme.secondary,
+                                    theme.secondary_foreground,
+                                    theme.radius,
+                                )
                             }),
                     )
                     .child(
@@ -685,28 +704,33 @@ impl NewDramaView {
                                 // Tauri common.episodeCount =「{count} 集」（带空格）
                                 div()
                                     .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(format!("{} 集", item.episode_cnt)))
+                                    .child(SharedString::from(crate::i18n::tf(
+                                        "common.episodeCount",
+                                        &[("count", &item.episode_cnt.to_string())],
+                                    )))
                             })),
                     )
                     .children((!item.description.is_empty()).then(|| {
                         div()
-                            .truncate()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .line_height(gpui_kit::relative(1.625))
+                            .text_color(theme.muted_foreground.opacity(0.8))
+                            .line_clamp(2)
+                            .overflow_hidden()
                             .child(SharedString::from(item.description.clone()))
                     })),
             )
-            .children((item.publish_time > 0).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(format_publish_time(item.publish_time)))
-            }))
             .child(
                 v_flex()
                     .flex_shrink_0()
                     .items_center()
                     .gap_1p5()
+                    .children((item.publish_time > 0).then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(format_publish_time(item.publish_time)))
+                    }))
                     .children(if item.is_online {
                         let sid = item.series_id.clone();
                         let item_clone = item.clone();
@@ -716,10 +740,13 @@ impl NewDramaView {
                                 item.series_id
                             )))
                             .icon(gpui_kit::assets::IconName::Play)
-                            .label("播放")
+                            .label(crate::i18n::t("player.play"))
                             .outline()
                             .small()
+                            .h_8()
+                            .px_2p5()
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.play_series(sid.clone(), cx);
                             }))
                             .into_any_element(),
@@ -727,10 +754,12 @@ impl NewDramaView {
                                 "new-cal-detail-{}",
                                 item.series_id
                             )))
-                            .label("详情")
-                            .ghost()
-                            .small()
+                            .label(crate::i18n::t("nav.detail.title"))
+                            .text()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.open_detail(
                                     item_clone.series_id.clone(),
                                     calendar_prefill(&item_clone, reserved),
@@ -741,21 +770,34 @@ impl NewDramaView {
                         ]
                     } else {
                         let sid = item.series_id.clone();
-                        vec![
-                            Button::new(ElementId::from(format!(
+                        vec![{
+                            let button = Button::new(ElementId::from(format!(
                                 "new-cal-reserve-{}",
                                 item.series_id
                             )))
                             .icon(gpui_kit::assets::IconName::BellRing)
-                            .label(if reserved { "已预约" } else { "预约" })
-                            .outline()
+                            .label(if reserved {
+                                crate::i18n::t("reservation.reserved")
+                            } else {
+                                crate::i18n::t("reservation.action")
+                            })
                             .small()
-                            .disabled(reserved)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.reserve(sid.clone(), cx);
-                            }))
-                            .into_any_element(),
-                        ]
+                            .h_8()
+                            .px_2p5()
+                            .rounded(gpui_kit::px(999.0))
+                            .disabled(reserved);
+                            let button = if reserved {
+                                button.secondary()
+                            } else {
+                                button.primary()
+                            };
+                            button
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.reserve(sid.clone(), cx);
+                                }))
+                                .into_any_element()
+                        }]
                     }),
             )
             .into_any_element()
@@ -801,7 +843,19 @@ impl NewDramaView {
 impl gpui_kit::EventEmitter<NewDramaEvent> for NewDramaView {}
 
 impl gpui_kit::Render for NewDramaView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let viewport_w = window.viewport_size().width.as_f32();
+        let grid_cols = if viewport_w >= 1536.0 {
+            8
+        } else if viewport_w >= 1024.0 {
+            5
+        } else if viewport_w >= 768.0 {
+            4
+        } else if viewport_w >= 640.0 {
+            3
+        } else {
+            2
+        };
         let gender_row = self.render_gender_row(cx);
         let theme = cx.theme();
         // 颜色先取值（Hsla: Copy）：后面要构造吃 &mut cx 的闭包，不能再借 theme
@@ -823,10 +877,15 @@ impl gpui_kit::Render for NewDramaView {
                     .items_center()
                     .justify_center()
                     .gap_3()
-                    .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted_fg)
+                            .child(crate::i18n::t("newDrama.loadFailed")),
+                    )
                     .child(
                         Button::new("new-retry")
-                            .label("重试")
+                            .label(crate::i18n::t("common.retry"))
                             .on_click(cx.listener(|this, _, _, cx| this.load_recommend(false, cx))),
                     )
                     .into_any_element()
@@ -835,7 +894,12 @@ impl gpui_kit::Render for NewDramaView {
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .child(div().text_sm().text_color(muted_fg).child("暂无新剧"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted_fg)
+                            .child(crate::i18n::t("newDrama.emptyRecommend")),
+                    )
                     .into_any_element()
             } else {
                 let items = self.items.clone();
@@ -850,24 +914,19 @@ impl gpui_kit::Render for NewDramaView {
                             .w_full()
                             .gap_4()
                             .child(
-                                h_flex()
-                                    .w_full()
-                                    .flex_wrap()
-                                    .items_start()
-                                    .gap_4()
-                                    .children(
-                                        items
-                                            .iter()
-                                            .map(|item| self.render_recommend_card(item, cx)),
-                                    ),
+                                div().w_full().grid().grid_cols(grid_cols).gap_4().children(
+                                    items
+                                        .iter()
+                                        .map(|item| self.render_recommend_card(item, cx)),
+                                ),
                             )
                             .children((has_more).then(|| {
                                 h_flex().w_full().justify_center().child(
                                     Button::new("new-more")
                                         .label(if loading {
-                                            "正在加载更多…"
+                                            crate::i18n::t("feed.loadingMore")
                                         } else {
-                                            "加载更多"
+                                            crate::i18n::t("follow.loadMore")
                                         })
                                         .ghost()
                                         .small()
@@ -878,11 +937,12 @@ impl gpui_kit::Render for NewDramaView {
                                 )
                             }))
                             .children((!has_more).then(|| {
-                                h_flex()
-                                    .w_full()
-                                    .justify_center()
-                                    .py_2()
-                                    .child(div().text_sm().text_color(muted_fg).child("没有更多了"))
+                                h_flex().w_full().justify_center().py_2().child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(muted_fg)
+                                        .child(crate::i18n::t("follow.noMore")),
+                                )
                             })),
                     )
                     .into_any_element()
@@ -903,10 +963,19 @@ impl gpui_kit::Render for NewDramaView {
                     .items_center()
                     .justify_center()
                     .gap_3()
-                    .child(div().text_sm().text_color(muted_fg).child("新剧加载失败"))
-                    .child(Button::new("new-cal-retry").label("重试").on_click(
-                        cx.listener(|this, _, _, cx| this.load_calendar(None, false, cx)),
-                    ))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted_fg)
+                            .child(crate::i18n::t("newDrama.loadFailed")),
+                    )
+                    .child(
+                        Button::new("new-cal-retry")
+                            .label(crate::i18n::t("common.retry"))
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.load_calendar(None, false, cx)),
+                            ),
+                    )
                     .into_any_element()
             } else {
                 let selected = self.cal_selected.clone();
@@ -951,7 +1020,7 @@ impl gpui_kit::Render for NewDramaView {
                                             .min_w(gpui_kit::px(56.0))
                                             .max_w(gpui_kit::px(80.0))
                                             .flex_1()
-                                            .rounded(gpui_kit::px(8.0))
+                                            .rounded(theme.radius + gpui_kit::px(2.0))
                                             .border_1()
                                             .px(gpui_kit::px(4.0))
                                             .py(gpui_kit::px(6.0))
@@ -1015,7 +1084,7 @@ impl gpui_kit::Render for NewDramaView {
                                             div()
                                                 .text_sm()
                                                 .text_color(muted_fg)
-                                                .child("这一天没有上新"),
+                                                .child(crate::i18n::t("newDrama.empty")),
                                         )
                                         .into_any_element(),
                                 ]
@@ -1028,9 +1097,9 @@ impl gpui_kit::Render for NewDramaView {
                                 h_flex().w_full().justify_center().child(
                                     Button::new("new-cal-more")
                                         .label(if loading {
-                                            "正在加载更多…"
+                                            crate::i18n::t("feed.loadingMore")
                                         } else {
-                                            "加载更多"
+                                            crate::i18n::t("follow.loadMore")
                                         })
                                         .ghost()
                                         .small()
@@ -1041,11 +1110,12 @@ impl gpui_kit::Render for NewDramaView {
                                 )
                             }))
                             .children((!has_more && !empty).then(|| {
-                                h_flex()
-                                    .w_full()
-                                    .justify_center()
-                                    .py_2()
-                                    .child(div().text_sm().text_color(muted_fg).child("没有更多了"))
+                                h_flex().w_full().justify_center().py_2().child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(muted_fg)
+                                        .child(crate::i18n::t("follow.noMore")),
+                                )
                             })),
                     )
                     .into_any_element()
@@ -1061,7 +1131,8 @@ impl gpui_kit::Render for NewDramaView {
                     .w_full()
                     .flex_1()
                     .min_h_0()
-                    .p_4()
+                    .px_4()
+                    .pt_3()
                     .gap_3()
                     .children(gender_row)
                     .child(body),
@@ -1090,15 +1161,23 @@ fn weekday_label(date: &str) -> String {
     let today = Local::now();
     let today_key = format!("{:04}{:02}{:02}", today.year(), today.month(), today.day());
     if date == today_key {
-        return "今天".to_string();
+        return crate::i18n::t("newDrama.today");
     }
     let Ok(d) = chrono::NaiveDate::parse_from_str(date, "%Y%m%d") else {
         return String::new();
     };
-    ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
-        .get(d.weekday().num_days_from_sunday() as usize)
-        .unwrap_or(&"")
-        .to_string()
+    let keys = [
+        "newDrama.weekday.0",
+        "newDrama.weekday.1",
+        "newDrama.weekday.2",
+        "newDrama.weekday.3",
+        "newDrama.weekday.4",
+        "newDrama.weekday.5",
+        "newDrama.weekday.6",
+    ];
+    keys.get(d.weekday().num_days_from_sunday() as usize)
+        .map(|key| crate::i18n::t(key))
+        .unwrap_or_default()
 }
 
 /// "20261014" → "10/14"。
@@ -1126,6 +1205,30 @@ fn format_publish_time(ms: i64) -> String {
         ),
         None => String::new(),
     }
+}
+
+fn status_badge(
+    label: impl Into<SharedString>,
+    background: gpui_kit::Hsla,
+    foreground: gpui_kit::Hsla,
+    radius: gpui_kit::Pixels,
+) -> gpui_kit::AnyElement {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded(radius)
+        .bg(background)
+        .border_1()
+        .border_color(background)
+        .text_color(foreground)
+        .px_2()
+        .py_0p5()
+        .text_xs()
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
+        .whitespace_nowrap()
+        .child(label.into())
+        .into_any_element()
 }
 
 /// 日历条目 → 详情 prefill（rec_tags 当题材标签，与 Tauri 同口径）。

@@ -1,5 +1,5 @@
 //! 壳级 UI 偏好（GPUI）：侧栏折叠态 / 追更提醒弹出开关 / 找剧筛选折叠态 /
-//! 主题偏好。
+//! 主题偏好 / 界面语言。
 //!
 //! 语义对齐 Tauri 的 zustand `hongguo-ui` persist（localStorage，见
 //! `src/stores/ui.ts` 的 partialize）——纯 UI 偏好不进业务库；用数据目录下
@@ -63,6 +63,8 @@ pub(crate) struct UiPrefs {
     /// 找剧筛选面板折叠态（Tauri `browseFiltersCollapsed` 同款）。
     pub(crate) browse_filters_collapsed: bool,
     pub(crate) theme: ThemePref,
+    /// 界面语言（Tauri `hongguo-locale` store 同义；独立壳各存各的）。
+    pub(crate) locale: crate::i18n::Locale,
 }
 
 impl Default for UiPrefs {
@@ -72,6 +74,7 @@ impl Default for UiPrefs {
             aibot_popup_on: true,
             browse_filters_collapsed: false,
             theme: ThemePref::Auto,
+            locale: crate::i18n::locale(),
         }
     }
 }
@@ -91,6 +94,11 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
             "aibot_popup_on" => prefs.aibot_popup_on = value.trim() == "true",
             "browse_filters_collapsed" => prefs.browse_filters_collapsed = value.trim() == "true",
             "theme" => prefs.theme = ThemePref::parse(value.trim()),
+            "locale" => {
+                if let Some(locale) = crate::i18n::Locale::parse(value.trim()) {
+                    prefs.locale = locale;
+                }
+            }
             _ => {}
         }
     }
@@ -101,11 +109,12 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
 pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
     let tmp = path.with_extension("tmp");
     let text = format!(
-        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\n",
+        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\nlocale={}\n",
         prefs.sidebar_collapsed,
         prefs.aibot_popup_on,
         prefs.browse_filters_collapsed,
-        prefs.theme.as_str()
+        prefs.theme.as_str(),
+        prefs.locale.tag()
     );
     if std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))

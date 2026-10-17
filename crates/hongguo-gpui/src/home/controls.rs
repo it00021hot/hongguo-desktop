@@ -104,7 +104,10 @@ impl super::HomeView {
                 // 引擎致命失败即自停（shutdown），封面背后不会再有画面——
                 // 失败必须落可见错误态：只写 pending_title 的话，那行小徽标
                 // 随 switching 消失，用户看到的就是「无声无息卡在封面」
-                self.play_error = Some(format!("播放失败：{msg}"));
+                self.play_error = Some(crate::i18n::tf(
+                    "common.failedWith",
+                    &[("message", msg.as_str())],
+                ));
             }
         }
         cx.notify();
@@ -444,7 +447,7 @@ impl super::HomeView {
                               _window: &mut Window,
                               _cx: &mut Context<gpui_kit::component::menu::PopupMenu>|
               -> gpui_kit::component::menu::PopupMenu {
-            let mut menu = menu.label("倍速");
+            let mut menu = menu.label(crate::i18n::t("player.playbackRate"));
             for r in Self::RATES {
                 let view = view.clone();
                 menu = menu.item(
@@ -579,7 +582,7 @@ impl super::HomeView {
                                             .icon(gpui_kit::assets::IconName::FaceGrinning)
                                             .ghost()
                                             .small()
-                                            .tooltip("表情")
+                                            .tooltip(crate::i18n::t("player.danmakuEmoji"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.danmaku_emoji_open = !this.danmaku_emoji_open;
                                                 cx.notify();
@@ -593,7 +596,7 @@ impl super::HomeView {
                                             .as_ref()
                                             .is_none_or(|i| i.read(cx).value().trim().is_empty());
                                         Button::new("stage-danmaku-send")
-                                            .label("发送")
+                                            .label(crate::i18n::t("player.interact.send"))
                                             // Tauri EmojiSendBox 的发送钮是默认
                                             // primary（深色主题白底胶囊），空文本
                                             // 时整体 50% 透明——ghost 文本态与真机
@@ -727,7 +730,7 @@ impl super::HomeView {
                         let current = self.now.as_ref().map(|n| n.definition).unwrap_or(0);
                         let label = match self.now.as_ref() {
                             Some(n) if n.definition > 0 => format!("{}P", n.definition),
-                            _ => "自动".to_string(),
+                            _ => crate::i18n::t("player.definitionAuto"),
                         };
                         if defs.is_empty() {
                             // 无档位表（本地集）：禁用钮保留 + 悬停说明（Tauri
@@ -739,7 +742,7 @@ impl super::HomeView {
                                 .ghost()
                                 .small()
                                 .disabled(true)
-                                .tooltip("本地只有一版清晰度")
+                                .tooltip(crate::i18n::t("player.definitionLocalOnly"))
                                 .into_any_element()
                         } else {
                             let view = cx.entity();
@@ -750,18 +753,18 @@ impl super::HomeView {
                                 .ghost()
                                 .small()
                                 .dropdown_menu(move |menu, _window, _cx| {
-                                    let mut menu = menu.label("清晰度");
+                                    let mut menu = menu.label(crate::i18n::t("player.definition"));
                                     menu = menu.item(
-                                        PopupMenuItem::new("自动").checked(current == 0).on_click(
-                                            {
+                                        PopupMenuItem::new(crate::i18n::t("player.definitionAuto"))
+                                            .checked(current == 0)
+                                            .on_click({
                                                 let view = view.clone();
                                                 move |_, _, cx| {
                                                     view.update(cx, |v, cx| {
                                                         v.switch_definition(None, cx)
                                                     })
                                                 }
-                                            },
-                                        ),
+                                            }),
                                     );
                                     for d in &defs {
                                         let view = view.clone();
@@ -811,9 +814,16 @@ impl super::HomeView {
                                     .icon(gpui_kit::assets::IconName::ListVideo)
                                     .label(match self.now.as_ref() {
                                         Some(now) if now.episode_count > 0 => {
-                                            format!("选集 · 全{}集", now.episode_count)
+                                            format!(
+                                                "{} · {}",
+                                                crate::i18n::t("player.episodes"),
+                                                crate::i18n::tf(
+                                                    "player.totalEpisodes",
+                                                    &[("count", &now.episode_count.to_string())],
+                                                )
+                                            )
                                         }
-                                        _ => "选集".to_string(),
+                                        _ => crate::i18n::t("player.episodes"),
                                     })
                                     .ghost()
                                     .small()
@@ -828,7 +838,7 @@ impl super::HomeView {
                         // 下载入口（Tauri download-sheet 同款位置：右段）
                         Button::new("stage-downloads")
                             .icon(gpui_kit::assets::IconName::Download)
-                            .label("下载")
+                            .label(crate::i18n::t("player.download"))
                             .ghost()
                             .small()
                             .on_click(
@@ -896,23 +906,23 @@ impl super::HomeView {
                                     )
                                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                                     .child(self.dm_setting_row(
-                                        "不透明度",
+                                        crate::i18n::t("player.danmakuOpacity"),
                                         &self.dm_opacity_slider,
                                         self.dm_opacity,
                                     ))
                                     .child(self.dm_setting_row(
                                         // Tauri 面板同文案（「字体大小」）
-                                        "字体大小",
+                                        crate::i18n::t("player.danmakuFontSize"),
                                         &self.dm_font_slider,
                                         self.dm_font_scale,
                                     ))
                                     .child(self.dm_setting_row(
-                                        "密度",
+                                        crate::i18n::t("player.danmakuDensity"),
                                         &self.dm_density_slider,
                                         self.dm_density,
                                     ))
                                     .child(self.dm_setting_row(
-                                        "显示区域",
+                                        crate::i18n::t("player.danmakuArea"),
                                         &self.dm_area_slider,
                                         self.dm_area,
                                     ))
@@ -990,7 +1000,7 @@ impl super::HomeView {
                                     })
                                     .ghost()
                                     .small()
-                                    .tooltip("静音")
+                                    .tooltip(crate::i18n::t("player.mute"))
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
                             )
                             .children(self.volume_popup_open.then(|| {
@@ -1050,9 +1060,9 @@ impl super::HomeView {
                             .small()
                             .selected(self.incognito)
                             .tooltip(if self.incognito {
-                                "退出隐身"
+                                crate::i18n::t("player.exitIncognito")
                             } else {
-                                "隐身模式"
+                                crate::i18n::t("player.incognito")
                             })
                             .text_color(if self.incognito {
                                 gpui_kit::rgba(0xffffffff)
@@ -1075,7 +1085,7 @@ impl super::HomeView {
                             .icon(gpui_kit::assets::IconName::RectangleVertical)
                             .ghost()
                             .small()
-                            .tooltip("竖屏播放")
+                            .tooltip(crate::i18n::t("player.portrait"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_portrait(window, cx);
                             })),

@@ -68,12 +68,22 @@ pub(crate) struct LikedView {
 }
 
 impl LikedView {
+    /// 语言切换：刷新搜索框 placeholder，保留输入。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("liked.searchPlaceholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索点赞的剧"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("liked.searchPlaceholder"))
+        });
         cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -132,7 +142,7 @@ impl LikedView {
                     Err(e) => {
                         log::warn!("[Liked] GPUI 壳失败: {e}");
                         if view.items.is_empty() {
-                            view.phase = Phase::Failed(format!("{e}"));
+                            view.phase = Phase::Failed(crate::i18n::app_error_text(&e));
                         }
                     }
                 }
@@ -182,12 +192,22 @@ impl LikedView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update_in(cx, |view, window, cx| match result {
                 Ok(()) => {
-                    window.push_notification(Notification::success("已取消点赞"), cx);
+                    window.push_notification(
+                        Notification::success(crate::i18n::t("player.interact.undone")),
+                        cx,
+                    );
                     view.load(cx);
                 }
                 Err(e) => {
                     log::warn!("[Liked] 取消赞失败: {e}");
-                    window.push_notification(Notification::error(format!("取消赞失败：{e}")), cx);
+                    let message = crate::i18n::app_error_text(&e);
+                    window.push_notification(
+                        Notification::error(crate::i18n::tf(
+                            "common.failedWith",
+                            &[("message", message.as_str())],
+                        )),
+                        cx,
+                    );
                 }
             });
         })
@@ -231,12 +251,20 @@ impl LikedView {
                 view.deleting = false;
                 if failed > 0 {
                     window.push_notification(
-                        Notification::error(format!("部分删除失败：{failed}/{total}")),
+                        Notification::error(crate::i18n::tf(
+                            "batch.partialFail",
+                            &[("error", &format!("{failed}/{total}"))],
+                        )),
                         cx,
                     );
                 } else {
-                    window
-                        .push_notification(Notification::success(format!("已删除 {total} 项")), cx);
+                    window.push_notification(
+                        Notification::success(crate::i18n::tf(
+                            "batch.done",
+                            &[("count", &total.to_string())],
+                        )),
+                        cx,
+                    );
                     view.managing = false;
                     view.selected.clear();
                 }
@@ -253,10 +281,13 @@ impl LikedView {
         window.open_alert_dialog(cx, move |dialog, _window, _cx| {
             let view = view.clone();
             dialog
-                .title("批量取消点赞？")
-                .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("liked.batchUndoTitle"))
+                .description(crate::i18n::tf(
+                    "batch.confirmBody",
+                    &[("count", &count.to_string())],
+                ))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
@@ -297,7 +328,7 @@ impl LikedView {
             .chars()
             .rev()
             .collect();
-        format!("剧集 {tail}")
+        crate::i18n::tf("collections.unresolved", &[("id", tail.as_str())])
     }
 
     fn toggle_selected(&mut self, vid: &str, cx: &mut Context<Self>) {
@@ -319,9 +350,9 @@ impl LikedView {
             .child(
                 Button::new("liked-manage")
                     .label(if self.managing {
-                        "退出管理"
+                        crate::i18n::t("batch.exitManage")
                     } else {
-                        "管理"
+                        crate::i18n::t("batch.manage")
                     })
                     .outline()
                     .small()
@@ -449,7 +480,7 @@ impl LikedView {
                                                 )
                                                 .small(),
                                             )
-                                            .child("继续播放"),
+                                            .child(crate::i18n::t("history.continue")),
                                     )
                             })),
                     )
@@ -502,7 +533,7 @@ impl LikedView {
                 let series_id = item.series_id.clone();
                 Button::new(ElementId::from(format!("liked-undo-{}", item.vid)))
                     .icon(gpui_kit::assets::IconName::HeartOff)
-                    .tooltip("取消赞")
+                    .tooltip(crate::i18n::t("liked.undo"))
                     .ghost()
                     .small()
                     .absolute()
@@ -521,27 +552,32 @@ impl LikedView {
     /// 吸底批量条（Tauri BatchBar：全选 / 计数 / 批量取消赞 + 确认）。
     fn render_batch_bar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let total = self.visible_items(cx).len();
-        BatchBar::new(self.selected.len(), total, self.deleting, "取消赞")
-            .on_toggle_all(cx.listener(|this, _, _, cx| {
-                let total = this.visible_items(cx).len();
-                if total > 0 && this.selected.len() >= total {
-                    this.selected.clear();
-                } else {
-                    let vids: Vec<String> = this
-                        .visible_items(cx)
-                        .iter()
-                        .map(|i| i.vid.clone())
-                        .collect();
-                    for vid in vids {
-                        this.selected.insert(vid);
-                    }
+        BatchBar::new(
+            self.selected.len(),
+            total,
+            self.deleting,
+            crate::i18n::t("liked.undo"),
+        )
+        .on_toggle_all(cx.listener(|this, _, _, cx| {
+            let total = this.visible_items(cx).len();
+            if total > 0 && this.selected.len() >= total {
+                this.selected.clear();
+            } else {
+                let vids: Vec<String> = this
+                    .visible_items(cx)
+                    .iter()
+                    .map(|i| i.vid.clone())
+                    .collect();
+                for vid in vids {
+                    this.selected.insert(vid);
                 }
-                cx.notify();
-            }))
-            .on_delete(cx.listener(|this, _, window, cx| {
-                this.confirm_batch_undo(window, cx);
-            }))
-            .into_any_element()
+            }
+            cx.notify();
+        }))
+        .on_delete(cx.listener(|this, _, window, cx| {
+            this.confirm_batch_undo(window, cx);
+        }))
+        .into_any_element()
     }
 
     /// 预览种子（screenshot feature）：灌假点赞列表与合成封面，跳过网络。
@@ -596,7 +632,7 @@ impl gpui_kit::Render for LikedView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("点赞列表加载失败"),
+                                .child(crate::i18n::t("liked.loadFailed")),
                         )
                         .child(
                             div()
@@ -606,7 +642,7 @@ impl gpui_kit::Render for LikedView {
                         )
                         .child(
                             Button::new("liked-retry")
-                                .label("重试")
+                                .label(crate::i18n::t("common.retry"))
                                 .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                         )
                         .into_any_element()
@@ -627,13 +663,13 @@ impl gpui_kit::Render for LikedView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("还没有点赞"),
+                                .child(crate::i18n::t("liked.empty")),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
-                                .child("在推荐页点 ❤ 赞过的视频会出现在这里"),
+                                .child(crate::i18n::t("liked.emptyHint")),
                         )
                         .into_any_element()
                 }

@@ -18,9 +18,9 @@ struct RailItem {
     /// 激活态着色（红心/黄星）；未激活恒纯白（抖音系贴画面右缘形态）。
     active_color: gpui_kit::Rgba,
     /// 无计数项的文案（分享 → 「分享」）。
-    label: Option<&'static str>,
+    label: Option<String>,
     /// 悬停 tooltip（悬停变手型 + 提示）。
-    tooltip: &'static str,
+    tooltip: String,
 }
 
 impl super::HomeView {
@@ -144,11 +144,22 @@ impl super::HomeView {
             let _ = this.update(cx, |view, cx| {
                 view.digg_pending = false;
                 match result {
-                    Ok(_) => view.show_toast(if next { "已点赞" } else { "已取消点赞" }, cx),
+                    Ok(_) => view.show_toast(
+                        if next {
+                            crate::i18n::t("player.interact.liked")
+                        } else {
+                            crate::i18n::t("player.interact.undone")
+                        },
+                        cx,
+                    ),
                     Err(e) => {
                         // 失败回滚（下次重试）
                         log::warn!("[Home] 点赞失败: {e}");
-                        view.show_toast(format!("操作失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                         view.load_interact_state(cx);
                     }
                 }
@@ -204,10 +215,21 @@ impl super::HomeView {
             let _ = this.update(cx, |view, cx| {
                 view.collect_pending = false;
                 match result {
-                    Ok(_) => view.show_toast(if next { "已收藏" } else { "已取消收藏" }, cx),
+                    Ok(_) => view.show_toast(
+                        if next {
+                            crate::i18n::t("player.interact.collected")
+                        } else {
+                            crate::i18n::t("player.interact.uncollected")
+                        },
+                        cx,
+                    ),
                     Err(e) => {
                         log::warn!("[Home] 收藏失败: {e}");
-                        view.show_toast(format!("操作失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                         view.load_interact_state(cx);
                     }
                 }
@@ -229,7 +251,7 @@ impl super::HomeView {
         );
         cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
         // Tauri 分享成功有 toast（player.interact.shareCopied）；这里也回执
-        self.show_toast("分享链接已复制", cx);
+        self.show_toast(crate::i18n::t("player.interact.shareCopied"), cx);
     }
 
     /// 互动登录墙（Tauri interaction-rail requireLogin 同款）：提示 + 去
@@ -237,7 +259,7 @@ impl super::HomeView {
     /// 离开播放页卸载同口径）。
     fn require_login(&mut self, cx: &mut Context<Self>) {
         log::info!("[Home] 互动需要登录（settings 里没有账号），跳设置页");
-        self.show_toast("互动需要先登录（设置页 → 账号）", cx);
+        self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
         cx.emit(super::HomeEvent::OpenSettings);
     }
 
@@ -276,9 +298,9 @@ impl super::HomeView {
                     Ok(()) => {
                         view.show_toast(
                             if next {
-                                "已追更，更新了会提醒你"
+                                crate::i18n::t("follow.followed")
                             } else {
-                                "已取消追更"
+                                crate::i18n::t("follow.unfollowed")
                             },
                             cx,
                         );
@@ -287,7 +309,11 @@ impl super::HomeView {
                         // 失败回滚（下次重查拿服务端真相）
                         view.follow_is_on = Some(!next);
                         log::warn!("[Home] 追更失败: {e}");
-                        view.show_toast(format!("操作失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -365,7 +391,7 @@ impl super::HomeView {
                     active: collected,
                     active_color: gpui_kit::rgba(0xfacc15ff),
                     label: None,
-                    tooltip: "收藏",
+                    tooltip: crate::i18n::t("player.interact.collect"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_collect(cx)),
@@ -380,7 +406,7 @@ impl super::HomeView {
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
                     label: None,
-                    tooltip: "评论",
+                    tooltip: crate::i18n::t("player.interact.comments"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_comments_panel(cx)),
@@ -393,7 +419,7 @@ impl super::HomeView {
                     active: digged,
                     active_color: gpui_kit::rgba(0xef4444ff),
                     label: None,
-                    tooltip: "点赞",
+                    tooltip: crate::i18n::t("player.interact.like"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_digg(cx)),
@@ -409,8 +435,12 @@ impl super::HomeView {
                         active: follow_on,
                         // Tauri 追更态用 text-primary（语义令牌，非皮肤色）
                         active_color: cx.theme().primary.to_rgb(),
-                        label: Some(if follow_on { "已追更" } else { "追更" }),
-                        tooltip: "追更",
+                        label: Some(if follow_on {
+                            crate::i18n::t("follow.following")
+                        } else {
+                            crate::i18n::t("follow.follow")
+                        }),
+                        tooltip: crate::i18n::t("player.interact.follow"),
                     },
                     cx,
                     cx.listener(|this, _, _, cx| this.toggle_follow(cx)),
@@ -423,8 +453,8 @@ impl super::HomeView {
                     count: 0,
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
-                    label: Some("分享"),
-                    tooltip: "分享",
+                    label: Some(crate::i18n::t("player.interact.share")),
+                    tooltip: crate::i18n::t("player.interact.share"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.share_series(cx)),

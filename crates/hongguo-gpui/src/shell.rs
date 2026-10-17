@@ -85,24 +85,24 @@ impl Dest {
         Dest::Settings,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Dest::Home => "首页",
-            Dest::Browse => "找剧",
-            Dest::Rank => "排行榜",
-            Dest::New => "新剧",
-            Dest::History => "历史",
-            Dest::Collections => "收藏",
-            Dest::Liked => "点赞",
-            Dest::Follows => "追更",
-            Dest::Reservations => "预约",
-            Dest::Tasks => "下载管理",
-            Dest::Merge => "一键合并",
-            Dest::Storage => "磁盘清理",
-            Dest::Settings => "设置",
+            Dest::Home => crate::i18n::t("nav.home.title"),
+            Dest::Browse => crate::i18n::t("nav.browse.title"),
+            Dest::Rank => crate::i18n::t("nav.rank.title"),
+            Dest::New => crate::i18n::t("nav.new.title"),
+            Dest::History => crate::i18n::t("nav.history.title"),
+            Dest::Collections => crate::i18n::t("nav.collections.title"),
+            Dest::Liked => crate::i18n::t("nav.liked.title"),
+            Dest::Follows => crate::i18n::t("nav.follows.title"),
+            Dest::Reservations => crate::i18n::t("nav.reservations.title"),
+            Dest::Tasks => crate::i18n::t("nav.tasks.title"),
+            Dest::Merge => crate::i18n::t("nav.merge.title"),
+            Dest::Storage => crate::i18n::t("nav.storage.title"),
+            Dest::Settings => crate::i18n::t("nav.settings.title"),
             // 不在侧栏（播放页进入），仅兜匹配
-            Dest::Detail => "详情",
-            Dest::Creator => "创作者",
+            Dest::Detail => crate::i18n::t("nav.detail.title"),
+            Dest::Creator => crate::i18n::t("nav.creator.title"),
         }
     }
 
@@ -195,6 +195,8 @@ pub struct Shell {
     sidebar_collapsed: bool,
     /// 主题偏好（auto 时随系统外观重算；设置页改动即存即生效）。
     theme: crate::ui_prefs::ThemePref,
+    /// 当前界面语言。
+    locale: crate::i18n::Locale,
     feed: Entity<HomeView>,
     rank: Entity<RankView>,
     browse: Entity<BrowseView>,
@@ -449,6 +451,7 @@ impl Shell {
             state,
             sidebar_collapsed: ui_prefs.sidebar_collapsed,
             theme: ui_prefs.theme,
+            locale: ui_prefs.locale,
             feed,
             rank,
             browse,
@@ -558,7 +561,7 @@ impl Shell {
         cx.observe_window_appearance(window, |this, window, cx| {
             if this.theme == crate::ui_prefs::ThemePref::Auto {
                 let mode = this.theme.resolve(window.appearance());
-                gpui_kit::component::Theme::change(mode, None, cx);
+                crate::tokens::apply(mode, cx);
             }
         })
         .detach();
@@ -620,7 +623,17 @@ impl Shell {
 
     /// 壳级服务事件消费（独立通道；与 HomeView 的事件循环互不影响）。
     fn on_service_event(&mut self, event: ServiceEvent, cx: &mut Context<Self>) {
-        if let ServiceEvent::FollowNotices(_) = event {
+        if let ServiceEvent::FollowNotices(payload) = &event {
+            if crate::ui_prefs::load().aibot_popup_on {
+                for notice in &payload.notices {
+                    cx.show_system_notification(gpui_kit::SystemNotification {
+                        tag: SharedString::from(format!("follow:{}", notice.id)),
+                        title: SharedString::from(notice.title.clone()),
+                        body: SharedString::from(notice.detail.clone()),
+                        actions: Vec::new(),
+                    });
+                }
+            }
             // 新提醒：角标刷新 + 追更页列表翻面（数据在本地库，一次小读；
             // 页面在不在前台都刷新，回到页面即最新）
             self.refresh_follow_unread(cx);
@@ -759,6 +772,9 @@ impl Shell {
                     home.play_from_detail(series_id, vid_index, start_secs, cx)
                 });
                 cx.notify();
+            }
+            DetailEvent::OpenSettings => {
+                self.enter_dest(Dest::Settings, cx);
             }
             // 出品方/演职员芯片 → 创作者主页（详情实体保留，返回原地恢复）
             DetailEvent::OpenCreator(user_id) => {
@@ -907,6 +923,54 @@ impl Shell {
         }
     }
 
+    /// 取证辅助（screenshot feature 的 `HONGGUO_SHOT_PANEL=detail-login-wall`，
+    /// 配 `HONGGUO_DETAIL=<sid>` 且数据根未登录）：走真实收藏点击，验
+    /// 登录提示与设置页跳转。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_trigger_detail_collect(&self, window: &mut Window, cx: &mut App) {
+        if let Some(detail) = &self.detail {
+            detail.update(cx, |view, cx| view.debug_trigger_collect(window, cx));
+        } else {
+            log::warn!("[Shot] detail-login-wall 需要 HONGGUO_DETAIL=<sid> 先打开详情页");
+        }
+    }
+
+    /// 取证辅助（`HONGGUO_SHOT_PANEL=locale-en`）：走真实语言切换路径，
+    /// 验持久化、状态型控件刷新与整窗重绘。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_set_locale_en(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_locale(crate::i18n::Locale::EnUs, window, cx);
+    }
+
+    /// 取证辅助（`HONGGUO_SHOT_PANEL=notify`）：走真实 FollowNotices 事件
+    /// 路径弹一条系统通知，验 GPUI 平台层通知通道。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_show_notification(&mut self, cx: &mut Context<Self>) {
+        self.on_service_event(
+            ServiceEvent::FollowNotices(
+                hongguo_service::follow_service::events::FollowNoticesEvent {
+                    notices: vec![hongguo_common::model::FollowNotice {
+                        id: -1,
+                        kind: hongguo_common::model::NOTICE_KIND_FOLLOW.into(),
+                        series_id: "system-notification-probe".into(),
+                        title: crate::i18n::t("follow.checkUpdate"),
+                        detail: crate::i18n::t("follow.checkNone"),
+                        at: chrono::Utc::now().timestamp(),
+                        read: false,
+                    }],
+                },
+            ),
+            cx,
+        );
+    }
+
+    /// 取证辅助（`HONGGUO_SHOT_PANEL=binge-state`）：走「观看完整短剧」的
+    /// 同一状态迁移，拍横条消失、左上集数胶囊出现的第二帧。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_enter_binge(&mut self, cx: &mut Context<Self>) {
+        self.feed.update(cx, |view, cx| view.enter_binge(cx));
+    }
+
     /// 取证辅助（screenshot feature）：按 `HONGGUO_PAGE` 的键切目的地
     ///（验「去播放再回来」的浏览位置保留）。
     #[cfg(feature = "screenshot")]
@@ -1032,10 +1096,10 @@ impl Shell {
                     let view = view.clone();
                     let view_cancel = view.clone();
                     dialog
-                        .title("确定要退出吗？")
-                        .description("退出会中断正在进行的下载任务，播放进度已实时保存。")
-                        .ok_text("退出")
-                        .cancel_text("取消")
+                        .title(crate::i18n::t("window.exitTitle"))
+                        .description(crate::i18n::t("window.exitBody"))
+                        .ok_text(crate::i18n::t("window.exitConfirm"))
+                        .cancel_text(crate::i18n::t("common.cancel"))
                         // 组件库的取消钮默认不显示（show_cancel=false）：只
                         // 设文案不给按钮 = 确认框没有取消键（Tauri 确认框
                         // 是「取消 + 确认」两键，Esc 只是额外通道）
@@ -1101,17 +1165,41 @@ impl Shell {
             })
             .ghost()
             .small()
-            .tooltip(if pinned {
-                "取消置顶"
-            } else {
-                "置顶窗口"
-            })
+            .tooltip(crate::i18n::t("player.pin"))
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
                 this.feed
                     .update(cx, |view, cx| view.toggle_pinned(window, cx));
                 cx.notify();
             }));
+
+        // 语言（Tauri ThemeSwitch 的语言菜单同位）：资源与 Tauri 共用；
+        // 切换后刷新整个窗口，子实体不需要各自保存一份 locale。
+        let current_locale = self.locale;
+        let language_view = cx.entity();
+        let language_menu = move |menu: gpui_kit::component::menu::PopupMenu,
+                                  _window: &mut Window,
+                                  _cx: &mut Context<gpui_kit::component::menu::PopupMenu>|
+              -> gpui_kit::component::menu::PopupMenu {
+            let mut menu = menu.label(crate::i18n::t("search.langLabel"));
+            for locale in crate::i18n::Locale::ALL {
+                let view = language_view.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(crate::i18n::t(locale.label_key()))
+                        .checked(current_locale == locale)
+                        .on_click(move |_, window, cx| {
+                            view.update(cx, |shell, cx| shell.set_locale(locale, window, cx));
+                        }),
+                );
+            }
+            menu
+        };
+        let language_button = Button::new("toolbar-language")
+            .icon(IconName::Languages)
+            .ghost()
+            .small()
+            .tooltip(crate::i18n::t("search.langLabel"))
+            .dropdown_menu(language_menu);
 
         // 外观（Tauri ThemeSwitch 同位）：三档菜单语义与设置页外观卡一致，
         // 点击回调拿不到壳的 Context，经实体句柄回写
@@ -1121,11 +1209,20 @@ impl Shell {
                                _window: &mut Window,
                                _cx: &mut Context<gpui_kit::component::menu::PopupMenu>|
               -> gpui_kit::component::menu::PopupMenu {
-            let mut menu = menu.label("外观");
+            let mut menu = menu.label(crate::i18n::t("settings.appearance"));
             for (value, label) in [
-                (crate::ui_prefs::ThemePref::Auto, "跟随系统"),
-                (crate::ui_prefs::ThemePref::Light, "亮色"),
-                (crate::ui_prefs::ThemePref::Dark, "暗色"),
+                (
+                    crate::ui_prefs::ThemePref::Auto,
+                    crate::i18n::t("settings.themeAuto"),
+                ),
+                (
+                    crate::ui_prefs::ThemePref::Light,
+                    crate::i18n::t("settings.themeLight"),
+                ),
+                (
+                    crate::ui_prefs::ThemePref::Dark,
+                    crate::i18n::t("settings.themeDark"),
+                ),
             ] {
                 let view = view.clone();
                 menu = menu.item(
@@ -1147,7 +1244,7 @@ impl Shell {
             .icon(theme_icon)
             .ghost()
             .small()
-            .tooltip("外观")
+            .tooltip(crate::i18n::t("settings.appearance"))
             .dropdown_menu(theme_menu);
 
         // 窗口钮（Windows/Linux；macOS 是原生红绿灯）：Tauri WindowButtons
@@ -1299,6 +1396,7 @@ impl Shell {
                     .items_center()
                     .gap_1()
                     .child(pin_button)
+                    .child(language_button)
                     .child(theme_button)
                     .children(window_controls),
             )
@@ -1324,6 +1422,45 @@ impl Shell {
             .update(cx, |view, cx| view.set_theme(pref, cx));
     }
 
+    /// 语言切换：更新进程内资源、持久化，并强制整窗重绘（子实体不各自
+    /// 持有 locale，避免切换后只刷新壳、页面仍停在旧语言）。
+    fn set_locale(
+        &mut self,
+        locale: crate::i18n::Locale,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.locale == locale {
+            return;
+        }
+        self.locale = locale;
+        crate::i18n::set_locale(locale);
+        let mut prefs = crate::ui_prefs::load();
+        prefs.locale = locale;
+        crate::ui_prefs::save(prefs);
+        self.settings_page
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.feed
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.browse
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.history
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.collections
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.liked
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.reservations
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        self.storage
+            .update(cx, |view, cx| view.refresh_locale(window, cx));
+        if let Some(detail) = &self.detail {
+            detail.update(cx, |view, cx| view.refresh_locale(window, cx));
+        }
+        cx.refresh_windows();
+        cx.notify();
+    }
+
     /// 侧栏（Tauri app-sidebar 对齐）：13 目的地，展开 224px 图标+文字、
     /// 折叠 56px 纯图标（tooltip 出标签）；追更带未读角标；贴底账户区
     /// （头像/昵称；已登录点进设置页）+ 折叠钮。
@@ -1340,12 +1477,12 @@ impl Shell {
             .as_ref()
             .map(|a| {
                 if a.user_name.is_empty() {
-                    "我的".to_string()
+                    crate::i18n::t("nav.accountFallback")
                 } else {
                     a.user_name.clone()
                 }
             })
-            .unwrap_or_else(|| "我的".to_string());
+            .unwrap_or_else(|| crate::i18n::t("nav.accountFallback"));
         let item = |dest: Dest| {
             let active = self.dest == dest;
             let badge = (dest == Dest::Follows && unread > 0).then_some(unread);
@@ -1363,17 +1500,23 @@ impl Shell {
                 .gap_3()
                 .rounded_md()
                 .px_3()
-                .py(gpui_kit::px(7.0))
+                .py_2()
                 .text_sm()
                 .cursor_pointer()
                 .when(collapsed, |s| s.justify_center().px_0())
                 .text_color(if active {
-                    theme.foreground
+                    theme.primary_foreground
                 } else {
-                    theme.muted_foreground
+                    theme.sidebar_foreground
                 })
-                .when(active, |s| s.bg(theme.secondary))
-                .hover(|s| s.bg(theme.secondary_hover))
+                .when(active, |s| {
+                    s.bg(theme.primary)
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                })
+                .hover(|s| {
+                    s.bg(theme.sidebar_accent)
+                        .text_color(theme.sidebar_accent_foreground)
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.dest == dest {
                         return;
@@ -1388,9 +1531,9 @@ impl Shell {
                             gpui_kit::component::Icon::new(dest.icon())
                                 .small()
                                 .text_color(if active {
-                                    theme.foreground
+                                    theme.primary_foreground
                                 } else {
-                                    theme.muted_foreground
+                                    theme.sidebar_foreground
                                 }),
                         )
                         // 折叠态：小角标压在图标右上（Tauri 同款）
@@ -1494,7 +1637,7 @@ impl Shell {
                                             .flex_shrink_0()
                                             .text_xs()
                                             .text_color(theme.primary)
-                                            .child("登录")
+                                            .child(crate::i18n::t("nav.login"))
                                     }))
                             }),
                     ),
@@ -1509,7 +1652,7 @@ impl Shell {
                             .icon(IconName::PanelLeft)
                             .ghost()
                             .small()
-                            .tooltip("展开")
+                            .tooltip(crate::i18n::t("nav.expand"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sidebar_collapsed = false;
                                 this.persist_sidebar_collapsed();
@@ -1521,8 +1664,8 @@ impl Shell {
                             .icon(IconName::PanelLeftClose)
                             .ghost()
                             .small()
-                            .label("收起")
-                            .tooltip("收起")
+                            .label(crate::i18n::t("nav.collapse"))
+                            .tooltip(crate::i18n::t("nav.collapse"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sidebar_collapsed = true;
                                 this.persist_sidebar_collapsed();

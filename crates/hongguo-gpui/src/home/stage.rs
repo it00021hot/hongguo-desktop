@@ -33,6 +33,81 @@ use crate::bridge;
 const STAGE_DIAG_EVERY_SECS: u64 = 5;
 
 impl super::HomeView {
+    /// 从「观看完整短剧」进入当前剧连播态（横条与取证探针共用）。
+    ///
+    /// 状态变化必须显式通知：wake_controls 在悬浮层已经可见时不会重绘，
+    /// 只靠它会出现“点了横条没反应，直到下一次视频帧刷新”的空窗。
+    pub(crate) fn enter_binge(&mut self, cx: &mut Context<Self>) {
+        if let Some(now) = self.now.clone() {
+            log::info!(
+                "[Home] 观看完整短剧：进入连播态 {} 第 {} 集",
+                now.series_id,
+                now.vid_index
+            );
+            self.binge = Some(now.series_id);
+        }
+        self.wake_on_input(cx);
+        cx.notify();
+    }
+
+    /// 「观看完整短剧」横条。
+    ///
+    /// 它必须在控制条之后挂到舞台：控制条的 `pt-10` 是透明悬停缓冲，
+    /// 与横条的 `bottom: 56px` 相交；若控制条后画，它的 root down/up
+    /// 拦截会把横条的点击全部吃掉（真实鼠标也点不动）。
+    fn render_binge_entry(&self, cx: &Context<Self>) -> Option<gpui_kit::AnyElement> {
+        if self.mini.is_some() || self.in_binge() || !self.controls_visible() || self.now.is_none()
+        {
+            return None;
+        }
+        let theme = cx.theme();
+        let now = self.now.as_ref().expect("上面已验 now 在");
+        let episodes = if now.episode_count > 0 {
+            format!(
+                " · {}",
+                crate::i18n::tf(
+                    "player.totalEpisodes",
+                    &[("count", &now.episode_count.to_string())],
+                )
+            )
+        } else {
+            String::new()
+        };
+        Some(
+            h_flex()
+                .id("binge-entry")
+                .absolute()
+                .left_3()
+                .right_3()
+                .bottom(gpui_kit::px(56.0))
+                .justify_center()
+                .gap_2()
+                .rounded(theme.radius + gpui_kit::px(2.0))
+                .bg(gpui_kit::rgba(0x00000099))
+                .hover(|s| s.bg(gpui_kit::rgba(0x000000bf)))
+                .px_3()
+                .py_2p5()
+                .text_sm()
+                .text_color(gpui_kit::rgb(0xffffff))
+                .cursor_pointer()
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.enter_binge(cx);
+                    cx.stop_propagation();
+                }))
+                .child(div().truncate().child(SharedString::from(format!(
+                    "{}{episodes}",
+                    crate::i18n::t("player.watchFullSeries")
+                ))))
+                .child(
+                    Icon::new(IconName::ChevronRight)
+                        .small()
+                        .text_color(gpui_kit::rgba(0xffffff99)),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// 换上新渲染产物，旧图送进回收队列（见 `retired_images` 头注释：
     /// gpui 纹理只增不删，必须显式 `drop_image`）。
     #[cfg(target_os = "windows")]
@@ -389,22 +464,16 @@ impl super::HomeView {
                 .absolute()
                 .size_full()
                 .id("stage-video")
-                // 点画面：信息流语义（Tauri onStageClick）——未选中时单击 =
-                // 「选中这部剧」（进入连播锁定，滚轮/↑↓ 变切集），选中后的
-                // 单击才是播放/暂停。顺手把焦点带回舞台锚——弹层菜单收走
-                // 焦点后，这是用户最自然的「回到播放操作」路径
+                // 点画面：播放/暂停（Tauri onStageClick 同语义）。进入连播
+                // 锁定只有「观看完整短剧」横条与播完本集两条路径；把点画面
+                // 偷偷解释成“选中剧”会让用户第一次点击时看不到预期反馈。
+                // 顺手把焦点带回舞台锚——弹层菜单收走焦点后，这是用户最
+                // 自然的「回到播放操作」路径。
                 .on_click(cx.listener(|this, _, window, cx| {
                     window.focus(&this.focus, cx);
                     // 点画面是真实输入：连播静默就此解除（Tauri wakeOnMove
                     // 静默闸门的另一面——pointerdown 解除）
                     this.wake_on_input(cx);
-                    if !this.in_binge() {
-                        if let Some(now) = &this.now {
-                            this.binge = Some(now.series_id.clone());
-                        }
-                        cx.notify();
-                        return;
-                    }
                     this.toggle_pause(cx);
                 }))
                 .child({
@@ -458,7 +527,7 @@ impl super::HomeView {
                     div()
                         .text_xs()
                         .text_color(gpui_kit::rgb(0xffffff))
-                        .child("缓冲中"),
+                        .child(crate::i18n::t("player.bufferingShort")),
                 )
         });
         // 控制条（底部悬浮，鼠标活动时可见）；小屏换紧凑条（Tauri
@@ -663,59 +732,11 @@ impl super::HomeView {
                                 .small()
                                 .text_color(gpui_kit::rgb(0xffffff)),
                         )
-                        .child(format!("第{}集", now.vid_index))
+                        .child(crate::i18n::tf(
+                            "player.episodeNo",
+                            &[("index", &now.vid_index.to_string())],
+                        ))
                 }),
-            )
-            // 沉浸流底部「观看完整短剧 · 全N集」横条（Tauri player-page 同款）：
-            // 进入选中剧连播态（滚轮/↑↓=切集）的**唯一手动入口**，已选中
-            // 不渲染；显隐跟随播放控件，小屏不渲染（与互动栏同口径）。
-            // 悬停滚轮拦下：横条上滚动不切剧（Tauri data-wheel-block 同款）。
-            .children(
-                (!in_mini && !self.in_binge() && self.controls_visible() && self.now.is_some())
-                    .then(|| {
-                        let now = self.now.as_ref().expect("条件里已验 now 在");
-                        let episodes = if now.episode_count > 0 {
-                            format!(" · 全{}集", now.episode_count)
-                        } else {
-                            String::new()
-                        };
-                        h_flex()
-                            .id("binge-entry")
-                            .absolute()
-                            .left_3()
-                            .right_3()
-                            .bottom(gpui_kit::px(56.0))
-                            .justify_center()
-                            .gap_2()
-                            .rounded(gpui_kit::px(8.0))
-                            .bg(gpui_kit::rgba(0x00000099))
-                            .hover(|s| s.bg(gpui_kit::rgba(0x000000bf)))
-                            .px_3()
-                            .py_2p5()
-                            .text_sm()
-                            .text_color(gpui_kit::rgb(0xffffff))
-                            .cursor_pointer()
-                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                // 选中这部剧 = 连播锁定（切集）；同为「用户在场」
-                                // 信号，唤醒悬浮层让左上角连播指示亮出来
-                                if let Some(now) = this.now.clone() {
-                                    this.binge = Some(now.series_id);
-                                }
-                                this.wake_controls(cx);
-                                cx.stop_propagation();
-                            }))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .child(SharedString::from(format!("观看完整短剧{episodes}"))),
-                            )
-                            .child(
-                                Icon::new(IconName::ChevronRight)
-                                    .small()
-                                    .text_color(gpui_kit::rgba(0xffffff99)),
-                            )
-                    }),
             )
             // 分类 tab 已上移壳顶栏（`HomeView::render_top_tabs`，Tauri
             // `TopBarTabs` portal 同位）——舞台顶部只留左上连播胶囊与
@@ -748,7 +769,7 @@ impl super::HomeView {
                     )
                     .child(
                         Button::new("stage-retry-play")
-                            .label("重试")
+                            .label(crate::i18n::t("common.retry"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.play_error = None;
@@ -802,7 +823,7 @@ impl super::HomeView {
                                     .py_1p5()
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0xffffffbf))
-                                    .child("空格播放/暂停 · ←→ 快退快进 5 秒 · ↑↓ 切剧/切集 · 单击画面选剧 · Esc 退出选剧"),
+                                    .child(crate::i18n::t("player.keyboardHint")),
                             )
                             .into_any_element()
                     }),
@@ -866,39 +887,43 @@ impl super::HomeView {
                     .into_any_element()
             }))
             .children(controls)
+            // 连播横条必须在控制条之后：控制条的 40px 透明悬停热区与它
+            // 重叠，后画的横条才是更高的命中层。
+            .children(self.render_binge_entry(cx))
             // 顶部 2px 加载细条（Tauri loadbar 同款）：切换在途 / 首帧未出 /
             // 缓冲中亮，30% 宽的胶囊在轨道里循环滑动（CSS keyframes 同参：
             // 1.1s 从 -110% 滑到 +440%，按胶囊自身宽计 = 轨道的 -0.33→1.32）。
             // 用 gpui 的 Animation 驱动：它有独立的连续帧请求，不依赖播放帧率
             //（切换间隙恰好没有帧可驱动重绘）。
             .children(
-                (self.switching || self.frame.is_none() || self.buffering).then(|| {
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(gpui_kit::px(2.0))
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .h_full()
-                                .w(gpui_kit::relative(0.30))
-                                .rounded(gpui_kit::px(9999.0))
-                                .bg(theme.primary)
-                                .with_animation(
-                                    "hg-loadbar",
-                                    gpui_kit::Animation::new(std::time::Duration::from_millis(
-                                        1100,
-                                    ))
-                                    .repeat(),
-                                    |el, t| el.left(gpui_kit::relative(-0.33 + 1.65 * t)),
-                                ),
-                        )
-                        .into_any_element()
-                }),
+                (self.switching || self.frame.is_none() || self.buffering || self.feed_loading())
+                    .then(|| {
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(gpui_kit::px(2.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .h_full()
+                                    .w(gpui_kit::relative(0.30))
+                                    .rounded(gpui_kit::px(9999.0))
+                                    .bg(theme.primary)
+                                    .with_animation(
+                                        "hg-loadbar",
+                                        gpui_kit::Animation::new(std::time::Duration::from_millis(
+                                            1100,
+                                        ))
+                                        .repeat(),
+                                        |el, t| el.left(gpui_kit::relative(-0.33 + 1.65 * t)),
+                                    ),
+                            )
+                            .into_any_element()
+                    }),
             )
             // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（Tauri 同址，
             // 见 `controls.rs` 的 stage-picker-wrap）
@@ -947,7 +972,7 @@ impl super::HomeView {
                             div().text_xs().text_color(theme.muted_foreground).child(
                                 self.pending_title
                                     .clone()
-                                    .unwrap_or_else(|| "正在切换…".into()),
+                                    .unwrap_or_else(|| crate::i18n::t("player.switching")),
                             ),
                         ),
                 )

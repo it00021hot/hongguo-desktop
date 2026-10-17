@@ -199,11 +199,14 @@ impl super::HomeView {
         let raw = input.read(cx).value().to_string();
         let is_mention = raw.contains('\u{FFFC}');
         let text = strip_mention_segment(&raw);
-        if (text.is_empty() && !is_mention) || self.comment_sending || !self.comments_ready() {
+        if (text.is_empty() && !is_mention) || self.comment_sending {
             return;
         }
         if !self.logged_in() {
-            log::info!("[Home] 发评论需要登录（settings 里没有账号），已忽略");
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
+            return;
+        }
+        if !self.comments_ready() {
             return;
         }
         let Some(now) = self.now.clone() else {
@@ -258,7 +261,11 @@ impl super::HomeView {
                     Err(e) => {
                         // 失败必须可见（风控/频控拒绝时静默会被当成发成功）
                         log::warn!("[Home] 评论发送失败: {e}");
-                        view.show_toast(format!("评论发送失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -340,7 +347,7 @@ impl super::HomeView {
     /// 评论点赞（乐观 ±1 + 红心翻转，失败回滚到服务端态）。
     pub(super) fn toggle_comment_digg(&mut self, comment_id: String, cx: &mut Context<Self>) {
         if !self.logged_in() {
-            log::info!("[Home] 评论点赞需要登录，已忽略");
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
             return;
         }
         let Some(item) = self
@@ -469,7 +476,7 @@ impl super::HomeView {
             return;
         }
         if !self.logged_in() {
-            log::info!("[Home] 回复需要登录（settings 里没有账号），已忽略");
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
             return;
         }
         let Some(now) = self.now.clone() else {
@@ -634,7 +641,7 @@ impl super::HomeView {
     /// 回复点赞（乐观 ±1 + 红心翻转，失败回滚；与评论点赞同一 do_action）。
     pub(super) fn toggle_reply_digg(&mut self, reply_id: String, cx: &mut Context<Self>) {
         if !self.logged_in() {
-            log::info!("[Home] 回复点赞需要登录，已忽略");
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
             return;
         }
         let Some(reply) = self

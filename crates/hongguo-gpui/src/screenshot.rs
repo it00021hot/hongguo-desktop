@@ -35,6 +35,9 @@ pub(crate) fn install(
     // =suggest（配 HONGGUO_PAGE=browse）：往搜索框灌关键词，拍真实联想
     // 下拉（300ms 防抖 → 真实接口，连封面缩略图一起验）。
     let panel = std::env::var("HONGGUO_SHOT_PANEL").unwrap_or_default();
+    // 连播入口状态探针：第 1 张拍横条，第 2 张前走与横条点击相同的
+    // enter_binge 迁移，验横条消失、左上集数胶囊立即出现。
+    let binge_state = panel == "binge-state";
 
     cx.spawn(async move |cx| {
         // scroll-return 探针：第 1 轮滚一把、第 2 轮往返一次（见循环内注释）
@@ -63,6 +66,21 @@ pub(crate) fn install(
                     }
                     "login" => {
                         feed.update(cx, |shell, cx| shell.debug_open_login(cx));
+                    }
+                    "detail-login-wall" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| {
+                                shell.debug_trigger_detail_collect(window, cx);
+                            });
+                        });
+                    }
+                    "locale-en" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_locale_en(window, cx));
+                        });
+                    }
+                    "notify" => {
+                        feed.update(cx, |shell, cx| shell.debug_show_notification(cx));
                     }
                     "dm-settings" => {
                         feed.update(cx, |shell, cx| shell.debug_open_dm_settings(cx));
@@ -206,6 +224,9 @@ pub(crate) fn install(
                 feed.update(cx, |shell, cx| shell.debug_switch_dest(&home, cx));
                 feed.update(cx, |shell, cx| shell.debug_switch_dest(&back, cx));
                 log::info!("[ScrollProbe] 已往返 {home} → {back}");
+            }
+            if binge_state && i == 2 {
+                feed.update(cx, |shell, cx| shell.debug_enter_binge(cx));
             }
             let shot = window.update(cx, |_, window, cx| {
                 // 必须先强制重绘：窗口被遮挡/失焦时 AppKit 会暂停绘制，

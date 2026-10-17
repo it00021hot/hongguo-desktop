@@ -33,9 +33,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::Sizable;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderState};
@@ -554,7 +552,10 @@ impl HomeView {
             danmaku_last_pos: 0.0,
             danmaku_last_tick: None,
             dm_rng: 0x853c49e6748fea9b,
-            danmaku_input: Some(cx.new(|cx| InputState::new(window, cx).placeholder("发条弹幕…"))),
+            danmaku_input: Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("player.interact.danmakuPlaceholder"))
+            })),
             danmaku_sending: false,
             danmaku_clear_input: false,
             danmaku_emoji_open: false,
@@ -612,7 +613,10 @@ impl HomeView {
             reserve_pending: HashSet::new(),
             reservations_loaded: false,
             reply_to: None,
-            comment_input: Some(cx.new(|cx| InputState::new(window, cx).placeholder("说点什么…"))),
+            comment_input: Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("player.comments.placeholder"))
+            })),
             comment_sending: false,
             comment_clear_input: false,
             mention_users: Arc::new(Vec::new()),
@@ -634,8 +638,9 @@ impl HomeView {
             comment_deleting: false,
             downloads_open: false,
             download_selected: Vec::new(),
-            download_range: cx
-                .new(|cx| InputState::new(window, cx).placeholder("如 1-50 或 1-10, 25, 30-45")),
+            download_range: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(crate::i18n::t("download.rangePlaceholder"))
+            }),
             download_range_error: false,
             incognito: prefs.incognito,
             incognito_owed: false,
@@ -772,18 +777,15 @@ impl HomeView {
         Some(
             h_flex()
                 .id("top-feed-tabs")
-                .gap_1()
+                .gap_0p5()
                 .children(self.tabs.iter().cloned().map(|s| {
                     let active = s == self.active;
-                    let button = Button::new(format!("stage-tab-{}", s.as_str()))
-                        .label(self.tab_label(&s))
-                        .small();
-                    let button = if active {
-                        // Tauri TopBarTab：选中 bg-primary text-primary-foreground
-                        button.primary()
-                    } else {
-                        button.ghost()
-                    };
+                    let button = crate::pill_tab::pill_tab(
+                        format!("stage-tab-{}", s.as_str()),
+                        self.tab_label(&s),
+                        active,
+                        cx,
+                    );
                     button.on_click(cx.listener(move |this, _, _, cx| {
                         this.switch_source(s.clone(), cx);
                         cx.stop_propagation();
@@ -829,6 +831,28 @@ impl HomeView {
             });
         })
         .detach();
+    }
+
+    /// 语言切换：刷新输入框 placeholder（输入内容保持不动）。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.danmaku_input {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(
+                    crate::i18n::t("player.interact.danmakuPlaceholder"),
+                    window,
+                    cx,
+                );
+            });
+        }
+        if let Some(input) = &self.comment_input {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(crate::i18n::t("player.comments.placeholder"), window, cx);
+            });
+        }
+        self.download_range.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("download.rangePlaceholder"), window, cx);
+        });
+        cx.notify();
     }
 
     /// 订阅 service 业务事件（登录 MFA、下载状态）并落到视图状态。
@@ -1184,9 +1208,9 @@ impl gpui_kit::Render for HomeView {
         let notice: Option<String> = if let Some(err) = &feed.failed {
             Some(err.clone())
         } else if feed.loading && self.now.is_none() {
-            Some("加载中…".into())
+            Some(crate::i18n::t("common.loading"))
         } else if !feed.loading && feed.items.is_empty() && self.now.is_none() {
-            Some("暂无内容".into())
+            Some(crate::i18n::t("common.empty"))
         } else {
             None
         };
@@ -1210,7 +1234,7 @@ impl gpui_kit::Render for HomeView {
                     )
                     .child(
                         Button::new("home-retry")
-                            .label("重试")
+                            .label(crate::i18n::t("common.retry"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.load_feed(this.active.clone(), false, cx);
                             })),

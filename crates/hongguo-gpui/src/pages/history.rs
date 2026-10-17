@@ -55,11 +55,11 @@ impl HistoryTab {
         HistoryTab::Finished,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            HistoryTab::All => "全部",
-            HistoryTab::Unfinished => "未看完",
-            HistoryTab::Finished => "已看完",
+            HistoryTab::All => crate::i18n::t("history.tabAll"),
+            HistoryTab::Unfinished => crate::i18n::t("history.tabUnfinished"),
+            HistoryTab::Finished => crate::i18n::t("history.tabFinished"),
         }
     }
 }
@@ -110,12 +110,22 @@ pub(crate) struct HistoryView {
 }
 
 impl HistoryView {
+    /// 语言切换：刷新搜索框 placeholder，保留筛选条件与输入。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("history.searchPlaceholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索看过的剧"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("history.searchPlaceholder"))
+        });
         cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -179,7 +189,7 @@ impl HistoryView {
                         Err(e) => {
                             log::warn!("[History] GPUI 壳本地读取失败: {e}");
                             if view.items.is_empty() {
-                                view.phase = Phase::Failed(format!("{e}"));
+                                view.phase = Phase::Failed(crate::i18n::app_error_text(&e));
                             }
                         }
                     }
@@ -211,7 +221,7 @@ impl HistoryView {
                     Err(e) => {
                         log::warn!("[History] GPUI 壳失败: {e}");
                         if view.items.is_empty() {
-                            view.phase = Phase::Failed(format!("{e}"));
+                            view.phase = Phase::Failed(crate::i18n::app_error_text(&e));
                         }
                     }
                 }
@@ -287,7 +297,10 @@ impl HistoryView {
                 match result {
                     Ok(()) => {
                         window.push_notification(
-                            Notification::success(format!("已删除 {total} 项")),
+                            Notification::success(crate::i18n::tf(
+                                "batch.done",
+                                &[("count", &total.to_string())],
+                            )),
                             cx,
                         );
                         view.managing = false;
@@ -296,7 +309,10 @@ impl HistoryView {
                     Err(e) => {
                         log::warn!("[History] 批量删除失败: {e}");
                         window.push_notification(
-                            Notification::error(format!("部分删除失败：{e}")),
+                            Notification::error(crate::i18n::tf(
+                                "batch.partialFail",
+                                &[("error", &crate::i18n::app_error_text(&e))],
+                            )),
                             cx,
                         );
                     }
@@ -314,10 +330,13 @@ impl HistoryView {
         window.open_alert_dialog(cx, move |dialog, _window, _cx| {
             let view = view.clone();
             dialog
-                .title("批量删除观看历史？")
-                .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("history.deleteConfirmTitle"))
+                .description(crate::i18n::tf(
+                    "batch.confirmBody",
+                    &[("count", &count.to_string())],
+                ))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
@@ -397,9 +416,9 @@ impl HistoryView {
             .child(
                 Button::new("history-manage")
                     .label(if self.managing {
-                        "退出管理"
+                        crate::i18n::t("batch.exitManage")
                     } else {
-                        "管理"
+                        crate::i18n::t("batch.manage")
                     })
                     .outline()
                     .small()
@@ -428,17 +447,24 @@ impl HistoryView {
             .cloned();
         let index = item.vid_index.max(1);
         let badge = if item.duration_ms > 0 {
-            format!(
-                "看到第{index}集/共{total}集 {time}",
-                total = if item.episode_cnt > 0 {
-                    item.episode_cnt.to_string()
-                } else {
-                    "–".to_string()
-                },
-                time = format_duration(item.position_ms as f64 / 1000.0)
+            let total = if item.episode_cnt > 0 {
+                item.episode_cnt.to_string()
+            } else {
+                "–".to_string()
+            };
+            crate::i18n::tf(
+                "history.watching",
+                &[
+                    ("index", &index.to_string()),
+                    ("total", total.as_str()),
+                    (
+                        "time",
+                        format_duration(item.position_ms as f64 / 1000.0).as_str(),
+                    ),
+                ],
             )
         } else {
-            format!("第{index}集")
+            crate::i18n::tf("player.epShort", &[("index", &index.to_string())])
         };
         h_flex()
             .id(ElementId::from(format!(
@@ -514,7 +540,7 @@ impl HistoryView {
                             .text_sm()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(SharedString::from(if item.title.is_empty() {
-                                "未知剧集".to_string()
+                                crate::i18n::t("history.unknownTitle")
                             } else {
                                 item.title.clone()
                             })),
@@ -548,7 +574,7 @@ impl HistoryView {
                     item.series_id, item.updated_at_ms
                 )))
                 .icon(gpui_kit::assets::IconName::Play)
-                .label("继续播放")
+                .label(crate::i18n::t("history.continue"))
                 .outline()
                 .small()
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -616,7 +642,7 @@ impl gpui_kit::Render for HistoryView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("观看历史加载失败"),
+                            .child(crate::i18n::t("history.loadFailed")),
                     )
                     .child(
                         div()
@@ -626,7 +652,7 @@ impl gpui_kit::Render for HistoryView {
                     )
                     .child(
                         Button::new("history-retry")
-                            .label("重试")
+                            .label(crate::i18n::t("common.retry"))
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                     )
                     .into_any_element()
@@ -647,13 +673,13 @@ impl gpui_kit::Render for HistoryView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("还没有观看记录"),
+                            .child(crate::i18n::t("history.empty")),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("在官方客户端或本应用看过的短剧都会同步到这里"),
+                            .child(crate::i18n::t("history.emptyHint")),
                     )
                     .into_any_element()
             }
@@ -664,11 +690,11 @@ impl gpui_kit::Render for HistoryView {
                     let theme = cx.theme();
                     let query_empty = self.search.read(cx).value().trim().is_empty();
                     let hint = if !query_empty {
-                        "没有找到匹配的剧"
+                        crate::i18n::t("common.searchNoMatch")
                     } else if self.tab == HistoryTab::Finished {
-                        "还没有看完的剧"
+                        crate::i18n::t("history.noMatchFinished")
                     } else {
-                        "没有未看完的剧"
+                        crate::i18n::t("history.noMatchUnfinished")
                     };
                     v_flex()
                         .items_center()
@@ -700,9 +726,12 @@ impl gpui_kit::Render for HistoryView {
                                 .children((visible_count < shown).then(|| {
                                     h_flex().w_full().justify_center().p_2().child(
                                         Button::new("history-more")
-                                            .label(format!(
-                                                "加载更多（{} / {}）",
-                                                visible_count, shown
+                                            .label(crate::i18n::tf(
+                                                "history.loadMore",
+                                                &[
+                                                    ("shown", &visible_count.to_string()),
+                                                    ("total", &shown.to_string()),
+                                                ],
                                             ))
                                             .ghost()
                                             .small()
@@ -728,27 +757,32 @@ impl gpui_kit::Render for HistoryView {
                 .pt_3()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child("未登录：观看记录保存在本机，登录后自动同步到云端")
+                .child(crate::i18n::t("history.localModeHint"))
         });
         let batch_bar = self.managing.then(|| {
             let total = self.visible_items(cx).len();
-            BatchBar::new(self.selected.len(), total, self.deleting, "删除所选")
-                .on_toggle_all(cx.listener(|this, _, _, cx| {
-                    let visible = this.visible_items(cx);
-                    let total = visible.len();
-                    if total > 0 && this.selected.len() >= total {
-                        this.selected.clear();
-                    } else {
-                        for item in visible {
-                            this.selected.insert(item.series_id);
-                        }
+            BatchBar::new(
+                self.selected.len(),
+                total,
+                self.deleting,
+                crate::i18n::t("batch.deleteSelected"),
+            )
+            .on_toggle_all(cx.listener(|this, _, _, cx| {
+                let visible = this.visible_items(cx);
+                let total = visible.len();
+                if total > 0 && this.selected.len() >= total {
+                    this.selected.clear();
+                } else {
+                    for item in visible {
+                        this.selected.insert(item.series_id);
                     }
-                    cx.notify();
-                }))
-                .on_delete(cx.listener(|this, _, window, cx| {
-                    this.confirm_batch_delete(window, cx);
-                }))
-                .into_any_element()
+                }
+                cx.notify();
+            }))
+            .on_delete(cx.listener(|this, _, window, cx| {
+                this.confirm_batch_delete(window, cx);
+            }))
+            .into_any_element()
         });
         let theme = cx.theme();
         v_flex()
@@ -774,8 +808,8 @@ fn days_ago(ms: i64) -> String {
         .unwrap_or(0);
     let diff_days = (now - ms) / 86_400_000;
     match diff_days {
-        d if d <= 0 => "今天".to_string(),
-        1 => "昨天".to_string(),
-        d => format!("{d} 天前"),
+        d if d <= 0 => crate::i18n::t("history.today"),
+        1 => crate::i18n::t("history.yesterday"),
+        d => crate::i18n::tf("history.daysAgo", &[("count", &d.to_string())]),
     }
 }

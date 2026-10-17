@@ -23,9 +23,11 @@ mod emoji_files;
 mod events;
 mod home;
 mod http_client;
+mod i18n;
 mod image_upload;
 mod mini;
 mod pages;
+mod pill_tab;
 mod play_activity;
 mod playback_prefs;
 mod portrait;
@@ -119,15 +121,22 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // Windows 非打包应用的 Toast 需要稳定的 AppUserModelID；macOS
+            // 通知中心也用同一身份展示。必须在开窗前设好。
+            cx.set_app_identity("com.hongguo.desktop", "红果");
+            // 语言与主题一样在开窗前就位：所有首帧文案都必须已经是用户上次
+            // 选择的语言，不能先画中文再闪成英文。
+            let ui_prefs = crate::ui_prefs::load();
+            crate::i18n::set_locale(ui_prefs.locale);
             // 封面是 CDN 签名 URL：gpui 图片缓存需要一个 HTTP 客户端才能拉远程资源。
             http_client::ReqwestClient::install(cx);
             // 主题偏好（Tauri `hongguo-theme` store 同款三档）：auto 跟随系统
             // 外观（开窗前就能从平台拿到），light/dark 为显式覆盖——显式档位
             // 同时把窗口外观钉给平台（macOS 窗口边框跟随；Windows 无操作），
             // auto 则保持不钉，系统切换时观察者会重算（见 Shell::new）。
-            let theme_pref = crate::ui_prefs::load().theme;
+            let theme_pref = ui_prefs.theme;
             let theme_mode = theme_pref.resolve(cx.window_appearance());
-            gpui_kit::component::Theme::change(theme_mode, None, cx);
+            crate::tokens::apply(theme_mode, cx);
             if theme_pref != crate::ui_prefs::ThemePref::Auto {
                 cx.set_window_appearance(Some(match theme_mode {
                     gpui_kit::component::ThemeMode::Light => gpui_kit::WindowAppearance::Light,
@@ -174,6 +183,15 @@ fn main() {
                 },
             )
             .expect("窗口创建失败");
+
+            // 点击系统通知（追更更新）→ 激活已有窗口；Tauri Web Notification
+            // 的 `window.focus()` 同语义。
+            let notification_window = shell_window;
+            cx.on_system_notification_response(move |_response, cx| {
+                let _ = notification_window.update(cx, |_, window, _| {
+                    window.activate_window();
+                });
+            });
             shell.update(cx, |shell, cx| shell.activate(cx));
             // 退出确认：窗口关闭先问一句（Tauri CloseRequested → 确认框同款）。
             // 挂在实体就位之后——守卫回调要用壳的弱引用。

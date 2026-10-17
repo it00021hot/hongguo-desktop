@@ -309,7 +309,7 @@ impl super::HomeView {
         }
         self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
-            "正在准备…".to_string()
+            crate::i18n::t("player.preparingShort")
         } else {
             item.title.clone()
         });
@@ -410,7 +410,11 @@ impl super::HomeView {
                         }
                         // 失败必须可见：此前只写 pending_title，而那行小徽标
                         // 随 switching 消失——用户看到的就是「点了没反应」
-                        view.play_error = Some(format!("起播失败：{e}"));
+                        let message = crate::i18n::app_error_text(&e);
+                        view.play_error = Some(crate::i18n::tf(
+                            "common.failedWith",
+                            &[("message", message.as_str())],
+                        ));
                     }
                 }
                 cx.notify();
@@ -466,19 +470,26 @@ impl super::HomeView {
         let ep = match series.episodes.iter().find(|e| e.vid_index == vid_index) {
             Some(ep) => ep,
             None if forced_next_ep.is_some() => {
-                return Err(hongguo_common::AppError::Media(format!(
-                    "第 {vid_index} 集不在分集表里（表里 {} 集），不回落重播",
-                    series.episodes.len()
+                return Err(hongguo_common::AppError::Media(crate::i18n::tf(
+                    "player.episodeMissing",
+                    &[
+                        ("index", &vid_index.to_string()),
+                        ("total", &series.episodes.len().to_string()),
+                    ],
                 )));
             }
             None => series
                 .episodes
                 .iter()
                 .find(|e| e.vid_index == 1)
-                .ok_or_else(|| hongguo_common::AppError::Media("分集表里没有可播的集".into()))?,
+                .ok_or_else(|| {
+                    hongguo_common::AppError::Media(crate::i18n::t("player.noPlayableEpisode"))
+                })?,
         };
         if ep.vid.trim().is_empty() {
-            return Err(hongguo_common::AppError::Media("该集没有 vid".into()));
+            return Err(hongguo_common::AppError::Media(crate::i18n::t(
+                "player.episodeNoVid",
+            )));
         }
         let progress_key = format!("{}:{}", item.series_id, ep.vid_index);
         // 实际要播的 vid：比对「同一集被播了两遍」与「恰好落在第一集」的
@@ -510,6 +521,15 @@ impl super::HomeView {
             None => {
                 let prepared =
                     prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
+                // 与 Tauri `play_service::local::resolve_play` 共用同一调度：
+                // 在线起播后把本剧后续 1..=prefetch_episodes 集同时排进流
+                // 预取与（无 HEVC 时的）兼容预转。GPUI 自己起播曾漏掉这步，
+                // 只预取了信息流下一部剧，自动连播到下一集仍然冷启动。
+                hongguo_service::play_service::schedule_following_episodes(
+                    &state,
+                    &item.series_id,
+                    ep.vid_index,
+                );
                 (
                     hongguo_playback::PlaySource::Online {
                         vid: ep.vid.clone(),
@@ -779,7 +799,13 @@ impl super::HomeView {
                 return;
             }
             let _ = this.update(cx, |view, cx| {
-                view.show_toast(format!("第{vid_index}集已看完，已删除本地文件"), cx);
+                view.show_toast(
+                    crate::i18n::tf(
+                        "player.autoDeleteDone",
+                        &[("index", &vid_index.to_string())],
+                    ),
+                    cx,
+                );
             });
         })
         .detach();
@@ -851,7 +877,13 @@ impl super::HomeView {
         };
         // 下载面板开着不接力（同连播闸）——退回提示，静默不动像坏了
         if self.downloads_open {
-            self.show_toast(format!("已经是最后一集（第{}集）了", now.episode_count), cx);
+            self.show_toast(
+                crate::i18n::tf(
+                    "player.lastEpisode",
+                    &[("index", &now.episode_count.to_string())],
+                ),
+                cx,
+            );
             return;
         }
         // 下一季数据面：起播时已预取（plan/v 相关作品；未到/拉失败 = 空表）
@@ -865,7 +897,10 @@ impl super::HomeView {
         {
             // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集，
             // 连播锁定延续到新季
-            self.show_toast(format!("即将播放下一季：{}", next.title), cx);
+            self.show_toast(
+                crate::i18n::tf("player.playNextSeason", &[("title", next.title.as_str())]),
+                cx,
+            );
             self.binge = Some(next.series_id.clone());
             self.play_target(
                 StreamItem {

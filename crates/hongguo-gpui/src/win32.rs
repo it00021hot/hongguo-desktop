@@ -264,7 +264,7 @@ pub(crate) fn register_hotkey(mods: u32, vk: u32) -> Result<(), String> {
     let ok = unsafe { RegisterHotKey(hwnd, id, mods, vk) };
     if ok == 0 {
         *cur = None;
-        return Err("快捷键注册失败（可能被其他程序占用）".to_string());
+        return Err(crate::i18n::t("settings.bossKeyRegisterFailed"));
     }
     *cur = Some(HotkeyReg { hwnd, id });
     Ok(())
@@ -435,7 +435,7 @@ fn message_window() -> Result<isize, String> {
             lpsz_class_name: class_name.as_ptr(),
         };
         if RegisterClassW(&wc) == 0 {
-            return Err("消息窗口类注册失败".to_string());
+            return Err(crate::i18n::t("settings.bossKeyMessageWindowClassFailed"));
         }
         // HWND_MESSAGE = -3：message-only 窗口，永不可见、不进任务栏
         let hwnd = CreateWindowExW(
@@ -453,7 +453,7 @@ fn message_window() -> Result<isize, String> {
             std::ptr::null(),
         );
         if hwnd == 0 {
-            return Err("消息窗口创建失败".to_string());
+            return Err(crate::i18n::t("settings.bossKeyMessageWindowCreateFailed"));
         }
         hwnd
     };

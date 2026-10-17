@@ -39,12 +39,12 @@ impl Source {
     }
 
     /// 回落名（服务端标题缺失时显示；16/36/39 有本地名，未知 tab 显示 tab_type）。
-    pub(crate) fn fallback_label(&self) -> &str {
+    pub(crate) fn fallback_label(&self) -> String {
         match self.0.as_ref() {
-            "16" => "推荐",
-            "36" => "漫剧",
-            "39" => "真人",
-            other => other,
+            "16" => crate::i18n::t("home.tabFeed"),
+            "36" => crate::i18n::t("home.tabComic"),
+            "39" => crate::i18n::t("home.tabHuman"),
+            other => other.to_string(),
         }
     }
 }
@@ -101,6 +101,13 @@ pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_sec
 
 impl super::HomeView {
     // —— 数据：推荐流 ——
+
+    /// 当前 tab 的首批/换一批是否在途（Tauri `feed.isLoading` 同语义）。
+    pub(super) fn feed_loading(&self) -> bool {
+        self.feeds
+            .get(&self.active)
+            .is_some_and(|feed| feed.loading)
+    }
 
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
@@ -160,8 +167,12 @@ impl super::HomeView {
                     }
                     Err(e) => {
                         log::warn!("[Home] {source:?} 首批加载失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
                         view.feeds.get_mut(&source).expect("源已初始化").failed =
-                            Some(format!("推荐流加载失败：{e}"));
+                            Some(crate::i18n::tf(
+                                "feed.loadFailedWith",
+                                &[("message", message.as_str())],
+                            ));
                     }
                 }
                 view.feeds.get_mut(&source).expect("源已初始化").loading = false;

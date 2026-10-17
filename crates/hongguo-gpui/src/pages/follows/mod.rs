@@ -165,7 +165,7 @@ impl FollowsView {
                     Err(e) => {
                         log::warn!("[Follows] GPUI 壳列表失败: {e}");
                         if view.items.is_empty() {
-                            view.failed = Some(format!("{e}"));
+                            view.failed = Some(crate::i18n::app_error_text(&e));
                         }
                     }
                 }
@@ -202,7 +202,14 @@ impl FollowsView {
                     }
                     Err(e) => {
                         log::warn!("[Follows] GPUI 壳翻页失败: {e}");
-                        window.push_notification(Notification::error(format!("加载失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -253,12 +260,22 @@ impl FollowsView {
                 view.cancelling.remove(&series_id);
                 match result {
                     Ok(()) => {
-                        window.push_notification(Notification::success("已取消追更"), cx);
+                        window.push_notification(
+                            Notification::success(crate::i18n::t("follow.unfollowed")),
+                            cx,
+                        );
                         view.load(cx);
                     }
                     Err(e) => {
                         log::warn!("[Follows] 取消追更失败: {e}");
-                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -274,10 +291,13 @@ impl FollowsView {
         window.open_alert_dialog(cx, move |dialog, _window, _cx| {
             let view = view.clone();
             dialog
-                .title("批量取消追更？")
-                .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("follow.batchCancelTitle"))
+                .description(crate::i18n::tf(
+                    "batch.confirmBody",
+                    &[("count", &count.to_string())],
+                ))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
@@ -326,14 +346,20 @@ impl FollowsView {
                 view.batch_cancelling = false;
                 if failed == 0 {
                     window.push_notification(
-                        Notification::success(format!("已取消 {done} 部剧的追更")),
+                        Notification::success(crate::i18n::tf(
+                            "follow.batchUnfollowed",
+                            &[("count", &done.to_string())],
+                        )),
                         cx,
                     );
                     view.managing = false;
                     view.selected.clear();
                 } else {
                     window.push_notification(
-                        Notification::error(format!("部分取消失败：{last_err}")),
+                        Notification::error(crate::i18n::tf(
+                            "batch.partialFail",
+                            &[("error", last_err.as_str())],
+                        )),
                         cx,
                     );
                 }
@@ -361,14 +387,27 @@ impl FollowsView {
             let _ = this.update_in(cx, |view, window, cx| {
                 view.checking = false;
                 match result {
-                    Ok(0) => {
-                        window.push_notification(Notification::success("暂时没有新的更新"), cx)
-                    }
-                    Ok(n) => window
-                        .push_notification(Notification::success(format!("有 {n} 条新提醒")), cx),
+                    Ok(0) => window.push_notification(
+                        Notification::success(crate::i18n::t("follow.checkNone")),
+                        cx,
+                    ),
+                    Ok(n) => window.push_notification(
+                        Notification::success(crate::i18n::tf(
+                            "follow.checkResult",
+                            &[("count", &n.to_string())],
+                        )),
+                        cx,
+                    ),
                     Err(e) => {
                         log::warn!("[Follows] 检查更新失败: {e}");
-                        window.push_notification(Notification::error(format!("检查失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 view.refresh_notices(cx);
@@ -396,13 +435,23 @@ impl FollowsView {
                 match result {
                     Ok(()) => {
                         view.read_all = false;
-                        window.push_notification(Notification::success("已清空"), cx);
+                        window.push_notification(
+                            Notification::success(crate::i18n::t("follow.cleared")),
+                            cx,
+                        );
                         view.refresh_notices(cx);
                         cx.emit(FollowsEvent::NoticesChanged);
                     }
                     Err(e) => {
                         log::warn!("[Follows] 清空提醒失败: {e}");
-                        window.push_notification(Notification::error(format!("清空失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -512,12 +561,12 @@ impl gpui_kit::Render for FollowsView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("登录后才能追更"),
+                        .child(crate::i18n::t("follow.loginRequired")),
                 )
                 .child(
                     Button::new("follows-login")
                         .icon(gpui_kit::assets::IconName::LogIn)
-                        .label("登录")
+                        .label(crate::i18n::t("settings.loginAction"))
                         .small()
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(FollowsEvent::Login);
@@ -539,7 +588,7 @@ impl gpui_kit::Render for FollowsView {
                 self.selected.len(),
                 total,
                 self.batch_cancelling,
-                "取消追更",
+                crate::i18n::t("follow.unfollow"),
             )
             .on_toggle_all(cx.listener(|this, _, _, cx| {
                 let total = this.items.len();

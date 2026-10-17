@@ -67,7 +67,7 @@ pub(crate) fn apply(spec: &str) -> Result<(), String> {
         if spec.is_empty() {
             return Ok(());
         }
-        Err("老板键暂未在本平台实现（全局快捷键 FFI 后补）".to_string())
+        Err(crate::i18n::t("settings.bossKeyPlatformUnsupported"))
     }
 }
 
@@ -85,7 +85,7 @@ pub(crate) fn take_fired() -> bool {
 
 /// 老板键 vs 播放器快捷键的冲突（末段裸键 vs 播放器键；Tauri
 /// `bossKeyConflicts` 同口径）。返回冲突动作的可读名，空 = 无冲突。
-pub(crate) fn conflicts(spec: &str, keys: &ShortcutKeys) -> Vec<&'static str> {
+pub(crate) fn conflicts(spec: &str, keys: &ShortcutKeys) -> Vec<String> {
     let core = accel::gpui_key_of(spec);
     if core.is_empty() {
         return Vec::new();

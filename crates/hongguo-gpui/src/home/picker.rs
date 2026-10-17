@@ -169,7 +169,7 @@ impl super::HomeView {
                 h_flex()
                     .gap_4()
                     .child(self.picker_tab(
-                        "选集",
+                        crate::i18n::t("player.episodes"),
                         !self.picker_tab_series,
                         None,
                         cx.listener(|this, _, _, cx| {
@@ -178,7 +178,7 @@ impl super::HomeView {
                         }),
                     ))
                     .child(self.picker_tab(
-                        "系列剧",
+                        crate::i18n::t("player.seriesList"),
                         self.picker_tab_series,
                         (season_count > 0).then_some(season_count),
                         cx.listener(|this, _, _, cx| {
@@ -198,7 +198,10 @@ impl super::HomeView {
                         div()
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xa3a3a3ff))
-                            .child(format!("全{total}集"))
+                            .child(crate::i18n::tf(
+                                "player.totalEpisodes",
+                                &[("count", &total.to_string())],
+                            ))
                     }))
                     .child(
                         Button::new("picker-close")
@@ -332,11 +335,12 @@ impl super::HomeView {
     /// 选集浮层头部的一个 tab（红条高亮激活态）。
     fn picker_tab(
         &self,
-        label: &'static str,
+        label: impl Into<SharedString>,
         active: bool,
         badge: Option<usize>,
         on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
     ) -> gpui_kit::AnyElement {
+        let label: SharedString = label.into();
         div()
             .id(ElementId::from(format!("picker-tab-{label}")))
             .relative()
@@ -415,9 +419,11 @@ impl super::HomeView {
     /// 预约一个未上线季（乐观置「已预约」，失败回滚；Tauri useReserveSeries
     /// 同口径——只做预约，取消预约在日历页，浮层里没有入口）。
     fn reserve_season(&mut self, series_id: String, cx: &mut Context<Self>) {
-        if !self.logged_in()
-            || self.reserved_ids.contains(&series_id)
-            || !self.reserve_pending.insert(series_id.clone())
+        if !self.logged_in() {
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
+            return;
+        }
+        if self.reserved_ids.contains(&series_id) || !self.reserve_pending.insert(series_id.clone())
         {
             return;
         }
@@ -433,9 +439,17 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.reserve_pending.remove(&series_id);
-                if let Err(e) = result {
-                    view.reserved_ids.remove(&series_id);
-                    log::warn!("[Home] 预约失败: {e}");
+                match result {
+                    Ok(()) => view.show_toast(crate::i18n::t("reservation.done"), cx),
+                    Err(e) => {
+                        view.reserved_ids.remove(&series_id);
+                        log::warn!("[Home] 预约失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
+                    }
                 }
                 cx.notify();
             });
@@ -466,10 +480,16 @@ impl super::HomeView {
                     meta.push(item.tag.clone());
                 }
                 if item.episode_cnt > 0 {
-                    meta.push(format!("全{}集", item.episode_cnt));
+                    meta.push(crate::i18n::tf(
+                        "player.totalEpisodes",
+                        &[("count", &item.episode_cnt.to_string())],
+                    ));
                 }
                 if item.play_cnt > 0 {
-                    meta.push(format!("{}次播放", Self::fmt_play_count(item.play_cnt)));
+                    meta.push(crate::i18n::tf(
+                        "browse.playCount",
+                        &[("count", &Self::fmt_play_count(item.play_cnt))],
+                    ));
                 }
                 h_flex()
                     .id(gpui_kit::ElementId::from(format!(
@@ -521,7 +541,10 @@ impl super::HomeView {
                                     .text_color(gpui_kit::rgb(0xffffff))
                                     .truncate()
                                     .child(SharedString::from(if item.title.is_empty() {
-                                        format!("第{no}季")
+                                        crate::i18n::tf(
+                                            "player.seasonNo",
+                                            &[("no", &no.to_string())],
+                                        )
                                     } else {
                                         item.title.clone()
                                     })),
@@ -538,7 +561,7 @@ impl super::HomeView {
                                             .text_size(gpui_kit::px(10.0))
                                             .line_height(gpui_kit::relative(1.45))
                                             .text_color(gpui_kit::rgb(0xffffff))
-                                            .child("即将上线")
+                                            .child(crate::i18n::t("player.comingSoon"))
                                     }))
                                     .child(
                                         div()
@@ -555,7 +578,7 @@ impl super::HomeView {
                             .text_xs()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(gpui_kit::rgb(0xef4444))
-                            .child("播放中")
+                            .child(crate::i18n::t("player.nowPlaying"))
                     }))
                     .children((unreleased && !current).then(|| {
                         // 未上线季：预约按钮（Tauri BellRing 圆胶囊同款；
@@ -597,11 +620,11 @@ impl super::HomeView {
                             })
                             .child(Icon::new(gpui_kit::assets::IconName::BellRing).size_3())
                             .child(if reserved {
-                                "已预约"
+                                crate::i18n::t("reservation.reserved")
                             } else if pending {
-                                "预约中…"
+                                crate::i18n::t("reservation.reserving")
                             } else {
-                                "预约"
+                                crate::i18n::t("reservation.action")
                             })
                     }))
                     .children((!current && !unreleased).then(|| {
@@ -618,7 +641,7 @@ impl super::HomeView {
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xd4d4d4ff))
                             .child(Icon::new(gpui_kit::assets::IconName::Play).size_3())
-                            .child("播放")
+                            .child(crate::i18n::t("player.play"))
                     }))
             }))
             .into_any_element()

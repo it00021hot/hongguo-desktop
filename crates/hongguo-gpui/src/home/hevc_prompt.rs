@@ -54,13 +54,13 @@ impl super::HomeView {
                         div()
                             .text_sm()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
-                            .child("缺少 HEVC 视频扩展"),
+                            .child(crate::i18n::t("player.hevcCardTitle")),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("当前在播的是降档的 H.264 版本（系统缺 HEVC 解码支持）。下载安装扩展（约 2.4 MB，自动校验）后，后续剧集自动切回原生 H.265 画质。"),
+                            .child(crate::i18n::t("player.hevcCardDesc")),
                     )
                     .child(
                         h_flex()
@@ -69,9 +69,9 @@ impl super::HomeView {
                             .child(
                                 Button::new("hevc-install")
                                     .label(if self.hevc_installing {
-                                        "下载安装中…"
+                                        crate::i18n::t("player.hevcInstalling")
                                     } else {
-                                        "一键安装"
+                                        crate::i18n::t("player.hevcInstall")
                                     })
                                     .small()
                                     .disabled(self.hevc_installing)
@@ -81,7 +81,7 @@ impl super::HomeView {
                             )
                             .child(
                                 Button::new("hevc-later")
-                                    .label("暂不安装")
+                                    .label(crate::i18n::t("player.hevcLater"))
                                     .ghost()
                                     .small()
                                     .disabled(self.hevc_installing)
@@ -115,11 +115,17 @@ impl super::HomeView {
                     // GPUI 不会「正在重试播放」：当前这集早已按 H.264 起播且播放
                     // 正常，装完的收益从下一集/下一次起播的选流开始（能力已在
                     // service 里重探并缓存）。
-                    Ok(true) => view.show_toast("HEVC 扩展已安装，后续剧集将改用 H.265 解码", cx),
-                    Ok(false) => view.show_toast("扩展已装好但系统仍未识别，请重启应用后再试", cx),
+                    Ok(true) => view.show_toast(crate::i18n::t("player.hevcInstallSuccess"), cx),
+                    Ok(false) => view.show_toast(crate::i18n::t("player.hevcStillNoPicture"), cx),
                     Err(e) => {
                         log::warn!("[Home] HEVC 扩展安装失败: {e}");
-                        view.show_toast(format!("HEVC 扩展安装失败：{e}"), cx);
+                        view.show_toast(
+                            crate::i18n::tf(
+                                "player.hevcInstallFailed",
+                                &[("reason", &crate::i18n::app_error_text(&e))],
+                            ),
+                            cx,
+                        );
                     }
                 }
             });

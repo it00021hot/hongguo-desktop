@@ -72,12 +72,22 @@ pub(crate) struct ReservationView {
 }
 
 impl ReservationView {
+    /// 语言切换：刷新搜索框 placeholder，保留 tab 与输入。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("reservation.searchPlaceholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索预约的剧"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("reservation.searchPlaceholder"))
+        });
         cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -162,7 +172,7 @@ impl ReservationView {
                         Err(e) => {
                             log::warn!("[Reservations] GPUI 壳失败 online={online}: {e}");
                             if tab.items.is_none() {
-                                tab.failed = Some(format!("{e}"));
+                                tab.failed = Some(crate::i18n::app_error_text(&e));
                             }
                         }
                     }
@@ -217,12 +227,22 @@ impl ReservationView {
                 view.cancelling.remove(&series_id);
                 match result {
                     Ok(()) => {
-                        window.push_notification(Notification::success("已取消预约"), cx);
+                        window.push_notification(
+                            Notification::success(crate::i18n::t("reservation.cancelled")),
+                            cx,
+                        );
                         view.load(cx);
                     }
                     Err(e) => {
                         log::warn!("[Reservations] 取消预约失败: {e}");
-                        window.push_notification(Notification::error(format!("取消失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -261,7 +281,10 @@ impl ReservationView {
                 match result {
                     Ok(()) => {
                         window.push_notification(
-                            Notification::success(format!("已删除 {total} 项")),
+                            Notification::success(crate::i18n::tf(
+                                "batch.done",
+                                &[("count", &total.to_string())],
+                            )),
                             cx,
                         );
                         view.managing = false;
@@ -270,7 +293,10 @@ impl ReservationView {
                     Err(e) => {
                         log::warn!("[Reservations] 批量删除失败: {e}");
                         window.push_notification(
-                            Notification::error(format!("部分删除失败：{e}")),
+                            Notification::error(crate::i18n::tf(
+                                "batch.partialFail",
+                                &[("error", &crate::i18n::app_error_text(&e))],
+                            )),
                             cx,
                         );
                     }
@@ -288,10 +314,13 @@ impl ReservationView {
         window.open_alert_dialog(cx, move |dialog, _window, _cx| {
             let view = view.clone();
             dialog
-                .title("批量删除预约？")
-                .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("reservation.batchCancelTitle"))
+                .description(crate::i18n::tf(
+                    "batch.confirmBody",
+                    &[("count", &count.to_string())],
+                ))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
@@ -381,9 +410,9 @@ impl ReservationView {
             .children(self.logged_in().then(|| {
                 Button::new("reservations-manage")
                     .label(if self.managing {
-                        "退出管理"
+                        crate::i18n::t("batch.exitManage")
                     } else {
-                        "管理"
+                        crate::i18n::t("batch.manage")
                     })
                     .outline()
                     .small()
@@ -405,7 +434,11 @@ impl ReservationView {
             .gap_2()
             .children([true, false].map(|online| {
                 let data = if online { &self.online } else { &self.offline };
-                let label = if online { "已上线" } else { "待上线" };
+                let label = if online {
+                    crate::i18n::t("reservation.tab.online")
+                } else {
+                    crate::i18n::t("reservation.tab.offline")
+                };
                 let count = if data.loading {
                     "…".to_string()
                 } else {
@@ -525,7 +558,10 @@ impl ReservationView {
                             .py_0p5()
                             .text_size(gpui_kit::px(10.0))
                             .text_color(gpui_kit::rgb(0xffffffff))
-                            .child(SharedString::from(format!("{publish_date} 上线")))
+                            .child(SharedString::from(crate::i18n::tf(
+                                "reservation.publishAt",
+                                &[("time", publish_date.as_str())],
+                            )))
                     })),
             )
             // 标题/简介/标签
@@ -613,9 +649,12 @@ impl ReservationView {
                             }))
                             .children((item.publish_time > 0 && !item.is_online).then(|| {
                                 div().text_xs().text_color(theme.muted_foreground).child(
-                                    SharedString::from(format!(
-                                        "{} 上线",
-                                        format_month_day_time(item.publish_time)
+                                    SharedString::from(crate::i18n::tf(
+                                        "reservation.publishAt",
+                                        &[(
+                                            "time",
+                                            format_month_day_time(item.publish_time).as_str(),
+                                        )],
                                     )),
                                 )
                             })),
@@ -633,7 +672,7 @@ impl ReservationView {
                                 item.series_id
                             )))
                             .icon(gpui_kit::assets::IconName::Play)
-                            .label("播放")
+                            .label(crate::i18n::t("player.play"))
                             .outline()
                             .small()
                             .on_click(cx.listener(
@@ -648,7 +687,7 @@ impl ReservationView {
                                 "reservation-detail-{}",
                                 item.series_id
                             )))
-                            .label("详情")
+                            .label(crate::i18n::t("nav.detail.title"))
                             .ghost()
                             .small()
                             .on_click(cx.listener(
@@ -666,7 +705,7 @@ impl ReservationView {
                             item.series_id
                         )))
                         .icon(gpui_kit::assets::IconName::BellRing)
-                        .label("取消预约")
+                        .label(crate::i18n::t("reservation.cancel"))
                         .outline()
                         .small()
                         .disabled(cancelling)
@@ -762,12 +801,12 @@ impl gpui_kit::Render for ReservationView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("登录后才能查看预约列表"),
+                        .child(crate::i18n::t("reservation.loginRequired")),
                 )
                 .child(
                     Button::new("reservations-login")
                         .icon(gpui_kit::assets::IconName::LogIn)
-                        .label("登录")
+                        .label(crate::i18n::t("settings.loginAction"))
                         .small()
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(ReservationEvent::Login);
@@ -793,7 +832,7 @@ impl gpui_kit::Render for ReservationView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("预约列表加载失败"),
+                            .child(crate::i18n::t("reservation.loadFailed")),
                     )
                     .child(
                         div()
@@ -803,7 +842,7 @@ impl gpui_kit::Render for ReservationView {
                     )
                     .child(
                         Button::new("reservations-retry")
-                            .label("重试")
+                            .label(crate::i18n::t("common.retry"))
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                     )
                     .into_any_element()
@@ -823,13 +862,13 @@ impl gpui_kit::Render for ReservationView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("还没有预约的短剧"),
+                            .child(crate::i18n::t("reservation.empty")),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("在上新日历点「预约」，上线时这里就能看到"),
+                            .child(crate::i18n::t("reservation.emptyHint")),
                     )
                     .into_any_element()
             } else {
@@ -855,23 +894,28 @@ impl gpui_kit::Render for ReservationView {
         let toolbar = logged_in.then(|| self.render_toolbar(cx));
         let batch_bar = (logged_in && self.managing).then(|| {
             let total = self.visible_items(cx).len();
-            BatchBar::new(self.selected.len(), total, self.deleting, "取消预约")
-                .on_toggle_all(cx.listener(|this, _, _, cx| {
-                    let visible = this.visible_items(cx);
-                    let total = visible.len();
-                    if total > 0 && this.selected.len() >= total {
-                        this.selected.clear();
-                    } else {
-                        for item in visible {
-                            this.selected.insert(item.series_id);
-                        }
+            BatchBar::new(
+                self.selected.len(),
+                total,
+                self.deleting,
+                crate::i18n::t("reservation.cancel"),
+            )
+            .on_toggle_all(cx.listener(|this, _, _, cx| {
+                let visible = this.visible_items(cx);
+                let total = visible.len();
+                if total > 0 && this.selected.len() >= total {
+                    this.selected.clear();
+                } else {
+                    for item in visible {
+                        this.selected.insert(item.series_id);
                     }
-                    cx.notify();
-                }))
-                .on_delete(cx.listener(|this, _, window, cx| {
-                    this.confirm_batch_delete(window, cx);
-                }))
-                .into_any_element()
+                }
+                cx.notify();
+            }))
+            .on_delete(cx.listener(|this, _, window, cx| {
+                this.confirm_batch_delete(window, cx);
+            }))
+            .into_any_element()
         });
         let theme = cx.theme();
         v_flex()
@@ -889,7 +933,10 @@ impl gpui_kit::Render for ReservationView {
 fn format_month_day(ms: i64) -> String {
     use chrono::{Datelike, TimeZone};
     match chrono::Local.timestamp_millis_opt(ms).single() {
-        Some(dt) => format!("{}月{}日", dt.month(), dt.day()),
+        Some(dt) => match crate::i18n::locale() {
+            crate::i18n::Locale::ZhCn => format!("{}月{}日", dt.month(), dt.day()),
+            crate::i18n::Locale::EnUs => format!("{:02}/{:02}", dt.month(), dt.day()),
+        },
         None => String::new(),
     }
 }

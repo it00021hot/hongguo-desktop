@@ -52,7 +52,7 @@ fn normalize_tabs(tabs: &[RankTab]) -> Vec<RankTab> {
     }
     vec![RankTab {
         id: "all".into(),
-        name: "全部".into(),
+        name: crate::i18n::t("browse.all"),
         subs: tabs
             .iter()
             .map(|tab| hongguo_api::rank::RankSubList {
@@ -63,7 +63,7 @@ fn normalize_tabs(tabs: &[RankTab]) -> Vec<RankTab> {
                     Vec::new()
                 } else {
                     vec![hongguo_api::rank::RankPanelRow {
-                        name: "筛选".into(),
+                        name: crate::i18n::t("rank.filter.title"),
                         items: tab
                             .subs
                             .iter()
@@ -344,16 +344,23 @@ impl RankView {
                         view.reserved_local.insert(sid.clone(), next);
                         window.push_notification(
                             Notification::success(if next {
-                                "预约成功"
+                                crate::i18n::t("reservation.done")
                             } else {
-                                "已取消预约"
+                                crate::i18n::t("reservation.cancelled")
                             }),
                             cx,
                         );
                     }
                     Err(e) => {
                         log::warn!("[Rank] 预约失败: {e}");
-                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -375,18 +382,15 @@ impl RankView {
             h_flex()
                 .id("top-rank-tabs")
                 .items_center()
-                .gap_1()
+                .gap_0p5()
                 .children(tabs.into_iter().map(|tab| {
                     let active = self.selected == tab.id;
-                    let button = Button::new(format!("rank-tab-{}", tab.id))
-                        .label(tab.name.clone())
-                        .small();
-                    let button = if active {
-                        // 顶栏 tab 选中态 = Tauri TopBarTab 的 bg-primary 胶囊
-                        button.primary()
-                    } else {
-                        button.ghost()
-                    };
+                    let button = crate::pill_tab::pill_tab(
+                        format!("rank-tab-{}", tab.id),
+                        tab.name.clone(),
+                        active,
+                        cx,
+                    );
                     let first_sub = tab.subs.first().map(|s| s.id.clone()).unwrap_or_default();
                     let id = tab.id.clone();
                     button.on_click(cx.listener(move |this, _, _, cx| {
@@ -421,18 +425,20 @@ impl RankView {
                 div()
                     .id(ElementId::from(format!("rank-sub-{}", sub.id)))
                     .w_full()
-                    .rounded(gpui_kit::px(6.0))
+                    .rounded(theme.radius)
                     .px_3()
                     .py_2()
                     .text_sm()
                     .cursor_pointer()
-                    .text_color(if active {
-                        theme.foreground
-                    } else {
-                        theme.muted_foreground
+                    .when(active, |s| {
+                        s.bg(theme.primary)
+                            .text_color(theme.primary_foreground)
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                     })
-                    .when(active, |s| s.bg(theme.secondary))
-                    .hover(|s| s.bg(theme.secondary_hover))
+                    .when(!active, |s| {
+                        s.text_color(theme.muted_foreground)
+                            .hover(|h| h.bg(theme.accent).text_color(theme.accent_foreground))
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.sub == id {
                             return;
@@ -509,7 +515,7 @@ impl RankView {
             v_flex()
                 .w_full()
                 .gap_3()
-                .rounded(gpui_kit::px(8.0))
+                .rounded(theme.radius + gpui_kit::px(2.0))
                 .border_1()
                 .border_color(theme.border)
                 .bg(theme.group_box)
@@ -518,7 +524,7 @@ impl RankView {
                 .children((!value.is_empty()).then(|| {
                     h_flex().w_full().justify_end().child(
                         Button::new("rank-panel-reset")
-                            .label("重置筛选")
+                            .label(crate::i18n::t("rank.filter.reset"))
                             .ghost()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -538,7 +544,7 @@ impl RankView {
             // 星语言（Tauri 榜单前三 text-star 同款）
             crate::tokens::star(theme.mode).into()
         } else {
-            theme.muted_foreground
+            theme.muted_foreground.opacity(0.5)
         };
         let mut meta: Vec<String> = Vec::new();
         if !item.sub_title.is_empty() {
@@ -558,13 +564,13 @@ impl RankView {
             .id(ElementId::from(format!("rank-row-{}", item.series_id)))
             .items_center()
             .gap_4()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(theme.radius_lg)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .p_3()
             .cursor_pointer()
-            .hover(|s| s.border_color(theme.foreground))
+            .hover(|s| s.border_color(theme.foreground.opacity(0.3)).shadow_md())
             .on_click({
                 let item = item.clone();
                 cx.listener(move |this, _, _, cx| this.open_detail(&item, cx))
@@ -585,7 +591,7 @@ impl RankView {
                     .h(gpui_kit::px(107.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(8.0))
+                    .rounded(theme.radius + gpui_kit::px(2.0))
                     .bg(theme.secondary)
                     .child(match cover {
                         Some(bitmap) => img(ImageSource::Render(bitmap))
@@ -632,9 +638,11 @@ impl RankView {
                     }))
                     .children((!item.description.is_empty()).then(|| {
                         div()
-                            .truncate()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .line_height(gpui_kit::relative(1.625))
+                            .text_color(theme.muted_foreground.opacity(0.8))
+                            .line_clamp(2)
+                            .overflow_hidden()
                             .child(SharedString::from(item.description.clone()))
                     }))
                     .children(
@@ -685,9 +693,15 @@ impl RankView {
                             } else {
                                 gpui_kit::assets::IconName::Bell
                             })
-                            .label(if reserved { "已预约" } else { "预约" })
+                            .label(if reserved {
+                                crate::i18n::t("reservation.reserved")
+                            } else {
+                                crate::i18n::t("reservation.action")
+                            })
                             .outline()
                             .small()
+                            .h_8()
+                            .px_2p5()
                             .disabled(pending)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
@@ -701,18 +715,21 @@ impl RankView {
                         vec![
                             Button::new(ElementId::from(format!("rank-play-{}", item.series_id)))
                                 .icon(gpui_kit::assets::IconName::Play)
-                                .label("播放")
+                                .label(crate::i18n::t("player.play"))
                                 .outline()
                                 .small()
+                                .h_8()
+                                .px_2p5()
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.play_series(sid.clone(), cx);
                                 }))
                                 .into_any_element(),
                             Button::new(ElementId::from(format!("rank-detail-{}", item.series_id)))
-                                .label("详情")
-                                .ghost()
-                                .small()
+                                .label(crate::i18n::t("rank.detail"))
+                                .text()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.open_detail(&item_clone, cx);
@@ -786,7 +803,7 @@ impl gpui_kit::Render for RankView {
                     .find(|it| it.id == self.panel && !it.id.is_empty())
                     .map(|it| it.name.clone())
             })
-            .unwrap_or_else(|| "总榜".to_string());
+            .unwrap_or_else(|| crate::i18n::t("rank.filter.all"));
         let filter_open = self.filter_open;
         let filter_toggle = has_panel.then(|| {
             let theme = cx.theme();
@@ -794,7 +811,6 @@ impl gpui_kit::Render for RankView {
                 .icon(gpui_kit::assets::IconName::SlidersHorizontal)
                 .label(panel_label)
                 .outline()
-                .small()
                 .text_color(if filter_open {
                     theme.primary
                 } else {
@@ -817,9 +833,9 @@ impl gpui_kit::Render for RankView {
             h_flex().w_full().justify_center().py_2().child(
                 Button::new("rank-more")
                     .label(if loading_more {
-                        "正在加载更多…"
+                        crate::i18n::t("feed.loadingMore")
                     } else {
-                        "加载更多"
+                        crate::i18n::t("follow.loadMore")
                     })
                     .ghost()
                     .small()
@@ -856,6 +872,11 @@ impl gpui_kit::Render for RankView {
                         v_flex()
                             .flex_1()
                             .min_w_0()
+                            // WebView2 的 6px 细滚动条占内容宽，Tauri 榜单
+                            // 行卡右缘因此比视口右缘内收 10px（滚动条 + 间隙）。
+                            // GPUI 滚动条是悬浮层，不占宽；显式留出同一 gutter，
+                            // 否则行卡与顶栏筛选钮会向右多伸 10px。
+                            .pr(gpui_kit::px(10.0))
                             .gap_2()
                             .child(
                                 h_flex()
@@ -911,11 +932,15 @@ impl gpui_kit::Render for RankView {
                                                             div()
                                                                 .text_sm()
                                                                 .text_color(theme.muted_foreground)
-                                                                .child("排行榜加载失败"),
+                                                                .child(crate::i18n::t(
+                                                                    "rank.loadFailed",
+                                                                )),
                                                         )
                                                         .child(
                                                             Button::new("rank-retry")
-                                                                .label("重试")
+                                                                .label(crate::i18n::t(
+                                                                    "common.retry",
+                                                                ))
                                                                 .on_click(cx.listener(
                                                                     |this, _, _, cx| {
                                                                         this.load_page(false, cx)
@@ -934,7 +959,9 @@ impl gpui_kit::Render for RankView {
                                                             div()
                                                                 .text_sm()
                                                                 .text_color(theme.muted_foreground)
-                                                                .child("暂无内容"),
+                                                                .child(crate::i18n::t(
+                                                                    "rank.empty",
+                                                                )),
                                                         )
                                                         .into_any_element(),
                                                 ]
@@ -947,7 +974,7 @@ impl gpui_kit::Render for RankView {
                                                     div()
                                                         .text_sm()
                                                         .text_color(theme.muted_foreground)
-                                                        .child("没有更多了"),
+                                                        .child(crate::i18n::t("follow.noMore")),
                                                 )
                                             })),
                                     ),

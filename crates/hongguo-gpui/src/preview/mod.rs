@@ -106,7 +106,7 @@ fn render_case(
     );
     cx.update(|cx| {
         gpui_kit::init(cx);
-        gpui_kit::component::theme::Theme::change(case.mode, None, cx);
+        crate::tokens::apply(case.mode, cx);
         if case.font_scale != 1. {
             gpui_kit::component::theme::Theme::update(cx, |theme| {
                 theme.font_size *= case.font_scale
@@ -176,11 +176,7 @@ fn interaction_probe(
     );
     cx.update(|cx| {
         gpui_kit::init(cx);
-        gpui_kit::component::theme::Theme::change(
-            gpui_kit::component::theme::ThemeMode::Dark,
-            None,
-            cx,
-        );
+        crate::tokens::apply(gpui_kit::component::theme::ThemeMode::Dark, cx);
     });
     let (handle, shell) = cx.update(|cx| {
         gpui_kit::open_window(

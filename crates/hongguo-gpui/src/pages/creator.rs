@@ -13,7 +13,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img};
 use hongguo_api::danmaku::{CreatorProfile, CreatorWork};
@@ -147,7 +147,7 @@ impl CreatorView {
                     }
                     Err(e) => {
                         log::warn!("[Creator] GPUI 壳作品失败: {e}");
-                        view.failed = Some(format!("{e}"));
+                        view.failed = Some(crate::i18n::app_error_text(&e));
                     }
                 }
                 cx.notify();
@@ -172,7 +172,7 @@ impl CreatorView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| {
+            let _ = this.update_in(cx, |view, window, cx| {
                 view.loading_more = false;
                 match result {
                     Ok(page) => {
@@ -181,7 +181,18 @@ impl CreatorView {
                         view.has_more = page.has_more;
                         view.load_covers(cx);
                     }
-                    Err(e) => log::warn!("[Creator] GPUI 壳翻页失败: {e}"),
+                    Err(e) => {
+                        log::warn!("[Creator] GPUI 壳翻页失败: {e}");
+                        window.push_notification(
+                            gpui_kit::component::notification::Notification::error(
+                                crate::i18n::tf(
+                                    "common.failedWith",
+                                    &[("message", &crate::i18n::app_error_text(&e))],
+                                ),
+                            ),
+                            cx,
+                        );
+                    }
                 }
                 cx.notify();
             });
@@ -258,7 +269,7 @@ impl CreatorView {
             .child(
                 Button::new("creator-back")
                     .icon(gpui_kit::assets::IconName::ArrowLeft)
-                    .label("返回")
+                    .label(crate::i18n::t("detail.back"))
                     .ghost()
                     .small()
                     .on_click(cx.listener(|_, _, _, cx| {
@@ -331,12 +342,18 @@ impl CreatorView {
             String::new()
         };
         let plays = if work.play_cnt > 0 {
-            format!("{}次播放", format_play_count(work.play_cnt))
+            crate::i18n::tf(
+                "browse.playCount",
+                &[("count", &format_play_count(work.play_cnt))],
+            )
         } else {
             String::new()
         };
         let episodes = if work.episode_cnt > 0 {
-            format!("全{}集", work.episode_cnt)
+            crate::i18n::tf(
+                "detail.allEpisodesBadge",
+                &[("count", &work.episode_cnt.to_string())],
+            )
         } else {
             String::new()
         };
@@ -453,7 +470,7 @@ impl CreatorView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("主页加载失败"),
+                        .child(crate::i18n::t("creator.loadFailed")),
                 )
                 .child(
                     div()
@@ -463,7 +480,7 @@ impl CreatorView {
                 )
                 .child(
                     Button::new("creator-retry")
-                        .label("重试")
+                        .label(crate::i18n::t("common.retry"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             let uid = this.user_id.clone();
                             this.load(uid, cx);
@@ -476,7 +493,7 @@ impl CreatorView {
                 .mt_6()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("TA 还没有发布作品")
+                .child(crate::i18n::t("creator.empty"))
                 .into_any_element();
         }
         let mut column = v_flex().w_full().gap_3();
@@ -499,9 +516,9 @@ impl CreatorView {
                 h_flex().w_full().justify_center().pt_2().child(
                     Button::new("creator-more")
                         .label(if self.loading_more {
-                            "加载中…"
+                            crate::i18n::t("common.loading")
                         } else {
-                            "加载更多"
+                            crate::i18n::t("follow.loadMore")
                         })
                         .outline()
                         .small()
@@ -524,7 +541,10 @@ impl gpui_kit::Render for CreatorView {
                 .mt_6()
                 .text_base()
                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                .child(SharedString::from(format!("作品 · {}", self.total)))
+                .child(SharedString::from(crate::i18n::tf(
+                    "creator.works",
+                    &[("count", &self.total.to_string())],
+                )))
         });
         let body = self.render_body(cx);
         let theme = cx.theme();

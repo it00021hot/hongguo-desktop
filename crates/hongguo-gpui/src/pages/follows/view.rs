@@ -55,7 +55,7 @@ impl super::FollowsView {
                         this.tab = Tab::Follows;
                         cx.notify();
                     }))
-                    .child("追更的剧"),
+                    .child(crate::i18n::t("follow.tabFollows")),
             )
             .child(
                 pill(self.tab == Tab::Notices)
@@ -68,7 +68,7 @@ impl super::FollowsView {
                         h_flex()
                             .items_center()
                             .gap_1p5()
-                            .child("更新提醒")
+                            .child(crate::i18n::t("follow.tabNotices"))
                             .children((unread > 0).then(|| {
                                 div()
                                     .rounded_full()
@@ -92,9 +92,9 @@ impl super::FollowsView {
             .child(
                 Button::new("follows-manage")
                     .label(if self.managing {
-                        "退出管理"
+                        crate::i18n::t("batch.exitManage")
                     } else {
-                        "管理"
+                        crate::i18n::t("batch.manage")
                     })
                     .outline()
                     .small()
@@ -123,19 +123,19 @@ impl super::FollowsView {
         let remain = item.episode_cnt - item.latest_watched_vid_index;
         let progress = if item.latest_watched_vid_index > 0 {
             if remain <= 0 {
-                "已追平".to_string()
+                crate::i18n::t("follow.caughtUp")
             } else {
-                format!("{remain} 集未看")
+                crate::i18n::tf("follow.unwatched", &[("count", &remain.to_string())])
             }
         } else {
             String::new()
         };
         let serial = if item.finished {
-            "已完结"
+            crate::i18n::t("follow.finished")
         } else {
-            "连载中"
+            crate::i18n::t("follow.serializing")
         };
-        let status = [progress.as_str(), serial]
+        let status = [progress.as_str(), serial.as_str()]
             .iter()
             .filter(|s| !s.is_empty())
             .copied()
@@ -237,9 +237,12 @@ impl super::FollowsView {
                     }))
                     .children((item.episode_cnt > 0).then(|| {
                         div().text_xs().text_color(theme.muted_foreground).child(
-                            SharedString::from(format!(
-                                "看到 {} / {} 集",
-                                item.latest_watched_vid_index, item.episode_cnt
+                            SharedString::from(crate::i18n::tf(
+                                "follow.episodeProgress",
+                                &[
+                                    ("watched", &item.latest_watched_vid_index.to_string()),
+                                    ("total", &item.episode_cnt.to_string()),
+                                ],
                             )),
                         )
                     })),
@@ -255,7 +258,7 @@ impl super::FollowsView {
                     .child(
                         Button::new(ElementId::from(format!("follow-play-{}", item.series_id)))
                             .icon(gpui_kit::assets::IconName::Play)
-                            .label("播放")
+                            .label(crate::i18n::t("player.play"))
                             .outline()
                             .small()
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -267,7 +270,7 @@ impl super::FollowsView {
                         let sid = item.series_id.clone();
                         Button::new(ElementId::from(format!("follow-cancel-{}", item.series_id)))
                             .icon(gpui_kit::assets::IconName::Tv)
-                            .label("取消追更")
+                            .label(crate::i18n::t("follow.unfollow"))
                             .outline()
                             .small()
                             .border_color(theme.primary)
@@ -301,7 +304,7 @@ impl super::FollowsView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("追更列表加载失败"),
+                        .child(crate::i18n::t("follow.loadFailed")),
                 )
                 .child(
                     div()
@@ -311,7 +314,7 @@ impl super::FollowsView {
                 )
                 .child(
                     Button::new("follows-retry")
-                        .label("重试")
+                        .label(crate::i18n::t("common.retry"))
                         .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                 )
                 .into_any_element();
@@ -332,13 +335,13 @@ impl super::FollowsView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("还没有追更的剧"),
+                        .child(crate::i18n::t("follow.empty")),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child("在剧集详情页点「追更」，这部剧更新时会提醒你"),
+                        .child(crate::i18n::t("follow.emptyHint")),
                 )
                 .into_any_element();
         }
@@ -353,9 +356,9 @@ impl super::FollowsView {
                 h_flex().w_full().justify_center().pt_2().child(
                     Button::new("follows-more")
                         .label(if self.loading_more {
-                            "加载中…"
+                            crate::i18n::t("common.loading")
                         } else {
-                            "加载更多"
+                            crate::i18n::t("follow.loadMore")
                         })
                         .outline()
                         .small()
@@ -366,11 +369,12 @@ impl super::FollowsView {
         } else {
             let muted = cx.theme().muted_foreground;
             column = column.child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .pt_2()
-                    .child(div().text_xs().text_color(muted).child("没有更多了")),
+                h_flex().w_full().justify_center().pt_2().child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(crate::i18n::t("follow.noMore")),
+                ),
             );
         }
         div()
@@ -426,9 +430,9 @@ impl super::FollowsView {
                                 theme.muted_foreground
                             })
                             .child(if kind_online {
-                                "预约上线"
+                                crate::i18n::t("follow.kindOnline")
                             } else {
-                                "追更更新"
+                                crate::i18n::t("follow.kindFollow")
                             }),
                     )
                     .child(
@@ -476,7 +480,7 @@ impl super::FollowsView {
             .child(
                 Checkbox::new("follows-popup-on")
                     .checked(self.popup_on)
-                    .label("弹出提醒")
+                    .label(crate::i18n::t("follow.popupOn"))
                     .on_click(cx.listener(|this, checked: &bool, _, cx| {
                         this.set_popup_on(*checked, cx);
                     })),
@@ -485,9 +489,9 @@ impl super::FollowsView {
                 Button::new("follows-check-updates")
                     .icon(gpui_kit::assets::IconName::RefreshCw)
                     .label(if self.checking {
-                        "检查中…"
+                        crate::i18n::t("follow.checking")
                     } else {
-                        "检查更新"
+                        crate::i18n::t("follow.checkUpdate")
                     })
                     .outline()
                     .small()
@@ -497,7 +501,7 @@ impl super::FollowsView {
             .children((!notices_empty).then(|| {
                 Button::new("follows-clear")
                     .icon(gpui_kit::assets::IconName::CheckCheck)
-                    .label("清空")
+                    .label(crate::i18n::t("follow.clearAll"))
                     .ghost()
                     .small()
                     .disabled(self.clearing)
@@ -518,13 +522,13 @@ impl super::FollowsView {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("暂无提醒"),
+                        .child(crate::i18n::t("follow.noticesEmpty")),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child("追的剧更新、预约的剧上线后，会在这里提醒你（每 20 分钟自动检查）"),
+                        .child(crate::i18n::t("follow.noticesEmptyHint")),
                 )
                 .into_any_element()
         } else {
@@ -551,13 +555,22 @@ impl super::FollowsView {
 fn format_notice_time(secs: i64) -> String {
     use chrono::{Datelike, TimeZone, Timelike};
     match chrono::Local.timestamp_opt(secs, 0).single() {
-        Some(dt) => format!(
-            "{}月{}日 {:02}:{:02}",
-            dt.month(),
-            dt.day(),
-            dt.hour(),
-            dt.minute()
-        ),
+        Some(dt) => match crate::i18n::locale() {
+            crate::i18n::Locale::ZhCn => format!(
+                "{}月{}日 {:02}:{:02}",
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute()
+            ),
+            crate::i18n::Locale::EnUs => format!(
+                "{:02}/{:02} {:02}:{:02}",
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute()
+            ),
+        },
         None => String::new(),
     }
 }

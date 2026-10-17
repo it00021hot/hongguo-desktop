@@ -49,11 +49,11 @@ enum TypeTab {
 impl TypeTab {
     const ALL: [TypeTab; 3] = [TypeTab::All, TypeTab::Real, TypeTab::Comic];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            TypeTab::All => "全部",
-            TypeTab::Real => "真人剧",
-            TypeTab::Comic => "漫剧",
+            TypeTab::All => crate::i18n::t("collections.filterAll"),
+            TypeTab::Real => crate::i18n::t("collections.filterReal"),
+            TypeTab::Comic => crate::i18n::t("collections.filterComic"),
         }
     }
 
@@ -93,12 +93,22 @@ pub(crate) struct CollectionView {
 }
 
 impl CollectionView {
+    /// 语言切换：刷新搜索框 placeholder，保留筛选条件与输入。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("collections.searchPlaceholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索收藏的剧"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("collections.searchPlaceholder"))
+        });
         cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -165,10 +175,10 @@ impl CollectionView {
                     Err(e) => {
                         log::warn!("[Collections] GPUI 壳失败: {e}");
                         if view.entries.is_empty() {
-                            view.phase = if format!("{e}").contains("未登录") {
+                            view.phase = if e.i18n_key() == "error.auth" {
                                 Phase::LoginRequired
                             } else {
-                                Phase::Failed(format!("{e}"))
+                                Phase::Failed(crate::i18n::app_error_text(&e))
                             };
                         }
                     }
@@ -221,12 +231,22 @@ impl CollectionView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update_in(cx, |view, window, cx| match result {
                 Ok(()) => {
-                    window.push_notification(Notification::success("已取消收藏"), cx);
+                    window.push_notification(
+                        Notification::success(crate::i18n::t("collections.removed")),
+                        cx,
+                    );
                     view.load(cx);
                 }
                 Err(e) => {
                     log::warn!("[Collections] 取消收藏失败: {e}");
-                    window.push_notification(Notification::error(format!("取消收藏失败：{e}")), cx);
+                    let message = crate::i18n::app_error_text(&e);
+                    window.push_notification(
+                        Notification::error(crate::i18n::tf(
+                            "common.failedWith",
+                            &[("message", message.as_str())],
+                        )),
+                        cx,
+                    );
                 }
             });
         })
@@ -262,7 +282,10 @@ impl CollectionView {
                 match result {
                     Ok(()) => {
                         window.push_notification(
-                            Notification::success(format!("已删除 {total} 项")),
+                            Notification::success(crate::i18n::tf(
+                                "batch.done",
+                                &[("count", &total.to_string())],
+                            )),
                             cx,
                         );
                         view.managing = false;
@@ -271,7 +294,10 @@ impl CollectionView {
                     Err(e) => {
                         log::warn!("[Collections] 批量取消收藏失败: {e}");
                         window.push_notification(
-                            Notification::error(format!("部分删除失败：{e}")),
+                            Notification::error(crate::i18n::tf(
+                                "batch.partialFail",
+                                &[("error", &crate::i18n::app_error_text(&e))],
+                            )),
                             cx,
                         );
                     }
@@ -289,10 +315,13 @@ impl CollectionView {
         window.open_alert_dialog(cx, move |dialog, _window, _cx| {
             let view = view.clone();
             dialog
-                .title("批量取消收藏？")
-                .description(format!("将删除选中的 {count} 项，删除后不可恢复。"))
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("collections.batchRemoveTitle"))
+                .description(crate::i18n::tf(
+                    "batch.confirmBody",
+                    &[("count", &count.to_string())],
+                ))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {
@@ -372,9 +401,9 @@ impl CollectionView {
             .child(
                 Button::new("collections-manage")
                     .label(if self.managing {
-                        "退出管理"
+                        crate::i18n::t("batch.exitManage")
                     } else {
-                        "管理"
+                        crate::i18n::t("batch.manage")
                     })
                     .outline()
                     .small()
@@ -413,11 +442,13 @@ impl CollectionView {
                     .chars()
                     .rev()
                     .collect();
-                format!("剧集 {tail}")
+                crate::i18n::tf("collections.unresolved", &[("id", tail.as_str())])
             });
         let episode_line = match self.episode_counts.get(&series_id) {
-            Some(n) if *n > 0 => format!("共 {n} 集"),
-            _ => "正在获取剧集信息…".to_string(),
+            Some(n) if *n > 0 => {
+                crate::i18n::tf("collections.episodeCount", &[("n", &n.to_string())])
+            }
+            _ => crate::i18n::t("collections.resolvingHint"),
         };
         let cover = self.covers.get(&series_id).cloned();
         let play_open = hovered && !managing;
@@ -508,7 +539,7 @@ impl CollectionView {
                                                 )
                                                 .small(),
                                             )
-                                            .child("继续播放"),
+                                            .child(crate::i18n::t("history.continue")),
                                     )
                             })),
                     )
@@ -545,7 +576,7 @@ impl CollectionView {
                 let sid = series_id.clone();
                 Button::new(ElementId::from(format!("collections-remove-{}", series_id)))
                     .icon(gpui_kit::assets::IconName::StarOff)
-                    .tooltip("取消收藏")
+                    .tooltip(crate::i18n::t("collections.remove"))
                     .ghost()
                     .small()
                     .absolute()
@@ -623,11 +654,11 @@ impl gpui_kit::Render for CollectionView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("登录后可查看收藏（书架与官方 App 同步）"),
+                                .child(crate::i18n::t("collections.loginRequired")),
                         )
                         .child(
                             Button::new("collections-retry-login")
-                                .label("重试")
+                                .label(crate::i18n::t("common.retry"))
                                 .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                         )
                         .into_any_element()
@@ -643,7 +674,7 @@ impl gpui_kit::Render for CollectionView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("收藏列表加载失败"),
+                                .child(crate::i18n::t("collections.loadFailed")),
                         )
                         .child(
                             div()
@@ -653,7 +684,7 @@ impl gpui_kit::Render for CollectionView {
                         )
                         .child(
                             Button::new("collections-retry")
-                                .label("重试")
+                                .label(crate::i18n::t("common.retry"))
                                 .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                         )
                         .into_any_element()
@@ -675,13 +706,13 @@ impl gpui_kit::Render for CollectionView {
                             div()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("还没有收藏"),
+                                .child(crate::i18n::t("collections.empty")),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
-                                .child("在推荐页点 ☆ 收藏喜欢的剧，就会出现在这里"),
+                                .child(crate::i18n::t("collections.emptyHint")),
                         )
                         .into_any_element()
                 }
@@ -711,23 +742,28 @@ impl gpui_kit::Render for CollectionView {
             .then(|| self.render_toolbar(cx));
         let batch_bar = self.managing.then(|| {
             let total = self.visible_entries(cx).len();
-            BatchBar::new(self.selected.len(), total, self.deleting, "取消收藏")
-                .on_toggle_all(cx.listener(|this, _, _, cx| {
-                    let visible = this.visible_entries(cx);
-                    let total = visible.len();
-                    if total > 0 && this.selected.len() >= total {
-                        this.selected.clear();
-                    } else {
-                        for entry in visible {
-                            this.selected.insert(entry.series_id);
-                        }
+            BatchBar::new(
+                self.selected.len(),
+                total,
+                self.deleting,
+                crate::i18n::t("collections.remove"),
+            )
+            .on_toggle_all(cx.listener(|this, _, _, cx| {
+                let visible = this.visible_entries(cx);
+                let total = visible.len();
+                if total > 0 && this.selected.len() >= total {
+                    this.selected.clear();
+                } else {
+                    for entry in visible {
+                        this.selected.insert(entry.series_id);
                     }
-                    cx.notify();
-                }))
-                .on_delete(cx.listener(|this, _, window, cx| {
-                    this.confirm_batch_remove(window, cx);
-                }))
-                .into_any_element()
+                }
+                cx.notify();
+            }))
+            .on_delete(cx.listener(|this, _, window, cx| {
+                this.confirm_batch_remove(window, cx);
+            }))
+            .into_any_element()
         });
         let theme = cx.theme();
         v_flex()

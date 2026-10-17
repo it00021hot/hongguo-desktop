@@ -66,7 +66,11 @@ impl super::HomeView {
                             .text_sm()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(gpui_kit::rgb(0xffffff))
-                            .child(format!("评论 · {}", self.comments_total)),
+                            .child(format!(
+                                "{} · {}",
+                                crate::i18n::t("player.comments.title"),
+                                self.comments_total
+                            )),
                     )
                     .child(
                         Button::new("comment-close")
@@ -92,7 +96,7 @@ impl super::HomeView {
                             .text_center()
                             .text_sm()
                             .text_color(gpui_kit::rgba(0xffffff99))
-                            .child("加载中…")
+                            .child(crate::i18n::t("common.loading"))
                             .into_any_element()
                     } else if self.comments.is_empty() {
                         div()
@@ -100,7 +104,7 @@ impl super::HomeView {
                             .text_center()
                             .text_sm()
                             .text_color(gpui_kit::rgba(0xffffff99))
-                            .child("还没有评论，抢首条")
+                            .child(crate::i18n::t("player.comments.empty"))
                             .into_any_element()
                     } else {
                         v_flex()
@@ -119,9 +123,18 @@ impl super::HomeView {
                                         this.load_comments_next(cx);
                                     }))
                                     .child(if self.comments_loading {
-                                        "加载中…"
+                                        crate::i18n::t("common.loading")
                                     } else {
-                                        "加载更多"
+                                        crate::i18n::tf(
+                                            "player.comments.loadMore",
+                                            &[(
+                                                "n",
+                                                &self
+                                                    .comments_total
+                                                    .saturating_sub(self.comments.len() as i64)
+                                                    .to_string(),
+                                            )],
+                                        )
                                     })
                             }))
                             .into_any_element()
@@ -151,7 +164,9 @@ impl super::HomeView {
                                         div()
                                             .text_xs()
                                             .text_color(gpui_kit::rgba(0xffffff99))
-                                            .child("正在获取可 @ 的用户…"),
+                                            .child(crate::i18n::t(
+                                                "player.comments.mentionLoading",
+                                            )),
                                     )
                                     .into_any_element(),
                             ]
@@ -163,9 +178,9 @@ impl super::HomeView {
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0xffffff99))
                                     .child(if self.logged_in() {
-                                        "小果AI 暂时不在提及列表里"
+                                        crate::i18n::t("player.comments.mentionUnavailable")
                                     } else {
-                                        "互动需要先登录（设置页 → 账号）"
+                                        crate::i18n::t("player.interact.loginRequired")
                                     })
                                     .into_any_element(),
                             ]
@@ -266,7 +281,10 @@ impl super::HomeView {
                                 div()
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0x93c5fdff))
-                                    .child(format!("回复 @{reply_target}：")),
+                                    .child(format!(
+                                        "{} @{reply_target}：",
+                                        crate::i18n::t("player.comments.replyToPrefix")
+                                    )),
                             )
                             .child(
                                 div()
@@ -278,7 +296,7 @@ impl super::HomeView {
                                         this.reply_to = None;
                                         cx.notify();
                                     }))
-                                    .child("取消"),
+                                    .child(crate::i18n::t("common.cancel")),
                             )
                     }))
                     .child(
@@ -313,9 +331,9 @@ impl super::HomeView {
                             .child(
                                 Button::new("comment-send")
                                     .label(if self.reply_to.is_some() {
-                                        "回复"
+                                        crate::i18n::t("player.comments.reply")
                                     } else {
-                                        "发送"
+                                        crate::i18n::t("player.interact.send")
                                     })
                                     .small()
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -436,20 +454,16 @@ impl super::HomeView {
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .text_color(gpui_kit::rgb(0xffffff))
                                     .child(if is_reply {
-                                        "删除回复"
+                                        crate::i18n::t("player.comments.deleteReplyTitle")
                                     } else {
-                                        "删除评论"
+                                        crate::i18n::t("player.comments.deleteCommentTitle")
                                     }),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0xffffff99))
-                                    .child(if is_reply {
-                                        "确定删除这条回复吗？删除后不可恢复。"
-                                    } else {
-                                        "确定删除这条评论吗？删除后不可恢复。"
-                                    }),
+                                    .child(crate::i18n::t("player.comments.deleteDesc")),
                             )
                             .child(
                                 h_flex()
@@ -459,7 +473,7 @@ impl super::HomeView {
                                     .mt_1()
                                     .child(
                                         Button::new("comment-del-cancel")
-                                            .label("取消")
+                                            .label(crate::i18n::t("common.cancel"))
                                             .ghost()
                                             .small()
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -469,9 +483,9 @@ impl super::HomeView {
                                     .child(
                                         Button::new("comment-del-confirm")
                                             .label(if self.comment_deleting {
-                                                "删除中…"
+                                                crate::i18n::t("batch.deleting")
                                             } else {
-                                                "删除"
+                                                crate::i18n::t("common.delete")
                                             })
                                             .danger()
                                             .small()
@@ -497,7 +511,7 @@ impl super::HomeView {
             .iter()
             .find(|u| u.is_ai_bot)
             .map(|u| u.user_name.clone())
-            .unwrap_or_else(|| "小果".to_string());
+            .unwrap_or_else(|| crate::i18n::t("player.comments.aiName"));
         let (prefix, rest) = match parse_mention_prefix(text) {
             Some((name, rest)) => (Some(name), rest),
             None => (None, text),
@@ -567,7 +581,7 @@ impl super::HomeView {
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0xffffff99))
                                     .child(SharedString::from(if c.user_name.is_empty() {
-                                        "匿名用户".to_string()
+                                        crate::i18n::t("player.comments.anon")
                                     } else {
                                         c.user_name.clone()
                                     })),
@@ -608,7 +622,7 @@ impl super::HomeView {
                                                     cx.notify();
                                                 })
                                             })
-                                            .child("回复"),
+                                            .child(crate::i18n::t("player.comments.reply")),
                                     )
                                     .children(is_mine.then(|| {
                                         div()
@@ -623,7 +637,7 @@ impl super::HomeView {
                                                     this.request_delete(cid.clone(), None, cx);
                                                 })
                                             })
-                                            .child("删除")
+                                            .child(crate::i18n::t("common.delete"))
                                     }))
                                     .children((reply_count > 0).then({
                                         let cid = cid.clone();
@@ -641,9 +655,14 @@ impl super::HomeView {
                                                     );
                                                 }))
                                                 .child(if replies_open {
-                                                    "收起回复".to_string()
+                                                    crate::i18n::t(
+                                                        "player.comments.collapseReplies",
+                                                    )
                                                 } else {
-                                                    format!("展开 {reply_count} 条回复")
+                                                    crate::i18n::tf(
+                                                        "player.comments.expandReplies",
+                                                        &[("n", &reply_count.to_string())],
+                                                    )
                                                 })
                                         }
                                     })),
@@ -688,13 +707,13 @@ impl super::HomeView {
                         div()
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xffffff73))
-                            .child("思考中…")
+                            .child(crate::i18n::t("player.comments.aiThinking"))
                     }))
                     .children((loading && items.is_empty()).then(|| {
                         div()
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xffffff73))
-                            .child("加载中…")
+                            .child(crate::i18n::t("common.loading"))
                     }))
                     .children(items.iter().map(|r| {
                         let digged = self
@@ -722,25 +741,27 @@ impl super::HomeView {
                                             .text_xs()
                                             .text_color(gpui_kit::rgba(0xffffff99))
                                             .child(SharedString::from(if r.user_name.is_empty() {
-                                                "匿名用户".to_string()
+                                                crate::i18n::t("player.comments.anon")
                                             } else {
                                                 r.user_name.clone()
                                             })),
                                     )
-                                    .child(
+                                    .child({
+                                        let original =
+                                            crate::i18n::t("player.comments.originalComment");
+                                        let name = if r.reply_to_name.is_empty() {
+                                            original.as_str()
+                                        } else {
+                                            r.reply_to_name.as_str()
+                                        };
                                         div()
                                             .text_xs()
                                             .text_color(gpui_kit::rgba(0xffffffd9))
-                                            .child(SharedString::from(format!(
-                                                "回复 @{}：{}",
-                                                if r.reply_to_name.is_empty() {
-                                                    "原评论".to_string()
-                                                } else {
-                                                    r.reply_to_name.clone()
-                                                },
-                                                r.text
-                                            ))),
-                                    )
+                                            .child(SharedString::from(crate::i18n::tf(
+                                                "player.comments.replyToSummary",
+                                                &[("name", name), ("text", r.text.as_str())],
+                                            )))
+                                    })
                                     .child(
                                         h_flex()
                                             .items_center()
@@ -775,7 +796,7 @@ impl super::HomeView {
                                                             cx.notify();
                                                         })
                                                     })
-                                                    .child("回复"),
+                                                    .child(crate::i18n::t("player.comments.reply")),
                                             )
                                             .children(reply_mine.then(|| {
                                                 div()
@@ -797,7 +818,7 @@ impl super::HomeView {
                                                             );
                                                         })
                                                     })
-                                                    .child("删除")
+                                                    .child(crate::i18n::t("common.delete"))
                                             }))
                                             .child(
                                                 // ♡ 回复点赞（乐观 ±1）

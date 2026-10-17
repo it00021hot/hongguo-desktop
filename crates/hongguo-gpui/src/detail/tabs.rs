@@ -20,9 +20,21 @@ impl DetailView {
             .map(|r| r.works.len() as i64 + r.guess.len() as i64)
             .unwrap_or(0);
         let tabs = [
-            (DetailTab::Episodes, "选集", episode_total),
-            (DetailTab::Reviews, "剧评", self.reviews_total),
-            (DetailTab::Related, "相关推荐", related_total),
+            (
+                DetailTab::Episodes,
+                crate::i18n::t("detail.tabEpisodes"),
+                episode_total,
+            ),
+            (
+                DetailTab::Reviews,
+                crate::i18n::t("detail.tabComments"),
+                self.reviews_total,
+            ),
+            (
+                DetailTab::Related,
+                crate::i18n::t("detail.tabRecommend"),
+                related_total,
+            ),
         ];
         Some(
             v_flex()
@@ -91,7 +103,7 @@ impl DetailView {
                 .py_10()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("暂无分集信息")
+                .child(crate::i18n::t("series.noEpisodes"))
                 .into_any_element();
         }
         let (resume_ep, _) = self.resume_entry();
@@ -142,13 +154,12 @@ impl DetailView {
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(format!("{}", ep.vid_index)),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .child(SharedString::from(format!("第{}集", ep.vid_index))),
-                    )
+                    .child(div().flex_1().min_w_0().text_sm().child(SharedString::from(
+                        crate::i18n::tf(
+                            "player.episodeNo",
+                            &[("index", &ep.vid_index.to_string())],
+                        ),
+                    )))
                     .children((ep.duration > 0).then(|| {
                         div()
                             .flex_shrink_0()

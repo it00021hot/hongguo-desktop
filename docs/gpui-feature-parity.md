@@ -17,7 +17,7 @@
 | 3 | 详情页「追更」按钮（仅连载中显示） | `series-detail-page.tsx:390` | ✅ `detail/header.rs`（series_status==0 才显示；乐观翻转+回滚） |
 | 4 | 播放页互动栏「追更」项（仅连载中显示） | `interaction-rail.tsx:231-239` | ✅ `home/interact.rs`（meta series_status 判定；未登录 toast+去设置页） |
 | 5 | 侧栏追更未读角标 | `app-sidebar.tsx:60,76` | ✅ 折叠/展开两种形态；FollowNotices 事件 + 已读变化同步 |
-| 6 | 更新提醒 OS 弹窗 | `app-shell.tsx:53-64`（Web Notification） | ⏳ 选型待定（可能要新依赖，先报告再动）；当前：事件已进壳，追更页列表/角标实时刷新 |
+| 6 | 更新提醒 OS 弹窗 | `app-shell.tsx:53-64`（Web Notification） | ✅ 2026-10-17（GPUI 平台层原生 `SystemNotification`，无需新依赖：Windows Toast / macOS 通知中心；`set_app_identity` + 追更事件逐条弹出，点击通知激活窗口；弹窗开关沿用 `aibot_popup_on`） |
 
 ## W2 创作者主页（Tauri 有整页，GPUI 缺）—— ✅ 2026-10-17 全部落地
 
@@ -44,7 +44,7 @@
 | 2 | UI 偏好持久化：Tauri 持久化 `sidebarCollapsed`（默认折叠）/`aibotPopupOn`/`browseFiltersCollapsed` | `src/stores/ui.ts` | ✅ 2026-10-17（`ui_prefs.rs` 三项齐） |
 | 3 | 更新通道：GPUI 设置页自述「暂未接入更新通道」 | `settings.rs:1196` | 待定（GPUI 未入发布管线，先确认是否要求对齐） |
 | 4 | 主题切换：Tauri 顶栏三档（`theme-switch.tsx`：跟随系统/亮色/暗色，persist `hongguo-theme`，默认 auto）；GPUI 原为固定深色 | `src/stores/theme.ts`、`src/components/layout/theme-switch.tsx` | ✅ 2026-10-17（`ui_prefs.theme` + 设置页「外观」卡；auto 观察窗口外观实时跟随；显式档位钉住窗口外观）。**入口位置是有意偏差**：Tauri 在顶栏，GPUI 顶栏是平台拖拽区（自绘可点控件会被原生命中测试判成拖拽吞掉，见 `shell.rs` render_title_bar 注释） |
-| 5 | 界面语言切换：Tauri 顶栏中/英切换（`ThemeSwitch` 同排的 Languages 菜单，`src/locales/` 两份文案） | `theme-switch.tsx:44-57` | ⏳ 待裁决：GPUI 全量文案是硬编码中文，做 i18n 是全仓文案扫一遍的大工程；先确认是否要求对齐 |
+| 5 | 界面语言切换：Tauri 顶栏中/英切换（`ThemeSwitch` 同排的 Languages 菜单，`src/locales/` 两份文案） | `theme-switch.tsx:44-57` | ✅ 2026-10-17（GPUI `i18n.rs` 编译期嵌入 Tauri 两份 locale JSON，`ui_prefs.locale` 持久化；顶栏 Languages 菜单、全量可见文案、Select/输入框 placeholder 切换、整窗重绘；缺词条测试 + Tauri 同源文案结构测试） |
 | 6 | 老板键：Tauri `boss_key_cmd.rs` 自述「GPUI 壳无此层（全局快捷键插件是 Tauri 侧能力）」——设置页无卡片、无注册 | `crates/hongguo-tauri/src/commands/boss_key_cmd.rs` 头注释；`boss-key-card.tsx` | ✅ 2026-10-17（`src/boss_key/`：accelerator 解析/捕获/冲突纯函数 + win32 自建消息窗口接 WM_HOTKEY；设置页「全局快捷键」卡；先注册后落库 + 冲突拦截）。真机验过保存/启动注册/合成按键藏显/冲突拦截四条路径。macOS 侧仅缺 FFI（设置时会明确报错，不做假生效） |
 | 7 | 竖屏播放：Tauri `enter/exit/fit_portrait_screen` + `set_portrait_full` 与 `use-portrait-window` 的竖条形态；GPUI 无 | `window_cmd.rs:230-370`、`use-portrait-window.ts`、`MiniScreenControls variant="portrait"` | ✅ 2026-10-17（`src/portrait/`：几何纯函数 + Win32 落窗；控制栏竖屏钮；竖屏紧凑条；侧栏藏/顶栏留；F→铺满、Esc 铺满→竖条；离开播放页先退竖屏）。真机验过 1280×840→388×840 与铺满 642×1392。macOS 侧只缩不挪（Apple FFI 后补，与小屏同缺口） |
 | 8 | 退出确认：Tauri `CloseRequested` → 前端确认框（自绘 ×/Alt+F4/任务栏关闭都问一句）；GPUI 关窗直接退 | `crates/hongguo-tauri/src/lib.rs:107-113`、`app-shell.tsx:189-194` | ✅ 2026-10-17（`Shell::install_close_guard`：弹「确定要退出吗？/ 退出会中断正在进行的下载任务…」，取消复位闸门、弹过还来放行；真机投 WM_CLOSE 验过窗口未被关掉、文案与两键同 Tauri） |
@@ -131,7 +131,7 @@
 小屏（480×270 纯播放器 + 紧凑条）与 Tauri 同构。
 
 已知非差异：倍速/主题/筛选折叠等**持久化状态**两边各自保存，截图可能不同
-（如 Tauri 存了 2x、GPUI 默认 1x）；语言入口仍缺（W1#5 待裁决）。
+（如 Tauri 存了 2x、GPUI 默认 1x）；语言入口已完成（W1#5）。
 
 ### 顺带修（本轮验证中发现）
 
@@ -174,7 +174,7 @@ ShowWindow」的既有写法未动（已实测可用，属另一批次）。
 拖窗（窗口位移 122,79）、双击最大化、关闭钮弹退出确认框。
 
 有意保留的差异：顶栏左侧不画应用名（Tauri 顶栏同样为空）；设置页「外观卡」
-作为主题第二入口保留（Tauri 只在顶栏）；语言切换（W1#5）仍是待裁决项。
+作为主题第二入口保留（Tauri 只在顶栏）；语言切换（W1#5）已在顶栏落地。
 
 附注（主题默认变化）：本次后 GPUI 默认「跟随系统」（= Tauri 默认 auto 口径）；
 本机 Windows 当前为浅色应用外观，所以 GPUI 壳开箱即浅色，想要深色在设置页
@@ -294,7 +294,75 @@ ShowWindow」的既有写法未动（已实测可用，属另一批次）。
   去播放再回列表保留位置）——GPUI 用 `HONGGUO_SHOT_PANEL=scroll-return`
   （滚一把 → 往返首页 → 再抓帧）核对：前后两张截图逐像素同位置，
   gpui 的元素状态按 ElementId 跨挂载保留，**无需对齐动作**。
-- 顶栏分类 tab：Tauri = 固定顶栏 portal 常显；GPUI = 舞台顶部悬浮、随悬浮层显隐
-  （`home/stage.rs` 注释自述为适配 TitleBar 拖拽区的有意形态）。**待用户裁决**是否改为
-  常显顶栏（需要自绘标题栏拖拽区）。
+- ✅ 2026-10-17 顶栏分类 tab：Tauri = 固定顶栏 portal 常显；GPUI 已改为
+  自绘顶栏常显槽（`shell.rs::render_toolbar`），不再随播放悬浮层显隐。
+- ✅ 2026-10-17 互动登录墙补漏：详情页收藏/点赞不再静默——toast 后切设置页
+  账号卡；评论发送/点赞、回复发送/点赞、弹幕发送、剧评/回复点赞不再只写日志；
+  剧评详情页的收藏/点赞补成功与失败回执。相关推荐季卡与推荐卡预约未登录
+  也给可见提示，预约成功/失败补 toast。
+- ✅ 2026-10-17 前台失败态补漏：下载任务删除失败、合并预检失败、创作者
+  翻页失败都补 toast；相关推荐接口失败从永久「加载中…」落到空态并提示。
+  截图探针新增 `HONGGUO_SHOT_PANEL=detail-login-wall`（配
+  `HONGGUO_DETAIL=<sid>`，临时数据根未登录）：真机拍到详情页点击收藏 →
+  设置页 + 登录提示条。
+- ✅ 2026-10-17 中英切换全量落地：GPUI 直接嵌入 `src/locales/{zh-CN,en-US}.json`
+  （与 Tauri 同源），顶栏新增 Languages 菜单，`ui_prefs.locale` 跨启动持久化；
+  页面/播放器/详情/评论/设置/批量管理/错误提示全部走词条；Select 与输入框
+  placeholder 在切换时刷新，输入草稿保留。`HONGGUO_SHOT_PANEL=locale-en`
+  走真实切换路径，真机截图确认设置页全英；`tests/i18n.rs` 校验双语 key
+  完全一致、所有 GPUI 字面量 key 都存在。
+- ✅ 2026-10-17 追更系统通知：`FollowNotices` 事件按 `aibot_popup_on` 逐条发
+  `App::show_system_notification`；启动时设置 AppUserModelID（Windows Toast
+  非打包应用必需），点击通知激活窗口。探针 `HONGGUO_SHOT_PANEL=notify` 真机
+  截图确认 Windows 右下角弹出「红果播放器」通知。
+- ✅ 2026-10-17 修正英文剧集元信息换行回归：`home/overlay.rs` 把 Tauri 的
+  内联 `<span>` 误译成两个块级 `div`，导致 `Ep. 1` 与 `· 53 episodes` 分成
+  两行；改为显式 flex 行。中英真机截图确认都是单行
+  `Ep. 1 · N episodes` / `第N集 · 全M集`。
+- ✅ 2026-10-17 主题令牌按 Tauri CSS 全量收口（`tokens.rs::apply`）：GPUI Kit
+  默认把 `group_box` / `sidebar` 画成 `neutral-950`，与 Tauri 的
+  `bg-card` / `bg-sidebar`（暗色 `neutral-900`）不是同一套表面层级；现统一
+  背景/卡片/侧栏/边框/主次色/业务状态色与 8/14px 控件/卡片圆角，并让主窗口、
+  设置页、跟随系统和预览矩阵共用同一入口。1280×840 暗/亮两套截图逐像素取色：
+  页面底 `#0a0a0a`、卡片与侧栏 `#171717`（暗色），亮色对应
+  `#ffffff` / `#fafafa`。
+- ✅ 2026-10-17 顶栏与筛选用同一胶囊 tab（`pill_tab.rs`）：`px-3 py-1
+  text-xs rounded-full`，选中 primary 实底，未选中 muted + hover accent；
+  修掉此前普通小按钮的 8px 圆角/错误文字色。首页、排行榜、新剧和频道筛选
+  统一走该组件，tab 间距按 Tauri `gap-0.5`。
+- ✅ 2026-10-17 排行榜行卡补齐：左侧子榜选中态由 `secondary` 改为
+  `primary/primary-foreground`；行卡改 Tauri `card` 表面、`radius-xl`、
+  hover `foreground/30` + shadow，简介恢复两行 clamp，4 名以后名次用
+  muted/50；播放/详情动作列与 Tauri 同序。
+- ✅ 2026-10-17 新剧/日历卡补齐：推荐网格按 Tauri `SeriesCardGrid` 断点
+  2/3/4/5/8 列铺满，封面 3:4；卡片表面、14px 圆角、hover 与评分星尺寸对齐；
+  日历行整卡进详情（动作按钮独立阻止冒泡），“已上线/即将上线”改 Tauri
+  Badge 的半透明状态色，发布时间回到行尾动作列，简介两行。
+- ✅ 2026-10-17 播放页点击语义纠正：点画面恢复 Tauri `onStageClick` 的
+  播放/暂停，不再把第一次点击解释成“进入连播”；“观看完整短剧”横条仍为
+  唯一手动入口，进入时显式 `notify`，避免悬浮层原本可见时状态已改但不重绘。
+  `HONGGUO_SHOT_PANEL=binge-state` 两帧取证：横条退场、左上集数胶囊立即出现。
+- ✅ 2026-10-17 GPUI 在线起播补齐同剧后续集预取：此前 `play_task` 只调用
+  `online::prepare`，首帧时又只预取信息流下一部剧，当前剧自动连播到下一集
+  仍会冷启动。现与 Tauri 共用
+  `play_service::schedule_following_episodes`（在线流 + 无 HEVC 兼容预转，
+  数量受 `prefetch_episodes` 约束）。实流日志验证：`[Home] 起播 …` 后同一秒
+  出现当前剧下一集 `[Online] 预取 <vid>`，另有一路下一部剧预取。
+- ✅ 2026-10-17 二次逐像素复核：排行榜/日历行尾动作钮由 24px `small` 改回
+  Tauri `Button size=sm` 的 32px（保留 `gap-1` 与图标按钮的 `px-2.5`）；
+  “详情”改 12px 文本钮；行简介补 `leading-relaxed` + muted/80；封面与
+  日期钮补 `rounded-lg`（10px）；排行榜滚动区留出 WebView2 滚动条 10px
+  gutter，行卡右缘从 1279 收到 1269，与 Tauri 截图一致；新剧页顶部从
+  `p-4` 改 `px-4 pt-3`，首行网格上移 4px。
+- ✅ 2026-10-17 首页 tab 切换加载反馈：Tauri 的 `sourceBooting` 来自
+  `feed.isLoading`，会自动亮顶部细进度条；GPUI 原条件只含
+  `switching/frame/buffering`，切到空源时旧画面继续播、网络请求在跑却无反馈。
+  现补 `HomeView::feed_loading()` 并并入同一条 loadbar 条件，选中态与加载态
+  在同帧可见。
+- ✅ 2026-10-17 连播横条真实点击修复：用户实测点击“观看完整短剧”仍无反应。
+  根因是控制条 `pt-10`（40px）透明悬停热区与横条 `bottom-14`（56px）
+  几何重叠，且控制条在舞台中后画、root 的 down/up stop 吞掉了横条点击。
+  新增 `tests/binge_click_repro.rs` 按真实层序先复现失败，再把横条改为控制条
+  之后渲染（成为更高命中层）；复现测试、`tab_click_repro`、`toolbar_click`
+  全部通过。此前只验证 `enter_binge` 状态迁移，没覆盖真实命中层，属于验收漏项。
 - 其余按双壳并存逐页对拍补充；发现即登记。

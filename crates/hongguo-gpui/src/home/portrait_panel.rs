@@ -286,9 +286,9 @@ impl super::HomeView {
                             .ghost()
                             .xsmall()
                             .tooltip(if self.portrait_full {
-                                "退出铺满"
+                                crate::i18n::t("player.exitPortraitFill")
                             } else {
-                                "铺满"
+                                crate::i18n::t("player.portraitFill")
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_portrait_full(window, cx);
@@ -299,7 +299,7 @@ impl super::HomeView {
                             .icon(gpui_kit::assets::IconName::RectangleHorizontal)
                             .ghost()
                             .xsmall()
-                            .tooltip("退出竖屏")
+                            .tooltip(crate::i18n::t("player.exitPortrait"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.exit_portrait(window, cx);
                             })),

@@ -7,8 +7,23 @@
 //! 关键不变量：**捕获产出的串必须能反解成注册参数**——否则就是「设置里存
 //! 下了、注册时才发现不认识」。
 
+#[path = "../src/i18n.rs"]
+mod i18n;
+
 #[path = "../src/boss_key/accel.rs"]
 mod accel;
+
+#[test]
+fn i18n_is_available_to_accel_tests() {
+    i18n::set_locale(i18n::Locale::ZhCn);
+    assert_eq!(i18n::Locale::ALL.len(), 2);
+    assert_eq!(i18n::Locale::ZhCn.tag(), "zh-CN");
+    assert_eq!(i18n::Locale::EnUs.label_key(), "search.langEn");
+    assert_eq!(
+        i18n::app_error_text(&hongguo_common::AppError::Cancelled),
+        "操作已取消"
+    );
+}
 
 #[test]
 fn core_key_is_last_segment_lowercased() {

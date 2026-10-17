@@ -102,13 +102,20 @@ impl super::HomeView {
         ) {
             Ok(added) => {
                 log::info!("[Home] 下载入队 {added} 集（勾选 {} 集）", vids.len());
-                self.show_toast(format!("已加入队列 {} 个任务", vids.len()), cx);
+                self.show_toast(
+                    crate::i18n::tf("download.submitting", &[("count", &vids.len().to_string())]),
+                    cx,
+                );
                 self.close_downloads(cx);
                 cx.emit(HomeEvent::OpenTasks);
             }
             Err(e) => {
                 log::warn!("[Home] 下载入队失败: {e}");
-                self.show_toast(format!("下载入队失败：{e}"), cx);
+                let message = crate::i18n::app_error_text(&e);
+                self.show_toast(
+                    crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                    cx,
+                );
             }
         }
     }
@@ -148,42 +155,53 @@ impl super::HomeView {
             .collect();
 
         let outline =
-            |id: &'static str, label: &'static str| Button::new(id).label(label).small().outline();
-        let ghost =
-            |id: &'static str, label: &'static str| Button::new(id).label(label).small().ghost();
+            |id: &'static str, label: String| Button::new(id).label(label).small().outline();
+        let ghost = |id: &'static str, label: String| Button::new(id).label(label).small().ghost();
         let quick = h_flex()
             .id("download-quick")
             .flex_wrap()
             .items_center()
             .gap_2()
-            .child(outline("download-select-all", "全选").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_download_selection(selected_all.clone(), cx);
-                },
-            )))
-            .child(outline("download-invert", "反选").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_download_selection(inverted.clone(), cx);
-                },
-            )))
-            .child(outline("download-clear", "清空").on_click(
-                cx.listener(|this, _, _, cx| this.set_download_selection(Vec::new(), cx)),
-            ))
-            .child(ghost("download-first-10", "前 10 集").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_download_selection(first_n(total, 10), cx);
-                },
-            )))
-            .child(ghost("download-first-30", "前 30 集").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_download_selection(first_n(total, 30), cx);
-                },
-            )))
-            .child(ghost("download-last-30", "后 30 集").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.set_download_selection(last_n(total, 30), cx);
-                },
-            )));
+            .child(
+                outline("download-select-all", crate::i18n::t("download.selectAll")).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_download_selection(selected_all.clone(), cx);
+                    }),
+                ),
+            )
+            .child(
+                outline("download-invert", crate::i18n::t("download.invert")).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_download_selection(inverted.clone(), cx);
+                    }),
+                ),
+            )
+            .child(
+                outline("download-clear", crate::i18n::t("download.clear")).on_click(
+                    cx.listener(|this, _, _, cx| this.set_download_selection(Vec::new(), cx)),
+                ),
+            )
+            .child(
+                ghost("download-first-10", crate::i18n::t("download.first10")).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_download_selection(first_n(total, 10), cx);
+                    }),
+                ),
+            )
+            .child(
+                ghost("download-first-30", crate::i18n::t("download.first30")).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_download_selection(first_n(total, 30), cx);
+                    }),
+                ),
+            )
+            .child(
+                ghost("download-last-30", crate::i18n::t("download.last30")).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.set_download_selection(last_n(total, 30), cx);
+                    },
+                )),
+            );
 
         // 区间语法行：输入即解析；勾选非空时给「格式化选集」回填键
         let range_row = h_flex()
@@ -201,7 +219,7 @@ impl super::HomeView {
                     .icon(gpui_kit::assets::IconName::Check)
                     .ghost()
                     .small()
-                    .tooltip("格式化选集")
+                    .tooltip(crate::i18n::t("download.formatSelection"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let text = format_range(&this.download_selected);
                         let input = this.download_range.clone();
@@ -295,7 +313,7 @@ impl super::HomeView {
                                 .text_base()
                                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                 .text_color(theme.foreground)
-                                .child("下载到本地"),
+                                .child(crate::i18n::t("player.downloadToLocal")),
                         )
                         .child(
                             Button::new("downloads-close")
@@ -314,12 +332,14 @@ impl super::HomeView {
                                 .text_sm()
                                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                                 .text_color(theme.foreground)
-                                .child("选择集数"),
+                                .child(crate::i18n::t("download.selectEpisodes")),
                         )
-                        .child(
-                            gpui_kit::component::tag::Tag::secondary()
-                                .child(SharedString::from(format!("已选 {selected_len} 集"))),
-                        ),
+                        .child(gpui_kit::component::tag::Tag::secondary().child(
+                            SharedString::from(crate::i18n::tf(
+                                "download.selected",
+                                &[("count", &selected_len.to_string())],
+                            )),
+                        )),
                 )
                 .child(quick)
                 .child(
@@ -329,14 +349,14 @@ impl super::HomeView {
                             div()
                                 .text_sm()
                                 .text_color(theme.foreground)
-                                .child("区间语法"),
+                                .child(crate::i18n::t("download.rangeLabel")),
                         )
                         .child(range_row)
                         .children(self.download_range_error.then(|| {
                             div()
                                 .text_xs()
                                 .text_color(theme.danger)
-                                .child("区间格式无法解析")
+                                .child(crate::i18n::t("download.rangeInvalid"))
                         })),
                 )
                 .child(grid)
@@ -347,14 +367,14 @@ impl super::HomeView {
                         .gap_2()
                         .child(
                             Button::new("downloads-cancel")
-                                .label("取消")
+                                .label(crate::i18n::t("common.cancel"))
                                 .outline()
                                 .on_click(cx.listener(|this, _, _, cx| this.close_downloads(cx))),
                         )
                         .child(
                             Button::new("downloads-submit")
                                 .icon(gpui_kit::assets::IconName::Download)
-                                .label("开始下载")
+                                .label(crate::i18n::t("download.submit"))
                                 .primary()
                                 .disabled(selected_len == 0)
                                 .on_click(cx.listener(|this, _, _, cx| this.submit_downloads(cx))),

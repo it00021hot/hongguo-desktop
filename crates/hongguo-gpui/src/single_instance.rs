@@ -14,6 +14,12 @@ static EVENT: std::sync::Mutex<Option<isize>> = std::sync::Mutex::new(None);
 /// 启动早期调用：本进程是首个实例返回 true；已有实例在跑则请求它前置窗口、
 /// 返回 false（调用方安静退出，别去碰数据库——上一个实例可能正持库锁）。
 pub(crate) fn claim() -> bool {
+    // 截图取证专用：允许一个临时数据根的 screenshot 实例与用户正在看的
+    // 实例并存。仅测试构建生效；正式壳仍严格单实例。
+    #[cfg(feature = "screenshot")]
+    if std::env::var_os("HONGGUO_ISOLATED_PROBE").is_some() {
+        return true;
+    }
     #[cfg(target_os = "windows")]
     {
         match crate::win32::claim_single_instance() {

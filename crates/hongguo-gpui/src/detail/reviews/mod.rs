@@ -103,7 +103,10 @@ impl DetailView {
         }
         if !self.logged_in() {
             // 登录墙（Tauri 由后端拒绝 + 全局 toast；这里就地给回执）
-            window.push_notification(Notification::error("登录后才能发表剧评"), cx);
+            window.push_notification(
+                Notification::error(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
             return;
         }
         let score = i64::from(self.review_stars) * 2;
@@ -122,7 +125,10 @@ impl DetailView {
                 match result {
                     Ok(_) => {
                         window.push_notification(
-                            Notification::success(format!("剧评已发布（{score} 分）")),
+                            Notification::success(crate::i18n::tf(
+                                "detail.reviewSent",
+                                &[("score", &score.to_string())],
+                            )),
                             cx,
                         );
                         // 评分保留、正文清空（Tauri setText('') 同款）
@@ -132,7 +138,14 @@ impl DetailView {
                     }
                     Err(e) => {
                         log::warn!("[Detail] 剧评发布失败: {e}");
-                        window.push_notification(Notification::error(format!("发布失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -152,9 +165,17 @@ impl DetailView {
 
     /// 剧评点赞（Tauri useReviewDigg 同款：本地乐观覆盖 + 计数 ±1，失败
     /// 回滚；端点是剧评形态 digg_review（object_type=2），与评论点赞不同）。
-    pub(super) fn toggle_review_digg(&mut self, review_id: String, cx: &mut Context<Self>) {
+    pub(super) fn toggle_review_digg(
+        &mut self,
+        review_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.logged_in() {
-            log::info!("[Detail] 剧评点赞需要登录，已忽略");
+            window.push_notification(
+                Notification::info(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
             return;
         }
         let Some(item) = self
@@ -205,10 +226,14 @@ impl DetailView {
         &mut self,
         parent_review_id: String,
         reply_id: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.logged_in() {
-            log::info!("[Detail] 回复点赞需要登录，已忽略");
+            window.push_notification(
+                Notification::info(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
             return;
         }
         let Some(reply) = self
@@ -363,7 +388,10 @@ impl DetailView {
             return;
         }
         if !self.logged_in() {
-            window.push_notification(Notification::error("登录后才能回复"), cx);
+            window.push_notification(
+                Notification::error(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
             return;
         }
         self.review_reply_sending = true;
@@ -413,7 +441,14 @@ impl DetailView {
                     }
                     Err(e) => {
                         log::warn!("[Detail] 剧评回复失败: {e}");
-                        window.push_notification(Notification::error(format!("回复失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -440,13 +475,13 @@ impl DetailView {
             let parent = parent.clone();
             dialog
                 .title(if is_reply {
-                    "删除这条回复？"
+                    crate::i18n::t("detail.deleteReplyTitle")
                 } else {
-                    "删除这条剧评？"
+                    crate::i18n::t("detail.deleteReviewTitle")
                 })
-                .description("删除后不可恢复。")
-                .ok_text("删除")
-                .cancel_text("取消")
+                .description(crate::i18n::t("detail.deleteDesc"))
+                .ok_text(crate::i18n::t("common.delete"))
+                .cancel_text(crate::i18n::t("common.cancel"))
                 .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, _window, cx| {

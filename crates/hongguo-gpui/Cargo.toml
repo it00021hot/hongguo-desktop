@@ -32,6 +32,11 @@ required-features = ["screenshot"]
 name = "tab_click_repro"
 required-features = ["screenshot"]
 
+# 连播横条命中回归（控制条 40px 透明悬停热区与横条重叠，后画层级必须可点）。
+[[test]]
+name = "binge_click_repro"
+required-features = ["screenshot"]
+
 # 自绘顶栏命中回归（同上：拖拽 handler 与绝对居中覆盖层叠加下按钮可点）。
 [[test]]
 name = "toolbar_click"

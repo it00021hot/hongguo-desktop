@@ -30,9 +30,15 @@ impl super::HomeView {
         let now = self.now.as_ref();
         let has_next = now.is_some_and(|n| (n.vid_index as usize) < n.episode_count);
         let episode_line = now.map(|n| {
-            let mut s = format!("第{}集", n.vid_index);
+            let mut s = crate::i18n::tf("player.episodeNo", &[("index", &n.vid_index.to_string())]);
             if n.episode_count > 0 {
-                s.push_str(&format!(" · 全{}集", n.episode_count));
+                s.push_str(&format!(
+                    " · {}",
+                    crate::i18n::tf(
+                        "player.totalEpisodes",
+                        &[("count", &n.episode_count.to_string())],
+                    )
+                ));
             }
             if let Some(intro) = self.intros.get(&n.series_id) {
                 s.push(' ');

@@ -113,7 +113,14 @@ impl super::HomeView {
                         // 「这集本来没弹幕」和「坏了」（Tauri toast 同文案）
                         log::warn!("[Home] 弹幕拉取失败: {e}");
                         view.danmaku_items = Arc::new(Vec::new());
-                        view.show_toast("弹幕加载失败（不影响播放）", cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf(
+                                "player.danmakuFailed",
+                                &[("reason", message.as_str())],
+                            ),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -288,8 +295,7 @@ impl super::HomeView {
             .as_ref()
             .is_some_and(|a| !a.user_id.is_empty());
         if !logged_in {
-            log::info!("[Home] 弹幕发送需要登录（settings 里没有账号），已忽略");
-            self.show_toast("互动需要先登录", cx);
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
             return;
         }
         let Some(player) = &self.player else {
@@ -325,7 +331,7 @@ impl super::HomeView {
                             let at = items.partition_point(|d| d.offset_ms <= offset_ms);
                             items.insert(at, item);
                         }
-                        view.show_toast("弹幕已发送", cx);
+                        view.show_toast(crate::i18n::t("player.interact.danmakuSent"), cx);
                         // 输入框清空走渲染期（set_value 需要 window），这里只立标志
                         view.danmaku_clear_input = true;
                     }
@@ -333,7 +339,11 @@ impl super::HomeView {
                         // 失败必须可见：风控/频控拒绝时静默的话，用户以为
                         // 发成功了（Tauri 全局 MutationCache onError 同位）
                         log::warn!("[Home] 弹幕发送失败: {e}");
-                        view.show_toast(format!("弹幕发送失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
