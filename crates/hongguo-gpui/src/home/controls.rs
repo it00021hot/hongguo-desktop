@@ -59,6 +59,15 @@ impl super::HomeView {
         cx.notify();
     }
 
+    /// 取证辅助（HONGGUO_SHOT_PANEL=dm-settings）：打开弹幕设置面板并拉长
+    /// 控制条可见窗（无人值守抓四行滑杆 UI）。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_dm_settings(&mut self, cx: &mut Context<Self>) {
+        self.dm_panel_open = true;
+        self.controls_until = Some(Instant::now() + Duration::from_secs(CONTROLS_HOLD_SECS));
+        cx.notify();
+    }
+
     pub(super) fn on_player_event(&mut self, event: PlayerEvent, cx: &mut Context<Self>) {
         match event {
             PlayerEvent::FirstFrame { .. } => {
@@ -892,7 +901,8 @@ impl super::HomeView {
                                         self.dm_opacity,
                                     ))
                                     .child(self.dm_setting_row(
-                                        "字号",
+                                        // Tauri 面板同文案（「字体大小」）
+                                        "字体大小",
                                         &self.dm_font_slider,
                                         self.dm_font_scale,
                                     ))

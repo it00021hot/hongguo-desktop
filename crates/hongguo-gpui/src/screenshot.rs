@@ -64,6 +64,9 @@ pub(crate) fn install(
                     "login" => {
                         feed.update(cx, |shell, cx| shell.debug_open_login(cx));
                     }
+                    "dm-settings" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_dm_settings(cx));
+                    }
                     "suggest" => {
                         let _ = window.update(cx, |_, window, cx| {
                             feed.update(cx, |shell, cx| {

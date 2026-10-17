@@ -800,6 +800,13 @@ impl Shell {
             .update(cx, |home, cx| home.debug_open_downloads(window, cx));
     }
 
+    /// 取证辅助（screenshot feature）：打开弹幕设置面板。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_dm_settings(&self, cx: &mut App) {
+        self.feed
+            .update(cx, |home, cx| home.debug_open_dm_settings(cx));
+    }
+
     /// 取证辅助（screenshot feature）：打开选集浮层系列剧 tab。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_picker(&self, cx: &mut App) {
