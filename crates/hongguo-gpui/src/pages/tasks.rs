@@ -743,8 +743,7 @@ impl TasksView {
         } else {
             crate::preview::fixtures::download_tasks()
         };
-        let count =
-            |status: TaskStatus| tasks.iter().filter(|t| t.status == status).count() as usize;
+        let count = |status: TaskStatus| tasks.iter().filter(|t| t.status == status).count();
         self.queue_status = Some(QueueStatus {
             pending: count(TaskStatus::Pending),
             running: count(TaskStatus::Running),

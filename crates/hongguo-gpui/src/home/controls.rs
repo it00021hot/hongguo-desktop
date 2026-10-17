@@ -1028,26 +1028,8 @@ impl super::HomeView {
                                 }),
                             ),
                     )
-                    .child(
-                        // 置顶（Tauri 控制栏钉住钮同位；顶栏是组件库 Drag 区，
-                        // 放不了自绘可点控件，入口落在这里，与小屏共用状态）
-                        Button::new("stage-pin")
-                            .icon(if self.pinned {
-                                gpui_kit::assets::IconName::Pin
-                            } else {
-                                gpui_kit::assets::IconName::PinOff
-                            })
-                            .ghost()
-                            .small()
-                            .tooltip(if self.pinned {
-                                "取消置顶"
-                            } else {
-                                "置顶窗口"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_pinned(window, cx);
-                            })),
-                    )
+                    // 置顶入口已上移壳顶栏（Tauri 同址：顶栏钉住钮 + 小屏
+                    // 紧凑条；正常播放的控制栏没有这一项）
                     .child(
                         // 竖屏播放（Tauri 控制栏竖屏钮同位）：窗口收窄成按视频
                         // 宽高比算宽的竖条，竖屏视频刚好包住画面不留两侧黑边。

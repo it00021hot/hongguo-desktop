@@ -33,7 +33,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Sizable;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::button::ButtonVariants;
+use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderState};
 use gpui_kit::component::v_flex;
@@ -742,6 +745,44 @@ impl HomeView {
             .filter(|t| !t.is_empty())
             .cloned()
             .unwrap_or_else(|| s.fallback_label().to_string())
+    }
+
+    /// 顶栏中部 tab 槽（Tauri `TopBarTabs` portal 同位）：壳在顶栏渲染它，
+    /// 点 tab 换源。列表由服务端下发（回落三件套见 `feed::Source`）。
+    /// 舞台里的悬浮 tab 行已随顶栏化退场（Tauri 只有顶栏一处）。
+    pub(crate) fn render_top_tabs(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::AnyElement> {
+        if self.tabs.is_empty() {
+            return None;
+        }
+        Some(
+            h_flex()
+                .id("top-feed-tabs")
+                .gap_1()
+                .children(self.tabs.iter().cloned().map(|s| {
+                    let active = s == self.active;
+                    let button = Button::new(format!("stage-tab-{}", s.as_str()))
+                        .label(self.tab_label(&s))
+                        .small();
+                    let button = if active {
+                        button.secondary()
+                    } else {
+                        button.ghost()
+                    };
+                    button.on_click(cx.listener(move |this, _, _, cx| {
+                        this.switch_source(s.clone(), cx);
+                        cx.stop_propagation();
+                    }))
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// 窗口是否已置顶（顶栏钮的图标态；与小屏紧凑条共用 `pinned`）。
+    pub(crate) fn pinned(&self) -> bool {
+        self.pinned
     }
 
     /// 设置页改了快捷键映射：换进运行中的视图（新值已由设置页落盘）。

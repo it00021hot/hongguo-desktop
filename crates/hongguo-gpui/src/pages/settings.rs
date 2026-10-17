@@ -314,7 +314,7 @@ impl SettingsView {
     }
 
     /// 切换主题：立即应用 + 落盘 + 通知壳（auto 观察者换判据）。
-    fn set_theme(&mut self, pref: crate::ui_prefs::ThemePref, cx: &mut Context<Self>) {
+    pub(crate) fn set_theme(&mut self, pref: crate::ui_prefs::ThemePref, cx: &mut Context<Self>) {
         use crate::ui_prefs::ThemePref;
         self.theme = pref;
         let mut prefs = crate::ui_prefs::load();
@@ -1444,10 +1444,12 @@ impl SettingsView {
                 bytes: 12_400_000,
             },
         });
-        let mut capability = DecodeCapability::default();
-        // 半硬件一档（macOS Apple 软编会话）：徽标显示「软件加速」
-        capability.platform_encoder = true;
-        capability.has_ffmpeg = scene != "settings-no-ffmpeg";
+        let capability = DecodeCapability {
+            // 半硬件一档（macOS Apple 软编会话）：徽标显示「软件加速」
+            platform_encoder: true,
+            has_ffmpeg: scene != "settings-no-ffmpeg",
+            ..Default::default()
+        };
         self.capability = Some(capability);
         let settings = self.state.settings();
         let dir = settings.download_dir.clone();

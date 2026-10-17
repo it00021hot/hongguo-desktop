@@ -368,64 +368,77 @@ impl NewDramaView {
 
     // —— 渲染 ——
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+    /// 视图 tab（Tauri `TopBarTabs` portal 同位：壳在顶栏渲染它，
+    /// 页面主体的那行只剩频道胶囊——见 [`Self::render_gender_row`]）。
+    pub(crate) fn render_top_tabs(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         let view = self.view;
+        Some(
+            h_flex()
+                .id("top-new-tabs")
+                .items_center()
+                .gap_1()
+                .children(
+                    [
+                        (ViewTab::Recommend, "新剧推荐"),
+                        (ViewTab::Calendar, "上新日历"),
+                    ]
+                    .map(|(tab, label)| {
+                        let active = view == tab;
+                        let button = Button::new(format!("new-tab-{label}")).label(label).small();
+                        let button = if active {
+                            button.secondary()
+                        } else {
+                            button.ghost()
+                        };
+                        button.on_click(cx.listener(move |this, _, _, cx| {
+                            if this.view == tab {
+                                return;
+                            }
+                            this.view = tab;
+                            if tab == ViewTab::Calendar && !this.cal_loaded {
+                                this.load_calendar(None, false, cx);
+                            }
+                            cx.notify();
+                        }))
+                    }),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// 频道胶囊行（Tauri 新剧页同款：只属于新剧推荐视图、靠右排）。
+    fn render_gender_row(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        if self.view != ViewTab::Recommend {
+            return None;
+        }
+        let theme = cx.theme();
         let gender = self.gender;
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .children(
-                [
-                    (ViewTab::Recommend, "新剧推荐"),
-                    (ViewTab::Calendar, "上新日历"),
-                ]
-                .map(|(tab, label)| {
-                    let active = view == tab;
-                    let button = Button::new(format!("new-tab-{label}")).label(label).small();
-                    let button = if active {
-                        button.secondary()
-                    } else {
-                        button.ghost()
-                    };
-                    button.on_click(cx.listener(move |this, _, _, cx| {
-                        if this.view == tab {
-                            return;
-                        }
-                        this.view = tab;
-                        if tab == ViewTab::Calendar && !this.cal_loaded {
-                            this.load_calendar(None, false, cx);
-                        }
-                        cx.notify();
-                    }))
-                }),
-            )
-            .child(div().flex_1())
-            .children((self.view == ViewTab::Recommend).then(|| {
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .children(
-                        [(2, "全部"), (1, "男频"), (0, "女频")].map(|(value, label)| {
-                            let active = gender == value;
-                            let button = Button::new(format!("new-gender-{label}"))
-                                .label(label)
-                                .small();
-                            let button = if active {
-                                button.secondary()
-                            } else {
-                                button.ghost()
-                            };
-                            button.on_click(cx.listener(move |this, _, _, cx| {
-                                this.switch_gender(value, cx);
-                            }))
-                        }),
-                    )
-                    .text_color(theme.foreground)
-            }))
-            .into_any_element()
+        Some(
+            h_flex()
+                .id("new-gender-row")
+                .w_full()
+                .justify_end()
+                .items_center()
+                .gap_2()
+                .children(
+                    [(2, "全部"), (1, "男频"), (0, "女频")].map(|(value, label)| {
+                        let active = gender == value;
+                        let button = Button::new(format!("new-gender-{label}"))
+                            .label(label)
+                            .small();
+                        let button = if active {
+                            button.secondary()
+                        } else {
+                            button.ghost()
+                        };
+                        button.on_click(cx.listener(move |this, _, _, cx| {
+                            this.switch_gender(value, cx);
+                        }))
+                    }),
+                )
+                .text_color(theme.foreground)
+                .into_any_element(),
+        )
     }
 
     fn render_recommend_card(
@@ -763,7 +776,7 @@ impl gpui_kit::EventEmitter<NewDramaEvent> for NewDramaView {}
 
 impl gpui_kit::Render for NewDramaView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs = self.render_tabs(cx);
+        let gender_row = self.render_gender_row(cx);
         let theme = cx.theme();
         // 颜色先取值（Hsla: Copy）：后面要构造吃 &mut cx 的闭包，不能再借 theme
         let muted_fg = theme.muted_foreground;
@@ -989,7 +1002,7 @@ impl gpui_kit::Render for NewDramaView {
                     .min_h_0()
                     .p_4()
                     .gap_3()
-                    .child(tabs)
+                    .children(gender_row)
                     .child(body),
             )
     }

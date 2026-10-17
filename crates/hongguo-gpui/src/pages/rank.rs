@@ -364,18 +364,18 @@ impl RankView {
 
     // —— 渲染 ——
 
-    fn render_tabs_row(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
-        // 两级形态才显示内容 tab 行（旧一级形态只有一个合成 tab）
+    /// 内容分类 tab（Tauri `TopBarTabs` portal 同位：壳在顶栏渲染它，
+    /// 页面主体里不再有第二行）。两级形态才显示（旧一级形态只有一个合成 tab）。
+    pub(crate) fn render_top_tabs(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         if !self.raw_tabs.iter().any(|t| t.id == "all") {
             return None;
         }
         let tabs = normalize_tabs(&self.raw_tabs);
         Some(
             h_flex()
-                .w_full()
-                .flex_wrap()
+                .id("top-rank-tabs")
                 .items_center()
-                .gap_2()
+                .gap_1()
                 .children(tabs.into_iter().map(|tab| {
                     let active = self.selected == tab.id;
                     let button = Button::new(format!("rank-tab-{}", tab.id))
@@ -756,7 +756,6 @@ impl gpui_kit::EventEmitter<RankEvent> for RankView {}
 
 impl gpui_kit::Render for RankView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs_row = self.render_tabs_row(cx);
         let sub_nav = self.render_sub_nav(cx);
         let filter_panel = self
             .filter_open
@@ -840,7 +839,6 @@ impl gpui_kit::Render for RankView {
             .id("rank-page")
             .p_4()
             .gap_3()
-            .children(tabs_row)
             .child(
                 h_flex()
                     .w_full()

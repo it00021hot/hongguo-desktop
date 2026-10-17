@@ -5,18 +5,22 @@
 //! 可折叠：展开 224px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
 //! Tauri collapsed 同款）。贴底账户区（登录面板复用首页的）+ 折叠钮。
 //!
-//! 顶栏用组件库 TitleBar 拉到 44px：应用名居左，**分类 tab 居中**（首页
-//! 三个 tab，Tauri 的 portal 插槽同位），置顶 + 窗口钮（组件自动附）居右。
+//! 顶栏自绘（Tauri `app-shell` 44px 薄行对齐）：中部是当前页面分类 tab 的
+//! 居中槽（Tauri `TopBarTabsPortal` 同位；首页/排行榜/新剧三页自带），
+//! 右端置顶 / 外观 / 窗口钮，空白带按住拖窗、双击最大化。
+//! 为什么不用组件库 TitleBar：见 [`Shell::render_toolbar`] 头注释。
 
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::Icon;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::v_flex;
-use gpui_kit::component::{ActiveTheme, Sizable};
+use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
@@ -218,6 +222,9 @@ pub struct Shell {
     account_avatar: Option<Arc<RenderImage>>,
     account_avatar_url: Option<String>,
     account_avatar_pending: bool,
+    /// 顶栏拖窗的按下起点：移动超过阈值才 `start_window_move`（按钮上的
+    /// 轻微抖动不误起拖）。
+    toolbar_drag: Option<gpui_kit::Point<gpui_kit::Pixels>>,
 }
 
 impl Shell {
@@ -461,6 +468,7 @@ impl Shell {
             account_avatar: None,
             account_avatar_url: None,
             account_avatar_pending: false,
+            toolbar_drag: None,
         };
         if let Some(page) = page_start {
             shell.enter_dest(page, cx);
@@ -1044,19 +1052,265 @@ impl Shell {
         });
     }
 
-    /// 顶栏（组件库 TitleBar）：应用名居左，窗口钮（组件在非 macOS 自动
-    /// 附上并标 WindowControlArea）居右。**不放任何自绘可点控件**——组件
-    /// 把整条 bar 标成 Drag 区，落进去的点击都会被原生命中测试判成拖拽
-    /// 吞掉（置顶钮上一版就栽在这）；它需要的入口都放在舞台/控制栏里。
-    fn render_title_bar(&self) -> gpui_kit::AnyElement {
-        gpui_kit::component::TitleBar::new()
-            .child(
+    /// 顶栏（自绘，Tauri `app-shell` header 的 44px 横贯薄行对齐）：
+    /// 中部是各页分类 tab 的居中槽（Tauri `TOP_BAR_SLOT_ID` portal 同位），
+    /// 右侧置顶 / 外观 / 窗口钮；空白带按住拖窗（>4px 才起拖）、双击最大化。
+    ///
+    /// 为什么自绘：组件库 `TitleBar` 为 Windows 把整条 bar 标成
+    /// `WindowControlArea::Drag`（OS 级 HTCAPTION），落进去的可点控件点击
+    /// 全被原生命中测试吞成拖拽（置顶钮上一版就栽在这）。自绘后拖拽改手动
+    /// （`start_window_move`），控件走正常命中路径；窗口钮仍用
+    /// `WindowControlArea`（Min/Max/Close）交给 OS 原生处理——关闭请求照旧
+    /// 走 WM_CLOSE 的退出确认守卫。
+    fn render_toolbar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let theme = cx.theme();
+        let border = theme.border;
+        let bg = theme.sidebar;
+        let fg = theme.secondary_foreground;
+        let hover_bg = theme.secondary_hover;
+        let danger = theme.danger;
+        let danger_fg = theme.danger_foreground;
+        let mac = cfg!(target_os = "macos");
+
+        // 竖屏不渲染 tab 槽（Tauri 4376496 同款：388px 窄条里整排 tab 与
+        // 右侧钮必然叠压；竖屏=沉浸看剧，切 tab 退出竖屏再说）
+        let in_portrait = crate::portrait::is_active();
+        let tabs = (!in_portrait).then(|| self.render_top_tabs(cx)).flatten();
+        let pinned = self.feed.read(cx).pinned();
+        let is_maximized = window.is_maximized();
+
+        // 置顶（Tauri 顶栏钉住钮同位）：与小屏紧凑条共用同一份状态
+        let pin_button = Button::new("toolbar-pin")
+            .icon(if pinned {
+                IconName::Pin
+            } else {
+                IconName::PinOff
+            })
+            .ghost()
+            .small()
+            .tooltip(if pinned {
+                "取消置顶"
+            } else {
+                "置顶窗口"
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.feed
+                    .update(cx, |view, cx| view.toggle_pinned(window, cx));
+                cx.notify();
+            }));
+
+        // 外观（Tauri ThemeSwitch 同位）：三档菜单语义与设置页外观卡一致，
+        // 点击回调拿不到壳的 Context，经实体句柄回写
+        let view = cx.entity();
+        let current = self.theme;
+        let theme_menu = move |menu: gpui_kit::component::menu::PopupMenu,
+                               _window: &mut Window,
+                               _cx: &mut Context<gpui_kit::component::menu::PopupMenu>|
+              -> gpui_kit::component::menu::PopupMenu {
+            let mut menu = menu.label("外观");
+            for (value, label) in [
+                (crate::ui_prefs::ThemePref::Auto, "跟随系统"),
+                (crate::ui_prefs::ThemePref::Light, "亮色"),
+                (crate::ui_prefs::ThemePref::Dark, "暗色"),
+            ] {
+                let view = view.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(label)
+                        .checked(current == value)
+                        .on_click(move |_, _window, cx| {
+                            view.update(cx, |shell, cx| shell.set_theme_pref(value, cx));
+                        }),
+                );
+            }
+            menu
+        };
+        let theme_icon = match current {
+            crate::ui_prefs::ThemePref::Auto => IconName::Monitor,
+            crate::ui_prefs::ThemePref::Light => IconName::Sun,
+            crate::ui_prefs::ThemePref::Dark => IconName::Moon,
+        };
+        let theme_button = Button::new("toolbar-theme")
+            .icon(theme_icon)
+            .ghost()
+            .small()
+            .tooltip("外观")
+            .dropdown_menu(theme_menu);
+
+        // 窗口钮（Windows/Linux；macOS 是原生红绿灯）：Tauri WindowButtons
+        // 同款 40px 方块、关闭键 hover 红底；点击交 OS 原生命中处理
+        let window_controls = (!mac).then(|| {
+            let button = |id: &'static str,
+                          icon: IconName,
+                          area: gpui_kit::WindowControlArea,
+                          is_close: bool| {
                 div()
-                    .text_sm()
-                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .child("红果"),
+                    .id(id)
+                    .flex()
+                    .w(gpui_kit::px(40.0))
+                    .h_full()
+                    .justify_center()
+                    .items_center()
+                    .text_color(fg)
+                    .hover(move |style| {
+                        if is_close {
+                            style.bg(danger).text_color(danger_fg)
+                        } else {
+                            style.bg(hover_bg)
+                        }
+                    })
+                    .window_control_area(area)
+                    .child(Icon::new(icon).small())
+            };
+            h_flex()
+                .h_full()
+                .flex_shrink_0()
+                .child(button(
+                    "win-min",
+                    IconName::WindowMinimize,
+                    gpui_kit::WindowControlArea::Min,
+                    false,
+                ))
+                .child(button(
+                    "win-max",
+                    if is_maximized {
+                        IconName::WindowRestore
+                    } else {
+                        IconName::WindowMaximize
+                    },
+                    gpui_kit::WindowControlArea::Max,
+                    false,
+                ))
+                .child(button(
+                    "win-close",
+                    IconName::WindowClose,
+                    gpui_kit::WindowControlArea::Close,
+                    true,
+                ))
+        });
+
+        h_flex()
+            .id("app-toolbar")
+            .relative()
+            .h(gpui_kit::px(44.0))
+            .flex_shrink_0()
+            .items_center()
+            .bg(bg)
+            .border_b_1()
+            .border_color(border)
+            // macOS 给原生红绿灯让位（Tauri pl-[76px] 同款）
+            .pl(gpui_kit::px(if mac { 76.0 } else { 12.0 }))
+            .pr_0()
+            // 拖窗/双击（见函数头注释）：阈值防按钮误拖
+            .on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, _| {
+                    this.toolbar_drag = Some(ev.position);
+                }),
+            )
+            .on_mouse_up(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.toolbar_drag = None;
+                }),
+            )
+            .on_mouse_move(
+                cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, cx| {
+                    let Some(start) = this.toolbar_drag else {
+                        return;
+                    };
+                    let dx = (ev.position.x - start.x).as_f32().abs();
+                    let dy = (ev.position.y - start.y).as_f32().abs();
+                    if dx > 4.0 || dy > 4.0 {
+                        this.toolbar_drag = None;
+                        #[cfg(target_os = "windows")]
+                        {
+                            let hwnd = crate::win32::hwnd_of(window);
+                            log::info!("[Toolbar] 起拖窗口（hwnd {hwnd:?}，位移 {dx:.0},{dy:.0}）");
+                            // WM_NCLBUTTONDOWN 会同步进系统移动循环，必须挪到
+                            // 实体更新之外——事件分发当口同步派发 WM_* 会撞
+                            // gpui 的借用（隐身藏显 ShowWindow 同款坑，见
+                            // `home/incognito.rs` 的 IncognitoStep 模式）。
+                            // 延迟一拍只是微秒级，物理按键仍按着，移动循环照进
+                            cx.spawn(async move |_this, _cx| {
+                                if let Some(hwnd) = hwnd {
+                                    crate::win32::start_window_move(hwnd);
+                                }
+                            })
+                            .detach();
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        window.start_window_move();
+                    }
+                }),
+            )
+            .on_double_click(cx.listener(|this, _, window, cx| {
+                this.toolbar_drag = None;
+                // macOS 要的是系统标题栏双击语义（含「移动并调整大小」等
+                // 原生行为）；其余平台切最大化。同样挪出实体更新（见上）
+                if cfg!(target_os = "macos") {
+                    window.titlebar_double_click();
+                    return;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    let hwnd = crate::win32::hwnd_of(window);
+                    cx.spawn(async move |_this, _cx| {
+                        if let Some(hwnd) = hwnd {
+                            crate::win32::toggle_maximize(hwnd);
+                        }
+                    })
+                    .detach();
+                }
+                #[cfg(not(target_os = "windows"))]
+                window.zoom_window();
+            }))
+            // 中部 tab 槽：绝对定位真居中（Tauri 同款——左右组宽度不等时
+            // flex 剩余空间居中有肉眼可见偏移）；容器无命中盒，空白带不挡拖窗
+            .children(tabs.map(|tabs| {
+                h_flex()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .h_full()
+                    .justify_center()
+                    .items_center()
+                    .child(tabs)
+            }))
+            .child(
+                h_flex()
+                    .ml_auto()
+                    .h_full()
+                    .items_center()
+                    .gap_1()
+                    .child(pin_button)
+                    .child(theme_button)
+                    .children(window_controls),
             )
             .into_any_element()
+    }
+
+    /// 顶栏中部 tab 槽的内容：当前目的地页面的分类 tab（Tauri 各页
+    /// `TopBarTabsPortal` 同位）。没有 tab 的页面返回 None（槽留空）。
+    fn render_top_tabs(&mut self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        match self.dest {
+            Dest::Home => self.feed.update(cx, |view, cx| view.render_top_tabs(cx)),
+            Dest::Rank => self.rank.update(cx, |view, cx| view.render_top_tabs(cx)),
+            Dest::New => self
+                .new_drama
+                .update(cx, |view, cx| view.render_top_tabs(cx)),
+            _ => None,
+        }
+    }
+
+    /// 顶栏外观菜单的落点：与设置页同一段实现（应用 + 落盘 + 通知观察者）。
+    fn set_theme_pref(&mut self, pref: crate::ui_prefs::ThemePref, cx: &mut Context<Self>) {
+        self.settings_page
+            .update(cx, |view, cx| view.set_theme(pref, cx));
     }
 
     /// 侧栏（Tauri app-sidebar 对齐）：13 目的地，展开 224px 图标+文字、
@@ -1298,7 +1552,7 @@ impl Shell {
 impl gpui_kit::Render for Shell {
     fn render(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
         // chrome 全藏的两种形态：小屏播放（480×270 纯播放器，Tauri 小屏
@@ -1312,7 +1566,7 @@ impl gpui_kit::Render for Shell {
         let chrome_hidden = in_mini || immersive;
         // 先建好所有吃 cx 的闭包/子渲染，再取 theme（theme 借 cx，两者不能
         // 交叠——闭包里要 &mut Context）
-        let title_bar = (!chrome_hidden).then(|| self.render_title_bar());
+        let toolbar = (!chrome_hidden).then(|| self.render_toolbar(window, cx));
         let sidebar = (!chrome_hidden && !in_portrait).then(|| self.render_sidebar(cx));
         let content = self.render_content(cx);
         let theme = cx.theme();
@@ -1321,7 +1575,7 @@ impl gpui_kit::Render for Shell {
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .children(title_bar)
+            .children(toolbar)
             .child(
                 h_flex()
                     .flex_1()

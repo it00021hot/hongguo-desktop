@@ -38,7 +38,6 @@ pub(crate) fn install(
 
     cx.spawn(async move |cx| {
         // scroll-return 探针：第 1 轮滚一把、第 2 轮往返一次（见循环内注释）
-        #[allow(unused_mut, reason = "只有 scroll-return 分支会置位")]
         let mut scroll_ok = false;
         cx.background_executor().timer(start_delay).await;
         if pause_ui {

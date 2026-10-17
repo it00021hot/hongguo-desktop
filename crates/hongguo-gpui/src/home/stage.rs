@@ -16,7 +16,6 @@ use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
@@ -720,36 +719,9 @@ impl super::HomeView {
                             )
                     }),
             )
-            // 分类 tab（Tauri 顶栏 portal 的悬浮形态）：舞台顶部居中，与
-            // 左上连播胶囊同一行，显隐跟随悬浮层总闸；小屏不渲染。列表由
-            // 服务端下发（self.tabs，回落三件套见 feed::Source）。tab 的
-            // 点击不能下传画面（触发暂停/选中）——拦截放进 on_click 里：
-            // 同元素挂 on_mouse_down(stop) 会把 Button 内部的按下记录一并
-            // 杀掉，点击就永远合成不出来（tab 点不动就是这么来的）
-            .children((!in_mini && self.controls_visible()).then(|| {
-                h_flex()
-                    .absolute()
-                    .top_3()
-                    .left_0()
-                    .right_0()
-                    .justify_center()
-                    .gap_2()
-                    .children(self.tabs.iter().cloned().map(|s| {
-                        let active = s == self.active;
-                        let button = Button::new(format!("stage-tab-{}", s.as_str()))
-                            .label(self.tab_label(&s))
-                            .small();
-                        let button = if active {
-                            button.secondary()
-                        } else {
-                            button.ghost()
-                        };
-                        button.on_click(cx.listener(move |this, _, _, cx| {
-                            this.switch_source(s.clone(), cx);
-                            cx.stop_propagation();
-                        }))
-                    }))
-            }))
+            // 分类 tab 已上移壳顶栏（`HomeView::render_top_tabs`，Tauri
+            // `TopBarTabs` portal 同位）——舞台顶部只留左上连播胶囊与
+            // 右上弹幕入口，不再有第二层 tab 条。
             // 起播失败态（Tauri error-state 对齐）：画面中央错误 + 重试。
             // 失败必须可见——此前只写 pending_title，而那行小徽标随
             // switching 消失，用户看到的就是「切 tab / 换剧没反应」。

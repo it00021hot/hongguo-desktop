@@ -223,10 +223,11 @@ pub(crate) const SWP_NOSIZE: u32 = 0x0001;
 pub(crate) const SWP_NOMOVE: u32 = 0x0002;
 pub(crate) const SWP_NOACTIVATE: u32 = 0x0010;
 pub(crate) const SW_HIDE: i32 = 0;
+/// `SW_MAXIMIZE` / `SW_RESTORE`：双击顶栏切最大化/还原
+pub(crate) const SW_MAXIMIZE: i32 = 3;
+pub(crate) const SW_RESTORE: i32 = 9;
 pub(crate) const SW_SHOW: i32 = 5;
 pub(crate) const SW_SHOWNA: i32 = 8;
-pub(crate) const SW_RESTORE: i32 = 9;
-pub(crate) const SW_MAXIMIZE: i32 = 3;
 const MONITOR_DEFAULTTONEAREST: u32 = 2;
 
 /// 已注册的全局快捷键（老板键）状态：注册到本进程自建的**消息窗口**上。
@@ -324,6 +325,35 @@ pub(crate) fn post_close(hwnd: isize) {
     // SAFETY：句柄来自 gpui 的 platform window；消息是常量
     unsafe {
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    }
+}
+
+/// 起拖窗口（自绘顶栏空白带按住拖动）。
+///
+/// `ReleaseCapture + WM_NCLBUTTONDOWN(HTCAPTION)` 是让窗口进系统移动循环的
+/// 标准手法，拖拽手感/贴靠/多显示器全跟系统走。为什么不用 gpui 的
+/// `Window::start_window_move()`：那是平台 trait 的**默认空实现**，
+/// gpui-pre-windows 没有覆写（macOS 那头才接了 performWindowDragWithEvent）
+/// ——Windows 上自绘拖拽只能自己走这一步。
+pub(crate) fn start_window_move(hwnd: isize) {
+    // SAFETY：句柄来自 gpui 的 platform window；WM_NCLBUTTONDOWN 的 wparam
+    // 是命中码（HTCAPTION），lparam 客户区坐标 0 = 用当前光标位置
+    unsafe {
+        ReleaseCapture();
+        SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
+    }
+}
+
+/// 双击顶栏空白带：最大化 ↔ 还原（`IsZoomed` 判当前态）。
+pub(crate) fn toggle_maximize(hwnd: isize) {
+    // SAFETY：句柄来自 gpui 的 platform window
+    unsafe {
+        let cmd = if IsZoomed(hwnd) != 0 {
+            SW_RESTORE
+        } else {
+            SW_MAXIMIZE
+        };
+        ShowWindow(hwnd, cmd);
     }
 }
 
@@ -453,6 +483,10 @@ fn wide(s: &str) -> Vec<u16> {
 
 const HWND_MESSAGE: isize = -3;
 const WM_HOTKEY: u32 = 0x0312;
+/// `WM_NCLBUTTONDOWN`：非客户区左键按下（配 HTCAPTION 起拖窗口）
+const WM_NCLBUTTONDOWN: u32 = 0x00A1;
+/// `HTCAPTION`：命中码——标题栏（拖动窗口）
+const HTCAPTION: i32 = 2;
 /// `GetLastError`：命名对象已存在（第二次启动）。
 const ERROR_ALREADY_EXISTS: u32 = 183;
 /// `WaitForSingleObject`：对象已置位。
@@ -512,6 +546,8 @@ unsafe extern "system" {
     unsafe fn WaitForSingleObject(handle: isize, millis: u32) -> u32;
     unsafe fn CloseHandle(handle: isize) -> i32;
     unsafe fn GetLastError() -> u32;
+    unsafe fn ReleaseCapture() -> i32;
+    unsafe fn SendMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
     #[cfg(feature = "screenshot")]
     unsafe fn keybd_event(bvk: u8, scan: u8, flags: u32, extra: usize);
     #[cfg(feature = "screenshot")]
@@ -539,6 +575,7 @@ unsafe extern "system" {
     unsafe fn MapWindowPoints(from: isize, to: isize, point: *mut POINT, count: i32) -> i32;
     unsafe fn GetCursorPos(point: *mut POINT) -> i32;
     unsafe fn IsIconic(hwnd: isize) -> i32;
+    unsafe fn IsZoomed(hwnd: isize) -> i32;
     unsafe fn IsWindowVisible(hwnd: isize) -> i32;
     unsafe fn SetForegroundWindow(hwnd: isize) -> i32;
 }

@@ -99,7 +99,7 @@ async fn tab_click_reaches_on_click(cx: &mut gpui_kit::TestAppContext) {
         Rc::new(Cell::new(0)),
     ];
     let stage = Rc::new(Cell::new(0));
-    let window = cx.add_window(|_, cx| Host {
+    let window = cx.add_window(|_, _cx| Host {
         tab_clicks: tab_clicks.clone(),
         stage: Rc::clone(&stage),
         controls_visible: true,

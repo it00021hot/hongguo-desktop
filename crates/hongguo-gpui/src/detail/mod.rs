@@ -647,32 +647,36 @@ impl DetailView {
         } else {
             DetailTab::Episodes
         };
-        let mut series = Series::default();
-        series.series_id = "7100000".into();
-        series.title = "命运契约".into();
-        series.cover = "preview://detail-cover".into();
-        series.episode_count = 80;
-        series.tags = vec!["玄幻".into(), "逆袭".into(), "修真".into()];
-        series.episodes = (1..=80)
-            .map(|i| hongguo_common::model::Episode {
-                vid_index: i,
-                vid: format!("7100000:{i}"),
-                duration: 60 + (i as i64 % 7) * 9,
-                ..Default::default()
-            })
-            .collect();
+        let series = Series {
+            series_id: "7100000".into(),
+            title: "命运契约".into(),
+            cover: "preview://detail-cover".into(),
+            episode_count: 80,
+            tags: vec!["玄幻".into(), "逆袭".into(), "修真".into()],
+            episodes: (1..=80)
+                .map(|i| hongguo_common::model::Episode {
+                    vid_index: i,
+                    vid: format!("7100000:{i}"),
+                    duration: 60 + (i as i64 % 7) * 9,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
         self.series_id = series.series_id.clone();
         self.series = Some(Arc::new(series));
-        let mut meta = SeriesMeta::default();
-        meta.hot_score = 37_860_000;
-        meta.followed_cnt = 271_000;
-        meta.play_cnt = 4_030_000;
-        meta.season = "第1季".into();
-        meta.record_number = "京网文〔2026〕0000-000号".into();
-        meta.intro = "落魄少年在一场契约游戏里觉醒了读档能力：每一次死亡都回到十分钟前。\
+        let meta = SeriesMeta {
+            hot_score: 37_860_000,
+            followed_cnt: 271_000,
+            play_cnt: 4_030_000,
+            season: "第1季".into(),
+            record_number: "京网文〔2026〕0000-000号".into(),
+            intro: "落魄少年在一场契约游戏里觉醒了读档能力：每一次死亡都回到十分钟前。\
                       他靠着这个能力在豪门倾轧与修真秘境之间反复横跳，把仇人一个个熬成了路人。\
                       可他渐渐发现，所谓契约游戏的庄家，正是十分钟后的自己。"
-            .into();
+                .into(),
+            ..Default::default()
+        };
         self.meta = Some(meta);
         self.images
             .insert("preview://detail-cover".into(), fixtures::cover(0));
