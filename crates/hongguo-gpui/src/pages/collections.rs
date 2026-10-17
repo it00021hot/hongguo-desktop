@@ -661,10 +661,11 @@ impl gpui_kit::Render for CollectionView {
                 }
                 Phase::Loaded if self.entries.is_empty() => {
                     let theme = cx.theme();
+                    // Tauri Empty 组件是流内块（p-4 py-16，顶部对齐），不是
+                    // 垂直居中——空态位置也要同构
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .gap_2()
                         .child(
                             gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)

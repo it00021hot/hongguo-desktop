@@ -811,9 +811,9 @@ impl gpui_kit::Render for ReservationView {
             } else if self.current_items().is_empty() {
                 let theme = cx.theme();
                 v_flex()
-                    .flex_1()
                     .items_center()
-                    .justify_center()
+                    // Tauri Empty：流内 py-16 顶部对齐
+                    .py_16()
                     .gap_2()
                     .child(
                         gpui_kit::component::Icon::new(gpui_kit::assets::IconName::BellRing)

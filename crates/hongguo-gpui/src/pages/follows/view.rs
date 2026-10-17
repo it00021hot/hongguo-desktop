@@ -319,9 +319,9 @@ impl super::FollowsView {
         if self.items.is_empty() {
             let theme = cx.theme();
             return v_flex()
-                .flex_1()
                 .items_center()
-                .justify_center()
+                // Tauri Empty：流内 py-16 顶部对齐
+                .py_16()
                 .gap_2()
                 .child(
                     gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv)

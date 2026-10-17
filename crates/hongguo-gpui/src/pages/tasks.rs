@@ -584,9 +584,9 @@ impl gpui_kit::Render for TasksView {
         } else if self.tasks.as_deref().unwrap_or(&[]).is_empty() {
             let theme = cx.theme();
             v_flex()
-                .flex_1()
                 .items_center()
-                .justify_center()
+                // Tauri Empty：流内 py-16 顶部对齐（原来垂直居中，空态位置不同）
+                .py_16()
                 .child(
                     div()
                         .text_sm()

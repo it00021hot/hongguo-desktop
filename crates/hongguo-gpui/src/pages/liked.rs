@@ -613,10 +613,10 @@ impl gpui_kit::Render for LikedView {
                 }
                 Phase::Loaded if self.items.is_empty() => {
                     let theme = cx.theme();
+                    // Tauri Empty：流内 py-16 顶部对齐（不是垂直居中）
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .gap_2()
                         .child(
                             gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Heart)

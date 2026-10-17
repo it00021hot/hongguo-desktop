@@ -634,9 +634,9 @@ impl gpui_kit::Render for HistoryView {
             Phase::Loaded if self.items.is_empty() => {
                 let theme = cx.theme();
                 v_flex()
-                    .flex_1()
                     .items_center()
-                    .justify_center()
+                    // Tauri Empty：流内 py-16 顶部对齐
+                    .py_16()
                     .gap_2()
                     .child(
                         gpui_kit::component::Icon::new(gpui_kit::assets::IconName::ClockArrowDown)
@@ -671,9 +671,8 @@ impl gpui_kit::Render for HistoryView {
                         "没有未看完的剧"
                     };
                     v_flex()
-                        .flex_1()
                         .items_center()
-                        .justify_center()
+                        .py_16()
                         .child(
                             div()
                                 .text_sm()
