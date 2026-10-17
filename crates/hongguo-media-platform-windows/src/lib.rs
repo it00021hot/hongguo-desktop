@@ -11,11 +11,13 @@
 //! 其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
 pub mod audio;
+pub mod audio_output;
 mod cover;
 mod mf;
 pub mod video;
 
 pub use audio::AacDecoder;
+pub use audio_output::CpalAudioOutput;
 pub use cover::heic_to_jpeg;
 pub use video::VideoFrameDecoder;
 

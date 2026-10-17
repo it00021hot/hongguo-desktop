@@ -74,8 +74,8 @@ impl DecoderInitOwned {
             length_size: self.length_size,
             width: self.width,
             height: self.height,
-            // FullRange 请求是 macOS VT 的语义；MF 输出恒 limited，由渲染
-            // 转换端按 BT.709 limited 处理——两端观感一致
+            // macOS 已忽略此项（VT 恒出硬件原生 420v，渲染端直接采样）；
+            // Windows MF 输出恒 limited，由渲染转换端按 BT.709 处理
             full_range: true,
         })
     }
@@ -127,6 +127,11 @@ async fn present(
     // 帧槽留给「随手取最新帧」的调用方；事件里带一份给事件驱动的宿主
     //（克隆只是引用计数 +1，不搬数据：macOS CVPixelBuffer / Windows Arc）
     *shared.latest.lock() = Some(frame.clone());
+    // 起播/seek 之后的第一个可上屏帧 = 起播闸打开：主时钟从这里起跑、
+    // 音频设备同时启动。预滚（关键帧 → 起点/目标）期间的挂钟读数全部作废，
+    // 否则首帧一出画就已经落后一截（1080p 实测 -6s），而解码只够维持内容
+    // 帧率，追不回。幂等：Started 之后每次调用都直接返回。
+    shared.start_clock();
     if !*first_sent {
         *first_sent = true;
         log::info!(
@@ -146,8 +151,13 @@ async fn present(
         // skew = 这一帧的显示时间 − 上屏瞬间的时钟：
         //   负 = 帧迟到（画面内容落后于声音），正 = 超跑。
         // **这是音画是否对齐的唯一可读指标**——光看「帧在动」分不出对齐。
+        //
+        // 告警阈值按**墙钟**表达：用户感知的是「画面比声音晚多久」，而
+        // 媒体域偏差在倍速下被放大 rate 倍（2x 时 0.1s 墙钟误差 = 0.2s
+        // 媒体偏差）。不换算的话高倍速会把正常抖动报成失步。
+        let rate = shared.rate().max(0.25);
         let skew = frame.pts_secs - shared.now();
-        if skew.abs() > 0.15 {
+        if skew.abs() > 0.15 * rate {
             log::warn!(
                 "[Playback][sync] 第 {shown} 帧偏差 {skew:+.3}s（画面{}）",
                 if skew < 0.0 { "落后" } else { "超跑" }
@@ -242,6 +252,14 @@ pub(crate) async fn run(
         pts
     };
     let frame_dur = 1.0 / info.average_framerate().unwrap_or(25.0);
+    log::info!(
+        "[Playback] 视频轨 {w}x{h}，平均 {:.2}fps（帧间隔 {:.1}ms），{} 样本",
+        info.average_framerate().unwrap_or(25.0),
+        frame_dur * 1000.0,
+        info.samples.len(),
+        w = info.width,
+        h = info.height
+    );
     // B 帧重排的安全线：显示时间早于「已解码 dts 水位 - 本值」的帧，
     // 不可能再有更早的帧解出来，可以定稿。无 ctts 时为 0。
     let reorder_secs = info.max_reorder_secs();

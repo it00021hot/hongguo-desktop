@@ -3,16 +3,21 @@
 //! 输入 `(vid, 档位)`（流已由调用方经 `play_service` 注册进 hongguo-stream
 //! 缓存），输出两条：**视频帧**（`latest_frame` 槽；macOS 为 NV12
 //! CVPixelBuffer 零拷贝，Windows 为 NV12 系统内存）与**扬声器声音**
-//! （cpal 输出）。音频硬件的可闻消费位置是主时钟（扣设备引线、含倍速
-//! 换算），视频按源 PTS 对表上屏——与 Tauri 侧 `<video>` 同一「媒体自己走
-//! 时间轴」的语义，同步逻辑不进宿主。
+//! （平台输出单元：macOS AudioToolbox / Windows WASAPI）。音频硬件的可闻
+//! 消费位置是主时钟（扣设备引线、含倍速换算），视频按源 PTS 对表上屏——
+//! 与 Tauri 侧 `<video>` 同一「媒体自己走时间轴」的语义，同步逻辑不进宿主。
 //!
 //! ```text
 //! serve() 按样本表逐段取明文 ─┬─ 视频样本 → 平台 HEVC 解码(macOS VT / Windows MF)
 //!                             │   → 帧槽 ─→ 渲染（surface 零拷贝 / NV12→RGBA）
 //!                             └─ 音频样本 → 平台 AAC 解码(AudioToolbox / MF)
-//!                                → WSOLA 倍速 → 环形缓冲（水位状态机）→ cpal → 时钟
+//!                                → WSOLA 倍速 → 环形缓冲（水位状态机）
+//!                                → 平台输出单元 → 时钟
 //! ```
+//!
+//! 音频输出走 `hongguo_media_platform::platform::audio` 的契约：引擎这一层
+//! 没有平台分支，也不直接依赖 cpal（cpal 的 macOS 后端建流会初始化带输入
+//! 作用域的 AudioUnit，触发麦克风授权）。
 //!
 //! 取流编排（prepare/prefetch/预算升格）留在壳侧的 `play_service`：引擎与
 //! 具体壳、具体编排入口解耦，只认「serve 能读到的流」。

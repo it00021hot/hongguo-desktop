@@ -2,13 +2,13 @@
 //!
 //! 值形态与 Tauri 一致：`Settings.boss_key` 存 tauri accelerator 串
 //!（`"CommandOrControl+Alt+H"`，空串 = 未启用），解析/展示/冲突检测在
-//! [`accel`]（纯函数，集成测试覆盖）。注册走 `win32` 手写的 FFI——Tauri 用
-//! tauri-plugin-global-shortcut，gpui 没有全局快捷键面，这是本项目 FFI 面的
-//! 第三个能力（另两个：小屏落位、隐身藏显）。
+//! [`accel`]（纯函数，集成测试覆盖）。注册能力由 [`crate::platform`] 提供：
+//! Windows 走手写 Win32 FFI（Tauri 用 tauri-plugin-global-shortcut，gpui
+//! 没有全局快捷键面），macOS 侧尚未实现——注册时明确报错，不做「存上了
+//! 却从不生效」的假象。
 //!
 //! 切换语义与 Tauri 一致：可见 → 隐藏（先暂停播放，声音不漏）；隐藏 →
-//! 显示 + 聚焦（前端续播）。macOS 侧待补 FFI（与 mini / 隐身的 Apple 缺口
-//! 同口径）：那边设置老板键会明确报错，不做「存上了却从不生效」的假象。
+//! 显示 + 聚焦（前端续播）。
 
 pub(crate) mod accel;
 
@@ -34,53 +34,34 @@ pub(crate) fn apply(spec: &str) -> Result<(), String> {
     }
     let old = cur.take();
 
-    #[cfg(target_os = "windows")]
-    {
-        if old.is_some() {
-            crate::win32::unregister_hotkey();
-        }
-        if spec.is_empty() {
-            return Ok(());
-        }
-        let hk = accel::parse(&spec)?;
-        match crate::win32::register_hotkey(hk.mods, hk.vk) {
-            Ok(()) => {
-                *cur = Some(spec);
-                Ok(())
-            }
-            Err(e) => {
-                // 回滚旧键：失败不外泄（保存本身已在报错），下次保存成功即自愈
-                if let Some(o) = old
-                    && let Ok(hk) = accel::parse(&o)
-                    && crate::win32::register_hotkey(hk.mods, hk.vk).is_ok()
-                {
-                    *cur = Some(o);
-                }
-                Err(e)
-            }
-        }
+    if old.is_some() {
+        crate::platform::unregister_hotkey();
     }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = old;
-        if spec.is_empty() {
-            return Ok(());
+    if spec.is_empty() {
+        return Ok(());
+    }
+    let hk = accel::parse(&spec)?;
+    match crate::platform::register_hotkey(hk.mods, hk.vk) {
+        Ok(()) => {
+            *cur = Some(spec);
+            Ok(())
         }
-        Err(crate::i18n::t("settings.bossKeyPlatformUnsupported"))
+        Err(e) => {
+            // 回滚旧键：失败不外泄（保存本身已在报错），下次保存成功即自愈
+            if let Some(o) = old
+                && let Ok(hk) = accel::parse(&o)
+                && crate::platform::register_hotkey(hk.mods, hk.vk).is_ok()
+            {
+                *cur = Some(o);
+            }
+            Err(e)
+        }
     }
 }
 
 /// 老板键是否被按下过（读后清；壳内轮询任务消费）。
 pub(crate) fn take_fired() -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        crate::win32::take_hotkey_fired()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        false
-    }
+    crate::platform::take_hotkey_fired()
 }
 
 /// 老板键 vs 播放器快捷键的冲突（末段裸键 vs 播放器键；Tauri

@@ -17,11 +17,27 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use tokio::sync::mpsc;
 
-use crate::audio::Clock;
+use crate::audio::{AudioDevice, Clock};
 
 pub use event::{OpenOptions, PlaySource, PlayerEvent};
 pub use handle::{MAX_RATE, MIN_RATE, PlayerHandle};
 pub use open::open;
+
+/// 起播闸：首帧就绪前主时钟与音频设备都不走。
+///
+/// 视频从**起点前的关键帧**起解，预滚到起点要付「关键帧到起点的解码时间」；
+/// 这段时间若让音频设备照常推进时钟，首帧一出画就已经落后一截，而解码
+/// 只够维持内容帧率、永远追不回来（1080p 续播实测首帧晚 6 秒且持续恶化）。
+/// 所以时钟与设备都等「第一帧可上屏」才启动：视频循环在发首帧前调
+/// [`Shared::start_clock`]，音频喂送只预填不启动设备。
+pub(crate) enum ClockGate {
+    /// 等首帧。音频已就绪时把（音频时钟、设备）暂存在这里，首帧一到就换轴
+    /// 并起跑；无音频时就是挂钟本身，首帧一到重锚。
+    Waiting {
+        audio: Option<(Arc<Clock>, Arc<AudioDevice>)>,
+    },
+    Started,
+}
 
 /// 内部共享态：任务族与句柄的共同视图。
 pub(crate) struct Shared {
@@ -50,6 +66,23 @@ pub(crate) struct Shared {
     pub latest: parking_lot::Mutex<Option<hongguo_media_platform::platform::video::VideoFrame>>,
     pub dims: parking_lot::Mutex<(usize, usize)>,
     pub duration_secs: parking_lot::Mutex<f64>,
+    /// 起播锚点（媒体秒）：首帧就绪时时钟从这里起跑，预滚期间不作数。
+    pub start_anchor: parking_lot::Mutex<f64>,
+    /// 时钟闸：为真时 [`Shared::now`] 固定返回 [`Shared::start_anchor`]。
+    ///
+    /// 用在哪：起播预滚、seek、**音频迟到接管**。视频解码照常在跑（前瞻
+    /// 缓冲），只是不上屏——因为锚点不动，`emit_due` 不会把帧发出去。
+    /// 音频迟到时若不闸住视频，「准备音频（建流 + 预填）」这段时间画面会
+    /// 自己往前走，等音频接上时它已经从更晚的位置开始，声画就永久错开
+    /// 一截（倍速下这段错位还按倍速放大）。
+    pub hold: AtomicBool,
+    /// 起播闸（见 [`ClockGate`]）。音频就绪与视频首帧在两条任务上，
+    /// 谁先到谁记；**同一把锁里完成状态迁移与时钟换轴**，避免「首帧检查
+    /// 到 Waiting、音频同时存下待接管」这种两边都以为对方会动手的空档。
+    pub clock_gate: parking_lot::Mutex<ClockGate>,
+    /// 已接上的音频设备（没有音频时为 None）：seek 重新武装起播闸要用它
+    /// 在下一帧出画前把设备停住（否则 seek 预滚期间时钟又白跑一截）。
+    pub audio_device: parking_lot::Mutex<Option<Arc<AudioDevice>>>,
     pub events: mpsc::Sender<PlayerEvent>,
 }
 
@@ -57,12 +90,85 @@ impl Shared {
     /// 当前播放位置（主时钟）。视频循环与进度上报都走这里，时钟被换掉后
     /// 各处的读数自动跟上。
     pub(crate) fn now(&self) -> f64 {
+        if self.hold.load(Ordering::Relaxed) {
+            return *self.start_anchor.lock();
+        }
         self.clock.lock().now()
+    }
+
+    /// 把时钟闸在 `secs`：视频停在这一帧等音频/seek 重定位完成。
+    pub(crate) fn hold_at(&self, secs: f64) {
+        *self.start_anchor.lock() = secs;
+        self.hold.store(true, Ordering::Relaxed);
+    }
+
+    /// 放行时钟闸（音频已接上 / 首帧已出）。
+    pub(crate) fn release_hold(&self) {
+        self.hold.store(false, Ordering::Relaxed);
     }
 
     /// 换主时钟（音频迟到接管/音频播完切挂钟时用）。
     pub(crate) fn set_clock(&self, clock: Arc<Clock>) {
         *self.clock.lock() = clock;
+    }
+
+    /// 首帧可上屏：打开起播闸（时钟起跑、音频设备启动）。幂等。
+    ///
+    /// 无音频/设备迟到时主时钟还是挂钟，重锚到起点——预滚期间它已经走了的
+    /// 时间不算数。音频已就绪时换成音频时钟并 reset 到同一起点：环里预填的
+    /// 正是从起点开始的 PCM，设备一起跑，声画就对齐。持有 `clock_gate`
+    /// 完成全部动作（同步锁，不跨 await）。
+    pub(crate) fn start_clock(&self) {
+        // 首帧出画即放行（音频已注册时下面同时起跑设备）
+        self.hold.store(false, Ordering::Relaxed);
+        let mut gate = self.clock_gate.lock();
+        let ClockGate::Waiting { audio } = &mut *gate else {
+            return;
+        };
+        let audio = audio.take();
+        *gate = ClockGate::Started;
+        let anchor = *self.start_anchor.lock();
+        match audio {
+            Some((clock, device)) => {
+                clock.reset(anchor);
+                *self.clock.lock() = clock;
+                device.activate();
+                log::info!("[Playback] 首帧就绪：音频时钟起跑（锚点 {anchor:.2}s）");
+            }
+            None => {
+                // 无音频（或设备迟到）：主时钟重锚到起点。迟到接管自己的
+                // 路径会看到 Started 并直接换轴（见 open::adopt_audio），这里
+                // 只负责把挂钟的预滚时间抹掉。
+                self.clock.lock().reset(anchor);
+                log::info!("[Playback] 首帧就绪：挂钟重锚（{anchor:.2}s）");
+            }
+        }
+    }
+
+    /// seek 后重新武装起播闸：下一帧出画前时钟与设备都不走。
+    ///
+    /// seek 与起播同一个问题——视频要从目标前的关键帧解码预滚到目标，
+    /// 这段时间时钟若在走，首帧（seek 后的画面）一出就已经落后一截。
+    /// 锁顺序与 [`Self::start_clock`] 一致（gate → anchor → clock → device）。
+    pub(crate) fn rearm_gate(&self, target: f64) {
+        let mut gate = self.clock_gate.lock();
+        // seek 预滚期间闸住时钟：视频从目标前的关键帧解到目标，这段解码
+        // 时间不能算进播放时间（否则首帧一出画就已落后）。
+        *self.start_anchor.lock() = target;
+        self.hold.store(true, Ordering::Relaxed);
+        let clock = Arc::clone(&self.clock.lock());
+        let device = self.audio_device.lock().clone();
+        if let Some(device) = &device {
+            // 设备先停：预滚期间不能有任何声音推进时钟（旧缓冲由喂送侧的
+            // 冲流协议在设备重新起跑后丢弃）
+            device.deactivate();
+        }
+        let audio = if clock.is_wall() {
+            None
+        } else {
+            device.map(|device| (clock, device))
+        };
+        *gate = ClockGate::Waiting { audio };
     }
 
     /// 消费者视角取新 seek：代次比 `last_gen` 新则返回目标并就地记账。

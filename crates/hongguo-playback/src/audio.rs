@@ -13,9 +13,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
+
+use hongguo_media_platform::platform::audio::{AudioOutputStream, PlatformAudioOutput};
 
 /// 可闻位置时钟。媒体时间域 = 样本 PTS（秒）。
 pub(crate) struct Clock {
@@ -135,6 +136,17 @@ impl Clock {
         st.pending.as_ref().map(|p| p.rate).unwrap_or(st.rate)
     }
 
+    /// 是否挂钟（无音频轨/设备不可用时的退化时钟）。
+    pub(crate) fn is_wall(&self) -> bool {
+        self.sample_rate == 0
+    }
+
+    /// 设备停流时清掉引线（见 [`AudioDevice::apply`]）：让时钟承认
+    /// 「已取走但未发声」的这批样本已经过去，与下一次真正发声的内容对齐。
+    pub(crate) fn drop_lead(&self) {
+        self.lead.store(0, Ordering::Relaxed);
+    }
+
     /// 输出回调记账：设备又消费了 `frames` 帧、当前引线 `lead` 帧。
     /// 帧数按增量累加（漏一次回调也不失真），引线按最新值覆盖（可闻位置
     /// 读数时再钳到 ≤ 已消费）。越过分级换速阈值时在此换轴（回调线程
@@ -173,55 +185,107 @@ fn audio_now(st: &ClockState, sample_rate: u64, consumed: &AtomicU64, lead: &Ato
     st.base + (c - l) as f64 / sample_rate as f64 * st.rate
 }
 
-/// cpal 流的 Send 包装。
+/// 平台输出流（已带 Send，具体类型由平台 crate 保证）。
 ///
-/// CoreAudio 的流对象是线程安全的不透明对象：数据回调跑在设备自己的 IO 线程
-/// （与句柄在哪个线程无关），`pause()`/`play()`（AudioOutputUnitStart/Stop）
-/// 本身线程安全。cpal 出于保守统一标了 `!Send`，跨执行器搬运句柄的约束由
-/// 本类型给出。
-struct SendStream(cpal::Stream);
-unsafe impl Send for SendStream {}
+/// macOS 是 AudioToolbox 默认输出单元（output-only），Windows 是 cpal 的
+/// WASAPI 流。引擎只认 [`AudioOutputStream`] 契约——**不含任何平台分支**。
+type Stream = <hongguo_media_platform::platform::audio::PlatformAudioOutput as
+    hongguo_media_platform::platform::audio::AudioOutputHost>::Stream;
 
-/// 设备级播放开关的仲裁：**用户暂停**与**缓冲断流暂停**各占一位，设备只在
-/// 两位都清零时运转。两个暂停源来自不同任务（控制面 vs 喂送循环），必须
-/// 单点合成，否则「缓冲恢复」会把用户暂停悄悄解除。
+/// 设备级播放开关的仲裁：**用户暂停**、**缓冲断流暂停**与**起播闸**各占
+/// 一位，三者都放行时设备才运转。三个来源来自不同任务（控制面、喂送循环、
+/// 视频首帧），必须单点合成，否则「缓冲恢复」会把用户暂停悄悄解除。
+///
+/// **设备调用跑在专属线程上**：CoreAudio 的 `AudioQueueStart`（以及此前的
+/// AudioUnit 初始化）在 HAL 层可能阻塞数秒——本机 USB 声卡实测 4–5 秒，
+/// 栈停在 `AudioQueueObject::Prime → DoIONodeConnect`。这些调用若发生在
+/// 播放任务里，整条链路（视频上屏、喂送、seek）一起冻住。这里只投一条
+/// 命令（非阻塞），由控制线程串行执行：命令有序、失败只记日志。
 pub(crate) struct AudioDevice {
-    stream: Mutex<Option<SendStream>>,
+    /// 控制线程的命令口；线程随 sender 关闭退出，流在其作用域内释放。
+    cmd: std::sync::mpsc::Sender<bool>,
     user_paused: AtomicBool,
     starved: AtomicBool,
+    /// 主时钟（同一设备域）。设备停下的瞬间要把「引线」清零——见 `apply`。
+    clock: Arc<Clock>,
+    /// 起播闸：首帧出画前设备不转。视频从起点前的关键帧起解，预滚期间
+    /// 时钟若随设备推进，首帧一出画就已经落后一截，之后解码只够维持
+    /// 内容帧率、永远追不回（实测 1080p 续播首帧晚 6 秒）。所以设备与
+    /// 时钟都等首帧出画才启动（见 `player::Shared::start_clock`）。
+    activated: AtomicBool,
 }
 
 impl AudioDevice {
+    /// 起控制线程并接管流的生命周期。线程名固定，排障时一眼能认出来。
+    fn new(stream: Stream, clock: Arc<Clock>) -> Option<Self> {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let spawned = std::thread::Builder::new()
+            .name("hg-audio-ctl".into())
+            .spawn(move || {
+                let mut stream = Some(stream);
+                // 幂等记账：状态未变不发命令（发送端已在 apply 里做过，
+                // 这里兜重复投递）
+                let mut playing = false;
+                while let Ok(want) = rx.recv() {
+                    if want == playing {
+                        continue;
+                    }
+                    let Some(s) = stream.as_ref() else {
+                        break;
+                    };
+                    if let Err(e) = s.set_playing(want) {
+                        log::warn!(
+                            "[Playback] 音频设备 {}失败: {e}",
+                            if want { "启动" } else { "暂停" }
+                        );
+                    } else {
+                        playing = want;
+                    }
+                }
+                // sender 关闭（设备析构）：流在这里释放。AudioQueue 的
+                // Stop/Dispose 同样可能卡在 HAL，放在本线程不影响播放。
+                drop(stream.take());
+            });
+        if let Err(e) = spawned {
+            log::warn!("[Playback] 音频控制线程起不来（{e}），本集无声");
+            return None;
+        }
+        Some(Self {
+            cmd: tx,
+            user_paused: AtomicBool::new(false),
+            starved: AtomicBool::new(false),
+            clock,
+            activated: AtomicBool::new(false),
+        })
+    }
+
     fn apply(&self) {
-        let guard = self.stream.lock();
-        let Some(stream) = guard.as_ref() else {
-            return;
-        };
+        let activated = self.activated.load(Ordering::Relaxed);
         let user_paused = self.user_paused.load(Ordering::Relaxed);
         let starved = self.starved.load(Ordering::Relaxed);
-        let should_play = !user_paused && !starved;
+        let should_play = activated && !user_paused && !starved;
+        if !should_play {
+            // 设备停下的瞬间，已经交给 HAL、但不会真正发声的那一批（引线）
+            // 不能再算作「已播」：这些样本从环形缓冲里被取走了、停流时被
+            // 丢弃，而时钟的 consumed 已经把它们计进去。不清零引线的话，
+            // 每次缓冲暂停都会让时钟比声音多走一个引线（十几毫秒），
+            // 反复缓冲后累积成可闻的音画不同步（声音越来越落后画面）。
+            self.clock.drop_lead();
+        }
         // 设备起停留痕：用户暂停是唯一没有别处记录的位（starved 翻转有
         // 水位日志），只在它参与时升到 info，纯水位翻转让给水位日志
         log::log!(
-            if user_paused {
+            if user_paused || !activated {
                 log::Level::Info
             } else {
                 log::Level::Debug
             },
-            "[Playback] 音频设备 {}（user_paused={user_paused} starved={starved}）",
+            "[Playback] 音频设备 {}（activated={activated} user_paused={user_paused} starved={starved}）",
             if should_play { "启动" } else { "暂停" }
         );
-        // pause/play 的错误类型不同，分支各自消化
-        let result = if should_play {
-            stream.0.play().map_err(|e| e.to_string())
-        } else {
-            stream.0.pause().map_err(|e| e.to_string())
-        };
-        if let Err(e) = result {
-            log::warn!(
-                "[Playback] 音频设备 {}失败: {e}",
-                if should_play { "启动" } else { "暂停" }
-            );
+        // 非阻塞投递：真正的设备调用在控制线程里做（见类型注释）。
+        if let Err(e) = self.cmd.send(should_play) {
+            log::warn!("[Playback] 音频控制线程已退出，命令丢弃: {e}");
         }
     }
 
@@ -240,8 +304,23 @@ impl AudioDevice {
         true
     }
 
-    /// 设备起跑闸（起播预填完成后调用）：两位暂停标志都清零才让设备转。
-    pub(crate) fn start(&self) {
+    /// 首帧出画：打开起播闸。返回是否为首次激活（迟到接管的设备已经
+    /// 激活过，此时不得再重锚时间轴）。
+    pub(crate) fn activate(&self) -> bool {
+        if self.activated.swap(true, Ordering::Relaxed) {
+            return false;
+        }
+        self.apply();
+        true
+    }
+
+    /// seek 重新武装起播闸：先把设备停住，下一帧出画再由 [`Self::activate`]
+    /// 放行。设备停着时回调不来，seek 的冲流收口会等到设备重新起跑——
+    /// 这是预期顺序（旧声音绝不能在预滚期间漏出去）。
+    pub(crate) fn deactivate(&self) {
+        if !self.activated.swap(false, Ordering::Relaxed) {
+            return;
+        }
         self.apply();
     }
 }
@@ -280,29 +359,27 @@ impl AudioOut {
         volume: f32,
         muted: bool,
     ) -> Option<(Self, RingFeed)> {
-        let device = cpal::default_host().default_output_device().or_else(|| {
-            log::warn!("[Playback] 没有默认音频输出设备");
-            None
-        })?;
-        let dev_cfg = device
-            .default_output_config()
-            .map_err(|e| {
+        use hongguo_media_platform::platform::audio::{AudioOutputHost, OutputFormat};
+
+        // 设备混音格式与输出流都走平台契约：macOS 是 AudioToolbox 默认输出
+        // 单元（output-only，**不触发麦克风授权**），Windows 是 cpal/WASAPI。
+        // 引擎这一层没有任何平台分支。
+        let format = match <PlatformAudioOutput as AudioOutputHost>::default_output_format() {
+            Ok(f) => f,
+            Err(e) => {
                 log::warn!("[Playback] 读音频设备混音格式失败: {e}");
-                e
-            })
-            .ok()?;
-        let dst_rate = dev_cfg.sample_rate().0;
-        let dst_channels = dev_cfg.channels();
+                return None;
+            }
+        };
+        let (dst_rate, dst_channels) = (format.sample_rate, format.channels);
         let adapter =
             crate::resample::PcmAdapter::new(channels, sample_rate, dst_channels, dst_rate);
-        let ring = ringbuf::HeapRb::<f32>::new(usize::from(dst_channels) * dst_rate as usize); // 1 秒（设备域）
+        // 2 秒（设备域）：1 秒环在倍速下只有 0.5 秒媒体余量，喂送端一次
+        // 网络抖动就会撞到低水位并触发「缓冲中」。2 秒给足吸收空间
+        // （48kHz 立体声 ≈ 768KB，可忽略）。
+        let ring = ringbuf::HeapRb::<f32>::new(usize::from(dst_channels) * dst_rate as usize * 2);
         let (prod, mut cons) = ring.split();
 
-        let config = cpal::StreamConfig {
-            channels: dst_channels,
-            sample_rate: cpal::SampleRate(dst_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
         // 时钟计数设备域帧：设备帧数 ÷ 设备采样率 = 媒体秒（重采样保持时长）
         let clock = Arc::new(Clock::audio(dst_rate));
         let cb_clock = Arc::clone(&clock);
@@ -310,6 +387,10 @@ impl AudioOut {
         let ring_frames = Arc::new(AtomicU64::new(0));
         let cb_ring_w = Arc::clone(&ring_frames);
         let cb_calls = Arc::new(AtomicU64::new(0));
+        // 回调节奏实测起点：clock 每秒推进量必须与墙钟一致（设备回调
+        // 间隔 × 每拍帧数 ÷ 采样率）；不一致就是设备域口径错了，音画会
+        // 系统性漂移（实测过一次 2 倍速推进）。
+        let cb_started = std::time::Instant::now();
         // 欠载（缓冲空、只能出静音）累计帧数。
         //
         // **静音不推进时钟**：回调里只把真实取出的帧计入 consumed。设备在
@@ -331,11 +412,12 @@ impl AudioOut {
         let cb_seen_out = Arc::clone(&cb_seen);
         let channels_cb = usize::from(dst_channels);
         // 累计已消费帧数与引线都在时钟里，回调只管报数
-        let err = move |e| log::warn!("[Playback] 音频设备回调错误: {e}");
-        let stream = device
-            .build_output_stream(
-                &config,
-                move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+        let stream = <PlatformAudioOutput as AudioOutputHost>::open(
+            OutputFormat {
+                sample_rate: dst_rate,
+                channels: dst_channels,
+            },
+            move |data: &mut [f32], lead_frames: u32| {
                     if cb_discard.load(Ordering::Relaxed) {
                         // 冲流：整环丢弃（一次回调清空），出静音、不计时
                         cb_seen_w.store(true, Ordering::Relaxed);
@@ -354,13 +436,8 @@ impl AudioOut {
                         (cons.occupied_len() / channels_cb) as u64,
                         Ordering::Relaxed,
                     );
-                    // 设备引线：这批数据到 DAC 的提前量（帧）
-                    let lead = info
-                        .timestamp()
-                        .playback
-                        .duration_since(&info.timestamp().callback)
-                        .map(|d| d.as_secs_f64() * dst_rate as f64)
-                        .unwrap_or(0.0);
+                    // 设备引线：这批数据到 DAC 的提前量（帧），平台实现给出
+                    let lead = f64::from(lead_frames);
                     let frames = filled / channels_cb;
                     if cb_muted.load(Ordering::Relaxed) {
                         // 静音不是暂停：照常推进时钟，只是听不见
@@ -384,23 +461,21 @@ impl AudioOut {
                     let n = cb_calls.fetch_add(1, Ordering::Relaxed);
                     if n.is_multiple_of(200) {
                         log::debug!(
-                            "[Playback][cb] 第 {n} 次回调，clock={:.2}s，引线 {:.0} 帧，欠载 {:.1}s（累计）",
+                            "[Playback][cb] 第 {n} 次回调，本拍 {frames} 帧，clock={:.2}s，墙钟 {:.2}s，引线 {lead:.0} 帧，欠载 {:.1}s（累计）",
                             cb_clock.now(),
-                            lead,
+                            cb_started.elapsed().as_secs_f64(),
                             (silence + silent_frames) as f64 / f64::from(dst_rate)
                         );
                     }
-                },
-                err,
-                None,
-            )
-            .map_err(|e| {
-                log::warn!(
-                    "[Playback] 音频建流失败（解码 {channels}ch {sample_rate}Hz → 设备 {dst_channels}ch {dst_rate}Hz）: {e}"
-                );
-                e
-            })
-            .ok()?;
+            },
+        )
+        .map_err(|e| {
+            log::warn!(
+                "[Playback] 音频建流失败（解码 {channels}ch {sample_rate}Hz → 设备 {dst_channels}ch {dst_rate}Hz）: {e}"
+            );
+            e
+        })
+        .ok()?;
         if channels != dst_channels || sample_rate != dst_rate {
             log::info!(
                 "[Playback] 音频设备已建（{dst_channels}ch {dst_rate}Hz，解码侧 {channels}ch {sample_rate}Hz 已适配）"
@@ -408,11 +483,7 @@ impl AudioOut {
         } else {
             log::info!("[Playback] 音频设备已建（{channels}ch {sample_rate}Hz）");
         }
-        let device = Arc::new(AudioDevice {
-            stream: Mutex::new(Some(SendStream(stream))),
-            user_paused: AtomicBool::new(false),
-            starved: AtomicBool::new(false),
-        });
+        let device = Arc::new(AudioDevice::new(stream, Arc::clone(&clock))?);
         Some((
             Self {
                 device: Arc::clone(&device),
@@ -461,9 +532,9 @@ impl AudioOut {
 
 impl Drop for AudioOut {
     fn drop(&mut self) {
-        // 先停设备再释放：Drop 顺序里显式 pause 一遍（语义清晰、代价为零）
+        // 停设备（命令投给控制线程，非阻塞），流与控制线程随命令口关闭退出：
+        // 设备释放可能卡在 HAL，不能放在播放任务的析构路径上。
         self.device.set_user_paused(true);
-        *self.device.stream.lock() = None;
     }
 }
 

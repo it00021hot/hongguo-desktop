@@ -146,6 +146,7 @@ pub(crate) fn install(
                     }
                     // 退出确认：投一个真 WM_CLOSE（等同点 × / Alt+F4），
                     // 期望窗口**没关**且确认框在抓帧里可见。
+                    #[cfg(target_os = "windows")]
                     "close-test" => {
                         let _ = window.update(cx, |_, window, cx| {
                             if let Some(hwnd) = crate::win32::hwnd_of(window) {

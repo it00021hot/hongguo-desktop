@@ -123,6 +123,9 @@ impl PlayerHandle {
         let target = secs.clamp(0.0, dur);
         self.shared.read_epoch.fetch_add(1, Ordering::Relaxed);
         self.shared.clock.lock().reset(target);
+        // 重新武装起播闸：seek 后视频要从目标前的关键帧预滚，这段时间
+        // 时钟与设备都不许走（与起播同一问题，见 Shared::rearm_gate）
+        self.shared.rearm_gate(target);
         if let Some(audio) = self.audio.lock().as_ref() {
             audio.begin_flush();
         }

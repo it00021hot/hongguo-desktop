@@ -25,8 +25,9 @@ log = "0.4"
 parking_lot = "0.12"
 # 引擎的任务族跑在调用方的 tokio 运行时里（壳经桥 spawn）。
 tokio = { version = "1", features = ["rt", "sync", "time"] }
-# 音频输出：默认设备 f32 流；音频硬件的可闻消费位置就是主时钟。
-cpal = "0.15"
+# 音频输出经平台契约（hongguo-media-platform::platform::audio）：macOS 是
+# AudioToolbox 输出单元，Windows 是 cpal。引擎不再直接依赖 cpal——cpal 的
+# macOS 后端建流时会初始化带输入作用域的 AudioUnit，触发麦克风授权。
 # 解码 PCM → 输出回调之间的无锁环形缓冲。
 ringbuf = "0.4"
 

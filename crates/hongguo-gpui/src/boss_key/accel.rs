@@ -4,8 +4,14 @@
 //! 形态与 Tauri 完全一致：tauri accelerator 串（如 `"CommandOrControl+Alt+H"`，
 //! 捕获自键盘物理键、末段是裸键名），空串 = 未启用。注册参数（修饰位 +
 //! Win32 虚拟键码）也在这里算，`win32` 只负责把参数交给系统。
+//!
+//! 注册参数（MOD_* / `parse` / `Hotkey`）两端都编译：macOS 侧用它们校验
+//! 用户捕获的组合（格式错误在捕获阶段就提示），注册本身由平台层报
+//! 「本平台未实现」。
 
 /// 修饰键位（Win32 `RegisterHotKey` 的 fsModifiers 值；与系统 ABI 对齐）。
+/// 注册参数在两端都编译：macOS 侧 `parse` 用来校验用户捕获的组合、再交给
+/// 平台层报「本平台未实现」，不在捕获阶段就吞掉格式错误。
 pub(crate) const MOD_ALT: u32 = 0x0001;
 pub(crate) const MOD_CONTROL: u32 = 0x0002;
 pub(crate) const MOD_SHIFT: u32 = 0x0004;
@@ -100,7 +106,7 @@ pub(crate) fn parse(spec: &str) -> Result<Hotkey, String> {
 }
 
 /// `MOD_NOREPEAT`（0x4000）：按住不连发——老板键是切换语义，连发会把窗口
-/// 藏了又显。
+/// 藏了又显。只被 `parse` 使用（macOS 正式构建不编译）。
 const MOD_NOREPEAT: u32 = 0x4000;
 
 /// 裸键名 → Win32 虚拟键码（只收 GPUI 能稳定报出、且 Win32 一一对应的键）。

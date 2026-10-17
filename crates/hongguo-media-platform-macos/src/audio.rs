@@ -458,6 +458,12 @@ impl hongguo_media_platform_api::AudioDecoder for AacDecoder {
     }
 }
 
+// ————————————————————————————————————————————————————————————
+// 默认输出设备的混音格式：见 `audio_output::MacAudioOutput::default_output_format`
+// （那是 AudioToolbox 输出单元的同一套能力，进 `audio_output` 模块后本文件
+// 只管 AAC 解码；两端查询走的是同一段 CoreAudio 属性读法）。
+// ————————————————————————————————————————————————————————————
+
 #[cfg(test)]
 mod tests {
     use super::*;

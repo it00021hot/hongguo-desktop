@@ -78,10 +78,10 @@ impl Locale {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        if let Ok(value) = std::env::var("LANG").or_else(|_| std::env::var("LC_ALL")) {
-            if value.to_ascii_lowercase().starts_with("en") {
-                return Self::EnUs;
-            }
+        if let Ok(value) = std::env::var("LANG").or_else(|_| std::env::var("LC_ALL"))
+            && value.to_ascii_lowercase().starts_with("en")
+        {
+            return Self::EnUs;
         }
         Self::ZhCn
     }

@@ -126,7 +126,7 @@ impl super::HomeView {
 
     /// 换集/换清晰度后的重适配：比例变化 >1% 才动窗口（Tauri `resize`
     /// 监听 + REFIT_DELTA 同口径）。不在竖屏中是空操作。
-    pub(super) fn refit_portrait(&mut self, window: &gpui_kit::Window, cx: &gpui_kit::App) {
+    pub(super) fn refit_portrait(&mut self, window: &mut gpui_kit::Window, cx: &gpui_kit::App) {
         if self.portrait.is_none() {
             return;
         }

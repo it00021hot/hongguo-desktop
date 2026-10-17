@@ -68,18 +68,6 @@ pub(crate) enum HomeEvent {
     OpenTasks,
 }
 
-/// 视频转换目标尺寸的跨线程打包（(w,h) ⇄ u64；Arc<AtomicU64> 共享给
-/// 后台转换线程，见 [`HomeView::video_target`]）。
-#[cfg(target_os = "windows")]
-fn pack_size(w: usize, h: usize) -> u64 {
-    ((w as u64) << 32) | h as u64
-}
-
-#[cfg(target_os = "windows")]
-fn unpack_size(packed: u64) -> (usize, usize) {
-    ((packed >> 32) as usize, (packed & 0xffff_ffff) as usize)
-}
-
 pub(crate) mod auth;
 pub(crate) mod comment_view;
 pub(crate) mod comments;
@@ -102,6 +90,7 @@ pub(crate) mod portrait_panel;
 pub(crate) mod preview_seed;
 pub(crate) mod season;
 pub(crate) mod stage;
+pub(crate) mod video_surface;
 
 /// 当前在播的剧（overlay 与进度落盘的身份）。
 ///
@@ -174,27 +163,8 @@ pub struct HomeView {
     /// 更新互相抢时序——首帧先到置 true、就位后到又清 false，封面从此永远
     /// 收不掉（画面上封面与视频叠着）。帧直接来自事件，没有第二处状态。
     frame: Option<VideoFrame>,
-    /// Windows 的渲染产物：NV12 → RGBA（BT.709 limited）在事件任务里转换
-    /// （不占 UI 线程），渲染按普通图像上传——gpui 的视频 surface 只有
-    /// Apple 目标（CVPixelBuffer），Windows 走这条等价路径。
-    #[cfg(target_os = "windows")]
-    frame_image: Option<Arc<RenderImage>>,
-    /// 已下台、等 render 里 `window.drop_image` 回收的图像。gpui 的纹理按
-    /// `RenderImage::id` 常驻 sprite atlas（`paint_image` 只增不删），视频
-    /// 路径每帧一个新 id，不主动回收就是无上限的显存/内存泄漏。
-    #[cfg(target_os = "windows")]
-    retired_images: Vec<Arc<RenderImage>>,
-    /// 视频转换目标尺寸（宽,高；CSS px，打包成 u64 跨线程共享——转换在
-    /// gpui 后台线程池跑，Rc/Cell 过不去）。render_stage 按舞台显示区刷新，
-    /// 事件循环的 NV12→RGBA 按它缩放输出——769px 的视口出 1080p 纹理纯
-    /// 浪费：转换 CPU、图集纹理、回收压力都按面积走（8.3MB → ~1.3MB）。
-    #[cfg(target_os = "windows")]
-    video_target: Arc<AtomicU64>,
-    /// 转换产物是否按「铺满裁切」（cover）适配：小屏形态为真——Tauri 小屏
-    /// 把视频 `object-cover` 拉满 480×270（竖屏剧在小窗里也不留黑边），
-    /// 其余形态 object-contain 留黑边。转换线程读它，舞台渲染写它。
-    #[cfg(target_os = "windows")]
-    video_cover: Arc<std::sync::atomic::AtomicBool>,
+    /// 视频上屏的像素载体（平台差异的唯一归属，见 [`video_surface`]）。
+    video_surface: video_surface::VideoSurface,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
     /// 切换目标（switching 时 overlay 显示它的封面与标题）。
@@ -379,20 +349,18 @@ pub struct HomeView {
     /// 回来补上；用户自己按停的不欠。
     incognito_owed: bool,
     /// 隐身轮询任务在跑（防重复起；关开关后由下一拍自杀收位）。
-    #[cfg(target_os = "windows")]
     incognito_polling: bool,
     /// 最小化欠下的那次播放（Tauri owedPlay 同构，见 [`minimize`]）：
     /// 最小化瞬间本来在播才记欠，还原补上。
-    #[cfg(target_os = "windows")]
     minimize_owed: bool,
     /// 全屏中（Render 时从 window.is_fullscreen 读，切图标用）。
     fullscreen: bool,
     /// 小屏播放态（Tauri miniScreen 同款）：Some 是进入前的几何快照。
     /// 同窗缩放语义——不换窗口、不暂停，只缩窗口 + 换紧凑控制条。
-    mini: Option<crate::mini::SavedGeometry>,
+    mini: Option<crate::platform::WindowSnapshot>,
     /// 竖屏播放态（Tauri portrait 同款）：Some 是进入前的几何快照。
     /// 与小屏同一套机制（同窗收窄成竖条 + 紧凑控制条竖屏形态）。
-    portrait: Option<crate::mini::SavedGeometry>,
+    portrait: Option<crate::platform::WindowSnapshot>,
     /// 竖屏铺满档（Tauri portraitFull 同款；只在竖屏中有意义）。
     portrait_full: bool,
     /// 上次落窗用的竖屏比例（变化 >1% 才重适配，Tauri REFIT_DELTA 同值）。
@@ -512,14 +480,7 @@ impl HomeView {
             pin_hold: true,
             switching: false,
             frame: None,
-            #[cfg(target_os = "windows")]
-            frame_image: None,
-            #[cfg(target_os = "windows")]
-            retired_images: Vec::new(),
-            #[cfg(target_os = "windows")]
-            video_target: Arc::new(AtomicU64::new(pack_size(1280, 720))),
-            #[cfg(target_os = "windows")]
-            video_cover: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            video_surface: video_surface::VideoSurface::new(),
             stage_diag_at: Cell::new(Instant::now()),
             pending_title: None,
             play_error: None,
@@ -644,9 +605,7 @@ impl HomeView {
             download_range_error: false,
             incognito: prefs.incognito,
             incognito_owed: false,
-            #[cfg(target_os = "windows")]
             incognito_polling: false,
-            #[cfg(target_os = "windows")]
             minimize_owed: false,
             fullscreen: false,
             mini: None,
@@ -690,23 +649,12 @@ impl HomeView {
         view.subscribe_controls(cx);
         view.subscribe_service_events(cx);
         // 隐身偏好跨启动还原（Tauri 挂载时重发 setIncognito(true) 同款）：
-        // 有原生句柄才起轮询，预览/无头环境保持关
-        #[cfg(target_os = "windows")]
-        if view.incognito
-            && let Some(hwnd) = crate::win32::hwnd_of(window)
-        {
-            view.spawn_incognito_poller(hwnd, cx);
-        }
-        #[cfg(not(target_os = "windows"))]
+        // 窗口已就位就起轮询（两端都有藏显原语）
         if view.incognito {
-            view.incognito = false;
+            view.spawn_incognito_poller(window.window_handle(), cx);
         }
-        // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）：同样要原生
-        // 句柄，预览/无头环境与 macOS 不起
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = crate::win32::hwnd_of(window) {
-            view.spawn_minimize_poller(hwnd, cx);
-        }
+        // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）
+        view.spawn_minimize_poller(window.window_handle(), cx);
         // 下载队列恢复：running 视为中断改回 pending（Tauri bootstrap 同款），
         // 然后触发一轮调度把中断的任务续跑起来。库读取失败只记错误不拦
         // 启动——壳的其余功能不依赖队列（显式容错：有日志、只此一处）。
@@ -1052,18 +1000,18 @@ impl HomeView {
     }
 
     /// 引擎事件循环（每个引擎一个，epoch 封口：换剧后陈旧事件自然断流）。
-    /// 纪元与转换目标经 Arc 原子共享——NV12→RGBA 转换挪到 gpui 后台线程池
-    /// （每帧 3-4ms 标量转换 + BGRA 交换不再挤占主线程，30fps ≈ 每秒
-    /// 120-150ms 主线程时间还给它），纪元判定因此必须走在转换**之前**。
+    /// 像素转换（Windows 的 NV12→RGBA）在后台线程池执行、不挤占主线程，
+    /// 纪元判定因此必须走在转换**之前**。
     pub(super) fn spawn_event_loop(
         &mut self,
         epoch: u64,
         epoch_shared: Arc<AtomicU64>,
         mut events: mpsc::Receiver<PlayerEvent>,
-        #[cfg(target_os = "windows")] video_target: Arc<AtomicU64>,
-        #[cfg(target_os = "windows")] video_cover: Arc<std::sync::atomic::AtomicBool>,
         cx: &mut Context<Self>,
     ) {
+        // 转换句柄在循环外取一次：目标尺寸/适配模式是原子共享，后台转换
+        // 直接读，不必每帧回主线程。
+        let convert_handle = self.video_surface.conversion_handle();
         cx.spawn(async move |this, cx| {
             while let Some(first) = events.recv().await {
                 // 纪元先行判定：切剧/离开首页后本循环的剩余事件全部作废，
@@ -1079,7 +1027,7 @@ impl HomeView {
                 // batch 分配；多余的下一轮再收，通道背压照旧作用在解码端。
                 let mut batch = Vec::with_capacity(4);
                 batch.push(first);
-                while batch.len() < 16
+                while batch.len() < 8
                     && let Ok(next) = events.try_recv()
                 {
                     batch.push(next);
@@ -1089,18 +1037,16 @@ impl HomeView {
                     if matches!(event, PlayerEvent::Frame(_)) && Some(i) != last_frame {
                         continue;
                     }
-                    // Windows：NV12→RGBA 在后台线程池转换（不占主线程； awaiting
-                    // 期间主线程照常跑布局/绘制/输入）；macOS 是 CVPixelBuffer
-                    // 零拷贝，无需转换
-                    #[cfg(target_os = "windows")]
+                    // 像素载体转换在后台线程池（Windows 才有活；awaiting 期间
+                    // 主线程照常跑布局/绘制/输入）。macOS 零拷贝，直接返回 None。
+                    // 转换句柄在循环外取一次（原子共享），每帧不再回主线程。
                     let converted = match &event {
                         PlayerEvent::Frame(frame) => {
-                            let target = unpack_size(video_target.load(Ordering::Relaxed));
-                            let cover = video_cover.load(Ordering::Relaxed);
                             let frame = frame.clone();
+                            let handle = convert_handle;
                             cx.background_executor()
                                 .spawn(async move {
-                                    Self::render_image_of(&frame, target, cover)
+                                    video_surface::convert_frame(&handle, &frame)
                                 })
                                 .await
                         }
@@ -1115,10 +1061,7 @@ impl HomeView {
                                 );
                                 return;
                             }
-                            #[cfg(target_os = "windows")]
-                            if let Some(image) = converted {
-                                view.set_frame_image(image);
-                            }
+                            view.video_surface.adopt(converted);
                             view.on_player_event(event, cx);
                         })
                         .is_ok();
@@ -1138,21 +1081,33 @@ impl gpui_kit::Render for HomeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
-        // 取证：render 调用率（64 次一跳）。绘制饿死时这行不涨而事件仍在流。
+        // 出帧节奏取证（每 64 帧一行，debug 级）：本行是**上屏链路唯一的
+        // 量化哨兵**。间隔接近刷新周期（16.7ms@60Hz）说明合成跟得上；
+        // 几十上百毫秒说明主线程在等 GPU——`sample <pid>` 会显示栈停在
+        // `CAMetalLayer nextDrawable` 的信号量上（呈现池耗尽）。
+        // 排障实录：本机开系统动态视频壁纸时 GPU 占用 95%，本行跌到 5fps；
+        // 关掉壁纸后 GPU 7%、回升到 22–28fps。
         static RENDERS: AtomicU32 = AtomicU32::new(0);
+        static LAST_RENDER_MS: AtomicU64 = AtomicU64::new(0);
         let n = RENDERS.fetch_add(1, Ordering::Relaxed);
         if n.is_multiple_of(64) {
-            log::info!("[Home] render #{n}");
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = LAST_RENDER_MS.swap(now, Ordering::Relaxed);
+            if last != 0 {
+                let interval = (now - last) as f64 / 64.0;
+                log::debug!(
+                    "[Home] render #{n}（均 {interval:.1}ms/帧 → {:.1}fps）",
+                    1000.0 / interval.max(1.0)
+                );
+            }
         }
         // 纹理回收口：gpui 的 sprite atlas 按 RenderImage::id 常驻（paint 只增
         // 不删），视频每帧一个新 id——不在这里显式 drop，显存/内存就无上限
         // 涨（实测 5 分钟 5.5GB）。只在 render 时有 Window 句柄可调。
-        #[cfg(target_os = "windows")]
-        for old in std::mem::take(&mut self.retired_images) {
-            if let Err(e) = window.drop_image(old) {
-                log::warn!("[Home] 纹理回收失败: {e}");
-            }
-        }
+        self.video_surface.drop_retired(window);
         // 竖屏重适配：换集/换清晰度后档位尺寸变了就按新比例重落窗（比例
         // 变化 ≤1% 不动）。挂在这里是因为它是「起播完成后」唯一一定有
         // Window 的钩子——起播的异步收尾处拿不到 Window。
@@ -1214,13 +1169,7 @@ impl gpui_kit::Render for HomeView {
         } else {
             None
         };
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
-            .overflow_hidden()
-            .child(match notice {
+        let body = match notice {
                 Some(msg) => v_flex()
                     .flex_1()
                     .items_center()
@@ -1295,6 +1244,13 @@ impl gpui_kit::Render for HomeView {
                         },
                     ))
                     .into_any_element(),
-            })
+            };
+        v_flex()
+            .size_full()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
+            .overflow_hidden()
+            .child(body)
     }
 }

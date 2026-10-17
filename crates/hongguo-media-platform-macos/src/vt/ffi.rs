@@ -37,7 +37,11 @@ pub type CMVideoFormatDescriptionRef = *mut c_void;
 pub type CMSampleBufferRef = *mut c_void;
 pub type CMBlockBufferRef = *mut c_void;
 pub type CVPixelBufferRef = *mut c_void;
+pub type CVPixelBufferPoolRef = *mut c_void;
 pub type CMItemCount = isize;
+
+/// `kCVReturnSuccess`：CoreVideo 返回码 0。
+pub const kCVReturnSuccess: i32 = 0;
 
 /// `CMSampleTimingInfo`（CMSampleBuffer.h）。
 #[repr(C)]
@@ -238,6 +242,9 @@ unsafe extern "C" {
     pub static kCVPixelBufferWidthKey: CFStringRef;
     pub static kCVPixelBufferHeightKey: CFStringRef;
     pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
+    /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧
+    /// 新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）。
+    pub static kCVPixelBufferPoolMinimumBufferCountKey: CFStringRef;
 
     pub fn CVPixelBufferCreate(
         allocator: CFAllocatorRef,
@@ -267,6 +274,20 @@ unsafe extern "C" {
     ) -> usize;
     pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
     -> usize;
+    pub fn CVPixelBufferGetWidthOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize) -> usize;
+    // 输出缓冲池：播放路径按分辨率建一个池反复取 420f 缓冲，避免逐帧
+    // 新建 IOSurface（分配开销比区间换算本身还大）。
+    pub fn CVPixelBufferPoolCreate(
+        allocator: CFAllocatorRef,
+        poolAttributes: CFDictionaryRef,
+        pixelBufferAttributes: CFDictionaryRef,
+        poolOut: *mut CVPixelBufferPoolRef,
+    ) -> i32;
+    pub fn CVPixelBufferPoolCreatePixelBuffer(
+        allocator: CFAllocatorRef,
+        pixelBufferPool: CVPixelBufferPoolRef,
+        pixelBufferOut: *mut CVPixelBufferRef,
+    ) -> i32;
 }
 
 // —— VideoToolbox ——
@@ -282,6 +303,12 @@ unsafe extern "C" {
     pub static kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: CFStringRef;
     /// 解码会话属性：当前用的到底是不是硬件解码器（建会话后查一次留痕）。
     pub static kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder: CFStringRef;
+    /// 解码会话属性：实时播放（不是转码/导出）。
+    ///
+    /// 打开后 VT 允许解码器按实时流取舍（更浅的流水线、更少的参考帧缓存），
+    /// 是播放路径的主流设置（ffmpeg videotoolbox / mpv 同款）。不设时解码器
+    /// 按「离线导出」档跑，帧时延更大——内容帧率一旦逼近吞吐就持续落后。
+    pub static kVTDecompressionPropertyKey_RealTime: CFStringRef;
     pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxKeyFrameInterval: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxFrameDelayCount: CFStringRef;
