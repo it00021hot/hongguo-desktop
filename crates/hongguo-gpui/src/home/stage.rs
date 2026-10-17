@@ -900,11 +900,8 @@ impl super::HomeView {
                         .into_any_element()
                 }),
             )
-            // 选集浮层本体（最顶层；自身拦鼠标，点击不落到捕获层）
-            .children(
-                (self.picker_open && !in_mini && self.engine_ready())
-                    .then(|| self.render_picker(cx)),
-            )
+            // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（Tauri 同址，
+            // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）
             .children(self.login_panel_open.then(|| self.render_login_panel(cx)))
             // 布局哨兵：子层矩形只在这里可见，两次准备绘制之间比对（见字段注释）。

@@ -792,18 +792,28 @@ impl super::HomeView {
                     })
                     .child(
                         // 选集浮层入口（Tauri immersive 同款：ListVideo 图标 +
-                        // 总集数；浮层贴按钮向上弹，见 render_picker）
-                        Button::new("stage-picker")
-                            .icon(gpui_kit::assets::IconName::ListVideo)
-                            .label(match self.now.as_ref() {
-                                Some(now) if now.episode_count > 0 => {
-                                    format!("选集 · 全{}集", now.episode_count)
-                                }
-                                _ => "选集".to_string(),
-                            })
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
+                        // 总集数；浮层**贴按钮**向上弹——Tauri 的 EpisodePicker
+                        // 就挂在按钮 wrapper 里，右缘与按钮对齐）
+                        div()
+                            .id("stage-picker-wrap")
+                            .relative()
+                            .child(
+                                Button::new("stage-picker")
+                                    .icon(gpui_kit::assets::IconName::ListVideo)
+                                    .label(match self.now.as_ref() {
+                                        Some(now) if now.episode_count > 0 => {
+                                            format!("选集 · 全{}集", now.episode_count)
+                                        }
+                                        _ => "选集".to_string(),
+                                    })
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
+                            )
+                            .children(self.picker_open.then(|| {
+                                // deferred：后画的兄弟钮（下载/全屏…）不许盖住浮层
+                                gpui_kit::deferred(self.render_picker(cx)).with_priority(1)
+                            })),
                     )
                     .child(
                         // 下载入口（Tauri download-sheet 同款位置：右段）

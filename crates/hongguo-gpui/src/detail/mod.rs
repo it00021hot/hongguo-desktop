@@ -98,6 +98,8 @@ pub(crate) struct DetailView {
     reviews_total: i64,
     reviews_score: String,
     reviews_score_cnt: i64,
+    /// 剧评标签统计（`extra.filter_tag`：评分卡里「爽剧 26」胶囊行）
+    reviews_tag_stats: Vec<hongguo_api::danmaku::CommentTagStat>,
     reviews_cursor: String,
     reviews_has_more: bool,
     reviews_loading: bool,
@@ -114,7 +116,8 @@ pub(crate) struct DetailView {
     history: Vec<WatchHistoryItem>,
     // —— 剧评发评框（Tauri ReviewComposer：评分 + 表情 + 文本）——
     /// 剧评输入框（懒建：DetailView::new 没有 window，首个 render 里补）。
-    review_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    /// 剧评正文：多行文本域（Tauri ReviewComposer 的 Textarea 同款）
+    review_input: Option<Entity<gpui_kit::component::input::TextareaState>>,
     /// 我的评分（1–5 星，0 = 未选——未选禁发，score 是剧评身份的一部分）。
     review_stars: u8,
     review_hover_stars: u8,
@@ -161,6 +164,7 @@ impl DetailView {
             reviews_total: 0,
             reviews_score: String::new(),
             reviews_score_cnt: 0,
+            reviews_tag_stats: Vec::new(),
             reviews_cursor: String::new(),
             reviews_has_more: false,
             reviews_loading: false,
@@ -229,6 +233,7 @@ impl DetailView {
         self.reviews_total = 0;
         self.reviews_score.clear();
         self.reviews_score_cnt = 0;
+        self.reviews_tag_stats.clear();
         self.reviews_cursor.clear();
         self.reviews_has_more = false;
         self.related = None;
@@ -547,7 +552,10 @@ impl gpui_kit::Render for DetailView {
         // cx.new 创建本视图），首个 render 才有——建一次并挂 Enter 提交。
         if self.review_input.is_none() {
             let input = cx.new(|cx| {
-                gpui_kit::component::input::InputState::new(window, cx).placeholder("写下你的剧评…")
+                gpui_kit::component::input::TextareaState::new(window, cx)
+                    .placeholder("写下你的剧评…")
+                    // Enter 发表、Shift+Enter 换行（Tauri 富文本输入 onEnter 同款）
+                    .submit_on_enter(true)
             });
             cx.subscribe(
                 &input,
@@ -689,6 +697,16 @@ impl DetailView {
         self.reviews_total = 3716;
         self.reviews_score = "8.6".into();
         self.reviews_score_cnt = 12_000;
+        self.reviews_tag_stats = vec![
+            hongguo_api::danmaku::CommentTagStat {
+                tag_name: "修仙世界观宏大".into(),
+                count: 26,
+            },
+            hongguo_api::danmaku::CommentTagStat {
+                tag_name: "爽".into(),
+                count: 18,
+            },
+        ];
         let mut works = fixtures::related_seasons();
         for (i, item) in works.iter_mut().enumerate() {
             let url = format!("preview://related-{i}");

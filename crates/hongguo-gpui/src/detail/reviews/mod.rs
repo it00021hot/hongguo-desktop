@@ -39,6 +39,7 @@ impl DetailView {
                         view.reviews_total = page.page.total;
                         view.reviews_score = page.score.clone();
                         view.reviews_score_cnt = page.score_cnt;
+                        view.reviews_tag_stats = page.tag_stats.clone();
                         view.reviews_has_more = page.page.has_more;
                         view.reviews_cursor = page.page.next_cursor.clone();
                         view.reviews = Arc::new(page.page.items.clone());

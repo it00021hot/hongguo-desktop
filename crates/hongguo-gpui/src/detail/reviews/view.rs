@@ -237,11 +237,16 @@ impl super::super::DetailView {
                             }))
                             .child(Icon::new(gpui_kit::assets::IconName::FaceGrinning).size_4()),
                     )
-                    .children(
-                        self.review_input.as_ref().map(|input| {
-                            Input::new(input).flex_1().h(gpui_kit::px(40.0)).text_sm()
-                        }),
-                    )
+                    .children(self.review_input.as_ref().map(|input| {
+                        // 多行文本域（Tauri ReviewComposer Textarea 同款）：
+                        // 无边框融入卡片，3 行高
+                        gpui_kit::component::input::Textarea::new(input)
+                            .flex_1()
+                            .h(gpui_kit::px(72.0))
+                            .text_sm()
+                            .appearance(false)
+                            .bordered(false)
+                    }))
                     .child(
                         Button::new("review-send")
                             .label(if self.review_sending {
@@ -305,29 +310,67 @@ impl super::super::DetailView {
             .gap_4()
             // 发评框（Tauri ReviewComposer 同位：列表在它下面）
             .child(self.render_review_composer(cx))
-            // 评分摘要（剧均评分 + 评分人数；空 = 暂无评分整行不渲染）
-            .children((!self.reviews_score.is_empty()).then(|| {
-                h_flex()
-                    .items_baseline()
-                    .gap_2()
+            // 评分摘要卡（Tauri ReviewList 同款：边框卡里 大字评分 + 五星 +
+            // 人数 + 标签统计胶囊；无评分时退化为五星占位 + 暂无评分）
+            .child({
+                let has_score = !self.reviews_score.is_empty();
+                let star = crate::tokens::star(theme.mode);
+                div()
+                    .rounded(gpui_kit::px(8.0))
+                    .border_1()
+                    .border_color(theme.border)
+                    .px_4()
+                    .py_3()
                     .child(
-                        div()
-                            .text_xl()
-                            .font_weight(gpui_kit::FontWeight::BOLD)
-                            .text_color(crate::tokens::star(theme.mode))
-                            .child(format!(
-                                "{:.1}",
-                                self.reviews_score.parse::<f64>().unwrap_or(0.0)
-                            )),
+                        h_flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_3()
+                            .children(has_score.then(|| {
+                                h_flex()
+                                    .items_baseline()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(gpui_kit::px(30.0))
+                                            .line_height(gpui_kit::relative(1.0))
+                                            .font_weight(gpui_kit::FontWeight::BOLD)
+                                            .text_color(star)
+                                            .child(format!(
+                                                "{:.1}",
+                                                self.reviews_score.parse::<f64>().unwrap_or(0.0)
+                                            )),
+                                    )
+                                    .child(score_stars(&self.reviews_score, theme))
+                            }))
+                            .children((!has_score).then(|| score_stars("0", theme)))
+                            .child(div().text_sm().text_color(theme.muted_foreground).child(
+                                if has_score && self.reviews_score_cnt > 0 {
+                                    format!(
+                                        "{}人评分",
+                                        DetailView::fmt_count(self.reviews_score_cnt)
+                                    )
+                                } else if has_score {
+                                    "剧均评分".to_string()
+                                } else {
+                                    "暂无评分".to_string()
+                                },
+                            ))
+                            .children(self.reviews_tag_stats.iter().map(|tag| {
+                                div()
+                                    .rounded_full()
+                                    .bg(theme.muted)
+                                    .px_3()
+                                    .py_1()
+                                    .text_xs()
+                                    .text_color(theme.foreground)
+                                    .child(SharedString::from(format!(
+                                        "{} {}",
+                                        tag.tag_name, tag.count
+                                    )))
+                            })),
                     )
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(
-                        if self.reviews_score_cnt > 0 {
-                            format!("{}人评分", DetailView::fmt_count(self.reviews_score_cnt))
-                        } else {
-                            "剧均评分".to_string()
-                        },
-                    ))
-            }))
+            })
             // 剧评列表（Tauri ReviewList 同款：头像 + 昵称 + 评分 + 时间 +
             // 正文 + 点赞/回复/删除 + 回复线程（懒加载）与行内回复框；
             // 评分行只有剧评有——单集评论 score 恒空）
@@ -398,28 +441,28 @@ impl super::super::DetailView {
                                         h_flex()
                                             .items_center()
                                             .gap_2()
+                                            // Tauri ReviewList 同款：五星 + 绝对日期 +
+                                            // 评分后缀文案（「观看N小时后点评」）
                                             .children((!c.score.is_empty()).then(|| {
-                                                div()
-                                                    .px_1p5()
-                                                    .rounded(gpui_kit::px(4.0))
-                                                    .text_xs()
-                                                    .bg(crate::tokens::star(theme.mode)
-                                                        .opacity(0.15))
-                                                    .text_color(crate::tokens::star(theme.mode))
-                                                    .child(SharedString::from(format!(
-                                                        "{}分",
-                                                        c.score
-                                                    )))
+                                                score_stars(&c.score, theme)
                                             }))
                                             .child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(theme.muted_foreground)
-                                                    .child(SharedString::from(
-                                                        crate::home::fmt::relative_time(
-                                                            c.create_time,
-                                                        ),
-                                                    )),
+                                                    .child(SharedString::from(review_date(
+                                                        c.create_time,
+                                                    ))),
+                                            )
+                                            .children(
+                                                (!c.score_suffix_text.is_empty()).then(|| {
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(SharedString::from(
+                                                            c.score_suffix_text.clone(),
+                                                        ))
+                                                }),
                                             ),
                                     )
                                     .child(
@@ -670,6 +713,50 @@ impl super::super::DetailView {
             )
             .into_any_element()
     }
+}
+
+/// 十分制评分 → 五星（Tauri `ScoreStars` 同款：整数星实心、余下 ≥0.5 半星
+/// 用 50% 透明实心星、空位用描边星）。
+fn score_stars(score: &str, theme: &gpui_kit::component::Theme) -> gpui_kit::AnyElement {
+    let value = (score.parse::<f64>().unwrap_or(0.0) / 2.0).clamp(0.0, 5.0);
+    let filled = value.floor() as u32;
+    let half = value - value.floor() >= 0.5;
+    let star = crate::tokens::star(theme.mode);
+    h_flex()
+        .items_center()
+        .gap(gpui_kit::px(1.0))
+        .children((1..=5u32).map(|n| {
+            if n <= filled {
+                Icon::new(gpui_kit::assets::IconName::StarFill)
+                    .size_3()
+                    .text_color(star)
+                    .into_any_element()
+            } else if n == filled + 1 && half {
+                Icon::new(gpui_kit::assets::IconName::StarFill)
+                    .size_3()
+                    .text_color(star.opacity(0.5))
+                    .into_any_element()
+            } else {
+                Icon::new(gpui_kit::assets::IconName::Star)
+                    .size_3()
+                    .text_color(theme.muted_foreground.opacity(0.4))
+                    .into_any_element()
+            }
+        }))
+        .into_any_element()
+}
+
+/// 剧评时间 → 绝对日期（Tauri `toLocaleDateString()` 同款，`2026/10/15`）。
+fn review_date(ts_ms: i64) -> String {
+    if ts_ms <= 0 {
+        return String::new();
+    }
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(ts_ms)
+        .single()
+        .map(|dt| dt.format("%Y/%m/%d").to_string())
+        .unwrap_or_default()
 }
 
 fn render_review_text(text: &str) -> gpui_kit::AnyElement {

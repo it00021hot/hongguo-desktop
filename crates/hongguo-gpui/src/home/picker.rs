@@ -156,6 +156,9 @@ impl super::HomeView {
         };
         let start = active_group as u32 * GROUP_SIZE + 1;
         let end = (start + GROUP_SIZE - 1).min(total);
+        // 系列剧 tab 的计数角标（Tauri `seasons.length` 同款：浮层打开时
+        // 系列列表已拉过，非空才显示）
+        let season_count = self.seasons_of().1.len();
 
         // 头部：选集 | 系列剧 双 tab（hgplayer 同款）+ 全 N 集 + 收起
         let header = h_flex()
@@ -168,6 +171,7 @@ impl super::HomeView {
                     .child(self.picker_tab(
                         "选集",
                         !self.picker_tab_series,
+                        None,
                         cx.listener(|this, _, _, cx| {
                             this.picker_tab_series = false;
                             cx.notify();
@@ -176,6 +180,7 @@ impl super::HomeView {
                     .child(self.picker_tab(
                         "系列剧",
                         self.picker_tab_series,
+                        (season_count > 0).then_some(season_count),
                         cx.listener(|this, _, _, cx| {
                             this.picker_tab_series = true;
                             if let Some(now) = this.now.clone() {
@@ -286,22 +291,16 @@ impl super::HomeView {
                     }))
             }));
 
-        let hint = div()
-            .mt_3()
-            .pt_2p5()
-            .border_t_1()
-            .border_color(gpui_kit::rgba(0x262626ff))
-            .text_xs()
-            .text_color(gpui_kit::rgba(0x737373ff))
-            .child("选定集数即选中本剧：单击画面也可选中，滚轮/↑↓ 切集，Esc 退出");
-
         v_flex()
             .id("picker-panel")
             .absolute()
-            .right_4()
-            .bottom_12()
-            .w(gpui_kit::px(472.0))
-            .max_h(gpui_kit::relative(0.62))
+            // 贴「选集」按钮向上弹（Tauri EpisodePicker 挂按钮 wrapper 同款：
+            // 右缘与按钮对齐、间距 8）
+            .right_0()
+            .bottom(gpui_kit::relative(1.0))
+            .mb(gpui_kit::px(8.0))
+            .w(gpui_kit::px(452.0))
+            .max_h(gpui_kit::px(440.0))
             .p_4()
             .rounded(gpui_kit::px(12.0))
             .bg(gpui_kit::rgba(0x171717f2))
@@ -327,7 +326,6 @@ impl super::HomeView {
                     .then_some(group_tabs)
                     .map(|tabs| div().child(tabs).child(grid).into_any_element())
             })
-            .children((!self.picker_tab_series).then_some(hint))
             .into_any_element()
     }
 
@@ -336,6 +334,7 @@ impl super::HomeView {
         &self,
         label: &'static str,
         active: bool,
+        badge: Option<usize>,
         on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
     ) -> gpui_kit::AnyElement {
         div()
@@ -368,7 +367,22 @@ impl super::HomeView {
                 )
             })
             .on_click(on_click)
-            .child(label)
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(label)
+                    .children(badge.map(|n| {
+                        // Tauri Badge：bg-red-500 圆角胶囊、白字
+                        div()
+                            .rounded_full()
+                            .bg(gpui_kit::rgb(0xef4444))
+                            .px_1p5()
+                            .text_size(gpui_kit::px(11.0))
+                            .text_color(gpui_kit::rgb(0xffffff))
+                            .child(SharedString::from(n.to_string()))
+                    })),
+            )
             .into_any_element()
     }
 
@@ -615,7 +629,10 @@ impl super::HomeView {
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_picker(&mut self, cx: &mut Context<Self>) {
         self.picker_open = true;
-        self.picker_tab_series = true;
+        // 默认系列剧 tab（验季卡片/预约）；HONGGUO_PICKER_TAB=grid 拍选集网格
+        self.picker_tab_series = std::env::var("HONGGUO_PICKER_TAB")
+            .map(|v| v != "grid")
+            .unwrap_or(true);
         self.controls_until = Some(Instant::now() + Duration::from_secs(CONTROLS_HOLD_SECS));
         if let Some(now) = self.now.clone() {
             self.load_related_seasons(now.series_id.clone(), cx);
