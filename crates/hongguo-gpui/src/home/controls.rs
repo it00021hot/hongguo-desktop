@@ -15,7 +15,6 @@ use gpui_kit::component::button::ButtonCustomVariant;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{Window, div};
@@ -109,6 +108,42 @@ impl gpui_kit::RenderOnce for SkinnedInput {
 /// 给播放器 chrome 的输入框套上皮肤（`Input` 的 builder 照常配）。
 pub(super) fn skinned_input(input: gpui_kit::component::input::Input) -> SkinnedInput {
     SkinnedInput { inner: input }
+}
+
+/// 控制条上方**舞台居中**的菜单定位层（倍速/清晰度/弹幕设置/选集统一用）：
+/// 挂控制条树内（去掉按钮包装层的 `.relative()` 后，absolute 锚定控制条
+/// 根、横跨舞台），`bottom(relative(1.0))` 悬在整条控制栏上方，居中交给
+/// `justify_center`——此前各面板贴各自按钮锚定，打开位置各不相同（用户
+/// 意见：统一居中）。层本体不设命中盒：卡片外的空带让点击落到舞台捕获
+/// 层，保持「点外关闭」语义。
+pub(super) fn centered_over_controls(card: gpui_kit::AnyElement) -> gpui_kit::AnyElement {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom(gpui_kit::relative(1.0))
+        .mb_3()
+        .flex()
+        .justify_center()
+        .child(card)
+        .into_any_element()
+}
+
+/// 菜单卡（hgplayer 皮肤，红线 11 豁免域）：黑 85% 底 + 白 10% 描边 +
+/// rounded 12，与弹幕设置面板同款。卡片自己拦下鼠标与滚轮——点击不许
+/// 穿透成舞台暂停/切剧，滚轮不许冒泡成切剧。
+pub(super) fn chrome_menu_card(min_w: gpui_kit::Pixels) -> gpui_kit::Div {
+    div()
+        .min_w(min_w)
+        .rounded(gpui_kit::px(12.0))
+        .bg(gpui_kit::rgba(0x000000d9))
+        .border_1()
+        .border_color(gpui_kit::rgba(0xffffff1a))
+        .on_mouse_down(
+            gpui_kit::MouseButton::Left,
+            |_, _, cx: &mut gpui_kit::App| cx.stop_propagation(),
+        )
+        .on_scroll_wheel(|_, _, cx: &mut gpui_kit::App| cx.stop_propagation())
 }
 
 /// 进度拖动的拖拽载荷（`on_drag`/`on_drag_move` 按类型配对）。
@@ -523,28 +558,6 @@ impl super::HomeView {
         } else {
             IconName::Pause
         };
-        // 倍速菜单的点击回调拿不到 view 的 Context，经实体句柄回写
-        let view = cx.entity();
-        // 开态回写专用句柄：rate_menu 闭包会把 view 按值收进各 item
-        let view_open = view.clone();
-        let rate = self.rate;
-        let rate_menu = move |menu: gpui_kit::component::menu::PopupMenu,
-                              _window: &mut Window,
-                              _cx: &mut Context<gpui_kit::component::menu::PopupMenu>|
-              -> gpui_kit::component::menu::PopupMenu {
-            let mut menu = menu.label(crate::i18n::t("player.playbackRate"));
-            for r in Self::RATES {
-                let view = view.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(Self::fmt_rate(r))
-                        .checked(r == rate)
-                        .on_click(move |_, _window, cx| {
-                            view.update(cx, |v, cx| v.set_rate(r, cx));
-                        }),
-                );
-            }
-            menu
-        };
         v_flex()
             .id("stage-controls")
             .absolute()
@@ -835,35 +848,31 @@ impl super::HomeView {
                     // 止的右组贴控制栏右缘，不与左组顺排
                     .child(div().flex_1())
                     .child(
+                        // 倍速菜单入口：点钮开合，开着期间控制条常显（panel_open）。
+                        // 面板不再挂在按钮包装层——gpui 的 absolute 锚定**父级**
+                        // 边界（Taffy 没有「最近定位祖先」），塞进包装层只能锚到
+                        // 32px 小盒；统一在控制条根的子节点上舞台居中（见本函数尾）。
                         Button::new("stage-rate")
                             .icon(gpui_kit::assets::IconName::Gauge)
                             .label(Self::fmt_rate(self.rate))
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
-                            .dropdown_menu(rate_menu)
-                            // 菜单开态回写视图：开着期间控制条常显（panel_open），
-                            // 不然 3s 一到菜单跟着控制条一起被收走
-                            .on_open_change({
-                                let view = view_open.clone();
-                                move |open, _, cx| {
-                                    view.update(cx, |v, cx| {
-                                        v.rate_menu_open = *open;
-                                        cx.notify();
-                                    });
-                                }
-                            }),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.rate_menu_open = !this.rate_menu_open;
+                                cx.notify();
+                            })),
                     )
                     .child({
-                        // 清晰度菜单（Tauri 同款）：自动 + 本集全部档位；本地集
-                        // 没有档位表，按钮置灰并保持可见（不渲染会让用户以为
-                        // 「这个功能本来就没有」，在线流那集它又出现了）
+                        // 清晰度菜单入口（舞台居中卡，见 render_definition_menu）：
+                        // 自动 + 本集全部档位；本地集没有档位表，按钮置灰并保持
+                        // 可见（不渲染会让用户以为「这个功能本来就没有」，在线
+                        // 流那集它又出现了）
                         let defs = self
                             .now
                             .as_ref()
                             .map(|n| n.definitions.clone())
                             .unwrap_or_default();
-                        let current = self.now.as_ref().map(|n| n.definition).unwrap_or(0);
                         let label = match self.now.as_ref() {
                             Some(n) if n.definition > 0 => format!("{}P", n.definition),
                             _ => crate::i18n::t("player.definitionAuto"),
@@ -882,96 +891,41 @@ impl super::HomeView {
                                 .tooltip(crate::i18n::t("player.definitionLocalOnly"))
                                 .into_any_element()
                         } else {
-                            let view = cx.entity();
-                            let view_open = view.clone();
                             Button::new("stage-definition")
                                 .icon(gpui_kit::assets::IconName::MonitorPlay)
                                 .label(label)
                                 .custom(chrome_variant(cx))
                                 .cursor_pointer()
                                 .small()
-                                .dropdown_menu(move |menu, _window, _cx| {
-                                    let mut menu = menu.label(crate::i18n::t("player.definition"));
-                                    menu = menu.item(
-                                        PopupMenuItem::new(crate::i18n::t("player.definitionAuto"))
-                                            .checked(current == 0)
-                                            .on_click({
-                                                let view = view.clone();
-                                                move |_, _, cx| {
-                                                    view.update(cx, |v, cx| {
-                                                        v.switch_definition(None, cx)
-                                                    })
-                                                }
-                                            }),
-                                    );
-                                    for d in &defs {
-                                        let view = view.clone();
-                                        let value = d.value;
-                                        // 竖屏剧的宽高是反的，只报分辨率会误导
-                                        let lbl = if d.height > d.width {
-                                            format!("{}P（{}×{}）", d.value, d.width, d.height)
-                                        } else {
-                                            format!("{}P", d.value)
-                                        };
-                                        menu = menu.item(
-                                            PopupMenuItem::new(lbl)
-                                                .checked(d.value == current)
-                                                .on_click(move |_, _, cx| {
-                                                    let view = view.clone();
-                                                    view.update(cx, |v, cx| {
-                                                        v.switch_definition(Some(value), cx)
-                                                    })
-                                                }),
-                                        );
-                                    }
-                                    menu
-                                })
-                                // 菜单开态回写视图（倍速菜单同款）：开着常显。
-                                // 挂在 dropdown_menu 返回的 Popover 上，不是 Button
-                                .on_open_change({
-                                    let view = view_open.clone();
-                                    move |open, _, cx| {
-                                        view.update(cx, |v, cx| {
-                                            v.definition_menu_open = *open;
-                                            cx.notify();
-                                        });
-                                    }
-                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.definition_menu_open = !this.definition_menu_open;
+                                    cx.notify();
+                                }))
                                 .into_any_element()
                         }
                     })
                     .child(
                         // 选集浮层入口（Tauri immersive 同款：ListVideo 图标 +
-                        // 总集数；浮层**贴按钮**向上弹——Tauri 的 EpisodePicker
-                        // 就挂在按钮 wrapper 里，右缘与按钮对齐）
-                        div()
-                            .id("stage-picker-wrap")
-                            .relative()
-                            .child(
-                                Button::new("stage-picker")
-                                    .icon(gpui_kit::assets::IconName::ListVideo)
-                                    .label(match self.now.as_ref() {
-                                        Some(now) if now.episode_count > 0 => {
-                                            format!(
-                                                "{} · {}",
-                                                crate::i18n::t("player.episodes"),
-                                                crate::i18n::tf(
-                                                    "player.totalEpisodes",
-                                                    &[("count", &now.episode_count.to_string())],
-                                                )
-                                            )
-                                        }
-                                        _ => crate::i18n::t("player.episodes"),
-                                    })
-                                    .custom(chrome_variant(cx))
-                                    .cursor_pointer()
-                                    .small()
-                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
-                            )
-                            .children(self.picker_open.then(|| {
-                                // deferred：后画的兄弟钮（下载/全屏…）不许盖住浮层
-                                gpui_kit::deferred(self.render_picker(cx)).with_priority(1)
-                            })),
+                        // 总集数；浮层在控制条根的子节点上舞台居中——见本函数尾）
+                        Button::new("stage-picker")
+                            .icon(gpui_kit::assets::IconName::ListVideo)
+                            .label(match self.now.as_ref() {
+                                Some(now) if now.episode_count > 0 => {
+                                    format!(
+                                        "{} · {}",
+                                        crate::i18n::t("player.episodes"),
+                                        crate::i18n::tf(
+                                            "player.totalEpisodes",
+                                            &[("count", &now.episode_count.to_string())],
+                                        )
+                                    )
+                                }
+                                _ => crate::i18n::t("player.episodes"),
+                            })
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
                     )
                     .child(
                         // 下载入口（Tauri download-sheet 同款位置：右段）
@@ -1001,7 +955,8 @@ impl super::HomeView {
                     )
                     .child({
                         // 弹幕设置：B 站同款「弹」字方框 + 齿轮角标（自绘，见
-                        // `player_icons`）+ 上方面板（透明度/字号/密度/显示区域）。
+                        // `player_icons`）+ 上方面板（透明度/字号/密度/显示区域，
+                        // 在控制条根的子节点上舞台居中——见本函数尾）。
                         // 开合 = 点它（Tauri 同款点击语义），点外部由舞台捕获层收
                         // （picker 同款，见 stage 层）——原先的 hover 并集开合指针
                         // 一晃就收，滑杆根本没法拖。
@@ -1009,82 +964,29 @@ impl super::HomeView {
                         // 开=纯白、关=70% 白，hover 铺 20% 白——组件 `Button` 的
                         // 自绘图标塞不进去（.icon 只收 Icon），且 `open` 态会带一块
                         // 常驻底色，与 Tauri 真机并排对拍不一致。
+                        let color = if self.dm_panel_open {
+                            gpui_kit::rgba(0xffffffff)
+                        } else {
+                            gpui_kit::rgba(0xffffffb3)
+                        };
                         div()
-                            .id("dm-settings")
-                            .relative()
-                            .child({
-                                let color = if self.dm_panel_open {
-                                    gpui_kit::rgba(0xffffffff)
-                                } else {
-                                    gpui_kit::rgba(0xffffffb3)
-                                };
-                                div()
-                                    .id("stage-dm-settings")
-                                    .flex()
-                                    .w(gpui_kit::px(32.0))
-                                    .h(gpui_kit::px(28.0))
-                                    .justify_center()
-                                    .items_center()
-                                    .rounded(gpui_kit::px(6.0))
-                                    .cursor_pointer()
-                                    .role(gpui_kit::Role::Button)
-                                    .aria_label(crate::i18n::t("player.danmakuSettings"))
-                                    .text_color(color)
-                                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.dm_panel_open = !this.dm_panel_open;
-                                        cx.notify();
-                                    }))
-                                    .child(player_icons::danmaku_settings(color))
-                            })
-                            .children(self.dm_panel_open.then(|| {
-                                // Tauri 面板几何/皮肤同款：w-60(240) / p-4 / gap-4，
-                                // 黑 85% 底 + 白 10% 描边（此前 pt-3 pb-4 gap-3、
-                                // 无描边，行距比 Tauri 紧一档）
-                                v_flex()
-                                    .id("dm-settings-panel")
-                                    .absolute()
-                                    .right_0()
-                                    // 贴着按钮上沿（bottom-full）再抬 12px
-                                    //（Tauri 面板 mb-3 同款留白）
-                                    .bottom(gpui_kit::relative(1.0))
-                                    .mb_3()
-                                    .w(gpui_kit::px(240.0))
-                                    .gap_4()
-                                    .p_4()
-                                    .rounded(gpui_kit::px(12.0))
-                                    .bg(gpui_kit::rgba(0x000000d9))
-                                    .border_1()
-                                    .border_color(gpui_kit::rgba(0xffffff1a))
-                                    .on_mouse_down(
-                                        gpui_kit::MouseButton::Left,
-                                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                                    )
-                                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                                    .child(self.dm_setting_row(
-                                        crate::i18n::t("player.danmakuOpacity"),
-                                        &self.dm_opacity_slider,
-                                        self.dm_opacity,
-                                    ))
-                                    .child(self.dm_setting_row(
-                                        // Tauri 面板同文案（「字体大小」）
-                                        crate::i18n::t("player.danmakuFontSize"),
-                                        &self.dm_font_slider,
-                                        self.dm_font_scale,
-                                    ))
-                                    .child(self.dm_setting_row(
-                                        crate::i18n::t("player.danmakuDensity"),
-                                        &self.dm_density_slider,
-                                        self.dm_density,
-                                    ))
-                                    .child(self.dm_setting_row(
-                                        crate::i18n::t("player.danmakuArea"),
-                                        &self.dm_area_slider,
-                                        self.dm_area,
-                                    ))
-                                    .into_any_element()
+                            .id("stage-dm-settings")
+                            .flex()
+                            .w(gpui_kit::px(32.0))
+                            .h(gpui_kit::px(28.0))
+                            .justify_center()
+                            .items_center()
+                            .rounded(gpui_kit::px(6.0))
+                            .cursor_pointer()
+                            .role(gpui_kit::Role::Button)
+                            .aria_label(crate::i18n::t("player.danmakuSettings"))
+                            .text_color(color)
+                            .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dm_panel_open = !this.dm_panel_open;
+                                cx.notify();
                             }))
-                            .into_any_element()
+                            .child(player_icons::danmaku_settings(color))
                     })
                     .child({
                         // 弹幕开关（B 站同款「弹」字方框，关=斜杠+压暗）。
@@ -1283,7 +1185,220 @@ impl super::HomeView {
                     )
                     .into_any_element(),
             )
+            // 菜单居中层：四个点击式菜单（倍速/清晰度/弹幕设置/选集）的
+            // 面板挂**控制条根**的直接子节点——gpui 的 absolute 锚定父级边界
+            // （Taffy 没有「最近定位祖先」），塞进按钮包装层只能锚到 32px
+            // 小盒；这里锚到横跨舞台的控制条根，经 [`centered_over_controls`]
+            // 统一舞台居中。deferred：后画的兄弟钮不许盖住面板。
+            .children(
+                self.rate_menu_open
+                    .then(|| gpui_kit::deferred(self.render_rate_menu(cx)).with_priority(1)),
+            )
+            .children(
+                self.definition_menu_open
+                    .then(|| gpui_kit::deferred(self.render_definition_menu(cx)).with_priority(1)),
+            )
+            .children(self.dm_panel_open.then(|| {
+                // Tauri 面板几何/皮肤同款：w-60(240) / p-4 / gap-4，黑 85% 底
+                // + 白 10% 描边
+                let card = v_flex()
+                    .id("dm-settings-panel")
+                    .w(gpui_kit::px(240.0))
+                    .gap_4()
+                    .p_4()
+                    .rounded(gpui_kit::px(12.0))
+                    .bg(gpui_kit::rgba(0x000000d9))
+                    .border_1()
+                    .border_color(gpui_kit::rgba(0xffffff1a))
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                    )
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .child(self.dm_setting_row(
+                        crate::i18n::t("player.danmakuOpacity"),
+                        &self.dm_opacity_slider,
+                        self.dm_opacity,
+                    ))
+                    .child(self.dm_setting_row(
+                        // Tauri 面板同文案（「字体大小」）
+                        crate::i18n::t("player.danmakuFontSize"),
+                        &self.dm_font_slider,
+                        self.dm_font_scale,
+                    ))
+                    .child(self.dm_setting_row(
+                        crate::i18n::t("player.danmakuDensity"),
+                        &self.dm_density_slider,
+                        self.dm_density,
+                    ))
+                    .child(self.dm_setting_row(
+                        crate::i18n::t("player.danmakuArea"),
+                        &self.dm_area_slider,
+                        self.dm_area,
+                    ));
+                gpui_kit::deferred(centered_over_controls(card.into_any_element())).with_priority(1)
+            }))
+            .children(
+                self.picker_open
+                    .then(|| gpui_kit::deferred(self.render_picker(cx)).with_priority(1)),
+            )
             .into_any_element()
+    }
+
+    /// 菜单卡标题行（组件 PopupMenu label 同位）：白 60% 小字。
+    fn chrome_menu_title(label: impl Into<gpui_kit::SharedString>) -> impl gpui_kit::IntoElement {
+        div()
+            .px_3()
+            .pt(gpui_kit::px(6.0))
+            .pb(gpui_kit::px(4.0))
+            .text_xs()
+            .text_color(gpui_kit::rgba(0xffffff99))
+            .child(label.into())
+    }
+
+    /// 倍速菜单（舞台居中卡）：此前走组件 dropdown——贴按钮锚定、亮色主题
+    /// 下还是主题弹层，与弹幕设置/选集的 hgplayer 面板形态不一、位置各异，
+    /// 统一为 [`Self::chrome_menu_card`] 居中卡。选择即关闭（组件 PopupMenu
+    /// 同语义）。
+    fn render_rate_menu(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let rate = self.rate;
+        let view = cx.entity();
+        let card = chrome_menu_card(gpui_kit::px(128.0))
+            .p_1p5()
+            .child(Self::chrome_menu_title(crate::i18n::t(
+                "player.playbackRate",
+            )))
+            .children(Self::RATES.map(|r| {
+                let view = view.clone();
+                div()
+                    .id(gpui_kit::ElementId::from(format!("stage-rate-{r}")))
+                    .h(gpui_kit::px(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .rounded(gpui_kit::px(6.0))
+                    .px_3()
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(if r == rate {
+                        gpui_kit::rgb(0xffffff)
+                    } else {
+                        gpui_kit::rgba(0xffffffe6)
+                    })
+                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
+                    .on_click(move |_, _, cx| {
+                        view.update(cx, |v, cx| {
+                            v.set_rate(r, cx);
+                            v.rate_menu_open = false;
+                        });
+                    })
+                    .child(Self::fmt_rate(r))
+                    .when(r == rate, |row| {
+                        row.child(
+                            Icon::new(IconName::Check)
+                                .small()
+                                .text_color(gpui_kit::rgb(0xffffff)),
+                        )
+                    })
+            }));
+        centered_over_controls(card.into_any_element())
+    }
+
+    /// 清晰度菜单（舞台居中卡）：自动 + 本集全部档位，结构同 Tauri 旧
+    /// dropdown 内容（竖屏剧补宽高标注），壳统一见 [`Self::render_rate_menu`]。
+    fn render_definition_menu(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let defs = self
+            .now
+            .as_ref()
+            .map(|n| n.definitions.clone())
+            .unwrap_or_default();
+        let current = self.now.as_ref().map(|n| n.definition).unwrap_or(0);
+        let view = cx.entity();
+        let mut rows: Vec<gpui_kit::AnyElement> = Vec::with_capacity(defs.len() + 1);
+        let auto_view = view.clone();
+        rows.push(
+            div()
+                .id("stage-definition-auto")
+                .h(gpui_kit::px(32.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .rounded(gpui_kit::px(6.0))
+                .px_3()
+                .cursor_pointer()
+                .text_sm()
+                .text_color(if current == 0 {
+                    gpui_kit::rgb(0xffffff)
+                } else {
+                    gpui_kit::rgba(0xffffffe6)
+                })
+                .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
+                .on_click(move |_, _, cx| {
+                    auto_view.update(cx, |v, cx| {
+                        v.switch_definition(None, cx);
+                        v.definition_menu_open = false;
+                    });
+                })
+                .child(crate::i18n::t("player.definitionAuto"))
+                .when(current == 0, |row| {
+                    row.child(
+                        Icon::new(IconName::Check)
+                            .small()
+                            .text_color(gpui_kit::rgb(0xffffff)),
+                    )
+                })
+                .into_any_element(),
+        );
+        for d in &defs {
+            let view = view.clone();
+            let value = d.value;
+            // 竖屏剧的宽高是反的，只报分辨率会误导
+            let lbl = if d.height > d.width {
+                format!("{}P（{}×{}）", d.value, d.width, d.height)
+            } else {
+                format!("{}P", d.value)
+            };
+            rows.push(
+                div()
+                    .id(gpui_kit::ElementId::from(format!(
+                        "stage-definition-{value}"
+                    )))
+                    .h(gpui_kit::px(32.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .rounded(gpui_kit::px(6.0))
+                    .px_3()
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(if value == current {
+                        gpui_kit::rgb(0xffffff)
+                    } else {
+                        gpui_kit::rgba(0xffffffe6)
+                    })
+                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
+                    .on_click(move |_, _, cx| {
+                        view.update(cx, |v, cx| {
+                            v.switch_definition(Some(value), cx);
+                            v.definition_menu_open = false;
+                        });
+                    })
+                    .child(lbl)
+                    .when(value == current, |row| {
+                        row.child(
+                            Icon::new(IconName::Check)
+                                .small()
+                                .text_color(gpui_kit::rgb(0xffffff)),
+                        )
+                    })
+                    .into_any_element(),
+            );
+        }
+        let card = chrome_menu_card(gpui_kit::px(148.0))
+            .p_1p5()
+            .child(Self::chrome_menu_title(crate::i18n::t("player.definition")))
+            .children(rows);
+        centered_over_controls(card.into_any_element())
     }
 
     /// 进度轨道（自绘）：细条填充按播放位置实时走（帧事件驱动重渲染）；

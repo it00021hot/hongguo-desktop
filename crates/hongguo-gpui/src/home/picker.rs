@@ -295,14 +295,11 @@ impl super::HomeView {
                     }))
             }));
 
-        v_flex()
+        // 定位层（舞台居中）+ 浮层卡：包装层已不带 .relative()，absolute 锚
+        // 到控制条根、横跨舞台，`bottom(relative(1.0))` 悬在整条控制栏上方，
+        // 居中交给 justify_center（用户对齐意见：各菜单位置统一居中）
+        let panel = v_flex()
             .id("picker-panel")
-            .absolute()
-            // 贴「选集」按钮向上弹（Tauri EpisodePicker 挂按钮 wrapper 同款：
-            // 右缘与按钮对齐、间距 8）
-            .right_0()
-            .bottom(gpui_kit::relative(1.0))
-            .mb(gpui_kit::px(8.0))
             .w(gpui_kit::px(452.0))
             .max_h(gpui_kit::px(440.0))
             .p_4()
@@ -329,8 +326,8 @@ impl super::HomeView {
                 (group_count > 1)
                     .then_some(group_tabs)
                     .map(|tabs| div().child(tabs).child(grid).into_any_element())
-            })
-            .into_any_element()
+            });
+        super::controls::centered_over_controls(panel.into_any_element())
     }
 
     /// 选集浮层头部的一个 tab（红条高亮激活态）。

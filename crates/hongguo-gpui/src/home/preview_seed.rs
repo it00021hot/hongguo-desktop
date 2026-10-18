@@ -66,6 +66,8 @@ impl HomeView {
                 self.dm_panel_open = true;
                 self.set_input(&self.danmaku_input, "名场面来了", window, cx);
             }
+            "rate-menu" => self.rate_menu_open = true,
+            "definition-menu" => self.definition_menu_open = true,
             "mini" => {
                 self.mini = Some(crate::mini::preview_geometry());
                 crate::mini::set_active(true);
