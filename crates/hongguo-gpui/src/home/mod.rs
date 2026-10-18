@@ -85,6 +85,7 @@ pub(crate) mod minimize;
 pub(crate) mod overlay;
 pub(crate) mod picker;
 pub(crate) mod playback;
+pub(crate) mod player_icons;
 pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;

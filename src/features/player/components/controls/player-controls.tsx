@@ -3,20 +3,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Download,
   Eye,
-  Frame,
   Gauge,
   ListVideo,
-  Maximize,
-  Minimize,
   MonitorPlay,
   Pause,
-  PictureInPicture2,
   Play,
   RectangleVertical,
-  Settings2,
   SkipBack,
   SkipForward,
-  MessageSquareText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,6 +33,13 @@ import { EpisodePicker } from '../episode-picker';
 import { ChromeSurface } from '../chrome-surface';
 import type { Episode, VideoDefinition } from '@/service/schema';
 import { DanmakuSendBox } from './danmaku-send-box';
+import {
+  DanmakuSettingsIcon,
+  DanmakuSwitchIcon,
+  FullscreenIcon,
+  MiniWindowIcon,
+  WebFullscreenIcon,
+} from './player-icons';
 import { ScrubBar } from './scrub-bar';
 import { DisplaySlider } from './sliders';
 import { VolumePopup } from './volume-popup';
@@ -506,19 +507,16 @@ export function PlayerControls({
           {/* 小屏播放（对齐 hgplayer）：同一窗口缩成 480×270 落屏幕右下角，
               播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
           <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
-            <PictureInPicture2 className="size-4" />
+            <MiniWindowIcon />
           </IconButton>
 
-          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
+          {/* 弹幕设置：「弹」字方框 + 齿轮角标 + 上方浮层面板 */}
           <div ref={danmakuPanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.danmakuSettings')}
               onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
             >
-              <Settings2
-                className={cn('size-4', danmakuPanelOpen ? 'text-white' : 'text-white/70')}
-                aria-hidden
-              />
+              <DanmakuSettingsIcon className={danmakuPanelOpen ? 'text-white' : 'text-white/70'} />
             </IconButton>
             {danmakuPanelOpen && (
               <div className="absolute right-0 bottom-full z-30 mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
@@ -557,9 +555,9 @@ export function PlayerControls({
           </div>
 
           <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
-            <MessageSquareText
-              className={cn('size-5', danmakuOn ? 'text-white' : 'text-white/40')}
-              aria-hidden
+            <DanmakuSwitchIcon
+              off={!danmakuOn}
+              className={danmakuOn ? 'text-white' : 'text-white/40'}
             />
           </IconButton>
 
@@ -593,11 +591,11 @@ export function PlayerControls({
             label={t(frameless ? 'player.exitFrameless' : 'player.frameless')}
             onClick={toggleFrameless}
           >
-            <Frame className={cn('size-4', frameless && 'text-white')} aria-hidden />
+            <WebFullscreenIcon className={frameless ? 'text-white' : 'text-white/70'} />
           </IconButton>
 
           <IconButton label={t('player.fullscreen')} onClick={onToggleFullscreen}>
-            {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+            <FullscreenIcon exit={fullscreen} />
           </IconButton>
         </div>
       </div>

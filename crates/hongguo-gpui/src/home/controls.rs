@@ -19,6 +19,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Window, div};
 use hongguo_playback::PlayerEvent;
 
+use super::player_icons;
 use crate::bridge;
 
 /// 控制条强制常显时长（秒）：交互后多 linger 一段时间再交回闲置淡出。
@@ -851,7 +852,7 @@ impl super::HomeView {
                         // 小屏播放（Tauri onOpenMini 同款）：**同一个窗口**缩成
                         // 480×270 落工作区右下角，播放零中断
                         Button::new("stage-mini")
-                            .icon(gpui_kit::assets::IconName::PictureInPicture2)
+                            .icon(player_icons::mini_window())
                             .ghost()
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -859,31 +860,42 @@ impl super::HomeView {
                             })),
                     )
                     .child({
-                        // 弹幕设置：齿轮 + 上方面板（透明度/字号/密度/显示区域）。
-                        // 开合 = 点齿轮（Tauri 同款点击语义），点外部由舞台捕获
-                        // 层收（picker 同款，见 stage 层）——原先的 hover 并集
-                        // 开合指针一晃就收，滑杆根本没法拖
+                        // 弹幕设置：B 站同款「弹」字方框 + 齿轮角标（自绘，见
+                        // `player_icons`）+ 上方面板（透明度/字号/密度/显示区域）。
+                        // 开合 = 点它（Tauri 同款点击语义），点外部由舞台捕获层收
+                        // （picker 同款，见 stage 层）——原先的 hover 并集开合指针
+                        // 一晃就收，滑杆根本没法拖。
+                        // 与弹幕开关同一套自绘钮（Tauri IconButton 同款）：透明底、
+                        // 开=纯白、关=70% 白，hover 铺 20% 白——组件 `Button` 的
+                        // 自绘图标塞不进去（.icon 只收 Icon），且 `open` 态会带一块
+                        // 常驻底色，与 Tauri 真机并排对拍不一致。
                         div()
                             .id("dm-settings")
                             .relative()
                             .child({
-                                // 开=白（面板开着期间恒亮）：状态色走组件的
-                                // `open` 语义态（下拉触发钮的正规通道）——它
-                                // 渲染时跳过 hover 层，实例色不会被悬停色盖掉
-                                //（实例 text_color 直接写 hover 精修会 panic：
-                                // div 只许设一次 hover，组件内部已设）
-                                Button::new("stage-dm-settings")
-                                    .icon(IconName::Settings2)
-                                    .ghost()
-                                    .small()
-                                    .open(self.dm_panel_open)
-                                    .when(self.dm_panel_open, |b| {
-                                        b.text_color(gpui_kit::rgba(0xffffffff))
-                                    })
+                                let color = if self.dm_panel_open {
+                                    gpui_kit::rgba(0xffffffff)
+                                } else {
+                                    gpui_kit::rgba(0xffffffb3)
+                                };
+                                div()
+                                    .id("stage-dm-settings")
+                                    .flex()
+                                    .w(gpui_kit::px(32.0))
+                                    .h(gpui_kit::px(28.0))
+                                    .justify_center()
+                                    .items_center()
+                                    .rounded(gpui_kit::px(6.0))
+                                    .cursor_pointer()
+                                    .role(gpui_kit::Role::Button)
+                                    .aria_label(crate::i18n::t("player.danmakuSettings"))
+                                    .text_color(color)
+                                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.dm_panel_open = !this.dm_panel_open;
                                         cx.notify();
                                     }))
+                                    .child(player_icons::danmaku_settings(color))
                             })
                             .children(self.dm_panel_open.then(|| {
                                 v_flex()
@@ -931,15 +943,16 @@ impl super::HomeView {
                             .into_any_element()
                     })
                     .child({
-                        // 弹幕开关（Tauri 同款：MessageSquare 图标，开=亮/关=暗）。
-                        // 状态色走组件的 `selected` 语义态（开关钮的正规通道）：
-                        // 渲染时跳过 hover 层，实例 text_color 不会被悬停色盖掉
-                        //——直接写 hover 精修会 panic（div 只许设一次 hover，
-                        // 组件内部已设），不写则指针停在按钮上时状态变化不可见
-                        //（用户实测「移走鼠标才变化」的根因）
-                        // 自绘开关钮（Tauri IconButton 同款）：透明底、开=纯白
-                        // 图标、关=40% 白，hover 铺 20% 白。组件 `selected` 态
-                        // 会带一块常驻底色，与 Tauri 真机不一致（并排对拍）
+                        // 弹幕开关（B 站同款「弹」字方框，关=斜杠+压暗）。
+                        // 自绘开关钮（Tauri IconButton 同款）：透明底、开=纯白、
+                        // 关=40% 白，hover 铺 20% 白。组件 `selected` 态会带一块
+                        // 常驻底色，与 Tauri 真机不一致（并排对拍）；自绘图标的
+                        // 颜色也拿不到组件内部的 hover/text 通道，所以整钮自绘。
+                        let color = if self.danmaku_on {
+                            gpui_kit::rgba(0xffffffff)
+                        } else {
+                            gpui_kit::rgba(0xffffff66)
+                        };
                         div()
                             .id("stage-danmaku")
                             .flex()
@@ -949,11 +962,9 @@ impl super::HomeView {
                             .items_center()
                             .rounded(gpui_kit::px(6.0))
                             .cursor_pointer()
-                            .text_color(if self.danmaku_on {
-                                gpui_kit::rgba(0xffffffff)
-                            } else {
-                                gpui_kit::rgba(0xffffff66)
-                            })
+                            .role(gpui_kit::Role::Button)
+                            .aria_label(crate::i18n::t("player.danmaku"))
+                            .text_color(color)
                             .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.danmaku_on = !this.danmaku_on;
@@ -971,12 +982,7 @@ impl super::HomeView {
                                 this.persist_prefs();
                                 cx.notify();
                             }))
-                            .child(
-                                gpui_kit::component::Icon::new(
-                                    gpui_kit::assets::IconName::MessageSquareText,
-                                )
-                                .small(),
-                            )
+                            .child(player_icons::danmaku_switch(self.danmaku_on, color))
                     })
                     .child({
                         // 音量（Tauri VolumePopup 同款）：图标按钮单击=静音切换；
@@ -1095,7 +1101,7 @@ impl super::HomeView {
                         // 但不进 OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。
                         // 与全屏互斥（toggle 内部裁决）
                         Button::new("stage-frameless")
-                            .icon(gpui_kit::assets::IconName::Frame)
+                            .icon(player_icons::web_fullscreen())
                             .ghost()
                             .small()
                             .tooltip(crate::i18n::t(if self.frameless {
@@ -1111,12 +1117,7 @@ impl super::HomeView {
                         // 播放器全屏（真沉浸：OS 全屏 + chrome 全藏；顶栏最大化钮是
                         // 另一档「应用全屏」chrome 保留）；图标随状态换
                         Button::new("stage-fullscreen")
-                            .icon(if self.fullscreen {
-                                // Tauri 用四角收拢/张开的 Minimize/Maximize
-                                gpui_kit::assets::IconName::Minimize
-                            } else {
-                                gpui_kit::assets::IconName::Maximize
-                            })
+                            .icon(player_icons::fullscreen(self.fullscreen))
                             .ghost()
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
