@@ -254,6 +254,9 @@ impl Shell {
             HomeEvent::OpenSettings => this.enter_dest(Dest::Settings, cx),
             // 下载提交成功：切下载任务页（Tauri navigate('/tasks') 同款）
             HomeEvent::OpenTasks => this.enter_dest(Dest::Tasks, cx),
+            // chrome 显隐变了（无边框/沉浸全屏）：壳重绘才会重读
+            // `immersive_fullscreen()`，否则顶栏/侧栏停在旧状态
+            HomeEvent::ChromeChanged => cx.notify(),
         })
         .detach();
         // 点赞/收藏卡「继续播放」：壳切回首页沉浸流起播（与详情页同通道）

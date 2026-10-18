@@ -75,7 +75,8 @@ impl super::HomeView {
                     .child(
                         Button::new("comment-close")
                             .icon(gpui_kit::assets::IconName::X)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.comments_panel_open = false;
@@ -303,8 +304,33 @@ impl super::HomeView {
                         h_flex()
                             .items_center()
                             .gap_2()
-                            // 表情按钮（Tauri EmojiPickerButton 同款：开时高亮；
-                            // 点击不夺输入框焦点，插入落真实光标处）
+                            .children(comment_input.as_ref().map(|input| {
+                                // 输入框：hgplayer 固定深色皮肤（Tauri 评论面板
+                                // 同款，不跟主题走）——`h-9 / rounded-md /
+                                // bg-neutral-800/80 / px-3 / text-sm / 白字`，
+                                // 没有描边；光标/占位符/选区由 [`skinned_input`]
+                                // 在渲染当期改主题 token（否则亮色主题下是深灰
+                                // 占位符 + 近黑光标压在深色面板上）。
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(gpui_kit::px(36.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(gpui_kit::px(6.0))
+                                    .bg(gpui_kit::rgba(0x262626cc))
+                                    .px_3()
+                                    .child(super::controls::skinned_input(
+                                        Input::new(input)
+                                            .appearance(false)
+                                            .h_full()
+                                            .flex_1()
+                                            .text_sm()
+                                            .text_color(gpui_kit::rgba(0xffffffff)),
+                                    ))
+                            }))
+                            // 表情按钮（Tauri EmojiSendBox 顺序：input → emoji →
+                            // send；开时高亮，点击不夺输入框焦点，插入落真实光标处）
                             .child(
                                 div()
                                     .id("emoji-btn")
@@ -322,28 +348,47 @@ impl super::HomeView {
                                     }))
                                     .child(
                                         Icon::new(gpui_kit::assets::IconName::FaceGrinning)
-                                            .size_4(),
+                                            .size_4()
+                                            .text_color(if self.emoji_picker_open {
+                                                gpui_kit::rgb(0xffffff)
+                                            } else {
+                                                gpui_kit::rgba(0xffffff99)
+                                            }),
                                     ),
                             )
-                            .children(comment_input.as_ref().map(|input| {
-                                Input::new(input).flex_1().h(gpui_kit::px(32.0)).text_xs()
-                            }))
-                            .child(
+                            .child({
+                                // 发送钮（Tauri `size="sm"` + `h-9 px-4` 同款）。
+                                // 空文本/提交中不用 `disabled()`：禁用前景取主题
+                                // muted，亮色主题下深色字压深底等于隐形；改用
+                                // Tauri 的 `disabled:opacity-50` 视觉，点击由
+                                // submit 内部护栏吞掉。
+                                let empty = comment_input
+                                    .as_ref()
+                                    .is_none_or(|i| i.read(cx).value().trim().is_empty());
                                 Button::new("comment-send")
                                     .label(if self.reply_to.is_some() {
                                         crate::i18n::t("player.comments.reply")
                                     } else {
                                         crate::i18n::t("player.interact.send")
                                     })
-                                    .small()
+                                    .primary()
+                                    .h(gpui_kit::px(36.0))
+                                    .px(gpui_kit::px(16.0))
+                                    .rounded(gpui_kit::px(6.0))
+                                    .cursor_pointer()
+                                    .opacity(if empty || self.comment_sending {
+                                        0.5
+                                    } else {
+                                        1.0
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if this.reply_to.is_some() {
                                             this.submit_reply(cx);
                                         } else {
                                             this.submit_comment(cx);
                                         }
-                                    })),
-                            ),
+                                    }))
+                            }),
                     ),
             )
             // 表情选择器：点外部收起的捕获层 + 上拉网格（Tauri EmojiPicker
@@ -474,7 +519,8 @@ impl super::HomeView {
                                     .child(
                                         Button::new("comment-del-cancel")
                                             .label(crate::i18n::t("common.cancel"))
-                                            .ghost()
+                                            .custom(super::controls::chrome_variant(cx))
+                                            .cursor_pointer()
                                             .small()
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.cancel_delete(cx);

@@ -353,7 +353,7 @@ impl super::HomeView {
     }
 
     /// 弹幕设置面板的一行（Tauri DisplaySlider 同构：label 上 + 百分比读数
-    /// 右 + 滑杆下）。
+    /// 右 + 滑杆下）。字色/字重与 Tauri 对齐：label 白 90%、读数等宽白 70%。
     pub(super) fn dm_setting_row(
         &self,
         label: impl Into<SharedString>,
@@ -368,13 +368,14 @@ impl super::HomeView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui_kit::rgba(0xffffffcc))
+                            .text_color(gpui_kit::rgba(0xffffffe6))
                             .child(label.into()),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .font_family("monospace")
+                            .text_color(gpui_kit::rgba(0xffffffb3))
                             .child(format!("{}%", (value * 100.0).round() as i64)),
                     ),
             )

@@ -67,6 +67,11 @@ pub(crate) enum HomeEvent {
     OpenSettings,
     /// 下载提交成功：切下载任务页（Tauri `navigate('/tasks')` 同款）。
     OpenTasks,
+    /// chrome（顶栏/侧栏）显隐变了：无边框/沉浸全屏切换后壳必须重绘。
+    /// 壳的 `Shell::render` 只在自己被通知时重读 `immersive_fullscreen()`；
+    /// 不推这一条的话，无边框点下去顶栏不动、再点回来也不动——用户看到的
+    /// 就是「按钮状态一直不对」（2026-10-18 实测）。
+    ChromeChanged,
 }
 
 pub(crate) mod auth;
@@ -530,24 +535,31 @@ impl HomeView {
                 SliderState::new()
                     .min(0.1)
                     .max(1.0)
+                    // 步长必须跟着区间走：SliderState 默认 step=1.0，0.1–1.0
+                    // 的区间下只能落在 0.1 / 1.0 两档（用户实测「百分比要么
+                    // 0 要么 100」）。
+                    .step(0.05)
                     .default_value(prefs.dm_opacity)
             }),
             dm_font_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.5)
                     .max(2.0)
+                    .step(0.05)
                     .default_value(prefs.dm_font_scale)
             }),
             dm_density_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.0)
                     .max(1.0)
+                    .step(0.05)
                     .default_value(prefs.dm_density)
             }),
             dm_area_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.25)
                     .max(1.0)
+                    .step(0.05)
                     .default_value(prefs.dm_area)
             }),
             interact_items: Arc::new(Vec::new()),
@@ -942,6 +954,8 @@ impl HomeView {
         }
         self.frameless = next;
         crate::platform::set_traffic_lights_hidden(window, next);
+        // 壳必须重绘才收得起/放得回头顶这层 chrome（见 HomeEvent::ChromeChanged）
+        cx.emit(HomeEvent::ChromeChanged);
         self.wake_controls(cx);
         cx.notify();
     }
@@ -971,6 +985,8 @@ impl HomeView {
         }
         self.immersive = !self.immersive;
         window.toggle_fullscreen();
+        // 同 frameless：chrome 显隐翻面要推壳重绘（OS 全屏事件不一定及时）
+        cx.emit(HomeEvent::ChromeChanged);
         self.wake_controls(cx);
         cx.notify();
     }

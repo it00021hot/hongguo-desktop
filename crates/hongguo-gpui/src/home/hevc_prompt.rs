@@ -82,7 +82,8 @@ impl super::HomeView {
                             .child(
                                 Button::new("hevc-later")
                                     .label(crate::i18n::t("player.hevcLater"))
-                                    .ghost()
+                                    .custom(super::controls::chrome_variant(cx))
+                                    .cursor_pointer()
                                     .small()
                                     .disabled(self.hevc_installing)
                                     .on_click(cx.listener(|this, _, _, cx| {

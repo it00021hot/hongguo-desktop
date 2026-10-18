@@ -118,21 +118,24 @@ impl super::HomeView {
                             } else {
                                 IconName::Pause
                             })
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_pause(cx))),
                     )
                     .child(
                         Button::new("mini-prev-ep")
                             .icon(gpui_kit::assets::IconName::SkipBack)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(-1, cx))),
                     )
                     .child(
                         Button::new("mini-next-ep")
                             .icon(gpui_kit::assets::IconName::SkipForward)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .disabled(!has_next)
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
@@ -153,7 +156,8 @@ impl super::HomeView {
                     .child(
                         Button::new("mini-rate")
                             .label(Self::fmt_rate(self.rate))
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, _, cx| this.cycle_rate_mini(cx))),
                     )
@@ -164,7 +168,8 @@ impl super::HomeView {
                             } else {
                                 gpui_kit::assets::IconName::Volume2
                             })
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
                     )
@@ -175,7 +180,8 @@ impl super::HomeView {
                             } else {
                                 gpui_kit::assets::IconName::EyeOff
                             })
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(
                                 cx.listener(|this, _, window, cx| {
@@ -190,7 +196,8 @@ impl super::HomeView {
                             } else {
                                 gpui_kit::assets::IconName::PinOff
                             })
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_pinned(window, cx);
@@ -199,7 +206,8 @@ impl super::HomeView {
                     .child(
                         Button::new("mini-expand")
                             .icon(gpui_kit::assets::IconName::Maximize2)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.exit_mini(window, cx);
@@ -208,7 +216,8 @@ impl super::HomeView {
                     .child(
                         Button::new("mini-close")
                             .icon(gpui_kit::assets::IconName::X)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .xsmall()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.stop_mini(window, cx);

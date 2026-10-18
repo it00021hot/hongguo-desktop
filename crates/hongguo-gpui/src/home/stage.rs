@@ -530,7 +530,6 @@ impl super::HomeView {
             .children(danmaku_layer)
             .children(overlay)
             .children(rail)
-            .children(comment_panel)
             .children(hevc_prompt)
             // 「下载到本地」浮层在壳层整窗渲染（见 `downloads.rs` 头注释）
             .children(buffering_badge)
@@ -726,6 +725,11 @@ impl super::HomeView {
             // 连播横条必须在控制条之后：控制条的 40px 透明悬停热区与它
             // 重叠，后画的横条才是更高的命中层。
             .children(self.render_binge_entry(cx))
+            // 评论面板必须是这一层**最后**画的：它底边在 56px、发送输入行
+            // 又压在自身底部，而控制条根节点带 40px 透明热区（总高约 90px）
+            // ——面板若画在控制条之前，输入行的下半截会被热区吃掉，点击落不
+            // 到输入框上（用户实测「评论输入完全打不了字」的根因）。
+            .children(comment_panel)
             // 顶部 2px 加载细条（Tauri loadbar 同款）：切换在途 / 首帧未出 /
             // 缓冲中亮，30% 宽的胶囊在轨道里循环滑动（CSS keyframes 同参：
             // 1.1s 从 -110% 滑到 +440%，按胶囊自身宽计 = 轨道的 -0.33→1.32）。

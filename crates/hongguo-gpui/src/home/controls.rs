@@ -6,10 +6,12 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::Disableable;
+use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Selectable;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::button::ButtonCustomVariant;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
@@ -26,6 +28,71 @@ use crate::bridge;
 /// 只被 screenshot 门控的取证辅助使用，随消费点一起进 feature。
 #[cfg(feature = "screenshot")]
 pub(super) const CONTROLS_HOLD_SECS: u64 = 600;
+
+/// 播放器浮层钮的 hgplayer 皮肤（Tauri `IconButton` 同款）：透明底、白字、
+/// hover 铺 20% 白——**颜色不跟主题走**。
+///
+/// 为什么非要用 `custom` 变体：`ghost` 的前景与 hover 文字色都取自主题
+/// （`secondary_foreground`），亮色主题下就是深色字压在画面上（用户实测
+/// 「亮色主题下都看不到按钮」）；而 gpui 的 `Button` 内部已占用 hover 层，
+/// 实例 `text_color` 盖不住悬停态，只有 custom 变体能把 normal/hover/active
+/// 三态颜色一次钉死，同时保留 Button 的 tooltip / 焦点语义。
+pub(super) fn chrome_variant(cx: &gpui_kit::App) -> ButtonCustomVariant {
+    let transparent: gpui_kit::Hsla = gpui_kit::rgba(0x00000000).into();
+    ButtonCustomVariant::new(cx)
+        .color(transparent)
+        .foreground(gpui_kit::rgba(0xffffffe6).into())
+        .hover(gpui_kit::rgba(0xffffff33).into())
+        .active(gpui_kit::rgba(0xffffff4d).into())
+}
+
+/// 播放器/评论面板里的输入框：在元素**真正渲染的那一拍**，临时把主题里
+/// 光标 / 占位符 / 选区三个 token 换成 hgplayer 皮肤值，再把 `Input` 交给
+/// 组件渲染，然后立刻还原。
+///
+/// 为什么只能这么做：`Input` 在 `RenderOnce::render` 里从 `cx.theme()` 把
+/// 这三个颜色拷进 `InputState` 的 editor style（`set_editor_style` 是
+/// gpui-component 的 crate 内部 API），应用侧没有实例级覆盖入口。播放器是
+/// 固定深色皮肤，亮色主题的默认值是「近黑光标 + 深灰占位符」，压在深色
+/// 胶囊/面板上就是隐形。`Theme::global_mut` 不广播主题变更、不动其它字段
+/// （见其注释），我们的改写与还原在同一个同步渲染调用内完成，正文色仍由
+/// 调用方的 `.text_color()` 决定（正文取继承色）。
+#[derive(gpui_kit::IntoElement)]
+pub(super) struct SkinnedInput {
+    inner: gpui_kit::component::input::Input,
+}
+
+impl gpui_kit::RenderOnce for SkinnedInput {
+    fn render(
+        self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::component::Theme;
+        let (caret, muted, selection) = {
+            let theme = Theme::global_mut(cx);
+            let saved = (theme.caret, theme.muted_foreground, theme.selection);
+            theme.caret = gpui_kit::rgba(0xffffffff).into();
+            theme.muted_foreground = gpui_kit::rgba(0xffffff99).into();
+            theme.selection = gpui_kit::rgba(0xffffff40).into();
+            saved
+        };
+        // Input::render 在这里同步读取主题并把三个颜色拷进 InputState。
+        // `into_any_element()` 把返回的元素摊成自有值：它默认会借住 `cx`
+        // （RPIT 捕获入参生命周期），不摊平的话下面还原借不到可变引用。
+        let element = self.inner.render(window, cx).into_any_element();
+        let theme = Theme::global_mut(cx);
+        theme.caret = caret;
+        theme.muted_foreground = muted;
+        theme.selection = selection;
+        element
+    }
+}
+
+/// 给播放器 chrome 的输入框套上皮肤（`Input` 的 builder 照常配）。
+pub(super) fn skinned_input(input: gpui_kit::component::input::Input) -> SkinnedInput {
+    SkinnedInput { inner: input }
+}
 
 /// 进度拖动的拖拽载荷（`on_drag`/`on_drag_move` 按类型配对）。
 struct ScrubDrag;
@@ -518,7 +585,8 @@ impl super::HomeView {
                     .child(
                         Button::new("stage-toggle-play")
                             .icon(play_icon)
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_pause(cx))),
                     )
@@ -527,14 +595,16 @@ impl super::HomeView {
                         // 第 1 集原地不动，越过末集跟随换剧
                         Button::new("stage-prev-episode")
                             .icon(gpui_kit::assets::IconName::SkipBack)
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(-1, cx))),
                     )
                     .child(
                         Button::new("stage-next-episode")
                             .icon(gpui_kit::assets::IconName::SkipForward)
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
                     )
@@ -560,7 +630,14 @@ impl super::HomeView {
                             .id("danmaku-box")
                             .ml_2()
                             .relative()
-                            .child(
+                            .child({
+                                // 弹幕输入：hgplayer 固定深色皮肤（Tauri 同款，
+                                // 不跟主题走）——15% 白底胶囊、白字、白光标、
+                                // 白 60% 占位符。光标/占位符/选区靠
+                                // [`skinned_input`] 在渲染当期改主题 token。
+                                let ink: gpui_kit::Hsla = gpui_kit::rgba(0xffffffff).into();
+                                let emoji_active = ink;
+                                let emoji_idle: gpui_kit::Hsla = gpui_kit::rgba(0xffffff99).into();
                                 h_flex()
                                     .items_center()
                                     .gap_1()
@@ -568,51 +645,91 @@ impl super::HomeView {
                                     .pr_1()
                                     .h(gpui_kit::px(32.0))
                                     .rounded_full()
-                                    // 15% 白（Tauri bg-white/15 同值）
                                     .bg(gpui_kit::rgba(0xffffff26))
                                     .children(self.danmaku_input.as_ref().map(|input| {
-                                        Input::new(input)
-                                            .bordered(false)
-                                            .h(gpui_kit::px(28.0))
-                                            // Tauri w-44 = 176px
-                                            .w(gpui_kit::px(176.0))
-                                            .text_xs()
+                                        // 透明输入（Tauri inputClassName 的
+                                        // `bg-transparent`）：`appearance(false)`
+                                        // 才不吃主题底色——否则亮色主题下胶囊里
+                                        // 会嵌一块白底方块（用户实测截图）。
+                                        skinned_input(
+                                            Input::new(input)
+                                                .appearance(false)
+                                                .bordered(false)
+                                                // Tauri inputClassName: h-full
+                                                // flex-1 text-xs leading-8 ——
+                                                // 撑满 32px 胶囊
+                                                .h_full()
+                                                // Tauri w-44 = 176px
+                                                .w(gpui_kit::px(176.0))
+                                                .text_xs()
+                                                .text_color(ink),
+                                        )
                                     }))
-                                    .child(
-                                        Button::new("stage-danmaku-emoji")
-                                            .icon(gpui_kit::assets::IconName::FaceGrinning)
-                                            .ghost()
-                                            .small()
-                                            .tooltip(crate::i18n::t("player.danmakuEmoji"))
+                                    .child({
+                                        // 表情入口（Tauri EmojiPickerButton 同款）：
+                                        // 裸图标钮（16px + px-1），不占按钮底板——
+                                        // 原先的 ghost 钮是 28px 方底板，胶囊里
+                                        // 顶得比 Tauri 高一倍，输入区被挤窄
+                                        div()
+                                            .id("stage-danmaku-emoji")
+                                            .px_1()
+                                            .cursor_pointer()
+                                            .role(gpui_kit::Role::Button)
+                                            .aria_label(crate::i18n::t("player.danmakuEmoji"))
+                                            .text_color(if self.danmaku_emoji_open {
+                                                emoji_active
+                                            } else {
+                                                emoji_idle
+                                            })
+                                            .hover(|s| s.text_color(emoji_active))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.danmaku_emoji_open = !this.danmaku_emoji_open;
                                                 cx.notify();
-                                            })),
-                                    )
+                                            }))
+                                            .child(
+                                                // 颜色显式给：`Icon` 是 RenderOnce，
+                                                // 靠父级 text_color 继承不可靠（同仓
+                                                // 互动栏图标全部显式传色）
+                                                Icon::new(gpui_kit::assets::IconName::FaceGrinning)
+                                                    .size_4()
+                                                    .text_color(if self.danmaku_emoji_open {
+                                                        emoji_active
+                                                    } else {
+                                                        emoji_idle
+                                                    }),
+                                            )
+                                    })
                                     .child({
-                                        // 发送钮（Tauri ghost 圆角同款）：空文本/
-                                        // 发送中置灰——点了没反应的观感就是它
+                                        // 发送钮（Tauri EmojiSendBox 同款）：primary
+                                        // 胶囊、h-6(24px) / px-2.5 / text-xs。
+                                        // 空文本/发送中**不用 `disabled()`**：组件
+                                        // 的禁用前景取主题 muted（亮色主题下深色字
+                                        // 压在深色胶囊上等于隐形），改用 Tauri 的
+                                        // `disabled:opacity-50` 视觉；点击由
+                                        // `submit_danmaku` 内部护栏吞掉。
                                         let empty = self
                                             .danmaku_input
                                             .as_ref()
                                             .is_none_or(|i| i.read(cx).value().trim().is_empty());
                                         Button::new("stage-danmaku-send")
                                             .label(crate::i18n::t("player.interact.send"))
-                                            // Tauri EmojiSendBox 的发送钮是默认
-                                            // primary（深色主题白底胶囊），空文本
-                                            // 时整体 50% 透明——ghost 文本态与真机
-                                            // 不一致（并排对拍）
                                             .primary()
                                             .small()
+                                            .h(gpui_kit::px(24.0))
                                             .rounded_full()
-                                            .disabled(empty || self.danmaku_sending)
+                                            .cursor_pointer()
+                                            .opacity(if empty || self.danmaku_sending {
+                                                0.5
+                                            } else {
+                                                1.0
+                                            })
                                             .on_click(
                                                 cx.listener(|this, _, _, cx| {
                                                     this.submit_danmaku(cx)
                                                 }),
                                             )
-                                    }),
-                            )
+                                    })
+                            })
                             .children(self.danmaku_emoji_open.then(|| {
                                 // 表情网格（评论面板同款：连选不关面板、光标处
                                 // 插入不夺焦；点外部 on_mouse_down_out 收起）
@@ -704,7 +821,8 @@ impl super::HomeView {
                         Button::new("stage-rate")
                             .icon(gpui_kit::assets::IconName::Gauge)
                             .label(Self::fmt_rate(self.rate))
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .dropdown_menu(rate_menu)
                             // 菜单开态回写视图：开着期间控制条常显（panel_open），
@@ -740,7 +858,8 @@ impl super::HomeView {
                             Button::new("stage-definition")
                                 .icon(gpui_kit::assets::IconName::MonitorPlay)
                                 .label(label)
-                                .ghost()
+                                .custom(chrome_variant(cx))
+                                .cursor_pointer()
                                 .small()
                                 .disabled(true)
                                 .tooltip(crate::i18n::t("player.definitionLocalOnly"))
@@ -751,7 +870,8 @@ impl super::HomeView {
                             Button::new("stage-definition")
                                 .icon(gpui_kit::assets::IconName::MonitorPlay)
                                 .label(label)
-                                .ghost()
+                                .custom(chrome_variant(cx))
+                                .cursor_pointer()
                                 .small()
                                 .dropdown_menu(move |menu, _window, _cx| {
                                     let mut menu = menu.label(crate::i18n::t("player.definition"));
@@ -826,7 +946,8 @@ impl super::HomeView {
                                         }
                                         _ => crate::i18n::t("player.episodes"),
                                     })
-                                    .ghost()
+                                    .custom(chrome_variant(cx))
+                                    .cursor_pointer()
                                     .small()
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
                             )
@@ -840,7 +961,8 @@ impl super::HomeView {
                         Button::new("stage-downloads")
                             .icon(gpui_kit::assets::IconName::Download)
                             .label(crate::i18n::t("player.download"))
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(
                                 cx.listener(|this, _, window, cx| {
@@ -853,7 +975,8 @@ impl super::HomeView {
                         // 480×270 落工作区右下角，播放零中断
                         Button::new("stage-mini")
                             .icon(player_icons::mini_window())
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.enter_mini(window, cx);
@@ -898,20 +1021,24 @@ impl super::HomeView {
                                     .child(player_icons::danmaku_settings(color))
                             })
                             .children(self.dm_panel_open.then(|| {
+                                // Tauri 面板几何/皮肤同款：w-60(240) / p-4 / gap-4，
+                                // 黑 85% 底 + 白 10% 描边（此前 pt-3 pb-4 gap-3、
+                                // 无描边，行距比 Tauri 紧一档）
                                 v_flex()
                                     .id("dm-settings-panel")
                                     .absolute()
                                     .right_0()
-                                    // 贴着按钮上沿（bottom-full）；视觉留白进
-                                    // 自己的 padding
+                                    // 贴着按钮上沿（bottom-full）再抬 12px
+                                    //（Tauri 面板 mb-3 同款留白）
                                     .bottom(gpui_kit::relative(1.0))
+                                    .mb_3()
                                     .w(gpui_kit::px(240.0))
-                                    .gap_3()
-                                    .pt_3()
-                                    .pb_4()
-                                    .px_4()
+                                    .gap_4()
+                                    .p_4()
                                     .rounded(gpui_kit::px(12.0))
-                                    .bg(gpui_kit::rgba(0x171717f2))
+                                    .bg(gpui_kit::rgba(0x000000d9))
+                                    .border_1()
+                                    .border_color(gpui_kit::rgba(0xffffff1a))
                                     .on_mouse_down(
                                         gpui_kit::MouseButton::Left,
                                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
@@ -1004,7 +1131,8 @@ impl super::HomeView {
                                     } else {
                                         gpui_kit::assets::IconName::Volume2
                                     })
-                                    .ghost()
+                                    .custom(chrome_variant(cx))
+                                    .cursor_pointer()
                                     .small()
                                     .tooltip(crate::i18n::t("player.mute"))
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_mute(cx))),
@@ -1062,7 +1190,8 @@ impl super::HomeView {
                         // 亮暗态走 `selected` 语义态（弹幕开关同款，悬停免疫）
                         Button::new("stage-incognito")
                             .icon(gpui_kit::assets::IconName::Eye)
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .selected(self.incognito)
                             .tooltip(if self.incognito {
@@ -1089,7 +1218,8 @@ impl super::HomeView {
                         // 竖屏中的控件换成紧凑条竖屏形态，这里只做「进入」入口
                         Button::new("stage-portrait")
                             .icon(gpui_kit::assets::IconName::RectangleVertical)
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .tooltip(crate::i18n::t("player.portrait"))
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1099,11 +1229,20 @@ impl super::HomeView {
                     .child(
                         // 无边框播放（Tauri 控制栏同位新增，issue #11）：chrome 全藏
                         // 但不进 OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。
-                        // 与全屏互斥（toggle 内部裁决）
+                        // 与全屏互斥（toggle 内部裁决）。
+                        // 状态可见：图标亮/暗跟 `frameless` 走（Tauri
+                        // `frameless ? 'text-white' : 'text-white/70'` 同款）——
+                        // 之前两态一个样，用户只能从「顶栏还在不在」猜。
                         Button::new("stage-frameless")
                             .icon(player_icons::web_fullscreen())
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
+                            .text_color(if self.frameless {
+                                gpui_kit::rgba(0xffffffff)
+                            } else {
+                                gpui_kit::rgba(0xffffffb3)
+                            })
                             .tooltip(crate::i18n::t(if self.frameless {
                                 "player.exitFrameless"
                             } else {
@@ -1118,7 +1257,8 @@ impl super::HomeView {
                         // 另一档「应用全屏」chrome 保留）；图标随状态换
                         Button::new("stage-fullscreen")
                             .icon(player_icons::fullscreen(self.fullscreen))
-                            .ghost()
+                            .custom(chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_immersive_fullscreen(window, cx);

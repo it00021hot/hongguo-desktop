@@ -206,7 +206,8 @@ impl super::HomeView {
                     .child(
                         Button::new("picker-close")
                             .icon(IconName::ChevronDown)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.picker_open = false;
