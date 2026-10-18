@@ -34,6 +34,8 @@ export function fuzzyStaleTime(key: readonly unknown[]): number {
 
 export const keys = {
   settings: ['settings'] as const,
+  /** 缓存目录留空时的默认位置（进程内不变，设置页只在空态展示） */
+  defaultCacheDir: ['default-cache-dir'] as const,
   feed: (tab: string) => ['feed', tab] as const,
   /** 首页顶栏 tab 列表（服务端下发；登录态变化时壳侧过滤，不换 key） */
   feedTabs: ['feed-tabs'] as const,

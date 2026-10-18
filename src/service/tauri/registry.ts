@@ -418,6 +418,8 @@ export const COMMANDS = {
     args: z.object({ settings: settingsSchema }),
     response: settingsSchema,
   },
+  /** 缓存目录留空时的默认位置（数据目录；设置页展示用） */
+  default_cache_dir: { args: noArgs, response: z.string() },
   test_proxy: {
     args: z.object({ draft: proxyConfigSchema.nullable() }),
     response: proxyTestResultSchema,

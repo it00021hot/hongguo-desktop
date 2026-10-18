@@ -18,6 +18,7 @@ import {
   useCacheClear,
   useCacheUsage,
   useDecodeCapability,
+  useDefaultCacheDir,
   useRedetectCapability,
   useSaveSettings,
   useSettings,
@@ -50,6 +51,7 @@ export function SettingsPage() {
   const redetect = useRedetectCapability();
   const { data: usage } = useStorageUsage();
   const { data: cacheUsage } = useCacheUsage();
+  const { data: defaultCacheDir } = useDefaultCacheDir();
   const clearCache = useCacheClear();
   const testProxyMutation = useTestProxy();
   // 播放器快捷键（老板键冲突检测的比对源；与播放器同一份 store）
@@ -58,6 +60,9 @@ export function SettingsPage() {
   // 草稿为 null 表示「未修改」，直接用服务端值派生，避免 effect 同步引发级联渲染
   const [draft, setDraft] = useState<Partial<Settings> | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
+  // 缓存目录输入框：null = 用户没动过。未配置时直接展示默认位置，
+  // 空串 = 用户主动清空（仍保留「空 = 跟随数据目录」的存储语义）。
+  const [cacheDirDraft, setCacheDirDraft] = useState<string | null>(null);
 
   if (isPending || !loaded) {
     return <div className="text-muted-foreground p-6 text-sm">{t('common.loading')}</div>;
@@ -66,6 +71,8 @@ export function SettingsPage() {
   // 合并草稿与服务端值
   const current: Settings = { ...loaded, ...(draft ?? {}) };
   const effectiveProxyUrl = proxyUrl ?? current.proxy.url;
+  // 未配置缓存目录时，输入框直接填默认位置；用户清空后保留空串。
+  const effectiveCacheDir = cacheDirDraft ?? (current.cacheDir || defaultCacheDir || '');
   // 老板键 vs 播放器快捷键冲突（全局组合在应用内按下会同时触发两者）
   const bossConflicts = resolveBossKeyConflicts(
     current.bossKey,
@@ -84,7 +91,10 @@ export function SettingsPage() {
 
   const chooseCacheDir = async () => {
     const picked = await appApi.selectFolder().catch(() => null);
-    if (picked) patch({ cacheDir: picked });
+    if (picked) {
+      setCacheDirDraft(picked);
+      patch({ cacheDir: picked });
+    }
   };
 
   const submit = () => {
@@ -95,13 +105,18 @@ export function SettingsPage() {
       return;
     }
     saveMutation.mutate(
-      { ...current, proxy: { ...current.proxy, url: effectiveProxyUrl } },
+      {
+        ...current,
+        cacheDir: effectiveCacheDir,
+        proxy: { ...current.proxy, url: effectiveProxyUrl },
+      },
       {
         onSuccess: () => {
           toast.success(t('settings.saved'));
           // 保存成功后丢弃草稿，回到「跟随服务端」状态
           setDraft(null);
           setProxyUrl(null);
+          setCacheDirDraft(null);
         },
         // 失败必须有回音：后端报错（老板键被占用注册失败这类）静默的
         // 话，用户眼里就是「点了没反应」（v0.5.0 保存无反应排查实录）
@@ -374,16 +389,19 @@ export function SettingsPage() {
           <CardTitle className="text-base">{t('settings.storage')}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {/* 缓存目录：空 = 跟随数据目录。保存即时生效于新写入，旧目录残留
-              不迁移——与下载目录同语义，文案里说清免得用户以为搬走了。 */}
+          {/* 缓存目录：未配置时输入框直接填默认位置（空存储 = 跟随数据目录）。
+              保存即时生效于新写入，旧目录残留不迁移——与下载目录同语义。 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="cache-dir">{t('settings.cacheDir')}</Label>
             <div className="flex gap-2">
               <Input
                 id="cache-dir"
-                value={current.cacheDir}
+                value={effectiveCacheDir}
                 placeholder={t('settings.cacheDirPlaceholder')}
-                onChange={(e) => patch({ cacheDir: e.target.value })}
+                onChange={(e) => {
+                  setCacheDirDraft(e.target.value);
+                  patch({ cacheDir: e.target.value });
+                }}
                 className="font-mono text-xs"
               />
               <Button variant="outline" onClick={() => void chooseCacheDir()}>

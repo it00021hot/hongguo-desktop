@@ -158,6 +158,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             // 设置
             commands::settings_cmd::get_settings,
             commands::settings_cmd::save_settings,
+            commands::settings_cmd::default_cache_dir,
             commands::settings_cmd::test_proxy,
             // 剧集
             commands::series_cmd::get_series_episodes,

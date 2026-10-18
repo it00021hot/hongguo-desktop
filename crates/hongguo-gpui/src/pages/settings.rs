@@ -168,6 +168,8 @@ pub(crate) struct SettingsView {
     redetect_done: bool,
     usage: Option<StorageUsage>,
     cache_usage: Option<CacheUsage>,
+    /// 缓存目录留空时的默认位置（数据目录；进程内不变，构造时取一次）。
+    default_cache_dir: String,
     clearing_cache: bool,
     testing_proxy: bool,
     test_result: Option<ProxyTestResult>,
@@ -182,6 +184,15 @@ pub(crate) struct SettingsView {
     /// 主题偏好（Tauri 的主题切换在顶栏；GPUI 顶栏是原生拖拽区，入口落在
     /// 设置页——三档语义与 Tauri `hongguo-theme` store 相同）。
     theme: crate::ui_prefs::ThemePref,
+}
+
+/// 缓存目录输入框的展示值：未配置时直接填默认位置（存储语义仍是空 = 跟随数据目录）。
+fn cache_dir_display(default_cache_dir: &str, cache_dir: &str) -> String {
+    if cache_dir.trim().is_empty() {
+        default_cache_dir.to_string()
+    } else {
+        cache_dir.to_string()
+    }
 }
 
 fn naming_index(naming: NamingTemplate) -> usize {
@@ -305,6 +316,7 @@ impl SettingsView {
             redetect_done: false,
             usage: None,
             cache_usage: None,
+            default_cache_dir: hongguo_service::settings_service::default_cache_dir(),
             clearing_cache: false,
             testing_proxy: false,
             test_result: None,
@@ -403,7 +415,7 @@ impl SettingsView {
                 let dir = settings.download_dir.clone();
                 view.dir_input
                     .update(cx, |input, cx| input.set_value(dir, window, cx));
-                let cache_dir = settings.cache_dir.clone();
+                let cache_dir = cache_dir_display(&view.default_cache_dir, &settings.cache_dir);
                 view.cache_dir_input
                     .update(cx, |input, cx| input.set_value(cache_dir, window, cx));
                 let url = settings.proxy.url.clone();
@@ -658,7 +670,7 @@ impl SettingsView {
                 let dir = saved.download_dir.clone();
                 self.dir_input
                     .update(cx, |input, cx| input.set_value(dir, window, cx));
-                let cache_dir = saved.cache_dir.clone();
+                let cache_dir = cache_dir_display(&self.default_cache_dir, &saved.cache_dir);
                 self.cache_dir_input
                     .update(cx, |input, cx| input.set_value(cache_dir, window, cx));
                 let url = saved.proxy.url.clone();
@@ -1336,6 +1348,8 @@ impl SettingsView {
             }
             None => crate::i18n::t("common.loading"),
         };
+        // 缓存目录：未配置时输入框直接填默认位置（空存储 = 跟随数据目录）。
+        // 保存即时生效于新写入，旧目录残留不迁移——与下载目录同语义。
         card(cx)
             .child(
                 div()
@@ -1506,7 +1520,7 @@ impl SettingsView {
         let dir = settings.download_dir.clone();
         self.dir_input
             .update(cx, |input, cx| input.set_value(dir, window, cx));
-        let cache_dir = settings.cache_dir.clone();
+        let cache_dir = cache_dir_display(&self.default_cache_dir, &settings.cache_dir);
         self.cache_dir_input
             .update(cx, |input, cx| input.set_value(cache_dir, window, cx));
         let url = settings.proxy.url.clone();
