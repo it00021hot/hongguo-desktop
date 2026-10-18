@@ -163,6 +163,11 @@ pub(crate) fn show_foreground(window: &Window) {
     crate::macos::show_foreground(window);
 }
 
+/// 藏/显 macOS 红绿灯（无边框播放用）：只 setHidden 三颗圆点，不动 styleMask。
+pub(crate) fn set_traffic_lights_hidden(window: &Window, hidden: bool) {
+    crate::macos::set_traffic_lights_hidden(window, hidden);
+}
+
 /// 当前窗口是否可见（老板键切换判定用）。
 pub(crate) fn visibility(window: &Window) -> bool {
     is_visible(window)

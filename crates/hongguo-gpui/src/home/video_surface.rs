@@ -18,7 +18,14 @@
 
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(target_os = "windows")]
+use std::time::Instant;
+
 use gpui_kit::{ObjectFit, RenderImage, Window};
+#[cfg(target_os = "windows")]
+use hongguo_media_platform_api::video::FrameBuffer;
 use hongguo_media_platform_api::video::VideoFrame;
 
 use crate::home::video_surface::imp::{ConversionHandle, Imp};
@@ -79,10 +86,13 @@ impl VideoSurface {
 #[cfg(target_os = "windows")]
 mod imp {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use gpui_kit::prelude::*;
-    use hongguo_media_platform_api::video::{FrameBuffer, VideoFrame};
+    use gpui_kit::{ImageSource, ObjectFit, RenderImage, Window, div, img};
+    use hongguo_media_platform_api::video::VideoFrame;
+
+    use super::{pack_size, render_image_of, unpack};
 
     /// 回收队列上限：render 排不上队时也不能无界涨（被挤掉的旧图其纹理
     /// 可能滞留图集，代价有界：≤16 × 输出尺寸）。

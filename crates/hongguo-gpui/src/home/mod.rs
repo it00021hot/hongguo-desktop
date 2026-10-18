@@ -937,7 +937,7 @@ impl HomeView {
             self.toggle_immersive_fullscreen(window, cx);
         }
         self.frameless = next;
-        crate::macos::set_traffic_lights_hidden(window, next);
+        crate::platform::set_traffic_lights_hidden(window, next);
         self.wake_controls(cx);
         cx.notify();
     }
@@ -963,7 +963,7 @@ impl HomeView {
     ) {
         if self.frameless && !self.immersive {
             self.frameless = false;
-            crate::macos::set_traffic_lights_hidden(window, false);
+            crate::platform::set_traffic_lights_hidden(window, false);
         }
         self.immersive = !self.immersive;
         window.toggle_fullscreen();
@@ -1074,7 +1074,7 @@ impl HomeView {
                     let converted = match &event {
                         PlayerEvent::Frame(frame) => {
                             let frame = frame.clone();
-                            let handle = convert_handle;
+                            let handle = convert_handle.clone();
                             cx.background_executor()
                                 .spawn(async move {
                                     video_surface::convert_frame(&handle, &frame)

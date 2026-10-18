@@ -58,6 +58,9 @@ pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()
     FRAMELESS.store(!visible, Ordering::Release);
     #[cfg(target_os = "macos")]
     set_traffic_lights_hidden(&app, !visible);
+    // Windows/Linux 没有红绿灯；AppHandle 是 Tauri 注入参数，非 macOS 目标显式忽略。
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
     Ok(())
 }
 

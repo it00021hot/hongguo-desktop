@@ -8,8 +8,7 @@ use gpui_kit::Window;
 
 use crate::win32::{
     HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SW_MAXIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, border_offset, hwnd_of, set_window_pos, set_window_pos_raw, show_window,
-    window_rect, work_area,
+    SWP_NOSIZE, border_offset, hwnd_of, set_window_pos, set_window_pos_raw, show_window, work_area,
 };
 
 use super::{MINI_H, MINI_MARGIN, MINI_W, OuterRect, WindowSnapshot};
@@ -48,7 +47,7 @@ pub(crate) fn restore_from_minimized(window: &Window) {
 
 /// 快照窗口外框与最大化态。
 pub(crate) fn snapshot(window: &Window) -> Option<WindowSnapshot> {
-    let (x, y, w, h) = window_rect(hwnd_of(window)?)?;
+    let (x, y, w, h) = crate::win32::window_rect(hwnd_of(window)?)?;
     Some(WindowSnapshot {
         rect: OuterRect::new(x as f64, y as f64, w as f64, h as f64),
         maximized: window.is_maximized(),
@@ -149,7 +148,7 @@ pub(crate) fn portrait_geometry(
     let hwnd = hwnd_of(window)?;
     let scale = window.scale_factor() as f64;
     let (left, top, right, bottom) = work_area(hwnd, scale)?;
-    let (rx, ry, rw, rh) = window_rect(hwnd)?;
+    let (rx, ry, rw, rh) = crate::win32::window_rect(hwnd)?;
     let (off_l, off_t, off_r, off_b) = border_offset(hwnd);
     // 外框 → 内容（Tauri 的 outer_position/inner_size 同量）
     let cur = (
@@ -246,6 +245,9 @@ pub(crate) fn show_foreground(window: &Window) {
         crate::win32::show_foreground(hwnd);
     }
 }
+
+/// Windows 没有红绿灯：无边框播放不需要藏任何系统按钮，空实现。
+pub(crate) fn set_traffic_lights_hidden(_window: &Window, _hidden: bool) {}
 
 /// 当前窗口是否可见（老板键切换判定用；与 [`is_visible`] 同源）。
 pub(crate) fn visibility(window: &Window) -> bool {

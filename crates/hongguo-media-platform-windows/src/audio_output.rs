@@ -15,7 +15,6 @@ use hongguo_media_platform_api::audio_output::{AudioOutputHost, AudioOutputStrea
 /// cpal 输出流（输出域）。
 pub struct CpalStream {
     stream: cpal::Stream,
-    sample_rate: u32,
     playing: std::sync::atomic::AtomicBool,
 }
 
@@ -100,7 +99,6 @@ impl AudioOutputHost for CpalAudioOutput {
         );
         Ok(CpalStream {
             stream,
-            sample_rate: format.sample_rate,
             playing: std::sync::atomic::AtomicBool::new(false),
         })
     }
