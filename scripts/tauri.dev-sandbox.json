@@ -1,0 +1,7 @@
+{
+  "app": {
+    "appDirectoriesOverride": {
+      "localData": "./app-data"
+    }
+  }
+}

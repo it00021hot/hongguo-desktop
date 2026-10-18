@@ -1,10 +1,11 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-preview
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-preview
 
 help:
-	@echo "dev        启动开发模式（Vite + Tauri）"
+	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
+	@echo "dev-sandbox 沙箱模式开发：数据/临时目录隔离到 target/（agent/受限终端可用）"
 	@echo "build      构建前端产物"
 	@echo "test       运行前端测试（vitest）"
 	@echo "test-rust  运行 Rust 测试（cargo test）"
@@ -18,8 +19,22 @@ help:
 	@echo "gpui       启动 GPUI 壳"
 	@echo "gpui-preview 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview"
 
+# 两种 dev 模式并存，不自动切换：
+# - dev：真实权限/真实数据（%APPDATA%\hongguo-downloader 与真实 WebView2
+#   profile）。必须在普通终端运行；agent/沙箱终端里子进程写不了
+#   %LOCALAPPDATA% 的 profile 和 %TEMP%，会报 0x800700AA。
+# - dev-sandbox：把 WebView2 profile、应用数据、临时目录全部重定向到
+#   target/ 下，专供沙箱/agent 终端跑；数据与真实库隔离，适合功能测试。
 dev:
 	pnpm tauri dev
+
+# 受限环境（agent 沙箱 / 只允许写工作区的终端）专用。默认 dev 会去写
+# %LOCALAPPDATA% 下的 WebView2 profile 和 %TEMP%，被拒时 WebView2 报
+# 0x800700AA「请求的资源在使用中」。本目标把 WebView2 profile（经
+# scripts/tauri.dev-sandbox.json）、HONGGUO_DATA_DIR 与 TEMP/TMP 全部
+# 指到 target/ 下；代价是 dev 的库/设置与真实 %APPDATA% 隔离（target/dev-data）。
+dev-sandbox:
+	node scripts/dev-sandbox.mjs
 
 # GPUI 壳（起步单壳）：直接消费 hongguo-service，操作与 Tauri 客户端一致。
 # 与 Tauri dev 并行无冲突（不同进程、不同窗口系统），但共享同一个数据库——
