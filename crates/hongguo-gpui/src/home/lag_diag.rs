@@ -238,7 +238,18 @@ impl PaintDiag {
     }
 }
 
-/// 事件循环窗口统计：合并丢弃、单批最大条数、投递耗时（含像素转换）。
+/// 像素转换统计。只有 Windows 走 NV12→RGBA（macOS 是 CVPixelBuffer 零拷贝，
+/// 转换段在事件循环里整个不存在），所以随平台一起消失——mac 的诊断行不印
+/// 恒为 0 的「转换耗时」。
+#[cfg(target_os = "windows")]
+#[derive(Default)]
+struct ConvertDiag {
+    count: u32,
+    sum: Duration,
+    max: Duration,
+}
+
+/// 事件循环窗口统计：合并丢弃、单批最大条数、投递耗时（Windows 含像素转换）。
 pub(super) struct EventDiag {
     window_started: Instant,
     events: u32,
@@ -248,9 +259,8 @@ pub(super) struct EventDiag {
     batches: u32,
     sum_lag: Duration,
     max_lag: Duration,
-    conversions: u32,
-    sum_convert: Duration,
-    max_convert: Duration,
+    #[cfg(target_os = "windows")]
+    convert: ConvertDiag,
     last_warn: Option<Instant>,
 }
 
@@ -265,9 +275,8 @@ impl EventDiag {
             batches: 0,
             sum_lag: Duration::ZERO,
             max_lag: Duration::ZERO,
-            conversions: 0,
-            sum_convert: Duration::ZERO,
-            max_convert: Duration::ZERO,
+            #[cfg(target_os = "windows")]
+            convert: ConvertDiag::default(),
             last_warn: None,
         }
     }
@@ -280,10 +289,12 @@ impl EventDiag {
         self.batches += 1;
     }
 
+    /// 像素转换耗时（仅 Windows；NV12→RGBA，见 home/mod.rs 事件循环）。
+    #[cfg(target_os = "windows")]
     pub(super) fn note_convert(&mut self, elapsed: Duration) {
-        self.conversions += 1;
-        self.sum_convert += elapsed;
-        self.max_convert = self.max_convert.max(elapsed);
+        self.convert.count += 1;
+        self.convert.sum += elapsed;
+        self.convert.max = self.convert.max.max(elapsed);
     }
 
     /// 一批事件从出通道到全部投递进视图（含 Windows 的 NV12→RGBA 转换）。
@@ -315,12 +326,18 @@ impl EventDiag {
             log::Level::Info
         };
         let avg_lag = self.sum_lag.as_secs_f64() * 1000.0 / f64::from(self.batches.max(1));
-        let avg_convert =
-            self.sum_convert.as_secs_f64() * 1000.0 / f64::from(self.conversions.max(1));
+        #[cfg(target_os = "windows")]
+        let convert_seg = format!(
+            "，转换均 {:.1}ms/最大 {}ms",
+            self.convert.sum.as_secs_f64() * 1000.0 / f64::from(self.convert.count.max(1)),
+            self.convert.max.as_millis(),
+        );
+        #[cfg(not(target_os = "windows"))]
+        let convert_seg = String::new();
         log::log!(
             level,
             "[Home][events] {:.1}s 窗口：收 {} 事件/{} 帧，合并丢弃 {} 帧，\
-             单批最大 {}，投递均 {:.1}ms/最大 {}ms（转换均 {:.1}ms/最大 {}ms）",
+             单批最大 {}，投递均 {:.1}ms/最大 {}ms{convert_seg}",
             elapsed.as_secs_f64(),
             self.events,
             self.frames,
@@ -328,8 +345,6 @@ impl EventDiag {
             self.max_batch,
             avg_lag,
             self.max_lag.as_millis(),
-            avg_convert,
-            self.max_convert.as_millis(),
         );
         self.window_started = Instant::now();
         self.events = 0;
@@ -339,8 +354,9 @@ impl EventDiag {
         self.batches = 0;
         self.sum_lag = Duration::ZERO;
         self.max_lag = Duration::ZERO;
-        self.conversions = 0;
-        self.sum_convert = Duration::ZERO;
-        self.max_convert = Duration::ZERO;
+        #[cfg(target_os = "windows")]
+        {
+            self.convert = ConvertDiag::default();
+        }
     }
 }
