@@ -1,11 +1,3 @@
-# 2026-10-18 VS Build Tools 14.44.35229 更新后，aws-lc-sys（reqwest 0.13 →
-# rustls → aws-lc-rs）在默认 target 的长路径下会报 cl.exe D8050 / lib.exe
-# LNK1104。target 放到仓库旁的短路径，所有 cargo 命令（含
-# `cargo run -p hongguo-gpui` 与 `pnpm tauri dev`）共用；VS 修复后可删。
-# 注意：相对路径按本仓库位于 `<home>/projects/<repo>` 的布局解析。
-[build]
-target-dir = "../../.cache/hongguo-target"
-
 # 软解提速的编译期开关。三个目标各按其**真实硬件下限**取值，
 # 宁可少拿收益，也不让老机器跑不起来。
 #
