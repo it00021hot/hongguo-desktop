@@ -864,8 +864,9 @@ JSON **数字**（精度内直接发数字）：
 
 - hgplayer 传 0 的字段（duration/retain/episode_cnt 等）照抄 0；
   `player_accumulate_total_time` 样本里等于当时进度，我们同用 position_ms
-- 我们实现：`history.rs report_watch_progress` 一次打双接口，前端
-  persist 节流（~1 分钟 + 切集/退出），匿名后端静默跳过。
+- 我们实现：`history.rs report_watch_progress` 一次打双接口；**触发在播放器
+  的上报心跳里**（`history-cadence.ts` / `history_cadence.rs` 两壳同规则，
+  见 §9.4.2），匿名后端静默跳过。
   ⚠️ **vid_index 基准（2026-10-17 定）**：线上协议是 **0 基**（样本
   第 1 集 = 0），域值（前端/本地存储）是 1 基——写侧统一 -1 换算
   （`wire_vid_index`，删除形态同源），读侧 +1 转回。曾把 1 基直发
@@ -894,8 +895,21 @@ vid / series_id）；单集精确查询接口未抓到。
 - **关窗口不上报**（最后一条流量就是最后事件的上报，无 close flush）。
 
 参考端实现是 JS 每 5s 调 Go `SaveProgress`（落本地库 + `progressUploader`
-协程批量上云）；本项目等价口径：persist 首次（~5s）即报 + 每 60s +
-force（暂停/切集/卸载）。
+协程批量上云）。本项目口径（2026-10-18 定，两壳同规则：
+`src/features/player/hooks/history-cadence.ts` ↔
+`crates/hongguo-gpui/src/home/history_cadence.rs`）：**上报心跳与 5 秒落盘
+节流解耦**，按播放位置判定节拍——新剧起播 5s 首报；**同剧切集立即报新集**
+（历史行按剧聚合，切集后还显示上一集就是错的，比参考端激进一步，参考端要
+等新集自己的 5s 里程碑）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
+的前跳）立即补；暂停/切集/退出 force 收尾（仍守 <5 秒不建行的噪点门槛）。
+上报落定后把 `watch-history` / `local-history` 查询标记过期但**不立刻重拉**
+（`refetchType: 'none'`：首页「你的内容」种子吃同一份缓存，播放中重排会把
+游标指到别的剧），历史页下次打开必拉新行。
+
+> 为什么不能挂在落盘/帧事件上（2026-10-18 用户实测「第七集播完、第八集
+> 开播，历史还是第七集；第八集十几秒才上报 5 秒」）：首报会被 5 秒落盘
+> 窗口量化到 5–10 秒；而「每 60s 一拍」的计数只在真正上报时自增，恒定卡在
+> 1，长集播放时云端进度整集停在首报值。
 
 「历史」页筛选口径（参考端 History 组件逆向）：**已看完 = episode_cnt>0
 且已看到最后一集**（`vid_index+1 >= episode_cnt`），与片内进度无关；

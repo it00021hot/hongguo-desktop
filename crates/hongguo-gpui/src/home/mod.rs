@@ -54,6 +54,7 @@ use tokio::sync::mpsc;
 use danmaku::DmFlight;
 pub(crate) use feed::Source;
 use feed::{SourceFeed, StreamItem};
+use history_cadence::HistoryCadence;
 
 /// 首页发往壳的事件（页面间不互相持有，壳订阅后裁决目的地）。
 #[derive(Debug, Clone)]
@@ -78,6 +79,7 @@ pub(crate) mod downloads_range;
 pub(crate) mod feed;
 pub(crate) mod fmt;
 pub(crate) mod hevc_prompt;
+pub(crate) mod history_cadence;
 pub(crate) mod incognito;
 pub(crate) mod interact;
 pub(crate) mod mini_panel;
@@ -421,11 +423,10 @@ pub struct HomeView {
 
     wheel_at: Option<Instant>,
     last_save: Instant,
-    /// 观看历史记录节拍（issue #10 节奏对齐 Tauri）：键 = series:集号，
-    /// 切集清零；本集已记录次数（起播 ≥5 秒首报一次，之后由 force 事件
-    /// ——暂停/切集/离开——补记，与 Tauri 实际行为一致）。
-    history_report_key: String,
-    history_reported: u64,
+    /// 观看历史上报节拍（`history_cadence`，与 Tauri 前端同一套规则）：
+    /// 1 秒心跳按播放位置判定——新剧 5 秒首报、同剧切集立即翻页、
+    /// 每 60 秒一拍；暂停/切集/退出走 force 收尾。
+    history_cadence: HistoryCadence,
     /// 播放快捷键的焦点锚：键盘事件只派发给焦点子树，舞台持有一个
     /// FocusHandle（见 render_stage），首次渲染播种、点舞台带回。
     focus: gpui_kit::FocusHandle,
@@ -640,8 +641,7 @@ impl HomeView {
             progress_bounds: Rc::new(Cell::new(None)),
             wheel_at: None,
             last_save: Instant::now(),
-            history_report_key: String::new(),
-            history_reported: 0,
+            history_cadence: HistoryCadence::default(),
             focus: cx.focus_handle(),
             focus_seeded: false,
             shortcut_keys: prefs.keys.clone(),
@@ -661,6 +661,9 @@ impl HomeView {
         }
         // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）
         view.spawn_minimize_poller(window.window_handle(), cx);
+        // 观看历史上报心跳（1s 一拍；没在播时内部直接返回）：节拍必须独立于
+        // 5 秒落盘窗口与帧事件，否则首报被量化、60 秒节拍根本不成立
+        view.spawn_history_heartbeat(cx);
         // 下载队列恢复：running 视为中断改回 pending（Tauri bootstrap 同款），
         // 然后触发一轮调度把中断的任务续跑起来。库读取失败只记错误不拦
         // 启动——壳的其余功能不依赖队列（显式容错：有日志、只此一处）。

@@ -362,10 +362,11 @@ export function PlayerView({
     [onStageClick],
   );
 
-  // 进度持久化（5s 节流落盘 + 云端上报节拍 + 卸载补写）抽在
+  // 进度持久化（5s 节流落盘 + 观看历史上报心跳 + 卸载补写）抽在
   // use-playback-progress；lastKnownRef/srcKeyRef 两把竞态防御 ref 的
   // 真值在取流侧持有，这里经参数转入（起播续点、startCompat 认流共用）。
-  const { persist } = usePlaybackProgress({
+  // report 走播放位置心跳（节拍独立于落盘节流），persist 只管落盘与收尾上报。
+  const { persist, report } = usePlaybackProgress({
     videoRef,
     seriesId,
     vidIndex,
@@ -600,6 +601,8 @@ export function PlayerView({
                     // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
                     setStalled({ key: streamKey, on: false });
                     persist(e.currentTarget.currentTime);
+                    // 历史上报心跳：媒体时钟驱动（暂停即停），节拍见 history-cadence
+                    report(e.currentTarget.currentTime);
                   }}
                   onEnded={handleEnded}
                   onRateChange={handleRateChange}
