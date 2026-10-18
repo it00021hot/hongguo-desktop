@@ -4,6 +4,7 @@
 #[cfg(feature = "screenshot")]
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Icon;
 use gpui_kit::component::Sizable;
@@ -45,7 +46,12 @@ impl super::HomeView {
             .bottom(gpui_kit::px(56.0))
             .h(gpui_kit::relative(0.68))
             .w(gpui_kit::px(380.0))
-            .bg(gpui_kit::rgba(0x171717f2))
+            // Tauri 同款：bg-neutral-950/95 + rounded-tl-xl + 左/上白 10% 描边
+            .bg(gpui_kit::rgba(0x0a0a0af2))
+            .rounded_tl(gpui_kit::px(12.0))
+            .border_t_1()
+            .border_l_1()
+            .border_color(gpui_kit::rgba(0xffffff1a))
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
@@ -55,12 +61,14 @@ impl super::HomeView {
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
             .child(
-                // 头部：评论 · N + 关闭
+                // 头部：评论 · N + 关闭（Tauri h-12 + border-b 白 10% 同款）
                 h_flex()
                     .items_center()
                     .justify_between()
                     .px_4()
                     .py_3()
+                    .border_b_1()
+                    .border_color(gpui_kit::rgba(0xffffff1a))
                     .child(
                         div()
                             .text_sm()
@@ -142,13 +150,13 @@ impl super::HomeView {
                     }),
             )
             .child(
-                // 底部发送框：回复目标指示 + 输入 + 发送
+                // 底部发送框：回复目标指示 + 输入 + 发送（Tauri border-white/10）
                 v_flex()
                     .px_4()
                     .py_3()
                     .gap_2()
                     .border_t_1()
-                    .border_color(gpui_kit::rgba(0x262626ff))
+                    .border_color(gpui_kit::rgba(0xffffff1a))
                     // @提及候选弹层（Tauri CommentPanel 同款：横排候选 +
                     // AI 头像角标 + 「Ai」后缀；点选→延迟写入输入框）。
                     // 表情选择器/候选都在输入行上方；无候选时给提示行。
@@ -482,13 +490,17 @@ impl super::HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.cancel_delete(cx)),
                     )
-                    .child(
+                    .child({
+                        // 卡片走主题（Tauri ConfirmDialog = shadcn AlertDialog
+                        // bg-background）：亮色主题下是亮卡片，别在浮层里钉死
+                        // 深底把主题外的用户甩回暗色。
+                        let theme = cx.theme();
                         v_flex()
                             .w(gpui_kit::px(272.0))
                             .p_4()
                             .gap_2p5()
                             .rounded(gpui_kit::px(12.0))
-                            .bg(gpui_kit::rgb(0x262626))
+                            .bg(theme.background)
                             .on_mouse_down(
                                 gpui_kit::MouseButton::Left,
                                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
@@ -497,7 +509,7 @@ impl super::HomeView {
                                 div()
                                     .text_sm()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .text_color(gpui_kit::rgb(0xffffff))
+                                    .text_color(theme.foreground)
                                     .child(if is_reply {
                                         crate::i18n::t("player.comments.deleteReplyTitle")
                                     } else {
@@ -507,7 +519,7 @@ impl super::HomeView {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(gpui_kit::rgba(0xffffff99))
+                                    .text_color(theme.muted_foreground)
                                     .child(crate::i18n::t("player.comments.deleteDesc")),
                             )
                             .child(
@@ -540,8 +552,8 @@ impl super::HomeView {
                                                 this.confirm_delete(cx);
                                             })),
                                     ),
-                            ),
-                    )
+                            )
+                    })
             }))
             .into_any_element()
     }

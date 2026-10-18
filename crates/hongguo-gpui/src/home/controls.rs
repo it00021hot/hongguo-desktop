@@ -47,16 +47,21 @@ pub(super) fn chrome_variant(cx: &gpui_kit::App) -> ButtonCustomVariant {
 }
 
 /// 播放器/评论面板里的输入框：在元素**真正渲染的那一拍**，临时把主题里
-/// 光标 / 占位符 / 选区三个 token 换成 hgplayer 皮肤值，再把 `Input` 交给
-/// 组件渲染，然后立刻还原。
+/// 光标 / 占位符 / 选区 / **编辑器底色**四个 token 换成 hgplayer 皮肤值，
+/// 再把 `Input` 交给组件渲染，然后立刻还原。
 ///
 /// 为什么只能这么做：`Input` 在 `RenderOnce::render` 里从 `cx.theme()` 把
-/// 这三个颜色拷进 `InputState` 的 editor style（`set_editor_style` 是
+/// 这几个颜色拷进 `InputState` 的 editor style（`set_editor_style` 是
 /// gpui-component 的 crate 内部 API），应用侧没有实例级覆盖入口。播放器是
 /// 固定深色皮肤，亮色主题的默认值是「近黑光标 + 深灰占位符」，压在深色
 /// 胶囊/面板上就是隐形。`Theme::global_mut` 不广播主题变更、不动其它字段
 /// （见其注释），我们的改写与还原在同一个同步渲染调用内完成，正文色仍由
 /// 调用方的 `.text_color()` 决定（正文取继承色）。
+///
+/// 编辑器底色必须显式透明：`appearance(false)` 只关掉 `Input` 容器的底色，
+/// 而 gpui-base 的 editor 元素自己会**逐行涂 `editor_background`**（未设置
+/// 时回落 `input_background()`——亮色下就是白底块，实测两种主题都穿了帮，
+/// 见 feed-comments 预览）。底色由外层胶囊/输入框容器画。
 #[derive(gpui_kit::IntoElement)]
 pub(super) struct SkinnedInput {
     inner: gpui_kit::component::input::Input,
@@ -69,15 +74,24 @@ impl gpui_kit::RenderOnce for SkinnedInput {
         cx: &mut gpui_kit::App,
     ) -> impl gpui_kit::IntoElement {
         use gpui_kit::component::Theme;
-        let (caret, muted, selection) = {
+        let (caret, muted, selection, editor_bg) = {
             let theme = Theme::global_mut(cx);
-            let saved = (theme.caret, theme.muted_foreground, theme.selection);
+            let saved = (
+                theme.caret,
+                theme.muted_foreground,
+                theme.selection,
+                theme.highlight_theme.style.editor_background,
+            );
             theme.caret = gpui_kit::rgba(0xffffffff).into();
             theme.muted_foreground = gpui_kit::rgba(0xffffff99).into();
             theme.selection = gpui_kit::rgba(0xffffff40).into();
+            // Arc 容器：首次经 make_mut 拆出本壳自有副本，之后就地改写。
+            std::sync::Arc::make_mut(&mut theme.highlight_theme)
+                .style
+                .editor_background = Some(gpui_kit::rgba(0x00000000).into());
             saved
         };
-        // Input::render 在这里同步读取主题并把三个颜色拷进 InputState。
+        // Input::render 在这里同步读取主题并把这几个颜色拷进 InputState。
         // `into_any_element()` 把返回的元素摊成自有值：它默认会借住 `cx`
         // （RPIT 捕获入参生命周期），不摊平的话下面还原借不到可变引用。
         let element = self.inner.render(window, cx).into_any_element();
@@ -85,6 +99,9 @@ impl gpui_kit::RenderOnce for SkinnedInput {
         theme.caret = caret;
         theme.muted_foreground = muted;
         theme.selection = selection;
+        std::sync::Arc::make_mut(&mut theme.highlight_theme)
+            .style
+            .editor_background = editor_bg;
         element
     }
 }

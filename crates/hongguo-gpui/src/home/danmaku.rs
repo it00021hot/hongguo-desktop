@@ -354,6 +354,11 @@ impl super::HomeView {
 
     /// 弹幕设置面板的一行（Tauri DisplaySlider 同构：label 上 + 百分比读数
     /// 右 + 滑杆下）。字色/字重与 Tauri 对齐：label 白 90%、读数等宽白 70%。
+    ///
+    /// 滑杆钉 hgplayer 白皮肤（组件默认取主题令牌，亮色主题下会变成
+    /// 「深色填充 + 浅色轨道」压在黑面板上——Tauri 是白 25% 轨道、白填充、
+    /// 白滑块，见 DisplaySlider）：`.bg` 管 bar（轨道取 20% 透明度、
+    /// 已填段全色、滑块外圈 50%），`.text_color` 管滑块芯。
     pub(super) fn dm_setting_row(
         &self,
         label: impl Into<SharedString>,
@@ -379,7 +384,11 @@ impl super::HomeView {
                             .child(format!("{}%", (value * 100.0).round() as i64)),
                     ),
             )
-            .child(Slider::new(slider))
+            .child(
+                Slider::new(slider)
+                    .bg(gpui_kit::rgba(0xffffff40))
+                    .text_color(gpui_kit::rgb(0xffffff)),
+            )
             .into_any_element()
     }
 }

@@ -256,8 +256,9 @@ impl super::HomeView {
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .cursor_pointer()
                             .when(checked, |s| {
+                                // Tauri EpisodeRangePicker 选中态：border-transparent
                                 s.bg(theme.primary)
-                                    .border_color(theme.primary)
+                                    .border_color(gpui_kit::rgba(0x00000000))
                                     .text_color(theme.primary_foreground)
                             })
                             .when(!checked, |s| {
@@ -292,7 +293,10 @@ impl super::HomeView {
                 .rounded_t(gpui_kit::px(12.0))
                 .border_t_1()
                 .border_color(theme.border)
-                .bg(gpui_kit::rgba(0x171717f7))
+                // Tauri DownloadSheet 走 shadcn Sheet（bg-background）：
+                // **主题跟随**，亮色就是亮面板。此前写死深底、内部却取主题
+                // 令牌，亮色主题下黑字压深板全部穿帮（预览实测）。
+                .bg(theme.background)
                 .px_6()
                 .pt_4()
                 .pb_4()
