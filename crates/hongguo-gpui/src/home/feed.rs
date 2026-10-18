@@ -93,7 +93,18 @@ pub(super) struct SourceFeed {
     /// 首批（含换一批）落定时刻：「回首页过期换一批」的判定源
     /// （Tauri react-query dataUpdatedAt 同语义）。
     loaded_at: Option<std::time::Instant>,
+    /// 首批自动重试已用预算（见 [`FEED_AUTO_RETRIES`]）；成功落定内容或
+    /// 用户手动重试时清零。
+    pub(super) auto_retries: u32,
 }
+
+/// 首批自动重试预算上限：打开应用的首屏请求最容易撞上网络/代理未就绪
+/// 这类瞬时故障，失败即落「重试」按钮让人手点很蠢——预算内自动退避
+/// 重拉，烧完才落手动卡。
+const FEED_AUTO_RETRIES: u32 = 3;
+
+/// 自动重试基础退避：第 n 次失败后等 `BASE * 2^(n-1)`（1s/2s/4s）。
+const FEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批
 /// （Tauri `FEED_STALE_MS` 同款）。
@@ -123,6 +134,7 @@ impl super::HomeView {
                 feed.offset = 0;
                 feed.has_more = false;
                 feed.failed = None;
+                feed.auto_retries = 0;
                 *self.indexes.get_mut(&source).expect("游标已初始化") = 0;
             } else if !feed.items.is_empty() {
                 return;
@@ -144,6 +156,39 @@ impl super::HomeView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            // 坏结果（请求失败或空页）先记账判重试：预算内保持「加载中」并按
+            // 退避自动重拉，手动重试卡只在预算烧完后出现（打开应用的首屏请求
+            // 最容易撞上瞬时故障，让人手点重试很蠢）。
+            let retry_after = this.update(cx, |view, _| {
+                let feed = view.feeds.get_mut(&source).expect("源已初始化");
+                let bad = match &result {
+                    Err(_) => true,
+                    Ok(page) => page.items.is_empty(),
+                };
+                if bad && feed.auto_retries < FEED_AUTO_RETRIES {
+                    feed.auto_retries += 1;
+                    Some(FEED_RETRY_BASE * 2u32.pow(feed.auto_retries - 1))
+                } else {
+                    None
+                }
+            });
+            if let Ok(Some(delay)) = retry_after {
+                let reason = match &result {
+                    Err(e) => e.to_string(),
+                    Ok(_) => "空页".into(),
+                };
+                log::warn!("[Home] {source:?} 首批失败（{reason}），{delay:.0?} 后自动重试");
+                cx.background_executor().timer(delay).await;
+                let _ = this.update(cx, |view, cx| {
+                    let feed = view.feeds.get_mut(&source).expect("源已初始化");
+                    // 放开 loading 闸再走 load_feed（其 early-return 拦在途请求）；
+                    // 清上一轮落下的失败卡，等这轮的判定
+                    feed.loading = false;
+                    feed.failed = None;
+                    view.load_feed(source.clone(), false, cx);
+                });
+                return;
+            }
             let _ = this.update(cx, |view, cx| {
                 match result {
                     Ok(page) => {
@@ -155,6 +200,9 @@ impl super::HomeView {
                             feed.items = page.items.iter().map(StreamItem::from).collect();
                             feed.failed = None;
                             feed.loaded_at = Some(std::time::Instant::now());
+                            if !feed.items.is_empty() {
+                                feed.auto_retries = 0;
+                            }
                         }
                         // 取证：dump 开关时把整页封面都预载落盘（离线对拍用）
                         if std::env::var("HONGGUO_DUMP_COVER").is_ok() {
