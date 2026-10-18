@@ -75,9 +75,11 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
         if let Err(e) = render_case(&case, &state, output) {
             anyhow::bail!("场景 {} 渲染失败: {e:#}", case.name);
         }
-        // mini 场景翻的是进程级全局（crate::mini 的静态），跑完复位，
-        // 不让后续场景继承小屏形态。
+        // mini / portrait 场景翻的是进程级全局（各自的静态），跑完复位，
+        // 不让后续场景继承形态（portrait 漏复位时侧栏/顶栏 tab 槽全变竖屏
+        // 形态，交互探针的 tab 也整个消失——2026-10-18 实测）。
         crate::mini::set_active(false);
+        crate::portrait::set_active(false);
     }
     // 出图之后跑交互探针：点击是出图验不了的另一半
     interaction_probe(&state)?;
@@ -199,11 +201,20 @@ fn interaction_probe(
         Ok(())
     })??;
 
-    // tab 条带：舞台顶部 top_3(12px) 起的一小条；横跨内容区全宽（x 取
-    // 240..1010，避开侧栏 224），多档高度每 8px 点一次，直到源离开
-    // 「推荐」。点击推荐本身 = 换一批（源不变），漫剧是第一个会翻源的点。
+    // tab 是异步就位的（假网络 404 → 回落三件套走 bridge）：不等它落定
+    // 就开扫，扫的时候 tab 条还是空的，点击全部落空（实测踩中）。与
+    // render_case 同款等待：run_until_parked + 推时钟 + 二帧。
+    cx.run_until_parked();
+    cx.advance_clock(std::time::Duration::from_millis(200));
+    cx.update_window(handle, |_, window, cx| {
+        let _ = window.draw(cx);
+    })?;
+    // tab 条带：壳顶栏（h 44px）里的分类 tab（分类 tab 已从舞台 top_3 上移
+    // 壳顶栏，扫舞台顶部会全部落空）；横跨内容区全宽（x 取 240..1010，避开
+    // 侧栏 224），多档高度每 8px 点一次，直到源离开「推荐」。点击推荐本身
+    // = 换一批（源不变），漫剧是第一个会翻源的点。
     let switched_at = cx.update_window(handle, |_, window, cx| -> Option<(f32, f32)> {
-        for y in [54.0, 60.0, 66.0, 72.0, 78.0] {
+        for y in [14.0, 22.0, 30.0, 38.0] {
             for x in (240..1010).step_by(8) {
                 let pos = Point::new(px(x as f32), px(y));
                 for input in [

@@ -569,13 +569,18 @@ impl Shell {
         }
         // 跟随系统：系统外观切换（Windows 主题 / macOS 外观）时重算主题档。
         // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
-        cx.observe_window_appearance(window, |this, window, cx| {
-            if this.theme == crate::ui_prefs::ThemePref::Auto {
-                let mode = this.theme.resolve(window.appearance());
-                crate::tokens::apply(mode, cx);
-            }
-        })
-        .detach();
+        // 预览不挂：预览场景的主题由矩阵按 case 指定（scene 的 mode），
+        // headless 窗口一挂上这个回调就会用宿主外观（Light）把场景主题
+        // 盖掉——dark 场景全部渲染成亮色（2026-10-18 实测）。
+        if !crate::preview::is_active() {
+            cx.observe_window_appearance(window, |this, window, cx| {
+                if this.theme == crate::ui_prefs::ThemePref::Auto {
+                    let mode = this.theme.resolve(window.appearance());
+                    crate::tokens::apply(mode, cx);
+                }
+            })
+            .detach();
+        }
         shell
     }
 
@@ -1338,6 +1343,12 @@ impl Shell {
             )
             .on_mouse_move(
                 cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, _cx| {
+                    // 只认**按住左键**的移动：按钮内部会 stop 掉 mouse up
+                    //（toolbar_drag 滞留 Some），不查按键的话，松开后的移动
+                    // 也会累计位移误起拖（headless 交互探针实测踩中）。
+                    if ev.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                        return;
+                    }
                     let Some(start) = this.toolbar_drag else {
                         return;
                     };
