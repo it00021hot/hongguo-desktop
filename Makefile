@@ -72,10 +72,17 @@ test-rust:
 # Windows 的 make 走 cmd.exe，recipe 里的 `VAR=value command` 是 POSIX
 # 语法（会被当成不存在的程序）。用 make export 注入交叉目标的占位 CC/AR，
 # 让 Windows 与 Unix 共用同一条 recipe。
+# **只在 Windows 宿主导出**：x86_64 Mac 上 x86_64-apple-darwin 就是宿主
+# 三元组，顶层 export 会把占位编译器毒进真实构建——cc 全部「成功」空转、
+# 静态库产物缺失，gpui-preview 等真实构建炸 could not find native static
+# library（2026-10-19 实测）。macOS/Linux 原生有真编译器，交叉 clippy 不
+# 需要占位；Windows 的 gpui-preview 本就不可用，无此问题。
+ifeq ($(OS),Windows_NT)
 export CC_aarch64_apple_darwin := true
 export AR_aarch64_apple_darwin := true
 export CC_x86_64_apple_darwin := true
 export AR_x86_64_apple_darwin := true
+endif
 
 lint:
 	pnpm lint
