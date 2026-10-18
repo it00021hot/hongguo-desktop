@@ -746,13 +746,14 @@ impl RankView {
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_preview_seed(&mut self, scene: &str, cx: &mut Context<Self>) {
         let empty = scene == "rank-empty";
+        let loading = scene == "rank-loading";
         self.raw_tabs = crate::preview::fixtures::rank_tabs();
         self.selected = "all".into();
         self.sub = "ranklist_hot_sc".into();
         self.filter_open = scene == "rank-filter";
-        self.loading = false;
+        self.loading = loading;
         self.failed = false;
-        self.items = if empty {
+        self.items = if empty || loading {
             Vec::new()
         } else {
             let mut items = crate::preview::fixtures::rank_items();
@@ -902,7 +903,17 @@ impl gpui_kit::Render for RankView {
                                     .children(filter_toggle),
                             )
                             .children(filter_panel)
-                            .child(
+                            .child(if loading {
+                                // 首拉加载：整块内容区居中（与历史/收藏等页同口径；
+                                // 此前是列表顶部的细条 Spinner，各页加载位置不一的
+                                // 来源，用户意见：统一居中）
+                                h_flex()
+                                    .size_full()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(Spinner::new().small())
+                                    .into_any_element()
+                            } else {
                                 div()
                                     .id("rank-list")
                                     .flex_1()
@@ -912,16 +923,7 @@ impl gpui_kit::Render for RankView {
                                         v_flex()
                                             .w_full()
                                             .gap_2()
-                                            .children(if loading {
-                                                vec![
-                                                    h_flex()
-                                                        .w_full()
-                                                        .justify_center()
-                                                        .py_8()
-                                                        .child(Spinner::new().small())
-                                                        .into_any_element(),
-                                                ]
-                                            } else if failed {
+                                            .children(if failed {
                                                 vec![
                                                     v_flex()
                                                         .w_full()
@@ -977,8 +979,9 @@ impl gpui_kit::Render for RankView {
                                                         .child(crate::i18n::t("follow.noMore")),
                                                 )
                                             })),
-                                    ),
-                            ),
+                                    )
+                                    .into_any_element()
+                            }),
                     ),
             )
     }

@@ -125,6 +125,31 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "definition-menu",
             font_scale: 1.,
         },
+        // —— 页面首拉加载态（用户对齐：各页加载位置统一整区居中）——
+        PreviewCase {
+            name: "rank-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "rank-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "browse-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "browse-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator-loading",
+            font_scale: 1.,
+        },
         // —— 首页分支态 ——
         PreviewCase {
             name: "feed-error-light",

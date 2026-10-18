@@ -454,13 +454,6 @@ impl CreatorView {
 
     fn render_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        if self.loading && !self.works_loaded {
-            return v_flex()
-                .pt_20()
-                .items_center()
-                .child(Spinner::new().small())
-                .into_any_element();
-        }
         if let Some(err) = self.failed.clone() {
             return v_flex()
                 .pt_20()
@@ -554,7 +547,18 @@ impl gpui_kit::Render for CreatorView {
             .text_color(theme.foreground)
             .id("creator-page")
             .child(div().w_full().px_8().pt_6().child(self.render_back_bar(cx)))
-            .child(
+            .child(if self.loading && !self.works_loaded {
+                // 首拉加载：整块剩余区居中（与历史/收藏等页同口径；此前 pt-20
+                // 顶部条是各页加载位置不一的来源，用户意见：统一居中。提到
+                // 页面级是因为滚动列是自高的，body 里 flex_1 没有可撑满的基准）
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_center()
+                    .justify_center()
+                    .child(Spinner::new().small())
+                    .into_any_element()
+            } else {
                 div()
                     .id("creator-scroll")
                     .flex_1()
@@ -572,21 +576,23 @@ impl gpui_kit::Render for CreatorView {
                                 .children(heading)
                                 .child(body),
                         ),
-                    ),
-            )
+                    )
+                    .into_any_element()
+            })
     }
 }
 
 #[cfg(feature = "screenshot")]
 impl CreatorView {
-    /// 预览种子：`creator` = 资料头 + 作品网格；`creator-empty` = 空作品态。
+    /// 预览种子：`creator` = 资料头 + 作品网格；`creator-empty` = 空作品态；
+    /// `creator-loading` = 首拉加载态（整区居中 Spinner）。
     pub(crate) fn debug_preview_seed(&mut self, scene: &str, cx: &mut Context<Self>) {
         self.user_id = "2007062623837002".into();
-        self.loading = false;
+        self.loading = scene == "creator-loading";
         self.failed = None;
         self.profile = Some(crate::preview::fixtures::creator_profile());
         self.avatar = Some(crate::preview::fixtures::cover(9));
-        self.works = if scene == "creator-empty" {
+        self.works = if scene == "creator-empty" || scene == "creator-loading" {
             Vec::new()
         } else {
             crate::preview::fixtures::creator_works()
@@ -598,7 +604,7 @@ impl CreatorView {
             );
         }
         self.total = self.works.len() as i64;
-        self.works_loaded = true;
+        self.works_loaded = scene != "creator-loading";
         self.has_more = false;
         cx.notify();
     }

@@ -1014,9 +1014,11 @@ impl BrowseView {
             self.suggest_open = true;
             self.suggest_index = 1;
         }
-        if scene != "browse-empty" {
+        if scene != "browse-empty" && scene != "browse-loading" {
             self.feed_items = items;
         }
+        // 首拉加载态：空列表 + 在拉（渲染走整区居中 Spinner）
+        self.feed_loading = scene == "browse-loading";
         self.downloaded = HashMap::from([("7100001".to_string(), 3u32)]);
         for (i, item) in self.feed_items.iter().enumerate() {
             self.covers
@@ -1248,6 +1250,9 @@ impl gpui_kit::Render for BrowseView {
                     .w_full()
                     .p_6()
                     .gap_4()
+                    // 整页滚动的容器里给内容列撑到视口高：首拉加载的
+                    // Spinner 才有剩余高度可居中（与历史/收藏等页同口径）
+                    .min_h(gpui_kit::relative(1.0))
                     .child(search_row)
                     .children(filter_section)
                     .children(failed.then(|| {
@@ -1261,10 +1266,12 @@ impl gpui_kit::Render for BrowseView {
                             })
                     }))
                     .child(if loading {
+                        // 首拉加载：撑满内容列剩余高度居中（列已 min_h 视口高）
                         h_flex()
                             .w_full()
+                            .flex_1()
+                            .items_center()
                             .justify_center()
-                            .py_8()
                             .child(Spinner::new().small())
                             .into_any_element()
                     } else if empty {
