@@ -30,6 +30,15 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
         },
         PlaySource::Local { path } => ByteSource::local(path)?,
     };
+    log::info!(
+        "[Playback] 起播参数：起点 {:.1}s，倍速 {:.2}x（{}）",
+        opts.start_secs,
+        opts.rate,
+        match &opts.source {
+            PlaySource::Online { definition, .. } => format!("在线 {definition}p"),
+            PlaySource::Local { path } => format!("本地 {}", path.display()),
+        }
+    );
     let meta = open_stream(&source).await?;
     let video_info = meta.video;
     log::info!(
@@ -59,6 +68,9 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
     let wall = Arc::new(Clock::wall());
     wall.reset(opts.start_secs);
     wall.set_rate(opts.rate.clamp(super::MIN_RATE, super::MAX_RATE), 0.0);
+    let audio_slot: Arc<parking_lot::Mutex<Option<AudioOut>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let (audio_ready_tx, _) = tokio::sync::watch::channel(false);
     let shared = Arc::new(Shared {
         paused: AtomicBool::new(false),
         shutdown: AtomicBool::new(false),
@@ -76,16 +88,16 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
         clock_gate: parking_lot::Mutex::new(super::ClockGate::Waiting { audio: None }),
         audio_device: parking_lot::Mutex::new(None),
         audio_start_deadline: parking_lot::Mutex::new(None),
+        audio_ready: audio_ready_tx.clone(),
         events: opts.events,
     });
-    let audio_slot: Arc<parking_lot::Mutex<Option<AudioOut>>> =
-        Arc::new(parking_lot::Mutex::new(None));
     let mut tasks = Vec::new();
 
     // 视频循环先起：音频建流在 HAL 层可能卡若干秒（本机 USB 声卡实测
-    // 3.7–5s，极端 570s），把它放在视频之前等于让整个起播等声卡——画面
-    // 一直盖着封面。两条链并行，谁慢谁等：视频首帧一到就出画，音频就绪
-    // 后按当前播放位置接管（见下方 spawn 的音频任务）。
+    // 3.7–5s，极端 570s），放在视频之前等于整条起播链等声卡。两条链并行，
+    // 但**首帧会等音频初始化完成（最多 2s）**再出画：音频若晚到、从起点
+    // 接管并 reset 时钟，已经跑出的一段会让 `now()` 倒退、画面冻住；等音频
+    // 的代价只是封面多停几百毫秒。超过 2s 才走迟到接管（见 adopt_audio）。
     {
         let shared = Arc::clone(&shared);
         let info = video_info.clone();
@@ -118,6 +130,9 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
         let start = opts.start_secs;
         let t_started = t0;
         tasks.push(tokio::spawn(async move {
+            // 无论建流成功、无音轨、设备不可用还是环境变量禁用，退出时都要
+            // 放行首帧等待——否则视频会一直停在封面等音频。
+            let _ready = AudioReadyGuard(Arc::clone(&shared));
             let Some(info) = audio_info.clone() else {
                 log::info!(
                     "[Playback] 无音频轨（累计 {}ms）",
@@ -198,6 +213,39 @@ pub async fn open(opts: OpenOptions) -> hongguo_common::AppResult<std::sync::Arc
     }))
 }
 
+/// 空环预暖音频设备：启动 → 等首个回调 → 暂停。
+///
+/// 只补静音的回调不会推进时钟（`advance(0)`），所以这次启动不会偷跑播放
+/// 时间；暂停后喂送侧再把环填满，首帧 `start_clock` 恢复设备即可立即出声。
+async fn prewarm_device(out: &AudioOut) {
+    const PREWARM_TIMEOUT: Duration = Duration::from_secs(2);
+    let before = out.callback_count();
+    let started = std::time::Instant::now();
+    out.device.activate();
+    let mut warmed = false;
+    loop {
+        if out.callback_count() != before {
+            warmed = true;
+            break;
+        }
+        if started.elapsed() >= PREWARM_TIMEOUT {
+            log::warn!(
+                "[Playback] 音频预暖 {}s 未等到首个回调，恢复时仍可能等待设备",
+                PREWARM_TIMEOUT.as_secs()
+            );
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    out.device.deactivate();
+    if warmed {
+        log::info!(
+            "[Playback] 音频设备预暖完成（{:.0}ms）",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
+
 /// 把一对音频产物接进播放：起喂送 → 预填 → 启动设备 → 换主时钟。
 ///
 /// 立即就绪与迟到接管共用这一段——两者唯一的差别是 `start_secs`：立即就绪
@@ -233,6 +281,14 @@ async fn adopt_audio(
     // 暂停状态要带给刚接上的设备（起播时若已是暂停态）
     out.device
         .set_user_paused(shared.paused.load(Ordering::Relaxed));
+
+    // 预暖：空环把设备先转起来再暂停。WASAPI 首次 Start 到首个回调实测能
+    // 慢到 1.5s（首帧已出、时钟切到音频后只能干等，画面冻住）。空环回调
+    // 只补静音、不推进时钟；暖好后暂停，等首帧再由 start_clock 恢复——
+    // 恢复远快于首次启动，起播/换集不再出现这段冻结。
+    if !late_takeover && !shared.paused.load(Ordering::Relaxed) {
+        prewarm_device(&out).await;
+    }
 
     let (prime_tx, prime_rx) = tokio::sync::oneshot::channel();
     let feeder = {
@@ -312,6 +368,17 @@ fn media_end(info: &TrackInfo) -> f64 {
         return (end - info.edit_media_start_secs).max(0.0);
     }
     info.sample_pts().last().copied().unwrap_or(0.0)
+}
+
+/// 音频初始化结束（含失败/无音轨）的放行卫兵：Drop 时把 `audio_ready`
+/// 置真，唤醒等首帧的视频任务。
+struct AudioReadyGuard(Arc<Shared>);
+
+impl Drop for AudioReadyGuard {
+    fn drop(&mut self) {
+        log::debug!("[Playback] 音频初始化完成，放行首帧等待");
+        let _ = self.0.audio_ready.send(true);
+    }
 }
 
 /// 建音频设备的上界等待。见 [`open`] 里该段的说明。

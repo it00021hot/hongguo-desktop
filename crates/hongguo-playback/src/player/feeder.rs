@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hongguo_video::sample_table::TrackInfo;
 
@@ -47,6 +47,151 @@ const BUFFER_HIGH_SECS: f64 = 0.6;
 /// 恢复」的假事件。每次起播/换集都会闪一下，倍速越高越短、越必现。
 /// 预填到高水位后，设备起步就有滞回区间可用，不再有启动瞬态。
 const AUDIO_PRIME_SECS: f64 = BUFFER_HIGH_SECS;
+
+/// 音频侧诊断窗口：与视频/宿主同拍，日志时间戳可直接对齐。
+const DIAG_WINDOW: Duration = Duration::from_secs(5);
+/// 窗口内设备欠载超过它（毫秒）——用户能听到的断音，升级 warn。
+const UNDERRUN_WARN_MS: f64 = 50.0;
+/// 单次取样本等待超过它（毫秒）——供给卡顿，升级 warn。
+const READ_WARN_MS: f64 = 500.0;
+
+/// 音频侧 5s 窗口诊断：环水位、欠载、断流次数与各段耗时。
+///
+/// 倍速下「偶发卡顿」的音频侧表现是环被抽干：设备回调补静音（欠载）或
+/// 水位状态机暂停设备（断流）。这两件事都必须有量化记录，否则日志里只有
+/// 「播放中」和一片安静，分不出是没喂上还是设备没消费。
+struct AudioDiag {
+    window_started: Instant,
+    /// 窗口内环水位的上下沿（秒，设备域）；跳过预填/冲流阶段。
+    ring_min: f64,
+    ring_max: f64,
+    /// 水位暂停次数与累计时长。
+    starve_count: u32,
+    starve_started: Option<Instant>,
+    starve_total: Duration,
+    /// 设备回调欠载（毫秒）：窗口增量 + 窗口起点基线。
+    silence_ms: f64,
+    last_silence_ms: f64,
+    read_max: Duration,
+    decode_max: Duration,
+    wsola_max: Duration,
+    push_max: Duration,
+    in_frames: u64,
+    out_frames: u64,
+    dropped_frames: u64,
+    decode_errors: u32,
+}
+
+impl AudioDiag {
+    fn new(silence_ms: f64) -> Self {
+        Self {
+            window_started: Instant::now(),
+            ring_min: f64::INFINITY,
+            ring_max: 0.0,
+            starve_count: 0,
+            starve_started: None,
+            starve_total: Duration::ZERO,
+            silence_ms: 0.0,
+            last_silence_ms: silence_ms,
+            read_max: Duration::ZERO,
+            decode_max: Duration::ZERO,
+            wsola_max: Duration::ZERO,
+            push_max: Duration::ZERO,
+            in_frames: 0,
+            out_frames: 0,
+            dropped_frames: 0,
+            decode_errors: 0,
+        }
+    }
+
+    fn observe_ring(&mut self, ring_secs: f64) {
+        self.ring_min = self.ring_min.min(ring_secs);
+        self.ring_max = self.ring_max.max(ring_secs);
+    }
+
+    fn note_silence(&mut self, current_ms: f64) {
+        self.silence_ms += (current_ms - self.last_silence_ms).max(0.0);
+        self.last_silence_ms = current_ms;
+    }
+
+    fn starve_started(&mut self) {
+        self.starve_count += 1;
+        self.starve_started = Some(Instant::now());
+    }
+
+    fn starve_ended(&mut self) -> Duration {
+        let Some(started) = self.starve_started.take() else {
+            return Duration::ZERO;
+        };
+        let duration = started.elapsed();
+        self.starve_total += duration;
+        duration
+    }
+
+    /// seek/换集后重置窗口：重定位造成的预填与冲流不是播放卡顿。
+    fn reset(&mut self) {
+        self.window_started = Instant::now();
+        self.ring_min = f64::INFINITY;
+        self.ring_max = 0.0;
+        self.starve_count = 0;
+        self.starve_started = None;
+        self.starve_total = Duration::ZERO;
+        self.silence_ms = 0.0;
+        self.read_max = Duration::ZERO;
+        self.decode_max = Duration::ZERO;
+        self.wsola_max = Duration::ZERO;
+        self.push_max = Duration::ZERO;
+        self.in_frames = 0;
+        self.out_frames = 0;
+        self.dropped_frames = 0;
+        self.decode_errors = 0;
+    }
+
+    /// 到点输出一行窗口摘要。断流/欠载/取流等待任一超阈值就升级 warn——
+    /// 用户报「卡了一下」时，这行直接给出卡在音频侧的证据。
+    fn report(&mut self, rate: f64) {
+        if self.window_started.elapsed() < DIAG_WINDOW {
+            return;
+        }
+        let elapsed = self.window_started.elapsed();
+        let ring_min = if self.ring_min.is_finite() {
+            self.ring_min
+        } else {
+            0.0
+        };
+        let level = if self.silence_ms >= UNDERRUN_WARN_MS
+            || self.starve_count > 0
+            || self.read_max.as_secs_f64() * 1000.0 >= READ_WARN_MS
+        {
+            log::Level::Warn
+        } else {
+            log::Level::Info
+        };
+        log::log!(
+            level,
+            "[Playback][audio] {:.1}s 窗口：环 {:.2}–{:.2}s，设备欠载 {:.0}ms，\
+             水位暂停 {} 次（累计 {:.0}ms），读样本最大 {}ms/解码最大 {}ms/\
+             WSOLA 最大 {}ms/推送等待最大 {}ms，入 {} 帧/出 {} 帧，\
+             冲流丢弃 {} 帧，解码失败 {} 包（{:.2}x）",
+            elapsed.as_secs_f64(),
+            ring_min,
+            self.ring_max,
+            self.silence_ms,
+            self.starve_count,
+            self.starve_total.as_secs_f64() * 1000.0,
+            self.read_max.as_millis(),
+            self.decode_max.as_millis(),
+            self.wsola_max.as_millis(),
+            self.push_max.as_millis(),
+            self.in_frames,
+            self.out_frames,
+            self.dropped_frames,
+            self.decode_errors,
+            rate,
+        );
+        self.reset();
+    }
+}
 
 /// 喂送循环的游标账本：冲流收口状态（重预填包计数 + 是否在冲流中）与
 /// 样本游标。seek 重定位一次改写全部三样，收拢一处免得散参乱序。
@@ -161,10 +306,7 @@ pub(super) async fn audio_feeder(
     let mut priming = primed.is_some();
     // seek 广播的记账位（独立于视频循环，见 Shared::seek_broadcast）
     let mut seek_gen = 0u64;
-    // 临时诊断累计：解码入量 / WSOLA 出量 / 冲流丢弃量（解码域帧）
-    let mut diag_in = 0u64;
-    let mut diag_out = 0u64;
-    let mut diag_drop = 0u64;
+    let mut diag = AudioDiag::new(feed.silence_ms());
 
     while cursor.idx < total {
         if shared.shutdown.load(Ordering::Relaxed) {
@@ -183,6 +325,7 @@ pub(super) async fn audio_feeder(
                     &mut cursor,
                 )
                 .await;
+                diag.reset();
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
@@ -199,6 +342,7 @@ pub(super) async fn audio_feeder(
                 &mut cursor,
             )
             .await;
+            diag.reset();
             continue;
         }
         // 读样本带读取代次：seek 会抬代次，堵在旧位置上的 serve 请求尽早
@@ -206,6 +350,7 @@ pub(super) async fn audio_feeder(
         // seek 的就绪被白白拖后一个区间。
         let my_epoch = shared.read_epoch.load(Ordering::Relaxed);
         let shared_for_read = Arc::clone(&shared);
+        let t_read = Instant::now();
         let sample = match source
             .read_cancellable(cursor.idx, move || {
                 shared_for_read.read_epoch.load(Ordering::Relaxed) != my_epoch
@@ -223,22 +368,28 @@ pub(super) async fn audio_feeder(
                 return;
             }
         };
+        diag.read_max = diag.read_max.max(t_read.elapsed());
+        let t_decode = Instant::now();
         let decoded = match decoder.decode(&sample) {
             Ok(d) => d,
             Err(e) => {
                 // 单包解不出来不该整场静音，但也**不能跳过**：跳过等于把这段
                 // 时间从音频里抹掉，音轨比画面短一截——每跳一包就多攒一份
                 // 音画差。补一包等长静音，时间轴严丝合缝。
+                diag.decode_errors += 1;
                 log::warn!("[Playback] 音频样本 {} 解码失败（补静音）: {e}", cursor.idx);
                 vec![0f32; 1024 * ch]
             }
         };
+        diag.decode_max = diag.decode_max.max(t_decode.elapsed());
         // 倍速伸缩（rate 变化逐窗生效）
         let rate = shared.rate();
         let mut stretched = Vec::with_capacity(decoded.len() / 2);
+        let t_wsola = Instant::now();
         wsola.process(&decoded, rate, &mut stretched);
-        diag_in += (decoded.len() / ch) as u64;
-        diag_out += (stretched.len() / ch) as u64;
+        diag.wsola_max = diag.wsola_max.max(t_wsola.elapsed());
+        diag.in_frames += (decoded.len() / ch) as u64;
+        diag.out_frames += (stretched.len() / ch) as u64;
         if !stretched.is_empty() {
             // 冲流期环放不下就丢这包：老数据还没被回调丢完、设备又暂停着时
             //（用户暂停/水位暂停），等在 push 上会让喂送任务连同冲流收口、
@@ -246,14 +397,17 @@ pub(super) async fn audio_feeder(
             // 就是要丢的内容；时间轴的连续由时钟换轴负责，不靠这包撑着。
             let need_secs = stretched.len() as f64 / ch as f64 / f64::from(sample_rate);
             if cursor.flush_pending && feed.vacant_secs() < need_secs {
-                diag_drop += (stretched.len() / ch) as u64;
+                diag.dropped_frames += (stretched.len() / ch) as u64;
                 log::debug!("[Playback] 冲流期环满，丢一包等回调腾位");
-            } else if !feed
-                .push(&stretched, &shared.shutdown, &shared.paused)
-                .await
-            {
-                return;
             } else {
+                let t_push = Instant::now();
+                if !feed
+                    .push(&stretched, &shared.shutdown, &shared.paused)
+                    .await
+                {
+                    return;
+                }
+                diag.push_max = diag.push_max.max(t_push.elapsed());
                 cursor.pushed += 1;
             }
         }
@@ -283,10 +437,16 @@ pub(super) async fn audio_feeder(
         // 还没起播，环浅是正常中间态）
         if !cursor.flush_pending && !priming {
             let ring_secs = feed.buffered_secs();
+            diag.observe_ring(ring_secs);
             if ring_secs <= BUFFER_LOW_SECS && feed.set_starved(true) {
+                diag.starve_started();
                 log::info!("[Playback] 缓冲低水位（{ring_secs:.2}s），暂停设备等填充");
             } else if ring_secs >= BUFFER_HIGH_SECS && feed.set_starved(false) {
-                log::info!("[Playback] 缓冲回填（{ring_secs:.2}s），恢复播放");
+                let starved = diag.starve_ended();
+                log::info!(
+                    "[Playback] 缓冲回填（{ring_secs:.2}s，断流 {:.0}ms），恢复播放",
+                    starved.as_secs_f64() * 1000.0
+                );
             }
             // UI 徽标边沿只按 buffered_ui 翻转：seek 路径上 starved 被提前
             // 解除（收冲流的口），靠它的翻转沿发事件会把 Ready 永远丢掉。
@@ -298,18 +458,25 @@ pub(super) async fn audio_feeder(
                 shared.emit(PlayerEvent::Ready).await;
             }
         }
+        diag.note_silence(feed.silence_ms());
+        if diag.window_started.elapsed() >= DIAG_WINDOW {
+            diag.report(shared.rate());
+        }
         cursor.idx += 1;
         // 喂送心跳（debug）：喂到哪、环多满、各状态位——排「喂送卡死/失聪」
         // 类问题的第一现场
         if cursor.idx.is_multiple_of(200) {
             log::debug!(
-                "[Playback][feeder] idx {}/{} 环 {:.2}s paused={} flush={} gen={} 入{diag_in} 出{diag_out} 丢{diag_drop}",
+                "[Playback][feeder] idx {}/{} 环 {:.2}s paused={} flush={} gen={} 入{} 出{} 丢{}",
                 cursor.idx,
                 total,
                 feed.buffered_secs(),
                 shared.paused.load(Ordering::Relaxed),
                 cursor.flush_pending,
-                seek_gen
+                seek_gen,
+                diag.in_frames,
+                diag.out_frames,
+                diag.dropped_frames
             );
         }
     }

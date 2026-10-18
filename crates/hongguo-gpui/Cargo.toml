@@ -74,6 +74,10 @@ screenshot = [
     "gpui-pre/test-support",
     "gpui-pre-platform/test-support",
 ]
+# 帧耗时取证（排障构建）：给 gpui-pre 打开 profiler，stage 周期日志打
+# draw/present 直方图均值与最大值——区分「建树慢」「layout/paint 慢」与
+# 「present 等 vsync」。默认不开。
+perf-probe = ["dep:gpui-pre", "gpui-pre/profiler"]
 
 [dependencies]
 # GPUI Kit（longbridge/gpui-kit）：gpui-base + gpui-component 聚合，桌面壳按

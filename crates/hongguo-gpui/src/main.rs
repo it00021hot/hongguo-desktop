@@ -68,7 +68,30 @@ pub(crate) fn tokio() -> &'static tokio::runtime::Runtime {
 fn main() {
     // 日志先于一切：装配失败的原因只在这里（与 Tauri 壳同一约定）。预览
     // 模式同样要日志与 panic 留痕，所以这两样在数据根声明之前就位。
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // 毫秒时间戳：卡顿诊断看的就是亚秒级间隔（2x 下一帧 16.7ms），
+    // 默认的秒级精度会把「停顿 120ms」和「正常」印成同一秒。
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+    // Windows 默认定时器精度 ~15.6ms：播放循环的毫秒级轮询会被拉长成一整个
+    // tick，2x 下变成「两帧一起到 → 33ms 空档」的节拍抖动（日志里
+    // `[Playback][video]` 的 ≤20/≤33ms 分档能直接看到）。浏览器/播放器都会
+    // 在播放期把精度提到 1ms，这里同样做；进程退出系统自动回收。
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "winmm")]
+        unsafe extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+        }
+        let result = unsafe { timeBeginPeriod(1) };
+        if result == 0 {
+            log::info!("[Shell] Windows 定时器精度已提升到 1ms");
+        } else {
+            log::warn!(
+                "[Shell] timeBeginPeriod(1) 失败（{result}），播放轮询可能受 15.6ms 粒度影响"
+            );
+        }
+    }
     // panic 留痕：音频设备回调等非主线程的 panic 会静默带走整条线程
     // （实测：回调线程一死，声音原地消失、时钟冻结、界面无限「缓冲中」，
     // 日志里却一片安静）。钩子让它至少留下现场，然后 abort 显性化。

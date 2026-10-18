@@ -91,6 +91,13 @@ pub(crate) struct Shared {
     pub audio_device: parking_lot::Mutex<Option<Arc<AudioDevice>>>,
     /// 音频起播看门狗的截止标记（None = 没有待判定的起播）。
     pub audio_start_deadline: parking_lot::Mutex<Option<AudioStartDeadline>>,
+    /// 音频初始化是否已完成（含「无音轨/设备不可用」的否定结果）。
+    ///
+    /// 首帧必须等它：音频设备建流 + 预填要几百毫秒，如果视频先出画并跑出
+    /// 一段，音频随后才从起点接上、把主时钟 reset 回起点，`now()` 会倒退
+    /// ——画面冻结到音频时钟追平（实测 2x 下 0.6s 级）。等音频就绪再开闸，
+    /// 起播多等的是封面时间，播放中不再凭空卡一下。
+    pub audio_ready: tokio::sync::watch::Sender<bool>,
     pub events: mpsc::Sender<PlayerEvent>,
 }
 
@@ -110,7 +117,15 @@ impl Shared {
         if self.hold.load(Ordering::Relaxed) {
             return *self.start_anchor.lock();
         }
-        self.clock.lock().now()
+        let clock = Arc::clone(&*self.clock.lock());
+        // 播放中才允许回调间外推：暂停/水位断流时声音不前进，时钟必须冻住。
+        let smooth = !self.paused.load(Ordering::Relaxed)
+            && !self
+                .audio_device
+                .lock()
+                .as_ref()
+                .is_some_and(|device| device.is_starved());
+        clock.now_smooth(smooth)
     }
 
     /// 音频起播看门狗（见 [`Self::arm_audio_start_watchdog`]）：到点仍没出声

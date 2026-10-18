@@ -40,7 +40,15 @@ struct ClockState {
     /// consumed 上）。`rate()` 在此期间返回目标值——WSOLA 与界面即刻按新
     /// 倍速走，只有时钟的推进轴等旧内容放完才换。None = 无待生效换速。
     pending: Option<PendingRate>,
+    /// 最近一次**真实音频帧**回调时刻：两次回调之间按墙钟外推，视频帧
+    /// 才能落在 16.7/11.1ms 的网格上，而不是被 10ms 回调粒度量化成
+    /// 20–25ms 的间隔（2x/3x 下可见的轻微「跳」）。
+    last_advance: Instant,
 }
+
+/// 回调间外推上限：超过一个回调周期就不再往前走，宁可让画面等下一次
+/// 回调，也不在设备停摆/欠载时把时钟推到声音前面。
+const MAX_CLOCK_EXTRAPOLATE: f64 = 0.03;
 
 struct PendingRate {
     at_consumed: u64,
@@ -61,6 +69,7 @@ impl Clock {
                 base: 0.0,
                 rate: 1.0,
                 pending: None,
+                last_advance: Instant::now(),
             }),
             wall: Mutex::new(None),
         }
@@ -76,6 +85,7 @@ impl Clock {
                 base: 0.0,
                 rate: 1.0,
                 pending: None,
+                last_advance: Instant::now(),
             }),
             wall: Mutex::new(None),
         }
@@ -87,6 +97,7 @@ impl Clock {
         let mut st = self.state.lock();
         st.base = base_secs;
         st.pending = None;
+        st.last_advance = Instant::now();
         drop(st);
         self.consumed.store(0, Ordering::Relaxed);
         self.lead.store(0, Ordering::Relaxed);
@@ -94,6 +105,15 @@ impl Clock {
     }
 
     pub(crate) fn now(&self) -> f64 {
+        self.now_smooth(false)
+    }
+
+    /// 可外推的时钟读数：两次真实音频帧回调之间按墙钟往后补（上限
+    /// [`MAX_CLOCK_EXTRAPOLATE`]）。
+    ///
+    /// 只给**播放中的视频节拍**用；暂停、seek 闸住、缓冲断流时调用方传
+    /// `false`——那些状态下声音不前进，时钟必须冻住。
+    pub(crate) fn now_smooth(&self, extrapolate: bool) -> f64 {
         let st = self.state.lock();
         if self.sample_rate == 0 {
             let start = self.wall.lock().expect("挂钟已设");
@@ -101,7 +121,16 @@ impl Clock {
         }
         let consumed = self.consumed.load(Ordering::Relaxed);
         let lead = self.lead.load(Ordering::Relaxed).min(consumed);
-        st.base + (consumed - lead) as f64 / self.sample_rate as f64 * st.rate
+        let mut position = st.base + (consumed - lead) as f64 / self.sample_rate as f64 * st.rate;
+        if extrapolate {
+            position += st
+                .last_advance
+                .elapsed()
+                .as_secs_f64()
+                .min(MAX_CLOCK_EXTRAPOLATE)
+                * st.rate;
+        }
+        position
     }
 
     /// 设备是否已经真的出过声（收到过带真实帧的回调）。
@@ -131,6 +160,8 @@ impl Clock {
             st.base = audio_now(&st, self.sample_rate, &self.consumed, &self.lead);
             st.rate = rate;
             st.pending = None;
+            // 新轴从此刻起算，别把上次回调到换速之间的时间重复外推
+            st.last_advance = Instant::now();
             drop(st);
             self.consumed.store(0, Ordering::Relaxed);
             self.lead.store(0, Ordering::Relaxed);
@@ -174,6 +205,9 @@ impl Clock {
         // 检查与取走同一把锁：UI 线程的 set_rate 在锁外，不会插进检查与
         // 生效之间把阈值换掉
         let mut st = self.state.lock();
+        if frames > 0 {
+            st.last_advance = Instant::now();
+        }
         let Some(p) = st.pending.take_if(|p| consumed >= p.at_consumed) else {
             return;
         };
@@ -250,12 +284,21 @@ impl AudioDevice {
                     let Some(s) = stream.as_ref() else {
                         break;
                     };
+                    // 设备启动/暂停的 HAL 调用耗时：起播/换集时视频时钟等
+                    // 设备出声，这一段的长度就是用户看到的「卡一下」。
+                    let t0 = Instant::now();
                     if let Err(e) = s.set_playing(want) {
                         log::warn!(
-                            "[Playback] 音频设备 {}失败: {e}",
-                            if want { "启动" } else { "暂停" }
+                            "[Playback] 音频设备 {}失败（{:.0}ms）: {e}",
+                            if want { "启动" } else { "暂停" },
+                            t0.elapsed().as_secs_f64() * 1000.0
                         );
                     } else {
+                        log::info!(
+                            "[Playback] 音频设备 {}完成（{:.0}ms）",
+                            if want { "启动" } else { "暂停" },
+                            t0.elapsed().as_secs_f64() * 1000.0
+                        );
                         playing = want;
                     }
                 }
@@ -321,6 +364,11 @@ impl AudioDevice {
         true
     }
 
+    /// 是否因水位断流暂停（时钟不应外推）。
+    pub(crate) fn is_starved(&self) -> bool {
+        self.starved.load(Ordering::Relaxed)
+    }
+
     /// 首帧出画：打开起播闸。返回是否为首次激活（迟到接管的设备已经
     /// 激活过，此时不得再重锚时间轴）。
     pub(crate) fn activate(&self) -> bool {
@@ -359,9 +407,8 @@ pub(crate) struct AudioOut {
     discarding: Arc<AtomicBool>,
     /// 冲流收口凭证（见 [`RingFeed::end_flush_if_seen`]）。
     discard_seen: Arc<AtomicBool>,
-    /// 欠载静音累计（诊断）：持续增长 = 喂送跟不上；接近 0 = 健康。
-    #[expect(dead_code, reason = "诊断字段：与 [cb] 日志配套，排障时按需读取")]
-    pub(crate) silence_frames: Arc<AtomicU64>,
+    /// 设备回调累计次数：预暖（空环启动再暂停）用它等首个回调。
+    callback_count: Arc<AtomicU64>,
 }
 
 impl AudioOut {
@@ -404,6 +451,7 @@ impl AudioOut {
         let ring_frames = Arc::new(AtomicU64::new(0));
         let cb_ring_w = Arc::clone(&ring_frames);
         let cb_calls = Arc::new(AtomicU64::new(0));
+        let cb_calls_out = Arc::clone(&cb_calls);
         // 回调节奏实测起点：clock 每秒推进量必须与墙钟一致（设备回调
         // 间隔 × 每拍帧数 ÷ 采样率）；不一致就是设备域口径错了，音画会
         // 系统性漂移（实测过一次 2 倍速推进）。
@@ -476,6 +524,14 @@ impl AudioOut {
                     // 只计真实音频：时钟 =「已经送进设备的真实声音」的可闻位置
                     cb_clock.advance(frames as u64, lead as u64);
                     let n = cb_calls.fetch_add(1, Ordering::Relaxed);
+                    if n == 0 {
+                        // 首个真实回调距建流完成的延迟：换集/起播时视频切到
+                        // 音频时钟后要等它，这段就是用户看到的「卡一下」。
+                        log::debug!(
+                            "[Playback][cb] 首个回调（输出流建成后 {}ms）",
+                            cb_started.elapsed().as_millis()
+                        );
+                    }
                     if n.is_multiple_of(200) {
                         log::debug!(
                             "[Playback][cb] 第 {n} 次回调，本拍 {frames} 帧，clock={:.2}s，墙钟 {:.2}s，引线 {lead:.0} 帧，欠载 {:.1}s（累计）",
@@ -511,7 +567,7 @@ impl AudioOut {
                 device_rate: dst_rate,
                 discarding: cb_discard_w,
                 discard_seen: cb_seen_out,
-                silence_frames: cb_silence,
+                callback_count: cb_calls_out,
             },
             RingFeed {
                 producer: prod,
@@ -521,6 +577,7 @@ impl AudioOut {
                 discard_seen: cb_seen,
                 device,
                 adapter,
+                silence_frames: cb_silence,
             },
         ))
     }
@@ -537,6 +594,11 @@ impl AudioOut {
     /// 内容」的播放时间——分级时钟的换轴延迟就取这个值。
     pub(crate) fn buffered_secs(&self) -> f64 {
         self.ring_frames.load(Ordering::Relaxed) as f64 / f64::from(self.device_rate.max(1))
+    }
+
+    /// 设备回调累计次数（含空环补静音的回调）。预暖时用它等设备真正转起来。
+    pub(crate) fn callback_count(&self) -> u64 {
+        self.callback_count.load(Ordering::Relaxed)
     }
 
     /// 开始冲流（seek 跳点即调）：回调进入丢弃态并清零收口凭证，
@@ -567,6 +629,9 @@ pub(crate) struct RingFeed {
     ring_frames: Arc<AtomicU64>,
     discarding: Arc<AtomicBool>,
     discard_seen: Arc<AtomicBool>,
+    /// 设备回调的欠载静音累计（帧，设备域）：持续增长 = 喂送跟不上。
+    /// 由喂送循环按窗口取差值写进诊断行（[`RingFeed::silence_ms`]）。
+    silence_frames: Arc<AtomicU64>,
     device: Arc<AudioDevice>,
     adapter: crate::resample::PcmAdapter,
 }
@@ -650,6 +715,13 @@ impl RingFeed {
         let (dst_ch, dst_rate) = self.adapter.dst_format();
         let frames = self.producer.occupied_len() / usize::from(dst_ch.max(1));
         frames as f64 / f64::from(dst_rate.max(1))
+    }
+
+    /// 设备回调累计欠载时长（毫秒，设备域）。回调只能把空出来的槽补静音，
+    /// 这里把静音帧数换成时间——用户听到的「一顿」就是它。
+    pub(crate) fn silence_ms(&self) -> f64 {
+        let (_, dst_rate) = self.adapter.dst_format();
+        self.silence_frames.load(Ordering::Relaxed) as f64 * 1000.0 / f64::from(dst_rate.max(1))
     }
 
     /// 缓冲断流暂停（见 AudioDevice::set_starved）。

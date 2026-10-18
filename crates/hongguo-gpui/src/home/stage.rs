@@ -244,7 +244,7 @@ impl super::HomeView {
                 })
                 .unwrap_or_else(|| "?".into());
             log::info!(
-                "[Home][stage] 周期状态：video_ready={video_ready} frame={} switching={} {image_state} epoch={} 舞台={stage_size} 视口={}×{} 播放={:.1}/{}s",
+                "[Home][stage] 周期状态：video_ready={video_ready} frame={} switching={} {image_state} epoch={} 舞台={stage_size} 视口={}×{} 播放={:.1}/{}s 倍速={:.2}x buffering={}",
                 self.frame.is_some(),
                 self.switching,
                 self.epoch.load(Ordering::Relaxed),
@@ -258,7 +258,37 @@ impl super::HomeView {
                     .as_ref()
                     .map(|p| p.duration_secs())
                     .unwrap_or(0.0),
+                self.rate,
+                self.buffering,
             );
+            #[cfg(feature = "perf-probe")]
+            {
+                // GPUI 内建 profiler：draw 是 layout+paint，present 间隔是
+                // 实际出帧节奏；两个数一对比就知道慢在画还是慢在等。
+                let perf = window.frame_duration_snapshot();
+                let draw = &perf.draw_duration_histogram;
+                let interval = &perf.present_interval_histogram;
+                let dirty = &perf.dirty_to_present_histogram;
+                let refresh = perf
+                    .by_refresh_interval
+                    .first()
+                    .and_then(|f| f.refresh_interval)
+                    .map(|d| format!("{:.2}ms", d.as_secs_f64() * 1000.0))
+                    .unwrap_or_else(|| "?".into());
+                log::info!(
+                    "[Home][perf] draw 均 {:.2}ms/最大 {:.1}ms（p50 {:.2}/p95 {:.2}/p99 {:.2}，{} 次），present 间隔均 {:.2}ms/最大 {:.1}ms（{} 帧），dirty→present 均 {:.2}ms，刷新间隔 {refresh}",
+                    draw.mean() / 1e6,
+                    draw.max() as f64 / 1e6,
+                    draw.value_at_quantile(0.5) as f64 / 1e6,
+                    draw.value_at_quantile(0.95) as f64 / 1e6,
+                    draw.value_at_quantile(0.99) as f64 / 1e6,
+                    draw.len(),
+                    interval.mean() / 1e6,
+                    interval.max() as f64 / 1e6,
+                    interval.len(),
+                    dirty.mean() / 1e6,
+                );
+            }
         }
         // 占位封面取**目标剧**（游标位）：切剧瞬间游标已指向下一部，先出
         // 它的封面；无封面条目（书架种子）退回首帧方向已在播的那部。

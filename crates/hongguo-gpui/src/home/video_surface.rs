@@ -335,7 +335,14 @@ fn render_image_of(
     let image = Arc::new(crate::image_upload::render_image(buf));
     let n = CONVERTED.fetch_add(1, Ordering::Relaxed);
     if n < 3 || n.is_multiple_of(200) {
-        log::info!(
+        // 前 3 帧留 info 基线；之后每 200 帧只落 debug——默认 info 级
+        // 由 `[Home][events]` 窗口摘要报转换最大值，不逐帧刷屏。
+        log::log!(
+            if n < 3 {
+                log::Level::Info
+            } else {
+                log::Level::Debug
+            },
             "[Home] NV12→RGBA 转换 #{n} 耗时 {:.1}ms（{tw}×{th}，源 {}×{}）",
             t0.elapsed().as_secs_f64() * 1000.0,
             nv12.width,

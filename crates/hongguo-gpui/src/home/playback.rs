@@ -257,6 +257,8 @@ impl super::HomeView {
         // render，翻沿永远走不到。暂停即释放（用户在场，恢复由
         // toggle_pause 重新持有）。
         crate::play_activity::set_active(true);
+        // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
+        self.paint_diag.reset();
         self.switching = true;
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）

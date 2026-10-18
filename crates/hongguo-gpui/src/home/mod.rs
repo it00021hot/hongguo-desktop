@@ -87,6 +87,7 @@ pub(crate) mod hevc_prompt;
 pub(crate) mod history_cadence;
 pub(crate) mod incognito;
 pub(crate) mod interact;
+pub(crate) mod lag_diag;
 pub(crate) mod mini_panel;
 pub(crate) mod minimize;
 pub(crate) mod overlay;
@@ -175,6 +176,8 @@ pub struct HomeView {
     video_surface: video_surface::VideoSurface,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
+    /// 上屏节奏取证：两次新内容 render 的间隔、合并跳帧、最大停顿（5s 窗口）。
+    paint_diag: lag_diag::PaintDiag,
     /// 切换目标（switching 时 overlay 显示它的封面与标题）。
     pending_title: Option<String>,
     /// 起播失败态（自动重试也失败后落这里；画面中央错误卡 + 重试——
@@ -493,6 +496,7 @@ impl HomeView {
             frame: None,
             video_surface: video_surface::VideoSurface::new(),
             stage_diag_at: Cell::new(Instant::now()),
+            paint_diag: lag_diag::PaintDiag::new(),
             pending_title: None,
             play_error: None,
             play_retried: false,
@@ -1061,7 +1065,9 @@ impl HomeView {
         // 直接读，不必每帧回主线程。
         let convert_handle = self.video_surface.conversion_handle();
         cx.spawn(async move |this, cx| {
+            let mut diag = lag_diag::EventDiag::new();
             while let Some(first) = events.recv().await {
+                let batch_started = Instant::now();
                 // 纪元先行判定：切剧/离开首页后本循环的剩余事件全部作废，
                 // 直接退场——以前是整帧转换完才在 update 里丢弃，切剧窗口
                 // （恰好是 UI 最忙的时候）负载凭空翻倍
@@ -1081,6 +1087,13 @@ impl HomeView {
                     batch.push(next);
                 }
                 let last_frame = batch.iter().rposition(|e| matches!(e, PlayerEvent::Frame(_)));
+                // 合并取证：这一批里被丢掉的帧（只保留最后一帧上屏）是宿主
+                // 跟不上的直接证据——引擎可没丢，是 UI 侧没画。
+                let batch_frames = batch
+                    .iter()
+                    .filter(|e| matches!(e, PlayerEvent::Frame(_)))
+                    .count() as u32;
+                diag.note_batch(batch.len(), batch_frames, batch_frames.saturating_sub(1));
                 'batch: for (i, event) in batch.into_iter().enumerate() {
                     if matches!(event, PlayerEvent::Frame(_)) && Some(i) != last_frame {
                         continue;
@@ -1095,11 +1108,15 @@ impl HomeView {
                         PlayerEvent::Frame(frame) => {
                             let frame = frame.clone();
                             let handle = convert_handle.clone();
-                            cx.background_executor()
+                            let t_convert = Instant::now();
+                            let converted = cx
+                                .background_executor()
                                 .spawn(async move {
                                     video_surface::convert_frame(&handle, &frame)
                                 })
-                                .await
+                                .await;
+                            diag.note_convert(t_convert.elapsed());
+                            converted
                         }
                         _ => None,
                     };
@@ -1117,17 +1134,21 @@ impl HomeView {
                                 );
                                 return;
                             }
-                            // 周期哨兵：这条涨而 `render #` 不涨 = 事件到了、重绘
-                            // 没被调度（窗口遮挡/合成器不请求帧）。
+                            // 周期哨兵（debug）：这条涨而 `render #` 不涨 = 事件
+                            // 到了、重绘没被调度（窗口遮挡/合成器不请求帧）。
+                            // info 级的上屏节奏在 `[Home][paint]` 窗口摘要里。
                             static HANDLED: AtomicU32 = AtomicU32::new(0);
                             let h = HANDLED.fetch_add(1, Ordering::Relaxed);
                             if h.is_multiple_of(100) {
-                                log::info!(
+                                log::debug!(
                                     "[Home] 事件已处理 #{h}（epoch={epoch}，帧槽={}）",
                                     view.frame.is_some()
                                 );
                             }
                             view.video_surface.adopt(converted);
+                            if matches!(&event, PlayerEvent::Frame(_)) {
+                                view.paint_diag.note_frame();
+                            }
                             view.on_player_event(event, cx);
                         })
                         .is_ok();
@@ -1136,6 +1157,10 @@ impl HomeView {
                         break 'batch;
                     }
                 }
+                // 这一批从出通道到全部投递完成（含 Windows 像素转换）的耗时：
+                // 主线程被别的东西占住时，帧会在通道里排队，这里先涨。
+                diag.note_lag(batch_started.elapsed());
+                diag.report();
             }
         })
         .detach();
@@ -1148,6 +1173,7 @@ impl gpui_kit::Render for HomeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
+        let build_started = Instant::now();
         // 出帧节奏取证（每 64 帧一行，debug 级）：本行是**上屏链路唯一的
         // 量化哨兵**。间隔接近刷新周期（16.7ms@60Hz）说明合成跟得上；
         // 几十上百毫秒说明主线程在等 GPU——`sample <pid>` 会显示栈停在
@@ -1171,6 +1197,23 @@ impl gpui_kit::Render for HomeView {
                 );
             }
         }
+        // 上屏节奏取证（5s 窗口，info）：有新内容的 render 才打点——两次
+        // 打点的间隔就是画面内容的停顿，`seen - painted` 的差是渲染合并
+        // 跳过的帧。引擎日志只能证明帧发出去了，用户看到的卡顿在这之后。
+        let paint_pts = self.frame.as_ref().map(|f| f.pts_secs);
+        let paint_clock = self.player.as_ref().map(|p| p.position_secs());
+        let paint_paused = self.player.as_ref().is_some_and(|p| p.is_paused());
+        self.paint_diag.observe_render(
+            paint_pts,
+            paint_clock,
+            self.rate,
+            lag_diag::PaintState {
+                paused: paint_paused,
+                active: window.is_window_active(),
+                buffering: self.buffering,
+                switching: self.switching,
+            },
+        );
         // 纹理回收口：gpui 的 sprite atlas 按 RenderImage::id 常驻（paint 只增
         // 不删），视频每帧一个新 id——不在这里显式 drop，显存/内存就无上限
         // 涨（实测 5 分钟 5.5GB）。只在 render 时有 Window 句柄可调。
@@ -1312,12 +1355,28 @@ impl gpui_kit::Render for HomeView {
                 ))
                 .into_any_element(),
         };
-        v_flex()
+        let root = v_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
             // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
             .overflow_hidden()
-            .child(body)
+            .child(body);
+        // 元素树构建耗时（不含 GPUI 的 layout/paint/GPU 提交）：用于把
+        // 「主线程慢」拆成「我们建树慢」还是「渲染器慢」。
+        static BUILD_US: AtomicU64 = AtomicU64::new(0);
+        static BUILD_MAX_US: AtomicU64 = AtomicU64::new(0);
+        static BUILD_N: AtomicU32 = AtomicU32::new(0);
+        let us = build_started.elapsed().as_micros() as u64;
+        BUILD_US.fetch_add(us, Ordering::Relaxed);
+        BUILD_MAX_US.fetch_max(us, Ordering::Relaxed);
+        let n = BUILD_N.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.is_multiple_of(64) {
+            let avg = BUILD_US.swap(0, Ordering::Relaxed) / u64::from(n.min(64));
+            let max = BUILD_MAX_US.swap(0, Ordering::Relaxed);
+            BUILD_N.store(0, Ordering::Relaxed);
+            log::debug!("[Home][render] 建树均 {avg}µs/最大 {max}µs（{n} 帧累计）");
+        }
+        root
     }
 }

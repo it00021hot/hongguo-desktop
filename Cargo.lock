@@ -3669,6 +3669,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
+ "hdrhistogram",
  "heapless",
  "image",
  "inventory",
@@ -4271,6 +4272,16 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "hdrhistogram"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49d1053f4708f0af3cf9fc5bffc7e68a914a3c45becb231c80068c9c3f78bea"
+dependencies = [
+ "byteorder",
+ "num-traits",
+]
 
 [[package]]
 name = "heapless"
