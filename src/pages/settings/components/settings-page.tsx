@@ -287,7 +287,7 @@ export function SettingsPage() {
               id="prefetch-episodes"
               type="range"
               min={0}
-              max={3}
+              max={10}
               step={1}
               value={current.prefetchEpisodes}
               onChange={(e) => patch({ prefetchEpisodes: Number(e.target.value) })}

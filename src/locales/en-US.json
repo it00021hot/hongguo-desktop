@@ -408,7 +408,7 @@
     "pauseOnMinimize": "Auto-pause when minimized",
     "prefetchEpisodes": "Episodes to prefetch",
     "prefetchOff": "Off",
-    "prefetchEpisodesDesc": "Preload upcoming episodes while watching so switching is instant; switching shows preloads the next series by the same count. Off (including show-switch prefetch) uses the least data.",
+    "prefetchEpisodesDesc": "Preload upcoming episodes while watching so switching is instant; in the immersive feed the same count of upcoming series is preloaded (head segment each, completed as you reach them). Off (including show-switch prefetch) uses the least data.",
     "bossKey": "Boss key",
     "bossKeyOff": "Off",
     "bossKeyCapturing": "Press key combo…",

@@ -408,7 +408,7 @@
     "pauseOnMinimize": "最小化时自动暂停",
     "prefetchEpisodes": "连播预取集数",
     "prefetchOff": "关闭",
-    "prefetchEpisodesDesc": "起播后自动向后预载接下来几集，切集不用等；换剧时同样按此数预载下一部剧。关闭（含换剧预取）最省流量。",
+    "prefetchEpisodesDesc": "起播后自动向后预载接下来几集，切集不用等；沉浸流刷剧时按此数预载后续几部（各取开头一段，刷到哪补全到哪）。关闭（含换剧预取）最省流量。",
     "bossKey": "老板键",
     "bossKeyOff": "关闭",
     "bossKeyCapturing": "按下组合键…",

@@ -251,9 +251,9 @@ impl SettingsView {
         let prefetch = cx.new(|_| {
             SliderState::new()
                 .min(0.)
-                .max(3.)
+                .max(10.)
                 .step(1.)
-                .default_value(1.)
+                .default_value(3.)
         });
         cx.subscribe_in(
             &naming_select,
@@ -295,7 +295,7 @@ impl SettingsView {
             let SliderEvent::Change(value) = event else {
                 return;
             };
-            let n = value.start().round().clamp(0.0, 3.0) as u32;
+            let n = value.start().round().clamp(0.0, 10.0) as u32;
             this.patch(cx, |s| s.prefetch_episodes = n);
         })
         .detach();

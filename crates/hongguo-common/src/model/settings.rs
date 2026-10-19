@@ -225,7 +225,7 @@ fn default_true() -> bool {
 }
 
 fn default_prefetch_episodes() -> u32 {
-    1
+    3
 }
 
 fn default_theme() -> String {
@@ -261,9 +261,10 @@ impl Settings {
         self.max_concurrency = self.max_concurrency.clamp(1, 10);
     }
 
-    /// 收敛预取集数到 0–3（0=关闭；上限对齐 StreamCache 的预取标记位）。
+    /// 收敛预取集数到 0–10（0=关闭；连播与换剧铺的部/集数都挂这一档，
+    /// 上限对齐 StreamCache 的预取标记位）。
     pub fn clamp_prefetch_episodes(&mut self) {
-        self.prefetch_episodes = self.prefetch_episodes.min(3);
+        self.prefetch_episodes = self.prefetch_episodes.min(10);
     }
 
     /// 缓存根覆盖值：非空给 `Some`，空表示跟随数据目录（`None`）。
@@ -333,13 +334,14 @@ mod tests {
 
     #[test]
     fn clamp_prefetch_episodes_bounds() {
-        // 上限 3 对齐 StreamCache 预取标记位；0 = 关闭预取是合法值
+        // 上限 10（issue #11：连播预取放开到用户自设），对齐 StreamCache
+        // 预取标记位；0 = 关闭预取是合法值
         let mut s = Settings {
-            prefetch_episodes: 9,
+            prefetch_episodes: 99,
             ..Default::default()
         };
         s.clamp_prefetch_episodes();
-        assert_eq!(s.prefetch_episodes, 3);
+        assert_eq!(s.prefetch_episodes, 10);
         s.prefetch_episodes = 0;
         s.clamp_prefetch_episodes();
         assert_eq!(s.prefetch_episodes, 0);

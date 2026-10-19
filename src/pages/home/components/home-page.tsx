@@ -15,6 +15,7 @@ import {
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
   useSeriesProgress,
+  useSettings,
   useWatchHistory,
 } from '@/service/queries';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
@@ -350,32 +351,50 @@ export function HomePage() {
     if (prevItem) prefetchEpisodes(prevItem.seriesId);
   }, [prevItem, prefetchEpisodes]);
 
-  // 预取下一部剧续播集的**流**（取流表 + 渐进填充）：滚过去时缓存已就绪，
-  // 首帧只等头部数据。触发时机 = 当前剧首帧一出画（PlayerView 回调）——
-  // 在播那一路站稳了，带宽才让给铺垫；固定延迟会让下一部的就绪时间跟着
-  // 延迟走，快滚时预取干脆来不及。起播被卡住（自动播被 WebView 拦、网络
-  // 慢）时首帧信号不来，兜底定时照发——慢是慢，不能不备。
-  // 同一部剧只取一次；失败不算数，下次再成为「下一部」时允许重试。
+  // 预取下一部剧续播集的**流**（取流表 + 渐进填充头部）：滚过去时缓存已
+  // 就绪，首帧只等头部数据。触发时机 = 当前剧首帧一出画（PlayerView 回
+  // 调）——在播那一路站稳了，带宽才让给铺垫；固定延迟会让下一部的就绪
+  // 时间跟着延迟走，快滚时预取干脆来不及。起播被卡住（自动播被 WebView
+  // 拦、网络慢）时首帧信号不来，兜底定时照发——慢是慢，不能不备。
+  // 广度 = 预取档位（0=全关）：后续 B 部每部预取入口集（issue #11：只铺
+  // 紧邻下一部时快滑 3-5 部全是冷启动）。同一部剧只取一次；失败不算数，
+  // 下次再成为「后续部」时允许重试。
+  const { data: settings } = useSettings();
+  const prefetchBreadth = settings?.prefetchEpisodes ?? 3;
   const streamPrefetched = useRef(new Set<string>());
   const prefetchStream = useCallback((id: string) => {
     if (streamPrefetched.current.has(id)) return;
     streamPrefetched.current.add(id);
     void play.prefetch(id).catch(() => streamPrefetched.current.delete(id));
   }, []);
+  const upcomingIds = useMemo(
+    () =>
+      items
+        .slice(index + 1, index + 1 + prefetchBreadth)
+        .map((it) => it.seriesId)
+        .filter(Boolean),
+    [items, index, prefetchBreadth],
+  );
+  const upcomingKey = upcomingIds.join(',');
   /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期
       对号，切剧瞬间自动回到「未出画」，无需 effect 追着清）。 */
   const [firstFrameFor, setFirstFrameFor] = useState('');
   const stageLive = current !== undefined && firstFrameFor === current.seriesId;
   useEffect(() => {
-    if (!nextItem || !stageLive) return;
-    prefetchStream(nextItem.seriesId);
-  }, [nextItem, stageLive, prefetchStream]);
+    if (!stageLive) return;
+    upcomingIds.forEach((id) => prefetchStream(id));
+    // upcomingIds 随 items/游标重算，用拼串做稳定依赖，避免每帧重发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageLive, upcomingKey, prefetchStream]);
   useEffect(() => {
-    if (!nextItem || stageLive) return;
-    const id = nextItem.seriesId;
-    const timer = setTimeout(() => prefetchStream(id), PREFETCH_FALLBACK_DELAY_MS);
+    if (stageLive || upcomingIds.length === 0) return;
+    const timer = setTimeout(
+      () => upcomingIds.forEach((id) => prefetchStream(id)),
+      PREFETCH_FALLBACK_DELAY_MS,
+    );
     return () => clearTimeout(timer);
-  }, [nextItem, stageLive, prefetchStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageLive, upcomingKey, prefetchStream]);
 
   // 快滑到源尾部时预取下一页；游标越界时也靠它链式拉齐
   useEffect(() => {

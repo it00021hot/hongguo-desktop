@@ -90,11 +90,11 @@ mod tests {
     #[test]
     fn normalize_clamps_prefetch_episodes() {
         let n = normalize(Settings {
-            prefetch_episodes: 9,
+            prefetch_episodes: 99,
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(n.prefetch_episodes, 3, "预取集数上限 3，0=关闭也是合法值");
+        assert_eq!(n.prefetch_episodes, 10, "预取集数上限 10，0=关闭也是合法值");
     }
 
     #[test]

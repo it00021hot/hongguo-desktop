@@ -919,34 +919,47 @@ impl super::HomeView {
         self.step(1, cx);
     }
 
-    /// 首帧出画：预取下一部剧续播集的流（每部一次；Tauri 首帧发令同款）。
+    /// 首帧出画：预取信息流后续 B 部的流（每部一次；Tauri 首帧发令同款）。
+    /// B = `Settings.prefetch_episodes`（0=全关，含换剧预取）——快滑时
+    /// 每一部都有头部缓存可接，不再是只有紧邻下一部热、其余全冷启动。
     pub(super) fn prefetch_next_stream(&mut self, cx: &mut Context<Self>) {
-        let items = self.display_items();
-        let cursor = self.cursor();
-        let Some(next) = items.get(cursor + 1).cloned() else {
-            return;
-        };
-        if !self.stream_prefetched.insert(next.series_id.clone()) {
+        let breadth = self.state.settings().prefetch_episodes;
+        if breadth == 0 {
             return;
         }
-        let state = Arc::clone(&self.state);
-        let history = self.history.clone().unwrap_or_default();
-        // 整条取流链跑在 tokio 桥里（reqwest/定时器要 reactor）；GPUI 侧只接结果
-        let done = bridge::spawn(Self::prefetch_stream_task(
-            state,
-            next.series_id.clone(),
-            history,
-        ));
-        cx.spawn(async move |this, cx| {
-            if let Err(e) = done.await.expect("tokio 桥不会丢弃发送端") {
-                // 失败不算数：下次再成为「下一部」时允许重试
-                let _ = this.update(cx, |view, _| {
-                    view.stream_prefetched.remove(&next.series_id);
-                });
-                log::info!("[Home] 预取下一部流失败（忽略）: {e}");
+        let items = self.display_items();
+        let cursor = self.cursor();
+        let mut launched = 0usize;
+        for offset in 1..=breadth as usize {
+            let Some(next) = items.get(cursor + offset).cloned() else {
+                break;
+            };
+            if next.series_id.is_empty() || !self.stream_prefetched.insert(next.series_id.clone()) {
+                continue;
             }
-        })
-        .detach();
+            launched += 1;
+            let state = Arc::clone(&self.state);
+            let history = self.history.clone().unwrap_or_default();
+            // 整条取流链跑在 tokio 桥里（reqwest/定时器要 reactor）；GPUI 侧只接结果
+            let done = bridge::spawn(Self::prefetch_stream_task(
+                state,
+                next.series_id.clone(),
+                history,
+            ));
+            cx.spawn(async move |this, cx| {
+                if let Err(e) = done.await.expect("tokio 桥不会丢弃发送端") {
+                    // 失败不算数：下次再成为「后续部」时允许重试
+                    let _ = this.update(cx, |view, _| {
+                        view.stream_prefetched.remove(&next.series_id);
+                    });
+                    log::info!("[Home] 预取后续部流失败（忽略）: {e}");
+                }
+            })
+            .detach();
+        }
+        if launched > 0 {
+            log::info!("[Home] 沉浸流预取铺 {launched} 部");
+        }
     }
 
     async fn prefetch_stream_task(
@@ -954,11 +967,6 @@ impl super::HomeView {
         series_id: String,
         history: Vec<WatchHistoryItem>,
     ) -> AppResult<()> {
-        // 铺几集跟连播预取同一个设置档（0=全关，连换剧预取也不做）
-        let count = state.settings().prefetch_episodes;
-        if count == 0 {
-            return Ok(());
-        }
         let env = state.api_env();
         let series = match state.store.series_by_id(&series_id)? {
             Some(s) if !s.episodes.is_empty() => s,
@@ -980,15 +988,12 @@ impl super::HomeView {
         } else {
             1
         };
-        // 与 Tauri 壳 play_prefetch 同一口径：入口集起共 N 集，逐集排队
-        // schedule（幂等/去重/礼让在 schedule 内部）
-        for offset in 0..count {
-            hongguo_service::play_service::online::schedule_next_episode_prefetch(
-                Arc::clone(&state),
-                &series_id,
-                entry + offset,
-            );
-        }
+        // 每部只铺入口集（头部 8MB 有界，升格当前集才无界续填）；同剧
+        // 后续集的连播铺集由起播的 schedule_following_episodes 负责，
+        // 这里不重复——铺多了就是把带宽从当前集嘴里抢走
+        hongguo_service::play_service::online::schedule_next_episode_prefetch(
+            state, &series_id, entry,
+        );
         Ok(())
     }
 
