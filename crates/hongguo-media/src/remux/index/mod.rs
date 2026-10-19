@@ -14,20 +14,20 @@
 //! - **`ctts` 的 offset 原样照搬**。合成时间 = 解码时间 + offset，而拼接后
 //!   解码时间本身已随各集时长整体平移，两者同步平移后差值不变。再额外加一次
 //!   起点偏移，会让每集首个 B 帧的错位逐集累积。
-//! - **非视频轨逐集锁齐视频主轴**。各集独立编码，每集音/视频轨时长有毫秒级
-//!   差值（被丢弃的 `edts` 本该跳过的 AAC priming 也算在内），按轨独立累加
-//!   会让它越积越大——声音越播越偏（issue #11「合并后图音不同步」）。
-//!   每集收尾把差值补进该集末样本的 `stts` 时长（[`plan`] 的
-//!   `lock_tail_to`），两轨时间轴逐集对齐，偏差不再跨集累积。
+//! - **逐集保留 `edts/elst`**。各集独立编码，AAC priming/视频起始偏移由 edit
+//!   list 表达；丢弃它再改样本表末尾补时长，只能补掉一个样本（约 23ms），
+//!   补不掉开头的 2048 tick（46ms）priming，10 集约残留 240ms（issue #11
+//!   「合并后图音不同步」）。现在把源 edit 的 `media_time` 平移到合并轨的
+//!   集起点，`segment_duration` 照旧用 movie timescale，逐集写回 `edts`；
+//!   `stts` / 样本数 / `ctts` / `stss` / 偏移全部不动。
 //!
-//! `edts` / `mvex` / `udta` 一律丢弃：编辑列表指向各集自己的片段，合并后语义
-//! 已不成立；时长改由样本表决定，对本地播放没有影响。
+//! `mvex` / `udta` 丢弃；`edts` 是时间轴语义的一部分，必须保留。
 
 mod moov;
 mod plan;
 
 pub use moov::{build_moov, mdat_data_start, mdat_header_len, needs_wide_offsets};
-pub use plan::{MergeIndex, MergedTrack, SourceFile, plan, read_source_file};
+pub use plan::{Edit, MergeIndex, MergedTrack, SourceFile, plan, read_source_file};
 
 #[cfg(test)]
 use plan::{MDHD_DURATION, MVHD_DURATION, TKHD_DURATION, duration_of};
