@@ -7,6 +7,13 @@ use hongguo_stream::{StreamCache, cache};
 use super::fill::{fill, resume_fill};
 use crate::app_state::AppState;
 
+/// 预取（换剧 + 连播共用）的并发上限。每路要先走「取流表 + 探针链」再排
+/// 填充门闸；预取档位放开到 10 后，10 路同时探针会在慢网/弱机上抢当前
+/// 播放的带宽与 CPU。2 路足够让下一个目标先热，其余排队。
+const PREFETCH_CONCURRENCY: usize = 2;
+static PREFETCH_SLOTS: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(PREFETCH_CONCURRENCY);
+
 /// 在线播放就绪后带回的档位信息。
 pub struct Prepared {
     pub url: String,
@@ -201,6 +208,12 @@ pub fn schedule_next_episode_prefetch(state: AppState, series_id: &str, next_vid
     };
     let progress_key = format!("{series_id}:{next_vid_index}");
     crate::runtime::spawn(async move {
+        // 等位期间当前集可能已经开播并自己取流；prefetch_stream 的幂等闸
+        // （ready / is_fetching）会让排队者直接退出，不会白占填充门闸。
+        let _permit = PREFETCH_SLOTS
+            .acquire()
+            .await
+            .expect("预取信号量常驻到进程结束");
         if let Err(e) = prefetch_stream(&state, &vid, &progress_key).await {
             log::info!("[Online] 第 {next_vid_index} 集预取失败（忽略）: {e}");
         }

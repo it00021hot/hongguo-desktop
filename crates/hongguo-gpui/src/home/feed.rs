@@ -283,6 +283,11 @@ impl super::HomeView {
         } else if source == self.active {
             self.follow_cursor(cx);
         }
+        // 续页/换批把后续条目拉进来后补铺预取：只在首帧触发的话，首屏
+        // 只有 2 条时永远只热 1 部，快滑到第 3 部仍冷启动。
+        if source == self.active && self.player.is_some() {
+            self.prefetch_next_stream(cx);
+        }
         cx.notify();
     }
 
