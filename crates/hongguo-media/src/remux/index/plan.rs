@@ -152,7 +152,10 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
         .any(|f| f.tracks.iter().any(|t| t.info.stss.is_some()));
 
     let mut tracks = Vec::with_capacity(first.tracks.len());
-    for t in 0..first.tracks.len() {
+    // 逐集「非视频轨应收累计时长」：音画不同步的根治在样本表层（见
+    // [`alignment_targets`]），每集收尾把差值补进末样本
+    let targets = alignment_targets(files);
+    for (t, targets_of_track) in targets.iter().enumerate() {
         let mut acc = Accumulator {
             tkhd: first.tracks[t].tkhd.clone(),
             mdhd: first.tracks[t].mdhd.clone(),
@@ -172,6 +175,9 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
             let track = &file.tracks[t];
             acc.push(&track.info, want_ctts, episode + 1);
             acc.movie_duration += duration_of(&track.tkhd, TKHD_DURATION);
+            if let Some(target) = targets_of_track[episode] {
+                acc.lock_tail_to(target, episode + 1);
+            }
         }
 
         acc.mdhd = set_duration(&acc.mdhd, MDHD_DURATION, acc.media_duration);
@@ -186,6 +192,42 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
     let mvhd = set_duration(&first.mvhd, MVHD_DURATION, movie_duration);
 
     Ok(MergeIndex { tracks, mvhd })
+}
+
+/// 逐集「每条非视频轨的应收累计时长」（本轨媒体时基下的 tick 数）。
+///
+/// 短剧各集是平台分别编码的，每集音/视频轨时长有毫秒级出入；按轨独立
+/// 累加会让差值逐集累积，N 集后声音明显偏离画面（issue #11「快速合并
+/// 图音不同步，声音比画面慢很多」）。以**视频轨为主轴**：把每集的累计
+/// 视频时长换算到本轨时基定为本轨应收累计，收尾差值由
+/// [`Accumulator::lock_tail_to`] 补齐。没有视频轨（纯音频拼接）无从对齐，
+/// 全部返回 None 跳过。
+fn alignment_targets(files: &[SourceFile]) -> Vec<Vec<Option<i64>>> {
+    let Some(master) = files[0].tracks.iter().position(|t| t.info.is_video) else {
+        return vec![vec![None; files.len()]; files[0].tracks.len()];
+    };
+    let master_ts = f64::from(mdhd_timescale(&files[0].tracks[master].mdhd).max(1));
+    let mut master_cum_secs = 0.0;
+    let master_cum: Vec<f64> = files
+        .iter()
+        .map(|file| {
+            master_cum_secs += track_duration(&file.tracks[master].info) as f64 / master_ts;
+            master_cum_secs
+        })
+        .collect();
+    files[0]
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(t, track)| {
+            let ts = f64::from(mdhd_timescale(&track.mdhd).max(1));
+            master_cum
+                .iter()
+                .map(|secs| (secs * ts).round() as i64)
+                .map(|target| (t != master).then_some(target))
+                .collect()
+        })
+        .collect()
 }
 
 /// 轨道结构一致性。
@@ -250,6 +292,19 @@ fn check_structure(files: &[SourceFile]) -> AppResult<()> {
                     ),
                 ));
             }
+            // 逐集时长相加的前提：同一轨的媒体时基一致（stts 的 delta 都是
+            // 「各自 mdhd 时基下的 tick」，混着加就是悄悄改速率）
+            if mdhd_timescale(&a.mdhd) != mdhd_timescale(&b.mdhd) {
+                return Err(structure_error(
+                    episode,
+                    &format!(
+                        "第 {} 条轨道的媒体时基是 {}，第 1 集是 {}",
+                        t + 1,
+                        mdhd_timescale(&b.mdhd),
+                        mdhd_timescale(&a.mdhd)
+                    ),
+                ));
+            }
         }
     }
     Ok(())
@@ -288,6 +343,45 @@ struct Accumulator {
 }
 
 impl Accumulator {
+    /// 把累计时长锁到目标 tick（该轨媒体时基）：差值补进**最后一个样本**
+    /// 的 stts 时长——只把末位游程拆出末样本单独成段，样本数与逐样本的
+    /// `sizes`/`ctts`/`stss` 完全不受影响。
+    ///
+    /// 每集收尾调一次，音/视频两轨的时间轴逐集锁齐：源各集独立编码带来
+    /// 的毫秒级时长差（含被丢弃的 elst 未跳过的 AAC priming）不再逐集累积
+    /// （issue #11「快速合并音画不同步」）。补正等价样本级静音/裁尾，对
+    /// 播放器表现为该样本之后的时间轴空档/提前，毫秒级不可感。
+    fn lock_tail_to(&mut self, target: i64, episode: usize) {
+        let pad = target - self.media_duration as i64;
+        if pad == 0 {
+            return;
+        }
+        let Some(&(count, delta)) = self.stts.last() else {
+            return;
+        };
+        // 末样本时长减不到 1 tick（音频远长于视频的病态源）：钳在 1，
+        // 残差留 warn——宁留本集毫秒级偏差也不产出非法的 0 时长样本
+        let shifted = delta as i64 + pad;
+        if shifted < 1 {
+            log::warn!(
+                "[Remux] 第 {episode} 集收尾对齐差 {pad} tick 超出末样本时长 {delta}，\
+                 本集残留音画偏差（源文件音视频轨严重不齐）"
+            );
+        }
+        let applied = shifted.max(1) - delta as i64;
+        if applied == 0 {
+            return;
+        }
+        let new_delta = (delta as i64 + applied) as u32;
+        if count > 1 {
+            self.stts.last_mut().expect("刚读过末游程").0 = count - 1;
+        } else {
+            self.stts.pop();
+        }
+        push_run(&mut self.stts, 1, new_delta);
+        self.media_duration = (self.media_duration as i64 + applied) as u64;
+    }
+
     fn push(&mut self, info: &TrackInfo, want_ctts: bool, episode: usize) {
         let count = info.samples.len();
         if count == 0 {
@@ -384,7 +478,15 @@ fn track_duration(info: &TrackInfo) -> u64 {
 const MVHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const MVHD_DURATION: (usize, usize) = (16, 24);
 pub(super) const MDHD_DURATION: (usize, usize) = (16, 24);
+/// `mdhd` 的媒体时基字段（与 `mvhd` 同形：version/flags + creation +
+/// modification + timescale，载荷偏移 12）。
+const MDHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const TKHD_DURATION: (usize, usize) = (20, 28);
+
+/// 一条轨道的媒体时基（逐集相加与音画锁齐都按它换算）。
+fn mdhd_timescale(mdhd: &[u8]) -> u32 {
+    timescale_of(mdhd, MDHD_TIMESCALE)
+}
 
 /// box 头长度。[`raw`] 取的是**整个 box**，字段偏移是相对载荷的，两者要补上它。
 const BOX_HEADER: usize = 8;

@@ -156,6 +156,70 @@ fn a_file_without_stss_contributes_every_sample_as_a_keyframe() {
 }
 
 #[test]
+fn audio_tail_is_padded_to_lock_onto_the_video_timeline() {
+    // 视频每集 5 tick、音频每集 4 tick：每集收尾把差 1 补进末样本，
+    // 两轨逐集锁齐、差值不再累积（issue #11 快速合并音画漂移）
+    let files = vec![
+        source(&[TrackPlan::video(samples(5)), TrackPlan::audio(samples(4))]),
+        source(&[TrackPlan::video(samples(5)), TrackPlan::audio(samples(4))]),
+    ];
+    let merged = plan(&files).unwrap();
+    assert_eq!(duration_of(&merged.tracks[0].mdhd, MDHD_DURATION), 10);
+    assert_eq!(
+        duration_of(&merged.tracks[1].mdhd, MDHD_DURATION),
+        10,
+        "音频收尾补差后与视频主轴逐集对齐"
+    );
+    // 每集末样本拆成 2 tick（3×1 + 1×2），样本数不变
+    assert_eq!(merged.tracks[1].stts, vec![(3, 1), (1, 2), (3, 1), (1, 2)]);
+}
+
+#[test]
+fn audio_longer_than_video_is_trimmed_within_the_last_sample() {
+    // 音频每样本 4 tick（每集 8 tick）长过视频每集 6 tick：末样本裁短 2，
+    // 累计锁到视频主轴
+    let audio = TrackPlan {
+        is_video: false,
+        samples: samples(2),
+        durations: vec![4, 4],
+        composition: None,
+        sync_every: None,
+    };
+    let files = vec![
+        source(&[TrackPlan::video(samples(6)), audio.clone()]),
+        source(&[TrackPlan::video(samples(6)), audio]),
+    ];
+    let merged = plan(&files).unwrap();
+    assert_eq!(duration_of(&merged.tracks[1].mdhd, MDHD_DURATION), 12);
+    assert_eq!(
+        merged.tracks[1].stts,
+        vec![(1, 4), (1, 2), (1, 4), (1, 2)],
+        "每集末样本 4→2 tick"
+    );
+}
+
+#[test]
+fn audio_much_longer_than_video_clamps_instead_of_going_negative() {
+    // 音频远长于视频的病态源：末样本最多裁到 1 tick，绝不产出 0/负时长，
+    // 样本数与逐样本表保持一致
+    let files = vec![
+        source(&[TrackPlan::video(samples(4)), TrackPlan::audio(samples(9))]),
+        source(&[TrackPlan::video(samples(2)), TrackPlan::audio(samples(5))]),
+    ];
+    let merged = plan(&files).unwrap();
+    let audio = &merged.tracks[1];
+    assert!(
+        audio.stts.iter().all(|&(_, d)| d >= 1),
+        "样本时长不许被裁到 0"
+    );
+    assert_eq!(
+        audio.stts.iter().map(|(n, _)| *n).sum::<u32>(),
+        14,
+        "锁齐不改样本数"
+    );
+}
+
+#[test]
 fn interleave_order_follows_the_source_layout() {
     // fixture 按「轨0样本0, 轨1样本0, 轨0样本1, …」轮转交织
     let file = source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(3))]);
