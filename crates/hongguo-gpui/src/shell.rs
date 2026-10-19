@@ -220,10 +220,16 @@ pub struct Shell {
     /// 关闭请求就直接放行——宁可少问一句，绝不把窗口变成关不掉的
     ///（Tauri「前端未就绪就放行」同精神）。
     exit_asked: bool,
-    /// 上次采样的窗口几何 [x, y, w, h]（render 逐帧刷新，正常窗态才覆盖
-    /// ——小屏/全屏/最大化的瞬态几何不抹掉上次记忆）。随关闭落盘，
-    /// 下次启动恢复（issue #11）。
+    /// 上次采样的常态窗口几何 [x, y, w, h]（render 逐帧刷新，非小屏/
+    /// 竖屏/全屏/最大化/最小化才覆盖）。随关闭落盘，下次启动恢复（issue
+    /// #11）。
     win_bounds: [f32; 4],
+    /// 上次采样的小屏几何 [x, y, w, h]（小屏中逐帧刷新）。三种窗态各记
+    /// 各的槽位，切形态互不覆盖；进小屏时由 [`crate::mini`] 取用。
+    mini_bounds: [f32; 4],
+    /// 上次采样的竖屏几何 [x, y, w, h]（竖屏中逐帧刷新；进竖屏时由
+    /// [`crate::portrait`] 取用）。
+    portrait_bounds: [f32; 4],
     /// 账号头像（avatar_url 拉取；账号变化时重拉，登出清空）。
     account_avatar: Option<Arc<RenderImage>>,
     account_avatar_url: Option<String>,
@@ -478,6 +484,8 @@ impl Shell {
             follow_unread: 0,
             exit_asked: false,
             win_bounds: [0.0; 4],
+            mini_bounds: [0.0; 4],
+            portrait_bounds: [0.0; 4],
             account_avatar: None,
             account_avatar_url: None,
             account_avatar_pending: false,
@@ -1148,15 +1156,27 @@ impl Shell {
         });
     }
 
-    /// 把采样到的窗口几何并进偏好同步落盘（读-改-写：只覆盖几何四键，
-    /// 其余偏好字段保持盘上值）。
+    /// 把采样到的三槽窗口几何并进偏好同步落盘（读-改-写：只覆盖已采样
+    /// 到的槽位——w 为 0 表示本会话没进过该形态，盘上记忆保持不动）。
     fn save_window_bounds(&self) {
-        let [x, y, w, h] = self.win_bounds;
-        if w <= 0.0 || h <= 0.0 {
-            return;
-        }
         let mut prefs = crate::ui_prefs::load();
-        (prefs.win_x, prefs.win_y, prefs.win_w, prefs.win_h) = (x, y, w, h);
+        if self.win_bounds[2] > 0.0 {
+            let [x, y, w, h] = self.win_bounds;
+            (prefs.win_x, prefs.win_y, prefs.win_w, prefs.win_h) = (x, y, w, h);
+        }
+        if self.mini_bounds[2] > 0.0 {
+            let [x, y, w, h] = self.mini_bounds;
+            (prefs.mini_x, prefs.mini_y, prefs.mini_w, prefs.mini_h) = (x, y, w, h);
+        }
+        if self.portrait_bounds[2] > 0.0 {
+            let [x, y, w, h] = self.portrait_bounds;
+            (
+                prefs.portrait_x,
+                prefs.portrait_y,
+                prefs.portrait_w,
+                prefs.portrait_h,
+            ) = (x, y, w, h);
+        }
         crate::ui_prefs::save_sync(&prefs);
     }
 
@@ -1759,21 +1779,51 @@ impl gpui_kit::Render for Shell {
         let in_portrait = crate::portrait::is_active();
         let immersive = self.feed.read(cx).immersive_fullscreen();
         let chrome_hidden = in_mini || immersive;
-        // 窗口几何采样（随关闭落盘，见 install_close_guard）：正常窗态才
-        // 记——小屏/全屏/最大化/最小化的瞬态几何不覆盖上次记忆。最小化
-        // 时 bounds 可能变成 0 或屏外值，写进记忆等于清空。
-        if !chrome_hidden
-            && !window.is_fullscreen()
-            && !window.is_maximized()
-            && !crate::platform::is_minimized(window)
-        {
+        // 窗口几何采样按当前形态路由（随关闭落盘，见 install_close_guard）：
+        // 常态/小屏/竖屏各记各的槽位——竖屏条写竖屏槽、小窗写小窗槽，切
+        // 形态谁也不覆盖谁。全屏/最大化/最小化中的几何归系统管，不进任何
+        // 槽位（最小化时 bounds 可能变成 0 或屏外值）；塌缩过恢复下限的
+        // 采样也不进槽位——过渡态会读出坏值，写进去会毒化该形态的记忆
+        // （重进时被恢复判定拒掉回默认）。
+        let system_managed = window.is_fullscreen()
+            || window.is_maximized()
+            || crate::platform::is_minimized(window);
+        if !system_managed {
             let b = window.bounds();
-            self.win_bounds = [
+            let sampled = [
                 b.origin.x.into(),
                 b.origin.y.into(),
                 b.size.width.into(),
                 b.size.height.into(),
             ];
+            let (floor_w, floor_h) = if in_mini {
+                (
+                    crate::window_restore::MINI_RESTORE_W,
+                    crate::window_restore::MINI_RESTORE_H,
+                )
+            } else if in_portrait {
+                (
+                    crate::window_restore::PORTRAIT_RESTORE_W,
+                    crate::window_restore::PORTRAIT_RESTORE_H,
+                )
+            } else {
+                (
+                    crate::window_restore::MIN_RESTORE_W,
+                    crate::window_restore::MIN_RESTORE_H,
+                )
+            };
+            let sane = sampled[2] >= floor_w && sampled[3] >= floor_h;
+            if in_mini {
+                if sane {
+                    self.mini_bounds = sampled;
+                }
+            } else if in_portrait {
+                if sane {
+                    self.portrait_bounds = sampled;
+                }
+            } else if !immersive && sane {
+                self.win_bounds = sampled;
+            }
         }
         // 先建好所有吃 cx 的闭包/子渲染，再取 theme（theme 借 cx，两者不能
         // 交叠——闭包里要 &mut Context）

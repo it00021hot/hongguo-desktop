@@ -50,3 +50,21 @@ pub(crate) const MINI_H: f64 = 270.0;
 
 /// 小屏落位边距（工作区右下角，Tauri MINI_MARGIN 同参）。
 pub(crate) const MINI_MARGIN: f64 = 16.0;
+
+/// 当前所有显示器的矩形 `(x, y, w, h)`（逻辑像素，与窗口 bounds 同一
+/// 坐标空间）——窗口几何记忆恢复判定（`window_restore::restore_rect`）
+/// 相交检查的输入。
+pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
+    cx.displays()
+        .iter()
+        .map(|display| {
+            let b = display.bounds();
+            (
+                b.origin.x.into(),
+                b.origin.y.into(),
+                b.size.width.into(),
+                b.size.height.into(),
+            )
+        })
+        .collect()
+}

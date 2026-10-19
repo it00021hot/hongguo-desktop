@@ -241,7 +241,7 @@ fn main() {
         });
 }
 
-/// 上次窗口几何恢复（ui_prefs 的 win_* 四键）：判定在
+/// 上次常态窗口几何恢复（ui_prefs 的 win_* 四键）：判定在
 /// [`window_restore::restore_rect`]（纯函数，集成测试覆盖），这里只转成
 /// GPUI 的 `Bounds`。下界是 480×270（Tauri 同款），不是默认窗口的
 /// 1024×680——用户正常缩到 900×600 也要能恢复。
@@ -249,25 +249,14 @@ fn restore_window_bounds(
     prefs: &crate::ui_prefs::UiPrefs,
     cx: &gpui_kit::App,
 ) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
-    let displays: Vec<window_restore::DisplayRect> = cx
-        .displays()
-        .iter()
-        .map(|display| {
-            let b = display.bounds();
-            (
-                b.origin.x.into(),
-                b.origin.y.into(),
-                b.size.width.into(),
-                b.size.height.into(),
-            )
-        })
-        .collect();
     let (x, y, w, h) = window_restore::restore_rect(
         prefs.win_x,
         prefs.win_y,
         prefs.win_w,
         prefs.win_h,
-        &displays,
+        &crate::platform::display_rects(cx),
+        window_restore::MIN_RESTORE_W,
+        window_restore::MIN_RESTORE_H,
     )?;
     Some(gpui_kit::Bounds {
         origin: gpui_kit::point(gpui_kit::px(x), gpui_kit::px(y)),

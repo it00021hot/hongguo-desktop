@@ -10,17 +10,46 @@ use gpui_kit::Window;
 
 pub(crate) use crate::platform::WindowSnapshot;
 
-/// 进入小屏：快照 → 缩放落位（工作区右下角，小工作区压到放得下为止）。
-/// 几何不可得时返回 `None`，调用方保持原状（与 Tauri 幂等注释同口径：
-/// 已在小屏时调用方不得再进来，否则快照会被 480×270 覆盖）。
+/// 进入小屏：快照 → 落位。上次小窗几何有效（不小于小屏恢复下限且落在
+/// 任一显示器内）就原样回去——三种窗态各记各的槽位，切形态互不覆盖；
+/// 没有记忆（首次进小屏）才回落 480×270 工作区右下角默认落角。几何不可
+/// 得时返回 `None`，调用方保持原状（与 Tauri 幂等注释同口径：已在小屏时
+/// 调用方不得再进来，否则快照会被小屏几何覆盖）。
 pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<WindowSnapshot> {
     let saved = crate::platform::snapshot(window)?;
-    crate::platform::place_mini(window, cx)?;
+    let prefs = crate::ui_prefs::load();
+    match crate::window_restore::restore_rect(
+        prefs.mini_x,
+        prefs.mini_y,
+        prefs.mini_w,
+        prefs.mini_h,
+        &crate::platform::display_rects(cx),
+        crate::window_restore::MINI_RESTORE_W,
+        crate::window_restore::MINI_RESTORE_H,
+    ) {
+        Some((x, y, w, h)) => {
+            crate::platform::apply_frame(
+                window,
+                cx,
+                (f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+            );
+        }
+        None => crate::platform::place_mini(window, cx)?,
+    }
     Some(saved)
 }
 
-/// 退出小屏：按快照还原几何与最大化态。
+/// 退出小屏：先把当前小窗几何落盘（理由见 [`crate::ui_prefs::store_geometry`]），
+/// 再按快照还原几何与最大化态。
 pub(crate) fn exit(window: &mut Window, cx: &gpui_kit::App, saved: WindowSnapshot) {
+    let b = window.bounds();
+    crate::ui_prefs::store_geometry(
+        crate::ui_prefs::GeometrySlot::Mini,
+        b.origin.x.into(),
+        b.origin.y.into(),
+        b.size.width.into(),
+        b.size.height.into(),
+    );
     crate::platform::restore(window, cx, saved);
 }
 

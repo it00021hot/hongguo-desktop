@@ -1,11 +1,12 @@
 //! 壳级 UI 偏好（GPUI）：侧栏折叠态 / 追更提醒弹出开关 / 找剧筛选折叠态 /
-//! 主题偏好 / 界面语言 / 上次窗口几何。
+//! 主题偏好 / 界面语言 / 三种窗态的窗口几何。
 //!
 //! 语义对齐 Tauri 的 zustand `hongguo-ui` persist（localStorage，见
 //! `src/stores/ui.ts` 的 partialize）——纯 UI 偏好不进业务库；用数据目录下
-//! 一个键值文件承载，坏档回默认。会话级瞬态（小屏/置顶/全屏）不在此列：
-//! 那些与会话绑定，不持久化（Tauri partialize 同款口径）；窗口几何是
-//! 例外——跨启动记忆（issue #11），Tauri 壳的 `window_state.rs` 同语义。
+//! 一个键值文件承载，坏档回默认。会话级瞬态（置顶）不在此列：那些与
+//! 会话绑定，不持久化（Tauri partialize 同款口径）；窗口几何是例外——
+//! 跨启动记忆（issue #11），常态/小屏/竖屏各记各的槽位，Tauri 壳的
+//! `window_state.rs` 同语义。
 
 use std::path::Path;
 
@@ -72,6 +73,17 @@ pub(crate) struct UiPrefs {
     pub(crate) win_y: f32,
     pub(crate) win_w: f32,
     pub(crate) win_h: f32,
+    /// 上次小屏几何（逻辑像素；同 win_* 语义）。三种窗态各记各的槽位，
+    /// 切形态互不覆盖（进小屏时由 [`crate::mini`] 取用）。
+    pub(crate) mini_x: f32,
+    pub(crate) mini_y: f32,
+    pub(crate) mini_w: f32,
+    pub(crate) mini_h: f32,
+    /// 上次竖屏几何（逻辑像素；进竖屏时由 [`crate::portrait`] 取用）。
+    pub(crate) portrait_x: f32,
+    pub(crate) portrait_y: f32,
+    pub(crate) portrait_w: f32,
+    pub(crate) portrait_h: f32,
 }
 
 impl Default for UiPrefs {
@@ -86,6 +98,14 @@ impl Default for UiPrefs {
             win_y: 0.0,
             win_w: 0.0,
             win_h: 0.0,
+            mini_x: 0.0,
+            mini_y: 0.0,
+            mini_w: 0.0,
+            mini_h: 0.0,
+            portrait_x: 0.0,
+            portrait_y: 0.0,
+            portrait_w: 0.0,
+            portrait_h: 0.0,
         }
     }
 }
@@ -114,6 +134,14 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
             "win_y" => prefs.win_y = value.trim().parse().unwrap_or(0.0),
             "win_w" => prefs.win_w = value.trim().parse().unwrap_or(0.0),
             "win_h" => prefs.win_h = value.trim().parse().unwrap_or(0.0),
+            "mini_x" => prefs.mini_x = value.trim().parse().unwrap_or(0.0),
+            "mini_y" => prefs.mini_y = value.trim().parse().unwrap_or(0.0),
+            "mini_w" => prefs.mini_w = value.trim().parse().unwrap_or(0.0),
+            "mini_h" => prefs.mini_h = value.trim().parse().unwrap_or(0.0),
+            "portrait_x" => prefs.portrait_x = value.trim().parse().unwrap_or(0.0),
+            "portrait_y" => prefs.portrait_y = value.trim().parse().unwrap_or(0.0),
+            "portrait_w" => prefs.portrait_w = value.trim().parse().unwrap_or(0.0),
+            "portrait_h" => prefs.portrait_h = value.trim().parse().unwrap_or(0.0),
             _ => {}
         }
     }
@@ -160,4 +188,47 @@ pub(crate) fn save(prefs: UiPrefs) {
 /// 随退出保存必须走这条）。
 pub(crate) fn save_sync(prefs: &UiPrefs) {
     save_to(&hongguo_store::paths::data_dir().join(FILE_NAME), prefs);
+}
+
+/// 几何槽位（形态退出落盘用，见 [`store_geometry`]）。
+pub(crate) enum GeometrySlot {
+    Mini,
+    Portrait,
+}
+
+/// 把一份几何写进指定形态槽位并同步落盘（其余键保持盘上值）。塌缩过该
+/// 形态恢复下限的值直接丢弃——过渡态读到的坏值不能毒化槽位。
+///
+/// 形态退出路径专用：几何采样只进内存（`Shell` 槽位，关闭守卫才落盘），
+/// 会话内退出再重进读的是这个文件——不在这里补一笔，拖完立刻退出重进
+/// 就会回到拖动前的旧位置。
+pub(crate) fn store_geometry(slot: GeometrySlot, x: f32, y: f32, w: f32, h: f32) {
+    let (floor_w, floor_h) = match slot {
+        GeometrySlot::Mini => (
+            crate::window_restore::MINI_RESTORE_W,
+            crate::window_restore::MINI_RESTORE_H,
+        ),
+        GeometrySlot::Portrait => (
+            crate::window_restore::PORTRAIT_RESTORE_W,
+            crate::window_restore::PORTRAIT_RESTORE_H,
+        ),
+    };
+    if w < floor_w || h < floor_h {
+        return;
+    }
+    let mut prefs = load();
+    match slot {
+        GeometrySlot::Mini => {
+            (prefs.mini_x, prefs.mini_y, prefs.mini_w, prefs.mini_h) = (x, y, w, h)
+        }
+        GeometrySlot::Portrait => {
+            (
+                prefs.portrait_x,
+                prefs.portrait_y,
+                prefs.portrait_w,
+                prefs.portrait_h,
+            ) = (x, y, w, h);
+        }
+    }
+    save_sync(&prefs);
 }

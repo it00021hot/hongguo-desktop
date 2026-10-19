@@ -32,8 +32,12 @@ pub(crate) fn is_active() -> bool {
     PORTRAIT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// 进入竖屏：快照 → 按比例收窄落位。几何不可得返回 `None`（调用方保持
-/// 原状）。调用方负责幂等与「先退出其它紧凑形态」。
+/// 进入竖屏：快照 → 落位。上次竖屏几何有效（不小于竖屏恢复下限且落在
+/// 任一显示器内）就原样回去——三种窗态各记各的槽位，切形态互不覆盖；
+/// 素材比例与上次不同由换集重适配（portrait_panel 的 refit 路径）纠偏。
+/// 最大化进竖屏仍直进铺满档（Tauri enter 的 Ev + fit(full)，hgplayer
+/// 同款）；无记忆按比例现算。几何不可得返回 `None`（调用方保持原状）。
+/// 调用方负责幂等与「先退出其它紧凑形态」。
 pub(crate) fn enter(
     window: &mut Window,
     aspect: f64,
@@ -45,7 +49,30 @@ pub(crate) fn enter(
     *FULL_RESTORE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    fit(window, aspect, full, cx);
+    let prefs = crate::ui_prefs::load();
+    let remembered = if full {
+        None
+    } else {
+        crate::window_restore::restore_rect(
+            prefs.portrait_x,
+            prefs.portrait_y,
+            prefs.portrait_w,
+            prefs.portrait_h,
+            &crate::platform::display_rects(cx),
+            crate::window_restore::PORTRAIT_RESTORE_W,
+            crate::window_restore::PORTRAIT_RESTORE_H,
+        )
+    };
+    match remembered {
+        Some((x, y, w, h)) => {
+            crate::platform::apply_frame(
+                window,
+                cx,
+                (f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+            );
+        }
+        None => fit(window, aspect, full, cx),
+    }
     Some(saved)
 }
 
@@ -79,10 +106,19 @@ pub(crate) fn set_full(window: &mut Window, aspect: f64, full: bool, cx: &gpui_k
     }
 }
 
-/// 退出竖屏：还原进入前的几何与最大化态（丢掉的铺满快照不再需要）。
+/// 退出竖屏：先把当前竖屏几何落盘（理由同 [`crate::mini::exit`]，写竖屏
+/// 自己的槽位），再还原进入前的几何与最大化态（丢掉的铺满快照不再需要）。
 pub(crate) fn exit(window: &mut Window, saved: WindowSnapshot, cx: &gpui_kit::App) {
     *FULL_RESTORE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    crate::mini::exit(window, cx, saved);
+    let b = window.bounds();
+    crate::ui_prefs::store_geometry(
+        crate::ui_prefs::GeometrySlot::Portrait,
+        b.origin.x.into(),
+        b.origin.y.into(),
+        b.size.width.into(),
+        b.size.height.into(),
+    );
+    crate::platform::restore(window, cx, saved);
 }
