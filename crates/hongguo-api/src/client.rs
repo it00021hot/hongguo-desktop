@@ -351,6 +351,22 @@ fn host_of(url: &str) -> &str {
 
 // ---------------------------------------------------------------- 视频 Range 请求
 
+/// 探测请求的总超时。只取 1 字节，健康 CDN 秒级；卡死连接不该吃 client 默认 30s。
+const VIDEO_RANGE_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 等响应头的上限。真正卡死的连接通常卡在这里，不能等到整个 body 超时。
+const VIDEO_RANGE_HEADER_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 读取停滞超时：连续这么久没有**任何**新字节就报错。
+///
+/// 这是「卡死连接」和「慢但仍在传」的分界。不能用总耗时（1MB 在 68KB/s
+/// 以下会误杀健康慢网）；只要每 10s 有推进，就继续读。
+const VIDEO_RANGE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 单次 Range 请求的总上限（兜底防「每 9s 来一个字节」的假活跃连接）。
+/// 正常的 1MB 块远小于它。
+const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// 用 `Range: bytes=0-0` 探测直链总长。
 ///
 /// 返回 `Err` 表示该 CDN 不支持 Range（回了 200）——流式取流的前提不成立，
@@ -358,6 +374,7 @@ fn host_of(url: &str) -> &str {
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
     let resp = client
         .get(url)
+        .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
         .header("User-Agent", hongguo_signer::VIDEO_UA)
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header("Range", "bytes=0-0")
@@ -416,12 +433,6 @@ pub async fn get_video_range(
     Err(last_err.unwrap_or_else(|| AppError::Network("Range 请求重试耗尽".into())))
 }
 
-/// 视频 Range 单请求超时。块 ≤1MB（首探 256KB / 分块 1MB），健康 CDN 秒级
-/// 回全；卡死的连接靠它 15s 内报错进重试链，而不是吃满 client 默认的 30s
-/// ——30s × 3 次退避近两分钟的停顿，就是 issue #11「卡缓存要手动暂停
-/// 再恢复」的体感来源。
-const VIDEO_RANGE_TIMEOUT: Duration = Duration::from_secs(15);
-
 async fn get_video_range_once(
     client: &reqwest::Client,
     url: &str,
@@ -431,7 +442,7 @@ async fn get_video_range_once(
     let send = |referer: bool| {
         let mut req = client
             .get(url)
-            .timeout(VIDEO_RANGE_TIMEOUT)
+            .timeout(VIDEO_RANGE_TOTAL_TIMEOUT)
             .header("User-Agent", hongguo_signer::VIDEO_UA)
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header("Range", format!("bytes={start}-{end}"));
@@ -440,17 +451,10 @@ async fn get_video_range_once(
         }
         req
     };
-
-    let mut resp = send(false)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+    let mut resp = send_range_request(send(false), start, end).await?;
     if resp.status().as_u16() == 403 {
         log::info!("[CDN] Range 请求被 403 拒（裸 UA），补 Referer 重试一次");
-        resp = send(true)
-            .send()
-            .await
-            .map_err(|e| AppError::Network(e.to_string()))?;
+        resp = send_range_request(send(true), start, end).await?;
     }
     let status = resp.status();
     if status != reqwest::StatusCode::PARTIAL_CONTENT && status != reqwest::StatusCode::OK {
@@ -461,23 +465,56 @@ async fn get_video_range_once(
 
     use futures_util::StreamExt;
     let mut stream = resp.bytes_stream();
+    let stalled = || {
+        AppError::Network(format!(
+            "Range {start}-{end} 读取停滞超过 {}s（无新字节）",
+            VIDEO_RANGE_STALL_TIMEOUT.as_secs()
+        ))
+    };
     if status == reqwest::StatusCode::PARTIAL_CONTENT {
         // 206：响应体就是请求的那段（短读语义由调用方处理）
         let mut bytes = Vec::with_capacity((end - start + 1) as usize);
-        while let Some(chunk) = stream.next().await {
-            bytes.extend_from_slice(&chunk.map_err(|e| AppError::Network(e.to_string()))?);
+        loop {
+            match tokio::time::timeout(VIDEO_RANGE_STALL_TIMEOUT, stream.next()).await {
+                Ok(Some(Ok(chunk))) => bytes.extend_from_slice(&chunk),
+                Ok(Some(Err(e))) => return Err(AppError::Network(e.to_string())),
+                Ok(None) => break,
+                Err(_) => return Err(stalled()),
+            }
         }
         Ok(bytes)
     } else {
         // 200：CDN 忽略了 Range 回全量——边收边切，收满要的区间就断流
         let mut cutter = RangeCutter::new(start, end);
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
-            if cutter.push(&chunk) {
-                break; // 收够了，剩余字节不要了（提前断开连接）
+        loop {
+            match tokio::time::timeout(VIDEO_RANGE_STALL_TIMEOUT, stream.next()).await {
+                Ok(Some(Ok(chunk))) => {
+                    if cutter.push(&chunk) {
+                        break; // 收够了，剩余字节不要了（提前断开连接）
+                    }
+                }
+                Ok(Some(Err(e))) => return Err(AppError::Network(e.to_string())),
+                Ok(None) => break,
+                Err(_) => return Err(stalled()),
             }
         }
         cutter.finish()
+    }
+}
+
+/// 发一次 Range 请求，只对「等响应头」计时；body 的停滞由调用方逐块计时。
+async fn send_range_request(
+    request: reqwest::RequestBuilder,
+    start: u64,
+    end: u64,
+) -> AppResult<reqwest::Response> {
+    match tokio::time::timeout(VIDEO_RANGE_HEADER_TIMEOUT, request.send()).await {
+        Ok(Ok(resp)) => Ok(resp),
+        Ok(Err(e)) => Err(AppError::Network(e.to_string())),
+        Err(_) => Err(AppError::Network(format!(
+            "Range {start}-{end} 等响应头超时（{}s）",
+            VIDEO_RANGE_HEADER_TIMEOUT.as_secs()
+        ))),
     }
 }
 
@@ -782,6 +819,35 @@ mod tests {
             "视频 Range 请求必须保持原始字节: {req}"
         );
         assert!(req.contains("range: bytes=0-1"), "应保留 Range: {req}");
+    }
+
+    #[tokio::test]
+    async fn video_range_allows_a_slow_but_flowing_body() {
+        // 慢但一直在传：每 1s 到 1 字节，不能被总耗时超时误杀（停滞超时 10s）。
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).unwrap();
+            let _ = sock.write_all(
+                b"HTTP/1.1 206 Partial Content\r\nContent-Length: 2\r\n\
+                  Content-Range: bytes 0-1/2\r\nConnection: close\r\n\r\n",
+            );
+            let _ = sock.flush();
+            let _ = sock.write_all(b"h");
+            let _ = sock.flush();
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let _ = sock.write_all(b"i");
+        });
+
+        let url = format!("http://{addr}/v.mp4");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let bytes = get_video_range(&client, &url, 0, 1)
+            .await
+            .expect("慢速但持续的响应应成功");
+        assert_eq!(bytes, b"hi");
     }
 
     #[tokio::test]
