@@ -4432,6 +4432,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "smallvec",
+ "sys-locale",
  "tokio",
 ]
 

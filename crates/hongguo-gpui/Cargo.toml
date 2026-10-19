@@ -107,6 +107,10 @@ hongguo-media-platform = { path = "../hongguo-media-platform" }
 # service 的 async 函数族依赖 tokio 运行时设施（sleep / Semaphore）；GPUI 的
 # 执行器不是 tokio，本壳自带一个运行时线程做桥（oneshot 回传，见 main.rs）。
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# 默认语言跟随系统：读 NSLocale（macOS）/系统区域，而非 LANG 环境变量——
+# 终端里 LANG 常是 en_US.UTF-8，中文系统的开发机上「跟随系统」会直接变
+# 英文。0.3.2 已在依赖树中（gpui 字体栈），无新增代码。
+sys-locale = "0.3"
 # 封面远程拉取：gpui 图片缓存的 HttpClient 桥（http_client.rs）与 BoxFuture。
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 bytes = "1"

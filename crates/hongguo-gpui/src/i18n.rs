@@ -78,12 +78,20 @@ impl Locale {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        if let Ok(value) = std::env::var("LANG").or_else(|_| std::env::var("LC_ALL"))
-            && value.to_ascii_lowercase().starts_with("en")
+        if let Some(code) = sys_locale::get_locale()
+            && let Some(locale) = Self::parse_primary(&code)
         {
-            return Self::EnUs;
+            return locale;
         }
         Self::ZhCn
+    }
+
+    /// BCP-47 tag 归档：取主语言子标签判定（`zh-Hans-CN` → zh、
+    /// `en-GB` → en），sys-locale 返回的是完整 tag 而非 parse 的窄集。
+    #[cfg(not(target_os = "windows"))]
+    fn parse_primary(value: &str) -> Option<Self> {
+        let primary = value.split(['-', '_']).next()?;
+        Self::parse(primary)
     }
 }
 
