@@ -1,10 +1,11 @@
 //! 壳级 UI 偏好（GPUI）：侧栏折叠态 / 追更提醒弹出开关 / 找剧筛选折叠态 /
-//! 主题偏好 / 界面语言。
+//! 主题偏好 / 界面语言 / 上次窗口几何。
 //!
 //! 语义对齐 Tauri 的 zustand `hongguo-ui` persist（localStorage，见
 //! `src/stores/ui.ts` 的 partialize）——纯 UI 偏好不进业务库；用数据目录下
-//! 一个键值文件承载，坏档回默认。窗口级瞬态（小屏/置顶/全屏）不在此列：
-//! 那些与会话绑定，不持久化（Tauri partialize 同款口径）。
+//! 一个键值文件承载，坏档回默认。会话级瞬态（小屏/置顶/全屏）不在此列：
+//! 那些与会话绑定，不持久化（Tauri partialize 同款口径）；窗口几何是
+//! 例外——跨启动记忆（issue #11），Tauri 壳的 `window_state.rs` 同语义。
 
 use std::path::Path;
 
@@ -65,6 +66,12 @@ pub(crate) struct UiPrefs {
     pub(crate) theme: ThemePref,
     /// 界面语言（Tauri `hongguo-locale` store 同义；独立壳各存各的）。
     pub(crate) locale: crate::i18n::Locale,
+    /// 上次窗口几何（逻辑像素；issue #11）。`win_w`/`win_h` 为 0 = 无记忆
+    /// （首次启动/记录不可用），启动回中置默认。
+    pub(crate) win_x: f32,
+    pub(crate) win_y: f32,
+    pub(crate) win_w: f32,
+    pub(crate) win_h: f32,
 }
 
 impl Default for UiPrefs {
@@ -75,6 +82,10 @@ impl Default for UiPrefs {
             browse_filters_collapsed: false,
             theme: ThemePref::Auto,
             locale: crate::i18n::locale(),
+            win_x: 0.0,
+            win_y: 0.0,
+            win_w: 0.0,
+            win_h: 0.0,
         }
     }
 }
@@ -99,6 +110,10 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
                     prefs.locale = locale;
                 }
             }
+            "win_x" => prefs.win_x = value.trim().parse().unwrap_or(0.0),
+            "win_y" => prefs.win_y = value.trim().parse().unwrap_or(0.0),
+            "win_w" => prefs.win_w = value.trim().parse().unwrap_or(0.0),
+            "win_h" => prefs.win_h = value.trim().parse().unwrap_or(0.0),
             _ => {}
         }
     }
@@ -109,12 +124,16 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
 pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
     let tmp = path.with_extension("tmp");
     let text = format!(
-        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\nlocale={}\n",
+        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\nlocale={}\nwin_x={}\nwin_y={}\nwin_w={}\nwin_h={}\n",
         prefs.sidebar_collapsed,
         prefs.aibot_popup_on,
         prefs.browse_filters_collapsed,
         prefs.theme.as_str(),
-        prefs.locale.tag()
+        prefs.locale.tag(),
+        prefs.win_x,
+        prefs.win_y,
+        prefs.win_w,
+        prefs.win_h,
     );
     if std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))
@@ -135,4 +154,10 @@ pub(crate) fn save(prefs: UiPrefs) {
         let path = hongguo_store::paths::data_dir().join(FILE_NAME);
         let _ = tokio::task::spawn_blocking(move || save_to(&path, &prefs)).await;
     });
+}
+
+/// 同步落盘（退出路径用：`cx.quit()` 之后 tokio 桥不再保证跑，窗口几何
+/// 随退出保存必须走这条）。
+pub(crate) fn save_sync(prefs: &UiPrefs) {
+    save_to(&hongguo_store::paths::data_dir().join(FILE_NAME), prefs);
 }

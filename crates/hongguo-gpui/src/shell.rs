@@ -220,6 +220,10 @@ pub struct Shell {
     /// 关闭请求就直接放行——宁可少问一句，绝不把窗口变成关不掉的
     ///（Tauri「前端未就绪就放行」同精神）。
     exit_asked: bool,
+    /// 上次采样的窗口几何 [x, y, w, h]（render 逐帧刷新，正常窗态才覆盖
+    /// ——小屏/全屏/最大化的瞬态几何不抹掉上次记忆）。随关闭落盘，
+    /// 下次启动恢复（issue #11）。
+    win_bounds: [f32; 4],
     /// 账号头像（avatar_url 拉取；账号变化时重拉，登出清空）。
     account_avatar: Option<Arc<RenderImage>>,
     account_avatar_url: Option<String>,
@@ -473,6 +477,7 @@ impl Shell {
             detail_series: None,
             follow_unread: 0,
             exit_asked: false,
+            win_bounds: [0.0; 4],
             account_avatar: None,
             account_avatar_url: None,
             account_avatar_pending: false,
@@ -1098,6 +1103,9 @@ impl Shell {
             let Some(shell) = this.upgrade() else {
                 return true; // 壳都没了：别拦
             };
+            // 窗口几何随关闭保存（同步写：回调之后窗口可能立即销毁，tokio
+            // 桥不保证还跑）；即使这次关闭被确认框拦下，存的也是当前真值
+            shell.update(cx, |shell, _| shell.save_window_bounds());
             if shell.read(cx).exit_asked {
                 log::info!("[Shell] 退出确认已弹过，本次关闭直接放行");
                 return true;
@@ -1138,6 +1146,18 @@ impl Shell {
             });
             false // 拦下这次关闭，等确认框结果
         });
+    }
+
+    /// 把采样到的窗口几何并进偏好同步落盘（读-改-写：只覆盖几何四键，
+    /// 其余偏好字段保持盘上值）。
+    fn save_window_bounds(&self) {
+        let [x, y, w, h] = self.win_bounds;
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let mut prefs = crate::ui_prefs::load();
+        (prefs.win_x, prefs.win_y, prefs.win_w, prefs.win_h) = (x, y, w, h);
+        crate::ui_prefs::save_sync(&prefs);
     }
 
     /// 顶栏（自绘，Tauri `app-shell` header 的 44px 横贯薄行对齐）：
@@ -1739,6 +1759,17 @@ impl gpui_kit::Render for Shell {
         let in_portrait = crate::portrait::is_active();
         let immersive = self.feed.read(cx).immersive_fullscreen();
         let chrome_hidden = in_mini || immersive;
+        // 窗口几何采样（随关闭落盘，见 install_close_guard）：正常窗态才
+        // 记——小屏/全屏/最大化的瞬态几何不覆盖上次记忆
+        if !chrome_hidden && !window.is_fullscreen() && !window.is_maximized() {
+            let b = window.bounds();
+            self.win_bounds = [
+                b.origin.x.into(),
+                b.origin.y.into(),
+                b.size.width.into(),
+                b.size.height.into(),
+            ];
+        }
         // 先建好所有吃 cx 的闭包/子渲染，再取 theme（theme 借 cx，两者不能
         // 交叠——闭包里要 &mut Context）
         let toolbar = (!chrome_hidden).then(|| self.render_toolbar(window, cx));

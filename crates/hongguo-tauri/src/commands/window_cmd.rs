@@ -254,6 +254,12 @@ fn portrait_full_restore() -> std::sync::MutexGuard<'static, Option<(i32, i32, u
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// 窗口正处在小屏/竖屏这类会话瞬态（此时窗口几何是瞬态值，不该被
+/// window_state 当成常态记忆写盘）。
+pub(crate) fn in_transient_mode() -> bool {
+    saved_geometry().is_some() || portrait_restore().is_some()
+}
+
 /// 按视频宽高比重算竖屏几何并落窗（hgplayer kc 逐步同款）。
 fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
     let mon = win.current_monitor().ok().flatten();

@@ -15,6 +15,7 @@ mod events;
 mod protocol;
 #[cfg(test)]
 mod testing;
+mod window_state;
 
 use hongguo_common::{AppError, AppResult};
 
@@ -92,6 +93,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             use std::sync::atomic::Ordering;
             use tauri::{Emitter, Manager};
             if let Some(window) = app.get_webview_window("main") {
+                // 窗口几何记忆（issue #11）：窗口还藏着（mark_window_ready
+                // 才亮出）就先恢复上次几何，再挂防抖落盘
+                window_state::restore(&window);
                 let ready = app
                     .state::<commands::app_cmd::WindowCloseGate>()
                     .inner()
@@ -101,10 +105,26 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 // 恒 visible），前端拿不到——Rust 侧在 Resized 里查
                 // is_minimized，状态翻转才 emit（避免每次 resize 都发）
                 let minimized = std::sync::atomic::AtomicBool::new(false);
+                // 几何防抖的 epoch：移动/缩放事件递增，saver 线程 500ms
+                // 轮询、变了才快照写盘
+                let geometry_epoch = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                window_state::spawn_saver(win.clone(), std::sync::Arc::clone(&geometry_epoch));
                 // 兜底显示用的副本先克隆：win/ready 都要 move 进下面的事件闭包
                 let fallback_ready = ready.clone();
                 let fallback_window = win.clone();
+                let close_save_window = win.clone();
+                let close_save_epoch = std::sync::Arc::clone(&geometry_epoch);
                 window.on_window_event(move |event| {
+                    match event {
+                        tauri::WindowEvent::CloseRequested { .. } => {
+                            // 关闭即存（防抖线程未必轮到下一拍进程就退了）
+                            window_state::save(&close_save_window);
+                        }
+                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                            close_save_epoch.fetch_add(1, std::sync::atomic::Ordering::Release);
+                        }
+                        _ => {}
+                    }
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event
                         && ready.load(Ordering::Acquire)
                     {
