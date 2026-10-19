@@ -41,12 +41,18 @@ fn load() -> Option<Geometry> {
     }
 }
 
-/// 当前几何快照；瞬态/最大化/全屏中返回 None（不覆盖上次记忆）。
+/// 当前几何快照；瞬态/最大化/全屏/最小化中返回 None（不覆盖上次记忆）。
+///
+/// 最小化也要排除：Windows 会为最小化发 Resized，此时 `inner_size` 可能是
+/// 0×0；写进记忆后下次启动只能回默认，等于「记住窗口」被一次最小化清空。
 fn snapshot(win: &tauri::WebviewWindow) -> Option<Geometry> {
     if super::commands::window_cmd::in_transient_mode() {
         return None;
     }
-    if win.is_maximized().unwrap_or(false) || win.is_fullscreen().unwrap_or(false) {
+    if win.is_maximized().unwrap_or(false)
+        || win.is_fullscreen().unwrap_or(false)
+        || win.is_minimized().unwrap_or(false)
+    {
         return None;
     }
     let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {

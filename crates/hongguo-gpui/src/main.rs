@@ -45,6 +45,7 @@ mod tokens;
 mod ui_prefs;
 #[cfg(target_os = "windows")]
 mod win32;
+mod window_restore;
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -170,10 +171,11 @@ fn main() {
                     gpui_kit::component::ThemeMode::Dark => gpui_kit::WindowAppearance::Dark,
                 }));
             }
-            // 默认窗口与 Tauri conf 同参（1280×840，最小 1024×680）。优先级：
-            // 取证开关 HONGGUO_WINDOW=宽x高（中置）> 上次窗口几何（落在当前
-            // 任一显示器内才恢复，issue #11；Tauri 壳 window_state 同语义）>
-            // 中置默认。取证开关要求整页入镜，不恢复旧位置。
+            // 默认窗口与 Tauri conf 同参（1280×840，可恢复下限 480×270，
+            // 与 mini 同尺寸）。优先级：取证开关 HONGGUO_WINDOW=宽x高（中置）>
+            // 上次窗口几何（落在当前任一显示器内才恢复，issue #11；Tauri 壳
+            // window_state 同语义）> 中置默认。取证开关要求整页入镜，不恢复
+            // 旧位置。
             let forensic = std::env::var("HONGGUO_WINDOW").ok().and_then(|v| {
                 let (w, h) = v.split_once('x')?;
                 Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
@@ -239,25 +241,38 @@ fn main() {
         });
 }
 
-/// 上次窗口几何恢复（ui_prefs 的 win_* 四键）：有记忆（不小于最小尺寸
-/// 1024×680）且落在当前任一显示器内才用——显示器拔了/换布局后的旧坐标
-/// 会把窗口丢到屏外找不回。返回 None 回中置默认。
+/// 上次窗口几何恢复（ui_prefs 的 win_* 四键）：判定在
+/// [`window_restore::restore_rect`]（纯函数，集成测试覆盖），这里只转成
+/// GPUI 的 `Bounds`。下界是 480×270（Tauri 同款），不是默认窗口的
+/// 1024×680——用户正常缩到 900×600 也要能恢复。
 fn restore_window_bounds(
     prefs: &crate::ui_prefs::UiPrefs,
     cx: &gpui_kit::App,
 ) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
-    let (x, y, w, h) = (prefs.win_x, prefs.win_y, prefs.win_w, prefs.win_h);
-    if w < 1024.0 || h < 680.0 {
-        return None;
-    }
-    let bounds = gpui_kit::Bounds {
+    let displays: Vec<window_restore::DisplayRect> = cx
+        .displays()
+        .iter()
+        .map(|display| {
+            let b = display.bounds();
+            (
+                b.origin.x.into(),
+                b.origin.y.into(),
+                b.size.width.into(),
+                b.size.height.into(),
+            )
+        })
+        .collect();
+    let (x, y, w, h) = window_restore::restore_rect(
+        prefs.win_x,
+        prefs.win_y,
+        prefs.win_w,
+        prefs.win_h,
+        &displays,
+    )?;
+    Some(gpui_kit::Bounds {
         origin: gpui_kit::point(gpui_kit::px(x), gpui_kit::px(y)),
         size: gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)),
-    };
-    cx.displays()
-        .iter()
-        .any(|d| d.bounds().intersects(&bounds))
-        .then_some(bounds)
+    })
 }
 
 /// 开库并组装全局状态。与 Tauri 壳的装配逐层同源：

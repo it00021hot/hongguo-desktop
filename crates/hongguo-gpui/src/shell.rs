@@ -1760,8 +1760,13 @@ impl gpui_kit::Render for Shell {
         let immersive = self.feed.read(cx).immersive_fullscreen();
         let chrome_hidden = in_mini || immersive;
         // 窗口几何采样（随关闭落盘，见 install_close_guard）：正常窗态才
-        // 记——小屏/全屏/最大化的瞬态几何不覆盖上次记忆
-        if !chrome_hidden && !window.is_fullscreen() && !window.is_maximized() {
+        // 记——小屏/全屏/最大化/最小化的瞬态几何不覆盖上次记忆。最小化
+        // 时 bounds 可能变成 0 或屏外值，写进记忆等于清空。
+        if !chrome_hidden
+            && !window.is_fullscreen()
+            && !window.is_maximized()
+            && !crate::platform::is_minimized(window)
+        {
             let b = window.bounds();
             self.win_bounds = [
                 b.origin.x.into(),
