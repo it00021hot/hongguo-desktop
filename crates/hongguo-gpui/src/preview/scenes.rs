@@ -135,6 +135,22 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
         },
         // —— 首页分支态 ——
         PreviewCase {
+            name: "feed-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "feed-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "feed-loading-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "feed-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
             name: "feed-error-light",
             mode: ThemeMode::Light,
             width: W,

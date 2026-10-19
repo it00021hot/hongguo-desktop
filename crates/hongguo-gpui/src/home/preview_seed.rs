@@ -22,8 +22,9 @@ impl HomeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        // 失败/空态是「无剧可播」的分支：不灌流，画面落在提示 + 重试上
-        if !matches!(scene, "error" | "empty") {
+        // 失败/空态/首拉加载态是「无剧可播」的分支：不灌流；失败与空态
+        // 落在提示 + 重试，加载态只转 Spinner（启动时不该有重试钮）
+        if !matches!(scene, "error" | "empty" | "feed-loading") {
             self.seed_feed_state();
             self.seed_now_playing();
         }
@@ -84,6 +85,15 @@ impl HomeView {
                 feed.failed = Some("推荐流加载失败：网络请求超时（预览示例）".into());
             }
             "empty" => {}
+            "feed-loading" => {
+                let feed = self
+                    .feeds
+                    .get_mut(&Source::recommend())
+                    .expect("源已初始化");
+                feed.items.clear();
+                feed.loading = true;
+                feed.failed = None;
+            }
             other => anyhow::bail!("未知预览场景键: {other}"),
         }
         cx.notify();

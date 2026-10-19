@@ -33,10 +33,12 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::ActiveTheme;
+use gpui_kit::component::Sizable;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{Entity, RenderImage, Window, div};
@@ -1271,35 +1273,42 @@ impl gpui_kit::Render for HomeView {
         self.fullscreen = window.is_fullscreen();
         let theme = cx.theme();
         let feed = self.feeds.get(&self.active).expect("源已初始化");
-        let notice: Option<String> = if let Some(err) = &feed.failed {
-            Some(err.clone())
+        // (提示文案, 是否给手动重试)：加载态由自动重试链接管，不能把
+        // 「重试」按钮和「加载中…」画在一起——启动首屏正常在拉请求时也
+        // 会冒出重试钮，用户会以为启动即失败（用户启动实测截图）。
+        // 只有失败与空页才需要用户动作；空页保留重试（Tauri 空态同款）。
+        let notice: Option<(String, bool)> = if let Some(err) = &feed.failed {
+            Some((err.clone(), true))
         } else if feed.loading && self.now.is_none() {
-            Some(crate::i18n::t("common.loading"))
+            Some((crate::i18n::t("common.loading"), false))
         } else if !feed.loading && feed.items.is_empty() && self.now.is_none() {
-            Some(crate::i18n::t("common.empty"))
+            Some((crate::i18n::t("common.empty"), true))
         } else {
             None
         };
         let body = match notice {
-            Some(msg) => v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .child(
+            Some((message, retry)) => {
+                let mut panel = v_flex().flex_1().items_center().justify_center().gap_3();
+                if !retry {
+                    panel = panel.child(Spinner::new().small());
+                }
+                panel = panel.child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child(msg),
-                )
-                .child(
-                    Button::new("home-retry")
-                        .label(crate::i18n::t("common.retry"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.load_feed(this.active.clone(), false, cx);
-                        })),
-                )
-                .into_any_element(),
+                        .child(message),
+                );
+                if retry {
+                    panel = panel.child(
+                        Button::new("home-retry")
+                            .label(crate::i18n::t("common.retry"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load_feed(this.active.clone(), false, cx);
+                            })),
+                    );
+                }
+                panel.into_any_element()
+            }
             None => self
                 .render_stage(window, cx)
                 .id("home-stage")
