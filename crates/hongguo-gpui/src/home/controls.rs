@@ -186,6 +186,30 @@ impl super::HomeView {
                 self.buffering = false;
                 // 失败落封面：定格帧此时只会盖住错误态（Tauri 真值表 error 档）
                 self.hold_last_frame = false;
+                // 播放中致命失败同样走 retry 档（对齐 Tauri recovery-policy
+                // 的 network/other：自动重试一次，复发才落错误态）——起播
+                // 失败与这里共用同一个 play_retried 预算（引擎就位即复位）。
+                // 引擎已停、时钟冻结在失败位置，读它就是续播断点。
+                if !self.play_retried
+                    && let Some(item) = self.display_items().get(self.cursor()).cloned()
+                {
+                    self.play_retried = true;
+                    let position = self
+                        .player
+                        .as_ref()
+                        .map(|h| h.position_secs())
+                        .unwrap_or(0.0);
+                    // 集号必须显式带上：start_override 单独在场时 play_task
+                    // 会把集号回落到第 1 集（那语义是「切清晰度保进度」，
+                    // 必然伴随显式集号），第 5 集失败就会被重试到第 1 集去
+                    let vid_index = self.now.as_ref().map(|n| n.vid_index).unwrap_or(1);
+                    log::warn!(
+                        "[Home] 播放中失败，自动重试一次（第 {vid_index} 集 {position:.1}s 起）: {msg}"
+                    );
+                    self.play_target(item, Some(vid_index), Some(position), cx);
+                    cx.notify();
+                    return;
+                }
                 // 引擎致命失败即自停（shutdown），封面背后不会再有画面——
                 // 失败必须落可见错误态：只写 pending_title 的话，那行小徽标
                 // 随 switching 消失，用户看到的就是「无声无息卡在封面」

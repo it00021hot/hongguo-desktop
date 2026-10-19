@@ -416,6 +416,12 @@ pub async fn get_video_range(
     Err(last_err.unwrap_or_else(|| AppError::Network("Range 请求重试耗尽".into())))
 }
 
+/// 视频 Range 单请求超时。块 ≤1MB（首探 256KB / 分块 1MB），健康 CDN 秒级
+/// 回全；卡死的连接靠它 15s 内报错进重试链，而不是吃满 client 默认的 30s
+/// ——30s × 3 次退避近两分钟的停顿，就是 issue #11「卡缓存要手动暂停
+/// 再恢复」的体感来源。
+const VIDEO_RANGE_TIMEOUT: Duration = Duration::from_secs(15);
+
 async fn get_video_range_once(
     client: &reqwest::Client,
     url: &str,
@@ -425,6 +431,7 @@ async fn get_video_range_once(
     let send = |referer: bool| {
         let mut req = client
             .get(url)
+            .timeout(VIDEO_RANGE_TIMEOUT)
             .header("User-Agent", hongguo_signer::VIDEO_UA)
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header("Range", format!("bytes={start}-{end}"));
