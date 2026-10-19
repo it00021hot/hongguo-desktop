@@ -841,7 +841,9 @@ impl super::HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
-                            .dropdown_menu(rate_menu)
+                            // 默认 TopLeft 会把弹层盖在按钮上；BottomLeft =
+                            // 按钮上方弹出、左缘对齐（用户定稿口径）
+                            .dropdown_menu_with_anchor(gpui_kit::Anchor::BottomLeft, rate_menu)
                             // 菜单开态回写视图：开着期间控制条常显（panel_open），
                             // 不然 3s 一到菜单跟着控制条一起被收走
                             .on_open_change({
@@ -890,10 +892,16 @@ impl super::HomeView {
                                 .custom(chrome_variant(cx))
                                 .cursor_pointer()
                                 .small()
-                                .dropdown_menu(move |menu, _window, _cx| {
-                                    let mut menu = menu.label(crate::i18n::t("player.definition"));
-                                    menu = menu.item(
-                                        PopupMenuItem::new(crate::i18n::t("player.definitionAuto"))
+                                // 同倍速菜单：上方弹出、左缘对齐（不盖按钮）
+                                .dropdown_menu_with_anchor(
+                                    gpui_kit::Anchor::BottomLeft,
+                                    move |menu, _window, _cx| {
+                                        let mut menu =
+                                            menu.label(crate::i18n::t("player.definition"));
+                                        menu = menu.item(
+                                            PopupMenuItem::new(crate::i18n::t(
+                                                "player.definitionAuto",
+                                            ))
                                             .checked(current == 0)
                                             .on_click({
                                                 let view = view.clone();
@@ -903,29 +911,30 @@ impl super::HomeView {
                                                     })
                                                 }
                                             }),
-                                    );
-                                    for d in &defs {
-                                        let view = view.clone();
-                                        let value = d.value;
-                                        // 竖屏剧的宽高是反的，只报分辨率会误导
-                                        let lbl = if d.height > d.width {
-                                            format!("{}P（{}×{}）", d.value, d.width, d.height)
-                                        } else {
-                                            format!("{}P", d.value)
-                                        };
-                                        menu = menu.item(
-                                            PopupMenuItem::new(lbl)
-                                                .checked(d.value == current)
-                                                .on_click(move |_, _, cx| {
-                                                    let view = view.clone();
-                                                    view.update(cx, |v, cx| {
-                                                        v.switch_definition(Some(value), cx)
-                                                    })
-                                                }),
                                         );
-                                    }
-                                    menu
-                                })
+                                        for d in &defs {
+                                            let view = view.clone();
+                                            let value = d.value;
+                                            // 竖屏剧的宽高是反的，只报分辨率会误导
+                                            let lbl = if d.height > d.width {
+                                                format!("{}P（{}×{}）", d.value, d.width, d.height)
+                                            } else {
+                                                format!("{}P", d.value)
+                                            };
+                                            menu = menu.item(
+                                                PopupMenuItem::new(lbl)
+                                                    .checked(d.value == current)
+                                                    .on_click(move |_, _, cx| {
+                                                        let view = view.clone();
+                                                        view.update(cx, |v, cx| {
+                                                            v.switch_definition(Some(value), cx)
+                                                        })
+                                                    }),
+                                            );
+                                        }
+                                        menu
+                                    },
+                                )
                                 // 菜单开态回写视图（倍速菜单同款）：开着常显。
                                 // 挂在 dropdown_menu 返回的 Popover 上，不是 Button
                                 .on_open_change({
@@ -1315,7 +1324,7 @@ impl super::HomeView {
         let bounds = Rc::clone(&self.progress_bounds);
         let hovered = self.progress_hovered;
         h_flex()
-            .flex_1()
+            .w_full()
             .items_center()
             .cursor_pointer()
             // 命中区加高（好点），视觉条只有 4px
