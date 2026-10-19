@@ -31,7 +31,11 @@ impl super::HomeView {
             .when(lifted, |s| s.bottom(gpui_kit::px(112.0)))
             .when(!lifted, |s| s.bottom(gpui_kit::px(56.0)))
             .left_3()
-            .max_w(gpui_kit::relative(0.62))
+            // **定宽**而不是 max_w：简介行的百分比上限要挂在有确定宽度的
+            // 父级上才生效——overlay 宽度由内容决定时，子级的
+            // max_w(58%) 解析不出基准，简介一行冲出屏幕不换行（实测）。
+            // 62% 对齐 Tauri max-w-[62%]。
+            .w(gpui_kit::relative(0.62))
             .gap_1()
             // 信息层压在画面上：整块拦下鼠标（gpui 重叠兄弟分支都派发，
             // 不拦点信息文字会同时触发「点画面暂停」；子级的标题/展开钮
@@ -138,8 +142,11 @@ impl super::HomeView {
                     })),
             )
             .children(intro.map(|intro| {
-                // 简介块只占舞台约三分之一（hgplayer 同款量级）；块内点击
-                // 不落回舞台（防触发暂停/继续），展开交互只在按钮上
+                // 简介块只占舞台约三分之一（Tauri max-w-[36%] 同款：overlay
+                // 定宽 62% × 本行 58% ≈ 舞台 36%）；块内点击不落回舞台
+                //（防触发暂停/继续），展开交互只在按钮上。文本
+                // flex_1 + min_w_0：在行内收敛宽度强制换行——没有这一步
+                // 文本按 max-content 一行铺开跑出屏幕（实测）。
                 let expanded = self.intro_expanded;
                 h_flex()
                     .id("overlay-intro")
@@ -154,6 +161,8 @@ impl super::HomeView {
                     .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .text_xs()
                             .line_height(gpui_kit::relative(1.6))
                             .text_color(gpui_kit::rgba(0xffffffb3))
