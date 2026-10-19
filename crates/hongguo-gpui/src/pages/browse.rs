@@ -1239,6 +1239,18 @@ impl gpui_kit::Render for BrowseView {
             )
         });
         let theme = cx.theme();
+        // 首拉加载：**整页**居中，搜索框/筛选等页内控件加载期不渲染——
+        // 加载位置不受页内控件影响（用户定稿口径）。
+        if loading {
+            return v_flex()
+                .size_full()
+                .bg(theme.background)
+                .text_color(theme.foreground)
+                .items_center()
+                .justify_center()
+                .child(Spinner::new().small())
+                .into_any_element();
+        }
         v_flex()
             .size_full()
             .bg(theme.background)
@@ -1250,9 +1262,6 @@ impl gpui_kit::Render for BrowseView {
                     .w_full()
                     .p_6()
                     .gap_4()
-                    // 整页滚动的容器里给内容列撑到视口高：首拉加载的
-                    // Spinner 才有剩余高度可居中（与历史/收藏等页同口径）
-                    .min_h(gpui_kit::relative(1.0))
                     .child(search_row)
                     .children(filter_section)
                     .children(failed.then(|| {
@@ -1265,16 +1274,7 @@ impl gpui_kit::Render for BrowseView {
                                 crate::i18n::t("browse.loadFailed")
                             })
                     }))
-                    .child(if loading {
-                        // 首拉加载：撑满内容列剩余高度居中（列已 min_h 视口高）
-                        h_flex()
-                            .w_full()
-                            .flex_1()
-                            .items_center()
-                            .justify_center()
-                            .child(Spinner::new().small())
-                            .into_any_element()
-                    } else if empty {
+                    .child(if empty {
                         v_flex()
                             .w_full()
                             .items_center()
@@ -1306,6 +1306,7 @@ impl gpui_kit::Render for BrowseView {
                         )
                     })),
             )
+            .into_any_element()
     }
 }
 

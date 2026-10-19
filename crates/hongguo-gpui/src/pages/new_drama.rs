@@ -844,6 +844,24 @@ impl gpui_kit::EventEmitter<NewDramaEvent> for NewDramaView {}
 
 impl gpui_kit::Render for NewDramaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 首拉加载（推荐/日历）：**整页**居中，性别筛选行等页内控件加载期
+        // 不渲染——加载位置不受页内控件影响（用户定稿口径）。与创作者
+        // 主页/排行榜的页面级分支同款。
+        let page_loading = match self.view {
+            ViewTab::Recommend => self.loading && self.items.is_empty(),
+            ViewTab::Calendar => self.cal_loading && self.cal_items.is_empty(),
+        };
+        if page_loading {
+            let theme = cx.theme();
+            return v_flex()
+                .size_full()
+                .bg(theme.background)
+                .text_color(theme.foreground)
+                .items_center()
+                .justify_center()
+                .child(Spinner::new().small())
+                .into_any_element();
+        }
         let viewport_w = window.viewport_size().width.as_f32();
         let grid_cols = if viewport_w >= 1536.0 {
             8
@@ -1137,6 +1155,7 @@ impl gpui_kit::Render for NewDramaView {
                     .children(gender_row)
                     .child(body),
             )
+            .into_any_element()
     }
 }
 

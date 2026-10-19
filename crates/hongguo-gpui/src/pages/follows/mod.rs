@@ -605,9 +605,13 @@ impl gpui_kit::Render for FollowsView {
                 Tab::Notices => self.render_notices_body(cx),
             }
         };
-        let toolbar = logged_in.then(|| self.render_tabs(cx));
-        let manage_row =
-            (logged_in && self.tab == Tab::Follows).then(|| self.render_manage_row(cx));
+        // 首拉加载期不渲染页签/管理行：加载态整页居中、不受页内控件影响
+        //（用户定稿口径；条件与 render_follows_body 的加载分支一致）
+        let page_loading =
+            logged_in && self.tab == Tab::Follows && self.loading && self.items.is_empty();
+        let toolbar = (logged_in && !page_loading).then(|| self.render_tabs(cx));
+        let manage_row = (logged_in && !page_loading && self.tab == Tab::Follows)
+            .then(|| self.render_manage_row(cx));
         let batch_bar = (logged_in && self.tab == Tab::Follows && self.managing).then(|| {
             let total = self.items.len();
             BatchBar::new(

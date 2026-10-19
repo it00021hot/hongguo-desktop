@@ -1013,7 +1013,13 @@ impl gpui_kit::Render for ReservationView {
                     .into_any_element()
             }
         };
-        let toolbar = logged_in.then(|| self.render_toolbar(cx));
+        // 首拉加载期不渲染工具栏：加载态整页居中、不受页内控件影响
+        //（用户定稿口径；条件与 body 的加载分支一致）
+        let page_loading = logged_in && {
+            let current = self.current();
+            current.loading && current.items.is_none()
+        };
+        let toolbar = (logged_in && !page_loading).then(|| self.render_toolbar(cx));
         let batch_bar = (logged_in && self.managing).then(|| {
             let total = self.visible_items(cx).len();
             BatchBar::new(

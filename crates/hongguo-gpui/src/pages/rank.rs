@@ -775,6 +775,20 @@ impl gpui_kit::EventEmitter<RankEvent> for RankView {}
 
 impl gpui_kit::Render for RankView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 首拉加载：整页剩余区居中（含子榜导航区域）。居中在右侧列表列里
+        // 会读成「偏右」（子榜列占了左侧），用户实测反馈；页面级分支与
+        // 创作者主页同款。
+        if self.loading && self.items.is_empty() {
+            let theme = cx.theme();
+            return v_flex()
+                .size_full()
+                .bg(theme.background)
+                .text_color(theme.foreground)
+                .items_center()
+                .justify_center()
+                .child(Spinner::new().small())
+                .into_any_element();
+        }
         let sub_nav = self.render_sub_nav(cx);
         let filter_panel = self
             .filter_open
@@ -822,8 +836,7 @@ impl gpui_kit::Render for RankView {
                     cx.notify();
                 }))
         });
-        let (loading, failed, empty, has_more, count) = (
-            self.loading && self.items.is_empty(),
+        let (failed, empty, has_more, count) = (
             self.failed && self.items.is_empty(),
             self.items.is_empty(),
             self.has_more,
@@ -903,17 +916,7 @@ impl gpui_kit::Render for RankView {
                                     .children(filter_toggle),
                             )
                             .children(filter_panel)
-                            .child(if loading {
-                                // 首拉加载：整块内容区居中（与历史/收藏等页同口径；
-                                // 此前是列表顶部的细条 Spinner，各页加载位置不一的
-                                // 来源，用户意见：统一居中）
-                                h_flex()
-                                    .size_full()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(Spinner::new().small())
-                                    .into_any_element()
-                            } else {
+                            .child(
                                 div()
                                     .id("rank-list")
                                     .flex_1()
@@ -979,10 +982,11 @@ impl gpui_kit::Render for RankView {
                                                         .child(crate::i18n::t("follow.noMore")),
                                                 )
                                             })),
-                                    )
-                                    .into_any_element()
-                            }),
+                                    ),
+                            )
+                            .into_any_element(),
                     ),
             )
+            .into_any_element()
     }
 }

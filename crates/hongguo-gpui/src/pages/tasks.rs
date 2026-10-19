@@ -750,14 +750,16 @@ impl gpui_kit::Render for TasksView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("tasks-page")
-            .child(
+            .children((self.tasks.is_some()).then(|| {
+                // 首拉加载期不渲染筛选工具栏：加载态整页居中、不受页内控件
+                // 影响（用户定稿口径）
                 div()
                     .w_full()
                     .px_6()
                     .pt_6()
                     .pb_4()
-                    .child(self.render_toolbar(cx)),
-            )
+                    .child(self.render_toolbar(cx))
+            }))
             .child(body)
             .children(bottom_bar)
     }
