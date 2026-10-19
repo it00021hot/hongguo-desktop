@@ -230,6 +230,7 @@ export function CommentPanel({ vid, onClose }: Props) {
         vid,
         text: withMention ? content.replace(/@[^\s\uFFFC]*\uFFFC\s*/, '').trim() : content,
         mentionUserId: withMention ? mentionUser.userId : undefined,
+        mentionUserName: withMention ? mentionUser.name : undefined,
         contextCommentIds: withMention
           ? comments.slice(0, MENTION_CONTEXT_LIMIT).map((c) => c.commentId)
           : undefined,

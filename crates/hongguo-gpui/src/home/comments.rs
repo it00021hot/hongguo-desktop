@@ -215,8 +215,9 @@ impl super::HomeView {
         let mention = is_mention
             .then(|| self.mention_user.clone())
             .flatten()
-            .map(|(uid, _)| CommentMention {
+            .map(|(uid, name)| CommentMention {
                 user_id: uid,
+                user_name: name,
                 comment_ids: self
                     .comments
                     .iter()

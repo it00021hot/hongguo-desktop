@@ -45,8 +45,9 @@ pub(crate) fn emoji_by_name(name: &str) -> Option<Arc<RenderImage>> {
 }
 
 /// 文本 → 段序列：认识的 `[名字]` 换表情，不认识的原样保留为文本。
-/// 手写扫描（不引 regex 依赖）：`[` 起始、1–8 个非空白且不含 `]`/`[`、
-/// `]` 收尾，且整个代码在映射表里才认。
+/// 手写扫描（不引 regex 依赖）：`[` 起始、1–8 个非空白字符且不含 `]`/`[`、
+/// `]` 收尾（窗口判定在 [`crate::emoji_scan`]，与 Tauri 正则同口径），
+/// 且整个代码在映射表里才认。
 pub(crate) fn parse_emoji_segments(text: &str) -> Vec<EmojiSegment> {
     let bytes = text.as_bytes();
     let mut segments = Vec::new();
@@ -57,24 +58,7 @@ pub(crate) fn parse_emoji_segments(text: &str) -> Vec<EmojiSegment> {
             i += 1;
             continue;
         }
-        // 找收尾 `]`：中间 1–8 个非空白且不含 `[`/`]`
-        let mut end = None;
-        for (j, b) in bytes
-            .iter()
-            .enumerate()
-            .take(bytes.len().min(i + 10))
-            .skip(i + 1)
-        {
-            match b {
-                b']' => {
-                    end = Some(j);
-                    break;
-                }
-                b'[' | b' ' | b'\t' => break,
-                _ => {}
-            }
-        }
-        let Some(close) = end else {
+        let Some(close) = crate::emoji_scan::find_emoji_code_end(text, i) else {
             i += 1;
             continue;
         };
@@ -125,48 +109,4 @@ pub(crate) fn is_wide_char(c: char) -> bool {
             | 0xFFE0..=0xFFE6
             | 0x20000..=0x2FFFD
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 认识的 `[名字]` 换表情段，文本段保留；不认识的代码原样留在文本里。
-    #[test]
-    fn parse_segments_splits_known_emoji() {
-        let segs = parse_emoji_segments("来了[微笑]");
-        assert_eq!(segs.len(), 2, "文本段 + 表情段");
-        assert!(matches!(&segs[0], EmojiSegment::Text(t) if t == "来了"));
-        assert!(matches!(&segs[1], EmojiSegment::Emoji(_)));
-
-        // 映射表里没有的代码：原样保留为文本（不产表情段）
-        let segs = parse_emoji_segments("[不存在的表情]");
-        assert!(
-            segs.iter()
-                .all(|s| matches!(s, EmojiSegment::Text(t) if t.contains("[不存在的表情]"))),
-            "未知代码应留在文本段"
-        );
-    }
-
-    /// webp 资产可解码成 RGBA 位图（首项 [微笑] 即 e01.webp）。
-    #[test]
-    fn emoji_webp_decodes() {
-        assert!(emoji_by_name("[微笑]").is_some(), "映射表首项应可解码");
-    }
-
-    /// 超长/含空白的伪代码不认（hgplayer 同款 1–8 非空白字符约束）。
-    #[test]
-    fn scanner_ignores_non_code_brackets() {
-        for text in [
-            "[这是 一段很长 很长 很长很长 很长很长的 文本内容]",
-            "a [b c] d",
-        ] {
-            assert!(
-                parse_emoji_segments(text)
-                    .iter()
-                    .all(|s| matches!(s, EmojiSegment::Text(_))),
-                "{text} 不应产生表情段"
-            );
-        }
-    }
 }

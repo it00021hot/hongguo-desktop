@@ -20,6 +20,7 @@ mod cover_img;
 mod danmaku_emoji;
 mod detail;
 mod emoji_files;
+mod emoji_scan;
 mod events;
 mod home;
 mod http_client;

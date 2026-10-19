@@ -221,9 +221,11 @@ export const COMMANDS = {
       groupId: z.string(),
       bookId: z.string(),
       text: z.string(),
-      // @小果AI 提及评论（可选；两字段同时在场才生效，contextCommentIds
-      // 进 aibot_mention_context——官方传最近评论 id）
+      // @提及评论（可选；三字段同时在场才生效，contextCommentIds
+      // 进 aibot_mention_context——官方传最近评论 id；mentionUserName
+      // 是被提及者昵称，text 前缀与 rich_text 段文本都用它）
       mentionUserId: z.string().optional(),
+      mentionUserName: z.string().optional(),
       contextCommentIds: z.array(z.string()).optional(),
     }),
     response: commentItemSchema,

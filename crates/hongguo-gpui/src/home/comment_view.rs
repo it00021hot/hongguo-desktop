@@ -17,6 +17,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::danmaku::CommentItem;
 
+use crate::emoji_scan::{MentionPiece, split_mention_segments};
+
 #[cfg(feature = "screenshot")]
 use super::controls::CONTROLS_HOLD_SECS;
 
@@ -590,20 +592,44 @@ impl super::HomeView {
                     })),
             );
         }
-        for seg in crate::danmaku_emoji::parse_emoji_segments(rest) {
-            row = row.child(match seg {
-                crate::danmaku_emoji::EmojiSegment::Text(t) => {
-                    div().child(SharedString::from(t)).into_any_element()
-                }
-                crate::danmaku_emoji::EmojiSegment::Emoji(img) => {
-                    gpui_kit::img(gpui_kit::ImageSource::Render(img))
-                        .size(gpui_kit::px(18.0))
-                        .object_fit(gpui_kit::ObjectFit::Contain)
-                        .into_any_element()
-                }
-            });
+        for el in self.rich_children(rest) {
+            row = row.child(el);
         }
         row.into_any_element()
+    }
+
+    /// 富文本子元素（Tauri `EmojiText` 同口径）：认识的 `[名字]` 换表情图、
+    /// 文本中段的 `@名字\u{FFFC}` 染蓝、其余原样。评论正文与回复行共用
+    /// ——回复行（含小果AI 的回复）此前是纯文本，表情码全裸奔。
+    fn rich_children(&self, text: &str) -> Vec<gpui_kit::AnyElement> {
+        let mut out = Vec::new();
+        for seg in crate::danmaku_emoji::parse_emoji_segments(text) {
+            match seg {
+                crate::danmaku_emoji::EmojiSegment::Text(t) => {
+                    for piece in split_mention_segments(&t) {
+                        out.push(match piece {
+                            MentionPiece::Text(s) => {
+                                div().child(SharedString::from(s)).into_any_element()
+                            }
+                            MentionPiece::Mention(name) => div()
+                                .mr_1()
+                                .text_color(gpui_kit::rgb(0x38bdf8))
+                                .child(SharedString::from(format!("@{name}")))
+                                .into_any_element(),
+                        });
+                    }
+                }
+                crate::danmaku_emoji::EmojiSegment::Emoji(img) => {
+                    out.push(
+                        gpui_kit::img(gpui_kit::ImageSource::Render(img))
+                            .size(gpui_kit::px(18.0))
+                            .object_fit(gpui_kit::ObjectFit::Contain)
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        out
     }
 
     fn render_comment_row(&self, c: &CommentItem, cx: &Context<Self>) -> gpui_kit::AnyElement {
@@ -812,13 +838,21 @@ impl super::HomeView {
                                         } else {
                                             r.reply_to_name.as_str()
                                         };
+                                        let summary = crate::i18n::tf(
+                                            "player.comments.replyToSummary",
+                                            &[("name", name), ("text", r.text.as_str())],
+                                        );
                                         div()
                                             .text_xs()
                                             .text_color(gpui_kit::rgba(0xffffffd9))
-                                            .child(SharedString::from(crate::i18n::tf(
-                                                "player.comments.replyToSummary",
-                                                &[("name", name), ("text", r.text.as_str())],
-                                            )))
+                                            .child({
+                                                let mut row =
+                                                    div().flex().flex_wrap().items_center();
+                                                for el in self.rich_children(&summary) {
+                                                    row = row.child(el);
+                                                }
+                                                row
+                                            })
                                     })
                                     .child(
                                         h_flex()
@@ -946,12 +980,19 @@ impl super::HomeView {
 /// `\u{FFFC}` 是提及段结尾占位符，含它说明已插入、不再触发）。手写匹配
 /// （不引 regex）：`(^|\s)@[^\s@\u{FFFC}]*$` 同口径。
 fn mention_query_open(text: &str) -> bool {
+    strip_trailing_mention_trigger(text) != text
+}
+
+/// 剥掉末尾未成段的 `@词` 触发词（与 [`mention_query_open`] 同一套判定
+/// 的剥离面）：点选候选后插入提及段前先吞掉触发词，否则 `@词` 残留在
+/// 提及段前（Tauri insertMention 光标处吞词同语义）。无触发词原样返回。
+pub(super) fn strip_trailing_mention_trigger(text: &str) -> &str {
     let Some(at) = text.rfind('@') else {
-        return false;
+        return text;
     };
     let after = &text[at + 1..];
     if after.contains('\u{FFFC}') {
-        return false;
+        return text;
     }
     // @ 前必须是串首或空白
     if at > 0
@@ -960,12 +1001,16 @@ fn mention_query_open(text: &str) -> bool {
             .next_back()
             .is_some_and(char::is_whitespace)
     {
-        return false;
+        return text;
     }
     // @ 之后到串尾不许再有空白 / @ / 占位符
-    !after
+    if after
         .chars()
         .any(|c| c.is_whitespace() || c == '@' || c == '\u{FFFC}')
+    {
+        return text;
+    }
+    &text[..at]
 }
 
 /// 提取 `@名字\u{FFFC}` 提及前缀（Tauri CommentText 的

@@ -28,9 +28,10 @@ describe('interact.sendComment 入参键名', () => {
     });
   });
 
-  it('提及参数走 mentionUserId / contextCommentIds（不是 userId）', async () => {
+  it('提及参数走 mentionUserId / mentionUserName / contextCommentIds（不是 userId）', async () => {
     await interact.sendComment('vid1', 'series1', '正文', {
       userId: '2029014865965927',
+      userName: '小果',
       contextCommentIds: ['c1', 'c2'],
     });
     expect(invokeMock).toHaveBeenCalledWith('comment_send', {
@@ -38,6 +39,7 @@ describe('interact.sendComment 入参键名', () => {
       bookId: 'series1',
       text: '正文',
       mentionUserId: '2029014865965927',
+      mentionUserName: '小果',
       contextCommentIds: ['c1', 'c2'],
     });
   });
@@ -47,6 +49,7 @@ describe('interact.sendComment 入参键名', () => {
     const args = (invokeMock.mock.lastCall?.[1] ?? {}) as Record<string, unknown>;
     expect(args).toEqual({ groupId: 'vid1', bookId: 'series1', text: '正文' });
     expect(args.mentionUserId).toBeUndefined();
+    expect(args.mentionUserName).toBeUndefined();
     expect(args.contextCommentIds).toBeUndefined();
   });
 });

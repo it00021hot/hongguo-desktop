@@ -1243,7 +1243,7 @@ impl gpui_kit::Render for HomeView {
         // 评论输入框的延迟写入（set_value 要 window）：
         // 1) 发送成功清空——comment_clear_input 此前只置位没人消费（发完
         //    不清，与 Tauri 不一致），一并修掉；
-        // 2) 提及插入（候选点击 → 追加 `@名字\u{FFFC} `）
+        // 2) 提及插入（候选点击 → 吞掉 `@词` 触发词后接 `@名字\u{FFFC} `）
         if let Some(input) = &self.comment_input {
             if self.comment_clear_input {
                 self.comment_clear_input = false;
@@ -1251,8 +1251,9 @@ impl gpui_kit::Render for HomeView {
                 input.update(cx, |state, cx| state.set_value("", window, cx));
             } else if let Some(segment) = self.mention_insert.take() {
                 let current = input.read(cx).value().to_string();
+                let base = comment_view::strip_trailing_mention_trigger(&current);
                 input.update(cx, |state, cx| {
-                    state.set_value(format!("{current}{segment}"), window, cx)
+                    state.set_value(format!("{base}{segment}"), window, cx)
                 });
             }
         }
