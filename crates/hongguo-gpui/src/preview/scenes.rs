@@ -108,23 +108,6 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "dm",
             font_scale: 1.,
         },
-        // —— 菜单居中（倍速/清晰度自绘卡，用户对齐：各菜单位置统一居中）——
-        PreviewCase {
-            name: "feed-rate-menu-light",
-            mode: ThemeMode::Light,
-            width: W,
-            height: H,
-            scene: "rate-menu",
-            font_scale: 1.,
-        },
-        PreviewCase {
-            name: "feed-definition-menu-light",
-            mode: ThemeMode::Light,
-            width: W,
-            height: H,
-            scene: "definition-menu",
-            font_scale: 1.,
-        },
         // —— 页面首拉加载态（用户对齐：各页加载位置统一整区居中）——
         PreviewCase {
             name: "rank-loading-light",

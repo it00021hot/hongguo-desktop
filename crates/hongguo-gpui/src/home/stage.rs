@@ -710,36 +710,6 @@ impl super::HomeView {
                     )
                     .into_any_element()
             }))
-            // 倍速/清晰度菜单开着：同款捕获层（自绘居中卡取代组件下拉后，
-            // 点外关闭由这里承担，语义与弹幕设置一致）
-            .children((self.rate_menu_open && !in_mini).then(|| {
-                div()
-                    .absolute()
-                    .size_full()
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.rate_menu_open = false;
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element()
-            }))
-            .children((self.definition_menu_open && !in_mini).then(|| {
-                div()
-                    .absolute()
-                    .size_full()
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.definition_menu_open = false;
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element()
-            }))
             // 轻量提示（Tauri toast 同位）：舞台顶部居中，分类 tab 行的
             // 下方；无指针监听不吃点击
             .children(self.toast.as_ref().map(|t| {
