@@ -55,6 +55,9 @@
 | 13 | 缺 HEVC 扩展的安装引导：Tauri `HevcInstallCard` 两档（失败后的居中主卡 + 提前告知的底部悬浮卡，附 `hevc-session` 会话记忆与一键安装 service）；GPUI 选流虽已提前降档 H.264，但对用户完全沉默 | `hevc-install-card.tsx` + `hevc-session.ts` + `capability_service::install_hevc_extension` | ✅ 2026-10-17（`home/hevc_prompt.rs` 做 proactive 一档：底部悬浮卡 + 一键安装 + 暂不安装会话记忆；文案按 GPUI 实际形态改写——不是「有声音没画面」而是「当前是降档 H.264」）。真机 `HONGGUO_NO_HEVC=1` 拍到卡片与两键 |
 | 14 | 顶部 2px 加载细条：Tauri `loadbar.tsx` + `hg-loadbar`（切换在途/首帧未出/缓冲中亮，30% 胶囊 1.1s 循环滑动）；GPUI 只有中央 spinner 与右上「缓冲中」角标 | `loadbar.tsx` + `index.css:252-273` | ✅ 2026-10-17（stage 顶部同款细条；用 gpui `Animation` 驱动循环滑动，不依赖播放帧率）。真机：对切换间隙逐帧扫顶部像素行，只有间隙那一帧命中亮条，间隙外 14 帧全无 |
 | 15 | 暂停时的快捷键提示：Tauri `keyboard-hint.tsx`（38% 高度居中胶囊，小屏/竖屏/错误态不渲染）；GPUI 无 | `keyboard-hint.tsx:6-16` | ✅ 2026-10-17（stage 同款胶囊，文案取 Tauri 同一条静态提示）。真机 `HONGGUO_SHOT_PAUSE=1` 抓帧在位 |
+| 16 | 窗口位置与大小记忆：两壳启动固定 1280×840 居中、关窗即忘 | `crates/hongguo-gpui/src/ui_prefs.rs`、`crates/hongguo-tauri/src/window_state.rs` | ✅ 2026-10-19（GPUI `win_*` 四键 + 关闭同步落盘；Tauri `window-state.json` + 500ms 防抖 + CloseRequested 即存；小屏/竖屏/最大化/全屏/最小化瞬态不覆盖。真机：1000×700 / 900×600 / 1100×700 精确还原；屏外回中置；Tauri 关闭确认路径即存） |
+| 17 | 连播预取档位 0–10 与沉浸流后续 B 部：Tauri 滑杆封顶 3，GPUI 首帧只铺紧邻下一部 | `src/pages/home/components/home-page.tsx`、`crates/hongguo-gpui/src/home/playback.rs`、`crates/hongguo-service/src/play_service/online/prepare.rs` | ✅ 2026-10-19（双壳滑杆/zod/Rust clamp 到 10；后续 B 部各取入口集头部；预取并发限 2 路；无 HEVC 兼容预转固定只铺下一集。真机：设置 10 保存重开生效，起播日志出现多路预取） |
+| 18 | 首页启动加载态误显「重试」：GPUI 的 `notice` 把加载/空/失败共用一个分支，加载中也会画重试钮 | `crates/hongguo-gpui/src/home/mod.rs` | ✅ 2026-10-19（加载中改 Spinner + 文案，仅失败/空页给重试；新增 `feed-loading-light/dark` 预览场景。`make gpui-preview` 75 张目检无重试钮） |
 
 ### 已闭环的能力边界（原「已知边界」逐项清零）
 
