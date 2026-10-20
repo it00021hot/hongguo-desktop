@@ -202,6 +202,7 @@ unsafe fn install_backdrop(
     device: &IDCompositionDevice,
     container: &IDCompositionVisual,
 ) -> Result<IDCompositionVisual> {
+  unsafe {
     use windows::core::Interface;
     use windows::Win32::Graphics::Direct3D11::{ID3D11Resource, ID3D11RenderTargetView,
         ID3D11Texture2D};
@@ -238,4 +239,5 @@ unsafe fn install_backdrop(
     // insertAbove = TRUE + referenceVisual = NULL ⇒ 排在所有兄弟之后（最底层）。
     container.AddVisual(&backdrop, true, None)?;
     Ok(backdrop)
+  }
 }
