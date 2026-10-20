@@ -1,6 +1,6 @@
-//! 舞台渲染：tab 顶栏、沉浸舞台（封面占位层 / 视频槽二选一）、信息叠加层、
-//! 封面懒加载。视频像素载体（macOS 零拷贝 surface / Windows RGBA 上传）在
-//! [`super::video_surface`]——本文件不写平台分支。
+//! 舞台主渲染树（`render_stage`）。
+
+use super::*;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,254 +16,12 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::prelude::*;
 use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
 use hongguo_playback::{PresenterBounds, PresenterFit};
 
-use super::danmaku::DM_LANE_GAP;
-use super::feed::StreamItem;
-use crate::bridge;
+use super::super::danmaku::DM_LANE_GAP;
 
-/// 舞台周期状态日志（HONGGUO_DIAG 取证）的最小间隔（秒）。
-const STAGE_DIAG_EVERY_SECS: u64 = 5;
-
-impl super::HomeView {
-    /// 从「观看完整短剧」进入当前剧连播态（横条与取证探针共用）。
-    ///
-    /// 状态变化必须显式通知：wake_controls 在悬浮层已经可见时不会重绘，
-    /// 只靠它会出现“点了横条没反应，直到下一次视频帧刷新”的空窗。
-    pub(crate) fn enter_binge(&mut self, cx: &mut Context<Self>) {
-        if let Some(now) = self.now.clone() {
-            log::info!(
-                "[Home] 观看完整短剧：进入连播态 {} 第 {} 集",
-                now.series_id,
-                now.vid_index
-            );
-            self.binge = Some(now.series_id);
-        }
-        self.wake_on_input(cx);
-        cx.notify();
-    }
-
-    /// 「观看完整短剧」横条。
-    ///
-    /// 它必须在控制条之后挂到舞台：控制条的 `pt-10` 是透明悬停缓冲，
-    /// 与横条的 `bottom: 56px` 相交；若控制条后画，它的 root down/up
-    /// 拦截会把横条的点击全部吃掉（真实鼠标也点不动）。
-    fn render_binge_entry(&self, cx: &Context<Self>) -> Option<gpui_kit::AnyElement> {
-        if self.mini.is_some() || self.in_binge() || !self.controls_visible() || self.now.is_none()
-        {
-            return None;
-        }
-        let theme = cx.theme();
-        let now = self.now.as_ref().expect("上面已验 now 在");
-        let episodes = if now.episode_count > 0 {
-            format!(
-                " · {}",
-                crate::i18n::tf(
-                    "player.totalEpisodes",
-                    &[("count", &now.episode_count.to_string())],
-                )
-            )
-        } else {
-            String::new()
-        };
-        Some(
-            h_flex()
-                .id("binge-entry")
-                .absolute()
-                .left_3()
-                .right_3()
-                .bottom(gpui_kit::px(56.0))
-                .justify_center()
-                .gap_2()
-                .rounded(theme.radius + gpui_kit::px(2.0))
-                .bg(gpui_kit::rgba(0x00000099))
-                .hover(|s| s.bg(gpui_kit::rgba(0x000000bf)))
-                .px_3()
-                .py_2p5()
-                .text_sm()
-                .text_color(gpui_kit::rgb(0xffffff))
-                .cursor_pointer()
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.enter_binge(cx);
-                    cx.stop_propagation();
-                }))
-                .child(div().truncate().child(SharedString::from(format!(
-                    "{}{episodes}",
-                    crate::i18n::t("player.watchFullSeries")
-                ))))
-                .child(
-                    Icon::new(IconName::ChevronRight)
-                        .small()
-                        .text_color(gpui_kit::rgba(0xffffff99)),
-                )
-                .into_any_element(),
-        )
-    }
-
-    /// 懒加载当前/目标剧的封面（全屏占位用）。
-    pub(super) fn load_cover_of(&mut self, item: &StreamItem, cx: &mut Context<Self>) {
-        let remote = if item.horiz_cover.is_empty() {
-            item.cover.clone()
-        } else {
-            item.horiz_cover.clone()
-        };
-        self.load_cover(item.series_id.clone(), remote, cx);
-    }
-
-    /// 懒加载一张剧封面进 covers 表（全屏占位与选集系列剧卡片共用；
-    /// HEIC 签名 URL 走 cover 管线，失败静默允许重试）。
-    pub(super) fn load_cover(&mut self, series_id: String, remote: String, cx: &mut Context<Self>) {
-        let sid = series_id.clone();
-        if remote.is_empty()
-            || self.covers.contains_key(&sid)
-            || !self.covers_pending.insert(sid.clone())
-        {
-            return;
-        }
-        // acquire_renderable 是同步函数（内部自建 runtime），必须走阻塞池
-        let rx = bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
-                hongguo_protocol::cover::acquire_renderable(&remote).map(|(bytes, _)| bytes)
-            })
-            .await
-            .expect("阻塞池 join")
-        });
-        cx.spawn(async move |this, cx| {
-            let bytes: Vec<u8> = match rx.await.expect("tokio 桥不会丢弃发送端") {
-                Ok(b) => b,
-                Err(e) => {
-                    let _ = this.update(cx, |view, _| {
-                        log::warn!("[Home] 封面加载失败: {e}");
-                        view.covers_pending.remove(&sid);
-                    });
-                    return;
-                }
-            };
-            let _ = this.update(cx, |view, cx| match image::load_from_memory(&bytes) {
-                Ok(decoded) => {
-                    // 取证开关：HONGGUO_DUMP_COVER=<目录> 时每个封面都落盘
-                    // 原始字节 + 我们的解码 PNG（sid 做文件名；离线与 ffmpeg
-                    // 参照对拍用）
-                    if let Ok(dir) = std::env::var("HONGGUO_DUMP_COVER") {
-                        let _ = std::fs::create_dir_all(&dir);
-                        let tag: String = sid
-                            .chars()
-                            .rev()
-                            .take(8)
-                            .collect::<String>()
-                            .chars()
-                            .rev()
-                            .collect();
-                        let _ = std::fs::write(
-                            std::path::Path::new(&dir).join(format!("{tag}.bin")),
-                            &bytes,
-                        );
-                        let rgba = decoded.to_rgba8();
-                        let _ =
-                            rgba.save(std::path::Path::new(&dir).join(format!("{tag}.ours.png")));
-                        let head: Vec<u8> = bytes.iter().take(12).copied().collect();
-                        log::info!(
-                            "[Home] 封面落盘 {tag}（{}B，首字节 {head:02x?}，{}×{}）",
-                            bytes.len(),
-                            rgba.width(),
-                            rgba.height()
-                        );
-                    }
-                    view.covers.insert(
-                        sid,
-                        Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                    );
-                    cx.notify();
-                }
-                Err(e) => {
-                    log::warn!("[Home] 封面解码失败: {e}");
-                    view.covers_pending.remove(&sid);
-                }
-            });
-        })
-        .detach();
-    }
-
-    // —— 渲染 ——
-
-    /// 系统后端：把 contain 的黑边画成黑色。
-    ///
-    /// 透明洞的边界是**视频矩形**，不是整个舞台。视频位在 GPUI 内容之下，舞台
-    /// 背景一透明，黑边就成了「洞」：Windows 的 DComp 透明窗没有窗口底色兜底，
-    /// 会直接漏出后面的窗口（实测截屏里能看到别的窗口内容）；macOS 靠窗口黑底
-    /// 遮住，但两侧共用这段代码之后行为一致——黑边由 GPUI 自己画，窗口底色
-    /// 只作最后的兜底。
-    ///
-    /// 换算与 `wm_presenter` 的舞台几何同参：contain 居中换算宽高，取不到原生
-    /// 尺寸（metadata 未就绪）时不画；小屏是 `cover` 铺满，没有黑边。
-    fn render_stage_letterbox(&self) -> Option<gpui_kit::AnyElement> {
-        if self.mini.is_some() {
-            return None;
-        }
-        let [_, _, stage_w, stage_h] = self.stage_bounds.get()?;
-        let (native_w, native_h) = self.player.as_ref()?.dims();
-        if stage_w < 2.0 || stage_h < 2.0 || native_w == 0 || native_h == 0 {
-            return None;
-        }
-        let aspect = native_w as f32 / native_h as f32;
-        let (mut video_w, mut video_h) = (stage_w, stage_w / aspect);
-        if video_h > stage_h {
-            video_h = stage_h;
-            video_w = stage_h * aspect;
-        }
-        let bar_y = ((stage_h - video_h) / 2.0).max(0.0);
-        let bar_x = ((stage_w - video_w) / 2.0).max(0.0);
-        if bar_y < 0.5 && bar_x < 0.5 {
-            return None;
-        }
-        let black = gpui_kit::rgb(0x000000);
-        Some(
-            div()
-                .absolute()
-                .size_full()
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(gpui_kit::px(bar_y))
-                        .bg(black),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .h(gpui_kit::px(bar_y))
-                        .bg(black),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(gpui_kit::px(bar_y))
-                        .bottom(gpui_kit::px(bar_y))
-                        .left_0()
-                        .w(gpui_kit::px(bar_x))
-                        .bg(black),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(gpui_kit::px(bar_y))
-                        .bottom(gpui_kit::px(bar_y))
-                        .right_0()
-                        .w(gpui_kit::px(bar_x))
-                        .bg(black),
-                )
-                .into_any_element(),
-        )
-    }
-
+impl HomeView {
     /// 沉浸舞台：**同一时刻只画一层内容**——出画了画视频，没出画画封面。
     ///
     /// 两层都是绝对定位铺满舞台，谁盖谁由元素顺序决定。曾经两层都画、封面
@@ -275,7 +33,7 @@ impl super::HomeView {
     /// 取流/解码的间隙看到的是这部剧的封面而不是黑屏。
     ///
     /// 返回 `Div`（不是 AnyElement）：调用方要挂滚轮监听与 `.id`。
-    pub(super) fn render_stage(
+    pub(in crate::home) fn render_stage(
         &self,
         window: &gpui_kit::Window,
         cx: &Context<Self>,

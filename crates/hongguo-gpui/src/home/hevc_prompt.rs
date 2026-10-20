@@ -2,7 +2,7 @@
 //!
 //! Tauri 有两档：解码失败后的**居中主卡**（要么装扩展、要么转兼容格式）与
 //! 提前告知的**底部悬浮卡**。GPUI 侧选流时就会按 `hevc_playable()` 让接口
-//! 下发 H.264（`DecoderCapability::from_hevc`，见 `home/playback.rs`），不会
+//! 下发 H.264（`DecoderCapability::from_hevc`，见 `home/playback/open.rs`），不会
 //! 走到「有声音没画面」那条路——所以这里只做 proactive 那一档：告诉用户当前
 //! 是降档画质，装好扩展后续剧集自动切回 H.265。
 //!
