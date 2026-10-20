@@ -30,8 +30,10 @@ impl DetailView {
             self.prefill = Some(prefill.clone());
             self.series_id = "7200000".into();
             self.series = Some(Arc::new(synthesize_upcoming_series("7200000", &prefill)));
-            self.images
-                .insert("preview://detail-cover".into(), fixtures::cover(6));
+            crate::preview::fixtures::put_preview_image(
+                "preview://detail-cover",
+                fixtures::cover(6),
+            );
             self.meta = None;
             self.tab = DetailTab::Episodes;
             cx.notify();
@@ -73,8 +75,7 @@ impl DetailView {
             ..Default::default()
         };
         self.meta = Some(meta);
-        self.images
-            .insert("preview://detail-cover".into(), fixtures::cover(0));
+        crate::preview::fixtures::put_preview_image("preview://detail-cover", fixtures::cover(0));
         let mut reviews: Vec<CommentItem> = fixtures::comments();
         if let Some(last) = reviews.last_mut() {
             last.score = "9".into();
@@ -97,7 +98,7 @@ impl DetailView {
         let mut works = fixtures::related_seasons();
         for (i, item) in works.iter_mut().enumerate() {
             let url = format!("preview://related-{i}");
-            self.images.insert(url.clone(), fixtures::cover(i + 1));
+            crate::preview::fixtures::put_preview_image(&url, fixtures::cover(i + 1));
             item.cover = url;
         }
         let mut guess = vec![RelatedItem {
@@ -117,7 +118,7 @@ impl DetailView {
         });
         for (i, item) in guess.iter_mut().enumerate() {
             let url = format!("preview://guess-{i}");
-            self.images.insert(url.clone(), fixtures::cover(i + 4));
+            crate::preview::fixtures::put_preview_image(&url, fixtures::cover(i + 4));
             item.cover = url;
         }
         self.related = Some(Arc::new(RelatedSeries { works, guess }));

@@ -75,6 +75,29 @@ pub(crate) fn cover(seed: usize) -> Arc<RenderImage> {
     Arc::new(crate::image_upload::render_image(img))
 }
 
+/// 预览合成图旁路：预览场景不走网络，数据目录里没有成品图，渲染点先查
+/// 这张表（URL → 已合成的位图），查不到再走真图的路径。
+static PREVIEW_IMAGES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, Arc<RenderImage>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 登记一张预览合成图（键 = 封面 URL）。
+pub(crate) fn put_preview_image(url: impl Into<String>, image: Arc<RenderImage>) {
+    PREVIEW_IMAGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(url.into(), image);
+}
+
+/// 取一张预览合成图（没有则 `None`）。
+pub(crate) fn preview_image(url: &str) -> Option<Arc<RenderImage>> {
+    PREVIEW_IMAGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(url)
+        .cloned()
+}
+
 /// seed → 柔和 RGB 三元组（低饱和高明度，浅深主题都不刺眼；47° 素数
 /// 步进让相邻 seed 色相拉开，肉眼可分辨每张封面不同）。
 fn pastel(seed: usize) -> (u8, u8, u8) {

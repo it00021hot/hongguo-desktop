@@ -11,10 +11,7 @@ impl HistoryView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self
-            .covers
-            .get(&format!("{}:{}", item.series_id, item.updated_at_ms))
-            .cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let index = item.vid_index.max(1);
         let badge = if item.duration_ms > 0 {
             let total = if item.episode_cnt > 0 {
@@ -81,23 +78,7 @@ impl HistoryView {
                     .overflow_hidden()
                     .rounded(gpui_kit::px(8.0))
                     .bg(theme.secondary)
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => h_flex()
-                            .size_full()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                gpui_kit::component::Icon::new(
-                                    gpui_kit::assets::IconName::ClockArrowDown,
-                                )
-                                .text_color(theme.muted_foreground),
-                            )
-                            .into_any_element(),
-                    }),
+                    .child(cover),
             )
             .child(
                 v_flex()

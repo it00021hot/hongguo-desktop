@@ -11,7 +11,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::danmaku::ReplyItem;
 
 use crate::detail::DetailView;
@@ -26,7 +26,7 @@ impl super::super::DetailView {
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let rid = r.reply_id.clone();
-        let avatar = self.images.get(&r.avatar).cloned();
+        let avatar = crate::cover_img::avatar(&r.avatar);
         let digged = self
             .review_digg_override
             .get(&rid)
@@ -45,11 +45,7 @@ impl super::super::DetailView {
                     .overflow_hidden()
                     .rounded_full()
                     .bg(theme.secondary)
-                    .children(avatar.map(|bitmap| {
-                        img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                    })),
+                    .child(avatar),
             )
             .child(
                 v_flex()
@@ -383,7 +379,7 @@ impl super::super::DetailView {
                 self.reviews
                     .iter()
                     .map(|c| {
-                        let avatar = self.images.get(&c.avatar).cloned();
+                        let avatar = crate::cover_img::avatar(&c.avatar);
                         let rid = c.comment_id.clone();
                         let is_mine =
                             !self.my_user_id().is_empty() && c.user_id == self.my_user_id();
@@ -425,11 +421,7 @@ impl super::super::DetailView {
                                     .overflow_hidden()
                                     .rounded_full()
                                     .bg(theme.secondary)
-                                    .children(avatar.map(|bitmap| {
-                                        img(ImageSource::Render(bitmap))
-                                            .size_full()
-                                            .object_fit(ObjectFit::Cover)
-                                    })),
+                                    .child(avatar),
                             )
                             .child(
                                 v_flex()

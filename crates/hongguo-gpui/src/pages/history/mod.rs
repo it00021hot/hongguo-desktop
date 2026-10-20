@@ -8,7 +8,7 @@
 //! （云端一条请求；本地逐剧删）。云端数据与操作走 `hongguo_api::history`，
 //! 本地走 `hongguo_store`，与 Tauri 的 history command 同一段。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
@@ -19,16 +19,14 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
-};
+use gpui_kit::{App, ElementId, Entity, SharedString, Window, div};
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_common::model::LocalHistoryItem;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::home::fmt::format_duration;
-use crate::pages::list_common::{BatchBar, decode_cover, pick_dot, search_box};
+use crate::pages::list_common::{BatchBar, pick_dot, search_box};
 
 mod actions;
 mod list;
@@ -79,8 +77,6 @@ pub(crate) struct HistoryView {
     state: Arc<AppStateInner>,
     phase: Phase,
     items: Vec<WatchHistoryItem>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
     search: Entity<InputState>,
     tab: HistoryTab,
     managing: bool,
@@ -123,8 +119,6 @@ impl HistoryView {
             state,
             phase: Phase::Loading,
             items: Vec::new(),
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
             search,
             tab: HistoryTab::All,
             managing: false,

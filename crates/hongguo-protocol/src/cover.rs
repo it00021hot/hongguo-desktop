@@ -97,10 +97,109 @@ fn headers(ct: &str, len: usize) -> Vec<(String, String)> {
 }
 
 /// 取回「必定可渲染」的封面字节（给非 WebView 壳的公开入口）：与 [`serve`]
-/// 同一条三级阶梯、同一份磁盘缓存。返回 `(字节, Content-Type)`。
+/// 同一条三级阶梯、**同一份磁盘缓存**。返回 `(字节, Content-Type)`。
+///
+/// **磁盘缓存当源头**（与 WebView 侧同源）：命中直接读数据目录的
+/// `cover-cache/<sha256(url)>.<ext>`，不再下载+转码；未命中才走阶梯，转完
+/// 落盘再返回——同一张封面全进程只转一次，重启也在。
 pub fn acquire_renderable(remote: &str) -> Result<(Vec<u8>, &'static str), String> {
-    let (bytes, _ext, ct) = acquire(remote)?;
+    if let Some((bytes, ct)) = cached_renderable(remote) {
+        return Ok((bytes, ct));
+    }
+    let (bytes, ext, ct) = acquire(remote)?;
+    // 写盘前必须确保目录存在（`serve` 里的同一条纪律）。
+    ensure_cache_dir()?;
+    let final_path = cache_path(remote, ext);
+    let tmp = cache_tmp(remote);
+    if let Err(error) = std::fs::write(&tmp, &bytes) {
+        let msg = format!("写封面缓存失败: {error}");
+        log::warn!("[Cover] {msg}");
+        return Err(msg);
+    }
+    let _ = std::fs::rename(&tmp, &final_path);
     Ok((bytes, ct))
+}
+
+/// 磁盘缓存里已转码好的封面字节与类型（没有则 `None`）。
+///
+/// 给非 WebView 壳的「按需重新解码」用：内存里的解码结果被逐出后，从这里
+/// 重新取字节再解码——本地文件读，比重新下载转码快一个量级。
+pub fn cached_renderable(remote: &str) -> Option<(Vec<u8>, &'static str)> {
+    for (ext, ct) in [JPEG_KIND, PNG_KIND, WEBP_KIND] {
+        if let Ok(bytes) = std::fs::read(cache_path(remote, ext)) {
+            return Some((bytes, ct));
+        }
+    }
+    None
+}
+
+/// 各档位的长边上限（像素）。
+///
+/// 官方封面是 400×572 的海报，解成 RGBA 是 915KB/张；按用途缩过之后差一个
+/// 数量级。gpui 的 `img()` 不做缩放，缩放必须在落盘前做完——数据目录里存的
+/// 就是显示尺寸的图。
+pub const EDGE_CARD: u32 = 320;
+/// 头像档（评论/回复头像只画 24–44px 的圆）。
+pub const EDGE_AVATAR: u32 = 64;
+/// 全屏占位档（舞台占位按窗口像素铺，1080p 屏上有一千多 px 宽）。
+pub const EDGE_FULL: u32 = 1024;
+
+/// 某一档封面在磁盘上的路径（`<sha256>-<edge>.jpg`）。
+///
+/// 纯函数：调用方不必等文件就绪就能算出路径（gpui 的 `img()` 拿路径当
+/// 来源，文件没就绪时先显示占位，资产加载完成后自动重绘）。
+pub fn sized_cache_path(remote: &str, edge: u32) -> std::path::PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(remote.as_bytes());
+    let digest = hex::encode(&hasher.finalize());
+    hongguo_store::paths::cover_cache_dir().join(format!("{digest}-{edge}.jpg"))
+}
+
+/// 确保某一档封面在磁盘上，返回它的路径。
+///
+/// 磁盘命中直接返回；否则下载 → HEIC 转码 → 缩到该档尺寸 → 落盘。
+pub fn ensure_sized_cached(remote: &str, edge: u32) -> Result<std::path::PathBuf, String> {
+    let path = sized_cache_path(remote, edge);
+    if path.exists() {
+        return Ok(path);
+    }
+    let (bytes, _) = acquire_renderable(remote)?;
+    let sized = resize_to(&bytes, edge)?;
+    ensure_cache_dir()?;
+    let tmp = path.with_extension("tmp");
+    if let Err(error) = std::fs::write(&tmp, &sized) {
+        let msg = format!("写封面缓存失败: {error}");
+        log::warn!("[Cover] {msg}");
+        return Err(msg);
+    }
+    let _ = std::fs::rename(&tmp, &path);
+    Ok(path)
+}
+
+/// 卡片档 JPEG 质量（85：肉眼无损，体积比 95 小一半）。
+const CARD_JPEG_QUALITY: u8 = 85;
+
+/// 把转码产物缩到指定长边并重编码为 JPEG。
+fn resize_to(bytes: &[u8], edge: u32) -> Result<Vec<u8>, String> {
+    use image::ImageEncoder;
+
+    let decoded = image::load_from_memory(bytes).map_err(|e| format!("封面解码失败: {e}"))?;
+    let resized = if decoded.width().max(decoded.height()) > edge {
+        decoded.resize(edge, edge, image::imageops::FilterType::Triangle)
+    } else {
+        decoded
+    };
+    let rgb = resized.to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, CARD_JPEG_QUALITY)
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| format!("封面编码失败: {e}"))?;
+    Ok(out)
 }
 
 /// 缓存目录就位（每次写盘前查一次，存在时是一次 exists 开销）。

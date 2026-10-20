@@ -16,7 +16,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img};
+use gpui_kit::{ElementId, SharedString, Window, div};
 use hongguo_api::rank::{RankItem, RankTab};
 use hongguo_service::app_state::AppStateInner;
 
@@ -64,8 +64,6 @@ pub(crate) struct RankView {
     /// 逐行预约乐观态（条目自带 reserved 起态）。
     reserved_local: HashMap<String, bool>,
     reserving: std::collections::HashSet<String>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: std::collections::HashSet<String>,
     /// 滚动哨兵：滚到底自动续页（按钮留作兜底）。
     scroll: crate::pages::scroll_load::ScrollLoad,
 }
@@ -88,8 +86,6 @@ impl RankView {
             filter_open: false,
             reserved_local: HashMap::new(),
             reserving: std::collections::HashSet::new(),
-            covers: HashMap::new(),
-            covers_pending: std::collections::HashSet::new(),
             scroll: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }

@@ -11,7 +11,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, Window, div, img};
+use gpui_kit::{ElementId, SharedString, Window, div};
 use hongguo_api::interact::{collect_series, digg_video};
 
 use super::DetailView;
@@ -47,10 +47,10 @@ impl DetailView {
     }
 
     pub(super) fn render_header(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let series = self.series.as_ref().expect("render_header 仅就绪态调用");
         let meta = self.meta.as_ref();
-        let cover = self.images.get(&series.cover).cloned();
+        let cover = crate::cover_img::card(&series.cover);
         // 统计行（Tauri 排版：评分 评分人数 → 红果热度值 → 追剧 → 播放）
         let mut stats: Vec<String> = Vec::new();
         if !self.reviews_score.is_empty() {
@@ -124,11 +124,7 @@ impl DetailView {
                     .overflow_hidden()
                     .rounded(gpui_kit::px(12.0))
                     .bg(theme.secondary)
-                    .children(cover.map(|bitmap| {
-                        img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                    })),
+                    .child(cover),
             )
             .child(
                 v_flex()
@@ -154,7 +150,7 @@ impl DetailView {
                             .gap_1p5()
                             .children(
                                 meta.filter(|m| !m.season.is_empty())
-                                    .map(|m| Self::tag_pill(m.season.clone(), true, theme)),
+                                    .map(|m| Self::tag_pill(m.season.clone(), true, &theme)),
                             )
                             .when(!series.episodes.is_empty(), |row| {
                                 row.child(Self::tag_pill(
@@ -163,12 +159,12 @@ impl DetailView {
                                         &[("count", &series.episodes.len().to_string())],
                                     ),
                                     false,
-                                    theme,
+                                    &theme,
                                 ))
                             })
                             .children(
                                 tags.into_iter()
-                                    .map(|t| Self::tag_pill(t, false, theme))
+                                    .map(|t| Self::tag_pill(t, false, &theme))
                                     .collect::<Vec<_>>(),
                             )
                     }))
@@ -317,7 +313,7 @@ impl DetailView {
     /// 出品方 / 演职员（Tauri `series-detail-page.tsx` creators 块同款：
     /// 头像 + 名字 + 角色行，点击跳创作者主页；无 uid 的旧条目仅展示）。
     pub(super) fn render_creators(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let Some(meta) = &self.meta else {
             return div().into_any_element();
         };
@@ -327,14 +323,10 @@ impl DetailView {
         let mut row = h_flex().mt_4().flex_wrap().items_center().gap_3();
         for creator in &meta.creators {
             let clickable = !creator.user_id.is_empty();
-            let avatar_view = match self.images.get(&creator.avatar).cloned() {
-                Some(image) => img(ImageSource::Render(image))
-                    .size_7()
-                    .flex_shrink_0()
-                    .rounded_full()
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element(),
-                None => h_flex()
+            // 头像走 gpui 图片元素：圆形裁剪与尺寸由外层容器负责；没有头像
+            // 地址时退回通用图标。
+            let avatar_view = if creator.avatar.is_empty() {
+                h_flex()
                     .size_7()
                     .flex_shrink_0()
                     .items_center()
@@ -346,7 +338,15 @@ impl DetailView {
                             .small()
                             .text_color(theme.muted_foreground),
                     )
-                    .into_any_element(),
+                    .into_any_element()
+            } else {
+                div()
+                    .size_7()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .rounded_full()
+                    .child(crate::cover_img::avatar(&creator.avatar))
+                    .into_any_element()
             };
             let mut chip = div()
                 .id(ElementId::from(format!(
@@ -404,7 +404,7 @@ impl DetailView {
 
     /// 备案号（头部块之下、tab 之上独立一行小字；空 = meta 未给不渲染）。
     pub(super) fn render_record_line(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let record = self
             .meta
             .as_ref()

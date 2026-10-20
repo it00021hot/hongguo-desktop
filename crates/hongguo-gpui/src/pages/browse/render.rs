@@ -6,6 +6,11 @@ use super::*;
 
 impl gpui_kit::Render for BrowseView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：把本页要显示的封面排上转码（gpui 资产机制去重），成品图
+        // 落盘后 gpui 刷新窗口，渲染期就画得出来。
+        let mut cover_urls: Vec<String> = self.feed_items.iter().map(|i| i.cover.clone()).collect();
+        cover_urls.extend(self.search_items.iter().map(|i| i.cover.clone()));
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 滚动哨兵：滚到底自动续页（Tauri browse-page.tsx 的 IntersectionObserver
         // 同语义；浏览流与搜索结果共用同一滚动容器，按当前态选加载入口）。
         let searching = !self.submitted.is_empty();

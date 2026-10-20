@@ -116,9 +116,6 @@ impl ReservationView {
                     offline_total,
                     ..
                 } = page;
-                if !extend {
-                    view.load_covers(&items, cx);
-                }
                 let tab = if online {
                     &mut view.online
                 } else {
@@ -142,31 +139,6 @@ impl ReservationView {
         .detach();
     }
 
-    /// 逐条取封面（条目自带上线封面 URL）。
-    fn load_covers(&mut self, items: &[CalendarItem], cx: &mut Context<Self>) {
-        for item in items {
-            let key = item.series_id.clone();
-            if item.cover.is_empty() || !self.covers_pending.insert(key.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(item.cover.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&key);
-                    if let Ok(bytes) = bytes
-                        && let Some(image) = decode_cover(&bytes)
-                    {
-                        view.covers.insert(key, image);
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-        }
-    }
-
     /// 预览种子（screenshot feature）：灌假预约列表，跳过网络。
     /// `reservation-offline` = 待上线 tab；`reservation-empty` = 空态；
     /// `reservation-manage` = 管理模式（前两条已选）。
@@ -175,25 +147,28 @@ impl ReservationView {
         let empty = scene == "reservation-empty";
         let online = !scene.contains("offline");
         self.online_tab = online;
-        let online_items = if empty || !online {
+        let mut online_items = if empty || !online {
             Vec::new()
         } else {
             crate::preview::fixtures::reservation_items(true)
         };
-        let offline_items = if empty || online {
+        let mut offline_items = if empty || online {
             Vec::new()
         } else {
             crate::preview::fixtures::reservation_items(false)
         };
-        for (i, item) in offline_items.iter().enumerate() {
-            self.covers.insert(
-                item.series_id.clone(),
+        for (i, item) in offline_items.iter_mut().enumerate() {
+            let url = format!("preview://reservation-offline/{i}");
+            item.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(
+                url,
                 crate::preview::fixtures::cover(6 + i),
             );
         }
-        for (i, item) in online_items.iter().enumerate() {
-            self.covers
-                .insert(item.series_id.clone(), crate::preview::fixtures::cover(i));
+        for (i, item) in online_items.iter_mut().enumerate() {
+            let url = format!("preview://reservation-online/{i}");
+            item.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(url, crate::preview::fixtures::cover(i));
         }
         self.online = TabData {
             total: online_items.len() as i64,

@@ -21,7 +21,6 @@ impl super::BrowseView {
         } = card;
         let theme = cx.theme();
         let downloaded = self.downloaded.get(series_id).copied().unwrap_or(0);
-        let cover = self.covers.get(cover_url).cloned();
         let tags: Vec<String> = tags
             .iter()
             .filter(|t| !t.is_empty())
@@ -54,13 +53,7 @@ impl super::BrowseView {
                     .flex_shrink_0()
                     .overflow_hidden()
                     .bg(theme.secondary)
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => div().size_full().into_any_element(),
-                    })
+                    .child(crate::cover_img::card(cover_url))
                     .children((downloaded > 0).then(|| {
                         div()
                             .absolute()

@@ -12,6 +12,17 @@ use hongguo_api::danmaku::CommentItem;
 use crate::emoji_scan::{MentionPiece, split_mention_segments};
 
 impl HomeView {
+    /// AI bot 的用户名（官方 mention 列表里的「小果」）。
+    ///
+    /// 提及候选列表加载前是 `None`——此时正文里的 `@名字` 拿不到权威名字，
+    /// 认不出哪个是 AI bot（Tauri 侧同样用列表里的 userName 判定）。
+    pub(super) fn ai_bot_name(&self) -> Option<String> {
+        self.mention_users
+            .iter()
+            .find(|u| u.is_ai_bot)
+            .map(|u| u.user_name.clone())
+    }
+
     /// 评论列表一行：头像占位（昵称首字圆形）/昵称/文本/相对时间/♡。
     /// 评论正文：`@名字\u{FFFC}` 提及前缀染蓝（AI bot 名字补琥珀「Ai」
     /// 后缀——Tauri 的渐变文字在 GPUI 用单色近似），其余按 `[名字]`
@@ -19,10 +30,7 @@ impl HomeView {
     /// 固定色值属硬红线 11 的播放器豁免。
     fn render_comment_text(&self, text: &str) -> gpui_kit::AnyElement {
         let ai_name = self
-            .mention_users
-            .iter()
-            .find(|u| u.is_ai_bot)
-            .map(|u| u.user_name.clone())
+            .ai_bot_name()
             .unwrap_or_else(|| crate::i18n::t("player.comments.aiName"));
         let (prefix, rest) = match parse_mention_prefix(text) {
             Some((name, rest)) => (Some(name), rest),
@@ -53,7 +61,7 @@ impl HomeView {
     /// 富文本子元素（Tauri `EmojiText` 同口径）：认识的 `[名字]` 换表情图、
     /// 文本中段的 `@名字\u{FFFC}` 染蓝、其余原样。评论正文与回复行共用
     /// ——回复行（含小果AI 的回复）此前是纯文本，表情码全裸奔。
-    pub(super) fn rich_children(&self, text: &str) -> Vec<gpui_kit::AnyElement> {
+    pub(in crate::home) fn rich_children(&self, text: &str) -> Vec<gpui_kit::AnyElement> {
         let mut out = Vec::new();
         for seg in crate::danmaku_emoji::parse_emoji_segments(text) {
             match seg {

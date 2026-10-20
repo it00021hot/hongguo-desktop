@@ -2,6 +2,7 @@
 
 use super::*;
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -16,7 +17,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ImageSource, ObjectFit, RenderImage, SharedString, div, img};
 use hongguo_playback::{PresenterBounds, PresenterFit};
 
 use super::super::danmaku::DM_LANE_GAP;
@@ -35,17 +36,27 @@ impl HomeView {
     /// 返回 `Div`（不是 AnyElement）：调用方要挂滚轮监听与 `.id`。
     pub(in crate::home) fn render_stage(
         &self,
-        window: &gpui_kit::Window,
-        cx: &Context<Self>,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
     ) -> gpui_kit::Div {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         // 同剧切集期间定格帧继续上屏（Tauri FrameHold 同款）：`hold_last_frame`
         // 由 play_target 按「同剧」置位、新集首帧/失败时落下；切剧不置位，
         // 走的仍是「立刻换新剧封面」。
         let system_backend = self.player.as_ref().is_some_and(|p| p.is_system());
         let system_ready = system_backend && self.system_video_ready;
-        let video_ready =
-            (self.frame.is_some() || system_ready) && (!self.switching || self.hold_last_frame);
+        // 出画判定分两路：
+        // - 自研上屏：末帧在 `self.frame` 里，同剧切集靠 `hold_last_frame` 顶住旧帧。
+        // - 系统后端：末帧在**原生层**（AVPlayerLayer / DComp 视频位），GPUI 拿
+        //   到也不需要拿到——同剧切集时引擎还没换，原生层仍是上一集的最后一帧，
+        //   只要**别用海报盖住它**。以前这里跟着 `hold_last_frame` 走，而它由
+        //   `self.frame` 决定（系统后端恒为 None）→ 恒 false → 每次切集都先闪
+        //   一张海报（切剧时 `system_video_ready` 会被清，海报照旧该出）。
+        let video_ready = if system_backend {
+            system_ready
+        } else {
+            self.frame.is_some() && (!self.switching || self.hold_last_frame)
+        };
         // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
         // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
         // 小窗铺满（cover），正常/竖屏保持 contain：竖屏窗口很窄，cover 会把
@@ -110,6 +121,27 @@ impl HomeView {
                     )
                 })
                 .unwrap_or_else(|| "?".into());
+            // 内存分解：进程涨内存时要能拆到「流缓存 / 封面 / 头像」三处，
+            // 否则只能靠猜。封面与头像是解码后的 RGBA（像素数 × 4 字节）。
+            let (stream_bytes, stream_entries) = hongguo_stream::cache().stats();
+            let image_bytes = |map: &HashMap<String, Arc<RenderImage>>| -> usize {
+                map.values()
+                    .map(|img| {
+                        let size = img.size(0);
+                        size.width.0 as usize * size.height.0 as usize * 4
+                    })
+                    .sum()
+            };
+            // 列表卡封面在 gpui 的图片缓存里（壳根节点挂了有上限的
+            // `ImageCache`），这里报的是舞台占位那一两张原图档。
+            let covers_bytes = image_bytes(&self.stage_covers);
+            log::info!(
+                "[Home][mem] 流缓存 {} 条 / {:.1}MB，舞台占位封面 {} 张 / {:.1}MB",
+                stream_entries,
+                stream_bytes as f64 / 1024.0 / 1024.0,
+                self.stage_covers.len(),
+                covers_bytes as f64 / 1024.0 / 1024.0,
+            );
             log::info!(
                 "[Home][stage] 周期状态：video_ready={video_ready} frame={} switching={} {image_state} epoch={} 舞台={stage_size} 视口={}×{} 播放={:.1}/{}s 倍速={:.2}x buffering={}",
                 self.frame.is_some(),
@@ -169,7 +201,7 @@ impl HomeView {
         let cover: gpui_kit::AnyElement = match cover_sid
             .as_ref()
             .filter(|_| !video_ready)
-            .and_then(|s| self.covers.get(s))
+            .and_then(|s| self.stage_covers.get(s))
         {
             Some(bitmap) => div()
                 .absolute()
@@ -461,8 +493,17 @@ impl HomeView {
             .track_focus(&self.focus)
             .on_key_down(
                 cx.listener(|this, ev: &gpui_kit::KeyDownEvent, window, cx| {
-                    // 按键是真实输入：解除连播静默（Tauri wakeChrome 同款）
+                    // 按键是真实输入：解除连播静默（Tauri wakeChrome 同款）——
+                    // **先做**，不受下面的输入框守卫影响：在输入框里打字同样是
+                    // 「用户在场」（控件该亮），守卫只该拦「快捷键」不该拦
+                    // 「用户在场」这一条副作用。
                     this.wake_on_input(cx);
+                    // 焦点在输入框时不劫持快捷键（Tauri use-player-interactions
+                    // 的 isEditableTarget 守卫同款）：空格/←→/↑↓ 在输入框里是
+                    // 移动光标与输入的一部分，不是暂停/快进/切集；Esc 也归输入框。
+                    if gpui_kit::component::WindowExt::focused_input(window, cx).is_some() {
+                        return;
+                    }
                     let keys = this.shortcut_keys.clone();
                     let key = ev.keystroke.key.as_str();
                     if key == keys.play_pause {

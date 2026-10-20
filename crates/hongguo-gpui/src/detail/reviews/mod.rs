@@ -43,9 +43,6 @@ impl DetailView {
                         view.reviews_has_more = page.page.has_more;
                         view.reviews_cursor = page.page.next_cursor.clone();
                         view.reviews = Arc::new(page.page.items.clone());
-                        for url in page.page.items.iter().map(|c| c.avatar.clone()) {
-                            view.load_image(url, cx);
-                        }
                         // 评分摘要变了要回头刷新头部统计行
                         cx.notify();
                     }
@@ -79,7 +76,6 @@ impl DetailView {
                     let mut items = (*view.reviews).clone();
                     for c in page.page.items {
                         if !items.iter().any(|x| x.comment_id == c.comment_id) {
-                            view.load_image(c.avatar.clone(), cx);
                             items.push(c);
                         }
                     }
@@ -323,9 +319,6 @@ impl DetailView {
                 view.review_replies_loading.remove(&review_id);
                 match result {
                     Ok(page) => {
-                        for r in &page.items {
-                            view.load_image(r.avatar.clone(), cx);
-                        }
                         let mut list = view
                             .review_replies
                             .get(&review_id)
@@ -417,7 +410,6 @@ impl DetailView {
                 view.review_reply_sending = false;
                 match result {
                     Ok(reply) => {
-                        let avatar = reply.avatar.clone();
                         let mut list = view
                             .review_replies
                             .get(&review_id)
@@ -437,7 +429,6 @@ impl DetailView {
                         view.review_replies_open.insert(review_id.clone());
                         view.review_reply_target = None;
                         view.review_reply_clear = true;
-                        view.load_image(avatar, cx);
                     }
                     Err(e) => {
                         log::warn!("[Detail] 剧评回复失败: {e}");

@@ -17,16 +17,12 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
-};
+use gpui_kit::{App, ElementId, Entity, SharedString, Window, div};
 use hongguo_api::interact::InteractionItem;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
-use crate::pages::list_common::{
-    BatchBar, decode_cover, fetch_series_visual, pick_dot, search_box,
-};
+use crate::pages::list_common::{BatchBar, fetch_series_visual, pick_dot, search_box};
 
 /// 点赞页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -53,9 +49,10 @@ pub(crate) struct LikedView {
     items: Vec<InteractionItem>,
     /// 解析到的剧名（mget 缺标题时靠 resolve 补，也供过滤用）。
     titles: HashMap<String, String>,
-    /// 已解码封面（键 = series_id；行身份用它，别用行下标）。
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
+    /// 封面 URL（series_id → URL）：像素在进程级共享缓存里。
+    covers: HashMap<String, String>,
+    /// 在途的剧档案解析（series_id 去重）。
+    resolving: HashSet<String>,
     /// 悬浮中的卡片（键 = vid）：悬浮才出「继续播放」与「取消赞」。
     hovered: Option<String>,
     search: Entity<InputState>,
@@ -96,7 +93,7 @@ impl LikedView {
             items: Vec::new(),
             titles: HashMap::new(),
             covers: HashMap::new(),
-            covers_pending: HashSet::new(),
+            resolving: HashSet::new(),
             hovered: None,
             search,
             managing: false,
@@ -153,25 +150,24 @@ impl LikedView {
         .detach();
     }
 
-    /// 逐条解析剧名与封面（档案 resolve → 封面三级阶梯 → 解码）。
+    /// 逐条解析剧名与封面地址（档案 resolve；像素由共享缓存负责）。
     fn load_covers(&mut self, items: &[InteractionItem], cx: &mut Context<Self>) {
         for item in items {
             let key = item.series_id.clone();
-            if key.is_empty() || !self.covers_pending.insert(key.clone()) {
+            if key.is_empty() || !self.resolving.insert(key.clone()) {
                 continue;
             }
             let rx = fetch_series_visual(Arc::clone(&self.state), item.series_id.clone());
             cx.spawn(async move |this, cx| {
                 let visual = rx.await.expect("tokio 桥不会丢弃发送端");
                 this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&visual.series_id);
+                    view.resolving.remove(&visual.series_id);
                     if !visual.title.is_empty() {
                         view.titles.insert(visual.series_id.clone(), visual.title);
                     }
-                    if let Some(bytes) = &visual.cover
-                        && let Some(image) = decode_cover(bytes)
-                    {
-                        view.covers.insert(visual.series_id.clone(), image);
+                    if !visual.cover_url.is_empty() {
+                        view.covers
+                            .insert(visual.series_id.clone(), visual.cover_url);
                     }
                     cx.notify();
                 })
@@ -378,7 +374,10 @@ impl LikedView {
         let theme = cx.theme();
         let key = item.vid.clone();
         let title = self.title_of(item);
-        let cover = self.covers.get(&item.series_id).cloned();
+        let cover = match self.covers.get(&item.series_id) {
+            Some(url) => crate::cover_img::card(url),
+            None => div().size_full().into_any_element(),
+        };
         let play_open = hovered && !managing;
         div()
             .relative()
@@ -439,23 +438,7 @@ impl LikedView {
                             .flex_shrink_0()
                             .overflow_hidden()
                             .bg(theme.secondary)
-                            .child(match cover {
-                                Some(bitmap) => img(ImageSource::Render(bitmap))
-                                    .size_full()
-                                    .object_fit(ObjectFit::Cover)
-                                    .into_any_element(),
-                                None => h_flex()
-                                    .size_full()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        gpui_kit::component::Icon::new(
-                                            gpui_kit::assets::IconName::Heart,
-                                        )
-                                        .text_color(theme.muted_foreground),
-                                    )
-                                    .into_any_element(),
-                            })
+                            .child(cover)
                             .children(play_open.then(|| {
                                 // 悬浮遮罩 + 「继续播放」胶囊（Tauri 同款）
                                 h_flex()
@@ -595,8 +578,12 @@ impl LikedView {
         for (i, item) in self.items.iter().enumerate() {
             self.titles
                 .insert(item.series_id.clone(), item.series_title.clone());
-            self.covers
-                .insert(item.series_id.clone(), crate::preview::fixtures::cover(i));
+            let url = format!("preview://liked/{i}");
+            crate::preview::fixtures::put_preview_image(
+                url.clone(),
+                crate::preview::fixtures::cover(i),
+            );
+            self.covers.insert(item.series_id.clone(), url);
         }
         if scene == "liked-manage" {
             self.managing = true;
@@ -610,6 +597,9 @@ impl gpui_kit::EventEmitter<LikedEvent> for LikedView {}
 
 impl gpui_kit::Render for LikedView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.covers.values().cloned().collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 先建 body（里面的闭包要 &mut cx），theme 最后取——theme 借 cx，
         // 与闭包交叠会被借用检查拒绝（shell.rs 同款纪律）。
         let body =

@@ -6,7 +6,7 @@
 //! 数据与操作走 `hongguo_api::reservation`（fetch_reservations /
 //! reserve_series / delete_reservations），与 Tauri 的预约 command 同一段。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::component::Disableable;
@@ -18,15 +18,13 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
-};
+use gpui_kit::{App, ElementId, Entity, SharedString, Window, div};
 use hongguo_api::calendar::CalendarItem;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::detail::DetailPrefill;
-use crate::pages::list_common::{BatchBar, decode_cover, pick_dot, search_box};
+use crate::pages::list_common::{BatchBar, pick_dot, search_box};
 
 mod actions;
 mod cards;
@@ -92,8 +90,6 @@ pub(crate) struct ReservationView {
     online_tab: bool,
     online: TabData,
     offline: TabData,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
     search: Entity<InputState>,
     managing: bool,
     selected: BTreeSet<String>,
@@ -134,8 +130,6 @@ impl ReservationView {
             online_tab: true,
             online: TabData::default(),
             offline: TabData::default(),
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
             search,
             managing: false,
             selected: BTreeSet::new(),
@@ -149,7 +143,6 @@ impl ReservationView {
     fn logged_in(&self) -> bool {
         self.state.settings().account.is_some() || self.preview_logged_in
     }
-
     fn current(&self) -> &TabData {
         if self.online_tab {
             &self.online

@@ -34,14 +34,6 @@ impl super::BrowseView {
                     return; // 过期结果丢弃
                 }
                 view.suggest_items = result.unwrap_or_default();
-                // 有封面的条目拉缩略图（纯词条目没有封面，只出放大镜图标）
-                let covers: Vec<String> = view
-                    .suggest_items
-                    .iter()
-                    .map(|item| item.cover.clone())
-                    .filter(|url| !url.is_empty())
-                    .collect();
-                view.load_covers(&covers, cx);
                 cx.notify();
             });
         })
@@ -160,14 +152,13 @@ impl super::BrowseView {
         &self,
         index: usize,
         item: &SuggestItem,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let active = index
             == self
                 .suggest_index
                 .min(self.suggest_items.len().saturating_sub(1));
-        let cover = self.covers.get(&item.cover).cloned();
         let word: gpui_kit::AnyElement = if item.parts.is_empty() {
             div()
                 .truncate()
@@ -213,15 +204,16 @@ impl super::BrowseView {
                     .small()
                     .text_color(theme.muted_foreground),
             )
-            .children(cover.map(|bitmap| {
-                img(ImageSource::Render(bitmap))
+            .child(
+                div()
                     .w(gpui_kit::px(40.0))
                     .h(gpui_kit::px(54.0))
                     .flex_shrink_0()
                     .rounded(gpui_kit::px(6.0))
-                    .object_fit(ObjectFit::Cover)
+                    .overflow_hidden()
                     .bg(theme.muted)
-            }))
+                    .child(crate::cover_img::card(&item.cover)),
+            )
             .child(
                 v_flex()
                     .flex_1()

@@ -14,7 +14,7 @@
 //! 数据与操作走 `hongguo_service::follow_service`——与 Tauri 的 follow_cmd
 //! 同一段服务面（登录墙 / 基线维护 / 列表翻页都在 service，壳只做 UI）。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariant};
@@ -22,14 +22,14 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{RenderImage, Window, div};
+use gpui_kit::{Window, div};
 use hongguo_api::interact::FollowUpdateItem;
 use hongguo_common::model::FollowNotice;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::detail::DetailPrefill;
-use crate::pages::list_common::{BatchBar, decode_cover};
+use crate::pages::list_common::BatchBar;
 
 mod view;
 
@@ -68,8 +68,6 @@ pub(crate) struct FollowsView {
     loading: bool,
     loading_more: bool,
     failed: Option<String>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
     managing: bool,
     selected: BTreeSet<String>,
     /// 单条取消追更进行中（按钮转圈/禁用）。
@@ -105,8 +103,6 @@ impl FollowsView {
             loading: false,
             loading_more: false,
             failed: None,
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
             managing: false,
             selected: BTreeSet::new(),
             cancelling: HashSet::new(),
@@ -160,7 +156,6 @@ impl FollowsView {
                         view.items = page.items;
                         view.cursor = page.cursor;
                         view.has_more = page.has_more;
-                        view.load_covers(cx);
                     }
                     Err(e) => {
                         log::warn!("[Follows] GPUI 壳列表失败: {e}");
@@ -198,7 +193,6 @@ impl FollowsView {
                         view.items.extend(page.items);
                         view.cursor = page.cursor;
                         view.has_more = page.has_more;
-                        view.load_covers(cx);
                     }
                     Err(e) => {
                         log::warn!("[Follows] GPUI 壳翻页失败: {e}");
@@ -216,31 +210,6 @@ impl FollowsView {
             });
         })
         .detach();
-    }
-
-    /// 逐条取封面（条目自带 CDN 签名 URL，HEIC 走同一封面阶梯）。
-    fn load_covers(&mut self, cx: &mut Context<Self>) {
-        for item in &self.items {
-            let key = item.series_id.clone();
-            if item.cover.is_empty() || !self.covers_pending.insert(key.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(item.cover.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&key);
-                    if let Ok(bytes) = bytes
-                        && let Some(image) = decode_cover(&bytes)
-                    {
-                        view.covers.insert(key, image);
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 
     /// 单条取消追更（行卡上的「取消追更」；Tauri FollowButton 同位）。
@@ -570,6 +539,9 @@ impl gpui_kit::EventEmitter<FollowsEvent> for FollowsView {}
 
 impl gpui_kit::Render for FollowsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         let logged_in = self.logged_in();
         let body = if !logged_in {
             let theme = cx.theme();
@@ -661,9 +633,10 @@ impl FollowsView {
         } else {
             crate::preview::fixtures::follow_items()
         };
-        for (i, item) in self.items.iter().enumerate() {
-            self.covers
-                .insert(item.series_id.clone(), crate::preview::fixtures::cover(i));
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let url = format!("preview://follow/{i}");
+            item.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(url, crate::preview::fixtures::cover(i));
         }
         self.notices = crate::preview::fixtures::follow_notices();
         self.has_more = self.items.len() > 3;

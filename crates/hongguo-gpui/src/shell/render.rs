@@ -115,6 +115,9 @@ impl gpui_kit::Render for Shell {
             && self.dest == Dest::Home
             && !crate::preview::is_active();
         v_flex()
+            // 封面解码结果的内存缓存挂全应用：同一张封面在首页/找剧/历史/
+            // 收藏共用一份，容量有上限（超出释放 GPU 纹理）。
+            .image_cache(self.cover_image_cache.clone())
             .id("shell")
             .size_full()
             .bg(theme.background)

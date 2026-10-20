@@ -17,7 +17,7 @@ use crate::home::player_icons;
 impl HomeView {
     /// 播放控制条（底部悬浮）：暂停/继续、进度（拖动 seek）、倍速菜单、
     /// 弹幕发送框与开关、清晰度、选集、音量。
-    pub(in crate::home) fn render_controls(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    pub(in crate::home) fn render_controls(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let paused = self.player.as_ref().is_some_and(|p| p.is_paused());
         let duration = self
             .player

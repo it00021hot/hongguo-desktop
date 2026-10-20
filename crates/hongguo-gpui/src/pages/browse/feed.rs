@@ -77,14 +77,6 @@ impl super::BrowseView {
                         view.feed_next_offset = page.next_offset;
                         view.feed_session_id = page.session_id.clone();
                         view.feed_has_more = page.has_more;
-                        view.load_covers(
-                            &page
-                                .items
-                                .iter()
-                                .map(|i| i.cover.clone())
-                                .collect::<Vec<_>>(),
-                            cx,
-                        );
                     }
                     Err(e) => {
                         log::warn!("[Browse] 浏览流失败: {e}");
@@ -104,34 +96,6 @@ impl super::BrowseView {
         self.feed_session_id.clear();
         self.feed_has_more = false;
         self.load_browse_page(cx);
-    }
-
-    /// 逐条取封面（HEIC 走同一段转码阶梯；键 = 远端 URL）。
-    pub(super) fn load_covers(&mut self, urls: &[String], cx: &mut Context<Self>) {
-        for url in urls {
-            let url = url.clone();
-            if url.is_empty() || !self.covers_pending.insert(url.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(url.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&url);
-                    if let Ok(bytes) = bytes
-                        && let Ok(decoded) = image::load_from_memory(&bytes)
-                    {
-                        view.covers.insert(
-                            url.clone(),
-                            Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                        );
-                        cx.notify();
-                    }
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 
     pub(super) fn play_series(&self, series_id: String, cx: &mut Context<Self>) {

@@ -33,7 +33,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Entity, RenderImage, Window, div};
+use gpui_kit::{App, Entity, Window, div};
 use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedSeries;
 use hongguo_api::history::WatchHistoryItem;
@@ -42,7 +42,6 @@ use hongguo_common::model::Series;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
-use crate::cover_img;
 
 /// 详情页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -88,9 +87,6 @@ pub(crate) struct DetailView {
     series: Option<Arc<Series>>,
     /// 详情 meta（video_detail：简介/追剧/播放/热度/季徽/题材标签/备案号）。
     meta: Option<hongguo_api::detail::SeriesMeta>,
-    /// 图片缓存（封面/相关推荐卡/剧评头像共用），键 = 远端 URL。
-    images: std::collections::HashMap<String, Arc<RenderImage>>,
-    images_pending: std::collections::HashSet<String>,
     loading: bool,
     /// 档案装载失败（错误态 + 重试；Tauri ErrorState + ResolveButton 同位）。
     load_failed: bool,
@@ -166,8 +162,6 @@ impl DetailView {
             series_id: String::new(),
             series: None,
             meta: None,
-            images: std::collections::HashMap::new(),
-            images_pending: std::collections::HashSet::new(),
             loading: false,
             load_failed: false,
             prefill: None,

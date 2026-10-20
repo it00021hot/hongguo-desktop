@@ -10,6 +10,10 @@ use gpui_kit::{ElementId, SharedString, Window, div};
 
 impl gpui_kit::Render for NewDramaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let mut cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
+        cover_urls.extend(self.cal_items.iter().map(|i| i.cover.clone()));
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 首拉加载（推荐/日历）：**整页**居中，性别筛选行等页内控件加载期
         // 不渲染——加载位置不受页内控件影响（用户定稿口径）。与创作者
         // 主页/排行榜的页面级分支同款。
@@ -361,8 +365,10 @@ impl NewDramaView {
         self.items = crate::preview::fixtures::new_drama_items();
         self.downloaded = HashMap::from([("7100001".to_string(), 3u32)]);
         for (i, item) in self.items.iter().enumerate() {
-            self.covers
-                .insert(item.cover.clone(), crate::preview::fixtures::cover(i));
+            crate::preview::fixtures::put_preview_image(
+                item.cover.clone(),
+                crate::preview::fixtures::cover(i),
+            );
         }
         if calendar {
             let items = crate::preview::fixtures::calendar_items(3);
@@ -375,8 +381,10 @@ impl NewDramaView {
             ];
             self.cal_selected = "20261014".into();
             for (i, item) in items.iter().enumerate() {
-                self.covers
-                    .insert(item.cover.clone(), crate::preview::fixtures::cover(8 + i));
+                crate::preview::fixtures::put_preview_image(
+                    item.cover.clone(),
+                    crate::preview::fixtures::cover(8 + i),
+                );
             }
             self.cal_items = items;
             self.cal_loaded = true;

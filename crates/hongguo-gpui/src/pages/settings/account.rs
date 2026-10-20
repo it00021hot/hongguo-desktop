@@ -21,11 +21,9 @@ impl super::SettingsView {
             let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 if let Ok(bytes) = bytes
-                    && let Ok(decoded) = image::load_from_memory(&bytes)
+                    && let Some(avatar) = crate::cover_img::decode(&bytes)
                 {
-                    view.account_avatar = Some(Arc::new(crate::image_upload::render_image(
-                        decoded.to_rgba8(),
-                    )));
+                    view.account_avatar = Some(avatar);
                     cx.notify();
                 }
             });

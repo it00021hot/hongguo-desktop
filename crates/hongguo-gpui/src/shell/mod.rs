@@ -78,6 +78,9 @@ pub struct Shell {
     merge: Entity<MergeView>,
     creator: Entity<CreatorView>,
     detail: Option<Entity<DetailView>>,
+    /// 封面解码结果的内存缓存（gpui 的 `ImageCache` 实现，有张数上限）：
+    /// 挂在壳根节点上，全应用的封面图都走它。
+    cover_image_cache: Entity<crate::cover_image_cache::CoverImageCache>,
     /// 详情页当前加载的剧（同剧重复点击不重载）。
     detail_series: Option<String>,
     /// 侧栏追更未读角标（本地通知未读数；未登录恒 0）。
@@ -372,6 +375,7 @@ impl Shell {
             storage,
             merge,
             creator,
+            cover_image_cache: crate::cover_image_cache::CoverImageCache::new(cx),
             detail: None,
             detail_series: None,
             follow_unread: 0,

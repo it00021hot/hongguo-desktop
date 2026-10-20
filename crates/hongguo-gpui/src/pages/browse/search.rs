@@ -65,14 +65,6 @@ impl super::BrowseView {
                         view.search_next_offset = page.next_offset;
                         view.search_id = page.search_id.clone();
                         view.search_has_more = page.has_more;
-                        view.load_covers(
-                            &page
-                                .items
-                                .iter()
-                                .map(|i| i.cover.clone())
-                                .collect::<Vec<_>>(),
-                            cx,
-                        );
                         // 首页精选不足 18 条且还有下一页：自动续拉（Tauri 同款）
                         if first_page && page.has_more && view.search_items.len() < 18 {
                             view.load_search_page(false, cx);

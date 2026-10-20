@@ -152,7 +152,7 @@ impl HomeView {
     }
 
     /// 选集浮层入口（Tauri immersive 同款：ListVideo 图标 + 总集数）。
-    pub(super) fn render_picker_entry(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    pub(super) fn render_picker_entry(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         // 选集浮层入口（Tauri immersive 同款：ListVideo 图标 +
         // 总集数；浮层**贴按钮**向上弹——Tauri 的 EpisodePicker
         // 就挂在按钮 wrapper 里，右缘与按钮对齐）

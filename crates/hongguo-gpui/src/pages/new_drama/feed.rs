@@ -65,9 +65,6 @@ impl NewDramaView {
                         view.next_offset = page.next_offset;
                         view.session_id = page.session_id.clone();
                         view.has_more = page.has_more;
-                        let urls: Vec<String> =
-                            page.items.iter().map(|i| i.cover.clone()).collect();
-                        view.load_covers(&urls, cx);
                     }
                     Err(e) => {
                         log::warn!("[New] 推荐流失败: {e}");
@@ -136,9 +133,6 @@ impl NewDramaView {
                         view.cal_next_offset = page.next_offset;
                         view.cal_session_id = page.session_id.clone();
                         view.cal_has_more = page.has_more;
-                        let urls: Vec<String> =
-                            page.items.iter().map(|i| i.cover.clone()).collect();
-                        view.load_covers(&urls, cx);
                         // 混排页过滤后暂空但还有下一页：自动续拉（Tauri 同款）
                         let selected = view.cal_selected.clone();
                         let visible = view
@@ -160,32 +154,5 @@ impl NewDramaView {
             .ok();
         })
         .detach();
-    }
-
-    fn load_covers(&mut self, urls: &[String], cx: &mut Context<Self>) {
-        for url in urls {
-            let url = url.clone();
-            if url.is_empty() || !self.covers_pending.insert(url.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(url.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&url);
-                    if let Ok(bytes) = bytes
-                        && let Ok(decoded) = image::load_from_memory(&bytes)
-                    {
-                        view.covers.insert(
-                            url.clone(),
-                            Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                        );
-                        cx.notify();
-                    }
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 }

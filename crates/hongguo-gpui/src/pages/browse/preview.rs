@@ -29,12 +29,16 @@ impl super::BrowseView {
         self.feed_loading = scene == "browse-loading";
         self.downloaded = HashMap::from([("7100001".to_string(), 3u32)]);
         for (i, item) in self.feed_items.iter().enumerate() {
-            self.covers
-                .insert(item.cover.clone(), crate::preview::fixtures::cover(i));
+            crate::preview::fixtures::put_preview_image(
+                item.cover.clone(),
+                crate::preview::fixtures::cover(i),
+            );
         }
         for (i, item) in self.search_items.iter().enumerate() {
-            self.covers
-                .insert(item.cover.clone(), crate::preview::fixtures::cover(6 + i));
+            crate::preview::fixtures::put_preview_image(
+                item.cover.clone(),
+                crate::preview::fixtures::cover(6 + i),
+            );
         }
         cx.notify();
     }

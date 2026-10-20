@@ -18,7 +18,7 @@ impl ReservationView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.covers.get(&item.series_id).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let publish_date = if item.publish_time > 0 {
             format_month_day(item.publish_time)
         } else {
@@ -81,21 +81,7 @@ impl ReservationView {
                             }
                         })
                     })
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => h_flex()
-                            .size_full()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv)
-                                    .text_color(theme.muted_foreground),
-                            )
-                            .into_any_element(),
-                    })
+                    .child(cover)
                     .children((!publish_date.is_empty()).then(|| {
                         div()
                             .absolute()

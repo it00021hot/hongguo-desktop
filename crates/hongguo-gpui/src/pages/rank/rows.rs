@@ -92,7 +92,7 @@ impl super::RankView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.covers.get(&item.cover).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let reserved = self.reserved_of(item);
         let rank_color: gpui_kit::Hsla = if item.rank <= 3 {
             // 星语言（Tauri 榜单前三 text-star 同款）
@@ -147,13 +147,7 @@ impl super::RankView {
                     .overflow_hidden()
                     .rounded(theme.radius + gpui_kit::px(2.0))
                     .bg(theme.secondary)
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => div().size_full().into_any_element(),
-                    }),
+                    .child(cover),
             )
             .child(
                 v_flex()

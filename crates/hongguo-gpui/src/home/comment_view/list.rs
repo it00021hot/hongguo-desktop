@@ -110,6 +110,12 @@ impl HomeView {
                     let rname = r.user_name.clone();
                     let reply_mine =
                         !self.my_user_id().is_empty() && r.user_id == self.my_user_id();
+                    // AI bot 回复：作者名带「Ai」后缀 + 「内容由AI生成」标记
+                    // （Tauri ReplyThread 的 isAi 同款——回复作者对上
+                    // mention 列表里的 AI bot 才算）。
+                    let is_ai = self
+                        .ai_bot_name()
+                        .is_some_and(|ai_name| ai_name == r.user_name);
                     h_flex()
                         .items_start()
                         .gap_2()
@@ -120,13 +126,26 @@ impl HomeView {
                                 .min_w_0()
                                 .gap_0p5()
                                 .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(gpui_kit::rgba(0xffffff99))
-                                        .child(SharedString::from(if r.user_name.is_empty() {
-                                            crate::i18n::t("player.comments.anon")
-                                        } else {
-                                            r.user_name.clone()
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(gpui_kit::rgba(0xffffff99))
+                                                .child(SharedString::from(
+                                                    if r.user_name.is_empty() {
+                                                        crate::i18n::t("player.comments.anon")
+                                                    } else {
+                                                        r.user_name.clone()
+                                                    },
+                                                )),
+                                        )
+                                        .children(is_ai.then(|| {
+                                            div()
+                                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                                .text_color(gpui_kit::rgb(0xfbbf24))
+                                                .child("Ai")
                                         })),
                                 )
                                 .child({
@@ -164,6 +183,16 @@ impl HomeView {
                                                     r.create_time,
                                                 )),
                                         )
+                                        // AI 生成标记（Tauri ReplyRow 的 isAi
+                                        // 同款：时间右侧跟一句「内容由AI生成」）
+                                        .children(is_ai.then(|| {
+                                            div()
+                                                .text_size(gpui_kit::px(10.0))
+                                                .text_color(gpui_kit::rgba(0xffffff73))
+                                                .child(crate::i18n::t(
+                                                    "player.comments.aiGenerated",
+                                                ))
+                                        }))
                                         .child(
                                             div()
                                                 .id(ElementId::from(format!("reply-btn-{rid}")))

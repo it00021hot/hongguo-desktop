@@ -231,48 +231,6 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 拉评论/回复头像（avatar URL → RGBA）。同一阶梯（嗅探透传 jpeg，
-    /// 失败退回首字圆形占位）；key 就是 URL，列表里同人多条只拉一次。
-    /// `on_miss` 场景不重试：头像属装饰信息，失败静默（与封面同口径）。
-    pub(super) fn load_avatar(&mut self, url: String, cx: &mut Context<Self>) {
-        if url.is_empty()
-            || self.avatars.contains_key(&url)
-            || !self.avatars_pending.insert(url.clone())
-        {
-            return;
-        }
-        let rx = bridge::spawn({
-            let remote = url.clone();
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    hongguo_protocol::cover::acquire_renderable(&remote).map(|(bytes, _)| bytes)
-                })
-                .await
-                .expect("阻塞池 join")
-            }
-        });
-        cx.spawn(async move |this, cx| {
-            let bytes: Vec<u8> = match rx.await.expect("tokio 桥不会丢弃发送端") {
-                Ok(b) => b,
-                Err(e) => {
-                    log::warn!("[Home] 头像加载失败: {e}");
-                    return;
-                }
-            };
-            let _ = this.update(cx, |view, cx| match image::load_from_memory(&bytes) {
-                Ok(decoded) => {
-                    view.avatars.insert(
-                        url,
-                        Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                    );
-                    cx.notify();
-                }
-                Err(e) => log::warn!("[Home] 头像解码失败: {e}"),
-            });
-        })
-        .detach();
-    }
-
     /// 登录面板（居中卡片）：已登录显示账号+退出；未登录显示手机号/验证码
     /// 表单 + 登录按钮。点遮罩收起。
     pub(super) fn render_login_panel(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
@@ -471,15 +429,8 @@ impl super::HomeView {
             .rounded_full()
             .overflow_hidden()
             .size(gpui_kit::px(size));
-        match self.avatars.get(url) {
-            Some(img) => frame
-                .child(
-                    gpui_kit::img(gpui_kit::ImageSource::Render(Arc::clone(img)))
-                        .size_full()
-                        .object_fit(gpui_kit::ObjectFit::Cover),
-                )
-                .into_any_element(),
-            None => frame
+        if url.is_empty() {
+            return frame
                 .flex()
                 .items_center()
                 .justify_center()
@@ -490,8 +441,11 @@ impl super::HomeView {
                     let ch = name.chars().next().unwrap_or('游');
                     SharedString::from(ch.to_string())
                 })
-                .into_any_element(),
+                .into_any_element();
         }
+        frame
+            .child(crate::cover_img::avatar(url))
+            .into_any_element()
     }
 
     /// 取证辅助（screenshot feature 的 HONGGUO_SHOT_PANEL=login）：打开

@@ -17,16 +17,12 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
-};
+use gpui_kit::{App, ElementId, Entity, SharedString, Window, div};
 use hongguo_api::interact::BookshelfEntry;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
-use crate::pages::list_common::{
-    BatchBar, decode_cover, fetch_series_visual, pick_dot, search_box,
-};
+use crate::pages::list_common::{BatchBar, fetch_series_visual, pick_dot, search_box};
 
 /// 收藏页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -81,8 +77,10 @@ pub(crate) struct CollectionView {
     /// resolve 到位的标题/集数（书架条目本身只有 series_id）。
     titles: HashMap<String, String>,
     episode_counts: HashMap<String, u32>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
+    /// 封面 URL（series_id → URL）：像素在进程级共享缓存里。
+    covers: HashMap<String, String>,
+    /// 在途的剧档案解析（series_id 去重）。
+    resolving: HashSet<String>,
     hovered: Option<String>,
     search: Entity<InputState>,
     type_tab: TypeTab,
@@ -122,7 +120,7 @@ impl CollectionView {
             titles: HashMap::new(),
             episode_counts: HashMap::new(),
             covers: HashMap::new(),
-            covers_pending: HashSet::new(),
+            resolving: HashSet::new(),
             hovered: None,
             search,
             type_tab: TypeTab::All,
@@ -190,27 +188,26 @@ impl CollectionView {
         .detach();
     }
 
-    /// 逐条解析标题/集数/封面（书架条目只有 series_id）。
+    /// 逐条解析标题/集数/封面地址（书架条目只有 series_id）。
     fn load_visuals(&mut self, entries: &[BookshelfEntry], cx: &mut Context<Self>) {
         for entry in entries {
             let key = entry.series_id.clone();
-            if key.is_empty() || !self.covers_pending.insert(key.clone()) {
+            if key.is_empty() || !self.resolving.insert(key.clone()) {
                 continue;
             }
             let rx = fetch_series_visual(Arc::clone(&self.state), entry.series_id.clone());
             cx.spawn(async move |this, cx| {
                 let visual = rx.await.expect("tokio 桥不会丢弃发送端");
                 this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&visual.series_id);
+                    view.resolving.remove(&visual.series_id);
                     if !visual.title.is_empty() {
                         view.titles.insert(visual.series_id.clone(), visual.title);
                         view.episode_counts
                             .insert(visual.series_id.clone(), visual.episode_count);
                     }
-                    if let Some(bytes) = &visual.cover
-                        && let Some(image) = decode_cover(bytes)
-                    {
-                        view.covers.insert(visual.series_id.clone(), image);
+                    if !visual.cover_url.is_empty() {
+                        view.covers
+                            .insert(visual.series_id.clone(), visual.cover_url);
                     }
                     cx.notify();
                 })
@@ -450,7 +447,10 @@ impl CollectionView {
             }
             _ => crate::i18n::t("collections.resolvingHint"),
         };
-        let cover = self.covers.get(&series_id).cloned();
+        let cover = match self.covers.get(&series_id) {
+            Some(url) => crate::cover_img::card(url),
+            None => div().size_full().into_any_element(),
+        };
         let play_open = hovered && !managing;
         div()
             .relative()
@@ -499,23 +499,7 @@ impl CollectionView {
                             .flex_shrink_0()
                             .overflow_hidden()
                             .bg(theme.secondary)
-                            .child(match cover {
-                                Some(bitmap) => img(ImageSource::Render(bitmap))
-                                    .size_full()
-                                    .object_fit(ObjectFit::Cover)
-                                    .into_any_element(),
-                                None => h_flex()
-                                    .size_full()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        gpui_kit::component::Icon::new(
-                                            gpui_kit::assets::IconName::Star,
-                                        )
-                                        .text_color(theme.muted_foreground),
-                                    )
-                                    .into_any_element(),
-                            })
+                            .child(cover)
                             .children(play_open.then(|| {
                                 h_flex()
                                     .absolute()
@@ -610,8 +594,12 @@ impl CollectionView {
             self.titles.insert(entry.series_id.clone(), title.into());
             self.episode_counts
                 .insert(entry.series_id.clone(), 24 + i as u32 * 6);
-            self.covers
-                .insert(entry.series_id.clone(), crate::preview::fixtures::cover(i));
+            let url = format!("preview://collection/{i}");
+            crate::preview::fixtures::put_preview_image(
+                url.clone(),
+                crate::preview::fixtures::cover(i),
+            );
+            self.covers.insert(entry.series_id.clone(), url);
         }
         if scene == "collections-manage" {
             self.managing = true;
@@ -630,6 +618,9 @@ impl gpui_kit::EventEmitter<CollectionEvent> for CollectionView {}
 
 impl gpui_kit::Render for CollectionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.covers.values().cloned().collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         let body =
             match &self.phase {
                 Phase::Loading => h_flex()

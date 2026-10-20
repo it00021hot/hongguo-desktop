@@ -115,7 +115,7 @@ impl gpui_kit::Render for HomeView {
         }
         // 全屏态图标跟随（Render::render 有 window 可查）
         self.fullscreen = window.is_fullscreen();
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let feed = self.feeds.get(&self.active).expect("源已初始化");
         // (提示文案, 是否给手动重试)：加载态由自动重试链接管，不能把
         // 「重试」按钮和「加载中…」画在一起——启动首屏正常在拉请求时也

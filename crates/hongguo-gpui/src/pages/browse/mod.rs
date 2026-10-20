@@ -6,7 +6,7 @@
 //! 原地切搜索结果，退出回筛选流；浏览流按 session 游标翻页。数据走
 //! `hongguo_api::{discover, search}`，与 Tauri 的 browse/search command 同一段。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -17,9 +17,7 @@ use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ElementId, Entity, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img,
-};
+use gpui_kit::{App, ElementId, Entity, SharedString, Window, div};
 use hongguo_api::discover::{BrowseFilters, FeedItem, SelectorRow};
 use hongguo_api::search::{SearchResult, SuggestItem};
 use hongguo_service::app_state::AppStateInner;
@@ -90,8 +88,6 @@ pub(crate) struct BrowseView {
     suggest_index: usize,
     suggest_open: bool,
     // —— 封面与下载角标 ——
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
     downloaded: HashMap<String, u32>,
 }
 
@@ -153,8 +149,6 @@ impl BrowseView {
             suggest_seq: 0,
             suggest_index: 0,
             suggest_open: false,
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
             downloaded: HashMap::new(),
         }
     }

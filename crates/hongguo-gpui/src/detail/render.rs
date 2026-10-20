@@ -113,6 +113,20 @@ impl gpui_kit::Render for DetailView {
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let mut cover_urls: Vec<String> = self
+            .series
+            .as_ref()
+            .map(|s| vec![s.cover.clone()])
+            .unwrap_or_default();
+        if let Some(meta) = self.meta.as_ref() {
+            cover_urls.extend(meta.creators.iter().map(|c| c.avatar.clone()));
+        }
+        if let Some(related) = self.related.as_ref() {
+            cover_urls.extend(related.works.iter().map(|i| i.cover.clone()));
+            cover_urls.extend(related.guess.iter().map(|i| i.cover.clone()));
+        }
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 剧评输入框懒建：DetailView::new 拿不到 window（壳在事件回调里
         // cx.new 创建本视图），首个 render 才有——建一次并挂 Enter 提交。
         if self.review_input.is_none() {

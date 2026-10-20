@@ -4,7 +4,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 
 impl NewDramaView {
     pub(super) fn play_series(&self, series_id: String, cx: &mut Context<Self>) {
@@ -57,7 +57,7 @@ impl NewDramaView {
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let downloaded = self.downloaded.get(&item.series_id).copied().unwrap_or(0);
-        let cover = self.covers.get(&item.cover).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let mut tags: Vec<String> = item.tags.clone();
         if let Some(first) = item.sub_title.split('·').next()
             && !first.is_empty()
@@ -89,13 +89,7 @@ impl NewDramaView {
                     .flex_shrink_0()
                     .overflow_hidden()
                     .bg(theme.secondary)
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => div().size_full().into_any_element(),
-                    })
+                    .child(cover)
                     .children((!item.rec_text.is_empty()).then(|| {
                         h_flex()
                             .absolute()

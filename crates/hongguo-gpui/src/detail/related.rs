@@ -12,7 +12,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::detail::{RelatedItem, RelatedSeries, fetch_related_series};
 
 use super::DetailView;
@@ -69,9 +69,6 @@ impl DetailView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update_in(cx, |view, window, cx| match result {
                 Ok(related) => {
-                    for item in related.works.iter().chain(related.guess.iter()) {
-                        view.load_image(item.cover.clone(), cx);
-                    }
                     view.related = Some(Arc::new(related));
                     cx.notify();
                 }
@@ -155,7 +152,7 @@ impl DetailView {
     /// （星色）+ 标题 + 集数/播放行）。
     fn related_card(&self, item: &RelatedItem, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.images.get(&item.cover).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let mut stats: Vec<String> = Vec::new();
         if item.episode_cnt > 0 {
             // Tauri related-card：detail.episodesCount =「共N集」
@@ -198,11 +195,7 @@ impl DetailView {
                     .overflow_hidden()
                     .rounded(gpui_kit::px(8.0))
                     .bg(theme.secondary)
-                    .children(cover.map(|bitmap| {
-                        img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                    }))
+                    .child(cover)
                     .children((!item.tag.is_empty()).then(|| {
                         div()
                             .absolute()

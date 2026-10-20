@@ -18,6 +18,8 @@
 mod av_spike;
 mod boss_key;
 mod bridge;
+mod cover_asset;
+mod cover_image_cache;
 mod cover_img;
 #[cfg(target_os = "macos")]
 mod crash_log;

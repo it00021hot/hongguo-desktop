@@ -126,7 +126,10 @@ impl HomeView {
             *self.indexes.get_mut(&source).expect("游标已初始化") = 0;
         }
         for (i, (sid, _, _)) in fx::SERIES.into_iter().enumerate() {
-            self.covers.insert(sid.into(), fx::cover(i));
+            let url = format!("preview://home/{i}");
+            crate::preview::fixtures::put_preview_image(&url, fx::cover(i));
+            let sid: String = sid.into();
+            self.stage_covers.insert(sid, fx::cover(i));
         }
     }
 
@@ -148,6 +151,8 @@ impl HomeView {
             definition: 1080,
             vid: "preview-vid".into(),
             cover: String::new(),
+            // 预览无真实档案：分集表给一份占位（预取下一集按它查 vid）。
+            episode_vids: std::sync::Arc::new(Vec::new()),
         });
         self.controls_until = Some(
             Instant::now() + std::time::Duration::from_secs(super::controls::CONTROLS_HOLD_SECS),

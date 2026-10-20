@@ -54,6 +54,9 @@ impl HistoryView {
 
 impl gpui_kit::Render for HistoryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         let body = match &self.phase {
             Phase::Loading => h_flex()
                 .flex_1()

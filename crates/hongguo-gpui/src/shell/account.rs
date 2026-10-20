@@ -1,7 +1,5 @@
 use super::*;
 
-use std::sync::Arc;
-
 impl super::Shell {
     /// 账号变化（登录/登出）：头像重拉 + 追更角标重算。
     pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
@@ -32,11 +30,9 @@ impl super::Shell {
             let _ = this.update(cx, |shell, cx| {
                 shell.account_avatar_pending = false;
                 if let Ok(bytes) = bytes
-                    && let Ok(decoded) = image::load_from_memory(&bytes)
+                    && let Some(avatar) = crate::cover_img::decode(&bytes)
                 {
-                    shell.account_avatar = Some(Arc::new(crate::image_upload::render_image(
-                        decoded.to_rgba8(),
-                    )));
+                    shell.account_avatar = Some(avatar);
                     shell.account_avatar_url = Some(url);
                     cx.notify();
                 }

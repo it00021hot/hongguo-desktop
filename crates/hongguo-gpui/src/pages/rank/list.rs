@@ -69,7 +69,6 @@ impl super::RankView {
                         if !page.tabs.is_empty() {
                             view.raw_tabs = page.tabs.clone();
                         }
-                        view.load_covers(&page.items, cx);
                         // 子榜失效（换 tab/形态切换）：落到第一个子榜重拉一次
                         let tabs = normalize_tabs(&view.raw_tabs);
                         let needs_fallback = tabs
@@ -131,32 +130,5 @@ impl super::RankView {
         self.filter_open = false;
         self.load_page(false, cx);
         cx.notify();
-    }
-
-    fn load_covers(&mut self, items: &[RankItem], cx: &mut Context<Self>) {
-        for item in items {
-            let key = item.cover.clone();
-            if key.is_empty() || !self.covers_pending.insert(key.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(key.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&key);
-                    if let Ok(bytes) = bytes
-                        && let Ok(decoded) = image::load_from_memory(&bytes)
-                    {
-                        view.covers.insert(
-                            key.clone(),
-                            Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                        );
-                        cx.notify();
-                    }
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 }

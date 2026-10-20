@@ -13,7 +13,7 @@ use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::detail::{RelatedItem, fetch_related_series};
 use hongguo_api::reservation::{fetch_reservations, reserve_series};
 
@@ -43,12 +43,9 @@ impl super::HomeView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| match result {
+            let _ = this.update(cx, |view, _cx| match result {
                 Ok(works) => {
-                    // 季卡片封面走同一张 covers 表（懒加载，与全屏占位同源）
-                    for item in &works {
-                        view.load_cover(item.series_id.clone(), item.cover.clone(), cx);
-                    }
+                    // 季卡片封面由渲染时按需预热（gpui 资产机制），这里不用再拉
                     view.related_seasons
                         .insert(series_id.clone(), Arc::new(works));
                 }
@@ -141,7 +138,7 @@ impl super::HomeView {
     /// （连选连跳，关闭走 Esc/收起/点外部）。红色是 hgplayer 皮肤（硬红线
     /// 11 的播放器豁免）。「系列剧」tab 与下载完成角标随相关作品/预约、
     /// 下载能力的对齐步骤补。
-    pub(super) fn render_picker(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    pub(super) fn render_picker(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(now) = &self.now else {
             return div().into_any_element();
         };
@@ -460,9 +457,9 @@ impl super::HomeView {
 
     /// 系列剧 tab：各季卡片（Tauri EpisodePicker 同款：封面 + 剧名 +
     /// 「tag · 全N集 · 播放量」数据行，右侧 播放中/预约/播放 三态；当前季
-    /// 红框高亮，可播季点击换剧，浮层不关）。封面走 covers 表（HEIC 签名
-    /// URL 经 cover 管线，拉取在 load_related_seasons 完成处发起）。
-    fn render_seasons_tab(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    /// 红框高亮，可播季点击换剧，浮层不关）。封面走 gpui 的图片缓存（HEIC
+    /// 签名 URL 经 cover 管线转码落盘后按路径取）。
+    fn render_seasons_tab(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let (current_sid, seasons) = self.seasons_of();
         v_flex()
             .gap_2()
@@ -475,7 +472,7 @@ impl super::HomeView {
                     gpui_kit::rgba(0x00000000)
                 };
                 let sid_click = item.series_id.clone();
-                let cover = self.covers.get(&item.series_id).cloned();
+                let cover = crate::cover_img::card(&item.cover);
                 let mut meta: Vec<String> = Vec::new();
                 if !item.tag.is_empty() {
                     meta.push(item.tag.clone());
@@ -524,11 +521,7 @@ impl super::HomeView {
                             .overflow_hidden()
                             .rounded(gpui_kit::px(6.0))
                             .bg(gpui_kit::rgba(0x333333cc))
-                            .children(cover.map(|bitmap| {
-                                img(ImageSource::Render(bitmap))
-                                    .size_full()
-                                    .object_fit(ObjectFit::Cover)
-                            })),
+                            .child(cover),
                     )
                     .child(
                         v_flex()

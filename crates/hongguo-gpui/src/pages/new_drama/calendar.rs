@@ -6,7 +6,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 
 use crate::bridge;
 
@@ -17,7 +17,7 @@ impl NewDramaView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.covers.get(&item.cover).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         let reserved = item.has_subscribed || self.reserved_local.contains(&item.series_id);
         let card_item = item.clone();
         h_flex()
@@ -47,13 +47,7 @@ impl NewDramaView {
                     .overflow_hidden()
                     .rounded(theme.radius + gpui_kit::px(2.0))
                     .bg(theme.secondary)
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => div().size_full().into_any_element(),
-                    }),
+                    .child(cover),
             )
             .child(
                 v_flex()

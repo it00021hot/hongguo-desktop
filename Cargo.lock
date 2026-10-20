@@ -4580,6 +4580,7 @@ dependencies = [
  "hongguo-media-platform",
  "hongguo-store",
  "hongguo-stream",
+ "image",
  "log",
  "reqwest",
  "sha2 0.11.0",

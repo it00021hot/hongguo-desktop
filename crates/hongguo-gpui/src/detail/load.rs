@@ -122,23 +122,7 @@ impl DetailView {
                 view.loading = false;
                 match result {
                     Ok((series, meta, upcoming)) => {
-                        view.load_image(series.cover.clone(), cx);
-                        // 出品方/演职员头像随 meta 预取（头部芯片用；先收集
-                        // URL 再改 view，避免同时借 self.meta）
-                        let creator_avatars: Vec<String> = meta
-                            .as_ref()
-                            .map(|m| {
-                                m.creators
-                                    .iter()
-                                    .map(|c| c.avatar.clone())
-                                    .filter(|a| !a.is_empty())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
                         view.meta = meta;
-                        for url in creator_avatars {
-                            view.load_image(url, cx);
-                        }
                         view.series = Some(Arc::new(series));
                         view.upcoming = upcoming;
                         if !upcoming {
@@ -218,41 +202,6 @@ impl DetailView {
             let items = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, _| {
                 view.interact_items = Arc::new(items);
-            });
-        })
-        .detach();
-    }
-
-    /// 懒加载一张远端图进 images 表（封面/头像/相关卡共用；管线与全屏
-    /// 占位同源，状态各自持有）。
-    pub(super) fn load_image(&mut self, url: String, cx: &mut Context<Self>) {
-        if url.is_empty()
-            || self.images.contains_key(&url)
-            || !self.images_pending.insert(url.clone())
-        {
-            return;
-        }
-        let rx = cover_img::fetch(url.clone());
-        cx.spawn(async move |this, cx| {
-            let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| match bytes {
-                Ok(b) => match image::load_from_memory(&b) {
-                    Ok(decoded) => {
-                        view.images.insert(
-                            url.clone(),
-                            Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                        );
-                        cx.notify();
-                    }
-                    Err(e) => {
-                        log::warn!("[Detail] 图片解码失败: {e}");
-                        view.images_pending.remove(&url);
-                    }
-                },
-                Err(e) => {
-                    log::warn!("[Detail] 图片加载失败: {e}");
-                    view.images_pending.remove(&url);
-                }
             });
         })
         .detach();

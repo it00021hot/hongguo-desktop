@@ -10,7 +10,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use gpui_kit::RenderImage;
 use hongguo_api::calendar::CalendarItem;
 use hongguo_api::rank::RankItem;
 use hongguo_service::app_state::AppStateInner;
@@ -66,8 +65,6 @@ pub(crate) struct NewDramaView {
     cal_loaded: bool,
     /// 日历本地预约态（日历响应 has_subscribed 恒 false，本地记已点过的剧）。
     reserved_local: HashSet<String>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
     downloaded: HashMap<String, u32>,
     /// 滚动哨兵：推荐流与日历各一条（两个滚动容器互不复用；按钮留作兜底）。
     scroll_recommend: crate::pages::scroll_load::ScrollLoad,
@@ -102,8 +99,6 @@ impl NewDramaView {
             cal_failed: false,
             cal_loaded: false,
             reserved_local: HashSet::new(),
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
             downloaded: HashMap::new(),
             scroll_recommend: crate::pages::scroll_load::ScrollLoad::new(),
             scroll_calendar: crate::pages::scroll_load::ScrollLoad::new(),

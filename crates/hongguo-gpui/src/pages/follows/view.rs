@@ -12,7 +12,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::interact::FollowUpdateItem;
 
 use super::Tab;
@@ -118,7 +118,7 @@ impl super::FollowsView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.covers.get(&item.series_id).cloned();
+        let cover = crate::cover_img::card(&item.cover);
         // 状态行（player p() 同款拼装）：追平/未看集数 + 连载中/已完结
         let remain = item.episode_cnt - item.latest_watched_vid_index;
         let progress = if item.latest_watched_vid_index > 0 {
@@ -187,21 +187,7 @@ impl super::FollowsView {
                             }
                         })
                     })
-                    .child(match cover {
-                        Some(bitmap) => img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element(),
-                        None => h_flex()
-                            .size_full()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv)
-                                    .text_color(theme.muted_foreground),
-                            )
-                            .into_any_element(),
-                    }),
+                    .child(cover),
             )
             // 标题 / 状态行 / 集数进度
             .child(

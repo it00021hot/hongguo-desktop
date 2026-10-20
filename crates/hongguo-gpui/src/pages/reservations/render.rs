@@ -72,6 +72,16 @@ impl ReservationView {
 
 impl gpui_kit::Render for ReservationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self
+            .online
+            .items
+            .iter()
+            .chain(self.offline.items.iter())
+            .flatten()
+            .map(|i| i.cover.clone())
+            .collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 滚动哨兵：滚到底自动续页（Tauri reservation-page.tsx 的
         // IntersectionObserver 同语义；按钮留作兜底）。
         let (has_more, loading) = {

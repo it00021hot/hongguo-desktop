@@ -92,6 +92,7 @@ pub(crate) mod player_icons;
 pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
+pub(crate) mod rich_preview;
 pub(crate) mod season;
 pub(crate) mod stage;
 pub(crate) mod state;
@@ -121,6 +122,12 @@ struct NowPlaying {
     vid: String,
     /// 封面 URL（观看历史记录用；直播流条目自带，档案回填的流可能为空）
     cover: String,
+    /// 本剧全部分集（集号 → vid）：预取下一集与片尾接力都从这里取 vid。
+    ///
+    /// 缓存在这里是为了让**主线程不碰库**——`Store` 是同步阻塞门面
+    /// （投递 DB 线程后等结果），切集路径上每集读一次库就是主线程上多一次
+    /// 跨线程往返。起播时档案已经在手（`play_task` 读的），顺手带下来。
+    episode_vids: Arc<Vec<(u32, String)>>,
 }
 
 // ---------------------------------------------------------------- 视图
@@ -135,14 +142,9 @@ pub struct HomeView {
     /// 服务端下发的 tab 标题（tab_type → title；缺省回落本地名）。
     tab_labels: HashMap<String, String>,
 
-    /// 已解码封面（series_id → RGBA）：切剧间隙的全屏占位。
-    covers: HashMap<String, Arc<RenderImage>>,
-    /// 已解码评论/回复头像（avatar URL → RGBA）；加载失败不入表（退回首字
-    /// 圆形占位）。
-    avatars: HashMap<String, Arc<RenderImage>>,
-    avatars_pending: HashSet<String>,
-    covers_pending: HashSet<String>,
-
+    /// 全屏占位用的**原图档**封面（series_id → RGBA）：只有当前/目标这一集，
+    /// 铺满舞台要原图（列表卡档是缩到 320 长边的小图，不够铺）。
+    stage_covers: HashMap<String, Arc<RenderImage>>,
     // —— 播放态 ——
     /// 引擎出生纪元：每次切剧 +1，陈旧事件/任务按它丢弃。Arc 原子共享给
     /// 事件循环——转换挪到后台线程后，纪元判定必须在**转换之前**做
@@ -178,6 +180,13 @@ pub struct HomeView {
     stage_bounds: Rc<Cell<Option<[f32; 4]>>>,
     /// 系统播放器画面已就绪（首帧事件）：视图据此打透明洞并跳过 GPUI 上屏。
     system_video_ready: bool,
+    /// 系统后端的窗口已经提到前台过一次（会话内一次）。
+    ///
+    /// 无人值守启动时进程可能不在前台，GPUI 就不请求帧，视频层也就没有第
+    /// 一次 render 去挂载——首次起播必须把窗口提到前台。但**每次引擎重建
+    /// 都提一次会在切集时抢焦点**（Windows 的 activate 还会合成一对 ALT 键
+    /// 去骗前台策略），看别的应用时被拉回来、窗口最小化时被强制还原。
+    system_window_activated: bool,
     /// 系统后端一次切集/起播的起点（首帧事件到达时结算耗时）。
     system_switch_started: Option<Instant>,
     /// 每一次起播/接力的逻辑代次：AVQueuePlayer 接力不换播放器，不能用
@@ -499,10 +508,7 @@ impl HomeView {
             indexes,
             tabs,
             tab_labels: HashMap::new(),
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
-            avatars: HashMap::new(),
-            avatars_pending: HashSet::new(),
+            stage_covers: HashMap::new(),
             epoch: Arc::new(AtomicU64::new(0)),
             player: None,
             #[cfg(feature = "screenshot")]
@@ -688,6 +694,7 @@ impl HomeView {
             window_handle: window.window_handle(),
             stage_bounds: Rc::new(Cell::new(None)),
             system_video_ready: false,
+            system_window_activated: false,
             system_switch_started: None,
             play_generation: 0,
             first_frame_generation: 0,

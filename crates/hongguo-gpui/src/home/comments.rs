@@ -78,14 +78,13 @@ impl super::HomeView {
                 match result {
                     Ok(users) => {
                         log::info!("[Home] @提及候选 {} 人", users.len());
-                        // 候选头像走同一张 avatars 表（失败退回首字占位）
-                        for url in users
+                        // 候选头像走 gpui 的图片缓存（失败退回首字占位）
+                        let urls: Vec<String> = users
                             .iter()
                             .map(|u| u.avatar.clone())
                             .filter(|a| !a.is_empty())
-                        {
-                            view.load_avatar(url, cx);
-                        }
+                            .collect();
+                        crate::cover_img::prewarm(&urls, hongguo_protocol::cover::EDGE_AVATAR, cx);
                         view.mention_users = Arc::new(users);
                         view.mention_loaded_for = Some(sid);
                     }
@@ -133,7 +132,11 @@ impl super::HomeView {
                         let urls: Vec<String> =
                             view.comments.iter().map(|c| c.avatar.clone()).collect();
                         for url in urls {
-                            view.load_avatar(url, cx);
+                            crate::cover_img::prewarm(
+                                std::slice::from_ref(&url),
+                                hongguo_protocol::cover::EDGE_AVATAR,
+                                cx,
+                            );
                         }
                     }
                     Err(e) => log::warn!("[Home] 评论拉取失败: {e}"),
@@ -178,7 +181,11 @@ impl super::HomeView {
                     let urls: Vec<String> =
                         view.comments.iter().map(|c| c.avatar.clone()).collect();
                     for url in urls {
-                        view.load_avatar(url, cx);
+                        crate::cover_img::prewarm(
+                            std::slice::from_ref(&url),
+                            hongguo_protocol::cover::EDGE_AVATAR,
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -257,7 +264,11 @@ impl super::HomeView {
                             view.replies_open.insert(cid);
                             view.start_ai_reply_poll(cx);
                         }
-                        view.load_avatar(avatar, cx);
+                        crate::cover_img::prewarm(
+                            std::slice::from_ref(&avatar),
+                            hongguo_protocol::cover::EDGE_AVATAR,
+                            cx,
+                        );
                     }
                     Err(e) => {
                         // 失败必须可见（风控/频控拒绝时静默会被当成发成功）
@@ -454,7 +465,11 @@ impl super::HomeView {
                         let urls: Vec<String> = items.iter().map(|r| r.avatar.clone()).collect();
                         view.replies.insert(comment_id, Arc::new(items));
                         for url in urls {
-                            view.load_avatar(url, cx);
+                            crate::cover_img::prewarm(
+                                std::slice::from_ref(&url),
+                                hongguo_protocol::cover::EDGE_AVATAR,
+                                cx,
+                            );
                         }
                     }
                     Err(e) => log::warn!("[Home] 回复拉取失败: {e}"),
@@ -522,7 +537,11 @@ impl super::HomeView {
                         view.comments = Arc::new(parents);
                         view.reply_to = None;
                         view.comment_clear_input = true;
-                        view.load_avatar(avatar, cx);
+                        crate::cover_img::prewarm(
+                            std::slice::from_ref(&avatar),
+                            hongguo_protocol::cover::EDGE_AVATAR,
+                            cx,
+                        );
                     }
                     Err(e) => log::warn!("[Home] 回复发送失败: {e}"),
                 }

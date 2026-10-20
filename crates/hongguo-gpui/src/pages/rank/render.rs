@@ -25,9 +25,10 @@ impl super::RankView {
             }
             items
         };
-        for (i, item) in self.items.iter().enumerate() {
-            self.covers
-                .insert(item.cover.clone(), crate::preview::fixtures::cover(i));
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let url = format!("preview://rank/{i}");
+            item.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(url, crate::preview::fixtures::cover(i));
         }
         cx.notify();
     }
@@ -35,6 +36,9 @@ impl super::RankView {
 
 impl gpui_kit::Render for RankView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 首拉加载：整页剩余区居中（含子榜导航区域）。居中在右侧列表列里
         // 会读成「偏右」（子榜列占了左侧），用户实测反馈；页面级分支与
         // 创作者主页同款。

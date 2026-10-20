@@ -6,7 +6,6 @@
 //! 标题 + 集数/热度/播放行，点击起播——统一首页沉浸流）。页面发事件给壳
 //! （Play/Back），页面间不互相持有。
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -15,13 +14,12 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, RenderImage, SharedString, Window, div, img};
+use gpui_kit::{ElementId, SharedString, Window, div};
 use hongguo_api::danmaku::{CreatorProfile, CreatorWork};
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::home::fmt::format_play_count;
-use crate::pages::list_common::decode_cover;
 
 /// 创作者页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -51,10 +49,6 @@ pub(crate) struct CreatorView {
     loading: bool,
     loading_more: bool,
     failed: Option<String>,
-    covers: HashMap<String, Arc<RenderImage>>,
-    covers_pending: HashSet<String>,
-    avatar: Option<Arc<RenderImage>>,
-    avatar_pending: bool,
     /// 滚动哨兵：滚到底自动续页（按钮留作兜底）。
     scroll: crate::pages::scroll_load::ScrollLoad,
 }
@@ -73,10 +67,6 @@ impl CreatorView {
             loading: false,
             loading_more: false,
             failed: None,
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
-            avatar: None,
-            avatar_pending: false,
             scroll: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }
@@ -85,7 +75,6 @@ impl CreatorView {
     pub(crate) fn load(&mut self, user_id: String, cx: &mut Context<Self>) {
         self.user_id = user_id.clone();
         self.profile = None;
-        self.avatar = None;
         self.works.clear();
         self.cursor.clear();
         self.has_more = false;
@@ -112,9 +101,6 @@ impl CreatorView {
                 }
                 match result {
                     Ok(profile) => {
-                        if !profile.avatar.is_empty() {
-                            view.load_avatar(profile.avatar.clone(), cx);
-                        }
                         view.profile = Some(profile);
                         cx.notify();
                     }
@@ -146,7 +132,6 @@ impl CreatorView {
                         view.cursor = page.cursor;
                         view.has_more = page.has_more;
                         view.works_loaded = true;
-                        view.load_covers(cx);
                     }
                     Err(e) => {
                         log::warn!("[Creator] GPUI 壳作品失败: {e}");
@@ -182,7 +167,6 @@ impl CreatorView {
                         view.works.extend(page.works);
                         view.cursor = page.cursor;
                         view.has_more = page.has_more;
-                        view.load_covers(cx);
                     }
                     Err(e) => {
                         log::warn!("[Creator] GPUI 壳翻页失败: {e}");
@@ -201,55 +185,6 @@ impl CreatorView {
             });
         })
         .detach();
-    }
-
-    /// 资料头头像（独立于作品封面缓存：头像是圆形小图，不进 covers 表）。
-    fn load_avatar(&mut self, url: String, cx: &mut Context<Self>) {
-        if self.avatar_pending {
-            return;
-        }
-        self.avatar_pending = true;
-        let rx = crate::cover_img::fetch(url);
-        cx.spawn(async move |this, cx| {
-            let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| {
-                view.avatar_pending = false;
-                if let Ok(bytes) = bytes
-                    && let Ok(decoded) = image::load_from_memory(&bytes)
-                {
-                    view.avatar = Some(Arc::new(crate::image_upload::render_image(
-                        decoded.to_rgba8(),
-                    )));
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// 逐条取作品封面（条目自带 CDN 签名 URL，HEIC 走同一封面阶梯）。
-    fn load_covers(&mut self, cx: &mut Context<Self>) {
-        for work in &self.works {
-            let key = work.series_id.clone();
-            if work.cover.is_empty() || !self.covers_pending.insert(key.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(work.cover.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&key);
-                    if let Ok(bytes) = bytes
-                        && let Some(image) = decode_cover(&bytes)
-                    {
-                        view.covers.insert(key, image);
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 
     fn play_series(&self, series_id: &str, cx: &mut Context<Self>) {
@@ -283,36 +218,40 @@ impl CreatorView {
     }
 
     /// 资料头：头像（64px 圆）+ 昵称 + 简介（2 行截断）。
-    fn render_profile(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    fn render_profile(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let Some(profile) = &self.profile else {
             return div().into_any_element();
         };
-        let avatar = self.avatar.clone();
+        // 头像走 gpui 图片元素：圆形裁剪与尺寸由外层容器负责，组件库管
+        // 解码与缓存；没有头像地址时退回通用图标。
+        let avatar = if profile.avatar.is_empty() {
+            h_flex()
+                .size(gpui_kit::px(64.0))
+                .flex_shrink_0()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(theme.muted)
+                .child(
+                    gpui_kit::component::Icon::new(gpui_kit::assets::IconName::UserRound)
+                        .text_color(theme.muted_foreground),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .size(gpui_kit::px(64.0))
+                .flex_shrink_0()
+                .overflow_hidden()
+                .rounded_full()
+                .child(crate::cover_img::avatar(&profile.avatar))
+                .into_any_element()
+        };
         h_flex()
             .mt_4()
             .items_center()
             .gap_4()
-            .child(match avatar {
-                Some(image) => img(ImageSource::Render(image))
-                    .size(gpui_kit::px(64.0))
-                    .flex_shrink_0()
-                    .rounded_full()
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element(),
-                None => h_flex()
-                    .size(gpui_kit::px(64.0))
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .bg(theme.muted)
-                    .child(
-                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::UserRound)
-                            .text_color(theme.muted_foreground),
-                    )
-                    .into_any_element(),
-            })
+            .child(avatar)
             .child(
                 v_flex()
                     .min_w_0()
@@ -338,7 +277,7 @@ impl CreatorView {
     /// 作品卡（3:4 封面 + 底部渐变信息条：标题/集数/热度/播放）。
     fn render_card(&self, work: &CreatorWork, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = self.covers.get(&work.series_id).cloned();
+        let cover = crate::cover_img::card(&work.cover);
         let hot = if work.hot > 0 {
             format_play_count(work.hot)
         } else {
@@ -396,13 +335,13 @@ impl CreatorView {
                     .relative()
                     .w_full()
                     .h(gpui_kit::px(267.0))
-                    .children(cover.map(|bitmap| {
-                        img(ImageSource::Render(bitmap))
+                    .child(
+                        div()
                             .size_full()
-                            .object_fit(ObjectFit::Cover)
                             // Tauri group-hover:opacity-80（悬停封面变淡）
                             .group_hover("creator-work", |s| s.opacity(0.8))
-                    }))
+                            .child(cover),
+                    )
                     .child(
                         div()
                             .absolute()
@@ -531,6 +470,9 @@ impl gpui_kit::EventEmitter<CreatorEvent> for CreatorView {}
 
 impl gpui_kit::Render for CreatorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        let cover_urls: Vec<String> = self.works.iter().map(|w| w.cover.clone()).collect();
+        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
         // 滚动哨兵：滚到底自动续页（Tauri creator-home-page.tsx 的
         // IntersectionObserver 同语义；按钮留作兜底）。
         if self.scroll.should_load(self.has_more, self.loading_more) {
@@ -599,16 +541,25 @@ impl CreatorView {
         self.user_id = "2007062623837002".into();
         self.loading = scene == "creator-loading";
         self.failed = None;
-        self.profile = Some(crate::preview::fixtures::creator_profile());
-        self.avatar = Some(crate::preview::fixtures::cover(9));
+        self.profile = Some({
+            let mut profile = crate::preview::fixtures::creator_profile();
+            profile.avatar = "preview://creator-avatar".into();
+            crate::preview::fixtures::put_preview_image(
+                profile.avatar.clone(),
+                crate::preview::fixtures::cover(9),
+            );
+            profile
+        });
         self.works = if scene == "creator-empty" || scene == "creator-loading" {
             Vec::new()
         } else {
             crate::preview::fixtures::creator_works()
         };
-        for (i, work) in self.works.iter().enumerate() {
-            self.covers.insert(
-                work.series_id.clone(),
+        for (i, work) in self.works.iter_mut().enumerate() {
+            let url = format!("preview://creator-work-{i}");
+            work.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(
+                url,
                 crate::preview::fixtures::cover(i + 2),
             );
         }

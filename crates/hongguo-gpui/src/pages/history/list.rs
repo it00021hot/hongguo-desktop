@@ -48,7 +48,6 @@ impl HistoryView {
                             view.selected.clear();
                             view.visible_count = 20;
                             view.phase = Phase::Loaded;
-                            view.load_covers(&view.items.clone(), cx);
                         }
                         Err(e) => {
                             log::warn!("[History] GPUI 壳本地读取失败: {e}");
@@ -76,7 +75,6 @@ impl HistoryView {
                 match result {
                     Ok(page) => {
                         log::info!("[History] GPUI 壳 -> {} 条", page.items.len());
-                        view.load_covers(&page.items, cx);
                         view.items = page.items;
                         view.selected.clear();
                         view.visible_count = 20;
@@ -94,31 +92,6 @@ impl HistoryView {
             .ok();
         })
         .detach();
-    }
-
-    /// 逐条取封面字节（条目自带上线封面 URL；HEIC 走同一段转码阶梯）。
-    fn load_covers(&mut self, items: &[WatchHistoryItem], cx: &mut Context<Self>) {
-        for item in items {
-            let key = format!("{}:{}", item.series_id, item.updated_at_ms);
-            if item.cover.is_empty() || !self.covers_pending.insert(key.clone()) {
-                continue;
-            }
-            let rx = crate::cover_img::fetch(item.cover.clone());
-            cx.spawn(async move |this, cx| {
-                let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-                this.update(cx, |view, cx| {
-                    view.covers_pending.remove(&key);
-                    if let Ok(bytes) = bytes
-                        && let Some(image) = decode_cover(&bytes)
-                    {
-                        view.covers.insert(key, image);
-                    }
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-        }
     }
 
     /// 过滤（tab + 标题/seriesId 包含，Tauri 同口径）。
@@ -156,11 +129,10 @@ impl HistoryView {
         } else {
             crate::preview::fixtures::watch_history_items()
         };
-        for (i, item) in self.items.iter().enumerate() {
-            self.covers.insert(
-                format!("{}:{}", item.series_id, item.updated_at_ms),
-                crate::preview::fixtures::cover(i),
-            );
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let url = format!("preview://history/{i}");
+            item.cover = url.clone();
+            crate::preview::fixtures::put_preview_image(url, crate::preview::fixtures::cover(i));
         }
         if scene == "history-manage" {
             self.managing = true;
