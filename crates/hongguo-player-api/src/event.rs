@@ -1,4 +1,6 @@
 //! 事件契约：[`PlayerEvent`] 引擎通报与 [`OpenOptions`] 打开参数。
+//!
+//! 自研引擎与系统播放器共用同一套事件：壳只订阅一次，后端换实现不改消费方。
 
 use tokio::sync::mpsc;
 
@@ -9,12 +11,12 @@ pub enum PlayerEvent {
     FirstFrame { width: usize, height: usize },
     /// 新一帧可上屏，**帧随事件一起送达**。
     ///
-    /// 不带帧、让宿主回头去 [`PlayerHandle::latest_frame`](super::PlayerHandle::latest_frame) 取，会有致命竞态：
+    /// 不带帧、让宿主回头去 [`PlayerHandle::latest_frame`] 取，会有致命竞态：
     /// 宿主在「引擎就位」时清一次帧槽，首帧事件若先于就位到达，清空就把
     /// 「已出画」的事实抹掉了，封面永远收不掉。帧跟着事件走，宿主只认事件
     /// 里的帧，顺序天然正确。
-    Frame(hongguo_media_platform::platform::video::VideoFrame),
-    /// 缓冲断流：设备已暂停、时钟冻结（水位见 [`BUFFER_LOW_SECS`](super::feeder::BUFFER_LOW_SECS)）。
+    Frame(hongguo_media_platform_api::video::VideoFrame),
+    /// 缓冲断流：设备已暂停、时钟冻结。
     Buffering,
     /// 断流恢复：设备重新起跑。
     Ready,

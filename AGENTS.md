@@ -36,8 +36,12 @@
 - `crates/hongguo-protocol/` 自定义 URI 协议供数逻辑：`url`（按平台的 URL 形态与编解码）+ `local` + `cover`（HEIC 封面三级转码阶梯）+ `pool`（常驻工作池与 panic 加固）+ `serve`（三路供数入口，产出元组）。**无 tauri 依赖**——HTTP 组装与 Builder 注册是壳胶水（hongguo-tauri 的 `protocol.rs`）
 - `crates/hongguo-service/` 业务编排层：九域 service（download / play / merge / login / series / settings / storage / transcode / capability）+ 全局业务状态 `AppState`（壳经 Tauri `manage` 注入，GPUI 壳直接构造）+ 共用任务运行时 `runtime`（后台任务任意线程可派发）+ 业务事件总线 `events`（`ServiceEvent`，壳订阅适配）。**不依赖任何 UI 框架**（源码静态闸扫 tauri 引用）：进度与状态只发布事件，发送机制由壳决定
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app
-- `crates/hongguo-playback/` 播放引擎（壳无关的媒体末端）：样本表驱动逐段取流（只消费 `hongguo-stream` 缓存）→ 平台解码（经 `hongguo-media-platform` 门面）→ 音频时钟 A/V 同步（cpal 流即主时钟，WSOLA 变速不变调）。输入 (vid, 档位)，出 NV12 帧 + 扬声器声音；取流编排留在调用方，当前消费方是 hongguo-gpui
-- `crates/hongguo-gpui/` GPUI 壳（起步单壳）：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放引擎在 `hongguo-playback`；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
+- `crates/hongguo-playback/` 播放引擎（壳无关的媒体末端）：样本表驱动逐段取流（只消费 `hongguo-stream` 缓存）→ 平台解码（经 `hongguo-media-platform` 门面）→ 音频时钟 A/V 同步（cpal 流即主时钟，WSOLA 变速不变调）。输入 (vid, 档位)，出 NV12 帧 + 扬声器声音；取流编排留在调用方，当前消费方是 hongguo-gpui。事件/播放源/打开参数已上收到 `hongguo-player-api`（下面那组），本 crate 只转出
+- `crates/hongguo-player-api/` 回放契约（无 UI、无平台实现依赖）：`PlayerEvent` / `PlaySource` / `OpenOptions` / `PlayerLike`（两后端的统一控制面）/ `PresenterBounds` / `HostWindow`。自研引擎与系统播放器都吃这一份
+- `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
+- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（rendering mode）+ 自定义 `IMFByteStream` + DirectComposition 视频位（vendored `gpui-pre-windows` 补丁）；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
+- `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
+- `crates/hongguo-gpui/` GPUI 壳（起步单壳）：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放引擎在 `hongguo-playback`、系统播放器在 `hongguo-player`；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format
 - `captures/` 抓包工具与数据（`addon.py` 抓包 / `audit.py` 参数审计），`docs/` 仓库文档，`scripts/` 构建辅助脚本
 

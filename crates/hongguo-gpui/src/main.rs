@@ -15,8 +15,6 @@
 //! 播放（帧流 → GPU 纹理）是 §5.3 spike，另行立项。
 
 #[cfg(target_os = "macos")]
-mod av_presenter;
-#[cfg(target_os = "macos")]
 mod av_spike;
 mod boss_key;
 mod bridge;
@@ -53,8 +51,6 @@ mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
 mod window_restore;
-#[cfg(target_os = "windows")]
-mod wm_presenter;
 
 use std::sync::Arc;
 use std::sync::OnceLock;

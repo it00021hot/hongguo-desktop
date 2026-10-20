@@ -43,16 +43,18 @@ MediaEngine（系统解码/音频时钟/倍速/seek）
 | --- | --- |
 | `vendor/gpui-pre-windows/src/system_video.rs` | 视频位访问器：按 HWND 取「DComp device + 视频位 visual」，设置舞台矩形/变换/裁剪并 `Commit` |
 | `vendor/gpui-pre-windows/src/directx_renderer.rs` | 视觉树改三层容器：根 →〔内容（swapchain）、视频位〕；注册到 `system_video` 表 |
-| `crates/hongguo-gpui/src/wm_presenter/mod.rs` | 门面：`prepare_window` / `open`（对齐 `av_presenter/mod.rs`） |
-| `crates/hongguo-gpui/src/wm_presenter/mf.rs` | `MFStartup` 一次、引擎创建（rendering mode）、倍速探测、统计读数 |
-| `crates/hongguo-gpui/src/wm_presenter/stream.rs` | `IMFByteStream` 实现：`hongguo-stream` Range 供数 + 异步 `BeginRead` + 续填钩子 |
-| `crates/hongguo-gpui/src/wm_presenter/events.rs` | `IMFMediaEngineNotify` 回调 → `PlayerEvent`（首帧/缓冲/播完/失败） |
-| `crates/hongguo-gpui/src/wm_presenter/player.rs` | `SystemPlayer`：`PlayerLike` + `VideoPresenter`、舞台几何、倍速补发、统计取证 |
-| `crates/hongguo-gpui/src/wm_presenter/view.rs` | HWND → 视频位；舞台几何提交；窗口透明背景 |
-| `crates/hongguo-gpui/src/platform/mod.rs` | `open_system_player` / `prepare_system_window` 的 Windows 分支 |
+| `crates/hongguo-player-api/` | 回放契约：`PlayerEvent` / `PlaySource` / `OpenOptions` / `PlayerLike` / 舞台几何 / `HostWindow`（不依赖 UI 与平台实现） |
+| `crates/hongguo-player-windows/src/lib.rs` | 门面：`prepare_window`（登记宿主窗口 + MFStartup）/ `open` |
+| `crates/hongguo-player-windows/src/mf.rs` | `MFStartup` 一次、引擎创建（rendering mode）、倍速探测、统计读数 |
+| `crates/hongguo-player-windows/src/stream.rs` | `IMFByteStream` 实现：`hongguo-stream` Range 供数 + 异步 `BeginRead` + 续填钩子 |
+| `crates/hongguo-player-windows/src/events.rs` | `IMFMediaEngineNotify` 回调 → `PlayerEvent`（首帧/缓冲/播完/失败） |
+| `crates/hongguo-player-windows/src/player.rs` | `SystemPlayer`：`PlayerLike` + `VideoPresenter`、舞台几何、倍速补发、统计取证 |
+| `crates/hongguo-player-windows/src/view.rs` | 宿主 `HostWindow` → 视频位；舞台几何提交 |
+| `crates/hongguo-player/` | 门面 crate：按 target 分派到 `hongguo-player-macos` / `-windows` |
+| `crates/hongguo-gpui/src/platform/mod.rs` | 壳侧接线：`host_window`（gpui Window → `HostWindow`）、透明背景、`open_system_player` / `prepare_system_window` |
 
-平台专属依赖只进 `[target.'cfg(target_os = "windows")'.dependencies]`；macOS
-代码路径（`av_presenter`）继续只在 macOS 目标编译，Windows 构建根本不碰。
+平台专属依赖只进各平台实现 crate 的 `[target.'cfg(target_os = …)'.dependencies]`；
+壳只依赖门面 `hongguo-player`，Windows 构建不碰任何 objc2，macOS 构建不碰 windows。
 
 ## 3. vendored gpui-pre-windows 补丁面（最小）
 

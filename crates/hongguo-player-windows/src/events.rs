@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hongguo_playback::PlayerEvent;
+use hongguo_player_api::PlayerEvent;
 use tokio::sync::mpsc;
 use windows::Win32::Media::MediaFoundation::{
     IMFMediaEngineNotify, IMFMediaEngineNotify_Impl, MF_MEDIA_ENGINE_EVENT_BUFFERINGENDED,

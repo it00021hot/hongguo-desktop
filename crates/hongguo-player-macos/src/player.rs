@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use gpui_kit::Window;
-use hongguo_playback::{PlaySource, PlayerEvent, PresenterBounds, PresenterFit, VideoPresenter};
+use hongguo_player_api::{
+    HostWindow, PlaySource, PlayerEvent, PlayerLike, PresenterBounds, PresenterFit, VideoPresenter,
+};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -18,7 +19,6 @@ use objc2_foundation::{NSArray, NSString, NSURL};
 use tokio::sync::mpsc;
 
 use super::{avf, loader, view};
-use crate::home::player::PlayerLike;
 
 /// 事件线程轮询间隔（缓冲/播完/失败都从这里出）。
 const EVENT_TICK: Duration = Duration::from_millis(100);
@@ -386,10 +386,10 @@ impl PlayerLike for SystemPlayer {
         true
     }
 
-    fn attach(&self, window: &Window) {
+    fn attach(&self, host: &HostWindow) {
         // 只建/复用宿主；可见性由紧随其后的 submit_stage 决定，避免 attach
         // 先把层亮出来、下一行又按 system_ready=false 藏回去的抖动。
-        let _ = view::ensure(window, self.player.get());
+        let _ = view::ensure(host, self.player.get());
     }
 
     fn submit_stage(&self, bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {

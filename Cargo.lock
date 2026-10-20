@@ -4409,13 +4409,13 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
- "gpui-pre-windows",
  "hongguo-api",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
  "hongguo-media-platform-api",
  "hongguo-playback",
+ "hongguo-player",
  "hongguo-protocol",
  "hongguo-service",
  "hongguo-store",
@@ -4433,8 +4433,6 @@ dependencies = [
  "smallvec",
  "sys-locale",
  "tokio",
- "windows 0.62.2",
- "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -4514,12 +4512,62 @@ dependencies = [
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
+ "hongguo-player-api",
  "hongguo-stream",
  "hongguo-video",
  "log",
  "parking_lot",
  "ringbuf",
  "tokio",
+]
+
+[[package]]
+name = "hongguo-player"
+version = "0.5.5"
+dependencies = [
+ "hongguo-player-api",
+ "hongguo-player-macos",
+ "hongguo-player-windows",
+ "tokio",
+]
+
+[[package]]
+name = "hongguo-player-api"
+version = "0.5.5"
+dependencies = [
+ "hongguo-media-platform-api",
+ "raw-window-handle",
+ "tokio",
+]
+
+[[package]]
+name = "hongguo-player-macos"
+version = "0.5.5"
+dependencies = [
+ "hongguo-player-api",
+ "hongguo-stream",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
+ "tokio",
+]
+
+[[package]]
+name = "hongguo-player-windows"
+version = "0.5.5"
+dependencies = [
+ "gpui-pre-windows",
+ "hongguo-player-api",
+ "hongguo-stream",
+ "log",
+ "raw-window-handle",
+ "tokio",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

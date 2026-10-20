@@ -1,9 +1,9 @@
 //! Windows 系统播放器：MediaEngine 的 [`PlayerLike`] / [`VideoPresenter`] 实现。
 //!
-//! 与 macOS 的 `av_presenter/player.rs` 对位：引擎自己解码、自己出声、自己把画面
-//! 合成进 DirectComposition 视觉；本层只做控制面（播放/暂停/seek/倍速/音量）、
-//! 舞台几何下发与引擎统计取证。窗口形态切换不重建引擎，只改视觉的
-//! offset/scale/clip（[`SystemVideoStage`]）。
+//! 与 macOS 实现的 `player.rs` 对位：引擎自己解码、自己出声、自己把画面合成进
+//! DirectComposition 视觉；本层只做控制面（播放/暂停/seek/倍速/音量）、舞台几何
+//! 下发与引擎统计取证。窗口形态切换不重建引擎，只改视觉的 offset/scale/clip
+//! （[`SystemVideoStage`]）。
 //!
 //! 引擎渲染分辨率：rendering mode 默认把视频画进一块 640×480 的固定表面（spike
 //! 实测），所以每次拿到原生尺寸就用 `UpdateVideoStream` 把落点重设成视频原生
@@ -13,9 +13,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui_kit::Window;
 use gpui_pre_windows::system_video::{SystemVideoLayer, SystemVideoStage};
-use hongguo_playback::{PlaySource, PlayerEvent, PresenterBounds, PresenterFit, VideoPresenter};
+use hongguo_player_api::{
+    HostWindow, PlaySource, PlayerEvent, PlayerLike, PresenterBounds, PresenterFit, StallHook,
+    VideoPresenter,
+};
 use tokio::sync::mpsc;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Media::MediaFoundation::{
@@ -24,7 +26,6 @@ use windows::Win32::Media::MediaFoundation::{
 };
 
 use super::{events, mf, stream, view};
-use crate::home::player::{PlayerLike, StallHook};
 
 /// 引擎统计取证周期（`HONGGUO_WM_METRICS=1` 才打）。
 const METRICS_EVERY: Duration = Duration::from_secs(5);
@@ -366,9 +367,9 @@ impl PlayerLike for SystemPlayer {
         (width as usize, height as usize)
     }
 
-    fn attach(&self, window: &Window) {
+    fn attach(&self, host: &HostWindow) {
         let mut state = self.state.lock().expect("视频位锁 poisoned");
-        state.scale = window.scale_factor();
+        state.scale = host.scale_factor;
         if state.layer.is_none() {
             state.layer = view::current_layer();
         }

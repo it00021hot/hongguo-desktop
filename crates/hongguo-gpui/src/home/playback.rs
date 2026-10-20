@@ -766,7 +766,8 @@ impl super::HomeView {
                 events,
             })
             .await?;
-            Opened::Ready(engine as Player, now)
+            // 自研引擎句柄 → 契约 trait 的零开销适配（见 `home/player.rs`）。
+            Opened::Ready(Arc::new(super::player::EnginePlayer(engine)) as Player, now)
         };
         Ok(opened)
     }

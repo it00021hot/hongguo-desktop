@@ -22,6 +22,12 @@ members = [
     "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",
     "crates/hongguo-playback",
+    # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
+    # 平台实现分 crate，壳只依赖门面（architecture-refactor.md「平台实现分 crate」）。
+    "crates/hongguo-player",
+    "crates/hongguo-player-api",
+    "crates/hongguo-player-macos",
+    "crates/hongguo-player-windows",
     "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",

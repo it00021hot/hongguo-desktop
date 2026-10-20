@@ -308,7 +308,11 @@ impl super::HomeView {
         // 系统播放器：画面层跟随舞台矩形（上一帧 prepaint 的 bounds），
         // 主线程挂载/更新原生 NSView + AVPlayerLayer。
         if let Some(player) = &self.player {
-            player.attach(window);
+            // 系统播放器只认契约的宿主窗口描述（原生句柄 + DPI 缩放）；把 gpui
+            // 窗口解成它这事归 platform 门面，视图这里不写平台分支。
+            if let Some(host) = crate::platform::host_window(window) {
+                player.attach(&host);
+            }
             // 顶栏 44px 只在 chrome 可见时占位（小屏/沉浸全屏没有顶栏）。
             // prepaint 原点 → 窗口绝对坐标的差异（Windows 已含顶栏、macOS 需补）
             // 属于窗口系统，归 `platform` 门面，这里不写平台常量。

@@ -28,7 +28,6 @@
 
 mod audio;
 pub mod player;
-pub mod presenter;
 mod resample;
 mod source;
 #[cfg(test)]
@@ -37,4 +36,6 @@ mod video;
 mod wsola;
 
 pub use player::{OpenOptions, PlaySource, PlayerEvent, PlayerHandle, open};
-pub use presenter::{PresenterBounds, PresenterFit, VideoPresenter};
+// 事件/播放源/舞台几何的契约在 `hongguo-player-api`（系统播放器与自研引擎
+// 共用）；本 crate 只转出，壳侧既有 `hongguo_playback::PlayerEvent` 导入不变。
+pub use hongguo_player_api::{PresenterBounds, PresenterFit, VideoPresenter};

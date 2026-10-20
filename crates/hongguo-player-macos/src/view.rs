@@ -1,8 +1,8 @@
 //! 原生视频宿主视图：挂在 GPUI 视图**下面**的一层 NSView + AVPlayerLayer。
 //!
 //! 透明洞机制：
-//! 1. 系统后端时窗口背景设成透明（Metal 层 clear alpha=0），窗口本身铺黑，
-//!    桌面不会从洞里透出来；
+//! 1. 系统后端时**壳**把窗口背景设成透明（Metal 层 clear alpha=0），这里再把
+//!    窗口铺黑，桌面不会从洞里透出来；黑边由 GPUI 自己画（两平台同一段代码）；
 //! 2. GPUI 壳根/舞台在播放时只画透明背景，叠层（控制条/弹幕/浮层）仍由
 //!    GPUI 画在视频层之上；
 //! 3. 视频 NSView 作为 contentView 的子视图插在 GPUIView 之下，rect 跟随
@@ -15,14 +15,13 @@ use std::ffi::CStr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gpui_kit::Window;
-use hongguo_playback::{PresenterBounds, PresenterFit};
+use hongguo_player_api::{HostWindow, PresenterBounds, PresenterFit};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::RawWindowHandle;
 
 use super::avf;
 
@@ -155,24 +154,23 @@ fn log_composition(tag: &str) {
     );
 }
 
-/// GPUI 窗口背后的 NSView。
-fn ns_view(window: &Window) -> Option<&NSView> {
-    let handle = HasWindowHandle::window_handle(window).ok()?.as_raw();
-    let RawWindowHandle::AppKit(handle) = handle else {
+/// 宿主窗口背后的 NSView。
+fn ns_view(host: &HostWindow) -> Option<&NSView> {
+    let RawWindowHandle::AppKit(handle) = host.handle else {
         return None;
     };
     // SAFETY: gpui-pre-macos 的 AppKitWindowHandle.ns_view 是窗口持有的 GPUIView。
     Some(unsafe { &*(handle.ns_view.as_ptr() as *const NSView) })
 }
 
-/// 系统后端启动时调用一次：窗口透明 + 背景铺黑。
+/// 系统后端启动时调用一次：窗口背景铺黑。
 ///
-/// 透明是为了让 GPUI 的 Metal 层不挡住下面的视频视图；背景黑是为了让
-/// 视频 contain 的黑边/尚未出画的区域仍然是黑，而不是桌面。
+/// 透明是由**壳**设的（GPUI 的 `set_background_appearance(Transparent)`，Metal
+/// 层清成 alpha=0 才有洞）——窗口外观属于 UI 框架语义，不在播放器实现里。
+/// 这里铺黑：视频 contain 的黑边/尚未出画的区域仍然是黑，而不是桌面。
 #[cfg(target_os = "macos")]
-pub fn prepare_window(window: &Window) {
-    window.set_background_appearance(gpui_kit::WindowBackgroundAppearance::Transparent);
-    let Some(view) = ns_view(window) else { return };
+pub fn prepare_window(host: &HostWindow) {
+    let Some(view) = ns_view(host) else { return };
     let Some(ns_window) = view.window() else {
         return;
     };
@@ -203,8 +201,8 @@ pub fn prepare_window(window: &Window) {
 }
 
 /// 挂上/切换当前播放器；返回 false 表示窗口不可用。
-pub fn ensure(window: &Window, player: &AnyObject) -> bool {
-    let Some(view) = ns_view(window) else {
+pub fn ensure(host: &HostWindow, player: &AnyObject) -> bool {
+    let Some(view) = ns_view(host) else {
         log::warn!("[AvPresenter] ensure: 取不到 NSView");
         return false;
     };

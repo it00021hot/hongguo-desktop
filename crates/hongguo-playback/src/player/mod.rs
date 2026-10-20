@@ -8,7 +8,6 @@
 //! 控制面语义与 Tauri 版一致：倍速 0.25–4（音频 WSOLA 变速不变调，时钟乘
 //! rate）、音量 0–1 与静音独立、seek 冲解码器与设备缓冲后从关键帧续播。
 
-mod event;
 mod feeder;
 mod handle;
 mod open;
@@ -18,8 +17,10 @@ use tokio::sync::mpsc;
 
 use crate::audio::{AudioDevice, Clock};
 
-pub use event::{OpenOptions, PlaySource, PlayerEvent};
+// 事件/播放源/打开参数已上收到契约 crate `hongguo-player-api`（系统播放器也
+// 用同一套）；这里只转出，壳侧 `hongguo_playback::PlayerEvent` 的导入路径不变。
 pub use handle::{MAX_RATE, MIN_RATE, PlayerHandle};
+pub use hongguo_player_api::{OpenOptions, PlaySource, PlayerEvent};
 pub use open::open;
 
 /// 音频起播看门狗的等待上限：设备启动在 HAL 层迟迟不返回时，超过它就让

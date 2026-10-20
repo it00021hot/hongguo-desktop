@@ -24,7 +24,7 @@ use windows::Win32::Media::MediaFoundation::{
 };
 use windows::core::{Interface, Result, implement};
 
-use crate::home::player::StallHook;
+use hongguo_player_api::StallHook;
 
 /// 一次 `read_range_cancellable` 最多取的字节数（渐进流可能只到了头部）。
 const READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;

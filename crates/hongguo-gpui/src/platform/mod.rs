@@ -71,60 +71,41 @@ pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
         .collect()
 }
 
-/// 系统播放器工厂（平台门面）。业务层只问 `video_backend::is_system()`，
-/// 不写 `#[cfg]`；非 macOS / Windows 目标返回 `None`（`video_backend` 已拒绝
-/// system）。
-#[cfg(target_os = "macos")]
+/// GPUI 窗口 → 契约的宿主窗口描述（[`hongguo_player::HostWindow`]）。
+///
+/// 系统播放器实现不依赖 gpui：壳在这里把原生句柄与 DPI 缩放解出来交给它。
+pub(crate) fn host_window(window: &gpui_kit::Window) -> Option<hongguo_player::HostWindow> {
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .ok()?
+        .as_raw();
+    Some(hongguo_player::HostWindow {
+        handle,
+        scale_factor: window.scale_factor(),
+    })
+}
+
+/// 系统播放器工厂：按目标分派到 `hongguo-player-macos` / `hongguo-player-windows`。
+/// 业务层只问 `video_backend::is_system()`，不写 `#[cfg]`；没有实现的目标恒
+/// `None`（`video_backend` 那边已经拒绝 system）。
 pub(crate) fn open_system_player(
-    source: hongguo_playback::PlaySource,
+    source: hongguo_player::PlaySource,
     start_secs: f64,
     rate: f64,
-    events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
-    on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    events: tokio::sync::mpsc::Sender<hongguo_player::PlayerEvent>,
+    on_stall: Option<hongguo_player::StallHook>,
 ) -> Option<crate::home::player::Player> {
-    Some(crate::av_presenter::open(
-        source, start_secs, rate, events, on_stall,
-    ))
+    hongguo_player::open(source, start_secs, rate, events, on_stall)
 }
 
-/// Windows：MediaEngine（rendering mode）+ 合成视觉；引擎起不来返回 `None`，
-/// 壳回落到自研上屏（见 `docs/gpui-system-player-windows.md`）。
-#[cfg(target_os = "windows")]
-pub(crate) fn open_system_player(
-    source: hongguo_playback::PlaySource,
-    start_secs: f64,
-    rate: f64,
-    events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
-    on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-) -> Option<crate::home::player::Player> {
-    crate::wm_presenter::open(source, start_secs, rate, events, on_stall)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn open_system_player(
-    _source: hongguo_playback::PlaySource,
-    _start_secs: f64,
-    _rate: f64,
-    _events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
-    _on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
-) -> Option<crate::home::player::Player> {
-    None
-}
-
-/// 系统后端窗口外观；非系统后端目标空操作。
-#[cfg(target_os = "macos")]
+/// 系统后端窗口外观：先让 GPUI 清成 alpha=0（透明洞的 UI 框架侧），再把窗口
+/// 交给播放器实现铺黑/挂视频位——窗口外观不属于播放器，句柄之外的语义都留在壳。
 pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
-    crate::av_presenter::prepare_window(window);
+    window.set_background_appearance(gpui_kit::WindowBackgroundAppearance::Transparent);
+    match host_window(window) {
+        Some(host) => hongguo_player::prepare_window(&host),
+        None => log::error!("[Platform] 取不到窗口原生句柄，系统后端不可用"),
+    }
 }
-
-/// Windows：窗口背景透明 + Media Foundation 进程级初始化。
-#[cfg(target_os = "windows")]
-pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
-    crate::wm_presenter::prepare_window(window);
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn prepare_system_window(_window: &gpui_kit::Window) {}
 
 /// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器视频位用）。
 /// 各平台的差异见 [`windows`] / [`macos`] 里的同名实现；无系统后端的目标恒等。

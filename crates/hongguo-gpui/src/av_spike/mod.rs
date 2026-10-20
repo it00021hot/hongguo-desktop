@@ -13,7 +13,7 @@
 //!
 //! 本模块只做 macos：`AVFoundation` 是系统框架，不引入任何外部 crate。
 
-pub(crate) use crate::av_presenter::{avf, loader};
+pub(crate) use hongguo_player::{avf, loader};
 mod measure;
 
 use std::sync::Arc;

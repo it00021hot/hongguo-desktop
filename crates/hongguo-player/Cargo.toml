@@ -1,0 +1,19 @@
+[package]
+name = "hongguo-player"
+description = "红果桌面版系统播放器门面：按编译目标分派到 macOS（AVPlayer）/ Windows（MediaEngine）实现"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 门面只做两件事：按 target 选实现、把契约原样转出。不含任何业务与 UI 代码。
+[dependencies]
+hongguo-player-api = { path = "../hongguo-player-api" }
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+hongguo-player-macos = { path = "../hongguo-player-macos" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+hongguo-player-windows = { path = "../hongguo-player-windows" }
