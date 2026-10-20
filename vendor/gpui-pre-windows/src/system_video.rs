@@ -187,3 +187,55 @@ pub(crate) fn install(
     }
     Ok(())
 }
+
+/// 窗口黑底：1×1 黑表面拉伸到覆盖整个窗口，垫在**所有**子视觉之下。
+///
+/// 为什么需要：视频位与 GPUI 内容是两张画布（各自 swapchain），快速改窗口
+/// 尺寸时必然错开一帧；窗口是 `DXGI_ALPHA_MODE_PREMULTIPLIED` 的透明合成窗，
+/// 任何没被内容或视频覆盖的像素会**直接漏出桌面**（实测拖快一点就在画面边缘
+/// 看到一条浅色细线）。macOS 从未出现这个问题，因为它的窗口背景是黑的——
+/// 这里补同一个语义：缝里露出来的一定是黑色。
+///
+/// 1×1 表面 + 8192 倍变换覆盖 ±4096 物理像素，任何窗口尺寸/DPI 都够用，
+/// 且不需要跟随 resize 更新（零每帧开销，显存占用 4 字节）。
+unsafe fn install_backdrop(
+    device: &IDCompositionDevice,
+    container: &IDCompositionVisual,
+) -> Result<IDCompositionVisual> {
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Direct3D11::{ID3D11Resource, ID3D11RenderTargetView,
+        ID3D11Texture2D};
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM};
+
+    let surface = device.CreateSurface(1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE)?;
+    let mut offset = windows::Win32::Foundation::POINT::default();
+    let texture: ID3D11Texture2D = surface.BeginDraw(None, &mut offset)?;
+    if let Ok(d3d) = texture.GetDevice()
+        && let Ok(context) = d3d.GetImmediateContext()
+        && let Ok(resource) = texture.cast::<ID3D11Resource>()
+    {
+        let mut view: Option<ID3D11RenderTargetView> = None;
+        if d3d
+            .CreateRenderTargetView(&resource, None, Some(&mut view))
+            .is_ok()
+            && let Some(view) = view
+        {
+            context.ClearRenderTargetView(&view, &[0.0, 0.0, 0.0, 1.0]);
+        }
+    }
+    surface.EndDraw()?;
+
+    let backdrop = device.CreateVisual()?;
+    backdrop.SetContent(&surface)?;
+    // 1×1 表面 → 覆盖 [-4096, 4096)² 物理像素。
+    backdrop.SetTransform2(&Matrix3x2 {
+        M11: 8192.0,
+        M22: 8192.0,
+        M31: -4096.0,
+        M32: -4096.0,
+        ..Matrix3x2::identity()
+    })?;
+    // insertAbove = TRUE + referenceVisual = NULL ⇒ 排在所有兄弟之后（最底层）。
+    container.AddVisual(&backdrop, true, None)?;
+    Ok(backdrop)
+}
