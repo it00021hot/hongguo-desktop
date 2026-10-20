@@ -206,6 +206,43 @@ impl HomeView {
                     this.wake_on_input(cx);
                     this.toggle_pause(cx);
                 }))
+                // 小窗拖窗：按下记起点，**在这层上**判位移（鼠标移动事件派发给
+                // 命中的最内层元素，挂在根容器上收不到——上一版就是因此拖不动）。
+                // 位移 <3px 视为单击（照常暂停），超过才起拖。
+                .on_mouse_down(
+                    gpui_kit::MouseButton::Left,
+                    cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, _| {
+                        if this.mini.is_some() {
+                            this.mini_drag = Some(ev.position);
+                        }
+                    }),
+                )
+                .on_mouse_up(
+                    gpui_kit::MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.mini_drag = None;
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, cx| {
+                        if this.mini.is_none() {
+                            return;
+                        }
+                        let Some(start) = this.mini_drag else {
+                            return;
+                        };
+                        if ev.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                            return;
+                        }
+                        let dx = (ev.position.x - start.x).as_f32().abs();
+                        let dy = (ev.position.y - start.y).as_f32().abs();
+                        if dx <= 3.0 && dy <= 3.0 {
+                            return;
+                        }
+                        this.mini_drag = None;
+                        crate::platform::start_window_move(window, cx);
+                    }),
+                )
                 .into_any_element()
         } else if video_ready {
             div()
@@ -716,19 +753,6 @@ impl HomeView {
             // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）
             .children(self.login_panel_open.then(|| self.render_login_panel(cx)))
-            // 小窗：**按住窗体任何地方立即拖**（用户口径，不要阈值）。
-            // macOS 的无边框窗口本来就允许拖背景，Windows 没有这行为，所以
-            // 这里补一个「按下即起拖」；小窗控制条自己 stop 了 mouse down
-            // （见 `mini_panel.rs`），所以拖不会和按钮抢事件。
-            // 怎么起拖（要不要延迟一拍）归 platform 门面，视图层无平台分支。
-            .on_mouse_down(
-                gpui_kit::MouseButton::Left,
-                cx.listener(|this, _: &gpui_kit::MouseDownEvent, window, cx| {
-                    if this.mini.is_some() {
-                        crate::platform::start_window_move(window, cx);
-                    }
-                }),
-            )
             // 布局哨兵：子层矩形只在这里可见，两次准备绘制之间比对（见字段注释）。
             // 第一个子层是封面槽（恒在、恒为舞台整块），出画时第二个是视频层、
             // 尺寸必须与它一致——不一致就是布局回归。
