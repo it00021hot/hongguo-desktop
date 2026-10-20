@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
+use crate::cache::StreamEntry;
 use crate::range::{ProtocolResponse, RangeSpec, parse_range, partial_headers};
+use crate::read::StreamReadError;
 use hongguo_video::streaming::{SparseBuffer, StreamingPlan};
 
 /// 等待数据就绪的最长时间（秒）。超时返回 502，避免请求永久挂起。
@@ -167,6 +169,113 @@ pub fn serve_cancellable(
     serve_inner(vid, definition, range_header, &cancelled)
 }
 
+/// 读取期间持有的条目租约：判断条目是否仍是缓存里的同一条。
+///
+/// 条目被逐出或同键重建（新 Arc）后，手里这份的填充必然已经死亡；继续等
+/// 只会等满 30s，所以每个等待切片都要用 [`is_current`](Self::is_current) 复查。
+pub(crate) struct EntryLease {
+    cache: &'static crate::StreamCache,
+    vid: String,
+    definition: u32,
+    pub(crate) entry: Arc<StreamEntry>,
+}
+
+impl EntryLease {
+    pub(crate) fn is_current(&self) -> bool {
+        self.cache
+            .get(&self.vid, self.definition)
+            .is_some_and(|entry| Arc::ptr_eq(&entry, &self.entry))
+    }
+}
+
+/// 条目已就绪的供数模式：整集（内存明文）或渐进（稀疏密文 + 解密计划）。
+pub(crate) enum EntryMode {
+    Whole,
+    Progressive(Arc<ProgressiveStream>),
+}
+
+/// 等条目就绪并拿到租约。
+///
+/// `serve()`（HTTP Range）与 [`crate::read`]（AVFoundation 字节读取）共用这
+/// 一段等待：两条路只是对“要哪段字节”的表达不同，就绪判定、取消/逐出
+/// 语义必须完全一致。
+pub(crate) fn wait_for_entry(
+    vid: &str,
+    definition: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(EntryLease, EntryMode), StreamReadError> {
+    let cache = crate::cache();
+    // 压根没有这一档：说明它已经被清掉了（或从没起播过）。
+    // 这种情况必须立刻报错，不能进等待——等满 30 秒才告诉用户「没这流」，
+    // 在切档的语境下就是一次白等。
+    let Some(entry) = cache.get(vid, definition) else {
+        // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
+        // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
+        log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
+        return Err(StreamReadError::Missing {
+            vid: vid.to_string(),
+            definition,
+        });
+    };
+    let lease = EntryLease {
+        cache,
+        vid: vid.to_string(),
+        definition,
+        entry,
+    };
+
+    // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
+    // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
+    // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
+    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+    let entered = std::time::Instant::now();
+    let mut polls: u64 = 0;
+    loop {
+        polls += 1;
+        if cancelled() {
+            log::info!("[Stream] {vid}@{definition} 等待就绪前已被取消（seek 重定位）");
+            return Err(StreamReadError::Cancelled);
+        }
+        if !lease.is_current() {
+            log::warn!("[Stream] {vid}@{definition} 等待就绪时条目已被逐出/重建，立即放弃");
+            return Err(StreamReadError::Replaced);
+        }
+        let prog = lease.entry.progressive.lock().clone();
+        let filled = *lease.entry.filled.lock();
+        // 首轮就绪是常态（渐进入注册即应答），只在异常等待时留痕：排障
+        // 「换集卡 20s」类问题看「已等 Xs」的一行即定位
+        if filled > 0 {
+            if polls > 1 {
+                log::info!(
+                    "[Stream][probe] mode 就绪(整集): polls={polls} 等 {:.3}s",
+                    entered.elapsed().as_secs_f64()
+                );
+            }
+            return Ok((lease, EntryMode::Whole));
+        }
+        if let Some(progressive) = prog {
+            if polls > 1 {
+                log::info!(
+                    "[Stream][probe] mode 就绪(渐进): polls={polls} 等 {:.3}s",
+                    entered.elapsed().as_secs_f64()
+                );
+            }
+            return Ok((lease, EntryMode::Progressive(progressive)));
+        }
+        if polls == 1 || polls.is_multiple_of(40) {
+            log::info!(
+                "[Stream][probe] mode 等待中: filled={filled} prog=false 已等 {:.3}s",
+                entered.elapsed().as_secs_f64()
+            );
+        }
+        if std::time::Instant::now() >= deadline {
+            log::warn!("[Stream] {vid}@{definition} 等待流就绪超时（{WAIT_TIMEOUT_SECS}s）");
+            return Err(StreamReadError::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn serve_inner(
     vid: &str,
     definition: u32,
@@ -177,103 +286,32 @@ fn serve_inner(
     // 时用 RUST_LOG=debug 打开，日常不刷屏。
     log::debug!("[Stream] 请求 vid={vid} def={definition} range={range_header:?}");
 
-    let c = crate::cache();
-    // 压根没有这一档：说明它已经被清掉了（或从没起播过）。
-    // 这种情况必须立刻报错，不能进等待——等满 30 秒才告诉用户「没这流」，
-    // 在切档的语境下就是一次白等。
-    let entry = match c.get(vid, definition) {
-        Some(e) => e,
-        None => {
-            // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
-            // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
-            log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
-            return Err(format!("没有正在准备的在线流: {vid}@{definition}"));
-        }
-    };
-
-    // 「这条流还是不是眼前这条」：条目被逐出或同键重建（新 Arc）后，手里这份
-    // 的填充必然已经死亡，继续等只会等满 30s——立即报错，让前端的自动重试
-    // 尽快接手（重新 prepare 命中新条目，续播位置不丢）。
-    let still_current = {
-        let vid = vid.to_string();
-        let entry = entry.clone();
-        move || {
-            c.get(&vid, definition)
-                .is_some_and(|e| Arc::ptr_eq(&e, &entry))
-        }
-    };
-
-    // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
-    // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
-    // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
-    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
-    let entered = std::time::Instant::now();
-    let mut polls: u64 = 0;
-    let mode = loop {
-        polls += 1;
-        if cancelled() {
-            log::info!("[Stream] {vid}@{definition} 等待就绪前已被取消（seek 重定位）");
-            return Err("读取已取消（seek 重定位）".to_string());
-        }
-        if !still_current() {
-            log::warn!("[Stream] {vid}@{definition} 等待就绪时条目已被逐出/重建，立即放弃");
-            return Err("在线流已被替换，请重试".to_string());
-        }
-        let prog = entry.progressive.lock().clone();
-        let filled = *entry.filled.lock();
-        // 首轮就绪是常态（渐进入注册即应答），只在异常等待时留痕：排障
-        // 「换集卡 20s」类问题看「已等 Xs」的一行即定位
-        if filled > 0 {
-            if polls > 1 {
-                log::info!(
-                    "[Stream][probe] mode 就绪(整集): polls={polls} 等 {:.3}s",
-                    entered.elapsed().as_secs_f64()
-                );
-            }
-            break None;
-        }
-        if let Some(p) = prog {
-            if polls > 1 {
-                log::info!(
-                    "[Stream][probe] mode 就绪(渐进): polls={polls} 等 {:.3}s",
-                    entered.elapsed().as_secs_f64()
-                );
-            }
-            break Some(p);
-        }
-        if polls == 1 || polls.is_multiple_of(40) {
-            log::info!(
-                "[Stream][probe] mode 等待中: filled={filled} prog=false 已等 {:.3}s",
-                entered.elapsed().as_secs_f64()
-            );
-        }
-        if std::time::Instant::now() >= deadline {
-            log::warn!("[Stream] {vid}@{definition} 等待流就绪超时（{WAIT_TIMEOUT_SECS}s）");
-            return Err("等待流就绪超时".to_string());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let (lease, mode) =
+        wait_for_entry(vid, definition, cancelled).map_err(|error| error.to_string())?;
 
     match mode {
         // 整集模式：size 只在 store 里从 0 变成真实值一次，之后再不变
-        None => {
-            let size = *entry.size.lock();
-            let buffer = entry.buffer.lock();
+        EntryMode::Whole => {
+            // 锁序与 store 一致（buffer → size），避免与写入侧交叉等待。
+            let buffer = lease.entry.buffer.lock();
+            let size = *lease.entry.size.lock();
             Ok(respond(&buffer, parse_range(range_header, size), size))
         }
-        Some(prog) => serve_progressive(&prog, range_header, &still_current, cancelled),
+        EntryMode::Progressive(progressive) => {
+            serve_progressive(&progressive, range_header, &lease, cancelled)
+        }
     }
 }
 
 /// 渐进模式应答：把明文 Range 映射回密文区间，等齐、解密、拼装。
 ///
-/// `still_current` 为假（条目被逐出/同键重建）时立即放弃等待——手里的
-/// 渐进流已经没人喂了，等满超时只是把断流拖长成 30 秒黑屏。
-/// `cancelled` 命中（播放端 seek 重定位）时同样立即放弃，注销读者登记。
+/// `lease` 在等待期间被逐出/同键重建时立即放弃——手里的渐进流已经没人喂
+/// 了，等满超时只是把断流拖长成 30 秒黑屏。`cancelled` 命中（播放端 seek
+/// 重定位）时同样立即放弃，注销读者登记。
 fn serve_progressive(
     prog: &Arc<ProgressiveStream>,
     range_header: Option<&str>,
-    still_current: &impl Fn() -> bool,
+    lease: &EntryLease,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<ProtocolResponse, String> {
     let plain_len = prog.plain_len;
@@ -301,45 +339,8 @@ fn serve_progressive(
         }
     };
 
-    // 等依赖的密文区间。先把需求登记进 ReaderDemand（填充调度器据此
-    // 优先下这一段），再在覆盖表的条件变量上等：字节一落盘立即唤醒。
-    let needed = prog.needed(start, end);
-    if !prog.sparse.wait_cover(&needed, Duration::ZERO) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
-        // 切片等待：数据到达由条件变量即时唤醒；切片只是给「条目被逐出」
-        // 与总超时留个检查点，不再是 50ms 轮询。
-        const WAIT_SLICE: Duration = Duration::from_millis(200);
-        let ticket = prog.demand.register(&needed);
-        let outcome = loop {
-            if prog.sparse.wait_cover(&needed, WAIT_SLICE) {
-                break Ok(());
-            }
-            if cancelled() {
-                log::info!(
-                    "[Stream] 等待明文区间 {start}-{end} 期间被取消（seek 重定位），注销读者登记退场"
-                );
-                break Err("读取已取消（seek 重定位）".to_string());
-            }
-            if !still_current() {
-                log::warn!(
-                    "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
-                );
-                break Err("在线流已被替换，请重试".to_string());
-            }
-            if std::time::Instant::now() >= deadline {
-                // 典型成因：填充线程停摆或网络断供，播放追上了填充前沿
-                log::warn!(
-                    "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
-                );
-                break Err("等待流就绪超时".to_string());
-            }
-        };
-        prog.demand.unregister(ticket);
-        outcome?;
-    }
-
-    let mut body = vec![0u8; (end - start) as usize];
-    prog.render(start, end, &mut body);
+    let body =
+        read_plain_range(prog, start, end, lease, cancelled).map_err(|error| error.to_string())?;
 
     if range_header.is_some() {
         Ok((206, partial_headers(start, end - 1, plain_len), body))
@@ -356,6 +357,63 @@ fn serve_progressive(
             body,
         ))
     }
+}
+
+/// 读一段明文 `[start, end)`：等依赖的密文区间、登记读者需求、惰性解密。
+///
+/// `serve()` 与 [`crate::read`] 的字节读取都走这里——HTTP 头、206 状态码
+/// 是壳层语义，数据面的等待/解密/需求登记只有这一份实现。
+pub(crate) fn read_plain_range(
+    prog: &ProgressiveStream,
+    start: u64,
+    end: u64,
+    lease: &EntryLease,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<u8>, StreamReadError> {
+    if start >= end {
+        return Ok(Vec::new());
+    }
+
+    // 先把需求登记进 ReaderDemand（填充调度器据此优先下这一段），再在覆盖
+    // 表的条件变量上等：字节一落盘立即唤醒。
+    let needed = prog.needed(start, end);
+    if !prog.sparse.wait_cover(&needed, Duration::ZERO) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+        // 切片等待：数据到达由条件变量即时唤醒；切片只是给「条目被逐出」
+        // 与总超时留个检查点，不再是 50ms 轮询。
+        const WAIT_SLICE: Duration = Duration::from_millis(200);
+        let ticket = prog.demand.register(&needed);
+        let outcome = loop {
+            if prog.sparse.wait_cover(&needed, WAIT_SLICE) {
+                break Ok(());
+            }
+            if cancelled() {
+                log::info!(
+                    "[Stream] 等待明文区间 {start}-{end} 期间被取消（seek 重定位），注销读者登记退场"
+                );
+                break Err(StreamReadError::Cancelled);
+            }
+            if !lease.is_current() {
+                log::warn!(
+                    "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
+                );
+                break Err(StreamReadError::Replaced);
+            }
+            if std::time::Instant::now() >= deadline {
+                // 典型成因：填充线程停摆或网络断供，播放追上了填充前沿
+                log::warn!(
+                    "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
+                );
+                break Err(StreamReadError::Timeout);
+            }
+        };
+        prog.demand.unregister(ticket);
+        outcome?;
+    }
+
+    let mut body = vec![0u8; (end - start) as usize];
+    prog.render(start, end, &mut body);
+    Ok(body)
 }
 
 /// 渐进模式的开放 Range 窗口大小，可用 `HONGGUO_STREAM_WINDOW` 覆盖。
@@ -844,6 +902,140 @@ mod tests {
             proxy: Default::default(),
         };
         assert!(!c.set_progressive("v-race", 720, Arc::new(prog)));
+    }
+
+    // ------------------------------------------------ 字节级读取（AVFoundation）
+
+    use crate::read::StreamReadError;
+    use crate::{read_range, read_range_cancellable, total_len};
+
+    #[test]
+    fn byte_reads_whole_mode_range_like_serve() {
+        ready_stream("v-bytes-whole", 1080, 4096);
+        assert_eq!(total_len("v-bytes-whole", 1080), Some(4096));
+
+        let chunk = read_range("v-bytes-whole", 1080, 100, Some(50)).expect("闭区间应成功");
+        let reference: Vec<u8> = (100..150).map(|i| (i % 251) as u8).collect();
+        assert_eq!(chunk.total, 4096);
+        assert_eq!(chunk.start, 100);
+        assert_eq!(chunk.bytes, reference);
+
+        // 与 HTTP 版逐字节一致：两条路共用同一份数据面
+        let (status, _, body) = serve("v-bytes-whole", 1080, Some("bytes=100-149")).unwrap();
+        assert_eq!(status, 206);
+        assert_eq!(body, chunk.bytes);
+    }
+
+    #[test]
+    fn byte_read_range_clamps_at_end_and_allows_eof_read() {
+        ready_stream("v-bytes-clamp", 1080, 4096);
+
+        let tail = read_range("v-bytes-clamp", 1080, 4090, Some(100)).expect("越过末尾应截断");
+        assert_eq!(tail.bytes.len(), 6, "只应回末尾剩余字节");
+        assert_eq!(tail.total, 4096);
+
+        let eof = read_range("v-bytes-clamp", 1080, 4096, None).expect("EOF 读应成功");
+        assert!(eof.bytes.is_empty());
+        assert_eq!(eof.start, 4096);
+
+        let empty = read_range("v-bytes-clamp", 1080, 4090, Some(0)).expect("零长读应成功");
+        assert!(empty.bytes.is_empty());
+
+        let error = read_range("v-bytes-clamp", 1080, 4097, Some(1)).expect_err("越界应报错");
+        assert!(matches!(
+            error,
+            StreamReadError::OutOfRange {
+                start: 4097,
+                total: 4096
+            }
+        ));
+    }
+
+    #[test]
+    fn byte_progressive_len_is_known_before_any_data() {
+        let (sparse, cipher, reference, plain_len) = progressive_fixture("v-bytes-prog", 720);
+        // contentLength 必须在 AVURLAsset 创建前就可用
+        assert_eq!(total_len("v-bytes-prog", 720), Some(plain_len));
+
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            sparse.write(0, &cipher);
+        });
+        let chunk = read_range("v-bytes-prog", 720, 10, Some(20)).expect("渐进读应成功");
+        writer.join().unwrap();
+        assert_eq!(chunk.bytes, &reference[10..30]);
+        assert_eq!(chunk.total, plain_len);
+    }
+
+    #[test]
+    fn byte_progressive_read_cancel_unregisters_demand() {
+        let (sparse, cipher, _reference, _len) = progressive_fixture("v-bytes-cancel", 720);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_cb = Arc::clone(&cancel);
+        let reader = std::thread::spawn(move || {
+            read_range_cancellable("v-bytes-cancel", 720, 10, Some(10), || {
+                cancel_cb.load(Ordering::Relaxed)
+            })
+        });
+        std::thread::sleep(Duration::from_millis(150));
+
+        let c = crate::cache();
+        let prog = c
+            .get("v-bytes-cancel", 720)
+            .and_then(|entry| entry.progressive.lock().clone())
+            .expect("渐进条目应在");
+        assert!(prog.demand.has_waiters(), "等待期间应留下读者登记");
+
+        cancel.store(true, Ordering::Relaxed);
+        let started = std::time::Instant::now();
+        let error = reader
+            .join()
+            .expect("读取线程不应 panic")
+            .expect_err("应被取消");
+        assert!(matches!(error, StreamReadError::Cancelled));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "取消应立即生效，实际 {:?}",
+            started.elapsed()
+        );
+        assert!(!prog.demand.has_waiters(), "取消后读者登记应注销");
+
+        // 条目仍可用：数据随后补齐即可正常读
+        sparse.write(0, &cipher);
+        let chunk = read_range("v-bytes-cancel", 720, 10, Some(10)).expect("取消后应可重读");
+        assert_eq!(chunk.bytes, &cipher[10..20]);
+    }
+
+    #[test]
+    fn byte_missing_entry_is_an_error_not_a_hang() {
+        let error = read_range("v-bytes-never", 720, 0, Some(1)).expect_err("未准备的流应报错");
+        assert!(matches!(error, StreamReadError::Missing { .. }));
+        assert_eq!(total_len("v-bytes-never", 720), None);
+    }
+
+    #[test]
+    fn byte_reads_identity_progressive_stream() {
+        // 未加密流（plan=None）：明文就是密文，字节 API 与 serve 同源
+        let c = crate::cache();
+        let data: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
+        let sparse = SparseBuffer::new(data.len() as u64);
+        sparse.write(0, &data);
+        let prog = ProgressiveStream {
+            sparse,
+            plan: None,
+            plain_len: data.len() as u64,
+            demand: ReaderDemand::new(),
+            cdn_url: "https://cdn/example.mp4".into(),
+            proxy: Default::default(),
+        };
+        c.remove("v-bytes-raw", 720);
+        assert!(c.begin_fetch("v-bytes-raw", 720));
+        c.end_fetch("v-bytes-raw", 720);
+        assert!(c.set_progressive("v-bytes-raw", 720, Arc::new(prog)));
+
+        assert_eq!(total_len("v-bytes-raw", 720), Some(600));
+        let chunk = read_range("v-bytes-raw", 720, 100, Some(100)).unwrap();
+        assert_eq!(chunk.bytes, &data[100..200]);
     }
 
     // ------------------------------------------------------------- 需求登记表

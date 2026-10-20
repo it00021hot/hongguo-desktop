@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use objc2::runtime::AnyObject;
 use objc2_foundation::NSArray;
 
-use super::{avf, loader};
+use super::{SpikeEpisode, avf, loader};
 
 /// 2ms 轮询：25fps 帧间隔 40ms、2x 下 20ms，2ms 粒度足以抓到每一帧。
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
@@ -39,14 +39,23 @@ struct SeekOutcome {
     to_frame_ms: Option<f64>,
 }
 
-pub fn run(player_addr: usize, layer_addr: usize, refresh_hz: f64) -> ! {
+pub fn run(
+    player_addr: usize,
+    layer_addr: usize,
+    refresh_hz: f64,
+    first: SpikeEpisode,
+    second: SpikeEpisode,
+) -> ! {
     // SAFETY: player 由主线程创建并泄漏，引用覆盖整个进程；测量线程退出前
     // 不会有人释放它。
     let player: &AnyObject = unsafe { &*(player_addr as *const AnyObject) };
 
-    let asset = avf::custom_url("ep1").expect("自定义 scheme URL 构造失败");
-    let asset = avf::asset_with_url(&asset);
-    loader::attach(&asset);
+    log::info!("[AvSpike] 播放 A：{}", first.label);
+    log::info!("[AvSpike] 切集 B：{}", second.label);
+    let asset_url = avf::custom_url(&format!("{}-main", first.slug)).expect("自定义 scheme URL");
+    let asset = avf::asset_with_url(&asset_url);
+    // delegate 由 loader 内部泄漏成进程级强引用（weak 属性，不能只靠局部变量）。
+    loader::attach(&asset, first.source.clone());
     let item = avf::item_with_asset(&asset);
     avf::set_spectral_pitch(&item);
     let output = avf::video_output();
@@ -62,13 +71,18 @@ pub fn run(player_addr: usize, layer_addr: usize, refresh_hz: f64) -> ! {
     let fps = f64::from(avf::nominal_fps(&asset));
     let duration = avf::duration(&asset).seconds();
     log::info!(
-        "[AvSpike] item ready: {fps:.1}fps / {duration:.3}s / pitch={:?} / loader_requests={} / loader_bytes={}",
+        "[AvSpike] item ready: {fps:.1}fps / {duration:.3}s / pitch={:?} / \
+         loader_requests={} / loader_bytes={} / loader_errors={}",
         avf::audio_pitch_algorithm(&item),
         loader::REQUESTS.load(std::sync::atomic::Ordering::Relaxed),
         loader::BYTES_SERVED.load(std::sync::atomic::Ordering::Relaxed),
+        loader::ERRORS.load(std::sync::atomic::Ordering::Relaxed),
     );
 
-    for (label, rate, seconds) in [("1x", 1.0_f32, 5.0_f64), ("2x", 2.0, 8.0), ("3x", 3.0, 5.0)] {
+    for (label, rate, seconds) in [("2x", 2.0_f32, 8.0_f64), ("1x", 1.0, 5.0), ("3x", 3.0, 5.0)] {
+        // 在线短剧可能没有 8s 长：按实际时长收窄采样窗口，别把片尾算成掉帧。
+        let usable = duration / f64::from(rate) * 0.8;
+        let seconds = seconds.min(usable).max(2.0);
         report_playback(player, &output, label, rate, fps, refresh_hz, seconds);
     }
 
@@ -77,17 +91,19 @@ pub fn run(player_addr: usize, layer_addr: usize, refresh_hz: f64) -> ! {
 
     // seek 精度：暂停后零容差 seek（精确到帧与倍速无关），逐帧目标包含 ±1 帧。
     avf::pause(player);
+    let max_frame = ((duration * fps).floor() as i64 - 1).max(0);
     let mut outcomes = Vec::new();
     for frame in [0_i64, 1, 60, 61, 299, 300, 301, 450, 499, 300] {
+        let frame = frame.min(max_frame);
         outcomes.push(seek_case(player, &output, frame, fps));
     }
     // 2x 播放中 seek：只要求落点 ±2 帧（seek 期间播放仍在推进），单独记录。
-    seek_while_playing(player, &output, 200, fps);
+    seek_while_playing(player, &output, 200.min(max_frame), fps);
     report_seek_summary(&outcomes, fps);
 
     // 切集：AVQueuePlayer 预加载下一项，advanceToNextItem 接力。
-    let cutover_1x = cutover(player, &asset, fps, 1.0, 5);
-    let cutover_2x = cutover(player, &asset, fps, 2.0, 3);
+    let cutover_1x = cutover(player, &asset, &second, fps, 1.0, 5);
+    let cutover_2x = cutover(player, &asset, &second, fps, 2.0, 3);
     log::info!(
         "[AvSpike] cutover summary rate=1x n={} median={:.1}ms max={:.1}ms",
         cutover_1x.len(),
@@ -101,6 +117,12 @@ pub fn run(player_addr: usize, layer_addr: usize, refresh_hz: f64) -> ! {
         cutover_2x.last().copied().unwrap_or(0.0)
     );
 
+    log::info!(
+        "[AvSpike] loader totals: requests={} bytes={} errors={}",
+        loader::REQUESTS.load(std::sync::atomic::Ordering::Relaxed),
+        loader::BYTES_SERVED.load(std::sync::atomic::Ordering::Relaxed),
+        loader::ERRORS.load(std::sync::atomic::Ordering::Relaxed),
+    );
     log::info!(
         "[AvSpike] pitch: algorithm=Spectral（系统频谱变速）；音高客观测量需要录音回环，本 spike 未做"
     );
@@ -309,14 +331,25 @@ fn report_seek_summary(outcomes: &[SeekOutcome], fps: f64) {
     );
 }
 
-fn cutover(player: &AnyObject, asset_a: &AnyObject, fps: f64, rate: f32, runs: usize) -> Vec<f64> {
+fn cutover(
+    player: &AnyObject,
+    asset_a: &AnyObject,
+    episode_b: &SpikeEpisode,
+    fps: f64,
+    rate: f32,
+    runs: usize,
+) -> Vec<f64> {
     avf::pause(player);
-    let asset_b_url = avf::custom_url("ep2").expect("ep2 URL");
-    let asset_b = avf::asset_with_url(&asset_b_url);
-    loader::attach(&asset_b);
     let mut gaps = Vec::new();
 
     for run in 0..runs {
+        // 每轮新建 asset/loader：同一个 AVURLAsset 会被 AVFoundation 按 URL
+        // 缓存，复用会让第二轮起根本不再走 delegate。
+        let asset_b_url =
+            avf::custom_url(&format!("{}-r{run}", episode_b.slug)).expect("episode B URL");
+        let asset_b = avf::asset_with_url(&asset_b_url);
+        loader::attach(&asset_b, episode_b.source.clone());
+
         let item_a = avf::item_with_asset(asset_a);
         let output_a = avf::video_output();
         avf::add_output(&item_a, &output_a);
@@ -341,7 +374,7 @@ fn cutover(player: &AnyObject, asset_a: &AnyObject, fps: f64, rate: f32, runs: u
         let status_before = avf::item_status(&item_b);
         let started = Instant::now();
         avf::advance_to_next_item(&queue);
-        let first = wait_first_frame(&output_b, &queue, Duration::from_secs(2));
+        let first = wait_first_frame(&output_b, &queue, Duration::from_secs(6));
         let gap_ms = started.elapsed().as_secs_f64() * 1000.0;
         gaps.push(gap_ms);
         log::info!(
