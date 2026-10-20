@@ -222,3 +222,8 @@ pub(crate) fn set_traffic_lights_hidden(window: &Window, hidden: bool) {
 pub(crate) fn visibility(window: &Window) -> bool {
     is_visible(window)
 }
+
+/// 起拖窗口（小窗整窗拖动）：macOS 直接进系统的窗口移动循环。
+pub(crate) fn start_window_move(window: &mut Window, _cx: &gpui_kit::App) {
+    window.start_window_move();
+}

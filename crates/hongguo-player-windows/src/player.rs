@@ -276,6 +276,12 @@ impl SystemPlayer {
 
 /// 舞台几何换算：视频原生尺寸 → 舞台内的位置/缩放（`contain` 留黑边、
 /// `cover` 溢出裁切，裁剪在视觉树里由裁剪视觉完成）。
+///
+/// **落点对齐到整物理像素**：视频位是独立的 DComp 视觉，它和 GPUI 内容不在
+/// 同一张画布上；分数坐标 + 双线性采样会让画面最外圈半个像素采到渲染目标
+/// 之外（透明），叠在透明洞上就是一条浅色细线（用户实测「窗口缩放时视频
+/// 边缘有白线、像不在一个图层」）。取整后视频与目标 1:1 映射，边缘像素完整
+/// 不透明；舞台原点同样取整，窗口拖动/缩放时不会出现 1px 抖动。
 fn geometry(
     bounds: PresenterBounds,
     fit: PresenterFit,
@@ -283,8 +289,10 @@ fn geometry(
     (native_w, native_h): (u32, u32),
 ) -> SystemVideoStage {
     let scale = f64::from(scale);
-    let width = f64::from(bounds.width) * scale;
-    let height = f64::from(bounds.height) * scale;
+    let x = (f64::from(bounds.x) * scale).round();
+    let y = (f64::from(bounds.y) * scale).round();
+    let width = (f64::from(bounds.width) * scale).round().max(1.0);
+    let height = (f64::from(bounds.height) * scale).round().max(1.0);
     let native_w = f64::from(native_w);
     let native_h = f64::from(native_h);
     let contain = (width / native_w).min(height / native_h);
@@ -293,15 +301,19 @@ fn geometry(
         PresenterFit::Contain => contain,
         PresenterFit::Cover => cover,
     };
+    // 视频在该比例下的整数像素尺寸（逐轴取整：contain 下两轴比例一致，
+    // 取整误差 ≤0.5px，肉眼不可见；换来的是边缘采样不再越界）。
+    let video_w = (native_w * ratio).round().max(1.0);
+    let video_h = (native_h * ratio).round().max(1.0);
     SystemVideoStage {
-        x: (f64::from(bounds.x) * scale) as f32,
-        y: (f64::from(bounds.y) * scale) as f32,
+        x: x as f32,
+        y: y as f32,
         width: width as f32,
         height: height as f32,
-        scale_x: ratio as f32,
-        scale_y: ratio as f32,
-        offset_x: ((width - native_w * ratio) / 2.0) as f32,
-        offset_y: ((height - native_h * ratio) / 2.0) as f32,
+        scale_x: (video_w / native_w) as f32,
+        scale_y: (video_h / native_h) as f32,
+        offset_x: ((width - video_w) / 2.0).round() as f32,
+        offset_y: ((height - video_h) / 2.0).round() as f32,
     }
 }
 

@@ -35,6 +35,11 @@ impl HomeView {
         if bar_y < 0.5 && bar_x < 0.5 {
             return None;
         }
+        // 黑边往画面里压 1px：视频位是独立原生层，和最上层 GPUI 内容的像素
+        // 网格在缩放后可能差半像素，边界会露出透明洞（用户实测「桌面缩放时
+        // 视频边缘一条白线、像不在一个图层」）。压 1px 后边界永远被不透明
+        // 黑色盖住，画面少 1px 肉眼不可见；四块都黑所以互相重叠也无妨。
+        const SEAM_COVER: f32 = 1.0;
         let black = gpui_kit::rgb(0x000000);
         Some(
             div()
@@ -46,7 +51,7 @@ impl HomeView {
                         .top_0()
                         .left_0()
                         .right_0()
-                        .h(gpui_kit::px(bar_y))
+                        .h(gpui_kit::px(bar_y + SEAM_COVER))
                         .bg(black),
                 )
                 .child(
@@ -55,25 +60,25 @@ impl HomeView {
                         .bottom_0()
                         .left_0()
                         .right_0()
-                        .h(gpui_kit::px(bar_y))
+                        .h(gpui_kit::px(bar_y + SEAM_COVER))
                         .bg(black),
                 )
                 .child(
                     div()
                         .absolute()
-                        .top(gpui_kit::px(bar_y))
-                        .bottom(gpui_kit::px(bar_y))
+                        .top_0()
+                        .bottom_0()
                         .left_0()
-                        .w(gpui_kit::px(bar_x))
+                        .w(gpui_kit::px(bar_x + SEAM_COVER))
                         .bg(black),
                 )
                 .child(
                     div()
                         .absolute()
-                        .top(gpui_kit::px(bar_y))
-                        .bottom(gpui_kit::px(bar_y))
+                        .top_0()
+                        .bottom_0()
                         .right_0()
-                        .w(gpui_kit::px(bar_x))
+                        .w(gpui_kit::px(bar_x + SEAM_COVER))
                         .bg(black),
                 )
                 .into_any_element(),

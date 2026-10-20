@@ -113,3 +113,7 @@ pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
 pub(crate) fn stage_origin(x: f32, y: f32, _chrome_top: f32) -> (f32, f32) {
     (x, y)
 }
+
+/// 起拖窗口：没有原生实现的平台空操作（不会走到，`SUPPORTED` 已拒绝）。
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub(crate) fn start_window_move(_window: &mut gpui_kit::Window, _cx: &gpui_kit::App) {}

@@ -716,6 +716,43 @@ impl HomeView {
             // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）
             .children(self.login_panel_open.then(|| self.render_login_panel(cx)))
+            // 小窗整窗可拖（Tauri `data-tauri-drag-region` 同款）：按下记起点，
+            // 按住移动超过 4px 才起拖窗口——低于阈值仍走点击（暂停/继续）。
+            // 「要不要延迟一拍、怎么起拖」归 platform 门面，这里不写平台分支。
+            // （此前小窗完全没有拖窗入口，用户实测「小窗拖不动位置」。）
+            .on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, _| {
+                    if this.mini.is_some() {
+                        this.stage_drag = Some(ev.position);
+                    }
+                }),
+            )
+            .on_mouse_up(
+                gpui_kit::MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.stage_drag = None;
+                }),
+            )
+            .on_mouse_move(
+                cx.listener(|this, ev: &gpui_kit::MouseMoveEvent, window, cx| {
+                    // 只认按住左键的移动：控件内部可能 stop 掉 mouse up，
+                    // 那样 stage_drag 会滞留 Some（顶栏同款判据）。
+                    if ev.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                        return;
+                    }
+                    let Some(start) = this.stage_drag else {
+                        return;
+                    };
+                    let dx = (ev.position.x - start.x).as_f32().abs();
+                    let dy = (ev.position.y - start.y).as_f32().abs();
+                    if dx <= 4.0 && dy <= 4.0 {
+                        return;
+                    }
+                    this.stage_drag = None;
+                    crate::platform::start_window_move(window, cx);
+                }),
+            )
             // 布局哨兵：子层矩形只在这里可见，两次准备绘制之间比对（见字段注释）。
             // 第一个子层是封面槽（恒在、恒为舞台整块），出画时第二个是视频层、
             // 尺寸必须与它一致——不一致就是布局回归。

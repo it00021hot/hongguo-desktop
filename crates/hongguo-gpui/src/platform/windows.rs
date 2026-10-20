@@ -298,3 +298,17 @@ pub(crate) fn visibility(window: &Window) -> bool {
 fn defer_window_op(window: &Window, cx: &gpui_kit::App, op: impl FnOnce() + Send + 'static) {
     window.spawn(cx, async move |_| op()).detach();
 }
+
+/// 起拖窗口（小窗整窗拖动；顶栏用的是同一套 Win32 系统移动循环）。
+///
+/// `WM_NCLBUTTONDOWN(HTCAPTION)` 会同步进入系统移动循环：在 gpui 事件分发
+/// 当口同步派发 WM_* 会撞它的借用，所以经 [`defer_window_op`] 挪到执行器
+/// 下一拍——物理按键仍按着，移动循环照进（顶栏拖窗踩过同款）。
+pub(crate) fn start_window_move(window: &Window, cx: &gpui_kit::App) {
+    let Some(hwnd) = crate::win32::hwnd_of(window) else {
+        return;
+    };
+    defer_window_op(window, cx, move || {
+        crate::win32::start_window_move(hwnd);
+    });
+}
