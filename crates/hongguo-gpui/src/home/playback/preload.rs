@@ -86,10 +86,10 @@ impl super::HomeView {
         cx.spawn(async move |this, cx| {
             loop {
                 // 这一拍只做逻辑（入场/回收/重锚/进度落盘），**不推进位置**：
-                // 弹幕位置是挂钟的纯函数，重绘节拍由弹幕层的 vsync 动画驱动
-                // （见 `stage/render.rs`）。频率与视频 fps / 刷新率都无关。
+                // 弹幕位置是挂钟的纯函数，重绘由弹幕层的 vsync 动画驱动（见
+                // `stage/render.rs`）。频率与视频 fps / 刷新率都无关。
                 cx.background_executor()
-                    .timer(Duration::from_millis(16))
+                    .timer(Duration::from_millis(33))
                     .await;
                 let keep = this
                     .update(cx, |view, cx| {

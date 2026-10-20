@@ -344,8 +344,11 @@ impl HomeView {
             let layer_opacity = self.dm_opacity;
             // 每帧取一次「现在」：弹幕位置是它的纯函数（见 `DmFlight`）。
             let dm_now = std::time::Instant::now();
-            let _ = self.player.as_ref().is_some_and(|p| p.is_paused());
-            div()
+            let dm_paused = self.player.as_ref().is_some_and(|p| p.is_paused());
+            // 重绘节拍跟合成器：播放中挂一个长周期 repeat 动画，GPUI 每个合成
+            // 帧请求一次重绘（60/120Hz 自适应，与视频 fps 无关）；暂停时摘掉，
+            // 静止画面不烧 CPU。位置本身是挂钟的纯函数（见 `DmFlight`）。
+            let base = div()
                 .absolute()
                 .size_full()
                 .overflow_hidden()
@@ -382,7 +385,20 @@ impl HomeView {
                                 }
                             }
                         }))
-                }))
+                }));
+            // 重绘节拍跟合成器：播放中挂长周期 repeat 动画，GPUI 每个合成帧
+            // 请求一次重绘（60/120Hz 自适应，与视频 fps 无关）；暂停时摘掉，
+            // 静止画面不烧 CPU。位置本身是挂钟的纯函数（见 `DmFlight`）。
+            if dm_paused {
+                base.into_any_element()
+            } else {
+                base.with_animation(
+                    "hg-danmaku",
+                    gpui_kit::Animation::new(std::time::Duration::from_secs(1)).repeat(),
+                    |el, _| el,
+                )
+                .into_any_element()
+            }
         });
         // 信息叠加层（左下）：剧名/集数/热度/简介——闲置淡出与控制条
         // 同时机（Tauri chromeShown 同款，静默期不亮）；小屏不渲染
