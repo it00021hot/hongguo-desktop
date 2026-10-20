@@ -4,7 +4,8 @@
 //! ——深递归/栈泄漏类问题拿到那一行也无从定位（2026-10-20 实测：连播 74
 //! 分钟后主线程栈溢出，日志只留一句话）。这里在**备用信号栈**（sigaltstack）
 //! 上接住 SIGSEGV，用 `Backtrace` 抓栈后写盘：
-//! `<数据目录>/crash-<启动时间戳>.log`。
+//! `<数据目录>/crash.log`（追加；不按启动时间分文件，避免每次正常启动
+//! 都在数据目录留一个空文件）。
 //!
 //! 文件在启动时就打开（信号上下文里不能再做路径解析/打开），处理器里只做
 //! 追加写与 `_exit`。格式化 Backtrace 会分配到堆，这是取证与信号安全的
@@ -48,11 +49,7 @@ static CRASH_FILE: OnceLock<std::fs::File> = OnceLock::new();
 /// 安装崩溃取证（幂等；数据目录已就位后调用）。
 pub(crate) fn install() {
     let dir = hongguo_store::paths::data_dir();
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("crash-{stamp}.log"));
+    let path = dir.join("crash.log");
     match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
