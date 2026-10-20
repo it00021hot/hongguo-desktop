@@ -24,19 +24,24 @@
 
 ## 3. 方案
 
-### D1. CALayer 直呈（推荐，不改上游）
+### D1. AVSampleBufferDisplayLayer 直呈（推荐）
 
-- 窗口设为非不透明；在 GPUI 的 Metal 层之下挂一个视频 `CALayer`（或
-  `AVSampleBufferDisplayLayer`），GPUI 在舞台区域留透明洞（不再画 surface）。
-- 帧到达时直接 `layer.contents = CVPixelBuffer`（macOS 已是零拷贝），由合成器
-  按显示刷新取最新内容；GPUI 只在 UI 需要时重绘。
-- 命中测试不受影响（NSView 按视图命中，透明像素仍属于 GPUI 视图），点画面
-  暂停、控制条、弹幕都照旧。
+- 窗口非不透明（`isOpaque=false` + 透明背景），视频层挂在 GPUI 的 Metal 层
+  之下，GPUI 在舞台区域留透明洞；命中测试仍归 GPUI 视图。
+- 每个解码帧（`CVPixelBuffer` + PTS）包成 `CMSampleBuffer`（`ReadyWithImageBuffer`，
+  零拷贝）交给 `AVSampleBufferDisplayLayer`。该层按 **PTS 在 vsync 上排期**：
+  100Hz 屏放 50fps 内容时每帧正好占 2 个刷新周期；迟到帧由层自己丢，抖动
+  不会造成「两帧抢一个 vsync」的合并。seek/换集时 `flush()`。
+- GPUI 不再逐帧画视频，只在 UI 变化时重绘；弹幕/控制条照旧叠在 GPUI 层里。
 
-### D2. 上游 patch（备选，窗口保持不透明）
+为什么不是普通 `CALayer.contents`：contents 是「最新值覆盖」语义，两帧落在
+同一个 vsync 间隔里会丢前一帧；`AVSampleBufferDisplayLayer` 带 PTS 队列，
+才能保证每个内容帧都真正上屏（这正是「零合并」的要求）。
 
-把 `PaintSurface` 从 scene 里拿掉，改成更新一个常驻 layer；需要维护
-`vendor/gpui-pre` 的 patch，升级上游时要跟。
+### D2. 上游 patch（备选，不采用）
+
+给 `vendor/gpui-pre` 打 patch，让 `PaintSurface` 更新常驻 layer 而不是进 scene。
+窗口可以不透明，但仍受 GPUI 重绘节拍影响，且要长期跟上游，收益不如 D1。
 
 ## 4. 影响面 / 风险
 
@@ -44,7 +49,8 @@
   黑底或假帧。
 - 小窗/竖屏/全屏/缩放：视频层 bounds 要跟随舞台矩形（当前 `stage_rects` 已
   有现成钩子）。
-- 遮挡/最小化：视频层要跟着窗口可见性暂停更新（引擎侧已有停播语义）。
+- 遮挡/最小化：视频层要跟着窗口可见性暂停入队（引擎侧已有停播语义）。
+- seek/换集：`flush(removingDisplayedImage: false)`，避免黑闪。
 - Windows：surface 只有 Apple 目标，Windows 保留现有 RGBA 纹理路径，按平台
   隔离，不做同构改造。
 
