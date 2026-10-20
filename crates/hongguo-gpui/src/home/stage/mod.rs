@@ -14,6 +14,7 @@ use crate::bridge;
 const STAGE_DIAG_EVERY_SECS: u64 = 5;
 
 // —— 渲染 ——
+mod letterbox;
 mod overlay;
 mod render;
 

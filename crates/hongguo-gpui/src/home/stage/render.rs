@@ -48,9 +48,13 @@ impl HomeView {
             (self.frame.is_some() || system_ready) && (!self.switching || self.hold_last_frame);
         // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
         // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
-        // 一律铺满（cover）：正常/竖屏/小窗同一个口径——画面盖住整个舞台，
-        // 舞台里不再有黑边，也就不存在「视频边缘与黑边的接缝」。
-        let video_fit = ObjectFit::Cover;
+        // 小窗铺满（cover），正常/竖屏保持 contain：竖屏窗口很窄，cover 会把
+        // 画面裁掉大半（用户实测「拉动大小应该是画面跟着窗口变，不是藏画面」）。
+        let video_fit = if self.mini.is_some() {
+            ObjectFit::Cover
+        } else {
+            ObjectFit::Contain
+        };
         // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
         // contain 保宽高比在转换端算）。小屏的适配模式跟着形态走
         //（Tauri `miniScreen ? 'object-cover' : 'object-contain'` 同款）。
@@ -81,8 +85,12 @@ impl HomeView {
                 let (x, y) = crate::platform::stage_origin(r[0], r[1], chrome_top);
                 PresenterBounds::new(x, y, r[2], r[3])
             });
-            // 与 `video_fit` 同口径：铺满整个舞台（不再 contain 留黑边）。
-            let fit = PresenterFit::Cover;
+            // 与 `video_fit` 同口径（小窗 cover、其余 contain）。
+            let fit = if self.mini.is_some() {
+                PresenterFit::Cover
+            } else {
+                PresenterFit::Contain
+            };
             player.submit_stage(bounds, fit, system_ready);
         }
         // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
@@ -273,6 +281,10 @@ impl HomeView {
                 .into_any_element()
         };
 
+        // 系统后端：contain 的黑边由 GPUI 画黑（洞只留视频矩形）。
+        let letterbox = system_ready
+            .then(|| self.render_stage_letterbox())
+            .flatten();
         // 缓冲角标（右上）：引擎水位状态机的 Buffering 事件驱动，区别于左上
         // 的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
         let buffering_badge = (self.buffering && self.player.is_some()).then(|| {
@@ -496,6 +508,7 @@ impl HomeView {
                 div().absolute().size_full().into_any_element()
             })
 
+            .children(letterbox)
             .children(danmaku_layer)
             .children(overlay)
             .children(rail)
