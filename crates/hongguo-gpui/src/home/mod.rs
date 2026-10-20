@@ -437,10 +437,6 @@ pub struct HomeView {
     controls_hovered: bool,
     /// 指针悬在进度轨道上（滑块圆点显示开关，Tauri ScrubBar 同款）。
     progress_hovered: bool,
-    /// 小窗整窗拖动的按下起点（Tauri `data-tauri-drag-region` 同款）：移动
-    /// 超过阈值才真正起拖窗口，否则会把「点一下暂停」吃掉。顶栏有自己的一份
-    /// （`Shell::toolbar_drag`），两处不会同时生效。
-    stage_drag: Option<gpui_kit::Point<gpui_kit::Pixels>>,
     /// 自动连播静默起步（Tauri quietStart 同款）：连播切集到新集首帧或
     /// 用户真实输入之间，一切悬浮层不亮（面板照常）。
     silent_until_input: bool,
@@ -672,7 +668,6 @@ impl HomeView {
             pointer_on_stage: false,
             controls_hovered: false,
             progress_hovered: false,
-            stage_drag: None,
             silent_until_input: false,
             progress_bounds: Rc::new(Cell::new(None)),
             wheel_at: None,
