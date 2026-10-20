@@ -103,6 +103,8 @@ fn gpui_key_of_feeds_conflict_check() {
     assert_eq!(accel::gpui_key_of(""), "");
 }
 
+// Carbon 换算只在 macOS 目标编译（Windows 上没有调用点），覆盖由 macOS job 承担。
+#[cfg(target_os = "macos")]
 #[test]
 fn mac_carbon_params_cover_captured_combinations() {
     // 捕获产出的串 → Win32 注册参数 → Carbon（修饰位 + ANSI 键码）

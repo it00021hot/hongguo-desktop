@@ -214,16 +214,23 @@ pub(crate) fn accelerator_from_keystroke(
 }
 
 // —— macOS 注册参数（Carbon `RegisterEventHotKey`）——
+//
+// 只在 macOS 目标编译：Carbon 修饰位与 macOS 虚拟键码的唯一使用者是
+// `platform/macos.rs`，Windows 上它们没有任何调用点（编译进来就是死代码）。
 
 /// Carbon 修饰位（HIToolbox `Events.h` 的 cmdKey/shiftKey/optionKey）。
+#[cfg(target_os = "macos")]
 pub(crate) const CARBON_CMD: u32 = 0x0100;
+#[cfg(target_os = "macos")]
 pub(crate) const CARBON_SHIFT: u32 = 0x0200;
+#[cfg(target_os = "macos")]
 pub(crate) const CARBON_OPTION: u32 = 0x0800;
 
 /// `MOD_*` 位 → Carbon 修饰位。
 ///
 /// `CommandOrControl` 在 macOS 上落 **Command**（Tauri accelerator 同语义：
 /// Windows 是 Ctrl、macOS 是 Cmd）；Alt 落 Option。`MOD_NOREPEAT` 等位忽略。
+#[cfg(target_os = "macos")]
 pub(crate) fn carbon_mods(mods: u32) -> u32 {
     let mut bits = 0;
     if mods & (MOD_CONTROL | MOD_WIN) != 0 {
@@ -240,9 +247,10 @@ pub(crate) fn carbon_mods(mods: u32) -> u32 {
 
 /// Win32 虚拟键码 → macOS 虚拟键码（ANSI 物理键位表）。
 ///
-/// 两端都编译（纯函数，测试覆盖）：macOS 侧注册前过一遍，认不出的键
-/// 直接报注册失败，不留下「注册成功却从不触发」的假象。`Insert` 在
-/// macOS 键盘上不存在、F21–F24 超出 ANSI 表——返回 `None`。
+/// 只在 macOS 目标编译：macOS 侧注册前过一遍，认不出的键直接报注册失败，
+/// 不留下「注册成功却从不触发」的假象。`Insert` 在 macOS 键盘上不存在、
+/// F21–F24 超出 ANSI 表——返回 `None`。
+#[cfg(target_os = "macos")]
 pub(crate) fn mac_keycode(vk: u32) -> Option<u32> {
     let code = match vk {
         // 字母
