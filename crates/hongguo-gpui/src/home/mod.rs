@@ -185,8 +185,13 @@ pub struct HomeView {
     system_video_ready: bool,
     /// 系统后端一次切集/起播的起点（首帧事件到达时结算耗时）。
     system_switch_started: Option<Instant>,
-    /// 系统播放器已到片尾并触发过接力（防 30fps 节拍重复 advance）。
-    system_tail_advanced: bool,
+    /// 每一次起播/接力的逻辑代次：AVQueuePlayer 接力不换播放器，不能用
+    /// 播放器实例区分「上一集/下一集」，片尾幂等靠这三元组。
+    play_generation: u64,
+    /// 当前这一代真正收到过 FirstFrame 的代次。
+    first_frame_generation: u64,
+    /// 已经因片尾推进过的代次（同一代只允许一次）。
+    ended_generation: u64,
     /// 正在异步预注册/预加载的下一集 vid（防重复入队）。
     system_preload_pending: Option<String>,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
@@ -686,7 +691,9 @@ impl HomeView {
             stage_bounds: Rc::new(Cell::new(None)),
             system_video_ready: false,
             system_switch_started: None,
-            system_tail_advanced: false,
+            play_generation: 0,
+            first_frame_generation: 0,
+            ended_generation: 0,
             system_preload_pending: None,
         };
         view.subscribe_controls(cx);

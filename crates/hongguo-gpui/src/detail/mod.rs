@@ -503,21 +503,41 @@ impl DetailView {
             .series_last_position(&self.series_id)
             .ok()
             .flatten();
-        if let Some((idx, pos)) = &local
+        let (idx, start, duration) = if let Some((idx, pos)) = &local
             && pos.is_resumable()
         {
-            return (*idx, pos.current_time);
+            (*idx, pos.current_time, pos.duration)
+        } else {
+            let threshold_ms =
+                (hongguo_common::model::playback::RESUME_THRESHOLD_SECS * 1000.0) as i64;
+            if let Some(h) = self.history.iter().find(|h| h.series_id == self.series_id)
+                && h.position_ms > threshold_ms
+            {
+                (
+                    h.vid_index.max(1) as u32,
+                    h.position_ms as f64 / 1000.0,
+                    h.duration_ms as f64 / 1000.0,
+                )
+            } else if let Some((idx, _)) = local {
+                (idx, 0.0, 0.0)
+            } else {
+                (1, 0.0, 0.0)
+            }
+        };
+        // 剩余 <2s：这一集已经看完，绝不起播在尾部；还有下一集就直接给
+        // 下一集 0s。末集由 play_from_detail 按已看完规则跳下一部。
+        if duration > 0.0 && duration - start <= 2.0 {
+            let count = self
+                .series
+                .as_ref()
+                .map(|series| series.episodes.len() as u32)
+                .unwrap_or(0);
+            if idx < count {
+                log::info!("[Detail] 第 {idx} 集剩余不足 2s → 下一集 {}", idx + 1);
+                return (idx + 1, 0.0);
+            }
         }
-        let threshold_ms = (hongguo_common::model::playback::RESUME_THRESHOLD_SECS * 1000.0) as i64;
-        if let Some(h) = self.history.iter().find(|h| h.series_id == self.series_id)
-            && h.position_ms > threshold_ms
-        {
-            return (h.vid_index.max(1) as u32, h.position_ms as f64 / 1000.0);
-        }
-        if let Some((idx, _)) = local {
-            return (idx, 0.0);
-        }
-        (1, 0.0)
+        (idx, start)
     }
 
     /// 登录与否（settings 里有账号即已登录，与首页互动栏同口径）。

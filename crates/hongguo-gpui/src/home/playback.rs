@@ -57,6 +57,12 @@ impl super::HomeView {
         }
         if next as usize > now.episode_count {
             // 滚过末集也算剧终（Tauri Ns()→hc() 同款）
+            self.ended_generation = self.play_generation;
+            log::info!(
+                "[Home][尾进] 片尾前进 gen={} ep {}→剧终/下一部 source=step",
+                self.play_generation,
+                now.vid_index
+            );
             self.advance_after_series_end(cx);
             return;
         }
@@ -66,6 +72,11 @@ impl super::HomeView {
             .find(|i| i.series_id == now.series_id)
             .cloned()
         {
+            log::info!(
+                "[Home][尾进] step gen={} ep {}→{next}",
+                self.play_generation,
+                now.vid_index
+            );
             self.play_target(item, Some(next as u32), None, cx);
         }
     }
@@ -106,7 +117,8 @@ impl super::HomeView {
         self.epoch.fetch_add(1, Ordering::Relaxed);
         self.player = None;
         self.system_video_ready = false;
-        self.system_tail_advanced = false;
+        // 离开首页也推进代次：旧播放器的 Ended/尾部事件不能再推进任何集。
+        self.play_generation = self.play_generation.wrapping_add(1);
         self.system_preload_pending = None;
         hongguo_stream::cache().clear_next();
         // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
@@ -272,6 +284,9 @@ impl super::HomeView {
             self.skip_finished_series(&item.series_id, cx);
             return;
         }
+        // 每次起播/接力开新代次：片尾幂等以代次为准（AVQueuePlayer 接力
+        // 不换播放器，旧 Ended/旧尾部读数必须按代次隔离）。
+        self.play_generation = self.play_generation.wrapping_add(1);
         // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
         //（重建要走取流表+asset+loader，实测首帧 650-970ms；接力 ~70ms）。
         if crate::video_backend::is_system()
@@ -305,6 +320,11 @@ impl super::HomeView {
                 && !next_vid.is_empty()
                 && player.advance_preloaded(&next_vid)
             {
+                log::info!(
+                    "[Home][尾进] 接力 gen={} ep {}→{next_index}",
+                    self.play_generation,
+                    self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
+                );
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {
                     now.vid_index = next_index;
@@ -312,7 +332,6 @@ impl super::HomeView {
                 }
                 self.system_switch_started = Some(Instant::now());
                 self.system_video_ready = true;
-                self.system_tail_advanced = false;
                 self.switching = false;
                 self.buffering = false;
                 self.pending_title = None;
@@ -357,7 +376,6 @@ impl super::HomeView {
         // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
         self.paint_diag.reset();
         self.switching = true;
-        self.system_tail_advanced = false;
         // 新的起播/切集目标会重排预加载；旧的 pending 不挡这一次。
         self.system_preload_pending = None;
         if crate::video_backend::is_system() {
@@ -796,23 +814,6 @@ impl super::HomeView {
                         }
                         view.danmaku_tick(cx);
                         view.save_progress_maybe();
-                        // 系统后端没有 Frame 事件，AVPlayer 在片尾有时不再推进
-                        // position（起播贴尾时尤其明显），Ended 永不发生。这里
-                        // 用 30fps 节拍做兜底：已经在尾部就主动走连播/剧终接力。
-                        if !view.switching && !view.system_tail_advanced
-                            && let Some(player) = view.player.clone()
-                            && !player.is_paused()
-                        {
-                            let duration = player.duration_secs();
-                            let position = player.position_secs();
-                            if duration > 0.5 && position >= duration - 0.25 {
-                                view.system_tail_advanced = true;
-                                log::info!(
-                                    "[Home] 系统播放器已在尾部（{position:.2}/{duration:.2}s）→ 主动接力"
-                                );
-                                view.advance_after_end(cx);
-                            }
-                        }
                         cx.notify();
                         true
                     })
@@ -1121,7 +1122,29 @@ impl super::HomeView {
     }
 
     /// 连播：下一集；末集走剧终接力（下一季 → 信息流下一条推荐）。
-    pub(super) fn advance_after_end(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn advance_after_end(&mut self, cx: &mut Context<Self>, source: &'static str) {
+        // 片尾前进幂等：一次 Ended 只允许推进一集。AVQueuePlayer 接力不换
+        // 播放器，不能用播放器实例/单纯布尔位区分旧事件；用代次：
+        // - 当前代次必须已经出过首帧（旧 Ended 不能推进新目标）；
+        // - 同一代次只推进一次（Ended 回调重复/乱序只认第一次）。
+        let generation = self.play_generation;
+        log::info!(
+            "[Home][尾进] 请求 source={source} gen={generation} first_frame_gen={} ended_gen={} now_ep={}",
+            self.first_frame_generation,
+            self.ended_generation,
+            self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
+        );
+        if self.first_frame_generation != generation {
+            log::info!(
+                "[Home][尾进] 忽略 source={source} gen={generation}（首帧代次={}，旧播放器事件）",
+                self.first_frame_generation
+            );
+            return;
+        }
+        if self.ended_generation == generation {
+            log::info!("[Home][尾进] 忽略重复 source={source} gen={generation}");
+            return;
+        }
         // 看完自动删（Tauri handleEnded 的 autoDelete 同序：先删刚看完这集的
         // 本地文件，再决定连播——下载面板开着也照删，删除不依赖连播）。
         // 没下载过的集本来就没有文件，`delete_episode` 返回 false，不提示。
@@ -1140,6 +1163,13 @@ impl super::HomeView {
         if self.switching {
             return;
         }
+        // 真正开始推进才记账：switching/下载面板挡下的调用不能消费代次。
+        self.ended_generation = generation;
+        let from = self.now.as_ref().map(|now| now.vid_index).unwrap_or(0);
+        log::info!(
+            "[Home][尾进] 片尾前进 gen={generation} ep {from}→{} source={source}",
+            from + 1
+        );
         // 自动连播静默起步（Tauri quietStart 同款）：新集首帧或用户真实输入
         // 之前，悬浮层一律不亮（首帧/on_player_event、wake_on_input 解除）。
         // 8s 硬上限（Tauri QUIET_WINDOW_MS 同款）：起播失败/首帧迟迟不来时，

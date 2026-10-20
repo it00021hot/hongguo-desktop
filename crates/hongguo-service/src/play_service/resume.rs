@@ -16,10 +16,16 @@ use hongguo_store::Store;
 /// 尾帧不再推进导致 Ended 永不发生。0.5s 足够让解码器吐出尾帧并走完
 /// `position >= duration - 0.25` 的结束判定。
 const RESUME_TAIL_EPSILON_SECS: f64 = 0.5;
+/// 剩余不足 2s 视为「这一集已经看完」：起点决策直接给出下一集，绝不让
+/// 播放器起播在尾部。片尾前进的唯一真相源是 AVPlayer Ended（system）
+/// 或帧引擎 Ended（GPUI），不再有 30fps 尾部兜底。
+const RESUME_END_GUARD_SECS: f64 = 2.0;
 
 /// 起点决策。返回 `(集号, 起播秒)`；无断点时 `(1, 0.0)`。
 ///
 /// 云端行的 vid_index 0/1 基混杂（第三方上报 0 基），按既有口径对 0 钳 1。
+/// 剩余 < [`RESUME_END_GUARD_SECS`] 或已看完：返回 `(下一集, 0.0)`；末集
+/// 会返回 `count + 1`，由播放入口按「下一部/下一集」决策跳过。
 pub fn resolve_entry(
     store: &Store,
     series_id: &str,
@@ -33,10 +39,27 @@ pub fn resolve_entry(
     let cloud = history
         .iter()
         .find(|h| h.series_id == series_id && h.position_ms > threshold_ms);
+    let finished = history
+        .iter()
+        .find(|h| h.series_id == series_id)
+        .is_some_and(WatchHistoryItem::is_finished);
     let (vid_index, start_secs, duration) = decide_entry(local, cloud);
-    // 落点 clamp 在**决策层**做一次：所有调用方（首页/历史/详情/预取）
-    // 都拿到同一个不会贴在 duration 上的起点。
-    Ok((vid_index, clamp_tail(start_secs, duration)))
+    Ok(next_entry_if_tail(
+        vid_index, start_secs, duration, finished,
+    ))
+}
+
+/// 片尾/已看完 → 下一集 0s；否则原集，并 clamp 到 `duration - ε`。
+fn next_entry_if_tail(
+    vid_index: u32,
+    start_secs: f64,
+    duration: f64,
+    finished: bool,
+) -> (u32, f64) {
+    if finished || (duration > 0.0 && duration - start_secs <= RESUME_END_GUARD_SECS) {
+        return (vid_index.saturating_add(1), 0.0);
+    }
+    (vid_index, clamp_tail(start_secs, duration))
 }
 
 /// 纯决策（`resolve_entry` 的可测内核，`local` = `(集号, 起播秒, 时长, 更新时刻)`）：
@@ -139,5 +162,20 @@ mod tests {
         assert_eq!(clamp_tail(172.4, 172.6), 172.1);
         assert_eq!(clamp_tail(30.0, 172.6), 30.0);
         assert_eq!(clamp_tail(30.0, 0.0), 30.0, "时长未知不猜");
+    }
+
+    #[test]
+    fn remaining_under_two_seconds_advances_before_player_open() {
+        assert_eq!(next_entry_if_tail(11, 62.5, 63.3, false), (12, 0.0));
+        assert_eq!(
+            next_entry_if_tail(11, 61.0, 63.3, false),
+            (11, 61.0),
+            "还有 2.3s 正常续播"
+        );
+        assert_eq!(
+            next_entry_if_tail(70, 30.0, 172.6, true),
+            (71, 0.0),
+            "已看完直接给下一集，交播放入口做下一部决策"
+        );
     }
 }

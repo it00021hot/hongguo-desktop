@@ -166,6 +166,7 @@ impl super::HomeView {
                 // 「画面已就绪」，视图据此打透明洞；GPUI 后端仍等 Frame。
                 if self.player.as_ref().is_some_and(|p| p.is_system()) {
                     self.system_video_ready = true;
+                    self.first_frame_generation = self.play_generation;
                     self.hold_last_frame = false;
                     // 系统后端没有后续 Frame 事件；这里必须主动调度一帧，
                     // 否则舞台永远停在上一帧的黑色/封面。
@@ -203,6 +204,9 @@ impl super::HomeView {
                 if first {
                     log::info!("[Home] 首帧进入 view——video_ready 即为 true");
                 }
+                // 每个 Frame 都证明「当前代次已有画面」；同剧切集时 frame
+                // 槽沿用旧帧，不能只在 first 时记代次。
+                self.first_frame_generation = self.play_generation;
                 // 新集首帧出画：定格帧交棒（Tauri FrameHold 淡出同款）
                 self.hold_last_frame = false;
                 self.frame = Some(frame);
@@ -217,12 +221,8 @@ impl super::HomeView {
             PlayerEvent::Ready => self.buffering = false,
             PlayerEvent::Ended => {
                 self.buffering = false;
-                // 节拍兜底可能已经推进过；同一尾部只接力一次。
-                if self.system_tail_advanced {
-                    return;
-                }
-                self.system_tail_advanced = true;
-                self.advance_after_end(cx);
+                // 来源标记交给 advance_after_end 的代次幂等统一裁决。
+                self.advance_after_end(cx, "ended");
             }
             PlayerEvent::Failed(msg) => {
                 self.buffering = false;

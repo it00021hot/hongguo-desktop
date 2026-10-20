@@ -387,8 +387,17 @@ impl HistoryView {
         };
         // 云端 vid_index 1 起（历史数据可能混 0，钳到第 1 集）；进度直接
         // 取自本行（页数据源就是云端历史，等价 Tauri 播放器的云端兜底）。
-        let vid_index = target.vidx_1based() as u32;
-        let start_secs = (target.position_ms as f64 / 1000.0).max(0.0);
+        // 剩余 <2s 视为这一集已看完：直接给下一集 0s，绝不起播在尾部。
+        let mut vid_index = target.vidx_1based() as u32;
+        let mut start_secs = (target.position_ms as f64 / 1000.0).max(0.0);
+        if target.duration_ms > 0 && target.duration_ms - target.position_ms <= 2000 {
+            vid_index = vid_index.saturating_add(1);
+            start_secs = 0.0;
+            log::info!(
+                "[History] 《{}》剩余不足 2s → 下一集 {vid_index}",
+                target.series_id
+            );
+        }
         if target.series_id != item.series_id {
             log::info!(
                 "[History] 已看完《{}》→ 跳过，接下一部《{}》",
