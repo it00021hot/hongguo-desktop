@@ -1,71 +1,76 @@
-# GPUI 视频上屏节拍优化（计划）
+# GPUI 视频播放架构：切换系统播放器（计划）
 
-状态：待确认（大规模结构调整，先出计划再动代码）
+状态：方案定稿（D：系统播放器），待 Phase 0 spike 验证
+决策：播放体验优先，不再自研解码/上屏/A-V 同步；窗口形态仍由 GPUI 壳负责。
 
-## 1. 现状（前台实测，release，1080p HEVC）
+## 1. 动机（实测基线，release，1080p HEVC）
 
-| 倍速 | 内容帧率 | 上屏 | 合并跳帧 | 最大间隔 | >50ms |
-| --- | --- | --- | --- | --- | --- |
-| 1x | 25fps | 23.4fps | 3–5 /5s | 90ms | 15–21 次 |
-| 2x | 50fps | 45.1–47.1fps | 2–13 /5s | 49–80ms | 0–6 次 |
-| 3x | 75fps | 69.5fps | 13 /5s | 30–59ms | 0–1 次 |
+| 倍速 | 内容帧率 | 上屏 | 合并跳帧 | 最大间隔 |
+| --- | --- | --- | --- | --- |
+| 1x | 25fps | 23.4fps | 3–5 /5s | 90ms |
+| 2x | 50fps | 45.1–47.1fps | 2–13 /5s | 49–80ms |
+| 3x | 75fps | 69.5fps | 13 /5s | 30–59ms |
 
-- 显示 `3440×1440@100Hz`，刷新率不是上限（3x 能到 69.5fps > 60）。
-- 首页建树 **16µs/帧**（最大 69µs），UI 代码不是瓶颈。
-- 每帧时间 = 内容帧间隔 + 1–2ms，稳定慢约 5% → 每隔十几帧合并一帧。
+- 显示 3440×1440@100Hz；3x 能到 69.5fps，刷新率不是上限。
+- 首页建树 16µs/帧；解码 0–2ms、迟到 0 帧、音频零欠载。
+- 结论：瓶颈是「每个内容帧都要走一次 GPUI 的 layout/paint/present」。
+  拆视频子实体、减布局都无效（已试，GPUI 失效会带父视图）。
 
-## 2. 已排除的路径（避免重做）
+## 2. 方案：D（系统播放器）
 
-- **拆独立视频子实体**：试过，帧事件不 notify 首页时首页仍逐帧 render（GPUI 的失效会带父视图），拆子实体省不到任何东西。
-- **减树/减布局**：建树 16µs，没有可减的量级。
-- **换解码/预取**：解码最大 0–2ms、迟到 0 帧、音频零欠载，与丢帧无关。
+| | macOS | Windows |
+| --- | --- | --- |
+| 播放器 | `AVPlayer` + `AVPlayerLayer` | `MediaPlayer`（Media Foundation） |
+| 供数 | `AVAssetResourceLoader` 自定义 scheme，喂解密后的 fMP4 字节 | 自定义 `IMFByteStream`，同一份解密字节 |
+| 上屏/节拍 | 系统合成，vsync 精确 | 系统合成（DWM），vsync 精确 |
+| 变速 | `AVPlayer.rate` + time-pitch | `MediaPlaybackSession.PlaybackRate` |
+| 叠加 | GPUI 透明层：控制条/弹幕/浮层 | 同左 |
 
-结论：瓶颈在「每个内容帧都必须走一次 GPUI 的 layout/paint/present」。
+保留：解密、取流、预取、任务与下载联动（引擎侧）。
+移除：自研解码、上屏、A/V 同步、WSOLA（交给系统）。
 
-## 3. 方案
+## 3. Phase 0：可行性 spike（先做，决定成败）
 
-### D1. AVSampleBufferDisplayLayer 直呈（推荐）
+macOS 单平台，只验证四条硬指标，不接窗口形态：
 
-- 窗口非不透明（`isOpaque=false` + 透明背景），视频层挂在 GPUI 的 Metal 层
-  之下，GPUI 在舞台区域留透明洞；命中测试仍归 GPUI 视图。
-- 每个解码帧（`CVPixelBuffer` + PTS）包成 `CMSampleBuffer`（`ReadyWithImageBuffer`，
-  零拷贝）交给 `AVSampleBufferDisplayLayer`。该层按 **PTS 在 vsync 上排期**：
-  100Hz 屏放 50fps 内容时每帧正好占 2 个刷新周期；迟到帧由层自己丢，抖动
-  不会造成「两帧抢一个 vsync」的合并。seek/换集时 `flush()`。
-- GPUI 不再逐帧画视频，只在 UI 变化时重绘；弹幕/控制条照旧叠在 GPUI 层里。
+1. 100Hz 下 2x 播放**零合并**（播放器呈现计数，不看 `[Home][paint]`）。
+2. **切集空档 ≤ 200ms**（AVPlayerItem 预加载 + 队列接力）。
+3. seek 精度：按样本表落点，误差 ≤ 1 帧。
+4. 2x 变速不变调。
 
-为什么不是普通 `CALayer.contents`：contents 是「最新值覆盖」语义，两帧落在
-同一个 vsync 间隔里会丢前一帧；`AVSampleBufferDisplayLayer` 带 PTS 队列，
-才能保证每个内容帧都真正上屏（这正是「零合并」的要求）。
+任一不达标 → 先解决（双 item 预加载 / 自定义 loader 的 Range 语义），不进入 Phase 1。
 
-### D2. 上游 patch（备选，不采用）
+## 4. Phase 1：macOS 全量
 
-给 `vendor/gpui-pre` 打 patch，让 `PaintSurface` 更新常驻 layer 而不是进 scene。
-窗口可以不透明，但仍受 GPUI 重绘节拍影响，且要长期跟上游，收益不如 D1。
+- 窗口形态照旧：小窗/竖屏/铺满/全屏由 `mini`/`portrait`/`stage_rects` 驱动，
+  播放器层 bounds 跟随舞台矩形，`videoGravity` 按 contain/cover 切换。
+- 叠加：GPUI 透明洞 + 控制条/弹幕/浮层；点画面暂停、命中测试、老板键、
+  通知点击、遮挡暂停全部接回。
+- 进度落盘：用播放器的周期时间回调（替代逐帧回调）。
 
-## 4. 影响面 / 风险
+## 5. Phase 2：Windows 对齐
 
-- 截图与 `make gpui-preview`：透明洞在离屏渲染里会变透明，需要给预览补一层
-  黑底或假帧。
-- 小窗/竖屏/全屏/缩放：视频层 bounds 要跟随舞台矩形（当前 `stage_rects` 已
-  有现成钩子）。
-- 遮挡/最小化：视频层要跟着窗口可见性暂停入队（引擎侧已有停播语义）。
-- seek/换集：`flush(removingDisplayedImage: false)`，避免黑闪。
-- Windows：surface 只有 Apple 目标，Windows 保留现有 RGBA 纹理路径，按平台
-  隔离，不做同构改造。
+- `IMFByteStream` 供数 + `MediaPlayer`；同一套 `VideoPresenter` 抽象。
+- 窗口形态、叠加、进度、老板键语义与 macOS 一致；VSync 交给系统合成器。
 
-## 5. 验收
+## 6. 抽象与回滚
 
-- `[Home][paint]`：2x 下合并跳 **0**、上屏 ≥ 内容帧率；3x 下合并 ≤ 1/5s。
-- `>50ms` 停顿 0 次，音画偏差 ≤ 60ms，音频欠载 0。
-- CPU 不高于现状 10%，内存不高于现状 10%。
-- 前台连续 30s × 3 轮；小窗/竖屏/铺满各一轮；预览矩阵无视觉回归。
-- 回滚开关：`platform::VIDEO_LAYER_DIRECT`（默认开，出问题可一键回旧路径）。
+- `VideoPresenter` trait：`submit(bounds/fit)` / `play` / `pause` / `seek` /
+  `set_rate` / `flush` / `set_visible`；平台实现只出现在 `platform/`。
+- 回滚开关 `VIDEO_BACKEND=system|gpui`（默认 system），GPUI 自研链路保留。
+- 不引入新外部依赖（只用系统框架）。
 
-## 6. 分步
+## 7. 验收
 
-1. 前台基线采集（已完成：2x 45.1–47.1fps，合并 2–13/5s，见 §1）
-2. macOS 原型：常态窗口 + 播放/暂停/切集
-3. 接入小窗/竖屏/全屏/缩放几何
-4. Windows 路径评估（预期不动）
-5. 回归验收 + 更新本文件
+- 2x：零合并、上屏 ≥ 内容帧率；3x：合并 ≤ 1/5s。
+- 切集 ≤ 200ms；seek 误差 ≤ 1 帧；音画偏差 ≤ 50ms；音频零欠载。
+- CPU/内存不高于现状 15%。
+- 小窗/竖屏/铺满/全屏各一轮 + 预览矩阵无回归。
+- Windows 同口径（需实机日志）。
+
+## 8. 风险
+
+- 切集空档（最大风险，Phase 0 先证）。
+- resource loader 的 Range/seek 语义与预取缓存的一致性。
+- 弹幕/控制条叠加与命中测试。
+- 进度落盘粒度变粗（周期回调替代逐帧）。
