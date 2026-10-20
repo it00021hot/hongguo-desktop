@@ -872,6 +872,8 @@ impl super::HomeView {
     /// Tauri 无宿主签名下的「猜你喜欢」分支不适用。
     fn advance_after_series_end(&mut self, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
+            // 没有在播目标时 step 不会再回到本函数，但连播锁仍要清
+            self.binge = None;
             self.step(1, cx);
             return;
         };
@@ -915,7 +917,12 @@ impl super::HomeView {
             );
             return;
         }
-        // 没有下一季：跟随信息流刷下一条推荐（已到底时宿主原地驻留）
+        // 没有下一季：跟随信息流刷下一条推荐（已到底时宿主原地驻留）。
+        //
+        // **先解除连播锁定**：连播态下 `step` 会改走 `step_episode`，而末集
+        // 的 `step_episode` 又回到本函数——末集不死循环（实测 5 千层递归
+        // 后主线程栈溢出，见 2026-10-20 的崩溃取证）。
+        self.binge = None;
         self.step(1, cx);
     }
 
