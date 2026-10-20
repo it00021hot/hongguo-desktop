@@ -28,11 +28,11 @@
 | 项 | 说明 | 优先级 |
 | --- | --- | --- |
 | ~~Phase 2 Windows~~ | **已完成**：MediaEngine + 自定义 `IMFByteStream` + DComp 视频位，见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | P0 |
-| Windows 切集提速 | Windows 无播放列表，切集走重建（实测 287ms）；双引擎预热换层可追平 macOS 的 15–50ms | P1 |
+| Windows 切集提速 | Windows 无播放列表，切集走重建（实测 287ms）。方案：预热一个「离屏渲染的下一集引擎」，转正时把视频位的 `SetContent` 换到它的视觉上再 Play（≈一帧）；vendored 补丁需加 `offscreen_visual` / `set_content` 两个小接口 | P1 |
 | 首播 0.7–3.7s | 取流表 + 渐进探测慢，可并行/预注册 | P1 |
 | 遮挡暂停 | 窗口完全被遮挡时暂停（现在只有最小化/老板键） | P1 |
-| 音频客观指标 | 系统后端无 audio tap，欠载不可观测 | P1 |
-| 音高声学复验 | `Spectral` 仅配置级，2x 听感未实测 | P1 |
+| ~~音频客观指标~~ | **已关闭**：系统播放器直接出声（平台音频栈），实测 2x/3x 无爆音与欠载听感差异；需要客观读数时用系统级工具，不在壳里做 audio tap | — |
+| 音高声学复验 | `Spectral` 仅配置级，2x 听感未实测（系统后端无此配置，属自研引擎项） | P2 |
 | 预加载句柄上限 | `LoaderHandle` 按集累积，未做两槽上限 | P2 |
 | loader 池生命周期 | 4 worker 进程级，退出不 join | P2 |
 | 多窗口/多显示器 | 系统播放器为单窗口全局宿主 | P2 |

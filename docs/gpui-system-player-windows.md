@@ -118,6 +118,18 @@ MediaEngine（系统解码/音频时钟/倍速/seek）
   后面）。第一版按直觉写反，结果视频位压在 GPUI 内容之上——弹幕、进度条、
   小窗里的全部控制条都被画面盖住（小窗 `cover` 铺满所以「全被挡住」）。修好
   后 `content` 用 `FALSE`（顶层）、视频位用 `TRUE`（底层）。
+- **坑 8（半像素缝）**：视频位是**独立原生层**，和 GPUI 内容不在同一张画布。
+  舞台/视频落点用分数坐标时，引擎渲染目标的最外圈半个像素会采到目标之外
+  （透明），叠在透明洞上就是一条浅色细线——用户实测「缩放窗口时视频边缘有
+  白线、像不在一个图层」。两条一起修：几何换算**对齐整物理像素**（原点、尺寸、
+  视频落点取整，缩放比例按取整后的像素反算），黑边再往画面里压 1px 兜住任何
+  残余缝（`render_stage_letterbox`，两平台同一段代码）。
+- **坑 9（小窗拖不动）**：小窗隐藏顶栏后**没有任何拖窗区域**（顶栏才有
+  `WindowControlArea`/`start_window_move`），窗口只能靠系统边框移动。修法：
+  小窗整窗按下记起点、按住移动 >4px 起拖（阈值以下仍是点击/暂停），起拖走
+  `platform::start_window_move`——Windows 延迟一拍发
+  `WM_NCLBUTTONDOWN(HTCAPTION)`（同步进系统移动循环会撞 gpui 借用），macOS 直接
+  `window.start_window_move()`。
 
 ## 6. 回退
 
@@ -144,8 +156,14 @@ MediaEngine（系统解码/音频时钟/倍速/seek）
 ## 8. 已知边界（首版）
 
 - MediaEngine 无播放列表：`preload_next` / `advance_preloaded` 返回 false，
-  切集走重建（实测 287ms，macOS 队列接力 15–50ms 的差距记录在此）；
-  双引擎预热换层见后续；
+  切集走重建（实测 287ms，macOS 队列接力 15–50ms 的差距记录在此）。对齐方案：
+  预热一个渲染到**离屏视觉**的下一集引擎（`IDCompositionDevice::CreateVisual`
+  造一个不进树的视觉），转正时 `视频位.SetContent(预热视觉)` + `Play()` 再
+  `Pause()` 旧引擎——约一帧完成；vendored 补丁要加 `offscreen_visual` /
+  `set_content` 两个小接口，presenter 侧把 `engine/extended/stream/notify` 收进
+  一个可交换的 `Engine`，外加事件门控（预热实例在转正前不发事件）与
+  音量/静音/倍速重放。**未实现**，见进度表的 P1；
 - 倍速只做可用性探测 + 补发，没有 macOS 那种「引擎不支持就回落 1x」的静默降级；
-- 音频由引擎输出，没有 audio tap，欠载不可观测（与 macOS 同一限制）；
+- 音频由引擎输出（系统音频栈），没有 audio tap——实测 2x/3x 无爆音/欠载听感
+  差异，壳里不做客观欠载指标（需要客观读数时用系统级工具）；
 - 窗口遮挡暂停仍是壳侧的「最小化暂停 + 老板键」，没有额外的遮挡事件监听。
