@@ -1383,9 +1383,15 @@ impl gpui_kit::Render for HomeView {
                 ))
                 .into_any_element(),
         };
+        // 系统后端画面已就绪时，Home 根也是透明洞的一部分——它盖在 Shell
+        // 根和舞台之间，铺主题底色会把下层 AVPlayerLayer 整块遮黑。
+        let video_hole = crate::video_backend::is_system()
+            && self.system_video_ready
+            && !crate::preview::is_active();
         let root = v_flex()
             .size_full()
             .bg(theme.background)
+            .when(video_hole, |el| el.bg(gpui_kit::rgba(0x00000000)))
             .text_color(theme.foreground)
             // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
             .overflow_hidden()

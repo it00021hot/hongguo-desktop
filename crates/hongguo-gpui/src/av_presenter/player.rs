@@ -377,10 +377,9 @@ impl PlayerLike for SystemPlayer {
     }
 
     fn attach(&self, window: &Window) {
-        if view::ensure(window, self.player.get()) {
-            let (bounds, fit) = *self.stage.lock().expect("舞台锁 poisoned");
-            view::submit(bounds, fit, true);
-        }
+        // 只建/复用宿主；可见性由紧随其后的 submit_stage 决定，避免 attach
+        // 先把层亮出来、下一行又按 system_ready=false 藏回去的抖动。
+        let _ = view::ensure(window, self.player.get());
     }
 
     fn submit_stage(&self, bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {

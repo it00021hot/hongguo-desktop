@@ -167,6 +167,9 @@ impl super::HomeView {
                 if self.player.as_ref().is_some_and(|p| p.is_system()) {
                     self.system_video_ready = true;
                     self.hold_last_frame = false;
+                    // 系统后端没有后续 Frame 事件；这里必须主动调度一帧，
+                    // 否则舞台永远停在上一帧的黑色/封面。
+                    cx.notify();
                     // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集。
                     if let Ok(ms) = std::env::var("HONGGUO_AV_NEXT_EPISODE_MS")
                         && let Ok(ms) = ms.parse::<u64>()

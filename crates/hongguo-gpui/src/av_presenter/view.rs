@@ -11,7 +11,9 @@
 //! 线程纪律：`prepare_window` / `ensure` / `submit` / `hide` 只在主线程
 //! （GPUI render/回调）调用；全局宿主跨集复用，避免每集重建视图。
 
+use std::ffi::CStr;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui_kit::Window;
 use hongguo_playback::{PresenterBounds, PresenterFit};
@@ -37,6 +39,121 @@ struct Host {
 unsafe impl Send for Host {}
 
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
+/// 自检只打一次；排障时看这一组就能判断是「层被盖住」还是「窗口不透明」。
+static SELF_CHECKED: AtomicBool = AtomicBool::new(false);
+
+fn class_name(obj: *mut AnyObject) -> String {
+    if obj.is_null() {
+        return "<nil>".to_owned();
+    }
+    // SAFETY: object_getClassName 对有效 ObjC 对象返回静态 C 字符串。
+    unsafe { CStr::from_ptr(objc2::ffi::object_getClassName(obj)) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn rect_text(rect: NSRect) -> String {
+    format!(
+        "{:.0},{:.0} {:.0}×{:.0}",
+        rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
+    )
+}
+
+/// 打印合成关系：窗口 opaque、GPUIView  backing layer、contentView 子视图顺序、
+/// 宿主/播放层 frame/opacity/hidden。只在系统后端首次可见提交时打一次。
+fn log_composition(tag: &str) {
+    let guard = HOST.lock().expect("视频宿主锁 poisoned");
+    let Some(host) = guard.as_ref() else {
+        return;
+    };
+    let Some(window) = (unsafe { (&*(host.content as *const NSView)).window() }) else {
+        return;
+    };
+    let window_opaque: bool = unsafe { msg_send![&*window, isOpaque] };
+    let window_bg: *mut AnyObject = unsafe { msg_send![&*window, backgroundColor] };
+    let content = host.content;
+    let content_layer: *mut AnyObject = unsafe { msg_send![content, layer] };
+    let content_layer_opaque: bool = unsafe {
+        if content_layer.is_null() {
+            false
+        } else {
+            msg_send![content_layer, isOpaque]
+        }
+    };
+    let content_wants_layer: bool = unsafe { msg_send![content, wantsLayer] };
+    let content_frame: NSRect = unsafe { msg_send![content, bounds] };
+    let subviews: *mut AnyObject = unsafe { msg_send![content, subviews] };
+    let count: usize = unsafe { msg_send![subviews, count] };
+    let mut order = String::new();
+    for i in 0..count {
+        let sv: *mut AnyObject = unsafe { msg_send![subviews, objectAtIndex: i] };
+        let frame: NSRect = unsafe { msg_send![sv, frame] };
+        let hidden: bool = unsafe { msg_send![sv, isHidden] };
+        let layer: *mut AnyObject = unsafe { msg_send![sv, layer] };
+        let layer_opaque: bool = unsafe {
+            if layer.is_null() {
+                false
+            } else {
+                msg_send![layer, isOpaque]
+            }
+        };
+        if i > 0 {
+            order.push_str(" | ");
+        }
+        order.push_str(&format!(
+            "#{i} {} {}{} layer_opaque={}",
+            class_name(sv),
+            rect_text(frame),
+            if hidden { " hidden" } else { "" },
+            layer_opaque
+        ));
+    }
+    let mut gpui = std::ptr::null_mut();
+    for i in 0..count {
+        let sv: *mut AnyObject = unsafe { msg_send![subviews, objectAtIndex: i] };
+        if sv != host.view {
+            gpui = sv;
+            break;
+        }
+    }
+    let gpui_layer: *mut AnyObject = unsafe { msg_send![gpui, layer] };
+    let gpui_layer_opaque: bool = unsafe {
+        if gpui_layer.is_null() {
+            false
+        } else {
+            msg_send![gpui_layer, isOpaque]
+        }
+    };
+    let gpui_layer_class = class_name(gpui_layer);
+    let host_frame: NSRect = unsafe { msg_send![host.view, frame] };
+    let host_hidden: bool = unsafe { msg_send![host.view, isHidden] };
+    let host_alpha: f64 = unsafe { msg_send![host.view, alphaValue] };
+    let host_layer: *mut AnyObject = unsafe { msg_send![host.view, layer] };
+    let host_layer_opaque: bool = unsafe {
+        if host_layer.is_null() {
+            false
+        } else {
+            msg_send![host_layer, isOpaque]
+        }
+    };
+    let player_frame: NSRect = unsafe { msg_send![host.player_layer, frame] };
+    let player_hidden: bool = unsafe { msg_send![host.player_layer, isHidden] };
+    let player_opacity: f32 = unsafe { msg_send![host.player_layer, opacity] };
+    let player_ready: bool = unsafe { msg_send![host.player_layer, isReadyForDisplay] };
+    log::info!(
+        "[AvPresenter][selfcheck:{tag}] window opaque={window_opaque} bg={} content {} layer={} layer_opaque={} wantsLayer={} subviews=[{order}] gpui={} layer_class={} layer_opaque={} host={} hidden={host_hidden} alpha={host_alpha:.2} layer_opaque={host_layer_opaque} player={} hidden={player_hidden} opacity={player_opacity:.2} ready={player_ready}",
+        class_name(window_bg),
+        rect_text(content_frame),
+        class_name(content_layer),
+        content_layer_opaque,
+        content_wants_layer,
+        class_name(gpui),
+        gpui_layer_class,
+        gpui_layer_opaque,
+        rect_text(host_frame),
+        rect_text(player_frame),
+    );
+}
 
 /// GPUI 窗口背后的 NSView。
 fn ns_view(window: &Window) -> Option<&NSView> {
@@ -67,7 +184,22 @@ pub fn prepare_window(window: &Window) {
         ]
     };
     let _: () = unsafe { msg_send![&*ns_window, setBackgroundColor: black] };
-    log::info!("[AvPresenter] 窗口透明层就绪（背景铺黑）");
+    let opaque: bool = unsafe { msg_send![&*ns_window, isOpaque] };
+    let background: *mut AnyObject = unsafe { msg_send![&*ns_window, backgroundColor] };
+    let view_layer: *mut AnyObject = unsafe { msg_send![view, layer] };
+    let view_layer_opaque: bool = unsafe {
+        if view_layer.is_null() {
+            false
+        } else {
+            msg_send![view_layer, isOpaque]
+        }
+    };
+    log::info!(
+        "[AvPresenter] 窗口透明层就绪（背景铺黑）：isOpaque={opaque} bg={} GPUIView layer={} opaque={view_layer_opaque}",
+        class_name(background),
+        class_name(view_layer)
+    );
+    log_composition("prepare");
 }
 
 /// 挂上/切换当前播放器；返回 false 表示窗口不可用。
@@ -144,12 +276,16 @@ pub fn ensure(window: &Window, player: &AnyObject) -> bool {
     });
     // player_layer 由 host_layer 的 sublayers 持有；我们的 Retained 可安全释放。
     drop(player_layer);
+    drop(host);
     log::info!("[AvPresenter] 视频宿主已插入 contentView（GPUIView 之下）");
     true
 }
 
 /// 提交舞台矩形/适配/可见性（每帧调用，幂等）。
 pub fn submit(bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {
+    if visible && !SELF_CHECKED.swap(true, Ordering::Relaxed) {
+        log_composition("visible");
+    }
     let mut host = HOST.lock().expect("视频宿主锁 poisoned");
     let Some(host) = host.as_mut() else { return };
     let content_bounds: NSRect = unsafe { msg_send![host.content, bounds] };

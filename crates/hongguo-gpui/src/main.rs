@@ -276,30 +276,54 @@ fn main() {
                 }
             };
             // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
-            let (shell_window, shell) = gpui_kit::open_window(
-                // 无边框（Tauri decorations:false 同款）：以组件库 TitleBar
-                // 的窗口选项为基底——标题栏自绘、拖拽与窗口钮走平台原生命中
-                // 测试（WindowControlArea → HTCAPTION/HTMINBUTTON/…）。
-                {
-                    let mut options = gpui_kit::component::TitleBar::window_options();
-                    options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
-                    // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
-                    options.titlebar = Some(gpui_kit::TitlebarOptions {
-                        title: Some("红果".into()),
-                        ..gpui_kit::component::TitleBar::title_bar_options()
-                    });
-                    options
-                },
-                cx,
-                |window, cx| {
-                    // 组件库管不到的最后一寸：WS_THICKFRAME 引出的 1px 系统
-                    // 边框线，按 DWM 边框色关掉（缩放/贴靠不受影响）
-                    #[cfg(target_os = "windows")]
-                    win32::hide_border(window);
-                    cx.new(|cx| shell::Shell::new(state.clone(), window, cx))
-                },
-            )
-            .expect("窗口创建失败");
+            let system_backend = crate::video_backend::is_system();
+            let mut built = None;
+            let shell_window: gpui_kit::AnyWindowHandle = cx
+                .open_window(
+                    // 无边框（Tauri decorations:false 同款）：以组件库 TitleBar
+                    // 的窗口选项为基底——标题栏自绘、拖拽与窗口钮走平台原生命中
+                    // 测试（WindowControlArea → HTCAPTION/HTMINBUTTON/…）。
+                    {
+                        let mut options = gpui_kit::component::TitleBar::window_options();
+                        options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
+                        // 系统播放器要透出下层 AVPlayerLayer：窗口从创建时就按
+                        // 透明配置，避免「先不透明建窗、再 set_background_appearance」
+                        // 这一段里 CAMetalLayer / NSWindow 的 opaque 状态不同步。
+                        options.window_background = if system_backend {
+                            gpui_kit::WindowBackgroundAppearance::Transparent
+                        } else {
+                            gpui_kit::WindowBackgroundAppearance::Opaque
+                        };
+                        // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
+                        options.titlebar = Some(gpui_kit::TitlebarOptions {
+                            title: Some("红果".into()),
+                            ..gpui_kit::component::TitleBar::title_bar_options()
+                        });
+                        options
+                    },
+                    |window, cx| {
+                        // 组件库管不到的最后一寸：WS_THICKFRAME 引出的 1px 系统
+                        // 边框线，按 DWM 边框色关掉（缩放/贴靠不受影响）
+                        #[cfg(target_os = "windows")]
+                        win32::hide_border(window);
+                        let view = cx.new(|cx| shell::Shell::new(state.clone(), window, cx));
+                        built = Some(view.clone());
+                        // Root 是 GPUI 场景最底层，gpui-component 的 RootPlugin
+                        // 默认给它铺 `theme.background`；系统后端必须在这里把
+                        // Root 也改成透明，否则整个窗内都是这块不透明黑。
+                        cx.new(|cx| {
+                            let root = gpui_kit::base::Root::new(view, window, cx);
+                            if system_backend {
+                                root.bg(gpui_kit::rgba(0x00000000))
+                            } else {
+                                root
+                            }
+                        })
+                    },
+                )
+                .expect("窗口创建失败")
+                .into();
+            let shell = built.expect("open_window ran its build closure");
 
             // macOS：窗口创建后按平台坐标精确恢复（gpui 的 WindowBounds 只认
             // 它自己的坐标空间，多屏下会丢显示器原点）
