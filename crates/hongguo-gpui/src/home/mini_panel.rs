@@ -222,16 +222,6 @@ impl super::HomeView {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.exit_mini(window, cx);
                             })),
-                    )
-                    .child(
-                        Button::new("mini-close")
-                            .icon(gpui_kit::assets::IconName::X)
-                            .custom(super::controls::chrome_variant(cx))
-                            .cursor_pointer()
-                            .xsmall()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.stop_mini(window, cx);
-                            })),
                     ),
             )
             .into_any_element()
@@ -289,18 +279,6 @@ impl super::HomeView {
             log::info!("[Home] 退出小屏，窗口几何已还原");
         }
         cx.notify();
-    }
-
-    /// 关闭小屏（Tauri stopMini 同款：暂停 + 强落进度 + 还原窗口；gpui 壳
-    /// 只有播放流一个根，无需再跳路由）。
-    fn stop_mini(&mut self, window: &mut gpui_kit::Window, cx: &mut Context<Self>) {
-        if let Some(player) = &self.player
-            && !player.is_paused()
-        {
-            player.pause();
-        }
-        self.save_progress_now();
-        self.exit_mini(window, cx);
     }
 
     /// 小屏里点倍速标签循环档位（Tauri MINI_RATES 同款，完整菜单回大屏）。
