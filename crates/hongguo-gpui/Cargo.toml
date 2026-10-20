@@ -129,6 +129,27 @@ serde_json = "1"
 # Windows 小屏路径用）。
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6"
+# 系统播放器（wm_presenter）：Media Foundation Media Engine + 自定义
+# IMFByteStream + DirectComposition 视频位。0.62 已在依赖图里（tauri/wry/
+# sysinfo 传递引入），按需裁剪 feature；实现口径与 hongguo-media-platform-windows
+# 的 MF 用法一致（MTA + MFStartup）。
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+# `#[implement]`（IMFByteStream / IMFMediaEngineNotify）生成的代码引用
+# `windows_core::`，必须直接依赖且与 windows 同版本。
+windows-core = "0.62"
+# 合成视觉挂点（vendored 补丁，见根 Cargo.toml 的 [patch.crates-io]）：给
+# MediaEngine 提供「GPUI 内容之下的 IDCompositionVisual」与渲染器的 D3D11 设备。
+# 版本必须与 gpui-kit 传递依赖钉的一致，否则 patch 后仍是两份、类型不互通。
+gpui-pre-windows = { version = "=0.3.9", package = "gpui-pre-windows", default-features = false }
 
 # 视频 surface 桥接（home.rs video_layer）：gpui 0.3.9 起收 objc2 的
 # CFRetained<CVPixelBuffer>，解码侧给的是 core-video TCFType 包装——

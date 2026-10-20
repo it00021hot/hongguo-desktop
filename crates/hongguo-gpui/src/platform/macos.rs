@@ -12,6 +12,15 @@ use super::{MINI_H, MINI_MARGIN, MINI_W, OuterRect, WindowSnapshot};
 /// 第二次启动的前置请求（单实例 Unix 套接字，见 [`crate::single_instance`]）。
 pub(crate) const SHELL_POLLER: bool = true;
 
+/// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器的视频位用）。
+///
+/// macOS 的 `AVPlayerLayer` 宿主挂在窗口 contentView 上，其坐标原点与 GPUI
+/// prepaint 给的 y 相差一个顶栏高度（既有实现一直按此补偿，本机验证过）；
+/// Windows 那边 prepaint 已含顶栏，补偿为 0。差异只在窗口系统，业务层不感知。
+pub(crate) fn stage_origin(x: f32, y: f32, chrome_top: f32) -> (f32, f32) {
+    (x, y + chrome_top)
+}
+
 /// 注册全局快捷键：Carbon `RegisterEventHotKey`（Tauri 的
 /// tauri-plugin-global-shortcut 在 macOS 也是这条通路；不申请辅助功能授权）。
 pub(crate) fn register_hotkey(mods: u32, vk: u32) -> Result<(), String> {

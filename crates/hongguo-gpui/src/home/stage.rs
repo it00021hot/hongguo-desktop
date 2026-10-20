@@ -189,6 +189,81 @@ impl super::HomeView {
 
     // —— 渲染 ——
 
+    /// 系统后端：把 contain 的黑边画成黑色。
+    ///
+    /// 透明洞的边界是**视频矩形**，不是整个舞台。视频位在 GPUI 内容之下，舞台
+    /// 背景一透明，黑边就成了「洞」：Windows 的 DComp 透明窗没有窗口底色兜底，
+    /// 会直接漏出后面的窗口（实测截屏里能看到别的窗口内容）；macOS 靠窗口黑底
+    /// 遮住，但两侧共用这段代码之后行为一致——黑边由 GPUI 自己画，窗口底色
+    /// 只作最后的兜底。
+    ///
+    /// 换算与 `wm_presenter` 的舞台几何同参：contain 居中换算宽高，取不到原生
+    /// 尺寸（metadata 未就绪）时不画；小屏是 `cover` 铺满，没有黑边。
+    fn render_stage_letterbox(&self) -> Option<gpui_kit::AnyElement> {
+        if self.mini.is_some() {
+            return None;
+        }
+        let [_, _, stage_w, stage_h] = self.stage_bounds.get()?;
+        let (native_w, native_h) = self.player.as_ref()?.dims();
+        if stage_w < 2.0 || stage_h < 2.0 || native_w == 0 || native_h == 0 {
+            return None;
+        }
+        let aspect = native_w as f32 / native_h as f32;
+        let (mut video_w, mut video_h) = (stage_w, stage_w / aspect);
+        if video_h > stage_h {
+            video_h = stage_h;
+            video_w = stage_h * aspect;
+        }
+        let bar_y = ((stage_h - video_h) / 2.0).max(0.0);
+        let bar_x = ((stage_w - video_w) / 2.0).max(0.0);
+        if bar_y < 0.5 && bar_x < 0.5 {
+            return None;
+        }
+        let black = gpui_kit::rgb(0x000000);
+        Some(
+            div()
+                .absolute()
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(gpui_kit::px(bar_y))
+                        .bg(black),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(gpui_kit::px(bar_y))
+                        .bg(black),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(gpui_kit::px(bar_y))
+                        .bottom(gpui_kit::px(bar_y))
+                        .left_0()
+                        .w(gpui_kit::px(bar_x))
+                        .bg(black),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(gpui_kit::px(bar_y))
+                        .bottom(gpui_kit::px(bar_y))
+                        .right_0()
+                        .w(gpui_kit::px(bar_x))
+                        .bg(black),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// 沉浸舞台：**同一时刻只画一层内容**——出画了画视频，没出画画封面。
     ///
     /// 两层都是绝对定位铺满舞台，谁盖谁由元素顺序决定。曾经两层都画、封面
@@ -234,17 +309,18 @@ impl super::HomeView {
         // 主线程挂载/更新原生 NSView + AVPlayerLayer。
         if let Some(player) = &self.player {
             player.attach(window);
-            // `on_children_prepainted` 的 y 是相对内容区的（x 已是窗口绝对）：
             // 顶栏 44px 只在 chrome 可见时占位（小屏/沉浸全屏没有顶栏）。
-            let stage_top = if self.mini.is_some() || self.immersive {
+            // prepaint 原点 → 窗口绝对坐标的差异（Windows 已含顶栏、macOS 需补）
+            // 属于窗口系统，归 `platform` 门面，这里不写平台常量。
+            let chrome_top = if self.mini.is_some() || self.immersive {
                 0.0
             } else {
                 44.0
             };
-            let bounds = self
-                .stage_bounds
-                .get()
-                .map(|r| PresenterBounds::new(r[0], r[1] + stage_top, r[2], r[3]));
+            let bounds = self.stage_bounds.get().map(|r| {
+                let (x, y) = crate::platform::stage_origin(r[0], r[1], chrome_top);
+                PresenterBounds::new(x, y, r[2], r[3])
+            });
             let fit = if self.mini.is_some() {
                 PresenterFit::Cover
             } else {
@@ -402,6 +478,10 @@ impl super::HomeView {
                 .child(Spinner::new())
                 .into_any_element()
         };
+        // 系统后端：把 contain 的黑边画黑（透明洞只留视频矩形，见方法注释）。
+        let letterbox = system_ready
+            .then(|| self.render_stage_letterbox())
+            .flatten();
         // 缓冲角标（右上）：引擎水位状态机的 Buffering 事件驱动，区别于左上
         // 的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
         let buffering_badge = (self.buffering && self.player.is_some()).then(|| {
@@ -624,6 +704,10 @@ impl super::HomeView {
                 // 会让日志恒报「视频层 0」，哨兵就成了假警报源
                 div().absolute().size_full().into_any_element()
             })
+            // 黑边必须画在视频层之后：哨兵按子层下标读矩形（cover=0、video=1），
+            // 插在中间会把视频层挤到下标 2、哨兵从此读错。纯样式 div 没有
+            // hitbox，不挡点画面暂停。
+            .children(letterbox)
             .children(danmaku_layer)
             .children(overlay)
             .children(rail)
@@ -889,9 +973,11 @@ impl super::HomeView {
                 if rects.get() != Some(sample) {
                     rects.set(Some(sample));
                     log::info!(
-                        "[Home][stage] 封面层 {:.0}×{:.0}，视频层 {:.0}×{:.0}（应同为舞台整块）",
+                        "[Home][stage] 封面层 {:.0}×{:.0}（原点 {:.0},{:.0}），视频层 {:.0}×{:.0}（应同为舞台整块）",
                         c[0],
                         c[1],
+                        cover.origin.x.to_f64() as f32,
+                        cover.origin.y.to_f64() as f32,
                         v[0],
                         v[1]
                     );

@@ -53,6 +53,8 @@ mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
 mod window_restore;
+#[cfg(target_os = "windows")]
+mod wm_presenter;
 
 use std::sync::Arc;
 use std::sync::OnceLock;

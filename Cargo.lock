@@ -4077,8 +4077,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-windows"
 version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "513d4f0fc7d596d3bdef2a73a524ffb83dabc95bf484f2855a698e7f431290a9"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -4411,6 +4409,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
+ "gpui-pre-windows",
  "hongguo-api",
  "hongguo-common",
  "hongguo-media",
@@ -4434,6 +4433,8 @@ dependencies = [
  "smallvec",
  "sys-locale",
  "tokio",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

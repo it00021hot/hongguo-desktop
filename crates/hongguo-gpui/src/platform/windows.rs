@@ -16,6 +16,14 @@ use super::{MINI_H, MINI_MARGIN, MINI_W, OuterRect, WindowSnapshot};
 /// 壳级轮询是否可用（全局快捷键 + 第二次启动前置窗口）。
 pub(crate) const SHELL_POLLER: bool = true;
 
+/// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器的视频位用）。
+///
+/// Windows 上 `on_children_prepainted` 给的原点已经是窗口坐标（实测
+/// `cover.origin.y = 44`，顶栏已含在内），再做补偿会把画面整体下移一个顶栏。
+pub(crate) fn stage_origin(x: f32, y: f32, _chrome_top: f32) -> (f32, f32) {
+    (x, y)
+}
+
 /// 注册全局快捷键（[`crate::boss_key::accel`] 算好的修饰位 + 虚拟键码）。
 pub(crate) fn register_hotkey(mods: u32, vk: u32) -> Result<(), String> {
     crate::win32::register_hotkey(mods, vk)

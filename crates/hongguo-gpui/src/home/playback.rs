@@ -39,6 +39,21 @@ struct PlayRequest {
     start_override: Option<f64>,
 }
 
+/// 系统播放器的打开参数：引擎/视频位只能在主线程取，所以起播链把它带回来。
+struct SystemSpec {
+    source: hongguo_playback::PlaySource,
+    start_secs: f64,
+    rate: f64,
+    events: mpsc::Sender<PlayerEvent>,
+    on_stall: Option<super::player::StallHook>,
+}
+
+/// 起播链的产物：自研上屏已就位，或系统后端待主线程创建。
+enum Opened {
+    Ready(Player, super::NowPlaying),
+    System(SystemSpec, super::NowPlaying),
+}
+
 /// 观看历史上报心跳（秒）：节拍判定在 [`super::history_cadence::HistoryCadence`]，
 /// 这里只按拍取位置。1 秒粒度 = 5 秒首报最迟 6 秒落地，肉眼即「开播就到」。
 const HISTORY_HEARTBEAT_SECS: u64 = 1;
@@ -472,7 +487,23 @@ impl super::HomeView {
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
-                match result {
+                // 系统后端的播放器只能在主线程创建（DComp 视频位归渲染线程）。
+                let opened = match result {
+                    Ok(Opened::Ready(handle, now)) => Ok((handle, now)),
+                    Ok(Opened::System(spec, now)) => crate::platform::open_system_player(
+                        spec.source,
+                        spec.start_secs,
+                        spec.rate,
+                        spec.events,
+                        spec.on_stall,
+                    )
+                    .map(|handle| (handle, now))
+                    .ok_or_else(|| {
+                        hongguo_common::AppError::Media(crate::i18n::t("player.systemUnavailable"))
+                    }),
+                    Err(error) => Err(error),
+                };
+                match opened {
                     Ok((handle, now)) => {
                         // 新引擎就位（帧随后由它的 Frame 事件送到，这里不清帧：
                         // 起了才清的写法会把先到的首帧抹掉，封面从此收不掉）。
@@ -524,6 +555,17 @@ impl super::HomeView {
                         log::info!("[Home] 引擎就位（epoch={epoch}），switching 解除");
                     }
                     Err(e) => {
+                        // 系统播放器起不来 = 后端降级，不是播放失败：翻掉开关后用
+                        // 自研上屏重走一次起播（不消耗 play_retried 预算）。
+                        if crate::video_backend::fall_back_to_gpui() {
+                            log::warn!("[Home] 系统播放器不可用，后端降级为 gpui 重起：{e}");
+                            view.switching = false;
+                            if let Some(item) = view.display_items().get(view.cursor()).cloned() {
+                                view.play_target(item, None, None, cx);
+                                cx.notify();
+                                return;
+                            }
+                        }
                         log::warn!("[Home] 起播失败: {e}");
                         view.switching = false;
                         view.buffering = false;
@@ -560,7 +602,7 @@ impl super::HomeView {
         history: Vec<WatchHistoryItem>,
         req: PlayRequest,
         events: mpsc::Sender<PlayerEvent>,
-    ) -> AppResult<(Player, NowPlaying)> {
+    ) -> AppResult<Opened> {
         let PlayRequest {
             item,
             forced_next_ep,
@@ -685,9 +727,37 @@ impl super::HomeView {
                 );
             }))
         };
-        let handle: Player = if crate::video_backend::is_system() {
-            crate::platform::open_system_player(source, start_secs, rate, events, on_stall)
-                .expect("系统播放器只有 macOS 实现")
+        let now = NowPlaying {
+            series_id: item.series_id,
+            title: if item.title.is_empty() {
+                series.title.clone()
+            } else {
+                item.title.clone()
+            },
+            vid_index: ep.vid_index,
+            episode_count,
+            heat_text: item.heat_text,
+            season_tag: item.season_tag,
+            badge: item.badge,
+            definitions,
+            definition,
+            vid: ep.vid.clone(),
+            cover: item.cover.clone(),
+        };
+        // 系统播放器要拿 DComp 视频位——那是渲染线程的私有对象，只能在主线程
+        // 创建；所以这里把打开参数原样带回主线程（`Opened::System`），由调用方
+        // 在 `this.update` 里建。自研上屏没有这个约束，就地打开。
+        let opened = if crate::video_backend::is_system() {
+            Opened::System(
+                SystemSpec {
+                    source,
+                    start_secs,
+                    rate,
+                    events,
+                    on_stall,
+                },
+                now,
+            )
         } else {
             let engine = hongguo_playback::open(OpenOptions {
                 source,
@@ -696,28 +766,9 @@ impl super::HomeView {
                 events,
             })
             .await?;
-            engine as Player
+            Opened::Ready(engine as Player, now)
         };
-        Ok((
-            handle,
-            NowPlaying {
-                series_id: item.series_id,
-                title: if item.title.is_empty() {
-                    series.title.clone()
-                } else {
-                    item.title.clone()
-                },
-                vid_index: ep.vid_index,
-                episode_count,
-                heat_text: item.heat_text,
-                season_tag: item.season_tag,
-                badge: item.badge,
-                definitions,
-                definition,
-                vid: ep.vid.clone(),
-                cover: item.cover.clone(),
-            },
-        ))
+        Ok(opened)
     }
 
     /// 预先给系统播放器塞入下一集（AVQueuePlayer）：先把下一集流注册好

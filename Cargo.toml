@@ -78,6 +78,17 @@ rusty_h264-common = { path = "vendor/rusty_h264_common" }
 # 直接把硬件原生的 420v 交给 GPU 采样，全程零 CPU 搬运。
 # 上游 0.3.9 为当前最新版（本地索引已确认），待其支持 420v 后回收。
 gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+# gpui-pre-windows 0.3.9 把窗口内容的合成视觉直接设成 DirectComposition 目标的
+# 根，应用没有位置把「自己的视觉」插到内容之下。系统播放器（Media Foundation
+# Media Engine 的 rendering mode）要求应用提供 `IDCompositionVisual` 当画面落点，
+# 而这一层必须在 GPUI 内容之下——否则 GPUI 把舞台区清成 alpha=0 也露不出下面的
+# 视频（macOS 侧的对应结构是 AVPlayerLayer 插在 GPUIView 之下）。
+#
+# 补丁把根改成容器视觉，子视觉分两层〔内容、视频位〕，并新增 `system_video`
+# 模块按 HWND 暴露「视频位 visual + 渲染器 D3D11 设备」，供壳侧交给 MediaEngine
+# 当 MF_MEDIA_ENGINE_PLAYBACK_VISUAL（见 crates/hongguo-gpui/src/wm_presenter/）。
+# 上游 0.3.9 为当前最新版，待其提供原生视频挂点后回收。
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 # tauri-plugin-webdriver 0.2.3 在 Windows 上声明 webview2-com 0.38 / windows
 # 0.61，而 tauri 2.12 已把 webview2-com 抬到 0.39（windows 0.62）——同一依赖图
 # 里两套 windows-core 类型不互通，插件 platform/windows.rs 拿 tauri 侧的

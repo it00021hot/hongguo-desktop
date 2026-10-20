@@ -159,6 +159,7 @@
     "bufferingShort": "Buffering",
     "switching": "Switching…",
     "preparingShort": "Preparing…",
+    "systemUnavailable": "System player unavailable, falling back to the built-in renderer",
     "compatFetching": "Fetching this episode…",
     "compatTranscoding": "Cannot decode, converting to a compatible format {percent}%",
     "compatHint": "First conversion runs in software and may take a while; playback resumes automatically",

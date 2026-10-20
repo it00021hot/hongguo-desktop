@@ -159,6 +159,7 @@
     "bufferingShort": "缓冲中",
     "switching": "正在切换…",
     "preparingShort": "正在准备…",
+    "systemUnavailable": "系统播放器不可用，已回落到自研上屏",
     "compatFetching": "正在取这一集…",
     "compatTranscoding": "画面解不出来，正在转成兼容格式 {percent}%",
     "compatHint": "首次兜底是纯软件转码，可能较慢；转好后自动接着播放，只需等这一次",

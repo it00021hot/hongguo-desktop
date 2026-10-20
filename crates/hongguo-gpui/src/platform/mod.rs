@@ -72,7 +72,8 @@ pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
 }
 
 /// 系统播放器工厂（平台门面）。业务层只问 `video_backend::is_system()`，
-/// 不写 `#[cfg]`；非 macOS 目标返回 `None`（`video_backend` 已拒绝 system）。
+/// 不写 `#[cfg]`；非 macOS / Windows 目标返回 `None`（`video_backend` 已拒绝
+/// system）。
 #[cfg(target_os = "macos")]
 pub(crate) fn open_system_player(
     source: hongguo_playback::PlaySource,
@@ -86,7 +87,20 @@ pub(crate) fn open_system_player(
     ))
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows：MediaEngine（rendering mode）+ 合成视觉；引擎起不来返回 `None`，
+/// 壳回落到自研上屏（见 `docs/gpui-system-player-windows.md`）。
+#[cfg(target_os = "windows")]
+pub(crate) fn open_system_player(
+    source: hongguo_playback::PlaySource,
+    start_secs: f64,
+    rate: f64,
+    events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
+    on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+) -> Option<crate::home::player::Player> {
+    crate::wm_presenter::open(source, start_secs, rate, events, on_stall)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn open_system_player(
     _source: hongguo_playback::PlaySource,
     _start_secs: f64,
@@ -97,11 +111,24 @@ pub(crate) fn open_system_player(
     None
 }
 
-/// 系统后端窗口外观（透明 + 黑底）；非 macOS 空操作。
+/// 系统后端窗口外观；非系统后端目标空操作。
 #[cfg(target_os = "macos")]
 pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
     crate::av_presenter::prepare_window(window);
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows：窗口背景透明 + Media Foundation 进程级初始化。
+#[cfg(target_os = "windows")]
+pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
+    crate::wm_presenter::prepare_window(window);
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn prepare_system_window(_window: &gpui_kit::Window) {}
+
+/// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器视频位用）。
+/// 各平台的差异见 [`windows`] / [`macos`] 里的同名实现；无系统后端的目标恒等。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn stage_origin(x: f32, y: f32, _chrome_top: f32) -> (f32, f32) {
+    (x, y)
+}
