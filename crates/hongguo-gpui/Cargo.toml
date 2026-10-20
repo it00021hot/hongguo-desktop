@@ -140,6 +140,9 @@ raw-window-handle = "0.6"
 core-foundation = "0.10"
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    # CVBuffer 的 RefEncode（copyPixelBufferForItemTime 的返回值）挂在该 feature 下
+    "objc2",
     "CVBuffer",
     "CVImageBuffer",
     "CVPixelBuffer",
@@ -161,4 +164,8 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     # 播放期活动断言（play_activity.rs）：NSProcessInfo + 原因字符串
     "NSProcessInfo",
     "NSString",
+    # Phase 0 AV spike：自定义 scheme URL / 内存字节回包 / 队列 item 数组
+    "NSURL",
+    "NSData",
+    "NSArray",
 ] }

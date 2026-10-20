@@ -14,6 +14,8 @@
 //! 范围：浏览类操作（推荐流 / 排行榜，含封面、加载与失败态）。剧集详情与
 //! 播放（帧流 → GPU 纹理）是 §5.3 spike，另行立项。
 
+#[cfg(target_os = "macos")]
+mod av_spike;
 mod boss_key;
 mod bridge;
 mod cover_img;
@@ -106,6 +108,13 @@ fn main() {
         );
         std::process::abort();
     }));
+    // Phase 0 AVPlayer spike：HONGGUO_AV_SPIKE=1 时整个进程走独立诊断路径，
+    // 不声明数据根、不抢单实例、不碰任何业务状态（默认启动路径零改动）。
+    #[cfg(target_os = "macos")]
+    if crate::av_spike::requested() {
+        crate::av_spike::run();
+        return;
+    }
     // 离屏预览：--render-preview <目录> 直接接管进程。必须在下方声明
     // 交互壳数据根之前分发——preview::run 要把数据根指到预览专用目录
     //（set_shell_data_root 是 OnceLock，只有第一次生效）。管线编在
