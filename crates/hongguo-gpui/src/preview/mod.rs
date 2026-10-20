@@ -12,7 +12,7 @@
 //!    互不接触），跑完即删；
 //! 3. 每个场景一个 [`gpui_kit::HeadlessAppContext`]（独立主题/字号全局），
 //!    `gpui_kit::open_window` 开 `show:false` 窗口挂真实 `Shell`，种子注入
-//!    （`home/preview_seed.rs` + `preview/fixtures.rs`）后 `draw` 两帧，
+//!    （`home/preview_seed.rs` + `preview/fixtures/`）后 `draw` 两帧，
 //!    `capture_screenshot` 存 `<场景名>.png`。
 //!
 //! 已知边界（预览图的预期形态，不是 bug）：
