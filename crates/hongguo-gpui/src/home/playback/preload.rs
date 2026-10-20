@@ -85,9 +85,9 @@ impl super::HomeView {
             .update(cx, |_, window, _| window.activate_window());
         cx.spawn(async move |this, cx| {
             loop {
-                // 60Hz：弹幕位置按挂钟推进（`danmaku_tick` 里用 dt 累计），
-                // 但**推进频率**必须是 60 才顺——33ms 的节拍在 60fps 视频上
-                // 一眼就能看出顿挫（用户实测「弹幕有种卡顿的感觉」）。
+                // 这一拍只做逻辑（入场/回收/重锚/进度落盘），**不推进位置**：
+                // 弹幕位置是挂钟的纯函数，重绘节拍由弹幕层的 vsync 动画驱动
+                // （见 `stage/render.rs`）。频率与视频 fps / 刷新率都无关。
                 cx.background_executor()
                     .timer(Duration::from_millis(16))
                     .await;

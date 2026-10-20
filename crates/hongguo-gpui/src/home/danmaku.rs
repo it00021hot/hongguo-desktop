@@ -20,13 +20,26 @@ pub(super) struct DmFlight {
     pub(super) text: String,
     pub(super) lane: usize,
     width: f32,
+    /// 锚点时刻的滚动进度（0 = 刚出右沿，1 = 滚出一屏）。
     progress: f64,
+    /// 播放中才有锚点：进度 = `progress` + 锚点以来的挂钟 / DM_CROSS_SECS。
+    /// 位置因此是「渲染时刻」的纯函数——重绘多少 Hz都不影响速度与线性度，
+    /// 暂停时锚点清空、进度冻结（tick 负责折叠）。
+    anchor_at: Option<std::time::Instant>,
 }
 
 impl DmFlight {
+    /// 当前进度（纯函数：锚点 + 挂钟差）。
+    pub(super) fn progress_at(&self, now: std::time::Instant) -> f64 {
+        match self.anchor_at {
+            Some(at) => self.progress + now.duration_since(at).as_secs_f64() / DM_CROSS_SECS,
+            None => self.progress,
+        }
+    }
+
     /// 相对舞台左缘的横向偏移（像素，可为负 = 已滚出左沿）。
-    pub(super) fn x_offset(&self, stage_w: f64) -> f64 {
-        stage_w - self.progress * (stage_w + self.width as f64)
+    pub(super) fn x_offset(&self, stage_w: f64, now: std::time::Instant) -> f64 {
+        stage_w - self.progress_at(now) * (stage_w + self.width as f64)
     }
 }
 
@@ -167,14 +180,14 @@ impl super::HomeView {
             .get()
             .and_then(|r| r.get(1).copied())
             .unwrap_or(640.0);
-        // 在飞推进（暂停不推进 = 冻结）与出屏回收（progress ≥ 1 滚完一屏）
-        if !paused && !self.danmaku_flights.is_empty() {
-            let step = dt / DM_CROSS_SECS;
-            for f in &mut self.danmaku_flights {
-                f.progress += step;
-            }
+        // 位置不在这里推进（tick 只做逻辑）：播放中把进度折叠到「现在」并
+        // 重锚，暂停时清锚点冻结。这样重绘频率与进度完全解耦。
+        let _ = dt;
+        for f in &mut self.danmaku_flights {
+            f.progress = f.progress_at(now);
+            f.anchor_at = (!paused).then_some(now);
         }
-        self.danmaku_flights.retain(|f| f.progress < 1.0);
+        self.danmaku_flights.retain(|f| f.progress_at(now) < 1.0);
 
         // 入场：offset 落在 (上一帧, 当前] 的按密度抽样发射（随机均匀：
         // 丢哪条无所谓，要的是同屏条数按比例变稀）
@@ -212,6 +225,7 @@ impl super::HomeView {
                 lane: pick,
                 width: dm_text_width(&d.text, font_px),
                 progress: 0.0,
+                anchor_at: Some(now),
             });
             spawned += 1;
         }

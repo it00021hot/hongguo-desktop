@@ -342,6 +342,9 @@ impl HomeView {
                 .unwrap_or(576.0);
             let font_px = self.dm_font_px(stage_h);
             let layer_opacity = self.dm_opacity;
+            // 每帧取一次「现在」：弹幕位置是它的纯函数（见 `DmFlight`）。
+            let dm_now = std::time::Instant::now();
+            let _ = self.player.as_ref().is_some_and(|p| p.is_paused());
             div()
                 .absolute()
                 .size_full()
@@ -349,7 +352,7 @@ impl HomeView {
                 .opacity(layer_opacity)
                 .children(self.danmaku_flights.iter().map(|f| {
                     let top = f.lane as f32 * (font_px + DM_LANE_GAP);
-                    let x = f.x_offset(stage_w) as f32;
+                    let x = f.x_offset(stage_w, dm_now) as f32;
                     // 表情分段：[名字] 换打包 webp（1.3 字号，基线下沉
                     // 0.28em 对齐 hgplayer），文本段照旧
                     let segments = crate::danmaku_emoji::parse_emoji_segments(&f.text);
