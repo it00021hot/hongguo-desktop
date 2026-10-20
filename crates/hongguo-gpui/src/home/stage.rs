@@ -507,6 +507,29 @@ impl super::HomeView {
         // 评论面板打开时互动栏让位（面板就盖在右缘）
         let rail = (!in_mini && self.controls_visible() && !self.comments_panel_open)
             .then(|| self.render_interaction_rail(cx));
+        // 顶部加载条只对「真正在加载的未完成项」亮：system 后端没有 Frame
+        // 事件，不能再用 `frame.is_none()`（它会永远为真）；改为看切换/
+        // 缓冲/播放器已起但首帧未到。已看完被跳过时三者都为空，条自然熄。
+        let loadbar = if crate::video_backend::is_system() {
+            self.switching
+                || self.buffering
+                || (self.player.is_some() && !self.system_video_ready && self.play_error.is_none())
+        } else {
+            self.switching || self.frame.is_none() || self.buffering || self.feed_loading()
+        };
+        static LOADBAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if LOADBAR.swap(loadbar, Ordering::Relaxed) != loadbar {
+            log::info!(
+                "[Home][stage] 加载条 {}（system={} switching={} buffering={} player={} ready={} error={}）",
+                if loadbar { "亮" } else { "灭" },
+                crate::video_backend::is_system(),
+                self.switching,
+                self.buffering,
+                self.player.is_some(),
+                self.system_video_ready,
+                self.play_error.is_some()
+            );
+        }
         let comment_panel =
             (!in_mini && self.comments_panel_open).then(|| self.render_comment_panel(cx));
         // HEVC 安装引导（Tauri HevcInstallCard floating 形态）：本机解不了
@@ -818,36 +841,31 @@ impl super::HomeView {
             // 1.1s 从 -110% 滑到 +440%，按胶囊自身宽计 = 轨道的 -0.33→1.32）。
             // 用 gpui 的 Animation 驱动：它有独立的连续帧请求，不依赖播放帧率
             //（切换间隙恰好没有帧可驱动重绘）。
-            .children(
-                (self.switching || self.frame.is_none() || self.buffering || self.feed_loading())
-                    .then(|| {
+            .children(loadbar.then(|| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(gpui_kit::px(2.0))
+                    .overflow_hidden()
+                    .child(
                         div()
                             .absolute()
                             .top_0()
-                            .left_0()
-                            .right_0()
-                            .h(gpui_kit::px(2.0))
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .h_full()
-                                    .w(gpui_kit::relative(0.30))
-                                    .rounded(gpui_kit::px(9999.0))
-                                    .bg(theme.primary)
-                                    .with_animation(
-                                        "hg-loadbar",
-                                        gpui_kit::Animation::new(std::time::Duration::from_millis(
-                                            1100,
-                                        ))
-                                        .repeat(),
-                                        |el, t| el.left(gpui_kit::relative(-0.33 + 1.65 * t)),
-                                    ),
-                            )
-                            .into_any_element()
-                    }),
-            )
+                            .h_full()
+                            .w(gpui_kit::relative(0.30))
+                            .rounded(gpui_kit::px(9999.0))
+                            .bg(theme.primary)
+                            .with_animation(
+                                "hg-loadbar",
+                                gpui_kit::Animation::new(std::time::Duration::from_millis(1100))
+                                    .repeat(),
+                                |el, t| el.left(gpui_kit::relative(-0.33 + 1.65 * t)),
+                            ),
+                    )
+                    .into_any_element()
+            }))
             // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（Tauri 同址，
             // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）

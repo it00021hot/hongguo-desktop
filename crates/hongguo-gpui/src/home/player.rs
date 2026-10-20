@@ -13,6 +13,9 @@ use hongguo_playback::{PlayerHandle, PresenterBounds, PresenterFit};
 /// 视图侧播放器句柄（`Arc` 便于事件回调/后台任务共享）。
 pub(crate) type Player = Arc<dyn PlayerLike>;
 
+/// loader 读到填充前沿/超时时的业务续填钩子（系统后端专用）。
+pub(crate) type StallHook = Arc<dyn Fn() + Send + Sync>;
+
 /// 两种后端共用的控制面。方法名与 `PlayerHandle` 一一对应，视图调用点
 /// 不需要改；平台差异（画面挂载/舞台矩形）走默认空实现。
 pub(crate) trait PlayerLike: Send + Sync {
@@ -43,7 +46,7 @@ pub(crate) trait PlayerLike: Send + Sync {
     fn detach(&self) {}
 
     /// 预加载下一集（系统后端 AVQueuePlayer 接力；GPUI 后端无操作）。
-    fn preload_next(&self, _vid: &str, _definition: u32) -> bool {
+    fn preload_next(&self, _vid: &str, _definition: u32, _on_stall: Option<StallHook>) -> bool {
         false
     }
 

@@ -2,6 +2,7 @@
 //! 三级调度器（需求优先 → 顺序前沿 → 收尾回绕）与预取动态预算。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use hongguo_api::client::{STREAM_RETRY_ATTEMPTS, stream_retry_backoff};
 use hongguo_common::model::Settings;
@@ -97,6 +98,10 @@ pub(super) async fn fill(
                         FillBudget::Unbounded
                     } else if cache().current_has_waiters() {
                         FillBudget::Yield
+                    } else if cache().is_next(&key, definition) {
+                        // 系统播放器已排队、马上接力的下一集：提前填过 8MB
+                        // 上限，loader 才不会在切集瞬间卡在 8388608 等 30s。
+                        FillBudget::Unbounded
                     } else {
                         FillBudget::Bounded(PREFETCH_HEAD_BYTES)
                     }
@@ -186,18 +191,46 @@ enum FillBudget {
     Yield,
 }
 
+/// 续填在「预取填充还握着取流权」时的退避重试：预取正好在 8MB 预算处收尾，
+/// 这一次 begin_fetch 会失败；不重试就会留下「8MB 之后永远没人续填」的缝。
+const RESUME_RETRY_ATTEMPTS: u8 = 8;
+const RESUME_RETRY_DELAY: Duration = Duration::from_millis(200);
+
 /// 预取条目升格为当前集后的**续填**：渐进已注册、URL/代理存在条目里，
 /// 直接把余下字节按序填满（当前集优先级，无窗口上限、不礼让）。
 ///
 /// 没有它，预取只填头部的条目在被切上后，播放追上填充前沿就只能
 /// 30s 超时——「滚回来就黑屏」的另一半。
 pub fn resume_fill(state: &AppState, vid: &str, definition: u32, progress_key: &str) {
+    resume_fill_inner(state, vid, definition, progress_key, RESUME_RETRY_ATTEMPTS);
+}
+
+fn resume_fill_inner(
+    state: &AppState,
+    vid: &str,
+    definition: u32,
+    progress_key: &str,
+    attempts_left: u8,
+) {
     let c = cache();
     if !c.needs_resume(vid, definition) {
         return;
     }
     if !c.begin_fetch(vid, definition) {
-        return; // 已有填充方
+        // 已有填充方（多半是 8MB 收尾中的预取）。退避后再试，别让 loader
+        // 在填充前沿干等 30s 超时。
+        if attempts_left == 0 {
+            log::warn!("[Online] {vid}@{definition} 续填一直抢不到取流权（退避重试耗尽）");
+            return;
+        }
+        let state = state.clone();
+        let owned = vid.to_string();
+        let owned_key = progress_key.to_string();
+        crate::runtime::spawn(async move {
+            tokio::time::sleep(RESUME_RETRY_DELAY).await;
+            resume_fill_inner(&state, &owned, definition, &owned_key, attempts_left - 1);
+        });
+        return;
     }
     let Some((sparse, prog)) = c.resume_parts(vid, definition) else {
         c.end_fetch(vid, definition);
@@ -212,7 +245,10 @@ pub fn resume_fill(state: &AppState, vid: &str, definition: u32, progress_key: &
     // 见模块头注释。
     crate::runtime::spawn(async move {
         let reporter = ProgressReporter::new(event_sink(state.events()), owned_key);
-        let cancelled = || !c.exists(&owned, definition) || c.current() != owned;
+        let cancelled = || {
+            !c.exists(&owned, definition)
+                || (c.current() != owned && !c.is_next(&owned, definition))
+        };
         let client = match hongguo_api::client::build_client(&proxy) {
             Ok(cl) => cl,
             Err(e) => {

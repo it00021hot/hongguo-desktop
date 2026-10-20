@@ -54,15 +54,25 @@ unsafe extern "C" {
 pub enum Source {
     /// 整段明文在内存（Phase 0 对照模式 / 本地小样片）。
     Bytes(Arc<[u8]>),
-    /// hongguo-stream 渐进流。
-    Stream { vid: String, definition: u32 },
+    /// hongguo-stream 渐进流。`on_stall` 在每次读前/读失败时调用：让业务层
+    /// 按需 `resume_fill`（8MB 预取预算用完后必须有人续填）。
+    Stream {
+        vid: String,
+        definition: u32,
+        on_stall: Option<StallHook>,
+    },
 }
+
+/// 读前/读失败时的业务侧唤醒（当前集续填）。同步入口，内部自行派发。
+pub type StallHook = Arc<dyn Fn() + Send + Sync>;
 
 impl Source {
     pub fn label(&self) -> String {
         match self {
             Self::Bytes(bytes) => format!("bytes({}B)", bytes.len()),
-            Self::Stream { vid, definition } => format!("stream({vid}@{definition})"),
+            Self::Stream {
+                vid, definition, ..
+            } => format!("stream({vid}@{definition})"),
         }
     }
 }
@@ -278,16 +288,25 @@ fn respond_range(
             respond_with_data(data_request, &bytes[start_index..end_index]);
             true
         }
-        Source::Stream { vid, definition } => {
+        Source::Stream {
+            vid,
+            definition,
+            on_stall,
+        } => {
             let mut position = start;
             while position < end {
                 if cancelled.load(Ordering::SeqCst) {
                     return false;
                 }
                 let want = (end - position).min(READ_CHUNK_BYTES);
-                let result = read_range_cancellable(vid, *definition, position, Some(want), || {
-                    cancelled.load(Ordering::SeqCst)
-                });
+                let result = read_with_stall(
+                    vid,
+                    *definition,
+                    position,
+                    want,
+                    cancelled,
+                    on_stall.as_ref(),
+                );
                 match result {
                     Ok(chunk) if !chunk.bytes.is_empty() => {
                         respond_with_data(data_request, &chunk.bytes);
@@ -316,6 +335,49 @@ fn respond_range(
     }
 }
 
+/// 读一块；读前先唤醒业务续填，可恢复错误退避重试。8MB 预取预算耗尽后，
+/// 只有 `resume_fill` 能把填充前沿往前推；loader 不能把这一次超时直接
+/// 变成 AVFoundation 的永久失败。
+fn read_with_stall(
+    vid: &str,
+    definition: u32,
+    start: u64,
+    want: u64,
+    cancelled: &AtomicBool,
+    on_stall: Option<&StallHook>,
+) -> Result<hongguo_stream::StreamChunk, StreamReadError> {
+    const STALL_RETRIES: u8 = 3;
+    for attempt in 0..=STALL_RETRIES {
+        if let Some(on_stall) = on_stall {
+            on_stall();
+        }
+        let result = read_range_cancellable(vid, definition, start, Some(want), || {
+            cancelled.load(Ordering::SeqCst)
+        });
+        match result {
+            Err(error)
+                if attempt < STALL_RETRIES
+                    && matches!(
+                        &error,
+                        StreamReadError::Timeout
+                            | StreamReadError::Missing { .. }
+                            | StreamReadError::Replaced
+                    ) =>
+            {
+                log::warn!(
+                    "[AvPlayer] {vid}@{definition} 读取 {start}..{} 暂时失败（{error}），{}ms 后重试（{}/{STALL_RETRIES}）",
+                    start + want,
+                    250u64 * (attempt as u64 + 1),
+                    attempt + 1
+                );
+                std::thread::sleep(Duration::from_millis(250 * (attempt as u64 + 1)));
+            }
+            other => return other,
+        }
+    }
+    unreachable!("STALL_RETRIES 范围内必返回")
+}
+
 fn respond_with_data(request: &AnyObject, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -330,7 +392,9 @@ fn respond_with_data(request: &AnyObject, bytes: &[u8]) {
 fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
     match source {
         Source::Bytes(bytes) => Some(bytes.len() as u64),
-        Source::Stream { vid, definition } => {
+        Source::Stream {
+            vid, definition, ..
+        } => {
             let deadline = Instant::now() + TOTAL_LEN_TIMEOUT;
             loop {
                 if cancelled.load(Ordering::SeqCst) {

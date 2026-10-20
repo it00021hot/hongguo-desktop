@@ -76,6 +76,9 @@ pub struct StreamCache {
     /// 显式预取的档位（沉浸流「下一部剧」），有界（[`MAX_PREFETCH_MARKS`]），
     /// 新标记挤掉最老的。逐出策略额外保这些条目；填充礼让也认它。
     prefetch: Mutex<Vec<(String, u32)>>,
+    /// 系统播放器已排队、即将接力的下一集。只允许一条：它可以在 `current`
+    /// 还是上一集时提前续填，避免 loader 读到 8MB 预取上限后干等 30s。
+    next: Mutex<Option<(String, u32)>>,
 }
 
 /// 除当前集与显式预取外，再保留几条最近用过的流。
@@ -254,11 +257,15 @@ impl StreamCache {
     /// [`Self::retain_playing_set`] 的可注入形态（测试用）。
     fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
         let prefetch = self.prefetch.lock().clone();
+        let next = self.next.lock().clone();
         let mut entries = self.entries.lock();
         let is_marked = |k: &StreamKey| {
             prefetch
                 .iter()
                 .any(|(v, d)| v == &k.vid && *d == k.definition)
+                || next
+                    .as_ref()
+                    .is_some_and(|(v, d)| v == &k.vid && *d == k.definition)
         };
 
         // 候选逐出集：非当前、非预取。按最近使用降序，窗口外即逐出。
@@ -303,6 +310,26 @@ impl StreamCache {
         *self.current.lock() = vid.to_string();
         // 升格为当前的那(几)条预取不再是预取
         self.prefetch.lock().retain(|(v, _)| v != vid);
+        // 已切到目标集（或换剧）：旧「下一集」标记作废。
+        *self.next.lock() = None;
+    }
+
+    /// 标记系统播放器队列里即将接力的下一集（只保留一条）。
+    pub fn mark_next(&self, vid: &str, definition: u32) {
+        *self.next.lock() = Some((vid.to_string(), definition));
+    }
+
+    /// 这一条是否是系统播放器排队中的下一集。
+    pub fn is_next(&self, vid: &str, definition: u32) -> bool {
+        self.next
+            .lock()
+            .as_ref()
+            .is_some_and(|(v, d)| v == vid && *d == definition)
+    }
+
+    /// 离开播放页/预加载取消：撤掉「下一集」标记，别再让它无界占带宽。
+    pub fn clear_next(&self) {
+        *self.next.lock() = None;
     }
 
     /// 这一条是否还在预取标记里（填充让位判定用）。
@@ -469,6 +496,20 @@ mod tests {
         assert!(c.is_fetching("a", 1080));
         assert!(!c.is_fetching("a", 720), "别的档位不受影响");
         assert!(!c.is_fetching("b", 1080), "别的 vid 不受影响");
+    }
+
+    #[test]
+    fn next_marker_survives_until_the_next_current() {
+        let c = StreamCache::default();
+        c.mark_next("a", 1080);
+        assert!(c.is_next("a", 1080));
+        assert!(!c.is_next("a", 720));
+        assert!(!c.is_next("b", 1080));
+        c.set_current("a");
+        assert!(
+            !c.is_next("a", 1080),
+            "切上后 next 必须清掉，避免继续无界占带宽"
+        );
     }
 
     /// 免触碰的存在性检查：`get` 会刷新 LRU 指纹，断言里用它才不打乱时序。

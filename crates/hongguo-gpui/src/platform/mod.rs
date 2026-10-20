@@ -79,8 +79,11 @@ pub(crate) fn open_system_player(
     start_secs: f64,
     rate: f64,
     events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
+    on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) -> Option<crate::home::player::Player> {
-    Some(crate::av_presenter::open(source, start_secs, rate, events))
+    Some(crate::av_presenter::open(
+        source, start_secs, rate, events, on_stall,
+    ))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -89,6 +92,7 @@ pub(crate) fn open_system_player(
     _start_secs: f64,
     _rate: f64,
     _events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
+    _on_stall: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
 ) -> Option<crate::home::player::Player> {
     None
 }

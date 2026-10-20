@@ -339,6 +339,7 @@ async fn prepare_online_inner(
             source: loader::Source::Stream {
                 vid: item.vid.clone(),
                 definition: prepared_a.definition,
+                on_stall: None,
             },
         },
         SpikeEpisode {
@@ -347,6 +348,7 @@ async fn prepare_online_inner(
             source: loader::Source::Stream {
                 vid: vid_b,
                 definition: definition_b,
+                on_stall: None,
             },
         },
     ])

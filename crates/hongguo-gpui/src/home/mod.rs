@@ -185,6 +185,10 @@ pub struct HomeView {
     system_video_ready: bool,
     /// 系统后端一次切集/起播的起点（首帧事件到达时结算耗时）。
     system_switch_started: Option<Instant>,
+    /// 系统播放器已到片尾并触发过接力（防 30fps 节拍重复 advance）。
+    system_tail_advanced: bool,
+    /// 正在异步预注册/预加载的下一集 vid（防重复入队）。
+    system_preload_pending: Option<String>,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
     /// 上屏节奏取证：两次新内容 render 的间隔、合并跳帧、最大停顿（5s 窗口）。
@@ -682,6 +686,8 @@ impl HomeView {
             stage_bounds: Rc::new(Cell::new(None)),
             system_video_ready: false,
             system_switch_started: None,
+            system_tail_advanced: false,
+            system_preload_pending: None,
         };
         view.subscribe_controls(cx);
         view.subscribe_service_events(cx);

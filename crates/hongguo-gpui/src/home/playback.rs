@@ -12,7 +12,7 @@ use hongguo_playback::{OpenOptions, PlayerEvent};
 
 use super::player::Player;
 use hongguo_service::app_state::AppStateInner;
-use hongguo_service::play_service::online::prepare;
+use hongguo_service::play_service::online::{ensure_stream_ready, prepare, resume_fill};
 use hongguo_service::play_service::position;
 use tokio::sync::mpsc;
 
@@ -106,6 +106,9 @@ impl super::HomeView {
         self.epoch.fetch_add(1, Ordering::Relaxed);
         self.player = None;
         self.system_video_ready = false;
+        self.system_tail_advanced = false;
+        self.system_preload_pending = None;
+        hongguo_stream::cache().clear_next();
         // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
         // 定格帧是「同剧切集」专属，离开时一并落下）
         self.frame = None;
@@ -196,14 +199,33 @@ impl super::HomeView {
             self.step_episode(dir, cx);
             return;
         }
-        let len = self.display_items().len();
+        let items = self.display_items();
+        let len = items.len();
         if len == 0 {
             return;
         }
         let cur = self.cursor();
-        let next = (cur as i64 + dir as i64).clamp(0, len as i64 - 1) as usize;
+        let mut next = (cur as i64 + dir as i64).clamp(0, len as i64 - 1) as usize;
         if next == cur {
             return;
+        }
+        // 已看完的剧不播、不预热：沿方向跳到下一部未完成的；整段都看完
+        // 就停在边界，不创建播放器（加载条也随之关闭）。
+        let mut hops = 0usize;
+        while self.series_finished(&items[next].series_id) {
+            hops += 1;
+            if hops > len {
+                self.set_cursor(next);
+                cx.notify();
+                return;
+            }
+            let candidate = next as i64 + dir as i64;
+            if candidate < 0 || candidate >= len as i64 {
+                self.set_cursor(next);
+                cx.notify();
+                return;
+            }
+            next = candidate as usize;
         }
         self.set_cursor(next);
         // 快滑到尾部：预取下一页
@@ -212,7 +234,7 @@ impl super::HomeView {
         if should_load_more {
             self.load_more(self.active.clone(), cx);
         }
-        if let Some(item) = self.display_items().get(next).cloned() {
+        if let Some(item) = items.get(next).cloned() {
             self.play_target(item, None, None, cx);
         }
         cx.notify();
@@ -238,6 +260,16 @@ impl super::HomeView {
             && forced_next_ep.is_none()
             && (self.engine_ready() || self.switching)
         {
+            return;
+        }
+        // 信息流/历史点到已看完的剧：不创建播放器、不 prepare/prefetch，
+        // 直接跳下一部未看完的。
+        if forced_next_ep.is_none()
+            && start_override.is_none()
+            && self.series_finished(&item.series_id)
+        {
+            log::info!("[Home] 已看完《{}》→ 播放路径跳过", item.series_id);
+            self.skip_finished_series(&item.series_id, cx);
             return;
         }
         // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
@@ -280,16 +312,20 @@ impl super::HomeView {
                 }
                 self.system_switch_started = Some(Instant::now());
                 self.system_video_ready = true;
+                self.system_tail_advanced = false;
                 self.switching = false;
                 self.buffering = false;
                 self.pending_title = None;
                 self.play_error = None;
                 self.wake_controls(cx);
+                // 刚接力的这一集已经消费掉旧 pending；下一集的预加载要
+                // 用新的 now 重新入队，不能被旧请求的 pending 挡住。
+                self.system_preload_pending = None;
                 if let Some(now) = self.now.clone() {
                     self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
                     self.load_episode_counts(&now, cx);
                 }
-                self.preload_system_next();
+                self.preload_system_next(cx);
                 log::info!("[Home] 系统播放器队列接力第 {next_index} 集（未重建播放器）");
                 cx.notify();
                 return;
@@ -321,6 +357,9 @@ impl super::HomeView {
         // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
         self.paint_diag.reset();
         self.switching = true;
+        self.system_tail_advanced = false;
+        // 新的起播/切集目标会重排预加载；旧的 pending 不挡这一次。
+        self.system_preload_pending = None;
         if crate::video_backend::is_system() {
             self.system_switch_started = Some(Instant::now());
         }
@@ -459,7 +498,7 @@ impl super::HomeView {
                         view.now = Some(now);
                         if system_backend {
                             // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
-                            view.preload_system_next();
+                            view.preload_system_next(cx);
                         }
                         view.switching = false;
                         view.buffering = false;
@@ -613,8 +652,23 @@ impl super::HomeView {
                 )
             }
         };
+        let on_stall: Option<Arc<dyn Fn() + Send + Sync>> = {
+            let state = Arc::clone(&state);
+            let vid = ep.vid.clone();
+            let progress_key = progress_key.clone();
+            Some(Arc::new(move || {
+                // loader 读到 8MB 预取预算之外时按需续填；resume 内部有
+                // 取流权退避重试，不会在预取收尾窗口里丢一次就放弃。
+                hongguo_service::play_service::online::resume_fill(
+                    &state,
+                    &vid,
+                    definition,
+                    &progress_key,
+                );
+            }))
+        };
         let handle: Player = if crate::video_backend::is_system() {
-            crate::platform::open_system_player(source, start_secs, rate, events)
+            crate::platform::open_system_player(source, start_secs, rate, events, on_stall)
                 .expect("系统播放器只有 macOS 实现")
         } else {
             let engine = hongguo_playback::open(OpenOptions {
@@ -648,8 +702,9 @@ impl super::HomeView {
         ))
     }
 
-    /// 预先给系统播放器塞入下一集（AVQueuePlayer），连播时走队列接力。
-    pub(super) fn preload_system_next(&mut self) {
+    /// 预先给系统播放器塞入下一集（AVQueuePlayer）：先把下一集流注册好
+    ///（不在切集时才发现没注册、被迫重建播放器），再挂 AVPlayerItem。
+    pub(super) fn preload_system_next(&mut self, cx: &mut Context<Self>) {
         if !crate::video_backend::is_system() {
             return;
         }
@@ -669,15 +724,52 @@ impl super::HomeView {
         else {
             return;
         };
-        if episode.vid.is_empty() {
+        let vid = episode.vid.clone();
+        if vid.is_empty() || self.system_preload_pending.as_deref() == Some(vid.as_str()) {
             return;
         }
-        if player.preload_next(&episode.vid, definition) {
-            log::info!(
-                "[Home] 已预加载第 {next_index} 集（{}@{definition}）",
-                episode.vid
-            );
-        }
+        self.system_preload_pending = Some(vid.clone());
+        // 先在主线程同步落「下一集」标记：连播预取可能已经开跑，晚一步它
+        // 就会在 8MB 预算处收工，再由 ensure 唤醒已经来不及。
+        hongguo_stream::cache().mark_next(&vid, definition);
+        let player = Arc::clone(player);
+        let state = Arc::clone(&self.state);
+        let progress_key = format!("{series_id}:{next_index}");
+        let ready_vid = vid.clone();
+        let ready_key = progress_key.clone();
+        let done = bridge::spawn(async move {
+            ensure_stream_ready(&state, &ready_vid, definition, &ready_key).await
+        });
+        cx.spawn(async move |this, cx| {
+            let ready = done.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                if view.system_preload_pending.as_deref() == Some(vid.as_str()) {
+                    view.system_preload_pending = None;
+                }
+                let still_next = view.now.as_ref().is_some_and(|now| {
+                    now.series_id == series_id && now.vid_index + 1 == next_index
+                });
+                if !still_next {
+                    return;
+                }
+                if !ready {
+                    log::warn!("[Home] 第 {next_index} 集流 5s 内未注册，预加载继续由 loader 等待");
+                }
+                let stall_state = Arc::clone(&view.state);
+                let stall_vid = vid.clone();
+                let stall_key = progress_key.clone();
+                let on_stall: Option<super::player::StallHook> = Some(Arc::new(move || {
+                    resume_fill(&stall_state, &stall_vid, definition, &stall_key);
+                }));
+                if player.preload_next(&vid, definition, on_stall) {
+                    log::info!(
+                        "[Home] 已预加载第 {next_index} 集（{vid}@{definition}，流已注册={ready}）"
+                    );
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 系统播放器的周期节拍：没有 Frame 事件，弹幕推进/控制条刷新/进度落盘
@@ -704,6 +796,23 @@ impl super::HomeView {
                         }
                         view.danmaku_tick(cx);
                         view.save_progress_maybe();
+                        // 系统后端没有 Frame 事件，AVPlayer 在片尾有时不再推进
+                        // position（起播贴尾时尤其明显），Ended 永不发生。这里
+                        // 用 30fps 节拍做兜底：已经在尾部就主动走连播/剧终接力。
+                        if !view.switching && !view.system_tail_advanced
+                            && let Some(player) = view.player.clone()
+                            && !player.is_paused()
+                        {
+                            let duration = player.duration_secs();
+                            let position = player.position_secs();
+                            if duration > 0.5 && position >= duration - 0.25 {
+                                view.system_tail_advanced = true;
+                                log::info!(
+                                    "[Home] 系统播放器已在尾部（{position:.2}/{duration:.2}s）→ 主动接力"
+                                );
+                                view.advance_after_end(cx);
+                            }
+                        }
                         cx.notify();
                         true
                     })
@@ -853,6 +962,54 @@ impl super::HomeView {
         cx.notify();
     }
 
+    /// 这一部是否已看完（看到最后一集即算，与片内进度无关）。
+    pub(super) fn series_finished(&self, series_id: &str) -> bool {
+        self.history
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .find(|h| h.series_id == series_id)
+            .is_some_and(WatchHistoryItem::is_finished)
+    }
+
+    /// 跳过已看完的剧：接历史里下一部未看完的（按列表顺序，末尾回绕）；
+    /// 都没有就回信息流从当前游标找下一部未完成的。绝不 prepare/prefetch
+    /// 被跳过的剧，也不留播放器/加载态。
+    fn skip_finished_series(&mut self, after: &str, cx: &mut Context<Self>) {
+        let items = self.history.clone().unwrap_or_default();
+        let start = items
+            .iter()
+            .position(|h| h.series_id == after)
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let next = items[start..]
+            .iter()
+            .chain(items[..start].iter())
+            .find(|h| !h.is_finished())
+            .cloned();
+        if let Some(next) = next {
+            let item = StreamItem {
+                series_id: next.series_id.clone(),
+                title: next.title.clone(),
+                cover: next.cover.clone(),
+                ..Default::default()
+            };
+            log::info!(
+                "[Home] 已看完《{}》→ 跳过，接下一部未看完《{}》",
+                after,
+                next.title
+            );
+            self.binge = Some(next.series_id.clone());
+            // 不拿历史行里的集号/秒数硬起播：让起点决策合并本地断点与云端
+            // 历史（本地 5 秒一写更新），并继续走 clamp。
+            self.play_target(item, None, None, cx);
+            return;
+        }
+        log::info!("[Home] 已看完《{after}》→ 历史无未完成项，回信息流");
+        self.binge = None;
+        self.step(1, cx);
+    }
+
     /// 详情页播放入口（DetailEvent::Play → 壳 → 这里）：明确要追这部，
     /// 锁定连播；起播集与起点由详情页的继续播放决策给定。标题/封面从
     /// 档案抄（阻塞池读，UI 线程不碰库）。
@@ -863,6 +1020,11 @@ impl super::HomeView {
         start_secs: f64,
         cx: &mut Context<Self>,
     ) {
+        // 已看完的剧不续播、不起播放器、不 prepare/prefetch；直接跳下一部。
+        if self.series_finished(&series_id) {
+            self.skip_finished_series(&series_id, cx);
+            return;
+        }
         // 起点复核（Tauri 首页「成为当前剧」effect 同款）：列表页调用方只
         // 拿得到本地档案，云端观看历史 >3 秒时用云端位置兜底——传上来的
         // (1, 0.0) 正是「本地没有可续播记录」的形态，显式续播/换集
@@ -1088,6 +1250,10 @@ impl super::HomeView {
             let Some(next) = items.get(cursor + offset).cloned() else {
                 break;
             };
+            // 已看完的后续剧不预取、不缓存、不加载。
+            if self.series_finished(&next.series_id) {
+                continue;
+            }
             if next.series_id.is_empty() || !self.stream_prefetched.insert(next.series_id.clone()) {
                 continue;
             }
@@ -1121,6 +1287,14 @@ impl super::HomeView {
         series_id: String,
         history: Vec<WatchHistoryItem>,
     ) -> AppResult<()> {
+        if history
+            .iter()
+            .find(|h| h.series_id == series_id)
+            .is_some_and(WatchHistoryItem::is_finished)
+        {
+            log::info!("[Home] 预取跳过已看完《{series_id}》");
+            return Ok(());
+        }
         let env = state.api_env();
         let series = match state.store.series_by_id(&series_id)? {
             Some(s) if !s.episodes.is_empty() => s,
@@ -1160,7 +1334,10 @@ impl super::HomeView {
                 continue;
             };
             let sid = item.series_id.clone();
-            if sid.is_empty() || !self.archives_prefetched.insert(sid.clone()) {
+            if sid.is_empty()
+                || self.series_finished(&sid)
+                || !self.archives_prefetched.insert(sid.clone())
+            {
                 continue;
             }
             let state = Arc::clone(&self.state);

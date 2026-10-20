@@ -217,6 +217,11 @@ impl super::HomeView {
             PlayerEvent::Ready => self.buffering = false,
             PlayerEvent::Ended => {
                 self.buffering = false;
+                // 节拍兜底可能已经推进过；同一尾部只接力一次。
+                if self.system_tail_advanced {
+                    return;
+                }
+                self.system_tail_advanced = true;
                 self.advance_after_end(cx);
             }
             PlayerEvent::Failed(msg) => {

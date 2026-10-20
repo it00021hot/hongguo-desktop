@@ -207,6 +207,7 @@ pub fn open(
     start_secs: f64,
     rate: f64,
     events: mpsc::Sender<PlayerEvent>,
+    on_stall: Option<loader::StallHook>,
 ) -> Arc<dyn PlayerLike> {
     let (asset, loader_handle) = match source {
         PlaySource::Online { vid, definition } => {
@@ -217,6 +218,7 @@ pub fn open(
                 loader::Source::Stream {
                     vid: vid.clone(),
                     definition,
+                    on_stall,
                 },
             );
             (asset, Some(handle))
@@ -327,7 +329,12 @@ impl PlayerLike for SystemPlayer {
             .unwrap_or((0, 0))
     }
 
-    fn preload_next(&self, vid: &str, definition: u32) -> bool {
+    fn preload_next(
+        &self,
+        vid: &str,
+        definition: u32,
+        on_stall: Option<loader::StallHook>,
+    ) -> bool {
         let mut preloaded = self.preloaded.lock().expect("预加载锁 poisoned");
         if preloaded
             .as_ref()
@@ -346,6 +353,9 @@ impl PlayerLike for SystemPlayer {
             loader::Source::Stream {
                 vid: vid.to_string(),
                 definition,
+                // 切到这一集后由同一 loader 在 8MB 处继续唤醒续填；
+                // 未切之前 resume_fill 也会因 is_next 放行。
+                on_stall,
             },
         );
         let item = avf::item_with_asset(&asset);

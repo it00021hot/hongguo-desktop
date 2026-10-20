@@ -64,11 +64,6 @@ impl HistoryTab {
     }
 }
 
-/// 参考端同款「已看完」判定：看到最后一集即算，与片内进度无关。
-fn is_finished(item: &WatchHistoryItem) -> bool {
-    item.episode_cnt > 0 && item.vid_index.max(1) >= item.episode_cnt
-}
-
 /// 本地条目 → 渲染行（字段与云端同形；u32 集号升为 i64 统一口径）。
 fn row_from_local(item: &LocalHistoryItem) -> WatchHistoryItem {
     WatchHistoryItem {
@@ -356,8 +351,8 @@ impl HistoryView {
             .iter()
             .filter(|item| {
                 match self.tab {
-                    HistoryTab::Finished if !is_finished(item) => return false,
-                    HistoryTab::Unfinished if is_finished(item) => return false,
+                    HistoryTab::Finished if !item.is_finished() => return false,
+                    HistoryTab::Unfinished if item.is_finished() => return false,
                     _ => {}
                 }
                 if q.is_empty() {
@@ -370,12 +365,39 @@ impl HistoryView {
     }
 
     fn open_item(&self, item: &WatchHistoryItem, cx: &mut Context<Self>) {
+        // 已看完的剧不续播：在历史列表里按顺序找下一部未看完的（末尾回绕）。
+        // 这一层先挡一次，即使 HomeView 的历史缓存还没就绪也不会起播放器。
+        let target = if item.is_finished() {
+            let start = self
+                .items
+                .iter()
+                .position(|row| row.series_id == item.series_id)
+                .map(|index| index + 1)
+                .unwrap_or(0);
+            self.items[start..]
+                .iter()
+                .chain(self.items[..start].iter())
+                .find(|row| !row.is_finished())
+        } else {
+            Some(item)
+        };
+        let Some(target) = target else {
+            log::info!("[History] 已看完且无未完成项，跳过 {}", item.series_id);
+            return;
+        };
         // 云端 vid_index 1 起（历史数据可能混 0，钳到第 1 集）；进度直接
         // 取自本行（页数据源就是云端历史，等价 Tauri 播放器的云端兜底）。
-        let vid_index = item.vid_index.max(1) as u32;
-        let start_secs = (item.position_ms as f64 / 1000.0).max(0.0);
+        let vid_index = target.vidx_1based() as u32;
+        let start_secs = (target.position_ms as f64 / 1000.0).max(0.0);
+        if target.series_id != item.series_id {
+            log::info!(
+                "[History] 已看完《{}》→ 跳过，接下一部《{}》",
+                item.series_id,
+                target.series_id
+            );
+        }
         cx.emit(HistoryEvent::Play {
-            series_id: item.series_id.clone(),
+            series_id: target.series_id.clone(),
             vid_index,
             start_secs,
         });

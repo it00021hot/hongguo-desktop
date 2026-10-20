@@ -191,6 +191,50 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     Ok(())
 }
 
+/// 保证下一集（或任意待播集）的渐进流**已注册**再返回：系统播放器队列
+/// 预加载只等注册，不等整集。注册前切集只能重建取流链（冷切 0.9s）；
+/// 注册后切集命中 `prepare` 的 ready 分支，首帧只等解码。
+///
+/// 不调用 `prepare`：那会把 `cache.current` 改成待播集，让当前集填充让位。
+/// 这里只走 `prefetch_stream`（含 `mark_prefetch`）并轮询 `total_len`。
+pub async fn ensure_stream_ready(
+    state: &AppState,
+    vid: &str,
+    definition: u32,
+    progress_key: &str,
+) -> bool {
+    const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    if hongguo_stream::total_len(vid, definition).is_some() {
+        cache().mark_next(vid, definition);
+        // 预取可能早已在 8MB 预算处收工；标记后立刻续填，别让队列预加载
+        // 的 loader 在填充前沿空等 30s。
+        resume_fill(state, vid, definition, progress_key);
+        return true;
+    }
+    let c = cache();
+    // 先标记「下一集」，预取填充的预算闭包立刻看到它并从 8MB 上限转无界；
+    // 只在这里标、切集时由 set_current 清，不会让后续集全部无界。
+    c.mark_next(vid, definition);
+    resume_fill(state, vid, definition, progress_key);
+    if !c.exists(vid, definition)
+        && !c.is_fetching(vid, definition)
+        && let Err(error) = prefetch_stream(state, vid, progress_key).await
+    {
+        log::info!("[Online] 预注册 {vid}@{definition} 失败: {error}");
+    }
+    let deadline = std::time::Instant::now() + READY_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        if hongguo_stream::total_len(vid, definition).is_some() {
+            log::info!("[Online] {vid}@{definition} 流已注册（预注册完成）");
+            resume_fill(state, vid, definition, progress_key);
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    log::warn!("[Online] {vid}@{definition} 预注册超时（继续由 loader 等待）");
+    false
+}
+
 /// 集间流预取的统一入口：同剧连播（`resolve_play` 起播后向后铺）与换剧
 /// （首页 `play_prefetch` 从入口集起铺）都走这里，铺几集由
 /// `Settings.prefetch_episodes` 统一控制（0=全关）。
