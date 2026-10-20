@@ -742,6 +742,23 @@ impl HomeView {
             // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）
             .children(self.login_panel_open.then(|| self.render_login_panel(cx)))
+            // 小窗顶部 18px 交给系统当标题栏（`WindowControlArea::Drag` →
+            // WM_NCHITTEST 回 HTCAPTION）。原因：无边框窗仍带 `WS_THICKFRAME`，
+            // 顶部原本是 resize 热区——鼠标未到可见边就变 resize 光标，按下既
+            // 不移动也不缩放（GPUI 的 min/max 尺寸把它夹住）。改成 HTCAPTION
+            // 后这一段能拖、光标也正常；**追加在末尾**不破坏哨兵下标（cover=0、
+            // video=1）。
+            .when(self.mini.is_some(), |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(gpui_kit::px(18.0))
+                        .window_control_area(gpui_kit::WindowControlArea::Drag),
+                )
+            })
             // 布局哨兵：子层矩形只在这里可见，两次准备绘制之间比对（见字段注释）。
             // 第一个子层是封面槽（恒在、恒为舞台整块），出画时第二个是视频层、
             // 尺寸必须与它一致——不一致就是布局回归。
