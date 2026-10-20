@@ -101,7 +101,15 @@ impl super::HomeView {
                         }
                         view.danmaku_tick(cx);
                         view.save_progress_maybe();
-                        cx.notify();
+                        // 有弹幕动画在跑时**不要**再 notify：动画本身每合成帧
+                        // 都会重绘，这里的 notify 会打断它的帧节奏（顿挫的另一
+                        // 半原因）。没有动画驱动时才需要它维持进度条等刷新。
+                        let animating = view.danmaku_on
+                            && !view.danmaku_flights.is_empty()
+                            && !view.player.as_ref().is_some_and(|p| p.is_paused());
+                        if !animating {
+                            cx.notify();
+                        }
                         true
                     })
                     .unwrap_or(false);
