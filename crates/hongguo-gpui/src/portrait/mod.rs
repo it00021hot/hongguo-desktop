@@ -32,6 +32,20 @@ pub(crate) fn is_active() -> bool {
     PORTRAIT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// 竖屏正处在铺满档：几何是**派生态**（按工作区高算出来的），不是用户
+/// 拖出来的竖条几何。记忆槽位只收后者——铺满时既不采样也不落槽，否则
+/// 退出竖屏时会把铺满几何记成"上次竖屏大小"，下次进竖屏直接满高、
+/// 铺满钮看起来永远没反应。
+static PORTRAIT_FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn set_full_active(on: bool) {
+    PORTRAIT_FULL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn is_full() -> bool {
+    PORTRAIT_FULL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 进入竖屏：快照 → 落位。上次竖屏几何有效（不小于竖屏恢复下限且落在
 /// 任一显示器内）就原样回去——三种窗态各记各的槽位，切形态互不覆盖；
 /// 素材比例与上次不同由换集重适配（portrait_panel 的 refit 路径）纠偏。
@@ -46,6 +60,7 @@ pub(crate) fn enter(
     let saved = crate::platform::snapshot(window)?;
     // 最大化进竖屏：退最大化直接进铺满档（Tauri enter 的 Ev + fit(full)）
     let full = saved.maximized;
+    set_full_active(full);
     *FULL_RESTORE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
@@ -58,17 +73,22 @@ pub(crate) fn enter(
             prefs.portrait_y,
             prefs.portrait_w,
             prefs.portrait_h,
-            &crate::platform::display_rects(cx),
+            &crate::platform::memory_display_rects(cx),
             crate::window_restore::PORTRAIT_RESTORE_W,
             crate::window_restore::PORTRAIT_RESTORE_H,
         )
     };
     match remembered {
         Some((x, y, w, h)) => {
-            crate::platform::apply_frame(
+            crate::platform::memory_restore_frame(
                 window,
                 cx,
-                (f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+                crate::platform::OuterRect::new(
+                    f64::from(x),
+                    f64::from(y),
+                    f64::from(w),
+                    f64::from(h),
+                ),
             );
         }
         None => fit(window, aspect, full, cx),
@@ -87,6 +107,7 @@ pub(crate) fn fit(window: &mut Window, aspect: f64, full: bool, cx: &gpui_kit::A
 /// 铺满档切换（Tauri `set_portrait_full` 同款）：普通→铺满先快照当前几何；
 /// 铺满→普通还原快照（没有快照——最大化直接进来的——按普通档重算）。
 pub(crate) fn set_full(window: &mut Window, aspect: f64, full: bool, cx: &gpui_kit::App) {
+    set_full_active(full);
     if full {
         if let Some(rect) = crate::platform::current_rect(window) {
             *FULL_RESTORE
@@ -108,17 +129,24 @@ pub(crate) fn set_full(window: &mut Window, aspect: f64, full: bool, cx: &gpui_k
 
 /// 退出竖屏：先把当前竖屏几何落盘（理由同 [`crate::mini::exit`]，写竖屏
 /// 自己的槽位），再还原进入前的几何与最大化态（丢掉的铺满快照不再需要）。
+///
+/// **铺满中退出不落盘**：那一份是派生的满高几何，记进槽位会让下次进竖屏
+/// 直接满高、铺满钮看起来永远没反应（实测：在铺满里退竖屏 → 再进竖屏
+/// 得到 651×1410 而不是 380×700）。
 pub(crate) fn exit(window: &mut Window, saved: WindowSnapshot, cx: &gpui_kit::App) {
+    let was_full = is_full();
+    set_full_active(false);
     *FULL_RESTORE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    let b = window.bounds();
-    crate::ui_prefs::store_geometry(
-        crate::ui_prefs::GeometrySlot::Portrait,
-        b.origin.x.into(),
-        b.origin.y.into(),
-        b.size.width.into(),
-        b.size.height.into(),
-    );
+    if !was_full && let Some(rect) = crate::platform::memory_rect(window) {
+        crate::ui_prefs::store_geometry(
+            crate::ui_prefs::GeometrySlot::Portrait,
+            rect.x as f32,
+            rect.y as f32,
+            rect.w as f32,
+            rect.h as f32,
+        );
+    }
     crate::platform::restore(window, cx, saved);
 }

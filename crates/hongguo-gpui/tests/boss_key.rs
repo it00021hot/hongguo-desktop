@@ -102,3 +102,41 @@ fn gpui_key_of_feeds_conflict_check() {
     assert_eq!(accel::gpui_key_of("Alt+Up"), "up");
     assert_eq!(accel::gpui_key_of(""), "");
 }
+
+#[test]
+fn mac_carbon_params_cover_captured_combinations() {
+    // 捕获产出的串 → Win32 注册参数 → Carbon（修饰位 + ANSI 键码）
+    let hk = accel::parse("CommandOrControl+Alt+H").expect("H 组合可解析");
+    assert_eq!(accel::mac_keycode(hk.vk), Some(0x04)); // kVK_ANSI_H
+    assert_eq!(
+        accel::carbon_mods(hk.mods),
+        accel::CARBON_CMD | accel::CARBON_OPTION
+    );
+
+    // CommandOrControl 在 macOS 落 Command；Shift 单列
+    let hk = accel::parse("CommandOrControl+Shift+Space").expect("空格组合可解析");
+    assert_eq!(accel::mac_keycode(hk.vk), Some(0x31)); // kVK_Space
+    assert_eq!(
+        accel::carbon_mods(hk.mods),
+        accel::CARBON_CMD | accel::CARBON_SHIFT
+    );
+
+    // 键码表覆盖设置页能捕获的键（字母/数字/功能键/导航/标点）
+    for spec in [
+        "CommandOrControl+A",
+        "CommandOrControl+9",
+        "CommandOrControl+F12",
+        "CommandOrControl+Left",
+        "CommandOrControl+PageDown",
+        "CommandOrControl+Escape",
+        "CommandOrControl+;",
+        "CommandOrControl+Num7",
+    ] {
+        let hk = accel::parse(spec).expect("应可解析");
+        assert!(accel::mac_keycode(hk.vk).is_some(), "{spec} 缺 macOS 键码");
+    }
+
+    // 没有对应物理键的键返回 None（注册时报失败，不会静默无效）
+    assert_eq!(accel::mac_keycode(0x2D), None); // Insert
+    assert_eq!(accel::mac_keycode(0x87), None); // F24
+}

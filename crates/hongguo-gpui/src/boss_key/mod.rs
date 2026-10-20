@@ -3,9 +3,9 @@
 //! 值形态与 Tauri 一致：`Settings.boss_key` 存 tauri accelerator 串
 //!（`"CommandOrControl+Alt+H"`，空串 = 未启用），解析/展示/冲突检测在
 //! [`accel`]（纯函数，集成测试覆盖）。注册能力由 [`crate::platform`] 提供：
-//! Windows 走手写 Win32 FFI（Tauri 用 tauri-plugin-global-shortcut，gpui
-//! 没有全局快捷键面），macOS 侧尚未实现——注册时明确报错，不做「存上了
-//! 却从不生效」的假象。
+//! Windows 走手写 Win32 FFI、macOS 走 Carbon `RegisterEventHotKey`
+//!（Tauri 用 tauri-plugin-global-shortcut，gpui 没有全局快捷键面，两侧
+//! 都是手写）；注册失败如实报错，不留「存上了却从不生效」的假象。
 //!
 //! 切换语义与 Tauri 一致：可见 → 隐藏（先暂停播放，声音不漏）；隐藏 →
 //! 显示 + 聚焦（前端续播）。

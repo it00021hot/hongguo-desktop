@@ -56,7 +56,14 @@ impl super::HomeView {
             .pt_5()
             .pb_1()
             .gap_1()
-            .bg(gpui_kit::rgba(0x000000bf))
+            // Tauri `bg-gradient-to-t from-black/75 to-transparent` 同参：
+            // 底部 75% 黑向上淡出。此前是整块 75% 黑，480×270 里像一条
+            // 占掉半个窗口的实心黑带（用户实测口径）
+            .bg(gpui_kit::linear_gradient(
+                0.,
+                gpui_kit::linear_color_stop(gpui_kit::rgba(0x000000bf), 0.),
+                gpui_kit::linear_color_stop(gpui_kit::rgba(0x00000000), 1.),
+            ))
             // 与大屏控制条同款：小屏控制条悬浮在画面上，点击/松开都**不能**
             // 再落到舞台（重叠 bounds 的兄弟分支都会收到鼠标事件）
             .on_mouse_down(
@@ -81,17 +88,19 @@ impl super::HomeView {
                 cx.notify();
             }))
             // 剧名/集数/简介贴着进度条上方（第三方小屏同款两行形态），宽度
-            // 收敛 + 截断（480 宽，长剧名长简介都不挡画面）
+            // 收敛 + 单行截断（Tauri `truncate` 同款）。宽度必须给成**定宽**
+            // 再让文本 `w_full`：只给 max_w 时文本按内容宽排版、再由父级裁掉，
+            // 省略号不会出现（预览里表现为右边半个字被切掉）
             .child(
                 v_flex()
-                    .max_w(gpui_kit::relative(0.62))
-                    .overflow_hidden()
+                    .w(gpui_kit::relative(0.62))
                     .child(
                         div()
+                            .w_full()
                             .text_xs()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(gpui_kit::rgb(0xffffff))
-                            .text_ellipsis()
+                            .truncate()
                             .child(SharedString::from(format!(
                                 "@{}",
                                 now.map(|n| n.title.as_str()).unwrap_or("")
@@ -99,9 +108,10 @@ impl super::HomeView {
                     )
                     .children(episode_line.map(|line| {
                         div()
+                            .w_full()
                             .text_size(gpui_kit::px(10.0))
                             .text_color(gpui_kit::rgba(0xffffffcc))
-                            .text_ellipsis()
+                            .truncate()
                             .child(SharedString::from(line))
                     })),
             )

@@ -16,6 +16,7 @@ pub(crate) mod merge;
 pub(crate) mod new_drama;
 pub(crate) mod rank;
 pub(crate) mod reservations;
+pub(crate) mod scroll_load;
 pub(crate) mod settings;
 pub(crate) mod storage;
 pub(crate) mod tasks;

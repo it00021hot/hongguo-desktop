@@ -70,6 +70,9 @@ pub(crate) struct NewDramaView {
     covers: HashMap<String, Arc<RenderImage>>,
     covers_pending: HashSet<String>,
     downloaded: HashMap<String, u32>,
+    /// 滚动哨兵：推荐流与日历各一条（两个滚动容器互不复用；按钮留作兜底）。
+    scroll_recommend: crate::pages::scroll_load::ScrollLoad,
+    scroll_calendar: crate::pages::scroll_load::ScrollLoad,
 }
 
 impl NewDramaView {
@@ -103,6 +106,8 @@ impl NewDramaView {
             covers: HashMap::new(),
             covers_pending: HashSet::new(),
             downloaded: HashMap::new(),
+            scroll_recommend: crate::pages::scroll_load::ScrollLoad::new(),
+            scroll_calendar: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }
 
@@ -862,6 +867,27 @@ impl gpui_kit::Render for NewDramaView {
                 .child(Spinner::new().small())
                 .into_any_element();
         }
+        // 滚动哨兵：滚到底自动续页（Tauri new-calendar-view.tsx /
+        // new-drama-recommends.tsx 的 IntersectionObserver 同语义；两个视图
+        // 各有自己的滚动容器，按当前 tab 判）。
+        match self.view {
+            ViewTab::Recommend => {
+                if self
+                    .scroll_recommend
+                    .should_load(self.has_more, self.loading)
+                {
+                    self.load_recommend(true, cx);
+                }
+            }
+            ViewTab::Calendar => {
+                if self
+                    .scroll_calendar
+                    .should_load(self.cal_has_more, self.cal_loading)
+                {
+                    self.load_calendar(None, true, cx);
+                }
+            }
+        }
         let viewport_w = window.viewport_size().width.as_f32();
         let grid_cols = if viewport_w >= 1536.0 {
             8
@@ -927,6 +953,7 @@ impl gpui_kit::Render for NewDramaView {
                     .id("new-recommend")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(self.scroll_recommend.handle())
                     .child(
                         v_flex()
                             .w_full()
@@ -1011,6 +1038,7 @@ impl gpui_kit::Render for NewDramaView {
                     .id("new-calendar")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(self.scroll_calendar.handle())
                     .child(
                         v_flex()
                             .w_full()

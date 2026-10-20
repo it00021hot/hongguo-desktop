@@ -105,6 +105,8 @@ pub(crate) struct RankView {
     reserving: std::collections::HashSet<String>,
     covers: HashMap<String, Arc<RenderImage>>,
     covers_pending: std::collections::HashSet<String>,
+    /// 滚动哨兵：滚到底自动续页（按钮留作兜底）。
+    scroll: crate::pages::scroll_load::ScrollLoad,
 }
 
 impl RankView {
@@ -127,6 +129,7 @@ impl RankView {
             reserving: std::collections::HashSet::new(),
             covers: HashMap::new(),
             covers_pending: std::collections::HashSet::new(),
+            scroll: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }
 
@@ -789,6 +792,11 @@ impl gpui_kit::Render for RankView {
                 .child(Spinner::new().small())
                 .into_any_element();
         }
+        // 滚动哨兵：滚到底自动续页（Tauri rank-page.tsx 的 IntersectionObserver
+        // 同语义；「加载更多」按钮留作键盘/兜底入口）。
+        if self.scroll.should_load(self.has_more, self.loading) {
+            self.load_page(true, cx);
+        }
         let sub_nav = self.render_sub_nav(cx);
         let filter_panel = self
             .filter_open
@@ -922,6 +930,7 @@ impl gpui_kit::Render for RankView {
                                     .flex_1()
                                     .min_h_0()
                                     .overflow_y_scroll()
+                                    .track_scroll(self.scroll.handle())
                                     .child(
                                         v_flex()
                                             .w_full()

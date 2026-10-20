@@ -102,9 +102,11 @@ pub(crate) struct HistoryView {
     selected: BTreeSet<String>,
     deleting: bool,
     loading: bool,
-    /// 渐进渲染：首批 20 行，「加载更多」按钮每批 +40（Tauri 用滚动哨兵
-    /// 自动续载；GPUI 先给显式入口，语义相同、列表长度不设上限）。
+    /// 渐进渲染：首批 20 行，滚到底自动 +40（Tauri 同款哨兵；按钮留作兜底），
+    /// 语义相同、列表长度不设上限。
     visible_count: usize,
+    /// 滚动哨兵：滚到底自动续载。
+    scroll: crate::pages::scroll_load::ScrollLoad,
     /// 预览种子用的登录态开关（真实壳恒 false，以 settings 的 account 为准）。
     preview_logged_in: bool,
 }
@@ -145,6 +147,7 @@ impl HistoryView {
             deleting: false,
             loading: false,
             visible_count: 20,
+            scroll: crate::pages::scroll_load::ScrollLoad::new(),
             preview_logged_in: false,
         }
     }
@@ -709,11 +712,20 @@ impl gpui_kit::Render for HistoryView {
                 } else {
                     let managing = self.managing;
                     let shown = visible.len();
+                    // 滚动哨兵：滚到底自动再放一批（Tauri history-page.tsx 的
+                    // IntersectionObserver 同语义）；到底了把 has_more 报假，
+                    // 列表回到顶部后会重新武装。
+                    let more_local = self.visible_count < shown;
+                    if self.scroll.should_load(more_local, false) {
+                        self.visible_count = (self.visible_count + 40).min(shown);
+                        cx.notify();
+                    }
                     let visible_count = self.visible_count.min(shown);
                     div()
                         .id("history-list")
                         .flex_1()
                         .overflow_y_scroll()
+                        .track_scroll(self.scroll.handle())
                         .p_4()
                         .child(
                             v_flex()

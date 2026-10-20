@@ -149,10 +149,14 @@ pub(crate) fn load_from(path: &Path) -> UiPrefs {
 }
 
 /// 写偏好：同目录临时文件 + rename，半写状态不会留下坏档。
+///
+/// **13 个键一个都不能少**：漏写形态槽位曾让「切小窗→拖大小→切回→再进」
+/// 永远回默认落角（盘上没有 mini_* 行，读回就是 0）——新增字段时必须同步
+/// 改 [`load_from`] 与这里。
 pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
     let tmp = path.with_extension("tmp");
     let text = format!(
-        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\nlocale={}\nwin_x={}\nwin_y={}\nwin_w={}\nwin_h={}\n",
+        "sidebar_collapsed={}\naibot_popup_on={}\nbrowse_filters_collapsed={}\ntheme={}\nlocale={}\nwin_x={}\nwin_y={}\nwin_w={}\nwin_h={}\nmini_x={}\nmini_y={}\nmini_w={}\nmini_h={}\nportrait_x={}\nportrait_y={}\nportrait_w={}\nportrait_h={}\n",
         prefs.sidebar_collapsed,
         prefs.aibot_popup_on,
         prefs.browse_filters_collapsed,
@@ -162,6 +166,14 @@ pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
         prefs.win_y,
         prefs.win_w,
         prefs.win_h,
+        prefs.mini_x,
+        prefs.mini_y,
+        prefs.mini_w,
+        prefs.mini_h,
+        prefs.portrait_x,
+        prefs.portrait_y,
+        prefs.portrait_w,
+        prefs.portrait_h,
     );
     if std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))

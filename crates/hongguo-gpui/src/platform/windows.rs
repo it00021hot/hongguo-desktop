@@ -59,6 +59,32 @@ pub(crate) fn current_rect(window: &Window) -> Option<OuterRect> {
     snapshot(window).map(|s| s.rect)
 }
 
+/// 窗口记忆槽位的坐标空间 = gpui `window.bounds()`（逻辑像素、左上原点、
+/// 虚拟屏绝对坐标——Windows 的 gpui 显示坐标本来就带各屏原点，不存在
+/// macOS 那套「相对本屏」的问题）。
+pub(crate) fn memory_rect(window: &Window) -> Option<OuterRect> {
+    let b = window.bounds();
+    Some(OuterRect::new(
+        b.origin.x.into(),
+        b.origin.y.into(),
+        b.size.width.into(),
+        b.size.height.into(),
+    ))
+}
+
+/// 按记忆槽位落窗（逻辑像素；`apply_frame` 内部再换算到物理像素）。
+pub(crate) fn memory_restore_frame(window: &Window, cx: &gpui_kit::App, rect: OuterRect) {
+    apply_frame(window, cx, (rect.x, rect.y, rect.w, rect.h));
+}
+
+/// 记忆槽位校验用的显示器矩形（与 [`memory_rect`] 同一空间）。
+pub(crate) fn memory_display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
+    super::display_rects(cx)
+}
+
+/// Windows 的 `WindowBounds` 与记忆槽位同一坐标空间，开窗时直接恢复。
+pub(crate) const RESTORE_AFTER_OPEN: bool = false;
+
 /// 小屏：缩成 480×270 并落到工作区右下角。
 pub(crate) fn place_mini(window: &Window, cx: &gpui_kit::App) -> Option<()> {
     let hwnd = hwnd_of(window)?;

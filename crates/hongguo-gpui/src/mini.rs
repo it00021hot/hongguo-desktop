@@ -23,15 +23,20 @@ pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<WindowSna
         prefs.mini_y,
         prefs.mini_w,
         prefs.mini_h,
-        &crate::platform::display_rects(cx),
+        &crate::platform::memory_display_rects(cx),
         crate::window_restore::MINI_RESTORE_W,
         crate::window_restore::MINI_RESTORE_H,
     ) {
         Some((x, y, w, h)) => {
-            crate::platform::apply_frame(
+            crate::platform::memory_restore_frame(
                 window,
                 cx,
-                (f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+                crate::platform::OuterRect::new(
+                    f64::from(x),
+                    f64::from(y),
+                    f64::from(w),
+                    f64::from(h),
+                ),
             );
         }
         None => crate::platform::place_mini(window, cx)?,
@@ -42,14 +47,15 @@ pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<WindowSna
 /// 退出小屏：先把当前小窗几何落盘（理由见 [`crate::ui_prefs::store_geometry`]），
 /// 再按快照还原几何与最大化态。
 pub(crate) fn exit(window: &mut Window, cx: &gpui_kit::App, saved: WindowSnapshot) {
-    let b = window.bounds();
-    crate::ui_prefs::store_geometry(
-        crate::ui_prefs::GeometrySlot::Mini,
-        b.origin.x.into(),
-        b.origin.y.into(),
-        b.size.width.into(),
-        b.size.height.into(),
-    );
+    if let Some(rect) = crate::platform::memory_rect(window) {
+        crate::ui_prefs::store_geometry(
+            crate::ui_prefs::GeometrySlot::Mini,
+            rect.x as f32,
+            rect.y as f32,
+            rect.w as f32,
+            rect.h as f32,
+        );
+    }
     crate::platform::restore(window, cx, saved);
 }
 

@@ -8,28 +8,29 @@ use gpui_kit::Window;
 
 use super::{MINI_H, MINI_MARGIN, MINI_W, OuterRect, WindowSnapshot};
 
-/// 壳级轮询（全局快捷键 + 第二次启动前置窗口）：macOS 侧未实现——
-/// 全局热键要 Carbon `RegisterEventHotKey` 或 NSEvent 全局监听（后者需要
-/// 辅助功能授权），单实例前置要 NSWorkspace 通知；两项都还没落地，这里
-/// 如实报不支持，不做「注册成功却从不生效」的假象。
-pub(crate) const SHELL_POLLER: bool = false;
+/// 壳级轮询：老板键（Carbon 全局热键，回调只置标志，100ms 一拍消费）+
+/// 第二次启动的前置请求（单实例 Unix 套接字，见 [`crate::single_instance`]）。
+pub(crate) const SHELL_POLLER: bool = true;
 
-/// 注册全局快捷键：本平台未实现。
-pub(crate) fn register_hotkey(_mods: u32, _vk: u32) -> Result<(), String> {
-    Err(crate::i18n::t("settings.bossKeyPlatformUnsupported"))
+/// 注册全局快捷键：Carbon `RegisterEventHotKey`（Tauri 的
+/// tauri-plugin-global-shortcut 在 macOS 也是这条通路；不申请辅助功能授权）。
+pub(crate) fn register_hotkey(mods: u32, vk: u32) -> Result<(), String> {
+    crate::macos::register_hotkey(mods, vk)
 }
 
-/// 注销全局快捷键：没有注册过，空操作。
-pub(crate) fn unregister_hotkey() {}
+/// 注销全局快捷键。
+pub(crate) fn unregister_hotkey() {
+    crate::macos::unregister_hotkey();
+}
 
-/// 老板键按下标志：没有注册实现，恒 false。
+/// 老板键按下标志（读后清）。
 pub(crate) fn take_hotkey_fired() -> bool {
-    false
+    crate::macos::take_hotkey_fired()
 }
 
-/// 第二次启动的前置请求：单实例前置未实现，恒 false。
+/// 第二次启动的前置请求（单实例 Unix 套接字，读后复位）。
 pub(crate) fn take_focus_request() -> bool {
-    false
+    crate::single_instance::take_focus_request()
 }
 
 /// 最小化态还原：macOS 的 deminiaturize 由 AppKit 自己管，这里不需要
@@ -85,7 +86,11 @@ pub(crate) fn set_topmost(window: &Window, cx: &gpui_kit::App, on: bool) -> bool
     true
 }
 
-/// 竖屏几何：当前窗口 + 可见区（翻成 top-left 语义）→ 目标外框（AppKit）。
+/// 竖屏几何：当前窗口 + 可见区（翻成 top-left 语义）→ 目标矩形。
+///
+/// 返回值是 **gpui `Window::bounds()` 的空间**（逻辑点、左上原点、相对
+/// 本屏），与 `mini`/`portrait` 记忆槽位同一口径；AppKit 坐标换算统一由
+/// [`apply_frame`] 负责，本函数不再自己翻回去。
 pub(crate) fn portrait_geometry(
     window: &Window,
     aspect: f64,
@@ -109,13 +114,21 @@ pub(crate) fn portrait_geometry(
         cur,
         work,
     });
-    // 回 AppKit 坐标：x 平移回屏幕原点，y 从「顶向下」翻回「底向上」
-    Some((x + sx, screen_top - y - h, w, h))
+    Some((x, y, w, h))
 }
 
-/// 落窗（AppKit 坐标）。
-pub(crate) fn apply_frame(window: &Window, cx: &gpui_kit::App, rect: (f64, f64, f64, f64)) {
-    set_frame(window, cx, OuterRect::new(rect.0, rect.1, rect.2, rect.3));
+/// 落窗。入参是 gpui `Window::bounds()` 的空间（逻辑点、左上原点、x/y
+/// 相对本屏）——`mini`/`portrait` 的记忆槽位与竖屏 `portrait_geometry`
+/// 都是这一份，与 Windows 侧 `apply_frame`（逻辑像素）口径一致。
+///
+/// AppKit 要的是全局左下原点：x 加回本屏左缘，y 从「顶向下」翻回去。
+/// 之前这里把 gpui 坐标直接当 AppKit 坐标落窗，记忆里的 y 是上下颠倒的
+/// ——切小窗/竖屏再进就跳到屏幕另一头。
+pub(crate) fn apply_frame(window: &Window, cx: &gpui_kit::App, (x, y, w, h): (f64, f64, f64, f64)) {
+    let Some((sx, sy, _, sh)) = crate::macos::screen_frame(window) else {
+        return;
+    };
+    set_frame(window, cx, OuterRect::new(x + sx, sy + sh - y - h, w, h));
 }
 
 /// 直接把窗口落到给定外框（竖屏铺满档退出还原用）。
@@ -124,11 +137,16 @@ pub(crate) fn restore_frame(window: &Window, cx: &gpui_kit::App, rect: OuterRect
 }
 
 fn set_frame(window: &Window, cx: &gpui_kit::App, rect: OuterRect) {
+    // 句柄在借用期内取出，落窗留到借用结束之后：`setFrame_display` 会同步
+    // 触发 AppKit 尺寸回调，回调经 `handle.update` 重入 GPUI 的 App。借用期
+    // 内落窗会让这次重入直接撞 `RefCell`（日志里的「RefCell already
+    // borrowed」），视口尺寸停在旧值——小窗里渲染大屏布局、拖边内容不跟着变。
+    let Some(native) = crate::macos::ns_window_of(window) else {
+        return;
+    };
     window
-        .spawn(cx, async move |cx| {
-            let _ = cx.update(|window, _| {
-                crate::macos::set_frame(window, (rect.x, rect.y, rect.w, rect.h));
-            });
+        .spawn(cx, async move |_| {
+            crate::macos::set_frame(&native, (rect.x, rect.y, rect.w, rect.h));
         })
         .detach();
 }
@@ -137,6 +155,29 @@ fn set_frame(window: &Window, cx: &gpui_kit::App, rect: OuterRect) {
 pub(crate) fn window_rect(window: &Window) -> Option<(f64, f64, f64, f64)> {
     crate::macos::frame(window)
 }
+
+/// 窗口记忆槽位的坐标空间 = AppKit 全局外框（含各自显示器原点）。
+pub(crate) fn memory_rect(window: &Window) -> Option<OuterRect> {
+    current_rect(window)
+}
+
+/// 按记忆槽位落窗（AppKit 全局坐标）。
+pub(crate) fn memory_restore_frame(window: &Window, cx: &gpui_kit::App, rect: OuterRect) {
+    restore_frame(window, cx, rect);
+}
+
+/// 记忆槽位校验用的显示器矩形（与 [`memory_rect`] 同一空间）。
+pub(crate) fn memory_display_rects(_cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
+    crate::macos::screens_frames()
+        .into_iter()
+        .map(|(x, y, w, h)| (x as f32, y as f32, w as f32, h as f32))
+        .collect()
+}
+
+/// 记忆槽位是不是「窗口创建后再落」：macOS 的 `WindowBounds` 走 gpui 自己的
+/// 坐标空间（多屏下丢显示器原点），所以先按默认位置开窗、再用 AppKit 外框
+/// 精确恢复。
+pub(crate) const RESTORE_AFTER_OPEN: bool = true;
 
 /// 全局光标位置（AppKit 全局点、左下原点）。
 pub(crate) fn cursor_pos(_window: &Window) -> Option<(f64, f64)> {

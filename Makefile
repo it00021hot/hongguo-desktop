@@ -1,7 +1,7 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-preview
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview
 
 help:
 	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
@@ -17,6 +17,7 @@ help:
 	@echo "nsis      同步 Windows 安装器模板（升级 Tauri 后跑，需联网）"
 	@echo "clean      清理构建产物"
 	@echo "gpui       启动 GPUI 壳"
+	@echo "gpui-app   把 GPUI 壳打成 macOS .app（通知/Dock 身份需要 bundle；产物 target/gpui-app/红果.app）"
 	@echo "gpui-preview 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview"
 
 # 两种 dev 模式并存，不自动切换：
@@ -41,6 +42,12 @@ dev-sandbox:
 # 同时开两个壳会撞库锁，后启动者按重试口径等 1s 后仍锁着就退出。
 gpui:
 	cargo run -p hongguo-gpui
+
+# macOS 应用包：系统通知/通知权限、Dock 身份、菜单栏应用名都挂在 bundle 上
+# （裸二进制下 gpui 明确报「not running from an app bundle」，通知不可用）。
+# ad-hoc 签名，本地/开发分发够用；正式分发换 Developer ID + notarize。
+gpui-app:
+	bash scripts/gpui-app.sh
 
 # 离屏 UI 预览（screenshot feature）：无头渲染真实壳代码 + 假数据快照，
 # 逐场景存 PNG——各功能菜单的视觉验收依据。机制与边界见

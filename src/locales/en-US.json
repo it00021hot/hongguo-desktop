@@ -456,7 +456,6 @@
     "bossKeyRegisterFailed": "Couldn't register the shortcut (it may be taken by another app)",
     "bossKeyMessageWindowClassFailed": "Couldn't register the message-window class",
     "bossKeyMessageWindowCreateFailed": "Couldn't create the message window",
-    "bossKeyPlatformUnsupported": "Boss keys are not available on this platform yet",
     "diskCleanupHint": "Per-series disk cleanup is available from Disk cleanup in the sidebar.",
     "gpuiUpdateUnavailable": "Version {version} · Update checks are not available in the GPUI shell yet (use the Tauri shell).",
     "ffmpegInstallHint": "Optionally install ffmpeg (free & open source) to speed up compat merging — it is picked up automatically, with hardware encoding when an NVIDIA/AMD/Intel GPU is present. Everything works without it, just slower.",

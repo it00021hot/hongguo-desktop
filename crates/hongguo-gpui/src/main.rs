@@ -17,6 +17,8 @@
 mod boss_key;
 mod bridge;
 mod cover_img;
+#[cfg(target_os = "macos")]
+mod crash_log;
 mod danmaku_emoji;
 mod detail;
 mod emoji_files;
@@ -126,6 +128,9 @@ fn main() {
     // （%APPDATA%\hongguo-gpui，与 hongguo-downloader 无任何交集），
     // 互不锁库（实测并存时后启动者因库锁直接退出）。
     hongguo_store::paths::set_shell_data_root("hongguo-gpui");
+    // 崩溃取证：数据目录就位后装（信号处理器要把调用栈写进数据目录）。
+    #[cfg(target_os = "macos")]
+    crash_log::install();
     // 单实例：已有实例在跑就请它把窗口带到前台，自己安静退出（Tauri
     // single-instance 插件同语义）。必须早于开库——上一个实例可能正持库锁
     //（隐身藏窗/小屏/竖屏形态都在跑），撞锁退出会让用户看到「点图标没反应」。
@@ -134,11 +139,6 @@ fn main() {
         return;
     }
     let state = build_app_state();
-    // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。失败只记
-    // 日志——快捷键被占用不该拦启动，用户进设置换一个即可。
-    if let Err(e) = boss_key::apply(&state.settings().boss_key) {
-        log::warn!("[BossKey] {e}（进设置换一个快捷键）");
-    }
 
     // 资产源必须接上：gpui 的 SvgRenderer 从 App 的 AssetSource 读 SVG——
     // 不接的话**所有纯图标按钮都是空壳**（按钮在、图标没了，实测控制条
@@ -149,6 +149,14 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。
+            // 必须在 App 跑起来之后注册：Carbon 的 application event target
+            // 要等 NSApplication 就位，开跑前注册会拿到空 target、把热键
+            // 装到一个永远不会派发事件的地方。失败只记日志——快捷键被占用
+            // 不该拦启动，用户进设置换一个即可。
+            if let Err(e) = boss_key::apply(&state.settings().boss_key) {
+                log::warn!("[BossKey] {e}（进设置换一个快捷键）");
+            }
             // Windows 非打包应用的 Toast 需要稳定的 AppUserModelID；macOS
             // 通知中心也用同一身份展示。必须在开窗前设好。
             cx.set_app_identity("com.hongguo.desktop", "红果");
@@ -180,20 +188,80 @@ fn main() {
                 let (w, h) = v.split_once('x')?;
                 Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
             });
+            let saved = if forensic.is_some() {
+                None
+            } else {
+                crate::window_restore::restore_rect(
+                    ui_prefs.win_x,
+                    ui_prefs.win_y,
+                    ui_prefs.win_w,
+                    ui_prefs.win_h,
+                    &crate::platform::memory_display_rects(cx),
+                    crate::window_restore::MIN_RESTORE_W,
+                    crate::window_restore::MIN_RESTORE_H,
+                )
+                .map(|(x, y, w, h)| {
+                    crate::platform::OuterRect::new(
+                        f64::from(x),
+                        f64::from(y),
+                        f64::from(w),
+                        f64::from(h),
+                    )
+                })
+            };
             let bounds = if let Some((w, h)) = forensic {
                 gpui_kit::Bounds::centered(
                     None,
                     gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)),
                     cx,
                 )
+            } else if crate::platform::RESTORE_AFTER_OPEN {
+                // macOS：开窗用默认尺寸，创建后按 AppKit 外框精确恢复。
+                match saved {
+                    Some(rect) => log::info!(
+                        "[Window] 恢复上次几何（平台坐标）x={} y={} {}×{}",
+                        rect.x,
+                        rect.y,
+                        rect.w,
+                        rect.h
+                    ),
+                    None => log::info!("[Window] 无可用几何记忆，按默认 1280×840 中置"),
+                }
+                gpui_kit::Bounds::centered(
+                    None,
+                    gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
+                    cx,
+                )
             } else {
-                restore_window_bounds(&ui_prefs, cx).unwrap_or_else(|| {
-                    gpui_kit::Bounds::centered(
-                        None,
-                        gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
-                        cx,
-                    )
-                })
+                match saved {
+                    Some(rect) => {
+                        log::info!(
+                            "[Window] 恢复上次几何 x={} y={} {}×{}",
+                            rect.x,
+                            rect.y,
+                            rect.w,
+                            rect.h
+                        );
+                        gpui_kit::Bounds {
+                            origin: gpui_kit::point(
+                                gpui_kit::px(rect.x as f32),
+                                gpui_kit::px(rect.y as f32),
+                            ),
+                            size: gpui_kit::size(
+                                gpui_kit::px(rect.w as f32),
+                                gpui_kit::px(rect.h as f32),
+                            ),
+                        }
+                    }
+                    None => {
+                        log::info!("[Window] 无可用几何记忆，按默认 1280×840 中置");
+                        gpui_kit::Bounds::centered(
+                            None,
+                            gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
+                            cx,
+                        )
+                    }
+                }
             };
             // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
             let (shell_window, shell) = gpui_kit::open_window(
@@ -221,6 +289,38 @@ fn main() {
             )
             .expect("窗口创建失败");
 
+            // macOS：窗口创建后按平台坐标精确恢复（gpui 的 WindowBounds 只认
+            // 它自己的坐标空间，多屏下会丢显示器原点）
+            if crate::platform::RESTORE_AFTER_OPEN
+                && let Some(rect) = saved
+            {
+                let _ = shell_window.update(cx, |_, window, cx| {
+                    crate::platform::memory_restore_frame(window, cx, rect);
+                });
+            }
+
+            // 落框取证：延迟一拍打印「记忆坐标」里的实际外框（与恢复日志同口径）
+            let actual_window = shell_window;
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(300))
+                    .await;
+                cx.update(|app| {
+                    let _ = actual_window.update(app, |_, window, _| {
+                        if let Some(rect) = crate::platform::memory_rect(window) {
+                            log::info!(
+                                "[Window] 实际外框 x={} y={} {}×{}",
+                                rect.x,
+                                rect.y,
+                                rect.w,
+                                rect.h
+                            );
+                        }
+                    });
+                });
+            })
+            .detach();
+
             // 点击系统通知（追更更新）→ 激活已有窗口；Tauri Web Notification
             // 的 `window.focus()` 同语义。
             let notification_window = shell_window;
@@ -239,29 +339,6 @@ fn main() {
             #[cfg(feature = "screenshot")]
             screenshot::install(shell_window, shell.clone(), cx);
         });
-}
-
-/// 上次常态窗口几何恢复（ui_prefs 的 win_* 四键）：判定在
-/// [`window_restore::restore_rect`]（纯函数，集成测试覆盖），这里只转成
-/// GPUI 的 `Bounds`。下界是 480×270（Tauri 同款），不是默认窗口的
-/// 1024×680——用户正常缩到 900×600 也要能恢复。
-fn restore_window_bounds(
-    prefs: &crate::ui_prefs::UiPrefs,
-    cx: &gpui_kit::App,
-) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
-    let (x, y, w, h) = window_restore::restore_rect(
-        prefs.win_x,
-        prefs.win_y,
-        prefs.win_w,
-        prefs.win_h,
-        &crate::platform::display_rects(cx),
-        window_restore::MIN_RESTORE_W,
-        window_restore::MIN_RESTORE_H,
-    )?;
-    Some(gpui_kit::Bounds {
-        origin: gpui_kit::point(gpui_kit::px(x), gpui_kit::px(y)),
-        size: gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)),
-    })
 }
 
 /// 开库并组装全局状态。与 Tauri 壳的装配逐层同源：

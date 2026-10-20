@@ -456,7 +456,6 @@
     "bossKeyRegisterFailed": "快捷键注册失败（可能被其他程序占用）",
     "bossKeyMessageWindowClassFailed": "消息窗口类注册失败",
     "bossKeyMessageWindowCreateFailed": "消息窗口创建失败",
-    "bossKeyPlatformUnsupported": "老板键暂未在本平台实现（全局快捷键 FFI 后补）",
     "diskCleanupHint": "磁盘清理（按剧删除本地文件）在左侧「磁盘清理」页。",
     "gpuiUpdateUnavailable": "版本 {version} · GPUI 壳暂未接入更新通道（Tauri 壳内可用）",
     "ffmpegInstallHint": "想让兼容合并提速可以装 ffmpeg（免费开源）：装上后转码自动改走它，有 N/A/Intel 显卡时还能用硬件编码。不装也完全能用，只是转码慢一些。",

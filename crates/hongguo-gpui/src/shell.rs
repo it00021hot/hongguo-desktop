@@ -45,6 +45,11 @@ use crate::pages::settings::{SettingsEvent, SettingsView};
 use crate::pages::storage::StorageView;
 use crate::pages::tasks::TasksView;
 
+/// 窗口几何防抖落盘间隔（Tauri `window_state::spawn_saver` 的 500ms 同参）。
+/// 移动/缩放每停一下就在这之后落盘，退出路径（关闭回调 / Cmd+Q / 强杀）
+/// 不再决定记忆能否保住。
+const GEOMETRY_SAVE_DEBOUNCE_MS: u64 = 500;
+
 /// 侧栏导航目的地（与 Tauri `app-sidebar.tsx` 的 NAV_ITEMS 逐项同序）。
 /// 播放不在列：它由各页「播放/继续播放」进入，首页本身就是沉浸流。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,6 +235,9 @@ pub struct Shell {
     /// 上次采样的竖屏几何 [x, y, w, h]（竖屏中逐帧刷新；进竖屏时由
     /// [`crate::portrait`] 取用）。
     portrait_bounds: [f32; 4],
+    /// 采样到的几何还没落盘（500ms 防抖 saver 用；见
+    /// [`GEOMETRY_SAVE_DEBOUNCE_MS`]）。
+    bounds_dirty: bool,
     /// 账号头像（avatar_url 拉取；账号变化时重拉，登出清空）。
     account_avatar: Option<Arc<RenderImage>>,
     account_avatar_url: Option<String>,
@@ -486,6 +494,7 @@ impl Shell {
             win_bounds: [0.0; 4],
             mini_bounds: [0.0; 4],
             portrait_bounds: [0.0; 4],
+            bounds_dirty: false,
             account_avatar: None,
             account_avatar_url: None,
             account_avatar_pending: false,
@@ -559,7 +568,11 @@ impl Shell {
                     };
                     let ok = this
                         .update(cx, |shell, cx| {
-                            shell.boss_key_playback(!visible, cx);
+                            // 入参是「这次要藏起来吗」：当前可见 = 本次按下去
+                            // 是藏（暂停），当前不可见 = 本次是按回来（续播）。
+                            // 这里写反过一次（传 !visible），实测症状是「藏起来
+                            // 还在响、按回来反而暂停」。
+                            shell.boss_key_playback(visible, cx);
                         })
                         .is_ok();
                     if !ok {
@@ -1106,6 +1119,26 @@ impl Shell {
     /// 关不掉的（Tauri 前端未就绪放行同精神）。
     /// 由 `main.rs` 在壳实体就位后挂上（`Shell::new` 里拿不到自身弱引用）。
     pub(crate) fn install_close_guard(&self, window: &mut Window, cx: &mut Context<Self>) {
+        // 防抖落盘（Tauri `window_state::spawn_saver` 的 500ms 同款）：
+        // macOS 的 Cmd+Q 走 NSApplication terminate，根本不发
+        // `windowShouldClose`，只靠关闭回调存几何等于「退出就丢记忆」；
+        // 强杀/崩溃同理。移动/缩放停下 500ms 内落一次盘，退出路径就不重要了。
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(GEOMETRY_SAVE_DEBOUNCE_MS))
+                    .await;
+                let Ok(dirty) = this.update(cx, |shell, _| std::mem::take(&mut shell.bounds_dirty))
+                else {
+                    break;
+                };
+                if dirty {
+                    let _ = this.update(cx, |shell, _| shell.save_window_bounds());
+                }
+            }
+        })
+        .detach();
+
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             let Some(shell) = this.upgrade() else {
@@ -1789,40 +1822,46 @@ impl gpui_kit::Render for Shell {
             || window.is_maximized()
             || crate::platform::is_minimized(window);
         if !system_managed {
-            let b = window.bounds();
-            let sampled = [
-                b.origin.x.into(),
-                b.origin.y.into(),
-                b.size.width.into(),
-                b.size.height.into(),
-            ];
-            let (floor_w, floor_h) = if in_mini {
-                (
-                    crate::window_restore::MINI_RESTORE_W,
-                    crate::window_restore::MINI_RESTORE_H,
-                )
-            } else if in_portrait {
-                (
-                    crate::window_restore::PORTRAIT_RESTORE_W,
-                    crate::window_restore::PORTRAIT_RESTORE_H,
-                )
-            } else {
-                (
-                    crate::window_restore::MIN_RESTORE_W,
-                    crate::window_restore::MIN_RESTORE_H,
-                )
-            };
-            let sane = sampled[2] >= floor_w && sampled[3] >= floor_h;
-            if in_mini {
-                if sane {
-                    self.mini_bounds = sampled;
+            // 记忆槽位的坐标空间由平台定义（macOS = AppKit 全局外框，Windows
+            // = gpui 逻辑坐标）：gpui 在 macOS 的 bounds 是「相对本屏」的，
+            // 存进去多屏必错位。
+            let sampled = crate::platform::memory_rect(window)
+                .map(|r| [r.x as f32, r.y as f32, r.w as f32, r.h as f32]);
+            if let Some(sampled) = sampled {
+                let (floor_w, floor_h) = if in_mini {
+                    (
+                        crate::window_restore::MINI_RESTORE_W,
+                        crate::window_restore::MINI_RESTORE_H,
+                    )
+                } else if in_portrait {
+                    (
+                        crate::window_restore::PORTRAIT_RESTORE_W,
+                        crate::window_restore::PORTRAIT_RESTORE_H,
+                    )
+                } else {
+                    (
+                        crate::window_restore::MIN_RESTORE_W,
+                        crate::window_restore::MIN_RESTORE_H,
+                    )
+                };
+                let sane = sampled[2] >= floor_w && sampled[3] >= floor_h;
+                if in_mini {
+                    if sane && sampled != self.mini_bounds {
+                        self.mini_bounds = sampled;
+                        self.bounds_dirty = true;
+                    }
+                } else if in_portrait {
+                    // 铺满档是派生的满高几何，不进竖屏记忆槽（同
+                    // `portrait::exit` 的守卫）：采样进来会让「上次竖屏大小」
+                    // 变成满高，下次进竖屏铺满钮形同虚设。
+                    if sane && !crate::portrait::is_full() && sampled != self.portrait_bounds {
+                        self.portrait_bounds = sampled;
+                        self.bounds_dirty = true;
+                    }
+                } else if !immersive && sane && sampled != self.win_bounds {
+                    self.win_bounds = sampled;
+                    self.bounds_dirty = true;
                 }
-            } else if in_portrait {
-                if sane {
-                    self.portrait_bounds = sampled;
-                }
-            } else if !immersive && sane {
-                self.win_bounds = sampled;
             }
         }
         // 先建好所有吃 cx 的闭包/子渲染，再取 theme（theme 借 cx，两者不能

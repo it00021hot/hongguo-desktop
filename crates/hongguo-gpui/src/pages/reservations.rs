@@ -97,6 +97,8 @@ pub(crate) struct ReservationView {
     cancelling: HashSet<String>,
     /// 预览种子用的登录态开关（真实壳恒 false，以 settings 的 account 为准）。
     preview_logged_in: bool,
+    /// 滚动哨兵：滚到底自动续页（两个 tab 共用一个滚动容器；按钮留兜底）。
+    scroll: crate::pages::scroll_load::ScrollLoad,
 }
 
 impl ReservationView {
@@ -135,6 +137,7 @@ impl ReservationView {
             deleting: false,
             cancelling: HashSet::new(),
             preview_logged_in: false,
+            scroll: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }
 
@@ -887,6 +890,15 @@ impl gpui_kit::EventEmitter<ReservationEvent> for ReservationView {}
 
 impl gpui_kit::Render for ReservationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 滚动哨兵：滚到底自动续页（Tauri reservation-page.tsx 的
+        // IntersectionObserver 同语义；按钮留作兜底）。
+        let (has_more, loading) = {
+            let tab = self.current();
+            (tab.has_more, tab.loading_more || tab.loading)
+        };
+        if self.scroll.should_load(has_more, loading) {
+            self.load_more(cx);
+        }
         let logged_in = self.logged_in();
         let body = if !logged_in {
             let theme = cx.theme();
@@ -1008,6 +1020,7 @@ impl gpui_kit::Render for ReservationView {
                     .id("reservations-list")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(self.scroll.handle())
                     .p_4()
                     .child(column)
                     .into_any_element()

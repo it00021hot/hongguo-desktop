@@ -733,9 +733,13 @@ impl super::HomeView {
                     .into_any_element()
             }))
             // 小屏拖拽条（Tauri MiniDragBar 同款）：顶栏在小屏不渲染，窗口
-            // 拖动职责落在这条 24px 顶带——标记成 WindowControlArea::Drag，
-            // 平台 WM_NCHITTEST 给 HTCAPTION 原生拖拽；拦下鼠标下传，拖拽
-            // 残留的 click 不能触发「点画面暂停」
+            // 拖动职责落在这条 24px 顶带。两条平台路径：Windows 靠
+            // WindowControlArea::Drag 走 WM_NCHITTEST 的 HTCAPTION；macOS 的
+            // hit test 是**空实现**（gpui-pre-macos 的 on_hit_test_window_
+            // control 什么都不做），必须显式 start_window_move 才进 NSWindow
+            // 的拖动循环——只打 WindowControlArea 的话这条带在 macOS 上是
+            // 死区（用户实测小窗拖不动）。拦下鼠标下传，拖拽残留的 click
+            // 不能触发「点画面暂停」
             .children(in_mini.then(|| {
                 div()
                     .id("mini-drag-bar")
@@ -746,7 +750,12 @@ impl super::HomeView {
                     .h(gpui_kit::px(24.0))
                     .on_mouse_down(
                         gpui_kit::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                        cx.listener(|_, _, window, cx| {
+                            cx.stop_propagation();
+                            // Windows 上这里是平台默认的空实现，HTCAPTION
+                            // 已经接管；macOS 上它才是真正起拖的那一下
+                            window.start_window_move();
+                        }),
                     )
                     .window_control_area(gpui_kit::WindowControlArea::Drag)
                     .into_any_element()

@@ -123,6 +123,8 @@ pub(crate) struct BrowseView {
     search_has_more: bool,
     search_loading: bool,
     search_failed: bool,
+    /// 滚动哨兵：滚到底自动续页（浏览流 / 搜索结果共用；按钮留作兜底）。
+    scroll: crate::pages::scroll_load::ScrollLoad,
     // —— 联想（简化形态：输入框下方行式列表，点击即选）——
     suggest_items: Vec<SuggestItem>,
     suggest_seq: u64,
@@ -197,6 +199,7 @@ impl BrowseView {
             search_has_more: false,
             search_loading: false,
             search_failed: false,
+            scroll: crate::pages::scroll_load::ScrollLoad::new(),
             suggest_items: Vec::new(),
             suggest_seq: 0,
             suggest_index: 0,
@@ -1056,6 +1059,21 @@ impl gpui_kit::EventEmitter<BrowseEvent> for BrowseView {}
 
 impl gpui_kit::Render for BrowseView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 滚动哨兵：滚到底自动续页（Tauri browse-page.tsx 的 IntersectionObserver
+        // 同语义；浏览流与搜索结果共用同一滚动容器，按当前态选加载入口）。
+        let searching = !self.submitted.is_empty();
+        let (scroll_has_more, scroll_loading) = if searching {
+            (self.search_has_more, self.search_loading)
+        } else {
+            (self.feed_has_more, self.feed_loading)
+        };
+        if self.scroll.should_load(scroll_has_more, scroll_loading) {
+            if searching {
+                self.load_search_page(false, cx);
+            } else {
+                self.load_browse_page(cx);
+            }
+        }
         // 结果网格列数 = Tauri SeriesCardGrid 的响应式断点（2/3/4/5/8 列，
         // sm/md/lg/2xl）：卡片宽度按列宽铺满，1280 窗口下 5 列 220px 与
         // Tauri 同宽
@@ -1257,6 +1275,7 @@ impl gpui_kit::Render for BrowseView {
             .text_color(theme.foreground)
             .id("browse-page")
             .overflow_y_scroll()
+            .track_scroll(self.scroll.handle())
             .child(
                 v_flex()
                     .w_full()

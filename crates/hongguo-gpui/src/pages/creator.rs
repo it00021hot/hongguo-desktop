@@ -55,6 +55,8 @@ pub(crate) struct CreatorView {
     covers_pending: HashSet<String>,
     avatar: Option<Arc<RenderImage>>,
     avatar_pending: bool,
+    /// 滚动哨兵：滚到底自动续页（按钮留作兜底）。
+    scroll: crate::pages::scroll_load::ScrollLoad,
 }
 
 impl CreatorView {
@@ -75,6 +77,7 @@ impl CreatorView {
             covers_pending: HashSet::new(),
             avatar: None,
             avatar_pending: false,
+            scroll: crate::pages::scroll_load::ScrollLoad::new(),
         }
     }
 
@@ -528,6 +531,11 @@ impl gpui_kit::EventEmitter<CreatorEvent> for CreatorView {}
 
 impl gpui_kit::Render for CreatorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 滚动哨兵：滚到底自动续页（Tauri creator-home-page.tsx 的
+        // IntersectionObserver 同语义；按钮留作兜底）。
+        if self.scroll.should_load(self.has_more, self.loading_more) {
+            self.load_more(cx);
+        }
         let profile = self.render_profile(cx);
         let heading = (self.works_loaded && !self.works.is_empty()).then(|| {
             div()
@@ -564,6 +572,7 @@ impl gpui_kit::Render for CreatorView {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(self.scroll.handle())
                     .px_8()
                     .pb_8()
                     .child(

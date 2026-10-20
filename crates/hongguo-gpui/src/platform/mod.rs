@@ -51,9 +51,11 @@ pub(crate) const MINI_H: f64 = 270.0;
 /// 小屏落位边距（工作区右下角，Tauri MINI_MARGIN 同参）。
 pub(crate) const MINI_MARGIN: f64 = 16.0;
 
-/// 当前所有显示器的矩形 `(x, y, w, h)`（逻辑像素，与窗口 bounds 同一
-/// 坐标空间）——窗口几何记忆恢复判定（`window_restore::restore_rect`）
-/// 相交检查的输入。
+/// 当前所有显示器的矩形 `(x, y, w, h)`（逻辑像素，与 gpui 窗口 bounds 同一
+/// 坐标空间）——只有 Windows 的记忆槽位用这套 gpui 坐标；macOS 走
+/// [`macos::memory_display_rects`] 的 AppKit 全局外框（gpui 在 macOS 丢了
+/// 显示器原点，多屏必错位）。
+#[cfg(target_os = "windows")]
 pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
     cx.displays()
         .iter()
