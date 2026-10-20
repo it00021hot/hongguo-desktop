@@ -48,11 +48,9 @@ impl HomeView {
             (self.frame.is_some() || system_ready) && (!self.switching || self.hold_last_frame);
         // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
         // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
-        let video_fit = if self.mini.is_some() {
-            ObjectFit::Cover
-        } else {
-            ObjectFit::Contain
-        };
+        // 一律铺满（cover）：正常/竖屏/小窗同一个口径——画面盖住整个舞台，
+        // 舞台里不再有黑边，也就不存在「视频边缘与黑边的接缝」。
+        let video_fit = ObjectFit::Cover;
         // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
         // contain 保宽高比在转换端算）。小屏的适配模式跟着形态走
         //（Tauri `miniScreen ? 'object-cover' : 'object-contain'` 同款）。
@@ -83,11 +81,8 @@ impl HomeView {
                 let (x, y) = crate::platform::stage_origin(r[0], r[1], chrome_top);
                 PresenterBounds::new(x, y, r[2], r[3])
             });
-            let fit = if self.mini.is_some() {
-                PresenterFit::Cover
-            } else {
-                PresenterFit::Contain
-            };
+            // 与 `video_fit` 同口径：铺满整个舞台（不再 contain 留黑边）。
+            let fit = PresenterFit::Cover;
             player.submit_stage(bounds, fit, system_ready);
         }
         // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
@@ -277,10 +272,7 @@ impl HomeView {
                 .child(Spinner::new())
                 .into_any_element()
         };
-        // 系统后端：把 contain 的黑边画黑（透明洞只留视频矩形，见方法注释）。
-        let letterbox = system_ready
-            .then(|| self.render_stage_letterbox())
-            .flatten();
+
         // 缓冲角标（右上）：引擎水位状态机的 Buffering 事件驱动，区别于左上
         // 的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
         let buffering_badge = (self.buffering && self.player.is_some()).then(|| {
@@ -503,10 +495,7 @@ impl HomeView {
                 // 会让日志恒报「视频层 0」，哨兵就成了假警报源
                 div().absolute().size_full().into_any_element()
             })
-            // 黑边必须画在视频层之后：哨兵按子层下标读矩形（cover=0、video=1），
-            // 插在中间会把视频层挤到下标 2、哨兵从此读错。纯样式 div 没有
-            // hitbox，不挡点画面暂停。
-            .children(letterbox)
+
             .children(danmaku_layer)
             .children(overlay)
             .children(rail)

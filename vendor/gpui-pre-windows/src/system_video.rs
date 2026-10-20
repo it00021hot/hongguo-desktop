@@ -166,10 +166,12 @@ pub(crate) fn install(
         scale.SetTransform2(&Matrix3x2::identity())?;
         scale.AddVisual(&target, true, None)?;
         clip.AddVisual(&scale, true, None)?;
-        // referenceVisual = NULL 时 `insertAbove = TRUE` 表示「渲染在所有兄弟
-        // **之下**」（MS 文档：above no sibling ⇒ 排在所有兄弟后面）。视频位
-        // 必须在 GPUI 内容之下，否则进度条/弹幕/小窗控制条会被画面盖住。
-        container.AddVisual(&clip, true, None)?;
+        // 最底层先垫窗口黑底：内容与视频位是两张画布，改尺寸时错开一帧露出的
+        // 缝必须露黑色而不是桌面（与 macOS 的窗口黑底同语义）。
+        let backdrop = install_backdrop(device, container)?;
+        // referenceVisual = 黑底时 `insertAbove = TRUE` ⇒ 紧贴在黑底之上；
+        // 视频位仍必须在 GPUI 内容之下，否则进度条/弹幕会被画面盖住。
+        container.AddVisual(&clip, true, &backdrop)?;
         layers()
             .lock()
             .expect("视频位表锁 poisoned")
