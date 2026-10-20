@@ -1,4 +1,4 @@
-# GPUI 系统播放器：进度与交接（macOS 已完成，Windows 待做）
+# GPUI 系统播放器：进度与交接（macOS 已完成，Windows 已完成 Phase 2）
 
 最后更新：2026-10-20
 
@@ -12,7 +12,8 @@
 | 透明洞修复 + 默认 system | 画面可见；2x 48fps（内容 24fps×2）满帧、帧间隔 20.2ms、0 丢帧 | `ed068c7` |
 | 已看完跳过 + 续播 clamp + 加载条 | 已看完不续播/不预取；剩余 <2s 直接下一集；加载条首帧后灭 | `9e7fab5` |
 | 冷切集 + 8MB Range 超时 | 冷切中位 37ms；75s/2x 无 8MB 超时 | `9e7fab5` |
-| 片尾单一真相源（本轮） | 删除 30fps 尾部兜底，只认 Ended + 三代次幂等；长跑待复验 | 本次提交 |
+| 片尾单一真相源（本轮） | 删除 30fps 尾部兜底，只认 Ended + 三代次幂等；长跑待复验 | `5e127fc` |
+| **Phase 2 Windows（本轮）** | MediaEngine + 自定义 `IMFByteStream` + DComp 视频位；真实壳 2x 60fps、0 丢帧、切集 287ms | 本次提交 |
 
 ## 2. 已验证（本机）
 
@@ -26,7 +27,8 @@
 
 | 项 | 说明 | 优先级 |
 | --- | --- | --- |
-| **Phase 2 Windows** | `MediaPlayer` + 自定义 `IMFByteStream`，复用 `VideoPresenter`；窗口形态/透明洞/叠加对齐 macOS | P0 |
+| ~~Phase 2 Windows~~ | **已完成**：MediaEngine + 自定义 `IMFByteStream` + DComp 视频位，见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | P0 |
+| Windows 切集提速 | Windows 无播放列表，切集走重建（实测 287ms）；双引擎预热换层可追平 macOS 的 15–50ms | P1 |
 | 首播 0.7–3.7s | 取流表 + 渐进探测慢，可并行/预注册 | P1 |
 | 遮挡暂停 | 窗口完全被遮挡时暂停（现在只有最小化/老板键） | P1 |
 | 音频客观指标 | 系统后端无 audio tap，欠载不可观测 | P1 |
@@ -34,7 +36,7 @@
 | 预加载句柄上限 | `LoaderHandle` 按集累积，未做两槽上限 | P2 |
 | loader 池生命周期 | 4 worker 进程级，退出不 join | P2 |
 | 多窗口/多显示器 | 系统播放器为单窗口全局宿主 | P2 |
-| 预览截图 | `render_to_image` 抓不到原生 AVPlayerLayer，视频区黑，需系统截图 | P2 |
+| 预览截图 | `render_to_image` 抓不到原生视频层（macOS AVPlayerLayer / Windows DComp），视频区黑，需系统截图 | P2 |
 
 ## 4. 待验证（重要）
 
@@ -47,28 +49,31 @@
 ## 5. 运行方式
 
 ```bash
-make gpui                      # macOS 默认 system（AVPlayer）
+make gpui                      # macOS 默认 system（AVPlayer）；Windows 默认 system（MediaEngine）
 VIDEO_BACKEND=gpui make gpui   # 回滚 GPUI 自研上屏
 VIDEO_BACKEND=system make gpui # 显式系统后端
 
-HONGGUO_AV_METRICS=1           # 5s 一次帧率/间隔统计
+HONGGUO_AV_METRICS=1           # 5s 一次帧率/间隔统计（macOS）
+HONGGUO_WM_METRICS=1           # 5s 一次 rendered/dropped 统计（Windows）
 HONGGUO_AV_RATE=2              # 首帧后切 2x
 HONGGUO_AV_NEXT_EPISODE_MS=5000 # 首帧后 5s 切下一集
 ```
 
-## 6. Phase 2 Windows 交接
+Windows 下抓帧取证：DComp 内容不进窗口重定向表面，`PrintWindow` 抓到的是
+黑图，只能用屏幕区域拷贝（窗口提前后 `BitBlt` 窗口矩形）。
 
-- 抽象：`crates/hongguo-playback/src/presenter.rs`（`VideoPresenter`）
-- 后端开关：`crates/hongguo-gpui/src/video_backend.rs`（当前非 macOS 回落 gpui）
-- 参照实现：`crates/hongguo-gpui/src/av_presenter/`（player/view/loader）
-- 窗口形态：`home/stage.rs` 的 `stage_bounds` → presenter `set_bounds/fit`
-- 透明洞：`shell.rs` / `stage.rs` 的 system 分支；Windows 需等价方案（DirectComposition visual 或 child HWND + overlay，先读 gpui-pre-windows 渲染器定路线）
-- 供数：`TextFieldStream` 对应 `hongguo-stream::read_range`；`contentLength` 用 `plain_len`
-- 验收：2x 零丢帧、切集 ≤100ms、五形态不中断、已看完跳过、加载条收尾
+## 6. Phase 2 Windows（已落地）
+
+- 设计/实测/坑：`docs/gpui-system-player-windows.md`
+- 平台开关：`crates/hongguo-gpui/src/video_backend.rs`（macOS/Windows 默认 system）
+- Windows 实现：`crates/hongguo-gpui/src/wm_presenter/`（mf/stream/events/view/player）
+- 视频位挂点：`vendor/gpui-pre-windows` 的 `system_video` 模块（补丁说明见根 `Cargo.toml`）
+- 引擎创建失败：`video_backend::fall_back_to_gpui()` 翻开关 + 重走起播，不 panic
 
 ## 7. 风险
 
 - 已看完判定依赖历史 `episode_cnt`；
 - `Ended` 幂等依赖每 item 单次回调，长跑待验；
 - 系统后端无逐帧回调，弹幕/进度靠 30fps 节拍；
-- 音频由 AVPlayer 输出，无欠载指标。
+- 音频由系统引擎输出（macOS AVPlayer / Windows MediaEngine），无欠载指标；
+- Windows 的视频位是 vendored gpui 补丁，上游升级时要重新对一遍视觉树改动。
