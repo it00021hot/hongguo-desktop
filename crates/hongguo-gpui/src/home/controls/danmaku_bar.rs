@@ -22,6 +22,43 @@ impl HomeView {
             .id("danmaku-box")
             .ml_2()
             .relative()
+            // 表情/提及预览（浮在胶囊上方，同款深底小条）：GPUI 的 Input 是
+            // 纯文本编辑器，插进去的 `[名字]` 只是代码，这里把同一段文本按
+            // 弹幕层那套分段渲染出表情图与蓝色 @名字。表情面板开着时让位
+            // （那会儿面板才是主角），且它同样浮在控制条上方 → 自己也拦一层
+            // 鼠标，别让点击漏到画面层（点画面 = 暂停）。
+            .children(
+                (!self.danmaku_emoji_open)
+                    .then(|| {
+                        self.render_rich_preview(
+                            &self
+                                .danmaku_input
+                                .as_ref()
+                                .map(|i| i.read(cx).value().to_string())
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .flatten()
+                    .map(|preview| {
+                        div()
+                            .absolute()
+                            .left_0()
+                            .bottom(gpui_kit::px(38.0))
+                            .px_2()
+                            .py_1()
+                            .rounded(gpui_kit::px(6.0))
+                            .bg(gpui_kit::rgba(0x000000d9))
+                            .on_mouse_down(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                            )
+                            .on_mouse_up(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                            )
+                            .child(preview)
+                    }),
+            )
             .child({
                 // 弹幕输入：hgplayer 固定深色皮肤（Tauri 同款，
                 // 不跟主题走）——15% 白底胶囊、白字、白光标、
@@ -136,6 +173,18 @@ impl HomeView {
                         this.danmaku_emoji_open = false;
                         cx.notify();
                     }))
+                    // 面板自己拦一层鼠标（评论面板的表情面板同款）：**这个面板
+                    // 浮在控制条上方**（bottom 38px + 176px 高），控制条自己的
+                    // bounds 罩不到它 → 控制条那层的 stop_propagation 拦不住
+                    // 这次点击，事件会一路落到舞台画面层（点画面 = 暂停）。
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                    )
+                    .on_mouse_up(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                    )
                     // 滚轮拦下（Tauri emoji-picker data-wheel-block
                     // 同款）：表情网格上滚不切剧
                     .on_scroll_wheel(|_, _, cx| cx.stop_propagation())

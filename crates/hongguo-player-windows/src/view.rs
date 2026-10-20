@@ -49,6 +49,12 @@ pub(super) fn current_layer() -> Option<SystemVideoLayer> {
     gpui_pre_windows::system_video::system_video_layer(HWND(hwnd as *mut core::ffi::c_void))
 }
 
+/// 当前宿主窗口的标识（HWND）：引擎复用前要确认还是同一个窗口——窗口重建
+/// （HWND 变了）之后旧引擎的画面落点视觉已经作废，复用它会黑屏。
+pub(super) fn window_id() -> Option<isize> {
+    *WINDOW.lock().expect("窗口句柄锁 poisoned")
+}
+
 /// 提交舞台几何；返回 false 表示这一层已失效（调用方下一帧重取）。
 pub(super) fn submit(layer: &SystemVideoLayer, stage: Option<&SystemVideoStage>) -> bool {
     match layer.set_stage(stage) {

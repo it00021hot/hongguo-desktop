@@ -83,7 +83,7 @@ impl HomeView {
             )
             .detach();
         }
-        // 弹幕发送框：Enter 提交
+        // 弹幕发送框：Enter 提交；输入即「用户在场」（唤醒控件）
         if let Some(input) = &self.danmaku_input {
             cx.subscribe(
                 input,
@@ -91,17 +91,27 @@ impl HomeView {
                     if matches!(event, InputEvent::PressEnter { .. }) {
                         this.submit_danmaku(cx);
                     }
+                    // 输入框改动（含 Delete/退格删字）= 用户在打字：控件该亮。
+                    // 舞台的 on_key_down 也会做同一件事，但输入框**吃掉**的按键
+                    // （Delete 等）根本到不了舞台——只靠舞台那条路，控件会在
+                    // 输入框里打字时一直藏着（Tauri 侧靠 wakeOnInput 兜住）。
+                    if matches!(event, InputEvent::Change) {
+                        this.wake_controls(cx);
+                    }
                 },
             )
             .detach();
         }
-        // 评论输入框：Enter 提交
+        // 评论输入框：Enter 提交；输入即「用户在场」（唤醒控件）
         if let Some(input) = &self.comment_input {
             cx.subscribe(
                 input,
                 |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::PressEnter { .. }) {
                         this.submit_comment(cx);
+                    }
+                    if matches!(event, InputEvent::Change) {
+                        this.wake_controls(cx);
                     }
                 },
             )

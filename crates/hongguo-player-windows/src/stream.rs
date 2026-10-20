@@ -26,6 +26,10 @@ use windows::core::{Interface, Result, implement};
 
 use hongguo_player_api::StallHook;
 
+/// `msoEnd`（从末尾算的 seek 基准）：windows crate 的 MediaFoundation 模块
+/// 只导出了 `msoBegin`/`msoCurrent`，末尾基准按 MF 文档的取值自行构造。
+const MFBYTESTREAM_SEEK_END: MFBYTESTREAM_SEEK_ORIGIN = MFBYTESTREAM_SEEK_ORIGIN(2);
+
 /// 一次 `read_range_cancellable` 最多取的字节数（渐进流可能只到了头部）。
 const READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// 渐进流注册（`plain_len` 可见）前等长度的上限（与 macOS loader 同参）。
@@ -274,12 +278,16 @@ impl IMFByteStream_Impl for ByteStream_Impl {
     }
 
     fn Seek(&self, origin: MFBYTESTREAM_SEEK_ORIGIN, offset: i64, _flags: u32) -> Result<u64> {
+        // 总长走 `total()` 而不是裸原子：裸原子在 `GetLength` 之前是 0，
+        // 拿它当上界会把任何 seek 钳回 0（拖进度条后画面回到开头）。
+        let total = self.inner.total()? as i64;
         let base = if origin == msoCurrent {
             self.inner.position.load(Ordering::SeqCst) as i64
+        } else if origin == MFBYTESTREAM_SEEK_END {
+            total
         } else {
             0
         };
-        let total = self.inner.total.load(Ordering::SeqCst) as i64;
         let next = (base + offset).clamp(0, total.max(0)) as u64;
         self.inner.position.store(next, Ordering::SeqCst);
         Ok(next)

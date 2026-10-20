@@ -179,7 +179,22 @@ impl super::HomeView {
             definitions,
             definition,
             vid: ep.vid.clone(),
-            cover: item.cover.clone(),
+            // 封面：调用方的条目没带就用档案的（档案是权威源）——观看历史
+            // 记的封面不再取决于「谁发起的这次起播」。
+            cover: if item.cover.is_empty() {
+                series.cover.clone()
+            } else {
+                item.cover.clone()
+            },
+            // 全分集表（集号 → vid）：预取下一集与片尾接力都从这里取 vid，
+            // 主线程不必再读库（库是同步阻塞门面）。
+            episode_vids: Arc::new(
+                series
+                    .episodes
+                    .iter()
+                    .map(|episode| (episode.vid_index, episode.vid.clone()))
+                    .collect(),
+            ),
         };
         // 系统播放器要拿 DComp 视频位——那是渲染线程的私有对象，只能在主线程
         // 创建；所以这里把打开参数原样带回主线程（`Opened::System`），由调用方

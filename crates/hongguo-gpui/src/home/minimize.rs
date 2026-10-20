@@ -59,6 +59,9 @@ impl super::HomeView {
                 // 只在「正在播」时欠：已经暂停着说明是用户自己按停的
                 self.minimize_owed = true;
                 player.pause();
+                // 暂停 = 不再是「用户级工作」：活动断言一起收（用户手动暂停
+                // 走 toggle_pause 也收，这里是同一套语义）。
+                crate::play_activity::set_active(false);
                 log::info!("[Home] 窗口最小化，自动暂停");
                 cx.notify();
             }
@@ -66,6 +69,8 @@ impl super::HomeView {
             self.minimize_owed = false;
             if let Some(player) = &self.player {
                 player.resume();
+                // 恢复播放重新持有活动断言（同 toggle_pause）
+                crate::play_activity::set_active(true);
                 log::info!("[Home] 窗口还原，续播");
                 cx.notify();
             }

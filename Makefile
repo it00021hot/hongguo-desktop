@@ -95,14 +95,18 @@ lint:
 	pnpm lint
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-# macOS 双目标交叉：排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
+# macOS 双目标交叉：只排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
 # build script 里 bindgen Apple 框架头文件，Windows 宿主没有 macOS SDK
 # 生不出来（真 macOS 环境原生 clippy 不受影响，CI 的 macOS job 覆盖）。
-# hongguo-playback 同理：cpal → coreaudio-sys 0.2.18 对 Apple 目标无条件
-# bindgen（要 libclang + macOS SDK），本机生不出来；macOS 覆盖由 Mac 本机
-# 与 CI 承担，Windows 宿主那条仍全量含它。
-	cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+# hongguo-playback 现在也在交叉闸门里：它早已不直接依赖 cpal（音频输出走
+# hongguo-media-platform 的平台契约，macOS 侧是 AudioToolbox），cpal 留在
+# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies] 里，
+# Apple 目标不再拖出 coreaudio-sys → 不再需要 libclang。
+# 提醒：占位 CC/AR 指向 `true`，Windows 宿主上 PATH 里得能找到 true.exe
+# （Git for Windows 的 usr/bin 里有），否则 objc2-exception-helper 的
+# build script 找不到编译器。
+	cargo clippy --workspace --exclude hongguo-gpui --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy --workspace --exclude hongguo-gpui --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 
 fmt:
 	cargo fmt --all

@@ -202,13 +202,16 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
 
 /// 打开一集系统播放器。返回的门面已实现 [`PlayerLike`]；图层由 render 侧
 /// 调用 `attach` 挂载（tokio 线程不能碰 AppKit）。
+///
+/// 返回 `None` = 引擎起不来，调用方回落到自研上屏——与 Windows 实现同一套
+/// 契约（门面 `hongguo_player::open` 的返回类型由两边实现共同决定）。
 pub fn open(
     source: PlaySource,
     start_secs: f64,
     rate: f64,
     events: mpsc::Sender<PlayerEvent>,
     on_stall: Option<loader::StallHook>,
-) -> Arc<dyn PlayerLike> {
+) -> Option<Arc<dyn PlayerLike>> {
     let (asset, loader_handle) = match source {
         PlaySource::Online { vid, definition } => {
             let url = avf::custom_url(&format!("{vid}-{definition}")).expect("自定义 scheme URL");
@@ -270,7 +273,7 @@ pub fn open(
         );
     }
     log::info!("[AvPresenter] 系统播放器已打开（起点 {start_secs:.1}s，{rate:.2}x）");
-    system
+    Some(system)
 }
 
 impl PlayerLike for SystemPlayer {

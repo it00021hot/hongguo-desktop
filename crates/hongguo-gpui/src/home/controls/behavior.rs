@@ -49,6 +49,15 @@ impl HomeView {
                     self.system_video_ready = true;
                     self.first_frame_generation = self.play_generation;
                     self.hold_last_frame = false;
+                    // 倍速补发改挂首帧事件：引擎在 metadata 就绪前一律报「不支
+                    // 持这个倍速」，此前只能靠渲染帧节流补发（每帧一次 COM 探
+                    // 测）——渲染节拍一变，补发就跟着变慢。首帧到达即 metadata
+                    // 已就绪，此刻补发最准。
+                    // 只对系统后端：自研引擎的倍速出生即位，补发会平白走一次
+                    // 分级换轴记账。
+                    if let Some(player) = self.player.as_ref() {
+                        player.set_rate(self.rate);
+                    }
                     // 系统后端没有后续 Frame 事件；这里必须主动调度一帧，
                     // 否则舞台永远停在上一帧的黑色/封面。
                     cx.notify();
@@ -77,6 +86,11 @@ impl HomeView {
                 }
                 // 帧由紧随其后的 Frame 事件带上；这里只做「出画了」的副作用
                 self.prefetch_next_stream(cx);
+                // 相邻剧分集档案预取（换剧秒回）：挂在首帧而不是逐帧事件上
+                // ——系统后端（AVPlayer / MediaEngine）**不发 Frame 事件**，
+                // 挂在 Frame 分支等于这条预取在 system 模式下从不执行，换剧
+                // 就得多等一次 resolve_series 的网络往返。
+                self.prefetch_neighbor_archives();
                 // 新集首帧出画 = 连播静默期结束（Tauri 首播解除静默同款）
                 self.silent_until_input = false;
             }
@@ -94,8 +108,6 @@ impl HomeView {
                 self.save_progress_maybe();
                 // 弹幕 tick：入场 + 在飞推进（Frame 事件即渲染节拍）
                 self.danmaku_tick(cx);
-                // 相邻剧分集档案预取（换剧秒回，Tauri 同节奏）
-                self.prefetch_neighbor_archives();
             }
             // 引擎缓冲状态机：水位低暂停设备、回填恢复（详见 playback::player）
             PlayerEvent::Buffering => self.buffering = true,

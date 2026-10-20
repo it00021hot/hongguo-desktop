@@ -16,17 +16,16 @@ impl super::HomeView {
         };
         let (series_id, definition, next_index) =
             (now.series_id.clone(), now.definition, now.vid_index + 1);
-        let Ok(Some(series)) = self.state.store.series_by_id(&series_id) else {
-            return;
-        };
-        let Some(episode) = series
-            .episodes
+        // 下一集的 vid 取自起播时缓存的分集表（主线程不碰库：`Store` 是
+        // 同步阻塞门面，切集路径上每集读一次就是主线程多一次跨线程往返）。
+        let Some((_, vid)) = now
+            .episode_vids
             .iter()
-            .find(|episode| episode.vid_index == next_index)
+            .find(|(index, _)| *index == next_index)
         else {
             return;
         };
-        let vid = episode.vid.clone();
+        let vid = vid.clone();
         if vid.is_empty() || self.system_preload_pending.as_deref() == Some(vid.as_str()) {
             return;
         }
@@ -78,11 +77,16 @@ impl super::HomeView {
     /// 改由 30fps 定时器驱动（Tauri `<video>` 的 timeupdate 同语义）。
     pub(in crate::home) fn spawn_system_tick(&mut self, epoch: u64, cx: &mut Context<Self>) {
         // 无人值守启动时进程可能不在前台，GPUI 会停止请求帧（视频层也就
-        // 没有第一次 render 去挂载）。系统后端播放时把窗口提到前台一次；
-        // 用户手动启动时本来就是前台，无副作用。
-        let _ = self
-            .window_handle
-            .update(cx, |_, window, _| window.activate_window());
+        // 没有第一次 render 去挂载）。**只在本次会话第一次起播时**把窗口提
+        // 到前台：每次引擎重建都提一次会在切集时抢焦点（Windows 的 activate
+        // 还会合成一对 ALT 键去骗前台策略），看别的应用时被拉回来、窗口最小
+        // 化时被强制还原。
+        if !self.system_window_activated {
+            self.system_window_activated = true;
+            let _ = self
+                .window_handle
+                .update(cx, |_, window, _| window.activate_window());
+        }
         cx.spawn(async move |this, cx| {
             loop {
                 // 这一拍只做逻辑（入场/回收/重锚/进度落盘），**不推进位置**：

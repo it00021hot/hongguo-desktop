@@ -175,19 +175,14 @@ impl super::HomeView {
                 .is_some_and(|now| now.series_id == item.series_id)
             && let Some(next_index) = forced_next_ep
         {
-            let next_vid = self
-                .state
-                .store
-                .series_by_id(&item.series_id)
-                .ok()
-                .flatten()
-                .and_then(|series| {
-                    series
-                        .episodes
-                        .into_iter()
-                        .find(|episode| episode.vid_index == next_index)
-                })
-                .map(|episode| episode.vid);
+            // 下一集的 vid 取自起播时缓存的分集表（主线程不碰库）：这里要的
+            // 正是当初预加载进队列的那一条，缓存里的它比再读一次库更准。
+            let next_vid = self.now.as_ref().and_then(|now| {
+                now.episode_vids
+                    .iter()
+                    .find(|(index, _)| *index == next_index)
+                    .map(|(_, vid)| vid.clone())
+            });
             if let (Some(next_vid), Some(player)) = (next_vid, self.player.as_ref())
                 && !next_vid.is_empty()
                 && player.advance_preloaded(&next_vid)
@@ -638,6 +633,9 @@ impl super::HomeView {
         }
         // 先落进度再放引擎：读数来自句柄，Drop 之后就是 0 了
         self.save_progress_now();
+        // 播放期活动断言（防系统闲睡）随引擎一起释放：断言只在用户手动
+        // 暂停时才会收，离开首页不收的话，壳不在前台也照样挡着机器休眠。
+        crate::play_activity::set_active(false);
         // 陈旧事件与在途起播任务按纪元弃置；句柄 Drop = 任务 abort、音频
         // 设备释放、事件通道关闭（循环自灭）
         if let Some(player) = &self.player {

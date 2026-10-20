@@ -91,16 +91,21 @@ const KEEP_RECENT: usize = 3;
 
 /// 预取标记的上限。连播铺的后续集与换剧铺的后续部共用
 /// `Settings.prefetch_episodes` 档（上限 10），两路同时满档各 10 个标记，
-/// 加上快速连滚短暂多出的一两个。上限 = 10 + 10 + 2，防止标记无界增长
-/// 把逐出豁免变成内存漏洞（预取条目只填头部 8MB，22 个标记字节上仍小）。
-const MAX_PREFETCH_MARKS: usize = 22;
+/// 加上快速连滚短暂多出的一两个。**上限 16**（原 22）：标记是**豁免**字节
+/// 预算的，每个标记还带一条预取头部（2MB），22 个就是 44MB 净占内存；
+/// 16 个足够覆盖两路满档的常用量，被挤掉的是最老的标记（不是下一集）。
+const MAX_PREFETCH_MARKS: usize = 16;
 
 /// 在线流缓存的总字节预算。当前集 + 预取 + 最近保留加起来超过它时，
 /// 从最旧的「非当前」条目开始逐出，直到回到预算内。预取条目只填头部
 /// 8MB（升格当前集才无界续填），真正吃预算的是当前集与最近保留的整集
 /// 渐进缓冲——典型短剧（30-80MB/集）下 3 条整集 + 满档预取头部仍在
 /// 768MB 内。
-const RETAIN_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
+///
+/// **降到 48MB**：768MB 对一个桌面小应用是过宽的天花板（实测整进程稳态
+/// 300MB 上下，缓存再留 768MB 就奔 1GB 去了）。实测稳态占用只有 50MB
+/// 上下（8~9 条），48MB 仍能留 1~2 条整集 + 预取头部。
+const RETAIN_BUDGET_BYTES: u64 = 48 * 1024 * 1024;
 
 impl StreamCache {
     /// 取或创建一个条目。
@@ -139,6 +144,17 @@ impl StreamCache {
     /// 这一档的条目是否还在（取流失败会被删掉）。
     pub fn exists(&self, vid: &str, definition: u32) -> bool {
         self.get(vid, definition).is_some()
+    }
+
+    /// 缓存的内存占用（字节）与条目数：排障用。
+    ///
+    /// 壳的周期状态日志要靠它把「进程涨了多少内存」拆到流缓存这一层——
+    /// 逐出策略是按字节预算走的（见 [`RETAIN_BUDGET_BYTES`]），没有这个
+    /// 读数就只能猜「是流缓存还是封面缓存吃掉了内存」。
+    pub fn stats(&self) -> (u64, usize) {
+        let entries = self.entries.lock();
+        let bytes = entries.values().map(|e| entry_weight(e)).sum();
+        (bytes, entries.len())
     }
 
     /// 这一档是否已经可以供 `<video>` 取数；可以的话带回它提供的全部档位。
