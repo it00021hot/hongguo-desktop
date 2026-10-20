@@ -13,8 +13,7 @@
 //!
 //! 本模块只做 macos：`AVFoundation` 是系统框架，不引入任何外部 crate。
 
-mod avf;
-mod loader;
+pub(crate) use crate::av_presenter::{avf, loader};
 mod measure;
 
 use std::sync::Arc;

@@ -3,8 +3,7 @@
 //! 两种数据源：
 //! - [`Source::Stream`]：生产形态——`hongguo-stream` 的 `(vid, 档位)` 渐进流，
 //!   按需等待密文区间、惰性解密；`contentLength` 用 `plain_len`。
-//! - [`Source::Bytes`]：Phase 0 的整段内存样片，用于对照「全量字节」与
-//!   「渐进供数」两种模式的切集空档。
+//! - [`Source::Bytes`]：Phase 0 的整段内存样片（spike 对照用）。
 //!
 //! 关键语义：
 //! - `AVAssetResourceLoader.delegate` 是 **weak**，delegate 必须由调用方强引用；
@@ -12,13 +11,15 @@
 //!   `contentInformationRequest.allowedContentTypes` 内，否则 `finishLoading`
 //!   抛 ObjC 异常（Rust 侧无法 catch，会 abort）；
 //! - 必须声明 `byteRangeAccessSupported=YES` + `contentLength`，否则 seek 失败；
-//! - 每个请求一个取消位：`didCancelLoadingRequest:` 与 `shouldWait...` 必须在
-//!   不同线程上跑（这里用并发 dispatch queue），否则 seek/切集时取消永远
-//!   送不进来，旧读取会把串行队列堵满 30s。
+//! - `shouldWait` 必须**立即返回**，回包进有界工作池；同步阻塞会让 AVFoundation
+//!   不消费已回字节（Phase 1a 实测首帧 2s 超时）；
+//! - `didCancelLoadingRequest:` 与 `shouldWait` 在不同线程上跑（并发 dispatch
+//!   queue + 工作池），取消位才送得进来。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use hongguo_stream::{StreamReadError, read_range_cancellable, total_len};
@@ -34,6 +35,10 @@ const READ_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 const TOTAL_LEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// `dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0)` 的 qos 常量。
 const QOS_CLASS_DEFAULT: isize = 0x15;
+/// 回包工作池线程数：同时最多 4 个 range 在读；再多只会抢填充带宽。
+const LOADER_WORKERS: usize = 4;
+/// 队列容量：AVFoundation 一集通常 2–5 个在途请求，32 留足冗余。
+const LOADER_QUEUE: usize = 32;
 
 pub static REQUESTS: AtomicU64 = AtomicU64::new(0);
 pub static BYTES_SERVED: AtomicU64 = AtomicU64::new(0);
@@ -47,7 +52,7 @@ unsafe extern "C" {
 /// 一集的数据来源。
 #[derive(Clone)]
 pub enum Source {
-    /// 整段明文在内存（Phase 0 对照模式）。
+    /// 整段明文在内存（Phase 0 对照模式 / 本地小样片）。
     Bytes(Arc<[u8]>),
     /// hongguo-stream 渐进流。
     Stream { vid: String, definition: u32 },
@@ -62,30 +67,68 @@ impl Source {
     }
 }
 
-struct LoaderIvars {
-    source: Source,
-    /// 正在处理中的请求 → 取消位。key 用请求对象地址。
-    /// `Arc` 是因为处理线程结束时要自己摘掉登记。
-    cancelled: Arc<Mutex<HashMap<usize, Arc<AtomicBool>>>>,
-}
-
-/// 把请求对象交给处理线程。`Retained` 本身 !Send，但 AVFoundation 明确允许
-/// 异步回包；线程持有强引用，finish/cancel 前对象不会释放。
+/// 把请求对象交给工作池。`Retained` 本身 !Send，但 AVFoundation 明确允许
+/// 异步回包；任务持有强引用，finish/cancel 前对象不会释放。
 struct SendRequest(Retained<AnyObject>);
 
-// SAFETY: 见 [`SendRequest`] 注释；只在 loader 线程内调用该对象的公开方法。
+// SAFETY: 见 [`SendRequest`] 注释；只在 loader 工作线程内调用该对象的方法。
 unsafe impl Send for SendRequest {}
 
 impl SendRequest {
-    /// 用方法取引用，避免闭包按字段捕获 `Retained`（那样会绕过本包装的 Send）。
     fn get(&self) -> &AnyObject {
         &self.0
     }
 }
 
+struct Job {
+    source: Source,
+    request: SendRequest,
+    cancelled: Arc<AtomicBool>,
+    flags: Arc<Mutex<HashMap<usize, Arc<AtomicBool>>>>,
+    key: usize,
+}
+
+/// 有界回包工作池（进程级，所有播放器共用）。`shouldWait` 只入队、立即返回；
+/// 线程数固定为 [`LOADER_WORKERS`]，不会因请求数暴涨而无限建线程。
+fn pool() -> &'static SyncSender<Job> {
+    static POOL: OnceLock<SyncSender<Job>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let (send, receive) = sync_channel::<Job>(LOADER_QUEUE);
+        let receive = Arc::new(Mutex::new(receive));
+        for index in 0..LOADER_WORKERS {
+            let receive = Arc::clone(&receive);
+            std::thread::Builder::new()
+                .name(format!("hongguo-av-loader-{index}"))
+                .spawn(move || {
+                    loop {
+                        // 锁只包住 recv：拿到任务立即释放，四个 worker 并行回包。
+                        let job = {
+                            let guard = receive.lock().expect("loader 队列 poisoned");
+                            guard.recv()
+                        };
+                        let Ok(job) = job else { return };
+                        serve(job.source, job.request.get(), &job.cancelled);
+                        job.flags
+                            .lock()
+                            .expect("取消位表 poisoned")
+                            .remove(&job.key);
+                    }
+                })
+                .expect("loader 工作线程创建失败");
+        }
+        send
+    })
+}
+
+struct LoaderIvars {
+    source: Source,
+    /// 正在处理中的请求 → 取消位。key 用请求对象地址。
+    cancelled: Arc<Mutex<HashMap<usize, Arc<AtomicBool>>>>,
+}
+
 define_class!(
     #[unsafe(super(NSObject))]
-    #[name = "HongguoAvSpikeResourceLoader"]
+    #[name = "HongguoAvPlayerResourceLoader"]
     #[ivars = LoaderIvars]
     struct Loader;
 
@@ -99,27 +142,28 @@ define_class!(
                 .lock()
                 .expect("取消位表 poisoned")
                 .insert(key, Arc::clone(&cancelled));
-            // SAFETY: request 在回调期间有效；retain 后由处理线程持有。
+            // SAFETY: request 在回调期间有效；retain 后由工作池持有。
             let Some(request) = (unsafe {
                 Retained::retain(request as *const AnyObject as *mut AnyObject)
             }) else {
                 return false.into();
             };
-            let source = self.ivars().source.clone();
-            let request = SendRequest(request);
-            // 立即返回，把回包放到独立线程：AVFoundation 要等 shouldWait 返回
-            // 才会消费已经 respond 的字节；在回调里阻塞到整段读完会让渐进流
-            // 永远起不来（本 spike 实测）。
-            std::thread::Builder::new()
-                .name("hongguo-av-loader".to_owned())
-                .spawn(move || {
-                    serve(source, request.get(), &cancelled);
-                    flags
-                        .lock()
-                        .expect("取消位表 poisoned")
-                        .remove(&key);
-                })
-                .expect("loader 线程创建失败");
+            let job = Job {
+                source: self.ivars().source.clone(),
+                request: SendRequest(request),
+                cancelled,
+                flags: Arc::clone(&flags),
+                key,
+            };
+            if let Err(error) = pool().send(job) {
+                // 池已不可用（进程收尾）：把请求还给 AVFoundation 一个明确失败。
+                flags
+                    .lock()
+                    .expect("取消位表 poisoned")
+                    .remove(&key);
+                finish_with_error(error.0.request.get(), -3, "loader pool unavailable");
+                return true.into();
+            }
             true
         }
 
@@ -139,11 +183,17 @@ define_class!(
     }
 );
 
-/// 给 asset 挂上 delegate。
-///
-/// `AVAssetResourceLoader.delegate` 是 weak：这里把 delegate 泄漏成进程级
-/// 强引用（spike 一次性进程，退出即回收），调用方不需要持有句柄。
-pub fn attach(asset: &AnyObject, source: Source) {
+/// 传给 asset 的 delegate 句柄。`AVAssetResourceLoader.delegate` 是 weak，
+/// 调用方必须持有本句柄到这一集播放结束。
+pub struct LoaderHandle(#[expect(dead_code, reason = "持有即保活")] Retained<Loader>);
+
+// SAFETY: 只用于保活；delegate 回调在 AVFoundation 的队列/工作池线程上，
+// 不在持有线程上访问实例状态。释放只是 ObjC retain count -1。
+unsafe impl Send for LoaderHandle {}
+unsafe impl Sync for LoaderHandle {}
+
+/// 给 asset 挂上 delegate，返回必须保活的句柄。
+pub fn attach(asset: &AnyObject, source: Source) -> LoaderHandle {
     let ivars = LoaderIvars {
         source,
         cancelled: Arc::new(Mutex::new(HashMap::new())),
@@ -151,8 +201,7 @@ pub fn attach(asset: &AnyObject, source: Source) {
     // SAFETY: NSObject 子类，ivars 已设置；init 由 NSObject 提供。
     let loader: Retained<Loader> =
         unsafe { msg_send![super(Loader::alloc().set_ivars(ivars)), init] };
-    // SAFETY: 全局并发队列常驻；用并发而不是串行，didCancel 才能与阻塞中的
-    // shouldWait 并行执行。
+    // SAFETY: 全局并发队列常驻；用并发而不是串行，didCancel 才能与 shouldWait 并行。
     let queue = unsafe { dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0) };
     // SAFETY: resourceLoader 恒非空；delegate 与 queue 的类型来自公开 API。
     let resource_loader: *mut AnyObject = unsafe { msg_send![asset, resourceLoader] };
@@ -163,7 +212,7 @@ pub fn attach(asset: &AnyObject, source: Source) {
             queue: queue
         ]
     };
-    std::mem::forget(loader);
+    LoaderHandle(loader)
 }
 
 fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
@@ -173,7 +222,7 @@ fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
             // 请求已取消：不 finish，也不报错。
             return;
         }
-        log::error!("[AvSpike] {} 拿不到 contentLength", source.label());
+        log::error!("[AvPlayer] {} 拿不到 contentLength", source.label());
         finish_with_error(request, -1, "stream total length unavailable");
         ERRORS.fetch_add(1, Ordering::Relaxed);
         return;
@@ -202,12 +251,6 @@ fn serve(source: Source, request: &AnyObject, cancelled: &AtomicBool) {
         } else {
             start.saturating_add(length as u64).min(total)
         };
-        log::debug!(
-            "[AvSpike][loader] {} request offset={} len={} all_to_end={all_to_end} total={total} -> {start}..{end}",
-            source.label(),
-            offset,
-            length,
-        );
         // SAFETY: 上面已判空，dataRequest 在本次请求生命周期内有效。
         let data_request = unsafe { &*data_request };
         if !respond_range(&source, request, data_request, start, end, cancelled) {
@@ -252,14 +295,14 @@ fn respond_range(
                     }
                     Ok(_) => {
                         log::warn!(
-                            "[AvSpike] {vid}@{definition} 在 {position} 处读到空段（total={end}）"
+                            "[AvPlayer] {vid}@{definition} 在 {position} 处读到空段（total={end}）"
                         );
                         break;
                     }
                     Err(StreamReadError::Cancelled) => return false,
                     Err(error) => {
                         log::error!(
-                            "[AvSpike] {vid}@{definition} 读取 {position}..{} 失败: {error}",
+                            "[AvPlayer] {vid}@{definition} 读取 {position}..{} 失败: {error}",
                             position + want
                         );
                         finish_with_error(request, -2, &error.to_string());
@@ -306,11 +349,10 @@ fn total_bytes(source: &Source, cancelled: &AtomicBool) -> Option<u64> {
 }
 
 fn finish_with_error(request: &AnyObject, code: isize, message: &str) {
-    let domain = NSString::from_str("HongguoAvSpike");
+    let domain = NSString::from_str("HongguoAvPlayer");
     let description = NSString::from_str(message);
     let key = NSString::from_str("NSLocalizedDescription");
-    // 用 NSDictionary 的 +dictionaryWithObject:forKey: 组 userInfo（避免为
-    // spike 再开 NSDictionary feature 的额外绑定面）。
+    // 用 NSDictionary 的 +dictionaryWithObject:forKey: 组 userInfo。
     let dictionary_class = objc2::runtime::AnyClass::get(c"NSDictionary").expect("NSDictionary");
     // SAFETY: 公开类方法；两个对象均在本调用内有效。
     let user_info: Retained<AnyObject> = unsafe {

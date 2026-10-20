@@ -249,7 +249,31 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(state: Arc<AppStateInner>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 系统播放器：窗口透明（GPUI Metal 层 clear alpha=0）+ 背景铺黑，
+        // 视频 NSView 插在 GPUIView 之下。默认 gpui 后端不碰窗口外观。
+        if crate::video_backend::is_system() {
+            crate::platform::prepare_system_window(window);
+        }
         let feed = cx.new(|cx| HomeView::new(state.clone(), window, cx));
+        // 无人值守启动（终端后台拉起）时窗口可能不是 key window，GPUI 就
+        // 不再请求帧；系统播放器要在首帧 render 时挂 NSView，这一步不能省。
+        {
+            let wh = window.window_handle();
+            cx.spawn(async move |_this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+                let active = wh
+                    .update(cx, |_, window, _| {
+                        let active = window.is_window_active();
+                        window.activate_window();
+                        active
+                    })
+                    .unwrap_or(false);
+                log::info!("[Shell] 启动激活：之前 active={active}");
+            })
+            .detach();
+        }
         let rank = cx.new(|_cx| RankView::new(state.clone()));
         let browse = cx.new(|cx| BrowseView::new(state.clone(), window, cx));
         let new_drama = cx.new(|_cx| NewDramaView::new(state.clone()));
@@ -974,6 +998,29 @@ impl Shell {
         } else {
             log::warn!("[Shot] detail-login-wall 需要 HONGGUO_DETAIL=<sid> 先打开详情页");
         }
+    }
+
+    /// 取证辅助（Phase 1b `HONGGUO_SHOT_PANEL=next-episode`）：走真实连播
+    /// step_episode，量系统播放器切集首帧。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_next_episode(&self, cx: &mut App) {
+        self.feed.update(cx, |home, cx| {
+            home.step_episode(1, cx);
+        });
+    }
+
+    /// 取证辅助（`HONGGUO_SHOT_PANEL=rate-2x`）：按控制条同一路径切 2x。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_rate_2x(&self, cx: &mut App) {
+        self.feed.update(cx, |home, cx| home.set_rate(2.0, cx));
+    }
+
+    /// 取证辅助（`HONGGUO_SHOT_PANEL=immersive`）：进播放器沉浸全屏。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_immersive(&self, window: &mut Window, cx: &mut App) {
+        self.feed.update(cx, |home, cx| {
+            home.toggle_immersive_fullscreen(window, cx);
+        });
     }
 
     /// 取证辅助（`HONGGUO_SHOT_PANEL=locale-en`）：走真实语言切换路径，
@@ -1874,10 +1921,16 @@ impl gpui_kit::Render for Shell {
             .update(cx, |view, cx| view.render_downloads_sheet(cx));
         let content = self.render_content(cx);
         let theme = cx.theme();
+        // 系统后端 + 首页：壳根透明，舞台的透明洞才露得出下层视频视图；
+        // 其他目的地照常铺主题底色（视频只在首页播放）。
+        let video_hole = crate::video_backend::is_system()
+            && self.dest == Dest::Home
+            && !crate::preview::is_active();
         v_flex()
             .id("shell")
             .size_full()
             .bg(theme.background)
+            .when(video_hole, |el| el.bg(gpui_kit::rgba(0x00000000)))
             .text_color(theme.foreground)
             .children(toolbar)
             .child(

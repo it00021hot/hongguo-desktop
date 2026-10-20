@@ -270,3 +270,61 @@ pub fn custom_url(episode: &str) -> Option<Retained<NSURL>> {
         "hongguo-spike://localhost/{episode}.mp4"
     )))
 }
+
+// —— 系统播放器壳需要的补充读取（Phase 1b） ——
+
+use objc2_foundation::NSSize;
+
+pub fn current_item(player: &AnyObject) -> Option<&AnyObject> {
+    // SAFETY: currentItem 可空；调用期间 player 持有着 item。
+    let item: *mut AnyObject = unsafe { msg_send![player, currentItem] };
+    unsafe { item.as_ref() }
+}
+
+pub fn item_presentation_size(item: &AnyObject) -> (usize, usize) {
+    // SAFETY: presentationSize 是只读 CGSize；未 ready 时为 0×0。
+    let size: NSSize = unsafe { msg_send![item, presentationSize] };
+    (size.width.max(0.0) as usize, size.height.max(0.0) as usize)
+}
+
+pub fn item_duration(item: &AnyObject) -> CmTime {
+    // SAFETY: 只读 CMTime 属性。
+    unsafe { msg_send![item, duration] }
+}
+
+pub fn item_error(item: &AnyObject) -> Option<String> {
+    // SAFETY: error 可空；localizedDescription 为 NSString。
+    let error: *mut AnyObject = unsafe { msg_send![item, error] };
+    if error.is_null() {
+        return None;
+    }
+    let description: *mut AnyObject = unsafe { msg_send![error, localizedDescription] };
+    let text: *mut NSString = description.cast();
+    if text.is_null() {
+        return None;
+    }
+    // SAFETY: 返回字符串在调用期间有效。
+    Some(unsafe { (*text).to_string() })
+}
+
+pub fn player_rate(player: &AnyObject) -> f32 {
+    // SAFETY: 只读 float 属性。
+    unsafe { msg_send![player, rate] }
+}
+
+pub fn set_muted(player: &AnyObject, muted: bool) {
+    // SAFETY: 公开 bool 属性。
+    let _: () = unsafe { msg_send![player, setMuted: muted] };
+}
+
+pub fn item_likely_to_keep_up(item: &AnyObject) -> bool {
+    // SAFETY: 只读 bool 属性。
+    unsafe { msg_send![item, isPlaybackLikelyToKeepUp] }
+}
+
+/// AVPlayerActionAtItemEndNone = 0：队列播完不自动跳下一项，由壳按
+/// `PlayerEvent::Ended` 显式接力（连播锁定/剧终接力语义都在壳里）。
+pub fn disable_auto_advance(player: &AnyObject) {
+    // SAFETY: 公开 NSInteger 属性。
+    let _: () = unsafe { msg_send![player, setActionAtItemEnd: 0isize] };
+}

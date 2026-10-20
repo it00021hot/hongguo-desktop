@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::*;
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_common::AppResult;
-use hongguo_playback::{OpenOptions, PlayerEvent, PlayerHandle};
+use hongguo_playback::{OpenOptions, PlayerEvent};
+
+use super::player::Player;
 use hongguo_service::app_state::AppStateInner;
 use hongguo_service::play_service::online::prepare;
 use hongguo_service::play_service::position;
@@ -45,7 +47,7 @@ impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
     /// 越过第 1 集原地不动；滚过末集 = 剧终，走剧终接力（下一季 → 信息流
     /// 下一条推荐）。
-    pub(super) fn step_episode(&mut self, dir: i32, cx: &mut Context<Self>) {
+    pub(crate) fn step_episode(&mut self, dir: i32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
             return;
         };
@@ -98,8 +100,12 @@ impl super::HomeView {
         self.save_progress_now();
         // 陈旧事件与在途起播任务按纪元弃置；句柄 Drop = 任务 abort、音频
         // 设备释放、事件通道关闭（循环自灭）
+        if let Some(player) = &self.player {
+            player.detach();
+        }
         self.epoch.fetch_add(1, Ordering::Relaxed);
         self.player = None;
+        self.system_video_ready = false;
         // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
         // 定格帧是「同剧切集」专属，离开时一并落下）
         self.frame = None;
@@ -234,6 +240,61 @@ impl super::HomeView {
         {
             return;
         }
+        // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
+        //（重建要走取流表+asset+loader，实测首帧 650-970ms；接力 ~70ms）。
+        if crate::video_backend::is_system()
+            && start_override.is_none()
+            && self.preferred_definition.is_none_or(|definition| {
+                self.now
+                    .as_ref()
+                    .is_some_and(|now| now.definition == definition)
+            })
+            && forced_next_ep == self.now.as_ref().map(|now| now.vid_index + 1)
+            && self
+                .now
+                .as_ref()
+                .is_some_and(|now| now.series_id == item.series_id)
+            && let Some(next_index) = forced_next_ep
+        {
+            let next_vid = self
+                .state
+                .store
+                .series_by_id(&item.series_id)
+                .ok()
+                .flatten()
+                .and_then(|series| {
+                    series
+                        .episodes
+                        .into_iter()
+                        .find(|episode| episode.vid_index == next_index)
+                })
+                .map(|episode| episode.vid);
+            if let (Some(next_vid), Some(player)) = (next_vid, self.player.as_ref())
+                && !next_vid.is_empty()
+                && player.advance_preloaded(&next_vid)
+            {
+                self.save_progress_now();
+                if let Some(now) = self.now.as_mut() {
+                    now.vid_index = next_index;
+                    now.vid = next_vid;
+                }
+                self.system_switch_started = Some(Instant::now());
+                self.system_video_ready = true;
+                self.switching = false;
+                self.buffering = false;
+                self.pending_title = None;
+                self.play_error = None;
+                self.wake_controls(cx);
+                if let Some(now) = self.now.clone() {
+                    self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
+                    self.load_episode_counts(&now, cx);
+                }
+                self.preload_system_next();
+                log::info!("[Home] 系统播放器队列接力第 {next_index} 集（未重建播放器）");
+                cx.notify();
+                return;
+            }
+        }
         // 起播目标即身份：出问题（画面错位/内容重复）时这行是唯一能对齐
         // 「屏幕上那部剧」与「引擎在放哪部」的证据。
         log::info!(
@@ -260,6 +321,9 @@ impl super::HomeView {
         // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
         self.paint_diag.reset();
         self.switching = true;
+        if crate::video_backend::is_system() {
+            self.system_switch_started = Some(Instant::now());
+        }
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
         self.play_error = None;
@@ -308,6 +372,7 @@ impl super::HomeView {
         if !same_series {
             self.frame = None;
             self.video_surface.clear();
+            self.system_video_ready = false;
         }
         self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
@@ -368,7 +433,11 @@ impl super::HomeView {
                         // persist(force) 同款）：旧引擎与旧 now 还在手里，
                         // 读数有效；首次起播 player 为空自然跳过
                         view.save_progress_now();
+                        let system_backend = handle.is_system();
                         view.player = Some(handle);
+                        if system_backend {
+                            view.spawn_system_tick(epoch, cx);
+                        }
                         // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
                         // 别的剧即解除，同剧连播保持
                         if view.binge.as_deref() != Some(now.series_id.as_str()) {
@@ -388,6 +457,10 @@ impl super::HomeView {
                         // series_id 当 book_id（服务端参数错配，热剧也拉空）
                         view.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
                         view.now = Some(now);
+                        if system_backend {
+                            // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
+                            view.preload_system_next();
+                        }
                         view.switching = false;
                         view.buffering = false;
                         view.play_retried = false;
@@ -430,7 +503,7 @@ impl super::HomeView {
         history: Vec<WatchHistoryItem>,
         req: PlayRequest,
         events: mpsc::Sender<PlayerEvent>,
-    ) -> AppResult<(std::sync::Arc<PlayerHandle>, NowPlaying)> {
+    ) -> AppResult<(Player, NowPlaying)> {
         let PlayRequest {
             item,
             forced_next_ep,
@@ -540,13 +613,19 @@ impl super::HomeView {
                 )
             }
         };
-        let handle = hongguo_playback::open(OpenOptions {
-            source,
-            start_secs,
-            rate,
-            events,
-        })
-        .await?;
+        let handle: Player = if crate::video_backend::is_system() {
+            crate::platform::open_system_player(source, start_secs, rate, events)
+                .expect("系统播放器只有 macOS 实现")
+        } else {
+            let engine = hongguo_playback::open(OpenOptions {
+                source,
+                start_secs,
+                rate,
+                events,
+            })
+            .await?;
+            engine as Player
+        };
         Ok((
             handle,
             NowPlaying {
@@ -567,6 +646,74 @@ impl super::HomeView {
                 cover: item.cover.clone(),
             },
         ))
+    }
+
+    /// 预先给系统播放器塞入下一集（AVQueuePlayer），连播时走队列接力。
+    pub(super) fn preload_system_next(&mut self) {
+        if !crate::video_backend::is_system() {
+            return;
+        }
+        let Some(now) = self.now.as_ref() else { return };
+        let Some(player) = self.player.as_ref() else {
+            return;
+        };
+        let (series_id, definition, next_index) =
+            (now.series_id.clone(), now.definition, now.vid_index + 1);
+        let Ok(Some(series)) = self.state.store.series_by_id(&series_id) else {
+            return;
+        };
+        let Some(episode) = series
+            .episodes
+            .iter()
+            .find(|episode| episode.vid_index == next_index)
+        else {
+            return;
+        };
+        if episode.vid.is_empty() {
+            return;
+        }
+        if player.preload_next(&episode.vid, definition) {
+            log::info!(
+                "[Home] 已预加载第 {next_index} 集（{}@{definition}）",
+                episode.vid
+            );
+        }
+    }
+
+    /// 系统播放器的周期节拍：没有 Frame 事件，弹幕推进/控制条刷新/进度落盘
+    /// 改由 30fps 定时器驱动（Tauri `<video>` 的 timeupdate 同语义）。
+    fn spawn_system_tick(&mut self, epoch: u64, cx: &mut Context<Self>) {
+        // 无人值守启动时进程可能不在前台，GPUI 会停止请求帧（视频层也就
+        // 没有第一次 render 去挂载）。系统后端播放时把窗口提到前台一次；
+        // 用户手动启动时本来就是前台，无副作用。
+        let _ = self
+            .window_handle
+            .update(cx, |_, window, _| window.activate_window());
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(33))
+                    .await;
+                let keep = this
+                    .update(cx, |view, cx| {
+                        if view.epoch.load(Ordering::Relaxed) != epoch {
+                            return false;
+                        }
+                        if !view.player.as_ref().is_some_and(|p| p.is_system()) {
+                            return false;
+                        }
+                        view.danmaku_tick(cx);
+                        view.save_progress_maybe();
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    return;
+                }
+            }
+        })
+        .detach();
     }
 
     /// 拉当前剧的简介、全剧收藏数与连载状态（video_detail 的 series_intro /

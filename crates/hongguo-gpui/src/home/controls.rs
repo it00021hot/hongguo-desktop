@@ -156,6 +156,40 @@ impl super::HomeView {
     pub(super) fn on_player_event(&mut self, event: PlayerEvent, cx: &mut Context<Self>) {
         match event {
             PlayerEvent::FirstFrame { .. } => {
+                if let Some(started) = self.system_switch_started.take() {
+                    log::info!(
+                        "[AvPresenter] 切集首帧 {:.0}ms（system 后端）",
+                        started.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
+                // 系统播放器的画面由 AVPlayerLayer 自己合成：首帧事件只置
+                // 「画面已就绪」，视图据此打透明洞；GPUI 后端仍等 Frame。
+                if self.player.as_ref().is_some_and(|p| p.is_system()) {
+                    self.system_video_ready = true;
+                    self.hold_last_frame = false;
+                    // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集。
+                    if let Ok(ms) = std::env::var("HONGGUO_AV_NEXT_EPISODE_MS")
+                        && let Ok(ms) = ms.parse::<u64>()
+                    {
+                        static ONCE: std::sync::atomic::AtomicBool =
+                            std::sync::atomic::AtomicBool::new(false);
+                        if !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            cx.spawn(async move |this, cx| {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_millis(ms))
+                                    .await;
+                                let _ = this.update(cx, |view, cx| view.step_episode(1, cx));
+                            })
+                            .detach();
+                        }
+                    }
+                    // 取证：HONGGUO_AV_RATE=2 首帧后切倍速。
+                    if let Ok(rate) = std::env::var("HONGGUO_AV_RATE")
+                        && let Ok(rate) = rate.parse::<f64>()
+                    {
+                        self.set_rate(rate, cx);
+                    }
+                }
                 // 帧由紧随其后的 Frame 事件带上；这里只做「出画了」的副作用
                 self.prefetch_next_stream(cx);
                 // 新集首帧出画 = 连播静默期结束（Tauri 首播解除静默同款）
@@ -354,7 +388,7 @@ impl super::HomeView {
         cx.notify();
     }
 
-    pub(super) fn set_rate(&mut self, rate: f64, cx: &mut Context<Self>) {
+    pub(crate) fn set_rate(&mut self, rate: f64, cx: &mut Context<Self>) {
         self.rate = rate;
         if let Some(player) = &self.player {
             player.set_rate(rate);

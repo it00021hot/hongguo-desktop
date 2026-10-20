@@ -55,7 +55,8 @@ pub fn run(
     let asset_url = avf::custom_url(&format!("{}-main", first.slug)).expect("自定义 scheme URL");
     let asset = avf::asset_with_url(&asset_url);
     // delegate 由 loader 内部泄漏成进程级强引用（weak 属性，不能只靠局部变量）。
-    loader::attach(&asset, first.source.clone());
+    // spike 进程一次性：句柄泄漏到进程退出，等价 Phase 0 的 delegate 保活。
+    std::mem::forget(loader::attach(&asset, first.source.clone()));
     let item = avf::item_with_asset(&asset);
     avf::set_spectral_pitch(&item);
     let output = avf::video_output();
@@ -348,7 +349,7 @@ fn cutover(
         let asset_b_url =
             avf::custom_url(&format!("{}-r{run}", episode_b.slug)).expect("episode B URL");
         let asset_b = avf::asset_with_url(&asset_b_url);
-        loader::attach(&asset_b, episode_b.source.clone());
+        std::mem::forget(loader::attach(&asset_b, episode_b.source.clone()));
 
         let item_a = avf::item_with_asset(asset_a);
         let output_a = avf::video_output();

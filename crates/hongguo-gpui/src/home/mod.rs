@@ -48,7 +48,7 @@ use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::InteractionItem;
 use hongguo_common::model::{DownloadTask, VideoDefinition};
 use hongguo_media_platform_api::video::VideoFrame;
-use hongguo_playback::{PlayerEvent, PlayerHandle};
+use hongguo_playback::PlayerEvent;
 use hongguo_service::app_state::AppStateInner;
 use hongguo_service::events::ServiceEvent;
 use tokio::sync::mpsc;
@@ -95,6 +95,7 @@ pub(crate) mod minimize;
 pub(crate) mod overlay;
 pub(crate) mod picker;
 pub(crate) mod playback;
+pub(crate) mod player;
 pub(crate) mod player_icons;
 pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
@@ -152,7 +153,7 @@ pub struct HomeView {
     /// 事件循环——转换挪到后台线程后，纪元判定必须在**转换之前**做
     ///（切剧窗口里旧帧不再白转一遍），主线程字段够不着就要共享。
     epoch: Arc<AtomicU64>,
-    player: Option<std::sync::Arc<PlayerHandle>>,
+    player: Option<player::Player>,
     /// 预览的虚拟引擎标记（screenshot feature）：预览无真实引擎，而控制条/
     /// 选集/下载面板的渲染门槛都是 player.is_some()——种子置位后同一门槛
     /// 放行，这些 UI 走同一段渲染代码出画（见 [`Self::engine_ready`]）。
@@ -176,6 +177,14 @@ pub struct HomeView {
     frame: Option<VideoFrame>,
     /// 视频上屏的像素载体（平台差异的唯一归属，见 [`video_surface`]）。
     video_surface: video_surface::VideoSurface,
+    /// 系统播放器周期性激活/挂载用的窗口句柄（无 render 时也能把窗口提到前台）。
+    window_handle: gpui_kit::AnyWindowHandle,
+    /// 舞台矩形（GPUI 逻辑像素、左上原点）：系统播放器图层跟随它。
+    stage_bounds: Rc<Cell<Option<[f32; 4]>>>,
+    /// 系统播放器画面已就绪（首帧事件）：视图据此打透明洞并跳过 GPUI 上屏。
+    system_video_ready: bool,
+    /// 系统后端一次切集/起播的起点（首帧事件到达时结算耗时）。
+    system_switch_started: Option<Instant>,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
     /// 上屏节奏取证：两次新内容 render 的间隔、合并跳帧、最大停顿（5s 窗口）。
@@ -669,6 +678,10 @@ impl HomeView {
             history_pending: false,
             seeds: Vec::new(),
             stage_rects: Rc::new(Cell::new(None)),
+            window_handle: window.window_handle(),
+            stage_bounds: Rc::new(Cell::new(None)),
+            system_video_ready: false,
+            system_switch_started: None,
         };
         view.subscribe_controls(cx);
         view.subscribe_service_events(cx);
@@ -1289,6 +1302,11 @@ impl gpui_kit::Render for HomeView {
         let body = match notice {
             Some((message, retry)) => {
                 let mut panel = v_flex().flex_1().items_center().justify_center().gap_3();
+                if crate::video_backend::is_system() {
+                    // 系统后端壳根是透明的（给视频洞让路）；加载/空/失败态
+                    // 不是舞台，必须自己铺黑，不能把桌面透出来。
+                    panel = panel.bg(gpui_kit::rgb(0x000000));
+                }
                 if !retry {
                     panel = panel.child(Spinner::new().small());
                 }

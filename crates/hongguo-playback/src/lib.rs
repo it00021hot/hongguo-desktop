@@ -28,6 +28,7 @@
 
 mod audio;
 pub mod player;
+pub mod presenter;
 mod resample;
 mod source;
 #[cfg(test)]
@@ -36,3 +37,4 @@ mod video;
 mod wsola;
 
 pub use player::{OpenOptions, PlaySource, PlayerEvent, PlayerHandle, open};
+pub use presenter::{PresenterBounds, PresenterFit, VideoPresenter};

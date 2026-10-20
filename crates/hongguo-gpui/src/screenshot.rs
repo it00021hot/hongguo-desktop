@@ -133,6 +133,17 @@ pub(crate) fn install(
                         });
                     }
                     // 竖屏：按当前在播档位收窄窗口（拍竖条形态 + 紧凑条）。
+                    "next-episode" => {
+                        feed.update(cx, |shell, cx| shell.debug_next_episode(cx));
+                    }
+                    "rate-2x" => {
+                        feed.update(cx, |shell, cx| shell.debug_rate_2x(cx));
+                    }
+                    "immersive" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_immersive(window, cx));
+                        });
+                    }
                     "portrait" => {
                         let _ = window.update(cx, |_, window, cx| {
                             feed.update(cx, |shell, cx| shell.debug_enter_portrait(window, cx));

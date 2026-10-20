@@ -15,6 +15,8 @@
 //! 播放（帧流 → GPU 纹理）是 §5.3 spike，另行立项。
 
 #[cfg(target_os = "macos")]
+mod av_presenter;
+#[cfg(target_os = "macos")]
 mod av_spike;
 mod boss_key;
 mod bridge;
@@ -26,7 +28,7 @@ mod detail;
 mod emoji_files;
 mod emoji_scan;
 mod events;
-mod home;
+pub(crate) mod home;
 mod http_client;
 mod i18n;
 mod image_upload;
@@ -47,6 +49,7 @@ mod single_instance;
 mod toast;
 mod tokens;
 mod ui_prefs;
+mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
 mod window_restore;

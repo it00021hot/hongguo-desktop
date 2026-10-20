@@ -18,6 +18,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
+use hongguo_playback::{PresenterBounds, PresenterFit};
 
 use super::danmaku::DM_LANE_GAP;
 use super::feed::StreamItem;
@@ -208,7 +209,10 @@ impl super::HomeView {
         // 同剧切集期间定格帧继续上屏（Tauri FrameHold 同款）：`hold_last_frame`
         // 由 play_target 按「同剧」置位、新集首帧/失败时落下；切剧不置位，
         // 走的仍是「立刻换新剧封面」。
-        let video_ready = self.frame.is_some() && (!self.switching || self.hold_last_frame);
+        let system_backend = self.player.as_ref().is_some_and(|p| p.is_system());
+        let system_ready = system_backend && self.system_video_ready;
+        let video_ready =
+            (self.frame.is_some() || system_ready) && (!self.switching || self.hold_last_frame);
         // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
         // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
         let video_fit = if self.mini.is_some() {
@@ -226,6 +230,28 @@ impl super::HomeView {
             self.video_surface.set_target(w as usize, h as usize);
         }
         self.video_surface.set_cover(self.mini.is_some());
+        // 系统播放器：画面层跟随舞台矩形（上一帧 prepaint 的 bounds），
+        // 主线程挂载/更新原生 NSView + AVPlayerLayer。
+        if let Some(player) = &self.player {
+            player.attach(window);
+            // `on_children_prepainted` 的 y 是相对内容区的（x 已是窗口绝对）：
+            // 顶栏 44px 只在 chrome 可见时占位（小屏/沉浸全屏没有顶栏）。
+            let stage_top = if self.mini.is_some() || self.immersive {
+                0.0
+            } else {
+                44.0
+            };
+            let bounds = self
+                .stage_bounds
+                .get()
+                .map(|r| PresenterBounds::new(r[0], r[1] + stage_top, r[2], r[3]));
+            let fit = if self.mini.is_some() {
+                PresenterFit::Cover
+            } else {
+                PresenterFit::Contain
+            };
+            player.submit_stage(bounds, fit, system_ready);
+        }
         // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
         // 一行钉死——排障不用再猜是事件没到还是渲染没跟上。带舞台尺寸
         //（FFI 缩放后布局是否跟随重排，小屏排障靠它）。
@@ -331,7 +357,19 @@ impl super::HomeView {
         //   转成 RGBA 后按普通图像渲染（img 同款 object-contain）。
         // 外层 div 接点击切暂停（对齐 Tauri 点击画面暂停/继续）：控制条是
         // 兄弟层，点它不会冒泡到这里。
-        let video: gpui_kit::AnyElement = if video_ready {
+        let video: gpui_kit::AnyElement = if system_ready {
+            // 系统后端：画面由下层 AVPlayerLayer 合成，这里只留点击层。
+            div()
+                .absolute()
+                .size_full()
+                .id("stage-video")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    window.focus(&this.focus, cx);
+                    this.wake_on_input(cx);
+                    this.toggle_pause(cx);
+                }))
+                .into_any_element()
+        } else if video_ready {
             div()
                 .absolute()
                 .size_full()
@@ -478,10 +516,16 @@ impl super::HomeView {
             && !self.hevc_prompt_dismissed)
             .then(|| self.render_hevc_prompt(cx));
         let rects = Rc::clone(&self.stage_rects);
+        let stage_bounds = Rc::clone(&self.stage_bounds);
         v_flex()
             .flex_1()
             .min_h_0()
-            .bg(gpui_kit::rgb(0x000000))
+            .bg(if system_ready {
+                // 透明洞：露出下面的 AVPlayerLayer；非播放态仍铺黑。
+                gpui_kit::rgba(0x00000000)
+            } else {
+                gpui_kit::rgb(0x000000)
+            })
             .relative()
             .overflow_hidden()
             // 播放快捷键（映射可在设置页自定义，默认对齐 Tauri
@@ -818,6 +862,12 @@ impl super::HomeView {
                 };
                 let (c, v) = (size(cover), bounds.get(1).map(size).unwrap_or([0.0; 2]));
                 let sample = [c[0], c[1], v[0], v[1]];
+                stage_bounds.set(Some([
+                    cover.origin.x.to_f64() as f32,
+                    cover.origin.y.to_f64() as f32,
+                    c[0],
+                    c[1],
+                ]));
                 if rects.get() != Some(sample) {
                     rects.set(Some(sample));
                     log::info!(

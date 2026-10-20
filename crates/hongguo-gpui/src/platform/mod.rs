@@ -70,3 +70,34 @@ pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
         })
         .collect()
 }
+
+/// 系统播放器工厂（平台门面）。业务层只问 `video_backend::is_system()`，
+/// 不写 `#[cfg]`；非 macOS 目标返回 `None`（`video_backend` 已拒绝 system）。
+#[cfg(target_os = "macos")]
+pub(crate) fn open_system_player(
+    source: hongguo_playback::PlaySource,
+    start_secs: f64,
+    rate: f64,
+    events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
+) -> Option<crate::home::player::Player> {
+    Some(crate::av_presenter::open(source, start_secs, rate, events))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn open_system_player(
+    _source: hongguo_playback::PlaySource,
+    _start_secs: f64,
+    _rate: f64,
+    _events: tokio::sync::mpsc::Sender<hongguo_playback::PlayerEvent>,
+) -> Option<crate::home::player::Player> {
+    None
+}
+
+/// 系统后端窗口外观（透明 + 黑底）；非 macOS 空操作。
+#[cfg(target_os = "macos")]
+pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
+    crate::av_presenter::prepare_window(window);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn prepare_system_window(_window: &gpui_kit::Window) {}
