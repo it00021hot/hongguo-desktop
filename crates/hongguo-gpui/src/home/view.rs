@@ -219,9 +219,13 @@ impl gpui_kit::Render for HomeView {
         let video_hole = crate::video_backend::is_system()
             && self.system_video_ready
             && !crate::preview::is_active();
+        // 底色恒黑（不是主题底色）：系统后端下视频位与 GPUI 内容是两张画布，
+        // 拖动改窗口尺寸时舞台/黑边会落后一帧，任何**未被覆盖**的像素都会露
+        // 出来——露主题浅色就是用户看到的那条「白线」。黑色与舞台/黑边同色，
+        // 缝就彻底不可见（macOS 靠窗口黑底天然如此）。
         let root = v_flex()
             .size_full()
-            .bg(theme.background)
+            .bg(gpui_kit::rgb(0x000000))
             .when(video_hole, |el| el.bg(gpui_kit::rgba(0x00000000)))
             .text_color(theme.foreground)
             // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
