@@ -203,6 +203,13 @@ fn attach_source(
     source: PlaySource,
     on_stall: Option<StallHook>,
 ) -> Result<Option<IMFByteStream>, String> {
+    // 【实测结论】Media Engine 的换源（`SetSourceFromByteStream`）只换源、**不
+    // 关旧源**：旧解码器的显存帧池与 CPU 参考帧要等旧源自己关闭才释放，实测
+    // 逐集滞留（每集约 19MB 显存 / 55MB 系统内存，连播 6 集涨 95MB/265MB）。
+    // 断字节流无效（drain 不是瓶颈）；重建引擎也无效（曲线逐点相同）⇒ 涨的
+    // 是每台新设备/新解码器的常驻开销，MF 与驱动都不归还。`IMFMediaEngine`
+    // 也没有「只关源」的 API（`Stop` 是 MediaSession 的）⇒ Media Engine 路线
+    // 下无法主动释放，只能靠「不换解码器」（虚拟播放列表）根治。
     match source {
         PlaySource::Online { vid, definition } => {
             let stream = stream::open(vid.clone(), definition, on_stall);
