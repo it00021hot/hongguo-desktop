@@ -42,6 +42,7 @@
 - `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（rendering mode）+ 自定义 `IMFByteStream` + DirectComposition 视频位（vendored `gpui-pre-windows` 补丁）；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
 - `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
 - `crates/hongguo-gpui/` GPUI 壳（起步单壳）：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放引擎在 `hongguo-playback`、系统播放器在 `hongguo-player`；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
+- `crates/hongguo-nsh-demo/` NSH 换壳闸门 demo（系统播放器 + 本地解密供数 + 弹幕，评估文档在其 docs/）：**独立 workspace、不入成员/CI**——依赖仓库外并排 clone 的 NSH checkout（`../../../nsh` 相对路径），runner 上无该源；自行保持 clippy/fmt 干净
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format
 - `captures/` 抓包工具与数据（`addon.py` 抓包 / `audit.py` 参数审计），`docs/` 仓库文档，`scripts/` 构建辅助脚本
 

@@ -1,0 +1,39 @@
+[package]
+name = "hongguo-nsh-demo"
+description = "红果短剧 × NSH 纯 Rust 播放闸门 demo：系统播放器 + 本地解密供数 + 弹幕渲染（换壳评估用，不入主 workspace/CI）"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "PolyForm-Noncommercial-1.0.0"
+
+# 独立 workspace：依赖仓库外的 NSH checkout（../..\..\nsh，与 hongguo-desktop
+# 并排 clone），CI runner 上没有该源，故不入主 workspace 成员、不参与门禁。
+[workspace]
+
+[dependencies]
+nsh-core = { path = "../../../nsh/crates/nsh-core" }
+nsh-base = { path = "../../../nsh/crates/nsh-base" }
+hongguo-api = { path = "../hongguo-api" }
+hongguo-common = { path = "../hongguo-common" }
+hongguo-protocol = { path = "../hongguo-protocol" }
+hongguo-service = { path = "../hongguo-service" }
+hongguo-stream = { path = "../hongguo-stream" }
+tiny_http = "0.12"
+log = "0.4"
+env_logger = "0.11"
+# prepare 的注册等待轮询用 tokio::time::sleep（跑在 nsh 的 background 任务里）
+tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nsh-platform-linux = { path = "../../../nsh/crates/nsh-platform-linux", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nsh-platform-macos = { path = "../../../nsh/crates/nsh-platform-macos", default-features = false }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nsh-platform-windows = { path = "../../../nsh/crates/nsh-platform-windows", default-features = false }
+
+# 与根 manifest 的 [patch.crates-io] 保持一致（该段只在各自 workspace 的根
+# 生效，本 crate 是独立 workspace，需要自己镜像）。实测只碰到 muxide。
+[patch.crates-io]
+muxide = { path = "../../vendor/muxide" }
