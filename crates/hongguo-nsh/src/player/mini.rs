@@ -13,9 +13,10 @@ use super::{Stage, icons, widgets, widgets::clock};
 const MINI_RATES: [f32; 4] = [1.0, 1.5, 2.0, 3.0];
 
 /// 紧凑控制条。`portrait` = 竖屏形态；退出按钮随形态切换。
+///
+/// 容器不挂 on_press（同 bottom_bar：父级 press 会截走子按钮的点击）。
 pub(crate) fn mini_bar(s: Stage, portrait: bool) -> impl IntoElement {
     let stage = s.clone();
-    let wake_stage = s.clone();
     let opacity_stage = s.clone();
     let scrub_stage = s.clone();
     view()
@@ -32,7 +33,6 @@ pub(crate) fn mini_bar(s: Stage, portrait: bool) -> impl IntoElement {
         .bg_linear_to_t()
         .gradient_from(rgba(0x000000bf))
         .gradient_to(rgba(0x00000000))
-        .on_press(move |_: &()| super::wake(&wake_stage))
         .opacity(move || {
             if opacity_stage.chrome_shown.get() {
                 1.0

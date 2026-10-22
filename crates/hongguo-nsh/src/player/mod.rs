@@ -763,7 +763,9 @@ fn video_layer(s: Stage, url: ReadSignal<String>) -> impl IntoElement {
         })
         // 纵向滑动 = 上一部/下一部剧（连播中切集）：触摸屏/触板手势，
         // 对齐 Tauri 的滚轮换剧语义（横滑失败交还，不干扰单击）。
-        .claim_touches(TouchClaim::on_pan(PanActivation::vertical(20.0, 20.0)))
+        // ⚠️ 暂时摘除：0.1.1 上视频的 pan claim 会把整窗触摸吸进视频的
+        // 命中链（连控制栏按钮都收不到 press），等 nsh 升级再挂回。
+        // .claim_touches(TouchClaim::on_pan(PanActivation::vertical(20.0, 20.0)))
         .on_responder_grant({
             let s = s.clone();
             move |_: &ResponderEvent| wake(&s)

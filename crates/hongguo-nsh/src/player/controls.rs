@@ -23,9 +23,11 @@ const POPUP_BOTTOM: f32 = 44.0;
 const BUTTON: f32 = 32.0;
 
 /// 控制栏（含全部浮层；调用方把它作为舞台的一个绝对定位层）。
+///
+/// 显隐不用响应式 `opacity`：0.1.1 上带 opacity 绑定的层命中测试会穿透
+/// （点按钮落到视频），改由外层 `If` 条件挂载——代价是淡入淡出换成
+/// 硬切，P2 随 nsh 升级再评估。
 pub(crate) fn bottom_bar(s: Stage) -> impl IntoElement {
-    let opacity_stage = s.clone();
-    let wake_stage = s.clone();
     let scrub_stage = s.clone();
     view()
         .absolute()
@@ -37,14 +39,9 @@ pub(crate) fn bottom_bar(s: Stage) -> impl IntoElement {
         .px(px(16.0))
         .pt(px(16.0))
         .pb(px(10.0))
-        .opacity(move || {
-            if opacity_stage.chrome_shown.get() {
-                1.0
-            } else {
-                0.0_f32
-            }
-        })
-        .on_press(move |_: &()| super::wake(&wake_stage))
+        // 注意：容器**不挂** on_press(wake)——nsh 里父级 press 会截走子按钮
+        // 的点击（实测点「下一集」只 wake 不切集）。按钮各自负责唤醒：
+        // 播放态切换本身就会让 chrome 常显，菜单类按钮开面板同样常显。
         // 进度条。
         .child(widgets::scrub_bar(
             move || {

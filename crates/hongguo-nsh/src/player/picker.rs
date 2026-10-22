@@ -43,6 +43,40 @@ pub(crate) fn picker(
     // 覆盖作废，自动跟回当前集所在段。
     let group_override: Signal<Option<(u32, u32)>> = signal(None);
 
+    // 整棵按 `open` 条件挂载——遮罩常驻会把整窗点击全部吞掉。
+    If::new(
+        move || open.get(),
+        move || {
+            let on_pick = on_pick.clone();
+            let on_switch_series = on_switch_series.clone();
+            panel(
+                open,
+                episodes,
+                current,
+                series_id,
+                related,
+                group_override,
+                tab,
+                on_pick,
+                on_switch_series,
+            )
+        },
+    )
+}
+
+/// 面板本体：全屏遮罩（点外关）+ 右下浮层。
+#[expect(clippy::too_many_arguments, reason = "面板参数都是 Copy 句柄或克隆")]
+fn panel(
+    open: Signal<bool>,
+    episodes: Signal<Vec<Episode>>,
+    current: Signal<u32>,
+    series_id: Signal<String>,
+    related: Signal<Vec<RelatedItem>>,
+    group_override: Signal<Option<(u32, u32)>>,
+    tab: Signal<u8>,
+    on_pick: impl Fn(u32) + Clone + 'static,
+    on_switch_series: impl Fn(RelatedItem) + Clone + 'static,
+) -> impl IntoElement {
     view()
         .absolute()
         .left(px(0.0))
@@ -51,100 +85,88 @@ pub(crate) fn picker(
         .bottom(px(0.0))
         // 点外部关闭（遮罩在浮层内容之下，点内容不会落到这里）。
         .on_press(move |_: &()| open.set(false))
-        .child(If::new(
-            move || open.get(),
-            move || {
-                // Fn 闭包里内层的 move 闭包各自吃一份独立克隆。
-                let on_pick = on_pick.clone();
-                let on_switch_series = on_switch_series.clone();
-                view()
-                    .absolute()
-                    .right(px(12.0))
-                    .bottom(px(56.0))
-                    .w(px(SHEET_W))
-                    .max_h(px(SHEET_MAX_H))
-                    .flex_col()
-                    .rounded(px(12.0))
-                    .bg(rgba(0x171717f2))
-                    .p(px(16.0))
-                    .on_press(move |_: &()| {}) // 吞掉面板内点击，不落到遮罩上
-                    // 头部：双 tab + 全N集 + 收起。
-                    .child(
-                        view()
-                            .w_full()
-                            .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                view()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(16.0))
-                                    .child(tab_head(tab, 0, t("player.episodes")))
-                                    .child(If::new(
-                                        move || !related.get().is_empty(),
-                                        move || {
-                                            tab_head(
-                                                tab,
-                                                1,
-                                                format!(
-                                                    "{} · {}",
-                                                    t("player.seriesList"),
-                                                    related.get().len()
-                                                ),
-                                            )
-                                        },
-                                    )),
-                            )
-                            .child(
-                                view()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(
-                                        text(move || {
-                                            let total = episodes.with(|list| list.len());
-                                            if total > 0 {
-                                                {
-                                                    t("player.totalEpisodes")
-                                                        .replace("{count}", &total.to_string())
-                                                }
-                                            } else {
-                                                Default::default()
-                                            }
-                                        })
-                                        .text_size(px(12.0))
-                                        .text_color(rgba(0xffffff99)),
-                                    )
-                                    .child(
-                                        icons::chevron_down(16.0, || rgba(0xffffff99))
-                                            .on_press(move |_: &()| open.set(false)),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        scroll()
-                            .flex_1()
-                            .w_full()
-                            .child(If::new(
-                                move || tab.get() == 0,
-                                move || {
-                                    grid_tab(episodes, current, group_override, on_pick.clone())
-                                },
-                            ))
-                            .child(If::new(
-                                move || tab.get() == 1,
-                                move || {
-                                    series_tab(
-                                        series_id.get(),
-                                        related.get(),
-                                        on_switch_series.clone(),
-                                    )
-                                },
-                            )),
-                    )
-            },
-        ))
+        .child(
+            view()
+                .absolute()
+                .right(px(12.0))
+                .bottom(px(56.0))
+                .w(px(SHEET_W))
+                // definite 高：absolute 容器里 flex_1 的 scroll 需要可分的
+                // 父高度，max_h 会塌成内容高（实测只剩头一行）。
+                .h(px(SHEET_MAX_H))
+                .flex_col()
+                .rounded(px(12.0))
+                .bg(rgba(0x171717f2))
+                .p(px(16.0))
+                .on_press(move |_: &()| {}) // 吞掉面板内点击，不落到遮罩上
+                // 头部：双 tab + 全N集 + 收起。
+                .child(
+                    view()
+                        .w_full()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(16.0))
+                                .child(tab_head(tab, 0, t("player.episodes")))
+                                .child(If::new(
+                                    move || !related.get().is_empty(),
+                                    move || {
+                                        tab_head(
+                                            tab,
+                                            1,
+                                            format!(
+                                                "{} · {}",
+                                                t("player.seriesList"),
+                                                related.get().len()
+                                            ),
+                                        )
+                                    },
+                                )),
+                        )
+                        .child(
+                            view()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(
+                                    text(move || {
+                                        let total = episodes.with(|list| list.len());
+                                        if total > 0 {
+                                            t("player.totalEpisodes")
+                                                .replace("{count}", &total.to_string())
+                                        } else {
+                                            String::new()
+                                        }
+                                    })
+                                    .text_size(px(12.0))
+                                    .text_color(rgba(0xffffff99)),
+                                )
+                                .child(
+                                    icons::chevron_down(16.0, || rgba(0xffffff99))
+                                        .on_press(move |_: &()| open.set(false)),
+                                ),
+                        ),
+                )
+                .child(
+                    scroll()
+                        .flex_1()
+                        .w_full()
+                        .child(If::new(
+                            move || tab.get() == 0,
+                            move || grid_tab(episodes, current, group_override, on_pick.clone()),
+                        ))
+                        .child(If::new(
+                            move || tab.get() == 1,
+                            move || {
+                                series_tab(series_id.get(), related.get(), on_switch_series.clone())
+                            },
+                        )),
+                ),
+        )
 }
 
 /// 头部的一个 tab（选中 = 白字 + 红色下划线，hgplayer 同款）。
@@ -232,18 +254,26 @@ fn grid_tab(
                 })
             },
         ))
-        // 8 列数字网格（段一变条目集整体重建）。
-        .child(Each::new(
-            move || {
-                let total = episodes.with(|list| list.len() as u32);
-                let g = active_group.get();
-                let start = g * GROUP_SIZE + 1;
-                let end = ((g + 1) * GROUP_SIZE).min(total);
-                (start..=end).collect::<Vec<u32>>()
-            },
-            |vid_index: &u32| *vid_index,
-            move |vid_index: ReadSignal<u32>, _| cell(current, vid_index, on_pick.clone()),
-        ))
+        // 8 列数字网格（段一变条目集整体重建；CSS grid，flex_wrap 在
+        // 绝对链里宽度解析不可靠会塌成单列）。
+        .child(
+            view()
+                .w_full()
+                .grid()
+                .grid_cols(8)
+                .gap(px(8.0))
+                .child(Each::new(
+                    move || {
+                        let total = episodes.with(|list| list.len() as u32);
+                        let g = active_group.get();
+                        let start = g * GROUP_SIZE + 1;
+                        let end = ((g + 1) * GROUP_SIZE).min(total);
+                        (start..=end).collect::<Vec<u32>>()
+                    },
+                    |vid_index: &u32| *vid_index,
+                    move |vid_index: ReadSignal<u32>, _| cell(current, vid_index, on_pick.clone()),
+                )),
+        )
 }
 
 /// 一集格子：当前集红底白字，其余暗底；选中不关浮层（连选连跳）。

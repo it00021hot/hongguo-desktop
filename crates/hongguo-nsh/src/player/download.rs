@@ -12,9 +12,6 @@ use crate::i18n::t;
 
 use super::icons;
 
-/// 面板宽度与高度上限（Tauri Sheet `max-h-[80vh]` 的本壳口径）。
-const SHEET_W: f32 = 460.0;
-const SHEET_MAX_H: f32 = 560.0;
 /// 「后 30 集」快选的集数。
 const LAST_N: u32 = 30;
 
@@ -24,6 +21,7 @@ const CELL_H: f32 = 34.0;
 
 /// 下载面板：全屏遮罩（点外关）+ 底部面板。勾选状态在这里持有；
 /// `series_id` 是提交对象，`default_selected` 是当前正在播的集。
+/// 整棵按 `open` 条件挂载——遮罩常驻会把整窗点击全部吞掉。
 pub(crate) fn sheet(
     open: Signal<bool>,
     episodes: Signal<Vec<Episode>>,
@@ -43,39 +41,52 @@ pub(crate) fn sheet(
             });
         }
     });
-    view()
-        .absolute()
-        .left(px(0.0))
-        .top(px(0.0))
-        .right(px(0.0))
-        .bottom(px(0.0))
-        .on_press(move |_: &()| open.set(false))
-        .child(If::new(
-            move || open.get(),
-            move || {
-                let selected = selected;
-                view()
-                    .absolute()
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .bottom(px(0.0))
-                    .max_h(px(SHEET_MAX_H))
-                    .w(px(SHEET_W))
-                    .flex_col()
-                    .rounded(px(12.0))
-                    .bg(rgba(0x171717f2))
-                    .p(px(16.0))
-                    .on_press(move |_: &()| {}) // 吞面板内点击
-                    .child(header(open))
-                    .child(quick_row(episodes, selected))
-                    .child(scroll().flex_1().w_full().child(Each::new(
-                        move || episodes.with(|list| list.clone()),
-                        |e: &Episode| e.vid_index,
-                        move |item: ReadSignal<Episode>, _| cell(selected, item),
-                    )))
-                    .child(footer(open, series_id, selected))
-            },
-        ))
+    If::new(
+        move || open.get(),
+        move || {
+            let selected = selected;
+            view()
+                .absolute()
+                .left(px(0.0))
+                .top(px(0.0))
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .on_press(move |_: &()| open.set(false))
+                .child(
+                    view()
+                        .absolute()
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .bottom(px(0.0))
+                        .h(px(420.0))
+                        .flex_col()
+                        .rounded(px(12.0))
+                        .bg(rgba(0x171717f2))
+                        .p(px(16.0))
+                        .on_press(move |_: &()| {}) // 吞面板内点击
+                        .child(header(open))
+                        .child(quick_row(episodes, selected))
+                        .child(
+                            // 固定高：max_h 容器里 flex_1 没有可分高度，网格会塌。
+                            // 8 列网格（CSS grid；flex_wrap 的宽度解析在
+                            // absolute 链里不可靠）。
+                            scroll().h(px(280.0)).w_full().child(
+                                view()
+                                    .w_full()
+                                    .grid()
+                                    .grid_cols(8)
+                                    .gap(px(8.0))
+                                    .child(Each::new(
+                                        move || episodes.with(|list| list.clone()),
+                                        |e: &Episode| e.vid_index,
+                                        move |item: ReadSignal<Episode>, _| cell(selected, item),
+                                    )),
+                            ),
+                        )
+                        .child(footer(open, series_id, selected)),
+                )
+        },
+    )
 }
 
 /// 标题行：标题 + 关闭。
