@@ -19,6 +19,17 @@ use nsh_core::ui::prelude::*;
 /// 这一路的进度接进 UI，预取等其它 key 的进度不进。
 pub(crate) const PROGRESS_KEY: &str = "hongguo-nsh";
 
+/// 登录 MFA 后台轮询的 UI 侧事件（`LoginMfaStateEvent` 的壳内映射）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum MfaUi {
+    /// 上行验证通过并已自动重登落库。
+    Success { name: String },
+    /// 轮询终止（超时 / 失败），要重新走登录。
+    Failed { timeout: bool, message: String },
+    /// 仍在等用户在手机上回复短信。
+    Waiting { tip: String },
+}
+
 /// 壳关心的业务事件快照（界面上直接读的几项）。
 ///
 /// 壳骨架阶段只留三项：「后台在干什么」类状态。列表类数据仍走各自的查询，
@@ -29,8 +40,9 @@ pub struct ShellEvents {
     pub online_percent: Option<f64>,
     /// 追更提醒的新增条数（打开设置/首页时清零）。
     pub follow_notices: usize,
-    /// 登录 MFA 是否在等用户在手机上确认。
-    pub login_mfa_pending: bool,
+    /// 登录 MFA 的最新状态（登录面板消费；登录态翻沿在这里做，面板
+    /// 关着时轮询完成也不能丢）。
+    pub login_mfa: Option<MfaUi>,
 }
 
 static EVENTS: LazyLock<Signal<ShellEvents>> =
@@ -85,11 +97,27 @@ fn apply(signal: Signal<ShellEvents>, event: ServiceEvent) {
         }
         ServiceEvent::LoginMfa(mfa) => {
             use hongguo_service::login_service::events::LoginMfaStateEvent;
-            let waiting = matches!(mfa, LoginMfaStateEvent::Waiting { .. });
-            if !waiting {
-                log::info!("[Events] 登录 MFA 结束：{mfa:?}");
+            let ui = match mfa {
+                LoginMfaStateEvent::Success { name } => {
+                    // 登录态翻沿在这里做：面板可能根本没开（后台轮询完成）。
+                    crate::account::set_logged_in(true);
+                    Some(MfaUi::Success { name })
+                }
+                LoginMfaStateEvent::Failed {
+                    message_kind,
+                    message,
+                } => Some(MfaUi::Failed {
+                    timeout: message_kind == "settings.loginMfaTimeout",
+                    message,
+                }),
+                LoginMfaStateEvent::Waiting { server_tip } => {
+                    Some(MfaUi::Waiting { tip: server_tip })
+                }
+            };
+            if !matches!(ui, Some(MfaUi::Waiting { .. })) {
+                log::info!("[Events] 登录 MFA 结束：{ui:?}");
             }
-            signal.update(|events| events.login_mfa_pending = waiting);
+            signal.update(move |events| events.login_mfa = ui);
         }
         // 下载/合并/漫画进度由各自的页面按需订阅；壳骨架阶段不铺开。
         _ => {}

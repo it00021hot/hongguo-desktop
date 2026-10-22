@@ -39,6 +39,13 @@ pub fn build() -> AppState {
             load_settings(&state);
             // 追更更新检查（Tauri 壳 lib.rs 同款：启动查一轮 + 20 分钟周期）。
             hongguo_service::follow_service::start_notice_loop(state.clone());
+            // 带账号启动：补传离线期间攒下的本地历史（Tauri 壳同款触发点）。
+            if state.settings().account.is_some() {
+                let st = state.clone();
+                hongguo_service::runtime::spawn(async move {
+                    hongguo_service::history_service::upload_pending(&st).await;
+                });
+            }
             state
         })
         .clone()

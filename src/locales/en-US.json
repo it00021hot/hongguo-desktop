@@ -495,7 +495,8 @@
     "logout": "Sign out",
     "loggedOut": "Signed out",
     "loginRiskNote": "Accounts are bound to this device; switching devices may trigger risk control",
-    "hongguoId": "Hongguo ID"
+    "hongguoId": "Hongguo ID",
+    "moreInLaterPhase": "More settings (appearance, playback, network, shortcuts…) will arrive in a later release."
   },
   "error": {
     "network": "Cannot reach the server. Check your connection or the proxy in Settings.",

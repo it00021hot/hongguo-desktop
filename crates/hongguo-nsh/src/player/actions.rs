@@ -12,9 +12,17 @@ use hongguo_common::model::Episode;
 use crate::i18n::t;
 use crate::nav::FeedNav;
 
-use super::{RATES, Stage, danmaku, feed, rail};
+use super::{RATES, Stage, danmaku, feed, history, rail};
 
 // ---------------------------------------------------------------- 编排动作
+
+/// 档案锚点：`Vid` = 锚定正在播的 vid（换剧路径）；`At` = 按集号起播并
+/// seek 到起始秒（外部播放请求）；`First` = 从第一集开播（连播切剧）。
+pub(crate) enum Anchor {
+    Vid(String),
+    At(u32, f64),
+    First,
+}
 
 /// 「用户在场」：重置 3 秒倒计时并亮出悬浮层。
 pub(crate) fn wake(s: &Stage) {
@@ -90,12 +98,44 @@ pub(crate) fn toggle_portrait_full(s: &Stage) {
     s.toggle_portrait_full();
 }
 
+/// 外部播放请求（历史/收藏/追更的「继续播放」）：以剧为单位、按集号起播
+/// 并 seek 到起始秒，锁定连播（与连播切剧同一形态）。
+pub(crate) fn play_request(s: &Stage, req: crate::play_req::PlayRequest) {
+    // 收尾上一段（正在播的话）：进度与历史都落定，再换源。
+    history::flush(s);
+    batch(|| {
+        s.binge.set(true);
+        s.episodes.set(Vec::new());
+        s.current_index.set(0);
+        s.related.set(Vec::new());
+        reset_media(s);
+        s.info.title.set(String::new());
+        s.info.heat_text.set(String::new());
+        s.info.season_tag.set(String::new());
+        s.info.badge.set(String::new());
+        s.info.intro.set(String::new());
+        s.info.episode_count.set(0);
+    });
+    s.rail_ctx.title.set(String::new());
+    s.rail_ctx.series_id.set(req.series_id.clone());
+    s.backdrop.set(String::new());
+    log::info!(
+        "[Player] 播放请求 series={} 集={} 位置={:.1}s",
+        req.series_id,
+        req.vid_index,
+        req.start_secs
+    );
+    load_archive(s, &req.series_id, Anchor::At(req.vid_index, req.start_secs));
+}
+
 /// 换一部剧（沉浸流步进）：先用流条目自带的 vid 起播（秒开），
 /// 再拉分集表把选集/自动连播接上。
 fn play_series_at(s: &Stage, at: usize) {
     let Some(entry) = s.items.with(|list| list.get(at).cloned()) else {
         return;
     };
+    // 收尾上一段（正在播的话）：进度与历史都落定，再换源。
+    history::flush(s);
     batch(|| {
         s.index.set(at);
         s.episodes.set(Vec::new());
@@ -127,11 +167,13 @@ fn play_series_at(s: &Stage, at: usize) {
     );
     prepare_and_play(s, &first, None);
     // 档案（分集 + 简介 + 互动回显）并行跟上；锚定正在播的 vid。
-    load_archive(s, &entry.series_id, &first);
+    load_archive(s, &entry.series_id, Anchor::Vid(first));
 }
 
 /// 换剧（供选集浮层的系列剧 tab）：以剧为单位起播并锁定连播。
 pub(crate) fn switch_series(s: &Stage, series_id: &str, title: &str, cover: &str) {
+    // 收尾上一段（正在播的话）：进度与历史都落定，再换源。
+    history::flush(s);
     batch(|| {
         s.binge.set(true);
         s.episodes.set(Vec::new());
@@ -148,7 +190,7 @@ pub(crate) fn switch_series(s: &Stage, series_id: &str, title: &str, cover: &str
     s.backdrop.set(cover.to_owned());
     log::info!("[Player] 连播切剧 series={series_id}");
     // 锚定空 = 档案到了从第一集开播。
-    load_archive(s, series_id, "");
+    load_archive(s, series_id, Anchor::First);
 }
 
 /// 沉浸流步进：末尾先续拉一页再切（不空转）。
@@ -204,6 +246,8 @@ pub(crate) fn pick_episode(s: &Stage, vid_index: u32) {
 
 /// 起播一集：prepare → 等注册 → 换源；弹幕池同步换。
 fn play_episode(s: &Stage, episode: &Episode) {
+    // 同剧切集收尾（立即翻页口径在节拍器里）：进度与历史落定再换源。
+    history::flush(s);
     batch(|| {
         reset_media(s);
         s.current_index.set(episode.vid_index);
@@ -361,12 +405,10 @@ pub(crate) fn send_danmaku(s: &Stage) {
 }
 
 /// 档案并行装载：分集表 + 简介 + 互动回显（相关系列在选集浮层打开时按需拉）。
-/// `anchor_vid` 是已在播的那一集——分集表到达后按它定位集号（左下角标、
-/// 选集高亮、上下集边界都依赖它）。
-fn load_archive(s: &Stage, series_id: &str, anchor_vid: &str) {
+/// `anchor` 决定分集表到达后的定位方式（见 [`Anchor`]）。
+fn load_archive(s: &Stage, series_id: &str, anchor: Anchor) {
     let stage = s.clone();
     let sid = series_id.to_owned();
-    let anchor = anchor_vid.to_owned();
     spawn(async move {
         let state = crate::state::state();
         let listed = background(async move { feed::fetch_series(&sid, &state).await }).await;
@@ -378,18 +420,43 @@ fn load_archive(s: &Stage, series_id: &str, anchor_vid: &str) {
                     stage.info.episode_count.set(list.episodes.len() as u32);
                     stage.rail.collect_count.set(list.followed_cnt);
                 });
-                // 正在播的这集对齐到分集表里的集号（左下角标、选集高亮、
-                // 上下集边界都依赖它）；anchor 为空 = 换剧路径，档案到了
-                // 从第一集开播（play_series_at 路径已在播，不动）。
-                let start = list
-                    .episodes
-                    .iter()
-                    .find(|e| e.vid == anchor)
-                    .or_else(|| anchor.is_empty().then(|| list.episodes.first()).flatten());
-                if let Some(episode) = start.cloned() {
-                    stage.current_index.set(episode.vid_index);
-                    if anchor.is_empty() && stage.source.get().is_empty() {
-                        play_episode(&stage, &episode);
+                // 锚点定位：换剧对齐正在播的 vid（左下角标/选集高亮/上下集
+                // 边界都依赖它）；外部播放请求按集号起播并 seek 到起始秒；
+                // 连播切剧从第一集开播（换剧路径已在播，不动）。
+                match anchor {
+                    Anchor::Vid(vid) => {
+                        if let Some(episode) = list.episodes.iter().find(|e| e.vid == vid).cloned()
+                        {
+                            stage.current_index.set(episode.vid_index);
+                        }
+                    }
+                    Anchor::First => {
+                        if let Some(episode) = list.episodes.first().cloned() {
+                            stage.current_index.set(episode.vid_index);
+                            if stage.source.get().is_empty() {
+                                play_episode(&stage, &episode);
+                            }
+                        }
+                    }
+                    Anchor::At(vid_index, start_secs) => {
+                        if let Some(episode) = list
+                            .episodes
+                            .iter()
+                            .find(|e| e.vid_index == vid_index)
+                            .cloned()
+                        {
+                            // 起始秒交给源 on_load 消费（元数据就位才 seek）。
+                            stage.pending_seek.replace(Some(start_secs));
+                            play_episode(&stage, &episode);
+                        } else {
+                            log::warn!(
+                                "[Player] 播放请求的集号 {vid_index} 不在分集表，回退第一集"
+                            );
+                            if let Some(episode) = list.episodes.first().cloned() {
+                                stage.pending_seek.replace(None);
+                                play_episode(&stage, &episode);
+                            }
+                        }
                     }
                 }
                 log::info!("[Player] 《{}》共 {} 集", list.title, list.episodes.len());

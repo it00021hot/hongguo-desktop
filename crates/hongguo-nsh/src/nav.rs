@@ -5,22 +5,37 @@
 
 use nsh_core::ui::prelude::*;
 
-/// 一个可导航的页面（对齐 Tauri 侧栏顺序：推荐 / 排行榜 / 找剧 / 设置）。
+/// 一个可导航的页面（顺序对齐 Tauri 侧栏：推荐 / 找剧 / 排行榜 /
+/// 历史 / 收藏 / 追更 / 设置；P2 只迁账号域三页，其余留占位）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
     /// 推荐（首页沉浸流）。
     Home,
-    /// 排行榜。
-    Rank,
     /// 找剧。
     Browse,
+    /// 排行榜。
+    Rank,
+    /// 观看历史。
+    History,
+    /// 收藏（书架）。
+    Collections,
+    /// 追更。
+    Follows,
     /// 设置。
     Settings,
 }
 
 impl Page {
     /// 侧栏顺序（冒烟脚本的点击坐标按这个顺序排）。
-    pub const ALL: [Self; 4] = [Self::Home, Self::Rank, Self::Browse, Self::Settings];
+    pub const ALL: [Self; 7] = [
+        Self::Home,
+        Self::Browse,
+        Self::Rank,
+        Self::History,
+        Self::Collections,
+        Self::Follows,
+        Self::Settings,
+    ];
 
     /// 页面标题的 i18n key（复用 Tauri 壳既有词条，不新造）。
     pub fn title_key(self) -> &'static str {
@@ -28,6 +43,9 @@ impl Page {
             Self::Home => "nav.home.title",
             Self::Rank => "nav.rank.title",
             Self::Browse => "nav.browse.title",
+            Self::History => "nav.history.title",
+            Self::Collections => "nav.collections.title",
+            Self::Follows => "nav.follows.title",
             Self::Settings => "nav.settings.title",
         }
     }
@@ -200,6 +218,11 @@ impl Nav {
         Self {
             stack: signal(vec![Page::Home]),
         }
+    }
+
+    /// 从 context 取（`App` 在根部 `provide_context`）。
+    pub fn from_context() -> Self {
+        use_context::<Self>().expect("Nav 由 App 在根部 provide_context")
     }
 
     /// 栈顶页（视图里读它决定渲染哪一页）。

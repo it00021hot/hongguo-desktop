@@ -13,12 +13,14 @@
 //! 暂缺（升级后补）。
 
 pub(crate) mod actions;
+pub(crate) mod cadence;
 pub(crate) mod comments;
 pub(crate) mod comments_view;
 pub(crate) mod controls;
 pub(crate) mod danmaku;
 pub(crate) mod download;
 pub(crate) mod feed;
+pub(crate) mod history;
 pub(crate) mod icons;
 pub(crate) mod info;
 pub(crate) mod mini;
@@ -44,8 +46,9 @@ use self::rail::{RailCtx, RailState};
 // 编排动作收口：子模块（controls / mini）继续走 `super::动作`。
 pub(crate) use actions::{
     fetch_feed, load_related, long_press_rate_off, long_press_rate_on, on_end, pick_episode,
-    replay_episode, seek_ratio, seek_to, send_danmaku, step_chrome, step_episode, switch_series,
-    toggle_frameless, toggle_fullscreen, toggle_incognito, toggle_portrait_full, wake,
+    play_request, replay_episode, seek_ratio, seek_to, send_danmaku, step_chrome, step_episode,
+    switch_series, toggle_frameless, toggle_fullscreen, toggle_incognito, toggle_portrait_full,
+    wake,
 };
 
 /// 推荐流首个 tab（抓包锁定：推荐 16 / 漫剧 36 / 真人剧 39）。
@@ -123,7 +126,7 @@ pub(crate) struct Stage {
     pub rail_ctx: RailCtx,
     pub info: InfoState,
     pub comments: CommentsState,
-    /// 登录态（设置里的账号档案；登录入口 P2 迁设置页）。
+    /// 登录态（壳级账号域的镜像；登录面板 / 退出登录翻沿）。
     pub logged_in: Signal<bool>,
     /// 小窗形态（几何在 platform）。
     pub mini: MiniMode,
@@ -145,12 +148,17 @@ pub(crate) struct Stage {
     pub long_press_rate: Stored<Option<f32>>,
     /// 竖屏 refit 的上一次比例基线（变化 >1% 才重适配）。
     pub refit_last: Stored<f32>,
+    /// 外部播放请求的起始秒（历史/收藏/追更续播）：源 `on_load`（元数据
+    /// 就位）时消费并 seek，提前 seek 会打在空流上。
+    pub pending_seek: Stored<Option<f64>>,
+    /// 观看历史上报节拍的记账器（一次播放生命周期一个）。
+    pub history_cadence: Stored<cadence::HistoryCadence>,
 }
 
 impl Stage {
     fn new() -> Self {
         let rail = RailState::new();
-        let logged_in = signal(crate::state::state().settings().account.is_some());
+        let logged_in = crate::account::logged_in();
         let rail_ctx = RailCtx {
             series_id: signal(String::new()),
             bare_vid: signal(String::new()),
@@ -213,6 +221,8 @@ impl Stage {
             pinned: signal(false),
             long_press_rate: stored(None),
             refit_last: stored(0.0),
+            pending_seek: stored(None),
+            history_cadence: stored(cadence::HistoryCadence::default()),
         }
     }
 
@@ -370,6 +380,20 @@ pub fn PlayerPage() -> impl IntoElement {
         effect(move || {
             if !s.comments.open.get() && s.rail_ctx.open_comments.get() {
                 s.rail_ctx.open_comments.set(false);
+            }
+        });
+    }
+
+    // ---- 观看历史上报节拍 / 播放进度落盘（1 秒一拍；暂停沿 force 收尾）----
+    history::spawn_heartbeat(s.clone());
+
+    // ---- 外部播放请求（历史/收藏/追更的「继续播放」）：取走并按
+    //      （剧, 集号, 起始秒）起播 ----
+    {
+        let s = s.clone();
+        effect(move || {
+            if let Some(req) = crate::play_req::take() {
+                play_request(&s, req);
             }
         });
     }
@@ -797,7 +821,13 @@ fn video_layer(s: Stage, url: ReadSignal<String>) -> impl IntoElement {
             });
             // 竖屏中切集/换清晰度导致视频比例变化 → 重适配（Tauri `Em`：
             // 变化 >1% 才动，铺满与否跟随当前档）。
-            s.refit_portrait_if_needed(&s.refit_last)
+            s.refit_portrait_if_needed(&s.refit_last);
+            // 外部播放请求的起始位置（历史/收藏/追更续播）：元数据就位才
+            // seek——提前打在空流上会被丢弃。duration 上面刚落到信号，
+            // seek 的钳制随之生效。
+            if let Some(secs) = s.pending_seek.replace(None) {
+                seek_to(&s, secs as f32);
+            }
         })
         .on_buffer(move |now: &bool| load.0.set(*now))
         .on_progress(move |p: &VideoProgress| {

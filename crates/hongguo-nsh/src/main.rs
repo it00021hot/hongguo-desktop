@@ -20,10 +20,13 @@ use nsh_platform_macos as nsh_platform;
 #[cfg(target_os = "windows")]
 use nsh_platform_windows as nsh_platform;
 
+mod account;
 mod app;
 mod i18n;
 mod nav;
+mod pages;
 mod platform;
+mod play_req;
 mod player;
 mod pump;
 mod state;

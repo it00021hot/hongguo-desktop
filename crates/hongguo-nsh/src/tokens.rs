@@ -36,6 +36,18 @@ pub fn theme() -> Theme {
     theme
 }
 
+/// 模态遮罩（恒黑透明，亮暗主题同值；GPUI 壳的登录/下载遮罩同款）。
+pub fn scrim() -> AdaptiveColor {
+    let color = rgba(0x00000099);
+    AdaptiveColor::new(color, color)
+}
+
+/// 画布图标的弱化色（canvas 只收 `Color`，吃不到 AdaptiveColor 的双档；
+/// 取暗色档的 muted 值，亮色主题下作中性灰也不突兀）。
+pub fn icon_muted() -> Color {
+    rgba(0xa3a3a3ff)
+}
+
 /// 业务语义色（对齐 CSS 的 `--hot` / `--star` / `--warm`）。页面迁进来之前
 /// 没有调用方，先按 P1 各页的既定用法留在令牌层（业务色就该只有这一处定义）。
 #[expect(dead_code, reason = "业务色随 P1 页面迁入启用，定义先立在令牌层")]

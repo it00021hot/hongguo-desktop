@@ -16,9 +16,12 @@
 
 use nsh_core::ui::prelude::*;
 
+use crate::account;
 use crate::i18n::t;
 use crate::nav::{FeedNav, Frameless, Incognito, MiniMode, Nav, Page};
+use crate::pages;
 use crate::platform;
+use crate::play_req;
 use crate::player;
 use crate::pump;
 
@@ -49,6 +52,10 @@ pub fn App() -> impl IntoElement {
     // 事件泵随组件树启动一次（任务跟着 owner 一起销毁）。
     pump::start();
     let events = pump::events();
+    // 账号域与跨页播放请求的壳级信号节点先建起来（首个使用点可能在更深的
+    // 组件里，那里不再是组件体）。
+    account::init();
+    play_req::init();
 
     // 窗口几何恢复（常态槽位，跨启动记忆）：窗口此刻已由 run_app 创建，
     // 按记忆校验落位；没有记忆保持 AppOptions 的默认尺寸。
@@ -265,12 +272,15 @@ fn tab_pill(feed: FeedNav, id: &'static str, label: String) -> impl IntoElement 
         .on_press(move |_: &()| feed.pick(id))
 }
 
-/// 内容区：按栈顶渲染页面（首页是沉浸式播放，铺满无边距）。
+/// 内容区：按栈顶渲染页面（首页是沉浸式播放，铺满无边距；历史/收藏/追更/
+/// 设置是账号域整页，其余占位待 P3 迁入）。登录面板（模态）盖在内容区上，
+/// 覆盖范围与 GPUI 壳的登录面板（盖在首页舞台）一致。
 fn content(nav: Nav) -> impl IntoElement {
     view()
         .flex_1()
         .w_full()
         .h_full()
+        .relative()
         .overflow_hidden()
         .child(If::new(
             move || nav.current() == Page::Home,
@@ -285,9 +295,23 @@ fn content(nav: Nav) -> impl IntoElement {
             move || placeholder("search.empty"),
         ))
         .child(If::new(
-            move || nav.current() == Page::Settings,
-            move || placeholder("settings.appearance"),
+            move || nav.current() == Page::History,
+            move || pages::history::HistoryPage::element(()),
         ))
+        .child(If::new(
+            move || nav.current() == Page::Collections,
+            move || pages::collections::CollectionsPage::element(()),
+        ))
+        .child(If::new(
+            move || nav.current() == Page::Follows,
+            move || pages::follows::FollowsPage::element(()),
+        ))
+        .child(If::new(
+            move || nav.current() == Page::Settings,
+            move || pages::settings::SettingsPage::element(()),
+        ))
+        // 登录面板（模态，账号域各入口共用；开合由 account::OPEN 驱动）。
+        .child(account::login_overlay())
 }
 
 /// 占位面板：用一个既有 i18n 词条说明「这一页还没迁进来」。
