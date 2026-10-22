@@ -3,7 +3,7 @@
 //! 验证三件事（NSH 换壳决策的两个性能闸门 + 基础能力）：
 //! 1. **播放**：真实在线短剧经 hongguo 内核解密、本地 HTTP 供数给 `Video`；
 //! 2. **叠层控件**：自制控制栏盖在原生视频视图上（z 序与 hit-testing）；
-//! 3. **弹幕**：AnimatedValue 原生动画驱动滚动字幕，屏幕实时显示 FPS 与
+//! 3. **弹幕**：NativeValue 原生动画驱动滚动字幕，屏幕实时显示 FPS 与
 //!    在屏条数——对照 GPUI 壳的现状指标。
 //!
 //! 弹幕滚动、节奏与帧率统计全在引擎任务里；取流链路在 `background`
@@ -26,8 +26,8 @@ const LANE_H: f32 = 26.0;
 const LANES: usize = ((STAGE_H * 0.6) / LANE_H) as usize;
 const TRAVEL_MS: f32 = 9000.0;
 
-/// 一条在屏弹幕。`PartialEq` 只比 id：AnimatedValue 是 Copy 句柄，不参与
-/// 相等判定（信号用 `SignalEquals::Never`，每次写都触发重排）。
+/// 一条在屏弹幕。`PartialEq` 只比 id：NativeValue 句柄不参与相等判定
+/// （信号用 `SignalEquals::Never`，每次写都触发重排）。
 /// `expires_at` 供回收任务批量清理，不参与相等判定。
 #[derive(Clone)]
 struct Danmaku {
@@ -269,14 +269,15 @@ pub fn App() -> impl IntoElement {
         }
     });
 
-    // 一条弹幕的滚动视图：AnimatedValue 从舞台右缘滚到左缘外。行闭包只在
+    // 一条弹幕的滚动视图：NativeValue 从舞台右缘滚到左缘外。行闭包只在
     // 行创建时跑一次；删除由回收任务按 expires_at 批处理，这里不起
     // 完成任务，只等动画自然结束（行被回收时值与绑定一起销毁）。
     let danmaku_row = move |item: ReadSignal<Danmaku>, _index: ReadSignal<usize>| {
         let d = item.get();
-        let x = animated_value(STAGE_W);
+        let x = native_value(STAGE_W);
+        let anim = x.clone();
         spawn(async move {
-            let _ = x.timing(-160.0, TRAVEL_MS, Easing::Linear).await;
+            let _ = anim.timing(-160.0, TRAVEL_MS, Easing::Linear).await;
         });
         text(move || item.with(|d| d.label.clone()))
             .absolute()
@@ -313,17 +314,19 @@ pub fn App() -> impl IntoElement {
                     .items_center()
                     .gap_2()
                     .child(
-                        chip(move || label_of(playing.get(), "播放", "暂停")).on_press(move || {
-                            playing.update(|p| *p = !*p);
-                        }),
+                        chip(move || label_of(playing.get(), "播放", "暂停")).on_press(
+                            move |_: &()| {
+                                playing.update(|p| *p = !*p);
+                            },
+                        ),
                     )
-                    .child(chip(|| "上一集".to_owned()).on_press(move || {
+                    .child(chip(|| "上一集".to_owned()).on_press(move |_: &()| {
                         let i = current.get();
                         if i > 0 {
                             play(i - 1);
                         }
                     }))
-                    .child(chip(|| "下一集".to_owned()).on_press(move || {
+                    .child(chip(|| "下一集".to_owned()).on_press(move |_: &()| {
                         let i = current.get();
                         if i + 1 < episodes.get().len() {
                             play(i + 1);
@@ -337,14 +340,14 @@ pub fn App() -> impl IntoElement {
                     .gap_2()
                     .child(
                         chip(move || label_of(danmaku_on.get(), "弹幕关", "弹幕开")).on_press(
-                            move || {
+                            move |_: &()| {
                                 danmaku_on.update(|v| *v = !*v);
                             },
                         ),
                     )
                     .child(
                         chip(move || label_of(system_controls.get(), "自绘栏", "系统栏")).on_press(
-                            move || {
+                            move |_: &()| {
                                 system_controls.update(|v| *v = !*v);
                             },
                         ),
@@ -400,6 +403,8 @@ pub fn App() -> impl IntoElement {
                 .child(If::new(
                     move || !source.get().is_empty(),
                     move || {
+                        // 外层是 Fn 闭包，handle 先克隆给内层 move 闭包
+                        let player = player.clone();
                         // 视频元素按 source 键重建：video(url) 只在构造时取
                         // URL，If 条件在两次非空之间不翻转不会重建；Each 以
                         // url 为 key，换集即重建（对齐 AVPlayer 重开语义）。
@@ -414,17 +419,17 @@ pub fn App() -> impl IntoElement {
                                     .resize_mode(ResizeMode::Contain)
                                     .w(px(STAGE_W))
                                     .h(px(STAGE_H))
-                                    .on_load_start(move || buffering.set(true))
+                                    .on_load_start(move |_: &()| buffering.set(true))
                                     .on_load(move |e: &VideoInfo| {
                                         batch(|| {
                                             buffering.set(false);
                                             duration.set(e.duration);
                                             // contain 模式下画面实际显示区域：
                                             // 弹幕带贴画面，不铺整个舞台
-                                            if e.size.width.0 > 0 && e.size.height.0 > 0 {
-                                                let scale = (STAGE_W / e.size.width.0 as f32)
-                                                    .min(STAGE_H / e.size.height.0 as f32);
-                                                let band_h = e.size.height.0 as f32 * scale;
+                                            if e.width > 0.0 && e.height > 0.0 {
+                                                let scale =
+                                                    (STAGE_W / e.width).min(STAGE_H / e.height);
+                                                let band_h = e.height * scale;
                                                 let band_top = (STAGE_H - band_h) / 2.0;
                                                 let n =
                                                     ((band_h / LANE_H) as usize).clamp(1, LANES);
@@ -440,7 +445,7 @@ pub fn App() -> impl IntoElement {
                                             emit_due(e.current_time);
                                         });
                                     })
-                                    .on_end(move || {
+                                    .on_end(move |_: &()| {
                                         let i = current.get();
                                         if i + 1 < episodes.get().len() {
                                             play(i + 1);
