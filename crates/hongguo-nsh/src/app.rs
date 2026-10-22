@@ -74,30 +74,30 @@ pub fn App() -> impl IntoElement {
     // 无边框播放（hgplayer bare 同款）：chrome 全藏（侧栏+顶栏），整窗
     // 只剩播放器画面；Esc 退出（播放域的 Esc 链）。
     let frameless_on = frameless;
+    // 顶栏横贯全宽（Tauri AppShell 同构：logo/应用名在左、分类 tab 居中、
+    // 状态与小屏在右），侧栏在顶栏下方而不是长在顶栏里。
     view()
         .w_full()
         .h_full()
-        .flex_row()
+        .flex_col()
         .bg(theme().background)
-        // 小屏/无边框播放：chrome 全藏，整窗只剩播放器。
         .child(If::new(
             move || !mini.get() && !frameless_on.get(),
-            move || sidebar(nav),
+            move || header(nav, feed, events, mini),
         ))
         .child(
             view()
                 .flex_1()
-                .h_full()
-                .flex_col()
+                .flex_row()
                 .child(If::new(
                     move || !mini.get() && !frameless_on.get(),
-                    move || header(nav, feed, events, mini),
+                    move || sidebar(nav),
                 ))
                 .child(content(nav)),
         )
 }
 
-/// 左侧栏：应用名 + 四个页签（顶部不留内边距，与顶栏标题同一基线）。
+/// 左侧栏：四个页签（应用名在顶栏，侧栏只留导航）。
 fn sidebar(nav: Nav) -> impl IntoElement {
     let rows: Vec<_> = Page::ALL
         .iter()
@@ -141,32 +141,17 @@ fn sidebar(nav: Nav) -> impl IntoElement {
         .flex_col()
         .gap(px(2.0))
         .px(px(8.0))
+        .pt(px(8.0))
         .pb(px(8.0))
         .bg(theme().group_box)
         .border_r_1()
         .border_color(theme().border)
-        // 标题行与顶栏同高、顶部不留内边距：两侧文字落在同一条水平线上。
-        .child(
-            view()
-                .w_full()
-                .h(px(HEADER_H))
-                .flex_row()
-                .items_center()
-                .px(px(4.0))
-                .child(
-                    text(move || t("app.name"))
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme().foreground),
-                ),
-        )
         .children(rows)
 }
 
-/// 顶栏：当前页标题（首页换成分类 tab）+ 运行状态 + 小屏开关（Tauri 的薄行形态）。
-///
-/// 分类 tab 放在顶栏中部而不是画面上：Tauri 壳的首页 tab 就是 portal 进顶栏
-/// 插槽的（`top-bar-tabs.tsx`），画面顶部不再有第二层 tab 条。
+/// 顶栏（横贯全宽，Tauri AppShell 同构）：logo/应用名在左，分类 tab 居中
+/// （绝对定位真居中——左右组宽度不等，flex 剩余空间居中会偏右），运行
+/// 状态与小屏开关钉在右端。
 fn header(
     nav: Nav,
     feed: FeedNav,
@@ -176,39 +161,43 @@ fn header(
     view()
         .w_full()
         .h(px(HEADER_H))
+        .relative()
         .flex_row()
         .items_center()
-        .justify_between()
         .px(px(16.0))
+        .gap(px(12.0))
+        .bg(theme().group_box)
         .border_b_1()
         .border_color(theme().border)
+        // 左：应用名（flex_1 把右组推到行尾；中组是绝对定位居中，不占流）。
         .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                // 首页：分类 tab 胶囊；其他页：页标题。
-                .child(If::new(
-                    move || nav.current() == Page::Home,
-                    move || {
-                        view().flex_row().items_center().gap(px(4.0)).children(
-                            player::TABS
-                                .iter()
-                                .map(|&(id, key)| tab_pill(feed, id, t(key)))
-                                .collect::<Vec<_>>(),
-                        )
-                    },
-                ))
-                .child(If::new(
-                    move || nav.current() != Page::Home,
-                    move || {
-                        text(move || t(nav.current().title_key()))
-                            .text_size(px(16.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme().foreground)
-                    },
-                )),
+            text(move || t("app.name"))
+                .flex_1()
+                .text_size(px(15.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme().foreground),
         )
+        // 中：分类 tab 居中（首页；其他页顶栏中部留空，导航位置由侧栏
+        // 高亮表达——Tauri AppShell 同款口径）。
+        .child(If::new(
+            move || nav.current() == Page::Home,
+            move || {
+                view()
+                    .absolute()
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .children(
+                        player::TABS
+                            .iter()
+                            .map(|&(id, key)| tab_pill(feed, id, t(key)))
+                            .collect::<Vec<_>>(),
+                    )
+            },
+        ))
+        // 右：运行状态 + 小屏开关。
         .child(
             view()
                 .flex_row()

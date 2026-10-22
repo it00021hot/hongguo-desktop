@@ -434,7 +434,18 @@ fn send_box(s: Stage) -> impl IntoElement {
         )
         .child({
             let s = s.clone();
-            icons::send(14.0, || rgba(0xffffffcc)).on_press(move |_: &()| super::send_danmaku(&s))
+            // 「发送」文字小胶囊（Tauri EmojiSendBox 的发送钮同款形态：
+            // h-6 圆角胶囊 px-2.5 text-xs）。
+            text(move || t("player.interact.send"))
+                .text_size(px(12.0))
+                .text_color(rgb(0xffffff))
+                .px(px(10.0))
+                .h(px(24.0))
+                .items_center()
+                .rounded_full()
+                .bg(rgba(0xffffff33))
+                .hover(|style| style.bg(rgba(0xffffff52)))
+                .on_press(move |_: &()| super::send_danmaku(&s))
         })
 }
 
