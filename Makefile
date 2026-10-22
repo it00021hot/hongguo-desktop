@@ -93,43 +93,54 @@ test-rust:
 # 质量闸门：一票否决。make 遇到非零退出就中止本 target 并让 make 整体失败，
 # 所以任何一道检查挂掉都是红的。别用 `-` 前缀或 `|| true` 把失败吞掉。
 # --all-targets 必须带：否则 #[cfg(test)] 里的代码根本不进 clippy 的检查范围。
-# macOS 双目标交叉 clippy：vt（VideoToolbox）等 cfg 门后的代码 Windows 宿主
-# 看不见，本次 v0.0.1 发版就是它带了 125 条警告上 CI。占位 CC/AR 只骗过
-# objc2-exception-helper 的 C 编译步骤，check/clippy 不链接、结果不受影响。
 # -D clippy::allow_attributes 是忽略标签禁令：#[allow] 直接拒；确需断言用
 # #[expect(reason)]——lint 不再触发时编译失败，杜绝过期放行。
 #
+# macOS 双目标交叉 clippy（守卫范围见 MAC_CROSS_CRATES）：交叉链上的依赖有
+# 真要编 C/C++ 的 build script（objc2-exception-helper、vswhom-sys 的 C++
+# 段），早年「占位 CC/AR 假成功即可」的口径已失效——实测在 cc 的归档步炸
+# 硬链接失败（2026-10-22）。注入真交叉工具链，前置 `winget install
+# LLVM.LLVM`。路径必须 C:/ 短路径形态：cc 会把带空格的路径按空格拆词
+#（C:/Program Files/... 直接炸），/c/... 的 MSYS 形态又会回落 PATH 撞上带
+# 空格的安装路径。
 # Windows 的 make 走 cmd.exe，recipe 里的 `VAR=value command` 是 POSIX
-# 语法（会被当成不存在的程序）。用 make export 注入交叉目标的占位 CC/AR，
-# 让 Windows 与 Unix 共用同一条 recipe。
+# 语法（会被当成不存在的程序），所以用 make export 注入，Windows 与 Unix
+# 共用同一条 recipe。
 # **只在 Windows 宿主导出**：x86_64 Mac 上 x86_64-apple-darwin 就是宿主
-# 三元组，顶层 export 会把占位编译器毒进真实构建——cc 全部「成功」空转、
-# 静态库产物缺失，gpui-preview 等真实构建炸 could not find native static
-# library（2026-10-19 实测）。macOS/Linux 原生有真编译器，交叉 clippy 不
-# 需要占位；Windows 的 gpui-preview 本就不可用，无此问题。
+# 三元组，顶层 export 会把注入的编译器毒进宿主真实构建——静态库产物缺失，
+# gpui-preview 等真实构建炸 could not find native static library
+#（2026-10-19 实测）。macOS/Linux 原生有真编译器，不需要任何注入。
 ifeq ($(OS),Windows_NT)
-export CC_aarch64_apple_darwin := true
-export AR_aarch64_apple_darwin := true
-export CC_x86_64_apple_darwin := true
-export AR_x86_64_apple_darwin := true
+export CC_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang.exe
+export CXX_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang++.exe
+export AR_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
+export CC_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang.exe
+export CXX_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang++.exe
+export AR_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
 endif
+
+# macOS 交叉闸门的守卫范围：平台链正清单（两个 api 契约 + 媒体平台门面与
+# macOS 实现 + 播放引擎）。不用 --workspace 排除法——全图会拖进 aws-lc-sys
+#（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK 的 Darwin
+# libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可自由分发），
+# 全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条 macos-latest 腿就是
+# --workspace 全量）。hongguo-gpui 同理不在清单：其依赖 build script 要
+# bindgen Apple 框架头。hongguo-playback 在清单里：cpal 只留在
+# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies]，
+# Apple 目标不再拖出 coreaudio-sys。
+MAC_CROSS_CRATES := -p hongguo-player-api -p hongguo-media-platform-api \
+	-p hongguo-media-platform -p hongguo-media-platform-macos \
+	-p hongguo-player-macos -p hongguo-playback
 
 lint:
 	pnpm lint
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-# macOS 双目标交叉：只排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
-# build script 里 bindgen Apple 框架头文件，Windows 宿主没有 macOS SDK
-# 生不出来（真 macOS 环境原生 clippy 不受影响，CI 的 macOS job 覆盖）。
-# hongguo-playback 现在也在交叉闸门里：它早已不直接依赖 cpal（音频输出走
-# hongguo-media-platform 的平台契约，macOS 侧是 AudioToolbox），cpal 留在
-# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies] 里，
-# Apple 目标不再拖出 coreaudio-sys → 不再需要 libclang。
-# 提醒：占位 CC/AR 指向 `true`，Windows 宿主上 PATH 里得能找到 true.exe
-# （Git for Windows 的 usr/bin 里有），否则 objc2-exception-helper 的
-# build script 找不到编译器。
-	cargo clippy --workspace --exclude hongguo-gpui --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	cargo clippy --workspace --exclude hongguo-gpui --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+# vt（VideoToolbox）等 cfg 门后的代码 Windows 宿主看不见，v0.0.1 发版就是它
+# 带着警告上的 CI——这两条交叉把平台链在本地也守住（守卫范围与正清单依据见
+# 上面的 MAC_CROSS_CRATES 注释）。
+	cargo clippy $(MAC_CROSS_CRATES) --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy $(MAC_CROSS_CRATES) --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 
 fmt:
 	cargo fmt --all
