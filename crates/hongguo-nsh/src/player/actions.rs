@@ -67,6 +67,29 @@ pub(crate) fn long_press_rate_off(s: &Stage) {
     }
 }
 
+/// 全屏开关（镜像态同步给图标用）。
+pub(crate) fn toggle_fullscreen(s: &Stage) {
+    crate::platform::toggle_fullscreen();
+    s.fullscreen.set(crate::platform::is_fullscreen());
+}
+
+/// 无边框播放开关（App chrome 藏显由 app.rs 按同一信号裁决）。
+pub(crate) fn toggle_frameless(s: &Stage) {
+    let next = !s.frameless.get();
+    s.frameless.set(next);
+}
+
+/// 隐身模式开关（离窗透明+暂停、回窗续播的判定在播放域轮询任务里）。
+pub(crate) fn toggle_incognito(s: &Stage) {
+    let next = !s.incognito.get();
+    s.incognito.set(next);
+}
+
+/// 竖屏铺满档切换（竖屏中全屏语义让位给铺满；非竖屏 no-op）。
+pub(crate) fn toggle_portrait_full(s: &Stage) {
+    s.toggle_portrait_full();
+}
+
 /// 换一部剧（沉浸流步进）：先用流条目自带的 vid 起播（秒开），
 /// 再拉分集表把选集/自动连播接上。
 fn play_series_at(s: &Stage, at: usize) {

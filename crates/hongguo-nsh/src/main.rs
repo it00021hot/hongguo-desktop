@@ -13,20 +13,23 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+// nsh 的平台后端（窗口/输入管线本体）；壳自己的平台代码在 `platform/` 模块
+//（对齐 GPUI 壳的 `platform/` 命名）。
 #[cfg(target_os = "macos")]
-use nsh_platform_macos as platform;
+use nsh_platform_macos as nsh_platform;
 #[cfg(target_os = "windows")]
-use nsh_platform_windows as platform;
+use nsh_platform_windows as nsh_platform;
 
 mod app;
 mod i18n;
 mod nav;
-mod platform_ext;
+mod platform;
 mod player;
 mod pump;
 mod state;
 mod supply;
 mod tokens;
+mod window_state;
 
 use std::process::Termination;
 
@@ -41,18 +44,21 @@ fn main() -> impl Termination {
     // 单实例要早于开库：上一个实例可能正持库锁（小窗/后台播放都在跑），
     // 撞锁退出会让用户看到「点图标没反应」。第二个进程请已有实例前置窗口
     // 后安静退出。
-    if !platform_ext::claim_single_instance() {
+    if !platform::claim_single_instance() {
         log::info!("[Shell] 已有实例在运行：已请求它前置窗口，本进程退出");
         return std::process::ExitCode::SUCCESS;
     }
     state::build();
-    platform::run_app(
-        platform::AppSource::Rust(platform::Root::of::<app::App>().theme(tokens::theme())),
-        platform::AppOptions {
+    // 窗口几何防抖落盘（跨启动记忆，window_state 三槽位）：线程内部等窗口
+    // 出现才开始记，放在 run_app 前起跑即可。
+    platform::spawn_geometry_saver();
+    nsh_platform::run_app(
+        nsh_platform::AppSource::Rust(nsh_platform::Root::of::<app::App>().theme(tokens::theme())),
+        nsh_platform::AppOptions {
             title: "红果".to_owned(),
             size: (1280, 840),
             script: std::env::var("NSH_SCRIPT").ok(),
-            limits: platform::Limits::standalone_desktop(),
+            limits: nsh_platform::Limits::standalone_desktop(),
             #[cfg(target_os = "windows")]
             app_id: "com.hongguo.desktop".to_owned(),
             ..Default::default()

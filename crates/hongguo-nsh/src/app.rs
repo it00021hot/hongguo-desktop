@@ -17,8 +17,8 @@
 use nsh_core::ui::prelude::*;
 
 use crate::i18n::t;
-use crate::nav::{FeedNav, MiniMode, Nav, Page};
-use crate::platform_ext;
+use crate::nav::{FeedNav, Frameless, Incognito, MiniMode, Nav, Page};
+use crate::platform;
 use crate::player;
 use crate::pump;
 
@@ -37,22 +37,30 @@ pub fn App() -> impl IntoElement {
     let nav = Nav::new();
     let feed = FeedNav::new();
     let mini = MiniMode::new();
-    // 三个句柄走 context：页面组件不重复声明 props（nsh 的 props 是给 JS
+    let frameless = Frameless::new();
+    let incognito = Incognito::new();
+    // 句柄走 context：页面组件不重复声明 props（nsh 的 props 是给 JS
     // 用的解码结构，纯 Rust 壳里传 `Copy` 句柄最省事）。
     provide_context(nav);
     provide_context(feed);
     provide_context(mini);
+    provide_context(frameless);
+    provide_context(incognito);
     // 事件泵随组件树启动一次（任务跟着 owner 一起销毁）。
     pump::start();
     let events = pump::events();
+
+    // 窗口几何恢复（常态槽位，跨启动记忆）：窗口此刻已由 run_app 创建，
+    // 按记忆校验落位；没有记忆保持 AppOptions 的默认尺寸。
+    platform::restore_normal();
 
     // 单实例前置请求轮询：第二个实例置位事件后把窗口带到前台。100ms 一拍，
     // 与 Tauri 壳的窗口前置节奏一致。
     spawn(async move {
         loop {
             timer(std::time::Duration::from_millis(100)).await;
-            if platform_ext::take_focus_request() {
-                platform_ext::bring_to_front();
+            if platform::take_focus_request() {
+                platform::bring_to_front();
             }
         }
     });
@@ -63,20 +71,26 @@ pub fn App() -> impl IntoElement {
         true
     });
 
+    // 无边框播放（hgplayer bare 同款）：chrome 全藏（侧栏+顶栏），整窗
+    // 只剩播放器画面；Esc 退出（播放域的 Esc 链）。
+    let frameless_on = frameless;
     view()
         .w_full()
         .h_full()
         .flex_row()
         .bg(theme().background)
-        // 小屏播放：chrome 全藏，整窗只剩播放器（Tauri `miniScreen` 同款）。
-        .child(If::new(move || !mini.get(), move || sidebar(nav)))
+        // 小屏/无边框播放：chrome 全藏，整窗只剩播放器。
+        .child(If::new(
+            move || !mini.get() && !frameless_on.get(),
+            move || sidebar(nav),
+        ))
         .child(
             view()
                 .flex_1()
                 .h_full()
                 .flex_col()
                 .child(If::new(
-                    move || !mini.get(),
+                    move || !mini.get() && !frameless_on.get(),
                     move || header(nav, feed, events, mini),
                 ))
                 .child(content(nav)),

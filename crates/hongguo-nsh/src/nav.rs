@@ -100,14 +100,89 @@ impl MiniMode {
     pub fn set(&self, mini: bool) {
         self.on.set(mini);
         if mini {
-            crate::platform_ext::enter_mini();
+            crate::platform::enter_mini();
         } else {
-            crate::platform_ext::exit_mini();
+            crate::platform::exit_mini();
         }
     }
 }
 
 impl Default for MiniMode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 无边框播放（Tauri `playerFrameless` 同款）：chrome 全藏（侧栏/顶栏），
+/// macOS 由平台层同步藏红绿灯。会话态。
+#[derive(Clone, Copy)]
+pub struct Frameless {
+    on: Signal<bool>,
+}
+
+impl Frameless {
+    /// 常态起步。
+    pub fn new() -> Self {
+        Self { on: signal(false) }
+    }
+
+    /// 从 context 取（`App` 在根部 `provide_context`）。
+    pub fn from_context() -> Self {
+        use_context::<Self>().expect("Frameless 由 App 在根部 provide_context")
+    }
+
+    /// 当前是否无边框。
+    pub fn get(&self) -> bool {
+        self.on.get()
+    }
+
+    /// 开关（窗口侧在平台层：macOS 藏红绿灯，Windows 无边框本就无边框）。
+    pub fn set(&self, on: bool) {
+        self.on.set(on);
+        crate::platform::set_frameless(on);
+    }
+}
+
+impl Default for Frameless {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 隐身模式（Tauri incognito 同款）：开启后鼠标脱离窗口 → 整窗透明 + 暂停；
+/// 回窗 → 重现 + 续播（只续被隐身欠下的那次）。开关本身是会话态；欠播与
+/// 显隐判定在播放域的轮询任务里（`player::mod`）。
+#[derive(Clone, Copy)]
+pub struct Incognito {
+    on: Signal<bool>,
+}
+
+impl Incognito {
+    /// 关闭起步。
+    pub fn new() -> Self {
+        Self { on: signal(false) }
+    }
+
+    /// 从 context 取（`App` 在根部 `provide_context`）。
+    pub fn from_context() -> Self {
+        use_context::<Self>().expect("Incognito 由 App 在根部 provide_context")
+    }
+
+    /// 当前是否隐身。
+    pub fn get(&self) -> bool {
+        self.on.get()
+    }
+
+    /// 开关。关掉时窗口侧立即恢复可见（欠播的清理归播放域任务）。
+    pub fn set(&self, on: bool) {
+        self.on.set(on);
+        if !on {
+            crate::platform::set_window_alpha(1.0);
+        }
+    }
+}
+
+impl Default for Incognito {
     fn default() -> Self {
         Self::new()
     }

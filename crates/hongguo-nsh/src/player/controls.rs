@@ -77,6 +77,11 @@ fn button_row(s: Stage) -> impl IntoElement {
     let definition = s.definition;
     let muted = s.muted;
     let volume = s.volume;
+    // 宽度分档（对齐 hgplayer 的逐段让位）：发送框先收缩（自身 min-w-0）；
+    // <860 藏发送框、选集标签取短；<720 再藏时间与下载按钮。
+    let stage_w = s.stage_w;
+    let compact = move || stage_w.get() < 860.0;
+    let extra_compact = move || stage_w.get() < 720.0;
     view()
         .w_full()
         .h(px(32.0))
@@ -122,16 +127,23 @@ fn button_row(s: Stage) -> impl IntoElement {
                 move || super::step_episode(&s, 1)
             },
         ))
-        // 时间（等宽数字）。
-        .child(
-            text(move || format!("{} / {}", clock(time.get()), clock(duration.get())))
-                .ml(px(6.0))
-                .text_size(px(12.0))
-                .text_color(rgba(0xffffffdd))
-                .tabular_nums(),
-        )
-        // 弹幕发送框（hgplayer 同款位置：左段时间之后，常驻）。
-        .child(send_box(s.clone()))
+        // 时间（等宽数字；不参与收缩——挤也不能把时间折行；极窄整段让位）。
+        .child(If::new(
+            move || !extra_compact(),
+            move || {
+                text(move || format!("{} / {}", clock(time.get()), clock(duration.get())))
+                    .ml(px(6.0))
+                    .flex_shrink(0.0)
+                    .text_size(px(12.0))
+                    .text_color(rgba(0xffffffdd))
+                    .tabular_nums()
+            },
+        ))
+        // 弹幕发送框（hgplayer 同款位置：左段时间之后；窄舞台整段让位）。
+        .child(If::new(move || !compact(), {
+            let s = s.clone();
+            move || send_box(s.clone())
+        }))
         // 右段顶到行尾。
         .child(
             view()
@@ -174,13 +186,15 @@ fn button_row(s: Stage) -> impl IntoElement {
                         )
                     }
                 }))
-                // 选集（沉浸流形态的数字网格入口）。
+                // 选集（沉浸流形态的数字网格入口；窄舞台标签取短）。
                 .child(text_button(
                     "episodes",
                     move || icons::list_video(14.0, || rgb(0xffffff)),
                     move || {
                         let total = episodes.with(|list| list.len());
-                        if total > 0 {
+                        if compact() {
+                            format!("{} {total}", t("player.episodes"))
+                        } else if total > 0 {
                             format!(
                                 "{} · {}",
                                 t("player.episodes"),
@@ -191,7 +205,7 @@ fn button_row(s: Stage) -> impl IntoElement {
                         }
                     },
                     {
-                        let s = stage.clone();
+                        let s = s.clone();
                         move || {
                             let next = !s.picker_open.get();
                             s.picker_open.set(next);
@@ -201,6 +215,21 @@ fn button_row(s: Stage) -> impl IntoElement {
                         }
                     },
                 ))
+                // 下载到本地面板（Tauri 按钮同位：选集之后、小窗之前；极窄让位）。
+                .child(If::new(move || !extra_compact(), {
+                    let stage = stage.clone();
+                    move || {
+                        text_button(
+                            "download",
+                            move || icons::download(14.0, || rgb(0xffffff)),
+                            move || t("player.download"),
+                            {
+                                let s = stage.clone();
+                                move || s.download_open.update(|v| *v = !*v)
+                            },
+                        )
+                    }
+                }))
                 // 小窗。
                 .child(icon_button(
                     "mini",
@@ -260,6 +289,23 @@ fn button_row(s: Stage) -> impl IntoElement {
                         volume.set(if next { 0.0 } else { 1.0 });
                     },
                 ))
+                // 隐身模式（离窗透明+暂停，回窗续播）。
+                .child(icon_button(
+                    "incognito",
+                    move || {
+                        let on = s.incognito.get();
+                        icons::eye(
+                            16.0,
+                            move || {
+                                if on { rgb(0xffffff) } else { rgba(0xffffff8c) }
+                            },
+                        )
+                    },
+                    {
+                        let s = stage.clone();
+                        move || super::toggle_incognito(&s)
+                    },
+                ))
                 // 竖屏播放（宽度按视频宽高比收窄的竖条）。
                 .child(icon_button(
                     "portrait",
@@ -268,7 +314,42 @@ fn button_row(s: Stage) -> impl IntoElement {
                         let s = stage.clone();
                         move || s.enter_portrait()
                     },
-                )),
+                ))
+                // 无边框播放（chrome 全藏不进 OS 全屏；hgplayer bare 同款）。
+                .child(icon_button(
+                    "frameless",
+                    move || {
+                        let on = s.frameless.get();
+                        icons::frameless(
+                            16.0,
+                            move || {
+                                if on { rgb(0xffffff) } else { rgba(0xffffffb3) }
+                            },
+                        )
+                    },
+                    {
+                        let s = stage.clone();
+                        move || super::toggle_frameless(&s)
+                    },
+                ))
+                // 全屏（窗口级 OS 全屏；竖屏中让位给铺满切换，本按钮不出现）。
+                .child(If::new(move || !s.portrait.get(), {
+                    let s = stage.clone();
+                    move || {
+                        let fullscreen = s.fullscreen;
+                        icon_button(
+                            "fullscreen",
+                            move || {
+                                let exit = fullscreen.get();
+                                icons::fullscreen(16.0, exit, || rgb(0xffffff))
+                            },
+                            {
+                                let s = stage.clone();
+                                move || super::toggle_fullscreen(&s)
+                            },
+                        )
+                    }
+                })),
         )
 }
 
@@ -320,7 +401,8 @@ fn text_button<E: IntoElement + 'static>(
         .on_press(move |_: &()| on_press())
 }
 
-/// 弹幕发送框（圆角胶囊 + 输入 + 发送）。
+/// 弹幕发送框（圆角胶囊 + 输入 + 发送）。窄舞台整行放不下时先收缩发送框
+/// （`min-w-0` 同款），按钮与时间不缩。
 fn send_box(s: Stage) -> impl IntoElement {
     let draft = s.dm_draft;
     let stage = s.clone();
@@ -328,6 +410,9 @@ fn send_box(s: Stage) -> impl IntoElement {
         .w(px(SEND_BOX_W))
         .h(px(32.0))
         .ml(px(8.0))
+        .flex_shrink(1.0)
+        .min_w(px(0.0))
+        .overflow_hidden()
         .flex_row()
         .items_center()
         .gap(px(6.0))

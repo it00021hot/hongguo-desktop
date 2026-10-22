@@ -38,6 +38,8 @@ env_logger = "0.11"
 tokio = { version = "1", features = ["sync", "time"] }
 # 文案资源解析（复用 Tauri 壳的 src/locales/*.json）。
 serde_json = "1"
+# 窗口几何记忆（window-state.json 三槽位）的序列化。
+serde = { version = "1", features = ["derive"] }
 
 # NSH 平台后端按目标各取一份（default-features = false：不要 QuickJS）。
 # 与 hongguo-nsh-demo 的依赖口径一致。

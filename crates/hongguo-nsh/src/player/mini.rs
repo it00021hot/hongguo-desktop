@@ -225,6 +225,27 @@ fn button_row(s: Stage, portrait: bool) -> impl IntoElement {
                         )
                     }
                 }))
+                // 铺满切换只有竖屏形态要（hgplayer wu：竖屏里铺满/收回是
+                // 核心档位，Esc 退铺满回竖条）；小窗尺寸固定无档位可言。
+                .child(If::new(move || portrait, {
+                    let stage = stage.clone();
+                    move || {
+                        let stage = stage.clone();
+                        let portrait_full = stage.portrait_full;
+                        icon_button(
+                            "portrait-full",
+                            move || {
+                                let full = portrait_full.get();
+                                if full {
+                                    icons::minimize(14.0, || rgb(0xffffff))
+                                } else {
+                                    icons::maximize2(14.0, || rgb(0xffffff))
+                                }
+                            },
+                            move || super::toggle_portrait_full(&stage),
+                        )
+                    }
+                }))
                 // ⤢ 退出当前紧凑形态（小窗 = 回大窗；竖屏 = 回横屏）。
                 .child(icon_button(
                     "expand",
@@ -236,12 +257,12 @@ fn button_row(s: Stage, portrait: bool) -> impl IntoElement {
                         }
                     },
                     {
-                        let s = stage.clone();
+                        let stage = stage.clone();
                         move || {
                             if portrait {
-                                s.exit_portrait();
+                                stage.exit_portrait();
                             } else {
-                                s.mini.set(false);
+                                stage.mini.set(false);
                             }
                         }
                     },

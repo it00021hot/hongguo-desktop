@@ -4533,6 +4533,7 @@ dependencies = [
  "nsh-core",
  "nsh-platform-macos",
  "nsh-platform-windows",
+ "serde",
  "serde_json",
  "tiny_http",
  "tokio",

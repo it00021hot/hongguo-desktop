@@ -17,6 +17,7 @@ pub(crate) mod comments;
 pub(crate) mod comments_view;
 pub(crate) mod controls;
 pub(crate) mod danmaku;
+pub(crate) mod download;
 pub(crate) mod feed;
 pub(crate) mod icons;
 pub(crate) mod info;
@@ -33,7 +34,7 @@ use hongguo_api::discover::FeedItem;
 use hongguo_common::model::{Episode, VideoDefinition};
 
 use crate::i18n::t;
-use crate::nav::{FeedNav, MiniMode};
+use crate::nav::{FeedNav, Frameless, Incognito, MiniMode};
 
 use self::comments::CommentsState;
 use self::danmaku::DanmakuState;
@@ -44,7 +45,7 @@ use self::rail::{RailCtx, RailState};
 pub(crate) use actions::{
     fetch_feed, load_related, long_press_rate_off, long_press_rate_on, on_end, pick_episode,
     replay_episode, seek_ratio, seek_to, send_danmaku, step_chrome, step_episode, switch_series,
-    wake,
+    toggle_frameless, toggle_fullscreen, toggle_incognito, toggle_portrait_full, wake,
 };
 
 /// 推荐流首个 tab（抓包锁定：推荐 16 / 漫剧 36 / 真人剧 39）。
@@ -124,14 +125,26 @@ pub(crate) struct Stage {
     pub comments: CommentsState,
     /// 登录态（设置里的账号档案；登录入口 P2 迁设置页）。
     pub logged_in: Signal<bool>,
-    /// 小窗形态（几何在 platform_ext）。
+    /// 小窗形态（几何在 platform）。
     pub mini: MiniMode,
+    /// 无边框播放（chrome 全藏；App 壳按它藏侧栏/顶栏）。
+    pub frameless: Frameless,
+    /// 隐身模式（离窗透明+暂停，回窗续播）。
+    pub incognito: Incognito,
     /// 竖屏形态。
     pub portrait: Signal<bool>,
+    /// 竖屏铺满档（platform 静态的镜像，图标态与 refit 档位用）。
+    pub portrait_full: Signal<bool>,
+    /// 全屏镜像（platform 静态的镜像，全屏按钮的图标态）。
+    pub fullscreen: Signal<bool>,
+    /// 下载到本地面板。
+    pub download_open: Signal<bool>,
     /// 置顶（小窗控制条上也有入口，同一份状态）。
     pub pinned: Signal<bool>,
     /// 长按倍速前的原档位（`Some` = 正在长按快进中）。
     pub long_press_rate: Stored<Option<f32>>,
+    /// 竖屏 refit 的上一次比例基线（变化 >1% 才重适配）。
+    pub refit_last: Stored<f32>,
 }
 
 impl Stage {
@@ -191,9 +204,15 @@ impl Stage {
             comments: CommentsState::new(),
             logged_in,
             mini: MiniMode::from_context(),
+            frameless: Frameless::from_context(),
+            incognito: Incognito::from_context(),
             portrait: signal(false),
+            portrait_full: signal(false),
+            fullscreen: signal(false),
+            download_open: signal(false),
             pinned: signal(false),
             long_press_rate: stored(None),
+            refit_last: stored(0.0),
         }
     }
 
@@ -233,23 +252,65 @@ impl Stage {
         });
     }
 
-    /// 进竖屏（宽度按当前视频宽高比收窄）。
+    /// 竖屏用的宽高比（Tauri `portraitAspectOf` 同口径）：竖屏比
+    /// （<0.9）与手机形比例取更「长」的一方，横屏/未知回落手机比例
+    /// （9:19.5）——按内容包窗会得到矮胖条，不像手机。
+    fn portrait_aspect(&self) -> f32 {
+        const PORTRAIT_ASPECT_MAX: f32 = 0.9;
+        const PHONE_LIKE_ASPECT: f32 = 9.0 / 19.5;
+        let video = self.aspect.get();
+        if video > 0.0 && video < PORTRAIT_ASPECT_MAX {
+            video.min(PHONE_LIKE_ASPECT)
+        } else {
+            PHONE_LIKE_ASPECT
+        }
+    }
+
+    /// 进竖屏（宽度按钳制后的视频宽高比收窄）。
     pub(crate) fn enter_portrait(&self) {
         self.portrait.set(true);
-        crate::platform_ext::enter_portrait(self.aspect.get());
+        self.portrait_full.set(false);
+        let aspect = self.portrait_aspect();
+        self.refit_last.replace(aspect);
+        crate::platform::enter_portrait(aspect);
     }
 
     /// 退竖屏回横屏。
     pub(crate) fn exit_portrait(&self) {
         self.portrait.set(false);
-        crate::platform_ext::exit_compact();
+        self.portrait_full.set(false);
+        crate::platform::exit_portrait();
+    }
+
+    /// 竖屏铺满档切换（hgplayer wu：竖屏里全屏语义让位给铺满）。
+    pub(crate) fn toggle_portrait_full(&self) {
+        if !self.portrait.get() {
+            return;
+        }
+        let next = !self.portrait_full.get();
+        self.portrait_full.set(next);
+        crate::platform::set_portrait_full(self.portrait_aspect(), next);
+    }
+
+    /// 竖屏中切集/换清晰度导致视频比例变化后的重适配（Tauri `Em`：
+    /// 变化 >1% 才动；铺满与否跟随当前档）。
+    fn refit_portrait_if_needed(&self, last: &Stored<f32>) {
+        if !self.portrait.get() {
+            return;
+        }
+        let ar = self.portrait_aspect();
+        if (ar - last.with(|v| *v)).abs() <= 0.01 {
+            return;
+        }
+        last.replace(ar);
+        crate::platform::set_portrait_full(ar, self.portrait_full.get());
     }
 
     /// 置顶开关（两处入口共享一份状态）。
     pub(crate) fn toggle_pinned(&self) {
         let next = !self.pinned.get();
         self.pinned.set(next);
-        crate::platform_ext::set_always_on_top(next);
+        crate::platform::set_always_on_top(next);
     }
 }
 
@@ -331,16 +392,50 @@ pub fn PlayerPage() -> impl IntoElement {
         });
     }
 
-    // ---- 鼠标移动唤醒：nsh 0.1.1 没有指针移动事件，150ms 轮询光标位置，
-    //      在窗口内动了（含刚进窗口）就唤醒——Tauri mousemove/mouseenter
-    //      的同语义替代 ----
+    // ---- 鼠标移动唤醒 + 隐身模式：nsh 0.1.1 没有指针移动事件，150ms
+    //      轮询光标位置。移动唤醒：在窗口内动了（含刚进窗口）就唤醒——
+    //      Tauri mousemove/mouseenter 的同语义替代。隐身（incognito.ts
+    //      同款）：开着时离窗 → 整窗透明 + 暂停；回窗 → 重现 + 只续被隐身
+    //      欠下的那次播放（用户自己按停的不欠）。 ----
     {
         let s = s.clone();
         let last = stored(None::<(f32, f32)>);
+        let was_hidden = stored(false);
+        let owed_play = stored(false);
         spawn(async move {
             loop {
                 timer(std::time::Duration::from_millis(150)).await;
-                let Some(point) = crate::platform_ext::cursor_in_window() else {
+                let point = crate::platform::cursor_in_window();
+                // 隐身分支先行：开着时光标离窗就藏，回窗就还。
+                if s.incognito.get() {
+                    match point {
+                        Some(_) => {
+                            if was_hidden.replace(false) {
+                                crate::platform::set_window_alpha(1.0);
+                                if owed_play.replace(false) {
+                                    s.playing.set(true);
+                                }
+                            }
+                        }
+                        None => {
+                            if !was_hidden.with(|v| *v) {
+                                was_hidden.replace(true);
+                                // 只在「正在播」时欠：已经暂停着是用户按的，不欠
+                                owed_play.replace(s.playing.get());
+                                if s.playing.get() {
+                                    s.playing.set(false);
+                                }
+                                crate::platform::set_window_alpha(0.05);
+                            }
+                        }
+                    }
+                } else if was_hidden.replace(false) {
+                    // 关掉隐身开关与离窗回窗同一条恢复路径。
+                    crate::platform::set_window_alpha(1.0);
+                    owed_play.replace(false);
+                }
+
+                let Some(point) = point else {
                     last.replace(None);
                     continue;
                 };
@@ -409,7 +504,8 @@ pub fn PlayerPage() -> impl IntoElement {
     {
         let s = s.clone();
         on_key("escape", move |_| {
-            // 面板优先（评论/选集/弹层），然后连播，最后紧凑形态。
+            // 链序对齐 Tauri（use-player-interactions Esc）：竖屏铺满最先，
+            // 然后面板（评论/选集/弹层），无边框，连播，最后紧凑形态本身。
             if s.comments.open.get() {
                 s.comments.open.set(false);
                 return;
@@ -419,16 +515,24 @@ pub fn PlayerPage() -> impl IntoElement {
                 s.close_popups();
                 return;
             }
+            if s.portrait.get() && s.portrait_full.get() {
+                s.toggle_portrait_full(); // 铺满回竖条（hgplayer 同序）
+                return;
+            }
+            if s.frameless.get() {
+                s.frameless.set(false);
+                return;
+            }
             if s.binge.get() {
                 s.binge.set(false);
                 return;
             }
-            if s.portrait.get() {
-                s.exit_portrait();
-                return;
-            }
             if s.mini.get() {
                 s.mini.set(false);
+                return;
+            }
+            if s.portrait.get() {
+                s.exit_portrait();
             }
         });
     }
@@ -563,6 +667,13 @@ fn stage_view(s: Stage) -> impl IntoElement {
                 controls::bottom_bar(s.clone())
             },
         ))
+        // 下载到本地面板（盖在控制栏之上：Sheet 语义）。
+        .child(download::sheet(
+            s.download_open,
+            s.episodes,
+            s.current_index,
+            s.series_id,
+        ))
         // 顶部加载细条 / 中央 spinner / 加载面板 / 错误条。
         .child(info::loadbar(move || {
             loadbar_stage.preparing.get()
@@ -682,6 +793,9 @@ fn video_layer(s: Stage, url: ReadSignal<String>) -> impl IntoElement {
                     danmaku.band_top.set((stage_h.get() - band_h) / 2.0);
                 }
             });
+            // 竖屏中切集/换清晰度导致视频比例变化 → 重适配（Tauri `Em`：
+            // 变化 >1% 才动，铺满与否跟随当前档）。
+            s.refit_portrait_if_needed(&s.refit_last)
         })
         .on_buffer(move |now: &bool| load.0.set(*now))
         .on_progress(move |p: &VideoProgress| {

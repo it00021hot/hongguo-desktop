@@ -195,6 +195,36 @@ pub(crate) fn maximize(size: f32, color: impl Fn() -> Color + Clone + 'static) -
     )
 }
 
+/// 铺满档（Maximize：屏内四角外撑）。
+pub(crate) fn maximize2(size: f32, color: impl Fn() -> Color + Clone + 'static) -> CanvasView {
+    stroked(
+        size,
+        2.0,
+        &[
+            "M8 3H5a2 2 0 0 0-2 2v3",
+            "M21 8V5a2 2 0 0 0-2-2h-3",
+            "M3 16v3a2 2 0 0 0 2 2h3",
+            "M16 21h3a2 2 0 0 0 2-2v-3",
+        ],
+        color,
+    )
+}
+
+/// 退出铺满（Minimize：屏内四角收拢）。
+pub(crate) fn minimize(size: f32, color: impl Fn() -> Color + Clone + 'static) -> CanvasView {
+    stroked(
+        size,
+        2.0,
+        &[
+            "M8 3v3a2 2 0 0 1-2 2H3",
+            "M21 8h-3a2 2 0 0 1-2-2V3",
+            "M3 16h3a2 2 0 0 1 2 2v3",
+            "M16 21v-3a2 2 0 0 1 2-2h3",
+        ],
+        color,
+    )
+}
+
 /// 退出竖屏（RectangleHorizontal：横放矩形）。
 pub(crate) fn rectangle_horizontal(
     size: f32,
@@ -334,6 +364,75 @@ pub(crate) fn spinner(size: f32, color: impl Fn() -> Color + Clone + 'static) ->
     })
     .w(px(size))
     .h(px(size))
+}
+
+// ---------------------------------------------------------------- 下载/隐身/窗口态
+
+/// 下载到本地（Download：落盘托盘 + 下箭头）。
+pub(crate) fn download(size: f32, color: impl Fn() -> Color + Clone + 'static) -> CanvasView {
+    stroked(
+        size,
+        2.0,
+        &[
+            "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4",
+            "m7 10 5 5 5-5",
+            "M12 15V3",
+        ],
+        color,
+    )
+}
+
+/// 隐身模式（Eye：眼眶 + 瞳孔）。
+pub(crate) fn eye(size: f32, color: impl Fn() -> Color + Clone + 'static) -> CanvasView {
+    stroked(
+        size,
+        2.0,
+        &[
+            "M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0",
+            "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+        ],
+        color,
+    )
+}
+
+/// 无边框播放（网页全屏：圆角方框 + 内侧四角，`WebFullscreenIcon` 同几何）。
+pub(crate) fn frameless(size: f32, color: impl Fn() -> Color + Clone + 'static) -> CanvasView {
+    stroked(
+        size,
+        1.8,
+        &[
+            "M6 4.6h12a3.4 3.4 0 0 1 3.4 3.4v8a3.4 3.4 0 0 1-3.4 3.4H6a3.4 3.4 0 0 1-3.4-3.4V8A3.4 3.4 0 0 1 6 4.6Z",
+            "M7.5 9.7V8.4a.9.9 0 0 1 .9-.9h1.3",
+            "M16.5 9.7V8.4a.9.9 0 0 0-.9-.9h-1.3",
+            "M7.5 14.3v1.3a.9.9 0 0 0 .9.9h1.3",
+            "M16.5 14.3v1.3a.9.9 0 0 1-.9.9h-1.3",
+        ],
+        color,
+    )
+}
+
+/// 全屏（四角外撑）/ 退出全屏（四角收拢），`FullscreenIcon` 两态同几何。
+pub(crate) fn fullscreen(
+    size: f32,
+    exit: bool,
+    color: impl Fn() -> Color + Clone + 'static,
+) -> CanvasView {
+    let paths: &'static [&'static str] = if exit {
+        &[
+            "M8.6 3.4v2.8a2.4 2.4 0 0 1-2.4 2.4H3.4",
+            "M15.4 3.4v2.8a2.4 2.4 0 0 0 2.4 2.4h2.8",
+            "M3.4 15.4h2.8a2.4 2.4 0 0 1 2.4 2.4v2.8",
+            "M20.6 15.4h-2.8a2.4 2.4 0 0 0-2.4 2.4v2.8",
+        ]
+    } else {
+        &[
+            "M9.4 3.4H6A2.6 2.6 0 0 0 3.4 6v3.4",
+            "M14.6 3.4H18A2.6 2.6 0 0 1 20.6 6v3.4",
+            "M9.4 20.6H6A2.6 2.6 0 0 1 3.4 18v-3.4",
+            "M14.6 20.6H18a2.6 2.6 0 0 0 2.6-2.6v-3.4",
+        ]
+    };
+    stroked(size, 2.0, paths, color)
 }
 
 // ---------------------------------------------------------------- B 站「弹」字两钮
