@@ -1,0 +1,1 @@
+wait 9000; shot target/nsh-smoke/01-home.png; tap 112 101; wait 900; shot target/nsh-smoke/02-rank.png; tap 112 139; wait 900; shot target/nsh-smoke/03-browse.png; tap 112 177; wait 900; shot target/nsh-smoke/04-settings.png; quit

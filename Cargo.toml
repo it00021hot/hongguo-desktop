@@ -20,6 +20,8 @@ members = [
     "crates/hongguo-media-platform-api",
     "crates/hongguo-media-platform-macos",
     "crates/hongguo-media-platform-windows",
+    # NSH 壳（第三壳，与 GPUI 壳共存至替值线；见 docs/nsh-shell-plan.md）。
+    "crates/hongguo-nsh",
     "crates/hongguo-video",
     "crates/hongguo-playback",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：

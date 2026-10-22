@@ -1,0 +1,1 @@
+wait 9000; drag 700 300 700 550 250; wait 5000; shot target/nsh-smoke/11-pan-next.png; key space; wait 600; tap 700 300; wait 800; shot target/nsh-smoke/12-tap-resume.png; quit
