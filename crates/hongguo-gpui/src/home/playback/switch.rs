@@ -334,117 +334,148 @@ impl super::HomeView {
         ));
         cx.spawn(async move |this, cx| {
             let result = done.await.expect("tokio 桥不会丢弃发送端");
+            let mut deferred: Option<(super::open::SystemSpec, super::NowPlaying)> = None;
             let _ = this.update(cx, |view, cx| {
                 // 陈旧任务（期间用户又切了剧）：不接管，引擎随 result 丢弃自停
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
-                // 系统后端的播放器只能在主线程创建（DComp 视频位归渲染线程）。
-                let opened = match result {
-                    Ok(Opened::Ready(handle, now)) => Ok((handle, now)),
-                    Ok(Opened::System(spec, now)) => crate::platform::open_system_player(
-                        spec.source,
-                        spec.start_secs,
-                        spec.rate,
-                        spec.events,
-                        spec.on_stall,
-                    )
-                    .map(|handle| (handle, now))
-                    .ok_or_else(|| {
-                        hongguo_common::AppError::Media(crate::i18n::t("player.systemUnavailable"))
-                    }),
-                    Err(error) => Err(error),
-                };
+                match result {
+                    Ok(Opened::Ready(handle, now)) => view.install_player(handle, now, epoch, cx),
+                    // 系统播放器要主线程建（视频 quad 是渲染器的），但**不能在
+                    // 实体借用内建**：open 过程中的 STA COM 调用会泵窗口消息，
+                    // a11y 探测/重绘若在泵里重入会撞 HomeView 的借用（实测日
+                    // 志刷「RefCell already borrowed」）。先把参数带出 update，
+                    // 借用解除后再开，见下方第二个 update。
+                    Ok(Opened::System(spec, now)) => deferred = Some((spec, now)),
+                    Err(error) => view.handle_play_failure(error, cx),
+                }
+                cx.notify();
+            });
+            let Some((spec, now)) = deferred else {
+                return;
+            };
+            // 借用已解除：泵消息重入也只是普通的绘制/无障碍路径。
+            let opened = crate::platform::open_system_player(
+                spec.source,
+                spec.start_secs,
+                spec.rate,
+                spec.events,
+                spec.on_stall,
+            );
+            let _ = this.update(cx, |view, cx| {
+                // 开的这几毫秒里用户又切了剧：句柄随 opened 丢弃自停（引擎
+                // 没有 Play 调用不会出声）。
+                if view.epoch.load(Ordering::Relaxed) != epoch {
+                    return;
+                }
                 match opened {
-                    Ok((handle, now)) => {
-                        // 新引擎就位（帧随后由它的 Frame 事件送到，这里不清帧：
-                        // 起了才清的写法会把先到的首帧抹掉，封面从此收不掉）。
-                        // 切换途中旧帧已清，到这里的画面本来就是封面占位。
-                        // 偏好重放：换集重建引擎（对齐 Tauri `<video>` 卸载重挂）后
-                        // 把音量/静音按存值发给新引擎。倍速已随 OpenOptions 出生
-                        // 即位（见 play_task），只在分歧时补发——同值补发会平白
-                        // 走一次分级换轴记账。
-                        if (handle.rate() - view.rate).abs() > 1e-9 {
-                            handle.set_rate(view.rate);
-                        }
-                        handle.set_volume(view.volume);
-                        handle.set_muted(view.muted);
-                        // 换引擎前的 force 落盘 + 观看历史（Tauri 切集
-                        // persist(force) 同款）：旧引擎与旧 now 还在手里，
-                        // 读数有效；首次起播 player 为空自然跳过
-                        view.save_progress_now();
-                        let system_backend = handle.is_system();
-                        view.player = Some(handle);
-                        if system_backend {
-                            view.spawn_system_tick(epoch, cx);
-                        }
-                        // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
-                        // 别的剧即解除，同剧连播保持
-                        if view.binge.as_deref() != Some(now.series_id.as_str()) {
-                            view.binge = None;
-                        }
-                        view.load_intro(now.series_id.clone(), cx);
-                        // 剧终接力的下一季数据面随起播预取（Tauri 起播时
-                        // 拉好相关列表同款；剧终时通常已就绪）
-                        view.load_related_seasons(now.series_id.clone(), cx);
-                        // 互动数据：集级公开计数（档案）+ mget 最近互动
-                        view.load_episode_counts(&now, cx);
-                        view.load_interact_state(cx);
-                        // 弹幕按集重拉（社交态不缓存，每次进集都拉）。必须在
-                        // now 就位之后、且 series_id 显式传参：以前先于 now 赋值
-                        // 调用、内部又依赖 self.now——首播时 now 还是 None 直接
-                        // 返回（第一部剧永远没弹幕），换剧时错拿上一部剧的
-                        // series_id 当 book_id（服务端参数错配，热剧也拉空）
-                        view.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
-                        view.now = Some(now);
-                        if system_backend {
-                            // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
-                            view.preload_system_next(cx);
-                        }
-                        view.switching = false;
-                        view.buffering = false;
-                        view.play_retried = false;
-                        log::info!("[Home] 引擎就位（epoch={epoch}），switching 解除");
-                    }
-                    Err(e) => {
-                        // 系统播放器起不来 = 后端降级，不是播放失败：翻掉开关后用
-                        // 自研上屏重走一次起播（不消耗 play_retried 预算）。
-                        if crate::video_backend::fall_back_to_gpui() {
-                            log::warn!("[Home] 系统播放器不可用，后端降级为 gpui 重起：{e}");
-                            view.switching = false;
-                            if let Some(item) = view.display_items().get(view.cursor()).cloned() {
-                                view.play_target(item, None, None, cx);
-                                cx.notify();
-                                return;
-                            }
-                        }
-                        log::warn!("[Home] 起播失败: {e}");
-                        view.switching = false;
-                        view.buffering = false;
-                        // 对齐 Tauri recovery-policy 的 retry 档：自动重试一次
-                        //（换目标/换集失败同样算一次预算），再失败才落错误态
-                        if !view.play_retried {
-                            view.play_retried = true;
-                            log::info!("[Home] 起播失败，自动重试一次");
-                            if let Some(item) = view.display_items().get(view.cursor()).cloned() {
-                                view.play_target(item, None, None, cx);
-                                cx.notify();
-                                return;
-                            }
-                        }
-                        // 失败必须可见：此前只写 pending_title，而那行小徽标
-                        // 随 switching 消失——用户看到的就是「点了没反应」
-                        let message = crate::i18n::app_error_text(&e);
-                        view.play_error = Some(crate::i18n::tf(
-                            "common.failedWith",
-                            &[("message", message.as_str())],
-                        ));
-                    }
+                    Some(handle) => view.install_player(handle, now, epoch, cx),
+                    None => view.handle_play_failure(
+                        hongguo_common::AppError::Media(crate::i18n::t("player.systemUnavailable")),
+                        cx,
+                    ),
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// 把开好的播放器句柄接进视图（系统/自研两路共用）：偏好重放、落盘收尾、
+    /// 数据面重拉与切换态解除。
+    fn install_player(
+        &mut self,
+        handle: Player,
+        now: super::NowPlaying,
+        epoch: u64,
+        cx: &mut Context<Self>,
+    ) {
+        // 新引擎就位（帧随后由它的 Frame 事件送到，这里不清帧：
+        // 起了才清的写法会把先到的首帧抹掉，封面从此收不掉）。
+        // 切换途中旧帧已清，到这里的画面本来就是封面占位。
+        // 偏好重放：换集重建引擎（对齐 Tauri `<video>` 卸载重挂）后
+        // 把音量/静音按存值发给新引擎。倍速已随 OpenOptions 出生
+        // 即位（见 play_task），只在分歧时补发——同值补发会平白
+        // 走一次分级换轴记账。
+        if (handle.rate() - self.rate).abs() > 1e-9 {
+            handle.set_rate(self.rate);
+        }
+        handle.set_volume(self.volume);
+        handle.set_muted(self.muted);
+        // 换引擎前的 force 落盘 + 观看历史（Tauri 切集
+        // persist(force) 同款）：旧引擎与旧 now 还在手里，
+        // 读数有效；首次起播 player 为空自然跳过
+        self.save_progress_now();
+        let system_backend = handle.is_system();
+        self.player = Some(handle);
+        if system_backend {
+            self.spawn_system_tick(epoch, cx);
+        }
+        // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
+        // 别的剧即解除，同剧连播保持
+        if self.binge.as_deref() != Some(now.series_id.as_str()) {
+            self.binge = None;
+        }
+        self.load_intro(now.series_id.clone(), cx);
+        // 剧终接力的下一季数据面随起播预取（Tauri 起播时
+        // 拉好相关列表同款；剧终时通常已就绪）
+        self.load_related_seasons(now.series_id.clone(), cx);
+        // 互动数据：集级公开计数（档案）+ mget 最近互动
+        self.load_episode_counts(&now, cx);
+        self.load_interact_state(cx);
+        // 弹幕按集重拉（社交态不缓存，每次进集都拉）。必须在
+        // now 就位之后、且 series_id 显式传参：以前先于 now 赋值
+        // 调用、内部又依赖 self.now——首播时 now 还是 None 直接
+        // 返回（第一部剧永远没弹幕），换剧时错拿上一部剧的
+        // series_id 当 book_id（服务端参数错配，热剧也拉空）
+        self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
+        self.now = Some(now);
+        if system_backend {
+            // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
+            self.preload_system_next(cx);
+        }
+        self.switching = false;
+        self.buffering = false;
+        self.play_retried = false;
+        log::info!("[Home] 引擎就位（epoch={epoch}），switching 解除");
+    }
+
+    /// 起播失败收尾：系统后端先降级重走，普通失败按 retry 档自动重试一次，
+    /// 复发才落可见错误态。
+    fn handle_play_failure(&mut self, e: hongguo_common::AppError, cx: &mut Context<Self>) {
+        // 系统播放器起不来 = 后端降级，不是播放失败：翻掉开关后用
+        // 自研上屏重走一次起播（不消耗 play_retried 预算）。
+        if crate::video_backend::fall_back_to_gpui() {
+            log::warn!("[Home] 系统播放器不可用，后端降级为 gpui 重起：{e}");
+            self.switching = false;
+            if let Some(item) = self.display_items().get(self.cursor()).cloned() {
+                self.play_target(item, None, None, cx);
+                cx.notify();
+                return;
+            }
+        }
+        log::warn!("[Home] 起播失败: {e}");
+        self.switching = false;
+        self.buffering = false;
+        // 对齐 Tauri recovery-policy 的 retry 档：自动重试一次
+        //（换目标/换集失败同样算一次预算），再失败才落错误态
+        if !self.play_retried {
+            self.play_retried = true;
+            log::info!("[Home] 起播失败，自动重试一次");
+            if let Some(item) = self.display_items().get(self.cursor()).cloned() {
+                self.play_target(item, None, None, cx);
+                cx.notify();
+                return;
+            }
+        }
+        // 失败必须可见：此前只写 pending_title，而那行小徽标
+        // 随 switching 消失——用户看到的就是「点了没反应」
+        let message = crate::i18n::app_error_text(&e);
+        self.play_error = Some(crate::i18n::tf(
+            "common.failedWith",
+            &[("message", message.as_str())],
+        ));
     }
 
     /// 切清晰度（Tauri onDefinitionChange 同款）：同集同位重播，缓存按

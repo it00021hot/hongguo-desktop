@@ -1,77 +1,73 @@
-# GPUI 壳：Windows 系统播放器（Phase 2）
+# GPUI 壳：Windows 系统播放器（frame-server，与 NSH 同构）
 
-日期：2026-10-20｜平台：Windows｜状态：**已实现并在真实壳验证**（macOS 侧见
-[`gpui-system-player-status.md`](./gpui-system-player-status.md)）
+日期：2026-10-22｜平台：Windows｜状态：**已实现并在真实壳验证**
 
-## 1. 结论：与 macOS 同构，不抄近路
+> 历史：2026-10-20 首版用 MediaEngine **rendering mode**（引擎自己合成进一个
+> 独立的 DComp 视觉，垫在 GPUI 内容之下，壳画透明洞）。该结构能用，但视频与
+> GPUI 内容是**两张画布**，白线/错帧/漏桌面/z 序一类问题全是它生的（旧版坑
+> 6~8）；换源/重建引擎还逐集漏解码器内存（+50MB private/集，见下）。2026-10-22
+> 对齐 nsh-platform-windows 的 video 纪律整体迁移到 **frame-server 模式**，
+> 两条问题一起消失。本文描述现行架构；旧结构只在 §6 留档。
 
-macOS 的系统后端是「原生层插在 GPUIView 之下 + GPUI 画透明洞 + 覆盖层在
-上」。Windows 上**同一套结构成立**，依据是三处源码/文档事实：
+## 1. 结论：帧与内容同一张渲染目标
 
-1. **GPUI 在 Windows 用 DirectComposition 合成**：`gpui-pre-windows` 的
-   `directx_renderer.rs` 用 `DCompositionCreateDevice` +
-   `CreateTargetForHwnd(hwnd, true)` + `CreateSwapChainForComposition`，
-   视觉树根是渲染器私有的一个 `IDCompositionVisual`（内容为 GPUI 自己的
-   swapchain）。
-2. **透明洞的合成前提已就绪**：该 swapchain 的 AlphaMode 是
-   `DXGI_ALPHA_MODE_PREMULTIPLIED`；`WindowBackgroundAppearance` 非 `Opaque`
-   时渲染器清屏为 `[0,0,0,0]`，窗口类背景刷是纯黑。因此「GPUI 在舞台区清成
-   alpha=0」天然会把下层视觉露出来，窗口其余部位仍是黑底（黑边不露桌面）。
-3. **Media Foundation Media Engine 有 rendering mode**：创建时给
-   `MF_MEDIA_ENGINE_PLAYBACK_VISUAL` 一个 `IDCompositionVisual`，引擎自己把
-   音视频渲染进这个视觉（`MF_MEDIA_ENGINE_CALLBACK` 收事件，DXGI 管理器可
-   选）。数据侧用 `IMFMediaEngineEx::SetSourceFromByteStream` 喂自定义
-   `IMFByteStream`，正好对上 `hongguo-stream` 的 Range 供数。
+MediaEngine 的 **frame-server 模式**（不给 `PLAYBACK_VISUAL`，给
+`MF_MEDIA_ENGINE_DXGI_MANAGER` + `MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT`）下，
+引擎只解码不合成；应用每帧用 `TransferVideoFrame` 把当前帧转进一块 BGRA
+纹理。这块纹理由 vendored 补丁（`gpui-pre-windows::video_quad`）在渲染器的
+**clear 之后、场景批次之前**画一个 quad（复用 polychrome sprite 管线，只换
+SRV）——视频与 GPUI 内容在**同一张渲染目标**上：
 
-因此**不做**「系统解码 + 帧回读进 GPUI 纹理」那种折中：那条路每帧多一次
-GPU→CPU→GPU 搬运，且 MediaEngine 帧服务器模式要自己驱帧，收益还不如现有
-`hongguo-playback` 引擎。Windows 系统后端必须是**原生合成、零回读**。
-
-缺的那一环是**挂点**：GPUI 的视觉树根是私有字段，应用无法把自己的视觉插到
-内容之下。这需要给 `gpui-pre-windows` 打一个最小 vendored 补丁（见 §3）。
+- 缩放/黑边/裁切全是同画布原生语义，跨画布的半像素缝、两 swapchain 错帧、
+  透明洞漏桌面、`AddVisual` z 序反直觉——结构性不存在；
+- 弹幕/控制条自然压在画面上（场景画在视频之后）；
+- `render_to_image` / `PrintWindow` 能拍到视频（旧 DComp 结构抓不到）。
 
 ## 2. 结构
 
 ```text
-MediaEngine（系统解码/音频时钟/倍速/seek）
+MediaEngine（frame-server：系统解码/音频时钟/倍速/seek）
    ├── IMFMediaEngineNotify ──事件──> PlayerEvent（首帧/缓冲/播完/失败）
    ├── IMFByteStream（自有实现）──读──> hongguo-stream::read_range_cancellable
-   └── IDCompositionVisual（视频位）──合成──> 窗口视觉树（GPUI 内容之下）
+   └── TransferVideoFrame ──> BGRA 纹理（渲染器设备）
+                                  └── video_quad：clear 后、场景前画 quad
 ```
 
 | 模块 | 职责 |
 | --- | --- |
-| `vendor/gpui-pre-windows/src/system_video.rs` | 视频位访问器：按 HWND 取「DComp device + 视频位 visual」，设置舞台矩形/变换/裁剪并 `Commit` |
-| `vendor/gpui-pre-windows/src/directx_renderer.rs` | 视觉树改三层容器：根 →〔内容（swapchain）、视频位〕；注册到 `system_video` 表 |
-| `crates/hongguo-player-api/` | 回放契约：`PlayerEvent` / `PlaySource` / `OpenOptions` / `PlayerLike` / 舞台几何 / `HostWindow`（不依赖 UI 与平台实现） |
-| `crates/hongguo-player-windows/src/lib.rs` | 门面：`prepare_window`（登记宿主窗口 + MFStartup）/ `open` |
-| `crates/hongguo-player-windows/src/mf.rs` | `MFStartup` 一次、引擎创建（rendering mode）、倍速探测、统计读数 |
-| `crates/hongguo-player-windows/src/stream.rs` | `IMFByteStream` 实现：`hongguo-stream` Range 供数 + 异步 `BeginRead` + 续填钩子 |
-| `crates/hongguo-player-windows/src/events.rs` | `IMFMediaEngineNotify` 回调 → `PlayerEvent`（首帧/缓冲/播完/失败） |
-| `crates/hongguo-player-windows/src/player.rs` | `SystemPlayer`：`PlayerLike` + `VideoPresenter`、舞台几何、倍速补发、统计取证 |
-| `crates/hongguo-player-windows/src/view.rs` | 宿主 `HostWindow` → 视频位；舞台几何提交 |
-| `crates/hongguo-player/` | 门面 crate：按 target 分派到 `hongguo-player-macos` / `-windows` |
-| `crates/hongguo-gpui/src/platform/mod.rs` | 壳侧接线：`host_window`（gpui Window → `HostWindow`）、透明背景、`open_system_player` / `prepare_system_window` |
+| `vendor/gpui-pre-windows/src/video_quad.rs` | 按 HWND 登记「渲染器设备 + 当前帧」；`create_frame_texture` / `set_frame` / `clear_frame` / 设备代际 |
+| `vendor/gpui-pre-windows/src/directx_renderer.rs` | `draw_video_quad`（clear 后、批次前画 1 个 poly sprite 实例，SRV=视频纹理）；`DirectComposition` 只留黑底视觉 |
+| `vendor/gpui-pre-windows/src/directx_devices.rs` | 设备旗标补 `VIDEO_SUPPORT` + `SetMultithreadProtected`（MF 建视频处理链的硬前提） |
+| `crates/hongguo-player-windows/src/mf.rs` | `MFStartup` 一次；引擎创建（frame-server 属性面）；设备管理器按代际 `ResetDevice` 到渲染器设备；倍速探测、统计读数 |
+| `crates/hongguo-player-windows/src/player.rs` | `SystemPlayer`：控制面 + 每帧泵（`OnVideoStreamTick` → `TransferVideoFrame` → 落点提交）；每集新引擎 |
+| `crates/hongguo-player-windows/src/stream.rs` | `IMFByteStream` 实现：hongguo-stream Range 供数 + 同步完成 `BeginRead` |
+| `crates/hongguo-player-windows/src/events.rs` | `IMFMediaEngineNotify` → `PlayerEvent` |
+| `crates/hongguo-gpui/src/home/stage/render.rs` | `submit_stage` 每帧泵（vsync 节奏）；零尺寸连续帧元素在弹幕不在飞时顶住泵频 |
 
-平台专属依赖只进各平台实现 crate 的 `[target.'cfg(target_os = …)'.dependencies]`；
-壳只依赖门面 `hongguo-player`，Windows 构建不碰任何 objc2，macOS 构建不碰 windows。
+## 3. 关键机制
 
-## 3. vendored gpui-pre-windows 补丁面（最小）
-
-动机与 macOS 的 `gpui-pre-apple` 补丁同一口径：上游没给能力、本仓必须用。
-
-1. 视觉树由「根 = 内容」改成「根 = 容器，子视觉 =〔内容、视频位〕」，
-   视频位在下（`AddVisual(video, FALSE)`），并 `SetRoot(container)`。
-2. 新增 `pub mod system_video`：
-   - `SystemVideoLayer { composition_device, clip, clip_rect, scale, target }`
-   - `system_video_layer(hwnd) -> Option<SystemVideoLayer>`（按 HWND 注册表）
-   - `render_target()`（交给 `MF_MEDIA_ENGINE_PLAYBACK_VISUAL`）/
-     `set_stage(&SystemVideoStage)`（offset + 缩放矩阵 + 裁剪 + `Commit`）
-3. 不改 GPUI 的绘制、事件、图集任何逻辑——补丁只加「视觉树里的一层」和
-   「取这一层的句柄」。
-
-裁剪/缩放拆两层视觉是必要的：`SetClip` 作用在视觉自身坐标系、会被本视觉的
-变换缩放；分成「裁剪层（舞台矩形）→ 缩放层」后 `cover` 溢出才能正确裁切。
+- **解码设备 = 渲染器那台**（零拷贝）：渲染器设备补齐 `VIDEO_SUPPORT` 与多
+  线程保护后，引擎经 `IMFDXGIDeviceManager` 直接在它上面解码/做 NV12→BGRA，
+  产物纹理渲染器当场就能采样。历史教训：给 GPUI 设备但缺旗标 → 开播 60ms
+  内 `DXGI_ERROR_DEVICE_REMOVED`（旧坑 3）；让引擎每集自建设备 → Shutdown
+  后开销 MF/驱动不归还，连播 +50MB private/集（重建引擎同曲线）。
+- **每集一个新引擎**：`SetSourceFromByteStream` 只换源不关旧源，`IMFMediaEngine`
+  没有「只关源」API（`Stop` 属 MediaSession）；每集新引擎 + Drop 显式
+  `Pause+Shutdown` 才真正释放。解码设备共享后不再付每集设备的开销。
+- **每帧泵**：`OnVideoStreamTick` 裸 vtable 调用（S_FALSE 是成功码，windows
+  crate 不区分），报新帧才 `TransferVideoFrame`；落点按舞台几何换算成物理
+  像素矩形（整像素对齐防边缘采样越界），`contain` 黑边由舞台背景天然呈现。
+  泵挂在壳的 `submit_stage`（每渲染帧一次）；弹幕动画在飞时它就在驱动重绘，
+  不在飞时由零尺寸 `with_animation` 元素补连续帧——否则只剩 33ms 节拍，
+  2x 内容丢一半帧（实测 rendered 133/5s、dropped 142/5s → 对齐后
+  rendered ≈277/5s、dropped 0）。
+- **设备丢失**：渲染器重建设备 → `video_quad::device_rebuilt()` 代际 +1、
+  全部旧帧作废；播放器发现代际变化即重建帧纹理、设备管理器 `ResetDevice`
+  到新设备。
+- **open 在实体借用之外**：系统播放器的 open 会经 STA COM 泵窗口消息，若在
+  `HomeView` 的 update 借用内跑，a11y 探测/重绘重入会撞借用（实测日志刷
+  「RefCell already borrowed」）。壳侧先把 `SystemSpec` 带出 update，借用解除
+  后再开，二次 update 接管（`home/playback/switch.rs`）。
 
 ## 4. 事件映射
 
@@ -83,87 +79,48 @@ MediaEngine（系统解码/音频时钟/倍速/seek）
 | `ENDED` | `Ended` | 每 item 一次；代次幂等仍在壳侧 |
 | `ERROR` / `STREAMRENDERINGERROR` | `Failed` | 带 `param1`（MF_MEDIA_ENGINE_ERR）与 `param2`（HRESULT） |
 
-## 5. 线程、COM 与三个实测坑
+## 5. 回退与运行
 
-- 主线程是 STA（`gpui-pre-windows` 调 `OleInitialize`）。**引擎、字节流、
-  notify、视觉全部在主线程创建**：起播链（tokio）只把打开参数带回来
-  （`Opened::System`），由 `this.update` 在主线程建。事件回调由引擎自己的线程
-  调进来，只做 `blocking_send` 到 tokio 通道。
-- `MFStartup` 在主线程 `prepare_system_window` 里一次；`SetSourceFromByteStream`
-  之后引擎在内部线程读字节流，读实现是自由线程的（原子量 + 锁 + 同步完成回调）。
-- **坑 1（供数）**：MediaEngine 只走异步 `BeginRead`。返回 `E_NOTIMPL` 会让它
-  停在「取到长度」之后：一个字节不读、一个事件不发。实现方式是在 `BeginRead`
-  里同步读到位 → `MFCreateAsyncResult` → `MFInvokeCallback`，`EndRead` 取字节数。
-- **坑 2（分辨率）**：rendering mode 默认把视频画进一块 **640×480** 固定表面
-  （spike 与公开问答一致）。metadata 就绪后必须
-  `UpdateVideoStream(None, &RECT{0,0,原生宽,原生高}, None)`，画面才按原生分辨率
-  渲染；缩放交给 DComp 视觉。
-- **坑 3（设备）**：**不要**给 `MF_MEDIA_ENGINE_DXGI_MANAGER`。引擎会拿 GPUI 那台
-  D3D11 设备建视频处理链，而它没有 `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`、也没开
-  多线程保护——实测开播 60ms 内 `DXGI_ERROR_DEVICE_REMOVED`，整个窗口崩溃重建。
-  引擎用自己那台设备、跨设备把内容交给合成器反而稳（真实壳 60s+ 无异常）。
-- **坑 4（提交）**：引擎把内容挂到视觉上之后，**应用必须 `Commit`** 一次（引擎
-  不会替我们提交我们的合成设备）。`set_stage` 内每次变更后提交，几何不变时直接返回。
-- **坑 5（舞台原点）**：GPUI `on_children_prepainted` 给的原点在 Windows 上
-  **已经是窗口坐标**（实测顶栏 44px 已含在内）；macOS 侧既有实现一直额外补一个
-  顶栏高度。补偿归 `platform::stage_origin`（Windows 恒等、macOS +顶栏），
-  业务层不再写平台常量。
-- **坑 6（透明洞边界）**：洞的边界是**视频矩形**，不是整个舞台。舞台背景透明
-  后，contain 的黑边会漏出窗口后面的内容（Windows 的 DComp 透明窗没有窗口底色
-  兜底，实测截屏能看到别的窗口）。修法是把黑边交给 GPUI 自己画
-  （`home/stage.rs` 的 `render_stage_letterbox`），两个平台同一段代码。
-- **坑 7（z 序参数反了）**：`IDCompositionVisual::AddVisual` 在
-  `referenceVisual = NULL` 时，`insertAbove = TRUE` 表示「渲染在**所有兄弟
-  之下**」、`FALSE` 才是「之上」（MS 文档原话：above no sibling ⇒ 排在所有兄弟
-  后面）。第一版按直觉写反，结果视频位压在 GPUI 内容之上——弹幕、进度条、
-  小窗里的全部控制条都被画面盖住（小窗 `cover` 铺满所以「全被挡住」）。修好
-  后 `content` 用 `FALSE`（顶层）、视频位用 `TRUE`（底层）。
-- **坑 8（半像素缝）**：视频位是**独立原生层**，和 GPUI 内容不在同一张画布。
-  舞台/视频落点用分数坐标时，引擎渲染目标的最外圈半个像素会采到目标之外
-  （透明），叠在透明洞上就是一条浅色细线——用户实测「缩放窗口时视频边缘有
-  白线、像不在一个图层」。两条一起修：几何换算**对齐整物理像素**（原点、尺寸、
-  视频落点取整，缩放比例按取整后的像素反算），黑边再往画面里压 1px 兜住任何
-  残余缝（`render_stage_letterbox`，两平台同一段代码）。
-- **坑 9（小窗拖不动）**：小窗隐藏顶栏后**没有任何拖窗区域**（顶栏才有
-  `WindowControlArea`/`start_window_move`），窗口只能靠系统边框移动。修法：
-  小窗整窗按下记起点、按住移动 >4px 起拖（阈值以下仍是点击/暂停），起拖走
-  `platform::start_window_move`——Windows 延迟一拍发
-  `WM_NCLBUTTONDOWN(HTCAPTION)`（同步进系统移动循环会撞 gpui 借用），macOS 直接
-  `window.start_window_move()`。
+`VIDEO_BACKEND=gpui` 回滚到自研上屏；引擎/视频 quad 创建失败时
+`open_system_player` 返回 `None`，壳翻开关后用自研重走起播——不 panic、不黑屏。
 
-## 6. 回退
+```bash
+make gpui                      # macOS 默认 system（AVPlayer）；Windows 默认 system（frame-server）
+VIDEO_BACKEND=gpui make gpui   # 回滚 GPUI 自研上屏
+HONGGUO_WM_METRICS=1           # 5s 一次 rendered/dropped 统计（取证）
+HONGGUO_AV_NEXT_EPISODE_MS=5000 HONGGUO_AV_NEXT_EPISODE_LOOP=1  # 连播内存/帧率取证
+```
 
-`VIDEO_BACKEND=gpui` 仍回滚到自研上屏；引擎创建失败（HRESULT 非 0、设备
-不支持、无 HEVC 解码器）时 `open_system_player` 返回 `None`，壳回落到
-`hongguo_playback::open`，日志里点名失败原因——不 panic、不黑屏。
+## 6. 旧 rendering-mode 结构（留档，已被替换）
 
-## 7. 验收（2026-10-20 真实壳实测）
+首版把引擎渲染进独立 `IDCompositionVisual`（内容视觉之下 + 裁剪/缩放双层 +
+黑底垫底），壳画透明洞。实测过 2x 60fps 零丢帧，但两画布结构持续出问题：
+分数坐标半像素白线、`AddVisual` z 序反直觉（`insertAbove=NULL` 语义相反）、
+透明洞漏桌面、`MF_MEDIA_ENGINE_DXGI_MANAGER` 缺旗标 60ms 崩设备、rendering
+mode 640×480 固定表面要 `UpdateVideoStream` 重设、换源/重建引擎逐集漏解码器
+内存（换源 +49.9MB private/集、36 集 2GB）。`system_video` 模块已删除；黑底
+视觉保留（resize 错帧的缝露黑不露桌面，与视频无关）。
 
-真实在线剧集（1920×1080 横版 + 竖版漫剧各一次），`HONGGUO_WM_METRICS=1`
-（`GetStatistics` 5s 窗口，只用于取证）：
+## 7. 验收（2026-10-22 frame-server，真实壳实测）
 
-| 项 | 结果 |
-| --- | --- |
-| 画面 | 舞台 1224×796，窗口抓帧（屏幕区域拷贝——PrintWindow 抓不到 DComp 内容）画面清晰、比例正确、透明洞生效 |
-| 覆盖层 | 顶栏 tab（漫剧/真人剧/推荐）、左侧栏、底部控制条都压在画面上（GPUI 画在视频位之上） |
-| 首帧 | 起播 1.1s（含取流表 + 渐进流注册）；切集 287ms（重建引擎） |
-| 2x | `rendered` 每 5s 增 300 帧 = **60fps**、`dropped` 恒为 0（30fps 内容 ×2） |
-| 倍速补发 | metadata 就绪前 `IsPlaybackRateSupported` 全 false：期望值先记、每帧节流补发，实测打开后 ~0.3s 生效（"倍速生效 2.00x"） |
-| 连播 | 40s 处 `ENDED` → 壳侧尾进 → 新引擎首帧 287ms，弹幕/计数/进度按新集重拉 |
-| 稳定性 | 连续播放 60s+，无设备丢失、无卡死（曾因 DXGI 管理器 60ms 崩设备，已修） |
-| 回退 | `VIDEO_BACKEND=gpui` 路径不受影响；引擎创建失败自动降级并重起当前集 |
+同机同协议（`LOOP=1` 6s 连切 34–37 集、debug 构建、2x），三轮对照：
 
-## 8. 已知边界（首版）
+| 指标 | rendering mode（换源复用） | frame-server（现行） |
+| --- | --- | --- |
+| private 内存/集 | +49.9MB（36 集 2GB） | **−0.4 ~ −2.1MB（走平）** |
+| 切集首帧 p50 / max | 167ms / 1668ms | **84ms / ~550ms** |
+| 帧统计（2x） | —（DComp 直推无此读数口径） | rendered ≈276/5s、dropped 0 |
+| 画面贴合 | 双画布，缝/白线靠逐条补丁 | 同画布，结构性无缝（进程内抓帧目检） |
+| 抓帧 | PrintWindow 黑图 | `render_to_image` 能拍到视频帧 |
 
-- MediaEngine 无播放列表：`preload_next` / `advance_preloaded` 返回 false，
-  切集走重建（实测 287ms，macOS 队列接力 15–50ms 的差距记录在此）。对齐方案：
-  预热一个渲染到**离屏视觉**的下一集引擎（`IDCompositionDevice::CreateVisual`
-  造一个不进树的视觉），转正时 `视频位.SetContent(预热视觉)` + `Play()` 再
-  `Pause()` 旧引擎——约一帧完成；vendored 补丁要加 `offscreen_visual` /
-  `set_content` 两个小接口，presenter 侧把 `engine/extended/stream/notify` 收进
-  一个可交换的 `Engine`，外加事件门控（预热实例在转正前不发事件）与
-  音量/静音/倍速重放。**未实现**，见进度表的 P1；
-- 倍速只做可用性探测 + 补发，没有 macOS 那种「引擎不支持就回落 1x」的静默降级；
-- 音频由引擎输出（系统音频栈），没有 audio tap——实测 2x/3x 无爆音/欠载听感
-  差异，壳里不做客观欠载指标（需要客观读数时用系统级工具）；
-- 窗口遮挡暂停仍是壳侧的「最小化暂停 + 老板键」，没有额外的遮挡事件监听。
+稳定性：连播 34–37 集无设备丢失、无引擎创建失败；a11y 探测窗口内的重入
+（「RefCell already borrowed」）经 open 出借用后归零。
+
+## 8. 已知边界
+
+- 引擎无播放列表：`preload_next`/`advance_preloaded` 返回 false，切集走重建
+  （p50 84ms，与 macOS 队列接力 15–50ms 的差距大幅收窄，离屏预热暂不需要）；
+- 音频由引擎输出（系统音频栈），无 audio tap（2x/3x 听感无欠载差异）；
+- 倍速仍是「探测 + 补发」，无静默降级档；
+- 多窗口/多显示器：视频 quad 按 HWND 登记，单窗口全局宿主；
+- 抓帧工具（`HONGGUO_SHOT`）现在能拍到视频帧（旧结构抓不到原生层）。

@@ -20,8 +20,9 @@ mod vsync;
 mod window;
 mod wrapper;
 
-// 本仓补丁（模块头有动机）：系统播放器的 DirectComposition 视频位。
-pub mod system_video;
+// 本仓补丁（模块头有动机）：系统播放器的视频 quad（frame-server 帧与
+// GPUI 内容画进同一张渲染目标）。
+pub mod video_quad;
 
 pub(crate) use clipboard::*;
 pub(crate) use destination_list::*;

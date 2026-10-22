@@ -811,6 +811,34 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
+            // Windows 系统 frame-server 的帧泵跟着渲染帧走（player-windows 的
+            // `present_frame` 在每帧 submit_stage 里泵）：弹幕在飞时弹幕动画
+            // 就在驱动重绘，弹幕关/无在飞时靠这个零尺寸连续帧元素顶住泵频
+            // ——否则只剩 33ms 节拍在推，2x 内容会丢一半帧（实测
+            // WM_METRICS rendered 133/5s、dropped 142/5s；对齐后零丢帧）。
+            // 零尺寸子元素不吃点击，舞台的暂停/双击命中不受影响。
+            .children((system_ready
+                && self
+                    .player
+                    .as_ref()
+                    .is_some_and(|p| !p.is_paused()))
+            .then(|| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(
+                        div().size(gpui_kit::px(0.0)).with_animation(
+                            "hg-video-pump",
+                            gpui_kit::Animation::new(std::time::Duration::from_millis(16))
+                                .repeat(),
+                            |el, _| el,
+                        ),
+                    )
+                    .into_any_element()
+            }))
             // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（Tauri 同址，
             // 见 `controls.rs` 的 stage-picker-wrap）
             // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）

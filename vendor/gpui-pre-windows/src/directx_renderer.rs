@@ -22,6 +22,7 @@ use windows::{
 use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
 use crate::*;
 use gpui::*;
+use windows_numerics::Matrix3x2;
 
 pub(crate) const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -92,6 +93,8 @@ struct DirectXRenderPipelines {
     mono_sprites: PipelineState<MonochromeSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
+    // 本仓补丁：系统播放器的视频 quad（见 video_quad 模块），单实例缓冲。
+    video_sprite: PipelineState<PolychromeSprite>,
 }
 
 struct DirectXGlobalElements {
@@ -119,8 +122,8 @@ struct DirectComposition {
     comp_device: IDCompositionDevice,
     #[expect(dead_code, reason = "持有即保活：目标对象释放会断开窗口合成")]
     comp_target: IDCompositionTarget,
-    /// 合成视觉树的根容器：内容视觉在它下面，系统播放器的视频位再往下
-    /// （见本仓补丁 `system_video`）。
+    /// 合成视觉树的根容器：黑底视觉与内容视觉挂在它下面（见
+    /// [`install_backdrop`]）。
     #[expect(dead_code, reason = "持有即保活：根容器释放会连带断开整棵视觉树")]
     comp_container: IDCompositionVisual,
     comp_visual: IDCompositionVisual,
@@ -167,6 +170,8 @@ impl DirectXRenderer {
 
         let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
             .context("Creating DirectX devices")?;
+        // 本仓补丁：把设备交给视频层（frame-server 引擎经设备管理器用它解码）。
+        video_quad::register(hwnd, &devices.device);
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
@@ -267,6 +272,8 @@ impl DirectXRenderer {
 
     fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
+        // 本仓补丁：旧设备的视频纹理/SRV 全部作废，代际 +1 让播放器重建。
+        video_quad::device_rebuilt();
 
         unsafe {
             #[cfg(debug_assertions)]
@@ -361,6 +368,9 @@ impl DirectXRenderer {
             _ => [0.0f32; 4],
         })?;
         self.upload_scene_buffers(scene)?;
+        // 本仓补丁：视频 quad 画在场景之前（clear 之后）——它在 z 序上垫底，
+        // GPUI 的弹幕/控制条/黑边全部自然压在它上面（见 video_quad 模块）。
+        self.draw_video_quad()?;
 
         let annotation = self
             .devices
@@ -825,6 +835,31 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    /// 系统播放器的视频 quad：把注册的当前帧画一个实例（复用 polychrome
+    /// sprite 管线，只把 SRV 换成视频纹理）。没有帧就什么都不画。
+    fn draw_video_quad(&mut self) -> Result<()> {
+        let Some((view, sprite)) = video_quad::frame_sprite_for(self.hwnd) else {
+            return Ok(());
+        };
+        let devices = self.devices.as_ref().context("devices missing")?;
+        self.pipelines.video_sprite.update_buffer(
+            &devices.device,
+            &devices.device_context,
+            &[sprite],
+        )?;
+        self.pipelines.video_sprite.draw_range_with_texture(
+            &devices.device_context,
+            &[Some(view)],
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
+            slice::from_ref(&self.globals.sampler),
+            0,
+            1,
+        )
+    }
+
     pub(crate) fn gpu_specs(&self) -> Result<GpuSpecs> {
         let devices = self.devices.as_ref().context("devices missing")?;
         let desc = unsafe { devices.adapter.GetDesc1() }?;
@@ -1002,6 +1037,14 @@ impl DirectXRenderPipelines {
             16,
             create_blend_state(device)?,
         )?;
+        // 本仓补丁：视频 quad 一次只画一帧，缓冲 1 个实例就够。
+        let video_sprite = PipelineState::new(
+            device,
+            "video_sprite_pipeline",
+            ShaderModule::PolychromeSprite,
+            1,
+            create_blend_state(device)?,
+        )?;
 
         Ok(Self {
             shadow_pipeline,
@@ -1012,6 +1055,7 @@ impl DirectXRenderPipelines {
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
+            video_sprite,
         })
     }
 }
@@ -1020,22 +1064,19 @@ impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        // 根是容器、内容单独一层：系统播放器的视频位要插在内容**之下**，
-        // 上游「根 = 内容」的形态没有位置放它（见 system_video 模块头）。
+        // 本仓补丁：根是容器，内容视觉挂在容器下，最底层先垫窗口黑底
+        // （[`install_backdrop`]）。视频 quad 不在这里——它与 GPUI 内容画进
+        // 同一张渲染目标（见 video_quad 模块），不再需要独立合成视觉。
         //
         // ⚠️ `referenceVisual = NULL` 时 z 序语义是反的（MS 文档）：
         // `insertAbove = TRUE` → 渲染在**所有兄弟之下**；`FALSE` → 在**所有
-        // 兄弟之上**。所以内容视觉必须用 FALSE 才是顶层（写反的后果：视频位
-        // 压在 GPUI 内容之上，进度条/弹幕/小窗全部控制条都被视频盖住）。
+        // 兄弟之上**。所以内容视觉用 FALSE（顶层）。
         let comp_container = unsafe { comp_device.CreateVisual() }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
         unsafe {
+            install_backdrop(&comp_device, &comp_container)?;
             comp_container.AddVisual(&comp_visual, false, None)?;
             comp_target.SetRoot(&comp_container)?;
-        }
-        if let Err(error) = crate::system_video::install(hwnd, &comp_device, &comp_container) {
-            // 视频位挂不上不拖垮整个渲染器：壳侧拿不到句柄会回落自研上屏。
-            log::warn!("system video layer install failed: {error}");
         }
 
         Ok(Self {
@@ -1053,6 +1094,54 @@ impl DirectComposition {
         }
         Ok(())
     }
+}
+
+/// 窗口黑底：1×1 黑表面拉伸到覆盖整个窗口，垫在**所有**子视觉之下。
+///
+/// 为什么需要：swapchain 是 `DXGI_ALPHA_MODE_PREMULTIPLIED` 的透明合成窗，
+/// 快速改窗口尺寸时内容必然错开一帧，任何没被覆盖的像素会**直接漏出桌面**
+/// （实测拖快一点就在画面边缘看到一条浅色细线）。macOS 从未出现这个问题，
+/// 因为它的窗口背景是黑的——这里补同一个语义：缝里露出来的一定是黑色。
+///
+/// 1×1 表面 + 8192 倍变换覆盖 ±4096 物理像素，任何窗口尺寸/DPI 都够用，
+/// 且不需要跟随 resize 更新（零每帧开销，显存占用 4 字节）。
+unsafe fn install_backdrop(
+    device: &IDCompositionDevice,
+    container: &IDCompositionVisual,
+) -> Result<()> {
+    unsafe {
+        let surface = device.CreateSurface(1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE)?;
+        let mut offset = windows::Win32::Foundation::POINT::default();
+        let texture: ID3D11Texture2D = surface.BeginDraw(None, &mut offset)?;
+        if let Ok(d3d) = texture.GetDevice()
+            && let Ok(context) = d3d.GetImmediateContext()
+            && let Ok(resource) = texture.cast::<ID3D11Resource>()
+        {
+            let mut view: Option<ID3D11RenderTargetView> = None;
+            if d3d
+                .CreateRenderTargetView(&resource, None, Some(&mut view))
+                .is_ok()
+                && let Some(view) = view
+            {
+                context.ClearRenderTargetView(&view, &[0.0, 0.0, 0.0, 1.0]);
+            }
+        }
+        surface.EndDraw()?;
+
+        let backdrop = device.CreateVisual()?;
+        backdrop.SetContent(&surface)?;
+        // 1×1 表面 → 覆盖 [-4096, 4096)² 物理像素。
+        backdrop.SetTransform2(&Matrix3x2 {
+            M11: 8192.0,
+            M22: 8192.0,
+            M31: -4096.0,
+            M32: -4096.0,
+            ..Matrix3x2::identity()
+        })?;
+        // insertAbove = TRUE + referenceVisual = NULL ⇒ 排在所有兄弟之后（最底层）。
+        container.AddVisual(&backdrop, true, None)?;
+    }
+    Ok(())
 }
 
 impl DirectXGlobalElements {
@@ -1304,6 +1393,7 @@ struct PathSprite {
 
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
+        video_quad::unregister(self.hwnd);
         #[cfg(debug_assertions)]
         if let Some(devices) = &self.devices {
             report_live_objects(&devices.device).ok();

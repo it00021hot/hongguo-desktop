@@ -20,10 +20,7 @@ use windows::Win32::Media::MediaFoundation::{
 use windows::core::{Result, implement};
 
 /// 一集的事件通道（引擎持有；通道关闭 = 宿主已弃，发送静默失败即可）。
-///
-/// **状态可共享**：引擎在集与集之间复用（见 `player.rs` 的引擎槽），回调对象
-/// 跟着引擎活下来，事件通道却每集换一条——所以事件状态放在 `Arc` 里，回调
-/// 对象与换源方共用同一份。
+/// 每集新引擎（见 `player.rs`），通道随 [`NotifyShared::new`] 一次绑定。
 pub(super) struct NotifyShared {
     events: Mutex<Option<mpsc::Sender<PlayerEvent>>>,
     /// 首次出画只报一次（`FIRSTFRAMEREADY` 与随后的 `PLAYING` 都可能到）。
@@ -39,16 +36,6 @@ impl NotifyShared {
             started: AtomicBool::new(false),
             buffering: AtomicBool::new(false),
         }
-    }
-
-    /// 换集：换事件通道并把「已出画/在缓冲」两个去重位清回初始态。
-    ///
-    /// 不清的话，第二集的 `FIRSTFRAMEREADY` 会被 `started` 吞掉——壳侧永远
-    /// 等不到新一集的首帧事件（表现为「切集后一直黑屏」）。
-    pub(super) fn attach(&self, events: mpsc::Sender<PlayerEvent>) {
-        *self.events.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-        self.started.store(false, Ordering::SeqCst);
-        self.buffering.store(false, Ordering::SeqCst);
     }
 
     fn send(&self, event: PlayerEvent) {

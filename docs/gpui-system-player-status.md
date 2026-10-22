@@ -1,6 +1,6 @@
-# GPUI 系统播放器：进度与交接（macOS 已完成，Windows 已完成 Phase 2）
+# GPUI 系统播放器：进度与交接（macOS 已完成，Windows 已完成 Phase 2 + frame-server 迁移）
 
-最后更新：2026-10-20
+最后更新：2026-10-22
 
 ## 1. 已完成并验证
 
@@ -13,7 +13,9 @@
 | 已看完跳过 + 续播 clamp + 加载条 | 已看完不续播/不预取；剩余 <2s 直接下一集；加载条首帧后灭 | `9e7fab5` |
 | 冷切集 + 8MB Range 超时 | 冷切中位 37ms；75s/2x 无 8MB 超时 | `9e7fab5` |
 | 片尾单一真相源（本轮） | 删除 30fps 尾部兜底，只认 Ended + 三代次幂等；长跑待复验 | `5e127fc` |
-| **Phase 2 Windows（本轮）** | MediaEngine + 自定义 `IMFByteStream` + DComp 视频位；真实壳 2x 60fps、0 丢帧、切集 287ms | 本次提交 |
+| Phase 2 Windows（旧） | MediaEngine + 自定义 `IMFByteStream` + DComp 视频位；真实壳 2x 60fps、0 丢帧、切集 287ms | `146b23b` |
+| 连播内存治理（2026-10-22） | 每集新引擎 + 显式 `Shutdown`：连播 36 集 private 走平（此前 +49.9MB/集） | 本次提交 |
+| **frame-server 迁移（2026-10-22，现行）** | 渲染器设备补旗标共享给引擎 + `TransferVideoFrame` → 视频 quad 同画布；连播走平、切集首帧 p50 84ms、2x dropped=0、画面无缝（`render_to_image` 可拍到视频），详见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | 本次提交 |
 
 ## 2. 已验证（本机）
 
@@ -27,8 +29,8 @@
 
 | 项 | 说明 | 优先级 |
 | --- | --- | --- |
-| ~~Phase 2 Windows~~ | **已完成**：MediaEngine + 自定义 `IMFByteStream` + DComp 视频位，见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | P0 |
-| Windows 切集提速 | Windows 无播放列表，切集走重建（实测 287ms）。方案：预热一个「离屏渲染的下一集引擎」，转正时把视频位的 `SetContent` 换到它的视觉上再 Play（≈一帧）；vendored 补丁需加 `offscreen_visual` / `set_content` 两个小接口 | P1 |
+| ~~Phase 2 Windows~~ | **已完成**；2026-10-22 进一步迁移到 frame-server（同画布视频 quad），见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | P0 |
+| ~~Windows 切集提速~~ | frame-server + 每集新引擎后实测 p50 84ms，离屏预热方案不再需要 | 已关闭 |
 | 首播 0.7–3.7s | 取流表 + 渐进探测慢，可并行/预注册 | P1 |
 | 遮挡暂停 | 窗口完全被遮挡时暂停（现在只有最小化/老板键） | P1 |
 | ~~音频客观指标~~ | **已关闭**：系统播放器直接出声（平台音频栈），实测 2x/3x 无爆音与欠载听感差异；需要客观读数时用系统级工具，不在壳里做 audio tap | — |
@@ -36,7 +38,7 @@
 | 预加载句柄上限 | `LoaderHandle` 按集累积，未做两槽上限 | P2 |
 | loader 池生命周期 | 4 worker 进程级，退出不 join | P2 |
 | 多窗口/多显示器 | 系统播放器为单窗口全局宿主 | P2 |
-| 预览截图 | `render_to_image` 抓不到原生视频层（macOS AVPlayerLayer / Windows DComp），视频区黑，需系统截图 | P2 |
+| ~~预览截图~~ | **Windows 已解决**：视频 quad 画进 GPUI 渲染目标，`render_to_image` 能拍到；macOS（AVPlayerLayer）仍是黑的 | P2（macOS 残留） |
 
 ## 4. 待验证（重要）
 
@@ -57,23 +59,26 @@ HONGGUO_AV_METRICS=1           # 5s 一次帧率/间隔统计（macOS）
 HONGGUO_WM_METRICS=1           # 5s 一次 rendered/dropped 统计（Windows）
 HONGGUO_AV_RATE=2              # 首帧后切 2x
 HONGGUO_AV_NEXT_EPISODE_MS=5000 # 首帧后 5s 切下一集
+HONGGUO_AV_NEXT_EPISODE_LOOP=1  # 每集首帧都重新计时（连播内存曲线取证）
 ```
 
-Windows 下抓帧取证：DComp 内容不进窗口重定向表面，`PrintWindow` 抓到的是
-黑图，只能用屏幕区域拷贝（窗口提前后 `BitBlt` 窗口矩形）。
+Windows 下抓帧取证：frame-server 后视频画进 GPUI 渲染目标，`render_to_image`
+（`HONGGUO_SHOT`）与 `PrintWindow` 都能拍到；macOS 原生层仍需系统截图。
 
-## 6. Phase 2 Windows（已落地）
+## 6. Windows 实现位置（frame-server 现行）
 
 - 设计/实测/坑：`docs/gpui-system-player-windows.md`
 - 平台开关：`crates/hongguo-gpui/src/video_backend.rs`（macOS/Windows 默认 system）
-- Windows 实现：`crates/hongguo-gpui/src/wm_presenter/`（mf/stream/events/view/player）
-- 视频位挂点：`vendor/gpui-pre-windows` 的 `system_video` 模块（补丁说明见根 `Cargo.toml`）
+- Windows 实现：`crates/hongguo-player-windows/src/`（mf/stream/events/view/player）
+- 视频 quad 挂点：`vendor/gpui-pre-windows` 的 `video_quad` 模块（设备旗标与
+  渲染补丁同 crate，说明见根 `Cargo.toml` 的 [patch.crates-io]）
 - 引擎创建失败：`video_backend::fall_back_to_gpui()` 翻开关 + 重走起播，不 panic
 
 ## 7. 风险
 
 - 已看完判定依赖历史 `episode_cnt`；
 - `Ended` 幂等依赖每 item 单次回调，长跑待验；
-- 系统后端无逐帧回调，弹幕/进度靠 30fps 节拍；
+- Windows 弹幕/进度节拍 30fps（画面本身由渲染帧泵驱动，见 windows 文档 §3）；
 - 音频由系统引擎输出（macOS AVPlayer / Windows MediaEngine），无欠载指标；
-- Windows 的视频位是 vendored gpui 补丁，上游升级时要重新对一遍视觉树改动。
+- 视频 quad 是 vendored gpui-pre-windows 补丁（设备旗标 + 渲染器插入绘制），
+  上游升级时要重新对一遍这三处。

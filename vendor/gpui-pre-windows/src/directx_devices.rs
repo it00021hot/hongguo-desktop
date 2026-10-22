@@ -10,8 +10,9 @@ use windows::Win32::{
         },
         Direct3D11::{
             D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_DEBUG,
-            D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS, D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS,
-            D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+            D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS,
+            D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS, D3D11_SDK_VERSION, D3D11CreateDevice,
+            ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
         },
         Dxgi::{
             CreateDXGIFactory2, DXGI_CREATE_FACTORY_DEBUG, DXGI_CREATE_FACTORY_FLAGS,
@@ -132,7 +133,16 @@ fn get_adapter(
         )
         .log_err()
         {
-            return Ok((adapter, device, context.unwrap(), feature_level));
+            let device_context = context.unwrap();
+            // 本仓补丁：Media Foundation 的 frame-server 引擎在**这台设备**上
+            // 解码/建视频处理链（设备管理器把设备交给引擎，见本仓补丁
+            // video_quad）。`VIDEO_SUPPORT` 是 MF 建视频处理链的硬前提（缺了
+            // 直接 DXGI_ERROR_DEVICE_REMOVED），多线程保护串行化 MF 工作线程
+            // 与渲染器对立即上下文的并发使用。补丁前的旗标只有 BGRA_SUPPORT。
+            if let Ok(multithread) = device_context.cast::<ID3D11Multithread>() {
+                unsafe { let _ = multithread.SetMultithreadProtected(true); }
+            }
+            return Ok((adapter, device, device_context, feature_level));
         }
     }
 
@@ -148,9 +158,9 @@ fn get_device(
 ) -> Result<ID3D11Device> {
     let mut device: Option<ID3D11Device> = None;
     let device_flags = if debug_layer_available {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
     } else {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT
     };
     unsafe {
         D3D11CreateDevice(

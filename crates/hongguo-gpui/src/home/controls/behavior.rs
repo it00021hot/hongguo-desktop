@@ -61,13 +61,17 @@ impl HomeView {
                     // 系统后端没有后续 Frame 事件；这里必须主动调度一帧，
                     // 否则舞台永远停在上一帧的黑色/封面。
                     cx.notify();
-                    // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集。
+                    // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集；
+                    // 再给 HONGGUO_AV_NEXT_EPISODE_LOOP=1 则每集首帧都重新计时
+                    //（连播内存曲线取证用，一次开关连切到底）。
                     if let Ok(ms) = std::env::var("HONGGUO_AV_NEXT_EPISODE_MS")
                         && let Ok(ms) = ms.parse::<u64>()
                     {
                         static ONCE: std::sync::atomic::AtomicBool =
                             std::sync::atomic::AtomicBool::new(false);
-                        if !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        let looping =
+                            std::env::var("HONGGUO_AV_NEXT_EPISODE_LOOP").is_ok_and(|v| v == "1");
+                        if looping || !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
                             cx.spawn(async move |this, cx| {
                                 cx.background_executor()
                                     .timer(std::time::Duration::from_millis(ms))

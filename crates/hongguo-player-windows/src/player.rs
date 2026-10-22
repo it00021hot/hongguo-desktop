@@ -1,29 +1,40 @@
-//! Windows 系统播放器：MediaEngine 的 [`PlayerLike`] / [`VideoPresenter`] 实现。
+//! Windows 系统播放器：MediaEngine frame-server 模式的 [`PlayerLike`] /
+//! [`VideoPresenter`] 实现。
 //!
-//! 与 macOS 实现的 `player.rs` 对位：引擎自己解码、自己出声、自己把画面合成进
-//! DirectComposition 视觉；本层只做控制面（播放/暂停/seek/倍速/音量）、舞台几何
-//! 下发与引擎统计取证。窗口形态切换不重建引擎，只改视觉的 offset/scale/clip
-//! （[`SystemVideoStage`]）。
+//! 与 macOS 实现的 `player.rs` 对位：引擎自己解码、自己出声；本层只做控制面
+//! （播放/暂停/seek/倍速/音量）、帧泵与舞台几何。与 macOS 的差异在画面通路：
+//! 引擎经 `TransferVideoFrame` 把帧写进渲染器设备上的 BGRA 纹理，视频 quad
+//! （vendor 补丁）把它与 GPUI 内容画进**同一张渲染目标**——没有独立合成层，
+//! 缩放/黑边/窗口形态全部是同画布语义（对齐 nsh-platform-windows 的 video）。
 //!
-//! 引擎渲染分辨率：rendering mode 默认把视频画进一块 640×480 的固定表面（spike
-//! 实测），所以每次拿到原生尺寸就用 `UpdateVideoStream` 把落点重设成视频原生
-//! 尺寸——画质与"是否全屏"解耦，缩放交给 DComp。
+//! **每帧泵**（[`SystemPlayer::present_frame`]，由壳的 `submit_stage` 每帧带进
+//! 来，即 vsync 节奏）：`OnVideoStreamTick` 报新帧才 `TransferVideoFrame`，
+//! 暂停自然停在最后一帧。
+//!
+//! **每集一个新引擎**（对齐 nsh 的 video 纪律）：换源
+//! （`SetSourceFromByteStream`）只换源不关旧源，旧解码器的显存帧池与 CPU 参考
+//! 帧逐集滞留；`IMFMediaEngine` 没有「只关源」的 API（`Stop` 属 MediaSession）。
+//! 每集新引擎 + Drop 里显式 `Shutdown`，旧解码器随引擎一起释放；解码设备是
+//! 渲染器那台（[`mf::device_manager`] 进程级共享），新建引擎不再各自付设备的
+//! 开销（2026-10-22 实测：换源复用 +49.9MB private/集；共享设备 + 新引擎后走平）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use gpui_pre_windows::system_video::{SystemVideoLayer, SystemVideoStage};
+use gpui_pre_windows::video_quad::{VideoQuad, VideoRect};
 use hongguo_player_api::{
     HostWindow, PlaySource, PlayerEvent, PlayerLike, PresenterBounds, PresenterFit, StallHook,
     VideoPresenter,
 };
 use tokio::sync::mpsc;
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{RECT, S_OK};
+use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Media::MediaFoundation::{
     IMFByteStream, IMFMediaEngine, IMFMediaEngineEx, IMFMediaEngineNotify,
-    MF_MEDIA_ENGINE_STATISTIC_FRAMES_DROPPED, MF_MEDIA_ENGINE_STATISTIC_FRAMES_RENDERED,
+    MF_MEDIA_ENGINE_STATISTIC_FRAMES_DROPPED, MF_MEDIA_ENGINE_STATISTIC_FRAMES_RENDERED, MFARGB,
 };
+use windows::core::Interface;
 
 use super::{events, mf, stream, view};
 
@@ -49,56 +60,35 @@ struct Staged {
     visible: bool,
 }
 
-struct ViewState {
-    /// 视频位句柄：`attach` 时按需取，提交失败（渲染器重建）后清空重取。
-    layer: Option<SystemVideoLayer>,
-    /// 窗口 DPI 缩放：GPUI 逻辑像素 → DComp 物理像素。
-    scale: f32,
+/// 播放器自己持有的帧纹理：按（设备代际, 原生尺寸）失效重建。
+struct FrameTexture {
+    texture: ID3D11Texture2D,
+    size: (u32, u32),
+    generation: u64,
 }
-
-/// 进程级「当前引擎」：MediaEngine 没有播放列表，每集重建一个引擎的代价是
-/// 实测两笔——切集 287ms，以及**每集约 35MB 的原生解码器/设备开销堆积**
-/// （进程内存实测每换一集涨约 35MB，而 Rust 侧缓存是平的，见壳的
-/// `[Home][mem]` 日志）。
-///
-/// 这里把引擎留住：换集时换源（`SetSourceFromByteStream`）而不是重建。
-/// 换源不成功（引擎已被 Shutdown / 窗口重建）就退回重建。
-struct EngineCell {
-    engine: IMFMediaEngine,
-    extended: IMFMediaEngineEx,
-    /// 事件回调的共享状态（换源时换事件通道，见 `events::NotifyShared`）。
-    shared: Arc<events::NotifyShared>,
-    /// 换源代数：每次换源 +1。旧句柄在 Drop 时只在「引擎现在放的还是我这一集」
-    /// 时才停引擎——换源之后引擎已经在放新的一集，停它等于把新集也停了。
-    epoch: AtomicU64,
-    /// 引擎创建时的宿主窗口（HWND）：窗口重建后旧引擎的落点视觉作废，不复用。
-    window: isize,
-}
-
-/// 进程级引擎槽：存着「当前这一集在用的引擎」，下一集换源复用它。
-static ENGINE_SLOT: Mutex<Option<Arc<EngineCell>>> = Mutex::new(None);
-
-// SAFETY: 与 [`SystemPlayer`] 同一套约定——Media Foundation 的接口是自由线程的，
-// 引擎的调用点全在 GPUI 主线程；槽里的 `Arc` 只做所有权传递，不跨线程调方法。
-unsafe impl Send for EngineCell {}
-unsafe impl Sync for EngineCell {}
 
 pub struct SystemPlayer {
-    cell: Arc<EngineCell>,
-    /// 本句柄打开时的换源代数（Drop 时据此判断引擎现在放的是不是我的这一集）。
-    epoch: u64,
+    engine: IMFMediaEngine,
+    extended: IMFMediaEngineEx,
+    /// 视频 quad：帧的落点（渲染器每帧从这里取纹理画进渲染目标）。
+    quad: VideoQuad,
     /// 在线流的字节流（引擎持有引用，这里只是明确保活）；本地文件为 None。
     _stream: Option<IMFByteStream>,
     paused: AtomicBool,
     rate: AtomicU64,
     staged: Mutex<Staged>,
-    state: Mutex<ViewState>,
-    /// 已下发给引擎的渲染尺寸（打包 w<<32|h）。
+    /// 窗口 DPI 缩放：GPUI 逻辑像素 → 物理像素。
+    scale: Mutex<f32>,
+    /// 帧纹理（按需建）；None = 还没有可用画面。
+    frame: Mutex<Option<FrameTexture>>,
+    /// 已探得的原生视频尺寸（打包 w<<32|h；metadata 未就绪为 0）。
     announced: AtomicU64,
     /// 期望倍速（用户偏好）与实际生效的倍速：metadata 就绪前引擎一律报「不支持」。
     applied_rate: AtomicU64,
     rate_retry_at: Mutex<Instant>,
     metrics_at: Mutex<Instant>,
+    /// 落点是否已提交（avoid 每帧重复 set_frame；可见性翻转时清帧用）。
+    presented: AtomicBool,
 }
 
 // SAFETY: Media Foundation 与 DirectComposition 的接口都是自由线程的；本结构的
@@ -108,9 +98,6 @@ unsafe impl Send for SystemPlayer {}
 unsafe impl Sync for SystemPlayer {}
 
 /// 打开一集系统播放器。返回 `None` 表示引擎起不来——调用方回落到自研上屏。
-///
-/// 引擎尽量复用：进程级槽里若还有**同一个窗口**的引擎，就换源接着用
-/// （不重建引擎 = 不付重建的 287ms，也不堆原生解码器资源）。
 pub fn open(
     source: PlaySource,
     start_secs: f64,
@@ -121,42 +108,12 @@ pub fn open(
     // 分段耗时：起播慢要能拆开看——「建引擎 / 挂源 / 起播」各占多少，
     // 才知道该优化哪一段（壳侧只记得到首帧的总时长）。
     let opened_at = Instant::now();
-    let layer = view::current_layer()?;
-    let window = view::window_id()?;
-
-    // 复用路径：槽里的引擎属于同一个窗口才复用（窗口重建后旧引擎的落点
-    // 视觉作废，复用它会黑屏）。
-    let reused = ENGINE_SLOT.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if let Some(cell) = reused {
-        if cell.window != window {
-            log::info!("[WmPresenter] 宿主窗口已重建，不复用旧引擎");
-        } else {
-            cell.shared.attach(events.clone());
-            match attach_source(&cell, source.clone(), on_stall.clone()) {
-                Ok(byte_stream) => {
-                    let epoch = cell.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-                    return finish_open(
-                        cell,
-                        byte_stream,
-                        epoch,
-                        start_secs,
-                        rate,
-                        opened_at,
-                        layer,
-                        Reused::Yes,
-                    );
-                }
-                Err(error) => {
-                    log::warn!("[WmPresenter] 复用引擎换源失败（{error}），重建引擎");
-                }
-            }
-        }
-    }
-
-    // 新建引擎：回调状态与事件通道一起建（换源时只换通道、引擎不动）。
-    let shared = Arc::new(events::NotifyShared::new(events));
-    let notify: IMFMediaEngineNotify = events::Notify::new(Arc::clone(&shared)).into();
-    let (engine, extended) = match mf::create_engine(layer.render_target(), &notify) {
+    let quad = view::video()?;
+    let device = quad.device()?;
+    let generation = quad.generation();
+    let notify: IMFMediaEngineNotify =
+        events::Notify::new(Arc::new(events::NotifyShared::new(events))).into();
+    let (engine, extended) = match mf::create_engine(&device, generation, &notify) {
         Ok(engine) => engine,
         Err(error) => {
             log::error!("[WmPresenter] MediaEngine 创建失败: {error}");
@@ -164,57 +121,42 @@ pub fn open(
         }
     };
     let engine_at = Instant::now();
-    let cell = Arc::new(EngineCell {
-        engine,
-        extended,
-        shared,
-        epoch: AtomicU64::new(0),
-        window,
-    });
-    let byte_stream = match attach_source(&cell, source, on_stall) {
+    let byte_stream = match attach_source(&engine, &extended, source, on_stall) {
         Ok(byte_stream) => byte_stream,
         Err(error) => {
+            // 引擎已挂了半个源：显式停掉再交给 Drop 释放，别留着自收。
+            unsafe {
+                engine.Pause().ok();
+                engine.Shutdown().ok();
+            }
             log::error!("[WmPresenter] {error}");
             return None;
         }
     };
-    let epoch = cell.epoch.fetch_add(1, Ordering::SeqCst) + 1;
     finish_open(
-        cell,
+        engine,
+        extended,
+        quad,
         byte_stream,
-        epoch,
         start_secs,
         rate,
         opened_at,
-        layer,
-        Reused::No(engine_at),
+        engine_at,
     )
 }
 
-/// 引擎是复用的还是新建的（只影响耗时日志的措辞）。
-enum Reused {
-    Yes,
-    No(Instant),
-}
-
-/// 把一集的源挂到引擎上（新建与换源共用一条路）：在线流走字节流，本地文件走 URL。
+/// 把一集的源挂到引擎上：在线流走字节流，本地文件走 URL。
 fn attach_source(
-    cell: &EngineCell,
+    engine: &IMFMediaEngine,
+    extended: &IMFMediaEngineEx,
     source: PlaySource,
     on_stall: Option<StallHook>,
 ) -> Result<Option<IMFByteStream>, String> {
-    // 【实测结论】Media Engine 的换源（`SetSourceFromByteStream`）只换源、**不
-    // 关旧源**：旧解码器的显存帧池与 CPU 参考帧要等旧源自己关闭才释放，实测
-    // 逐集滞留（每集约 19MB 显存 / 55MB 系统内存，连播 6 集涨 95MB/265MB）。
-    // 断字节流无效（drain 不是瓶颈）；重建引擎也无效（曲线逐点相同）⇒ 涨的
-    // 是每台新设备/新解码器的常驻开销，MF 与驱动都不归还。`IMFMediaEngine`
-    // 也没有「只关源」的 API（`Stop` 是 MediaSession 的）⇒ Media Engine 路线
-    // 下无法主动释放，只能靠「不换解码器」（虚拟播放列表）根治。
     match source {
         PlaySource::Online { vid, definition } => {
             let stream = stream::open(vid.clone(), definition, on_stall);
             let url = windows::core::BSTR::from(format!("https://hongguo.local/stream/{vid}.mp4"));
-            unsafe { cell.extended.SetSourceFromByteStream(&stream, &url) }
+            unsafe { extended.SetSourceFromByteStream(&stream, &url) }
                 .map_err(|error| format!("设置字节流源失败（{vid}@{definition}）: {error}"))?;
             Ok(Some(stream))
         }
@@ -223,43 +165,44 @@ fn attach_source(
                 "file:///{}",
                 path.to_string_lossy().replace('\\', "/")
             ));
-            unsafe { cell.engine.SetSource(&url) }
+            unsafe { engine.SetSource(&url) }
                 .map_err(|error| format!("设置本地文件源失败（{}）: {error}", path.display()))?;
             Ok(None)
         }
     }
 }
 
-/// 起播收尾：定位起点、起播、组装句柄，并把引擎放回进程级槽（下一集换源复用）。
+/// 起播收尾：定位起点、起播、组装句柄。
 #[expect(
     clippy::too_many_arguments,
     reason = "起播参数面一一对应，不拆结构体反而失真"
 )]
 fn finish_open(
-    cell: Arc<EngineCell>,
+    engine: IMFMediaEngine,
+    extended: IMFMediaEngineEx,
+    quad: VideoQuad,
     byte_stream: Option<IMFByteStream>,
-    epoch: u64,
     start_secs: f64,
     rate: f64,
     opened_at: Instant,
-    layer: SystemVideoLayer,
-    reused: Reused,
+    engine_at: Instant,
 ) -> Option<Arc<dyn PlayerLike>> {
-    let source_at = Instant::now();
     unsafe {
         // 续播起点：metadata 就绪后引擎会按这个位置出画。
         if start_secs > SEEK_EPSILON_SECS {
-            cell.engine.SetCurrentTime(start_secs).ok();
+            engine.SetCurrentTime(start_secs).ok();
         }
-        if let Err(error) = cell.engine.Play() {
+        if let Err(error) = engine.Play() {
             log::error!("[WmPresenter] Play 失败: {error}");
+            engine.Shutdown().ok();
             return None;
         }
     }
     let play_at = Instant::now();
     let player = Arc::new(SystemPlayer {
-        cell: Arc::clone(&cell),
-        epoch,
+        engine,
+        extended,
+        quad,
         _stream: byte_stream,
         paused: AtomicBool::new(false),
         // 倍速在 metadata 就绪前 `IsPlaybackRateSupported` 一律 false（spike 实测）：
@@ -277,29 +220,18 @@ fn finish_open(
             fit: PresenterFit::Contain,
             visible: false,
         }),
-        state: Mutex::new(ViewState {
-            layer: Some(layer),
-            scale: 1.0,
-        }),
+        scale: Mutex::new(1.0),
+        frame: Mutex::new(None),
         announced: AtomicU64::new(0),
         metrics_at: Mutex::new(Instant::now()),
+        presented: AtomicBool::new(false),
     });
     player.try_apply_rate();
-    // 放回进程级槽：下一集换源复用（而不是重建引擎）。
-    *ENGINE_SLOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(cell);
-    match reused {
-        Reused::Yes => log::info!(
-            "[WmPresenter] 复用引擎换源起播（起点 {start_secs:.1}s，期望 {rate:.2}x）：挂源 {:.0}ms / 起播 {:.0}ms",
-            source_at.duration_since(opened_at).as_secs_f64() * 1000.0,
-            play_at.duration_since(source_at).as_secs_f64() * 1000.0,
-        ),
-        Reused::No(engine_at) => log::info!(
-            "[WmPresenter] 系统播放器已打开（起点 {start_secs:.1}s，期望 {rate:.2}x）：建引擎 {:.0}ms / 挂源 {:.0}ms / 起播 {:.0}ms",
-            engine_at.duration_since(opened_at).as_secs_f64() * 1000.0,
-            source_at.duration_since(engine_at).as_secs_f64() * 1000.0,
-            play_at.duration_since(source_at).as_secs_f64() * 1000.0,
-        ),
-    }
+    log::info!(
+        "[WmPresenter] 系统播放器已打开（起点 {start_secs:.1}s，期望 {rate:.2}x）：建引擎 {:.0}ms / 挂源到起播 {:.0}ms",
+        engine_at.duration_since(opened_at).as_secs_f64() * 1000.0,
+        play_at.duration_since(engine_at).as_secs_f64() * 1000.0,
+    );
     Some(player)
 }
 
@@ -307,8 +239,7 @@ impl SystemPlayer {
     /// 原生视频尺寸（metadata 未就绪时为 (0, 0)）。
     ///
     /// **一次 item 内尺寸不变**：metadata 就绪后缓存住（打包进 `announced`），
-    /// 省掉每帧一次 `GetNativeVideoSize` 的 COM 往返——舞台几何与黑边两处
-    /// 每帧都要问原生尺寸，不缓存就是每帧两次 COM 调用。
+    /// 省掉每帧一次 `GetNativeVideoSize` 的 COM 往返。
     fn native_size(&self) -> (u32, u32) {
         let announced = self.announced.load(Ordering::SeqCst);
         if announced != 0 {
@@ -317,82 +248,113 @@ impl SystemPlayer {
         let mut width = 0u32;
         let mut height = 0u32;
         unsafe {
-            self.cell
-                .engine
+            self.engine
                 .GetNativeVideoSize(Some(&mut width as *mut u32), Some(&mut height as *mut u32))
                 .ok();
+        }
+        if width != 0 && height != 0 {
+            self.announced.store(
+                (u64::from(width) << 32) | u64::from(height),
+                Ordering::SeqCst,
+            );
         }
         (width, height)
     }
 
-    /// 把引擎的渲染落点设成视频原生尺寸（rendering mode 默认 640×480 固定表面）。
-    fn announce_native_size(&self) {
+    /// 帧泵：壳每帧经 `submit_stage` 进来一次（vsync 节奏）。
+    ///
+    /// ① `OnVideoStreamTick` 报新帧才 `TransferVideoFrame` 进纹理（暂停自然
+    /// 停在最后一帧）；② 按舞台几何把纹理落点提交给视频 quad；③ 倍速补发与
+    /// 统计取证顺路。
+    fn present_frame(&self) {
+        self.try_apply_rate();
+        let staged = *self.staged.lock().expect("舞台锁 poisoned");
+        if !staged.visible {
+            if self.presented.swap(false, Ordering::SeqCst) {
+                self.quad.clear_frame();
+            }
+            return;
+        }
         let (width, height) = self.native_size();
-        if width == 0 || height == 0 {
+        let Some(bounds) = staged
+            .bounds
+            .filter(|bounds| !bounds.is_empty() && width > 0)
+        else {
             return;
-        }
-        let packed = (u64::from(width) << 32) | u64::from(height);
-        if self.announced.swap(packed, Ordering::SeqCst) == packed {
-            return;
-        }
-        let rect = RECT {
-            left: 0,
-            top: 0,
-            right: width as i32,
-            bottom: height as i32,
         };
-        match unsafe {
-            self.cell
-                .extended
-                .UpdateVideoStream(None, Some(&rect), None)
-        } {
-            Ok(()) => log::info!("[WmPresenter] 渲染落点设为原生 {width}×{height}"),
-            Err(error) => {
-                log::warn!("[WmPresenter] UpdateVideoStream({width}×{height}) 失败: {error}")
+        if !self.ensure_frame_texture(width, height) {
+            return;
+        }
+        let frame = self.frame.lock().expect("帧纹理锁 poisoned");
+        let Some(frame) = frame.as_ref() else {
+            return;
+        };
+        let mut pts = 0i64;
+        // SAFETY: a call on a live engine; S_FALSE（无新帧）是成功码，windows
+        // crate 不区分成功码，所以走裸 vtable（对齐 nsh 的 tick）。
+        let fresh = unsafe {
+            (Interface::vtable(&self.engine).OnVideoStreamTick)(self.engine.as_raw(), &mut pts)
+        } == S_OK;
+        if fresh {
+            let rect = RECT {
+                left: 0,
+                top: 0,
+                right: width as i32,
+                bottom: height as i32,
+            };
+            let black = MFARGB {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbAlpha: 255,
+            };
+            // SAFETY: 引擎在设备管理器那台设备上做 NV12→BGRA 转换写进纹理；
+            // 设备开多线程保护，与渲染器并发安全。
+            unsafe {
+                self.engine
+                    .TransferVideoFrame(&frame.texture, None, &rect, Some(&black))
+                    .ok();
             }
         }
+        let scale = *self.scale.lock().expect("DPI 锁 poisoned");
+        let dest = geometry(bounds, staged.fit, scale, (width, height));
+        self.quad
+            .set_frame(frame.texture.clone(), (width, height), dest);
+        self.presented.store(true, Ordering::SeqCst);
+        self.log_metrics();
     }
 
-    /// 提交舞台几何（幂等；几何没变时 [view::submit] 内部直接返回）。
-    fn apply_stage(&self) {
-        let staged = *self.staged.lock().expect("舞台锁 poisoned");
-        // 先 announce（顺带把原生尺寸缓存住），再取尺寸：announce 之后
-        // `native_size` 命中缓存，不再有 COM 往返。
-        self.announce_native_size();
-        let (native_w, native_h) = self.native_size();
-        // 倍速可能因为「metadata 还没就绪」在 open 时被拒：每帧按节流补试。
-        self.try_apply_rate();
-
-        let Some(layer) = self.state.lock().expect("视频位锁 poisoned").layer.clone() else {
-            return;
-        };
-        let stage = staged
-            .bounds
-            .filter(|bounds| staged.visible && !bounds.is_empty() && native_w > 0 && native_h > 0)
-            .map(|bounds| {
-                let scale = self.state.lock().expect("视频位锁 poisoned").scale;
-                geometry(bounds, staged.fit, scale, (native_w, native_h))
-            });
-        let alive = view::submit(&layer, stage.as_ref());
-        if !alive {
-            // 渲染器重建（设备丢失）后旧视觉失效：清掉，下一次 attach 重取。
-            self.state.lock().expect("视频位锁 poisoned").layer = None;
-            // 引擎的画面落点就是那个作废的视觉：它已经画不出东西了，别让下一集
-            // 换源复用它（换源会成功、但画面是黑的）——从槽里摘掉，下一集重建。
-            let mut slot = ENGINE_SLOT.lock().expect("引擎槽锁 poisoned");
-            if slot
+    /// 帧纹理就位：没有或已失效（设备代际变了/尺寸变了）就重建。
+    fn ensure_frame_texture(&self, width: u32, height: u32) -> bool {
+        let generation = self.quad.generation();
+        {
+            let frame = self.frame.lock().expect("帧纹理锁 poisoned");
+            if frame
                 .as_ref()
-                .is_some_and(|cell| std::ptr::eq(cell.as_ref(), self.cell.as_ref()))
+                .is_some_and(|f| f.size == (width, height) && f.generation == generation)
             {
-                *slot = None;
+                return true;
             }
         }
-        self.log_metrics();
+        let texture = match self.quad.create_frame_texture(width, height) {
+            Ok(texture) => texture,
+            Err(error) => {
+                log::warn!("[WmPresenter] 帧纹理创建失败（{width}×{height}）: {error}");
+                return false;
+            }
+        };
+        *self.frame.lock().expect("帧纹理锁 poisoned") = Some(FrameTexture {
+            texture,
+            size: (width, height),
+            generation,
+        });
+        log::info!("[WmPresenter] 帧纹理就绪 {width}×{height}（代际 {generation}）");
+        true
     }
 
     /// 把期望倍速补发给引擎（引擎只在 metadata 就绪后才认这个值）。
     ///
-    /// 节流到 [`RATE_RETRY_EVERY`]：`apply_stage` 每帧都会调它，而
+    /// 节流到 [`RATE_RETRY_EVERY`]：`present_frame` 每帧都会调它，而
     /// `IsPlaybackRateSupported` 是一次 COM 往返。
     fn try_apply_rate(&self) {
         let desired = self.rate();
@@ -407,11 +369,11 @@ impl SystemPlayer {
             }
             *at = Instant::now();
         }
-        if !mf::rate_supported(&self.cell.extended, desired) {
+        if !mf::rate_supported(&self.extended, desired) {
             log::debug!("[WmPresenter] 引擎暂不支持 {desired}x（metadata 未就绪？）");
             return;
         }
-        match unsafe { self.cell.engine.SetPlaybackRate(desired) } {
+        match unsafe { self.engine.SetPlaybackRate(desired) } {
             Ok(()) => {
                 self.applied_rate.store(desired.to_bits(), Ordering::SeqCst);
                 log::info!("[WmPresenter] 倍速生效 {desired:.2}x");
@@ -430,36 +392,28 @@ impl SystemPlayer {
             return;
         }
         *last = Instant::now();
-        let rendered = mf::statistic(
-            &self.cell.extended,
-            MF_MEDIA_ENGINE_STATISTIC_FRAMES_RENDERED,
-        );
-        let dropped = mf::statistic(
-            &self.cell.extended,
-            MF_MEDIA_ENGINE_STATISTIC_FRAMES_DROPPED,
-        );
+        let rendered = mf::statistic(&self.extended, MF_MEDIA_ENGINE_STATISTIC_FRAMES_RENDERED);
+        let dropped = mf::statistic(&self.extended, MF_MEDIA_ENGINE_STATISTIC_FRAMES_DROPPED);
         log::info!(
             "[WmPresenter][metrics] 5s rendered={rendered:?} dropped={dropped:?} rate={:.2}x pos={:.2}s",
             self.rate(),
-            unsafe { self.cell.engine.GetCurrentTime() }
+            unsafe { self.engine.GetCurrentTime() }
         );
     }
 }
 
-/// 舞台几何换算：视频原生尺寸 → 舞台内的位置/缩放（`contain` 留黑边、
-/// `cover` 溢出裁切，裁剪在视觉树里由裁剪视觉完成）。
+/// 舞台几何换算：视频原生尺寸 → 窗口内的视频矩形（物理像素；`contain` 留
+/// 黑边、`cover` 溢出由 GPUI 裁——视频 quad 在场景之下，黑边就是舞台背景）。
 ///
-/// **落点对齐到整物理像素**：视频位是独立的 DComp 视觉，它和 GPUI 内容不在
-/// 同一张画布上；分数坐标 + 双线性采样会让画面最外圈半个像素采到渲染目标
-/// 之外（透明），叠在透明洞上就是一条浅色细线（用户实测「窗口缩放时视频
-/// 边缘有白线、像不在一个图层」）。取整后视频与目标 1:1 映射，边缘像素完整
-/// 不透明；舞台原点同样取整，窗口拖动/缩放时不会出现 1px 抖动。
+/// **落点对齐到整物理像素**：分数坐标 + 双线性采样会让画面最外圈半个像素
+/// 采到纹理之外，叠出一条浅色细线。取整后视频与纹理 1:1 映射，边缘像素完整；
+/// 舞台原点同样取整，窗口拖动/缩放时不会出现 1px 抖动。
 fn geometry(
     bounds: PresenterBounds,
     fit: PresenterFit,
     scale: f32,
     (native_w, native_h): (u32, u32),
-) -> SystemVideoStage {
+) -> VideoRect {
     let scale = f64::from(scale);
     let x = (f64::from(bounds.x) * scale).round();
     let y = (f64::from(bounds.y) * scale).round();
@@ -477,29 +431,25 @@ fn geometry(
     // 取整误差 ≤0.5px，肉眼不可见；换来的是边缘采样不再越界）。
     let video_w = (native_w * ratio).round().max(1.0);
     let video_h = (native_h * ratio).round().max(1.0);
-    SystemVideoStage {
-        x: x as f32,
-        y: y as f32,
-        width: width as f32,
-        height: height as f32,
-        scale_x: (video_w / native_w) as f32,
-        scale_y: (video_h / native_h) as f32,
-        offset_x: ((width - video_w) / 2.0).round() as f32,
-        offset_y: ((height - video_h) / 2.0).round() as f32,
+    VideoRect {
+        x: ((width - video_w) / 2.0 + x).round() as f32,
+        y: ((height - video_h) / 2.0 + y).round() as f32,
+        width: video_w as f32,
+        height: video_h as f32,
     }
 }
 
 impl PlayerLike for SystemPlayer {
     fn pause(&self) {
         self.paused.store(true, Ordering::SeqCst);
-        if let Err(error) = unsafe { self.cell.engine.Pause() } {
+        if let Err(error) = unsafe { self.engine.Pause() } {
             log::warn!("[WmPresenter] Pause 失败: {error}");
         }
     }
 
     fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
-        if let Err(error) = unsafe { self.cell.engine.Play() } {
+        if let Err(error) = unsafe { self.engine.Play() } {
             log::warn!("[WmPresenter] Play 失败: {error}");
         }
         // 暂停/恢复会重置引擎的实际速率：把期望值补回去（就绪前由节流补试兜底）。
@@ -512,17 +462,17 @@ impl PlayerLike for SystemPlayer {
     }
 
     fn position_secs(&self) -> f64 {
-        unsafe { self.cell.engine.GetCurrentTime() }
+        unsafe { self.engine.GetCurrentTime() }
     }
 
     fn duration_secs(&self) -> f64 {
         // 未就绪时引擎给 NaN/0：统一成 0，免得 UI 算出 NaN 进度。
-        let duration = unsafe { self.cell.engine.GetDuration() };
+        let duration = unsafe { self.engine.GetDuration() };
         if duration.is_finite() { duration } else { 0.0 }
     }
 
     fn seek(&self, seconds: f64) {
-        if let Err(error) = unsafe { self.cell.engine.SetCurrentTime(seconds.max(0.0)) } {
+        if let Err(error) = unsafe { self.engine.SetCurrentTime(seconds.max(0.0)) } {
             log::warn!("[WmPresenter] seek {seconds:.1}s 失败: {error}");
         }
     }
@@ -539,16 +489,11 @@ impl PlayerLike for SystemPlayer {
     }
 
     fn set_volume(&self, volume: f32) {
-        unsafe {
-            self.cell
-                .engine
-                .SetVolume(f64::from(volume.clamp(0.0, 1.0)))
-        }
-        .ok();
+        unsafe { self.engine.SetVolume(f64::from(volume.clamp(0.0, 1.0))) }.ok();
     }
 
     fn set_muted(&self, muted: bool) {
-        unsafe { self.cell.engine.SetMuted(muted) }.ok();
+        unsafe { self.engine.SetMuted(muted) }.ok();
     }
 
     fn dims(&self) -> (usize, usize) {
@@ -557,11 +502,7 @@ impl PlayerLike for SystemPlayer {
     }
 
     fn attach(&self, host: &HostWindow) {
-        let mut state = self.state.lock().expect("视频位锁 poisoned");
-        state.scale = host.scale_factor;
-        if state.layer.is_none() {
-            state.layer = view::current_layer();
-        }
+        *self.scale.lock().expect("DPI 锁 poisoned") = host.scale_factor;
     }
 
     fn submit_stage(&self, bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool) {
@@ -570,7 +511,8 @@ impl PlayerLike for SystemPlayer {
             fit,
             visible,
         };
-        self.apply_stage();
+        // 每帧泵就挂在这里：壳的舞台渲染每帧都调（vsync 节奏）。
+        self.present_frame();
     }
 
     fn is_system(&self) -> bool {
@@ -579,7 +521,7 @@ impl PlayerLike for SystemPlayer {
 
     fn detach(&self) {
         self.staged.lock().expect("舞台锁 poisoned").visible = false;
-        self.apply_stage();
+        self.present_frame();
     }
 
     fn preload_next(&self, _vid: &str, _definition: u32, _on_stall: Option<StallHook>) -> bool {
@@ -599,7 +541,7 @@ impl VideoPresenter for SystemPlayer {
 
     fn set_visible(&self, visible: bool) {
         self.staged.lock().expect("舞台锁 poisoned").visible = visible;
-        self.apply_stage();
+        self.present_frame();
     }
 
     fn play(&self) {
@@ -626,19 +568,18 @@ impl VideoPresenter for SystemPlayer {
 
 impl Drop for SystemPlayer {
     fn drop(&mut self) {
-        // 字节流是本集独占的：无论引擎是不是已经换源，都要 Close 让在途读退出
-        // （否则旧集的读线程会一直挂到 30s 超时，每集漏一个线程）。
+        // 显式 Shutdown：不调的话引擎的媒体会话（连同旧源的解码器显存帧池）
+        // 会被 MF 工作队列挂活到进程结束——这正是此前逐集滞留的根源之一。
+        unsafe {
+            self.engine.Pause().ok();
+            self.engine.Shutdown().ok();
+        }
+        // 字节流是本集独占的：Close 让在途读尽快退出（否则旧集的读线程会
+        // 一直挂到 30s 超时，每集漏一个线程）。
         if let Some(stream) = &self._stream {
             unsafe { stream.Close() }.ok();
         }
-        // 只有「引擎现在放的还是我这一集」才停它：换源之后引擎已经在放新的
-        // 一集（旧句柄这时才被壳丢掉），停它等于把新集也停了。
-        if self.cell.epoch.load(Ordering::SeqCst) != self.epoch {
-            return;
-        }
-        unsafe {
-            self.cell.engine.Pause().ok();
-            self.cell.engine.Shutdown().ok();
-        }
+        // 本集的帧别留在视频 quad 上（下一集首帧前舞台显示封面，不该露出旧画面）。
+        self.quad.clear_frame();
     }
 }
