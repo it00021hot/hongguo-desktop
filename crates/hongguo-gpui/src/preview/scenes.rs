@@ -43,6 +43,24 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "feed",
             font_scale: 1.,
         },
+        // —— 控制栏响应档：缩窗时图标不动、发送框让位（>800 全胶囊收窄，
+        // <800 折叠成「弹」字笔钮）；portrait(388) 是竖屏档的再确认 ——
+        PreviewCase {
+            name: "feed-narrow-light",
+            mode: ThemeMode::Light,
+            width: 860.,
+            height: H,
+            scene: "feed",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "feed-compact-light",
+            mode: ThemeMode::Light,
+            width: 640.,
+            height: H,
+            scene: "feed",
+            font_scale: 1.,
+        },
         // —— 首页面板 ——
         PreviewCase {
             name: "feed-picker-light",

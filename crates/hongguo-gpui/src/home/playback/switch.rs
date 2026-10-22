@@ -113,6 +113,7 @@ impl super::HomeView {
         self.downloads_open = false;
         self.dm_panel_open = false;
         self.danmaku_emoji_open = false;
+        self.danmaku_compact_open = false;
         self.emoji_picker_open = false;
         self.volume_popup_open = false;
         self.volume_hovered = false;

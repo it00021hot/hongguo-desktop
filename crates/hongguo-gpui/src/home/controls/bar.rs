@@ -95,6 +95,7 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_pause(cx))),
                     )
                     .child(
@@ -105,6 +106,7 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(-1, cx))),
                     )
                     .child(
@@ -113,12 +115,16 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
                     )
-                    .child(
-                        // 时间读数（Tauri ml-1 微调；mm:ss 分钟补零）
+                    // 时间读数（Tauri ml-1 微调；mm:ss 分钟补零）。紧凑档
+                    // （窄舞台）收起：读数不是图标，手机端同样没有常驻时间，
+                    // 这里是「图标一个不裁」要的最后一个让位方。
+                    .children((!self.controls_compact()).then(|| {
                         div()
                             .ml_1()
+                            .flex_shrink_0()
                             .text_xs()
                             .font_family("monospace")
                             .text_color(gpui_kit::rgba(0xffffffcc))
@@ -126,15 +132,22 @@ impl HomeView {
                                 "{} / {}",
                                 Self::fmt_secs(position),
                                 Self::fmt_secs(duration)
-                            )),
-                    )
+                            ))
+                            .into_any_element()
+                    }))
                     .child(self.render_danmaku_box(cx))
                     // 左右分组撑杆（Tauri 右组 ml-auto 同款）：倍速起到全屏
-                    // 止的右组贴控制栏右缘，不与左组顺排
+                    // 止的右组贴控制栏右缘，不与左组顺排。缩窗时**图标一律
+                    // 不缩不裁**——flex 收缩全由发送框让位（compact 档见
+                    // danmaku_bar），所以右组每个成员都钉死收缩系数
                     .child(div().flex_1())
-                    .child(self.render_rate_button(cx))
-                    .child(self.render_definition_button(cx))
-                    .child(self.render_picker_entry(cx))
+                    .child(div().flex_shrink_0().child(self.render_rate_button(cx)))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .child(self.render_definition_button(cx)),
+                    )
+                    .child(div().flex_shrink_0().child(self.render_picker_entry(cx)))
                     .child(
                         // 下载入口（Tauri download-sheet 同款位置：右段）
                         Button::new("stage-downloads")
@@ -143,14 +156,15 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .on_click(
                                 cx.listener(|this, _, window, cx| {
                                     this.toggle_downloads(window, cx)
                                 }),
                             ),
                     )
-                    .child(self.render_mini_entry(cx))
-                    .child(self.render_dm_settings(cx))
+                    .child(div().flex_shrink_0().child(self.render_mini_entry(cx)))
+                    .child(div().flex_shrink_0().child(self.render_dm_settings(cx)))
                     .child({
                         // 弹幕开关（B 站同款「弹」字方框，关=斜杠+压暗）。
                         // 自绘开关钮（Tauri IconButton 同款）：透明底、开=纯白、
@@ -165,6 +179,7 @@ impl HomeView {
                         div()
                             .id("stage-danmaku")
                             .flex()
+                            .flex_shrink_0()
                             .w(gpui_kit::px(32.0))
                             .h(gpui_kit::px(28.0))
                             .justify_center()
@@ -193,7 +208,7 @@ impl HomeView {
                             }))
                             .child(player_icons::danmaku_switch(self.danmaku_on, color))
                     })
-                    .child(self.render_volume_controls(cx))
+                    .child(div().flex_shrink_0().child(self.render_volume_controls(cx)))
                     .child(
                         // 隐身模式（Tauri incognito 同款）：开着时光标脱离窗口 →
                         // 暂停 + 整窗藏起，回到窗口矩形 → 原地重现 + 续播。
@@ -203,6 +218,7 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .selected(self.incognito)
                             .tooltip(if self.incognito {
                                 crate::i18n::t("player.exitIncognito")
@@ -222,7 +238,7 @@ impl HomeView {
                     )
                     // 置顶入口已上移壳顶栏（Tauri 同址：顶栏钉住钮 + 小屏
                     // 紧凑条；正常播放的控制栏没有这一项）
-                    .child(self.render_portrait_entry(cx))
+                    .child(div().flex_shrink_0().child(self.render_portrait_entry(cx)))
                     .child(
                         // 无边框播放（Tauri 控制栏同位新增，issue #11）：chrome 全藏
                         // 但不进 OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。
@@ -235,6 +251,7 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .text_color(if self.frameless {
                                 gpui_kit::rgba(0xffffffff)
                             } else {
@@ -257,6 +274,7 @@ impl HomeView {
                             .custom(chrome_variant(cx))
                             .cursor_pointer()
                             .small()
+                            .flex_shrink_0()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_immersive_fullscreen(window, cx);
                             })),

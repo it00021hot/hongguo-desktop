@@ -280,6 +280,8 @@ pub struct HomeView {
     danmaku_clear_input: bool,
     /// 弹幕表情弹层开着（pill 里的笑脸钮开关；点外部收起）。
     danmaku_emoji_open: bool,
+    /// 窄舞台的弹幕浮层输入开着（「弹」字笔钮开关；点外部收起）。
+    danmaku_compact_open: bool,
     /// 弹幕设置滑杆（透明度/字号/密度/面积）。
     dm_opacity_slider: Entity<SliderState>,
     dm_font_slider: Entity<SliderState>,
@@ -558,6 +560,7 @@ impl HomeView {
             danmaku_sending: false,
             danmaku_clear_input: false,
             danmaku_emoji_open: false,
+            danmaku_compact_open: false,
             dm_opacity_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.1)

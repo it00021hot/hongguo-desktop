@@ -94,6 +94,28 @@ pub(super) fn danmaku_settings(color: impl Into<Hsla>) -> impl IntoElement {
         .child(badge)
 }
 
+/// 弹幕书写入口（手机端同款）：无框「弹」字 + 右下角笔角标——窄舞台下发送
+/// 框折叠成的这一钮，点开浮层输入。角标处理与 [`danmaku_settings`] 同款。
+pub(super) fn danmaku_write(color: impl Into<Hsla>) -> impl IntoElement {
+    let color = color.into();
+    let badge = div()
+        .absolute()
+        .right(px(-4.0))
+        .bottom(px(-4.0))
+        .size(px(9.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.5))
+        .bg(gpui_kit::rgba(0x000000b3))
+        .child(Icon::new(IconName::Pen).size(px(7.0)).text_color(color));
+    div()
+        .relative()
+        .size(px(DM_BOX))
+        .child(danmaku_glyph(color))
+        .child(badge)
+}
+
 /// 「弹」字本体（开关与设置共用；无边框，靠斜杠/齿轮角标区分）。
 fn danmaku_glyph(color: Hsla) -> impl IntoElement {
     div()
