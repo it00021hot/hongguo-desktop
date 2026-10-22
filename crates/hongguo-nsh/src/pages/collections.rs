@@ -3,13 +3,13 @@
 //! 书架列表（bookshelf/video/list）：卡片网格（封面 3:4 + 标题 + 共 N 集），
 //! 「继续播放」走本地续播锚点，「✕」单条取消收藏（bookshelf update
 //! operate_type=1）；左上类型筛选（全部/真人/漫剧，按条目 content_type）+
-//! 标题搜索。未登录给登录墙（匿名书架只给空表，不发请求）。管理模式批量
-//! 取消留 P3（README 已注明）。
+//! 标题搜索；管理模式多选批量取消（`collect_series_batch` 一个请求）。
+//! 未登录给登录墙（匿名书架只给空表，不发请求）。
 //!
 //! 书架条目只有 series_id：标题/集数/封面逐条经 series resolver 解析，
 //! 到手一张插一张（与 GPUI 的 resolving 集合同口径）。
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use nsh_core::ui::prelude::*;
 
@@ -52,6 +52,10 @@ pub fn CollectionsPage() -> impl IntoElement {
     let loading = stored(false);
     let nav = Nav::from_context();
     let logged = crate::account::logged_in();
+    // 管理模式（多选批量取消收藏）。
+    let managing = signal(false);
+    let selected: Signal<BTreeSet<String>> = signal_with(BTreeSet::new(), SignalEquals::Never);
+    let confirm_remove = signal(false);
 
     // 挂载拉一次；登录态翻沿（登录成功 / 退出）重拉。
     {
@@ -102,6 +106,26 @@ pub fn CollectionsPage() -> impl IntoElement {
                         move || tab.set(value),
                     )
                 }))
+                .child(pill(
+                    "col-manage",
+                    move || {
+                        if managing.get() {
+                            t("batch.exitManage")
+                        } else {
+                            t("batch.manage")
+                        }
+                    },
+                    move || theme().muted,
+                    move || theme().foreground,
+                    move || {
+                        let next = !managing.get();
+                        managing.set(next);
+                        if !next {
+                            selected.set(BTreeSet::new());
+                            confirm_remove.set(false);
+                        }
+                    },
+                ))
                 .child(view().flex_1())
                 .child(search_box(search)),
         )
@@ -151,11 +175,137 @@ pub fn CollectionsPage() -> impl IntoElement {
                                 move || visible(&entries, &visuals, tab, search),
                                 |entry: &BookshelfEntry| entry.series_id.clone(),
                                 move |entry: ReadSignal<BookshelfEntry>, _| {
-                                    card(nav, entry, entries, visuals, phase, loading)
+                                    card(
+                                        nav, entry, entries, visuals, phase, loading, managing,
+                                        selected,
+                                    )
                                 },
                             )),
                     )
                     .into_element()
+            },
+        ))
+        // 管理模式底栏：全选 / 已选 N 项 / 批量取消收藏（两段确认）。
+        .child(If::new(
+            move || managing.get() && phase.get() == Phase::Loaded,
+            move || {
+                batch_bar(
+                    entries,
+                    visuals,
+                    phase,
+                    loading,
+                    selected,
+                    managing,
+                    confirm_remove,
+                )
+            },
+        ))
+}
+
+/// 管理模式底栏：全选切换 + 已选计数 + 批量取消收藏。
+fn batch_bar(
+    entries: Signal<Vec<BookshelfEntry>>,
+    visuals: Signal<HashMap<String, Visual>>,
+    phase: Signal<Phase>,
+    loading: Stored<bool>,
+    selected: Signal<BTreeSet<String>>,
+    managing: Signal<bool>,
+    confirm_remove: Signal<bool>,
+) -> impl IntoElement {
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .p(px(10.0))
+        .rounded(px(10.0))
+        .bg(theme().group_box)
+        .border_1()
+        .border_color(theme().border)
+        .child(pill(
+            "col-select-all",
+            move || {
+                let total = entries.get().len();
+                if selected.get().len() >= total && total > 0 {
+                    t("batch.deselectAll")
+                } else {
+                    t("batch.selectAll")
+                }
+            },
+            move || theme().muted,
+            move || theme().foreground,
+            move || {
+                let total = entries.get().len();
+                let all: BTreeSet<String> =
+                    entries.get().iter().map(|e| e.series_id.clone()).collect();
+                if selected.get().len() >= total && total > 0 {
+                    selected.set(BTreeSet::new());
+                } else {
+                    selected.set(all);
+                }
+            },
+        ))
+        .child(
+            text(move || {
+                t("batch.selectedCount").replace("{count}", &selected.get().len().to_string())
+            })
+            .text_size(px(12.0))
+            .text_color(theme().muted_foreground),
+        )
+        .child(view().flex_1())
+        .child(pill(
+            "col-batch-remove",
+            move || {
+                if confirm_remove.get() {
+                    t("common.confirm")
+                } else {
+                    t("collections.remove")
+                }
+            },
+            move || theme().danger,
+            move || theme().background,
+            move || {
+                if selected.get().is_empty() {
+                    return;
+                }
+                if !confirm_remove.get() {
+                    confirm_remove.set(true);
+                    return;
+                }
+                confirm_remove.set(false);
+                let refs: Vec<(String, bool)> =
+                    selected.get().into_iter().map(|sid| (sid, false)).collect();
+                let total = refs.len();
+                managing.set(false);
+                selected.set(BTreeSet::new());
+                spawn(async move {
+                    let state = crate::state::state();
+                    let env = state.api_env();
+                    let result = background(async move {
+                        hongguo_api::interact::collect_series_batch(&refs, &env).await
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(())) => {
+                            toast(
+                                t("batch.done").replace("{count}", &total.to_string()),
+                                ToastDuration::Short,
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            log::warn!("[Collections] 批量取消收藏失败: {e}");
+                            toast(
+                                t("batch.partialFail").replace("{error}", &e.to_string()),
+                                ToastDuration::Long,
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("[Collections] 批量取消收藏任务失败: {e}");
+                        }
+                    }
+                    // 无论成败都重拉（失败时服务端可能已部分生效）
+                    load(entries, visuals, phase, loading).await;
+                });
             },
         ))
 }
@@ -191,7 +341,12 @@ fn visible(
         .collect()
 }
 
-/// 一张收藏卡：封面（右上 ✕ 取消收藏）+ 继续播放 + 标题 + 共 N 集。
+/// 一张收藏卡：封面（右上 ✕ 取消收藏）+ 继续播放 + 标题 + 共 N 集；
+/// 管理模式盖一层全卡选择区（✕/继续播放隐藏，整卡点击切换选中）。
+#[expect(
+    clippy::too_many_arguments,
+    reason = "重拉句柄与管理态随卡下发，NSH 页面无实体可挂"
+)]
 fn card(
     nav: Nav,
     entry: ReadSignal<BookshelfEntry>,
@@ -199,13 +354,17 @@ fn card(
     visuals: Signal<HashMap<String, Visual>>,
     phase: Signal<Phase>,
     loading: Stored<bool>,
+    managing: Signal<bool>,
+    selected: Signal<BTreeSet<String>>,
 ) -> impl IntoElement {
     let sid = entry.get().series_id.clone();
     let key = format!("col-{}", sid);
     let remove_sid = sid.clone();
     let open_sid = sid.clone();
+    let pick_sid = sid.clone();
     view()
         .w(px(CARD_W))
+        .relative()
         .flex_col()
         .gap(px(6.0))
         // 封面 3:4；右上 ✕ 单条取消收藏（封面容器不收点击，✕ 自己收）。
@@ -238,38 +397,48 @@ fn card(
                         .resize_mode(ResizeMode::Cover)
                     },
                 ))
-                .child(
-                    text("✕")
-                        .text_size(px(11.0))
-                        .text_color(theme().foreground)
-                        .w(px(22.0))
-                        .h(px(22.0))
-                        .items_center()
-                        .justify_center()
-                        .absolute()
-                        .right(px(6.0))
-                        .top(px(6.0))
-                        .rounded(px(999.0))
-                        .bg(scrim())
-                        .key("col-remove")
-                        .on_press(move |_: &()| {
-                            remove_one(&remove_sid, all, visuals, phase, loading)
-                        }),
-                ),
+                .child(If::new(
+                    // 右上 ✕ 单条取消收藏（管理模式隐藏，批量入口在底栏）。
+                    move || !managing.get(),
+                    move || {
+                        let remove_sid = remove_sid.clone();
+                        text("✕")
+                            .text_size(px(11.0))
+                            .text_color(theme().foreground)
+                            .w(px(22.0))
+                            .h(px(22.0))
+                            .items_center()
+                            .justify_center()
+                            .absolute()
+                            .right(px(6.0))
+                            .top(px(6.0))
+                            .rounded(px(999.0))
+                            .bg(scrim())
+                            .key("col-remove")
+                            .on_press(move |_: &()| {
+                                remove_one(&remove_sid, all, visuals, phase, loading)
+                            })
+                    },
+                )),
         )
-        .child(
-            text(move || t("history.continue"))
-                .text_size(px(12.0))
-                .text_color(theme().primary_foreground)
-                .w_full()
-                .h(px(28.0))
-                .items_center()
-                .justify_center()
-                .rounded(px(8.0))
-                .bg(theme().primary)
-                .key("col-play")
-                .on_press(move |_: &()| open_series(&nav, &open_sid)),
-        )
+        // 继续播放（管理模式隐藏）。
+        .child(If::new(
+            move || !managing.get(),
+            move || {
+                let open_sid = open_sid.clone();
+                text(move || t("history.continue"))
+                    .text_size(px(12.0))
+                    .text_color(theme().primary_foreground)
+                    .w_full()
+                    .h(px(28.0))
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(8.0))
+                    .bg(theme().primary)
+                    .key("col-play")
+                    .on_press(move |_: &()| open_series(&nav, &open_sid))
+            },
+        ))
         .child(
             text(move || {
                 let title = visuals
@@ -310,6 +479,70 @@ fn card(
             .text_size(px(12.0))
             .text_color(theme().muted_foreground),
         )
+        // 管理模式：全卡选择层（选中态左上角标出；✕/继续播放已隐藏，
+        // 不会有子命中区被截流）。
+        .child(If::new(
+            move || managing.get(),
+            move || {
+                // 闭包都要 Fn：sid 每个使用点各发一份克隆。
+                let (sid_border, sid_dot_border, sid_dot_bg, sid_press) = (
+                    pick_sid.clone(),
+                    pick_sid.clone(),
+                    pick_sid.clone(),
+                    pick_sid.clone(),
+                );
+                let picked = move |sid: &String| selected.get().contains(sid);
+                view()
+                    .absolute()
+                    .left(px(0.0))
+                    .top(px(0.0))
+                    .w(px(CARD_W))
+                    .h(px(COVER_H))
+                    .rounded(px(10.0))
+                    .border_1()
+                    .border_color(move || {
+                        if picked(&sid_border) {
+                            theme().primary
+                        } else {
+                            theme().border
+                        }
+                    })
+                    .key("col-pick-overlay")
+                    .on_press(move |_: &()| {
+                        let mut next = selected.get();
+                        if next.contains(&sid_press) {
+                            next.remove(&sid_press);
+                        } else {
+                            next.insert(sid_press.clone());
+                        }
+                        selected.set(next);
+                    })
+                    .child(
+                        view()
+                            .absolute()
+                            .left(px(6.0))
+                            .top(px(6.0))
+                            .w(px(20.0))
+                            .h(px(20.0))
+                            .rounded(px(999.0))
+                            .border_1()
+                            .border_color(move || {
+                                if picked(&sid_dot_border) {
+                                    theme().primary
+                                } else {
+                                    theme().border
+                                }
+                            })
+                            .bg(move || {
+                                if picked(&sid_dot_bg) {
+                                    theme().primary
+                                } else {
+                                    scrim()
+                                }
+                            }),
+                    )
+            },
+        ))
         .key(key)
 }
 

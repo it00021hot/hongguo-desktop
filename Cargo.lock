@@ -4522,6 +4522,7 @@ name = "hongguo-nsh"
 version = "0.5.5"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "env_logger",
  "hongguo-api",
  "hongguo-common",

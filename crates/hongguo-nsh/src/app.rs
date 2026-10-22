@@ -307,6 +307,14 @@ fn content(nav: Nav) -> impl IntoElement {
             move || pages::follows::FollowsPage::element(()),
         ))
         .child(If::new(
+            move || nav.current() == Page::Reservations,
+            move || pages::reservations::ReservationsPage::element(()),
+        ))
+        .child(If::new(
+            move || nav.current() == Page::Tasks,
+            move || pages::tasks::TasksPage::element(()),
+        ))
+        .child(If::new(
             move || nav.current() == Page::Settings,
             move || pages::settings::SettingsPage::element(()),
         ))

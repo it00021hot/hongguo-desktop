@@ -4,7 +4,10 @@
 //! 本地观看记录（播放时已落库），顶部给本地模式提示行。行式列表：封面 +
 //! 标题 + 进度行 + 相对时间，整行点击续播；「全部/未看完/已看完」筛选 +
 //! 标题搜索。已看完的剧不续播——按列表顺序跳下一部未看完的（末尾回绕，
-//! GPUI/Tauri 同口径）。批量删除留 P3（README 已注明）。
+//! GPUI/Tauri 同口径）。管理模式多选批量删除：云端一条请求
+//! （`delete_watch_history`），本地逐剧删（`delete_local_history`）。
+
+use std::collections::BTreeSet;
 
 use nsh_core::ui::prelude::*;
 
@@ -31,6 +34,11 @@ pub fn HistoryPage() -> impl IntoElement {
     let loading = stored(false);
     let nav = Nav::from_context();
     let logged = crate::account::logged_in();
+    // 管理模式（多选批量删除）。
+    let managing = signal(false);
+    let selected: Signal<BTreeSet<String>> = signal_with(BTreeSet::new(), SignalEquals::Never);
+    let deleting = stored(false);
+    let confirm_delete = signal(false);
 
     // 挂载拉一次；登录态翻沿（登录成功 / 退出）在云端↔本地双模式间重拉。
     {
@@ -52,7 +60,7 @@ pub fn HistoryPage() -> impl IntoElement {
         .px(px(PAGE_PAD))
         .pt(px(PAGE_PAD))
         .gap(px(12.0))
-        // 工具行：筛选 tab + 搜索框。
+        // 工具行：筛选 tab + 搜索框 + 管理。
         .child(
             view()
                 .w_full()
@@ -81,6 +89,26 @@ pub fn HistoryPage() -> impl IntoElement {
                         move || tab.set(value),
                     )
                 }))
+                .child(pill(
+                    "hist-manage",
+                    move || {
+                        if managing.get() {
+                            t("batch.exitManage")
+                        } else {
+                            t("batch.manage")
+                        }
+                    },
+                    move || theme().muted,
+                    move || theme().foreground,
+                    move || {
+                        let next = !managing.get();
+                        managing.set(next);
+                        if !next {
+                            selected.set(BTreeSet::new());
+                            confirm_delete.set(false);
+                        }
+                    },
+                ))
                 // 占位 flex：把搜索框推到行尾。
                 .child(view().flex_1())
                 .child(search_box(search)),
@@ -133,9 +161,147 @@ pub fn HistoryPage() -> impl IntoElement {
                     .child(Each::new(
                         move || visible(&items, tab, search),
                         |item: &WatchHistoryItem| item.series_id.clone(),
-                        move |item: ReadSignal<WatchHistoryItem>, _| row(nav, item, items),
+                        move |item: ReadSignal<WatchHistoryItem>, _| {
+                            row(nav, item, items, managing, selected)
+                        },
                     ))
                     .into_element()
+            },
+        ))
+        // 管理模式底栏：全选 / 已选 N 项 / 删除所选（两段确认）。
+        .child(If::new(
+            move || managing.get() && phase.get() == Phase::Loaded,
+            move || batch_bar(items, selected, managing, confirm_delete, deleting, logged),
+        ))
+}
+
+/// 管理模式底栏（GPUI BatchBar 同位）：全选切换 + 已选计数 + 删除。
+fn batch_bar(
+    items: Signal<Vec<WatchHistoryItem>>,
+    selected: Signal<BTreeSet<String>>,
+    managing: Signal<bool>,
+    confirm_delete: Signal<bool>,
+    deleting: Stored<bool>,
+    logged: Signal<bool>,
+) -> impl IntoElement {
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .p(px(10.0))
+        .rounded(px(10.0))
+        .bg(theme().group_box)
+        .border_1()
+        .border_color(theme().border)
+        .child(pill(
+            "hist-select-all",
+            move || {
+                let total = items.get().len();
+                if selected.get().len() >= total && total > 0 {
+                    t("batch.deselectAll")
+                } else {
+                    t("batch.selectAll")
+                }
+            },
+            move || theme().muted,
+            move || theme().foreground,
+            move || {
+                let total = items.get().len();
+                let all: BTreeSet<String> =
+                    items.get().iter().map(|it| it.series_id.clone()).collect();
+                if selected.get().len() >= total && total > 0 {
+                    selected.set(BTreeSet::new());
+                } else {
+                    selected.set(all);
+                }
+            },
+        ))
+        .child(
+            text(move || {
+                t("batch.selectedCount").replace("{count}", &selected.get().len().to_string())
+            })
+            .text_size(px(12.0))
+            .text_color(theme().muted_foreground),
+        )
+        .child(view().flex_1())
+        .child(pill(
+            "hist-delete",
+            move || {
+                if confirm_delete.get() {
+                    t("common.confirm")
+                } else if deleting.with(|v| *v) {
+                    t("batch.deleting")
+                } else {
+                    t("batch.deleteSelected")
+                }
+            },
+            move || theme().danger,
+            move || theme().background,
+            move || {
+                if deleting.with(|v| *v) || selected.get().is_empty() {
+                    return;
+                }
+                if !confirm_delete.get() {
+                    confirm_delete.set(true);
+                    return;
+                }
+                confirm_delete.set(false);
+                let refs: Vec<(String, String, i64)> = items
+                    .get()
+                    .iter()
+                    .filter(|it| selected.get().contains(&it.series_id))
+                    .map(|it| (it.series_id.clone(), it.vid.clone(), it.vid_index))
+                    .collect();
+                let ids: Vec<String> = refs.iter().map(|(sid, _, _)| sid.clone()).collect();
+                let total = refs.len();
+                let local_mode = !logged.get();
+                managing.set(false);
+                selected.set(BTreeSet::new());
+                spawn(async move {
+                    let state = crate::state::state();
+                    let result: Result<(), String> = if local_mode {
+                        let store = state.store.clone();
+                        match background(async move {
+                            tokio::task::spawn_blocking(move || store.delete_local_history(&ids))
+                                .await
+                                .map_err(|e| format!("本地删除任务失败: {e}"))
+                                .and_then(|inner| inner.map_err(|e| e.to_string()))
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => Ok(()),
+                            Ok(Err(e)) => Err(e),
+                            Err(e) => Err(e.to_string()),
+                        }
+                    } else {
+                        match background(async move {
+                            hongguo_api::history::delete_watch_history(&refs, &state.api_env())
+                                .await
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => Ok(()),
+                            Ok(Err(e)) => Err(e.to_string()),
+                            Err(e) => Err(e.to_string()),
+                        }
+                    };
+                    match result {
+                        Ok(()) => {
+                            toast(
+                                t("batch.done").replace("{count}", &total.to_string()),
+                                ToastDuration::Short,
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("[History] 批量删除失败: {e}");
+                            toast(
+                                t("batch.partialFail").replace("{error}", &e),
+                                ToastDuration::Long,
+                            );
+                        }
+                    }
+                });
             },
         ))
 }
@@ -165,13 +331,17 @@ fn visible(
         .collect()
 }
 
-/// 一行历史：封面 + 标题 + 进度行；整行点击续播。
+/// 一行历史：（管理模式 = 选择点 + 整行切换选中）封面 + 标题 + 进度行。
 fn row(
     nav: Nav,
     item: ReadSignal<WatchHistoryItem>,
     all: Signal<Vec<WatchHistoryItem>>,
+    managing: Signal<bool>,
+    selected: Signal<BTreeSet<String>>,
 ) -> impl IntoElement {
-    let key = format!("hist-{}", item.get().series_id);
+    let sid = item.get().series_id.clone();
+    let key = format!("hist-{}", sid);
+    let pick_sid = sid.clone();
     view()
         .w_full()
         .flex_row()
@@ -180,6 +350,29 @@ fn row(
         .p(px(8.0))
         .rounded(px(10.0))
         .bg(theme().group_box)
+        // 管理模式的选中点（非管理模式透明占位，列宽不跳）。
+        .child({
+            let (sid_border, sid_bg) = (pick_sid.clone(), pick_sid.clone());
+            view()
+                .w(px(18.0))
+                .h(px(18.0))
+                .rounded(px(999.0))
+                .border_1()
+                .border_color(move || {
+                    if managing.get() && selected.get().contains(&sid_border) {
+                        theme().primary
+                    } else {
+                        theme().border
+                    }
+                })
+                .bg(move || {
+                    if managing.get() && selected.get().contains(&sid_bg) {
+                        theme().primary
+                    } else {
+                        AdaptiveColor::TRANSPARENT
+                    }
+                })
+        })
         .child(
             // 封面 16:9 小图（封面缺省给纯色底）。
             view()
@@ -223,17 +416,33 @@ fn row(
                         .text_color(theme().muted_foreground),
                 ),
         )
-        .child(
-            text(move || t("history.continue"))
-                .text_size(px(12.0))
-                .text_color(theme().primary_foreground)
-                .px(px(12.0))
-                .py(px(5.0))
-                .rounded(px(999.0))
-                .bg(theme().primary),
-        )
+        // 继续播放胶囊（管理模式隐藏）。
+        .child(If::new(
+            move || !managing.get(),
+            move || {
+                text(move || t("history.continue"))
+                    .text_size(px(12.0))
+                    .text_color(theme().primary_foreground)
+                    .px(px(12.0))
+                    .py(px(5.0))
+                    .rounded(px(999.0))
+                    .bg(theme().primary)
+            },
+        ))
         .key(key)
-        .on_press(move |_: &()| open_item(&nav, &all.get(), &item.get()))
+        .on_press(move |_: &()| {
+            if managing.get() {
+                let mut next = selected.get();
+                if next.contains(&sid) {
+                    next.remove(&sid);
+                } else {
+                    next.insert(sid.clone());
+                }
+                selected.set(next);
+                return;
+            }
+            open_item(&nav, &all.get(), &item.get());
+        })
 }
 
 /// 进度行：`看到第N集/共M集 相对时间`（条目没给总集数时只给相对时间）。

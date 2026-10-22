@@ -32,14 +32,17 @@ pub enum MfaUi {
 
 /// 壳关心的业务事件快照（界面上直接读的几项）。
 ///
-/// 壳骨架阶段只留三项：「后台在干什么」类状态。列表类数据仍走各自的查询，
-/// 事件只做增量与状态提示。
+/// 列表类数据仍走各自的查询，事件只做增量提示与「该刷新了」的 tick。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ShellEvents {
     /// 在线取流进度（0..=100）；`None` 表示当前没有进行中的取流。
     pub online_percent: Option<f64>,
-    /// 追更提醒的新增条数（打开设置/首页时清零）。
+    /// 追更提醒的新增条数（事件累计；通知 tab 打开时归零）。
     pub follow_notices: usize,
+    /// 追更通知列表的刷新信号（每批通知事件 +1；追更页据此重拉）。
+    pub notices_tick: u64,
+    /// 下载任务的刷新信号（任一下载事件 +1；任务页据此重读队列快照）。
+    pub download_tick: u64,
     /// 登录 MFA 的最新状态（登录面板消费；登录态翻沿在这里做，面板
     /// 关着时轮询完成也不能丢）。
     pub login_mfa: Option<MfaUi>,
@@ -91,9 +94,21 @@ fn apply(signal: Signal<ShellEvents>, event: ServiceEvent) {
         }
         ServiceEvent::FollowNotices(notices) => {
             let added = notices.notices.len();
-            if added > 0 {
-                signal.update(|state| state.follow_notices += added);
-            }
+            signal.update(move |state| {
+                state.notices_tick += 1;
+                if added > 0 {
+                    state.follow_notices += added;
+                }
+            });
+        }
+        ServiceEvent::DownloadTaskAdded(_)
+        | ServiceEvent::DownloadProgress(_)
+        | ServiceEvent::DownloadCompleted(_)
+        | ServiceEvent::DownloadFailed(_)
+        | ServiceEvent::DownloadStopped(_)
+        | ServiceEvent::DownloadQueueChanged(_) => {
+            // 任务页直读内存队列快照，事件只当「该重读了」的 tick。
+            signal.update(|state| state.download_tick += 1);
         }
         ServiceEvent::LoginMfa(mfa) => {
             use hongguo_service::login_service::events::LoginMfaStateEvent;
@@ -119,7 +134,11 @@ fn apply(signal: Signal<ShellEvents>, event: ServiceEvent) {
             }
             signal.update(move |events| events.login_mfa = ui);
         }
-        // 下载/合并/漫画进度由各自的页面按需订阅；壳骨架阶段不铺开。
         _ => {}
     }
+}
+
+/// 通知 tab 打开：顶部状态字的「新增提醒」计数归零（追更页调用）。
+pub fn reset_follow_notices() {
+    EVENTS.update(|state| state.follow_notices = 0);
 }

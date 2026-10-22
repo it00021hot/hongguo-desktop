@@ -6,7 +6,7 @@
 use nsh_core::ui::prelude::*;
 
 /// 一个可导航的页面（顺序对齐 Tauri 侧栏：推荐 / 找剧 / 排行榜 /
-/// 历史 / 收藏 / 追更 / 设置；P2 只迁账号域三页，其余留占位）。
+/// 历史 / 收藏 / 追更 / 预约 / 下载任务 / 设置；new/点赞等留占位待 P3）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
     /// 推荐（首页沉浸流）。
@@ -21,19 +21,25 @@ pub enum Page {
     Collections,
     /// 追更。
     Follows,
+    /// 预约。
+    Reservations,
+    /// 下载任务。
+    Tasks,
     /// 设置。
     Settings,
 }
 
 impl Page {
     /// 侧栏顺序（冒烟脚本的点击坐标按这个顺序排）。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Browse,
         Self::Rank,
         Self::History,
         Self::Collections,
         Self::Follows,
+        Self::Reservations,
+        Self::Tasks,
         Self::Settings,
     ];
 
@@ -46,6 +52,8 @@ impl Page {
             Self::History => "nav.history.title",
             Self::Collections => "nav.collections.title",
             Self::Follows => "nav.follows.title",
+            Self::Reservations => "nav.reservations.title",
+            Self::Tasks => "nav.tasks.title",
             Self::Settings => "nav.settings.title",
         }
     }
