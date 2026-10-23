@@ -79,14 +79,14 @@ MediaEngine（frame-server：系统解码/音频时钟/倍速/seek）
 | `ENDED` | `Ended` | 每 item 一次；代次幂等仍在壳侧 |
 | `ERROR` / `STREAMRENDERINGERROR` | `Failed` | 带 `param1`（MF_MEDIA_ENGINE_ERR）与 `param2`（HRESULT） |
 
-## 5. 回退与运行
+## 5. 运行
 
-`VIDEO_BACKEND=gpui` 回滚到自研上屏；引擎/视频 quad 创建失败时
-`open_system_player` 返回 `None`，壳翻开关后用自研重走起播——不 panic、不黑屏。
+自研引擎与 `VIDEO_BACKEND` 开关已整体删除（2026-10-23），系统播放器是唯一
+路线；播放器/视频位创建失败时 `open_system_player` 返回 `None`，壳走
+「自动重试一次 → 可见错误态」——不 panic、不静默黑屏。
 
 ```bash
-make gpui                      # macOS 默认 system（AVPlayer）；Windows 默认 system（frame-server）
-VIDEO_BACKEND=gpui make gpui   # 回滚 GPUI 自研上屏
+make gpui                      # 唯一播放路线：macOS AVPlayer；Windows frame-server
 HONGGUO_WM_METRICS=1           # 5s 一次 rendered/dropped 统计（取证）
 HONGGUO_AV_NEXT_EPISODE_MS=5000 HONGGUO_AV_NEXT_EPISODE_LOOP=1  # 连播内存/帧率取证
 ```

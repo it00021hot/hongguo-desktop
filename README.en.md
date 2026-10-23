@@ -223,13 +223,13 @@ hongguo-desktop/
 │   ├── hongguo-api/                    # Official API clients (14 domains, one directory per endpoint domain)
 │   ├── hongguo-media/                  # Pure-Rust codecs (demux / hevc / remux / transcode / HEIF covers)
 │   ├── hongguo-media-platform-api/     # Platform media contract (frame carriers / decoder traits / transcode requests)
-│   ├── hongguo-media-platform-macos/   # macOS implementation (VideoToolbox / AudioToolbox)
+│   ├── hongguo-media-platform-macos/   # macOS implementation (VideoToolbox transcode chain)
 │   ├── hongguo-media-platform-windows/ # Windows implementation (Media Foundation / WIC)
 │   ├── hongguo-media-platform/         # Platform facade (compile-time impl selection) + ffmpeg + capability probing
 │   ├── hongguo-store/                  # Turso embedded database (entity/ split by aggregate / migrations / recovery)
 │   ├── hongguo-stream/                 # Online stream contract (progressive stream / per (vid, definition) cache / Range replies)
 │   ├── hongguo-protocol/               # Custom URI providers (hongguo-local / stream / cover)
-│   ├── hongguo-playback/               # Playback engine (sample-table fetch → platform decode → audio clock sync)
+│   ├── hongguo-player/                 # System player facade (macOS AVPlayer / Windows MediaEngine; contract in hongguo-player-api)
 │   ├── hongguo-service/                # App services: nine domains + AppState + shared runtime/event bus (no UI framework deps)
 │   ├── hongguo-tauri/                  # Tauri assembly: commands / bootstrap / protocol registration / event forwarding
 │   ├── hongguo-tauri-app/              # Tauri app entry (tauri.conf.json / capabilities / icons / generate_context!)

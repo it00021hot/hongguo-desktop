@@ -38,7 +38,7 @@
 | 首播 0.7–3.7s | 取流表 + 渐进探测慢，可并行/预注册 | P1 |
 | 遮挡暂停 | 窗口完全被遮挡时暂停（现在只有最小化/老板键） | P1 |
 | ~~音频客观指标~~ | **已关闭**：系统播放器直接出声（平台音频栈），实测 2x/3x 无爆音与欠载听感差异；需要客观读数时用系统级工具，不在壳里做 audio tap | — |
-| 音高声学复验 | `Spectral` 仅配置级，2x 听感未实测（系统后端无此配置，属自研引擎项） | P2 |
+| 音高声学复验 | `Spectral` 仅配置级，2x 听感未实测（系统后端无此配置，属自研引擎项） | P2（引擎已删，随引擎消亡） |
 | 预加载句柄上限 | `LoaderHandle` 按集累积，未做两槽上限——macOS 实测（2026-10-23）：自然连播 +5.7MB/集、6s 连切 +2.7MB/次持续走涨（Windows 同题已治平） | P2 |
 | 竖屏进入落窗延迟 | 竖屏 UI 态即时生效，窗框收缩延迟 0.6–4.7s 才落地（小窗即时）——对比两者 `set_frame` 落窗路径（`platform/macos.rs`） | P2 |
 | 普通窄窗尾部图标裁切 | 窗宽 ≲700（舞台 ≲640）时 12 图标物理放不下、尾部 4–5 个被裁——`88a26cd` 只豁免竖屏形态，普通窗同类边界待定降级档 | P3 |
@@ -52,14 +52,12 @@
 2. ~~**重复 Ended / 跨 item 旧回调**~~ **已验（2026-10-23）**：长跑窗口内无重复前进；更极端时序仍靠代次兜底。
 3. **历史缺 `episode_cnt`**：`series_finished` 无法判定，可能仍起播（有节拍兜底，但会多一次起播）。
 4. **弱网下切集**：接近 200ms 目标时是否需要双 player + 双 layer 预热换层。
-5. **回滚路径**：`VIDEO_BACKEND=gpui` 已烟测，未做完整回归（2026-10-23 视频侧复验通过）。
+5. ~~**回滚路径**~~ **已关闭（2026-10-23）**：自研引擎整条删除（`VIDEO_BACKEND` 开关与运行时后端降级一并移除），系统播放器成为唯一路线；系统播放器起播失败走壳的「自动重试一次 → 错误态」。
 
 ## 5. 运行方式
 
 ```bash
-make gpui                      # macOS 默认 system（AVPlayer）；Windows 默认 system（MediaEngine）
-VIDEO_BACKEND=gpui make gpui   # 回滚 GPUI 自研上屏
-VIDEO_BACKEND=system make gpui # 显式系统后端
+make gpui                      # macOS AVPlayer；Windows MediaEngine——唯一播放路线
 
 HONGGUO_AV_METRICS=1           # 5s 一次帧率/间隔统计（macOS）
 HONGGUO_WM_METRICS=1           # 5s 一次 rendered/dropped 统计（Windows）

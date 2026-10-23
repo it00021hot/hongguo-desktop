@@ -1,23 +1,18 @@
 # GPUI 壳：系统播放器后端（Phase 1b）
 
 日期：2026-10-20｜平台：macOS 27.0.1 / Apple M6 / 3440×1440@100Hz
-状态：macOS 系统播放器接入真实壳，`VIDEO_BACKEND=system` opt-in；默认 gpui 不变。
+状态：**历史留档**。系统播放器现为唯一路线——自研引擎与 `VIDEO_BACKEND`
+开关已于 2026-10-23 整体删除（见 `gpui-system-player-status.md` §4）；
+下文的「默认 gpui / opt-in system」是当时形态。模块路径亦已迁移
+（`av_presenter/` → `hongguo-player-macos`，`home/stage.rs` → `home/stage/`）。
 
-## 1. 开关
+## 1. 开关（已删除）
 
-```bash
-# 默认：自研 GPUI 上屏链路（回滚路径）
-make gpui
-
-# 系统播放器（AVPlayer + AVPlayerLayer，仅 macOS）
-VIDEO_BACKEND=system make gpui
-```
-
-- 进程级读取一次；切后端要重启。非 macOS 上 `system` 静默回落 gpui。
-- 播放器门面：[home/player.rs](../crates/hongguo-gpui/src/home/player.rs) 的 `PlayerLike`；
-  默认实现走 `PlayerHandle`，系统实现是 `av_presenter::SystemPlayer`。
-- 业务/视图层没有 `#[cfg(target_os)]`：平台分支只在 `av_presenter/`（macOS）
-  与 `home/playback.rs` 的工厂一行。
+当时的形态：`VIDEO_BACKEND=gpui|system` 进程级读取一次，默认 gpui、
+`system` 显式启用系统播放器；非 macOS 上 `system` 静默回落 gpui。
+现播放器门面在 [home/player.rs](../crates/hongguo-gpui/src/home/player.rs)
+（转出 `hongguo_player` 的 `PlayerLike`），系统实现是
+`hongguo-player-macos` 的 `SystemPlayer`；业务/视图层没有 `#[cfg(target_os)]`。
 
 ## 2. 结构
 

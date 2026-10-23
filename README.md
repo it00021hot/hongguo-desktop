@@ -193,13 +193,13 @@ hongguo-desktop/
 │   ├── hongguo-api/                    # 官方 App 接口客户端（14 域，按端点域目录化）
 │   ├── hongguo-media/                  # 纯 Rust 编解码（demux / hevc / remux / transcode / 封面 HEIF）
 │   ├── hongguo-media-platform-api/     # 平台媒体契约（帧载体 / 解码器 trait / 转码请求）
-│   ├── hongguo-media-platform-macos/   # macOS 实现（VideoToolbox / AudioToolbox）
+│   ├── hongguo-media-platform-macos/   # macOS 实现（VideoToolbox 转码链）
 │   ├── hongguo-media-platform-windows/ # Windows 实现（Media Foundation / WIC）
 │   ├── hongguo-media-platform/         # 平台门面（编译期选实现）+ ffmpeg + 能力探测
 │   ├── hongguo-store/                  # Turso 内嵌数据库（entity/ 按聚合拆分 / 迁移链 / 坏档恢复）
 │   ├── hongguo-stream/                 # 在线流契约（渐进流 / 按 (vid, 档位) 分条的缓存 / Range 应答）
 │   ├── hongguo-protocol/               # 自定义 URI 供数（hongguo-local / stream / cover）
-│   ├── hongguo-playback/               # 播放引擎（样本表取流 → 平台解码 → 音频时钟同步）
+│   ├── hongguo-player/                 # 系统播放器门面（macOS AVPlayer / Windows MediaEngine，契约在 hongguo-player-api）
 │   ├── hongguo-service/                # 应用服务：九域编排 + AppState + 共用运行时/事件总线（无 UI 框架依赖）
 │   ├── hongguo-tauri/                  # Tauri 装配：commands / bootstrap / 协议注册 / 事件转发
 │   ├── hongguo-tauri-app/              # Tauri 应用入口（tauri.conf.json / capabilities / icons / generate_context!）

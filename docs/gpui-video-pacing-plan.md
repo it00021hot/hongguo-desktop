@@ -57,7 +57,8 @@ macOS 单平台，只验证四条硬指标，不接窗口形态：
 
 - `VideoPresenter` trait：`submit(bounds/fit)` / `play` / `pause` / `seek` /
   `set_rate` / `flush` / `set_visible`；平台实现只出现在 `platform/`。
-- 回滚开关 `VIDEO_BACKEND=system|gpui`（默认 system），GPUI 自研链路保留。
+- ~~回滚开关 `VIDEO_BACKEND=system|gpui`（默认 system），GPUI 自研链路保留~~
+  已关闭（2026-10-23）：自研链路整体删除，系统播放器是唯一路线。
 - 不引入新外部依赖（只用系统框架）。
 
 ## 7. 验收
