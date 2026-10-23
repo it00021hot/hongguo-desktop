@@ -109,11 +109,9 @@ impl gpui_kit::Render for Shell {
             .update(cx, |view, cx| view.render_downloads_sheet(cx));
         let content = self.render_content(cx);
         let theme = cx.theme();
-        // 系统后端 + 首页：壳根透明，舞台的透明洞才露得出下层视频视图；
+        // 系统播放器 + 首页：壳根透明，舞台的透明洞才露得出下层视频视图；
         // 其他目的地照常铺主题底色（视频只在首页播放）。
-        let video_hole = crate::video_backend::is_system()
-            && self.dest == Dest::Home
-            && !crate::preview::is_active();
+        let video_hole = self.dest == Dest::Home && !crate::preview::is_active();
         v_flex()
             // 封面解码结果的内存缓存挂全应用：同一张封面在首页/找剧/历史/
             // 收藏共用一份，容量有上限（超出释放 GPU 纹理）。

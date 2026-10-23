@@ -1,6 +1,6 @@
 //! 舞台渲染：tab 顶栏、沉浸舞台（封面占位层 / 视频槽二选一）、信息叠加层。
-//! 视频像素载体（macOS 零拷贝 surface / Windows RGBA 上传）在
-//! [`super::video_surface`]——本文件不写平台分支。
+//! 画面由系统播放器的原生层（AVPlayerLayer / DComp 视频位）合成，GPUI 只
+//! 在未出画时铺封面占位——本文件不写平台分支。
 
 use gpui_kit::prelude::*;
 

@@ -23,7 +23,6 @@ members = [
     # NSH 壳（第三壳，与 GPUI 壳共存至替值线；见 docs/nsh-shell-plan.md）。
     "crates/hongguo-nsh",
     "crates/hongguo-video",
-    "crates/hongguo-playback",
     # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
     # 平台实现分 crate，壳只依赖门面（architecture-refactor.md「平台实现分 crate」）。
     "crates/hongguo-player",

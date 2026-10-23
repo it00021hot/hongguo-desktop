@@ -7,10 +7,11 @@
 //! 内容」（云端历史 + 书架）种子排前，同一个号打开就是你的剧（对齐第三方
 //! 与 Tauri 端）。
 //!
-//! 播放经 [`hongguo_playback`] 引擎：起点决策（本地档案 >3 秒续播，云端
-//! 历史兜底）、5 秒节流落盘、首帧出画预取下一部的流、自动连播（末集接
-//! 流内下一部——Tauri 的剧终接力跨季/换批语义后续对齐）。取流编排与
-//! Tauri 同一段 service（运行时共用，见 `hongguo_service::runtime`）。
+//! 播放经系统播放器（macOS AVPlayer / Windows MediaEngine，经
+//! `hongguo_player` 门面）：起点决策（本地档案 >3 秒续播，云端历史兜底）、
+//! 5 秒节流落盘、首帧出画预取下一部的流、自动连播（末集接流内下一部——
+//! Tauri 的剧终接力跨季/换批语义后续对齐）。取流编排与 Tauri 同一段
+//! service（运行时共用，见 `hongguo_service::runtime`）。
 //!
 //! 控制区（对齐 Tauri 版控制栏的核心件）：暂停/继续（按钮 + 点击画面）、
 //! 进度条拖动 seek、倍速菜单（0.75–3x，音频变速不变调）、音量/静音；偏好
@@ -18,7 +19,7 @@
 //! 与 ↑↓ 切剧随控制层下一批目标落地；「回首页 5 分钟换一批」的过期重开
 //! 已对齐（FEED_STALE 判定 + pin_hold 在播不动）。
 //!
-//! 本文件只留视图本体（HomeView/NowPlaying 状态、构造、订阅、引擎事件
+//! 本文件只留视图本体（HomeView/NowPlaying 状态、构造、订阅、播放器事件
 //! 循环与 Render 入口）；按域拆出的子模块：`feed`（取流/展示列表）、
 //! `playback`（播放编排）、`danmaku`（弹幕）、`comments`（评论/回复）、
 //! `interact`（点赞/收藏/互动栏）、`auth`（登录/头像）、`controls`（控制条
@@ -41,7 +42,6 @@ use hongguo_api::detail::RelatedItem;
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::InteractionItem;
 use hongguo_common::model::{DownloadTask, VideoDefinition};
-use hongguo_media_platform_api::video::VideoFrame;
 use hongguo_service::app_state::AppStateInner;
 
 use danmaku::DmFlight;
@@ -81,7 +81,6 @@ pub(crate) mod hevc_prompt;
 pub(crate) mod history_cadence;
 pub(crate) mod incognito;
 pub(crate) mod interact;
-pub(crate) mod lag_diag;
 pub(crate) mod mini_panel;
 pub(crate) mod minimize;
 pub(crate) mod overlay;
@@ -95,7 +94,6 @@ pub(crate) mod preview_seed;
 pub(crate) mod season;
 pub(crate) mod stage;
 pub(crate) mod state;
-pub(crate) mod video_surface;
 pub(crate) mod view;
 pub(crate) mod window;
 
@@ -145,12 +143,11 @@ pub struct HomeView {
     /// 铺满舞台要原图（列表卡档是缩到 320 长边的小图，不够铺）。
     stage_covers: HashMap<String, Arc<RenderImage>>,
     // —— 播放态 ——
-    /// 引擎出生纪元：每次切剧 +1，陈旧事件/任务按它丢弃。Arc 原子共享给
-    /// 事件循环——转换挪到后台线程后，纪元判定必须在**转换之前**做
-    ///（切剧窗口里旧帧不再白转一遍），主线程字段够不着就要共享。
+    /// 播放纪元：每次切剧 +1，陈旧事件/任务按它丢弃。Arc 原子共享给
+    /// 事件循环——事件在后台线程收取，主线程字段够不着就要共享。
     epoch: Arc<AtomicU64>,
     player: Option<player::Player>,
-    /// 预览的虚拟引擎标记（screenshot feature）：预览无真实引擎，而控制条/
+    /// 预览的虚拟播放器标记（screenshot feature）：预览无真实播放器，而控制条/
     /// 选集/下载面板的渲染门槛都是 player.is_some()——种子置位后同一门槛
     /// 放行，这些 UI 走同一段渲染代码出画（见 [`Self::engine_ready`]）。
     #[cfg(feature = "screenshot")]
@@ -165,14 +162,6 @@ pub struct HomeView {
     /// 回首页按落盘进度续播（[`Self::resume_if_idle`]，Tauri 重挂载同语义）。
     pin_hold: bool,
     switching: bool,
-    /// 当前可上屏的帧；`None` = 还没出画（画封面占位）。
-    ///
-    /// 出画与否**只认这一处**：曾经另立过 `frame_ready` 标志，和「引擎就位」
-    /// 更新互相抢时序——首帧先到置 true、就位后到又清 false，封面从此永远
-    /// 收不掉（画面上封面与视频叠着）。帧直接来自事件，没有第二处状态。
-    frame: Option<VideoFrame>,
-    /// 视频上屏的像素载体（平台差异的唯一归属，见 [`video_surface`]）。
-    video_surface: video_surface::VideoSurface,
     /// 系统播放器周期性激活/挂载用的窗口句柄（无 render 时也能把窗口提到前台）。
     window_handle: gpui_kit::AnyWindowHandle,
     /// 舞台矩形（GPUI 逻辑像素、左上原点）：系统播放器图层跟随它。
@@ -197,10 +186,8 @@ pub struct HomeView {
     ended_generation: u64,
     /// 正在异步预注册/预加载的下一集 vid（防重复入队）。
     system_preload_pending: Option<String>,
-    /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
+    /// 舞台周期状态日志的上一跳（排障取证：switching/ready 状态）。
     stage_diag_at: Cell<Instant>,
-    /// 上屏节奏取证：两次新内容 render 的间隔、合并跳帧、最大停顿（5s 窗口）。
-    paint_diag: lag_diag::PaintDiag,
     /// 切换目标（switching 时 overlay 显示它的封面与标题）。
     pending_title: Option<String>,
     /// 起播失败态（自动重试也失败后落这里；画面中央错误卡 + 重试——
@@ -401,9 +388,6 @@ pub struct HomeView {
     portrait_full: bool,
     /// 上次落窗用的竖屏比例（变化 >1% 才重适配，Tauri REFIT_DELTA 同值）。
     portrait_aspect_last: f64,
-    /// 同剧切集保留上一集末帧顶住画面（Tauri `use-frame-hold` 同款：切集
-    /// 全程不闪封面，直到新集首帧出画；切剧仍立刻走封面）。
-    hold_last_frame: bool,
     /// 缺 HEVC 扩展的安装引导：本会话点过「暂不安装」就不再打扰（Tauri
     /// `hevcSession.markDismissed` 的模块级会话语义）。
     hevc_prompt_dismissed: bool,
@@ -418,7 +402,8 @@ pub struct HomeView {
     frameless: bool,
     /// 窗口钉住（Tauri usePinWindow 同款：窗口级会话态，大小屏共用）。
     pinned: bool,
-    /// 下载任务快照（每次渲染从队列读，进度靠 Frame 事件驱动的重渲染刷新）。
+    /// 下载任务快照（每次渲染从队列读，进度靠 service 事件与播放节拍驱动
+    /// 的重渲染刷新）。
     downloads: Arc<Vec<DownloadTask>>,
     /// 选集浮层的下载完成集号（渲染时刷新）。
     done_vids: Arc<Vec<u32>>,
@@ -435,7 +420,7 @@ pub struct HomeView {
     definition_menu_open: bool,
     /// 音量竖条的轨道矩形哨兵（拖动换算用，与 progress_bounds 同模式）。
     volume_bounds: Rc<Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
-    /// 引擎 rebuffer 状态（Buffering/Ready 事件驱动，中间出 loading）。
+    /// 播放器缓冲状态（Buffering/Ready 事件驱动，中间出 loading）。
     buffering: bool,
     /// 控制条可见截止时刻；拖动中/暂停时常显。
     controls_until: Option<Instant>,
@@ -517,10 +502,7 @@ impl HomeView {
             now: None,
             pin_hold: true,
             switching: false,
-            frame: None,
-            video_surface: video_surface::VideoSurface::new(),
             stage_diag_at: Cell::new(Instant::now()),
-            paint_diag: lag_diag::PaintDiag::new(),
             pending_title: None,
             play_error: None,
             play_retried: false,
@@ -659,7 +641,6 @@ impl HomeView {
             portrait: None,
             portrait_full: false,
             portrait_aspect_last: 0.0,
-            hold_last_frame: false,
             hevc_prompt_dismissed: false,
             hevc_installing: false,
             immersive: false,

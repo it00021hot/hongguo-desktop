@@ -1,5 +1,5 @@
-//! 播放编排：起播链（档案 → 起点决策 → prepare → 引擎 open）、滚轮/连播
-//! 切换、切清晰度、自动连播、进度落盘与流/档案预取。
+//! 播放编排：起播链（档案 → 起点决策 → prepare → 打开参数带回主线程）、
+//! 滚轮/连播切换、切清晰度、自动连播、进度落盘与流/档案预取。
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -8,10 +8,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::*;
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_common::AppResult;
-use hongguo_playback::{OpenOptions, PlayerEvent};
 
 use super::player;
-use super::player::Player;
+use super::player::{Player, PlayerEvent};
 use hongguo_service::app_state::AppStateInner;
 use hongguo_service::play_service::online::{ensure_stream_ready, prepare, resume_fill};
 use hongguo_service::play_service::position;

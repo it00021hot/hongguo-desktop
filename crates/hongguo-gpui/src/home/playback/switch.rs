@@ -3,7 +3,7 @@
 
 use super::*;
 
-use super::open::{Opened, PlayRequest};
+use super::open::{PlayRequest, SystemSpec};
 
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
@@ -162,8 +162,7 @@ impl super::HomeView {
         self.play_generation = self.play_generation.wrapping_add(1);
         // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
         //（重建要走取流表+asset+loader，实测首帧 650-970ms；接力 ~70ms）。
-        if crate::video_backend::is_system()
-            && start_override.is_none()
+        if start_override.is_none()
             && self.preferred_definition.is_none_or(|definition| {
                 self.now
                     .as_ref()
@@ -241,14 +240,11 @@ impl super::HomeView {
         // render，翻沿永远走不到。暂停即释放（用户在场，恢复由
         // toggle_pause 重新持有）。
         crate::play_activity::set_active(true);
-        // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
-        self.paint_diag.reset();
         self.switching = true;
         // 新的起播/切集目标会重排预加载；旧的 pending 不挡这一次。
         self.system_preload_pending = None;
-        if crate::video_backend::is_system() {
-            self.system_switch_started = Some(Instant::now());
-        }
+        // 新一次起播/切集的计时起点（首帧事件到达时结算耗时）。
+        self.system_switch_started = Some(Instant::now());
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
         self.play_error = None;
@@ -286,20 +282,17 @@ impl super::HomeView {
                 }
             });
         }
-        // 旧帧退场（Tauri use-frame-hold 同款真值表）：
-        // - 切剧：立刻走新剧封面，上一部的残帧绝不许跨剧泄漏；
-        // - 同剧切集/换清晰度：保留上一集末帧顶住画面（`hold_last_frame`），
-        //   新集首帧出画即接棒——这才是「切集不闪封面」。
+        // 旧画面退场：切剧立刻清「画面已就绪」，走新剧封面（切剧不闪上一
+        // 部的残影）；同剧切集/换清晰度不清——原生画面层（AVPlayerLayer /
+        // DComp 视频位）还挂在同一播放器的上一集画面上，新集首帧事件会
+        // 接棒，这正是「切集不闪封面」。
         let same_series = self
             .now
             .as_ref()
             .is_some_and(|n| n.series_id == item.series_id);
         if !same_series {
-            self.frame = None;
-            self.video_surface.clear();
             self.system_video_ready = false;
         }
-        self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
             crate::i18n::t("player.preparingShort")
         } else {
@@ -311,11 +304,8 @@ impl super::HomeView {
 
         let state = Arc::clone(&self.state);
         let history = self.history.clone().unwrap_or_default();
-        // 事件通道容量**必须小**：Frame 事件各背一帧（1080p NV12
-        // CVPixelBuffer ≈ 3MB），64 深度在宿主一时跟不上时就压着近 200MB
-        // 的 IOSurface 不还（解码器的输出池也跟着膨胀）。8 帧 ≈ 0.27s 的
-        // 内容量，足够吸收正常抖动；更深只会把「晚显示」变成「内存涨」。
-        // 宿主侧另有 batch 合并，控制事件（Buffering/Ended/…）依旧按序处理。
+        // 事件通道容量小即可：系统播放器只发低频控制事件（首帧/缓冲/播完/
+        // 失败），8 深度足够吸收抖动，通道背压照旧作用在发送端。
         let (events, rx) = mpsc::channel::<PlayerEvent>(8);
         let epoch = self.epoch.load(Ordering::Relaxed);
         let epoch_shared = Arc::clone(&self.epoch);
@@ -335,20 +325,19 @@ impl super::HomeView {
         ));
         cx.spawn(async move |this, cx| {
             let result = done.await.expect("tokio 桥不会丢弃发送端");
-            let mut deferred: Option<(super::open::SystemSpec, super::NowPlaying)> = None;
+            let mut deferred: Option<(SystemSpec, super::NowPlaying)> = None;
             let _ = this.update(cx, |view, cx| {
-                // 陈旧任务（期间用户又切了剧）：不接管，引擎随 result 丢弃自停
+                // 陈旧任务（期间用户又切了剧）：不接管，句柄随 result 丢弃自停
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
                 match result {
-                    Ok(Opened::Ready(handle, now)) => view.install_player(handle, now, epoch, cx),
-                    // 系统播放器要主线程建（视频 quad 是渲染器的），但**不能在
-                    // 实体借用内建**：open 过程中的 STA COM 调用会泵窗口消息，
-                    // a11y 探测/重绘若在泵里重入会撞 HomeView 的借用（实测日
-                    // 志刷「RefCell already borrowed」）。先把参数带出 update，
-                    // 借用解除后再开，见下方第二个 update。
-                    Ok(Opened::System(spec, now)) => deferred = Some((spec, now)),
+                    // 视频位是渲染线程的私有对象，不能在实体借用内建：open
+                    // 过程中的 STA COM 调用会泵窗口消息，a11y 探测/重绘若在
+                    // 泵里重入会撞 HomeView 的借用（实测日志刷「RefCell
+                    // already borrowed」）。先把参数带出 update，借用解除后
+                    // 再开，见下方第二个 update。
+                    Ok((spec, now)) => deferred = Some((spec, now)),
                     Err(error) => view.handle_play_failure(error, cx),
                 }
                 cx.notify();
@@ -365,8 +354,8 @@ impl super::HomeView {
                 spec.on_stall,
             );
             let _ = this.update(cx, |view, cx| {
-                // 开的这几毫秒里用户又切了剧：句柄随 opened 丢弃自停（引擎
-                // 没有 Play 调用不会出声）。
+                // 开的这几毫秒里用户又切了剧：句柄随 opened 丢弃自停（没有
+                // Play 调用不会出声）。
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
@@ -383,8 +372,8 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 把开好的播放器句柄接进视图（系统/自研两路共用）：偏好重放、落盘收尾、
-    /// 数据面重拉与切换态解除。
+    /// 把开好的播放器句柄接进视图：偏好重放、落盘收尾、数据面重拉与切换
+    /// 态解除。
     fn install_player(
         &mut self,
         handle: Player,
@@ -392,27 +381,21 @@ impl super::HomeView {
         epoch: u64,
         cx: &mut Context<Self>,
     ) {
-        // 新引擎就位（帧随后由它的 Frame 事件送到，这里不清帧：
-        // 起了才清的写法会把先到的首帧抹掉，封面从此收不掉）。
-        // 切换途中旧帧已清，到这里的画面本来就是封面占位。
-        // 偏好重放：换集重建引擎（对齐 Tauri `<video>` 卸载重挂）后
-        // 把音量/静音按存值发给新引擎。倍速已随 OpenOptions 出生
-        // 即位（见 play_task），只在分歧时补发——同值补发会平白
-        // 走一次分级换轴记账。
+        // 偏好重放：换集重建播放器（对齐 Tauri `<video>` 卸载重挂）后
+        // 把音量/静音按存值发给新实例。倍速已随打开参数传入，只在分歧时
+        // 补发——同值补发是平白的重复调用（首帧事件还会再补一次）。
         if (handle.rate() - self.rate).abs() > 1e-9 {
             handle.set_rate(self.rate);
         }
         handle.set_volume(self.volume);
         handle.set_muted(self.muted);
-        // 换引擎前的 force 落盘 + 观看历史（Tauri 切集
-        // persist(force) 同款）：旧引擎与旧 now 还在手里，
+        // 换播放器前的 force 落盘 + 观看历史（Tauri 切集
+        // persist(force) 同款）：旧播放器与旧 now 还在手里，
         // 读数有效；首次起播 player 为空自然跳过
         self.save_progress_now();
-        let system_backend = handle.is_system();
         self.player = Some(handle);
-        if system_backend {
-            self.spawn_system_tick(epoch, cx);
-        }
+        // 系统播放器没有内容事件流，弹幕推进/进度落盘靠 30fps 节拍
+        self.spawn_system_tick(epoch, cx);
         // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
         // 别的剧即解除，同剧连播保持
         if self.binge.as_deref() != Some(now.series_id.as_str()) {
@@ -432,30 +415,16 @@ impl super::HomeView {
         // series_id 当 book_id（服务端参数错配，热剧也拉空）
         self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
         self.now = Some(now);
-        if system_backend {
-            // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
-            self.preload_system_next(cx);
-        }
+        // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
+        self.preload_system_next(cx);
         self.switching = false;
         self.buffering = false;
         self.play_retried = false;
-        log::info!("[Home] 引擎就位（epoch={epoch}），switching 解除");
+        log::info!("[Home] 播放器就位（epoch={epoch}），switching 解除");
     }
 
-    /// 起播失败收尾：系统后端先降级重走，普通失败按 retry 档自动重试一次，
-    /// 复发才落可见错误态。
+    /// 起播失败收尾：按 retry 档自动重试一次，复发才落可见错误态。
     fn handle_play_failure(&mut self, e: hongguo_common::AppError, cx: &mut Context<Self>) {
-        // 系统播放器起不来 = 后端降级，不是播放失败：翻掉开关后用
-        // 自研上屏重走一次起播（不消耗 play_retried 预算）。
-        if crate::video_backend::fall_back_to_gpui() {
-            log::warn!("[Home] 系统播放器不可用，后端降级为 gpui 重起：{e}");
-            self.switching = false;
-            if let Some(item) = self.display_items().get(self.cursor()).cloned() {
-                self.play_target(item, None, None, cx);
-                cx.notify();
-                return;
-            }
-        }
         log::warn!("[Home] 起播失败: {e}");
         self.switching = false;
         self.buffering = false;
@@ -680,11 +649,6 @@ impl super::HomeView {
         self.play_generation = self.play_generation.wrapping_add(1);
         self.system_preload_pending = None;
         hongguo_stream::cache().clear_next();
-        // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
-        // 定格帧是「同剧切集」专属，离开时一并落下）
-        self.frame = None;
-        self.video_surface.clear();
-        self.hold_last_frame = false;
         self.switching = false;
         self.buffering = false;
         self.scrubbing = None;

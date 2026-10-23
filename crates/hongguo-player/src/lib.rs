@@ -5,7 +5,7 @@
 //! 调用方不需要同时认识 api 与实现。
 //!
 //! 无系统播放器实现的目标（Linux 等）编译成空壳：`open` 返回 `None`、
-//! `prepare_window` 空操作，`video_backend` 那边也不会选系统后端。
+//! `prepare_window` 空操作（壳只发 macOS / Windows，起播按失败处理）。
 
 pub use hongguo_player_api as api;
 pub use hongguo_player_api::*;
@@ -25,7 +25,7 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use hongguo_player_macos::{avf, loader};
 
-/// 打开一集系统播放器；`None` = 引擎/画面位起不来，调用方回落到自研上屏。
+/// 打开一集系统播放器；`None` = 播放器/画面位起不来，调用方走起播失败。
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn open(
     source: PlaySource,

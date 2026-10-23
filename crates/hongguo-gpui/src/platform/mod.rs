@@ -85,8 +85,7 @@ pub(crate) fn host_window(window: &gpui_kit::Window) -> Option<hongguo_player::H
 }
 
 /// 系统播放器工厂：按目标分派到 `hongguo-player-macos` / `hongguo-player-windows`。
-/// 业务层只问 `video_backend::is_system()`，不写 `#[cfg]`；没有实现的目标恒
-/// `None`（`video_backend` 那边已经拒绝 system）。
+/// 业务层不写 `#[cfg]`；没有实现的目标恒 `None`（起播链按失败处理）。
 pub(crate) fn open_system_player(
     source: hongguo_player::PlaySource,
     start_secs: f64,
@@ -114,6 +113,6 @@ pub(crate) fn stage_origin(x: f32, y: f32, _chrome_top: f32) -> (f32, f32) {
     (x, y)
 }
 
-/// 起拖窗口：没有原生实现的平台空操作（不会走到，`SUPPORTED` 已拒绝）。
+/// 起拖窗口：没有原生实现的平台空操作（壳只发 macOS / Windows）。
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub(crate) fn start_window_move(_window: &mut gpui_kit::Window, _cx: &gpui_kit::App) {}

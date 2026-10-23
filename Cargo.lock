@@ -4415,7 +4415,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
- "core-foundation 0.10.0",
  "env_logger",
  "futures",
  "gpui-kit",
@@ -4425,8 +4424,6 @@ dependencies = [
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
- "hongguo-media-platform-api",
- "hongguo-playback",
  "hongguo-player",
  "hongguo-protocol",
  "hongguo-service",
@@ -4436,8 +4433,6 @@ dependencies = [
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-video",
  "objc2-foundation 0.3.2",
  "raw-window-handle",
  "reqwest",
@@ -4541,22 +4536,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hongguo-playback"
-version = "0.5.6"
-dependencies = [
- "hongguo-common",
- "hongguo-media",
- "hongguo-media-platform",
- "hongguo-player-api",
- "hongguo-stream",
- "hongguo-video",
- "log",
- "parking_lot",
- "ringbuf",
- "tokio",
-]
-
-[[package]]
 name = "hongguo-player"
 version = "0.5.6"
 dependencies = [
@@ -4570,7 +4549,6 @@ dependencies = [
 name = "hongguo-player-api"
 version = "0.5.6"
 dependencies = [
- "hongguo-media-platform-api",
  "raw-window-handle",
  "tokio",
 ]
@@ -8460,17 +8438,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "ringbuf"
-version = "0.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c"
-dependencies = [
- "crossbeam-utils",
- "portable-atomic",
- "portable-atomic-util",
 ]
 
 [[package]]

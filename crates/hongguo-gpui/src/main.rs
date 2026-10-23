@@ -49,7 +49,6 @@ mod single_instance;
 mod toast;
 mod tokens;
 mod ui_prefs;
-mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
 mod window_restore;
@@ -276,7 +275,6 @@ fn main() {
                 }
             };
             // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
-            let system_backend = crate::video_backend::is_system();
             let mut built = None;
             let shell_window: gpui_kit::AnyWindowHandle = cx
                 .open_window(
@@ -286,14 +284,12 @@ fn main() {
                     {
                         let mut options = gpui_kit::component::TitleBar::window_options();
                         options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
-                        // 系统播放器要透出下层 AVPlayerLayer：窗口从创建时就按
-                        // 透明配置，避免「先不透明建窗、再 set_background_appearance」
-                        // 这一段里 CAMetalLayer / NSWindow 的 opaque 状态不同步。
-                        options.window_background = if system_backend {
-                            gpui_kit::WindowBackgroundAppearance::Transparent
-                        } else {
-                            gpui_kit::WindowBackgroundAppearance::Opaque
-                        };
+                        // 系统播放器要透出下层 AVPlayerLayer / DComp 视频位：
+                        // 窗口从创建时就按透明配置，避免「先不透明建窗、再
+                        // set_background_appearance」这一段里 CAMetalLayer /
+                        // NSWindow 的 opaque 状态不同步。
+                        options.window_background =
+                            gpui_kit::WindowBackgroundAppearance::Transparent;
                         // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
                         options.titlebar = Some(gpui_kit::TitlebarOptions {
                             title: Some("红果".into()),
@@ -309,15 +305,12 @@ fn main() {
                         let view = cx.new(|cx| shell::Shell::new(state.clone(), window, cx));
                         built = Some(view.clone());
                         // Root 是 GPUI 场景最底层，gpui-component 的 RootPlugin
-                        // 默认给它铺 `theme.background`；系统后端必须在这里把
-                        // Root 也改成透明，否则整个窗内都是这块不透明黑。
+                        // 默认给它铺 `theme.background`；系统播放器要透出下层
+                        // 视频位，必须在这里把 Root 改成透明，否则整个窗内都
+                        // 是这块不透明黑。
                         cx.new(|cx| {
-                            let root = gpui_kit::base::Root::new(view, window, cx);
-                            if system_backend {
-                                root.bg(gpui_kit::rgba(0x00000000))
-                            } else {
-                                root
-                            }
+                            gpui_kit::base::Root::new(view, window, cx)
+                                .bg(gpui_kit::rgba(0x00000000))
                         })
                     },
                 )

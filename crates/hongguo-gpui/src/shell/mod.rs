@@ -114,10 +114,8 @@ pub struct Shell {
 impl Shell {
     pub fn new(state: Arc<AppStateInner>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 系统播放器：窗口透明（GPUI Metal 层 clear alpha=0）+ 背景铺黑，
-        // 视频 NSView 插在 GPUIView 之下。默认 gpui 后端不碰窗口外观。
-        if crate::video_backend::is_system() {
-            crate::platform::prepare_system_window(window);
-        }
+        // 视频 NSView / DComp 视频位插在 GPUIView 之下。
+        crate::platform::prepare_system_window(window);
         let feed = cx.new(|cx| HomeView::new(state.clone(), window, cx));
         // 无人值守启动（终端后台拉起）时窗口可能不是 key window，GPUI 就
         // 不再请求帧；系统播放器要在首帧 render 时挂 NSView，这一步不能省。

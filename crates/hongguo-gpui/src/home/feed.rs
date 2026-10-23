@@ -113,13 +113,6 @@ pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_sec
 impl super::HomeView {
     // —— 数据：推荐流 ——
 
-    /// 当前 tab 的首批/换一批是否在途（Tauri `feed.isLoading` 同语义）。
-    pub(super) fn feed_loading(&self) -> bool {
-        self.feeds
-            .get(&self.active)
-            .is_some_and(|feed| feed.loading)
-    }
-
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
     pub(super) fn load_feed(&mut self, source: Source, restart: bool, cx: &mut Context<Self>) {

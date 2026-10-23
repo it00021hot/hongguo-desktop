@@ -415,10 +415,6 @@ impl PlayerLike for SystemPlayer {
         view::submit(bounds, fit, visible);
     }
 
-    fn is_system(&self) -> bool {
-        true
-    }
-
     fn detach(&self) {
         view::hide();
     }

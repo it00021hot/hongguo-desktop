@@ -515,17 +515,13 @@ impl PlayerLike for SystemPlayer {
         self.present_frame();
     }
 
-    fn is_system(&self) -> bool {
-        true
-    }
-
     fn detach(&self) {
         self.staged.lock().expect("舞台锁 poisoned").visible = false;
         self.present_frame();
     }
 
     fn preload_next(&self, _vid: &str, _definition: u32, _on_stall: Option<StallHook>) -> bool {
-        // 引擎没有播放列表：预加载/接力由壳侧回落到重建（对齐 Tauri 卸载重挂）。
+        // MediaEngine 没有播放列表：预加载/接力由壳侧回落到重建（对齐 Tauri 卸载重挂）。
         false
     }
 
