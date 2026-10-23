@@ -45,3 +45,8 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
     "CVImageBuffer",
     "CVPixelBuffer",
 ] }
+# CATransaction：视频子层的几何变更要禁隐式动画（切形态卡顿的根因）。
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CATransaction",
+] }

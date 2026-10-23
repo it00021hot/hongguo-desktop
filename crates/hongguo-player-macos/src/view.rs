@@ -21,9 +21,29 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_quartz_core::CATransaction;
 use raw_window_handle::RawWindowHandle;
 
 use super::avf;
+
+/// 包在「禁用隐式动画」的 CATransaction 里执行几何变更。
+///
+/// **为什么必须**：`player_layer` 是裸 CALayer 子层（没有 NSView 托管，
+/// AppKit 不会替它关动作），直接 `setFrame:` / `setVideoGravity:` 会触发
+/// Core Animation 默认的 0.25s 隐式动画。平时帧帧同值无感；**切形态**
+/// （全屏↔正常、小窗、竖屏）时窗口在动、GPUI 黑边逐帧就位，视频层却带着
+/// 缓动在后面追——三层不同步就是用户实测的「切播放模式画面卡顿」。禁掉
+/// 动作后几何立即生效，与 GPUI 同拍。
+///
+/// 线程纪律：必须在主线程调用（本文件全部入口都在主线程）。
+fn without_implicit_actions<T>(f: impl FnOnce() -> T) -> T {
+    // begin/commit 必须配对，本函数保证。
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    let out = f();
+    CATransaction::commit();
+    out
+}
 
 /// 全局唯一的视频宿主（GPUI 壳单窗口）。裸指针由 contentView/父 layer 持有，
 /// 进程内不回收——窗口关闭即随 AppKit 树释放。
@@ -253,18 +273,21 @@ pub fn ensure(host: &HostWindow, player: &AnyObject) -> bool {
     };
     let gravity = NSString::from_str("AVLayerVideoGravityResizeAspect");
     // SAFETY: 两个 layer 都是有效 ObjC 对象；sublayer 增加引用。
+    // 初始几何同样禁隐式动画（与 submit 同口径）。
     unsafe {
-        let _: () = msg_send![&*player_layer, setFrame: bounds];
-        let _: () = msg_send![&*player_layer, setAutoresizingMask: 18u32];
-        let _: () = msg_send![&*player_layer, setVideoGravity: &*gravity];
-        let _: () = msg_send![host_layer, addSublayer: &*player_layer];
-        // GPUIView 是 contentView 的 subview；视频视图插在它下面（-1 = below）。
-        let _: () = msg_send![
-            content_ptr,
-            addSubview: host_view,
-            positioned: -1isize,
-            relativeTo: view
-        ];
+        without_implicit_actions(|| {
+            let _: () = msg_send![&*player_layer, setFrame: bounds];
+            let _: () = msg_send![&*player_layer, setAutoresizingMask: 18u32];
+            let _: () = msg_send![&*player_layer, setVideoGravity: &*gravity];
+            let _: () = msg_send![host_layer, addSublayer: &*player_layer];
+            // GPUIView 是 contentView 的 subview；视频视图插在它下面（-1 = below）。
+            let _: () = msg_send![
+                content_ptr,
+                addSubview: host_view,
+                positioned: -1isize,
+                relativeTo: view
+            ];
+        });
     }
     *host = Some(Host {
         content: content_ptr,
@@ -313,11 +336,14 @@ pub fn submit(bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool)
             PresenterFit::Cover => "AVLayerVideoGravityResizeAspectFill",
         });
         // SAFETY: 宿主对象由视图树持有；frame/gravity 是常规属性。
+        // 几何变更禁隐式动画（见 without_implicit_actions）。
         unsafe {
-            let _: () = msg_send![host.view, setFrame: frame];
-            let _: () = msg_send![host.player_layer, setFrame: inner];
-            let _: () = msg_send![host.player_layer, setVideoGravity: &*gravity];
-            let _: () = msg_send![host.view, setHidden: !visible];
+            without_implicit_actions(|| {
+                let _: () = msg_send![host.view, setFrame: frame];
+                let _: () = msg_send![host.player_layer, setFrame: inner];
+                let _: () = msg_send![host.player_layer, setVideoGravity: &*gravity];
+                let _: () = msg_send![host.view, setHidden: !visible];
+            });
             let key = (
                 frame.origin.x,
                 frame.origin.y,
