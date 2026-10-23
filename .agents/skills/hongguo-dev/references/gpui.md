@@ -15,7 +15,7 @@
 - **异步桥**（`bridge.rs`）：service 的 async 族假定 tokio 设施（`sleep` / `Semaphore`），而 GPUI 执行器是 smol 系——壳持一个常驻 tokio 运行时线程（`main.rs` 的 `TOKIO`），`bridge::spawn` 投递 + oneshot 回传；`Receiver` 不依赖 tokio 上下文，可在 GPUI 任务里直接 await。`rx.await.expect("tokio 桥不会丢弃发送端")` 是不变量断言（运行时常驻到进程结束），新增调用沿用同一措辞，别加兜底。
 - **事件泵**（`events.rs`）：service 业务事件经 broadcast 发布，泵转发进 mpsc 无界通道（同步原语，GPUI 执行器可直接 await）；消费方在视图构造时起一条 `cx.spawn` 循环把事件落进视图状态——与 Tauri 壳消费同一批事件（一份业务实现，两种 UI 适配）。
 - **封面与 HTTP**：HEIC 封面走 `hongguo-protocol` 的转码阶梯 + `spawn_blocking`（与 Tauri 的 `hongguo-cover://` 同源）；远程拉封面走 `http_client.rs` 的 HttpClient 桥，请求进常驻 tokio 运行时（hyper 的 DNS 解析依赖 tokio 反应器，GPUI 执行器没有）。
-- **模块归属**：`shell.rs`（侧栏导航 / 目的地切换，对齐 Tauri 客户端信息架构）、`home/`（首页沉浸流，按域拆子模块：feed / playback / danmaku / comments / interact / auth / controls / mini_panel / picker / downloads / stage / fmt）、`rank.rs`、`mini.rs`（小屏）、`preview/`、`screenshot.rs`（feature 门控）。新文件按域落位，参照 `home/` 的模块树；文件规模红线与 `backend.md` 同款。
+- **模块归属**：`shell/`（侧栏导航 / 顶栏 / 目的地切换，对齐 Tauri 客户端信息架构）、`home/`（首页沉浸流，按域拆子模块：feed / playback / stage / danmaku / comments / comment_view / interact / auth / controls / picker / mini_panel / downloads…）、`pages/`（次级页：browse / rank / new_drama / history / collections / liked / follows / reservations / creator / settings / storage / tasks / merge）、`detail/`、`portrait/`、`boss_key/`、`mini.rs`（小屏）、`preview/`、`screenshot.rs`（feature 门控）。新文件按域落位，参照 `home/` 与 `pages/` 的模块树；文件规模红线与 `backend.md` 同款。
 
 ## 界面规范
 

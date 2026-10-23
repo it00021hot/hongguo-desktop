@@ -51,8 +51,8 @@ impl HomeView {
                 if let Some(player) = self.player.as_ref() {
                     player.set_rate(self.rate);
                 }
-                // 首帧事件后没有周期性的内容事件；这里必须主动调度一帧，
-                // 否则舞台永远停在上一帧的黑色/封面。
+                // 首帧到达即上屏：系统节拍最快也要等下一拍，这里主动
+                // notify 一次，舞台才不会在黑色/封面上多停一拍。
                 cx.notify();
                 // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集；
                 // 再给 HONGGUO_AV_NEXT_EPISODE_LOOP=1 则每集首帧都重新计时
@@ -186,7 +186,7 @@ impl HomeView {
     }
 
     /// 鼠标活动/操作刷新控制条可见窗；隐藏→可见的沿上排一次性定时器，
-    /// 静止到期后靠它（或播放中的帧事件流）触发重算隐藏。真实输入同时
+    /// 静止到期后靠它（或播放中的节拍重算）触发隐藏。真实输入同时
     /// 解除连播静默（Tauri wakeOnInput 同款）。
     pub(in crate::home) fn wake_controls(&mut self, cx: &mut Context<Self>) {
         // 静默期闸门（Tauri wakeOnMove 同款）：连播静默起步后，「用户在场」
@@ -217,9 +217,8 @@ impl HomeView {
 
     /// 任一面板打开即常显（Tauri panelOpen 同一集合：选集/评论/弹幕设置/
     /// 音量/下载）。倍速/清晰度下拉菜单与表情网格虽不是「面板」，但开着时
-    /// 指针不在控制条本体上、hover 养不了常显窗——不进来就会被帧事件流的
-    /// 重算连菜单一起收掉（播放中每帧都触发，暂停态没重渲染所以显得
-    /// 「只有暂停能操作」）。
+    /// 指针不在控制条本体上、hover 养不了常显窗——不进来就会被节拍重算
+    /// 连菜单一起收掉。
     fn panel_open(&self) -> bool {
         self.picker_open
             || self.comments_panel_open

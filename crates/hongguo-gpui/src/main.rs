@@ -1,4 +1,4 @@
-//! 红果桌面版 GPUI 壳（起步单壳，`docs/architecture-refactor.md` §4.3）。
+//! 红果桌面版 GPUI 自绘壳。
 //!
 //! **操作与 Tauri 客户端一致**：装配序（开库 → 设备 adopt → 全局状态）、
 //! 接口调用（`state.api_env()` + `hongguo_api`）与 Tauri 壳逐层同源——本壳

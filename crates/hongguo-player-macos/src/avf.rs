@@ -1,7 +1,7 @@
 //! AVFoundation 的最小 FFI 面（spike 专用）。
 //!
-//! 只包 [Phase 0](docs/gpui-video-pacing-plan.md) 要验证的四条指标用到的
-//! 调用：`AVPlayer` / `AVPlayerItem` / `AVPlayerLayer` / `AVPlayerItemVideoOutput`。
+//! 只包 AVPlayer spike（`HONGGUO_AV_SPIKE=1` 诊断入口）用到的调用：
+//! `AVPlayer` / `AVPlayerItem` / `AVPlayerLayer` / `AVPlayerItemVideoOutput`。
 //! 不引入 objc2-av-foundation 绑定 crate：类按名字从运行时取，方法用
 //! `msg_send!` 直投；框架链接由 `#[link(name = "AVFoundation")]` 负责。
 //!

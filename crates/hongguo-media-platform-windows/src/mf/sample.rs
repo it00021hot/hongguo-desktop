@@ -75,7 +75,7 @@ pub(super) fn type_stride(t: &IMFMediaType, width: usize) -> usize {
 ///
 /// SAFETY：`unsafe fn` 的调用方须保证返回的裸指针只在 `buf` 存活且未
 /// `Unlock` 期间使用（即 `finish_sample` 之前）——两个约定由
-/// [`nv12_sample`] 与 playback 的 `bytes_sample` 以固定顺序满足。
+/// [`nv12_sample`] 以固定顺序满足。
 pub(super) unsafe fn locked_buffer(len: usize) -> AppResult<(IMFSample, IMFMediaBuffer, *mut u8)> {
     unsafe {
         let sample = hr(MFCreateSample(), "建样本")?;

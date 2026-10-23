@@ -97,7 +97,7 @@ pub struct SystemPlayer {
 unsafe impl Send for SystemPlayer {}
 unsafe impl Sync for SystemPlayer {}
 
-/// 打开一集系统播放器。返回 `None` 表示引擎起不来——调用方回落到自研上屏。
+/// 打开一集系统播放器。返回 `None` 表示播放器/画面位起不来——调用方走起播失败。
 pub fn open(
     source: PlaySource,
     start_secs: f64,

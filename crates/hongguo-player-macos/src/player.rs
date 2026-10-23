@@ -218,7 +218,7 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
 /// 打开一集系统播放器。返回的门面已实现 [`PlayerLike`]；图层由 render 侧
 /// 调用 `attach` 挂载（tokio 线程不能碰 AppKit）。
 ///
-/// 返回 `None` = 引擎起不来，调用方回落到自研上屏——与 Windows 实现同一套
+/// 返回 `None` = 播放器/画面位起不来，调用方走起播失败——与 Windows 实现同一套
 /// 契约（门面 `hongguo_player::open` 的返回类型由两边实现共同决定）。
 pub fn open(
     source: PlaySource,

@@ -3,9 +3,9 @@
 //! 插件注册、全局状态注入、自定义协议挂载、command 挂载——Tauri 应用的
 //! 全部装配在这里；[`prepare`] 产出装好的 `Builder`，`build(generate_context!)`
 //! 与 `.run()` 留在 `crates/hongguo-tauri-app`（`generate_context` 必须与 tauri.conf.json
-//! 同 crate，见 `docs/architecture-refactor.md` §8 第 5 条）。
+//! 同 crate）。
 //!
-//! GPUI 壳（将来的 `hongguo-gpui`）**不消费本 crate**——它直接构造
+//! GPUI 壳（`hongguo-gpui`）**不消费本 crate**——它直接构造
 //! `hongguo_service::AppStateInner` 并调用 service，绕开 IPC 与 WebView 供数。
 
 pub mod bootstrap;

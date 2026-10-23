@@ -34,7 +34,7 @@ pub(super) fn startup() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
         if let Err(error) = unsafe { MFStartup(MF_VERSION.max(MF_API_VERSION), 0) } {
-            // 起不来就是系统后端整体不可用：壳侧随后 open 会失败并回滚 gpui。
+            // 起不来就是系统后端整体不可用：壳侧随后 open 会失败并走起播错误态。
             log::error!("[WmPresenter] MFStartup 失败: {error}");
         }
     });

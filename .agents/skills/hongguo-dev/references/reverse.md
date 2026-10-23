@@ -35,11 +35,8 @@ Go 侧 API 层若带 doc 注释编入二进制，Ghidra 反编译 + API 注册�
 | 分析产物根目录 | `C:/Users/liu13/tools/rea/analysis/hongguo-apk/`（strings.tsv、find-str-refs.py、dex/、jadx-src*/、models-dump.json、so/） |
 | jadx-headless-mcp | **弃用**——会话环境快照看不到新 env，且单类反编译 15 分钟起步易 OOM；其唯一价值（全类清单）已被 `dex-classes-*.txt` 静态产物替代 |
 
-换一个 APK 的完整 checklist 与踩坑清单：`docs/hongguo-apk-reverse-playbook.md`。
-
 ## 台账指针
 
-- `docs/hongguo-apk-reverse-playbook.md` —— 完整操作手册（流水线细节、13 条踩坑、死路记录）
 - `docs/hongguo-apk-endpoints.md` —— 官方 APK 端点全量清单（静态提取，1302 条）
 - `docs/hongguo-hgplayer-re-endpoints.md` —— hgplayer（Windows）逆向发现
-- `docs/hongguo-api-endpoints.md` —— 项目对接口径唯一台账（抓包锁定）
+- `docs/hongguo-api-endpoints.md` —— 项目对接口径唯一台账（抓包锁定；含扫码登录等实测死路的结论记录）

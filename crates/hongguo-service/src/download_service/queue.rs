@@ -121,7 +121,6 @@ impl DownloadQueue {
         }
     }
 
-    /// 更新下载进度。
     pub fn update_progress(&self, id: &str, downloaded: u64, total: u64) {
         let mut guard = self.tasks.write();
         if let Some(t) = guard.iter_mut().find(|t| t.id == id) {

@@ -66,7 +66,7 @@ export function ReservationPage() {
     if (current.isFetchingMore) return;
     current.loadMore();
   });
-  // 滚近底部（600px 提前量）懒翻下一页；常驻哨兵（同日历/找剧口径）
+  // 滚近底部（400px 提前量）懒翻下一页；常驻哨兵（同日历/找剧口径）
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;

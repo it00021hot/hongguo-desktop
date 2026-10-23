@@ -1,8 +1,7 @@
 //! 自定义 URI 协议的 Tauri 注册胶水。
 //!
 //! 供数逻辑（URL 编解码、工作池、Range 应答、封面转码阶梯）都在
-//! `hongguo-protocol` crate；本文件只做两件事（「协议注册归壳」，见
-//! `docs/architecture-refactor.md` §2）：
+//! `hongguo-protocol` crate；本文件只做两件事（协议注册归壳）：
 //! 1. 把三个 scheme 挂到 Tauri Builder（异步 handler，可挂起等数据就绪）；
 //! 2. 把协议层的元组产物组装成 `tauri::http` 响应，并执行 serve 侧的
 //!    `catch_unwind`（第三层 panic 防线：炸了回 500，worker 与进程都活着）。

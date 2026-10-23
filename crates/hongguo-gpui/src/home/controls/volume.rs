@@ -11,7 +11,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::div;
 
 impl HomeView {
-    /// 音量滑杆：拖动即生效（引擎在设备回调里乘 PCM，零延迟），松手落盘。
+    /// 音量滑杆：拖动即生效（音量值直设播放器，即时可闻），松手落盘。
     /// 音量弹层开合裁决（按钮 hover ∥ 弹层 hover 取并集，见挂载处注释）。
     fn update_volume_popup(&mut self, cx: &mut Context<Self>) {
         let open = self.volume_hovered || self.volume_popup_hovered;

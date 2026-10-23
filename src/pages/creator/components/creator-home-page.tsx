@@ -8,6 +8,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { usePlaySeries } from '@/hooks/use-play-series';
 import { useCreatorProfile, useCreatorWorks, usePrefetchSeriesEpisodes } from '@/service/queries';
 import { formatCountPrecise } from '@/utils/format';
+import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
 import type { CreatorWork } from '@/service/schema';
 import { t, tf } from '@/locales';
 
@@ -132,7 +133,7 @@ function WorksGrid({
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) onLoadMore();
       },
-      { rootMargin: '600px', root: document.getElementById('content') },
+      { rootMargin: `${SENTINEL_ROOT_MARGIN_PX}px`, root: document.getElementById('content') },
     );
     observer.observe(el);
     return () => observer.disconnect();

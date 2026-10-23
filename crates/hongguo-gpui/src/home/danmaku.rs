@@ -13,7 +13,7 @@ use hongguo_api::interact::send_danmaku;
 use crate::bridge;
 
 /// 在飞的弹幕：泳道 + 入场墙钟 + 估宽。位置每渲染帧按「播放中才走的
-/// 墙钟」推进——暂停即冻结（无 Frame 事件），倍速不改变滚动速度
+/// 墙钟」推进——暂停即冻结（锚点清空），倍速不改变滚动速度
 ///（hgplayer 同款：它家倍速下弹幕也不变速）。progress 以「屏宽」为单位的
 /// 滚动进度：x = stage_w − progress × (stage_w + 估宽)，progress ≥ 1 出屏。
 pub(super) struct DmFlight {
@@ -142,9 +142,9 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 弹幕 tick（每个 Frame 事件驱动，播放中 ~30fps）：seek 跳变检测 →
-    /// 入场（offset 落在 (上一帧, 当前] 的按密度抽样发射）→ 在飞推进与
-    /// 出屏回收。暂停时没有 Frame 事件，位置自然冻结。
+    /// 弹幕 tick（33ms 系统节拍驱动，见 `playback/preload.rs`）：seek 跳变
+    /// 检测 → 入场（offset 落在 (上一帧, 当前] 的按密度抽样发射）→ 在飞
+    /// 推进与出屏回收。暂停时锚点清空，位置冻结。
     pub(super) fn danmaku_tick(&mut self, cx: &mut Context<Self>) {
         if !self.danmaku_on || self.danmaku_items.is_empty() {
             return;

@@ -52,8 +52,8 @@ impl HomeView {
         cx.notify();
     }
 
-    /// 弹一条轻量提示（Tauri toast 同位）：单槽覆盖，定时收尾（不依赖
-    /// 重渲染节拍——暂停中没有 Frame 事件也能按时消失）。
+    /// 弹一条轻量提示（Tauri toast 同位）：单槽覆盖，定时收尾（靠定时
+    /// 任务，不依赖重渲染节拍）。
     pub(crate) fn show_toast(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
         self.toast = Some(crate::toast::Toast::new(message));
         cx.notify();

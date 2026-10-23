@@ -8,8 +8,8 @@
 //!
 //! 契约（`PlatformRequest` / 码率策略）在 `hongguo-media-platform-api`，
 //! 平台原生实现（VideoToolbox / Media Foundation / WIC）分居两个实现
-//! crate——依赖方向「实现 → 契约；门面 → 契约 +（按目标）实现」，见
-//! `docs/architecture-refactor.md`。纯 Rust 的编解码（backend / demux /
+//! crate——依赖方向「实现 → 契约；门面 → 契约 +（按目标）实现」。纯 Rust
+//! 的编解码（backend / demux /
 //! hevc / remux / codec_probe / disk_space / transcode / heif）在
 //! `crates/hongguo-media`。
 //!

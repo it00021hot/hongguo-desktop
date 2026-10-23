@@ -69,9 +69,9 @@ export function RankPage() {
     setSub(first?.id ?? '');
   };
 
-  // 滚动续载：哨兵进视口（600px 提前量）就向服务端翻下一页（每页 20 条，
-  // 按抓包协议 offset=next_offset + 回传 session_id）。API 分页天然一批
-  // 20 条，不再需要客户端渲染批量。
+  // 滚动续载：哨兵进视口（400px 提前量）就向服务端翻下一页（每页 10 条，
+  // offset=响应的 next_offset + 回传 session_id/rank_version，见
+  // service/queries/rank.ts）。API 分页天然一批 10 条，不再需要客户端渲染批量。
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;
@@ -197,7 +197,7 @@ export function RankPage() {
                   {listItems.map((item) => (
                     <RankRow key={item.seriesId} item={item} />
                   ))}
-                  {/* 续载哨兵：常驻（滚动容器内 600px 提前量触发服务端翻页）。
+                  {/* 续载哨兵：常驻（滚动容器内 400px 提前量触发服务端翻页）。
                       到底后（!hasMore）不移除也无妨——回调里 loadMore 自会空转 */}
                   <div ref={sentinelRef} className="h-px" aria-hidden />
                   {rank.isFetchingMore && (

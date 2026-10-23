@@ -160,9 +160,9 @@ impl Decompressor {
                 refcon: &*boxed as *const Sender<(Pb, f64)> as *mut c_void,
             };
             // 显式点名硬件解码：不传规格时 VT 可能落软解，1080p HEVC 软解
-            // 46.8ms/帧（>33ms 的实时线），画面必然越播越落后。
+            // 46.8ms/帧，转码吞吐直接掉一个量级。
             // 只「建议」不「要求」：个别码流硬解不收时还得让 VT 回软解，
-            // 能播总比报错强（建的会话是什么，下面查出来记日志）。
+            // 能解总比报错强（建的会话是什么，下面查出来记日志）。
             let spec = make_dict(&[(
                 ffi::kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder
                     as ffi::CFTypeRef,
@@ -183,8 +183,8 @@ impl Decompressor {
             ffi::CFRelease(pixel_format as ffi::CFTypeRef);
             ffi::CFRelease(pool_min as ffi::CFTypeRef);
             os(status, "建解码会话")?;
-            // 实时播放档：让解码器按实时流取舍流水线（见 FFI 声明处注释）。
-            // 失败只记日志——属性不被支持时解码仍然正确，只是时延更大。
+            // 实时档（RealTime）：让解码器按实时流取舍流水线（见 FFI 声明处
+            // 注释）。失败只记日志——属性不被支持时解码仍然正确，只是时延更大。
             let rt = ffi::VTSessionSetProperty(
                 session as ffi::VTSessionRef,
                 ffi::kVTDecompressionPropertyKey_RealTime,
@@ -267,8 +267,7 @@ impl Decompressor {
             // 异步模式：`kVTDecodeFrame_EnableAsynchronousDecompression` 要求
             // VT 把解码排队到内部队列，DecodeFrame 立即返回、结果经回调异步
             // 到达。同步模式（不设标志）会让本调用阻塞到帧出来——实测 1080p
-            // HEVC 每帧 46.5ms，硬件再快也排不成流水线，30fps 的实时线是
-            // 33ms/帧，同步模式必然越播越落后。异步让硬件并行吃满。
+            // HEVC 每帧 46.5ms，硬件再快也排不成流水线；异步让硬件并行吃满。
             let mut info_flags = 0u32;
             let status = ffi::VTDecompressionSessionDecodeFrame(
                 self.session,

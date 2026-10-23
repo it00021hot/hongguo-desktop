@@ -17,8 +17,8 @@ use hongguo_store::Store;
 /// `position >= duration - 0.25` 的结束判定。
 const RESUME_TAIL_EPSILON_SECS: f64 = 0.5;
 /// 剩余不足 2s 视为「这一集已经看完」：起点决策直接给出下一集，绝不让
-/// 播放器起播在尾部。片尾前进的唯一真相源是 AVPlayer Ended（system）
-/// 或帧引擎 Ended（GPUI），不再有 30fps 尾部兜底。
+/// 播放器起播在尾部。片尾前进的唯一真相源是系统播放器的 Ended 事件
+/// （两端同为 AVPlayer / MediaEngine），不再有 30fps 尾部兜底。
 const RESUME_END_GUARD_SECS: f64 = 2.0;
 
 /// 起点决策。返回 `(集号, 起播秒)`；无断点时 `(1, 0.0)`。

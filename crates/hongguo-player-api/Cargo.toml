@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# 契约 crate 的纪律（architecture-refactor.md §4「契约与实现分离」）：只吃
+# 契约 crate 的纪律（契约与实现分离）：只吃
 # 「窗口句柄」这类中立依赖，不吃任何平台实现 crate——否则「与 UI/平台解耦」
 # 只是纸面。
 [dependencies]

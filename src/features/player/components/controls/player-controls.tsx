@@ -94,8 +94,8 @@ interface Props {
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
   /**
-   * 进入小窗播放：主窗把当前进度落库后开置顶小窗并隐藏自己。
-   * 状态与取流编排都在播放页，这里只挂按钮。
+   * 进入小屏播放：同一窗口原地缩成 480×270 落屏幕右下角，播放零中断
+   * （见 use-mini-window）。这里只挂按钮，状态编排都在宿主。
    */
   onOpenMini: () => void;
   /**
@@ -109,7 +109,7 @@ interface Props {
   onToggleIncognito: () => void;
   /**
    * 沉浸流形态开关：为 true 时控制栏带「选集」入口（贴按钮向上弹的
-   * 数字网格，hgplayer 同款）。播放页右侧已有 SeriesPanel，不传即无。
+   * 数字网格，hgplayer 同款）。不传即无。
    */
   immersive?: boolean;
   /** 选集浮层里点选某一集（跳集，由播放器接 store） */
@@ -135,8 +135,8 @@ interface Props {
  * 没人再替我们发 `timeupdate`，状态只能自己接。
  *
  * 快进/快退不占按钮位，由快捷键 `←` `→` 承担；播放键旁的步进按钮是
- * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集仍在右侧 `SeriesPanel`，
- * 这里只给最常用的「接着看下一集」一个单击入口。
+ * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集在控制栏的「选集」
+ * 浮层，这里只给最常用的「接着看下一集」一个单击入口。
  */
 export function PlayerControls({
   videoRef,

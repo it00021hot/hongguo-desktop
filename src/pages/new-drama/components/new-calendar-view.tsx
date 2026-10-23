@@ -33,7 +33,7 @@ export function NewCalendarView() {
     }
   });
 
-  // 滚近底部（600px 提前量）懒翻下一页；常驻哨兵（同榜单/找剧口径）
+  // 滚近底部（400px 提前量）懒翻下一页；常驻哨兵（同榜单/找剧口径）
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -117,7 +117,7 @@ export function NewCalendarView() {
               {items.map((item) => (
                 <CalendarRow key={item.seriesId} item={item} />
               ))}
-              {/* 懒翻页哨兵：常驻（滚近底部 600px 提前量触发下一页） */}
+              {/* 懒翻页哨兵：常驻（滚近底部 400px 提前量触发下一页） */}
               <div ref={sentinelRef} className="h-px" aria-hidden />
               {cal.isFetchingMore && (
                 <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">

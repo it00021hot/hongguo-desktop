@@ -1,6 +1,6 @@
 # AGENTS.md — hongguo-desktop
 
-红果短剧（Hongguo）非官方桌面客户端：Tauri 2 官方壳（React 19 WebView）+ GPUI 自绘壳（GPUI Kit，起步）+ 纯 Rust 业务内核。Windows / macOS。仅供学习研究（PolyForm Noncommercial），不存储、不分发任何影视内容。
+红果短剧（Hongguo）非官方桌面客户端：Tauri 2 官方壳（React 19 WebView）+ GPUI 自绘壳（GPUI Kit）+ 纯 Rust 业务内核。Windows / macOS。仅供学习研究（PolyForm Noncommercial），不存储、不分发任何影视内容。
 
 ## 开始任何开发前
 
@@ -38,10 +38,9 @@
 - `crates/hongguo-tauri/` Tauri 装配层：`commands`（IPC 薄层）、`bootstrap`（启动装配）、`diagnostics`（panic 取证）、`protocol.rs`（协议注册胶水）、`events.rs`（service 事件 → 前端事件的原名原载荷转发）、`testing`（跨层 e2e 与守卫元测试）——`prepare()` 产出装好的 Builder，`build(generate_context!)` 留在 crates/hongguo-tauri-app
 - `crates/hongguo-player-api/` 回放契约（无 UI、无平台实现依赖）：`PlayerEvent` / `PlaySource` / `PlayerLike`（统一控制面）/ `PresenterBounds` / `HostWindow`。系统播放器两端实现都吃这一份
 - `crates/hongguo-player-macos/` macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数；`#![cfg(target_os = "macos")]`，objc2/AppKit 依赖全在本 crate 的 target 表
-- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（rendering mode）+ 自定义 `IMFByteStream` + DirectComposition 视频位（vendored `gpui-pre-windows` 补丁）；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
+- `crates/hongguo-player-windows/` Windows 系统播放器：Media Foundation Media Engine（frame-server 模式：每帧 `TransferVideoFrame` 写进渲染器纹理）+ 自定义 `IMFByteStream` 供数 + 视频 quad 同画布（vendored `gpui-pre-windows` 补丁）；`#![cfg(target_os = "windows")]`，windows/objc2 互不越界
 - `crates/hongguo-player/` 系统播放器门面：按编译目标分派到上面两个实现 crate，并把契约原样转出——壳只依赖它
 - `crates/hongguo-gpui/` GPUI 壳（起步单壳）：直接构造 `AppStateInner` 并调用 service/api，**操作与 Tauri 客户端一致**（不复制业务；`make gpui` 运行）。播放经 `hongguo-player` 系统播放器（macOS AVPlayer / Windows MediaEngine）；service 的 async 族由壳内常驻 tokio 运行时经 oneshot 桥接，业务事件经 `events.rs` 事件泵（broadcast→mpsc）接进视图
-- `crates/hongguo-nsh-demo/` NSH 换壳闸门 demo（系统播放器 + 本地解密供数 + 弹幕，评估文档在其 docs/）：**独立 workspace、不入成员/CI**——依赖仓库外并排 clone 的 NSH checkout（`../../../nsh` 相对路径），runner 上无该源；自行保持 clippy/fmt 干净
 - Rust 侧已 workspace 化：根 `Cargo.toml`（members / `resolver` / `[patch]` / `[profile]` 都在根），`Cargo.lock`、`target/`、`vendor/` 也都在仓库根；cargo 一律在**仓库根**跑（`--workspace`）。`vendor/` 被 `[workspace] exclude` 排除，不参与 lint/test/format
 - `captures/` 抓包工具与数据（`addon.py` 抓包 / `audit.py` 参数审计），`docs/` 仓库文档，`scripts/` 构建辅助脚本
 
@@ -51,6 +50,7 @@ Tauri 壳的前后端只通过三条通道交互：IPC command、事件推送、
 
 ```bash
 make dev        # 开发模式（Vite + Tauri，端口 1420 固定、单实例）
+make gpui       # 启动 GPUI 壳
 make test       # 前端 vitest（= pnpm test）
 make test-rust  # cargo test
 make lint       # 质量闸门一票否决：ESLint + Prettier + cargo clippy×3（Windows 宿主 + macOS 双目标交叉）

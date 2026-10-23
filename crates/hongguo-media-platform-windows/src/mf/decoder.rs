@@ -1,5 +1,4 @@
-//! HEVC 解码：IMFSourceReader 文件流 → NV12 系统内存帧（转码链路用；
-//! 播放侧样本进内存直驱 MFT 的解码见 [`super::playback`]）。
+//! HEVC 解码：IMFSourceReader 文件流 → NV12 系统内存帧（转码链路用）。
 
 use windows::Win32::Media::MediaFoundation::*;
 

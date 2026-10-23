@@ -6,7 +6,7 @@
 //! 壳只认本 crate 的 [`PlayerLike`] 与 [`PlayerEvent`]，不写平台分支；
 //! 打开/窗口准备由门面 crate `hongguo-player` 分派。
 //!
-//! 本 crate 的依赖纪律（`docs/architecture-refactor.md` §4「契约与实现分离」）：
+//! 本 crate 的依赖纪律（契约与实现分离）：
 //! 只允许窗口句柄（`raw-window-handle`）这类中立依赖；**不得**依赖壳或
 //! 任何平台实现。
 

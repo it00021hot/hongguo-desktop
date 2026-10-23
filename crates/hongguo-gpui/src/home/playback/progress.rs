@@ -36,8 +36,8 @@ impl super::HomeView {
 
     /// 观看历史上报心跳：1 秒一拍，取当前播放位置交给节拍判定。
     ///
-    /// 为什么独立成心跳、不挂在 [`Self::save_progress_maybe`]（Frame 事件 +
-    /// 5 秒落盘窗口）上：首报会被量化到 5–10 秒，60 秒节拍也随帧率与落盘
+    /// 为什么独立成心跳、不挂在 [`Self::save_progress_maybe`]（系统节拍 +
+    /// 5 秒落盘窗口）上：首报会被量化到 5–10 秒，60 秒节拍也随落盘
     /// 格点漂移——2026-10-18 用户实测「第七集播完、第八集开播，历史还是
     /// 第七集；第八集十几秒才上报 5 秒」就是这两个错位叠出来的。
     pub(in crate::home) fn spawn_history_heartbeat(&mut self, cx: &mut Context<Self>) {

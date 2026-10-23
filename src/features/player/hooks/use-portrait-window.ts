@@ -47,8 +47,9 @@ async function enterPortrait(aspect: number): Promise<void> {
   });
 }
 
-/** 退出竖屏并清镜像态。进小屏与路由离开播放页也走这里——竖屏的几何快照
- *  是单份的，进小屏前必须先还原，否则小屏的快照记的是竖条几何。 */
+/** 退出竖屏并清镜像态。进小屏也走这里——竖屏的几何快照是单份的，进小屏前
+ *  必须先还原，否则小屏的快照记的是竖条几何。（离开播放区的收尾在
+ *  app-shell 的路由监听里，与本函数同款调用。） */
 export function exitPortraitScreen(): void {
   if (!useUiStore.getState().portrait) return;
   useUiStore.getState().setPortrait(false);

@@ -12,7 +12,7 @@
 //!
 //! **本 crate 不依赖 tauri**：供数函数只产出 `(状态码, 响应头, 响应体)` 元组
 //! （[`hongguo_stream::range::ProtocolResponse`]），HTTP 组装与 Builder 注册是
-//! 壳层的职责（「协议注册归壳」，见 `docs/architecture-refactor.md` §2）。 GPUI
+//! 壳层的职责（协议注册归壳）。 GPUI
 //! 壳不经过 URI 供数，不消费本 crate 的协议入口；[`pool`] 的工作池与 panic
 //! 加固是协议路径的执行纪律，随供数逻辑同址。
 //!

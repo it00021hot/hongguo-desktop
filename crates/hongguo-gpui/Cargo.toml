@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# 操作一致约定（docs/architecture-refactor.md §7）：本壳**不复制业务**——
+# 操作一致约定：本壳**不复制业务**——
 # 设备引导（hongguo_service::device）、全局状态（AppStateInner）、接口调用
 # （state.api_env() + hongguo_api）与 Tauri 壳走同一段服务面；壳内只做窗口、
 # 装配与渲染。

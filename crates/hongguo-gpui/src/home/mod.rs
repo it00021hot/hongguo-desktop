@@ -208,9 +208,9 @@ pub struct HomeView {
     muted: bool,
     /// 进度拖动中的目标秒（None = 跟随播放位置显示）。
     scrubbing: Option<f64>,
-    /// 上一次真正下发给引擎的 scrub seek 时刻：拖动中的连续 seek 按它节流
-    ///（Tauri 的 `<video>` 每次赋值 currentTime 浏览器会自行合并，引擎这侧
-    /// 每发一次就是冲流 + 解码器重建，必须限频；松手的那次不受限）。
+    /// 上一次真正下发给播放器的 scrub seek 时刻：拖动中的连续 seek 按它节流
+    ///（Tauri 的 `<video>` 每次赋值 currentTime 浏览器会自行合并，播放器这侧
+    /// 每发一次 seek 都要重冲流，必须限频；松手的那次不受限）。
     last_scrub_seek: Cell<Instant>,
     /// 连播锁定（Tauri bingeSeriesId 同款）：信息流里主动选了某集/点了画面
     /// = 要追这部，锁定后滚轮/↑↓ 切集而不是跟随换剧；Esc/点返回解除。
@@ -414,8 +414,8 @@ pub struct HomeView {
     volume_hovered: bool,
     volume_popup_hovered: bool,
     /// 倍速 / 清晰度下拉菜单开着（Popover 的 on_open_change 回写）：开着期间
-    /// 控制条常显——不进 `panel_open` 的话，帧事件流触发重算时 3s 一到连
-    /// 菜单一起收掉，菜单根本没法操作（暂停才能点得到的根源）。
+    /// 控制条常显——不进 `panel_open` 的话，重算时 3s 一到连菜单一起收掉，
+    /// 菜单根本没法操作。
     rate_menu_open: bool,
     definition_menu_open: bool,
     /// 音量竖条的轨道矩形哨兵（拖动换算用，与 progress_bounds 同模式）。
@@ -694,7 +694,7 @@ impl HomeView {
         // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）
         view.spawn_minimize_poller(window.window_handle(), cx);
         // 观看历史上报心跳（1s 一拍；没在播时内部直接返回）：节拍必须独立于
-        // 5 秒落盘窗口与帧事件，否则首报被量化、60 秒节拍根本不成立
+        // 5 秒落盘窗口，否则首报被量化、60 秒节拍根本不成立
         view.spawn_history_heartbeat(cx);
         // 下载队列恢复：running 视为中断改回 pending（Tauri bootstrap 同款），
         // 然后触发一轮调度把中断的任务续跑起来。库读取失败只记错误不拦

@@ -147,7 +147,7 @@ struct CacheFile {
 /// `transcode_service::cache::trim()` 按磁盘空闲空间自己管预算（2–16GB），
 /// 已有淘汰机制；而它的文件是**正在播的集**的供数源——`hongguo-local://`
 /// 每次 range 请求都重新开文件（见 `hongguo-protocol::local::serve`），
-/// 播到一半被删就会断这一集。自研引擎 + 平台解不了 HEVC 时才走这条路，
+/// 播到一半被删就会断这一集。平台解不了 HEVC 需要转码兜底时才走这条路，
 /// 但没必要为清缓存冒断播的风险。
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
