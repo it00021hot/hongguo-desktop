@@ -328,3 +328,19 @@ pub fn disable_auto_advance(player: &AnyObject) {
     // SAFETY: 公开 NSInteger 属性。
     let _: () = unsafe { msg_send![player, setActionAtItemEnd: 0isize] };
 }
+
+/// 关闭「自动等待以减少卡顿」。数据来自本地渐进流（自定义 scheme 供数、
+/// 起播前已预填头部），AVF 的防卡顿算法在这种源上没有真实带宽样本可估，
+/// 暂停恢复时会间歇性把视频呈现门住 1–2s（音频先行）——实测形态即
+/// 「暂停再播画面卡住、声音继续」。本地源立即起播是官方推荐口径。
+pub fn disable_wait_to_minimize_stalling(player: &AnyObject) {
+    // SAFETY: 公开 BOOL 属性。
+    let _: () = unsafe { msg_send![player, setAutomaticallyWaitsToMinimizeStalling: false] };
+}
+
+/// 立即以指定倍速起播（跳过播放前的就绪评估）。恢复播放用它替代
+/// `play()` + `set_rate()` 的两次变速过渡。
+pub fn play_immediately(player: &AnyObject, rate: f32) {
+    // SAFETY: 公开实例方法；rate 是 float 值类型。
+    let _: () = unsafe { msg_send![player, playImmediatelyAtRate: rate] };
+}

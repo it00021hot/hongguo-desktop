@@ -162,10 +162,21 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
             let mut last: Option<avf::CmTime> = None;
             let mut samples: Vec<(Instant, f64)> = Vec::new();
             let mut window = Instant::now();
+            let mut current_item = 0usize;
             loop {
                 if stop.load(Ordering::SeqCst) {
                     return;
                 }
+                // 输出只挂在打开时的那个 item 上：接力后要跟到当前 item，
+                // 否则接力后永远取不到新帧（取证失明）。
+                if let Some(item) = avf::current_item(player) {
+                    let ptr = item as *const AnyObject as usize;
+                    if ptr != current_item {
+                        current_item = ptr;
+                        avf::add_output(item, output);
+                    }
+                }
+
                 let now = avf::current_time(player);
                 if avf::has_new_frame(output, now)
                     && let Some(display) = avf::frame_display_time(output, now)
@@ -175,21 +186,25 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
                     samples.push((Instant::now(), display.seconds()));
                 }
                 std::thread::sleep(Duration::from_millis(2));
-                if window.elapsed() >= Duration::from_secs(5) && samples.len() > 3 {
-                    let first = samples.first().unwrap().0;
-                    let elapsed = samples.last().unwrap().0.duration_since(first).as_secs_f64();
-                    let fps = (samples.len() - 1) as f64 / elapsed.max(0.001);
-                    let mut gaps: Vec<f64> = samples
-                        .windows(2)
-                        .map(|pair| pair[1].0.duration_since(pair[0].0).as_secs_f64())
-                        .collect();
-                    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    let max_gap = gaps.last().copied().unwrap_or(0.0);
+                if window.elapsed() >= Duration::from_secs(5) {
+                    // 0 帧也要打：暂停恢复后「画面冻结、声音继续」的形态
+                    // 就是 presented 归零而 rate>0，静默会把它藏住。
+                    let (fps, max_gap, med_gap) = if samples.len() > 1 {
+                        let first = samples.first().unwrap().0;
+                        let elapsed = samples.last().unwrap().0.duration_since(first).as_secs_f64();
+                        let fps = (samples.len() - 1) as f64 / elapsed.max(0.001);
+                        let mut gaps: Vec<f64> = samples
+                            .windows(2)
+                            .map(|pair| pair[1].0.duration_since(pair[0].0).as_secs_f64())
+                            .collect();
+                        gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        (fps, gaps.last().copied().unwrap_or(0.0), gaps[gaps.len() / 2])
+                    } else {
+                        (0.0, 0.0, 0.0)
+                    };
                     log::info!(
-                        "[AvPresenter][metrics] 5s frames={} presented={fps:.1}fps max_gap={:.1}ms gap_med={:.1}ms rate={:.2}",
+                        "[AvPresenter][metrics] 5s frames={} presented={fps:.1}fps max_gap={max_gap:.1}ms gap_med={med_gap:.1}ms rate={:.2}",
                         samples.len(),
-                        max_gap * 1000.0,
-                        gaps[gaps.len() / 2] * 1000.0,
                         avf::player_rate(player)
                     );
                     samples.clear();
@@ -244,6 +259,7 @@ pub fn open(
     let items = NSArray::from_slice(&[&*item]);
     let player = avf::queue_player(&items);
     avf::disable_auto_advance(&player);
+    avf::disable_wait_to_minimize_stalling(&player);
     avf::set_volume(&player, 1.0);
     if start_secs > 0.5 {
         avf::seek_exact(&player, avf::CmTime::secs(start_secs));
@@ -284,11 +300,10 @@ impl PlayerLike for SystemPlayer {
 
     fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
-        avf::play(self.player.get());
+        // playImmediately：跳过 AVF 的就绪评估直接以目标倍速起播——普通
+        // play() 在自定义源上恢复呈现会间歇性门 1–2s（音频先行，画面卡住）
         let rate = f64::from_bits(self.rate.load(Ordering::Relaxed));
-        if (rate - 1.0).abs() > 1e-9 {
-            avf::set_rate(self.player.get(), rate as f32);
-        }
+        avf::play_immediately(self.player.get(), rate as f32);
     }
 
     fn is_paused(&self) -> bool {
