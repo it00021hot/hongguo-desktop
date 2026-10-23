@@ -43,11 +43,12 @@ impl super::HomeView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, _cx| match result {
+            let _ = this.update(cx, |view, cx| match result {
                 Ok(works) => {
-                    // 季卡片封面由渲染时按需预热（gpui 资产机制），这里不用再拉
                     view.related_seasons
                         .insert(series_id.clone(), Arc::new(works));
+                    // 封面预热必须在数据到位处排产：渲染期只查盘不排产
+                    view.prewarm_season_covers(cx);
                 }
                 Err(sid) => {
                     view.related_loading.remove(&sid);
@@ -55,6 +56,16 @@ impl super::HomeView {
             });
         })
         .detach();
+    }
+
+    /// 季卡封面排转码（card 档）：渲染期 [`crate::cover_img::card`] 只查
+    /// 成品图在不在盘上，没人预热就永远是占位块（2026-10-23 用户实测
+    /// 系列剧 tab 封面全空的根因）。数据到位与浮层打开两处调用——后者
+    /// 兜住缓存命中（早退不走到货回调）与「当前季合成条目」。
+    fn prewarm_season_covers(&self, cx: &mut Context<Self>) {
+        let (_, seasons) = self.seasons_of();
+        let covers: Vec<String> = seasons.iter().map(|(w, _)| w.cover.clone()).collect();
+        crate::cover_img::prewarm(&covers, hongguo_protocol::cover::EDGE_CARD, cx);
     }
 
     /// 季列表合成（Tauri seasons memo 同构）：plan 只回其他季，当前季
@@ -81,6 +92,7 @@ impl super::HomeView {
                 RelatedItem {
                     series_id: sid.clone(),
                     title: now.title.clone(),
+                    cover: now.cover.clone(),
                     tag: String::new(),
                     episode_cnt: now.episode_count as u32,
                     ..Default::default()
@@ -129,6 +141,8 @@ impl super::HomeView {
         {
             self.load_related_seasons(now.series_id.clone(), cx);
             self.load_reservations(cx);
+            // 缓存命中时上面的拉取会早退，预热在这里兜底（含当前季合成条目）
+            self.prewarm_season_covers(cx);
         }
         cx.notify();
     }
@@ -654,6 +668,7 @@ impl super::HomeView {
         if let Some(now) = self.now.clone() {
             self.load_related_seasons(now.series_id.clone(), cx);
             self.load_reservations(cx);
+            self.prewarm_season_covers(cx);
         }
         cx.notify();
     }
