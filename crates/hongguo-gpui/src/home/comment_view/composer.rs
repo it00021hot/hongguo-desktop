@@ -37,18 +37,6 @@ impl HomeView {
             // AI 头像角标 + 「Ai」后缀；点选→延迟写入输入框）。
             // 表情选择器/候选都在输入行上方；无候选时给提示行。
             .children(mention_open.then(|| self.render_mention_popup(cx)))
-            // 表情/提及预览（GPUI 的 Input 是纯文本编辑器，插进去的 `[名字]`
-            // 只能是代码；预览行按弹幕层那套分段渲染出表情图与蓝色 @名字，
-            // 发出去之前先看见最终长什么样——Tauri 那边是 contentEditable
-            // 内联渲染，这里用预览补齐同一件事）。
-            .children(
-                self.render_rich_preview(
-                    &comment_input
-                        .as_ref()
-                        .map(|i| i.read(cx).value().to_string())
-                        .unwrap_or_default(),
-                ),
-            )
             .children((!reply_target.is_empty()).then(|| {
                 h_flex()
                     .items_center()
@@ -97,6 +85,7 @@ impl HomeView {
                             .px_3()
                             .child(super::super::controls::skinned_input(
                                 Input::new(input)
+                                    .token(|ctx, _, _| crate::danmaku_emoji::render_emoji_token(ctx))
                                     .appearance(false)
                                     .h_full()
                                     .flex_1()
@@ -227,10 +216,19 @@ impl HomeView {
                                     let input = comment_input.clone();
                                     move |_, window, cx| {
                                         if let Some(input) = &input {
-                                            // 光标处插入 [名字]（焦点纪律：
-                                            // 点格子不夺焦，选完接着打字）
+                                            // 光标处插入 `[名字]` 并附成原子内联
+                                            // token（焦点纪律：点格子不夺焦，选完
+                                            // 接着打字）；被拒时退回纯文本插入
                                             input.update(cx, |state, cx| {
-                                                state.insert(code.clone(), window, cx);
+                                                let token =
+                                                    crate::danmaku_emoji::emoji_inline_token(&code);
+                                                if state
+                                                    .replace_with_token(token, window, cx)
+                                                    .is_err()
+                                                {
+                                                    log::warn!("[Home] 表情 token 插入被拒，退回纯文本");
+                                                    state.insert(code.clone(), window, cx);
+                                                }
                                             });
                                         }
                                     }

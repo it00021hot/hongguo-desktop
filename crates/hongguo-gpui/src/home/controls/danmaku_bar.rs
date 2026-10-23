@@ -130,48 +130,13 @@ impl HomeView {
     /// 发送 pill：无框输入 + 内嵌表情 + 发送（hgplayer 固定深色皮肤，Tauri
     /// 同款，不跟主题走）。inline 挂在控制栏行里（可收缩），浮层里固定宽。
     ///
-    /// `overlay_bottom` 是表情/提及预览与表情网格相对本 pill 容器的 bottom：
-    /// inline 直接悬在控制栏上方（38），浮层里还要再让过一层浮层 Wrapper（40）。
+    /// `overlay_bottom` 是表情网格相对本 pill 容器的 bottom：inline 直接悬
+    /// 在控制栏上方（38），浮层里还要再让过一层浮层 Wrapper（40）。
     fn render_danmaku_pill(&self, cx: &Context<Self>, width: PillWidth) -> gpui_kit::AnyElement {
         let overlay_bottom = match width {
             PillWidth::Inline => 38.0,
             PillWidth::Fixed => 40.0,
         };
-        // 表情/提及预览（浮在胶囊上方，同款深底小条）：GPUI 的 Input 是
-        // 纯文本编辑器，插进去的 `[名字]` 只是代码，这里把同一段文本按
-        // 弹幕层那套分段渲染出表情图与蓝色 @名字。表情面板开着时让位
-        // （那会儿面板才是主角），且它同样浮在控制条上方 → 自己也拦一层
-        // 鼠标，别让点击漏到画面层（点画面 = 暂停）。
-        let rich_preview = (!self.danmaku_emoji_open)
-            .then(|| {
-                self.render_rich_preview(
-                    &self
-                        .danmaku_input
-                        .as_ref()
-                        .map(|input| input.read(cx).value().to_string())
-                        .unwrap_or_default(),
-                )
-            })
-            .flatten()
-            .map(|preview| {
-                div()
-                    .absolute()
-                    .left_0()
-                    .bottom(gpui_kit::px(overlay_bottom))
-                    .px_2()
-                    .py_1()
-                    .rounded(gpui_kit::px(6.0))
-                    .bg(gpui_kit::rgba(0x000000d9))
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                    )
-                    .on_mouse_up(
-                        gpui_kit::MouseButton::Left,
-                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                    )
-                    .child(preview)
-            });
         // 弹幕输入：hgplayer 固定深色皮肤（Tauri 同款，
         // 不跟主题走）——15% 白底胶囊、白字、白光标、
         // 白 60% 占位符。光标/占位符/选区靠
@@ -180,18 +145,22 @@ impl HomeView {
         let emoji_active = ink;
         let emoji_idle: gpui_kit::Hsla = gpui_kit::rgba(0xffffff99).into();
         let input = self.danmaku_input.as_ref().map(|input| {
+            // 内联 token（Tauri RichEmojiInput 对齐）：`[名字]` 在输入框里
+            // 直接渲染成表情图，value 仍是代码纯文本——预览条随之取消。
+            let rich = Input::new(input)
+                .token(|ctx, _, _| crate::danmaku_emoji::render_emoji_token(ctx));
             // 透明输入（Tauri inputClassName 的 `bg-transparent`）：
             // `appearance(false)` 才不吃主题底色——否则亮色主题下胶囊里
             // 会嵌一块白底方块（用户实测截图）。inline 是 `flex-1`（Tauri
             // 同款）：撑满胶囊、随胶囊收缩；浮层里固定 176px。
             let sized = match width {
-                PillWidth::Inline => Input::new(input)
+                PillWidth::Inline => rich
                     .appearance(false)
                     .bordered(false)
                     .h_full()
                     .flex_1()
                     .min_w_0(),
-                PillWidth::Fixed => Input::new(input)
+                PillWidth::Fixed => rich
                     .appearance(false)
                     .bordered(false)
                     .h_full()
@@ -272,7 +241,6 @@ impl HomeView {
             });
         div()
             .relative()
-            .children(rich_preview)
             .child(pill)
             .children(self.danmaku_emoji_open.then(|| {
                 // 表情网格（评论面板同款：连选不关面板、光标处
@@ -331,9 +299,19 @@ impl HomeView {
                                         let input = danmaku_input.clone();
                                         move |_, window, cx| {
                                             if let Some(input) = &input {
-                                                // 光标处插入 [名字]
+                                                // 光标处插入 `[名字]` 并附成原子
+                                                // 内联 token（Tauri insertEmoji 对齐）；
+                                                // token 插入被拒（理论路径）时退回
+                                                // 纯文本插入，宁可见代码不可丢输入
                                                 input.update(cx, |state, cx| {
-                                                    state.insert(code.clone(), window, cx);
+                                                    let token = crate::danmaku_emoji::emoji_inline_token(&code);
+                                                    if state
+                                                        .replace_with_token(token, window, cx)
+                                                        .is_err()
+                                                    {
+                                                        log::warn!("[Home] 表情 token 插入被拒，退回纯文本");
+                                                        state.insert(code.clone(), window, cx);
+                                                    }
                                                 });
                                             }
                                         }

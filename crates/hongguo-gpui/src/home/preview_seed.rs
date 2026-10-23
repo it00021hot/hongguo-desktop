@@ -57,7 +57,14 @@ impl HomeView {
                 self.reply_to = Some(("c1".into(), None, "追剧到三点的猫".into()));
                 self.comments_total = 3716;
                 self.comments = Arc::new(fx::comments());
-                self.set_input(&self.comment_input, "前方高能预警！", window, cx);
+                // 种子带表情码：内联 token 渲染（Tauri RichEmojiInput 对齐）
+                // 的验收面——场景图里输入框应出现表情图而非 `[名字]` 文案
+                self.set_input(
+                    &self.comment_input,
+                    "前方高能预警！[微笑][偷笑]",
+                    window,
+                    cx,
+                );
             }
             "login" => {
                 self.login_panel_open = true;
@@ -65,7 +72,7 @@ impl HomeView {
             }
             "dm" => {
                 self.dm_panel_open = true;
-                self.set_input(&self.danmaku_input, "名场面来了", window, cx);
+                self.set_input(&self.danmaku_input, "名场面来了[笑][鼓掌]", window, cx);
             }
             "mini" => {
                 self.mini = Some(crate::mini::preview_geometry());
@@ -172,7 +179,9 @@ impl HomeView {
         );
     }
 
-    /// 预填输入框（`set_value` 要 window，种子阶段正好有）。
+    /// 预填输入框（`set_value` 要 window，种子阶段正好有）。走
+    /// [`crate::danmaku_emoji::rich_content`]：种子里带的表情码以原子
+    /// token 附着，场景图验的就是输入框的内联渲染。
     fn set_input(
         &self,
         input: &Option<gpui_kit::Entity<gpui_kit::component::input::InputState>>,
@@ -181,7 +190,9 @@ impl HomeView {
         cx: &mut Context<Self>,
     ) {
         if let Some(input) = input {
-            input.update(cx, |state, cx| state.set_value(value, window, cx));
+            input.update(cx, |state, cx| {
+                state.set_value(crate::danmaku_emoji::rich_content(value), window, cx)
+            });
         }
     }
 }

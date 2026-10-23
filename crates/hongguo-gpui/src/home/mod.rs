@@ -92,7 +92,6 @@ pub(crate) mod player_icons;
 pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
-pub(crate) mod rich_preview;
 pub(crate) mod season;
 pub(crate) mod stage;
 pub(crate) mod state;
