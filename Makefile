@@ -120,17 +120,15 @@ export AR_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
 endif
 
 # macOS 交叉闸门的守卫范围：平台链正清单（两个 api 契约 + 媒体平台门面与
-# macOS 实现 + 播放引擎）。不用 --workspace 排除法——全图会拖进 aws-lc-sys
-#（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK 的 Darwin
-# libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可自由分发），
-# 全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条 macos-latest 腿就是
-# --workspace 全量）。hongguo-gpui 同理不在清单：其依赖 build script 要
-# bindgen Apple 框架头。hongguo-playback 在清单里：cpal 只留在
-# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies]，
-# Apple 目标不再拖出 coreaudio-sys。
+# macOS 实现 + 播放器 macOS 实现）。不用 --workspace 排除法——全图会拖进
+# aws-lc-sys（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK
+# 的 Darwin libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可
+# 自由分发），全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条
+# macos-latest 腿就是 --workspace 全量）。hongguo-gpui 同理不在清单：其依赖
+# build script 要 bindgen Apple 框架头。
 MAC_CROSS_CRATES := -p hongguo-player-api -p hongguo-media-platform-api \
 	-p hongguo-media-platform -p hongguo-media-platform-macos \
-	-p hongguo-player-macos -p hongguo-playback
+	-p hongguo-player-macos
 
 lint:
 	pnpm lint

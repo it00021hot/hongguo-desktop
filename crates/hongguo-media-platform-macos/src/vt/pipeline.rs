@@ -166,7 +166,7 @@ fn run(
     //   showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序
     //   喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
     // 转码只处理 HEVC 源（H.264 源在 ffmpeg 侧直转），解码会话固定按 HEVC 建
-    let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets, false)? };
+    let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets)? };
     let mut slot_times = source_pts.clone();
     slot_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mut ready: Vec<(Pb, f64)> = Vec::new();

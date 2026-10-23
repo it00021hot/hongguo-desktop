@@ -39,14 +39,12 @@
 //!   MFT 在位（hevc_decoder_present）
 //! - [`mft`]：会话线程（COM/MTA + MFStartup 一次初始化）、MFT 枚举/激活、
 //!   同步/异步两套驱动与统一 Driver
-//! - [`sample`]：媒体类型与样本小工具；nv12_sample 与 playback 的
-//!   bytes_sample 共用 locked_buffer/finish_sample 建样本骨架
+//! - [`sample`]：媒体类型与样本小工具（locked_buffer/finish_sample 建样本骨架）
 //! - [`decoder`]：SourceReader HEVC 解码 → NV12 系统内存
 //! - [`scaler`]：Video Processor MFT 缩放
 //! - [`encoder`]：H.264 编码 MFT（硬件优先 / 测试回落软件）
 //! - [`annexb`]：参数集提取与 Annex-B/AVCC 切分
 //! - [`pipeline`]：HEVC→H.264 转码编排（transcode_h264 入口）
-//! - [`playback`]：播放专用解码（样本进内存直驱 MFT）
 
 // windows-rs 的事件类型常量（METransformNeedInput 等）沿用 MF 的混合大小写
 // 命名，出现在 match 模式里会触发 non_upper_case_globals。
@@ -57,7 +55,6 @@ mod decoder;
 mod encoder;
 mod mft;
 mod pipeline;
-mod playback;
 mod probe;
 mod sample;
 mod scaler;
@@ -66,16 +63,7 @@ pub use pipeline::transcode_h264;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::transcode_h264_for_tests;
 pub use probe::{clear_probe_cache, h264_hw_encoder_available};
-
-pub(crate) use playback::{AacMftDecoder, VideoMftDecoder};
 pub use probe::hevc_decoder_present;
-
-// playback.rs（子模块）经 `use super::{…}` 引用的跨子模块名字，绑进本模块
-// 命名空间，保持其 use 块逐字不动。
-use decoder::frame_size_of;
-use mft::{Driver, SESSION_INIT, enum_activates, hr, type_info};
-use probe::MF_VERSION;
-use sample::{sample_to_bytes, secs_to_hns, type_stride, video_type};
 
 // 下方 tests 原样保留，引用的跨子模块名字由此供给。
 #[cfg(test)]
