@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use gpui_kit::RenderImage;
-use gpui_kit::component::input::{InlineToken, InlineTokenContext, InputContent};
+use gpui_kit::component::input::{InlineTokenContext, InputContent};
 use gpui_kit::prelude::*;
 
 pub(crate) use crate::emoji_files::EMOJI_FILES;
@@ -118,63 +118,19 @@ pub(crate) fn is_wide_char(c: char) -> bool {
 // Tauri 的输入框是 contentEditable：`[名字]` 与 `@名字\u{FFFC}` 在输入框里
 // 即时渲染成表情图/提及 chip，value 始终是含代码的纯文本。gpui-component 的
 // Input 原生支持原子内联 token（`Input::token` 自定义渲染 + `replace_with_token`
-// 插入，编辑/撤销/光标仍归输入框管），约定：token 的 text 必须与缓冲区里的
-// 字节逐字一致，渲染层据 text 反查表情图/提及名。
+// 插入，编辑/撤销/光标仍归输入框管）。附着逻辑的纯函数在
+// [`crate::emoji_scan`]（可测性口径同文件头），这里只注入码表并负责渲染。
 
-/// 表情码（带括号的 `[名字]`，即 [`EMOJI_FILES`] 的键形态）的内联 token
-/// （id/text/label 同为代码本身）。
-pub(crate) fn emoji_inline_token(code: &str) -> InlineToken {
-    InlineToken::new(code.to_string(), code.to_string())
-}
-
-/// 提及段 `@名字\u{FFFC}` 的内联 token（尾随空格不进 token，与 Tauri
-/// serialize 同口径）。
-fn mention_inline_token(text: &str) -> InlineToken {
-    let name = text
-        .trim_start_matches('@')
-        .trim_end_matches('\u{FFFC}')
-        .to_string();
-    InlineToken::new(text.to_string(), text).with_label(format!("@{name}"))
-}
+pub(crate) use crate::emoji_scan::emoji_inline_token;
 
 /// 全文按输入框的 token 约定重解析：认识的 `[名字]` 附表情 token、
 /// `@名字\u{FFFC}` 附提及 token。用于 `set_value` 的三个全量重置点
 /// （提及插入 / 发送后清空）——点选插入走 `replace_with_token` 增量附着，
 /// 不经这里。
 pub(crate) fn rich_content(text: &str) -> InputContent {
-    let mut content = InputContent::new(text);
-    // 表情码：与 [`parse_emoji_segments`] 同一把窗口扫描
-    let bytes = text.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'['
-            && let Some(close) = crate::emoji_scan::find_emoji_code_end(text, i)
-        {
-            // 扫出的 code 含括号，正是 [`EMOJI_FILES`] 的键形态，直接对表
-            let code = &text[i..=close];
-            if EMOJI_FILES.iter().any(|(known, _)| *known == code)
-                && let Ok(next) = content.clone().with_token(i..close + 1, emoji_inline_token(code))
-            {
-                content = next;
-            }
-            i = close + 1;
-            continue;
-        }
-        i += 1;
-    }
-    // 提及：从每个对象替换符回溯到最近的 `@`（中间不得有空白）
-    for (idx, c) in text.char_indices() {
-        if c == '\u{FFFC}'
-            && let Some(at) = text[..idx].rfind('@')
-            && !text[at + 1..idx].chars().any(char::is_whitespace)
-            && let Ok(next) = content
-                .clone()
-                .with_token(at..idx + 1, mention_inline_token(&text[at..idx + 1]))
-        {
-            content = next;
-        }
-    }
-    content
+    crate::emoji_scan::rich_content(text, |code| {
+        EMOJI_FILES.iter().any(|(known, _)| *known == code)
+    })
 }
 
 /// token 渲染器（`Input::token` 的回调体）：表情 token 画表情图、提及
