@@ -111,11 +111,13 @@ export function useSendComment() {
       vid: string;
       text: string;
       mentionUserId?: string;
+      mentionUserName?: string;
       contextCommentIds?: string[];
     }) => {
       const { groupId, bookId } = parseVid(input.vid);
       return interactCmd.sendComment(groupId, bookId, input.text, {
         userId: input.mentionUserId ?? '',
+        userName: input.mentionUserName ?? '',
         contextCommentIds: input.contextCommentIds ?? [],
       });
     },

@@ -20,6 +20,10 @@
 //! 渐进模式的开放式 Range 必须开窗口（默认 4MB，`HONGGUO_STREAM_WINDOW`
 //! 可覆盖）：给到底就等于要等整集，渐进失去意义。整集模式保持「一次给到底」。
 //!
+//! **字节级读取**（[`read_range`] / [`read_range_cancellable`] / [`total_len`]）
+//! 与 HTTP 版 [`serve`] 共用同一套等待/解密/读者需求登记，供
+//! `AVAssetResourceLoader` 这类只要 offset/length 的消费者使用。
+//!
 //! ## 为什么独立成 crate
 //!
 //! 本 crate 是两端共用的**上游**：
@@ -36,11 +40,13 @@
 
 mod cache;
 mod progressive;
+mod read;
 
 pub mod range;
 
 pub use cache::StreamCache;
 pub use progressive::{ProgressiveStream, ReaderDemand, serve, serve_cancellable};
+pub use read::{StreamChunk, StreamReadError, read_range, read_range_cancellable, total_len};
 
 use std::sync::OnceLock;
 

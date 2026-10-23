@@ -27,9 +27,31 @@ test = false
 name = "emoji_insert"
 required-features = ["screenshot"]
 
+# 播放器输入框的「渲染期主题皮肤补丁」安全性：gpui 的 Input 把光标/占位符/
+# 选区颜色锁在主题里，壳只能在 render 期间临时改 token；断言不撞借用 panic
+# 且渲染后原样还原（同上，依赖 test-support）。
+[[test]]
+name = "skin_input"
+required-features = ["screenshot"]
+
 # 舞台 tab 点击行为断言（同上，依赖 gpui test-support 派进程内鼠标事件）。
 [[test]]
 name = "tab_click_repro"
+required-features = ["screenshot"]
+
+# 连播横条命中回归（控制条 40px 透明悬停热区与横条重叠，后画层级必须可点）。
+[[test]]
+name = "binge_click_repro"
+required-features = ["screenshot"]
+
+# 自绘顶栏命中回归（同上：拖拽 handler 与绝对居中覆盖层叠加下按钮可点）。
+[[test]]
+name = "toolbar_click"
+required-features = ["screenshot"]
+
+# 找剧页搜索联想的键盘派发断言（同上，进程内走真实按键派发路径）。
+[[test]]
+name = "browse_suggest_keys"
 required-features = ["screenshot"]
 
 # 预览场景矩阵的覆盖率断言（纯数据，不出图、不碰窗口）：scenes.rs 自洽、
@@ -52,6 +74,10 @@ screenshot = [
     "gpui-pre/test-support",
     "gpui-pre-platform/test-support",
 ]
+# 帧耗时取证（排障构建）：给 gpui-pre 打开 profiler，stage 周期日志打
+# draw/present 直方图均值与最大值——区分「建树慢」「layout/paint 慢」与
+# 「present 等 vsync」。默认不开。
+perf-probe = ["dep:gpui-pre", "gpui-pre/profiler"]
 
 [dependencies]
 # GPUI Kit（longbridge/gpui-kit）：gpui-base + gpui-component 聚合，桌面壳按
@@ -71,6 +97,9 @@ hongguo-store = { path = "../hongguo-store" }
 # §5.3 spike：播放引擎（解码/音频/同步）+ 取流编排面。
 hongguo-playback = { path = "../hongguo-playback" }
 hongguo-stream = { path = "../hongguo-stream" }
+# 回放契约 + 系统播放器门面（macOS AVPlayer / Windows MediaEngine 实现分居
+# hongguo-player-* crate）：壳只认契约，不写平台分支，也不直接摸平台依赖。
+hongguo-player = { path = "../hongguo-player" }
 hongguo-media = { path = "../hongguo-media" }
 # 帧契约（VideoFrame/FrameBuffer）：壳只认契约 crate——平台实现经门面
 # 按编译目标选择，是 playback 引擎的事，与 UI 无关。
@@ -81,6 +110,10 @@ hongguo-media-platform = { path = "../hongguo-media-platform" }
 # service 的 async 函数族依赖 tokio 运行时设施（sleep / Semaphore）；GPUI 的
 # 执行器不是 tokio，本壳自带一个运行时线程做桥（oneshot 回传，见 main.rs）。
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# 默认语言跟随系统：读 NSLocale（macOS）/系统区域，而非 LANG 环境变量——
+# 终端里 LANG 常是 en_US.UTF-8，中文系统的开发机上「跟随系统」会直接变
+# 英文。0.3.2 已在依赖树中（gpui 字体栈），无新增代码。
+sys-locale = "0.3"
 # 封面远程拉取：gpui 图片缓存的 HttpClient 桥（http_client.rs）与 BoxFuture。
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 bytes = "1"
@@ -110,7 +143,32 @@ raw-window-handle = "0.6"
 core-foundation = "0.10"
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    # CVBuffer 的 RefEncode（copyPixelBufferForItemTime 的返回值）挂在该 feature 下
+    "objc2",
     "CVBuffer",
     "CVImageBuffer",
     "CVPixelBuffer",
+] }
+# 窗口原语（macos.rs）：小屏落位/置顶/竖屏几何/隐身藏显。objc2 与
+# objc2-app-kit 的版本跟 gpui-pre-macos 一致，同在该依赖树里，不新增外部
+# crate；只开用到的类，别拉整套 AppKit 绑定。
+raw-window-handle = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSApplication",
+    "NSEvent",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSGeometry",
+    # 播放期活动断言（play_activity.rs）：NSProcessInfo + 原因字符串
+    "NSProcessInfo",
+    "NSString",
+    # Phase 0 AV spike：自定义 scheme URL / 内存字节回包 / 队列 item 数组
+    "NSURL",
+    "NSData",
+    "NSArray",
 ] }

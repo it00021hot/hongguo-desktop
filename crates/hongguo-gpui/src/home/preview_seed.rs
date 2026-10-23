@@ -22,8 +22,9 @@ impl HomeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        // 失败/空态是「无剧可播」的分支：不灌流，画面落在提示 + 重试上
-        if !matches!(scene, "error" | "empty") {
+        // 失败/空态/首拉加载态是「无剧可播」的分支：不灌流；失败与空态
+        // 落在提示 + 重试，加载态只转 Spinner（启动时不该有重试钮）
+        if !matches!(scene, "error" | "empty" | "feed-loading") {
             self.seed_feed_state();
             self.seed_now_playing();
         }
@@ -56,7 +57,14 @@ impl HomeView {
                 self.reply_to = Some(("c1".into(), None, "追剧到三点的猫".into()));
                 self.comments_total = 3716;
                 self.comments = Arc::new(fx::comments());
-                self.set_input(&self.comment_input, "前方高能预警！", window, cx);
+                // 种子带表情码：内联 token 渲染（Tauri RichEmojiInput 对齐）
+                // 的验收面——场景图里输入框应出现表情图而非 `[名字]` 文案
+                self.set_input(
+                    &self.comment_input,
+                    "前方高能预警！[微笑][偷笑]",
+                    window,
+                    cx,
+                );
             }
             "login" => {
                 self.login_panel_open = true;
@@ -64,11 +72,17 @@ impl HomeView {
             }
             "dm" => {
                 self.dm_panel_open = true;
-                self.set_input(&self.danmaku_input, "名场面来了", window, cx);
+                self.set_input(&self.danmaku_input, "名场面来了[笑][鼓掌]", window, cx);
             }
             "mini" => {
                 self.mini = Some(crate::mini::preview_geometry());
                 crate::mini::set_active(true);
+            }
+            "portrait" => {
+                // 竖屏窄条：几何快照是占位（预览不还原窗口），active 旗子
+                // 让壳把侧栏藏掉、控制条走竖屏形态（Tauri portrait 同列）
+                self.portrait = Some(crate::mini::preview_geometry());
+                crate::portrait::set_active(true);
             }
             "error" => {
                 let feed = self
@@ -78,6 +92,15 @@ impl HomeView {
                 feed.failed = Some("推荐流加载失败：网络请求超时（预览示例）".into());
             }
             "empty" => {}
+            "feed-loading" => {
+                let feed = self
+                    .feeds
+                    .get_mut(&Source::recommend())
+                    .expect("源已初始化");
+                feed.items.clear();
+                feed.loading = true;
+                feed.failed = None;
+            }
             other => anyhow::bail!("未知预览场景键: {other}"),
         }
         cx.notify();
@@ -110,7 +133,10 @@ impl HomeView {
             *self.indexes.get_mut(&source).expect("游标已初始化") = 0;
         }
         for (i, (sid, _, _)) in fx::SERIES.into_iter().enumerate() {
-            self.covers.insert(sid.into(), fx::cover(i));
+            let url = format!("preview://home/{i}");
+            crate::preview::fixtures::put_preview_image(&url, fx::cover(i));
+            let sid: String = sid.into();
+            self.stage_covers.insert(sid, fx::cover(i));
         }
     }
 
@@ -131,6 +157,9 @@ impl HomeView {
             definitions: fx::definitions(),
             definition: 1080,
             vid: "preview-vid".into(),
+            cover: String::new(),
+            // 预览无真实档案：分集表给一份占位（预取下一集按它查 vid）。
+            episode_vids: std::sync::Arc::new(Vec::new()),
         });
         self.controls_until = Some(
             Instant::now() + std::time::Duration::from_secs(super::controls::CONTROLS_HOLD_SECS),
@@ -138,9 +167,21 @@ impl HomeView {
         self.ep_comment_count = 3716;
         self.ep_digg_count = 5678;
         self.follow_count = 999;
+        // 追更键显隐（series_status=0 连载中）与已追态：预览里给全开
+        self.series_status = Some(0);
+        self.follow_is_on = Some(true);
+        // 信息层简介：长文本（>40 字触发「展开」），验收收起两行钳制与
+        // 展开后的换行——此前 intros 为空，简介一行跑出屏幕的 bug 矩阵
+        // 根本抓不到（2026-10-19 用户实测）
+        self.intros.insert(
+            sid.into(),
+            "穿成青云宗外门弟子的林辰，开局伪废灵根。八年困于炼气一层，全宗笑他是吃软饭的废物。十年前他救过的小女孩，如今已是天灵根第一女神苏清瑶。退婚当日，他觉醒万倍暴击系统：一颗筑基丹，暴击出金丹修为；一式基础剑法，暴击出仙阶剑意。从此踩天骄、夺造化，踏诸宗如平地。多年后有人问他逆袭的秘诀，林辰看着远方淡淡一笑：谁说我靠的是系统？".into(),
+        );
     }
 
-    /// 预填输入框（`set_value` 要 window，种子阶段正好有）。
+    /// 预填输入框（`set_value` 要 window，种子阶段正好有）。走
+    /// [`crate::danmaku_emoji::rich_content`]：种子里带的表情码以原子
+    /// token 附着，场景图验的就是输入框的内联渲染。
     fn set_input(
         &self,
         input: &Option<gpui_kit::Entity<gpui_kit::component::input::InputState>>,
@@ -149,7 +190,9 @@ impl HomeView {
         cx: &mut Context<Self>,
     ) {
         if let Some(input) = input {
-            input.update(cx, |state, cx| state.set_value(value, window, cx));
+            input.update(cx, |state, cx| {
+                state.set_value(crate::danmaku_emoji::rich_content(value), window, cx)
+            });
         }
     }
 }

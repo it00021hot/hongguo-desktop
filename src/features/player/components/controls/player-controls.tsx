@@ -5,17 +5,12 @@ import {
   Eye,
   Gauge,
   ListVideo,
-  Maximize,
-  Minimize,
   MonitorPlay,
   Pause,
-  PictureInPicture2,
   Play,
   RectangleVertical,
-  Settings2,
   SkipBack,
   SkipForward,
-  MessageSquareText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,8 +20,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useWindowFullscreen } from '@/hooks/use-window-fullscreen';
+import { useWindowFullscreen, applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { usePlayerStore } from '@/stores/player';
+import { useUiStore } from '@/stores/ui';
+import { app as appApi } from '@/service/commands';
 import { formatDuration } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
@@ -36,6 +33,13 @@ import { EpisodePicker } from '../episode-picker';
 import { ChromeSurface } from '../chrome-surface';
 import type { Episode, VideoDefinition } from '@/service/schema';
 import { DanmakuSendBox } from './danmaku-send-box';
+import {
+  DanmakuSettingsIcon,
+  DanmakuSwitchIcon,
+  FullscreenIcon,
+  MiniWindowIcon,
+  WebFullscreenIcon,
+} from './player-icons';
 import { ScrubBar } from './scrub-bar';
 import { DisplaySlider } from './sliders';
 import { VolumePopup } from './volume-popup';
@@ -168,6 +172,25 @@ export function PlayerControls({
   const [rate, setRate] = useState(1);
   // 全屏：窗口级真值（Esc/绿按钮变化经 useWindowFullscreenSync 回流）
   const { fullscreen, toggleFullscreen } = useWindowFullscreen();
+  // 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏不进 OS 全屏。
+  // 与全屏互斥——点全屏先退无边框，点无边框先退全屏
+  const frameless = useUiStore((s) => s.playerFrameless);
+  const setFrameless = useUiStore((s) => s.setPlayerFrameless);
+  const toggleFrameless = () => {
+    const next = !frameless;
+    if (next && useUiStore.getState().windowFullscreen) {
+      void applyWindowFullscreen(false).catch(() => undefined);
+    }
+    setFrameless(next);
+    void appApi.setTrafficLightsVisible(!next).catch(() => undefined);
+  };
+  const onToggleFullscreen = () => {
+    if (!fullscreen && useUiStore.getState().playerFrameless) {
+      setFrameless(false);
+      void appApi.setTrafficLightsVisible(true).catch(() => undefined);
+    }
+    toggleFullscreen();
+  };
   // 面板/浮层开合在全局播放 store：切集/切剧重挂载不丢
   const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
   const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
@@ -484,19 +507,16 @@ export function PlayerControls({
           {/* 小屏播放（对齐 hgplayer）：同一窗口缩成 480×270 落屏幕右下角，
               播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
           <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
-            <PictureInPicture2 className="size-4" />
+            <MiniWindowIcon />
           </IconButton>
 
-          {/* 弹幕设置：齿轮 + 上方浮层面板 */}
+          {/* 弹幕设置：「弹」字方框 + 齿轮角标 + 上方浮层面板 */}
           <div ref={danmakuPanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.danmakuSettings')}
               onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
             >
-              <Settings2
-                className={cn('size-4', danmakuPanelOpen ? 'text-white' : 'text-white/70')}
-                aria-hidden
-              />
+              <DanmakuSettingsIcon className={danmakuPanelOpen ? 'text-white' : 'text-white/70'} />
             </IconButton>
             {danmakuPanelOpen && (
               <div className="absolute right-0 bottom-full z-30 mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
@@ -535,9 +555,9 @@ export function PlayerControls({
           </div>
 
           <IconButton label={t('player.danmaku')} onClick={onToggleDanmaku}>
-            <MessageSquareText
-              className={cn('size-5', danmakuOn ? 'text-white' : 'text-white/40')}
-              aria-hidden
+            <DanmakuSwitchIcon
+              off={!danmakuOn}
+              className={danmakuOn ? 'text-white' : 'text-white/40'}
             />
           </IconButton>
 
@@ -565,8 +585,17 @@ export function PlayerControls({
             <RectangleVertical className="size-4" />
           </IconButton>
 
-          <IconButton label={t('player.fullscreen')} onClick={toggleFullscreen}>
-            {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+          {/* 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏但不进
+              OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。与全屏互斥 */}
+          <IconButton
+            label={t(frameless ? 'player.exitFrameless' : 'player.frameless')}
+            onClick={toggleFrameless}
+          >
+            <WebFullscreenIcon className={frameless ? 'text-white' : 'text-white/70'} />
+          </IconButton>
+
+          <IconButton label={t('player.fullscreen')} onClick={onToggleFullscreen}>
+            <FullscreenIcon exit={fullscreen} />
           </IconButton>
         </div>
       </div>

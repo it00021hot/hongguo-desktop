@@ -67,7 +67,7 @@ pub use pipeline::transcode_h264;
 pub use pipeline::transcode_h264_for_tests;
 pub use probe::{clear_probe_cache, h264_hw_encoder_available};
 
-pub(crate) use playback::{AacMftDecoder, HevcMftDecoder};
+pub(crate) use playback::{AacMftDecoder, VideoMftDecoder};
 pub use probe::hevc_decoder_present;
 
 // playback.rs（子模块）经 `use super::{…}` 引用的跨子模块名字，绑进本模块

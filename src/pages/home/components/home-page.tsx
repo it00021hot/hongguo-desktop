@@ -15,6 +15,7 @@ import {
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
   useSeriesProgress,
+  useSettings,
   useWatchHistory,
 } from '@/service/queries';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
@@ -100,6 +101,8 @@ export function HomePage() {
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const playingId = usePlayerStore((s) => s.seriesId);
+  // store 目标的集号（0 = 只点名了剧，集号待本组件的起点决策补上）
+  const storeVidIndex = usePlayerStore((s) => s.vidIndex);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
   /** 回首页恢复是否已尝试（一次性；见下方渲染期恢复块）。 */
   const [restored, setRestored] = useState(false);
@@ -291,17 +294,18 @@ export function HomePage() {
   // 播放器起播在本地没有该集播放档案（resumeAt=0）时用它 seek——跨客户
   // 端续播连进度都对上。
   //
-  // 每部剧只在**成为当前剧**时定一次起点：正在看的时候历史刷新/进度
-  // 上报不能把目标拽走（store 目标还停在本剧就直接让位）；滚走再滚回
-  // 来时会重新对号本地档案，接的是你离开时的那集。
+  // 让位条件 = 目标剧一致**且**集号已指定（>0）：正在看的时候历史刷新/
+  // 进度上报不能把目标拽走；而追更/收藏/预约这些只点名剧的入口
+  // （vidIndex=0）要靠这里跑起点决策补上集号（issue #11）。滚走再滚
+  // 回来时会重新对号本地档案，接的是你离开时的那集。
   // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
   // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
   useEffect(() => {
     if (!currentSeries) return;
-    if (playingId === currentSeries.seriesId) return;
+    if (playingId === currentSeries.seriesId && (storeVidIndex ?? 0) > 0) return;
     if (progressQuery.isPending || historyPending) return;
 
-    // >3 秒都续播（不看片尾）：本地档案优先，观看历史兜底（共享决策，
+    // >3 秒都续播（不看片尾）：本地档案 vs 云端历史取新者（共享决策，
     // 与详情页「继续看」/后端 resolve_entry 同口径）
     const entry = resolveResumeEntry(
       localProgress,
@@ -319,6 +323,7 @@ export function HomePage() {
   }, [
     currentSeries,
     playingId,
+    storeVidIndex,
     localProgress,
     progressQuery.isPending,
     historyItems,
@@ -346,32 +351,50 @@ export function HomePage() {
     if (prevItem) prefetchEpisodes(prevItem.seriesId);
   }, [prevItem, prefetchEpisodes]);
 
-  // 预取下一部剧续播集的**流**（取流表 + 渐进填充）：滚过去时缓存已就绪，
-  // 首帧只等头部数据。触发时机 = 当前剧首帧一出画（PlayerView 回调）——
-  // 在播那一路站稳了，带宽才让给铺垫；固定延迟会让下一部的就绪时间跟着
-  // 延迟走，快滚时预取干脆来不及。起播被卡住（自动播被 WebView 拦、网络
-  // 慢）时首帧信号不来，兜底定时照发——慢是慢，不能不备。
-  // 同一部剧只取一次；失败不算数，下次再成为「下一部」时允许重试。
+  // 预取下一部剧续播集的**流**（取流表 + 渐进填充头部）：滚过去时缓存已
+  // 就绪，首帧只等头部数据。触发时机 = 当前剧首帧一出画（PlayerView 回
+  // 调）——在播那一路站稳了，带宽才让给铺垫；固定延迟会让下一部的就绪
+  // 时间跟着延迟走，快滚时预取干脆来不及。起播被卡住（自动播被 WebView
+  // 拦、网络慢）时首帧信号不来，兜底定时照发——慢是慢，不能不备。
+  // 广度 = 预取档位（0=全关）：后续 B 部每部预取入口集（issue #11：只铺
+  // 紧邻下一部时快滑 3-5 部全是冷启动）。同一部剧只取一次；失败不算数，
+  // 下次再成为「后续部」时允许重试。
+  const { data: settings } = useSettings();
+  const prefetchBreadth = settings?.prefetchEpisodes ?? 3;
   const streamPrefetched = useRef(new Set<string>());
   const prefetchStream = useCallback((id: string) => {
     if (streamPrefetched.current.has(id)) return;
     streamPrefetched.current.add(id);
     void play.prefetch(id).catch(() => streamPrefetched.current.delete(id));
   }, []);
+  const upcomingIds = useMemo(
+    () =>
+      items
+        .slice(index + 1, index + 1 + prefetchBreadth)
+        .map((it) => it.seriesId)
+        .filter(Boolean),
+    [items, index, prefetchBreadth],
+  );
+  const upcomingKey = upcomingIds.join(',');
   /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期
       对号，切剧瞬间自动回到「未出画」，无需 effect 追着清）。 */
   const [firstFrameFor, setFirstFrameFor] = useState('');
   const stageLive = current !== undefined && firstFrameFor === current.seriesId;
   useEffect(() => {
-    if (!nextItem || !stageLive) return;
-    prefetchStream(nextItem.seriesId);
-  }, [nextItem, stageLive, prefetchStream]);
+    if (!stageLive) return;
+    upcomingIds.forEach((id) => prefetchStream(id));
+    // upcomingIds 随 items/游标重算，用拼串做稳定依赖，避免每帧重发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageLive, upcomingKey, prefetchStream]);
   useEffect(() => {
-    if (!nextItem || stageLive) return;
-    const id = nextItem.seriesId;
-    const timer = setTimeout(() => prefetchStream(id), PREFETCH_FALLBACK_DELAY_MS);
+    if (stageLive || upcomingIds.length === 0) return;
+    const timer = setTimeout(
+      () => upcomingIds.forEach((id) => prefetchStream(id)),
+      PREFETCH_FALLBACK_DELAY_MS,
+    );
     return () => clearTimeout(timer);
-  }, [nextItem, stageLive, prefetchStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageLive, upcomingKey, prefetchStream]);
 
   // 快滑到源尾部时预取下一页；游标越界时也靠它链式拉齐
   useEffect(() => {

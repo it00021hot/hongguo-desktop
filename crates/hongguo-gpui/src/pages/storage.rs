@@ -36,12 +36,22 @@ pub(crate) struct StorageView {
 }
 
 impl StorageView {
+    /// 语言切换：刷新搜索框 placeholder，保留输入。
+    pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter.update(cx, |input, cx| {
+            input.set_placeholder(crate::i18n::t("storage.searchPlaceholder"), window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn new(
         state: Arc<AppStateInner>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("搜索剧名"));
+        let filter = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("storage.searchPlaceholder"))
+        });
         // 过滤词变化 → 列表重渲染（可见集在 render 里按当前过滤词派生，
         // 与 Tauri 的 useState 派生 visible 同构）。
         cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
@@ -101,14 +111,24 @@ impl StorageView {
         match hongguo_service::storage_service::cleanup::delete_series(&self.state, &series_id) {
             Ok(n) => {
                 window.push_notification(
-                    Notification::success(format!("{title} · 已删除 {n} 个文件")),
+                    Notification::success(crate::i18n::tf(
+                        "storage.freedFilesOf",
+                        &[("title", title.as_str()), ("count", &n.to_string())],
+                    )),
                     cx,
                 );
                 self.load(cx);
             }
             Err(e) => {
                 log::warn!("[Storage] 删除《{title}》文件失败: {e}");
-                window.push_notification(Notification::error(format!("删除失败：{e}")), cx);
+                let message = crate::i18n::app_error_text(&e);
+                window.push_notification(
+                    Notification::error(crate::i18n::tf(
+                        "common.failedWith",
+                        &[("message", message.as_str())],
+                    )),
+                    cx,
+                );
             }
         }
     }
@@ -117,12 +137,25 @@ impl StorageView {
     fn delete_all_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match hongguo_service::storage_service::cleanup::delete_all(&self.state) {
             Ok(n) => {
-                window.push_notification(Notification::success(format!("已删除 {n} 个文件")), cx);
+                window.push_notification(
+                    Notification::success(crate::i18n::tf(
+                        "storage.freedFiles",
+                        &[("count", &n.to_string())],
+                    )),
+                    cx,
+                );
                 self.load(cx);
             }
             Err(e) => {
                 log::warn!("[Storage] 删除全部失败: {e}");
-                window.push_notification(Notification::error(format!("删除失败：{e}")), cx);
+                let message = crate::i18n::app_error_text(&e);
+                window.push_notification(
+                    Notification::error(crate::i18n::tf(
+                        "common.failedWith",
+                        &[("message", message.as_str())],
+                    )),
+                    cx,
+                );
             }
         }
     }
@@ -134,10 +167,11 @@ impl StorageView {
             // on_ok，避免把捕获的 view 移出 Fn 闭包。
             let view = view.clone();
             dialog
-                .title("确定删除全部已下载文件？")
-                .description("所有已下载的剧集文件都会被删除，剧集档案保留。此操作不可撤销。")
-                .ok_text("确定")
-                .cancel_text("取消")
+                .title(crate::i18n::t("storage.deleteAllConfirm"))
+                .description(crate::i18n::t("storage.deleteAllDesc"))
+                .ok_text(crate::i18n::t("common.confirm"))
+                .cancel_text(crate::i18n::t("common.cancel"))
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| view.delete_all_now(window, cx));
@@ -167,14 +201,14 @@ impl StorageView {
                                 div()
                                     .text_base()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .child("磁盘占用"),
+                                    .child(crate::i18n::t("settings.storage")),
                             ),
                     )
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("删除文件后保留剧集档案，之后仍可重新下载"),
+                            .child(crate::i18n::t("storage.desc")),
                     ),
             )
             .child(
@@ -192,20 +226,24 @@ impl StorageView {
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                                     .child(match &self.usage {
                                         Some(u) => SharedString::from(format_bytes(u.bytes)),
-                                        None => SharedString::from("加载中…"),
+                                        None => {
+                                            SharedString::from(crate::i18n::t("common.loading"))
+                                        }
                                     }),
                             )
                             .children(self.usage.as_ref().map(|u| {
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child(format!("{} 个文件", u.files))
+                                div().text_sm().text_color(theme.muted_foreground).child(
+                                    crate::i18n::tf(
+                                        "storage.fileCount",
+                                        &[("count", &u.files.to_string())],
+                                    ),
+                                )
                             })),
                     )
                     .child(
                         Button::new("storage-delete-all")
                             .icon(gpui_kit::assets::IconName::Trash)
-                            .label("删除全部已下载")
+                            .label(crate::i18n::t("settings.deleteAll"))
                             .small()
                             .danger()
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -238,7 +276,10 @@ impl StorageView {
                     .text_sm()
                     .child(SharedString::from(s.title.clone())),
             )
-            .child(Tag::secondary().child(SharedString::from(format!("{} 集", s.files))))
+            .child(Tag::secondary().child(SharedString::from(crate::i18n::tf(
+                "storage.downloadedEpisodes",
+                &[("count", &s.files.to_string())],
+            ))))
             .child(
                 div()
                     .w_16()
@@ -253,7 +294,7 @@ impl StorageView {
                     .icon(gpui_kit::assets::IconName::Trash)
                     .ghost()
                     .small()
-                    .tooltip("删除本地文件")
+                    .tooltip(crate::i18n::t("storage.deleteFiles"))
                     .on_click({
                         let series_id = s.series_id.clone();
                         let title = s.title.clone();
@@ -281,7 +322,7 @@ impl StorageView {
                 div()
                     .text_base()
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .child("按剧清理"),
+                    .child(crate::i18n::t("storage.bySeries")),
             )
             .child(Input::new(&self.filter))
             .child(if visible.is_empty() {
@@ -293,7 +334,7 @@ impl StorageView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("暂无数据"),
+                            .child(crate::i18n::t("common.empty")),
                     )
                     .into_any_element()
             } else {

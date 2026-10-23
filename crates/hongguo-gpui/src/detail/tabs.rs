@@ -20,42 +20,69 @@ impl DetailView {
             .map(|r| r.works.len() as i64 + r.guess.len() as i64)
             .unwrap_or(0);
         let tabs = [
-            (DetailTab::Episodes, "选集", episode_total),
-            (DetailTab::Reviews, "剧评", self.reviews_total),
-            (DetailTab::Related, "相关推荐", related_total),
+            (
+                DetailTab::Episodes,
+                crate::i18n::t("detail.tabEpisodes"),
+                episode_total,
+            ),
+            (
+                DetailTab::Reviews,
+                crate::i18n::t("detail.tabComments"),
+                self.reviews_total,
+            ),
+            (
+                DetailTab::Related,
+                crate::i18n::t("detail.tabRecommend"),
+                related_total,
+            ),
         ];
         Some(
             v_flex()
                 .mt_8()
                 .child(
-                    h_flex()
-                        .gap_6()
-                        .border_b_1()
-                        .border_color(theme.secondary)
-                        .children(tabs.map(|(tab, label, count)| {
-                            let active = self.tab == tab;
-                            div()
-                                .id(ElementId::from(format!("detail-tab-{:?}", tab)))
-                                .pb_2()
-                                .text_sm()
-                                .cursor_pointer()
-                                .when(active, |s| {
-                                    s.border_b_2()
-                                        .border_color(theme.foreground)
-                                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                        .text_color(theme.foreground)
-                                })
-                                .when(!active, |s| s.text_color(theme.muted_foreground))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.tab = tab;
-                                    cx.notify();
-                                }))
-                                .child(if count > 0 {
-                                    format!("{label} {count}")
-                                } else {
-                                    label.to_string()
-                                })
-                        })),
+                    // Tauri `TabsList` 同款分段控件：muted 底槽（h-9、p-[3px]、
+                    // rounded-lg）里一枚 active 抬起胶囊（bg-background、
+                    // rounded-md）。此前是下划线 tab——并排对拍可见不一致
+                    h_flex().child(
+                        h_flex()
+                            .id("detail-tabs")
+                            .h(gpui_kit::px(36.0))
+                            .p(gpui_kit::px(3.0))
+                            .items_center()
+                            .rounded(gpui_kit::px(10.0))
+                            .bg(theme.muted)
+                            .children(tabs.map(|(tab, label, count)| {
+                                let active = self.tab == tab;
+                                div()
+                                    .id(ElementId::from(format!("detail-tab-{:?}", tab)))
+                                    .h_full()
+                                    .px_2()
+                                    .py_1()
+                                    .flex()
+                                    .items_center()
+                                    .rounded(gpui_kit::px(8.0))
+                                    .text_sm()
+                                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .when(active, |s| {
+                                        s.bg(theme.background).text_color(theme.foreground)
+                                    })
+                                    .when(!active, |s| {
+                                        s.text_color(theme.muted_foreground)
+                                            .hover(|h| h.text_color(theme.foreground))
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        // 统一走 select_tab：相关推荐 tab 要顺带
+                                        // 拉预约态（未上线卡的预约钮数据源）
+                                        this.select_tab(tab, cx);
+                                    }))
+                                    .child(if count > 0 {
+                                        format!("{label} {count}")
+                                    } else {
+                                        label.to_string()
+                                    })
+                            })),
+                    ),
                 )
                 .child(match self.tab {
                     DetailTab::Episodes => self.render_episode_grid(cx),
@@ -76,7 +103,7 @@ impl DetailView {
                 .py_10()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("暂无分集信息")
+                .child(crate::i18n::t("series.noEpisodes"))
                 .into_any_element();
         }
         let (resume_ep, _) = self.resume_entry();
@@ -127,13 +154,12 @@ impl DetailView {
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(format!("{}", ep.vid_index)),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .child(SharedString::from(format!("第{}集", ep.vid_index))),
-                    )
+                    .child(div().flex_1().min_w_0().text_sm().child(SharedString::from(
+                        crate::i18n::tf(
+                            "player.episodeNo",
+                            &[("index", &ep.vid_index.to_string())],
+                        ),
+                    )))
                     .children((ep.duration > 0).then(|| {
                         div()
                             .flex_shrink_0()

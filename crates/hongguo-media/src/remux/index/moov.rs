@@ -2,7 +2,7 @@
 
 use hongguo_video::r#box::build_box;
 
-use super::{MergeIndex, MergedTrack};
+use super::{Edit, MergeIndex, MergedTrack};
 
 /// 生成合并后的 `moov`。
 ///
@@ -44,8 +44,28 @@ fn build_trak(track: &MergedTrack, offsets: &[u64], wide: bool) -> Vec<u8> {
     mdia.extend(build_box(b"minf", &minf));
 
     let mut trak = track.tkhd.clone();
+    trak.extend(edts_box(&track.edits));
     trak.extend(build_box(b"mdia", &mdia));
     build_box(b"trak", &trak)
+}
+
+/// 逐集 presentation 映射。`tkhd` 的时长是各段之和，`mdhd` 仍是媒体时长；
+/// 播放器靠这张表跳过每集开头的 AAC priming / 视频起始偏移。
+///
+/// 统一写 version 1（64 位时长/有符号 media_time），避免合集超长时截断。
+/// 空 edit 的 `media_time = -1` 按位写回全 1。
+fn edts_box(edits: &[Edit]) -> Vec<u8> {
+    if edits.is_empty() {
+        return Vec::new();
+    }
+    let mut p = vec![1u8, 0, 0, 0]; // version 1 + flags
+    p.extend((edits.len() as u32).to_be_bytes());
+    for edit in edits {
+        p.extend(edit.segment_duration.to_be_bytes());
+        p.extend((edit.media_time as u64).to_be_bytes());
+        p.extend(edit.rate.to_be_bytes());
+    }
+    build_box(b"edts", &build_box(b"elst", &p))
 }
 
 fn build_stbl(track: &MergedTrack, offsets: &[u64], wide: bool) -> Vec<u8> {

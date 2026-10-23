@@ -39,12 +39,12 @@ impl Source {
     }
 
     /// 回落名（服务端标题缺失时显示；16/36/39 有本地名，未知 tab 显示 tab_type）。
-    pub(crate) fn fallback_label(&self) -> &str {
+    pub(crate) fn fallback_label(&self) -> String {
         match self.0.as_ref() {
-            "16" => "推荐",
-            "36" => "漫剧",
-            "39" => "真人",
-            other => other,
+            "16" => crate::i18n::t("home.tabFeed"),
+            "36" => crate::i18n::t("home.tabComic"),
+            "39" => crate::i18n::t("home.tabHuman"),
+            other => other.to_string(),
         }
     }
 }
@@ -90,10 +90,35 @@ pub(super) struct SourceFeed {
     pub(super) loading: bool,
     pub(super) fetching_more: bool,
     pub(super) failed: Option<String>,
+    /// 首批（含换一批）落定时刻：「回首页过期换一批」的判定源
+    /// （Tauri react-query dataUpdatedAt 同语义）。
+    loaded_at: Option<std::time::Instant>,
+    /// 首批自动重试已用预算（见 [`FEED_AUTO_RETRIES`]）；成功落定内容或
+    /// 用户手动重试时清零。
+    pub(super) auto_retries: u32,
 }
+
+/// 首批自动重试预算上限：打开应用的首屏请求最容易撞上网络/代理未就绪
+/// 这类瞬时故障，失败即落「重试」按钮让人手点很蠢——预算内自动退避
+/// 重拉，烧完才落手动卡。
+const FEED_AUTO_RETRIES: u32 = 3;
+
+/// 自动重试基础退避：第 n 次失败后等 `BASE * 2^(n-1)`（1s/2s/4s）。
+const FEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批
+/// （Tauri `FEED_STALE_MS` 同款）。
+pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 impl super::HomeView {
     // —— 数据：推荐流 ——
+
+    /// 当前 tab 的首批/换一批是否在途（Tauri `feed.isLoading` 同语义）。
+    pub(super) fn feed_loading(&self) -> bool {
+        self.feeds
+            .get(&self.active)
+            .is_some_and(|feed| feed.loading)
+    }
 
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
@@ -109,6 +134,7 @@ impl super::HomeView {
                 feed.offset = 0;
                 feed.has_more = false;
                 feed.failed = None;
+                feed.auto_retries = 0;
                 *self.indexes.get_mut(&source).expect("游标已初始化") = 0;
             } else if !feed.items.is_empty() {
                 return;
@@ -130,6 +156,39 @@ impl super::HomeView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            // 坏结果（请求失败或空页）先记账判重试：预算内保持「加载中」并按
+            // 退避自动重拉，手动重试卡只在预算烧完后出现（打开应用的首屏请求
+            // 最容易撞上瞬时故障，让人手点重试很蠢）。
+            let retry_after = this.update(cx, |view, _| {
+                let feed = view.feeds.get_mut(&source).expect("源已初始化");
+                let bad = match &result {
+                    Err(_) => true,
+                    Ok(page) => page.items.is_empty(),
+                };
+                if bad && feed.auto_retries < FEED_AUTO_RETRIES {
+                    feed.auto_retries += 1;
+                    Some(FEED_RETRY_BASE * 2u32.pow(feed.auto_retries - 1))
+                } else {
+                    None
+                }
+            });
+            if let Ok(Some(delay)) = retry_after {
+                let reason = match &result {
+                    Err(e) => e.to_string(),
+                    Ok(_) => "空页".into(),
+                };
+                log::warn!("[Home] {source:?} 首批失败（{reason}），{delay:.0?} 后自动重试");
+                cx.background_executor().timer(delay).await;
+                let _ = this.update(cx, |view, cx| {
+                    let feed = view.feeds.get_mut(&source).expect("源已初始化");
+                    // 放开 loading 闸再走 load_feed（其 early-return 拦在途请求）；
+                    // 清上一轮落下的失败卡，等这轮的判定
+                    feed.loading = false;
+                    feed.failed = None;
+                    view.load_feed(source.clone(), false, cx);
+                });
+                return;
+            }
             let _ = this.update(cx, |view, cx| {
                 match result {
                     Ok(page) => {
@@ -140,6 +199,10 @@ impl super::HomeView {
                             feed.has_more = page.has_more;
                             feed.items = page.items.iter().map(StreamItem::from).collect();
                             feed.failed = None;
+                            feed.loaded_at = Some(std::time::Instant::now());
+                            if !feed.items.is_empty() {
+                                feed.auto_retries = 0;
+                            }
                         }
                         // 取证：dump 开关时把整页封面都预载落盘（离线对拍用）
                         if std::env::var("HONGGUO_DUMP_COVER").is_ok() {
@@ -152,8 +215,12 @@ impl super::HomeView {
                     }
                     Err(e) => {
                         log::warn!("[Home] {source:?} 首批加载失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
                         view.feeds.get_mut(&source).expect("源已初始化").failed =
-                            Some(format!("推荐流加载失败：{e}"));
+                            Some(crate::i18n::tf(
+                                "feed.loadFailedWith",
+                                &[("message", message.as_str())],
+                            ));
                     }
                 }
                 view.feeds.get_mut(&source).expect("源已初始化").loading = false;
@@ -215,6 +282,11 @@ impl super::HomeView {
             }
         } else if source == self.active {
             self.follow_cursor(cx);
+        }
+        // 续页/换批把后续条目拉进来后补铺预取：只在首帧触发的话，首屏
+        // 只有 2 条时永远只热 1 部，快滑到第 3 部仍冷启动。
+        if source == self.active && self.player.is_some() {
+            self.prefetch_next_stream(cx);
         }
         cx.notify();
     }
@@ -284,12 +356,57 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 云端历史（推荐 tab 种子 + 起点兜底）。登录才有数据，匿名回空表。
+    /// 观看历史（推荐 tab 种子 + 起点兜底）——**历史源按登录态切换**
+    ///（Tauri `88f5edf` 同款）：登录读云端（跨端续播），匿名读本地记录。
+    /// 匿名也发起云端查询会拿回设备级历史行（设备上做过的测试残留），
+    /// 命中看过的剧就一律「续播」到那条记录的集数。
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
         if self.history_pending {
             return;
         }
         self.history_pending = true;
+        if self.state.settings().account.is_none() {
+            let state = Arc::clone(&self.state);
+            let rx = bridge::spawn(async move {
+                tokio::task::spawn_blocking(move || state.store.local_history_list())
+                    .await
+                    .expect("阻塞池 join")
+            });
+            cx.spawn(async move |this, cx| {
+                let result = rx.await.expect("tokio 桥不会丢弃发送端");
+                let Ok(items) = result else {
+                    return;
+                };
+                let _ = this.update(cx, |view, cx| {
+                    log::info!(
+                        "[Home] 匿名：历史源取本地记录（{} 条，Tauri 88f5edf 同款）",
+                        items.len()
+                    );
+                    view.history = Some(
+                        items
+                            .into_iter()
+                            .map(|it| hongguo_api::history::WatchHistoryItem {
+                                series_id: it.series_id,
+                                title: it.title,
+                                cover: it.cover,
+                                vid_index: it.vid_index as i64,
+                                vid: it.vid,
+                                position_ms: it.position_ms,
+                                duration_ms: it.duration_ms,
+                                episode_cnt: it.episode_cnt as i64,
+                                updated_at_ms: it.updated_at_ms,
+                            })
+                            .collect(),
+                    );
+                    // 「你的内容」种子到位（书架随后续上）
+                    view.merge_seeds(cx);
+                    view.load_seeds_meta(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
             let env = state.api_env();
@@ -384,6 +501,15 @@ impl super::HomeView {
             self.pin_hold,
             self.now.as_ref(),
         )
+    }
+
+    /// 当前 tab 的流是否过期（从未加载 = 不过期——首载由 `load_feed` 负责，
+    /// 这里只服务「回首页过期换一批」的判定）。
+    pub(super) fn feed_stale(&self) -> bool {
+        self.feeds
+            .get(&self.active)
+            .and_then(|f| f.loaded_at)
+            .is_some_and(|t| t.elapsed() >= FEED_STALE)
     }
 
     /// 游标位置（展示列表下标，夹到已加载范围）。语义**对齐 Tauri**：游标是

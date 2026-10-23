@@ -27,6 +27,7 @@ import {
   useStorageActions,
 } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
+import { useUiStore } from '@/stores/ui';
 import { STREAM_SCHEME } from '@/utils/scheme';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
@@ -361,10 +362,11 @@ export function PlayerView({
     [onStageClick],
   );
 
-  // 进度持久化（5s 节流落盘 + 云端上报节拍 + 卸载补写）抽在
+  // 进度持久化（5s 节流落盘 + 观看历史上报心跳 + 卸载补写）抽在
   // use-playback-progress；lastKnownRef/srcKeyRef 两把竞态防御 ref 的
   // 真值在取流侧持有，这里经参数转入（起播续点、startCompat 认流共用）。
-  const { persist } = usePlaybackProgress({
+  // report 走播放位置心跳（节拍独立于落盘节流），persist 只管落盘与收尾上报。
+  const { persist, report } = usePlaybackProgress({
     videoRef,
     seriesId,
     vidIndex,
@@ -390,6 +392,9 @@ export function PlayerView({
   const { portrait, portraitFull, togglePortrait, togglePortraitFull } = usePortraitWindow({
     videoRef,
   });
+  // 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏不进 OS 全屏，
+  // 开关在控制栏；这里只消费状态（拖拽条显隐）
+  const frameless = useUiStore((s) => s.playerFrameless);
   const { pinned, togglePinned } = usePinWindow();
 
   const handleEnded = () => {
@@ -513,7 +518,9 @@ export function PlayerView({
             !chromeShown && 'cursor-none',
           )}
         >
-          {miniScreen && <MiniDragBar />}
+          {/* 小屏/无边框都没有顶栏：拖拽条顶上（无边框模式下它是唯一的
+              移窗抓手；小屏沿用原语义） */}
+          {(miniScreen || frameless) && <MiniDragBar />}
           {/* 抖音式切换过渡：key 绑「实际供数的流」（取流中旧流继续播，
               动画精确落在新内容出画的那一帧），内容整体按方向滑入
               （下一个从下、上一个从上）+淡入——配合封面占位读作「翻页」，
@@ -594,6 +601,8 @@ export function PlayerView({
                     // 时间轴在推进本身就是「没卡住」的证据，waiting 的卡顿态在这里收掉
                     setStalled({ key: streamKey, on: false });
                     persist(e.currentTarget.currentTime);
+                    // 历史上报心跳：媒体时钟驱动（暂停即停），节拍见 history-cadence
+                    report(e.currentTarget.currentTime);
                   }}
                   onEnded={handleEnded}
                   onRateChange={handleRateChange}

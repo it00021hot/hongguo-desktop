@@ -4,6 +4,7 @@
 //! 与交织顺序，不碰文件 IO——落盘与字节搬运在 `remux.rs` 的用例里验证。
 
 use super::*;
+use hongguo_video::r#box::{find_box, parse_boxes};
 use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
 
 fn samples(n: usize) -> Vec<Vec<u8>> {
@@ -156,6 +157,106 @@ fn a_file_without_stss_contributes_every_sample_as_a_keyframe() {
 }
 
 #[test]
+fn audio_priming_edit_is_skipped_in_every_episode() {
+    // 每集音频 6 tick、edit 跳过开头 2 tick，视频 4 tick：合并后音频媒体仍是
+    // 12 tick，但 presentation 是 8 tick；每集 audio edit 的 media_time 平移
+    // 到本集 media 起点（0+2、6+2），不再靠改末样本制造假时长。
+    let audio = TrackPlan::audio_with_priming(samples(6), 2);
+    let files = vec![
+        source(&[TrackPlan::video(samples(4)), audio.clone()]),
+        source(&[TrackPlan::video(samples(4)), audio]),
+    ];
+    let merged = plan(&files).unwrap();
+    let video = &merged.tracks[0];
+    let audio = &merged.tracks[1];
+
+    assert_eq!(duration_of(&audio.mdhd, MDHD_DURATION), 12, "媒体时长不变");
+    assert_eq!(duration_of(&audio.tkhd, TKHD_DURATION), 8, "presentation 8");
+    assert_eq!(duration_of(&video.mdhd, MDHD_DURATION), 8);
+    assert_eq!(duration_of(&video.tkhd, TKHD_DURATION), 8);
+    assert_eq!(audio.stts, vec![(12, 1)], "stts 不再被末尾钳制改写");
+    assert_eq!(
+        audio.edits,
+        vec![
+            Edit {
+                segment_duration: 4,
+                media_time: 2,
+                rate: 0x0001_0000,
+            },
+            Edit {
+                segment_duration: 4,
+                media_time: 8,
+                rate: 0x0001_0000,
+            },
+        ]
+    );
+    assert_eq!(
+        video.edits,
+        vec![
+            Edit {
+                segment_duration: 4,
+                media_time: 0,
+                rate: 0x0001_0000,
+            },
+            Edit {
+                segment_duration: 4,
+                media_time: 4,
+                rate: 0x0001_0000,
+            },
+        ]
+    );
+}
+
+#[test]
+fn edit_media_times_accumulate_across_three_episodes() {
+    let audio = TrackPlan::audio_with_priming(samples(5), 1);
+    let files = vec![
+        source(&[TrackPlan::video(samples(4)), audio.clone()]),
+        source(&[TrackPlan::video(samples(4)), audio.clone()]),
+        source(&[TrackPlan::video(samples(4)), audio]),
+    ];
+    let merged = plan(&files).unwrap();
+    let audio = &merged.tracks[1];
+    assert_eq!(
+        audio
+            .edits
+            .iter()
+            .map(|e| (e.segment_duration, e.media_time))
+            .collect::<Vec<_>>(),
+        vec![(4, 1), (4, 6), (4, 11)],
+        "每集 media_time = 本集 media 起点 + 源 edit 起点"
+    );
+    assert_eq!(duration_of(&audio.tkhd, TKHD_DURATION), 12);
+}
+
+#[test]
+fn tracks_without_edits_get_contiguous_default_edits() {
+    // 源没有 elst 时也要在每个集边界写一段显式 edit，避免播放器用隐式
+    // 「上一条继续往后推」解释拼接处。
+    let files = vec![
+        source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(4))]),
+        source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(4))]),
+    ];
+    let merged = plan(&files).unwrap();
+    assert_eq!(
+        merged.tracks[0]
+            .edits
+            .iter()
+            .map(|e| (e.segment_duration, e.media_time))
+            .collect::<Vec<_>>(),
+        vec![(3, 0), (3, 3)]
+    );
+    assert_eq!(
+        merged.tracks[1]
+            .edits
+            .iter()
+            .map(|e| (e.segment_duration, e.media_time))
+            .collect::<Vec<_>>(),
+        vec![(4, 0), (4, 4)]
+    );
+}
+
+#[test]
 fn interleave_order_follows_the_source_layout() {
     // fixture 按「轨0样本0, 轨1样本0, 轨0样本1, …」轮转交织
     let file = source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(3))]);
@@ -188,6 +289,51 @@ fn mismatched_track_counts_are_refused() {
 #[test]
 fn a_missing_moov_is_an_error_not_an_empty_file() {
     assert!(read_source_file(&[0xffu8; 512]).is_err());
+}
+
+#[test]
+fn moov_writes_audio_edits_per_episode() {
+    let audio = TrackPlan::audio_with_priming(samples(6), 2);
+    let files = vec![
+        source(&[TrackPlan::video(samples(4)), audio.clone()]),
+        source(&[TrackPlan::video(samples(4)), audio]),
+    ];
+    let merged = plan(&files).unwrap();
+    let offsets: Vec<Vec<u64>> = merged
+        .tracks
+        .iter()
+        .map(|t| vec![0u64; t.sizes.len()])
+        .collect();
+    let moov = build_moov(&merged, &offsets, false);
+
+    let traks: Vec<_> = parse_boxes(&moov, 8, moov.len())
+        .into_iter()
+        .filter(|b| b.is("trak"))
+        .collect();
+    assert_eq!(traks.len(), 2);
+    let audio_trak = &traks[1];
+    let edts = find_box(
+        &moov,
+        audio_trak.start,
+        audio_trak.start + audio_trak.size,
+        "edts",
+    )
+    .expect("音频轨应有 edts");
+    let elst =
+        find_box(&moov, edts.start, edts.start + edts.size, "elst").expect("edts 里应有 elst");
+
+    assert_eq!(moov[elst.start], 1, "统一写 version 1");
+    let count = u32::from_be_bytes(moov[elst.start + 4..elst.start + 8].try_into().unwrap());
+    assert_eq!(count, 2);
+    let entry = |i: usize| {
+        let at = elst.start + 8 + i * 20;
+        let segment = u64::from_be_bytes(moov[at..at + 8].try_into().unwrap());
+        let media = i64::from_be_bytes(moov[at + 8..at + 16].try_into().unwrap());
+        let rate = i32::from_be_bytes(moov[at + 16..at + 20].try_into().unwrap());
+        (segment, media, rate)
+    };
+    assert_eq!(entry(0), (4, 2, 0x0001_0000));
+    assert_eq!(entry(1), (4, 8, 0x0001_0000));
 }
 
 #[test]

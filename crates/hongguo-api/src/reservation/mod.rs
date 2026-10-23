@@ -22,7 +22,12 @@ pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v
 /// 批量删除预约端点（2026-10-11 逆向 hgplayer 1.1.8 API 注册表锁定）。
 pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
 
-/// 预约列表（is_online=true 已上线 / false 待上线）。
+/// 预约列表拉全（is_online=true 已上线 / false 待上线）。
+///
+/// **串行翻页拉全，只给「需要全集做成员判定」的消费方用**（GPUI 壳的
+/// 预约态对号：picker / detail 相关推荐）；预约页 itself 走
+/// [`fetch_reservations_page`] 单页懒翻页——拉全是串行的，预约上百部时
+/// 首屏要等几十个请求，issue #11 的「已上线 5–8 秒才出来」就是它。
 ///
 /// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
 /// 匿名空表；与日历共用 [`super::calendar::parse_calendar_item`] 的双形态解析。
@@ -98,13 +103,15 @@ fn finalize_reservations(
     page
 }
 
-/// 拉一页预约列表（tab_type=13 形态，每页 20 条）。
+/// 拉一页预约列表（tab_type=13 形态，每页 20 条）——预约页的入口：
+/// 单页即回，`has_more/next_offset/session_id` 交给调用方懒翻页
+/// （hgplayer 同款；此前一次性串行拉全，预约多时首屏肉眼可见地慢）。
 ///
 /// `session_id`：None = 首页（对齐 hgplayer：列表请求从不自带）；
 /// Some = 翻页续传首页响应下发的值。绝不能传进程级自造常量——服务端
 /// 按它维护会话快照，操作后的重读会命中操作前的缓存（fetch_reservations
 /// 文档有归因记录）。
-async fn fetch_reservations_page(
+pub async fn fetch_reservations_page(
     is_online: bool,
     offset: i64,
     session_id: Option<&str>,

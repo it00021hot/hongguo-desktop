@@ -9,21 +9,23 @@ export const interact = {
     call('danmaku_send', { groupId, bookId, text, offsetMs }),
   /** 发一条播放页评论（单集维度流，与面板同源），返回**服务端回显的
    *  完整评论对象**（直接插列表顶部）。
-   *  mention 在场 = @小果AI 提及评论（rich_text tp=15 +
-   *  aibot_mention_context=最近评论 id）。⚠️ 键名必须显式对住 registry
+   *  mention 在场 = @提及评论（rich_text tp=15 +
+   *  aibot_mention_context=最近评论 id；userName 是被提及者昵称，Rust 侧
+   *  重拼 `@昵称\uFFFC` 前缀与段文本）。⚠️ 键名必须显式对住 registry
    *  的 mentionUserId——call 不校验入参，键名写错会被 Tauri 静默丢弃、
    *  提及降级成普通评论（2026-10-16 实锤事故，勿改回展开写法）。 */
   sendComment: (
     groupId: string,
     bookId: string,
     text: string,
-    mention?: { userId: string; contextCommentIds: string[] },
+    mention?: { userId: string; userName: string; contextCommentIds: string[] },
   ) =>
     call('comment_send', {
       groupId,
       bookId,
       text,
       mentionUserId: mention?.userId,
+      mentionUserName: mention?.userName,
       contextCommentIds: mention?.contextCommentIds,
     }),
   /** 评论 @ 提及候选（含官方 AI bot「小果」，isAiBot=true）。 */

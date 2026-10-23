@@ -43,6 +43,24 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "feed",
             font_scale: 1.,
         },
+        // —— 控制栏响应档：缩窗时图标不动、发送框让位（>800 全胶囊收窄，
+        // <800 折叠成「弹」字笔钮）；portrait(388) 是竖屏档的再确认 ——
+        PreviewCase {
+            name: "feed-narrow-light",
+            mode: ThemeMode::Light,
+            width: 860.,
+            height: H,
+            scene: "feed",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "feed-compact-light",
+            mode: ThemeMode::Light,
+            width: 640.,
+            height: H,
+            scene: "feed",
+            font_scale: 1.,
+        },
         // —— 首页面板 ——
         PreviewCase {
             name: "feed-picker-light",
@@ -108,7 +126,48 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "dm",
             font_scale: 1.,
         },
+        // —— 页面首拉加载态（用户对齐：各页加载位置统一整区居中）——
+        PreviewCase {
+            name: "rank-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "rank-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "browse-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "browse-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator-loading",
+            font_scale: 1.,
+        },
         // —— 首页分支态 ——
+        PreviewCase {
+            name: "feed-loading-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "feed-loading",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "feed-loading-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "feed-loading",
+            font_scale: 1.,
+        },
         PreviewCase {
             name: "feed-error-light",
             mode: ThemeMode::Light,
@@ -307,6 +366,14 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             scene: "history-manage",
             font_scale: 1.,
         },
+        PreviewCase {
+            name: "history-local-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "history-local",
+            font_scale: 1.,
+        },
         // —— 预约 ——
         PreviewCase {
             name: "reservation-light",
@@ -338,6 +405,72 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             width: W,
             height: H,
             scene: "reservation-empty",
+            font_scale: 1.,
+        },
+        // —— 追更 ——
+        PreviewCase {
+            name: "follows-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "follows",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-empty-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-empty",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-manage-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-manage",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "follows-notices-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "follows-notices",
+            font_scale: 1.,
+        },
+        // —— 创作者主页 ——
+        PreviewCase {
+            name: "creator-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-dark",
+            mode: ThemeMode::Dark,
+            width: W,
+            height: H,
+            scene: "creator",
+            font_scale: 1.,
+        },
+        PreviewCase {
+            name: "creator-empty-light",
+            mode: ThemeMode::Light,
+            width: W,
+            height: H,
+            scene: "creator-empty",
             font_scale: 1.,
         },
         // —— 下载管理 ——
@@ -504,6 +637,15 @@ pub(crate) fn cases() -> Vec<PreviewCase> {
             width: 480.,
             height: 270.,
             scene: "mini",
+            font_scale: 1.,
+        },
+        // —— 竖屏（窄条播放器形态：侧栏藏、顶栏在、控制条竖屏档）——
+        PreviewCase {
+            name: "portrait-light",
+            mode: ThemeMode::Light,
+            width: 388.,
+            height: 840.,
+            scene: "portrait",
             font_scale: 1.,
         },
         // —— 字号缩放（125% / 150%，对齐系统 DPI 变化下的布局）——

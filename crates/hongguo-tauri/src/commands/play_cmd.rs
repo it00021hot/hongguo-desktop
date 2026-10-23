@@ -18,18 +18,16 @@ pub async fn play_series(
     hongguo_service::play_service::local::resolve_play(state.inner(), &request).await
 }
 
-/// 预取一部剧的在线流（沉浸流「一切就下一部」）。
+/// 预取一部剧的在线流（沉浸流刷剧：前端按预取档位对**后续每部**各调一次）。
 ///
 /// 幂等且静默：本地没档案就先解析登记（通常前端已预取过分集，这里秒回），
 /// 流已取/在取直接返回；取流失败不报错——预取是优化，失败大不了现场取。
-/// 铺几集由 `Settings.prefetch_episodes` 决定（0=全关，含换剧预取）：入口
-/// 集起共 N 集，与连播预取走同一条 `schedule_next_episode_prefetch`
-/// （幂等/去重/礼让共用）。只铺流不铺预转——切剧瞬间 N 集转码的 CPU
-/// 代价过高，无 HEVC 机器由取流侧直接选 h264 流覆盖。
+/// 每部只铺入口集（头部 8MB 有界，升格当前集才无界续填）；同剧后续集的
+/// 连播铺集由起播的 [`schedule_following_episodes`] 负责，这里不重复。
+/// 档位 0=全关（含换剧预取）。
 #[tauri::command]
 pub async fn play_prefetch(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
-    let count = state.settings().prefetch_episodes;
-    if count == 0 {
+    if state.settings().prefetch_episodes == 0 {
         return Ok(());
     }
     let series = match state.store.series_by_id(&series_id)? {
@@ -52,13 +50,11 @@ pub async fn play_prefetch(state: State<'_, AppState>, series_id: String) -> App
     } else {
         1
     };
-    for offset in 0..count {
-        hongguo_service::play_service::online::schedule_next_episode_prefetch(
-            state.inner().clone(),
-            &series_id,
-            entry + offset,
-        );
-    }
+    hongguo_service::play_service::online::schedule_next_episode_prefetch(
+        state.inner().clone(),
+        &series_id,
+        entry,
+    );
     Ok(())
 }
 

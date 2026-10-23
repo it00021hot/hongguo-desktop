@@ -16,7 +16,7 @@
 //! 进度条拖动 seek、倍速菜单（0.75–3x，音频变速不变调）、音量/静音；偏好
 //! 经 [`crate::playback_prefs`] 跨集跨启动保留。键盘快捷键（空格/方向键）
 //! 与 ↑↓ 切剧随控制层下一批目标落地；「回首页 5 分钟换一批」的过期重开
-//! 未做（换一批入口本身已对齐）。
+//! 已对齐（FEED_STALE 判定 + pin_hold 在播不动）。
 //!
 //! 本文件只留视图本体（HomeView/NowPlaying 状态、构造、订阅、引擎事件
 //! 循环与 Render 入口）；按域拆出的子模块：`feed`（取流/展示列表）、
@@ -29,48 +29,42 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::button::Button;
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::slider::{SliderEvent, SliderState};
-use gpui_kit::component::v_flex;
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::slider::SliderState;
 use gpui_kit::prelude::*;
-use gpui_kit::{Entity, RenderImage, Window, div};
+use gpui_kit::{Entity, RenderImage, Window};
 use hongguo_api::danmaku::{CommentItem, Danmaku, ReplyItem};
 use hongguo_api::detail::RelatedItem;
 use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::InteractionItem;
 use hongguo_common::model::{DownloadTask, VideoDefinition};
 use hongguo_media_platform_api::video::VideoFrame;
-use hongguo_playback::{PlayerEvent, PlayerHandle};
 use hongguo_service::app_state::AppStateInner;
-use hongguo_service::events::ServiceEvent;
-use tokio::sync::mpsc;
 
 use danmaku::DmFlight;
 pub(crate) use feed::Source;
 use feed::{SourceFeed, StreamItem};
+use history_cadence::HistoryCadence;
 
 /// 首页发往壳的事件（页面间不互相持有，壳订阅后裁决目的地）。
 #[derive(Debug, Clone)]
 pub(crate) enum HomeEvent {
     /// 点剧名 → 打开应用内详情页。
     OpenDetail(String),
-}
-
-/// 视频转换目标尺寸的跨线程打包（(w,h) ⇄ u64；Arc<AtomicU64> 共享给
-/// 后台转换线程，见 [`HomeView::video_target`]）。
-#[cfg(target_os = "windows")]
-fn pack_size(w: usize, h: usize) -> u64 {
-    ((w as u64) << 32) | h as u64
-}
-
-#[cfg(target_os = "windows")]
-fn unpack_size(packed: u64) -> (usize, usize) {
-    ((packed >> 32) as usize, (packed & 0xffff_ffff) as usize)
+    /// 登录/登出成功：壳刷新头像与追更未读角标（账号态变化的唯一推送口）。
+    AccountChanged,
+    /// 互动登录墙：切到设置页（账号卡登录入口；Tauri requireLogin 同款）。
+    OpenSettings,
+    /// 下载提交成功：切下载任务页（Tauri `navigate('/tasks')` 同款）。
+    OpenTasks,
+    /// chrome（顶栏/侧栏）显隐变了：无边框/沉浸全屏切换后壳必须重绘。
+    /// 壳的 `Shell::render` 只在自己被通知时重读 `immersive_fullscreen()`；
+    /// 不推这一条的话，无边框点下去顶栏不动、再点回来也不动——用户看到的
+    /// 就是「按钮状态一直不对」（2026-10-18 实测）。
+    ChromeChanged,
 }
 
 pub(crate) mod auth;
@@ -79,18 +73,31 @@ pub(crate) mod comments;
 pub(crate) mod controls;
 pub(crate) mod danmaku;
 pub(crate) mod downloads;
+pub(crate) mod downloads_range;
+pub(crate) mod events;
 pub(crate) mod feed;
 pub(crate) mod fmt;
+pub(crate) mod hevc_prompt;
+pub(crate) mod history_cadence;
 pub(crate) mod incognito;
 pub(crate) mod interact;
+pub(crate) mod lag_diag;
 pub(crate) mod mini_panel;
 pub(crate) mod minimize;
 pub(crate) mod overlay;
 pub(crate) mod picker;
 pub(crate) mod playback;
+pub(crate) mod player;
+pub(crate) mod player_icons;
+pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
+pub(crate) mod season;
 pub(crate) mod stage;
+pub(crate) mod state;
+pub(crate) mod video_surface;
+pub(crate) mod view;
+pub(crate) mod window;
 
 /// 当前在播的剧（overlay 与进度落盘的身份）。
 ///
@@ -112,6 +119,14 @@ struct NowPlaying {
     definition: u32,
     /// 本集的 vid（弹幕 group_id）
     vid: String,
+    /// 封面 URL（观看历史记录用；直播流条目自带，档案回填的流可能为空）
+    cover: String,
+    /// 本剧全部分集（集号 → vid）：预取下一集与片尾接力都从这里取 vid。
+    ///
+    /// 缓存在这里是为了让**主线程不碰库**——`Store` 是同步阻塞门面
+    /// （投递 DB 线程后等结果），切集路径上每集读一次库就是主线程上多一次
+    /// 跨线程往返。起播时档案已经在手（`play_task` 读的），顺手带下来。
+    episode_vids: Arc<Vec<(u32, String)>>,
 }
 
 // ---------------------------------------------------------------- 视图
@@ -126,20 +141,15 @@ pub struct HomeView {
     /// 服务端下发的 tab 标题（tab_type → title；缺省回落本地名）。
     tab_labels: HashMap<String, String>,
 
-    /// 已解码封面（series_id → RGBA）：切剧间隙的全屏占位。
-    covers: HashMap<String, Arc<RenderImage>>,
-    /// 已解码评论/回复头像（avatar URL → RGBA）；加载失败不入表（退回首字
-    /// 圆形占位）。
-    avatars: HashMap<String, Arc<RenderImage>>,
-    avatars_pending: HashSet<String>,
-    covers_pending: HashSet<String>,
-
+    /// 全屏占位用的**原图档**封面（series_id → RGBA）：只有当前/目标这一集，
+    /// 铺满舞台要原图（列表卡档是缩到 320 长边的小图，不够铺）。
+    stage_covers: HashMap<String, Arc<RenderImage>>,
     // —— 播放态 ——
     /// 引擎出生纪元：每次切剧 +1，陈旧事件/任务按它丢弃。Arc 原子共享给
     /// 事件循环——转换挪到后台线程后，纪元判定必须在**转换之前**做
     ///（切剧窗口里旧帧不再白转一遍），主线程字段够不着就要共享。
     epoch: Arc<AtomicU64>,
-    player: Option<std::sync::Arc<PlayerHandle>>,
+    player: Option<player::Player>,
     /// 预览的虚拟引擎标记（screenshot feature）：预览无真实引擎，而控制条/
     /// 选集/下载面板的渲染门槛都是 player.is_some()——种子置位后同一门槛
     /// 放行，这些 UI 走同一段渲染代码出画（见 [`Self::engine_ready`]）。
@@ -161,24 +171,36 @@ pub struct HomeView {
     /// 更新互相抢时序——首帧先到置 true、就位后到又清 false，封面从此永远
     /// 收不掉（画面上封面与视频叠着）。帧直接来自事件，没有第二处状态。
     frame: Option<VideoFrame>,
-    /// Windows 的渲染产物：NV12 → RGBA（BT.709 limited）在事件任务里转换
-    /// （不占 UI 线程），渲染按普通图像上传——gpui 的视频 surface 只有
-    /// Apple 目标（CVPixelBuffer），Windows 走这条等价路径。
-    #[cfg(target_os = "windows")]
-    frame_image: Option<Arc<RenderImage>>,
-    /// 已下台、等 render 里 `window.drop_image` 回收的图像。gpui 的纹理按
-    /// `RenderImage::id` 常驻 sprite atlas（`paint_image` 只增不删），视频
-    /// 路径每帧一个新 id，不主动回收就是无上限的显存/内存泄漏。
-    #[cfg(target_os = "windows")]
-    retired_images: Vec<Arc<RenderImage>>,
-    /// 视频转换目标尺寸（宽,高；CSS px，打包成 u64 跨线程共享——转换在
-    /// gpui 后台线程池跑，Rc/Cell 过不去）。render_stage 按舞台显示区刷新，
-    /// 事件循环的 NV12→RGBA 按它缩放输出——769px 的视口出 1080p 纹理纯
-    /// 浪费：转换 CPU、图集纹理、回收压力都按面积走（8.3MB → ~1.3MB）。
-    #[cfg(target_os = "windows")]
-    video_target: Arc<AtomicU64>,
+    /// 视频上屏的像素载体（平台差异的唯一归属，见 [`video_surface`]）。
+    video_surface: video_surface::VideoSurface,
+    /// 系统播放器周期性激活/挂载用的窗口句柄（无 render 时也能把窗口提到前台）。
+    window_handle: gpui_kit::AnyWindowHandle,
+    /// 舞台矩形（GPUI 逻辑像素、左上原点）：系统播放器图层跟随它。
+    stage_bounds: Rc<Cell<Option<[f32; 4]>>>,
+    /// 系统播放器画面已就绪（首帧事件）：视图据此打透明洞并跳过 GPUI 上屏。
+    system_video_ready: bool,
+    /// 系统后端的窗口已经提到前台过一次（会话内一次）。
+    ///
+    /// 无人值守启动时进程可能不在前台，GPUI 就不请求帧，视频层也就没有第
+    /// 一次 render 去挂载——首次起播必须把窗口提到前台。但**每次引擎重建
+    /// 都提一次会在切集时抢焦点**（Windows 的 activate 还会合成一对 ALT 键
+    /// 去骗前台策略），看别的应用时被拉回来、窗口最小化时被强制还原。
+    system_window_activated: bool,
+    /// 系统后端一次切集/起播的起点（首帧事件到达时结算耗时）。
+    system_switch_started: Option<Instant>,
+    /// 每一次起播/接力的逻辑代次：AVQueuePlayer 接力不换播放器，不能用
+    /// 播放器实例区分「上一集/下一集」，片尾幂等靠这三元组。
+    play_generation: u64,
+    /// 当前这一代真正收到过 FirstFrame 的代次。
+    first_frame_generation: u64,
+    /// 已经因片尾推进过的代次（同一代只允许一次）。
+    ended_generation: u64,
+    /// 正在异步预注册/预加载的下一集 vid（防重复入队）。
+    system_preload_pending: Option<String>,
     /// 舞台周期状态日志的上一跳（排障取证：frame/switching/image 状态）。
     stage_diag_at: Cell<Instant>,
+    /// 上屏节奏取证：两次新内容 render 的间隔、合并跳帧、最大停顿（5s 窗口）。
+    paint_diag: lag_diag::PaintDiag,
     /// 切换目标（switching 时 overlay 显示它的封面与标题）。
     pending_title: Option<String>,
     /// 起播失败态（自动重试也失败后落这里；画面中央错误卡 + 重试——
@@ -257,6 +279,8 @@ pub struct HomeView {
     danmaku_clear_input: bool,
     /// 弹幕表情弹层开着（pill 里的笑脸钮开关；点外部收起）。
     danmaku_emoji_open: bool,
+    /// 窄舞台的弹幕浮层输入开着（「弹」字笔钮开关；点外部收起）。
+    danmaku_compact_open: bool,
     /// 弹幕设置滑杆（透明度/字号/密度/面积）。
     dm_opacity_slider: Entity<SliderState>,
     dm_font_slider: Entity<SliderState>,
@@ -273,6 +297,14 @@ pub struct HomeView {
     follow_count: i64,
     digg_pending: bool,
     collect_pending: bool,
+    /// 当前剧连载状态（video_detail series_status：0=连载中 1=已完结；
+    /// 互动栏追更键显隐判定源，meta 未到 = None）。
+    series_status: Option<i64>,
+    /// 当前剧追更态（跟随列表首页本地判成员；未登录/未到 = None）。
+    follow_is_on: Option<bool>,
+    follow_pending: bool,
+    /// 每剧 (followed_cnt, series_status) 会话内缓存（load_intro 顺带）。
+    series_meta_cache: HashMap<String, (i64, i64)>,
     /// 评论面板开着。
     comments_panel_open: bool,
     /// 当前集评论（已拍平去重；每次进集重拉——社交态不缓存复用）。
@@ -308,6 +340,19 @@ pub struct HomeView {
     comment_input: Option<Entity<InputState>>,
     comment_sending: bool,
     comment_clear_input: bool,
+    /// @提及候选（relation/list，含 AI bot「小果」）；按剧缓存一次。
+    mention_users: Arc<Vec<hongguo_api::interact::MentionUser>>,
+    mention_loaded_for: Option<String>,
+    mention_pending: bool,
+    /// 已插入待发送的提及对象 (uid, name)；发送成功即清。
+    mention_user: Option<(String, String)>,
+    /// 待写入输入框的提及段（候选点击 → render 期 set_value，形如
+    /// `@名字\u{FFFC} `；set_value 要 window，不能就地写）。
+    mention_insert: Option<String>,
+    /// @小果 提及评论的 AI 回复轮询（Tauri aiPending 同款）：
+    /// (评论 id, 起始时刻)；120s 未等到放弃。
+    ai_pending: Vec<(String, Instant)>,
+    ai_polling: bool,
     /// 评论面板的表情选择器开着（笑脸按钮 toggle；连选不关面板）。
     emoji_picker_open: bool,
     // —— 壳内登录（SMS；Tauri 登录页对齐的最小面）——
@@ -325,8 +370,14 @@ pub struct HomeView {
     /// 删除请求在途（防重复提交）。
     comment_deleting: bool,
     // —— 下载 ——
-    /// 下载面板开着。
+    /// 下载面板（「下载到本地」选集浮层）开着。
     downloads_open: bool,
+    /// 浮层里已勾选的集号（升序；默认 = 在播这一集）。
+    download_selected: Vec<u32>,
+    /// 区间语法输入框（Tauri `EpisodeRangePicker` 同款）。
+    download_range: Entity<InputState>,
+    /// 区间串解析不出任何集号（Tauri `rangeError` 同义）。
+    download_range_error: bool,
     /// 隐身模式（Tauri incognito 同语义，见 [`incognito`]）：开着时光标
     /// 脱离窗口 → 暂停 + 整窗藏起，回到窗口矩形 → 原地重现 + 续播。
     incognito: bool,
@@ -334,20 +385,37 @@ pub struct HomeView {
     /// 回来补上；用户自己按停的不欠。
     incognito_owed: bool,
     /// 隐身轮询任务在跑（防重复起；关开关后由下一拍自杀收位）。
-    #[cfg(target_os = "windows")]
     incognito_polling: bool,
     /// 最小化欠下的那次播放（Tauri owedPlay 同构，见 [`minimize`]）：
     /// 最小化瞬间本来在播才记欠，还原补上。
-    #[cfg(target_os = "windows")]
     minimize_owed: bool,
     /// 全屏中（Render 时从 window.is_fullscreen 读，切图标用）。
     fullscreen: bool,
     /// 小屏播放态（Tauri miniScreen 同款）：Some 是进入前的几何快照。
     /// 同窗缩放语义——不换窗口、不暂停，只缩窗口 + 换紧凑控制条。
-    mini: Option<crate::mini::SavedGeometry>,
+    mini: Option<crate::platform::WindowSnapshot>,
+    /// 竖屏播放态（Tauri portrait 同款）：Some 是进入前的几何快照。
+    /// 与小屏同一套机制（同窗收窄成竖条 + 紧凑控制条竖屏形态）。
+    portrait: Option<crate::platform::WindowSnapshot>,
+    /// 竖屏铺满档（Tauri portraitFull 同款；只在竖屏中有意义）。
+    portrait_full: bool,
+    /// 上次落窗用的竖屏比例（变化 >1% 才重适配，Tauri REFIT_DELTA 同值）。
+    portrait_aspect_last: f64,
+    /// 同剧切集保留上一集末帧顶住画面（Tauri `use-frame-hold` 同款：切集
+    /// 全程不闪封面，直到新集首帧出画；切剧仍立刻走封面）。
+    hold_last_frame: bool,
+    /// 缺 HEVC 扩展的安装引导：本会话点过「暂不安装」就不再打扰（Tauri
+    /// `hevcSession.markDismissed` 的模块级会话语义）。
+    hevc_prompt_dismissed: bool,
+    /// HEVC 扩展安装中（按钮转「下载安装中…」并禁用）。
+    hevc_installing: bool,
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
+    /// 无边框播放（hgplayer 播放页 bare 布局同款，issue #11）：chrome 全藏
+    /// 但**不进 OS 全屏**，窗口保持原几何；macOS 红绿灯一并藏
+    /// （[`crate::macos`]）。与 [`Self::immersive`] 互斥。
+    frameless: bool,
     /// 窗口钉住（Tauri usePinWindow 同款：窗口级会话态，大小屏共用）。
     pinned: bool,
     /// 下载任务快照（每次渲染从队列读，进度靠 Frame 事件驱动的重渲染刷新）。
@@ -379,6 +447,8 @@ pub struct HomeView {
     controls_hovered: bool,
     /// 指针悬在进度轨道上（滑块圆点显示开关，Tauri ScrubBar 同款）。
     progress_hovered: bool,
+    /// 小窗拖窗的按下起点（画面层上判位移：<3px 当单击暂停，超过才起拖）。
+    mini_drag: Option<gpui_kit::Point<gpui_kit::Pixels>>,
     /// 自动连播静默起步（Tauri quietStart 同款）：连播切集到新集首帧或
     /// 用户真实输入之间，一切悬浮层不亮（面板照常）。
     silent_until_input: bool,
@@ -388,6 +458,10 @@ pub struct HomeView {
 
     wheel_at: Option<Instant>,
     last_save: Instant,
+    /// 观看历史上报节拍（`history_cadence`，与 Tauri 前端同一套规则）：
+    /// 1 秒心跳按播放位置判定——新剧 5 秒首报、同剧切集立即翻页、
+    /// 每 60 秒一拍；暂停/切集/退出走 force 收尾。
+    history_cadence: HistoryCadence,
     /// 播放快捷键的焦点锚：键盘事件只派发给焦点子树，舞台持有一个
     /// FocusHandle（见 render_stage），首次渲染播种、点舞台带回。
     focus: gpui_kit::FocusHandle,
@@ -435,10 +509,7 @@ impl HomeView {
             indexes,
             tabs,
             tab_labels: HashMap::new(),
-            covers: HashMap::new(),
-            covers_pending: HashSet::new(),
-            avatars: HashMap::new(),
-            avatars_pending: HashSet::new(),
+            stage_covers: HashMap::new(),
             epoch: Arc::new(AtomicU64::new(0)),
             player: None,
             #[cfg(feature = "screenshot")]
@@ -447,13 +518,9 @@ impl HomeView {
             pin_hold: true,
             switching: false,
             frame: None,
-            #[cfg(target_os = "windows")]
-            frame_image: None,
-            #[cfg(target_os = "windows")]
-            retired_images: Vec::new(),
-            #[cfg(target_os = "windows")]
-            video_target: Arc::new(AtomicU64::new(pack_size(1280, 720))),
+            video_surface: video_surface::VideoSurface::new(),
             stage_diag_at: Cell::new(Instant::now()),
+            paint_diag: lag_diag::PaintDiag::new(),
             pending_title: None,
             play_error: None,
             play_retried: false,
@@ -485,32 +552,43 @@ impl HomeView {
             danmaku_last_pos: 0.0,
             danmaku_last_tick: None,
             dm_rng: 0x853c49e6748fea9b,
-            danmaku_input: Some(cx.new(|cx| InputState::new(window, cx).placeholder("发条弹幕…"))),
+            danmaku_input: Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("player.interact.danmakuPlaceholder"))
+            })),
             danmaku_sending: false,
             danmaku_clear_input: false,
             danmaku_emoji_open: false,
+            danmaku_compact_open: false,
             dm_opacity_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.1)
                     .max(1.0)
+                    // 步长必须跟着区间走：SliderState 默认 step=1.0，0.1–1.0
+                    // 的区间下只能落在 0.1 / 1.0 两档（用户实测「百分比要么
+                    // 0 要么 100」）。
+                    .step(0.05)
                     .default_value(prefs.dm_opacity)
             }),
             dm_font_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.5)
                     .max(2.0)
+                    .step(0.05)
                     .default_value(prefs.dm_font_scale)
             }),
             dm_density_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.0)
                     .max(1.0)
+                    .step(0.05)
                     .default_value(prefs.dm_density)
             }),
             dm_area_slider: cx.new(|_| {
                 SliderState::new()
                     .min(0.25)
                     .max(1.0)
+                    .step(0.05)
                     .default_value(prefs.dm_area)
             }),
             interact_items: Arc::new(Vec::new()),
@@ -520,6 +598,10 @@ impl HomeView {
             follow_count: 0,
             digg_pending: false,
             collect_pending: false,
+            series_status: None,
+            follow_is_on: None,
+            follow_pending: false,
+            series_meta_cache: HashMap::new(),
             comments_panel_open: false,
             comments: Arc::new(Vec::new()),
             comments_total: 0,
@@ -539,30 +621,49 @@ impl HomeView {
             reserve_pending: HashSet::new(),
             reservations_loaded: false,
             reply_to: None,
-            comment_input: Some(cx.new(|cx| InputState::new(window, cx).placeholder("说点什么…"))),
+            comment_input: Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("player.comments.placeholder"))
+            })),
             comment_sending: false,
             comment_clear_input: false,
+            mention_users: Arc::new(Vec::new()),
+            mention_loaded_for: None,
+            mention_pending: false,
+            mention_user: None,
+            mention_insert: None,
+            ai_pending: Vec::new(),
+            ai_polling: false,
             emoji_picker_open: false,
             login_panel_open: false,
-            login_mobile: Some(
-                cx.new(|cx| InputState::new(window, cx).placeholder("手机号（11 位）")),
-            ),
-            login_code: Some(cx.new(|cx| InputState::new(window, cx).placeholder("验证码"))),
+            // 字段标签在卡片里（Tauri FieldLabel 同款），输入框不再塞占位文案
+            login_mobile: Some(cx.new(|cx| InputState::new(window, cx))),
+            login_code: Some(cx.new(|cx| InputState::new(window, cx))),
             login_busy: false,
             login_message: None,
             mfa_retry: None,
             comment_delete_target: None,
             comment_deleting: false,
             downloads_open: false,
+            download_selected: Vec::new(),
+            download_range: cx.new(|cx| {
+                InputState::new(window, cx).placeholder(crate::i18n::t("download.rangePlaceholder"))
+            }),
+            download_range_error: false,
             incognito: prefs.incognito,
             incognito_owed: false,
-            #[cfg(target_os = "windows")]
             incognito_polling: false,
-            #[cfg(target_os = "windows")]
             minimize_owed: false,
             fullscreen: false,
             mini: None,
+            portrait: None,
+            portrait_full: false,
+            portrait_aspect_last: 0.0,
+            hold_last_frame: false,
+            hevc_prompt_dismissed: false,
+            hevc_installing: false,
             immersive: false,
+            frameless: false,
             pinned: false,
             downloads: Arc::new(Vec::new()),
             done_vids: Arc::new(Vec::new()),
@@ -577,10 +678,12 @@ impl HomeView {
             pointer_on_stage: false,
             controls_hovered: false,
             progress_hovered: false,
+            mini_drag: None,
             silent_until_input: false,
             progress_bounds: Rc::new(Cell::new(None)),
             wheel_at: None,
             last_save: Instant::now(),
+            history_cadence: HistoryCadence::default(),
             focus: cx.focus_handle(),
             focus_seeded: false,
             shortcut_keys: prefs.keys.clone(),
@@ -590,27 +693,28 @@ impl HomeView {
             history_pending: false,
             seeds: Vec::new(),
             stage_rects: Rc::new(Cell::new(None)),
+            window_handle: window.window_handle(),
+            stage_bounds: Rc::new(Cell::new(None)),
+            system_video_ready: false,
+            system_window_activated: false,
+            system_switch_started: None,
+            play_generation: 0,
+            first_frame_generation: 0,
+            ended_generation: 0,
+            system_preload_pending: None,
         };
         view.subscribe_controls(cx);
         view.subscribe_service_events(cx);
         // 隐身偏好跨启动还原（Tauri 挂载时重发 setIncognito(true) 同款）：
-        // 有原生句柄才起轮询，预览/无头环境保持关
-        #[cfg(target_os = "windows")]
-        if view.incognito
-            && let Some(hwnd) = crate::win32::hwnd_of(window)
-        {
-            view.spawn_incognito_poller(hwnd, cx);
-        }
-        #[cfg(not(target_os = "windows"))]
+        // 窗口已就位就起轮询（两端都有藏显原语）
         if view.incognito {
-            view.incognito = false;
+            view.spawn_incognito_poller(window.window_handle(), cx);
         }
-        // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）：同样要原生
-        // 句柄，预览/无头环境与 macOS 不起
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = crate::win32::hwnd_of(window) {
-            view.spawn_minimize_poller(hwnd, cx);
-        }
+        // 最小化自动暂停监听（pauseOnMinimize，开关每拍现读）
+        view.spawn_minimize_poller(window.window_handle(), cx);
+        // 观看历史上报心跳（1s 一拍；没在播时内部直接返回）：节拍必须独立于
+        // 5 秒落盘窗口与帧事件，否则首报被量化、60 秒节拍根本不成立
+        view.spawn_history_heartbeat(cx);
         // 下载队列恢复：running 视为中断改回 pending（Tauri bootstrap 同款），
         // 然后触发一轮调度把中断的任务续跑起来。库读取失败只记错误不拦
         // 启动——壳的其余功能不依赖队列（显式容错：有日志、只此一处）。
@@ -657,453 +761,5 @@ impl HomeView {
             view.load_tabs(cx);
         }
         view
-    }
-
-    /// tab 的显示名：服务端下发标题优先，缺省回落本地名。
-    pub(crate) fn tab_label(&self, s: &Source) -> String {
-        self.tab_labels
-            .get(s.as_str())
-            .filter(|t| !t.is_empty())
-            .cloned()
-            .unwrap_or_else(|| s.fallback_label().to_string())
-    }
-
-    /// 设置页改了快捷键映射：换进运行中的视图（新值已由设置页落盘）。
-    pub(crate) fn reload_shortcut_keys(
-        &mut self,
-        keys: crate::playback_prefs::ShortcutKeys,
-        cx: &mut Context<Self>,
-    ) {
-        self.shortcut_keys = keys;
-        cx.notify();
-    }
-
-    /// 弹一条轻量提示（Tauri toast 同位）：单槽覆盖，定时收尾（不依赖
-    /// 重渲染节拍——暂停中没有 Frame 事件也能按时消失）。
-    pub(crate) fn show_toast(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
-        self.toast = Some(crate::toast::Toast::new(message));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(crate::toast::TOAST_TTL)
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                if view
-                    .toast
-                    .as_ref()
-                    .is_some_and(crate::toast::Toast::expired)
-                {
-                    view.toast = None;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// 订阅 service 业务事件（登录 MFA、下载状态）并落到视图状态。
-    ///
-    /// 事件泵把 tokio broadcast 转成 GPUI 侧可 await 的无界通道
-    /// （见 [`crate::events`]）；这里起一条消费循环——与 Tauri 壳消费
-    /// 同一批事件（一份业务实现，两种 UI 适配）。
-    fn subscribe_service_events(&mut self, cx: &mut Context<Self>) {
-        let mut rx = crate::events::subscribe(&self.state);
-        cx.spawn(async move |this, cx| {
-            while let Some(event) = rx.recv().await {
-                let ok = this
-                    .update(cx, |view, cx| view.on_service_event(event, cx))
-                    .is_ok();
-                if !ok {
-                    break; // 视图已销毁
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// service 事件 → 视图状态。
-    fn on_service_event(&mut self, event: ServiceEvent, cx: &mut Context<Self>) {
-        match event {
-            ServiceEvent::LoginMfa(ev) => self.on_login_mfa_event(ev, cx),
-            // 下载面板开着时随事件即时刷新（面板本身另有 1s 轮询兜底）
-            ServiceEvent::DownloadTaskAdded(_)
-            | ServiceEvent::DownloadProgress(_)
-            | ServiceEvent::DownloadCompleted(_)
-            | ServiceEvent::DownloadFailed(_)
-            | ServiceEvent::DownloadStopped(_)
-            | ServiceEvent::DownloadQueueChanged(_) => {
-                if self.downloads_open {
-                    self.refresh_downloads(cx);
-                }
-            }
-            ServiceEvent::OnlineProgress(_) => {}
-            ServiceEvent::MergeTaskAdded(_)
-            | ServiceEvent::MergeProgress(_)
-            | ServiceEvent::MergeCompleted(_)
-            | ServiceEvent::MergeFailed(_) => {}
-            ServiceEvent::CompatProgress(_) => {}
-            // 追更提醒：GPUI 壳的追更页未建，先记日志（通知已落本地库，
-            // 页面就位后从这里接 UI 刷新）
-            ServiceEvent::FollowNotices(ev) => {
-                log::info!("[Follow] {} 条新更新提醒", ev.notices.len());
-            }
-        }
-    }
-
-    /// 引擎是否就位：控制条、选集/下载面板渲染的共同门槛。真实壳=引擎
-    /// 句柄在；预览进程由种子置位虚拟引擎（screenshot feature）。
-    fn engine_ready(&self) -> bool {
-        self.player.is_some() || self.preview_engine()
-    }
-
-    #[cfg(feature = "screenshot")]
-    fn preview_engine(&self) -> bool {
-        self.preview_engine
-    }
-
-    #[cfg(not(feature = "screenshot"))]
-    fn preview_engine(&self) -> bool {
-        false
-    }
-
-    // —— 壳协作面（Shell 顶栏/侧栏读写的最小开口） ——
-
-    /// 当前 tab 源（预览交互探针读，断言切源生效）。
-    #[cfg(feature = "screenshot")]
-    pub(crate) fn active_source(&self) -> Source {
-        self.active.clone()
-    }
-
-    /// 切沉浸流 tab（顶栏 tab 入口）：重复点当前 tab = 换一批（重开会话、
-    /// 游标归零、在播剧钉住不动）；切到别的 tab 关掉在播钉——新源首批到位
-    /// 或缓存游标处的剧立即接管播放，切 tab 就换片（Tauri pinHold 同口径）。
-    pub(crate) fn switch_source(&mut self, s: Source, cx: &mut Context<Self>) {
-        log::info!(
-            "[Home] 切换 tab 源 → {}（当前 {}）",
-            self.tab_label(&s),
-            self.tab_label(&self.active)
-        );
-        let same = self.active == s;
-        let empty = self.feeds.get(&s).is_none_or(|f| f.items.is_empty());
-        if same {
-            // 换一批：重开会话、游标归零，在播剧钉住不动（开闸）
-            self.pin_hold = true;
-            self.load_feed(s, true, cx);
-            return;
-        }
-        // 跨 tab 关闸：钉子不关的话，游标 0 会被在播剧占住，首批到位后
-        // follow_cursor/play_target 判「目标就是在播」而不切——点了没反应
-        self.pin_hold = false;
-        self.active = s.clone();
-        if empty {
-            self.load_feed(s, false, cx);
-        } else {
-            let cursor_item = self
-                .display_items()
-                .get(self.cursor())
-                .map(|i| i.series_id.clone());
-            let target_same = self
-                .now
-                .as_ref()
-                .is_some_and(|n| cursor_item.as_deref() == Some(&n.series_id));
-            if !target_same && let Some(item) = self.display_items().get(self.cursor()).cloned() {
-                self.play_target(item, None, None, cx);
-            }
-        }
-        cx.notify();
-    }
-
-    pub(crate) fn immersive_fullscreen(&self) -> bool {
-        self.immersive
-    }
-
-    /// 置顶窗口（顶栏入口与小屏紧凑条共用；FFI 成功才翻状态，两边不各说
-    /// 各话——Tauri usePinWindow 同一份语义）。
-    pub(crate) fn toggle_pinned(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let next = !self.pinned;
-        if crate::mini::set_topmost(window, cx, next) {
-            self.pinned = next;
-            log::info!("[Home] 窗口钉住 → {next}");
-            cx.notify();
-        }
-    }
-
-    /// 播放器全屏（控制条按钮 / F / Esc）：OS 全屏 + chrome（顶栏/侧栏）
-    /// 全藏 = 真沉浸。与「应用全屏」（顶栏最大化钮，chrome 保留）分层。
-    pub(super) fn toggle_immersive_fullscreen(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.immersive = !self.immersive;
-        window.toggle_fullscreen();
-        self.wake_controls(cx);
-        cx.notify();
-    }
-
-    fn subscribe_controls(&mut self, cx: &mut Context<Self>) {
-        // 弹幕设置滑杆：Change 即生效，Release 落盘（音量滑杆同节奏）
-        let dm_sliders = [
-            (&self.dm_opacity_slider, 0u8),
-            (&self.dm_font_slider, 1),
-            (&self.dm_density_slider, 2),
-            (&self.dm_area_slider, 3),
-        ];
-        for (slider, which) in dm_sliders {
-            cx.subscribe(
-                slider,
-                move |this: &mut Self, _: Entity<SliderState>, event: &SliderEvent, cx| {
-                    this.on_dm_slider_event(which, event, cx);
-                },
-            )
-            .detach();
-        }
-        // 弹幕发送框：Enter 提交
-        if let Some(input) = &self.danmaku_input {
-            cx.subscribe(
-                input,
-                |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        this.submit_danmaku(cx);
-                    }
-                },
-            )
-            .detach();
-        }
-        // 评论输入框：Enter 提交
-        if let Some(input) = &self.comment_input {
-            cx.subscribe(
-                input,
-                |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. }) {
-                        this.submit_comment(cx);
-                    }
-                },
-            )
-            .detach();
-        }
-    }
-
-    /// 引擎事件循环（每个引擎一个，epoch 封口：换剧后陈旧事件自然断流）。
-    /// 纪元与转换目标经 Arc 原子共享——NV12→RGBA 转换挪到 gpui 后台线程池
-    /// （每帧 3-4ms 标量转换 + BGRA 交换不再挤占主线程，30fps ≈ 每秒
-    /// 120-150ms 主线程时间还给它），纪元判定因此必须走在转换**之前**。
-    pub(super) fn spawn_event_loop(
-        &mut self,
-        epoch: u64,
-        epoch_shared: Arc<AtomicU64>,
-        mut events: mpsc::Receiver<PlayerEvent>,
-        #[cfg(target_os = "windows")] video_target: Arc<AtomicU64>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(async move |this, cx| {
-            while let Some(first) = events.recv().await {
-                // 纪元先行判定：切剧/离开首页后本循环的剩余事件全部作废，
-                // 直接退场——以前是整帧转换完才在 update 里丢弃，切剧窗口
-                // （恰好是 UI 最忙的时候）负载凭空翻倍
-                if epoch_shared.load(Ordering::Relaxed) != epoch {
-                    return;
-                }
-                // 合并积压：Frame 只保最新一批里的最后一帧（1080p 转换 ~50ms、
-                // 上屏只认最新，旧帧转换纯属浪费），其余事件一个不丢、按序处理。
-                // 抽干按 16 条封顶：病态积压下（转换跟不上、通道满载）一条
-                // Frame 事件背一帧 NV12（~3MB），不封顶就是单轮上百 MB 的
-                // batch 分配；多余的下一轮再收，通道背压照旧作用在解码端。
-                let mut batch = Vec::with_capacity(4);
-                batch.push(first);
-                while batch.len() < 16
-                    && let Ok(next) = events.try_recv()
-                {
-                    batch.push(next);
-                }
-                let last_frame = batch.iter().rposition(|e| matches!(e, PlayerEvent::Frame(_)));
-                'batch: for (i, event) in batch.into_iter().enumerate() {
-                    if matches!(event, PlayerEvent::Frame(_)) && Some(i) != last_frame {
-                        continue;
-                    }
-                    // Windows：NV12→RGBA 在后台线程池转换（不占主线程； awaiting
-                    // 期间主线程照常跑布局/绘制/输入）；macOS 是 CVPixelBuffer
-                    // 零拷贝，无需转换
-                    #[cfg(target_os = "windows")]
-                    let converted = match &event {
-                        PlayerEvent::Frame(frame) => {
-                            let target = unpack_size(video_target.load(Ordering::Relaxed));
-                            let frame = frame.clone();
-                            cx.background_executor()
-                                .spawn(async move { Self::render_image_of(&frame, target) })
-                                .await
-                        }
-                        _ => None,
-                    };
-                    let ok = this
-                        .update(cx, |view, cx| {
-                            if view.epoch.load(Ordering::Relaxed) != epoch {
-                                log::warn!(
-                                    "[Home] 事件被纪元弃置（loop={epoch}，view={}）——事件到得了 view 却进不去",
-                                    view.epoch.load(Ordering::Relaxed)
-                                );
-                                return;
-                            }
-                            #[cfg(target_os = "windows")]
-                            if let Some(image) = converted {
-                                view.set_frame_image(image);
-                            }
-                            view.on_player_event(event, cx);
-                        })
-                        .is_ok();
-                    if !ok {
-                        break 'batch;
-                    }
-                }
-            }
-        })
-        .detach();
-    }
-}
-
-impl gpui_kit::Render for HomeView {
-    fn render(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl gpui_kit::IntoElement {
-        // 取证：render 调用率（64 次一跳）。绘制饿死时这行不涨而事件仍在流。
-        static RENDERS: AtomicU32 = AtomicU32::new(0);
-        let n = RENDERS.fetch_add(1, Ordering::Relaxed);
-        if n.is_multiple_of(64) {
-            log::info!("[Home] render #{n}");
-        }
-        // 纹理回收口：gpui 的 sprite atlas 按 RenderImage::id 常驻（paint 只增
-        // 不删），视频每帧一个新 id——不在这里显式 drop，显存/内存就无上限
-        // 涨（实测 5 分钟 5.5GB）。只在 render 时有 Window 句柄可调。
-        #[cfg(target_os = "windows")]
-        for old in std::mem::take(&mut self.retired_images) {
-            if let Err(e) = window.drop_image(old) {
-                log::warn!("[Home] 纹理回收失败: {e}");
-            }
-        }
-        // render_* 要 &mut cx，先取（theme 借的是 cx 的不可变引用）。
-        // 分类 tab 已移入壳顶栏（Shell render_title_bar），舞台从 tab 行
-        // 下方起排改为吃满内容区（Tauri 沉浸流同款）。
-        // 播放快捷键的焦点种子：键盘事件只派发给焦点子树，舞台的
-        // FocusHandle 得在首次渲染时拿到焦点（只播种一次——之后焦点可能
-        // 在弹层菜单里，每帧强抢会打架；点舞台会带回焦点）。
-        // 放在 theme 借用之前：focus 要可变借 cx。
-        if !self.focus_seeded && !self.focus.is_focused(window) {
-            self.focus_seeded = true;
-            window.focus(&self.focus, cx);
-        }
-        // 弹幕发送成功后的输入框清空（set_value 要 window，这里补执行）
-        if self.danmaku_clear_input
-            && let Some(input) = &self.danmaku_input
-        {
-            self.danmaku_clear_input = false;
-            input.update(cx, |state, cx| state.set_value("", window, cx));
-        }
-        // 下载任务快照刷新（render_stage 是 &self，写不进去；借这里的 &mut）
-        if self.downloads_open {
-            let sid = self
-                .now
-                .as_ref()
-                .map(|n| n.series_id.clone())
-                .unwrap_or_default();
-            self.downloads = Arc::new(self.state.queue().of_series(&sid));
-            self.done_vids = Arc::new(self.state.queue().completed_vids(&sid));
-        }
-        // 全屏态图标跟随（Render::render 有 window 可查）
-        self.fullscreen = window.is_fullscreen();
-        let theme = cx.theme();
-        let feed = self.feeds.get(&self.active).expect("源已初始化");
-        let notice: Option<String> = if let Some(err) = &feed.failed {
-            Some(err.clone())
-        } else if feed.loading && self.now.is_none() {
-            Some("加载中…".into())
-        } else if !feed.loading && feed.items.is_empty() && self.now.is_none() {
-            Some("暂无内容".into())
-        } else {
-            None
-        };
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            // 沉浸流锁死在视口内：任何 1px 超高都会冒出页面滚动条并吃掉滚轮
-            .overflow_hidden()
-            .child(match notice {
-                Some(msg) => v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(msg),
-                    )
-                    .child(
-                        Button::new("home-retry")
-                            .label("重试")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.load_feed(this.active.clone(), false, cx);
-                            })),
-                    )
-                    .into_any_element(),
-                None => self
-                    .render_stage(window, cx)
-                    .id("home-stage")
-                    .on_mouse_move(cx.listener(|this, _: &gpui_kit::MouseMoveEvent, _, cx| {
-                        this.wake_controls(cx);
-                    }))
-                    // 指针离开画面（含鼠标直接甩出窗口）：立即收——控制栏
-                    // hover 位一并清掉，不然「指针最后停在控制栏上时甩出窗」
-                    // 会永久常显，得点一下别处才收
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        this.pointer_on_stage = *hovered;
-                        if !hovered {
-                            this.controls_hovered = false;
-                            this.volume_hovered = false;
-                            this.volume_popup_hovered = false;
-                            this.volume_popup_open = false;
-                            if this.controls_until.is_some() {
-                                this.controls_until = None;
-                            }
-                            cx.notify();
-                        }
-                    }))
-                    .on_scroll_wheel(cx.listener(
-                        |this, ev: &gpui_kit::ScrollWheelEvent, window, cx| {
-                            // 小屏里滚轮不切剧（纯播放器语义，同 ↑↓ 守卫）
-                            if this.mini.is_some() {
-                                return;
-                            }
-                            // 滚轮也是「用户在场」（真实输入）：切剧/切集时唤醒
-                            // 悬浮层（Tauri wakeChrome 同款，面板守卫之前就亮；
-                            // 静默期滚轮同样解除——它不是指针晃动）
-                            this.wake_on_input(cx);
-                            // 面板开着不抢滚动：选集/下载是 Tauri
-                            // seriesPanelOpen/downloading 的显式守卫；评论面板
-                            // 在 Tauri 靠 data-wheel-block 拦——面板类统一在
-                            // 舞台层守卫（条状区域见各自根节点的滚轮拦截）
-                            if this.picker_open || this.comments_panel_open || this.downloads_open {
-                                return;
-                            }
-                            // Tauri 同参：|Δy|<15 忽略；方向同 Tauri
-                            //（deltaY>0=下滚=下一部，y<0 即下一部）
-                            let y = ev.delta.pixel_delta(window.line_height()).y.to_f64();
-                            if y.abs() < 15.0 {
-                                return;
-                            }
-                            // 400ms 冷却吃掉一次惯性滚动的连发。裁决在舞台层
-                            // 而不是 step() 里：连播切集路径同样要冷却，而键盘
-                            // ↑↓（Tauri 同款）不吃这把滚轮锁
-                            if !this.wheel_cooldown_ready() {
-                                return;
-                            }
-                            this.step(if y < 0.0 { 1 } else { -1 }, cx);
-                        },
-                    ))
-                    .into_any_element(),
-            })
     }
 }

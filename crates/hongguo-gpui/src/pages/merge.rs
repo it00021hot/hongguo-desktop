@@ -54,7 +54,14 @@ impl From<&MergeCandidate> for CandidateItem {
     fn from(c: &MergeCandidate) -> Self {
         Self {
             series_id: c.series_id.clone().into(),
-            label: format!("{} · {} 集", c.series_title, c.episode_count).into(),
+            label: crate::i18n::tf(
+                "merge.candidate",
+                &[
+                    ("title", c.series_title.as_str()),
+                    ("count", &c.episode_count.to_string()),
+                ],
+            )
+            .into(),
         }
     }
 }
@@ -262,7 +269,7 @@ impl MergeView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            this.update(cx, |view, cx| {
+            this.update_in(cx, |view, window, cx| {
                 // 期间换过剧：丢弃（结果归属旧选择）
                 if view.selected.as_ref().map(|s| s.series_id.as_str())
                     != Some(series_id_check.as_str())
@@ -272,7 +279,17 @@ impl MergeView {
                 view.preflight_pending = false;
                 match result {
                     Ok(preflight) => view.preflight = Some(preflight),
-                    Err(e) => log::warn!("[Merge] 预检失败: {e}"),
+                    Err(e) => {
+                        log::warn!("[Merge] 预检失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
+                    }
                 }
                 cx.notify();
             })
@@ -331,13 +348,21 @@ impl MergeView {
         ) {
             Ok(task) => {
                 // 后端已派发到阻塞池：这里只确认「已启动」，进度走事件流
-                window.push_notification(Notification::success("开始合并"), cx);
+                window
+                    .push_notification(Notification::success(crate::i18n::t("merge.started")), cx);
                 self.upsert_task(task);
                 cx.notify();
             }
             Err(e) => {
                 log::warn!("[Merge] 启动失败: {e}");
-                window.push_notification(Notification::error(format!("{e}")), cx);
+                let message = crate::i18n::app_error_text(&e);
+                window.push_notification(
+                    Notification::error(crate::i18n::tf(
+                        "common.failedWith",
+                        &[("message", message.as_str())],
+                    )),
+                    cx,
+                );
             }
         }
     }
@@ -357,7 +382,14 @@ impl MergeView {
             }
             Err(e) => {
                 log::warn!("[Merge] 删除记录失败: {e}");
-                window.push_notification(Notification::error(format!("删除失败：{e}")), cx);
+                let message = crate::i18n::app_error_text(&e);
+                window.push_notification(
+                    Notification::error(crate::i18n::tf(
+                        "common.failedWith",
+                        &[("message", message.as_str())],
+                    )),
+                    cx,
+                );
             }
         }
     }
@@ -368,10 +400,11 @@ impl MergeView {
             let view = view.clone();
             let task = task.clone();
             dialog
-                .title("删除这条合并记录？")
-                .description("只删除这条任务记录，已经生成的合并文件会原样留在下载目录里。")
-                .ok_text("删除")
-                .cancel_text("取消")
+                .title(crate::i18n::t("merge.removeConfirm"))
+                .description(crate::i18n::t("merge.removeDesc"))
+                .ok_text(crate::i18n::t("common.delete"))
+                .cancel_text(crate::i18n::t("common.cancel"))
+                .show_cancel(true)
                 .ok_variant(ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
                     view.update(cx, |view, cx| view.remove_task(&task, window, cx));
@@ -407,20 +440,20 @@ impl MergeView {
                 div()
                     .text_base()
                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .child("一键合并"),
+                    .child(crate::i18n::t("merge.title")),
             )
             // 选剧
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Label::new("选择剧集"))
+                    .child(Label::new(crate::i18n::t("merge.selectSeries")))
                     .child(
                         div()
                             .w_full()
                             .when(no_candidates, |s| s.opacity(0.5))
                             .child(
                                 Select::new(&self.select)
-                                    .placeholder("请选择一部剧")
+                                    .placeholder(crate::i18n::t("merge.pickSeries"))
                                     .w_full(),
                             ),
                     )
@@ -428,14 +461,14 @@ impl MergeView {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("还没有已下载的分集，先去下载几集再来合并")
+                            .child(crate::i18n::t("merge.noCandidates"))
                     })),
             )
             // 输出名
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Label::new("输出文件名"))
+                    .child(Label::new(crate::i18n::t("merge.outputName")))
                     .child(Input::new(&self.output_input)),
             )
             // 模式
@@ -471,7 +504,7 @@ impl MergeView {
                                                 )
                                                 .small(),
                                             )
-                                            .child("快速合并"),
+                                            .child(crate::i18n::t("merge.quick")),
                                     )
                                     .disabled(quick_unavailable),
                             )
@@ -486,19 +519,19 @@ impl MergeView {
                                             )
                                             .small(),
                                         )
-                                        .child("兼容合并"),
+                                        .child(crate::i18n::t("merge.compat")),
                                 ),
                             ),
                     )
                     .child(div().text_sm().text_color(theme.muted_foreground).child(
                         if effective == MergeMode::Quick {
                             if quick_unavailable {
-                                "各集规格不一致，快速合并不可用"
+                                crate::i18n::t("merge.quickUnavailable")
                             } else {
-                                "原画质直拼，不重编码，无损且极快"
+                                crate::i18n::t("merge.quickDesc")
                             }
                         } else {
-                            "转换成通用格式，任何播放器都能播（较慢）"
+                            crate::i18n::t("merge.compatDesc")
                         },
                     )),
             )
@@ -517,11 +550,22 @@ impl MergeView {
                             .text_sm()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .child(format!(
-                                "{} 集 · {}{}",
-                                p.episode_count,
+                                "{} · {}{}",
+                                crate::i18n::tf(
+                                    "common.episodeCount",
+                                    &[("count", &p.episode_count.to_string())],
+                                ),
                                 format_bytes(p.estimated_size),
                                 p.free_space
-                                    .map(|f| format!(" · 剩余 {}", format_bytes(f)))
+                                    .map(|f| {
+                                        format!(
+                                            " · {}",
+                                            crate::i18n::tf(
+                                                "merge.freeSpace",
+                                                &[("size", format_bytes(f).as_str())],
+                                            )
+                                        )
+                                    })
                                     .unwrap_or_default()
                             ))
                     }))
@@ -538,7 +582,11 @@ impl MergeView {
             .child(
                 Button::new("merge-start")
                     .icon(gpui_kit::assets::IconName::Combine)
-                    .label(if busy { "合并中…" } else { "开始合并" })
+                    .label(if busy {
+                        crate::i18n::t("merge.running")
+                    } else {
+                        crate::i18n::t("merge.start")
+                    })
                     .primary()
                     .disabled(!can_start)
                     .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))),
@@ -549,11 +597,11 @@ impl MergeView {
     fn render_task_row(&self, task: &MergeTask, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let (status_label, tag) = match task.status {
-            MergeStatus::Pending => ("等待中", Tag::secondary()),
-            MergeStatus::Running => ("合并中", Tag::secondary()),
-            MergeStatus::Completed => ("已完成", Tag::success()),
-            MergeStatus::Failed => ("失败", Tag::danger()),
-            MergeStatus::Cancelled => ("已取消", Tag::secondary()),
+            MergeStatus::Pending => (crate::i18n::t("merge.status.pending"), Tag::secondary()),
+            MergeStatus::Running => (crate::i18n::t("merge.status.running"), Tag::secondary()),
+            MergeStatus::Completed => (crate::i18n::t("merge.status.completed"), Tag::success()),
+            MergeStatus::Failed => (crate::i18n::t("merge.status.failed"), Tag::danger()),
+            MergeStatus::Cancelled => (crate::i18n::t("merge.status.cancelled"), Tag::secondary()),
         };
         h_flex()
             .items_center()
@@ -608,7 +656,7 @@ impl MergeView {
                             .icon(gpui_kit::assets::IconName::FolderOpen)
                             .ghost()
                             .small()
-                            .tooltip("打开文件夹")
+                            .tooltip(crate::i18n::t("merge.actions.openOutput"))
                             .on_click(move |_, _, _| crate::pages::reveal_in_folder(&path))
                     },
                 ),
@@ -618,7 +666,7 @@ impl MergeView {
                     .icon(gpui_kit::assets::IconName::Trash)
                     .ghost()
                     .small()
-                    .tooltip("删除这条合并记录")
+                    .tooltip(crate::i18n::t("merge.actions.remove"))
                     .on_click({
                         let task = task.clone();
                         cx.listener(move |this, _, window, cx| {
@@ -640,7 +688,7 @@ impl MergeView {
                     div()
                         .text_base()
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                        .child("合并任务"),
+                        .child(crate::i18n::t("merge.taskList")),
                 )
                 .child(
                     v_flex()
@@ -719,16 +767,16 @@ impl gpui_kit::Render for MergeView {
     }
 }
 
-/// 预检 warning 的 i18n key → 文案（与 `src/locales/zh-CN.json` 的
-/// merge.* 同文案；GPUI 壳无 i18n 资源表，逐条对齐中文口径）。
+/// 预检 warning 的 i18n key → 当前语言文案。
 fn merge_warning_text(key: &str, mismatch_episode: Option<u32>) -> String {
-    match key {
-        "merge.noDownloads" => "没有已下载的分集".to_string(),
-        "merge.insufficientSpace" => "磁盘剩余空间不足".to_string(),
-        "merge.codecMismatch" => format!(
-            "第 {} 集的分辨率或编码与其它集不同，快速合并会损坏文件。改用兼容合并可统一分辨率后合并。",
-            mismatch_episode.unwrap_or(0)
-        ),
-        other => other.to_string(),
+    if key == "merge.codecMismatch" {
+        crate::i18n::tf(
+            key,
+            &[("episode", &mismatch_episode.unwrap_or(0).to_string())],
+        )
+    } else if key.starts_with("merge.") || key.starts_with("error.") {
+        crate::i18n::t(key)
+    } else {
+        key.to_string()
     }
 }

@@ -31,6 +31,19 @@ pub struct WatchHistoryItem {
     pub updated_at_ms: i64,
 }
 
+impl WatchHistoryItem {
+    /// 「已看完」的唯一口径（与历史页 tab 同义）：看到最后一集即算，
+    /// 与片内进度无关。已看完的剧不再续播、不再预热/预取/加载。
+    pub fn is_finished(&self) -> bool {
+        self.episode_cnt > 0 && self.vidx_1based() >= self.episode_cnt
+    }
+
+    /// 报道集号对 0 钳 1（云端 0/1 基混杂）。
+    pub fn vidx_1based(&self) -> i64 {
+        self.vid_index.max(1)
+    }
+}
+
 /// 云端观看历史一页。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

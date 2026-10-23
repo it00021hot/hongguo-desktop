@@ -29,6 +29,13 @@ jpeg-encoder = "0.6"
 # sysinfo 传递引入），声明为直接依赖不新增外部 crate，feature 按需裁剪
 # 只编译用到的接口。
 [target.'cfg(windows)'.dependencies]
+# 音频输出（WASAPI 共享模式）：Windows 没有 macOS 的输入作用域授权语义，
+# cpal 这边是干净的（macOS 改走 AudioToolbox，见 platform-macos::audio_output）。
+#
+# **必须留在本表**：cpal 在 macOS 目标上会拖出 coreaudio-sys，其 build.rs 无条件
+# 跑 bindgen 绑 CoreAudio 框架头 → 需要 libclang。crate 内容在非 Windows 目标
+# 本就全被 `#![cfg(target_os = "windows")]` 剥掉，这里依赖也用不上。
+cpal = "0.15"
 windows = { version = "0.62", features = [
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",

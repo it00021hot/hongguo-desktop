@@ -7,6 +7,8 @@ use gpui_kit::prelude::*;
 
 pub(crate) mod browse;
 pub(crate) mod collections;
+pub(crate) mod creator;
+pub(crate) mod follows;
 pub(crate) mod history;
 pub(crate) mod liked;
 pub(crate) mod list_common;
@@ -14,6 +16,7 @@ pub(crate) mod merge;
 pub(crate) mod new_drama;
 pub(crate) mod rank;
 pub(crate) mod reservations;
+pub(crate) mod scroll_load;
 pub(crate) mod settings;
 pub(crate) mod storage;
 pub(crate) mod tasks;

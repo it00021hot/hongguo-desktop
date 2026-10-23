@@ -29,8 +29,10 @@ use hongguo_video::sample_table::TrackInfo;
 /// VisualSampleEntry 载荷长度（ISO/IEC 14496-15）：
 /// reserved(6) + data_ref_idx(2) + pre_defined(2) + reserved(2) + pre_defined[3](12)
 /// + width(2) + height(2) + horiz/vert res(8) + reserved(4) + frame_count(2)
-/// + compressorname(32) + depth(2) + pre_defined(2)
-const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
+/// + compressorname(32) + depth(2) + pre_defined(2)。
+///
+/// 之后的扩展区才是 hvcC / avcC——`h264` 模块的 avcC 查找共用同一常量。
+pub(crate) const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 
 /// Annex-B 起始码（HEIF 封面软解同样使用）。
 pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];

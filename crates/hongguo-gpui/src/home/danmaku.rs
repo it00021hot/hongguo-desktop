@@ -20,13 +20,26 @@ pub(super) struct DmFlight {
     pub(super) text: String,
     pub(super) lane: usize,
     width: f32,
+    /// 锚点时刻的滚动进度（0 = 刚出右沿，1 = 滚出一屏）。
     progress: f64,
+    /// 播放中才有锚点：进度 = `progress` + 锚点以来的挂钟 / DM_CROSS_SECS。
+    /// 位置因此是「渲染时刻」的纯函数——重绘多少 Hz都不影响速度与线性度，
+    /// 暂停时锚点清空、进度冻结（tick 负责折叠）。
+    anchor_at: Option<std::time::Instant>,
 }
 
 impl DmFlight {
+    /// 当前进度（纯函数：锚点 + 挂钟差）。
+    pub(super) fn progress_at(&self, now: std::time::Instant) -> f64 {
+        match self.anchor_at {
+            Some(at) => self.progress + now.duration_since(at).as_secs_f64() / DM_CROSS_SECS,
+            None => self.progress,
+        }
+    }
+
     /// 相对舞台左缘的横向偏移（像素，可为负 = 已滚出左沿）。
-    pub(super) fn x_offset(&self, stage_w: f64) -> f64 {
-        stage_w - self.progress * (stage_w + self.width as f64)
+    pub(super) fn x_offset(&self, stage_w: f64, now: std::time::Instant) -> f64 {
+        stage_w - self.progress_at(now) * (stage_w + self.width as f64)
     }
 }
 
@@ -113,7 +126,14 @@ impl super::HomeView {
                         // 「这集本来没弹幕」和「坏了」（Tauri toast 同文案）
                         log::warn!("[Home] 弹幕拉取失败: {e}");
                         view.danmaku_items = Arc::new(Vec::new());
-                        view.show_toast("弹幕加载失败（不影响播放）", cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf(
+                                "player.danmakuFailed",
+                                &[("reason", message.as_str())],
+                            ),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -160,14 +180,14 @@ impl super::HomeView {
             .get()
             .and_then(|r| r.get(1).copied())
             .unwrap_or(640.0);
-        // 在飞推进（暂停不推进 = 冻结）与出屏回收（progress ≥ 1 滚完一屏）
-        if !paused && !self.danmaku_flights.is_empty() {
-            let step = dt / DM_CROSS_SECS;
-            for f in &mut self.danmaku_flights {
-                f.progress += step;
-            }
+        // 位置不在这里推进（tick 只做逻辑）：播放中把进度折叠到「现在」并
+        // 重锚，暂停时清锚点冻结。这样重绘频率与进度完全解耦。
+        let _ = dt;
+        for f in &mut self.danmaku_flights {
+            f.progress = f.progress_at(now);
+            f.anchor_at = (!paused).then_some(now);
         }
-        self.danmaku_flights.retain(|f| f.progress < 1.0);
+        self.danmaku_flights.retain(|f| f.progress_at(now) < 1.0);
 
         // 入场：offset 落在 (上一帧, 当前] 的按密度抽样发射（随机均匀：
         // 丢哪条无所谓，要的是同屏条数按比例变稀）
@@ -205,6 +225,7 @@ impl super::HomeView {
                 lane: pick,
                 width: dm_text_width(&d.text, font_px),
                 progress: 0.0,
+                anchor_at: Some(now),
             });
             spawned += 1;
         }
@@ -288,8 +309,7 @@ impl super::HomeView {
             .as_ref()
             .is_some_and(|a| !a.user_id.is_empty());
         if !logged_in {
-            log::info!("[Home] 弹幕发送需要登录（settings 里没有账号），已忽略");
-            self.show_toast("互动需要先登录", cx);
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
             return;
         }
         let Some(player) = &self.player else {
@@ -325,7 +345,7 @@ impl super::HomeView {
                             let at = items.partition_point(|d| d.offset_ms <= offset_ms);
                             items.insert(at, item);
                         }
-                        view.show_toast("弹幕已发送", cx);
+                        view.show_toast(crate::i18n::t("player.interact.danmakuSent"), cx);
                         // 输入框清空走渲染期（set_value 需要 window），这里只立标志
                         view.danmaku_clear_input = true;
                     }
@@ -333,7 +353,11 @@ impl super::HomeView {
                         // 失败必须可见：风控/频控拒绝时静默的话，用户以为
                         // 发成功了（Tauri 全局 MutationCache onError 同位）
                         log::warn!("[Home] 弹幕发送失败: {e}");
-                        view.show_toast(format!("弹幕发送失败：{e}"), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();
@@ -343,7 +367,12 @@ impl super::HomeView {
     }
 
     /// 弹幕设置面板的一行（Tauri DisplaySlider 同构：label 上 + 百分比读数
-    /// 右 + 滑杆下）。
+    /// 右 + 滑杆下）。字色/字重与 Tauri 对齐：label 白 90%、读数等宽白 70%。
+    ///
+    /// 滑杆钉 hgplayer 白皮肤（组件默认取主题令牌，亮色主题下会变成
+    /// 「深色填充 + 浅色轨道」压在黑面板上——Tauri 是白 25% 轨道、白填充、
+    /// 白滑块，见 DisplaySlider）：`.bg` 管 bar（轨道取 20% 透明度、
+    /// 已填段全色、滑块外圈 50%），`.text_color` 管滑块芯。
     pub(super) fn dm_setting_row(
         &self,
         label: impl Into<SharedString>,
@@ -358,17 +387,22 @@ impl super::HomeView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui_kit::rgba(0xffffffcc))
+                            .text_color(gpui_kit::rgba(0xffffffe6))
                             .child(label.into()),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .font_family("monospace")
+                            .text_color(gpui_kit::rgba(0xffffffb3))
                             .child(format!("{}%", (value * 100.0).round() as i64)),
                     ),
             )
-            .child(Slider::new(slider))
+            .child(
+                Slider::new(slider)
+                    .bg(gpui_kit::rgba(0xffffff40))
+                    .text_color(gpui_kit::rgb(0xffffff)),
+            )
             .into_any_element()
     }
 }

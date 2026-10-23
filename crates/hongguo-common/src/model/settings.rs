@@ -187,6 +187,15 @@ pub struct Settings {
     /// 改动即时生效于新写入，旧目录残留不迁移（与 download_dir 同语义）。
     #[serde(default)]
     pub cache_dir: String,
+    /// 磁盘缓存占用上限（MB；0 = 不限）。超过上限后自动删除最旧的缓存文件
+    /// （封面/头像转码产物与兼容转码产物都算），见
+    /// `hongguo_service::storage_service::cache::auto_clean`。
+    #[serde(default)]
+    pub cache_limit_mb: u32,
+    /// 缓存自动清理周期（天；0 = 关闭）。超过这个天数的缓存文件在自动清理
+    /// 时被删除（按最后修改时间判定）。
+    #[serde(default)]
+    pub cache_ttl_days: u32,
     /// 命名模板
     #[serde(default)]
     pub naming: NamingTemplate,
@@ -225,7 +234,7 @@ fn default_true() -> bool {
 }
 
 fn default_prefetch_episodes() -> u32 {
-    1
+    3
 }
 
 fn default_theme() -> String {
@@ -241,6 +250,8 @@ impl Default for Settings {
         Self {
             download_dir,
             cache_dir: String::new(),
+            cache_limit_mb: 0,
+            cache_ttl_days: 0,
             naming: NamingTemplate::default(),
             max_concurrency: 3,
             proxy: ProxyConfig::default(),
@@ -261,9 +272,10 @@ impl Settings {
         self.max_concurrency = self.max_concurrency.clamp(1, 10);
     }
 
-    /// 收敛预取集数到 0–3（0=关闭；上限对齐 StreamCache 的预取标记位）。
+    /// 收敛预取集数到 0–10（0=关闭；连播与换剧铺的部/集数都挂这一档，
+    /// 上限对齐 StreamCache 的预取标记位）。
     pub fn clamp_prefetch_episodes(&mut self) {
-        self.prefetch_episodes = self.prefetch_episodes.min(3);
+        self.prefetch_episodes = self.prefetch_episodes.min(10);
     }
 
     /// 缓存根覆盖值：非空给 `Some`，空表示跟随数据目录（`None`）。
@@ -271,6 +283,12 @@ impl Settings {
     pub fn cache_override(&self) -> Option<String> {
         let trimmed = self.cache_dir.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    /// 缓存上限（字节）：0 = 不限。给
+    /// `hongguo_service::storage_service::cache::auto_clean` 用。
+    pub fn cache_limit_bytes(&self) -> u64 {
+        u64::from(self.cache_limit_mb) * 1024 * 1024
     }
 
     /// 某部剧的下载子目录：`<下载根>/红果短剧/<剧名>`。
@@ -333,13 +351,14 @@ mod tests {
 
     #[test]
     fn clamp_prefetch_episodes_bounds() {
-        // 上限 3 对齐 StreamCache 预取标记位；0 = 关闭预取是合法值
+        // 上限 10（issue #11：连播预取放开到用户自设），对齐 StreamCache
+        // 预取标记位；0 = 关闭预取是合法值
         let mut s = Settings {
-            prefetch_episodes: 9,
+            prefetch_episodes: 99,
             ..Default::default()
         };
         s.clamp_prefetch_episodes();
-        assert_eq!(s.prefetch_episodes, 3);
+        assert_eq!(s.prefetch_episodes, 10);
         s.prefetch_episodes = 0;
         s.clamp_prefetch_episodes();
         assert_eq!(s.prefetch_episodes, 0);
@@ -442,6 +461,8 @@ mod tests {
         let s = Settings {
             download_dir: "D:\\dl".into(),
             cache_dir: "D:\\cache".into(),
+            cache_limit_mb: 512,
+            cache_ttl_days: 7,
             naming: NamingTemplate::TitleIndex,
             max_concurrency: 4,
             proxy: ProxyConfig {
@@ -459,6 +480,8 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["downloadDir"], "D:\\dl");
         assert_eq!(v["cacheDir"], "D:\\cache");
+        assert_eq!(v["cacheLimitMb"], 512);
+        assert_eq!(v["cacheTtlDays"], 7);
         assert_eq!(v["maxConcurrency"], 4);
         assert_eq!(v["autoDeleteAfterPlay"], false);
         assert_eq!(v["autoNextEpisode"], true);
@@ -491,6 +514,33 @@ mod tests {
         assert_eq!(s.cache_override(), None);
         s.cache_dir = " D:\\cache ".into();
         assert_eq!(s.cache_override().as_deref(), Some("D:\\cache"));
+    }
+
+    #[test]
+    fn cache_limit_bytes_converts_mb() {
+        let mut s = Settings::default();
+        assert_eq!(s.cache_limit_bytes(), 0, "0 = 不限");
+        s.cache_limit_mb = 512;
+        assert_eq!(s.cache_limit_bytes(), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn cache_policy_defaults_to_off() {
+        // 默认两档都关：不主动删用户的数据
+        let s = Settings::default();
+        assert_eq!(s.cache_limit_mb, 0);
+        assert_eq!(s.cache_ttl_days, 0);
+    }
+
+    #[test]
+    fn old_store_without_cache_policy_reads_as_off() {
+        // 老库没有这两个字段：serde(default) 让它们是 0（关），不是崩
+        let s: Settings = serde_json::from_str(
+            r#"{"downloadDir":"/tmp","maxConcurrency":3,"theme":"dark"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.cache_limit_mb, 0);
+        assert_eq!(s.cache_ttl_days, 0);
     }
 
     #[test]

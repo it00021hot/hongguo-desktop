@@ -1,5 +1,5 @@
-//! HEVC 解码：同步解码会话（[`Decompressor`]，VTDecompressionSession）与
-//! 播放末端的逐帧解码器（[`HevcFrameDecoder`] / [`DecodedFrame`]）。
+//! HEVC / H.264 解码：同步解码会话（[`Decompressor`]，VTDecompressionSession）
+//! 与播放末端的逐帧解码器（[`FrameDecoder`] / [`DecodedFrame`]）。
 //!
 //! 解码输出回调 [`decode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>`
 //! 队列——回调与所属类型必须同文件。
@@ -10,10 +10,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use core_video::pixel_buffer::{CVPixelBuffer, CVPixelBufferRef};
 
 use hongguo_common::AppResult;
+use hongguo_media_platform_api::video::VideoCodec;
 
 use super::ffi;
 use super::pipeline::cm_time_secs;
-use super::pixel::{Pb, Transfer, iosurface_attrs, make_dict, make_int, os};
+use super::pixel::{Pb, iosurface_attrs, make_dict, make_int, os};
 
 // ————————————————————————————————————————————————————————————
 // 解码
@@ -23,7 +24,7 @@ use super::pixel::{Pb, Transfer, iosurface_attrs, make_dict, make_int, os};
 ///
 /// 排障必需：软解在 1080p HEVC 上是 46.8ms/帧（实时线 33ms），表现是
 /// 「画面越播越落后音频」，而日志里光看「首帧正常」根本看不出来。
-unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef) {
+unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef, label: &str) {
     unsafe {
         let mut value: ffi::CFTypeRef = std::ptr::null();
         let status = ffi::VTSessionCopyProperty(
@@ -36,7 +37,7 @@ unsafe fn log_hardware(session: ffi::VTDecompressionSessionRef) {
             let hw = ffi::CFBooleanGetValue(value as ffi::CFBooleanRef) != 0;
             ffi::CFRelease(value);
             log::info!(
-                "[Platform/vt] HEVC 解码会话：{}",
+                "[Platform/vt] {label} 解码会话：{}",
                 if hw {
                     "硬件解码"
                 } else {
@@ -89,28 +90,53 @@ unsafe extern "C" fn decode_cb(
 }
 
 impl Decompressor {
-    /// 用 `hvcC` 参数集（VPS/SPS/PPS 裸 NAL）建同步解码会话，输出 NV12。
+    /// 用参数集（HEVC 的 VPS/SPS/PPS，或 H.264 的 SPS/PPS，均为裸 NAL）建
+    /// 同步解码会话，输出 NV12。
     ///
     /// `full_range` 选输出像素区间：`false` = VideoRange（'420v'，转码链
     /// 既定格式）；`true` = FullRange（'420f'，GPU 合成器直采样要求的形态，
-    /// 见 [`HevcFrameDecoder`]）。
-    pub(super) unsafe fn new(parameter_sets: &[Vec<u8>], full_range: bool) -> AppResult<Self> {
+    /// 见 [`FrameDecoder`]）。
+    pub(super) unsafe fn new(
+        codec: VideoCodec,
+        parameter_sets: &[Vec<u8>],
+        full_range: bool,
+    ) -> AppResult<Self> {
         unsafe {
+            let label = match codec {
+                VideoCodec::Hevc => "HEVC",
+                VideoCodec::H264 => "H.264",
+            };
             let sizes: Vec<usize> = parameter_sets.iter().map(|n| n.len()).collect();
             let ptrs: Vec<*const u8> = parameter_sets.iter().map(|n| n.as_ptr()).collect();
             let mut format = std::ptr::null_mut();
-            os(
-                ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                    ffi::kCFAllocatorDefault,
-                    parameter_sets.len(),
-                    ptrs.as_ptr(),
-                    sizes.as_ptr(),
-                    4,
-                    std::ptr::null(),
-                    &mut format,
-                ),
-                "建 HEVC 格式描述",
-            )?;
+            // 两种编码的参数集顺序各有讲究：HEVC 要 VPS/SPS/PPS，H.264 要
+            // SPS/PPS（引擎侧提取函数按这个次序给出）。样本长度前缀恒 4
+            // （hvcC/avcC 声明的 length_size，引擎侧提取时已归一校验）。
+            match codec {
+                VideoCodec::Hevc => os(
+                    ffi::CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                        ffi::kCFAllocatorDefault,
+                        parameter_sets.len(),
+                        ptrs.as_ptr(),
+                        sizes.as_ptr(),
+                        4,
+                        std::ptr::null(),
+                        &mut format,
+                    ),
+                    "建 HEVC 格式描述",
+                )?,
+                VideoCodec::H264 => os(
+                    ffi::CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                        ffi::kCFAllocatorDefault,
+                        parameter_sets.len(),
+                        ptrs.as_ptr(),
+                        sizes.as_ptr(),
+                        4,
+                        &mut format,
+                    ),
+                    "建 H.264 格式描述",
+                )?,
+            };
 
             let pixel_format = make_int(if full_range {
                 ffi::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -118,6 +144,11 @@ impl Decompressor {
                 ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             } as i32);
             let iosurface = iosurface_attrs();
+            // 输出缓冲池最小缓冲数：解码器按它预分配 IOSurface，避免逐帧
+            // 新建/回收（帧率高时分配开销直接进帧时延）。6 帧 ≈ 0.2s@30fps，
+            // 足够覆盖本引擎 0.4s 前瞻里同时在飞的那批帧。
+            const POOL_MIN_BUFFERS: i32 = 6;
+            let pool_min = make_int(POOL_MIN_BUFFERS);
             let attrs = make_dict(&[
                 (
                     ffi::kCVPixelBufferPixelFormatTypeKey as ffi::CFTypeRef,
@@ -126,6 +157,10 @@ impl Decompressor {
                 (
                     ffi::kCVPixelBufferIOSurfacePropertiesKey as ffi::CFTypeRef,
                     iosurface as ffi::CFTypeRef,
+                ),
+                (
+                    ffi::kCVPixelBufferPoolMinimumBufferCountKey as ffi::CFTypeRef,
+                    pool_min as ffi::CFTypeRef,
                 ),
             ]);
 
@@ -157,8 +192,19 @@ impl Decompressor {
             ffi::CFRelease(attrs as ffi::CFTypeRef);
             ffi::CFRelease(iosurface as ffi::CFTypeRef);
             ffi::CFRelease(pixel_format as ffi::CFTypeRef);
-            os(status, "建 HEVC 解码会话")?;
-            log_hardware(session);
+            ffi::CFRelease(pool_min as ffi::CFTypeRef);
+            os(status, "建解码会话")?;
+            // 实时播放档：让解码器按实时流取舍流水线（见 FFI 声明处注释）。
+            // 失败只记日志——属性不被支持时解码仍然正确，只是时延更大。
+            let rt = ffi::VTSessionSetProperty(
+                session as ffi::VTSessionRef,
+                ffi::kVTDecompressionPropertyKey_RealTime,
+                ffi::kCFBooleanTrue as ffi::CFTypeRef,
+            );
+            if rt != ffi::noErr {
+                log::warn!("[Platform/vt] 解码器拒收 RealTime（OSStatus {rt}），按默认档继续");
+            }
+            log_hardware(session, label);
 
             Ok(Decompressor {
                 session,
@@ -319,34 +365,51 @@ impl std::fmt::Debug for DecodedFrame {
     }
 }
 
-/// HEVC 逐帧解码器（播放末端；转码链走 [`super::transcode_h264`]，不经这里）。
+/// HEVC / H.264 逐帧解码器（播放末端；转码链走 [`super::transcode_h264`]，
+/// 不经这里）。
 ///
-/// 同步解码：[`HevcFrameDecoder::decode`] 返回即该样本的全部输出已就绪。
+/// 同步解码：[`FrameDecoder::decode`] 返回即该样本的全部输出已就绪。
 /// 帧经 NV12 CVPixelBuffer（IOSurface 背板）交付，GPU 可直接采样——
 /// GPUI 的 `surface()` 元素零拷贝上屏就吃这个形态。
 ///
-/// `full_range = true` 时请求 FullRange NV12（'420f'）：GPU 合成器的
-/// YCbCr shader 断言全区间；转码链保持 '420v' 不受影响。
-pub struct HevcFrameDecoder {
+/// **输出格式：解码要 420v，交付给渲染的是 420f。** 两者不是一回事，实测
+/// （本机 Intel UHD 630，1080p HEVC，裸 VT 会话逐配置 A/B）：
+///
+/// | 会话输出请求 | 吞吐 |
+/// | --- | --- |
+/// | '420v'（VideoRange，硬件原生） | 675–785 fps |
+/// | '420f'（FullRange） | 55–67 fps |
+///
+/// 请求 420f 会让 VT 在硬解输出后逐帧插入一次色域换算，吞吐掉一个数量级
+/// （AVAssetReader 同文件对照：420v 552fps / 420f 50fps）。也不要试图在
+/// CPU 侧自己转：锁住 IOSurface 的可读映射本身就要 12–16ms/帧（GPU 同步），
+/// 比换算本身贵得多。
+///
+/// 所以交付的就是 420v，由渲染端（GPUI 的 Metal surface）直接采样——
+/// surface 对两种 NV12 的支持由 `vendor/gpui-pre-apple` 补丁提供。
+pub struct FrameDecoder {
     inner: Decompressor,
-    /// 420f 转换会话：VT 对部分片源不理会 FullRange 请求（输出仍 '420v'），
-    /// 而 GPU 合成器断言全区间——首帧发现格式不符时按需建会话转换。
-    full_range_transfer: Option<Transfer>,
-    actual_format_logged: bool,
 }
 
 // VT 解码会话与格式描述都是 CF 对象，CoreFoundation 引用计数线程安全，
 // Apple 文档明示会话可跨线程使用；内部通道（Receiver/Box<Sender>）本身
 // Send。跨线程约束（async 任务里持解码器）由本声明给出。
-unsafe impl Send for HevcFrameDecoder {}
+unsafe impl Send for FrameDecoder {}
 
-impl HevcFrameDecoder {
-    /// 用参数集（`hvcC` 裸 NAL：VPS/SPS/PPS）建解码会话。
-    pub fn open(parameter_sets: &[Vec<u8>], full_range: bool) -> AppResult<Self> {
+impl FrameDecoder {
+    /// 用参数集（HEVC 的 VPS/SPS/PPS 或 H.264 的 SPS/PPS，裸 NAL）建解码会话。
+    ///
+    /// `full_range` 在本平台不消费：会话恒按 420v（硬件原生、快一个数量级，
+    /// 见类型注释），交付的也是 420v，交给渲染端直接采样。
+    pub fn open(
+        codec: VideoCodec,
+        parameter_sets: &[Vec<u8>],
+        _full_range: bool,
+    ) -> AppResult<Self> {
+        // 恒定按硬件原生 420v 建会话（见类型注释）。`full_range` 参数保留在
+        // 契约里（平台契约由 api crate 定义），macOS 侧不再消费它。
         Ok(Self {
-            inner: unsafe { Decompressor::new(parameter_sets, full_range)? },
-            full_range_transfer: None,
-            actual_format_logged: false,
+            inner: unsafe { Decompressor::new(codec, parameter_sets, false)? },
         })
     }
 
@@ -359,26 +422,13 @@ impl HevcFrameDecoder {
         duration_secs: f64,
     ) -> AppResult<Vec<DecodedFrame>> {
         unsafe { self.inner.decode(sample, pts_secs, duration_secs)? };
-        let ready = self.take_ready();
-        // GPU 合成器（gpui surface）断言 FullRange NV12；VT 对部分片源不理会
-        // 请求仍吐 '420v'——发现即经 VTPixelTransferSession 转全区间，绝不把
-        // 非全区间帧递给渲染端（那里是硬断言，panic 会把主循环打成僵尸）。
-        let mut out = Vec::with_capacity(ready.len());
-        for frame in ready {
-            out.push(self.enforce_full_range(frame));
-        }
-        Ok(out)
+        Ok(self.take_ready())
     }
 
     /// 冲尾帧并返回遗留输出。会话随即不再可用。
     pub fn finish(&mut self) -> AppResult<Vec<DecodedFrame>> {
         unsafe { self.inner.finish()? };
-        let ready = self.take_ready();
-        let mut out = Vec::with_capacity(ready.len());
-        for frame in ready {
-            out.push(self.enforce_full_range(frame));
-        }
-        Ok(out)
+        Ok(self.take_ready())
     }
 
     fn take_ready(&self) -> Vec<DecodedFrame> {
@@ -387,42 +437,5 @@ impl HevcFrameDecoder {
         raw.into_iter()
             .map(|(inner, pts_secs)| DecodedFrame { inner, pts_secs })
             .collect()
-    }
-
-    fn enforce_full_range(&mut self, frame: DecodedFrame) -> DecodedFrame {
-        let fmt = unsafe { ffi::CVPixelBufferGetPixelFormatType(frame.inner.0) };
-        if !self.actual_format_logged {
-            self.actual_format_logged = true;
-            log::info!(
-                "[Platform/vt] 解码输出像素格式: {}",
-                if fmt == ffi::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
-                    "420f（全区间，直上屏）"
-                } else {
-                    "非 420f，走全区间转换"
-                }
-            );
-        }
-        if fmt == ffi::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
-            return frame;
-        }
-        let DecodedFrame { inner, pts_secs } = frame;
-        let (w, h) = inner.dims();
-        let transfer = self.full_range_transfer.get_or_insert_with(|| {
-            // 转换会话只可能因系统资源建不出来；这里失败等于无法渲染，报错终止
-            unsafe { Transfer::new(w, h).expect("建全区间转换会话") }
-        });
-        let converted = unsafe {
-            transfer.transfer_to(&inner, ffi::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-        };
-        match converted {
-            Ok(pb) => DecodedFrame {
-                inner: pb,
-                pts_secs,
-            },
-            Err(e) => {
-                log::warn!("[Platform/vt] 全区间转换失败，保留原帧（渲染端可能拒绝）: {e}");
-                DecodedFrame { inner, pts_secs }
-            }
-        }
     }
 }

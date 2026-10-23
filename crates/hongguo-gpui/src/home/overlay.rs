@@ -31,7 +31,11 @@ impl super::HomeView {
             .when(lifted, |s| s.bottom(gpui_kit::px(112.0)))
             .when(!lifted, |s| s.bottom(gpui_kit::px(56.0)))
             .left_3()
-            .max_w(gpui_kit::relative(0.62))
+            // **定宽**而不是 max_w：简介行的百分比上限要挂在有确定宽度的
+            // 父级上才生效——overlay 宽度由内容决定时，子级的
+            // max_w(58%) 解析不出基准，简介一行冲出屏幕不换行（实测）。
+            // 62% 对齐 Tauri max-w-[62%]。
+            .w(gpui_kit::relative(0.62))
             .gap_1()
             // 信息层压在画面上：整块拦下鼠标（gpui 重叠兄弟分支都派发，
             // 不拦点信息文字会同时触发「点画面暂停」；子级的标题/展开钮
@@ -100,9 +104,13 @@ impl super::HomeView {
                             )
                             .on_click({
                                 let sid = now.series_id.clone();
-                                cx.listener(move |_, _, _, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     // 点剧名 → 应用内详情页（壳订阅事件切目的
-                                    // 地）；stop_propagation 防触发画面暂停
+                                    // 地）；stop_propagation 防触发画面暂停。
+                                    // 离开播放页先退竖屏（Tauri 路由离开 =
+                                    // exitPortraitScreen 同款；竖条几何是单份
+                                    // 快照，带走会写坏小屏/竖屏的还原基线）
+                                    this.exit_portrait(window, cx);
                                     cx.stop_propagation();
                                     cx.emit(super::HomeEvent::OpenDetail(sid.clone()));
                                 })
@@ -113,18 +121,32 @@ impl super::HomeView {
             .child(
                 div()
                     .mt_0p5()
+                    // Tauri 这里是一个 <p> 内联 <span>；GPUI 必须显式 flex，
+                    // 否则第二个 div 会换行成「Ep. 1 / · 53 episodes」。
+                    .flex()
+                    .items_center()
                     .text_xs()
                     .text_color(gpui_kit::rgba(0xffffffd9))
-                    .child(format!("第{}集", now.vid_index))
+                    .child(crate::i18n::tf(
+                        "player.episodeNo",
+                        &[("index", &now.vid_index.to_string())],
+                    ))
                     .children((now.episode_count > 0).then(|| {
-                        div()
-                            .text_color(gpui_kit::rgba(0xffffffb3))
-                            .child(format!(" · 全{}集", now.episode_count))
+                        div().text_color(gpui_kit::rgba(0xffffffb3)).child(format!(
+                            " · {}",
+                            crate::i18n::tf(
+                                "player.totalEpisodes",
+                                &[("count", &now.episode_count.to_string())],
+                            )
+                        ))
                     })),
             )
             .children(intro.map(|intro| {
-                // 简介块只占舞台约三分之一（hgplayer 同款量级）；块内点击
-                // 不落回舞台（防触发暂停/继续），展开交互只在按钮上
+                // 简介块只占舞台约三分之一（Tauri max-w-[36%] 同款：overlay
+                // 定宽 62% × 本行 58% ≈ 舞台 36%）；块内点击不落回舞台
+                //（防触发暂停/继续），展开交互只在按钮上。文本
+                // flex_1 + min_w_0：在行内收敛宽度强制换行——没有这一步
+                // 文本按 max-content 一行铺开跑出屏幕（实测）。
                 let expanded = self.intro_expanded;
                 h_flex()
                     .id("overlay-intro")
@@ -139,6 +161,8 @@ impl super::HomeView {
                     .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .text_xs()
                             .line_height(gpui_kit::relative(1.6))
                             .text_color(gpui_kit::rgba(0xffffffb3))
@@ -168,7 +192,11 @@ impl super::HomeView {
                                     cx.notify();
                                 }))
                             })
-                            .child(if expanded { "收起" } else { "展开" })
+                            .child(if expanded {
+                                crate::i18n::t("player.introCollapse")
+                            } else {
+                                crate::i18n::t("player.introExpand")
+                            })
                     }))
             }))
             .into_any_element()

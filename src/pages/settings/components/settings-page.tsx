@@ -18,6 +18,7 @@ import {
   useCacheClear,
   useCacheUsage,
   useDecodeCapability,
+  useDefaultCacheDir,
   useRedetectCapability,
   useSaveSettings,
   useSettings,
@@ -42,6 +43,17 @@ const FFMPEG_INSTALL = isMac()
   ? { cmd: 'brew install ffmpeg', page: 'https://ffmpeg.org/download.html' }
   : { cmd: 'winget install Gyan.FFmpeg', page: 'https://www.gyan.dev/ffmpeg/builds/' };
 
+/** 缓存自动清理的保留周期档位（天；0 = 不自动清理）。与 GPUI 壳
+ *  `settings/storage.rs` 的 CACHE_TTL_DAYS 同档。label 用字面量类型，
+ *  t() 的 MessageKey 才认。 */
+const CACHE_TTL_OPTIONS = [
+  { days: 0, label: 'settings.cacheTtlOff' },
+  { days: 1, label: 'settings.cacheTtlDays1' },
+  { days: 3, label: 'settings.cacheTtlDays3' },
+  { days: 7, label: 'settings.cacheTtlDays7' },
+  { days: 30, label: 'settings.cacheTtlDays30' },
+] as const;
+
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
 export function SettingsPage() {
   const { data: loaded, isPending, refetch: refetchSettings } = useSettings();
@@ -50,6 +62,7 @@ export function SettingsPage() {
   const redetect = useRedetectCapability();
   const { data: usage } = useStorageUsage();
   const { data: cacheUsage } = useCacheUsage();
+  const { data: defaultCacheDir } = useDefaultCacheDir();
   const clearCache = useCacheClear();
   const testProxyMutation = useTestProxy();
   // 播放器快捷键（老板键冲突检测的比对源；与播放器同一份 store）
@@ -58,6 +71,9 @@ export function SettingsPage() {
   // 草稿为 null 表示「未修改」，直接用服务端值派生，避免 effect 同步引发级联渲染
   const [draft, setDraft] = useState<Partial<Settings> | null>(null);
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
+  // 缓存目录输入框：null = 用户没动过。未配置时直接展示默认位置，
+  // 空串 = 用户主动清空（仍保留「空 = 跟随数据目录」的存储语义）。
+  const [cacheDirDraft, setCacheDirDraft] = useState<string | null>(null);
 
   if (isPending || !loaded) {
     return <div className="text-muted-foreground p-6 text-sm">{t('common.loading')}</div>;
@@ -66,6 +82,8 @@ export function SettingsPage() {
   // 合并草稿与服务端值
   const current: Settings = { ...loaded, ...(draft ?? {}) };
   const effectiveProxyUrl = proxyUrl ?? current.proxy.url;
+  // 未配置缓存目录时，输入框直接填默认位置；用户清空后保留空串。
+  const effectiveCacheDir = cacheDirDraft ?? (current.cacheDir || defaultCacheDir || '');
   // 老板键 vs 播放器快捷键冲突（全局组合在应用内按下会同时触发两者）
   const bossConflicts = resolveBossKeyConflicts(
     current.bossKey,
@@ -84,7 +102,10 @@ export function SettingsPage() {
 
   const chooseCacheDir = async () => {
     const picked = await appApi.selectFolder().catch(() => null);
-    if (picked) patch({ cacheDir: picked });
+    if (picked) {
+      setCacheDirDraft(picked);
+      patch({ cacheDir: picked });
+    }
   };
 
   const submit = () => {
@@ -95,13 +116,18 @@ export function SettingsPage() {
       return;
     }
     saveMutation.mutate(
-      { ...current, proxy: { ...current.proxy, url: effectiveProxyUrl } },
+      {
+        ...current,
+        cacheDir: effectiveCacheDir,
+        proxy: { ...current.proxy, url: effectiveProxyUrl },
+      },
       {
         onSuccess: () => {
           toast.success(t('settings.saved'));
           // 保存成功后丢弃草稿，回到「跟随服务端」状态
           setDraft(null);
           setProxyUrl(null);
+          setCacheDirDraft(null);
         },
         // 失败必须有回音：后端报错（老板键被占用注册失败这类）静默的
         // 话，用户眼里就是「点了没反应」（v0.5.0 保存无反应排查实录）
@@ -272,7 +298,7 @@ export function SettingsPage() {
               id="prefetch-episodes"
               type="range"
               min={0}
-              max={3}
+              max={10}
               step={1}
               value={current.prefetchEpisodes}
               onChange={(e) => patch({ prefetchEpisodes: Number(e.target.value) })}
@@ -374,16 +400,19 @@ export function SettingsPage() {
           <CardTitle className="text-base">{t('settings.storage')}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {/* 缓存目录：空 = 跟随数据目录。保存即时生效于新写入，旧目录残留
-              不迁移——与下载目录同语义，文案里说清免得用户以为搬走了。 */}
+          {/* 缓存目录：未配置时输入框直接填默认位置（空存储 = 跟随数据目录）。
+              保存即时生效于新写入，旧目录残留不迁移——与下载目录同语义。 */}
           <div className="flex flex-col gap-2">
             <Label htmlFor="cache-dir">{t('settings.cacheDir')}</Label>
             <div className="flex gap-2">
               <Input
                 id="cache-dir"
-                value={current.cacheDir}
+                value={effectiveCacheDir}
                 placeholder={t('settings.cacheDirPlaceholder')}
-                onChange={(e) => patch({ cacheDir: e.target.value })}
+                onChange={(e) => {
+                  setCacheDirDraft(e.target.value);
+                  patch({ cacheDir: e.target.value });
+                }}
                 className="font-mono text-xs"
               />
               <Button variant="outline" onClick={() => void chooseCacheDir()}>
@@ -430,6 +459,55 @@ export function SettingsPage() {
             >
               {clearCache.isPending ? t('common.loading') : t('settings.clearCache')}
             </Button>
+          </div>
+          {/* 自动清理两档：占用上限（MB）+ 保留周期（天）。两档都关 = 不动
+              用户的数据；超限/过期由后台每小时扫一轮删最旧的。 */}
+          <div className="flex flex-col gap-2">
+            <Label>{t('settings.cacheAutoClean')}</Label>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="cache-limit" className="text-muted-foreground">
+                  {t('settings.cacheLimit')}
+                </Label>
+                <Input
+                  id="cache-limit"
+                  type="number"
+                  min={0}
+                  step={64}
+                  className="w-28"
+                  value={current.cacheLimitMb}
+                  placeholder={t('settings.cacheLimitPlaceholder')}
+                  onChange={(e) => {
+                    const parsed = Number(e.target.value);
+                    patch({ cacheLimitMb: Number.isFinite(parsed) && parsed > 0 ? parsed : 0 });
+                  }}
+                />
+                <span className="text-muted-foreground text-xs">
+                  {t('settings.cacheLimitUnit')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="cache-ttl" className="text-muted-foreground">
+                  {t('settings.cacheTtl')}
+                </Label>
+                <Select
+                  value={String(current.cacheTtlDays)}
+                  onValueChange={(v) => patch({ cacheTtlDays: Number(v) })}
+                >
+                  <SelectTrigger id="cache-ttl" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CACHE_TTL_OPTIONS.map((option) => (
+                      <SelectItem key={option.days} value={String(option.days)}>
+                        {t(option.label)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-xs">{t('settings.cacheAutoCleanDesc')}</p>
           </div>
         </CardContent>
       </Card>

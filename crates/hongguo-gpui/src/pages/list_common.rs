@@ -10,9 +10,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, ClickEvent, ElementId, Entity, RenderImage, RenderOnce, SharedString, Window, div,
-};
+use gpui_kit::{App, ClickEvent, ElementId, Entity, RenderOnce, SharedString, Window, div};
 use hongguo_service::app_state::AppStateInner;
 use tokio::sync::oneshot;
 
@@ -139,7 +137,11 @@ impl RenderOnce for BatchBar {
             .child(
                 Button::new("batch-select-all")
                     .icon(gpui_kit::assets::IconName::ListChecks)
-                    .label(if all_picked { "取消全选" } else { "全选" })
+                    .label(if all_picked {
+                        crate::i18n::t("batch.deselectAll")
+                    } else {
+                        crate::i18n::t("batch.selectAll")
+                    })
                     .ghost()
                     .small()
                     .disabled(total == 0)
@@ -153,14 +155,17 @@ impl RenderOnce for BatchBar {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(SharedString::from(format!("已选 {count} 项"))),
+                    .child(SharedString::from(crate::i18n::tf(
+                        "batch.selectedCount",
+                        &[("count", &count.to_string())],
+                    ))),
             )
             .child(div().flex_1())
             .child(
                 Button::new("batch-delete")
                     .icon(gpui_kit::assets::IconName::Trash)
                     .label(if self.deleting {
-                        SharedString::from("删除中…")
+                        SharedString::from(crate::i18n::t("batch.deleting"))
                     } else {
                         self.delete_label
                     })
@@ -182,11 +187,11 @@ pub(crate) struct SeriesVisual {
     pub title: String,
     /// 总集数（收藏卡片「共 N 集」行用）。
     pub episode_count: u32,
-    /// 封面原始字节（解码交给 [`decode_cover`]）。
-    pub cover: Option<Vec<u8>>,
+    /// 封面 URL（解码交给 gpui 的图片缓存，见 [`crate::cover_img`]）。
+    pub cover_url: String,
 }
 
-/// 解析一部剧的标题/集数/封面字节（本地档案优先，未收录拉官方并落库）；
+/// 解析一部剧的标题/集数/封面地址（本地档案优先，未收录拉官方并落库）；
 /// 解析失败给空壳（页面按「解析中…」缺省渲染），不向上抛错。
 pub(crate) fn fetch_series_visual(
     state: Arc<AppStateInner>,
@@ -198,41 +203,18 @@ pub(crate) fn fetch_series_visual(
             .await
             .ok();
         match meta {
-            Some(s) => {
-                let cover = if s.cover.is_empty() {
-                    None
-                } else {
-                    crate::cover_img::fetch(s.cover.clone())
-                        .await
-                        .expect("tokio 桥不会丢弃发送端")
-                        .ok()
-                };
-                SeriesVisual {
-                    series_id,
-                    title: s.title.clone(),
-                    episode_count: s.episode_count,
-                    cover,
-                }
-            }
+            Some(s) => SeriesVisual {
+                series_id,
+                title: s.title.clone(),
+                episode_count: s.episode_count,
+                cover_url: s.cover.clone(),
+            },
             None => SeriesVisual {
                 series_id,
                 title: String::new(),
                 episode_count: 0,
-                cover: None,
+                cover_url: String::new(),
             },
         }
     })
-}
-
-/// 封面字节 → RenderImage（解码失败只记日志，卡片走占位底）。
-pub(crate) fn decode_cover(bytes: &[u8]) -> Option<Arc<RenderImage>> {
-    match image::load_from_memory(bytes) {
-        Ok(decoded) => Some(Arc::new(crate::image_upload::render_image(
-            decoded.to_rgba8(),
-        ))),
-        Err(e) => {
-            log::warn!("[Cover] 解码失败: {e}");
-            None
-        }
-    }
 }

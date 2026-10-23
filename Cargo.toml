@@ -20,8 +20,16 @@ members = [
     "crates/hongguo-media-platform-api",
     "crates/hongguo-media-platform-macos",
     "crates/hongguo-media-platform-windows",
+    # NSH 壳（第三壳，与 GPUI 壳共存至替值线；见 docs/nsh-shell-plan.md）。
+    "crates/hongguo-nsh",
     "crates/hongguo-video",
     "crates/hongguo-playback",
+    # 回放契约 + 系统播放器（门面 / macOS / Windows 实现）：
+    # 平台实现分 crate，壳只依赖门面（architecture-refactor.md「平台实现分 crate」）。
+    "crates/hongguo-player",
+    "crates/hongguo-player-api",
+    "crates/hongguo-player-macos",
+    "crates/hongguo-player-windows",
     "crates/hongguo-protocol",
     "crates/hongguo-service",
     "crates/hongguo-signer",
@@ -38,7 +46,7 @@ exclude = ["vendor/*"]
 # 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
 # tauri.conf.json），成员用 `xxx.workspace = true` 继承。
 [workspace.package]
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 # MSRV 跟随当前 stable 工具链（1.99.1）。应用不是库，MSRV 只影响依赖解析。
 rust-version = "1.99.1"
@@ -67,6 +75,28 @@ muxide = { path = "vendor/muxide" }
 rusty_alloc = { path = "vendor/rusty_alloc" }
 rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
 rusty_h264-common = { path = "vendor/rusty_h264_common" }
+# gpui-pre-apple 0.3.9 的 Metal surface 渲染器**只接受 '420f'**（全区间 NV12）：
+# metal_renderer.rs 对像素格式是硬断言，shader 的 YCbCr→RGB 矩阵也写死全区间。
+# 而 VideoToolbox 硬解的原生输出是 '420v'（视频区间）——本机实测同一份 1080p
+# HEVC：'420v' 输出 552fps、'420f' 只有 50fps（VT 内部逐帧插入色域换算），
+# 请求 420f 等于每秒白白多付 19ms/帧，播放必然越播越落后。
+#
+# 补丁把 surface 渲染器扩成两种 NV12 都收：'420f' 走原管道，'420v' 用同一
+# 顶点函数 + limited-range 片元矩阵（surface_fragment_video）。这样解码端可以
+# 直接把硬件原生的 420v 交给 GPU 采样，全程零 CPU 搬运。
+# 上游 0.3.9 为当前最新版（本地索引已确认），待其支持 420v 后回收。
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+# gpui-pre-windows 0.3.9 把窗口内容的合成视觉直接设成 DirectComposition 目标的
+# 根，应用没有位置把「自己的视觉」插到内容之下。系统播放器（Media Foundation
+# Media Engine 的 rendering mode）要求应用提供 `IDCompositionVisual` 当画面落点，
+# 而这一层必须在 GPUI 内容之下——否则 GPUI 把舞台区清成 alpha=0 也露不出下面的
+# 视频（macOS 侧的对应结构是 AVPlayerLayer 插在 GPUIView 之下）。
+#
+# 补丁把根改成容器视觉，子视觉分两层〔内容、视频位〕，并新增 `system_video`
+# 模块按 HWND 暴露「视频位 visual + 渲染器 D3D11 设备」，供壳侧交给 MediaEngine
+# 当 MF_MEDIA_ENGINE_PLAYBACK_VISUAL（见 crates/hongguo-gpui/src/wm_presenter/）。
+# 上游 0.3.9 为当前最新版，待其提供原生视频挂点后回收。
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 # tauri-plugin-webdriver 0.2.3 在 Windows 上声明 webview2-com 0.38 / windows
 # 0.61，而 tauri 2.12 已把 webview2-com 抬到 0.39（windows 0.62）——同一依赖图
 # 里两套 windows-core 类型不互通，插件 platform/windows.rs 拿 tauri 侧的

@@ -1,24 +1,25 @@
-//! 视频逐帧解码出口（macOS）：VideoToolbox NV12 CVPixelBuffer，渲染零拷贝上屏。
+//! 视频逐帧解码出口（macOS）：VideoToolbox（HEVC / H.264）NV12
+//! CVPixelBuffer，渲染零拷贝上屏。
 //!
 //! 契约见 [`hongguo_media_platform_api::video`]；本类型是门面
-//! `hongguo_media_platform::platform::video::HevcDecoder` 在 macOS 上的具体
-//! 实现。解码器接口与原 VT 侧一致（open/decode/finish，帧自带 PTS），引擎
+//! `hongguo_media_platform::platform::video::VideoFrameDecoder` 在 macOS 上的
+//! 具体实现。解码器接口与原 VT 侧一致（open/decode/finish，帧自带 PTS），引擎
 //! （hongguo-playback）与壳（hongguo-gpui）只认这一层。
 
 use hongguo_common::AppResult;
 use hongguo_media_platform_api::video::{DecoderInit, FrameBuffer, VideoDecoder, VideoFrame};
 
-use crate::vt::HevcFrameDecoder;
+use crate::vt::FrameDecoder;
 
 /// 帧流解码器（VT 会话：open/decode/finish，帧自带 PTS）。
-pub struct HevcDecoder {
-    inner: HevcFrameDecoder,
+pub struct VideoFrameDecoder {
+    inner: FrameDecoder,
 }
 
-impl HevcDecoder {
+impl VideoFrameDecoder {
     pub fn open(init: DecoderInit<'_>) -> AppResult<Self> {
         Ok(Self {
-            inner: HevcFrameDecoder::open(init.parameter_sets, init.full_range)?,
+            inner: FrameDecoder::open(init.codec, init.parameter_sets, init.full_range)?,
         })
     }
 
@@ -59,17 +60,17 @@ impl HevcDecoder {
     }
 }
 
-impl VideoDecoder for HevcDecoder {
+impl VideoDecoder for VideoFrameDecoder {
     fn decode(
         &mut self,
         sample: &[u8],
         pts_secs: f64,
         duration_secs: f64,
     ) -> AppResult<Vec<VideoFrame>> {
-        HevcDecoder::decode(self, sample, pts_secs, duration_secs)
+        VideoFrameDecoder::decode(self, sample, pts_secs, duration_secs)
     }
 
     fn finish(&mut self) -> AppResult<Vec<VideoFrame>> {
-        HevcDecoder::finish(self)
+        VideoFrameDecoder::finish(self)
     }
 }

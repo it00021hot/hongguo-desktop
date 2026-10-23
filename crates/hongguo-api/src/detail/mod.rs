@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use hongguo_common::{AppError, AppResult};
 
-pub use model::{EpisodeList, RelatedSeries, SeriesMeta};
+pub use model::{EpisodeList, RelatedSeries, SeriesCreator, SeriesMeta};
 // 保持公共路径 `detail::RelatedItem` 可用（被 `RelatedSeries` 聚合引用，
 // crate 内暂无直接引用者）。作为 crate 公开再导出，rustc 不再按
 // unused_imports 处理，故不需要 `#[expect]`。

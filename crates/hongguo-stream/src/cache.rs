@@ -76,6 +76,9 @@ pub struct StreamCache {
     /// 显式预取的档位（沉浸流「下一部剧」），有界（[`MAX_PREFETCH_MARKS`]），
     /// 新标记挤掉最老的。逐出策略额外保这些条目；填充礼让也认它。
     prefetch: Mutex<Vec<(String, u32)>>,
+    /// 系统播放器已排队、即将接力的下一集。只允许一条：它可以在 `current`
+    /// 还是上一集时提前续填，避免 loader 读到 8MB 预取上限后干等 30s。
+    next: Mutex<Option<(String, u32)>>,
 }
 
 /// 除当前集与显式预取外，再保留几条最近用过的流。
@@ -86,17 +89,23 @@ pub struct StreamCache {
 /// （2026-10-06「视频处理失败」的根因）。多留几条，弹动就打不穿缓存。
 const KEEP_RECENT: usize = 3;
 
-/// 预取标记的上限。连播与换剧预取共用 `Settings.prefetch_episodes` 档
-/// （issue #6），两路同时各铺最多 3 集，加上快速连滚短暂多出的一两个
-/// 标记。上限 = 3 + 3 + 2，防止标记无界增长把逐出豁免变成内存漏洞。
-const MAX_PREFETCH_MARKS: usize = 8;
+/// 预取标记的上限。连播铺的后续集与换剧铺的后续部共用
+/// `Settings.prefetch_episodes` 档（上限 10），两路同时满档各 10 个标记，
+/// 加上快速连滚短暂多出的一两个。**上限 16**（原 22）：标记是**豁免**字节
+/// 预算的，每个标记还带一条预取头部（2MB），22 个就是 44MB 净占内存；
+/// 16 个足够覆盖两路满档的常用量，被挤掉的是最老的标记（不是下一集）。
+const MAX_PREFETCH_MARKS: usize = 16;
 
 /// 在线流缓存的总字节预算。当前集 + 预取 + 最近保留加起来超过它时，
-/// 从最旧的「非当前」条目开始逐出，直到回到预算内。换剧预取与连播预取
-/// 同档铺 N 集后双剧合计（渐进缓冲按整集长度计内存）在典型短剧
-/// （30-80MB/集）下会吃满 512MB——被逐出的预取等于白下流量，上调到
-/// 768MB 给满档（3+3）留余量。
-const RETAIN_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
+/// 从最旧的「非当前」条目开始逐出，直到回到预算内。预取条目只填头部
+/// 8MB（升格当前集才无界续填），真正吃预算的是当前集与最近保留的整集
+/// 渐进缓冲——典型短剧（30-80MB/集）下 3 条整集 + 满档预取头部仍在
+/// 768MB 内。
+///
+/// **降到 48MB**：768MB 对一个桌面小应用是过宽的天花板（实测整进程稳态
+/// 300MB 上下，缓存再留 768MB 就奔 1GB 去了）。实测稳态占用只有 50MB
+/// 上下（8~9 条），48MB 仍能留 1~2 条整集 + 预取头部。
+const RETAIN_BUDGET_BYTES: u64 = 48 * 1024 * 1024;
 
 impl StreamCache {
     /// 取或创建一个条目。
@@ -135,6 +144,17 @@ impl StreamCache {
     /// 这一档的条目是否还在（取流失败会被删掉）。
     pub fn exists(&self, vid: &str, definition: u32) -> bool {
         self.get(vid, definition).is_some()
+    }
+
+    /// 缓存的内存占用（字节）与条目数：排障用。
+    ///
+    /// 壳的周期状态日志要靠它把「进程涨了多少内存」拆到流缓存这一层——
+    /// 逐出策略是按字节预算走的（见 [`RETAIN_BUDGET_BYTES`]），没有这个
+    /// 读数就只能猜「是流缓存还是封面缓存吃掉了内存」。
+    pub fn stats(&self) -> (u64, usize) {
+        let entries = self.entries.lock();
+        let bytes = entries.values().map(|e| entry_weight(e)).sum();
+        (bytes, entries.len())
     }
 
     /// 这一档是否已经可以供 `<video>` 取数；可以的话带回它提供的全部档位。
@@ -253,11 +273,15 @@ impl StreamCache {
     /// [`Self::retain_playing_set`] 的可注入形态（测试用）。
     fn retain_with(&self, vid: &str, keep_recent: usize, budget: u64) {
         let prefetch = self.prefetch.lock().clone();
+        let next = self.next.lock().clone();
         let mut entries = self.entries.lock();
         let is_marked = |k: &StreamKey| {
             prefetch
                 .iter()
                 .any(|(v, d)| v == &k.vid && *d == k.definition)
+                || next
+                    .as_ref()
+                    .is_some_and(|(v, d)| v == &k.vid && *d == k.definition)
         };
 
         // 候选逐出集：非当前、非预取。按最近使用降序，窗口外即逐出。
@@ -302,6 +326,26 @@ impl StreamCache {
         *self.current.lock() = vid.to_string();
         // 升格为当前的那(几)条预取不再是预取
         self.prefetch.lock().retain(|(v, _)| v != vid);
+        // 已切到目标集（或换剧）：旧「下一集」标记作废。
+        *self.next.lock() = None;
+    }
+
+    /// 标记系统播放器队列里即将接力的下一集（只保留一条）。
+    pub fn mark_next(&self, vid: &str, definition: u32) {
+        *self.next.lock() = Some((vid.to_string(), definition));
+    }
+
+    /// 这一条是否是系统播放器排队中的下一集。
+    pub fn is_next(&self, vid: &str, definition: u32) -> bool {
+        self.next
+            .lock()
+            .as_ref()
+            .is_some_and(|(v, d)| v == vid && *d == definition)
+    }
+
+    /// 离开播放页/预加载取消：撤掉「下一集」标记，别再让它无界占带宽。
+    pub fn clear_next(&self) {
+        *self.next.lock() = None;
     }
 
     /// 这一条是否还在预取标记里（填充让位判定用）。
@@ -468,6 +512,20 @@ mod tests {
         assert!(c.is_fetching("a", 1080));
         assert!(!c.is_fetching("a", 720), "别的档位不受影响");
         assert!(!c.is_fetching("b", 1080), "别的 vid 不受影响");
+    }
+
+    #[test]
+    fn next_marker_survives_until_the_next_current() {
+        let c = StreamCache::default();
+        c.mark_next("a", 1080);
+        assert!(c.is_next("a", 1080));
+        assert!(!c.is_next("a", 720));
+        assert!(!c.is_next("b", 1080));
+        c.set_current("a");
+        assert!(
+            !c.is_next("a", 1080),
+            "切上后 next 必须清掉，避免继续无界占带宽"
+        );
     }
 
     /// 免触碰的存在性检查：`get` 会刷新 LRU 指纹，断言里用它才不打乱时序。

@@ -3,68 +3,51 @@
 //! 进程仍可能被系统的节能策略降级，主流播放器（VLC/IINA）播放期间都
 //! 持有同类断言。用户暂停即释放（用户在场与否由交互决定）。
 //!
-//! 平台形态：macOS = `NSProcessInfo beginActivityWithOptions`（手写 FFI，
-//! 与 vt/ffi 同款纪律：只声明用到的符号，字符串必须用 C 字面量——
-//! objc_getClass 不容忍非 NUL 结尾）；Windows =
-//! `SetThreadExecutionState`（ES_CONTINUOUS 逐线程生效，调用点固定在
-//! 主线程）。其余目标空操作。
+//! 平台形态：macOS = `NSProcessInfo beginActivityWithOptions:reason:`
+//! （objc2 绑定，token 由 `Retained` 持有——手写裸 `objc_msgSend` 时它只是
+//! autorelease 对象，自动释放池一清就悬空，恢复播放时 `endActivity` 撞上
+//! 已销毁对象直接 SIGSEGV，2026-10-17 实测崩溃报告即此）；
+//! Windows = `SetThreadExecutionState`（ES_CONTINUOUS 逐线程生效，调用点
+//! 固定在主线程）。其余目标空操作。
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::os::raw::{c_char, c_void};
     use std::sync::Mutex;
 
-    /// `NSActivityUserInitiated = 0x00FFFFFF | NSActivityIdleSystemSleepDisabled`：
-    /// 防 App Nap + 防系统闲睡 + 防突然/自动终止（SDK NSProcessInfo.h 实值）。
-    const NS_ACTIVITY_USER_INITIATED: u64 = 0x01FF_FFFF;
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
 
-    unsafe extern "C" {
-        fn objc_getClass(name: *const c_char) -> *mut c_void;
-        fn sel_registerName(name: *const c_char) -> *mut c_void;
-        fn objc_msgSend(receiver: *mut c_void, op: *mut c_void, ...) -> *mut c_void;
-    }
+    /// `NSActivityUserInitiated`：防 App Nap + 防系统闲睡 + 防突然终止。
+    const ACTIVITY: NSActivityOptions = NSActivityOptions::UserInitiated;
 
-    fn cls(name: &'static std::ffi::CStr) -> *mut c_void {
-        unsafe { objc_getClass(name.as_ptr()) }
-    }
+    /// 当前断言的 token；None = 未持有。持有 `Retained` 保证 token 活到
+    /// `endActivity` 那一刻（见文件头）。
+    ///
+    /// `NSObjectProtocol` 不是 Send/Sync（AppKit 对象本来就只该在主线程碰），
+    /// 但 `set_active` 只在主线程 render / 点击回调里调用——裸包装把这条
+    /// 约束写成显式断言，而不是让 Mutex 替我们假装对象可以跨线程。
+    struct Token(Retained<ProtocolObject<dyn objc2::runtime::NSObjectProtocol>>);
+    // SAFETY：只在主线程读写（见上）。
+    unsafe impl Send for Token {}
 
-    fn sel(name: &'static std::ffi::CStr) -> *mut c_void {
-        unsafe { sel_registerName(name.as_ptr()) }
-    }
-
-    /// 当前断言的 token（NSActivity 对象地址；None = 未持有）。idempotent
-    /// 的记账位：同一状态只 begin/end 一次。
-    static TOKEN: Mutex<Option<usize>> = Mutex::new(None);
+    static TOKEN: Mutex<Option<Token>> = Mutex::new(None);
 
     pub fn set_active(active: bool) {
         let mut guard = TOKEN.lock().expect("活动断言记账锁");
         if active == guard.is_some() {
             return;
         }
-        unsafe {
-            let pi = objc_msgSend(cls(c"NSProcessInfo"), sel(c"processInfo"));
-            if active {
-                let reason = objc_msgSend(
-                    cls(c"NSString"),
-                    sel(c"stringWithUTF8String:"),
-                    c"红果播放中".as_ptr(),
-                );
-                let token = objc_msgSend(
-                    pi,
-                    sel(c"beginActivityWithOptions:reason:"),
-                    NS_ACTIVITY_USER_INITIATED,
-                    reason,
-                );
-                if !token.is_null() {
-                    *guard = Some(token as usize);
-                    log::info!("[PlayActivity] 活动断言已持有");
-                } else {
-                    log::warn!("[PlayActivity] beginActivity 返回空，断言未生效");
-                }
-            } else if let Some(token) = guard.take() {
-                objc_msgSend(pi, sel(c"endActivity:"), token as *mut c_void);
-                log::info!("[PlayActivity] 活动断言已释放");
-            }
+        let process_info = NSProcessInfo::processInfo();
+        if active {
+            let reason = NSString::from_str("红果播放中");
+            let token = process_info.beginActivityWithOptions_reason(ACTIVITY, &reason);
+            *guard = Some(Token(token));
+            log::info!("[PlayActivity] 活动断言已持有");
+        } else if let Some(Token(token)) = guard.take() {
+            // SAFETY：token 由上面的 beginActivity 返回、且类型正确
+            unsafe { process_info.endActivity(&token) };
+            log::info!("[PlayActivity] 活动断言已释放");
         }
     }
 }

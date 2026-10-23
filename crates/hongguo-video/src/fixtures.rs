@@ -140,6 +140,9 @@ pub struct TrackPlan {
     pub composition: Option<Vec<i32>>,
     /// 每隔几个样本放一个关键帧。`None` = 不写 `stss` = 全部样本都是关键帧。
     pub sync_every: Option<u32>,
+    /// 源 `edts/elst` 的 `media_time`（media timescale，fixture 下 = 1000）。
+    /// `Some` 才写 edit list；`tkhd` 时长同步改成 presentation 时长。
+    pub edit_media_time: Option<i64>,
 }
 
 impl TrackPlan {
@@ -150,6 +153,7 @@ impl TrackPlan {
             durations: vec![1; samples.len()],
             composition: None,
             sync_every: Some(5),
+            edit_media_time: None,
             samples,
         }
     }
@@ -161,6 +165,7 @@ impl TrackPlan {
             durations: vec![1; samples.len()],
             composition: None,
             sync_every: None,
+            edit_media_time: None,
             samples,
         }
     }
@@ -174,6 +179,7 @@ impl TrackPlan {
             durations: vec![1; n],
             composition: Some(composition),
             sync_every: Some(5),
+            edit_media_time: None,
             samples,
         }
     }
@@ -186,7 +192,17 @@ impl TrackPlan {
             durations,
             composition: None,
             sync_every: Some(3),
+            edit_media_time: None,
             samples,
+        }
+    }
+
+    /// 带 priming edit 的音频轨：前 `media_time` tick 是编码器前置，presentation
+    /// 从它之后开始。真实 AAC 源的 2048 samples 用同一形状表达。
+    pub fn audio_with_priming(samples: Vec<Vec<u8>>, media_time: i64) -> Self {
+        Self {
+            edit_media_time: Some(media_time),
+            ..Self::audio(samples)
         }
     }
 }
@@ -276,13 +292,18 @@ fn build_trak(track_id: u32, plan: &TrackPlan, offsets: &[u64]) -> Vec<u8> {
 
     // 真实封装器会把时长写进 tkhd / mdhd：拼接时正是靠累加各集的这两个字段
     // 得出全集时长，写成 0 的话那些断言就全在验 0 + 0 + 0。
-    let duration: u32 = plan.durations.iter().sum();
+    let media_duration: u32 = plan.durations.iter().sum();
+    // edit list 的 media_time 是「跳过开头的编码器前置」：tkhd 写 presentation
+    // 时长，mdhd 仍写完整 media 时长——真实 AAC 源就是这个形状。
+    let edit_media_time = plan.edit_media_time.unwrap_or(0).max(0);
+    let presentation =
+        media_duration.saturating_sub(u32::try_from(edit_media_time).unwrap_or(u32::MAX));
 
     // tkhd：creation(4) modification(4) track_ID(4) reserved(4) duration(4)
     let mut tkhd_payload = vec![0u8; 8];
     tkhd_payload.extend(track_id.to_be_bytes());
     tkhd_payload.extend(0u32.to_be_bytes());
-    tkhd_payload.extend(duration.to_be_bytes());
+    tkhd_payload.extend(presentation.to_be_bytes());
     tkhd_payload.extend([0u8; 8]); // reserved
     tkhd_payload.extend(0u16.to_be_bytes()); // layer
     tkhd_payload.extend(0u16.to_be_bytes()); // alternate_group
@@ -296,10 +317,20 @@ fn build_trak(track_id: u32, plan: &TrackPlan, offsets: &[u64]) -> Vec<u8> {
     // mdhd：creation(4) modification(4) timescale(4) duration(4)
     let mut mdhd_payload = vec![0u8; 8];
     mdhd_payload.extend(1000u32.to_be_bytes()); // timescale
-    mdhd_payload.extend(duration.to_be_bytes());
+    mdhd_payload.extend(media_duration.to_be_bytes());
     mdhd_payload.extend(0u16.to_be_bytes()); // language
     mdhd_payload.extend(0u16.to_be_bytes()); // pre_defined
     let mdhd = full_box(b"mdhd", &mdhd_payload);
+
+    // edts/elst：version 0，一条 edit，media_time 指向 presentation 起点
+    let edts = (edit_media_time > 0).then(|| {
+        let mut p = 0u32.to_be_bytes().to_vec(); // version 0 + flags
+        p.extend(1u32.to_be_bytes()); // entry_count
+        p.extend(presentation.to_be_bytes()); // segment_duration（movie timescale）
+        p.extend((edit_media_time as i32).to_be_bytes()); // media_time
+        p.extend(0x0001_0000i32.to_be_bytes()); // rate 1.0
+        build_box(b"edts", &build_box(b"elst", &p))
+    });
 
     // hdlr：pre_defined(4) handler_type(4)
     let mut hdlr_payload = vec![0u8; 4];
@@ -340,7 +371,10 @@ fn build_trak(track_id: u32, plan: &TrackPlan, offsets: &[u64]) -> Vec<u8> {
 
     let minf = build_box(b"minf", &[&media_header[..], &dinf[..], &stbl[..]].concat());
     let mdia = build_box(b"mdia", &[&mdhd[..], &hdlr[..], &minf[..]].concat());
-    build_box(b"trak", &[&tkhd[..], &mdia[..]].concat())
+    build_box(
+        b"trak",
+        &[&tkhd[..], edts.as_deref().unwrap_or(&[]), &mdia[..]].concat(),
+    )
 }
 
 fn stts_box(durations: &[u32]) -> Vec<u8> {

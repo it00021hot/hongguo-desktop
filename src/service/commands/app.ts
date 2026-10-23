@@ -30,6 +30,11 @@ export const app = {
   /** 铺满档切换（对齐 hgplayer Nf）：铺满→普通还原快照，普通→铺满先快照 */
   setPortraitFull: (aspect: number, full: boolean) => call('set_portrait_full', { aspect, full }),
   /**
+   * macOS 原生红绿灯藏显（无边框播放模式用；Tauri 同款只 setHidden 三颗
+   * 圆点不动 styleMask）。Windows/Linux 本就 decorations:false，命令无害
+   */
+  setTrafficLightsVisible: (visible: boolean) => call('set_traffic_lights_visible', { visible }),
+  /**
    * 隐身模式开关：开 = 后端起系统级光标轮询（鼠标脱离窗口隐藏、回到窗口
    * 区域自动重现）；关 = 停轮询并带回可能隐藏中的窗口
    */

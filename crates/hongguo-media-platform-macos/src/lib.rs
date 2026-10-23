@@ -1,21 +1,26 @@
 #![cfg(target_os = "macos")]
 //! macOS 平台原生实现（hongguo-media-platform-macos crate）。
 //!
-//! - VideoToolbox（[`vt`]）：HEVC 硬解 + H.264 编码（硬编优先，无硬编
-//!   回落 Apple 内置软编会话），CVPixelBuffer 全程 NV12，编解码之间零拷贝
+//! - VideoToolbox（[`vt`]）：HEVC / H.264 硬解 + H.264 编码（硬编优先，
+//!   无硬编回落 Apple 内置软编会话），CVPixelBuffer 全程 NV12，
+//!   编解码之间零拷贝
 //! - AudioToolbox（[`audio`]）：AAC 解码（AudioConverter，mpv 的 coreaudio
 //!   AAC 解码同款）
+//! - AudioToolbox 输出（[`audio_output`]）：默认输出单元，output-only——
+//!   不碰输入作用域，因此不会触发麦克风授权（cpal 的 macOS 后端会）
 //!
 //! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform`
 //! 按编译目标选择本 crate；本 crate 不依赖门面（反向即 Cargo 依赖环）。
 //! 其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
 pub mod audio;
+pub mod audio_output;
 pub mod video;
 mod vt;
 
 pub use audio::AacDecoder;
-pub use video::HevcDecoder;
+pub use audio_output::MacAudioOutput;
+pub use video::VideoFrameDecoder;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码（硬编优先，软编回落）。
 pub use vt::transcode_h264;

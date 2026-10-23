@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BellRing, CalendarClock, LogIn, Play, Star, Tv } from 'lucide-react';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/empty';
 import { ListSearch } from '@/components/common/list-search';
 import { matchListQuery } from '@/utils/list-filter';
+import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoginDialog } from '@/pages/settings/components/login-dialog';
@@ -36,6 +37,11 @@ import type { CalendarItem } from '@/service/schema';
  * 「即将上线」降级视图）；行尾动作列已上线 = 播放 + 详情，
  * 未上线 = 取消预约。
  *
+ * 列表单页懒翻页（hgplayer 同款）：首屏一页即回、角标计数用响应下发
+ * 的 total，滚到底再翻下一页——此前一次性串行拉全，预约上百部时
+ * 「已上线」要等 5–8 秒才出来（issue #11）。搜索态在后台把剩余页补齐
+ * （对全量条目过滤，hgplayer「正在加载全部记录…」同款语义）。
+ *
  * 预约列表接口需要登录，匿名返回空表——未登录时给登录入口而不是空列表。
  */
 
@@ -52,9 +58,35 @@ export function ReservationPage() {
   const batch = useBatchSelect();
   const batchDelete = useReservationsDelete();
   // 标题搜索（对齐参考端 v1.1.6「搜索预约的剧」）：客户端过滤，条目自带标题
-  const shown = (current.data?.items ?? []).filter((item) =>
-    matchListQuery(query, item.title, item.seriesId),
-  );
+  const shown = current.items.filter((item) => matchListQuery(query, item.title, item.seriesId));
+  // 搜索要对全量条目过滤：搜索态下后台持续翻页补齐（失败即停，重试走
+  // 列表自身的失效/重挂）；普通浏览仍是一页懒翻
+  useEffect(() => {
+    if (query === '' || current.error || current.isLoading || !current.hasMore) return;
+    if (current.isFetchingMore) return;
+    current.loadMore();
+  });
+  // 滚近底部（600px 提前量）懒翻下一页；常驻哨兵（同日历/找剧口径）
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries.some((e) => e.isIntersecting) &&
+          current.hasMore &&
+          !current.isFetchingMore &&
+          shown.length > 0
+        ) {
+          current.loadMore();
+        }
+      },
+      { rootMargin: `${SENTINEL_ROOT_MARGIN_PX}px` },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
   // 返回保留浏览位置（页面滚在 app-shell 的 #content）
   useScrollRestore(
     'hongguo.reservation.scroll',
@@ -62,21 +94,11 @@ export function ReservationPage() {
     !current.isLoading && shown.length > 0,
   );
 
-  // 角标计数：total 优先、条数兜底（后端已翻页拉全并兜底，这里双保险；
-  // 数据未到显示骨架点，不让 0 冒充「没有预约」）
+  // 角标计数：响应下发的 total（首页即真值），缺失时条数兜底；
+  // 数据未到显示骨架点，不让 0 冒充「没有预约」
   const tabs: { key: boolean; label: string; count: number | null }[] = [
-    {
-      key: true,
-      label: t('reservation.tab.online'),
-      count: onlineQ.data ? Math.max(onlineQ.data.onlineTotal, onlineQ.data.items.length) : null,
-    },
-    {
-      key: false,
-      label: t('reservation.tab.offline'),
-      count: offlineQ.data
-        ? Math.max(offlineQ.data.offlineTotal, offlineQ.data.items.length)
-        : null,
-    },
+    { key: true, label: t('reservation.tab.online'), count: onlineQ.count },
+    { key: false, label: t('reservation.tab.offline'), count: offlineQ.count },
   ];
 
   return (
@@ -128,7 +150,7 @@ export function ReservationPage() {
           detail={current.error.message}
           onRetry={() => void current.refetch()}
         />
-      ) : (current.data?.items.length ?? 0) === 0 ? (
+      ) : current.items.length === 0 ? (
         <Empty className="py-16">
           <EmptyHeader>
             <EmptyMedia>
@@ -155,6 +177,14 @@ export function ReservationPage() {
               />
             ))}
           </div>
+          {/* 懒翻页：哨兵常驻列表尾（rootMargin 提前量），翻页中给反馈 */}
+          <div ref={sentinelRef} className="h-px" aria-hidden />
+          {current.isFetchingMore && (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
+              <Spinner aria-hidden />
+              {t('feed.loadingMore')}
+            </p>
+          )}
           {batch.managing && (
             <BatchBar
               count={batch.selected.size}

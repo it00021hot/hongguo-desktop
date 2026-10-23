@@ -29,7 +29,7 @@
 //!   VT 回调 trampoline 的 refcon 指向会话内部队列，故 decode_cb/encode_cb
 //!   分别与 Decompressor/Compressor 同文件（decode/encode），不在此处
 //! - [`probe`]：能力探测（会话可建吗 / 是不是硬件），进程级缓存
-//! - [`decode`]：HEVC 解码会话与播放末端逐帧解码器
+//! - [`decode`]：HEVC / H.264 解码会话与播放末端逐帧解码器
 //! - [`encode`]：H.264 编码会话
 //! - [`pipeline`]：HEVC→H.264 转码编排
 
@@ -40,7 +40,7 @@ mod pipeline;
 mod pixel;
 mod probe;
 
-pub use decode::HevcFrameDecoder;
+pub use decode::FrameDecoder;
 pub use pipeline::transcode_h264;
 pub use probe::{clear_probe_cache, encoder_available, h264_hw_encoder_available};
 

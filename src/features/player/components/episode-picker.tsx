@@ -19,7 +19,7 @@ import {
   useDownloadTasks,
   useRelatedSeries,
   useReserveSeries,
-  useReservations,
+  useReservationsFillAll,
   useSeriesEpisodes,
 } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
@@ -70,7 +70,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
   const { data: related } = useRelatedSeries(seriesId);
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const setBinge = usePlayerStore((s) => s.setBinge);
-  const { data: offlineReservations } = useReservations(false);
+  const offlineReservations = useReservationsFillAll(false);
   const { mutate: reserve, isPending: reserving } = useReserveSeries();
   const seasons = useMemo(() => {
     const list = (related?.works ?? []).filter((w) => seasonNoFromTag(w.tag) != null);
@@ -93,7 +93,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
     return list;
   }, [related?.works, series]);
   const reservedIds = useMemo(
-    () => new Set((offlineReservations?.items ?? []).map((r) => r.seriesId)),
+    () => new Set(offlineReservations.items.map((r) => r.seriesId)),
     [offlineReservations],
   );
   const switchSeason = (item: RelatedItem) => {

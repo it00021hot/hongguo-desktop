@@ -1,10 +1,11 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-preview
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview nsh nsh-smoke
 
 help:
-	@echo "dev        启动开发模式（Vite + Tauri）"
+	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
+	@echo "dev-sandbox 沙箱模式开发：数据/临时目录隔离到 target/（agent/受限终端可用）"
 	@echo "build      构建前端产物"
 	@echo "test       运行前端测试（vitest）"
 	@echo "test-rust  运行 Rust 测试（cargo test）"
@@ -16,10 +17,27 @@ help:
 	@echo "nsis      同步 Windows 安装器模板（升级 Tauri 后跑，需联网）"
 	@echo "clean      清理构建产物"
 	@echo "gpui       启动 GPUI 壳"
+	@echo "gpui-app   把 GPUI 壳打成 macOS .app（通知/Dock 身份需要 bundle；产物 target/gpui-app/红果.app）"
 	@echo "gpui-preview 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview"
+	@echo "nsh        启动 NSH 壳（第三壳，与 GPUI 壳共存；docs/nsh-shell-plan.md）"
+	@echo "nsh-smoke  NSH 壳冒烟验收：跑 scripts/*.txt 的 NSH_SCRIPT，截图落 target/nsh-smoke/"
 
+# 两种 dev 模式并存，不自动切换：
+# - dev：真实权限/真实数据（%APPDATA%\hongguo-downloader 与真实 WebView2
+#   profile）。必须在普通终端运行；agent/沙箱终端里子进程写不了
+#   %LOCALAPPDATA% 的 profile 和 %TEMP%，会报 0x800700AA。
+# - dev-sandbox：把 WebView2 profile、应用数据、临时目录全部重定向到
+#   target/ 下，专供沙箱/agent 终端跑；数据与真实库隔离，适合功能测试。
 dev:
 	pnpm tauri dev
+
+# 受限环境（agent 沙箱 / 只允许写工作区的终端）专用。默认 dev 会去写
+# %LOCALAPPDATA% 下的 WebView2 profile 和 %TEMP%，被拒时 WebView2 报
+# 0x800700AA「请求的资源在使用中」。本目标把 WebView2 profile（经
+# scripts/tauri.dev-sandbox.json）、HONGGUO_DATA_DIR 与 TEMP/TMP 全部
+# 指到 target/ 下；代价是 dev 的库/设置与真实 %APPDATA% 隔离（target/dev-data）。
+dev-sandbox:
+	node scripts/dev-sandbox.mjs
 
 # GPUI 壳（起步单壳）：直接消费 hongguo-service，操作与 Tauri 客户端一致。
 # 与 Tauri dev 并行无冲突（不同进程、不同窗口系统），但共享同一个数据库——
@@ -27,12 +45,39 @@ dev:
 gpui:
 	cargo run -p hongguo-gpui
 
+# macOS 应用包：系统通知/通知权限、Dock 身份、菜单栏应用名都挂在 bundle 上
+# （裸二进制下 gpui 明确报「not running from an app bundle」，通知不可用）。
+# ad-hoc 签名，本地/开发分发够用；正式分发换 Developer ID + notarize。
+gpui-app:
+	bash scripts/gpui-app.sh
+
 # 离屏 UI 预览（screenshot feature）：无头渲染真实壳代码 + 假数据快照，
 # 逐场景存 PNG——各功能菜单的视觉验收依据。机制与边界见
 # crates/hongguo-gpui/src/preview/mod.rs 头注释。
 # windows不支持
 gpui-preview:
 	cargo run -p hongguo-gpui --features screenshot -- --render-preview /tmp/hongguo-gpui-preview
+
+# NSH 壳（第三壳）：进程内直调 service，无 IPC；与 GPUI 壳共存至替值线。
+# 数据根与另外两壳平级独立（%APPDATA%\hongguo-nsh），互不锁库。
+nsh:
+	cargo run -p hongguo-nsh
+
+# NSH 壳冒烟验收：每个脚本是一条完整链路（启动 → 交互 → 截图 → quit）。
+# 逐个跑 scripts/*.txt，截图落 target/nsh-smoke/；任一截图缺失即失败。
+# 脚本里的截图路径相对仓库根（cargo 从根运行），所以先清空目标目录。
+nsh-smoke:
+	rm -rf target/nsh-smoke && mkdir -p target/nsh-smoke
+	@set -e; for f in crates/hongguo-nsh/scripts/*.txt; do \
+		echo "== $$f"; \
+		NSH_SCRIPT="$$(cat $$f)" cargo run -q -p hongguo-nsh; \
+	done
+	@for f in crates/hongguo-nsh/scripts/*.txt; do \
+		for shot in $$(grep -o 'target/nsh-smoke/[^;]*' $$f); do \
+			test -s $$shot || { echo "缺失截图: $$shot"; exit 1; }; \
+		done; \
+	done
+	@echo "NSH 冒烟通过：$$(ls target/nsh-smoke/*.png | wc -l) 张截图"
 
 build:
 	pnpm build
@@ -48,23 +93,54 @@ test-rust:
 # 质量闸门：一票否决。make 遇到非零退出就中止本 target 并让 make 整体失败，
 # 所以任何一道检查挂掉都是红的。别用 `-` 前缀或 `|| true` 把失败吞掉。
 # --all-targets 必须带：否则 #[cfg(test)] 里的代码根本不进 clippy 的检查范围。
-# macOS 双目标交叉 clippy：vt（VideoToolbox）等 cfg 门后的代码 Windows 宿主
-# 看不见，本次 v0.0.1 发版就是它带了 125 条警告上 CI。占位 CC/AR 只骗过
-# objc2-exception-helper 的 C 编译步骤，check/clippy 不链接、结果不受影响。
 # -D clippy::allow_attributes 是忽略标签禁令：#[allow] 直接拒；确需断言用
 # #[expect(reason)]——lint 不再触发时编译失败，杜绝过期放行。
+#
+# macOS 双目标交叉 clippy（守卫范围见 MAC_CROSS_CRATES）：交叉链上的依赖有
+# 真要编 C/C++ 的 build script（objc2-exception-helper、vswhom-sys 的 C++
+# 段），早年「占位 CC/AR 假成功即可」的口径已失效——实测在 cc 的归档步炸
+# 硬链接失败（2026-10-22）。注入真交叉工具链，前置 `winget install
+# LLVM.LLVM`。路径必须 C:/ 短路径形态：cc 会把带空格的路径按空格拆词
+#（C:/Program Files/... 直接炸），/c/... 的 MSYS 形态又会回落 PATH 撞上带
+# 空格的安装路径。
+# Windows 的 make 走 cmd.exe，recipe 里的 `VAR=value command` 是 POSIX
+# 语法（会被当成不存在的程序），所以用 make export 注入，Windows 与 Unix
+# 共用同一条 recipe。
+# **只在 Windows 宿主导出**：x86_64 Mac 上 x86_64-apple-darwin 就是宿主
+# 三元组，顶层 export 会把注入的编译器毒进宿主真实构建——静态库产物缺失，
+# gpui-preview 等真实构建炸 could not find native static library
+#（2026-10-19 实测）。macOS/Linux 原生有真编译器，不需要任何注入。
+ifeq ($(OS),Windows_NT)
+export CC_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang.exe
+export CXX_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang++.exe
+export AR_aarch64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
+export CC_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang.exe
+export CXX_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/clang++.exe
+export AR_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
+endif
+
+# macOS 交叉闸门的守卫范围：平台链正清单（两个 api 契约 + 媒体平台门面与
+# macOS 实现 + 播放引擎）。不用 --workspace 排除法——全图会拖进 aws-lc-sys
+#（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK 的 Darwin
+# libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可自由分发），
+# 全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条 macos-latest 腿就是
+# --workspace 全量）。hongguo-gpui 同理不在清单：其依赖 build script 要
+# bindgen Apple 框架头。hongguo-playback 在清单里：cpal 只留在
+# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies]，
+# Apple 目标不再拖出 coreaudio-sys。
+MAC_CROSS_CRATES := -p hongguo-player-api -p hongguo-media-platform-api \
+	-p hongguo-media-platform -p hongguo-media-platform-macos \
+	-p hongguo-player-macos -p hongguo-playback
+
 lint:
 	pnpm lint
 	pnpm format:check
 	cargo clippy --workspace --all-targets -- -D warnings -D clippy::allow_attributes
-	# macOS 双目标交叉：排除 hongguo-gpui——gpui 的依赖（gpui_media 等）在
-	# build script 里 bindgen Apple 框架头文件，Windows 宿主没有 macOS SDK
-	# 生不出来（真 macOS 环境原生 clippy 不受影响，CI 的 macOS job 覆盖）。
-	# hongguo-playback 同理：cpal → coreaudio-sys 0.2.18 对 Apple 目标无条件
-	# bindgen（要 libclang + macOS SDK），本机生不出来；macOS 覆盖由 Mac 本机
-	# 与 CI 承担，Windows 宿主那条仍全量含它。
-	CC_aarch64_apple_darwin=true AR_aarch64_apple_darwin=true cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
-	CC_x86_64_apple_darwin=true AR_x86_64_apple_darwin=true cargo clippy --workspace --exclude hongguo-gpui --exclude hongguo-playback --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+# vt（VideoToolbox）等 cfg 门后的代码 Windows 宿主看不见，v0.0.1 发版就是它
+# 带着警告上的 CI——这两条交叉把平台链在本地也守住（守卫范围与正清单依据见
+# 上面的 MAC_CROSS_CRATES 注释）。
+	cargo clippy $(MAC_CROSS_CRATES) --target aarch64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
+	cargo clippy $(MAC_CROSS_CRATES) --target x86_64-apple-darwin --all-targets -- -D warnings -D clippy::allow_attributes
 
 fmt:
 	cargo fmt --all

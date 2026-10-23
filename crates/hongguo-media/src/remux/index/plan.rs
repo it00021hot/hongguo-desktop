@@ -6,6 +6,20 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::{BoxHeader, find_box, parse_boxes};
 use hongguo_video::sample_table::{TrackInfo, collect_track};
 
+/// 一条 `edts/elst` 条目：从源媒体时间轴映射到 presentation 时间轴。
+///
+/// `media_time` 是 media timescale；`segment_duration` 是 movie timescale。
+/// 两者时基不同，不能直接相加。`-1` 是空 edit（只占 presentation 时长）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Edit {
+    pub segment_duration: u64,
+    pub media_time: i64,
+    pub rate: i32,
+}
+
+/// 正常播放速率（16.16 定点）。
+const EDIT_RATE_ONE: i32 = 0x0001_0000;
+
 /// 一个输入文件里的一条轨道：解析结果 + 要原样搬进产物的 box。
 pub struct SourceTrack {
     pub info: TrackInfo,
@@ -19,6 +33,8 @@ pub struct SourceTrack {
     /// 视频轨的 `vmhd` 或音频轨的 `smhd`
     pub header: Vec<u8>,
     pub dinf: Vec<u8>,
+    /// 源 `trak/edts/elst` 的全部条目。空 = 没有 edit list，按 media 起点补齐。
+    pub edits: Vec<Edit>,
 }
 
 /// 一个输入文件解析后的全部轨道，外加本集内的样本交织顺序。
@@ -49,6 +65,8 @@ pub struct MergedTrack {
     pub ctts: Vec<(u32, i32)>,
     /// `stss` 同步样本号。`None` 表示没有这张表 = 全部样本都是关键帧。
     pub stss: Option<Vec<u32>>,
+    /// `edts/elst`：逐集合成的 presentation 映射。至少一条（无源 edit 的补默认段）。
+    pub edits: Vec<Edit>,
 }
 
 /// 整个合并产物的索引。
@@ -103,6 +121,7 @@ pub fn read_source_file(moov: &[u8]) -> AppResult<SourceFile> {
             stsd: pick(&["stsd"])?,
             header: pick(&["vmhd", "smhd"])?,
             dinf: pick(&["dinf"])?,
+            edits: read_edits(moov, trak),
             info,
         });
     }
@@ -130,6 +149,52 @@ fn interleave_order(tracks: &[SourceTrack]) -> Vec<(usize, u32)> {
     all.into_iter().map(|(_, t, i)| (t, i)).collect()
 }
 
+/// 读一条轨道的 `edts/elst`。缺失/畸形返回空，调用方补默认 edit。
+///
+/// `elst` 的 `media_time` 是 media timescale、`segment_duration` 是 movie
+/// timescale；这里只做原样解析，跨集平移在 [`plan`] 里按 media ticks 累加。
+fn read_edits(data: &[u8], trak: &BoxHeader) -> Vec<Edit> {
+    let Some(edts) = find_box(data, trak.start, trak.start + trak.size, "edts") else {
+        return Vec::new();
+    };
+    let Some(elst) = find_box(data, edts.start, edts.start + edts.size, "elst") else {
+        return Vec::new();
+    };
+    let end = elst.start + elst.size;
+    if elst.start + 8 > end {
+        return Vec::new();
+    }
+    let version = data[elst.start];
+    let count = read_u32(data, elst.start + 4) as usize;
+    let entry = if version == 1 { 20 } else { 12 };
+    let mut edits = Vec::new();
+    for i in 0..count {
+        let at = elst.start + 8 + i * entry;
+        if at + entry > end {
+            break;
+        }
+        let (segment_duration, media_time, rate) = if version == 1 {
+            (
+                read_u64(data, at),
+                read_u64(data, at + 8) as i64,
+                read_u32(data, at + 16) as i32,
+            )
+        } else {
+            (
+                u64::from(read_u32(data, at)),
+                i64::from(read_u32(data, at + 4) as i32),
+                read_u32(data, at + 8) as i32,
+            )
+        };
+        edits.push(Edit {
+            segment_duration,
+            media_time,
+            rate,
+        });
+    }
+    edits
+}
+
 /// 把所有输入累加成一条完整的索引。
 ///
 /// 轨道结构与电影时基必须逐文件一致。`codec_probe` 已经拦过编码参数，这里补的
@@ -151,6 +216,7 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
         .iter()
         .any(|f| f.tracks.iter().any(|t| t.info.stss.is_some()));
 
+    let movie_ts = timescale_of(&first.mvhd, MVHD_TIMESCALE).max(1);
     let mut tracks = Vec::with_capacity(first.tracks.len());
     for t in 0..first.tracks.len() {
         let mut acc = Accumulator {
@@ -164,14 +230,23 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
             stts: Vec::new(),
             ctts: Vec::new(),
             stss: if want_stss { Some(Vec::new()) } else { None },
+            edits: Vec::new(),
             media_duration: 0,
             movie_duration: 0,
         };
 
         for (episode, file) in files.iter().enumerate() {
             let track = &file.tracks[t];
+            // 本集 media 起点：源 elst 的 media_time 都是相对**本集** media 的，
+            // 拼到合并轨上要整体平移到本集起点。
+            let media_start = acc.media_duration as i64;
+            let episode_edits = compose_episode_edits(track, media_start, movie_ts);
+            acc.movie_duration += episode_edits
+                .iter()
+                .map(|e| e.segment_duration)
+                .sum::<u64>();
+            acc.edits.extend(episode_edits);
             acc.push(&track.info, want_ctts, episode + 1);
-            acc.movie_duration += duration_of(&track.tkhd, TKHD_DURATION);
         }
 
         acc.mdhd = set_duration(&acc.mdhd, MDHD_DURATION, acc.media_duration);
@@ -179,13 +254,62 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
         tracks.push(acc.finish());
     }
 
-    let movie_duration: u64 = files
+    // 电影时长取各轨 presentation 的最大值：源 mvhd 是「各集自己的上界」，
+    // 逐集相加会把每集内部的音频/视频毫秒差也加进来（实测 10 集多出 76ms
+    // 尾部空档）。edit list 的段时长之和才是本轨真实的 presentation 结束点。
+    let movie_duration = tracks
         .iter()
-        .map(|f| duration_of(&f.mvhd, MVHD_DURATION))
-        .sum();
+        .map(|t| duration_of(&t.tkhd, TKHD_DURATION))
+        .max()
+        .unwrap_or(0);
     let mvhd = set_duration(&first.mvhd, MVHD_DURATION, movie_duration);
 
     Ok(MergeIndex { tracks, mvhd })
+}
+
+/// 把一集的源 edit 平移到合并轨的 media 起点；源没有 elst 时补一条默认段。
+///
+/// 默认段让每条轨在每个集边界都有明确的 presentation 映射，播放器不会拿
+/// 「上一条 edit 继续往后推」这种隐式行为解释拼接处。`segment_duration` 为 0
+/// 的畸形 edit 回落到 `tkhd` 时长，避免写出零长段。
+fn compose_episode_edits(track: &SourceTrack, media_start: i64, movie_ts: u32) -> Vec<Edit> {
+    let segment_fallback = {
+        let by_tkhd = duration_of(&track.tkhd, TKHD_DURATION);
+        if by_tkhd > 0 {
+            by_tkhd
+        } else {
+            let media_ts = u64::from(mdhd_timescale(&track.mdhd).max(1));
+            (track_duration(&track.info) * u64::from(movie_ts) / media_ts).max(1)
+        }
+    };
+    if track.edits.is_empty() {
+        return vec![Edit {
+            segment_duration: segment_fallback,
+            media_time: media_start,
+            rate: EDIT_RATE_ONE,
+        }];
+    }
+    track
+        .edits
+        .iter()
+        .map(|edit| Edit {
+            segment_duration: if edit.segment_duration > 0 {
+                edit.segment_duration
+            } else {
+                segment_fallback
+            },
+            media_time: if edit.media_time >= 0 {
+                media_start.saturating_add(edit.media_time)
+            } else {
+                edit.media_time
+            },
+            rate: if edit.rate == 0 {
+                EDIT_RATE_ONE
+            } else {
+                edit.rate
+            },
+        })
+        .collect()
 }
 
 /// 轨道结构一致性。
@@ -250,6 +374,19 @@ fn check_structure(files: &[SourceFile]) -> AppResult<()> {
                     ),
                 ));
             }
+            // 逐集时长相加的前提：同一轨的媒体时基一致（stts 的 delta 都是
+            // 「各自 mdhd 时基下的 tick」，混着加就是悄悄改速率）
+            if mdhd_timescale(&a.mdhd) != mdhd_timescale(&b.mdhd) {
+                return Err(structure_error(
+                    episode,
+                    &format!(
+                        "第 {} 条轨道的媒体时基是 {}，第 1 集是 {}",
+                        t + 1,
+                        mdhd_timescale(&b.mdhd),
+                        mdhd_timescale(&a.mdhd)
+                    ),
+                ));
+            }
         }
     }
     Ok(())
@@ -281,6 +418,8 @@ struct Accumulator {
     stts: Vec<(u32, u32)>,
     ctts: Vec<(u32, i32)>,
     stss: Option<Vec<u32>>,
+    /// 逐集 presentation 映射，最终写进 `edts/elst`
+    edits: Vec<Edit>,
     /// 媒体时基下的累计时长
     media_duration: u64,
     /// 电影时基下的累计时长
@@ -350,6 +489,7 @@ impl Accumulator {
             stts: self.stts,
             ctts: self.ctts,
             stss: self.stss,
+            edits: self.edits,
         }
     }
 }
@@ -384,7 +524,15 @@ fn track_duration(info: &TrackInfo) -> u64 {
 const MVHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const MVHD_DURATION: (usize, usize) = (16, 24);
 pub(super) const MDHD_DURATION: (usize, usize) = (16, 24);
+/// `mdhd` 的媒体时基字段（与 `mvhd` 同形：version/flags + creation +
+/// modification + timescale，载荷偏移 12）。
+const MDHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const TKHD_DURATION: (usize, usize) = (20, 28);
+
+/// 一条轨道的媒体时基（逐集相加与音画锁齐都按它换算）。
+fn mdhd_timescale(mdhd: &[u8]) -> u32 {
+    timescale_of(mdhd, MDHD_TIMESCALE)
+}
 
 /// box 头长度。[`raw`] 取的是**整个 box**，字段偏移是相对载荷的，两者要补上它。
 const BOX_HEADER: usize = 8;
@@ -450,6 +598,15 @@ fn read_u32(data: &[u8], at: usize) -> u32 {
         return 0;
     }
     u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
+}
+
+fn read_u64(data: &[u8], at: usize) -> u64 {
+    if at + 8 > data.len() {
+        return 0;
+    }
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&data[at..at + 8]);
+    u64::from_be_bytes(b)
 }
 
 /// 把一个 box 连头带尾原样取出。

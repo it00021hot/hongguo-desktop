@@ -2,13 +2,8 @@ import { useMutation } from '@tanstack/react-query';
 
 import { rank } from '../commands';
 import type { RankPage } from '../schema';
-import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
 import { dedupBy, fuzzyStaleTime, keys, useInfiniteStream } from './common';
 
 // ---------------------------------------------------------------- 排行榜 / 新剧 / 上新日历 / 预约
@@ -142,13 +137,63 @@ export function useNewCalendar(date: string) {
   };
 }
 
-/** 我的预约（isOnline：已上线 / 待上线 tab）。 */
+/**
+ * 我的预约（isOnline：已上线 / 待上线 tab）——单页懒翻页。
+ *
+ * 此前 queryFn 在后端一次性串行拉全：预约上百部时首屏要等几十个串行
+ * 请求（issue #11 的「已上线 5–8 秒才出来」）。现与上新日历同构：
+ * 首屏一页即回，角标计数直接用响应下发的两个 total（每页响应都带，
+ * 首页即真值），滚到底再翻下一页。需要全集做预约态成员判定的消费方
+ * （ReserveButton / 选集面板）挂 [`useReservationsFillAll`] 后台补齐，
+ * 与本查询共享同一份缓存。
+ */
 export function useReservations(isOnline: boolean) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: keys.reservations(isOnline),
-    queryFn: () => rank.reservations(isOnline),
+    queryFn: ({ pageParam }) => rank.reservations(isOnline, pageParam.offset, pageParam.sessionId),
+    initialPageParam: { offset: 0, sessionId: '' },
+    getNextPageParam: (last) =>
+      last.hasMore && last.nextOffset > 0
+        ? { offset: last.nextOffset, sessionId: last.sessionId }
+        : undefined,
     staleTime: fuzzyStaleTime(keys.reservations(isOnline)),
   });
+
+  const items = useMemo(
+    () => dedupBy(query.data?.pages.flatMap((p) => p.items) ?? [], (i) => i.seriesId),
+    [query.data],
+  );
+  const first = query.data?.pages[0];
+
+  return {
+    items,
+    /**
+     * 角标计数（首页响应下发；条数兜底只在响应缺 total 时生效）。
+     * null = 首页未到，让 tab 显示骨架点而不是冒充「没有预约」。
+     */
+    count: first ? Math.max(isOnline ? first.onlineTotal : first.offlineTotal, items.length) : null,
+    isLoading: query.isPending,
+    isFetchingMore: query.isFetchingNextPage,
+    error: query.error,
+    hasMore: query.hasNextPage,
+    loadMore: () => void query.fetchNextPage().catch(() => undefined),
+    refetch: () => query.refetch(),
+  };
+}
+
+/**
+ * 预约全集后台补齐（预约态成员判定用）：ReserveButton / 选集面板要拿
+ * 完整列表对号「是否已预约」，挂上后持续翻页直到拉完——预约页先画
+ * 一页，剩余页由这里在后台补上，两边共享同一份缓存不重复请求。
+ * 失败即停（错误态挡住续拉），下次挂载或失效重拉后自然重试。
+ */
+export function useReservationsFillAll(isOnline: boolean) {
+  const list = useReservations(isOnline);
+  useEffect(() => {
+    if (list.error || list.isLoading || !list.hasMore || list.isFetchingMore) return;
+    list.loadMore();
+  });
+  return list;
 }
 
 /** 批量删除预约（subscribe_delete；两个 tab 的列表一起失效）。 */

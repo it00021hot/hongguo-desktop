@@ -1,0 +1,79 @@
+{
+  "skill_name": "nsh-app-dev",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "We're adding a Settings screen to our NSH app. The app is at <APP_DIR> — it's a TSX app (made with `nsh init --template ts`) and today it just shows a shopping list.\n\nI want:\n- a Settings screen with a switch for dark mode that actually changes the app's appearance\n- a row that opens a dialog to pick the language (English / 中文 / 日本語)\n- a list of the saved items, each with a delete button\n- a button in the home screen that opens the Settings screen\n\nWrite the code. Then make sure it type checks and the tests pass.\n\nThe `nsh` CLI is at C:\\Users\\liu13\\projects\\nsh\\target\\debug\\nsh (the NSH checkout is at C:\\Users\\liu13\\projects\\nsh; its guides are in website/docs and its API reference in website/modules).",
+      "expected_output": "A TSX Settings screen using NSH's reactive API and nsh/base components, reachable from the home screen, with a passing `nsh check` and `nsh test`.",
+      "files": [],
+      "expectations": [
+        "The Settings screen uses NSH's reactive API (signal/computed/effect) and no React APIs (useState, useEffect, useMemo, useCallback)",
+        "The switch and the language dialog use nsh/base components (Switch, Dialog or AlertDialog) rather than hand-rolled ones",
+        "All text sits inside <Text> elements and every tag is PascalCase",
+        "The dark-mode switch actually changes the app's appearance (setColorScheme, or a 'dark:' class that follows the system), not only a local flag",
+        "The saved-items list gives each row a stable identity so deletion removes the right item",
+        "A test covering the new screen was added, `nsh test` was run, and the result is reported",
+        "`nsh check` was run on the app and its result is reported",
+        "Every nsh / nsh/base API the code uses really exists in NSH (no invented imports or props)"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Our NSH app at <APP_DIR> is a mixed app: TSX screens on top of a Rust crate (src/lib.rs). Right now the crate exports a Badge component, a Format module and a Counter class.\n\nI want a new Rust component: a Rating — five stars, the user taps one to set the rating (0..5), and it reports the new value to TS as an event. Export it so App.tsx can use it, and show it on the home screen with the current rating next to it.\n\nWrite the Rust and the TSX. Then make sure it compiles and the tests pass.\n\nThe `nsh` CLI is at C:\\Users\\liu13\\projects\\nsh\\target\\debug\\nsh (the NSH checkout is at C:\\Users\\liu13\\projects\\nsh; its guides are in website/docs and its API reference in website/modules).",
+      "expected_output": "A Rust Rating component in the crate's lib.rs, registered in the #[native_module] registry, used from App.tsx, with the app compiling and its tests passing.",
+      "files": [],
+      "expectations": [
+        "The component is declared with #[component] and has the required `-> impl IntoElement` return type",
+        "The props are declared with #[derive(Props)] and use Prop<T> for the value that changes",
+        "The event is declared with #[derive(Event)] and sent with cx.emit(...); the TSX handler name is the camelCase of the variant",
+        "The component is registered in the crate's root #[native_module(\"...\")] function with registry.register::<Rating>()",
+        "The styles use NSH's typed style API (.px_2(), move || theme()...) and never a bare f32 length",
+        "App.tsx imports the component from the crate's native specifier and passes the event handler",
+        "The app compiles and `nsh test` passes, and the result is reported"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We need to ship our NSH app. The app is at <APP_DIR> (TSX).\n\nTwo things:\n1. Make it installable: the bundle id should be com.acme.shopping, the version 2.1.0, and the icon is the square PNG at icon.png. Package it for the iOS simulator, for iOS devices (we sign with \"Apple Development: Jane Doe (ABCDE12345)\" and a dev.mobileprovision profile), for Android (release keystore release.jks, key alias upload) and for the web.\n2. Our host app downloads updates after release, so we need signed packages: set up the root/release key pair, certify the release key, publish build 7 and tell me how to verify it.\n\nChange the config where it belongs, and give me the exact commands in order, with what each one produces.\n\nThe `nsh` CLI is at C:\\Users\\liu13\\projects\\nsh\\target\\debug\\nsh (the NSH checkout is at C:\\Users\\liu13\\projects\\nsh; its guides are in website/docs and its API reference in website/modules).",
+      "expected_output": "nsh.json updated with the id, version, build and icon, plus the exact nsh package commands for the four targets and the keygen -> certify -> publish -> verify sequence.",
+      "files": [],
+      "expectations": [
+        "nsh.json is given the id com.acme.shopping, the version 2.1.0, a build number and the icon path",
+        "nsh package is invoked for ios-simulator, ios (with --sign and --profile), android (with --keystore and --key-alias) and web",
+        "The signing sequence is keygen (root and release) -> certify (--root, --key, --apps) -> publish (--key, --cert, --build 7) -> verify (--root)",
+        "The root key's .secret is kept offline and the host trusts the root's .pub",
+        "Where the outputs land is stated (.nsh/out for packages, the .nshpkg path for the published package)",
+        "Every CLI flag used actually exists on the nsh command it is given to"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "We have our own iOS app (UIKit, Swift) and we want to show an NSH TSX module inside one of our screens. Later we'll also let the app download signed .nshpkg packages at runtime and run them.\n\nWalk me through what we need:\n- which artifacts to add to the Xcode project, and how\n- the Swift code that mounts the module, loads a built bundle, and connects to a dev server during development\n- how the module gets its network permissions, and how the host caps its memory and call time\n- how the signed package flow works on iOS: the trust store, the root key, the revocation list\n- the CLI commands that produce the bundle we ship and the package we publish\n\nThe module lives at <APP_DIR>. The `nsh` CLI is at C:\\Users\\liu13\\projects\\nsh\\target\\debug\\nsh (the NSH checkout is at C:\\Users\\liu13\\projects\\nsh; its guides are in website/docs and its API reference in website/modules).",
+      "expected_output": "A walkthrough of embedding NSH on iOS: the xcframeworks, the NshAppView Swift code, the dev server, the capabilities and limits, the NshTrust signed-package flow, and the CLI commands.",
+      "files": [],
+      "expectations": [
+        "The iOS artifacts are named correctly: NativeShell.xcframework for release and NativeShellDev.xcframework for debug, and the Swift module is NativeShell",
+        "The Swift code mounts the module with NshAppView, loads a built bundle with loadBundle(at:) and connects with connectDevServer(_:)",
+        "The signed-package flow uses NshTrust(stateDirectory:), addRoot(...), updateRevocations(...) and loadPackage(at:trust:)",
+        "Capabilities and limits are covered: granting capabilities to the module, and the host's memory / call-time caps",
+        "The CLI commands are given: nsh build --release for the shipped bundle, nsh publish for the package, and nsh dev --server-only for the dev server",
+        "The dev-server URL is given in the right form (ws://host:port/ws)"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Our NSH app at <APP_DIR> (TSX) has to reach people on the web: the same app runs in desktop and phone browsers, and our marketing site will embed it.\n\nThree things:\n1. Get it running in a browser while I edit, then produce the static site to deploy. Tell me what the build needs installed, where the output lands, and how the site must be served (cache headers, the MIME type for the wasm).\n2. Show the HTML/JS that embeds the built app in our page with createPlayer — capped at 128 MB of memory and 2 s of call time, forced dark.\n3. The app currently lays out as a phone column. Give the home screen a sidebar layout when it runs in a desktop browser (a mouse and a wide container decide that), without changing the phone layout.\n\nThe `nsh` CLI is at C:\\Users\\liu13\\projects\\nsh\\target\\debug\\nsh (the NSH checkout is at C:\\Users\\liu13\\projects\\nsh; its guides are in website/docs and its API reference in website/modules).",
+      "expected_output": "The web dev/build commands with the wasm toolchain prerequisites, the deploy serving rules, a createPlayer embed with limits and forced dark, and a desktop-idiom layout branch in the app.",
+      "files": [],
+      "expectations": [
+        "Development is `nsh run App.tsx --target web`; packaging is `nsh package App.tsx --target web`, writing a static site under .nsh/out/<Name>/",
+        "The web runtime in the checkout must be built first (cargo xtask web), which needs `rustup target add wasm32-unknown-unknown` plus clang and llvm-ar",
+        "The serving rules are stated: index.html and manifest.webmanifest no-cache, everything else public, max-age=31536000, immutable, and .wasm as application/wasm",
+        "The embed uses createPlayer(document.querySelector(...), { wasm, ... }) and player.run(<the bundle.nshc bytes>)",
+        "The embed caps the app with run(code, { limits: \"memory=128MB,call=2s\" }) and forces dark with dark: true (or player.setDark)",
+        "The desktop layout branches on the idiom (platform.idiom === \"desktop\", platform.select, or the desktop={{...}} props), not on a hand-rolled window-size guess",
+        "Every nsh / nsh.js API and CLI flag used really exists (no invented options)"
+      ]
+    }
+  ]
+}

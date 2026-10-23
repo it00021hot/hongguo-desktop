@@ -1,0 +1,38 @@
+[package]
+name = "hongguo-player-windows"
+description = "红果桌面版 Windows 系统播放器：Media Foundation Media Engine + 自定义 IMFByteStream + DirectComposition 视频位"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 本 crate 只在 Windows 目标上编译出内容（其余目标为空壳）；平台专属依赖全部
+# 进本表，macOS 宿主上连依赖都不构建。
+[dependencies]
+hongguo-player-api = { path = "../hongguo-player-api" }
+# 供数：一集的明文按 Range 从渐进流里取。
+hongguo-stream = { path = "../hongguo-stream" }
+log = "0.4"
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# 宿主窗口句柄（契约层传进来的 RawWindowHandle）。
+raw-window-handle = "0.6"
+# Media Foundation（Media Engine / IMFByteStream）+ DirectComposition 视频位。
+# 0.62 已在依赖图里（tauri/wry/sysinfo 传递引入），按需裁剪 feature。
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+] }
+# `#[implement]`（IMFByteStream / IMFMediaEngineNotify）生成的代码引用
+# `windows_core::`，必须直接依赖且与 windows 同版本。
+windows-core = "0.62"
+# 合成视觉挂点（vendored 补丁，见根 Cargo.toml 的 [patch.crates-io]）：给
+# MediaEngine 提供「GPUI 内容之下的 IDCompositionVisual」。
+gpui-pre-windows = { version = "=0.3.9", package = "gpui-pre-windows", default-features = false }

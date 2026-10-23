@@ -5,8 +5,9 @@
 //! 标题 + 评分/热度/追剧/播放统计行 + 季徽/全集数/题材标签 + 简介 + 动作行
 //! 播放/收藏/点赞）→ 备案号 → 三 tab（选集 / 剧评 / 相关推荐）。数据全部
 //! 走官方 App 接口（分集档案 / video_detail meta / 剧评分页 / plan 相关
-//! 推荐）——「继续看第 N 集」的 N 从本地播放档案推（service 同一段
-//! resolve_entry 决策），云端观看历史兜底未做（Tauri 有，差异见页尾注释）。
+//! 推荐）——「继续看第 N 集」的 N 按 Tauri 详情页 continueIndex 同口径三段
+//! 决策：本地断点 >3 秒优先，云端观看历史 >3 秒兜底，本地有记录（≤3 秒）
+//! 仍视作看到那一集从头播。
 //!
 //! 未上线剧：Tauri 靠来源页 prefill 合成 0 集档案走降级视图；GPUI 的入口
 //! （首页/排行榜）只传 series_id 没有 prefill，解析失败一律落错误态 +
@@ -15,8 +16,13 @@
 //! 页面间不互相持有：加载与播放入口经事件交壳裁决（Shell 订阅
 //! [`DetailEvent`] 切目的地/调 feed 起播）。
 
+mod actions;
 mod header;
+mod load;
+#[cfg(feature = "screenshot")]
+mod preview_seed;
 mod related;
+mod render;
 mod reviews;
 mod tabs;
 
@@ -24,17 +30,18 @@ use std::sync::Arc;
 
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{App, RenderImage, div};
+use gpui_kit::{App, Entity, Window, div};
 use hongguo_api::danmaku::CommentItem;
 use hongguo_api::detail::RelatedSeries;
+use hongguo_api::history::WatchHistoryItem;
 use hongguo_api::interact::InteractionItem;
 use hongguo_common::model::Series;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
-use crate::cover_img;
 
 /// 详情页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -45,6 +52,11 @@ pub(crate) enum DetailEvent {
         vid_index: u32,
         start_secs: f64,
     },
+    /// 互动登录墙：与 Tauri 详情页 requireLogin 同序，提示后进设置页账号卡。
+    OpenSettings,
+    /// 点「出品方/演职员」芯片 → 创作者主页（壳切页；详情页实体保留，
+    /// 返回时原地恢复）。
+    OpenCreator(String),
 }
 
 /// 来源页（预约列表/榜单行）带来的档案快照。未上线剧解析分集必然失败
@@ -75,9 +87,6 @@ pub(crate) struct DetailView {
     series: Option<Arc<Series>>,
     /// 详情 meta（video_detail：简介/追剧/播放/热度/季徽/题材标签/备案号）。
     meta: Option<hongguo_api::detail::SeriesMeta>,
-    /// 图片缓存（封面/相关推荐卡/剧评头像共用），键 = 远端 URL。
-    images: std::collections::HashMap<String, Arc<RenderImage>>,
-    images_pending: std::collections::HashSet<String>,
     loading: bool,
     /// 档案装载失败（错误态 + 重试；Tauri ErrorState + ResolveButton 同位）。
     load_failed: bool,
@@ -93,15 +102,57 @@ pub(crate) struct DetailView {
     reviews_total: i64,
     reviews_score: String,
     reviews_score_cnt: i64,
+    /// 剧评标签统计（`extra.filter_tag`：评分卡里「爽剧 26」胶囊行）
+    reviews_tag_stats: Vec<hongguo_api::danmaku::CommentTagStat>,
     reviews_cursor: String,
     reviews_has_more: bool,
     reviews_loading: bool,
     // —— 相关推荐（plan 接口两格）——
     related: Option<Arc<RelatedSeries>>,
+    /// 相关推荐卡上的预约态（未上线剧的「预约」按钮；进入相关 tab 时拉取，
+    /// Tauri `useReservations(false/true)` 两个 tab 都查的口径）
+    related_reserved: std::collections::HashSet<String>,
+    /// 相关推荐预约在途（防连点）
+    related_reserve_pending: std::collections::HashSet<String>,
+    /// 预约列表已拉过（会话内一次）
+    related_reserve_loaded: bool,
     // —— 互动（收藏/点赞）：mget 回显列表是 best-effort，未命中按未互动 ——
     interact_items: Arc<Vec<InteractionItem>>,
     collect_pending: bool,
     digg_pending: bool,
+    /// 追更态（跟随列表首页本地判成员；未登录/未查到 = None）与在途翻转。
+    follow_is_on: Option<bool>,
+    follow_pending: bool,
+    /// 云端观看历史（登录可见；「继续看」的兜底源，Tauri 详情页同款）。
+    history: Vec<WatchHistoryItem>,
+    // —— 剧评发评框（Tauri ReviewComposer：评分 + 表情 + 文本）——
+    /// 剧评输入框（懒建：DetailView::new 没有 window，首个 render 里补）。
+    /// 剧评正文：多行文本域（Tauri ReviewComposer 的 Textarea 同款）
+    review_input: Option<Entity<gpui_kit::component::input::TextareaState>>,
+    /// 我的评分（1–5 星，0 = 未选——未选禁发，score 是剧评身份的一部分）。
+    review_stars: u8,
+    review_hover_stars: u8,
+    review_emoji_open: bool,
+    review_sending: bool,
+    /// 发送成功后的清空（set_value 要 window，render 期补执行）。
+    review_clear_input: bool,
+    /// Enter 提交请求（订阅回调没有 window，转交 render 执行）。
+    review_submit_pending: bool,
+    // —— 剧评互动（Tauri ReviewList 同款：点赞 / 回复线程 / 删除）——
+    /// 剧评点赞的本地乐观覆盖（key = 剧评 id）。
+    review_digg_override: std::collections::HashMap<String, bool>,
+    /// 剧评回复线程：review_id → 已拉回复（懒加载）与游标/展开/加载态。
+    review_replies: std::collections::HashMap<String, Arc<Vec<hongguo_api::danmaku::ReplyItem>>>,
+    review_replies_cursor: std::collections::HashMap<String, String>,
+    review_replies_open: std::collections::HashSet<String>,
+    review_replies_loading: std::collections::HashSet<String>,
+    /// 回复目标（review_id, 回复「回复」时的 (reply_id, 名字)）。
+    review_reply_target: Option<(String, Option<(String, String)>)>,
+    review_reply_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    review_reply_clear: bool,
+    review_reply_submit_pending: bool,
+    review_reply_sending: bool,
+    review_deleting: bool,
 }
 
 impl DetailView {
@@ -111,8 +162,6 @@ impl DetailView {
             series_id: String::new(),
             series: None,
             meta: None,
-            images: std::collections::HashMap::new(),
-            images_pending: std::collections::HashSet::new(),
             loading: false,
             load_failed: false,
             prefill: None,
@@ -124,402 +173,39 @@ impl DetailView {
             reviews_total: 0,
             reviews_score: String::new(),
             reviews_score_cnt: 0,
+            reviews_tag_stats: Vec::new(),
             reviews_cursor: String::new(),
             reviews_has_more: false,
             reviews_loading: false,
             related: None,
+            related_reserved: std::collections::HashSet::new(),
+            related_reserve_pending: std::collections::HashSet::new(),
+            related_reserve_loaded: false,
             interact_items: Arc::new(Vec::new()),
             collect_pending: false,
             digg_pending: false,
+            follow_is_on: None,
+            follow_pending: false,
+            history: Vec::new(),
+            review_input: None,
+            review_stars: 0,
+            review_hover_stars: 0,
+            review_emoji_open: false,
+            review_sending: false,
+            review_clear_input: false,
+            review_submit_pending: false,
+            review_digg_override: std::collections::HashMap::new(),
+            review_replies: std::collections::HashMap::new(),
+            review_replies_cursor: std::collections::HashMap::new(),
+            review_replies_open: std::collections::HashSet::new(),
+            review_replies_loading: std::collections::HashSet::new(),
+            review_reply_target: None,
+            review_reply_input: None,
+            review_reply_clear: false,
+            review_reply_submit_pending: false,
+            review_reply_sending: false,
+            review_deleting: false,
         }
-    }
-
-    /// 装载一部剧（同剧已装载则跳过；换剧强制重载）。档案与装饰性数据
-    /// （meta/剧评/相关推荐/互动态）并行各拉各的，互不拦页面——Tauri
-    /// react-query 各 query 独立降级同口径。
-    pub(crate) fn load(&mut self, series_id: String, cx: &mut Context<Self>) {
-        self.load_with_prefill(series_id, None, cx);
-    }
-
-    /// 装载（可带来源页 prefill）：解析失败且有 prefill 时走「即将上线」
-    /// 降级视图（prefill 合成 0 集档案，正常渲染流只换动作行）。
-    pub(crate) fn load_with_prefill(
-        &mut self,
-        series_id: String,
-        prefill: Option<DetailPrefill>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.loading || (self.series_id == series_id && self.series.is_some()) {
-            return;
-        }
-        self.series_id = series_id.clone();
-        self.series = None;
-        self.meta = None;
-        self.load_failed = false;
-        self.upcoming = false;
-        self.reserved = prefill.as_ref().map(|p| p.reserved).unwrap_or(false);
-        self.reserve_pending = false;
-        self.prefill = prefill.clone();
-        self.tab = DetailTab::Episodes;
-        self.reviews = Arc::new(Vec::new());
-        self.reviews_total = 0;
-        self.reviews_score.clear();
-        self.reviews_score_cnt = 0;
-        self.reviews_cursor.clear();
-        self.reviews_has_more = false;
-        self.related = None;
-        self.interact_items = Arc::new(Vec::new());
-        self.collect_pending = false;
-        self.digg_pending = false;
-        self.loading = true;
-        let state = Arc::clone(&self.state);
-        let sid = series_id.clone();
-        let rx = bridge::spawn(async move {
-            let env = state.api_env();
-            let cached = state
-                .store
-                .series_by_id(&sid)?
-                .filter(|s| !s.episodes.is_empty());
-            // 未上线剧解析必然失败：有 prefill 就用它合成 0 集档案
-            let (series, upcoming) = match cached {
-                Some(s) => (s, false),
-                None => {
-                    match hongguo_service::series_service::resolver::resolve_series(&sid, &env)
-                        .await
-                    {
-                        Ok(s) => {
-                            state.store.upsert_series(&s)?;
-                            (s, false)
-                        }
-                        Err(e) => match prefill.clone() {
-                            Some(p) => (synthesize_upcoming_series(&sid, &p), true),
-                            None => return Err(e),
-                        },
-                    }
-                }
-            };
-            // 装饰性 meta 失败不拦页面（头部相应行不渲染，Tauri 同口径）
-            let meta = hongguo_api::detail::fetch_series_meta(&sid, &env)
-                .await
-                .ok();
-            Ok::<_, hongguo_common::AppError>((series, meta, upcoming))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| {
-                view.loading = false;
-                match result {
-                    Ok((series, meta, upcoming)) => {
-                        view.load_image(series.cover.clone(), cx);
-                        view.meta = meta;
-                        view.series = Some(Arc::new(series));
-                        view.upcoming = upcoming;
-                        if !upcoming {
-                            // 头部统计行的评分来自剧评分页首页 extra——剧评
-                            // 本来就要拉，这里一并驱动
-                            view.load_reviews_first_page(cx);
-                            view.load_related(cx);
-                            view.load_interact_state(cx);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("[Detail] {series_id} 档案装载失败: {e}");
-                        view.load_failed = true;
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// 「继续看」目标集与起点（本地播放档案 >3 秒续播，service 同一段
-    /// resolve_entry 决策；Tauri 另有云端观看历史兜底，GPUI 未接）。
-    fn resume_entry(&self) -> (u32, f64) {
-        hongguo_service::play_service::resume::resolve_entry(
-            &self.state.store,
-            &self.series_id,
-            &[],
-        )
-        .ok()
-        .unwrap_or((1, 0.0))
-    }
-
-    /// 登录与否（settings 里有账号即已登录，与首页互动栏同口径）。
-    fn logged_in(&self) -> bool {
-        self.state
-            .settings()
-            .account
-            .map(|a| a.user_id)
-            .is_some_and(|id| !id.is_empty())
-    }
-
-    /// 互动回显（收藏/点赞态）：mget 全量列表，best-effort（失败留空 =
-    /// 全按未互动，Tauri useInteractionState 同口径）。登录后才拉。
-    pub(super) fn load_interact_state(&mut self, cx: &mut Context<Self>) {
-        if !self.logged_in() {
-            return;
-        }
-        let state = Arc::clone(&self.state);
-        let rx = bridge::spawn(async move {
-            let env = state.api_env();
-            hongguo_api::interact::fetch_interaction_state(&env)
-                .await
-                .map(|s| s.items)
-                .unwrap_or_default()
-        });
-        cx.spawn(async move |this, cx| {
-            let items = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, _| {
-                view.interact_items = Arc::new(items);
-            });
-        })
-        .detach();
-    }
-
-    /// 懒加载一张远端图进 images 表（封面/头像/相关卡共用；管线与全屏
-    /// 占位同源，状态各自持有）。
-    fn load_image(&mut self, url: String, cx: &mut Context<Self>) {
-        if url.is_empty()
-            || self.images.contains_key(&url)
-            || !self.images_pending.insert(url.clone())
-        {
-            return;
-        }
-        let rx = cover_img::fetch(url.clone());
-        cx.spawn(async move |this, cx| {
-            let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| match bytes {
-                Ok(b) => match image::load_from_memory(&b) {
-                    Ok(decoded) => {
-                        view.images.insert(
-                            url.clone(),
-                            Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                        );
-                        cx.notify();
-                    }
-                    Err(e) => {
-                        log::warn!("[Detail] 图片解码失败: {e}");
-                        view.images_pending.remove(&url);
-                    }
-                },
-                Err(e) => {
-                    log::warn!("[Detail] 图片加载失败: {e}");
-                    view.images_pending.remove(&url);
-                }
-            });
-        })
-        .detach();
-    }
-
-    // —— 渲染 ——
-    fn render_page(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
-        if self.loading || self.series.is_none() {
-            return v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .bg(theme.background)
-                .text_color(theme.foreground)
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(if self.loading {
-                            "加载中…"
-                        } else if self.load_failed {
-                            "加载失败"
-                        } else {
-                            "暂无内容"
-                        }),
-                )
-                .children(self.load_failed.then(|| {
-                    Button::new("detail-retry")
-                        .label("重试")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let sid = this.series_id.clone();
-                            // 强制重走装载：先清态再 load
-                            this.series_id.clear();
-                            this.load(sid, cx);
-                        }))
-                }))
-                .into_any_element();
-        }
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .id("detail-page")
-            .overflow_y_scroll()
-            .child(self.render_back_bar(cx))
-            .child(
-                div()
-                    .max_w(gpui_kit::px(1152.0))
-                    .mx_auto()
-                    .w_full()
-                    .px_8()
-                    .pb_8()
-                    .child(self.render_header(cx))
-                    .child(self.render_record_line(cx))
-                    .children(self.render_tabs(cx)),
-            )
-            .into_any_element()
-    }
-
-    /// 计数人性化（详情页头部精度）：万/亿带一位小数、整数省略小数点
-    /// （Tauri formatCountPrecise / hgplayer 头部同口径）。
-    fn fmt_count(n: i64) -> String {
-        if n >= 100_000_000 {
-            return format!("{:.1}亿", n as f64 / 100_000_000.0).replace(".0", "");
-        }
-        if n >= 10_000 {
-            return format!("{:.1}万", n as f64 / 10_000.0).replace(".0", "");
-        }
-        format!("{n}")
-    }
-
-    /// 秒 → mm:ss（选集格时长角标；Tauri formatDuration 同形态）。
-    fn fmt_duration(secs: i64) -> String {
-        format!("{}:{:02}", secs / 60, secs % 60)
-    }
-}
-
-/// prefill → 0 集合成档案（未上线剧）。只填展示必需字段；分集为空，
-/// 选集 tab 自然落「暂无分集信息」。
-fn synthesize_upcoming_series(series_id: &str, prefill: &DetailPrefill) -> Series {
-    Series {
-        series_id: series_id.to_string(),
-        title: prefill.title.clone(),
-        cover: prefill.cover.clone(),
-        episode_count: 0,
-        followed_cnt: 0,
-        tags: prefill.tags.clone(),
-        episodes: Vec::new(),
-        dismissed: false,
-    }
-}
-
-impl gpui_kit::Render for DetailView {
-    fn render(
-        &mut self,
-        _window: &mut gpui_kit::Window,
-        cx: &mut Context<Self>,
-    ) -> impl gpui_kit::IntoElement {
-        self.render_page(cx)
-    }
-}
-
-/// 预览种子（screenshot feature）：离屏矩阵的详情页场景——灌固定档案 +
-/// meta + 剧评 + 相关推荐 + 假封面，全程零网络。`tab` 选下半区初始 tab
-///（"detail" = 选集，"detail-related" = 相关推荐；剧评 tab 与选集共用
-/// 一张基准图即可覆盖，不单独出图）。
-#[cfg(feature = "screenshot")]
-impl DetailView {
-    pub(crate) fn debug_preview_seed(&mut self, tab: &str, cx: &mut Context<Self>) {
-        use crate::preview::fixtures;
-        use hongguo_api::detail::{RelatedItem, RelatedSeries, SeriesMeta};
-
-        self.loading = false;
-        self.load_failed = false;
-        if tab == "detail-upcoming" {
-            // 未上线降级视图：prefill 合成 0 集档案（预约态起「预约」按钮）
-            let prefill = DetailPrefill {
-                title: "长风渡口".into(),
-                cover: "preview://detail-cover".into(),
-                tags: vec!["古装".into(), "权谋".into()],
-                desc: "战乱年代，一介孤女在渡口撑起商行，卷入朝堂风云。".into(),
-                reserved: true,
-            };
-            self.upcoming = true;
-            self.reserved = prefill.reserved;
-            self.prefill = Some(prefill.clone());
-            self.series_id = "7200000".into();
-            self.series = Some(Arc::new(synthesize_upcoming_series("7200000", &prefill)));
-            self.images
-                .insert("preview://detail-cover".into(), fixtures::cover(6));
-            self.meta = None;
-            self.tab = DetailTab::Episodes;
-            cx.notify();
-            return;
-        }
-        self.tab = if tab == "detail-related" {
-            DetailTab::Related
-        } else {
-            DetailTab::Episodes
-        };
-        let mut series = Series::default();
-        series.series_id = "7100000".into();
-        series.title = "命运契约".into();
-        series.cover = "preview://detail-cover".into();
-        series.episode_count = 80;
-        series.tags = vec!["玄幻".into(), "逆袭".into(), "修真".into()];
-        series.episodes = (1..=80)
-            .map(|i| hongguo_common::model::Episode {
-                vid_index: i,
-                vid: format!("7100000:{i}"),
-                duration: 60 + (i as i64 % 7) * 9,
-                ..Default::default()
-            })
-            .collect();
-        self.series_id = series.series_id.clone();
-        self.series = Some(Arc::new(series));
-        let mut meta = SeriesMeta::default();
-        meta.hot_score = 37_860_000;
-        meta.followed_cnt = 271_000;
-        meta.play_cnt = 4_030_000;
-        meta.season = "第1季".into();
-        meta.record_number = "京网文〔2026〕0000-000号".into();
-        meta.intro = "落魄少年在一场契约游戏里觉醒了读档能力：每一次死亡都回到十分钟前。\
-                      他靠着这个能力在豪门倾轧与修真秘境之间反复横跳，把仇人一个个熬成了路人。\
-                      可他渐渐发现，所谓契约游戏的庄家，正是十分钟后的自己。"
-            .into();
-        self.meta = Some(meta);
-        self.images
-            .insert("preview://detail-cover".into(), fixtures::cover(0));
-        let mut reviews: Vec<CommentItem> = fixtures::comments();
-        if let Some(last) = reviews.last_mut() {
-            last.score = "9".into();
-            last.score_suffix_text = "观看2小时后点评".into();
-        }
-        self.reviews = Arc::new(reviews.clone());
-        self.reviews_total = 3716;
-        self.reviews_score = "8.6".into();
-        self.reviews_score_cnt = 12_000;
-        let mut works = fixtures::related_seasons();
-        for (i, item) in works.iter_mut().enumerate() {
-            let url = format!("preview://related-{i}");
-            self.images.insert(url.clone(), fixtures::cover(i + 1));
-            item.cover = url;
-        }
-        let mut guess = vec![RelatedItem {
-            series_id: "7200001".into(),
-            title: "重生之商海风云".into(),
-            score: 7.9,
-            play_cnt: 8_800_000,
-            episode_cnt: 66,
-            ..Default::default()
-        }];
-        guess.push(RelatedItem {
-            series_id: "7200002".into(),
-            title: "闪婚老公是豪门".into(),
-            play_cnt: 12_400_000,
-            episode_cnt: 99,
-            ..Default::default()
-        });
-        for (i, item) in guess.iter_mut().enumerate() {
-            let url = format!("preview://guess-{i}");
-            self.images.insert(url.clone(), fixtures::cover(i + 4));
-            item.cover = url;
-        }
-        self.related = Some(Arc::new(RelatedSeries { works, guess }));
-        self.interact_items = Arc::new(vec![InteractionItem {
-            series_id: "7100000".into(),
-            followed: true,
-            ..Default::default()
-        }]);
-        cx.notify();
     }
 }
 

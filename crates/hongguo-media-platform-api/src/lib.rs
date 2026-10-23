@@ -14,11 +14,13 @@
 //! 与仓库既有范式（`hongguo_media::backend` 的枚举分发）一致。
 
 pub mod audio;
+pub mod audio_output;
 pub mod transcode;
 pub mod video;
 
 pub use audio::AudioDecoder;
+pub use audio_output::{AudioOutputHost, AudioOutputStream, OutputFormat};
 pub use transcode::PlatformRequest;
 #[cfg(target_os = "windows")]
 pub use video::Nv12Plane;
-pub use video::{DecoderInit, FrameBuffer, VideoDecoder, VideoFrame};
+pub use video::{DecoderInit, FrameBuffer, VideoCodec, VideoDecoder, VideoFrame};

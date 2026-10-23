@@ -9,21 +9,21 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
-use gpui_kit::component::{ActiveTheme, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, Window, div};
 use hongguo_api::interact::{collect_series, digg_video};
 
 use super::DetailView;
 use crate::bridge;
 
-/// hgplayer 皮肤色（硬红线 11 的播放器豁免口径，与首页互动栏同源）：
-/// 星 = 收藏/评分，红 = 热度/点赞。
-fn star_color() -> gpui_kit::Rgba {
-    gpui_kit::rgba(0xfacc15ff)
+/// 星 = 收藏/评分，红 = 热度/点赞——都走业务语义令牌（Tauri 详情页
+/// `text-star` / `text-hot` 同款；亮暗分档在 `tokens` 里）。
+pub(super) fn star_color(mode: gpui_kit::component::ThemeMode) -> gpui_kit::Rgba {
+    crate::tokens::star(mode)
 }
-fn hot_color() -> gpui_kit::Rgba {
-    gpui_kit::rgba(0xef4444ff)
+pub(super) fn hot_color(mode: gpui_kit::component::ThemeMode) -> gpui_kit::Rgba {
+    crate::tokens::hot(mode)
 }
 
 impl DetailView {
@@ -38,7 +38,7 @@ impl DetailView {
                     .icon(gpui_kit::assets::IconName::ChevronLeft)
                     .ghost()
                     .small()
-                    .label("返回")
+                    .label(crate::i18n::t("detail.back"))
                     .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(super::DetailEvent::Back);
                     })),
@@ -47,31 +47,50 @@ impl DetailView {
     }
 
     pub(super) fn render_header(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let series = self.series.as_ref().expect("render_header 仅就绪态调用");
         let meta = self.meta.as_ref();
-        let cover = self.images.get(&series.cover).cloned();
+        let cover = crate::cover_img::card(&series.cover);
         // 统计行（Tauri 排版：评分 评分人数 → 红果热度值 → 追剧 → 播放）
         let mut stats: Vec<String> = Vec::new();
         if !self.reviews_score.is_empty() {
-            let mut seg = format!("{:.1}分", self.reviews_score.parse::<f64>().unwrap_or(0.0));
+            let mut seg = format!(
+                "{:.1}{}",
+                self.reviews_score.parse::<f64>().unwrap_or(0.0),
+                crate::i18n::t("detail.scoreUnit")
+            );
             if self.reviews_score_cnt > 0 {
                 seg.push_str(&format!(
-                    " {}人评分",
-                    Self::fmt_count(self.reviews_score_cnt)
+                    " {}",
+                    crate::i18n::tf(
+                        "detail.ratingCount",
+                        &[("count", &Self::fmt_count(self.reviews_score_cnt))],
+                    )
                 ));
             }
             stats.push(seg);
         }
         if let Some(m) = meta {
             if m.hot_score > 0 {
-                stats.push(format!("🔥红果热度值{}", Self::fmt_count(m.hot_score)));
+                stats.push(format!(
+                    "🔥{}",
+                    crate::i18n::tf(
+                        "detail.heatValue",
+                        &[("count", &Self::fmt_count(m.hot_score))],
+                    )
+                ));
             }
             if m.followed_cnt > 0 {
-                stats.push(format!("{}人追剧", Self::fmt_count(m.followed_cnt)));
+                stats.push(crate::i18n::tf(
+                    "detail.followCount",
+                    &[("count", &Self::fmt_count(m.followed_cnt))],
+                ));
             }
             if m.play_cnt > 0 {
-                stats.push(format!("{}次播放", Self::fmt_count(m.play_cnt)));
+                stats.push(crate::i18n::tf(
+                    "detail.playsCount",
+                    &[("count", &Self::fmt_count(m.play_cnt))],
+                ));
             }
         }
         // 标签行：季徽（红底高亮）+ 全 N 集 + 题材标签（meta 的 secondary_infos
@@ -105,11 +124,7 @@ impl DetailView {
                     .overflow_hidden()
                     .rounded(gpui_kit::px(12.0))
                     .bg(theme.secondary)
-                    .children(cover.map(|bitmap| {
-                        img(ImageSource::Render(bitmap))
-                            .size_full()
-                            .object_fit(ObjectFit::Cover)
-                    })),
+                    .child(cover),
             )
             .child(
                 v_flex()
@@ -135,18 +150,21 @@ impl DetailView {
                             .gap_1p5()
                             .children(
                                 meta.filter(|m| !m.season.is_empty())
-                                    .map(|m| Self::tag_pill(m.season.clone(), true, theme)),
+                                    .map(|m| Self::tag_pill(m.season.clone(), true, &theme)),
                             )
                             .when(!series.episodes.is_empty(), |row| {
                                 row.child(Self::tag_pill(
-                                    format!("全{}集", series.episodes.len()),
+                                    crate::i18n::tf(
+                                        "detail.allEpisodesBadge",
+                                        &[("count", &series.episodes.len().to_string())],
+                                    ),
                                     false,
-                                    theme,
+                                    &theme,
                                 ))
                             })
                             .children(
                                 tags.into_iter()
-                                    .map(|t| Self::tag_pill(t, false, theme))
+                                    .map(|t| Self::tag_pill(t, false, &theme))
                                     .collect::<Vec<_>>(),
                             )
                     }))
@@ -160,6 +178,7 @@ impl DetailView {
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(intro))
                     }))
+                    .child(self.render_creators(cx))
                     .child(if self.upcoming {
                         // 未上线降级视图（Tauri prefill 同款）：动作行换
                         // 「即将上线 + 预约（已预约可再点取消）」
@@ -176,12 +195,16 @@ impl DetailView {
                                     .py_1()
                                     .text_sm()
                                     .text_color(theme.muted_foreground)
-                                    .child("⌛ 即将上线"),
+                                    .child(format!("⌛ {}", crate::i18n::t("player.comingSoon"))),
                             )
                             .child(
                                 Button::new("detail-reserve")
                                     .icon(gpui_kit::assets::IconName::BellRing)
-                                    .label(if self.reserved { "已预约" } else { "预约" })
+                                    .label(if self.reserved {
+                                        crate::i18n::t("reservation.reserved")
+                                    } else {
+                                        crate::i18n::t("reservation.action")
+                                    })
                                     .outline()
                                     .text_color(if self.reserved {
                                         theme.muted_foreground
@@ -194,9 +217,9 @@ impl DetailView {
                             )
                             .into_any_element()
                     } else {
-                        // 动作行：播放/继续播放 + 收藏 + 点赞（Tauri 同三键；
-                        // 未登录点互动静默忽略——与首页互动栏同口径，Tauri
-                        // 是 toast + 去设置页，壳无对应路由暂分叉）
+                        // 动作行：播放/继续播放 + 收藏 + 点赞 + 追更（仅连载
+                        // 中显示）。收藏/点赞未登录给 toast 并进设置页账号卡；
+                        // 追更沿用 Tauri follow 专用提示。
                         h_flex()
                             .mt_5()
                             .items_center()
@@ -204,10 +227,16 @@ impl DetailView {
                             .gap_2()
                             .child(
                                 Button::new("detail-play")
+                                    .icon(gpui_kit::assets::IconName::Play)
                                     .label(if resume_ep > 1 {
-                                        format!("继续播放 第{}集", resume_ep)
+                                        // Tauri `detail.continueEpisode` / `playFirst`
+                                        // 原文（含数字两侧空格），并排对拍逐字对齐
+                                        crate::i18n::tf(
+                                            "detail.continueEpisode",
+                                            &[("index", &resume_ep.to_string())],
+                                        )
                                     } else {
-                                        "立即播放".to_string()
+                                        crate::i18n::t("detail.playFirst")
                                     })
                                     .primary()
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -227,41 +256,155 @@ impl DetailView {
                                 let collected = self.collected();
                                 Button::new("detail-collect")
                                     .icon(gpui_kit::assets::IconName::Star)
-                                    .label(if collected { "已收藏" } else { "收藏" })
+                                    .label(if collected {
+                                        crate::i18n::t("detail.collected")
+                                    } else {
+                                        crate::i18n::t("detail.collect")
+                                    })
                                     .outline()
                                     .text_color(if collected {
-                                        star_color().into()
+                                        star_color(theme.mode).into()
                                     } else {
                                         theme.foreground
                                     })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.toggle_collect(cx);
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_collect(window, cx);
                                     }))
                             })
                             .child({
                                 let digged = self.digged();
                                 Button::new("detail-digg")
                                     .icon(gpui_kit::assets::IconName::Heart)
-                                    .label("点赞")
+                                    .label(crate::i18n::t("player.interact.like"))
                                     .outline()
                                     .text_color(if digged {
-                                        hot_color().into()
+                                        hot_color(theme.mode).into()
                                     } else {
                                         theme.foreground
                                     })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.toggle_digg(cx);
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_digg(window, cx);
                                     }))
                             })
+                            .children((self.follow_visible()).then(|| {
+                                let on = self.follow_is_on.unwrap_or(false);
+                                Button::new("detail-follow")
+                                    .icon(gpui_kit::assets::IconName::Tv)
+                                    .label(if on {
+                                        crate::i18n::t("follow.following")
+                                    } else {
+                                        crate::i18n::t("follow.follow")
+                                    })
+                                    .outline()
+                                    .when(on, |b| {
+                                        b.border_color(theme.primary).text_color(theme.primary)
+                                    })
+                                    .disabled(self.follow_pending)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_follow(window, cx);
+                                    }))
+                            }))
                             .into_any_element()
                     }),
             )
             .into_any_element()
     }
 
+    /// 出品方 / 演职员（Tauri `series-detail-page.tsx` creators 块同款：
+    /// 头像 + 名字 + 角色行，点击跳创作者主页；无 uid 的旧条目仅展示）。
+    pub(super) fn render_creators(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let Some(meta) = &self.meta else {
+            return div().into_any_element();
+        };
+        if meta.creators.is_empty() {
+            return div().into_any_element();
+        }
+        let mut row = h_flex().mt_4().flex_wrap().items_center().gap_3();
+        for creator in &meta.creators {
+            let clickable = !creator.user_id.is_empty();
+            // 头像走 gpui 图片元素：圆形裁剪与尺寸由外层容器负责；没有头像
+            // 地址时退回通用图标。
+            let avatar_view = if creator.avatar.is_empty() {
+                h_flex()
+                    .size_7()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(theme.muted)
+                    .child(
+                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::UserRound)
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .size_7()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .rounded_full()
+                    .child(crate::cover_img::avatar(&creator.avatar))
+                    .into_any_element()
+            };
+            let mut chip = div()
+                .id(ElementId::from(format!(
+                    "detail-creator-{}-{}",
+                    creator.user_id, creator.name
+                )))
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
+                .py_1()
+                .pr_3()
+                .pl_1()
+                .tooltip({
+                    let name = creator.name.clone();
+                    move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(SharedString::from(
+                            crate::i18n::tf("detail.creatorHome", &[("name", &name)]),
+                        ))
+                        .build(window, cx)
+                    }
+                });
+            if clickable {
+                let uid = creator.user_id.clone();
+                chip = chip
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.secondary_hover))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(super::DetailEvent::OpenCreator(uid.clone()));
+                    }));
+            }
+            row = row.child(
+                chip.child(avatar_view).child(
+                    v_flex()
+                        .items_start()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                .child(SharedString::from(creator.name.clone())),
+                        )
+                        .children((!creator.role.is_empty()).then(|| {
+                            div()
+                                .text_size(gpui_kit::px(10.0))
+                                .text_color(theme.muted_foreground)
+                                .child(SharedString::from(creator.role.clone()))
+                        })),
+                ),
+            );
+        }
+        row.into_any_element()
+    }
+
     /// 备案号（头部块之下、tab 之上独立一行小字；空 = meta 未给不渲染）。
     pub(super) fn render_record_line(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let record = self
             .meta
             .as_ref()
@@ -288,7 +431,8 @@ impl DetailView {
             .rounded_full()
             .text_xs()
             .when(hot, |s| {
-                s.bg(hot_color()).text_color(gpui_kit::rgb(0xffffff))
+                s.bg(hot_color(theme.mode))
+                    .text_color(gpui_kit::rgb(0xffffff))
             })
             .when(!hot, |s| {
                 s.bg(theme.secondary).text_color(theme.muted_foreground)
@@ -328,8 +472,16 @@ impl DetailView {
             .unwrap_or(false)
     }
 
-    fn toggle_collect(&mut self, cx: &mut Context<Self>) {
-        if !self.logged_in() || self.collect_pending {
+    fn toggle_collect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.collect_pending {
+            return;
+        }
+        if !self.logged_in() {
+            window.push_notification(
+                Notification::info(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
+            cx.emit(super::DetailEvent::OpenSettings);
             return;
         }
         let next = !self.collected();
@@ -342,10 +494,28 @@ impl DetailView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| {
+            let _ = this.update_in(cx, |view, window, cx| {
                 view.collect_pending = false;
-                if let Err(e) = result {
-                    log::warn!("[Detail] 收藏失败: {e}");
+                match result {
+                    Ok(_) => window.push_notification(
+                        Notification::success(if next {
+                            crate::i18n::t("player.interact.collected")
+                        } else {
+                            crate::i18n::t("player.interact.uncollected")
+                        }),
+                        cx,
+                    ),
+                    Err(e) => {
+                        log::warn!("[Detail] 收藏失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
+                    }
                 }
                 // 成败都刷新回显（成功取新态；失败回落服务端真相）
                 view.load_interact_state(cx);
@@ -356,8 +526,16 @@ impl DetailView {
         cx.notify();
     }
 
-    fn toggle_digg(&mut self, cx: &mut Context<Self>) {
-        if !self.logged_in() || self.digg_pending {
+    fn toggle_digg(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.digg_pending {
+            return;
+        }
+        if !self.logged_in() {
+            window.push_notification(
+                Notification::info(crate::i18n::t("player.interact.loginRequired")),
+                cx,
+            );
+            cx.emit(super::DetailEvent::OpenSettings);
             return;
         }
         let (resume_ep, _) = self.resume_entry();
@@ -382,10 +560,28 @@ impl DetailView {
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let _ = this.update(cx, |view, cx| {
+            let _ = this.update_in(cx, |view, window, cx| {
                 view.digg_pending = false;
-                if let Err(e) = result {
-                    log::warn!("[Detail] 点赞失败: {e}");
+                match result {
+                    Ok(_) => window.push_notification(
+                        Notification::success(if next {
+                            crate::i18n::t("player.interact.liked")
+                        } else {
+                            crate::i18n::t("player.interact.undone")
+                        }),
+                        cx,
+                    ),
+                    Err(e) => {
+                        log::warn!("[Detail] 点赞失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
+                    }
                 }
                 view.load_interact_state(cx);
                 cx.notify();
@@ -393,6 +589,96 @@ impl DetailView {
         })
         .detach();
         cx.notify();
+    }
+
+    /// 取证辅助：走真实未登录收藏路径（toast + 切设置页），供截图验回执。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_trigger_collect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_collect(window, cx);
+    }
+
+    /// 「追更」按钮显隐：官方只在连载剧（series_status=0）出追更钮——
+    /// 完结剧「全 N 集」无钮（2026-10-15 实包口径，Tauri 同款）。
+    pub(super) fn follow_visible(&self) -> bool {
+        !self.upcoming && self.meta.as_ref().is_some_and(|m| m.series_status == 0)
+    }
+
+    /// 「是否已追」查询（跟随列表首页本地判成员，service 同一段；
+    /// 未登录不查——点击时给登录墙回音）。
+    pub(super) fn load_follow_state(&mut self, cx: &mut Context<Self>) {
+        self.follow_is_on = None;
+        if self.state.settings().account.is_none() {
+            return;
+        }
+        let state = Arc::clone(&self.state);
+        let sid = self.series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::is_following(&state, &sid).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                if let Ok(on) = result {
+                    view.follow_is_on = Some(on);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 追更切换（乐观翻转；失败回滚并透传错误原文；未登录给登录墙回音）。
+    pub(super) fn toggle_follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.follow_pending {
+            return;
+        }
+        if self.state.settings().account.is_none() {
+            window.push_notification(
+                Notification::error(crate::i18n::t("follow.loginRequired")),
+                cx,
+            );
+            return;
+        }
+        let next = !self.follow_is_on.unwrap_or(false);
+        self.follow_is_on = Some(next);
+        self.follow_pending = true;
+        cx.notify();
+        let state = Arc::clone(&self.state);
+        let sid = self.series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::toggle(&state, &sid, next).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update_in(cx, |view, window, cx| {
+                view.follow_pending = false;
+                match result {
+                    Ok(()) => window.push_notification(
+                        Notification::success(if next {
+                            crate::i18n::t("follow.followed")
+                        } else {
+                            crate::i18n::t("follow.unfollowed")
+                        }),
+                        cx,
+                    ),
+                    Err(e) => {
+                        // 失败回滚（下次重查拿服务端真相）
+                        view.follow_is_on = Some(!next);
+                        log::warn!("[Detail] 追更失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 未上线降级视图的预约切换（Tauri prefill 视图「预约」按钮同款：
@@ -418,16 +704,23 @@ impl DetailView {
                         view.reserved = next;
                         window.push_notification(
                             Notification::success(if next {
-                                "预约成功"
+                                crate::i18n::t("reservation.done")
                             } else {
-                                "已取消预约"
+                                crate::i18n::t("reservation.cancelled")
                             }),
                             cx,
                         );
                     }
                     Err(e) => {
                         log::warn!("[Detail] 预约操作失败: {e}");
-                        window.push_notification(Notification::error(format!("操作失败：{e}")), cx);
+                        let message = crate::i18n::app_error_text(&e);
+                        window.push_notification(
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
+                            cx,
+                        );
                     }
                 }
                 cx.notify();

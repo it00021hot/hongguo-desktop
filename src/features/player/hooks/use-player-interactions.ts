@@ -126,6 +126,19 @@ export function usePlayerInteractions(params: {
             .catch(() => undefined);
           return;
         }
+        // 无边框播放先退回常规窗口（红绿灯显回；chrome 由 app-shell 条件
+        // 自动回来）。面板开着时 Esc 仍归面板
+        if (
+          ui.playerFrameless &&
+          !seriesPanelOpen &&
+          !commentPanelOpen &&
+          !danmakuPanelOpen &&
+          !volumeOpen
+        ) {
+          ui.setPlayerFrameless(false);
+          void appApi.setTrafficLightsVisible(true).catch(() => undefined);
+          return;
+        }
         // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
         // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
         if (inBinge && !seriesPanelOpen && !commentPanelOpen && !danmakuPanelOpen && !volumeOpen) {

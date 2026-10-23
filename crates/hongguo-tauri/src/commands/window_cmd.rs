@@ -40,6 +40,30 @@ const MINI_MIN: (f64, f64) = (360.0, 180.0);
 /// 同款（#5：常态也允许缩到迷你尺寸，进出小屏只差几何与控制条形态）。
 const MAIN_MIN: (f64, f64) = (MINI_W, MINI_H);
 
+// ---------------------------------------------------------------- 无边框播放
+
+/// 播放模式「窗口化无边框」开着的标记（前端控制栏开关，会话态）：小屏
+/// 退出显回红绿灯时要不要重新藏，由它说了算——否则无边框播放进出一次
+/// 小屏，圆点就在纯画面上复活了。
+static FRAMELESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 藏/显 macOS 原生红绿灯（无边框播放模式的开关；小屏的藏显走同一实现）。
+///
+/// 刻意**不动 styleMask**（缘由见 [`set_traffic_lights_hidden`] 的注释）：
+/// 只 setHidden 三颗圆点，窗口圆角/阴影/边缘缩放全部保留。Windows/Linux
+/// 本就 decorations:false，命令照常成功、无实际操作。
+#[tauri::command]
+pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()> {
+    use std::sync::atomic::Ordering;
+    FRAMELESS.store(!visible, Ordering::Release);
+    #[cfg(target_os = "macos")]
+    set_traffic_lights_hidden(&app, !visible);
+    // Windows/Linux 没有红绿灯；AppHandle 是 Tauri 注入参数，非 macOS 目标显式忽略。
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+    Ok(())
+}
+
 /// 藏/显 macOS 原生红绿灯的三颗圆点（小屏模式用）。
 ///
 /// 刻意**不动 styleMask**：tao 的 `set_decorations` 是整体替换 styleMask，
@@ -100,6 +124,10 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
         return Ok(());
     }
 
+    // 常态此刻还是窗口真身：先把当前几何精确写进常态槽位（防抖线程
+    // 500ms 一拍，紧接着进形态就关窗会把最后一次拖动落在档外）
+    crate::window_state::save(&win);
+
     // 快照用 inner_size（内容尺寸）：exit 的 set_size 语义就是「设内容
     // 尺寸」，拿外框当内容还原会每圈漂移。红绿灯改为只 setHidden 后
     // （见 set_traffic_lights_hidden）styleMask 全程不动，macOS 下外框
@@ -120,24 +148,26 @@ pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     set_traffic_lights_hidden(&app, true);
 
-    let mon = win
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let (left, top, right, bottom) = work_area_logical(mon.as_ref());
-    // 小工作区（外接竖屏等）放不下就压到放得下为止
-    let w = MINI_W.min(right - left - 2.0 * MINI_MARGIN);
-    let h = MINI_H.min(bottom - top - 2.0 * MINI_MARGIN);
-
-    // 小屏放开到控件不换行的下限（可继续缩小，见 MINI_MIN），再缩到
-    // 标准小屏尺寸落角
     let _ = win.set_min_size(Some(tauri::LogicalSize::new(MINI_MIN.0, MINI_MIN.1)));
-    let _ = win.set_size(tauri::LogicalSize::new(w, h));
-    // 手动 min/max 而非 clamp：极小工作区下 min>max 时 clamp 会 panic
-    let x = (right - w - MINI_MARGIN).max(left);
-    let y = (bottom - h - MINI_MARGIN).max(top);
-    let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    // 上次小窗的几何有效（≥MINI_MIN 且落在任一显示器工作区内）就原样
+    // 回去——三种窗态各记各的槽位，切形态互不覆盖；没有记忆（首次进
+    // 小屏）才回 480×270 落角默认
+    if !crate::window_state::apply_saved(&win, crate::window_state::Mode::Mini, MINI_MIN) {
+        let mon = win
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| app.primary_monitor().ok().flatten());
+        let (left, top, right, bottom) = work_area_logical(mon.as_ref());
+        // 小工作区（外接竖屏等）放不下就压到放得下为止
+        let w = MINI_W.min(right - left - 2.0 * MINI_MARGIN);
+        let h = MINI_H.min(bottom - top - 2.0 * MINI_MARGIN);
+        // 手动 min/max 而非 clamp：极小工作区下 min>max 时 clamp 会 panic
+        let x = (right - w - MINI_MARGIN).max(left);
+        let y = (bottom - h - MINI_MARGIN).max(top);
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    }
     let _ = win.set_focus();
     Ok(())
 }
@@ -152,10 +182,18 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
     let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
-    // 原生红绿灯无条件显回（macOS 小屏时被藏了，见 enter_mini_screen）——
-    // 放在「无快照提前 return」之前，异常路径也要还原。
+    // 原生红绿灯按模式显回（macOS 小屏时被藏了，见 enter_mini_screen）——
+    // 放在「无快照提前 return」之前，异常路径也要还原。无边框播放开着时
+    // 保持隐藏：圆点不该在纯画面上复活（FRAMELESS 标记见其定义处）。
     #[cfg(target_os = "macos")]
-    set_traffic_lights_hidden(&app, false);
+    {
+        use std::sync::atomic::Ordering;
+        set_traffic_lights_hidden(&app, FRAMELESS.load(Ordering::Acquire));
+    }
+    // 退出前先把当前小窗几何精确写进小屏槽位（此刻窗态还是小屏，save 按
+    // 形态路由）：防抖线程 500ms 一拍，拖完立刻退出时最后一次拖动还悬在
+    // 档外——重进小屏就会回到拖动前的旧位置。
+    crate::window_state::save(&win);
     let saved = saved_geometry().take();
     let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));
     let Some(g) = saved else {
@@ -226,6 +264,19 @@ fn portrait_full_restore() -> std::sync::MutexGuard<'static, Option<(i32, i32, u
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// 当前窗态（window_state 落盘路由用）：竖屏亮着优先于小屏——正常流程
+/// 进小屏前会先退竖屏（前端 enterMini 的守卫），真叠起来时亮在眼前的
+/// 也是竖屏条。
+pub(crate) fn current_mode() -> crate::window_state::Mode {
+    if portrait_restore().is_some() {
+        crate::window_state::Mode::Portrait
+    } else if saved_geometry().is_some() {
+        crate::window_state::Mode::Mini
+    } else {
+        crate::window_state::Mode::Normal
+    }
+}
+
 /// 按视频宽高比重算竖屏几何并落窗（hgplayer kc 逐步同款）。
 fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
     let mon = win.current_monitor().ok().flatten();
@@ -282,6 +333,9 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
     if portrait_restore().is_some() || !aspect.is_finite() || aspect <= 0.0 {
         return Ok(());
     }
+    // 常态此刻还是窗口真身（小屏叠加进来时小屏入口已落过常态槽，幂等
+    // 无害）：先把当前几何精确写进常态槽位再切形态，理由同 enter_mini_screen
+    crate::window_state::save(&win);
     let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) else {
         return Ok(());
     };
@@ -297,11 +351,19 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
         PORTRAIT_MIN.0,
         PORTRAIT_MIN.1,
     )));
-    // 最大化进竖屏：退最大化直接进铺满档（hgplayer rE 的 Ev + kc(e, max)）
+    // 最大化进竖屏：退最大化直接进铺满档（hgplayer rE 的 Ev + kc(e, max)）；
+    // 普通进入优先回上次竖屏槽位（三种窗态各记各的），没有记忆才按比例
+    // 现算（首次进竖屏）
     if maximized {
         let _ = win.unmaximize();
+        fit_portrait(&win, aspect, true);
+    } else if !crate::window_state::apply_saved(
+        &win,
+        crate::window_state::Mode::Portrait,
+        PORTRAIT_MIN,
+    ) {
+        fit_portrait(&win, aspect, false);
     }
-    fit_portrait(&win, aspect, maximized);
     Ok(())
 }
 
@@ -357,6 +419,9 @@ pub fn exit_portrait_screen(app: AppHandle) -> AppResult<()> {
     let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
+    // 退出前先把当前竖屏几何精确写进竖屏槽位（此刻窗态还是竖屏，save 按
+    // 形态路由），理由同 exit_mini_screen
+    crate::window_state::save(&win);
     let _ = portrait_full_restore().take();
     let saved = portrait_restore().take();
     let _ = win.set_min_size(Some(tauri::LogicalSize::new(MAIN_MIN.0, MAIN_MIN.1)));

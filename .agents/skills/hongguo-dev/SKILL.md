@@ -68,3 +68,11 @@ make release      # 打包发布版（Tauri 壳）
 ## 目录归属（结构规范）
 
 前端 `pages/ + features/{player,update} + service/{tauri,commands,queries,schema} + stores/locales/utils/hooks`，`hongguo-api` 按域目录平铺（`client.rs` 统一入口 + `params.rs` 请求常量），GPUI 壳按域拆子模块（参照 `crates/hongguo-gpui/src/home/` 的模块树）。新代码按 `references/frontend.md` 的「目录归属判定」落位：同一逻辑只有一个明确归属，不堆巨石文件、不造转发层；大规模结构调整先出计划文档经确认再动代码。
+
+**平台实现一律分 crate**（与媒体层 `hongguo-media-platform-*` 同一口径，不为目录整齐造转发文件）：
+
+- 回放契约 `hongguo-player-api`（`PlayerEvent`/`PlaySource`/`OpenOptions`/`PlayerLike`/舞台几何/`HostWindow`）——不吃 UI、不吃平台实现；
+- 系统播放器实现 `hongguo-player-macos`（AVPlayer）/ `hongguo-player-windows`（MediaEngine + DComp 视频位），平台依赖全在各自 target 表，`#![cfg(target_os = …)]`；
+- 门面 `hongguo-player` 按 target 分派；壳只依赖门面，`#[cfg(target_os)]` 只允许出现在门面与 `platform` 门面里，业务/视图层出现平台分支即返工。
+
+GPUI 壳本身是单 crate；壳内**唯一**允许的平台代码是 `platform/`（业务语义门面，两端各有实现文件）与 `av_spike/`（macOS Phase 0 诊断，`HONGGUO_AV_SPIKE=1`）。新增平台能力先问「能不能进 `hongguo-player-*` / `hongguo-media-platform-*`」，不能才考虑 `platform/`。

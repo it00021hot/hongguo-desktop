@@ -15,19 +15,14 @@ cd "$(dirname "$0")/.."
 
 BASE=${1:?用法: check-file-size.sh <base-ref-or-sha>}
 LIMIT=800
-# 销号清单：从 dev 合入 main 时（2026-10-15，v0.4.5）首次暴露的 GPUI 存量
-GRANDFATHERED=(
-  crates/hongguo-gpui/src/home/controls.rs
-  crates/hongguo-gpui/src/home/mod.rs
-  crates/hongguo-gpui/src/pages/browse.rs
-  crates/hongguo-gpui/src/pages/new_drama.rs
-  crates/hongguo-gpui/src/pages/rank.rs
-  crates/hongguo-gpui/src/pages/reservations.rs
-  crates/hongguo-gpui/src/pages/settings.rs
-)
+# 销号清单：从 dev 合入 main 时（2026-10-15，v0.4.5）首次暴露的 GPUI 存量。
+# 2026-10-20 全部销号（`docs/gpui-shell-file-split.md`）：GPUI 壳已无 >800 行
+# 文件，清单清空——`is_grandfathered` 保留，留给以后真的出现存量豁免时再用。
+GRANDFATHERED=()
 is_grandfathered() {
   local f=$1
-  for g in "${GRANDFATHERED[@]}"; do
+  # `${arr[@]:-}` 让空清单在 bash 3.2 / `set -u` 下也不炸（macOS 自带 bash）。
+  for g in "${GRANDFATHERED[@]:-}"; do
     [ "$f" = "$g" ] && return 0
   done
   return 1

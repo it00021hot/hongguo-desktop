@@ -7,6 +7,7 @@ use std::time::Duration;
 #[cfg(feature = "screenshot")]
 use std::time::Instant;
 
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
@@ -20,6 +21,8 @@ use gpui_kit::{SharedString, div};
 use super::controls::CONTROLS_HOLD_SECS;
 use crate::bridge;
 use hongguo_service::login_service::flow::LoginResult;
+
+const DEFAULT_RETRY_SECS: u32 = 60;
 
 impl super::HomeView {
     /// 登录态（settings 账号卡片的 user_id 非空）。
@@ -54,8 +57,9 @@ impl super::HomeView {
         // 侧栏直接登出，按卸载语义先停播落进度）
         self.release_for_leave(cx);
         self.mfa_retry = None;
-        self.login_message = Some("已退出登录".to_string());
+        self.login_message = Some(crate::i18n::t("settings.loggedOut"));
         log::info!("[Login] 已退出登录");
+        cx.emit(super::HomeEvent::AccountChanged);
         cx.notify();
     }
 
@@ -67,7 +71,7 @@ impl super::HomeView {
         };
         let mobile = input.read(cx).value().trim().to_string();
         if mobile.len() != 11 || !mobile.starts_with('1') || self.login_busy {
-            self.login_message = Some("手机号格式不正确".into());
+            self.login_message = Some(crate::i18n::t("settings.loginInvalidMobile"));
             cx.notify();
             return;
         }
@@ -85,11 +89,24 @@ impl super::HomeView {
                     Ok(outcome) => {
                         // csrf 凭据已由 service 暂存（提交时消费），壳不再经手
                         log::info!("[Login] 发码成功: {}", outcome.message);
-                        view.login_message = Some(format!("{}（注意查收短信）", outcome.message));
+                        let wait = if outcome.retry_time > 0 {
+                            outcome.retry_time
+                        } else {
+                            DEFAULT_RETRY_SECS
+                        }
+                        .to_string();
+                        view.login_message = Some(crate::i18n::tf(
+                            "settings.codeSent",
+                            &[("s", wait.as_str())],
+                        ));
                     }
                     Err(e) => {
                         log::warn!("[Login] 发码失败: {e}");
-                        view.login_message = Some(format!("发码失败：{e}"));
+                        let message = crate::i18n::app_error_text(&e);
+                        view.login_message = Some(crate::i18n::tf(
+                            "settings.loginSendFailed",
+                            &[("message", message.as_str())],
+                        ));
                     }
                 }
                 cx.notify();
@@ -111,7 +128,7 @@ impl super::HomeView {
         let mobile = mobile_input.read(cx).value().trim().to_string();
         let code = code_input.read(cx).value().trim().to_string();
         if mobile.len() != 11 || !mobile.starts_with('1') {
-            self.login_message = Some("手机号格式不正确".into());
+            self.login_message = Some(crate::i18n::t("settings.loginInvalidMobile"));
             cx.notify();
             return;
         }
@@ -132,7 +149,11 @@ impl super::HomeView {
                 Err(e) => {
                     view.login_busy = false;
                     log::warn!("[Login] 登录失败: {e}");
-                    view.login_message = Some(format!("登录失败：{e}"));
+                    let message = crate::i18n::app_error_text(&e);
+                    view.login_message = Some(crate::i18n::tf(
+                        "settings.loginFailed",
+                        &[("message", message.as_str())],
+                    ));
                     cx.notify();
                 }
                 Ok(LoginResult::Success { user }) => {
@@ -141,7 +162,11 @@ impl super::HomeView {
                     log::info!("[Login] 登录成功: {} ({})", user.name, user.user_id);
                     // 账号落库与资料刷新（真昵称/高清头像）由 service 的
                     // complete_login 后台完成——壳不再自行跟进
-                    view.login_message = Some(format!("登录成功：{}", user.name));
+                    view.login_message = Some(crate::i18n::tf(
+                        "settings.loginSuccess",
+                        &[("name", user.name.as_str())],
+                    ));
+                    cx.emit(super::HomeEvent::AccountChanged);
                     cx.notify();
                 }
                 Ok(LoginResult::Mfa {
@@ -180,7 +205,11 @@ impl super::HomeView {
             LoginMfaStateEvent::Success { name } => {
                 self.login_busy = false;
                 self.mfa_retry = None;
-                self.login_message = Some(format!("登录成功：{name}"));
+                self.login_message = Some(crate::i18n::tf(
+                    "settings.loginSuccess",
+                    &[("name", name.as_str())],
+                ));
+                cx.emit(super::HomeEvent::AccountChanged);
             }
             LoginMfaStateEvent::Failed {
                 message_kind,
@@ -189,9 +218,9 @@ impl super::HomeView {
                 self.login_busy = false;
                 self.mfa_retry = None;
                 self.login_message = Some(if message_kind == "settings.loginMfaTimeout" {
-                    "5 分钟未确认，登录已超时退出".into()
+                    crate::i18n::t("settings.loginMfaTimeout")
                 } else {
-                    format!("登录失败：{message}")
+                    crate::i18n::tf("settings.loginFailed", &[("message", message.as_str())])
                 });
             }
             LoginMfaStateEvent::Waiting { server_tip } => {
@@ -202,52 +231,24 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 拉评论/回复头像（avatar URL → RGBA）。同一阶梯（嗅探透传 jpeg，
-    /// 失败退回首字圆形占位）；key 就是 URL，列表里同人多条只拉一次。
-    /// `on_miss` 场景不重试：头像属装饰信息，失败静默（与封面同口径）。
-    pub(super) fn load_avatar(&mut self, url: String, cx: &mut Context<Self>) {
-        if url.is_empty()
-            || self.avatars.contains_key(&url)
-            || !self.avatars_pending.insert(url.clone())
-        {
-            return;
-        }
-        let rx = bridge::spawn({
-            let remote = url.clone();
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    hongguo_protocol::cover::acquire_renderable(&remote).map(|(bytes, _)| bytes)
-                })
-                .await
-                .expect("阻塞池 join")
-            }
-        });
-        cx.spawn(async move |this, cx| {
-            let bytes: Vec<u8> = match rx.await.expect("tokio 桥不会丢弃发送端") {
-                Ok(b) => b,
-                Err(e) => {
-                    log::warn!("[Home] 头像加载失败: {e}");
-                    return;
-                }
-            };
-            let _ = this.update(cx, |view, cx| match image::load_from_memory(&bytes) {
-                Ok(decoded) => {
-                    view.avatars.insert(
-                        url,
-                        Arc::new(crate::image_upload::render_image(decoded.to_rgba8())),
-                    );
-                    cx.notify();
-                }
-                Err(e) => log::warn!("[Home] 头像解码失败: {e}"),
-            });
-        })
-        .detach();
-    }
-
     /// 登录面板（居中卡片）：已登录显示账号+退出；未登录显示手机号/验证码
     /// 表单 + 登录按钮。点遮罩收起。
     pub(super) fn render_login_panel(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let account = self.state.settings().account;
+        // 按钮门槛与 Tauri 登录弹窗同款：手机号 11 位、验证码 ≥4 位
+        let mobile = self
+            .login_mobile
+            .as_ref()
+            .map(|i| i.read(cx).value().trim().to_string())
+            .unwrap_or_default();
+        let code = self
+            .login_code
+            .as_ref()
+            .map(|i| i.read(cx).value().trim().to_string())
+            .unwrap_or_default();
+        let mobile_ok = mobile.len() == 11 && mobile.starts_with('1');
+        let code_ok = code.len() >= 4;
+        let theme = cx.theme();
         v_flex()
             .absolute()
             .inset_0()
@@ -266,24 +267,57 @@ impl super::HomeView {
                 let mobile_input = self.login_mobile.clone();
                 let code_input = self.login_code.clone();
                 v_flex()
-                    .w(gpui_kit::px(300.0))
-                    .p_5()
-                    .gap_3()
-                    .rounded(gpui_kit::px(12.0))
+                    // Tauri 登录弹窗 512×383（DialogContent max-w-sm + p-6）
+                    .w(gpui_kit::px(512.0))
+                    .p_6()
+                    .gap_4()
+                    .rounded(gpui_kit::px(10.0))
                     .bg(gpui_kit::rgb(0x1f1f1f))
                     .on_mouse_down(
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
+                    // 头部：标题 + 说明 + 关闭（Tauri DialogHeader 同构）
                     .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .text_color(gpui_kit::rgb(0xffffff))
-                            .child(match &account {
-                                Some(a) => SharedString::from(format!("账号：{}", a.user_name)),
-                                None => "登录红果".into(),
-                            }),
+                        h_flex()
+                            .items_start()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .text_size(gpui_kit::px(18.0))
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                            .text_color(theme.foreground)
+                                            .child(match &account {
+                                                Some(a) => SharedString::from(crate::i18n::tf(
+                                                    "settings.accountId",
+                                                    &[("id", a.user_name.as_str())],
+                                                )),
+                                                None => SharedString::from(crate::i18n::t(
+                                                    "settings.loginTitle",
+                                                )),
+                                            }),
+                                    )
+                                    .children(account.is_none().then(|| {
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child(crate::i18n::t("settings.loginPrompt"))
+                                    })),
+                            )
+                            .child(
+                                Button::new("login-close")
+                                    .icon(gpui_kit::assets::IconName::X)
+                                    .ghost()
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.login_panel_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .when_some(account.clone(), |s, a| {
                         s.child(
@@ -294,7 +328,7 @@ impl super::HomeView {
                         )
                         .child(
                             Button::new("login-logout")
-                                .label("退出登录")
+                                .label(crate::i18n::t("settings.logout"))
                                 .danger()
                                 .small()
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -305,46 +339,75 @@ impl super::HomeView {
                         )
                     })
                     .when(account.is_none(), |s| {
-                        s.children(
-                            mobile_input
-                                .as_ref()
-                                .map(|input| Input::new(input).h(gpui_kit::px(32.0)).text_sm()),
+                        s.child(
+                            // 手机号：字段标签 + 输入（Tauri FieldLabel 同款）
+                            v_flex()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child(crate::i18n::t("settings.loginMobilePlaceholder")),
+                                )
+                                .children(
+                                    mobile_input
+                                        .as_ref()
+                                        .map(|input| Input::new(input).h(gpui_kit::px(36.0))),
+                                ),
                         )
                         .child(
-                            h_flex()
-                                .items_center()
-                                .gap_2()
-                                .children(code_input.as_ref().map(|input| {
-                                    Input::new(input).flex_1().h(gpui_kit::px(32.0)).text_sm()
-                                }))
+                            v_flex()
+                                .gap_1p5()
                                 .child(
-                                    Button::new("login-send-code")
-                                        .label(if self.login_busy {
-                                            "发送中…"
-                                        } else {
-                                            "发送验证码"
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .disabled(self.login_busy)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.login_send_code(cx);
-                                        })),
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child(crate::i18n::t("settings.loginCodePlaceholder")),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .children(code_input.as_ref().map(|input| {
+                                            Input::new(input).flex_1().h(gpui_kit::px(36.0))
+                                        }))
+                                        .child(
+                                            Button::new("login-send-code")
+                                                .icon(gpui_kit::assets::IconName::Send)
+                                                .label(if self.login_busy {
+                                                    crate::i18n::t("settings.loginSending")
+                                                } else {
+                                                    crate::i18n::t("settings.loginSendCode")
+                                                })
+                                                .outline()
+                                                .small()
+                                                .disabled(self.login_busy || !mobile_ok)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.login_send_code(cx);
+                                                })),
+                                        ),
                                 ),
                         )
                         .child(
                             Button::new("login-submit")
                                 .label(if self.mfa_retry.is_some() {
-                                    "重试登录"
+                                    crate::i18n::t("settings.loginRetry")
                                 } else {
-                                    "登录"
+                                    crate::i18n::t("settings.loginAction")
                                 })
                                 .primary()
-                                .small()
-                                .disabled(self.login_busy)
+                                .w_full()
+                                .disabled(self.login_busy || !mobile_ok || !code_ok)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.login_submit(cx);
                                 })),
+                        )
+                        .child(
+                            // Tauri loginRiskNote 原文
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(crate::i18n::t("settings.loginRiskNote")),
                         )
                     })
                     .children(self.login_message.clone().map(|msg| {
@@ -366,15 +429,8 @@ impl super::HomeView {
             .rounded_full()
             .overflow_hidden()
             .size(gpui_kit::px(size));
-        match self.avatars.get(url) {
-            Some(img) => frame
-                .child(
-                    gpui_kit::img(gpui_kit::ImageSource::Render(Arc::clone(img)))
-                        .size_full()
-                        .object_fit(gpui_kit::ObjectFit::Cover),
-                )
-                .into_any_element(),
-            None => frame
+        if url.is_empty() {
+            return frame
                 .flex()
                 .items_center()
                 .justify_center()
@@ -385,8 +441,11 @@ impl super::HomeView {
                     let ch = name.chars().next().unwrap_or('游');
                     SharedString::from(ch.to_string())
                 })
-                .into_any_element(),
+                .into_any_element();
         }
+        frame
+            .child(crate::cover_img::avatar(url))
+            .into_any_element()
     }
 
     /// 取证辅助（screenshot feature 的 HONGGUO_SHOT_PANEL=login）：打开

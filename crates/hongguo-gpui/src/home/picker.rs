@@ -13,7 +13,7 @@ use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, ImageSource, ObjectFit, SharedString, div, img};
+use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::detail::{RelatedItem, fetch_related_series};
 use hongguo_api::reservation::{fetch_reservations, reserve_series};
 
@@ -26,7 +26,7 @@ impl super::HomeView {
     /// 拉当前剧的相关作品·系列（plan/v；每剧一次，失败静默可重试）。
     /// 季卡片数据源：works 里季号可解析的条目（当前剧由浮层渲染时从
     /// 档案合成插头部，与 Tauri seasons memo 同构）。
-    fn load_related_seasons(&mut self, series_id: String, cx: &mut Context<Self>) {
+    pub(super) fn load_related_seasons(&mut self, series_id: String, cx: &mut Context<Self>) {
         if self.related_seasons.contains_key(&series_id)
             || !self.related_loading.insert(series_id.clone())
         {
@@ -45,12 +45,10 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| match result {
                 Ok(works) => {
-                    // 季卡片封面走同一张 covers 表（懒加载，与全屏占位同源）
-                    for item in &works {
-                        view.load_cover(item.series_id.clone(), item.cover.clone(), cx);
-                    }
                     view.related_seasons
                         .insert(series_id.clone(), Arc::new(works));
+                    // 封面预热必须在数据到位处排产：渲染期只查盘不排产
+                    view.prewarm_season_covers(cx);
                 }
                 Err(sid) => {
                     view.related_loading.remove(&sid);
@@ -60,14 +58,14 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 「第N季」→ 季号（Tauri seasonNoFromTag 同款正则）。
-    fn season_no(tag: &str) -> Option<u32> {
-        let rest = tag.strip_prefix("第")?;
-        let no: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if no.is_empty() || !rest[no.len()..].starts_with("季") {
-            return None;
-        }
-        no.parse().ok()
+    /// 季卡封面排转码（card 档）：渲染期 [`crate::cover_img::card`] 只查
+    /// 成品图在不在盘上，没人预热就永远是占位块（2026-10-23 用户实测
+    /// 系列剧 tab 封面全空的根因）。数据到位与浮层打开两处调用——后者
+    /// 兜住缓存命中（早退不走到货回调）与「当前季合成条目」。
+    fn prewarm_season_covers(&self, cx: &mut Context<Self>) {
+        let (_, seasons) = self.seasons_of();
+        let covers: Vec<String> = seasons.iter().map(|(w, _)| w.cover.clone()).collect();
+        crate::cover_img::prewarm(&covers, hongguo_protocol::cover::EDGE_CARD, cx);
     }
 
     /// 季列表合成（Tauri seasons memo 同构）：plan 只回其他季，当前季
@@ -84,7 +82,9 @@ impl super::HomeView {
             .unwrap_or_default();
         let mut out: Vec<(RelatedItem, u32)> = works
             .iter()
-            .filter_map(|w| Self::season_no(&w.tag).map(|no| (w.clone(), no)))
+            .filter_map(|w| {
+                crate::home::season::season_no_from_tag(&w.tag).map(|no| (w.clone(), no))
+            })
             .collect();
         if !out.iter().any(|(w, _)| w.series_id == *sid) {
             // 当前季缺失：从档案合成（tag/playCnt 档案没有，卡片留空即可）
@@ -92,6 +92,7 @@ impl super::HomeView {
                 RelatedItem {
                     series_id: sid.clone(),
                     title: now.title.clone(),
+                    cover: now.cover.clone(),
                     tag: String::new(),
                     episode_cnt: now.episode_count as u32,
                     ..Default::default()
@@ -140,6 +141,8 @@ impl super::HomeView {
         {
             self.load_related_seasons(now.series_id.clone(), cx);
             self.load_reservations(cx);
+            // 缓存命中时上面的拉取会早退，预热在这里兜底（含当前季合成条目）
+            self.prewarm_season_covers(cx);
         }
         cx.notify();
     }
@@ -149,7 +152,7 @@ impl super::HomeView {
     /// （连选连跳，关闭走 Esc/收起/点外部）。红色是 hgplayer 皮肤（硬红线
     /// 11 的播放器豁免）。「系列剧」tab 与下载完成角标随相关作品/预约、
     /// 下载能力的对齐步骤补。
-    pub(super) fn render_picker(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    pub(super) fn render_picker(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(now) = &self.now else {
             return div().into_any_element();
         };
@@ -164,6 +167,9 @@ impl super::HomeView {
         };
         let start = active_group as u32 * GROUP_SIZE + 1;
         let end = (start + GROUP_SIZE - 1).min(total);
+        // 系列剧 tab 的计数角标（Tauri `seasons.length` 同款：浮层打开时
+        // 系列列表已拉过，非空才显示）
+        let season_count = self.seasons_of().1.len();
 
         // 头部：选集 | 系列剧 双 tab（hgplayer 同款）+ 全 N 集 + 收起
         let header = h_flex()
@@ -174,16 +180,18 @@ impl super::HomeView {
                 h_flex()
                     .gap_4()
                     .child(self.picker_tab(
-                        "选集",
+                        crate::i18n::t("player.episodes"),
                         !self.picker_tab_series,
+                        None,
                         cx.listener(|this, _, _, cx| {
                             this.picker_tab_series = false;
                             cx.notify();
                         }),
                     ))
                     .child(self.picker_tab(
-                        "系列剧",
+                        crate::i18n::t("player.seriesList"),
                         self.picker_tab_series,
+                        (season_count > 0).then_some(season_count),
                         cx.listener(|this, _, _, cx| {
                             this.picker_tab_series = true;
                             if let Some(now) = this.now.clone() {
@@ -201,12 +209,16 @@ impl super::HomeView {
                         div()
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xa3a3a3ff))
-                            .child(format!("全{total}集"))
+                            .child(crate::i18n::tf(
+                                "player.totalEpisodes",
+                                &[("count", &total.to_string())],
+                            ))
                     }))
                     .child(
                         Button::new("picker-close")
                             .icon(IconName::ChevronDown)
-                            .ghost()
+                            .custom(super::controls::chrome_variant(cx))
+                            .cursor_pointer()
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.picker_open = false;
@@ -294,22 +306,16 @@ impl super::HomeView {
                     }))
             }));
 
-        let hint = div()
-            .mt_3()
-            .pt_2p5()
-            .border_t_1()
-            .border_color(gpui_kit::rgba(0x262626ff))
-            .text_xs()
-            .text_color(gpui_kit::rgba(0x737373ff))
-            .child("选定集数即选中本剧：单击画面也可选中，滚轮/↑↓ 切集，Esc 退出");
-
         v_flex()
             .id("picker-panel")
             .absolute()
-            .right_4()
-            .bottom_12()
-            .w(gpui_kit::px(472.0))
-            .max_h(gpui_kit::relative(0.62))
+            // 贴「选集」按钮向上弹（Tauri EpisodePicker 挂按钮 wrapper 同款：
+            // 右缘与按钮对齐、间距 8）
+            .right_0()
+            .bottom(gpui_kit::relative(1.0))
+            .mb(gpui_kit::px(8.0))
+            .w(gpui_kit::px(452.0))
+            .max_h(gpui_kit::px(440.0))
             .p_4()
             .rounded(gpui_kit::px(12.0))
             .bg(gpui_kit::rgba(0x171717f2))
@@ -335,17 +341,18 @@ impl super::HomeView {
                     .then_some(group_tabs)
                     .map(|tabs| div().child(tabs).child(grid).into_any_element())
             })
-            .children((!self.picker_tab_series).then_some(hint))
             .into_any_element()
     }
 
     /// 选集浮层头部的一个 tab（红条高亮激活态）。
     fn picker_tab(
         &self,
-        label: &'static str,
+        label: impl Into<SharedString>,
         active: bool,
+        badge: Option<usize>,
         on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
     ) -> gpui_kit::AnyElement {
+        let label: SharedString = label.into();
         div()
             .id(ElementId::from(format!("picker-tab-{label}")))
             .relative()
@@ -376,7 +383,22 @@ impl super::HomeView {
                 )
             })
             .on_click(on_click)
-            .child(label)
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(label)
+                    .children(badge.map(|n| {
+                        // Tauri Badge：bg-red-500 圆角胶囊、白字
+                        div()
+                            .rounded_full()
+                            .bg(gpui_kit::rgb(0xef4444))
+                            .px_1p5()
+                            .text_size(gpui_kit::px(11.0))
+                            .text_color(gpui_kit::rgb(0xffffff))
+                            .child(SharedString::from(n.to_string()))
+                    })),
+            )
             .into_any_element()
     }
 
@@ -409,9 +431,11 @@ impl super::HomeView {
     /// 预约一个未上线季（乐观置「已预约」，失败回滚；Tauri useReserveSeries
     /// 同口径——只做预约，取消预约在日历页，浮层里没有入口）。
     fn reserve_season(&mut self, series_id: String, cx: &mut Context<Self>) {
-        if !self.logged_in()
-            || self.reserved_ids.contains(&series_id)
-            || !self.reserve_pending.insert(series_id.clone())
+        if !self.logged_in() {
+            self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
+            return;
+        }
+        if self.reserved_ids.contains(&series_id) || !self.reserve_pending.insert(series_id.clone())
         {
             return;
         }
@@ -427,9 +451,17 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.reserve_pending.remove(&series_id);
-                if let Err(e) = result {
-                    view.reserved_ids.remove(&series_id);
-                    log::warn!("[Home] 预约失败: {e}");
+                match result {
+                    Ok(()) => view.show_toast(crate::i18n::t("reservation.done"), cx),
+                    Err(e) => {
+                        view.reserved_ids.remove(&series_id);
+                        log::warn!("[Home] 预约失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
+                    }
                 }
                 cx.notify();
             });
@@ -439,9 +471,9 @@ impl super::HomeView {
 
     /// 系列剧 tab：各季卡片（Tauri EpisodePicker 同款：封面 + 剧名 +
     /// 「tag · 全N集 · 播放量」数据行，右侧 播放中/预约/播放 三态；当前季
-    /// 红框高亮，可播季点击换剧，浮层不关）。封面走 covers 表（HEIC 签名
-    /// URL 经 cover 管线，拉取在 load_related_seasons 完成处发起）。
-    fn render_seasons_tab(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    /// 红框高亮，可播季点击换剧，浮层不关）。封面走 gpui 的图片缓存（HEIC
+    /// 签名 URL 经 cover 管线转码落盘后按路径取）。
+    fn render_seasons_tab(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let (current_sid, seasons) = self.seasons_of();
         v_flex()
             .gap_2()
@@ -454,16 +486,22 @@ impl super::HomeView {
                     gpui_kit::rgba(0x00000000)
                 };
                 let sid_click = item.series_id.clone();
-                let cover = self.covers.get(&item.series_id).cloned();
+                let cover = crate::cover_img::card(&item.cover);
                 let mut meta: Vec<String> = Vec::new();
                 if !item.tag.is_empty() {
                     meta.push(item.tag.clone());
                 }
                 if item.episode_cnt > 0 {
-                    meta.push(format!("全{}集", item.episode_cnt));
+                    meta.push(crate::i18n::tf(
+                        "player.totalEpisodes",
+                        &[("count", &item.episode_cnt.to_string())],
+                    ));
                 }
                 if item.play_cnt > 0 {
-                    meta.push(format!("{}次播放", Self::fmt_play_count(item.play_cnt)));
+                    meta.push(crate::i18n::tf(
+                        "browse.playCount",
+                        &[("count", &Self::fmt_play_count(item.play_cnt))],
+                    ));
                 }
                 h_flex()
                     .id(gpui_kit::ElementId::from(format!(
@@ -497,11 +535,7 @@ impl super::HomeView {
                             .overflow_hidden()
                             .rounded(gpui_kit::px(6.0))
                             .bg(gpui_kit::rgba(0x333333cc))
-                            .children(cover.map(|bitmap| {
-                                img(ImageSource::Render(bitmap))
-                                    .size_full()
-                                    .object_fit(ObjectFit::Cover)
-                            })),
+                            .child(cover),
                     )
                     .child(
                         v_flex()
@@ -515,7 +549,10 @@ impl super::HomeView {
                                     .text_color(gpui_kit::rgb(0xffffff))
                                     .truncate()
                                     .child(SharedString::from(if item.title.is_empty() {
-                                        format!("第{no}季")
+                                        crate::i18n::tf(
+                                            "player.seasonNo",
+                                            &[("no", &no.to_string())],
+                                        )
                                     } else {
                                         item.title.clone()
                                     })),
@@ -532,7 +569,7 @@ impl super::HomeView {
                                             .text_size(gpui_kit::px(10.0))
                                             .line_height(gpui_kit::relative(1.45))
                                             .text_color(gpui_kit::rgb(0xffffff))
-                                            .child("即将上线")
+                                            .child(crate::i18n::t("player.comingSoon"))
                                     }))
                                     .child(
                                         div()
@@ -549,7 +586,7 @@ impl super::HomeView {
                             .text_xs()
                             .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(gpui_kit::rgb(0xef4444))
-                            .child("播放中")
+                            .child(crate::i18n::t("player.nowPlaying"))
                     }))
                     .children((unreleased && !current).then(|| {
                         // 未上线季：预约按钮（Tauri BellRing 圆胶囊同款；
@@ -591,11 +628,11 @@ impl super::HomeView {
                             })
                             .child(Icon::new(gpui_kit::assets::IconName::BellRing).size_3())
                             .child(if reserved {
-                                "已预约"
+                                crate::i18n::t("reservation.reserved")
                             } else if pending {
-                                "预约中…"
+                                crate::i18n::t("reservation.reserving")
                             } else {
-                                "预约"
+                                crate::i18n::t("reservation.action")
                             })
                     }))
                     .children((!current && !unreleased).then(|| {
@@ -612,7 +649,7 @@ impl super::HomeView {
                             .text_xs()
                             .text_color(gpui_kit::rgba(0xd4d4d4ff))
                             .child(Icon::new(gpui_kit::assets::IconName::Play).size_3())
-                            .child("播放")
+                            .child(crate::i18n::t("player.play"))
                     }))
             }))
             .into_any_element()
@@ -623,11 +660,15 @@ impl super::HomeView {
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_picker(&mut self, cx: &mut Context<Self>) {
         self.picker_open = true;
-        self.picker_tab_series = true;
+        // 默认系列剧 tab（验季卡片/预约）；HONGGUO_PICKER_TAB=grid 拍选集网格
+        self.picker_tab_series = std::env::var("HONGGUO_PICKER_TAB")
+            .map(|v| v != "grid")
+            .unwrap_or(true);
         self.controls_until = Some(Instant::now() + Duration::from_secs(CONTROLS_HOLD_SECS));
         if let Some(now) = self.now.clone() {
             self.load_related_seasons(now.series_id.clone(), cx);
             self.load_reservations(cx);
+            self.prewarm_season_covers(cx);
         }
         cx.notify();
     }

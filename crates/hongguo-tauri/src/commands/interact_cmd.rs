@@ -48,10 +48,12 @@ pub async fn danmaku_send(
 /// 返回**服务端回显的完整评论对象**（头像/昵称/uid/时间齐全）——
 /// 前端直接插列表顶部。
 ///
-/// `mention_user_id` + `context_comment_ids` 同时在场 = **@小果AI 提及
-/// 评论**（2026-10-15/16 官方实包：rich_text tp=15/uri=uid +
+/// `mention_user_id` + `context_comment_ids` 同时在场 = **@提及评论**
+/// （2026-10-15/16 官方实包：rich_text tp=15/uri=uid +
 /// business_param.aibot_mention_context=最近评论 id 嵌套数组；官方单集
 /// 流里的提及评论带 AI 回复，见 flows-official-follow.jsonl:3314）。
+/// `mention_user_name` 是被提及者昵称——text 前缀与段文本都是
+/// `@昵称\u{FFFC}`，缺了会张冠李戴成「小果」。
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
@@ -59,15 +61,17 @@ pub async fn comment_send(
     book_id: String,
     text: String,
     mention_user_id: Option<String>,
+    mention_user_name: Option<String>,
     context_comment_ids: Option<Vec<String>>,
 ) -> AppResult<CommentItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
-    let mention = match (mention_user_id, context_comment_ids) {
+    let mention = match (mention_user_id, mention_user_name, context_comment_ids) {
         // 上下文 id 允许为空（面板无评论时也能 @；官方上下文是软信息，
         // 实包为最近评论 id，缺失不影响提及生效）
-        (Some(uid), Some(ids)) if !uid.trim().is_empty() => Some(CommentMention {
+        (Some(uid), Some(name), Some(ids)) if !uid.trim().is_empty() => Some(CommentMention {
             user_id: uid.trim().to_string(),
+            user_name: name,
             comment_ids: ids,
         }),
         _ => None,

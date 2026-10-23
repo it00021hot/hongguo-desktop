@@ -1,0 +1,1 @@
+wait 9000; resize 900 620; shot target/nsh-smoke/07-player.png; key space; wait 600; shot target/nsh-smoke/08-player-chrome.png; key space; key Down; wait 8000; shot target/nsh-smoke/09-player-next.png; quit

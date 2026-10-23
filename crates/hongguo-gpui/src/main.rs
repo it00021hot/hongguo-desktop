@@ -14,26 +14,45 @@
 //! 范围：浏览类操作（推荐流 / 排行榜，含封面、加载与失败态）。剧集详情与
 //! 播放（帧流 → GPU 纹理）是 §5.3 spike，另行立项。
 
+#[cfg(target_os = "macos")]
+mod av_spike;
+mod boss_key;
 mod bridge;
+mod cover_asset;
+mod cover_image_cache;
 mod cover_img;
+#[cfg(target_os = "macos")]
+mod crash_log;
 mod danmaku_emoji;
 mod detail;
 mod emoji_files;
+mod emoji_scan;
 mod events;
-mod home;
+pub(crate) mod home;
 mod http_client;
+mod i18n;
 mod image_upload;
+#[cfg(target_os = "macos")]
+mod macos;
 mod mini;
 mod pages;
+mod pill_tab;
+mod platform;
 mod play_activity;
 mod playback_prefs;
+mod portrait;
 mod preview;
 #[cfg(feature = "screenshot")]
 mod screenshot;
 mod shell;
+mod single_instance;
 mod toast;
+mod tokens;
+mod ui_prefs;
+mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
+mod window_restore;
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -58,7 +77,30 @@ pub(crate) fn tokio() -> &'static tokio::runtime::Runtime {
 fn main() {
     // 日志先于一切：装配失败的原因只在这里（与 Tauri 壳同一约定）。预览
     // 模式同样要日志与 panic 留痕，所以这两样在数据根声明之前就位。
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // 毫秒时间戳：卡顿诊断看的就是亚秒级间隔（2x 下一帧 16.7ms），
+    // 默认的秒级精度会把「停顿 120ms」和「正常」印成同一秒。
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+    // Windows 默认定时器精度 ~15.6ms：播放循环的毫秒级轮询会被拉长成一整个
+    // tick，2x 下变成「两帧一起到 → 33ms 空档」的节拍抖动（日志里
+    // `[Playback][video]` 的 ≤20/≤33ms 分档能直接看到）。浏览器/播放器都会
+    // 在播放期把精度提到 1ms，这里同样做；进程退出系统自动回收。
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "winmm")]
+        unsafe extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+        }
+        let result = unsafe { timeBeginPeriod(1) };
+        if result == 0 {
+            log::info!("[Shell] Windows 定时器精度已提升到 1ms");
+        } else {
+            log::warn!(
+                "[Shell] timeBeginPeriod(1) 失败（{result}），播放轮询可能受 15.6ms 粒度影响"
+            );
+        }
+    }
     // panic 留痕：音频设备回调等非主线程的 panic 会静默带走整条线程
     // （实测：回调线程一死，声音原地消失、时钟冻结、界面无限「缓冲中」，
     // 日志里却一片安静）。钩子让它至少留下现场，然后 abort 显性化。
@@ -69,6 +111,13 @@ fn main() {
         );
         std::process::abort();
     }));
+    // Phase 0 AVPlayer spike：HONGGUO_AV_SPIKE=1 时整个进程走独立诊断路径，
+    // 不声明数据根、不抢单实例、不碰任何业务状态（默认启动路径零改动）。
+    #[cfg(target_os = "macos")]
+    if crate::av_spike::requested() {
+        crate::av_spike::run();
+        return;
+    }
     // 离屏预览：--render-preview <目录> 直接接管进程。必须在下方声明
     // 交互壳数据根之前分发——preview::run 要把数据根指到预览专用目录
     //（set_shell_data_root 是 OnceLock，只有第一次生效）。管线编在
@@ -91,6 +140,16 @@ fn main() {
     // （%APPDATA%\hongguo-gpui，与 hongguo-downloader 无任何交集），
     // 互不锁库（实测并存时后启动者因库锁直接退出）。
     hongguo_store::paths::set_shell_data_root("hongguo-gpui");
+    // 崩溃取证：数据目录就位后装（信号处理器要把调用栈写进数据目录）。
+    #[cfg(target_os = "macos")]
+    crash_log::install();
+    // 单实例：已有实例在跑就请它把窗口带到前台，自己安静退出（Tauri
+    // single-instance 插件同语义）。必须早于开库——上一个实例可能正持库锁
+    //（隐身藏窗/小屏/竖屏形态都在跑），撞锁退出会让用户看到「点图标没反应」。
+    if !single_instance::claim() {
+        log::info!("[Shell] 已有实例在运行：已请求它前置窗口，本进程退出");
+        return;
+    }
     let state = build_app_state();
 
     // 资产源必须接上：gpui 的 SvgRenderer 从 App 的 AssetSource 读 SVG——
@@ -102,47 +161,216 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。
+            // 必须在 App 跑起来之后注册：Carbon 的 application event target
+            // 要等 NSApplication 就位，开跑前注册会拿到空 target、把热键
+            // 装到一个永远不会派发事件的地方。失败只记日志——快捷键被占用
+            // 不该拦启动，用户进设置换一个即可。
+            if let Err(e) = boss_key::apply(&state.settings().boss_key) {
+                log::warn!("[BossKey] {e}（进设置换一个快捷键）");
+            }
+            // Windows 非打包应用的 Toast 需要稳定的 AppUserModelID；macOS
+            // 通知中心也用同一身份展示。必须在开窗前设好。
+            cx.set_app_identity("com.hongguo.desktop", "红果");
+            // 语言与主题一样在开窗前就位：所有首帧文案都必须已经是用户上次
+            // 选择的语言，不能先画中文再闪成英文。
+            let ui_prefs = crate::ui_prefs::load();
+            crate::i18n::set_locale(ui_prefs.locale);
             // 封面是 CDN 签名 URL：gpui 图片缓存需要一个 HTTP 客户端才能拉远程资源。
             http_client::ReqwestClient::install(cx);
-            // 客户端视觉身份是深色（与 Tauri 壳一致）；后续接跟随系统。
-            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
-            let bounds = gpui_kit::Bounds::centered(
-                None,
-                // 默认窗口与 Tauri conf 同参（1280×840，最小 1024×680）
-                gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
-                cx,
-            );
-            // 默认构建用不到这个句柄（只有 screenshot feature 抓帧要），
-            // 关掉 feature 时按「有意不用」放行，别为一个变量把 feature 拧到反。
-            #[cfg_attr(
-                not(feature = "screenshot"),
-                expect(unused_variables, reason = "句柄只有 screenshot feature 用")
-            )]
-            let (shell_window, shell) = gpui_kit::open_window(
-                // 无边框（Tauri decorations:false 同款）：以组件库 TitleBar
-                // 的窗口选项为基底——标题栏自绘、拖拽与窗口钮走平台原生命中
-                // 测试（WindowControlArea → HTCAPTION/HTMINBUTTON/…）。
-                {
-                    let mut options = gpui_kit::component::TitleBar::window_options();
-                    options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
-                    // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
-                    options.titlebar = Some(gpui_kit::TitlebarOptions {
-                        title: Some("红果".into()),
-                        ..gpui_kit::component::TitleBar::title_bar_options()
+            // 主题偏好（Tauri `hongguo-theme` store 同款三档）：auto 跟随系统
+            // 外观（开窗前就能从平台拿到），light/dark 为显式覆盖——显式档位
+            // 同时把窗口外观钉给平台（macOS 窗口边框跟随；Windows 无操作），
+            // auto 则保持不钉，系统切换时观察者会重算（见 Shell::new）。
+            let theme_pref = ui_prefs.theme;
+            let theme_mode = theme_pref.resolve(cx.window_appearance());
+            crate::tokens::apply(theme_mode, cx);
+            if theme_pref != crate::ui_prefs::ThemePref::Auto {
+                cx.set_window_appearance(Some(match theme_mode {
+                    gpui_kit::component::ThemeMode::Light => gpui_kit::WindowAppearance::Light,
+                    gpui_kit::component::ThemeMode::Dark => gpui_kit::WindowAppearance::Dark,
+                }));
+            }
+            // 默认窗口与 Tauri conf 同参（1280×840，可恢复下限 480×270，
+            // 与 mini 同尺寸）。优先级：取证开关 HONGGUO_WINDOW=宽x高（中置）>
+            // 上次窗口几何（落在当前任一显示器内才恢复，issue #11；Tauri 壳
+            // window_state 同语义）> 中置默认。取证开关要求整页入镜，不恢复
+            // 旧位置。
+            let forensic = std::env::var("HONGGUO_WINDOW").ok().and_then(|v| {
+                let (w, h) = v.split_once('x')?;
+                Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))
+            });
+            let saved = if forensic.is_some() {
+                None
+            } else {
+                crate::window_restore::restore_rect(
+                    ui_prefs.win_x,
+                    ui_prefs.win_y,
+                    ui_prefs.win_w,
+                    ui_prefs.win_h,
+                    &crate::platform::memory_display_rects(cx),
+                    crate::window_restore::MIN_RESTORE_W,
+                    crate::window_restore::MIN_RESTORE_H,
+                )
+                .map(|(x, y, w, h)| {
+                    crate::platform::OuterRect::new(
+                        f64::from(x),
+                        f64::from(y),
+                        f64::from(w),
+                        f64::from(h),
+                    )
+                })
+            };
+            let bounds = if let Some((w, h)) = forensic {
+                gpui_kit::Bounds::centered(
+                    None,
+                    gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)),
+                    cx,
+                )
+            } else if crate::platform::RESTORE_AFTER_OPEN {
+                // macOS：开窗用默认尺寸，创建后按 AppKit 外框精确恢复。
+                match saved {
+                    Some(rect) => log::info!(
+                        "[Window] 恢复上次几何（平台坐标）x={} y={} {}×{}",
+                        rect.x,
+                        rect.y,
+                        rect.w,
+                        rect.h
+                    ),
+                    None => log::info!("[Window] 无可用几何记忆，按默认 1280×840 中置"),
+                }
+                gpui_kit::Bounds::centered(
+                    None,
+                    gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
+                    cx,
+                )
+            } else {
+                match saved {
+                    Some(rect) => {
+                        log::info!(
+                            "[Window] 恢复上次几何 x={} y={} {}×{}",
+                            rect.x,
+                            rect.y,
+                            rect.w,
+                            rect.h
+                        );
+                        gpui_kit::Bounds {
+                            origin: gpui_kit::point(
+                                gpui_kit::px(rect.x as f32),
+                                gpui_kit::px(rect.y as f32),
+                            ),
+                            size: gpui_kit::size(
+                                gpui_kit::px(rect.w as f32),
+                                gpui_kit::px(rect.h as f32),
+                            ),
+                        }
+                    }
+                    None => {
+                        log::info!("[Window] 无可用几何记忆，按默认 1280×840 中置");
+                        gpui_kit::Bounds::centered(
+                            None,
+                            gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(840.)),
+                            cx,
+                        )
+                    }
+                }
+            };
+            // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
+            let system_backend = crate::video_backend::is_system();
+            let mut built = None;
+            let shell_window: gpui_kit::AnyWindowHandle = cx
+                .open_window(
+                    // 无边框（Tauri decorations:false 同款）：以组件库 TitleBar
+                    // 的窗口选项为基底——标题栏自绘、拖拽与窗口钮走平台原生命中
+                    // 测试（WindowControlArea → HTCAPTION/HTMINBUTTON/…）。
+                    {
+                        let mut options = gpui_kit::component::TitleBar::window_options();
+                        options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
+                        // 系统播放器要透出下层 AVPlayerLayer：窗口从创建时就按
+                        // 透明配置，避免「先不透明建窗、再 set_background_appearance」
+                        // 这一段里 CAMetalLayer / NSWindow 的 opaque 状态不同步。
+                        options.window_background = if system_backend {
+                            gpui_kit::WindowBackgroundAppearance::Transparent
+                        } else {
+                            gpui_kit::WindowBackgroundAppearance::Opaque
+                        };
+                        // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
+                        options.titlebar = Some(gpui_kit::TitlebarOptions {
+                            title: Some("红果".into()),
+                            ..gpui_kit::component::TitleBar::title_bar_options()
+                        });
+                        options
+                    },
+                    |window, cx| {
+                        // 组件库管不到的最后一寸：WS_THICKFRAME 引出的 1px 系统
+                        // 边框线，按 DWM 边框色关掉（缩放/贴靠不受影响）
+                        #[cfg(target_os = "windows")]
+                        win32::hide_border(window);
+                        let view = cx.new(|cx| shell::Shell::new(state.clone(), window, cx));
+                        built = Some(view.clone());
+                        // Root 是 GPUI 场景最底层，gpui-component 的 RootPlugin
+                        // 默认给它铺 `theme.background`；系统后端必须在这里把
+                        // Root 也改成透明，否则整个窗内都是这块不透明黑。
+                        cx.new(|cx| {
+                            let root = gpui_kit::base::Root::new(view, window, cx);
+                            if system_backend {
+                                root.bg(gpui_kit::rgba(0x00000000))
+                            } else {
+                                root
+                            }
+                        })
+                    },
+                )
+                .expect("窗口创建失败")
+                .into();
+            let shell = built.expect("open_window ran its build closure");
+
+            // macOS：窗口创建后按平台坐标精确恢复（gpui 的 WindowBounds 只认
+            // 它自己的坐标空间，多屏下会丢显示器原点）
+            if crate::platform::RESTORE_AFTER_OPEN
+                && let Some(rect) = saved
+            {
+                let _ = shell_window.update(cx, |_, window, cx| {
+                    crate::platform::memory_restore_frame(window, cx, rect);
+                });
+            }
+
+            // 落框取证：延迟一拍打印「记忆坐标」里的实际外框（与恢复日志同口径）
+            let actual_window = shell_window;
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(300))
+                    .await;
+                cx.update(|app| {
+                    let _ = actual_window.update(app, |_, window, _| {
+                        if let Some(rect) = crate::platform::memory_rect(window) {
+                            log::info!(
+                                "[Window] 实际外框 x={} y={} {}×{}",
+                                rect.x,
+                                rect.y,
+                                rect.w,
+                                rect.h
+                            );
+                        }
                     });
-                    options
-                },
-                cx,
-                |window, cx| {
-                    // 组件库管不到的最后一寸：WS_THICKFRAME 引出的 1px 系统
-                    // 边框线，按 DWM 边框色关掉（缩放/贴靠不受影响）
-                    #[cfg(target_os = "windows")]
-                    win32::hide_border(window);
-                    cx.new(|cx| shell::Shell::new(state.clone(), window, cx))
-                },
-            )
-            .expect("窗口创建失败");
+                });
+            })
+            .detach();
+
+            // 点击系统通知（追更更新）→ 激活已有窗口；Tauri Web Notification
+            // 的 `window.focus()` 同语义。
+            let notification_window = shell_window;
+            cx.on_system_notification_response(move |_response, cx| {
+                let _ = notification_window.update(cx, |_, window, _| {
+                    window.activate_window();
+                });
+            });
             shell.update(cx, |shell, cx| shell.activate(cx));
+            // 退出确认：窗口关闭先问一句（Tauri CloseRequested → 确认框同款）。
+            // 挂在实体就位之后——守卫回调要用壳的弱引用。
+            let _ = shell_window.update(cx, |_, window, cx| {
+                shell.update(cx, |shell, cx| shell.install_close_guard(window, cx));
+            });
             // 图形链路取证：HONGGUO_SHOT=… 时进程内抓帧存 PNG（见截图模块头注释）
             #[cfg(feature = "screenshot")]
             screenshot::install(shell_window, shell.clone(), cx);
@@ -195,6 +423,9 @@ fn build_app_state() -> Arc<AppStateInner> {
     }
     // 追更更新检查定时器（Tauri 壳 lib.rs setup 同款：启动查一轮 + 20 分钟周期）
     hongguo_service::follow_service::start_notice_loop(state.clone());
+    // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮；策略每轮
+    // 现读设置，用户在设置页改了下轮就生效。
+    hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
     state
 }
 

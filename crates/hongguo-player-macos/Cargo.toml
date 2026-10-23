@@ -1,0 +1,52 @@
+[package]
+name = "hongguo-player-macos"
+description = "红果桌面版 macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader 供数"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 本 crate 只在 macOS 目标上编译出内容（其余目标为空壳）；平台专属依赖全部
+# 进本表，Windows 宿主上连依赖都不构建。
+[dependencies]
+hongguo-player-api = { path = "../hongguo-player-api" }
+# 供数：一集的明文按 Range 从渐进流里取。
+hongguo-stream = { path = "../hongguo-stream" }
+log = "0.4"
+tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 窗口原语与 AVFoundation/HIToolbox 绑定（与 gpui-pre-macos 的 objc2 同版本，
+# 类型必须同源——两套 objc2 是不同的类型）。
+raw-window-handle = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    # NSView/NSWindow 都继承 NSResponder，缺这个 feature 拿不到类本身。
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSGeometry",
+    "NSString",
+    "NSURL",
+    "NSData",
+    "NSArray",
+] }
+# AVPlayerItemVideoOutput 的取样箱（取证用）与 CVBuffer 引用类型。
+objc2-core-foundation = { version = "0.3.2", default-features = false }
+objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2",
+    "CVBuffer",
+    "CVImageBuffer",
+    "CVPixelBuffer",
+] }
+# CATransaction：视频子层的几何变更要禁隐式动画（切形态卡顿的根因）。
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CATransaction",
+] }

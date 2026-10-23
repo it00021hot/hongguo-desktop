@@ -23,6 +23,7 @@ pub mod bgra;
 pub mod codec_probe;
 pub mod demux;
 pub mod disk_space;
+pub mod h264;
 pub mod heif;
 pub mod hevc;
 pub mod nv12_rgba;

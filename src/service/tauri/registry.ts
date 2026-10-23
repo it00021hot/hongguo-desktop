@@ -89,6 +89,7 @@ export const COMMANDS = {
     args: z.object({ aspect: z.number(), full: z.boolean() }),
     response: voidResp,
   },
+  set_traffic_lights_visible: { args: z.object({ visible: z.boolean() }), response: voidResp },
   set_incognito: { args: z.object({ enabled: z.boolean() }), response: voidResp },
   /** 关闭拦截就位（app-shell 监听挂上后调用，后端才开始拦 CloseRequested） */
   mark_window_ready: { args: noArgs, response: voidResp },
@@ -220,9 +221,11 @@ export const COMMANDS = {
       groupId: z.string(),
       bookId: z.string(),
       text: z.string(),
-      // @小果AI 提及评论（可选；两字段同时在场才生效，contextCommentIds
-      // 进 aibot_mention_context——官方传最近评论 id）
+      // @提及评论（可选；三字段同时在场才生效，contextCommentIds
+      // 进 aibot_mention_context——官方传最近评论 id；mentionUserName
+      // 是被提及者昵称，text 前缀与 rich_text 段文本都用它）
       mentionUserId: z.string().optional(),
+      mentionUserName: z.string().optional(),
       contextCommentIds: z.array(z.string()).optional(),
     }),
     response: commentItemSchema,
@@ -371,7 +374,11 @@ export const COMMANDS = {
     response: calendarPageSchema,
   },
   reservation_list: {
-    args: z.object({ isOnline: z.boolean() }),
+    args: z.object({
+      isOnline: z.boolean(),
+      offset: z.number().optional(),
+      sessionId: z.string().optional(),
+    }),
     response: calendarPageSchema,
   },
   reservation_reserve: {
@@ -413,6 +420,8 @@ export const COMMANDS = {
     args: z.object({ settings: settingsSchema }),
     response: settingsSchema,
   },
+  /** 缓存目录留空时的默认位置（数据目录；设置页展示用） */
+  default_cache_dir: { args: noArgs, response: z.string() },
   test_proxy: {
     args: z.object({ draft: proxyConfigSchema.nullable() }),
     response: proxyTestResultSchema,

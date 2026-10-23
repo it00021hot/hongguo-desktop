@@ -21,6 +21,8 @@ hongguo-store = { path = "../hongguo-store" }
 base64 = "0.23"
 sha2 = "0.11"
 log = "0.4"
+# 封面卡片档缩放（转码产物按显示尺寸缩小后落盘：列表卡只需 320 长边）。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # 封面原图下载（worker 线程上无 runtime，内联 current_thread runtime 跑一段 async）。
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls",

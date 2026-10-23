@@ -127,11 +127,11 @@ pub async fn send_comment(
 /// `group_type=30`；官方单集流里的提及评论活体见
 /// flows-official-follow.jsonl:3314——comment 7681486101919679268
 /// `group_id=vid`、带 tp=15 text_exts、AI 回复 reply_count=3）。
-/// `text` 为用户正文（可空），最终请求 text 前置 `@小果\u{FFFC}`，
-/// rich_text 段 tp=15/uri=小果 uid（有正文时段文本含尾随空格、e=5，
-/// 实包 1616 原样），business_param 另带 aibot_mention_context
-/// （**最近评论 id** 的嵌套数组 JSON 串——实包里是评论 id 不是 vid）。
-/// 返回完整评论回显。
+/// `text` 为用户正文（可空），最终请求 text 前置 `@昵称\u{FFFC}`
+/// （实包里昵称即「小果」；rich_text 段 tp=15/uri=uid、段文本 = 同一
+/// 提及串，有正文时段文本含尾随空格、`e` 按段文本 UTF-16 单位计，实包
+/// 1616 原样），business_param 另带 aibot_mention_context（**最近评论
+/// id** 的嵌套数组 JSON 串——实包里是评论 id 不是 vid）。返回完整评论回显。
 pub async fn send_comment_mention(
     group_id: &str,
     book_id: &str,
@@ -140,17 +140,16 @@ pub async fn send_comment_mention(
     env: &ApiEnv,
 ) -> AppResult<CommentItem> {
     let body = text.trim();
+    let nick = mention.user_name.trim();
+    let segment = format!("@{nick}\u{FFFC}");
+    let units = segment.encode_utf16().count() as i64;
     let (final_text, segment_text, segment_end) = if body.is_empty() {
-        (
-            MENTION_TEXT.to_string(),
-            MENTION_TEXT.to_string(),
-            MENTION_TEXT_UNITS,
-        )
+        (segment.clone(), segment, units)
     } else {
         (
-            format!("{MENTION_TEXT} {body}"),
-            format!("{MENTION_TEXT} "),
-            MENTION_TEXT_UNITS + 1,
+            format!("{segment} {body}"),
+            format!("{segment} "),
+            units + 1,
         )
     };
     let ctx = serde_json::to_string(
@@ -679,19 +678,17 @@ pub async fn fetch_mention_list(series_id: &str, env: &ApiEnv) -> AppResult<Vec<
     Ok(items)
 }
 
-/// AI 提及的草稿：@ 小果AI 的 uid 与 AI 上下文评论（官方
+/// AI 提及的草稿：被提及用户与 AI 上下文评论（官方
 /// aibot_mention_context = 最近评论 id 的嵌套数组，实包 1539/1616）。
 pub struct CommentMention {
-    /// AI bot uid（relation/list 的 is_ai_bot 条目）
+    /// 被提及用户 uid（relation/list 条目；AI bot「小果」即 is_ai_bot）
     pub user_id: String,
+    /// 被提及用户昵称——text 前缀与 rich_text 段文本都是 `@昵称\u{FFFC}`
+    /// （实包对小果即 `@小果\u{FFFC}`，@ 普通用户不能张冠李戴成「小果」）
+    pub user_name: String,
     /// AI 上下文评论 id（面板最近评论优先）
     pub comment_ids: Vec<String>,
 }
-
-/// 提及评论的文本常量：官方形态 text/段文本均为 `@小果\u{FFFC}`
-/// （U+FFFC 占位符；s:e=0..4，2026-10-15 实包）。
-const MENTION_TEXT: &str = "@小果\u{FFFC}";
-const MENTION_TEXT_UNITS: i64 = 4;
 
 /// 拉追更列表一页（get_user_action `action_channel=9`，2026-10-15 抓包
 /// 实锤）。`cursor` 传上页响应的 `cursor` 原文（JSON 串）；首页传空串。

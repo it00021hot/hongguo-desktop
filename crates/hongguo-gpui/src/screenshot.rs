@@ -30,31 +30,216 @@ pub(crate) fn install(
     // ——控制条 3s 自隐、互动栏随它显隐，无人值守抓帧永远抓不到 UI；
     // 要验 UI 视觉（图标/布局）就开这个。
     let pause_ui = std::env::var("HONGGUO_SHOT_PAUSE").is_ok();
-    // HONGGUO_SHOT_PANEL=downloads：抓帧前打开下载面板（验任务行 UI）；
-    // =picker：打开选集浮层系列剧 tab（验季卡片/预约按钮）。
+    // HONGGUO_SHOT_PANEL=downloads：抓帧前打开「下载到本地」选集浮层；
+    // =picker：打开选集浮层系列剧 tab（验季卡片/预约按钮）；
+    // =suggest（配 HONGGUO_PAGE=browse）：往搜索框灌关键词，拍真实联想
+    // 下拉（300ms 防抖 → 真实接口，连封面缩略图一起验）。
     let panel = std::env::var("HONGGUO_SHOT_PANEL").unwrap_or_default();
+    // 连播入口状态探针：第 1 张拍横条，第 2 张前走与横条点击相同的
+    // enter_binge 迁移，验横条消失、左上集数胶囊立即出现。
+    let binge_state = panel == "binge-state";
 
     cx.spawn(async move |cx| {
+        // scroll-return 探针：第 1 轮滚一把、第 2 轮往返一次（见循环内注释）
+        let mut scroll_ok = false;
         cx.background_executor().timer(start_delay).await;
         if pause_ui {
             feed.update(cx, |shell, cx| shell.debug_pause_player(cx));
         }
-        match panel.as_str() {
-            "downloads" => {
-                feed.update(cx, |shell, cx| shell.debug_open_downloads(cx));
-            }
-            "picker" => {
-                feed.update(cx, |shell, cx| shell.debug_open_picker(cx));
-            }
-            "comments" => {
-                feed.update(cx, |shell, cx| shell.debug_open_comments(cx));
-            }
-            "login" => {
-                feed.update(cx, |shell, cx| shell.debug_open_login(cx));
-            }
-            _ => {}
-        }
         for i in 1..=count {
+            // 面板开关放在本回合里：`suggest` 要往输入框灌值，得有 Window。
+            if i == 1 {
+                match panel.as_str() {
+                    "downloads" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_open_downloads(window, cx));
+                        });
+                    }
+                    "picker" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_picker(cx));
+                    }
+                    "comments" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_comments(cx));
+                    }
+                    "mention" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_mention(cx));
+                    }
+                    "login" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_login(cx));
+                    }
+                    "detail-login-wall" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| {
+                                shell.debug_trigger_detail_collect(window, cx);
+                            });
+                        });
+                    }
+                    "locale-en" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_locale_en(window, cx));
+                        });
+                    }
+                    "notify" => {
+                        feed.update(cx, |shell, cx| shell.debug_show_notification(cx));
+                    }
+                    "dm-settings" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_dm_settings(cx));
+                    }
+                    "suggest" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| {
+                                shell.debug_fill_browse_keyword(window, cx);
+                            });
+                        });
+                    }
+                    // 长页面整页入镜的补充手段：窗口最多涨到屏幕高，再往下
+                    // 的卡片只能滚出来（HONGGUO_SHOT_SCROLL=<像素>）。
+                    "scroll" => {
+                        let dy = std::env::var("HONGGUO_SHOT_SCROLL")
+                            .ok()
+                            .and_then(|v| v.parse::<f32>().ok())
+                            .unwrap_or(800.0);
+                        let _ = window.update(cx, |_, window, cx| {
+                            // 先派一次鼠标移动把命中测试摆到页面中部，再滚
+                            let size = window.viewport_size();
+                            let center = gpui_kit::point(size.width / 2.0, size.height / 2.0);
+                            window.dispatch_event(
+                                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                                    position: center,
+                                    pressed_button: None,
+                                    modifiers: Default::default(),
+                                }),
+                                cx,
+                            );
+                            window.dispatch_event(
+                                gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                                    position: center,
+                                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                        gpui_kit::px(0.0),
+                                        gpui_kit::px(-dy),
+                                    )),
+                                    modifiers: Default::default(),
+                                    touch_phase: gpui_kit::TouchPhase::Started,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
+                    // 老板键：走真实保存路径（注册 → 落库；冲突则当场拦截）。
+                    // 抓帧拍通知条，日志拍库里的值。
+                    "boss-set" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_boss_key(window, cx));
+                        });
+                    }
+                    // 竖屏：按当前在播档位收窄窗口（拍竖条形态 + 紧凑条）。
+                    "next-episode" => {
+                        feed.update(cx, |shell, cx| shell.debug_next_episode(cx));
+                    }
+                    "rate-2x" => {
+                        feed.update(cx, |shell, cx| shell.debug_rate_2x(cx));
+                    }
+                    "immersive" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_immersive(window, cx));
+                        });
+                    }
+                    "portrait" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_enter_portrait(window, cx));
+                        });
+                    }
+                    // 竖屏铺满档：撑满工作区高（验档位几何与按钮态）。
+                    "portrait-full" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_portrait_full(window, cx));
+                        });
+                    }
+                    // 退出确认：投一个真 WM_CLOSE（等同点 × / Alt+F4），
+                    // 期望窗口**没关**且确认框在抓帧里可见。
+                    #[cfg(target_os = "windows")]
+                    "close-test" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            if let Some(hwnd) = crate::win32::hwnd_of(window) {
+                                log::info!("[CloseProbe] 投递 WM_CLOSE");
+                                crate::win32::post_close(hwnd);
+                            }
+                            let _ = cx;
+                        });
+                    }
+                    // 看完自动删：打开开关（真实保存路径），让在播的这集播到
+                    // 底——验「文件被删 + 提示条」。
+                    "auto-delete" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_set_auto_delete(window, cx));
+                        });
+                    }
+                    // 切剧：验「换剧立刻走新剧封面」（上一部定格帧不跨剧泄漏）。
+                    "next-series" => {
+                        feed.update(cx, |shell, cx| shell.debug_next_series(cx));
+                    }
+                    // 小屏：收缩到 480×270（验铺满裁切/紧凑条）。
+                    "mini" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| shell.debug_enter_mini(window, cx));
+                        });
+                    }
+                    // 未上线相关推荐：走 open_related 真实路径（验 prefill 降级）。
+                    "related-upcoming" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_upcoming_related(cx));
+                    }
+                    // 浏览位置保留：先滚一把（第 1 张 = 滚动后），下一张前
+                    //「去首页再回来」，比对两张是否同一位置（Tauri
+                    // use-scroll-restore 的会话级记忆同题）。
+                    "scroll-return" => {
+                        scroll_ok = {
+                            let dy = std::env::var("HONGGUO_SHOT_SCROLL")
+                                .ok()
+                                .and_then(|v| v.parse::<f32>().ok())
+                                .unwrap_or(900.0);
+                            let _ = window.update(cx, |_, window, cx| {
+                                let size = window.viewport_size();
+                                let center = gpui_kit::point(size.width / 2.0, size.height / 2.0);
+                                window.dispatch_event(
+                                    gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                                        position: center,
+                                        pressed_button: None,
+                                        modifiers: Default::default(),
+                                    }),
+                                    cx,
+                                );
+                                window.dispatch_event(
+                                    gpui_kit::PlatformInput::ScrollWheel(
+                                        gpui_kit::ScrollWheelEvent {
+                                            position: center,
+                                            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                                gpui_kit::px(0.0),
+                                                gpui_kit::px(-dy),
+                                            )),
+                                            modifiers: Default::default(),
+                                            touch_phase: gpui_kit::TouchPhase::Started,
+                                        },
+                                    ),
+                                    cx,
+                                );
+                            });
+                            true
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            // 第二轮：离开再回来，验滚动位置是否保住（Tauri sessionStorage 同题）
+            if i == 2 && scroll_ok {
+                let home = std::env::var("HONGGUO_SCROLL_HOME").unwrap_or_else(|_| "home".into());
+                let back = std::env::var("HONGGUO_SCROLL_BACK").unwrap_or_else(|_| "browse".into());
+                feed.update(cx, |shell, cx| shell.debug_switch_dest(&home, cx));
+                feed.update(cx, |shell, cx| shell.debug_switch_dest(&back, cx));
+                log::info!("[ScrollProbe] 已往返 {home} → {back}");
+            }
+            if binge_state && i == 2 {
+                feed.update(cx, |shell, cx| shell.debug_enter_binge(cx));
+            }
             let shot = window.update(cx, |_, window, cx| {
                 // 必须先强制重绘：窗口被遮挡/失焦时 AppKit 会暂停绘制，
                 // rendered_frame 会停在上一帧——直接取图会拿到陈旧画面
@@ -84,6 +269,43 @@ pub(crate) fn install(
                 }
             }
             cx.background_executor().timer(interval).await;
+        }
+        // HONGGUO_BOSS_PROBE=<accelerator>：老板键链路探针——合成该组合键，
+        // 系统派 WM_HOTKEY → 轮询藏窗/显窗。按键靠**启动时的设置注册**生效，
+        // 验的是「设置里存过 → 启动注册 → 系统认下 → 藏显」这条真实链。
+        // 结果只落日志；抓帧循环之后跑，隐藏窗口不影响已拍完的图。
+        #[cfg(target_os = "windows")]
+        if let Ok(spec) = std::env::var("HONGGUO_BOSS_PROBE") {
+            use crate::boss_key::accel;
+            log::info!("[BossProbe] 探针组合 {spec}（应为启动注册生效的那个）");
+            let hk = accel::parse(&spec).expect("探针组合必然可解析");
+            let hwnd = window
+                .update(cx, |_, window, _| crate::win32::hwnd_of(window))
+                .ok()
+                .flatten();
+            let initial = hwnd.map(crate::win32::is_window_visible);
+            log::info!("[BossProbe] 初始可见={initial:?}（隐藏启动时 false，属启动方式而非功能）");
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            crate::win32::send_key_chord(hk.mods, hk.vk);
+            cx.background_executor()
+                .timer(Duration::from_millis(700))
+                .await;
+            if let Some(hwnd) = hwnd {
+                log::info!(
+                    "[BossProbe] 第一次按下后 可见={}（期望与初始相反）",
+                    crate::win32::is_window_visible(hwnd)
+                );
+                crate::win32::send_key_chord(hk.mods, hk.vk);
+                cx.background_executor()
+                    .timer(Duration::from_millis(700))
+                    .await;
+                log::info!(
+                    "[BossProbe] 第二次按下后 可见={}（期望回到初始）",
+                    crate::win32::is_window_visible(hwnd)
+                );
+            }
         }
     })
     .detach();

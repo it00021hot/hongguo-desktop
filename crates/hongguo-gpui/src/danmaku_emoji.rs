@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use gpui_kit::RenderImage;
+use gpui_kit::component::input::{InlineTokenContext, InputContent};
+use gpui_kit::prelude::*;
 
 pub(crate) use crate::emoji_files::EMOJI_FILES;
 
@@ -45,8 +47,9 @@ pub(crate) fn emoji_by_name(name: &str) -> Option<Arc<RenderImage>> {
 }
 
 /// 文本 → 段序列：认识的 `[名字]` 换表情，不认识的原样保留为文本。
-/// 手写扫描（不引 regex 依赖）：`[` 起始、1–8 个非空白且不含 `]`/`[`、
-/// `]` 收尾，且整个代码在映射表里才认。
+/// 手写扫描（不引 regex 依赖）：`[` 起始、1–8 个非空白字符且不含 `]`/`[`、
+/// `]` 收尾（窗口判定在 [`crate::emoji_scan`]，与 Tauri 正则同口径），
+/// 且整个代码在映射表里才认。
 pub(crate) fn parse_emoji_segments(text: &str) -> Vec<EmojiSegment> {
     let bytes = text.as_bytes();
     let mut segments = Vec::new();
@@ -57,24 +60,7 @@ pub(crate) fn parse_emoji_segments(text: &str) -> Vec<EmojiSegment> {
             i += 1;
             continue;
         }
-        // 找收尾 `]`：中间 1–8 个非空白且不含 `[`/`]`
-        let mut end = None;
-        for (j, b) in bytes
-            .iter()
-            .enumerate()
-            .take(bytes.len().min(i + 10))
-            .skip(i + 1)
-        {
-            match b {
-                b']' => {
-                    end = Some(j);
-                    break;
-                }
-                b'[' | b' ' | b'\t' => break,
-                _ => {}
-            }
-        }
-        let Some(close) = end else {
+        let Some(close) = crate::emoji_scan::find_emoji_code_end(text, i) else {
             i += 1;
             continue;
         };
@@ -127,46 +113,50 @@ pub(crate) fn is_wide_char(c: char) -> bool {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// —— 输入框的内联 token（Tauri RichEmojiInput 对齐）——
+//
+// Tauri 的输入框是 contentEditable：`[名字]` 与 `@名字\u{FFFC}` 在输入框里
+// 即时渲染成表情图/提及 chip，value 始终是含代码的纯文本。gpui-component 的
+// Input 原生支持原子内联 token（`Input::token` 自定义渲染 + `replace_with_token`
+// 插入，编辑/撤销/光标仍归输入框管）。附着逻辑的纯函数在
+// [`crate::emoji_scan`]（可测性口径同文件头），这里只注入码表并负责渲染。
 
-    /// 认识的 `[名字]` 换表情段，文本段保留；不认识的代码原样留在文本里。
-    #[test]
-    fn parse_segments_splits_known_emoji() {
-        let segs = parse_emoji_segments("来了[微笑]");
-        assert_eq!(segs.len(), 2, "文本段 + 表情段");
-        assert!(matches!(&segs[0], EmojiSegment::Text(t) if t == "来了"));
-        assert!(matches!(&segs[1], EmojiSegment::Emoji(_)));
+pub(crate) use crate::emoji_scan::emoji_inline_token;
 
-        // 映射表里没有的代码：原样保留为文本（不产表情段）
-        let segs = parse_emoji_segments("[不存在的表情]");
-        assert!(
-            segs.iter()
-                .all(|s| matches!(s, EmojiSegment::Text(t) if t.contains("[不存在的表情]"))),
-            "未知代码应留在文本段"
+/// 全文按输入框的 token 约定重解析：认识的 `[名字]` 附表情 token、
+/// `@名字\u{FFFC}` 附提及 token。用于 `set_value` 的三个全量重置点
+/// （提及插入 / 发送后清空）——点选插入走 `replace_with_token` 增量附着，
+/// 不经这里。
+pub(crate) fn rich_content(text: &str) -> InputContent {
+    crate::emoji_scan::rich_content(text, |code| {
+        EMOJI_FILES.iter().any(|(known, _)| *known == code)
+    })
+}
+
+/// token 渲染器（`Input::token` 的回调体）：表情 token 画表情图、提及
+/// token 画蓝色 @名字，选中态垫一层白 15% 底（与胶囊皮肤同源）。不认识的
+/// 代码回退为原文案——兜的是「种子/历史文本里存了已下架表情」。
+pub(crate) fn render_emoji_token(ctx: &InlineTokenContext) -> gpui_kit::AnyElement {
+    let text = ctx.token().text();
+    let mut el = gpui_kit::div()
+        .flex()
+        .items_center()
+        .when(ctx.is_selected(), |el| {
+            el.bg(gpui_kit::rgba(0xffffff26)).rounded(gpui_kit::px(4.0))
+        });
+    if let Some(bitmap) = emoji_by_name(text) {
+        el = el.child(
+            gpui_kit::img(gpui_kit::ImageSource::Render(bitmap))
+                .size(ctx.line_height())
+                .object_fit(gpui_kit::ObjectFit::Contain),
         );
+    } else if let Some(name) = text.trim_end_matches('\u{FFFC}').strip_prefix('@') {
+        el = el
+            .mr_1()
+            .text_color(gpui_kit::rgb(0x38bdf8))
+            .child(format!("@{name}"));
+    } else {
+        el = el.child(text.to_string());
     }
-
-    /// webp 资产可解码成 RGBA 位图（首项 [微笑] 即 e01.webp）。
-    #[test]
-    fn emoji_webp_decodes() {
-        assert!(emoji_by_name("[微笑]").is_some(), "映射表首项应可解码");
-    }
-
-    /// 超长/含空白的伪代码不认（hgplayer 同款 1–8 非空白字符约束）。
-    #[test]
-    fn scanner_ignores_non_code_brackets() {
-        for text in [
-            "[这是 一段很长 很长 很长很长 很长很长的 文本内容]",
-            "a [b c] d",
-        ] {
-            assert!(
-                parse_emoji_segments(text)
-                    .iter()
-                    .all(|s| matches!(s, EmojiSegment::Text(_))),
-                "{text} 不应产生表情段"
-            );
-        }
-    }
+    el.into_any_element()
 }

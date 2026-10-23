@@ -140,7 +140,13 @@ impl TasksView {
         cx.notify();
     }
 
-    fn delete_tasks(&mut self, ids: Vec<String>, with_files: bool, cx: &mut Context<Self>) {
+    fn delete_tasks(
+        &mut self,
+        ids: Vec<String>,
+        with_files: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.deleting {
             return;
         }
@@ -156,6 +162,14 @@ impl TasksView {
             }
             Err(e) => {
                 log::warn!("[Tasks] 删除任务失败: {e}");
+                let message = crate::i18n::app_error_text(&e);
+                window.push_notification(
+                    Notification::error(crate::i18n::tf(
+                        "common.failedWith",
+                        &[("message", message.as_str())],
+                    )),
+                    cx,
+                );
                 // 失败留在列表上（refresh 会照出真实状态），不吞
                 self.refresh(cx);
             }
@@ -182,22 +196,29 @@ impl TasksView {
             let view_only = view.clone();
             let view_files = view.clone();
             dialog
-                .title(format!("删除 {n} 个任务"))
+                .title(crate::i18n::tf(
+                    "tasks.removeConfirm",
+                    &[("count", &n.to_string())],
+                ))
                 .content({
                     let freeable = freeable.clone();
                     move |content, _window, _cx| {
-                    content.child(
-                        v_flex()
-                            .gap_2()
-                            .child(SharedString::from(format!(
-                                "其中 {completed} 个已下载完成（约 {freeable}）。"
-                            )))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .child("不勾选则只移除任务记录，磁盘上的视频文件会保留（可在文件管理器里自行管理）。"),
-                            ),
-                    )
+                        content.child(
+                            v_flex()
+                                .gap_2()
+                                .child(SharedString::from(crate::i18n::tf(
+                                    "tasks.removeSummary",
+                                    &[
+                                        ("done", &completed.to_string()),
+                                        ("size", freeable.as_str()),
+                                    ],
+                                )))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .child(crate::i18n::t("tasks.removeKeepHint")),
+                                ),
+                        )
                     }
                 })
                 .footer(
@@ -207,7 +228,7 @@ impl TasksView {
                         .gap_2()
                         .child(
                             Button::new("tasks-del-cancel")
-                                .label("取消")
+                                .label(crate::i18n::t("common.cancel"))
                                 .ghost()
                                 .small()
                                 .on_click(move |_, window, cx| {
@@ -216,25 +237,25 @@ impl TasksView {
                         )
                         .child(
                             Button::new("tasks-del-only")
-                                .label("仅删除记录")
+                                .label(crate::i18n::t("tasks.removeOnly"))
                                 .outline()
                                 .small()
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
                                     view_only.update(cx, |view, cx| {
-                                        view.delete_tasks(ids_only.clone(), false, cx)
+                                        view.delete_tasks(ids_only.clone(), false, window, cx)
                                     });
                                 }),
                         )
                         .child(
                             Button::new("tasks-del-files")
-                                .label("删除任务和文件")
+                                .label(crate::i18n::t("tasks.removeAndFiles"))
                                 .danger()
                                 .small()
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
                                     view_files.update(cx, |view, cx| {
-                                        view.delete_tasks(ids_files.clone(), true, cx)
+                                        view.delete_tasks(ids_files.clone(), true, window, cx)
                                     });
                                 }),
                         ),
@@ -264,22 +285,27 @@ impl TasksView {
                 match result {
                     Ok(count) if count > 0 => {
                         window.push_notification(
-                            Notification::success(format!("从磁盘补回 {count} 条下载记录")),
+                            Notification::success(crate::i18n::tf(
+                                "tasks.rescanFound",
+                                &[("count", &count.to_string())],
+                            )),
                             cx,
                         );
                     }
                     Ok(_) => {
                         window.push_notification(
-                            Notification::info(
-                                "没有可补登记的记录。如果是重装或记录被清空，先到找剧搜出那部剧并点开详情，再回来扫描",
-                            ),
+                            Notification::info(crate::i18n::t("tasks.rescanNone")),
                             cx,
                         );
                     }
                     Err(e) => {
                         log::warn!("[Tasks] 扫描补登记失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
                         window.push_notification(
-                            Notification::error(format!("扫描失败：{e}")),
+                            Notification::error(crate::i18n::tf(
+                                "common.failedWith",
+                                &[("message", message.as_str())],
+                            )),
                             cx,
                         );
                     }
@@ -310,10 +336,23 @@ impl TasksView {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let status_line = self.queue_status.as_ref().map(|s| {
-            format!(
-                "进行中 {} · 等待 {} · 已完成 {} · 失败 {} · 并发 {}/{}",
-                s.running, s.pending, s.completed, s.failed, s.active, s.limit
-            )
+            let queue = crate::i18n::tf(
+                "tasks.queueStatus",
+                &[
+                    ("running", &s.running.to_string()),
+                    ("pending", &s.pending.to_string()),
+                    ("completed", &s.completed.to_string()),
+                    ("failed", &s.failed.to_string()),
+                ],
+            );
+            let concurrency = crate::i18n::tf(
+                "tasks.concurrency",
+                &[
+                    ("active", &s.active.to_string()),
+                    ("limit", &s.limit.to_string()),
+                ],
+            );
+            format!("{queue} · {concurrency}")
         });
         let all_empty = self.tasks.as_deref().map(|t| t.is_empty()).unwrap_or(true);
         let failed = self.failed_ids();
@@ -340,7 +379,7 @@ impl TasksView {
             .child(
                 Button::new("tasks-resume-all")
                     .icon(gpui_kit::assets::IconName::Play)
-                    .label("一键启动")
+                    .label(crate::i18n::t("tasks.startAll"))
                     .outline()
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -351,7 +390,7 @@ impl TasksView {
             .child(
                 Button::new("tasks-pause-all")
                     .icon(gpui_kit::assets::IconName::Pause)
-                    .label("一键暂停")
+                    .label(crate::i18n::t("tasks.pauseAll"))
                     .outline()
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -362,7 +401,7 @@ impl TasksView {
             .child(
                 Button::new("tasks-retry-all")
                     .icon(gpui_kit::assets::IconName::RotateCcw)
-                    .label("重试全部失败")
+                    .label(crate::i18n::t("tasks.retryAll"))
                     .outline()
                     .small()
                     .disabled(failed.is_empty())
@@ -377,9 +416,9 @@ impl TasksView {
             .child(
                 Button::new("tasks-select-all")
                     .label(if all_checked {
-                        "取消全选"
+                        crate::i18n::t("tasks.deselectAll")
                     } else {
-                        "全选"
+                        crate::i18n::t("tasks.selectAll")
                     })
                     .outline()
                     .small()
@@ -388,7 +427,7 @@ impl TasksView {
             )
             .child(
                 Button::new("tasks-select-failed")
-                    .label("选中失败项")
+                    .label(crate::i18n::t("tasks.selectFailed"))
                     .outline()
                     .small()
                     .disabled(failed.is_empty())
@@ -401,9 +440,9 @@ impl TasksView {
                 Button::new("tasks-rescan")
                     .icon(gpui_kit::assets::IconName::ScanSearch)
                     .label(if self.rescanning {
-                        "加载中…"
+                        crate::i18n::t("common.loading")
                     } else {
-                        "扫描补登记"
+                        crate::i18n::t("tasks.rescan")
                     })
                     .outline()
                     .small()
@@ -413,13 +452,13 @@ impl TasksView {
             .into_any_element()
     }
 
-    fn status_tag(status: TaskStatus) -> (&'static str, Tag) {
+    fn status_tag(status: TaskStatus) -> (String, Tag) {
         match status {
-            TaskStatus::Pending => ("等待中", Tag::secondary()),
-            TaskStatus::Running => ("下载中", Tag::primary()),
-            TaskStatus::Completed => ("已完成", Tag::success()),
-            TaskStatus::Failed => ("失败", Tag::danger()),
-            TaskStatus::Stopped => ("已停止", Tag::warning()),
+            TaskStatus::Pending => (crate::i18n::t("tasks.status.pending"), Tag::secondary()),
+            TaskStatus::Running => (crate::i18n::t("tasks.status.running"), Tag::primary()),
+            TaskStatus::Completed => (crate::i18n::t("tasks.status.completed"), Tag::success()),
+            TaskStatus::Failed => (crate::i18n::t("tasks.status.failed"), Tag::danger()),
+            TaskStatus::Stopped => (crate::i18n::t("tasks.status.stopped"), Tag::warning()),
         }
     }
 
@@ -516,7 +555,7 @@ impl TasksView {
                             .icon(gpui_kit::assets::IconName::Pause)
                             .ghost()
                             .small()
-                            .tooltip("停止")
+                            .tooltip(crate::i18n::t("tasks.actions.stop"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let _ = hongguo_service::download_service::actions::stop_task(
                                     &this.state,
@@ -533,7 +572,7 @@ impl TasksView {
                                     .icon(gpui_kit::assets::IconName::RotateCcw)
                                     .ghost()
                                     .small()
-                                    .tooltip("重试")
+                                    .tooltip(crate::i18n::t("tasks.actions.retry"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let _ =
                                             hongguo_service::download_service::actions::retry_task(
@@ -551,7 +590,7 @@ impl TasksView {
                             .icon(gpui_kit::assets::IconName::FolderOpen)
                             .ghost()
                             .small()
-                            .tooltip("打开文件夹")
+                            .tooltip(crate::i18n::t("tasks.actions.openFolder"))
                             .on_click(cx.listener(move |this, _, _, _| {
                                 this.open_folder(&series_id);
                             }))
@@ -562,7 +601,7 @@ impl TasksView {
                             .icon(gpui_kit::assets::IconName::Trash)
                             .ghost()
                             .small()
-                            .tooltip("删除")
+                            .tooltip(crate::i18n::t("tasks.actions.remove"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.confirm_delete(vec![id.clone()], window, cx);
                             }))
@@ -584,14 +623,14 @@ impl gpui_kit::Render for TasksView {
         } else if self.tasks.as_deref().unwrap_or(&[]).is_empty() {
             let theme = cx.theme();
             v_flex()
-                .flex_1()
                 .items_center()
-                .justify_center()
+                // Tauri Empty：流内 py-16 顶部对齐（原来垂直居中，空态位置不同）
+                .py_16()
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("还没有下载任务"),
+                        .child(crate::i18n::t("tasks.empty")),
                 )
                 .into_any_element()
         } else {
@@ -631,10 +670,22 @@ impl gpui_kit::Render for TasksView {
                                             this.toggle_all(cx);
                                         })),
                                 )
-                                .child(div().flex_1().child("下载管理"))
-                                .child(div().w(gpui_kit::px(96.0)).child("集数"))
-                                .child(div().w(gpui_kit::px(112.0)).child("状态"))
-                                .child(div().w(gpui_kit::px(128.0)).child("大小"))
+                                .child(div().flex_1().child(crate::i18n::t("nav.tasks.title")))
+                                .child(
+                                    div()
+                                        .w(gpui_kit::px(96.0))
+                                        .child(crate::i18n::t("tasks.columns.episode")),
+                                )
+                                .child(
+                                    div()
+                                        .w(gpui_kit::px(112.0))
+                                        .child(crate::i18n::t("tasks.columns.status")),
+                                )
+                                .child(
+                                    div()
+                                        .w(gpui_kit::px(128.0))
+                                        .child(crate::i18n::t("tasks.columns.size")),
+                                )
                                 .child(div().w(gpui_kit::px(120.0))),
                         )
                         .children(tasks.iter().map(|t| self.render_row(t, cx))),
@@ -643,67 +694,72 @@ impl gpui_kit::Render for TasksView {
         };
         let selected_count = self.selected.len();
         let freeable = self.freeable_of(&self.selected.iter().cloned().collect::<Vec<_>>());
-        let bottom_bar =
-            (selected_count > 0).then(|| {
-                let theme = cx.theme();
-                let ids: Vec<String> = self.selected.iter().cloned().collect();
-                h_flex()
-                    .w_full()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_3()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .bg(theme.background)
-                    .px_4()
-                    .py_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .child(SharedString::from(selected_count.to_string())),
-                    )
-                    .children((freeable > 0).then(|| {
-                        div().text_xs().text_color(theme.muted_foreground).child(
-                            SharedString::from(format!("可释放 {}", format_bytes(freeable))),
-                        )
-                    }))
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("tasks-clear-selection")
-                            .icon(gpui_kit::assets::IconName::X)
-                            .ghost()
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.selected.clear();
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("tasks-delete-selected")
-                            .icon(gpui_kit::assets::IconName::Trash)
-                            .label("删除")
-                            .danger()
-                            .small()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.confirm_delete(ids.clone(), window, cx);
-                            })),
-                    )
-                    .into_any_element()
-            });
+        let bottom_bar = (selected_count > 0).then(|| {
+            let theme = cx.theme();
+            let ids: Vec<String> = self.selected.iter().cloned().collect();
+            h_flex()
+                .w_full()
+                .flex_shrink_0()
+                .items_center()
+                .gap_3()
+                .border_t_1()
+                .border_color(theme.border)
+                .bg(theme.background)
+                .px_4()
+                .py_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .child(SharedString::from(selected_count.to_string())),
+                )
+                .children((freeable > 0).then(|| {
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(crate::i18n::tf(
+                            "tasks.freeable",
+                            &[("size", format_bytes(freeable).as_str())],
+                        )))
+                }))
+                .child(div().flex_1())
+                .child(
+                    Button::new("tasks-clear-selection")
+                        .icon(gpui_kit::assets::IconName::X)
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.selected.clear();
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("tasks-delete-selected")
+                        .icon(gpui_kit::assets::IconName::Trash)
+                        .label(crate::i18n::t("common.delete"))
+                        .danger()
+                        .small()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_delete(ids.clone(), window, cx);
+                        })),
+                )
+                .into_any_element()
+        });
         let theme = cx.theme();
         v_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("tasks-page")
-            .child(
+            .children((self.tasks.is_some()).then(|| {
+                // 首拉加载期不渲染筛选工具栏：加载态整页居中、不受页内控件
+                // 影响（用户定稿口径）
                 div()
                     .w_full()
                     .px_6()
                     .pt_6()
                     .pb_4()
-                    .child(self.render_toolbar(cx)),
-            )
+                    .child(self.render_toolbar(cx))
+            }))
             .child(body)
             .children(bottom_bar)
     }
@@ -712,24 +768,10 @@ impl gpui_kit::Render for TasksView {
 /// task.error 存 i18n key（`error.*`），也混有历史错误原文（存量无法静态
 /// 枚举）。已知 key 翻成中文，未知原样透出（Tauri t() 回落同口径）。
 fn task_error_text(key: &str) -> String {
-    match key {
-        "error.network" => "连不上服务器，请检查网络连接或设置页里的代理".into(),
-        "error.emptyResponse" => "服务器没有返回内容，请稍后再试一次".into(),
-        "error.signer" => "暂时准备不了这次请求，请稍后重试".into(),
-        "error.storeCorrupt" => "本地记录读取失败，请重启应用后再试".into(),
-        "error.io" => "文件读写失败，请检查磁盘剩余空间".into(),
-        "error.decrypt" => "这一集无法播放，请重新下载后再试".into(),
-        "error.media" => "视频处理失败，请重新下载这一集".into(),
-        "error.invalidArgs" => "这个操作没法完成，请重试".into(),
-        "error.notFound" => "没有找到对应的内容".into(),
-        "error.cancelled" => "操作已取消".into(),
-        "error.busy" => "上一个任务还在跑，请等它完成".into(),
-        "error.internal" => "操作失败，请重试".into(),
-        "error.badPayload" => "数据格式异常，请重试".into(),
-        "error.storeLocked" => {
-            "应用已在运行（可能被隐身模式隐藏了窗口），请从 Dock/任务栏打开它".into()
-        }
-        other => other.to_string(),
+    if key.starts_with("error.") {
+        crate::i18n::t(key)
+    } else {
+        key.to_string()
     }
 }
 
@@ -743,8 +785,7 @@ impl TasksView {
         } else {
             crate::preview::fixtures::download_tasks()
         };
-        let count =
-            |status: TaskStatus| tasks.iter().filter(|t| t.status == status).count() as usize;
+        let count = |status: TaskStatus| tasks.iter().filter(|t| t.status == status).count();
         self.queue_status = Some(QueueStatus {
             pending: count(TaskStatus::Pending),
             running: count(TaskStatus::Running),

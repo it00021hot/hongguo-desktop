@@ -1,0 +1,1 @@
+wait 9000; tap 1236 22; wait 2000; shot target/nsh-smoke/05-mini.png; key Escape; wait 2000; shot target/nsh-smoke/06-restored.png; quit

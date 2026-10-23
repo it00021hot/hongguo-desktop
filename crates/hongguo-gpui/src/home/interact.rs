@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, div};
 use hongguo_api::interact::{InteractionItem, collect_series, digg_video, fetch_interaction_state};
@@ -18,9 +18,9 @@ struct RailItem {
     /// 激活态着色（红心/黄星）；未激活恒纯白（抖音系贴画面右缘形态）。
     active_color: gpui_kit::Rgba,
     /// 无计数项的文案（分享 → 「分享」）。
-    label: Option<&'static str>,
+    label: Option<String>,
     /// 悬停 tooltip（悬停变手型 + 提示）。
-    tooltip: &'static str,
+    tooltip: String,
 }
 
 impl super::HomeView {
@@ -96,7 +96,7 @@ impl super::HomeView {
     /// 点赞当前集（裸 vid 为点赞对象）：乐观翻转 + 计数 ±1，失败回滚。
     fn toggle_digg(&mut self, cx: &mut Context<Self>) {
         if !self.logged_in() {
-            log::info!("[Home] 点赞需要登录（settings 里没有账号），已忽略");
+            self.require_login(cx);
             return;
         }
         let Some(now) = self.now.clone() else {
@@ -143,10 +143,25 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.digg_pending = false;
-                if let Err(e) = result {
-                    // 失败回滚（下次重试）
-                    log::warn!("[Home] 点赞失败: {e}");
-                    view.load_interact_state(cx);
+                match result {
+                    Ok(_) => view.show_toast(
+                        if next {
+                            crate::i18n::t("player.interact.liked")
+                        } else {
+                            crate::i18n::t("player.interact.undone")
+                        },
+                        cx,
+                    ),
+                    Err(e) => {
+                        // 失败回滚（下次重试）
+                        log::warn!("[Home] 点赞失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
+                        view.load_interact_state(cx);
+                    }
                 }
                 cx.notify();
             });
@@ -158,7 +173,7 @@ impl super::HomeView {
     /// 收藏/取消收藏当前剧（乐观翻转 + 收藏计数 ±1，失败回滚）。
     fn toggle_collect(&mut self, cx: &mut Context<Self>) {
         if !self.logged_in() {
-            log::info!("[Home] 收藏需要登录（settings 里没有账号），已忽略");
+            self.require_login(cx);
             return;
         }
         let Some(now) = self.now.clone() else {
@@ -199,9 +214,24 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.collect_pending = false;
-                if let Err(e) = result {
-                    log::warn!("[Home] 收藏失败: {e}");
-                    view.load_interact_state(cx);
+                match result {
+                    Ok(_) => view.show_toast(
+                        if next {
+                            crate::i18n::t("player.interact.collected")
+                        } else {
+                            crate::i18n::t("player.interact.uncollected")
+                        },
+                        cx,
+                    ),
+                    Err(e) => {
+                        log::warn!("[Home] 收藏失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
+                        view.load_interact_state(cx);
+                    }
                 }
                 cx.notify();
             });
@@ -220,6 +250,77 @@ impl super::HomeView {
             now.title, now.series_id
         );
         cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+        // Tauri 分享成功有 toast（player.interact.shareCopied）；这里也回执
+        self.show_toast(crate::i18n::t("player.interact.shareCopied"), cx);
+    }
+
+    /// 互动登录墙（Tauri interaction-rail requireLogin 同款）：提示 + 去
+    /// 设置页账号卡登录。切页走壳的「离开首页」语义（停播落进度，与 Tauri
+    /// 离开播放页卸载同口径）。
+    fn require_login(&mut self, cx: &mut Context<Self>) {
+        log::info!("[Home] 互动需要登录（settings 里没有账号），跳设置页");
+        self.show_toast(crate::i18n::t("player.interact.loginRequired"), cx);
+        cx.emit(super::HomeEvent::OpenSettings);
+    }
+
+    /// 追更键显隐：官方只在连载剧（series_status=0）出追更钮；meta 未到
+    /// （None）按显示处理（Tauri 回落「追更列表未加载即显示」的同口径）。
+    fn follow_visible(&self) -> bool {
+        self.series_status != Some(1)
+    }
+
+    /// 追更当前剧（do_action 34/35，服务端跟随列表）：与详情页/追更页
+    /// 同一段 service；乐观翻转 + 失败回滚，回执走舞台 toast。
+    fn toggle_follow(&mut self, cx: &mut Context<Self>) {
+        if self.follow_pending {
+            return;
+        }
+        if !self.logged_in() {
+            self.require_login(cx);
+            return;
+        }
+        let Some(now) = self.now.clone() else {
+            return;
+        };
+        let next = !self.follow_is_on.unwrap_or(false);
+        self.follow_is_on = Some(next);
+        self.follow_pending = true;
+        let state = Arc::clone(&self.state);
+        let sid = now.series_id.clone();
+        let rx = bridge::spawn(async move {
+            hongguo_service::follow_service::toggle(&state, &sid, next).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let _ = this.update(cx, |view, cx| {
+                view.follow_pending = false;
+                match result {
+                    Ok(()) => {
+                        view.show_toast(
+                            if next {
+                                crate::i18n::t("follow.followed")
+                            } else {
+                                crate::i18n::t("follow.unfollowed")
+                            },
+                            cx,
+                        );
+                    }
+                    Err(e) => {
+                        // 失败回滚（下次重查拿服务端真相）
+                        view.follow_is_on = Some(!next);
+                        log::warn!("[Home] 追更失败: {e}");
+                        let message = crate::i18n::app_error_text(&e);
+                        view.show_toast(
+                            crate::i18n::tf("common.failedWith", &[("message", message.as_str())]),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// 互动栏当前集/剧的命中（mget 列表里才有「已互动」态）。
@@ -290,7 +391,7 @@ impl super::HomeView {
                     active: collected,
                     active_color: gpui_kit::rgba(0xfacc15ff),
                     label: None,
-                    tooltip: "收藏",
+                    tooltip: crate::i18n::t("player.interact.collect"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_collect(cx)),
@@ -305,7 +406,7 @@ impl super::HomeView {
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
                     label: None,
-                    tooltip: "评论",
+                    tooltip: crate::i18n::t("player.interact.comments"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_comments_panel(cx)),
@@ -318,11 +419,33 @@ impl super::HomeView {
                     active: digged,
                     active_color: gpui_kit::rgba(0xef4444ff),
                     label: None,
-                    tooltip: "点赞",
+                    tooltip: crate::i18n::t("player.interact.like"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_digg(cx)),
             ))
+            // 追更（📺，仅连载中显示——已完结剧不会有新集；Tauri 同位）
+            .children(self.follow_visible().then(|| {
+                let follow_on = self.follow_is_on.unwrap_or(false);
+                self.rail_item(
+                    "follow",
+                    RailItem {
+                        icon: gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv),
+                        count: 0,
+                        active: follow_on,
+                        // Tauri 追更态用 text-primary（语义令牌，非皮肤色）
+                        active_color: cx.theme().primary.to_rgb(),
+                        label: Some(if follow_on {
+                            crate::i18n::t("follow.following")
+                        } else {
+                            crate::i18n::t("follow.follow")
+                        }),
+                        tooltip: crate::i18n::t("player.interact.follow"),
+                    },
+                    cx,
+                    cx.listener(|this, _, _, cx| this.toggle_follow(cx)),
+                )
+            }))
             .child(self.rail_item(
                 "share",
                 RailItem {
@@ -330,8 +453,8 @@ impl super::HomeView {
                     count: 0,
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
-                    label: Some("分享"),
-                    tooltip: "分享",
+                    label: Some(crate::i18n::t("player.interact.share")),
+                    tooltip: crate::i18n::t("player.interact.share"),
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.share_series(cx)),

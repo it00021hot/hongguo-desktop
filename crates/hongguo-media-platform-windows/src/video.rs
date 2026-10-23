@@ -1,9 +1,9 @@
-//! 视频逐帧解码出口（Windows）：Media Foundation 解码 MFT，NV12 系统内存帧，
-//! 渲染侧 CPU 转 RGBA 后按普通图像上传。
+//! 视频逐帧解码出口（Windows）：Media Foundation 解码 MFT（HEVC / H.264），
+//! NV12 系统内存帧，渲染侧 CPU 转 RGBA 后按普通图像上传。
 //!
 //! 契约见 [`hongguo_media_platform_api::video`]；本类型是门面
-//! `hongguo_media_platform::platform::video::HevcDecoder` 在 Windows 上的具体
-//! 实现。解码器接口与原 MF 侧一致（open/decode/finish，帧自带 PTS），引擎
+//! `hongguo_media_platform::platform::video::VideoFrameDecoder` 在 Windows 上
+//! 的具体实现。解码器接口与原 MF 侧一致（open/decode/finish，帧自带 PTS），引擎
 //! （hongguo-playback）与壳（hongguo-gpui）只认这一层。
 
 use hongguo_common::AppResult;
@@ -11,18 +11,19 @@ use hongguo_media_platform_api::video::{
     DecoderInit, FrameBuffer, Nv12Plane, VideoDecoder, VideoFrame,
 };
 
-use crate::mf::HevcMftDecoder;
+use crate::mf::VideoMftDecoder;
 
 /// 帧流解码器（MF 会话：open/decode/finish，帧自带 PTS）。
-pub struct HevcDecoder {
-    inner: HevcMftDecoder,
+pub struct VideoFrameDecoder {
+    inner: VideoMftDecoder,
 }
 
-impl HevcDecoder {
+impl VideoFrameDecoder {
     pub fn open(init: DecoderInit<'_>) -> AppResult<Self> {
         Ok(Self {
-            inner: HevcMftDecoder::new(
-                init.hvcc,
+            inner: VideoMftDecoder::new(
+                init.codec,
+                init.sequence_header,
                 init.parameter_sets,
                 init.length_size,
                 init.width,
@@ -78,17 +79,17 @@ impl HevcDecoder {
     }
 }
 
-impl VideoDecoder for HevcDecoder {
+impl VideoDecoder for VideoFrameDecoder {
     fn decode(
         &mut self,
         sample: &[u8],
         pts_secs: f64,
         duration_secs: f64,
     ) -> AppResult<Vec<VideoFrame>> {
-        HevcDecoder::decode(self, sample, pts_secs, duration_secs)
+        VideoFrameDecoder::decode(self, sample, pts_secs, duration_secs)
     }
 
     fn finish(&mut self) -> AppResult<Vec<VideoFrame>> {
-        HevcDecoder::finish(self)
+        VideoFrameDecoder::finish(self)
     }
 }

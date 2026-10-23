@@ -9,6 +9,13 @@ use crate::app_state::AppState;
 use hongguo_common::model::Settings;
 use hongguo_common::{AppError, AppResult};
 
+/// 缓存占用上限的档位上限（MB）。超过 1TB 的上限没有实际意义，收敛掉
+/// 免得用户手改 JSON 时把清理策略搞得离谱。
+const MAX_CACHE_LIMIT_MB: u32 = 1024 * 1024;
+
+/// 缓存保留周期的档位上限（天）。一年前的缓存没有留着的价值。
+const MAX_CACHE_TTL_DAYS: u32 = 365;
+
 /// 保存设置（立即生效，无需重启）。
 pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     let normalized = normalize(settings)?;
@@ -39,6 +46,13 @@ pub fn apply_cache_root(settings: &Settings) {
     );
 }
 
+/// 未配置 `cache_dir` 时的缓存位置：跟随数据目录（其下再分 `compat-cache/`
+/// 与 `cover-cache/`）。设置页留空时要把实际路径显示出来——「跟随数据目录」
+/// 本身没告诉用户文件落哪儿。两壳共用这一段解析，别在各自壳里拼路径。
+pub fn default_cache_dir() -> String {
+    hongguo_store::paths::data_dir().display().to_string()
+}
+
 /// 归一化并校验设置。
 ///
 /// 两步是一体的：校验的是**归一化之后**的结果，拆成两个函数就会留下
@@ -54,6 +68,10 @@ pub fn normalize(settings: Settings) -> AppResult<Settings> {
     // cache_dir 允许空（= 跟随数据目录），只裁空白
     settings.cache_dir = settings.cache_dir.trim().to_string();
     settings.boss_key = settings.boss_key.trim().to_string();
+    // 缓存自动清理两档：上限 0 = 不限、周期 0 = 关闭，负数无意义（u32 收
+    // 不到，但旧库/手改的 JSON 可能给负数，这里按 0 处理）。
+    settings.cache_limit_mb = settings.cache_limit_mb.min(MAX_CACHE_LIMIT_MB);
+    settings.cache_ttl_days = settings.cache_ttl_days.min(MAX_CACHE_TTL_DAYS);
 
     // 后置条件：clamp_concurrency 一旦失效，队列就会带着 0 并发启动，
     // 那时候没有任何地方会报错，这里是唯一的检查点。
@@ -83,11 +101,23 @@ mod tests {
     #[test]
     fn normalize_clamps_prefetch_episodes() {
         let n = normalize(Settings {
-            prefetch_episodes: 9,
+            prefetch_episodes: 99,
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(n.prefetch_episodes, 3, "预取集数上限 3，0=关闭也是合法值");
+        assert_eq!(n.prefetch_episodes, 10, "预取集数上限 10，0=关闭也是合法值");
+    }
+
+    #[test]
+    fn normalize_clamps_cache_policy() {
+        let n = normalize(Settings {
+            cache_limit_mb: 10_000_000,
+            cache_ttl_days: 100_000,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(n.cache_limit_mb, MAX_CACHE_LIMIT_MB);
+        assert_eq!(n.cache_ttl_days, MAX_CACHE_TTL_DAYS);
     }
 
     #[test]

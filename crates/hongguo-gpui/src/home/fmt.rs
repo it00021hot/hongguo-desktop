@@ -39,6 +39,18 @@ pub(crate) fn format_duration(seconds: f64) -> String {
 /// 播放量短格式（Tauri `formatPlayCount` 同口径：亿/万阶梯、去尾零）。
 /// 找剧搜索卡热度行用。
 pub(crate) fn format_play_count(n: i64) -> String {
+    if crate::i18n::locale() == crate::i18n::Locale::EnUs {
+        if n >= 1_000_000_000 {
+            return format!("{:.1}B", n as f64 / 1_000_000_000.0).replace(".0", "");
+        }
+        if n >= 1_000_000 {
+            return format!("{:.1}M", n as f64 / 1_000_000.0).replace(".0", "");
+        }
+        if n >= 1_000 {
+            return format!("{:.1}K", n as f64 / 1_000.0).replace(".0", "");
+        }
+        return n.to_string();
+    }
     if n >= 100_000_000 {
         return format!("{:.1}亿", n as f64 / 100_000_000.0).replace(".0", "");
     }
@@ -63,18 +75,30 @@ pub(crate) fn relative_time(ts_ms: i64) -> String {
         - ts_ms / 1000)
         .max(0);
     match secs {
-        0..=59 => "刚刚".to_string(),
-        60..=3_599 => format!("{}分钟前", secs / 60),
-        3_600..=86_399 => format!("{}小时前", secs / 3_600),
-        86_400..=172_799 => "昨天".to_string(),
-        172_800..=2_591_999 => format!("{}天前", secs / 86_400),
+        0..=59 => crate::i18n::t("player.comments.justNow"),
+        60..=3_599 => crate::i18n::tf(
+            "player.comments.minutesAgo",
+            &[("n", &(secs / 60).to_string())],
+        ),
+        3_600..=86_399 => crate::i18n::tf(
+            "player.comments.hoursAgo",
+            &[("n", &(secs / 3_600).to_string())],
+        ),
+        86_400..=172_799 => crate::i18n::t("player.comments.yesterday"),
+        172_800..=2_591_999 => crate::i18n::tf(
+            "player.comments.daysAgo",
+            &[("n", &(secs / 86_400).to_string())],
+        ),
         _ => {
             use chrono::{Datelike, TimeZone};
             let dt = chrono::Local
                 .timestamp_millis_opt(ts_ms)
                 .single()
                 .unwrap_or_else(chrono::Local::now);
-            format!("{}月{}日", dt.month(), dt.day())
+            match crate::i18n::locale() {
+                crate::i18n::Locale::ZhCn => format!("{}月{}日", dt.month(), dt.day()),
+                crate::i18n::Locale::EnUs => format!("{:02}/{:02}", dt.month(), dt.day()),
+            }
         }
     }
 }
@@ -102,16 +126,28 @@ impl super::HomeView {
     /// `utils/format.ts` 的 formatCountPrecise（亿/万，详情页头部）是
     /// Tauri 端就分开的两套。
     pub(super) fn fmt_count(n: i64) -> String {
-        if n >= 1_000_000 {
-            return format!("{:.1}", n as f64 / 1_000_000.0).replace(".0", "") + "百万";
-        }
-        if n >= 10_000 {
-            let text = if n % 10_000 >= 1000 {
-                format!("{:.1}", n as f64 / 10_000.0)
-            } else {
-                format!("{}", n / 10_000)
-            };
-            return text.replace(".0", "") + "万";
+        match crate::i18n::locale() {
+            crate::i18n::Locale::ZhCn => {
+                if n >= 1_000_000 {
+                    return format!("{:.1}", n as f64 / 1_000_000.0).replace(".0", "") + "百万";
+                }
+                if n >= 10_000 {
+                    let text = if n % 10_000 >= 1_000 {
+                        format!("{:.1}", n as f64 / 10_000.0)
+                    } else {
+                        format!("{}", n / 10_000)
+                    };
+                    return text.replace(".0", "") + "万";
+                }
+            }
+            crate::i18n::Locale::EnUs => {
+                if n >= 1_000_000 {
+                    return format!("{:.1}M", n as f64 / 1_000_000.0).replace(".0", "");
+                }
+                if n >= 1_000 {
+                    return format!("{:.1}K", n as f64 / 1_000.0).replace(".0", "");
+                }
+            }
         }
         format!("{n}")
     }
@@ -119,6 +155,9 @@ impl super::HomeView {
     /// 播放量格式化（系列剧卡片数据行）：对齐 Tauri `formatPlayCount`
     /// （亿/万阶梯，详情页头部同源口径）。
     pub(super) fn fmt_play_count(n: i64) -> String {
+        if crate::i18n::locale() == crate::i18n::Locale::EnUs {
+            return format_play_count(n);
+        }
         if n >= 100_000_000 {
             return format!("{:.1}亿", n as f64 / 100_000_000.0).replace(".0", "");
         }

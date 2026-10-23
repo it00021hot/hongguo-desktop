@@ -35,6 +35,10 @@ export const settingsSchema = z.object({
   downloadDir: z.string(),
   // 后端 serde(default)：旧库无此字段，前端宽松接收（空 = 跟随数据目录）
   cacheDir: z.string().catch(''),
+  /** 缓存占用上限（MB；0 = 不限）。后端 serde(default)，旧后端无此字段 */
+  cacheLimitMb: z.number().int().min(0).catch(0),
+  /** 缓存自动清理周期（天；0 = 关闭）。后端 serde(default)，旧后端无此字段 */
+  cacheTtlDays: z.number().int().min(0).catch(0),
   naming: namingTemplateSchema,
   maxConcurrency: z.number().int().min(1).max(10),
   proxy: proxyConfigSchema,
@@ -42,8 +46,8 @@ export const settingsSchema = z.object({
   autoNextEpisode: z.boolean(),
   // 后端 serde(default)：旧库无此字段，前端宽松接收
   pauseOnMinimize: z.boolean().catch(true),
-  /** 连播预取集数（0=关闭，上限 3；Rust clamp_prefetch_episodes） */
-  prefetchEpisodes: z.number().int().min(0).max(3).catch(1),
+  /** 连播预取集数（0=关闭，上限 10；Rust clamp_prefetch_episodes） */
+  prefetchEpisodes: z.number().int().min(0).max(10).catch(3),
   /** 老板键全局快捷键（tauri accelerator 形态；空 = 未启用） */
   bossKey: z.string().catch(''),
   theme: z.string(),

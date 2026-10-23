@@ -31,7 +31,7 @@ Makefile 是入口（`make help` 看全量）：
 ### lint 闸门的注意事项（Makefile 注释是真踩出来的）
 
 - clippy 必须 `--all-targets`：否则 `#[cfg(test)]` 里的代码根本不进检查。
-- macOS 双目标交叉 clippy（`--target aarch64-apple-darwin` / `x86_64-apple-darwin`）：VT 等 cfg 门后的代码 Windows 宿主看不见，v0.0.1 就是它带着 125 条警告上了 CI。占位 `CC_*=true AR_*=true` 只骗过 C 编译步骤，check/clippy 不链接、结果不受影响。
+- macOS 双目标交叉 clippy（`--target aarch64-apple-darwin` / `x86_64-apple-darwin`）只守平台链正清单（Makefile `MAC_CROSS_CRATES`）：VT 等 cfg 门后的代码 Windows 宿主看不见，v0.0.1 就是它带着 125 条警告上了 CI；全图交叉会拖进 aws-lc-sys（要真 macOS SDK 的 Darwin libc 头，本地生不出来），全图覆盖在 CI 的 macOS 原生 runner。交叉的 C 工具链是真 clang（LLVM，前置 `winget install LLVM.LLVM`）：交叉链上有真编 C/C++ 的 build script，早年占位 `CC_*=true` 的「假成功」口径已失效；路径必须 `C:/` 短路径形态（cc 拆带空格路径）。
 - `-D clippy::allow_attributes`：`#[allow]` 直接拒；确需断言用 `#[expect(reason)]`——lint 不再触发时编译失败，杜绝过期放行。
 - 别用 `-` 前缀或 `|| true` 吞失败；每行独立 shell，`cd` 只对本行有效。
 
