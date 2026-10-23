@@ -18,6 +18,7 @@
 | **frame-server 迁移（2026-10-22，现行）** | 渲染器设备补旗标共享给引擎 + `TransferVideoFrame` → 视频 quad 同画布；连播走平、切集首帧 p50 84ms、2x dropped=0、画面无缝（`render_to_image` 可拍到视频），详见 [`gpui-system-player-windows.md`](./gpui-system-player-windows.md) | 本次提交 |
 | macOS 复验（2026-10-23） | 默认 system 一次起播成功（FirstFrame 1.9s）；2x 60.0fps 满帧零丢帧（gap 中位 16.8ms / 最大 19.4ms）；自然连播 7 次 Ended 接力 + 强制 6s 连切 51 次零失败；用户手测确认弹幕平滑、小窗拖动/单击、白线/闪缝均无异常 | 本轮 |
 | 壳侧对齐两修（2026-10-23）：小窗红绿灯 + 输入框内联表情 | 小窗进出隐藏/恢复 macOS 红绿灯（与无边框播放共用 `set_traffic_lights_hidden`，互不顶掉）；弹幕与评论输入框的 `[名字]` 以 `Input::token` 原子内联 token 渲染成表情图（点选 `replace_with_token` 插入、value 仍纯文本、撤销/光标归输入框），上方预览条随之删除——Tauri RichEmojiInput 对齐 | 本次提交 |
+| 暂停恢复画面冻结修复（2026-10-23） | 用户实测「暂停再播画面卡住、声音继续」（间歇 1–2s）。探针定位：AVF 防卡顿启发式在自定义 scheme 源上恢复时门住视频呈现（数据面无断供）。修复：建播放器即关 `automaticallyWaitsToMinimizeStalling` + 恢复改 `playImmediately(atRate:)`——恢复帧间隙 1100–2050ms → ≤2.1ms（plain 与暂停中 seek 两组验证）；metrics 线程顺带修接力后失明与 0 帧静默 | `c698820` |
 
 ## 2. 已验证（本机）
 
