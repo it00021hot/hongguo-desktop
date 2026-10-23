@@ -1,8 +1,0 @@
-{
-  "name": "hongguo-nsh",
-  "id": "com.hongguo.nsh",
-  "version": "1.0.0",
-  "build": 1,
-  "rust": ".",
-  "root": "App"
-}

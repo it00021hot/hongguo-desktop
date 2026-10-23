@@ -1,7 +1,7 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview nsh nsh-smoke
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview
 
 help:
 	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
@@ -19,8 +19,6 @@ help:
 	@echo "gpui       启动 GPUI 壳"
 	@echo "gpui-app   把 GPUI 壳打成 macOS .app（通知/Dock 身份需要 bundle；产物 target/gpui-app/红果.app）"
 	@echo "gpui-preview 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview"
-	@echo "nsh        启动 NSH 壳（第三壳，与 GPUI 壳共存；docs/nsh-shell-plan.md）"
-	@echo "nsh-smoke  NSH 壳冒烟验收：跑 scripts/*.txt 的 NSH_SCRIPT，截图落 target/nsh-smoke/"
 
 # 两种 dev 模式并存，不自动切换：
 # - dev：真实权限/真实数据（%APPDATA%\hongguo-downloader 与真实 WebView2
@@ -57,27 +55,6 @@ gpui-app:
 # windows不支持
 gpui-preview:
 	cargo run -p hongguo-gpui --features screenshot -- --render-preview /tmp/hongguo-gpui-preview
-
-# NSH 壳（第三壳）：进程内直调 service，无 IPC；与 GPUI 壳共存至替值线。
-# 数据根与另外两壳平级独立（%APPDATA%\hongguo-nsh），互不锁库。
-nsh:
-	cargo run -p hongguo-nsh
-
-# NSH 壳冒烟验收：每个脚本是一条完整链路（启动 → 交互 → 截图 → quit）。
-# 逐个跑 scripts/*.txt，截图落 target/nsh-smoke/；任一截图缺失即失败。
-# 脚本里的截图路径相对仓库根（cargo 从根运行），所以先清空目标目录。
-nsh-smoke:
-	rm -rf target/nsh-smoke && mkdir -p target/nsh-smoke
-	@set -e; for f in crates/hongguo-nsh/scripts/*.txt; do \
-		echo "== $$f"; \
-		NSH_SCRIPT="$$(cat $$f)" cargo run -q -p hongguo-nsh; \
-	done
-	@for f in crates/hongguo-nsh/scripts/*.txt; do \
-		for shot in $$(grep -o 'target/nsh-smoke/[^;]*' $$f); do \
-			test -s $$shot || { echo "缺失截图: $$shot"; exit 1; }; \
-		done; \
-	done
-	@echo "NSH 冒烟通过：$$(ls target/nsh-smoke/*.png | wc -l) 张截图"
 
 build:
 	pnpm build

@@ -396,12 +396,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ascii"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
-
-[[package]]
 name = "ash"
 version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1328,12 +1322,6 @@ dependencies = [
  "wasm-bindgen",
  "windows-link 0.2.1",
 ]
-
-[[package]]
-name = "chunked_transfer"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e4de3bc4ea267985becf712dc6d9eed8b04c953b3fcfb339ebc87acd9804901"
 
 [[package]]
 name = "cipher"
@@ -3586,7 +3574,7 @@ dependencies = [
  "smallvec",
  "spin 0.10.1",
  "strum 0.28.0",
- "taffy 0.13.0",
+ "taffy",
  "thiserror 2.0.21",
  "ttf-parser",
  "url",
@@ -4382,29 +4370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hongguo-nsh"
-version = "0.5.6"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "env_logger",
- "hongguo-api",
- "hongguo-common",
- "hongguo-protocol",
- "hongguo-service",
- "hongguo-store",
- "hongguo-stream",
- "log",
- "nsh-core",
- "nsh-platform-macos",
- "nsh-platform-windows",
- "serde",
- "serde_json",
- "tiny_http",
- "tokio",
-]
-
-[[package]]
 name = "hongguo-player"
 version = "0.5.6"
 dependencies = [
@@ -5004,12 +4969,6 @@ name = "imagesize"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
-
-[[package]]
-name = "imagesize"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
 
 [[package]]
 name = "imgref"
@@ -6243,119 +6202,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nsh-animation"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0004eabd31751552aa5d6244b4f9234697b377add7fac969720c0eb17ead29a9"
-
-[[package]]
-name = "nsh-core"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4310862aabaecd04f931cce2f6d7bdb5cc923093c487e947ba4f4005a432483c"
-dependencies = [
- "log",
- "nsh-animation",
- "nsh-macros",
- "rustc-hash 2.1.3",
- "serde_json",
- "slab",
- "taffy 0.15.0",
- "tokio",
-]
-
-[[package]]
-name = "nsh-engine"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11b24e6663c0e9e0f66cdd866648fe963b537657ac05b019d2cbd21a71e9ed56"
-dependencies = [
- "crossbeam-channel",
- "libc",
- "log",
- "nsh-animation",
- "nsh-core",
- "rustc-hash 2.1.3",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "nsh-macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3ed6a60044bc96f82ca037b7f8713df6285cbd672c01154cabc331f1f9b3538"
-dependencies = [
- "imagesize 0.15.0",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "ttf-parser",
-]
-
-[[package]]
-name = "nsh-platform-macos"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c63efcf8123925eb4e6cbb92b85b4dc9cec20ddaf260b9f29cbc88e0c96b9d1a"
-dependencies = [
- "block2 0.6.2",
- "crossbeam-channel",
- "dispatch2",
- "libc",
- "log",
- "nsh-animation",
- "nsh-core",
- "nsh-engine",
- "nsh-ui-mobile",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-text",
- "objc2-foundation 0.3.2",
- "objc2-image-io",
- "objc2-io-kit",
- "objc2-quartz-core 0.3.2",
- "rustc-hash 2.1.3",
- "serde_json",
-]
-
-[[package]]
-name = "nsh-platform-windows"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b579dc6abd6441d651898ae25e9a41331f9ac49a58c32f21e440ff4643dbfe5"
-dependencies = [
- "base64 0.22.1",
- "crossbeam-channel",
- "image",
- "log",
- "nsh-animation",
- "nsh-core",
- "nsh-engine",
- "nsh-ui-mobile",
- "rustc-hash 2.1.3",
- "serde_json",
- "ttf-parser",
- "ureq",
- "webview2-com",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "windows-numerics 0.3.1",
-]
-
-[[package]]
-name = "nsh-ui-mobile"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6da57ee1b3c5361add6ce34f6722ed6fb12cd821a5339ec3dd2aefe80a7a0b6"
-dependencies = [
- "nsh-core",
- "serde_json",
-]
-
-[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6760,16 +6606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc2-image-io"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32b0446e98cf4a784cc7a0177715ff317eeaa8463841c616cfc78aa4f953c4ea"
-dependencies = [
- "objc2-core-foundation",
- "objc2-core-graphics",
-]
-
-[[package]]
 name = "objc2-io-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6858,7 +6694,6 @@ dependencies = [
  "bitflags 2.13.2",
  "objc2 0.6.5",
  "objc2-core-foundation",
- "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
 ]
@@ -8416,7 +8251,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
- "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -9691,17 +9525,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "taffy"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c8480887e8803986d96a7173729565520d4bbb721ad6b7ad6941a22897207aa"
-dependencies = [
- "serde",
- "slotmap",
- "smallvec",
-]
-
-[[package]]
 name = "tao"
 version = "0.37.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10372,18 +10195,6 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
-]
-
-[[package]]
-name = "tiny_http"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
-dependencies = [
- "ascii",
- "chunked_transfer",
- "httpdate",
- "log",
 ]
 
 [[package]]
@@ -11091,35 +10902,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
-name = "ureq"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
-dependencies = [
- "base64 0.23.1",
- "flate2",
- "log",
- "percent-encoding",
- "rustls",
- "rustls-pki-types",
- "ureq-proto",
- "utf8-zero",
- "webpki-roots",
-]
-
-[[package]]
-name = "ureq-proto"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841583fc36089d7d59419568ae157f43a5a03a2e5a81ba87c77d1596ef46e922"
-dependencies = [
- "base64 0.23.1",
- "http",
- "httparse",
- "log",
-]
-
-[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11209,12 +10991,6 @@ name = "utf16_iter"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8232dd3cdaed5356e0f716d285e4b40b932ac434100fe9b7e0e8e935b9e6246"
-
-[[package]]
-name = "utf8-zero"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"
@@ -11613,15 +11389,6 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]
