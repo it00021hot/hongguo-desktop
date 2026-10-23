@@ -457,7 +457,7 @@
     "cacheTtlDays3": "3 days",
     "cacheTtlDays7": "7 days",
     "cacheTtlDays30": "30 days",
-    "cacheAutoCleanDesc": "Runs in the background every hour: over the size limit the oldest cache files are removed first, and files older than the retention period are deleted too. With both set to unlimited/off, no cache file is touched.",
+    "cacheAutoCleanDesc": "Sweeps the cover cache every hour: over the size limit the oldest files are removed first, and files older than the retention period are deleted too. Files written in the last 10 minutes are kept. The transcode cache has its own budget based on free disk space and is trimmed automatically.",
     "redetectBackend": "Re-detect",
     "redetectDone": "Done — now: {backend}.",
     "bossKeyUnsupported": "This key can't be used as a boss key. Include Ctrl/Cmd or Alt.",

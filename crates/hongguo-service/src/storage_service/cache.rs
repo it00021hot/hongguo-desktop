@@ -138,37 +138,56 @@ struct CacheFile {
     modified: std::time::SystemTime,
 }
 
-/// 收集两处磁盘缓存的文件账。
+/// 收集封面缓存的文件账。
+///
+/// **只收封面/头像转码产物**（`cover-cache/`）：那是纯缓存，删了只影响
+/// 下次显示要重新下载一次。
+///
+/// **兼容转码产物（`compat-cache/`）不进这里**：它由
+/// `transcode_service::cache::trim()` 按磁盘空闲空间自己管预算（2–16GB），
+/// 已有淘汰机制；而它的文件是**正在播的集**的供数源——`hongguo-local://`
+/// 每次 range 请求都重新开文件（见 `hongguo-protocol::local::serve`），
+/// 播到一半被删就会断这一集。自研引擎 + 平台解不了 HEVC 时才走这条路，
+/// 但没必要为清缓存冒断播的风险。
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
-    for dir in [cover_cache_dir(), compat_cache_dir()] {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    let dir = cover_cache_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else {
-                continue;
-            };
-            let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            out.push(CacheFile {
-                path,
-                bytes: meta.len(),
-                modified,
-            });
-        }
+        let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        out.push(CacheFile {
+            path,
+            bytes: meta.len(),
+            modified,
+        });
     }
     out
 }
 
-/// 按策略自动清理磁盘缓存（封面/头像转码产物 + 兼容转码产物）。
+/// 刚落盘不久的文件不删（分钟）。刚写下的封面很可能正要被页面加载
+/// （`ensure_sized_cached` 写 `.tmp` 再 rename），删了会让这一帧的封面
+/// 变成占位块。十分钟足够让所有在途加载走完。
+const MIN_FILE_AGE_MINUTES: u64 = 10;
+
+/// 按策略自动清理磁盘缓存（**只清封面/头像转码产物**）。
 ///
 /// - TTL：最后修改时间早于 `ttl_days` 天的文件被删除；
 /// - 上限：剩余占用仍超 `limit_bytes` 时，从最旧的文件开始删到上限以内；
-/// - 删不掉的文件（Windows 上正被 AVPlayer 打开的 mp4）跳过，不报错。
+/// - 刚落盘 10 分钟内的文件一律不删（多半正要被页面加载）；
+/// - 删不掉的文件（权限、占用）跳过，不报错。
+///
+/// 兼容转码产物（`compat-cache/`）**不在范围内**：它是正在播的集的供数源
+/// （`hongguo-local://` 每次 range 请求重新开文件），播到一半被删会断播；
+/// 它另有按磁盘空闲的预算机制（`transcode_service::cache::trim`）。
 ///
 /// 返回值与手动 [`clear`] 同构：删掉多少个文件、释放多少字节。
 pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheClearResult {
@@ -181,6 +200,13 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
     let mut files = collect_files();
     let mut removed = 0u64;
     let mut freed = 0u64;
+    // 刚落盘不久的文件一律不删（两段都算）：它多半正要被页面加载。
+    let min_age = std::time::Duration::from_secs(MIN_FILE_AGE_MINUTES * 60);
+    let age_of = |file: &CacheFile| -> std::time::Duration {
+        now.duration_since(file.modified)
+            .unwrap_or(std::time::Duration::ZERO)
+    };
+    files.retain(|file| age_of(file) >= min_age);
 
     // 1) TTL：过期即删
     if policy.ttl_days > 0 {
@@ -188,10 +214,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
         let mut expired = Vec::new();
         let mut kept = Vec::new();
         for file in files {
-            let age = now
-                .duration_since(file.modified)
-                .unwrap_or(std::time::Duration::ZERO);
-            if age >= ttl {
+            if age_of(&file) >= ttl {
                 expired.push(file);
             } else {
                 kept.push(file);
@@ -226,7 +249,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
 
     if removed > 0 {
         log::info!(
-            "[Cache] 自动清理：删掉 {removed} 个文件、释放 {} 字节（上限 {} MB，TTL {} 天）",
+            "[Cache] 自动清理：删掉 {removed} 个封面缓存文件、释放 {} 字节（上限 {} MB，TTL {} 天）",
             freed,
             policy.limit_bytes / 1024 / 1024,
             policy.ttl_days
@@ -364,6 +387,9 @@ mod tests {
     }
 
     /// 上限：超了从最旧开始删到上限以内（写入间隔给不同的 mtime）。
+    ///
+    /// 参照时间往后推一天——刚落盘 10 分钟内的文件有护栏不删（见
+    /// `auto_clean_keeps_fresh_files`）。
     #[test]
     fn auto_clean_trims_to_limit_oldest_first() {
         let dir = std::env::temp_dir().join(format!("hg-cache-cap-{}", std::process::id()));
@@ -382,7 +408,7 @@ mod tests {
                 limit_bytes: 250,
                 ttl_days: 0,
             },
-            std::time::SystemTime::now(),
+            days_from_now(1),
         );
         assert_eq!(result.items, 1, "删到 200 ≤ 250 即可停");
         assert_eq!(result.bytes, 100);
@@ -404,5 +430,53 @@ mod tests {
         let result = auto_clean(AutoCleanPolicy::default(), days_ago(400));
         assert_eq!(result.items, 0);
         assert!(cover.join("a.jpg").exists());
+    }
+
+    /// 刚落盘不久的文件不删——哪怕超上限也不删：它多半正要被页面加载
+    /// （写 `.tmp` 再 rename 刚落盘），删了会让这一帧的封面变占位块。
+    #[test]
+    fn auto_clean_keeps_fresh_files() {
+        let dir = std::env::temp_dir().join(format!("hg-cache-fresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
+        let cover = cover_cache_dir();
+        std::fs::create_dir_all(&cover).unwrap();
+        write_aged(&cover, "a.jpg", 100);
+
+        // 上限 0 字节（超得不能再超），但文件才落盘几秒
+        let result = auto_clean(
+            AutoCleanPolicy {
+                limit_bytes: 1,
+                ttl_days: 0,
+            },
+            std::time::SystemTime::now(),
+        );
+        assert_eq!(result.items, 0, "刚落盘的文件不删");
+        assert!(cover.join("a.jpg").exists());
+    }
+
+    /// 兼容转码产物（正在播的集的供数源）不在自动清理范围内——它由
+    /// `transcode_service::cache::trim()` 按磁盘空闲自己管预算。
+    #[test]
+    fn auto_clean_leaves_compat_cache_alone() {
+        let dir = std::env::temp_dir().join(format!("hg-cache-compat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
+        let compat = compat_cache_dir();
+        std::fs::create_dir_all(&compat).unwrap();
+        write_aged(&compat, "series_001.mp4", 500);
+
+        let result = auto_clean(
+            AutoCleanPolicy {
+                limit_bytes: 1,
+                ttl_days: 1,
+            },
+            days_from_now(30),
+        );
+        assert_eq!(result.items, 0);
+        assert!(
+            compat.join("series_001.mp4").exists(),
+            "兼容转码产物不能被自动清理删掉（会断正在播的集）"
+        );
     }
 }
