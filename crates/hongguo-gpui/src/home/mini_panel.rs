@@ -250,6 +250,9 @@ impl super::HomeView {
             Some(saved) => {
                 self.mini = Some(saved);
                 crate::mini::set_active(true);
+                // 小窗不显示红绿灯（Tauri mini 是 decorations:false）：重复
+                // setHidden 幂等，无边框播放开着时也只是一次空操作
+                crate::platform::set_traffic_lights_hidden(window, true);
                 // 大屏的浮层带不进 480×270 的小窗：进小屏前一并收掉
                 //（Tauri enterMini 同款）。下拉菜单本体收不掉（Popover 随
                 // 触发钮卸载自毁），这里清的是常显记账位
@@ -275,6 +278,11 @@ impl super::HomeView {
         if let Some(saved) = self.mini.take() {
             crate::mini::exit(window, cx, saved);
             crate::mini::set_active(false);
+            // 显回红绿灯前先看无边框播放：它还开着就保持隐藏，别把它的
+            // 藏显顶掉（两个形态共用同一颗开关）
+            if !self.frameless {
+                crate::platform::set_traffic_lights_hidden(window, false);
+            }
             self.wake_controls(cx);
             log::info!("[Home] 退出小屏，窗口几何已还原");
         }
