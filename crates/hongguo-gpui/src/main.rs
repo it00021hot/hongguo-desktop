@@ -423,6 +423,9 @@ fn build_app_state() -> Arc<AppStateInner> {
     }
     // 追更更新检查定时器（Tauri 壳 lib.rs setup 同款：启动查一轮 + 20 分钟周期）
     hongguo_service::follow_service::start_notice_loop(state.clone());
+    // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮；策略每轮
+    // 现读设置，用户在设置页改了下轮就生效。
+    hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
     state
 }
 

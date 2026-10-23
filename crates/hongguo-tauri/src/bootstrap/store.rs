@@ -25,6 +25,10 @@ pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
     hongguo_service::settings_service::apply_cache_root(&settings);
     state.replace_settings(settings);
 
+    // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮。策略每轮
+    // 现读设置——用户在设置页改了上限/周期，下一轮就生效。
+    hongguo_service::storage_service::cache::start_auto_clean_loop(state.inner().clone());
+
     // 2) 合并在后台线程上跑，进程退出时线程直接没了。启动时还标着 running 的
     // 一定是上次没跑完的：留着会让 UI 上一条「合并中」永远转不完，
     // 而实际早就没人跑了。标成失败让用户看到真实结果。
