@@ -35,6 +35,10 @@ export const settingsSchema = z.object({
   downloadDir: z.string(),
   // 后端 serde(default)：旧库无此字段，前端宽松接收（空 = 跟随数据目录）
   cacheDir: z.string().catch(''),
+  /** 缓存占用上限（MB；0 = 不限）。后端 serde(default)，旧后端无此字段 */
+  cacheLimitMb: z.number().int().min(0).catch(0),
+  /** 缓存自动清理周期（天；0 = 关闭）。后端 serde(default)，旧后端无此字段 */
+  cacheTtlDays: z.number().int().min(0).catch(0),
   naming: namingTemplateSchema,
   maxConcurrency: z.number().int().min(1).max(10),
   proxy: proxyConfigSchema,

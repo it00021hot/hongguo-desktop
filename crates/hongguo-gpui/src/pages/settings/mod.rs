@@ -112,6 +112,10 @@ pub(crate) struct SettingsView {
     draft: Option<Settings>,
     dir_input: Entity<InputState>,
     cache_dir_input: Entity<InputState>,
+    /// 缓存占用上限输入（MB）。
+    cache_limit_input: Entity<InputState>,
+    /// 缓存自动清理周期下拉（天；关闭/1/3/7/30）。
+    cache_ttl_select: Entity<SelectState<SearchableVec<SharedString>>>,
     proxy_input: Entity<InputState>,
     naming_select: Entity<SelectState<SearchableVec<SharedString>>>,
     proxy_select: Entity<SelectState<SearchableVec<SharedString>>>,
@@ -149,6 +153,12 @@ impl SettingsView {
         let dir_input = cx.new(|cx| InputState::new(window, cx));
         let cache_dir_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(crate::i18n::t("settings.cacheDirPlaceholder"))
+        });
+        let cache_limit_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(crate::i18n::t("settings.cacheLimitPlaceholder"))
+        });
+        let cache_ttl_select = cx.new(|cx| {
+            SelectState::new(storage::cache_ttl_items(), None, window, cx)
         });
         let proxy_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("http://127.0.0.1:7890"));
@@ -193,6 +203,20 @@ impl SettingsView {
         )
         .detach();
         cx.subscribe_in(
+            &cache_ttl_select,
+            window,
+            |this, _, event: &SelectEvent<SearchableVec<SharedString>>, _, cx| {
+                if let SelectEvent::Confirm(Some(value)) = event
+                    && let Some(ix) = storage::cache_ttl_labels()
+                        .iter()
+                        .position(|l| l == value.as_str())
+                {
+                    this.patch(cx, |s| s.cache_ttl_days = storage::cache_ttl_from_index(ix));
+                }
+            },
+        )
+        .detach();
+        cx.subscribe_in(
             &concurrency,
             window,
             |this, _, event: &SliderEvent, _, cx| {
@@ -219,6 +243,8 @@ impl SettingsView {
             draft: None,
             dir_input,
             cache_dir_input,
+            cache_limit_input,
+            cache_ttl_select,
             proxy_input,
             naming_select,
             proxy_select,

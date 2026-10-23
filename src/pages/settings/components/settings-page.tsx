@@ -43,6 +43,17 @@ const FFMPEG_INSTALL = isMac()
   ? { cmd: 'brew install ffmpeg', page: 'https://ffmpeg.org/download.html' }
   : { cmd: 'winget install Gyan.FFmpeg', page: 'https://www.gyan.dev/ffmpeg/builds/' };
 
+/** 缓存自动清理的保留周期档位（天；0 = 不自动清理）。与 GPUI 壳
+ *  `settings/storage.rs` 的 CACHE_TTL_DAYS 同档。label 用字面量类型，
+ *  t() 的 MessageKey 才认。 */
+const CACHE_TTL_OPTIONS = [
+  { days: 0, label: 'settings.cacheTtlOff' },
+  { days: 1, label: 'settings.cacheTtlDays1' },
+  { days: 3, label: 'settings.cacheTtlDays3' },
+  { days: 7, label: 'settings.cacheTtlDays7' },
+  { days: 30, label: 'settings.cacheTtlDays30' },
+] as const;
+
 /** 设置页：目录 / 命名 / 并发 / 代理 / 播放 / 存储。 */
 export function SettingsPage() {
   const { data: loaded, isPending, refetch: refetchSettings } = useSettings();
@@ -448,6 +459,55 @@ export function SettingsPage() {
             >
               {clearCache.isPending ? t('common.loading') : t('settings.clearCache')}
             </Button>
+          </div>
+          {/* 自动清理两档：占用上限（MB）+ 保留周期（天）。两档都关 = 不动
+              用户的数据；超限/过期由后台每小时扫一轮删最旧的。 */}
+          <div className="flex flex-col gap-2">
+            <Label>{t('settings.cacheAutoClean')}</Label>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="cache-limit" className="text-muted-foreground">
+                  {t('settings.cacheLimit')}
+                </Label>
+                <Input
+                  id="cache-limit"
+                  type="number"
+                  min={0}
+                  step={64}
+                  className="w-28"
+                  value={current.cacheLimitMb}
+                  placeholder={t('settings.cacheLimitPlaceholder')}
+                  onChange={(e) => {
+                    const parsed = Number(e.target.value);
+                    patch({ cacheLimitMb: Number.isFinite(parsed) && parsed > 0 ? parsed : 0 });
+                  }}
+                />
+                <span className="text-muted-foreground text-xs">
+                  {t('settings.cacheLimitUnit')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="cache-ttl" className="text-muted-foreground">
+                  {t('settings.cacheTtl')}
+                </Label>
+                <Select
+                  value={String(current.cacheTtlDays)}
+                  onValueChange={(v) => patch({ cacheTtlDays: Number(v) })}
+                >
+                  <SelectTrigger id="cache-ttl" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CACHE_TTL_OPTIONS.map((option) => (
+                      <SelectItem key={option.days} value={String(option.days)}>
+                        {t(option.label)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-xs">{t('settings.cacheAutoCleanDesc')}</p>
           </div>
         </CardContent>
       </Card>

@@ -10,6 +10,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::select::Select;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::div;
@@ -17,6 +18,43 @@ use gpui_kit::div;
 use crate::bridge;
 use crate::home::fmt::format_bytes;
 use crate::pages::card;
+
+/// 缓存自动清理周期的档位（天；0 = 关闭）。下拉里的每一档。
+pub(super) const CACHE_TTL_DAYS: [u32; 5] = [0, 1, 3, 7, 30];
+
+/// 周期档位的展示文案（与 [`CACHE_TTL_DAYS`] 同序）。
+pub(super) fn cache_ttl_labels() -> [String; 5] {
+    [
+        crate::i18n::t("settings.cacheTtlOff"),
+        crate::i18n::t("settings.cacheTtlDays1"),
+        crate::i18n::t("settings.cacheTtlDays3"),
+        crate::i18n::t("settings.cacheTtlDays7"),
+        crate::i18n::t("settings.cacheTtlDays30"),
+    ]
+}
+
+/// 周期档位 → 存储值（天）。
+pub(super) fn cache_ttl_from_index(ix: usize) -> u32 {
+    CACHE_TTL_DAYS.get(ix).copied().unwrap_or(0)
+}
+
+/// 存储值（天）→ 档位下标（不认识的档位落到「关闭」）。
+pub(super) fn cache_ttl_index(days: u32) -> usize {
+    CACHE_TTL_DAYS
+        .iter()
+        .position(|d| *d == days)
+        .unwrap_or(0)
+}
+
+/// 下拉的可选项。
+pub(super) fn cache_ttl_items() -> SearchableVec<SharedString> {
+    SearchableVec::new(
+        cache_ttl_labels()
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<SharedString>>(),
+    )
+}
 
 /// 缓存目录输入框的展示值：未配置时直接填默认位置（存储语义仍是空 = 跟随数据目录）。
 pub(super) fn cache_dir_display(default_cache_dir: &str, cache_dir: &str) -> String {
@@ -204,6 +242,52 @@ impl super::SettingsView {
                     ),
             )
             .child(div().text_sm().child(SharedString::from(usage_line)))
+            // 自动清理两档：占用上限（MB）+ 保留周期（天）。两档都关 = 不动
+            // 用户的数据；超限/过期由后台每小时扫一轮删最旧的。
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(Label::new(crate::i18n::t("settings.cacheAutoClean")))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(SharedString::from(
+                                        crate::i18n::t("settings.cacheLimit"),
+                                    )))
+                                    .child(div().w(gpui_kit::px(96.0)).child(Input::new(
+                                        &self.cache_limit_input,
+                                    )))
+                                    .child(
+                                        div().text_sm().child(SharedString::from(
+                                            crate::i18n::t("settings.cacheLimitUnit"),
+                                        )),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_sm().child(SharedString::from(
+                                        crate::i18n::t("settings.cacheTtl"),
+                                    )))
+                                    .child(div().flex_1().child(Select::new(&self.cache_ttl_select))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(crate::i18n::t("settings.cacheAutoCleanDesc")),
+                    ),
+            )
             .child(
                 h_flex()
                     .w_full()

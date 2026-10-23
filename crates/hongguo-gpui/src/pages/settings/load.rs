@@ -54,6 +54,15 @@ impl super::SettingsView {
                 let cache_dir = cache_dir_display(&view.default_cache_dir, &settings.cache_dir);
                 view.cache_dir_input
                     .update(cx, |input, cx| input.set_value(cache_dir, window, cx));
+                let limit = settings.cache_limit_mb.to_string();
+                view.cache_limit_input
+                    .update(cx, |input, cx| input.set_value(limit, window, cx));
+                let ttl = gpui_kit::component::IndexPath::new(super::storage::cache_ttl_index(
+                    settings.cache_ttl_days,
+                ));
+                view.cache_ttl_select.update(cx, |select, cx| {
+                    select.set_selected_index(Some(ttl), window, cx)
+                });
                 let url = settings.proxy.url.clone();
                 view.proxy_input
                     .update(cx, |input, cx| input.set_value(url, window, cx));
@@ -133,6 +142,13 @@ impl super::SettingsView {
         self.proxy_select.update(cx, |select, cx| {
             select.set_selected_index(Some(gpui_kit::component::IndexPath::new(1)), window, cx)
         });
+        // 缓存自动清理两档：周期下拉必须选中（不选会显示组件自带的英文
+        // 占位文案），上限输入留空 = 不限
+        self.cache_ttl_select.update(cx, |select, cx| {
+            select.set_selected_index(Some(gpui_kit::component::IndexPath::new(0)), window, cx)
+        });
+        self.cache_limit_input
+            .update(cx, |input, cx| input.set_value(String::new(), window, cx));
         // 与「手动指定」选中态一致地进草稿：URL 输入框随模式展示
         let mut draft = settings.clone();
         draft.proxy.mode = ProxyMode::Manual;

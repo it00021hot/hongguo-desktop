@@ -19,6 +19,15 @@ impl super::SettingsView {
         let mut next = self.current();
         next.download_dir = self.dir_input.read(cx).value().trim().to_string();
         next.cache_dir = self.cache_dir_input.read(cx).value().trim().to_string();
+        // 缓存上限（MB）：非数字按 0（不限）处理——输入框允许中途清空，
+        // 空值不该把保存卡死。
+        next.cache_limit_mb = self
+            .cache_limit_input
+            .read(cx)
+            .value()
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(0);
         if next.proxy.mode == ProxyMode::Manual {
             next.proxy.url = self.proxy_input.read(cx).value().trim().to_string();
         }
@@ -63,6 +72,15 @@ impl super::SettingsView {
                 let cache_dir = cache_dir_display(&self.default_cache_dir, &saved.cache_dir);
                 self.cache_dir_input
                     .update(cx, |input, cx| input.set_value(cache_dir, window, cx));
+                let limit = saved.cache_limit_mb.to_string();
+                self.cache_limit_input
+                    .update(cx, |input, cx| input.set_value(limit, window, cx));
+                let ttl = gpui_kit::component::IndexPath::new(super::storage::cache_ttl_index(
+                    saved.cache_ttl_days,
+                ));
+                self.cache_ttl_select.update(cx, |select, cx| {
+                    select.set_selected_index(Some(ttl), window, cx)
+                });
                 let url = saved.proxy.url.clone();
                 self.proxy_input
                     .update(cx, |input, cx| input.set_value(url, window, cx));
