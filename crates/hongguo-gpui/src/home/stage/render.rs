@@ -2,24 +2,24 @@
 
 use super::*;
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui_kit::AnimationExt as _;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::{ImageSource, ObjectFit, RenderImage, SharedString, div, img};
+use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
 
 use crate::home::player::{PresenterBounds, PresenterFit};
+use crate::ui_button::button as Button;
 
 use super::super::danmaku::DM_LANE_GAP;
 
@@ -94,22 +94,29 @@ impl HomeView {
             // 内存分解：进程涨内存时要能拆到「流缓存 / 封面 / 头像」三处，
             // 否则只能靠猜。封面与头像是解码后的 RGBA（像素数 × 4 字节）。
             let (stream_bytes, stream_entries) = hongguo_stream::cache().stats();
-            let image_bytes = |map: &HashMap<String, Arc<RenderImage>>| -> usize {
-                map.values()
-                    .map(|img| {
-                        let size = img.size(0);
-                        size.width.0 as usize * size.height.0 as usize * 4
-                    })
-                    .sum()
-            };
+            // 只统计已就绪的封面（在途/失败的条目没有图）。
+            let ready_covers: Vec<_> = self
+                .stage_covers
+                .values()
+                .filter_map(|cover| match cover {
+                    StageCover::Ready(img) => Some(img),
+                    _ => None,
+                })
+                .collect();
+            let covers_bytes: usize = ready_covers
+                .iter()
+                .map(|img| {
+                    let size = img.size(0);
+                    size.width.0 as usize * size.height.0 as usize * 4
+                })
+                .sum();
             // 列表卡封面在 gpui 的图片缓存里（壳根节点挂了有上限的
             // `ImageCache`），这里报的是舞台占位那一两张原图档。
-            let covers_bytes = image_bytes(&self.stage_covers);
             log::info!(
                 "[Home][mem] 流缓存 {} 条 / {:.1}MB，舞台占位封面 {} 张 / {:.1}MB",
                 stream_entries,
                 stream_bytes as f64 / 1024.0 / 1024.0,
-                self.stage_covers.len(),
+                ready_covers.len(),
                 covers_bytes as f64 / 1024.0 / 1024.0,
             );
             log::info!(
@@ -160,18 +167,17 @@ impl HomeView {
         }
         // 占位封面取**目标剧**（游标位）：切剧瞬间游标已指向下一部，先出
         // 它的封面；无封面条目（书架种子）退回首帧方向已在播的那部。
-        let cover_sid = self
-            .display_items()
-            .get(self.cursor())
-            .map(|i| i.series_id.clone())
-            .or_else(|| self.now.as_ref().map(|n| n.series_id.clone()));
+        let cover_sid = self.stage_cover_target();
         // 封面层：图 + 压暗（Tauri 的 `brightness-[0.55]`；GPUI 没有亮度滤镜，
         // 用等价的 45% 黑罩）。
         let cover: gpui_kit::AnyElement = match cover_sid
             .as_ref()
             .filter(|_| !video_ready)
             .and_then(|s| self.stage_covers.get(s))
-        {
+            .and_then(|cover| match cover {
+                StageCover::Ready(img) => Some(img),
+                _ => None,
+            }) {
             Some(bitmap) => div()
                 .absolute()
                 .size_full()
@@ -196,6 +202,10 @@ impl HomeView {
         // 条是兄弟层，点它不会冒泡到这里。
         let video: gpui_kit::AnyElement = if system_ready {
             // 系统后端：画面由下层 AVPlayerLayer 合成，这里只留点击层。
+            //
+            // keyboard-skip: 点画面暂停是**鼠标便利层**，不是独立的键盘入口——
+            // 同一动作的键盘入口是控制栏的播放/暂停钮与舞台的空格快捷键；把它
+            // 做成按钮会在无障碍树里多出一个覆盖整块画面的巨按钮。
             div()
                 .absolute()
                 .size_full()
@@ -441,6 +451,17 @@ impl HomeView {
                     let keys = this.shortcut_keys.clone();
                     let key = ev.keystroke.key.as_str();
                     if key == keys.play_pause {
+                        // 焦点在舞台的**子控件**上时，空格让位给那个控件：gpui 的
+                        // 按钮在 KeyUp 阶段把 Enter/Space 转成 click，舞台这里再
+                        // 翻一次就是双触发——按一次空格既激活按钮又翻暂停，两次
+                        // 翻转等于什么都没发生（控制栏「播放/暂停」钮点过之后按
+                        // 空格没反应，就是这个）。
+                        let focus_on_child = window
+                            .focused(cx)
+                            .is_some_and(|handle| handle != this.focus);
+                        if focus_on_child {
+                            return;
+                        }
                         this.toggle_pause(cx);
                     } else if key == keys.seek_back {
                         this.seek_by(-5.0, cx);
@@ -515,8 +536,11 @@ impl HomeView {
             .children(
                 (self.in_binge() && !in_mini && self.controls_visible()).then(|| {
                     let now = self.now.as_ref().expect("in_binge 已验 now 在");
-                    h_flex()
-                        .id("binge-pill")
+                    // 解除连播锁定 → base::Button 承担 role/focus/Enter-Space
+                    // （Tauri `immersive-info-overlay` 同款 <button>）。库强制
+                    // flex row + 主轴居中，这里补回原 h_flex 的左对齐。
+                    BaseButton::new("binge-pill")
+                        .accessibility_label(crate::i18n::t("player.exitBinge"))
                         .absolute()
                         .top_3()
                         .left_3()
@@ -529,8 +553,13 @@ impl HomeView {
                         .bg(gpui_kit::rgba(0x0000004d))
                         .text_xs()
                         .text_color(gpui_kit::rgb(0xffffff))
+                        .justify_start()
+                        // base Button 强制 line_height(relative(1.))，文字行盒比
+                        // 默认矮一截；钉回默认行高才与原元素像素一致。
+                        .line_height(gpui_kit::phi())
                         .cursor_pointer()
                         .hover(|s| s.bg(gpui_kit::rgba(0x00000080)))
+                        .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                         // 拦截放 on_click 内（同元素 on_mouse_down(stop) 会
                         // 杀掉点击合成，见分类 tab 处注释）
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -591,8 +620,13 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 选集浮层开着：舞台铺一层透明捕获层，点浮层外=关闭。捕获层
-            // 拦下鼠标下传（舞台的播放/暂停与信息层都不该收到这次点击）
+            // 选集浮层开着：舞台铺一层透明捕获层，点画面=关闭。捕获层
+            // 拦下鼠标下传（舞台的播放/暂停不该收到这次点击）。
+            //
+            // 注意它**只管画面**：控制条画在它之上，而控制条根节点拦
+            // 鼠标下传（bar.rs），捕获层压根收不到控制条上的点击——浮层
+            // 「点外部关闭」由浮层自己的 on_mouse_down_out 负责
+            // （home/picker.rs），别指望这张层。
             .children(
                 (self.picker_open && !in_mini && self.engine_ready()).then(|| {
                     div()

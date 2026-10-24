@@ -2,6 +2,9 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::{Role, Toggled};
+
 /// 面板行类型 → 行头标签（Tauri FILTER_LABEL_KEYS 同款；未知类型回落
 /// 服务端行名去掉「全部」前缀）。
 fn row_label(row_type: &str, row_name: &str) -> String {
@@ -130,7 +133,15 @@ impl super::BrowseView {
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(row_label(&row.row_type, &row.row_name))),
                     )
-                    .child(h_flex().flex_wrap().gap_1().py_0p5().children(pills))
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .py_0p5()
+                            .id(ElementId::from(format!("browse-group-{}", row.row_type)))
+                            .role(Role::RadioGroup)
+                            .children(pills),
+                    )
                     .into_any_element(),
             );
         }
@@ -190,7 +201,15 @@ impl super::BrowseView {
                             .text_color(theme.muted_foreground)
                             .child(crate::i18n::t("browse.fCreation")),
                     )
-                    .child(h_flex().flex_wrap().gap_1().py_0p5().children(pills))
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .py_0p5()
+                            .id("browse-group-creation")
+                            .role(Role::RadioGroup)
+                            .children(pills),
+                    )
                     .into_any_element(),
             );
         }
@@ -205,6 +224,9 @@ impl super::BrowseView {
 }
 
 /// 行内筛选胶囊（Tauri ToggleGroupItem 形态：圆角全、选中主色描边）。
+///
+/// 载体是 gpui-kit 的 base Button 而不是 div：div 不带焦点句柄，键盘用户
+/// 根本够不到这些筛选项；base Button 自带焦点句柄与 Enter/Space 激活。
 fn pill(
     cx: &App,
     id: ElementId,
@@ -213,10 +235,15 @@ fn pill(
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> gpui_kit::AnyElement {
     let theme = cx.theme();
-    div()
-        .id(id)
-        .flex()
-        .items_center()
+    let label = SharedString::from(label);
+    BaseButton::new(id)
+        .role(Role::RadioButton)
+        .aria_toggled(if selected {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .accessibility_label(label.clone())
         .rounded_full()
         .border_1()
         .when(selected, |s| {
@@ -233,6 +260,16 @@ fn pill(
         .py_0p5()
         .text_xs()
         .cursor_pointer()
+        // base Button 固定 justify_center，这里改回左对齐，和原来的 div 一致。
+        .justify_start()
+        // base Button 强制 line_height(relative(1.))，文字行盒会比默认矮一截、
+        // 胶囊整体变矮；钉回窗口默认行高（黄金比例）才与原来的 div 像素一致。
+        .line_height(gpui_kit::phi())
+        // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+        .focus_visible(|s| {
+            s.border_color(theme.ring)
+                .shadow(crate::tokens::focus_ring(theme))
+        })
         .hover(|s| s.bg(theme.secondary))
         .on_click(on_click)
         .child(label)

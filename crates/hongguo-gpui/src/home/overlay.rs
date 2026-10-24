@@ -1,6 +1,7 @@
 //! 舞台信息叠加层：热度/剧名/集数/简介压在画面左下，控制条弹出时抬
 //! 到其上沿，闲置淡出由调用方按 controls_visible 决定渲染。
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -90,14 +91,21 @@ impl super::HomeView {
                         // Tauri 同款交互：点剧名离开播放器看档案。GPUI 壳
                         // 无详情路由，先打开官方详情页（系统默认浏览器）；
                         // stopPropagation：点标题不能同时触发「点画面暂停」。
-                        div()
-                            .id("overlay-title")
+                        // 剧名可点 → base::Button（焦点句柄/Enter-Space/role 由库
+                        // 负责）；可见文本的 @ 只是视觉前缀，无障碍名用剧名本身。
+                        BaseButton::new("overlay-title")
+                            .accessibility_label(now.title.clone())
                             .text_sm()
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .text_color(gpui_kit::rgb(0xffffff))
                             .truncate()
                             .cursor_pointer()
                             .hover(|s| s.text_color(gpui_kit::rgba(0xffd7d7ff)))
+                            // base Button 强制 justify_center + line_height(relative(1.))：
+                            // 原链没写 flex，是块级左对齐 + 默认行高，两项都要钉回去。
+                            .justify_start()
+                            .line_height(gpui_kit::phi())
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                             .on_mouse_down(
                                 gpui_kit::MouseButton::Left,
                                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
@@ -158,7 +166,9 @@ impl super::HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
-                    .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                    // 块内点击不落回舞台由上面的 on_mouse_down 负责（仓库既有
+                    // 纪律同款：舞台的选集捕获层、小屏拖拽条都只靠 on_mouse_down
+                    // 拦点击落回），这层 on_click 是多余的。
                     .child(
                         div()
                             .flex_1()
@@ -172,26 +182,30 @@ impl super::HomeView {
                             .child(SharedString::from(intro.clone())),
                     )
                     .children((intro_expandable).then(|| {
-                        div()
-                            .id("intro-toggle")
+                        // 展开/收起钮可点 → base::Button。原来两段 when 是同一
+                        // 个动作的两种状态，合成一份 on_click。
+                        BaseButton::new("overlay-intro-toggle")
+                            .accessibility_label(if expanded {
+                                crate::i18n::t("player.introCollapse")
+                            } else {
+                                crate::i18n::t("player.introExpand")
+                            })
+                            .aria_expanded(expanded)
                             .flex_shrink_0()
                             .pb(gpui_kit::px(2.0))
                             .text_xs()
                             .cursor_pointer()
                             .text_color(gpui_kit::rgba(0xffffff99))
                             .hover(|s| s.text_color(gpui_kit::rgb(0xffffff)))
-                            .when(expanded, |s| {
-                                s.on_click(cx.listener(|this, _, _, cx| {
-                                    this.intro_expanded = false;
-                                    cx.notify();
-                                }))
-                            })
-                            .when(!expanded, |s| {
-                                s.on_click(cx.listener(|this, _, _, cx| {
-                                    this.intro_expanded = true;
-                                    cx.notify();
-                                }))
-                            })
+                            // base Button 强制 justify_center + line_height(relative(1.))：
+                            // 原链没写 flex，是块级左对齐 + 默认行高，两项都要钉回去。
+                            .justify_start()
+                            .line_height(gpui_kit::phi())
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.intro_expanded = !expanded;
+                                cx.notify();
+                            }))
                             .child(if expanded {
                                 crate::i18n::t("player.introCollapse")
                             } else {

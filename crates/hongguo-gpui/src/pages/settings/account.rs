@@ -4,7 +4,7 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::tag::Tag;
@@ -13,15 +13,21 @@ use gpui_kit::div;
 use hongguo_common::model::AccountState;
 
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 impl super::SettingsView {
+    /// 设置页账户头像的显示边长（物理像素）：画的是 `size_8()`（2rem =
+    /// 32px）。头像按这个尺寸预缩进 GPU——渲染器没有 mipmap，原图直接缩到
+    /// 32px 画出来必然糊（见 [`crate::cover_img::decode`]）。
+    const ACCOUNT_AVATAR_PX: u32 = 32;
+
     pub(super) fn load_avatar(&mut self, url: String, cx: &mut Context<Self>) {
         let rx = crate::cover_img::fetch(url);
         cx.spawn(async move |this, cx| {
             let bytes = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 if let Ok(bytes) = bytes
-                    && let Some(avatar) = crate::cover_img::decode(&bytes)
+                    && let Some(avatar) = crate::cover_img::decode(&bytes, Self::ACCOUNT_AVATAR_PX)
                 {
                     view.account_avatar = Some(avatar);
                     cx.notify();

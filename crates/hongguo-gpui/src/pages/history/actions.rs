@@ -1,6 +1,7 @@
 //! 历史页动作：删除记录（批量 + 确认弹窗）、继续观看/跳集起播、多选切换。
 
 use super::*;
+use hongguo_common::AppError;
 
 impl HistoryView {
     /// 批量删除历史：云端一条请求（useWatchHistoryDelete 同款）；本地逐剧
@@ -30,7 +31,7 @@ impl HistoryView {
                 // 本地模式：逐剧删（只动本机，Tauri localDelete 同款）
                 tokio::task::spawn_blocking(move || state_local.store.delete_local_history(&ids))
                     .await
-                    .expect("阻塞池 join")
+                    .map_err(|e| AppError::Internal(format!("本地历史删除阻塞池任务失败: {e}")))?
             } else {
                 let env = state_cloud.api_env();
                 hongguo_api::history::delete_watch_history(&refs, &env).await

@@ -2,14 +2,16 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::v_flex;
 use gpui_kit::div;
 use gpui_kit::prelude::*;
+
+use crate::ui_button::button as Button;
 
 impl HomeView {
     /// 底部发送框：@提及弹层、回复目标指示、输入框、表情与发送。
@@ -51,11 +53,16 @@ impl HomeView {
                             )),
                     )
                     .child(
-                        div()
-                            .id("reply-cancel")
-                            .cursor_pointer()
+                        // 取消回复目标（base::Button 强制居中，这里改回
+                        // 左对齐 + 默认行高，保持与原 div 同像素）
+                        BaseButton::new("reply-cancel")
+                            .accessibility_label(crate::i18n::t("common.cancel"))
+                            .justify_start()
+                            .line_height(gpui_kit::phi())
                             .text_xs()
+                            .cursor_pointer()
                             .text_color(gpui_kit::rgba(0xffffff99))
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.reply_to = None;
                                 cx.notify();
@@ -98,8 +105,16 @@ impl HomeView {
                     // 表情按钮（Tauri EmojiSendBox 顺序：input → emoji →
                     // send；开时高亮，点击不夺输入框焦点，插入落真实光标处）
                     .child(
-                        div()
-                            .id("emoji-btn")
+                        // 表情按钮（base::Button 强制居中，这里改回左对齐：
+                        // 图标原本贴左；面板开合是开关语义）
+                        BaseButton::new("emoji-btn")
+                            .accessibility_label(crate::i18n::t("player.danmakuEmoji"))
+                            .aria_toggled(if self.emoji_picker_open {
+                                gpui_kit::Toggled::True
+                            } else {
+                                gpui_kit::Toggled::False
+                            })
+                            .justify_start()
                             .px_1()
                             .cursor_pointer()
                             .text_color(if self.emoji_picker_open {
@@ -108,6 +123,7 @@ impl HomeView {
                                 gpui_kit::rgba(0xffffff99)
                             })
                             .hover(|s| s.text_color(gpui_kit::rgb(0xffffff)))
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.emoji_picker_open = !this.emoji_picker_open;
                                 cx.notify();
@@ -205,15 +221,17 @@ impl HomeView {
                         .children(crate::danmaku_emoji::EMOJI_FILES.iter().map(|(name, _)| {
                             let code = name.to_string();
                             let img = crate::danmaku_emoji::emoji_by_name(name);
-                            div()
-                                .id(gpui_kit::ElementId::from(format!("emoji-{}", code)))
+                            // 每格一张表情图：库注入的 flex + 居中与原链
+                            // 完全一致（无需补偿）；格内无文字，行高也不必管。
+                            BaseButton::new(gpui_kit::ElementId::from(format!("emoji-{}", code)))
+                                .accessibility_label(code.clone())
                                 .size_8()
-                                .flex()
-                                .items_center()
-                                .justify_center()
                                 .rounded(gpui_kit::px(6.0))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
+                                .focus_visible(|s| {
+                                    s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                })
                                 .on_click({
                                     let input = comment_input.clone();
                                     move |_, window, cx| {

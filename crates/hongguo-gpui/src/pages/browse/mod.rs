@@ -9,10 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
@@ -24,6 +23,7 @@ use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::home::fmt::format_play_count;
+use crate::ui_button::button as Button;
 
 mod cards;
 mod feed;

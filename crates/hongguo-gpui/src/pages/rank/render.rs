@@ -34,6 +34,7 @@ impl super::RankView {
                         .ghost()
                         .small()
                         .disabled(self.loading)
+                        .when(self.loading, |b| b.cursor_default())
                         .on_click(cx.listener(|this, _, _, cx| this.load_page(true, cx))),
                 )
                 .into_any_element()
@@ -88,21 +89,7 @@ impl gpui_kit::Render for RankView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
-        // 首拉加载：整页剩余区居中（含子榜导航区域）。居中在右侧列表列里
-        // 会读成「偏右」（子榜列占了左侧），用户实测反馈；页面级分支与
-        // 创作者主页同款。
-        if self.loading && self.items.is_empty() {
-            let theme = cx.theme();
-            return v_flex()
-                .size_full()
-                .bg(theme.background)
-                .text_color(theme.foreground)
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
-                .into_any_element();
-        }
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         // 滚动哨兵（虚拟列表版）：滚到列表末尾就续页；新页未测高时
         // is_scrolled_to_end 报 None，天然防住「追加后仍在底部」的连环翻页。
         if self.has_more && !self.loading && self.rows.scrolled_to_end() {
@@ -161,14 +148,15 @@ impl gpui_kit::Render for RankView {
                     cx.notify();
                 }))
         });
-        let (failed, empty, count) = (
+        let (loading, failed, empty, count) = (
+            self.loading && self.items.is_empty(),
             self.failed && self.items.is_empty(),
             self.items.is_empty(),
             self.items.len(),
         );
         // 旧列表后台刷新中（keepPreviousData 展示态）：Tauri RefreshShade
         // 同款——降透明度 + 挡掉鼠标（刷新期点旧行会以旧状态起播/预约）。
-        // 真没数据的加载走上面的整页 spinner，不套这层。
+        // 真没数据的加载走下面的行骨架，不套这层。
         let refreshing = self.loading && !self.items.is_empty();
         // 虚拟列表对账：有行才挂列表，末位固定一个 footer 槽（行数 + 1）
         if !failed && !empty {
@@ -236,42 +224,34 @@ impl gpui_kit::Render for RankView {
                                     .flex_1()
                                     .min_h_0()
                                     .when(refreshing, |s| s.opacity(0.5))
-                                    .children(if failed {
-                                        vec![
-                                            v_flex()
-                                                .w_full()
-                                                .items_center()
-                                                .py_16()
-                                                .gap_3()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(crate::i18n::t("rank.loadFailed")),
-                                                )
-                                                .child(
-                                                    Button::new("rank-retry")
-                                                        .label(crate::i18n::t("common.retry"))
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.load_page(false, cx)
-                                                        })),
-                                                )
-                                                .into_any_element(),
-                                        ]
+                                    .children(if loading {
+                                        // 首拉加载：行骨架铺在列表区（与真实列表
+                                        // 同容器，数据到位不跳版）。行高按 GPUI
+                                        // 真实行算，不照抄 Tauri 的 h-24：封面
+                                        // 107 + 行内上下 p_3 24 = 131；行间距
+                                        // 另按真实条目槽的 pb_2 给 8。
+                                        vec![crate::pages::skeleton::rows(cx, 8, 131.0, 8.0)]
+                                    } else if failed {
+                                        vec![crate::pages::states::error_state(
+                                            cx,
+                                            None,
+                                            crate::i18n::t("rank.loadFailed"),
+                                            None,
+                                            Some((
+                                                "rank-retry",
+                                                crate::pages::states::retry_on(
+                                                    cx.entity(),
+                                                    |this, cx| this.load_page(false, cx),
+                                                ),
+                                            )),
+                                        )]
                                     } else if empty {
-                                        vec![
-                                            v_flex()
-                                                .w_full()
-                                                .items_center()
-                                                .py_16()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(crate::i18n::t("rank.empty")),
-                                                )
-                                                .into_any_element(),
-                                        ]
+                                        vec![crate::pages::states::empty_state(
+                                            cx,
+                                            None,
+                                            crate::i18n::t("rank.empty"),
+                                            None,
+                                        )]
                                     } else {
                                         let entity = cx.entity();
                                         let state = self.rows.state();

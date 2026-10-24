@@ -7,11 +7,12 @@ use std::time::Instant;
 
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::{Window, div};
+
+use crate::ui_button::button as Button;
 
 impl gpui_kit::Render for HomeView {
     fn render(

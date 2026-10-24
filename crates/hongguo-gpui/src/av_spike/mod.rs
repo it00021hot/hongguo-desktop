@@ -218,9 +218,9 @@ async fn prepare_online_inner(
         return Err("推荐流没有可用 vid".to_string());
     }
 
-    // 短剧单集常只有 6-10MB，8MB 预取头部会把整集下完，渐进等待就压不到。
-    // 先只探测总长（Range 0-0，不下载正片），挑最大的一集；探测本身不
-    // 触发填充，正式 prepare 之后到开播之间才真正开始下 A。
+    // 短剧单集常只有 6-10MB，头部预算（整集的 20%）就接近整集长度，
+    // 渐进等待就压不到。先只探测总长（Range 0-0，不下载正片），挑最大的
+    // 一集；探测本身不触发填充，正式 prepare 之后到开播之间才真正开始下 A。
     const PROGRESSIVE_STRESS_BYTES: u64 = 24 * 1024 * 1024;
     let mut probed: Vec<(hongguo_api::discover::FeedItem, u32, u64)> = Vec::new();
     for item in &feed_items {
@@ -252,7 +252,7 @@ async fn prepare_online_inner(
     let (item, definition_a, total_a) = probed.swap_remove(best);
     if total_a < PROGRESSIVE_STRESS_BYTES {
         log::warn!(
-            "[AvSpike] 所有候选都小于 24MB（最大 {total_a}B）：8MB 预取头部可能已覆盖全集，渐进等待未被压测"
+            "[AvSpike] 所有候选都小于 24MB（最大 {total_a}B）：头部预算可能已覆盖全集，渐进等待未被压测"
         );
     }
     log::info!(

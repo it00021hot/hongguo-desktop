@@ -2,10 +2,12 @@
 
 use std::sync::Arc;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, div};
+use gpui_kit::{ElementId, Toggled, div};
 use hongguo_api::interact::{InteractionItem, collect_series, digg_video, fetch_interaction_state};
+use hongguo_common::AppError;
 
 use super::NowPlaying;
 use crate::bridge;
@@ -21,6 +23,9 @@ struct RailItem {
     label: Option<String>,
     /// 悬停 tooltip（悬停变手型 + 提示）。
     tooltip: String,
+    /// 是否开关项（收藏/点赞/追更）：开关才带 aria-toggled；评论面板、分享
+    /// 这类动作项没有开/关两态，带了就是假开关。
+    toggleable: bool,
 }
 
 impl super::HomeView {
@@ -32,7 +37,7 @@ impl super::HomeView {
         self.ep_comment_count = 0;
         self.ep_digg_count = 0;
         let rx = bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
+            let counts = tokio::task::spawn_blocking(move || {
                 state
                     .store
                     .series_by_id(&sid)
@@ -42,28 +47,31 @@ impl super::HomeView {
                     .map(|e| (e.comment_count, e.digg_count))
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| AppError::Internal(format!("集级计数阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(counts)
         });
         cx.spawn(async move |this, cx| {
             let counts = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, _| {
-                if let Some((comment_count, digg_count)) = counts {
-                    // info 常驻：点赞数不显示类问题的第一现场（档案里有没有
-                    // 这两个计数，一行钉死）
-                    log::info!(
-                        "[Home] 集级公开计数（{}#{}）：评论={} 点赞={}",
-                        view.now
-                            .as_ref()
-                            .map(|n| n.series_id.as_str())
-                            .unwrap_or("?"),
-                        view.now.as_ref().map(|n| n.vid_index).unwrap_or(0),
-                        comment_count,
-                        digg_count
-                    );
-                    view.ep_comment_count = comment_count;
-                    view.ep_digg_count = digg_count;
-                } else {
-                    log::warn!("[Home] 集级公开计数：档案里找不到当前集");
+                match counts {
+                    Ok(Some((comment_count, digg_count))) => {
+                        // info 常驻：点赞数不显示类问题的第一现场（档案里有没有
+                        // 这两个计数，一行钉死）
+                        log::info!(
+                            "[Home] 集级公开计数（{}#{}）：评论={} 点赞={}",
+                            view.now
+                                .as_ref()
+                                .map(|n| n.series_id.as_str())
+                                .unwrap_or("?"),
+                            view.now.as_ref().map(|n| n.vid_index).unwrap_or(0),
+                            comment_count,
+                            digg_count
+                        );
+                        view.ep_comment_count = comment_count;
+                        view.ep_digg_count = digg_count;
+                    }
+                    Ok(None) => log::warn!("[Home] 集级公开计数：档案里找不到当前集"),
+                    Err(e) => log::warn!("[Home] 集级公开计数读取失败: {e}"),
                 }
             });
         })
@@ -392,6 +400,7 @@ impl super::HomeView {
                     active_color: gpui_kit::rgba(0xfacc15ff),
                     label: None,
                     tooltip: crate::i18n::t("player.interact.collect"),
+                    toggleable: true,
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_collect(cx)),
@@ -407,6 +416,7 @@ impl super::HomeView {
                     active_color: gpui_kit::rgba(0xffffffff),
                     label: None,
                     tooltip: crate::i18n::t("player.interact.comments"),
+                    toggleable: false,
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_comments_panel(cx)),
@@ -420,6 +430,7 @@ impl super::HomeView {
                     active_color: gpui_kit::rgba(0xef4444ff),
                     label: None,
                     tooltip: crate::i18n::t("player.interact.like"),
+                    toggleable: true,
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.toggle_digg(cx)),
@@ -441,6 +452,7 @@ impl super::HomeView {
                             crate::i18n::t("follow.follow")
                         }),
                         tooltip: crate::i18n::t("player.interact.follow"),
+                        toggleable: true,
                     },
                     cx,
                     cx.listener(|this, _, _, cx| this.toggle_follow(cx)),
@@ -455,6 +467,7 @@ impl super::HomeView {
                     active_color: gpui_kit::rgba(0xffffffff),
                     label: Some(crate::i18n::t("player.interact.share")),
                     tooltip: crate::i18n::t("player.interact.share"),
+                    toggleable: false,
                 },
                 cx,
                 cx.listener(|this, _, _, cx| this.share_series(cx)),
@@ -478,10 +491,20 @@ impl super::HomeView {
             active_color,
             label,
             tooltip,
+            toggleable,
         } = item;
         let tooltip = tooltip.to_string();
-        div()
-            .id(ElementId::from(format!("rail-{id}")))
+        // 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space 激活与 role
+        // 由库负责；无障碍名用该项的 tooltip（每项都有）。
+        BaseButton::new(ElementId::from(format!("rail-{id}")))
+            .accessibility_label(tooltip.clone())
+            .when(toggleable, |s| {
+                s.aria_toggled(if active {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+            })
             .flex()
             .flex_col()
             .items_center()
@@ -492,6 +515,12 @@ impl super::HomeView {
             } else {
                 gpui_kit::rgb(0xffffff)
             })
+            // base Button 强制 justify_center：原链是 flex column 且没写
+            // justify，内容从顶部排，钉回顶部对齐。
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))：计数/文案子元素继承
+            // 行高，钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
             .tooltip(move |window, cx| {
                 gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
             })
@@ -505,6 +534,7 @@ impl super::HomeView {
                 gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
+            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
             .on_click(on_click)
             .child(icon.size_7().text_color(if active {
                 active_color

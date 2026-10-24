@@ -29,7 +29,6 @@ mod tabs;
 use std::sync::Arc;
 
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -42,6 +41,7 @@ use hongguo_common::model::Series;
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 /// 详情页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]

@@ -4,6 +4,7 @@
 use super::*;
 
 use super::open::{PlayRequest, SystemSpec};
+use hongguo_common::AppError;
 
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
@@ -192,6 +193,11 @@ impl super::HomeView {
                     self.play_generation,
                     self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
                 );
+                // 缓存的「当前集」要跟着正在播的走：接力不重建播放器，也就不
+                // 走 `prepare`（那里才 `set_current`）。不更新的话，接力后
+                // 真正在播的这一集会被当成「其余的」——按头部预算封顶，而
+                // 上一集反倒享受整集缓存。
+                hongguo_stream::cache().set_current(&next_vid);
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {
                     now.vid_index = next_index;
@@ -586,7 +592,7 @@ impl super::HomeView {
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
         let done = bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
+            let info = tokio::task::spawn_blocking(move || {
                 state
                     .store
                     .series_by_id(&sid)
@@ -595,10 +601,17 @@ impl super::HomeView {
                     .map(|s| (s.title, s.cover))
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| AppError::Internal(format!("剧集档案阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(info)
         });
         cx.spawn(async move |this, cx| {
-            let info = done.await.expect("tokio 桥不会丢弃发送端");
+            let info = match done.await.expect("tokio 桥不会丢弃发送端") {
+                Ok(info) => info,
+                Err(e) => {
+                    log::warn!("[Home] 剧集档案读取失败: {e}");
+                    None
+                }
+            };
             let _ = this.update(cx, |view, cx| {
                 let (title, cover) = info.unwrap_or_default();
                 let item = StreamItem {

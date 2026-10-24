@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::WindowExt;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -17,6 +17,19 @@ use hongguo_api::detail::{RelatedItem, RelatedSeries, fetch_related_series};
 
 use super::DetailView;
 use crate::bridge;
+use crate::ui_button::button as Button;
+
+/// 「相关作品」段的容器 id。
+///
+/// **为什么两段都要自己的 id**：gpui 的 a11y NodeId 是「有 id 的祖先链」的
+/// 哈希——两段里同一部剧（服务端两个 cell 各自下发、不去重，猜你喜欢完全可能
+/// 命中相关作品里的同 IP 剧）用的是同一个卡片 id，若两段容器都不带 id，两张卡
+/// 的路径相同 → 同一个 NodeId → 重复节点（debug 构建直接 panic，release 构建
+/// 静默丢节点）。容器带上自己的 id 就把两段隔成两个作用域。
+const WORKS_SECTION_ID: &str = "detail-related-works";
+
+/// 「猜你喜欢」段的容器 id（与 [`WORKS_SECTION_ID`] 必须是不同的值）。
+const GUESS_SECTION_ID: &str = "detail-related-guess";
 
 impl DetailView {
     /// 相关推荐卡 → 本页换载。**必带档案快照 prefill**（Tauri
@@ -108,24 +121,32 @@ impl DetailView {
             .gap_6()
             .children((!related.works.is_empty()).then(|| {
                 v_flex()
+                    .id(WORKS_SECTION_ID)
                     .gap_3()
                     .child(Self::section_title(&crate::i18n::t("detail.relatedWorks")))
                     .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .children(related.works.iter().map(|item| self.related_card(item, cx))),
+                        h_flex().flex_wrap().gap_3().children(
+                            related
+                                .works
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, item)| self.related_card(item, ix, cx)),
+                        ),
                     )
             }))
             .children((!related.guess.is_empty()).then(|| {
                 v_flex()
+                    .id(GUESS_SECTION_ID)
                     .gap_3()
                     .child(Self::section_title(&crate::i18n::t("detail.guessYouLike")))
                     .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_3()
-                            .children(related.guess.iter().map(|item| self.related_card(item, cx))),
+                        h_flex().flex_wrap().gap_3().children(
+                            related
+                                .guess
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, item)| self.related_card(item, ix, cx)),
+                        ),
                     )
             }))
             .children(
@@ -150,9 +171,19 @@ impl DetailView {
 
     /// 相关卡（related-card.tsx 同位：封面 3:4 + 左上题材角标 + 右下评分角标
     /// （星色）+ 标题 + 集数/播放行）。
-    fn related_card(&self, item: &RelatedItem, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    ///
+    /// 卡片 id 用**段内序号**而不是 series_id：同一部剧在两段里都可能出现
+    /// （服务端不去重），而 gpui 的 a11y NodeId 只认「有 id 的祖先链」——
+    /// 段容器已把两段隔开，段内再用序号保证唯一（卡片里的预约钮跟着卡的
+    /// 路径走，天然不撞）。
+    fn related_card(
+        &self,
+        item: &RelatedItem,
+        ix: usize,
+        cx: &Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&item.cover);
+        let cover = crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Inline);
         let mut stats: Vec<String> = Vec::new();
         if item.episode_cnt > 0 {
             // Tauri related-card：detail.episodesCount =「共N集」
@@ -174,15 +205,24 @@ impl DetailView {
         let reserve_id = item.series_id.clone();
         let reserved = self.related_reserved.contains(&reserve_id);
         let reserve_pending = self.related_reserve_pending.contains(&reserve_id);
-        div()
-            .id(ElementId::from(format!(
-                "detail-related-{}",
-                item.series_id
-            )))
+        // 整卡可点 → 用 base::Button 承担 role/focus/Enter-Space（Tauri 侧是
+        // `article role="button" tabIndex={0}`，同一语义）。库强制 flex row +
+        // 居中，这里要复原原 div 的 block 竖排：flex_col + items_stretch
+        // （子件撑满卡宽，标题才会按卡宽折行）+ justify_start（内容从顶上排，
+        // Tauri 注释里点名过「button 会把内容垂直居中，整排一高一低」）。
+        BaseButton::new(ElementId::from(format!("related-card-{ix}")))
+            .accessibility_label(item.title.clone())
             // Tauri 网格 repeat(auto-fill,minmax(128px,1fr)) 在 1280 窗口下
             // 是 7 列 145px；固定 116 会挤成 9 列（并排对拍可见）
             .w(gpui_kit::px(145.0))
+            .flex_col()
+            .items_stretch()
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
             .cursor_pointer()
+            .focus_visible(|s| s.shadow(crate::tokens::focus_ring(theme)))
             .on_click({
                 let item = item.clone();
                 cx.listener(move |this, _, _, cx| this.open_related(&item, cx))
@@ -193,7 +233,7 @@ impl DetailView {
                     .h(gpui_kit::px(193.0))
                     .w_full()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(8.0))
+                    .rounded(crate::tokens::radius::COVER)
                     .bg(theme.secondary)
                     .child(cover)
                     .children((!item.tag.is_empty()).then(|| {
@@ -204,8 +244,8 @@ impl DetailView {
                             .px_1p5()
                             .rounded(gpui_kit::px(4.0))
                             .text_xs()
-                            .bg(gpui_kit::rgba(0x000000aa))
-                            .text_color(gpui_kit::rgb(0xffffff))
+                            .bg(crate::tokens::scrim(50))
+                            .text_color(crate::tokens::on_media(95))
                             .child(SharedString::from(item.tag.clone()))
                     }))
                     .children((item.score > 0.0).then(|| {
@@ -216,7 +256,7 @@ impl DetailView {
                             .px_1()
                             .py_0p5()
                             .rounded(gpui_kit::px(4.0))
-                            .bg(gpui_kit::rgba(0x00000099))
+                            .bg(crate::tokens::scrim(60))
                             .text_size(gpui_kit::px(10.0))
                             // 评分角标走 star（Tauri related-card text-star 同款）
                             .text_color(crate::tokens::star(theme.mode))
@@ -260,6 +300,7 @@ impl DetailView {
                     .outline()
                     .small()
                     .disabled(reserve_pending)
+                    .when(reserve_pending, |b| b.cursor_default())
                     .on_click({
                         let reserve_id = reserve_id.clone();
                         cx.listener(move |this, _, window, cx| {

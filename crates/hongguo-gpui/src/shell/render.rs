@@ -145,7 +145,7 @@ impl gpui_kit::Render for Shell {
             .id("shell")
             .size_full()
             .bg(theme.background)
-            .when(video_hole, |el| el.bg(gpui_kit::rgba(0x00000000)))
+            .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
             .when(bordered, |el| el.border_1().border_color(theme.border))
             .text_color(theme.foreground)
             .children(toolbar)

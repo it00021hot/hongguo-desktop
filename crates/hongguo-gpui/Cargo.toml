@@ -53,11 +53,65 @@ required-features = ["screenshot"]
 name = "browse_suggest_keys"
 required-features = ["screenshot"]
 
+# 剧集卡片网格的几何断言（找剧页与 Tauri SeriesCardGrid 对齐的守卫）：
+# 列宽/封面 3:4/同行等高/末行留空（同上，进程内量真实排版）。
+[[test]]
+name = "browse_grid_geometry"
+required-features = ["screenshot"]
+
+# 评论富文本的换行与回复前缀断言（同上，进程内量文本节点的实际排版）。
+[[test]]
+name = "comment_text"
+required-features = ["screenshot"]
+
+# 封面圆角档的断言（纯样式层，不出图、不碰窗口）：圆角必须落在图片元素上、
+# 取值必须与 Tauri 的 --radius 尺度一致。默认构建即可跑。
+[[test]]
+name = "cover_corner"
+
+# 舞台占位封面三态的守卫（纯源码文本，不出图、不碰窗口）：在途/就绪/失败
+# 三态必须齐全，同剧不得重复发 1024 档请求，失败不得每次切集重试。
+# 不依赖 test-support，默认构建即可跑。
+[[test]]
+name = "stage_cover_guard"
+
 # 预览场景矩阵的覆盖率断言（纯数据，不出图、不碰窗口）：scenes.rs 自洽、
 # 经 #[path] 源文件级引入（bin 无 lib 目标，集成测试进不了 crate 内部）。
 # 不依赖 test-support，默认构建即可跑。
 [[test]]
 name = "preview_scenes"
+
+# a11y 节点 id 唯一性守卫（纯源码文本，不出图、不碰窗口）：accesskit 的 NodeId
+# 是「有 id 的祖先链」的哈希，同 id 落在两条未加 id 的分支下会撞出重复节点。
+[[test]]
+name = "a11y_id_guard"
+
+# 头像预热档位与渲染档位一致的守卫（纯源码文本）：成品图按「URL 哈希 + 档位」
+# 落盘，档位错配（预热 320 / 渲染找 64）就是整块空白。
+[[test]]
+name = "avatar_edge_guard"
+
+# 可点击元素的键盘可达闸门（纯源码文本）：全壳不许出现「手搓可点击 div」。
+[[test]]
+name = "keyboard_reachability"
+
+# 选集浮层「点外部关闭」的行为断言（同上，进程内派真实鼠标事件）：点别的
+# 控件要收起且不吞那一击，点入口按钮不许双翻，点浮层内部要留着。
+[[test]]
+name = "picker_dismiss"
+required-features = ["screenshot"]
+
+# 音量弹层「按住拖动」的行为断言（同上）：带一条负对照（纯 hover 裁决的弹层
+# 拖不动）把回归钉住。
+[[test]]
+name = "volume_drag"
+required-features = ["screenshot"]
+
+# 控制栏浮层的层级断言（同上）：deferred 浮层压过后画的兄弟 + 真壳三个浮层
+# 都 deferred 的接线守卫。
+[[test]]
+name = "overlay_layering"
+required-features = ["screenshot"]
 
 # 进程内抓帧取证（screenshot.rs）：`--features screenshot` 才编入，走 GPUI
 # `render_to_image`（不需要系统屏幕录制授权，无头也能拿真图）。默认构建不带。
@@ -81,7 +135,7 @@ perf-probe = ["dep:gpui-pre", "gpui-pre/profiler"]
 [dependencies]
 # GPUI Kit（longbridge/gpui-kit）：gpui-base + gpui-component 聚合，桌面壳按
 # .agents/skills/gpui-ui-design 的设计/编码规范构建（组件系统 + 主题令牌）。
-gpui-kit = "0.7.3"
+gpui-kit = "0.8.0"
 # 仅 `screenshot` feature 用：同版本的 gpui-pre / 平台层，为开 test-support
 # （`render_to_image` 的实现就门控在这两处）。版本必须与 gpui-kit 钉的一致。
 gpui-pre = { version = "=0.3.9", package = "gpui-pre", optional = true }

@@ -12,11 +12,13 @@
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable as _;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::div;
 use gpui_kit::prelude::*;
+
+use crate::ui_button::button as Button;
 
 impl super::HomeView {
     /// 底部悬浮安装引导（Tauri HevcInstallCard floating 形态：不盖画面、
@@ -75,6 +77,7 @@ impl super::HomeView {
                                     })
                                     .small()
                                     .disabled(self.hevc_installing)
+                                    .when(self.hevc_installing, |b| b.cursor_default())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.install_hevc_extension(cx);
                                     })),
@@ -86,6 +89,7 @@ impl super::HomeView {
                                     .cursor_pointer()
                                     .small()
                                     .disabled(self.hevc_installing)
+                                    .when(self.hevc_installing, |b| b.cursor_default())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.hevc_prompt_dismissed = true;
                                         cx.notify();

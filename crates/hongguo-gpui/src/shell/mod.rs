@@ -2,7 +2,7 @@
 //! `app-sidebar` 的 GPUI 对齐形态）。
 //!
 //! 侧栏目的地对齐 Tauri 客户端的信息架构（13 项，逐页接真数据）。
-//! 可折叠：展开 224px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
+//! 可折叠：展开 160px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
 //! Tauri collapsed 同款）。贴底账户区（登录面板复用首页的）+ 折叠钮。
 //!
 //! 顶栏自绘（Tauri `app-shell` 44px 薄行对齐）：中部是当前页面分类 tab 的
@@ -439,14 +439,11 @@ impl Shell {
                     // 第二次启动请求前置窗口（单实例；Tauri bring_back_active_window
                     // 同款：显示 + 还原最小化 + 聚焦）
                     if crate::platform::take_focus_request() {
-                        let shown = handle
-                            .update(cx, |_, window, _| {
-                                crate::platform::restore_from_minimized(window);
-                                crate::platform::show_foreground(window);
-                                crate::platform::visibility(window)
-                            })
-                            .unwrap_or(false);
-                        log::info!("[Shell] 第二次启动请求：窗口已带到前台（可见={shown}）");
+                        let _ = handle.update(cx, |_, window, cx| {
+                            crate::platform::restore_from_minimized(window, cx);
+                            crate::platform::show_foreground(window, cx);
+                        });
+                        log::info!("[Shell] 第二次启动请求：窗口已带到前台");
                     }
                     if !crate::boss_key::take_fired() {
                         continue;
@@ -471,11 +468,11 @@ impl Shell {
                     if !ok {
                         return;
                     }
-                    let _ = handle.update(cx, |_, window, _| {
+                    let _ = handle.update(cx, |_, window, cx| {
                         if visible {
-                            crate::platform::hide(window);
+                            crate::platform::hide(window, cx);
                         } else {
-                            crate::platform::show_foreground(window);
+                            crate::platform::show_foreground(window, cx);
                         }
                     });
                     log::info!(

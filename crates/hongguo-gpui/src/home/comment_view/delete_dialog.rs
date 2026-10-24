@@ -5,12 +5,13 @@ use super::*;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::div;
 use gpui_kit::prelude::*;
+
+use crate::ui_button::button as Button;
 
 impl HomeView {
     pub(super) fn render_delete_dialog(&self, cx: &Context<Self>) -> Option<gpui_kit::AnyElement> {
@@ -91,6 +92,7 @@ impl HomeView {
                                         .danger()
                                         .small()
                                         .disabled(self.comment_deleting)
+                                        .when(self.comment_deleting, |b| b.cursor_default())
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.confirm_delete(cx);
                                         })),

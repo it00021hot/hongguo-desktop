@@ -3,12 +3,13 @@
 use gpui_kit::component::Disableable;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{SharedString, div};
+
+use crate::ui_button::button as Button;
 
 impl super::HomeView {
     /// 小屏紧凑控制条（Tauri MiniScreenControls 对齐）：剧名/集数/简介、
@@ -148,6 +149,7 @@ impl super::HomeView {
                             .cursor_pointer()
                             .xsmall()
                             .disabled(!has_next)
+                            .when(!has_next, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
                     )
                     .child(

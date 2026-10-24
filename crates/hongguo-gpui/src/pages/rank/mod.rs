@@ -9,10 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -22,6 +21,7 @@ use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::detail::DetailPrefill;
+use crate::ui_button::button as Button;
 
 mod list;
 mod render;

@@ -4,9 +4,10 @@
 use super::*;
 
 use gpui_kit::Focusable;
+use gpui_kit::Toggled;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
@@ -14,6 +15,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::div;
 
 use crate::home::player_icons;
+use crate::ui_button::button as Button;
 
 /// 舞台宽度低于此值时，发送框折叠成「弹」字笔钮（手机端同款），时间读数
 /// 一并收起。
@@ -98,8 +100,11 @@ impl HomeView {
                     .child(self.render_danmaku_pill(cx, PillWidth::Fixed))
             }))
             .child(
-                div()
-                    .id("stage-danmaku-write")
+                // 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space 激活与
+                // role 由库负责（这是打开输入浮层的动作，不是开关，不带
+                // aria-toggled）。
+                BaseButton::new("stage-danmaku-write")
+                    .accessibility_label(crate::i18n::t("player.danmaku"))
                     .flex()
                     .w(gpui_kit::px(32.0))
                     .h(gpui_kit::px(28.0))
@@ -107,10 +112,12 @@ impl HomeView {
                     .items_center()
                     .rounded(gpui_kit::px(6.0))
                     .cursor_pointer()
-                    .role(gpui_kit::Role::Button)
-                    .aria_label(crate::i18n::t("player.danmaku"))
                     .text_color(color)
                     .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
+                    // base Button 强制 line_height(relative(1.))：自绘「弹」字
+                    // 继承行高，钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.danmaku_compact_open = !this.danmaku_compact_open;
                         if this.danmaku_compact_open {
@@ -183,18 +190,27 @@ impl HomeView {
                 // 裸图标钮（16px + px-1），不占按钮底板——
                 // 原先的 ghost 钮是 28px 方底板，胶囊里
                 // 顶得比 Tauri 高一倍，输入区被挤窄
-                div()
-                    .id("stage-danmaku-emoji")
+                // 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space 激活
+                // 与 role 由库负责；面板开合是开关态，带 aria-toggled。
+                BaseButton::new("stage-danmaku-emoji")
+                    .accessibility_label(crate::i18n::t("player.danmakuEmoji"))
+                    .aria_toggled(if self.danmaku_emoji_open {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
                     .px_1()
                     .cursor_pointer()
-                    .role(gpui_kit::Role::Button)
-                    .aria_label(crate::i18n::t("player.danmakuEmoji"))
                     .text_color(if self.danmaku_emoji_open {
                         emoji_active
                     } else {
                         emoji_idle
                     })
                     .hover(|s| s.text_color(emoji_active))
+                    // base Button 强制 justify_center：图标原来贴胶囊左边，
+                    // 钉回左对齐才与原 div 像素一致。
+                    .justify_start()
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.danmaku_emoji_open = !this.danmaku_emoji_open;
                         cx.notify();
@@ -286,45 +302,51 @@ impl HomeView {
                             .children(crate::danmaku_emoji::EMOJI_FILES.iter().map(|(name, _)| {
                                 let code = name.to_string();
                                 let emoji = crate::danmaku_emoji::emoji_by_name(name);
-                                div()
-                                    .id(gpui_kit::ElementId::from(format!("dm-emoji-{}", code)))
-                                    .size_8()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(gpui_kit::px(6.0))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
-                                    .on_click({
-                                        let input = danmaku_input.clone();
-                                        move |_, window, cx| {
-                                            if let Some(input) = &input {
-                                                // 光标处插入 `[名字]` 并附成原子
-                                                // 内联 token（Tauri insertEmoji 对齐）；
-                                                // token 插入被拒（理论路径）时退回
-                                                // 纯文本插入，宁可见代码不可丢输入
-                                                input.update(cx, |state, cx| {
-                                                    let token =
-                                                        crate::danmaku_emoji::emoji_inline_token(
-                                                            &code,
-                                                        );
-                                                    if state
-                                                        .replace_with_token(token, window, cx)
-                                                        .is_err()
-                                                    {
-                                                        log::warn!(
-                                                            "[Home] 表情 token 插入被拒，退回纯文本"
-                                                        );
-                                                        state.insert(code.clone(), window, cx);
-                                                    }
-                                                });
-                                            }
+                                // 每格可点 → base::Button：焦点句柄、Tab 可达、
+                                // Enter/Space 激活与 role 由库负责；无障碍名用表情
+                                // 代号本身（格子里只有图片，没有文字）。
+                                BaseButton::new(gpui_kit::ElementId::from(format!(
+                                    "dm-emoji-{}",
+                                    code
+                                )))
+                                .accessibility_label(code.clone())
+                                .size_8()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(gpui_kit::px(6.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(gpui_kit::rgba(0xffffff26)))
+                                .focus_visible(|s| {
+                                    s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                })
+                                .on_click({
+                                    let input = danmaku_input.clone();
+                                    move |_, window, cx| {
+                                        if let Some(input) = &input {
+                                            // 光标处插入 `[名字]` 并附成原子
+                                            // 内联 token（Tauri insertEmoji 对齐）；
+                                            // token 插入被拒（理论路径）时退回
+                                            // 纯文本插入，宁可见代码不可丢输入
+                                            input.update(cx, |state, cx| {
+                                                let token =
+                                                    crate::danmaku_emoji::emoji_inline_token(&code);
+                                                if state
+                                                    .replace_with_token(token, window, cx)
+                                                    .is_err()
+                                                {
+                                                    log::warn!(
+                                                        "[Home] 表情 token 插入被拒，退回纯文本"
+                                                    );
+                                                    state.insert(code.clone(), window, cx);
+                                                }
+                                            });
                                         }
-                                    })
-                                    .children(emoji.map(|bitmap| {
-                                        gpui_kit::img(gpui_kit::ImageSource::Render(bitmap))
-                                            .size_6()
-                                    }))
+                                    }
+                                })
+                                .children(emoji.map(|bitmap| {
+                                    gpui_kit::img(gpui_kit::ImageSource::Render(bitmap)).size_6()
+                                }))
                             })),
                     )
                     .into_any_element()

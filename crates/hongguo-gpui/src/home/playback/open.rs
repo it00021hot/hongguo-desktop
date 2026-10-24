@@ -150,7 +150,7 @@ impl super::HomeView {
             let vid = ep.vid.clone();
             let progress_key = progress_key.clone();
             Some(Arc::new(move || {
-                // loader 读到 8MB 预取预算之外时按需续填；resume 内部有
+                // loader 读到头部预算之外时按需续填；resume 内部有
                 // 取流权退避重试，不会在预取收尾窗口里丢一次就放弃。
                 hongguo_service::play_service::online::resume_fill(
                     &state,

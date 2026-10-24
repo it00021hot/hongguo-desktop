@@ -9,11 +9,11 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -23,6 +23,7 @@ use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::pages::list_common::{BatchBar, fetch_series_visual, pick_dot, search_box};
+use crate::ui_button::button as Button;
 
 /// 收藏页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -88,6 +89,9 @@ pub(crate) struct CollectionView {
     selected: BTreeSet<String>,
     deleting: bool,
     loading: bool,
+    /// 网格滚动句柄（常驻视图里）：离开再回来位置还在——对齐 Tauri
+    /// `useScrollRestore('hongguo.collections.scroll')` 的会话级记忆。
+    scroll: gpui_kit::ScrollHandle,
 }
 
 impl CollectionView {
@@ -128,6 +132,7 @@ impl CollectionView {
             selected: BTreeSet::new(),
             deleting: false,
             loading: false,
+            scroll: gpui_kit::ScrollHandle::new(),
         }
     }
 
@@ -448,7 +453,7 @@ impl CollectionView {
             _ => crate::i18n::t("collections.resolvingHint"),
         };
         let cover = match self.covers.get(&series_id) {
-            Some(url) => crate::cover_img::card(url),
+            Some(url) => crate::cover_img::card(url, crate::cover_img::CoverShape::Card),
             None => div().size_full().into_any_element(),
         };
         let play_open = hovered && !managing;
@@ -466,11 +471,16 @@ impl CollectionView {
                 }
             }))
             .child(
-                v_flex()
-                    .id(ElementId::from(format!("collections-open-{}", series_id)))
+                // 整卡可点 → 用 base::Button 承担 role/focus/Enter-Space（Tauri 侧
+                // 是 `article role="button" tabIndex={0}`，同一语义）。库强制
+                // flex row + 居中，这里要复原原 v_flex 的竖排：flex_col +
+                // items_stretch（子件撑满卡宽，标题才会按卡宽折行）+ justify_start
+                // （内容从顶上排）。
+                BaseButton::new(ElementId::from(format!("collections-open-{}", series_id)))
+                    .accessibility_label(title.clone())
                     .w_full()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(12.0))
+                    .rounded(crate::tokens::radius::CARD)
                     .border_1()
                     .when(picked, |s| s.border_color(theme.primary))
                     .when(!picked, |s| s.border_color(theme.border))
@@ -481,6 +491,17 @@ impl CollectionView {
                         theme.group_box
                     })
                     .cursor_pointer()
+                    .flex_col()
+                    .items_stretch()
+                    .justify_start()
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                    // 截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(theme))
+                    })
                     .on_click({
                         let series_id = series_id.clone();
                         cx.listener(move |this, _, _, cx| {
@@ -498,6 +519,9 @@ impl CollectionView {
                             .h(gpui_kit::px(229.0))
                             .flex_shrink_0()
                             .overflow_hidden()
+                            // 封面顶两角跟着卡片圆角（Tauri：卡片 overflow-hidden
+                            // + rounded-xl 把封面顶角裁圆，底角接文字区是方的）
+                            .rounded_t(crate::tokens::radius::CARD)
                             .bg(theme.secondary)
                             .child(cover)
                             .children(play_open.then(|| {
@@ -506,7 +530,9 @@ impl CollectionView {
                                     .inset_0()
                                     .items_center()
                                     .justify_center()
-                                    .bg(gpui_kit::rgba(0x00000059))
+                                    // 常驻播放遮罩：Tauri 是 hover 才上 bg-black/30，
+                                    // 这边有续播点就一直压着，档位略深到 35%。
+                                    .bg(crate::tokens::scrim(35))
                                     .child(
                                         h_flex()
                                             .items_center()
@@ -537,7 +563,7 @@ impl CollectionView {
                                     .truncate()
                                     .text_sm()
                                     .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .child(SharedString::from(title)),
+                                    .child(SharedString::from(title.clone())),
                             )
                             .child(
                                 div()
@@ -552,6 +578,7 @@ impl CollectionView {
                 div().absolute().top_2().left_2().child(pick_dot(
                     ElementId::from(format!("collections-pick-{}", series_id)),
                     picked,
+                    title.clone(),
                     cx.listener(move |this, _, _, cx| this.toggle_selected(&sid, cx)),
                     cx,
                 ))
@@ -566,8 +593,8 @@ impl CollectionView {
                     .absolute()
                     .top_2()
                     .right_2()
-                    .bg(gpui_kit::rgba(0x00000099))
-                    .text_color(gpui_kit::rgb(0xffffffff))
+                    .bg(crate::tokens::scrim(60))
+                    .text_color(crate::tokens::on_media(100))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.remove_one(sid.clone(), cx);
@@ -620,93 +647,47 @@ impl gpui_kit::Render for CollectionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.covers.values().cloned().collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         let body =
             match &self.phase {
-                Phase::Loading => h_flex()
+                // 首拉加载：封面网格骨架铺在网格容器里（与真实网格同
+                // padding / 同卡宽，数据到位不跳版）
+                Phase::Loading => div()
+                    .id("collections-skeleton")
                     .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(Spinner::new().small())
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(crate::pages::skeleton::cover_grid(cx, 10, 172.0, 229.0))
                     .into_any_element(),
-                Phase::LoginRequired => {
-                    let theme = cx.theme();
-                    // Tauri ErrorState（Empty py-16）：流内顶部对齐
-                    v_flex()
-                        .items_center()
-                        .py_16()
-                        .gap_3()
-                        .child(
-                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)
-                                .with_size(gpui_kit::px(32.0))
-                                .text_color(theme.muted_foreground),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(crate::i18n::t("collections.loginRequired")),
-                        )
-                        .child(
-                            Button::new("collections-retry-login")
-                                .label(crate::i18n::t("common.retry"))
-                                .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                        )
-                        .into_any_element()
-                }
+                Phase::LoginRequired => crate::pages::states::error_state(
+                    cx,
+                    Some(gpui_kit::assets::IconName::Star),
+                    crate::i18n::t("collections.loginRequired"),
+                    None,
+                    Some((
+                        "collections-retry-login",
+                        crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                    )),
+                ),
                 Phase::Failed(msg) => {
                     let detail = msg.clone();
-                    let theme = cx.theme();
-                    v_flex()
-                        .items_center()
-                        .py_16()
-                        .gap_3()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(crate::i18n::t("collections.loadFailed")),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(SharedString::from(detail)),
-                        )
-                        .child(
-                            Button::new("collections-retry")
-                                .label(crate::i18n::t("common.retry"))
-                                .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                        )
-                        .into_any_element()
+                    crate::pages::states::error_state(
+                        cx,
+                        None,
+                        crate::i18n::t("collections.loadFailed"),
+                        Some(detail),
+                        Some((
+                            "collections-retry",
+                            crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                        )),
+                    )
                 }
-                Phase::Loaded if self.entries.is_empty() => {
-                    let theme = cx.theme();
-                    // Tauri Empty 组件是流内块（p-4 py-16，顶部对齐），不是
-                    // 垂直居中——空态位置也要同构
-                    v_flex()
-                        .items_center()
-                        .py_16()
-                        .gap_2()
-                        .child(
-                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star)
-                                .with_size(gpui_kit::px(32.0))
-                                .text_color(theme.muted_foreground),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(crate::i18n::t("collections.empty")),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(crate::i18n::t("collections.emptyHint")),
-                        )
-                        .into_any_element()
-                }
+                Phase::Loaded if self.entries.is_empty() => crate::pages::states::empty_state(
+                    cx,
+                    Some(gpui_kit::assets::IconName::Star),
+                    crate::i18n::t("collections.empty"),
+                    Some(crate::i18n::t("collections.emptyHint")),
+                ),
                 Phase::Loaded => {
                     let managing = self.managing;
                     let hovered = self.hovered.clone();
@@ -715,6 +696,7 @@ impl gpui_kit::Render for CollectionView {
                         .id("collections-grid")
                         .flex_1()
                         .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
                         .p_4()
                         .child(h_flex().flex_wrap().items_start().gap_3().children(
                             visible.iter().map(|entry| {

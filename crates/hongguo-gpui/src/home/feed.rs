@@ -9,6 +9,7 @@ use hongguo_api::discover::FeedItem;
 use hongguo_api::history::fetch_watch_history;
 use hongguo_api::interact::fetch_bookshelf;
 use hongguo_api::recommend::{fetch_feed_tabs, fetch_recommend_feed};
+use hongguo_common::AppError;
 
 use crate::bridge;
 
@@ -370,12 +371,16 @@ impl super::HomeView {
             let rx = bridge::spawn(async move {
                 tokio::task::spawn_blocking(move || state.store.local_history_list())
                     .await
-                    .expect("阻塞池 join")
+                    .map_err(|e| AppError::Internal(format!("本地历史阻塞池任务失败: {e}")))?
             });
             cx.spawn(async move |this, cx| {
                 let result = rx.await.expect("tokio 桥不会丢弃发送端");
-                let Ok(items) = result else {
-                    return;
+                let items = match result {
+                    Ok(items) => items,
+                    Err(e) => {
+                        log::warn!("[Home] 本地历史读取失败: {e}");
+                        return;
+                    }
                 };
                 let _ = this.update(cx, |view, cx| {
                     log::info!(

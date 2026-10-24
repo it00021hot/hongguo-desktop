@@ -57,67 +57,39 @@ impl gpui_kit::Render for HistoryView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         let body = match &self.phase {
-            Phase::Loading => h_flex()
+            // 首拉加载：骨架铺在列表容器里（与真实列表同 padding，
+            // 数据到位不跳版）。行高按 GPUI 真实行算，不照抄 Tauri 的 h-28：
+            // 封面 96 + 行内上下 p_3 24 + 行间距（条目槽 pb_2）8 = 128。
+            Phase::Loading => div()
+                .id("history-skeleton")
+                .flex()
+                .flex_col()
                 .flex_1()
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
+                .min_h_0()
+                .p_4()
+                .child(crate::pages::skeleton::rows(cx, 6, 120.0, 8.0))
                 .into_any_element(),
             Phase::Failed(msg) => {
                 let detail = msg.clone();
-                let theme = cx.theme();
-                // Tauri ErrorState（Empty py-16）：流内顶部对齐
-                v_flex()
-                    .items_center()
-                    .py_16()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("history.loadFailed")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(detail)),
-                    )
-                    .child(
-                        Button::new("history-retry")
-                            .label(crate::i18n::t("common.retry"))
-                            .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                    )
-                    .into_any_element()
+                crate::pages::states::error_state(
+                    cx,
+                    None,
+                    crate::i18n::t("history.loadFailed"),
+                    Some(detail),
+                    Some((
+                        "history-retry",
+                        crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                    )),
+                )
             }
-            Phase::Loaded if self.items.is_empty() => {
-                let theme = cx.theme();
-                v_flex()
-                    .items_center()
-                    // Tauri Empty：流内 py-16 顶部对齐
-                    .py_16()
-                    .gap_2()
-                    .child(
-                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::ClockArrowDown)
-                            .with_size(gpui_kit::px(32.0))
-                            .text_color(theme.muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("history.empty")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("history.emptyHint")),
-                    )
-                    .into_any_element()
-            }
+            Phase::Loaded if self.items.is_empty() => crate::pages::states::empty_state(
+                cx,
+                Some(gpui_kit::assets::IconName::ClockArrowDown),
+                crate::i18n::t("history.empty"),
+                Some(crate::i18n::t("history.emptyHint")),
+            ),
             Phase::Loaded => {
                 let shown = self.visible_indices(cx).len();
                 if shown == 0 {

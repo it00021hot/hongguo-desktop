@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use gpui_kit::component::Disableable;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, Sizable};
@@ -15,6 +15,7 @@ use hongguo_service::app_state::AppStateInner;
 use tokio::sync::oneshot;
 
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 /// 批量条上的点击回调（页面经 `cx.listener` 注入）。
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -94,37 +95,50 @@ pub(crate) fn search_box(input: &Entity<InputState>, cx: &App) -> gpui_kit::Div 
 }
 
 /// 选择圆钮（Tauri PickDot）：选中实心主色 + 对勾，未选空心圈。
-/// 点击拦截冒泡（卡片自己的点击是「打开/切换」，别被圆钮吃掉反过来）。
+///
+/// 用 gpui-base 的无样式 `Checkbox`：勾选语义、焦点、键盘激活与无障碍
+/// （role=checkbox / aria-checked）由库负责，形状与配色由本壳给（圆点 =
+/// Tauri 同款；库自带的 `component::checkbox` 是方框，形态对不上）。根节点
+/// 显式给 20px，命中区与原来那个手搓圆点一致。
+///
+/// 点击必须拦冒泡：圆钮是**卡片按钮的子节点**（卡片在管理态的点击也是
+/// 「切换选中」），不拦的话同一次点击既触发圆钮的 on_change 又冒泡到卡片
+/// 的 on_click → 切换两次 = 什么都没发生（点圆钮没反应）。
 pub(crate) fn pick_dot(
     id: ElementId,
     picked: bool,
+    label: impl Into<SharedString>,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
+    gpui_kit::base::Checkbox::new(id)
         .size_5()
         .flex_shrink_0()
-        .rounded_full()
-        .border_2()
-        .when(picked, |s| {
-            s.bg(theme.primary)
-                .border_color(theme.primary)
-                .text_color(theme.primary_foreground)
-        })
-        .when(!picked, |s| s.border_color(theme.muted_foreground))
-        .cursor_pointer()
-        .on_click(move |ev: &ClickEvent, window, cx| {
+        .checked(picked)
+        .accessibility_label(label)
+        .on_change(move |_state, event, window, cx| {
             cx.stop_propagation();
-            on_toggle(ev, window, cx);
+            on_toggle(event, window, cx);
         })
-        .children(
-            picked
-                .then(|| gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Check).small()),
+        .child(
+            gpui_kit::base::CheckboxIndicator::new()
+                .checked(picked)
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .when(picked, |s| {
+                    s.bg(theme.primary)
+                        .border_color(theme.primary)
+                        .text_color(theme.primary_foreground)
+                })
+                .when(!picked, |s| s.border_color(theme.muted_foreground))
+                .children(picked.then(|| {
+                    gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Check).small()
+                })),
         )
 }
 
@@ -202,6 +216,7 @@ impl RenderOnce for BatchBar {
                     .ghost()
                     .small()
                     .disabled(total == 0)
+                    .when(total == 0, |b| b.cursor_default())
                     .on_click(move |ev, window, cx| {
                         if let Some(f) = &self.on_toggle_all {
                             f(ev, window, cx);
@@ -229,6 +244,7 @@ impl RenderOnce for BatchBar {
                     .danger()
                     .small()
                     .disabled(count == 0 || self.deleting)
+                    .when(count == 0 || self.deleting, |b| b.cursor_default())
                     .on_click(move |ev, window, cx| {
                         if let Some(f) = &self.on_delete {
                             f(ev, window, cx);

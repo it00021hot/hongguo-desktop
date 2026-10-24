@@ -5,13 +5,15 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::div;
+use hongguo_common::AppError;
 
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 /// GPUI keystroke 键名 → 可读标签（Tauri shortcutKeyLabel 同款）。
 fn shortcut_key_label(key: &str) -> String {
@@ -102,14 +104,17 @@ impl super::SettingsView {
     fn persist_shortcut_keys(&self, cx: &Context<Self>) {
         let keys = self.shortcut_keys.clone();
         crate::bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 let path = hongguo_store::paths::data_dir().join(crate::playback_prefs::FILE_NAME);
                 let mut prefs = crate::playback_prefs::load_from(&path);
                 prefs.keys = keys;
                 crate::playback_prefs::save_to(&path, &prefs);
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| AppError::Internal(format!("快捷键落盘阻塞池任务失败: {e}")));
+            if let Err(e) = result {
+                log::warn!("[Settings] 快捷键落盘失败: {e}");
+            }
         });
         let _ = cx;
     }

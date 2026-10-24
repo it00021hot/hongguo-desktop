@@ -18,6 +18,7 @@
 mod av_spike;
 mod boss_key;
 mod bridge;
+mod comment_text;
 mod cover_asset;
 mod cover_image_cache;
 mod cover_img;
@@ -32,6 +33,7 @@ pub(crate) mod home;
 mod http_client;
 mod i18n;
 mod image_upload;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mini;
@@ -48,6 +50,7 @@ mod shell;
 mod single_instance;
 mod toast;
 mod tokens;
+mod ui_button;
 mod ui_prefs;
 #[cfg(target_os = "windows")]
 mod win32;
@@ -76,11 +79,7 @@ pub(crate) fn tokio() -> &'static tokio::runtime::Runtime {
 fn main() {
     // 日志先于一切：装配失败的原因只在这里（与 Tauri 壳同一约定）。预览
     // 模式同样要日志与 panic 留痕，所以这两样在数据根声明之前就位。
-    // 毫秒时间戳：卡顿诊断看的就是亚秒级间隔（2x 下一帧 16.7ms），
-    // 默认的秒级精度会把「停顿 120ms」和「正常」印成同一秒。
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    crate::logging::init();
     // Windows 默认定时器精度 ~15.6ms：播放循环的毫秒级轮询会被拉长成一整个
     // tick，2x 下变成「两帧一起到 → 33ms 空档」的节拍抖动（日志里
     // `[Playback][video]` 的 ≤20/≤33ms 分档能直接看到）。浏览器/播放器都会

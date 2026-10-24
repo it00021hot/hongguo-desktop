@@ -10,11 +10,10 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use gpui_kit::component::Disableable;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -25,6 +24,7 @@ use hongguo_service::app_state::AppStateInner;
 use crate::bridge;
 use crate::detail::DetailPrefill;
 use crate::pages::list_common::{BatchBar, pick_dot, search_box};
+use crate::ui_button::button as Button;
 
 mod actions;
 mod cards;

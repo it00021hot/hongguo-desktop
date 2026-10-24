@@ -4,7 +4,7 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::notification::Notification;
@@ -16,6 +16,7 @@ use hongguo_common::model::settings::ProxyMode;
 
 use crate::bridge;
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 impl super::SettingsView {
     fn test_proxy(&mut self, cx: &mut Context<Self>) {
@@ -102,6 +103,7 @@ impl super::SettingsView {
                             .secondary()
                             .small()
                             .disabled(self.testing_proxy)
+                            .when(self.testing_proxy, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| this.test_proxy(cx))),
                     )
                     .children(self.test_result.as_ref().map(|r| {

@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::prelude::*;
-use gpui_kit::{Entity, RenderImage, Window};
+use gpui_kit::{Entity, Window};
 use hongguo_api::danmaku::{CommentItem, Danmaku, ReplyItem};
 use hongguo_api::detail::RelatedItem;
 use hongguo_api::history::WatchHistoryItem;
@@ -48,6 +48,7 @@ use danmaku::DmFlight;
 pub(crate) use feed::Source;
 use feed::{SourceFeed, StreamItem};
 use history_cadence::HistoryCadence;
+use stage::StageCover;
 
 /// 首页发往壳的事件（页面间不互相持有，壳订阅后裁决目的地）。
 #[derive(Debug, Clone)]
@@ -92,6 +93,7 @@ pub(crate) mod portrait_panel;
 #[cfg(feature = "screenshot")]
 pub(crate) mod preview_seed;
 pub(crate) mod season;
+pub(crate) mod skin_focus;
 pub(crate) mod stage;
 pub(crate) mod state;
 pub(crate) mod view;
@@ -139,9 +141,10 @@ pub struct HomeView {
     /// 服务端下发的 tab 标题（tab_type → title；缺省回落本地名）。
     tab_labels: HashMap<String, String>,
 
-    /// 全屏占位用的**原图档**封面（series_id → RGBA）：只有当前/目标这一集，
-    /// 铺满舞台要原图（列表卡档是缩到 320 长边的小图，不够铺）。
-    stage_covers: HashMap<String, Arc<RenderImage>>,
+    /// 全屏占位用的**原图档**封面（series_id → 状态，见
+    /// [`StageCover`]）：只有当前/目标这一集，铺满舞台要原图（列表卡档是
+    /// 缩到 320 长边的小图，不够铺）。
+    stage_covers: HashMap<String, StageCover>,
     // —— 播放态 ——
     /// 播放纪元：每次切剧 +1，陈旧事件/任务按它丢弃。Arc 原子共享给
     /// 事件循环——事件在后台线程收取，主线程字段够不着就要共享。
@@ -225,6 +228,12 @@ pub struct HomeView {
     /// 手动翻到的范围段（每段 30 集）：记设置时的当前集——当前集变了
     /// （连播/点选）覆盖作废，自动跟回当前集所在段（Tauri groupOverride）。
     picker_group_override: Option<(usize, u32)>,
+    /// 选集入口按钮的矩形哨兵（与 progress_bounds 同模式）。
+    ///
+    /// 浮层「点外部关闭」要把**入口按钮本身**排除在外（Tauri 的锚点是
+    /// 按钮 + 浮层）：点按钮那一下交给按钮的 on_click 收起；若捕获层先
+    /// 把它关了，按钮的 on_click 又会把它打开——面板关不掉还反复横跳。
+    picker_entry_bounds: Rc<Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
     /// 用户显式选择的清晰度（None = 自动/沿用）：跨集保留（Tauri 的
     /// definition 会话态同语义），传给后续每次起播的 prepare。
     preferred_definition: Option<u32>,
@@ -418,6 +427,13 @@ pub struct HomeView {
     /// 弹层在按钮盒外——两个 hover 取并集才是「弹层开着」。
     volume_hovered: bool,
     volume_popup_hovered: bool,
+    /// 音量滑杆正被按住拖动：拖动期间弹层要钉住。
+    ///
+    /// gpui 进入拖拽捕获后，弹层的 hover 位会掉（指针被捕获，不再按命中
+    /// 盒判定），hover 驱动的弹层当场收起 → 滑杆从元素树里消失 →
+    /// drag_move 再也送不到它，音量停在按下处（用户实测「按住拖不动」）。
+    /// 拖动中用这个位把弹层钉在屏幕上。
+    volume_dragging: bool,
     /// 倍速 / 清晰度下拉菜单开着（Popover 的 on_open_change 回写）：开着期间
     /// 控制条常显——不进 `panel_open` 的话，重算时 3s 一到连菜单一起收掉，
     /// 菜单根本没法操作。
@@ -527,6 +543,7 @@ impl HomeView {
             binge: None,
             picker_open: false,
             picker_group_override: None,
+            picker_entry_bounds: Rc::new(Cell::new(None)),
             preferred_definition: None,
             intros: HashMap::new(),
             intros_pending: HashSet::new(),
@@ -663,6 +680,7 @@ impl HomeView {
             volume_popup_open: false,
             volume_hovered: false,
             volume_popup_hovered: false,
+            volume_dragging: false,
             rate_menu_open: false,
             definition_menu_open: false,
             volume_bounds: Rc::new(Cell::new(None)),

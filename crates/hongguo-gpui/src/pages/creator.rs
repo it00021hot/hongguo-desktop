@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -20,6 +20,7 @@ use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
 use crate::home::fmt::format_play_count;
+use crate::ui_button::button as Button;
 
 /// 创作者页发往壳的事件（壳订阅后切目的地/起播）。
 #[derive(Debug, Clone)]
@@ -277,7 +278,7 @@ impl CreatorView {
     /// 作品卡（3:4 封面 + 底部渐变信息条：标题/集数/热度/播放）。
     fn render_card(&self, work: &CreatorWork, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&work.cover);
+        let cover = crate::cover_img::card(&work.cover, crate::cover_img::CoverShape::Detail);
         let hot = if work.hot > 0 {
             format_play_count(work.hot)
         } else {
@@ -303,20 +304,36 @@ impl CreatorView {
         // 贴图叠加的既有口径（预约页封面角标同族），用同样的半透明黑。
         let overlay_bg = gpui_kit::linear_gradient(
             0.,
-            gpui_kit::linear_color_stop(gpui_kit::rgba(0x000000d9), 0.),
-            gpui_kit::linear_color_stop(gpui_kit::rgba(0x00000000), 1.),
+            gpui_kit::linear_color_stop(crate::tokens::scrim(85), 0.),
+            gpui_kit::linear_color_stop(crate::tokens::scrim(0), 1.),
         );
-        div()
-            .id(ElementId::from(format!("creator-work-{}", work.series_id)))
+        // 整卡可点 → 用 base::Button 承担 role/focus/Enter-Space（键盘用户能
+        // 走到作品卡）。库强制 flex row + 居中，这里要复原原 div 的块级竖排：
+        // flex_col + items_stretch（子件撑满卡宽）+ justify_start（内容从顶
+        // 上排）。
+        BaseButton::new(ElementId::from(format!("creator-work-{}", work.series_id)))
+            .accessibility_label(work.title.clone())
+            // group 名不能丢：封面用 group_hover("creator-work") 做悬停变淡。
             .group("creator-work")
             // 卡片宽度对齐 Tauri 网格密度（xl:grid-cols-5 @ max-w-6xl ≈
             // 205px/列；172 会把「全N集 · 热度 · 播放」行挤出截断）
             .w(gpui_kit::px(200.0))
             .flex_shrink_0()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(crate::tokens::radius::CARD)
             .overflow_hidden()
             .bg(theme.secondary)
             .cursor_pointer()
+            .flex_col()
+            .items_stretch()
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
+            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+            .focus_visible(|s| {
+                s.border_color(theme.ring)
+                    .shadow(crate::tokens::focus_ring(theme))
+            })
             .tooltip({
                 let title = work.title.clone();
                 move |window, cx| {
@@ -349,6 +366,9 @@ impl CreatorView {
                             .left_0()
                             .right_0()
                             .bg(overlay_bg)
+                            // 渐变条贴着卡片下缘，底角跟着卡片圆角（Tauri 侧
+                            // 是卡片 overflow-hidden 裁出来的同款效果）
+                            .rounded_b(crate::tokens::radius::CARD)
                             .p_2p5()
                             .pt_8()
                             .child(
@@ -356,7 +376,7 @@ impl CreatorView {
                                     .text_sm()
                                     .line_clamp(2)
                                     .font_weight(gpui_kit::FontWeight::MEDIUM)
-                                    .text_color(gpui_kit::rgb(0xffffffff))
+                                    .text_color(crate::tokens::on_media(100))
                                     .child(SharedString::from(work.title.clone())),
                             )
                             .child(
@@ -365,7 +385,7 @@ impl CreatorView {
                                     .items_center()
                                     .gap_2()
                                     .text_xs()
-                                    .text_color(gpui_kit::rgba(0xffffffb3))
+                                    .text_color(crate::tokens::on_media(70))
                                     .children(
                                         (!episodes.is_empty()).then(|| {
                                             div().child(SharedString::from(episodes.clone()))
@@ -395,41 +415,28 @@ impl CreatorView {
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
         if let Some(err) = self.failed.clone() {
-            return v_flex()
-                .pt_20()
-                .items_center()
-                .gap_3()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::i18n::t("creator.loadFailed")),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(err)),
-                )
-                .child(
-                    Button::new("creator-retry")
-                        .label(crate::i18n::t("common.retry"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let uid = this.user_id.clone();
-                            this.load(uid, cx);
-                        })),
-                )
-                .into_any_element();
+            return crate::pages::states::error_state(
+                cx,
+                None,
+                crate::i18n::t("creator.loadFailed"),
+                Some(err),
+                Some((
+                    "creator-retry",
+                    crate::pages::states::retry_on(cx.entity(), |this, cx| {
+                        let uid = this.user_id.clone();
+                        this.load(uid, cx);
+                    }),
+                )),
+            );
         }
         if self.works.is_empty() {
-            return div()
-                .mt_6()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(crate::i18n::t("creator.empty"))
-                .into_any_element();
+            return crate::pages::states::empty_state(
+                cx,
+                None,
+                crate::i18n::t("creator.empty"),
+                None,
+            );
         }
         let mut column = v_flex().w_full().gap_3();
         column = column.child(
@@ -458,6 +465,7 @@ impl CreatorView {
                         .outline()
                         .small()
                         .disabled(self.loading_more)
+                        .when(self.loading_more, |b| b.cursor_default())
                         .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
                 ),
             );
@@ -472,7 +480,15 @@ impl gpui_kit::Render for CreatorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.works.iter().map(|w| w.cover.clone()).collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
+        // 创作者头像单独一档（64）：与封面不是同一档（成品图按 URL 哈希 + 档位
+        // 落盘），不排头像就是整块空白。
+        let avatar_urls: Vec<String> = self
+            .profile
+            .as_ref()
+            .map(|p| vec![p.avatar.clone()])
+            .unwrap_or_default();
+        crate::cover_img::prewarm_avatars(&avatar_urls, cx);
         // 滚动哨兵：滚到底自动续页（Tauri creator-home-page.tsx 的
         // IntersectionObserver 同语义；按钮留作兜底）。
         if self.scroll.should_load(self.has_more, self.loading_more) {
@@ -498,15 +514,24 @@ impl gpui_kit::Render for CreatorView {
             .id("creator-page")
             .child(div().w_full().px_8().pt_6().child(self.render_back_bar(cx)))
             .child(if self.loading && !self.works_loaded {
-                // 首拉加载：整块剩余区居中（与历史/收藏等页同口径；此前 pt-20
-                // 顶部条是各页加载位置不一的来源，用户意见：统一居中。提到
-                // 页面级是因为滚动列是自高的，body 里 flex_1 没有可撑满的基准）
-                h_flex()
+                // 首拉加载：封面网格骨架铺在作品网格的位置（与真实作品区同
+                // 滚动容器 / 同 padding / 同卡宽，数据到位不跳版）
+                div()
+                    .id("creator-skeleton")
                     .flex_1()
                     .min_h_0()
-                    .items_center()
-                    .justify_center()
-                    .child(Spinner::new().small())
+                    .overflow_y_scroll()
+                    .px_8()
+                    .pb_8()
+                    .child(
+                        h_flex().w_full().justify_center().items_start().child(
+                            v_flex()
+                                .w_full()
+                                .max_w(gpui_kit::px(1152.0))
+                                .min_w_0()
+                                .child(crate::pages::skeleton::cover_grid(cx, 10, 200.0, 267.0)),
+                        ),
+                    )
                     .into_any_element()
             } else {
                 div()
@@ -536,7 +561,7 @@ impl gpui_kit::Render for CreatorView {
 #[cfg(feature = "screenshot")]
 impl CreatorView {
     /// 预览种子：`creator` = 资料头 + 作品网格；`creator-empty` = 空作品态；
-    /// `creator-loading` = 首拉加载态（整区居中 Spinner）。
+    /// `creator-loading` = 首拉加载态（作品网格骨架）。
     pub(crate) fn debug_preview_seed(&mut self, scene: &str, cx: &mut Context<Self>) {
         self.user_id = "2007062623837002".into();
         self.loading = scene == "creator-loading";

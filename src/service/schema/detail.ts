@@ -3,6 +3,8 @@
  */
 import { z } from 'zod';
 
+import { normalizeAvatarUrl } from '@/utils/image-url';
+
 /** 详情页相关作品里的一条（Rust `detail::RelatedItem`）。 */
 const relatedItemSchema = z.object({
   seriesId: z.string(),
@@ -65,7 +67,11 @@ export const seriesMetaSchema = z.object({
       z.object({
         userId: z.string(),
         name: z.string(),
-        avatar: z.string(),
+        /** 头像 CDN 地址规整（同评论/弹幕/创作者档案头像：http→https 绕开
+         *  CSP/ATS，heic→jpeg，格式说不清的走本地代理）——服务端下发的是
+         *  `http://p3-reading-sign.fqnovelpic.com/...~tplv-...jpeg?lk3s=...`
+         *  这样的**签名 http** 地址，直挂 <img> 会被 WebView 拦掉（整块空白） */
+        avatar: z.string().transform(normalizeAvatarUrl),
         role: z.string(),
       }),
     )

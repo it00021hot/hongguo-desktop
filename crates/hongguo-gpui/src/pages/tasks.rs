@@ -10,12 +10,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress;
-use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
@@ -26,6 +26,15 @@ use hongguo_service::app_state::AppStateInner;
 use hongguo_service::events::ServiceEvent;
 
 use crate::home::fmt::format_bytes;
+use crate::ui_button::button as Button;
+
+/// 列宽（表头与数据行共用一份，改一处两处同步）。
+/// 勾选列按复选框本身的宽度给窄列；标题列自适应，其余定宽。
+const COL_CHECK_W: f32 = 16.0;
+const COL_EPISODE_W: f32 = 96.0;
+const COL_STATUS_W: f32 = 112.0;
+const COL_SIZE_W: f32 = 128.0;
+const COL_ACTIONS_W: f32 = 120.0;
 
 pub(crate) struct TasksView {
     state: Arc<AppStateInner>,
@@ -276,13 +285,25 @@ impl TasksView {
                 hongguo_service::download_service::actions::rescan_downloads(&state)
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| format!("阻塞池任务失败: {e}"))
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update_in(cx, |view, window, cx| {
                 view.rescanning = false;
-                match result {
+                // 阻塞池 join 失败没有 AppError 可翻译，直接透出短句。
+                let outcome: Result<usize, String> = match result {
+                    Ok(Ok(count)) => Ok(count),
+                    Ok(Err(e)) => {
+                        log::warn!("[Tasks] 扫描补登记失败: {e}");
+                        Err(crate::i18n::app_error_text(&e))
+                    }
+                    Err(msg) => {
+                        log::warn!("[Tasks] 扫描补登记失败: {msg}");
+                        Err(msg)
+                    }
+                };
+                match outcome {
                     Ok(count) if count > 0 => {
                         window.push_notification(
                             Notification::success(crate::i18n::tf(
@@ -298,9 +319,7 @@ impl TasksView {
                             cx,
                         );
                     }
-                    Err(e) => {
-                        log::warn!("[Tasks] 扫描补登记失败: {e}");
-                        let message = crate::i18n::app_error_text(&e);
+                    Err(message) => {
                         window.push_notification(
                             Notification::error(crate::i18n::tf(
                                 "common.failedWith",
@@ -405,6 +424,7 @@ impl TasksView {
                     .outline()
                     .small()
                     .disabled(failed.is_empty())
+                    .when(failed.is_empty(), |b| b.cursor_default())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let _ = hongguo_service::download_service::actions::retry_tasks(
                             &this.state,
@@ -423,6 +443,7 @@ impl TasksView {
                     .outline()
                     .small()
                     .disabled(all_empty)
+                    .when(all_empty, |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_all(cx))),
             )
             .child(
@@ -431,6 +452,7 @@ impl TasksView {
                     .outline()
                     .small()
                     .disabled(failed.is_empty())
+                    .when(failed.is_empty(), |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected = this.failed_ids().into_iter().collect();
                         cx.notify();
@@ -447,6 +469,7 @@ impl TasksView {
                     .outline()
                     .small()
                     .disabled(self.rescanning)
+                    .when(self.rescanning, |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, _, cx| this.rescan(cx))),
             )
             .into_any_element()
@@ -462,7 +485,78 @@ impl TasksView {
         }
     }
 
-    fn render_row(&self, task: &DownloadTask, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    /// 表头行。列宽与数据行共用同一组常量，标题列自适应。
+    fn render_header_row(&self, cx: &mut Context<Self>) -> TableRow {
+        let theme = cx.theme();
+        let total = self.tasks.as_deref().map(|t| t.len()).unwrap_or(0);
+        let all_checked = total > 0 && self.selected.len() >= total;
+        TableRow::new()
+            .px_4()
+            .py_2()
+            .gap_3()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(
+                TableHead::new()
+                    .w(gpui_kit::px(COL_CHECK_W))
+                    .min_w(gpui_kit::px(COL_CHECK_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(
+                        Checkbox::new("tasks-check-all")
+                            .checked(all_checked)
+                            .on_click(cx.listener(|this, _: &bool, _, cx| {
+                                this.toggle_all(cx);
+                            })),
+                    ),
+            )
+            .child(
+                TableHead::new()
+                    .flex_1()
+                    .min_w_0()
+                    .px_0()
+                    .py_0()
+                    .child(div().flex_1().child(crate::i18n::t("nav.tasks.title"))),
+            )
+            .child(
+                TableHead::new()
+                    .w(gpui_kit::px(COL_EPISODE_W))
+                    .min_w(gpui_kit::px(COL_EPISODE_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(crate::i18n::t("tasks.columns.episode")),
+            )
+            .child(
+                TableHead::new()
+                    .w(gpui_kit::px(COL_STATUS_W))
+                    .min_w(gpui_kit::px(COL_STATUS_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(crate::i18n::t("tasks.columns.status")),
+            )
+            .child(
+                TableHead::new()
+                    .w(gpui_kit::px(COL_SIZE_W))
+                    .min_w(gpui_kit::px(COL_SIZE_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(crate::i18n::t("tasks.columns.size")),
+            )
+            .child(
+                TableHead::new()
+                    .w(gpui_kit::px(COL_ACTIONS_W))
+                    .min_w(gpui_kit::px(COL_ACTIONS_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0(),
+            )
+    }
+
+    fn render_row(&self, task: &DownloadTask, cx: &mut Context<Self>) -> TableRow {
         let theme = cx.theme();
         let checked = self.selected.contains(&task.id);
         let percent = if task.total > 0 {
@@ -471,62 +565,84 @@ impl TasksView {
             0.0
         };
         let (_, tag) = Self::status_tag(task.status);
-        h_flex()
-            .w_full()
-            .items_center()
-            .gap_3()
+        TableRow::new()
             .px_4()
             .py_2()
-            .border_b_1()
-            .border_color(theme.border)
+            .gap_3()
             .when(checked, |s| s.bg(theme.secondary))
             .child(
-                Checkbox::new(ElementId::from(format!("tasks-check-{}", task.id)))
-                    .checked(checked)
-                    .on_click({
-                        let id = task.id.clone();
-                        cx.listener(move |this, checked: &bool, _, cx| {
-                            let _ = checked;
-                            this.toggle(&id, cx);
-                        })
-                    }),
+                TableCell::new()
+                    .w(gpui_kit::px(COL_CHECK_W))
+                    .min_w(gpui_kit::px(COL_CHECK_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(
+                        Checkbox::new(ElementId::from(format!("tasks-check-{}", task.id)))
+                            .checked(checked)
+                            .on_click({
+                                let id = task.id.clone();
+                                cx.listener(move |this, checked: &bool, _, cx| {
+                                    let _ = checked;
+                                    this.toggle(&id, cx);
+                                })
+                            }),
+                    ),
             )
             .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_0p5()
+                TableCell::new().flex_1().min_w_0().px_0().py_0().child(
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_sm()
+                                .child(SharedString::from(task.series_title.clone())),
+                        )
+                        .children((!task.error.is_empty()).then(|| {
+                            div()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme.danger)
+                                .child(SharedString::from(task_error_text(&task.error)))
+                        })),
+                ),
+            )
+            .child(
+                TableCell::new()
+                    .w(gpui_kit::px(COL_EPISODE_W))
+                    .min_w(gpui_kit::px(COL_EPISODE_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
                     .child(
                         div()
-                            .truncate()
+                            .w_full()
                             .text_sm()
-                            .child(SharedString::from(task.series_title.clone())),
-                    )
-                    .children((!task.error.is_empty()).then(|| {
-                        div()
-                            .truncate()
-                            .text_xs()
-                            .text_color(theme.danger)
-                            .child(SharedString::from(task_error_text(&task.error)))
-                    })),
+                            .child(SharedString::from(task.vid_index.to_string())),
+                    ),
             )
             .child(
-                div()
-                    .w(gpui_kit::px(96.0))
+                TableCell::new()
+                    .w(gpui_kit::px(COL_STATUS_W))
+                    .min_w(gpui_kit::px(COL_STATUS_W))
                     .flex_shrink_0()
-                    .text_sm()
-                    .child(SharedString::from(task.vid_index.to_string())),
-            )
-            .child(
-                div()
-                    .w(gpui_kit::px(112.0))
-                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
                     .child(tag.child(SharedString::from(Self::status_tag(task.status).0))),
             )
-            .child(div().w(gpui_kit::px(128.0)).flex_shrink_0().map(|s| {
-                if task.status == TaskStatus::Running {
-                    s.child(
+            .child(
+                TableCell::new()
+                    .w(gpui_kit::px(COL_SIZE_W))
+                    .min_w(gpui_kit::px(COL_SIZE_W))
+                    .flex_shrink_0()
+                    .px_0()
+                    .py_0()
+                    .child(if task.status == TaskStatus::Running {
                         v_flex()
+                            .w_full()
                             .gap_1()
                             .child(Progress::new("task-progress").value(percent))
                             .child(div().text_xs().text_color(theme.muted_foreground).child(
@@ -535,109 +651,111 @@ impl TasksView {
                                     format_bytes(task.downloaded),
                                     format_bytes(task.total)
                                 )),
-                            )),
-                    )
-                } else {
-                    s.text_xs()
-                        .child(SharedString::from(format_bytes(task.total)))
-                }
-            }))
+                            ))
+                    } else {
+                        div()
+                            .w_full()
+                            .text_xs()
+                            .child(SharedString::from(format_bytes(task.total)))
+                    }),
+            )
             .child(
-                h_flex()
-                    .w(gpui_kit::px(120.0))
+                TableCell::new()
+                    .w(gpui_kit::px(COL_ACTIONS_W))
+                    .min_w(gpui_kit::px(COL_ACTIONS_W))
                     .flex_shrink_0()
-                    .items_center()
-                    .justify_end()
-                    .gap_1()
-                    .children((task.status == TaskStatus::Running).then(|| {
-                        let id = task.id.clone();
-                        Button::new(ElementId::from(format!("tasks-stop-{}", task.id)))
-                            .icon(gpui_kit::assets::IconName::Pause)
-                            .ghost()
-                            .small()
-                            .tooltip(crate::i18n::t("tasks.actions.stop"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let _ = hongguo_service::download_service::actions::stop_task(
-                                    &this.state,
-                                    &id,
-                                );
-                                this.refresh(cx);
-                            }))
-                    }))
-                    .children(
-                        matches!(task.status, TaskStatus::Failed | TaskStatus::Stopped).then(
-                            || {
+                    .px_0()
+                    .py_0()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_end()
+                            .gap_1()
+                            .children((task.status == TaskStatus::Running).then(|| {
                                 let id = task.id.clone();
-                                Button::new(ElementId::from(format!("tasks-retry-{}", task.id)))
-                                    .icon(gpui_kit::assets::IconName::RotateCcw)
+                                Button::new(ElementId::from(format!("tasks-stop-{}", task.id)))
+                                    .icon(gpui_kit::assets::IconName::Pause)
                                     .ghost()
                                     .small()
-                                    .tooltip(crate::i18n::t("tasks.actions.retry"))
+                                    .tooltip(crate::i18n::t("tasks.actions.stop"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let _ =
-                                            hongguo_service::download_service::actions::retry_task(
+                                            hongguo_service::download_service::actions::stop_task(
                                                 &this.state,
                                                 &id,
                                             );
                                         this.refresh(cx);
                                     }))
-                            },
-                        ),
-                    )
-                    .children((task.status == TaskStatus::Completed).then(|| {
-                        let series_id = task.series_id.clone();
-                        Button::new(ElementId::from(format!("tasks-folder-{}", task.id)))
-                            .icon(gpui_kit::assets::IconName::FolderOpen)
-                            .ghost()
-                            .small()
-                            .tooltip(crate::i18n::t("tasks.actions.openFolder"))
-                            .on_click(cx.listener(move |this, _, _, _| {
-                                this.open_folder(&series_id);
                             }))
-                    }))
-                    .child({
-                        let id = task.id.clone();
-                        Button::new(ElementId::from(format!("tasks-del-{}", task.id)))
-                            .icon(gpui_kit::assets::IconName::Trash)
-                            .ghost()
-                            .small()
-                            .tooltip(crate::i18n::t("tasks.actions.remove"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.confirm_delete(vec![id.clone()], window, cx);
+                            .children(
+                                matches!(task.status, TaskStatus::Failed | TaskStatus::Stopped)
+                                    .then(|| {
+                                        let id = task.id.clone();
+                                        Button::new(ElementId::from(format!(
+                                            "tasks-retry-{}",
+                                            task.id
+                                        )))
+                                        .icon(gpui_kit::assets::IconName::RotateCcw)
+                                        .ghost()
+                                        .small()
+                                        .tooltip(crate::i18n::t("tasks.actions.retry"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            let _ = hongguo_service::download_service::actions::retry_task(
+                                                &this.state,
+                                                &id,
+                                            );
+                                            this.refresh(cx);
+                                        }))
+                                    }),
+                            )
+                            .children((task.status == TaskStatus::Completed).then(|| {
+                                let series_id = task.series_id.clone();
+                                Button::new(ElementId::from(format!("tasks-folder-{}", task.id)))
+                                    .icon(gpui_kit::assets::IconName::FolderOpen)
+                                    .ghost()
+                                    .small()
+                                    .tooltip(crate::i18n::t("tasks.actions.openFolder"))
+                                    .on_click(cx.listener(move |this, _, _, _| {
+                                        this.open_folder(&series_id);
+                                    }))
                             }))
-                    }),
+                            .child({
+                                let id = task.id.clone();
+                                Button::new(ElementId::from(format!("tasks-del-{}", task.id)))
+                                    .icon(gpui_kit::assets::IconName::Trash)
+                                    .ghost()
+                                    .small()
+                                    .tooltip(crate::i18n::t("tasks.actions.remove"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.confirm_delete(vec![id.clone()], window, cx);
+                                    }))
+                            }),
+                    ),
             )
-            .into_any_element()
     }
 }
 
 impl gpui_kit::Render for TasksView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if self.tasks.is_none() {
-            h_flex()
+            // 首拉加载：行骨架铺在表格容器里（与真实表格同 padding，
+            // 数据到位不跳版）。行高按 GPUI 真实行算，不照抄 Tauri 的 h-24：
+            // 行内上下 p_2 16 + 行内容高 31（运行中的大小列：进度条 8 +
+            // 间距 4 + 文字行 19；状态标签 25 / 操作按钮 24 都比它矮）= 47。
+            // 表格行之间没有行距（靠 1px 边框分隔），骨架按同值给 1。
+            div()
+                .id("tasks-skeleton")
                 .flex_1()
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
+                .overflow_y_scroll()
+                .px_6()
+                .child(crate::pages::skeleton::rows(cx, 6, 47.0, 1.0))
                 .into_any_element()
         } else if self.tasks.as_deref().unwrap_or(&[]).is_empty() {
-            let theme = cx.theme();
-            v_flex()
-                .items_center()
-                // Tauri Empty：流内 py-16 顶部对齐（原来垂直居中，空态位置不同）
-                .py_16()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::i18n::t("tasks.empty")),
-                )
-                .into_any_element()
+            crate::pages::states::empty_state(cx, None, crate::i18n::t("tasks.empty"), None)
         } else {
             let theme = cx.theme();
             let tasks = self.tasks.clone().unwrap_or_default();
-            let all_ids_len = tasks.len();
-            let all_checked = all_ids_len > 0 && self.selected.len() >= all_ids_len;
             div()
                 .id("tasks-table")
                 .flex_1()
@@ -646,49 +764,26 @@ impl gpui_kit::Render for TasksView {
                 .child(
                     v_flex()
                         .w_full()
-                        .rounded(gpui_kit::px(12.0))
+                        .rounded(crate::tokens::radius::CARD)
                         .border_1()
                         .border_color(theme.border)
                         .bg(theme.group_box)
                         .overflow_hidden()
-                        // 表头
                         .child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_3()
-                                .px_4()
-                                .py_2()
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
+                            Table::new()
+                                .accessibility_label(crate::i18n::t("nav.tasks.title"))
+                                .small()
+                                .bg(theme.group_box)
                                 .child(
-                                    Checkbox::new("tasks-check-all")
-                                        .checked(all_checked)
-                                        .on_click(cx.listener(|this, _: &bool, _, cx| {
-                                            this.toggle_all(cx);
-                                        })),
-                                )
-                                .child(div().flex_1().child(crate::i18n::t("nav.tasks.title")))
-                                .child(
-                                    div()
-                                        .w(gpui_kit::px(96.0))
-                                        .child(crate::i18n::t("tasks.columns.episode")),
+                                    TableHeader::new()
+                                        .bg(theme.group_box)
+                                        .child(self.render_header_row(cx)),
                                 )
                                 .child(
-                                    div()
-                                        .w(gpui_kit::px(112.0))
-                                        .child(crate::i18n::t("tasks.columns.status")),
-                                )
-                                .child(
-                                    div()
-                                        .w(gpui_kit::px(128.0))
-                                        .child(crate::i18n::t("tasks.columns.size")),
-                                )
-                                .child(div().w(gpui_kit::px(120.0))),
-                        )
-                        .children(tasks.iter().map(|t| self.render_row(t, cx))),
+                                    TableBody::new()
+                                        .children(tasks.iter().map(|t| self.render_row(t, cx))),
+                                ),
+                        ),
                 )
                 .into_any_element()
         };

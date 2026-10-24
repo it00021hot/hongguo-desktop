@@ -10,7 +10,6 @@ mod list;
 mod mention;
 
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
@@ -18,6 +17,7 @@ use gpui_kit::div;
 use gpui_kit::prelude::*;
 
 use super::HomeView;
+use crate::ui_button::button as Button;
 
 impl HomeView {
     /// 评论面板（Tauri comment-panel 对齐：右侧滑出，列表 + 发送框；
@@ -45,7 +45,11 @@ impl HomeView {
             // 滚轮拦下（Tauri comment-panel data-wheel-block 同款）：面板内
             // 滚动是列表自己在滚，不冒泡成舞台切剧
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+            // 面板内点击不落回画面层（点评论=暂停视频）由上面那句
+            // on_mouse_down(stop) 负责：gpui 的 click 由「同一元素上按下+抬起」
+            // 合成，拦下按下就合成不出点击（仓库既有纪律同款：舞台的选集捕获
+            // 层、小屏拖拽条都只靠 on_mouse_down 拦）。原先这里还挂了一层
+            // on_click(stop)，是同一件事的第二道拦截，没有额外作用。
             .child(self.render_comment_panel_header(cx))
             .child(self.render_comment_list(cx))
             .child(self.render_comment_composer(cx))

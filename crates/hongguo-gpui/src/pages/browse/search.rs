@@ -138,6 +138,9 @@ impl super::BrowseView {
                             .icon(gpui_kit::assets::IconName::Search)
                             .label(crate::i18n::t("search.submit"))
                             .disabled(self.keyword.read(cx).value().trim().is_empty())
+                            .when(self.keyword.read(cx).value().trim().is_empty(), |b| {
+                                b.cursor_default()
+                            })
                             .on_click(cx.listener(|this, _, _, cx| this.submit_search(cx))),
                     )
                     .children(searching.then(|| {

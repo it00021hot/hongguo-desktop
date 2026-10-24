@@ -28,7 +28,7 @@ impl super::HomeView {
         }
         self.system_preload_pending = Some(vid.clone());
         // 先在主线程同步落「下一集」标记：连播预取可能已经开跑，晚一步它
-        // 就会在 8MB 预算处收工，再由 ensure 唤醒已经来不及。
+        // 就会在头部预算处收工，再由 ensure 唤醒已经来不及。
         hongguo_stream::cache().mark_next(&vid, definition);
         let player = Arc::clone(player);
         let state = Arc::clone(&self.state);
@@ -203,7 +203,7 @@ impl super::HomeView {
         } else {
             1
         };
-        // 每部只铺入口集（头部 8MB 有界，升格当前集才无界续填）；同剧
+        // 每部只铺入口集（只填开头一段，转正当前集才续满整集）；同剧
         // 后续集的连播铺集由起播的 schedule_following_episodes 负责，
         // 这里不重复——铺多了就是把带宽从当前集嘴里抢走
         hongguo_service::play_service::online::schedule_next_episode_prefetch(

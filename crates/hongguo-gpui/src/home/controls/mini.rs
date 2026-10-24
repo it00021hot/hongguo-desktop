@@ -3,10 +3,10 @@
 use super::*;
 
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 
 use crate::home::player_icons;
+use crate::ui_button::button as Button;
 
 impl HomeView {
     /// 小屏播放入口（Tauri onOpenMini 同款）。

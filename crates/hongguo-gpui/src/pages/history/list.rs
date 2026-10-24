@@ -1,6 +1,7 @@
 //! 历史列表数据：双模式加载、封面、tab/搜索过滤与预览种子。
 
 use super::*;
+use hongguo_common::AppError;
 
 /// 本地条目 → 渲染行（字段与云端同形；u32 集号升为 i64 统一口径）。
 fn row_from_local(item: &LocalHistoryItem) -> WatchHistoryItem {
@@ -35,7 +36,9 @@ impl HistoryView {
             let rx = bridge::spawn(async move {
                 tokio::task::spawn_blocking(move || state.store.local_history_list())
                     .await
-                    .expect("阻塞池 join")
+                    .map_err(|e| AppError::Internal(format!("本地历史读取阻塞池任务失败: {e}")))
+                    // join 失败与读取失败并成一条错误通道交给 UI
+                    .and_then(|result| result)
             });
             cx.spawn(async move |this, cx| {
                 let result = rx.await.expect("tokio 桥不会丢弃发送端");

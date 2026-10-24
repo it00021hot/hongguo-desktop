@@ -1,37 +1,19 @@
 use super::*;
 
-use gpui_kit::component::button::Button;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, Window, div};
+use gpui_kit::{ElementId, Role, SharedString, Toggled, Window, div};
 
 impl gpui_kit::Render for NewDramaView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let mut cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
         cover_urls.extend(self.cal_items.iter().map(|i| i.cover.clone()));
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
-        // 首拉加载（推荐/日历）：**整页**居中，性别筛选行等页内控件加载期
-        // 不渲染——加载位置不受页内控件影响（用户定稿口径）。与创作者
-        // 主页/排行榜的页面级分支同款。
-        let page_loading = match self.view {
-            ViewTab::Recommend => self.loading && self.items.is_empty(),
-            ViewTab::Calendar => self.cal_loading && self.cal_items.is_empty(),
-        };
-        if page_loading {
-            let theme = cx.theme();
-            return v_flex()
-                .size_full()
-                .bg(theme.background)
-                .text_color(theme.foreground)
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
-                .into_any_element();
-        }
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         // 滚动哨兵（虚拟列表版）：滚到列表末尾就续页；新页未测高时
         // is_scrolled_to_end 报 None，天然防住「追加后仍在底部」的连环翻页。
         match self.view {
@@ -61,62 +43,37 @@ impl gpui_kit::Render for NewDramaView {
             _ => {}
         }
         let viewport_w = window.viewport_size().width.as_f32();
-        let grid_cols = if viewport_w >= 1536.0 {
-            8
-        } else if viewport_w >= 1024.0 {
-            5
-        } else if viewport_w >= 768.0 {
-            4
-        } else if viewport_w >= 640.0 {
-            3
-        } else {
-            2
-        };
+        let grid_cols = crate::pages::grid::cols(viewport_w);
         let gender_row = self.render_gender_row(cx);
         let theme = cx.theme();
         // 颜色先取值（Hsla: Copy）：后面要构造吃 &mut cx 的闭包，不能再借 theme
-        let muted_fg = theme.muted_foreground;
         let root_bg = theme.background;
         let root_fg = theme.foreground;
         let body: gpui_kit::AnyElement = if self.view == ViewTab::Recommend {
             if self.loading && self.items.is_empty() {
-                h_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .py_8()
-                    .child(Spinner::new().small())
-                    .into_any_element()
+                // 首拉加载：卡片网格骨架（与真实推荐卡同网格同几何，
+                // 数据到位不跳版）
+                crate::pages::skeleton::card_grid(cx, 9, grid_cols)
             } else if self.failed && self.items.is_empty() {
-                v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted_fg)
-                            .child(crate::i18n::t("newDrama.loadFailed")),
-                    )
-                    .child(
-                        Button::new("new-retry")
-                            .label(crate::i18n::t("common.retry"))
-                            .on_click(cx.listener(|this, _, _, cx| this.load_recommend(false, cx))),
-                    )
-                    .into_any_element()
+                crate::pages::states::error_state(
+                    cx,
+                    None,
+                    crate::i18n::t("newDrama.loadFailed"),
+                    None,
+                    Some((
+                        "new-retry",
+                        crate::pages::states::retry_on(cx.entity(), |this, cx| {
+                            this.load_recommend(false, cx)
+                        }),
+                    )),
+                )
             } else if self.items.is_empty() {
-                v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted_fg)
-                            .child(crate::i18n::t("newDrama.emptyRecommend")),
-                    )
-                    .into_any_element()
+                crate::pages::states::empty_state(
+                    cx,
+                    None,
+                    crate::i18n::t("newDrama.emptyRecommend"),
+                    None,
+                )
             } else {
                 // 换频道后台重拉中（keepPreviousData 展示态）：Tauri
                 // RefreshShade 同款——降透明度 + 挡掉鼠标
@@ -135,10 +92,8 @@ impl gpui_kit::Render for NewDramaView {
                     .when(refreshing, |s| s.opacity(0.5))
                     // Auto sizing 的 list() 不自报内容高，必须从父容器拿确定高度
                     .child(
-                        gpui_kit::list(state, move |ix, window, cx| {
-                            entity.update(cx, |view, cx| {
-                                view.render_rec_row(ix, grid_cols, window, cx)
-                            })
+                        gpui_kit::list(state, move |ix, _window, cx| {
+                            entity.update(cx, |view, cx| view.render_rec_row(ix, grid_cols, cx))
                         })
                         .flex_1(),
                     )
@@ -155,33 +110,23 @@ impl gpui_kit::Render for NewDramaView {
         } else {
             // 日历视图
             if self.cal_loading && self.cal_items.is_empty() {
-                h_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .py_8()
-                    .child(Spinner::new().small())
-                    .into_any_element()
+                // 首拉加载：行骨架（与真实日历行同容器，数据到位不跳版）。
+                // 行高按 GPUI 真实行算，不照抄 Tauri 的 h-20：封面 107 +
+                // 行内上下 p_3 24 = 131；行间距另按真实条目槽的 pb_2 给 8。
+                crate::pages::skeleton::rows(cx, 6, 131.0, 8.0)
             } else if self.cal_failed && self.cal_items.is_empty() {
-                v_flex()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted_fg)
-                            .child(crate::i18n::t("newDrama.loadFailed")),
-                    )
-                    .child(
-                        Button::new("new-cal-retry")
-                            .label(crate::i18n::t("common.retry"))
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.load_calendar(None, false, cx)),
-                            ),
-                    )
-                    .into_any_element()
+                crate::pages::states::error_state(
+                    cx,
+                    None,
+                    crate::i18n::t("newDrama.loadFailed"),
+                    None,
+                    Some((
+                        "new-cal-retry",
+                        crate::pages::states::retry_on(cx.entity(), |this, cx| {
+                            this.load_calendar(None, false, cx)
+                        }),
+                    )),
+                )
             } else {
                 let selected = self.cal_selected.clone();
                 let dates = self.cal_dates.clone();
@@ -206,17 +151,12 @@ impl gpui_kit::Render for NewDramaView {
                         .child(Spinner::new().small())
                         .into_any_element()
                 } else if empty {
-                    v_flex()
-                        .w_full()
-                        .items_center()
-                        .py_16()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(muted_fg)
-                                .child(crate::i18n::t("newDrama.empty")),
-                        )
-                        .into_any_element()
+                    crate::pages::states::empty_state(
+                        cx,
+                        None,
+                        crate::i18n::t("newDrama.empty"),
+                        None,
+                    )
                 } else {
                     self.cal_rows.sync(visible_ixs.len() + 1);
                     let entity = cx.entity();
@@ -235,6 +175,8 @@ impl gpui_kit::Render for NewDramaView {
                     .gap_2()
                     .child(
                         h_flex()
+                            .id("new-date-row")
+                            .role(Role::RadioGroup)
                             .w_full()
                             .flex_wrap()
                             .items_center()
@@ -243,12 +185,26 @@ impl gpui_kit::Render for NewDramaView {
                             .children(dates.iter().map(|date| {
                                 let date = date.clone();
                                 let active = date == selected;
+                                let weekday = weekday_label(&date);
+                                let day = day_month(&date);
                                 // Tauri 日期钮：h-14 min-w-14 flex-1 max-w-20
                                 // 的描边卡片，选中 primary 实底（原来只是
                                 // 文字/小胶囊，卡片形态缺失）
-                                div()
-                                    .id(ElementId::from(format!("new-date-{date}")))
-                                    .flex()
+                                //
+                                // 载体是 gpui-kit 的 base Button 而不是 div：
+                                // div 不带焦点句柄，键盘用户根本够不到这些
+                                // 日期钮；base Button 自带焦点句柄与 Enter/Space
+                                // 激活。
+                                BaseButton::new(ElementId::from(format!("new-date-{date}")))
+                                    .role(Role::RadioButton)
+                                    .aria_toggled(if active {
+                                        Toggled::True
+                                    } else {
+                                        Toggled::False
+                                    })
+                                    .accessibility_label(SharedString::from(format!(
+                                        "{weekday} {day}"
+                                    )))
                                     .flex_col()
                                     .items_center()
                                     .justify_center()
@@ -272,19 +228,15 @@ impl gpui_kit::Render for NewDramaView {
                                             .text_color(theme.foreground)
                                             .hover(|h| h.bg(theme.accent))
                                     })
-                                    .child(
-                                        div()
-                                            .text_size(gpui_kit::px(11.0))
-                                            .line_height(gpui_kit::relative(1.2))
-                                            .child(SharedString::from(weekday_label(&date))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                            .line_height(gpui_kit::relative(1.2))
-                                            .child(SharedString::from(day_month(&date))),
-                                    )
+                                    // base Button 强制 line_height(relative(1.))，文字行盒会比默认
+                                    // 矮一截；钉回窗口默认行高（黄金比例）才与原来的 div 像素一致。
+                                    .line_height(gpui_kit::phi())
+                                    // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补
+                                    // border-ring + 3px 外圈。
+                                    .focus_visible(|s| {
+                                        s.border_color(theme.ring)
+                                            .shadow(crate::tokens::focus_ring(theme))
+                                    })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if this.cal_selected == date {
                                             return;
@@ -310,6 +262,19 @@ impl gpui_kit::Render for NewDramaView {
                                         }
                                         cx.notify();
                                     }))
+                                    .child(
+                                        div()
+                                            .text_size(gpui_kit::px(11.0))
+                                            .line_height(gpui_kit::relative(1.2))
+                                            .child(SharedString::from(weekday)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                            .line_height(gpui_kit::relative(1.2))
+                                            .child(SharedString::from(day)),
+                                    )
                             })),
                     )
                     .child(

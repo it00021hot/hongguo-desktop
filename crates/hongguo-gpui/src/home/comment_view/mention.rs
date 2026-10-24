@@ -2,10 +2,10 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::h_flex;
-use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
 
@@ -52,15 +52,22 @@ impl HomeView {
                         u.is_ai_bot,
                     );
                     let click_name = name.clone();
-                    v_flex()
-                        .id(ElementId::from(format!("mention-{uid}")))
-                        .w(gpui_kit::px(56.0))
+                    // 候选卡：竖排（头像在上、名字在下）。库注入的
+                    // justify_center 会把整列压到中间，这里改回顶部对齐；
+                    // 名字行有文字，行高也要改回默认。
+                    BaseButton::new(ElementId::from(format!("mention-{uid}")))
+                        .accessibility_label(name.clone())
+                        .flex_col()
+                        .justify_start()
                         .items_center()
+                        .w(gpui_kit::px(56.0))
                         .gap_1()
                         .rounded(gpui_kit::px(6.0))
                         .p_1()
+                        .line_height(gpui_kit::phi())
                         .cursor_pointer()
                         .hover(|s| s.bg(gpui_kit::rgba(0xffffff1a)))
+                        .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             // 选中 = 记提及对象 + 排一段待插入
                             // 文本（render 期 set_value，见
@@ -93,7 +100,9 @@ impl HomeView {
                                 })),
                         )
                         .child(
+                            // min_w_0：名字要能截断（truncate 得有可压缩的宽度）
                             h_flex()
+                                .min_w_0()
                                 .items_center()
                                 .gap_0p5()
                                 .text_size(gpui_kit::px(11.0))

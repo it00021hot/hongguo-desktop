@@ -45,12 +45,18 @@ pub(crate) fn take_focus_request() -> bool {
 }
 
 /// 最小化态还原（第二次启动前置时的「显示 + 还原」）。
-pub(crate) fn restore_from_minimized(window: &Window) {
-    if let Some(hwnd) = hwnd_of(window)
-        && crate::win32::is_iconic(hwnd)
-    {
-        crate::win32::show_window(hwnd, crate::win32::SW_RESTORE);
+///
+/// 延后到执行器下一拍执行——理由见 [`defer_window_op`]。
+pub(crate) fn restore_from_minimized(window: &Window, cx: &gpui_kit::App) {
+    let Some(hwnd) = hwnd_of(window) else {
+        return;
+    };
+    if !crate::win32::is_iconic(hwnd) {
+        return;
     }
+    defer_window_op(window, cx, move || {
+        crate::win32::show_window(hwnd, crate::win32::SW_RESTORE);
+    });
 }
 
 /// 快照窗口外框与最大化态。
@@ -262,22 +268,31 @@ pub(crate) fn is_minimized(window: &Window) -> bool {
     hwnd_of(window).is_some_and(crate::win32::is_iconic)
 }
 
-pub(crate) fn hide(window: &Window) {
-    if let Some(hwnd) = hwnd_of(window) {
+pub(crate) fn hide(window: &Window, cx: &gpui_kit::App) {
+    let Some(hwnd) = hwnd_of(window) else {
+        return;
+    };
+    defer_window_op(window, cx, move || {
         crate::win32::hide(hwnd);
-    }
+    });
 }
 
-pub(crate) fn show_no_activate(window: &Window) {
-    if let Some(hwnd) = hwnd_of(window) {
+pub(crate) fn show_no_activate(window: &Window, cx: &gpui_kit::App) {
+    let Some(hwnd) = hwnd_of(window) else {
+        return;
+    };
+    defer_window_op(window, cx, move || {
         crate::win32::show_no_activate(hwnd);
-    }
+    });
 }
 
-pub(crate) fn show_foreground(window: &Window) {
-    if let Some(hwnd) = hwnd_of(window) {
+pub(crate) fn show_foreground(window: &Window, cx: &gpui_kit::App) {
+    let Some(hwnd) = hwnd_of(window) else {
+        return;
+    };
+    defer_window_op(window, cx, move || {
         crate::win32::show_foreground(hwnd);
-    }
+    });
 }
 
 /// Windows 没有红绿灯：无边框播放不需要藏任何系统按钮，空实现。
@@ -290,11 +305,16 @@ pub(crate) fn visibility(window: &Window) -> bool {
 
 /// 把窗口操作派发到执行器（主线程）再执行。
 ///
-/// **不能在调用点同步做**：这些函数都从点击回调里进来，而点击回调正嵌在
+/// **不能在调用点同步做**：这些函数都从点击回调/轮询回调里进来，而回调正嵌在
 /// 窗口过程的一次 `handle.update` 里；同步 `SetWindowPos` 会让 WM_SIZE
 /// **同步重入**同一个 update——重入被 gpui 拒绝（`log_err` 吞掉），视口
 /// 从此停在旧尺寸（实测舞台停在 1024×680、控制条画到 270 高的窗口外）。
 /// gpui 自己的 `resize()` 也是把 SetWindowPos 派发到执行器绕开这一点。
+///
+/// `ShowWindow` 同理：它同步派发 WM_SHOWWINDOW/WM_SIZE/WM_ACTIVATE 到我们
+/// 自己的窗口过程，gpui 的窗口过程要在这时更新窗口状态——撞上借用时 gpui
+/// 同样用 `log_err` 吞掉（正文是 std 的 "RefCell already borrowed"，且因
+/// 依赖 crate 的路径拼不出日志 target，看起来像无出处的裸行）。
 fn defer_window_op(window: &Window, cx: &gpui_kit::App, op: impl FnOnce() + Send + 'static) {
     window.spawn(cx, async move |_| op()).detach();
 }

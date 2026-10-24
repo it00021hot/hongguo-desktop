@@ -343,6 +343,25 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::sniff_kind;
+    use super::{EDGE_AVATAR, EDGE_CARD, sized_cache_path};
+
+    /// 档位参与成品图寻址：预热档位与渲染档位错配时**必然取不到文件**。
+    ///
+    /// 这是「头像整块空白」的机械根源（2026-10-25 实测：详情页创作者头像按
+    /// 封面档 320 预热，渲染侧找头像档 64）。改档位名等于换文件——所以渲染侧
+    /// 与预热侧必须共用同一个档位常量。
+    #[test]
+    fn sized_cache_path_is_edge_scoped() {
+        let url = "https://example.com/a.jpeg?sig=1";
+        let card = sized_cache_path(url, EDGE_CARD);
+        let avatar = sized_cache_path(url, EDGE_AVATAR);
+        assert_ne!(
+            card, avatar,
+            "档位必须参与寻址——错配就是取不到文件（头像空白）"
+        );
+        assert!(card.to_string_lossy().ends_with("-320.jpg"));
+        assert!(avatar.to_string_lossy().ends_with("-64.jpg"));
+    }
 
     #[test]
     fn jpeg_magic() {

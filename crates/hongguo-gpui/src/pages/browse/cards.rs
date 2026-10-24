@@ -2,15 +2,19 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+
 impl super::BrowseView {
     /// 一张结果卡（浏览/搜索共用；字段差异在调用方已归一）。
+    ///
+    /// 卡宽不在这儿定：卡片是网格的一槽，等宽由 [`crate::pages::grid::row`]
+    /// 给（与 Tauri CSS grid 的 `1fr` 列同解）；封面按 3:4 由
+    /// [`crate::pages::grid::cover_box`] 定（同 Tauri `aspect-[3/4]`）。
     pub(super) fn render_card(
         &self,
         card: CardView<'_>,
-        card_w: f32,
-        cover_h: f32,
         cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
+    ) -> gpui_kit::base::Button {
         let CardView {
             series_id,
             title,
@@ -27,18 +31,33 @@ impl super::BrowseView {
             .take(3)
             .cloned()
             .collect();
-        v_flex()
-            .id(ElementId::from(format!("browse-card-{series_id}")))
-            // 宽度跟网格列走（Tauri `w-full` + 响应式列数）：固定 196px 在
-            // 1280 窗口下比 Tauri 的 220px 窄一截（并排对拍可见）
-            .w(gpui_kit::px(card_w))
+        // 整卡可点 → 用 base::Button 承担 role/focus/Enter-Space（Tauri 侧是
+        // `article role="button" tabIndex={0}`，同一语义）。库强制 flex row +
+        // 居中，这里要复原原 v_flex 的竖排：flex_col + items_stretch（子件
+        // 撑满卡宽，封面才按卡宽裁）+ justify_start（内容从顶上排）。
+        BaseButton::new(ElementId::from(format!("browse-card-{series_id}")))
+            .accessibility_label(title.to_string())
+            // 卡宽跟着网格列走（Tauri `w-full` + 响应式列数）：宽度由网格槽
+            // 给（`grid::row`），不在卡上写死——写死就要把侧栏宽与页面内边距
+            // 一起硬编码，侧栏一展开就算错。
             .overflow_hidden()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(crate::tokens::radius::CARD)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .cursor_pointer()
             .hover(|s| s.border_color(theme.foreground))
+            .flex_col()
+            .items_stretch()
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
+            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+            .focus_visible(|s| {
+                s.border_color(theme.ring)
+                    .shadow(crate::tokens::focus_ring(theme))
+            })
             .on_click({
                 let series_id = series_id.to_string();
                 cx.listener(move |this, _, _, cx| {
@@ -46,14 +65,15 @@ impl super::BrowseView {
                 })
             })
             .child(
-                div()
-                    .relative()
-                    .w_full()
-                    .h(gpui_kit::px(cover_h))
-                    .flex_shrink_0()
-                    .overflow_hidden()
+                crate::pages::grid::cover_box()
+                    // 封面顶两角跟着卡片圆角（Tauri：卡片 overflow-hidden +
+                    // rounded-xl 把封面顶角裁圆，底角接文字区是方的）
+                    .rounded_t(crate::tokens::radius::CARD)
                     .bg(theme.secondary)
-                    .child(crate::cover_img::card(cover_url))
+                    .child(crate::cover_img::card(
+                        cover_url,
+                        crate::cover_img::CoverShape::Card,
+                    ))
                     .children((downloaded > 0).then(|| {
                         div()
                             .absolute()
@@ -67,11 +87,11 @@ impl super::BrowseView {
                             .bottom_2()
                             .left_2()
                             .rounded(gpui_kit::px(4.0))
-                            .bg(gpui_kit::rgba(0x000000b3))
+                            .bg(crate::tokens::scrim(70))
                             .px_1p5()
                             .py_0p5()
                             .text_xs()
-                            .text_color(gpui_kit::rgb(0xffffffff))
+                            .text_color(crate::tokens::on_media(100))
                             .child(SharedString::from(crate::i18n::tf(
                                 "detail.allEpisodesBadge",
                                 &[("count", &episode_count.to_string())],
@@ -118,6 +138,5 @@ impl super::BrowseView {
                         )
                     })),
             )
-            .into_any_element()
     }
 }

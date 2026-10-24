@@ -10,6 +10,7 @@ use std::time::Instant;
 use gpui_kit::{Context, Window};
 
 use super::feed::{Source, StreamItem};
+use super::stage::StageCover;
 use super::{HomeView, NowPlaying};
 use crate::preview::fixtures as fx;
 
@@ -136,7 +137,8 @@ impl HomeView {
             let url = format!("preview://home/{i}");
             crate::preview::fixtures::put_preview_image(&url, fx::cover(i));
             let sid: String = sid.into();
-            self.stage_covers.insert(sid, fx::cover(i));
+            self.stage_covers
+                .insert(sid, StageCover::Ready(fx::cover(i)));
         }
     }
 

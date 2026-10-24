@@ -5,7 +5,6 @@
 
 use super::*;
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::label::Label;
@@ -18,6 +17,8 @@ use gpui_kit::div;
 use crate::bridge;
 use crate::home::fmt::format_bytes;
 use crate::pages::card;
+use crate::ui_button::button as Button;
+use hongguo_common::AppError;
 
 /// 缓存自动清理周期的档位（天；0 = 关闭）。下拉里的每一档。
 pub(super) const CACHE_TTL_DAYS: [u32; 5] = [0, 1, 3, 7, 30];
@@ -145,12 +146,24 @@ impl super::SettingsView {
         self.clearing_cache = true;
         cx.notify();
         let rx = bridge::spawn(async move {
-            tokio::task::spawn_blocking(hongguo_service::storage_service::cache::clear)
-                .await
-                .expect("阻塞池 join")
+            let cleared =
+                tokio::task::spawn_blocking(hongguo_service::storage_service::cache::clear)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("清缓存阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(cleared)
         });
         cx.spawn(async move |this, cx| {
-            let result = rx.await.expect("tokio 桥不会丢弃发送端");
+            let result = match rx.await.expect("tokio 桥不会丢弃发送端") {
+                Ok(result) => result,
+                Err(e) => {
+                    log::warn!("[Settings] 清缓存失败: {e}");
+                    let _ = this.update(cx, |view, cx| {
+                        view.clearing_cache = false;
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
             let _ = this.update_in(cx, |view, window, cx| {
                 view.clearing_cache = false;
                 let items = result.items.to_string();
@@ -305,6 +318,7 @@ impl super::SettingsView {
                             .outline()
                             .small()
                             .disabled(self.clearing_cache)
+                            .when(self.clearing_cache, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.clear_cache(cx);
                             })),
