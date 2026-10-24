@@ -92,8 +92,12 @@ interface StubRequest {
 
 Without `network`, **every request fails** (nothing reaches the network in a test unless you ask for `"live"`).
 
-Headless behaves as **iOS** unless `platform` says otherwise: `platform: "android"` gives the Android idiom, and
-`platform: "macos"` (or another desktop) gives a mouse and a keyboard. On a phone, `hover` and `rightClick` reject.
+Headless behaves as **iOS** unless `platform` says otherwise: `platform: "android"` gives the Android idiom,
+`platform: "macos"` (or another desktop) gives a mouse and a keyboard, and `platform: "web"` gives a browser in the
+desktop idiom. On an iOS or Android phone, `hover` and `rightClick` reject; the web takes them at any width.
+
+The app runs **under the `capabilities` its `nsh.json` declares**, as on a device: a host it does not list is refused
+in the test too.
 
 ### Selectors
 
@@ -267,4 +271,8 @@ From Rust, in `cargo test`: `nsh_testing::Headless`. See `references/rust.md`.
 
 - Images are not loaded: no `onLoad` / `onError`, and `Image.getSize` rejects.
 - `app.screenshot()` needs a real platform.
-- The capabilities of `nsh.json` are **not** applied: a test runs with every capability.
+- A press's **coordinates** only reach the app on backends that know the pointer: GPUI and the headless driver in
+  0.2.0. Every other backend leaves the `PressEvent` argument `undefined`.
+- Capabilities **are** applied: a test runs under the app's `nsh.json` `capabilities`, as on a device, so an undeclared
+  host is refused. That is the one way to test capability rules without a device — and the reason a test that passed
+  against an undeclared host now fails.

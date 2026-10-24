@@ -125,8 +125,14 @@ public final class MainActivity extends Activity {
 | `runPackage(NshPackage)` | Runs a verified package |
 | `connectDevServer(String url)` | Connects to `nsh dev` (dev AAR only) |
 | `registerComponent(String name, NshComponent.Factory factory)` | A native component |
-| `handleBack()` | Call from `onBackPressed` (Android ≤ 12) |
-| `destroy()` | Stops the app |
+| `handleBack()` | Optional now: `NshView` takes back presses itself (see below) |
+| `destroy()` | Stops the app and calls `destroy()` on each of its native components |
+
+**The back key needs no forwarding.** `NshView` gets back presses by itself while the app wants them (an open dialog, a
+pushed page, a `BackHandler` listener) and leaves them to the activity otherwise: with
+`android:enableOnBackInvokedCallback="true"` on Android 13+ it registers an `OnBackInvokedCallback`; elsewhere it takes
+the back key before the activity's `onBackPressed`, so before AndroidX's `OnBackPressedDispatcher` and fragment
+callbacks. A host that still forwards to `handleBack()` keeps working — a press reaches the app once.
 
 The Rust side is JNI glue: `nsh_platform_android::set_ui_sets`, `nsh_platform_android::run_root`, and the
 `ui_sets!`, `root!`, `main!` macros.
