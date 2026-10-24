@@ -193,6 +193,11 @@ pub struct HomeView {
     /// 起播失败态（自动重试也失败后落这里；画面中央错误卡 + 重试——
     /// 失败必须可见，否则「切 tab / 换剧没反应」）。
     play_error: Option<String>,
+    /// 冷启动自动开播按住（取证开关 HONGGUO_PAGE 等把启动目的地定向到
+    /// 非首页时由壳置位）：信息流首批落定后 [`after_feed_loaded`]
+    /// （home/feed.rs）不再起播——否则人还在别的页，首页的剧已经在播。
+    /// 回首页走 [`Self::resume_if_idle`]，不经过这个闸。
+    cold_start_held: bool,
     /// 自动重试记账位：只在引擎就位时复位（play_target 里清会死循环）。
     play_retried: bool,
     /// 舞台轻量提示（Tauri toast 同位，见 [`crate::toast`]）：弹幕拉取/
@@ -475,6 +480,12 @@ pub struct HomeView {
 impl gpui_kit::EventEmitter<HomeEvent> for HomeView {}
 
 impl HomeView {
+    /// 按住冷启动自动开播（见 [`Self::cold_start_held`] 字段注释）：
+    /// 启动目的地不是首页时由壳调用。
+    pub(crate) fn hold_cold_start(&mut self) {
+        self.cold_start_held = true;
+    }
+
     pub fn new(state: Arc<AppStateInner>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tabs = Source::fallback_tabs().to_vec();
         let mut feeds = HashMap::new();
@@ -505,6 +516,7 @@ impl HomeView {
             stage_diag_at: Cell::new(Instant::now()),
             pending_title: None,
             play_error: None,
+            cold_start_held: false,
             play_retried: false,
             toast: None,
             rate: prefs.rate,

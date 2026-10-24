@@ -387,6 +387,12 @@ impl Shell {
             account_avatar_pending: false,
             toolbar_drag: None,
         };
+        // 启动目的地不是首页：按住首页信息流的冷启动自动开播——信息流
+        // 异步加载完成时人还在别的页，不按住的话 after_feed_loaded 会照常
+        // 起播（人不在首页，剧在播）。回首页走 resume_if_idle 续播。
+        if dest != Dest::Home {
+            shell.feed.update(cx, |home, _cx| home.hold_cold_start());
+        }
         if let Some(page) = page_start {
             shell.enter_dest(page, cx);
         }

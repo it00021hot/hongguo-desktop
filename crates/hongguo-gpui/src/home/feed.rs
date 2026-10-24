@@ -269,6 +269,13 @@ impl super::HomeView {
     /// Tauri「起点决策 effect」的自动起播；已在播则只做游标跟随（种子到位、
     /// 换批、翻页都会改列表，游标指到的剧变了就该切过去）。
     fn after_feed_loaded(&mut self, source: Source, cx: &mut Context<Self>) {
+        // 冷启动被按住（启动目的地不是首页）：不起播也不预取——人还在别的
+        // 页，首页的剧不应该已经在播。回首页由 resume_if_idle 接管续播，
+        // 不经过这个闸。
+        if self.cold_start_held {
+            cx.notify();
+            return;
+        }
         if self.player.is_none() && !self.switching && source == self.active {
             if let Some(item) = self.display_items().first().cloned() {
                 self.play_target(item, None, None, cx);
