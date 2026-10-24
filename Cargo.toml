@@ -135,3 +135,11 @@ strip = true
 # 不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
+
+# 依赖在 dev 下也开 O2：GPUI 壳（gpui-pre Windows 平台层）每个 vsync 都
+# 全量重绘一次窗口，dev 档零优化的 taffy 布局 + 绘制 + 文字排版让内容页
+# 一帧 40-70ms（恒定 15-21fps，2026-10-24 帧停顿探针实测），任何页面都
+# 「不流畅」。workspace 自己的代码保持 dev 档（增量编译快、可调试），只
+# 优化 rarely-edit 的依赖；首次构建慢几分钟，之后改壳代码仍是秒级增量。
+[profile.dev.package."*"]
+opt-level = 2
