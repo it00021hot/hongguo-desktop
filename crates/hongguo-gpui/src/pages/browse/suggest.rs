@@ -34,6 +34,15 @@ impl super::BrowseView {
                     return; // 过期结果丢弃
                 }
                 view.suggest_items = result.unwrap_or_default();
+                // 带剧集的行要画缩略图：渲染期 [`cover_img::card`] 只查盘不
+                // 拉网，这里在数据到达处排转码（封面预热纪律与其他页一致；
+                // 漏了这步联想行就永远是占位灰块）。
+                let covers: Vec<String> = view
+                    .suggest_items
+                    .iter()
+                    .map(|item| item.cover.clone())
+                    .collect();
+                crate::cover_img::prewarm(&covers, hongguo_protocol::cover::EDGE_CARD, cx);
                 cx.notify();
             });
         })
@@ -204,7 +213,9 @@ impl super::BrowseView {
                     .small()
                     .text_color(theme.muted_foreground),
             )
-            .child(
+            // 纯词联想不画封面位（Tauri SuggestRow 的 `item.cover && webCover`
+            // 同口径：只有放大镜 + 词）
+            .children((!item.cover.is_empty()).then(|| {
                 div()
                     .w(gpui_kit::px(40.0))
                     .h(gpui_kit::px(54.0))
@@ -212,8 +223,8 @@ impl super::BrowseView {
                     .rounded(gpui_kit::px(6.0))
                     .overflow_hidden()
                     .bg(theme.muted)
-                    .child(crate::cover_img::card(&item.cover)),
-            )
+                    .child(crate::cover_img::card(&item.cover))
+            }))
             .child(
                 v_flex()
                     .flex_1()

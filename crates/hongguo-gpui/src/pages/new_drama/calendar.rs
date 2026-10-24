@@ -11,6 +11,63 @@ use gpui_kit::{ElementId, SharedString, div};
 use crate::bridge;
 
 impl NewDramaView {
+    /// 虚拟列表条目：可见日期行（索引由 render 期过滤好传入）；末位是
+    /// footer 槽（加载更多/到底提示）。
+    pub(super) fn render_cal_row(
+        &self,
+        ix: usize,
+        visible_ixs: &[usize],
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        match visible_ixs.get(ix) {
+            // 行间 8px 间距（Tauri gap-2 同参，list() 条目自 spacing）
+            Some(&index) => div()
+                .w_full()
+                .pb_2()
+                .child(self.render_calendar_row(&self.cal_items[index], cx))
+                .into_any_element(),
+            None => self.cal_footer(cx),
+        }
+    }
+
+    /// footer：加载更多（键盘/兜底入口）或到底提示。
+    fn cal_footer(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        if self.cal_has_more {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    Button::new("new-cal-more")
+                        .label(if self.cal_loading {
+                            crate::i18n::t("feed.loadingMore")
+                        } else {
+                            crate::i18n::t("follow.loadMore")
+                        })
+                        .ghost()
+                        .small()
+                        .disabled(self.cal_loading)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.load_calendar(None, true, cx);
+                        })),
+                )
+                .into_any_element()
+        } else {
+            let theme = cx.theme();
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(crate::i18n::t("follow.noMore")),
+                )
+                .into_any_element()
+        }
+    }
+
     pub(super) fn render_calendar_row(
         &self,
         item: &CalendarItem,
@@ -21,6 +78,8 @@ impl NewDramaView {
         let reserved = item.has_subscribed || self.reserved_local.contains(&item.series_id);
         let card_item = item.clone();
         h_flex()
+            // list() 的条目按内容宽排：行根必须显式吃满列表宽（同 rank 行）
+            .w_full()
             .id(ElementId::from(format!("new-cal-{}", item.series_id)))
             .items_center()
             .gap_4()

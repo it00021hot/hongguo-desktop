@@ -46,7 +46,6 @@ impl HistoryView {
                             log::info!("[History] GPUI 壳本地模式 -> {} 条", items.len());
                             view.items = items.iter().map(row_from_local).collect();
                             view.selected.clear();
-                            view.visible_count = 20;
                             view.phase = Phase::Loaded;
                         }
                         Err(e) => {
@@ -77,7 +76,6 @@ impl HistoryView {
                         log::info!("[History] GPUI 壳 -> {} 条", page.items.len());
                         view.items = page.items;
                         view.selected.clear();
-                        view.visible_count = 20;
                         view.phase = Phase::Loaded;
                     }
                     Err(e) => {
@@ -95,11 +93,15 @@ impl HistoryView {
     }
 
     /// 过滤（tab + 标题/seriesId 包含，Tauri 同口径）。
-    pub(super) fn visible_items(&self, cx: &App) -> Vec<WatchHistoryItem> {
+    ///
+    /// 返回 `self.items` 的下标：虚拟列表每帧都要重建条目数，按索引走免得
+    /// 每帧克隆整张表。
+    pub(super) fn visible_indices(&self, cx: &App) -> Vec<usize> {
         let q = self.search.read(cx).value().trim().to_lowercase();
         self.items
             .iter()
-            .filter(|item| {
+            .enumerate()
+            .filter(|(_, item)| {
                 match self.tab {
                     HistoryTab::Finished if !item.is_finished() => return false,
                     HistoryTab::Unfinished if item.is_finished() => return false,
@@ -110,7 +112,7 @@ impl HistoryView {
                 }
                 item.title.to_lowercase().contains(&q) || item.series_id.to_lowercase().contains(&q)
             })
-            .cloned()
+            .map(|(index, _)| index)
             .collect()
     }
 

@@ -19,6 +19,63 @@ use crate::bridge;
 /// 批量条上的点击回调（页面经 `cx.listener` 注入）。
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
+/// `list()` 变高虚拟列表的喂养状态（页面持有一份，`list(state, …)` 挂元素）。
+///
+/// ListState 的条目数要显式对账，两种对账语义不同：
+/// - **整替**（换键 / 新搜索 / 首页重拉）→ [`Self::replace`] 标记新代数，
+///   下次 [`Self::sync`] 走 `reset`——测量缓存作废、滚动回顶；
+/// - **追加翻页** → 不动代数，sync 时走 `splice` 追加——已有行的测量与
+///   滚动位置原样保留。
+///
+/// 可见行之外不参与布局/解码/绘制，滚多深每帧成本都恒定。
+pub(crate) struct VirtualRows {
+    state: gpui_kit::ListState,
+    epoch: u64,
+    fed_epoch: u64,
+    fed_rows: usize,
+}
+
+impl VirtualRows {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: gpui_kit::ListState::new(0, gpui_kit::ListAlignment::Top, gpui_kit::px(400.0)),
+            epoch: 0,
+            fed_epoch: 0,
+            fed_rows: 0,
+        }
+    }
+
+    /// 状态克隆（挂 `list()` 元素用；本体留在页面继续对账）。
+    pub(crate) fn state(&self) -> gpui_kit::ListState {
+        self.state.clone()
+    }
+
+    /// 滚动哨兵：滚到列表末尾（Tauri IntersectionObserver 副本语义）。
+    /// 新条目尚未测高时返回 None，天然防住「追加后仍在底部」的连环翻页。
+    pub(crate) fn scrolled_to_end(&self) -> bool {
+        self.state.is_scrolled_to_end() == Some(true)
+    }
+
+    /// 内容整替标记：下次 [`Self::sync`] 走 reset（滚动回顶）。
+    pub(crate) fn replace(&mut self) {
+        self.epoch += 1;
+    }
+
+    /// render 期对账：把当前条目数同步进 ListState（含 footer 槽）。
+    pub(crate) fn sync(&mut self, rows: usize) {
+        if self.fed_epoch != self.epoch {
+            self.state.reset(rows);
+        } else if rows > self.fed_rows {
+            self.state
+                .splice(self.fed_rows..self.fed_rows, rows - self.fed_rows);
+        } else if rows != self.fed_rows {
+            self.state.reset(rows);
+        }
+        self.fed_epoch = self.epoch;
+        self.fed_rows = rows;
+    }
+}
+
 /// 搜索框（Tauri ListSearch：放大镜内嵌 + 240×h-8）。
 pub(crate) fn search_box(input: &Entity<InputState>, cx: &App) -> gpui_kit::Div {
     let theme = cx.theme();

@@ -115,6 +115,9 @@ impl super::RankView {
             .cloned()
             .collect();
         h_flex()
+            // list() 的条目按内容宽排：行根必须显式吃满列表宽，否则短简介
+            // 的行缩成一小条、长简介的行横向溢出视口
+            .w_full()
             .id(ElementId::from(format!("rank-row-{}", item.series_id)))
             .items_center()
             .gap_4()

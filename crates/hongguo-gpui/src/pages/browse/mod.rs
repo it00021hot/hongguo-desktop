@@ -78,8 +78,9 @@ pub(crate) struct BrowseView {
     search_has_more: bool,
     search_loading: bool,
     search_failed: bool,
-    /// 滚动哨兵：滚到底自动续页（浏览流 / 搜索结果共用；按钮留作兜底）。
-    scroll: crate::pages::scroll_load::ScrollLoad,
+    /// 结果网格虚拟列表（`list()`：按列数分行，可见行才参与布局/解码/绘制）。
+    /// 搜索框与筛选面板钉在页首不再随内容滚走（虚拟列表自己滚）。
+    grid_rows: crate::pages::list_common::VirtualRows,
     // —— 联想（简化形态：输入框下方行式列表，点击即选）——
     suggest_items: Vec<SuggestItem>,
     suggest_seq: u64,
@@ -144,7 +145,7 @@ impl BrowseView {
             search_has_more: false,
             search_loading: false,
             search_failed: false,
-            scroll: crate::pages::scroll_load::ScrollLoad::new(),
+            grid_rows: crate::pages::list_common::VirtualRows::new(),
             suggest_items: Vec::new(),
             suggest_seq: 0,
             suggest_index: 0,

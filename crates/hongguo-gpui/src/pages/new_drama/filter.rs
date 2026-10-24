@@ -5,17 +5,47 @@ use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 
 impl NewDramaView {
-    /// 切频道：整页重来（Tauri 换 key 重挂载同口径）。
+    /// 切频道：旧频道快照入缓存，看过的频道立即恢复展示；没缓存的频道
+    /// 保留旧列表展示（Tauri keepPreviousData 同语义，翻页游标作废），
+    /// 无论有无缓存都后台重拉一页，滚动归零（Tauri 换 key 重挂载同语义）。
     fn switch_gender(&mut self, gender: i64, cx: &mut Context<Self>) {
         if self.gender == gender {
             return;
         }
+        // 快照入缓存（**克隆**：旧列表要留在展示态给 keepPreviousData）
+        self.gender_pages.insert(
+            self.gender,
+            GenderPage {
+                items: self.items.clone(),
+                next_offset: self.next_offset,
+                session_id: self.session_id.clone(),
+                has_more: self.has_more,
+            },
+        );
         self.gender = gender;
-        self.items.clear();
-        self.next_offset = 0;
-        self.session_id.clear();
-        self.has_more = false;
-        self.load_recommend(false, cx);
+        match self.gender_pages.remove(&gender) {
+            Some(cached) => {
+                self.items = cached.items;
+                self.next_offset = cached.next_offset;
+                self.session_id = cached.session_id;
+                self.has_more = cached.has_more;
+            }
+            None => {
+                // 旧列表继续展示（keepPreviousData），只把翻页游标作废
+                self.next_offset = 0;
+                self.session_id.clear();
+                self.has_more = false;
+            }
+        }
+        self.failed = false;
+        // 虚拟列表按整替对账：reset 清测量并滚回顶（Tauri 换 key 重挂载同语义）
+        self.rec_rows.replace();
+        if self.loading {
+            // 旧频道首拉在途：登记待重拉，响应落定后由 render 补发。
+            self.recommend_needs_reload = true;
+        } else {
+            self.load_recommend(false, cx);
+        }
         cx.notify();
     }
 

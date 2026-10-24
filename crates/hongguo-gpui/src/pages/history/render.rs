@@ -25,7 +25,8 @@ impl HistoryView {
                 };
                 button.on_click(cx.listener(move |this, _, _, cx| {
                     this.tab = tab;
-                    this.visible_count = 20;
+                    // 虚拟列表滚动归零（Tauri 换 tab 重挂载同语义）
+                    this.scroll.reset();
                     cx.notify();
                 }))
             }))
@@ -118,8 +119,8 @@ impl gpui_kit::Render for HistoryView {
                     .into_any_element()
             }
             Phase::Loaded => {
-                let visible = self.visible_items(cx);
-                if visible.is_empty() {
+                let shown = self.visible_indices(cx).len();
+                if shown == 0 {
                     // 列表非空但被 tab/搜索滤空：给一行轻提示（区分场景）
                     let theme = cx.theme();
                     let query_empty = self.search.read(cx).value().trim().is_empty();
@@ -142,48 +143,32 @@ impl gpui_kit::Render for HistoryView {
                         .into_any_element()
                 } else {
                     let managing = self.managing;
-                    let shown = visible.len();
-                    // 滚动哨兵：滚到底自动再放一批（Tauri history-page.tsx 的
-                    // IntersectionObserver 同语义）；到底了把 has_more 报假，
-                    // 列表回到顶部后会重新武装。
-                    let more_local = self.visible_count < shown;
-                    if self.scroll.should_load(more_local, false) {
-                        self.visible_count = (self.visible_count + 40).min(shown);
-                        cx.notify();
-                    }
-                    let visible_count = self.visible_count.min(shown);
+                    let entity = cx.entity();
+                    let list_scroll = self.list_scroll.clone();
+                    // 虚拟列表（uniform_list）：只有可见行参与布局/解码/绘制，
+                    // 滚多深每帧成本都恒定——原来的 visible_count 渐进分批
+                    // 与「加载更多」按钮因此退场（分批是 WebView DOM 的补丁，
+                    // 这里不需要）。
                     div()
                         .id("history-list")
+                        .flex()
+                        .flex_col()
                         .flex_1()
-                        .overflow_y_scroll()
-                        .track_scroll(self.scroll.handle())
+                        .min_h_0()
                         .p_4()
                         .child(
-                            v_flex()
-                                .w_full()
-                                .gap_2()
-                                .children(visible.iter().take(visible_count).map(|item| {
-                                    let picked = self.selected.contains(&item.series_id);
-                                    self.render_row(item, managing, picked, cx)
-                                }))
-                                .children((visible_count < shown).then(|| {
-                                    h_flex().w_full().justify_center().p_2().child(
-                                        Button::new("history-more")
-                                            .label(crate::i18n::tf(
-                                                "history.loadMore",
-                                                &[
-                                                    ("shown", &visible_count.to_string()),
-                                                    ("total", &shown.to_string()),
-                                                ],
-                                            ))
-                                            .ghost()
-                                            .small()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.visible_count += 40;
-                                                cx.notify();
-                                            })),
-                                    )
-                                })),
+                            gpui_kit::uniform_list(
+                                "history-rows",
+                                shown,
+                                move |range, _window, cx| {
+                                    entity.update(cx, |view, cx| {
+                                        view.render_row_range(range, managing, cx)
+                                    })
+                                },
+                            )
+                            // Auto sizing 不自报内容高，必须从父容器拿确定高度
+                            .flex_1()
+                            .track_scroll(&list_scroll),
                         )
                         .into_any_element()
                 }
@@ -203,7 +188,7 @@ impl gpui_kit::Render for HistoryView {
                 .child(crate::i18n::t("history.localModeHint"))
         });
         let batch_bar = self.managing.then(|| {
-            let total = self.visible_items(cx).len();
+            let total = self.visible_indices(cx).len();
             BatchBar::new(
                 self.selected.len(),
                 total,
@@ -211,13 +196,14 @@ impl gpui_kit::Render for HistoryView {
                 crate::i18n::t("batch.deleteSelected"),
             )
             .on_toggle_all(cx.listener(|this, _, _, cx| {
-                let visible = this.visible_items(cx);
+                let visible = this.visible_indices(cx);
                 let total = visible.len();
                 if total > 0 && this.selected.len() >= total {
                     this.selected.clear();
                 } else {
-                    for item in visible {
-                        this.selected.insert(item.series_id);
+                    for index in visible {
+                        let series_id = this.items[index].series_id.clone();
+                        this.selected.insert(series_id);
                     }
                 }
                 cx.notify();

@@ -3,6 +3,33 @@
 use super::*;
 
 impl HistoryView {
+    /// 虚拟列表按范围物化行（uniform_list 回调，只有可见区间会跑）。
+    ///
+    /// 条目槽位等高：行本体恒 120px（96px 封面 + 上下 p_3），加原 v_flex
+    /// gap_2 的 8px 间距 = 128px 槽；溢出裁剪防异常文本撑破槽位互相叠压。
+    pub(super) fn render_row_range(
+        &self,
+        range: std::ops::Range<usize>,
+        managing: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui_kit::AnyElement> {
+        let visible = self.visible_indices(cx);
+        range
+            .filter_map(|slot| {
+                let item = self.items.get(*visible.get(slot)?)?;
+                let picked = self.selected.contains(&item.series_id);
+                Some(
+                    div()
+                        .h(gpui_kit::px(128.0))
+                        .pb(gpui_kit::px(8.0))
+                        .overflow_hidden()
+                        .child(self.render_row(item, managing, picked, cx))
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
     pub(super) fn render_row(
         &self,
         item: &WatchHistoryItem,
@@ -50,7 +77,11 @@ impl HistoryView {
             })
             .p_3()
             .cursor_pointer()
-            .when(!managing, |s| s.hover(|s| s.border_color(theme.foreground)))
+            .when(!managing, |s| {
+                // Tauri history 卡 `hover:border-foreground/30` 同款（30% 前景色
+                // 的柔和描边；原来吃满前景色，比 Tauri 生硬一档）
+                s.hover(|s| s.border_color(theme.foreground.opacity(0.3)))
+            })
             .on_click({
                 let item = item.clone();
                 cx.listener(move |this, _, _, cx| {

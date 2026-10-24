@@ -34,6 +34,10 @@ impl super::BrowseView {
         }
         self.search_loading = true;
         self.search_failed = false;
+        // 首页整替（新搜索）：虚拟列表按整替对账（reset，滚动回顶）
+        if first_page {
+            self.grid_rows.replace();
+        }
         cx.notify();
         let state = Arc::clone(&self.state);
         let query = self.submitted.clone();
@@ -86,6 +90,8 @@ impl super::BrowseView {
         self.keyword
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.suggest_items.clear();
+        // 回浏览流（内容整替）：虚拟列表按整替对账（reset，滚动回顶）
+        self.grid_rows.replace();
         cx.notify();
     }
 

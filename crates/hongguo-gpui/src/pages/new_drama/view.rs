@@ -1,10 +1,10 @@
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
+use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, Window, div};
 
@@ -32,26 +32,33 @@ impl gpui_kit::Render for NewDramaView {
                 .child(Spinner::new().small())
                 .into_any_element();
         }
-        // 滚动哨兵：滚到底自动续页（Tauri new-calendar-view.tsx /
-        // new-drama-recommends.tsx 的 IntersectionObserver 同语义；两个视图
-        // 各有自己的滚动容器，按当前 tab 判）。
+        // 滚动哨兵（虚拟列表版）：滚到列表末尾就续页；新页未测高时
+        // is_scrolled_to_end 报 None，天然防住「追加后仍在底部」的连环翻页。
         match self.view {
             ViewTab::Recommend => {
-                if self
-                    .scroll_recommend
-                    .should_load(self.has_more, self.loading)
-                {
+                if self.has_more && !self.loading && self.rec_rows.scrolled_to_end() {
                     self.load_recommend(true, cx);
                 }
             }
             ViewTab::Calendar => {
-                if self
-                    .scroll_calendar
-                    .should_load(self.cal_has_more, self.cal_loading)
-                {
+                if self.cal_has_more && !self.cal_loading && self.cal_rows.scrolled_to_end() {
                     self.load_calendar(None, true, cx);
                 }
             }
+        }
+        // 换频道/切日期撞上在途请求而欠下的重拉：在途已落定，这里补发
+        // （switch_gender / 日期点击的登记，见 filter.rs 与本文件日期钮）。
+        match self.view {
+            ViewTab::Recommend if self.recommend_needs_reload && !self.loading => {
+                self.recommend_needs_reload = false;
+                self.load_recommend(false, cx);
+            }
+            ViewTab::Calendar if self.calendar_needs_reload && !self.cal_loading => {
+                self.calendar_needs_reload = false;
+                let date = self.cal_selected.clone();
+                self.load_calendar((!date.is_empty()).then_some(date), false, cx);
+            }
+            _ => {}
         }
         let viewport_w = window.viewport_size().width.as_f32();
         let grid_cols = if viewport_w >= 1536.0 {
@@ -111,50 +118,38 @@ impl gpui_kit::Render for NewDramaView {
                     )
                     .into_any_element()
             } else {
-                let items = self.items.clone();
-                let has_more = self.has_more;
-                let loading = self.loading;
+                // 换频道后台重拉中（keepPreviousData 展示态）：Tauri
+                // RefreshShade 同款——降透明度 + 挡掉鼠标
+                let refreshing = self.loading && !self.items.is_empty();
+                // 虚拟列表：按列数分块成行（行高 = 行内最高卡），末位固定
+                // footer 槽（加载更多/到底提示）。可见行才参与布局/解码/绘制。
+                self.rec_rows.sync(self.items.chunks(grid_cols).count() + 1);
+                let entity = cx.entity();
+                let state = self.rec_rows.state();
                 div()
-                    .id("new-recommend")
+                    .relative()
+                    .flex()
+                    .flex_col()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(self.scroll_recommend.handle())
+                    .min_h_0()
+                    .when(refreshing, |s| s.opacity(0.5))
+                    // Auto sizing 的 list() 不自报内容高，必须从父容器拿确定高度
                     .child(
-                        v_flex()
-                            .w_full()
-                            .gap_4()
-                            .child(
-                                div().w_full().grid().grid_cols(grid_cols).gap_4().children(
-                                    items
-                                        .iter()
-                                        .map(|item| self.render_recommend_card(item, cx)),
-                                ),
-                            )
-                            .children((has_more).then(|| {
-                                h_flex().w_full().justify_center().child(
-                                    Button::new("new-more")
-                                        .label(if loading {
-                                            crate::i18n::t("feed.loadingMore")
-                                        } else {
-                                            crate::i18n::t("follow.loadMore")
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .disabled(loading)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.load_recommend(true, cx);
-                                        })),
-                                )
-                            }))
-                            .children((!has_more).then(|| {
-                                h_flex().w_full().justify_center().py_2().child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(muted_fg)
-                                        .child(crate::i18n::t("follow.noMore")),
-                                )
-                            })),
+                        gpui_kit::list(state, move |ix, window, cx| {
+                            entity.update(cx, |view, cx| {
+                                view.render_rec_row(ix, grid_cols, window, cx)
+                            })
+                        })
+                        .flex_1(),
                     )
+                    // 刷新遮罩：挡掉旧列表上的鼠标交互
+                    .children(refreshing.then(|| {
+                        div()
+                            .id("new-recommend-shade")
+                            .absolute()
+                            .inset_0()
+                            .occlude()
+                    }))
                     .into_any_element()
             }
         } else {
@@ -190,144 +185,141 @@ impl gpui_kit::Render for NewDramaView {
             } else {
                 let selected = self.cal_selected.clone();
                 let dates = self.cal_dates.clone();
-                let rows: Vec<CalendarItem> = self
+                let visible_ixs: Vec<usize> = self
                     .cal_items
                     .iter()
-                    .filter(|i| selected.is_empty() || selected_date_of(i) == selected)
-                    .cloned()
+                    .enumerate()
+                    .filter(|(_, i)| selected.is_empty() || selected_date_of(i) == selected)
+                    .map(|(ix, _)| ix)
                     .collect();
                 let has_more = self.cal_has_more;
                 let loading = self.cal_loading;
-                let empty = rows.is_empty();
-                div()
-                    .id("new-calendar")
+                let empty = visible_ixs.is_empty();
+                // 行区：混排页过滤后暂空给转圈/空态；否则挂虚拟行列表
+                //（末位固定 footer 槽：加载更多/到底提示），可见行才参与
+                // 布局/解码/绘制。
+                let rows_region: gpui_kit::AnyElement = if empty && (has_more || loading) {
+                    h_flex()
+                        .w_full()
+                        .justify_center()
+                        .py_8()
+                        .child(Spinner::new().small())
+                        .into_any_element()
+                } else if empty {
+                    v_flex()
+                        .w_full()
+                        .items_center()
+                        .py_16()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(muted_fg)
+                                .child(crate::i18n::t("newDrama.empty")),
+                        )
+                        .into_any_element()
+                } else {
+                    self.cal_rows.sync(visible_ixs.len() + 1);
+                    let entity = cx.entity();
+                    let state = self.cal_rows.state();
+                    gpui_kit::list(state, move |ix, _window, cx| {
+                        entity.update(cx, |view, cx| view.render_cal_row(ix, &visible_ixs, cx))
+                    })
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(self.scroll_calendar.handle())
+                    .into_any_element()
+                };
+                // 日期条常驻（虚拟列表自己滚——原来日期条跟内容一起滚走）
+                v_flex()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .gap_2()
                     .child(
-                        v_flex()
+                        h_flex()
                             .w_full()
+                            .flex_wrap()
+                            .items_center()
                             .gap_2()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .flex_wrap()
+                            .pb_1()
+                            .children(dates.iter().map(|date| {
+                                let date = date.clone();
+                                let active = date == selected;
+                                // Tauri 日期钮：h-14 min-w-14 flex-1 max-w-20
+                                // 的描边卡片，选中 primary 实底（原来只是
+                                // 文字/小胶囊，卡片形态缺失）
+                                div()
+                                    .id(ElementId::from(format!("new-date-{date}")))
+                                    .flex()
+                                    .flex_col()
                                     .items_center()
-                                    .gap_2()
-                                    .pb_1()
-                                    .children(dates.iter().map(|date| {
-                                        let date = date.clone();
-                                        let active = date == selected;
-                                        // Tauri 日期钮：h-14 min-w-14 flex-1 max-w-20
-                                        // 的描边卡片，选中 primary 实底（原来只是
-                                        // 文字/小胶囊，卡片形态缺失）
+                                    .justify_center()
+                                    .h(gpui_kit::px(56.0))
+                                    .min_w(gpui_kit::px(56.0))
+                                    .max_w(gpui_kit::px(80.0))
+                                    .flex_1()
+                                    .rounded(theme.radius + gpui_kit::px(2.0))
+                                    .border_1()
+                                    .px(gpui_kit::px(4.0))
+                                    .py(gpui_kit::px(6.0))
+                                    .cursor_pointer()
+                                    .when(active, |s| {
+                                        s.bg(theme.primary)
+                                            .border_color(theme.primary)
+                                            .text_color(theme.primary_foreground)
+                                    })
+                                    .when(!active, |s| {
+                                        s.bg(theme.background)
+                                            .border_color(theme.border)
+                                            .text_color(theme.foreground)
+                                            .hover(|h| h.bg(theme.accent))
+                                    })
+                                    .child(
                                         div()
-                                            .id(ElementId::from(format!("new-date-{date}")))
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .justify_center()
-                                            .h(gpui_kit::px(56.0))
-                                            .min_w(gpui_kit::px(56.0))
-                                            .max_w(gpui_kit::px(80.0))
-                                            .flex_1()
-                                            .rounded(theme.radius + gpui_kit::px(2.0))
-                                            .border_1()
-                                            .px(gpui_kit::px(4.0))
-                                            .py(gpui_kit::px(6.0))
-                                            .cursor_pointer()
-                                            .when(active, |s| {
-                                                s.bg(theme.primary)
-                                                    .border_color(theme.primary)
-                                                    .text_color(theme.primary_foreground)
-                                            })
-                                            .when(!active, |s| {
-                                                s.bg(theme.background)
-                                                    .border_color(theme.border)
-                                                    .text_color(theme.foreground)
-                                                    .hover(|h| h.bg(theme.accent))
-                                            })
-                                            .child(
-                                                div()
-                                                    .text_size(gpui_kit::px(11.0))
-                                                    .line_height(gpui_kit::relative(1.2))
-                                                    .child(SharedString::from(weekday_label(
-                                                        &date,
-                                                    ))),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                                    .line_height(gpui_kit::relative(1.2))
-                                                    .child(SharedString::from(day_month(&date))),
-                                            )
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if this.cal_selected == date {
-                                                    return;
-                                                }
-                                                this.cal_selected = date.clone();
-                                                this.cal_items.clear();
-                                                this.cal_next_offset = 0;
-                                                this.cal_session_id.clear();
-                                                this.cal_has_more = false;
-                                                this.load_calendar(Some(date.clone()), false, cx);
-                                                cx.notify();
-                                            }))
-                                    })),
-                            )
-                            .children(if empty && has_more {
-                                vec![
-                                    h_flex()
-                                        .w_full()
-                                        .justify_center()
-                                        .py_8()
-                                        .child(Spinner::new().small())
-                                        .into_any_element(),
-                                ]
-                            } else if empty {
-                                vec![
-                                    v_flex()
-                                        .w_full()
-                                        .items_center()
-                                        .py_16()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(muted_fg)
-                                                .child(crate::i18n::t("newDrama.empty")),
-                                        )
-                                        .into_any_element(),
-                                ]
-                            } else {
-                                rows.iter()
-                                    .map(|item| self.render_calendar_row(item, cx))
-                                    .collect()
-                            })
-                            .children((has_more && !empty).then(|| {
-                                h_flex().w_full().justify_center().child(
-                                    Button::new("new-cal-more")
-                                        .label(if loading {
-                                            crate::i18n::t("feed.loadingMore")
+                                            .text_size(gpui_kit::px(11.0))
+                                            .line_height(gpui_kit::relative(1.2))
+                                            .child(SharedString::from(weekday_label(&date))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                            .line_height(gpui_kit::relative(1.2))
+                                            .child(SharedString::from(day_month(&date))),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if this.cal_selected == date {
+                                            return;
+                                        }
+                                        this.cal_selected = date.clone();
+                                        // 旧日期的行保留展示（Tauri
+                                        // keepPreviousData 同语义）：按新日期
+                                        // 过滤后为空时渲染层给转圈，新数据
+                                        // 到达整替；翻页游标作废防串页，滚动
+                                        // 归零（换 key 重挂载同语义）。
+                                        this.cal_next_offset = 0;
+                                        this.cal_session_id.clear();
+                                        this.cal_has_more = false;
+                                        // 虚拟列表按整替对账：reset 清测量并滚回顶
+                                        this.cal_rows.replace();
+                                        if this.cal_loading {
+                                            // 在途请求未落定：登记待重拉，落定
+                                            // 后由 render 补发（单飞闸会吞掉直接
+                                            // 调用，漏了这步新日期永远拉不到）
+                                            this.calendar_needs_reload = true;
                                         } else {
-                                            crate::i18n::t("follow.loadMore")
-                                        })
-                                        .ghost()
-                                        .small()
-                                        .disabled(loading)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.load_calendar(None, true, cx);
-                                        })),
-                                )
-                            }))
-                            .children((!has_more && !empty).then(|| {
-                                h_flex().w_full().justify_center().py_2().child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(muted_fg)
-                                        .child(crate::i18n::t("follow.noMore")),
-                                )
+                                            this.load_calendar(Some(date.clone()), false, cx);
+                                        }
+                                        cx.notify();
+                                    }))
                             })),
+                    )
+                    .child(
+                        div()
+                            .id("new-calendar")
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .child(rows_region),
                     )
                     .into_any_element()
             }

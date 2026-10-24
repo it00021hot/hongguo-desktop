@@ -83,10 +83,10 @@ pub(crate) struct HistoryView {
     selected: BTreeSet<String>,
     deleting: bool,
     loading: bool,
-    /// 渐进渲染：首批 20 行，滚到底自动 +40（Tauri 同款哨兵；按钮留作兜底），
-    /// 语义相同、列表长度不设上限。
-    visible_count: usize,
-    /// 滚动哨兵：滚到底自动续载。
+    /// 虚拟列表滚动句柄：可见行才参与布局/解码/绘制，长列表（几百条）不再
+    /// 随滚动线性放大每帧成本（原渐进渲染的 visible_count 分批因此退场）。
+    list_scroll: gpui_kit::UniformListScrollHandle,
+    /// 滚动归零句柄（包着虚拟列表的 base handle）。
     scroll: crate::pages::scroll_load::ScrollLoad,
     /// 预览种子用的登录态开关（真实壳恒 false，以 settings 的 account 为准）。
     preview_logged_in: bool,
@@ -115,6 +115,8 @@ impl HistoryView {
             }
         })
         .detach();
+        let list_scroll = gpui_kit::UniformListScrollHandle::new();
+        let base_handle = list_scroll.0.borrow().base_handle.clone();
         Self {
             state,
             phase: Phase::Loading,
@@ -125,8 +127,8 @@ impl HistoryView {
             selected: BTreeSet::new(),
             deleting: false,
             loading: false,
-            visible_count: 20,
-            scroll: crate::pages::scroll_load::ScrollLoad::new(),
+            scroll: crate::pages::scroll_load::ScrollLoad::for_handle(base_handle),
+            list_scroll,
             preview_logged_in: false,
         }
     }

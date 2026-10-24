@@ -53,6 +53,14 @@ pub(crate) struct NewDramaView {
     has_more: bool,
     loading: bool,
     failed: bool,
+    /// 换频道时有首拉在途（load_recommend 的单飞闸会吞掉直接调用）：登记
+    /// 待重拉，在途响应落定后由 render 补发。
+    recommend_needs_reload: bool,
+    /// 日历切日期撞上在途请求的同款登记。
+    calendar_needs_reload: bool,
+    /// 非展示频道的列表快照（Tauri useNewDrama 按 gender 分缓存同口径）：
+    /// 切频道时旧态入缓存、看过的频道秒出；每次切换仍后台重拉，拉到整替。
+    gender_pages: HashMap<i64, GenderPage>,
     // —— 日历 ——
     cal_dates: Vec<String>,
     cal_selected: String,
@@ -66,9 +74,19 @@ pub(crate) struct NewDramaView {
     /// 日历本地预约态（日历响应 has_subscribed 恒 false，本地记已点过的剧）。
     reserved_local: HashSet<String>,
     downloaded: HashMap<String, u32>,
-    /// 滚动哨兵：推荐流与日历各一条（两个滚动容器互不复用；按钮留作兜底）。
-    scroll_recommend: crate::pages::scroll_load::ScrollLoad,
-    scroll_calendar: crate::pages::scroll_load::ScrollLoad,
+    /// 推荐网格虚拟列表（`list()`：按列数分行，可见行才参与布局/解码/绘制）。
+    rec_rows: crate::pages::list_common::VirtualRows,
+    /// 日历行虚拟列表。
+    cal_rows: crate::pages::list_common::VirtualRows,
+}
+
+/// 一个频道的完整列表态（[`NewDramaView::gender_pages`] 的值）。
+#[derive(Default)]
+struct GenderPage {
+    items: Vec<RankItem>,
+    next_offset: i64,
+    session_id: String,
+    has_more: bool,
 }
 
 impl NewDramaView {
@@ -89,6 +107,9 @@ impl NewDramaView {
             has_more: false,
             loading: false,
             failed: false,
+            recommend_needs_reload: false,
+            calendar_needs_reload: false,
+            gender_pages: HashMap::new(),
             cal_dates: Vec::new(),
             cal_selected: String::new(),
             cal_items: Vec::new(),
@@ -100,8 +121,8 @@ impl NewDramaView {
             cal_loaded: false,
             reserved_local: HashSet::new(),
             downloaded: HashMap::new(),
-            scroll_recommend: crate::pages::scroll_load::ScrollLoad::new(),
-            scroll_calendar: crate::pages::scroll_load::ScrollLoad::new(),
+            rec_rows: crate::pages::list_common::VirtualRows::new(),
+            cal_rows: crate::pages::list_common::VirtualRows::new(),
         }
     }
 }

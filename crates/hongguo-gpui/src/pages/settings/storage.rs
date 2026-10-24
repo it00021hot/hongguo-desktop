@@ -40,10 +40,7 @@ pub(super) fn cache_ttl_from_index(ix: usize) -> u32 {
 
 /// 存储值（天）→ 档位下标（不认识的档位落到「关闭」）。
 pub(super) fn cache_ttl_index(days: u32) -> usize {
-    CACHE_TTL_DAYS
-        .iter()
-        .position(|d| *d == days)
-        .unwrap_or(0)
+    CACHE_TTL_DAYS.iter().position(|d| *d == days).unwrap_or(0)
 }
 
 /// 下拉的可选项。
@@ -261,14 +258,14 @@ impl super::SettingsView {
                                     .child(div().text_sm().child(SharedString::from(
                                         crate::i18n::t("settings.cacheLimit"),
                                     )))
-                                    .child(div().w(gpui_kit::px(96.0)).child(Input::new(
-                                        &self.cache_limit_input,
-                                    )))
                                     .child(
-                                        div().text_sm().child(SharedString::from(
-                                            crate::i18n::t("settings.cacheLimitUnit"),
-                                        )),
-                                    ),
+                                        div()
+                                            .w(gpui_kit::px(96.0))
+                                            .child(Input::new(&self.cache_limit_input)),
+                                    )
+                                    .child(div().text_sm().child(SharedString::from(
+                                        crate::i18n::t("settings.cacheLimitUnit"),
+                                    ))),
                             )
                             .child(
                                 h_flex()
@@ -278,7 +275,9 @@ impl super::SettingsView {
                                     .child(div().text_sm().child(SharedString::from(
                                         crate::i18n::t("settings.cacheTtl"),
                                     )))
-                                    .child(div().flex_1().child(Select::new(&self.cache_ttl_select))),
+                                    .child(
+                                        div().flex_1().child(Select::new(&self.cache_ttl_select)),
+                                    ),
                             ),
                     )
                     .child(
