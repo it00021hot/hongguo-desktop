@@ -33,26 +33,27 @@ impl HomeView {
             return;
         }
         // 转码落盘（数据目录的原图档）后本地读回解码：转码一次、复用多次。
+        // 读盘 + JPEG 解码 + 缩放都留在阻塞池——cx.spawn 跑在 GPUI 前台执行
+        // 器（主线程）上，1024px 档的解码搬上来就是每次上滑一记主线程长停顿。
         let rx = crate::bridge::spawn(async move {
             tokio::task::spawn_blocking(move || {
                 hongguo_protocol::cover::ensure_sized_cached(
                     &remote,
                     hongguo_protocol::cover::EDGE_FULL,
                 )
+                .map_err(|error| {
+                    log::warn!("[Home] 全屏占位封面转码失败: {error}");
+                    error
+                })
+                .ok()
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| crate::cover_img::decode_full(&bytes))
             })
             .await
             .expect("阻塞池 join")
         });
         cx.spawn(async move |this, cx| {
-            let result = rx.await.expect("tokio 桥不会丢弃发送端");
-            let bytes = match result {
-                Ok(path) => std::fs::read(path).ok(),
-                Err(error) => {
-                    log::warn!("[Home] 全屏占位封面转码失败: {error}");
-                    None
-                }
-            };
-            let image = bytes.as_deref().and_then(crate::cover_img::decode_full);
+            let image = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 if let Some(image) = image {
                     view.stage_covers.insert(sid, image);
