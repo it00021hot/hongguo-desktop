@@ -65,6 +65,12 @@ struct FrameTexture {
     texture: ID3D11Texture2D,
     size: (u32, u32),
     generation: u64,
+    /// 纹理里已经有画面（`TransferVideoFrame` 至少写过一帧）。
+    ///
+    /// 换集时新引擎的首帧还没解出来，这块纹理是空的：把它发到视频位就是
+    /// 把「黑」当画面发出去——用户看到的正是切集瞬间闪一帧黑。空纹理一律
+    /// 不发，等这一集的首帧到了再接棒（视频位保持上一集的末帧）。
+    has_frame: bool,
 }
 
 pub struct SystemPlayer {
@@ -285,8 +291,8 @@ impl SystemPlayer {
         if !self.ensure_frame_texture(width, height) {
             return;
         }
-        let frame = self.frame.lock().expect("帧纹理锁 poisoned");
-        let Some(frame) = frame.as_ref() else {
+        let mut frame = self.frame.lock().expect("帧纹理锁 poisoned");
+        let Some(frame) = frame.as_mut() else {
             return;
         };
         let mut pts = 0i64;
@@ -315,6 +321,12 @@ impl SystemPlayer {
                     .TransferVideoFrame(&frame.texture, None, &rect, Some(&black))
                     .ok();
             }
+            frame.has_frame = true;
+        }
+        // 首帧还没解出来：视频位保持上一集的末帧（切集不闪黑），等这一集的
+        // 首帧接棒。空纹理发出去就是闪一帧黑。
+        if !frame.has_frame {
+            return;
         }
         let scale = *self.scale.lock().expect("DPI 锁 poisoned");
         let dest = geometry(bounds, staged.fit, scale, (width, height));
@@ -347,6 +359,8 @@ impl SystemPlayer {
             texture,
             size: (width, height),
             generation,
+            // 新建的纹理是空的：首帧到达前不发给视频位。
+            has_frame: false,
         });
         log::info!("[WmPresenter] 帧纹理就绪 {width}×{height}（代际 {generation}）");
         true
@@ -575,7 +589,9 @@ impl Drop for SystemPlayer {
         if let Some(stream) = &self._stream {
             unsafe { stream.Close() }.ok();
         }
-        // 本集的帧别留在视频 quad 上（下一集首帧前舞台显示封面，不该露出旧画面）。
-        self.quad.clear_frame();
+        // **不清视频位的帧**：帧是窗口级共享资源（quad 按 HWND 注册），不属于
+        // 本集。换集时旧播放器先死、新引擎首帧还没解出来，这里清帧就是切集
+        // 瞬间闪一帧黑。帧的清理由「画面不再可见」触发（`detach()` / 舞台
+        // visible=false），换集则保持上一集末帧顶住画面，等新集首帧接棒。
     }
 }
