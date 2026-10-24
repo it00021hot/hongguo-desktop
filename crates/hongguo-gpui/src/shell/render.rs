@@ -38,6 +38,29 @@ impl gpui_kit::Render for Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
+        // 帧驱动取证（RUST_LOG=debug 才输出、才抓栈，平时零开销）：每 300
+        // 帧抽一次渲染调用栈，回答「这一帧是谁驱动的」——vsync 询帧、notify
+        // 效果还是动画请求（帧异常密集时对照 [Hang] 日志用）。
+        if log::log_enabled!(log::Level::Debug) {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static FRAME: AtomicU32 = AtomicU32::new(0);
+            let n = FRAME.fetch_add(1, Ordering::Relaxed);
+            if n % 300 == 5 {
+                let text = std::backtrace::Backtrace::force_capture().to_string();
+                // 只留帧号行、只留 gpui/hongguo 帧，砍掉 std/哈希库噪音
+                let picked: Vec<&str> = text
+                    .lines()
+                    .filter(|l| {
+                        let t = l.trim();
+                        (t.starts_with(|c: char| c.is_ascii_digit())
+                            && (t.contains("gpui") || t.contains("hongguo")))
+                            || t.starts_with("at ")
+                    })
+                    .take(80)
+                    .collect();
+                log::debug!("[PerfFrame] 第 {n} 帧栈：{}", picked.join("\n"));
+            }
+        }
         // chrome 全藏的两种形态：小屏播放（480×270 纯播放器，Tauri 小屏
         // 同款，拖窗走播放页拖拽条）与播放器沉浸全屏（播放器全屏按钮/F
         // 进入；顶栏最大化钮是另一档「应用全屏」，chrome 保留，对齐 Tauri）
@@ -112,6 +135,9 @@ impl gpui_kit::Render for Shell {
         // 系统播放器 + 首页：壳根透明，舞台的透明洞才露得出下层视频视图；
         // 其他目的地照常铺主题底色（视频只在首页播放）。
         let video_hole = self.dest == Dest::Home && !crate::preview::is_active();
+        // 窗口 1px 自绘边框（DWMWA_BORDER_COLOR 已关系统线，深色桌面下无边框
+        // 连缩放边都摸不到）：跟主题走；最大化/全屏时贴屏幕边，画了反而怪。
+        let bordered = !window.is_maximized() && !window.is_fullscreen();
         v_flex()
             // 封面解码结果的内存缓存挂全应用：同一张封面在首页/找剧/历史/
             // 收藏共用一份，容量有上限（超出释放 GPU 纹理）。
@@ -120,6 +146,7 @@ impl gpui_kit::Render for Shell {
             .size_full()
             .bg(theme.background)
             .when(video_hole, |el| el.bg(gpui_kit::rgba(0x00000000)))
+            .when(bordered, |el| el.border_1().border_color(theme.border))
             .text_color(theme.foreground)
             .children(toolbar)
             .child(
