@@ -32,6 +32,16 @@
 - **扩展矩阵三步**（新页面 / 新面板必做）：`preview/scenes.rs` 加场景（键名唯一）→ `home/preview_seed.rs` 加种子分支 → `tests/preview_scenes.rs` 的 `SCENE_KEYS` 同步补键（覆盖率测试盯着失同步）。下载假任务灌**真实队列**（`state.replace_queue`），直接种 `self.downloads` 会被 Render 每帧的 `tasks_of` 刷新覆盖。动过场景矩阵 / 种子分发就跑 `cargo test -p hongguo-gpui --test preview_scenes`。
 - **运行中窗口取证用 `screenshot.rs`**（与预览矩阵互补不互替）：预览验布局 / 主题 / 面板全分支（离线、无播放器）；`HONGGUO_SHOT` 对运行中窗口进程内抓帧，验真实数据与播放链路。macOS 上 `screencapture` 抓别的进程要屏幕录制授权（抓到的是壁纸），`render_to_image` 不经窗口服务器、无需授权，是图形链路唯一可靠的取证手段。
 
+## 日志与帧取证（排查日志纪律）
+
+- **排查期日志一律 `log::debug!` 常驻代码，不物理删除**——这是 dev-habits「调试残留清零」的转正形态：env_logger 默认过滤器是 `info`，`debug!` 平时零输出；要开就 `RUST_LOG=hongguo_gpui=debug`（只开壳）或 `RUST_LOG=debug`（连 service 一起）。新探针照此形态入代码，别再犯「交付前删探针」的错。
+- 现役探针（debug 门控，各回答一个问题）：
+  - `[BrowseGrid] sync / render ix`（`pages/browse/render.rs`）——虚拟网格当前形态与每帧物化的行区间；静止时只应看到可见几行反复出现。
+  - `[CoverCache] miss`（`cover_image_cache.rs`）——封面解码缓存未命中；正常一份封面整个会话一次，同一张反复 miss = 解码-逐出循环，日志直接点名资源。
+  - `[PerfFrame]`（`shell/render.rs`）——每 300 帧抽一次渲染调用栈，回答「这帧谁驱动的」（vsync 询帧 / notify 效果 / 动画请求）；抓栈被 `log_enabled!(Debug)` 门住，平时零开销。
+- `[Hang]`（`main.rs`，`perf-probe` feature 门控，**warn 级**）——主线程单段停顿 ≥`HONGGUO_HANG_MS`（默认 50ms，`HONGGUO_HANG_POLL_MS` 调轮询间隔）即告警，是 perf-probe 注释承诺的周期日志出口；`cargo build -p hongguo-gpui --features perf-probe` 才编译。停顿事故是异常事件不是调试噪音，保持 warn。
+- 背景口径（已实测）：gpui-pre Windows 平台层每 vsync 询帧、核心回调 `is_dirty()` 脏闸门决定画不画——空闲不画；性能问题先看 [Hang] 的单帧 draw 成本，别再猜「全量重绘」。单实例互斥：重启实例时 taskkill 后等 2 秒再启动，否则撞 mutex 静默退出。
+
 ## 已知坑（每条锁着一条纪律）
 
 - **cargo test 与本壳 bin**：`[[bin]] test = false` 是铁的——cargo test 会把无测试框架的 bin 当用例**直接执行**，本壳一跑就开窗口，把全仓测试挂死。要测的东西放 `tests/`（集成测试）：现状 `preview_scenes`（纯数据覆盖率，默认构建可跑）与 `emoji_insert`（需 `screenshot` feature）。bin 无 lib 目标，集成测试进不了 crate 内部，唯一通路是 `#[path]` 源文件级引入（`scenes.rs` 自洽、不引 `super::*` 就是为这个）；`#[cfg(test)]` 单测在这 crate 里永远跑不了。

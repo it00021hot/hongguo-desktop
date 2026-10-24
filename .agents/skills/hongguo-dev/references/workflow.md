@@ -59,7 +59,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 
 ### GPUI 壳
 
-见 `references/gpui.md`（GPUI 壳规范的唯一归属）：`make gpui-preview` 离屏预览矩阵是界面改动的标准验收，运行中窗口取证走 `screenshot.rs`（HONGGUO_SHOT）。
+见 `references/gpui.md`（GPUI 壳规范的唯一归属）：`make gpui-preview` 离屏预览矩阵是界面改动的标准验收，运行中窗口取证走 `screenshot.rs`（HONGGUO_SHOT）。排查日志（`RUST_LOG=hongguo_gpui=debug` 开关 + `[BrowseGrid]`/`[CoverCache]`/`[PerfFrame]`/`[Hang]` 探针清单与口径）也在 `gpui.md` 的「日志与帧取证」节。
 
 ### Rust 后端
 
