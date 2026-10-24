@@ -92,6 +92,6 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 ## 工程背景（改构建配置前必知）
 
 - release profile `opt-level=3 + lto="thin" + strip`：fat LTO 曾让 rustc 段 17-18 分钟，thin 砍半以上。**禁加 `panic="abort"`**（见 SKILL.md 红线 6）。
-- `[profile.dev.package.rusty_h265-accel] debug-assertions = false`：只为该依赖关断言（其去块滤波 debug_assert 在 1080p 真码流必触发），别推广到别处。
-- vendor/ 四个 patch（muxide B帧 stco、rusty_alloc 2.2.2 顶替 1.1.6、rusty_h264-common 摘全局分配器、tauri-plugin-webdriver 抬版本）各有回收约定，改这些目录前看**根 `Cargo.toml`** 的 `[patch.crates-io]` 注释（workspace 化后 patch/profile 都在根 manifest）。`vendor/` 已被 `[workspace] exclude` 排除，不参与 lint/test。
-- `lib.rs` 里的 `alloc_stress` 压力测试：只要它崩就是分配器的锅，别在业务代码里找。
+- `[profile.dev.package.rusty_h265-accel] debug-assertions = false`：只为该依赖关断言（其去块滤波 debug_assert 在 1080p 真码流必触发），别推广到别处。现状消费者是 HEIC 封面软解。
+- vendor/ 两个 patch（gpui-pre-windows 视频 quad 同画布、tauri-plugin-webdriver 抬版本）各有回收约定，改这些目录前看**根 `Cargo.toml`** 的 `[patch.crates-io]` 注释（workspace 化后 patch/profile 都在根 manifest）。`vendor/` 已被 `[workspace] exclude` 排除，不参与 lint/test。
+- `lib.rs` 里的 `alloc_stress` 压力测试：并发分配的回归护栏，崩了先查分配/并发本身，别在业务代码里找。
