@@ -453,6 +453,17 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
   （episode_cnt，前端合成）+ 题材（data_type=3）
 - 数字格式化口径（对齐 hgplayer）：万/亿一位小数、整数省小数点
   （27.05万→27.1万、3786.01万→3786万；`formatCountPrecise`）
+- **出品方 / 演职员 = `video_detail` 的 `data.video_data.main_creator_users[]`**
+  （`base_info.{user_id,user_name,user_avatar}` + `user_tag.sub_title_list[0].text`
+  出角色文案；⚠️ 匿名设备实测**该字段不返回**，登录态才有）。
+
+  ⚠️ **`user_avatar` 是「签名 http」地址**（2026-10-25 实包）：
+  `http://p3-reading-sign.fqnovelpic.com/novel-pic/<hash>~tplv-s85hriknmn-jpeg-v1:144:0.jpeg?lk3s=...&x-expires=...&x-signature=...`
+  ——服务端 http/https 都回 200（同一签名），但**浏览器侧 http 会被 CSP
+  `img-src`（无 `http:`）与混合内容拦掉** → `<img>` 空白。所以 Tauri 壳这处
+  必须过 `normalizeAvatarUrl`（http→https；见 `src/utils/image-url.ts`），
+  与评论/弹幕/@/创作者档案头像同口径；漏一处就是「详情页创作者筹码没头像」。
+  GPUI 壳不走浏览器，另有一道档位坑（见 `docs/gpui-kit-research.md`）。
 
 ## 9. 互动操作（2026-10-05 抓 hgplayer 1.1.3 实操全量锁定；2026-10-06 抓 1.1.5 重锁）
 
