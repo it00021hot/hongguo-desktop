@@ -131,7 +131,8 @@ impl Decompressor {
             // VT 在硬解输出后逐帧插入一次色域换算，吞吐掉一个数量级（1080p
             // HEVC 420v 675–785 fps vs 420f 55–67 fps）。转码链重编码前本来
             // 就要做色彩处理，420v 是唯一正确的选择。
-            let pixel_format = make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
+            let pixel_format =
+                make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
             let iosurface = iosurface_attrs();
             // 输出缓冲池最小缓冲数：解码器按它预分配 IOSurface，避免逐帧
             // 新建/回收（帧率高时分配开销直接进帧时延）。6 帧 ≈ 0.2s@30fps，

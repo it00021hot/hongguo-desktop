@@ -23,16 +23,14 @@ remain with their respective authors. This project itself is licensed under
 
 以下均为**纯 Rust 实现**，不含 C 代码，不依赖任何外部二进制。
 
-| 组件                                                     | 用途                                | 许可              |
-| -------------------------------------------------------- | ----------------------------------- | ----------------- |
-| [rusty_h265](https://crates.io/crates/rusty_h265)        | HEVC/H.265 解码（兼容模式转码输入） | Apache-2.0        |
-| [rusty_h264](https://crates.io/crates/rusty_h264)        | H.264 编码（兼容模式转码输出）      | BSD-2-Clause      |
-| [rusty_aac](https://crates.io/crates/rusty_aac)          | AAC-LC 编解码                       | Apache-2.0        |
-| [muxide](https://github.com/Michael-A-Kuykendall/muxide) | MP4 封装                            | MIT OR Apache-2.0 |
-| [aes](https://crates.io/crates/aes)                      | AES-128 加密（密钥派生）            | MIT OR Apache-2.0 |
-| [ctr](https://crates.io/crates/ctr)                      | AES-CTR 模式（CENC 解密）           | MIT OR Apache-2.0 |
-| [md-5](https://crates.io/crates/md-5)                    | MD5 摘要                            | MIT OR Apache-2.0 |
-| [sm3](https://crates.io/crates/sm3)                      | SM3 摘要（国密）                    | MIT OR Apache-2.0 |
+| 组件                                              | 用途                             | 许可              |
+| ------------------------------------------------- | -------------------------------- | ----------------- |
+| [rusty_h265](https://crates.io/crates/rusty_h265) | HEVC/H.265 解码（HEIC 封面软解） | Apache-2.0        |
+| [rusty_aac](https://crates.io/crates/rusty_aac)   | AAC-LC 编解码                    | Apache-2.0        |
+| [aes](https://crates.io/crates/aes)               | AES-128 加密（密钥派生）         | MIT OR Apache-2.0 |
+| [ctr](https://crates.io/crates/ctr)               | AES-CTR 模式（CENC 解密）        | MIT OR Apache-2.0 |
+| [md-5](https://crates.io/crates/md-5)             | MD5 摘要                         | MIT OR Apache-2.0 |
+| [sm3](https://crates.io/crates/sm3)               | SM3 摘要（国密）                 | MIT OR Apache-2.0 |
 
 ## 三、异步与网络 / Async & Networking
 

@@ -368,18 +368,18 @@ fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴。
 ///
-/// 背景：`rusty_h264-common` 默认给整个测试进程强装了第三方分配器
-/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在
-/// 间歇性崩溃（表现为荒唐大小的分配失败 → abort）。这个测试用来
-/// 复现与回归验证：**只要它崩，就是分配器的锅**，别在业务代码里找。
+/// 背景：曾经 `rusty_h264-common` 默认给整个测试进程强装第三方分配器
+/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在间歇性
+/// 崩溃（表现为荒唐大小的分配失败 → abort）。那个分配器连同整条纯 Rust
+/// 转码兜底都已从依赖树里彻底摘掉，进程跑标准 Rust 分配器。这个测试留着
+/// 当并发分配的回归护栏：**它若崩，先怀疑分配/并发本身**，别在业务代码里找。
 #[cfg(test)]
 mod alloc_stress {
     use std::sync::Barrier;
 
     /// 模拟 mp4 流式解密测试的分配指纹：高频短命小块（几十~几百字节）、
     /// 精确 with_capacity、Vec 增长 realloc、周期性整块清空。
-    /// **与业务无关**——它若崩，唯一嫌疑就是进程级第三方分配器
-    /// （rusty_h264-common 默认强装的 rusty_alloc）。
+    /// **与业务无关**——它若崩，只说明分配/并发有问题，与业务逻辑无关。
     #[test]
     fn concurrent_alloc_free_storm_is_stable() {
         const THREADS: usize = 16;

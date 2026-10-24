@@ -5,7 +5,7 @@
 //!   有硬件 MFT）→ 接近实时到中速（视硬编与否）
 //! - 有 ffmpeg 且选得到**真硬件**编码器 → 接近实时
 //! - 有 ffmpeg 但只有软件编码器 → 中速
-//! - 都没有 → 纯 Rust 软解，慢
+//! - 都没有 → **没有转码后端**，转码做不了
 //!
 //! 成本分层：平台层是纯原生 API（MFTEnumEx / VT 会话），毫秒级；`has_ffmpeg`
 //! 只要一次 `ffmpeg -version`；ffmpeg 侧「真硬件」要 `-encoders` + 逐个试编
@@ -98,33 +98,24 @@ fn probe() -> DecodeCapability {
     }
 }
 
-/// 当前机器分流链会选中的最佳后端（不实际转码）。
+/// 当前机器分流链会选中的后端（不实际转码）。
 ///
 /// 分流顺序与壳内 `service::transcode_service::pipeline` 一致：
-/// 平台编码层 → ffmpeg → 纯 Rust。并行度、超订预期都从这里的结论出发。
-pub fn selected_backend() -> Backend {
+/// 平台编码层 → ffmpeg。**`None` = 一条路都没有**（平台编码器不可用且没装
+/// ffmpeg）——此时转码根本做不了，调用方必须自己处理这个状态。
+pub fn selected_backend() -> Option<Backend> {
     if platform_available() {
-        return Backend::Platform;
+        return Some(Backend::Platform);
     }
     match crate::ffmpeg::h264_encoder() {
-        Some(e) if e.hardware => Backend::FfmpegHw,
-        Some(_) => Backend::FfmpegSw,
-        None => Backend::Rust,
+        Some(e) if e.hardware => Some(Backend::FfmpegHw),
+        Some(_) => Some(Backend::FfmpegSw),
+        None => None,
     }
 }
 
 fn platform_available() -> bool {
     !crate::platform::disabled_by_env() && crate::platform::encoder_available()
-}
-
-/// 当前机器的转码链路能否统一分辨率（缩放）。
-///
-/// ffmpeg 有 `scale` 滤镜，平台硬编有各自的像素搬移器（VT 的
-/// `VTPixelTransferSession` / MF 的 VideoProcessor）；**纯 Rust 软解没有
-/// 缩放能力**。没有缩放能力时，混合分辨率的剧集不能进兼容合并——
-/// 否则转完几十分钟才死在拼接的宽高一致校验上。
-pub fn scaling_available() -> bool {
-    selected_backend() != Backend::Rust
 }
 
 /// 预热探测（启动时调用，避免首次转码时的额外延迟）。

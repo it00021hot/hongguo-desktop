@@ -1,6 +1,6 @@
 //! macOS VideoToolbox 编码后端（硬编优先，无硬编回落 Apple 内置软编会话）。
 //!
-//! 链路与软解路径（`hongguo_media::transcode`）逐段对应，只是「解码 → YUV → 编码」
+//! 链路与 ffmpeg 路径逐段对应，只是「解码 → YUV → 编码」
 //! 被整体换成了 GPU 上的「解码 → NV12 CVPixelBuffer → 编码」，IOSurface
 //! 背板的像素缓冲在编解码之间零拷贝：
 //!
@@ -10,8 +10,8 @@
 //!     → H.264 AVCC ─Annex-B 转换 + SPS/PPS 前插→ mux_h264 → MP4 out
 //! ```
 //!
-//! 复用软解路径的部分：MP4 解复用、参数集读取（`hvcC`）、音轨 AAC 直通、
-//! 封装（muxide faststart）、临时文件原子替换。产物与软解/ffmpeg 完全同构。
+//! 复用公共件的部分：MP4 解复用、参数集读取（`hvcC`）、音轨 AAC 直通、
+//! 封装（faststart）、临时文件原子替换。产物与 ffmpeg 完全同构。
 //!
 //! 时间戳：逐帧显示时间来自源样本表（`stts`/`ctts` 展开），不再按固定帧率
 //! 合成——换后端顺手消灭第一类音画漂移。

@@ -3,9 +3,9 @@
 //! 分流策略（整个媒体层的关键决策）：
 //! - **平台原生硬编可用**（VideoToolbox / Media Foundation）→ 接近实时
 //! - **装了 ffmpeg** → 用 ffmpeg，有硬件编码器时接近实时
-//! - **都没有** → 纯 Rust（`rusty_h265` + `rusty_h264` + `muxide`），零外部依赖
+//! - **都没有** → 做不了转码，直接报错
 //!
-//! 三条路都产出 H.264 MP4，对上层完全一致；上游失败时自动落回下一条，
+//! 两条路都产出 H.264 MP4，对上层完全一致；上游失败时自动落回下一条，
 //! 不让用户卡死。实际走了哪条由 [`hongguo_media::Backend`] 报告，谁都不许
 //! 再拿字符串猜。
 //!
@@ -15,7 +15,7 @@ use std::path::Path;
 
 use crate::transcode_service::cache;
 use hongguo_common::AppResult;
-use hongguo_media::transcode::{TranscodeOptions, TranscodeResult};
+use hongguo_media::transcode::TranscodeResult;
 
 /// 转码一个文件。
 ///
@@ -26,7 +26,6 @@ pub fn transcode(
     series_id: &str,
     vid_index: u32,
     source: &Path,
-    options: &TranscodeOptions,
     scale_to: Option<(u32, u32)>,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> AppResult<TranscodeResult> {
@@ -38,27 +37,21 @@ pub fn transcode(
 
     // 命中缓存直接返回
     if let Some(cached) = cache::cached_path(series_id, vid_index) {
-        let meta = std::fs::metadata(&cached).ok();
         return Ok(TranscodeResult {
             output_path: cached.to_string_lossy().to_string(),
-            output_size: meta.map(|m| m.len()).unwrap_or(0),
-            elapsed_ms: 0,
-            frames: 0,
-            decoder: hongguo_media_platform::capability::selected_backend()
-                .decoder_label()
-                .to_string(),
-            encoder: String::new(),
             backend: hongguo_media_platform::capability::selected_backend(),
         });
     }
 
-    let started = std::time::Instant::now();
     let target = cache::cache_file(series_id, vid_index);
 
     // 分流 1：平台原生编码（macOS：VideoToolbox，硬编优先、Apple 软编回落；
     // Windows：Media Foundation 硬编）。不依赖用户装任何东西；
     // 会话建不出来/失败会静默落回 ffmpeg。
-    let mut backend = hongguo_media::Backend::Rust;
+    let mut backend: Option<hongguo_media::Backend> = None;
+    // 两条路都试过但都没成时，最后一个真实原因要透给用户——没有第三档兜底了，
+    // 吞掉它就只剩一句「没找到 ffmpeg」的假话。
+    let mut last_error: Option<String> = None;
     if let Some(done) = hongguo_media_platform::platform::transcode_h264(
         &hongguo_media_platform::platform::PlatformRequest {
             input: source,
@@ -70,18 +63,22 @@ pub fn transcode(
         match done {
             Ok(()) => {
                 if output_is_playable(&target) {
-                    backend = hongguo_media::Backend::Platform;
+                    backend = Some(hongguo_media::Backend::Platform);
                 } else {
                     log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
+                    last_error = Some("平台编码器产出的文件无法播放".to_string());
                     let _ = std::fs::remove_file(&target);
                 }
             }
-            Err(e) => log::warn!("[Transcode] 平台硬编失败，尝试下一条路: {e}"),
+            Err(e) => {
+                log::warn!("[Transcode] 平台硬编失败，尝试下一条路: {e}");
+                last_error = Some(e.to_string());
+            }
         }
     }
 
     // 分流 2：ffmpeg（含硬编码器）
-    if backend == hongguo_media::Backend::Rust
+    if backend.is_none()
         && let Some(encoder) = hongguo_media_platform::ffmpeg::h264_encoder()
     {
         let req = hongguo_media_platform::ffmpeg::TranscodeRequest {
@@ -95,46 +92,45 @@ pub fn transcode(
                 // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
                 // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
                 if output_is_playable(&target) {
-                    backend = if encoder.hardware {
+                    backend = Some(if encoder.hardware {
                         hongguo_media::Backend::FfmpegHw
                     } else {
                         hongguo_media::Backend::FfmpegSw
-                    };
+                    });
                 } else {
-                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除后回落软解");
+                    log::warn!("[Transcode] ffmpeg 产物校验未通过，删除产物");
+                    last_error = Some("ffmpeg 产出的文件无法播放".to_string());
                     let _ = std::fs::remove_file(&target);
                 }
             }
-            Err(e) => log::warn!("[Transcode] ffmpeg 转码失败，回落软解: {e}"),
+            Err(e) => {
+                log::warn!("[Transcode] ffmpeg 转码失败: {e}");
+                last_error = Some(e.to_string());
+            }
         }
     }
 
-    // 分流 3：纯 Rust 软解
-    if backend == hongguo_media::Backend::Rust {
-        // 源不是 HEVC 时在这里就把话说清楚。不加这道闸，错误会一路推迟到
-        // `hongguo_media::transcode` 内部才抛「不是 HEVC 轨」，用户既不知道为什么
-        // 失败，也不知道装 ffmpeg 能解决。
-        hongguo_media::codec_probe::ensure_softdecode_supported(source)?;
-        // 解码器内部的 unwind 兜底在 `hongguo_media::transcode` 里，这里不再重复包一层
-        hongguo_media::transcode::transcode_file(source, &target, options)?;
-    }
+    let Some(backend) = backend else {
+        return Err(match last_error {
+            // 两条路都试过了但都没成：把真实原因带出去，别让用户去猜。
+            Some(e) => hongguo_common::AppError::Media(format!("转码失败：{e}")),
+            // 一条路都没有：机器上没有任何可用后端。
+            None => hongguo_common::AppError::Media(
+                "没有可用的转码后端：系统编码器不可用，且未找到 ffmpeg。请安装 ffmpeg 后重试。"
+                    .into(),
+            ),
+        });
+    };
 
     cache::trim();
 
-    let backend_info = hongguo_media_platform::ffmpeg::backend_info();
+    log::info!(
+        "[Transcode] {series_id} 第 {vid_index} 集完成，后端 {}",
+        backend.decoder_label()
+    );
     Ok(TranscodeResult {
-        output_size: std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0),
         output_path: target.to_string_lossy().to_string(),
-        elapsed_ms: started.elapsed().as_millis(),
-        frames: 0,
-        decoder: backend.decoder_label().to_string(),
-        encoder: match backend {
-            hongguo_media::Backend::FfmpegHw | hongguo_media::Backend::FfmpegSw => {
-                backend_info.encoder
-            }
-            _ => String::new(),
-        },
-        backend,
+        backend: Some(backend),
     })
 }
 

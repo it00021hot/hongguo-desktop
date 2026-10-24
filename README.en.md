@@ -46,8 +46,7 @@ FFmpeg and no external binaries at all**.
 - **Downloads are standard MP4** — streaming decryption + atomic rename, no truncated
   files on disconnect
 - **Fully automatic compatibility mode** — when HEVC can't be decoded, it transcodes to
-  H.264 with a four-level fallback: platform hardware → ffmpeg hardware → ffmpeg software
-  → pure-Rust software
+  H.264 with a two-level fallback: platform hardware → ffmpeg
 - **Data lives in an embedded Turso database** — pure Rust, no C toolchain, with a schema
   migration chain and automatic recovery
 
@@ -135,8 +134,8 @@ FFmpeg and no external binaries at all**.
   template, concurrency
 - **Proxy**: follow system / manual (common port presets) / force direct, with a one-click
   latency test
-- **Transcode backend badge**: live indication of hardware / software / standard
-  (pure-Rust) mode, with re-detection
+- **Transcode backend badge**: live indication of hardware / software / unavailable mode,
+  with re-detection
 - Auto-next and auto-delete-after-watching toggles
 - **Theme**: auto / light / dark (dark default); **bilingual UI** (Chinese / English),
   follows system language
@@ -149,13 +148,13 @@ FFmpeg and no external binaries at all**.
 
 ### Core (Rust)
 
-| Layer    | Choice                                                                                           |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| Shell    | [Tauri 2](https://tauri.app) (system webview, no Electron)                                       |
-| Language | Rust 2024 edition · tokio · reqwest (rustls)                                                     |
-| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v5)               |
-| Crypto   | aes / ctr / sm3 / md-5 and other pure-Rust crates (CENC-AES-CTR)                                 |
-| Codecs   | rusty_h265 / rusty_h264 / muxide (pure Rust) + VideoToolbox / Media Foundation + optional ffmpeg |
+| Layer    | Choice                                                                                          |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| Shell    | [Tauri 2](https://tauri.app) (system webview, no Electron)                                      |
+| Language | Rust 2024 edition · tokio · reqwest (rustls)                                                    |
+| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v5)              |
+| Crypto   | aes / ctr / sm3 / md-5 and other pure-Rust crates (CENC-AES-CTR)                                |
+| Codecs   | rusty_h265 (pure Rust) + in-house MP4 muxer + VideoToolbox / Media Foundation + optional ffmpeg |
 
 ### Frontend
 
@@ -177,9 +176,10 @@ FFmpeg and no external binaries at all**.
   `hongguo-cover://` cover proxy (HEIC → JPEG with an on-disk hash cache)
 - **Signing stack**: five signature headers (`x-gorgon` / `x-argus` / `x-ladon` /
   `x-helios` / `x-medusa`) locked by golden-vector unit tests
-- **Four-level transcode fallback**: platform hardware (VideoToolbox on macOS / Media
-  Foundation on Windows) → ffmpeg hardware (NVENC / QSV / AMF) → ffmpeg software →
-  rusty_h265 + rusty_h264 pure-Rust software; probed at startup and shown as a badge
+- **Two-level transcode fallback**: platform hardware (VideoToolbox on macOS / Media
+  Foundation on Windows) → ffmpeg (hardware NVENC / QSV / AMF, or software libx264);
+  probed at startup and shown as a badge. With neither available the transcode fails
+  outright — there is no pure-software fallback
 - **Reliability**: single-instance lock, three-layer panic guard on protocol callbacks,
   crash.log forensics, database corruption recovery, interrupted-job resume, and a
   one-shot idempotent migration from the legacy JSON archive
@@ -264,8 +264,8 @@ app with `RUST_LOG=debug`.
 
 The video is HEVC and the system webview needs hardware support to decode it. The built-in
 compatibility mode handles this: it transcodes to H.264 automatically — platform hardware
-(VideoToolbox on Apple silicon / Media Foundation on Windows) → ffmpeg (NVENC/QSV/AMF) →
-pure-Rust software decoding, with automatic fallback and no manual configuration.
+(VideoToolbox on Apple silicon / Media Foundation on Windows) → ffmpeg (NVENC/QSV/AMF hardware
+or libx264 software), with automatic fallback and no manual configuration.
 
 ### Can I edit the signature constants?
 

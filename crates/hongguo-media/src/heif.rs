@@ -433,4 +433,19 @@ mod tests {
         let err = decode_primary_to_jpeg(b"not a heif file at all......");
         assert!(err.is_err(), "垃圾输入必须报错");
     }
+
+    /// 解码器层面的健壮性：随机字节喂进去要报错或什么都不吐，**不能崩**。
+    ///
+    /// 封面是外部数据（CDN 上的 HEIC），解码器是第三方纯 Rust 实现——这里崩
+    /// 一次就是整个进程崩，代价远高于"这张封面出不来"。
+    #[test]
+    fn the_hevc_decoder_survives_garbage_without_panicking() {
+        let mut d = rusty_h265::Decoder::new();
+        let garbage: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let _ = d.push_annexb(&garbage, None);
+        let _ = d.next_frame();
+        d.flush();
+        // 再取一次也不该 panic
+        let _ = d.next_frame();
+    }
 }

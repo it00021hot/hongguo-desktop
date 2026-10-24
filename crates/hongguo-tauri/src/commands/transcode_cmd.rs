@@ -1,6 +1,6 @@
 //! 转码能力查询与播放兼容兜底。
 //!
-//! 真正的转码实现在 [`hongguo_media::transcode`]，由合并功能
+//! 真正的转码实现在 [`hongguo_media::mux`] 与平台硬编 crate，由合并功能
 //! （`merge_service::compat`）与播放兼容兜底（`play_service::compat_play`）驱动。
 //! 兜底编排（下载/转码两段进度）在 service 的
 //! `play_service::compat_play::compat_for_playback`；这里只留能力查询与转调。

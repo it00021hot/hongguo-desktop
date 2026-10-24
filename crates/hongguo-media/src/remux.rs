@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use hongguo_common::{AppError, AppResult};
 
+use crate::mp4::{build_moov, mdat_data_start, mdat_header, needs_wide_offsets};
+
 mod index;
 
 /// 按集号数字排序的待合并文件。
@@ -85,7 +87,7 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
         .flat_map(|s| s.tracks.iter())
         .map(|t| t.info.samples.iter().map(|(_, size)| *size).sum::<u64>())
         .sum();
-    let wide = index::needs_wide_offsets(total_payload);
+    let wide = needs_wide_offsets(total_payload);
 
     // moov 长度只取决于样本数与偏移宽度，与偏移的具体数值无关：
     // 先用占位偏移量一次长度，再带真实偏移重算一次。
@@ -94,8 +96,8 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
         .iter()
         .map(|t| vec![0u64; t.sizes.len()])
         .collect();
-    let moov_len = index::build_moov(&plan, &placeholders, wide).len();
-    let data_start = index::mdat_data_start(ftyp.len(), moov_len, wide);
+    let moov_len = build_moov(&plan.mvhd, &plan.tracks, &placeholders, wide).len();
+    let data_start = mdat_data_start(ftyp.len(), moov_len, wide);
 
     let mut offsets: Vec<Vec<u64>> = plan
         .tracks
@@ -117,7 +119,7 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
         }
     }
 
-    let moov = index::build_moov(&plan, &offsets, wide);
+    let moov = build_moov(&plan.mvhd, &plan.tracks, &offsets, wide);
     debug_assert_eq!(moov.len(), moov_len, "两次构建的 moov 长度应一致");
 
     Ok(Prepared {
@@ -141,7 +143,6 @@ fn write_output(inputs: &[PathBuf], temp: &Path, prepared: &Prepared) -> AppResu
         &mut out,
         &mdat_header(prepared.total_payload, prepared.wide),
     )?;
-
     let mut written = 0u64;
     let mut buf: Vec<u8> = Vec::new();
     for (path, source) in inputs.iter().zip(&prepared.sources) {
@@ -158,24 +159,6 @@ fn write_output(inputs: &[PathBuf], temp: &Path, prepared: &Prepared) -> AppResu
 
     out.flush().map_err(|e| AppError::Io(e.to_string()))?;
     Ok((written, inputs.len()))
-}
-
-/// `mdat` 的 box 头。载荷装不下 32 位时用 largesize。
-///
-/// 返回的**长度就是真正写出去的字节数**——固定长度的数组会在窄偏移时多写出
-/// 8 个零字节，所有样本偏移随之偏小。
-fn mdat_header(total_payload: u64, wide: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(16);
-    if wide {
-        out.extend(1u32.to_be_bytes());
-        out.extend(b"mdat");
-        out.extend(total_payload.to_be_bytes());
-    } else {
-        let total = (index::mdat_header_len(false) as u64 + total_payload) as u32;
-        out.extend(total.to_be_bytes());
-        out.extend(b"mdat");
-    }
-    out
 }
 
 /// 从 `file` 的 `at` 处读满 `buf`。偏移单调递增时不会真的 seek。

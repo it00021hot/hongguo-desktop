@@ -29,7 +29,7 @@ const NO_HEVC_HEVC: u8 = 2;
 /// 编码器偏好排序。
 ///
 /// 平台优先给 `h265` / `h264`，其次 `bytevc1`，其余（含 `bytevc2`）最后。
-/// 同一清晰度下优先选标准编码器——ffmpeg 与软解链路对它们的兼容性差异很大。
+/// 同一清晰度下优先选标准编码器——ffmpeg 与系统播放器的兼容性差异很大。
 fn codec_rank(codec: &str) -> u8 {
     match codec {
         "h265" | "h264" | "h265_hvc1" | "hevc" | "hvc1" | "avc1" => 0,

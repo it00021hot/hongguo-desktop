@@ -1,24 +1,12 @@
 //! 合并计划的素材与校验：解析各输入的 `moov`、逐集累加出合并后的样本表。
 //!
-//! 写出侧（`moov` 字节组装）见 [`super::moov`]。
+//! 写出侧（`moov` 字节组装）见 [`crate::mp4`]。
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::{BoxHeader, find_box, parse_boxes};
 use hongguo_video::sample_table::{TrackInfo, collect_track};
 
-/// 一条 `edts/elst` 条目：从源媒体时间轴映射到 presentation 时间轴。
-///
-/// `media_time` 是 media timescale；`segment_duration` 是 movie timescale。
-/// 两者时基不同，不能直接相加。`-1` 是空 edit（只占 presentation 时长）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Edit {
-    pub segment_duration: u64,
-    pub media_time: i64,
-    pub rate: i32,
-}
-
-/// 正常播放速率（16.16 定点）。
-const EDIT_RATE_ONE: i32 = 0x0001_0000;
+use crate::mp4::{EDIT_RATE_ONE, Edit, TrackSpec, push_run};
 
 /// 一个输入文件里的一条轨道：解析结果 + 要原样搬进产物的 box。
 pub struct SourceTrack {
@@ -48,31 +36,10 @@ pub struct SourceFile {
     pub mvhd: Vec<u8>,
 }
 
-/// 合并后一条轨道的索引素材。
-#[derive(Debug)]
-pub struct MergedTrack {
-    pub tkhd: Vec<u8>,
-    pub mdhd: Vec<u8>,
-    pub hdlr: Vec<u8>,
-    pub stsd: Vec<u8>,
-    pub header: Vec<u8>,
-    pub dinf: Vec<u8>,
-    /// `stsz` 的逐样本大小
-    pub sizes: Vec<u32>,
-    /// `stts` 游程
-    pub stts: Vec<(u32, u32)>,
-    /// `ctts` 游程。空表示没有这张表，产物里也不写。
-    pub ctts: Vec<(u32, i32)>,
-    /// `stss` 同步样本号。`None` 表示没有这张表 = 全部样本都是关键帧。
-    pub stss: Option<Vec<u32>>,
-    /// `edts/elst`：逐集合成的 presentation 映射。至少一条（无源 edit 的补默认段）。
-    pub edits: Vec<Edit>,
-}
-
 /// 整个合并产物的索引。
 #[derive(Debug)]
 pub struct MergeIndex {
-    pub tracks: Vec<MergedTrack>,
+    pub tracks: Vec<TrackSpec>,
     /// 已改好时长的 `mvhd`
     pub mvhd: Vec<u8>,
 }
@@ -473,12 +440,12 @@ impl Accumulator {
         }
     }
 
-    fn finish(mut self) -> MergedTrack {
+    fn finish(mut self) -> TrackSpec {
         // stss 攒下来还是空的，说明没有任何一集是关键帧表非空——那就不写
         if self.stss.as_ref().is_some_and(Vec::is_empty) {
             self.stss = None;
         }
-        MergedTrack {
+        TrackSpec {
             tkhd: self.tkhd,
             mdhd: self.mdhd,
             hdlr: self.hdlr,
@@ -491,17 +458,6 @@ impl Accumulator {
             stss: self.stss,
             edits: self.edits,
         }
-    }
-}
-
-/// 追加一段游程；与上一段 delta 相同就并进去，免得游程表按集数线性膨胀。
-fn push_run<T: PartialEq>(runs: &mut Vec<(u32, T)>, count: u32, delta: T) {
-    if count == 0 {
-        return;
-    }
-    match runs.last_mut() {
-        Some(last) if last.1 == delta => last.0 += count,
-        _ => runs.push((count, delta)),
     }
 }
 

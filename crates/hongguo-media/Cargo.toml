@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media"
-description = "红果桌面版纯 Rust 编解码：demux / hevc / remux / transcode / 封面 HEIF / 后端选择"
+description = "红果桌面版媒体公共底座：demux / hevc / remux / H.264 封装 / 封面 HEIF / 后端标识"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,11 +14,8 @@ hongguo-common = { path = "../hongguo-common" }
 hongguo-video = { path = "../hongguo-video" }
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
-# H.264 封装（muxide，走根 manifest 的 [patch.crates-io] 补丁修 B 帧流表）
-muxide = "0.2.5"
-# 纯 Rust 软解软编：rusty_h265 解码 + rusty_h264 编码（最后的兜底路径）
+# HEVC 解码：HEIC 封面纯 Rust 软解（封面阶梯的最后一级，零外部依赖）
 rusty_h265 = "0.6.0"
-rusty_h264 = "0.16.0"
 # 封面 HEIC 解码后的 JPEG 编码（纯 Rust、零 unsafe）
 jpeg-encoder = "0.6"
 # 合并前校验「输出卷还剩多少字节」，只开 disk

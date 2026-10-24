@@ -1,13 +1,11 @@
 //! ffmpeg 可选加速（分流链的第二层）。
 //!
 //! 完整分流顺序见壳内 `service::transcode_service::pipeline`：
-//! **平台硬编（`platform`）→ ffmpeg → 纯 Rust 软解**。本模块只负责
-//! 中间那层：
+//! **平台硬编（`platform`）→ ffmpeg**。本模块只负责中间那层：
 //!
 //! - 有 ffmpeg：HEVC → H.264 转码交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码，
 //!   速度接近实时。触发点只有「兼容合并」与「播放兼容兜底」两个。
-//! - 无 ffmpeg：落回 `rusty_h265` + `rusty_h264` + `muxide`，
-//!   零外部依赖、纯 Rust，只是软解慢一些。
+//! - 无 ffmpeg：**没有兜底层了**——平台编码器也没有时转码做不了，直接报错。
 //!
 //! 快速合并**不经过这里**：它走 `hongguo_media::remux` 的纯 Rust 索引重写拼接，
 //! 任何后端都不调它。
@@ -53,7 +51,7 @@ const WINGET_SCAN_DEPTH: usize = 6;
 
 fn detect() -> Option<PathBuf> {
     // 调试/测试开关：强制按「未安装」处理，用于验证设置页的安装引导、
-    // 软解兜底与无 ffmpeg 的各条分支——不用真把 ffmpeg 卸了。
+    // 无后端与无 ffmpeg 的各条分支——不用真把 ffmpeg 卸了。
     // 与 HONGGUO_DATA_DIR / HONGGUO_STREAM_WINDOW 同一套环境变量约定。
     if std::env::var_os("HONGGUO_NO_FFMPEG").is_some() {
         log::info!("[FFmpeg] HONGGUO_NO_FFMPEG 已设置，本次按未安装处理");
@@ -304,7 +302,7 @@ pub fn backend_info() -> BackendInfo {
         },
         _ => BackendInfo {
             encoder: String::new(),
-            transcode_with: "rusty_h265 → rusty_h264".to_string(),
+            transcode_with: "none (ffmpeg not found)".to_string(),
         },
     }
 }
@@ -342,7 +340,10 @@ mod tests {
         let info = backend_info();
         if ffmpeg_path().is_none() {
             assert_eq!(info.encoder, "", "无 ffmpeg 时不应报告编码器");
-            assert!(info.transcode_with.contains("rusty_h265"), "应回落软解");
+            assert!(
+                info.transcode_with.contains("none"),
+                "无 ffmpeg 时应说明没有转码链路"
+            );
         } else {
             assert!(!info.encoder.is_empty(), "有 ffmpeg 时应选到编码器");
         }

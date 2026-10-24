@@ -1357,46 +1357,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
-dependencies = [
- "clap_builder",
- "clap_derive",
-]
-
-[[package]]
-name = "clap_builder"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
-dependencies = [
- "anstream",
- "anstyle",
- "clap_lex",
- "strsim",
-]
-
-[[package]]
-name = "clap_derive"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "clap_lex"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
-
-[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1522,19 +1482,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
-]
-
-[[package]]
-name = "console"
-version = "0.15.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
-dependencies = [
- "encode_unicode",
- "libc",
- "once_cell",
- "unicode-width 0.2.2",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2279,12 +2226,6 @@ name = "embed_plist"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
-
-[[package]]
-name = "encode_unicode"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -3388,9 +3329,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-base"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e9955b6f4b048fd50ca15fc8e225d80bb00ba9ebc8fecdddde5ad26dbef9270"
+checksum = "d5cd7de73d5b2d3d18b94a928abf343922091fa77bc472f77b7d2e7e8b1823a7"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -3429,9 +3370,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-component"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465a363235cd4062ef5f0953fc096fc764ed6f53dfbd9f409f669f93ea3b1ff9"
+checksum = "4097e161cc81e86323b439664be0cdd4f7c56148e867ed6f67fd72b966b6c2d1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3476,9 +3417,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-component-macros"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c0c9398aaf99e595d450e38eb44ff0c500df8c332b4783d5b72022e69525359"
+checksum = "6b98496748463b60ad69eab80cd91fc9b3807fed9a0e01ab4d5c159c949fd814"
 dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -3488,9 +3429,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-kit"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fac401f6b149bf33794da0942510240afd29b7b18556574e4cf17196b647066"
+checksum = "3cdcb78553bef8785669e572e79759b0eab47fdd9d318fe0cce1def798189432"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -3503,9 +3444,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-kit-assets"
-version = "0.7.3"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7abc281dcbfe51c16a7e73189521a3a771168c31e3ab0db99e21e481d1b1b9a"
+checksum = "b037e2fa43d53a567a8aa5be6b1a8931f416cbd010ceee8d4a3727a71e9b1d05"
 dependencies = [
  "anyhow",
  "gpui-pre",
@@ -3589,6 +3530,8 @@ dependencies = [
 [[package]]
 name = "gpui-pre-apple"
 version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b52f58893fe1a0836464428dfad2b5eaf42c9c303a9638f4c2aced5a69072a15"
 dependencies = [
  "anyhow",
  "async-task",
@@ -4313,8 +4256,6 @@ dependencies = [
  "hongguo-video",
  "jpeg-encoder",
  "log",
- "muxide",
- "rusty_h264",
  "rusty_h265",
  "serde",
  "serde_json",
@@ -4997,19 +4938,6 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
-]
-
-[[package]]
-name = "indicatif"
-version = "0.17.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "183b3088984b400f4cfac3620d5e076c84da5364016b4f49473de574b2586235"
-dependencies = [
- "console",
- "number_prefix",
- "portable-atomic",
- "unicode-width 0.2.2",
- "web-time",
 ]
 
 [[package]]
@@ -6038,18 +5966,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
-name = "muxide"
-version = "0.2.5"
-dependencies = [
- "anyhow",
- "clap",
- "indicatif",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "naga"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6358,12 +6274,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-[[package]]
-name = "number_prefix"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "objc"
@@ -8348,70 +8258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rusty_alloc"
-version = "1.1.6"
-dependencies = [
- "libc",
- "portable-atomic",
- "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "rusty_alloc-api"
-version = "1.1.6"
-dependencies = [
- "rusty_alloc",
-]
-
-[[package]]
-name = "rusty_h264"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acc4385b919216f3148223bf790f47611676d3a4084083c0535eaa2d29478da8"
-dependencies = [
- "rusty_h264-common",
- "rusty_h264-decoder",
- "rusty_h264-encoder",
-]
-
-[[package]]
-name = "rusty_h264-accel"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18110c8f692668ccf004393bee04e369d4f0f173dd0ea4b515080258e6f9c599"
-
-[[package]]
-name = "rusty_h264-common"
-version = "0.16.0"
-dependencies = [
- "bytemuck",
- "once_cell",
- "portable-atomic",
- "rusty_alloc-api",
- "rusty_h264-accel",
- "wide",
-]
-
-[[package]]
-name = "rusty_h264-decoder"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0f4deb1a3a5e928cbaa1dff7db6bc46262c850aedeb75cb5aeab890494c18a5"
-dependencies = [
- "rusty_h264-common",
-]
-
-[[package]]
-name = "rusty_h264-encoder"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e037f6341a02f54021f7077735bd12e2fd61a749e1ee7248eee00466ef5fa4ba"
-dependencies = [
- "rusty_h264-accel",
- "rusty_h264-common",
-]
-
-[[package]]
 name = "rusty_h265"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8449,15 +8295,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "safe_arch"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "same-file"
@@ -11630,16 +11467,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bae2f2b2b816647a1cab1acc91f5bd20812d53cb344382635ec2181940c8034f"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "wide"
-version = "0.7.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
-dependencies = [
- "bytemuck",
- "safe_arch",
 ]
 
 [[package]]

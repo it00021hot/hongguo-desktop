@@ -19,9 +19,9 @@ hongguo-api = { path = "../hongguo-api" }
 hongguo-signer = { path = "../hongguo-signer" }
 # 持久化（Turso 内嵌库）。
 hongguo-store = { path = "../hongguo-store" }
-# 纯 Rust 编解码核心（Backend 标识 / demux / transcode 兜底 / 封面软解）。
+# 媒体公共底座（Backend 标识 / demux / H.264 封装 / 封面软解）。
 hongguo-media = { path = "../hongguo-media" }
-# 平台层（能力探测 / 平台硬编 / ffmpeg 执行——转码分流链的第二、三层）。
+# 平台层（能力探测 / 平台硬编 / ffmpeg 执行——转码分流链的第二层）。
 hongguo-media-platform = { path = "../hongguo-media-platform" }
 # 在线流契约（渐进流填充、Range 线格式）。
 hongguo-stream = { path = "../hongguo-stream" }

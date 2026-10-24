@@ -17,7 +17,7 @@ use super::probe::h264_hw_encoder_available;
 use super::scaler::Scaler;
 
 /// 平台硬编可用时执行转码；不可用返回 `None`（HEVC 以外的源也返回 `None`，
-/// 留给 ffmpeg/软解——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
+/// 留给 ffmpeg——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     if !h264_hw_encoder_available() {
         return None;
@@ -235,11 +235,9 @@ fn run(
         return Err(AppError::Media("平台硬编没有产出任何帧".into()));
     }
 
-    // 4) 音轨直通 + 封装（与软解路径同一套代码，faststart）
+    // 4) 音轨直通 + 封装（与其他后端同一套代码，faststart）
     let (out_w, out_h) = out_dims.unwrap_or((video.width as usize, video.height as usize));
-    hongguo_media::transcode::mux_with_audio(
-        req.input, demuxed, req.output, &units, out_w, out_h, fps as f32,
-    )?;
+    hongguo_media::mux::with_audio(req.input, demuxed, req.output, &units, out_w, out_h)?;
 
     log::info!(
         "[Platform/mf] HEVC→H.264 完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",

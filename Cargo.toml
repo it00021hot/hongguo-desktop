@@ -50,40 +50,7 @@ rust-version = "1.99.1"
 license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
 
-# 根治「测试高并发间歇崩」：rusty_h264-common 默认给整个进程强装第三方分配器
-# rusty_alloc 1.1.6（`rusty_alloc-api = "=1.1.6"` 锁死版本；rusty_h264 default 转发
-# global-alloc，feature unification 关不掉）。1.1.6 有并发 bug——多线程分配下整个
-# 进程间歇 abort（"memory allocation of 22906492240 bytes failed"），全量 cargo
-# test 默认并发 6 次崩 2 次，生产跑转码/在线播放同样暴露。
-#
-# 两层处理：
-# 1. vendor/rusty_h264_common —— patch rusty_h264-common 0.16.0，摘掉它的
-#    #[global_allocator]（进程回到 Rust 标准分配器，根治；上游如果哪天改用
-#    修好的 alloc 再整体撤掉）。
-# 2. vendor/rusty_alloc* —— rusty_alloc 2.2.2（2026-10-01，修了 9 月一连串
-#    并发问题）以 1.1.6 的版本号顶替。global-alloc feature 虽已不生效，
-#    但保留：将来谁把分配器装回去时用的也是修过的版本。
 [patch.crates-io]
-# muxide 0.2.5 的 B 帧流封装有设计缺陷：interleave schedule 按 PTS 排序
-# 写 mdat，而 stco 按写入序、stsz/stts/ctts 按输入序构建——B 帧流表与
-# 数据互相矛盾，产物不可解（vendor 补丁把视频排序键改为 dts=解码序，
-# 无 B 帧的流 dts==pts 行为不变）。上游 0.2.5 为最新版，待修复后回收。
-muxide = { path = "vendor/muxide" }
-rusty_alloc = { path = "vendor/rusty_alloc" }
-rusty_alloc-api = { path = "vendor/rusty_alloc_api" }
-rusty_h264-common = { path = "vendor/rusty_h264_common" }
-# gpui-pre-apple 0.3.9 的 Metal surface 渲染器**只接受 '420f'**（全区间 NV12）：
-# metal_renderer.rs 对像素格式是硬断言，shader 的 YCbCr→RGB 矩阵也写死全区间。
-# 而 VideoToolbox 硬解的原生输出是 '420v'（视频区间）——本机实测同一份 1080p
-# HEVC：'420v' 输出 552fps、'420f' 只有 50fps（VT 内部逐帧插入色域换算），
-# 请求 420f 等于每秒白白多付 19ms/帧，播放必然越播越落后。
-#
-# 补丁把 surface 渲染器扩成两种 NV12 都收：'420f' 走原管道，'420v' 用同一
-# 顶点函数 + limited-range 片元矩阵（surface_fragment_video）。这样解码端可以
-# 直接把硬件原生的 420v 交给 GPU 采样，全程零 CPU 搬运。
-# 自研引擎删除（2026-10）后壳侧已无视频 surface 使用方，此扩展待回收。
-# 上游 0.3.9 为当前最新版（本地索引已确认）。
-gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
 # gpui-pre-windows 0.3.9 的渲染器没有视频画面的落点，而系统播放器
 # （Media Foundation Media Engine 的 frame-server 模式）经 TransferVideoFrame
 # 把帧写进渲染器设备上的纹理，需要渲染器把它画出来——且必须与 GPUI 内容
@@ -128,11 +95,12 @@ strip = true
 #
 # `rusty_h265-accel` 的去块滤波在帧边界有个过严的 `debug_assert`
 # （deblock.rs:331，水平边要求 x >= 4）。1080p 真实码流第一帧就踩到，
-# 结果 dev 下整个软解必然 panic，转码兜底这条路等于不存在。
+# 结果 dev 下整个软解必然 panic。
 #
 # 它确实只是一条断言：release 不编译它，该段 SIMD 路径又由 `if ok` 守住
-# 会整段跳过，实测 release 下 1080p 解码正常、帧数与样本数一致。
-# 不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
+# 会整段跳过。不这么配就只能全局降级或强制 release，那会把真实断言一起埋掉。
+# 现状消费者是 HEIC 封面软解（`hongguo-media::heif`）——纯 Rust 视频转码
+# 兜底移除后，转码不再经过 rusty_h265。
 [profile.dev.package.rusty_h265-accel]
 debug-assertions = false
 

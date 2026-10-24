@@ -40,8 +40,7 @@
 
 - **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
 - **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg 硬编 →
-  ffmpeg 软编 → 纯 Rust 软解，四级回退
+- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg，两级回退
 - **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
 
 ---
@@ -121,13 +120,13 @@
 
 ### 内核（Rust）
 
-| 层     | 选型                                                                                                  |
-| ------ | ----------------------------------------------------------------------------------------------------- |
-| 桌面壳 | [Tauri 2](https://tauri.app)（系统 WebView，无 Electron）                                             |
-| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                           |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v5）                            |
-| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                |
-| 编解码 | rusty_h265 / rusty_h264 / muxide（纯 Rust）+ VideoToolbox / Media Foundation（平台硬编）+ 可选 ffmpeg |
+| 层     | 选型                                                                                            |
+| ------ | ----------------------------------------------------------------------------------------------- |
+| 桌面壳 | [Tauri 2](https://tauri.app)（系统 WebView，无 Electron）                                       |
+| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                     |
+| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v5）                      |
+| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                          |
+| 编解码 | rusty_h265（纯 Rust）+ 自写 MP4 封装 + VideoToolbox / Media Foundation（平台硬编）+ 可选 ffmpeg |
 
 ### 前端
 
@@ -148,9 +147,9 @@
   播放；`hongguo-cover://` 封面代理（HEIC → JPEG，磁盘哈希缓存）
 - **签名栈**：`x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa` 五头签名，
   黄金向量单测锁定正确性
-- **四级转码回退**：macOS VideoToolbox / Windows Media Foundation 平台硬编 →
-  ffmpeg 硬编（NVENC / QSV / AMF）→ ffmpeg 软编 → rusty_h265 + rusty_h264 纯 Rust 软解，
-  启动时探测并常驻徽章展示
+- **两级转码回退**：macOS VideoToolbox / Windows Media Foundation 平台硬编 →
+  ffmpeg（硬编码器 NVENC / QSV / AMF，软编 libx264），
+  启动时探测并常驻徽章展示；两者都不可用时直接报错，没有纯软解兜底
 - **可靠性**：单实例锁、协议回调三层 panic 防线、crash.log 取证、数据库坏档自动恢复、
   任务中断恢复、旧 JSON 存档一次性幂等迁移
 
@@ -233,7 +232,7 @@ hongguo-desktop/
 
 视频是 HEVC 编码，系统 WebView 解码需要硬件支持。应用已内置「兼容模式」：转成
 H.264 后播放——平台硬编（Apple 芯片 VideoToolbox / Windows Media Foundation）→
-ffmpeg（NVENC/QSV/AMF 硬编）→ 纯 Rust 软解，自动回退，无需手动配置。
+ffmpeg（NVENC/QSV/AMF 硬编，或 libx264 软编），自动回退，无需手动配置。
 
 ### 签名魔数能改吗
 

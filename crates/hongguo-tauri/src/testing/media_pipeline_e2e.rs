@@ -5,7 +5,7 @@
 //! 1. 索引重写在**平台封装器**产出的文件上同样成立（HEVC Main profile 带 B 帧、
 //!    `ctts` 非空、chunk 不止一个、stsc 多条目）。
 //! 2. 产物被 `ffprobe` 认成一条**完整**的时间轴，而不是「只能播第 1 集」。
-//! 3. ffmpeg 路线产出的 H.264 能播，且比纯 Rust 软解快多少。
+//! 3. ffmpeg 路线产出的 H.264 能播。
 //!
 //! 全部用例由 `HONGGUO_E2E_DIR` 门控：没设就整体跳过，真实文件不进
 //! `make test-rust`。跑法：
@@ -22,7 +22,6 @@ use std::time::Instant;
 use serde_json::Value;
 
 use hongguo_media::remux::concat_copy;
-use hongguo_media::transcode;
 use hongguo_media_platform::ffmpeg;
 use hongguo_media_platform::ffmpeg::transcode_with_ffmpeg;
 
@@ -498,61 +497,31 @@ fn platform_transcode_produces_playable_h264() {
 }
 
 #[test]
-fn softdecode_and_ffmpeg_output_are_both_decodable() {
-    // ⚠️ 这条在 **debug 构建下极慢**（单线程软解 1080p，实测跑了几分钟还没出结果）。
-    //   `cargo test` 默认就是 debug，跑它之前先 `cargo test --release`。
-    //   `compat.rs` 里记的 54s/集 是 release 下的数，拿它和 ffmpeg 比才有意义。
+fn ffmpeg_output_is_decodable() {
     let Some(encoder) = ffmpeg::h264_encoder() else {
         eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
         return;
     };
-    // 挑最小的一集：软解是单线程的，慢的不是代码而是等待
+    // 挑最小的一集：慢的不是代码而是等待
     let Some(all) = episodes() else { return };
     let src = all
         .into_iter()
         .min_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX))
         .unwrap();
-    let dir = scratch("both");
-
-    let soft_out = dir.join("软解.mp4");
-    let soft_started = Instant::now();
-    let soft = transcode::transcode_file(&src, &soft_out, &transcode::TranscodeOptions::default())
-        .expect("软解应能转出可解析的 MP4");
-    let soft_elapsed = soft_started.elapsed();
+    let dir = scratch("ffmpeg");
 
     let ff_out = dir.join("ffmpeg.mp4");
     let ff_started = Instant::now();
     transcode_with_ffmpeg(&plain_req(&src, &ff_out), &encoder).unwrap();
     let ff_elapsed = ff_started.elapsed();
 
-    for (label, path) in [("软解", &soft_out), ("ffmpeg", &ff_out)] {
-        let tracks = hongguo_media::demux::demux_file(path).expect("产物应能解复用");
-        assert!(tracks.video_track().is_some(), "{label} 产物应有视频轨");
-        assert!(
-            (media_seconds(path) - media_seconds(&src)).abs() < media_seconds(&src) * 0.01,
-            "{label} 产物时长应与源一致"
-        );
-        println!(
-            "[e2e] {label}: {} 帧 / {:.2?}s",
-            soft.frames,
-            if label == "软解" {
-                soft_elapsed
-            } else {
-                ff_elapsed
-            }
-        );
-    }
-    println!(
-        "[e2e] 同集对比：软解 {:.2?} vs ffmpeg({}) {:.2?}，快 {:.1}×",
-        soft_elapsed,
-        enc_label(&encoder),
-        ff_elapsed,
-        soft_elapsed.as_secs_f64() / ff_elapsed.as_secs_f64().max(0.001)
-    );
+    let tracks = hongguo_media::demux::demux_file(&ff_out).expect("产物应能解复用");
+    assert!(tracks.video_track().is_some(), "产物应有视频轨");
     assert!(
-        ff_elapsed < soft_elapsed,
-        "ffmpeg 路线应快于纯 Rust 软解：{ff_elapsed:?} vs {soft_elapsed:?}"
+        (media_seconds(&ff_out) - media_seconds(&src)).abs() < media_seconds(&src) * 0.01,
+        "产物时长应与源一致"
     );
+    println!("[e2e] ffmpeg: {:.2?}s", ff_elapsed);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -561,7 +530,7 @@ fn compat_merge_end_to_end_via_ffmpeg() {
     let Some((all, _)) = mergeable_episodes() else {
         return;
     };
-    // 只取三集：软解基准下全集要十分钟，ffmpeg 下没必要跑那么久
+    // 只取三集：整集转码本来就慢，没必要跑那么久
     let inputs: Vec<PathBuf> = all.into_iter().take(3).collect();
     let dir = scratch("compat");
 
@@ -672,7 +641,7 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
 
 #[test]
 fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
-    // 门控：没有 ffmpeg 时整条兼容合并会静默回落软解，测试结果就没有意义了
+    // 门控：没有 ffmpeg 时整条兼容合并会静默落到别的后端，测试结果就没有意义了
     let Some(encoder) = ffmpeg::h264_encoder() else {
         // 没装 ffmpeg 是合法状态（项目本来就承诺零外部依赖），不是失败
         eprintln!(

@@ -22,12 +22,12 @@
 //!   `stts` / 样本数 / `ctts` / `stss` / 偏移全部不动。
 //!
 //! `mvex` / `udta` 丢弃；`edts` 是时间轴语义的一部分，必须保留。
+//!
+//! `moov` 的字节组装在 [`crate::mp4`]——快速合并与重新封装共用同一份写出层。
 
-mod moov;
 mod plan;
 
-pub use moov::{build_moov, mdat_data_start, mdat_header_len, needs_wide_offsets};
-pub use plan::{Edit, MergeIndex, MergedTrack, SourceFile, plan, read_source_file};
+pub use plan::{SourceFile, plan, read_source_file};
 
 #[cfg(test)]
 use plan::{MDHD_DURATION, MVHD_DURATION, TKHD_DURATION, duration_of};

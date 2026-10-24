@@ -1,6 +1,6 @@
 //! Windows Media Foundation 硬编后端（HEVC 解码 → NV12 → H.264 硬编）。
 //!
-//! 链路与 macOS 侧（[`super::vt`]）/软解路径逐段对应，只是「解码 → YUV →
+//! 链路与 macOS 侧（[`super::vt`]）逐段对应，只是「解码 → YUV →
 //! 编码」被整体换成 Media Foundation 的 MFT 流水线，帧以 **NV12 系统内存**
 //! 在 MFT 之间搬运（v1 形态：不建 D3D11 设备管理器——实测 NVIDIA 编码 MFT
 //! 注册为 `d3d11_aware=false`，系统内存直进直出即可工作）：
@@ -19,8 +19,8 @@
 //! 软件解码器）；编码硬件优先，测试通道（`transcode_h264_for_tests`）
 //! 回落 in-box 软件编码器 h264_mf——两条驱动路径因此都被 CI 覆盖。
 //!
-//! 复用软解路径的部分与 vt 侧相同：MP4 解复用、音轨 AAC 直通、封装
-//! （muxide faststart）、临时文件原子替换；Annex-B 转换同一份
+//! 复用公共件的部分与 vt 侧相同：MP4 解复用、音轨 AAC 直通、封装
+//! （faststart）、临时文件原子替换；Annex-B 转换同一份
 //! `hongguo_media::hevc::to_annexb`。时间戳同样读**输出样本自带的 PTS**（100ns），
 //! 不依赖「输出序=输入序」——个别编码器拒收「关 B 帧」时可能重排。
 //!
@@ -62,8 +62,8 @@ mod scaler;
 pub use pipeline::transcode_h264;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::transcode_h264_for_tests;
-pub use probe::{clear_probe_cache, h264_hw_encoder_available};
 pub use probe::hevc_decoder_present;
+pub use probe::{clear_probe_cache, h264_hw_encoder_available};
 
 // 下方 tests 原样保留，引用的跨子模块名字由此供给。
 #[cfg(test)]
