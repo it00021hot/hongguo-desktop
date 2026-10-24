@@ -335,7 +335,7 @@ fn respond_range(
     }
 }
 
-/// 读一块；读前先唤醒业务续填，可恢复错误退避重试。8MB 预取预算耗尽后，
+/// 读一块；读前先唤醒业务续填，可恢复错误退避重试。头部预算耗尽后，
 /// 只有 `resume_fill` 能把填充前沿往前推；loader 不能把这一次超时直接
 /// 变成 AVFoundation 的永久失败。
 fn read_with_stall(

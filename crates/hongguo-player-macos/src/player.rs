@@ -371,7 +371,7 @@ impl PlayerLike for SystemPlayer {
             loader::Source::Stream {
                 vid: vid.to_string(),
                 definition,
-                // 切到这一集后由同一 loader 在 8MB 处继续唤醒续填；
+                // 切到这一集后由同一 loader 在头部预算处继续唤醒续填；
                 // 未切之前 resume_fill 也会因 is_next 放行。
                 on_stall,
             },

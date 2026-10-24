@@ -206,14 +206,15 @@ pub async fn ensure_stream_ready(
     const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     if hongguo_stream::total_len(vid, definition).is_some() {
         cache().mark_next(vid, definition);
-        // 预取可能早已在 8MB 预算处收工；标记后立刻续填，别让队列预加载
+        // 预取可能早已在头部预算处收工；标记后立刻续填，别让队列预加载
         // 的 loader 在填充前沿空等 30s。
         resume_fill(state, vid, definition, progress_key);
         return true;
     }
     let c = cache();
-    // 先标记「下一集」，预取填充的预算闭包立刻看到它并从 8MB 上限转无界；
-    // 只在这里标、切集时由 set_current 清，不会让后续集全部无界。
+    // 先标记「下一集」：它免于逐出（见 `StreamCache::retain_with`），也免于
+    // 续填被当成「已切走」而中止（见 `resume_fill` 的让位判定）。缓存内容
+    // 仍受统一预算约束——非当前集只填开头一段，转正后再续满。
     c.mark_next(vid, definition);
     resume_fill(state, vid, definition, progress_key);
     if !c.exists(vid, definition)

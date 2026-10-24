@@ -36,7 +36,7 @@ const READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 const TOTAL_LEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// 单次 `Read` 的总等待上限：超过就当供数失败，让引擎走失败/重试路径。
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// 可恢复读取错误的退避重试次数（8MB 预算耗尽要靠 `on_stall` 续填）。
+/// 可恢复读取错误的退避重试次数（头部预算耗尽要靠 `on_stall` 续填）。
 const STALL_RETRIES: u8 = 3;
 
 struct Inner {
@@ -146,7 +146,7 @@ impl Inner {
     }
 }
 
-/// 读一块；读前先唤醒业务续填，可恢复错误退避重试（8MB 预算耗尽后只有
+/// 读一块；读前先唤醒业务续填，可恢复错误退避重试（头部预算耗尽后只有
 /// `resume_fill` 能把填充前沿往前推）。
 fn read_with_stall(
     vid: &str,
