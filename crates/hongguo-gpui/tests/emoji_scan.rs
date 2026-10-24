@@ -123,9 +123,7 @@ fn mention_segments_plain_text_stays_whole() {
 // 码表注入为两码假表；「已知」判定与壳的 EMOJI_FILES 对表同构。
 fn tokens(text: &str) -> Vec<(usize, usize, String, String)> {
     use emoji_scan::rich_content;
-    let content = rich_content(text, |code| {
-        ["[微笑]", "[笑]"].contains(&code)
-    });
+    let content = rich_content(text, |code| ["[微笑]", "[笑]"].contains(&code));
     content
         .tokens()
         .iter()
@@ -162,7 +160,10 @@ fn emoji_and_mention_tokens_attach_disjoint() {
     let t = "哈[微笑]@小果AI\u{FFFC}好";
     let toks = tokens(t);
     assert_eq!(toks.len(), 2, "{toks:?}");
-    assert_eq!((toks[0].0, toks[0].2.clone()), (t.find('[').unwrap(), "[微笑]".to_string()));
+    assert_eq!(
+        (toks[0].0, toks[0].2.clone()),
+        (t.find('[').unwrap(), "[微笑]".to_string())
+    );
     assert!(toks[1].2.starts_with("@小果AI"));
 }
 

@@ -85,7 +85,9 @@ impl HomeView {
                             .px_3()
                             .child(super::super::controls::skinned_input(
                                 Input::new(input)
-                                    .token(|ctx, _, _| crate::danmaku_emoji::render_emoji_token(ctx))
+                                    .token(|ctx, _, _| {
+                                        crate::danmaku_emoji::render_emoji_token(ctx)
+                                    })
                                     .appearance(false)
                                     .h_full()
                                     .flex_1()
@@ -226,7 +228,9 @@ impl HomeView {
                                                     .replace_with_token(token, window, cx)
                                                     .is_err()
                                                 {
-                                                    log::warn!("[Home] 表情 token 插入被拒，退回纯文本");
+                                                    log::warn!(
+                                                        "[Home] 表情 token 插入被拒，退回纯文本"
+                                                    );
                                                     state.insert(code.clone(), window, cx);
                                                 }
                                             });

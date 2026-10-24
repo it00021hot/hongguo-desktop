@@ -80,9 +80,11 @@ impl gpui_kit::Render for HomeView {
                 input.update(cx, |state, cx| {
                     // 带 token 的 set_value：重置后表情码与提及仍是原子内联
                     // 单元（提及插入是全量重置点之一，顺带把存量代码重新附着）
-                    state.set_value(crate::danmaku_emoji::rich_content(&format!(
-                        "{base}{segment}"
-                    )), window, cx)
+                    state.set_value(
+                        crate::danmaku_emoji::rich_content(&format!("{base}{segment}")),
+                        window,
+                        cx,
+                    )
                 });
             }
         }

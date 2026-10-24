@@ -118,7 +118,9 @@ pub(crate) fn rich_content(text: &str, is_known: impl Fn(&str) -> bool) -> Input
             // 扫出的 code 含括号，正是码表键形态，直接交给判定闭包
             let code = &text[i..=close];
             if is_known(code)
-                && let Ok(next) = content.clone().with_token(i..close + 1, emoji_inline_token(code))
+                && let Ok(next) = content
+                    .clone()
+                    .with_token(i..close + 1, emoji_inline_token(code))
             {
                 content = next;
             }

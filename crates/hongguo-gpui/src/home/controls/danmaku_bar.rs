@@ -147,8 +147,8 @@ impl HomeView {
         let input = self.danmaku_input.as_ref().map(|input| {
             // 内联 token（Tauri RichEmojiInput 对齐）：`[名字]` 在输入框里
             // 直接渲染成表情图，value 仍是代码纯文本——预览条随之取消。
-            let rich = Input::new(input)
-                .token(|ctx, _, _| crate::danmaku_emoji::render_emoji_token(ctx));
+            let rich =
+                Input::new(input).token(|ctx, _, _| crate::danmaku_emoji::render_emoji_token(ctx));
             // 透明输入（Tauri inputClassName 的 `bg-transparent`）：
             // `appearance(false)` 才不吃主题底色——否则亮色主题下胶囊里
             // 会嵌一块白底方块（用户实测截图）。inline 是 `flex-1`（Tauri
@@ -304,12 +304,17 @@ impl HomeView {
                                                 // token 插入被拒（理论路径）时退回
                                                 // 纯文本插入，宁可见代码不可丢输入
                                                 input.update(cx, |state, cx| {
-                                                    let token = crate::danmaku_emoji::emoji_inline_token(&code);
+                                                    let token =
+                                                        crate::danmaku_emoji::emoji_inline_token(
+                                                            &code,
+                                                        );
                                                     if state
                                                         .replace_with_token(token, window, cx)
                                                         .is_err()
                                                     {
-                                                        log::warn!("[Home] 表情 token 插入被拒，退回纯文本");
+                                                        log::warn!(
+                                                            "[Home] 表情 token 插入被拒，退回纯文本"
+                                                        );
                                                         state.insert(code.clone(), window, cx);
                                                     }
                                                 });
