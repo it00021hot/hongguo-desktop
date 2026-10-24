@@ -160,6 +160,80 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 帧停顿取证（perf-probe）：gpui 前台日志的主线程停顿监控。
+            // 单段前台工作 ≥ 阈值（HONGGUO_HANG_MS，默认 50ms——60fps 一帧
+            // 16.7ms，超 50ms 肉眼可感知）记一起事故，每 HONGGUO_HANG_POLL_MS
+            // （默认 1s）汇总一跳。这是 perf-probe 注释里承诺的周期日志出口。
+            #[cfg(feature = "perf-probe")]
+            {
+                const HANG_THRESHOLD_MS: u64 = 50;
+                const HANG_POLL_MS: u64 = 1000;
+                let threshold_ms = std::env::var("HONGGUO_HANG_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(HANG_THRESHOLD_MS);
+                let poll_ms = std::env::var("HONGGUO_HANG_POLL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(HANG_POLL_MS);
+                if let Err(e) = cx.start_hang_monitor(
+                    gpui_pre::profiler::hang::HangMonitorConfig {
+                        threshold: std::time::Duration::from_millis(threshold_ms),
+                        frame_budget: std::time::Duration::from_millis(threshold_ms),
+                        interval: std::time::Duration::from_millis(poll_ms),
+                    },
+                    move |poll| {
+                        for incident in &poll.incidents {
+                            use gpui_pre::profiler::journal::ForegroundEvent;
+                            let worst = incident
+                                .contributors
+                                .iter()
+                                .map(|event| event.duration())
+                                .max()
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            // 贡献者按耗时降序取前几段点名（TaskPoll 带
+                            // spawn 位置的 file:line——直接定位元凶代码）
+                            let mut contributors: Vec<&ForegroundEvent> =
+                                incident.contributors.iter().collect();
+                            contributors.sort_by_key(|event| std::cmp::Reverse(event.duration()));
+                            let named = contributors
+                                .iter()
+                                .take(4)
+                                .map(|event| {
+                                    let ms = event.duration().as_millis();
+                                    match event {
+                                        ForegroundEvent::TaskPoll(t) => {
+                                            format!("task {ms}ms @{:?}", t.location)
+                                        }
+                                        ForegroundEvent::Draw(_) => format!("draw {ms}ms"),
+                                        ForegroundEvent::View(t) => {
+                                            format!("view {}ms {}", ms, t.name)
+                                        }
+                                        ForegroundEvent::Present(_) => {
+                                            format!("present {ms}ms")
+                                        }
+                                        ForegroundEvent::Action(_) => format!("action {ms}ms"),
+                                        ForegroundEvent::Input(_) => "input".to_string(),
+                                        ForegroundEvent::SmallPolls(f) => format!(
+                                            "small_polls {}ms",
+                                            f.until.duration_since(f.since).as_millis()
+                                        ),
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" | ");
+                            log::warn!(
+                                "[Hang] 最长 {worst}ms（触发 {:?}，用户活跃={}）：{named}",
+                                incident.trigger,
+                                incident.during_active_use,
+                            );
+                        }
+                    },
+                ) {
+                    log::warn!("[Hang] 停顿监控启动失败: {e}");
+                }
+            }
             // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。
             // 必须在 App 跑起来之后注册：Carbon 的 application event target
             // 要等 NSApplication 就位，开跑前注册会拿到空 target、把热键
