@@ -76,7 +76,7 @@ pub async fn fetch_comments_page(
 
 /// 剧级评论（详情页「剧评」，整部剧一条线）。
 ///
-/// 2026-10-07 抓 hgplayer 详情页锁定：同一端点换**形态**——`group_id` 是
+/// 2026-10-07 抓详情页锁定：同一端点换**形态**——`group_id` 是
 /// **series_id**（不是 vid）、`group_type=1`（书/剧维度）、`comment_source=1`、
 /// `comment_type=2`、`server_channel=34`；business_param 是另一组全量字段
 /// （照抄抓包，审计纪律）。响应与单集评论同构（common_list_info.total /
@@ -184,7 +184,7 @@ pub async fn fetch_series_comments_page(
 
 /// 发剧评（详情页「剧评」tab 的评论框，带评分）。
 ///
-/// 参数照 hgplayer 1.1.6 抓包逐字段对齐（2026-10-10，用户实测发满分
+/// 参数照抓包逐字段对齐（2026-10-10，用户实测发满分
 /// 剧评「好看」抓包）：剧评形态是 **data_type=2 / commit_source=12 /
 /// comment_type=0**，评分放在 business_param.score（**十分制**，5 星
 /// ×2）；列表侧参数（comment_source/comment_type/server_channel）与
@@ -364,7 +364,7 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
     Ok(page)
 }
 
-/// 回复列表请求体——**单集评论维度**（2026-10-10 抓 hgplayer 1.1.8 展开
+/// 回复列表请求体——**单集评论维度**（2026-10-10 抓展开
 /// 评论回复实操锁定）：路径 `/novel/commentapi/reply/list/{comment_id}/v1/`，
 /// `group_id` 仍是分集 vid，`comment_source=504` / `comment_type=4` /
 /// `server_channel=18`（回复拉取是独立于评论拉取的第三形态，别混用
@@ -392,7 +392,7 @@ pub(super) fn comment_replies_payload(
     })
 }
 
-/// 回复列表请求体——**剧评维度**（2026-10-10 抓 hgplayer 1.1.8 展开/翻页
+/// 回复列表请求体——**剧评维度**（2026-10-10 抓展开/翻页
 /// 剧评回复实操锁定，3 页全量）：`group_id` 是 series_id，
 /// `comment_source=501` / `comment_type=2` / `server_channel=34`，
 /// business_param 带 `real_level:2`；**首屏不带 cursor 键**（与 comment/list

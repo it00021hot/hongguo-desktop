@@ -22,7 +22,7 @@ struct IncognitoVisibilityEvent {
 /// 隐身的语义是**鼠标脱离窗口 → 隐藏+暂停，鼠标回到窗口区域 → 窗口自动
 /// 重现**（不是最小化、不用点 Dock）。隐藏的窗口收不到任何鼠标事件，
 /// 「回来了」只能靠**系统级光标位置轮询**判定——这是桌面端做这件事的
-/// 唯一路径（hgplayer 同理）：窗口隐藏后位置不动，全局光标一旦重新落进
+/// 唯一路径：窗口隐藏后位置不动，全局光标一旦重新落进
 /// 它的矩形，立刻 show，体验上就是「鼠标回来窗口就回来了」。
 static INCOGNITO_ON: AtomicBool = AtomicBool::new(false);
 static INCOGNITO_GEN: AtomicU64 = AtomicU64::new(0);

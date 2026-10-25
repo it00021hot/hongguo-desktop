@@ -175,7 +175,7 @@ pub async fn reservation_reserve(
     Ok(())
 }
 
-/// 批量删除预约（subscribe_delete，hgplayer 1.1.8 同款；需要登录）。
+/// 批量删除预约（subscribe_delete，同款形态；需要登录）。
 #[tauri::command]
 pub async fn reservations_delete(
     state: State<'_, AppState>,

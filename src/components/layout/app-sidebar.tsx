@@ -41,7 +41,7 @@ const NAV_ITEMS = [
   { key: 'collections', to: '/collections', icon: Star },
   // 点赞用爱心：与播放页互动栏「点赞=❤」同一符号语言（原 ThumbsUp 不一致）
   { key: 'liked', to: '/liked', icon: Heart },
-  // 追更（📺 语义）：对齐第三方 player 的侧栏顺序——点赞与预约之间
+  // 追更（📺 语义）：侧栏顺序——点赞与预约之间
   { key: 'follows', to: '/follows', icon: Tv },
   { key: 'reservations', to: '/reservations', icon: BellRing },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
@@ -121,7 +121,7 @@ export function AppSidebar() {
         })}
       </nav>
 
-      {/* 我的 / 登录（hgplayer 同款贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
+      {/* 我的 / 登录（贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
       <div className="border-t p-2">
         <AccountButton collapsed={collapsed} />
       </div>

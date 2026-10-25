@@ -50,7 +50,7 @@ impl super::HomeView {
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             .children(heat.map(|h| {
-                // 热度行（hgplayer 同款：剧名上方，琥珀色）
+                // 热度行（剧名上方，琥珀色）
                 div()
                     .text_xs()
                     .font_weight(gpui_kit::FontWeight::MEDIUM)

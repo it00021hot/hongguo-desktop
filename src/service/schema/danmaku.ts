@@ -45,8 +45,8 @@ export type CommentPage = z.infer<typeof commentPageSchema>;
 
 /**
  * 剧级评论页 + 剧评分摘要（Rust `danmaku::SeriesReviewPage`）。
- * 评分/评分人数/题材标签在评论响应 extra 里（2026-10-07 逆向 hgplayer
- * Reviews 锁定）——详情头部的「8.0分 1074人评分」数据源。
+ * 评分/评分人数/题材标签在评论响应 extra 里（2026-10-07 逆向 Reviews
+ * 端点锁定）——详情头部的「8.0分 1074人评分」数据源。
  */
 export const seriesReviewPageSchema = z.object({
   ...commentPageSchema.shape,

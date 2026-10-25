@@ -1,5 +1,5 @@
 //! 互动操作：点赞 / 收藏 / 追更 / 发弹幕 / 发评论 / 互动状态（2026-10-05 抓
-//! hgplayer 1.1.3 实操全量锁定，口径详见 docs/hongguo-api-endpoints.md 第 9 节；
+//! 包实操全量锁定，口径详见 docs/hongguo-api-endpoints.md 第 9 节；
 //! 追更 2026-10-15 抓 hongguo-player v1.2.1 实包，见 captures/capture-requests-20261015.md）。
 //!
 //! 实测口径：
@@ -50,7 +50,7 @@ const BOOKSHELF_LIST_PATH: &str = "/reading/bookapi/bookshelf/video/list/v";
 const UGC_MGET_PATH: &str = "/reading/ugc/action/mget/v";
 const FOLLOW_LIST_PATH: &str = "/novel/articleapi/relation/get_user_action/v1/";
 
-/// hgplayer 埋点上下文（抓包原样；服务端不校验，但对齐着带）。
+/// 埋点上下文（抓包原样；服务端不校验，但对齐着带）。
 /// 剧评发送（danmaku.rs send_series_review）复用同一素形态。
 pub(crate) fn shark_param() -> Value {
     serde_json::json!({
@@ -217,8 +217,8 @@ fn parse_reply_response(value: &Value) -> AppResult<ReplyItem> {
 /// **不走 comment/add 带回复字段**）。`reply_to_comment_id` 是被回复的
 /// 评论 id；回复「回复」时 `reply_to_reply_id` 传被回复的那条回复 id
 /// （响应回显有此字段，多级回复同端点）。返回**服务端回显的完整回复
-/// 对象**（头像/昵称/uid/时间齐全——hgplayer 就是把这个对象直接插进
-/// 回复列表，2026-10-10 对照抓包对齐）。
+/// 对象**（头像/昵称/uid/时间齐全——直接把这个对象插进
+/// 回复列表即可，2026-10-10 对照抓包对齐）。
 pub async fn send_reply(
     group_id: &str,
     book_id: &str,
@@ -280,7 +280,7 @@ fn check_interact_code(value: &Value) -> AppResult<()> {
     )))
 }
 
-/// comment/add 双形态（2026-10-06 抓 hgplayer 1.1.5 逐字段对齐）：
+/// comment/add 双形态（2026-10-06 抓包逐字段对齐）：
 /// - 弹幕 `data_type=20`：business_param 只有 book_id/ignore_urge_rule/
 ///   offset/shark_param（shark 带 aid+type）；
 /// - 评论 `data_type=4`：business_param 另有 has_aigc_content/log_extra/
@@ -413,7 +413,7 @@ pub async fn digg_comment(comment_id: &str, digg: bool, env: &ApiEnv) -> AppResu
     check_interact_code(&value)
 }
 
-/// 点赞 / 取消点赞一条**剧评**（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+/// 点赞 / 取消点赞一条**剧评**（2026-10-10 抓包实操锁定）。
 ///
 /// 与评论点赞（[`digg_comment`])同路径但三处形态不同，照抓包别合并：
 /// `object_type=2`（评论 8）、`comment_type=2`（评论 4）、
@@ -436,7 +436,7 @@ pub async fn digg_review(review_id: &str, digg: bool, env: &ApiEnv) -> AppResult
     check_interact_code(&value)
 }
 
-/// 回复一条**剧评**或剧评的回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+/// 回复一条**剧评**或剧评的回复（2026-10-10 抓包实操锁定）。
 ///
 /// 与单集评论回复（[`send_reply`]）同端点（reply/add）但换剧评形态：
 /// `commit_source=13`（评论回复 9）、`data_type=2`、`group_type=1`、
@@ -485,7 +485,7 @@ pub async fn send_review_reply(
     parse_reply_response(&value)
 }
 
-/// 删除自己的评论 / 剧评 / 回复（2026-10-10 抓 hgplayer 1.1.8 实操锁定）。
+/// 删除自己的评论 / 剧评 / 回复（2026-10-10 抓包实操锁定）。
 ///
 /// `service_id`：**2 = 剧评，4 = 评论/回复**（抓包两例）；`data_type` 恒 9
 /// （删除语义，与发送侧 data_type 无关）。响应 `code==0` 即成功。
@@ -513,7 +513,7 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
         "is_cancelled": false,
         "shark_extra": {
             "enter_from": "MainFragmentActivity",
-            // 2026-10-06 抓包补齐：字符串形态的 "0"/"true"（hgplayer 原样）
+            // 2026-10-06 抓包补齐：字符串形态的 "0"/"true"（抓包原样）
             "inactive_type": "0",
             "is_active_behavior": "true",
             "page_list": "MainFragmentActivity",
@@ -539,7 +539,7 @@ pub async fn collect_series(series_id: &str, collect: bool, env: &ApiEnv) -> App
     check_interact_code(&value)
 }
 
-/// 批量收藏/取消收藏（2026-10-11 逆向 hgplayer 1.1.8 RemoveFavorites：
+/// 批量收藏/取消收藏（2026-10-11 逆向 RemoveFavorites 形态：
 /// 同一 `update_bookshelf_video_list` 携带多条目，一请求完成批量）。
 /// `(series_id, collect)` 对；信封与单条完全同形。
 pub async fn collect_series_batch(entries: &[(String, bool)], env: &ApiEnv) -> AppResult<()> {

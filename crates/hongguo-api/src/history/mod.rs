@@ -71,7 +71,7 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
             series_id,
             title: str_field(raw, "book_name"),
             cover: str_field(raw, "thumb_url"),
-            // 线上 vid_index 统一 0 基（官方 App / hgplayer / 我们对齐后
+            // 线上 vid_index 统一 0 基（官方 App / 我们对齐后
             // 的写入都是），+1 转回领域值（前端/本地存储 1 基）
             vid_index: raw
                 .get("vid_index")
@@ -130,7 +130,7 @@ fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
 
-/// 批量删除云端观看历史（2026-10-11 逆向 hgplayer 1.1.8 delete.go 逐字段锁定）：
+/// 批量删除云端观看历史（2026-10-11 逆向 delete.go 逐字段锁定）：
 /// 复用 `read_history/update`，每条带 `is_delete=true + use_soft_delete=true`，
 /// 其余进度字段全零（官方删除样本形态）。响应 `update_fail_datas` 非空 =
 /// 部分失败，报错给上层。
@@ -193,13 +193,13 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 观看进度上报（2026-10-06 抓 hgplayer 1.1.5 双接口逐字段锁定）：
+/// 观看进度上报（2026-10-06 抓包双接口逐字段锁定）：
 /// 官方客户端播片时同时打 `read_history/update` 与 `read_progress/upload`，
-/// 云端「历史」页的写入端。hgplayer 约每分钟一次 + 切集时触发。
+/// 云端「历史」页的写入端。约每分钟一次 + 切集时触发。
 ///
 /// 两接口字段形态刻意不同（照抓包原样）：update 里 book_id/vid 是 JSON
 /// **数字**，upload 里 book_id/item_id 是**字符串**；duration/retain 等
-/// hgplayer 传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
+/// 抓包传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
 /// 等于当时进度，这里同用 position_ms 承载（我们未单独累计观看时长）。
 /// `vid_index` 收领域值（1 基，前端/本地存储原样传入），线上按 0 基发送。
 pub async fn report_watch_progress(
@@ -361,7 +361,7 @@ pub(crate) mod probe {
         assert!(check_update_fails(&bad).is_err(), "非空明细=被拒");
     }
 
-    /// 实证云端历史真实返回（对号入座：同账号在 hgplayer 显示最近记录）。
+    /// 实证云端历史真实返回（对号入座：同账号在客户端显示最近记录）。
     /// `PROBE_DEVICE` / `PROBE_COOKIE` 由真实库导出；`PROBE_COOKIE_HG` /
     /// `PROBE_TOKEN` 可选，用官方会话做对照。
     /// `cargo test probe_watch_history -- --ignored --nocapture`

@@ -155,7 +155,7 @@ impl DeviceProfile {
 pub fn video_device() -> DeviceProfile {
     // 2026-10-04 抓包刷新（captures/flows-20261004.jsonl）：71332 旧档案的
     // install_id 已被服务端风控清理——reading 系（搜索等）整段 0 字节拒。
-    // 与下方 ANON_TTREQ 同源，失效时重抓 hgplayer 并整组同换。
+    // 与下方 ANON_TTREQ 同源，失效时重新抓包并整组同换。
     DeviceProfile::from_pairs(
         &[
             ("iid", "2715158266282762"),
@@ -199,7 +199,7 @@ pub fn video_device() -> DeviceProfile {
 pub const ANON_TTREQ: &str = "1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874";
 
 /// 当前客户端自报的版本身份（与 [`video_device`] / 注册模板同源：
-/// hgplayer 1.1.3 内置红果 7.3.9.32）。
+/// 对齐官方客户端 7.3.9.32）。
 const APP_VERSION_FIELDS: [(&str, &str); 4] = [
     ("version_code", "73932"),
     ("version_name", "7.3.9.32"),
@@ -223,7 +223,7 @@ pub fn align_app_version(profile: &mut DeviceProfile) {
 /// 静默拒（HTTP 200 + 0 字节）。`install_id` 从档案的 `iid` 派生，保证
 /// 换档案时始终一致；`store-region` 是实测的属地标记。
 pub fn anonymous_cookie(device: &DeviceProfile) -> String {
-    // passport_csrf_token 必须以空值字段在场（hgplayer 抓包形态）：
+    // passport_csrf_token 必须以空值字段在场（抓包形态）：
     // 缺失时服务端把 send_code 走成「换绑检查」——目标号已绑定其它
     // 账号就报 1001（2026-10-04 实测：补空值即恢复登录发码语义）。
     // ttreq 按 install_id 发放：注册档案带自己的票，静态档案用配套常量。

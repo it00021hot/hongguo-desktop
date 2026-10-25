@@ -49,7 +49,7 @@ pub async fn save_device_profile(
 }
 
 /// 把现役档案复制到备份行。现役不存在时是空操作（返回 false）。
-/// 换档（注册成功 / 阵亡重铺）前调用，hgplayer 的 device.json.bak 同款。
+/// 换档（注册成功 / 阵亡重铺）前调用，「现役 + 备份」双档案形态。
 pub async fn backup_device_profile(db: &Db) -> AppResult<bool> {
     let touched = db
         .execute(

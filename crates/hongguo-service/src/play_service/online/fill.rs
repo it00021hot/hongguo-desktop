@@ -295,7 +295,7 @@ fn resume_fill_inner(
 
 /// 渐进路径第一阶段：首探头部、盒游走定位 moov、精确补齐、建计划、注册协议层。
 ///
-/// 探针序列对齐 hgplayer worker 的 `Me()`（见 captures/hgplayer-116-frontend.js）：
+/// 探针序列（实证口径，见 captures/ 下的前端脚本）：
 /// 首探 256KB → 首探里没 moov 就从「最后一个顶层盒的结束处」64KB 步进游走
 /// （最多 4 轮）→ 精确区间拉 moov 本体。**不做固定尾部预取**——多下的字节
 /// 在 moov 拉完前纯属浪费首帧时间；尾部数据的即时性由读者需求登记保证。
@@ -580,21 +580,18 @@ fn sparse_snapshot(
     out
 }
 
-/// 头部首探量，对齐 hgplayer 的 `it(0, 262144)`：ftyp + mdat 头都装得下，
-/// 顶层盒表从这里算出 moov 落点。
+/// 头部首探量：ftyp + mdat 头都装得下，顶层盒表从这里算出 moov 落点。
 const HEAD_BYTES: u64 = 256 * 1024;
-/// moov 不在首探里时的盒游走步进，对齐 hgplayer 的 `it(f, f+64*1024)`：
-/// 从「最后一个顶层盒的结束处」起探。
+/// moov 不在首探里时的盒游走步进：从「最后一个顶层盒的结束处」起探。
 const BOX_WALK_STEP: u64 = 64 * 1024;
-/// 盒游走最多轮数，对齐 hgplayer `Me()` 的 `for(i<4)`：正常尾-moov 布局
-/// 第一轮就命中，多轮只防非常规盒序（fragmented 之类）。
+/// 盒游走最多轮数：正常尾-moov 布局第一轮就命中，多轮只防非常规盒序
+/// （fragmented 之类）。
 const BOX_WALK_MAX: usize = 4;
 /// 顺序填充的步长：每段一个 Range 请求。
 ///
-/// 1MB，对齐 hgplayer（第三方 Go+Wails 客户端）实测值——其前端 worker 按
-/// mp4 样本表分组拉流，单请求上限 `1<<20`（首探 256KB、盒游走 64KB 步进；
-/// 见 captures/hgplayer-116-frontend.js 的取流 worker）。分块越小，
-/// seek 需求打断顺序填充的粒度越细，回跳响应越快。
+/// 1MB，实测值——分块按 mp4 样本表分组拉流，单请求上限 `1<<20`
+/// （首探 256KB、盒游走 64KB 步进）。
+/// 分块越小，seek 需求打断顺序填充的粒度越细，回跳响应越快。
 const FETCH_CHUNK: u64 = 1024 * 1024;
 
 #[cfg(test)]

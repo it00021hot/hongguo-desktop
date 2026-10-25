@@ -32,7 +32,7 @@ describe('formatDuration', () => {
 });
 
 describe('formatCountPrecise', () => {
-  // 口径对齐 hgplayer 详情头部：27.1万人追剧 / 40.3万次播放 / 热度值3786万
+  // 详情头部口径：27.1万人追剧 / 40.3万次播放 / 热度值3786万
   it('万位带一位小数，整数省略小数点', () => {
     expect(formatCountPrecise(270_523)).toBe('27.1万');
     expect(formatCountPrecise(402_591)).toBe('40.3万');

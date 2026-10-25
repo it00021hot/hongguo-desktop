@@ -7,7 +7,7 @@ import type { ReplyItem } from '@/service/schema';
 
 /** 播放器皮肤的回复线程：解包评论回复查询，交给共享 ReplyThread。
  *  皮肤与 i18n 键位差异收敛在 `components/common/reply-thread`（阶段 3
- *  「双实现收敛」；页侧剧评同源）。原地内联展开（hgplayer 同款），展开才
+ *  「双实现收敛」；页侧剧评同源）。原地内联展开，展开才
  *  拉首页；开合受控于父组件——回复发送成功后强制展开，让本地追加的那条
  *  立刻可见（折叠时发回复 = 「没效果」的根源）。 */
 export function ReplySection({

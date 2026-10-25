@@ -5,7 +5,7 @@ import { call } from '../tauri/invoke';
 
 export const discover = {
   /**
-   * 首页推荐流（书城换一换，hgplayer RecommendTab 同源）。
+   * 首页推荐流（书城换一换，recommend/tab 同源）。
    * tab：'16'=推荐、'36'=漫剧、'39'=真人剧；sessionId 首页空串（走
    * bookmall/tab cr=4），翻页回传上一页会话 + offset（nextOffset）+
    * filterIds（已下发过的 series_id，服务端排除已见）。

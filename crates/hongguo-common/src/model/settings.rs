@@ -210,7 +210,7 @@ pub struct Settings {
     /// 播完自动下一集
     #[serde(default = "default_true")]
     pub auto_next_episode: bool,
-    /// 最小化自动暂停，恢复窗口后继续播（对齐 hgplayer）
+    /// 最小化自动暂停，恢复窗口后继续播。
     #[serde(default = "default_true")]
     pub pause_on_minimize: bool,
     /// 连播预取集数（0=关闭；1=仅下一集）。流预取与 HEVC 预转共用此档，

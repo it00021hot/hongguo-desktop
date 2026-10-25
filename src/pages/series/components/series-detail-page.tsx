@@ -71,7 +71,7 @@ export function SeriesDetailPage({
   const historyItem = history?.items.find((i) => i.seriesId === seriesId);
 
   // 未上线剧（来源页带档案 prefill）：解析分集必然失败（平台无分集可给），
-  // 合成一个 0 集档案走**正常渲染流**（hgplayer 同构：详情页不分支，只是
+  // 合成一个 0 集档案走**正常渲染流**（详情页不分支，只是
   // 动作行换「即将上线 + 预约」、选集 tab 自然落在「暂无分集信息」）
   const upcomingSeries: Series | undefined =
     !series && isError && prefill
@@ -153,7 +153,7 @@ export function SeriesDetailPage({
     );
   };
 
-  // ---- 剧评：**整部剧一条线**（group_type=1 形态，第三方同款）——
+  // ---- 剧评：**整部剧一条线**（group_type=1 形态，官方客户端同款）——
   //      单集评论在播放器的 💬 面板里，两套评论分属不同 group_id ----
   const { data: commentPages } = useSeriesComments(seriesId);
   const comments = commentPages?.pages.flatMap((p) => p.items) ?? [];
@@ -210,7 +210,7 @@ export function SeriesDetailPage({
 
       {activeSeries && (
         <>
-          {/* 头部：封面 + 档案。对齐第三方详情页构图，数据全走 App 接口 */}
+          {/* 头部：封面 + 档案。构图对齐官方客户端详情页，数据全走 App 接口 */}
           <div className="mt-4 flex gap-8">
             <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
               <SeriesCover cover={activeSeries.cover} alt={activeSeries.title} />
@@ -218,7 +218,7 @@ export function SeriesDetailPage({
 
             <div className="min-w-0 flex-1">
               <h1 className="text-2xl font-bold">{activeSeries.title}</h1>
-              {/* 统计行，排版对齐第三方：评分 评分人数 → 红果热度值 → 追剧 → 播放。
+              {/* 统计行，排版对齐官方客户端：评分 评分人数 → 红果热度值 → 追剧 → 播放。
                   评分来自剧评接口 extra（credibility_score），热度来自 video_detail
                   （hot_score），两者缺失时该段不渲染不打断行 */}
               <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -259,9 +259,9 @@ export function SeriesDetailPage({
                 <div className="text-muted-foreground mt-1 text-sm">{meta.updateFrequency}</div>
               )}
 
-              {/* 季徽（高亮）+「全 N 集」+ 题材标签——行构成与第三方一致；
+              {/* 季徽（高亮）+「全 N 集」+ 题材标签——行构成与官方客户端一致；
                   题材来自 video_detail secondary_infos，档案自带 tags 是解析兜底。
-                  未上线剧红底「全 0 集」（hgplayer 同款，0 集也要亮出来） */}
+                  未上线剧红底「全 0 集」（0 集也要亮出来） */}
               {(meta ? !!meta.season || meta.tags.length > 0 : activeSeries.tags.length > 0) ||
               activeSeries.episodes.length > 0 ||
               upcoming ? (
@@ -346,7 +346,7 @@ export function SeriesDetailPage({
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 {upcoming ? (
-                  /* 未上线：动作行换「⏳ 即将上线 + 预约」（hgplayer 同款），
+                  /* 未上线：动作行换「⏳ 即将上线 + 预约」，
                      播放/收藏/点赞无从谈起 */
                   <>
                     <span className="text-hot flex items-center gap-1.5 text-sm font-medium">
@@ -394,13 +394,13 @@ export function SeriesDetailPage({
             </div>
           </div>
 
-          {/* 备案号：第三方放在头部块之下、tab 之上（独立一行小字） */}
+          {/* 备案号：放在头部块之下、tab 之上（独立一行小字） */}
           {meta?.recordNumber && (
             <p className="text-muted-foreground/70 mt-4 text-xs">{meta.recordNumber}</p>
           )}
 
           {/* 选集 / 剧评 / 相关推荐。
-              推荐 tab 每次被打开都换一批（第三方同款）：feed 游标前进一页，
+              推荐 tab 每次被打开都换一批（官方客户端同款）：feed 游标前进一页，
               第一次打开除外——第一批本来就是新的。 */}
           <Tabs defaultValue="episodes" className="mt-8">
             <TabsList>
@@ -436,9 +436,9 @@ export function SeriesDetailPage({
                 </Empty>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {/* 选集格对齐第三方：序号 + 第 N 集 + 右侧时长角标。
+                  {/* 选集格对齐官方客户端：序号 + 第 N 集 + 右侧时长角标。
                       接口的 title 是整句剧情简介（不是集名），照排会挤成一团，
-                      第三方同款做法是统一显示「第 N 集」 */}
+                      官方客户端同款做法是统一显示「第 N 集」 */}
                   {activeSeries.episodes.map((ep) => (
                     <button
                       key={ep.vidIndex}
@@ -468,14 +468,14 @@ export function SeriesDetailPage({
 
             <TabsContent value="comments">
               {/* 剧均评分块 + 发评框（评分/表情）+ 滚动懒加载列表，
-                  整体在 ReviewList（2026-10-10 抓包对齐 hgplayer 剧评页） */}
+                  整体在 ReviewList（2026-10-10 抓包对齐） */}
               <ReviewList seriesId={seriesId} />
             </TabsContent>
 
             <TabsContent value="recommend">
-              {/* 相关推荐 tab = plan 接口的两格（第三方同款）：
+              {/* 相关推荐 tab = plan 接口的两格（官方客户端同款）：
                   相关作品·系列 置顶，下面是 猜你喜欢；tab 计数也是两格之和。
-                  猜你喜欢空了就整块不渲染（hgplayer 同款），不塞别的内容。 */}
+                  猜你喜欢空了就整块不渲染，不塞别的内容。 */}
               <RelatedWorks works={relatedData?.works ?? []} />
               {relatedGuess.length > 0 && <GuessYouLike items={relatedGuess} />}
             </TabsContent>

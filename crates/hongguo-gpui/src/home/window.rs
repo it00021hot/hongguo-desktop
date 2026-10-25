@@ -46,7 +46,7 @@ impl HomeView {
     }
 
     /// 无边框播放（控制栏按钮 / Esc 退出）：chrome 全藏但**不进 OS 全屏**，
-    /// 窗口保持原几何（hgplayer 播放页 bare 布局同款）。与沉浸全屏互斥——
+    /// 窗口保持原几何（播放页 bare 布局同款）。与沉浸全屏互斥——
     /// 开无边框先退 OS 全屏。macOS 红绿灯一并藏（Tauri 同款只 setHidden
     /// 三颗圆点不动 styleMask，见 [`crate::macos`]）。
     pub(super) fn toggle_frameless(&mut self, window: &mut Window, cx: &mut Context<Self>) {

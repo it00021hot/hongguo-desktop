@@ -19,23 +19,22 @@ pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
 ///
-/// 2026-10-11 抓 hgplayer 1.1.8 实流对齐（captures/flows-calendar-align.jsonl），
-/// 三处此前不知道的差异：
+/// 2026-10-11 实流抓包对齐，三处此前不知道的差异：
 /// - **首页请求不带 `target_date`，但必须带 `need_personal_recommend=1`**——
-///   缺了它服务端回的是「全部定档剧」混排（含大量已上线），条目集与第三方
-///   完全对不上；带上后回「个性化预约推荐」混排（未上线 + 人预约数）；
+///   缺了它服务端回的是「全部定档剧」混排（含大量已上线），条目集与官方
+///   App 完全对不上；带上后回「个性化预约推荐」混排（未上线 + 人预约数）；
 /// - **翻页三键齐传 `offset` + `subscribe_offset`（同值）+ `session_id`（响应
 ///   回传）**——只传 offset 服务端无视，永远回同一页（死循环同页实测）；
 /// - **响应是多天混排，按 `default_date`/选中日过滤后才是一天的条目**——
 ///   他家首页响应照样 has_more=true，滚到底第二页回来无新增才显示
 ///   「没有更多了」。
 ///
-/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 抓 hgplayer
-/// 切日期锁定；他家翻页时也始终在参）。响应条目有两种 schema（嵌套
+/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 切日期抓包
+/// 锁定；翻页请求里也始终在参）。响应条目有两种 schema（嵌套
 /// `subscribe_data.*` / 扁平 `item_id/name...`），[`parse_calendar_item`] 都吃。
 ///
 /// **单页返回 + 游标**：响应带 `has_more/next_offset/session_id`，前端滚动
-/// 到底再翻下一页（hgplayer 同款懒翻页）——此前这里一次性串行吃满 16 页
+/// 到底再翻下一页（懒翻页）——此前这里一次性串行吃满 16 页
 /// 才返回，切换日期等于把整天的请求全打完再画，肉眼可见地卡。
 pub async fn fetch_new_calendar(
     date: Option<&str>,
@@ -54,7 +53,7 @@ pub async fn fetch_new_calendar(
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
 
-    // 首页（默认日）不带 target_date（hgplayer 首页实测无此键）；切日期才带
+    // 首页（默认日）不带 target_date（首页抓包实测无此键）；切日期才带
     let active_day_input = date.filter(|d| !d.is_empty()).map(str::to_string);
     let mut q = base.clone();
     if let Some(day) = &active_day_input {

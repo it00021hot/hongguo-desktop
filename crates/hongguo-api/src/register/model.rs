@@ -19,8 +19,8 @@ pub struct RegisterResult {
     #[serde(default)]
     pub new_user: bool,
     /// 本次注册使用的指纹（cdid/openudid 必须随档案长期携带：后续业务
-    /// query 的设备指纹要与服务端登记的注册指纹一致，hgplayer 的
-    /// device.json 也存这两项）。parse_register 不填，register_device 补。
+    /// query 的设备指纹要与服务端登记的注册指纹一致）。
+    /// parse_register 不填，register_device 补。
     #[serde(default)]
     pub cdid: String,
     #[serde(default)]

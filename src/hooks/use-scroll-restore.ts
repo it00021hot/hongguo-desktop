@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * 返回保留浏览位置（对齐 hgplayer v1.1.7「找剧/排行榜/新剧 去播放后再
- * 回来，保留筛选和浏览位置」）。会话级：sessionStorage 承载，重开应用
+ * 返回保留浏览位置（找剧/排行榜/新剧去播放后再
+ * 回来，保留筛选和浏览位置）。会话级：sessionStorage 承载，重开应用
  * 不复旧位——去播放是临时离开，不是收藏锚点。
  */
 

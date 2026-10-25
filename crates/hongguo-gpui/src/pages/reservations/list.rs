@@ -55,7 +55,7 @@ impl ReservationView {
     }
 
     /// 搜索词变化：非空时对当前 tab 后台补齐剩余页——搜索要对全量条目
-    /// 过滤（hgplayer「正在加载全部记录…」同款语义），普通浏览一页懒翻。
+    /// 过滤（「正在加载全部记录…」同款语义），普通浏览一页懒翻。
     pub(crate) fn on_search_changed(&mut self, cx: &mut Context<Self>) {
         let q = self.search.read(cx).value().trim().to_lowercase();
         if !q.is_empty() {

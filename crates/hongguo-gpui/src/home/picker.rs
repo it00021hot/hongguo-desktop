@@ -149,8 +149,8 @@ impl super::HomeView {
     }
 
     /// 选集浮层（Tauri EpisodePicker 对齐）：贴控制栏向上弹的数字网格。
-    /// 范围段每段 30 集（hgplayer 同款）；当前集红底高亮；点选**不关**浮层
-    /// （连选连跳，关闭走 Esc/收起/点外部）。红色是 hgplayer 皮肤（硬红线
+    /// 范围段每段 30 集；当前集红底高亮；点选**不关**浮层
+    /// （连选连跳，关闭走 Esc/收起/点外部）。红色是播放器皮肤（硬红线
     /// 11 的播放器豁免）。「系列剧」tab 与下载完成角标随相关作品/预约、
     /// 下载能力的对齐步骤补。
     pub(super) fn render_picker(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -172,7 +172,7 @@ impl super::HomeView {
         // 系列列表已拉过，非空才显示）
         let season_count = self.seasons_of().1.len();
 
-        // 头部：选集 | 系列剧 双 tab（hgplayer 同款）+ 全 N 集 + 收起
+        // 头部：选集 | 系列剧 双 tab + 全 N 集 + 收起
         let header = h_flex()
             .items_center()
             .justify_between()

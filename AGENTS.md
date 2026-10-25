@@ -15,7 +15,7 @@
 | 写后端：command / service / store / 迁移 / 测试                                  | `.agents/skills/hongguo-dev/references/backend.md`                                                                                                 |
 | 写 GPUI 壳界面 / 界面视觉验收                                                    | `.agents/skills/hongguo-dev/references/gpui.md`——`make gpui-preview` 离屏预览矩阵，改界面后必跑；**动可见界面前必须先调用 `gpui-ui-design` skill** |
 | 对接官方 App 接口（抓包 / 端点 / 参数）                                          | `docs/hongguo-api-endpoints.md`                                                                                                                    |
-| 逆向分析官方 APK / hgplayer（协议 / 端点考证）                                   | `.agents/skills/hongguo-dev/references/reverse.md`                                                                                                 |
+| 逆向分析官方 APK（协议 / 端点考证）                                              | `.agents/skills/hongguo-dev/references/reverse.md`                                                                                                 |
 | WebView 调试 / CDP 自动化                                                        | `docs/webview-cdp-testing.md`                                                                                                                      |
 
 ## 目录结构
@@ -72,8 +72,8 @@ make release    # tauri build 打包
 7. `crates/hongguo-tauri-app/src/lib.rs` 只做入口（数行）；装配在 `hongguo-tauri`，各 crate 边界显式定义对外 API，禁止 `pub use *` 泄底。
 8. 启动顺序：单实例插件必须第一个注册，数据库在 `.setup()` 里晚于它打开。
 9. 对接官方接口禁止猜参数——照 `docs/hongguo-api-endpoints.md` 抓包逐字段对齐。
-10. 抓包对齐必须「请求 + 响应 + UI 效果」三点一线，只对齐请求等于没对齐：响应 body 逐字段解剖（发送类接口的响应是完整对象回显，丢弃=UI 缺字段）；计数类字段第三方做本地乐观 ±1；对照第三方实操效果核对渲染。
-11. UI 用 shadcn `Button` variant + 语义令牌，禁止硬编码色值（`bg-red-500` 等）；唯一例外是播放器控制栏/互动栏/评论面板的 hgplayer 红色皮肤。
+10. 抓包对齐必须「请求 + 响应 + UI 效果」三点一线，只对齐请求等于没对齐：响应 body 逐字段解剖（发送类接口的响应是完整对象回显，丢弃=UI 缺字段）；计数类字段官方 App 做本地乐观 ±1；对照官方 App 实操效果核对渲染。
+11. UI 用 shadcn `Button` variant + 语义令牌，禁止硬编码色值（`bg-red-500` 等）；唯一例外是播放器控制栏/互动栏/评论面板的播放器红色皮肤。
 12. 禁止用 Python 脚本改项目代码——改代码只准 Edit/Write 工具；Python 可以写辅助工具（放工具目录正常提交），一次性分析脚本用完即删。
 13. 开发在 dev 分支，conventional commits + 中文描述；纯结构移动/拆分与行为修改分开提交。
 14. 大规模结构调整先出计划文档，经确认再动代码。

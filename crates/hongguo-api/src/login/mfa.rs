@@ -16,10 +16,10 @@ use hongguo_common::{AppError, AppResult};
 /// MFA 上行短信的**真实可回复通道号**。
 ///
 /// API `verify_ways[].channel_mobile` 下发的是 9515211003（宁夏银川 95
-/// 扩展号段）——回复到它服务端收不到。hgplayer 1.1.3 把两个号码都硬编码
-/// 在二进制里做替换（10691859839103 = 运营商 106 网关真实通道，抓包全量
-/// 数据中不存在该号码，只能来自客户端内置）。2026-10-05 用户实测：按
-/// 95 号段回复无法通过 MFA，按 hgplayer 显示的 106 通道可以。
+/// 扩展号段）——回复到它服务端收不到。真实通道是 10691859839103
+/// （运营商 106 网关，抓包全量数据中不存在该号码，来自客户端内置）。
+/// 2026-10-05 用户实测：按
+/// 95 号段回复无法通过 MFA，按 106 通道可以。
 const REAL_UPSMS_CHANNEL: &str = "10691859839103";
 const STUB_UPSMS_CHANNEL: &str = "9515211003";
 
@@ -34,7 +34,7 @@ pub(super) fn real_upsms_channel(api_channel: &str) -> &str {
 }
 
 /// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key，
-/// 成功即下发会话 cookie（1.1.3 抓包：hgplayer 轮询到 registered 后
+/// 成功即下发会话 cookie（抓包：客户端轮询到 registered 后
 /// 自动发了这一次请求完成登录；cookie 带 registered 响应下发的
 /// 新 passport_mfa_token）。
 pub async fn mfa_relogin(

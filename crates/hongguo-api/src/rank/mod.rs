@@ -14,7 +14,7 @@
 //! `background_selector`）。
 //!
 //! bookmall 系对设备敏感（静态旧设备报 ILLEGAL_ACCESS 110），设备注册实现前，
-//! 探测用例走 hgplayer 抓包里的已注册设备档案。
+//! 探测用例走抓包里的已注册设备档案。
 
 mod model;
 
@@ -165,7 +165,7 @@ async fn fetch_upstream(
         ("gender", "2"),
         // 抓包原样：limit 恒 "0"（页长服务端定，limit 参数不参与）
         ("limit", "0"),
-        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；个性化混排）
+        // cell/change 全族都在参（2026-10-11 抓实流；个性化混排）
         ("need_personal_recommend", "1"),
         ("offset", &req.offset.to_string()),
         ("sub_selected_items", req.sub),
@@ -410,7 +410,7 @@ fn parse_selector_rows(rows: &[Value]) -> Vec<RankPanelRow> {
 /// inner_rows[]`（筛选行）与 `background_selector.inner_rows[]`（月榜行）。
 ///
 /// 形态由**客户端版本号**决定（probe_rank_login_form 二分实证，与登录态
-/// 无关）：73932（7.3.9，hgplayer 1.1.3 内置红果版本）下发两级全量结构；
+/// 无关）：73932（7.3.9）下发两级全量结构；
 /// 71332 老版本身份退化成扁平一级结构（无「全部」tab、面板分组丢失）。
 /// 设备档案已在启动时对齐版本（[`hongguo_signer::device::align_app_version`]），
 /// 一级形态的兼容归一保留在前端 normalizeTabs 里。
@@ -966,11 +966,11 @@ pub(crate) mod probe {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// hgplayer 抓包里的已注册设备（bookmall 系在静态旧设备上报 110，
+    /// 抓包里的已注册设备（bookmall 系在静态旧设备上报 110，
     /// 设备注册实现前用它验证端点形状）。
     ///
     /// 2026-10-04 更新：旧档案（device_id=1694…）当日搜索开始回 0 字节——
-    /// 服务端按 install_id 风控，旧 id 已失效；换当日 hgplayer 新注册的
+    /// 服务端按 install_id 风控，旧 id 已失效；换当日新注册的
     /// 设备（captures/flows-20261004.jsonl）后恢复。
     pub fn hg_env(base: &ApiEnv) -> ApiEnv {
         let pairs: Vec<(&str, &str)> = vec![
@@ -1335,7 +1335,7 @@ pub(crate) mod probe {
     }
 
     /// app 生产同款设备（video_device + 匿名 cookie）下发的 selector schema：
-    /// 对照 hgplayer 档案——排查两端 tabs 是否一致（灰度可能按设备分发）。
+    /// 排查两端 tabs 是否一致（灰度可能按设备分发）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_selector_app_device() {

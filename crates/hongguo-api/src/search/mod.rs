@@ -19,7 +19,7 @@ use hongguo_common::{AppError, AppResult};
 
 pub const SEARCH_TAB_PATH: &str = "/reading/bookapi/search/tab/v";
 
-/// 搜索联想（2026-10-07 抓 hgplayer 1.1.6 锁定）。
+/// 搜索联想（2026-10-07 抓包锁定）。
 pub const SUGGEST_PATH: &str = "/reading/bookapi/search/suggest/v";
 
 /// 翻页参数检查：offset>0 必须带 search_id（首页发放的会话 id）。
@@ -65,7 +65,7 @@ pub async fn search_series(
     parse_search(&value)
 }
 
-/// 搜索联想：输入 2~3 个字即返回相关剧集（hgplayer 1.1.6 找剧搜索框同款）。
+/// 搜索联想：输入 2~3 个字即返回相关剧集（找剧搜索框同款行为）。
 ///
 /// 业务参数全部在 query（逐值对齐 2026-10-07 抓包）：`q` 是查询词——
 /// 注意不是 search/tab 的 `query`。响应 `data.query_result_v2[]`。
@@ -255,11 +255,11 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
     })
 }
 
-/// 副标题列表双键名双形态归一（2026-10-11 dev 实测修正）：hgplayer 的
-/// rawSeries 叫 `series_sub_title_list`（JSON 字符串内嵌数组形态），
-/// 本项目抓包台账里推荐流/榜单条目是 `sub_title_list[]`（直数组形态，
+/// 副标题列表双键名双形态归一（2026-10-11 dev 实测修正）：
+/// `series_sub_title_list`（JSON 字符串内嵌数组形态）与
+/// 本项目抓包台账里推荐流/榜单条目的 `sub_title_list[]`（直数组形态，
 /// 见台账「条目标记字段」）——两个键都认，谁在场用谁。热度行取含
-/// 「热度」的那条（hgplayer hotText 同语义，搜索结果卡的热度行）。
+/// 「热度」的那条（搜索结果卡的热度行）。
 fn parse_sub_titles(raw: &Value) -> (Vec<String>, String) {
     let field = raw
         .get("series_sub_title_list")
@@ -327,7 +327,7 @@ mod tests {
         assert!(validate_pagination(6, "####11@x").is_ok());
     }
 
-    /// series_sub_title_list 双形态（2026-10-11 逆向 hgplayer hotText）：
+    /// series_sub_title_list 双形态（2026-10-11 逆向锁定）：
     /// JSON 字符串内嵌数组或直接数组，都要归一；热度行取含「热度」的那条。
     #[test]
     fn sub_title_list_dual_shape_and_heat() {

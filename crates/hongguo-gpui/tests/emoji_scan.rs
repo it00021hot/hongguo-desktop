@@ -42,7 +42,7 @@ fn short_names_still_close() {
     assert_eq!(&text[text.find('[').unwrap()..=close], "[微笑]");
 }
 
-/// 满 8 字符的名字收尾，第 9 个字符起不认（hgplayer 1–8 约束）。
+/// 满 8 字符的名字收尾，第 9 个字符起不认（1–8 约束）。
 #[test]
 fn eight_char_name_closes_nine_does_not() {
     let text = "[一二三四五六七八]";

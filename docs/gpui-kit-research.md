@@ -620,7 +620,7 @@ Wayland 帧迟到导致滚动卡顿/跳帧 —— <https://github.com/zed-indust
 | C3 | **进度条 / 弹幕轨 / 选集的时间轴组件** | 无现成时间轴组件（`progress` 是通用进度条，不含刻度与轨道） | Pawse 时间同步歌词 | 1.4⑥ |
 | C4 | **剧集横向选集条（可滑动封面小卡）** | `h_virtual_list` 只解决「定高横向虚拟滚动」，**卡片渲染、选中态、圆角裁剪、滚动吸附**需自建 | Zeidis 的 key tree 横向区 + disktree 的「放大到指针所在目录」交互 | `crates/base/src/virtual_list.rs` + disktree README |
 | C5 | **命令面板的搜索/模糊匹配与分组** | `command` 组件提供外壳，**模糊匹配算法与结果分组**需自建（可参考 Nohrs「fuzzy search over a SQLite app index」、Setu「layered variables + workspaces」） | <https://github.com/noh-rs/nohrs> · <https://github.com/bajrangCoder/setu> | 1.3 |
-| C6 | **红果专用主题（hgplayer 红色皮肤）** | gpui-kit 内置 17 套主题中无红果皮肤；需按 `.theme-schema.json` 规范新增一套 | `themes/` + `.theme-schema.json` | 2.3 |
+| C6 | **红果专用主题（播放器红色皮肤）** | gpui-kit 内置 17 套主题中无红果皮肤；需按 `.theme-schema.json` 规范新增一套 | `themes/` + `.theme-schema.json` | 2.3 |
 | C7 | **「删除前复核列表页」范式** | gpui-kit 只有 `dialog` 确认框，没有「多选复核 → 汇总 → 提交」的多步流程页 | disktree 的 review 屏幕（标记 → 复核 → 提交/导出） | disktree README |
 | C8 | **封面状态编码（色相=分类，纹理=状态）** | 属自定义视觉语言，需在红果设计规范中定义并落到 `ThemeColor` 扩展 | disktree 色彩纪律（muted 色阶 + 斜纹 + 单一琥珀色保留给主操作） | disktree README |
 | C9 | **全局快捷键（应用级 hotkey）** | gpui-kit 组件层无应用级全局热键设施（gpui-kit 依赖的 gpui 侧有 `platform`/全局动作机制，但需按红果窗口模型接入） | Aloud Ink（按住全局快捷键说话）、Steward（全局热键 + 模糊搜索） | 1.3 |
@@ -739,7 +739,7 @@ gpui 的 `Style::default().display` 是 `Display::Block`（`gpui-pre/src/style.r
 选集浮层的格子与分段 tab、互动栏单键、历史行、下载面板的集号格与浮层根、
 评论行的 ♡ 点赞、列表页的 6 处卡片）。
 
-第四轮把豁免范围收到**零**：播放器 hgplayer 皮肤区不再整体豁免。全仓 36 处
+第四轮把豁免范围收到**零**：播放器红色皮肤区不再整体豁免。全仓 36 处
 最终分成三类——32 处换成 `base::Button`、3 处是「只吞点击」的屏蔽层（删掉多余
 的 `on_click(stop)`，见 7.7）、1 处是显式标注的指针便利层（见 7.6）。
 检测器另配 14 个单元测试钉住行为。

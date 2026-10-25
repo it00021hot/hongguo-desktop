@@ -149,7 +149,7 @@ impl AppStateInner {
 /// 账号字段（`sessionid` 等）覆盖同名字段。
 ///
 /// 解析按 `k=v; k=v` 形态逐对处理，账号侧的分号后空格容忍；合并保序，
-/// 兜底字段在前、账号新增字段追加在后——与 hgplayer 抓包的 Cookie 顺序一致。
+/// 兜底字段在前、账号新增字段追加在后——与抓包的 Cookie 顺序一致。
 fn merge_session_cookie(
     account: Option<&str>,
     device: &hongguo_signer::device::DeviceProfile,

@@ -24,7 +24,7 @@ import { ChromeSurface } from './chrome-surface';
 const MINI_RATES = [1, 1.5, 2, 3];
 
 /**
- * 紧凑控制条，两种形态共用一行按钮集（hgplayer 小屏同款）：
+ * 紧凑控制条，两种形态共用一行按钮集：
  * - `mini`（默认）：480×270 小窗。顶栏已被摘掉，所以剧名/简介、置顶
  *   都长在条上；⤢ = 退出小屏回大窗。
  * - `portrait`：竖屏窄条。顶栏还在（置顶钮在顶栏，条上不重复），
@@ -155,7 +155,7 @@ export function MiniScreenControls({
       onMouseLeave={onControlsLeave}
       className="absolute inset-x-0 bottom-0 z-20 flex flex-col gap-1 bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 pb-1.5 text-white"
     >
-      {/* 剧名/集数/简介贴着进度条上方（第三方小屏同款三行形态），宽度
+      {/* 剧名/集数/简介贴着进度条上方（官方客户端小屏同款三行形态），宽度
           收敛 + 截断（小屏 480 宽，长剧名长简介都不挡画面）。portrait
           形态不渲染——竖屏的剧名/简介由 ImmersiveInfoOverlay 承担 */}
       {!portrait && (
@@ -231,7 +231,7 @@ export function MiniScreenControls({
             </MiniButton>
           )}
           {/* 铺满切换只有 portrait 形态要：小窗尺寸固定无档位可言。
-              hgplayer wu：竖屏里铺满/收回是核心档位，Esc 退铺满回竖条 */}
+              竖屏里铺满/收回是核心档位，Esc 退铺满回竖条 */}
           {portrait && (
             <MiniButton
               label={portraitFull ? t('player.exitPortraitFill') : t('player.portraitFill')}

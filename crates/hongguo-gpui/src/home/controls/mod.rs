@@ -24,7 +24,7 @@ mod mini;
 mod progress;
 mod volume;
 
-/// 播放器浮层钮的 hgplayer 皮肤（Tauri `IconButton` 同款）：透明底、白字、
+/// 播放器浮层钮的皮肤（Tauri `IconButton` 同款）：透明底、白字、
 /// hover 铺 20% 白——**颜色不跟主题走**。
 ///
 /// 为什么非要用 `custom` 变体：`ghost` 的前景与 hover 文字色都取自主题
@@ -42,7 +42,7 @@ pub(super) fn chrome_variant(cx: &gpui_kit::App) -> ButtonCustomVariant {
 }
 
 /// 播放器/评论面板里的输入框：在元素**真正渲染的那一拍**，临时把主题里
-/// 光标 / 占位符 / 选区 / **编辑器底色**四个 token 换成 hgplayer 皮肤值，
+/// 光标 / 占位符 / 选区 / **编辑器底色**四个 token 换成播放器皮肤值，
 /// 再把 `Input` 交给组件渲染，然后立刻还原。
 ///
 /// 为什么只能这么做：`Input` 在 `RenderOnce::render` 里从 `cx.theme()` 把

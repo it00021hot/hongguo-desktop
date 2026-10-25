@@ -1,6 +1,6 @@
 //! 弹幕表情：`[名字]` 代码 → 打包 webp 的解码与渲染分段。
 //!
-//! 上游文本里表情以 `[名字]` 代码出现（hgplayer 1.1.6 同款，1–8 个非空白
+//! 上游文本里表情以 `[名字]` 代码出现（1–8 个非空白
 //! 字符），渲染时按映射表换打包的 webp 图——弹幕/评论同源。webp 解码用
 //! image crate（feature "webp" 已启用），首次用到才解码并缓存
 //! （`RenderImage` 构造走 [`crate::image_upload::render_image`] 唯一入口）。
@@ -82,7 +82,7 @@ pub(crate) fn parse_emoji_segments(text: &str) -> Vec<EmojiSegment> {
     segments
 }
 
-/// 段宽度估算：文本按 CJK/非 CJK 估宽，表情按 1.3 字号（hgplayer 同款）。
+/// 段宽度估算：文本按 CJK/非 CJK 估宽，表情按 1.3 字号。
 pub(crate) fn segment_widths(text: &str, font_px: f32) -> f32 {
     parse_emoji_segments(text)
         .iter()

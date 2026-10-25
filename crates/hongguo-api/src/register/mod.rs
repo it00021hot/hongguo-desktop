@@ -31,8 +31,8 @@
 //! gzip 头的 XFL/OS 必须覆写为 00/00（zlib 家族头），flate2 默认的 02/ff 会被拒
 //! ```
 //!
-//! 算法与 hgplayer 的 `hg-go/pkg/crypto.TTEncryptV5`（Go 符号表）及
-//! TikTok 固件逆向的公开实现三方互证；`register_req_real.bin` 是真机
+//! 算法经逆向考证（Go 符号表 `crypto.TTEncryptV5`）及
+//! TikTok 固件逆向的公开实现互证；`register_req_real.bin` 是真机
 //! 抓包的注册 body，`tt_v5_real_capture_roundtrip` 用它锁死解密链。
 //! 历史教训：明文 form / gzip form 会被服务端静默降级成 `device_id:0`，
 //! 必须走加密形态。

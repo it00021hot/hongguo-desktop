@@ -27,8 +27,8 @@ fn saved_geometry() -> std::sync::MutexGuard<'static, Option<SavedGeometry>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 小屏尺寸（对齐 hgplayer 的 Ud/Vd 常量）与落角边距。hgplayer 底部留 72
-/// 是给 Windows 任务栏的；macOS 工作区已扣掉 Dock，给 16 即可。
+/// 小屏尺寸与落角边距。底部边距按 72
+/// 预留 Windows 任务栏的量；macOS 工作区已扣掉 Dock，给 16 即可。
 const MINI_W: f64 = 480.0;
 const MINI_H: f64 = 270.0;
 const MINI_MARGIN: f64 = 16.0;
@@ -72,7 +72,7 @@ pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()
 /// 队列异步块，事后用 `set_title_bar_style` 补位是内联立即执行，永远先于
 /// 排队的替换落地、补不过它（探针实测 inner=840/outer=868 复证）。所以直接
 /// 对三颗 `NSWindowButton` setHidden：窗口结构零变化，尺寸语义全程稳定。
-/// hgplayer 小屏连标题栏都没有，480×270 的画面上再叠三颗圆点纯属多余；
+/// 小屏窗口连标题栏都没有，480×270 的画面上再叠三颗圆点纯属多余；
 /// Windows 本就 decorations:false，无需此操作。
 #[cfg(target_os = "macos")]
 fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
@@ -104,13 +104,12 @@ fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
     });
 }
 
-/// 进入小屏播放（对齐 hgplayer 的「小屏播放」按钮 ng()/rw()）：
+/// 进入小屏播放（对齐官方客户端的「小屏播放」行为）：
 /// **同一个窗口**缩成 480×270、落到工作区右下角——不另开窗口、不藏
 /// 主窗、不暂停，`<video>` 元素原地不动、播放零中断。
 ///
 /// 旧实现（独立置顶小窗 + 隐藏主窗）整套移除：主窗藏了但它的视频还在
-/// 响，两路声音叠着播，窗口管理也全乱了套——那是没有对照第三方的
-/// 杜撰设计。
+/// 响，两路声音叠着播，窗口管理也全乱了套——那是闭门杜撰的设计。
 #[tauri::command]
 pub fn enter_mini_screen(app: AppHandle) -> AppResult<()> {
     use tauri::Manager;
@@ -209,7 +208,7 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
-/// 窗口置顶开关（对齐 hgplayer 的 De.pinned → WindowSetAlwaysOnTop）。
+/// 窗口置顶开关（走 WindowSetAlwaysOnTop）。
 ///
 /// **窗口级**的会话内状态：大屏置顶后进小屏依然置顶，退出小屏也不清——
 /// 「钉住」是用户对整个窗口的意图，与窗口大小无关。
@@ -224,29 +223,28 @@ pub fn set_always_on_top(app: AppHandle, enabled: bool) -> AppResult<()> {
 
 // ---------------------------------------------------------------- 竖屏播放
 
-// 竖屏播放（对齐 hgplayer 1.1.8 的 rE/kc/Nf/oE/Fc，算法自其前端 bundle
-// 逐行还原）：窗口收窄成按视频宽高比算宽的竖条，竖屏视频刚好包住画面
+// 竖屏播放：窗口收窄成按
+// 视频宽高比算宽的竖条，竖屏视频刚好包住画面
 // 不留两侧黑边。两档——普通档保持当前窗口高（最多工作区高的 70%）；
 // 铺满档（portraitFull）撑满工作区高并居中。
 //
-// 与 hgplayer 的三处刻意差异：最小宽度取 360（hgplayer Gv=240 配它的
-// 竖屏专属布局；本壳沿用「控制条一行不换行」的 360 下限口径，同
+// 三处刻意口径：最小宽度取 360（沿用「控制条一行不换行」的 360 下限，同
 // MINI_MIN）；标题栏高度按 0 算（本壳无框，macOS overlay 内容满窗）；
-// 普通档高度最多吃工作区高的 70%（hgplayer 整窗天生竖条尺寸，「保持
+// 普通档高度最多吃工作区高的 70%（参照实现整窗天生竖条尺寸，「保持
 // 当前高」没有巨条问题，本壳从大窗/最大化进竖屏会得到撑满的巨条——
 // 用户实测「默认尺寸太大」）。
 // 其余对齐：最大化状态进竖屏直接进铺满档；普通档在**当前窗口 x** 上
-// 居中（不跳屏幕中心）；宽高比钳宽溢出工作区时反推高度（hgplayer 同
+// 居中（不跳屏幕中心）；宽高比钳宽溢出工作区时反推高度（参照实现同
 // 款，不再回钳工作区高）。
 
 /// 竖屏退出时要恢复的窗口几何（进入那一刻的快照，语义同 MINI_RESTORE）。
 static PORTRAIT_RESTORE: std::sync::Mutex<Option<SavedGeometry>> = std::sync::Mutex::new(None);
 
-/// 铺满档退出时要还原的普通档几何（hgplayer 的 Pi：只快照 x/y/w/h）。
+/// 铺满档退出时要还原的普通档几何（参照实现同款：只快照 x/y/w/h）。
 static PORTRAIT_FULL_RESTORE: std::sync::Mutex<Option<(i32, i32, u32, u32)>> =
     std::sync::Mutex::new(None);
 
-/// 竖屏下的最小尺寸（hgplayer nE=400 同高；宽见上面模块注释）。
+/// 竖屏下的最小尺寸（高 400 同参照实现；宽见上面模块注释）。
 const PORTRAIT_MIN: (f64, f64) = (360.0, 400.0);
 
 /// 普通档高度上限 = 工作区高 × 此系数（刻意差异第三处，见模块注释）。
@@ -277,7 +275,7 @@ pub(crate) fn current_mode() -> crate::window_state::Mode {
     }
 }
 
-/// 按视频宽高比重算竖屏几何并落窗（hgplayer kc 逐步同款）。
+/// 按视频宽高比重算竖屏几何并落窗（参照实现逐步同款）。
 fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
     let mon = win.current_monitor().ok().flatten();
     let (left, top, right, bottom) = work_area_logical(mon.as_ref());
@@ -320,7 +318,7 @@ fn fit_portrait(win: &tauri::WebviewWindow, aspect: f64, full: bool) {
     let _ = win.set_position(tauri::LogicalPosition::new(x, y));
 }
 
-/// 进入竖屏播放。`aspect` 是视频宽高比（w/h），由前端按 hgplayer 口径
+/// 进入竖屏播放。`aspect` 是视频宽高比（w/h），由前端按本壳口径
 /// 算好传入（非竖屏比回落 9:16）。已在竖屏中幂等。
 #[tauri::command]
 pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
@@ -328,7 +326,8 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
     let Some(win) = app.get_webview_window("main") else {
         return Ok(());
     };
-    // 幂等 + 参数守卫（hgplayer rE 的 !de.mini 与 !(e>0)；mini 由前端保证；
+    // 幂等 + 参数守卫（已进竖屏或 aspect 非正都拒——参照实现的守卫口径；
+    // mini 由前端保证；
     // NaN/0/负数/无穷都拒——NaN 一旦漏进几何计算，set_size 的行为不可预期）
     if portrait_restore().is_some() || !aspect.is_finite() || aspect <= 0.0 {
         return Ok(());
@@ -351,7 +350,7 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
         PORTRAIT_MIN.0,
         PORTRAIT_MIN.1,
     )));
-    // 最大化进竖屏：退最大化直接进铺满档（hgplayer rE 的 Ev + kc(e, max)）；
+    // 最大化进竖屏：退最大化直接进铺满档（参照实现同款）；
     // 普通进入优先回上次竖屏槽位（三种窗态各记各的），没有记忆才按比例
     // 现算（首次进竖屏）
     if maximized {
@@ -367,7 +366,7 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
     Ok(())
 }
 
-/// 竖屏中换集/换流导致视频宽高比变化后的重适配（hgplayer oE）。
+/// 竖屏中换集/换流导致视频宽高比变化后的重适配。
 /// 铺满与否由前端镜像态传入；不在竖屏中则忽略。
 #[tauri::command]
 pub fn fit_portrait_screen(app: AppHandle, aspect: f64, full: bool) -> AppResult<()> {
@@ -382,7 +381,7 @@ pub fn fit_portrait_screen(app: AppHandle, aspect: f64, full: bool) -> AppResult
     Ok(())
 }
 
-/// 铺满档切换（hgplayer Nf）：普通→铺满先快照当前几何再撑满；铺满→普通
+/// 铺满档切换：普通→铺满先快照当前几何再撑满；铺满→普通
 /// 还原快照（没有快照——最大化直接进来的——就从当前几何按普通档重算）。
 #[tauri::command]
 pub fn set_portrait_full(app: AppHandle, aspect: f64, full: bool) -> AppResult<()> {

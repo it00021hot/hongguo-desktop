@@ -1,7 +1,7 @@
 //! 设备生命周期 command：状态查询 + 手动重注册。
 //!
-//! 前端可拿状态做「设备身份」展示/诊断（hgplayer 同款 registering/ready/
-//! error 三态的读侧）；重试按钮对齐它的 RetryDeviceRegister。
+//! 前端可拿状态做「设备身份」展示/诊断（registering/ready/
+//! error 三态的读侧）；重试按钮触发手动重注册。
 
 use tauri::State;
 

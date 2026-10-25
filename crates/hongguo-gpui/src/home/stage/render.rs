@@ -339,7 +339,7 @@ impl HomeView {
                     let top = f.lane as f32 * (font_px + DM_LANE_GAP);
                     let x = f.x_offset(stage_w, dm_now) as f32;
                     // 表情分段：[名字] 换打包 webp（1.3 字号，基线下沉
-                    // 0.28em 对齐 hgplayer），文本段照旧
+                    // 0.28em），文本段照旧
                     let segments = crate::danmaku_emoji::parse_emoji_segments(&f.text);
                     div()
                         .absolute()

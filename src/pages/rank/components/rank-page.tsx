@@ -16,7 +16,7 @@ import { RankRow } from './rank-row';
 import { normalizeTabs } from './normalize-tabs';
 
 /**
- * 排行榜页（对齐 hgplayer 1.1.3 布局，2026-10-05 抓包）：
+ * 排行榜页（2026-10-05 抓包对齐）：
  * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
  * （panel_selected_items 单选），子榜名旁带「N月N日已更新·基于…」描述行。
  *
@@ -32,7 +32,7 @@ import { normalizeTabs } from './normalize-tabs';
 /** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
 export function RankPage() {
-  // 选中态会话级保留（hgplayer 1.1.7 同款：去播放再回来榜单还在原位置）
+  // 选中态会话级保留（去播放再回来榜单还在原位置）
   const [selected, setSelected] = useSessionState('hongguo.rank.selected', 'all');
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
   const [sub, setSub] = useSessionState('hongguo.rank.sub', 'ranklist_hot_sc');
@@ -106,7 +106,7 @@ export function RankPage() {
         {tabRow.length === 0 && <Skeleton className="h-6 w-64 rounded-full" />}
       </TopBarTabsPortal>
       <div className="flex min-h-0 flex-1 gap-4">
-        {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位）。
+        {/* 左侧子榜竖排（首屏未到时骨架占位）。
             窗口过矮时子榜自己滚，不跟着右侧列表走 */}
         <nav
           className="flex w-36 shrink-0 scrollbar-thin flex-col gap-1 overflow-y-auto"

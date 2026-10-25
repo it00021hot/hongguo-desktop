@@ -1,4 +1,4 @@
-//! 沉浸流评论面板：右侧滑出（hgplayer 同款「评论 · N」列）。
+//! 沉浸流评论面板：右侧滑出（「评论 · N」列）。
 //!
 //! 列表（头像/昵称/文本/时间/♡）+ 底部发评论框；评论点赞走
 //! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态——
@@ -6,11 +6,11 @@
 //! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
 //! 评论总数（头部计数用）。
 //!
-//! 回复：发送走 reply/add 独立端点；回复**列表**自 2026-10-10 抓
-//! hgplayer 1.1.8 起可用（reply/list 独立端点，评论维度 src=504/ch=18，
+//! 回复：发送走 reply/add 独立端点；回复**列表**自 2026-10-10 抓包
+//! 确认可用（reply/list 独立端点，评论维度 src=504/ch=18，
 //! 此前「服务端无接口」的结论作废）——「展开 N 条回复」原地内联展开
 //! （不隐藏其他评论），自己发的回复仍本地追加一份（服务端列表有延迟）。
-//! 回复行格式对齐 hgplayer（2026-10-10 截图）：`回复 @xxx：` 前缀在
+//! 回复行格式（2026-10-10 截图）：`回复 @xxx：` 前缀在
 //! 正文行（@ 浅蓝高亮）、相对时间（N 天前）、头像 32px。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -130,7 +130,7 @@ export function CommentPanel({ vid, onClose }: Props) {
    *  reply_to_reply_id） */
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 展开了回复区的评论（受控：回复发送成功后强制展开，对齐 hgplayer） */
+  /** 展开了回复区的评论（受控：回复发送成功后强制展开） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (commentId: string, open: boolean) =>
     setOpenReplies((prev) => {
@@ -270,14 +270,14 @@ export function CommentPanel({ vid, onClose }: Props) {
       {
         onSuccess: (reply) => {
           // 服务端回显的完整回复对象直接进缓存（头像/昵称/uid/时间齐全，
-          // hgplayer 同款：新回复以普通条目出现，replyToName 驱动
+          // 新回复以普通条目出现，replyToName 驱动
           // 「回复 @xxx：」前缀）；同时父评论 replyCount +1
           appendReply(queryClient, keys.commentReplies(vid, parent.commentId), reply);
           bumpReplyCount(queryClient, keys.comments(vid), parent.commentId, 1);
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
-          // hgplayer 同款：发送成功强制展开回复区，让新回复立刻可见
+          // 发送成功强制展开回复区，让新回复立刻可见
           setReplySectionOpen(parent.commentId, true);
         },
         onError: (e) => toast.error(String(e)),

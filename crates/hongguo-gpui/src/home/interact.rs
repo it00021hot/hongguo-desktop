@@ -381,7 +381,7 @@ impl super::HomeView {
 
         // 单个互动项：icon 上、计数下，激活态换色（抖音系右栏单元）。
         // helper 收 cx.listener 的产物即可，避免闭包里再借 cx。
-        // 红色是 hgplayer 皮肤（硬红线 11 的播放器豁免）。
+        // 红色是播放器皮肤（硬红线 11 的播放器豁免）。
         v_flex()
             .absolute()
             .right_2()

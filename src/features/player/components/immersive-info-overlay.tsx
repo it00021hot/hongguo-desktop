@@ -8,7 +8,7 @@ import { t, tf } from '@/locales';
 import { ChromeSurface } from './chrome-surface';
 
 /**
- * 沉浸流信息叠加（hgplayer 同款）：@剧名/集数/简介压在画面左下。
+ * 沉浸流信息叠加：@剧名/集数/简介压在画面左下。
  * 控制栏弹出时整体抬到控制栏上沿之上（bottom-28），隐藏时落回
  * bottom-14——两者transition 联动，不再互相遮挡。
  * 小屏模式不用这坨：紧凑控件条自带收敛的剧名行。
@@ -76,13 +76,13 @@ export function ImmersiveInfoOverlay({
         shown={chromeShown && !miniScreen}
         className="absolute bottom-28 left-3 z-10 max-w-[62%] transition-all duration-300 data-[shown=false]:bottom-14"
       >
-        {/* 热度行（hgplayer 1.1.6 同款：剧名上方） */}
+        {/* 热度行（剧名上方） */}
         {overlayMeta?.heatText && (
           <p className="text-xs font-medium text-amber-300/90 drop-shadow-md">
             {overlayMeta.heatText}
           </p>
         )}
-        {/* 剧名 → 详情页。第三方同款交互：点标题离开播放器看档案/选集。
+        {/* 剧名 → 详情页。官方客户端同款交互：点标题离开播放器看档案/选集。
         stopPropagation：点标题不能同时触发「点画面暂停」。 */}
         <div className="flex items-center gap-1.5">
           {overlayMeta?.badge && (
@@ -117,7 +117,7 @@ export function ImmersiveInfoOverlay({
           )}
         </p>
         {intro && (
-          // 简介块只占舞台约三分之一（hgplayer 同款量级，大屏实测
+          // 简介块只占舞台约三分之一（大屏实测
           // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角。
           // 容器吃掉点击（防触发舞台暂停/继续），展开交互只在按钮上
           <div

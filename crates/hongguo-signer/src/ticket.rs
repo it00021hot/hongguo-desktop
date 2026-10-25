@@ -55,7 +55,7 @@ pub fn encode_query(values: &[(&str, String)]) -> String {
 ///
 ///
 /// 业务参数插在设备参数之后、`ts`/`_rticket` 之前——位置本身也参与签名，
-/// 与 hgplayer 的实测顺序一致；调用方不再有机会在签名后改 query。
+/// 与实测顺序一致；调用方不再有机会在签名后改 query。
 pub fn resolve_ticket_with(
     origin: &str,
     pathname: &str,

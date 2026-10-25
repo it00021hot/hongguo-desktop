@@ -1,6 +1,6 @@
-# 逆向分析规范（官方 APK / hgplayer 等外部客户端）
+# 逆向分析规范（官方 APK）
 
-适用：考证外部客户端的协议形态、端点参数、数据模型、交互行为。逆向结论只是
+适用：考证官方客户端的协议形态、端点参数、数据模型、交互行为。逆向结论只是
 「待验证假设」——进代码前必须按「对接官方接口禁止猜参数」「抓包三点一线」两条红线走
 抓包「请求 + 响应 + UI 效果」核对。
 
@@ -23,10 +23,6 @@
 
 三条操作铁律：**jadx 退出码 1 不一定是失败**（查 `sources/` 有无产物再判）；**长命令写成 `.sh` 脚本执行**（内联长命令会被传输层吞字）；**long needle 先换短 needle**。
 
-## Windows Wails/Go 目标（hgplayer）
-
-Go 侧 API 层若带 doc 注释编入二进制，Ghidra 反编译 + API 注册表（Name/Path/Method 三元组）可逐函数锁定请求组装；Wails 应用内嵌 WebView 前端资源可提取（Vue 产物可还原交互口径）。发现记录在 `docs/hongguo-hgplayer-re-endpoints.md`。
-
 ## 工具与产物（本机已就位）
 
 | 项 | 位置 |
@@ -38,5 +34,4 @@ Go 侧 API 层若带 doc 注释编入二进制，Ghidra 反编译 + API 注册�
 ## 台账指针
 
 - `docs/hongguo-apk-endpoints.md` —— 官方 APK 端点全量清单（静态提取，1302 条）
-- `docs/hongguo-hgplayer-re-endpoints.md` —— hgplayer（Windows）逆向发现
 - `docs/hongguo-api-endpoints.md` —— 项目对接口径唯一台账（抓包锁定；含扫码登录等实测死路的结论记录）

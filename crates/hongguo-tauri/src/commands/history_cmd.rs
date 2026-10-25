@@ -29,7 +29,7 @@ pub async fn watch_history_list(
 }
 
 /// 批量删除云端观看历史（read_history/update 的 is_delete+use_soft_delete
-/// 形态，hgplayer 1.1.8 同款）。
+/// 形态）。
 #[tauri::command]
 pub async fn watch_history_delete(
     state: State<'_, AppState>,

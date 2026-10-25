@@ -75,7 +75,7 @@ impl HomeView {
                     .items_center()
                     .gap_2()
                     .children(comment_input.as_ref().map(|input| {
-                        // 输入框：hgplayer 固定深色皮肤（Tauri 评论面板
+                        // 输入框：固定深色皮肤（Tauri 评论面板
                         // 同款，不跟主题走）——`h-9 / rounded-md /
                         // bg-neutral-800/80 / px-3 / text-sm / 白字`，
                         // 没有描边；光标/占位符/选区由 [`skinned_input`]

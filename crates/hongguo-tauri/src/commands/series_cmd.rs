@@ -82,7 +82,7 @@ pub async fn related_series(
 }
 
 /// 详情页头部元信息（追剧数/播放量/季徽/题材标签/备案号，官方
-/// video_detail 接口；2026-10-07 抓 hgplayer 锁定）。失败静默降级——
+/// video_detail 接口；2026-10-07 抓包锁定）。失败静默降级——
 /// 头部缺这几行不该打断详情页主功能。
 #[tauri::command]
 pub async fn series_meta(

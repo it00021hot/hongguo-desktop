@@ -98,8 +98,8 @@ pub static MIGRATIONS: &[&str] = &[
     "#,
     // v4 -> v5：设备档案从单行表扩成多行（1=现役，2=上一代备份，10=
     // bootstrap 元数据）。老表的 CHECK (id = 1) 锁死单行，SQLite 不能
-    // 直接删约束，按惯例重建表搬数据（对齐 hgplayer device.json + .bak
-    // 的「现役 + 上一代」双档案形态）。
+    // 直接删约束，按惯例重建表搬数据（「现役 + 上一代」双档案
+    // 形态，对齐 device.json + .bak 的做法）。
     r#"
     CREATE TABLE device_profile_new (
         id   INTEGER PRIMARY KEY,

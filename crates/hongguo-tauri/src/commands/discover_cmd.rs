@@ -45,13 +45,12 @@ pub async fn browse_page(
     .await
 }
 
-/// 拉一页首页推荐流（书城换一换，hgplayer RecommendTab 同源）。
+/// 拉一页首页推荐流（书城换一换，RecommendTab 同源）。
 ///
 /// `tab`：'16'=推荐、'36'=漫剧、'39'=真人剧（recommend 模块 fetch_recommend_feed
 /// 文档有 tab 表与两段式流程）。`sessionId` 首页传空串（走 bookmall/tab
 /// cr=4，响应下发会话与首批）；翻页传上一页的会话 + `offset`（上一页的
-/// nextOffset）+ `filterIds`（已下发过的 series_id，服务端排除已见——
-/// hgplayer 同款）。
+/// nextOffset）+ `filterIds`（已下发过的 series_id，服务端排除已见）。
 #[tauri::command]
 pub async fn recommend_feed(
     state: State<'_, AppState>,

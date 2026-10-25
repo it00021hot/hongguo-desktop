@@ -17,7 +17,7 @@ pub enum LoginOutcome {
     Mfa(Box<MfaContext>),
 }
 
-/// MFA 上行短信验证的完整上下文（2026-10-04 hgplayer 1.1.3 真机抓包对齐）。
+/// MFA 上行短信验证的完整上下文（2026-10-04 真机抓包对齐）。
 ///
 /// `retry_tag`/`sms_code_key` 来自 `data.biz_params`；`encrypt_uid` 与
 /// `event_params`/`common_params` 是 upsms 轮询 body 的原料；`verify_ways`

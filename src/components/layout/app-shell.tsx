@@ -80,15 +80,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, []),
   );
 
-  // 小屏播放（对齐 hgplayer De.mini 的 bare 布局）：侧栏与顶栏**全部**
-  // 藏掉，整个窗口只剩播放器（第三方小屏连标题栏都没有，窗口按钮由
+  // 小屏播放：侧栏与顶栏**全部**
+  // 藏掉，整个窗口只剩播放器（小屏窗口连标题栏都没有，窗口按钮由
   // 紧凑控制条承担）；拖拽由播放页的顶部拖拽条负责。
   const miniScreen = useUiStore((s) => s.miniScreen);
   // 竖屏播放：窗口收窄成竖条，侧栏藏掉——窄条里侧栏会占掉近 1/5 宽，
-  // 第三方竖屏（hgplayer）也没有侧栏；顶栏保留（分类 tab 与窗口钮照常）
+  // 窄条窗口也没有侧栏的余地；顶栏保留（分类 tab 与窗口钮照常）
   const portrait = useUiStore((s) => s.portrait);
   // 全屏真值对齐系统侧（Esc/绿按钮经 resize 回流 store）。沉浸流全屏时
-  // 同样藏掉顶栏与侧栏——整窗只剩画面，对齐 hgplayer 与旧元素全屏的视觉；
+  // 同样藏掉顶栏与侧栏——整窗只剩画面，与旧元素全屏同一视觉；
   // 其他页面被系统绿按钮全屏时界面照常。
   useWindowFullscreenSync();
   const windowFullscreen = useUiStore((s) => s.windowFullscreen);
@@ -97,12 +97,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     select: (s) => s.pathname === '/',
   });
   const playerFullscreen = windowFullscreen && playerSurface;
-  // 播放模式「窗口化无边框」（hgplayer 播放页 bare 布局同款）：chrome 全藏
+  // 播放模式「窗口化无边框」：chrome 全藏
   // 但不进 OS 全屏，整窗只剩画面——与沉浸全屏同一视觉，窗口保持原几何。
   const frameless = useUiStore((s) => s.playerFrameless);
   const playerFrameless = frameless && playerSurface;
   // 竖屏只在沉浸流成立：离开即自动退出，
-  // 窄条窗口配常规页面布局没法用（hgplayer 路由监听同款语义；退出实现
+  // 窄条窗口配常规页面布局没法用（退出实现
   // 收在 features/player 的 use-portrait-window，这里只做路由侧触发）
   useEffect(() => {
     if (!playerSurface && useUiStore.getState().portrait) {
@@ -127,11 +127,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-      {/* 横贯全宽的顶栏（hgplayer 同款形态，一条 44px 薄行）：原生红绿灯
+      {/* 横贯全宽的顶栏（一条 44px 薄行）：原生红绿灯
             （mac）/logo/应用名在左，中部是各页 portal 进来的分类 tab（无则
             留空，页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
             语言/窗口控件钉在右端。
-            小屏播放整个顶栏不渲染——第三方小屏是纯播放器，窗口钮/拖拽
+            小屏播放整个顶栏不渲染——小屏是纯播放器，窗口钮/拖拽
             由紧凑控制条与播放页拖拽条承担（mac 的原生红绿灯也由后端在
             enter_mini_screen 里一并摘掉）。
 
@@ -171,7 +171,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             />
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {/* 置顶（hgplayer 标题栏同款）：钉住/取消整个窗口 */}
+            {/* 置顶：钉住/取消整个窗口 */}
             <Button
               variant="ghost"
               size="icon"

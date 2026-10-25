@@ -22,7 +22,7 @@ export function RankRow({ item }: { item: RankItem }) {
   const reserve = useReserveSeries();
   const [reserved, setReserved] = useState(item.reserved);
 
-  // 卡片一律进详情（hgplayer 同款：详情看档案，播放/预约是右侧明确动作）。
+  // 卡片一律进详情：详情看档案，播放/预约是右侧明确动作。
   // 带上榜单自带的档案快照：未上线剧详情解析分集必然失败，prefill 支撑
   // 详情页渲染「即将上线」降级视图（而非整页报错）
   const openDetail = () =>
@@ -53,7 +53,7 @@ export function RankRow({ item }: { item: RankItem }) {
   // 官方条目双信息：🔥主热词（recText，如 "995万推荐"）+ 次信息（"5490万热度"）
   const rec = item.recText;
   const secondary = item.secondaryInfos.filter((s) => s !== '' && s !== rec);
-  // 元信息一行：副标题 · 评分 · 题材标签（hgplayer 同款行）
+  // 元信息一行：副标题 · 评分 · 题材标签
   const meta = [item.subTitle, item.score > 0 ? item.score.toFixed(1) : '', ...item.tags]
     .filter((s) => s !== '')
     .join(' · ');

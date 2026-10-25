@@ -31,16 +31,16 @@ import { usePlaySeries } from '@/hooks/use-play-series';
 import type { CalendarItem } from '@/service/schema';
 
 /**
- * 我的预约（对齐 hgplayer 1.1.3）：已上线 / 待上线两个 tab（带计数），
+ * 我的预约：已上线 / 待上线两个 tab（带计数），
  * 卡片 = 封面（左下上线日期角标 / 右下集数角标）+ 标题 + 简介一行 +
  * 分类标签。卡片一律进详情（排行榜预约榜同款口径，未上线剧落地
  * 「即将上线」降级视图）；行尾动作列已上线 = 播放 + 详情，
  * 未上线 = 取消预约。
  *
- * 列表单页懒翻页（hgplayer 同款）：首屏一页即回、角标计数用响应下发
+ * 列表单页懒翻页：首屏一页即回、角标计数用响应下发
  * 的 total，滚到底再翻下一页——此前一次性串行拉全，预约上百部时
  * 「已上线」要等 5–8 秒才出来（issue #11）。搜索态在后台把剩余页补齐
- * （对全量条目过滤，hgplayer「正在加载全部记录…」同款语义）。
+ * （对全量条目过滤）。
  *
  * 预约列表接口需要登录，匿名返回空表——未登录时给登录入口而不是空列表。
  */
@@ -54,10 +54,10 @@ export function ReservationPage() {
   const onlineQ = useReservations(true);
   const offlineQ = useReservations(false);
   const current = online ? onlineQ : offlineQ;
-  // 批量管理（hgplayer v1.1.8 subscribe_delete 同款）：多选后一请求删除
+  // 批量管理（subscribe_delete）：多选后一请求删除
   const batch = useBatchSelect();
   const batchDelete = useReservationsDelete();
-  // 标题搜索（对齐参考端 v1.1.6「搜索预约的剧」）：客户端过滤，条目自带标题
+  // 标题搜索（对齐官方客户端「搜索预约的剧」）：客户端过滤，条目自带标题
   const shown = current.items.filter((item) => matchListQuery(query, item.title, item.seriesId));
   // 搜索要对全量条目过滤：搜索态下后台持续翻页补齐（失败即停，重试走
   // 列表自身的失效/重挂）；普通浏览仍是一页懒翻
@@ -323,7 +323,7 @@ function ReservationCard({
             <Tv className="size-6" />
           </span>
         )}
-        {/* 左下：上线日期角标（hgplayer 同款位置） */}
+        {/* 左下：上线日期角标 */}
         {publishDate !== '' && (
           <span className="absolute bottom-0 left-0 bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
             {item.isOnline

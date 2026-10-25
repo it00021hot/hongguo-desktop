@@ -20,10 +20,10 @@ export function useBrowsePanel() {
 /** 找剧筛选流（无限滚动）。
  *
  * 翻页必须回传首页发放的 `sessionId`（服务端按它记住筛选上下文）+
- * 上一页的 `nextOffset` 游标——2026-10-07 抓 hgplayer 1.1.6 实证：
+ * 上一页的 `nextOffset` 游标——2026-10-07 抓包实证：
  * limit=18、offset 0→18→36…、session_id 从第二页起同值回传。
  * 旧的 (page-1)*18 算术 offset + 空串 session_id 会让结果集换源，
- * 表现就是「条数和第三方对不上」。
+ * 表现就是「条数和官方 App 对不上」。
  */
 export function useBrowseFeed(filters: BrowseFilters) {
   const query = useInfiniteQuery({

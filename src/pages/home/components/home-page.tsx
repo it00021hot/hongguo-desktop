@@ -23,7 +23,7 @@ import { resolveResumeEntry } from '@/utils/resume-entry';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/locales';
 /** 推荐流的「换一批」过期阈值（毫秒）：恢复游标后流数据比这更旧就整体
- *  重开会话（hgplayer 换一批同款 reset 语义）。 */
+ *  重开会话。 */
 const FEED_STALE_MS = 5 * 60_000;
 /** 首帧未出画时兜底预取下一部流前的等待（毫秒）：给当前剧起播让路。 */
 const PREFETCH_FALLBACK_DELAY_MS = 8_000;
@@ -33,7 +33,7 @@ import { TopBarTabs } from './top-bar-tabs';
 import { BootSplash } from './boot-splash';
 
 /**
- * 首页：沉浸式播放器流（第三方同款形态）。
+ * 首页：沉浸式播放器流（官方客户端同款形态）。
  *
  * 视频**铺满整页**，顶部居中是分类 tab 胶囊——列表由服务端下发
  * （bookmall/tab 响应 tab_item[]：tab_type/标题/顺序，拉取前/失败回落
@@ -53,7 +53,7 @@ interface StreamItem {
   cover: string;
   /** 横版封面（信息流才有）：全屏窗口的占位图用它，竖版 3:4 拉伸铺满横屏会糊。 */
   horizCover: string;
-  /** 热度文本（信息流条目带，剧名上方展示；hgplayer 1.1.6 同款） */
+  /** 热度文本（信息流条目带，剧名上方展示） */
   heatText?: string;
   /** 季角标（「第1季」；剧名前 pill） */
   seasonTag?: string;
@@ -108,7 +108,7 @@ export function HomePage() {
   const [restored, setRestored] = useState(false);
 
   // 登录后的「你的内容」种子：观看历史 + 书架（追更）排在推荐流最前
-  // ——同一个号打开就是你的剧，对齐第三方（它的首页就是书架/续看驱动）。
+  // ——同一个号打开就是你的剧，对齐官方客户端（首页就是书架/续看驱动）。
   // 历史/书架条目没有横版封面，标题等 currentSeries 解析出来自然显示。
   const { data: account } = useAccount();
   // 历史源双模式（与历史页同款判定）：登录读云端（跨端续播），匿名读
@@ -189,7 +189,7 @@ export function HomePage() {
 
   // ---- 回首页换一批（>5 分钟过期）但在播剧不动 ----
   // 恢复（游标对回 store 目标剧）落定后，若推荐流已过期：重开会话取新
-  // 一批（hgplayer 换一批同款 reset 语义，原地重放只会是旧会话），游标
+  // 一批（reset 语义，原地重放只会是旧会话），游标
   // 归零；在播剧由下方置顶钉住继续播，滚下去才是新一批。
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -270,7 +270,7 @@ export function HomePage() {
   const currentSeries = seriesQuery.data;
   // 两路进度源（官方 App「跟上历史进度」同款）：
   // - 本地播放档案：本应用 5 秒一写的真值（毫秒级 IPC）
-  // - 云端观看历史：跨客户端（hgplayer / 官方 App 看过的也算），种子区
+  // - 云端观看历史：跨客户端（官方 App 看过的也算），种子区
   //   已在用同一查询，这里共享缓存
   const progressQuery = useSeriesProgress(currentId ?? '');
   const localProgress = progressQuery.data;

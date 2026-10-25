@@ -30,7 +30,7 @@ pub struct FeedItem {
     /// 题材标签（来自 category_schema 字符串的二次解析）
     #[serde(default)]
     pub tags: Vec<String>,
-    /// 季角标（sub_title_list data_type=0，「第1季」形态；hgplayer titleTag 同源）
+    /// 季角标（sub_title_list data_type=0，「第1季」形态）
     #[serde(default)]
     pub season_tag: String,
     /// 热度文本（sub_title_list data_type=27，「1705万」形态，配火焰图标展示）
@@ -95,7 +95,7 @@ pub struct BrowseFilters {
     pub online_time: String,
     /// 长度：`duration_0_60`/`duration_60_120`/`duration_120_plus`
     pub duration: String,
-    /// 完结状态（2026-10-11 逆向 hgplayer 1.1.8 SelectorPanel：客户端
+    /// 完结状态（2026-10-11 逆向 SelectorPanel 行为：客户端
     /// 合成筛选项，选中值走请求体顶层 `creation_status` 参数）：
     /// 空=全部 / `creation_status_0`=已完结 / `creation_status_1`=连载中
     pub creation_status: String,

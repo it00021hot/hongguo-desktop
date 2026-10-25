@@ -75,7 +75,7 @@ impl DetailView {
     }
 
     /// 计数人性化（详情页头部精度）：万/亿带一位小数、整数省略小数点
-    /// （Tauri formatCountPrecise / hgplayer 头部同口径）。
+    /// （Tauri formatCountPrecise 同口径）。
     pub(super) fn fmt_count(n: i64) -> String {
         match crate::i18n::locale() {
             crate::i18n::Locale::ZhCn => {

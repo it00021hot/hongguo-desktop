@@ -7,8 +7,8 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type { CommentPage, ReplyItem, ReplyPage } from '@/service/schema';
 
-/** 服务端回显的完整回复对象进回复缓存（头像/昵称/uid/时间齐全，hgplayer
- *  同款：新回复以普通条目追加首页并去重，total +1；缓存未建时给单页初形
+/** 服务端回显的完整回复对象进回复缓存（头像/昵称/uid/时间齐全：
+ *  新回复以普通条目追加首页并去重，total +1；缓存未建时给单页初形
  *  ——面板没展开过就先回复的路径）。 */
 export function appendReply(
   queryClient: QueryClient,

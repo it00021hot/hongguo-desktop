@@ -122,7 +122,7 @@ impl super::HomeView {
         if let Some(next) =
             crate::home::season::pick_next_season(&works, &now.series_id, &now.title)
         {
-            // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集，
+            // toast「即将播放下一季」+ 直接开播第 1 集，
             // 连播锁定延续到新季
             self.show_toast(
                 crate::i18n::tf("player.playNextSeason", &[("title", next.title.as_str())]),

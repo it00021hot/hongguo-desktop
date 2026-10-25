@@ -23,7 +23,7 @@ when_to_use: 在本仓库做任何开发（新增功能、修 bug、写组件/ho
 | 写后端：command、service、store、迁移、测试               | `references/backend.md`（command 层仅 Tauri；service/store 两壳共用）                                                             |
 | 环境搭建 / 日常命令 / 调试 / 提交 / 发版                  | `references/workflow.md`（发版仅 Tauri；GPUI 壳调试与验收在 `gpui.md`）                                                           |
 | 对接官方 App 接口（抓包/端点/参数）                       | `docs/hongguo-api-endpoints.md`（仓库文档，改 domain/api 前必读）                                                                 |
-| 逆向分析官方 APK / hgplayer（协议/端点考证）              | `references/reverse.md`                                                                                                           |
+| 逆向分析官方 APK（协议/端点考证）                         | `references/reverse.md`                                                                                                           |
 
 参考文档没覆盖的判断，回到两条元规则：**同一段逻辑只有一个明确归属**；**不为目录整齐制造转发文件**。
 
@@ -50,7 +50,7 @@ make release      # 打包发布版（Tauri 壳）
 9. **signer/ 是 JS 1:1 移植，禁改写法**；vendor/ 四个 patch 依赖有「上游修复后回收」约定。
 10. **开发在 dev 分支**；提交信息按 dev-habits『commit message 规范』（Conventional Commits），本项目附加中文描述；纯移动/结构拆分与行为修改分开提交。
 12. **对接官方接口禁止猜参数**——照 `docs/hongguo-api-endpoints.md` 抓包逐字段对齐（audit.py 出参数表），103008「无社区功能」这类报错八成是形态不对而不是权限。
-13. **抓包对齐必须「请求 + 响应 + UI 效果」三点一线，只对齐请求等于没对齐**（2026-10-10 剧评回复返工实录）：① 响应 body 逐字段解剖——发送类接口（comment/add、reply/add）的响应是**完整对象回显**（头像/昵称/uid/时间/计数/评分），第三方把它整个插进列表当 UI 数据源，只取 code/id 丢弃对象 = 自己手拼简陋条目 = 缺 userId 删除按钮出不来、样式与第三方两样；② 计数类字段（digg_count 等）服务端有延迟，第三方 UI 是本地 ±1 乐观更新，不抄这层等于「点了没反应」；③ 对照第三方实操截图/逆向代码核对**渲染效果**（展开后长什么样、置顶不置顶、回显什么字段），「接口能通」不等于「效果对齐」。逆向第三方 bundle 时把它的 onSuccess 数据流（响应对象流向哪个缓存/列表）一并拆出来。
+13. **抓包对齐必须「请求 + 响应 + UI 效果」三点一线，只对齐请求等于没对齐**（2026-10-10 剧评回复返工实录）：① 响应 body 逐字段解剖——发送类接口（comment/add、reply/add）的响应是**完整对象回显**（头像/昵称/uid/时间/计数/评分），官方 App 把它整个插进列表当 UI 数据源，只取 code/id 丢弃对象 = 自己手拼简陋条目 = 缺 userId 删除按钮出不来、样式与官方 App 两样；② 计数类字段（digg_count 等）服务端有延迟，官方 App UI 是本地 ±1 乐观更新，不抄这层等于「点了没反应」；③ 对照官方 App 实操截图/逆向代码核对**渲染效果**（展开后长什么样、置顶不置顶、回显什么字段），「接口能通」不等于「效果对齐」。逆向官方 APK 时把它的 onSuccess 数据流（响应对象流向哪个缓存/列表）一并拆出来。
 14. **改代码用精确编辑**（dev-habits『改代码用精确编辑』；本仓库多次事故：脚本盲改静默丢写入、混入错字）。Python 照常可以**写辅助工具**（如 `captures/addon.py` 抓包、`captures/audit.py` 参数审计，放工具目录正常提交）；只做一次性分析的临时脚本用完即删。提交前的门禁命令必须**裸跑**确认退出码——`pnpm x | tail && commit` 这类管道会吞掉失败，曾把坏状态带进提交。
 
 ### Tauri 壳专属
@@ -59,7 +59,7 @@ make release      # 打包发布版（Tauri 壳）
 3. **事件名与载荷多处同步改**——service 发 `ServiceEvent`（名字常量在各域 events 模块）→ 壳 `crates/hongguo-tauri/src/events.rs` 的 `forward` 映射 → 前端 `service/tauri/types.ts` 的 `EVENTS`（载荷 schema 在 `service/tauri/events.ts`），漏改一处订阅静默失效。
 7. **lib.rs 只做装配**；新模块在 lib.rs 保持私有（`mod xxx;` 无 pub）。
 8. **启动顺序**：单实例插件必须第一个注册、数据库在 `.setup()` 里晚于它打开，否则二次启动撞库锁会被误报「数据损坏」。
-11. **新 UI 必须保持项目风格**：按钮一律 shadcn `Button` variant + 语义令牌，禁止硬编码色值（`bg-red-500` 等）——唯一例外是播放器控制栏/互动栏/评论面板的 hgplayer 红色皮肤；详见 `references/frontend.md` 样式节（GPUI 壳的对应条在 `references/gpui.md` 界面规范）。
+11. **新 UI 必须保持项目风格**：按钮一律 shadcn `Button` variant + 语义令牌，禁止硬编码色值（`bg-red-500` 等）——唯一例外是播放器控制栏/互动栏/评论面板的播放器红色皮肤；详见 `references/frontend.md` 样式节（GPUI 壳的对应条在 `references/gpui.md` 界面规范）。
 
 ### GPUI 壳专属
 

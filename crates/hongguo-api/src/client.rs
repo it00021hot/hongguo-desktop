@@ -28,9 +28,8 @@ pub const LQ_API_ORIGIN: &str = "https://api5-normal-lq.fqnovel.com";
 /// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
 
-/// CDN 取流重试次数（hgplayer 取流 worker `it()` 口径：**失败重试 3 次，
-/// 退避 300ms×(第几次)**——CDN 抖动是常态）。本文件的 Range 自愈与
-/// service 的在线填充两侧同源，改这里一处。
+/// CDN 取流重试次数（**失败重试 3 次，退避 300ms×(第几次)**——CDN 抖动是
+/// 常态）。本文件的 Range 自愈与 service 的在线填充两侧同源，改这里一处。
 pub const STREAM_RETRY_ATTEMPTS: u32 = 3;
 
 /// 第 `attempt`（0 基）次失败后的退避时长（`it()` 口径）。
@@ -101,7 +100,7 @@ pub struct ApiEnv {
     /// Cookie 不参与签名，走 `extra_headers` 注入。
     pub cookie: Option<String>,
     /// x-tt-token 长凭据（登录响应头下发；在场则以短形式随全部请求头
-    /// 携带，hgplayer 同款——这也是将来服务端滑动续期时新值的载体）
+    /// 携带——这也是将来服务端滑动续期时新值的载体）
     pub x_tt_token: Option<String>,
 }
 
@@ -159,7 +158,7 @@ pub async fn api_call_full_with_headers(
 
 /// 单次发送、空响应不重试不报错（回空 body）。批量取流预取专用：
 /// 2026-10-14 起批量形态恒回 200+0（服务端不再发货），它是「发了即回」
-/// 的常态而非故障——重试只会让每次切剧白等 6 秒。hgplayer 同款一次即回。
+/// 的常态而非故障——重试只会让每次切剧白等 6 秒，一次即回。
 pub async fn api_call_once_allow_empty(
     origin: &str,
     pathname: &str,
@@ -405,10 +404,10 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 /// 与 [`get_video_stream`] 同一套头（裸 UA 优先、403 补 Referer）。
 /// 非 206 一律按不支持 Range 报错，交给调用方回落。
 ///
-/// 对齐 hgplayer 取流 worker 的 `it()`：
+/// 取流重试口径：
 /// - **失败重试 3 次，退避 300ms×(第几次)**——CDN 抖动是常态；
-/// - **CDN 忽略 Range 回 200 全量时切片自愈**而不是报错（hgplayer 同款
-///   场景：`status===200 && n>0 ? subarray(n, i) : f`）。我们比它多做一步：
+/// - **CDN 忽略 Range 回 200 全量时切片自愈**而不是报错：按已收字节量
+///   跳过前缀、只留 Range 请求的数据段。再多做一步——
 ///   边收边丢、收够即断，不为切 1MB 白拉整集；
 /// - 个别节点 403 裸 UA，补 Referer 重试一次（本应用独有的节点差异）。
 pub async fn get_video_range(
@@ -582,7 +581,7 @@ async fn send_once(
         extra.push(("Cookie".into(), c.clone()));
     }
     // x-tt-token：登录响应头下发的凭据，短形式（前 56 位）随请求带——
-    // hgplayer 每个业务请求都在场（2026-10-05 抓包对齐；也是服务端
+    // 业务请求一律在场（2026-10-05 抓包对齐；也是服务端
     // 滑动续期时新值的下发载体）
     if let Some(full) = &env.x_tt_token
         && !full.is_empty()

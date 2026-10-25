@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 /**
  * 弹幕发送框 / 评论区共用的表情选择入口：笑脸按钮 + 上拉网格。
  *
- * 焦点纪律（保住输入框光标的关键，对齐 hgplayer）：trigger 与表情格子
+ * 焦点纪律（保住输入框光标的关键）：trigger 与表情格子
  * 都 mousedown preventDefault，且 Popover 的开/关自动聚焦一并禁掉——
  * 焦点全程留在输入框，插入永远落在真实光标处，选完接着打字无感；
  * 格子连选不关面板，点外部/Esc 由 Popover 收起。
@@ -63,10 +63,10 @@ export function EmojiPickerButton({
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
         data-wheel-block
-        /* hgplayer 同款面板皮肤（消费方都在豁免区），盖掉 Popover 默认底色 */
+        /* 播放器深色面板皮肤（消费方都在豁免区），盖掉 Popover 默认底色 */
         className="w-72 rounded-xl border-white/10 bg-black/85 p-2 backdrop-blur-sm"
       >
-        {/* hgplayer 同款网格：每格一张表情图，title 即 [名字] 代码 */}
+        {/* 网格：每格一张表情图，title 即 [名字] 代码 */}
         <div className="grid max-h-44 scrollbar-thin grid-cols-8 gap-0.5 overflow-y-auto">
           {DANMAKU_EMOJI_LIST.map((e) => (
             <button

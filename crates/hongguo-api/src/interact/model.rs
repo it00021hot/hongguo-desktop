@@ -26,7 +26,7 @@ pub struct InteractionItem {
     pub digged_count: i64,
     #[serde(default)]
     pub followed: bool,
-    /// 追剧数（hgplayer 右栏 ☆ 下的 21.1万）
+    /// 追剧数（右栏 ☆ 下的 21.1万）
     #[serde(default)]
     pub followed_cnt: i64,
     /// 剧标题（video_detail.series_title，「我的点赞」列表页直接展示）

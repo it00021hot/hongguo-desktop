@@ -13,7 +13,7 @@ import { t } from '@/locales';
 /**
  * 查询失败的统一重试块：主文案 + 可选错误详情 + 重试按钮/自定义动作。
  *
- * 豁免区外列表与页面的错误态都走这里（player 区 hgplayer 皮肤不在此列）。
+ * 豁免区外列表与页面的错误态都走这里（player 区红色皮肤不在此列）。
  * 各页手写块的常转 Loader2 是非 pending 态的装饰误导，收编后不再保留。
  */
 export function ErrorState({

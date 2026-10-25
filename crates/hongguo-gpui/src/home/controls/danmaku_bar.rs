@@ -134,7 +134,7 @@ impl HomeView {
             .into_any_element()
     }
 
-    /// 发送 pill：无框输入 + 内嵌表情 + 发送（hgplayer 固定深色皮肤，Tauri
+    /// 发送 pill：无框输入 + 内嵌表情 + 发送（固定深色皮肤，Tauri
     /// 同款，不跟主题走）。inline 挂在控制栏行里（可收缩），浮层里固定宽。
     ///
     /// `overlay_bottom` 是表情网格相对本 pill 容器的 bottom：inline 直接悬
@@ -144,7 +144,7 @@ impl HomeView {
             PillWidth::Inline => 38.0,
             PillWidth::Fixed => 40.0,
         };
-        // 弹幕输入：hgplayer 固定深色皮肤（Tauri 同款，
+        // 弹幕输入：固定深色皮肤（Tauri 同款，
         // 不跟主题走）——15% 白底胶囊、白字、白光标、
         // 白 60% 占位符。光标/占位符/选区靠
         // [`skinned_input`] 在渲染当期改主题 token。

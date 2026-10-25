@@ -46,7 +46,7 @@ enum Phase {
 pub(crate) struct LikedView {
     state: Arc<AppStateInner>,
     phase: Phase,
-    /// 全部点赞条目（mget 上限 100 条，与 hgplayer 口径一致）。
+    /// 全部点赞条目（mget 上限 100 条）。
     items: Vec<InteractionItem>,
     /// 解析到的剧名（mget 缺标题时靠 resolve 补，也供过滤用）。
     titles: HashMap<String, String>,

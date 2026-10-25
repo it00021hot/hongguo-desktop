@@ -25,7 +25,7 @@ import type { LoginResult } from '@/service/schema';
 const RETRY_DEFAULT_SECS = 60;
 
 /**
- * 登录弹窗（hgplayer 同款形态）：表单 → MFA 上行短信等待 → 自动登录。
+ * 登录弹窗：表单 → MFA 上行短信等待 → 自动登录。
  *
  * MFA 轮询在 **Rust 后台**（3s 一次，回复短信后自动登录并发
  * `login-mfa-state` 事件）——弹窗关掉也不丢状态，重新打开仍能看到

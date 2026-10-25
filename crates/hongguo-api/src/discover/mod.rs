@@ -40,11 +40,11 @@ use parse::{parse_browse_panel, parse_feed};
 pub const LANDPAGE_PATH: &str = "/reading/distribution/category/landpage/v1/";
 
 // 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed，
-// 2026-10-08 对齐 hgplayer RecommendTab）；landpage 只服务找剧筛选浏览。
+// 2026-10-08 对齐书城 RecommendTab）；landpage 只服务找剧筛选浏览。
 
 /// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
 ///
-/// 抓包形态（2026-10-07 hgplayer 1.1.5）：body 只有三个键，
+/// 抓包形态（2026-10-07）：body 只有三个键，
 /// 响应 `data.selector_rows[]`。
 pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
     let body = serde_json::to_vec(&serde_json::json!({
@@ -68,7 +68,7 @@ pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
 /// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
 /// 每页 20 条（用户指定；响应 next_offset 游标会跟着走，翻页无算术依赖）。
 ///
-/// 2026-10-11 抓 hgplayer 1.1.8 实流对齐：`creation_status` 仅在选中时在参，
+/// 2026-10-11 抓实流对齐：`creation_status` 仅在选中时在参，
 /// 全部选省略整个键（他家不发空串）。
 pub async fn fetch_browse(
     filters: &BrowseFilters,
@@ -87,7 +87,7 @@ pub async fn fetch_browse(
         "select_items": filters.to_select_items(),
         "session_id": session_id,
     });
-    // 完结状态筛选（hgplayer 1.1.8 同款）：客户端合成的「完结状态」行选中值
+    // 完结状态筛选：客户端合成的「完结状态」行选中值
     // 走 body 顶层；全部选时不发该键（抓包实锤他家省略）
     if !filters.creation_status.is_empty() {
         body["creation_status"] = serde_json::Value::String(filters.creation_status.clone());
@@ -116,7 +116,7 @@ mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_danmaku_verified() {
         let env = anon_env();
-        // 抓包锚点：hgplayer 续播的那集
+        // 抓包锚点：当时续播的那集
         let group_id = "7690197301075119166";
         let book_id = "7690150906532219966";
         let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
@@ -172,7 +172,7 @@ mod probe {
     async fn probe_bookmall_verified() {
         let env = anon_env();
         // 干净重放：设备字段全进 DeviceProfile（签名器只拼这一套），业务参数只留
-        // 非设备项，UA/版本与设备字段成套（hgplayer 形态）。
+        // 非设备项，UA/版本与设备字段成套（官方客户端形态）。
         let pairs = vec![
             ("ac", r#"wifi"#),
             ("aid", r#"8662"#),
@@ -271,7 +271,7 @@ mod probe {
         .map(|(k, v): (&str, &str)| (k.to_string(), v.to_string()))
         .collect();
 
-        // 对照实验：hgplayer 抓包里的设备 cookie（install_id/ttreq 是
+        // 对照实验：抓包里的设备 cookie（install_id/ttreq 是
         // 设备注册回执）。带与不带各打一次，隔离 ILLEGAL_ACCESS 的成因。
         let mut with_cookie = env.clone();
         with_cookie.cookie = Some("passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".to_string());

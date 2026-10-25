@@ -1,6 +1,6 @@
 //! 短信登录（passport 系，`novel.snssdk.com` 同域）。
 //!
-//! ## 流程（hgplayer 逆向实证）
+//! ## 流程（逆向实证）
 //!
 //! ```text
 //! POST /passport/mobile/send_code/v1/   mobile 需 XOR(0x05) hex 编码
@@ -29,7 +29,7 @@ use mfa::real_upsms_channel;
 pub use mfa::{mfa_relogin, upsms_verify};
 pub use model::{LoginOutcome, MfaContext, MfaFlow, PassportUser, SendCodeOutcome, UpsmsState};
 
-/// passport 与业务同域（hgplayer 实测基址 `https://novel.snssdk.com`）。
+/// passport 与业务同域（实测基址 `https://novel.snssdk.com`）。
 pub const PASSPORT_ORIGIN: &str = "https://novel.snssdk.com";
 
 /// passport 系 form 请求的 content-type（抓包原值，含 charset）。
@@ -37,7 +37,7 @@ const FORM_CONTENT_TYPE: &str = "application/x-www-form-urlencoded; charset=UTF-
 
 /// 手机号编码：`+86` 国码 + 11 位号码，每个 ASCII 字节 XOR 0x05 后转小写 hex。
 ///
-/// `+86` 前缀是 2026-10-04 hgplayer 1.1.3 真机抓包实证（密文解出
+/// `+86` 前缀是 2026-10-04 真机抓包实证（密文解出
 /// `+8617…`）；不带前缀的服务端按残缺号处理。
 pub fn encode_mobile(mobile: &str) -> String {
     xor05_hex(&format!("+86{mobile}"))
@@ -572,7 +572,7 @@ mod tests {
         let mobile = std::env::var("HG_LOGIN_MOBILE").unwrap_or_else(|_| "10000000000".into());
         println!("[probe] mobile: {mobile}");
         // HG_PROXY=http://127.0.0.1:8080 时走本地 mitmdump（抓自己的请求
-        // 与 hgplayer 抓包逐字节 diff）
+        // 与抓包逐字节 diff）
         if let Ok(p) = std::env::var("HG_PROXY")
             && !p.is_empty()
         {
@@ -697,7 +697,7 @@ mod tests {
 
     /// XOR(0x05) hex（含 +86 前缀）：'+'=0x2b→2e，'8'=0x38→3d，
     /// '6'=0x36→33，'1'=0x31→34，'3'=0x33→36，'0'=0x30→35。
-    /// 前缀 `2e3d33` 与 hgplayer 抓包密文头一致。
+    /// 前缀 `2e3d33` 与抓包密文头一致。
     #[test]
     fn encodes_mobile_with_xor05() {
         assert_eq!(encode_mobile("13800138000"), "2e3d3334363d353534363d353535");
@@ -789,7 +789,7 @@ mod tests {
                 assert_eq!(ctx.sms_code_key, "fb2825d4c17fad783d28724dd8aebe5e");
                 assert_eq!(ctx.encrypt_uid, "9bRhVfo5rymE");
                 assert_eq!(ctx.log_id, "2026100422LOG");
-                // 95 号段替换成真实 106 通道（hgplayer 同款修正）
+                // 95 号段替换成真实 106 通道（抓包同款修正）
                 assert_eq!(ctx.channel_mobile, "10691859839103");
                 assert_eq!(ctx.sms_content, "YZ");
                 assert!(ctx.tips.contains("完成身份验证"));

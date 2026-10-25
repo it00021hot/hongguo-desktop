@@ -118,7 +118,7 @@ export function CalendarRow({ item }: { item: CalendarItem }) {
             </button>
           </>
         ) : (
-          // 播放器之外的按钮走项目主题（primary 单色），不模仿 hgplayer 品牌红
+          // 播放器之外的按钮走项目主题（primary 单色），不用品牌红
           <Button
             size="sm"
             variant={reserved ? 'secondary' : 'default'}

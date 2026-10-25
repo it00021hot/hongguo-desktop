@@ -23,7 +23,7 @@ const GENDERS: { value: number; labelKey: MessageKey }[] = [
 
 export function NewDramaPage() {
   // 频道筛选在页面层：官方把它放在标题行右侧，对推荐/日历两个视图都可见。
-  // 会话级保留（hgplayer 1.1.7 同款：去播放再回来频道与位置都在）
+  // 会话级保留（去播放再回来频道与位置都在）
   const [gender, setGender] = useSessionState('hongguo.new.gender', 2);
   // 视图 tab（推荐/日历）：状态自持——tab 胶囊 portal 进 AppShell 顶栏，
   // 不能再依赖 Radix Tabs 的组件树上下文（Trigger 必须长在 Tabs 里）

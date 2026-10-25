@@ -32,7 +32,7 @@ export const interact = {
   mentionList: (seriesId: string) => call('mention_list', { seriesId }),
   /** 回复一条评论（reply/add 独立端点；回复流与面板同单集维度）。
    *  回复「回复」时传 replyToReplyId。返回**服务端回显的完整回复对象**
-   *  （直接插回复区，hgplayer 同款）。 */
+   *  （直接插回复区）。 */
   sendReply: (
     groupId: string,
     bookId: string,
@@ -76,7 +76,7 @@ export const interact = {
   /** 收藏（追剧）/ 取消收藏一部剧。 */
   seriesCollect: (seriesId: string, collect: boolean) =>
     call('series_collect', { seriesId, collect }),
-  /** 批量收藏/取消收藏（一请求多条目，hgplayer 1.1.8 RemoveFavorites 同款）。 */
+  /** 批量收藏/取消收藏（一请求多条目）。 */
   seriesCollectBatch: (entries: { seriesId: string; collect: boolean }[]) =>
     call('series_collect_batch', { entries }),
   /** 最近互动列表（点赞过的 vid + 收藏的剧），回显是 best-effort 匹配。 */

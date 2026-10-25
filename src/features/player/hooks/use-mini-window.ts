@@ -6,7 +6,7 @@ import { app as appApi } from '@/service/commands';
 import { exitPortraitScreen } from '@/features/player/hooks/use-portrait-window';
 
 /**
- * 小屏播放（对齐 hgplayer ng()/Op()）：同一窗口缩成 480×270 落到屏幕
+ * 小屏播放：同一窗口缩成 480×270 落到屏幕
  * 右下角，侧栏隐藏、控件换紧凑条——video 元素原地不动，播放零中断
  * （不暂停、不落库、不换页）。
  *

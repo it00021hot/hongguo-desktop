@@ -1,4 +1,4 @@
-/** 剧评输入框：剧评 tab 顶部的提交入口（评分 + 表情 + 文本，对齐 hgplayer）。 */
+/** 剧评输入框：剧评 tab 顶部的提交入口（评分 + 表情 + 文本）。 */
 import { useState } from 'react';
 import { Star } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,7 +10,7 @@ import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
 /**
  * 剧评输入框（剧评 tab 顶部；Enter/发布提交，成功后缓存失效重取置顶）。
  *
- * 评分随发送走（hgplayer 1.1.6 抓包：business_param.score 十分制 = 星级
+ * 评分随发送走（抓包实证：business_param.score 十分制 = 星级
  * ×2），「我的评分」五星级未选时禁发——score 是剧评身份的一部分，不选
  * 等于没评。表情/输入/发送接线统一走 EmojiSendBox（与弹幕/评论同源）。
  * 登录门槛走后端拒绝 + toast 指路（与互动按钮同一口径）。
@@ -39,7 +39,7 @@ export function ReviewComposer({ seriesId }: { seriesId: string }) {
   const shown = hoverStars || stars;
   return (
     <div className="bg-card/60 mb-2 rounded-lg border p-3">
-      {/* 我的评分（hgplayer 同款：星级 + 「我的评分」标签） */}
+      {/* 我的评分：星级 + 「我的评分」标签 */}
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm font-medium">{t('detail.myRating')}</span>
         <div

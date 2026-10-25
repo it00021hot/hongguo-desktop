@@ -1,7 +1,7 @@
 /**
  * 剧评列表（详情页「剧评」tab 内容）。
  *
- * 三块结构对齐 hgplayer 剧评页（2026-10-10 抓包对齐）：
+ * 三块结构（2026-10-10 抓包对齐）：
  * - 剧均评分块（credibility_score + score_cnt；空 = 暂无评分）
  * - 发评框（评分星级 + 表情 + 文本，见 ReviewComposer）
  * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）、评分后缀文案、
@@ -160,7 +160,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 展开了回复区的剧评（受控：发送成功强制展开，对齐 hgplayer） */
+  /** 展开了回复区的剧评（受控：发送成功强制展开） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (reviewId: string, open: boolean) =>
     setOpenReplies((prev) => {
@@ -183,7 +183,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
-          // hgplayer 同款：发送成功强制展开回复区，新回复立刻可见
+          // 发送成功强制展开回复区，新回复立刻可见
           setReplySectionOpen(reviewId, true);
         },
       },
@@ -224,7 +224,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   return (
     <>
       <ReviewComposer seriesId={seriesId} />
-      {/* 剧均评分块（hgplayer 同款：9.0 大字 + 星 + 人数 + 标签统计 pill；
+      {/* 剧均评分块（9.0 大字 + 星 + 人数 + 标签统计 pill；
           剧均本体 = credibility_score，评分人数 = credibility_score_count） */}
       <div className="border-border mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3">
         {reviewScore ? (

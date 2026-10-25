@@ -49,8 +49,8 @@ pub(crate) fn is_full() -> bool {
 /// 进入竖屏：快照 → 落位。上次竖屏几何有效（不小于竖屏恢复下限且落在
 /// 任一显示器内）就原样回去——三种窗态各记各的槽位，切形态互不覆盖；
 /// 素材比例与上次不同由换集重适配（portrait_panel 的 refit 路径）纠偏。
-/// 最大化进竖屏仍直进铺满档（Tauri enter 的 Ev + fit(full)，hgplayer
-/// 同款）；无记忆按比例现算。几何不可得返回 `None`（调用方保持原状）。
+/// 最大化进竖屏仍直进铺满档（Tauri enter 的 Ev + fit(full) 同款）；
+/// 无记忆按比例现算。几何不可得返回 `None`（调用方保持原状）。
 /// 调用方负责幂等与「先退出其它紧凑形态」。
 pub(crate) fn enter(
     window: &mut Window,

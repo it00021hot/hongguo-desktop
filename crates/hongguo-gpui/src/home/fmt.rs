@@ -61,7 +61,7 @@ pub(crate) fn format_play_count(n: i64) -> String {
 }
 
 /// 相对时间（评论时间戳）。分层与 Tauri `utils/relative-time.ts` 同口径
-/// （hgplayer：刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 30 天内 /
+/// （刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 30 天内 /
 /// M月D日）——此前自创「N 个月前/N 年前」与前端漂移。技术栈不同不共享
 /// 实现，改分层两边同步。crate 级自由函数：首页评论面板与详情页剧评共用。
 pub(crate) fn relative_time(ts_ms: i64) -> String {

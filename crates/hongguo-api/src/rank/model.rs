@@ -38,7 +38,7 @@ pub struct RankItem {
     /// 题材标签（category_schema 二次解析）
     #[serde(default)]
     pub tags: Vec<String>,
-    /// 未上线（分集数为 0）。hgplayer 同款状态分支：未上线行显示预约
+    /// 未上线（分集数为 0）。状态分支：未上线行显示预约
     /// 按钮、已上线行显示播放按钮——按剧状态分，不看榜单 id
     #[serde(default)]
     pub upcoming: bool,

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 联想词的一个渲染片段（hgplayer 同款 TextPart：按命中位切开，
+/// 联想词的一个渲染片段（TextPart：按命中位切开，
 /// hl=true 的片段前端上高亮色）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

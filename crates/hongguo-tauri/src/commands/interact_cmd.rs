@@ -98,7 +98,7 @@ pub async fn mention_list(
 /// 回复一条评论（或一条回复）。回复流与面板同单集维度（group=vid /
 /// group_type=30）。`reply_to_reply_id` 回复「回复」时传被回复的那条
 /// 回复 id（多级），纯评论回复传空。返回**服务端回显的完整回复对象**——
-/// 前端直接插回复区（hgplayer 同款）。
+/// 前端直接插回复区（同款行为）。
 #[tauri::command]
 pub async fn comment_reply(
     state: State<'_, AppState>,
@@ -222,7 +222,7 @@ pub async fn series_collect(
     Ok(())
 }
 
-/// 批量收藏/取消收藏（一个请求携带多条目，hgplayer 1.1.8 RemoveFavorites 同款）。
+/// 批量收藏/取消收藏（一个请求携带多条目，RemoveFavorites 同款）。
 #[tauri::command]
 pub async fn series_collect_batch(
     state: State<'_, AppState>,

@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import type { SuggestItem } from '@/service/schema';
 
 /**
- * 联想行，结构对齐 hgplayer：放大镜图标常驻（纯词行就只有它 + 词）；
+ * 联想行：放大镜图标常驻（纯词行就只有它 + 词）；
  * 带剧集的行前置竖版封面（40×54，HEIC 走 webp/转码链）；词按服务端
  * 命中位切片、命中片段上高亮色（#ff7a1a ≈ orange-500）、rich 行加粗；
  * 摘要行有才渲染。
@@ -21,7 +21,7 @@ export function SuggestRow({
   onHover: () => void;
   onPick: (item: SuggestItem) => void;
 }) {
-  // 封面闸门对齐 hgplayer（cover 有无）：纯词联想不渲染封面，只有放大镜。
+  // 封面闸门（cover 有无）：纯词联想不渲染封面，只有放大镜。
   const webCover = enhancedCover(item.cover);
   return (
     <button

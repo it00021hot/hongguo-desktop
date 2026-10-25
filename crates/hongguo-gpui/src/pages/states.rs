@@ -9,7 +9,7 @@
 //! 加载态不在此列：首拉加载已按 Tauri 的骨架屏口径走（`pages/skeleton.rs`，
 //! 卡片网格 / 列表行两种形态），空态与错误态只管「没有数据」与「出了错」。
 //!
-//! 播放器区也不在此列：那里的浮层是 hgplayer 深色皮肤的一部分，形态另算。
+//! 播放器区也不在此列：那里的浮层是播放器深色皮肤的一部分，形态另算。
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::empty::{

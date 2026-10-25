@@ -276,7 +276,7 @@ export function useSeriesComments(seriesId: string) {
  * 发剧评（详情页「剧评」评论框）。
  *
  * 成功后把**服务端回显的完整剧评对象**（expand.score 回显评分）置顶
- * 插入第一页（hgplayer 同款 unshift）：服务端列表有索引延迟且排序
+ * 插入第一页（unshift 置顶）：服务端列表有索引延迟且排序
  * 未必把新条目放回第一页，重取会让用户「找不到自己刚发的」
  * （2026-10-10 实测反馈）。不做立即 invalidate——本地那条一直在列表
  * 头，staleTime 0 下次进入即重拉与服务器对齐。

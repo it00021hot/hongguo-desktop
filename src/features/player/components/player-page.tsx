@@ -67,7 +67,7 @@ export function PlayerView({
   onWheelStep?: (dir: 1 | -1) => void;
   /**
    * 封面占位图（信息流条目/历史记录都有）：切剧/起播的取流间隙垫在画面上，
-   * 首帧真正出画（playing）后交叉淡出——第三方「滚动秒切」的观感一半来自这里，
+   * 首帧真正出画（playing）后交叉淡出——官方客户端「滚动秒切」的观感一半来自这里，
    * 黑屏等待变成封面常驻，感知延迟只剩取流本身。
    */
   coverUrl?: string;
@@ -392,7 +392,7 @@ export function PlayerView({
   const { portrait, portraitFull, togglePortrait, togglePortraitFull } = usePortraitWindow({
     videoRef,
   });
-  // 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏不进 OS 全屏，
+  // 无边框播放：chrome 全藏不进 OS 全屏，
   // 开关在控制栏；这里只消费状态（拖拽条显隐）
   const frameless = useUiStore((s) => s.playerFrameless);
   const { pinned, togglePinned } = usePinWindow();
@@ -732,8 +732,8 @@ export function PlayerView({
                   />
                 ) : portrait ? (
                   // 竖屏窄条：控件对齐小窗紧凑条（portrait 形态）——全量控制栏
-                  // 在竖条里必然溢出（选集浮层 460 宽更是放不下），hgplayer 竖屏
-                  // 同样是紧凑一行。⤢ = 退出竖屏；✕ 的位置给铺满切换
+                  // 在竖条里必然溢出（选集浮层 460 宽更是放不下），只能紧凑
+                  // 一行。⤢ = 退出竖屏；✕ 的位置给铺满切换
                   <MiniScreenControls
                     variant="portrait"
                     videoRef={videoRef}
