@@ -14,6 +14,14 @@ use gpui_kit::prelude::*;
 
 pub(crate) use crate::emoji_files::EMOJI_FILES;
 
+/// 表情纹理边长：解码后预缩的目标（只缩不放）。120px 原图直接进 sprite
+/// atlas 时显示端只有 20~60 设备像素，而 gpui 的 atlas 不建 mipmap、shader
+/// 只有一层双线性采样，数倍硬缩每像素只采到 2×2 纹素，表情因此发糊；先在
+/// CPU 用高质量滤波缩到贴近显示尺寸，GPU 端倍率落回肉眼无损区间。72 覆盖
+/// 选择器 32px 格 ×2 倍 DPI；弹幕字号拉满的高 DPI 场景会有轻微放大，仍远
+/// 好于原图硬缩。
+pub(crate) const EMOJI_TEXTURE_PX: u32 = 72;
+
 /// 一段解析结果：纯文本或一张表情图。
 pub(crate) enum EmojiSegment {
     Text(String),
@@ -40,10 +48,28 @@ pub(crate) fn emoji_by_name(name: &str) -> Option<Arc<RenderImage>> {
         .find(|(n, _)| *n == name)
         .and_then(|(_, bytes)| image::load_from_memory(bytes).ok())
         .map(image::DynamicImage::into_rgba8)
+        .map(prescale_to_texture)
         .map(crate::image_upload::render_image)
         .map(Arc::new);
     guard.insert(static_name, decoded.clone());
     decoded
+}
+
+/// 解码后的位图预缩到 [`EMOJI_TEXTURE_PX`]（只缩不放），把大倍率缩小留在
+/// CPU 的高质量滤波里。Triangle 在 1~2 倍缩小下与 Lanczos3 无差且无振铃
+/// （image crate 的 resize 默认 Nearest，不能省略滤波参数）。
+fn prescale_to_texture(rgba: image::RgbaImage) -> image::RgbaImage {
+    let side = rgba.width().max(rgba.height());
+    if side <= EMOJI_TEXTURE_PX {
+        return rgba;
+    }
+    let scale = EMOJI_TEXTURE_PX as f32 / side as f32;
+    image::imageops::resize(
+        &rgba,
+        (rgba.width() as f32 * scale).round() as u32,
+        (rgba.height() as f32 * scale).round() as u32,
+        image::imageops::FilterType::Triangle,
+    )
 }
 
 /// 文本 → 段序列：认识的 `[名字]` 换表情，不认识的原样保留为文本。
