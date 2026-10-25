@@ -3,7 +3,12 @@ import { call } from '../tauri/invoke';
 // ---------------------------------------------------------------- 弹幕
 
 export const danmaku = {
-  list: (groupId: string, bookId: string) => call('danmaku_list', { groupId: groupId, bookId }),
+  /**
+   * 一集弹幕的**一窗**（官方 30 秒滚窗协议，随播放进度逐窗推进；medusa
+   * 风控降级下没有全量拉取路线）。durationSecs 该集时长（秒，分集表
+   * duration）；cursor 传上一窗响应的 nextCursor（首页空串）。 */
+  window: (groupId: string, bookId: string, startMs: number, durationSecs: number, cursor: string) =>
+    call('danmaku_window', { groupId: groupId, bookId, startMs, durationSecs, cursor }),
   /**
    * 播放页评论区（单集维度流：group=vid/group_type=30/channel=18/
    * sort=video_innerflow，2026-10-16 官方实包形态）。一窗 10 条，

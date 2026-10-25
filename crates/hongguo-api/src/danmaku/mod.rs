@@ -37,6 +37,7 @@ use comments::{
     series_comments_payload,
 };
 
+use serde::Serialize;
 use serde_json::Value;
 
 use super::client::ApiEnv;
@@ -55,40 +56,20 @@ use hongguo_common::{AppError, AppResult};
 /// 这个主机上存在）。
 pub const LQ_API_ORIGIN: &str = crate::client::LQ_API_ORIGIN;
 
-/// 一集最多拉多少个 30 秒窗口（2 小时封顶，防服务端 cursor 异常死循环）。
-const MAX_WINDOWS: usize = 240;
+/// 弹幕窗请求的 `need_danmaku_guide_type`（2026-10-25 官方实流 83 窗里
+/// 73 窗发 `[2]`，空数组仅见冷启动首拉——统一按官方常态发 `[2]`）。
+const DANMAKU_GUIDE_TYPE: i64 = 2;
 
-/// 拉一集的**全部**弹幕（内部按官方滚窗协议循环到 has_more=false）。
-///
-/// `group_id` 是分集 vid，`book_id` 是 series_id——两个都来自剧集档案。
-pub async fn fetch_danmaku_all(
-    group_id: &str,
-    book_id: &str,
-    env: &ApiEnv,
-) -> AppResult<Vec<Danmaku>> {
-    let mut all: Vec<Danmaku> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut cursor = String::new();
-    let mut start_ms = 0u64;
-    for _ in 0..MAX_WINDOWS {
-        let page = fetch_danmaku_window_page(group_id, book_id, start_ms, 0, &cursor, env).await?;
-        let has_more = page.has_more;
-        cursor = page.next_cursor;
-        start_ms = page.next_start_ms;
-        for d in page.items {
-            if seen.insert(d.comment_id.clone()) {
-                all.push(d);
-            }
-        }
-        if !has_more || cursor.is_empty() {
-            break;
-        }
-    }
-    all.sort_by_key(|d| d.offset_ms);
-    Ok(all)
-}
-
+/// 弹幕必须**随播放进度滚窗**（官方 7.3.9.32 唯一形态）：medusa 风控
+/// 降级下每窗少量条目且 `has_more=false`，不存在「一次拉全」路线——
+/// 官方客户端就是播到哪拉到哪（2026-10-25 实流：窗序列 0/30s/60s/90s
+/// 随播放推进）。壳侧按 [`fetch_danmaku_window_page`] + 播放位置推进
+/// 实现（GPUI `advance_danmaku_window` / Tauri 播放页滚窗 effect）。
+/// 注意 `business_param.playlet_item_duration` 仍须传真值毫秒（服务端
+/// 端点校验需要，注释见命令侧）。
 /// 一窗弹幕。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DanmakuWindowPage {
     pub items: Vec<Danmaku>,
     /// 还有下一窗/下一页。
@@ -115,7 +96,7 @@ fn danmaku_payload(
         "aid": 8662,
         "business_param": {
             "book_id": book_id,
-            "need_danmaku_guide_type": [],
+            "need_danmaku_guide_type": [DANMAKU_GUIDE_TYPE],
             "playlet_item_duration": item_duration_ms,
             "start_offset_time": start_offset_ms,
         },
@@ -259,7 +240,7 @@ mod tests {
         assert_eq!(p["business_param"]["playlet_item_duration"], 199000);
         assert_eq!(
             p["business_param"]["need_danmaku_guide_type"],
-            serde_json::json!([])
+            serde_json::json!([DANMAKU_GUIDE_TYPE])
         );
         assert_eq!(p["cursor"], "");
     }
@@ -448,7 +429,11 @@ mod tests {
 mod probe {
     use super::*;
 
-    /// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+    /// probe 专用的翻页上限（评论区全量对账用；生产代码按页返回）。
+    const MAX_WINDOWS: usize = 240;
+
+    /// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见
+    /// [`MAX_WINDOWS`]）。
     ///
     /// 热门集会拉几百页，command 层已改用 [`fetch_comments_page`] 按页返回；
     /// 本函数只服务 probe 全量对账，与生产代码无关。
@@ -482,42 +467,33 @@ mod probe {
 
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
-    async fn probe_danmaku_full() {
+    async fn probe_danmaku_window() {
         let env = ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
-        {
-            // 首窗元数据：官方降级形态（medusa 风控低档）每窗仅少量条目 +
-            // has_more=false；全量形态应有 cursor 带 danmaku_window_count
-            let w = fetch_danmaku_window_page(
-                "7680669690372312089",
-                "7680564528135818302",
-                0,
-                199000,
-                "",
-                &env,
-            )
-            .await
-            .expect("首窗");
-            println!(
-                "[danmaku-win1] items={} has_more={} next_start={} cursor={:?}",
-                w.items.len(),
-                w.has_more,
-                w.next_start_ms,
-                &w.next_cursor[..w.next_cursor.len().min(200)]
-            );
-        }
-        let all = fetch_danmaku_all("7680669690372312089", "7680564528135818302", &env)
-            .await
-            .expect("整集弹幕");
+        // 首窗形态：medusa 风控降级每窗少量条目 + has_more=false（滚窗协议
+        // 没有全量拉取路线，客户端随播放推进逐窗请求）；cursor/next_start
+        // 是下一窗推进链的依据
+        let w = fetch_danmaku_window_page(
+            "7680669690372312089",
+            "7680564528135818302",
+            0,
+            199000,
+            "",
+            &env,
+        )
+        .await
+        .expect("首窗");
         println!(
-            "[danmaku-full] {} 条，前 5: {:?}",
-            all.len(),
-            &all[..all.len().min(5)]
+            "[danmaku-win1] items={} has_more={} next_start={} cursor={:?}",
+            w.items.len(),
+            w.has_more,
+            w.next_start_ms,
+            &w.next_cursor[..w.next_cursor.len().min(200)]
         );
-        assert!(!all.is_empty(), "这一集实测有弹幕");
-        // 时间轴升序（fetch_danmaku_all 已排序）
-        let mut sorted = all.clone();
+        assert!(!w.items.is_empty(), "这一集实测有弹幕");
+        // 窗内按时间轴升序
+        let mut sorted = w.items.clone();
         sorted.sort_by_key(|d| d.offset_ms);
-        assert_eq!(all, sorted);
+        assert_eq!(w.items, sorted);
     }
 
     /// 评论区（ct=4/src=4）匿名可读性探测：2026-10-06 实录旧弹幕形态被拒

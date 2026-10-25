@@ -46,13 +46,46 @@ function diggInPages<P extends { items: Array<{ userDigg: boolean; diggCount: nu
   };
 }
 
-/** 一集的弹幕（按 vid；后端已按时间轴排序并拉全窗口）。 */
-export function useDanmaku(vid: string) {
+/** 一窗弹幕（command 响应的形状；与 registry 的 danmaku_window 契约同源）。 */
+export interface DanmakuWindow {
+  items: Danmaku[];
+  hasMore: boolean;
+  nextCursor: string;
+  nextStartMs: number;
+}
+
+/** 弹幕滚窗翻页参数。 */
+interface DanmakuWindowParam {
+  startMs: number;
+  cursor: string;
+}
+
+/**
+ * 一集的弹幕（按 vid，**随播放进度滚窗**）：官方 30 秒滚窗协议在 medusa
+ * 风控降级下每窗 `hasMore=false`，不存在一次拉全——这里用无限查询按窗
+ * 铺页（首页 startMs=当前播放位置，之后 `nextStartMs`/`nextCursor` 链式
+ * 推进），由播放器在逼近已拉边界时 `fetchNextPage` 预取（官方播到哪拉
+ * 到哪）。startSecs = 播放器 metadata 就绪后采样的当前播放位置（官方
+ * 「播到哪从哪拉」，续播不再从 0 补拉废窗），null = 视频未就绪（查询
+ * 禁用）。durationSecs 传该集时长（秒）。
+ */
+export function useDanmaku(vid: string, durationSecs = 0, startSecs: number | null = null) {
   const { groupId, bookId } = parseVid(vid);
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: keys.danmaku(vid),
-    queryFn: () => danmakuCmd.list(groupId, bookId),
-    enabled: vid.includes(':'),
+    queryFn: ({ pageParam }: { pageParam: DanmakuWindowParam }) =>
+      danmakuCmd.window(groupId, bookId, pageParam.startMs, durationSecs, pageParam.cursor),
+    initialPageParam: {
+      startMs: Math.max(0, Math.floor((startSecs ?? 0) * 1000)),
+      cursor: '',
+    } satisfies DanmakuWindowParam,
+    // 降级形态 hasMore 恒 false——推进链只由 nextCursor/nextStartMs 是否
+    // 还在决定（GPUI advance_danmaku_window 同口径，hasMore 仅参考）
+    getNextPageParam: (last): DanmakuWindowParam | undefined =>
+      last.nextCursor && last.nextStartMs > 0
+        ? { startMs: last.nextStartMs, cursor: last.nextCursor }
+        : undefined,
+    enabled: vid.includes(':') && startSecs !== null,
     // 播放器已有带上下文的定制 toast（「不影响播放」），全局不再重复弹
     meta: { silentOnError: true },
     staleTime: 0,
@@ -60,8 +93,9 @@ export function useDanmaku(vid: string) {
 }
 
 /**
- * 发弹幕：成功后把新弹幕乐观追加进该集的弹幕缓存（服务端列表有延迟，
- * 不追的话用户发完看不见自己的弹幕）。
+ * 发弹幕：成功后把新弹幕乐观追加进该集弹幕缓存的**最后一窗**（服务端
+ * 列表有延迟，不追的话用户发完看不见自己的弹幕）。同一 vid 会因首窗
+ * 起点不同带不同的 key 尾参，按 key[1]（vid）谓词匹配全部窗页缓存。
  */
 export function useSendDanmaku() {
   const queryClient = useQueryClient();
@@ -71,13 +105,23 @@ export function useSendDanmaku() {
       return interactCmd.sendDanmaku(groupId, bookId, input.text, input.offsetMs);
     },
     onSuccess: (commentId, input) => {
-      queryClient.setQueryData<Danmaku[]>(keys.danmaku(input.vid), (prev) => {
-        const next = prev ?? [];
-        return [
-          ...next,
-          { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
-        ].sort((a, b) => a.offsetMs - b.offsetMs);
-      });
+      queryClient.setQueriesData<InfiniteData<DanmakuWindow, DanmakuWindowParam>>(
+        { predicate: (q) => q.queryKey[0] === 'danmaku' && q.queryKey[1] === input.vid },
+        (prev) => {
+          if (!prev) return prev;
+          const pages = prev.pages.map((p, i) => {
+            if (i !== prev.pages.length - 1) return p;
+            return {
+              ...p,
+              items: [
+                ...p.items,
+                { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
+              ].sort((a, b) => a.offsetMs - b.offsetMs),
+            };
+          });
+          return { ...prev, pages };
+        },
+      );
     },
   });
 }

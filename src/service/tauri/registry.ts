@@ -121,9 +121,20 @@ export const COMMANDS = {
   open_merge_output: { args: z.object({ id: z.string() }), response: voidResp },
 
   // ---- 弹幕 / 评论 / 剧评 --------------------------------------------
-  danmaku_list: {
-    args: z.object({ groupId: z.string(), bookId: z.string() }),
-    response: danmakuSchema.array(),
+  danmaku_window: {
+    args: z.object({
+      groupId: z.string(),
+      bookId: z.string(),
+      startMs: z.number(),
+      durationSecs: z.number(),
+      cursor: z.string(),
+    }),
+    response: z.object({
+      items: danmakuSchema.array(),
+      hasMore: z.boolean(),
+      nextCursor: z.string(),
+      nextStartMs: z.number(),
+    }),
   },
   comment_list: {
     args: z.object({

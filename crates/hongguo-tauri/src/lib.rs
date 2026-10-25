@@ -215,7 +215,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::device_cmd::device_status,
             commands::device_cmd::device_retry_register,
             // 弹幕
-            commands::danmaku_cmd::danmaku_list,
+            commands::danmaku_cmd::danmaku_window,
             commands::danmaku_cmd::comment_list,
             commands::danmaku_cmd::series_comment_list,
             commands::danmaku_cmd::series_review_send,

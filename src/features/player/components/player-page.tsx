@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -180,11 +180,58 @@ export function PlayerView({
   // video_detail 接口的 series_intro，官方 App 详情页同源
   const { data: meta } = useSeriesDetailMeta(seriesId ?? '');
 
-  // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存
+  // 弹幕：vid 来自剧集档案的分集表，换集自动换一份缓存。
+  // 滚窗协议（官方唯一形态）：首窗起点 = 当前播放位置（metadata 就绪、
+  // 续播 seek 已应用后采样，官方「播到哪从哪拉」），后续窗由下面的推进
+  // effect 在播放位置逼近已拉边界时预取（领先 10s 给请求留时间，边界处
+  // 不断档）。
   const currentVid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
   // 当前集的公开计数（detail 接口下发；右栏 ♥/💬 数字）
   const currentEpisode = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
-  const danmakuQuery = useDanmaku(currentVid ? `${currentVid}:${seriesId}` : '');
+  // 首窗起点：metadata 就绪前 null（查询禁用），就绪后采样当前位置。
+  // 换集即重置——否则新集会拿着上一集的播放位置当首窗起点（渲染期
+  // 重置是 React 官方模式：同一次渲染内修正，不落地旧状态）
+  const [danmakuStartVid, setDanmakuStartVid] = useState('');
+  const [danmakuStartSecs, setDanmakuStartSecs] = useState<number | null>(null);
+  if (danmakuStartVid !== currentVid) {
+    setDanmakuStartVid(currentVid);
+    setDanmakuStartSecs(null);
+  }
+  const handleLoadedMetadataWithDanmaku = useCallback(() => {
+    handleLoadedMetadata();
+    setDanmakuStartSecs(Math.floor(videoRef.current?.currentTime ?? 0));
+  }, [handleLoadedMetadata, videoRef]);
+  const danmakuQuery = useDanmaku(
+    currentVid ? `${currentVid}:${seriesId}` : '',
+    currentEpisode?.duration ?? 0,
+    danmakuStartSecs,
+  );
+  const danmakuItems = useMemo(
+    () => danmakuQuery.data?.pages.flatMap((p) => p.items) ?? [],
+    [danmakuQuery.data],
+  );
+  // 滚窗推进：播放位置 + 领先量触到已拉 frontier 的下一窗起点就续拉
+  // （官方客户端播到哪拉到哪；降级形态 hasMore=false 的窗也带下一窗
+  // 起点与 cursor，链条由 nextCursor 空否终止）。依赖只收原始值——
+  // query 对象每次渲染都是新身份，进依赖会让 interval 永远活不到触发；
+  // 实例经 ref 取（fetchNextPage 在 v5 引用稳定）。
+  const danmakuNextStartMs = danmakuQuery.data?.pages.at(-1)?.nextStartMs ?? 0;
+  const danmakuHasNext = danmakuQuery.hasNextPage;
+  const danmakuFetchingNext = danmakuQuery.isFetchingNextPage;
+  const danmakuQueryRef = useRef(danmakuQuery);
+  useEffect(() => {
+    danmakuQueryRef.current = danmakuQuery;
+  });
+  useEffect(() => {
+    if (!danmakuHasNext || danmakuFetchingNext || !danmakuNextStartMs) return;
+    const timer = setInterval(() => {
+      const t = videoRef.current?.currentTime;
+      if (t != null && t * 1000 + 10_000 >= danmakuNextStartMs) {
+        void danmakuQueryRef.current.fetchNextPage();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [danmakuHasNext, danmakuFetchingNext, danmakuNextStartMs, videoRef]);
   // 无 HEVC 扩展机器的安装引导数据源（false 才弹卡，探测未落定不渲染）
   const { data: hevcPlayable } = usePlaybackCapability();
   /**
@@ -556,7 +603,7 @@ export function PlayerView({
                     miniScreen ? 'object-cover' : 'object-contain',
                   )}
                   autoPlay
-                  onLoadedMetadata={handleLoadedMetadata}
+                  onLoadedMetadata={handleLoadedMetadataWithDanmaku}
                   onPlay={() => {
                     // 这里不再唤醒悬浮层：play 事件分不清「用户按的播放」还是
                     // 「切集后的自动起播」，而后者亮操作栏正是「自动下一集抢占
@@ -622,7 +669,7 @@ export function PlayerView({
                 )}
                 <DanmakuLayer
                   videoRef={videoRef}
-                  items={danmakuQuery.data ?? []}
+                  items={danmakuItems}
                   enabled={danmakuOn}
                   display={danmakuDisplay}
                 />

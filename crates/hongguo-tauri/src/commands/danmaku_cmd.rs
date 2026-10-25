@@ -3,47 +3,45 @@
 use tauri::State;
 
 use hongguo_api::danmaku::{
-    CommentItem, CommentPage, CreatorProfile, CreatorWorksPage, Danmaku, ReplyPage,
+    CommentItem, CommentPage, CreatorProfile, CreatorWorksPage, DanmakuWindowPage, ReplyPage,
     SeriesReviewPage, fetch_comment_replies, fetch_comments_page, fetch_creator_profile,
-    fetch_creator_works, fetch_danmaku_all, fetch_review_replies, fetch_series_comments_page,
-    send_series_review,
+    fetch_creator_works, fetch_danmaku_window_page, fetch_review_replies,
+    fetch_series_comments_page, send_series_review,
 };
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
 
-/// 拉一集的全部弹幕（后端按 30 秒窗口循环到 has_more=false）。
+/// 拉一集弹幕的**一窗**（官方 7.3.9.32 滚窗协议；medusa 风控降级下没有
+/// 全量拉取路线，壳侧随播放进度逐窗推进——GPUI `advance_danmaku_window`
+/// 与 Tauri 播放页滚窗 effect 同语义）。
 ///
-/// `groupId` 是分集 vid，`bookId` 是 series_id，都来自剧集档案的分集表。
+/// `groupId` 是分集 vid，`bookId` 是 series_id，都来自剧集档案的分集表；
+/// `startMs` 播放位置窗起点（首页 0，之后传上一窗响应的 `nextStartMs`）；
+/// `durationSecs` 该集时长（秒，分集表 duration，body 里换算毫秒）；
+/// `cursor` 上一窗响应的 `nextCursor` 原样回传（首页空串）。
 #[tauri::command]
-pub async fn danmaku_list(
+pub async fn danmaku_window(
     state: State<'_, AppState>,
     group_id: String,
     book_id: String,
-) -> AppResult<Vec<Danmaku>> {
+    start_ms: u64,
+    duration_secs: i64,
+    cursor: String,
+) -> AppResult<DanmakuWindowPage> {
     let env = state.api_env();
-    match fetch_danmaku_all(&group_id, &book_id, &env).await {
-        Ok(list) => {
-            let preview: Vec<String> = list
-                .iter()
-                .take(5)
-                .map(|d| format!("{}ms·{:?}", d.offset_ms, d.text))
-                .collect();
-            log::info!(
-                "[Danmaku] group={group_id} book={book_id} 拉到 {} 条{}",
-                list.len(),
-                if preview.is_empty() {
-                    String::new()
-                } else {
-                    format!("（前几条: {}）", preview.join(" | "))
-                }
-            );
-            Ok(list)
-        }
-        Err(e) => {
-            log::warn!("[Danmaku] group={group_id} book={book_id} 拉取失败: {e}");
-            Err(e)
-        }
+    let duration_ms = duration_secs.max(0) as u64 * 1000;
+    let page =
+        fetch_danmaku_window_page(&group_id, &book_id, start_ms, duration_ms, &cursor, &env).await;
+    match &page {
+        Ok(w) => log::info!(
+            "[Danmaku] group={group_id} start={start_ms}ms 窗 {} 条 has_more={} next_start={}",
+            w.items.len(),
+            w.has_more,
+            w.next_start_ms
+        ),
+        Err(e) => log::warn!("[Danmaku] group={group_id} start={start_ms}ms 拉取失败: {e}"),
     }
+    page
 }
 
 /// 拉播放页**评论区一页**（单集维度流，2026-10-16 官方实包形态：
@@ -184,8 +182,8 @@ mod tests {
         let src = include_str!("danmaku_cmd.rs");
         let sig = src
             .lines()
-            .find(|l| l.contains("fn danmaku_list("))
-            .expect("应能找到 danmaku_list 的签名");
+            .find(|l| l.contains("fn danmaku_window("))
+            .expect("应能找到 danmaku_window 的签名");
         assert!(sig.contains("pub async fn"), "必须是 async: {sig}");
     }
 }
