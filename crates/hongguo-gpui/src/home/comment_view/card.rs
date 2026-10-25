@@ -83,6 +83,17 @@ impl HomeView {
                                         ),
                                     )),
                             )
+                            // 附图（官方两态：本地图片 / 表情图片；纯文字评论无）
+                            .children(c.images.iter().filter_map(|item| {
+                                self.emoticon_image(item).map(|image| {
+                                    div()
+                                        .mt_1()
+                                        .size_16()
+                                        .rounded(gpui_kit::px(6.0))
+                                        .overflow_hidden()
+                                        .child(image)
+                                })
+                            }))
                             .child(
                                 h_flex()
                                     .items_center()

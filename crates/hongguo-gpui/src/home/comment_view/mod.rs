@@ -6,6 +6,8 @@ mod composer;
 #[cfg(feature = "screenshot")]
 mod debug;
 mod delete_dialog;
+pub(super) mod emoticon;
+mod emoticon_delete_dialog;
 mod list;
 mod mention;
 
@@ -52,10 +54,13 @@ impl HomeView {
             // on_click(stop)，是同一件事的第二道拦截，没有额外作用。
             .child(self.render_comment_panel_header(cx))
             .child(self.render_comment_list(cx))
-            .child(self.render_comment_composer(cx))
+            // 表情面板开着时，列表区盖一层捕获层（点外面收起面板）；发送区
+            // 排在捕获层**之后**——捕获层只挡列表，输入框照常可点（面板
+            // 本身也住在发送区里，见 composer.rs 的 render_emoji_picker）。
             .children(self.render_emoji_backdrop(cx))
-            .children(self.render_emoji_picker(cx))
+            .child(self.render_comment_composer(cx))
             .children(self.render_delete_dialog(cx))
+            .children(self.render_emoticon_delete_dialog(cx))
             .into_any_element()
     }
 

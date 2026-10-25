@@ -359,6 +359,17 @@ pub struct HomeView {
     ai_polling: bool,
     /// 评论面板的表情选择器开着（笑脸按钮 toggle；连选不关面板）。
     emoji_picker_open: bool,
+    /// 表情面板状态（档位 + 第三方/自定义列表）。
+    emoticon_panel: comment_view::emoticon::EmoticonPanel,
+    /// 表情操作菜单目标（官方同款：长按表情 → 「添加到表情」/「删除表情」）。
+    /// Some((表情, 是否可删)) = 菜单目标；None = 未打开。
+    emoticon_menu: Option<(hongguo_api::emoticon::Emoticon, bool)>,
+    /// 待确认删除的表情（删除走官方同款二次确认浮层）。
+    emoticon_delete_target: Option<hongguo_api::emoticon::Emoticon>,
+    /// 表情图解码缓存（URL → 位图；面板与评论里的图共用）。
+    emoticon_images: std::collections::HashMap<String, Arc<gpui_kit::RenderImage>>,
+    /// 待发送的评论附图（表情图片；官方两态：第三方 2 / 自定义 4）。
+    comment_attachment: Option<(hongguo_api::emoticon::Emoticon, Option<i64>)>,
     // —— 壳内登录（SMS；Tauri 登录页对齐的最小面）——
     login_panel_open: bool,
     login_mobile: Option<Entity<InputState>>,
@@ -650,6 +661,11 @@ impl HomeView {
             ai_pending: Vec::new(),
             ai_polling: false,
             emoji_picker_open: false,
+            emoticon_panel: comment_view::emoticon::EmoticonPanel::default(),
+            emoticon_menu: None,
+            emoticon_delete_target: None,
+            emoticon_images: HashMap::new(),
+            comment_attachment: None,
             login_panel_open: false,
             // 字段标签在卡片里（Tauri FieldLabel 同款），输入框不再塞占位文案
             login_mobile: Some(cx.new(|cx| InputState::new(window, cx))),

@@ -179,6 +179,13 @@ impl super::HomeView {
                     for url in urls {
                         crate::cover_img::prewarm_avatars(std::slice::from_ref(&url), cx);
                     }
+                    // 评论附图（本地图片 / 表情图片）同样要预解码才画得出来
+                    let image_urls: Vec<String> = view
+                        .comments
+                        .iter()
+                        .flat_map(|c| c.images.iter().map(|item| item.web_uri.clone()))
+                        .collect();
+                    view.prewarm_emoticon_images(&image_urls, cx);
                 }
                 cx.notify();
             });
@@ -198,7 +205,8 @@ impl super::HomeView {
         let raw = input.read(cx).value().to_string();
         let is_mention = raw.contains('\u{FFFC}');
         let text = strip_mention_segment(&raw);
-        if (text.is_empty() && !is_mention) || self.comment_sending {
+        let has_attachment = self.comment_attachment.is_some();
+        if (text.is_empty() && !is_mention && !has_attachment) || self.comment_sending {
             return;
         }
         if !self.logged_in() {
@@ -225,14 +233,22 @@ impl super::HomeView {
                     .collect(),
             });
         let send_mention = mention.is_some();
+        // 附图（官方两态：第三方表情 2 / 自定义表情 4；正文可空）
+        let attachment = self.comment_attachment.clone();
         self.comment_sending = true;
         let state = Arc::clone(&self.state);
         let (vid, sid) = (now.vid.clone(), now.series_id.clone());
         let rx = bridge::spawn(async move {
             let env = state.api_env();
+            let attachment = attachment.map(|(image, emoji_scene_type)| {
+                hongguo_api::emoticon::CommentAttachment {
+                    image,
+                    emoji_scene_type,
+                }
+            });
             match mention {
                 Some(m) => send_comment_mention(&vid, &sid, &m, &text, &env).await,
-                None => send_comment(&vid, &sid, &text, &env).await,
+                None => send_comment(&vid, &sid, &text, attachment.as_ref(), &env).await,
             }
         });
         cx.spawn(async move |this, cx| {
@@ -249,6 +265,8 @@ impl super::HomeView {
                         view.comments_total += 1;
                         view.ep_comment_count += 1;
                         view.comment_clear_input = true;
+                        // 附图随评论发出后清掉草稿附件（官方同款：发完即清）
+                        view.comment_attachment = None;
                         // @提及评论：回复区强制展开 + 起 AI 回复轮询
                         // （Tauri setAiPending + setReplySectionOpen 同款）
                         if send_mention {
