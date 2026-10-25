@@ -236,6 +236,12 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::interact_cmd::series_collect_batch,
             // @小果AI 提及（评论区快捷图标）
             commands::interact_cmd::mention_list,
+            // 表情（官方表情 / 第三方 GIF / 自定义表情，2026-10-25 实包锁定）
+            commands::emoticon_cmd::emoticon_list,
+            commands::emoticon_cmd::emoticon_search,
+            commands::emoticon_cmd::emoticon_upload,
+            commands::emoticon_cmd::emoticon_collect,
+            commands::emoticon_cmd::emoticon_delete,
             // 追更（开关 / 列表 / 是否已追 / 更新提醒）
             commands::follow_cmd::follow_update,
             commands::follow_cmd::follow_updates,

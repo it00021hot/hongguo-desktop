@@ -6,6 +6,7 @@
 use serde::Deserialize;
 use tauri::State;
 
+use hongguo_api::emoticon::{CommentAttachment, Emoticon};
 use hongguo_api::interact::CommentMention;
 use hongguo_api::interact::{
     BookshelfEntry, CommentItem, InteractionState, MentionUser, ReplyItem, collect_series,
@@ -54,6 +55,15 @@ pub async fn danmaku_send(
 /// 流里的提及评论带 AI 回复，见 flows-official-follow.jsonl:3314）。
 /// `mention_user_name` 是被提及者昵称——text 前缀与段文本都是
 /// `@昵称\u{FFFC}`，缺了会张冠李戴成「小果」。
+///
+/// `image` 在场 = **附图评论**（2026-10-25 官方实包）：body 顶层多
+/// `image_data`，表情类另带 `business_param.emoji_scene_type`（第三方
+/// 表情 2 / 自定义表情 4；本地图片评论**不带**）。附图与 @提及是官方两套
+/// 形态，附图在场时走附图流（正文可空）。
+#[expect(
+    clippy::too_many_arguments,
+    reason = "平铺参数表与 registry.ts 的 IPC 契约一一对应，包结构体反而要二次拆装"
+)]
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
@@ -63,6 +73,8 @@ pub async fn comment_send(
     mention_user_id: Option<String>,
     mention_user_name: Option<String>,
     context_comment_ids: Option<Vec<String>>,
+    image: Option<Emoticon>,
+    emoji_scene_type: Option<i64>,
 ) -> AppResult<CommentItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
@@ -76,12 +88,17 @@ pub async fn comment_send(
         }),
         _ => None,
     };
-    if text.is_empty() && mention.is_none() {
+    let attachment = image.map(|image| CommentAttachment {
+        image,
+        emoji_scene_type,
+    });
+    if text.is_empty() && mention.is_none() && attachment.is_none() {
         return Err(hongguo_common::AppError::Media("评论内容为空".into()));
     }
-    match &mention {
-        Some(m) => send_comment_mention(&group_id, &book_id, m, &text, &env).await,
-        None => send_comment(&group_id, &book_id, &text, &env).await,
+    match (&mention, &attachment) {
+        (Some(m), _) => send_comment_mention(&group_id, &book_id, m, &text, &env).await,
+        (None, Some(att)) => send_comment(&group_id, &book_id, &text, Some(att), &env).await,
+        (None, None) => send_comment(&group_id, &book_id, &text, None, &env).await,
     }
 }
 
