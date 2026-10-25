@@ -22,6 +22,7 @@
 - **语义令牌禁硬编码色值**（硬红线 11 的 GPUI 对应条）：颜色一律走 gpui_kit `ActiveTheme` 主题令牌，亮暗主题都不得写死；唯一例外是播放器控制栏 / 互动栏 / 评论面板的播放器红色皮肤。
 - **图标两分**：通用组件图标用 gpui_kit `Icon` + `IconName`（assets 集合）；自绘图标（播放器控制栏的 B 站形态弹幕/网页全屏/小窗）走 `home/player_icons.rs` 模式——几何内嵌 SVG 字节（`assets/player/*.svg`）1:1 移植 Tauri 版、`fill/stroke` 全 `currentColor`、激活态由外层 `text_color` 接管、不经 AssetSource；含汉字的图标（「弹」字方框）用 div 拼文本，不吃 SVG `<text>` 的系统字体回退。
 - **点击穿透**：重叠 bounds 的层（悬浮层 / 面板 / 控制条）必须 `stop_propagation`，否则点击透到下层。
+- **表情面板定位口径**：浮在发送区**上方**、底边对齐发送区**顶边**（`bottom(relative(1.0))` + 容器 `relative()`），发送区自己的行（附件预览 / 回复目标 / 输入行）永不被面板盖住；与 Tauri 壳 `EmojiPickerButton anchorTo="send-area"` 同款。面板是发送区的**子节点**，点外部收起的捕获层必须排在发送区**之前**（捕获层只挡评论列表，发送区照常可点）。
 - **组件优先 gpui_kit**（Sidebar / Button / Input / Slider…）；确需新原语先读 gpui-ui-design 的 coding guides。Tauri 端已有的交互形态（信息架构、面板行为、皮肤）是默认对齐基准，不另起炉灶。
 - **视图字段私有**：跨模块给视图种数据只能长在 home 树内（`impl HomeView` 才够得着），不为此开 pub 字段。
 

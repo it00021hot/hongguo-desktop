@@ -944,6 +944,122 @@ user_digg_timestamp_ms, video_detail{followed, followed_cnt, series_title}}`。
 用途：打开播放页时 best-effort 回显「已赞/已追」状态（列表 100 条内匹配
 vid / series_id）；单集精确查询接口未抓到。
 
+### 9.6 表情域（2026-10-25 官方 App 7.3.9.32 实抓锁定）
+
+官方评论输入框的表情面板已是**四档**（面板图标：🔍 搜索 / 😀 系统表情 /
+♡ 自定义 / GIF 第三方）。前三档与发送形态逐条如下。
+
+#### 9.6.1 表情列表 `GET /reading/ugc/comment/emoticon/v`
+
+query 业务参数：`count` / `offset` / `search_type` / `keyword`（`keyword` 仅
+搜索档与自定义档带）。`search_type` 四档（抓包逐档实证）：
+
+| search_type | 官方面板 tab id | keyword | 抓包实证 |
+| --- | --- | --- | --- |
+| 1 | （搜索页，独立入口） | 用户输入（**带 `+` 前缀 = 前缀匹配**） | 逐字输入时抓到 `+c` → `+ca` → `+cat` |
+| 2 | 服务端动态 tab（GIF） | 无 | `count=100&offset=0`，`has_more=true&next_offset=100`（分页） |
+| 3 | `emoticon` | 无 | `count=99&offset=0`；**收藏前后都返回空列表**，面板无对应入口 → 本仓不实现 |
+| 4 | `profile`（♡ 我的表情） | `profile`（恒定） | `count=49&keyword=profile&offset=0` |
+
+- 官方每次打开表情面板会**并发**拉 2 / 3 / 4 三档（抓包时间戳同毫秒）
+- 官方 APK 逆向（`KmpSaasEmojiViewModel`，2026-10-25）确认固定 tab id 是
+  `emoji`（本地系统表情，**无网络请求**）/ `profile` / `emoticon`，其余 tab
+  由服务端下发
+- ♡ 档（`search_type=4`）是**我的表情**：我上传的与我收藏的在**同一列表**
+  （实抓：收藏一个官方 GIF 后该档条目由 2 条变 3 条）
+
+响应 `data`：`{info_list:[...], has_more:bool, next_offset:int}`。条目字段：
+
+```json
+{
+  "id": "6996174263220784397",
+  "web_uri": "https://p26-im-emoticon-sign.byteimg.com/xxx~tplv-3jr8j4ixpe-resize:450:450.jpeg?lk3s=…",
+  "dynamic_url": "https://p26-im-emoticon-sign.byteimg.com/xxx~tplv-3jr8j4ixpe-resize:450:450.gif?lk3s=…",
+  "width": 450, "height": 450, "format": "", "image_type": 2,
+  "thumb_nails": [{"web_uri": "", "dynamic_url": "…resize:100:100.gif", "width": 100, "height": 100, "format": ""}],
+  "image_name": ""
+}
+```
+
+- `image_type`：**1 = 静态图 / 2 = 动图**（第三方 GIF 档恒 2）
+- `format` 与 `image_name` 官方条目**恒空串**（别当缺省值省掉）
+- 自定义表情（`search_type=4`）的条目另带 `expand_web_url`（展开大图）
+- 官方面板在第三方档顶部标注「内容来自于第三方」
+
+#### 9.6.2 图片上传 `POST /reading/reader/upload/picture/`
+
+- query：`need_encrypt=0`
+- body：**multipart/form-data**（**不 gzip**——reading 族其余接口才 gzip），
+  字段名 `picture`，`Content-Type: application/octet-stream`，
+  `Content-Transfer-Encoding: binary`，带 `Content-Length`
+- 响应：`{"code":0,"web_uri":"tos-cn-i-<bucket>/<hash>",
+  "data":"https://p0-reading-private.fqnovel.com/…~tplv-s85hriknmn-jpeg.jpeg?lk3s=…&policy=…"}`
+  ——`data` 是可直接引用的完整签名 URL（评论 `image_data.web_uri` 填它），
+  `web_uri` 是对象 key
+
+#### 9.6.3 添加 / 删除「我的表情」 `POST /reading/ugc/comment/emoticon/collect/v`
+
+body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序序列化）：
+
+```json
+{"collect_type":1,"image_height":449,"image_id":"7305929666710342938",
+ "image_type":2,"image_url":"https://p26-im-emoticon-sign.byteimg.com/…webp?…",
+ "image_width":425}
+```
+
+三种实抓形态（2026-10-25）：
+
+| 场景 | collect_type | image_id | image_url | image_type |
+| --- | --- | --- | --- | --- |
+| ♡ 档「+」上传本地图片 | 1 | `""` | 9.6.2 返回的 `data` 完整签名 URL | 1 |
+| 长按表情 / 长按评论附图「添加到表情」 | 1 | **源表情 id** | 该表情的静态 URL | 1 / 2 |
+| 长按 ♡ 档里的表情「删除表情」 | 2 | 我的表情 id | 我那份表情的 `web_uri` | 1 / 2 |
+
+- `image_url` 取值照官方 `ImageData` 拼接规则（`oi2.s.o`）：
+  `dynamic_url ?: web_url ?: web_uri`（`expand_web_url` 不参与）。实包里
+  收藏动图表情传的仍是**静态** `web_uri`（`image_type` 仍是 2）
+- 响应：添加回 `data.image_data` = 落库后的表情对象（带 `id` 与
+  `expand_web_url`）；**删除回 `data.image_data: null`**（没有可回显对象）
+- 官方 UI 入口：面板内长按表情、长按评论里的附图 → 弹「添加到表情」；
+  长按 ♡ 档里的表情 → 弹「删除表情」（删除还要二次确认「确定删除表情吗？」）
+- **删除也是同一端点**（`collect_type=2`），没有独立删除接口
+- 官方 ♡ 档的「上传自定义表情」= **上传（9.6.2）→ 收藏（9.6.3）**两步
+- 重复收藏服务端会拒：实测回 `{"code":101066,"message":"已添加过该表情"}`；
+  另一种形态是 `code=0` 但 `data.image_data` 为空（表情已在 ♡ 档里，
+  服务端不回显）。两种都按「服务端拒绝」处理，错误原文透传给用户
+
+#### 9.6.4 评论附图（`comment/add` 的 `image_data`）
+
+评论发送（9.3，`data_type=4`/`commit_source=3`）在附图时 body 顶层多
+`image_data`，表情类另带 `business_param.emoji_scene_type`：
+
+```json
+{
+  "commit_source": 3, "group_id": "<vid>", "group_type": 30, "data_type": 4, "text": "",
+  "image_data": [{
+    "web_uri": "…", "width": 196, "height": 196, "format": "", "id": "6996174263220784397",
+    "dynamic_url": "…", "image_type": 2,
+    "thumb_nails": [{"web_uri": "", "width": 100, "height": 100, "format": "", "dynamic_url": "…"}],
+    "image_name": ""
+  }],
+  "business_param": { …, "emoji_scene_type": 2 },
+  "aid": 8662
+}
+```
+
+| 场景 | `image_data` 条目 | `emoji_scene_type` |
+| --- | --- | --- |
+| 系统表情（😀 档） | **不带**（纯文本码 `[微笑]` 进 `text`，服务端无表情字段） | — |
+| 第三方 GIF（GIF 档） | 表情对象全量（`id`/`dynamic_url`/`thumb_nails`/`image_name` 在场，`image_type=2`） | **2** |
+| 自定义表情（♡ 档） | 表情对象全量（`image_type=1`，另带 `expand_web_url`） | **4** |
+| 本地图片（输入框「图片」钮） | 只有 `web_uri`（= 9.6.2 的 `data`）+ 宽高 + `format` + `image_type=1` | **不带** |
+
+- **本地图片是「发表时才上传」**：选图后**无任何请求**（实测），点发表才打
+  9.6.2，再带 `image_data` 发评论
+- 响应 `data.comment_info.common.content.image_data_list.image_data[]` 回显
+  附图（另带 `expand_web_url` / `web_url` 缩略形态 `-image-v1:300:0.heic`）；
+  纯图片评论的 `text` 为空串（`content_type=2`）
+
 ### 9.4.2 上报时机与历史页口径（2026-10-09 抓包实测；2026-10-25 官方 App 实流复核同形态）
 
 样本 `captures/flows-20261025-coldstart.jsonl`（官方 App 冷启动 + 全播放流程）。
@@ -997,11 +1113,11 @@ vid / series_id）；单集精确查询接口未抓到。
   剧评点赞（9.2.1）、剧评回复（9.3.1 剧评形态）——全部抓包锁定并落地；
   剩余未接：`read_history/list/v`（云端历史列表）、`book_pack_fields/v1`、
   `user/share/short_url/`、`read_progress/list|get`——按需再抓
-- **表情方案（前端，无网络请求）**：客户端内置 53 张本地 webp
-  （base64 内联 bundle），`[名字]` 文本码查表替换 `<img>`（正则
-  `/\[[^\[\]\s]{1,8}\]/g`，未匹配原样保留）；发送侧无表情 API 字段，
-  文本码直接进 text。本项目同方案已落地（`src/assets/emoji/` +
-  `utils/danmaku-emoji.ts` + `EmojiText`）
+- **表情方案（2026-10-25 官方 7.3.9.32 实抓重锁）**：官方评论/弹幕输入框
+  已是**四档面板**（见 9.5 节）——系统表情仍走内置 webp + `[名字]` 文本码
+  （发送侧纯文本，实测 `text:"[微笑]"`），另有第三方 GIF、自定义表情、
+  表情搜索三档走服务端，发送时带 `image_data`。本项目已按 9.5 节落地
+  （`crates/hongguo-api/src/emoticon/` + 两壳表情面板）
 
 ## 抓包数据文件
 
@@ -1026,7 +1142,24 @@ vid / series_id）；单集精确查询接口未抓到。
 1. `mitmdump -p 8080 -s captures/addon.py`（pip 装 mitmproxy ≥12；
    首次运行在 `~/.mitmproxy/` 生成 CA 并信任进系统——macOS 钥匙串 /
    Windows 证书存储）
-2. 官方 App 走模拟器抓包：`adb shell sh /data/local/tmp/hg-capture-apply.sh`
+2. 官方 App 走模拟器抓包：`adb push captures/hg-capture-apply.sh
+   /data/local/tmp/` + `adb shell sh /data/local/tmp/hg-capture-apply.sh`
    应用 CA bind-mount + 封 QUIC（重启模拟器后重跑），再
    `adb shell settings put global http_proxy 10.0.2.2:8080` 指向 mitmdump
-3. computer-use 驱动 UI 触发目标接口
+3. `python captures/ui.py dump|tap|shot` 驱动模拟器 UI（uiautomator；
+   截图用 `adb pull` 落盘，**别用 PowerShell 重定向**——它会改写二进制）
+4. 抓到的流量用 `python captures/flow.py <关键词> [--full]` 查（按端点/
+   域名过滤，打印 query/body/响应）
+
+⚠️ **模拟器 CA 装不上时的三个坑**（2026-10-25 实录，症状都是 mitmproxy
+侧 `Client TLS handshake failed … does not trust the proxy's certificate`）：
+
+1. **信任库真实路径是版本化 APEX**（`/apex/com.android.conscrypt@<版本>/cacerts`），
+   未版本化的 `/apex/com.android.conscrypt/cacerts` 在本机镜像上是**空壳目录**，
+   且 bind 到它会失败（脚本按通配符取真实目录）；
+2. **CA 文件权限要 644 + root:root**——从 `/sdcard` 复制来的证书带
+   media_rw 的 660 属主，App 进程读不到（日志里是
+   `DirectoryCertificateSrc: … open failed: EACCES`）；
+3. **SELinux 标签要 chcon 成 `system_security_cacerts_file`**——拷进
+   `/data/local/tmp` 的默认标签是 `shell_data_file`，App 同样读不到。
+

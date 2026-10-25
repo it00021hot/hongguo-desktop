@@ -84,6 +84,27 @@ for r in . browse rank new history collections; do node scripts/cdp.mjs probe "$
   深链 `?seriesId=<纯数字>` 会变空。`/detail` 的 `validateSearch` 已兜底，新路由照抄。
 - **Network 事件时序**：`Network.enable` 之前发生的请求收不到；probe 是导航前开
   监听，冷启动首页的首屏请求会漏——以落地路由之后的事件为准。
+- **PowerShell 吃内层双引号**：`node scripts/cdp.mjs eval "<js>"` 的 JS 里若带
+  双引号，PS 会把它当成参数分组符吃掉（页面报 `button is not defined` 之类）。
+  规矩：**外层双引号 + JS 内单引号**，别在 JS 里写双引号。
+- **截图会关掉 Radix 浮层**：`shot` 前后 Popover 可能已收起（截图动作让 WebView
+  失焦，Radix 判成 interact-outside）。要断言浮层内容，就把「点击→断言」放在
+  **同一次 eval** 里，截图只留到事后取证。
+- **Radix 的 role 别想当然**：Popover content 是 `role="dialog"`，而 shadcn 的
+  `AlertDialog`（确认框）落的是 `role="alertdialog"`。按 role 找确认框会选错
+  元素——认文案更稳（如按钮文字「删除」）。
+- **Radix 自定义锚点：锚点必须排在 trigger 之后**：`PopoverTrigger` 在
+  `hasCustomAnchor` 翻转前会被 `Popper.Anchor` 包一层，按钮的 ref 把 Popper 的
+  reference 抢走；翻转时 React 重建按钮、旧节点游离，而 Radix 跳过 `ref(null)`
+  （源码里是 `if (node)`）→ reference 永远停在游离节点上 → 量出 0 矩形 → 浮层
+  飞到**视口左上角**（不是"贴不到锚点"，是掉到原点）。React 按子节点顺序挂 ref，
+  把 `PopoverAnchor` 放到 `PopoverTrigger` 之后即可（后挂的赢）。**HMR 重建过之后
+  又会"正常"**——那是重建时锚点恰好重新挂上，别被它骗了：复现要**冷挂载**
+  （重开评论面板再开浮层）。
+- **floating-ui 只盯锚点的尺寸，不盯它的位置**：`autoUpdate` 的 ResizeObserver
+  观察 reference 的**尺寸**；锚点若是一条零高线（尺寸恒为 0），发送区长高
+  （附件预览出现）时锚点尺寸不变 → 不触发重定位 → 浮层停在旧位置，正好压住新
+  长出来的那一行。锚点要**盖住整个锚定区**（`absolute inset-0`），高度才会跟着走。
 
 ## 与 computer-use 的分工
 

@@ -106,3 +106,5 @@ export const useUiStore = create<UiState>()(
 ## 播放器专项（features/player）
 
 最敏感区域：取流/转码兜底/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 `features/player/hooks/`（use-playback-source / use-transcode-fallback / use-playback-progress / use-binge-relay / use-player-overlay / use-player-interactions / use-mini-window / use-danmaku-settings）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。
+
+- **表情面板定位口径**：浮在发送区**上方**，底边对齐发送区**顶边**——发送区自己的行（附件预览 / 回复目标 / 输入行）永不被面板盖住。评论区主发送框用 `EmojiPickerButton anchorTo="send-area"`（锚点铺满发送区），回复框与弹幕栏是单行输入、贴 trigger 浮起即可（`anchorTo="trigger"`）。两壳口径一致（GPUI 侧见 gpui.md）。自定义 Radix 锚点的两个坑（锚点必须排在 `PopoverTrigger` 之后、锚点要盖住锚定区才跟得上尺寸变化）见 `docs/webview-cdp-testing.md` 坑清单。
