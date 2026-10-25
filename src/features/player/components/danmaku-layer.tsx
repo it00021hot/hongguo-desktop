@@ -130,9 +130,12 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
           img.src = seg.url;
           img.alt = seg.value;
           img.draggable = false;
-          // 1.3em 见方、基线下沉 0.28em
+          // 1.3em 见方、基线下沉 0.28em。display:inline-block 必须显式给：
+          // Tailwind preflight 的 img{display:block} 会把表情图踢到文本
+          // 下一行（弹幕被撑成两行高），white-space:nowrap 拦不住块级盒
           img.style.cssText =
-            'width:1.3em;height:1.3em;margin:0 1px;vertical-align:-0.28em;object-fit:contain';
+            'display:inline-block;width:1.3em;height:1.3em;margin:0 1px;' +
+            'vertical-align:-0.28em;object-fit:contain';
           el.appendChild(img);
         }
       }
