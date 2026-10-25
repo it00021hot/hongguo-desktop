@@ -1,5 +1,5 @@
-//! 首页推荐流接口（书城换一换，hgplayer RecommendTab 同源同流程；
-//! 2026-10-08 抓包锁定，详见 docs/hongguo-api-endpoints.md）。
+//! 首页推荐流接口（书城换一换；2026-10-08 抓包锁定，2026-10-25 冷启动
+//! 全参数复对齐，详见 docs/hongguo-api-endpoints.md）。
 
 mod model;
 
@@ -13,13 +13,13 @@ use hongguo_common::{AppError, AppResult};
 
 pub use model::{FeedTabMeta, RecommendTabConfig};
 
-/// 拉一页首页推荐流（书城换一换，hgplayer RecommendTab 同源同流程）。
+/// 拉一页首页推荐流（书城换一换）。
 ///
 /// tab 表（bookmall/tab 下发）：推荐 16 / 漫剧 36 / 真人剧 39 / 关注 45
 /// （关注是登录后的追更流，不在这条数据面里）。生产链路里 tab 由前端
 /// 字面量直传（与旧 landpage genre 直传同一模式）。
 ///
-/// 抓包口径（2026-10-08，hgplayer 1.1.6 实操锁定，两段式）：
+/// 抓包口径（2026-10-08 实操锁定，两段式）：
 /// - **首页**：`GET bookmall/tab/v?client_req_type=4&tab_type=<T>`——目标
 ///   tab_item 自带 `bookstore_id` + `cell_id`（⚠️ **每 tab 不同**，用推荐位
 ///   的 id 打 tab39 服务端回落混合池、清一色 1004 漫剧——「真人 tab 全是
@@ -27,7 +27,7 @@ pub use model::{FeedTabMeta, RecommendTabConfig};
 ///   `cell_data[0].cell_data[].video_data[]`；
 /// - **翻页**：`GET cell/change/v`，双 id 用该 tab 自己的 + `session_id`
 ///   （首页下发）+ **`filter_ids`=已下发过的 series_id 逗号表**（服务端
-///   排除已见）+ `offset=0`（hgplayer 恒 0，不用响应的 next_offset）；
+///   排除已见）+ `offset=上一页响应的 next_offset`（0→6→12 递进）；
 /// - 内容按时间桶在服务端轮换，「换一批」= 新会话重拉（filter_ids 清空），
 ///   不做客户端偏移。
 pub async fn fetch_recommend_feed(
@@ -37,7 +37,7 @@ pub async fn fetch_recommend_feed(
     filter_ids: &[String],
     env: &ApiEnv,
 ) -> AppResult<super::discover::FeedPage> {
-    if session_id.is_empty() {
+    let page = if session_id.is_empty() {
         let (cfg, mut page) = fetch_tab_first_page(tab, env).await?;
         // 首批偶发空批：带着 cr=4 下发的会话直接走 cell/change 补拉
         if page.items.is_empty()
@@ -49,15 +49,19 @@ pub async fn fetch_recommend_feed(
             page.next_offset = fill.next_offset;
         }
         cache_tab_config_insert(tab, cfg);
-        Ok(page)
+        page
     } else {
         let cfg = resolve_tab_config(tab, env).await?;
-        recommend_cell_change(tab, &cfg, session_id, offset, filter_ids, env).await
+        recommend_cell_change(tab, &cfg, session_id, offset, filter_ids, env).await?
+    };
+    // 入口 vid 的条目类型进注册表：批量取流（预取/真播）的分组 key 来源
+    for item in &page.items {
+        super::play_url::register_content_type(&item.vid, item.content_type);
     }
+    Ok(page)
 }
 
-/// 抓包已知的每 tab 配置（2026-10-08，hgplayer 与本机设备取值一致——
-/// 服务端按 tab 下发的常量）。`fetch_tab_first_page` 失败时的兜底，
+/// 抓包已知的每 tab 配置（2026-10-08 抓包锁定——服务端按 tab 下发的常量）。`fetch_tab_first_page` 失败时的兜底，
 /// 供翻页继续可用（首页已成功过的会话不依赖它）。
 fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
     let (cell_id, bookstore_id) = match tab {
@@ -287,7 +291,7 @@ fn flex_str(v: Option<&Value>) -> Option<String> {
 
 /// `GET bookmall/tab/v?client_req_type=4&tab_type=<T>` →（配置, 首页）。
 ///
-/// hgplayer 切 tab 同款请求（2026-10-08 抓包锁定）。注意 tab_item 里的
+/// 切 tab 请求（2026-10-08 抓包锁定）。注意 tab_item 里的
 /// id 字段是 JSON 数字，容忍字符串形态。
 async fn fetch_tab_first_page(
     tab: &str,
@@ -359,7 +363,7 @@ async fn fetch_tab_first_page(
     };
     // tab 级 has_more 是 tab 列表语义（恒 false），流的分页真值由翻页的
     // cell/change 给——这里乐观置 true，翻到空页自然停；首批无 offset，
-    // 第一次翻页 offset=0（hgplayer 同款，之后用响应 next_offset 递进）
+    // 第一次翻页 offset=0，之后用响应 next_offset 递进
     let page = super::discover::FeedPage {
         session_id: flex_str(item.get("session_id")).unwrap_or_default(),
         has_more: true,
@@ -369,9 +373,127 @@ async fn fetch_tab_first_page(
     Ok((cfg, page))
 }
 
-/// 翻页：`GET cell/change/v`（hgplayer 同款：session + filter_ids 排除已见 +
+// ---------------------------------------------------------------- 会话与曝光上下文
+
+/// 官方 cell/change 的图片缩略规格（base64(JSON)，2026-10-25 冷启动抓包
+/// 逐字节对齐：360 中图 / 屏宽大图 / 99 小图——宽度跟随设备屏宽，本仓
+/// 档案 1078 与 tab/v 同源）。
+const FEED_IMAGE_SHRINK: &str = "W3siaW1hZ2VfdHlwZSI6MiwiaW1hZ2Vfd2lkdGgiOjM2MCwic2hyaW5rX3R5cGUiOjJ9LHsiaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==";
+
+/// 官方 cell/change 的推荐补充上下文：base64 即
+/// `{"recent_dislike_gid":[],"session_app_stay_time":0}`（2026-10-25 抓包）。
+const RECOMMEND_EXTRA: &str =
+    "eyJyZWNlbnRfZGlzbGlrZV9naWQiOltdLCJzZXNzaW9uX2FwcF9zdGF5X3RpbWUiOjB9";
+
+/// NPS 插入位配额（官方恒值，2026-10-25 抓包）。
+const NPS_INSERT_RANK_JSON: &str = r#"{"1":3,"3":3,"2":3,"4":3}"#;
+
+/// 进程生命周期的会话 UUID。官方每次启动发三枚 uuid 作 session_uuid /
+/// normal_session_id / cold_start_session_id；本仓用同一枚派生两形态
+/// （裸 uuid 与 `uuid#1`）——服务端只要求同会话内一致。
+fn session_uuid() -> &'static str {
+    static UUID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    UUID.get_or_init(uuid_v4)
+}
+
+/// 随机 UUID v4（不为此引入 uuid crate，rand 随机字节拼 8-4-4-4-12）。
+fn uuid_v4() -> String {
+    let mut b: [u8; 16] = rand::random();
+    b[6] = b[6] & 0x0f | 0x40; // version 4
+    b[8] = b[8] & 0x3f | 0x80; // variant 10xx
+    let hex = |range: std::ops::Range<usize>| {
+        b[range]
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect::<String>()
+    };
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex(0..4),
+        hex(4..6),
+        hex(6..8),
+        hex(8..10),
+        hex(10..16)
+    )
+}
+
+/// 一条已下发条目的曝光记录：响应卡片 `cell_extra_data.rec_filter_info`
+/// 的原样保留（content_type 字符串与 filter_id_map 不做映射猜测）。
+#[derive(Clone)]
+struct RecImpression {
+    content_type: String,
+    rec_group_id: i64,
+    filter_id_map: serde_json::Value,
+}
+
+/// 最近曝光环容量：官方 latest_impression_gids 一次 2~6 个，取 8 留余量。
+const IMPRESSION_CAP: usize = 8;
+
+type ImpressionRing = parking_lot::Mutex<Vec<RecImpression>>;
+static RECENT_IMPRESSIONS: std::sync::OnceLock<ImpressionRing> = std::sync::OnceLock::new();
+
+/// 记录一批曝光（翻页请求把它原样回传给服务端做个性化去重上下文）。
+fn push_impressions(items: impl IntoIterator<Item = RecImpression>) {
+    let ring = RECENT_IMPRESSIONS.get_or_init(|| parking_lot::Mutex::new(Vec::new()));
+    let mut guard = ring.lock();
+    for item in items {
+        if guard.iter().any(|i| i.rec_group_id == item.rec_group_id) {
+            continue;
+        }
+        guard.push(item);
+    }
+    let excess = guard.len().saturating_sub(IMPRESSION_CAP);
+    if excess > 0 {
+        guard.drain(0..excess);
+    }
+}
+
+fn recent_impressions() -> Vec<RecImpression> {
+    RECENT_IMPRESSIONS
+        .get_or_init(|| parking_lot::Mutex::new(Vec::new()))
+        .lock()
+        .clone()
+}
+
+/// 曝光记录 → `rec_filter_info_list` 线格式（官方键序 content_type /
+/// filter_id_map / rec_group_id，rec_group_id 是数字）。
+fn rec_filter_info_list(items: &[RecImpression]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|i| {
+                serde_json::json!({
+                    "content_type": i.content_type,
+                    "filter_id_map": i.filter_id_map,
+                    "rec_group_id": i.rec_group_id,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// 从响应卡片提取曝光记录；卡片不带 `cell_extra_data.rec_filter_info`
+/// （部分运营卡）则返回 None，不猜测类型映射。
+fn rec_impression_of(raw: &Value) -> Option<RecImpression> {
+    let info = raw.pointer("/cell_extra_data/rec_filter_info")?;
+    let content_type = info
+        .get("content_type")
+        .and_then(Value::as_str)?
+        .to_string();
+    let rec_group_id = info.get("rec_group_id").and_then(Value::as_i64)?;
+    Some(RecImpression {
+        content_type,
+        rec_group_id,
+        filter_id_map: info.get("filter_id_map").cloned().unwrap_or(Value::Null),
+    })
+}
+
+/// 翻页：`GET cell/change/v`（session + filter_ids 排除已见 +
 /// `offset=上一页响应的 next_offset`（0→6→12 递进，抓包实锤）；
 /// 双 id 用目标 tab 自己的）。
+///
+/// 参数表按官方 App 7.3.9.32 实流逐字段对齐（2026-10-25 冷启动抓包：
+/// 业务零值族 + 会话状态族 + 个性化上下文三部分都在参）。
 async fn recommend_cell_change(
     tab: &str,
     cfg: &RecommendTabConfig,
@@ -380,32 +502,101 @@ async fn recommend_cell_change(
     filter_ids: &[String],
     env: &ApiEnv,
 ) -> AppResult<super::discover::FeedPage> {
-    let mut q: Vec<(String, String)> = [
-        ("bottom_tab_type", "7"),
+    let uuid = session_uuid();
+    let impressions = recent_impressions();
+    let rec_filter_list =
+        serde_json::to_string(&rec_filter_info_list(&impressions)).unwrap_or_else(|_| "[]".into());
+    let latest_gids = impressions
+        .iter()
+        .map(|i| i.rec_group_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let refresh_action_info = format!(
+        r#"{{"first_screen_impression_gids":[],"has_active_refresh":false,"latest_impression_gids":"{latest_gids}"}}"#
+    );
+    let q: Vec<(String, String)> = [
+        // —— 业务零值族（官方恒 0/false，缺失会被当无个性化上下文处理）
+        ("author_id", "0"),
+        ("book_comment_id", "0"),
         ("category_id", "0"),
         ("cell_id", cfg.cell_id.as_str()),
         ("cell_sub_id", "0"),
         ("change_type", "0"),
         ("client_req_type", "2"),
         ("client_template", "7"),
+        ("cold_start_session", "0"),
+        ("current_chapter_num", "0"),
+        ("disable_digg_stat", "false"),
+        ("ecom_category_id", "0"),
+        ("ecom_impression_start_time", "0"),
+        ("ecom_refresh_type", "0"),
+        ("ecom_sort_by", "0"),
+        ("genre", "0"),
+        ("genre_type", "0"),
+        ("idol_tag_id", "0"),
+        ("image_shrink_datas_str", FEED_IMAGE_SHRINK),
+        ("inner_algo", "0"),
+        ("inner_category_id", "0"),
+        ("is_horizontal_screen", "false"),
+        ("item_id", "0"),
         ("limit", "0"),
-        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；缺了服务端
-        // 回非个性化混排，条目集与第三方对不上）
-        ("need_personal_recommend", "1"),
+        ("nps_insert_rank_json", NPS_INSERT_RANK_JSON),
         ("offset", &offset.to_string()),
+        ("page", "0"),
+        ("page_entry_time", "0"),
         ("plan_id", cfg.bookstore_id.as_str()),
+        ("post_id", "0"),
+        ("rank_sub_info_id", "0"),
+        ("reader_single_col_from_ip_strategy", "false"),
+        ("rec_filter_info_list", &rec_filter_list),
+        ("recommend_extra", RECOMMEND_EXTRA),
+        ("refresh_action_info", &refresh_action_info),
+        ("related_book_id", "0"),
+        ("screen_width_px", "1078"),
+        ("search_tab_type", "0"),
+        ("source_tab_type", "0"),
+        ("sub_genre", "0"),
+        ("sub_tag_id", "0"),
+        ("support_gender_list", "false"),
         ("tab_type", tab),
+        ("tag_id", "0"),
+        ("total_chapter_num", "0"),
+        ("unlimited_selector_change_type", "0"),
+        ("video_tab_cold_start", "0"),
         ("video_type_preferences_str", "[]"),
+        ("web_page_version_code", "0"),
+        // —— 会话状态族（官方客户端的运行态快照，服务端按存在性个性化）
+        ("app_dark_mode", "1"),
+        ("app_launch_times", "0"),
+        ("app_mini_window", "0"),
+        ("battery_pct", "71"),
+        ("charging", "0"),
+        ("cold_start_session_cnt_in_day", "4"),
+        ("cold_start_session_cnt_in_life", "32"),
+        ("cold_start_session_id", uuid),
+        ("current_volume", "0"),
+        ("down_speed", "60000"),
+        ("font_scale", "100"),
+        ("gender", "2"),
+        ("har_status", "0"),
+        ("is_power_save_mode", "0"),
+        ("network_type", "4"),
+        ("normal_session_cnt_in_day", "8"),
+        ("normal_session_cnt_in_life", "64"),
+        ("normal_session_id", &format!("{uuid}#1")),
+        ("rom_version", "V417IR release-keys"),
+        ("screen_brightness", "21"),
+        ("sys_dark_mode", "1"),
+        ("sys_mini_window", "1"),
+        // —— 排除与去重（翻页语义核心）
+        ("session_id", session_id),
+        ("filter_ids", &filter_ids.join(",")),
     ]
     .into_iter()
+    // 空会话/空排除表不发对应键（与调用方约定一致：首页会话还没建立）
+    .filter(|(k, v)| !((*k == "session_id" || *k == "filter_ids") && v.is_empty()))
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    if !session_id.is_empty() {
-        q.push(("session_id".to_string(), session_id.to_string()));
-    }
-    if !filter_ids.is_empty() {
-        q.push(("filter_ids".to_string(), filter_ids.join(",")));
-    }
     let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析推荐流失败: {e}")))?;
@@ -475,6 +666,10 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
         .unwrap_or_default();
     if series_id.is_empty() {
         return None;
+    }
+    // 卡片自带的曝光上下文进最近曝光环（翻页 rec_filter_info_list 的数据源）
+    if let Some(impression) = rec_impression_of(raw) {
+        push_impressions(std::iter::once(impression));
     }
     let season_tag = det
         .and_then(|d| d.get("secondary_infos"))
@@ -556,7 +751,7 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
             .unwrap_or(0.0),
         tags: super::discover::parse_tags(det.and_then(|d| d.get("category_schema"))),
         season_tag,
-        // 热度行（火焰图标 + 文案，hgplayer 同款展示）：条目级 rec_tags 里
+        // 热度行（火焰图标 + 文案）：条目级 rec_tags 里
         // data_type=1 的 content——「共217万人在追」「逆袭榜 No.3」「真人剧
         // 新番榜 No.4」等，多段全部拼接（2026-10-08 抓包实锤）
         heat_text: raw
@@ -706,7 +901,7 @@ pub(crate) mod probe {
         assert!(tabs.iter().any(|t| t.tab_type == RECOMMEND_TAB_TYPE));
     }
 
-    /// 首页推荐流两段式全链路（2026-10-08 抓 hgplayer 切「真人剧」tab +
+    /// 首页推荐流两段式全链路（2026-10-08 抓官方切「真人剧」tab +
     /// 滚动翻页实锤）：首页 `bookmall/tab cr=4`（每 tab 自带 bookstore_id/
     /// cell_id + 会话 + 嵌套首批），翻页 `cell/change`（双 id + session +
     /// filter_ids 排除已见 + offset 恒 0）。验证各 tab 类型过滤（39 全
@@ -753,7 +948,7 @@ pub(crate) mod probe {
     }
 
     /// cr=4 响应的 cell 结构全量 dump（tab36 实测含多个 cell、不同
-    /// cell_id——hgplayer 翻页用的是与 bookstore_id 同前缀的那个）。
+    /// cell_id——翻页用的是与 bookstore_id 同前缀的那个）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_recommend_tab_cells() {

@@ -73,6 +73,17 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     };
 
+    // 剧类型的持久来源：档案在库时整剧各集按 content_type 注册进取流
+    // 注册表（真播批量分组 key / 单集 content_type 用，连播后续集靠它）。
+    // 类型未知（旧档案 0）跳过——不猜值，取流走单集占位（官方回落链）。
+    if let Ok(Some(series)) = state.store.series_by_id(&request.series_id)
+        && series.content_type != 0
+    {
+        for ep in &series.episodes {
+            hongguo_api::play_url::register_content_type(&ep.vid, series.content_type);
+        }
+    }
+
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
     match online::prepare(state, &vid, &progress_key, request.definition).await {

@@ -28,16 +28,22 @@ pub async fn resolve_series(input: &str, env: &hongguo_api::client::ApiEnv) -> A
         list.title,
         list.episodes.len()
     );
-    Ok(Series {
+    Ok(series_from_list(list))
+}
+
+/// `EpisodeList` → store 的 `Series`（单剧解析与批量预取落库共用）。
+pub fn series_from_list(list: hongguo_api::detail::EpisodeList) -> Series {
+    Series {
         series_id: list.series_id,
         title: list.title,
         cover: list.cover,
         episode_count: list.episodes.len() as u32,
         followed_cnt: list.followed_cnt,
+        content_type: list.content_type,
         episodes: list.episodes,
         tags: Vec::new(),
         dismissed: false,
-    })
+    }
 }
 
 #[cfg(test)]

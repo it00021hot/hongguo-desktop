@@ -58,6 +58,20 @@ impl super::HomeView {
             }
         };
         let episode_count = series.episodes.len();
+        // 整剧各集的类型注册：连播后续集的 vid 只有这里能提前拿到类型——
+        // 真播批量（player/v1）分组 key 与单集 content_type 的来源。类型
+        // 优先取发起条目（feed 在手），否则取持久化的剧档案（重启续播）；
+        // 双双未知（0）时不猜值，取流走单集占位（官方回落链）。
+        let series_ct = if item.content_type != 0 {
+            item.content_type
+        } else {
+            series.content_type
+        };
+        if series_ct != 0 {
+            for episode in &series.episodes {
+                hongguo_api::play_url::register_content_type(&episode.vid, series_ct);
+            }
+        }
         // 切档保进度：覆盖值优先于起点决策（覆盖必然伴随显式集号——
         // 切清晰度 = 同集同位重播）
         let (vid_index, start_secs) = match (start_override, forced_next_ep) {

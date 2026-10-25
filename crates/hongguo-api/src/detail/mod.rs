@@ -16,13 +16,13 @@ pub use model::{EpisodeList, RelatedSeries, SeriesCreator, SeriesMeta};
 // crate 内暂无直接引用者）。作为 crate 公开再导出，rustc 不再按
 // unused_imports 处理，故不需要 `#[expect]`。
 pub use model::RelatedItem;
-pub use parse::{parse_episodes, parse_series_meta};
+pub use parse::{parse_episodes, parse_episodes_batch, parse_series_meta};
 
 use parse::parse_related_series;
 
 /// 相关作品（同系列各季 + 同 IP 作品）。
 ///
-/// 端点抓包实证（2026-10-07 hgplayer 1.1.5 详情页「相关推荐」tab 懒加载）：
+/// 端点抓包实证（2026-10-07 详情页「相关推荐」tab 懒加载）：
 /// `GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 /// &scene=10&...`（reading 族轻签名头，lq 域）。响应 `data[]` 是 cell 列表：
 /// `cell_name:"相关作品"` 的 cell 里 `video_data[]` 每项带 `tag_info.text`
@@ -104,12 +104,61 @@ pub async fn fetch_episode_list(
 
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
+    register_episode_types(&value);
     parse_episodes(&value)
+}
+
+/// 批量拉多部剧的分集档案（官方预取形态，2026-10-25 抓 7.3.9.32 实流对齐）：
+/// 一次 `multi_video_detail/preload`，`series_id` 是**逗号串**（官方 6 部
+/// 一发），响应 `data[series_id]` 按剧分发。单部残缺由解析层跳过。
+pub async fn fetch_episode_lists_batch(
+    series_ids: &[String],
+    env: &super::client::ApiEnv,
+) -> AppResult<Vec<EpisodeList>> {
+    let joined = series_ids.join(",");
+    let payload = serde_json::to_vec(&crate::params::detail_payload(&joined))
+        .map_err(|e| AppError::Signer(e.to_string()))?;
+    let bytes = crate::client::api_call(crate::params::DETAIL_PATH, Some(payload), env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析批量详情响应失败: {e}")))?;
+    register_episode_types(&value);
+    parse_episodes_batch(&value)
+}
+
+/// 档案响应里的 vid → content_type 进注册表（`video_data.content_type`
+/// 剧级在场，2026-10-25 抓包实证；整剧各集同型）。批量取流（预取/真播）
+/// 的分组 key 来源之一——连播的后续集就靠这里注册。
+fn register_episode_types(response: &Value) {
+    let Some(data) = response.get("data").and_then(Value::as_object) else {
+        return;
+    };
+    for node in data.values() {
+        let Some(video_data) = node.get("video_data") else {
+            continue;
+        };
+        let ct = video_data
+            .get("content_type")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if ct == 0 {
+            continue;
+        }
+        for ep in video_data
+            .get("video_list")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            if let Some(vid) = ep.get("vid").and_then(Value::as_str) {
+                crate::play_url::register_content_type(vid, ct);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- 剧集元信息
 
-/// 详情页头部元信息端点（2026-10-07 抓 hgplayer 详情页锁定）：
+/// 详情页头部元信息端点（2026-10-07 抓包详情页锁定）：
 /// `POST /novel/player/video_detail/v1/`，body `{"biz_param":{…},"series_id"}`。
 /// 追剧数/播放量/季徽/题材标签/备案号都在这里——preload 分集接口不带这些。
 pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
@@ -134,7 +183,7 @@ mod probe {
     use super::*;
 
     /// 详情响应里的公开计数盘点（信息流 landpage 的 comment_count 恒 0、
-    /// 无点赞/收藏数——hgplayer 右栏计数需要一个真实来源）。
+    /// 无点赞/收藏数——右栏计数需要一个真实来源）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_detail_counts() {
@@ -313,7 +362,7 @@ mod probe2 {
                 .map(|a| a.len())
                 .unwrap_or(0);
             println!("[plan raw] cell={name} items={n}");
-            // cell 里的其它数组字段（hgplayer 的 guess_mvs tag 暗示猜你喜欢
+            // cell 里的其它数组字段（抓包里的 guess_mvs tag 暗示猜你喜欢
             // 可能不走 video_data 而走专用字段）
             if let Some(obj) = cell.as_object() {
                 for (k, val) in obj {

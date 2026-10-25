@@ -4,8 +4,8 @@
 //! 在画面左下，切剧间隙封面占位。顶栏 tab 列表由服务端下发（bookmall/tab
 //! 响应 tab_item[]，回落三件套推荐 16 / 漫剧 36 / 真人 39），同一接口供数，
 //! **重复点当前 tab = 换一批**（重开会话、游标归零）；推荐 tab 把「你的
-//! 内容」（云端历史 + 书架）种子排前，同一个号打开就是你的剧（对齐第三方
-//! 与 Tauri 端）。
+//! 内容」（云端历史 + 书架）种子排前，同一个号打开就是你的剧（对齐官方
+//! 客户端与 Tauri 端）。
 //!
 //! 播放经系统播放器（macOS AVPlayer / Windows MediaEngine，经
 //! `hongguo_player` 门面）：起点决策（本地档案 >3 秒续播，云端历史兜底）、
@@ -261,11 +261,14 @@ pub struct HomeView {
     /// 已拉取弹幕的集（vid）——同集不重拉，换集必重拉。
     danmaku_vid: String,
     danmaku_fetching: bool,
+    /// 滚窗拉取状态（官方 7.3.9.32 协议：30 秒窗按播放位置推进，见
+    /// `danmaku::DanmakuWindow`）。
+    danmaku_window: danmaku::DanmakuWindow,
     /// 已入场游标（items 下标；seek 时二分重置）。
     danmaku_cursor: usize,
     /// 在飞的弹幕（泳道 + 入场墙钟）。
     danmaku_flights: Vec<DmFlight>,
-    /// 每条泳道「最早可再入场」的媒体秒（hgplayer laneFreeAt 同款）。
+    /// 每条泳道「最早可再入场」的媒体秒（laneFreeAt 同款）。
     danmaku_lane_free: Vec<f64>,
     /// 上一帧的播放位置（seek 跳变检测用）。
     danmaku_last_pos: f64,
@@ -410,7 +413,7 @@ pub struct HomeView {
     /// 沉浸全屏（播放器全屏按钮/F 键）：OS 全屏 + chrome（顶栏/侧栏）全藏。
     /// 顶栏最大化钮是另一档「应用全屏」——chrome 保留，对齐 Tauri。
     immersive: bool,
-    /// 无边框播放（hgplayer 播放页 bare 布局同款，issue #11）：chrome 全藏
+    /// 无边框播放（播放页 bare 布局同款，issue #11）：chrome 全藏
     /// 但**不进 OS 全屏**，窗口保持原几何；macOS 红绿灯一并藏
     /// （[`crate::macos`]）。与 [`Self::immersive`] 互斥。
     frameless: bool,
@@ -557,6 +560,7 @@ impl HomeView {
             danmaku_items: Arc::new(Vec::new()),
             danmaku_vid: String::new(),
             danmaku_fetching: false,
+            danmaku_window: danmaku::DanmakuWindow::default(),
             danmaku_cursor: 0,
             danmaku_flights: Vec::new(),
             danmaku_lane_free: Vec::new(),

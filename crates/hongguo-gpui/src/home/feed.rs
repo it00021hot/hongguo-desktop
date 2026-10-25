@@ -63,6 +63,9 @@ pub(super) struct StreamItem {
     pub(super) badge: String,
     /// 推荐位的 vid（批量取流预取用；种子条目可能为空）。
     pub(super) vid: String,
+    /// 条目 content_type（批量预取 `mixed_video_id_map` 的分组 key 原样串
+    /// 来源；种子/钉住条目无值 = 0，不进批量）。
+    pub(super) content_type: i64,
 }
 
 impl From<&FeedItem> for StreamItem {
@@ -76,6 +79,7 @@ impl From<&FeedItem> for StreamItem {
             season_tag: i.season_tag.clone(),
             badge: i.badge.clone(),
             vid: i.vid.clone(),
+            content_type: i.content_type,
         }
     }
 }
@@ -110,6 +114,19 @@ const FEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
 /// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批
 /// （Tauri `FEED_STALE_MS` 同款）。
 pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+impl SourceFeed {
+    /// 本会话已下发的全部 series_id（翻页 `filter_ids` 的料：服务端据此
+    /// 排除已见，官方抓包语义「已下发的 series_id 逗号表」；保序去重）。
+    fn seen_series_ids(&self) -> Vec<String> {
+        let mut seen: HashSet<String> = HashSet::new();
+        self.items
+            .iter()
+            .filter(|i| !i.series_id.is_empty() && seen.insert(i.series_id.clone()))
+            .map(|i| i.series_id.clone())
+            .collect()
+    }
+}
 
 impl super::HomeView {
     // —— 数据：推荐流 ——
@@ -231,13 +248,17 @@ impl super::HomeView {
     }
 
     /// 同会话续拉下一页（游标临近尾部时调用）。
+    ///
+    /// 翻页三件套必须带 `filter_ids`（已下发过的 series_id，服务端排除
+    /// 已见）——2026-10-25 抓官方 App 实流实锤：不带就是滚动重复的根因
+    /// （服务端不做会话内去重，Tauri useFeed 累积 filterIds 同口径）。
     pub(super) fn load_more(&mut self, source: Source, cx: &mut Context<Self>) {
-        let (session, offset) = {
+        let (session, offset, filter_ids) = {
             let feed = self.feeds.get(&source).expect("源已初始化");
             if feed.fetching_more || feed.loading || !feed.has_more {
                 return;
             }
-            (feed.session.clone(), feed.offset)
+            (feed.session.clone(), feed.offset, feed.seen_series_ids())
         };
         {
             let feed = self.feeds.get_mut(&source).expect("源已初始化");
@@ -247,7 +268,7 @@ impl super::HomeView {
         let tab = source.as_str().to_string();
         let rx = bridge::spawn(async move {
             let env = state.api_env();
-            fetch_recommend_feed(&tab, &session, offset, &[], &env).await
+            fetch_recommend_feed(&tab, &session, offset, &filter_ids, &env).await
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");

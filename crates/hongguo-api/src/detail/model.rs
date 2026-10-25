@@ -42,9 +42,13 @@ pub struct EpisodeList {
     pub episodes: Vec<Episode>,
     /// 全剧收藏数（video_data.followed_cnt，右栏「☆ N」数据源）
     pub followed_cnt: i64,
+    /// 剧的条目类型（video_data.content_type：漫剧 1004 / 真人剧 1 / 书城
+    /// 条目 1001…）。真播批量分组 key 与单集请求 content_type 的持久来源；
+    /// 0 = 响应未带（取流走单集占位值）。
+    pub content_type: i64,
 }
 
-/// 详情页头部的剧集元信息（对齐 hgplayer 头部数据面）。
+/// 详情页头部的剧集元信息。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesMeta {
@@ -55,7 +59,7 @@ pub struct SeriesMeta {
     pub followed_cnt: i64,
     /// 全剧播放量（series_play_cnt，150.8万次播放）
     pub play_cnt: i64,
-    /// 红果热度值（hot_score，3786万；2026-10-08 抓包实锤与 hgplayer
+    /// 红果热度值（hot_score，3786万；2026-10-08 抓包实锤与客户端
     /// 头部「🔥红果热度值3786万」同源同值）
     pub hot_score: i64,
     /// 备案号（record_info.record_number；响应里有 show 开关，前端恒显即可）

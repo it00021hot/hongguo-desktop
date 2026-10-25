@@ -6,6 +6,10 @@ use super::*;
 use super::open::{PlayRequest, SystemSpec};
 use hongguo_common::AppError;
 
+/// 官方批量预取窗口：当前 + 后续共 6 条（2026-10-25 抓官方 App 7.3.9.32
+/// 实流：model/preload 与 detail/preload 一次各带 6 个）。
+const OFFICIAL_PRELOAD_WINDOW: usize = 6;
+
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
     /// 越过第 1 集原地不动；滚过末集 = 剧终，走剧终接力（下一季 → 信息流
@@ -254,37 +258,80 @@ impl super::HomeView {
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
         self.play_error = None;
-        // 批量取流预取（hgplayer 同款时机与窗口）：当前 + 信息流后续几部的
-        // 推荐位 vid 一次批量；命中落 api 层暂存表，起播链先查它。批量
-        // 空响应（当前服务端常态）时静默，起播照走单集端点。
-        let batch_vids: Vec<String> = {
+        // 批量预取（2026-10-25 抓官方 App 7.3.9.32 对齐，双端点）：
+        // ① `multi_video_model/preload`（dr_scene=preload）——「当前 + 信息流
+        // 后续几部」（官方 6 个）的推荐位 vid 按 content_type 原样串分组
+        // 一次批量，命中落 api 层暂存表，起播链先查它；
+        // ② `multi_video_detail/preload`（逗号串 series_id）——同一窗口的
+        // 剧集档案一次批量，落库后换剧 resolve 秒回。批量空响应静默，
+        // 起播照走单集端点。
+        let (preload_map, series_window): (
+            std::collections::BTreeMap<String, Vec<String>>,
+            Vec<String>,
+        ) = {
             let items = self.display_items();
             let cur = self.cursor();
-            let mut vids: Vec<String> = Vec::new();
-            if !item.vid.is_empty() {
-                vids.push(item.vid.clone());
-            }
-            for it in items.iter().skip(cur + 1) {
-                if vids.len() >= 5 {
-                    break;
+            let mut map: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            let mut series: Vec<String> = Vec::new();
+            let mut seen_vids: Vec<String> = Vec::new();
+            // 只收 feed 条目（vid + content_type 在场）——头部「你的内容」
+            // 种子没有类型信息，占名额只会把批量挤没（官方窗口也是纯 feed 条目）
+            for it in items
+                .iter()
+                .skip(cur)
+                .filter(|it| !it.vid.is_empty() && it.content_type != 0)
+                .take(OFFICIAL_PRELOAD_WINDOW)
+            {
+                if !series.contains(&it.series_id) {
+                    series.push(it.series_id.clone());
                 }
-                if !it.vid.is_empty() && !vids.contains(&it.vid) {
-                    vids.push(it.vid.clone());
+                if seen_vids.contains(&it.vid) {
+                    continue;
                 }
+                seen_vids.push(it.vid.clone());
+                map.entry(it.content_type.to_string())
+                    .or_default()
+                    .push(it.vid.clone());
             }
-            vids
+            (map, series)
         };
-        if batch_vids.len() > 1 {
+        if !preload_map.is_empty() || series_window.len() > 1 {
             let state = Arc::clone(&self.state);
             bridge::spawn(async move {
                 let env = state.api_env();
-                let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
-                    hongguo_service::capability_service::hevc_playable(),
-                );
-                match hongguo_api::play_url::fetch_play_batch(&batch_vids, cap, &env).await {
-                    Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),
-                    Ok(_) => {}
-                    Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
+                if !preload_map.is_empty() {
+                    let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
+                        hongguo_service::capability_service::hevc_playable(),
+                    );
+                    match hongguo_api::play_url::fetch_play_batch(&preload_map, cap, &env).await {
+                        Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),
+                        Ok(_) => {}
+                        Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
+                    }
+                }
+                // 档案批量：整窗全量（官方 6 部一发，含在库的——响应带
+                // content_type，顺带把在库旧档案缺的类型补持久化；服务端
+                // 数据是权威源，整包 upsert 覆盖）
+                if series_window.len() > 1 {
+                    match hongguo_api::detail::fetch_episode_lists_batch(&series_window, &env).await
+                    {
+                        Ok(lists) => {
+                            let count = lists.len();
+                            for list in lists {
+                                let sid = list.series_id.clone();
+                                let series =
+                                    hongguo_service::series_service::resolver::series_from_list(
+                                        list,
+                                    );
+                                if let Err(e) = state.store.upsert_series(&series) {
+                                    log::warn!("[Home] 预取档案落库失败（{sid}）: {e}");
+                                }
+                            }
+                            log::info!("[Home] 批量档案预取 {count} 部落库");
+                        }
+                        Err(e) => log::warn!("[Home] 批量档案预取失败（忽略）: {e}"),
+                    }
                 }
             });
         }
@@ -490,7 +537,7 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 选集浮层里点某一集：跳集，**不关浮层**（hgplayer 同款连选连跳）；
+    /// 选集浮层里点某一集：跳集，**不关浮层**（连选连跳）；
     /// 信息流里主动选集 = 锁定本剧连播（Tauri onPickEpisode 同款）。
     pub(in crate::home) fn pick_episode(&mut self, vid_index: u32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
@@ -623,6 +670,7 @@ impl super::HomeView {
                     season_tag: String::new(),
                     badge: String::new(),
                     vid: String::new(),
+                    content_type: 0,
                 };
                 view.binge = Some(series_id.clone());
                 view.play_target(
