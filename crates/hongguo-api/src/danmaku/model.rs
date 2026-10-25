@@ -42,6 +42,10 @@ pub struct CommentItem {
     /// 评分后缀文案（expand.score_suffix_text，"观看1小时后点评"；单集评论恒空串）
     #[serde(default)]
     pub score_suffix_text: String,
+    /// 评论附图（本地图片 / 第三方表情 / 自定义表情；`common.content.
+    /// image_data_list.image_data[]`）。纯文字评论恒空。
+    #[serde(default)]
+    pub images: Vec<crate::emoticon::Emoticon>,
 }
 
 /// 评论区拉取结果：评论列表 + 评论总数（互动栏计数数据源）+ 翻页游标。

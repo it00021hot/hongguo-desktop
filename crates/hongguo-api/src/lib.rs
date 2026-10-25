@@ -11,6 +11,7 @@ pub mod client;
 pub mod danmaku;
 pub mod detail;
 pub mod discover;
+pub mod emoticon;
 pub mod history;
 pub mod interact;
 pub mod login;

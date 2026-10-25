@@ -215,6 +215,24 @@ pub async fn api_call_reading(
     api_call_full_with_headers(origin, pathname, body, biz_query, &headers, env).await
 }
 
+/// reading 系接口的**原样 body** 变体：body 不 gzip，`Content-Type` 由调用方
+/// 指定（图片上传的 `multipart/form-data; boundary=…` 用）。
+///
+/// 签名侧照常按原始 body 算摘要（`x-ss-stub`），与官方 App 实包一致——
+/// 官方上传的 multipart body 也是原样参与签名。
+pub async fn api_call_reading_raw(
+    origin: &str,
+    pathname: &str,
+    body: Vec<u8>,
+    content_type: &str,
+    biz_query: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
+    let mut headers = reading_headers();
+    headers.push(("Content-Type".into(), content_type.to_string()));
+    api_call_full_with_headers(origin, pathname, Some(body), biz_query, &headers, env).await
+}
+
 /// gzip 压缩（reading 系 POST body 的线上形态）。
 pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
     use std::io::Write;

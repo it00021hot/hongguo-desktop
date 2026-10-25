@@ -91,6 +91,40 @@ pub mod interaction {
     pub const PROFILE_SUB_TAB_WORKS: i64 = 22;
 }
 
+/// 表情域参数（2026-10-25 官方 App 7.3.9.32 实抓锁定）。
+///
+/// 表情列表端点 `/reading/ugc/comment/emoticon/v` 用 `search_type` 分档，
+/// 四档共用同一响应结构。
+pub mod emoticon {
+    /// `search_type=1`：关键词搜索（`keyword` 带 `+` 前缀 = 前缀匹配）。
+    pub const SEARCH_TYPE_SEARCH: i64 = 1;
+    /// `search_type=2`：第三方表情库（GIF tab，分页 `offset`/`next_offset`）。
+    pub const SEARCH_TYPE_THIRD_PARTY: i64 = 2;
+    /// `search_type=3`：官方每次开表情面板都会并发拉的一档（`count=99`、
+    /// 无 `keyword`）。2026-10-25 实测：收藏前后该档都返回空列表，官方
+    /// 面板也没有对应入口——本仓不实现这一档。
+    pub const SEARCH_TYPE_COLLECTED: i64 = 3;
+    /// `search_type=4`：我上传的自定义表情（固定 `keyword=profile`）。
+    pub const SEARCH_TYPE_MINE: i64 = 4;
+
+    /// 自定义表情的 `keyword` 取值（官方实包恒为 `profile`）。
+    pub const OWN_EMOTICON_KEYWORD: &str = "profile";
+
+    /// `collect_type`：1 = 添加（收藏为我的表情）。
+    pub const COLLECT_TYPE_ADD: i64 = 1;
+    /// `collect_type`：2 = 删除（从我的表情里移除）。
+    pub const COLLECT_TYPE_DELETE: i64 = 2;
+
+    /// `image_type`：1 = 静态图 / 2 = 动图。
+    pub const IMAGE_TYPE_STATIC: i64 = 1;
+    pub const IMAGE_TYPE_ANIMATED: i64 = 2;
+
+    /// `business_param.emoji_scene_type`：2 = 第三方表情 / 4 = 自定义表情。
+    /// 本地图片评论**不带**该字段。
+    pub const SCENE_TYPE_THIRD_PARTY: i64 = 2;
+    pub const SCENE_TYPE_OWN: i64 = 4;
+}
+
 // ---------------------------------------------------------------- 播放域路径
 
 /// 分集详情接口路径。

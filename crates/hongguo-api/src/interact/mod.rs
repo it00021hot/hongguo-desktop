@@ -28,6 +28,8 @@ pub use model::{
 
 pub use super::danmaku::{CommentItem, ReplyItem};
 
+use crate::emoticon::CommentAttachment;
+
 use serde_json::Value;
 
 use super::client::ApiEnv;
@@ -90,6 +92,7 @@ pub async fn send_danmaku(
             data_type: DATA_TYPE_DANMAKU,
             commit_source: COMMIT_SOURCE_DANMAKU,
             offset_ms,
+            attachment: None,
         },
         env,
     )
@@ -101,10 +104,14 @@ pub async fn send_danmaku(
 /// 对象**（comment/add 响应的 comment_info 与列表条目同构，2026-10-10 抓包
 /// 实锤：头像/昵称/uid/时间全带）——前端直接插入列表，别手拼条目
 /// （手拼缺 userId 删除按钮出不来，缺头像昵称样式和服务端条目两样）。
+///
+/// `attachment` 在场时走附图形态：body 顶层多 `image_data`，表情类另带
+/// `business_param.emoji_scene_type`（2026-10-25 官方实包锁定）。
 pub async fn send_comment(
     group_id: &str,
     book_id: &str,
     text: &str,
+    attachment: Option<&CommentAttachment>,
     env: &ApiEnv,
 ) -> AppResult<CommentItem> {
     comment_add(
@@ -115,6 +122,7 @@ pub async fn send_comment(
             data_type: DATA_TYPE_COMMENT,
             commit_source: COMMIT_SOURCE_COMMENT,
             offset_ms: 0,
+            attachment,
         },
         env,
     )
@@ -296,6 +304,8 @@ struct CommentAddArgs<'a> {
     data_type: i64,
     commit_source: i64,
     offset_ms: u64,
+    /// 附图载荷（本地图片 / 表情图片）；纯文字评论为 None。
+    attachment: Option<&'a CommentAttachment>,
 }
 
 async fn comment_add(args: CommentAddArgs<'_>, env: &ApiEnv) -> AppResult<CommentItem> {
@@ -306,6 +316,7 @@ async fn comment_add(args: CommentAddArgs<'_>, env: &ApiEnv) -> AppResult<Commen
         data_type,
         commit_source,
         offset_ms,
+        attachment,
     } = args;
     let business_param = if data_type == DATA_TYPE_DANMAKU {
         serde_json::json!({
@@ -326,7 +337,7 @@ async fn comment_add(args: CommentAddArgs<'_>, env: &ApiEnv) -> AppResult<Commen
             "text_feature": {},
         })
     };
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "aid": 8662,
         "business_param": business_param,
         "commit_source": commit_source,
@@ -335,6 +346,15 @@ async fn comment_add(args: CommentAddArgs<'_>, env: &ApiEnv) -> AppResult<Commen
         "group_type": GROUP_TYPE_COMMENT,
         "text": text,
     });
+    // 附图形态（2026-10-25 官方实包）：body 顶层多 `image_data`，
+    // business_param 多 `emoji_scene_type`——**本地图片评论不带该字段**
+    // （表情类才有：第三方 2 / 自定义 4）。
+    if let Some(att) = attachment {
+        payload["image_data"] = serde_json::json!([crate::emoticon::image_data_value(&att.image)]);
+        if let Some(scene) = att.emoji_scene_type {
+            payload["business_param"]["emoji_scene_type"] = serde_json::json!(scene);
+        }
+    }
     let raw = serde_json::to_vec(&payload)
         .map_err(|e| AppError::Media(format!("构造弹幕/评论请求失败: {e}")))?;
     let bytes =
@@ -1143,7 +1163,7 @@ mod probe {
             .expect("发弹幕");
         println!("[interact] danmaku comment_id={cid}");
 
-        let ccid = send_comment(vid, series, "probe 评论", &env)
+        let ccid = send_comment(vid, series, "probe 评论", None, &env)
             .await
             .expect("发评论（播放页单集流形态）");
         println!("[interact] comment comment_id={}", ccid.comment_id);

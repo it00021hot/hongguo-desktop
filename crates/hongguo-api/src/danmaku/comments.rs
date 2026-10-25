@@ -268,7 +268,9 @@ pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    if comment_id.is_empty() || text.is_empty() {
+    // 附图评论（本地图片/表情）正文为空——有图就算一条评论（2026-10-25 抓包）
+    let images = parse_comment_images(comment);
+    if comment_id.is_empty() || (text.is_empty() && images.is_empty()) {
         return None;
     }
     let base = comment.pointer("/common/user_info/base_info");
@@ -326,7 +328,25 @@ pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        images,
     })
+}
+
+/// 评论附图列表（`common.content.image_data_list.image_data[]`）。
+///
+/// 2026-10-25 抓包：官方回显的图与发送时的 `image_data` 同构，另带
+/// `expand_web_url` / `web_url`（缩略图形态 `-image-v1:300:0.heic`）——
+/// 渲染优先用 `web_uri`（原图），缩略图走 `thumb_nails`。
+fn parse_comment_images(comment: &Value) -> Vec<crate::emoticon::Emoticon> {
+    comment
+        .pointer("/common/content/image_data_list/image_data")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(crate::emoticon::parse_emoticon)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 评论响应 → [`CommentPage`]（单集评论与剧级评论同构，共用）。
