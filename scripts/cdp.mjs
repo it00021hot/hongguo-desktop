@@ -148,7 +148,7 @@ if (cmd === 'pages') {
   c.close();
 } else if (cmd === 'shot') {
   const c = await connect();
-  if (args[0]) await nav(c.send, normRoute(args[0]));
+  if (args[0] && args[0] !== '-') await nav(c.send, normRoute(args[0]));
   await new Promise((r) => setTimeout(r, 3000)); // 等懒加载图追上
   const r = await c.send('Page.captureScreenshot', { format: 'png' });
   const out = args[1] ?? join(tmpdir(), `hongguo-cdp-${Date.now()}.png`);
