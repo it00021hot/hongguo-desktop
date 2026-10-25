@@ -7,9 +7,11 @@
  * 组件本身不含任何业务（发送 mutation / 登录门槛归调用方）。
  */
 import { useImperativeHandle, useRef, useState } from 'react';
+import { ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
+import type { Emoticon } from '@/service/schema';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 
@@ -37,6 +39,11 @@ interface Props {
   autoFocus?: boolean;
   /** 表情面板对齐方向（控制栏左对齐 / 面板右侧对齐） */
   pickerAlign?: 'left' | 'right';
+  /**
+   * 表情面板锚点（见 `EmojiPickerButton`）：`send-area` 时面板贴在发送区
+   * 顶边，发送区自己的行（附件预览、回复目标）不会被面板盖住。
+   */
+  pickerAnchorTo?: 'trigger' | 'send-area';
   /** 容器（flex 行）附加类 */
   className?: string;
   /** 富文本输入附加类（各场景皮肤） */
@@ -45,6 +52,10 @@ interface Props {
   sendClassName?: string;
   /** AI bot 用户名：提及 chip 对它追加官方同款渐变「Ai」后缀 */
   mentionAiName?: string;
+  /** 选中表情图片（第三方 GIF / 自定义表情 / 搜索结果），带场景值 */
+  onPickImage?: (item: Emoticon, sceneType: number) => void;
+  /** 选本地图片（评论附图；官方输入框左侧的「图片」入口） */
+  onPickLocalImage?: (file: File) => void;
 }
 
 export function EmojiSendBox({
@@ -59,13 +70,17 @@ export function EmojiSendBox({
   maxLength,
   autoFocus,
   pickerAlign = 'left',
+  pickerAnchorTo = 'trigger',
   className,
   inputClassName,
   sendClassName,
   mentionAiName,
+  onPickImage,
+  onPickLocalImage,
   ref,
 }: Props & { ref?: React.Ref<EmojiSendBoxHandle> }) {
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const richRef = useRef<RichEmojiInputHandle | null>(null);
   useImperativeHandle(
     ref,
@@ -78,6 +93,31 @@ export function EmojiSendBox({
   const enabled = canSend ?? value.trim() !== '';
   return (
     <div className={cn('flex items-center gap-2', className)}>
+      {onPickLocalImage && (
+        <>
+          <button
+            type="button"
+            title={t('player.emoticon.image')}
+            aria-label={t('player.emoticon.image')}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => fileRef.current?.click()}
+            className="grid shrink-0 cursor-pointer place-items-center rounded-full px-1 text-white/60 transition-colors hover:text-white"
+          >
+            <ImageIcon className="size-4" aria-hidden />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) onPickLocalImage(file);
+            }}
+          />
+        </>
+      )}
       <RichEmojiInput
         ref={richRef}
         value={value}
@@ -94,7 +134,9 @@ export function EmojiSendBox({
         open={emojiOpen}
         onToggle={() => setEmojiOpen((o) => !o)}
         align={pickerAlign}
+        anchorTo={pickerAnchorTo}
         onPick={(name) => richRef.current?.insertEmoji(name)}
+        onPickImage={onPickImage}
       />
       <Button
         size="sm"

@@ -1,4 +1,5 @@
 import { call } from '../tauri/invoke';
+import type { Emoticon } from '../schema';
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）
 
@@ -13,12 +14,15 @@ export const interact = {
    *  aibot_mention_context=最近评论 id；userName 是被提及者昵称，Rust 侧
    *  重拼 `@昵称\uFFFC` 前缀与段文本）。⚠️ 键名必须显式对住 registry
    *  的 mentionUserId——call 不校验入参，键名写错会被 Tauri 静默丢弃、
-   *  提及降级成普通评论（2026-10-16 实锤事故，勿改回展开写法）。 */
+   *  提及降级成普通评论（2026-10-16 实锤事故，勿改回展开写法）。
+   *  image 在场 = 附图评论（2026-10-25 官方实包：body 顶层多 image_data；
+   *  emojiSceneType 表情类才有——第三方 2 / 自定义 4，本地图片不带）。 */
   sendComment: (
     groupId: string,
     bookId: string,
     text: string,
     mention?: { userId: string; userName: string; contextCommentIds: string[] },
+    image?: { image: Emoticon; emojiSceneType?: number | null },
   ) =>
     call('comment_send', {
       groupId,
@@ -27,6 +31,9 @@ export const interact = {
       mentionUserId: mention?.userId,
       mentionUserName: mention?.userName,
       contextCommentIds: mention?.contextCommentIds,
+      // 附图键只在有图时带（无图时不塞 null——纯文字评论的入参形态不变，
+      // 2026-10-16 提及键名事故的回归用例锁的就是这个形状）
+      ...(image ? { image: image.image, emojiSceneType: image.emojiSceneType ?? null } : {}),
     }),
   /** 评论 @ 提及候选（含官方 AI bot「小果」，isAiBot=true）。 */
   mentionList: (seriesId: string) => call('mention_list', { seriesId }),

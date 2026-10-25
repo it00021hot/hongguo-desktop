@@ -3,6 +3,7 @@
  */
 import { z } from 'zod';
 import { normalizeAvatarUrl } from '@/utils/image-url';
+import { emoticonSchema } from './emoticon';
 
 /** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
 export const danmakuSchema = z.object({
@@ -31,6 +32,8 @@ export const commentItemSchema = z.object({
   score: z.string().default(''),
   /** 评分后缀文案（"观看1小时后点评"；单集评论恒空串） */
   scoreSuffixText: z.string().default(''),
+  /** 评论附图（本地图片 / 表情图片；纯文字评论为空数组） */
+  images: z.array(emoticonSchema).default([]),
 });
 export type CommentItem = z.infer<typeof commentItemSchema>;
 

@@ -6,6 +6,7 @@ import type {
   CreatorProfile,
   CreatorWorksPage,
   Danmaku,
+  Emoticon,
   ReplyPage,
   SeriesReviewPage,
 } from '../schema';
@@ -157,13 +158,25 @@ export function useSendComment() {
       mentionUserId?: string;
       mentionUserName?: string;
       contextCommentIds?: string[];
+      /** 附图（本地图片 / 表情图片，2026-10-25 官方实包） */
+      image?: Emoticon;
+      /** `business_param.emoji_scene_type`（第三方 2 / 自定义 4；本地图片不带） */
+      emojiSceneType?: number | null;
     }) => {
       const { groupId, bookId } = parseVid(input.vid);
-      return interactCmd.sendComment(groupId, bookId, input.text, {
-        userId: input.mentionUserId ?? '',
-        userName: input.mentionUserName ?? '',
-        contextCommentIds: input.contextCommentIds ?? [],
-      });
+      return interactCmd.sendComment(
+        groupId,
+        bookId,
+        input.text,
+        {
+          userId: input.mentionUserId ?? '',
+          userName: input.mentionUserName ?? '',
+          contextCommentIds: input.contextCommentIds ?? [],
+        },
+        input.image
+          ? { image: input.image, emojiSceneType: input.emojiSceneType ?? null }
+          : undefined,
+      );
     },
     onSuccess: (comment, input) => {
       queryClient.setQueryData<InfiniteData<CommentPage, string>>(

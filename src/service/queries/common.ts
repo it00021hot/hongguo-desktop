@@ -71,6 +71,12 @@ export const keys = {
   comments: (vid: string) => ['comments', vid] as const,
   /** 评论 @ 提及候选（登录态，含官方 AI bot 小果） */
   mentionList: (seriesId: string) => ['mention-list', seriesId] as const,
+  /** 第三方表情库（GIF tab） */
+  emoticonsThirdParty: ['emoticons', 'third-party'] as const,
+  /** 我上传的自定义表情（♡ tab） */
+  emoticonsOwn: ['emoticons', 'own'] as const,
+  /** 表情关键词搜索结果 */
+  emoticonSearch: (keyword: string) => ['emoticons', 'search', keyword] as const,
   /** 创作者主页（详情页点创作者进入：资料头 + 作品列表） */
   creatorProfile: (userId: string) => ['creator-profile', userId] as const,
   creatorWorks: (userId: string) => ['creator-works', userId] as const,

@@ -17,5 +17,6 @@ export * from './detail';
 export * from './danmaku';
 export * from './follow';
 export * from './interact';
+export * from './emoticon';
 export * from './rank';
 export * from './search';
