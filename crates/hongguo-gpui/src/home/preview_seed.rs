@@ -169,7 +169,9 @@ impl HomeView {
         self.ep_comment_count = 3716;
         self.ep_digg_count = 5678;
         self.follow_count = 999;
-        // 追更键显隐（series_status=0 连载中）与已追态：预览里给全开
+        // 追更态 wiring：series_status=0（连载中）/已追。预览是匿名态，
+        // 追更键显隐带登录门（follow_visible），矩阵里这个键不出现——这里
+        // 只保状态链路有值可画（若未来预览支持假登录，钮会以连载态出现）。
         self.series_status = Some(0);
         self.follow_is_on = Some(true);
         // 信息层简介：长文本（>40 字触发「展开」），验收收起两行钳制与

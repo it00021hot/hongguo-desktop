@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::component::scroll::ScrollableElement;
+
 impl ReservationView {
     // —— 渲染 ——
 
@@ -129,8 +131,8 @@ impl gpui_kit::Render for ReservationView {
                 div()
                     .id("reservations-skeleton")
                     .flex_1()
-                    .overflow_y_scroll()
                     .track_scroll(self.scroll.handle())
+                    .overflow_y_scrollbar()
                     .p_4()
                     .child(crate::pages::skeleton::rows(cx, 4, 147.0, 8.0))
                     .into_any_element()
@@ -186,8 +188,8 @@ impl gpui_kit::Render for ReservationView {
                 div()
                     .id("reservations-list")
                     .flex_1()
-                    .overflow_y_scroll()
                     .track_scroll(self.scroll.handle())
+                    .overflow_y_scrollbar()
                     .p_4()
                     .child(column)
                     .into_any_element()

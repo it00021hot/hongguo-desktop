@@ -57,6 +57,20 @@ export const pictureUploadSchema = z.object({
 export type PictureUpload = z.infer<typeof pictureUploadSchema>;
 
 /**
+ * 选本地图片结果（Rust `emoticon_cmd::PickedImage`）。用户取消时
+ * `bytes` 为空数组——选图已改走 Rust 原生文件面板（WKWebView 不弹
+ * `<input type=file>` 的选择面板），取消没有独立错误形态，用空载荷表达。
+ */
+export const pickedImageSchema = z.object({
+  bytes: z.number().array(),
+  filename: z.string(),
+  width: z.number(),
+  height: z.number(),
+  format: z.string(),
+});
+export type PickedImage = z.infer<typeof pickedImageSchema>;
+
+/**
  * 收藏 / 删除表情的入参（Rust `emoticon_cmd` 的命令参数）。
  *
  * 官方实包（2026-10-25）形态：`image_id` 填**源表情 id**（收藏别人发的

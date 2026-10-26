@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::prelude::*;
 use gpui_kit::{Entity, Window};
@@ -319,6 +319,11 @@ pub struct HomeView {
     comments_loading: bool,
     /// 已加载评论的集（vid）。
     comments_vid: String,
+    /// 评论列表滚动位置（滚动条层与回跳共用同一句柄，跨帧稳定）。
+    comments_scroll: gpui_kit::ScrollHandle,
+    /// 表情选择器网格滚动位置（系统表情 / 远端表情各一，跨档不复位）。
+    emoji_grid_scroll: gpui_kit::ScrollHandle,
+    emoticon_grid_scroll: gpui_kit::ScrollHandle,
     /// 评论点赞的本地覆盖（乐观 ±1 与红心；key=comment_id）。
     comment_digg_override: HashMap<String, bool>,
     /// 展开回复的评论 id → 已拉回复（首页）与翻页游标。
@@ -343,6 +348,15 @@ pub struct HomeView {
     /// 评论输入框（与弹幕发送框同款 InputState）。
     comment_input: Option<Entity<InputState>>,
     comment_sending: bool,
+    /// 本地附件上传在飞（发表时才传，Tauri uploading 态同口径）。
+    comment_uploading: bool,
+    /// 本地图片附件草稿（选图不请求网络，发表时才上传）。
+    comment_local_attachment: Option<comment_view::emoticon::LocalImageAttachment>,
+    /// 表情面板搜索输入框。
+    emoticon_search_input: Option<Entity<InputState>>,
+    /// 在飞的表情图请求（按 `web_uri` 去重；渲染期每帧调
+    /// request_emoticon_images，靠它保证滚动到哪只请求一次）。
+    emoticon_fetching: Rc<std::cell::RefCell<HashSet<String>>>,
     comment_clear_input: bool,
     /// @提及候选（relation/list，含 AI bot「小果」）；按剧缓存一次。
     mention_users: Arc<Vec<hongguo_api::interact::MentionUser>>,
@@ -635,6 +649,9 @@ impl HomeView {
             comments_has_more: false,
             comments_loading: false,
             comments_vid: String::new(),
+            comments_scroll: gpui_kit::ScrollHandle::default(),
+            emoji_grid_scroll: gpui_kit::ScrollHandle::default(),
+            emoticon_grid_scroll: gpui_kit::ScrollHandle::default(),
             comment_digg_override: HashMap::new(),
             replies_open: HashSet::new(),
             replies: HashMap::new(),
@@ -652,6 +669,13 @@ impl HomeView {
                     .placeholder(crate::i18n::t("player.comments.placeholder"))
             })),
             comment_sending: false,
+            comment_uploading: false,
+            comment_local_attachment: None,
+            emoticon_search_input: Some(cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(crate::i18n::t("player.emoticon.searchPlaceholder"))
+            })),
+            emoticon_fetching: Rc::new(std::cell::RefCell::new(HashSet::new())),
             comment_clear_input: false,
             mention_users: Arc::new(Vec::new()),
             mention_loaded_for: None,
@@ -736,6 +760,18 @@ impl HomeView {
         };
         view.subscribe_controls(cx);
         view.subscribe_service_events(cx);
+        // 表情面板搜索框：逐字前缀搜索（Tauri useQuery 按 keyword 重查同款；
+        // 空关键词不发请求，见 search_emoticons 的门）
+        if let Some(input) = view.emoticon_search_input.clone() {
+            cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change)
+                    && this.emoticon_panel.tab == comment_view::emoticon::EmoticonTab::Search
+                {
+                    this.search_emoticons(cx);
+                }
+            })
+            .detach();
+        }
         // 隐身偏好跨启动还原（Tauri 挂载时重发 setIncognito(true) 同款）：
         // 窗口已就位就起轮询（两端都有藏显原语）
         if view.incognito {

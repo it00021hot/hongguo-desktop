@@ -185,7 +185,7 @@ impl super::HomeView {
                         .iter()
                         .flat_map(|c| c.images.iter().map(|item| item.web_uri.clone()))
                         .collect();
-                    view.prewarm_emoticon_images(&image_urls, cx);
+                    view.request_emoticon_image_urls(&image_urls, cx);
                 }
                 cx.notify();
             });
@@ -233,19 +233,44 @@ impl super::HomeView {
                     .collect(),
             });
         let send_mention = mention.is_some();
-        // 附图（官方两态：第三方表情 2 / 自定义表情 4；正文可空）
+        // 附图两态（官方：表情图带 emoji_scene_type 2/4；本地图片此刻才
+        // 上传，`image_type=1`、scene=None——Tauri submit 的 local 分支同口径）
         let attachment = self.comment_attachment.clone();
+        let local = self.comment_local_attachment.clone();
         self.comment_sending = true;
+        self.comment_uploading = local.is_some();
         let state = Arc::clone(&self.state);
         let (vid, sid) = (now.vid.clone(), now.series_id.clone());
         let rx = bridge::spawn(async move {
             let env = state.api_env();
-            let attachment = attachment.map(|(image, emoji_scene_type)| {
-                hongguo_api::emoticon::CommentAttachment {
-                    image,
-                    emoji_scene_type,
+            let attachment = match local {
+                Some(local) => {
+                    let uploaded =
+                        hongguo_api::emoticon::upload_picture(&local.bytes, &local.filename, &env)
+                            .await?;
+                    Some(hongguo_api::emoticon::CommentAttachment {
+                        image: hongguo_api::emoticon::Emoticon {
+                            id: None,
+                            web_uri: uploaded.url,
+                            dynamic_url: None,
+                            image_type: 1,
+                            width: local.width,
+                            height: local.height,
+                            format: Some(local.format),
+                            image_name: None,
+                            thumb_nails: None,
+                            expand_web_url: None,
+                        },
+                        emoji_scene_type: None,
+                    })
                 }
-            });
+                None => attachment.map(|(image, emoji_scene_type)| {
+                    hongguo_api::emoticon::CommentAttachment {
+                        image,
+                        emoji_scene_type,
+                    }
+                }),
+            };
             match mention {
                 Some(m) => send_comment_mention(&vid, &sid, &m, &text, &env).await,
                 None => send_comment(&vid, &sid, &text, attachment.as_ref(), &env).await,
@@ -255,6 +280,7 @@ impl super::HomeView {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.comment_sending = false;
+                view.comment_uploading = false;
                 match result {
                     Ok(item) => {
                         let avatar = item.avatar.clone();
@@ -265,8 +291,10 @@ impl super::HomeView {
                         view.comments_total += 1;
                         view.ep_comment_count += 1;
                         view.comment_clear_input = true;
-                        // 附图随评论发出后清掉草稿附件（官方同款：发完即清）
+                        // 附图随评论发出后清掉草稿附件（官方同款：发完即清；
+                        // 失败保留草稿可重试）
                         view.comment_attachment = None;
+                        view.comment_local_attachment = None;
                         // @提及评论：回复区强制展开 + 起 AI 回复轮询
                         // （Tauri setAiPending + setReplySectionOpen 同款）
                         if send_mention {

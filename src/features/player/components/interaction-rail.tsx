@@ -147,8 +147,10 @@ export function InteractionRail({
   const followedItem = followList.data?.pages
     .flatMap((p) => p.items)
     .find((i) => i.seriesId === seriesId);
+  // 未登录整键不出现（官方口径：有登录才显示追更；GPUI 侧同批对齐）
   const showFollow =
-    seriesStatus !== undefined ? seriesStatus === 0 : !followedItem || !followedItem.finished;
+    loggedIn &&
+    (seriesStatus !== undefined ? seriesStatus === 0 : !followedItem || !followedItem.finished);
 
   const digg = useVideoDigg();
   const collect = useSeriesCollect();

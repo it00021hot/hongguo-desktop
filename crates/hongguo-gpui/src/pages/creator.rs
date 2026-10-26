@@ -11,6 +11,7 @@ use std::sync::Arc;
 use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -520,7 +521,7 @@ impl gpui_kit::Render for CreatorView {
                     .id("creator-skeleton")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .px_8()
                     .pb_8()
                     .child(
@@ -538,8 +539,8 @@ impl gpui_kit::Render for CreatorView {
                     .id("creator-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .track_scroll(self.scroll.handle())
+                    .overflow_y_scrollbar()
                     .px_8()
                     .pb_8()
                     .child(

@@ -43,6 +43,12 @@ required-features = ["screenshot"]
 name = "binge_click_repro"
 required-features = ["screenshot"]
 
+# 评论面板输入框点击聚焦守卫（画面层 → 控制条热区 → 面板的层序下，
+# 点输入框必须拿到焦点；含 SkinnedInput 皮肤链，同上进程内派真实鼠标事件）。
+[[test]]
+name = "comment_input_click"
+required-features = ["screenshot"]
+
 # 自绘顶栏命中回归（同上：拖拽 handler 与绝对居中覆盖层叠加下按钮可点）。
 [[test]]
 name = "toolbar_click"
@@ -167,8 +173,11 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 bytes = "1"
 futures = "0.3"
 anyhow = "1"
-# 封面 HEIC 走协议层转 JPEG 后的位图解码（对齐 gpui 内置的 image 版本）。
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# 封面 HEIC 走协议层转 JPEG 后的位图解码（对齐 gpui 内置的 image 版本）；
+# gif 给评论附图的本地图解码（Tauri 侧浏览器解码天然支持）。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+# 评论附图 / 上传自定义表情的系统文件面板。
+rfd = "0.15"
 smallvec = "1"
 log = "0.4"
 env_logger = "0.11"

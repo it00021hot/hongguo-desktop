@@ -15,6 +15,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
@@ -747,7 +748,7 @@ impl gpui_kit::Render for TasksView {
             div()
                 .id("tasks-skeleton")
                 .flex_1()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .px_6()
                 .child(crate::pages::skeleton::rows(cx, 6, 47.0, 1.0))
                 .into_any_element()
@@ -759,7 +760,7 @@ impl gpui_kit::Render for TasksView {
             div()
                 .id("tasks-table")
                 .flex_1()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .px_6()
                 .child(
                     v_flex()

@@ -14,6 +14,7 @@ use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
 use gpui_kit::prelude::*;
@@ -655,7 +656,7 @@ impl gpui_kit::Render for CollectionView {
                 Phase::Loading => div()
                     .id("collections-skeleton")
                     .flex_1()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .p_4()
                     .child(crate::pages::skeleton::cover_grid(cx, 10, 172.0, 229.0))
                     .into_any_element(),
@@ -695,8 +696,8 @@ impl gpui_kit::Render for CollectionView {
                     div()
                         .id("collections-grid")
                         .flex_1()
-                        .overflow_y_scroll()
                         .track_scroll(&self.scroll)
+                        .overflow_y_scrollbar()
                         .p_4()
                         .child(h_flex().flex_wrap().items_start().gap_3().children(
                             visible.iter().map(|entry| {

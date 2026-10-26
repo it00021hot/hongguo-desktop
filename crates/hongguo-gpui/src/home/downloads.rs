@@ -14,6 +14,7 @@ use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, Toggled, Window, div};
@@ -233,7 +234,7 @@ impl super::HomeView {
         let grid = div()
             .id("download-episodes")
             .max_h(gpui_kit::px(256.0))
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .rounded(gpui_kit::px(6.0))
             .border_1()
             .border_color(theme.border)

@@ -10,6 +10,12 @@ authors.workspace = true
 [dependencies]
 # IPC / 窗口 / 协议注册的宿主框架。
 tauri = { version = "2", features = ["protocol-asset"] }
+# 评论附图 / 上传自定义表情的系统文件面板：WKWebView 对 `<input type=file>`
+# 不弹选择面板（真实点击到达 input 也不调 runOpenPanel 委托，实测
+# 2026-10-26，WebView2 无此问题），选图改走 Rust 原生对话框。
+rfd = "0.15"
+# 选图后的尺寸/格式解码（`emoticon_pick_image` 一次带齐，前端不再量图）。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。
 # 必须是第一个注册的插件（官方要求，锁要抢在窗口创建之前）。
 tauri-plugin-single-instance = "2"

@@ -22,6 +22,12 @@ export const emoticon = {
     call('emoticon_search', { keyword, count, offset }),
   /** 上传本地图片（评论附图 / 自定义表情共用）。 */
   upload: (bytes: number[], filename: string) => call('emoticon_upload', { bytes, filename }),
+  /**
+   * 弹系统文件面板选一张本地图片（取消时 `bytes` 为空数组）。不 walk
+   * `<input type=file>`：WKWebView 对它不弹选择面板（实测见命令注释），
+   * 选图走 Rust 原生对话框，两壳同一形态。
+   */
+  pickImage: () => call('emoticon_pick_image', {}),
   /** 把一张已有表情收藏进「我的表情」（长按 → 添加到表情）。 */
   collect: (input: EmoticonCollectInput) => call('emoticon_collect', input),
   /** 从「我的表情」删除（长按自己的表情 → 删除表情）。 */

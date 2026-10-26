@@ -145,3 +145,55 @@ pub async fn emoticon_delete(
     };
     collect_emoticon(&req, &env).await.map(|_| ())
 }
+
+/// 选本地图片的结果（字节 + 元数据一次带齐，前端不用再量图）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedImage {
+    pub bytes: Vec<u8>,
+    pub filename: String,
+    pub width: i64,
+    pub height: i64,
+    /// 小写扩展名（png/jpg/webp/gif）。
+    pub format: String,
+}
+
+/// 弹系统文件面板选一张本地图片（评论附图 / 上传自定义表情共用）。
+///
+/// 弃用 `<input type=file>` 的原因：WKWebView 对文件 input 不弹选择面板
+/// （真实点击到达 input 也不调 `runOpenPanel` 委托，2026-10-26 实测，
+/// WebView2 无此问题）——选图改走 Rust 原生对话框，两壳同一形态。
+#[tauri::command]
+pub fn emoticon_pick_image() -> AppResult<PickedImage> {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"])
+        .pick_file()
+    else {
+        // 用户取消：正常路径，前端按空处理
+        return Ok(PickedImage {
+            bytes: Vec::new(),
+            filename: String::new(),
+            width: 0,
+            height: 0,
+            format: String::new(),
+        });
+    };
+    let bytes = std::fs::read(&path)?;
+    let decoded = image::load_from_memory(&bytes)
+        .map_err(|e| hongguo_common::AppError::InvalidArgs(format!("图片解码失败: {e}")))?;
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "image".into());
+    let format = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_else(|| "png".into());
+    Ok(PickedImage {
+        bytes,
+        filename,
+        width: decoded.width() as i64,
+        height: decoded.height() as i64,
+        format,
+    })
+}

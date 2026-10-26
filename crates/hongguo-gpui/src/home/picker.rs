@@ -11,6 +11,7 @@ use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
@@ -336,7 +337,7 @@ impl super::HomeView {
             .p_4()
             .rounded(crate::tokens::radius::CARD)
             .bg(gpui_kit::rgba(0x171717f2))
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             // 点外部关闭（Tauri 同款）：锚点 = 入口按钮 + 浮层，落在之外
             // 即收起。这是**窗口级**监听（capture 阶段、按命中盒判内外），
             // 不吞底下控件的点击——控制条按钮照常响应，浮层顺手收掉。

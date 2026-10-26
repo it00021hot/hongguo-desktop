@@ -11,7 +11,9 @@ import { ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
+import { emoticon } from '@/service/commands/emoticon';
 import type { Emoticon } from '@/service/schema';
+import { localFromPicked, type LocalImageAttachment } from '@/utils/image-attachment';
 import { EmojiPickerButton } from './emoji-picker';
 import { RichEmojiInput, type RichEmojiInputHandle } from './rich-emoji-input';
 
@@ -54,8 +56,8 @@ interface Props {
   mentionAiName?: string;
   /** 选中表情图片（第三方 GIF / 自定义表情 / 搜索结果），带场景值 */
   onPickImage?: (item: Emoticon, sceneType: number) => void;
-  /** 选本地图片（评论附图；官方输入框左侧的「图片」入口） */
-  onPickLocalImage?: (file: File) => void;
+  /** 选本地图片（评论附图；官方输入框左侧的「图片」入口）。 */
+  onPickLocalImage?: (local: LocalImageAttachment) => void;
 }
 
 export function EmojiSendBox({
@@ -80,7 +82,6 @@ export function EmojiSendBox({
   ref,
 }: Props & { ref?: React.Ref<EmojiSendBoxHandle> }) {
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const fileRef = useRef<HTMLInputElement | null>(null);
   const richRef = useRef<RichEmojiInputHandle | null>(null);
   useImperativeHandle(
     ref,
@@ -94,29 +95,24 @@ export function EmojiSendBox({
   return (
     <div className={cn('flex items-center gap-2', className)}>
       {onPickLocalImage && (
-        <>
-          <button
-            type="button"
-            title={t('player.emoticon.image')}
-            aria-label={t('player.emoticon.image')}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => fileRef.current?.click()}
-            className="grid shrink-0 cursor-pointer place-items-center rounded-full px-1 text-white/60 transition-colors hover:text-white"
-          >
-            <ImageIcon className="size-4" aria-hidden />
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) onPickLocalImage(file);
-            }}
-          />
-        </>
+        <button
+          type="button"
+          title={t('player.emoticon.image')}
+          aria-label={t('player.emoticon.image')}
+          onMouseDown={(e) => e.preventDefault()}
+          // 选图走 Rust 原生文件面板：WKWebView 对 `<input type=file>`
+          // 不弹选择面板（真实点击到达 input 也不调 runOpenPanel，实测
+          // 2026-10-26，WebView2 无此问题）。
+          onClick={() => {
+            void emoticon.pickImage().then((picked) => {
+              const local = localFromPicked(picked);
+              if (local) onPickLocalImage(local);
+            });
+          }}
+          className="grid shrink-0 cursor-pointer place-items-center rounded-full px-1 text-white/60 transition-colors hover:text-white"
+        >
+          <ImageIcon className="size-4" aria-hidden />
+        </button>
       )}
       <RichEmojiInput
         ref={richRef}

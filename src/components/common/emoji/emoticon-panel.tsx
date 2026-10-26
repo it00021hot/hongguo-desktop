@@ -16,7 +16,7 @@
  * 进 ♡ 档）；♡ 档里的我的表情 → 「删除表情」。系统表情是本地 webp、
  * 没有服务端 id，官方不可收藏，故不挂长按。
  */
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Heart, Loader2, Search, Smile } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,7 +32,8 @@ import {
   useUploadCustomEmoticon,
 } from '@/service/queries';
 import type { Emoticon } from '@/service/schema';
-import { readLocalImage } from '@/utils/image-attachment';
+import { localFromPicked, type LocalImageAttachment } from '@/utils/image-attachment';
+import { emoticon } from '@/service/commands/emoticon';
 import { DANMAKU_EMOJI_LIST } from '@/utils/danmaku-emoji';
 import { EmoticonActionsMenu } from './emoticon-actions-menu';
 import { EmoticonCell } from './emoticon-cell';
@@ -66,7 +67,6 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
   const [keyword, setKeyword] = useState('');
   const [menu, setMenu] = useState<LongPressMenu | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Emoticon | null>(null);
-  const uploadRef = useRef<HTMLInputElement | null>(null);
   const thirdParty = useThirdPartyEmoticons(tab === 'thirdParty');
   const own = useOwnEmoticons(tab === 'custom');
   const search = useEmoticonSearch(keyword, tab === 'search');
@@ -74,10 +74,9 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
   const remove = useDeleteEmoticon();
   const upload = useUploadCustomEmoticon();
 
-  /** 上传自定义表情：选图 → 上传 → 收藏（官方两步）。 */
-  const onUploadCustom = async (file: File) => {
+  /** 上传自定义表情：选图 → 上传 → 收藏（官方两步）。选图走原生文件面板。 */
+  const onUploadCustom = async (local: LocalImageAttachment) => {
     try {
-      const local = await readLocalImage(file);
       await upload.mutateAsync({
         bytes: local.bytes,
         filename: local.filename,
@@ -220,7 +219,12 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => uploadRef.current?.click()}
+              onClick={() => {
+                void emoticon.pickImage().then((picked) => {
+                  const local = localFromPicked(picked);
+                  if (local) void onUploadCustom(local);
+                });
+              }}
               disabled={upload.isPending}
               title={t('player.emoticon.uploadCustom')}
               className="grid aspect-square cursor-pointer place-items-center rounded-md border border-dashed border-white/25 text-neutral-300 transition-colors hover:bg-white/10"
@@ -243,27 +247,22 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
           {(own.data?.items.length ?? 0) === 0 && !own.isPending && (
             <p className="text-[11px] text-neutral-500">{t('player.emoticon.customEmpty')}</p>
           )}
-          <input
-            ref={uploadRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = '';
-              if (file) void onUploadCustom(file);
-            }}
-          />
         </>
       )}
 
       {tab === 'search' && (
-        <EmoticonGrid
-          items={search.data?.items ?? []}
-          loading={search.isPending}
-          onPick={(item) => onPickImage(item, SCENE_THIRD_PARTY)}
-          onMenu={(item, point) => setMenu({ item, point, canRemove: false })}
-        />
+        // 没输入就不出网格——「没有找到表情」只属于真实搜索后无结果，
+        // 空关键词显示它是误导（GPUI 壳同口径）。
+        keyword.trim() !== '' && (
+          <EmoticonGrid
+            items={search.data?.items ?? []}
+            // enabled=false（无关键词）时 isPending 恒 true，不能当 loading
+            // 画无限转圈——没输入就保持空态，输入后只认真实在飞的请求。
+            loading={search.isFetching}
+            onPick={(item) => onPickImage(item, SCENE_THIRD_PARTY)}
+            onMenu={(item, point) => setMenu({ item, point, canRemove: false })}
+          />
+        )
       )}
 
       {/* 长按操作菜单（官方同款：添加到表情 / 删除表情） */}

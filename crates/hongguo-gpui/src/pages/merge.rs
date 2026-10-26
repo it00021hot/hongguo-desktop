@@ -15,6 +15,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::tab::{Tab, TabBar};
@@ -811,7 +812,7 @@ impl gpui_kit::Render for MergeView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("merge-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(
                 v_flex()
                     .max_w(gpui_kit::px(768.0))

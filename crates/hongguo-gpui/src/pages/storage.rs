@@ -12,6 +12,7 @@ use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
@@ -404,7 +405,7 @@ impl gpui_kit::Render for StorageView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("storage-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(
                 v_flex()
                     .max_w(gpui_kit::px(768.0))

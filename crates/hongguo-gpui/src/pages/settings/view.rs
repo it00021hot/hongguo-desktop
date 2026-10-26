@@ -6,6 +6,7 @@ use super::*;
 
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
@@ -80,7 +81,7 @@ impl gpui_kit::Render for SettingsView {
         div()
             .id("settings-page")
             .size_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .bg(theme.background)
             .text_color(theme.foreground)
             // 捕获态键盘归属：焦点锚在根元素上，捕获中接管按键

@@ -9,6 +9,7 @@ use gpui_kit::component::Disableable;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
@@ -341,7 +342,7 @@ impl super::FollowsView {
             return div()
                 .id("follows-skeleton")
                 .flex_1()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .p_4()
                 .child(crate::pages::skeleton::rows(cx, 4, 147.0, 8.0))
                 .into_any_element();
@@ -402,8 +403,8 @@ impl super::FollowsView {
         div()
             .id("follows-list")
             .flex_1()
-            .overflow_y_scroll()
             .track_scroll(&self.scroll)
+            .overflow_y_scrollbar()
             .p_4()
             .child(column)
             .into_any_element()
@@ -572,7 +573,7 @@ impl super::FollowsView {
             div()
                 .id("follows-notices-list")
                 .flex_1()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .p_4()
                 .child(column)
                 .into_any_element()

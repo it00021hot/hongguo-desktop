@@ -133,6 +133,8 @@ pub(crate) struct DetailView {
     review_stars: u8,
     review_hover_stars: u8,
     review_emoji_open: bool,
+    /// 剧评表情网格滚动位置（滚动条直叠层，跨帧稳定）。
+    review_emoji_scroll: gpui_kit::ScrollHandle,
     review_sending: bool,
     /// 发送成功后的清空（set_value 要 window，render 期补执行）。
     review_clear_input: bool,
@@ -191,6 +193,7 @@ impl DetailView {
             review_stars: 0,
             review_hover_stars: 0,
             review_emoji_open: false,
+            review_emoji_scroll: gpui_kit::ScrollHandle::default(),
             review_sending: false,
             review_clear_input: false,
             review_submit_pending: false,

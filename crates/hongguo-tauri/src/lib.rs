@@ -240,6 +240,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::emoticon_cmd::emoticon_list,
             commands::emoticon_cmd::emoticon_search,
             commands::emoticon_cmd::emoticon_upload,
+            commands::emoticon_cmd::emoticon_pick_image,
             commands::emoticon_cmd::emoticon_collect,
             commands::emoticon_cmd::emoticon_delete,
             // 追更（开关 / 列表 / 是否已追 / 更新提醒）

@@ -22,3 +22,15 @@ pub(crate) fn render_image(mut rgba: image::RgbaImage) -> RenderImage {
     hongguo_media::bgra::swap_red_blue_in_place(bytes);
     RenderImage::new(smallvec::smallvec![image::Frame::new(rgba)])
 }
+
+/// 多帧位图（GIF 解出的动图帧序列，各帧带 delay）→ 可上屏的 `RenderImage`。
+/// `img` 元素对多帧图按帧 delay 自动推进（gpui-pre `elements/img.rs`），
+/// BGRA 交换纪律与单帧版一致。
+pub(crate) fn render_image_frames(frames: Vec<image::Frame>) -> RenderImage {
+    let mut frames = frames;
+    for frame in &mut frames {
+        let bytes: &mut [u8] = frame.buffer_mut().as_mut();
+        hongguo_media::bgra::swap_red_blue_in_place(bytes);
+    }
+    RenderImage::new(frames)
+}

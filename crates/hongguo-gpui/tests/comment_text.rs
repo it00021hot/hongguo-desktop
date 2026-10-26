@@ -32,6 +32,10 @@ mod emoji_scan;
 )]
 #[path = "../src/i18n.rs"]
 mod i18n;
+#[expect(
+    dead_code,
+    reason = "本测试只借 image_upload 的依赖面，render_image/多帧入口均不触达"
+)]
 #[path = "../src/image_upload.rs"]
 mod image_upload;
 

@@ -3,6 +3,7 @@
 use super::*;
 
 use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::scroll::ScrollableElement;
 
 impl super::BrowseView {
     /// 刷新联想（≥2 字才发；防抖 300ms，序号防乱序回填）。
@@ -138,7 +139,7 @@ impl super::BrowseView {
                 .right_0()
                 .mt(gpui_kit::px(6.0))
                 .max_h(gpui_kit::px(320.0))
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .rounded(crate::tokens::radius::CARD)
                 .border_1()
                 .border_color(theme.border)

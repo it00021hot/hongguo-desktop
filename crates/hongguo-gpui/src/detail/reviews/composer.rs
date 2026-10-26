@@ -6,6 +6,7 @@ use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Icon;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
@@ -157,43 +158,60 @@ impl super::super::DetailView {
             );
         if self.review_emoji_open {
             // 表情网格（8 列，与评论面板同一套资产；点格子光标处插入
-            // `[名字]`，连选不关）
-            card = card.child(
-                div()
-                    .id("review-emoji-grid")
-                    .max_h(gpui_kit::px(132.0))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_wrap()
-                    .gap_0p5()
-                    .children(crate::danmaku_emoji::EMOJI_FILES.iter().map(|(name, _)| {
-                        let code = name.to_string();
-                        let img = crate::danmaku_emoji::emoji_by_name(name);
-                        let input = self.review_input.clone();
-                        BaseButton::new(ElementId::from(format!("review-emoji-{code}")))
-                            .accessibility_label(code.clone())
-                            .size_7()
-                            .rounded(gpui_kit::px(6.0))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.secondary_hover))
-                            // 焦点环只在键盘聚焦时出现（focus_visible），静止时
-                            // 无视觉负担；但少了它，键盘用户 Tab 进这 56 格就
-                            // 不知道停在哪一格。
-                            .focus_visible(super::view::focus_ring_style(theme))
-                            .on_click(move |_, window, cx| {
-                                if let Some(input) = &input {
-                                    input.update(cx, |state, cx| {
-                                        state.insert(code.clone(), window, cx);
-                                    });
-                                }
-                            })
-                            .children(img.map(|img| {
-                                gpui_kit::img(gpui_kit::ImageSource::Render(img))
-                                    .size_5()
-                                    .object_fit(gpui_kit::ObjectFit::Contain)
-                            }))
-                    })),
-            );
+            // `[名字]`，连选不关）。滚动条层挂滚动容器**外**（同评论面板：
+            // 叠在里面滑块跟着内容平移错位；包装器在 max_h 网格上滚不动）。
+            card = card
+                .child(
+                    div()
+                        .relative()
+                        .max_h(gpui_kit::px(132.0))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .id("review-emoji-grid")
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.review_emoji_scroll)
+                                .flex()
+                                .flex_wrap()
+                                .gap_0p5()
+                                .children(crate::danmaku_emoji::EMOJI_FILES.iter().map(
+                                    |(name, _)| {
+                                        let code = name.to_string();
+                                        let img = crate::danmaku_emoji::emoji_by_name(name);
+                                        let input = self.review_input.clone();
+                                        BaseButton::new(ElementId::from(format!(
+                                            "review-emoji-{code}"
+                                        )))
+                                        .accessibility_label(code.clone())
+                                        .size_7()
+                                        .rounded(gpui_kit::px(6.0))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme.secondary_hover))
+                                        // 焦点环只在键盘聚焦时出现（focus_visible），静止时
+                                        // 无视觉负担；但少了它，键盘用户 Tab 进这 56 格就
+                                        // 不知道停在哪一格。
+                                        .focus_visible(super::view::focus_ring_style(theme))
+                                        .on_click(move |_, window, cx| {
+                                            if let Some(input) = &input {
+                                                input.update(cx, |state, cx| {
+                                                    state.insert(code.clone(), window, cx);
+                                                });
+                                            }
+                                        })
+                                        .children(
+                                            img.map(|img| {
+                                                gpui_kit::img(gpui_kit::ImageSource::Render(img))
+                                                    .size_5()
+                                                    .object_fit(gpui_kit::ObjectFit::Contain)
+                                            }),
+                                        )
+                                    },
+                                )),
+                        ),
+                )
+                .vertical_scrollbar(&self.review_emoji_scroll);
         }
         card.into_any_element()
     }

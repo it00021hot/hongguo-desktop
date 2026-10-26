@@ -257,6 +257,13 @@ fn main() {
             let theme_pref = ui_prefs.theme;
             let theme_mode = theme_pref.resolve(cx.window_appearance());
             crate::tokens::apply(theme_mode, cx);
+            // 桌面惯例：滚动条常驻可见。默认 Scrolling 只在滚动瞬间出现、
+            // 静止即淡出——实测等于「没有滚动条」。官方文档主题初始化同款
+            // （https://gpui-kit.com/component/scrollable）。
+            gpui_kit::component::Theme::set_scrollbar_mode(
+                gpui_kit::component::scroll::ScrollbarMode::Always,
+                cx,
+            );
             if theme_pref != crate::ui_prefs::ThemePref::Auto {
                 cx.set_window_appearance(Some(match theme_mode {
                     gpui_kit::component::ThemeMode::Light => gpui_kit::WindowAppearance::Light,

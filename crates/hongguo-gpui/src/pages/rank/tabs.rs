@@ -3,6 +3,7 @@
 use super::*;
 
 use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::{Role, Toggled};
 
 /// 榜单 tab 归一（Tauri normalize-tabs.ts 同口径）：两级形态过滤掉无内容
@@ -100,7 +101,7 @@ impl super::RankView {
             .w(gpui_kit::px(144.0))
             .flex_shrink_0()
             .gap_1()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .children(subs.into_iter().map(|sub| {
                 let active = self.sub == sub.id;
                 let id = sub.id.clone();

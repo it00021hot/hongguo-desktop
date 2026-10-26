@@ -42,7 +42,7 @@ import {
 import { dedupBy, keys } from '@/service/queries/common';
 import { relativeTime } from '@/utils/relative-time';
 import { isImeComposing } from '@/utils/ime';
-import { readLocalImage, revokePreview, type LocalImageAttachment } from '@/utils/image-attachment';
+import { revokePreview, type LocalImageAttachment } from '@/utils/image-attachment';
 import { EmojiText } from '@/components/common/emoji/emoji-text';
 import { EmoticonActionsMenu } from '@/components/common/emoji/emoticon-actions-menu';
 import type { LongPressPoint } from '@/components/common/emoji/use-long-press';
@@ -253,14 +253,9 @@ export function CommentPanel({ vid, onClose }: Props) {
     replaceAttachment({ kind: 'emoticon', item, sceneType });
   };
 
-  /** 选本地图片（此刻不请求网络，发表时才上传）。 */
-  const onPickLocalImage = async (file: File) => {
-    try {
-      const local = await readLocalImage(file);
-      replaceAttachment({ kind: 'local', local });
-    } catch (e) {
-      toast.error(String(e));
-    }
+  /** 选本地图片（此刻不请求网络，发表时才上传）。选图走原生文件面板。 */
+  const onPickLocalImage = (local: LocalImageAttachment) => {
+    replaceAttachment({ kind: 'local', local });
   };
 
   /** 收藏评论里的图片到「我的表情」（官方：长按附图 → 「添加到表情」）。 */

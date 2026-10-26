@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::component::scroll::ScrollableElement;
+
 impl DetailView {
     /// 语言切换：刷新剧评/回复输入框 placeholder，保留草稿。
     pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -58,7 +60,7 @@ impl DetailView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("detail-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(self.render_back_bar(cx))
             .child(
                 div()

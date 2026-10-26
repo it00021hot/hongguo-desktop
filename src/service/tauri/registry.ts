@@ -40,6 +40,7 @@ import {
   mergeTaskSchema,
   passportUserSchema,
   pictureUploadSchema,
+  pickedImageSchema,
   playbackCapabilitySchema,
   playResponseSchema,
   proxyConfigSchema,
@@ -270,6 +271,10 @@ export const COMMANDS = {
   emoticon_upload: {
     args: z.object({ bytes: z.number().array(), filename: z.string() }),
     response: pictureUploadSchema,
+  },
+  emoticon_pick_image: {
+    args: z.object({}),
+    response: pickedImageSchema,
   },
   emoticon_collect: {
     args: emoticonCollectInputSchema,

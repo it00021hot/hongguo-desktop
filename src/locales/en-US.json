@@ -299,6 +299,7 @@
       "uploadDone": "Custom sticker added",
       "customEmpty": "No custom stickers yet — upload one to start",
       "loadMore": "Load more",
+      "noMore": "That's everything",
       "empty": "No stickers found",
       "image": "Image",
       "imageRemove": "Remove image",

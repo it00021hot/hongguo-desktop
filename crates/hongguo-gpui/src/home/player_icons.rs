@@ -28,6 +28,8 @@ const FULLSCREEN_EXIT: &[u8] = include_bytes!("../../assets/player/fullscreen-ex
 const MINI_WINDOW: &[u8] = include_bytes!("../../assets/player/mini-window.svg");
 /// 弹幕开关的关态斜杠（「\」方向）。
 const DANMAKU_OFF: &[u8] = include_bytes!("../../assets/player/danmaku-off.svg");
+/// 评论附图的「图片」入口（lucide image 几何，与 Tauri 同一份 lucide 路径）。
+const COMMENT_IMAGE: &[u8] = include_bytes!("../../assets/player/image.svg");
 
 /// 弹幕图标格（px）：与 Tauri 侧 16px 同格，字形 11px 同源。
 /// 图标内部几何是栅格化尺寸（不随 rem 缩放），与 gpui-kit `Icon` 的固定档位同义。
@@ -46,6 +48,11 @@ pub(super) fn fullscreen(exit: bool) -> Icon {
 /// 小窗（画中画）图标。
 pub(super) fn mini_window() -> Icon {
     Icon::default().data(MINI_WINDOW)
+}
+
+/// 评论发送区「图片」入口图标（本地附图，Tauri lucide ImageIcon 同源）。
+pub(super) fn comment_image() -> Icon {
+    Icon::default().data(COMMENT_IMAGE)
 }
 
 /// 弹幕开关：B 站同款「弹」字；关闭时加一道反斜杠（颜色由调用方压暗）。

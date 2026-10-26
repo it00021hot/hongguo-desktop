@@ -5,6 +5,7 @@ use super::*;
 use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
@@ -13,80 +14,97 @@ impl HomeView {
     /// 评论列表滚动区：加载态、空态、条目与「加载更多」。
     pub(super) fn render_comment_list(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let loading = self.comments_loading && self.comments.is_empty();
-        // 列容器：列会 stretch 子件，评论卡因此拿到面板宽度（行容器里子件按
-        // 内容宽度排，评论正文不会折行、直接横向飞出面板）。
-        v_flex()
-            .id("comments-scroll")
+        // 滚动条层必须挂在滚动容器**外**：gpui 的滚动偏移会平移容器内所有
+        // 子层（absolute 也不例外），叠在里面滚动条会跟着内容平移、滑块
+        // 错位（2026-10-26 用户实测「滚到底滑块还在顶上」）。所以外层 div
+        // 只负责占位与锚定滚动条（`vertical_scrollbar` 在 relative 外层上
+        // inset_0 内锚），内层 v_flex 才是滚动容器；也**不走**
+        // `overflow_y_scrollbar` 包装器——那层包装会把列表挪进 Scrollable
+        // 的 content（flex_none + h_auto），这条 min_w_0/flex_1 的正文链拿
+        // 不到确定宽度，评论正文一字一行竖排（同日实测）。
+        div()
+            .relative()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .px_4()
-            .child(if loading {
+            .flex()
+            .flex_col()
+            .child(
                 v_flex()
-                    .py_8()
-                    .text_center()
-                    .text_sm()
-                    .text_color(gpui_kit::rgba(0xffffff99))
-                    .child(crate::i18n::t("common.loading"))
-                    .into_any_element()
-            } else if self.comments.is_empty() {
-                v_flex()
-                    .py_8()
-                    .text_center()
-                    .text_sm()
-                    .text_color(gpui_kit::rgba(0xffffff99))
-                    .child(crate::i18n::t("player.comments.empty"))
-                    .into_any_element()
-            } else {
-                v_flex()
-                    .gap_4()
-                    .children(self.comments.iter().map(|c| self.render_comment_row(c, cx)))
-                    .children(self.comments_has_more.then(|| {
-                        // 居中行：库注入的 justify_center 正好对应原来的
-                        // text_center，不用改；行高要改回默认，否则行偏矮。
-                        BaseButton::new("comments-more")
-                            .accessibility_label(if self.comments_loading {
-                                crate::i18n::t("common.loading")
-                            } else {
-                                crate::i18n::tf(
-                                    "player.comments.loadMore",
-                                    &[(
-                                        "n",
-                                        &self
-                                            .comments_total
-                                            .saturating_sub(self.comments.len() as i64)
-                                            .to_string(),
-                                    )],
-                                )
-                            })
-                            .py_2()
+                    .id("comments-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.comments_scroll)
+                    .px_4()
+                    .child(if loading {
+                        v_flex()
+                            .py_8()
                             .text_center()
-                            .text_xs()
-                            .line_height(gpui_kit::phi())
-                            .cursor_pointer()
-                            .text_color(gpui_kit::rgba(0x60a5faff))
-                            .hover(|s| s.text_color(gpui_kit::rgb(0x93c5fd)))
-                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.load_comments_next(cx);
+                            .text_sm()
+                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .child(crate::i18n::t("common.loading"))
+                            .into_any_element()
+                    } else if self.comments.is_empty() {
+                        v_flex()
+                            .py_8()
+                            .text_center()
+                            .text_sm()
+                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .child(crate::i18n::t("player.comments.empty"))
+                            .into_any_element()
+                    } else {
+                        v_flex()
+                            .gap_4()
+                            .children(self.comments.iter().map(|c| self.render_comment_row(c, cx)))
+                            .children(self.comments_has_more.then(|| {
+                                // 居中行：库注入的 justify_center 正好对应原来的
+                                // text_center，不用改；行高要改回默认，否则行偏矮。
+                                BaseButton::new("comments-more")
+                                    .accessibility_label(if self.comments_loading {
+                                        crate::i18n::t("common.loading")
+                                    } else {
+                                        crate::i18n::tf(
+                                            "player.comments.loadMore",
+                                            &[(
+                                                "n",
+                                                &self
+                                                    .comments_total
+                                                    .saturating_sub(self.comments.len() as i64)
+                                                    .to_string(),
+                                            )],
+                                        )
+                                    })
+                                    .py_2()
+                                    .text_center()
+                                    .text_xs()
+                                    .line_height(gpui_kit::phi())
+                                    .cursor_pointer()
+                                    .text_color(gpui_kit::rgba(0x60a5faff))
+                                    .hover(|s| s.text_color(gpui_kit::rgb(0x93c5fd)))
+                                    .focus_visible(|s| {
+                                        s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.load_comments_next(cx);
+                                    }))
+                                    .child(if self.comments_loading {
+                                        crate::i18n::t("common.loading")
+                                    } else {
+                                        crate::i18n::tf(
+                                            "player.comments.loadMore",
+                                            &[(
+                                                "n",
+                                                &self
+                                                    .comments_total
+                                                    .saturating_sub(self.comments.len() as i64)
+                                                    .to_string(),
+                                            )],
+                                        )
+                                    })
                             }))
-                            .child(if self.comments_loading {
-                                crate::i18n::t("common.loading")
-                            } else {
-                                crate::i18n::tf(
-                                    "player.comments.loadMore",
-                                    &[(
-                                        "n",
-                                        &self
-                                            .comments_total
-                                            .saturating_sub(self.comments.len() as i64)
-                                            .to_string(),
-                                    )],
-                                )
-                            })
-                    }))
-                    .into_any_element()
-            })
+                            .into_any_element()
+                    }),
+            )
+            .vertical_scrollbar(&self.comments_scroll)
             .into_any_element()
     }
 

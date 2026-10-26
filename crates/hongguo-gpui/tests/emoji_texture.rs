@@ -18,6 +18,10 @@ mod emoji_files;
 #[expect(dead_code, reason = "danmaku_emoji 的依赖模块，本测试只用其中一部分")]
 #[path = "../src/emoji_scan.rs"]
 mod emoji_scan;
+#[expect(
+    dead_code,
+    reason = "多帧入口 render_image_frames 仅壳内表情动图使用，本测试不触达"
+)]
 #[path = "../src/image_upload.rs"]
 mod image_upload;
 

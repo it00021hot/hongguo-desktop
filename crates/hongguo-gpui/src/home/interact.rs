@@ -271,10 +271,12 @@ impl super::HomeView {
         cx.emit(super::HomeEvent::OpenSettings);
     }
 
-    /// 追更键显隐：官方只在连载剧（series_status=0）出追更钮；meta 未到
-    /// （None）按显示处理（Tauri 回落「追更列表未加载即显示」的同口径）。
+    /// 追更键显隐：**登录**且当前剧**连载中**（series_status=0）才出。
+    /// 官方只在连载剧出追更钮（完结剧不会有新集，2026-10-15 实包同口径）；
+    /// meta 未到（None）默认隐藏——完结剧在 meta 迟到/失败时不能挂着钮；
+    /// 未登录整键不出现（用户实测官方口径：有登录才显示）。
     fn follow_visible(&self) -> bool {
-        self.series_status != Some(1)
+        self.logged_in() && self.series_status == Some(0)
     }
 
     /// 追更当前剧（do_action 34/35，服务端跟随列表）：与详情页/追更页

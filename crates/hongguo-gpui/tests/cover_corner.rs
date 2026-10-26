@@ -11,6 +11,10 @@
 //! 断言走样式层（不开窗口、不出图）：
 //! `cargo test -p hongguo-gpui --test cover_corner`
 
+#[expect(
+    dead_code,
+    reason = "本测试只用单帧版 render_image，多帧入口仅壳内表情动图使用"
+)]
 #[path = "../src/image_upload.rs"]
 mod image_upload;
 // 令牌模块里只有圆角档位被本断言用到，其余是壳内的颜色令牌与主题装配。
