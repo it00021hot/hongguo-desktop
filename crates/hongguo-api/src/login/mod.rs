@@ -140,7 +140,7 @@ fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
             false,
         ),
         ("player_so_load", "1", false),
-        ("pv_player", "73932", false),
+        ("pv_player", hongguo_signer::APP_VERSION_CODE_STR, false),
         ("screen_brightness", "963", false),
         ("sys_dark_mode", "0", false),
         ("sys_mini_window", "1", false),

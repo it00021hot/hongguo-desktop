@@ -45,11 +45,14 @@ impl AppStateInner {
     /// 用真实文件库构造（应用启动用）。打开失败（建不了库/迁移失败）
     /// 直接终止启动：带病运行等于让用户在新库上改设置，回头又换回旧库。
     pub fn with_db(store: Store) -> Self {
-        Self::with_device(store, hongguo_signer::video_device())
+        Self::with_device(
+            store,
+            hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
+        )
     }
 
     /// [`AppStateInner::with_db`] 的带设备版本（启动装配时传入库里
-    /// 装载好的档案；测试与默认路径用静态兜底档案）。
+    /// 装载好的档案；测试与默认路径用匿名档案）。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
         Self {
             store,
@@ -184,17 +187,25 @@ mod tests {
 
     #[test]
     fn merge_cookie_anonymous_only_when_no_account() {
-        let device = hongguo_signer::video_device();
+        let cdid = hongguo_signer::fresh_cdid();
+        let mut device = hongguo_signer::anonymous_profile(&cdid);
+        device.set("iid", "4175317900247834");
+        device.set_ttreq(Some("1$abc".into()));
         let cookie = merge_session_cookie(None, &device);
-        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
+        assert!(cookie.contains("install_id=4175317900247834"));
         assert!(cookie.contains("store-region=cn-gd"));
-        assert!(cookie.contains("ttreq=1$"));
+        assert!(cookie.contains("ttreq=1$abc"));
         assert!(!cookie.contains("sessionid"), "匿名形态不应有会话字段");
+        // 匿名档案（无 iid）：零 cookie 打底
+        let bare = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
+        assert_eq!(merge_session_cookie(None, &bare), "");
     }
 
     #[test]
     fn merge_cookie_account_overrides_and_extends() {
-        let device = hongguo_signer::video_device();
+        let cdid = hongguo_signer::fresh_cdid();
+        let mut device = hongguo_signer::anonymous_profile(&cdid);
+        device.set("iid", "4175317900247834");
         let cookie = merge_session_cookie(Some("sessionid=abc; store-region=cn-sh"), &device);
         // 账号字段覆盖同名、追加新增，兜底字段保留
         assert!(

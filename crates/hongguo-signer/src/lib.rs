@@ -21,9 +21,8 @@
 //! 1. **签完不能再动 url 和 body。** 签名是「URL 查询串 + body 字节 + 时间戳」的
 //!    联合函数，改任何一个字节（包括 query 参数顺序、URL 编码方式）都会失配。
 //! 2. **常量不能改。** [`constants`] 里的值是黑盒实测产物，与服务端一一对应。
-//! 3. **设备档案要整体替换。** [`device::video_device`] 的字段与
-//!    [`device::VIDEO_UA`] 必须成对使用：Medusa 会把 `device_id` / `version_name`
-//!    写进密文，服务端两边比对。
+//! 3. **设备档案要整体替换。** 设备档案的字段与 [`device::video_ua`] 必须成对
+//!    使用：Medusa 会把 `device_id` / `version_name` 写进密文，服务端两边比对。
 //!
 //! ## 关于 clippy
 //!
@@ -57,7 +56,10 @@ pub mod xgorgon;
 
 // 统一出口：只导出 crate 内真正按 `crate::signer::X` 引用的符号，
 // 其余一律走 `signer::子模块::X`，避免出现没人用的转发。
-pub use device::{APP_ID, CHANNEL_ID, VIDEO_REFERER, VIDEO_UA, video_device};
+pub use device::{
+    APP_ID, APP_VERSION_CODE, APP_VERSION_CODE_STR, APP_VERSION_NAME, CHANNEL_ID, VIDEO_REFERER,
+    anonymous_profile, fresh_cdid, video_ua,
+};
 pub use helios::helios;
 pub use medusa::build_medusa;
 pub use primitives::md5_hex_upper;

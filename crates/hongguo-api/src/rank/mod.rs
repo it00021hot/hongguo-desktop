@@ -997,7 +997,10 @@ pub(crate) mod probe {
             ("version_code", "73932"),
             ("version_name", "7.3.9.32"),
         ];
-        let mut v = serde_json::to_value(hongguo_signer::video_device()).unwrap();
+        let mut v = serde_json::to_value(hongguo_signer::anonymous_profile(
+            "0f0f0f0f-0000-4000-8000-000000000000",
+        ))
+        .unwrap();
         v["fields"] = serde_json::Value::Array(
             pairs
                 .into_iter()
@@ -1334,12 +1337,12 @@ pub(crate) mod probe {
         }
     }
 
-    /// app 生产同款设备（video_device + 匿名 cookie）下发的 selector schema：
+    /// app 生产同款设备（匿名档案 + 匿名 cookie）下发的 selector schema：
     /// 排查两端 tabs 是否一致（灰度可能按设备分发）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_selector_app_device() {
-        let device = hongguo_signer::video_device();
+        let device = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
         let env = ApiEnv {
             proxy: hongguo_common::model::ProxyConfig::default(),
             cookie: Some(hongguo_signer::device::anonymous_cookie(&device)),

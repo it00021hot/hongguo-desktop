@@ -25,11 +25,7 @@ use hongguo_common::AppError;
 use hongguo_common::utils::time::now_ms;
 use hongguo_service::app_state::AppState;
 use hongguo_service::device::{BootstrapMeta, read_meta, write_meta};
-use hongguo_signer::device::{DeviceProfile, align_app_version, video_device};
-
-/// 注册尝试的退避间隔。冷却期一次注册就是一次风控暴露面，24h 内绝不重试；
-/// 手动重试（设置页按钮 / 命令）不受此限。
-const REGISTER_BACKOFF_MS: i64 = 24 * 60 * 60 * 1000;
+use hongguo_signer::device::{DeviceProfile, align_app_version};
 
 /// 健康探针用的搜索词（探针只看「有没有非空响应」，词本身无关紧要）。
 const PROBE_QUERY: &str = "热门";
@@ -75,12 +71,12 @@ async fn probe(env: &ApiEnv) -> Health {
     }
 }
 
-/// 后台健康复检：现役档案与静态兜底不同源才值得探（探针每次 1-2 个请求，
-/// 静态现役时轮换目标就是自己，没有信息量）。只在「现役死、静态活」时轮换。
+/// 后台健康复检：只探**带 iid 的注册档案**（匿名档案无设备身份可死，
+/// 官方 7.4.2.32 匿名读播全量放行，无需复检）。现役探针空响应即判死，
+/// 直接重铺匿名档案——register2 端点已废弃（device_id=0），不再尝试注册。
 async fn ensure_healthy(state: &AppState) {
     let device = state.device();
-    let current = video_device();
-    if device.get("iid") == current.get("iid") {
+    if device.get("iid").is_empty() {
         return;
     }
     let env = state.api_env();
@@ -89,90 +85,30 @@ async fn ensure_healthy(state: &AppState) {
         return;
     }
     log::warn!(
-        "[Device] 现役档案探针空响应（iid={}），静态档案对照中…",
+        "[Device] 现役档案探针空响应（iid={}），重铺匿名档案",
         device.get("iid")
     );
-    let static_env = ApiEnv {
-        proxy: env.proxy.clone(),
-        device: current.clone(),
-        cookie: Some(hongguo_signer::device::anonymous_cookie(&current)),
-        x_tt_token: None,
-    };
-    match probe(&static_env).await {
-        Health::Ok => {
-            log::warn!("[Device] 静态对照可用 → 现役档案已死，进入轮换");
-            rotate(state, false, "探针判定死设备").await;
-        }
-        _ => {
-            log::warn!("[Device] 静态对照也不可用（网络/服务端整体异常），按兵不动");
-        }
-    }
+    let mut meta = read_meta(&state.store);
+    repave_anonymous(state, &mut meta).await;
 }
 
-/// 轮换：注册优先（带退避），失败退静态兜底。`force` 绕过退避（手动重试）。
+/// 轮换：注册已退场（register2 被服务端废弃，恒 device_id=0），死设备
+/// 一律重铺匿名档案。`force` 仅保留签名兼容（手动重试命令走 [`retry_register`]）。
 /// 返回轮换后的状态。
 pub async fn rotate(state: &AppState, force: bool, reason: &str) -> DeviceStatus {
+    let _ = force;
     let mut meta = read_meta(&state.store);
-    let now = now_ms();
-    let backoff_left = meta
-        .last_register_attempt_ms
-        .map(|t| REGISTER_BACKOFF_MS - (now - t).max(0))
-        .unwrap_or(0);
-    if !force && backoff_left > 0 {
-        log::info!(
-            "[Device] 注册退避中（剩 {}h），按 {} 处理：直接静态兜底",
-            backoff_left / 3_600_000,
-            reason
-        );
-        return repave_static(state, &mut meta).await;
-    }
-
-    meta.last_register_attempt_ms = Some(now);
-    meta.last_register_error = None;
-    write_meta(&state.store, &meta);
-
-    // 签名档案用静态兜底（服务端要求注册请求带「已激活设备上下文」，
-    // 见 register_device 注释）；body 指纹是全新的
-    let reg_env = ApiEnv {
-        proxy: state.settings().proxy,
-        device: video_device(),
-        cookie: None,
-        x_tt_token: None,
-    };
-    match register_device(&reg_env).await {
-        Ok(r) => {
-            log::info!(
-                "[Device] 注册成功 device_id={} install_id={} ttreq={}（{}）",
-                r.device_id,
-                r.install_id,
-                if r.ttreq.is_empty() { "无" } else { "有" },
-                reason
-            );
-            let mut profile = video_device();
-            profile.set("device_id", &r.device_id);
-            profile.set("iid", &r.install_id);
-            profile.set("cdid", &r.cdid);
-            profile.set("openudid", &r.openudid);
-            align_app_version(&mut profile);
-            profile.set_ttreq(Some(r.ttreq.clone()));
-            swap(state, &mut meta, profile, "registered").await
-        }
-        Err(e) => {
-            log::warn!("[Device] 注册失败（{}）：{e}", reason);
-            meta.last_register_error = Some(e.to_string());
-            write_meta(&state.store, &meta);
-            repave_static(state, &mut meta).await
-        }
-    }
+    log::info!("[Device] 轮换（{reason}）：重铺匿名档案");
+    repave_anonymous(state, &mut meta).await
 }
 
-/// 静态兜底重铺。现役已是这份静态档案（iid 相同）时不折腾。
-async fn repave_static(state: &AppState, meta: &mut BootstrapMeta) -> DeviceStatus {
-    let current = video_device();
-    if state.device().get("iid") == current.get("iid") {
+/// 匿名档案重铺。现役已是匿名（无 iid）时不折腾。
+async fn repave_anonymous(state: &AppState, meta: &mut BootstrapMeta) -> DeviceStatus {
+    if state.device().get("iid").is_empty() {
         return status_inner(state, meta);
     }
-    swap(state, meta, current, "static_fallback").await
+    let profile = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
+    swap(state, meta, profile, "anonymous").await
 }
 
 /// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新。
@@ -229,12 +165,13 @@ fn status_inner(state: &AppState, meta: &BootstrapMeta) -> DeviceStatus {
     }
 }
 
-/// 手动重试注册（绕过退避）。成功换注册档案；失败维持现役并记录错误。
+/// 手动重试注册（设置页命令）。签名档案用现役档案；register2 端点已废弃
+/// （恒 device_id=0），失败维持现役并记录错误。
 pub async fn retry_register(state: &AppState) -> DeviceStatus {
     let mut meta = read_meta(&state.store);
     let reg_env = ApiEnv {
         proxy: state.settings().proxy,
-        device: video_device(),
+        device: state.device(),
         cookie: None,
         x_tt_token: None,
     };
@@ -242,10 +179,9 @@ pub async fn retry_register(state: &AppState) -> DeviceStatus {
     write_meta(&state.store, &meta);
     match register_device(&reg_env).await {
         Ok(r) => {
-            let mut profile = video_device();
+            let mut profile = hongguo_signer::anonymous_profile(&r.cdid);
             profile.set("device_id", &r.device_id);
             profile.set("iid", &r.install_id);
-            profile.set("cdid", &r.cdid);
             profile.set("openudid", &r.openudid);
             align_app_version(&mut profile);
             profile.set_ttreq(Some(r.ttreq.clone()));
@@ -259,41 +195,23 @@ pub async fn retry_register(state: &AppState) -> DeviceStatus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 退避判定：刚试过注册（24h 内）的元数据让非强制轮换直接走静态兜底，
-    /// 不打注册接口（当前网络环境下打不通，退避的意义就是别反复撞）。
-    #[test]
-    fn rotate_respects_backoff_without_network() {
-        // 同步部分可测：退避窗口的算术。真实轮换走全链路探针用例。
-        let meta = BootstrapMeta {
-            last_register_attempt_ms: Some(now_ms() - 3_600_000), // 1h 前
-            ..BootstrapMeta::default()
-        };
-        let left = meta
-            .last_register_attempt_ms
-            .map(|t| REGISTER_BACKOFF_MS - (now_ms() - t).max(0))
-            .unwrap_or(0);
-        assert!(left > 0, "1h 前试过，24h 退避应仍在窗口内");
-        assert!(left <= REGISTER_BACKOFF_MS);
-    }
-}
+// 重铺/换档逻辑由 hongguo_service::device 的测试覆盖（adopt_sync 同一套
+// store 语义）；壳侧只多出「探针判定 + 异步装配」，无独立可测纯函数。
+// 直连真实接口的注册探针已随 register2 废除一并移除。
 
 #[cfg(test)]
 mod probe {
     use super::*;
     use hongguo_common::model::ProxyConfig;
 
-    /// 全链路试注（预算内 1 次注册）：注册 → 组档案 → 探针验活性。
-    /// 注册被风控拒时打印拒绝原文（退避逻辑的真实路径）。
+    /// 全链路试注（预算内 1 次注册，register2 已废弃、恒 device_id=0，
+    /// 仅留作端点存活性诊断）：注册 → 组档案 → 探针验活性。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_register_and_use() {
         let reg_env = ApiEnv {
             proxy: ProxyConfig::default(),
-            device: video_device(),
+            device: hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
             cookie: None,
             x_tt_token: None,
         };
@@ -306,10 +224,9 @@ mod probe {
                     r.cdid,
                     if r.ttreq.is_empty() { "无" } else { &r.ttreq }
                 );
-                let mut profile = video_device();
+                let mut profile = hongguo_signer::anonymous_profile(&r.cdid);
                 profile.set("device_id", &r.device_id);
                 profile.set("iid", &r.install_id);
-                profile.set("cdid", &r.cdid);
                 profile.set("openudid", &r.openudid);
                 align_app_version(&mut profile);
                 profile.set_ttreq(Some(r.ttreq));

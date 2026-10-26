@@ -44,8 +44,15 @@ chown root:root "$STAGE"/*
 chmod 644 "$STAGE"/*
 chcon -R u:object_r:system_security_cacerts_file:s0 "$STAGE"
 
-# 2) bind-mount 盖住两个信任库（APEX 版本化路径 + /system 旧路径兜底）
+# 2) bind-mount 盖住三个信任库：APEX 版本化路径、APEX 未版本化路径、/system 旧路径兜底。
+#    未版本化路径必须盖：2026-10-26 新 MuMu 镜像实测，/apex/com.android.conscrypt 与
+#    版本化路径是两条独立 bind 链（不同 inode），Conscrypt 默认读未版本化路径——只盖
+#    版本化路径时 App 侧报 Trust anchor not found。旧镜像该路径是空壳目录可跳过。
+APEX_UNVERSIONED=/apex/com.android.conscrypt/cacerts
 mount -o bind "$STAGE" "$APEX_CERTS"
+if [ -d "$APEX_UNVERSIONED" ]; then
+  mount -o bind "$STAGE" "$APEX_UNVERSIONED" 2>/dev/null || echo "WARN: mount $APEX_UNVERSIONED failed (旧镜像空壳可忽略)"
+fi
 mount -o bind "$STAGE" /system/etc/security/cacerts
 
 # 3) 封 QUIC：UDP 443 过不了 HTTP 代理，REJECT 逼 TTNet 回落 TCP

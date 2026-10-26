@@ -67,7 +67,7 @@ fn build_client_uncached(
     config: &hongguo_common::model::ProxyConfig,
 ) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
-        .user_agent(hongguo_signer::VIDEO_UA)
+        .user_agent(hongguo_signer::video_ua())
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10));
 
@@ -105,7 +105,8 @@ pub struct ApiEnv {
 }
 
 impl ApiEnv {
-    /// 未登录的默认环境：静态兜底设备档案 + 默认 origin。
+    /// 未登录的默认环境：匿名游客档案（官方 7.4.2.32 形态，无设备身份）
+    /// + 默认 origin。
     ///
     /// 测试基线专用（生产走登录态 / 注册档案）。不 `#[cfg(test)]` 门控：下游
     /// crate（本仓 crates/hongguo-service 的测试）要用，而依赖 crate 对下游以非
@@ -113,7 +114,7 @@ impl ApiEnv {
     pub fn anonymous(proxy: hongguo_common::model::ProxyConfig) -> Self {
         Self {
             proxy,
-            device: hongguo_signer::video_device(),
+            device: hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
             cookie: None,
             x_tt_token: None,
         }
@@ -318,7 +319,7 @@ pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<
     let send = |referer: bool| {
         let mut req = client
             .get(url)
-            .header("User-Agent", hongguo_signer::VIDEO_UA)
+            .header("User-Agent", hongguo_signer::video_ua())
             // MP4 已经压缩，HTTP gzip 会破坏 Range 偏移并可能让 reqwest
             // 在读响应体时解压失败。视频必须按原始字节收取。
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
@@ -392,7 +393,7 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
     let resp = client
         .get(url)
         .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
-        .header("User-Agent", hongguo_signer::VIDEO_UA)
+        .header("User-Agent", hongguo_signer::video_ua())
         .header(reqwest::header::ACCEPT_ENCODING, "identity")
         .header("Range", "bytes=0-0")
         .send()
@@ -460,7 +461,7 @@ async fn get_video_range_once(
         let mut req = client
             .get(url)
             .timeout(VIDEO_RANGE_TOTAL_TIMEOUT)
-            .header("User-Agent", hongguo_signer::VIDEO_UA)
+            .header("User-Agent", hongguo_signer::video_ua())
             .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .header("Range", format!("bytes={start}-{end}"));
         if referer {
@@ -673,7 +674,6 @@ mod tests {
     use hongguo_common::model::ProxyConfig;
     use hongguo_common::model::settings::ProxyMode;
     use hongguo_signer::ticket::{sign_get, sign_post};
-    use hongguo_signer::video_device;
 
     #[test]
     fn range_cutter_slices_target_from_full_body() {
@@ -717,13 +717,17 @@ mod tests {
 
     #[test]
     fn post_signature_always_has_body() {
-        let signed = sign_post("/x/v1/", b"{}".to_vec(), &video_device());
+        let signed = sign_post(
+            "/x/v1/",
+            b"{}".to_vec(),
+            &ApiEnv::anonymous(ProxyConfig::default()).device,
+        );
         assert!(signed.body.is_some(), "POST 签名必须带 body");
     }
 
     #[test]
     fn get_signature_has_no_body() {
-        let signed = sign_get("/x/v1/", &video_device());
+        let signed = sign_get("/x/v1/", &ApiEnv::anonymous(ProxyConfig::default()).device);
         assert!(signed.body.is_none(), "GET 签名不应带 body");
     }
 

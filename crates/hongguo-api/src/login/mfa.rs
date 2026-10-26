@@ -219,7 +219,7 @@ mod tests {
     fn merges_mfa_cookie_into_env() {
         let mk = |cookie: Option<&str>| ApiEnv {
             proxy: hongguo_common::model::ProxyConfig::default(),
-            device: hongguo_signer::video_device(),
+            device: hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid()),
             cookie: cookie.map(str::to_string),
             x_tt_token: None,
         };

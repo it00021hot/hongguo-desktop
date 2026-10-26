@@ -203,7 +203,10 @@ mod probe {
             ("version_code", r#"73932"#),
             ("version_name", r#"7.3.9.32"#),
         ];
-        let mut v = serde_json::to_value(hongguo_signer::video_device()).unwrap();
+        let mut v = serde_json::to_value(hongguo_signer::anonymous_profile(
+            "0f0f0f0f-0000-4000-8000-000000000000",
+        ))
+        .unwrap();
         v["fields"] = serde_json::Value::Array(
             pairs
                 .into_iter()
@@ -221,8 +224,8 @@ mod probe {
             ),
             x_tt_token: None,
         };
-        // 对照：我们自己的静态档案，仅版本号升到 73932（UA 保留我们的机型）
-        let mut own = hongguo_signer::video_device();
+        // 对照：我们自己的匿名档案，仅版本号压到 73932（UA 保留我们的机型）
+        let mut own = hongguo_signer::anonymous_profile("0f0f0f0f-0000-4000-8000-000000000001");
         for key in [
             "version_code",
             "manifest_version_code",

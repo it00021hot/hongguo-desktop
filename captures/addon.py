@@ -44,6 +44,8 @@ def response(flow):
 
     req_body = safe_text(flow.request.raw_content)
     resp_body = safe_text(flow.response.raw_content)
+    # Set-Cookie 是身份票（ttreq/odin_tt）下发的唯一观测点，必须落盘
+    set_cookies = [v for k, v in flow.response.headers.items(True) if k.lower() == "set-cookie"]
     entry = {
         "t": time.time(),
         "method": flow.request.method,
@@ -52,6 +54,7 @@ def response(flow):
         "req_headers": dict(flow.request.headers.items()),
         "req_body": req_body[:200000],
         "status": flow.response.status_code,
+        "set_cookies": set_cookies,
         "resp_body": resp_body[:500000],
     }
     with open(OUT, "a", encoding="utf-8") as f:

@@ -4,15 +4,69 @@
 > 未接的接口域）见 [`hongguo-apk-endpoints.md`](hongguo-apk-endpoints.md)——那份只是
 > 路径在场，参数/签名/响应口径仍以本文件抓包为准。
 
-来源：官方 Android App（com.phoenix.read 7.3.9.32）经 mitmproxy 抓包实测
-（模拟器冷启动全流程；2026-10-25 起逐域复核口径），
+## 0. 官方 7.4.2.32 对齐（2026-10-26，MuMu 新设备 virgin 实抓三点一线）
+
+官方更新 7.4.2.32（versionCode 74232，旧 73932/7.3.9.32）后的实测形态：
+
+**版本身份与 UA**（全仓唯一出处 `hongguo-signer::device` 常量）：
+
+- `version_code/update_version_code/manifest_version_code = 74232`，
+  `version_name = 7.4.2.32`，`pv_player` 与 version_code 同值。
+- UA 尾段换形：`...Build/UKQ1.230804.001;tt-ok/3.12.13.20`
+  （旧的 `Cronet/TTNetVersion:…` 形态在**匿名请求**上被服务端静默拒
+  ——UA 是匿名风控的闸门，已实测从「空响应」翻转为「正常处理」）。
+- 公共头：`passport-sdk-version: 5051452`、`x-vc-bdturing-sdk-version: 4.0.3.cn`
+  （旧值 50561 / 3.7.2.cn）；`x-tt-request-tag` 与 `x-tt-dt` 官方业务请求
+  **不再携带**，匿名带上会被静默拒（已从 signer 统一头移除）。
+
+**匿名（未登录、无设备身份）读播边界**：
+
+- 全新身份（无 iid/device_id、零 cookie）**信息流 GET 全通**：
+  bookmall/tab、cell/change 等正常下发（官方 virgin 同形态实测）。
+- `novel/player/video_model/v1` 匿名 **200 + 0 字节**——官方 virgin
+  同样取不到流（同批抓包实证）。**播放需要服务端「认识」的设备**：
+  指纹已知（注册过）的设备带 `install_id + ttreq` cookie 即可取流。
+- cookie 形态：`install_id={iid}; ttreq={票}`（注册响应 Set-Cookie 下发，
+  票按 install_id 发放，两者必须同源）。匿名档案必须**零 cookie**
+  ——带自报的未知 install_id 反而被拒。
+
+**设备注册（device_register）7.4.2.32 真实形态**（2026-10-26 virgin 实抓，
+密文样本 `crates/hongguo-api/tests/fixtures/device_register_74232_real.bin`）：
+
+- 域：`https://log5-applog.fqnovel.com/service/2/device_register/`
+  （不是老的 log.snssdk.com）。
+- query 仅四参：`req_id={uuid}&tt_data=a&okhttp_version=4.2.243.31-douyin&use_store_region_cookie=1`。
+- **无任何签名头**（五件套全不带）；`content-type: application/octet-stream;tt-data=a`；
+  `x-ss-stub = body MD5 大写`；cookie 带 passport_csrf_token 对。
+- body：TT-Encrypt V5（`tc` magic 同旧版）包裹的注册 JSON。指纹模板与
+  7.3.9.32 时代差异大：`sdk_version: "4.3.2-rc.44"` / `sdk_version_code: 4030294` /
+  `sdk_target_version: 30` / `sdk_flavor: "cnInner"` / `git_hash: "27660d0"` /
+  `release_build: "a0af56b"` / `sig_hash: "56a962410c494bbaf0b58dba20cae56f"`（新包签名）、
+  `display_name: "红果免费短剧"`；body **不带** install_id/device_id（服务端按
+  cdid/openudid 指纹发号，指纹已知则原样回发 + `new_user:0`）。
+- 成功响应：JSON `device_id/install_id/device_token` + Set-Cookie
+  `install_id` + `ttreq`。
+- **本仓现状（未实测通过）**：完全复刻上述形态后，**已知指纹**用 curl 原样
+  重放可拿回原 ids；用 Rust reqwest 打**新指纹**恒 `device_id:0`（服务端
+  风控对新指纹有 HTTP 层之外的判定，暖场 settings/app_log 后注册仍拒；
+  怀疑点在官方 body 由原生 metasec 加密、可能附带采集字段）。⇒ 走
+  reqwest 的注册链路暂时不可用，游客播放依赖已知设备或登录会话。
+
+**官方设备身份的确定性**：cdid/openudid 由 ANDROID_ID 等设备种子派生
+（pm clear 后不变）；服务端对同一指纹恒回同一 install_id。这是「清数据
+不掉身份」的根因。
+
+## 来源与总述
+
+来源：官方 Android App（com.phoenix.read 7.3.9.32 起，现 7.4.2.32）经
+mitmproxy 抓包实测（模拟器冷启动全流程；2026-10-25 起逐域复核口径），
 全部端点均在 `api5-normal-lq.fqnovel.com`，签名五件套
 （x-gorgon/x-argus/x-ladon/x-helios/x-medusa）+ `x-reading-request: {ticket_ms}-{random}` 头。
 响应普遍为 **brotli 压缩 JSON**（请求头带 `accept-encoding: gzip, deflate, br`）。
 业务参数一律放 **URL query**（POST 也是），POST body 另有 JSON 业务体。
 
-公共参数（每个请求都带，签名覆盖）：`device_platform=android, aid=**, version_code=73932,
-manifest_version_code=73932, app_name=**, channel=**, device_type=Xiaomi 14 系指纹,
+公共参数（每个请求都带，签名覆盖）：`device_platform=android, aid=**, version_code（见第 0 节常量）,
+manifest_version_code, app_name=**, channel=**, device_type=Xiaomi 14 系指纹,
 device_id/iid/openudid/cdid, os=android, os_version, dpi=460, resolution,
 host_abi=arm64-v8a, _rticket={ms}, sim_region, msToken...`
 

@@ -338,3 +338,126 @@ mod tests {
         assert_eq!(content_type_of("v1"), Some(1));
     }
 }
+
+#[cfg(test)]
+mod probes {
+    /// 匿名取流的三域探测（官方 7.4.2.32 virgin 打 reading.snssdk.com，
+    /// 本仓历史口径打 lq 域——lq 对匿名 POST 疑似拒绝，见 2026-10-26 冒烟）。
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_video_model_hosts() {
+        use hongguo_common::model::ProxyConfig;
+        let device = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
+        let env = crate::client::ApiEnv {
+            // 走本机 mitm 便于与官方 virgin 请求逐字段对照
+            proxy: ProxyConfig {
+                mode: hongguo_common::model::settings::ProxyMode::Manual,
+                url: "http://127.0.0.1:8080".into(),
+            },
+            device,
+            cookie: None,
+            x_tt_token: None,
+        };
+        let vid = "7690617619568675902"; // 2026-10-26 官方 virgin 实流
+        let ct = crate::params::SINGLE_CONTENT_TYPE_FALLBACK;
+        let payload = serde_json::to_vec(&crate::params::single_model_payload(vid, ct))
+            .expect("payload 序列化不可能失败");
+        for origin in [
+            crate::client::LQ_API_ORIGIN,
+            "https://api5-normal.fqnovel.com",
+            "https://reading.snssdk.com",
+        ] {
+            match crate::client::api_call_full(
+                origin,
+                crate::params::SINGLE_MODEL_PATH,
+                Some(payload.clone()),
+                &[],
+                &env,
+            )
+            .await
+            {
+                Ok(b) => println!(
+                    "[vm-hosts] {origin} bytes={} head={}",
+                    b.len(),
+                    &String::from_utf8_lossy(&b)[..80.min(b.len())]
+                ),
+                Err(e) => println!("[vm-hosts] {origin} ERR {e}"),
+            }
+        }
+
+        // 官方 virgin 形态：query 只有 8 个版本参数 + cdid（无指纹堆）
+        let minimal = hongguo_signer::device::DeviceProfile::from_pairs(
+            &[
+                ("aid", "8662"),
+                ("device_platform", "android"),
+                ("update_version_code", hongguo_signer::APP_VERSION_CODE_STR),
+                (
+                    "manifest_version_code",
+                    hongguo_signer::APP_VERSION_CODE_STR,
+                ),
+                ("version_name", hongguo_signer::APP_VERSION_NAME),
+                ("version_code", hongguo_signer::APP_VERSION_CODE_STR),
+                ("app_name", "novelread"),
+                ("channel", "tengxun_8662_64"),
+            ],
+            &hongguo_signer::video_ua(),
+        );
+        let env_min = crate::client::ApiEnv {
+            proxy: ProxyConfig::default(),
+            device: minimal,
+            cookie: None,
+            x_tt_token: None,
+        };
+        for origin in [
+            "https://reading.snssdk.com",
+            crate::client::LQ_API_ORIGIN,
+            "https://api5-normal.fqnovel.com",
+        ] {
+            match crate::client::api_call_full(
+                origin,
+                crate::params::SINGLE_MODEL_PATH,
+                Some(payload.clone()),
+                &[],
+                &env_min,
+            )
+            .await
+            {
+                Ok(b) => println!(
+                    "[vm-hosts] 极简 {origin} bytes={} head={}",
+                    b.len(),
+                    &String::from_utf8_lossy(&b)[..80.min(b.len())]
+                ),
+                Err(e) => println!("[vm-hosts] 极简 {origin} ERR {e}"),
+            }
+        }
+
+        // 官方形态对照：body gzip + content-encoding 头（官方 virgin 实抓）
+        // 官方原始 body 逐字节（vid 7697626904827792409，video_id_type 形态）
+        let official_payload = br#"{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"disable_video_relate_book":false,"from_video_id":"","need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_id_type":0,"video_platform":3},"video_id":"7697626904827792409"}"#.to_vec();
+        let gz_official = {
+            use flate2::write::GzEncoder;
+            use std::io::Write;
+            let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::best());
+            enc.write_all(&official_payload)
+                .expect("gzip 写入内存不可能失败");
+            enc.finish().expect("gzip 收尾不可能失败")
+        };
+        match crate::client::api_call_full_response(
+            "https://reading.snssdk.com",
+            crate::params::SINGLE_MODEL_PATH,
+            Some(gz_official),
+            &[],
+            &[("Content-Encoding".into(), "gzip".into())],
+            &env,
+        )
+        .await
+        {
+            Ok(r) => println!(
+                "[vm-hosts] 官方body bytes={} head={}",
+                r.bytes.len(),
+                &String::from_utf8_lossy(&r.bytes)[..120.min(r.bytes.len())]
+            ),
+            Err(e) => println!("[vm-hosts] 官方body ERR {e}"),
+        }
+    }
+}
