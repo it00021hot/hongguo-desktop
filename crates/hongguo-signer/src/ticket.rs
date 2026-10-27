@@ -314,11 +314,11 @@ mod tests {
         // 注册来的档案换机型时 UA 要跟着换
         let mut device = test_device();
         device.set("device_id", "42");
-        let custom_ua = "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14)";
+        let custom_ua = crate::device::register_ua();
         // 换 UA 不改字段：serde 打个补丁重建（等价于注册流程换机型档案）
         let profile: crate::device::DeviceProfile = {
             let mut v = serde_json::to_value(&device).unwrap();
-            v["user_agent"] = serde_json::Value::String(custom_ua.into());
+            v["user_agent"] = serde_json::Value::String(custom_ua.clone());
             serde_json::from_value(v).unwrap()
         };
         let signed = sign_request(

@@ -57,7 +57,8 @@ pub mod xgorgon;
 // 统一出口：只导出 crate 内真正按 `crate::signer::X` 引用的符号，
 // 其余一律走 `signer::子模块::X`，避免出现没人用的转发。
 pub use device::{
-    APP_ID, APP_VERSION_CODE, APP_VERSION_CODE_STR, APP_VERSION_NAME, CHANNEL_ID, VIDEO_REFERER,
+    APP_ID, APP_VERSION_CODE, APP_VERSION_CODE_STR, APP_VERSION_NAME, CHANNEL_ID,
+    REGISTER_VERSION_CODE, REGISTER_VERSION_CODE_STR, REGISTER_VERSION_NAME, VIDEO_REFERER,
     anonymous_profile, fresh_cdid, video_ua,
 };
 pub use helios::helios;

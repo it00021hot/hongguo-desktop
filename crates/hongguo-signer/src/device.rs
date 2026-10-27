@@ -22,6 +22,13 @@ pub const APP_VERSION_CODE: u64 = 74232;
 pub const APP_VERSION_CODE_STR: &str = "74232";
 pub const APP_VERSION_NAME: &str = "7.4.2.32";
 
+/// 注册指纹钉定的版本身份（73932 活形态，2026-10-27 取流矩阵实证，与
+/// hgplayer 同口径）。注册请求与注册产物档案**终生钉这套身份**，不随
+/// [`APP_VERSION_CODE`] 走——升当前版本与注册指纹不同源，取流实测即挂。
+pub const REGISTER_VERSION_CODE: u64 = 73932;
+pub const REGISTER_VERSION_CODE_STR: &str = "73932";
+pub const REGISTER_VERSION_NAME: &str = "7.3.9.32";
+
 /// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
 /// 机型段与档案指纹一致，改机型要整组同换）。
 ///
@@ -32,6 +39,17 @@ pub fn video_ua() -> String {
         "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
          Build/UKQ1.230804.001;tt-ok/3.12.13.20)",
         APP_VERSION_CODE_STR
+    )
+}
+
+/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段为
+/// 73932 时代 Cronet 形态。与 [`video_ua`] 各自和所属版本身份成套
+/// （注册口径 vs 当前客户端口径），不可混搭。
+pub fn register_ua() -> String {
+    format!(
+        "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
+         Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
+        REGISTER_VERSION_CODE_STR
     )
 }
 
@@ -101,15 +119,17 @@ impl DeviceProfile {
         }
     }
 
-    /// 设备注册用的全新档案：版本身份取 [`APP_VERSION_CODE`] 常量、
-    /// Xiaomi 14 指纹，**不带** device_id/iid
-    ///（首次注册 query 里不能有空值形态的字段），cdid/openudid 由调用方
-    /// 生成后填入，与注册 body 的 JSON 指纹保持同一套。
+    /// 设备注册用的全新档案：版本身份**原生钉注册口径**（
+    /// [`REGISTER_VERSION_CODE_STR`] 73932 活形态，2026-10-27 取流矩阵
+    /// 实证），UA 为 73932 时代 Cronet 尾段（[`register_ua`]），Xiaomi 14
+    /// 指纹，**不带** device_id/iid（首次注册 query 里不能有空值形态的
+    /// 字段）。cdid/openudid 由调用方生成后填入——注册请求与注册产物
+    /// 档案共用本构造，指纹天然同源；匿名档案经 [`anonymous_profile`]
+    /// 对齐到当前客户端口径。
     ///
     /// 不 `#[cfg(test)]` 门控：下游 crate（domain/api/register）的测试要用，
     /// 而依赖 crate 对下游以非 test 方式编译，门控项会消失。
     pub fn fresh_register_profile(cdid: &str, openudid: &str) -> Self {
-        let ua = video_ua();
         let mut dev = Self::from_pairs(
             &[
                 ("ac", "wifi"),
@@ -125,19 +145,19 @@ impl DeviceProfile {
                 ("host_abi", "arm64-v8a"),
                 ("is_android_pad_screen", "0"),
                 ("language", "zh"),
-                ("manifest_version_code", APP_VERSION_CODE_STR),
+                ("manifest_version_code", REGISTER_VERSION_CODE_STR),
                 ("os", "android"),
                 ("os_api", "34"),
                 ("os_version", "14"),
                 ("player_so_load", "1"),
-                ("pv_player", APP_VERSION_CODE_STR),
+                ("pv_player", REGISTER_VERSION_CODE_STR),
                 ("resolution", "1200*2670"),
                 ("ssmix", "a"),
-                ("update_version_code", APP_VERSION_CODE_STR),
-                ("version_code", APP_VERSION_CODE_STR),
-                ("version_name", APP_VERSION_NAME),
+                ("update_version_code", REGISTER_VERSION_CODE_STR),
+                ("version_code", REGISTER_VERSION_CODE_STR),
+                ("version_name", REGISTER_VERSION_NAME),
             ],
-            &ua,
+            &register_ua(),
         );
         dev.set("cdid", cdid);
         dev.set("openudid", openudid);
@@ -167,13 +187,18 @@ impl DeviceProfile {
     }
 }
 
-/// 匿名游客档案（官方 7.4.2.32 形态）：机型指纹 + 版本身份 + 客户端
-/// 自生成的 `cdid`，**不带 iid/device_id/openudid、零 cookie**——服务端
-/// 对匿名读播全量放行。`cdid` 由调用方生成并落库，安装期内保持稳定
+/// 匿名游客档案（官方 7.4.2.32 形态）：注册指纹基底去 `openudid`，版本
+/// 身份与 UA 对齐当前客户端（[`align_app_version`] + [`video_ua`] 的
+/// tt-ok 尾段，2026-10-26 virgin 实抓），`pv_player` 随版本身份同值——
+/// **不带 iid/device_id/openudid、零 cookie**，服务端对匿名读播全量放行。
+/// `cdid` 由调用方生成并落库，安装期内保持稳定
 /// （官方同款行为：pm clear 后身份不变，就是 cdid/指纹没变）。
 pub fn anonymous_profile(cdid: &str) -> DeviceProfile {
     let mut p = DeviceProfile::fresh_register_profile(cdid, "");
     p.remove("openudid");
+    align_app_version(&mut p);
+    p.set("pv_player", APP_VERSION_CODE_STR);
+    p.set_user_agent(&video_ua());
     p
 }
 
@@ -356,6 +381,40 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
+    }
+
+    /// 双口径构造钉死：注册档案原生钉注册口径（73932 + Cronet 尾段），
+    /// 匿名档案对齐当前客户端口径（74232 + tt-ok 尾段）——两套身份各自
+    /// 成套，改口径只动常量与构造器，不许在调用点散写。
+    #[test]
+    fn register_and_anonymous_profiles_pin_their_regimes() {
+        let reg = DeviceProfile::fresh_register_profile("cdid-uuid", "openudid-hex");
+        for k in [
+            "version_code",
+            "update_version_code",
+            "manifest_version_code",
+            "pv_player",
+        ] {
+            assert_eq!(reg.get(k), REGISTER_VERSION_CODE_STR, "{k} 应钉注册口径");
+        }
+        assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
+        assert_eq!(reg.user_agent(), register_ua());
+        assert!(reg.user_agent().contains("Cronet/TTNetVersion"));
+        assert_eq!(reg.get("device_id"), "", "首次注册不带 device_id");
+        assert_eq!(reg.get("iid"), "");
+
+        let anon = anonymous_profile("cdid-uuid");
+        for k in [
+            "version_code",
+            "update_version_code",
+            "manifest_version_code",
+            "pv_player",
+        ] {
+            assert_eq!(anon.get(k), APP_VERSION_CODE_STR, "{k} 应对齐当前客户端");
+        }
+        assert_eq!(anon.get("version_name"), APP_VERSION_NAME);
+        assert_eq!(anon.user_agent(), video_ua());
+        assert!(anon.user_agent().contains("tt-ok/"));
     }
 
     #[test]

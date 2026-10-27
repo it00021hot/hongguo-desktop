@@ -19,6 +19,10 @@ use hongguo_store::Store;
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
 
+/// 设备注册换档的前端事件名（`ServiceEvent::DeviceRegistered` 对外名字，
+/// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
+pub const DEVICE_REGISTERED: &str = "device-registered";
+
 /// 已被淘汰、必须从库里重铺的档案 install_id（2026-10-26 起含**全部静态
 /// 兜底档案**——共享身份是风控暴露面，一并退役；匿名档案取代之）。
 /// **今后每次淘汰档案，旧 iid 必须追加进名单**——健康探针只兜「未来的死」，
@@ -116,44 +120,14 @@ fn repave_anonymous(
     (profile, "anonymous")
 }
 
-/// 注册产物 → 现役档案（2026-10-27 取流矩阵实证的 73932 活形态）。
+/// 注册产物 → 现役档案：与注册请求共用
+/// [`DeviceProfile::fresh_register_profile`] 构造（指纹字段集、顺序与 UA
+/// 天然同源，编译期保证），只补注册响应下发的设备身份。
 ///
-/// 字段集与顺序必须与注册请求同源（指纹一致性 + 签名 query 顺序敏感）：
-/// 版本身份钉 7.3.9.32、UA 尾段为 73932 时代 Cronet 形态，**不做**
-/// `align_app_version`（升 74232 与注册指纹不同源，取流实测即挂）。
+/// 注册口径（73932 活形态）钉在构造器里，**不做** `align_app_version`
+/// （升 74232 与注册指纹不同源，取流实测即挂，2026-10-27 取流矩阵实证）。
 pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
-    let mut p = DeviceProfile::from_pairs(
-        &[
-            ("ac", "wifi"),
-            ("aid", "8662"),
-            ("app_name", "novelread"),
-            ("channel", "xiaomi_8662_64"),
-            ("compliance_status", "0"),
-            ("device_brand", "xiaomi"),
-            ("device_platform", "android"),
-            ("device_type", "23127PN0CC"),
-            ("dpi", "460"),
-            ("dragon_device_type", "phone"),
-            ("host_abi", "arm64-v8a"),
-            ("is_android_pad_screen", "0"),
-            ("language", "zh"),
-            ("manifest_version_code", "73932"),
-            ("os", "android"),
-            ("os_api", "34"),
-            ("os_version", "14"),
-            ("player_so_load", "1"),
-            ("pv_player", "73932"),
-            ("resolution", "1200*2670"),
-            ("ssmix", "a"),
-            ("update_version_code", "73932"),
-            ("version_code", "73932"),
-            ("version_name", "7.3.9.32"),
-        ],
-        "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; \
-         Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
-    );
-    p.set("cdid", &reg.cdid);
-    p.set("openudid", &reg.openudid);
+    let mut p = DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
     p.set("device_id", &reg.device_id);
     p.set("iid", &reg.install_id);
     p.set_ttreq(Some(reg.ttreq.clone()));
@@ -377,6 +351,39 @@ mod tests {
             stored.get("cdid"),
             profile.get("cdid"),
             "落库的 cdid 与现役一致"
+        );
+    }
+
+    /// 注册产物档案与注册请求共用同一构造：版本身份钉注册口径（73932）、
+    /// UA 为注册形态，身份键来自注册响应且按「指纹在前、身份在后」的
+    /// 顺序落位（签名 query 顺序敏感）。
+    #[test]
+    fn registered_profile_shares_register_fingerprint() {
+        let reg = RegisterResult {
+            device_id: "8888888888888888".into(),
+            install_id: "9999999999999999".into(),
+            ttreq: "ttreq-ticket".into(),
+            cdid: "cdid-uuid".into(),
+            openudid: "openudid-hex".into(),
+            ..Default::default()
+        };
+        let p = registered_profile(&reg);
+        for k in [
+            "version_code",
+            "update_version_code",
+            "manifest_version_code",
+            "pv_player",
+        ] {
+            assert_eq!(p.get(k), hongguo_signer::REGISTER_VERSION_CODE_STR);
+        }
+        assert_eq!(p.get("version_name"), hongguo_signer::REGISTER_VERSION_NAME);
+        assert_eq!(p.user_agent(), hongguo_signer::device::register_ua());
+        assert_eq!(p.get("device_id"), "8888888888888888");
+        assert_eq!(p.get("iid"), "9999999999999999");
+        let all: Vec<&str> = p.iter().map(|(k, _)| k).collect();
+        assert_eq!(
+            &all[all.len() - 4..],
+            &["cdid", "openudid", "device_id", "iid"]
         );
     }
 

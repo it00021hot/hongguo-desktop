@@ -8,8 +8,9 @@
 //! ## 线上格式（73932 活形态）
 //!
 //! 请求（`register_device`）：
-//! - query：40 参公共指纹（[`register_query`]，版本身份覆写为 73932）
-//! - body：TT-Encrypt V5 加密的注册 JSON（[`reg73932_json_str`]）
+//! - query：40 参公共指纹（[`register_query`]，版本身份钉注册口径
+//!   `REGISTER_VERSION_*`，见 `hongguo_signer::device`）
+//! - body：TT-Encrypt V5 加密的注册 JSON（[`register_json_str`]）
 //! - 头：`content-type: application/octet-stream;tt-data=a` + 签名客户端
 //!   五件套 + `lc: 101` + `log-encode-type: gzip` + `x-ss-dp: 8662`
 //! - 响应：JSON `device_id/install_id/device_token/new_user` +
@@ -257,8 +258,9 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
 }
 
 /// 注册 query 的公共指纹参数（40 个；`cdid`/`openudid`/时间戳每次生成，
-/// 服务端按这套指纹发新设备号）。版本身份字段由 [`register_device`]
-/// 覆写为 73932。
+/// 服务端按这套指纹发新设备号）。版本身份字段直接钉注册口径
+/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]，73932 活形态），
+/// 与签名档案（`fresh_register_profile`）同源。
 fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, String)> {
     let pairs: Vec<(&str, String)> = vec![
         ("_rticket", now_ms.to_string()),
@@ -285,7 +287,7 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("last_deeplink_update_version_code", "0".into()),
         (
             "manifest_version_code",
-            hongguo_signer::APP_VERSION_CODE_STR.into(),
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
         ),
         ("md", "0".into()),
         ("minor_status", "0".into()),
@@ -302,11 +304,14 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("ttnet_version", "4.2.243.31-douyin".into()),
         (
             "update_version_code",
-            hongguo_signer::APP_VERSION_CODE_STR.into(),
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
         ),
         ("use_store_region_cookie", "1".into()),
-        ("version_code", hongguo_signer::APP_VERSION_CODE_STR.into()),
-        ("version_name", hongguo_signer::APP_VERSION_NAME.into()),
+        (
+            "version_code",
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
+        ),
+        ("version_name", hongguo_signer::REGISTER_VERSION_NAME.into()),
     ];
     pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
@@ -358,11 +363,12 @@ fn fresh_identity() -> FreshIdentity {
 const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 
 /// 构造 AppLog 注册 JSON 明文（73932 活形态；模板逐字段复刻自 hgplayer
-/// `GenerateProfileWith`/`Header` 反编译）：`openudid` 由 cdid 派生
+/// `GenerateProfileWith`/`Header` 反编译，版本身份引用
+/// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
 /// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
 /// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
 /// `apk_first_install_time` 回拨 100~500 秒。
-fn reg73932_json_str(id: &FreshIdentity, now_ms: u64) -> String {
+fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     let mut h = serde_json::Map::new();
     h.insert("access".into(), json!("wifi"));
     h.insert("aid".into(), json!(8662));
@@ -370,7 +376,10 @@ fn reg73932_json_str(id: &FreshIdentity, now_ms: u64) -> String {
         "apk_first_install_time".into(),
         json!(now_ms - FIRST_INSTALL_BACK_MS),
     );
-    h.insert("app_version".into(), json!("7.3.9.32"));
+    h.insert(
+        "app_version".into(),
+        json!(hongguo_signer::REGISTER_VERSION_NAME),
+    );
     h.insert("app_version_minor".into(), json!(""));
     h.insert("cdid".into(), json!(id.cdid));
     h.insert("channel".into(), json!("xiaomi_8662_64"));
@@ -399,7 +408,10 @@ fn reg73932_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     h.insert("ipv6_list".into(), json!([]));
     h.insert("is_system_app".into(), json!(0));
     h.insert("language".into(), json!("zh"));
-    h.insert("manifest_version_code".into(), json!(73932));
+    h.insert(
+        "manifest_version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
     h.insert("not_request_sender".into(), json!(0));
     h.insert("oaid_may_support".into(), json!(true));
     h.insert("openudid".into(), json!(id.openudid));
@@ -421,8 +433,14 @@ fn reg73932_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     h.insert("timezone".into(), json!(8));
     h.insert("tz_name".into(), json!("Asia/Shanghai"));
     h.insert("tz_offset".into(), json!(28800));
-    h.insert("update_version_code".into(), json!(73932));
-    h.insert("version_code".into(), json!(73932));
+    h.insert(
+        "update_version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
+    h.insert(
+        "version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
     let mut o = serde_json::Map::new();
     o.insert("magic_tag".into(), json!("ss_app_log"));
     o.insert("header".into(), Value::Object(h));
@@ -432,10 +450,10 @@ fn reg73932_json_str(id: &FreshIdentity, now_ms: u64) -> String {
 
 /// 注册一台全新设备。
 ///
-/// 73932 活形态：40 参富 query + TT-Encrypt V5 加密的 73932 指纹 JSON +
+/// 73932 活形态：40 参富 query + TT-Encrypt V5 加密的注册指纹 JSON +
 /// 签名客户端（五件套 + `lc/x-ss-dp/log-encode-type`）。签名档案用
-/// **全新指纹**（无 device_id/iid），cdid/openudid 与 query/body 三处
-/// 同源。`env` 只取代理设置。
+/// **全新指纹**（无 device_id/iid，原生注册口径），cdid/openudid 与
+/// query/body 三处同源。`env` 只取代理设置。
 pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -443,39 +461,19 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         .unwrap_or(0);
     let id = fresh_identity();
 
-    let mut profile =
+    // 注册档案原生就是注册口径（fresh_register_profile），与 query/body
+    // 同一套常量，零覆写
+    let profile =
         hongguo_signer::device::DeviceProfile::fresh_register_profile(&id.cdid, &id.openudid);
-    // 注册走 73932 指纹；UA 尾段同为 73932 时代的 Cronet 形态，与档案成套
-    for k in [
-        "version_code",
-        "update_version_code",
-        "manifest_version_code",
-        "pv_player",
-    ] {
-        profile.set(k, "73932");
-    }
-    profile.set("version_name", "7.3.9.32");
-    profile.set_user_agent(
-        "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; \
-         Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
-    );
 
-    let mut q = register_query(&id.cdid, &id.openudid, now_ms);
-    for (k, v) in q.iter_mut() {
-        let nv = match k.as_str() {
-            "version_code" | "update_version_code" | "manifest_version_code" => "73932",
-            "version_name" => "7.3.9.32",
-            _ => continue,
-        };
-        *v = nv.to_string();
-    }
+    let q = register_query(&id.cdid, &id.openudid, now_ms);
 
-    let body = tt_encrypt_v5(reg73932_json_str(&id, now_ms).as_bytes());
+    let body = tt_encrypt_v5(register_json_str(&id, now_ms).as_bytes());
     // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
     if std::env::var("TT_DEBUG").is_ok() {
         let dir = super::capture_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let plain = reg73932_json_str(&id, now_ms);
+        let plain = register_json_str(&id, now_ms);
         let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
         let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
         let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
@@ -601,6 +599,51 @@ mod tests {
         let raw = br#"{"code":110,"message":"ILLEGAL_ACCESS"}"#;
         let err = parse_register(raw).unwrap_err();
         assert!(err.to_string().contains("110"));
+    }
+
+    /// 注册 query 与注册 JSON 的版本身份钉注册口径（与签名档案同一套
+    /// REGISTER_* 常量，三处同源由构造保证，禁止字面量覆写回潮）。
+    #[test]
+    fn register_fingerprint_pins_register_regime() {
+        let id = FreshIdentity {
+            cdid: "cdid-uuid".into(),
+            openudid: "openudid-hex".into(),
+            clientudid: "clientudid-uuid".into(),
+            req_id: "req-id-uuid".into(),
+        };
+        let q = register_query(&id.cdid, &id.openudid, 1_760_000_000_000);
+        let get = |k: &str| {
+            q.iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.as_str())
+                .unwrap()
+        };
+        assert_eq!(
+            get("version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(
+            get("update_version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(
+            get("manifest_version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(get("version_name"), hongguo_signer::REGISTER_VERSION_NAME);
+
+        let v: Value = serde_json::from_str(&register_json_str(&id, 1_760_000_000_000)).unwrap();
+        let h = &v["header"];
+        assert_eq!(h["version_code"], hongguo_signer::REGISTER_VERSION_CODE);
+        assert_eq!(
+            h["update_version_code"],
+            hongguo_signer::REGISTER_VERSION_CODE
+        );
+        assert_eq!(
+            h["manifest_version_code"],
+            hongguo_signer::REGISTER_VERSION_CODE
+        );
+        assert_eq!(h["app_version"], hongguo_signer::REGISTER_VERSION_NAME);
     }
 
     /// 注册端点存活性诊断：[`register_device`] 全链路真机试注。
