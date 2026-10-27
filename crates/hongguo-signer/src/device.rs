@@ -159,6 +159,12 @@ impl DeviceProfile {
     pub fn user_agent(&self) -> &str {
         &self.user_agent
     }
+
+    /// 覆盖档案 UA（注册探针复刻 73932 时代 Cronet 尾段用；UA 与字段
+    /// 必须成套的约束由调用方保证）。
+    pub fn set_user_agent(&mut self, ua: &str) {
+        self.user_agent = ua.to_string();
+    }
 }
 
 /// 匿名游客档案（官方 7.4.2.32 形态）：机型指纹 + 版本身份 + 客户端

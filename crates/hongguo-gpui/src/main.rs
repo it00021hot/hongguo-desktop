@@ -499,6 +499,12 @@ fn build_app_state() -> Arc<AppStateInner> {
     // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮；策略每轮
     // 现读设置，用户在设置页改了下轮就生效。
     hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
+    // 设备生命周期（Tauri bootstrap device.rs 同款）：匿名/死档案自动注册，
+    // 失败 24h 退避。匿名可读不可播，注册成功才有取流。
+    hongguo_service::runtime::spawn({
+        let state = state.clone();
+        async move { hongguo_service::device::ensure_registered(&state).await }
+    });
     state
 }
 

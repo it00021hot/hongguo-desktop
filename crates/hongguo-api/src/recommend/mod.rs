@@ -87,6 +87,11 @@ const RECOMMEND_TAB_TYPE: &str = "16";
 /// 非活跃 tab 的 bookstore_id 为 null，切换到该 tab 时它自己的 cr=4 才带）。
 /// 进程缓存按 [`TAB_CONFIG_TTL`] 节奏复验，重取失败沿用旧列表
 /// （stale-while-error）——运营调整晚一刻到达，好过顶栏整体报错。
+///
+/// 身份时序：匿名身份打本端点只会回推荐单 tab（服务端按身份下发完整
+/// 顶栏）——单 tab 结果视为「身份未就绪」，不进缓存直接返回空表，调用方
+/// 保留回落三件套；注册换档后调 [`clear_feed_tabs_cache`] 再重拉即得
+/// 完整顶栏。
 pub async fn fetch_feed_tabs(env: &ApiEnv) -> AppResult<Vec<FeedTabMeta>> {
     if let Some(cached) = cached_feed_tabs() {
         if cached.at.elapsed() < TAB_CONFIG_TTL {
@@ -110,8 +115,21 @@ pub async fn fetch_feed_tabs(env: &ApiEnv) -> AppResult<Vec<FeedTabMeta>> {
     }
     let value = request_bookstore_tab(RECOMMEND_TAB_TYPE, env).await?;
     let tabs = parse_feed_tabs(&value)?;
+    if tabs.len() <= 1 {
+        log::info!(
+            "[Recommend] 顶栏塌缩为 {} 个 tab（身份未就绪），不缓存，由调用方回落",
+            tabs.len()
+        );
+        return Ok(Vec::new());
+    }
     cache_feed_tabs_insert(tabs.clone());
     Ok(tabs)
+}
+
+/// 清空顶栏列表进程缓存（注册换档后调用：换档前的匿名塌缩表不应再被
+/// TTL 复用）。
+pub fn clear_feed_tabs_cache() {
+    *FEED_TABS_CACHE.get_or_init(FeedTabsCache::default).lock() = None;
 }
 
 /// tab_item[] → 顶栏列表（保序）。缺 tab_type 的残缺条目跳过。

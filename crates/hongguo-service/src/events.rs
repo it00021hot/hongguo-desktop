@@ -58,6 +58,9 @@ pub enum ServiceEvent {
     LoginMfa(LoginMfaStateEvent),
     /// 更新提醒有新条目（`follow-notices`，载荷 = 本次新增的通知）。
     FollowNotices(FollowNoticesEvent),
+    /// 设备注册换档完成（载荷 = 新 iid）：启动自动注册/健康探针轮换成功
+    /// 后发布。身份敏感的数据（顶栏 tab 等）收到后应重拉。
+    DeviceRegistered(String),
 }
 
 /// 事件总线句柄（Clone 共享，AppState 持有）。

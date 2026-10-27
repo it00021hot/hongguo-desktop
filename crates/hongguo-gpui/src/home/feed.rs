@@ -134,6 +134,14 @@ impl super::HomeView {
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
     pub(super) fn load_feed(&mut self, source: Source, restart: bool, cx: &mut Context<Self>) {
+        // 注册换档已发生（启动顶栏请求先于注册完成时顶栏是塌缩表）：
+        // 先把顶栏重拉到位再走本次拉流。
+        let generation = self.state.device_generation();
+        if self.seen_device_generation != generation {
+            self.seen_device_generation = generation;
+            hongguo_api::recommend::clear_feed_tabs_cache();
+            self.load_tabs(cx);
+        }
         {
             let feed = self.feeds.get_mut(&source).expect("源已初始化");
             if feed.loading || feed.fetching_more {
@@ -349,6 +357,7 @@ impl super::HomeView {
                 return;
             };
             let _ = this.update(cx, |view, cx| {
+                view.seen_device_generation = view.state.device_generation();
                 let tabs: Vec<Source> = meta_tabs
                     .into_iter()
                     .filter(|t| t.tab_type != FOLLOW_TAB_TYPE)
@@ -361,6 +370,11 @@ impl super::HomeView {
                 if tabs.is_empty() {
                     return;
                 }
+                log::info!(
+                    "[Home] 顶栏 {} 个 tab：{:?}",
+                    tabs.len(),
+                    tabs.iter().map(|t| t.as_str()).collect::<Vec<_>>()
+                );
                 // 新 tab 补源状态（load_feed 的 expect("源已初始化")）
                 for s in &tabs {
                     view.feeds.entry(s.clone()).or_default();

@@ -140,6 +140,9 @@ pub struct HomeView {
     tabs: Vec<Source>,
     /// 服务端下发的 tab 标题（tab_type → title；缺省回落本地名）。
     tab_labels: HashMap<String, String>,
+    /// 已同步的设备代次：启动时顶栏请求可能先于注册完成（匿名身份只会
+    /// 下发推荐单 tab），注册换档后代次变化，下一次拉流前重拉顶栏。
+    seen_device_generation: u64,
 
     /// 全屏占位用的**原图档**封面（series_id → 状态，见
     /// [`StageCover`]）：只有当前/目标这一集，铺满舞台要原图（列表卡档是
@@ -549,6 +552,7 @@ impl HomeView {
             indexes,
             tabs,
             tab_labels: HashMap::new(),
+            seen_device_generation: 0,
             stage_covers: HashMap::new(),
             epoch: Arc::new(AtomicU64::new(0)),
             player: None,

@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::download_service::queue::DownloadQueue;
 use crate::download_service::scheduler::DownloadScheduler;
@@ -25,6 +26,9 @@ pub struct AppStateInner {
     pub settings: RwLock<Settings>,
     /// 当前设备档案（设备注册成功后被整体替换）
     device: RwLock<hongguo_signer::device::DeviceProfile>,
+    /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档
+    /// 已发生」，触发对身份敏感的数据（顶栏 tab 等）重拉。
+    device_generation: AtomicU64,
     /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
     /// 不落库：发码会话本身分钟级有效，重启即重新发码。
     pub login_csrf: RwLock<Option<String>>,
@@ -58,6 +62,7 @@ impl AppStateInner {
             store,
             settings: RwLock::new(Settings::default()),
             device: RwLock::new(device),
+            device_generation: AtomicU64::new(0),
             login_csrf: RwLock::new(None),
             login_mfa: RwLock::new(None),
             queue: RwLock::new(Arc::new(DownloadQueue::new())),
@@ -116,6 +121,12 @@ impl AppStateInner {
     /// 手动重注册成功）。下一次 `api_env()` 起全部请求即用新档。
     pub fn replace_device(&self, device: hongguo_signer::device::DeviceProfile) {
         *self.device.write() = device;
+        self.device_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 设备代次快照（换档检测用，见 [`Self::device_generation`]）。
+    pub fn device_generation(&self) -> u64 {
+        self.device_generation.load(Ordering::Relaxed)
     }
 
     /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。

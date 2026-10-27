@@ -58,6 +58,11 @@ impl HomeView {
             | ServiceEvent::MergeCompleted(_)
             | ServiceEvent::MergeFailed(_) => {}
             ServiceEvent::CompatProgress(_) => {}
+            // 注册换档完成：启动时顶栏请求可能先于注册（匿名身份只下发
+            // 推荐单 tab），重拉顶栏拿完整列表
+            ServiceEvent::DeviceRegistered(_) => {
+                self.load_tabs(cx);
+            }
             // 追更提醒：GPUI 壳的追更页未建，先记日志（通知已落本地库，
             // 页面就位后从这里接 UI 刷新）
             ServiceEvent::FollowNotices(ev) => {
