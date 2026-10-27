@@ -5,7 +5,7 @@
 //! cookie（install_id/ttreq）都从这来。播放取流需要服务端「认识」的
 //! 设备，匿名档案不可播。
 //!
-//! ## 线上格式（74232 活形态）
+//! ## 线上格式（注册口径活形态）
 //!
 //! 请求（`register_device`）：
 //! - query：40 参公共指纹（[`register_query`]，版本身份钉注册口径
@@ -259,7 +259,7 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
 
 /// 注册 query 的公共指纹参数（40 个；`cdid`/`openudid`/时间戳每次生成，
 /// 服务端按这套指纹发新设备号）。版本身份字段直接钉注册口径
-/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]，74232 活形态），
+/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]），
 /// 与签名档案（`fresh_register_profile`）同源。
 fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, String)> {
     let pairs: Vec<(&str, String)> = vec![
@@ -362,11 +362,11 @@ fn fresh_identity() -> FreshIdentity {
 /// 为 `randInt(100000,500000)`（100~500 秒），取中值 300 秒同分布。
 const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 
-/// 构造 AppLog 注册 JSON 明文（74232 活形态：基底复刻自 hgplayer
+/// 构造 AppLog 注册 JSON 明文（注册口径活形态：基底复刻自 hgplayer
 /// `GenerateProfileWith`/`Header` 反编译，SDK 代际五件 `sdk_version
 /// 4.3.2-rc.44` / `sdk_target_version 30` / `git_hash 27660d0` /
-/// `sdk_flavor cnInner` / `scene 2` 按官方 7.4.2.32 APK bdinstall
-/// 装配器（k80.j.b）对齐；版本身份引用
+/// `sdk_flavor cnInner` / `scene 2` 按官方 APK bdinstall
+/// 装配器对齐；版本身份引用
 /// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
 /// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
 /// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
@@ -454,7 +454,7 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
 
 /// 注册一台全新设备。
 ///
-/// 74232 活形态：40 参富 query + TT-Encrypt V5 加密的注册指纹 JSON +
+/// 注册口径活形态：40 参富 query + TT-Encrypt V5 加密的注册指纹 JSON +
 /// 签名客户端（五件套 + `lc/x-ss-dp/log-encode-type`）。签名档案用
 /// **全新指纹**（无 device_id/iid，原生注册口径），cdid/openudid 与
 /// query/body 三处同源。`env` 只取代理设置。

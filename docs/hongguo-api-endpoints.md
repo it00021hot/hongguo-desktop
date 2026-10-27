@@ -6,9 +6,12 @@
 ## 0. 公共约定与设备身份
 **版本身份**（全仓唯一出处 `hongguo-signer::device` 常量）：
 
-- 业务请求：`version_code/update_version_code/manifest_version_code = 74232`、
-  `version_name = 7.4.2.32`、`pv_player` 与 version_code 同值。
-- UA：`com.phoenix.read/74232 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001;tt-ok/3.12.13.20)`。
+- 业务请求：`version_code/update_version_code/manifest_version_code` 取
+  `APP_VERSION_CODE_STR`、`version_name` 取 `APP_VERSION_NAME`
+  （常量唯一出处 `crates/hongguo-signer/src/device.rs`）、`pv_player` 与
+  version_code 同值。
+- UA（`video_ua()` 产出）：
+  `com.phoenix.read/{APP_VERSION_CODE_STR} (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001;tt-ok/3.12.13.20)`。
   UA 尾段是匿名风控闸门：匿名请求必须用 `tt-ok/…` 尾段，
   `Cronet/TTNetVersion:…` 旧尾段会被静默拒。
 - 公共头：`passport-sdk-version: 5051452`、`x-vc-bdturing-sdk-version: 4.0.3.cn`、
@@ -24,8 +27,8 @@
 | 能力 | 信息流/搜索/详情可读，**不可取流**（video_model 回 200+0） | 全量可用；取流按会话新鲜度放行，注册即用即活 |
 
 **设备注册 `POST log.snssdk.com/service/2/device_register/`**（实现
-`hongguo-api::register`，74232 口径，`new_user:1` 实测通过；端点与
-加密格式与历史版本一致）：
+`hongguo-api::register`，版本身份钉注册口径 `REGISTER_VERSION_*`，
+`new_user:1` 实测通过；端点与加密格式与历史版本一致）：
 
 - 入参 query：40 参公共指纹——`_rticket, ac, aid, appTheme, app_name,
   app_type, cdid, channel, cpu_support64, cronet_version, device_brand,
@@ -35,12 +38,12 @@
   minor_status, need_personal_recommend, openudid, os, os_api, os_version,
   package, resolution, ssmix, ts, tt_data, ttnet_version,
   update_version_code, use_store_region_cookie, version_code, version_name`
-  （版本身份字段覆写 74232/7.4.2.32）。
+  （版本身份字段覆写为注册口径 `REGISTER_VERSION_*`）。
 - 入参头：签名五件套 + `sdk-version: 2` + `x-ss-stub: {body MD5 大写}` +
   `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
   `log-encode-type: gzip` + `x-ss-dp: 8662` + `passport-sdk-version:
   5051452` + `x-vc-bdturing-sdk-version: 4.0.3.cn`；零 cookie。
-- 入参 body：TT-Encrypt V5 包 74232 指纹注册 JSON。加密格式（实现
+- 入参 body：TT-Encrypt V5 包注册口径指纹 JSON。加密格式（实现
   `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
   - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
   - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
@@ -48,7 +51,7 @@
   - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
 - 注册 JSON 关键字段（全表见 `register_json_str`）：`device_model: "Xiaomi 14"`、
   `sdk_version: "4.3.2-rc.44"`、`sdk_target_version: 30`、`sdk_flavor: "cnInner"`、
-  `git_hash: "27660d0"`、`scene: 2`（74232 bdinstall 代际五件）、
+  `git_hash: "27660d0"`、`scene: 2`（官方 bdinstall 代际五件）、
   `sig_hash: aea615ab…`、
   `display_name: "红果短剧"`、`custom.client_ipv4 = "116.130.x.x" 随机伪值`
   （服务端不校验真实出口 IP）。身份字段生成规则：

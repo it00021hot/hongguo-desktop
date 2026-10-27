@@ -8,7 +8,7 @@
 //! 注册链路走 TT-Encrypt V5 格式（见 hongguo-api::register 模块文档）：
 //! 匿名档案仍是无身份时的启动兜底，
 //! [`ensure_registered`] 在壳启动后台把匿名/死档案自动换档为注册产物
-//! （74232 活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
+//! （注册口径活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
 
 use hongguo_api::client::ApiEnv;
 use hongguo_api::register::{RegisterResult, register_device};
@@ -154,7 +154,7 @@ fn repave_anonymous(
 /// [`DeviceProfile::fresh_register_profile`] 构造（指纹字段集、顺序与 UA
 /// 天然同源，编译期保证），只补注册响应下发的设备身份。
 ///
-/// 注册口径（74232 活形态）钉在构造器里，**不做** `align_app_version`
+/// 注册口径活形态钉在构造器里，**不做** `align_app_version`
 /// （自报版本与注册指纹必须同源，否则取流被拒）。
 pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     let mut p = DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
@@ -381,8 +381,8 @@ mod tests {
         );
     }
 
-    /// 注册产物档案启动复检：钉注册口径不做版本对齐（升 74232 与注册
-    /// 指纹不同源，取流实测即挂）。
+    /// 注册产物档案启动复检：钉注册口径不做版本对齐（自报版本与注册
+    /// 指纹不同源时取流被拒）。
     #[test]
     fn adopt_keeps_registered_profile_on_register_regime() {
         let db = store();
@@ -403,8 +403,8 @@ mod tests {
         assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
     }
 
-    /// 历史上被 align 升坏的注册档案（版本键 74232）：启动复检从档案
-    /// 自身身份重建为纯注册口径并落库。
+    /// 被 align 升到当前客户端口径的注册档案（版本键偏离注册口径）：
+    /// 启动复检从档案自身身份重建为纯注册口径并落库。
     #[test]
     fn adopt_heals_version_bumped_registered_profile() {
         let db = store();

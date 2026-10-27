@@ -6,7 +6,7 @@
 //!    远古快照直接重铺匿名档案（不走网络）。
 //! 2. **自动注册（启动后台）**：现役无设备身份（匿名/全新安装）→ 注册；
 //!    有身份的打搜索探针，空响应（死设备）→ 转注册。注册失败进 24h 退避。
-//! 3. **轮换**：注册（74232 活形态）优先，被rect退出
+//! 3. **轮换**：注册（注册口径活形态）优先，被拒（风控冷却期）退
 //!    匿名档案兜底。手动重试绕过退避。
 //!
 //! 每次换档：旧档复制进 `device_profile` 备份行（`device.json.bak`
@@ -41,7 +41,7 @@ pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 轮换：优先注册新设备（74232 活形态），被拒
+/// 轮换：优先注册新设备（注册口径活形态），被拒
 /// （风控冷却期）退匿名档案。`force` 绕过注册退避（手动重试用）。
 pub async fn rotate(state: &AppState, force: bool, reason: &str) -> DeviceStatus {
     let mut meta = read_meta(&state.store);
