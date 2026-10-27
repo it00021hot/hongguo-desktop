@@ -9,6 +9,7 @@ use hongguo_api::discover::FeedItem;
 use hongguo_api::history::fetch_watch_history;
 use hongguo_api::interact::fetch_bookshelf;
 use hongguo_api::recommend::{fetch_feed_tabs, fetch_recommend_feed};
+use hongguo_common::AppError;
 
 use crate::bridge;
 
@@ -62,6 +63,9 @@ pub(super) struct StreamItem {
     pub(super) badge: String,
     /// 推荐位的 vid（批量取流预取用；种子条目可能为空）。
     pub(super) vid: String,
+    /// 条目 content_type（批量预取 `mixed_video_id_map` 的分组 key 原样串
+    /// 来源；种子/钉住条目无值 = 0，不进批量）。
+    pub(super) content_type: i64,
 }
 
 impl From<&FeedItem> for StreamItem {
@@ -75,6 +79,7 @@ impl From<&FeedItem> for StreamItem {
             season_tag: i.season_tag.clone(),
             badge: i.badge.clone(),
             vid: i.vid.clone(),
+            content_type: i.content_type,
         }
     }
 }
@@ -110,19 +115,33 @@ const FEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
 /// （Tauri `FEED_STALE_MS` 同款）。
 pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+impl SourceFeed {
+    /// 本会话已下发的全部 series_id（翻页 `filter_ids` 的料：服务端据此
+    /// 排除已见，官方抓包语义「已下发的 series_id 逗号表」；保序去重）。
+    fn seen_series_ids(&self) -> Vec<String> {
+        let mut seen: HashSet<String> = HashSet::new();
+        self.items
+            .iter()
+            .filter(|i| !i.series_id.is_empty() && seen.insert(i.series_id.clone()))
+            .map(|i| i.series_id.clone())
+            .collect()
+    }
+}
+
 impl super::HomeView {
     // —— 数据：推荐流 ——
-
-    /// 当前 tab 的首批/换一批是否在途（Tauri `feed.isLoading` 同语义）。
-    pub(super) fn feed_loading(&self) -> bool {
-        self.feeds
-            .get(&self.active)
-            .is_some_and(|feed| feed.loading)
-    }
 
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
     pub(super) fn load_feed(&mut self, source: Source, restart: bool, cx: &mut Context<Self>) {
+        // 注册换档已发生（启动顶栏请求先于注册完成时顶栏是塌缩表）：
+        // 先把顶栏重拉到位再走本次拉流。
+        let generation = self.state.device_generation();
+        if self.seen_device_generation != generation {
+            self.seen_device_generation = generation;
+            hongguo_api::recommend::clear_feed_tabs_cache();
+            self.load_tabs(cx);
+        }
         {
             let feed = self.feeds.get_mut(&source).expect("源已初始化");
             if feed.loading || feed.fetching_more {
@@ -237,13 +256,17 @@ impl super::HomeView {
     }
 
     /// 同会话续拉下一页（游标临近尾部时调用）。
+    ///
+    /// 翻页三件套必须带 `filter_ids`（已下发过的 series_id，服务端排除
+    /// 已见）——不带就是滚动重复的根因
+    /// （服务端不做会话内去重，Tauri useFeed 累积 filterIds 同口径）。
     pub(super) fn load_more(&mut self, source: Source, cx: &mut Context<Self>) {
-        let (session, offset) = {
+        let (session, offset, filter_ids) = {
             let feed = self.feeds.get(&source).expect("源已初始化");
             if feed.fetching_more || feed.loading || !feed.has_more {
                 return;
             }
-            (feed.session.clone(), feed.offset)
+            (feed.session.clone(), feed.offset, feed.seen_series_ids())
         };
         {
             let feed = self.feeds.get_mut(&source).expect("源已初始化");
@@ -253,7 +276,7 @@ impl super::HomeView {
         let tab = source.as_str().to_string();
         let rx = bridge::spawn(async move {
             let env = state.api_env();
-            fetch_recommend_feed(&tab, &session, offset, &[], &env).await
+            fetch_recommend_feed(&tab, &session, offset, &filter_ids, &env).await
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
@@ -276,6 +299,13 @@ impl super::HomeView {
     /// Tauri「起点决策 effect」的自动起播；已在播则只做游标跟随（种子到位、
     /// 换批、翻页都会改列表，游标指到的剧变了就该切过去）。
     fn after_feed_loaded(&mut self, source: Source, cx: &mut Context<Self>) {
+        // 冷启动被按住（启动目的地不是首页）：不起播也不预取——人还在别的
+        // 页，首页的剧不应该已经在播。回首页由 resume_if_idle 接管续播，
+        // 不经过这个闸。
+        if self.cold_start_held {
+            cx.notify();
+            return;
+        }
         if self.player.is_none() && !self.switching && source == self.active {
             if let Some(item) = self.display_items().first().cloned() {
                 self.play_target(item, None, None, cx);
@@ -327,6 +357,7 @@ impl super::HomeView {
                 return;
             };
             let _ = this.update(cx, |view, cx| {
+                view.seen_device_generation = view.state.device_generation();
                 let tabs: Vec<Source> = meta_tabs
                     .into_iter()
                     .filter(|t| t.tab_type != FOLLOW_TAB_TYPE)
@@ -339,6 +370,11 @@ impl super::HomeView {
                 if tabs.is_empty() {
                     return;
                 }
+                log::info!(
+                    "[Home] 顶栏 {} 个 tab：{:?}",
+                    tabs.len(),
+                    tabs.iter().map(|t| t.as_str()).collect::<Vec<_>>()
+                );
                 // 新 tab 补源状态（load_feed 的 expect("源已初始化")）
                 for s in &tabs {
                     view.feeds.entry(s.clone()).or_default();
@@ -370,12 +406,16 @@ impl super::HomeView {
             let rx = bridge::spawn(async move {
                 tokio::task::spawn_blocking(move || state.store.local_history_list())
                     .await
-                    .expect("阻塞池 join")
+                    .map_err(|e| AppError::Internal(format!("本地历史阻塞池任务失败: {e}")))?
             });
             cx.spawn(async move |this, cx| {
                 let result = rx.await.expect("tokio 桥不会丢弃发送端");
-                let Ok(items) = result else {
-                    return;
+                let items = match result {
+                    Ok(items) => items,
+                    Err(e) => {
+                        log::warn!("[Home] 本地历史读取失败: {e}");
+                        return;
+                    }
                 };
                 let _ = this.update(cx, |view, cx| {
                     log::info!(

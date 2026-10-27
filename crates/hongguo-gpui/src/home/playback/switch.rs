@@ -3,7 +3,12 @@
 
 use super::*;
 
-use super::open::{Opened, PlayRequest};
+use super::open::{PlayRequest, SystemSpec};
+use hongguo_common::AppError;
+
+/// 官方批量预取窗口：当前 + 后续共 6 条（model/preload 与
+/// detail/preload 一次各带 6 个）。
+const OFFICIAL_PRELOAD_WINDOW: usize = 6;
 
 impl super::HomeView {
     /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
@@ -162,8 +167,7 @@ impl super::HomeView {
         self.play_generation = self.play_generation.wrapping_add(1);
         // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
         //（重建要走取流表+asset+loader，实测首帧 650-970ms；接力 ~70ms）。
-        if crate::video_backend::is_system()
-            && start_override.is_none()
+        if start_override.is_none()
             && self.preferred_definition.is_none_or(|definition| {
                 self.now
                     .as_ref()
@@ -193,6 +197,11 @@ impl super::HomeView {
                     self.play_generation,
                     self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
                 );
+                // 缓存的「当前集」要跟着正在播的走：接力不重建播放器，也就不
+                // 走 `prepare`（那里才 `set_current`）。不更新的话，接力后
+                // 真正在播的这一集会被当成「其余的」——按头部预算封顶，而
+                // 上一集反倒享受整集缓存。
+                hongguo_stream::cache().set_current(&next_vid);
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {
                     now.vid_index = next_index;
@@ -241,65 +250,102 @@ impl super::HomeView {
         // render，翻沿永远走不到。暂停即释放（用户在场，恢复由
         // toggle_pause 重新持有）。
         crate::play_activity::set_active(true);
-        // 上屏节奏取证换窗口：上一集的节奏/停顿不能算进新一集的起播预滚
-        self.paint_diag.reset();
         self.switching = true;
         // 新的起播/切集目标会重排预加载；旧的 pending 不挡这一次。
         self.system_preload_pending = None;
-        if crate::video_backend::is_system() {
-            self.system_switch_started = Some(Instant::now());
-        }
+        // 新一次起播/切集的计时起点（首帧事件到达时结算耗时）。
+        self.system_switch_started = Some(Instant::now());
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
         self.play_error = None;
-        // 批量取流预取（hgplayer 同款时机与窗口）：当前 + 信息流后续几部的
-        // 推荐位 vid 一次批量；命中落 api 层暂存表，起播链先查它。批量
-        // 空响应（当前服务端常态）时静默，起播照走单集端点。
-        let batch_vids: Vec<String> = {
+        // 批量预取（双端点）：
+        // ① `multi_video_model/preload`（dr_scene=preload）——「当前 + 信息流
+        // 后续几部」（官方 6 个）的推荐位 vid 按 content_type 原样串分组
+        // 一次批量，命中落 api 层暂存表，起播链先查它；
+        // ② `multi_video_detail/preload`（逗号串 series_id）——同一窗口的
+        // 剧集档案一次批量，落库后换剧 resolve 秒回。批量空响应静默，
+        // 起播照走单集端点。
+        let (preload_map, series_window): (
+            std::collections::BTreeMap<String, Vec<String>>,
+            Vec<String>,
+        ) = {
             let items = self.display_items();
             let cur = self.cursor();
-            let mut vids: Vec<String> = Vec::new();
-            if !item.vid.is_empty() {
-                vids.push(item.vid.clone());
-            }
-            for it in items.iter().skip(cur + 1) {
-                if vids.len() >= 5 {
-                    break;
+            let mut map: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            let mut series: Vec<String> = Vec::new();
+            let mut seen_vids: Vec<String> = Vec::new();
+            // 只收 feed 条目（vid + content_type 在场）——头部「你的内容」
+            // 种子没有类型信息，占名额只会把批量挤没（官方窗口也是纯 feed 条目）
+            for it in items
+                .iter()
+                .skip(cur)
+                .filter(|it| !it.vid.is_empty() && it.content_type != 0)
+                .take(OFFICIAL_PRELOAD_WINDOW)
+            {
+                if !series.contains(&it.series_id) {
+                    series.push(it.series_id.clone());
                 }
-                if !it.vid.is_empty() && !vids.contains(&it.vid) {
-                    vids.push(it.vid.clone());
+                if seen_vids.contains(&it.vid) {
+                    continue;
                 }
+                seen_vids.push(it.vid.clone());
+                map.entry(it.content_type.to_string())
+                    .or_default()
+                    .push(it.vid.clone());
             }
-            vids
+            (map, series)
         };
-        if batch_vids.len() > 1 {
+        if !preload_map.is_empty() || series_window.len() > 1 {
             let state = Arc::clone(&self.state);
             bridge::spawn(async move {
                 let env = state.api_env();
-                let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
-                    hongguo_service::capability_service::hevc_playable(),
-                );
-                match hongguo_api::play_url::fetch_play_batch(&batch_vids, cap, &env).await {
-                    Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),
-                    Ok(_) => {}
-                    Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
+                if !preload_map.is_empty() {
+                    let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
+                        hongguo_service::capability_service::hevc_playable(),
+                    );
+                    match hongguo_api::play_url::fetch_play_batch(&preload_map, cap, &env).await {
+                        Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),
+                        Ok(_) => {}
+                        Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
+                    }
+                }
+                // 档案批量：整窗全量（官方 6 部一发，含在库的——响应带
+                // content_type，顺带把在库旧档案缺的类型补持久化；服务端
+                // 数据是权威源，整包 upsert 覆盖）
+                if series_window.len() > 1 {
+                    match hongguo_api::detail::fetch_episode_lists_batch(&series_window, &env).await
+                    {
+                        Ok(lists) => {
+                            let count = lists.len();
+                            for list in lists {
+                                let sid = list.series_id.clone();
+                                let series =
+                                    hongguo_service::series_service::resolver::series_from_list(
+                                        list,
+                                    );
+                                if let Err(e) = state.store.upsert_series(&series) {
+                                    log::warn!("[Home] 预取档案落库失败（{sid}）: {e}");
+                                }
+                            }
+                            log::info!("[Home] 批量档案预取 {count} 部落库");
+                        }
+                        Err(e) => log::warn!("[Home] 批量档案预取失败（忽略）: {e}"),
+                    }
                 }
             });
         }
-        // 旧帧退场（Tauri use-frame-hold 同款真值表）：
-        // - 切剧：立刻走新剧封面，上一部的残帧绝不许跨剧泄漏；
-        // - 同剧切集/换清晰度：保留上一集末帧顶住画面（`hold_last_frame`），
-        //   新集首帧出画即接棒——这才是「切集不闪封面」。
+        // 旧画面退场：切剧立刻清「画面已就绪」，走新剧封面（切剧不闪上一
+        // 部的残影）；同剧切集/换清晰度不清——原生画面层（AVPlayerLayer /
+        // DComp 视频位）还挂在同一播放器的上一集画面上，新集首帧事件会
+        // 接棒，这正是「切集不闪封面」。
         let same_series = self
             .now
             .as_ref()
             .is_some_and(|n| n.series_id == item.series_id);
         if !same_series {
-            self.frame = None;
-            self.video_surface.clear();
             self.system_video_ready = false;
         }
-        self.hold_last_frame = same_series && self.frame.is_some();
         self.pending_title = Some(if item.title.is_empty() {
             crate::i18n::t("player.preparingShort")
         } else {
@@ -311,11 +357,8 @@ impl super::HomeView {
 
         let state = Arc::clone(&self.state);
         let history = self.history.clone().unwrap_or_default();
-        // 事件通道容量**必须小**：Frame 事件各背一帧（1080p NV12
-        // CVPixelBuffer ≈ 3MB），64 深度在宿主一时跟不上时就压着近 200MB
-        // 的 IOSurface 不还（解码器的输出池也跟着膨胀）。8 帧 ≈ 0.27s 的
-        // 内容量，足够吸收正常抖动；更深只会把「晚显示」变成「内存涨」。
-        // 宿主侧另有 batch 合并，控制事件（Buffering/Ended/…）依旧按序处理。
+        // 事件通道容量小即可：系统播放器只发低频控制事件（首帧/缓冲/播完/
+        // 失败），8 深度足够吸收抖动，通道背压照旧作用在发送端。
         let (events, rx) = mpsc::channel::<PlayerEvent>(8);
         let epoch = self.epoch.load(Ordering::Relaxed);
         let epoch_shared = Arc::clone(&self.epoch);
@@ -335,20 +378,19 @@ impl super::HomeView {
         ));
         cx.spawn(async move |this, cx| {
             let result = done.await.expect("tokio 桥不会丢弃发送端");
-            let mut deferred: Option<(super::open::SystemSpec, super::NowPlaying)> = None;
+            let mut deferred: Option<(SystemSpec, super::NowPlaying)> = None;
             let _ = this.update(cx, |view, cx| {
-                // 陈旧任务（期间用户又切了剧）：不接管，引擎随 result 丢弃自停
+                // 陈旧任务（期间用户又切了剧）：不接管，句柄随 result 丢弃自停
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
                 match result {
-                    Ok(Opened::Ready(handle, now)) => view.install_player(handle, now, epoch, cx),
-                    // 系统播放器要主线程建（视频 quad 是渲染器的），但**不能在
-                    // 实体借用内建**：open 过程中的 STA COM 调用会泵窗口消息，
-                    // a11y 探测/重绘若在泵里重入会撞 HomeView 的借用（实测日
-                    // 志刷「RefCell already borrowed」）。先把参数带出 update，
-                    // 借用解除后再开，见下方第二个 update。
-                    Ok(Opened::System(spec, now)) => deferred = Some((spec, now)),
+                    // 视频位是渲染线程的私有对象，不能在实体借用内建：open
+                    // 过程中的 STA COM 调用会泵窗口消息，a11y 探测/重绘若在
+                    // 泵里重入会撞 HomeView 的借用（实测日志刷「RefCell
+                    // already borrowed」）。先把参数带出 update，借用解除后
+                    // 再开，见下方第二个 update。
+                    Ok((spec, now)) => deferred = Some((spec, now)),
                     Err(error) => view.handle_play_failure(error, cx),
                 }
                 cx.notify();
@@ -365,8 +407,8 @@ impl super::HomeView {
                 spec.on_stall,
             );
             let _ = this.update(cx, |view, cx| {
-                // 开的这几毫秒里用户又切了剧：句柄随 opened 丢弃自停（引擎
-                // 没有 Play 调用不会出声）。
+                // 开的这几毫秒里用户又切了剧：句柄随 opened 丢弃自停（没有
+                // Play 调用不会出声）。
                 if view.epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
@@ -383,8 +425,8 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 把开好的播放器句柄接进视图（系统/自研两路共用）：偏好重放、落盘收尾、
-    /// 数据面重拉与切换态解除。
+    /// 把开好的播放器句柄接进视图：偏好重放、落盘收尾、数据面重拉与切换
+    /// 态解除。
     fn install_player(
         &mut self,
         handle: Player,
@@ -392,27 +434,21 @@ impl super::HomeView {
         epoch: u64,
         cx: &mut Context<Self>,
     ) {
-        // 新引擎就位（帧随后由它的 Frame 事件送到，这里不清帧：
-        // 起了才清的写法会把先到的首帧抹掉，封面从此收不掉）。
-        // 切换途中旧帧已清，到这里的画面本来就是封面占位。
-        // 偏好重放：换集重建引擎（对齐 Tauri `<video>` 卸载重挂）后
-        // 把音量/静音按存值发给新引擎。倍速已随 OpenOptions 出生
-        // 即位（见 play_task），只在分歧时补发——同值补发会平白
-        // 走一次分级换轴记账。
+        // 偏好重放：换集重建播放器（对齐 Tauri `<video>` 卸载重挂）后
+        // 把音量/静音按存值发给新实例。倍速已随打开参数传入，只在分歧时
+        // 补发——同值补发是平白的重复调用（首帧事件还会再补一次）。
         if (handle.rate() - self.rate).abs() > 1e-9 {
             handle.set_rate(self.rate);
         }
         handle.set_volume(self.volume);
         handle.set_muted(self.muted);
-        // 换引擎前的 force 落盘 + 观看历史（Tauri 切集
-        // persist(force) 同款）：旧引擎与旧 now 还在手里，
+        // 换播放器前的 force 落盘 + 观看历史（Tauri 切集
+        // persist(force) 同款）：旧播放器与旧 now 还在手里，
         // 读数有效；首次起播 player 为空自然跳过
         self.save_progress_now();
-        let system_backend = handle.is_system();
         self.player = Some(handle);
-        if system_backend {
-            self.spawn_system_tick(epoch, cx);
-        }
+        // 系统播放器没有内容事件流，弹幕推进/进度落盘靠 30fps 节拍
+        self.spawn_system_tick(epoch, cx);
         // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
         // 别的剧即解除，同剧连播保持
         if self.binge.as_deref() != Some(now.series_id.as_str()) {
@@ -432,30 +468,16 @@ impl super::HomeView {
         // series_id 当 book_id（服务端参数错配，热剧也拉空）
         self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
         self.now = Some(now);
-        if system_backend {
-            // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
-            self.preload_system_next(cx);
-        }
+        // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
+        self.preload_system_next(cx);
         self.switching = false;
         self.buffering = false;
         self.play_retried = false;
-        log::info!("[Home] 引擎就位（epoch={epoch}），switching 解除");
+        log::info!("[Home] 播放器就位（epoch={epoch}），switching 解除");
     }
 
-    /// 起播失败收尾：系统后端先降级重走，普通失败按 retry 档自动重试一次，
-    /// 复发才落可见错误态。
+    /// 起播失败收尾：按 retry 档自动重试一次，复发才落可见错误态。
     fn handle_play_failure(&mut self, e: hongguo_common::AppError, cx: &mut Context<Self>) {
-        // 系统播放器起不来 = 后端降级，不是播放失败：翻掉开关后用
-        // 自研上屏重走一次起播（不消耗 play_retried 预算）。
-        if crate::video_backend::fall_back_to_gpui() {
-            log::warn!("[Home] 系统播放器不可用，后端降级为 gpui 重起：{e}");
-            self.switching = false;
-            if let Some(item) = self.display_items().get(self.cursor()).cloned() {
-                self.play_target(item, None, None, cx);
-                cx.notify();
-                return;
-            }
-        }
         log::warn!("[Home] 起播失败: {e}");
         self.switching = false;
         self.buffering = false;
@@ -515,7 +537,7 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 选集浮层里点某一集：跳集，**不关浮层**（hgplayer 同款连选连跳）；
+    /// 选集浮层里点某一集：跳集，**不关浮层**（连选连跳）；
     /// 信息流里主动选集 = 锁定本剧连播（Tauri onPickEpisode 同款）。
     pub(in crate::home) fn pick_episode(&mut self, vid_index: u32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
@@ -617,7 +639,7 @@ impl super::HomeView {
         let state = Arc::clone(&self.state);
         let sid = series_id.clone();
         let done = bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
+            let info = tokio::task::spawn_blocking(move || {
                 state
                     .store
                     .series_by_id(&sid)
@@ -626,10 +648,17 @@ impl super::HomeView {
                     .map(|s| (s.title, s.cover))
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| AppError::Internal(format!("剧集档案阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(info)
         });
         cx.spawn(async move |this, cx| {
-            let info = done.await.expect("tokio 桥不会丢弃发送端");
+            let info = match done.await.expect("tokio 桥不会丢弃发送端") {
+                Ok(info) => info,
+                Err(e) => {
+                    log::warn!("[Home] 剧集档案读取失败: {e}");
+                    None
+                }
+            };
             let _ = this.update(cx, |view, cx| {
                 let (title, cover) = info.unwrap_or_default();
                 let item = StreamItem {
@@ -641,6 +670,7 @@ impl super::HomeView {
                     season_tag: String::new(),
                     badge: String::new(),
                     vid: String::new(),
+                    content_type: 0,
                 };
                 view.binge = Some(series_id.clone());
                 view.play_target(
@@ -680,11 +710,6 @@ impl super::HomeView {
         self.play_generation = self.play_generation.wrapping_add(1);
         self.system_preload_pending = None;
         hongguo_stream::cache().clear_next();
-        // 离开首页不留残帧（回首页走起点决策重起引擎，首帧到了再上屏；
-        // 定格帧是「同剧切集」专属，离开时一并落下）
-        self.frame = None;
-        self.video_surface.clear();
-        self.hold_last_frame = false;
         self.switching = false;
         self.buffering = false;
         self.scrubbing = None;

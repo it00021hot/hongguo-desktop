@@ -169,27 +169,51 @@ pub(crate) fn is_minimized(window: &Window) -> bool {
 }
 
 /// 隐藏窗口（隐身模式）。
-pub(crate) fn hide(window: &Window) {
-    if let Some(win) = ns_window_of(window) {
+///
+/// 延后到执行器下一拍执行——`orderOut` 会同步投递窗口通知（AppKit 的通知
+/// 中心在投递线程上同步送达），gpui 的通知回调要在这时更新窗口状态；在
+/// `handle.update` 借用内调用会撞借用（gpui 用 try_borrow_mut 拒绝那次更新，
+/// 把错吞成 "RefCell already borrowed" 的空 target 日志）。
+pub(crate) fn hide(window: &Window, cx: &gpui_kit::App) {
+    defer_ns_window_op(window, cx, |win| {
         win.orderOut(None);
-    }
+    });
 }
 
 /// 显示窗口但不夺焦点（隐身里「鼠标回来」的重现）。
-pub(crate) fn show_no_activate(window: &Window) {
-    if let Some(win) = ns_window_of(window) {
+pub(crate) fn show_no_activate(window: &Window, cx: &gpui_kit::App) {
+    defer_ns_window_op(window, cx, |win| {
         win.orderFrontRegardless();
-    }
+    });
 }
 
 /// 显示窗口并夺焦点（关闭隐身/第二次启动前置）。
-pub(crate) fn show_foreground(window: &Window) {
-    if let Some(win) = ns_window_of(window) {
+pub(crate) fn show_foreground(window: &Window, cx: &gpui_kit::App) {
+    defer_ns_window_op(window, cx, |win| {
         win.orderFrontRegardless();
-    }
+    });
     if let Some(mtm) = objc2::MainThreadMarker::new() {
         NSApplication::sharedApplication(mtm).activate();
     }
+}
+
+/// 把 AppKit 窗口操作延后到执行器下一拍。
+///
+/// NSWindow 由 gpui 持有（`Retained` 保活），本地执行器不要求 Send——整窗
+/// 引用可以直接带进任务里。
+fn defer_ns_window_op(
+    window: &Window,
+    cx: &gpui_kit::App,
+    op: impl FnOnce(Retained<NSWindow>) + 'static,
+) {
+    let Some(win) = ns_window_of(window) else {
+        return;
+    };
+    window
+        .spawn(cx, async move |_| {
+            op(win);
+        })
+        .detach();
 }
 
 // —— 全局快捷键（Carbon RegisterEventHotKey）——

@@ -160,7 +160,7 @@ pub(crate) fn mfa_view(ctx: &MfaContext) -> LoginResult {
 #[derive(Debug, Clone, Serialize)]
 // enum 级 rename_all 只作用于变体名（tag 值）；变体字段必须各自
 // 再标一次 camelCase——否则 Mfa 序列化成 retry_tag 之类 snake_case，
-// 前端 zod 校验直接挂（2026-10-04「数据格式异常」事故）
+// 前端 zod 校验直接挂
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum LoginResult {
     #[serde(rename_all = "camelCase")]

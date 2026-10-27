@@ -4,18 +4,20 @@
 
 use std::sync::Arc;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::WindowExt;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, Window, div};
+use gpui_kit::{App, ElementId, Role, SharedString, Window, div};
 use hongguo_api::interact::{collect_series, digg_video};
 
 use super::DetailView;
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 /// 星 = 收藏/评分，红 = 热度/点赞——都走业务语义令牌（Tauri 详情页
 /// `text-star` / `text-hot` 同款；亮暗分档在 `tokens` 里）。
@@ -50,7 +52,7 @@ impl DetailView {
         let theme = cx.theme().clone();
         let series = self.series.as_ref().expect("render_header 仅就绪态调用");
         let meta = self.meta.as_ref();
-        let cover = crate::cover_img::card(&series.cover);
+        let cover = crate::cover_img::card(&series.cover, crate::cover_img::CoverShape::Detail);
         // 统计行（Tauri 排版：评分 评分人数 → 红果热度值 → 追剧 → 播放）
         let mut stats: Vec<String> = Vec::new();
         if !self.reviews_score.is_empty() {
@@ -122,7 +124,7 @@ impl DetailView {
                     .w(gpui_kit::px(176.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(12.0))
+                    .rounded(crate::tokens::radius::CARD)
                     .bg(theme.secondary)
                     .child(cover),
             )
@@ -300,6 +302,7 @@ impl DetailView {
                                         b.border_color(theme.primary).text_color(theme.primary)
                                     })
                                     .disabled(self.follow_pending)
+                                    .when(self.follow_pending, |b| b.cursor_default())
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_follow(window, cx);
                                     }))
@@ -348,56 +351,89 @@ impl DetailView {
                     .child(crate::cover_img::avatar(&creator.avatar))
                     .into_any_element()
             };
-            let mut chip = div()
-                .id(ElementId::from(format!(
-                    "detail-creator-{}-{}",
-                    creator.user_id, creator.name
-                )))
-                .flex()
-                .items_center()
-                .gap_2()
-                .rounded_full()
-                .border_1()
-                .border_color(theme.border)
-                .py_1()
-                .pr_3()
-                .pl_1()
-                .tooltip({
-                    let name = creator.name.clone();
-                    move |window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(SharedString::from(
-                            crate::i18n::tf("detail.creatorHome", &[("name", &name)]),
-                        ))
-                        .build(window, cx)
-                    }
-                });
-            if clickable {
+            let name_column = v_flex()
+                .items_start()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                        .child(SharedString::from(creator.name.clone())),
+                )
+                .children((!creator.role.is_empty()).then(|| {
+                    div()
+                        .text_size(gpui_kit::px(10.0))
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(creator.role.clone()))
+                }));
+            let chip_id = ElementId::from(format!(
+                "detail-creator-{}-{}",
+                creator.user_id, creator.name
+            ));
+            let tooltip = {
+                let name = creator.name.clone();
+                move |window: &mut Window, cx: &mut App| {
+                    gpui_kit::component::tooltip::Tooltip::new(SharedString::from(crate::i18n::tf(
+                        "detail.creatorHome",
+                        &[("name", &name)],
+                    )))
+                    .build(window, cx)
+                }
+            };
+            // 有 uid 才可点：跳创作者主页是应用内导航，按链接语义给 role，与侧栏
+            // 导航行同口径；无 uid 的旧条目只展示，保持不可聚焦（仍是 div）。
+            let chip: gpui_kit::AnyElement = if clickable {
                 let uid = creator.user_id.clone();
-                chip = chip
+                BaseButton::new(chip_id)
+                    .role(Role::Link)
+                    .accessibility_label(crate::i18n::tf(
+                        "detail.creatorHome",
+                        &[("name", &creator.name)],
+                    ))
+                    .flex()
+                    .items_center()
+                    // base Button 强制 justify_center，这里改回左对齐，和原来的 div 一致。
+                    .justify_start()
+                    .gap_2()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(theme.border)
+                    .py_1()
+                    .pr_3()
+                    .pl_1()
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.secondary_hover))
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                    // 截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(&theme))
+                    })
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(super::DetailEvent::OpenCreator(uid.clone()));
-                    }));
-            }
-            row = row.child(
-                chip.child(avatar_view).child(
-                    v_flex()
-                        .items_start()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                                .child(SharedString::from(creator.name.clone())),
-                        )
-                        .children((!creator.role.is_empty()).then(|| {
-                            div()
-                                .text_size(gpui_kit::px(10.0))
-                                .text_color(theme.muted_foreground)
-                                .child(SharedString::from(creator.role.clone()))
-                        })),
-                ),
-            );
+                    }))
+                    .tooltip(tooltip)
+                    .child(avatar_view)
+                    .child(name_column)
+                    .into_any_element()
+            } else {
+                div()
+                    .id(chip_id)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(theme.border)
+                    .py_1()
+                    .pr_3()
+                    .pl_1()
+                    .tooltip(tooltip)
+                    .child(avatar_view)
+                    .child(name_column)
+                    .into_any_element()
+            };
+            row = row.child(chip);
         }
         row.into_any_element()
     }
@@ -431,8 +467,10 @@ impl DetailView {
             .rounded_full()
             .text_xs()
             .when(hot, |s| {
+                // Tauri `bg-hot text-primary-foreground`：暗色档前景是近黑、
+                // 亮色档近白，这里跟主题走而不是写死白字。
                 s.bg(hot_color(theme.mode))
-                    .text_color(gpui_kit::rgb(0xffffff))
+                    .text_color(theme.primary_foreground)
             })
             .when(!hot, |s| {
                 s.bg(theme.secondary).text_color(theme.muted_foreground)
@@ -598,7 +636,7 @@ impl DetailView {
     }
 
     /// 「追更」按钮显隐：官方只在连载剧（series_status=0）出追更钮——
-    /// 完结剧「全 N 集」无钮（2026-10-15 实包口径，Tauri 同款）。
+    /// 完结剧「全 N 集」无钮（Tauri 同款）。
     pub(super) fn follow_visible(&self) -> bool {
         !self.upcoming && self.meta.as_ref().is_some_and(|m| m.series_status == 0)
     }

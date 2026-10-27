@@ -1,4 +1,4 @@
-//! 起播链：起播请求/系统后端打开参数/起播产物，以及 tokio 线程上的
+//! 起播链：起播请求/系统播放器打开参数，以及 tokio 线程上的
 //! `play_task` 与手动重试入口。
 
 use super::*;
@@ -10,36 +10,32 @@ pub(super) struct PlayRequest {
     pub(super) forced_next_ep: Option<u32>,
     /// 用户显式选择的清晰度（None = 自动/沿用），传给 prepare。
     pub(super) preferred_definition: Option<u32>,
-    /// 起播倍速：引擎出生即按它走（见 `OpenOptions::rate`）。
+    /// 起播倍速。
     pub(super) rate: f64,
     /// 切清晰度保进度的位置覆盖（None = 走起点决策）。
     pub(super) start_override: Option<f64>,
 }
 
-/// 系统播放器的打开参数：引擎/视频位只能在主线程取，所以起播链把它带回来。
+/// 系统播放器的打开参数：视频位是渲染线程的私有对象，只能在主线程创建，
+/// 所以起播链把它带回来。
 pub(super) struct SystemSpec {
-    pub(super) source: hongguo_playback::PlaySource,
+    pub(super) source: hongguo_player::PlaySource,
     pub(super) start_secs: f64,
     pub(super) rate: f64,
     pub(super) events: mpsc::Sender<PlayerEvent>,
     pub(super) on_stall: Option<super::player::StallHook>,
 }
 
-/// 起播链的产物：自研上屏已就位，或系统后端待主线程创建。
-pub(super) enum Opened {
-    Ready(Player, super::NowPlaying),
-    System(SystemSpec, super::NowPlaying),
-}
-
 impl super::HomeView {
-    /// 起播链（tokio 线程）：解析档案 → 起点决策 → prepare → 引擎 open。
-    /// 与 Tauri 同一段服务面；起点 >3 秒续播，本地档案优先、云端历史兜底。
+    /// 起播链（tokio 线程）：解析档案 → 起点决策 → prepare → 打开参数带回
+    /// 主线程。与 Tauri 同一段服务面；起点 >3 秒续播，本地档案优先、云端
+    /// 历史兜底。
     pub(super) async fn play_task(
         state: Arc<AppStateInner>,
         history: Vec<WatchHistoryItem>,
         req: PlayRequest,
         events: mpsc::Sender<PlayerEvent>,
-    ) -> AppResult<Opened> {
+    ) -> AppResult<(SystemSpec, super::NowPlaying)> {
         let PlayRequest {
             item,
             forced_next_ep,
@@ -62,6 +58,20 @@ impl super::HomeView {
             }
         };
         let episode_count = series.episodes.len();
+        // 整剧各集的类型注册：连播后续集的 vid 只有这里能提前拿到类型——
+        // 真播批量（player/v1）分组 key 与单集 content_type 的来源。类型
+        // 优先取发起条目（feed 在手），否则取持久化的剧档案（重启续播）；
+        // 双双未知（0）时不猜值，取流走单集占位（官方回落链）。
+        let series_ct = if item.content_type != 0 {
+            item.content_type
+        } else {
+            series.content_type
+        };
+        if series_ct != 0 {
+            for episode in &series.episodes {
+                hongguo_api::play_url::register_content_type(&episode.vid, series_ct);
+            }
+        }
         // 切档保进度：覆盖值优先于起点决策（覆盖必然伴随显式集号——
         // 切清晰度 = 同集同位重播）
         let (vid_index, start_secs) = match (start_override, forced_next_ep) {
@@ -122,7 +132,7 @@ impl super::HomeView {
             Some(path) => {
                 log::info!("[Home] 本地成品命中，走本地播放：{path}");
                 (
-                    hongguo_playback::PlaySource::Local { path: path.into() },
+                    hongguo_player::PlaySource::Local { path: path.into() },
                     Vec::new(),
                     0u32,
                 )
@@ -140,7 +150,7 @@ impl super::HomeView {
                     ep.vid_index,
                 );
                 (
-                    hongguo_playback::PlaySource::Online {
+                    hongguo_player::PlaySource::Online {
                         vid: ep.vid.clone(),
                         definition: prepared.definition,
                     },
@@ -154,7 +164,7 @@ impl super::HomeView {
             let vid = ep.vid.clone();
             let progress_key = progress_key.clone();
             Some(Arc::new(move || {
-                // loader 读到 8MB 预取预算之外时按需续填；resume 内部有
+                // loader 读到头部预算之外时按需续填；resume 内部有
                 // 取流权退避重试，不会在预取收尾窗口里丢一次就放弃。
                 hongguo_service::play_service::online::resume_fill(
                     &state,
@@ -196,32 +206,19 @@ impl super::HomeView {
                     .collect(),
             ),
         };
-        // 系统播放器要拿 DComp 视频位——那是渲染线程的私有对象，只能在主线程
-        // 创建；所以这里把打开参数原样带回主线程（`Opened::System`），由调用方
-        // 在 `this.update` 里建。自研上屏没有这个约束，就地打开。
-        let opened = if crate::video_backend::is_system() {
-            Opened::System(
-                SystemSpec {
-                    source,
-                    start_secs,
-                    rate,
-                    events,
-                    on_stall,
-                },
-                now,
-            )
-        } else {
-            let engine = hongguo_playback::open(OpenOptions {
+        // 视频位是渲染线程的私有对象，只能在主线程创建：把打开参数原样带回
+        // 主线程，由调用方在实体借用解除后创建（见 `play_target` 的两段式
+        // update——open 过程中的 STA COM 调用会泵窗口消息，重入撞借用）。
+        Ok((
+            SystemSpec {
                 source,
                 start_secs,
                 rate,
                 events,
-            })
-            .await?;
-            // 自研引擎句柄 → 契约 trait 的零开销适配（见 `home/player.rs`）。
-            Opened::Ready(Arc::new(super::player::EnginePlayer(engine)) as Player, now)
-        };
-        Ok(opened)
+                on_stall,
+            },
+            now,
+        ))
     }
 
     /// 手动重试（失败卡的「重试」按钮）：起播失败重走当前游标位的起播链

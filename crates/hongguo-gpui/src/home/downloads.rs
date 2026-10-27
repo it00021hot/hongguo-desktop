@@ -8,19 +8,21 @@
 
 use std::sync::Arc;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, Window, div};
+use gpui_kit::{ElementId, SharedString, Toggled, Window, div};
 
 use super::HomeEvent;
 use super::downloads_range::{first_n, format_range, last_n, parse_range};
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 impl super::HomeView {
     /// 打开/收起「下载到本地」浮层。每次打开重置为「当前这一集」
@@ -232,7 +234,7 @@ impl super::HomeView {
         let grid = div()
             .id("download-episodes")
             .max_h(gpui_kit::px(256.0))
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .rounded(gpui_kit::px(6.0))
             .border_1()
             .border_color(theme.border)
@@ -244,8 +246,21 @@ impl super::HomeView {
                     .gap_1()
                     .children((1..=total).map(|n| {
                         let checked = self.download_selected.contains(&n);
-                        div()
-                            .id(ElementId::from(format!("download-ep-{n}")))
+                        // 每格可点 → base::Button：焦点句柄、Tab 可达、
+                        // Enter/Space 激活与 role 由库负责；勾选语义走
+                        // aria-toggled（Tauri 侧 aria-pressed 同款），无障碍名
+                        // 按 Tauri 基线「选择集数 + 集号」。
+                        BaseButton::new(ElementId::from(format!("download-ep-{n}")))
+                            .accessibility_label(format!(
+                                "{} {}",
+                                crate::i18n::t("download.selectEpisodes"),
+                                n
+                            ))
+                            .aria_toggled(if checked {
+                                Toggled::True
+                            } else {
+                                Toggled::False
+                            })
                             .h(gpui_kit::px(32.0))
                             .flex()
                             .justify_center()
@@ -267,6 +282,12 @@ impl super::HomeView {
                                     .text_color(theme.foreground)
                                     .hover(|h| h.bg(theme.accent))
                             })
+                            // base Button 强制 line_height(relative(1.))，文字行盒比
+                            // 默认矮一截；钉回默认行高才与原 div 像素一致。
+                            .line_height(gpui_kit::phi())
+                            // 下载浮层跟主题走（亮色就是亮面板），焦点环取主题
+                            // ring 而不是皮肤区的白色外圈——白圈压在亮面板上看不见。
+                            .focus_visible(|s| s.shadow(crate::tokens::focus_ring(theme)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let mut next = this.download_selected.clone();
                                 if let Some(pos) = next.iter().position(|&i| i == n) {
@@ -307,7 +328,10 @@ impl super::HomeView {
                     cx.listener(|_, _, _, cx| cx.stop_propagation()),
                 )
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                // 浮层本身不是控件：面板里的控件各自已是 base::Button，键盘走
+                // Tab 即可；这里只需要「点不到底下的画面」。拦住 mouse_down 就
+                // 够了——gpui 的 click 由「同一元素上按下+抬起」合成，按下被
+                // 拦下就合成不出点击（仓库既有纪律同款：评论面板、简介块）。
                 .child(
                     h_flex()
                         .items_center()
@@ -381,6 +405,7 @@ impl super::HomeView {
                                 .label(crate::i18n::t("download.submit"))
                                 .primary()
                                 .disabled(selected_len == 0)
+                                .when(selected_len == 0, |b| b.cursor_default())
                                 .on_click(cx.listener(|this, _, _, cx| this.submit_downloads(cx))),
                         ),
                 )

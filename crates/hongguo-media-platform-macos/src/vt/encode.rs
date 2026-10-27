@@ -114,8 +114,7 @@ impl Compressor {
 
             // 质量与码控。VT 没有 CRF：码率按分辨率×帧率标定（见 `bitrate_for`）。
             // MaxFrameDelayCount=0 关掉帧延迟（也就没有 B 帧重排）：输出顺序=输入
-            // 顺序，pts 标注与 muxide 的「严格递增」要求都不受干扰——对齐软解
-            // 路径 rusty_h264 的 lookahead=0 + num_ref_frames=1。
+            // 顺序，pts 标注与封装器的「严格递增」要求都不受干扰。
             // ProfileLevel 在个别第三方硬编上可能不吃：不致命，别让会话白建。
             let bitrate_num = make_int(bitrate);
             let gop = make_int(250);
@@ -245,7 +244,7 @@ impl Compressor {
         out
     }
 
-    /// 把一个编码样本转成 muxide 要的 Annex-B；返回 `(Annex-B, 是否关键帧)`。
+    /// 把一个编码样本转成封装器要的 Annex-B；返回 `(Annex-B, 是否关键帧)`。
     ///
     /// 关键帧前插 SPS/PPS：拼接器重建 moov 时样本描述取自第 1 集，后续各集
     /// 的码流必须自带参数集才能在第 1 集的 avcC 之下解码。
@@ -287,7 +286,7 @@ impl Compressor {
 /// VT 编码输出的同步样本判定：`kCMSampleAttachmentKey_NotSync` 缺省或为 false
 /// 即同步样本。压缩输出的约定是**非同步帧必带 NotSync=true，同步帧省略该键**
 /// （Apple 示例代码一律按 `!contains(key)` 判）——首帧 IDR 不带这个键，
-/// 按「缺省即非同步」判会把首帧标成非关键帧，muxide 直接拒收。
+/// 按「缺省即非同步」判会把首帧标成非关键帧，封装器直接拒收。
 unsafe fn is_sync_sample(sb: ffi::CMSampleBufferRef) -> bool {
     unsafe {
         let array = ffi::CMSampleBufferGetSampleAttachmentsArray(sb, 0);

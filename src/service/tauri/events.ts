@@ -35,6 +35,8 @@ const EVENT_PAYLOADS = {
   'compat-play-progress': compatProgressSchema,
   'login-mfa-state': loginMfaStateSchema,
   'follow-notices': followNoticesEventSchema,
+  /** 设备注册换档完成：载荷 = 新 install_id（身份敏感数据应重拉） */
+  'device-registered': z.string(),
   'boss-key-hidden': z.object({ hidden: z.boolean() }),
   /** lib.rs CloseRequested 拦截发出，Rust 侧 `()` 序列化为 null */
   'close-requested': z.null(),

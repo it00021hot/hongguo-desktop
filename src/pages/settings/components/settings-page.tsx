@@ -527,8 +527,8 @@ export function SettingsPage() {
 /**
  * 告诉用户「兼容合并会跑多快」，而不是「用什么写的」。
  *
- * 探测结果里有 Rust / ffmpeg / 编码器这些实现细节，但用户只关心快慢和
- * 要不要额外装东西，所以标签一律按速度分档。
+ * 探测结果里有 ffmpeg / 编码器这些实现细节，但用户只关心快慢和
+ * 要不要额外装东西，所以标签一律按速度分档；一条路都没有时直接说不可用。
  */
 function backendLabel(cap: DecodeCapability | undefined): string {
   if (!cap) return t('common.loading');
@@ -536,5 +536,5 @@ function backendLabel(cap: DecodeCapability | undefined): string {
   // VideoToolbox 走 Apple 软编会话——比 ffmpeg 快但编码仍在 CPU，归「软件加速」。
   if (cap.platformHwEncoder || cap.h264HwEncoder) return t('settings.backendFfmpegHw');
   if (cap.platformEncoder || cap.hasFfmpeg) return t('settings.backendFfmpegSw');
-  return t('settings.backendRust');
+  return t('settings.backendUnavailable');
 }

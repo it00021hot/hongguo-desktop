@@ -25,7 +25,7 @@ export function NewCalendarView() {
   const items = cal.items;
 
   // 服务端多天混排：某页按展示日过滤后可能为空但仍有下一页——空页自动
-  // 续拉，直到出新条目或游标到头（hgplayer「滚到底无新增才显示没有更多」同款）
+  // 续拉，直到出新条目或游标到头（滚到底无新增才显示「没有更多」）
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (cal.hasMore && !cal.isFetchingMore && !isLoading && items.length === 0) {
@@ -33,7 +33,7 @@ export function NewCalendarView() {
     }
   });
 
-  // 滚近底部（600px 提前量）懒翻下一页；常驻哨兵（同榜单/找剧口径）
+  // 滚近底部（400px 提前量）懒翻下一页；常驻哨兵（同榜单/找剧口径）
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -117,7 +117,7 @@ export function NewCalendarView() {
               {items.map((item) => (
                 <CalendarRow key={item.seriesId} item={item} />
               ))}
-              {/* 懒翻页哨兵：常驻（滚近底部 600px 提前量触发下一页） */}
+              {/* 懒翻页哨兵：常驻（滚近底部 400px 提前量触发下一页） */}
               <div ref={sentinelRef} className="h-px" aria-hidden />
               {cal.isFetchingMore && (
                 <p className="text-muted-foreground flex items-center justify-center gap-2 py-2 text-sm">
@@ -125,7 +125,7 @@ export function NewCalendarView() {
                   {t('feed.loadingMore')}
                 </p>
               )}
-              {/* 当日条目穷尽：hgplayer 同款「没有更多了」尾标 */}
+              {/* 当日条目穷尽：「没有更多了」尾标 */}
               {!cal.hasMore && !cal.isFetchingMore && items.length > 0 && (
                 <p className="text-muted-foreground py-2 text-center text-sm">{t('feed.end')}</p>
               )}
@@ -137,7 +137,7 @@ export function NewCalendarView() {
   );
 }
 
-/** "20261003" → 今天/周几（hgplayer 日期条同款：今天显示「今天」，其余
+/** "20261003" → 今天/周几（今天显示「今天」，其余
  *  显示星期；文案走 i18n，中英文各自成串）。 */
 function formatWeekday(d: string): string {
   if (d.length !== 8) return '';

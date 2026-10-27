@@ -159,8 +159,8 @@ fn single_chunk_offsets_advance_by_sample_size() {
 }
 
 /// 畸形巨 count 的回归锁：`vec![(0,size); count]` 按 count 直接预分配，
-/// 不卡上限时 0x5555_5555 这类 count = 一笔 22.9GB 的分配请求，进程直接 abort
-/// （2026-10 高并发测试间歇崩的根因之一）。防御后 count 被卡到切片字节数内。
+/// 不卡上限时 0x5555_5555 这类 count = 一笔 22.9GB 的分配请求，进程直接 abort。
+/// 防御后 count 被卡到切片字节数内。
 #[test]
 fn absurd_stsz_count_is_capped_not_allocated() {
     // 定长分支：sample_size=256 | count=0x5555_5555

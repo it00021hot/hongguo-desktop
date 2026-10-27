@@ -80,7 +80,7 @@ fn find_start_code(b: &[u8]) -> Option<(usize, usize)> {
 
 /// mf/playback.rs 的 `annexb_from_length_prefixed` 是变长前缀（1-4 字节）+
 /// 任何解析失败回退原文的解码输入形态；本函数是 moov/参数集侧的定长
-/// 4 字节截断语义——两处边界行为有意不同，合并前先对齐 hgplayer 实测语义。
+/// 4 字节截断语义——两处边界行为有意不同，合并前先对齐两处实测语义。
 fn split_avcc(b: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
     let mut pos = 0usize;

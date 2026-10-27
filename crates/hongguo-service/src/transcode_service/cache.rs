@@ -90,7 +90,6 @@ pub fn trim() -> usize {
     removed
 }
 
-/// 清空缓存。
 pub fn clear() -> usize {
     let dir = compat_cache_dir();
     let mut n = 0;

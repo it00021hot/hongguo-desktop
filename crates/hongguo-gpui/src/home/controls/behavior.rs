@@ -1,4 +1,4 @@
-//! 控制区行为：引擎事件分发、控制条显隐状态机、偏好落盘与唤醒。
+//! 控制区行为：播放器事件分发、控制条显隐状态机、偏好落盘与唤醒。
 
 use super::*;
 
@@ -7,9 +7,8 @@ use std::time::Instant;
 #[cfg(feature = "screenshot")]
 use std::time::Duration;
 
-use hongguo_playback::PlayerEvent;
-
 use crate::bridge;
+use crate::home::player::PlayerEvent;
 
 impl HomeView {
     /// 取证辅助（screenshot feature 的 HONGGUO_SHOT_PAUSE）：暂停播放并把
@@ -43,77 +42,53 @@ impl HomeView {
                         started.elapsed().as_secs_f64() * 1000.0
                     );
                 }
-                // 系统播放器的画面由 AVPlayerLayer 自己合成：首帧事件只置
-                // 「画面已就绪」，视图据此打透明洞；GPUI 后端仍等 Frame。
-                if self.player.as_ref().is_some_and(|p| p.is_system()) {
-                    self.system_video_ready = true;
-                    self.first_frame_generation = self.play_generation;
-                    self.hold_last_frame = false;
-                    // 倍速补发改挂首帧事件：引擎在 metadata 就绪前一律报「不支
-                    // 持这个倍速」，此前只能靠渲染帧节流补发（每帧一次 COM 探
-                    // 测）——渲染节拍一变，补发就跟着变慢。首帧到达即 metadata
-                    // 已就绪，此刻补发最准。
-                    // 只对系统后端：自研引擎的倍速出生即位，补发会平白走一次
-                    // 分级换轴记账。
-                    if let Some(player) = self.player.as_ref() {
-                        player.set_rate(self.rate);
-                    }
-                    // 系统后端没有后续 Frame 事件；这里必须主动调度一帧，
-                    // 否则舞台永远停在上一帧的黑色/封面。
-                    cx.notify();
-                    // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集；
-                    // 再给 HONGGUO_AV_NEXT_EPISODE_LOOP=1 则每集首帧都重新计时
-                    //（连播内存曲线取证用，一次开关连切到底）。
-                    if let Ok(ms) = std::env::var("HONGGUO_AV_NEXT_EPISODE_MS")
-                        && let Ok(ms) = ms.parse::<u64>()
-                    {
-                        static ONCE: std::sync::atomic::AtomicBool =
-                            std::sync::atomic::AtomicBool::new(false);
-                        let looping =
-                            std::env::var("HONGGUO_AV_NEXT_EPISODE_LOOP").is_ok_and(|v| v == "1");
-                        if looping || !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                            cx.spawn(async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(std::time::Duration::from_millis(ms))
-                                    .await;
-                                let _ = this.update(cx, |view, cx| view.step_episode(1, cx));
-                            })
-                            .detach();
-                        }
-                    }
-                    // 取证：HONGGUO_AV_RATE=2 首帧后切倍速。
-                    if let Ok(rate) = std::env::var("HONGGUO_AV_RATE")
-                        && let Ok(rate) = rate.parse::<f64>()
-                    {
-                        self.set_rate(rate, cx);
+                // 画面由 AVPlayerLayer / DComp 视频位自己合成：首帧事件只置
+                // 「画面已就绪」，视图据此打透明洞。
+                self.system_video_ready = true;
+                self.first_frame_generation = self.play_generation;
+                // 倍速补发改挂首帧事件：系统播放器在 metadata 就绪前一律报
+                // 「不支持这个倍速」。首帧到达即 metadata 已就绪，此刻补发最准。
+                if let Some(player) = self.player.as_ref() {
+                    player.set_rate(self.rate);
+                }
+                // 首帧到达即上屏：系统节拍最快也要等下一拍，这里主动
+                // notify 一次，舞台才不会在黑色/封面上多停一拍。
+                cx.notify();
+                // 取证：HONGGUO_AV_NEXT_EPISODE_MS=NNNN 首帧后 NN 秒自动切下一集；
+                // 再给 HONGGUO_AV_NEXT_EPISODE_LOOP=1 则每集首帧都重新计时
+                //（连播内存曲线取证用，一次开关连切到底）。
+                if let Ok(ms) = std::env::var("HONGGUO_AV_NEXT_EPISODE_MS")
+                    && let Ok(ms) = ms.parse::<u64>()
+                {
+                    static ONCE: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    let looping =
+                        std::env::var("HONGGUO_AV_NEXT_EPISODE_LOOP").is_ok_and(|v| v == "1");
+                    if looping || !ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(ms))
+                                .await;
+                            let _ = this.update(cx, |view, cx| view.step_episode(1, cx));
+                        })
+                        .detach();
                     }
                 }
-                // 帧由紧随其后的 Frame 事件带上；这里只做「出画了」的副作用
+                // 取证：HONGGUO_AV_RATE=2 首帧后切倍速。
+                if let Ok(rate) = std::env::var("HONGGUO_AV_RATE")
+                    && let Ok(rate) = rate.parse::<f64>()
+                {
+                    self.set_rate(rate, cx);
+                }
                 self.prefetch_next_stream(cx);
-                // 相邻剧分集档案预取（换剧秒回）：挂在首帧而不是逐帧事件上
-                // ——系统后端（AVPlayer / MediaEngine）**不发 Frame 事件**，
-                // 挂在 Frame 分支等于这条预取在 system 模式下从不执行，换剧
-                // 就得多等一次 resolve_series 的网络往返。
+                // 相邻剧分集档案预取（换剧秒回）：挂在首帧而不是周期事件上
+                // ——首帧每次起播必到，换剧就不必多等一次 resolve_series
+                // 的网络往返。
                 self.prefetch_neighbor_archives();
                 // 新集首帧出画 = 连播静默期结束（Tauri 首播解除静默同款）
                 self.silent_until_input = false;
             }
-            PlayerEvent::Frame(frame) => {
-                let first = self.frame.is_none();
-                if first {
-                    log::info!("[Home] 首帧进入 view——video_ready 即为 true");
-                }
-                // 每个 Frame 都证明「当前代次已有画面」；同剧切集时 frame
-                // 槽沿用旧帧，不能只在 first 时记代次。
-                self.first_frame_generation = self.play_generation;
-                // 新集首帧出画：定格帧交棒（Tauri FrameHold 淡出同款）
-                self.hold_last_frame = false;
-                self.frame = Some(frame);
-                self.save_progress_maybe();
-                // 弹幕 tick：入场 + 在飞推进（Frame 事件即渲染节拍）
-                self.danmaku_tick(cx);
-            }
-            // 引擎缓冲状态机：水位低暂停设备、回填恢复（详见 playback::player）
+            // 播放器缓冲状态（供数断流/恢复，系统播放器的卡顿事件）
             PlayerEvent::Buffering => self.buffering = true,
             PlayerEvent::Ready => self.buffering = false,
             PlayerEvent::Ended => {
@@ -123,12 +98,10 @@ impl HomeView {
             }
             PlayerEvent::Failed(msg) => {
                 self.buffering = false;
-                // 失败落封面：定格帧此时只会盖住错误态（Tauri 真值表 error 档）
-                self.hold_last_frame = false;
                 // 播放中致命失败同样走 retry 档（对齐 Tauri recovery-policy
                 // 的 network/other：自动重试一次，复发才落错误态）——起播
-                // 失败与这里共用同一个 play_retried 预算（引擎就位即复位）。
-                // 引擎已停、时钟冻结在失败位置，读它就是续播断点。
+                // 失败与这里共用同一个 play_retried 预算（播放器就位即复位）。
+                // 播放器已停、时钟冻结在失败位置，读它就是续播断点。
                 if !self.play_retried
                     && let Some(item) = self.display_items().get(self.cursor()).cloned()
                 {
@@ -149,7 +122,7 @@ impl HomeView {
                     cx.notify();
                     return;
                 }
-                // 引擎致命失败即自停（shutdown），封面背后不会再有画面——
+                // 播放器致命失败即自停（shutdown），封面背后不会再有画面——
                 // 失败必须落可见错误态：只写 pending_title 的话，那行小徽标
                 // 随 switching 消失，用户看到的就是「无声无息卡在封面」
                 self.play_error = Some(crate::i18n::tf(
@@ -213,7 +186,7 @@ impl HomeView {
     }
 
     /// 鼠标活动/操作刷新控制条可见窗；隐藏→可见的沿上排一次性定时器，
-    /// 静止到期后靠它（或播放中的帧事件流）触发重算隐藏。真实输入同时
+    /// 静止到期后靠它（或播放中的节拍重算）触发隐藏。真实输入同时
     /// 解除连播静默（Tauri wakeOnInput 同款）。
     pub(in crate::home) fn wake_controls(&mut self, cx: &mut Context<Self>) {
         // 静默期闸门（Tauri wakeOnMove 同款）：连播静默起步后，「用户在场」
@@ -244,9 +217,8 @@ impl HomeView {
 
     /// 任一面板打开即常显（Tauri panelOpen 同一集合：选集/评论/弹幕设置/
     /// 音量/下载）。倍速/清晰度下拉菜单与表情网格虽不是「面板」，但开着时
-    /// 指针不在控制条本体上、hover 养不了常显窗——不进来就会被帧事件流的
-    /// 重算连菜单一起收掉（播放中每帧都触发，暂停态没重渲染所以显得
-    /// 「只有暂停能操作」）。
+    /// 指针不在控制条本体上、hover 养不了常显窗——不进来就会被节拍重算
+    /// 连菜单一起收掉。
     fn panel_open(&self) -> bool {
         self.picker_open
             || self.comments_panel_open

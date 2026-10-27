@@ -77,7 +77,7 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
         }
         // mini / portrait 场景翻的是进程级全局（各自的静态），跑完复位，
         // 不让后续场景继承形态（portrait 漏复位时侧栏/顶栏 tab 槽全变竖屏
-        // 形态，交互探针的 tab 也整个消失——2026-10-18 实测）。
+        // 形态，交互探针的 tab 也整个消失）。
         crate::mini::set_active(false);
         crate::portrait::set_active(false);
     }
@@ -211,7 +211,7 @@ fn interaction_probe(
     })?;
     // tab 条带：壳顶栏（h 44px）里的分类 tab（分类 tab 已从舞台 top_3 上移
     // 壳顶栏，扫舞台顶部会全部落空）；横跨内容区全宽（x 取 240..1010，避开
-    // 侧栏 224），多档高度每 8px 点一次，直到源离开「推荐」。点击推荐本身
+    // 侧栏 160），多档高度每 8px 点一次，直到源离开「推荐」。点击推荐本身
     // = 换一批（源不变），漫剧是第一个会翻源的点。
     let switched_at = cx.update_window(handle, |_, window, cx| -> Option<(f32, f32)> {
         for y in [14.0, 22.0, 30.0, 38.0] {

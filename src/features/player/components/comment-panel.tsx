@@ -1,16 +1,15 @@
-//! 沉浸流评论面板：右侧滑出（hgplayer 同款「评论 · N」列）。
+//! 沉浸流评论面板：右侧滑出（「评论 · N」列）。
 //!
 //! 列表（头像/昵称/文本/时间/♡）+ 底部发评论框；评论点赞走
 //! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态——
-//! 2026-10-06 抓包重锁：评论形态 business_param 是 need_count/req_type +
+//! 评论形态 business_param 是 need_count/req_type +
 //! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
 //! 评论总数（头部计数用）。
 //!
-//! 回复：发送走 reply/add 独立端点；回复**列表**自 2026-10-10 抓
-//! hgplayer 1.1.8 起可用（reply/list 独立端点，评论维度 src=504/ch=18，
-//! 此前「服务端无接口」的结论作废）——「展开 N 条回复」原地内联展开
+//! 回复：发送走 reply/add 独立端点；回复**列表**走 reply/list 独立端点
+//! （评论维度 src=504/ch=18）——「展开 N 条回复」原地内联展开
 //! （不隐藏其他评论），自己发的回复仍本地追加一份（服务端列表有延迟）。
-//! 回复行格式对齐 hgplayer（2026-10-10 截图）：`回复 @xxx：` 前缀在
+//! 回复行格式：`回复 @xxx：` 前缀在
 //! 正文行（@ 浅蓝高亮）、相对时间（N 天前）、头像 32px。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -21,9 +20,11 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
-import { danmaku, interact } from '@/service/commands';
+import { danmaku, emoticon as emoticonCmd, interact } from '@/service/commands';
 import {
+  emoticonPreviewUrl,
   useAccount,
+  useCollectEmoticon,
   useCommentDigg,
   useComments,
   useMentionList,
@@ -40,7 +41,11 @@ import {
 import { dedupBy, keys } from '@/service/queries/common';
 import { relativeTime } from '@/utils/relative-time';
 import { isImeComposing } from '@/utils/ime';
+import { revokePreview, type LocalImageAttachment } from '@/utils/image-attachment';
 import { EmojiText } from '@/components/common/emoji/emoji-text';
+import { EmoticonActionsMenu } from '@/components/common/emoji/emoticon-actions-menu';
+import type { LongPressPoint } from '@/components/common/emoji/use-long-press';
+import { CommentImage } from './comment-image';
 import { ReplySection } from './comment-reply-section';
 import { EmojiSendBox, type EmojiSendBoxHandle } from '@/components/common/emoji/emoji-send-box';
 
@@ -70,7 +75,18 @@ function CommentText({ text, aiName }: { text: string; aiName?: string }) {
     </>
   );
 }
-import type { CommentItem, ReplyItem, ReplyPage } from '@/service/schema';
+import type { CommentItem, Emoticon, ReplyItem, ReplyPage } from '@/service/schema';
+
+/**
+ * 评论附件（官方同款两种形态）：
+ * - 表情图片（第三方 GIF / 自定义表情 / 搜索结果）：服务端下发的表情对象
+ *   直接进 `image_data`，附 `business_param.emoji_scene_type`（2 / 4）；
+ * - 本地图片：选图后**不立即上传**（官方实测选图无请求），点「发表」才
+ *   走 `/reading/reader/upload/picture/`，再把签名 URL 填进 `image_data`。
+ */
+type CommentAttachment =
+  | { kind: 'emoticon'; item: Emoticon; sceneType: number }
+  | { kind: 'local'; local: LocalImageAttachment };
 
 interface Props {
   vid: string;
@@ -101,7 +117,7 @@ export function CommentPanel({ vid, onClose }: Props) {
   const total = data?.pages[0]?.total || comments?.length || 0;
   const send = useSendComment();
   const sendReply = useSendReply();
-  // @ 提及（官方交互，2026-10-15 抓 player 实包）：输入 `@` 触发
+  // @ 提及（官方交互）：输入 `@` 触发
   // relation/list 候选弹层，选中小果插入提及段，发表时走 rich_text
   // tp=15 + aibot_mention_context（AI bot 会回复剧情介绍）。
   // ⚠️ vid 是「分集vid:seriesId」组合形态——relation/list 的 target 是
@@ -114,6 +130,16 @@ export function CommentPanel({ vid, onClose }: Props) {
   const commentDigg = useCommentDigg(vid);
   const replyDigg = useReplyDigg(vid);
   const [text, setText] = useState('');
+  /** 评论附件（表情图片 / 本地图片；官方两种形态，见 CommentAttachment） */
+  const [attachment, setAttachment] = useState<CommentAttachment | null>(null);
+  /** 本地图片上传中（官方：选图不请求，点发表才上传） */
+  const [uploading, setUploading] = useState(false);
+  /** 长按评论附图 → 「添加到表情」菜单（官方同款） */
+  const [collectMenu, setCollectMenu] = useState<{
+    item: Emoticon;
+    point: LongPressPoint;
+  } | null>(null);
+  const collectEmoticon = useCollectEmoticon();
   /** 评论输入框句柄：@ 提及插入要落在浏览器维护的光标上（脚本拼文本
    *  + 程序化选区会与 Chromium 编辑光标脱节，见 rich-emoji-input） */
   const sendBoxRef = useRef<EmojiSendBoxHandle | null>(null);
@@ -130,7 +156,7 @@ export function CommentPanel({ vid, onClose }: Props) {
    *  reply_to_reply_id） */
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 展开了回复区的评论（受控：回复发送成功后强制展开，对齐 hgplayer） */
+  /** 展开了回复区的评论（受控：回复发送成功后强制展开） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (commentId: string, open: boolean) =>
     setOpenReplies((prev) => {
@@ -213,18 +239,89 @@ export function CommentPanel({ vid, onClose }: Props) {
     };
   }, [aiPending, vid, queryClient]);
 
-  const submit = () => {
-    const content = text.trim();
-    if (!content || send.isPending) return;
+  /** 换附件：旧的本地预览 URL 要释放（blob 不释放会漏内存）。 */
+  const replaceAttachment = (next: CommentAttachment | null) => {
+    setAttachment((prev) => {
+      if (prev?.kind === 'local') revokePreview(prev.local.previewUrl);
+      return next;
+    });
+  };
+
+  /** 选中表情图片（第三方 GIF / 自定义表情 / 搜索结果）。 */
+  const onPickEmoticon = (item: Emoticon, sceneType: number) => {
+    replaceAttachment({ kind: 'emoticon', item, sceneType });
+  };
+
+  /** 选本地图片（此刻不请求网络，发表时才上传）。选图走原生文件面板。 */
+  const onPickLocalImage = (local: LocalImageAttachment) => {
+    replaceAttachment({ kind: 'local', local });
+  };
+
+  /** 收藏评论里的图片到「我的表情」（官方：长按附图 → 「添加到表情」）。 */
+  const onCollectImage = async (item: Emoticon) => {
+    setCollectMenu(null);
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
       return;
+    }
+    try {
+      await collectEmoticon.mutateAsync({
+        imageId: item.id ?? '',
+        imageUrl: item.webUri,
+        width: item.width,
+        height: item.height,
+        imageType: item.imageType,
+      });
+      toast.success(t('player.emoticon.addDone'));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const submit = async () => {
+    const content = text.trim();
+    if ((!content && !attachment) || send.isPending || uploading) return;
+    if (!loggedIn) {
+      toast.info(t('player.interact.loginRequired'));
+      return;
+    }
+    // 附图与 @提及是官方两套形态，附件在场时走附图流（正文可空）。
+    let image: Emoticon | undefined;
+    let emojiSceneType: number | null = null;
+    if (attachment?.kind === 'emoticon') {
+      image = attachment.item;
+      emojiSceneType = attachment.sceneType;
+    } else if (attachment?.kind === 'local') {
+      setUploading(true);
+      try {
+        const uploaded = await emoticonCmd.upload(
+          attachment.local.bytes,
+          attachment.local.filename,
+        );
+        image = {
+          id: null,
+          webUri: uploaded.url,
+          dynamicUrl: null,
+          imageType: 1,
+          width: attachment.local.width,
+          height: attachment.local.height,
+          format: attachment.local.format,
+          imageName: null,
+          thumbNails: null,
+          expandWebUrl: null,
+        };
+      } catch (e) {
+        toast.error(String(e));
+        return;
+      } finally {
+        setUploading(false);
+      }
     }
     // @ 提及（草稿含提及段占位符 \uFFFC 时按提及评论发送）：text 传剥掉
     // 提及段后的正文（Rust 侧会重拼 `@名字\uFFFC 正文` + rich_text
     // tp=15/uri=uid + aibot_mention_context=面板最近评论 id——官方实包
     // 1539/1616 传的是评论 id 嵌套数组，不是 vid）
-    const withMention = content.includes('\uFFFC') && mentionUser != null;
+    const withMention = content.includes('\uFFFC') && mentionUser != null && !attachment;
     send.mutate(
       {
         vid,
@@ -234,11 +331,14 @@ export function CommentPanel({ vid, onClose }: Props) {
         contextCommentIds: withMention
           ? comments.slice(0, MENTION_CONTEXT_LIMIT).map((c) => c.commentId)
           : undefined,
+        image,
+        emojiSceneType,
       },
       {
         onSuccess: (comment) => {
           setText('');
           setMentionUser(null);
+          replaceAttachment(null);
           // @提及评论：官方同款「思考中…」占位——回复区强制展开并轮询，
           // AI 回复到达后由轮询写进缓存并撤占位
           if (withMention) {
@@ -270,14 +370,14 @@ export function CommentPanel({ vid, onClose }: Props) {
       {
         onSuccess: (reply) => {
           // 服务端回显的完整回复对象直接进缓存（头像/昵称/uid/时间齐全，
-          // hgplayer 同款：新回复以普通条目出现，replyToName 驱动
+          // 新回复以普通条目出现，replyToName 驱动
           // 「回复 @xxx：」前缀）；同时父评论 replyCount +1
           appendReply(queryClient, keys.commentReplies(vid, parent.commentId), reply);
           bumpReplyCount(queryClient, keys.comments(vid), parent.commentId, 1);
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
-          // hgplayer 同款：发送成功强制展开回复区，让新回复立刻可见
+          // 发送成功强制展开回复区，让新回复立刻可见
           setReplySectionOpen(parent.commentId, true);
         },
         onError: (e) => toast.error(String(e)),
@@ -287,7 +387,7 @@ export function CommentPanel({ vid, onClose }: Props) {
 
   /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。
    *  乐观写进对应 query 缓存（hooks 内失败回滚 + 调用方 toast）——
-   *  显示值直读缓存，面板重开不再回跳旧值（2026-10-10 用户实测）。 */
+   *  显示值直读缓存，面板重开不再回跳旧值。 */
   const onCommentDigg = (id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
@@ -390,6 +490,18 @@ export function CommentPanel({ vid, onClose }: Props) {
                       <p className="mt-0.5 text-sm leading-snug break-words whitespace-pre-wrap">
                         <CommentText text={c.text} aiName={aibot?.userName} />
                       </p>
+                      {/* 附图（本地图片 / 表情图片；纯文字评论无）——长按可收藏进「我的表情」 */}
+                      {c.images.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {c.images.map((img, index) => (
+                            <CommentImage
+                              key={`${img.webUri}-${index}`}
+                              image={img}
+                              onMenu={(target, point) => setCollectMenu({ item: target, point })}
+                            />
+                          ))}
+                        </div>
+                      )}
                       <div className="mt-1 flex items-center gap-3 text-[11px] text-neutral-500">
                         <span>{relativeTime(c.createTime)}</span>
                         <button
@@ -413,7 +525,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                           </button>
                         )}
                       </div>
-                      {/* 回复列表（2026-10-10 起 reply/list 可用）：原地内联
+                      {/* 回复列表（reply/list 端点）：原地内联
                     展开，其他评论不隐藏；回复行「回复」走二级回复，新回复
                     直接进缓存 */}
                       <ReplySection
@@ -495,8 +607,8 @@ export function CommentPanel({ vid, onClose }: Props) {
         )}
       </div>
 
-      {/* 底部发评论 */}
-      <div className="shrink-0 border-t border-white/10 p-3">
+      {/* 底部发评论（relative：表情面板的锚点靠它定位到发送区顶边） */}
+      <div className="relative shrink-0 border-t border-white/10 p-3">
         {/* @ 候选条（官方交互：输入 @ 触发 relation/list；官方形态是
             输入行上方的一排大头像候选，AI 头像带橙勾徽标、名字带渐变
             Ai 后缀）。点击候选用 onMouseDown 防输入框失焦；插入走输入框
@@ -557,6 +669,30 @@ export function CommentPanel({ vid, onClose }: Props) {
             </div>
           </div>
         )}
+        {/* 附件预览（官方同款：输入框上方一排缩略图，带删除钮） */}
+        {attachment && (
+          <div className="mb-2 flex items-center gap-2">
+            <div className="relative">
+              <img
+                src={
+                  attachment.kind === 'local'
+                    ? attachment.local.previewUrl
+                    : emoticonPreviewUrl(attachment.item)
+                }
+                alt=""
+                className="size-16 rounded-md border border-white/10 object-cover"
+              />
+              <button
+                type="button"
+                onClick={() => replaceAttachment(null)}
+                aria-label={t('player.emoticon.imageRemove')}
+                className="absolute -top-1.5 -right-1.5 grid size-5 cursor-pointer place-items-center rounded-full bg-neutral-800 text-neutral-300 ring-1 ring-white/20 hover:text-white"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <EmojiSendBox
@@ -564,14 +700,18 @@ export function CommentPanel({ vid, onClose }: Props) {
               value={text}
               mentionAiName={aibot?.userName}
               onChange={setText}
-              onSubmit={submit}
+              onSubmit={() => void submit()}
               onEscape={() => setText((prev) => prev.replace(/(^|\s)@[^\s@￼]*$/, '$1'))}
               placeholder={t('player.comments.placeholder')}
               maxLength={200}
-              pending={send.isPending}
+              pending={send.isPending || uploading}
+              canSend={text.trim() !== '' || attachment !== null}
               pickerAlign="right"
+              pickerAnchorTo="send-area"
               inputClassName="h-9 min-w-0 flex-1 scrollbar-none overflow-x-auto rounded-md bg-neutral-800/80 px-3 text-sm leading-9 whitespace-pre text-white"
               sendClassName="h-9 px-4"
+              onPickImage={onPickEmoticon}
+              onPickLocalImage={(file) => void onPickLocalImage(file)}
             />
           </div>
         </div>
@@ -586,6 +726,18 @@ export function CommentPanel({ vid, onClose }: Props) {
         confirmLabel={t('common.delete')}
         onConfirm={confirmDelete}
       />
+
+      {/* 长按评论附图 → 「添加到表情」（官方同款：collect_type=1） */}
+      {collectMenu && (
+        <EmoticonActionsMenu
+          x={collectMenu.point.x}
+          y={collectMenu.point.y}
+          canRemove={false}
+          onAdd={() => void onCollectImage(collectMenu.item)}
+          onRemove={() => setCollectMenu(null)}
+          onClose={() => setCollectMenu(null)}
+        />
+      )}
     </div>
   );
 }

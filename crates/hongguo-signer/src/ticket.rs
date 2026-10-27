@@ -55,7 +55,7 @@ pub fn encode_query(values: &[(&str, String)]) -> String {
 ///
 ///
 /// 业务参数插在设备参数之后、`ts`/`_rticket` 之前——位置本身也参与签名，
-/// 与 hgplayer 的实测顺序一致；调用方不再有机会在签名后改 query。
+/// 与实测顺序一致；调用方不再有机会在签名后改 query。
 pub fn resolve_ticket_with(
     origin: &str,
     pathname: &str,
@@ -160,10 +160,10 @@ pub fn sign_request_with(
         ),
         ("x-xs-from-web".into(), "0".into()),
         ("x-ss-req-ticket".into(), ticket.to_string()),
-        ("x-tt-request-tag".into(), "t=0;n=0".into()),
         ("sdk-version".into(), "2".into()),
-        ("passport-sdk-version".into(), "50561".into()),
-        ("x-vc-bdturing-sdk-version".into(), "3.7.2.cn".into()),
+        // 旧值 50561 / 3.7.2.cn 会被服务端按旧指纹拒
+        ("passport-sdk-version".into(), "5051452".into()),
+        ("x-vc-bdturing-sdk-version".into(), "4.0.3.cn".into()),
         ("x-khronos".into(), khronos.to_string()),
         // x-ladon / x-argus 目前都直接用时间戳，保留字段位置以兼容后续协议变更
         ("x-ladon".into(), b64.encode(be32(khronos))),
@@ -183,13 +183,14 @@ pub fn sign_request_with(
                 device.get("version_name"),
             ),
         ),
-        ("x-tt-dt".into(), String::new()),
     ];
+    // 不带 x-tt-dt / x-tt-request-tag：官方业务请求不带这两个头，
+    // 匿名请求带上会被静默拒（空响应）
 
     if let Some(b) = &body {
         // 调用方显式给过 content-type（如 passport 系的 form 请求）就不
         // 再叠默认 JSON——两个同名头会让服务端按第一个解析，form body
-        // 被当 JSON 读，业务字段全丢（2026-10-05 发码 1003 事故根因）
+        // 被当 JSON 读，业务字段全丢
         let has_ct = extra_headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
@@ -230,7 +231,14 @@ pub fn sign_get(pathname: &str, device: &DeviceProfile) -> SignedRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::video_device;
+
+    /// 测试用档案：匿名形态 + 已激活身份字段（ticket 对 iid 的分支需要）。
+    fn test_device() -> DeviceProfile {
+        let mut d = crate::device::anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
+        d.set("iid", "2715158266282762");
+        d.set("device_id", "2715158266032906");
+        d
+    }
 
     #[test]
     fn encode_query_escapes_specials() {
@@ -245,7 +253,7 @@ mod tests {
 
     #[test]
     fn resolve_ticket_avoids_branch_1() {
-        let device = video_device();
+        let device = test_device();
         for i in 0..30u64 {
             let (_, _, ticket, _) = resolve_ticket_with(
                 API_ORIGIN,
@@ -261,7 +269,7 @@ mod tests {
 
     #[test]
     fn sign_get_produces_all_required_headers() {
-        let device = video_device();
+        let device = test_device();
         let signed = sign_get("/novel/player/multi_video_detail/v1/", &device);
 
         let names: Vec<&str> = signed.headers.iter().map(|(k, _)| k.as_str()).collect();
@@ -284,7 +292,7 @@ mod tests {
 
     #[test]
     fn sign_post_adds_stub_header() {
-        let device = video_device();
+        let device = test_device();
         let signed = sign_post("/x/v1/", b"{\"series_id\":1}".to_vec(), &device);
         let names: Vec<&str> = signed.headers.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"x-ss-stub"));
@@ -293,7 +301,7 @@ mod tests {
 
     #[test]
     fn signed_url_contains_api_origin() {
-        let device = video_device();
+        let device = test_device();
         let signed = sign_get("/x/v1/", &device);
         assert!(signed.url.starts_with(API_ORIGIN));
         assert!(signed.url.contains("/x/v1/?"));
@@ -303,13 +311,13 @@ mod tests {
     fn sign_request_honors_custom_origin_and_profile_ua() {
         // passport / 设备注册走别的域名；UA 必须取自档案而非全局常量，
         // 注册来的档案换机型时 UA 要跟着换
-        let mut device = video_device();
+        let mut device = test_device();
         device.set("device_id", "42");
-        let custom_ua = "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14)";
+        let custom_ua = crate::device::register_ua();
         // 换 UA 不改字段：serde 打个补丁重建（等价于注册流程换机型档案）
         let profile: crate::device::DeviceProfile = {
             let mut v = serde_json::to_value(&device).unwrap();
-            v["user_agent"] = serde_json::Value::String(custom_ua.into());
+            v["user_agent"] = serde_json::Value::String(custom_ua.clone());
             serde_json::from_value(v).unwrap()
         };
         let signed = sign_request(
@@ -339,7 +347,7 @@ mod tests {
     fn resolve_ticket_url_ends_with_its_query() {
         // url 必须原样带上签过名的那份 query：调用方不再单独持有 query，
         // 一旦这里拼接分叉，x-gorgon / x-medusa 就会与实际发出的 query 不符
-        let device = video_device();
+        let device = test_device();
         let (url, query, ticket, khronos) =
             resolve_ticket_with(API_ORIGIN, "/x/v1/", None, &device, &[], 1_700_000_000_000);
         assert!(url.ends_with(&query), "url 应原样带出 query");
@@ -349,7 +357,7 @@ mod tests {
 
     #[test]
     fn signed_headers_match_the_query_in_url() {
-        let device = video_device();
+        let device = test_device();
         let signed = sign_get("/x/v1/", &device);
 
         let query = signed.url.split_once('?').expect("url 应带 query").1;

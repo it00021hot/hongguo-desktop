@@ -5,11 +5,11 @@
 //! fill/stroke 走 currentColor，激活态（红心/黄星）由外层 fill-*/text-* 类接管。
 //! 计数来自剧集档案的 detail 公开计数（匿名可见），登录后 mget 兜底
 //! 「已赞/已追」红标。预约在侧边栏「预约」页，不在这。
-//! 发弹幕入口在控制栏（hgplayer 同款），不在这里。
+//! 发弹幕入口在控制栏，不在这里。
 //!
-//! 2026-10-05 抓包端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
-//! 状态 mget；口径见 docs 第 9 节。追更 2026-10-15 抓 player v1.2.1
-//! （do_action 34/35、object_type=10）。
+//! 端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
+//! 状态 mget；口径见 docs 第 9 节。追更 do_action
+//! 34/35、object_type=10。
 
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -141,14 +141,16 @@ export function InteractionRail({
     (publicFollowCount ?? 0) > 0 ? publicFollowCount! : (seriesHit?.followedCnt ?? 0);
 
   // 追更按钮按完结状态条件显示：官方只在连载剧（series_status=0）出追更
-  // （2026-10-15 实包：完结剧「全139集」无钮、连载剧「更新至83集」有钮）。
+  // （完结剧「全139集」无钮、连载剧「更新至83集」有钮）。
   // meta 未到的窗口期回落追更列表判定（已追+完结=隐藏）
   const followList = useFollowUpdates();
   const followedItem = followList.data?.pages
     .flatMap((p) => p.items)
     .find((i) => i.seriesId === seriesId);
+  // 未登录整键不出现（官方口径：有登录才显示追更；GPUI 侧同批对齐）
   const showFollow =
-    seriesStatus !== undefined ? seriesStatus === 0 : !followedItem || !followedItem.finished;
+    loggedIn &&
+    (seriesStatus !== undefined ? seriesStatus === 0 : !followedItem || !followedItem.finished);
 
   const digg = useVideoDigg();
   const collect = useSeriesCollect();

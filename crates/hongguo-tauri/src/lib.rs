@@ -3,9 +3,9 @@
 //! 插件注册、全局状态注入、自定义协议挂载、command 挂载——Tauri 应用的
 //! 全部装配在这里；[`prepare`] 产出装好的 `Builder`，`build(generate_context!)`
 //! 与 `.run()` 留在 `crates/hongguo-tauri-app`（`generate_context` 必须与 tauri.conf.json
-//! 同 crate，见 `docs/architecture-refactor.md` §8 第 5 条）。
+//! 同 crate）。
 //!
-//! GPUI 壳（将来的 `hongguo-gpui`）**不消费本 crate**——它直接构造
+//! GPUI 壳（`hongguo-gpui`）**不消费本 crate**——它直接构造
 //! `hongguo_service::AppStateInner` 并调用 service，绕开 IPC 与 WebView 供数。
 
 pub mod bootstrap;
@@ -191,7 +191,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::discover_cmd::recommend_feed,
             commands::discover_cmd::browse_panel,
             commands::discover_cmd::browse_page,
-            // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
+            // 排行榜 / 新剧 / 搜索 / 预约
             commands::rank_cmd::rank_list,
             commands::rank_cmd::new_drama_list,
             commands::rank_cmd::search_series_cmd,
@@ -215,7 +215,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::device_cmd::device_status,
             commands::device_cmd::device_retry_register,
             // 弹幕
-            commands::danmaku_cmd::danmaku_list,
+            commands::danmaku_cmd::danmaku_window,
             commands::danmaku_cmd::comment_list,
             commands::danmaku_cmd::series_comment_list,
             commands::danmaku_cmd::series_review_send,
@@ -223,7 +223,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::danmaku_cmd::review_replies,
             commands::danmaku_cmd::creator_profile,
             commands::danmaku_cmd::creator_works,
-            // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
+            // 互动（点赞/收藏/发弹幕/回复）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,
             commands::interact_cmd::comment_reply,
@@ -236,6 +236,13 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::interact_cmd::series_collect_batch,
             // @小果AI 提及（评论区快捷图标）
             commands::interact_cmd::mention_list,
+            // 表情（官方表情 / 第三方 GIF / 自定义表情）
+            commands::emoticon_cmd::emoticon_list,
+            commands::emoticon_cmd::emoticon_search,
+            commands::emoticon_cmd::emoticon_upload,
+            commands::emoticon_cmd::emoticon_pick_image,
+            commands::emoticon_cmd::emoticon_collect,
+            commands::emoticon_cmd::emoticon_delete,
             // 追更（开关 / 列表 / 是否已追 / 更新提醒）
             commands::follow_cmd::follow_update,
             commands::follow_cmd::follow_updates,
@@ -344,7 +351,7 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
     // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
     // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
     // 阵亡名单/远古快照的淘汰重铺与启动后的健康探针、失效轮换都在
-    // [`bootstrap::device`]（对齐 hgplayer 的 deviceBootstrap）。
+    // [`bootstrap::device`]（adopt → 探针 → 轮换的行为层）。
     let (device, device_source) = hongguo_service::device::adopt_sync(&db);
     log::info!(
         "[Device] 现役档案 iid={}（{device_source}）",
@@ -368,18 +375,18 @@ fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴。
 ///
-/// 背景：`rusty_h264-common` 默认给整个测试进程强装了第三方分配器
-/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在
-/// 间歇性崩溃（表现为荒唐大小的分配失败 → abort）。这个测试用来
-/// 复现与回归验证：**只要它崩，就是分配器的锅**，别在业务代码里找。
+/// 背景：曾经 `rusty_h264-common` 默认给整个测试进程强装第三方分配器
+/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在间歇性
+/// 崩溃（表现为荒唐大小的分配失败 → abort）。那个分配器连同整条纯 Rust
+/// 转码兜底都已从依赖树里彻底摘掉，进程跑标准 Rust 分配器。这个测试留着
+/// 当并发分配的回归护栏：**它若崩，先怀疑分配/并发本身**，别在业务代码里找。
 #[cfg(test)]
 mod alloc_stress {
     use std::sync::Barrier;
 
     /// 模拟 mp4 流式解密测试的分配指纹：高频短命小块（几十~几百字节）、
     /// 精确 with_capacity、Vec 增长 realloc、周期性整块清空。
-    /// **与业务无关**——它若崩，唯一嫌疑就是进程级第三方分配器
-    /// （rusty_h264-common 默认强装的 rusty_alloc）。
+    /// **与业务无关**——它若崩，只说明分配/并发有问题，与业务逻辑无关。
     #[test]
     fn concurrent_alloc_free_storm_is_stable() {
         const THREADS: usize = 16;

@@ -26,7 +26,7 @@ pub struct InteractionItem {
     pub digged_count: i64,
     #[serde(default)]
     pub followed: bool,
-    /// 追剧数（hgplayer 右栏 ☆ 下的 21.1万）
+    /// 追剧数（右栏 ☆ 下的 21.1万）
     #[serde(default)]
     pub followed_cnt: i64,
     /// 剧标题（video_detail.series_title，「我的点赞」列表页直接展示）
@@ -42,7 +42,7 @@ pub struct InteractionState {
 }
 
 /// 追更列表里的一部剧（get_user_action action_channel=9 的
-/// `mix_data[].video`，2026-10-15 抓 player v1.2.1 实包对齐）。
+/// `mix_data[].video`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowUpdateItem {
@@ -81,8 +81,8 @@ pub struct FollowUpdatePage {
     pub has_more: bool,
 }
 
-/// 评论 @ 提及候选里的一条（relation/list 的 ugc_user_list 摘要，
-/// 2026-10-15 抓 player 登录态实包；列表含官方 AI bot「小果」）。
+/// 评论 @ 提及候选里的一条（relation/list 的 ugc_user_list 摘要；
+/// 列表含官方 AI bot「小果」）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionUser {

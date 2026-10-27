@@ -34,6 +34,11 @@ or GPUI example by analogy: **NSH components run once**, and bindings follow the
 | `nsh build` and trusting it to catch type errors | It does not. Only `nsh check` checks types. |
 | Judging a UI change headless only | Headless is iOS on a phone-sized surface: a header, a hover or a shortcut never shows up. Run `nsh test --target <platform>`. |
 | A test that only calls internal functions | It proves nothing. A test presses, types or scrolls. |
+| Assuming `onPress` gets coordinates | The `PressEvent` is optional: only GPUI and the headless driver send it in 0.2.0. Read `e?.position`. |
+| A `Button` with `role="tab"` or `role="switch"` | It does not own the keyboard, the selected state or the role's semantics. Use `Tabs` or `Switch` from `nsh/base`. |
+| A hand-rolled progress bar, disclosure or split pane | `Progress`, `Collapsible`, `ResizablePanelGroup` and `DockArea` own the role, the range, the drags and the accessibility. |
+| Expecting a `backdropFilter` bar to fade out | The blur stops dead at the view's edge. Add a `maskImage` gradient (iOS and web draw it). |
+| `glassEffect` without a `backdropFilter` | Glass is drawn on iOS 26+ only; everywhere else it falls back to the blur, so without one the view shows nothing extra. |
 
 ## Patterns to avoid
 
@@ -97,8 +102,9 @@ The baselines live in `docs/dev/performance.md`.
 
 - A pressable view needs a role and a label (`role="button"`, `accessibilityLabel`), or it is invisible to a screen
   reader.
-- The `Button`, `Checkbox`, `Radio`, `Switch` and `Tab` base components already own focus, the disabled state and the
-  role. Prefer them over a hand-rolled pressable view.
+- The `Button`, `Checkbox`, `Radio`, `Switch`, `Tab`, `Collapsible`, `Progress`, `ResizablePanelGroup` and `DockArea`
+  base components already own focus, the disabled state, the drags and the role. Prefer them over a hand-rolled
+  pressable view.
 - Every interactive element needs a visible focus state (`focus:` classes or `focusStyle`).
 - A state change must be understandable before the click ("Make the result understandable before the click").
 - Honour reduce motion: `reduceMotion()` from `nsh/accessibility`.

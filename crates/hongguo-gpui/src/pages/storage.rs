@@ -8,10 +8,11 @@
 
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
@@ -23,6 +24,7 @@ use hongguo_service::storage_service::usage::{StorageSeriesUsage, StorageUsage};
 use crate::bridge;
 use crate::home::fmt::format_bytes;
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 pub(crate) struct StorageView {
     state: Arc<AppStateInner>,
@@ -33,6 +35,8 @@ pub(crate) struct StorageView {
     series: Option<Vec<StorageSeriesUsage>>,
     filter: Entity<InputState>,
     loading: bool,
+    /// 阻塞池任务失败的短句（Some = 整页换错误态 + 重试）。
+    failed: Option<String>,
 }
 
 impl StorageView {
@@ -66,6 +70,7 @@ impl StorageView {
             series: None,
             filter,
             loading: false,
+            failed: None,
         }
     }
 
@@ -76,6 +81,8 @@ impl StorageView {
             return;
         }
         self.loading = true;
+        // 重试时先清旧错误，否则失败态会一直挂在页面上。
+        self.failed = None;
         cx.notify();
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
@@ -84,14 +91,24 @@ impl StorageView {
                 (usage::usage(&state), usage::series_usage(&state))
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| format!("阻塞池任务失败: {e}"))
         });
         cx.spawn(async move |this, cx| {
-            let (usage, series) = rx.await.expect("tokio 桥不会丢弃发送端");
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
             this.update(cx, |view, cx| {
                 view.loading = false;
-                view.usage = Some(usage);
-                view.series = Some(series);
+                match result {
+                    Ok((usage, series)) => {
+                        view.usage = Some(usage);
+                        view.series = Some(series);
+                        view.failed = None;
+                    }
+                    Err(msg) => {
+                        view.usage = None;
+                        view.series = None;
+                        view.failed = Some(msg);
+                    }
+                }
                 cx.notify();
             })
             .ok();
@@ -307,7 +324,6 @@ impl StorageView {
     }
 
     fn render_series_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
         let filter = self.filter.read(cx).value();
         let kw = filter.trim().to_lowercase();
         let visible: Vec<&StorageSeriesUsage> = self
@@ -325,18 +341,15 @@ impl StorageView {
                     .child(crate::i18n::t("storage.bySeries")),
             )
             .child(Input::new(&self.filter))
-            .child(if visible.is_empty() {
-                v_flex()
-                    .w_full()
-                    .py_8()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("common.empty")),
-                    )
-                    .into_any_element()
+            .child(if self.series.is_none() {
+                // 首拉加载：行骨架铺在列表位（数据到位不跳版）。行高按 GPUI
+                // 真实行算，不照抄 Tauri 的 h-24：行内容高 25（状态标签
+                // 最高：文字 15 + 内边距 8 + 边框 2；标题行 23 / 删除按钮 24
+                // 都比它矮）+ 行内上下 p_2 16 + 边框 2 = 43；行间距另按
+                // 真实列表的 gap_2 给 8。
+                crate::pages::skeleton::rows(cx, 5, 43.0, 8.0)
+            } else if visible.is_empty() {
+                crate::pages::states::empty_state(cx, None, crate::i18n::t("common.empty"), None)
             } else {
                 v_flex()
                     .w_full()
@@ -345,6 +358,23 @@ impl StorageView {
                     .into_any_element()
             })
             .into_any_element()
+    }
+
+    /// 页面主体：加载失败时整页换错误态（占用统计与剧列表同源，一起失败）。
+    fn render_body(&self, cx: &mut Context<Self>) -> Vec<gpui_kit::AnyElement> {
+        if let Some(msg) = self.failed.clone() {
+            return vec![crate::pages::states::error_state(
+                cx,
+                None,
+                crate::i18n::t("common.loadFailed"),
+                Some(msg),
+                Some((
+                    "storage-retry",
+                    crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                )),
+            )];
+        }
+        vec![self.render_usage_card(cx), self.render_series_card(cx)]
     }
 
     /// 预览种子（screenshot feature）：灌假占用与假剧列表，跳过磁盘扫描。
@@ -375,7 +405,7 @@ impl gpui_kit::Render for StorageView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("storage-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(
                 v_flex()
                     .max_w(gpui_kit::px(768.0))
@@ -383,8 +413,7 @@ impl gpui_kit::Render for StorageView {
                     .w_full()
                     .p_6()
                     .gap_4()
-                    .child(self.render_usage_card(cx))
-                    .child(self.render_series_card(cx)),
+                    .children(self.render_body(cx)),
             )
     }
 }

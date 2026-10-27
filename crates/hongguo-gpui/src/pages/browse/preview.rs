@@ -25,7 +25,7 @@ impl super::BrowseView {
         if scene != "browse-empty" && scene != "browse-loading" {
             self.feed_items = items;
         }
-        // 首拉加载态：空列表 + 在拉（渲染走整区居中 Spinner）
+        // 首拉加载态：空列表 + 在拉（结果区渲染卡片网格骨架）
         self.feed_loading = scene == "browse-loading";
         self.downloaded = HashMap::from([("7100001".to_string(), 3u32)]);
         for (i, item) in self.feed_items.iter().enumerate() {

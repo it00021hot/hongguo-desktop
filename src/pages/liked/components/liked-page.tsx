@@ -1,9 +1,9 @@
 //! 「点赞」页：我赞过的视频（ugc/action/mget 最近互动列表过滤 user_digg）。
 //!
-//! 服务端没有「点赞列表」专用接口（2026-10-06 抓包确认 hgplayer 同样用
-//! mget 承载），条目带剧标题与点赞计数；超过 100 条的旧互动不在此列表
-//! （mget 上限，与 hgplayer 口径一致）。卡片同「收藏」页网格形态
-//! （封面 3:4 + 悬浮续播/取消赞）；标题搜索框对齐参考端 v1.1.6。
+//! 服务端没有「点赞列表」专用接口（mget 承载此
+//! 数据），条目带剧标题与点赞计数；超过 100 条的旧互动不在此列表
+//! （mget 上限）。卡片同「收藏」页网格形态
+//! （封面 3:4 + 悬浮续播/取消赞）；标题搜索框对齐官方客户端。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -37,7 +37,7 @@ export function LikedPage() {
   const queryClient = useQueryClient();
   const { data: state, isLoading, error, refetch } = useInteractionState();
   const digg = useVideoDigg();
-  // 批量管理（hgplayer v1.1.6 同款）：多选后逐条取消赞（官方无批量点赞
+  // 批量管理：多选后逐条取消赞（官方无批量点赞
   // 端点，do_action 单条语义；全跑完统一回显 + 汇总失败数）
   const batch = useBatchSelect();
   const batchUndo = useMutation({

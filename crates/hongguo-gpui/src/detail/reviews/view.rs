@@ -1,21 +1,39 @@
-//! 剧评 tab 渲染（Tauri ReviewList / ReviewComposer 对齐的视图侧）。
+//! 剧评 tab 渲染（Tauri ReviewList 对齐的视图侧）。
 //!
-//! 数据与操作在 `mod.rs`；本文件只画——发评框 / 剧评行（点赞/回复/删除）/
-//! 回复线程 / 列表。拆出为独立文件：纯移动零行为变更（文件规模拆分）。
+//! 数据与操作在 `mod.rs`；本文件只画——剧评行（点赞/回复/删除）/ 回复线程 /
+//! 列表。发评框在 `composer.rs`。
+//!
+//! 可点元素一律用 gpui-kit 的 `base::Button`（自带焦点句柄、Enter/Space 激活、
+//! role 与无障碍名称）；div 不带焦点句柄，键盘用户够不到。视觉仍由 styled 链
+//! 决定，`base::Button` 强制注入的 flex 居中与 `line_height(relative(1.))`
+//! 需要显式改回（`justify_start` / `line_height(phi())`）。
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Icon;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, div};
+use gpui_kit::{ElementId, SharedString, Toggled, div};
 use hongguo_api::danmaku::ReplyItem;
 
 use crate::detail::DetailView;
-use crate::detail::header::{hot_color, star_color};
+use crate::detail::header::hot_color;
+use crate::ui_button::button as Button;
+
+/// base Button 的键盘焦点环（gpui 自己没有默认焦点环；口径统一走全壳令牌
+/// `crate::tokens::focus_ring`，与 Tauri/shadcn 的 ring 同款）。
+pub(super) fn focus_ring_style<'a>(
+    theme: &'a gpui_kit::component::Theme,
+) -> impl FnOnce(gpui_kit::StyleRefinement) -> gpui_kit::StyleRefinement + 'a {
+    move |s| {
+        s.border_color(theme.ring)
+            .shadow(crate::tokens::focus_ring(theme))
+    }
+}
 
 impl super::super::DetailView {
     pub(super) fn render_review_reply_row(
@@ -52,23 +70,32 @@ impl super::super::DetailView {
                     .flex_1()
                     .min_w_0()
                     .gap_0p5()
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(
-                        SharedString::from(if r.user_name.is_empty() {
-                            crate::i18n::t("player.comments.anon")
-                        } else {
-                            r.user_name.clone()
-                        }),
-                    ))
-                    .child(div().text_sm().child(SharedString::from(format!(
-                        "{} @{}：{}",
-                        crate::i18n::t("detail.replyToPrefix"),
-                        if r.reply_to_name.is_empty() {
-                            crate::i18n::t("player.comments.originalComment")
-                        } else {
-                            r.reply_to_name.clone()
-                        },
-                        r.text
-                    ))))
+                    .child(
+                        // 昵称：列容器 + 截断（行容器里文本按内容宽度排版，
+                        // 长昵称会顶出卡片）。
+                        v_flex()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .truncate()
+                            .child(SharedString::from(if r.user_name.is_empty() {
+                                crate::i18n::t("player.comments.anon")
+                            } else {
+                                r.user_name.clone()
+                            })),
+                    )
+                    .child(
+                        // 回复正文：被回复人昵称为空时**不加前缀**（官方手机 App
+                        // 与 Tauri 壳同款）；前缀里的名字沿用正文色（剧评页走
+                        // 语义色，不是播放器皮肤域）。
+                        v_flex().text_sm().child(crate::comment_text::render(
+                            &crate::comment_text::reply_body(
+                                &r.text,
+                                &r.reply_to_name,
+                                "detail.replyToPrefixName",
+                                None,
+                            ),
+                        )),
+                    )
                     .child(
                         h_flex()
                             .items_center()
@@ -78,10 +105,18 @@ impl super::super::DetailView {
                                 SharedString::from(crate::home::fmt::relative_time(r.create_time)),
                             ))
                             .child(
-                                h_flex()
-                                    .id(ElementId::from(format!("reply-digg-{rid}")))
+                                BaseButton::new(ElementId::from(format!("reply-digg-{rid}")))
+                                    .aria_toggled(if digged {
+                                        Toggled::True
+                                    } else {
+                                        Toggled::False
+                                    })
+                                    .accessibility_label(crate::i18n::t("detail.like"))
                                     .items_center()
                                     .gap_1()
+                                    // base Button 固定 justify_center，这里改回
+                                    // 左对齐，和原来的 div 一致。
+                                    .justify_start()
                                     .cursor_pointer()
                                     .text_color(if digged {
                                         hot_color(theme.mode).into()
@@ -89,6 +124,11 @@ impl super::super::DetailView {
                                         theme.muted_foreground
                                     })
                                     .hover(|s| s.text_color(theme.foreground))
+                                    // base Button 强制 line_height(relative(1.))，
+                                    // 文字行盒会比默认矮一截；钉回默认行高（黄金
+                                    // 比例）才与原 div 像素一致。
+                                    .line_height(gpui_kit::phi())
+                                    .focus_visible(focus_ring_style(theme))
                                     .on_click({
                                         let (p, rid) = (parent_id.clone(), rid.clone());
                                         cx.listener(move |this, _, window, cx| {
@@ -108,11 +148,14 @@ impl super::super::DetailView {
                             .child({
                                 let (p, rid, name) =
                                     (parent_id.clone(), rid.clone(), r.user_name.clone());
-                                div()
-                                    .id(ElementId::from(format!("reply-to-{rid}")))
+                                BaseButton::new(ElementId::from(format!("reply-to-{rid}")))
+                                    .accessibility_label(crate::i18n::t("detail.reply"))
+                                    .justify_start()
                                     .cursor_pointer()
                                     .text_color(theme.muted_foreground)
                                     .hover(|s| s.text_color(theme.foreground))
+                                    .line_height(gpui_kit::phi())
+                                    .focus_visible(focus_ring_style(theme))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.set_review_reply_target(
                                             p.clone(),
@@ -124,11 +167,14 @@ impl super::super::DetailView {
                             })
                             .children(mine.then(|| {
                                 let (p, rid) = (parent_id.clone(), rid.clone());
-                                div()
-                                    .id(ElementId::from(format!("reply-del-{rid}")))
+                                BaseButton::new(ElementId::from(format!("reply-del-{rid}")))
+                                    .accessibility_label(crate::i18n::t("common.delete"))
+                                    .justify_start()
                                     .cursor_pointer()
                                     .text_color(theme.muted_foreground)
                                     .hover(|s| s.text_color(theme.danger))
+                                    .line_height(gpui_kit::phi())
+                                    .focus_visible(focus_ring_style(theme))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.confirm_delete_review_item(
                                             rid.clone(),
@@ -143,162 +189,6 @@ impl super::super::DetailView {
                     ),
             )
             .into_any_element()
-    }
-
-    /// 发评框（Tauri ReviewComposer 同款：我的评分五星 + 表情 + 文本 +
-    /// 「发表剧评」；未选评分或正文为空禁发；Enter 提交见 mod.rs 的订阅）。
-    pub(super) fn render_review_composer(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
-        let shown = if self.review_hover_stars > 0 {
-            self.review_hover_stars
-        } else {
-            self.review_stars
-        };
-        let has_text = self
-            .review_input
-            .as_ref()
-            .is_some_and(|i| !i.read(cx).value().trim().is_empty());
-        let can_send = has_text && self.review_stars >= 1 && !self.review_sending;
-        let mut stars = h_flex().items_center().gap_2().child(
-            div()
-                .text_sm()
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .child(crate::i18n::t("detail.myRating")),
-        );
-        for s in 1..=5u8 {
-            stars = stars.child(
-                div()
-                    .id(ElementId::from(format!("review-star-{s}")))
-                    .p_0p5()
-                    .cursor_pointer()
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        let next = if *hovered {
-                            s
-                        } else if this.review_hover_stars == s {
-                            0
-                        } else {
-                            this.review_hover_stars
-                        };
-                        if this.review_hover_stars != next {
-                            this.review_hover_stars = next;
-                            cx.notify();
-                        }
-                    }))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.review_stars = s;
-                        this.review_hover_stars = 0;
-                        cx.notify();
-                    }))
-                    .child(
-                        Icon::new(gpui_kit::assets::IconName::Star)
-                            .size_5()
-                            .text_color(if s <= shown {
-                                star_color(theme.mode).into()
-                            } else {
-                                theme.muted_foreground
-                            }),
-                    ),
-            );
-        }
-        stars = stars.children((self.review_stars > 0).then(|| {
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(crate::i18n::t("detail.ratedSuffix"))
-        }));
-        let mut card = v_flex()
-            .rounded(gpui_kit::px(8.0))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.group_box)
-            .p_3()
-            .gap_2()
-            .child(stars)
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("review-emoji-btn")
-                            .px_1()
-                            .cursor_pointer()
-                            .text_color(if self.review_emoji_open {
-                                theme.foreground
-                            } else {
-                                theme.muted_foreground
-                            })
-                            .hover(|s| s.text_color(theme.foreground))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.review_emoji_open = !this.review_emoji_open;
-                                cx.notify();
-                            }))
-                            .child(Icon::new(gpui_kit::assets::IconName::FaceGrinning).size_4()),
-                    )
-                    .children(self.review_input.as_ref().map(|input| {
-                        // 多行文本域（Tauri ReviewComposer Textarea 同款）：
-                        // 无边框融入卡片，3 行高
-                        gpui_kit::component::input::Textarea::new(input)
-                            .flex_1()
-                            .h(gpui_kit::px(72.0))
-                            .text_sm()
-                            .appearance(false)
-                            .bordered(false)
-                    }))
-                    .child(
-                        Button::new("review-send")
-                            .label(if self.review_sending {
-                                crate::i18n::t("common.sending")
-                            } else {
-                                crate::i18n::t("detail.reviewSend")
-                            })
-                            .small()
-                            .disabled(!can_send)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.submit_review(window, cx);
-                            })),
-                    ),
-            );
-        if self.review_emoji_open {
-            // 表情网格（8 列，与评论面板同一套资产；点格子光标处插入
-            // `[名字]`，连选不关）
-            card = card.child(
-                div()
-                    .id("review-emoji-grid")
-                    .max_h(gpui_kit::px(132.0))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_wrap()
-                    .gap_0p5()
-                    .children(crate::danmaku_emoji::EMOJI_FILES.iter().map(|(name, _)| {
-                        let code = name.to_string();
-                        let img = crate::danmaku_emoji::emoji_by_name(name);
-                        let input = self.review_input.clone();
-                        div()
-                            .id(ElementId::from(format!("review-emoji-{code}")))
-                            .size_7()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(gpui_kit::px(6.0))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.secondary_hover))
-                            .on_click(move |_, window, cx| {
-                                if let Some(input) = &input {
-                                    input.update(cx, |state, cx| {
-                                        state.insert(code.clone(), window, cx);
-                                    });
-                                }
-                            })
-                            .children(img.map(|img| {
-                                gpui_kit::img(gpui_kit::ImageSource::Render(img))
-                                    .size_5()
-                                    .object_fit(gpui_kit::ObjectFit::Contain)
-                            }))
-                    })),
-            );
-        }
-        card.into_any_element()
     }
 
     pub(crate) fn render_reviews(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
@@ -409,283 +299,326 @@ impl super::super::DetailView {
                             .and_then(|(_, t)| t.clone());
                         let reply_input = self.review_reply_input.clone();
                         v_flex()
-                    .gap_2()
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_3()
+                            .gap_2()
                             .child(
-                                div()
-                                    .size_9()
-                                    .flex_shrink_0()
-                                    .overflow_hidden()
-                                    .rounded_full()
-                                    .bg(theme.secondary)
-                                    .child(avatar),
-                            )
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .gap_1()
+                                h_flex()
+                                    .items_start()
+                                    .gap_3()
                                     .child(
                                         div()
-                                            .text_sm()
-                                            .font_weight(gpui_kit::FontWeight::MEDIUM)
-                                            .child(SharedString::from(c.user_name.clone())),
+                                            .size_9()
+                                            .flex_shrink_0()
+                                            .overflow_hidden()
+                                            .rounded_full()
+                                            .bg(theme.secondary)
+                                            .child(avatar),
                                     )
                                     .child(
-                                        h_flex()
-                                            .items_center()
-                                            .gap_2()
-                                            // Tauri ReviewList 同款：五星 + 绝对日期 +
-                                            // 评分后缀文案（「观看N小时后点评」）
-                                            .children((!c.score.is_empty()).then(|| {
-                                                score_stars(&c.score, theme)
-                                            }))
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap_1()
                                             .child(
                                                 div()
-                                                    .text_xs()
-                                                    .text_color(theme.muted_foreground)
-                                                    .child(SharedString::from(review_date(
-                                                        c.create_time,
-                                                    ))),
+                                                    .text_sm()
+                                                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                                    .child(SharedString::from(c.user_name.clone())),
                                             )
-                                            .children(
-                                                (!c.score_suffix_text.is_empty()).then(|| {
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(SharedString::from(
-                                                            c.score_suffix_text.clone(),
-                                                        ))
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .line_height(gpui_kit::relative(1.6))
-                                            .child(render_review_text(&c.text)),
-                                    )
-                                    // 动作行（Tauri ReviewList 同款：♥点赞 /
-                                    // 回复 / 删除（自己的）/ 展开回复）
-                                    .child(
-                                        h_flex()
-                                            .items_center()
-                                            .gap_4()
-                                            .text_xs()
                                             .child(
                                                 h_flex()
-                                                    .id(ElementId::from(format!(
-                                                        "review-digg-{rid}"
-                                                    )))
                                                     .items_center()
-                                                    .gap_1()
-                                                    .cursor_pointer()
-                                                    .text_color(if digged {
-                                                        hot_color(theme.mode).into()
-                                                    } else {
-                                                        theme.muted_foreground
-                                                    })
-                                                    .hover(|s| s.text_color(theme.foreground))
-                                                    .on_click({
-                                                        let rid = rid.clone();
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            this.toggle_review_digg(
-                                                                rid.clone(),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        })
-                                                    })
-                                                    .child(
-                                                        Icon::new(
-                                                            gpui_kit::assets::IconName::Heart,
-                                                        )
-                                                        .size_3p5(),
+                                                    .gap_2()
+                                                    // Tauri ReviewList 同款：五星 + 绝对日期 +
+                                                    // 评分后缀文案（「观看N小时后点评」）
+                                                    .children(
+                                                        (!c.score.is_empty())
+                                                            .then(|| score_stars(&c.score, theme)),
                                                     )
-                                                    .children((digg_count > 0).then(|| {
-                                                        div().child(SharedString::from(
-                                                            digg_count.to_string(),
-                                                        ))
-                                                    })),
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(theme.muted_foreground)
+                                                            .child(SharedString::from(
+                                                                review_date(c.create_time),
+                                                            )),
+                                                    )
+                                                    .children(
+                                                        (!c.score_suffix_text.is_empty()).then(
+                                                            || {
+                                                                div()
+                                                                    .text_xs()
+                                                                    .text_color(
+                                                                        theme.muted_foreground,
+                                                                    )
+                                                                    .child(SharedString::from(
+                                                                        c.score_suffix_text.clone(),
+                                                                    ))
+                                                            },
+                                                        ),
+                                                    ),
                                             )
                                             .child(
                                                 div()
-                                                    .id(ElementId::from(format!(
-                                                        "review-reply-{rid}"
-                                                    )))
-                                                    .cursor_pointer()
-                                                    .text_color(theme.muted_foreground)
-                                                    .hover(|s| s.text_color(theme.foreground))
-                                                    .on_click({
-                                                        let rid = rid.clone();
-                                                        cx.listener(move |this, _, _, cx| {
-                                                            this.set_review_reply_target(
-                                                                rid.clone(),
-                                                                None,
-                                                                cx,
-                                                            );
-                                                        })
-                                                    })
-                                                    .child(crate::i18n::t("detail.reply")),
+                                                    .text_sm()
+                                                    .line_height(gpui_kit::relative(1.6))
+                                                    .child(render_review_text(&c.text)),
                                             )
-                                            .children(is_mine.then(|| {
-                                                let rid = rid.clone();
-                                                div()
-                                                    .id(ElementId::from(format!(
-                                                        "review-del-{rid}"
-                                                    )))
-                                                    .cursor_pointer()
-                                                    .text_color(theme.muted_foreground)
-                                                    .hover(|s| s.text_color(theme.danger))
-                                                    .on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.confirm_delete_review_item(
-                                                                rid.clone(),
-                                                                2,
-                                                                None,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        },
-                                                    ))
-                                                    .child(crate::i18n::t("common.delete"))
-                                            }))
-                                            .children((reply_count > 0).then(|| {
-                                                let rid = rid.clone();
-                                                div()
-                                                    .id(ElementId::from(format!(
-                                                        "review-replies-toggle-{rid}"
-                                                    )))
-                                                    .cursor_pointer()
-                                                    .text_color(theme.muted_foreground)
-                                                    .hover(|s| s.text_color(theme.foreground))
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.toggle_review_replies(
-                                                                rid.clone(),
-                                                                reply_count,
-                                                                cx,
-                                                            );
-                                                        },
-                                                    ))
-                                                    .child(if replies_open {
-                                                        crate::i18n::t(
-                                                            "detail.collapseReplies",
+                                            // 动作行（Tauri ReviewList 同款：♥点赞 /
+                                            // 回复 / 删除（自己的）/ 展开回复）
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_4()
+                                                    .text_xs()
+                                                    .child(
+                                                        BaseButton::new(ElementId::from(format!(
+                                                            "review-digg-{rid}"
+                                                        )))
+                                                        .aria_toggled(if digged {
+                                                            Toggled::True
+                                                        } else {
+                                                            Toggled::False
+                                                        })
+                                                        .accessibility_label(crate::i18n::t(
+                                                            "detail.like",
+                                                        ))
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .justify_start()
+                                                        .cursor_pointer()
+                                                        .text_color(if digged {
+                                                            hot_color(theme.mode).into()
+                                                        } else {
+                                                            theme.muted_foreground
+                                                        })
+                                                        .hover(|s| s.text_color(theme.foreground))
+                                                        .line_height(gpui_kit::phi())
+                                                        .focus_visible(focus_ring_style(theme))
+                                                        .on_click({
+                                                            let rid = rid.clone();
+                                                            cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    this.toggle_review_digg(
+                                                                        rid.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            )
+                                                        })
+                                                        .child(
+                                                            Icon::new(
+                                                                gpui_kit::assets::IconName::Heart,
+                                                            )
+                                                            .size_3p5(),
                                                         )
-                                                    } else {
-                                                        crate::i18n::tf(
-                                                            "detail.expandReplies",
-                                                            &[("n", &reply_count.to_string())],
-                                                        )
-                                                    })
-                                            })),
+                                                        .children((digg_count > 0).then(|| {
+                                                            div().child(SharedString::from(
+                                                                digg_count.to_string(),
+                                                            ))
+                                                        })),
+                                                    )
+                                                    .child(
+                                                        BaseButton::new(ElementId::from(format!(
+                                                            "review-reply-{rid}"
+                                                        )))
+                                                        .accessibility_label(crate::i18n::t(
+                                                            "detail.reply",
+                                                        ))
+                                                        .justify_start()
+                                                        .cursor_pointer()
+                                                        .text_color(theme.muted_foreground)
+                                                        .hover(|s| s.text_color(theme.foreground))
+                                                        .line_height(gpui_kit::phi())
+                                                        .focus_visible(focus_ring_style(theme))
+                                                        .on_click({
+                                                            let rid = rid.clone();
+                                                            cx.listener(move |this, _, _, cx| {
+                                                                this.set_review_reply_target(
+                                                                    rid.clone(),
+                                                                    None,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                        })
+                                                        .child(crate::i18n::t("detail.reply")),
+                                                    )
+                                                    .children(is_mine.then(|| {
+                                                        let rid = rid.clone();
+                                                        BaseButton::new(ElementId::from(format!(
+                                                            "review-del-{rid}"
+                                                        )))
+                                                        .accessibility_label(crate::i18n::t(
+                                                            "common.delete",
+                                                        ))
+                                                        .justify_start()
+                                                        .cursor_pointer()
+                                                        .text_color(theme.muted_foreground)
+                                                        .hover(|s| s.text_color(theme.danger))
+                                                        .line_height(gpui_kit::phi())
+                                                        .focus_visible(focus_ring_style(theme))
+                                                        .on_click(cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                this.confirm_delete_review_item(
+                                                                    rid.clone(),
+                                                                    2,
+                                                                    None,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        ))
+                                                        .child(crate::i18n::t("common.delete"))
+                                                    }))
+                                                    .children((reply_count > 0).then(|| {
+                                                        let rid = rid.clone();
+                                                        let toggle_text = if replies_open {
+                                                            crate::i18n::t("detail.collapseReplies")
+                                                        } else {
+                                                            crate::i18n::tf(
+                                                                "detail.expandReplies",
+                                                                &[("n", &reply_count.to_string())],
+                                                            )
+                                                        };
+                                                        BaseButton::new(ElementId::from(format!(
+                                                            "review-replies-toggle-{rid}"
+                                                        )))
+                                                        .aria_expanded(replies_open)
+                                                        .accessibility_label(toggle_text.clone())
+                                                        .justify_start()
+                                                        .cursor_pointer()
+                                                        .text_color(theme.muted_foreground)
+                                                        .hover(|s| s.text_color(theme.foreground))
+                                                        .line_height(gpui_kit::phi())
+                                                        .focus_visible(focus_ring_style(theme))
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.toggle_review_replies(
+                                                                    rid.clone(),
+                                                                    reply_count,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        ))
+                                                        .child(toggle_text)
+                                                    })),
+                                            ),
                                     ),
-                            ),
-                    )
-                    // 回复线程（懒加载；行 = 头像/昵称/正文/♥/回复/删除）
-                    .children(replies_open.then(|| {
-                        let mut col = v_flex().pl_12().gap_2();
-                        if loading && replies.is_empty() {
-                            col = col.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(crate::i18n::t("common.loading")),
-                            );
-                        }
-                        for r in &replies {
-                            col = col.child(self.render_review_reply_row(&rid, r, cx));
-                        }
-                        if has_more {
-                            col = col.child(
-                                div()
-                                    .id(ElementId::from(format!("review-more-{rid}")))
-                                    .text_xs()
-                                    .cursor_pointer()
-                                    .text_color(theme.muted_foreground)
-                                    .hover(|s| s.text_color(theme.foreground))
-                                    .child(if loading {
+                            )
+                            // 回复线程（懒加载；行 = 头像/昵称/正文/♥/回复/删除）
+                            .children(replies_open.then(|| {
+                                let mut col = v_flex().pl_12().gap_2();
+                                if loading && replies.is_empty() {
+                                    col = col.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(crate::i18n::t("common.loading")),
+                                    );
+                                }
+                                for r in &replies {
+                                    col = col.child(self.render_review_reply_row(&rid, r, cx));
+                                }
+                                if has_more {
+                                    let more_text = if loading {
                                         crate::i18n::t("common.loading")
                                     } else {
                                         crate::i18n::t("detail.moreReplies")
-                                    })
-                                    .on_click({
-                                        let rid = rid.clone();
-                                        let cursor = self
-                                            .review_replies_cursor
-                                            .get(&rid)
-                                            .cloned()
-                                            .unwrap_or_default();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.fetch_review_replies(
-                                                rid.clone(),
-                                                cursor.clone(),
-                                                cx,
-                                            );
-                                        })
-                                    }),
-                            );
-                        }
-                        col
-                    }))
-                    // 行内回复框（Tauri replyTarget 同位：mt-2 小输入 + 回复）
-                    .children((reply_target_open && reply_input.is_some()).then(|| {
-                        let input = reply_input.clone().unwrap();
-                        h_flex()
-                            .pl_12()
-                            .mt_1()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Input::new(&input)
-                                    .flex_1()
-                                    .h(gpui_kit::px(32.0))
-                                    .text_xs(),
-                            )
-                            .child(
-                                Button::new(ElementId::from(format!(
-                                    "review-reply-send-{rid}"
-                                )))
-                                .label(if self.review_reply_sending {
-                                    crate::i18n::t("common.sending")
-                                } else {
-                                    crate::i18n::t("detail.reply")
-                                })
-                                .small()
-                                .disabled(
-                                    input.read(cx).value().trim().is_empty()
-                                        || self.review_reply_sending,
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.submit_review_reply(window, cx);
-                                })),
-                            )
-                            .child(
-                                Button::new(ElementId::from(format!(
-                                    "review-reply-cancel-{rid}"
-                                )))
-                                .label(crate::i18n::t("common.cancel"))
-                                .ghost()
-                                .small()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.review_reply_target = None;
-                                    cx.notify();
-                                })),
-                            )
-                            .children(reply_to_reply.as_ref().map(|(_, name)| {
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(format!(
-                                        "{} @{name}",
-                                        crate::i18n::t("detail.replyToPrefix")
-                                    )))
+                                    };
+                                    col = col.child(
+                                        BaseButton::new(ElementId::from(format!(
+                                            "review-more-{rid}"
+                                        )))
+                                        .accessibility_label(more_text.clone())
+                                        // 原 div 在 v_flex 里被拉满整行，文字靠左；
+                                        // base Button 固定 justify_center，改回左对齐。
+                                        .justify_start()
+                                        .text_xs()
+                                        .cursor_pointer()
+                                        .text_color(theme.muted_foreground)
+                                        .hover(|s| s.text_color(theme.foreground))
+                                        .line_height(gpui_kit::phi())
+                                        .focus_visible(focus_ring_style(theme))
+                                        .child(more_text)
+                                        .on_click({
+                                            let rid = rid.clone();
+                                            let cursor = self
+                                                .review_replies_cursor
+                                                .get(&rid)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.fetch_review_replies(
+                                                    rid.clone(),
+                                                    cursor.clone(),
+                                                    cx,
+                                                );
+                                            })
+                                        }),
+                                    );
+                                }
+                                col
                             }))
-                    }))
-                    .into_any_element()
+                            // 行内回复框（Tauri replyTarget 同位：mt-2 小输入 + 回复）
+                            .children((reply_target_open && reply_input.is_some()).then(|| {
+                                let input = reply_input.clone().unwrap();
+                                h_flex()
+                                    .pl_12()
+                                    .mt_1()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        Input::new(&input).flex_1().h(gpui_kit::px(32.0)).text_xs(),
+                                    )
+                                    .child(
+                                        Button::new(ElementId::from(format!(
+                                            "review-reply-send-{rid}"
+                                        )))
+                                        .label(if self.review_reply_sending {
+                                            crate::i18n::t("common.sending")
+                                        } else {
+                                            crate::i18n::t("detail.reply")
+                                        })
+                                        .small()
+                                        .disabled(
+                                            input.read(cx).value().trim().is_empty()
+                                                || self.review_reply_sending,
+                                        )
+                                        .when(
+                                            input.read(cx).value().trim().is_empty()
+                                                || self.review_reply_sending,
+                                            |b| b.cursor_default(),
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.submit_review_reply(window, cx);
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new(ElementId::from(format!(
+                                            "review-reply-cancel-{rid}"
+                                        )))
+                                        .label(crate::i18n::t("common.cancel"))
+                                        .ghost()
+                                        .small()
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.review_reply_target = None;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                    .children(reply_to_reply.as_ref().map(|(_, name)| {
+                                        div().text_xs().text_color(theme.muted_foreground).child(
+                                            SharedString::from(format!(
+                                                "{} @{name}",
+                                                crate::i18n::t("detail.replyToPrefix")
+                                            )),
+                                        )
+                                    }))
+                            }))
+                            .into_any_element()
                     })
                     .collect::<Vec<_>>(),
             )

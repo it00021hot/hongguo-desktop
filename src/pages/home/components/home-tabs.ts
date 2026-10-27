@@ -10,10 +10,10 @@ import type { FeedTab } from '@/service/schema';
 export const RECOMMEND_TAB_TYPE = '16';
 
 /** 关注 tab：一律不显示——追更由收藏页承载（既定决策），且其数据面要
- *  登录（2026-10-15 抓包：游客态服务端不下发 bookstore_id）。 */
+ *  登录（游客态服务端不下发 bookstore_id）。 */
 const FOLLOW_TAB_TYPE = '45';
 
-/** 服务端列表到手前的回落三件套（抓包锁定：推荐16/漫剧36/真人剧39），标题走 i18n。 */
+/** 服务端列表到手前的回落三件套（推荐16/漫剧36/真人剧39），标题走 i18n。 */
 const FALLBACK_TABS: { id: string; labelKey: MessageKey }[] = [
   { id: '16', labelKey: 'home.tabFeed' },
   { id: '36', labelKey: 'home.tabComic' },

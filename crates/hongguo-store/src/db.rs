@@ -1,6 +1,6 @@
 //! 内嵌 Turso 数据库：连接与 schema 迁移。
 //!
-//! 选型背景（M1，2026-10）：替换原 data.json 单文件全量重写存储。
+//! 选型背景：替换原 data.json 单文件全量重写存储。
 //! `turso` crate 是 tursodatabase/turso 的官方 Rust API，纯 Rust、无 C 工具链，
 //! 本地内嵌形态（`Builder::new_local`）。刻意关闭 default features：
 //! mimalloc 是全局分配器不能让库替我们换；fts 暂时用不上。
@@ -98,8 +98,8 @@ pub static MIGRATIONS: &[&str] = &[
     "#,
     // v4 -> v5：设备档案从单行表扩成多行（1=现役，2=上一代备份，10=
     // bootstrap 元数据）。老表的 CHECK (id = 1) 锁死单行，SQLite 不能
-    // 直接删约束，按惯例重建表搬数据（对齐 hgplayer device.json + .bak
-    // 的「现役 + 上一代」双档案形态）。
+    // 直接删约束，按惯例重建表搬数据（「现役 + 上一代」双档案
+    // 形态，对齐 device.json + .bak 的做法）。
     r#"
     CREATE TABLE device_profile_new (
         id   INTEGER PRIMARY KEY,

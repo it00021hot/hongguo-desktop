@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-/** 列表页批量管理模式的选择状态（对齐 hgplayer v1.1.6 的「管理」：
+/** 列表页批量管理模式的选择状态（进入管理 → 多选 → 批量删除）。
  *  进入管理 → 多选 → 批量删除）。选中集合按条目 id 记。
  *  与 BatchBar/ManageToggle/PickDot（components/batch-manage.tsx）配套。 */
 export function useBatchSelect() {

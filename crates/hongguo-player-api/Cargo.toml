@@ -1,18 +1,16 @@
 [package]
 name = "hongguo-player-api"
-description = "红果桌面版回放契约：播放源/事件/打开参数 + 系统播放器呈现接口（不依赖任何 UI 框架与平台实现）"
+description = "红果桌面版回放契约：播放源/事件 + 系统播放器呈现接口（不依赖任何 UI 框架与平台实现）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-# 契约 crate 的纪律（architecture-refactor.md §4「契约与实现分离」）：只吃
-# 「帧载体 + 窗口句柄」这类中立依赖，**不吃** hongguo-playback（自研引擎是
-# 实现）或任何平台 crate——否则「与 UI/平台解耦」只是纸面。
+# 契约 crate 的纪律（契约与实现分离）：只吃
+# 「窗口句柄」这类中立依赖，不吃任何平台实现 crate——否则「与 UI/平台解耦」
+# 只是纸面。
 [dependencies]
-# 帧载体（VideoFrame）：事件里的 Frame 变体只认契约 crate 的类型。
-hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
 # 系统播放器需要宿主窗口句柄；壳解出后交给实现层，实现层不依赖 gpui。
 raw-window-handle = "0.6"
 # 事件通道（宿主与播放器之间唯一的异步通路）。

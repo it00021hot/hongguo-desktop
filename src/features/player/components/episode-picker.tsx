@@ -1,4 +1,4 @@
-//! 选集浮层内容卡（对齐 hgplayer：「选集 | 系列剧」双 tab，从控制栏按钮向上弹）。
+//! 选集浮层内容卡（「选集 | 系列剧」双 tab，从控制栏按钮向上弹）。
 //!
 //! 定位由父级负责（贴着控制栏「选集」按钮向上弹，弹幕设置面板同款），
 //! 本组件只负责内容：选集 tab = 范围 tab + 8 列数字网格；系列剧 tab =
@@ -34,7 +34,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** 每个范围段的集数（hgplayer 同款 30 个一段）。 */
+/** 每个范围段的集数（30 个一段）。 */
 const GROUP_SIZE = 30;
 
 export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Props) {
@@ -66,7 +66,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
     return set;
   }, [tasks, seriesId]);
 
-  // ---- 系列剧 tab（hgplayer 1.1.8 同款）：各季卡片，未上线季可预约 ----
+  // ---- 系列剧 tab：各季卡片，未上线季可预约 ----
   const { data: related } = useRelatedSeries(seriesId);
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const setBinge = usePlayerStore((s) => s.setBinge);
@@ -74,7 +74,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
   const { mutate: reserve, isPending: reserving } = useReserveSeries();
   const seasons = useMemo(() => {
     const list = (related?.works ?? []).filter((w) => seasonNoFromTag(w.tag) != null);
-    // plan/v 只回其他季，不回正在播的这部——hgplayer 的系列剧列表里
+    // plan/v 只回其他季，不回正在播的这部——系列剧列表里
     // 当前季也在（红框 + 播放中），缺的从剧集档案合成一份补进头部。
     // 档案没有 tag/playCnt，卡片副标题留空即可，「播放中」就是它的说明。
     if (series && !list.some((w) => w.seriesId === series.seriesId)) {
@@ -121,7 +121,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
       onClick={(e) => e.stopPropagation()}
       className="w-full scrollbar-thin overflow-y-auto rounded-xl bg-neutral-900/95 p-4 text-neutral-100 shadow-2xl backdrop-blur-sm"
     >
-      {/* 头部：选集 | 系列剧 双 tab（hgplayer 同款）+ 全N集 + 收起 */}
+      {/* 头部：选集 | 系列剧 双 tab + 全N集 + 收起 */}
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-end gap-4">
           {(
@@ -200,7 +200,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
                   key={ep.vidIndex}
                   type="button"
                   onClick={() => {
-                    // 选中**不关**浮层（hgplayer 同款）：连选连跳，浮层常驻
+                    // 选中**不关**浮层：连选连跳，浮层常驻
                     // 鼠标下方，后续点击永远落在浮层内部——这是「选集穿透
                     // 成画面点击暂停」的结构性根治。关闭走 Esc/收起/点外部
                     onSelect(ep.vidIndex);
@@ -228,7 +228,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
           </div>
         </>
       ) : (
-        /* 系列剧 tab：各季卡片（hgplayer 同款：封面 + 剧名 + 季·数据，右侧
+        /* 系列剧 tab：各季卡片（封面 + 剧名 + 季·数据，右侧
            播放中/预约/播放）。plan 封面是 HEIC 签名 URL，必须走 SeriesCover。 */
         <div className="flex flex-col gap-2">
           {seasons.map((item) => {

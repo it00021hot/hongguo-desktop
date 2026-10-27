@@ -6,4 +6,4 @@
 pub mod playback;
 pub mod probe;
 
-pub use probe::{scaling_available, selected_backend};
+pub use probe::selected_backend;

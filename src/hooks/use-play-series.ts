@@ -13,8 +13,8 @@ import { usePlayerStore } from '@/stores/player';
  * 反馈（选集表/加载失败态都在那边），调用方只管表达意图。
  *
  * `vidIndex` 不传 = 只点名剧（追更/收藏/预约这些不知道该看哪集的入口），
- * store 记 0，起点由首页的起点决策补上（本地档案 vs 云端历史取新，
- * issue #11：追更识别到 80 集却从第 1 集播的根源就是这里硬编码 1）。
+ * store 记 0，起点由首页的起点决策补上（本地档案 vs 云端历史取新；
+ * issue #11 的根源曾是这里硬编码 1，已改记 0）。
  */
 export function usePlaySeries() {
   const navigate = useNavigate();

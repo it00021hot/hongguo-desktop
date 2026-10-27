@@ -42,7 +42,7 @@ fn short_names_still_close() {
     assert_eq!(&text[text.find('[').unwrap()..=close], "[微笑]");
 }
 
-/// 满 8 字符的名字收尾，第 9 个字符起不认（hgplayer 1–8 约束）。
+/// 满 8 字符的名字收尾，第 9 个字符起不认（1–8 约束）。
 #[test]
 fn eight_char_name_closes_nine_does_not() {
     let text = "[一二三四五六七八]";
@@ -123,9 +123,7 @@ fn mention_segments_plain_text_stays_whole() {
 // 码表注入为两码假表；「已知」判定与壳的 EMOJI_FILES 对表同构。
 fn tokens(text: &str) -> Vec<(usize, usize, String, String)> {
     use emoji_scan::rich_content;
-    let content = rich_content(text, |code| {
-        ["[微笑]", "[笑]"].contains(&code)
-    });
+    let content = rich_content(text, |code| ["[微笑]", "[笑]"].contains(&code));
     content
         .tokens()
         .iter()
@@ -141,7 +139,7 @@ fn tokens(text: &str) -> Vec<(usize, usize, String, String)> {
 }
 
 /// @提及插入必 panic 的字节边界回归：FFFC 占 3 字节，`idx + 1` 切在
-/// 字符中间（2026-10-23「@小果闪退」的根因——提及插入走 rich_content，
+/// 字符中间（提及插入走 rich_content，
 /// 一点候选就 abort）。
 #[test]
 fn mention_token_range_ends_on_char_boundary() {
@@ -162,7 +160,10 @@ fn emoji_and_mention_tokens_attach_disjoint() {
     let t = "哈[微笑]@小果AI\u{FFFC}好";
     let toks = tokens(t);
     assert_eq!(toks.len(), 2, "{toks:?}");
-    assert_eq!((toks[0].0, toks[0].2.clone()), (t.find('[').unwrap(), "[微笑]".to_string()));
+    assert_eq!(
+        (toks[0].0, toks[0].2.clone()),
+        (t.find('[').unwrap(), "[微笑]".to_string())
+    );
     assert!(toks[1].2.starts_with("@小果AI"));
 }
 

@@ -37,7 +37,7 @@ import { t, tf, locale } from '@/locales';
 import type { FollowNotice, FollowUpdateItem } from '@/service/schema';
 
 /**
- * 追更页（对齐第三方 player 的 Follows 页）：「追更的剧 / 更新提醒」双 tab。
+ * 追更页：「追更的剧 / 更新提醒」双 tab。
  *
  * - 追更的剧：游标翻页列表，状态行「已追平 / N 集未看 · 连载中/已完结」；
  *   管理模式批量取消追更（逐条 do_action 35，player 同款）；

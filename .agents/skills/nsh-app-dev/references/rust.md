@@ -143,6 +143,28 @@ style** and receives a `StyleRefinement`.
 
 A bare `f32` is not a length: the public API is typed and the compiler says so.
 
+### Effects: glass, materials, masks
+
+- `.backdrop_blur(px(30.0))` — the frosted-glass blur. On iOS `.backdrop_material(BackdropMaterial::Regular)` picks the
+  system material (`UltraThin` default, `Thin`, `Regular`, `Thick`, `Chrome`); the radius approximates strength and
+  reaches full at 30 points. `BackdropMaterial` is in `ui`'s prelude.
+- `glassEffect` (Apple's Liquid Glass, iOS 26+, nowhere else) and `maskImage` are **style keys with no typed builder**:
+  set them through the escape hatch rather than a method, and pair glass with a `.backdrop_blur(..)` for the platforms
+  that do not draw it.
+
+  ```rust
+  use nsh_core::{PatchValue, Style, StyleKey};
+
+  view().inline_style(
+      Style::default()
+          .with(StyleKey::GlassEffect, PatchValue::Str("regular".into()))
+          .with(StyleKey::MaskImage, PatchValue::Str("linear-gradient(#000 70%, #00000000)".into())),
+  )
+  ```
+
+  `maskImage` is a CSS gradient whose alpha decides how much of the view is drawn — backdrop filter included; that is
+  how a blurred bar fades instead of ending in a hard seam. iOS and web draw it, the other backends ignore the key.
+
 ### Colors
 
 `Hsla` is the color code holds, passes and computes with. `Rgba` is only for conversions. `AdaptiveColor` is
@@ -194,6 +216,10 @@ choice to the app.
 | `radio()`, `radio_group()` | `Radio`, `RadioGroup` | One option of a set, and the set |
 | `switch()` | `Switch` | An on / off control |
 | `tab()`, `tabs()` | `Tab`, `Tabs` | One tab and the tab list |
+| `collapsible()` | `Collapsible` | A disclosure region: children always, `content` while `open` |
+| `progress()` | `Progress` | A linear progress bar (`value` 0–100, `indeterminate`) |
+| `h_resizable()`, `v_resizable()`, `resizable_panel()` | `ResizablePanelGroup`, `ResizablePanel` | Panels with handles the user drags |
+| `dock_area()` | `DockArea` | A dockable workspace (splits, tab groups, edge docks) |
 | `nav_stack()`, `nav_page()` | `NavStack`, `NavPage` | The navigation stack and its pages |
 | `dialog()` | `Dialog` | Content over everything else |
 | `alert_dialog()` | `AlertDialog` | The platform's alert or action sheet |
@@ -355,8 +381,8 @@ In `cargo test`:
 
 ```toml
 [dev-dependencies]
-nsh-engine = "0.1"
-nsh-testing = "0.1"
+nsh-engine = "0.2"
+nsh-testing = "0.2"
 ```
 
 ```rust
@@ -372,10 +398,10 @@ fn a_tap_counts() {
 }
 ```
 
-`Headless` has `start`, `screen`, `shows`, `press`, `long_press`, `clear`, `type_text`, `submit`, `scroll`,
-`wait_for`, `wait_for_within`, `wait_for_gone`, `wait_until`, `wait`, `run_for`, `fast_forward`,
-`set_system_time`, `set_viewport`, `set_environment`, `on_dialog`, `pending_dialog`, `answer_dialog`,
-`set_clipboard`, `first_render`, `back`.
+`Headless` has `start`, `screen`, `shows`, `press`, `press_at` (a point in the view's coordinates, which is how a test
+reaches a `PressEvent`'s `position`), `long_press`, `clear`, `type_text`, `submit`, `scroll`, `wait_for`,
+`wait_for_within`, `wait_for_gone`, `wait_until`, `wait`, `run_for`, `fast_forward`, `set_system_time`, `set_viewport`,
+`set_environment`, `on_dialog`, `pending_dialog`, `answer_dialog`, `set_clipboard`, `first_render`, `back`.
 
 To test a TSX entry against the crate's set:
 

@@ -3,16 +3,18 @@
 
 use super::*;
 
+use gpui_kit::Toggled;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Selectable;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::div;
 
 use crate::home::player_icons;
+use crate::ui_button::button as Button;
 
 impl HomeView {
     /// 播放控制条（底部悬浮）：暂停/继续、进度（拖动 seek）、倍速菜单、
@@ -176,8 +178,16 @@ impl HomeView {
                         } else {
                             gpui_kit::rgba(0xffffff66)
                         };
-                        div()
-                            .id("stage-danmaku")
+                        // 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space
+                        // 激活与 role 由库负责（自绘图标塞不进组件 Button，
+                        // 但无样式按钮不注入底色，视觉仍由本链决定）。
+                        BaseButton::new("stage-danmaku")
+                            .accessibility_label(crate::i18n::t("player.danmaku"))
+                            .aria_toggled(if self.danmaku_on {
+                                Toggled::True
+                            } else {
+                                Toggled::False
+                            })
                             .flex()
                             .flex_shrink_0()
                             .w(gpui_kit::px(32.0))
@@ -186,10 +196,12 @@ impl HomeView {
                             .items_center()
                             .rounded(gpui_kit::px(6.0))
                             .cursor_pointer()
-                            .role(gpui_kit::Role::Button)
-                            .aria_label(crate::i18n::t("player.danmaku"))
                             .text_color(color)
                             .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
+                            // base Button 强制 line_height(relative(1.))：自绘
+                            // 「弹」字继承行高，钉回默认行高才与原 div 像素一致。
+                            .line_height(gpui_kit::phi())
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.danmaku_on = !this.danmaku_on;
                                 // 关=清屏+游标落当前位（重开不补放积压）；落盘

@@ -49,7 +49,7 @@ export const rank = {
     }),
   /** 预约 / 取消预约（需要登录）。 */
   reserve: (seriesId: string, reserve = true) => call('reservation_reserve', { seriesId, reserve }),
-  /** 批量删除预约（subscribe_delete，hgplayer 1.1.8 同款；需要登录）。 */
+  /** 批量删除预约（subscribe_delete；需要登录）。 */
   deleteReservations: (
     itemIds: string[],
     allSelect = false,

@@ -1,4 +1,4 @@
-//! 云端观看历史（`read_history/list/v`，2026-10-05 抓包）。
+//! 云端观看历史（`read_history/list/v`）。
 //!
 //! 官方 App 侧栏「历史」的数据源：账号维度的播放记录（含在官方客户端
 //! 看的），比本地播放档案全。query 只要 `limit/offset/query_soft_deleted`，
@@ -26,10 +26,8 @@ const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v
 /// 拉一页云端观看历史。
 pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
     let q: Vec<(String, String)> = [
-        // 2026-10-05 抓包逐字段对齐（captures/flows-20261005.jsonl）。
         // book_type=2 是**短剧过滤**的关键：缺了它会落进无名字的阅读历史
-        // 子集（audit 的 DEVICE_QS 过滤把这几个字段当设备参数藏了，
-        // 排查时必须 dump 抓包原文）。
+        // 子集。
         ("book_type", "2"),
         ("full_field", "false"),
         ("is_first_load", "true"),
@@ -71,7 +69,7 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
             series_id,
             title: str_field(raw, "book_name"),
             cover: str_field(raw, "thumb_url"),
-            // 线上 vid_index 统一 0 基（官方 App / hgplayer / 我们对齐后
+            // 线上 vid_index 统一 0 基（官方 App / 我们对齐后
             // 的写入都是），+1 转回领域值（前端/本地存储 1 基）
             vid_index: raw
                 .get("vid_index")
@@ -124,13 +122,13 @@ fn num_to_string(v: &Value) -> String {
 
 /// vid_index 基准换算：领域值（前端 / 本地存储）一律 **1 基**，官方线上
 /// 协议（read_history/update、read_progress/upload，含删除形态）一律
-/// **0 基**——抓包实锤第 1 集 vid_index=0。曾把 1 基值直发线上，跨端
-/// 续播差一集（2026-10-17 实锤官方会话记录后定位），写侧统一在此换算。
+/// **0 基**（官方第 1 集 vid_index=0）。1 基值直发线上会导致跨端
+/// 续播差一集，写侧统一在此换算。
 fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
 
-/// 批量删除云端观看历史（2026-10-11 逆向 hgplayer 1.1.8 delete.go 逐字段锁定）：
+/// 批量删除云端观看历史：
 /// 复用 `read_history/update`，每条带 `is_delete=true + use_soft_delete=true`，
 /// 其余进度字段全零（官方删除样本形态）。响应 `update_fail_datas` 非空 =
 /// 部分失败，报错给上层。
@@ -193,13 +191,13 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 观看进度上报（2026-10-06 抓 hgplayer 1.1.5 双接口逐字段锁定）：
+/// 观看进度上报（官方双接口）：
 /// 官方客户端播片时同时打 `read_history/update` 与 `read_progress/upload`，
-/// 云端「历史」页的写入端。hgplayer 约每分钟一次 + 切集时触发。
+/// 云端「历史」页的写入端。约每分钟一次 + 切集时触发。
 ///
-/// 两接口字段形态刻意不同（照抓包原样）：update 里 book_id/vid 是 JSON
+/// 两接口字段形态刻意不同（官方原样）：update 里 book_id/vid 是 JSON
 /// **数字**，upload 里 book_id/item_id 是**字符串**；duration/retain 等
-/// hgplayer 传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
+/// 官方传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
 /// 等于当时进度，这里同用 position_ms 承载（我们未单独累计观看时长）。
 /// `vid_index` 收领域值（1 基，前端/本地存储原样传入），线上按 0 基发送。
 pub async fn report_watch_progress(
@@ -296,7 +294,7 @@ pub async fn report_watch_progress(
     Ok(())
 }
 
-/// 数字型 id 字段：可解析就发 JSON 数字（对齐抓包），否则原样字符串。
+/// 数字型 id 字段：可解析就发 JSON 数字（对齐官方），否则原样字符串。
 fn str_or_num(s: &str) -> Value {
     s.parse::<u64>()
         .map(|n| serde_json::json!(n))
@@ -361,7 +359,7 @@ pub(crate) mod probe {
         assert!(check_update_fails(&bad).is_err(), "非空明细=被拒");
     }
 
-    /// 实证云端历史真实返回（对号入座：同账号在 hgplayer 显示最近记录）。
+    /// 云端历史真实返回验证（对号入座：同账号在客户端显示最近记录）。
     /// `PROBE_DEVICE` / `PROBE_COOKIE` 由真实库导出；`PROBE_COOKIE_HG` /
     /// `PROBE_TOKEN` 可选，用官方会话做对照。
     /// `cargo test probe_watch_history -- --ignored --nocapture`
@@ -379,7 +377,7 @@ pub(crate) mod probe {
             serde_json::from_str(&device_json).expect("device json");
         let mut device = device;
         hongguo_signer::device::align_app_version(&mut device);
-        // 官方会话对照：抓包里 cookie 是逗号分隔（addon 形态），转分号
+        // 官方会话对照：外部导出的 cookie 是逗号分隔（addon 形态），转分号
         let cookie_raw = hg_cookie.unwrap_or(account_cookie);
         let cookie = cookie_raw.replace(", ", "; ");
         let env = ApiEnv {

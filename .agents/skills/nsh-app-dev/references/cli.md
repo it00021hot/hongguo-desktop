@@ -182,6 +182,10 @@ nsh symbolicate bundle.js.map            # rewrites bundle.js:LINE:COL to the ap
   `wasm-bindgen` (`=0.2.x`) in the crate so the CLI's version holds from build to build.
 - **An app with Rust crates builds for minutes the first time** (the crate, the headless runner, the development
   host). That is normal.
+- **A Linux Rust app does not link WebKitGTK unless it uses web views.** The generated runners no longer enable
+  `nsh-linux-app/webview` unconditionally; the app's own crate opts in by enabling `webview` on its
+  `nsh-platform-linux` dependency, and Cargo feature unification carries that into the runner. Enabling it links
+  WebKitGTK 6.0, which must be installed to build and run. A Rust app that renders `<WebView>` on Linux needs this.
 - **`nsh.json`'s `"name"` names the output files**: `tsx-app` → `tsx-app.app`, `tsx-app.ipa`, `tsx-app.apk`,
   `tsx-app/`. Set it, or pass `--name`.
 - **`nsh publish` refuses to sign what a device would refuse**, and warns about a placeholder id (`com.example.*`).
@@ -189,7 +193,15 @@ nsh symbolicate bundle.js.map            # rewrites bundle.js:LINE:COL to the ap
 - **`nsh keygen` never overwrites an existing key.** A second `nsh keygen keys/root` leaves the first pair alone —
   move the files out of the way first.
 - **The CLI version and the checkout must agree.** In a checkout, build and use `./target/debug/nsh`; an `nsh` on
-  `PATH` may be an older release whose flags differ.
+  `PATH` may be an older release whose flags differ. This skill documents **0.2.0** (checkout `v0.2.0-33-g4dea976d`,
+  2026-10-23).
+
+## LayerFS (checkout only)
+
+The NSH repository carries a Linux LayerFS trial for reusable Cargo build workspaces: `scripts/layerfs prepare`,
+`smoke`, `status`. It needs Docker Engine with a local Linux FUSE device and writes receipts under `.nsh/layerfs/`.
+This is a workflow for working **on NSH itself**, not something an app uses; skip it unless the task is about NSH's own
+build infrastructure.
 
 ## Where things are written
 

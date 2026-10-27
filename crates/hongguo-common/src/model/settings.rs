@@ -210,7 +210,7 @@ pub struct Settings {
     /// 播完自动下一集
     #[serde(default = "default_true")]
     pub auto_next_episode: bool,
-    /// 最小化自动暂停，恢复窗口后继续播（对齐 hgplayer）
+    /// 最小化自动暂停，恢复窗口后继续播。
     #[serde(default = "default_true")]
     pub pause_on_minimize: bool,
     /// 连播预取集数（0=关闭；1=仅下一集）。流预取与 HEVC 预转共用此档，
@@ -535,10 +535,9 @@ mod tests {
     #[test]
     fn old_store_without_cache_policy_reads_as_off() {
         // 老库没有这两个字段：serde(default) 让它们是 0（关），不是崩
-        let s: Settings = serde_json::from_str(
-            r#"{"downloadDir":"/tmp","maxConcurrency":3,"theme":"dark"}"#,
-        )
-        .unwrap();
+        let s: Settings =
+            serde_json::from_str(r#"{"downloadDir":"/tmp","maxConcurrency":3,"theme":"dark"}"#)
+                .unwrap();
         assert_eq!(s.cache_limit_mb, 0);
         assert_eq!(s.cache_ttl_days, 0);
     }

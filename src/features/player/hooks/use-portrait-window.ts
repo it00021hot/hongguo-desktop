@@ -5,14 +5,13 @@ import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { app as appApi } from '@/service/commands';
 
 /**
- * 竖屏播放（对齐 hgplayer 1.1.8 的 rE/kc/Nf/oE/Fc，几何算法在后端
+ * 竖屏播放（几何算法在后端
  * window_cmd）：窗口收窄成竖条，比例带手机形地板（见 PHONE_LIKE_ASPECT）
  * ——像在热门手机上观看，而不是按内容比例出的矮胖条。store 是后端
  * 快照的镜像（同 miniScreen 口径）。
  */
 
-/** 宽高比 ≥0.9（近方形/横屏）不算竖屏比：竖屏只对竖版内容有意义
- *  （hgplayer Em/cu 同款口径）。 */
+/** 宽高比 ≥0.9（近方形/横屏）不算竖屏比：竖屏只对竖版内容有意义。 */
 const PORTRAIT_ASPECT_MAX = 0.9;
 /**
  * 手机形比例地板（w/h）：窗口比例 = min(视频比例, 本值)。热门手机屏幕
@@ -22,7 +21,7 @@ const PORTRAIT_ASPECT_MAX = 0.9;
  * 一致），比手机更长的内容（如 9:21）仍按自身比例包住不留边。
  */
 const PHONE_LIKE_ASPECT = 9 / 19.5;
-/** 宽高比变化超过 1% 才重适配——浮点抖动与同比例换流不触发（hgplayer Em）。 */
+/** 宽高比变化超过 1% 才重适配——浮点抖动与同比例换流不触发。 */
 const REFIT_DELTA = 0.01;
 
 /** 竖屏用的宽高比：竖屏比就与手机比例取更「长」的一方，否则回落手机
@@ -47,8 +46,9 @@ async function enterPortrait(aspect: number): Promise<void> {
   });
 }
 
-/** 退出竖屏并清镜像态。进小屏与路由离开播放页也走这里——竖屏的几何快照
- *  是单份的，进小屏前必须先还原，否则小屏的快照记的是竖条几何。 */
+/** 退出竖屏并清镜像态。进小屏也走这里——竖屏的几何快照是单份的，进小屏前
+ *  必须先还原，否则小屏的快照记的是竖条几何。（离开播放区的收尾在
+ *  app-shell 的路由监听里，与本函数同款调用。） */
 export function exitPortraitScreen(): void {
   if (!useUiStore.getState().portrait) return;
   useUiStore.getState().setPortrait(false);
@@ -75,7 +75,7 @@ export function usePortraitWindow(params: { videoRef: React.RefObject<HTMLVideoE
     }
   }, [videoRef]);
 
-  /** 竖屏中全屏键变成铺满切换（hgplayer wu：portrait 时全屏语义让位）。
+  /** 竖屏中全屏键变成铺满切换（portrait 时全屏语义让位）。
    *  非竖屏时是 no-op——调用方负责在竖屏时才换语义。 */
   const togglePortraitFull = useCallback(() => {
     const st = useUiStore.getState();
@@ -87,7 +87,7 @@ export function usePortraitWindow(params: { videoRef: React.RefObject<HTMLVideoE
       .catch((e: Error) => toast.error(e.message));
   }, [videoRef]);
 
-  // 切集/换清晰度 → 视频尺寸变化 → 自动重适配（hgplayer Em：变化 >1% 才
+  // 切集/换清晰度 → 视频尺寸变化 → 自动重适配（变化 >1% 才
   // 动；铺满与否跟随当前档）。比例一律取钳制后的：9:16→9:16 换集钳到同一
   // 手机比例不触发；真换比例（如 9:21 素材）或换成横屏（回落手机比例）
   // 才重算窗口。

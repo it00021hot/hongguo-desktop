@@ -1,5 +1,5 @@
 //! 弹幕表情映射（自动生成自 src/utils/danmaku-emoji-files.generated.ts，
-//! hgplayer 1.1.6 bundle 提取；webp 资产在 assets/emoji/）。重新生成：
+//! 从客户端 bundle 提取；webp 资产在 assets/emoji/）。重新生成：
 //! 从 generated.ts 照抄对表 + 复制 webp 到 assets/emoji/。
 
 /// [名字] 代码 → 打包的 webp 字节。

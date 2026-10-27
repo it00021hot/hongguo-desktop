@@ -29,9 +29,9 @@ import { cn } from '@/lib/utils';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
  *
- * 播放页（/player）不设菜单入口：它只能由各页的「播放/继续播放」跳转进入，
- * 独立菜单 + 页内历史与独立的历史页重复。找剧排第二（用户指定，
- * 2026-10-08），紧跟首页推荐。 */
+ * 播放不设菜单入口：播放已并回首页沉浸流（无独立 /player 路由），入口是
+ * 各页的「播放/继续播放」；独立菜单 + 页内历史与独立的历史页重复。
+ * 找剧排第二（用户指定），紧跟首页推荐。 */
 const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
   { key: 'browse', to: '/browse', icon: Compass },
@@ -41,7 +41,7 @@ const NAV_ITEMS = [
   { key: 'collections', to: '/collections', icon: Star },
   // 点赞用爱心：与播放页互动栏「点赞=❤」同一符号语言（原 ThumbsUp 不一致）
   { key: 'liked', to: '/liked', icon: Heart },
-  // 追更（📺 语义）：对齐第三方 player 的侧栏顺序——点赞与预约之间
+  // 追更（📺 语义）：侧栏顺序——点赞与预约之间
   { key: 'follows', to: '/follows', icon: Tv },
   { key: 'reservations', to: '/reservations', icon: BellRing },
   { key: 'tasks', to: '/tasks', icon: ListChecks },
@@ -121,7 +121,7 @@ export function AppSidebar() {
         })}
       </nav>
 
-      {/* 我的 / 登录（hgplayer 同款贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
+      {/* 我的 / 登录（贴底账户区）：未登录开登录弹窗，已登录显昵称 */}
       <div className="border-t p-2">
         <AccountButton collapsed={collapsed} />
       </div>

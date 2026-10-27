@@ -2,14 +2,13 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
 use hongguo_api::danmaku::CommentItem;
-
-use crate::emoji_scan::{MentionPiece, split_mention_segments};
 
 impl HomeView {
     /// AI bot 的用户名（官方 mention 列表里的「小果」）。
@@ -24,74 +23,10 @@ impl HomeView {
     }
 
     /// 评论列表一行：头像占位（昵称首字圆形）/昵称/文本/相对时间/♡。
-    /// 评论正文：`@名字\u{FFFC}` 提及前缀染蓝（AI bot 名字补琥珀「Ai」
-    /// 后缀——Tauri 的渐变文字在 GPUI 用单色近似），其余按 `[名字]`
-    /// 表情分段内联（与弹幕共用一套 parse）。面板属 hgplayer 皮肤域，
-    /// 固定色值属硬红线 11 的播放器豁免。
-    fn render_comment_text(&self, text: &str) -> gpui_kit::AnyElement {
-        let ai_name = self
-            .ai_bot_name()
-            .unwrap_or_else(|| crate::i18n::t("player.comments.aiName"));
-        let (prefix, rest) = match parse_mention_prefix(text) {
-            Some((name, rest)) => (Some(name), rest),
-            None => (None, text),
-        };
-        let mut row = div().flex().flex_wrap().items_center();
-        if let Some(name) = prefix {
-            row = row.child(
-                h_flex()
-                    .items_center()
-                    .mr_1()
-                    .text_color(gpui_kit::rgb(0x38bdf8))
-                    .child(SharedString::from(format!("@{name}")))
-                    .children((name == ai_name).then(|| {
-                        div()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .text_color(gpui_kit::rgb(0xfbbf24))
-                            .child("Ai")
-                    })),
-            );
-        }
-        for el in self.rich_children(rest) {
-            row = row.child(el);
-        }
-        row.into_any_element()
-    }
-
-    /// 富文本子元素（Tauri `EmojiText` 同口径）：认识的 `[名字]` 换表情图、
-    /// 文本中段的 `@名字\u{FFFC}` 染蓝、其余原样。评论正文与回复行共用
-    /// ——回复行（含小果AI 的回复）此前是纯文本，表情码全裸奔。
-    pub(in crate::home) fn rich_children(&self, text: &str) -> Vec<gpui_kit::AnyElement> {
-        let mut out = Vec::new();
-        for seg in crate::danmaku_emoji::parse_emoji_segments(text) {
-            match seg {
-                crate::danmaku_emoji::EmojiSegment::Text(t) => {
-                    for piece in split_mention_segments(&t) {
-                        out.push(match piece {
-                            MentionPiece::Text(s) => {
-                                div().child(SharedString::from(s)).into_any_element()
-                            }
-                            MentionPiece::Mention(name) => div()
-                                .mr_1()
-                                .text_color(gpui_kit::rgb(0x38bdf8))
-                                .child(SharedString::from(format!("@{name}")))
-                                .into_any_element(),
-                        });
-                    }
-                }
-                crate::danmaku_emoji::EmojiSegment::Emoji(img) => {
-                    out.push(
-                        gpui_kit::img(gpui_kit::ImageSource::Render(img))
-                            .size(gpui_kit::px(18.0))
-                            .object_fit(gpui_kit::ObjectFit::Contain)
-                            .into_any_element(),
-                    );
-                }
-            }
-        }
-        out
-    }
-
+    ///
+    /// 评论正文（提及前缀、正文提及段、表情码）交给
+    /// [`crate::comment_text`]：整段合成一个文本节点渲染，才能在面板宽度内
+    /// 换行（拆成多个 flex item 会按 max-content 撑开、飞出面板）。
     pub(super) fn render_comment_row(
         &self,
         c: &CommentItem,
@@ -123,9 +58,12 @@ impl HomeView {
                             .min_w_0()
                             .gap_0p5()
                             .child(
-                                div()
+                                // 昵称：列容器 + 截断（行容器里文本按内容宽度
+                                // 排版，长昵称会顶到右侧的 ♡ 按钮上）。
+                                v_flex()
                                     .text_xs()
                                     .text_color(gpui_kit::rgba(0xffffff99))
+                                    .truncate()
                                     .child(SharedString::from(if c.user_name.is_empty() {
                                         crate::i18n::t("player.comments.anon")
                                     } else {
@@ -133,11 +71,29 @@ impl HomeView {
                                     })),
                             )
                             .child(
-                                div()
+                                // 正文用列容器：列会 stretch 子件，文本节点因此
+                                // 拿到确定宽度而折行（行容器里按 max-content 排版）。
+                                v_flex()
                                     .text_sm()
                                     .text_color(gpui_kit::rgba(0xffffffe6))
-                                    .child(self.render_comment_text(&c.text)),
+                                    .child(crate::comment_text::render(
+                                        &crate::comment_text::comment_body(
+                                            &c.text,
+                                            self.ai_bot_name().as_deref(),
+                                        ),
+                                    )),
                             )
+                            // 附图（官方两态：本地图片 / 表情图片；纯文字评论无）
+                            .children(c.images.iter().filter_map(|item| {
+                                self.emoticon_image(item).map(|image| {
+                                    div()
+                                        .mt_1()
+                                        .size_16()
+                                        .rounded(gpui_kit::px(6.0))
+                                        .overflow_hidden()
+                                        .child(image)
+                                })
+                            }))
                             .child(
                                 h_flex()
                                     .items_center()
@@ -151,56 +107,88 @@ impl HomeView {
                                     .child(
                                         // 回复本条评论（打开底部回复输入框；
                                         // Tauri 评论行「回复」同款）
-                                        div()
-                                            .id(ElementId::from(format!("comment-reply-{cid}")))
-                                            .text_size(gpui_kit::px(11.0))
-                                            .cursor_pointer()
-                                            .text_color(gpui_kit::rgba(0xffffff73))
-                                            .hover(|s| s.text_color(gpui_kit::rgba(0xd4d4d8ff)))
-                                            .on_click({
-                                                let cid = cid.clone();
-                                                let name = c.user_name.clone();
-                                                cx.listener(move |this, _, _, cx| {
-                                                    // 只展开底部回复输入框（Tauri
-                                                    // setReplyTarget 同款，不拉回复区）
-                                                    this.reply_to =
-                                                        Some((cid.clone(), None, name.clone()));
-                                                    cx.notify();
-                                                })
+                                        //
+                                        // base::Button 强制注入 flex/居中/紧行高，
+                                        // 这里逐条改回原来的 block + 默认行高，
+                                        // 否则文字行盒变矮、位置偏移。
+                                        BaseButton::new(ElementId::from(format!(
+                                            "comment-reply-{cid}"
+                                        )))
+                                        .accessibility_label(crate::i18n::t(
+                                            "player.comments.reply",
+                                        ))
+                                        .justify_start()
+                                        .line_height(gpui_kit::phi())
+                                        .text_size(gpui_kit::px(11.0))
+                                        .cursor_pointer()
+                                        .text_color(gpui_kit::rgba(0xffffff73))
+                                        .hover(|s| s.text_color(gpui_kit::rgba(0xd4d4d8ff)))
+                                        .focus_visible(|s| {
+                                            s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                        })
+                                        .on_click({
+                                            let cid = cid.clone();
+                                            let name = c.user_name.clone();
+                                            cx.listener(move |this, _, _, cx| {
+                                                // 只展开底部回复输入框（Tauri
+                                                // setReplyTarget 同款，不拉回复区）
+                                                this.reply_to =
+                                                    Some((cid.clone(), None, name.clone()));
+                                                cx.notify();
                                             })
-                                            .child(crate::i18n::t("player.comments.reply")),
+                                        })
+                                        .child(crate::i18n::t("player.comments.reply")),
                                     )
                                     .children(is_mine.then(|| {
-                                        div()
-                                            .id(ElementId::from(format!("comment-del-{cid}")))
-                                            .text_size(gpui_kit::px(11.0))
-                                            .cursor_pointer()
-                                            .text_color(gpui_kit::rgba(0xffffff73))
-                                            .hover(|s| s.text_color(gpui_kit::rgb(0xf87171)))
-                                            .on_click({
-                                                let cid = cid.clone();
-                                                cx.listener(move |this, _, _, cx| {
-                                                    this.request_delete(cid.clone(), None, cx);
-                                                })
+                                        BaseButton::new(ElementId::from(format!(
+                                            "comment-del-{cid}"
+                                        )))
+                                        .accessibility_label(crate::i18n::t("common.delete"))
+                                        .justify_start()
+                                        .line_height(gpui_kit::phi())
+                                        .text_size(gpui_kit::px(11.0))
+                                        .cursor_pointer()
+                                        .text_color(gpui_kit::rgba(0xffffff73))
+                                        .hover(|s| s.text_color(gpui_kit::rgb(0xf87171)))
+                                        .focus_visible(|s| {
+                                            s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                        })
+                                        .on_click({
+                                            let cid = cid.clone();
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.request_delete(cid.clone(), None, cx);
                                             })
-                                            .child(crate::i18n::t("common.delete"))
+                                        })
+                                        .child(crate::i18n::t("common.delete"))
                                     }))
                                     .children((reply_count > 0).then({
                                         let cid = cid.clone();
                                         move || {
-                                            div()
-                                                .id(ElementId::from(format!("reply-toggle-{cid}")))
-                                                .text_size(gpui_kit::px(11.0))
-                                                .cursor_pointer()
-                                                .text_color(gpui_kit::rgba(0x60a5faff))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_replies(
-                                                        cid.clone(),
-                                                        reply_count,
-                                                        cx,
-                                                    );
-                                                }))
-                                                .child(if replies_open {
+                                            BaseButton::new(ElementId::from(format!(
+                                                "reply-toggle-{cid}"
+                                            )))
+                                            .accessibility_label(if replies_open {
+                                                crate::i18n::t("player.comments.collapseReplies")
+                                            } else {
+                                                crate::i18n::tf(
+                                                    "player.comments.expandReplies",
+                                                    &[("n", &reply_count.to_string())],
+                                                )
+                                            })
+                                            .aria_expanded(replies_open)
+                                            .justify_start()
+                                            .line_height(gpui_kit::phi())
+                                            .text_size(gpui_kit::px(11.0))
+                                            .cursor_pointer()
+                                            .text_color(gpui_kit::rgba(0x60a5faff))
+                                            .focus_visible(|s| {
+                                                s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                            })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle_replies(cid.clone(), reply_count, cx);
+                                            }))
+                                            .child(
+                                                if replies_open {
                                                     crate::i18n::t(
                                                         "player.comments.collapseReplies",
                                                     )
@@ -209,25 +197,41 @@ impl HomeView {
                                                         "player.comments.expandReplies",
                                                         &[("n", &reply_count.to_string())],
                                                     )
-                                                })
+                                                },
+                                            )
                                         }
                                     })),
                             ),
                     )
                     .child(
                         // ♡ 点赞（乐观 ±1）
-                        div()
-                            .id(ElementId::from(format!("comment-digg-{cid}")))
-                            .flex()
+                        //
+                        // 竖排（图标在上、数字在下）：库注入的是 flex row，
+                        // 这里补 flex_col + justify_start 改回竖排；数字是
+                        // 子件里的文字，行高也要改回默认，否则数字位置偏。
+                        BaseButton::new(ElementId::from(format!("comment-digg-{cid}")))
+                            .accessibility_label(if digged {
+                                crate::i18n::t("player.interact.liked")
+                            } else {
+                                crate::i18n::t("player.interact.like")
+                            })
+                            .aria_toggled(if digged {
+                                gpui_kit::Toggled::True
+                            } else {
+                                gpui_kit::Toggled::False
+                            })
                             .flex_col()
+                            .justify_start()
                             .items_center()
                             .gap_0p5()
+                            .line_height(gpui_kit::phi())
                             .cursor_pointer()
                             .text_color(if digged {
                                 gpui_kit::rgb(0xef4444)
                             } else {
                                 gpui_kit::rgba(0xffffff99)
                             })
+                            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                             .on_click({
                                 let cid = cid.clone();
                                 cx.listener(move |this, _, _, cx| {
@@ -245,17 +249,4 @@ impl HomeView {
             .children(self.render_comment_replies(cid, cx))
             .into_any_element()
     }
-}
-
-/// 提取 `@名字\u{FFFC}` 提及前缀（Tauri CommentText 的
-/// `/^@([^\s\u{FFFC}]+)\u{FFFC}\s*/` 同口径），返回（名字, 余下正文）。
-fn parse_mention_prefix(text: &str) -> Option<(String, &str)> {
-    let rest = text.strip_prefix('@')?;
-    let end = rest.find('\u{FFFC}')?;
-    let name = &rest[..end];
-    if name.is_empty() || name.chars().any(|c| c.is_whitespace() || c == '@') {
-        return None;
-    }
-    let after = &rest[end + '\u{FFFC}'.len_utf8()..];
-    Some((name.to_string(), after.trim_start()))
 }

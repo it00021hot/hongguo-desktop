@@ -1,4 +1,4 @@
-//! 红果桌面版 GPUI 壳（起步单壳，`docs/architecture-refactor.md` §4.3）。
+//! 红果桌面版 GPUI 自绘壳。
 //!
 //! **操作与 Tauri 客户端一致**：装配序（开库 → 设备 adopt → 全局状态）、
 //! 接口调用（`state.api_env()` + `hongguo_api`）与 Tauri 壳逐层同源——本壳
@@ -18,6 +18,7 @@
 mod av_spike;
 mod boss_key;
 mod bridge;
+mod comment_text;
 mod cover_asset;
 mod cover_image_cache;
 mod cover_img;
@@ -32,6 +33,7 @@ pub(crate) mod home;
 mod http_client;
 mod i18n;
 mod image_upload;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mini;
@@ -48,8 +50,8 @@ mod shell;
 mod single_instance;
 mod toast;
 mod tokens;
+mod ui_button;
 mod ui_prefs;
-mod video_backend;
 #[cfg(target_os = "windows")]
 mod win32;
 mod window_restore;
@@ -77,11 +79,7 @@ pub(crate) fn tokio() -> &'static tokio::runtime::Runtime {
 fn main() {
     // 日志先于一切：装配失败的原因只在这里（与 Tauri 壳同一约定）。预览
     // 模式同样要日志与 panic 留痕，所以这两样在数据根声明之前就位。
-    // 毫秒时间戳：卡顿诊断看的就是亚秒级间隔（2x 下一帧 16.7ms），
-    // 默认的秒级精度会把「停顿 120ms」和「正常」印成同一秒。
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    crate::logging::init();
     // Windows 默认定时器精度 ~15.6ms：播放循环的毫秒级轮询会被拉长成一整个
     // tick，2x 下变成「两帧一起到 → 33ms 空档」的节拍抖动（日志里
     // `[Playback][video]` 的 ≤20/≤33ms 分档能直接看到）。浏览器/播放器都会
@@ -161,6 +159,80 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            // 帧停顿取证（perf-probe）：gpui 前台日志的主线程停顿监控。
+            // 单段前台工作 ≥ 阈值（HONGGUO_HANG_MS，默认 50ms——60fps 一帧
+            // 16.7ms，超 50ms 肉眼可感知）记一起事故，每 HONGGUO_HANG_POLL_MS
+            // （默认 1s）汇总一跳。这是 perf-probe 注释里承诺的周期日志出口。
+            #[cfg(feature = "perf-probe")]
+            {
+                const HANG_THRESHOLD_MS: u64 = 50;
+                const HANG_POLL_MS: u64 = 1000;
+                let threshold_ms = std::env::var("HONGGUO_HANG_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(HANG_THRESHOLD_MS);
+                let poll_ms = std::env::var("HONGGUO_HANG_POLL_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(HANG_POLL_MS);
+                if let Err(e) = cx.start_hang_monitor(
+                    gpui_pre::profiler::hang::HangMonitorConfig {
+                        threshold: std::time::Duration::from_millis(threshold_ms),
+                        frame_budget: std::time::Duration::from_millis(threshold_ms),
+                        interval: std::time::Duration::from_millis(poll_ms),
+                    },
+                    move |poll| {
+                        for incident in &poll.incidents {
+                            use gpui_pre::profiler::journal::ForegroundEvent;
+                            let worst = incident
+                                .contributors
+                                .iter()
+                                .map(|event| event.duration())
+                                .max()
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            // 贡献者按耗时降序取前几段点名（TaskPoll 带
+                            // spawn 位置的 file:line——直接定位元凶代码）
+                            let mut contributors: Vec<&ForegroundEvent> =
+                                incident.contributors.iter().collect();
+                            contributors.sort_by_key(|event| std::cmp::Reverse(event.duration()));
+                            let named = contributors
+                                .iter()
+                                .take(4)
+                                .map(|event| {
+                                    let ms = event.duration().as_millis();
+                                    match event {
+                                        ForegroundEvent::TaskPoll(t) => {
+                                            format!("task {ms}ms @{:?}", t.location)
+                                        }
+                                        ForegroundEvent::Draw(_) => format!("draw {ms}ms"),
+                                        ForegroundEvent::View(t) => {
+                                            format!("view {}ms {}", ms, t.name)
+                                        }
+                                        ForegroundEvent::Present(_) => {
+                                            format!("present {ms}ms")
+                                        }
+                                        ForegroundEvent::Action(_) => format!("action {ms}ms"),
+                                        ForegroundEvent::Input(_) => "input".to_string(),
+                                        ForegroundEvent::SmallPolls(f) => format!(
+                                            "small_polls {}ms",
+                                            f.until.duration_since(f.since).as_millis()
+                                        ),
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" | ");
+                            log::warn!(
+                                "[Hang] 最长 {worst}ms（触发 {:?}，用户活跃={}）：{named}",
+                                incident.trigger,
+                                incident.during_active_use,
+                            );
+                        }
+                    },
+                ) {
+                    log::warn!("[Hang] 停顿监控启动失败: {e}");
+                }
+            }
             // 老板键：按持久化设置注册（Tauri boss_key_cmd::init 同款）。
             // 必须在 App 跑起来之后注册：Carbon 的 application event target
             // 要等 NSApplication 就位，开跑前注册会拿到空 target、把热键
@@ -185,6 +257,13 @@ fn main() {
             let theme_pref = ui_prefs.theme;
             let theme_mode = theme_pref.resolve(cx.window_appearance());
             crate::tokens::apply(theme_mode, cx);
+            // 桌面惯例：滚动条常驻可见。默认 Scrolling 只在滚动瞬间出现、
+            // 静止即淡出——实测等于「没有滚动条」。官方文档主题初始化同款
+            // （https://gpui-kit.com/component/scrollable）。
+            gpui_kit::component::Theme::set_scrollbar_mode(
+                gpui_kit::component::scroll::ScrollbarMode::Always,
+                cx,
+            );
             if theme_pref != crate::ui_prefs::ThemePref::Auto {
                 cx.set_window_appearance(Some(match theme_mode {
                     gpui_kit::component::ThemeMode::Light => gpui_kit::WindowAppearance::Light,
@@ -276,7 +355,6 @@ fn main() {
                 }
             };
             // 句柄两边都用：默认构建挂退出确认守卫、screenshot 构建再交给抓帧
-            let system_backend = crate::video_backend::is_system();
             let mut built = None;
             let shell_window: gpui_kit::AnyWindowHandle = cx
                 .open_window(
@@ -286,14 +364,12 @@ fn main() {
                     {
                         let mut options = gpui_kit::component::TitleBar::window_options();
                         options.window_bounds = Some(gpui_kit::WindowBounds::Windowed(bounds));
-                        // 系统播放器要透出下层 AVPlayerLayer：窗口从创建时就按
-                        // 透明配置，避免「先不透明建窗、再 set_background_appearance」
-                        // 这一段里 CAMetalLayer / NSWindow 的 opaque 状态不同步。
-                        options.window_background = if system_backend {
-                            gpui_kit::WindowBackgroundAppearance::Transparent
-                        } else {
-                            gpui_kit::WindowBackgroundAppearance::Opaque
-                        };
+                        // 系统播放器要透出下层 AVPlayerLayer / DComp 视频位：
+                        // 窗口从创建时就按透明配置，避免「先不透明建窗、再
+                        // set_background_appearance」这一段里 CAMetalLayer /
+                        // NSWindow 的 opaque 状态不同步。
+                        options.window_background =
+                            gpui_kit::WindowBackgroundAppearance::Transparent;
                         // 标题空着的话任务栏是一条空白条目，用户根本认不出这个窗口
                         options.titlebar = Some(gpui_kit::TitlebarOptions {
                             title: Some("红果".into()),
@@ -309,15 +385,12 @@ fn main() {
                         let view = cx.new(|cx| shell::Shell::new(state.clone(), window, cx));
                         built = Some(view.clone());
                         // Root 是 GPUI 场景最底层，gpui-component 的 RootPlugin
-                        // 默认给它铺 `theme.background`；系统后端必须在这里把
-                        // Root 也改成透明，否则整个窗内都是这块不透明黑。
+                        // 默认给它铺 `theme.background`；系统播放器要透出下层
+                        // 视频位，必须在这里把 Root 改成透明，否则整个窗内都
+                        // 是这块不透明黑。
                         cx.new(|cx| {
-                            let root = gpui_kit::base::Root::new(view, window, cx);
-                            if system_backend {
-                                root.bg(gpui_kit::rgba(0x00000000))
-                            } else {
-                                root
-                            }
+                            gpui_kit::base::Root::new(view, window, cx)
+                                .bg(gpui_kit::rgba(0x00000000))
                         })
                     },
                 )
@@ -426,6 +499,12 @@ fn build_app_state() -> Arc<AppStateInner> {
     // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮；策略每轮
     // 现读设置，用户在设置页改了下轮就生效。
     hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
+    // 设备生命周期（Tauri bootstrap device.rs 同款）：匿名/死档案自动注册，
+    // 失败 24h 退避。匿名可读不可播，注册成功才有取流。
+    hongguo_service::runtime::spawn({
+        let state = state.clone();
+        async move { hongguo_service::device::ensure_registered(&state).await }
+    });
     state
 }
 

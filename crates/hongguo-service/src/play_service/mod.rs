@@ -21,7 +21,8 @@ const COMPAT_PREFETCH_LIMIT: u32 = 1;
 /// 设备继续在自动连播时黑屏等待。
 ///
 /// 两路档位不同：在线流按 `prefetch_episodes` 全量铺，兼容预转只铺
-/// [`COMPAT_PREFETCH_LIMIT`] 集——前者是头部 8MB 有界预填，后者是整集转码。
+/// [`COMPAT_PREFETCH_LIMIT`] 集——前者只填开头一段（正在播的那一集才填整集），
+/// 后者是整集转码。
 pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vid_index: u32) {
     let count = state.settings().prefetch_episodes;
     for offset in online_offsets(count) {

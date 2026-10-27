@@ -7,12 +7,11 @@ import type { Series } from '@/service/schema';
 import { pickNextSeason } from '../season';
 
 /**
- * 剧终接力与连播锁定（hgplayer series-end 同款）。
+ * 剧终接力与连播锁定。
  *
  * 本季最后一集播完（或连播中滚/点过末集）：优先自动接**下一季**第 1 集
- * ——「相关作品·系列」（官方 plan 接口）里当前剧的下一条，即 hgplayer
- * NextSeason 的数据面；没有下一季时：信息流上下文跟随宿主刷下一条推荐
- * （hgplayer K() 的 X(1) 同款），无宿主上下文则回落「猜你喜欢」第一条。
+ * ——「相关作品·系列」（官方 plan 接口）里当前剧的下一条；没有下一季时：
+ * 信息流上下文跟随宿主刷下一条推荐，无宿主上下文则回落「猜你喜欢」第一条。
  * 都落空才提示已是最后一集。起播时就拉好相关列表，剧终时通常已就绪。
  *
  * 连播锁定（bingeSeriesId）：信息流里主动选了某集 = 要追这部，锁定后
@@ -56,7 +55,7 @@ export function useBingeRelay(params: {
     const works = related?.works ?? [];
     // 下一季按季数挑（大于当前季的最小已上线季）：服务端顺序不可信
     // （实测《逆江湖》各季乱序，works[idx+1] 会跳季/倒退）。判不出季数
-    // 才退回 hgplayer 同款「列表下一条」，并加未上线护栏（episodeCnt 0
+    // 才退回「列表下一条」，并加未上线护栏（episodeCnt 0
     // = 预约季，接过去必然播不了）。
     const selfIdx = works.findIndex((w) => w.seriesId === seriesId);
     const legacyNext = selfIdx >= 0 ? works[selfIdx + 1] : undefined;
@@ -64,7 +63,7 @@ export function useBingeRelay(params: {
       pickNextSeason(works, seriesId, currentSeries?.title ?? '') ??
       (legacyNext && legacyNext.episodeCnt > 0 ? legacyNext : undefined);
     if (nextSeason) {
-      // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集。点名跳转
+      // toast「即将播放下一季」+ 直接开播第 1 集。点名跳转
       // 让首页把游标对到下一季（流里没有就钉最前），锁连播延续切集语义
       toast.success(tf('player.playNextSeason', { title: nextSeason.title }));
       setSlideDir(1);
@@ -73,8 +72,8 @@ export function useBingeRelay(params: {
       return;
     }
     if (onWheelStep) {
-      // 信息流没有下一季：跟随宿主刷下一条推荐（hgplayer X(1) 同款；
-      // 已到底时宿主原地驻留）。未接管成功，闸门保持开
+      // 信息流没有下一季：跟随宿主刷下一条推荐（已到底时宿主原地驻留）。
+      // 未接管成功，闸门保持开
       setSlideDir(1);
       onWheelStep(1);
       seriesEndBusy.current = false;
@@ -107,7 +106,7 @@ export function useBingeRelay(params: {
       const next = vidIndex + delta;
       if (next < 1) return;
       // 连播模式下滚到尾部要有交代，静默不动像坏了。墙上的处置走剧终接力
-      // （hgplayer Ns()→hc() series-end 同款：滚/点过末集也算剧终）；
+      // （滚/点过末集也算剧终）；
       // 下载面板开着不接力（切剧会把面板连同勾选一起吃掉），退回提示。
       const total = currentSeries?.episodes.length ?? 0;
       if (total > 0 && next > total) {

@@ -96,11 +96,16 @@ mount(App);
   need no import. A lowercase tag is a compile error.
 - **Imports come from `nsh`** (primitives: `View`, `Text`, `Scroll`, `Input`, `Overlay`, `Image`, `List`, `Canvas`,
   `WebView`, `Video`, and the reactive API) and from **`nsh/base`** (the unstyled components: `Button`, `Checkbox`,
-  `Radio`, `RadioGroup`, `Switch`, `Tab`, `Tabs`, `NavStack`, `NavPage`, `createNavStack`, `Dialog`, `SafeAreaView`,
-  `safeArea`, `safeAreaInsets`, `AlertDialog`, `Keyboard`, `keyboardFrame`, `KeyboardAvoidingView`, `Popover`, `Menu`,
-  `ContextMenu`, `MenuItem`, `MenuSeparator`, `Submenu`, `Tooltip`, `Sheet`, `TextView`, `SelectionArea`).
+  `Radio`, `RadioGroup`, `Switch`, `Tab`, `Tabs`, `Collapsible`, `Progress`, `ResizablePanel`, `ResizablePanelGroup`,
+  `DockArea`, `NavStack`, `NavPage`, `createNavStack`, `Dialog`, `SafeAreaView`, `safeArea`, `safeAreaInsets`,
+  `AlertDialog`, `Keyboard`, `keyboardFrame`, `KeyboardAvoidingView`, `Popover`, `Menu`, `ContextMenu`, `MenuItem`,
+  `MenuSeparator`, `Submenu`, `Tooltip`, `Sheet`, `TextView`, `SelectionArea`).
   `nsh/image`, `nsh/list`, `nsh/canvas`, `nsh/webview`, `nsh/video` still export the same values, deprecated: import
   from `nsh`.
+- **A control is a base component, not a styled pressable.** `Tabs` and `Switch` own the role, the selected state and
+  the keyboard of their kind; a `Button` with `role="tab"` or `role="switch"` does not. Same for `Collapsible`
+  (disclosure), `Progress` (the progress-bar role, range and value) and `ResizablePanelGroup` / `DockArea` (the drags,
+  the handles' role and the layout data).
 - **There is no React.** No `useState`, no `useEffect`, no `key`, no reconciliation. `signal` / `computed` /
   `effect` / `batch` / `untracked` / `cleanup` / `context` replace it, and `solid-js` is refused by the bundler.
 - **Styles: `class` is Tailwind, `style` is an object.** `class="rounded-lg px-4"`; `style={{ borderRadius: 12, padding: 24 }}`
@@ -228,7 +233,10 @@ test("counts taps", async () => {
   `chooseMenuItem`, `wait`, `waitFor`, `waitUntil`, `back`, `setViewport`, `setColorScheme`, `screenshot`, and reads
   `count`, `shows`, `enabled`, `texts`, `value`, `storage`, `dialogs`, `menu`, `requests`, `clipboard`.
 - Headless behaves as **iOS** unless `open` is given `platform: "android"`; give `platform: "macos"` (or another
-  desktop) to get a mouse and a keyboard. `screenshot()` needs a real platform (`--target`).
+  desktop, or `"web"` for the desktop idiom in a browser) to get a mouse and a keyboard. `screenshot()` needs a real
+  platform (`--target`).
+- Tests run under the **`capabilities` the app's `nsh.json` declares**, as on a device: what it does not declare is
+  refused in the test too. A test that reaches an undeclared host now fails where it used to pass.
 - `nsh test <entry>` with steps on standard input drives an app without a test file:
   `echo 'await app.press("label:Tap")' | nsh test App.tsx`.
 - A Rust root is tested in `cargo test` with `nsh_testing::Headless`, and from TSX with `open(".")`.
@@ -291,7 +299,8 @@ Do not report an NSH change as done until:
 1. `nsh check <entry>` passes — it is the only command that checks types. Prove it does by breaking one type on
    purpose once, if you have never seen it catch anything.
 2. `nsh test <app>` passes — and for a behavior change, a test that presses, types or scrolls exists. Tests that only
-   call internal functions prove nothing.
+   call internal functions prove nothing. The test runs under the app's own `capabilities`, so an undeclared network
+   host fails here just as it would on a device.
 3. For a UI change, `nsh run <app>` shows it, and `nsh test <entry> --trace` shows the mount items and commit times
    did not regress.
 4. **Run the tests on a real platform** — `nsh test <app> --target macos|windows|linux|ios|android|web` runs the

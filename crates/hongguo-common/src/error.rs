@@ -42,6 +42,13 @@ pub enum AppError {
     #[error("{0}")]
     Auth(String),
 
+    /// 服务端业务拒绝（重复收藏、风控、频控等）。transparent：同
+    /// [`AppError::Auth`] 口径——服务端给的原因对用户是有效信息，
+    /// 套「视频处理失败」这类通用文案反而误导；i18n 资源刻意**不提供**
+    /// `error.rejected` 译文，让前端落到后端原文透传。
+    #[error("{0}")]
+    Rejected(String),
+
     #[error("参数错误: {0}")]
     InvalidArgs(String),
 
@@ -83,6 +90,7 @@ impl AppError {
             AppError::Decrypt(_) => "error.decrypt",
             AppError::Media(_) => "error.media",
             AppError::Auth(_) => "error.auth",
+            AppError::Rejected(_) => "error.rejected",
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",
@@ -142,5 +150,14 @@ mod tests {
             AppError::Cancelled.i18n_key(),
             AppError::Io("x".into()).i18n_key()
         );
+    }
+
+    #[test]
+    fn rejected_keeps_server_message_verbatim() {
+        // 服务端拒绝的原因（已添加过该表情 / 风控…）要原样透传，
+        // 不加类别前缀——前缀会把「重复收藏」说成「视频处理失败」。
+        let e = AppError::Rejected("已添加过该表情".into());
+        assert_eq!(e.i18n_key(), "error.rejected");
+        assert_eq!(e.to_string(), "已添加过该表情");
     }
 }

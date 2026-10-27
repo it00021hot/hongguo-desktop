@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { tf } from '@/locales';
 import { UpdateContext, type UpdateContextValue, type UpdatePhase } from './update-context';
 
-/** 「稍后」记到 localStorage：同版本启动检查不再自动弹（对齐 hgplayer） */
+/** 「稍后」记到 localStorage：同版本启动检查不再自动弹 */
 const DISMISSED_KEY = 'hongguo.update.dismissedVersion';
 
 export function UpdateProvider({ children }: { children: React.ReactNode }) {

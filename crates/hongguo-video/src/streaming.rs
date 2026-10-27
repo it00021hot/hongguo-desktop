@@ -276,9 +276,9 @@ fn find_fourcc(buf: &[u8], needle: &[u8; 4], from: usize) -> Option<usize> {
 /// 结束偏移（绝对坐标 = `base + 头部推算出的盒尾`）。
 ///
 /// 盒本体允许伸出缓冲外——mdat 的 size 写在 8 字节头里，256KB 首探就
-/// 足够算出「mdat 之后 = 尾部 moov 的落点」，这正是 hgplayer 盒游走
-/// `it(f, f+64*1024)` 的跳转依据。size==1 按 largesize（16 字节头）解析；
-/// size==0（到 EOF）视同解析终止（hgplayer 的 Ht 同样不认）。
+/// 足够算出「mdat 之后 = 尾部 moov 的落点」，这也是流式取数按 64KB
+/// 步进盒游走的跳转依据。size==1 按 largesize（16 字节头）解析；
+/// size==0（到 EOF）视同解析终止（同样不当作合法盒）。
 pub fn top_boxes_end(buf: &[u8], base: u64) -> Option<u64> {
     let mut pos = 0usize;
     let mut end = base;

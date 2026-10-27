@@ -3,7 +3,7 @@ import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
 
 /**
- * 最小化自动暂停（对齐 hgplayer：窗口最小化时自动暂停，恢复后继续播放）。
+ * 最小化自动暂停：窗口最小化时自动暂停，恢复后继续播放。
  *
  * 判定走 Rust 侧：WebView2 **最小化时不派发 visibilitychange**（dev 实测
  * 最小化后 visibilityState 恒 "visible"），前端无从感知——lib.rs 在窗口

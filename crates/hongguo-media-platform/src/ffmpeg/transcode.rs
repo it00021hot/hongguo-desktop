@@ -27,8 +27,8 @@ pub struct TranscodeRequest<'a> {
 
 /// 转码一集。
 ///
-/// 视频参数对齐现版：H.264 + yuv420p。音轨是**直通**（`-c:a copy`），与软解路径
-/// 的 AAC 搬运保持一致——源音轨解密后已是明文 AAC，重新编码既慢又多一轮有损压缩，
+/// 视频参数对齐现版：H.264 + yuv420p。音轨是**直通**（`-c:a copy`），与平台编码
+/// 路径的 AAC 搬运保持一致——源音轨解密后已是明文 AAC，重新编码既慢又多一轮有损压缩，
 /// 还会让「装不装 ffmpeg」产出两种不同的音频。
 pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> AppResult<()> {
     let Some(ffmpeg) = ffmpeg_path() else {

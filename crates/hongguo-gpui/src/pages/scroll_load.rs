@@ -31,9 +31,27 @@ impl ScrollLoad {
         }
     }
 
+    /// 以外部滚动句柄构造：虚拟列表（`uniform_list`）的滚动状态在它自己的
+    /// `UniformListScrollHandle` 里，把其 base handle 递进来，[`Self::reset`]
+    /// 与哨兵判定都作用于它。
+    pub(crate) fn for_handle(handle: ScrollHandle) -> Self {
+        Self {
+            handle,
+            armed: true,
+        }
+    }
+
     /// 挂到滚动容器：`.track_scroll(scroll_load.handle())`。
     pub(crate) fn handle(&self) -> &ScrollHandle {
         &self.handle
+    }
+
+    /// 换键（tab/筛选/频道/日期）后归零：滚动回顶（Tauri 换 key 重挂载
+    /// 滚动容器同语义——新列表从顶部看起），武装态一并复位。
+    pub(crate) fn reset(&mut self) {
+        self.handle
+            .set_offset(gpui_kit::point(gpui_kit::px(0.0), gpui_kit::px(0.0)));
+        self.armed = true;
     }
 
     /// 每帧（render 开头）判一次：返回真 = 该续页了，调用方跑本页的

@@ -1,11 +1,12 @@
 //! 下半区 tab 栏 + 选集网格（Tauri Tabs 三触发器同序同计数；选集格 =
 //! 序号 + 第 N 集 + 右侧时长角标，续播集描边高亮）。
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, div};
+use gpui_kit::{ElementId, Role, SharedString, Toggled, div};
 
 use super::{DetailTab, DetailView};
 
@@ -46,6 +47,7 @@ impl DetailView {
                     h_flex().child(
                         h_flex()
                             .id("detail-tabs")
+                            .role(Role::RadioGroup)
                             .h(gpui_kit::px(36.0))
                             .p(gpui_kit::px(3.0))
                             .items_center()
@@ -53,12 +55,22 @@ impl DetailView {
                             .bg(theme.muted)
                             .children(tabs.map(|(tab, label, count)| {
                                 let active = self.tab == tab;
-                                div()
-                                    .id(ElementId::from(format!("detail-tab-{:?}", tab)))
+                                let text = if count > 0 {
+                                    format!("{label} {count}")
+                                } else {
+                                    label.to_string()
+                                };
+                                BaseButton::new(ElementId::from(format!("detail-tab-{:?}", tab)))
+                                    .role(Role::RadioButton)
+                                    .aria_toggled(if active {
+                                        Toggled::True
+                                    } else {
+                                        Toggled::False
+                                    })
+                                    .accessibility_label(text.clone())
                                     .h_full()
                                     .px_2()
                                     .py_1()
-                                    .flex()
                                     .items_center()
                                     .rounded(gpui_kit::px(8.0))
                                     .text_sm()
@@ -71,16 +83,20 @@ impl DetailView {
                                         s.text_color(theme.muted_foreground)
                                             .hover(|h| h.text_color(theme.foreground))
                                     })
+                                    // base Button 强制 line_height(relative(1.))，
+                                    // 文字行盒会比默认矮一截；钉回默认行高才与原
+                                    // div 像素一致。
+                                    .line_height(gpui_kit::phi())
+                                    .focus_visible(|s| {
+                                        s.border_color(theme.ring)
+                                            .shadow(crate::tokens::focus_ring(theme))
+                                    })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         // 统一走 select_tab：相关推荐 tab 要顺带
                                         // 拉预约态（未上线卡的预约钮数据源）
                                         this.select_tab(tab, cx);
                                     }))
-                                    .child(if count > 0 {
-                                        format!("{label} {count}")
-                                    } else {
-                                        label.to_string()
-                                    })
+                                    .child(text)
                             })),
                     ),
                 )
@@ -114,10 +130,17 @@ impl DetailView {
             .gap_3()
             .children(series.episodes.iter().map(|ep| {
                 let current = ep.vid_index == resume_ep;
-                div()
-                    .id(ElementId::from(format!("detail-ep-{}", ep.vid_index)))
+                let episode_label =
+                    crate::i18n::tf("player.episodeNo", &[("index", &ep.vid_index.to_string())]);
+                // 每格可点 = 播放该集：走 base::Button 承担 role/focus/Enter-Space
+                // （Tauri 侧同款 `<button type="button">`）。续播集描边只是「上次
+                // 看到的位置」的视觉态、不是选择态，故不加 aria_selected。
+                BaseButton::new(ElementId::from(format!("detail-ep-{}", ep.vid_index)))
+                    .accessibility_label(episode_label.clone())
                     .flex()
                     .items_center()
+                    // base Button 强制 justify_center，这里改回左对齐，和原来的 div 一致。
+                    .justify_start()
                     .gap_3()
                     .px_4()
                     .py_2p5()
@@ -133,6 +156,13 @@ impl DetailView {
                     })
                     .hover(|s| s.border_color(theme.foreground))
                     .cursor_pointer()
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                    // 截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(theme))
+                    })
                     .on_click({
                         let sid = self.series_id.clone();
                         let vid_index = ep.vid_index;
@@ -154,12 +184,13 @@ impl DetailView {
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child(format!("{}", ep.vid_index)),
                     )
-                    .child(div().flex_1().min_w_0().text_sm().child(SharedString::from(
-                        crate::i18n::tf(
-                            "player.episodeNo",
-                            &[("index", &ep.vid_index.to_string())],
-                        ),
-                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .child(SharedString::from(episode_label)),
+                    )
                     .children((ep.duration > 0).then(|| {
                         div()
                             .flex_shrink_0()

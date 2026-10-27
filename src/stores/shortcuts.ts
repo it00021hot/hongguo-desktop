@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-/** 播放器可自定义的动作（对齐 hgplayer：默认与抖音网页版一致，
+/** 播放器可自定义的动作（默认与抖音网页版一致，
  *  快进快退默认 ← →） */
 export type ShortcutAction = 'playPause' | 'seekBack' | 'seekForward' | 'stepPrev' | 'stepNext';
 

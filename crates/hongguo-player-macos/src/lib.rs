@@ -1,8 +1,7 @@
 //! 红果桌面版 macOS 系统播放器：AVPlayer + AVPlayerLayer + AVAssetResourceLoader。
 //!
 //! 与 Windows 的 `hongguo-player-windows` 一一对应，契约在 `hongguo-player-api`。
-//! 平台专属依赖（objc2 / AppKit / AVFoundation）只在本 crate；设计见
-//! `docs/gpui-video-system-backend.md` 与 `docs/gpui-system-player-status.md`。
+//! 平台专属依赖（objc2 / AppKit / AVFoundation）只在本 crate。
 
 #![cfg(target_os = "macos")]
 

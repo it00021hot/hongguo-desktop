@@ -1,5 +1,10 @@
 use super::*;
 
+/// 侧栏账户头像的显示边长（物理像素）：侧栏画的是 `size_5()`（1.25rem =
+/// 20px）。头像按这个尺寸预缩进 GPU——渲染器没有 mipmap，原图直接缩到
+/// 20px 画出来必然糊（见 [`crate::cover_img::decode`]）。
+const SIDEBAR_AVATAR_PX: u32 = 20;
+
 impl super::Shell {
     /// 账号变化（登录/登出）：头像重拉 + 追更角标重算。
     pub(super) fn on_account_changed(&mut self, cx: &mut Context<Self>) {
@@ -30,7 +35,7 @@ impl super::Shell {
             let _ = this.update(cx, |shell, cx| {
                 shell.account_avatar_pending = false;
                 if let Ok(bytes) = bytes
-                    && let Some(avatar) = crate::cover_img::decode(&bytes)
+                    && let Some(avatar) = crate::cover_img::decode(&bytes, SIDEBAR_AVATAR_PX)
                 {
                     shell.account_avatar = Some(avatar);
                     shell.account_avatar_url = Some(url);

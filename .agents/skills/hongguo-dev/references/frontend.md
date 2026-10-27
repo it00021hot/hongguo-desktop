@@ -94,7 +94,7 @@ export const useUiStore = create<UiState>()(
 - Tailwind v4 CSS-first：设计令牌（oklch）在 `src/styles/index.css`，**没有 tailwind.config**；暗色靠 `<html class="dark">` 的 `@custom variant`。
 - 组件内原子类 + `cn()`（clsx + tailwind-merge）；shadcn 件用 cva 变体。自定义全局类（`hg-loadbar`、`scrollbar-thin` 等）写在 index.css，不散落。
 - 新颜色用现有令牌（`bg-background`、`text-muted-foreground`…），别写裸 hex——亮暗主题会漏。
-- **按钮/新 UI 必须保持项目风格**：按钮一律 shadcn `Button` 的 variant（默认 primary）+ 语义令牌类，**禁止硬编码色值覆盖**（`bg-red-500`、裸 hex 之类）。唯一例外：播放器控制栏/互动栏/评论面板内部维持既有的 hgplayer 红色皮肤（`bg-red-500` 是那里的一部分），播放器之外的新组件（详情页/列表页/设置页…）不许模仿。做法：先看 `components/ui/button` 的 variant 与相邻页面同类组件的皮肤，照抄而不是自创。
+- **按钮/新 UI 必须保持项目风格**：按钮一律 shadcn `Button` 的 variant（默认 primary）+ 语义令牌类，**禁止硬编码色值覆盖**（`bg-red-500`、裸 hex 之类）。唯一例外：播放器控制栏/互动栏/评论面板内部维持既有的播放器红色皮肤（`bg-red-500` 是那里的一部分），播放器之外的新组件（详情页/列表页/设置页…）不许模仿。做法：先看 `components/ui/button` 的 variant 与相邻页面同类组件的皮肤，照抄而不是自创。
 - 文件规模：拆分提醒线见 dev-habits『文件规模提醒』（约 300 行）；**新增**组件/hook 文件超 800 行 CI 直接拒（`scripts/check-file-size.sh`）；一组件一文件，组件内逻辑先抽 hooks 再考虑拆文件。
 
 ## 前端测试
@@ -106,3 +106,5 @@ export const useUiStore = create<UiState>()(
 ## 播放器专项（features/player）
 
 最敏感区域：取流/转码兜底/进度持久化/剧终接力/悬浮层状态机/三套交互裁决全在 `features/player/hooks/`（use-playback-source / use-transcode-fallback / use-playback-progress / use-binge-relay / use-player-overlay / use-player-interactions / use-mini-window / use-danmaku-settings）。改动原则：渲染结构不动、逻辑搬家不重写；自带竞态防御（带 key 读时校验、srcKey/cloudCounter 快照），**别当 redundancy 删掉**——每段都是修过的 bug。改完必冒烟：起播→切集→切清晰度→弹幕开关→小屏进出。
+
+- **表情面板定位口径**：浮在发送区**上方**，底边对齐发送区**顶边**——发送区自己的行（附件预览 / 回复目标 / 输入行）永不被面板盖住。评论区主发送框用 `EmojiPickerButton anchorTo="send-area"`（锚点铺满发送区），回复框与弹幕栏是单行输入、贴 trigger 浮起即可（`anchorTo="trigger"`）。两壳口径一致（GPUI 侧见 gpui.md）。自定义 Radix 锚点的两个坑（锚点必须排在 `PopoverTrigger` 之后、锚点要盖住锚定区才跟得上尺寸变化）见 `docs/webview-cdp-testing.md` 坑清单。

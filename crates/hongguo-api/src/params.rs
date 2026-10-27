@@ -1,12 +1,12 @@
 //! 官方 App 接口的请求体（静态类型承载）。
 //!
-//! ⚠️ 这些字段是**照抄现版**（`hongguo.js` / hgplayer）的实测值，改任何一个
+//! ⚠️ 这些字段是**照抄官方客户端**的值，改任何一个
 //! 都会让服务端返回 `Code: 110001`（签名对但参数错）或 200+0。验证时开
 //! `RUST_LOG=debug`：响应字节数 > 0 只说明签名过了，还要看 body 里 `code`
 //! 是不是 0。
 //!
-//! 字段名一律 `#[serde(rename = "…")]` 显式声明服务端字面量（逐值对齐
-//! 抓包，不用 rename_all——服务端字段并非统一命名风格）。
+//! 字段名一律 `#[serde(rename = "…")]` 显式声明服务端字面量
+//! （不用 rename_all——服务端字段并非统一命名风格）。
 
 use std::collections::BTreeMap;
 
@@ -14,7 +14,7 @@ use serde::Serialize;
 
 /// commentapi 互动体系的枚举值。
 ///
-/// ⚠️ 这些值是抓包锁定的服务端契约：错一个数字，服务端就回
+/// ⚠️ 这些值是服务端契约：错一个数字，服务端就回
 /// `103008「无社区功能」` 或 `100103 PARAM_INVALID`——而且**三套体系
 /// （评论 / 剧评 / 弹幕）互相只差一两个数字**。历史上它们散落为字面量，
 /// 被「顺手统一」的风险很高，所以集中声明，使用点只引用。
@@ -35,15 +35,15 @@ pub mod interaction {
     pub const OBJECT_TYPE_VIDEO: i64 = 6;
     pub const OBJECT_TYPE_REVIEW: i64 = 2;
     pub const OBJECT_TYPE_COMMENT: i64 = 8;
-    /// 短剧（整部剧；追更的 do_action 对象，2026-10-15 抓 player v1.2.1 实包）。
+    /// 短剧（整部剧；追更的 do_action 对象）。
     pub const OBJECT_TYPE_SERIES: i64 = 10;
 
     /// `action_type`（articleapi do_action 动作码）：点赞 3/4 之外的动作。
-    /// 追更 34 / 取消追更 35（2026-10-15 抓 player 实包往返三次锁定）。
+    /// 追更 34 / 取消追更 35。
     pub const ACTION_TYPE_FOLLOW: i64 = 34;
     pub const ACTION_TYPE_UNFOLLOW: i64 = 35;
 
-    /// 追更列表频道（get_user_action `action_channel`，抓包锁定）。
+    /// 追更列表频道（get_user_action `action_channel`）。
     pub const ACTION_CHANNEL_FOLLOW: i64 = 9;
 
     /// `comment_type`：内容类型（剧评**发送**时是 0，列表 / 点赞是 2）。
@@ -84,11 +84,45 @@ pub mod interaction {
     pub const LIST_SOURCE_REVIEW: i64 = 1;
     pub const LIST_SOURCE_REVIEW_REPLIES: i64 = 501;
     pub const LIST_SOURCE_COMMENT_REPLIES: i64 = 504;
-    /// 创作者主页的作品 tab（commentapi/user/profile，2026-10-15 官方实包：
+    /// 创作者主页的作品 tab（commentapi/user/profile：
     /// 详情页点创作者 → 主页，作品列表 tab_type=23 / sub_tab_type=22）
     pub const LIST_SOURCE_PROFILE_WORKS: i64 = 1506;
     pub const PROFILE_TAB_WORKS: i64 = 23;
     pub const PROFILE_SUB_TAB_WORKS: i64 = 22;
+}
+
+/// 表情域参数。
+///
+/// 表情列表端点 `/reading/ugc/comment/emoticon/v` 用 `search_type` 分档，
+/// 四档共用同一响应结构。
+pub mod emoticon {
+    /// `search_type=1`：关键词搜索（`keyword` 带 `+` 前缀 = 前缀匹配）。
+    pub const SEARCH_TYPE_SEARCH: i64 = 1;
+    /// `search_type=2`：第三方表情库（GIF tab，分页 `offset`/`next_offset`）。
+    pub const SEARCH_TYPE_THIRD_PARTY: i64 = 2;
+    /// `search_type=3`：官方每次开表情面板都会并发拉的一档（`count=99`、
+    /// 无 `keyword`）。收藏前后该档都返回空列表，官方
+    /// 面板也没有对应入口——本仓不实现这一档。
+    pub const SEARCH_TYPE_COLLECTED: i64 = 3;
+    /// `search_type=4`：我上传的自定义表情（固定 `keyword=profile`）。
+    pub const SEARCH_TYPE_MINE: i64 = 4;
+
+    /// 自定义表情的 `keyword` 取值（官方恒为 `profile`）。
+    pub const OWN_EMOTICON_KEYWORD: &str = "profile";
+
+    /// `collect_type`：1 = 添加（收藏为我的表情）。
+    pub const COLLECT_TYPE_ADD: i64 = 1;
+    /// `collect_type`：2 = 删除（从我的表情里移除）。
+    pub const COLLECT_TYPE_DELETE: i64 = 2;
+
+    /// `image_type`：1 = 静态图 / 2 = 动图。
+    pub const IMAGE_TYPE_STATIC: i64 = 1;
+    pub const IMAGE_TYPE_ANIMATED: i64 = 2;
+
+    /// `business_param.emoji_scene_type`：2 = 第三方表情 / 4 = 自定义表情。
+    /// 本地图片评论**不带**该字段。
+    pub const SCENE_TYPE_THIRD_PARTY: i64 = 2;
+    pub const SCENE_TYPE_OWN: i64 = 4;
 }
 
 // ---------------------------------------------------------------- 播放域路径
@@ -96,19 +130,22 @@ pub mod interaction {
 /// 分集详情接口路径。
 pub const DETAIL_PATH: &str = "/novel/player/multi_video_detail/preload/v1";
 
-/// 清晰度列表（取流地址）批量接口路径。
+/// 清晰度列表（取流地址）批量接口路径（dr_scene=player，起播/切剧形态）。
 ///
-/// ⚠️ 必须打 **lq 域**（`crate::client::LQ_API_ORIGIN`）。2026-10-14
-/// 抓包实锤：批量形态对**全新注册的真机设备**也回 200+0（hgplayer 自己
-/// 4 连空），真实播放走的是单集端点 [`SINGLE_MODEL_PATH`]（hgplayer：
-/// 批量空 → 回落单集 → CDN 直链）。
-pub const MODEL_PATH: &str = "/novel/player/multi_video_model/player/v1";
+/// 起播时刻打本端点（6 vid：当前 +
+/// 信息流后续，dr_scene=player）；纯滑动预取另有 dr_scene=preload 形态
+/// （端点 `/novel/player/multi_video_model/preload/v1`，biz_param 全同，
+/// 本仓无该场景不打）。剧内切集/单集取流走 [`SINGLE_MODEL_PATH`]。
+///
+/// ⚠️ 必须打 **lq 域**（`crate::client::LQ_API_ORIGIN`）。批量形态
+/// 曾对全新注册设备回 200+0，现已恢复发货。
+pub const PLAYER_MODEL_PATH: &str = "/novel/player/multi_video_model/player/v1";
 
-/// 单集取流端点（hgplayer 现役路径），2026-10-14 实测现有设备直接可用
-/// （code=0）。
+/// 单集取流端点（现有设备直接可用，
+/// code=0）。
 pub const SINGLE_MODEL_PATH: &str = "/novel/player/video_model/v1/";
 
-/// 详情页头部元信息端点（2026-10-07 抓 hgplayer 详情页锁定）。
+/// 详情页头部元信息端点。
 pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
 
 // ---------------------------------------------------------------- 详情 biz_param
@@ -126,7 +163,7 @@ pub struct DetailBizParam {
     pub need_all_video_definition: bool,
     #[serde(rename = "need_mp4_align")]
     pub need_mp4_align: bool,
-    /// ⚠️ 抓包形态是**字符串**（"900"），不是数字。
+    /// ⚠️ 官方形态是**字符串**（如 "1078"），不是数字。
     #[serde(rename = "screen_width_px")]
     pub screen_width_px: String,
     #[serde(rename = "source")]
@@ -149,15 +186,19 @@ pub struct DetailPayload {
 }
 
 /// 构造分集详情请求体。
+///
+/// 图片缩略规格与屏宽随设备档案（
+/// 结构 [type3=大图/type4=小图]，官方 1080 屏发 1081/99——宽度跟随设备
+/// 屏宽，本仓档案 1078 与 tab/v 同源）。
 pub fn detail_payload(series_id: &str) -> DetailPayload {
     DetailPayload {
         biz_param: DetailBizParam {
             detail_page_version: 0,
             disable_digg_stat: false,
-            image_shrink_datas_str: "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjcyLCJzaHJpbmtfdHlwZSI6NH1d\n".to_string(),
+            image_shrink_datas_str: "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==".to_string(),
             need_all_video_definition: false,
             need_mp4_align: false,
-            screen_width_px: "900".to_string(),
+            screen_width_px: "1078".to_string(),
             source: 7,
             use_os_player: false,
             use_server_dns: false,
@@ -169,7 +210,7 @@ pub fn detail_payload(series_id: &str) -> DetailPayload {
 
 // ---------------------------------------------------------------- 取流 biz_param
 
-/// 取流 biz_param 的公共字段（批量/单集只差 `video_platform` 与
+/// 取流 biz_param 的公共字段（批量/单集只差 `video_platform`、`source`、
 /// `from_video_id` 是否在场，见各自 payload）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelBizParam {
@@ -181,9 +222,9 @@ pub struct ModelBizParam {
     pub disable_digg_stat: bool,
     #[serde(rename = "disable_video_relate_book")]
     pub disable_video_relate_book: bool,
-    /// 仅单集形态在场（2026-10-14 hgplayer 抓包）。
-    #[serde(rename = "from_video_id")]
-    pub from_video_id: String,
+    /// 仅单集形态在场（官方切集体 `""`）；批量体无此键。
+    #[serde(rename = "from_video_id", skip_serializing_if = "Option::is_none")]
+    pub from_video_id: Option<String>,
     #[serde(rename = "need_all_video_definition")]
     pub need_all_video_definition: bool,
     #[serde(rename = "need_mp4_align")]
@@ -192,7 +233,10 @@ pub struct ModelBizParam {
     pub use_os_player: bool,
     #[serde(rename = "use_server_dns")]
     pub use_server_dns: bool,
-    /// 批量 1024 / 单集 3（抓包实锤）。
+    /// 仅单集形态在场（官方切集体 `4`）；批量体无此键。
+    #[serde(rename = "source", skip_serializing_if = "Option::is_none")]
+    pub source: Option<i64>,
+    /// 批量 1024 / 单集 3（官方两形态一致）。
     #[serde(rename = "video_platform")]
     pub video_platform: i64,
 }
@@ -200,7 +244,7 @@ pub struct ModelBizParam {
 /// 批量取流请求体（`dr_scene` 与端点同名 "player"）。
 ///
 /// `mixed_video_id_map` 的 key 是「清晰度分组 id」，现版用 `"1004"`；
-/// 值是「当前 + 信息流后续几部」的 vid 列表（hgplayer 一次 ~5 个）。
+/// 值是「当前 + 信息流后续几部」的 vid 列表（一次 ~5 个）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelPayload {
     #[serde(rename = "biz_param")]
@@ -211,29 +255,58 @@ pub struct ModelPayload {
     pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
 }
 
-/// 构造批量取流请求体。
-pub fn model_payload(vids: &[String]) -> ModelPayload {
+/// 构造批量请求体（预取/真播共用，仅 dr_scene 不同——两个场景的
+/// biz_param 逐字段一致）。
+fn batch_model_payload(
+    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
+    dr_scene: &'static str,
+) -> ModelPayload {
     ModelPayload {
-        biz_param: ModelBizParam {
-            detail_page_version: 0,
-            device_level: 3,
-            disable_digg_stat: false,
-            disable_video_relate_book: false,
-            from_video_id: String::new(),
-            need_all_video_definition: true,
-            need_mp4_align: false,
-            use_os_player: false,
-            use_server_dns: false,
-            video_platform: 1024,
-        },
-        dr_scene: "player",
-        mixed_video_id_map: BTreeMap::from([("1004".to_string(), vids.to_vec())]),
+        biz_param: batch_model_biz_param(),
+        dr_scene,
+        mixed_video_id_map: mixed_video_id_map.clone(),
     }
 }
 
-/// 单集取流请求体（2026-10-14 hgplayer 抓包逐值对齐）：
-/// `video_platform:3`（批量是 1024）、`from_video_id:""` 在场、
-/// `content_type:1004` = 清晰度分组 id、`video_id` 单集。
+/// 构造批量**真播/起播**请求体（端点 [`PLAYER_MODEL_PATH`]，dr_scene=player）。
+///
+/// 官方两处批量：**起播/切剧时刻**用本形态
+/// （6 vid：当前 + 信息流后续）；纯滑动预取另有 dr_scene=preload 形态
+/// （端点 `/novel/player/multi_video_model/preload/v1`，biz_param 全同），
+/// 本仓预取挂在起播时刻，统一走本形态。
+///
+/// `mixed_video_id_map` 的 key 是**条目 content_type 的原样字符串**
+/// （key 错配 → 空响应；漫剧 feed ct=1004→"1004"、
+/// 真人剧 ct=1→"1"、书城 cell 条目 1001→"1001"）。
+pub fn player_model_payload(mixed_video_id_map: &BTreeMap<String, Vec<String>>) -> ModelPayload {
+    batch_model_payload(mixed_video_id_map, "player")
+}
+
+/// 批量形态（player/preload 共用）的 biz_param——官方体无 `from_video_id`
+/// 与 `source` 键。
+fn batch_model_biz_param() -> ModelBizParam {
+    ModelBizParam {
+        detail_page_version: 0,
+        device_level: 3,
+        disable_digg_stat: false,
+        disable_video_relate_book: false,
+        from_video_id: None,
+        need_all_video_definition: true,
+        need_mp4_align: false,
+        source: None,
+        use_os_player: false,
+        use_server_dns: false,
+        video_platform: 1024,
+    }
+}
+
+/// 单集取流请求体：
+/// `video_platform:3`（批量是 1024）、`from_video_id:""` 与 `source:4`
+/// 在场（批量体两键均无）。
+///
+/// ⚠️ `content_type` 是**这一集所属剧的真实类型**（官方切集体：漫剧
+/// 1004、真人剧 1、书城条目 1001，随剧变，不是协议常量）——调用方从
+/// 注册表取，见 `crate::play_url::content_type_of`。
 #[derive(Debug, Clone, Serialize)]
 pub struct SingleModelPayload {
     #[serde(rename = "biz_param")]
@@ -244,29 +317,35 @@ pub struct SingleModelPayload {
     pub video_id: String,
 }
 
+/// 单集请求 `content_type` 的兜底值：注册表查不到类型时只能填一个，
+/// 服务端对该字段容错（错值照常返回流表）；1004 是早期探索时代的
+/// 历史值，仅作未知类型的占位，已知类型一律走注册表真值。
+pub const SINGLE_CONTENT_TYPE_FALLBACK: i64 = 1004;
+
 /// 构造单集取流请求体。
-pub fn single_model_payload(vid: &str) -> SingleModelPayload {
+pub fn single_model_payload(vid: &str, content_type: i64) -> SingleModelPayload {
     SingleModelPayload {
         biz_param: ModelBizParam {
             detail_page_version: 0,
             device_level: 3,
             disable_digg_stat: false,
             disable_video_relate_book: false,
-            from_video_id: String::new(),
+            from_video_id: Some(String::new()),
             need_all_video_definition: true,
             need_mp4_align: false,
+            source: Some(4),
             use_os_player: false,
             use_server_dns: false,
             video_platform: 3,
         },
-        content_type: 1004,
+        content_type,
         video_id: vid.to_string(),
     }
 }
 
 // ---------------------------------------------------------------- 详情页头部 meta
 
-/// 详情页头部元信息 biz_param（2026-10-07 抓包逐值对齐）。
+/// 详情页头部元信息 biz_param。
 #[derive(Debug, Clone, Serialize)]
 pub struct VideoDetailBizParam {
     #[serde(rename = "caller_scene")]
@@ -334,9 +413,32 @@ mod tests {
     fn paths_have_no_trailing_slash() {
         // 尾部斜杠会被服务端当成不同接口
         assert!(!DETAIL_PATH.ends_with('/'));
-        assert!(!MODEL_PATH.ends_with('/'));
+        assert!(!PLAYER_MODEL_PATH.ends_with('/'));
         assert!(DETAIL_PATH.contains("/preload/v1"));
-        assert!(MODEL_PATH.contains("/player/v1"));
+        assert!(PLAYER_MODEL_PATH.contains("/player/v1"));
+    }
+
+    #[test]
+    fn player_model_payload_scene_and_grouping() {
+        // 官方起播批量体：dr_scene=player + 分组原样
+        // 回填 + 无 from_video_id / source 键
+        let map = BTreeMap::from([
+            ("1004".to_string(), vec!["v1".to_string()]),
+            ("1".to_string(), vec!["v2".to_string()]),
+        ]);
+        let p = player_model_payload(&map);
+        assert_eq!(p.dr_scene, "player");
+        assert_eq!(p.mixed_video_id_map.len(), 2);
+        let body = serde_json::to_value(&p).unwrap();
+        assert!(
+            body.pointer("/biz_param/from_video_id").is_none(),
+            "官方批量体无 from_video_id 键"
+        );
+        assert!(
+            body.pointer("/biz_param/source").is_none(),
+            "官方批量体无 source 键"
+        );
+        assert_eq!(body["biz_param"]["video_platform"], 1024);
     }
 
     #[test]
@@ -348,29 +450,40 @@ mod tests {
     }
 
     #[test]
-    fn model_payload_wraps_vids_in_mixed_map() {
-        let p = model_payload(&["v123".to_string(), "v456".to_string()]);
+    fn player_model_payload_keeps_groups_verbatim() {
+        // 分组原样回填（key = 条目 content_type 原样串，不重排不映射）
+        let p = player_model_payload(&BTreeMap::from([
+            ("1".to_string(), vec!["v1".to_string()]),
+            (
+                "1004".to_string(),
+                vec!["v123".to_string(), "v456".to_string()],
+            ),
+        ]));
         let vids = p.mixed_video_id_map.get("1004").expect("分组 1004 在场");
         assert_eq!(vids, &["v123".to_string(), "v456".to_string()]);
-        // 2026-10-08 抓包：dr_scene 与端点同名 "player"
-        assert_eq!(p.dr_scene, "player");
+        assert!(p.mixed_video_id_map.contains_key("1"));
         assert!(!p.biz_param.disable_video_relate_book);
         assert_eq!(p.biz_param.video_platform, 1024);
     }
 
     #[test]
     fn single_model_payload_matches_capture() {
-        let p = single_model_payload("v1");
-        assert_eq!(p.content_type, 1004);
+        // 官方切集体：content_type=剧类型（动态）、source:4 在场
+        let p = single_model_payload("v1", 1001);
+        assert_eq!(p.content_type, 1001);
         assert_eq!(p.video_id, "v1");
-        // 单集 video_platform=3、from_video_id 空串在场（hgplayer 抓包形态）
         assert_eq!(p.biz_param.video_platform, 3);
-        assert_eq!(p.biz_param.from_video_id, "");
+        assert_eq!(p.biz_param.from_video_id, Some(String::new()));
+        assert_eq!(p.biz_param.source, Some(4));
+        // 序列化形态：批量体缺席的两键在单集体在场（官方切集体同款）
+        let body = serde_json::to_value(&p).unwrap();
+        assert_eq!(body["biz_param"]["source"], 4);
+        assert_eq!(body["biz_param"]["from_video_id"], "");
     }
 
     #[test]
     fn payloads_serialize_with_server_field_names() {
-        let p = serde_json::to_value(single_model_payload("v1")).unwrap();
+        let p = serde_json::to_value(single_model_payload("v1", 1004)).unwrap();
         assert!(p.get("biz_param").is_some());
         assert!(p.get("content_type").is_some());
         assert!(p["biz_param"].get("need_all_video_definition").is_some());

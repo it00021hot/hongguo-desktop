@@ -18,7 +18,7 @@
     dead_code
 )]
 //!
-//! ## 算法考证（2026-10-11，对照标准 SHA-512 与官方 APK 逐值核验）
+//! ## 算法说明（与标准 SHA-512 逐值对应）
 //!
 //! - `TtHashCore::calculate`：SHA-512 骨架的哈希变体（128 字节块、
 //!   64 字节输出）。K_TABLE / TT_IV 与标准 SHA-512 常量**逐值一致**
@@ -41,7 +41,7 @@
 //! 抓包字节级回归（样本说明见 `tests/fixtures/README.md`）。
 
 /// K 表（160 个 u32 = 80 个 u64，按 (lo, hi) 字对存放）——逐值等于
-/// 标准 SHA-512 的 80 个 K 常量（2026-10-11 对拍核验 0/80 差异），
+/// 标准 SHA-512 的 80 个 K 常量，
 /// 亦以原生 u64 数组见于官方 APK 的 libttcrypto / libbdsword /
 /// libEncryptor。
 const K_TABLE: [u32; 160] = [

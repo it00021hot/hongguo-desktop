@@ -5,7 +5,7 @@ import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
 /**
- * 追更按钮（对齐第三方 player 的 FollowButton 语义）：详情页/列表挂同款。
+ * 追更按钮（对齐官方客户端的追更按钮语义）：详情页/列表挂同款。
  * 状态与乐观逻辑收在 use-follow-state，播放页互动栏是同一份。
  */
 export function FollowButton({

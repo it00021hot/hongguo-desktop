@@ -3,7 +3,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/ca
 import { t, tf } from '@/locales';
 import { useUpdate } from './update-context';
 
-/** 设置页的更新卡片（对齐 hgplayer 的 about 卡）：标题 + 版本行 + 右侧
+/** 设置页的更新卡片：标题 + 版本行 + 右侧
  *  三态按钮（检查更新 / 检查中… / 查看新版本）。 */
 export function UpdateCard() {
   const { phase, version, checked, available, setDialogOpen, checkForUpdate } = useUpdate();

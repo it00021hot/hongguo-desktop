@@ -1,13 +1,17 @@
 //! 弹幕：commentapi 的 comment/list（comment_type=20）。
 //!
-//! 实测口径（2026-10 抓包锁定）：
+//! 协议口径：
 //! - `POST {LQ_API_ORIGIN}/novel/commentapi/comment/list/{group_id}/v1/`，
 //!   **group_id（=分集 vid）在路径里**；
-//! - 参数在 body **顶层**（不包 biz_param），抓包形状见 [`danmaku_payload`]；
+//! - 参数在 body **顶层**（不包 biz_param），见 [`danmaku_payload`]；
 //! - 自定义头 `x-reading-request: {ticket_ms}-{random}`；
-//! - 分页靠 `cursor`（`{"start_offset_time":ms,"end_offset_time":ms}` 30 秒窗口），
-//!   一集要多拉几窗才能拿全，本模块代为循环（上限见 [`MAX_WINDOWS`]）；
+//! - **滚窗协议**：不是一次拉全。起播从当前播放位置（`business_param.
+//!   start_offset_time`）拉一窗（count=90），响应 cursor 原样回传 +
+//!   `start_offset_time` 推进到其 `end_offset_time` 拉下一窗（30 秒窗），
+//!   has_more=false 收尾；窗内还有分页，同样走 cursor；
 //! - 弹幕的**时间轴**在 `comment.expand.offset_time`（毫秒，与 cursor 同单位）。
+//! - ⚠️ 设备风控分（x-medusa/x-helios，签名占位实现）低于门槛时服务端
+//!   把弹幕降级为每窗少量条目即 has_more=false——逐窗拉取仍优于一次拉全。
 //!
 //! 发送（comment/add）需要登录态，登录里程碑落地后再接。
 //!
@@ -33,6 +37,7 @@ use comments::{
     series_comments_payload,
 };
 
+use serde::Serialize;
 use serde_json::Value;
 
 use super::client::ApiEnv;
@@ -46,58 +51,53 @@ use crate::params::interaction::{
 };
 use hongguo_common::{AppError, AppResult};
 
-/// hgplayer 实测的 reading 系 API 主机（取流 multi_video_model/player/v1
+/// reading 系 API 主机（取流 multi_video_model/player/v1
 /// 也在这台机上，见 [`crate::client::LQ_API_ORIGIN`]；commentapi 只在
 /// 这个主机上存在）。
 pub const LQ_API_ORIGIN: &str = crate::client::LQ_API_ORIGIN;
 
-/// 一集最多拉多少个 30 秒窗口（2 小时封顶，防服务端 cursor 异常死循环）。
-const MAX_WINDOWS: usize = 240;
+/// 弹幕窗请求的 `need_danmaku_guide_type`（官方常态值）。
+const DANMAKU_GUIDE_TYPE: i64 = 2;
 
-/// 拉一集的**全部**弹幕（内部按 cursor 窗口循环到 has_more=false）。
-///
-/// `group_id` 是分集 vid，`book_id` 是 series_id——两个都来自剧集档案。
-pub async fn fetch_danmaku_all(
+/// 弹幕必须**随播放进度滚窗**（官方唯一形态）：medusa 风控
+/// 降级下每窗少量条目且 `has_more=false`，不存在「一次拉全」路线——
+/// 官方客户端就是播到哪拉到哪（窗序列 0/30s/60s/90s
+/// 随播放推进）。壳侧按 [`fetch_danmaku_window_page`] + 播放位置推进
+/// 实现（GPUI `advance_danmaku_window` / Tauri 播放页滚窗 effect）。
+/// 注意 `business_param.playlet_item_duration` 仍须传真值毫秒（服务端
+/// 端点校验需要，注释见命令侧）。
+/// 一窗弹幕。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuWindowPage {
+    pub items: Vec<Danmaku>,
+    /// 还有下一窗/下一页。
+    pub has_more: bool,
+    /// 下一窗请求**原样回传**的 cursor（官方协议：cursor 由服务端下发，
+    /// 客户端不改写——里面带着 danmaku_window_count 等服务端状态）。
+    pub next_cursor: String,
+    /// 下一窗的播放位置起点（ms）＝本窗 cursor 的 `end_offset_time`：
+    /// 请求侧 `business_param.start_offset_time`
+    /// 按它推进（cursor [0,30000) → 下一请求 start=30000）。
+    pub next_start_ms: u64,
+}
+
+/// 请求体（business_param
+/// 只有官方这四键）。
+fn danmaku_payload(
     group_id: &str,
     book_id: &str,
-    env: &ApiEnv,
-) -> AppResult<Vec<Danmaku>> {
-    let mut all: Vec<Danmaku> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut cursor = String::new();
-    for _ in 0..MAX_WINDOWS {
-        let page = fetch_danmaku_window(group_id, book_id, &cursor, env).await?;
-        let has_more = page.has_more;
-        cursor = page.next_cursor;
-        for d in page.items {
-            if seen.insert(d.comment_id.clone()) {
-                all.push(d);
-            }
-        }
-        if !has_more {
-            break;
-        }
-    }
-    all.sort_by_key(|d| d.offset_ms);
-    Ok(all)
-}
-
-/// 一窗弹幕。
-struct DanmakuWindow {
-    items: Vec<Danmaku>,
-    has_more: bool,
-    next_cursor: String,
-}
-
-/// 抓包形状的请求体。
-fn danmaku_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
+    start_offset_ms: u64,
+    item_duration_ms: u64,
+    cursor: &str,
+) -> Value {
     serde_json::json!({
         "aid": 8662,
         "business_param": {
             "book_id": book_id,
-            "need_danmaku_guide_type": [],
-            "playlet_item_duration": 60000,
-            "start_offset_time": 0,
+            "need_danmaku_guide_type": [DANMAKU_GUIDE_TYPE],
+            "playlet_item_duration": item_duration_ms,
+            "start_offset_time": start_offset_ms,
         },
         "comment_source": LIST_SOURCE_DANMAKU,
         "comment_type": COMMENT_TYPE_DANMAKU,
@@ -111,19 +111,38 @@ fn danmaku_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
     })
 }
 
-async fn fetch_danmaku_window(
+/// 拉一窗弹幕（官方滚窗协议）。
+///
+/// 官方不是一次拉全：起播从当前播放位置拉一窗（count=90），之后在窗口
+/// 边界回传上一响应的 cursor、`start_offset_time` 推进到其 `end_offset_time`
+/// 拉下一窗；窗内还有分页（has_more=true 继续）。`item_duration_ms` 是
+/// 本集真实时长（官方传 video_model 的 video_duration；解析不出传 0 也能拉）。
+pub async fn fetch_danmaku_window_page(
     group_id: &str,
     book_id: &str,
+    start_offset_ms: u64,
+    item_duration_ms: u64,
     cursor: &str,
     env: &ApiEnv,
-) -> AppResult<DanmakuWindow> {
+) -> AppResult<DanmakuWindowPage> {
     let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
-    let body = serde_json::to_vec(&danmaku_payload(group_id, book_id, cursor))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
-    // reading 系统一入口：轻签名头 + gzip body（1.1.3 抓包形态）
+    let body = serde_json::to_vec(&danmaku_payload(
+        group_id,
+        book_id,
+        start_offset_ms,
+        item_duration_ms,
+        cursor,
+    ))
+    .map_err(|e| AppError::Signer(e.to_string()))?;
+    // reading 系统一入口：轻签名头 + gzip body
     let bytes = super::client::api_call_reading(LQ_API_ORIGIN, &path, Some(body), &[], env).await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析弹幕响应失败: {e}")))?;
+    parse_window_page(&v)
+}
+
+/// 弹幕响应 → 一窗（纯函数，单测锚点）。
+fn parse_window_page(v: &Value) -> AppResult<DanmakuWindowPage> {
     if v.get("code").and_then(Value::as_i64) != Some(0) {
         let msg = v.get("message").and_then(Value::as_str).unwrap_or("?");
         return Err(AppError::Media(format!(
@@ -172,16 +191,22 @@ async fn fetch_danmaku_window(
                 .unwrap_or(0),
         });
     }
-    Ok(DanmakuWindow {
+    let next_cursor = list_info
+        .get("cursor")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let next_start_ms = serde_json::from_str::<Value>(&next_cursor)
+        .ok()
+        .and_then(|c| c.get("end_offset_time").and_then(Value::as_u64))
+        .unwrap_or(0);
+    Ok(DanmakuWindowPage {
         has_more: list_info
             .get("has_more")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        next_cursor: list_info
-            .get("cursor")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        next_cursor,
+        next_start_ms,
         items,
     })
 }
@@ -192,15 +217,30 @@ mod tests {
 
     #[test]
     fn payload_shape_matches_capture() {
-        let p = danmaku_payload("7690197301075119166", "7690150906532219966", "");
-        // 抓包锚点字段：任何一个改形都会 100103
+        // business_param 只有官方四键，
+        // start_offset_time 是当前播放位置、playlet_item_duration 是本集真实时长
+        let p = danmaku_payload(
+            "7680669690372312089",
+            "7680564528135818302",
+            1959,
+            199000,
+            "",
+        );
+        // 锚点字段：任何一个改形都会 100103
         assert_eq!(p["comment_type"], COMMENT_TYPE_DANMAKU, "20 = 弹幕");
-        assert_eq!(p["comment_source"], LIST_SOURCE_DANMAKU);
+        assert_eq!(p["comment_source"], LIST_SOURCE_DANMAKU, "601");
+        assert_eq!(p["server_channel"], SERVER_CHANNEL_DANMAKU, "1000");
         assert_eq!(p["group_type"], GROUP_TYPE_COMMENT);
         assert_eq!(p["count"], 90);
         assert_eq!(p["aid"], 8662);
-        assert_eq!(p["group_id"], "7690197301075119166");
-        assert_eq!(p["business_param"]["book_id"], "7690150906532219966");
+        assert_eq!(p["group_id"], "7680669690372312089");
+        assert_eq!(p["business_param"]["book_id"], "7680564528135818302");
+        assert_eq!(p["business_param"]["start_offset_time"], 1959);
+        assert_eq!(p["business_param"]["playlet_item_duration"], 199000);
+        assert_eq!(
+            p["business_param"]["need_danmaku_guide_type"],
+            serde_json::json!([DANMAKU_GUIDE_TYPE])
+        );
         assert_eq!(p["cursor"], "");
     }
 
@@ -209,14 +249,35 @@ mod tests {
         let p = danmaku_payload(
             "g",
             "b",
-            r#"{"start_offset_time":30000,"end_offset_time":60000}"#,
+            30000,
+            199000,
+            r#"{"start_offset_time":0,"end_offset_time":30000}"#,
         );
         assert!(p["cursor"].as_str().unwrap().contains("end_offset_time"));
+        assert_eq!(p["business_param"]["start_offset_time"], 30000);
+    }
+
+    #[test]
+    fn window_next_start_parses_cursor_end() {
+        // 响应 cursor 的 end_offset_time 是下一窗请求的 start_offset_time
+        let v = serde_json::json!({
+            "code": 0,
+            "data": {
+                "common_list_info": {
+                    "has_more": true,
+                    "cursor": r#"{"start_offset_time":0,"end_offset_time":30000,"danmaku_window_count":{"0":267}}"#,
+                },
+                "data_list": [],
+            },
+        });
+        let page = parse_window_page(&v).unwrap();
+        assert!(page.has_more);
+        assert_eq!(page.next_start_ms, 30000);
+        assert!(page.next_cursor.contains("danmaku_window_count"));
     }
 
     #[test]
     fn comments_payload_matches_capture_20261016() {
-        // 2026-10-16 抓官方 App 播放页面板（flows-official-follow.jsonl:3308）：
         // 单集维度 group=vid / group_type=30 / channel=18，count=10，
         // business_param.sort="video_innerflow"，need_count 仅首屏 true；
         // 弹幕形 business_param / channel=1000 会被 103001 拒
@@ -247,9 +308,9 @@ mod tests {
 
     #[test]
     fn series_comments_payload_matches_capture_20261007() {
-        // 2026-10-07 抓 hgplayer 详情页：剧级评论换形态——group_id 是
+        // 剧级评论换形态——group_id 是
         // series_id、group_type=1、source=1/type=2/channel=34，
-        // business_param 是全量字段组（照抄抓包）
+        // business_param 是全量字段组
         let p = series_comments_payload("7687941387362257982", "");
         assert_eq!(
             p["group_type"], GROUP_TYPE_REVIEW,
@@ -266,7 +327,7 @@ mod tests {
 
     #[test]
     fn comment_replies_payload_matches_capture_20261010() {
-        // 2026-10-10 抓 hgplayer 1.1.8 展开评论回复：source=504（评论拉取
+        // 展开评论回复形态：source=504（评论拉取
         // 是 4）+ 首页显式空 cursor + compliance_status 在场——三处都与
         // comment/list 形态不同，混用会被拒
         let p = comment_replies_payload("g", "b", "c", "");
@@ -287,7 +348,7 @@ mod tests {
 
     #[test]
     fn review_replies_payload_matches_capture_20261010() {
-        // 2026-10-10 抓 hgplayer 1.1.8 展开/翻页剧评回复（3 页全量）：
+        // 展开/翻页剧评回复形态：
         // source=501/type=2/ch=34 + real_level=2 + 首屏无 cursor 键 +
         // need_count 首页 true 翻页 false
         let p = review_replies_payload("s", "c", "");
@@ -319,7 +380,7 @@ mod tests {
 
     #[test]
     fn reply_page_parses_capital_common() {
-        // 回复条目在键名大写的 Common 下（上游序列化怪癖，抓包实锤）；
+        // 回复条目在键名大写的 Common 下（上游序列化怪癖）；
         // 分页在 comment_list_info（不是 common_list_info）
         let v = serde_json::json!({
             "code": 0,
@@ -366,7 +427,11 @@ mod tests {
 mod probe {
     use super::*;
 
-    /// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见 [`MAX_WINDOWS`]）。
+    /// probe 专用的翻页上限（评论区全量对账用；生产代码按页返回）。
+    const MAX_WINDOWS: usize = 240;
+
+    /// 拉一集的**全部**评论区（按 cursor 翻页到 has_more=false，上限见
+    /// [`MAX_WINDOWS`]）。
     ///
     /// 热门集会拉几百页，command 层已改用 [`fetch_comments_page`] 按页返回；
     /// 本函数只服务 probe 全量对账，与生产代码无关。
@@ -400,25 +465,37 @@ mod probe {
 
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
-    async fn probe_danmaku_full() {
+    async fn probe_danmaku_window() {
         let env = ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
-        let all = fetch_danmaku_all("7690197301075119166", "7690150906532219966", &env)
-            .await
-            .expect("整集弹幕");
+        // 首窗形态：medusa 风控降级每窗少量条目 + has_more=false（滚窗协议
+        // 没有全量拉取路线，客户端随播放推进逐窗请求）；cursor/next_start
+        // 是下一窗推进链的依据
+        let w = fetch_danmaku_window_page(
+            "7680669690372312089",
+            "7680564528135818302",
+            0,
+            199000,
+            "",
+            &env,
+        )
+        .await
+        .expect("首窗");
         println!(
-            "[danmaku-full] {} 条，前 5: {:?}",
-            all.len(),
-            &all[..all.len().min(5)]
+            "[danmaku-win1] items={} has_more={} next_start={} cursor={:?}",
+            w.items.len(),
+            w.has_more,
+            w.next_start_ms,
+            &w.next_cursor[..w.next_cursor.len().min(200)]
         );
-        assert!(!all.is_empty(), "这一集实测有弹幕");
-        // 时间轴升序（fetch_danmaku_all 已排序）
-        let mut sorted = all.clone();
+        assert!(!w.items.is_empty(), "这一集实测有弹幕");
+        // 窗内按时间轴升序
+        let mut sorted = w.items.clone();
         sorted.sort_by_key(|d| d.offset_ms);
-        assert_eq!(all, sorted);
+        assert_eq!(w.items, sorted);
     }
 
-    /// 评论区（ct=4/src=4）匿名可读性探测：2026-10-06 实录旧弹幕形态被拒
-    /// （103001），换 1.1.5 新形态（need_count/req_type/ch=18）后应恢复。
+    /// 评论区（ct=4/src=4）匿名可读性探测：旧弹幕形态被拒
+    /// （103001），新形态（need_count/req_type/ch=18）应可用。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_comments_full() {
@@ -439,8 +516,8 @@ mod probe {
         }
     }
 
-    /// 回复列表双维度探测（2026-10-10 抓 hgplayer 1.1.8 锁定形态后落地）。
-    /// 锚点取自当轮抓包：剧评 7693600825641861912（book=7691228619774905368）
+    /// 回复列表双维度探测。
+    /// 锚点：剧评 7693600825641861912（book=7691228619774905368）
     /// 与评论 7693242834317837081（vid=7691249364097829913）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例（匿名可读，无需登录态）"]

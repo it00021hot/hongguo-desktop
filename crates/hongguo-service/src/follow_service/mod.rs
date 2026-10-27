@@ -69,7 +69,6 @@ pub fn mark_notices_read(state: &AppState, ids: &[i64]) -> AppResult<u64> {
     state.store.follow_notices_mark_read(ids)
 }
 
-/// 清空通知。
 pub fn clear_notices(state: &AppState) -> AppResult<()> {
     state.store.follow_notices_clear()
 }

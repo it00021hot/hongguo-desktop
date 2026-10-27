@@ -1,7 +1,8 @@
 use super::cards::status_badge;
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt};
@@ -9,28 +10,101 @@ use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
 
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 impl NewDramaView {
+    /// 虚拟列表条目：可见日期行（索引由 render 期过滤好传入）；末位是
+    /// footer 槽（加载更多/到底提示）。
+    pub(super) fn render_cal_row(
+        &self,
+        ix: usize,
+        visible_ixs: &[usize],
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        match visible_ixs.get(ix) {
+            // 行间 8px 间距（Tauri gap-2 同参，list() 条目自 spacing）
+            Some(&index) => div()
+                .w_full()
+                .pb_2()
+                .child(self.render_calendar_row(&self.cal_items[index], cx))
+                .into_any_element(),
+            None => self.cal_footer(cx),
+        }
+    }
+
+    /// footer：加载更多（键盘/兜底入口）或到底提示。
+    fn cal_footer(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        if self.cal_has_more {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    Button::new("new-cal-more")
+                        .label(if self.cal_loading {
+                            crate::i18n::t("feed.loadingMore")
+                        } else {
+                            crate::i18n::t("follow.loadMore")
+                        })
+                        .ghost()
+                        .small()
+                        .disabled(self.cal_loading)
+                        .when(self.cal_loading, |b| b.cursor_default())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.load_calendar(None, true, cx);
+                        })),
+                )
+                .into_any_element()
+        } else {
+            let theme = cx.theme();
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(crate::i18n::t("follow.noMore")),
+                )
+                .into_any_element()
+        }
+    }
+
     pub(super) fn render_calendar_row(
         &self,
         item: &CalendarItem,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&item.cover);
+        let cover = crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Inline);
         let reserved = item.has_subscribed || self.reserved_local.contains(&item.series_id);
         let card_item = item.clone();
-        h_flex()
-            .id(ElementId::from(format!("new-cal-{}", item.series_id)))
+        // 整行可点 → 用 base::Button 承担 role/focus/Enter-Space（键盘用户能
+        // 走到新剧日历行）。库强制 flex row + 交叉轴居中 + 主轴居中：这里只
+        // 需把主轴改回 justify_start（内容左对齐，与原 h_flex 一致）。
+        BaseButton::new(ElementId::from(format!("new-cal-{}", item.series_id)))
+            // list() 的条目按内容宽排：行根必须显式吃满列表宽（同 rank 行）
+            .w_full()
+            .accessibility_label(item.title.clone())
             .items_center()
             .gap_4()
-            .rounded(theme.radius_lg)
+            .rounded(crate::tokens::radius::CARD)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .p_3()
             .cursor_pointer()
             .hover(|s| s.border_color(theme.foreground.opacity(0.3)).shadow_md())
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
+            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+            .focus_visible(|s| {
+                s.border_color(theme.ring)
+                    .shadow(crate::tokens::focus_ring(theme))
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_detail(
                     card_item.series_id.clone(),
@@ -45,7 +119,7 @@ impl NewDramaView {
                     .h(gpui_kit::px(107.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(theme.radius + gpui_kit::px(2.0))
+                    .rounded(crate::tokens::radius::COVER)
                     .bg(theme.secondary)
                     .child(cover),
             )
@@ -202,7 +276,8 @@ impl NewDramaView {
                             .h_8()
                             .px_2p5()
                             .rounded(gpui_kit::px(999.0))
-                            .disabled(reserved);
+                            .disabled(reserved)
+                            .when(reserved, |b| b.cursor_default());
                             let button = if reserved {
                                 button.secondary()
                             } else {

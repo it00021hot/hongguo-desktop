@@ -6,6 +6,7 @@
 use serde::Deserialize;
 use tauri::State;
 
+use hongguo_api::emoticon::{CommentAttachment, Emoticon};
 use hongguo_api::interact::CommentMention;
 use hongguo_api::interact::{
     BookshelfEntry, CommentItem, InteractionState, MentionUser, ReplyItem, collect_series,
@@ -49,11 +50,20 @@ pub async fn danmaku_send(
 /// 前端直接插列表顶部。
 ///
 /// `mention_user_id` + `context_comment_ids` 同时在场 = **@提及评论**
-/// （2026-10-15/16 官方实包：rich_text tp=15/uri=uid +
+/// （rich_text tp=15/uri=uid +
 /// business_param.aibot_mention_context=最近评论 id 嵌套数组；官方单集
-/// 流里的提及评论带 AI 回复，见 flows-official-follow.jsonl:3314）。
+/// 流里的提及评论带 AI 回复）。
 /// `mention_user_name` 是被提及者昵称——text 前缀与段文本都是
 /// `@昵称\u{FFFC}`，缺了会张冠李戴成「小果」。
+///
+/// `image` 在场 = **附图评论**：body 顶层多
+/// `image_data`，表情类另带 `business_param.emoji_scene_type`（第三方
+/// 表情 2 / 自定义表情 4；本地图片评论**不带**）。附图与 @提及是官方两套
+/// 形态，附图在场时走附图流（正文可空）。
+#[expect(
+    clippy::too_many_arguments,
+    reason = "平铺参数表与 registry.ts 的 IPC 契约一一对应，包结构体反而要二次拆装"
+)]
 #[tauri::command]
 pub async fn comment_send(
     state: State<'_, AppState>,
@@ -63,6 +73,8 @@ pub async fn comment_send(
     mention_user_id: Option<String>,
     mention_user_name: Option<String>,
     context_comment_ids: Option<Vec<String>>,
+    image: Option<Emoticon>,
+    emoji_scene_type: Option<i64>,
 ) -> AppResult<CommentItem> {
     let env = state.api_env();
     let text = text.trim().to_string();
@@ -76,12 +88,17 @@ pub async fn comment_send(
         }),
         _ => None,
     };
-    if text.is_empty() && mention.is_none() {
+    let attachment = image.map(|image| CommentAttachment {
+        image,
+        emoji_scene_type,
+    });
+    if text.is_empty() && mention.is_none() && attachment.is_none() {
         return Err(hongguo_common::AppError::Media("评论内容为空".into()));
     }
-    match &mention {
-        Some(m) => send_comment_mention(&group_id, &book_id, m, &text, &env).await,
-        None => send_comment(&group_id, &book_id, &text, &env).await,
+    match (&mention, &attachment) {
+        (Some(m), _) => send_comment_mention(&group_id, &book_id, m, &text, &env).await,
+        (None, Some(att)) => send_comment(&group_id, &book_id, &text, Some(att), &env).await,
+        (None, None) => send_comment(&group_id, &book_id, &text, None, &env).await,
     }
 }
 
@@ -98,7 +115,7 @@ pub async fn mention_list(
 /// 回复一条评论（或一条回复）。回复流与面板同单集维度（group=vid /
 /// group_type=30）。`reply_to_reply_id` 回复「回复」时传被回复的那条
 /// 回复 id（多级），纯评论回复传空。返回**服务端回显的完整回复对象**——
-/// 前端直接插回复区（hgplayer 同款）。
+/// 前端直接插回复区（同款行为）。
 #[tauri::command]
 pub async fn comment_reply(
     state: State<'_, AppState>,
@@ -197,8 +214,7 @@ pub async fn review_reply_send(
     .await
 }
 
-/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复
-/// （2026-10-10 抓包锁定）。
+/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复。
 #[tauri::command]
 pub async fn comment_delete(
     state: State<'_, AppState>,
@@ -222,7 +238,7 @@ pub async fn series_collect(
     Ok(())
 }
 
-/// 批量收藏/取消收藏（一个请求携带多条目，hgplayer 1.1.8 RemoveFavorites 同款）。
+/// 批量收藏/取消收藏（一个请求携带多条目，RemoveFavorites 同款）。
 #[tauri::command]
 pub async fn series_collect_batch(
     state: State<'_, AppState>,

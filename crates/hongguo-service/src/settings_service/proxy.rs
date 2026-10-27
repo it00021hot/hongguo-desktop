@@ -29,7 +29,7 @@ pub async fn test_proxy(draft: &ProxyConfig) -> AppResult<ProxyTestResult> {
     match result {
         // 收到任何 HTTP 状态码都算连通：探测地址是 API 主域的裸根，CDN 在
         // 根路径常态回 404——「有响应」本身就证明 DNS/TCP/TLS/代理全通。
-        // 按 2xx 判定会把可用的代理误报成 404 失败（2026-10-09 用户实测）。
+        // 按 2xx 判定会把可用的代理误报成 404 失败。
         Ok(resp) => Ok(ProxyTestResult {
             ok: true,
             elapsed_ms,

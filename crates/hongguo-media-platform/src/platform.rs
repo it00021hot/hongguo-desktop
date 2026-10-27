@@ -1,21 +1,17 @@
 //! 平台层的统一门面：编译期按目标选择实现（macOS / Windows）。
 //!
-//! - [`video`] / [`audio`]：解码出口——契约与数据在
-//!   `hongguo-media-platform-api`，具体类型由当前目标的实现 crate re-export；
 //! - [`cover`]：封面平台级静图解码（Windows WIC；其余平台本层不可用返回
 //!   `None`，调用方无需再写平台分支）；
 //! - 无状态分发：转码、能力探测、探测缓存清理（同名转发到实现 crate）。
 //!
-//! 调用方（service / protocol / playback / gpui）只认本模块，不感知具体
+//! 调用方（service / protocol / gpui）只认本模块，不感知具体
 //! 平台实现与原生 API（VideoToolbox / Media Foundation / WIC）。
 //!
 //! 探测纪律与 ffmpeg 侧一致：**列表里有 ≠ 能用**，必须真实建会话试编一帧
 //! （试编帧不能小于 256×256，nvenc 曾在 64×64 上误判不可用）。任何探测
-//! 失败都安静地返回不可用，让分流链落到 ffmpeg/软解。
+//! 失败都安静地返回不可用，让分流链落到 ffmpeg；两者都没有时转码直接报错。
 
-pub mod audio;
 pub mod cover;
-pub mod video;
 
 #[cfg(target_os = "macos")]
 use hongguo_media_platform_macos as imp;

@@ -5,13 +5,15 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::{ClipboardItem, div};
 
 use crate::bridge;
+use crate::ui_button::button as Button;
+use hongguo_common::AppError;
 
 impl super::SettingsView {
     pub(super) fn redetect_capability(&mut self, cx: &mut Context<Self>) {
@@ -21,12 +23,24 @@ impl super::SettingsView {
         self.redetecting = true;
         cx.notify();
         let rx = bridge::spawn(async move {
-            tokio::task::spawn_blocking(hongguo_media_platform::capability::probe::redetect)
-                .await
-                .expect("阻塞池 join")
+            let capability =
+                tokio::task::spawn_blocking(hongguo_media_platform::capability::probe::redetect)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("能力探测阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(capability)
         });
         cx.spawn(async move |this, cx| {
-            let capability = rx.await.expect("tokio 桥不会丢弃发送端");
+            let capability = match rx.await.expect("tokio 桥不会丢弃发送端") {
+                Ok(capability) => capability,
+                Err(e) => {
+                    log::warn!("[Settings] 能力重新探测失败: {e}");
+                    let _ = this.update(cx, |view, cx| {
+                        view.redetecting = false;
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
             let _ = this.update(cx, |view, cx| {
                 view.redetecting = false;
                 view.redetect_done = true;
@@ -46,7 +60,7 @@ impl super::SettingsView {
                 } else if cap.platform_encoder || cap.has_ffmpeg {
                     crate::i18n::t("settings.backendFfmpegSw")
                 } else {
-                    crate::i18n::t("settings.backendRust")
+                    crate::i18n::t("settings.backendUnavailable")
                 }
             }
         }

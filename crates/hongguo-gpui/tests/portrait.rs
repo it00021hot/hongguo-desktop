@@ -22,7 +22,7 @@ fn aspect_floors_at_phone_shape() {
         (aspect_of_video(0, 0) - phone).abs() < 1e-9,
         "无尺寸回落手机比例"
     );
-    // 横屏/方形不算竖屏比，同样回落手机比例（hgplayer Em/cu 口径）
+    // 横屏/方形不算竖屏比，同样回落手机比例
     assert!((aspect_of_video(1920, 1080) - phone).abs() < 1e-9);
     assert!((aspect_of_video(1080, 1080) - phone).abs() < 1e-9);
     // 比手机更长的内容按自身比例（会被工作区高钳住，但不抬到手机比例）

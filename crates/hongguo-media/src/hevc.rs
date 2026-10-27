@@ -39,32 +39,14 @@ pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 /// 是否是 HEVC 轨：`hev1` / `hvc1`，以及解密后仍带 `encv` 标记的加密轨。
 ///
-/// 判定只写这一份。解码前置校验（`codec_probe::ensure_softdecode_supported`）
-/// 和 [`read_parameter_sets`] 必须给出同一个答案，否则会出现「校验说不是 HEVC、
-/// 解析却仍当 HEVC 处理」这种自相矛盾的失败路径。
+/// 判定只写这一份。平台编码后端（VT / MF）的前置校验和
+/// [`read_parameter_set_nalus`] 必须给出同一个答案，否则会出现「校验说不是
+/// HEVC、解析却仍当 HEVC 处理」这种自相矛盾的失败路径。
 pub fn is_hevc(codec: &str) -> bool {
     codec.starts_with("hev") || codec.starts_with("hvc") || codec == "encv"
 }
 
-/// 从 MP4 读出 HEVC 参数集，拼成 Annex-B 前缀。
-///
-/// 返回 `(Annex-B 前缀, 样本长度前缀字节数)`。
-///
-/// ⚠️ `length_size` 必须一起返回：MP4 里每个样本是「长度前缀 + NAL」，
-///    解码器要的是 Annex-B。转换在 [`to_annexb`]，漏掉它解出来的是黑屏。
-///
-/// 返回空 vec 表示轨道里没有 `hvcC`（调用方应直接报错而不是继续解码）。
-pub fn read_parameter_sets(path: &Path, track: &TrackInfo) -> AppResult<(Vec<u8>, usize)> {
-    let (nalus, length_size) = read_parameter_set_nalus(path, track)?;
-    let mut out = Vec::new();
-    for nalu in &nalus {
-        out.extend_from_slice(&START_CODE);
-        out.extend_from_slice(nalu);
-    }
-    Ok((out, length_size))
-}
-
-/// [`read_parameter_sets`] 的裸形态：每条参数集一个 NAL（无起始码）。
+/// 从 MP4 读出 HEVC 参数集，每条一个 NAL（无起始码）。
 ///
 /// 平台解码器（VideoToolbox 的 `CMVideoFormatDescriptionCreateFrom…ParameterSets`）
 /// 要的就是这种「裸 NAL + 各自长度」的形态，走 Annex-B 反而要再剥一次起始码。

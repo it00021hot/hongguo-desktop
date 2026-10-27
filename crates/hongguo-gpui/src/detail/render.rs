@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::component::scroll::ScrollableElement;
+
 impl DetailView {
     /// 语言切换：刷新剧评/回复输入框 placeholder，保留草稿。
     pub(crate) fn refresh_locale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -58,7 +60,7 @@ impl DetailView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("detail-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(self.render_back_bar(cx))
             .child(
                 div()
@@ -75,7 +77,7 @@ impl DetailView {
     }
 
     /// 计数人性化（详情页头部精度）：万/亿带一位小数、整数省略小数点
-    /// （Tauri formatCountPrecise / hgplayer 头部同口径）。
+    /// （Tauri formatCountPrecise 同口径）。
     pub(super) fn fmt_count(n: i64) -> String {
         match crate::i18n::locale() {
             crate::i18n::Locale::ZhCn => {
@@ -113,20 +115,24 @@ impl gpui_kit::Render for DetailView {
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui_kit::IntoElement {
-        // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
+        // 封面与头像是**两档**：封面 320、头像 64——成品图按「URL 哈希 + 档位」
+        // 落盘（`sized_cache_path`），档位对不上就取不到文件（创作者头像会整块
+        // 空白：混在封面批次里按 320 预热，渲染侧找的是 64）。
         let mut cover_urls: Vec<String> = self
             .series
             .as_ref()
             .map(|s| vec![s.cover.clone()])
             .unwrap_or_default();
+        let mut avatar_urls: Vec<String> = Vec::new();
         if let Some(meta) = self.meta.as_ref() {
-            cover_urls.extend(meta.creators.iter().map(|c| c.avatar.clone()));
+            avatar_urls.extend(meta.creators.iter().map(|c| c.avatar.clone()));
         }
         if let Some(related) = self.related.as_ref() {
             cover_urls.extend(related.works.iter().map(|i| i.cover.clone()));
             cover_urls.extend(related.guess.iter().map(|i| i.cover.clone()));
         }
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
+        crate::cover_img::prewarm_avatars(&avatar_urls, cx);
         // 剧评输入框懒建：DetailView::new 拿不到 window（壳在事件回调里
         // cx.new 创建本视图），首个 render 才有——建一次并挂 Enter 提交。
         if self.review_input.is_none() {

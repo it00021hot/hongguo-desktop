@@ -6,7 +6,7 @@
 //! 平台形态：macOS = `NSProcessInfo beginActivityWithOptions:reason:`
 //! （objc2 绑定，token 由 `Retained` 持有——手写裸 `objc_msgSend` 时它只是
 //! autorelease 对象，自动释放池一清就悬空，恢复播放时 `endActivity` 撞上
-//! 已销毁对象直接 SIGSEGV，2026-10-17 实测崩溃报告即此）；
+//! 已销毁对象直接 SIGSEGV）；
 //! Windows = `SetThreadExecutionState`（ES_CONTINUOUS 逐线程生效，调用点
 //! 固定在主线程）。其余目标空操作。
 

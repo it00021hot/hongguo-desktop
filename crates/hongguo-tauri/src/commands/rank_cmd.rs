@@ -1,4 +1,4 @@
-//! 排行榜 / 新剧 / 搜索 / 预约 command（2026-10-03 抓包端点）。
+//! 排行榜 / 新剧 / 搜索 / 预约 command。
 
 use tauri::State;
 
@@ -175,7 +175,7 @@ pub async fn reservation_reserve(
     Ok(())
 }
 
-/// 批量删除预约（subscribe_delete，hgplayer 1.1.8 同款；需要登录）。
+/// 批量删除预约（subscribe_delete，同款形态；需要登录）。
 #[tauri::command]
 pub async fn reservations_delete(
     state: State<'_, AppState>,

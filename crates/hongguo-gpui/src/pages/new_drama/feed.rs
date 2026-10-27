@@ -25,6 +25,9 @@ impl NewDramaView {
     }
 
     /// 拉一页推荐（`more` = 翻页）。
+    ///
+    /// 响应归属**发起请求时的频道**：还在展示就整替/拼接展示态，人已切走
+    /// 就并回该频道的按键缓存——切频道期间旧列表保持可见（keepPreviousData）。
     pub(super) fn load_recommend(&mut self, more: bool, cx: &mut Context<Self>) {
         if self.loading {
             return;
@@ -57,18 +60,38 @@ impl NewDramaView {
                 match result {
                     Ok(page) => {
                         log::info!("[New] GPUI 壳 -> {} 条", page.items.len());
-                        if more {
-                            view.items.extend(page.items.clone());
+                        if view.gender == gender {
+                            // 首页整替（含 needs_reload 补发）：虚拟列表按整替对账
+                            if !more {
+                                view.rec_rows.replace();
+                            }
+                            if more {
+                                view.items.extend(page.items.clone());
+                            } else {
+                                view.items = page.items.clone();
+                            }
+                            view.next_offset = page.next_offset;
+                            view.session_id = page.session_id.clone();
+                            view.has_more = page.has_more;
                         } else {
-                            view.items = page.items.clone();
+                            let cached = view.gender_pages.entry(gender).or_default();
+                            if more {
+                                cached.items.extend(page.items.clone());
+                            } else {
+                                cached.items = page.items.clone();
+                            }
+                            cached.next_offset = page.next_offset;
+                            cached.session_id = page.session_id.clone();
+                            cached.has_more = page.has_more;
                         }
-                        view.next_offset = page.next_offset;
-                        view.session_id = page.session_id.clone();
-                        view.has_more = page.has_more;
                     }
                     Err(e) => {
                         log::warn!("[New] 推荐流失败: {e}");
-                        view.failed = true;
+                        // 有旧列表在手（keepPreviousData 展示中）就保留展示，
+                        // 真没数据才给失败态。
+                        if view.gender == gender && view.items.is_empty() {
+                            view.failed = true;
+                        }
                     }
                 }
                 cx.notify();
@@ -111,6 +134,10 @@ impl NewDramaView {
                 match result {
                     Ok(page) => {
                         log::info!("[New] 日历 -> {} 条", page.items.len());
+                        // 首页整替：虚拟列表按整替对账（reset，滚动回顶）
+                        if !more {
+                            view.cal_rows.replace();
+                        }
                         if !more {
                             view.cal_items = page.items.clone();
                             if !page.dates.is_empty() {

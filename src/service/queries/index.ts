@@ -64,6 +64,15 @@ export {
   useReserveSeries,
 } from './rank';
 export { useBrowsePanel, useBrowseFeed } from './browse';
+export {
+  useThirdPartyEmoticons,
+  useOwnEmoticons,
+  useEmoticonSearch,
+  useCollectEmoticon,
+  useDeleteEmoticon,
+  useUploadCustomEmoticon,
+  emoticonPreviewUrl,
+} from './emoticon';
 export { useSeriesSearchApp, useSearchSuggest } from './search';
 export {
   useDownloadTasks,

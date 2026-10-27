@@ -5,7 +5,6 @@
 
 use super::*;
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::select::Select;
@@ -16,6 +15,7 @@ use gpui_kit::div;
 use hongguo_common::model::settings::{NamingTemplate, ProxyMode};
 
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 pub(super) fn naming_labels() -> [String; 3] {
     [
@@ -157,7 +157,8 @@ impl super::SettingsView {
                             .label(crate::i18n::t("update.checkUpdate"))
                             .outline()
                             .small()
-                            .disabled(true),
+                            .disabled(true)
+                            .cursor_default(),
                     ),
             )
             .child(

@@ -9,8 +9,8 @@ pub struct RecommendTabConfig {
     pub bookstore_id: String,
 }
 
-/// 顶栏 tab 列表条目（`bookmall/tab` 响应 `tab_item[]` 下发，2026-10-15
-/// 官方抓包实锤：顺序即官方顶栏顺序「关注/漫剧/真人剧/推荐」；非活跃 tab
+/// 顶栏 tab 列表条目（`bookmall/tab` 响应 `tab_item[]` 下发：
+/// 顺序即官方顶栏顺序「关注/漫剧/真人剧/推荐」；非活跃 tab
 /// 的 bookstore_id 为 null，活跃 tab 才带。关注 45 游客态无数据面，显隐
 /// 由壳按登录态过滤，这里原样透传）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

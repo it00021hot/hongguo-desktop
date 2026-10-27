@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform-macos"
-description = "红果桌面版 macOS 平台原生化：VideoToolbox 硬编/硬解 + AudioToolbox AAC（契约见 hongguo-media-platform-api）"
+description = "红果桌面版 macOS 平台原生化：VideoToolbox 硬编/硬解（契约见 hongguo-media-platform-api）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-# 统一契约：帧载体 / 解码器 trait / PlatformRequest / bitrate_for。
+# 统一契约：PlatformRequest / bitrate_for。
 hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
@@ -19,24 +19,9 @@ hongguo-video = { path = "../hongguo-video" }
 log = "0.4"
 parking_lot = "0.12"
 
-# 本 crate 只在 macOS 目标上编译出内容（其余目标为空壳）；平台专属依赖
-# 全部进本表，Windows 宿主上连依赖都不构建。
-#
-# VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs），经
-# `#[link(kind = "framework")]` 直接链接系统框架。逐帧解码出口（播放末端）
-# 的 CVPixelBuffer 包装类型与 gpui 同源（gpui-pre 的 surface 元素吃这个
-# 类型），版本锁定一致避免类型失配。
-[target.'cfg(target_os = "macos")'.dependencies]
-core-video = { version = "0.5.2", features = ["metal"] }
-# TCFType trait（CVPixelBuffer 的引用计数包装用）；与 core-video 自身的
-# core-foundation 同大版本，不引入第二份。
-core-foundation = "0.10"
-# AAC-LC 软解兜底：Apple 在 Intel + macOS 15 移除了 CoreAudio 的 AAC 解码
-# 组件（AudioConverterNew 回 'fmt?' FormatNotSupported），AudioToolbox
-# 建不起来时回退 symphonia（只解 LC，正好覆盖现行流；ASC 走 extra_data
-# 注入，MP4 裸样本直喂）。直用两个子 crate（meta 聚合层不需要）。
-symphonia-core = "0.5"
-symphonia-codec-aac = "0.5"
+# 本 crate 只在 macOS 目标上编译出内容（其余目标为空壳）。平台专属依赖
+# 为零：VideoToolbox 是纯 C API，手写声明零依赖（vt/ffi.rs），经
+# `#[link(kind = "framework")]` 直接链接系统框架，不需要任何绑定 crate。
 
 [features]
 # 门面 test-support 转发：跨 crate 的 e2e 测试通道门控（对齐 hongguo-video

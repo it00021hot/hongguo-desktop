@@ -6,6 +6,7 @@ import type {
   CreatorProfile,
   CreatorWorksPage,
   Danmaku,
+  Emoticon,
   ReplyPage,
   SeriesReviewPage,
 } from '../schema';
@@ -13,7 +14,7 @@ import { keys } from './common';
 import { useAccount } from './interact';
 
 // ---------------------------------------------------------------- 弹幕与评论
-// 社交态数据一律不缓存（staleTime 0，每次挂载重拉——2026-10-10 定规：
+// 社交态数据一律不缓存（staleTime 0，每次挂载重拉：
 // 全站用户在产生数据，缓存 1 秒都是旧值；缓存只保留封面/视频流/登录
 // 信息这类不变或重资产）。乐观写回只解决「自己操作后到重拉之间」的
 // 即时反馈，数据新鲜度全靠每次打开重拉。
@@ -26,7 +27,7 @@ function parseVid(vid: string): { groupId: string; bookId: string } {
 
 /** 乐观点赞的通用缓存手术：id 命中的条目翻 userDigg 并把计数 ±1（夹 0）。
  *  评论/回复两条数据线 × 单集/剧评两侧共四份同构，差异只有缓存 key 与
- *  id 字段，2026-10-13 收敛成这一份。 */
+ *  id 字段。 */
 function diggInPages<P extends { items: Array<{ userDigg: boolean; diggCount: number }> }>(
   draft: InfiniteData<P, string>,
   idOf: (item: P['items'][number]) => string,
@@ -46,13 +47,46 @@ function diggInPages<P extends { items: Array<{ userDigg: boolean; diggCount: nu
   };
 }
 
-/** 一集的弹幕（按 vid；后端已按时间轴排序并拉全窗口）。 */
-export function useDanmaku(vid: string) {
+/** 一窗弹幕（command 响应的形状；与 registry 的 danmaku_window 契约同源）。 */
+export interface DanmakuWindow {
+  items: Danmaku[];
+  hasMore: boolean;
+  nextCursor: string;
+  nextStartMs: number;
+}
+
+/** 弹幕滚窗翻页参数。 */
+interface DanmakuWindowParam {
+  startMs: number;
+  cursor: string;
+}
+
+/**
+ * 一集的弹幕（按 vid，**随播放进度滚窗**）：官方 30 秒滚窗协议在 medusa
+ * 风控降级下每窗 `hasMore=false`，不存在一次拉全——这里用无限查询按窗
+ * 铺页（首页 startMs=当前播放位置，之后 `nextStartMs`/`nextCursor` 链式
+ * 推进），由播放器在逼近已拉边界时 `fetchNextPage` 预取（官方播到哪拉
+ * 到哪）。startSecs = 播放器 metadata 就绪后采样的当前播放位置（官方
+ * 「播到哪从哪拉」，续播不再从 0 补拉废窗），null = 视频未就绪（查询
+ * 禁用）。durationSecs 传该集时长（秒）。
+ */
+export function useDanmaku(vid: string, durationSecs = 0, startSecs: number | null = null) {
   const { groupId, bookId } = parseVid(vid);
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: keys.danmaku(vid),
-    queryFn: () => danmakuCmd.list(groupId, bookId),
-    enabled: vid.includes(':'),
+    queryFn: ({ pageParam }: { pageParam: DanmakuWindowParam }) =>
+      danmakuCmd.window(groupId, bookId, pageParam.startMs, durationSecs, pageParam.cursor),
+    initialPageParam: {
+      startMs: Math.max(0, Math.floor((startSecs ?? 0) * 1000)),
+      cursor: '',
+    } satisfies DanmakuWindowParam,
+    // 降级形态 hasMore 恒 false——推进链只由 nextCursor/nextStartMs 是否
+    // 还在决定（GPUI advance_danmaku_window 同口径，hasMore 仅参考）
+    getNextPageParam: (last): DanmakuWindowParam | undefined =>
+      last.nextCursor && last.nextStartMs > 0
+        ? { startMs: last.nextStartMs, cursor: last.nextCursor }
+        : undefined,
+    enabled: vid.includes(':') && startSecs !== null,
     // 播放器已有带上下文的定制 toast（「不影响播放」），全局不再重复弹
     meta: { silentOnError: true },
     staleTime: 0,
@@ -60,8 +94,9 @@ export function useDanmaku(vid: string) {
 }
 
 /**
- * 发弹幕：成功后把新弹幕乐观追加进该集的弹幕缓存（服务端列表有延迟，
- * 不追的话用户发完看不见自己的弹幕）。
+ * 发弹幕：成功后把新弹幕乐观追加进该集弹幕缓存的**最后一窗**（服务端
+ * 列表有延迟，不追的话用户发完看不见自己的弹幕）。同一 vid 会因首窗
+ * 起点不同带不同的 key 尾参，按 key[1]（vid）谓词匹配全部窗页缓存。
  */
 export function useSendDanmaku() {
   const queryClient = useQueryClient();
@@ -71,20 +106,30 @@ export function useSendDanmaku() {
       return interactCmd.sendDanmaku(groupId, bookId, input.text, input.offsetMs);
     },
     onSuccess: (commentId, input) => {
-      queryClient.setQueryData<Danmaku[]>(keys.danmaku(input.vid), (prev) => {
-        const next = prev ?? [];
-        return [
-          ...next,
-          { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
-        ].sort((a, b) => a.offsetMs - b.offsetMs);
-      });
+      queryClient.setQueriesData<InfiniteData<DanmakuWindow, DanmakuWindowParam>>(
+        { predicate: (q) => q.queryKey[0] === 'danmaku' && q.queryKey[1] === input.vid },
+        (prev) => {
+          if (!prev) return prev;
+          const pages = prev.pages.map((p, i) => {
+            if (i !== prev.pages.length - 1) return p;
+            return {
+              ...p,
+              items: [
+                ...p.items,
+                { commentId, text: input.text, offsetMs: input.offsetMs, diggCount: 0 },
+              ].sort((a, b) => a.offsetMs - b.offsetMs),
+            };
+          });
+          return { ...prev, pages };
+        },
+      );
     },
   });
 }
 
 /**
  * 播放页评论区（单集维度流：group=vid/group_type=30/channel=18/
- * sort=video_innerflow，2026-10-16 官方实包——面板整页与互动栏角标
+ * sort=video_innerflow——面板整页与互动栏角标
  * 同源；剧集维度 channel=27 是沉浸流信息流面板的另一条流，只有流内
  * 评论）。无限翻页，面板底部「加载更多」续拉。
  */
@@ -113,13 +158,25 @@ export function useSendComment() {
       mentionUserId?: string;
       mentionUserName?: string;
       contextCommentIds?: string[];
+      /** 附图（本地图片 / 表情图片） */
+      image?: Emoticon;
+      /** `business_param.emoji_scene_type`（第三方 2 / 自定义 4；本地图片不带） */
+      emojiSceneType?: number | null;
     }) => {
       const { groupId, bookId } = parseVid(input.vid);
-      return interactCmd.sendComment(groupId, bookId, input.text, {
-        userId: input.mentionUserId ?? '',
-        userName: input.mentionUserName ?? '',
-        contextCommentIds: input.contextCommentIds ?? [],
-      });
+      return interactCmd.sendComment(
+        groupId,
+        bookId,
+        input.text,
+        {
+          userId: input.mentionUserId ?? '',
+          userName: input.mentionUserName ?? '',
+          contextCommentIds: input.contextCommentIds ?? [],
+        },
+        input.image
+          ? { image: input.image, emojiSceneType: input.emojiSceneType ?? null }
+          : undefined,
+      );
     },
     onSuccess: (comment, input) => {
       queryClient.setQueryData<InfiniteData<CommentPage, string>>(
@@ -203,7 +260,7 @@ export function useReviewReplies(seriesId: string, commentId: string, enabled: b
  * 单集评论点赞 / 取消（do_action object_type=8 形态）。
  *
  * 乐观写**评论列表缓存**（diggCount ±1 / userDigg），失败回滚——服务端
- * 读写即时同步（2026-10-10 CDP 实测），此前「旁路 state ±1」面板一关
+ * 读写即时同步，此前「旁路 state ±1」面板一关
  * 就丢，重开在 staleTime 内拿旧缓存会回跳（194→195 的根因）。
  */
 export function useCommentDigg(vid: string) {
@@ -230,7 +287,7 @@ export function useCommentDigg(vid: string) {
 
 /**
  * 单集评论的**回复**点赞 / 取消——与评论点赞同端点同形态，
- * `object_id` 传 reply_id（2026-10-10 抓包实锤；CDP 实测读写即时同步）。
+ * `object_id` 传 reply_id，读写即时同步。
  *
  * 乐观写该评论的回复缓存，失败回滚。
  */
@@ -276,9 +333,9 @@ export function useSeriesComments(seriesId: string) {
  * 发剧评（详情页「剧评」评论框）。
  *
  * 成功后把**服务端回显的完整剧评对象**（expand.score 回显评分）置顶
- * 插入第一页（hgplayer 同款 unshift）：服务端列表有索引延迟且排序
- * 未必把新条目放回第一页，重取会让用户「找不到自己刚发的」
- * （2026-10-10 实测反馈）。不做立即 invalidate——本地那条一直在列表
+ * 插入第一页（unshift 置顶）：服务端列表有索引延迟且排序
+ * 未必把新条目放回第一页，重取会让用户「找不到自己刚发的」。
+ * 不做立即 invalidate——本地那条一直在列表
  * 头，staleTime 0 下次进入即重拉与服务器对齐。
  */
 export function useSendSeriesReview(seriesId: string) {
@@ -344,7 +401,7 @@ export function useReviewDigg(seriesId: string) {
 /**
  * 剧评的**回复**点赞 / 取消——注意**不是**剧评形态：回复点赞与评论点赞
  * 同端点（object_type=8 / comment_type=4），`object_id` 传 reply_id
- * （2026-10-10 CDP 实测对剧评回复即时生效；此前误走 review_digg 是错端点）。
+ * （误走 review_digg 是错端点）。
  *
  * 乐观写该剧评的回复缓存，失败回滚。
  */
@@ -404,7 +461,7 @@ export function useMentionList(seriesId: string) {
 // ---------------------------------------------------------------- 创作者主页
 
 /**
- * 创作者主页资料头（详情页点创作者 → 主页，2026-10-15 官方实包对齐）。
+ * 创作者主页资料头（详情页点创作者 → 主页）。
  * 失败交页面降级（头部行不渲染，作品列表照常）。
  */
 export function useCreatorProfile(userId: string) {

@@ -70,6 +70,9 @@ impl super::BrowseView {
                     Ok(page) => {
                         log::info!("[Browse] GPUI 壳 -> {} 条", page.items.len());
                         if offset == 0 {
+                            // 首页整替（重开/换筛选/退出搜索）：虚拟列表按整替
+                            // 对账（reset，滚动回顶）
+                            view.grid_rows.replace();
                             view.feed_items = page.items.clone();
                         } else {
                             view.feed_items.extend(page.items.clone());

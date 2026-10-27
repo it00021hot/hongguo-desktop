@@ -4,12 +4,15 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
-use gpui_kit::{App, div};
+use gpui_kit::div;
+
+use crate::ui_button::button as Button;
 
 impl super::SettingsView {
     /// 切换主题：立即应用 + 落盘 + 通知壳（auto 观察者换判据）。
@@ -52,7 +55,7 @@ impl gpui_kit::Render for SettingsView {
                 .child(self.render_dir_card(cx))
                 .child(self.render_naming_card(cx))
                 .child(self.render_proxy_card(cx))
-                .child(separator(cx))
+                .child(separator())
                 .child(self.render_playback_card(cx))
                 .child(self.render_shortcut_card(cx))
                 .child(self.render_boss_key_card(cx))
@@ -64,6 +67,9 @@ impl gpui_kit::Render for SettingsView {
                             .label(crate::i18n::t("settings.save"))
                             .primary()
                             .loading(self.saving)
+                            // loading 态与 disabled 同理：组件库把它算作惰性
+                            // （interactive = !(disabled || loading)），光标回箭头。
+                            .when(self.saving, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.save(window, cx);
                             })),
@@ -75,7 +81,7 @@ impl gpui_kit::Render for SettingsView {
         div()
             .id("settings-page")
             .size_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .bg(theme.background)
             .text_color(theme.foreground)
             // 捕获态键盘归属：焦点锚在根元素上，捕获中接管按键
@@ -92,10 +98,9 @@ impl gpui_kit::Render for SettingsView {
     }
 }
 
-fn separator(cx: &App) -> gpui_kit::AnyElement {
-    div()
-        .w_full()
+/// 卡片之间的分隔线（组件库 `Separator`：颜色跟主题 border）。
+fn separator() -> gpui_kit::AnyElement {
+    gpui_kit::component::separator::Separator::horizontal()
         .h(gpui_kit::px(1.0))
-        .bg(cx.theme().border)
         .into_any_element()
 }

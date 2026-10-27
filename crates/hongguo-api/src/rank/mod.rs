@@ -1,12 +1,11 @@
-//! 排行榜接口（2026-10-03 mitmproxy 抓包锁定；2026-10-17 抓官方 App 实流
-//! 全面校正翻页/筛选/月榜协议，详见 docs/hongguo-api-endpoints.md）。
+//! 排行榜接口（详见 docs/hongguo-api-endpoints.md）。
 //!
 //! `GET /reading/bookapi/bookmall/cell/change/v`（**/v 无斜杠**），固定
 //! `cell_id=7470092475068071998, tab_type=26, selected_items=all`，榜单用
 //! `sub_selected_items` 切换；响应是 `data.cell_view.cell_data[].video_data[]`
 //! （每块一条，`recommend_info` 是二次序列化 JSON 字符串，内含排名 `rank`）。
 //!
-//! 翻页协议（69 条官方实流锁定）：每页 10 条、`next_offset` 步进 10；
+//! 翻页协议：每页 10 条、`next_offset` 步进 10；
 //! 首页 `offset=0` + `unlimited_selector_change_type=2` 不带 session；
 //! 翻页 `offset=next_offset` + `usct=1` + 回传 `session_id` 与
 //! `filter_ids`（已下发 series_id 表）；`rank_version` 响应下发、后续
@@ -14,7 +13,7 @@
 //! `background_selector`）。
 //!
 //! bookmall 系对设备敏感（静态旧设备报 ILLEGAL_ACCESS 110），设备注册实现前，
-//! 探测用例走 hgplayer 抓包里的已注册设备档案。
+//! 探测用例走已注册设备档案。
 
 mod model;
 
@@ -46,12 +45,12 @@ pub(crate) const ALL_TAB_SUBS: &[&str] = &[
 
 /// 一次榜单请求的定位参数（内容 tab × 子榜 × 筛选 × 月榜 + 翻页游标）。
 ///
-/// 字段与官方 query 一一对应（2026-10-17 抓官方 App 实流锁定）：
+/// 字段与官方 query 一一对应：
 /// - `selected`：内容 tab `selected_items`（all/human/comic_series_rank/
 ///   ai_playlet/ranklist_celebrity/series_album；空串按 all 归一）
 /// - `sub`：子榜 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
 /// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
-///   cate_308 / style_1685…；单值——官方实测每次点击整组替换）
+///   cate_308 / style_1685…；单值——官方每次点击整组替换）
 /// - `background`：榜单历史选中项 `background_selected_items`
 ///   （date_202609=date 的 2026 年 9 月榜；None/空 = 当前月，不传）
 /// - `offset` / `session_id`：翻页游标（首页 offset=0 不带 session；
@@ -71,7 +70,7 @@ pub struct RankReq<'a> {
 }
 
 /// `unlimited_selector_change_type`：首屏（无会话）=2，翻页续载=1
-/// （2026-10-17 抓官方 App 实流：69 条 cell/change 无一例外——续载带 2
+/// （续载带 2
 /// 会被服务端当换一批处理，是「滚动加载重复/错乱」的根因）。
 fn selector_change_type(req: &RankReq<'_>) -> &'static str {
     if req.offset == 0 && req.session_id.is_empty() {
@@ -146,7 +145,7 @@ struct UpstreamPage {
     next_offset: i64,
 }
 
-/// 打一页上游（query 形态即官方实流：首屏 usct=2 无会话，续载 usct=1
+/// 打一页上游（query 形态即官方形态：首屏 usct=2 无会话，续载 usct=1
 /// + session + filter_ids）。`filter_ids` 由调用方从账本生成（带尾逗号）。
 async fn fetch_upstream(
     selected: &str,
@@ -163,9 +162,9 @@ async fn fetch_upstream(
         ("client_req_type", "2"),
         ("client_template", "2"),
         ("gender", "2"),
-        // 抓包原样：limit 恒 "0"（页长服务端定，limit 参数不参与）
+        // 官方原样：limit 恒 "0"（页长服务端定，limit 参数不参与）
         ("limit", "0"),
-        // cell/change 全族都在参（2026-10-11 抓 hgplayer 实流；个性化混排）
+        // cell/change 全族都在参（个性化混排）
         ("need_personal_recommend", "1"),
         ("offset", &req.offset.to_string()),
         ("sub_selected_items", req.sub),
@@ -214,7 +213,7 @@ async fn fetch_upstream(
     })
 }
 
-/// 上游没下发会话 id 时的本地兜底（正常抓包形态恒下发，护栏而已）。
+/// 上游没下发会话 id 时的本地兜底（正常官方形态恒下发，护栏而已）。
 fn fallback_session() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -236,8 +235,8 @@ fn store_book(session_id: &str, book: RankSessionBook) {
 ///
 /// **对外契约是窗口而非上游页**：`offset` 是会话榜单的窗口起点，同一
 /// (session, offset) 重复请求恒得同一批条目。这是机制性的：`session +
-/// filter_ids` 上游协议是顺序增量语义（fid 全局排异——2026-10-17 实验
-/// 实锤，带满 fid 重放旧窗口服务端会跳到未见段），而前端 staleTime=0
+/// filter_ids` 上游协议是顺序增量语义（fid 全局排异——带满 fid 重放旧
+/// 窗口服务端会跳到未见段），而前端 staleTime=0
 /// 的重挂载会按存储游标重放全部页，直接透传就会「中间缺 20 条」。所以
 /// 后端持有累积账本 [`RankSessionBook`]：窗口从账本切片（幂等），账本
 /// 不够深才按官方协议顺序向上游补页。
@@ -403,16 +402,15 @@ fn parse_selector_rows(rows: &[Value]) -> Vec<RankPanelRow> {
 
 /// 展开响应 `data.cell_view.cell_selector` 的 tab → 子榜 → 面板选项表。
 ///
-/// 抓包结构（2026-10-05 captures/rank-selector-schema.json；2026-10-17
-/// 官方实流补 background_selector）：
+/// 结构：
 /// `outer_row.items[]`（内容 tab，selector_item_id）→ `sub_cell_selector.
 /// outer_row.items[]`（子榜，sub_title 为描述行）→ `panel_selector.
 /// inner_rows[]`（筛选行）与 `background_selector.inner_rows[]`（月榜行）。
 ///
-/// 形态由**客户端版本号**决定（probe_rank_login_form 二分实证，与登录态
-/// 无关）：73932（7.3.9，hgplayer 1.1.3 内置红果版本）下发两级全量结构；
-/// 71332 老版本身份退化成扁平一级结构（无「全部」tab、面板分组丢失）。
-/// 设备档案已在启动时对齐版本（[`hongguo_signer::device::align_app_version`]），
+/// 形态由**客户端自报版本号**决定（与登录态无关）：较新版本身份下发
+/// 两级全量结构；过旧的版本身份退化成扁平一级结构（无「全部」tab、
+/// 面板分组丢失）。设备档案已在启动时对齐版本
+/// （[`hongguo_signer::device::align_app_version`]），
 /// 一级形态的兼容归一保留在前端 normalizeTabs 里。
 pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
     let Some(tabs) = data
@@ -546,8 +544,7 @@ pub(super) fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>>
             sub_title: str_field(raw, "sub_title"),
             score: num_field(raw, "score"),
             play_cnt: int_field(raw, "play_cnt"),
-            // 未上线判定：预约榜条目分集数为 0（已上线剧恒 >0；2026-10-09
-            // 抓包预约榜条目 episode_cnt=0/play_cnt=0，已上线条目 132 集）
+            // 未上线判定：预约榜条目分集数为 0（已上线剧恒 >0）
             upcoming: int_field(raw, "episode_cnt") == 0,
             reserved: raw
                 .get("online_subscribed")
@@ -571,7 +568,7 @@ pub(super) fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>>
         });
     }
     // 交付序就是官方榜单序（热度单调递减），绝不能按 recommend_info.rank
-    // 排序——2026-10-17 解包实锤它是页内位次（每页都是 1~10，首页甚至
+    // 排序——它是页内位次（每页都是 1~10，首页甚至
     // 出过 5,5 缺 9），跨页排序会把列表搅乱；全局连续名次由前端按拼接
     // 序号重排。这里 rank 只当「服务端给没给名次」的标记（0=无，如预约榜）
     Ok(items)
@@ -589,7 +586,7 @@ mod tests {
         }
     }
 
-    /// 抓包样本形状：cell_data 每块 1 条 + recommend_info 二次序列化。
+    /// 官方样本形状：cell_data 每块 1 条 + recommend_info 二次序列化。
     #[test]
     fn parses_rank_items_from_cell_view() {
         let data: Value = serde_json::json!({
@@ -627,7 +624,7 @@ mod tests {
         assert_eq!(it.sub_title, "玄幻·全200集");
     }
 
-    /// 抓包样本（2026-10-05 cell_selector）：tab → 子榜 → 面板行三层展开。
+    /// cell_selector 样本：tab → 子榜 → 面板行三层展开。
     #[test]
     fn parses_cell_selector_schema() {
         let data: Value = serde_json::json!({
@@ -710,7 +707,7 @@ mod tests {
         assert!(parse_cell_selector(Some(&serde_json::json!({}))).is_empty());
     }
 
-    /// 一级形态（老版本身份的退化结构，2026-10-05 probe 二分实证：由
+    /// 一级形态（老版本身份的退化结构，由
     /// version_code 决定、与登录态无关）：outer_row 直接是榜单，
     /// sub_cell_selector 是**筛选选项**（女频/男频/题材…，无 panel 层），
     /// 「总榜」选项 id 为空但要保留。
@@ -830,7 +827,7 @@ mod tests {
         assert!(!has_more, "上游已尽且账本浅于窗口=到底");
     }
 
-    /// 官方 69 条实流无一例外：首屏（offset=0 且无会话）usct=2，
+    /// 官方形态无一例外：首屏（offset=0 且无会话）usct=2，
     /// 翻页续载（offset>0 或带会话）usct=1——续载带 2 会被服务端当
     /// 「换一批」处理，是滚动加载重复/错乱的根因。
     #[test]
@@ -872,7 +869,7 @@ mod tests {
     }
 
     /// 翻页 filter_ids 取自会话账本里「已交付」的 series_id，顺序保持
-    /// 官方榜单序（官方抓包形态：逗号连接 + 尾逗号）。
+    /// 官方榜单序（官方形态：逗号连接 + 尾逗号）。
     #[test]
     fn book_keeps_delivery_order_for_filter_ids() {
         let mut book = RankSessionBook::default();
@@ -886,7 +883,7 @@ mod tests {
         assert_eq!(fid, "a,b,c");
     }
 
-    /// 月榜选项（background_selector，2026-10-17 官方实流）：综合行
+    /// 月榜选项（background_selector）：综合行
     /// date_all + 年份行 date_YYYYMM，与 panel_selector 同构展开。
     #[test]
     fn parses_background_selector_schema() {
@@ -923,7 +920,7 @@ mod tests {
     }
 
     /// 回归：条目保持服务端交付序，绝不能按 recommend_info.rank 排序——
-    /// 它是页内位次（2026-10-17 解包实锤每页都是 1~10 且可重复），跨页
+    /// 它是页内位次（每页都是 1~10 且可重复），跨页
     /// 排序会把拼接后的列表搅乱；全局名次由前端按序号重排。
     #[test]
     fn rank_items_keep_delivery_order() {
@@ -966,12 +963,8 @@ pub(crate) mod probe {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// hgplayer 抓包里的已注册设备（bookmall 系在静态旧设备上报 110，
-    /// 设备注册实现前用它验证端点形状）。
-    ///
-    /// 2026-10-04 更新：旧档案（device_id=1694…）当日搜索开始回 0 字节——
-    /// 服务端按 install_id 风控，旧 id 已失效；换当日 hgplayer 新注册的
-    /// 设备（captures/flows-20261004.jsonl）后恢复。
+    /// 已注册态的探测设备（bookmall 系端点对匿名/陈旧身份拒绝，探测
+    /// 需要注册态身份；device_id/iid/ttreq 为注册产物）。
     pub fn hg_env(base: &ApiEnv) -> ApiEnv {
         let pairs: Vec<(&str, &str)> = vec![
             ("ac", "wifi"),
@@ -987,26 +980,33 @@ pub(crate) mod probe {
             ("host_abi", "arm64-v8a"),
             ("iid", "2715158266282762"),
             ("language", "zh"),
-            ("manifest_version_code", "73932"),
+            (
+                "manifest_version_code",
+                hongguo_signer::REGISTER_VERSION_CODE_STR,
+            ),
             ("os", "android"),
             ("os_api", "34"),
             ("os_version", "14"),
             ("resolution", "1200*2670"),
             ("ssmix", "a"),
-            ("update_version_code", "73932"),
-            ("version_code", "73932"),
-            ("version_name", "7.3.9.32"),
+            (
+                "update_version_code",
+                hongguo_signer::REGISTER_VERSION_CODE_STR,
+            ),
+            ("version_code", hongguo_signer::REGISTER_VERSION_CODE_STR),
+            ("version_name", hongguo_signer::REGISTER_VERSION_NAME),
         ];
-        let mut v = serde_json::to_value(hongguo_signer::video_device()).unwrap();
+        let mut v = serde_json::to_value(hongguo_signer::anonymous_profile(
+            "0f0f0f0f-0000-4000-8000-000000000000",
+        ))
+        .unwrap();
         v["fields"] = serde_json::Value::Array(
             pairs
                 .into_iter()
                 .map(|(k, val)| serde_json::json!([k, val]))
                 .collect(),
         );
-        v["user_agent"] = serde_json::Value::String(
-            "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)".into(),
-        );
+        v["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
         ApiEnv {
             proxy: base.proxy.clone(),
             device: serde_json::from_value(v).unwrap(),
@@ -1073,8 +1073,7 @@ pub(crate) mod probe {
     }
 
     /// 排行榜筛选面板 schema 直连：dump 完整响应到 captures/，供提取
-    /// `unlimited_selector`（panel_selected_items 的选项 id 表，抓包响应被
-    /// addon 截断拿不全）。
+    /// `unlimited_selector`（panel_selected_items 的选项 id 表）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_selector_schema() {
@@ -1110,7 +1109,7 @@ pub(crate) mod probe {
     /// 排行榜 cell_selector 形态二分：服务端是否按客户端版本号分发
     /// 两级（内容 tab × 子榜 × 分组面板）/ 一级（扁平榜单）结构。
     /// 用法：PROBE_DEVICE / PROBE_COOKIE 由真实库导出，
-    /// `PROBE_VARIANT=asis|v73932 cargo test probe_rank_login_form -- --ignored --nocapture`
+    /// `PROBE_VARIANT=asis|vreg cargo test probe_rank_login_form -- --ignored --nocapture`
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_login_form() {
@@ -1119,12 +1118,18 @@ pub(crate) mod probe {
         let variant = std::env::var("PROBE_VARIANT").unwrap_or_else(|_| "asis".into());
 
         let mut v: Value = serde_json::from_str(&device_json).expect("device json");
-        if variant == "v73932" {
+        if variant == "vreg" {
             let bump = [
-                ["version_code", "73932"],
-                ["version_name", "7.3.9.32"],
-                ["manifest_version_code", "73932"],
-                ["update_version_code", "73932"],
+                ["version_code", hongguo_signer::REGISTER_VERSION_CODE_STR],
+                ["version_name", hongguo_signer::REGISTER_VERSION_NAME],
+                [
+                    "manifest_version_code",
+                    hongguo_signer::REGISTER_VERSION_CODE_STR,
+                ],
+                [
+                    "update_version_code",
+                    hongguo_signer::REGISTER_VERSION_CODE_STR,
+                ],
             ];
             let fields = v["fields"].as_array_mut().expect("fields");
             for [k, val] in bump {
@@ -1170,22 +1175,24 @@ pub(crate) mod probe {
         );
     }
 
-    /// 排行榜 cell_selector 形态二分（补充）：老版本号 + 匿名（无会话），
-    /// 区分「版本号」与「登录会话」哪个才是 schema 分发开关。
+    /// 排行榜 cell_selector 形态二分（补充）：注册口径版本身份 + 匿名
+    /// （无会话），区分「版本号」与「登录会话」哪个才是 schema 分发开关。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_login_form_anon() {
         let variant = std::env::var("PROBE_VARIANT").unwrap_or_else(|_| "asis".into());
         let device_json = std::env::var("PROBE_DEVICE").expect("PROBE_DEVICE");
         let mut v: Value = serde_json::from_str(&device_json).expect("device json");
-        if variant == "v73932" {
+        if variant == "vreg" {
             let fields = v["fields"].as_array_mut().expect("fields");
             for f in fields.iter_mut() {
                 match f[0].as_str() {
                     Some("version_code" | "manifest_version_code" | "update_version_code") => {
-                        f[1] = serde_json::json!("73932");
+                        f[1] = serde_json::json!(hongguo_signer::REGISTER_VERSION_CODE_STR);
                     }
-                    Some("version_name") => f[1] = serde_json::json!("7.3.9.32"),
+                    Some("version_name") => {
+                        f[1] = serde_json::json!(hongguo_signer::REGISTER_VERSION_NAME)
+                    }
                     _ => {}
                 }
             }
@@ -1214,7 +1221,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// 排行榜内容 tab「演员」形态验证（ranklist_celebrity，抓包没点到，
+    /// 排行榜内容 tab「演员」形态验证（ranklist_celebrity；
     /// 响应 cell_data 若不是剧集形态则前端跳过该 tab）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
@@ -1309,7 +1316,7 @@ pub(crate) mod probe {
             assert!(!page.items.is_empty(), "panel={p} 不应为空");
         }
 
-        // 内容 tab 切换（真人剧 / 漫剧 / 系列剧，抓包样本 id）
+        // 内容 tab 切换（真人剧 / 漫剧 / 系列剧，官方样本 id）
         for (sel, sub) in [
             ("human", "human_hot_sc"),
             ("comic_series_rank", "comic_series_hot_rank"),
@@ -1334,12 +1341,12 @@ pub(crate) mod probe {
         }
     }
 
-    /// app 生产同款设备（video_device + 匿名 cookie）下发的 selector schema：
-    /// 对照 hgplayer 档案——排查两端 tabs 是否一致（灰度可能按设备分发）。
+    /// app 生产同款设备（匿名档案 + 匿名 cookie）下发的 selector schema：
+    /// 排查两端 tabs 是否一致（灰度可能按设备分发）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_selector_app_device() {
-        let device = hongguo_signer::video_device();
+        let device = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
         let env = ApiEnv {
             proxy: hongguo_common::model::ProxyConfig::default(),
             cookie: Some(hongguo_signer::device::anonymous_cookie(&device)),
@@ -1373,7 +1380,7 @@ pub(crate) mod probe {
         );
     }
 
-    /// 翻页协议真连验证（2026-10-17 协议校正后的冒烟）：首页（usct=2 无
+    /// 翻页协议真连验证：首页（usct=2 无
     /// 会话）→ 翻页（usct=1 + session_id + rank_version 回传，filter_ids
     /// 由会话账本自动带上），两页条目应为 10 条上下且第二页出现新条目。
     #[tokio::test]
@@ -1436,10 +1443,9 @@ pub(crate) mod probe {
         );
     }
 
-    /// 深滚逐页对照（2026-10-17 排查热播榜缺 20 条）：用项目代码路径连拉
+    /// 深滚逐页对照（排查热播榜缺 20 条场景）：用项目代码路径连拉
     /// 到 has_more=false，逐页打印 条数/末6位 series_id/账本 filter 数，
-    /// 与官方实流（flows-20261016-official-rank.jsonl 热播榜深滚批次）
-    /// 逐页 diff。
+    /// 与官方对照逐页 diff。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_deep_paging_diff() {
@@ -1484,7 +1490,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// 重挂载重拉模拟（2026-10-17 排查热播榜缺 20 条）：正常翻 3 页后，
+    /// 重挂载重拉模拟（排查热播榜缺 20 条场景）：正常翻 3 页后，
     /// 按前端重拉形态再请求第 2 页（同 session、fid=账本全部已见），
     /// 看服务端回「原窗口 11~20 位」还是「跳过已见的 32 位起」——
     /// 前者是后端误去重问题，后者是 fid 全局排异问题。

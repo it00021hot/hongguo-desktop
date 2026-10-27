@@ -5,7 +5,7 @@ import { tf } from '@/locales';
 import { useUiStore } from '@/stores/ui';
 
 /**
- * 窗口级全屏（hgplayer WindowFullscreen/WindowIsFullscreen 同款）：走原生
+ * 窗口级全屏：走原生
  * 窗口全屏，不走元素 requestFullscreen——WKWebView 里元素全屏只置 DOM 状态
  * （fullscreenElement 置位、promise 成功），原生呈现永不发生，窗口纹丝不动；
  * 就算能呈现，Portal 到 body 的浮层（倍速/清晰度菜单）在全屏元素子树外
@@ -48,7 +48,7 @@ export function useWindowFullscreenSync() {
   }, []);
 }
 
-/** 播放器控制栏的全屏开关。失败弹 toast（hgplayer 同款「全屏切换失败」）
+/** 播放器控制栏的全屏开关。失败弹 toast「全屏切换失败」
  *  ——静默失败会让用户以为按钮坏了。 */
 export function useWindowFullscreen() {
   const fullscreen = useUiStore((s) => s.windowFullscreen);

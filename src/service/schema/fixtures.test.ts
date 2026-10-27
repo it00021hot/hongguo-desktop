@@ -11,7 +11,7 @@ import { loginMfaStateSchema } from './login';
 import { rankPageSchema } from './rank';
 
 /**
- * 响应契约 fixture：按 Rust serde 模型的既有形状（抓包结论背书，出处见
+ * 响应契约 fixture：按 Rust serde 模型的既有形状（出处见
  * `docs/hongguo-api-endpoints.md` 与各 schema 注释）手建的「 Rust 会产出
  * 什么」。这层网防的是**前端 schema 被无意改严/改形**与 serde 漂移——
  * Rust 模型改动当天这里会红（配合原计划批次三的 Rust 侧 struct 化）。

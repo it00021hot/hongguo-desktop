@@ -20,8 +20,7 @@ pub use hongguo_common::consts::scheme::{
 ///
 /// **macOS / Linux**：WKWebView（WKURLSchemeHandler）与 webkit2gtk 拦的是
 /// **真 scheme**，`http://hongguo-stream.localhost/…` 会被当成真实 HTTP 请求
-/// 发往不存在的主机 → `<video>` 直接 MediaError 4（2026-10-06 macOS 全部
-/// 视频打不开的根因）。必须给 `{scheme}://localhost/…`（`tauri://localhost`
+/// 发往不存在的主机 → `<video>` 直接 MediaError 4。必须给 `{scheme}://localhost/…`（`tauri://localhost`
 /// 同款形态，wry 转给 handler 时 host 恒为 localhost）。
 pub fn scheme_base(scheme: &str) -> String {
     if cfg!(target_os = "windows") {

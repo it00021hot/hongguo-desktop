@@ -7,6 +7,7 @@ use super::*;
 use super::general::{naming_index, proxy_index};
 use super::storage::cache_dir_display;
 use crate::bridge;
+use hongguo_common::AppError;
 #[cfg(feature = "screenshot")]
 use hongguo_common::model::settings::ProxyMode;
 #[cfg(feature = "screenshot")]
@@ -25,17 +26,31 @@ impl super::SettingsView {
         self.loading = true;
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
-            tokio::task::spawn_blocking(move || {
+            let probed = tokio::task::spawn_blocking(move || {
                 let usage = hongguo_service::storage_service::usage::usage(&state);
                 let cache_usage = hongguo_service::storage_service::cache::usage();
                 let capability = hongguo_media_platform::capability::probe::detect();
                 (usage, cache_usage, capability)
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| AppError::Internal(format!("占用与能力探测阻塞池任务失败: {e}")))?;
+            Ok::<_, AppError>(probed)
         });
         cx.spawn(async move |this, cx| {
-            let (usage, cache_usage, capability) = rx.await.expect("tokio 桥不会丢弃发送端");
+            let probed = rx.await.expect("tokio 桥不会丢弃发送端");
+            let (usage, cache_usage, capability) = match probed {
+                Ok(probed) => probed,
+                Err(e) => {
+                    log::warn!("[Settings] 占用与能力探测失败: {e}");
+                    // 探测拿不到就别让页面一直转圈：标记已加载，字段留空
+                    let _ = this.update(cx, |view, cx| {
+                        view.loaded = true;
+                        view.loading = false;
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
             let _ = this.update_in(cx, |view, window, cx| {
                 view.loaded = true;
                 view.loading = false;

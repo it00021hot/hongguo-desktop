@@ -43,7 +43,7 @@ export function usePlayerInteractions(params: {
     volumeOpen,
   } = params;
 
-  // ---- 滚轮切换（hgplayer 同款）：沉浸流=上一部/下一部剧，播放页=切集 ----
+  // ---- 滚轮切换：沉浸流=上一部/下一部剧，播放页=切集 ----
   // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
   const wheelLock = useRef(0);
   const onStageWheel = useCallback(
@@ -110,7 +110,7 @@ export function usePlayerInteractions(params: {
 
       // Esc 固定管「退出选中」——面板语义按键，不随自定义映射
       if (e.key === 'Escape') {
-        // 竖屏铺满先退铺满回竖条（hgplayer 同序：面板 Esc 之后、退出选中
+        // 竖屏铺满先退铺满回竖条（顺序：面板 Esc 之后、退出选中
         // 之前；面板开着时 Esc 仍归面板）
         const ui = useUiStore.getState();
         if (

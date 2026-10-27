@@ -43,14 +43,14 @@ function toCard(it: FeedItem): SeriesCard {
 
 /** 播放数 → 短格式（12606352 → 「1260.6万播放」）；搜索卡热度行用。
  *  服务端给不了搜索结果的标签/热度列表，播放数是同位信息。精度走
- *  formatCountPrecise（万/亿一位小数，hgplayer 口径）。 */
+ *  formatCountPrecise（万/亿一位小数）。 */
 function formatPlayCount(n: number): string {
   if (n <= 0) return '';
   return tf('browse.playCount', { count: formatCountPrecise(n) });
 }
 
-/** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
- * 实测 select_items.duration 服务端必认）。名称走 i18n，与 creationStatus
+/** 服务端面板缺「长度」行时的合成兜底（合成选项 id
+ * 服务端必认）。名称走 i18n，与 creationStatus
  * 合成行同口径。 */
 const durationFallbackRow = () => ({
   rowType: 'duration',
@@ -73,7 +73,7 @@ function withDurationFallback(
  * 浏览页：顶部一个搜索框，下面是官方筛选面板 + 结果网格。
  *
  * 数据走官方 App 的找剧接口（landpage 筛选面板 + 多维 select_items），
- * 与第三方客户端同款：体裁/主题/设定/背景/推荐/受众/时间/长度八行，
+ * 体裁/主题/设定/背景/推荐/受众/时间/长度八行，
  * 每行单选，「全部」即空选；选项表随服务端下发，不写死。
  *
  * 搜索与浏览共用同一块结果区：提交关键词就原地切成搜索结果，
@@ -82,7 +82,7 @@ function withDurationFallback(
 export function BrowsePage() {
   const filtersCollapsed = useUiStore((s) => s.browseFiltersCollapsed);
   const setBrowseFiltersCollapsed = useUiStore((s) => s.setBrowseFiltersCollapsed);
-  // 筛选条件会话级保留（hgplayer 1.1.7 同款：去播放再回来筛选还在）
+  // 筛选条件会话级保留（去播放再回来筛选还在）
   const [filters, setFilters] = useSessionState<BrowseFilters>('hongguo.browse.filters', {
     genre: '',
     theme: '',
@@ -101,7 +101,7 @@ export function BrowsePage() {
   const [submitted, setSubmitted] = useSessionState('hongguo.browse.submitted', '');
   const searching = submitted !== '';
 
-  // ---- 输入联想（hgplayer 1.1.6 同款）：停 300ms 才发请求，
+  // ---- 输入联想：停 300ms 才发请求，
   //      有 seriesId 的条目点击直进播放器，纯词条目回填发起搜索 ----
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
@@ -130,7 +130,7 @@ export function BrowsePage() {
   };
 
   const panel = useBrowsePanel();
-  // 找剧流（无限滚动）：session_id 游标翻页，与 hgplayer 同款
+  // 找剧流（无限滚动）：session_id 游标翻页
   const browse = useBrowseFeed(filters);
   // 找剧搜索走官方 App API（站内官网搜索只匹配剧名且结果少；
   // App 搜索是综合 tab，首页精选 + 翻页全量）
@@ -147,9 +147,8 @@ export function BrowsePage() {
       seriesTitle: it.title,
       cover: it.cover,
       episodeCount: it.episodeCnt,
-      // 2026-10-11 dev 实测：综合 tab 的 cell 不带 sub_title/sub_title_list，
-      // 真标签拿不到（空数组），热度行回落播放数（hgplayer 1.1.6「搜索
-      // 结果显示封面与热度」同位）
+      // 综合 tab 的 cell 不带 sub_title/sub_title_list，
+      // 真标签拿不到（空数组），热度行回落播放数（搜索结果显示封面与热度）
       tags: it.tags.length > 0 ? it.tags : it.subTitle.split('·').slice(0, 1).filter(Boolean),
       heatText: it.heatText || formatPlayCount(it.playCnt),
       url: '',
@@ -343,9 +342,9 @@ export function BrowsePage() {
         )}
       </div>
 
-      {/* 官方筛选面板（第三方同款八行，可整块折叠）：选项表服务端下发，
-          空选即「全部」。「长度」行部分设备不下发（2026-10-07 实测），但
-          select_items.duration 服务端必认——缺行时用抓包锁定的选项 id 合成兜底。
+      {/* 官方筛选面板（八行，可整块折叠）：选项表服务端下发，
+          空选即「全部」。「长度」行部分设备不下发，但
+          select_items.duration 服务端必认——缺行时用官方选项 id 合成兜底。
           折叠态只留开关行：徽标显示已选条件数，一键展开不用从头找。 */}
       {!searching && (
         <div className="flex flex-col gap-1.5">

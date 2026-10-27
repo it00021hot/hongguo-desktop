@@ -15,9 +15,9 @@ cd "$(dirname "$0")/.."
 
 BASE=${1:?用法: check-file-size.sh <base-ref-or-sha>}
 LIMIT=800
-# 销号清单：从 dev 合入 main 时（2026-10-15，v0.4.5）首次暴露的 GPUI 存量。
-# 2026-10-20 全部销号（`docs/gpui-shell-file-split.md`）：GPUI 壳已无 >800 行
-# 文件，清单清空——`is_grandfathered` 保留，留给以后真的出现存量豁免时再用。
+# 销号清单：2026-10-15（v0.4.5 合入 dev）首次暴露的 GPUI 存量已于
+# 2026-10-20 全部拆完（GPUI 壳无 >800 行文件），清单清空——`is_grandfathered`
+# 保留，留给以后真的出现存量豁免时再用。
 GRANDFATHERED=()
 is_grandfathered() {
   local f=$1

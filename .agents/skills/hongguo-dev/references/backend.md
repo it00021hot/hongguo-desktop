@@ -18,7 +18,7 @@ crates/hongguo-service（业务编排，无任何 UI 框架，两壳共用）
 
 - command 与 service 不是一一镜像：`<域>_cmd.rs` 大多转调同名 service，另有直连 `hongguo_api` 的外呼命令（rank/discover/danmaku…，必须 async）与窗口类命令（window_cmd）。
 
-- 已迁出的 crate：`crates/hongguo-common`（领域模型 `model` / 统一错误 `AppError` / 纯工具 `utils` / 跨端常量 `consts`）、`crates/hongguo-signer`（请求签名，JS 1:1 禁改）、`crates/hongguo-video`（MP4 解析与 CENC 解密）、`crates/hongguo-api`（官方接口客户端，14 域；改端点前必读 `docs/hongguo-api-endpoints.md`）、`crates/hongguo-store`（Turso 持久化：db 迁移 / entity 六组实体 / bridge 同步门面 / 旧档导入与坏档恢复）、`crates/hongguo-stream`（在线流契约：渐进流 / 缓存 / Range 应答 / 进程级 `cache()` 单例）、`crates/hongguo-media`（纯 Rust 编解码：demux / hevc / remux / transcode / heif 等）。本 crate 用 `hongguo_common::…` / `hongguo_signer::…` / `hongguo_video::…` / `hongguo_api::…` / `hongguo_store::…` / `hongguo_stream::…` / `hongguo_media::…` 引用；常量归属规则见 common 的 `consts/mod.rs` 头注释。
+- 已迁出的 crate：`crates/hongguo-common`（领域模型 `model` / 统一错误 `AppError` / 纯工具 `utils` / 跨端常量 `consts`）、`crates/hongguo-signer`（请求签名，JS 1:1 禁改）、`crates/hongguo-video`（MP4 解析与 CENC 解密）、`crates/hongguo-api`（官方接口客户端，14 域；改端点前必读 `docs/hongguo-api-endpoints.md`）、`crates/hongguo-store`（Turso 持久化：db 迁移 / entity 六组实体 / bridge 同步门面 / 旧档导入与坏档恢复）、`crates/hongguo-stream`（在线流契约：渐进流 / 缓存 / Range 应答 / 进程级 `cache()` 单例）、`crates/hongguo-media`（纯 Rust 编解码：demux / hevc / mp4 写出层 / mux 封装 / remux / transcode / heif 等）。本 crate 用 `hongguo_common::…` / `hongguo_signer::…` / `hongguo_video::…` / `hongguo_api::…` / `hongguo_store::…` / `hongguo_stream::…` / `hongguo_media::…` 引用；常量归属规则见 common 的 `consts/mod.rs` 头注释。
 
 - **媒体层三块**：纯 Rust 编解码在 `hongguo-media`；平台硬编（VT / MF / WIC）与 ffmpeg 执行在 `hongguo-media-platform` 门面（平台实现在 `hongguo-media-platform-{macos,windows}`，`ffmpeg` 外部进程与 `capability` 能力探测聚合并留在此）；帧契约在 `hongguo-media-platform-api`。方向恒为「平台/ffmpeg/能力探测 → 纯 Rust 核心」，不许反向（核心不依赖 tauri/gpui）。
 
@@ -98,4 +98,4 @@ pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
 
 ## 动 media/platform 前必读
 
-转码分流单入口 `pipeline::transcode`（平台硬编 → ffmpeg → 纯 Rust 软解），别绕开它直连后端。跨平台验证口径：显示序只用 pts 集合比对。VT/MF 硬编的决策档案与已修 FFI bug 全录在 git 历史（原 `docs/platform-transcode-progress.md`，文档清理时删除，`git log --follow` 可找回）。
+转码分流单入口 `pipeline::transcode`（平台硬编 → ffmpeg），别绕开它直连后端。机器上两者都没有时**没有兜底**，转码直接报错——别再指望纯 Rust 软解。跨平台验证口径：显示序只用 pts 集合比对。VT/MF 硬编的决策档案与已修 FFI bug 全录在 git 历史（原 `docs/platform-transcode-progress.md`，文档清理时删除，`git log --follow` 可找回）。

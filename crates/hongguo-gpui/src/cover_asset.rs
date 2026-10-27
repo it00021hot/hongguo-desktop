@@ -8,7 +8,37 @@
 //! 页面拿到的图片元素走 `img(ImageSource::Resource(Resource::Path(..)))`：
 //! 解码、内存缓存、GPU 纹理与重绘都归 gpui 的图片缓存管。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
 use gpui_kit::{App, Asset};
+
+/// 转码完成后的重绘合流窗口：每张成品图落盘都要触发一次重绘，渲染期的
+/// [`crate::cover_img`] 查到文件才会把 `img` 画出来。但一次首拉几十张，
+/// 逐张 `cx.refresh()`（全窗重绘）会把主线程拆成碎帧——100ms 窗口内到齐的
+/// 落盘合流为一次重绘。
+const REFRESH_COALESCE_MS: u64 = 100;
+
+/// 已有合流刷新在途（避免每次落盘都起一个定时任务）。
+static REFRESH_QUEUED: AtomicBool = AtomicBool::new(false);
+
+/// 请求一次合流的全窗重绘（见 [`REFRESH_COALESCE_MS`]）。
+///
+/// 唤醒检查与置位的次序保证不丢请求：窗口期内到达的落盘要么看到 true
+/// （被紧随其后的 refresh 覆盖），要么看到 false（自己排下一次）。
+fn schedule_refresh(cx: &mut App) {
+    if REFRESH_QUEUED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        cx.background_executor()
+            .timer(Duration::from_millis(REFRESH_COALESCE_MS))
+            .await;
+        REFRESH_QUEUED.store(false, Ordering::SeqCst);
+        cx.update(|cx| cx.refresh_windows());
+    })
+    .detach();
+}
 
 /// 远端封面 URL → 数据目录里的成品图就绪（按长边上限分档）。
 ///
@@ -43,9 +73,9 @@ impl Asset for CoverAsset {
                 Ok(result) => result.map(|_| ()),
                 Err(error) => Err(format!("封面转码任务失败: {error}")),
             };
-            // 成品图落盘后刷新窗口：等这张图的视图重绘（`fetch_asset` 不订阅
-            // 视图，只能全局刷新）。
-            cx.refresh();
+            // 成品图落盘后请求重绘（合流，见 [`schedule_refresh`]）——
+            // `fetch_asset` 不订阅视图，只能全局刷新。
+            cx.update(schedule_refresh);
             let _ = tx.send(result);
         });
         task.detach();

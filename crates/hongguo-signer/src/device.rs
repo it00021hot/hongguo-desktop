@@ -4,8 +4,9 @@
 //! version_name 打进密文，服务端两边比对，不一致直接判为伪造。
 //!
 //! 档案有 owned 形态 [`DeviceProfile`]（可从数据库装载、可被设备注册流程
-//! 改写字段）；`video_device()` 返回的是**实测可用的静态兜底档案**——
-//! 注册失败或未注册时用它，保证签名链路永远有自洽的设备可用。
+//! 改写字段）；游客身份走 [`anonymous_profile`]——当前官方版本起
+//! 未登录读播**不再需要设备注册**，仅凭 cdid + 签名即可，
+//! 共享的静态兜底档案已废除。
 
 use serde::{Deserialize, Serialize};
 
@@ -15,12 +16,44 @@ use crate::protobuf::{FieldType, FieldValue, proto};
 pub const APP_ID: &str = "8662";
 pub const CHANNEL_ID: &str = "1588093228";
 
-/// 与设备档案配套的 UA，二者的系统版本号必须一致。
-pub const VIDEO_UA: &str = concat!(
-    "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; ",
-    "Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 ",
-    "QuicVersion:462f352c 2026-08-31)"
-);
+/// 官方客户端版本身份（全仓唯一出处）。
+/// query / 注册模板 / UA 一律引用这三常量，禁止再散写魔法值。
+pub const APP_VERSION_CODE: u64 = 74232;
+pub const APP_VERSION_CODE_STR: &str = "74232";
+pub const APP_VERSION_NAME: &str = "7.4.2.32";
+
+/// 注册指纹钉定的版本身份（当前与 [`APP_VERSION_CODE`] 同值，两套独立
+/// 常量、升级互不牵连）。注册请求
+/// 与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——
+/// 升当前版本与注册指纹不同源，取流即挂。
+pub const REGISTER_VERSION_CODE: u64 = 74232;
+pub const REGISTER_VERSION_CODE_STR: &str = "74232";
+pub const REGISTER_VERSION_NAME: &str = "7.4.2.32";
+
+/// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
+/// 机型段与档案指纹一致，改机型要整组同换）。
+///
+/// UA 尾段为官方统一的 `tt-ok/3.12.13.20` 形态，
+/// 匿名请求的机型段会在服务端过风控名单，跟着换。
+pub fn video_ua() -> String {
+    format!(
+        "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
+         Build/UKQ1.230804.001;tt-ok/3.12.13.20)",
+        APP_VERSION_CODE_STR
+    )
+}
+
+/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段
+/// 为官方统一的 tt-ok 形态（旧 Cronet 尾段在匿名请求上已被服务端
+/// 按旧指纹拒）。与 [`video_ua`] 各自和所属版本身份
+/// 成套（注册口径 vs 当前客户端口径），不可混搭。
+pub fn register_ua() -> String {
+    format!(
+        "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
+         Build/UKQ1.230804.001;tt-ok/3.12.13.20)",
+        REGISTER_VERSION_CODE_STR
+    )
+}
 
 /// 视频 CDN 403 时补上的官网 Referer（直链被拒的最后手段）。
 ///
@@ -41,14 +74,14 @@ pub struct DeviceProfile {
     #[serde(default = "default_user_agent")]
     user_agent: String,
     /// 设备维度的 `ttreq` 票（注册响应 Set-Cookie 下发，按 install_id 发放）。
-    /// None = 用静态兜底档案配套的 [`ANON_TTREQ`]。不进 `fields`——那是要
-    /// 参与签名 query 的，票只该出现在 Cookie。
+    /// None = 无票（匿名档案零 cookie；注册档案必有票）。不进 `fields`——
+    /// 那是要参与签名 query 的，票只该出现在 Cookie。
     #[serde(default)]
     ttreq: Option<String>,
 }
 
 fn default_user_agent() -> String {
-    VIDEO_UA.to_string()
+    video_ua()
 }
 
 impl DeviceProfile {
@@ -67,6 +100,11 @@ impl DeviceProfile {
     /// 挂上注册响应下发的本设备 `ttreq` 票（覆盖语义，None 清除回兜底）。
     pub fn set_ttreq(&mut self, ttreq: Option<String>) {
         self.ttreq = ttreq.filter(|t| !t.is_empty());
+    }
+
+    /// 本设备 `ttreq` 票（None = 无票）。重建档案时原样搬运。
+    pub fn ttreq(&self) -> Option<&str> {
+        self.ttreq.as_deref()
     }
 
     /// 按 key 取字段值，缺 key 给空串（与旧 `device_field` 行为一致）。
@@ -88,14 +126,17 @@ impl DeviceProfile {
         }
     }
 
-    /// 设备注册用的全新档案：73932 / Xiaomi 14 指纹，**不带** device_id/iid
-    ///（首次注册 query 里不能有空值形态的字段），cdid/openudid 由调用方
-    /// 生成后填入，与注册 body 的 JSON 指纹保持同一套。
+    /// 设备注册用的全新档案：版本身份**原生钉注册口径**
+    /// （[`REGISTER_VERSION_CODE_STR`]），UA 为 tt-ok 尾段
+    /// （[`register_ua`]），Xiaomi 14
+    /// 指纹，**不带** device_id/iid（首次注册 query 里不能有空值形态的
+    /// 字段）。cdid/openudid 由调用方生成后填入——注册请求与注册产物
+    /// 档案共用本构造，指纹天然同源；匿名档案经 [`anonymous_profile`]
+    /// 对齐到当前客户端口径。
     ///
     /// 不 `#[cfg(test)]` 门控：下游 crate（domain/api/register）的测试要用，
     /// 而依赖 crate 对下游以非 test 方式编译，门控项会消失。
     pub fn fresh_register_profile(cdid: &str, openudid: &str) -> Self {
-        let ua = "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)";
         let mut dev = Self::from_pairs(
             &[
                 ("ac", "wifi"),
@@ -111,19 +152,19 @@ impl DeviceProfile {
                 ("host_abi", "arm64-v8a"),
                 ("is_android_pad_screen", "0"),
                 ("language", "zh"),
-                ("manifest_version_code", "73932"),
+                ("manifest_version_code", REGISTER_VERSION_CODE_STR),
                 ("os", "android"),
                 ("os_api", "34"),
                 ("os_version", "14"),
                 ("player_so_load", "1"),
-                ("pv_player", "73932"),
+                ("pv_player", REGISTER_VERSION_CODE_STR),
                 ("resolution", "1200*2670"),
                 ("ssmix", "a"),
-                ("update_version_code", "73932"),
-                ("version_code", "73932"),
-                ("version_name", "7.3.9.32"),
+                ("update_version_code", REGISTER_VERSION_CODE_STR),
+                ("version_code", REGISTER_VERSION_CODE_STR),
+                ("version_name", REGISTER_VERSION_NAME),
             ],
-            ua,
+            &register_ua(),
         );
         dev.set("cdid", cdid);
         dev.set("openudid", openudid);
@@ -145,94 +186,93 @@ impl DeviceProfile {
     pub fn user_agent(&self) -> &str {
         &self.user_agent
     }
+
+    /// 覆盖档案 UA（注册探针换口径对照用；UA 与字段
+    /// 必须成套的约束由调用方保证）。
+    pub fn set_user_agent(&mut self, ua: &str) {
+        self.user_agent = ua.to_string();
+    }
 }
 
-/// 短剧播放接口（video_model / video_detail）使用的静态兜底设备档案。
-///
-/// 这是一组固定的实测设备参数：换掉之后签名仍然自洽，但服务端可能对
-/// 新档案做更严格的风控。字段顺序就是 query 顺序，**不要重排**——
-/// 签名是「URL 查询串 + body 字节 + 时间戳」的联合函数。
-pub fn video_device() -> DeviceProfile {
-    // 2026-10-04 抓包刷新（captures/flows-20261004.jsonl）：71332 旧档案的
-    // install_id 已被服务端风控清理——reading 系（搜索等）整段 0 字节拒。
-    // 与下方 ANON_TTREQ 同源，失效时重抓 hgplayer 并整组同换。
-    DeviceProfile::from_pairs(
-        &[
-            ("iid", "2715158266282762"),
-            ("device_id", "2715158266032906"),
-            ("ac", "wifi"),
-            ("channel", "xiaomi_8662_64"),
-            ("aid", "8662"),
-            ("app_name", "novelread"),
-            ("cdid", "babf8a0e-8586-40ca-bb75-20a1a698b43f"),
-            ("version_code", "73932"),
-            ("version_name", "7.3.9.32"),
-            ("device_platform", "android"),
-            ("os", "android"),
-            ("ssmix", "a"),
-            ("device_type", "23127PN0CC"),
-            ("device_brand", "xiaomi"),
-            ("language", "zh"),
-            ("os_api", "34"),
-            ("os_version", "14"),
-            ("manifest_version_code", "73932"),
-            ("resolution", "1200*2670"),
-            ("dpi", "460"),
-            ("update_version_code", "73932"),
-            ("host_abi", "arm64-v8a"),
-            ("dragon_device_type", "phone"),
-            ("pv_player", "73932"),
-            ("compliance_status", "0"),
-            ("need_personal_recommend", "1"),
-            ("player_so_load", "1"),
-            ("is_android_pad_screen", "0"),
-        ],
-        VIDEO_UA,
+/// 匿名游客档案（官方匿名形态）：注册指纹基底去 `openudid`，版本
+/// 身份与 UA 对齐当前客户端（[`align_app_version`] + [`video_ua`] 的
+/// tt-ok 尾段），`pv_player` 随版本身份同值——
+/// **不带 iid/device_id/openudid、零 cookie**，服务端对匿名读播全量放行。
+/// `cdid` 由调用方生成并落库，安装期内保持稳定
+/// （官方同款行为：pm clear 后身份不变，就是 cdid/指纹没变）。
+pub fn anonymous_profile(cdid: &str) -> DeviceProfile {
+    let mut p = DeviceProfile::fresh_register_profile(cdid, "");
+    p.remove("openudid");
+    align_app_version(&mut p);
+    p.set("pv_player", APP_VERSION_CODE_STR);
+    p.set_user_agent(&video_ua());
+    p
+}
+
+/// 生成新的客户端 cdid（UUID v4，匿名档案与注册流程共用）。
+pub fn fresh_cdid() -> String {
+    let b: [u8; 16] = rand::random();
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6] & 0x0f | 0x40,
+        b[7],
+        b[8] & 0x3f | 0x80,
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
     )
 }
 
-/// 兜底档案配套的 `ttreq`（服务端按 install_id 发放的票）。
-///
-/// 与 [`video_device`] 同一次抓包而来：Cookie 里的 `install_id` 必须与档案
-/// 的 `iid` 一致，`ttreq` 也是设备维度的，所以两者要整组同换。设备注册
-/// 链路打通后，应改从注册响应的 Set-Cookie 里取自己的票。
-pub const ANON_TTREQ: &str = "1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874";
+/// 未登录时的匿名 Cookie：reading 系按 `install_id` 风控——**匿名档案
+/// （无 iid）必须零 cookie**（官方 virgin 形态，带未知 install_id 反而
+/// 被静默拒）；注册档案带自己的 install_id + 票。passport_csrf_token
+/// 空值字段只在有 install_id 的形态在场（登录发码语义需要）。
+pub fn anonymous_cookie(device: &DeviceProfile) -> String {
+    let iid = device.get("iid");
+    if iid.is_empty() {
+        return String::new();
+    }
+    let mut cookie = format!(
+        "passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id={iid}"
+    );
+    if let Some(ttreq) = &device.ttreq {
+        cookie.push_str(&format!("; ttreq={ttreq}"));
+    }
+    cookie
+}
 
-/// 当前客户端自报的版本身份（与 [`video_device`] / 注册模板同源：
-/// hgplayer 1.1.3 内置红果 7.3.9.32）。
+/// 当前客户端自报的版本身份（与档案 / 注册模板同源：
+/// 见顶部 [`APP_VERSION_CODE`] 常量）。
 const APP_VERSION_FIELDS: [(&str, &str); 4] = [
-    ("version_code", "73932"),
-    ("version_name", "7.3.9.32"),
-    ("manifest_version_code", "73932"),
-    ("update_version_code", "73932"),
+    ("version_code", APP_VERSION_CODE_STR),
+    ("version_name", APP_VERSION_NAME),
+    ("manifest_version_code", APP_VERSION_CODE_STR),
+    ("update_version_code", APP_VERSION_CODE_STR),
 ];
 
 /// 把设备档案的「App 版本身份」对齐到当前版本（device_id/iid 身份不动）。
 ///
-/// 服务端按自报 `version_code` 分发功能 schema：71332 老版本身份下排行榜
-/// `cell_selector` 退化成扁平一级结构（无「全部」内容 tab、面板分组丢失，
-/// 2026-10-05 `probe_rank_login_form` 二分实证），73932 才是全量两级结构。
-/// 真实设备升级 app 后同样只是自报新版本号，档案其余字段原样保留。
+/// 过旧的版本身份会让服务端下发退化的扁平 schema；本函数把自报版本
+/// 对齐到当前客户端。真实设备升级 app 后同样只是自报新版本号，
+/// 档案其余字段原样保留。
+///
+/// **注册产物档案不适用**：注册口径终生钉 [`REGISTER_VERSION_CODE_STR`]，
+/// 升当前版本与注册指纹不同源、取流即挂——service 的 adopt 按轮换元数据
+/// 跳过本函数。
 pub fn align_app_version(profile: &mut DeviceProfile) {
     for (k, v) in APP_VERSION_FIELDS {
         profile.set(k, v);
     }
-}
-
-/// 未登录时的匿名 Cookie：reading 系接口按 `install_id` 风控，缺它会被
-/// 静默拒（HTTP 200 + 0 字节）。`install_id` 从档案的 `iid` 派生，保证
-/// 换档案时始终一致；`store-region` 是实测的属地标记。
-pub fn anonymous_cookie(device: &DeviceProfile) -> String {
-    // passport_csrf_token 必须以空值字段在场（hgplayer 抓包形态）：
-    // 缺失时服务端把 send_code 走成「换绑检查」——目标号已绑定其它
-    // 账号就报 1001（2026-10-04 实测：补空值即恢复登录发码语义）。
-    // ttreq 按 install_id 发放：注册档案带自己的票，静态档案用配套常量。
-    let ttreq = device.ttreq.as_deref().unwrap_or(ANON_TTREQ);
-    format!(
-        "passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id={}; ttreq={}",
-        device.get("iid"),
-        ttreq
-    )
 }
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
@@ -333,23 +373,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn video_device_profile_is_stable() {
-        let device = video_device();
-        assert_eq!(device.iter().count(), 28);
-        // 迭代顺序就是 query 参数顺序，签名对它敏感，不能重排
-        let first: Vec<(&str, &str)> = device.iter().take(2).collect();
-        assert_eq!(
-            first,
-            vec![
-                ("iid", "2715158266282762"),
-                ("device_id", "2715158266032906")
-            ]
-        );
-
-        assert_eq!(device.get("version_name"), "7.3.9.32");
+    fn anonymous_profile_has_no_device_identity() {
+        let device = anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
+        assert_eq!(device.get("cdid"), "0f0f0f0f-0000-4000-8000-000000000000");
+        // 匿名形态：无 iid/device_id/openudid（官方 virgin 形态）
+        assert_eq!(device.get("iid"), "");
+        assert_eq!(device.get("device_id"), "");
+        assert_eq!(device.get("openudid"), "");
+        assert_eq!(device.get("version_name"), APP_VERSION_NAME);
         // UA 里的系统版本必须与设备档案的 os_version 一致
         assert_eq!(device.get("os_version"), "14");
         assert!(device.user_agent().contains("Android 14"));
+        assert!(device.user_agent().contains(APP_VERSION_CODE_STR));
 
         let mut keys: Vec<&str> = device.iter().map(|(key, _)| key).collect();
         let total = keys.len();
@@ -358,40 +393,87 @@ mod tests {
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
     }
 
+    /// 双口径构造钉死：注册档案原生钉注册口径（tt-ok 尾段），
+    /// 匿名档案对齐当前客户端口径（tt-ok 尾段）——两套身份各自
+    /// 成套，改口径只动常量与构造器，不许在调用点散写。
+    #[test]
+    fn register_and_anonymous_profiles_pin_their_regimes() {
+        let reg = DeviceProfile::fresh_register_profile("cdid-uuid", "openudid-hex");
+        for k in [
+            "version_code",
+            "update_version_code",
+            "manifest_version_code",
+            "pv_player",
+        ] {
+            assert_eq!(reg.get(k), REGISTER_VERSION_CODE_STR, "{k} 应钉注册口径");
+        }
+        assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
+        assert_eq!(reg.user_agent(), register_ua());
+        assert!(reg.user_agent().contains("tt-ok/3.12.13.20"));
+        assert_eq!(reg.get("device_id"), "", "首次注册不带 device_id");
+        assert_eq!(reg.get("iid"), "");
+
+        let anon = anonymous_profile("cdid-uuid");
+        for k in [
+            "version_code",
+            "update_version_code",
+            "manifest_version_code",
+            "pv_player",
+        ] {
+            assert_eq!(anon.get(k), APP_VERSION_CODE_STR, "{k} 应对齐当前客户端");
+        }
+        assert_eq!(anon.get("version_name"), APP_VERSION_NAME);
+        assert_eq!(anon.user_agent(), video_ua());
+        assert!(anon.user_agent().contains("tt-ok/"));
+    }
+
+    #[test]
+    fn fresh_cdid_is_uuid_v4() {
+        let cdid = fresh_cdid();
+        assert_eq!(cdid.len(), 36);
+        assert_eq!(cdid.as_bytes()[14], b'4', "版本号位应为 4");
+    }
+
     #[test]
     fn anonymous_cookie_matches_profile_iid() {
-        let device = video_device();
+        let cdid = fresh_cdid();
+        let mut device = anonymous_profile(&cdid);
+        device.set("iid", "4175317900247834");
         let cookie = anonymous_cookie(&device);
         // install_id 必须与档案 iid 一致，否则服务端判为两个设备
-        assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
+        assert!(cookie.contains("install_id=4175317900247834"));
         assert!(
             cookie.contains("passport_csrf_token=;"),
             "空值 csrf 字段必须在场（缺失时 send_code 走换绑分支报 1001）"
         );
         assert!(cookie.contains("store-region=cn-gd"));
-        assert!(cookie.contains(&format!("ttreq={ANON_TTREQ}")));
+        // 匿名档案（无 iid）：官方 virgin 形态零 cookie——带未知 install_id
+        // 反而会被静默拒
+        let bare = anonymous_profile(&fresh_cdid());
+        assert_eq!(anonymous_cookie(&bare), "");
     }
 
     #[test]
     fn set_overrides_in_place_and_appends_new_keys() {
-        let mut device = video_device();
-        let idx = device.iter().position(|(k, _)| k == "device_id").unwrap();
-        device.set("device_id", "42");
+        let cdid = fresh_cdid();
+        let mut device = anonymous_profile(&cdid);
+        device.set("iid", "42");
+        let idx = device.iter().position(|(k, _)| k == "iid").unwrap();
+        device.set("iid", "43");
         // 覆盖发生在原位置，不改变字段顺序
-        assert_eq!(device.iter().nth(idx), Some(("device_id", "42")));
-        // 已存在的 key（cdid 已进兜底档案）走覆盖，不动顺序
+        assert_eq!(device.iter().nth(idx), Some(("iid", "43")));
+        // 已存在的 key（cdid 已进匿名档案）走覆盖，不动顺序
         let cdid_pos = device.iter().position(|(k, _)| k == "cdid").unwrap();
         device.set("cdid", "abc");
         assert_eq!(device.iter().nth(cdid_pos), Some(("cdid", "abc")));
         // 档案外的新 key 追加在尾部（注册流程补 openudid 等字段）
         device.set("openudid", "xyz");
         assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
-        assert_eq!(device.iter().count(), 29);
     }
 
-    /// 旧档案（71332 时代遗留/注册）启动时对齐版本身份：四个版本字段
+    /// 旧档案启动时对齐版本身份：四个版本字段
     /// 原位覆盖，设备身份（device_id/iid/cdid）与其余字段不动——服务端
-    /// 按自报版本号分发功能 schema（排行榜选项表 71332 下退化为扁平）。
+    /// 按自报版本号分发功能 schema（过旧版本下排行榜选项表退化为扁平）。
     #[test]
     fn align_app_version_bumps_only_version_fields() {
         let mut legacy = DeviceProfile::from_pairs(
@@ -399,18 +481,18 @@ mod tests {
                 ("iid", "1905892595382586"),
                 ("device_id", "1905892595378490"),
                 ("cdid", "abc-uuid"),
-                ("version_code", "71332"),
-                ("version_name", "7.1.3.32"),
-                ("manifest_version_code", "71332"),
-                ("update_version_code", "71332"),
+                ("version_code", "60000"),
+                ("version_name", "6.0.0.0"),
+                ("manifest_version_code", "60000"),
+                ("update_version_code", "60000"),
             ],
-            "com.phoenix.read/71332 test",
+            "com.phoenix.read/60000 test",
         );
         align_app_version(&mut legacy);
-        assert_eq!(legacy.get("version_code"), "73932");
-        assert_eq!(legacy.get("version_name"), "7.3.9.32");
-        assert_eq!(legacy.get("manifest_version_code"), "73932");
-        assert_eq!(legacy.get("update_version_code"), "73932");
+        assert_eq!(legacy.get("version_code"), APP_VERSION_CODE_STR);
+        assert_eq!(legacy.get("version_name"), APP_VERSION_NAME);
+        assert_eq!(legacy.get("manifest_version_code"), APP_VERSION_CODE_STR);
+        assert_eq!(legacy.get("update_version_code"), APP_VERSION_CODE_STR);
         // 身份字段原样
         assert_eq!(legacy.get("iid"), "1905892595382586");
         assert_eq!(legacy.get("device_id"), "1905892595378490");
@@ -424,7 +506,8 @@ mod tests {
     #[test]
     fn profile_roundtrips_through_serde() {
         // 设备注册后档案要落库，serde 往返必须无损（含字段顺序）
-        let device = video_device();
+        let cdid = fresh_cdid();
+        let device = anonymous_profile(&cdid);
         let json = serde_json::to_string(&device).unwrap();
         let back: DeviceProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(device, back);
@@ -435,10 +518,10 @@ mod tests {
 
     #[test]
     fn legacy_json_without_user_agent_falls_back() {
-        // schema 演进容错：旧档没有 user_agent 字段时回落到 VIDEO_UA
+        // schema 演进容错：旧档没有 user_agent 字段时回落到 video_ua()
         let json = r#"{"fields":[["aid","8662"]]}"#;
         let back: DeviceProfile = serde_json::from_str(json).unwrap();
-        assert_eq!(back.user_agent(), VIDEO_UA);
+        assert_eq!(back.user_agent(), video_ua());
         assert_eq!(back.get("aid"), "8662");
     }
 

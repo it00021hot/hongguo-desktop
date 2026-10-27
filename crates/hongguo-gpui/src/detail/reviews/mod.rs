@@ -15,6 +15,7 @@ use hongguo_api::danmaku::fetch_series_comments_page;
 use super::DetailView;
 use crate::bridge;
 
+mod composer;
 mod view;
 
 impl DetailView {
@@ -43,6 +44,11 @@ impl DetailView {
                         view.reviews_has_more = page.page.has_more;
                         view.reviews_cursor = page.page.next_cursor.clone();
                         view.reviews = Arc::new(page.page.items.clone());
+                        // 剧评头像单独一档（64）：成品图按「URL 哈希 + 档位」
+                        // 落盘，头像与封面不是同一档——不排头像就是整块空白。
+                        let avatar_urls: Vec<String> =
+                            page.page.items.iter().map(|c| c.avatar.clone()).collect();
+                        crate::cover_img::prewarm_avatars(&avatar_urls, cx);
                         // 评分摘要变了要回头刷新头部统计行
                         cx.notify();
                     }
@@ -74,6 +80,9 @@ impl DetailView {
                     view.reviews_has_more = page.page.has_more;
                     view.reviews_cursor = page.page.next_cursor;
                     let mut items = (*view.reviews).clone();
+                    let avatar_urls: Vec<String> =
+                        page.page.items.iter().map(|c| c.avatar.clone()).collect();
+                    crate::cover_img::prewarm_avatars(&avatar_urls, cx);
                     for c in page.page.items {
                         if !items.iter().any(|x| x.comment_id == c.comment_id) {
                             items.push(c);
@@ -324,6 +333,10 @@ impl DetailView {
                             .get(&review_id)
                             .map(|v| (**v).clone())
                             .unwrap_or_default();
+                        // 回复头像同一档（64）：同剧评列表。
+                        let avatar_urls: Vec<String> =
+                            page.items.iter().map(|r| r.avatar.clone()).collect();
+                        crate::cover_img::prewarm_avatars(&avatar_urls, cx);
                         for r in page.items {
                             if !list.iter().any(|x| x.reply_id == r.reply_id) {
                                 list.push(r);

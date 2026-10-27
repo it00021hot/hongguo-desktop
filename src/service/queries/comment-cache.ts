@@ -1,14 +1,14 @@
 /**
  * 评论/回复缓存的乐观手术（单一实现）：发送与删除在播放器评论区与
- * 详情页剧评区两处逐行同构——只有缓存 key 不同，2026-10-13 收敛到这里。
+ * 详情页剧评区两处逐行同构——只有缓存 key 不同，收敛到这里。
  * 计数与摘除必须成对（发送 +1 / 删除 -1），此前各写一份时漏过计数，
  * 「展开 N 条」与实际条数对不上。
  */
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type { CommentPage, ReplyItem, ReplyPage } from '@/service/schema';
 
-/** 服务端回显的完整回复对象进回复缓存（头像/昵称/uid/时间齐全，hgplayer
- *  同款：新回复以普通条目追加首页并去重，total +1；缓存未建时给单页初形
+/** 服务端回显的完整回复对象进回复缓存（头像/昵称/uid/时间齐全：
+ *  新回复以普通条目追加首页并去重，total +1；缓存未建时给单页初形
  *  ——面板没展开过就先回复的路径）。 */
 export function appendReply(
   queryClient: QueryClient,

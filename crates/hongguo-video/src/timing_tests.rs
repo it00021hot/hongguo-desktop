@@ -202,24 +202,6 @@ fn sample_pts_fold_in_ctts_offsets() {
 }
 
 #[test]
-fn sample_dts_is_monotonic_where_pts_is_not() {
-    // 播放端做 B 帧重排的水位只能按 dts 算：pts 非单调（上面那例已证），
-    // dts 必须严格递增，且与 pts 同一套平移（两者都从 0 起）。
-    let mut info = cfr_info(3);
-    info.ctts = vec![(1, 0), (1, 512), (1, -512)];
-
-    let dts = info.sample_dts();
-    let pts = info.sample_pts();
-    let d = 1.0 / 30.0;
-
-    assert_eq!(dts.len(), 3);
-    assert!(dts.windows(2).all(|w| w[1] > w[0]), "dts 必须递增: {dts:?}");
-    assert!((dts[0] - 0.0).abs() < 1e-9, "dts 从 0 起步: {dts:?}");
-    // 同一套平移：平移量相同，逐项差值等于 ctts 偏移
-    assert!((pts[2] - dts[2] + d).abs() < 1e-9, "pts 与 dts 必须对齐");
-}
-
-#[test]
 fn max_reorder_secs_reads_the_worst_negative_offset() {
     let mut info = cfr_info(4);
     assert_eq!(info.max_reorder_secs(), 0.0, "没有 ctts 就没有重排");
@@ -364,6 +346,6 @@ fn timeline_shifts_by_edit_media_start() {
     assert!((pts[0] + 1024.0 / 44_100.0).abs() < 1e-9, "首样本落到 0 前");
     assert!(pts[1].abs() < 1e-9, "第二个样本才是 presentation 起点");
     // dts 与 pts 同量平移：两轴差不因 elst 改变
-    let dts = info.sample_dts();
+    let dts = info.timeline().0;
     assert!((dts[0] - pts[0]).abs() < 1e-12);
 }

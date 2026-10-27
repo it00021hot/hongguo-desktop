@@ -186,7 +186,7 @@ impl SyncMft {
     /// 写 1088 行，conformance window 裁边），而 cbSize 由声明几何算出——
     /// 本机 HEVC 扩展对非常规宽度（1924×1080）实测写超声明值，首次取帧
     /// 即 MF_E_BUFFERTOOSMALL。预留对齐头，解析端只读显示区，多出的尾巴
-    /// 无害（见 playback::nv12_of 的 need 校验）。
+    /// 无害。
     fn out_alloc_size(&self) -> u32 {
         let padded = self
             .current_geometry()

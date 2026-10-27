@@ -10,6 +10,7 @@ use std::time::Instant;
 use gpui_kit::{Context, Window};
 
 use super::feed::{Source, StreamItem};
+use super::stage::StageCover;
 use super::{HomeView, NowPlaying};
 use crate::preview::fixtures as fx;
 
@@ -136,7 +137,8 @@ impl HomeView {
             let url = format!("preview://home/{i}");
             crate::preview::fixtures::put_preview_image(&url, fx::cover(i));
             let sid: String = sid.into();
-            self.stage_covers.insert(sid, fx::cover(i));
+            self.stage_covers
+                .insert(sid, StageCover::Ready(fx::cover(i)));
         }
     }
 
@@ -167,12 +169,13 @@ impl HomeView {
         self.ep_comment_count = 3716;
         self.ep_digg_count = 5678;
         self.follow_count = 999;
-        // 追更键显隐（series_status=0 连载中）与已追态：预览里给全开
+        // 追更态 wiring：series_status=0（连载中）/已追。预览是匿名态，
+        // 追更键显隐带登录门（follow_visible），矩阵里这个键不出现——这里
+        // 只保状态链路有值可画（若未来预览支持假登录，钮会以连载态出现）。
         self.series_status = Some(0);
         self.follow_is_on = Some(true);
         // 信息层简介：长文本（>40 字触发「展开」），验收收起两行钳制与
-        // 展开后的换行——此前 intros 为空，简介一行跑出屏幕的 bug 矩阵
-        // 根本抓不到（2026-10-19 用户实测）
+        // 展开后的换行
         self.intros.insert(
             sid.into(),
             "穿成青云宗外门弟子的林辰，开局伪废灵根。八年困于炼气一层，全宗笑他是吃软饭的废物。十年前他救过的小女孩，如今已是天灵根第一女神苏清瑶。退婚当日，他觉醒万倍暴击系统：一颗筑基丹，暴击出金丹修为；一式基础剑法，暴击出仙阶剑意。从此踩天骄、夺造化，踏诸宗如平地。多年后有人问他逆袭的秘诀，林辰看着远方淡淡一笑：谁说我靠的是系统？".into(),

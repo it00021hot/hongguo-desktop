@@ -1,7 +1,7 @@
 import { DANMAKU_EMOJI_FILES } from './danmaku-emoji-files.generated';
 
 /**
- * 弹幕表情（对齐 hgplayer 1.1.6）：上游文本里表情以 `[名字]` 代码出现，
+ * 弹幕表情：上游文本里表情以 `[名字]` 代码出现，
  * 渲染时按映射表换成打包进应用的 webp 图片——评论/弹幕同源，评论区
  * 以后要渲染表情也走这里。
  */
@@ -12,7 +12,7 @@ const URLS = import.meta.glob<string>('../assets/emoji/*.webp', {
   import: 'default',
 });
 
-/** `[名字]` 代码：1–8 个非空白字符（hgplayer 同一款正则）。 */
+/** `[名字]` 代码：1–8 个非空白字符。 */
 const EMOJI_RE = /\[[^\][\s]{1,8}\]/g;
 
 /** 名字 → 图片 URL。 */
@@ -66,7 +66,7 @@ function parseTextWithMentions(text: string): EmojiSegment[] {
   return segments;
 }
 
-/** 表情选择器的条目（名字 + URL），按 hgplayer 同序。 */
+/** 表情选择器的条目（名字 + URL），与映射表同序。 */
 export const DANMAKU_EMOJI_LIST = DANMAKU_EMOJI_FILES.map(([name, file]) => ({
   name,
   url: URLS[`../assets/emoji/${file}`] ?? '',

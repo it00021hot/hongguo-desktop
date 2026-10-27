@@ -2,11 +2,11 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::h_flex;
 use gpui_kit::{SharedString, div};
 
 impl HomeView {
@@ -51,8 +51,10 @@ impl HomeView {
             String::new()
         };
         Some(
-            h_flex()
-                .id("binge-entry")
+            // 横条可点 → base::Button：焦点句柄、Tab 可达、Enter/Space 激活与
+            // role 由库负责；定位与视觉仍由本链决定。
+            BaseButton::new("binge-entry")
+                .accessibility_label(crate::i18n::t("player.watchFullSeries"))
                 .absolute()
                 .left_3()
                 .right_3()
@@ -67,6 +69,10 @@ impl HomeView {
                 .text_sm()
                 .text_color(gpui_kit::rgb(0xffffff))
                 .cursor_pointer()
+                // base Button 强制 line_height(relative(1.))，文字行盒比默认矮
+                // 一截、横条会整体变矮；钉回默认行高才与原 div 像素一致。
+                .line_height(gpui_kit::phi())
+                .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                 .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.enter_binge(cx);

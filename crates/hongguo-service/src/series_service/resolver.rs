@@ -4,8 +4,7 @@
 //!    所以这里的失败日志必须打印，否则「接口挂了」会表现成「没数据」，
 //!    排查方向会被带偏。
 //!
-//! 输入只收剧集 ID（收藏/历史/详情的档案回退都传 ID）。分享链接解析
-//! 已随找剧输入框的链接支持一起下线（2026-10-09）。
+//! 输入只收剧集 ID（收藏/历史/详情的档案回退都传 ID）。
 
 use hongguo_common::model::Series;
 use hongguo_common::{AppError, AppResult};
@@ -28,16 +27,22 @@ pub async fn resolve_series(input: &str, env: &hongguo_api::client::ApiEnv) -> A
         list.title,
         list.episodes.len()
     );
-    Ok(Series {
+    Ok(series_from_list(list))
+}
+
+/// `EpisodeList` → store 的 `Series`（单剧解析与批量预取落库共用）。
+pub fn series_from_list(list: hongguo_api::detail::EpisodeList) -> Series {
+    Series {
         series_id: list.series_id,
         title: list.title,
         cover: list.cover,
         episode_count: list.episodes.len() as u32,
         followed_cnt: list.followed_cnt,
+        content_type: list.content_type,
         episodes: list.episodes,
         tags: Vec::new(),
         dismissed: false,
-    })
+    }
 }
 
 #[cfg(test)]

@@ -8,8 +8,8 @@
 //!    └─ DecoderSpecificInfo(0x05)   ← AudioSpecificConfig，裸 AAC 解码必需
 //! ```
 //!
-//! 纯 Rust 解码器（symphonia）不走 MP4 demuxer，没有这串字节就无法初始化
-//! AAC——解出来的是噪声或直接拒开。描述符长度是变长编码（每字节 7 位，
+//! 裸 AAC 解码器不走 MP4 demuxer 时，没有这串字节就无法初始化——
+//! 解出来的是噪声或直接拒开。描述符长度是变长编码（每字节 7 位，
 //! 高位续传），遍历必须按这个读。
 
 use crate::r#box::parse_boxes;

@@ -15,11 +15,11 @@ use std::time::Duration;
 use gpui_kit::Window;
 use gpui_kit::prelude::*;
 
-/// 一拍判定得出的窗口动作。**必须在实体更新之外执行**：Windows 上
-/// ShowWindow 会同步派发 WM_SHOWWINDOW/WM_ACTIVATE，gpui 的窗口过程要更新
-/// 窗口状态，在 update 里调用会撞借用（实测日志刷「RefCell already
-/// borrowed」六连）；macOS 的 orderOut/orderFront 同样会触发窗口通知，统一
-/// 按同一纪律放在实体更新之外。
+/// 一拍判定得出的窗口动作。**藏显由平台层延后到执行器下一拍执行**：
+/// Windows 上 ShowWindow 会同步派发 WM_SHOWWINDOW/WM_ACTIVATE、macOS 的
+/// orderOut/orderFront 会同步投递窗口通知，gpui 的窗口过程/通知回调都要在
+/// 这时更新窗口状态，在借用内调用会撞借用（gpui 用 try_borrow_mut 拒绝那次
+/// 更新，把错吞成 "RefCell already borrowed" 的空 target 日志）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum IncognitoStep {
     /// 鼠标离开：窗口藏起（播放已在判定里暂停）。
@@ -51,10 +51,16 @@ fn probe(window: &Window) -> IncognitoProbe {
 }
 
 /// 执行窗口动作（实体更新之外调用）。
-fn apply_step(window: &Window, step: IncognitoStep) {
+///
+/// 平台层自己把它延后到执行器下一拍：Windows 的 ShowWindow 同步派发
+/// WM_SHOWWINDOW/WM_ACTIVATE、macOS 的 orderOut/orderFront 同步投递窗口
+/// 通知，gpui 的窗口过程/通知回调都要在这时更新窗口状态——在 update 借用内
+/// 调用会撞借用（gpui 用 try_borrow_mut 拒绝那次更新，把错吞成
+/// "RefCell already borrowed" 的空 target 日志）。
+fn apply_step(window: &Window, cx: &gpui_kit::App, step: IncognitoStep) {
     match step {
-        IncognitoStep::Hide => crate::platform::hide(window),
-        IncognitoStep::ShowNoActivate => crate::platform::show_no_activate(window),
+        IncognitoStep::Hide => crate::platform::hide(window, cx),
+        IncognitoStep::ShowNoActivate => crate::platform::show_no_activate(window, cx),
     }
 }
 
@@ -95,7 +101,9 @@ impl super::HomeView {
             let handle = window.window_handle();
             // 轮询在下一拍自杀（incognito 已翻 false）；窗口这边先带回来，
             // 「用户亲手关隐身」就是要窗口，夺焦点合理
-            let _ = handle.update(cx, |_, window, _| crate::platform::show_foreground(window));
+            let _ = handle.update(cx, |_, window, cx| {
+                crate::platform::show_foreground(window, cx)
+            });
         }
         self.persist_prefs();
         cx.notify();
@@ -131,7 +139,7 @@ impl super::HomeView {
                     return;
                 }
                 if let Some(step) = step {
-                    let _ = handle.update(cx, |_, window, _| apply_step(window, step));
+                    let _ = handle.update(cx, |_, window, cx| apply_step(window, cx, step));
                 }
             }
         })
@@ -151,8 +159,8 @@ impl super::HomeView {
             return (false, None);
         }
         // 最小化是用户的显式动作，隐身不得插手：最小化后光标多半还留在原
-        // 窗口矩形里，不跳过会每拍都判成「回来了」把窗口 show 回来
-        //（Tauri 2026-10-07 实测「隐身开着就最小化不了」）
+        // 窗口矩形里，不跳过会每拍都判成「回来了」把窗口 show 回来，
+        // 表现为「隐身开着就最小化不了」
         if read.minimized {
             return (true, None);
         }

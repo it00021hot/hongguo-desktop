@@ -37,6 +37,8 @@ export const keys = {
   /** 缓存目录留空时的默认位置（进程内不变，设置页只在空态展示） */
   defaultCacheDir: ['default-cache-dir'] as const,
   feed: (tab: string) => ['feed', tab] as const,
+  /** 推荐流整组失效用根 key（设备换档后按旧身份拉过的缓存全部翻面） */
+  feedRoot: ['feed'] as const,
   /** 首页顶栏 tab 列表（服务端下发；登录态变化时壳侧过滤，不换 key） */
   feedTabs: ['feed-tabs'] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
@@ -71,6 +73,12 @@ export const keys = {
   comments: (vid: string) => ['comments', vid] as const,
   /** 评论 @ 提及候选（登录态，含官方 AI bot 小果） */
   mentionList: (seriesId: string) => ['mention-list', seriesId] as const,
+  /** 第三方表情库（GIF tab） */
+  emoticonsThirdParty: ['emoticons', 'third-party'] as const,
+  /** 我上传的自定义表情（♡ tab） */
+  emoticonsOwn: ['emoticons', 'own'] as const,
+  /** 表情关键词搜索结果 */
+  emoticonSearch: (keyword: string) => ['emoticons', 'search', keyword] as const,
   /** 创作者主页（详情页点创作者进入：资料头 + 作品列表） */
   creatorProfile: (userId: string) => ['creator-profile', userId] as const,
   creatorWorks: (userId: string) => ['creator-works', userId] as const,

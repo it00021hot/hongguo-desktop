@@ -8,7 +8,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::Input;
@@ -20,6 +19,7 @@ use gpui_kit::{SharedString, div};
 #[cfg(feature = "screenshot")]
 use super::controls::CONTROLS_HOLD_SECS;
 use crate::bridge;
+use crate::ui_button::button as Button;
 use hongguo_service::login_service::flow::LoginResult;
 
 const DEFAULT_RETRY_SECS: u32 = 60;
@@ -382,6 +382,9 @@ impl super::HomeView {
                                                 .outline()
                                                 .small()
                                                 .disabled(self.login_busy || !mobile_ok)
+                                                .when(self.login_busy || !mobile_ok, |b| {
+                                                    b.cursor_default()
+                                                })
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.login_send_code(cx);
                                                 })),
@@ -398,6 +401,9 @@ impl super::HomeView {
                                 .primary()
                                 .w_full()
                                 .disabled(self.login_busy || !mobile_ok || !code_ok)
+                                .when(self.login_busy || !mobile_ok || !code_ok, |b| {
+                                    b.cursor_default()
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.login_submit(cx);
                                 })),

@@ -2,6 +2,9 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::scroll::ScrollableElement;
+
 impl super::BrowseView {
     /// 刷新联想（≥2 字才发；防抖 300ms，序号防乱序回填）。
     pub(super) fn refresh_suggest(&mut self, cx: &mut Context<Self>) {
@@ -34,6 +37,15 @@ impl super::BrowseView {
                     return; // 过期结果丢弃
                 }
                 view.suggest_items = result.unwrap_or_default();
+                // 带剧集的行要画缩略图：渲染期 [`cover_img::card`] 只查盘不
+                // 拉网，这里在数据到达处排转码（封面预热纪律与其他页一致；
+                // 漏了这步联想行就永远是占位灰块）。
+                let covers: Vec<String> = view
+                    .suggest_items
+                    .iter()
+                    .map(|item| item.cover.clone())
+                    .collect();
+                crate::cover_img::prewarm_covers(&covers, cx);
                 cx.notify();
             });
         })
@@ -127,8 +139,8 @@ impl super::BrowseView {
                 .right_0()
                 .mt(gpui_kit::px(6.0))
                 .max_h(gpui_kit::px(320.0))
-                .overflow_y_scroll()
-                .rounded(gpui_kit::px(12.0))
+                .overflow_y_scrollbar()
+                .rounded(crate::tokens::radius::CARD)
                 .border_1()
                 .border_color(theme.border)
                 .bg(theme.popover)
@@ -175,17 +187,29 @@ impl super::BrowseView {
                 }))
                 .into_any_element()
         };
-        h_flex()
-            .id(ElementId::from(format!("browse-suggest-{}", item.word)))
+        // 整行可点 → 用 base::Button 承担 role/focus/Enter-Space（键盘用户也能
+        // 走到搜索建议）。库强制 flex row + 交叉轴居中 + 主轴居中：这里只需把
+        // 主轴改回 justify_start（内容左对齐，与原 h_flex 一致）。
+        BaseButton::new(ElementId::from(format!("browse-suggest-{}", item.word)))
+            .accessibility_label(item.word.clone())
             .items_center()
             .gap(gpui_kit::px(10.0))
-            .rounded(gpui_kit::px(8.0))
+            .rounded(crate::tokens::radius::COVER)
             .px(gpui_kit::px(10.0))
             .py(gpui_kit::px(7.0))
             .text_sm()
             .cursor_pointer()
             .when(active, |s| s.bg(theme.accent))
             .hover(|s| s.bg(theme.accent))
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
+            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+            .focus_visible(|s| {
+                s.border_color(theme.ring)
+                    .shadow(crate::tokens::focus_ring(theme))
+            })
             // 悬停即改高亮（Tauri onHover={setSuggestIndex} 同款）
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered && this.suggest_index != index {
@@ -204,16 +228,21 @@ impl super::BrowseView {
                     .small()
                     .text_color(theme.muted_foreground),
             )
-            .child(
+            // 纯词联想不画封面位（Tauri SuggestRow 的 `item.cover && webCover`
+            // 同口径：只有放大镜 + 词）
+            .children((!item.cover.is_empty()).then(|| {
                 div()
                     .w(gpui_kit::px(40.0))
                     .h(gpui_kit::px(54.0))
                     .flex_shrink_0()
-                    .rounded(gpui_kit::px(6.0))
+                    .rounded(crate::tokens::radius::THUMB)
                     .overflow_hidden()
                     .bg(theme.muted)
-                    .child(crate::cover_img::card(&item.cover)),
-            )
+                    .child(crate::cover_img::card(
+                        &item.cover,
+                        crate::cover_img::CoverShape::Thumb,
+                    ))
+            }))
             .child(
                 v_flex()
                     .flex_1()

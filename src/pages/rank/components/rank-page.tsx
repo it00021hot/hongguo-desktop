@@ -16,14 +16,14 @@ import { RankRow } from './rank-row';
 import { normalizeTabs } from './normalize-tabs';
 
 /**
- * 排行榜页（对齐 hgplayer 1.1.3 布局，2026-10-05 抓包）：
+ * 排行榜页：
  * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
  * （panel_selected_items 单选），子榜名旁带「N月N日已更新·基于…」描述行。
  *
  * 选项表由接口随行下发（响应 cell_selector）。形态由客户端自报版本号
- * 决定（与登录态无关，设备档案已在后端对齐 73932），normalizeTabs 保留
+ * 决定（与登录态无关，设备档案已在后端对齐版本身份），normalizeTabs 保留
  * 一级形态兼容：
- * - 两级（73932）：tab=内容分类 → sub=子榜（含分组筛选面板行）；
+ * - 两级结构：tab=内容分类 → sub=子榜（含分组筛选面板行）；
  * - 一级（老版本身份，理论上不再出现）：tab=榜单 → sub=筛选选项平铺。
  *
  * 「演员」tab 响应无剧集数据（celebrity 形态），不提供入口。
@@ -32,7 +32,7 @@ import { normalizeTabs } from './normalize-tabs';
 /** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
 export function RankPage() {
-  // 选中态会话级保留（hgplayer 1.1.7 同款：去播放再回来榜单还在原位置）
+  // 选中态会话级保留（去播放再回来榜单还在原位置）
   const [selected, setSelected] = useSessionState('hongguo.rank.selected', 'all');
   // 子榜 id；tab 切换时重置为新 tab 的第一个子榜
   const [sub, setSub] = useSessionState('hongguo.rank.sub', 'ranklist_hot_sc');
@@ -69,9 +69,9 @@ export function RankPage() {
     setSub(first?.id ?? '');
   };
 
-  // 滚动续载：哨兵进视口（600px 提前量）就向服务端翻下一页（每页 20 条，
-  // 按抓包协议 offset=next_offset + 回传 session_id）。API 分页天然一批
-  // 20 条，不再需要客户端渲染批量。
+  // 滚动续载：哨兵进视口（400px 提前量）就向服务端翻下一页（每页 10 条，
+  // offset=响应的 next_offset + 回传 session_id/rank_version，见
+  // service/queries/rank.ts）。API 分页天然一批 10 条，不再需要客户端渲染批量。
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinelRef.current;
@@ -106,7 +106,7 @@ export function RankPage() {
         {tabRow.length === 0 && <Skeleton className="h-6 w-64 rounded-full" />}
       </TopBarTabsPortal>
       <div className="flex min-h-0 flex-1 gap-4">
-        {/* 左侧子榜竖排（hgplayer 同款形态；首屏未到时骨架占位）。
+        {/* 左侧子榜竖排（首屏未到时骨架占位）。
             窗口过矮时子榜自己滚，不跟着右侧列表走 */}
         <nav
           className="flex w-36 shrink-0 scrollbar-thin flex-col gap-1 overflow-y-auto"
@@ -197,7 +197,7 @@ export function RankPage() {
                   {listItems.map((item) => (
                     <RankRow key={item.seriesId} item={item} />
                   ))}
-                  {/* 续载哨兵：常驻（滚动容器内 600px 提前量触发服务端翻页）。
+                  {/* 续载哨兵：常驻（滚动容器内 400px 提前量触发服务端翻页）。
                       到底后（!hasMore）不移除也无妨——回调里 loadMore 自会空转 */}
                   <div ref={sentinelRef} className="h-px" aria-hidden />
                   {rank.isFetchingMore && (

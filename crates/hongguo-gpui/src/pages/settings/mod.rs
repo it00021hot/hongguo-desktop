@@ -155,11 +155,11 @@ impl SettingsView {
             InputState::new(window, cx).placeholder(crate::i18n::t("settings.cacheDirPlaceholder"))
         });
         let cache_limit_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(crate::i18n::t("settings.cacheLimitPlaceholder"))
+            InputState::new(window, cx)
+                .placeholder(crate::i18n::t("settings.cacheLimitPlaceholder"))
         });
-        let cache_ttl_select = cx.new(|cx| {
-            SelectState::new(storage::cache_ttl_items(), None, window, cx)
-        });
+        let cache_ttl_select =
+            cx.new(|cx| SelectState::new(storage::cache_ttl_items(), None, window, cx));
         let proxy_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("http://127.0.0.1:7890"));
         let naming_select = cx.new(|cx| SelectState::new(naming_items(), None, window, cx));

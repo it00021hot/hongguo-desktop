@@ -1,41 +1,36 @@
-// 探测期的形态告警统一压制（启动接线后随清理移除）
-#![allow(
-    dead_code,
-    unused_mut,
-    clippy::needless_range_loop,
-    clippy::double_parens,
-    clippy::manual_repeat_n,
-    clippy::needless_borrows_for_generic_args,
-    clippy::range_plus_one
-)]
-
 //! 设备注册：`POST log.snssdk.com/service/2/device_register/`。
 //!
-//! 注册是整个 App API 身份链的起点：服务端按 query 里的 cdid/openudid
+//! 注册是整个 App API 身份链的起点：服务端按请求里的 cdid/openudid
 //! 指纹发放 `device_id` / `install_id`，之后所有业务请求的设备参数与
-//! cookie（install_id/ttreq）都从这来。没有注册，bookmall 系接口在
-//! 静态档案上直接 ILLEGAL_ACCESS 110。
+//! cookie（install_id/ttreq）都从这来。播放取流需要服务端「认识」的
+//! 设备，匿名档案不可播。
 //!
-//! ## body 形态（抓包 + 逆向确认）
+//! ## 线上格式（注册口径活形态）
 //!
-//! 明文是 AppLog 的注册 JSON：`{"magic_tag":"ss_app_log","header":{…47 个
-//! 指纹字段…},"_gen_time":ms}`，gzip 压缩后套 **TT-Encrypt V5**
-//! （`content-type: application/octet-stream;tt-data=a`）：
+//! 请求（`register_device`）：
+//! - query：40 参公共指纹（[`register_query`]，版本身份钉注册口径
+//!   `REGISTER_VERSION_*`，见 `hongguo_signer::device`）
+//! - body：TT-Encrypt V5 加密的注册 JSON（[`register_json_str`]）
+//! - 头：`content-type: application/octet-stream;tt-data=a` + 签名客户端
+//!   五件套 + `lc: 101` + `log-encode-type: gzip` + `x-ss-dp: 8662`
+//! - 响应：JSON `device_id/install_id/device_token/new_user` +
+//!   Set-Cookie `install_id` + `ttreq`（票按新 install_id 发放，须随档案
+//!   长期携带）；`device_id: 0` 表示被静默拒绝。
+//!
+//! TT-Encrypt V5 格式：
 //!
 //! ```text
-//! 输出 = magic(6, "tc"+v5) ‖ salt(32 随机) ‖ iv(16 随机，服务端按 header
-//!        里的 iv 解密，不校验派生) ‖ AES-128-CBC(payload + PKCS7)
-//! key = 魔改哈希( 魔改哈希(salt) ‖ ORD_LIST(64) )[0..16]；
-//! payload = 魔改哈希(gzip)[16..64]（48B 完整性哈希，**不是**前 48 字节，
-//! 取错窗口服务端重算不符即静默拒绝 device_id=0）‖ gzip(明文)；
-//! gzip 头的 XFL/OS 必须覆写为 00/00（zlib 家族头），flate2 默认的 02/ff 会被拒
+//! packet = magic(6, "tc"+v5) ‖ salt(32 随机) ‖ AES-128-CBC(payload+PKCS7)
+//!          —— 包内没有 IV 字段；key 与 iv 全部从 salt 派生且不上线
+//! derive(salt) = sha512( sha512(salt) ‖ ORD_LIST(64) )   // 64B
+//! key = derive[0..16]；iv = derive[16..32]
+//! payload = sha512(gz) 完整 64 字节 ‖ gz，再 PKCS7
+//! gzip 头 XFL/OS 覆写 00/00（flate2 默认 02/ff 与官方字节流不符）
 //! ```
 //!
-//! 算法与 hgplayer 的 `hg-go/pkg/crypto.TTEncryptV5`（Go 符号表）及
-//! TikTok 固件逆向的公开实现三方互证；`register_req_real.bin` 是真机
-//! 抓包的注册 body，`tt_v5_real_capture_roundtrip` 用它锁死解密链。
-//! 历史教训：明文 form / gzip form 会被服务端静默降级成 `device_id:0`，
-//! 必须走加密形态。
+//! 格式细节由 `tt_v5_real_capture_roundtrip` /
+//! `tt_v5_reproduces_accepted_body` 两个逐字节锁锁定；解密或完整性校验
+//! 失败时服务端静默回 `device_id: 0`。
 
 mod model;
 
@@ -43,8 +38,6 @@ pub use model::RegisterResult;
 
 use serde_json::{Value, json};
 
-#[cfg(test)]
-use super::client::api_call_full;
 use super::client::{ApiEnv, api_call_full_response};
 use hongguo_common::{AppError, AppResult};
 
@@ -54,19 +47,13 @@ pub const REGISTER_PATH: &str = "/service/2/device_register/";
 /// TT-Encrypt V5 的 magic（"tc" + 版本 5 + 固定 3 字节）。
 const TT_MAGIC: [u8; 6] = [0x74, 0x63, 0x05, 0x10, 0x00, 0x00];
 
-/// TT-Encrypt V5 加密：gzip → 前置完整性哈希 → PKCS7 → AES-CBC → 拼头。
-pub fn tt_encrypt_v5(plaintext: &[u8]) -> Vec<u8> {
-    tt_encrypt_v5_with_salt(plaintext, &rand::random())
-}
-
-/// 同 [`tt_encrypt_v5`]，但盐由调用方指定（对拍/复现用）。
-pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
+/// Java `GZIPOutputStream` 同款 gzip：mtime=0，XFL/OS 两字节覆写 00/00
+/// （官方样本的 gzip 头就是 00/00；flate2 默认写 02/ff，不覆写会被
+/// 服务端按 zlib 家族头校验静默拒绝）。
+fn gzip_java_flavor(plaintext: &[u8]) -> Vec<u8> {
     use flate2::write::GzEncoder;
     use std::io::Write;
 
-    // gzip（mtime=0），随后把头部的 XFL/OS 两字节覆写为 0——真机 App
-    // 抓包样本（register_req_real.bin）的 gzip 头就是 00/00；flate2 默认
-    // 写 02/ff，服务端按 zlib 家族头校验，不覆写会被静默拒绝
     let mut gz = {
         let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::best());
         enc.write_all(plaintext).expect("gzip 写入内存不可能失败");
@@ -74,44 +61,43 @@ pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
     };
     gz[8] = 0;
     gz[9] = 0;
-    // IV 随机并原样放进 header（服务端按 header 里的 IV 解密，不校验其
-    // 与 salt 的派生关系——真机抓包与历史 Python 对拍的 IV 均非派生值）
-    let iv: [u8; 16] = rand::random();
-    tt_encrypt_v5_full(&gz, salt, &iv)
+    gz
 }
 
-/// 加密核心：gz 字节与 IV 均由调用方指定（对拍矩阵用——隔离 gz 字节流
-/// 与 IV 派生这两个独立变量）。
-pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
+/// TT-Encrypt V5 加密：gzip → 前置完整性哈希 → PKCS7 → AES-CBC → 拼头。
+pub fn tt_encrypt_v5(plaintext: &[u8]) -> Vec<u8> {
+    tt_encrypt_v5_with_salt(plaintext, &rand::random())
+}
+
+/// 同 [`tt_encrypt_v5`]，但盐由调用方指定（对拍/复现用）。
+pub fn tt_encrypt_v5_with_salt(plaintext: &[u8], salt: &[u8; 32]) -> Vec<u8> {
+    tt_encrypt_v5_full(&gzip_java_flavor(plaintext), salt)
+}
+
+/// 加密核心：gz 字节由调用方指定（逐字节锁定测试用）。
+///
+/// 线上格式见模块文档；`iv` 不上线，与 key 一样从 salt 派生。
+pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32]) -> Vec<u8> {
     use aes::Aes128;
     use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
     use hongguo_signer::tt_hash::{TT_ORD_LIST, TtHashCore};
 
-    // 盐 + 密钥派生。三次 calculate 共用一个 TtHashCore 只是沿用参考
-    // 实现的调用形态——CF 进位在每次 calculate 内部都先写后读，跨调用
-    // 不残留，共享核与独立核结果一致（tt_hash 的
-    // shared_core_matches_fresh_cores 测试锁定）。
     let mut core = TtHashCore::new();
     let h1 = core.calculate(salt);
     let mut seed = h1;
     seed.extend_from_slice(&TT_ORD_LIST);
     let key_iv = core.calculate(&seed);
     let key_arr: [u8; 16] = key_iv[..16].try_into().unwrap();
-    let iv_arr: [u8; 16] = *iv;
+    let iv_arr: [u8; 16] = key_iv[16..32].try_into().unwrap();
 
-    // payload = 魔改哈希第 16..64 字节（48B）‖ gzip，再 PKCS7 填充。
-    // calculate 输出 64 字节，真机抓包实证完整性哈希取的是 **digest[16..64]**
-    // 而非前 48 字节（register_req_real.bin 对拍锁定）——取错窗口服务端
-    // 重算不匹配即静默拒绝（device_id=0）。
-    let mut payload = core.calculate(gz)[16..64].to_vec();
+    // payload = gz 的完整 64 字节摘要 ‖ gz（服务端按前 64 字节做完整性
+    // 校验），再 PKCS7 填充。
+    let mut payload = core.calculate(gz).to_vec();
     payload.extend_from_slice(gz);
     let pad = 16 - payload.len() % 16;
-    payload.extend(std::iter::repeat(pad as u8).take(pad));
+    payload.extend(std::iter::repeat_n(pad as u8, pad));
 
-    // 标准 AES-128-CBC（与上游 Python 参考实现等价，由
-    // py_enc_accepted.hex 逐字节复现测试锁定——样本为服务端发号成功的
-    // Python 加密 body，见 tests/fixtures/README.md）
     let cipher = Aes128::new((&key_arr).into());
     let mut prev = iv_arr;
     let mut out = Vec::with_capacity(payload.len());
@@ -124,18 +110,17 @@ pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> 
         prev.copy_from_slice(chunk);
     }
 
-    let mut result = Vec::with_capacity(6 + 32 + 16 + out.len());
+    let mut result = Vec::with_capacity(6 + 32 + out.len());
     result.extend_from_slice(&TT_MAGIC);
     result.extend_from_slice(salt);
-    result.extend_from_slice(&iv_arr);
     result.extend_from_slice(&out);
     result
 }
 
-/// TT-Encrypt V5 解密（对拍/取证用）：返回 (明文字节, 抓包里的 gz 字节)。
+/// TT-Encrypt V5 解密（对拍/取证用）：返回 (明文字节, 包内 gz 字节)。
 ///
-/// 解密链与加密完全对称：按 salt → 派生 → gz 的顺序重放三次 calculate
-/// （与加密同一调用形态），并用 payload 前 48 字节校验完整性哈希。
+/// 与加密对称：iv/key 全从 salt 派生（包内无 IV 字段），payload 前 64
+/// 字节是 gz 的完整摘要。
 pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     use aes::Aes128;
     use aes::cipher::{BlockCipherDecrypt, KeyInit};
@@ -144,7 +129,7 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
 
     use hongguo_signer::tt_hash::{TT_ORD_LIST, TtHashCore};
 
-    if body.len() < 6 + 32 + 16 + 16 || body[..6] != TT_MAGIC {
+    if body.len() < 6 + 32 + 16 || body[..6] != TT_MAGIC {
         return Err(format!(
             "不是 TT-Encrypt V5 包：len={} magic={:02x?}",
             body.len(),
@@ -152,19 +137,18 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         ));
     }
     let salt = &body[6..38];
-    let iv_arr: [u8; 16] = body[38..54].try_into().unwrap();
-    let ct = &body[54..];
+    let ct = &body[38..];
     if !ct.len().is_multiple_of(16) {
         return Err(format!("密文长度 {} 不是 16 的倍数", ct.len()));
     }
 
-    // 派生链重放（顺序必须与加密一致，CF 链跨调用）
     let mut core = TtHashCore::new();
     let h1 = core.calculate(salt);
     let mut seed = h1;
     seed.extend_from_slice(&TT_ORD_LIST);
     let key_iv = core.calculate(&seed);
     let key_arr: [u8; 16] = key_iv[..16].try_into().unwrap();
+    let iv_arr: [u8; 16] = key_iv[16..32].try_into().unwrap();
 
     let cipher = Aes128::new((&key_arr).into());
     let mut payload = Vec::with_capacity(ct.len());
@@ -191,14 +175,14 @@ pub fn tt_decrypt_v5(body: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
     }
     payload.truncate(payload.len() - pad);
 
-    if payload.len() < 48 {
+    if payload.len() < 64 {
         return Err(format!("payload 过短：{}", payload.len()));
     }
-    let (app_hash, gz) = payload.split_at(48);
+    let (app_hash, gz) = payload.split_at(64);
 
-    // 完整性哈希校验（CF 链上的第三次 calculate，取 digest[16..64]）
-    let calc_hash = &core.calculate(gz)[16..64];
-    if calc_hash != app_hash {
+    // 完整性哈希校验：payload 前 64 字节 == gz 的完整摘要
+    let calc_hash = core.calculate(gz);
+    if calc_hash.as_slice() != app_hash {
         return Err(format!(
             "完整性哈希不符：app={} calc={}",
             app_hash
@@ -273,8 +257,10 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     })
 }
 
-/// 注册 query 的 40 个公共参数（指纹字段；`cdid`/`openudid`/时间戳每次生成，
-/// 服务端按这套指纹发新设备号）。
+/// 注册 query 的公共指纹参数（40 个；`cdid`/`openudid`/时间戳每次生成，
+/// 服务端按这套指纹发新设备号）。版本身份字段直接钉注册口径
+/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]），
+/// 与签名档案（`fresh_register_profile`）同源。
 fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, String)> {
     let pairs: Vec<(&str, String)> = vec![
         ("_rticket", now_ms.to_string()),
@@ -299,7 +285,10 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("is_preinstall", "0".into()),
         ("language", "zh".into()),
         ("last_deeplink_update_version_code", "0".into()),
-        ("manifest_version_code", "73932".into()),
+        (
+            "manifest_version_code",
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
+        ),
         ("md", "0".into()),
         ("minor_status", "0".into()),
         ("need_personal_recommend", "1".into()),
@@ -313,10 +302,16 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("ts", (now_ms / 1000).to_string()),
         ("tt_data", "a".into()),
         ("ttnet_version", "4.2.243.31-douyin".into()),
-        ("update_version_code", "73932".into()),
+        (
+            "update_version_code",
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
+        ),
         ("use_store_region_cookie", "1".into()),
-        ("version_code", "73932".into()),
-        ("version_name", "7.3.9.32".into()),
+        (
+            "version_code",
+            hongguo_signer::REGISTER_VERSION_CODE_STR.into(),
+        ),
+        ("version_name", hongguo_signer::REGISTER_VERSION_NAME.into()),
     ];
     pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
@@ -363,21 +358,31 @@ fn fresh_identity() -> FreshIdentity {
     }
 }
 
-/// 首次安装时间戳相对当前时间的回拨量（毫秒）：抓包模板值，设备「刚
-/// 装不久」的拟真参数（apk_first_install_time 与 first_launch_timestamp 共用）。
-const FIRST_INSTALL_BACKDATE_MS: u64 = 12_000;
+/// 首次安装时间戳相对当前时间的回拨量（毫秒）：hgplayer `GenerateProfileWith`
+/// 为 `randInt(100000,500000)`（100~500 秒），取中值 300 秒同分布。
+const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 
-/// 构造 AppLog 注册 JSON（抓包模板：47 个指纹字段，设备身份替换为新生成的）。
-fn applog_register_json(id: &FreshIdentity, now_ms: u64) -> Value {
-    // 字段多，json! 宏会顶爆递归限制，header 用 Map 逐项构建
+/// 构造 AppLog 注册 JSON 明文（注册口径活形态：基底复刻自 hgplayer
+/// `GenerateProfileWith`/`Header` 反编译，SDK 代际五件 `sdk_version
+/// 4.3.2-rc.44` / `sdk_target_version 30` / `git_hash 27660d0` /
+/// `sdk_flavor cnInner` / `scene 2` 按官方 APK bdinstall
+/// 装配器对齐；版本身份引用
+/// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
+/// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
+/// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
+/// `apk_first_install_time` 回拨 100~500 秒。
+fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     let mut h = serde_json::Map::new();
     h.insert("access".into(), json!("wifi"));
     h.insert("aid".into(), json!(8662));
     h.insert(
         "apk_first_install_time".into(),
-        json!(now_ms - FIRST_INSTALL_BACKDATE_MS),
+        json!(now_ms - FIRST_INSTALL_BACK_MS),
     );
-    h.insert("app_version".into(), json!("7.3.9.32"));
+    h.insert(
+        "app_version".into(),
+        json!(hongguo_signer::REGISTER_VERSION_NAME),
+    );
     h.insert("app_version_minor".into(), json!(""));
     h.insert("cdid".into(), json!(id.cdid));
     h.insert("channel".into(), json!("xiaomi_8662_64"));
@@ -386,11 +391,11 @@ fn applog_register_json(id: &FreshIdentity, now_ms: u64) -> Value {
     h.insert(
         "custom".into(),
         json!({
-            "client_ipv4": "116.130.67.90",
+            "client_ipv4": format!("116.130.{}.{}", rand::random::<u8>() as u32 % 231 + 10, rand::random::<u8>() as u32 % 231 + 10),
+            "filter_warn": 0,
             "is_android_fold": 0,
             "is_android_pad": 0,
-            "filter_warn": 0,
-            "web_ua": "Mozilla/5.0 (Linux; Android 14; Xiaomi 14 Build/UKQ1.230804.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/122.0.0.0 Mobile Safari/537.36",
+            "web_ua": "Mozilla/5.0 (Linux; Android 14; Xiaomi 14 Build/UKQ1.230804.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36",
         }),
     );
     h.insert("density_dpi".into(), json!(460));
@@ -401,12 +406,15 @@ fn applog_register_json(id: &FreshIdentity, now_ms: u64) -> Value {
     h.insert("device_platform".into(), json!("android"));
     h.insert("display_density".into(), json!("xxhdpi"));
     h.insert("display_name".into(), json!("红果短剧"));
-    h.insert("git_hash".into(), json!("fe95b95"));
+    h.insert("git_hash".into(), json!("27660d0"));
     h.insert("guest_mode".into(), json!(0));
     h.insert("ipv6_list".into(), json!([]));
     h.insert("is_system_app".into(), json!(0));
     h.insert("language".into(), json!("zh"));
-    h.insert("manifest_version_code".into(), json!(73932));
+    h.insert(
+        "manifest_version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
     h.insert("not_request_sender".into(), json!(0));
     h.insert("oaid_may_support".into(), json!(true));
     h.insert("openudid".into(), json!(id.openudid));
@@ -420,73 +428,89 @@ fn applog_register_json(id: &FreshIdentity, now_ms: u64) -> Value {
     h.insert("resolution".into(), json!("2670x1200"));
     h.insert("rom".into(), json!("hyperos"));
     h.insert("rom_version".into(), json!("OS1.0.32.0.UNCCNXM"));
-    h.insert("sdk_flavor".into(), json!("china"));
-    h.insert("sdk_target_version".into(), json!(29));
-    h.insert("sdk_version".into(), json!("3.7.3-rc.116-douyin"));
+    h.insert("scene".into(), json!(2));
+    h.insert("sdk_flavor".into(), json!("cnInner"));
+    h.insert("sdk_target_version".into(), json!(30));
+    h.insert("sdk_version".into(), json!("4.3.2-rc.44"));
     h.insert("sig_hash".into(), json!("aea615ab910015038f73c47e45d21466"));
     h.insert("sim_serial_number".into(), json!([]));
     h.insert("timezone".into(), json!(8));
     h.insert("tz_name".into(), json!("Asia/Shanghai"));
     h.insert("tz_offset".into(), json!(28800));
-    h.insert("update_version_code".into(), json!(73932));
-    h.insert("version_code".into(), json!(73932));
-
-    json!({
-        "magic_tag": "ss_app_log",
-        "header": Value::Object(h),
-        "_gen_time": now_ms,
-    })
+    h.insert(
+        "update_version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
+    h.insert(
+        "version_code".into(),
+        json!(hongguo_signer::REGISTER_VERSION_CODE),
+    );
+    let mut o = serde_json::Map::new();
+    o.insert("magic_tag".into(), json!("ss_app_log"));
+    o.insert("header".into(), Value::Object(h));
+    o.insert("_gen_time".into(), json!(now_ms));
+    Value::Object(o).to_string()
 }
 
 /// 注册一台全新设备。
 ///
-/// 签名档案必须用**空 device_id/iid**（服务端按 query+body 指纹发新号；
-/// 带着旧号签会被当成「已注册设备」原样回执），cdid/openudid 与
-/// query/body 三处保持同一指纹。
+/// 注册口径活形态：40 参富 query + TT-Encrypt V5 加密的注册指纹 JSON +
+/// 签名客户端（五件套 + `lc/x-ss-dp/log-encode-type`）。签名档案用
+/// **全新指纹**（无 device_id/iid，原生注册口径），cdid/openudid 与
+/// query/body 三处同源。`env` 只取代理设置。
 pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let id = fresh_identity();
+
+    // 注册档案原生就是注册口径（fresh_register_profile），与 query/body
+    // 同一套常量，零覆写
+    let profile =
+        hongguo_signer::device::DeviceProfile::fresh_register_profile(&id.cdid, &id.openudid);
+
     let q = register_query(&id.cdid, &id.openudid, now_ms);
 
-    let plain = applog_register_json(&id, now_ms).to_string();
-    let body = tt_encrypt_v5(plain.as_bytes());
+    let body = tt_encrypt_v5(register_json_str(&id, now_ms).as_bytes());
     // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
     if std::env::var("TT_DEBUG").is_ok() {
         let dir = super::capture_dir();
         let _ = std::fs::create_dir_all(&dir);
+        let plain = register_json_str(&id, now_ms);
         let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
         let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
         let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
-        let meta = serde_json::json!({"cdid": id.cdid, "openudid": id.openudid, "clientudid": id.clientudid, "req_id": id.req_id, "_rticket": now_ms.to_string(), "ts": (now_ms / 1000).to_string(), "first_launch_timestamp": ((now_ms - FIRST_INSTALL_BACKDATE_MS) / 1000).to_string()});
+        let meta = serde_json::json!({"cdid": id.cdid, "openudid": id.openudid, "clientudid": id.clientudid, "req_id": id.req_id, "_rticket": now_ms.to_string(), "ts": (now_ms / 1000).to_string()});
         let _ = std::fs::write(
             dir.join("rust_reg_meta.json"),
             serde_json::to_string(&meta).unwrap(),
         );
     }
 
-    // 签名档案用调用方的静态档案（含已知合法的 device_id）：实测服务端
-    // 要求注册请求带有「已激活设备上下文」——用全新/无 device_id 的档案
-    // 签名会被静默拒绝（device_id=0）；静态设备上下文 + body 新指纹 =
-    // 服务端按 body 指纹发放新设备号。
+    // 注册档案零 cookie（新指纹等服务端发号）；响应 Set-Cookie 下发本
+    // 设备自己的 ttreq 票（按新 install_id 发放），要随档案长期携带
     let reg_env = ApiEnv {
         proxy: env.proxy.clone(),
-        device: env.device.clone(),
+        device: profile,
         cookie: None,
         x_tt_token: None,
     };
 
-    // Set-Cookie 捕获版：响应头会下发本设备自己的 ttreq 票（按新
-    // install_id 发放），要随档案长期携带——静态兜底票绑定的是静态 iid，
-    // 配新 iid 会出现「install_id 与票不同源」的 Cookie
     let response = api_call_full_response(
         REGISTER_ORIGIN,
         REGISTER_PATH,
         Some(body),
         &q,
-        &[],
+        &[
+            (
+                "Content-Type".into(),
+                "application/octet-stream;tt-data=a".into(),
+            ),
+            ("lc".into(), "101".into()),
+            ("log-encode-type".into(), "gzip".into()),
+            ("x-ss-dp".into(), "8662".into()),
+        ],
         &reg_env,
     )
     .await?;
@@ -510,13 +534,15 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
     }
     Ok(result)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 真实 App 抓包（register_req_real.bin，2026-10-03 真机注册 body）的
-    /// 离线闭环：解密 → 同盐重加密 → 必须逐字节复现原始 body。
-    /// 锁死「派生链 + AES-CBC + PKCS7 + gzip 字节流」与官方客户端一致。
+    /// 官方真机注册 body（register_req_real.bin）的离线
+    /// 闭环：解密 → 同 (gz,salt) 重加密 → 必须逐字节复现原始 body。
+    /// 锁死「派生链 + IV 不上线 + AES-CBC + PKCS7 + gzip 字节流」与官方
+    /// 客户端一致。
     #[test]
     fn tt_v5_real_capture_roundtrip() {
         let body = include_bytes!("../../tests/fixtures/register_req_real.bin");
@@ -525,30 +551,23 @@ mod tests {
         // 解出的明文必须是合法 AppLog 注册 JSON
         let v: serde_json::Value = serde_json::from_slice(&plain).expect("解出的明文应是 JSON");
         assert_eq!(v["magic_tag"], "ss_app_log", "magic_tag 不符");
-        assert_eq!(&app_gz[..2], &[0x1f, 0x8b], "payload 48 偏移处应是 gzip 流");
+        assert_eq!(&app_gz[..2], &[0x1f, 0x8b], "payload 64 偏移处应是 gzip 流");
 
         let salt: [u8; 32] = body[6..38].try_into().unwrap();
-        let re = tt_encrypt_v5_with_salt(&plain, &salt);
-
-        // 结构锁：同盐重加密必须复现 magic+salt 区与总长（IV 是随机的、
-        // gzip 字节流因压缩器而异，此两者服务端均不校验——服务端用
-        // header 里的 IV 解密并按 digest[16..64] 校验完整性哈希）
-        assert_eq!(&re[..38], &body[..38], "magic/salt 区不一致");
-        assert_eq!(
-            re.len(),
-            body.len(),
-            "总长不一致（PKCS7 吸收 gz 差异后应相等）"
-        );
+        // 直接用解密出的 gz 重加密（官方压缩器与 flate2 字节流不必相同，
+        // 逐字节锁定的对象是加密拼装层，不是压缩器）
+        let re = tt_encrypt_v5_full(&app_gz, &salt);
+        assert_eq!(re, body, "同 (gz,salt) 重加密必须逐字节复现原始 body");
 
         // 往返锁：重加密密文再次解密必须还原同一明文（加密自洽）
         let (plain2, _) = tt_decrypt_v5(&re).expect("重加密密文应能自解");
         assert_eq!(plain2, plain, "加解密往返不还原");
     }
 
-    /// 「被服务端接受的注册 body」字节级复现锁：解密样本拿到 (gz, salt,
-    /// iv) 后重加密，必须逐字节相等。锁死 AES-CBC/PKCS7/hash 窗口/拼装
-    /// 全链路与真实接受形态一致（样本为 2026-10-03 服务端发号成功的
-    /// TT-Encrypt V5 body，解密需通过 digest[16..64] 校验）。
+    /// 「被服务端接受的注册 body」字节级复现锁：解密样本拿到 (gz, salt)
+    /// 后重加密，必须逐字节相等。锁死 AES-CBC/PKCS7/64B 摘要前缀/拼装
+    /// 全链路与真实接受形态一致（样本为服务端发号成功的 TT-Encrypt V5
+    /// body）。
     #[test]
     fn tt_v5_reproduces_accepted_body() {
         let hex = include_str!("../../tests/fixtures/py_enc_accepted.hex");
@@ -557,17 +576,16 @@ mod tests {
             .step_by(2)
             .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
             .collect();
-        let (plain, gz) = tt_decrypt_v5(&body).expect("被接受样本必须能解密（hash 窗口锁）");
+        let (plain, gz) = tt_decrypt_v5(&body).expect("被接受样本必须能解密（64B 摘要锁）");
         let v: serde_json::Value = serde_json::from_slice(&plain).expect("被接受样本明文应是 JSON");
         assert_eq!(v["magic_tag"], "ss_app_log");
 
         let salt: [u8; 32] = body[6..38].try_into().unwrap();
-        let iv: [u8; 16] = body[38..54].try_into().unwrap();
-        let re = tt_encrypt_v5_full(&gz, &salt, &iv);
-        assert_eq!(re, body, "同 (gz,salt,iv) 重加密必须逐字节复现被接受 body");
+        let re = tt_encrypt_v5_full(&gz, &salt);
+        assert_eq!(re, body, "同 (gz,salt) 重加密必须逐字节复现被接受 body");
     }
 
-    /// 抓包样本形状：数字 + 字符串双形态并存。
+    /// 官方样本形状：数字 + 字符串双形态并存。
     #[test]
     fn parses_register_response() {
         let raw = br#"{"server_time":1791016810,"device_id":2715158266032906,"install_id":2715158266282762,"new_user":1,"device_id_str":"2715158266032906","install_id_str":"2715158266282762","device_token":"AAAY"}"#;
@@ -579,399 +597,74 @@ mod tests {
         assert!(r.new_user);
     }
 
-    /// Python 逆向实现（TikTok 固件同源）固定盐加密的 golden：解密必须
-    /// 还原出同一段明文——锁住「盐派生 + AES-CBC + PKCS7」与公开实现一致。
+    /// 业务错误码必须浮出（ILLEGAL_ACCESS 等）。
     #[test]
     fn error_code_is_surfaced() {
         let raw = br#"{"code":110,"message":"ILLEGAL_ACCESS"}"#;
         let err = parse_register(raw).unwrap_err();
         assert!(err.to_string().contains("110"));
     }
-}
 
-#[cfg(test)]
-mod probe {
-    use super::*;
-    use crate::client::ApiEnv;
-    use hongguo_common::model::ProxyConfig;
-    use hongguo_common::utils::url::encode_rfc3986;
-
-    fn anon_env() -> ApiEnv {
-        ApiEnv::anonymous(ProxyConfig::default())
-    }
-
-    // register_query 在模块级（register_device 共用）。
-
-    /// 试探 1：明文 form 表单体（老版本 App 形态，body = query 的 urlencode）。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_register_plaintext_form() {
-        let env = anon_env();
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let cdid = uuid_v4();
-        let openudid = hex_random();
-        let mut q = register_query(&cdid, &openudid, now_ms);
-        q.retain(|(k, _)| k != "tt_data"); // 声明明文形态，去掉加密标记
-
-        // form 体 = query 全量 urlencode（经典注册形态）
-        let body = q
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        match api_call_full(
-            REGISTER_ORIGIN,
-            REGISTER_PATH,
-            Some(body.into_bytes()),
-            &q,
-            &env,
-        )
-        .await
-        {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                println!("[register-form] {}", &text[..text.len().min(600)]);
-                match parse_register(&bytes) {
-                    Ok(r) => println!(
-                        "[register-form] device_id={} install_id={} new_user={}",
-                        r.device_id, r.install_id, r.new_user
-                    ),
-                    Err(e) => println!("[register-form] 解析失败: {e}"),
-                }
-            }
-            Err(e) => println!("[register-form] ERR {e}"),
-        }
-    }
-
-    /// 试探 2：老式 form 补全指纹字段（cpu_model/density/timezone 等
-    /// 老版本 App 注册时 body 里的经典字段，query 只带公共项）。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_register_legacy_fingerprint_form() {
-        let env = anon_env();
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let cdid = uuid_v4();
-        let openudid = hex_random();
-        let mut q = register_query(&cdid, &openudid, now_ms);
-        q.retain(|(k, _)| k != "tt_data");
-
-        let mut pairs: Vec<(String, String)> = q.clone();
-        pairs.extend([
-            (
-                "cpu_model".into(),
-                "Qualcomm Technologies, Inc SM8650".into(),
-            ),
-            ("density".into(), "2.75".into()),
-            ("language".into(), "zh".into()),
-            ("mc".into(), "5c:c9:d3:12:34:56".into()),
-            ("timezone".into(), "Asia/Shanghai".into()),
-            ("req_id".into(), format!("{cdid}-{now_ms}")),
-            ("rom_version".into(), "UKQ1.230804.001".into()),
-            ("sim_region".into(), "cn".into()),
-        ]);
-
-        let body = pairs
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        match api_call_full(
-            REGISTER_ORIGIN,
-            REGISTER_PATH,
-            Some(body.into_bytes()),
-            &q,
-            &env,
-        )
-        .await
-        {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                println!("[register-legacy] {}", &text[..text.len().min(600)]);
-                match parse_register(&bytes) {
-                    Ok(r) => println!(
-                        "[register-legacy] device_id={} install_id={} new_user={}",
-                        r.device_id, r.install_id, r.new_user
-                    ),
-                    Err(e) => println!("[register-legacy] 解析失败: {e}"),
-                }
-            }
-            Err(e) => println!("[register-legacy] ERR {e}"),
-        }
-    }
-
-    /// 试探 3：gzip 压缩的明文 form（抓包头里 content-encoding: gzip +
-    /// log-encode-type: gzip，试探该形态是否与加密无关地被接受）。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_register_gzip_form() {
-        use std::io::Write as _;
-        let env = anon_env();
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let cdid = uuid_v4();
-        let openudid = hex_random();
-        let mut q = register_query(&cdid, &openudid, now_ms);
-        q.retain(|(k, _)| k != "tt_data");
-
-        let form = q
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, encode_rfc3986(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        gz.write_all(form.as_bytes()).unwrap();
-        let body = gz.finish().unwrap();
-
-        let extra = [
-            ("content-encoding".to_string(), "gzip".to_string()),
-            ("log-encode-type".to_string(), "gzip".to_string()),
-            (
-                "content-type".to_string(),
-                "application/x-www-form-urlencoded".to_string(),
-            ),
-        ];
-        match crate::client::api_call_full_with_headers(
-            REGISTER_ORIGIN,
-            REGISTER_PATH,
-            Some(body),
-            &q,
-            &extra,
-            &env,
-        )
-        .await
-        {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                println!("[register-gzip] {}", &text[..text.len().min(600)]);
-            }
-            Err(e) => println!("[register-gzip] ERR {e}"),
-        }
-    }
-
-    /// 试探 4：TT-Encrypt V5 加密 body（Python 逆向实现预生成，hex 文件
-    /// 读入——用于在移植 Rust 前验证「签名 + 加密形态」整条链路）。
-    #[tokio::test]
-    #[ignore = "需要先跑 python 生成 register_body.hex"]
-    async fn probe_register_ttencript_v5() {
-        let hex = std::fs::read_to_string(crate::capture_dir().join("register_body.hex"))
-            .expect("先跑 python 生成 register_body.hex");
-        let hex = hex.trim();
-        let body: Vec<u8> = (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect();
-        println!(
-            "[register-v5] body {} 字节, magic {:?}",
-            body.len(),
-            &body[..6]
-        );
-
-        // meta 里有与 body 配套的 cdid/openudid/时间戳（query 必须与 body 一致）
-        let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(crate::capture_dir().join("register_body_meta.json")).unwrap(),
-        )
-        .unwrap();
-        let cdid = meta["cdid"].as_str().unwrap();
-        let openudid = meta["openudid"].as_str().unwrap();
-        let now_ms = meta["_rticket"].as_str().unwrap().parse::<u64>().unwrap();
-        let mut q = register_query(cdid, openudid, now_ms);
-        // 抓包形态：加密包在 body，query 保留 tt_data=a
-        // （register_query 里本来就带 tt_data=a，不删）
-
-        let env = anon_env();
-        match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env).await {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                println!("[register-v5] {}", &text[..text.len().min(600)]);
-            }
-            Err(e) => println!("[register-v5] ERR {e}"),
-        }
-    }
-
-    /// 试探 5：TT-Encrypt V5 + AppLog JSON（真实注册形态——抓包 body
-    /// 用 Python 逆向实现解密出的就是这份 JSON 结构）。
-    #[tokio::test]
-    #[ignore = "需要先跑 python 生成 register_body2.hex"]
-    async fn probe_register_applog_json() {
-        let hex = std::fs::read_to_string(crate::capture_dir().join("register_body2.hex"))
-            .expect("先跑 python 生成 register_body2.hex");
-        let body: Vec<u8> = (0..hex.trim().len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex.trim()[i..i + 2], 16).unwrap())
-            .collect();
-
-        let meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(crate::capture_dir().join("register_body2_meta.json"))
-                .unwrap(),
-        )
-        .unwrap();
-        let now_ms = meta["_rticket"].as_str().unwrap().parse::<u64>().unwrap();
-        let q = register_query(
-            meta["cdid"].as_str().unwrap(),
-            meta["openudid"].as_str().unwrap(),
-            now_ms,
-        );
-
-        // 注册签名档案：device_id/iid 必须为空（服务端要发新的），
-        // cdid/openudid 与 query/body 保持同一指纹
-        let mut dev = hongguo_signer::video_device();
-        dev.set("device_id", "");
-        dev.set("iid", "");
-        dev.set("cdid", meta["cdid"].as_str().unwrap());
-        dev.set("openudid", meta["openudid"].as_str().unwrap());
-        let env = ApiEnv {
-            proxy: anon_env().proxy,
-            device: dev,
-            cookie: None,
-            x_tt_token: None,
+    /// 注册 query 与注册 JSON 的版本身份钉注册口径（与签名档案同一套
+    /// REGISTER_* 常量，三处同源由构造保证，禁止字面量覆写回潮）。
+    #[test]
+    fn register_fingerprint_pins_register_regime() {
+        let id = FreshIdentity {
+            cdid: "cdid-uuid".into(),
+            openudid: "openudid-hex".into(),
+            clientudid: "clientudid-uuid".into(),
+            req_id: "req-id-uuid".into(),
         };
-        match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env).await {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                println!("[register-json] {}", &text[..text.len().min(600)]);
-                match parse_register(&bytes) {
-                    Ok(r) => println!(
-                        "[register-json] device_id={} install_id={} new_user={}",
-                        r.device_id, r.install_id, r.new_user
-                    ),
-                    Err(e) => println!("[register-json] 解析失败: {e}"),
-                }
-            }
-            Err(e) => println!("[register-json] ERR {e}"),
-        }
+        let q = register_query(&id.cdid, &id.openudid, 1_760_000_000_000);
+        let get = |k: &str| {
+            q.iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.as_str())
+                .unwrap()
+        };
+        assert_eq!(
+            get("version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(
+            get("update_version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(
+            get("manifest_version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        assert_eq!(get("version_name"), hongguo_signer::REGISTER_VERSION_NAME);
+
+        let v: Value = serde_json::from_str(&register_json_str(&id, 1_760_000_000_000)).unwrap();
+        let h = &v["header"];
+        assert_eq!(h["version_code"], hongguo_signer::REGISTER_VERSION_CODE);
+        assert_eq!(
+            h["update_version_code"],
+            hongguo_signer::REGISTER_VERSION_CODE
+        );
+        assert_eq!(
+            h["manifest_version_code"],
+            hongguo_signer::REGISTER_VERSION_CODE
+        );
+        assert_eq!(h["app_version"], hongguo_signer::REGISTER_VERSION_NAME);
     }
 
-    /// 纯 Rust 注册链路：AppLog JSON + tt_encrypt_v5 + 静态档案签名。
+    /// 注册端点存活性诊断：[`register_device`] 全链路真机试注。
+    /// `device_id: 0` / 报错即形态或端点有变。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
-    async fn probe_register_device_rust() {
-        let env = anon_env();
+    async fn probe_register_live() {
+        let env = ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
         match register_device(&env).await {
             Ok(r) => println!(
-                "[register-rust] device_id={} install_id={} new_user={}",
-                r.device_id, r.install_id, r.new_user
+                "[register-live] device_id={} install_id={} new_user={} ttreq={}",
+                r.device_id,
+                r.install_id,
+                r.new_user,
+                if r.ttreq.is_empty() { "无" } else { "有" }
             ),
-            Err(e) => println!("[register-rust] ERR {e}"),
+            Err(e) => println!("[register-live] ERR {e}"),
         }
-    }
-
-    /// 档案矩阵：节流假设检验。每个变体全新指纹+全新 body，间隔 2s。
-    /// P0=重放 py_fresh2（21:23 被接受的全新注册，验证端点与幂等重发）；
-    /// P1=静态档案签名（现状，若 0/0 而其他过 → 档案被节流）；
-    /// P2=fresh 档案（无 device_id/iid 字段，检验「需要已知设备」结论
-    /// 是否被空值字段污染）；P3=71332 档案去掉 id 字段。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_register_profile_matrix() {
-        use hongguo_signer::video_device;
-
-        let env0 = anon_env();
-
-        // P0：重放 py_fresh2
-        let dir = crate::capture_dir();
-        if let (Ok(hex), Ok(meta_s)) = (
-            std::fs::read_to_string(dir.join("py_fresh2.hex")),
-            std::fs::read_to_string(dir.join("py_fresh2_meta.json")),
-        ) {
-            let hex = hex.trim();
-            let body: Vec<u8> = (0..hex.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-                .collect();
-            let meta: serde_json::Value = serde_json::from_str(&meta_s).unwrap();
-            let q = register_query(
-                meta["cdid"].as_str().unwrap(),
-                meta["openudid"].as_str().unwrap(),
-                meta["_rticket"].as_str().unwrap().parse().unwrap(),
-            );
-            match api_call_full(REGISTER_ORIGIN, REGISTER_PATH, Some(body), &q, &env0).await {
-                Ok(b) => println!(
-                    "[pm-P0重放] {}",
-                    &String::from_utf8_lossy(&b)[..160.min(b.len())]
-                ),
-                Err(e) => println!("[pm-P0重放] ERR {e}"),
-            }
-        } else {
-            println!("[pm-P0重放] 样本缺失，跳过");
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        // 变体发送器：全新指纹 + 指定签名档案
-        async fn send_fresh(tag: &str, env: &ApiEnv) {
-            match register_device(env).await {
-                Ok(r) => println!(
-                    "[pm-{tag}] device_id={} new_user={}",
-                    r.device_id, r.new_user
-                ),
-                Err(e) => println!("[pm-{tag}] ERR {e}"),
-            }
-        }
-
-        // P1：静态档案（现状）
-        send_fresh("P1静态档案", &env0).await;
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        // P2：fresh 档案（73932，无 device_id/iid/cdid/openudid 字段）
-        let mut fresh = hongguo_signer::device::DeviceProfile::fresh_register_profile("", "");
-        fresh.remove("cdid");
-        fresh.remove("openudid");
-        let env2 = ApiEnv {
-            proxy: env0.proxy.clone(),
-            device: fresh,
-            cookie: None,
-            x_tt_token: None,
-        };
-        send_fresh("P2fresh档案", &env2).await;
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        // P3：71332 静态档案去掉 device_id/iid
-        let mut dev3 = video_device();
-        dev3.remove("device_id");
-        dev3.remove("iid");
-        let env3 = ApiEnv {
-            proxy: env0.proxy.clone(),
-            device: dev3,
-            cookie: None,
-            x_tt_token: None,
-        };
-        send_fresh("P3匿名71332", &env3).await;
-    }
-
-    fn uuid_v4() -> String {
-        let b: [u8; 16] = rand::random();
-        format!(
-            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0],
-            b[1],
-            b[2],
-            b[3],
-            b[4],
-            b[5],
-            b[6] & 0x0f | 0x40,
-            b[7],
-            b[8] & 0x3f | 0x80,
-            b[9],
-            b[10],
-            b[11],
-            b[12],
-            b[13],
-            b[14],
-            b[15]
-        )
-    }
-
-    fn hex_random() -> String {
-        let b: [u8; 8] = rand::random();
-        b.iter().map(|x| format!("{x:02x}")).collect()
     }
 }

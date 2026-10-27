@@ -96,12 +96,8 @@ pub const kCMVideoCodecType_H264: OSType = 0x6176_6331;
 pub const kCMVideoCodecType_HEVC: OSType = 0x6876_6331;
 /// `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`（'420v'，NV12）
 pub const kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange: OSType = 0x3432_3076;
-/// `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange`（'420f'，NV12 全区间）——
-/// 播放末端 GPU 合成器的采样格式（gpui surface 断言的就是它）
-pub const kCVPixelFormatType_420YpCbCr8BiPlanarFullRange: OSType = 0x3432_3066;
 /// `kVTDecodeFrameFlags`：请求异步解码。不设即同步——DecodeFrame 阻塞到
-/// 帧出来，VT 无法流水线化（实测 1080p HEVC 46.5ms/帧 > 33ms 实时线），
-/// 播放场景必须设这个标志。
+/// 帧出来，VT 无法流水线化（实测 1080p HEVC 46.5ms/帧），必须设。
 pub const kVTDecodeFrame_EnableAsynchronousDecompression: u32 = 1 << 0;
 /// 兼容名：转码链等离线场景用同步就够（速度无所谓，同步省一轮回调）。
 pub const kVTDecodeFrame_Synchronous: u32 = 0;

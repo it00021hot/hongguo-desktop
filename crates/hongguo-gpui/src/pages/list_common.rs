@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use gpui_kit::component::Disableable;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, Sizable};
@@ -15,9 +15,67 @@ use hongguo_service::app_state::AppStateInner;
 use tokio::sync::oneshot;
 
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 /// 批量条上的点击回调（页面经 `cx.listener` 注入）。
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// `list()` 变高虚拟列表的喂养状态（页面持有一份，`list(state, …)` 挂元素）。
+///
+/// ListState 的条目数要显式对账，两种对账语义不同：
+/// - **整替**（换键 / 新搜索 / 首页重拉）→ [`Self::replace`] 标记新代数，
+///   下次 [`Self::sync`] 走 `reset`——测量缓存作废、滚动回顶；
+/// - **追加翻页** → 不动代数，sync 时走 `splice` 追加——已有行的测量与
+///   滚动位置原样保留。
+///
+/// 可见行之外不参与布局/解码/绘制，滚多深每帧成本都恒定。
+pub(crate) struct VirtualRows {
+    state: gpui_kit::ListState,
+    epoch: u64,
+    fed_epoch: u64,
+    fed_rows: usize,
+}
+
+impl VirtualRows {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: gpui_kit::ListState::new(0, gpui_kit::ListAlignment::Top, gpui_kit::px(400.0)),
+            epoch: 0,
+            fed_epoch: 0,
+            fed_rows: 0,
+        }
+    }
+
+    /// 状态克隆（挂 `list()` 元素用；本体留在页面继续对账）。
+    pub(crate) fn state(&self) -> gpui_kit::ListState {
+        self.state.clone()
+    }
+
+    /// 滚动哨兵：滚到列表末尾（Tauri IntersectionObserver 副本语义）。
+    /// 新条目尚未测高时返回 None，天然防住「追加后仍在底部」的连环翻页。
+    pub(crate) fn scrolled_to_end(&self) -> bool {
+        self.state.is_scrolled_to_end() == Some(true)
+    }
+
+    /// 内容整替标记：下次 [`Self::sync`] 走 reset（滚动回顶）。
+    pub(crate) fn replace(&mut self) {
+        self.epoch += 1;
+    }
+
+    /// render 期对账：把当前条目数同步进 ListState（含 footer 槽）。
+    pub(crate) fn sync(&mut self, rows: usize) {
+        if self.fed_epoch != self.epoch {
+            self.state.reset(rows);
+        } else if rows > self.fed_rows {
+            self.state
+                .splice(self.fed_rows..self.fed_rows, rows - self.fed_rows);
+        } else if rows != self.fed_rows {
+            self.state.reset(rows);
+        }
+        self.fed_epoch = self.epoch;
+        self.fed_rows = rows;
+    }
+}
 
 /// 搜索框（Tauri ListSearch：放大镜内嵌 + 240×h-8）。
 pub(crate) fn search_box(input: &Entity<InputState>, cx: &App) -> gpui_kit::Div {
@@ -37,37 +95,50 @@ pub(crate) fn search_box(input: &Entity<InputState>, cx: &App) -> gpui_kit::Div 
 }
 
 /// 选择圆钮（Tauri PickDot）：选中实心主色 + 对勾，未选空心圈。
-/// 点击拦截冒泡（卡片自己的点击是「打开/切换」，别被圆钮吃掉反过来）。
+///
+/// 用 gpui-base 的无样式 `Checkbox`：勾选语义、焦点、键盘激活与无障碍
+/// （role=checkbox / aria-checked）由库负责，形状与配色由本壳给（圆点 =
+/// Tauri 同款；库自带的 `component::checkbox` 是方框，形态对不上）。根节点
+/// 显式给 20px，命中区与原来那个手搓圆点一致。
+///
+/// 点击必须拦冒泡：圆钮是**卡片按钮的子节点**（卡片在管理态的点击也是
+/// 「切换选中」），不拦的话同一次点击既触发圆钮的 on_change 又冒泡到卡片
+/// 的 on_click → 切换两次 = 什么都没发生（点圆钮没反应）。
 pub(crate) fn pick_dot(
     id: ElementId,
     picked: bool,
+    label: impl Into<SharedString>,
     on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .justify_center()
+    gpui_kit::base::Checkbox::new(id)
         .size_5()
         .flex_shrink_0()
-        .rounded_full()
-        .border_2()
-        .when(picked, |s| {
-            s.bg(theme.primary)
-                .border_color(theme.primary)
-                .text_color(theme.primary_foreground)
-        })
-        .when(!picked, |s| s.border_color(theme.muted_foreground))
-        .cursor_pointer()
-        .on_click(move |ev: &ClickEvent, window, cx| {
+        .checked(picked)
+        .accessibility_label(label)
+        .on_change(move |_state, event, window, cx| {
             cx.stop_propagation();
-            on_toggle(ev, window, cx);
+            on_toggle(event, window, cx);
         })
-        .children(
-            picked
-                .then(|| gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Check).small()),
+        .child(
+            gpui_kit::base::CheckboxIndicator::new()
+                .checked(picked)
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .when(picked, |s| {
+                    s.bg(theme.primary)
+                        .border_color(theme.primary)
+                        .text_color(theme.primary_foreground)
+                })
+                .when(!picked, |s| s.border_color(theme.muted_foreground))
+                .children(picked.then(|| {
+                    gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Check).small()
+                })),
         )
 }
 
@@ -145,6 +216,7 @@ impl RenderOnce for BatchBar {
                     .ghost()
                     .small()
                     .disabled(total == 0)
+                    .when(total == 0, |b| b.cursor_default())
                     .on_click(move |ev, window, cx| {
                         if let Some(f) = &self.on_toggle_all {
                             f(ev, window, cx);
@@ -172,6 +244,7 @@ impl RenderOnce for BatchBar {
                     .danger()
                     .small()
                     .disabled(count == 0 || self.deleting)
+                    .when(count == 0 || self.deleting, |b| b.cursor_default())
                     .on_click(move |ev, window, cx| {
                         if let Some(f) = &self.on_delete {
                             f(ev, window, cx);

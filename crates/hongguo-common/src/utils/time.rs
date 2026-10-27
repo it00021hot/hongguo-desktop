@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn beijing_date_matches_known_captures() {
-        // 2026-10-04 抓包样本里的 publish_time（日历/预约域实测值，秒 → 毫秒 ×1000）
+        // 日历/预约域的 publish_time 样本值（秒 → 毫秒 ×1000）
         assert_eq!(beijing_date(1_790_957_041_000), "20261003");
         assert_eq!(beijing_date(1_791_216_360_000), "20261006");
         assert_eq!(beijing_date(1_759_276_800_000), "20251001");

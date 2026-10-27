@@ -2,7 +2,7 @@
 //! `app-sidebar` 的 GPUI 对齐形态）。
 //!
 //! 侧栏目的地对齐 Tauri 客户端的信息架构（13 项，逐页接真数据）。
-//! 可折叠：展开 224px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
+//! 可折叠：展开 160px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
 //! Tauri collapsed 同款）。贴底账户区（登录面板复用首页的）+ 折叠钮。
 //!
 //! 顶栏自绘（Tauri `app-shell` 44px 薄行对齐）：中部是当前页面分类 tab 的
@@ -114,10 +114,8 @@ pub struct Shell {
 impl Shell {
     pub fn new(state: Arc<AppStateInner>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 系统播放器：窗口透明（GPUI Metal 层 clear alpha=0）+ 背景铺黑，
-        // 视频 NSView 插在 GPUIView 之下。默认 gpui 后端不碰窗口外观。
-        if crate::video_backend::is_system() {
-            crate::platform::prepare_system_window(window);
-        }
+        // 视频 NSView / DComp 视频位插在 GPUIView 之下。
+        crate::platform::prepare_system_window(window);
         let feed = cx.new(|cx| HomeView::new(state.clone(), window, cx));
         // 无人值守启动（终端后台拉起）时窗口可能不是 key window，GPUI 就
         // 不再请求帧；系统播放器要在首帧 render 时挂 NSView，这一步不能省。
@@ -389,6 +387,12 @@ impl Shell {
             account_avatar_pending: false,
             toolbar_drag: None,
         };
+        // 启动目的地不是首页：按住首页信息流的冷启动自动开播——信息流
+        // 异步加载完成时人还在别的页，不按住的话 after_feed_loaded 会照常
+        // 起播（人不在首页，剧在播）。回首页走 resume_if_idle 续播。
+        if dest != Dest::Home {
+            shell.feed.update(cx, |home, _cx| home.hold_cold_start());
+        }
         if let Some(page) = page_start {
             shell.enter_dest(page, cx);
         }
@@ -435,14 +439,11 @@ impl Shell {
                     // 第二次启动请求前置窗口（单实例；Tauri bring_back_active_window
                     // 同款：显示 + 还原最小化 + 聚焦）
                     if crate::platform::take_focus_request() {
-                        let shown = handle
-                            .update(cx, |_, window, _| {
-                                crate::platform::restore_from_minimized(window);
-                                crate::platform::show_foreground(window);
-                                crate::platform::visibility(window)
-                            })
-                            .unwrap_or(false);
-                        log::info!("[Shell] 第二次启动请求：窗口已带到前台（可见={shown}）");
+                        let _ = handle.update(cx, |_, window, cx| {
+                            crate::platform::restore_from_minimized(window, cx);
+                            crate::platform::show_foreground(window, cx);
+                        });
+                        log::info!("[Shell] 第二次启动请求：窗口已带到前台");
                     }
                     if !crate::boss_key::take_fired() {
                         continue;
@@ -467,11 +468,11 @@ impl Shell {
                     if !ok {
                         return;
                     }
-                    let _ = handle.update(cx, |_, window, _| {
+                    let _ = handle.update(cx, |_, window, cx| {
                         if visible {
-                            crate::platform::hide(window);
+                            crate::platform::hide(window, cx);
                         } else {
-                            crate::platform::show_foreground(window);
+                            crate::platform::show_foreground(window, cx);
                         }
                     });
                     log::info!(
@@ -486,7 +487,7 @@ impl Shell {
         // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
         // 预览不挂：预览场景的主题由矩阵按 case 指定（scene 的 mode），
         // headless 窗口一挂上这个回调就会用宿主外观（Light）把场景主题
-        // 盖掉——dark 场景全部渲染成亮色（2026-10-18 实测）。
+        // 盖掉——dark 场景全部渲染成亮色。
         if !crate::preview::is_active() {
             cx.observe_window_appearance(window, |this, window, cx| {
                 if this.theme == crate::ui_prefs::ThemePref::Auto {

@@ -5,7 +5,7 @@
 
 use super::*;
 
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tag::Tag;
@@ -14,6 +14,7 @@ use gpui_kit::{App, div};
 
 use super::transcode::ffmpeg_install_block;
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 impl super::SettingsView {
     pub(super) fn render_playback_card(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -97,6 +98,7 @@ impl super::SettingsView {
                             .ghost()
                             .small()
                             .disabled(self.redetecting)
+                            .when(self.redetecting, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.redetect_capability(cx);
                             })),

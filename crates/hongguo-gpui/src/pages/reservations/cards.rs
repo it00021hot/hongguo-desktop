@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+
 impl ReservationView {
     fn toggle_selected(&mut self, series_id: &str, cx: &mut Context<Self>) {
         if !self.selected.remove(series_id) {
@@ -18,7 +20,7 @@ impl ReservationView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&item.cover);
+        let cover = crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Inline);
         let publish_date = if item.publish_time > 0 {
             format_month_day(item.publish_time)
         } else {
@@ -38,7 +40,7 @@ impl ReservationView {
             )))
             .items_stretch()
             .gap_4()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(crate::tokens::radius::CARD)
             .border_1()
             .border_color(if picked { theme.primary } else { theme.border })
             .bg(if picked {
@@ -52,51 +54,66 @@ impl ReservationView {
                 div().flex().items_center().child(pick_dot(
                     ElementId::from(format!("reservation-pick-{}", item.series_id)),
                     picked,
+                    item.title.clone(),
                     cx.listener(move |this, _, _, cx| this.toggle_selected(&sid, cx)),
                     cx,
                 ))
             }))
             // 封面（左下上线日期角标）
             .child(
-                div()
-                    .id(ElementId::from(format!(
-                        "reservation-cover-{}",
-                        item.series_id
-                    )))
-                    .relative()
-                    .w(gpui_kit::px(92.0))
-                    .h(gpui_kit::px(123.0))
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .rounded(gpui_kit::px(8.0))
-                    .bg(theme.secondary)
-                    .cursor_pointer()
-                    .on_click({
-                        let item = item.clone();
-                        cx.listener(move |this, _, _, cx| {
-                            if this.managing {
-                                this.toggle_selected(&item.series_id, cx);
-                            } else {
-                                this.open_detail(&item, cx);
-                            }
-                        })
+                // 封面可点 → base::Button 承担 role/focus/Enter-Space（视觉仍由
+                // styled 链决定）。库强制 flex row + 居中：这里复原原 div 的
+                // 块级竖排与左上对齐，固定 92×123 的盒子不被 flex 改写。
+                BaseButton::new(ElementId::from(format!(
+                    "reservation-cover-{}",
+                    item.series_id
+                )))
+                .accessibility_label(item.title.clone())
+                .relative()
+                .w(gpui_kit::px(92.0))
+                .h(gpui_kit::px(123.0))
+                .flex_shrink_0()
+                .overflow_hidden()
+                .rounded(crate::tokens::radius::COVER)
+                .bg(theme.secondary)
+                .cursor_pointer()
+                .flex_col()
+                .items_stretch()
+                .justify_start()
+                // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                // 截；钉回默认行高才与原 div 像素一致。
+                .line_height(gpui_kit::phi())
+                // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                .focus_visible(|s| {
+                    s.border_color(theme.ring)
+                        .shadow(crate::tokens::focus_ring(theme))
+                })
+                .on_click({
+                    let item = item.clone();
+                    cx.listener(move |this, _, _, cx| {
+                        if this.managing {
+                            this.toggle_selected(&item.series_id, cx);
+                        } else {
+                            this.open_detail(&item, cx);
+                        }
                     })
-                    .child(cover)
-                    .children((!publish_date.is_empty()).then(|| {
-                        div()
-                            .absolute()
-                            .bottom_0()
-                            .left_0()
-                            .bg(gpui_kit::rgba(0x000000a6))
-                            .px_1p5()
-                            .py_0p5()
-                            .text_size(gpui_kit::px(10.0))
-                            .text_color(gpui_kit::rgb(0xffffffff))
-                            .child(SharedString::from(crate::i18n::tf(
-                                "reservation.publishAt",
-                                &[("time", publish_date.as_str())],
-                            )))
-                    })),
+                })
+                .child(cover)
+                .children((!publish_date.is_empty()).then(|| {
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .bg(crate::tokens::scrim(65))
+                        .px_1p5()
+                        .py_0p5()
+                        .text_size(gpui_kit::px(10.0))
+                        .text_color(crate::tokens::on_media(100))
+                        .child(SharedString::from(crate::i18n::tf(
+                            "reservation.publishAt",
+                            &[("time", publish_date.as_str())],
+                        )))
+                })),
             )
             // 标题/简介/标签
             .child(
@@ -110,26 +127,41 @@ impl ReservationView {
                             .items_center()
                             .gap_2()
                             .child(
-                                div()
-                                    .id(ElementId::from(format!(
-                                        "reservation-title-{}",
-                                        item.series_id
-                                    )))
-                                    .truncate()
-                                    .text_sm()
-                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                                    .cursor_pointer()
-                                    .on_click({
-                                        let item = item.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            if this.managing {
-                                                this.toggle_selected(&item.series_id, cx);
-                                            } else {
-                                                this.open_detail(&item, cx);
-                                            }
-                                        })
+                                // 标题可点 → base::Button（Tauri 侧 series-row-card
+                                // 的 `article role="button"` 同语义）。flex_col +
+                                // items_stretch 复原原 div 的块级排版，标题仍按
+                                // 卡宽截断。
+                                BaseButton::new(ElementId::from(format!(
+                                    "reservation-title-{}",
+                                    item.series_id
+                                )))
+                                .accessibility_label(item.title.clone())
+                                .truncate()
+                                .text_sm()
+                                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                .cursor_pointer()
+                                .flex_col()
+                                .items_stretch()
+                                .justify_start()
+                                // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                                // 截；钉回默认行高才与原 div 像素一致。
+                                .line_height(gpui_kit::phi())
+                                // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                                .focus_visible(|s| {
+                                    s.border_color(theme.ring)
+                                        .shadow(crate::tokens::focus_ring(theme))
+                                })
+                                .on_click({
+                                    let item = item.clone();
+                                    cx.listener(move |this, _, _, cx| {
+                                        if this.managing {
+                                            this.toggle_selected(&item.series_id, cx);
+                                        } else {
+                                            this.open_detail(&item, cx);
+                                        }
                                     })
-                                    .child(SharedString::from(item.title.clone())),
+                                })
+                                .child(SharedString::from(item.title.clone())),
                             )
                             .children((item.score > 0.0).then(|| {
                                 h_flex()
@@ -243,6 +275,7 @@ impl ReservationView {
                         .outline()
                         .small()
                         .disabled(cancelling)
+                        .when(cancelling, |b| b.cursor_default())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.cancel_reserve(sid.clone(), cx);
                         })),

@@ -1,6 +1,7 @@
 //! 历史列表数据：双模式加载、封面、tab/搜索过滤与预览种子。
 
 use super::*;
+use hongguo_common::AppError;
 
 /// 本地条目 → 渲染行（字段与云端同形；u32 集号升为 i64 统一口径）。
 fn row_from_local(item: &LocalHistoryItem) -> WatchHistoryItem {
@@ -35,7 +36,9 @@ impl HistoryView {
             let rx = bridge::spawn(async move {
                 tokio::task::spawn_blocking(move || state.store.local_history_list())
                     .await
-                    .expect("阻塞池 join")
+                    .map_err(|e| AppError::Internal(format!("本地历史读取阻塞池任务失败: {e}")))
+                    // join 失败与读取失败并成一条错误通道交给 UI
+                    .and_then(|result| result)
             });
             cx.spawn(async move |this, cx| {
                 let result = rx.await.expect("tokio 桥不会丢弃发送端");
@@ -46,7 +49,6 @@ impl HistoryView {
                             log::info!("[History] GPUI 壳本地模式 -> {} 条", items.len());
                             view.items = items.iter().map(row_from_local).collect();
                             view.selected.clear();
-                            view.visible_count = 20;
                             view.phase = Phase::Loaded;
                         }
                         Err(e) => {
@@ -77,7 +79,6 @@ impl HistoryView {
                         log::info!("[History] GPUI 壳 -> {} 条", page.items.len());
                         view.items = page.items;
                         view.selected.clear();
-                        view.visible_count = 20;
                         view.phase = Phase::Loaded;
                     }
                     Err(e) => {
@@ -95,11 +96,15 @@ impl HistoryView {
     }
 
     /// 过滤（tab + 标题/seriesId 包含，Tauri 同口径）。
-    pub(super) fn visible_items(&self, cx: &App) -> Vec<WatchHistoryItem> {
+    ///
+    /// 返回 `self.items` 的下标：虚拟列表每帧都要重建条目数，按索引走免得
+    /// 每帧克隆整张表。
+    pub(super) fn visible_indices(&self, cx: &App) -> Vec<usize> {
         let q = self.search.read(cx).value().trim().to_lowercase();
         self.items
             .iter()
-            .filter(|item| {
+            .enumerate()
+            .filter(|(_, item)| {
                 match self.tab {
                     HistoryTab::Finished if !item.is_finished() => return false,
                     HistoryTab::Unfinished if item.is_finished() => return false,
@@ -110,7 +115,7 @@ impl HistoryView {
                 }
                 item.title.to_lowercase().contains(&q) || item.series_id.to_lowercase().contains(&q)
             })
-            .cloned()
+            .map(|(index, _)| index)
             .collect()
     }
 

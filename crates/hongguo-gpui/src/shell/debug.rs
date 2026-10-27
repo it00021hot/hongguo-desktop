@@ -46,6 +46,20 @@ impl super::Shell {
             .update(cx, |home, cx| home.debug_open_comments(cx));
     }
 
+    /// 取证辅助（screenshot feature）：评论面板 + 表情面板直达 GIF 档。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_comments_gif(&self, cx: &mut App) {
+        self.feed
+            .update(cx, |home, cx| home.debug_open_comments_gif(cx));
+    }
+
+    /// 取证辅助（screenshot feature）：开评论面板并聚焦输入框。
+    #[cfg(feature = "screenshot")]
+    pub(crate) fn debug_open_comments_caret(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.feed
+            .update(cx, |home, cx| home.debug_open_comments_caret(window, cx));
+    }
+
     /// 取证辅助（screenshot feature）：打开评论面板并派发 @提及弹层。
     #[cfg(feature = "screenshot")]
     pub(crate) fn debug_open_mention(&self, cx: &mut App) {

@@ -1,16 +1,16 @@
 //! 封面/头像转码供给（`hongguo-cover://`）。
 //!
 //! 红果系的条目封面全是 HEIC（fqnovelpic CDN 签名 URL；改扩展名/换
-//! tplv 模板一律 403，签名锁整个 path，2026-10-05 实测），WebView2 只在
+//! tplv 模板一律 403，签名锁整个 path），WebView2 只在
 //! 装了 HEVC 扩展的机器上能直接渲染。这里把「下载 HEIC → ffmpeg 转
 //! JPEG」收进后端：前端把原图 URL base64url 后拼 `{scheme}/c/{…}` 交给
 //! `<img>`，产物按 URL 哈希落盘缓存，同一张只转一次。
 //!
-//! 评论/剧评头像也走这条管线（2026-10-10 起）：无扩展名/`.image` 等
+//! 评论/剧评头像也走这条管线：无扩展名/`.image` 等
 //! 「格式说不清」的地址交给后端**魔数嗅探**——已是 jpeg/png/webp 就
 //! 原样透传（不转码、无损），真是 HEIC 才进下面的转码阶梯。
 //!
-//! 官方客户端（hgplayer）同样要过这一步——它抓包里的封面也是 HEIC，
+//! 官方客户端同样要过这一步——抓包里的封面也是 HEIC，
 //! 能显示靠的是客户端自解，不是接口给了别的格式。
 
 use base64::Engine;
@@ -218,7 +218,7 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
     let mut downloaded: Option<Vec<u8>> = None;
 
     // 0) 魔数嗅探透传：已经是 WebView 可直接渲染的格式就不折腾
-    //    （无扩展名头像实测多为 jpeg，2026-10-10 curl 实证）
+    //    （无扩展名头像多为 jpeg）
     if let Some((ext, ct)) = sniff_kind(bytes_of(&mut downloaded, remote)?) {
         let bytes = downloaded.take().expect("嗅探刚填充过 downloaded");
         return Ok((bytes, ext, ct));
@@ -343,6 +343,25 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::sniff_kind;
+    use super::{EDGE_AVATAR, EDGE_CARD, sized_cache_path};
+
+    /// 档位参与成品图寻址：预热档位与渲染档位错配时**必然取不到文件**。
+    ///
+    /// 这是「头像整块空白」的机械根源（详情页创作者头像按
+    /// 封面档 320 预热、渲染侧找头像档 64 即触发）。改档位名等于换文件——所以渲染侧
+    /// 与预热侧必须共用同一个档位常量。
+    #[test]
+    fn sized_cache_path_is_edge_scoped() {
+        let url = "https://example.com/a.jpeg?sig=1";
+        let card = sized_cache_path(url, EDGE_CARD);
+        let avatar = sized_cache_path(url, EDGE_AVATAR);
+        assert_ne!(
+            card, avatar,
+            "档位必须参与寻址——错配就是取不到文件（头像空白）"
+        );
+        assert!(card.to_string_lossy().ends_with("-320.jpg"));
+        assert!(avatar.to_string_lossy().ends_with("-64.jpg"));
+    }
 
     #[test]
     fn jpeg_magic() {

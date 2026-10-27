@@ -1,8 +1,7 @@
 //! HEIC 静图纯 Rust 解码：HEIF 容器 → rusty_h265 → JPEG。
 //!
 //! 封面转码能力阶梯的最后一级（平台 WIC/VT → ffmpeg → 本级），ffmpeg 与
-//! 平台解码器都没有的机器靠它保证封面可用——2026-10-09 真机实测：无
-//! ffmpeg 机器上封面曾全军覆没（协议层静默 404）。
+//! 平台解码器都没有的机器靠它保证封面可用（无它时封面在协议层静默 404）。
 //!
 //! 平台态：Windows 上是 WIC 之后的真兜底；macOS 上通常**休眠**——
 //! WKWebView 原生解 HEIC，前端不进代理，本级因此也轮不到。但模块跨平台
@@ -15,7 +14,7 @@
 //! 共用 [`crate::hevc::param_nalus_from_hvcc`]，解码复用转码同款
 //! rusty_h265 用法。
 //!
-//! 已知边界（对红果 CDN 样本实测，2026-10-09）：单 `hvc1` item、数据在
+//! 已知边界（红果 CDN 样本形态）：单 `hvc1` item、数据在
 //! `mdat`（construction_method 0）。Apple 相机那种 grid 拼贴 HEIC 目前
 //! 不支持——遇到时明确报错而不是解出错图；CDN 现网没有这种形态。
 
@@ -432,5 +431,20 @@ mod tests {
     fn rejects_garbage_input() {
         let err = decode_primary_to_jpeg(b"not a heif file at all......");
         assert!(err.is_err(), "垃圾输入必须报错");
+    }
+
+    /// 解码器层面的健壮性：随机字节喂进去要报错或什么都不吐，**不能崩**。
+    ///
+    /// 封面是外部数据（CDN 上的 HEIC），解码器是第三方纯 Rust 实现——这里崩
+    /// 一次就是整个进程崩，代价远高于"这张封面出不来"。
+    #[test]
+    fn the_hevc_decoder_survives_garbage_without_panicking() {
+        let mut d = rusty_h265::Decoder::new();
+        let garbage: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let _ = d.push_annexb(&garbage, None);
+        let _ = d.next_frame();
+        d.flush();
+        // 再取一次也不该 panic
+        let _ = d.next_frame();
     }
 }

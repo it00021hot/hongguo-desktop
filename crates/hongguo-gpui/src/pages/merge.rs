@@ -9,12 +9,13 @@
 use std::sync::Arc;
 
 use gpui_kit::component::Disableable;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_kit::component::button::{ButtonVariant, ButtonVariants};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::tab::{Tab, TabBar};
@@ -30,6 +31,7 @@ use hongguo_service::events::ServiceEvent;
 use crate::bridge;
 use crate::home::fmt::format_bytes;
 use crate::pages::card;
+use crate::ui_button::button as Button;
 
 /// 下拉候选项：行文案「剧名 · N 集」，值 = series_id。
 #[derive(Clone)]
@@ -82,6 +84,8 @@ pub(crate) struct MergeView {
     preflight_pending: bool,
     /// 模式偏好；快速合并被禁时本次实际用兼容（Tauri effectiveMode 同款派生）。
     mode: MergeMode,
+    /// 阻塞池任务失败的短句（Some = 整页换错误态 + 重试）。
+    failed: Option<String>,
 }
 
 impl MergeView {
@@ -135,6 +139,7 @@ impl MergeView {
             preflight: None,
             preflight_pending: false,
             mode: MergeMode::Quick,
+            failed: None,
         };
         view.subscribe_merge_events(cx);
         view
@@ -142,6 +147,8 @@ impl MergeView {
 
     /// 进入页面时拉候选与任务列表（本地数据，走阻塞池）。
     pub(crate) fn load(&mut self, cx: &mut Context<Self>) {
+        // 重试时先清旧错误，否则失败态会一直挂在页面上。
+        self.failed = None;
         let state = Arc::clone(&self.state);
         let rx = bridge::spawn(async move {
             tokio::task::spawn_blocking(move || {
@@ -151,26 +158,36 @@ impl MergeView {
                 )
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| format!("阻塞池任务失败: {e}"))
         });
         cx.spawn(async move |this, cx| {
-            let (candidates, tasks) = rx.await.expect("tokio 桥不会丢弃发送端");
+            let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update_in(cx, |view, window, cx| {
-                view.candidates = Some(candidates);
-                // 候选灌进下拉（SelectState::set_items 需要窗口）
-                let items: Vec<CandidateItem> = view
-                    .candidates
-                    .as_deref()
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(CandidateItem::from)
-                    .collect();
-                view.select.update(cx, |select, cx| {
-                    select.set_items(SearchableVec::new(items), window, cx)
-                });
-                match tasks {
-                    Ok(t) => view.tasks = Some(t),
-                    Err(e) => log::warn!("[Merge] 任务列表读取失败: {e}"),
+                match result {
+                    Ok((candidates, tasks)) => {
+                        view.failed = None;
+                        view.candidates = Some(candidates);
+                        // 候选灌进下拉（SelectState::set_items 需要窗口）
+                        let items: Vec<CandidateItem> = view
+                            .candidates
+                            .as_deref()
+                            .unwrap_or(&[])
+                            .iter()
+                            .map(CandidateItem::from)
+                            .collect();
+                        view.select.update(cx, |select, cx| {
+                            select.set_items(SearchableVec::new(items), window, cx)
+                        });
+                        match tasks {
+                            Ok(t) => view.tasks = Some(t),
+                            Err(e) => log::warn!("[Merge] 任务列表读取失败: {e}"),
+                        }
+                    }
+                    Err(msg) => {
+                        view.failed = Some(msg);
+                        view.candidates = None;
+                        view.tasks = None;
+                    }
                 }
                 cx.notify();
             });
@@ -265,7 +282,7 @@ impl MergeView {
                 hongguo_service::merge_service::prepare::preflight(&state, &series_id)
             })
             .await
-            .expect("阻塞池 join")
+            .map_err(|e| format!("阻塞池任务失败: {e}"))
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
@@ -277,11 +294,21 @@ impl MergeView {
                     return;
                 }
                 view.preflight_pending = false;
-                match result {
-                    Ok(preflight) => view.preflight = Some(preflight),
-                    Err(e) => {
+                // 阻塞池 join 失败没有 AppError 可翻译，直接透出短句。
+                let outcome: Result<MergePreflight, String> = match result {
+                    Ok(Ok(preflight)) => Ok(preflight),
+                    Ok(Err(e)) => {
                         log::warn!("[Merge] 预检失败: {e}");
-                        let message = crate::i18n::app_error_text(&e);
+                        Err(crate::i18n::app_error_text(&e))
+                    }
+                    Err(msg) => {
+                        log::warn!("[Merge] 预检失败: {msg}");
+                        Err(msg)
+                    }
+                };
+                match outcome {
+                    Ok(preflight) => view.preflight = Some(preflight),
+                    Err(message) => {
                         window.push_notification(
                             Notification::error(crate::i18n::tf(
                                 "common.failedWith",
@@ -589,6 +616,7 @@ impl MergeView {
                     })
                     .primary()
                     .disabled(!can_start)
+                    .when(!can_start, |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, window, cx| this.start(window, cx))),
             )
             .into_any_element()
@@ -678,8 +706,11 @@ impl MergeView {
     }
 
     fn render_tasks_card(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        // 还没拉过（None）= 首拉加载：出行骨架占位，卡位与标题不变；
+        // 拉过但是空 = 没有任务，不渲染任务卡。
+        let loading = self.tasks.is_none();
         let tasks = self.tasks.as_deref().unwrap_or(&[]);
-        if tasks.is_empty() {
+        if tasks.is_empty() && !loading {
             return None;
         }
         Some(
@@ -690,14 +721,42 @@ impl MergeView {
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .child(crate::i18n::t("merge.taskList")),
                 )
-                .child(
+                .child(if loading {
+                    // 行高按 GPUI 真实行算，不照抄 Tauri 的 h-24：行内容高 25
+                    // （状态标签最高：文字 15 + 内边距 8 + 边框 2；标题行 23 /
+                    // 删除按钮 24 都比它矮）+ 行内上下 p_2 16 + 边框 2 = 43；
+                    // 行间距另按真实列表的 gap_2 给 8。
+                    crate::pages::skeleton::rows(cx, 5, 43.0, 8.0)
+                } else {
                     v_flex()
                         .w_full()
                         .gap_2()
-                        .children(tasks.iter().map(|t| self.render_task_row(t, cx))),
-                )
+                        .children(tasks.iter().map(|t| self.render_task_row(t, cx)))
+                        .into_any_element()
+                })
                 .into_any_element(),
         )
+    }
+
+    /// 页面主体：加载失败时整页换错误态（候选与任务列表同源，一起失败）。
+    fn render_body(&self, cx: &mut Context<Self>) -> Vec<gpui_kit::AnyElement> {
+        if let Some(msg) = self.failed.clone() {
+            return vec![crate::pages::states::error_state(
+                cx,
+                None,
+                crate::i18n::t("common.loadFailed"),
+                Some(msg),
+                Some((
+                    "merge-retry",
+                    crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                )),
+            )];
+        }
+        let mut body = vec![self.render_form_card(cx)];
+        if let Some(tasks) = self.render_tasks_card(cx) {
+            body.push(tasks);
+        }
+        body
     }
 
     /// 预览种子（screenshot feature）：灌假候选/假任务/假预检，跳过本地
@@ -753,7 +812,7 @@ impl gpui_kit::Render for MergeView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .id("merge-page")
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .child(
                 v_flex()
                     .max_w(gpui_kit::px(768.0))
@@ -761,8 +820,7 @@ impl gpui_kit::Render for MergeView {
                     .w_full()
                     .p_6()
                     .gap_4()
-                    .child(self.render_form_card(cx))
-                    .children(self.render_tasks_card(cx)),
+                    .children(self.render_body(cx)),
             )
     }
 }

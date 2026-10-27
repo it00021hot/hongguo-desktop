@@ -5,12 +5,13 @@ use std::sync::Arc;
 #[cfg(feature = "screenshot")]
 use std::time::{Duration, Instant};
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
@@ -21,6 +22,7 @@ use hongguo_api::reservation::{fetch_reservations, reserve_series};
 use super::controls::CONTROLS_HOLD_SECS;
 use super::feed::StreamItem;
 use crate::bridge;
+use crate::ui_button::button as Button;
 
 impl super::HomeView {
     /// 拉当前剧的相关作品·系列（plan/v；每剧一次，失败静默可重试）。
@@ -59,13 +61,13 @@ impl super::HomeView {
     }
 
     /// 季卡封面排转码（card 档）：渲染期 [`crate::cover_img::card`] 只查
-    /// 成品图在不在盘上，没人预热就永远是占位块（2026-10-23 用户实测
-    /// 系列剧 tab 封面全空的根因）。数据到位与浮层打开两处调用——后者
+    /// 成品图在不在盘上，没人预热就永远是占位块（系列剧 tab 封面全空的
+    /// 根因）。数据到位与浮层打开两处调用——后者
     /// 兜住缓存命中（早退不走到货回调）与「当前季合成条目」。
     fn prewarm_season_covers(&self, cx: &mut Context<Self>) {
         let (_, seasons) = self.seasons_of();
         let covers: Vec<String> = seasons.iter().map(|(w, _)| w.cover.clone()).collect();
-        crate::cover_img::prewarm(&covers, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&covers, cx);
     }
 
     /// 季列表合成（Tauri seasons memo 同构）：plan 只回其他季，当前季
@@ -148,8 +150,8 @@ impl super::HomeView {
     }
 
     /// 选集浮层（Tauri EpisodePicker 对齐）：贴控制栏向上弹的数字网格。
-    /// 范围段每段 30 集（hgplayer 同款）；当前集红底高亮；点选**不关**浮层
-    /// （连选连跳，关闭走 Esc/收起/点外部）。红色是 hgplayer 皮肤（硬红线
+    /// 范围段每段 30 集；当前集红底高亮；点选**不关**浮层
+    /// （连选连跳，关闭走 Esc/收起/点外部）。红色是播放器皮肤（硬红线
     /// 11 的播放器豁免）。「系列剧」tab 与下载完成角标随相关作品/预约、
     /// 下载能力的对齐步骤补。
     pub(super) fn render_picker(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -171,7 +173,7 @@ impl super::HomeView {
         // 系列列表已拉过，非空才显示）
         let season_count = self.seasons_of().1.len();
 
-        // 头部：选集 | 系列剧 双 tab（hgplayer 同款）+ 全 N 集 + 收起
+        // 头部：选集 | 系列剧 双 tab + 全 N 集 + 收起
         let header = h_flex()
             .items_center()
             .justify_between()
@@ -239,8 +241,12 @@ impl super::HomeView {
                 let active = i == active_group;
                 let lo = i as u32 * GROUP_SIZE + 1;
                 let hi = ((i as u32 + 1) * GROUP_SIZE).min(total);
-                div()
-                    .id(gpui_kit::ElementId::from(format!("picker-group-{i}")))
+                let range = format!("{lo}-{hi}");
+                // 段 tab 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space
+                // 激活与 role 由库负责，视觉仍由本链决定。
+                BaseButton::new(gpui_kit::ElementId::from(format!("picker-group-{i}")))
+                    .accessibility_label(range.clone())
+                    .aria_selected(active)
                     .cursor_pointer()
                     .text_size(gpui_kit::px(13.0))
                     .text_color(if active {
@@ -250,12 +256,17 @@ impl super::HomeView {
                     })
                     .hover(|s| s.text_color(gpui_kit::rgba(0xe5e5e5ff)))
                     .when(active, |s| s.font_weight(gpui_kit::FontWeight::SEMIBOLD))
+                    // base Button 强制 justify_center + line_height(relative(1.))：
+                    // 原链没写 flex，是块级左对齐 + 默认行高，两项都要钉回去。
+                    .justify_start()
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let at = this.now.as_ref().map(|n| n.vid_index).unwrap_or(0);
                         this.picker_group_override = Some((i, at));
                         cx.notify();
                     }))
-                    .child(format!("{lo}-{hi}"))
+                    .child(range)
             }));
 
         // 8 列数字网格（右上角下载完成角标：绿点 = 该集已下载可离线播）
@@ -266,8 +277,11 @@ impl super::HomeView {
             .children((start..=end).map(|n| {
                 let active = n == now.vid_index;
                 let downloaded = self.done_vids.contains(&n);
-                div()
-                    .id(gpui_kit::ElementId::from(format!("picker-ep-{n}")))
+                // 集号格可点 → base::Button；绿点是 absolute child，定位基准
+                // 是这个 relative 盒，relative 必须留着。
+                BaseButton::new(gpui_kit::ElementId::from(format!("picker-ep-{n}")))
+                    .accessibility_label(n.to_string())
+                    .aria_selected(active)
                     .relative()
                     .flex()
                     .items_center()
@@ -289,6 +303,10 @@ impl super::HomeView {
                     })
                     .hover(|s| s.bg(gpui_kit::rgba(0x404040ff)))
                     .when(active, |s| s.font_weight(gpui_kit::FontWeight::SEMIBOLD))
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮
+                    // 一截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                     .on_click(cx.listener(move |this, _, _, cx| this.pick_episode(n, cx)))
                     .child(format!("{n}"))
                     .children(downloaded.then(|| {
@@ -317,9 +335,26 @@ impl super::HomeView {
             .w(gpui_kit::px(452.0))
             .max_h(gpui_kit::px(440.0))
             .p_4()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(crate::tokens::radius::CARD)
             .bg(gpui_kit::rgba(0x171717f2))
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
+            // 点外部关闭（Tauri 同款）：锚点 = 入口按钮 + 浮层，落在之外
+            // 即收起。这是**窗口级**监听（capture 阶段、按命中盒判内外），
+            // 不吞底下控件的点击——控制条按钮照常响应，浮层顺手收掉。
+            // 舞台层那张捕获层只铺在画面上（控制条在它之上），点控制条的
+            // 按钮它压根收不到，浮层就这么一直挂着（用户实测）。
+            .on_mouse_down_out(cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, cx| {
+                // 入口按钮本身不算「点外部」：那一下交给按钮的 on_click
+                // 收起（这里先关的话，按钮的 on_click 又会把它打开）
+                if let Some(b) = this.picker_entry_bounds.get()
+                    && b.contains(&ev.position)
+                {
+                    return;
+                }
+                this.picker_open = false;
+                this.picker_group_override = None;
+                cx.notify();
+            }))
             // 浮层内的任何点击都不许落到捕获层/舞台（点选集把视频点停了
             // 就是这里漏的——Tauri EpisodePicker 根节点 onClick 同款）
             .on_mouse_down(
@@ -353,8 +388,11 @@ impl super::HomeView {
         on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
     ) -> gpui_kit::AnyElement {
         let label: SharedString = label.into();
-        div()
-            .id(ElementId::from(format!("picker-tab-{label}")))
+        // tab 可点 → base::Button；红条是 absolute child，定位基准是这个
+        // relative 盒，relative 必须留着。
+        BaseButton::new(ElementId::from(format!("picker-tab-{label}")))
+            .accessibility_label(label.clone())
+            .aria_selected(active)
             .relative()
             .pb_1()
             .text_sm()
@@ -382,6 +420,11 @@ impl super::HomeView {
                         .bg(gpui_kit::rgb(0xef4444)),
                 )
             })
+            // base Button 强制 justify_center + line_height(relative(1.))：
+            // 原链没写 flex，是块级左对齐 + 默认行高，两项都要钉回去。
+            .justify_start()
+            .line_height(gpui_kit::phi())
+            .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
             .on_click(on_click)
             .child(
                 h_flex()
@@ -486,7 +529,8 @@ impl super::HomeView {
                     gpui_kit::rgba(0x00000000)
                 };
                 let sid_click = item.series_id.clone();
-                let cover = crate::cover_img::card(&item.cover);
+                let cover =
+                    crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Thumb);
                 let mut meta: Vec<String> = Vec::new();
                 if !item.tag.is_empty() {
                     meta.push(item.tag.clone());
@@ -511,7 +555,7 @@ impl super::HomeView {
                     .items_center()
                     .gap_2p5()
                     .p_2p5()
-                    .rounded(gpui_kit::px(8.0))
+                    .rounded(crate::tokens::radius::COVER)
                     .border_1()
                     .border_color(border_color)
                     .bg(gpui_kit::rgba(0x26262666))
@@ -533,7 +577,7 @@ impl super::HomeView {
                             .w(gpui_kit::px(40.0))
                             .flex_shrink_0()
                             .overflow_hidden()
-                            .rounded(gpui_kit::px(6.0))
+                            .rounded(crate::tokens::radius::THUMB)
                             .bg(gpui_kit::rgba(0x333333cc))
                             .child(cover),
                     )

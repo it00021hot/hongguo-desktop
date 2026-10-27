@@ -19,6 +19,12 @@ pub struct Series {
     /// 旧档案缓存缺省 0 = 不显示）
     #[serde(default)]
     pub followed_cnt: i64,
+    /// 剧的条目类型（官方 content_type：漫剧 1004 / 真人剧 1 / 书城条目
+    /// 1001…）。真播批量分组 key 与单集请求 content_type 的持久来源——
+    /// 起播时整剧各集按它注册进取流注册表；0 = 未知（旧档案缓存），
+    /// 取流走单集占位值（服务端对该字段容错）。
+    #[serde(default)]
+    pub content_type: i64,
     #[serde(default)]
     pub tags: Vec<String>,
     /// 完整分集（拉取后写入）

@@ -36,18 +36,17 @@ import type { WatchHistoryItem } from '@/service/schema';
 
 /**
  * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，
- * book_type=2 短剧过滤；官方/第三方客户端看的记录都在，2026-10-05 实证
- * 469 条带名字带进度）。
+ * book_type=2 短剧过滤；各端看的记录都在）。
  *
- * 点卡片跳播放器续播；封面是 HEIC 签名 URL，走 useWebCover 转码代理。
- * 顶部「全部/未看完/已看完」筛选与标题搜索对齐参考端 v1.1.6：
- * 已看完 = episode_cnt>0 且已看到最后一集（参考端 History 页 p() 同款判定，
+ * 点卡片跳播放器续播；封面是 HEIC 签名 URL，经 enhancedCover 转码代理。
+ * 顶部「全部/未看完/已看完」筛选与标题搜索对齐官方客户端：
+ * 已看完 = episode_cnt>0 且已看到最后一集（官方客户端同款判定，
  * 不看片内进度）。
  */
 
 type HistoryTab = 'all' | 'unfinished' | 'finished';
 
-/** 参考端同款「已看完」判定：看到最后一集即算，与片内进度无关。 */
+/** 官方同款「已看完」判定：看到最后一集即算，与片内进度无关。 */
 function isFinished(item: WatchHistoryItem): boolean {
   return item.episodeCnt > 0 && Math.max(1, item.vidIndex) >= item.episodeCnt;
 }
@@ -75,7 +74,7 @@ export function HistoryPage() {
   // tab/搜索词会话级保留（进详情再返回停在离开时的 tab）
   const [tab, setTab] = useSessionState<HistoryTab>('hongguo.history.tab', 'all');
   const [query, setQuery] = useSessionState('hongguo.history.query', '');
-  // 批量管理（hgplayer v1.1.6 同款「管理」）：多选后批量删除云端历史
+  // 批量管理：多选后批量删除云端历史
   const batch = useBatchSelect();
   const deleteMutation = useWatchHistoryDelete();
   const localDeleteMutation = useLocalHistoryDelete();
@@ -123,9 +122,9 @@ export function HistoryPage() {
   const open = (item: WatchHistoryItem) => {
     resolve(item.seriesId, {
       onSuccess: () => {
-        // 云端 vid_index 1 起（2026-10-09 实证：云端行的 vid 与该集 vid
-        // 一一对应，双魂共生 vid_index=18 即第 18/18 集；第三方 hgplayer
-        // 写入的是 0 基，历史数据可能混有 0——钳到第 1 集）。播放器
+        // 云端 vid_index 1 起（云端行的 vid 与该集 vid
+        // 一一对应，双魂共生 vid_index=18 即第 18/18 集；历史数据可能混有
+        // 旧客户端写入的 0 基——钳到第 1 集）。播放器
         // store 同为 1 起（0=无目标）
         playSeries(item.seriesId, Math.max(1, item.vidIndex));
       },
@@ -234,7 +233,7 @@ export function HistoryPage() {
                 }
               />
             ))}
-            {/* 续载哨兵：滚近底部（600px 提前量）继续渲染下一批 */}
+            {/* 续载哨兵：滚近底部（400px 提前量）继续渲染下一批 */}
             {visibleCount < shown.length && <div ref={sentinelRef} className="h-px" />}
             {resolving && <p className="text-muted-foreground text-sm">{t('common.resolving')}</p>}
           </div>

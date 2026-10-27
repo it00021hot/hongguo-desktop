@@ -3,6 +3,7 @@
  */
 import { z } from 'zod';
 import { normalizeAvatarUrl } from '@/utils/image-url';
+import { emoticonSchema } from './emoticon';
 
 /** 一条弹幕（Rust `danmaku::Danmaku` 的 camelCase 序列化）。 */
 export const danmakuSchema = z.object({
@@ -31,6 +32,8 @@ export const commentItemSchema = z.object({
   score: z.string().default(''),
   /** 评分后缀文案（"观看1小时后点评"；单集评论恒空串） */
   scoreSuffixText: z.string().default(''),
+  /** 评论附图（本地图片 / 表情图片；纯文字评论为空数组） */
+  images: z.array(emoticonSchema).default([]),
 });
 export type CommentItem = z.infer<typeof commentItemSchema>;
 
@@ -45,8 +48,8 @@ export type CommentPage = z.infer<typeof commentPageSchema>;
 
 /**
  * 剧级评论页 + 剧评分摘要（Rust `danmaku::SeriesReviewPage`）。
- * 评分/评分人数/题材标签在评论响应 extra 里（2026-10-07 逆向 hgplayer
- * Reviews 锁定）——详情头部的「8.0分 1074人评分」数据源。
+ * 评分/评分人数/题材标签在评论响应 extra 里——详情头部的
+ * 「8.0分 1074人评分」数据源。
  */
 export const seriesReviewPageSchema = z.object({
   ...commentPageSchema.shape,
@@ -55,12 +58,12 @@ export const seriesReviewPageSchema = z.object({
   /** 评分人数 */
   scoreCnt: z.number(),
   tags: z.array(z.string()),
-  /** 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行，2026-10-10 抓包） */
+  /** 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行） */
   tagStats: z.array(z.object({ tagName: z.string(), count: z.number() })).default([]),
 });
 export type SeriesReviewPage = z.infer<typeof seriesReviewPageSchema>;
 
-/** 一条回复（Rust `danmaku::ReplyItem`；reply/list 2026-10-10 抓包形态）。 */
+/** 一条回复（Rust `danmaku::ReplyItem`）。 */
 export const replyItemSchema = z.object({
   replyId: z.string(),
   /** 作者 uid（删除入口对比登录 uid 用；缺失为空串） */
@@ -88,7 +91,7 @@ export const replyPageSchema = z.object({
 });
 export type ReplyPage = z.infer<typeof replyPageSchema>;
 
-/** 创作者主页资料头（Rust `danmaku::CreatorProfile`，2026-10-15 官方实包）。 */
+/** 创作者主页资料头（Rust `danmaku::CreatorProfile`）。 */
 export const creatorProfileSchema = z.object({
   userId: z.string(),
   userName: z.string(),

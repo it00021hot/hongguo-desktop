@@ -44,7 +44,7 @@ pub(crate) fn take_focus_request() -> bool {
 
 /// 最小化态还原：macOS 的 deminiaturize 由 AppKit 自己管，这里不需要
 /// 显式还原（`show_foreground` 会把窗口带回前台）。
-pub(crate) fn restore_from_minimized(_window: &Window) {}
+pub(crate) fn restore_from_minimized(_window: &Window, _cx: &gpui_kit::App) {}
 
 /// 快照窗口外框与最大化态（最大化 = `isZoomed`）。
 pub(crate) fn snapshot(window: &Window) -> Option<WindowSnapshot> {
@@ -201,16 +201,16 @@ pub(crate) fn is_minimized(window: &Window) -> bool {
     crate::macos::is_minimized(window)
 }
 
-pub(crate) fn hide(window: &Window) {
-    crate::macos::hide(window);
+pub(crate) fn hide(window: &Window, cx: &gpui_kit::App) {
+    crate::macos::hide(window, cx);
 }
 
-pub(crate) fn show_no_activate(window: &Window) {
-    crate::macos::show_no_activate(window);
+pub(crate) fn show_no_activate(window: &Window, cx: &gpui_kit::App) {
+    crate::macos::show_no_activate(window, cx);
 }
 
-pub(crate) fn show_foreground(window: &Window) {
-    crate::macos::show_foreground(window);
+pub(crate) fn show_foreground(window: &Window, cx: &gpui_kit::App) {
+    crate::macos::show_foreground(window, cx);
 }
 
 /// 藏/显 macOS 红绿灯（无边框播放用）：只 setHidden 三颗圆点，不动 styleMask。

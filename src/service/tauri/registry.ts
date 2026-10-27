@@ -24,6 +24,9 @@ import {
   danmakuSchema,
   decodeCapabilitySchema,
   downloadTaskSchema,
+  emoticonPageSchema,
+  emoticonSchema,
+  emoticonCollectInputSchema,
   feedPageSchema,
   feedTabSchema,
   followNoticeSchema,
@@ -36,6 +39,8 @@ import {
   mergePreflightSchema,
   mergeTaskSchema,
   passportUserSchema,
+  pictureUploadSchema,
+  pickedImageSchema,
   playbackCapabilitySchema,
   playResponseSchema,
   proxyConfigSchema,
@@ -121,9 +126,20 @@ export const COMMANDS = {
   open_merge_output: { args: z.object({ id: z.string() }), response: voidResp },
 
   // ---- 弹幕 / 评论 / 剧评 --------------------------------------------
-  danmaku_list: {
-    args: z.object({ groupId: z.string(), bookId: z.string() }),
-    response: danmakuSchema.array(),
+  danmaku_window: {
+    args: z.object({
+      groupId: z.string(),
+      bookId: z.string(),
+      startMs: z.number(),
+      durationSecs: z.number(),
+      cursor: z.string(),
+    }),
+    response: z.object({
+      items: danmakuSchema.array(),
+      hasMore: z.boolean(),
+      nextCursor: z.string(),
+      nextStartMs: z.number(),
+    }),
   },
   comment_list: {
     args: z.object({
@@ -227,8 +243,46 @@ export const COMMANDS = {
       mentionUserId: z.string().optional(),
       mentionUserName: z.string().optional(),
       contextCommentIds: z.array(z.string()).optional(),
+      // 附图评论（可选；body 顶层多 image_data，
+      // 表情类另带 business_param.emoji_scene_type——第三方 2 /
+      // 自定义 4；本地图片评论不带该字段）
+      image: emoticonSchema.nullable().optional(),
+      emojiSceneType: z.number().nullable().optional(),
     }),
     response: commentItemSchema,
+  },
+  // ---- 表情（官方表情 / 第三方 GIF / 自定义表情）------------------------
+  emoticon_list: {
+    args: z.object({
+      source: z.enum(['thirdParty', 'own']),
+      count: z.number().optional(),
+      offset: z.number().optional(),
+    }),
+    response: emoticonPageSchema,
+  },
+  emoticon_search: {
+    args: z.object({
+      keyword: z.string(),
+      count: z.number().optional(),
+      offset: z.number().optional(),
+    }),
+    response: emoticonPageSchema,
+  },
+  emoticon_upload: {
+    args: z.object({ bytes: z.number().array(), filename: z.string() }),
+    response: pictureUploadSchema,
+  },
+  emoticon_pick_image: {
+    args: z.object({}),
+    response: pickedImageSchema,
+  },
+  emoticon_collect: {
+    args: emoticonCollectInputSchema,
+    response: emoticonSchema,
+  },
+  emoticon_delete: {
+    args: emoticonCollectInputSchema,
+    response: z.null(),
   },
   mention_list: {
     args: z.object({ seriesId: z.string() }),

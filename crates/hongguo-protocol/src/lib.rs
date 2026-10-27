@@ -12,11 +12,11 @@
 //!
 //! **本 crate 不依赖 tauri**：供数函数只产出 `(状态码, 响应头, 响应体)` 元组
 //! （[`hongguo_stream::range::ProtocolResponse`]），HTTP 组装与 Builder 注册是
-//! 壳层的职责（「协议注册归壳」，见 `docs/architecture-refactor.md` §2）。 GPUI
+//! 壳层的职责（协议注册归壳）。 GPUI
 //! 壳不经过 URI 供数，不消费本 crate 的协议入口；[`pool`] 的工作池与 panic
 //! 加固是协议路径的执行纪律，随供数逻辑同址。
 //!
-//! 执行模型（2026-10-07 事故后加固）：WKURLSchemeHandler 在**主线程**的
+//! 执行模型（panic 加固）：WKURLSchemeHandler 在**主线程**的
 //! extern "C" 边界里调回调，panic 无法 unwind 出去，std 只能 abort 全进程。
 //! 三层防线（[`pool`] + 壳层注册处）：
 //! 1. 回调体整体 `catch_unwind`，panic 到不了 FFI 边界；

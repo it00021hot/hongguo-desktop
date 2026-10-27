@@ -2,16 +2,20 @@
 
 use super::*;
 
+use std::rc::Rc;
+
+use gpui_kit::Toggled;
 use gpui_kit::Window;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Disableable;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::v_flex;
 use gpui_kit::div;
 
 use crate::home::player_icons;
+use crate::ui_button::button as Button;
 
 impl HomeView {
     /// 倍速入口（Tauri 同款下拉菜单）。
@@ -87,6 +91,7 @@ impl HomeView {
                 .cursor_pointer()
                 .small()
                 .disabled(true)
+                .cursor_default()
                 .tooltip(crate::i18n::t("player.definitionLocalOnly"))
                 .into_any_element()
         } else {
@@ -156,7 +161,20 @@ impl HomeView {
         // 选集浮层入口（Tauri immersive 同款：ListVideo 图标 +
         // 总集数；浮层**贴按钮**向上弹——Tauri 的 EpisodePicker
         // 就挂在按钮 wrapper 里，右缘与按钮对齐）
+        //
+        // 入口按钮的矩形哨兵：浮层「点外部关闭」要把按钮本身排除
+        // 在外（Tauri 的锚点 = 按钮 + 浮层）。点按钮那一下交给按钮的
+        // on_click 收起；捕获层先关掉浮层的话，按钮的 on_click 又会
+        // 把它打开——面板关不掉还反复横跳。第一个子层就是按钮（浮层
+        // 是 deferred 子层，排在后面）。
+        let entry_bounds = Rc::clone(&self.picker_entry_bounds);
         div()
+            // prepaint 哨兵是 Div 的方法：必须在 .id() 变 Stateful 之前挂
+            .on_children_prepainted(move |children, _, _| {
+                if let Some(b) = children.first() {
+                    entry_bounds.set(Some(*b));
+                }
+            })
             .id("stage-picker-wrap")
             .relative()
             .child(
@@ -207,8 +225,15 @@ impl HomeView {
                 } else {
                     gpui_kit::rgba(0xffffffb3)
                 };
-                div()
-                    .id("stage-dm-settings")
+                // 可点 → base::Button：焦点句柄、Tab 可达、Enter/Space 激活与
+                // role 由库负责；面板开合是开关态，带 aria-toggled。
+                BaseButton::new("stage-dm-settings")
+                    .accessibility_label(crate::i18n::t("player.danmakuSettings"))
+                    .aria_toggled(if self.dm_panel_open {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
                     .flex()
                     .w(gpui_kit::px(32.0))
                     .h(gpui_kit::px(28.0))
@@ -216,10 +241,12 @@ impl HomeView {
                     .items_center()
                     .rounded(gpui_kit::px(6.0))
                     .cursor_pointer()
-                    .role(gpui_kit::Role::Button)
-                    .aria_label(crate::i18n::t("player.danmakuSettings"))
                     .text_color(color)
                     .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
+                    // base Button 强制 line_height(relative(1.))：自绘「弹」字
+                    // 继承行高，钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.dm_panel_open = !this.dm_panel_open;
                         cx.notify();
@@ -227,10 +254,10 @@ impl HomeView {
                     .child(player_icons::danmaku_settings(color))
             })
             .children(self.dm_panel_open.then(|| {
-                // Tauri 面板几何/皮肤同款：w-60(240) / p-4 / gap-4，
-                // 黑 85% 底 + 白 10% 描边（此前 pt-3 pb-4 gap-3、
-                // 无描边，行距比 Tauri 紧一档）
-                v_flex()
+                // deferred：控制栏向上弹的浮层必须最后画（选集/音量浮层
+                // 同款）。不 deferred 就留在控制栏的普通绘制序里——后画的
+                // 兄弟元素（评论面板/连播横条/登录面板…）会盖住它。
+                let panel = v_flex()
                     .id("dm-settings-panel")
                     .absolute()
                     .right_0()
@@ -238,6 +265,9 @@ impl HomeView {
                     //（Tauri 面板 mb-3 同款留白）
                     .bottom(gpui_kit::relative(1.0))
                     .mb_3()
+                    // Tauri 面板几何/皮肤同款：w-60(240) / p-4 / gap-4，
+                    // 黑 85% 底 + 白 10% 描边（此前 pt-3 pb-4 gap-3、
+                    // 无描边，行距比 Tauri 紧一档）
                     .w(gpui_kit::px(240.0))
                     .gap_4()
                     .p_4()
@@ -271,7 +301,8 @@ impl HomeView {
                         &self.dm_area_slider,
                         self.dm_area,
                     ))
-                    .into_any_element()
+                    .into_any_element();
+                gpui_kit::deferred(panel).with_priority(1)
             }))
             .into_any_element()
     }

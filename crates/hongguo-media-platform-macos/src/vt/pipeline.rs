@@ -15,11 +15,11 @@ use super::ffi;
 use super::pixel::{CmSb, Pb, Transfer};
 
 /// 平台编码层执行 HEVC→H.264 转码；HEVC 以外的源返回 `None`
-/// （留给 ffmpeg/软解——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
+/// （留给 ffmpeg——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
 ///
 /// 闸门是「VT 会话能建」而不是「必须硬编」：会话有硬编走硬编，没有就落
-/// Apple 内置软编会话——后者仍然显著快于 ffmpeg 与纯 Rust 软解（本机 i7
-/// 实测 44.9s 集：VT 链 ≈5.9s，libx264 18.2s、纯 Rust 54s），且同样不依赖
+/// Apple 内置软编会话——后者仍然显著快于 ffmpeg（本机 i7
+/// 实测 44.9s 集：VT 链 ≈5.9s，libx264 18.2s），且同样不依赖
 /// 用户装任何东西。会话真建不出来（罕见）由管线落回下一条路。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
@@ -99,7 +99,7 @@ fn emit_outputs(
         // PTS **原样透传**。解码侧按源时间轴精确配对后，发射序=解码序，
         // 显示时间天然非单调——任何「回退顶开」都会把真实显示顺序打乱
         // （真实剧集 B 帧流首跑实证：标题帧被顶进转场中间）。非单调交给
-        // muxide：按时间戳交织、写 ctts，这正是 MP4 B 帧的标准形态。
+        // 封装器：按时间戳交织、写 ctts，这正是 MP4 B 帧的标准形态。
         let pts = output_pts_secs(&sb);
         units.push((pts, annexb, keyframe));
         if let Some(cb) = on_progress {
@@ -166,7 +166,7 @@ fn run(
     //   showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序
     //   喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
     // 转码只处理 HEVC 源（H.264 源在 ffmpeg 侧直转），解码会话固定按 HEVC 建
-    let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets, false)? };
+    let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets)? };
     let mut slot_times = source_pts.clone();
     slot_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let mut ready: Vec<(Pb, f64)> = Vec::new();
@@ -263,11 +263,9 @@ fn run(
         return Err(AppError::Media("平台硬编没有产出任何帧".into()));
     }
 
-    // 4) 音轨直通 + 封装（与软解路径同一套代码，faststart）
+    // 4) 音轨直通 + 封装（与其他后端同一套代码，faststart）
     let (out_w, out_h) = out_dims.unwrap_or((video.width as usize, video.height as usize));
-    hongguo_media::transcode::mux_with_audio(
-        req.input, demuxed, req.output, &units, out_w, out_h, fps as f32,
-    )?;
+    hongguo_media::mux::with_audio(req.input, demuxed, req.output, &units, out_w, out_h)?;
 
     log::info!(
         "[Platform/vt] HEVC→H.264 完成：{} 帧（{out_w}x{out_h}），耗时 {:?}",

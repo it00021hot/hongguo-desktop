@@ -10,13 +10,14 @@
 use gpui_kit::component::Disableable;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{SharedString, div};
 
 use crate::portrait::geom;
+use crate::ui_button::button as Button;
 
 /// 比例变化超过 1% 才重适配（Tauri REFIT_DELTA 同值）：浮点抖动与同比例
 /// 换流不触发。
@@ -229,6 +230,7 @@ impl super::HomeView {
                             .cursor_pointer()
                             .xsmall()
                             .disabled(!has_next)
+                            .when(!has_next, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
                     )
                     .child(

@@ -6,7 +6,7 @@
 //!
 //! 为什么值得做：黑屏是「看不出为什么也改不了」的死局，而兜底只在这一集上
 //! 付一次转码的代价（之后命中缓存）。转码走 [`pipeline::transcode`] 的统一
-//! 分流链（平台硬编 → ffmpeg → 纯 Rust 软解）。
+//! 分流链（平台硬编 → ffmpeg）。
 //!
 //! 进度按已编码秒数上报到界面——转码一集要几十秒，没有进度用户只能等。
 
@@ -48,9 +48,7 @@ pub async fn ensure_compat(
         return Ok(CompatPlay {
             url,
             cached: true,
-            backend: hongguo_media_platform::capability::selected_backend()
-                .decoder_label()
-                .to_string(),
+            backend: backend_label(hongguo_media_platform::capability::selected_backend()),
             elapsed_ms: 0,
         });
     }
@@ -83,14 +81,13 @@ pub async fn ensure_compat(
     };
     report(0.0);
 
-    // 2) 转码。分流链（平台硬编 → ffmpeg → 纯 Rust）在 pipeline 里只有一份，
-    //    这里必须走同一个入口——曾在这里复刻过一条 ffmpeg→软解的私有分流，
+    // 2) 转码。分流链（平台硬编 → ffmpeg）在 pipeline 里只有一份，
+    //    这里必须走同一个入口——曾在这里复刻过一条 ffmpeg→软编的私有分流，
     //    平台硬编接不进来，兼容播放永远拿不到硬编速度。
     let result = crate::transcode_service::pipeline::transcode(
         series_id,
         vid_index,
         &plain,
-        &Default::default(),
         None,
         Some(&report),
     );
@@ -105,16 +102,25 @@ pub async fn ensure_compat(
     let elapsed = started.elapsed();
     let url = hongguo_protocol::local::local_play_url(&result.output_path)
         .ok_or_else(|| AppError::Media("转码产物路径无法转成播放地址".into()))?;
-    log::info!(
-        "[Compat] 第 {vid_index} 集就绪：{}，耗时 {elapsed:?}",
-        result.backend.decoder_label()
-    );
+    let backend = backend_label(result.backend);
+    log::info!("[Compat] 第 {vid_index} 集就绪：{backend}，耗时 {elapsed:?}");
     Ok(CompatPlay {
         url,
         cached: false,
-        backend: result.backend.decoder_label().to_string(),
+        backend,
         elapsed_ms: elapsed.as_millis(),
     })
+}
+
+/// 后端标识，给界面提示用。
+///
+/// 没有可用后端时（平台编码器不可用且没装 ffmpeg），产物只可能是此前转好的
+/// 缓存——这时报「none」，不编一个后端名出来。
+fn backend_label(backend: Option<hongguo_media::Backend>) -> String {
+    match backend {
+        Some(b) => b.decoder_label().to_string(),
+        None => "none".to_string(),
+    }
 }
 
 /// 兼容播放的明文输入临时文件，必须与转码流水线的输出临时文件区分。

@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+
 impl super::RankView {
     fn play_series(&self, series_id: String, cx: &mut Context<Self>) {
         let (vid_index, start_secs) = hongguo_service::play_service::resume::resolve_entry(
@@ -92,7 +94,7 @@ impl super::RankView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&item.cover);
+        let cover = crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Inline);
         let reserved = self.reserved_of(item);
         let rank_color: gpui_kit::Hsla = if item.rank <= 3 {
             // 星语言（Tauri 榜单前三 text-star 同款）
@@ -114,17 +116,32 @@ impl super::RankView {
             .filter(|s| !s.is_empty() && **s != item.rec_text)
             .cloned()
             .collect();
-        h_flex()
-            .id(ElementId::from(format!("rank-row-{}", item.series_id)))
+        // 整行可点 → 用 base::Button 承担 role/focus/Enter-Space（键盘用户能
+        // 走到榜单行）。库强制 flex row + 交叉轴居中 + 主轴居中：这里只需把
+        // 主轴改回 justify_start（内容左对齐，与原 h_flex 一致）。
+        BaseButton::new(ElementId::from(format!("rank-row-{}", item.series_id)))
+            // list() 的条目按内容宽排：行根必须显式吃满列表宽，否则短简介
+            // 的行缩成一小条、长简介的行横向溢出视口
+            .w_full()
+            .accessibility_label(item.title.clone())
             .items_center()
             .gap_4()
-            .rounded(theme.radius_lg)
+            .rounded(crate::tokens::radius::CARD)
             .border_1()
             .border_color(theme.border)
             .bg(theme.group_box)
             .p_3()
             .cursor_pointer()
             .hover(|s| s.border_color(theme.foreground.opacity(0.3)).shadow_md())
+            .justify_start()
+            // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+            // 截；钉回默认行高才与原 div 像素一致。
+            .line_height(gpui_kit::phi())
+            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+            .focus_visible(|s| {
+                s.border_color(theme.ring)
+                    .shadow(crate::tokens::focus_ring(theme))
+            })
             .on_click({
                 let item = item.clone();
                 cx.listener(move |this, _, _, cx| this.open_detail(&item, cx))
@@ -145,7 +162,7 @@ impl super::RankView {
                     .h(gpui_kit::px(107.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(theme.radius + gpui_kit::px(2.0))
+                    .rounded(crate::tokens::radius::COVER)
                     .bg(theme.secondary)
                     .child(cover),
             )
@@ -251,6 +268,7 @@ impl super::RankView {
                             .h_8()
                             .px_2p5()
                             .disabled(pending)
+                            .when(pending, |b| b.cursor_default())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.toggle_reserve(&item_clone, cx);

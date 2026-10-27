@@ -31,15 +31,19 @@ static FILL_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 /// 拿到门闸后才进入真正抢带宽的填充段，一次只填一路。并发两路整集下载+解密
 /// 会抢爆带宽与 CPU——用户实测卡死的那次，当前剧与预取同时 fill 是最可疑的现场。
 ///
-/// **可取消**（2026-10-06）：条目被逐出（用户切走）后填充立即中止让出队列——
+/// **可取消**：条目被逐出（用户切走）后填充立即中止让出队列——
 /// 否则被切走的前一集拖着整集下载占住串行通道，当前集黑屏干等到天荒地老。
 /// 每个分块边界都检查一次，最坏滞后一个分块（1MB）。
 ///
-/// `prefetch = true` 时是**有界**预填（默认只填 [`PREFETCH_HEAD_BYTES`]，
-/// 够首帧秒开），但预算是动态的：条目升格为当前集、或已有读者在等这一档，
-/// 即刻转无界续满；当前集（另一条流）的读者在等数据则立刻让位收工
-/// （见 [`FillBudget`]）——不必依赖 [`resume_fill`] 事后抢取流权
-/// （预取尚未收工时它抢不到，那正是「播到头部上限就断流」的窗口）。
+/// 填充预算只有一条规则：**正在播的那一集缓存整集，其余只缓存开头
+/// [`NON_CURRENT_HEAD_PERCENT`]%**（见 [`fill_budget`]）。预算是动态的：
+/// 条目升格为当前集、或已有读者在等这一档，即刻转无界续满；当前集
+/// （另一条流）的读者在等数据则立刻让位收工（见 [`FillBudget`]）——
+/// 不必依赖 [`resume_fill`] 事后抢取流权（预取尚未收工时它抢不到，
+/// 那正是「播到头部上限就断流」的窗口）。
+///
+/// `prefetch` 只影响**让位判定**：预填被切走（条目还在）就停下，当前集的
+/// 填充被切走则立即中止（见 `cancelled`）。
 #[expect(
     clippy::too_many_arguments,
     reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
@@ -88,26 +92,11 @@ pub(super) async fn fill(
             }
             // CDN 抖动（短读/断流）是常态而不是异常，整体重试而不是一次失败
             // 就永远停在前沿——播放追上未填充区只能超时报错。
-            // 预取的动态预算：升格为当前集、本流已有读者在等即转无界；当前集
-            // （另一条流）的读者在等数据则立刻让位（见 [`FillBudget`]）
-            let cap: Box<dyn Fn() -> FillBudget + Send + Sync> = if prefetch {
+            // 预算闭包逐决策点求值：正在播的那一集无界，其余只填开头一段
+            let cap: Box<dyn Fn() -> FillBudget + Send + Sync> = {
                 let key = vid.to_string();
                 let prog_cap = prog.clone();
-                Box::new(move || {
-                    if cache().current() == key || prog_cap.demand.has_waiters() {
-                        FillBudget::Unbounded
-                    } else if cache().current_has_waiters() {
-                        FillBudget::Yield
-                    } else if cache().is_next(&key, definition) {
-                        // 系统播放器已排队、马上接力的下一集：提前填过 8MB
-                        // 上限，loader 才不会在切集瞬间卡在 8388608 等 30s。
-                        FillBudget::Unbounded
-                    } else {
-                        FillBudget::Bounded(PREFETCH_HEAD_BYTES)
-                    }
-                })
-            } else {
-                Box::new(|| FillBudget::Unbounded)
+                Box::new(move || fill_budget(cache(), &key, &prog_cap))
             };
             let mut last_err = None;
             for attempt in 0..STREAM_RETRY_ATTEMPTS {
@@ -173,15 +162,39 @@ pub(super) async fn fill(
     }
 }
 
-/// 预取只填的头部字节数：够首帧 + 前几十秒，不背整集。
+/// 非当前集只缓存开头这么多百分比。
 ///
-/// **8MB → 2MB**：预取标记最多 22 个（`MAX_PREFETCH_MARKS`），头部预算是
-/// **豁免**流缓存字节预算的——8MB × 22 = 176MB 净占内存，而 2MB × 22 = 44MB。
-/// 首帧真正要的是 moov 与第一帧数据（头部探测已把这两样取到手），剩下的
-/// 升格成当前集时由 `resume_fill` 无界续填。
-const PREFETCH_HEAD_BYTES: u64 = 2 * 1024 * 1024;
+/// 缓存规则只有一条：**正在播的那一集缓存整集，其余一律只缓存开头
+/// [`NON_CURRENT_HEAD_PERCENT`]%**——下一集、连播预取的后续集、换剧预取的
+/// 后续部都算「其余」。转正（`prepare` → `resume_fill`）后按整集续满。
+///
+/// 为什么是比例而不是固定字节：短剧单集只有 6-10MB（长的 30-80MB），固定
+/// 头部在小集上占比过大、在大集上又不够；比例口径对长短集一致。
+const NON_CURRENT_HEAD_PERCENT: u64 = 20;
 
-/// 填充调度器一次容量决策的结果（预取的有界填充逐决策点求值）。
+/// 非当前集的头部上限（字节）：整集的 [`NON_CURRENT_HEAD_PERCENT`]%。
+fn head_limit(prog: &ProgressiveStream) -> u64 {
+    prog.sparse.len().saturating_mul(NON_CURRENT_HEAD_PERCENT) / 100
+}
+
+/// 填充预算决策（逐决策点求值）。
+///
+/// - 正在播的那一集 → 无上限，缓存整集：当前集（`set_current` 记），或本流
+///   已有读者在等（读者在等就说明它已经在播）；
+/// - 当前集（**另一条**流）的读者正在等数据 → 立刻让位收工，带宽让给在播
+///   的那一路；
+/// - 其余 → 只填开头 [`NON_CURRENT_HEAD_PERCENT`]%，余下等转正续填。
+fn fill_budget(c: &StreamCache, vid: &str, prog: &ProgressiveStream) -> FillBudget {
+    if c.current() == vid || prog.demand.has_waiters() {
+        return FillBudget::Unbounded;
+    }
+    if c.current_has_waiters() {
+        return FillBudget::Yield;
+    }
+    FillBudget::Bounded(head_limit(prog))
+}
+
+/// 填充调度器一次容量决策的结果（有界填充逐决策点求值）。
 ///
 /// - [`FillBudget::Unbounded`]：不限量填满整集——已升格为当前集，或本流
 ///   自己的读者在等（需求由同一条填充按「需求优先」即时供给）；
@@ -195,15 +208,15 @@ enum FillBudget {
     Yield,
 }
 
-/// 续填在「预取填充还握着取流权」时的退避重试：预取正好在 8MB 预算处收尾，
-/// 这一次 begin_fetch 会失败；不重试就会留下「8MB 之后永远没人续填」的缝。
+/// 续填在「预取填充还握着取流权」时的退避重试：预取正好在头部预算处收尾，
+/// 这一次 begin_fetch 会失败；不重试就会留下「头部之后永远没人续填」的缝。
 const RESUME_RETRY_ATTEMPTS: u8 = 8;
 const RESUME_RETRY_DELAY: Duration = Duration::from_millis(200);
 
-/// 预取条目升格为当前集后的**续填**：渐进已注册、URL/代理存在条目里，
-/// 直接把余下字节按序填满（当前集优先级，无窗口上限、不礼让）。
+/// 条目转正为当前集后的**续填**：渐进已注册、URL/代理存在条目里，
+/// 直接把余下字节按序填满（当前集优先级，不礼让）。
 ///
-/// 没有它，预取只填头部的条目在被切上后，播放追上填充前沿就只能
+/// 没有它，只填了头部的条目在被切上后，播放追上填充前沿就只能
 /// 30s 超时——「滚回来就黑屏」的另一半。
 pub fn resume_fill(state: &AppState, vid: &str, definition: u32, progress_key: &str) {
     resume_fill_inner(state, vid, definition, progress_key, RESUME_RETRY_ATTEMPTS);
@@ -261,14 +274,15 @@ fn resume_fill_inner(
                 return;
             }
         };
+        // 预算与预填同一套规则：转正后（当前集）无上限填满；尚未转正的
+        // （系统播放器队列里的下一集提前续填）仍只填开头一段。
+        let cap: Box<dyn Fn() -> FillBudget + Send + Sync> = {
+            let key = owned.clone();
+            let prog_cap = prog.clone();
+            Box::new(move || fill_budget(cache(), &key, &prog_cap))
+        };
         let result = fill_remaining_with_client(
-            &client,
-            &sparse,
-            &prog,
-            &cdn_url,
-            &reporter,
-            &cancelled,
-            &|| FillBudget::Unbounded, // 续填只发生在当前集上：无上限，填满为止
+            &client, &sparse, &prog, &cdn_url, &reporter, &cancelled, &cap,
         )
         .await;
         c.end_fetch(&owned, definition);
@@ -281,7 +295,7 @@ fn resume_fill_inner(
 
 /// 渐进路径第一阶段：首探头部、盒游走定位 moov、精确补齐、建计划、注册协议层。
 ///
-/// 探针序列对齐 hgplayer worker 的 `Me()`（见 captures/hgplayer-116-frontend.js）：
+/// 探针序列（实证口径，见 captures/ 下的前端脚本）：
 /// 首探 256KB → 首探里没 moov 就从「最后一个顶层盒的结束处」64KB 步进游走
 /// （最多 4 轮）→ 精确区间拉 moov 本体。**不做固定尾部预取**——多下的字节
 /// 在 moov 拉完前纯属浪费首帧时间；尾部数据的即时性由读者需求登记保证。
@@ -481,8 +495,13 @@ async fn fill_remaining_with_client(
                     return Ok(());
                 }
                 FillBudget::Bounded(limit) => {
-                    if sparse.downloaded() >= limit.min(total) {
-                        log::info!("[Online] 预填达到上限（{limit} 字节），余下等转正续填");
+                    // 按**顺序填充前沿**判，不按已下载总量：头部探测与 moov
+                    // 也计入已下载，短集（6-10MB）上它们就能把 20% 的预算吃光，
+                    // 头部反而没填到。前沿才是「开头填到了哪儿」的真值。
+                    if frontier >= limit.min(total) {
+                        log::info!(
+                            "[Online] 预填达到上限（顺序填到 {limit}/{total} 字节），余下等转正续填"
+                        );
                         return Ok(());
                     }
                 }
@@ -561,26 +580,83 @@ fn sparse_snapshot(
     out
 }
 
-/// 头部首探量，对齐 hgplayer 的 `it(0, 262144)`：ftyp + mdat 头都装得下，
-/// 顶层盒表从这里算出 moov 落点。
+/// 头部首探量：ftyp + mdat 头都装得下，顶层盒表从这里算出 moov 落点。
 const HEAD_BYTES: u64 = 256 * 1024;
-/// moov 不在首探里时的盒游走步进，对齐 hgplayer 的 `it(f, f+64*1024)`：
-/// 从「最后一个顶层盒的结束处」起探。
+/// moov 不在首探里时的盒游走步进：从「最后一个顶层盒的结束处」起探。
 const BOX_WALK_STEP: u64 = 64 * 1024;
-/// 盒游走最多轮数，对齐 hgplayer `Me()` 的 `for(i<4)`：正常尾-moov 布局
-/// 第一轮就命中，多轮只防非常规盒序（fragmented 之类）。
+/// 盒游走最多轮数：正常尾-moov 布局第一轮就命中，多轮只防非常规盒序
+/// （fragmented 之类）。
 const BOX_WALK_MAX: usize = 4;
 /// 顺序填充的步长：每段一个 Range 请求。
 ///
-/// 1MB，对齐 hgplayer（第三方 Go+Wails 客户端）实测值——其前端 worker 按
-/// mp4 样本表分组拉流，单请求上限 `1<<20`（首探 256KB、盒游走 64KB 步进；
-/// 见 captures/hgplayer-116-frontend.js 的取流 worker）。分块越小，
-/// seek 需求打断顺序填充的粒度越细，回跳响应越快。
+/// 1MB，实测值——分块按 mp4 样本表分组拉流，单请求上限 `1<<20`
+/// （首探 256KB、盒游走 64KB 步进）。
+/// 分块越小，seek 需求打断顺序填充的粒度越细，回跳响应越快。
 const FETCH_CHUNK: u64 = 1024 * 1024;
 
 #[cfg(test)]
 mod scheduler_tests {
     use super::*;
+
+    /// 造一条指定长度的渐进流（不加密、不注册需求）。
+    fn progressive_of(total: u64) -> Arc<ProgressiveStream> {
+        Arc::new(ProgressiveStream {
+            sparse: hongguo_video::streaming::SparseBuffer::new(total),
+            plan: None,
+            plain_len: total,
+            demand: Default::default(),
+            cdn_url: String::new(),
+            proxy: hongguo_common::model::ProxyConfig::default(),
+        })
+    }
+
+    /// 缓存规则钉死：**正在播的那一集缓存整集，其余只缓存开头 20%**。
+    #[test]
+    fn only_the_playing_episode_is_cached_whole() {
+        const TOTAL: u64 = 10_000_000;
+        let c = StreamCache::default();
+        let prog = progressive_of(TOTAL);
+
+        // 其余的（预取的下一集等）：只留开头 20%
+        assert!(
+            matches!(
+                fill_budget(&c, "v-prefetch", &prog),
+                FillBudget::Bounded(2_000_000)
+            ),
+            "非当前集应只填开头 20%"
+        );
+
+        // 正在播的那一集：整集，无上限
+        c.set_current("v-playing");
+        assert!(matches!(
+            fill_budget(&c, "v-playing", &prog),
+            FillBudget::Unbounded
+        ));
+
+        // 已经有读者在等这一档 = 它已经在播：同样无上限
+        prog.demand.register(&[(0, 10)]);
+        assert!(matches!(
+            fill_budget(&c, "v-watched", &prog),
+            FillBudget::Unbounded
+        ));
+    }
+
+    /// 当前集（另一条流）的读者在等数据时，其余的流立刻让位收工。
+    #[test]
+    fn non_current_yields_to_the_playing_episode() {
+        let c = StreamCache::default();
+        c.set_current("v-current");
+        let current = progressive_of(1_000);
+        c.begin_fetch("v-current", 1080);
+        c.set_progressive("v-current", 1080, current.clone());
+        current.demand.register(&[(0, 10)]);
+
+        let other = progressive_of(10_000_000);
+        assert!(
+            matches!(fill_budget(&c, "v-other", &other), FillBudget::Yield),
+            "在播的那一路在等数据时，其余的流该让位"
+        );
+    }
 
     /// 回绕是一次决策而不是循环：Wrap 之后从 0 必能取到洞，全满则 Done。
     /// 旧版死循环（回绕 → hint 顶回原地 → 再回绕）在这里不可能复现：

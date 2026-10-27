@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // call() 只校验响应不校验入参——comment_send 的提及参数键名写错会被
-// Tauri 静默丢弃、@小果AI 降级成普通评论（2026-10-16 实锤事故）。
+// Tauri 静默丢弃、@小果AI 降级成普通评论。
 // 这里锁死「service 层发出的键名 = registry 声明的键名」。
 const invokeMock = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));

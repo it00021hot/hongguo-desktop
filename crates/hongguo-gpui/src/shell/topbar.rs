@@ -2,12 +2,14 @@ use super::*;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable};
 use gpui_kit::div;
 use gpui_kit::prelude::*;
+
+use crate::ui_button::button as Button;
 
 impl super::Shell {
     /// 顶栏（自绘，Tauri `app-shell` header 的 44px 横贯薄行对齐）：

@@ -2,6 +2,10 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::{Role, Toggled};
+
 /// 榜单 tab 归一（Tauri normalize-tabs.ts 同口径）：两级形态过滤掉无内容
 /// 的 celebrity tab；一级（旧身份）形态把榜单折成子榜、平铺选项包成面板行。
 pub(super) fn normalize_tabs(tabs: &[RankTab]) -> Vec<RankTab> {
@@ -93,21 +97,39 @@ impl super::RankView {
         let subs = self.current_tab().map(|t| t.subs).unwrap_or_default();
         v_flex()
             .id("rank-sub-nav")
+            .role(Role::RadioGroup)
             .w(gpui_kit::px(144.0))
             .flex_shrink_0()
             .gap_1()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .children(subs.into_iter().map(|sub| {
                 let active = self.sub == sub.id;
                 let id = sub.id.clone();
-                div()
-                    .id(ElementId::from(format!("rank-sub-{}", sub.id)))
+                let name = SharedString::from(sub.name);
+                BaseButton::new(ElementId::from(format!("rank-sub-{}", sub.id)))
+                    .role(Role::RadioButton)
+                    .aria_toggled(if active {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .accessibility_label(name.clone())
                     .w_full()
                     .rounded(theme.radius)
                     .px_3()
                     .py_2()
                     .text_sm()
                     .cursor_pointer()
+                    // base Button 固定 justify_center，这里改回左对齐，和原来的 div 一致。
+                    .justify_start()
+                    // base Button 强制 line_height(relative(1.))，文字行盒会比默认矮一截、
+                    // 行高变矮；钉回窗口默认行高（黄金比例）才与原来的 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(theme))
+                    })
                     .when(active, |s| {
                         s.bg(theme.primary)
                             .text_color(theme.primary_foreground)
@@ -124,7 +146,7 @@ impl super::RankView {
                         let selected = this.selected.clone();
                         this.switch_to(selected, id.clone(), cx);
                     }))
-                    .child(SharedString::from(sub.name))
+                    .child(name)
             }))
             .into_any_element()
     }
@@ -146,15 +168,23 @@ impl super::RankView {
         let rows: Vec<gpui_kit::AnyElement> = sub
             .panel
             .into_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(row_ix, row)| {
                 let items: Vec<gpui_kit::AnyElement> = row
                     .items
                     .into_iter()
                     .map(|it| {
                         let selected = it.id == value;
                         let id = it.id.clone();
-                        div()
-                            .id(ElementId::from(format!("rank-panel-{}", it.id)))
+                        let name = SharedString::from(it.name);
+                        BaseButton::new(ElementId::from(format!("rank-panel-{}", it.id)))
+                            .role(Role::RadioButton)
+                            .aria_toggled(if selected {
+                                Toggled::True
+                            } else {
+                                Toggled::False
+                            })
+                            .accessibility_label(name.clone())
                             .rounded_full()
                             .border_1()
                             .when(selected, |s| {
@@ -171,11 +201,21 @@ impl super::RankView {
                             .py_1()
                             .text_xs()
                             .cursor_pointer()
+                            // base Button 固定 justify_center，这里改回左对齐，和原来的 div 一致。
+                            .justify_start()
+                            // base Button 强制 line_height(relative(1.))，文字行盒会比默认矮一截、
+                            // 胶囊整体变矮；钉回窗口默认行高（黄金比例）才与原来的 div 像素一致。
+                            .line_height(gpui_kit::phi())
+                            // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                            .focus_visible(|s| {
+                                s.border_color(theme.ring)
+                                    .shadow(crate::tokens::focus_ring(theme))
+                            })
                             .hover(|s| s.bg(theme.secondary))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.pick_panel(id.clone(), cx);
                             }))
-                            .child(SharedString::from(it.name))
+                            .child(name)
                             .into_any_element()
                     })
                     .collect();
@@ -188,7 +228,14 @@ impl super::RankView {
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(row.name)),
                     )
-                    .child(h_flex().flex_wrap().gap_1p5().children(items))
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .id(ElementId::from(format!("rank-panel-group-{}", row_ix)))
+                            .role(Role::RadioGroup)
+                            .children(items),
+                    )
                     .into_any_element()
             })
             .collect();

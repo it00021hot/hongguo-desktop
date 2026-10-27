@@ -78,6 +78,9 @@ fn forward(app: &tauri::AppHandle, event: ServiceEvent) {
         ServiceEvent::FollowNotices(ev) => {
             let _ = app.emit(hongguo_service::follow_service::events::FOLLOW_NOTICES, ev);
         }
+        ServiceEvent::DeviceRegistered(iid) => {
+            let _ = app.emit(hongguo_service::device::DEVICE_REGISTERED, iid);
+        }
     }
 }
 
@@ -197,6 +200,10 @@ mod tests {
                     },
                 ),
             ),
+            (
+                hongguo_service::device::DEVICE_REGISTERED,
+                ServiceEvent::DeviceRegistered("2715158266282762".into()),
+            ),
         ];
         // 映射表在 forward() 里；这里锁定「一个变体一个名字」的名字集，
         // 防止将来加变体时只加事件不登记（前端订阅会静默失效）。
@@ -218,6 +225,7 @@ mod tests {
                 "compat-play-progress",
                 "login-mfa-state",
                 "follow-notices",
+                "device-registered",
             ]
         );
     }

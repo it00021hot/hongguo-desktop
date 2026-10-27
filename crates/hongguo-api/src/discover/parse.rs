@@ -69,8 +69,8 @@ pub(super) fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
         if series_id.is_empty() {
             continue;
         }
-        // sub_title_list：data_type 0=季文本 / 3=分类 / 27=热度（2026-10-07
-        // 抓包实证；分类沿用 category_schema 解析，这里只取季与热度）
+        // sub_title_list：data_type 0=季文本 / 3=分类 / 27=热度
+        // （分类沿用 category_schema 解析，这里只取季与热度）
         let (season_tag, heat_text) = parse_sub_titles(raw.get("sub_title_list"));
         // 官方运营角标：tag_info（同名字段在 plan/v 里是「第N季/同IP」，
         // 在 landpage 信息流里是「新剧/爆剧/红果首发」，enable=false 不显）
@@ -108,7 +108,7 @@ pub(super) fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
     })
 }
 
-/// sub_title_list → (季文本, 热度文本)。data_type 语义见 2026-10-07 抓包：
+/// sub_title_list → (季文本, 热度文本)。data_type 语义：
 /// 0=「第1季」形态、27=热度数值文本（官方配火焰图标）、3=分类（另有
 /// category_schema 承载，这里不取）。两条都算展示增强，缺了给空串。
 fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
@@ -177,7 +177,7 @@ mod tests {
         assert!(page.items[0].tags.is_empty());
     }
 
-    /// 面板解析：行 type/row_name/选项 id+名（2026-10-07 抓包样本的形状）。
+    /// 面板解析：行 type/row_name/选项 id+名（官方样本的形状）。
     #[test]
     fn parses_browse_panel_rows() {
         let v: Value = serde_json::json!({

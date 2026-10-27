@@ -2,36 +2,37 @@
 
 use super::*;
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui_kit::AnimationExt as _;
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Icon;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
-use gpui_kit::{ImageSource, ObjectFit, RenderImage, SharedString, div, img};
-use hongguo_playback::{PresenterBounds, PresenterFit};
+use gpui_kit::{ImageSource, ObjectFit, SharedString, div, img};
+
+use crate::home::player::{PresenterBounds, PresenterFit};
+use crate::ui_button::button as Button;
 
 use super::super::danmaku::DM_LANE_GAP;
 
 impl HomeView {
-    /// 沉浸舞台：**同一时刻只画一层内容**——出画了画视频，没出画画封面。
+    /// 沉浸舞台：**同一时刻只露一层内容**——出画了露原生画面（GPUI 只留
+    /// 点击皮），没出画露封面。
     ///
-    /// 两层都是绝对定位铺满舞台，谁盖谁由元素顺序决定。曾经两层都画、封面
-    /// 垫在视频下面：视频是 object-contain（上下留黑边），封面就从黑边里
-    /// 透出来——用户看到的正是「上下各一条封面夹着中间的画面」。二选一
-    /// 渲染，结构上不可能叠。
+    /// 曾经视频与封面两层都画、封面垫在视频下面：视频是 object-contain
+    /// （上下留黑边），封面就从黑边里透出来——用户看到的正是「上下各一条
+    /// 封面夹着中间的画面」。二选一渲染，结构上不可能叠。
     ///
     /// 层序仍与 Tauri `player-page.tsx` 一致：有画面时是画面，没有时是封面；
-    /// 取流/解码的间隙看到的是这部剧的封面而不是黑屏。
+    /// 取流的间隙看到的是这部剧的封面而不是黑屏。
     ///
     /// 返回 `Div`（不是 AnyElement）：调用方要挂滚轮监听与 `.id`。
     pub(in crate::home) fn render_stage(
@@ -40,42 +41,12 @@ impl HomeView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::Div {
         let theme = cx.theme().clone();
-        // 同剧切集期间定格帧继续上屏（Tauri FrameHold 同款）：`hold_last_frame`
-        // 由 play_target 按「同剧」置位、新集首帧/失败时落下；切剧不置位，
-        // 走的仍是「立刻换新剧封面」。
-        let system_backend = self.player.as_ref().is_some_and(|p| p.is_system());
-        let system_ready = system_backend && self.system_video_ready;
-        // 出画判定分两路：
-        // - 自研上屏：末帧在 `self.frame` 里，同剧切集靠 `hold_last_frame` 顶住旧帧。
-        // - 系统后端：末帧在**原生层**（AVPlayerLayer / DComp 视频位），GPUI 拿
-        //   到也不需要拿到——同剧切集时引擎还没换，原生层仍是上一集的最后一帧，
-        //   只要**别用海报盖住它**。以前这里跟着 `hold_last_frame` 走，而它由
-        //   `self.frame` 决定（系统后端恒为 None）→ 恒 false → 每次切集都先闪
-        //   一张海报（切剧时 `system_video_ready` 会被清，海报照旧该出）。
-        let video_ready = if system_backend {
-            system_ready
-        } else {
-            self.frame.is_some() && (!self.switching || self.hold_last_frame)
-        };
-        // 小屏铺满裁切（Tauri `miniScreen ? 'object-cover' : 'object-contain'`）；
-        // 竖屏保持 contain（竖条本就是按比例收的窗口，留边即真机观感）
-        // 小窗铺满（cover），正常/竖屏保持 contain：竖屏窗口很窄，cover 会把
-        // 画面裁掉大半（用户实测「拉动大小应该是画面跟着窗口变，不是藏画面」）。
-        let video_fit = if self.mini.is_some() {
-            ObjectFit::Cover
-        } else {
-            ObjectFit::Contain
-        };
-        // 视频输出尺寸跟随舞台显示区（上一帧的布局矩形，Paint 后才精确；
-        // contain 保宽高比在转换端算）。小屏的适配模式跟着形态走
-        //（Tauri `miniScreen ? 'object-cover' : 'object-contain'` 同款）。
-        if let Some([w, h, ..]) = self.stage_rects.get()
-            && w >= 2.0
-            && h >= 2.0
-        {
-            self.video_surface.set_target(w as usize, h as usize);
-        }
-        self.video_surface.set_cover(self.mini.is_some());
+        // 出画判定：画面由原生层（AVPlayerLayer / DComp 视频位）合成，末帧
+        // 从不进 GPUI。`system_video_ready` 是首帧事件置的「画面已就绪」；
+        // 同剧切集时播放器没换，原生层仍显示上一集的最后一帧——只要别用
+        // 海报盖住它即可（切剧时该标志会被清，海报照旧该出）。
+        let system_ready = self.system_video_ready;
+        let video_ready = system_ready;
         // 系统播放器：画面层跟随舞台矩形（上一帧 prepaint 的 bounds），
         // 主线程挂载/更新原生 NSView + AVPlayerLayer。
         if let Some(player) = &self.player {
@@ -109,7 +80,6 @@ impl HomeView {
         //（FFI 缩放后布局是否跟随重排，小屏排障靠它）。
         if self.stage_diag_at.get().elapsed() >= Duration::from_secs(STAGE_DIAG_EVERY_SECS) {
             self.stage_diag_at.set(Instant::now());
-            let image_state = self.video_surface.status();
             let stage_size = self
                 .stage_rects
                 .get()
@@ -124,27 +94,33 @@ impl HomeView {
             // 内存分解：进程涨内存时要能拆到「流缓存 / 封面 / 头像」三处，
             // 否则只能靠猜。封面与头像是解码后的 RGBA（像素数 × 4 字节）。
             let (stream_bytes, stream_entries) = hongguo_stream::cache().stats();
-            let image_bytes = |map: &HashMap<String, Arc<RenderImage>>| -> usize {
-                map.values()
-                    .map(|img| {
-                        let size = img.size(0);
-                        size.width.0 as usize * size.height.0 as usize * 4
-                    })
-                    .sum()
-            };
+            // 只统计已就绪的封面（在途/失败的条目没有图）。
+            let ready_covers: Vec<_> = self
+                .stage_covers
+                .values()
+                .filter_map(|cover| match cover {
+                    StageCover::Ready(img) => Some(img),
+                    _ => None,
+                })
+                .collect();
+            let covers_bytes: usize = ready_covers
+                .iter()
+                .map(|img| {
+                    let size = img.size(0);
+                    size.width.0 as usize * size.height.0 as usize * 4
+                })
+                .sum();
             // 列表卡封面在 gpui 的图片缓存里（壳根节点挂了有上限的
             // `ImageCache`），这里报的是舞台占位那一两张原图档。
-            let covers_bytes = image_bytes(&self.stage_covers);
             log::info!(
                 "[Home][mem] 流缓存 {} 条 / {:.1}MB，舞台占位封面 {} 张 / {:.1}MB",
                 stream_entries,
                 stream_bytes as f64 / 1024.0 / 1024.0,
-                self.stage_covers.len(),
+                ready_covers.len(),
                 covers_bytes as f64 / 1024.0 / 1024.0,
             );
             log::info!(
-                "[Home][stage] 周期状态：video_ready={video_ready} frame={} switching={} {image_state} epoch={} 舞台={stage_size} 视口={}×{} 播放={:.1}/{}s 倍速={:.2}x buffering={}",
-                self.frame.is_some(),
+                "[Home][stage] 周期状态：video_ready={video_ready} switching={} epoch={} 舞台={stage_size} 视口={}×{} 播放={:.1}/{}s 倍速={:.2}x buffering={}",
                 self.switching,
                 self.epoch.load(Ordering::Relaxed),
                 window.viewport_size().width.to_f64(),
@@ -191,18 +167,17 @@ impl HomeView {
         }
         // 占位封面取**目标剧**（游标位）：切剧瞬间游标已指向下一部，先出
         // 它的封面；无封面条目（书架种子）退回首帧方向已在播的那部。
-        let cover_sid = self
-            .display_items()
-            .get(self.cursor())
-            .map(|i| i.series_id.clone())
-            .or_else(|| self.now.as_ref().map(|n| n.series_id.clone()));
+        let cover_sid = self.stage_cover_target();
         // 封面层：图 + 压暗（Tauri 的 `brightness-[0.55]`；GPUI 没有亮度滤镜，
         // 用等价的 45% 黑罩）。
         let cover: gpui_kit::AnyElement = match cover_sid
             .as_ref()
             .filter(|_| !video_ready)
             .and_then(|s| self.stage_covers.get(s))
-        {
+            .and_then(|cover| match cover {
+                StageCover::Ready(img) => Some(img),
+                _ => None,
+            }) {
             Some(bitmap) => div()
                 .absolute()
                 .size_full()
@@ -221,17 +196,16 @@ impl HomeView {
                 .into_any_element(),
             None => div().absolute().size_full().into_any_element(),
         };
-        // 视频层：两端不同的像素载体，同一张布局皮。
-        // - macOS：surface 是**无 measure 函数的布局叶子**，尺寸全靠样式给
-        //   ——不给 size 就是 0×0 盒子（taffy 对无上下文的叶子返回零尺寸），
-        //   paint_surface 画了个寂寞。Tauri 侧同款 `absolute inset-0
-        //   size-full object-contain`，零拷贝上屏。
-        // - Windows：gpui 的视频 surface 只有 Apple 目标，NV12 在事件任务里
-        //   转成 RGBA 后按普通图像渲染（img 同款 object-contain）。
-        // 外层 div 接点击切暂停（对齐 Tauri 点击画面暂停/继续）：控制条是
-        // 兄弟层，点它不会冒泡到这里。
+        // 视频层：画面由下层原生层合成，GPUI 只留一张点击皮（切暂停/小窗
+        // 拖动）。未出画时这里不渲染——封面/占位由上面的 cover 层与 spinner
+        // 兜住。外层 div 接点击切暂停（对齐 Tauri 点击画面暂停/继续）：控制
+        // 条是兄弟层，点它不会冒泡到这里。
         let video: gpui_kit::AnyElement = if system_ready {
             // 系统后端：画面由下层 AVPlayerLayer 合成，这里只留点击层。
+            //
+            // keyboard-skip: 点画面暂停是**鼠标便利层**，不是独立的键盘入口——
+            // 同一动作的键盘入口是控制栏的播放/暂停钮与舞台的空格快捷键；把它
+            // 做成按钮会在无障碍树里多出一个覆盖整块画面的巨按钮。
             div()
                 .absolute()
                 .size_full()
@@ -279,30 +253,6 @@ impl HomeView {
                     }),
                 )
                 .into_any_element()
-        } else if video_ready {
-            div()
-                .absolute()
-                .size_full()
-                .id("stage-video")
-                // 点画面：播放/暂停（Tauri onStageClick 同语义）。进入连播
-                // 锁定只有「观看完整短剧」横条与播完本集两条路径；把点画面
-                // 偷偷解释成“选中剧”会让用户第一次点击时看不到预期反馈。
-                // 顺手把焦点带回舞台锚——弹层菜单收走焦点后，这是用户最
-                // 自然的「回到播放操作」路径。
-                .on_click(cx.listener(|this, _, window, cx| {
-                    window.focus(&this.focus, cx);
-                    // 点画面是真实输入：连播静默就此解除（Tauri wakeOnMove
-                    // 静默闸门的另一面——pointerdown 解除）
-                    this.wake_on_input(cx);
-                    this.toggle_pause(cx);
-                }))
-                // 像素载体由 [`video_surface`] 统一：macOS 直接采样解码帧的
-                // CVPixelBuffer，Windows 用后台转好的 RGBA 图像。
-                .child({
-                    let frame = self.frame.as_ref().expect("video_ready 已验帧在");
-                    self.video_surface.layer(frame, video_fit)
-                })
-                .into_any_element()
         } else {
             h_flex()
                 .absolute()
@@ -317,8 +267,8 @@ impl HomeView {
         let letterbox = system_ready
             .then(|| self.render_stage_letterbox())
             .flatten();
-        // 缓冲角标（右上）：引擎水位状态机的 Buffering 事件驱动，区别于左上
-        // 的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
+        // 缓冲角标（右上）：播放器缓冲事件（Buffering/Ready）驱动，区别于
+        // 左上的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
         let buffering_badge = (self.buffering && self.player.is_some()).then(|| {
             h_flex()
                 .absolute()
@@ -389,7 +339,7 @@ impl HomeView {
                     let top = f.lane as f32 * (font_px + DM_LANE_GAP);
                     let x = f.x_offset(stage_w, dm_now) as f32;
                     // 表情分段：[名字] 换打包 webp（1.3 字号，基线下沉
-                    // 0.28em 对齐 hgplayer），文本段照旧
+                    // 0.28em），文本段照旧
                     let segments = crate::danmaku_emoji::parse_emoji_segments(&f.text);
                     div()
                         .absolute()
@@ -441,22 +391,16 @@ impl HomeView {
         // 评论面板打开时互动栏让位（面板就盖在右缘）
         let rail = (!in_mini && self.controls_visible() && !self.comments_panel_open)
             .then(|| self.render_interaction_rail(cx));
-        // 顶部加载条只对「真正在加载的未完成项」亮：system 后端没有 Frame
-        // 事件，不能再用 `frame.is_none()`（它会永远为真）；改为看切换/
-        // 缓冲/播放器已起但首帧未到。已看完被跳过时三者都为空，条自然熄。
-        let loadbar = if crate::video_backend::is_system() {
-            self.switching
-                || self.buffering
-                || (self.player.is_some() && !self.system_video_ready && self.play_error.is_none())
-        } else {
-            self.switching || self.frame.is_none() || self.buffering || self.feed_loading()
-        };
+        // 顶部加载条只对「真正在加载的未完成项」亮：看切换/缓冲/播放器已起
+        // 但首帧未到。已看完被跳过时三者都为空，条自然熄。
+        let loadbar = self.switching
+            || self.buffering
+            || (self.player.is_some() && !self.system_video_ready && self.play_error.is_none());
         static LOADBAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if LOADBAR.swap(loadbar, Ordering::Relaxed) != loadbar {
             log::info!(
-                "[Home][stage] 加载条 {}（system={} switching={} buffering={} player={} ready={} error={}）",
+                "[Home][stage] 加载条 {}（switching={} buffering={} player={} ready={} error={}）",
                 if loadbar { "亮" } else { "灭" },
-                crate::video_backend::is_system(),
                 self.switching,
                 self.buffering,
                 self.player.is_some(),
@@ -507,6 +451,17 @@ impl HomeView {
                     let keys = this.shortcut_keys.clone();
                     let key = ev.keystroke.key.as_str();
                     if key == keys.play_pause {
+                        // 焦点在舞台的**子控件**上时，空格让位给那个控件：gpui 的
+                        // 按钮在 KeyUp 阶段把 Enter/Space 转成 click，舞台这里再
+                        // 翻一次就是双触发——按一次空格既激活按钮又翻暂停，两次
+                        // 翻转等于什么都没发生（控制栏「播放/暂停」钮点过之后按
+                        // 空格没反应，就是这个）。
+                        let focus_on_child = window
+                            .focused(cx)
+                            .is_some_and(|handle| handle != this.focus);
+                        if focus_on_child {
+                            return;
+                        }
                         this.toggle_pause(cx);
                     } else if key == keys.seek_back {
                         this.seek_by(-5.0, cx);
@@ -581,8 +536,11 @@ impl HomeView {
             .children(
                 (self.in_binge() && !in_mini && self.controls_visible()).then(|| {
                     let now = self.now.as_ref().expect("in_binge 已验 now 在");
-                    h_flex()
-                        .id("binge-pill")
+                    // 解除连播锁定 → base::Button 承担 role/focus/Enter-Space
+                    // （Tauri `immersive-info-overlay` 同款 <button>）。库强制
+                    // flex row + 主轴居中，这里补回原 h_flex 的左对齐。
+                    BaseButton::new("binge-pill")
+                        .accessibility_label(crate::i18n::t("player.exitBinge"))
                         .absolute()
                         .top_3()
                         .left_3()
@@ -595,8 +553,13 @@ impl HomeView {
                         .bg(gpui_kit::rgba(0x0000004d))
                         .text_xs()
                         .text_color(gpui_kit::rgb(0xffffff))
+                        .justify_start()
+                        // base Button 强制 line_height(relative(1.))，文字行盒比
+                        // 默认矮一截；钉回默认行高才与原元素像素一致。
+                        .line_height(gpui_kit::phi())
                         .cursor_pointer()
                         .hover(|s| s.bg(gpui_kit::rgba(0x00000080)))
+                        .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
                         // 拦截放 on_click 内（同元素 on_mouse_down(stop) 会
                         // 杀掉点击合成，见分类 tab 处注释）
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -657,8 +620,13 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 选集浮层开着：舞台铺一层透明捕获层，点浮层外=关闭。捕获层
-            // 拦下鼠标下传（舞台的播放/暂停与信息层都不该收到这次点击）
+            // 选集浮层开着：舞台铺一层透明捕获层，点画面=关闭。捕获层
+            // 拦下鼠标下传（舞台的播放/暂停不该收到这次点击）。
+            //
+            // 注意它**只管画面**：控制条画在它之上，而控制条根节点拦
+            // 鼠标下传（bar.rs），捕获层压根收不到控制条上的点击——浮层
+            // 「点外部关闭」由浮层自己的 on_mouse_down_out 负责
+            // （home/picker.rs），别指望这张层。
             .children(
                 (self.picker_open && !in_mini && self.engine_ready()).then(|| {
                     div()

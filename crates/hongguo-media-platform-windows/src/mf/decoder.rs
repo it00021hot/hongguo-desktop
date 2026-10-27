@@ -1,5 +1,4 @@
-//! HEVC 解码：IMFSourceReader 文件流 → NV12 系统内存帧（转码链路用；
-//! 播放侧样本进内存直驱 MFT 的解码见 [`super::playback`]）。
+//! HEVC 解码：IMFSourceReader 文件流 → NV12 系统内存帧（转码链路用）。
 
 use windows::Win32::Media::MediaFoundation::*;
 
@@ -62,7 +61,7 @@ impl Decoder {
             let (w, h) = frame_size_of(&cur)?;
             // 解码面尺寸 ≠ 轨道声明尺寸是常态而非异常：编码器按对齐取整
             // （实测红果源声明 1922×1080，解码面 1928×1080）。原来严格相等
-            // 校验直接拒了这类源，平台层全灭、静默落到十几分钟一集的软解。
+            // 校验直接拒了这类源，平台层全灭、静默落到慢得多的 ffmpeg 软编。
             // 真正要拒的只有「解出来的画面比声明还小」（内容真缺了）或
             // 离谱地大（参数装配错了）；对齐差交给缩放/合并的统一分辨率去收。
             if w < width || h < height || w > width + 64 || h > height + 64 {

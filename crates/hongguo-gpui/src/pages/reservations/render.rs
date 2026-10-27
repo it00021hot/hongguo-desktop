@@ -2,6 +2,8 @@
 
 use super::*;
 
+use gpui_kit::component::scroll::ScrollableElement;
+
 impl ReservationView {
     // —— 渲染 ——
 
@@ -81,7 +83,7 @@ impl gpui_kit::Render for ReservationView {
             .flatten()
             .map(|i| i.cover.clone())
             .collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         // 滚动哨兵：滚到底自动续页（Tauri reservation-page.tsx 的
         // IntersectionObserver 同语义；按钮留作兜底）。
         let (has_more, loading) = {
@@ -123,61 +125,35 @@ impl gpui_kit::Render for ReservationView {
         } else {
             let current = self.current();
             if current.loading && current.items.is_none() {
-                h_flex()
+                // 首拉加载：行骨架铺在列表容器里（与真实列表同 padding，
+                // 数据到位不跳版）。行高按 GPUI 真实行算，不照抄 Tauri 的 h-28：
+                // 封面 123 + 行内上下 p_3 24 + 行间距（列表 gap_2）8 = 155。
+                div()
+                    .id("reservations-skeleton")
                     .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(Spinner::new().small())
+                    .track_scroll(self.scroll.handle())
+                    .overflow_y_scrollbar()
+                    .p_4()
+                    .child(crate::pages::skeleton::rows(cx, 4, 147.0, 8.0))
                     .into_any_element()
             } else if let Some(err) = current.failed.clone() {
-                let theme = cx.theme();
-                v_flex()
-                    .items_center()
-                    .py_16()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("reservation.loadFailed")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(err)),
-                    )
-                    .child(
-                        Button::new("reservations-retry")
-                            .label(crate::i18n::t("common.retry"))
-                            .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                    )
-                    .into_any_element()
+                crate::pages::states::error_state(
+                    cx,
+                    None,
+                    crate::i18n::t("reservation.loadFailed"),
+                    Some(err),
+                    Some((
+                        "reservations-retry",
+                        crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                    )),
+                )
             } else if self.current_items().is_empty() {
-                let theme = cx.theme();
-                v_flex()
-                    .items_center()
-                    // Tauri Empty：流内 py-16 顶部对齐
-                    .py_16()
-                    .gap_2()
-                    .child(
-                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::BellRing)
-                            .with_size(gpui_kit::px(32.0))
-                            .text_color(theme.muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("reservation.empty")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("reservation.emptyHint")),
-                    )
-                    .into_any_element()
+                crate::pages::states::empty_state(
+                    cx,
+                    Some(gpui_kit::assets::IconName::BellRing),
+                    crate::i18n::t("reservation.empty"),
+                    Some(crate::i18n::t("reservation.emptyHint")),
+                )
             } else {
                 let managing = self.managing;
                 let visible = self.visible_items(cx);
@@ -204,6 +180,7 @@ impl gpui_kit::Render for ReservationView {
                                 .outline()
                                 .small()
                                 .disabled(loading_more)
+                                .when(loading_more, |b| b.cursor_default())
                                 .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
                         ),
                     );
@@ -211,8 +188,8 @@ impl gpui_kit::Render for ReservationView {
                 div()
                     .id("reservations-list")
                     .flex_1()
-                    .overflow_y_scroll()
                     .track_scroll(self.scroll.handle())
+                    .overflow_y_scrollbar()
                     .p_4()
                     .child(column)
                     .into_any_element()

@@ -2,8 +2,10 @@
 
 use super::*;
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Icon;
 use gpui_kit::component::h_flex;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
@@ -12,61 +14,97 @@ impl HomeView {
     /// 评论列表滚动区：加载态、空态、条目与「加载更多」。
     pub(super) fn render_comment_list(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let loading = self.comments_loading && self.comments.is_empty();
+        // 滚动条层必须挂在滚动容器**外**：gpui 的滚动偏移会平移容器内所有
+        // 子层（absolute 也不例外），叠在里面滚动条会跟着内容平移、滑块
+        // 错位（滚到底滑块还在顶上）。所以外层 div
+        // 只负责占位与锚定滚动条（`vertical_scrollbar` 在 relative 外层上
+        // inset_0 内锚），内层 v_flex 才是滚动容器；也**不走**
+        // `overflow_y_scrollbar` 包装器——那层包装会把列表挪进 Scrollable
+        // 的 content（flex_none + h_auto），这条 min_w_0/flex_1 的正文链拿
+        // 不到确定宽度，评论正文一字一行竖排（同日实测）。
         div()
-            .id("comments-scroll")
+            .relative()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .px_4()
-            .child(if loading {
-                div()
-                    .py_8()
-                    .text_center()
-                    .text_sm()
-                    .text_color(gpui_kit::rgba(0xffffff99))
-                    .child(crate::i18n::t("common.loading"))
-                    .into_any_element()
-            } else if self.comments.is_empty() {
-                div()
-                    .py_8()
-                    .text_center()
-                    .text_sm()
-                    .text_color(gpui_kit::rgba(0xffffff99))
-                    .child(crate::i18n::t("player.comments.empty"))
-                    .into_any_element()
-            } else {
+            .flex()
+            .flex_col()
+            .child(
                 v_flex()
-                    .gap_4()
-                    .children(self.comments.iter().map(|c| self.render_comment_row(c, cx)))
-                    .children(self.comments_has_more.then(|| {
-                        div()
-                            .id("comments-more")
-                            .py_2()
+                    .id("comments-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.comments_scroll)
+                    .px_4()
+                    .child(if loading {
+                        v_flex()
+                            .py_8()
                             .text_center()
-                            .text_xs()
-                            .cursor_pointer()
-                            .text_color(gpui_kit::rgba(0x60a5faff))
-                            .hover(|s| s.text_color(gpui_kit::rgb(0x93c5fd)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.load_comments_next(cx);
+                            .text_sm()
+                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .child(crate::i18n::t("common.loading"))
+                            .into_any_element()
+                    } else if self.comments.is_empty() {
+                        v_flex()
+                            .py_8()
+                            .text_center()
+                            .text_sm()
+                            .text_color(gpui_kit::rgba(0xffffff99))
+                            .child(crate::i18n::t("player.comments.empty"))
+                            .into_any_element()
+                    } else {
+                        v_flex()
+                            .gap_4()
+                            .children(self.comments.iter().map(|c| self.render_comment_row(c, cx)))
+                            .children(self.comments_has_more.then(|| {
+                                // 居中行：库注入的 justify_center 正好对应原来的
+                                // text_center，不用改；行高要改回默认，否则行偏矮。
+                                BaseButton::new("comments-more")
+                                    .accessibility_label(if self.comments_loading {
+                                        crate::i18n::t("common.loading")
+                                    } else {
+                                        crate::i18n::tf(
+                                            "player.comments.loadMore",
+                                            &[(
+                                                "n",
+                                                &self
+                                                    .comments_total
+                                                    .saturating_sub(self.comments.len() as i64)
+                                                    .to_string(),
+                                            )],
+                                        )
+                                    })
+                                    .py_2()
+                                    .text_center()
+                                    .text_xs()
+                                    .line_height(gpui_kit::phi())
+                                    .cursor_pointer()
+                                    .text_color(gpui_kit::rgba(0x60a5faff))
+                                    .hover(|s| s.text_color(gpui_kit::rgb(0x93c5fd)))
+                                    .focus_visible(|s| {
+                                        s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.load_comments_next(cx);
+                                    }))
+                                    .child(if self.comments_loading {
+                                        crate::i18n::t("common.loading")
+                                    } else {
+                                        crate::i18n::tf(
+                                            "player.comments.loadMore",
+                                            &[(
+                                                "n",
+                                                &self
+                                                    .comments_total
+                                                    .saturating_sub(self.comments.len() as i64)
+                                                    .to_string(),
+                                            )],
+                                        )
+                                    })
                             }))
-                            .child(if self.comments_loading {
-                                crate::i18n::t("common.loading")
-                            } else {
-                                crate::i18n::tf(
-                                    "player.comments.loadMore",
-                                    &[(
-                                        "n",
-                                        &self
-                                            .comments_total
-                                            .saturating_sub(self.comments.len() as i64)
-                                            .to_string(),
-                                    )],
-                                )
-                            })
-                    }))
-                    .into_any_element()
-            })
+                            .into_any_element()
+                    }),
+            )
+            .vertical_scrollbar(&self.comments_scroll)
             .into_any_element()
     }
 
@@ -129,10 +167,15 @@ impl HomeView {
                                     h_flex()
                                         .items_center()
                                         .gap_1()
+                                        .min_w_0()
                                         .child(
-                                            div()
+                                            // 昵称：列容器 + 截断（同上，长昵称不顶
+                                            // 到右侧按钮）。
+                                            v_flex()
+                                                .min_w_0()
                                                 .text_xs()
                                                 .text_color(gpui_kit::rgba(0xffffff99))
+                                                .truncate()
                                                 .child(SharedString::from(
                                                     if r.user_name.is_empty() {
                                                         crate::i18n::t("player.comments.anon")
@@ -149,27 +192,20 @@ impl HomeView {
                                         })),
                                 )
                                 .child({
-                                    let original =
-                                        crate::i18n::t("player.comments.originalComment");
-                                    let name = if r.reply_to_name.is_empty() {
-                                        original.as_str()
-                                    } else {
-                                        r.reply_to_name.as_str()
-                                    };
-                                    let summary = crate::i18n::tf(
-                                        "player.comments.replyToSummary",
-                                        &[("name", name), ("text", r.text.as_str())],
-                                    );
-                                    div()
+                                    // 回复正文：被回复人昵称为空时**不加前缀**
+                                    // （官方手机 App 与 Tauri 壳同款——回复评论
+                                    // 本条时只显示正文）。
+                                    v_flex()
                                         .text_xs()
                                         .text_color(gpui_kit::rgba(0xffffffd9))
-                                        .child({
-                                            let mut row = div().flex().flex_wrap().items_center();
-                                            for el in self.rich_children(&summary) {
-                                                row = row.child(el);
-                                            }
-                                            row
-                                        })
+                                        .child(crate::comment_text::render(
+                                            &crate::comment_text::reply_body(
+                                                &r.text,
+                                                &r.reply_to_name,
+                                                "player.comments.replyToPrefixName",
+                                                Some(crate::comment_text::mention_color()),
+                                            ),
+                                        ))
                                 })
                                 .child(
                                     h_flex()
@@ -194,75 +230,111 @@ impl HomeView {
                                                 ))
                                         }))
                                         .child(
-                                            div()
-                                                .id(ElementId::from(format!("reply-btn-{rid}")))
-                                                .text_size(gpui_kit::px(10.0))
-                                                .cursor_pointer()
-                                                .text_color(gpui_kit::rgba(0xffffff99))
-                                                .hover(|s| s.text_color(gpui_kit::rgb(0xffffff)))
-                                                .on_click({
-                                                    let rcid = rcid.clone();
-                                                    let rid = rid.clone();
-                                                    let rname = rname.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        this.reply_to = Some((
-                                                            rcid.clone(),
-                                                            Some(rid.clone()),
-                                                            rname.clone(),
-                                                        ));
-                                                        cx.notify();
-                                                    })
+                                            // 回复（库强制居中，这里改回左对齐 +
+                                            // 默认行高，保持与原 div 同像素）
+                                            BaseButton::new(ElementId::from(format!(
+                                                "reply-btn-{rid}"
+                                            )))
+                                            .accessibility_label(crate::i18n::t(
+                                                "player.comments.reply",
+                                            ))
+                                            .justify_start()
+                                            .line_height(gpui_kit::phi())
+                                            .text_size(gpui_kit::px(10.0))
+                                            .cursor_pointer()
+                                            .text_color(gpui_kit::rgba(0xffffff99))
+                                            .hover(|s| s.text_color(gpui_kit::rgb(0xffffff)))
+                                            .focus_visible(|s| {
+                                                s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                            })
+                                            .on_click({
+                                                let rcid = rcid.clone();
+                                                let rid = rid.clone();
+                                                let rname = rname.clone();
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.reply_to = Some((
+                                                        rcid.clone(),
+                                                        Some(rid.clone()),
+                                                        rname.clone(),
+                                                    ));
+                                                    cx.notify();
                                                 })
-                                                .child(crate::i18n::t("player.comments.reply")),
+                                            })
+                                            .child(crate::i18n::t("player.comments.reply")),
                                         )
                                         .children(reply_mine.then(|| {
-                                            div()
-                                                .id(ElementId::from(format!("reply-del-{rid}")))
-                                                .text_size(gpui_kit::px(10.0))
-                                                .cursor_pointer()
-                                                .text_color(gpui_kit::rgba(0xffffff73))
-                                                .hover(|s| s.text_color(gpui_kit::rgb(0xf87171)))
-                                                .on_click({
-                                                    let rid = rid.clone();
-                                                    let rcid = rcid.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        this.request_delete(
-                                                            rid.clone(),
-                                                            Some(rcid.clone()),
-                                                            cx,
-                                                        );
-                                                    })
+                                            BaseButton::new(ElementId::from(format!(
+                                                "reply-del-{rid}"
+                                            )))
+                                            .accessibility_label(crate::i18n::t("common.delete"))
+                                            .justify_start()
+                                            .line_height(gpui_kit::phi())
+                                            .text_size(gpui_kit::px(10.0))
+                                            .cursor_pointer()
+                                            .text_color(gpui_kit::rgba(0xffffff73))
+                                            .hover(|s| s.text_color(gpui_kit::rgb(0xf87171)))
+                                            .focus_visible(|s| {
+                                                s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                            })
+                                            .on_click({
+                                                let rid = rid.clone();
+                                                let rcid = rcid.clone();
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.request_delete(
+                                                        rid.clone(),
+                                                        Some(rcid.clone()),
+                                                        cx,
+                                                    );
                                                 })
-                                                .child(crate::i18n::t("common.delete"))
+                                            })
+                                            .child(crate::i18n::t("common.delete"))
                                         }))
                                         .child(
                                             // ♡ 回复点赞（乐观 ±1）
-                                            div()
-                                                .id(ElementId::from(format!("reply-digg-{rid}")))
-                                                .flex()
-                                                .items_center()
-                                                .gap_0p5()
-                                                .cursor_pointer()
-                                                .text_color(if digged {
-                                                    gpui_kit::rgb(0xef4444)
-                                                } else {
-                                                    gpui_kit::rgba(0xffffff99)
+                                            //
+                                            // 横排：库注入的 justify_center 会把
+                                            // 图标与数字居中，这里改回左对齐；
+                                            // 数字是子件里的文字，行高一并改回。
+                                            BaseButton::new(ElementId::from(format!(
+                                                "reply-digg-{rid}"
+                                            )))
+                                            .accessibility_label(if digged {
+                                                crate::i18n::t("player.interact.liked")
+                                            } else {
+                                                crate::i18n::t("player.interact.like")
+                                            })
+                                            .aria_toggled(if digged {
+                                                gpui_kit::Toggled::True
+                                            } else {
+                                                gpui_kit::Toggled::False
+                                            })
+                                            .justify_start()
+                                            .items_center()
+                                            .gap_0p5()
+                                            .line_height(gpui_kit::phi())
+                                            .cursor_pointer()
+                                            .text_color(if digged {
+                                                gpui_kit::rgb(0xef4444)
+                                            } else {
+                                                gpui_kit::rgba(0xffffff99)
+                                            })
+                                            .focus_visible(|s| {
+                                                s.shadow(crate::home::skin_focus::skin_focus_ring())
+                                            })
+                                            .on_click({
+                                                let rid = rid.clone();
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_reply_digg(rid.clone(), cx);
                                                 })
-                                                .on_click({
-                                                    let rid = rid.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        this.toggle_reply_digg(rid.clone(), cx);
-                                                    })
-                                                })
-                                                .child(
-                                                    Icon::new(gpui_kit::assets::IconName::Heart)
-                                                        .size_3(),
-                                                )
-                                                .children(
-                                                    (digg_count > 0).then(|| {
-                                                        div().child(format!("{digg_count}"))
-                                                    }),
-                                                ),
+                                            })
+                                            .child(
+                                                Icon::new(gpui_kit::assets::IconName::Heart)
+                                                    .size_3(),
+                                            )
+                                            .children(
+                                                (digg_count > 0)
+                                                    .then(|| div().child(format!("{digg_count}"))),
+                                            ),
                                         ),
                                 ),
                         )

@@ -7,11 +7,12 @@ use std::time::Instant;
 
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::v_flex;
 use gpui_kit::{Window, div};
+
+use crate::ui_button::button as Button;
 
 impl gpui_kit::Render for HomeView {
     fn render(
@@ -43,27 +44,6 @@ impl gpui_kit::Render for HomeView {
                 );
             }
         }
-        // 上屏节奏取证（5s 窗口，info）：有新内容的 render 才打点——两次
-        // 打点的间隔就是画面内容的停顿，`seen - painted` 的差是渲染合并
-        // 跳过的帧。引擎日志只能证明帧发出去了，用户看到的卡顿在这之后。
-        let paint_pts = self.frame.as_ref().map(|f| f.pts_secs);
-        let paint_clock = self.player.as_ref().map(|p| p.position_secs());
-        let paint_paused = self.player.as_ref().is_some_and(|p| p.is_paused());
-        self.paint_diag.observe_render(
-            paint_pts,
-            paint_clock,
-            self.rate,
-            lag_diag::PaintState {
-                paused: paint_paused,
-                active: window.is_window_active(),
-                buffering: self.buffering,
-                switching: self.switching,
-            },
-        );
-        // 纹理回收口：gpui 的 sprite atlas 按 RenderImage::id 常驻（paint 只增
-        // 不删），视频每帧一个新 id——不在这里显式 drop，显存/内存就无上限
-        // 涨（实测 5 分钟 5.5GB）。只在 render 时有 Window 句柄可调。
-        self.video_surface.drop_retired(window);
         // 竖屏重适配：换集/换清晰度后档位尺寸变了就按新比例重落窗（比例
         // 变化 ≤1% 不动）。挂在这里是因为它是「起播完成后」唯一一定有
         // Window 的钩子——起播的异步收尾处拿不到 Window。
@@ -101,9 +81,11 @@ impl gpui_kit::Render for HomeView {
                 input.update(cx, |state, cx| {
                     // 带 token 的 set_value：重置后表情码与提及仍是原子内联
                     // 单元（提及插入是全量重置点之一，顺带把存量代码重新附着）
-                    state.set_value(crate::danmaku_emoji::rich_content(&format!(
-                        "{base}{segment}"
-                    )), window, cx)
+                    state.set_value(
+                        crate::danmaku_emoji::rich_content(&format!("{base}{segment}")),
+                        window,
+                        cx,
+                    )
                 });
             }
         }
@@ -136,12 +118,14 @@ impl gpui_kit::Render for HomeView {
         };
         let body = match notice {
             Some((message, retry)) => {
-                let mut panel = v_flex().flex_1().items_center().justify_center().gap_3();
-                if crate::video_backend::is_system() {
-                    // 系统后端壳根是透明的（给视频洞让路）；加载/空/失败态
-                    // 不是舞台，必须自己铺黑，不能把桌面透出来。
-                    panel = panel.bg(gpui_kit::rgb(0x000000));
-                }
+                let mut panel = v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    // 壳根是透明的（给视频洞让路）；加载/空/失败态不是舞台，
+                    // 必须自己铺黑，不能把桌面透出来。
+                    .bg(gpui_kit::rgb(0x000000));
                 if !retry {
                     panel = panel.child(Spinner::new().small());
                 }
@@ -218,12 +202,10 @@ impl gpui_kit::Render for HomeView {
                 ))
                 .into_any_element(),
         };
-        // 系统后端画面已就绪时，Home 根也是透明洞的一部分——它盖在 Shell
+        // 系统播放器画面已就绪时，Home 根也是透明洞的一部分——它盖在 Shell
         // 根和舞台之间，铺主题底色会把下层 AVPlayerLayer 整块遮黑。
-        let video_hole = crate::video_backend::is_system()
-            && self.system_video_ready
-            && !crate::preview::is_active();
-        // 底色恒黑（不是主题底色）：系统后端下视频位与 GPUI 内容是两张画布，
+        let video_hole = self.system_video_ready && !crate::preview::is_active();
+        // 底色恒黑（不是主题底色）：视频位与 GPUI 内容是两张画布，
         // 拖动改窗口尺寸时舞台/黑边会落后一帧，任何**未被覆盖**的像素都会露
         // 出来——露主题浅色就是用户看到的那条「白线」。黑色与舞台/黑边同色，
         // 缝就彻底不可见（macOS 靠窗口黑底天然如此）。

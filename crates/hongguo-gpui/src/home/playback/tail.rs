@@ -122,7 +122,7 @@ impl super::HomeView {
         if let Some(next) =
             crate::home::season::pick_next_season(&works, &now.series_id, &now.title)
         {
-            // hgplayer 同款：toast「即将播放下一季」+ 直接开播第 1 集，
+            // toast「即将播放下一季」+ 直接开播第 1 集，
             // 连播锁定延续到新季
             self.show_toast(
                 crate::i18n::tf("player.playNextSeason", &[("title", next.title.as_str())]),
@@ -145,8 +145,8 @@ impl super::HomeView {
         // 没有下一季：跟随信息流刷下一条推荐（已到底时宿主原地驻留）。
         //
         // **先解除连播锁定**：连播态下 `step` 会改走 `step_episode`，而末集
-        // 的 `step_episode` 又回到本函数——末集不死循环（实测 5 千层递归
-        // 后主线程栈溢出，见 2026-10-20 的崩溃取证）。
+        // 的 `step_episode` 又回到本函数——末集不死循环（不解除会无限
+        // 递归，耗尽主线程栈）。
         self.binge = None;
         self.step(1, cx);
     }

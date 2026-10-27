@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-media-platform-api"
-description = "红果桌面版平台媒体层的统一契约：帧载体 / 解码器接口 / 转码请求（平台实现 crate 的公共上游）"
+description = "红果桌面版平台媒体层的统一契约：编码枚举 / 码率标定 / 转码请求（平台实现 crate 的公共上游）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,9 +10,3 @@ authors.workspace = true
 [dependencies]
 # 共用底座：统一错误（AppError / AppResult）。
 hongguo-common = { path = "../hongguo-common" }
-
-# macOS 帧载体：CVPixelBuffer 是 VideoFrame/FrameBuffer 的一等公民（零拷贝
-# 上屏路径的类型身份），与 gpui-pre 的 surface 元素同源；版本锁定
-# 0.5.2，实现 crate 与门面下游都不引入第二份。
-[target.'cfg(target_os = "macos")'.dependencies]
-core-video = { version = "0.5.2", features = ["metal"] }

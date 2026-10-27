@@ -7,9 +7,6 @@ impl super::HomeView {
     /// 预先给系统播放器塞入下一集（AVQueuePlayer）：先把下一集流注册好
     ///（不在切集时才发现没注册、被迫重建播放器），再挂 AVPlayerItem。
     pub(in crate::home) fn preload_system_next(&mut self, cx: &mut Context<Self>) {
-        if !crate::video_backend::is_system() {
-            return;
-        }
         let Some(now) = self.now.as_ref() else { return };
         let Some(player) = self.player.as_ref() else {
             return;
@@ -31,7 +28,7 @@ impl super::HomeView {
         }
         self.system_preload_pending = Some(vid.clone());
         // 先在主线程同步落「下一集」标记：连播预取可能已经开跑，晚一步它
-        // 就会在 8MB 预算处收工，再由 ensure 唤醒已经来不及。
+        // 就会在头部预算处收工，再由 ensure 唤醒已经来不及。
         hongguo_stream::cache().mark_next(&vid, definition);
         let player = Arc::clone(player);
         let state = Arc::clone(&self.state);
@@ -100,7 +97,7 @@ impl super::HomeView {
                         if view.epoch.load(Ordering::Relaxed) != epoch {
                             return false;
                         }
-                        if !view.player.as_ref().is_some_and(|p| p.is_system()) {
+                        if view.player.as_ref().is_none() {
                             return false;
                         }
                         view.danmaku_tick(cx);
@@ -206,7 +203,7 @@ impl super::HomeView {
         } else {
             1
         };
-        // 每部只铺入口集（头部 8MB 有界，升格当前集才无界续填）；同剧
+        // 每部只铺入口集（只填开头一段，转正当前集才续满整集）；同剧
         // 后续集的连播铺集由起播的 schedule_following_episodes 负责，
         // 这里不重复——铺多了就是把带宽从当前集嘴里抢走
         hongguo_service::play_service::online::schedule_next_episode_prefetch(

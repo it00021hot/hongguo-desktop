@@ -127,7 +127,7 @@ pub(crate) fn bookshelf_entries() -> Vec<BookshelfEntry> {
 
 /// 历史页：6 条观看记录（进度/时长/集数错开，时间基准贴近当前）。
 pub(crate) fn watch_history_items() -> Vec<WatchHistoryItem> {
-    const BASE_MS: i64 = 1_792_000_000_000; // 2026-10-13 前后
+    const BASE_MS: i64 = 1_792_000_000_000; // 预览固定时间基准
     SERIES
         .iter()
         .enumerate()

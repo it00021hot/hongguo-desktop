@@ -84,7 +84,7 @@ impl super::HomeView {
                             .map(|u| u.avatar.clone())
                             .filter(|a| !a.is_empty())
                             .collect();
-                        crate::cover_img::prewarm(&urls, hongguo_protocol::cover::EDGE_AVATAR, cx);
+                        crate::cover_img::prewarm_avatars(&urls, cx);
                         view.mention_users = Arc::new(users);
                         view.mention_loaded_for = Some(sid);
                     }
@@ -132,11 +132,7 @@ impl super::HomeView {
                         let urls: Vec<String> =
                             view.comments.iter().map(|c| c.avatar.clone()).collect();
                         for url in urls {
-                            crate::cover_img::prewarm(
-                                std::slice::from_ref(&url),
-                                hongguo_protocol::cover::EDGE_AVATAR,
-                                cx,
-                            );
+                            crate::cover_img::prewarm_avatars(std::slice::from_ref(&url), cx);
                         }
                     }
                     Err(e) => log::warn!("[Home] 评论拉取失败: {e}"),
@@ -181,12 +177,15 @@ impl super::HomeView {
                     let urls: Vec<String> =
                         view.comments.iter().map(|c| c.avatar.clone()).collect();
                     for url in urls {
-                        crate::cover_img::prewarm(
-                            std::slice::from_ref(&url),
-                            hongguo_protocol::cover::EDGE_AVATAR,
-                            cx,
-                        );
+                        crate::cover_img::prewarm_avatars(std::slice::from_ref(&url), cx);
                     }
+                    // 评论附图（本地图片 / 表情图片）同样要预解码才画得出来
+                    let image_urls: Vec<String> = view
+                        .comments
+                        .iter()
+                        .flat_map(|c| c.images.iter().map(|item| item.web_uri.clone()))
+                        .collect();
+                    view.request_emoticon_image_urls(&image_urls, cx);
                 }
                 cx.notify();
             });
@@ -206,7 +205,8 @@ impl super::HomeView {
         let raw = input.read(cx).value().to_string();
         let is_mention = raw.contains('\u{FFFC}');
         let text = strip_mention_segment(&raw);
-        if (text.is_empty() && !is_mention) || self.comment_sending {
+        let has_attachment = self.comment_attachment.is_some();
+        if (text.is_empty() && !is_mention && !has_attachment) || self.comment_sending {
             return;
         }
         if !self.logged_in() {
@@ -233,20 +233,54 @@ impl super::HomeView {
                     .collect(),
             });
         let send_mention = mention.is_some();
+        // 附图两态（官方：表情图带 emoji_scene_type 2/4；本地图片此刻才
+        // 上传，`image_type=1`、scene=None——Tauri submit 的 local 分支同口径）
+        let attachment = self.comment_attachment.clone();
+        let local = self.comment_local_attachment.clone();
         self.comment_sending = true;
+        self.comment_uploading = local.is_some();
         let state = Arc::clone(&self.state);
         let (vid, sid) = (now.vid.clone(), now.series_id.clone());
         let rx = bridge::spawn(async move {
             let env = state.api_env();
+            let attachment = match local {
+                Some(local) => {
+                    let uploaded =
+                        hongguo_api::emoticon::upload_picture(&local.bytes, &local.filename, &env)
+                            .await?;
+                    Some(hongguo_api::emoticon::CommentAttachment {
+                        image: hongguo_api::emoticon::Emoticon {
+                            id: None,
+                            web_uri: uploaded.url,
+                            dynamic_url: None,
+                            image_type: 1,
+                            width: local.width,
+                            height: local.height,
+                            format: Some(local.format),
+                            image_name: None,
+                            thumb_nails: None,
+                            expand_web_url: None,
+                        },
+                        emoji_scene_type: None,
+                    })
+                }
+                None => attachment.map(|(image, emoji_scene_type)| {
+                    hongguo_api::emoticon::CommentAttachment {
+                        image,
+                        emoji_scene_type,
+                    }
+                }),
+            };
             match mention {
                 Some(m) => send_comment_mention(&vid, &sid, &m, &text, &env).await,
-                None => send_comment(&vid, &sid, &text, &env).await,
+                None => send_comment(&vid, &sid, &text, attachment.as_ref(), &env).await,
             }
         });
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             let _ = this.update(cx, |view, cx| {
                 view.comment_sending = false;
+                view.comment_uploading = false;
                 match result {
                     Ok(item) => {
                         let avatar = item.avatar.clone();
@@ -257,6 +291,10 @@ impl super::HomeView {
                         view.comments_total += 1;
                         view.ep_comment_count += 1;
                         view.comment_clear_input = true;
+                        // 附图随评论发出后清掉草稿附件（官方同款：发完即清；
+                        // 失败保留草稿可重试）
+                        view.comment_attachment = None;
+                        view.comment_local_attachment = None;
                         // @提及评论：回复区强制展开 + 起 AI 回复轮询
                         // （Tauri setAiPending + setReplySectionOpen 同款）
                         if send_mention {
@@ -264,11 +302,7 @@ impl super::HomeView {
                             view.replies_open.insert(cid);
                             view.start_ai_reply_poll(cx);
                         }
-                        crate::cover_img::prewarm(
-                            std::slice::from_ref(&avatar),
-                            hongguo_protocol::cover::EDGE_AVATAR,
-                            cx,
-                        );
+                        crate::cover_img::prewarm_avatars(std::slice::from_ref(&avatar), cx);
                     }
                     Err(e) => {
                         // 失败必须可见（风控/频控拒绝时静默会被当成发成功）
@@ -465,11 +499,7 @@ impl super::HomeView {
                         let urls: Vec<String> = items.iter().map(|r| r.avatar.clone()).collect();
                         view.replies.insert(comment_id, Arc::new(items));
                         for url in urls {
-                            crate::cover_img::prewarm(
-                                std::slice::from_ref(&url),
-                                hongguo_protocol::cover::EDGE_AVATAR,
-                                cx,
-                            );
+                            crate::cover_img::prewarm_avatars(std::slice::from_ref(&url), cx);
                         }
                     }
                     Err(e) => log::warn!("[Home] 回复拉取失败: {e}"),
@@ -537,11 +567,7 @@ impl super::HomeView {
                         view.comments = Arc::new(parents);
                         view.reply_to = None;
                         view.comment_clear_input = true;
-                        crate::cover_img::prewarm(
-                            std::slice::from_ref(&avatar),
-                            hongguo_protocol::cover::EDGE_AVATAR,
-                            cx,
-                        );
+                        crate::cover_img::prewarm_avatars(std::slice::from_ref(&avatar), cx);
                     }
                     Err(e) => log::warn!("[Home] 回复发送失败: {e}"),
                 }

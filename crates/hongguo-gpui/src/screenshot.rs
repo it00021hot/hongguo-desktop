@@ -61,8 +61,22 @@ pub(crate) fn install(
                     "comments" => {
                         feed.update(cx, |shell, cx| shell.debug_open_comments(cx));
                     }
+                    "comments-gif" => {
+                        feed.update(cx, |shell, cx| shell.debug_open_comments_gif(cx));
+                    }
                     "mention" => {
                         feed.update(cx, |shell, cx| shell.debug_open_mention(cx));
+                    }
+                    // 评论输入框「点不出光标」取证：开面板 + 程序化聚焦
+                    // 输入框（HONGGUO_SHOT_PANEL=comments-caret），抓帧看
+                    // 光标画没画（show_cursor 四道闸：焦点/非 disabled/
+                    // 闪烁可见/窗口活跃）。
+                    "comments-caret" => {
+                        let _ = window.update(cx, |_, window, cx| {
+                            feed.update(cx, |shell, cx| {
+                                shell.debug_open_comments_caret(window, cx)
+                            });
+                        });
                     }
                     "login" => {
                         feed.update(cx, |shell, cx| shell.debug_open_login(cx));

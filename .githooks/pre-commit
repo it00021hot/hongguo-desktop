@@ -22,7 +22,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STRICT='-D warnings -D clippy::allow_attributes'
-MAC_CROSS='-p hongguo-player-api -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-platform-macos -p hongguo-player-macos -p hongguo-playback'
+MAC_CROSS='-p hongguo-player-api -p hongguo-media-platform-api -p hongguo-media-platform -p hongguo-media-platform-macos -p hongguo-player-macos'
 LLVM='C:/PROGRA~1/LLVM/bin'
 
 echo '[pre-commit] cargo clippy（本机宿主）'

@@ -9,6 +9,7 @@ pub(crate) mod browse;
 pub(crate) mod collections;
 pub(crate) mod creator;
 pub(crate) mod follows;
+pub(crate) mod grid;
 pub(crate) mod history;
 pub(crate) mod liked;
 pub(crate) mod list_common;
@@ -18,17 +19,19 @@ pub(crate) mod rank;
 pub(crate) mod reservations;
 pub(crate) mod scroll_load;
 pub(crate) mod settings;
+pub(crate) mod skeleton;
+pub(crate) mod states;
 pub(crate) mod storage;
 pub(crate) mod tasks;
 
-/// 页面卡面：Tauri Card 的 GPUI 对齐形态（圆角 12 + 边框 + 卡面底色 +
+/// 页面卡面：Tauri Card 的 GPUI 对齐形态（圆角 14 + 边框 + 卡面底色 +
 /// p-6），磁盘清理 / 一键合并 / 设置等设置型页面共用。
 pub(crate) fn card(cx: &gpui_kit::App) -> gpui_kit::Div {
     use gpui_kit::component::{ActiveTheme, v_flex};
     let theme = cx.theme();
     v_flex()
         .w_full()
-        .rounded(gpui_kit::px(12.0))
+        .rounded(crate::tokens::radius::CARD)
         .border_1()
         .border_color(theme.border)
         .bg(theme.group_box)

@@ -53,7 +53,7 @@ pub fn complete_login(state: &AppState, account: AccountState) -> AppResult<()> 
 /// 登录成功后跟进刷新用户资料（best-effort）：sms_login 响应给的是
 /// **默认昵称 + 低清头像**（`用户17xxx` + 120x256），真昵称/高清头像/
 /// raw_profile（红果号等长尾字段）都在 user_info——不跟进的话设置页
-/// 显示的就是默认档案（2026-10-10 用户实测「跟手机对不上」）。
+/// 显示的就是默认档案。
 /// 失败只记日志：登录本身已成功，资料拉不下来不该让登录报错。
 pub fn refresh_profile_after_login(state: AppState) {
     crate::runtime::spawn(async move {
@@ -84,7 +84,7 @@ pub fn refresh_profile_after_login(state: AppState) {
 /// user_id **绝不能**用响应里的 user_id 刷新：user_info 端点返回的是
 /// encode_user_id 加密形态（`#c1967_…` 71 字符），数字 uid 只在 sms_login
 /// 响应里——覆盖会让「删除自己的评论」的 isMine 判定（对比评论作者数字
-/// user_id）永远不成立（2026-10-10 实测事故）。但存量坏值可以从本响应的
+/// user_id）永远不成立。但存量坏值可以从本响应的
 /// req_id（字段名伪装的数字 uid，与 sms_login 的数字 user_id 同值）就地
 /// 自愈，不用退出重登。
 pub async fn fetch_and_refresh_user(state: &AppState) -> AppResult<PassportUser> {

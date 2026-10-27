@@ -94,8 +94,8 @@ interface Props {
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
   /**
-   * 进入小窗播放：主窗把当前进度落库后开置顶小窗并隐藏自己。
-   * 状态与取流编排都在播放页，这里只挂按钮。
+   * 进入小屏播放：同一窗口原地缩成 480×270 落屏幕右下角，播放零中断
+   * （见 use-mini-window）。这里只挂按钮，状态编排都在宿主。
    */
   onOpenMini: () => void;
   /**
@@ -109,7 +109,7 @@ interface Props {
   onToggleIncognito: () => void;
   /**
    * 沉浸流形态开关：为 true 时控制栏带「选集」入口（贴按钮向上弹的
-   * 数字网格，hgplayer 同款）。播放页右侧已有 SeriesPanel，不传即无。
+   * 数字网格）。不传即无。
    */
   immersive?: boolean;
   /** 选集浮层里点选某一集（跳集，由播放器接 store） */
@@ -135,8 +135,8 @@ interface Props {
  * 没人再替我们发 `timeupdate`，状态只能自己接。
  *
  * 快进/快退不占按钮位，由快捷键 `←` `→` 承担；播放键旁的步进按钮是
- * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集仍在右侧 `SeriesPanel`，
- * 这里只给最常用的「接着看下一集」一个单击入口。
+ * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集在控制栏的「选集」
+ * 浮层，这里只给最常用的「接着看下一集」一个单击入口。
  */
 export function PlayerControls({
   videoRef,
@@ -172,7 +172,7 @@ export function PlayerControls({
   const [rate, setRate] = useState(1);
   // 全屏：窗口级真值（Esc/绿按钮变化经 useWindowFullscreenSync 回流）
   const { fullscreen, toggleFullscreen } = useWindowFullscreen();
-  // 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏不进 OS 全屏。
+  // 无边框播放：chrome 全藏不进 OS 全屏。
   // 与全屏互斥——点全屏先退无边框，点无边框先退全屏
   const frameless = useUiStore((s) => s.playerFrameless);
   const setFrameless = useUiStore((s) => s.setPlayerFrameless);
@@ -306,7 +306,7 @@ export function PlayerControls({
     return () => document.removeEventListener('mousedown', onDown);
   }, [danmakuPanelOpen, setDanmakuPanelOpen]);
 
-  // 选集浮层点外部关闭。选中集数**不关**浮层（hgplayer 同款：连选连跳），
+  // 选集浮层点外部关闭。选中集数**不关**浮层（连选连跳），
   // 浮层常驻在鼠标下方，后续点击都落在浮层内部，永远到不了舞台——
   // 「选着选着视频暂停了」的穿透从结构上不可能再发生。
   // mousedown 先关、click 后到：关浮层打进点击冷却，这一下不会变成暂停。
@@ -345,8 +345,7 @@ export function PlayerControls({
         // 投影是 filter：非 none 的 filter 会把本层变成 stacking context，
         // 从这里向上弹的浮层（选集/弹幕设置/音量）的 z-30 全被困在层内、
         // 整棵按 z:auto 参与舞台排序，重叠区压不过 z-10 信息层/z-20 互动栏
-        // ——悬浮无手形、点击算「外部」直接关浮层（2026-10-10 选集网格
-        // 下两排点不了就是它）。所以 root 必须自带 z-30 抬整层；同时
+        // ——悬浮无手形、点击算「外部」直接关浮层。所以 root 必须自带 z-30 抬整层；同时
         // pointer-events-none 让出指针（透明 padding 不截获悬停/点击/滚轮，
         // 也不反过来盖住互动栏底端），两行内容可见时 auto 接回。
         'pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
@@ -390,7 +389,7 @@ export function PlayerControls({
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
-        {/* 弹幕发送框（hgplayer 同款位置：控制栏左段时间之后，常驻）。
+        {/* 弹幕发送框（控制栏左段时间之后，常驻）。
             w-52 在窄舞台下放不下，允许收缩到 w-32，输入框本身 min-w-0 兜底 */}
         <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
@@ -504,7 +503,7 @@ export function PlayerControls({
             {t('player.download')}
           </Button>
 
-          {/* 小屏播放（对齐 hgplayer）：同一窗口缩成 480×270 落屏幕右下角，
+          {/* 小屏播放：同一窗口缩成 480×270 落屏幕右下角，
               播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
           <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
             <MiniWindowIcon />
@@ -577,7 +576,7 @@ export function PlayerControls({
             <Eye className={cn('size-4', incognito ? 'text-white' : 'text-white/55')} aria-hidden />
           </IconButton>
 
-          {/* 竖屏播放（hgplayer 同款）：窗口收窄成按视频宽高比算宽的竖条，
+          {/* 竖屏播放：窗口收窄成按视频宽高比算宽的竖条，
               竖屏视频刚好包住画面不留两侧黑边。小屏里不出现（本组件不渲染
               在小屏）；竖屏中的控件是 MiniScreenControls 竖屏形态，所以
               这里只做「进入」入口 */}
@@ -585,7 +584,7 @@ export function PlayerControls({
             <RectangleVertical className="size-4" />
           </IconButton>
 
-          {/* 无边框播放（hgplayer 播放页 bare 布局同款）：chrome 全藏但不进
+          {/* 无边框播放：chrome 全藏但不进
               OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。与全屏互斥 */}
           <IconButton
             label={t(frameless ? 'player.exitFrameless' : 'player.frameless')}

@@ -17,7 +17,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable, WindowExt};
@@ -30,6 +30,7 @@ use hongguo_service::app_state::AppStateInner;
 use crate::bridge;
 use crate::detail::DetailPrefill;
 use crate::pages::list_common::BatchBar;
+use crate::ui_button::button as Button;
 
 mod view;
 
@@ -85,6 +86,8 @@ pub(crate) struct FollowsView {
     read_all: bool,
     /// 预览种子用的登录态开关（真实壳恒 false，以 settings 的 account 为准）。
     preview_logged_in: bool,
+    /// 列表滚动句柄（常驻视图里）：离开再回来位置还在。
+    scroll: gpui_kit::ScrollHandle,
 }
 
 impl FollowsView {
@@ -113,6 +116,7 @@ impl FollowsView {
             clearing: false,
             read_all: false,
             preview_logged_in: false,
+            scroll: gpui_kit::ScrollHandle::new(),
         }
     }
 
@@ -541,7 +545,7 @@ impl gpui_kit::Render for FollowsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
         let logged_in = self.logged_in();
         let body = if !logged_in {
             let theme = cx.theme();

@@ -18,7 +18,7 @@ export function feedItems(pages: FeedPage[]): FeedItem[] {
 /**
  * 首页推荐流（书城换一换，无限滚动）。
  *
- * 翻页三件套回传（hgplayer 同款，2026-10-08 抓包实锤）：首页会话
+ * 翻页三件套回传：首页会话
  * `sessionId`（bookmall/tab cr=4 下发）+ `offset`（上一页 nextOffset，
  * 0→6→12 递进）+ `filterIds`（已下发过的 series_id，服务端排除已见）。
  *
@@ -43,7 +43,7 @@ export function useFeed(tab: string) {
     staleTime: fuzzyStaleTime(keys.feed(tab)),
   });
   const stream = useInfiniteStream(query, feedItems);
-  // 换一批：重开会话回第 1 批（hgplayer V() 同款）。reset 会清掉已翻的页，
+  // 换一批：重开会话回第 1 批。reset 会清掉已翻的页，
   // 重新从首页游标拉——原地 refetch 只会重放旧会话，看起来「没反应」。
   const restart = useCallback(() => {
     void queryClient.resetQueries({ queryKey: keys.feed(tab) });

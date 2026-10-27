@@ -1,9 +1,9 @@
-//! 「收藏」页：书架列表（bookshelf/video/list，2026-10-06 抓包锁定）。
+//! 「收藏」页：书架列表（bookshelf/video/list）。
 //!
 //! 服务端条目只有 series_id + 收藏时间——标题封面走本地档案缓存，
 //! 未收录的自动回落 resolve_series；卡片同「历史」页形态，点击进播放器。
 //! 支持就地取消收藏（bookshelf update operate_type=1）。
-//! 标题搜索框对齐参考端 v1.1.6（客户端过滤，标题异步到位后登记）。
+//! 标题搜索框对齐官方客户端（客户端过滤，标题异步到位后登记）。
 
 import { useCallback, useEffect, useState } from 'react';
 import { Play, Star, StarOff } from 'lucide-react';
@@ -36,7 +36,7 @@ import { usePlaySeries } from '@/hooks/use-play-series';
 import { t, tf, type MessageKey } from '@/locales';
 import type { BookshelfEntry } from '@/service/schema';
 
-/** 内容类型筛选（对齐 hgplayer v1.1.7 收藏筛选；依据 bookshelf 条目的
+/** 内容类型筛选（依据 bookshelf 条目的
  *  content_type：1=真人 1004=漫剧，0=未知不归入任何一类）。 */
 type TypeTab = 'all' | 'real' | 'comic';
 
@@ -57,7 +57,7 @@ export function CollectionPage() {
   const refreshAuth = useAuthRefresh();
   const { data: entries, isLoading, error, refetch } = useBookshelf();
   const collect = useSeriesCollect();
-  // 批量管理（hgplayer v1.1.6 同款）：多选后一请求批量取消收藏
+  // 批量管理：多选后一请求批量取消收藏
   const batch = useBatchSelect();
   const batchCollect = useSeriesCollectBatch();
 

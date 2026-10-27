@@ -42,9 +42,13 @@ pub struct EpisodeList {
     pub episodes: Vec<Episode>,
     /// 全剧收藏数（video_data.followed_cnt，右栏「☆ N」数据源）
     pub followed_cnt: i64,
+    /// 剧的条目类型（video_data.content_type：漫剧 1004 / 真人剧 1 / 书城
+    /// 条目 1001…）。真播批量分组 key 与单集请求 content_type 的持久来源；
+    /// 0 = 响应未带（取流走单集占位值）。
+    pub content_type: i64,
 }
 
-/// 详情页头部的剧集元信息（对齐 hgplayer 头部数据面）。
+/// 详情页头部的剧集元信息。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesMeta {
@@ -55,7 +59,7 @@ pub struct SeriesMeta {
     pub followed_cnt: i64,
     /// 全剧播放量（series_play_cnt，150.8万次播放）
     pub play_cnt: i64,
-    /// 红果热度值（hot_score，3786万；2026-10-08 抓包实锤与 hgplayer
+    /// 红果热度值（hot_score，与客户端
     /// 头部「🔥红果热度值3786万」同源同值）
     pub hot_score: i64,
     /// 备案号（record_info.record_number；响应里有 show 开关，前端恒显即可）
@@ -68,12 +72,12 @@ pub struct SeriesMeta {
     /// 播放器简介面板共用，取代旧官网 extras 链路）
     pub intro: String,
     /// 付费信息（官方模型 VideoDetailVideoData.payInfo 原样透传；
-    /// Null=免费。官方模型对照新增，抓包样本未及、防御性读取）
+    /// Null=免费。官方模型对照新增，防御性读取）
     pub pay_info: serde_json::Value,
     /// 上线时间戳（online_time；UTC 毫秒，0=未知）
     pub online_time: i64,
-    /// 官方统计行原文（episode_right_text：完结「全139集」/ 连载「更新至83集」，
-    /// 2026-10-15 官方实包；旧字段名 update_tag 在真实响应里不存在，留作兜底键）
+    /// 官方统计行原文（episode_right_text：完结「全139集」/ 连载「更新至83集」；
+    /// 旧字段名 update_tag 在真实响应里不存在，留作兜底键）
     pub update_tag: String,
     /// 追更按钮显隐判定（series_status：0=连载中 1=已完结；与追更列表
     /// relation/get_user_action 同名同语义。官方详情页只在连载剧出「追更」）
@@ -85,8 +89,8 @@ pub struct SeriesMeta {
     pub episode_total_cnt: i64,
     /// 服务端续播锚点 vid（latest_consumed_item_id；空=无）
     pub latest_consumed_vid: String,
-    /// 出品方 / 演职员（main_creator_users，2026-10-15 抓 player v1.2.1
-    /// 详情页实包；官方点击走 Lynx 模板页无 JSON 端点，展示 + 跳搜索）
+    /// 出品方 / 演职员（main_creator_users，
+    /// 详情页下发；官方点击走 Lynx 模板页无 JSON 端点，展示 + 跳搜索）
     #[serde(default)]
     pub creators: Vec<SeriesCreator>,
 }

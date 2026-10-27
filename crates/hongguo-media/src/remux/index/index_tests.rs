@@ -4,6 +4,7 @@
 //! 与交织顺序，不碰文件 IO——落盘与字节搬运在 `remux.rs` 的用例里验证。
 
 use super::*;
+use crate::mp4::{Edit, build_moov, mdat_data_start, mdat_header_len, needs_wide_offsets};
 use hongguo_video::r#box::{find_box, parse_boxes};
 use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
 
@@ -304,7 +305,7 @@ fn moov_writes_audio_edits_per_episode() {
         .iter()
         .map(|t| vec![0u64; t.sizes.len()])
         .collect();
-    let moov = build_moov(&merged, &offsets, false);
+    let moov = build_moov(&merged.mvhd, &merged.tracks, &offsets, false);
 
     let traks: Vec<_> = parse_boxes(&moov, 8, moov.len())
         .into_iter()
@@ -357,11 +358,14 @@ fn the_two_moov_builds_have_the_same_length() {
         .collect();
 
     assert_eq!(
-        build_moov(&merged, &zeros, false).len(),
-        build_moov(&merged, &real, false).len()
+        build_moov(&merged.mvhd, &merged.tracks, &zeros, false).len(),
+        build_moov(&merged.mvhd, &merged.tracks, &real, false).len()
     );
     // 升到 64 位偏移时表更大，宽度确实体现在长度上
-    assert!(build_moov(&merged, &real, true).len() > build_moov(&merged, &real, false).len());
+    assert!(
+        build_moov(&merged.mvhd, &merged.tracks, &real, true).len()
+            > build_moov(&merged.mvhd, &merged.tracks, &real, false).len()
+    );
 }
 
 #[test]
@@ -369,7 +373,11 @@ fn the_stco_entries_land_inside_the_mdat_payload() {
     let files = vec![source(&[TrackPlan::video(samples(4))])];
     let merged = plan(&files).unwrap();
     let payload: u64 = (0..4).map(|i| 40 + i).sum();
-    let start = mdat_data_start(28, build_moov(&merged, &[vec![0; 4]], false).len(), false);
+    let start = mdat_data_start(
+        28,
+        build_moov(&merged.mvhd, &merged.tracks, &[vec![0; 4]], false).len(),
+        false,
+    );
 
     let offsets: Vec<u64> = (0..4)
         .map(|i| start + (0..i).map(|j| 40 + j).sum::<u64>())

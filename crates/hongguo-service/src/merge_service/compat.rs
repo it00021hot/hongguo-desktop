@@ -1,6 +1,6 @@
 //! 兼容合并：转 H.264/AAC。
 //!
-//! 与兼容模式共用 `hongguo_media::transcode` 的同一条流水线，区别只是
+//! 与兼容播放共用 `transcode_service::pipeline` 的同一条流水线，区别只是
 //! 「一集」变「多集」——流复制拼接成全集再转，或逐集转再流复制。
 //! 这里选择后者：内存占用恒定，且能复用单集转码的缓存。
 
@@ -15,7 +15,6 @@ use crate::app_state::AppState;
 use crate::transcode_service::{cache, pipeline};
 use hongguo_common::model::MergeTask;
 use hongguo_common::{AppError, AppResult};
-use hongguo_media::transcode::TranscodeOptions;
 
 /// 兼容合并：把每集转成 H.264 后流复制拼接。
 ///
@@ -54,9 +53,8 @@ pub fn compat_merge(
     // 照样过不去——实测一部 11 集的剧（10 集 1080p、1 集 720p）走到拼接才失败，
     // 前面十几分钟的转码全白做。
     let scale_to = pipeline::resolution_of(&inputs[0].1);
-    let mut odd: Vec<u32> = Vec::new();
     if let Some((w, h)) = scale_to {
-        odd = inputs
+        let odd: Vec<u32> = inputs
             .iter()
             .filter(|(_, p)| pipeline::resolution_of(p).is_some_and(|(rw, rh)| rw != w || rh != h))
             .map(|(i, _)| *i + 1)
@@ -72,23 +70,18 @@ pub fn compat_merge(
         }
     }
 
-    // 缩放缺口快速失败：没有缩放能力的后端（纯 Rust 软解）遇上混合分辨率，
-    // 各集各转各的分辨率，最后死在拼接的宽高一致校验上——实测一部 11 集的
-    // 剧（10 集 1080p、1 集 720p）在软解上白转十几分钟才失败。把失败提到
-    // 转码之前，并告诉用户哪条路能解决。
-    if !odd.is_empty() && !hongguo_media_platform::capability::scaling_available() {
-        return Err(AppError::Media(format!(
-            "第 {} 集分辨率与首集不一致，当前转码后端（纯 Rust 软解）不支持缩放，无法合并；\
-             安装 ffmpeg 或在支持硬件编码的机器上重试",
-            odd.iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join("、")
-        )));
-    }
+    // 没有可用后端就别开工：平台编码器不可用且没装 ffmpeg 时，每一集转码都会
+    // 立刻失败。早失败省下的是用户的时间——外加一整轮下载。
+    let Some(backend) = hongguo_media_platform::capability::selected_backend() else {
+        return Err(AppError::Media(
+            "当前机器没有可用的转码后端：系统编码器不可用，且未安装 ffmpeg。\
+             安装 ffmpeg 后重试。"
+                .into(),
+        ));
+    };
 
     // **并行度按后端定**，两条路的瓶颈完全不同。
-    let threads = merge_threads(inputs.len());
+    let threads = merge_threads(backend, inputs.len());
     log::info!("[Merge] {output_name}：{total} 集，并行度 {threads}");
 
     // 每格存结果或错误。用 `Mutex<Vec<…>>` 而不是逐个切分切片：
@@ -106,10 +99,10 @@ pub fn compat_merge(
 
     // 硬编会话超订的自适应收敛（背景见 [`merge_threads`]）：
     // 生效并行度从 threads 起步，一观察到「预期硬编却走了软路」就收到 2。
-    // 收敛不影响已完成的集——软解产物同样是能播的 H.264，只是慢，不值得重做。
+    // 收敛不影响已完成的集——回落路线的产物同样是能播的 H.264，只是慢，不值得重做。
     let live_cap = AtomicUsize::new(threads);
     let active = AtomicUsize::new(0);
-    let hw_expected = hongguo_media_platform::capability::selected_backend().is_hardware();
+    let hw_expected = backend.is_hardware();
 
     std::thread::scope(|scope| {
         // 每个线程循环领下一集：谁先空出来谁接下一集。
@@ -175,7 +168,6 @@ pub fn compat_merge(
                                 series_id,
                                 *vid_index,
                                 source,
-                                &TranscodeOptions::default(),
                                 scale_to,
                                 Some(cb),
                             );
@@ -183,7 +175,8 @@ pub fn compat_merge(
                             // 收敛并行度，让后续集不再超订。个别集因偶发错误回落
                             // 也会触发（多收敛一次，代价只是后面保守些），可接受。
                             if hw_expected
-                                && r.as_ref().is_ok_and(|t| !t.backend.is_hardware())
+                                && r.as_ref()
+                                    .is_ok_and(|t| !t.backend.is_some_and(|b| b.is_hardware()))
                                 && live_cap.fetch_min(2, Ordering::Relaxed) > 2
                             {
                                 log::warn!(
@@ -257,7 +250,7 @@ pub fn compat_merge(
     Ok((output, size, count))
 }
 
-/// 并行度按后端定，几条路的瓶颈完全不同。
+/// 并行度按后端定，两条路的瓶颈完全不同。
 ///
 /// - 平台层（VideoToolbox 等）：有硬编时编码在 GPU 上，CPU 只剩解封装/拷贝，
 ///   会话数同样有限（Apple 平台硬编会话有上限），铺 4 路保守起步，
@@ -273,14 +266,11 @@ pub fn compat_merge(
 ///   ⚠️ 不要给并行实例加 `-threads N` 限线程——真机实测（i5-13400、真实
 ///   剧集 4 路并行）默认线程 38.5s，限 `-threads 4` 反而 48.5s（慢 26%）：
 ///   x264 默认线程数已经调得很好，限线程只会饿着每个编码器。
-/// - 纯 Rust 软解：瓶颈是**单线程**的 HEVC 解码（`rusty_h265` 没有并行原语），
-///   它吃的是内存带宽。实测 i5-13400 / 16 逻辑核、1080p 单集 54s：
-///   串行 216s、4 路 177s、16 路 169s——加线程只是抢带宽，所以压在 4。
-fn merge_threads(episodes: usize) -> usize {
+fn merge_threads(backend: hongguo_media::Backend, episodes: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    let cap = match hongguo_media_platform::capability::selected_backend() {
+    let cap = match backend {
         hongguo_media::Backend::Platform => {
             if hongguo_media_platform::platform::h264_hw_encoder_available() {
                 cores.clamp(1, 4)
@@ -291,7 +281,6 @@ fn merge_threads(episodes: usize) -> usize {
         }
         hongguo_media::Backend::FfmpegHw => cores.clamp(1, 6),
         hongguo_media::Backend::FfmpegSw => (cores / 2).clamp(1, 4),
-        hongguo_media::Backend::Rust => 4,
     };
     cap.min(episodes.max(1))
 }
@@ -416,8 +405,14 @@ mod tests {
     #[test]
     fn threads_never_exceed_the_episode_count() {
         for n in [1usize, 2, 3, 10, 100] {
-            assert!(merge_threads(n) <= n, "{n} 集时并行度不应超过集数");
-            assert!(merge_threads(n) >= 1, "并行度至少为 1");
+            assert!(
+                merge_threads(hongguo_media::Backend::FfmpegHw, n) <= n,
+                "{n} 集时并行度不应超过集数"
+            );
+            assert!(
+                merge_threads(hongguo_media::Backend::FfmpegHw, n) >= 1,
+                "并行度至少为 1"
+            );
         }
     }
 
@@ -430,6 +425,6 @@ mod tests {
         std::fs::write(&p, b"x").unwrap();
         t.mark_completed(p.to_string_lossy().as_ref(), 1);
         let _ = std::fs::remove_dir_all(&d);
-        assert_eq!(merge_threads(1), 1);
+        assert_eq!(merge_threads(hongguo_media::Backend::FfmpegHw, 1), 1);
     }
 }

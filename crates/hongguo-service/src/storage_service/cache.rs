@@ -147,7 +147,7 @@ struct CacheFile {
 /// `transcode_service::cache::trim()` 按磁盘空闲空间自己管预算（2–16GB），
 /// 已有淘汰机制；而它的文件是**正在播的集**的供数源——`hongguo-local://`
 /// 每次 range 请求都重新开文件（见 `hongguo-protocol::local::serve`），
-/// 播到一半被删就会断这一集。自研引擎 + 平台解不了 HEVC 时才走这条路，
+/// 播到一半被删就会断这一集。平台解不了 HEVC 需要转码兜底时才走这条路，
 /// 但没必要为清缓存冒断播的风险。
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
@@ -192,10 +192,7 @@ const MIN_FILE_AGE_MINUTES: u64 = 10;
 /// 返回值与手动 [`clear`] 同构：删掉多少个文件、释放多少字节。
 pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheClearResult {
     if policy.is_disabled() {
-        return CacheClearResult {
-            items: 0,
-            bytes: 0,
-        };
+        return CacheClearResult { items: 0, bytes: 0 };
     }
     let mut files = collect_files();
     let mut removed = 0u64;
@@ -272,8 +269,10 @@ pub fn start_auto_clean_loop(state: crate::app_state::AppState) {
             };
             if !policy.is_disabled() {
                 // 删文件要碰文件系统，放阻塞池，不占异步运行时
-                let _ = tokio::task::spawn_blocking(move || auto_clean(policy, std::time::SystemTime::now()))
-                    .await;
+                let _ = tokio::task::spawn_blocking(move || {
+                    auto_clean(policy, std::time::SystemTime::now())
+                })
+                .await;
             }
             tokio::time::sleep(AUTO_CLEAN_INTERVAL).await;
         }
@@ -283,7 +282,6 @@ pub fn start_auto_clean_loop(state: crate::app_state::AppState) {
 /// 自动清理的轮询间隔。缓存是慢变量（天级），1 小时一轮足够及时，
 /// 又不至于每小时扫一遍目录。
 const AUTO_CLEAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
-
 
 #[cfg(test)]
 mod tests {

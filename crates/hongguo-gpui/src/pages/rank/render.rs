@@ -3,6 +3,57 @@
 use super::*;
 
 impl super::RankView {
+    /// 虚拟列表条目：`ix` 落在行区间给行卡，末位是 footer 槽
+    /// （加载更多按钮 / 到底提示，随 has_more 翻面）。
+    pub(super) fn render_list_item(
+        &self,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        if ix < self.items.len() {
+            // 行间 8px 间距（Tauri gap-2 同参）：list() 条目直接相邻堆叠，
+            // 原 v_flex gap 容器没了，间距改由条目槽位自带
+            return div()
+                .w_full()
+                .pb_2()
+                .child(self.render_row(&self.items[ix], cx))
+                .into_any_element();
+        }
+        if self.has_more {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    Button::new("rank-more")
+                        .label(if self.loading {
+                            crate::i18n::t("feed.loadingMore")
+                        } else {
+                            crate::i18n::t("follow.loadMore")
+                        })
+                        .ghost()
+                        .small()
+                        .disabled(self.loading)
+                        .when(self.loading, |b| b.cursor_default())
+                        .on_click(cx.listener(|this, _, _, cx| this.load_page(true, cx))),
+                )
+                .into_any_element()
+        } else {
+            let theme = cx.theme();
+            h_flex()
+                .w_full()
+                .justify_center()
+                .py_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(crate::i18n::t("follow.noMore")),
+                )
+                .into_any_element()
+        }
+    }
+
     /// 预览种子（screenshot feature）：灌假 tabs/子榜/榜单与合成封面。
     /// `rank-empty` = 空态分支；`rank-filter` = 筛选面板展开。
     #[cfg(feature = "screenshot")]
@@ -38,25 +89,17 @@ impl gpui_kit::Render for RankView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 封面预热：排上转码（gpui 资产机制去重），成品图落盘后 gpui 刷新窗口。
         let cover_urls: Vec<String> = self.items.iter().map(|i| i.cover.clone()).collect();
-        crate::cover_img::prewarm(&cover_urls, hongguo_protocol::cover::EDGE_CARD, cx);
-        // 首拉加载：整页剩余区居中（含子榜导航区域）。居中在右侧列表列里
-        // 会读成「偏右」（子榜列占了左侧），用户实测反馈；页面级分支与
-        // 创作者主页同款。
-        if self.loading && self.items.is_empty() {
-            let theme = cx.theme();
-            return v_flex()
-                .size_full()
-                .bg(theme.background)
-                .text_color(theme.foreground)
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
-                .into_any_element();
-        }
-        // 滚动哨兵：滚到底自动续页（Tauri rank-page.tsx 的 IntersectionObserver
-        // 同语义；「加载更多」按钮留作键盘/兜底入口）。
-        if self.scroll.should_load(self.has_more, self.loading) {
+        crate::cover_img::prewarm_covers(&cover_urls, cx);
+        // 滚动哨兵（虚拟列表版）：滚到列表末尾就续页；新页未测高时
+        // is_scrolled_to_end 报 None，天然防住「追加后仍在底部」的连环翻页。
+        if self.has_more && !self.loading && self.rows.scrolled_to_end() {
             self.load_page(true, cx);
+        }
+        // 换键时撞上首拉在途而欠下的重拉：在途响应已落定（loading 转假），
+        // 这里补发（switch_list 的登记，见 list.rs）。
+        if self.needs_reload && !self.loading {
+            self.needs_reload = false;
+            self.load_page(false, cx);
         }
         let sub_nav = self.render_sub_nav(cx);
         let filter_panel = self
@@ -105,32 +148,20 @@ impl gpui_kit::Render for RankView {
                     cx.notify();
                 }))
         });
-        let (failed, empty, has_more, count) = (
+        let (loading, failed, empty, count) = (
+            self.loading && self.items.is_empty(),
             self.failed && self.items.is_empty(),
             self.items.is_empty(),
-            self.has_more,
             self.items.len(),
         );
-        let more_button = has_more.then(|| {
-            let loading_more = self.loading;
-            h_flex().w_full().justify_center().py_2().child(
-                Button::new("rank-more")
-                    .label(if loading_more {
-                        crate::i18n::t("feed.loadingMore")
-                    } else {
-                        crate::i18n::t("follow.loadMore")
-                    })
-                    .ghost()
-                    .small()
-                    .disabled(loading_more)
-                    .on_click(cx.listener(|this, _, _, cx| this.load_page(true, cx))),
-            )
-        });
-        let rows: Vec<gpui_kit::AnyElement> = self
-            .items
-            .iter()
-            .map(|item| self.render_row(item, cx))
-            .collect();
+        // 旧列表后台刷新中（keepPreviousData 展示态）：Tauri RefreshShade
+        // 同款——降透明度 + 挡掉鼠标（刷新期点旧行会以旧状态起播/预约）。
+        // 真没数据的加载走下面的行骨架，不套这层。
+        let refreshing = self.loading && !self.items.is_empty();
+        // 虚拟列表对账：有行才挂列表，末位固定一个 footer 槽（行数 + 1）
+        if !failed && !empty {
+            self.rows.sync(count + 1);
+        }
         let theme = cx.theme();
         v_flex()
             .size_full()
@@ -187,72 +218,64 @@ impl gpui_kit::Render for RankView {
                             .children(filter_panel)
                             .child(
                                 div()
-                                    .id("rank-list")
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
                                     .flex_1()
                                     .min_h_0()
-                                    .overflow_y_scroll()
-                                    .track_scroll(self.scroll.handle())
-                                    .child(
-                                        v_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .children(if failed {
-                                                vec![
-                                                    v_flex()
-                                                        .w_full()
-                                                        .items_center()
-                                                        .py_16()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .text_sm()
-                                                                .text_color(theme.muted_foreground)
-                                                                .child(crate::i18n::t(
-                                                                    "rank.loadFailed",
-                                                                )),
-                                                        )
-                                                        .child(
-                                                            Button::new("rank-retry")
-                                                                .label(crate::i18n::t(
-                                                                    "common.retry",
-                                                                ))
-                                                                .on_click(cx.listener(
-                                                                    |this, _, _, cx| {
-                                                                        this.load_page(false, cx)
-                                                                    },
-                                                                )),
-                                                        )
-                                                        .into_any_element(),
-                                                ]
-                                            } else if empty {
-                                                vec![
-                                                    v_flex()
-                                                        .w_full()
-                                                        .items_center()
-                                                        .py_16()
-                                                        .child(
-                                                            div()
-                                                                .text_sm()
-                                                                .text_color(theme.muted_foreground)
-                                                                .child(crate::i18n::t(
-                                                                    "rank.empty",
-                                                                )),
-                                                        )
-                                                        .into_any_element(),
-                                                ]
-                                            } else {
-                                                rows
+                                    .when(refreshing, |s| s.opacity(0.5))
+                                    .children(if loading {
+                                        // 首拉加载：行骨架铺在列表区（与真实列表
+                                        // 同容器，数据到位不跳版）。行高按 GPUI
+                                        // 真实行算，不照抄 Tauri 的 h-24：封面
+                                        // 107 + 行内上下 p_3 24 = 131；行间距
+                                        // 另按真实条目槽的 pb_2 给 8。
+                                        vec![crate::pages::skeleton::rows(cx, 8, 131.0, 8.0)]
+                                    } else if failed {
+                                        vec![crate::pages::states::error_state(
+                                            cx,
+                                            None,
+                                            crate::i18n::t("rank.loadFailed"),
+                                            None,
+                                            Some((
+                                                "rank-retry",
+                                                crate::pages::states::retry_on(
+                                                    cx.entity(),
+                                                    |this, cx| this.load_page(false, cx),
+                                                ),
+                                            )),
+                                        )]
+                                    } else if empty {
+                                        vec![crate::pages::states::empty_state(
+                                            cx,
+                                            None,
+                                            crate::i18n::t("rank.empty"),
+                                            None,
+                                        )]
+                                    } else {
+                                        let entity = cx.entity();
+                                        let state = self.rows.state();
+                                        vec![
+                                            gpui_kit::list(state, move |ix, _window, cx| {
+                                                entity.update(cx, |view, cx| {
+                                                    view.render_list_item(ix, cx)
+                                                })
                                             })
-                                            .children(more_button)
-                                            .children((!has_more && count > 0).then(|| {
-                                                h_flex().w_full().justify_center().py_2().child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(crate::i18n::t("follow.noMore")),
-                                                )
-                                            })),
-                                    ),
+                                            // Auto sizing 的 list() 不自报内容高，
+                                            // 必须从父容器拿确定高度
+                                            .flex_1()
+                                            .into_any_element(),
+                                        ]
+                                    })
+                                    // 刷新遮罩：挡掉旧列表上的鼠标交互
+                                    //（Tauri RefreshShade 的 pointer-events-none）
+                                    .children(refreshing.then(|| {
+                                        div()
+                                            .id("rank-refresh-shade")
+                                            .absolute()
+                                            .inset_0()
+                                            .occlude()
+                                    })),
                             )
                             .into_any_element(),
                     ),

@@ -217,6 +217,8 @@ pub(super) fn synthesize_upcoming_series(series_id: &str, prefill: &DetailPrefil
         cover: prefill.cover.clone(),
         episode_count: 0,
         followed_cnt: 0,
+        // 未上线剧无取流场景，类型未知（0 = 注册表不收，取流走单集占位）
+        content_type: 0,
         tags: prefill.tags.clone(),
         episodes: Vec::new(),
         dismissed: false,

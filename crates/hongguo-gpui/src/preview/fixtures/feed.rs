@@ -152,9 +152,9 @@ pub(crate) fn new_drama_items() -> Vec<RankItem> {
         .collect()
 }
 
-/// 上新日历：当日条目（publish_time 落在 2026-10-14 本地，日期条筛得上）。
+/// 上新日历：当日条目（publish_time 落在种子日当天本地时区，日期条筛得上）。
 pub(crate) fn calendar_items(count: usize) -> Vec<CalendarItem> {
-    // 2026-10-14 12:00 (+08:00) 的 UTC 毫秒
+    // 种子日 12:00 (+08:00) 的 UTC 毫秒
     const BASE_MS: i64 = 1_791_950_400_000;
     SERIES
         .iter()

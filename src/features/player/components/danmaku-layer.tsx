@@ -12,28 +12,28 @@ interface Props {
   display: DanmakuDisplaySettings;
 }
 
-/** 滚过一屏的时长（毫秒）：hgplayer durationMs 默认 9000。 */
+/** 滚过一屏的时长（毫秒）：默认 9000。 */
 const CROSS_MS = 9000;
-/** 同一泳道相邻两条的入场间隔（视频秒）：hgplayer 占位 +1400ms 同款。 */
+/** 同一泳道相邻两条的入场间隔（视频秒）：占位 +1400ms。 */
 const LANE_BUSY_S = 1.4;
-/** 泳道高 = 字号 + 10（hgplayer top 计算同款）。 */
+/** 泳道高 = 字号 + 10。 */
 const LANE_GAP = 10;
 /** lane 数量按高度自适应的下限。 */
 const MIN_LANES = 4;
-/** 基准字号的缩放下限/上限：上限=hgplayer 默认 22px。 */
+/** 基准字号的缩放下限/上限：上限=默认 22px。 */
 const DM_FONT_MIN = 15;
 const DM_FONT_MAX = 22;
 
 /**
- * 弹幕渲染层（对齐 hgplayer 的 DOM 形态，替代旧 canvas）：
+ * 弹幕渲染层（DOM 形态，替代旧 canvas）：
  *
  * 每条弹幕是一个绝对定位的 `<span>`，Web Animations API 线性滚过一屏，
  * 位置更新交给浏览器合成器，rAF 只负责按 `video.currentTime` 入场——
  * 暂停即冻结（动画 pause）、倍速同步（动画 playbackRate）、seek 由时间
  * 跳变检测兜底（清屏重建入场游标）。
  *
- * 文本排版走 CSS：600 字重 + 柔和投影（`0 1px 3px rgba(0,0,0,.9)`，
- * hgplayer `.dm` 同款）替代旧实现的 2px 硬描边——描边是「弹幕刺眼」
+ * 文本排版走 CSS：600 字重 + 柔和投影（`0 1px 3px rgba(0,0,0,.9)`）
+ * 替代旧实现的 2px 硬描边——描边是「弹幕刺眼」
  * 的根源。`[名字]` 表情代码按映射表换成打包的 webp 图。
  */
 export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
@@ -88,7 +88,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
       const settings = displayRef.current;
       width = rect.width;
       height = rect.height;
-      // 基准字号：hgplayer 默认 22px（设置范围 14–40）。旧公式 height/22
+      // 基准字号：默认 22px（设置范围 14–40）。旧公式 height/22
       // 在桌面窗口会顶到 26px，大一号显得粗重「不够柔和」——小窗（小屏
       // 播放）仍按高度缩放，上限钉在 22。
       const base = Math.min(DM_FONT_MAX, Math.max(DM_FONT_MIN, height / 30));
@@ -119,7 +119,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
       clearFlights();
     };
 
-    /** 组一条弹幕的内容：文本段 + `[名字]` 表情图（hgplayer 排版同款）。 */
+    /** 组一条弹幕的内容：文本段 + `[名字]` 表情图。 */
     const appendContent = (el: HTMLSpanElement, text: string) => {
       for (const seg of parseEmojiSegments(text)) {
         if (seg.kind === 'text' || seg.kind === 'mention') {
@@ -130,9 +130,12 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
           img.src = seg.url;
           img.alt = seg.value;
           img.draggable = false;
-          // 1.3em 见方、基线下沉 0.28em（hgplayer .dm-emo 同款）
+          // 1.3em 见方、基线下沉 0.28em。display:inline-block 必须显式给：
+          // Tailwind preflight 的 img{display:block} 会把表情图踢到文本
+          // 下一行（弹幕被撑成两行高），white-space:nowrap 拦不住块级盒
           img.style.cssText =
-            'width:1.3em;height:1.3em;margin:0 1px;vertical-align:-0.28em;object-fit:contain';
+            'display:inline-block;width:1.3em;height:1.3em;margin:0 1px;' +
+            'vertical-align:-0.28em;object-fit:contain';
           el.appendChild(img);
         }
       }
@@ -140,12 +143,12 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
 
     const fire = (text: string, t: number, video: HTMLVideoElement) => {
       const el = document.createElement('span');
-      // hgplayer .dm 同款：600 字重 + 柔和投影，不用描边
+      // 600 字重 + 柔和投影，不用描边
       el.style.cssText =
         'position:absolute;left:0;white-space:nowrap;font-weight:600;color:#fff;' +
         `font-size:${fontPx}px;text-shadow:0 1px 3px rgba(0,0,0,.9);will-change:transform;`;
       appendContent(el, text);
-      // 泳道：挑最早空出来的那条并占位（hgplayer 同款，叠满时自然排队）
+      // 泳道：挑最早空出来的那条并占位（叠满时自然排队）
       let pick = 0;
       for (let i = 1; i < lanes; i += 1) {
         if ((laneFreeAt[i] ?? 0) < (laneFreeAt[pick] ?? 0)) pick = i;
@@ -161,9 +164,8 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
         ],
         { duration: CROSS_MS, easing: 'linear', fill: 'forwards' },
       );
-      // 速度是固定的墙钟时长（hgplayer 同款：不随视频倍速变——它家滚多快
-      // 倍速下也滚多快）；只做暂停冻结。之前跟着 video.playbackRate 走，
-      // 2x 播放时弹幕快一倍，被用户指出「比第三方快太多」。
+      // 速度是固定的墙钟时长（不随视频倍速变）；只做暂停冻结。之前跟着
+      // video.playbackRate 走，2x 播放时弹幕快一倍，被用户指出弹幕偏快。
       if (video.paused) anim.pause();
       anim.onfinish = () => {
         el.remove();

@@ -3,12 +3,13 @@
 use gpui_kit::component::Disableable;
 use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
-use gpui_kit::component::button::Button;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{SharedString, div};
+
+use crate::ui_button::button as Button;
 
 impl super::HomeView {
     /// 小屏紧凑控制条（Tauri MiniScreenControls 对齐）：剧名/集数/简介、
@@ -87,7 +88,7 @@ impl super::HomeView {
                 }
                 cx.notify();
             }))
-            // 剧名/集数/简介贴着进度条上方（第三方小屏同款两行形态），宽度
+            // 剧名/集数/简介贴着进度条上方（官方客户端小屏同款两行形态），宽度
             // 收敛 + 单行截断（Tauri `truncate` 同款）。宽度必须给成**定宽**
             // 再让文本 `w_full`：只给 max_w 时文本按内容宽排版、再由父级裁掉，
             // 省略号不会出现（预览里表现为右边半个字被切掉）
@@ -148,6 +149,7 @@ impl super::HomeView {
                             .cursor_pointer()
                             .xsmall()
                             .disabled(!has_next)
+                            .when(!has_next, |b| b.cursor_default())
                             .on_click(cx.listener(|this, _, _, cx| this.step_episode(1, cx))),
                     )
                     .child(

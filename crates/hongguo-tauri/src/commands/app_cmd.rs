@@ -71,7 +71,7 @@ pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
 /// 此时首帧已提交，用户看到的是完整界面而非白屏。
 ///
 /// 显示只发生在 false→true 的那次翻转上：本命令随 AppShell 重挂载会重复
-/// 调用，无条件 show 会把最小化/隐身中的窗口抢到前台（2026-10-09 同款事故）。
+/// 调用，无条件 show 会把最小化/隐身中的窗口抢到前台。
 /// 关闭拦截沿用原语义：ready 之后自绘 ×/Alt+F4/任务栏关闭转交前端弹确认框。
 #[tauri::command]
 pub fn mark_window_ready(app: AppHandle, ready: State<'_, WindowCloseGate>) -> AppResult<()> {

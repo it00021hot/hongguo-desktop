@@ -5,7 +5,7 @@ import type { RelatedItem } from '@/service/schema';
 import { RelatedCard, relatedDetailSearch } from './related-card';
 
 /**
- * 猜你喜欢（官方 plan 接口第二格，第三方详情页同款）：响应式封面网格，
+ * 猜你喜欢（官方 plan 接口第二格，官方客户端详情页同款）：响应式封面网格，
  * 卡片与相关作品同一套（角标 + 评分 + 剧名 + 集数/播放量）。
  */
 export function GuessYouLike({ items }: { items: RelatedItem[] }) {

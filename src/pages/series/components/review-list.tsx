@@ -1,7 +1,7 @@
 /**
  * 剧评列表（详情页「剧评」tab 内容）。
  *
- * 三块结构对齐 hgplayer 剧评页（2026-10-10 抓包对齐）：
+ * 三块结构：
  * - 剧均评分块（credibility_score + score_cnt；空 = 暂无评分）
  * - 发评框（评分星级 + 表情 + 文本，见 ReviewComposer）
  * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）、评分后缀文案、
@@ -67,7 +67,7 @@ function ScoreStars({ score }: { score: string }) {
 /** 剧评皮肤的回复线程：解包剧评回复查询，交给共享 ReplyThread
  *  （皮肤与 i18n 键位差异收敛在 `components/common/reply-thread`；player
  *  侧评论同源）。回复点赞**不是**剧评形态——与评论点赞同端点，object_id
- *  传 reply_id，2026-10-10 CDP 实测即时生效。 */
+ *  传 reply_id，即时生效。 */
 function ReviewReplySection({
   seriesId,
   commentId,
@@ -116,7 +116,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useSeriesComments(seriesId);
   const pages = data?.pages;
   // 按 commentId 去重：服务端相邻分页重叠条目，不去重 React 报 duplicate
-  // key 且同一条重复渲染（2026-10-10 实测 228 条里 38 组重复）
+  // key 且同一条重复渲染
   const comments = useMemo(
     () => dedupBy(pages?.flatMap((p) => p.items) ?? [], (c) => c.commentId),
     [pages],
@@ -160,7 +160,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
   const [replyToReply, setReplyToReply] = useState<{ id: string; name: string } | null>(null);
   const [replyText, setReplyText] = useState('');
-  /** 展开了回复区的剧评（受控：发送成功强制展开，对齐 hgplayer） */
+  /** 展开了回复区的剧评（受控：发送成功强制展开） */
   const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
   const setReplySectionOpen = (reviewId: string, open: boolean) =>
     setOpenReplies((prev) => {
@@ -183,7 +183,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
           setReplyText('');
           setReplyTarget(null);
           setReplyToReply(null);
-          // hgplayer 同款：发送成功强制展开回复区，新回复立刻可见
+          // 发送成功强制展开回复区，新回复立刻可见
           setReplySectionOpen(reviewId, true);
         },
       },
@@ -224,7 +224,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   return (
     <>
       <ReviewComposer seriesId={seriesId} />
-      {/* 剧均评分块（hgplayer 同款：9.0 大字 + 星 + 人数 + 标签统计 pill；
+      {/* 剧均评分块（9.0 大字 + 星 + 人数 + 标签统计 pill；
           剧均本体 = credibility_score，评分人数 = credibility_score_count） */}
       <div className="border-border mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-4 py-3">
         {reviewScore ? (

@@ -12,7 +12,7 @@ error, and so is a name the module does not export (the error names the closest 
 | Module | What it has |
 |---|---|
 | `nsh` | `signal`, `computed`, `effect`, `batch`, `untracked`, `cleanup`, `context`, `mount`, `split`, `token`; the host elements `View`, `Text`, `Scroll`, `Input`, `Overlay`, `Image`, `List`, `Canvas`, `WebView`, `Video`; the types (`ViewProps`, `TextProps`, `ImageProps`, `ScrollProps`, `InputProps`, `CommonProps`, `ViewStyle`, `TextStyle`, `StyleProp`, `ColorValue`, `LengthValue`, `YNode`, `Point`, `Size`, `Bounds`, `Edges`, `AccessibilityRole`, `AccessibilityState`, `OS`, `GestureResponderEvent`, …) |
-| `nsh/base` | `Button`, `Checkbox`, `Radio`, `RadioGroup`, `Switch`, `Tab`, `Tabs`, `NavStack`, `NavPage`, `createNavStack`, `Dialog`, `SafeAreaView`, `safeArea`, `safeAreaInsets`, `AlertDialog`, `Keyboard`, `keyboardFrame`, `KeyboardAvoidingView`, `Popover`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Submenu`, `Tooltip`, `Sheet`, `TextView`, `SelectionArea` |
+| `nsh/base` | `Button`, `Checkbox`, `Radio`, `RadioGroup`, `Switch`, `Tab`, `Tabs`, `Collapsible`, `Progress`, `ResizablePanel`, `ResizablePanelGroup`, `DockArea`, `NavStack`, `NavPage`, `createNavStack`, `Dialog`, `SafeAreaView`, `safeArea`, `safeAreaInsets`, `AlertDialog`, `Keyboard`, `keyboardFrame`, `KeyboardAvoidingView`, `Popover`, `Menu`, `ContextMenu`, `MenuItem`, `MenuSeparator`, `Submenu`, `Tooltip`, `Sheet`, `TextView`, `SelectionArea` |
 | `nsh/animated` | Native animations: `AnimatedValue`, springs, timelines |
 | `nsh/gesture` | `PanResponder` |
 | `nsh/device` | `platform`, `windowSize`, `colorScheme`, `fontScale`, `pixelRatio`, `locale` |
@@ -129,7 +129,7 @@ function App() {
 | `Text` | A run of text | `numberOfLines`, `onPress`, plus the text styles (`fontSize`, `fontWeight`, `color`, `textAlign`, …) |
 | `Scroll` | A scrollable view | `onScroll`, `scrollEnabled`, `contentContainerStyle`, `ref` |
 | `Input` | A text field | `value`, `onChangeText`, `placeholder`, `onSubmit`, `secureTextEntry`, `keyboardType`, `autoFocus`, `ref` |
-| `Image` | An image | `src`, `resizeMode`, `alt` |
+| `Image` | An image | `src` (a URL, an asset import, `asset:/…`, a `data:` URI or a `blob:` URL), `resizeMode`, `alt`; the `objectPosition` style decides where it sits in its box |
 | `List` | A virtualized list (long data only) | `data`, `renderItem`, `keyExtractor`, `onEndReached` |
 | `Overlay` | Children over the window, placed against an anchor | `anchor`, `placement` |
 | `Canvas` | A drawing surface | `onPaint`, `width`, `height` |
@@ -137,6 +137,21 @@ function App() {
 | `Video` | A video | `source`, `onPlay`, … |
 
 Read `website/elements/<element>.md` for a full prop list.
+
+### Press events carry the point
+
+`onPress`, `onLongPress`, `onPressDown` and `onPressUp` receive an optional `PressEvent`:
+`{ position, pagePosition }`. `position` is in the pressed view with its transforms undone; `pagePosition` is in the
+root view (the surface or its modal), the same coordinates touches use — that is what `Menu.popup(items, at)` takes.
+The payload is **absent on backends that do not know the pointer**: in 0.2.0 only the GPUI backend and the headless
+driver send it, so every other backend (iOS, Android, macOS, Windows, Linux) leaves the argument `undefined`. Treat it
+as optional:
+
+```tsx
+<View onPress={(e) => place(e?.position)} />
+```
+
+In Rust, `on_press` still takes no value; a listener that wants the point reads the raw payload.
 
 ### Layout defaults
 
@@ -202,6 +217,23 @@ the base components that have the state).
 - Everything else behaves as Tailwind 4 documents it: the palette, opacity modifiers (`bg-black/40`), arbitrary
   values, fractions, shadows and rings, gradients (`bg-linear-to-r`, `from-`/`via-`/`to-`), filters, transforms,
   transitions, `animate-*`, and grid.
+
+### Effects: filters, glass and masks
+
+```tsx
+<View style={{ backdropFilter: "blur(30px)", maskImage: "linear-gradient(#000 70%, #00000000)" }} />
+<View style={{ backdropFilter: "blur(12px)", glassEffect: "regular" }} />
+```
+
+- `filter` / `backdropFilter` are CSS filter strings; `backdropFilter` is what frosted glass is made of.
+- `glassEffect: "regular" | "clear"` draws Apple's Liquid Glass behind the view's content on **iOS 26 and later only**;
+  every other platform draws `backdropFilter` as before, so always give a glass view a blur to fall back to.
+- On iOS, `ios={{ backdropMaterial: "regular" }}` picks the system material a `backdropFilter` blur uses
+  (`ultraThin` default, `thin`, `regular`, `thick`, `chrome`). Pair it with a positive radius; the radius approximates
+  strength, full at 30 points.
+- `maskImage` takes a CSS **gradient** whose alpha decides how much of the view is drawn, and it masks everything the
+  view draws — its backdrop filter included. That is how a blurred bar fades out instead of cutting off hard. iOS and
+  web draw it; other backends ignore the key for now. Gradients only: an image or a shape there is an invalid value.
 
 ### Theme and tokens
 
@@ -270,6 +302,18 @@ A typo in `nsh.json` is a **build error**, not a setting that silently does noth
 - **`SafeAreaView`** pads clear of the system UI; `safeArea()` / `safeAreaInsets()` give the insets themselves.
 - **`Button`, `Checkbox`, `Radio`, `RadioGroup`, `Switch`, `Tab`, `Tabs`** are controlled: they report changes and
   the app owns the value.
+- **`Collapsible`** is a disclosure region: its `children` always show (summary plus the trigger the app renders), its
+  `content` shows after them while `open`. The content is made once and kept while collapsed, so what is inside keeps
+  its state.
+- **`Progress`** is a linear progress bar: `value` (0–100) sets the indicator's width and screen readers' value,
+  `indeterminate` drops the value and leaves the indicator's width and motion to the app. `trackClass` /
+  `indicatorClass` style the two parts; its children are the label.
+- **`ResizablePanelGroup` / `ResizablePanel`** are panels side by side (`axis="horizontal"`) or stacked, with a
+  handle the user drags. The group owns the drag, the limits and the cursor; the sizes are the app's (`size`, reported
+  with `onResize`).
+- **`DockArea`** is a dockable workspace: tab groups, splits and left / right / bottom docks. The layout is app data
+  (`layout` + `onLayoutChange`); the area owns tab drags, drops, resizing, zoom and the lock, and switches to drawers
+  and a bottom sheet under 600 points unless `compact` says otherwise.
 - **`TextView`** renders Markdown / HTML documents.
 
 ## Assets

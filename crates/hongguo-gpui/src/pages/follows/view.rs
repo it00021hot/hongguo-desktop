@@ -4,29 +4,41 @@
 //! 列表与提醒两个 body。拆出为独立文件：新增文件 800 行闸门的结构拆分，
 //! 纯移动零行为变更。
 
+use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Disableable;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::h_flex;
-use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
-use gpui_kit::{ElementId, SharedString, div};
+use gpui_kit::{ElementId, Role, SharedString, Toggled, div};
 use hongguo_api::interact::FollowUpdateItem;
 
 use super::Tab;
 use crate::pages::list_common::pick_dot;
+use crate::ui_button::button as Button;
 
 impl super::FollowsView {
     // —— 渲染 ——
 
     /// 顶部 tab 胶囊（Tauri 圆角胶囊形态：选中主色填充，未选 muted）。
+    ///
+    /// 载体是 gpui-kit 的 base Button 而不是 div：div 不带焦点句柄，键盘用户
+    /// 根本够不到这两个 tab；base Button 自带焦点句柄与 Enter/Space 激活。
     pub(super) fn render_tabs(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let unread = self.unread_count();
-        let pill = |active: bool| {
-            div()
+        let pill = |id: ElementId, label: SharedString, active: bool| {
+            BaseButton::new(id)
+                .role(Role::RadioButton)
+                .aria_toggled(if active {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .accessibility_label(label.clone())
                 .rounded_full()
                 .px_4()
                 .py_1p5()
@@ -42,44 +54,62 @@ impl super::FollowsView {
                         .text_color(theme.muted_foreground)
                         .hover(|s| s.text_color(theme.foreground))
                 })
+                // base Button 固定 justify_center，这里改回左对齐，和原来的 div 一致。
+                .justify_start()
+                // base Button 强制 line_height(relative(1.))，文字行盒会比默认矮一截、
+                // 胶囊整体变矮；钉回窗口默认行高（黄金比例）才与原来的 div 像素一致。
+                .line_height(gpui_kit::phi())
+                // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                .focus_visible(|s| {
+                    s.border_color(theme.ring)
+                        .shadow(crate::tokens::focus_ring(theme))
+                })
         };
         h_flex()
+            .id("follows-tabs")
+            .role(Role::RadioGroup)
             .w_full()
             .flex_wrap()
             .items_center()
             .gap_2()
             .child(
-                pill(self.tab == Tab::Follows)
-                    .id("follows-tab-list")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.tab = Tab::Follows;
-                        cx.notify();
-                    }))
-                    .child(crate::i18n::t("follow.tabFollows")),
+                pill(
+                    ElementId::from("follows-tab-list"),
+                    SharedString::from(crate::i18n::t("follow.tabFollows")),
+                    self.tab == Tab::Follows,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Follows;
+                    cx.notify();
+                }))
+                .child(crate::i18n::t("follow.tabFollows")),
             )
             .child(
-                pill(self.tab == Tab::Notices)
-                    .id("follows-tab-notices")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.tab = Tab::Notices;
-                        cx.notify();
-                    }))
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(crate::i18n::t("follow.tabNotices"))
-                            .children((unread > 0).then(|| {
-                                div()
-                                    .rounded_full()
-                                    .bg(theme.danger)
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .text_size(gpui_kit::px(10.0))
-                                    .text_color(theme.danger_foreground)
-                                    .child(SharedString::from(unread.to_string()))
-                            })),
-                    ),
+                pill(
+                    ElementId::from("follows-tab-notices"),
+                    SharedString::from(crate::i18n::t("follow.tabNotices")),
+                    self.tab == Tab::Notices,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Notices;
+                    cx.notify();
+                }))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .child(crate::i18n::t("follow.tabNotices"))
+                        .children((unread > 0).then(|| {
+                            div()
+                                .rounded_full()
+                                .bg(theme.danger)
+                                .px_1p5()
+                                .py_0p5()
+                                .text_size(gpui_kit::px(10.0))
+                                .text_color(theme.danger_foreground)
+                                .child(SharedString::from(unread.to_string()))
+                        })),
+                ),
             )
             .into_any_element()
     }
@@ -118,7 +148,7 @@ impl super::FollowsView {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let cover = crate::cover_img::card(&item.cover);
+        let cover = crate::cover_img::card(&item.cover, crate::cover_img::CoverShape::Inline);
         // 状态行（player p() 同款拼装）：追平/未看集数 + 连载中/已完结
         let remain = item.episode_cnt - item.latest_watched_vid_index;
         let progress = if item.latest_watched_vid_index > 0 {
@@ -146,7 +176,7 @@ impl super::FollowsView {
             .id(ElementId::from(format!("follow-card-{}", item.series_id)))
             .items_stretch()
             .gap_4()
-            .rounded(gpui_kit::px(12.0))
+            .rounded(crate::tokens::radius::CARD)
             .border_1()
             .border_color(if picked { theme.primary } else { theme.border })
             .bg(if picked {
@@ -161,22 +191,37 @@ impl super::FollowsView {
                 div().flex().items_center().child(pick_dot(
                     ElementId::from(format!("follow-pick-{}", item.series_id)),
                     picked,
+                    item.title.clone(),
                     cx.listener(move |this, _, _, cx| this.toggle_selected(&sid, cx)),
                     cx,
                 ))
             }))
             // 封面（点击：管理态选/取消，否则进详情）
             .child(
-                div()
-                    .id(ElementId::from(format!("follow-cover-{}", item.series_id)))
+                // 封面可点 → base::Button 承担 role/focus/Enter-Space（视觉仍由
+                // styled 链决定）。库强制 flex row + 居中：这里复原原 div 的
+                // 块级竖排与左上对齐，固定 92×123 的盒子不被 flex 改写。
+                BaseButton::new(ElementId::from(format!("follow-cover-{}", item.series_id)))
+                    .accessibility_label(item.title.clone())
                     .relative()
                     .w(gpui_kit::px(92.0))
                     .h(gpui_kit::px(123.0))
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .rounded(gpui_kit::px(8.0))
+                    .rounded(crate::tokens::radius::COVER)
                     .bg(theme.secondary)
                     .cursor_pointer()
+                    .flex_col()
+                    .items_stretch()
+                    .justify_start()
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                    // 截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(theme))
+                    })
                     .on_click({
                         let item = item.clone();
                         cx.listener(move |this, _, _, cx| {
@@ -197,23 +242,40 @@ impl super::FollowsView {
                     .justify_center()
                     .gap_1()
                     .child(
-                        div()
-                            .id(ElementId::from(format!("follow-title-{}", item.series_id)))
-                            .truncate()
-                            .text_sm()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .cursor_pointer()
-                            .on_click({
-                                let item = item.clone();
-                                cx.listener(move |this, _, _, cx| {
-                                    if this.managing {
-                                        this.toggle_selected(&item.series_id, cx);
-                                    } else {
-                                        this.open_detail(&item, cx);
-                                    }
-                                })
+                        // 标题可点 → base::Button（Tauri 侧 series-row-card 的
+                        // `article role="button"` 同语义）。flex_col + items_stretch
+                        // 复原原 div 的块级排版，标题仍按卡宽截断。
+                        BaseButton::new(ElementId::from(format!(
+                            "follow-title-{}",
+                            item.series_id
+                        )))
+                        .accessibility_label(item.title.clone())
+                        .truncate()
+                        .text_sm()
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                        .cursor_pointer()
+                        .flex_col()
+                        .items_stretch()
+                        .justify_start()
+                        // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                        // 截；钉回默认行高才与原 div 像素一致。
+                        .line_height(gpui_kit::phi())
+                        // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                        .focus_visible(|s| {
+                            s.border_color(theme.ring)
+                                .shadow(crate::tokens::focus_ring(theme))
+                        })
+                        .on_click({
+                            let item = item.clone();
+                            cx.listener(move |this, _, _, cx| {
+                                if this.managing {
+                                    this.toggle_selected(&item.series_id, cx);
+                                } else {
+                                    this.open_detail(&item, cx);
+                                }
                             })
-                            .child(SharedString::from(item.title.clone())),
+                        })
+                        .child(SharedString::from(item.title.clone())),
                     )
                     .children((!status.is_empty()).then(|| {
                         div()
@@ -263,6 +325,7 @@ impl super::FollowsView {
                             .border_color(theme.primary)
                             .text_color(theme.primary)
                             .disabled(cancelling)
+                            .when(cancelling, |b| b.cursor_default())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.cancel_follow(sid.clone(), cx);
                             }))
@@ -273,64 +336,36 @@ impl super::FollowsView {
 
     pub(super) fn render_follows_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         if self.loading && self.items.is_empty() {
-            return h_flex()
+            // 首拉加载：行骨架铺在列表容器里（与真实列表同 padding，
+            // 数据到位不跳版）。行高按 GPUI 真实行算，不照抄 Tauri 的 h-28：
+            // 封面 123 + 行内上下 p_3 24 + 行间距（列表 gap_2）8 = 155。
+            return div()
+                .id("follows-skeleton")
                 .flex_1()
-                .items_center()
-                .justify_center()
-                .child(Spinner::new().small())
+                .overflow_y_scrollbar()
+                .p_4()
+                .child(crate::pages::skeleton::rows(cx, 4, 147.0, 8.0))
                 .into_any_element();
         }
         if let Some(err) = self.failed.clone() {
-            let theme = cx.theme();
-            return v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::i18n::t("follow.loadFailed")),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(SharedString::from(err)),
-                )
-                .child(
-                    Button::new("follows-retry")
-                        .label(crate::i18n::t("common.retry"))
-                        .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                )
-                .into_any_element();
+            return crate::pages::states::error_state(
+                cx,
+                None,
+                crate::i18n::t("follow.loadFailed"),
+                Some(err),
+                Some((
+                    "follows-retry",
+                    crate::pages::states::retry_on(cx.entity(), |this, cx| this.load(cx)),
+                )),
+            );
         }
         if self.items.is_empty() {
-            let theme = cx.theme();
-            return v_flex()
-                .items_center()
-                // Tauri Empty：流内 py-16 顶部对齐
-                .py_16()
-                .gap_2()
-                .child(
-                    gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv)
-                        .with_size(gpui_kit::px(32.0))
-                        .text_color(theme.muted_foreground),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::i18n::t("follow.empty")),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::i18n::t("follow.emptyHint")),
-                )
-                .into_any_element();
+            return crate::pages::states::empty_state(
+                cx,
+                Some(gpui_kit::assets::IconName::Tv),
+                crate::i18n::t("follow.empty"),
+                Some(crate::i18n::t("follow.emptyHint")),
+            );
         }
         let managing = self.managing;
         let mut column = v_flex().w_full().gap_2();
@@ -350,6 +385,7 @@ impl super::FollowsView {
                         .outline()
                         .small()
                         .disabled(self.loading_more)
+                        .when(self.loading_more, |b| b.cursor_default())
                         .on_click(cx.listener(|this, _, _, cx| this.load_more(cx))),
                 ),
             );
@@ -367,7 +403,8 @@ impl super::FollowsView {
         div()
             .id("follows-list")
             .flex_1()
-            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .overflow_y_scrollbar()
             .p_4()
             .child(column)
             .into_any_element()
@@ -380,18 +417,30 @@ impl super::FollowsView {
             let unread = !notice.read && !self.read_all;
             let kind_online = notice.kind == hongguo_common::model::NOTICE_KIND_ONLINE;
             column = column.child(
-                div()
-                    .id(ElementId::from(format!("follow-notice-{}", notice.id)))
+                // 通知行可点 → base::Button 承担 role/focus/Enter-Space。原链已是
+                // flex row + items_center，与库注入的一致，只需把 justify 改回
+                // flex-start（库固定 justify_center）。
+                BaseButton::new(ElementId::from(format!("follow-notice-{}", notice.id)))
+                    .accessibility_label(notice.title.clone())
                     .flex()
                     .items_center()
                     .gap_3()
-                    .rounded(gpui_kit::px(12.0))
+                    .rounded(crate::tokens::radius::CARD)
                     .border_1()
                     .border_color(if unread { theme.primary } else { theme.border })
                     .bg(theme.group_box)
                     .p_3()
                     .cursor_pointer()
                     .hover(|s| s.border_color(theme.foreground.opacity(0.3)))
+                    .justify_start()
+                    // base Button 强制 line_height(relative(1.))，文字行盒比默认矮一
+                    // 截；钉回默认行高才与原 div 像素一致。
+                    .line_height(gpui_kit::phi())
+                    // 键盘焦点没有默认焦点环：按 Tauri/shadcn 同款补 border-ring + 3px 外圈。
+                    .focus_visible(|s| {
+                        s.border_color(theme.ring)
+                            .shadow(crate::tokens::focus_ring(theme))
+                    })
                     .on_click({
                         let notice = notice.clone();
                         cx.listener(move |this, _, _, cx| {
@@ -483,6 +532,7 @@ impl super::FollowsView {
                     .outline()
                     .small()
                     .disabled(self.checking)
+                    .when(self.checking, |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
             )
             .children((!notices_empty).then(|| {
@@ -492,6 +542,7 @@ impl super::FollowsView {
                     .ghost()
                     .small()
                     .disabled(self.clearing)
+                    .when(self.clearing, |b| b.cursor_default())
                     .on_click(cx.listener(|this, _, _, cx| this.clear_notices(cx)))
             }));
         let body = if notices_empty {
@@ -522,7 +573,7 @@ impl super::FollowsView {
             div()
                 .id("follows-notices-list")
                 .flex_1()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .p_4()
                 .child(column)
                 .into_any_element()

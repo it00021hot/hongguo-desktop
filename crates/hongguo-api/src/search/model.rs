@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 联想词的一个渲染片段（hgplayer 同款 TextPart：按命中位切开，
+/// 联想词的一个渲染片段（TextPart：按命中位切开，
 /// hl=true 的片段前端上高亮色）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +33,7 @@ pub struct SuggestItem {
     #[serde(default, rename = "abstract")]
     pub abstract_text: String,
     /// 命中书籍数据（官方 SuggestItem.bookData=ApiBookInfo 的
-    /// title/cover/score；纯词联想为空。官方模型对照新增、抓包样本未及，
+    /// title/cover/score；纯词联想为空。官方模型对照新增，
     /// 防御性读取）
     #[serde(default)]
     pub book_title: String,

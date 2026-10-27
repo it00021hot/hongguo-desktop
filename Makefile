@@ -1,7 +1,7 @@
 # 红果桌面版 —— 构建任务
 # 用法：make help / make dev / make test
 
-.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview nsh nsh-smoke
+.PHONY: help dev dev-sandbox build test test-rust lint fmt typecheck clean release assets nsis gpui gpui-app gpui-preview
 
 help:
 	@echo "dev        真实权限/真实数据开发（普通终端；受限沙箱内会失败）"
@@ -19,8 +19,6 @@ help:
 	@echo "gpui       启动 GPUI 壳"
 	@echo "gpui-app   把 GPUI 壳打成 macOS .app（通知/Dock 身份需要 bundle；产物 target/gpui-app/红果.app）"
 	@echo "gpui-preview 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview"
-	@echo "nsh        启动 NSH 壳（第三壳，与 GPUI 壳共存；docs/nsh-shell-plan.md）"
-	@echo "nsh-smoke  NSH 壳冒烟验收：跑 scripts/*.txt 的 NSH_SCRIPT，截图落 target/nsh-smoke/"
 
 # 两种 dev 模式并存，不自动切换：
 # - dev：真实权限/真实数据（%APPDATA%\hongguo-downloader 与真实 WebView2
@@ -57,27 +55,6 @@ gpui-app:
 # windows不支持
 gpui-preview:
 	cargo run -p hongguo-gpui --features screenshot -- --render-preview /tmp/hongguo-gpui-preview
-
-# NSH 壳（第三壳）：进程内直调 service，无 IPC；与 GPUI 壳共存至替值线。
-# 数据根与另外两壳平级独立（%APPDATA%\hongguo-nsh），互不锁库。
-nsh:
-	cargo run -p hongguo-nsh
-
-# NSH 壳冒烟验收：每个脚本是一条完整链路（启动 → 交互 → 截图 → quit）。
-# 逐个跑 scripts/*.txt，截图落 target/nsh-smoke/；任一截图缺失即失败。
-# 脚本里的截图路径相对仓库根（cargo 从根运行），所以先清空目标目录。
-nsh-smoke:
-	rm -rf target/nsh-smoke && mkdir -p target/nsh-smoke
-	@set -e; for f in crates/hongguo-nsh/scripts/*.txt; do \
-		echo "== $$f"; \
-		NSH_SCRIPT="$$(cat $$f)" cargo run -q -p hongguo-nsh; \
-	done
-	@for f in crates/hongguo-nsh/scripts/*.txt; do \
-		for shot in $$(grep -o 'target/nsh-smoke/[^;]*' $$f); do \
-			test -s $$shot || { echo "缺失截图: $$shot"; exit 1; }; \
-		done; \
-	done
-	@echo "NSH 冒烟通过：$$(ls target/nsh-smoke/*.png | wc -l) 张截图"
 
 build:
 	pnpm build
@@ -120,17 +97,15 @@ export AR_x86_64_apple_darwin := C:/PROGRA~1/LLVM/bin/llvm-ar.exe
 endif
 
 # macOS 交叉闸门的守卫范围：平台链正清单（两个 api 契约 + 媒体平台门面与
-# macOS 实现 + 播放引擎）。不用 --workspace 排除法——全图会拖进 aws-lc-sys
-#（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK 的 Darwin
-# libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可自由分发），
-# 全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条 macos-latest 腿就是
-# --workspace 全量）。hongguo-gpui 同理不在清单：其依赖 build script 要
-# bindgen Apple 框架头。hongguo-playback 在清单里：cpal 只留在
-# hongguo-media-platform-windows 的 [target.'cfg(windows)'.dependencies]，
-# Apple 目标不再拖出 coreaudio-sys。
+# macOS 实现 + 播放器 macOS 实现）。不用 --workspace 排除法——全图会拖进
+# aws-lc-sys（hongguo-api→reqwest→rustls），其 build script 要真 macOS SDK
+# 的 Darwin libc 头，Windows 宿主装什么工具链都生不出来（Apple 头文件不可
+# 自由分发），全图覆盖由 CI 的 macOS 原生 runner 承担（ci.yml 两条
+# macos-latest 腿就是 --workspace 全量）。hongguo-gpui 同理不在清单：其依赖
+# build script 要 bindgen Apple 框架头。
 MAC_CROSS_CRATES := -p hongguo-player-api -p hongguo-media-platform-api \
 	-p hongguo-media-platform -p hongguo-media-platform-macos \
-	-p hongguo-player-macos -p hongguo-playback
+	-p hongguo-player-macos
 
 lint:
 	pnpm lint

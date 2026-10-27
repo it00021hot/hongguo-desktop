@@ -5,7 +5,7 @@ import { enhancedCover, isRenderableCover } from '@/utils/cover';
 /**
  * 剧集列表行卡骨架（排行榜行 / 上新日历行共用）。
  *
- * 口径对齐 hgplayer：**卡片整体进详情**（onOpen），播放/预约/详情是行尾
+ * 交互口径：**卡片整体进详情**（onOpen），播放/预约/详情是行尾
  * 动作列的明确动作，不混在卡片点击里。封面统一走 enhancedCover 转码代理
  * （HEIC 签名 URL 直挂必裂）；悬浮/选中/键盘语义与渐进渲染提示都在这层。
  *
