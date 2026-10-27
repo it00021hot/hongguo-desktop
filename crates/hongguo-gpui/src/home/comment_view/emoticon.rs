@@ -1,6 +1,5 @@
 //! 表情面板（官方三档：系统表情 / 第三方 GIF / 自定义表情）。
 //!
-//! 2026-10-25 官方 App 7.3.9.32 实抓对齐：
 //! - **系统表情**：壳内内置（webp + `[名字]` 文本码），发评论仍是纯文本——
 //!   与 Tauri 壳同口径，不走服务端；
 //! - **第三方 GIF**（官方 GIF tab）：服务端 `search_type=2` 下发，官方面板
@@ -269,7 +268,7 @@ impl HomeView {
 
     /// 收藏一张表情到「我的表情」（官方同款：长按/右键 → 「添加到表情」）。
     ///
-    /// 官方实包（2026-10-25）：`collect_type=1`，`image_id` 填**源表情 id**，
+    /// 官方形态：`collect_type=1`，`image_id` 填**源表情 id**，
     /// `image_url` 填该表情的静态 URL（官方收藏动图表情时传的也是静态
     /// `web_uri`，`image_type` 仍是 2）；服务端把它并进「我的表情」列表
     /// （与上传的自定义表情同一列表，`search_type=4&keyword=profile`）。
@@ -287,7 +286,7 @@ impl HomeView {
 
     /// 从「我的表情」删除（官方同款：长按/右键 → 「删除表情」）。
     ///
-    /// 官方实包（2026-10-25）：同一端点、`collect_type=2`；服务端回
+    /// 官方形态：同一端点、`collect_type=2`；服务端回
     /// `image_data: null`，没有可回显的表情对象。
     pub(super) fn delete_emoticon(&mut self, item: &Emoticon, cx: &mut Context<Self>) {
         let request = EmoticonCollectRequest {
@@ -414,7 +413,7 @@ impl HomeView {
     ///
     /// 面板必须用 rfd 的 **Async**FileDialog：同步版在 GPUI 事件回调里阻塞
     /// 主线程，模态递归进事件循环时 GPUI 的上下文 RefCell 还在借用中，
-    /// 重入直接 panic（`RefCell already borrowed`，2026-10-26 实测）；异步版
+    /// 重入直接 panic（`RefCell already borrowed`）；异步版
     /// 由 rfd 派发到主线程呈现、回调经 waker 驱动，不嵌套 GPUI 的派发。
     pub(super) fn pick_local_image(&mut self, purpose: LocalImagePurpose, cx: &mut Context<Self>) {
         let rx = bridge::spawn(async move {

@@ -161,8 +161,7 @@ pub fn sign_request_with(
         ("x-xs-from-web".into(), "0".into()),
         ("x-ss-req-ticket".into(), ticket.to_string()),
         ("sdk-version".into(), "2".into()),
-        // 2026-10-26 官方 7.4.2.32 实抓对齐（旧值 50561 / 3.7.2.cn 为
-        // 7.3.9.32 时代抓包，匿名请求已被服务端按旧指纹拒）
+        // 旧值 50561 / 3.7.2.cn 会被服务端按旧指纹拒
         ("passport-sdk-version".into(), "5051452".into()),
         ("x-vc-bdturing-sdk-version".into(), "4.0.3.cn".into()),
         ("x-khronos".into(), khronos.to_string()),
@@ -185,13 +184,13 @@ pub fn sign_request_with(
             ),
         ),
     ];
-    // x-tt-dt / x-tt-request-tag 已随 2026-10-26 官方 7.4.2.32 对齐移除：
-    // 官方业务请求不带这两个头，匿名请求带上会被静默拒（空响应）
+    // 不带 x-tt-dt / x-tt-request-tag：官方业务请求不带这两个头，
+    // 匿名请求带上会被静默拒（空响应）
 
     if let Some(b) = &body {
         // 调用方显式给过 content-type（如 passport 系的 form 请求）就不
         // 再叠默认 JSON——两个同名头会让服务端按第一个解析，form body
-        // 被当 JSON 读，业务字段全丢（2026-10-05 发码 1003 事故根因）
+        // 被当 JSON 读，业务字段全丢
         let has_ct = extra_headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));

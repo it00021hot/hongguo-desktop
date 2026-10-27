@@ -17,14 +17,13 @@ use hongguo_common::{AppError, AppResult};
 ///
 /// API `verify_ways[].channel_mobile` 下发的是 9515211003（宁夏银川 95
 /// 扩展号段）——回复到它服务端收不到。真实通道是 10691859839103
-/// （运营商 106 网关，抓包全量数据中不存在该号码，来自客户端内置）。
-/// 2026-10-05 用户实测：按
-/// 95 号段回复无法通过 MFA，按 106 通道可以。
+/// （运营商 106 网关，接口下发数据中不存在该号码，来自客户端内置）：
+/// 按 95 号段回复无法通过 MFA，按 106 通道可以。
 const REAL_UPSMS_CHANNEL: &str = "10691859839103";
 const STUB_UPSMS_CHANNEL: &str = "9515211003";
 
 /// 上行短信通道号换成真实网关号（未知号码原样透传，服务端未来换号时
-/// 走抓包再对齐）。
+/// 再对齐）。
 pub(super) fn real_upsms_channel(api_channel: &str) -> &str {
     if api_channel == STUB_UPSMS_CHANNEL {
         REAL_UPSMS_CHANNEL
@@ -34,8 +33,8 @@ pub(super) fn real_upsms_channel(api_channel: &str) -> &str {
 }
 
 /// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key，
-/// 成功即下发会话 cookie（抓包：客户端轮询到 registered 后
-/// 自动发了这一次请求完成登录；cookie 带 registered 响应下发的
+/// 成功即下发会话 cookie（客户端轮询到 registered 后
+/// 自动发这一次请求完成登录；cookie 带 registered 响应下发的
 /// 新 passport_mfa_token）。
 pub async fn mfa_relogin(
     env: &ApiEnv,
@@ -73,7 +72,7 @@ fn with_mfa_cookie(env: &ApiEnv, token: &str) -> ApiEnv {
 
 /// MFA 上行短信验证轮询（单次调用，前端 3 秒间隔重发）。
 ///
-/// body 是 form-urlencoded 的 MFA 上下文（1.1.3 抓包字段齐全对齐），
+/// body 是 form-urlencoded 的 MFA 上下文，
 /// `biz_params` 为 JSON 串；成功判据是 `data.registered==true`（不是
 /// cookie——会话要靠 [`mfa_relogin`] 再发一次登录）。
 pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsState> {
@@ -89,12 +88,12 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
         ("new_authn_sdk_log_id", ctx.log_id.clone()),
         ("new_authn_sdk_verify_reason", ctx.verify_reason.clone()),
         ("new_authn_sdk_verify_scene", ctx.verify_scene.clone()),
-        // 客户端常量（1.1.3 抓包原样，服务端不校验版本）
+        // 客户端常量（官方原样，服务端不校验版本）
         ("new_authn_sdk_version", "1.1.31".to_string()),
         ("request_tag_from", "h5".to_string()),
         ("verify_reason", ctx.verify_reason.clone()),
         ("verify_scene", ctx.verify_scene.clone()),
-        // 抓包在场的两个空值字段（1.1.3 原样对齐，服务端可能参与
+        // 在场的两个空值字段（官方原样对齐，服务端可能参与
         // 形态校验——type=3731 的教训：空也要带）
         ("new_verify_flow", String::new()),
         ("verify_ticket", String::new()),
@@ -154,7 +153,7 @@ fn interpret_upsms_response(
                 Ok(UpsmsState::Waiting)
             }
         }
-        // 1045：仍在等待用户回复短信（1.1.3 抓包实证）
+        // 1045：仍在等待用户回复短信
         1045 => Ok(UpsmsState::Waiting),
         _ => Err(AppError::Auth(format!(
             "MFA 验证失败 {}: {}",
@@ -171,7 +170,7 @@ mod tests {
     use super::*;
 
     /// 通道号替换：只有已知的 95 号段替换，未知号码透传（服务端换号时
-    /// 靠抓包发现而不是被静默吞掉）。
+    /// 要显式发现而不是被静默吞掉）。
     #[test]
     fn replaces_stub_upsms_channel_only() {
         assert_eq!(real_upsms_channel("9515211003"), "10691859839103");

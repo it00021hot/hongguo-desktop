@@ -12,7 +12,7 @@ use hongguo_api::interact::send_danmaku;
 
 use crate::bridge;
 
-/// 弹幕滚窗状态（官方 7.3.9.32 协议：30 秒窗按播放位置推进，请求形态见
+/// 弹幕滚窗状态（官方滚窗协议：30 秒窗按播放位置推进，请求形态见
 /// `hongguo_api::danmaku::fetch_danmaku_window_page`）。
 #[derive(Default)]
 pub(super) struct DanmakuWindow {
@@ -99,7 +99,7 @@ impl super::HomeView {
     /// 不缓存，每次进集都重拉——Tauri useDanmaku staleTime 0 同款）。拉完
     /// 游标落到当前播放位置，由 tick 按「位置之前的不补放」自然对齐；
     /// 后续窗由 tick 在逼近窗口边界时推进（[`Self::advance_danmaku_window`]，
-    /// 官方 7.3.9.32 滚窗协议，2026-10-25 抓包对齐）。
+    /// 官方滚窗协议）。
     ///
     /// `series_id` 由调用方显式传入（进集时就是**这一集所属剧**的 id）。
     /// 以前从 `self.now` 现取有两个时序坑：调用点在 `view.now` 赋值之前，
@@ -120,7 +120,7 @@ impl super::HomeView {
         self.danmaku_flights.clear();
         self.danmaku_lane_free.clear();
         // 滚窗状态归零；时长/起点取播放器当前值（流注册后即可用；拿不到
-        // 传 0——2026-10-25 重放实验证明 start/duration 不影响响应内容，
+        // 传 0——start/duration 不影响响应内容，
         // 只影响协议语义的对齐度）
         let (pos_ms, duration_ms) = self
             .player

@@ -258,7 +258,7 @@ impl super::HomeView {
     /// 同会话续拉下一页（游标临近尾部时调用）。
     ///
     /// 翻页三件套必须带 `filter_ids`（已下发过的 series_id，服务端排除
-    /// 已见）——2026-10-25 抓官方 App 实流实锤：不带就是滚动重复的根因
+    /// 已见）——不带就是滚动重复的根因
     /// （服务端不做会话内去重，Tauri useFeed 累积 filterIds 同口径）。
     pub(super) fn load_more(&mut self, source: Source, cx: &mut Context<Self>) {
         let (session, offset, filter_ids) = {

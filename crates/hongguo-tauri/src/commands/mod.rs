@@ -28,10 +28,10 @@ pub mod window_cmd;
 
 #[cfg(test)]
 mod tests {
-    /// 2026-10-07 闪退回归：同步 command 在主线程的 IPC/协议回调里执行，
+    /// 同步 command 在主线程的 IPC/协议回调里执行，
     /// 那里没有 Tokio 线程上下文——裸 `tokio::spawn` / `Handle::current` /
     /// `block_on` 会当场 panic，而 panic 穿不过 objc 边界，直接 abort 全
-    /// 进程（隐身模式开启即闪退那次就是这么来的）。命令层起后台任务优先
+    /// 进程。命令层起后台任务优先
     /// 走 service 的共用任务运行时（`hongguo_service::runtime`，任意线程
     /// 可调）；需要 Tauri 设施（窗口/对话框等）时用 Tauri 的 async_runtime。
     /// async fn 里 `tokio::time::sleep` 这类**在运行时内**的调用不在禁止

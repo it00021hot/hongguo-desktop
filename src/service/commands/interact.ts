@@ -3,7 +3,7 @@ import type { Emoticon } from '../schema';
 
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 发弹幕，官方 App API）
 
-/** 互动操作（2026-10-05/06 抓包端点；全部要求登录态，匿名被服务端静默拒）。 */
+/** 互动操作（官方端点；全部要求登录态，匿名被服务端静默拒）。 */
 export const interact = {
   /** 发一条弹幕（offsetMs = 视频内位置毫秒），返回服务端 comment_id。 */
   sendDanmaku: (groupId: string, bookId: string, text: string, offsetMs: number) =>
@@ -14,8 +14,8 @@ export const interact = {
    *  aibot_mention_context=最近评论 id；userName 是被提及者昵称，Rust 侧
    *  重拼 `@昵称\uFFFC` 前缀与段文本）。⚠️ 键名必须显式对住 registry
    *  的 mentionUserId——call 不校验入参，键名写错会被 Tauri 静默丢弃、
-   *  提及降级成普通评论（2026-10-16 实锤事故，勿改回展开写法）。
-   *  image 在场 = 附图评论（2026-10-25 官方实包：body 顶层多 image_data；
+   *  提及降级成普通评论，勿改回展开写法）。
+   *  image 在场 = 附图评论（body 顶层多 image_data；
    *  emojiSceneType 表情类才有——第三方 2 / 自定义 4，本地图片不带）。 */
   sendComment: (
     groupId: string,
@@ -32,7 +32,7 @@ export const interact = {
       mentionUserName: mention?.userName,
       contextCommentIds: mention?.contextCommentIds,
       // 附图键只在有图时带（无图时不塞 null——纯文字评论的入参形态不变，
-      // 2026-10-16 提及键名事故的回归用例锁的就是这个形状）
+      // 回归用例锁的就是这个形状）
       ...(image ? { image: image.image, emojiSceneType: image.emojiSceneType ?? null } : {}),
     }),
   /** 评论 @ 提及候选（含官方 AI bot「小果」，isAiBot=true）。 */
@@ -58,10 +58,10 @@ export const interact = {
   videoDigg: (vid: string, seriesId: string, digg: boolean) =>
     call('video_digg', { vid, seriesId, digg }),
   /** 点赞 / 取消点赞一条评论（object_type=8；**回复的点赞同款形态**，
-   *  object_id 传 reply_id——2026-10-10 抓包实锤）。 */
+   *  object_id 传 reply_id）。 */
   commentDigg: (commentId: string, digg: boolean) => call('comment_digg', { commentId, digg }),
   /** 点赞 / 取消点赞一条剧评（object_type=2 / comment_type=2 / 空埋点，
-   *  与评论点赞三处不同，2026-10-10 抓包锁定）。 */
+   *  与评论点赞三处不同）。 */
   reviewDigg: (reviewId: string, digg: boolean) => call('review_digg', { reviewId, digg }),
   /** 回复一条剧评（reply/add 剧评形态 commit_source=13）；
    *  回复「回复」时传 replyToReplyId。返回服务端回显的完整回复对象。 */

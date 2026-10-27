@@ -1,4 +1,4 @@
-//! 预约接口（列表 + 预约/取消预约；2026-10-04 抓包实操锁定）。
+//! 预约接口（列表 + 预约/取消预约）。
 //!
 //! 列表与上新日历共用 `GET /reading/user/subscribe/list/v1/`（预约
 //! `tab_type=13` + `is_online`；路径常量与响应解析归 calendar 域）。
@@ -11,7 +11,7 @@ use super::danmaku::LQ_API_ORIGIN;
 use super::discover::check_code;
 use hongguo_common::{AppError, AppResult};
 
-/// 预约 / 取消预约端点（2026-10-04 抓包实操锁定）。///
+/// 预约 / 取消预约端点。
 /// `POST`，body 为 **gzip 压缩的 JSON**（带 `Content-Encoding: gzip`）：
 /// `{"item_id": <series_id>, "item_type": 1, "op_type": 1 预约 / 2 取消,
 /// "shark_param": {埋点上下文}, "wish_list_all_del": 0}`；query 只放
@@ -19,7 +19,7 @@ use hongguo_common::{AppError, AppResult};
 /// cookie**。响应 `code==0` 即成功。
 pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v";
 
-/// 批量删除预约端点（2026-10-11 逆向 API 注册表锁定）。
+/// 批量删除预约端点。
 pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
 
 /// 预约列表拉全（is_online=true 已上线 / false 待上线）。
@@ -32,11 +32,11 @@ pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
 /// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
 /// 匿名空表；与日历共用 [`super::calendar::parse_calendar_item`] 的双形态解析。
 ///
-/// **session_id 协议（2026-10-09 实车归因）**：列表接口绝不能自造
+/// **session_id 协议**：列表接口绝不能自造
 /// 进程级恒定 session_id——服务端按它维护浏览会话快照，操作
 /// （预约/取消）之后用同一个 session_id 再读，拿到的永远是操作前
-/// 的缓存列表，表现就是「取消预约无效」「新预约不出现」（探针实锤：
-/// 同一时刻去掉 session_id 立即读到新状态；官方客户端的列表请求从不
+/// 的缓存列表，表现就是「取消预约无效」「新预约不出现」（同一时刻
+/// 去掉 session_id 立即读到新状态；官方客户端的列表请求从不
 /// 带该参数，翻页时才续传响应下发的值）。所以首页不带，翻页续传
 /// 首页响应下发的 session_id。
 ///
@@ -150,7 +150,7 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
         "item_id": item_id,
         "item_type": 1,
         "op_type": if reserve { 1 } else { 2 },
-        // 埋点上下文（1.1.3 抓包原样字节对齐）
+        // 埋点上下文（官方原样字节对齐）
         "shark_param": {
             "enter_from": "BulletActivity",
             "page_list": "MainFragmentActivity,BulletActivity",
@@ -166,7 +166,7 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
     check_code(&value)
 }
 
-/// 批量删除预约（2026-10-11 逆向 subscribe_delete 逐字段锁定）：
+/// 批量删除预约：
 /// `POST /reading/user/subscribe/delete/v`，body
 /// `{item_id:[数字], all_select:false, not_del_item_id:[], is_online, tab_type:13}`。
 /// item_id 即 subscribe 列表条目的 series_id（与 reserve_series 同源）。
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(offline.online_total, 0);
     }
 
-    /// 预约操作的 body：gzip 可解回，JSON 字段与抓包形态一致。
+    /// 预约操作的 body：gzip 可解回，JSON 字段形态一致。
     #[test]
     fn reserve_payload_roundtrips_through_gzip() {
         let raw = br#"{"item_id":7692797468404091929,"item_type":1,"op_type":1}"#;
@@ -287,7 +287,7 @@ pub(crate) mod probe {
 
     /// 预约列表直连。匿名返回空表；设 HG_RESERVE_COOKIES（登录
     /// cookie）则验证两个 tab 的解析（已上线=嵌套、待上线=扁平，
-    /// 2026-10-04 实测同接口按 tab 分发两种 schema）。
+    /// 同接口按 tab 分发两种 schema）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_reservations() {
@@ -328,9 +328,8 @@ pub(crate) mod probe {
 
     /// 预约 / 取消预约往返直连（需要登录态）。
     ///
-    /// HG_RESERVE_COOKIES 提供登录 cookie（从抓包 cookie 头提取）；
-    /// HG_RESERVE_SERIES 指定目标剧（缺省用 2026-10-04 抓包会话里
-    /// 预约的那部）。
+    /// HG_RESERVE_COOKIES 提供登录 cookie；
+    /// HG_RESERVE_SERIES 指定目标剧。
     /// 流程：取消 → 列表应为空 → 重新预约 → 列表应含该剧。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

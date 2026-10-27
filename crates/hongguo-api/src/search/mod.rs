@@ -1,4 +1,4 @@
-//! 找剧搜索接口（2026-10-03 抓包锁定）。
+//! 找剧搜索接口。
 //!
 //! `GET /reading/bookapi/search/tab/v`：
 //! - `query` + `tab_type=11`（综合 tab）+ `count=100` + `offset`；
@@ -19,7 +19,7 @@ use hongguo_common::{AppError, AppResult};
 
 pub const SEARCH_TAB_PATH: &str = "/reading/bookapi/search/tab/v";
 
-/// 搜索联想（2026-10-07 抓包锁定）。
+/// 搜索联想。
 pub const SUGGEST_PATH: &str = "/reading/bookapi/search/suggest/v";
 
 /// 翻页参数检查：offset>0 必须带 search_id（首页发放的会话 id）。
@@ -67,7 +67,7 @@ pub async fn search_series(
 
 /// 搜索联想：输入 2~3 个字即返回相关剧集（找剧搜索框同款行为）。
 ///
-/// 业务参数全部在 query（逐值对齐 2026-10-07 抓包）：`q` 是查询词——
+/// 业务参数全部在 query：`q` 是查询词——
 /// 注意不是 search/tab 的 `query`。响应 `data.query_result_v2[]`。
 pub async fn search_suggest(q: &str, env: &ApiEnv) -> AppResult<Vec<SuggestItem>> {
     let query: Vec<(String, String)> = vec![
@@ -143,8 +143,8 @@ fn parse_suggest(value: &Value) -> AppResult<Vec<SuggestItem>> {
     Ok(items)
 }
 
-/// high_light_position（`[[start,len]]`，按 unicode 字符计，抓包实证
-/// 「云渺：不死帝师」的「不死」= [3,2]）→ 把 word 切成 hl 片段。
+/// high_light_position（`[[start,len]]`，按 unicode 字符计，
+/// 如「云渺：不死帝师」的「不死」= [3,2]）→ 把 word 切成 hl 片段。
 /// 位置越界/乱序按钳制+排序容错，切不出来的退空（前端整体普通渲染）。
 fn highlight_parts(word: &str, positions: Option<&Value>) -> Vec<SuggestPart> {
     let chars: Vec<char> = word.chars().collect();
@@ -255,10 +255,10 @@ fn parse_search(value: &Value) -> AppResult<SearchPage> {
     })
 }
 
-/// 副标题列表双键名双形态归一（2026-10-11 dev 实测修正）：
+/// 副标题列表双键名双形态归一：
 /// `series_sub_title_list`（JSON 字符串内嵌数组形态）与
-/// 本项目抓包台账里推荐流/榜单条目的 `sub_title_list[]`（直数组形态，
-/// 见台账「条目标记字段」）——两个键都认，谁在场用谁。热度行取含
+/// 推荐流/榜单条目的 `sub_title_list[]`（直数组形态）——
+/// 两个键都认，谁在场用谁。热度行取含
 /// 「热度」的那条（搜索结果卡的热度行）。
 fn parse_sub_titles(raw: &Value) -> (Vec<String>, String) {
     let field = raw
@@ -327,7 +327,7 @@ mod tests {
         assert!(validate_pagination(6, "####11@x").is_ok());
     }
 
-    /// series_sub_title_list 双形态（2026-10-11 逆向锁定）：
+    /// series_sub_title_list 双形态：
     /// JSON 字符串内嵌数组或直接数组，都要归一；热度行取含「热度」的那条。
     #[test]
     fn sub_title_list_dual_shape_and_heat() {
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn highlight_parts_tolerates_bad_positions() {
-        // 非前缀命中 + 乱序/越界钳制（「云渺：不死帝师」抓包 = [3,2]）
+        // 非前缀命中 + 乱序/越界钳制（「云渺：不死帝师」官方样本 = [3,2]）
         let pos: Value = serde_json::json!([[3, 2], [99, 5], [1, 0], [-1, 2], [2, 1]]);
         let parts = highlight_parts("云渺：不死帝师", Some(&pos));
         assert_eq!(
@@ -436,7 +436,7 @@ mod probe {
 
     /// 搜索直连：真实关键词 + 翻页衔接。
     ///
-    /// 2026-10-04：服务端按 install_id 风控（旧 id 0 字节拒），生产环境
+    /// 服务端按 install_id 风控（旧 id 0 字节拒），生产环境
     /// 静态档案 + 匿名 Cookie 即可过——本用例与生产 api_env 同构。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
@@ -501,7 +501,7 @@ mod probe {
         }
     }
 
-    /// 联想直连：真实关键词（2026-10-07 抓包形态对齐后验证）。
+    /// 联想直连：真实关键词。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_search_suggest() {

@@ -1,6 +1,6 @@
 //! 表情域模型（官方表情 / 第三方 GIF / 自定义表情通用形态）。
 //!
-//! 2026-10-25 官方 App 7.3.9.32 实抓锁定：三类表情共用同一套字段，
+//! 三类表情共用同一套字段，
 //! 差别只在 `image_type` 与可选字段是否在场——
 //! - 第三方表情（GIF tab，`search_type=2`）：`image_type=2`，带 `id` /
 //!   `dynamic_url` / `thumb_nails`，`format` 与 `image_name` 恒空串；
@@ -81,7 +81,7 @@ pub struct PictureUpload {
 
 /// 评论附图载荷：`image_data` 条目 + `business_param.emoji_scene_type`。
 ///
-/// 场景值（2026-10-25 实抓）：2 = 第三方表情/GIF，4 = 自定义表情；
+/// 场景值：2 = 第三方表情/GIF，4 = 自定义表情；
 /// 本地图片评论**不带**该字段（`emoji_scene_type` 缺席）。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CommentAttachment {
@@ -93,7 +93,7 @@ pub struct CommentAttachment {
 
 /// 收藏 / 删除表情的请求体（`/reading/ugc/comment/emoticon/collect/v`）。
 ///
-/// 官方 2026-10-25 实包：扁平 JSON，6 个字段恒在场，body gzip。
+/// 官方形态：扁平 JSON，6 个字段恒在场，body gzip。
 ///
 /// - `collect_type`：1 = 添加（收藏为我的表情）、2 = 删除；
 /// - `image_id`：**源表情 id**——收藏官方/第三方表情时非空（收藏他人发的
@@ -101,7 +101,7 @@ pub struct CommentAttachment {
 /// - `image_url`：照官方 `ImageData` 规则取 `dynamic_url ?: web_url ?: web_uri`
 ///   （官方 `oi2.s.o`，`expand_web_url` 不参与）。
 ///
-/// 字段顺序按官方实包的字母序声明（本仓 `serde_json` 的 Map 同样是字母序，
+/// 字段顺序按官方的字母序声明（本仓 `serde_json` 的 Map 同样是字母序，
 /// 保持逐字节形态一致）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct EmoticonCollectRequest {

@@ -36,8 +36,7 @@ import type { WatchHistoryItem } from '@/service/schema';
 
 /**
  * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，
- * book_type=2 短剧过滤；各端看的记录都在，2026-10-05 实证
- * 469 条带名字带进度）。
+ * book_type=2 短剧过滤；各端看的记录都在）。
  *
  * 点卡片跳播放器续播；封面是 HEIC 签名 URL，经 enhancedCover 转码代理。
  * 顶部「全部/未看完/已看完」筛选与标题搜索对齐官方客户端：
@@ -123,7 +122,7 @@ export function HistoryPage() {
   const open = (item: WatchHistoryItem) => {
     resolve(item.seriesId, {
       onSuccess: () => {
-        // 云端 vid_index 1 起（2026-10-09 实证：云端行的 vid 与该集 vid
+        // 云端 vid_index 1 起（云端行的 vid 与该集 vid
         // 一一对应，双魂共生 vid_index=18 即第 18/18 集；历史数据可能混有
         // 旧客户端写入的 0 基——钳到第 1 集）。播放器
         // store 同为 1 起（0=无目标）

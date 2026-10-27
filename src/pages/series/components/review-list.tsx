@@ -1,7 +1,7 @@
 /**
  * 剧评列表（详情页「剧评」tab 内容）。
  *
- * 三块结构（2026-10-10 抓包对齐）：
+ * 三块结构：
  * - 剧均评分块（credibility_score + score_cnt；空 = 暂无评分）
  * - 发评框（评分星级 + 表情 + 文本，见 ReviewComposer）
  * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）、评分后缀文案、
@@ -67,7 +67,7 @@ function ScoreStars({ score }: { score: string }) {
 /** 剧评皮肤的回复线程：解包剧评回复查询，交给共享 ReplyThread
  *  （皮肤与 i18n 键位差异收敛在 `components/common/reply-thread`；player
  *  侧评论同源）。回复点赞**不是**剧评形态——与评论点赞同端点，object_id
- *  传 reply_id，2026-10-10 CDP 实测即时生效。 */
+ *  传 reply_id，即时生效。 */
 function ReviewReplySection({
   seriesId,
   commentId,
@@ -116,7 +116,7 @@ export function ReviewList({ seriesId }: { seriesId: string }) {
   const { data, hasNextPage, isFetchingNextPage, fetchNextPage } = useSeriesComments(seriesId);
   const pages = data?.pages;
   // 按 commentId 去重：服务端相邻分页重叠条目，不去重 React 报 duplicate
-  // key 且同一条重复渲染（2026-10-10 实测 228 条里 38 组重复）
+  // key 且同一条重复渲染
   const comments = useMemo(
     () => dedupBy(pages?.flatMap((p) => p.items) ?? [], (c) => c.commentId),
     [pages],

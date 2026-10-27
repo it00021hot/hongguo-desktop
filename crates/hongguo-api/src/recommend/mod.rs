@@ -1,5 +1,4 @@
-//! 首页推荐流接口（书城换一换；2026-10-08 抓包锁定，2026-10-25 冷启动
-//! 全参数复对齐，详见 docs/hongguo-api-endpoints.md）。
+//! 首页推荐流接口（书城换一换；详见 docs/hongguo-api-endpoints.md）。
 
 mod model;
 
@@ -19,7 +18,7 @@ pub use model::{FeedTabMeta, RecommendTabConfig};
 /// （关注是登录后的追更流，不在这条数据面里）。生产链路里 tab 由前端
 /// 字面量直传（与旧 landpage genre 直传同一模式）。
 ///
-/// 抓包口径（2026-10-08 实操锁定，两段式）：
+/// 口径（两段式）：
 /// - **首页**：`GET bookmall/tab/v?client_req_type=4&tab_type=<T>`——目标
 ///   tab_item 自带 `bookstore_id` + `cell_id`（⚠️ **每 tab 不同**，用推荐位
 ///   的 id 打 tab39 服务端回落混合池、清一色 1004 漫剧——「真人 tab 全是
@@ -61,7 +60,7 @@ pub async fn fetch_recommend_feed(
     Ok(page)
 }
 
-/// 抓包已知的每 tab 配置（2026-10-08 抓包锁定——服务端按 tab 下发的常量）。`fetch_tab_first_page` 失败时的兜底，
+/// 已知的每 tab 配置（服务端按 tab 下发的常量）。`fetch_tab_first_page` 失败时的兜底，
 /// 供翻页继续可用（首页已成功过的会话不依赖它）。
 fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
     let (cell_id, bookstore_id) = match tab {
@@ -83,8 +82,8 @@ const RECOMMEND_TAB_TYPE: &str = "16";
 /// 顶栏 tab 列表（服务端下发）。
 ///
 /// 一次 cr=4 请求（推荐 tab）的 `tab_item[]` 就是完整顶栏：tab_type/title/
-/// 顺序即官方顶栏顺序，线格式见 [`FeedTabMeta`]（2026-10-15 官方抓包实锤；
-/// 非活跃 tab 的 bookstore_id 为 null，切换到该 tab 时它自己的 cr=4 才带）。
+/// 顺序即官方顶栏顺序，线格式见 [`FeedTabMeta`]；
+/// 非活跃 tab 的 bookstore_id 为 null，切换到该 tab 时它自己的 cr=4 才带。
 /// 进程缓存按 [`TAB_CONFIG_TTL`] 节奏复验，重取失败沿用旧列表
 /// （stale-while-error）——运营调整晚一刻到达，好过顶栏整体报错。
 ///
@@ -179,7 +178,7 @@ fn cached_feed_tabs() -> Option<CachedFeedTabs> {
         .clone()
 }
 
-/// 配置进程内缓存（首页 cr=4 与翻页共享；失败回落抓包已知值）。
+/// 配置进程内缓存（首页 cr=4 与翻页共享；失败回落已知值）。
 ///
 /// 条目带时间戳做 TTL 过期：cell_id/bookstore_id 原本
 /// 按服务端常量假设永不重取，运营调整后只能靠重启恢复。现在超过
@@ -220,7 +219,7 @@ fn cached_tab_config(tab: &str) -> Option<CachedTabConfig> {
 
 /// 解析 tab 的 cell 配置：进程缓存命中且未过期直接用；过期先重取一次，
 /// 重取失败沿用旧值（stale-while-error）。无缓存时现场取（bookmall/tab
-/// cr=4），再不行回落抓包已知值（同样缓存住，免得每页都重试配置请求）。
+/// cr=4），再不行回落已知值（同样缓存住，免得每页都重试配置请求）。
 async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabConfig> {
     if let Some(cached) = cached_tab_config(tab) {
         if cached.at.elapsed() < TAB_CONFIG_TTL {
@@ -309,7 +308,7 @@ fn flex_str(v: Option<&Value>) -> Option<String> {
 
 /// `GET bookmall/tab/v?client_req_type=4&tab_type=<T>` →（配置, 首页）。
 ///
-/// 切 tab 请求（2026-10-08 抓包锁定）。注意 tab_item 里的
+/// 切 tab 请求。注意 tab_item 里的
 /// id 字段是 JSON 数字，容忍字符串形态。
 async fn fetch_tab_first_page(
     tab: &str,
@@ -326,7 +325,7 @@ async fn fetch_tab_first_page(
         .ok_or_else(|| AppError::Media(format!("推荐 tab 响应无 tab={tab}")))?;
     // cell_data[] 里有多个 cell：推荐流是嵌套 cell_data[].video_data[] 非空的
     // 那个（cell_name=「猜你喜欢」，show_type=407）；[0] 可能是空的金刚位
-    // 运营卡（show_type=583，tab36 实测）——不能按位置取，按内容取。
+    // 运营卡（show_type=583）——不能按位置取，按内容取。
     // bookstore_id 在 tab_item 顶层。
     let mut cell_id = String::new();
     let mut items = Vec::new();
@@ -393,17 +392,17 @@ async fn fetch_tab_first_page(
 
 // ---------------------------------------------------------------- 会话与曝光上下文
 
-/// 官方 cell/change 的图片缩略规格（base64(JSON)，2026-10-25 冷启动抓包
-/// 逐字节对齐：360 中图 / 屏宽大图 / 99 小图——宽度跟随设备屏宽，本仓
+/// 官方 cell/change 的图片缩略规格（base64(JSON)：
+/// 360 中图 / 屏宽大图 / 99 小图——宽度跟随设备屏宽，本仓
 /// 档案 1078 与 tab/v 同源）。
 const FEED_IMAGE_SHRINK: &str = "W3siaW1hZ2VfdHlwZSI6MiwiaW1hZ2Vfd2lkdGgiOjM2MCwic2hyaW5rX3R5cGUiOjJ9LHsiaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==";
 
 /// 官方 cell/change 的推荐补充上下文：base64 即
-/// `{"recent_dislike_gid":[],"session_app_stay_time":0}`（2026-10-25 抓包）。
+/// `{"recent_dislike_gid":[],"session_app_stay_time":0}`。
 const RECOMMEND_EXTRA: &str =
     "eyJyZWNlbnRfZGlzbGlrZV9naWQiOltdLCJzZXNzaW9uX2FwcF9zdGF5X3RpbWUiOjB9";
 
-/// NPS 插入位配额（官方恒值，2026-10-25 抓包）。
+/// NPS 插入位配额（官方恒值）。
 const NPS_INSERT_RANK_JSON: &str = r#"{"1":3,"3":3,"2":3,"4":3}"#;
 
 /// 进程生命周期的会话 UUID。官方每次启动发三枚 uuid 作 session_uuid /
@@ -507,11 +506,10 @@ fn rec_impression_of(raw: &Value) -> Option<RecImpression> {
 }
 
 /// 翻页：`GET cell/change/v`（session + filter_ids 排除已见 +
-/// `offset=上一页响应的 next_offset`（0→6→12 递进，抓包实锤）；
+/// `offset=上一页响应的 next_offset`（0→6→12 递进）；
 /// 双 id 用目标 tab 自己的）。
 ///
-/// 参数表按官方 App 7.3.9.32 实流逐字段对齐（2026-10-25 冷启动抓包：
-/// 业务零值族 + 会话状态族 + 个性化上下文三部分都在参）。
+/// 参数表按官方 App 逐字段对齐：业务零值族 + 会话状态族 + 个性化上下文三部分都在参。
 async fn recommend_cell_change(
     tab: &str,
     cfg: &RecommendTabConfig,
@@ -721,8 +719,8 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
             .unwrap_or_default()
             .to_string(),
         horiz_cover: String::new(),
-        // 推荐位 vid 两个位置都见过：顶层 vid（2026-10-08 样本）与
-        // video_detail.video_list[0].vid（2026-10-14 实流，起点集）——
+        // 推荐位 vid 两个位置都见过：顶层 vid 与
+        // video_detail.video_list[0].vid（起点集）——
         // 批量取流预取的 vid 源就是它，两级回落兜住
         vid: raw
             .get("vid")
@@ -771,7 +769,7 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
         season_tag,
         // 热度行（火焰图标 + 文案）：条目级 rec_tags 里
         // data_type=1 的 content——「共217万人在追」「逆袭榜 No.3」「真人剧
-        // 新番榜 No.4」等，多段全部拼接（2026-10-08 抓包实锤）
+        // 新番榜 No.4」等，多段全部拼接
         heat_text: raw
             .get("rec_tags")
             .and_then(Value::as_array)
@@ -801,7 +799,7 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
 mod tests {
     use super::*;
 
-    /// 抓包样本形状（2026-10-08 probe_recommend_tab_feed 直连实录）：
+    /// 样本形状：
     /// 条目身份在 video_detail，series_id 顶层是数字、季徽的 data_type 缺省。
     #[test]
     fn parses_recommend_feed_entries() {
@@ -870,7 +868,7 @@ mod tests {
         assert_eq!(page.session_id, "20261008181149086C4BCA8151179AD830");
     }
 
-    /// 顶栏列表解析（2026-10-15 官方实抓样本形状）：顺序即顶栏顺序
+    /// 顶栏列表解析（官方样本形状）：顺序即顶栏顺序
     /// 关注/漫剧/真人剧/推荐，仅活跃 tab（16）带 bookstore_id，tab_type
     /// 数字/字符串双形态，缺 tab_type 的残缺条目跳过。
     #[test]
@@ -903,7 +901,7 @@ pub(crate) mod probe {
     use super::*;
     use crate::rank::probe::anon_env;
 
-    /// 顶栏列表直连实测（2026-10-15 官方抓包：游客拿到 45/36/39/16 四个
+    /// 顶栏列表直连探测（游客拿到 45/36/39/16 四个
     /// tab，顺序即官方顶栏，仅 16 带 bookstore_id）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
@@ -919,8 +917,7 @@ pub(crate) mod probe {
         assert!(tabs.iter().any(|t| t.tab_type == RECOMMEND_TAB_TYPE));
     }
 
-    /// 首页推荐流两段式全链路（2026-10-08 抓官方切「真人剧」tab +
-    /// 滚动翻页实锤）：首页 `bookmall/tab cr=4`（每 tab 自带 bookstore_id/
+    /// 首页推荐流两段式全链路：首页 `bookmall/tab cr=4`（每 tab 自带 bookstore_id/
     /// cell_id + 会话 + 嵌套首批），翻页 `cell/change`（双 id + session +
     /// filter_ids 排除已见 + offset 恒 0）。验证各 tab 类型过滤（39 全
     /// ct=1 真人剧）与翻页不重复。
@@ -965,7 +962,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// cr=4 响应的 cell 结构全量 dump（tab36 实测含多个 cell、不同
+    /// cr=4 响应的 cell 结构全量 dump（tab36 含多个 cell、不同
     /// cell_id——翻页用的是与 bookstore_id 同前缀的那个）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]

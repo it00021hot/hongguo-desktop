@@ -3,7 +3,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { PendingFallback } from '@/components/common/route-fallbacks';
 
 /**
- * 创作者主页（主演/出品方点进来的个人主页，2026-10-15 官方实包对齐）。
+ * 创作者主页（主演/出品方点进来的个人主页）。
  * userId 走 search 参数（详情页创作者条目自带的 user_id）。
  */
 const CreatorHomePage = lazy(() =>

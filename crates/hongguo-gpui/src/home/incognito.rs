@@ -159,8 +159,8 @@ impl super::HomeView {
             return (false, None);
         }
         // 最小化是用户的显式动作，隐身不得插手：最小化后光标多半还留在原
-        // 窗口矩形里，不跳过会每拍都判成「回来了」把窗口 show 回来
-        //（Tauri 2026-10-07 实测「隐身开着就最小化不了」）
+        // 窗口矩形里，不跳过会每拍都判成「回来了」把窗口 show 回来，
+        // 表现为「隐身开着就最小化不了」
         if read.minimized {
             return (true, None);
         }

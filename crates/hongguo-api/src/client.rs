@@ -20,9 +20,8 @@ use hongguo_common::{AppError, AppResult};
 const MAX_RETRIES: u32 = 3;
 
 /// reading 系（lq 域）统一 origin。轻签名头族（榜单/搜索/弹幕/剧评）与
-/// 取流 `multi_video_model/player/v1` 都在这台机上——2026-10-08 抓包：
-/// 真实 App 的取流请求打的是 lq 域，sinfonlineb 域的 player/preload 均
-/// 回 200+0 字节（2026-10-14 探针实测）。
+/// 取流 `multi_video_model/player/v1` 都在这台机上——真实 App 的取流请求
+/// 打的是 lq 域，sinfonlineb 域的 player/preload 均回 200+0 字节。
 pub const LQ_API_ORIGIN: &str = "https://api5-normal-lq.fqnovel.com";
 
 /// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
@@ -158,7 +157,7 @@ pub async fn api_call_full_with_headers(
 }
 
 /// 单次发送、空响应不重试不报错（回空 body）。批量取流预取专用：
-/// 2026-10-14 起批量形态恒回 200+0（服务端不再发货），它是「发了即回」
+/// 批量形态可能直接回 200+0（服务端不发货），它是「发了即回」
 /// 的常态而非故障——重试只会让每次切剧白等 6 秒，一次即回。
 pub async fn api_call_once_allow_empty(
     origin: &str,
@@ -194,7 +193,7 @@ pub struct ApiCallResponse {
 
 /// reading 系（lq 域）统一调用入口：轻签名头 + POST body 一律 gzip。
 ///
-/// 1.1.3 全量抓包对齐：这族接口的 POST（弹幕/预约/筛选）全部
+/// 这族接口的 POST（弹幕/预约/筛选）全部
 /// `Content-Encoding: gzip`，GET/POST 都带 `x-ss-dp + lc +
 /// x-reading-request`。走 sinfonlineb 域的播放/推荐流是项目原有
 /// 验证形态（未压缩 + 全签名），不走这里。
@@ -219,7 +218,7 @@ pub async fn api_call_reading(
 /// reading 系接口的**原样 body** 变体：body 不 gzip，`Content-Type` 由调用方
 /// 指定（图片上传的 `multipart/form-data; boundary=…` 用）。
 ///
-/// 签名侧照常按原始 body 算摘要（`x-ss-stub`），与官方 App 实包一致——
+/// 签名侧照常按原始 body 算摘要（`x-ss-stub`），与官方 App 一致——
 /// 官方上传的 multipart body 也是原样参与签名。
 pub async fn api_call_reading_raw(
     origin: &str,
@@ -246,13 +245,13 @@ pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
 
 /// reading 系接口的轻签名头（search / commentapi / 预约共用）。
 ///
-/// 抓包实证：这族接口不带 x-gorgon/x-argus/x-ladon，只要
+/// 这族接口不带 x-gorgon/x-argus/x-ladon，只要
 /// `x-ss-dp + x-reading-request + lc`（多带签名头也能过）。
 /// `x-reading-request` 形如 `{ticket_ms}-{random u32}`。
 pub fn reading_headers() -> Vec<(String, String)> {
-    /// x-ss-dp：红果 App 的 aid（与 docs 抓包对齐）。
+    /// x-ss-dp：红果 App 的 aid。
     const READING_DP: &str = "8662";
-    /// lc：reading 系固定头（抓包值 101，语义上游未公开）。
+    /// lc：reading 系固定头（值 101，语义上游未公开）。
     const LC: &str = "101";
     let ticket_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -600,7 +599,7 @@ async fn send_once(
         extra.push(("Cookie".into(), c.clone()));
     }
     // x-tt-token：登录响应头下发的凭据，短形式（前 56 位）随请求带——
-    // 业务请求一律在场（2026-10-05 抓包对齐；也是服务端
+    // 业务请求一律在场（官方对齐；也是服务端
     // 滑动续期时新值的下发载体）
     if let Some(full) = &env.x_tt_token
         && !full.is_empty()

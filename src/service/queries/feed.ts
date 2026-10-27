@@ -18,7 +18,7 @@ export function feedItems(pages: FeedPage[]): FeedItem[] {
 /**
  * 首页推荐流（书城换一换，无限滚动）。
  *
- * 翻页三件套回传（2026-10-08 抓包实锤）：首页会话
+ * 翻页三件套回传：首页会话
  * `sessionId`（bookmall/tab cr=4 下发）+ `offset`（上一页 nextOffset，
  * 0→6→12 递进）+ `filterIds`（已下发过的 series_id，服务端排除已见）。
  *

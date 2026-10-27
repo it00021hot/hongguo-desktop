@@ -36,7 +36,7 @@ pub struct FeedItem {
     /// 热度文本（sub_title_list data_type=27，「1705万」形态，配火焰图标展示）
     #[serde(default)]
     pub heat_text: String,
-    /// 官方运营角标（tag_info.text：「新剧/爆剧/红果首发」等；2026-10-07 抓包实证）
+    /// 官方运营角标（tag_info.text：「新剧/爆剧/红果首发」等）
     #[serde(default)]
     pub badge: String,
     /// 内容类型：1=真人剧，1004=漫剧（推荐流「按类型刷」的过滤键）
@@ -95,7 +95,7 @@ pub struct BrowseFilters {
     pub online_time: String,
     /// 长度：`duration_0_60`/`duration_60_120`/`duration_120_plus`
     pub duration: String,
-    /// 完结状态（2026-10-11 逆向 SelectorPanel 行为：客户端
+    /// 完结状态（官方 SelectorPanel 行为：客户端
     /// 合成筛选项，选中值走请求体顶层 `creation_status` 参数）：
     /// 空=全部 / `creation_status_0`=已完结 / `creation_status_1`=连载中
     pub creation_status: String,
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(si["genre"], serde_json::json!(["comic_series"]));
         assert_eq!(si["online_time"], serde_json::json!(["days_7"]));
         assert_eq!(si["sort"], serde_json::json!([]));
-        // duration 维度也要在场（面板有「长度」行，2026-10-07 抓包）
+        // duration 维度也要在场（面板有「长度」行）
         assert!(si.get("duration").is_some());
         assert_eq!(si["duration"], serde_json::json!([]));
     }

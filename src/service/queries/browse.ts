@@ -8,7 +8,7 @@ import { keys, useInfiniteStream } from './common';
 // ---------------------------------------------------------------- 浏览与搜索
 
 /** 找剧筛选面板：八行维度选项（选项表随服务端运营变化，每次打开重拉——
- *  运营数据不缓存，2026-10-10 定规）。 */
+ *  运营数据不缓存）。 */
 export function useBrowsePanel() {
   return useQuery({
     queryKey: keys.browsePanel,
@@ -20,8 +20,8 @@ export function useBrowsePanel() {
 /** 找剧筛选流（无限滚动）。
  *
  * 翻页必须回传首页发放的 `sessionId`（服务端按它记住筛选上下文）+
- * 上一页的 `nextOffset` 游标——2026-10-07 抓包实证：
- * limit=18、offset 0→18→36…、session_id 从第二页起同值回传。
+ * 上一页的 `nextOffset` 游标——limit=18、offset 0→18→36…、
+ * session_id 从第二页起同值回传。
  * 旧的 (page-1)*18 算术 offset + 空串 session_id 会让结果集换源，
  * 表现就是「条数和官方 App 对不上」。
  */

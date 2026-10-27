@@ -191,7 +191,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::discover_cmd::recommend_feed,
             commands::discover_cmd::browse_panel,
             commands::discover_cmd::browse_page,
-            // 排行榜 / 新剧 / 搜索 / 预约（2026-10 抓包端点）
+            // 排行榜 / 新剧 / 搜索 / 预约
             commands::rank_cmd::rank_list,
             commands::rank_cmd::new_drama_list,
             commands::rank_cmd::search_series_cmd,
@@ -223,7 +223,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::danmaku_cmd::review_replies,
             commands::danmaku_cmd::creator_profile,
             commands::danmaku_cmd::creator_works,
-            // 互动（点赞/收藏/发弹幕/回复，2026-10-05/06 抓包端点）
+            // 互动（点赞/收藏/发弹幕/回复）
             commands::interact_cmd::danmaku_send,
             commands::interact_cmd::comment_send,
             commands::interact_cmd::comment_reply,
@@ -236,7 +236,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::interact_cmd::series_collect_batch,
             // @小果AI 提及（评论区快捷图标）
             commands::interact_cmd::mention_list,
-            // 表情（官方表情 / 第三方 GIF / 自定义表情，2026-10-25 实包锁定）
+            // 表情（官方表情 / 第三方 GIF / 自定义表情）
             commands::emoticon_cmd::emoticon_list,
             commands::emoticon_cmd::emoticon_search,
             commands::emoticon_cmd::emoticon_upload,

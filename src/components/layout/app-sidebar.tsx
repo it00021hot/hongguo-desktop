@@ -31,7 +31,7 @@ import { cn } from '@/lib/utils';
  *
  * 播放不设菜单入口：播放已并回首页沉浸流（无独立 /player 路由），入口是
  * 各页的「播放/继续播放」；独立菜单 + 页内历史与独立的历史页重复。
- * 找剧排第二（用户指定，2026-10-08），紧跟首页推荐。 */
+ * 找剧排第二（用户指定），紧跟首页推荐。 */
 const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
   { key: 'browse', to: '/browse', icon: Compass },

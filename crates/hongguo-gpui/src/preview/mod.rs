@@ -77,7 +77,7 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
         }
         // mini / portrait 场景翻的是进程级全局（各自的静态），跑完复位，
         // 不让后续场景继承形态（portrait 漏复位时侧栏/顶栏 tab 槽全变竖屏
-        // 形态，交互探针的 tab 也整个消失——2026-10-18 实测）。
+        // 形态，交互探针的 tab 也整个消失）。
         crate::mini::set_active(false);
         crate::portrait::set_active(false);
     }

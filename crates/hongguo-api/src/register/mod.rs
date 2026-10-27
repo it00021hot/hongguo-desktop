@@ -5,7 +5,7 @@
 //! cookie（install_id/ttreq）都从这来。播放取流需要服务端「认识」的
 //! 设备，匿名档案不可播。
 //!
-//! ## 线上格式（74232 活形态，2026-10-27 活体实测）
+//! ## 线上格式（74232 活形态）
 //!
 //! 请求（`register_device`）：
 //! - query：40 参公共指纹（[`register_query`]，版本身份钉注册口径
@@ -48,7 +48,7 @@ pub const REGISTER_PATH: &str = "/service/2/device_register/";
 const TT_MAGIC: [u8; 6] = [0x74, 0x63, 0x05, 0x10, 0x00, 0x00];
 
 /// Java `GZIPOutputStream` 同款 gzip：mtime=0，XFL/OS 两字节覆写 00/00
-/// （真机抓包样本的 gzip 头就是 00/00；flate2 默认写 02/ff，不覆写会被
+/// （官方样本的 gzip 头就是 00/00；flate2 默认写 02/ff，不覆写会被
 /// 服务端按 zlib 家族头校验静默拒绝）。
 fn gzip_java_flavor(plaintext: &[u8]) -> Vec<u8> {
     use flate2::write::GzEncoder;
@@ -117,7 +117,7 @@ pub fn tt_encrypt_v5_full(gz: &[u8], salt: &[u8; 32]) -> Vec<u8> {
     result
 }
 
-/// TT-Encrypt V5 解密（对拍/取证用）：返回 (明文字节, 抓包里的 gz 字节)。
+/// TT-Encrypt V5 解密（对拍/取证用）：返回 (明文字节, 包内 gz 字节)。
 ///
 /// 与加密对称：iv/key 全从 salt 派生（包内无 IV 字段），payload 前 64
 /// 字节是 gz 的完整摘要。
@@ -366,7 +366,7 @@ const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 /// `GenerateProfileWith`/`Header` 反编译，SDK 代际五件 `sdk_version
 /// 4.3.2-rc.44` / `sdk_target_version 30` / `git_hash 27660d0` /
 /// `sdk_flavor cnInner` / `scene 2` 按官方 7.4.2.32 APK bdinstall
-/// 装配器（k80.j.b）对齐并经 2026-10-27 活体实测；版本身份引用
+/// 装配器（k80.j.b）对齐；版本身份引用
 /// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
 /// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
 /// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
@@ -539,7 +539,7 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
 mod tests {
     use super::*;
 
-    /// 真实 App 抓包（register_req_real.bin，官方真机注册 body）的离线
+    /// 官方真机注册 body（register_req_real.bin）的离线
     /// 闭环：解密 → 同 (gz,salt) 重加密 → 必须逐字节复现原始 body。
     /// 锁死「派生链 + IV 不上线 + AES-CBC + PKCS7 + gzip 字节流」与官方
     /// 客户端一致。
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(re, body, "同 (gz,salt) 重加密必须逐字节复现被接受 body");
     }
 
-    /// 抓包样本形状：数字 + 字符串双形态并存。
+    /// 官方样本形状：数字 + 字符串双形态并存。
     #[test]
     fn parses_register_response() {
         let raw = br#"{"server_time":1791016810,"device_id":2715158266032906,"install_id":2715158266282762,"new_user":1,"device_id_str":"2715158266032906","install_id_str":"2715158266282762","device_token":"AAAY"}"#;

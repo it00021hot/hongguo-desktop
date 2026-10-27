@@ -11,7 +11,7 @@ use hongguo_api::danmaku::{
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
 
-/// 拉一集弹幕的**一窗**（官方 7.3.9.32 滚窗协议；medusa 风控降级下没有
+/// 拉一集弹幕的**一窗**（官方滚窗协议；medusa 风控降级下没有
 /// 全量拉取路线，壳侧随播放进度逐窗推进——GPUI `advance_danmaku_window`
 /// 与 Tauri 播放页滚窗 effect 同语义）。
 ///
@@ -44,7 +44,7 @@ pub async fn danmaku_window(
     page
 }
 
-/// 拉播放页**评论区一页**（单集维度流，2026-10-16 官方实包形态：
+/// 拉播放页**评论区一页**（单集维度流，官方形态：
 /// group=vid / group_type=30 / channel=18 / sort=video_innerflow——
 /// 面板整页与互动栏角标同源）。cursor 翻页（响应会话游标原样回传）。
 #[tauri::command]
@@ -79,7 +79,7 @@ pub async fn comment_list(
 
 /// 拉**剧级评论**的一页（详情页「剧评」tab：整部剧一条线，不是单集评论）。
 ///
-/// 2026-10-07 抓包锁定：同端点换形态——`group_type=1`、`comment_source=1`、
+/// 同端点换形态——`group_type=1`、`comment_source=1`、
 /// `server_channel=34`，group_id 是 series_id。响应与单集评论同构。
 #[tauri::command]
 pub async fn series_comment_list(
@@ -154,7 +154,7 @@ pub async fn review_replies(
     fetch_review_replies(&series_id, &comment_id, &cursor.unwrap_or_default(), &env).await
 }
 
-/// 创作者主页资料头（详情页点创作者 → 主页；2026-10-15 官方实包）。
+/// 创作者主页资料头（详情页点创作者 → 主页）。
 #[tauri::command]
 pub async fn creator_profile(
     state: State<'_, AppState>,

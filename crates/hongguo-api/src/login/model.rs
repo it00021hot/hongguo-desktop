@@ -17,7 +17,7 @@ pub enum LoginOutcome {
     Mfa(Box<MfaContext>),
 }
 
-/// MFA 上行短信验证的完整上下文（2026-10-04 真机抓包对齐）。
+/// MFA 上行短信验证的完整上下文。
 ///
 /// `retry_tag`/`sms_code_key` 来自 `data.biz_params`；`encrypt_uid` 与
 /// `event_params`/`common_params` 是 upsms 轮询 body 的原料；`verify_ways`
@@ -40,8 +40,8 @@ pub struct MfaContext {
     /// 验证提示文案
     pub tips: String,
     /// MFA 会话绑定 cookie（sms_login 触发 MFA 时 Set-Cookie 下发）。
-    /// 轮询与重登请求都必须带，否则服务端不认这次验证（2026-10-05
-    /// 用户真机踩坑：通道号对了仍永远 1045）。
+    /// 轮询与重登请求都必须带，否则服务端不认这次验证
+    /// （通道号对了仍可能永远 1045）。
     #[serde(skip_serializing)]
     pub mfa_token: String,
 }
@@ -89,8 +89,8 @@ pub enum UpsmsState {
     },
 }
 
-/// 发码结果。`mobile_ticket` 保留字段（1.1.2 时代形态）；1.1.3 实测
-/// 会话绑定改走 `passport_csrf_token` Cookie（`csrf_cookie`，不序列化
+/// 发码结果。`mobile_ticket` 是保留字段；会话绑定走
+/// `passport_csrf_token` Cookie（`csrf_cookie`，不序列化
 /// 给前端，Rust 侧 AppState 暂存后在 sms_login 注入）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

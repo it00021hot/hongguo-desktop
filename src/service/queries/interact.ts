@@ -8,7 +8,7 @@ import { fuzzyStaleTime, keys } from './common';
 // ---------------------------------------------------------------- 互动（点赞 / 收藏 / 书架）
 
 /** 最近互动状态（登录后才拉；匿名接口静默拒）。回显带全站计数，
- *  属社交态数据——每次挂载重拉，不缓存（2026-10-10 定规）。 */
+ *  属社交态数据——每次挂载重拉，不缓存。 */
 export function useInteractionState() {
   const { data: account } = useAccount();
   return useQuery({
@@ -53,7 +53,7 @@ export function useVideoDigg() {
       interactCmd.videoDigg(input.vid, input.seriesId, input.digg),
     // 乐观更新：互动回显接口（ugc/action/mget）是「最近互动列表」，
     // 剧集不在列表里时状态永远是 false——不乐观写的话按钮永不点亮、
-    // 二次点击也不会走取消分支（详情页「二次点击还是提示已收藏」事故）
+    // 二次点击也不会走取消分支
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: keys.interactState });
       const prev = queryClient.getQueryData<InteractionState>(keys.interactState);
@@ -128,7 +128,7 @@ export function useSeriesCollect() {
     },
     onSuccess: () => {
       // 收藏态的权威回显走书架列表；interactState 的回显是 best-effort，
-      // 不失效它——服务端列表延迟回带旧值会把乐观态顶回去（同一事故）
+      // 不失效它——服务端列表延迟回带旧值会把乐观态顶回去
       void queryClient.invalidateQueries({ queryKey: keys.bookshelf });
     },
   });

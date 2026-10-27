@@ -64,7 +64,7 @@ pub(crate) enum HomeEvent {
     /// chrome（顶栏/侧栏）显隐变了：无边框/沉浸全屏切换后壳必须重绘。
     /// 壳的 `Shell::render` 只在自己被通知时重读 `immersive_fullscreen()`；
     /// 不推这一条的话，无边框点下去顶栏不动、再点回来也不动——用户看到的
-    /// 就是「按钮状态一直不对」（2026-10-18 实测）。
+    /// 就是「按钮状态一直不对」。
     ChromeChanged,
 }
 
@@ -264,7 +264,7 @@ pub struct HomeView {
     /// 已拉取弹幕的集（vid）——同集不重拉，换集必重拉。
     danmaku_vid: String,
     danmaku_fetching: bool,
-    /// 滚窗拉取状态（官方 7.3.9.32 协议：30 秒窗按播放位置推进，见
+    /// 滚窗拉取状态（官方滚窗协议：30 秒窗按播放位置推进，见
     /// `danmaku::DanmakuWindow`）。
     danmaku_window: danmaku::DanmakuWindow,
     /// 已入场游标（items 下标；seek 时二分重置）。

@@ -61,8 +61,8 @@ impl super::HomeView {
     }
 
     /// 季卡封面排转码（card 档）：渲染期 [`crate::cover_img::card`] 只查
-    /// 成品图在不在盘上，没人预热就永远是占位块（2026-10-23 用户实测
-    /// 系列剧 tab 封面全空的根因）。数据到位与浮层打开两处调用——后者
+    /// 成品图在不在盘上，没人预热就永远是占位块（系列剧 tab 封面全空的
+    /// 根因）。数据到位与浮层打开两处调用——后者
     /// 兜住缓存命中（早退不走到货回调）与「当前季合成条目」。
     fn prewarm_season_covers(&self, cx: &mut Context<Self>) {
         let (_, seasons) = self.seasons_of();

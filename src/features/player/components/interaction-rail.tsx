@@ -7,9 +7,9 @@
 //! 「已赞/已追」红标。预约在侧边栏「预约」页，不在这。
 //! 发弹幕入口在控制栏，不在这里。
 //!
-//! 2026-10-05 抓包端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
-//! 状态 mget；口径见 docs 第 9 节。追更 2026-10-15 抓 player v1.2.1
-//! （do_action 34/35、object_type=10）。
+//! 端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
+//! 状态 mget；口径见 docs 第 9 节。追更 do_action
+//! 34/35、object_type=10。
 
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -141,7 +141,7 @@ export function InteractionRail({
     (publicFollowCount ?? 0) > 0 ? publicFollowCount! : (seriesHit?.followedCnt ?? 0);
 
   // 追更按钮按完结状态条件显示：官方只在连载剧（series_status=0）出追更
-  // （2026-10-15 实包：完结剧「全139集」无钮、连载剧「更新至83集」有钮）。
+  // （完结剧「全139集」无钮、连载剧「更新至83集」有钮）。
   // meta 未到的窗口期回落追更列表判定（已追+完结=隐藏）
   const followList = useFollowUpdates();
   const followedItem = followList.data?.pages

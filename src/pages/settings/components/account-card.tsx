@@ -13,7 +13,7 @@ import { LoginDialog } from './login-dialog';
 /**
  * 从 user_info 原文（rawProfile JSON）提取红果号（biz_user_id）。
  * 手机 App「我的」页展示的账号就是这个值——它不在登录响应里，
- * 只有 user_info 下发（2026-10-10 实测）。原文缺失（旧账号未刷新
+ * 只有 user_info 下发。原文缺失（旧账号未刷新
  * 资料）时返回空串，卡片不显示该行。
  */
 function hongguoId(account: AccountState): string {

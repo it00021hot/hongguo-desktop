@@ -1,6 +1,6 @@
 //! 上新日历接口（subscribe/list 的日历形态：`tab_type=5` +
 //! `need_calendar_schema=true`；与预约列表共用同一端点，响应解析也在本域，
-//! 2026-10-03/04 抓包锁定，详见 docs/hongguo-api-endpoints.md）。
+//! 详见 docs/hongguo-api-endpoints.md）。
 
 mod model;
 
@@ -19,18 +19,18 @@ pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
 /// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
 ///
-/// 2026-10-11 实流抓包对齐，三处此前不知道的差异：
+/// 三处协议差异：
 /// - **首页请求不带 `target_date`，但必须带 `need_personal_recommend=1`**——
 ///   缺了它服务端回的是「全部定档剧」混排（含大量已上线），条目集与官方
 ///   App 完全对不上；带上后回「个性化预约推荐」混排（未上线 + 人预约数）；
 /// - **翻页三键齐传 `offset` + `subscribe_offset`（同值）+ `session_id`（响应
-///   回传）**——只传 offset 服务端无视，永远回同一页（死循环同页实测）；
+///   回传）**——只传 offset 服务端无视，永远回同一页（死循环同页）；
 /// - **响应是多天混排，按 `default_date`/选中日过滤后才是一天的条目**——
 ///   他家首页响应照样 has_more=true，滚到底第二页回来无新增才显示
 ///   「没有更多了」。
 ///
-/// 切日期的真实参数是 **`target_date=YYYYMMDD`**（2026-10-04 切日期抓包
-/// 锁定；翻页请求里也始终在参）。响应条目有两种 schema（嵌套
+/// 切日期的真实参数是 **`target_date=YYYYMMDD`**
+/// （翻页请求里也始终在参）。响应条目有两种 schema（嵌套
 /// `subscribe_data.*` / 扁平 `item_id/name...`），[`parse_calendar_item`] 都吃。
 ///
 /// **单页返回 + 游标**：响应带 `has_more/next_offset/session_id`，前端滚动
@@ -53,14 +53,14 @@ pub async fn fetch_new_calendar(
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
 
-    // 首页（默认日）不带 target_date（首页抓包实测无此键）；切日期才带
+    // 首页（默认日）不带 target_date（官方首页无此键）；切日期才带
     let active_day_input = date.filter(|d| !d.is_empty()).map(str::to_string);
     let mut q = base.clone();
     if let Some(day) = &active_day_input {
         q.push(("target_date".to_string(), day.clone()));
     }
     // 翻页三键齐传 offset + subscribe_offset（同值）+ session_id（响应回传；
-    // 只传 offset 服务端无视，永远回同一页——死循环同页实测）；首页请求绝
+    // 只传 offset 服务端无视，永远回同一页）；首页请求绝
     // 不能自带 session_id（命中服务端会话缓存，见 fetch_reservations）
     if let Some((offset, session_id)) = &cursor {
         q.push(("offset".to_string(), offset.to_string()));
@@ -180,7 +180,7 @@ pub(super) fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
     })
 }
 
-/// 一条日历条目，两种 schema 都吃（2026-10-04 实测服务端按请求形态分发）：
+/// 一条日历条目，两种 schema 都吃（服务端按请求形态分发）：
 ///
 /// - 嵌套形态（匿名请求）：`subscribe_data.{series_id,title,vid,...}` +
 ///   顶层 `category/rec_tags/schedule_publish_time/is_online`；
@@ -259,7 +259,7 @@ fn string_array(node: &Value, key: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// 抓包样本形状：subscribe_items + calendar_schema（日历形态）。
+    /// 官方样本形状：subscribe_items + calendar_schema（日历形态）。
     #[test]
     fn parses_calendar_page() {
         let data: Value = serde_json::json!({
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(page.online_unread_count_text, "");
     }
 
-    /// 2026-10-04 抓包形状：带 install_id Cookie / target_date 时服务端
+    /// 带 install_id Cookie / target_date 时服务端
     /// 下发扁平条目（无 subscribe_data，无 vid）。
     #[test]
     fn parses_flat_calendar_items() {
@@ -393,7 +393,7 @@ pub(crate) mod probe {
     }
 
     /// 日历 `target_date` 直查：生产同款环境（静态档案 + 匿名 Cookie）下
-    /// 看响应形态与条目归属（2026-10-04 抓包锁定参数名后的转正实验）。
+    /// 看响应形态与条目归属。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_calendar_target_date() {

@@ -96,7 +96,7 @@ impl NewDramaView {
     ///
     /// Tauri 代码里写的是 `justify-end`，但 ToggleGroup 基础类是 inline-flex
     /// （宽度收缩到内容），`justify-end` 实际不生效——真机渲染是贴左。这里
-    /// 以真机截图为口径（2026-10-17 并排对拍），不照抄失效的类名。
+    /// 以真机渲染为口径，不照抄失效的类名。
     pub(super) fn render_gender_row(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         if self.view != ViewTab::Recommend {
             return None;

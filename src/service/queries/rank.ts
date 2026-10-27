@@ -9,11 +9,11 @@ import { dedupBy, fuzzyStaleTime, keys, useInfiniteStream } from './common';
 // ---------------------------------------------------------------- 排行榜 / 新剧 / 上新日历 / 预约
 
 /**
- * 一个榜单（内容tab × 子榜 × 筛选 × 月榜 组合缓存；社交态数据不缓存——
- * 2026-10-10 定规，每次挂载重拉。切筛选时用 keepPreviousData 保住
+ * 一个榜单（内容tab × 子榜 × 筛选 × 月榜 组合缓存；社交态数据不缓存，
+ * 每次挂载重拉。切筛选时用 keepPreviousData 保住
  * 旧列表，避免整页闪 loading）。
  *
- * 无限滚动（**2026-10-17 抓官方 App 滚动榜单实锤的协议**）：每页 10 条
+ * 无限滚动（**对齐官方 App 滚动榜单的协议**）：每页 10 条
  * （limit 参数恒 "0" 不参与），首页 offset=0 不带 session_id；翻页
  * offset=响应的 next_offset（步进 10）并回传响应的 session_id 与
  * rank_version。页间可能重叠——按 seriesId 去重（后端已按会话记账 +
@@ -85,7 +85,7 @@ function newDramaItems(pages: RankPage[]) {
 export function useNewDrama(gender: number) {
   const query = useInfiniteQuery({
     queryKey: keys.newDrama(gender),
-    // pageParam 结构化：offset + 上一页回传的 session_id（抓包实锤翻页
+    // pageParam 结构化：offset + 上一页回传的 session_id（翻页
     // 必须回传；首页不传）
     queryFn: ({ pageParam }) => rank.newDrama(gender, pageParam.offset, pageParam.sessionId),
     initialPageParam: { offset: 0, sessionId: '' },
@@ -219,7 +219,7 @@ export function useReservationsDelete() {
 }
 
 /**
- * 预约 / 取消预约一部剧（复用 2026-10-04 抓包的 uncover_subscribe 端点）。
+ * 预约 / 取消预约一部剧（uncover_subscribe 端点）。
  *
  * 成功后两件事：刷新预约列表（权威源）；**就地翻新榜单缓存里该条的
  * reserved 位**——cell 接口的 online_subscribed 是响应时刻快照，不翻新

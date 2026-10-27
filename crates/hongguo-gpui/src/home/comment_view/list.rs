@@ -16,7 +16,7 @@ impl HomeView {
         let loading = self.comments_loading && self.comments.is_empty();
         // 滚动条层必须挂在滚动容器**外**：gpui 的滚动偏移会平移容器内所有
         // 子层（absolute 也不例外），叠在里面滚动条会跟着内容平移、滑块
-        // 错位（2026-10-26 用户实测「滚到底滑块还在顶上」）。所以外层 div
+        // 错位（滚到底滑块还在顶上）。所以外层 div
         // 只负责占位与锚定滚动条（`vertical_scrollbar` 在 relative 外层上
         // inset_0 内锚），内层 v_flex 才是滚动容器；也**不走**
         // `overflow_y_scrollbar` 包装器——那层包装会把列表挪进 Scrollable

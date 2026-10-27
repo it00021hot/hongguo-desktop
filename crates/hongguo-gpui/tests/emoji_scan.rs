@@ -139,7 +139,7 @@ fn tokens(text: &str) -> Vec<(usize, usize, String, String)> {
 }
 
 /// @提及插入必 panic 的字节边界回归：FFFC 占 3 字节，`idx + 1` 切在
-/// 字符中间（2026-10-23「@小果闪退」的根因——提及插入走 rich_content，
+/// 字符中间（提及插入走 rich_content，
 /// 一点候选就 abort）。
 #[test]
 fn mention_token_range_ends_on_char_boundary() {

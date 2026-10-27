@@ -8,7 +8,7 @@ vi.stubGlobal('document', { documentElement: { lang: '' } });
 
 const { buildTabList, RECOMMEND_TAB_TYPE } = await import('./home-tabs');
 
-/** 抓包样本形态的顶栏（2026-10-15 官方实抓：45/36/39/16 保序，仅 16 带 bookstoreId）。 */
+/** 官方样本形态的顶栏（45/36/39/16 保序，仅 16 带 bookstoreId）。 */
 function serverTabs() {
   return [
     { tabType: '45', title: '关注', bookstoreId: null },

@@ -6,7 +6,7 @@ import { keys } from './common';
 
 // ---------------------------------------------------------------- 表情（官方表情 / 第三方 GIF / 自定义表情）
 //
-// 官方三档来源（2026-10-25 实包）：
+// 官方三档来源：
 // - 第三方表情库：GIF tab，`search_type=2`，一页 100 条，按 offset 翻页；
 // - 我上传的自定义表情：♡ tab，`search_type=4&keyword=profile`；
 // - 关键词搜索：`search_type=1`，官方逐字前缀匹配。
@@ -83,7 +83,7 @@ export function useUploadCustomEmoticon() {
 /**
  * 收藏一张已有表情到「我的表情」（长按表情 → 「添加到表情」）。
  *
- * 官方实包（2026-10-25）：`image_id` 填**源表情 id**，`image_url` 填该
+ * 官方形态：`image_id` 填**源表情 id**，`image_url` 填该
  * 表情的静态 URL；服务端把它并进「我的表情」列表（与上传的自定义表情
  * 同一列表，同一档 `search_type=4&keyword=profile`）。
  */
@@ -102,7 +102,7 @@ export function useCollectEmoticon() {
 /**
  * 从「我的表情」删除（长按自己的表情 → 「删除表情」）。
  *
- * 官方实包（2026-10-25）：同一端点、`collect_type=2`；服务端回
+ * 官方同款：同一端点、`collect_type=2`；服务端回
  * `image_data: null`，所以没有可回显的表情对象。
  */
 export function useDeleteEmoticon() {

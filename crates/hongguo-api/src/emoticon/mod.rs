@@ -1,12 +1,12 @@
-//! 表情域：官方表情 / 第三方 GIF / 自定义表情（2026-10-25 官方 App
-//! 7.3.9.32 实抓锁定，口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
+//! 表情域：官方表情 / 第三方 GIF / 自定义表情
+//! （口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
 //!
 //! 三个端点：
 //! - `GET /reading/ugc/comment/emoticon/v`——表情列表。`search_type` 分档：
 //!   1 = 关键词搜索（`keyword` 带 `+` 前缀表示前缀匹配）、2 = 第三方表情库
 //!   （GIF tab，分页 `offset`/`next_offset`）、4 = 我的表情（`keyword=profile`，
 //!   官方「♡」档 = 我上传的自定义表情 + 我收藏的官方表情，同一列表）。
-//!   3 档官方每次开面板都并发拉，但收藏前后实测恒空、面板也无入口，
+//!   3 档官方每次开面板都并发拉，但收藏前后恒空、面板也无入口，
 //!   本仓不实现。响应 `data.info_list[]` 为 [`Emoticon`]，另有
 //!   `has_more`/`next_offset`；
 //! - `POST /reading/reader/upload/picture/`——图片上传（multipart，字段名
@@ -84,7 +84,7 @@ pub async fn list_emoticons(
 }
 
 /// 关键词搜索表情（`search_type=1`）。`prefix` 为 true 时关键词带 `+`
-/// 前缀——官方逐字输入时按前缀匹配（抓包见 `+c` → `+ca` → `+cat`）。
+/// 前缀——官方逐字输入时按前缀匹配（`+c` → `+ca` → `+cat`）。
 pub async fn search_emoticons(
     keyword: &str,
     count: i64,
@@ -123,7 +123,7 @@ pub async fn list_own_emoticons(count: i64, offset: i64, env: &ApiEnv) -> AppRes
 
 /// 上传一张图片（评论附图 / 自定义表情共用）。
 ///
-/// multipart 形态照抄官方实包：字段名 `picture`，`Content-Type:
+/// multipart 形态照官方：字段名 `picture`，`Content-Type:
 /// application/octet-stream`，`Content-Transfer-Encoding: binary`，
 /// 带 `Content-Length`；body **不 gzip**（reading 族其余接口才 gzip）。
 pub async fn upload_picture(
@@ -241,7 +241,7 @@ pub fn parse_emoticon(value: &Value) -> Option<Emoticon> {
 
 /// [`Emoticon`] → 官方 `image_data` 条目（snake_case 写出）。
 ///
-/// 字段在场性照官方实包：本地图片只有 `web_uri`/宽高/`format`/
+/// 字段在场性照官方：本地图片只有 `web_uri`/宽高/`format`/
 /// `image_type`，表情类另带 `id`/`dynamic_url`/`thumb_nails` 等。
 pub fn image_data_value(image: &Emoticon) -> Value {
     let mut obj = Map::new();
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn collect_request_matches_official_capture() {
-        // 官方实包（2026-10-25 长按评论里的 GIF → 「添加到表情」）：
+        // 官方形态（长按评论里的 GIF → 「添加到表情」）：
         // image_id 是**源表情 id**，image_url 是该表情的静态 URL，
         // image_type=2（动图）但 URL 仍是静态 webp。
         use crate::params::emoticon::COLLECT_TYPE_ADD;

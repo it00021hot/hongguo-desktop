@@ -487,7 +487,7 @@ impl Shell {
         // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
         // 预览不挂：预览场景的主题由矩阵按 case 指定（scene 的 mode），
         // headless 窗口一挂上这个回调就会用宿主外观（Light）把场景主题
-        // 盖掉——dark 场景全部渲染成亮色（2026-10-18 实测）。
+        // 盖掉——dark 场景全部渲染成亮色。
         if !crate::preview::is_active() {
             cx.observe_window_appearance(window, |this, window, cx| {
                 if this.theme == crate::ui_prefs::ThemePref::Auto {

@@ -1,6 +1,6 @@
 //! 内嵌 Turso 数据库：连接与 schema 迁移。
 //!
-//! 选型背景（M1，2026-10）：替换原 data.json 单文件全量重写存储。
+//! 选型背景：替换原 data.json 单文件全量重写存储。
 //! `turso` crate 是 tursodatabase/turso 的官方 Rust API，纯 Rust、无 C 工具链，
 //! 本地内嵌形态（`Builder::new_local`）。刻意关闭 default features：
 //! mimalloc 是全局分配器不能让库替我们换；fts 暂时用不上。

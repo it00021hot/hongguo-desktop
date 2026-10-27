@@ -1,4 +1,4 @@
-//! 「收藏」页：书架列表（bookshelf/video/list，2026-10-06 抓包锁定）。
+//! 「收藏」页：书架列表（bookshelf/video/list）。
 //!
 //! 服务端条目只有 series_id + 收藏时间——标题封面走本地档案缓存，
 //! 未收录的自动回落 resolve_series；卡片同「历史」页形态，点击进播放器。

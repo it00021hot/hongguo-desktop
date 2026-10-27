@@ -54,7 +54,7 @@ pub(crate) struct RankView {
     items: Vec<RankItem>,
     next_offset: i64,
     session_id: String,
-    /// 响应下发的版本戳，翻页回传（2026-10-17 官方实流协议）。
+    /// 响应下发的版本戳，翻页回传（官方协议）。
     rank_version: String,
     has_more: bool,
     loading: bool,

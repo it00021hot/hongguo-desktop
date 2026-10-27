@@ -1,4 +1,4 @@
-// 自动生成：名字与文件来自抓包提取的表情表，图片为其中内联的 base64 webp，已落盘到 src/assets/emoji/。
+// 自动生成：名字与文件来自官方表情表提取，图片为其中内联的 base64 webp，已落盘到 src/assets/emoji/。
 // 上游弹幕/评论文本以 [名字] 代码携带表情，渲染时按本表换图。重新生成：从 bundle 重跑提取（提取脚本逻辑见提交记录）。
 export const DANMAKU_EMOJI_FILES: readonly (readonly [name: string, file: string])[] = [
   ['[微笑]', 'e01.webp'],

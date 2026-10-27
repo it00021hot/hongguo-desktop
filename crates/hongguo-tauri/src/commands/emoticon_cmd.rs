@@ -1,5 +1,5 @@
-//! 表情 command：官方表情 / 第三方 GIF / 自定义表情（2026-10-25 官方实包
-//! 锁定，口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
+//! 表情 command：官方表情 / 第三方 GIF / 自定义表情（口径见
+//! `docs/hongguo-api-endpoints.md` 第 9.5 节）。
 //!
 //! 能力一一对应官方面板的入口：
 //! - GIF tab → `emoticon_list` 的 `thirdParty` 档；
@@ -87,7 +87,7 @@ pub async fn emoticon_upload(
 
 /// 把一张已有表情收藏进「我的表情」（长按表情 → 「添加到表情」）。
 ///
-/// 官方实包（2026-10-25）：`collect_type=1`，`image_id` 填**源表情 id**
+/// 官方形态：`collect_type=1`，`image_id` 填**源表情 id**
 /// （收藏别人发的表情即填它的 id；上传本地图片时为空串），`image_url` 填该
 /// 表情的 URL（官方取 `dynamic_url ?: web_url ?: web_uri`）。
 ///
@@ -123,7 +123,7 @@ pub async fn emoticon_collect(
 
 /// 从「我的表情」里删除一个表情（长按自己的表情 → 「删除表情」）。
 ///
-/// 官方实包（2026-10-25）：与添加同一端点，只把 `collect_type` 换成 2；
+/// 官方形态：与添加同一端点，只把 `collect_type` 换成 2；
 /// 服务端回 `image_data: null`——没有可回显的表情对象，所以这里只回成功。
 #[tauri::command]
 pub async fn emoticon_delete(
@@ -161,7 +161,7 @@ pub struct PickedImage {
 /// 弹系统文件面板选一张本地图片（评论附图 / 上传自定义表情共用）。
 ///
 /// 弃用 `<input type=file>` 的原因：WKWebView 对文件 input 不弹选择面板
-/// （真实点击到达 input 也不调 `runOpenPanel` 委托，2026-10-26 实测，
+/// （真实点击到达 input 也不调 `runOpenPanel` 委托，
 /// WebView2 无此问题）——选图改走 Rust 原生对话框，两壳同一形态。
 #[tauri::command]
 pub fn emoticon_pick_image() -> AppResult<PickedImage> {

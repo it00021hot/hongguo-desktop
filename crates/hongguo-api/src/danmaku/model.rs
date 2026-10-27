@@ -15,7 +15,7 @@ pub struct Danmaku {
     pub digg_count: i64,
 }
 
-/// 一条评论区评论（用户资料 / 计数 / 我的点赞态，见 2026-10-05 抓包样本）。
+/// 一条评论区评论（用户资料 / 计数 / 我的点赞态）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentItem {
@@ -50,8 +50,8 @@ pub struct CommentItem {
 
 /// 评论区拉取结果：评论列表 + 评论总数（互动栏计数数据源）+ 翻页游标。
 ///
-/// 2026-10-06 改版：**按页拉取**（一次一窗 20 条）——此前把整集全部
-/// 拉完才返回，热门集几百页要转圈半分钟（3716 条实测 ~30s），改版后
+/// **按页拉取**（一次一窗 20 条）——整集全部拉完才返回的话，
+/// 热门集几百页要转圈半分钟（3716 条 ~30s），按页后
 /// 第一页秒开。total 从第一页的 `common_list_info.total` 取。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,10 +69,9 @@ pub struct CommentPage {
 /// 剧级评论页 + 剧评分摘要。
 ///
 /// 评分/评分人数在本接口响应的 `extra` 里，字段是 **credibility_score /
-/// credibility_score_count**（2026-10-08 抓包实锤：《修仙：众人看我舔疯癫》
-/// `credibility_score=8.3`、`credibility_score_count=1247`，即头部
+/// credibility_score_count**（即头部
 /// 「8.3分 1247人评分」的数据源；同响应的 `book_info.score` 恒为空串，
-/// 此前读它导致头部评分永远不显示。score 是 JSON 数字形态，字符串也兜）。
+/// 读它会头部评分永远不显示。score 是 JSON 数字形态，字符串也兜）。
 /// `book_info.tags`（逗号分隔串）是书维度的题材标签，与详情头部的
 /// secondary_infos 不是一套。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -94,7 +93,7 @@ pub struct SeriesReviewPage {
     pub tag_stats: Vec<CommentTagStat>,
 }
 
-/// 剧评标签统计一条（extra.filter_tag，2026-10-10 抓包对齐）。
+/// 剧评标签统计一条（extra.filter_tag）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommentTagStat {
@@ -102,7 +101,7 @@ pub struct CommentTagStat {
     pub count: i64,
 }
 
-/// 一条回复（reply/list 条目，2026-10-10 实操抓包解码）。
+/// 一条回复（reply/list 条目）。
 ///
 /// 响应里回复体在键名大写的 `Common` 下（上游序列化怪癖，解析处已归一）；
 /// 身份键是 `reply_id`（不是 comment_id）。
@@ -149,7 +148,7 @@ pub struct ReplyPage {
 }
 
 /// 创作者主页资料头（`reading/user/profile/get` 的 ugc_user.base_info 摘要；
-/// 2026-10-15 官方实包：详情页点创作者 → 主页，头部数据源）。
+/// 详情页点创作者 → 主页，头部数据源）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatorProfile {

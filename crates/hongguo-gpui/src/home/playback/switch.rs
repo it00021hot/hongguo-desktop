@@ -6,8 +6,8 @@ use super::*;
 use super::open::{PlayRequest, SystemSpec};
 use hongguo_common::AppError;
 
-/// 官方批量预取窗口：当前 + 后续共 6 条（2026-10-25 抓官方 App 7.3.9.32
-/// 实流：model/preload 与 detail/preload 一次各带 6 个）。
+/// 官方批量预取窗口：当前 + 后续共 6 条（model/preload 与
+/// detail/preload 一次各带 6 个）。
 const OFFICIAL_PRELOAD_WINDOW: usize = 6;
 
 impl super::HomeView {
@@ -258,7 +258,7 @@ impl super::HomeView {
         // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
         // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
         self.play_error = None;
-        // 批量预取（2026-10-25 抓官方 App 7.3.9.32 对齐，双端点）：
+        // 批量预取（双端点）：
         // ① `multi_video_model/preload`（dr_scene=preload）——「当前 + 信息流
         // 后续几部」（官方 6 个）的推荐位 vid 按 content_type 原样串分组
         // 一次批量，命中落 api 层暂存表，起播链先查它；

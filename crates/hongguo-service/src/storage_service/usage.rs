@@ -19,8 +19,8 @@ pub struct StorageUsage {
 ///
 /// 剧名与分组都取自任务记录（与合并服务同一来源），不依赖剧集档案——
 /// 档案是「看过的剧」的全集，清理页要的是「磁盘上有文件的剧」。
-/// serde camelCase 对齐前端 schema（seriesId）：曾因 snake_case 序列化
-/// 被 zod 校验整单拒收，清理页永远「暂无数据」（2026-10-09 实测）。
+/// serde camelCase 对齐前端 schema（seriesId），snake_case 会被
+/// zod 校验整单拒收，清理页永远「暂无数据」。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageSeriesUsage {

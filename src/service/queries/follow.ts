@@ -9,7 +9,7 @@ import { useAccount } from './interact';
 // ---------------------------------------------------------------- 追更（列表 / 是否已追 / 更新提醒）
 
 /** 追更列表（cursor 无限翻页）。社交态数据：staleTime 0 每次重拉
- *  （2026-10-15 定规同预约/互动——服务端跟随列表没有「缓存有效期」可言）。 */
+ *  （同预约/互动——服务端跟随列表没有「缓存有效期」可言）。 */
 export function useFollowUpdates() {
   const { data: account } = useAccount();
   return useInfiniteQuery({

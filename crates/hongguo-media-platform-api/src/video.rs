@@ -10,11 +10,9 @@ pub enum VideoCodec {
 }
 
 /// 码率标定：VT 没有 CRF、MF 的 MFT 同理，按「0.12 bit/像素/帧」给出与
-/// libx264 `-crf 23` 同档的码率（1080p25 ≈ 6.2 Mbps）。mf/vt 两侧原本各
-/// 写一份逐字节相同——2026-10-07 在 Windows 侧用 NVENC MFT + libvmaf 双源
-/// 复核后从 0.1 提到 0.12（中低复杂度近真人剧 VMAF 98.0 略优于 crf23 的
-/// 97.1；高运动内容 CBR 固定码率天然吃亏，0.1 系数时 86.5 vs 92.4，提到
-/// 0.12 收窄到 ~3 分）。再偏差大时只调这里的系数。
+/// libx264 `-crf 23` 同档的码率（1080p25 ≈ 6.2 Mbps；中低复杂度近真人剧
+/// VMAF 略优于 crf23，高运动内容 CBR 固定码率天然吃亏，0.12 系数可收窄
+/// 差距）。再偏差大时只调这里的系数。
 pub fn bitrate_for(width: usize, height: usize, fps: f64) -> i32 {
     let bps = width as f64 * height as f64 * fps.max(1.0) * 0.12;
     bps.clamp(800_000.0, 12_000_000.0) as i32

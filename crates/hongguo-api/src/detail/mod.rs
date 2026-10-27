@@ -22,7 +22,7 @@ use parse::parse_related_series;
 
 /// 相关作品（同系列各季 + 同 IP 作品）。
 ///
-/// 端点抓包实证（2026-10-07 详情页「相关推荐」tab 懒加载）：
+/// 端点（详情页「相关推荐」tab 懒加载）：
 /// `GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
 /// &scene=10&...`（reading 族轻签名头，lq 域）。响应 `data[]` 是 cell 列表：
 /// `cell_name:"相关作品"` 的 cell 里 `video_data[]` 每项带 `tag_info.text`
@@ -32,8 +32,8 @@ pub const PLAN_PATH: &str = "/reading/bookapi/plan/v";
 /// 拉一部剧的相关作品·系列。
 ///
 /// 服务端对 plan/v 的**首次调用**下发冷响应——猜你喜欢 cell 还在但
-/// `cell_data` 里的短剧子格稀少甚至为空，连打会逐次填充（2026-10-08
-/// 实测同进程 4 连打 guess 1→6→8→9）。客户端每次进详情页只打一次、
+/// `cell_data` 里的短剧子格稀少甚至为空，连打会逐次填充（同进程
+/// 4 连打 guess 1→6→8→9）。客户端每次进详情页只打一次、
 /// 前端还带 10 分钟缓存，冷响应会原样上屏成「猜你喜欢消失」。
 /// 对策：guess 空时递增退避重试（至多 4 调），取首个非空结果；works
 /// 各次稳定不受影响，全空就退最后一次的响应。
@@ -60,7 +60,7 @@ pub async fn fetch_related_series(
     .collect();
 
     let mut last = RelatedSeries::default();
-    /// 相关推荐的重试次数与递增退避（400/700/1000ms）。实测冷填充通常
+    /// 相关推荐的重试次数与递增退避（400/700/1000ms）。冷填充通常
     /// 第二次就有数据，连冷到第四次极罕见（间隔拉长给服务端填充留时间）。
     const PLAN_RETRY_ATTEMPTS: u8 = 4;
     const PLAN_RETRY_BASE_MS: u64 = 400;
@@ -108,7 +108,7 @@ pub async fn fetch_episode_list(
     parse_episodes(&value)
 }
 
-/// 批量拉多部剧的分集档案（官方预取形态，2026-10-25 抓 7.3.9.32 实流对齐）：
+/// 批量拉多部剧的分集档案（官方预取形态）：
 /// 一次 `multi_video_detail/preload`，`series_id` 是**逗号串**（官方 6 部
 /// 一发），响应 `data[series_id]` 按剧分发。单部残缺由解析层跳过。
 pub async fn fetch_episode_lists_batch(
@@ -126,7 +126,7 @@ pub async fn fetch_episode_lists_batch(
 }
 
 /// 档案响应里的 vid → content_type 进注册表（`video_data.content_type`
-/// 剧级在场，2026-10-25 抓包实证；整剧各集同型）。批量取流（预取/真播）
+/// 剧级在场；整剧各集同型）。批量取流（预取/真播）
 /// 的分组 key 来源之一——连播的后续集就靠这里注册。
 fn register_episode_types(response: &Value) {
     let Some(data) = response.get("data").and_then(Value::as_object) else {
@@ -158,7 +158,7 @@ fn register_episode_types(response: &Value) {
 
 // ---------------------------------------------------------------- 剧集元信息
 
-/// 详情页头部元信息端点（2026-10-07 抓包详情页锁定）：
+/// 详情页头部元信息端点：
 /// `POST /novel/player/video_detail/v1/`，body `{"biz_param":{…},"series_id"}`。
 /// 追剧数/播放量/季徽/题材标签/备案号都在这里——preload 分集接口不带这些。
 pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
@@ -168,7 +168,7 @@ pub async fn fetch_series_meta(
     series_id: &str,
     env: &super::client::ApiEnv,
 ) -> AppResult<SeriesMeta> {
-    // body 照抄抓包（audit 纪律）：screen_width_px 是字符串形态
+    // body 照官方（audit 纪律）：screen_width_px 是字符串形态
     let body = serde_json::to_vec(&crate::params::video_detail_payload(series_id))
         .map_err(|e| AppError::Signer(e.to_string()))?;
 
@@ -362,7 +362,7 @@ mod probe2 {
                 .map(|a| a.len())
                 .unwrap_or(0);
             println!("[plan raw] cell={name} items={n}");
-            // cell 里的其它数组字段（抓包里的 guess_mvs tag 暗示猜你喜欢
+            // cell 里的其它数组字段（guess_mvs tag 暗示猜你喜欢
             // 可能不走 video_data 而走专用字段）
             if let Some(obj) = cell.as_object() {
                 for (k, val) in obj {
@@ -447,7 +447,7 @@ mod probe2 {
 #[cfg(test)]
 mod probe_related {
     use super::*;
-    /// 相关作品·系列真连探测（2026-10-07 端点实装验证；多季剧才有多条）。
+    /// 相关作品·系列真连探测（多季剧才有多条）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_related_series_live() {

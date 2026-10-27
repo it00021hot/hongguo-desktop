@@ -75,7 +75,7 @@ function readSource(): string {
 
 export function HomePage() {
   // 一次性清掉旧推荐流的持久化键（landpage 时代的口味统计/入口游标，
-  // 2026-10-08 迁到书城 cell 换一换后不再读写，留着只是脏数据）
+  // 迁到书城 cell 换一换后不再读写，留着只是脏数据）
   useEffect(() => {
     for (const k of ['hongguo.typeStats', 'hongguo.feedEntry']) {
       try {
@@ -290,7 +290,7 @@ export function HomePage() {
   }
 
   // 档案 + 两路进度源就绪 → 定起点。看过 >3 秒就续播那一集的那个位置，
-  // 不看片尾（2026-10-09 用户口径）。云端历史的集内位置塞进 resumeHint：
+  // 不看片尾。云端历史的集内位置塞进 resumeHint：
   // 播放器起播在本地没有该集播放档案（resumeAt=0）时用它 seek——跨客户
   // 端续播连进度都对上。
   //

@@ -2,15 +2,14 @@
 //!
 //! 列表（头像/昵称/文本/时间/♡）+ 底部发评论框；评论点赞走
 //! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态——
-//! 2026-10-06 抓包重锁：评论形态 business_param 是 need_count/req_type +
+//! 评论形态 business_param 是 need_count/req_type +
 //! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
 //! 评论总数（头部计数用）。
 //!
-//! 回复：发送走 reply/add 独立端点；回复**列表**自 2026-10-10 抓包
-//! 确认可用（reply/list 独立端点，评论维度 src=504/ch=18，
-//! 此前「服务端无接口」的结论作废）——「展开 N 条回复」原地内联展开
+//! 回复：发送走 reply/add 独立端点；回复**列表**走 reply/list 独立端点
+//! （评论维度 src=504/ch=18）——「展开 N 条回复」原地内联展开
 //! （不隐藏其他评论），自己发的回复仍本地追加一份（服务端列表有延迟）。
-//! 回复行格式（2026-10-10 截图）：`回复 @xxx：` 前缀在
+//! 回复行格式：`回复 @xxx：` 前缀在
 //! 正文行（@ 浅蓝高亮）、相对时间（N 天前）、头像 32px。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -79,7 +78,7 @@ function CommentText({ text, aiName }: { text: string; aiName?: string }) {
 import type { CommentItem, Emoticon, ReplyItem, ReplyPage } from '@/service/schema';
 
 /**
- * 评论附件（官方同款两种形态，2026-10-25 实包锁定）：
+ * 评论附件（官方同款两种形态）：
  * - 表情图片（第三方 GIF / 自定义表情 / 搜索结果）：服务端下发的表情对象
  *   直接进 `image_data`，附 `business_param.emoji_scene_type`（2 / 4）；
  * - 本地图片：选图后**不立即上传**（官方实测选图无请求），点「发表」才
@@ -118,7 +117,7 @@ export function CommentPanel({ vid, onClose }: Props) {
   const total = data?.pages[0]?.total || comments?.length || 0;
   const send = useSendComment();
   const sendReply = useSendReply();
-  // @ 提及（官方交互，2026-10-15 抓 player 实包）：输入 `@` 触发
+  // @ 提及（官方交互）：输入 `@` 触发
   // relation/list 候选弹层，选中小果插入提及段，发表时走 rich_text
   // tp=15 + aibot_mention_context（AI bot 会回复剧情介绍）。
   // ⚠️ vid 是「分集vid:seriesId」组合形态——relation/list 的 target 是
@@ -388,7 +387,7 @@ export function CommentPanel({ vid, onClose }: Props) {
 
   /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。
    *  乐观写进对应 query 缓存（hooks 内失败回滚 + 调用方 toast）——
-   *  显示值直读缓存，面板重开不再回跳旧值（2026-10-10 用户实测）。 */
+   *  显示值直读缓存，面板重开不再回跳旧值。 */
   const onCommentDigg = (id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
@@ -526,7 +525,7 @@ export function CommentPanel({ vid, onClose }: Props) {
                           </button>
                         )}
                       </div>
-                      {/* 回复列表（2026-10-10 起 reply/list 可用）：原地内联
+                      {/* 回复列表（reply/list 端点）：原地内联
                     展开，其他评论不隐藏；回复行「回复」走二级回复，新回复
                     直接进缓存 */}
                       <ReplySection

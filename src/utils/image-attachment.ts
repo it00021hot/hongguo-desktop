@@ -27,7 +27,7 @@ export interface LocalImageAttachment {
  * 为空）返回 null。
  *
  * 为什么不直接用 `<input type=file>`：WKWebView 对它不弹选择面板
- * （真实点击到达 input 也不调 runOpenPanel 委托，2026-10-26 实测）。
+ * （真实点击到达 input 也不调 runOpenPanel 委托）。
  */
 export function localFromPicked(picked: PickedImage): LocalImageAttachment | null {
   if (picked.bytes.length === 0) return null;

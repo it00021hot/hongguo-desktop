@@ -1,6 +1,6 @@
 //! 短信登录（passport 系，`novel.snssdk.com` 同域）。
 //!
-//! ## 流程（逆向实证）
+//! ## 流程
 //!
 //! ```text
 //! POST /passport/mobile/send_code/v1/   mobile 需 XOR(0x05) hex 编码
@@ -29,21 +29,20 @@ use mfa::real_upsms_channel;
 pub use mfa::{mfa_relogin, upsms_verify};
 pub use model::{LoginOutcome, MfaContext, MfaFlow, PassportUser, SendCodeOutcome, UpsmsState};
 
-/// passport 与业务同域（实测基址 `https://novel.snssdk.com`）。
+/// passport 与业务同域（基址 `https://novel.snssdk.com`）。
 pub const PASSPORT_ORIGIN: &str = "https://novel.snssdk.com";
 
-/// passport 系 form 请求的 content-type（抓包原值，含 charset）。
+/// passport 系 form 请求的 content-type（官方原值，含 charset）。
 const FORM_CONTENT_TYPE: &str = "application/x-www-form-urlencoded; charset=UTF-8";
 
 /// 手机号编码：`+86` 国码 + 11 位号码，每个 ASCII 字节 XOR 0x05 后转小写 hex。
 ///
-/// `+86` 前缀是 2026-10-04 真机抓包实证（密文解出
-/// `+8617…`）；不带前缀的服务端按残缺号处理。
+/// 密文解出的是 `+8617…`；不带前缀的服务端按残缺号处理。
 pub fn encode_mobile(mobile: &str) -> String {
     xor05_hex(&format!("+86{mobile}"))
 }
 
-/// 验证码编码：与手机号同套 XOR(0x05) hex（1.1.3 抓包实证 `code` 也是密文）。
+/// 验证码编码：与手机号同套 XOR(0x05) hex（`code` 同为密文）。
 pub fn encode_code(code: &str) -> String {
     xor05_hex(code)
 }
@@ -57,9 +56,8 @@ fn xor05_hex(s: &str) -> String {
     out
 }
 
-/// passport 公共 query（1.1.3 抓包逐项对齐）。
-/// passport 系 query 常量（2026-10-04 抓包全量对齐：query 只放 SDK
-/// 标识，**业务参数全部在 form body**——此前把 mobile/code 放 query 的
+/// passport 系 query 常量（query 只放 SDK
+/// 标识，**业务参数全部在 form body**——把 mobile/code 放 query 的
 /// 形态虽然被服务端解析，但与真实客户端形态不符，风控敏感接口不做
 /// 这种偏离）。
 fn passport_sdk_query(with_rom: bool) -> Vec<(String, String)> {
@@ -79,9 +77,9 @@ fn passport_sdk_query(with_rom: bool) -> Vec<(String, String)> {
     q
 }
 
-/// passport 系 form body 的设备/环境字段（2026-10-04 抓包 57 字段逐值
+/// passport 系 form body 的设备/环境字段（官方 57 字段逐值
 /// 对齐）。指纹字段取设备档案；运行时状态（电量/网速/会话计数等）用
-/// 抓包常量——静态档案口径下服务端只作风控参考，不校验真实性。
+/// 常量——静态档案口径下服务端只作风控参考，不校验真实性。
 fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
     let d = &env.device;
     // 档案键 → form 键一致的直接搬；两处不同名的显式映射
@@ -109,7 +107,7 @@ fn passport_device_form(env: &ApiEnv) -> Vec<(String, String)> {
         ("update_version_code", "update_version_code", true),
         ("version_code", "version_code", true),
         ("version_name", "version_name", true),
-        // 运行时状态常量（抓包原值）
+        // 运行时状态常量（官方原值）
         ("app_dark_mode", "0", false),
         ("app_mini_window", "0", false),
         ("battery_pct", "72", false),
@@ -194,21 +192,21 @@ pub fn extract_cookie_pairs(set_cookies: &[String]) -> String {
 
 /// 发送短信验证码。成功返回文案与 csrf 会话凭据。
 ///
-/// 形态（2026-10-04 抓包对齐）：query 只放 SDK 常量，设备+业务字段
+/// 形态：query 只放 SDK 常量，设备+业务字段
 /// 全在 form body。
 pub async fn send_sms_code(env: &ApiEnv, mobile: &str) -> AppResult<SendCodeOutcome> {
     let q = passport_sdk_query(true);
     let mut body = passport_device_form(env);
-    // mix_mode：1 = mobile 是 XOR(0x05) hex 密文（真机实测：配 0 时
+    // mix_mode：1 = mobile 是 XOR(0x05) hex 密文（配 0 时
     // 服务端把密文当明文解析成乱码，合法号码也报 1003 手机号错误）
     body.push(("mobile".into(), encode_mobile(mobile)));
     body.push(("mix_mode".into(), "1".into()));
     body.push(("account_sdk_source".into(), "app".into()));
     body.push(("passport_support_flow".into(), "captcha,verify".into()));
-    // type=3731：短信登录发码场景（1.1.3 抓包值；type=1 会被服务端
-    // 当成换绑场景——目标号已绑定其它账号时报 1001，2026-10-04 实测）
+    // type=3731：短信登录发码场景（type=1 会被服务端
+    // 当成换绑场景——目标号已绑定其它账号时报 1001）
     body.push(("type".into(), "3731".into()));
-    // send_code 独有（抓包原值；解绑上下文 flag + 自动阅读开关）
+    // send_code 独有（官方原值；解绑上下文 flag + 自动阅读开关）
     body.push(("auto_read".into(), "0".into()));
     body.push(("unbind_exist".into(), "34".into()));
     let resp = api_call_full_response(
@@ -255,7 +253,7 @@ pub async fn send_sms_code(env: &ApiEnv, mobile: &str) -> AppResult<SendCodeOutc
 /// 短信验证码登录。MFA 场景传入 [`LoginOutcome::Mfa`] 的上下文重试。
 ///
 /// 发码会话的绑定凭据（`passport_csrf_token`）由调用方合进 `env.cookie`
-/// （1.1.3 实测：cookie 带 csrf 而非 body 回传 mobile_ticket）。
+/// （cookie 带 csrf 而非 body 回传 mobile_ticket）。
 pub async fn sms_login(
     env: &ApiEnv,
     mobile: &str,
@@ -266,12 +264,12 @@ pub async fn sms_login(
     let mut body = passport_device_form(env);
     body.push(("mobile".into(), encode_mobile(mobile)));
     body.push(("mix_mode".into(), "1".into()));
-    // code 与 mobile 同套 XOR(0x05) hex 密文（1.1.3 抓包实证）
+    // code 与 mobile 同套 XOR(0x05) hex 密文
     body.push(("code".into(), encode_code(code)));
     body.push(("account_sdk_source".into(), "app".into()));
     body.push(("passport_support_flow".into(), "captcha,verify".into()));
     if let Some((tag, key)) = mfa {
-        // retry_tag 明文（抓包为 "1"），sms_code_key 密文（同套 XOR）
+        // retry_tag 明文（官方为 "1"），sms_code_key 密文（同套 XOR）
         body.push(("passport_mfa_retry_tag".into(), tag.into()));
         body.push(("sms_code_key".into(), encode_code(key)));
     }
@@ -299,8 +297,8 @@ fn form_urlencoded(pairs: &[(String, String)]) -> String {
 
 /// 登录后的当前用户信息（`/reading/user/info/v1/`，需要 cookie 环境）。
 pub async fn user_info(env: &ApiEnv) -> AppResult<PassportUser> {
-    // 抓包实证这族 reading 接口都在 lq 域（api5-normal-lq.fqnovel.com）、
-    // 走轻签名头；此前误挂 passport 域（novel.snssdk.com）上 404。
+    // 这族 reading 接口都在 lq 域（api5-normal-lq.fqnovel.com）、
+    // 走轻签名头；挂 passport 域（novel.snssdk.com）上会 404。
     let bytes = super::client::api_call_reading(
         super::danmaku::LQ_API_ORIGIN,
         "/reading/user/info/v1/",
@@ -326,7 +324,7 @@ fn parse_login_response(
         .map_err(|e| AppError::Auth(format!("sms_login 响应不是 JSON: {e}")))?;
     let raw = String::from_utf8_lossy(bytes).to_string();
 
-    // MFA 特征（1.1.3 实测嵌套在 data.biz_params；顶层形态做兼容）：
+    // MFA 特征（嵌套在 data.biz_params；顶层形态做兼容）：
     // passport_mfa_retry_tag 与 sms_code_key 成对出现即 MFA
     let biz = v
         .pointer("/data/biz_params")
@@ -399,7 +397,7 @@ fn parse_login_response(
     })
 }
 
-/// passport 惯例：`error_code` 在 `data` 里（实测 send_code 拒绝时
+/// passport 惯例：`error_code` 在 `data` 里（send_code 拒绝时
 /// `{"data":{"error_code":1003,"description":"手机号错误…"},"message":"error"}`），
 /// 顶层只有 `message`。两个位置都兜，错误文案优先 `data.description`。
 fn error_code_of(v: &Value) -> i64 {
@@ -426,8 +424,8 @@ fn check_error(v: &Value, prefix: &str) -> AppResult<()> {
 }
 
 /// 从 user_info 响应原文提取数字 uid——字段名 `req_id` 是伪装，
-/// 2026-10-10 实测值与 sms_login 的数字 user_id 同值（3836620877071530）。
-/// 用于给存量账号里被加密形态（`#c1967_…`）污染的 `AccountState.user_id`
+/// 取值与 sms_login 的数字 user_id 同值。用于给存量账号里被加密形态
+/// （`#c1967_…`）污染的 `AccountState.user_id`
 /// 自愈，免去退出重登。
 pub fn numeric_uid_from_raw(raw: &str) -> Option<String> {
     let v: Value = serde_json::from_str(raw).ok()?;
@@ -470,8 +468,8 @@ fn parse_user(v: &Value, raw: &str) -> PassportUser {
 mod tests {
     use super::*;
 
-    /// 数字 uid 自愈：user_info 原文里 req_id 是伪装字段名（2026-10-10
-    /// 实测值 = sms_login 的数字 user_id）；加密串/空值不收。
+    /// 数字 uid 自愈：user_info 原文里 req_id 是伪装字段名
+    /// （取值 = sms_login 的数字 user_id）；加密串/空值不收。
     #[test]
     fn numeric_uid_from_raw_matches_capture() {
         let raw = r##"{"code":0,"data":{"req_id":3836620877071530,"user_id":"#c1967_xxx","biz_user_id":194002051671}}"##;
@@ -502,8 +500,8 @@ mod tests {
         assert_eq!(parse_user(&v, raw).raw, raw);
     }
 
-    /// parse_user 必须从登录响应 data 里带出头像 URL（2026-10-04 抓包
-    /// 样本：sms_login 的 data 顶层有 avatar_url；user_info 端点嵌套在
+    /// parse_user 必须从登录响应 data 里带出头像 URL
+    /// （sms_login 的 data 顶层有 avatar_url；user_info 端点嵌套在
     /// data.user_info 里，两种形态都兜）。
     #[test]
     fn parse_user_extracts_avatar_url() {
@@ -571,8 +569,7 @@ mod tests {
         }
         let mobile = std::env::var("HG_LOGIN_MOBILE").unwrap_or_else(|_| "10000000000".into());
         println!("[probe] mobile: {mobile}");
-        // HG_PROXY=http://127.0.0.1:8080 时走本地 mitmdump（抓自己的请求
-        // 与抓包逐字节 diff）
+        // HG_PROXY=http://127.0.0.1:8080 时走本地 mitmdump（便于对照请求）
         if let Ok(p) = std::env::var("HG_PROXY")
             && !p.is_empty()
         {
@@ -697,13 +694,13 @@ mod tests {
 
     /// XOR(0x05) hex（含 +86 前缀）：'+'=0x2b→2e，'8'=0x38→3d，
     /// '6'=0x36→33，'1'=0x31→34，'3'=0x33→36，'0'=0x30→35。
-    /// 前缀 `2e3d33` 与抓包密文头一致。
+    /// 前缀 `2e3d33` 与官方密文头一致。
     #[test]
     fn encodes_mobile_with_xor05() {
         assert_eq!(encode_mobile("13800138000"), "2e3d3334363d353534363d353535");
     }
 
-    /// 验证码同套编码：'8'→3d '0'→35 '4'→34 '2'→32（1.1.3 抓包
+    /// 验证码同套编码：'8'→3d '0'→35 '4'→34 '2'→32（官方
     /// 密文 `3d353137` 解出 "8042" 的反向验证）。
     #[test]
     fn encodes_code_with_xor05() {
@@ -711,7 +708,7 @@ mod tests {
         assert_eq!(encode_code("123456"), "343736313033");
     }
 
-    /// MFA 重试时 sms_code_key 也要密文（1.1.3 抓包：密文解出恰为
+    /// MFA 重试时 sms_code_key 也要密文（密文解出恰为
     /// MFA 响应下发的明文 key），retry_tag 保持明文。
     #[test]
     fn encodes_mfa_retry_params() {
@@ -726,7 +723,7 @@ mod tests {
     }
 
     /// upsms body 的 form 编码：JSON 串整体转义、字段顺序稳定
-    /// （与 1.1.3 抓包字段集一致）。
+    /// （与官方字段集一致）。
     #[test]
     fn form_urlencoded_escapes_json_value() {
         let out = form_urlencoded(&[
@@ -773,7 +770,7 @@ mod tests {
         }
     }
 
-    /// MFA 分支：data.biz_params 嵌套形态（1.1.3 真机抓包样本）。
+    /// MFA 分支：data.biz_params 嵌套形态。
     #[test]
     fn detects_mfa_response() {
         let body = r#"{"data":{"error_code":2046,"description":"为保证账号安全，暂不支持此操作",
@@ -789,7 +786,7 @@ mod tests {
                 assert_eq!(ctx.sms_code_key, "fb2825d4c17fad783d28724dd8aebe5e");
                 assert_eq!(ctx.encrypt_uid, "9bRhVfo5rymE");
                 assert_eq!(ctx.log_id, "2026100422LOG");
-                // 95 号段替换成真实 106 通道（抓包同款修正）
+                // 95 号段替换成真实 106 通道（官方同款修正）
                 assert_eq!(ctx.channel_mobile, "10691859839103");
                 assert_eq!(ctx.sms_content, "YZ");
                 assert!(ctx.tips.contains("完成身份验证"));
@@ -799,7 +796,7 @@ mod tests {
     }
 
     /// MFA 响应的 Set-Cookie 里有 `passport_mfa_token`——轮询与重登的
-    /// 会话绑定全靠它（2026-10-05 真机踩坑：缺它永远 1045）。
+    /// 会话绑定全靠它（缺它永远 1045）。
     #[test]
     fn extracts_mfa_token_cookie() {
         let body = r#"{"data":{"error_code":2046,
@@ -839,8 +836,7 @@ mod tests {
         }
     }
 
-    /// 同名 cookie 多次下发（odin_tt）：后值覆盖、不叠罗汉（2026-10-05
-    /// 落库数据里 odin_tt 重复 3 次的修复回归）。
+    /// 同名 cookie 多次下发（odin_tt）：后值覆盖、不叠罗汉。
     #[test]
     fn dedupes_repeated_set_cookies() {
         let lines = vec![
@@ -865,7 +861,7 @@ mod tests {
         assert!(err.to_string().contains("验证码错误"));
     }
 
-    /// 真机抓包形态（2026-10-04 send_code 无效号段探测）：error_code
+    /// 嵌套错误形态（send_code 无效号段）：error_code
     /// 嵌在 data 里、description 带原因。锁住嵌套解析。
     #[test]
     fn surfaces_nested_error_code() {

@@ -49,8 +49,8 @@ function formatPlayCount(n: number): string {
   return tf('browse.playCount', { count: formatCountPrecise(n) });
 }
 
-/** 服务端面板缺「长度」行时的合成兜底（选项 id 来自 2026-10-07 抓包，
- * 实测 select_items.duration 服务端必认）。名称走 i18n，与 creationStatus
+/** 服务端面板缺「长度」行时的合成兜底（合成选项 id
+ * 服务端必认）。名称走 i18n，与 creationStatus
  * 合成行同口径。 */
 const durationFallbackRow = () => ({
   rowType: 'duration',
@@ -147,7 +147,7 @@ export function BrowsePage() {
       seriesTitle: it.title,
       cover: it.cover,
       episodeCount: it.episodeCnt,
-      // 2026-10-11 dev 实测：综合 tab 的 cell 不带 sub_title/sub_title_list，
+      // 综合 tab 的 cell 不带 sub_title/sub_title_list，
       // 真标签拿不到（空数组），热度行回落播放数（搜索结果显示封面与热度）
       tags: it.tags.length > 0 ? it.tags : it.subTitle.split('·').slice(0, 1).filter(Boolean),
       heatText: it.heatText || formatPlayCount(it.playCnt),
@@ -343,8 +343,8 @@ export function BrowsePage() {
       </div>
 
       {/* 官方筛选面板（八行，可整块折叠）：选项表服务端下发，
-          空选即「全部」。「长度」行部分设备不下发（2026-10-07 实测），但
-          select_items.duration 服务端必认——缺行时用抓包锁定的选项 id 合成兜底。
+          空选即「全部」。「长度」行部分设备不下发，但
+          select_items.duration 服务端必认——缺行时用官方选项 id 合成兜底。
           折叠态只留开关行：徽标显示已选条件数，一键展开不用从头找。 */}
       {!searching && (
         <div className="flex flex-col gap-1.5">

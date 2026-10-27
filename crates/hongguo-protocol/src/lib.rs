@@ -16,7 +16,7 @@
 //! 壳不经过 URI 供数，不消费本 crate 的协议入口；[`pool`] 的工作池与 panic
 //! 加固是协议路径的执行纪律，随供数逻辑同址。
 //!
-//! 执行模型（2026-10-07 事故后加固）：WKURLSchemeHandler 在**主线程**的
+//! 执行模型（panic 加固）：WKURLSchemeHandler 在**主线程**的
 //! extern "C" 边界里调回调，panic 无法 unwind 出去，std 只能 abort 全进程。
 //! 三层防线（[`pool`] + 壳层注册处）：
 //! 1. 回调体整体 `catch_unwind`，panic 到不了 FFI 边界；

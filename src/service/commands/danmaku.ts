@@ -16,13 +16,13 @@ export const danmaku = {
   ) => call('danmaku_window', { groupId: groupId, bookId, startMs, durationSecs, cursor }),
   /**
    * 播放页评论区（单集维度流：group=vid/group_type=30/channel=18/
-   * sort=video_innerflow，2026-10-16 官方实包形态）。一窗 10 条，
+   * sort=video_innerflow）。一窗 10 条，
    * cursor 翻页，返回列表+总数（total 与互动栏角标同源）。 */
   comments: (groupId: string, bookId: string, cursor = '') =>
     call('comment_list', { groupId, bookId, cursor: cursor || undefined }),
   /**
-   * 一条单集评论的回复列表（回复流同单集维度 src=504/ch=18；2026-10-16
-   * 官方实包）。cursor 翻页（原样回传）。
+   * 一条单集评论的回复列表（回复流同单集维度 src=504/ch=18）。
+   * cursor 翻页（原样回传）。
    */
   commentReplies: (groupId: string, bookId: string, commentId: string, cursor = '') =>
     call('comment_replies', { groupId, bookId, commentId, cursor: cursor || undefined }),
@@ -42,7 +42,7 @@ export const danmaku = {
 
   // ------------------------------------------------------------ 创作者主页
 
-  /** 主页资料头（详情页点创作者 → 主页；2026-10-15 官方实包）。 */
+  /** 主页资料头（详情页点创作者 → 主页）。 */
   creatorProfile: (userId: string) => call('creator_profile', { userId }),
   /** 主页作品列表一页（cursor 传上一页返回的原样游标，首页空串）。 */
   creatorWorks: (userId: string, cursor = '') =>

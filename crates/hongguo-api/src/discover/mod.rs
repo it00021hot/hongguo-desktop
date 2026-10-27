@@ -1,8 +1,8 @@
 //! 发现类接口：推荐信息流（榜单落地页）。
 //!
-//! 实测口径（2026-10 直连探测锁定）：
+//! 口径：
 //! - 路径 `/reading/distribution/category/landpage/v1/`，**必须 POST**（GET 404）；
-//! - **官方 body 协议**（2026-10-06 手机端抓包对齐）：业务参数全部在
+//! - **官方 body 协议**：业务参数全部在
 //!   POST body——`client_req_type/limit/offset/req_type:"only_content"/
 //!   select_items{genre:[...]}`。`genre` 取值：真人剧=short_play、
 //!   漫剧=comic_series、AI剧=ai_series（selector 面板的「体裁」维度，
@@ -12,7 +12,7 @@
 //!
 //! 预约日历（`search/uncover_subscribe`）与书城 tab（`bookmall/tab`）的
 //! 必填参数尚未破解（POST 报 100103 PARAM_INVALID，GET 404），探测用例
-//! 留在文末 `probe` 模块，待抓包补参后转正。
+//! 留在文末 `probe` 模块，待补参后转正。
 
 mod model;
 mod parse;
@@ -39,12 +39,12 @@ use parse::{parse_browse_panel, parse_feed};
 /// 推荐信息流落地页。
 pub const LANDPAGE_PATH: &str = "/reading/distribution/category/landpage/v1/";
 
-// 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed，
-// 2026-10-08 对齐书城 RecommendTab）；landpage 只服务找剧筛选浏览。
+// 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed）；
+// landpage 只服务找剧筛选浏览。
 
 /// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
 ///
-/// 抓包形态（2026-10-07）：body 只有三个键，
+/// 请求体只有三个键，
 /// 响应 `data.selector_rows[]`。
 pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
     let body = serde_json::to_vec(&serde_json::json!({
@@ -68,7 +68,7 @@ pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
 /// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
 /// 每页 20 条（用户指定；响应 next_offset 游标会跟着走，翻页无算术依赖）。
 ///
-/// 2026-10-11 抓实流对齐：`creation_status` 仅在选中时在参，
+/// `creation_status` 仅在选中时在参，
 /// 全部选省略整个键（他家不发空串）。
 pub async fn fetch_browse(
     filters: &BrowseFilters,
@@ -88,7 +88,7 @@ pub async fn fetch_browse(
         "session_id": session_id,
     });
     // 完结状态筛选：客户端合成的「完结状态」行选中值
-    // 走 body 顶层；全部选时不发该键（抓包实锤他家省略）
+    // 走 body 顶层；全部选时不发该键（他家省略）
     if !filters.creation_status.is_empty() {
         body["creation_status"] = serde_json::Value::String(filters.creation_status.clone());
     }
@@ -110,13 +110,12 @@ mod probe {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// 弹幕列表直连验证（抓包形状：vid 在路径里、参数在顶层、
+    /// 弹幕列表直连验证（vid 在路径里、参数在顶层、
     /// x-reading-request 头 = ticket-random）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_danmaku_verified() {
         let env = anon_env();
-        // 抓包锚点：当时续播的那集
         let group_id = "7690197301075119166";
         let book_id = "7690150906532219966";
         let path = format!("/novel/commentapi/comment/list/{group_id}/v1/");
@@ -166,7 +165,7 @@ mod probe {
         }
     }
 
-    /// bookmall 重放（抓包参数）：GET + 全业务 query。
+    /// bookmall 重放：GET + 全业务 query。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_bookmall_verified() {
@@ -190,18 +189,24 @@ mod probe {
             ("iid", r#"2169800441475978"#),
             ("is_android_pad_screen", r#"0"#),
             ("language", r#"zh"#),
-            ("manifest_version_code", r#"73932"#),
+            (
+                "manifest_version_code",
+                hongguo_signer::REGISTER_VERSION_CODE_STR,
+            ),
             ("need_personal_recommend", r#"1"#),
             ("os", r#"android"#),
             ("os_api", r#"34"#),
             ("os_version", r#"14"#),
             ("player_so_load", r#"1"#),
-            ("pv_player", r#"73932"#),
+            ("pv_player", hongguo_signer::REGISTER_VERSION_CODE_STR),
             ("resolution", r#"1200*2670"#),
             ("ssmix", r#"a"#),
-            ("update_version_code", r#"73932"#),
-            ("version_code", r#"73932"#),
-            ("version_name", r#"7.3.9.32"#),
+            (
+                "update_version_code",
+                hongguo_signer::REGISTER_VERSION_CODE_STR,
+            ),
+            ("version_code", hongguo_signer::REGISTER_VERSION_CODE_STR),
+            ("version_name", hongguo_signer::REGISTER_VERSION_NAME),
         ];
         let mut v = serde_json::to_value(hongguo_signer::anonymous_profile(
             "0f0f0f0f-0000-4000-8000-000000000000",
@@ -213,9 +218,7 @@ mod probe {
                 .map(|(k, val): (&str, &str)| serde_json::json!([k, val]))
                 .collect(),
         );
-        v["user_agent"] = serde_json::Value::String(
-            "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)".into(),
-        );
+        v["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
         let _hg_env = crate::client::ApiEnv {
             proxy: env.proxy.clone(),
             device: serde_json::from_value(v).unwrap(),
@@ -224,7 +227,7 @@ mod probe {
             ),
             x_tt_token: None,
         };
-        // 对照：我们自己的匿名档案，仅版本号压到 73932（UA 保留我们的机型）
+        // 对照：我们自己的匿名档案，仅版本身份压到注册口径（UA 保留我们的机型）
         let mut own = hongguo_signer::anonymous_profile("0f0f0f0f-0000-4000-8000-000000000001");
         for key in [
             "version_code",
@@ -232,13 +235,11 @@ mod probe {
             "update_version_code",
             "pv_player",
         ] {
-            own.set(key, "73932");
+            own.set(key, hongguo_signer::REGISTER_VERSION_CODE_STR);
         }
-        own.set("version_name", "7.3.9.32");
+        own.set("version_name", hongguo_signer::REGISTER_VERSION_NAME);
         let mut ov = serde_json::to_value(&own).unwrap();
-        ov["user_agent"] = serde_json::Value::String(
-            "com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)".into(),
-        );
+        ov["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
         let own_dev: hongguo_signer::device::DeviceProfile = serde_json::from_value(ov).unwrap();
         let env = crate::client::ApiEnv {
             proxy: env.proxy.clone(),
@@ -274,7 +275,7 @@ mod probe {
         .map(|(k, v): (&str, &str)| (k.to_string(), v.to_string()))
         .collect();
 
-        // 对照实验：抓包里的设备 cookie（install_id/ttreq 是
+        // 对照实验：设备 cookie（install_id/ttreq 是
         // 设备注册回执）。带与不带各打一次，隔离 ILLEGAL_ACCESS 的成因。
         let mut with_cookie = env.clone();
         with_cookie.cookie = Some("passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".to_string());
@@ -368,7 +369,7 @@ mod probe {
         }
     }
 
-    /// 预约日历：subscribe/list 带 need_calendar_schema=true（抓包形状）。
+    /// 预约日历：subscribe/list 带 need_calendar_schema=true。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_subscribe_calendar() {
@@ -460,7 +461,7 @@ mod probe {
 #[cfg(test)]
 mod probe_browse {
     use super::*;
-    /// 找剧面板 + 首页结果真连探测（2026-10-07 端点实装后转正的验证）。
+    /// 找剧面板 + 首页结果真连探测。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_browse_panel_and_page() {
@@ -494,7 +495,7 @@ mod probe_browse {
 mod probe_panel_cookie {
     use super::*;
     /// 带登录 cookie 的面板请求——对比匿名探测（8 行）验证服务端是否
-    /// 按登录态下发不同面板（app 实测只有 7 行，缺 duration）。
+    /// 按登录态下发不同面板（官方 App 只有 7 行，缺 duration）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_browse_panel_with_cookies() {

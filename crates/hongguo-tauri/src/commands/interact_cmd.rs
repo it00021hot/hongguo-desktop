@@ -50,13 +50,13 @@ pub async fn danmaku_send(
 /// 前端直接插列表顶部。
 ///
 /// `mention_user_id` + `context_comment_ids` 同时在场 = **@提及评论**
-/// （2026-10-15/16 官方实包：rich_text tp=15/uri=uid +
+/// （rich_text tp=15/uri=uid +
 /// business_param.aibot_mention_context=最近评论 id 嵌套数组；官方单集
-/// 流里的提及评论带 AI 回复，见 flows-official-follow.jsonl:3314）。
+/// 流里的提及评论带 AI 回复）。
 /// `mention_user_name` 是被提及者昵称——text 前缀与段文本都是
 /// `@昵称\u{FFFC}`，缺了会张冠李戴成「小果」。
 ///
-/// `image` 在场 = **附图评论**（2026-10-25 官方实包）：body 顶层多
+/// `image` 在场 = **附图评论**：body 顶层多
 /// `image_data`，表情类另带 `business_param.emoji_scene_type`（第三方
 /// 表情 2 / 自定义表情 4；本地图片评论**不带**）。附图与 @提及是官方两套
 /// 形态，附图在场时走附图流（正文可空）。
@@ -214,8 +214,7 @@ pub async fn review_reply_send(
     .await
 }
 
-/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复
-/// （2026-10-10 抓包锁定）。
+/// 删除自己的评论 / 剧评 / 回复。`service_id`：2 = 剧评，4 = 评论/回复。
 #[tauri::command]
 pub async fn comment_delete(
     state: State<'_, AppState>,

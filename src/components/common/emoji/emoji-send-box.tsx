@@ -101,8 +101,8 @@ export function EmojiSendBox({
           aria-label={t('player.emoticon.image')}
           onMouseDown={(e) => e.preventDefault()}
           // 选图走 Rust 原生文件面板：WKWebView 对 `<input type=file>`
-          // 不弹选择面板（真实点击到达 input 也不调 runOpenPanel，实测
-          // 2026-10-26，WebView2 无此问题）。
+          // 不弹选择面板（真实点击到达 input 也不调 runOpenPanel；
+          // WebView2 无此问题）。
           onClick={() => {
             void emoticon.pickImage().then((picked) => {
               const local = localFromPicked(picked);

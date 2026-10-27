@@ -16,7 +16,7 @@
 //! 帧逐集滞留；`IMFMediaEngine` 没有「只关源」的 API（`Stop` 属 MediaSession）。
 //! 每集新引擎 + Drop 里显式 `Shutdown`，旧解码器随引擎一起释放；解码设备是
 //! 渲染器那台（[`mf::device_manager`] 进程级共享），新建引擎不再各自付设备的
-//! 开销（2026-10-22 实测：换源复用 +49.9MB private/集；共享设备 + 新引擎后走平）。
+//! 开销（换源复用会逐集滞留显存/私有内存；共享设备 + 新引擎后走平）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};

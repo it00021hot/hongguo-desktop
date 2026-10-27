@@ -15,7 +15,7 @@ import { t, tf } from '@/locales';
 /**
  * 创作者主页（主演/出品方点进来的个人主页）。
  *
- * 2026-10-15 官方实包对齐：头部 = reading/user/profile/get（昵称/头像/
+ * 头部 = reading/user/profile/get（昵称/头像/
  * 简介），作品列表 = commentapi/user/profile/{uid}（剧级条目，video_id
  * 语义 = series_id，可直接当播放目标）。点击作品 = 起播（统一首页沉浸
  * 流，与追更/历史点卡片同一套 usePlaySeries）。

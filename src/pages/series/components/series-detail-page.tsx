@@ -93,8 +93,8 @@ export function SeriesDetailPage({
    * 「继续看」的集号。本地 playback 表是第一真值（播放期间 5 秒一写，
    * 切集立即更新）；云端观看历史既滞后（约 1 分钟一报）又有查询缓存，
    * 只做本地没记录时的兜底——否则就会出现「都看到第二集了还停在第一集」。
-   * 看过 >3 秒就续播那一集的那个位置，不看片尾（2026-10-09 用户口径，
-   * 与后端 resumeAt 同口径：位置 ≤3 秒视为没看过，从头播）。
+   * 看过 >3 秒就续播那一集的那个位置，不看片尾（与后端 resumeAt 同口径：
+   * 位置 ≤3 秒视为没看过，从头播）。
    */
   const continueIndex = useMemo(() => {
     // 与首页起点/后端 resolve_entry 同一份决策（utils/resume-entry）
@@ -276,8 +276,8 @@ export function SeriesDetailPage({
                       variant={upcoming ? 'default' : 'secondary'}
                       className={upcoming ? 'bg-hot text-primary-foreground' : ''}
                     >
-                      {/* 官方统计行原文优先（完结「全139集」/ 连载「更新至83集」，
-                          2026-10-15 实包）；旧后端窗口期回落本地集数拼「全 N 集」 */}
+                      {/* 官方统计行原文优先（完结「全139集」/ 连载「更新至83集」）；
+                          旧后端窗口期回落本地集数拼「全 N 集」 */}
                       {meta?.updateTag ||
                         tf('detail.allEpisodesBadge', { count: activeSeries.episodes.length })}
                     </Badge>
@@ -296,8 +296,8 @@ export function SeriesDetailPage({
               )}
 
               {/* 出品方 / 演职员（main_creator_users，对齐官方详情页 creators
-                  块：头像 + 名字 + 角色行）。点击跳**创作者主页**（2026-10-15
-                  官方实包：commentapi/user/profile，非搜索；userId 是条目
+                  块：头像 + 名字 + 角色行）。点击跳**创作者主页**
+                  （commentapi/user/profile，非搜索；userId 是条目
                   自带的 user_id）。旧条目无 uid 时不可点（仅展示） */}
               {meta && meta.creators.length > 0 && (
                 <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -384,8 +384,8 @@ export function SeriesDetailPage({
                       <Heart className={cn('size-4', digged && 'fill-hot text-hot')} aria-hidden />
                       {t('player.interact.like')}
                     </Button>
-                    {/* 追更（对齐官方详情页）：仅连载中的剧显示——2026-10-15
-                        官方实包：完结剧 series_status=1 且无追更钮（「全139集」），
+                    {/* 追更（对齐官方详情页）：仅连载中的剧显示——
+                        完结剧 series_status=1 且无追更钮（「全139集」），
                         连载剧 series_status=0（「更新至83集」+「每周六更新5集」） */}
                     {meta?.seriesStatus === 0 && <FollowButton seriesId={seriesId} />}
                   </>
@@ -468,7 +468,7 @@ export function SeriesDetailPage({
 
             <TabsContent value="comments">
               {/* 剧均评分块 + 发评框（评分/表情）+ 滚动懒加载列表，
-                  整体在 ReviewList（2026-10-10 抓包对齐） */}
+                  整体在 ReviewList */}
               <ReviewList seriesId={seriesId} />
             </TabsContent>
 

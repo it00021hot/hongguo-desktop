@@ -172,7 +172,7 @@ export function MiniScreenControls({
       )}
       {/* 进度条与大屏共用 ScrubBar：此前用原生 <input type=range> +
           accent-red-500，在 WebView2 上是粗红条大红钮，和细化后的大屏
-          进度条完全两个观感（2026-10-09 真机实测） */}
+          进度条完全两个观感 */}
       <ScrubBar
         current={Math.min(current, duration || 0)}
         duration={duration}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { seriesMetaSchema } from './detail';
 
 /**
- * 详情页创作者头像的地址规整（2026-10-25 回归）。
+ * 详情页创作者头像的地址规整。
  *
  * 服务端下发的是**签名 http** 地址（video_detail 的
  * `main_creator_users[].base_info.user_avatar`，实包样本）：
@@ -12,7 +12,7 @@ import { seriesMetaSchema } from './detail';
  * 头像整块空白。
  *
  * 其它头像域（评论 / 弹幕 / @提及 / 创作者档案）都在 schema 层过
- * `normalizeAvatarUrl`，详情页这处当年漏了——这里钉住「同口径」，别再漏。
+ * `normalizeAvatarUrl`，这里钉住「同口径」，别再漏。
  */
 describe('详情元信息契约', () => {
   const baseMeta = {

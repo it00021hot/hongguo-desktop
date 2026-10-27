@@ -78,8 +78,8 @@ impl super::RankView {
                         } else {
                             page.items.clone()
                         };
-                        // recommend_info.rank 是页内位次（每页 1~10、可重复，
-                        // 2026-10-17 解包实锤），连续名次按拼接序号重算；
+                        // recommend_info.rank 是页内位次（每页 1~10、可重复），
+                        // 连续名次按拼接序号重算；
                         // rank=0 是无名次榜（预约榜）保持 0
                         for (idx, it) in items.iter_mut().enumerate() {
                             if it.rank > 0 {

@@ -60,7 +60,7 @@ async fn probe_play_url() {
 async fn probe_play_batch() {
     use std::collections::BTreeMap;
     let env = hongguo_api::client::ApiEnv::anonymous(Default::default());
-    // 2026-10-25 官方实流的 6 vid（全 1004 漫剧），加一组真人剧（ct=1）
+    // 官方实流样本：6 vid（全 1004 漫剧），加一组真人剧（ct=1）
     let map = BTreeMap::from([
         (
             "1004".to_string(),
@@ -80,7 +80,7 @@ async fn probe_play_batch() {
     }
 }
 
-/// 官方批量端点考证探针（2026-10-25 抓包对齐的证据留档）：
+/// 官方批量端点考证探针：
 /// - model/player + dr_scene=player 发货（起播批量形态）；
 /// - mixed_video_id_map 的 key = 条目 content_type 原样串，错配 → 空响应；
 /// - detail/preload 逗号串批量一次回多剧。

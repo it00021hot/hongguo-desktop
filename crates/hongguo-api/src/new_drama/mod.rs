@@ -1,4 +1,4 @@
-//! 新剧推荐接口（2026-10-03 mitmproxy 抓包锁定，详见 docs/hongguo-api-endpoints.md）。
+//! 新剧推荐接口（详见 docs/hongguo-api-endpoints.md）。
 //!
 //! `GET .../cell/change/v1/`（**v1/ 带斜杠**，与排行榜不同路径），
 //! `selected_items=firstonlinetime_new, cell_gender`；响应形态与排行榜相同
@@ -13,14 +13,13 @@ use super::discover::check_code;
 use super::rank::{RankPage, parse_cell_selector, parse_rank_items};
 use hongguo_common::{AppError, AppResult};
 
-/// 新剧推荐（v1/ 带斜杠——两条路径后缀不一致是服务端原状，抓包实锤）。
+/// 新剧推荐（v1/ 带斜杠——两条路径后缀不一致是服务端原状）。
 pub const NEW_DRAMA_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/";
 
-/// 新剧推荐页（`cell_gender`：2=全部，其余见抓包；分页 offset/limit）。
-/// 新剧推荐页（`cell_gender`：2=全部，其余见抓包；分页 offset/limit）。
+/// 新剧推荐页（`cell_gender`：2=全部；分页 offset/limit）。
 ///
-/// 翻页必须回传上一页响应的 `session_id`（2026-10-11 抓实流：
-/// 第二页起 session_id 每页都在参；首页不传）。
+/// 翻页必须回传上一页响应的 `session_id`
+/// （第二页起 session_id 每页都在参；首页不传）。
 pub async fn fetch_new_drama(
     gender: i64,
     offset: i64,
@@ -34,7 +33,7 @@ pub async fn fetch_new_drama(
         ("change_type", "1"),
         ("client_req_type", "1"),
         ("limit", "18"),
-        // cell/change 全族都在参（2026-10-11 抓实流；个性化混排）
+        // cell/change 全族都在参（个性化混排）
         ("need_personal_recommend", "1"),
         ("offset", offset.to_string().as_str()),
     ]

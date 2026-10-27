@@ -16,14 +16,14 @@ import { RankRow } from './rank-row';
 import { normalizeTabs } from './normalize-tabs';
 
 /**
- * 排行榜页（2026-10-05 抓包对齐）：
+ * 排行榜页：
  * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
  * （panel_selected_items 单选），子榜名旁带「N月N日已更新·基于…」描述行。
  *
  * 选项表由接口随行下发（响应 cell_selector）。形态由客户端自报版本号
- * 决定（与登录态无关，设备档案已在后端对齐 73932），normalizeTabs 保留
+ * 决定（与登录态无关，设备档案已在后端对齐版本身份），normalizeTabs 保留
  * 一级形态兼容：
- * - 两级（73932）：tab=内容分类 → sub=子榜（含分组筛选面板行）；
+ * - 两级结构：tab=内容分类 → sub=子榜（含分组筛选面板行）；
  * - 一级（老版本身份，理论上不再出现）：tab=榜单 → sub=筛选选项平铺。
  *
  * 「演员」tab 响应无剧集数据（celebrity 形态），不提供入口。

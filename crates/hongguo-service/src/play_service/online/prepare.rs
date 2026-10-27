@@ -240,8 +240,8 @@ pub async fn ensure_stream_ready(
 /// （首页 `play_prefetch` 从入口集起铺）都走这里，铺几集由
 /// `Settings.prefetch_episodes` 统一控制（0=全关）。
 ///
-/// 集间切换若不预取，自动连播每集都要冷走一遍取流表+探针链（2026-10-12
-/// 实测 1.4s，正是「下一集黑一两秒」的来源——同现场预取命中只要 20ms）。
+/// 集间切换若不预取，自动连播每集都要冷走一遍取流表+探针链，正是
+/// 「下一集黑一两秒」的来源；预取命中则近乎瞬时。
 /// 幂等与礼让全部复用 [`prefetch_stream`]（StreamCache 去重 + FillBudget
 /// 让位）。档案里查不到该集的 vid 就放弃：播到它时 resolve_play 会
 /// 自行解析（与 compat_prefetch 同款语义）。

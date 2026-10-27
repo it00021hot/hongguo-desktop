@@ -26,8 +26,7 @@ pub fn save_store(
     )
 }
 
-/// 读播放位置。看过超过 3 秒就续播那个位置（2026-10-09 用户口径：
-/// 不管片尾——原「接近片尾归零」防线已废，位置保存原本就为它存在）。
+/// 读播放位置。看过超过 3 秒就续播那个位置（用户口径：不管片尾）。
 pub fn load(state: &AppState, series_id: &str, vid_index: u32) -> hongguo_common::AppResult<f64> {
     Ok(state
         .store

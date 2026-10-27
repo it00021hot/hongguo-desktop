@@ -5,10 +5,10 @@
 //! 轮换是异步生命周期，留在各壳的 bootstrap（Tauri 侧挂 async_runtime；
 //! GPUI 侧待其生命周期装配时接入同一套）。
 //!
-//! 2026-10-27 起注册链路恢复（TT-Encrypt V5 格式修正后真机注册实测通过，
-//! 见 hongguo-api::register 模块文档）：匿名档案仍是无身份时的启动兜底，
+//! 注册链路走 TT-Encrypt V5 格式（见 hongguo-api::register 模块文档）：
+//! 匿名档案仍是无身份时的启动兜底，
 //! [`ensure_registered`] 在壳启动后台把匿名/死档案自动换档为注册产物
-//! （73932 活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
+//! （74232 活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
 
 use hongguo_api::client::ApiEnv;
 use hongguo_api::register::{RegisterResult, register_device};
@@ -23,11 +23,10 @@ use crate::events::ServiceEvent;
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
 
-/// 已被淘汰、必须从库里重铺的档案 install_id（2026-10-26 起含**全部静态
+/// 已被淘汰、必须从库里重铺的档案 install_id（含**全部静态
 /// 兜底档案**——共享身份是风控暴露面，一并退役；匿名档案取代之）。
 /// **今后每次淘汰档案，旧 iid 必须追加进名单**——健康探针只兜「未来的死」，
-/// 名单兜「已知的死」，缺补会让老用户再次集体阵亡（2026-10-09 搜索全挂
-/// 事故的教训）。
+/// 名单兜「已知的死」，缺补会让老用户再次集体阵亡。
 pub const RETIRED_STATIC_IIDS: &[&str] = &["1905892595382586", "2715158266282762"];
 
 /// 轮换元数据（`device_profile` 元数据行，JSON 文档）。
@@ -75,8 +74,8 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
             if dead_listed || ancient {
                 return repave_anonymous(store, &p, dead_listed);
             }
-            // 注册产物钉注册口径（73932），不参与版本对齐——升 74232 与注册
-            // 指纹不同源，取流实测即挂；来源以轮换元数据为准（注册换档写入）
+            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须
+            // 同源，否则取流被拒；来源以轮换元数据为准（注册换档写入）
             if read_meta(store).source == "registered" {
                 return (heal_registered_profile(store, p), "adopted");
             }
@@ -155,8 +154,8 @@ fn repave_anonymous(
 /// [`DeviceProfile::fresh_register_profile`] 构造（指纹字段集、顺序与 UA
 /// 天然同源，编译期保证），只补注册响应下发的设备身份。
 ///
-/// 注册口径（73932 活形态）钉在构造器里，**不做** `align_app_version`
-/// （升 74232 与注册指纹不同源，取流实测即挂，2026-10-27 取流矩阵实证）。
+/// 注册口径（74232 活形态）钉在构造器里，**不做** `align_app_version`
+/// （自报版本与注册指纹必须同源，否则取流被拒）。
 pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     let mut p = DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
     p.set("device_id", &reg.device_id);
@@ -448,7 +447,7 @@ mod tests {
         );
     }
 
-    /// 注册产物档案与注册请求共用同一构造：版本身份钉注册口径（73932）、
+    /// 注册产物档案与注册请求共用同一构造：版本身份钉注册口径、
     /// UA 为注册形态，身份键来自注册响应且按「指纹在前、身份在后」的
     /// 顺序落位（签名 query 顺序敏感）。
     #[test]

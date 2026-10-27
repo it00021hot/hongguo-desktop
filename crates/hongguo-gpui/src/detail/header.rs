@@ -636,7 +636,7 @@ impl DetailView {
     }
 
     /// 「追更」按钮显隐：官方只在连载剧（series_status=0）出追更钮——
-    /// 完结剧「全 N 集」无钮（2026-10-15 实包口径，Tauri 同款）。
+    /// 完结剧「全 N 集」无钮（Tauri 同款）。
     pub(super) fn follow_visible(&self) -> bool {
         !self.upcoming && self.meta.as_ref().is_some_and(|m| m.series_status == 0)
     }

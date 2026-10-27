@@ -45,8 +45,8 @@ pub fn set_incognito(app: AppHandle, enabled: bool) -> AppResult<()> {
         // 只有隐身**真的开着过**才需要收回窗口。挂载同步（隐身本来就没开）
         // 绝不能 show+focus：播放页每次重挂载（剧终接力/自动连播后的导航）
         // 都会重发一次 setIncognito(false)，把最小化或被遮挡的窗口弹到最
-        // 前面——听剧听得好好的窗口突然蹦到前台（2026-10-09 真机复现：
-        // 失焦状态下 /player 重挂必抢前台）。
+        // 前面——听剧听得好好的窗口突然蹦到前台（失焦状态下
+        // /player 重挂必抢前台）。
         if was_on && let Some(w) = active_window(&app) {
             let _ = w.show();
             let _ = w.set_focus();
@@ -89,8 +89,7 @@ async fn incognito_watch(app: AppHandle, generation: u64) {
         };
         // 最小化是用户的显式动作，隐身不得插手：最小化后 is_visible 变
         // false，而光标多半还留在原窗口矩形里——不跳过的话每轮都会判成
-        // 「鼠标回来了」把窗口 show 回来，表现为「隐身开着就最小化不了」
-        // （2026-10-07 实测）。
+        // 「鼠标回来了」把窗口 show 回来，表现为「隐身开着就最小化不了」。
         if win.is_minimized().unwrap_or(false) {
             continue;
         }

@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn unplayable_definitions_are_kept_out_of_the_menu() {
-        // 实测：12/13 集的 720P 只有私有 bytevc2，点下去必定黑屏，
+        // 12/13 集的 720P 只有私有 bytevc2，点下去必定黑屏，
         // 所以菜单里不能出现这一档。
         let defs = list_definitions(&real_model(), DecoderCapability::Full);
         assert_eq!(

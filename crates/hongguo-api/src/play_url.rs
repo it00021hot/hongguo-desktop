@@ -1,10 +1,10 @@
 //! 取流地址。
 //!
 //! 平台把每集的可用流放在 `video_model`（一个 **JSON 字符串**）里，需要二次解析；
-//! 挑哪一条由 [`super::stream_pick`] 决定。真播链对齐官方 App（2026-10-25
-//! 抓 7.3.9.32 实流）：批量 `multi_video_model/player/v1`（dr_scene=player，
+//! 挑哪一条由 [`super::stream_pick`] 决定。真播链对齐官方 App：
+//! 批量 `multi_video_model/player/v1`（dr_scene=player，
 //! 按 content_type 分组）优先 → 空/类型未知回落单集 `video_model/v1/`
-//! （「批量空 → 回落单集」同链，2026-10-14 抓包实证），
+//! （「批量空 → 回落单集」同链），
 //! 见 [`fetch_play_url`] 注释。
 //!
 //! ⚠️ 签名失败时服务端返回 **HTTP 200 + 0 字节**，不是错误码。
@@ -34,7 +34,7 @@ fn batch_cache() -> &'static Mutex<HashMap<String, (Instant, PlayInfo)>> {
 /// vid → content_type 注册表（服务端下发的档案元数据，进程内缓存）。
 ///
 /// 批量取流端点的 `mixed_video_id_map` 分组 key 必须与条目 content_type
-/// 一致（2026-10-25 直连实证：错配 → 空响应），注册来源：
+/// 一致（错配 → 空响应），注册来源：
 /// - 推荐流解析（入口 vid，[`crate::recommend`]）；
 /// - 分集档案解析（整剧各集，[`crate::detail`]，档案 `video_data.content_type`）；
 /// - 批量取流分组（[`fetch_play_batch`] 的 map key）。
@@ -87,14 +87,14 @@ pub struct PlayInfo {
 /// `cap` 决定选流模式：在线播放传本机探测结论（无 HEVC 扩展的机器自动
 /// 翻转到 h264）；转码源/下载选流传 `Full` 保持全量候选。
 ///
-/// 取一集的播放地址——真播链对齐官方 App（2026-10-25 抓 7.3.9.32 实流）：
+/// 取一集的播放地址——真播链对齐官方 App：
 ///
 /// 1. 批量取流暂存命中（[`fetch_play_batch`] 落的）直接用，不发请求；
 /// 2. 批量 `multi_video_model/player/v1`（dr_scene=player，官方真播请求
 ///    形态）带这一集打一次——分组 key 用注册表里的 content_type（见
 ///    [`register_content_type`]；**类型未知不猜 key**，直接跳到 3）；
 /// 3. 批量空/未命中回落单集 [`crate::params::SINGLE_MODEL_PATH`]——
-///    「批量空 → 回落单集」回落链（2026-10-14 抓包实证）。
+///    「批量空 → 回落单集」回落链。
 ///
 /// `definition` 为 `Some` 时取该档位；平台没提供这一档时自动回退到最高档
 /// （见 [`pick_stream_at`]），不会因此播放失败。`cap` 决定选流模式：在线
@@ -233,13 +233,13 @@ async fn fetch_play_player_batch(
     }))
 }
 
-/// 批量取流（2026-10-25 抓官方 App 7.3.9.32 对齐）：起播/切剧时对
+/// 批量取流：起播/切剧时对
 /// 「当前 + 信息流后续几部」（官方 6 个）的入口 vid 打一次
 /// `multi_video_model/player/v1`（dr_scene=player，官方起播批量形态）。
 /// 命中落暂存表，[`fetch_play_url`] 使用时取走，不发单集请求。
 ///
-/// `mixed_video_id_map` 按**条目 content_type 原样字符串**分组（直连 probe
-/// 实证：key 错配 → 空响应；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"）。
+/// `mixed_video_id_map` 按**条目 content_type 原样字符串**分组（key 错配 →
+/// 空响应；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"）。
 /// 空响应时静默跳过（不报错，调用方回落单集）。
 ///
 /// 返回成功暂存的条数。
@@ -341,15 +341,15 @@ mod tests {
 
 #[cfg(test)]
 mod probes {
-    /// 匿名取流的三域探测（官方 7.4.2.32 virgin 打 reading.snssdk.com，
-    /// 本仓历史口径打 lq 域——lq 对匿名 POST 疑似拒绝，见 2026-10-26 冒烟）。
+    /// 匿名取流的三域探测（官方 virgin 档案打 reading.snssdk.com，
+    /// 本仓历史口径打 lq 域——lq 对匿名 POST 疑似拒绝）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_video_model_hosts() {
         use hongguo_common::model::ProxyConfig;
         let device = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
         let env = crate::client::ApiEnv {
-            // 走本机 mitm 便于与官方 virgin 请求逐字段对照
+            // 走本机 mitm 便于与官方 virgin 请求对照
             proxy: ProxyConfig {
                 mode: hongguo_common::model::settings::ProxyMode::Manual,
                 url: "http://127.0.0.1:8080".into(),
@@ -358,7 +358,7 @@ mod probes {
             cookie: None,
             x_tt_token: None,
         };
-        let vid = "7690617619568675902"; // 2026-10-26 官方 virgin 实流
+        let vid = "7690617619568675902";
         let ct = crate::params::SINGLE_CONTENT_TYPE_FALLBACK;
         let payload = serde_json::to_vec(&crate::params::single_model_payload(vid, ct))
             .expect("payload 序列化不可能失败");
@@ -431,8 +431,8 @@ mod probes {
             }
         }
 
-        // 官方形态对照：body gzip + content-encoding 头（官方 virgin 实抓）
-        // 官方原始 body 逐字节（vid 7697626904827792409，video_id_type 形态）
+        // 官方形态对照：body gzip + content-encoding 头
+        // 官方原始 body（vid 7697626904827792409，video_id_type 形态）
         let official_payload = br#"{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"disable_video_relate_book":false,"from_video_id":"","need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_id_type":0,"video_platform":3},"video_id":"7697626904827792409"}"#.to_vec();
         let gz_official = {
             use flate2::write::GzEncoder;
@@ -497,7 +497,7 @@ mod probes {
             device,
         };
 
-        let vid = "7677207072068340761"; // 2026-10-08 官方真机 video_model/v1 实流抓包
+        let vid = "7677207072068340761";
         let payload = serde_json::to_vec(&crate::params::single_model_payload(
             vid,
             crate::params::SINGLE_CONTENT_TYPE_FALLBACK,

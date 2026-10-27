@@ -1,9 +1,8 @@
 //! 协议路径的常驻工作池与 panic 加固。
 //!
 //! WKURLSchemeHandler 在**主线程**的 extern "C" 边界里调协议回调，panic
-//! 无法 unwind 出去，std 只能 abort 全进程（2026-10-07 事故：回调里
-//! `thread::spawn` 失败 panic → abort 卡死在内核，数据库文件锁被占）。
-//! 本模块承载三层防线的前两层：
+//! 无法 unwind 出去，std 只能 abort 全进程（回调里 `thread::spawn` 失败
+//! panic 同样如此）。本模块承载三层防线的前两层：
 //! 1. 壳层注册处的回调体整体 `catch_unwind`（注册是 tauri 胶水，留在壳）；
 //! 2. 请求不「一条一线程」，由常驻工作池消费——无界 per-request 线程正是
 //!    上述 spawn 失败的温床；
@@ -122,9 +121,8 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    /// 2026-10-07 事故回归：serve 侧 panic 只能损失那一条请求，工作池与
-    /// 后续任务必须照常——「一条请求 panic 拖 abort 全进程」就是当天数据库
-    /// 被锁一下午的根因。
+    /// panic 加固回归：serve 侧 panic 只能损失那一条请求，工作池与
+    /// 后续任务必须照常，不得拖垮整个进程。
     #[test]
     fn pool_serves_jobs_after_a_panicking_one() {
         let (tx, rx) = mpsc::channel();

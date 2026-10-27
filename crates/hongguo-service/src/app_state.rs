@@ -135,7 +135,7 @@ impl AppStateInner {
     /// 请求带 B Cookie」的半新半旧。Cookie 不参与签名（走 extra_headers 注入）。
     ///
     /// Cookie 的组成是「账号字段优先、匿名兜底补缺」：reading 系接口按
-    /// `install_id` 风控，未登录也不能裸奔（2026-10-04 实测 0 字节拒）。
+    /// `install_id` 风控，未登录也不能裸奔（会被 0 字节响应拒）。
     pub fn api_env(&self) -> hongguo_api::client::ApiEnv {
         let settings = self.settings();
         let device = self.device();

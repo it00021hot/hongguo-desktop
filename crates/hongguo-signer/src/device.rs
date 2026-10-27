@@ -5,8 +5,8 @@
 //!
 //! 档案有 owned 形态 [`DeviceProfile`]（可从数据库装载、可被设备注册流程
 //! 改写字段）；游客身份走 [`anonymous_profile`]——官方 7.4.2.32 起
-//! 未登录读播**不再需要设备注册**，仅凭 cdid + 签名即可（2026-10-26
-//! 官方 virgin 实抓三点一线 + 本仓探针实测），共享的静态兜底档案已废除。
+//! 未登录读播**不再需要设备注册**，仅凭 cdid + 签名即可，
+//! 共享的静态兜底档案已废除。
 
 use serde::{Deserialize, Serialize};
 
@@ -16,16 +16,15 @@ use crate::protobuf::{FieldType, FieldValue, proto};
 pub const APP_ID: &str = "8662";
 pub const CHANNEL_ID: &str = "1588093228";
 
-/// 官方客户端版本身份（全仓唯一出处，2026-10-26 官方 7.4.2.32 实抓对齐）。
+/// 官方客户端版本身份（全仓唯一出处）。
 /// query / 注册模板 / UA 一律引用这三常量，禁止再散写魔法值。
 pub const APP_VERSION_CODE: u64 = 74232;
 pub const APP_VERSION_CODE_STR: &str = "74232";
 pub const APP_VERSION_NAME: &str = "7.4.2.32";
 
-/// 注册指纹钉定的版本身份（74232 活形态：2026-10-27 Python 活体实测
-/// `new_user:1`，官方 7.4.2.32 APK bdinstall 装配器静态对齐）。注册请求
+/// 注册指纹钉定的版本身份（74232 活形态）。注册请求
 /// 与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——
-/// 升当前版本与注册指纹不同源，取流实测即挂。
+/// 升当前版本与注册指纹不同源，取流即挂。
 pub const REGISTER_VERSION_CODE: u64 = 74232;
 pub const REGISTER_VERSION_CODE_STR: &str = "74232";
 pub const REGISTER_VERSION_NAME: &str = "7.4.2.32";
@@ -33,8 +32,8 @@ pub const REGISTER_VERSION_NAME: &str = "7.4.2.32";
 /// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
 /// 机型段与档案指纹一致，改机型要整组同换）。
 ///
-/// 7.4.2.32 起官方 UA 尾段从 `Cronet/TTNetVersion:…` 换成 `tt-ok/3.12.13.20`
-/// （2026-10-26 官方实抓），匿名请求的机型段会在服务端过风控名单，跟着换。
+/// UA 尾段为 7.4.2.32 起官方统一的 `tt-ok/3.12.13.20` 形态，
+/// 匿名请求的机型段会在服务端过风控名单，跟着换。
 pub fn video_ua() -> String {
     format!(
         "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
@@ -127,8 +126,8 @@ impl DeviceProfile {
     }
 
     /// 设备注册用的全新档案：版本身份**原生钉注册口径**（
-    /// [`REGISTER_VERSION_CODE_STR`] 74232 活形态，2026-10-27 活体
-    /// 实测），UA 为 7.4.2.32 tt-ok 尾段（[`register_ua`]），Xiaomi 14
+    /// [`REGISTER_VERSION_CODE_STR`] 74232 活形态），UA 为 7.4.2.32
+    /// tt-ok 尾段（[`register_ua`]），Xiaomi 14
     /// 指纹，**不带** device_id/iid（首次注册 query 里不能有空值形态的
     /// 字段）。cdid/openudid 由调用方生成后填入——注册请求与注册产物
     /// 档案共用本构造，指纹天然同源；匿名档案经 [`anonymous_profile`]
@@ -196,7 +195,7 @@ impl DeviceProfile {
 
 /// 匿名游客档案（官方 7.4.2.32 形态）：注册指纹基底去 `openudid`，版本
 /// 身份与 UA 对齐当前客户端（[`align_app_version`] + [`video_ua`] 的
-/// tt-ok 尾段，2026-10-26 virgin 实抓），`pv_player` 随版本身份同值——
+/// tt-ok 尾段），`pv_player` 随版本身份同值——
 /// **不带 iid/device_id/openudid、零 cookie**，服务端对匿名读播全量放行。
 /// `cdid` 由调用方生成并落库，安装期内保持稳定
 /// （官方同款行为：pm clear 后身份不变，就是 cdid/指纹没变）。
@@ -262,10 +261,9 @@ const APP_VERSION_FIELDS: [(&str, &str); 4] = [
 
 /// 把设备档案的「App 版本身份」对齐到当前版本（device_id/iid 身份不动）。
 ///
-/// 服务端按自报 `version_code` 分发功能 schema：71332 老版本身份下排行榜
-/// `cell_selector` 退化成扁平一级结构（无「全部」内容 tab、面板分组丢失，
-/// 2026-10-05 `probe_rank_login_form` 二分实证），73932 才是全量两级结构。
-/// 真实设备升级 app 后同样只是自报新版本号，档案其余字段原样保留。
+/// 过旧的版本身份会让服务端下发退化的扁平 schema；本函数把自报版本
+/// 对齐到当前客户端。真实设备升级 app 后同样只是自报新版本号，
+/// 档案其余字段原样保留。
 ///
 /// **注册产物档案不适用**：注册口径终生钉 [`REGISTER_VERSION_CODE_STR`]，
 /// 升当前版本与注册指纹不同源、取流即挂——service 的 adopt 按轮换元数据
@@ -472,9 +470,9 @@ mod tests {
         assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
     }
 
-    /// 旧档案（71332 时代遗留/注册）启动时对齐版本身份：四个版本字段
+    /// 旧档案启动时对齐版本身份：四个版本字段
     /// 原位覆盖，设备身份（device_id/iid/cdid）与其余字段不动——服务端
-    /// 按自报版本号分发功能 schema（排行榜选项表 71332 下退化为扁平）。
+    /// 按自报版本号分发功能 schema（过旧版本下排行榜选项表退化为扁平）。
     #[test]
     fn align_app_version_bumps_only_version_fields() {
         let mut legacy = DeviceProfile::from_pairs(

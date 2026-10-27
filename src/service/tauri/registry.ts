@@ -243,7 +243,7 @@ export const COMMANDS = {
       mentionUserId: z.string().optional(),
       mentionUserName: z.string().optional(),
       contextCommentIds: z.array(z.string()).optional(),
-      // 附图评论（可选；2026-10-25 官方实包：body 顶层多 image_data，
+      // 附图评论（可选；body 顶层多 image_data，
       // 表情类另带 business_param.emoji_scene_type——第三方 2 /
       // 自定义 4；本地图片评论不带该字段）
       image: emoticonSchema.nullable().optional(),
