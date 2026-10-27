@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pin } from 'lucide-react';
 import { useLocation } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './app-sidebar';
 import { ThemeSwitch } from './theme-switch';
 import { WindowButtons } from './window-controls';
@@ -10,7 +11,7 @@ import { useWindowFullscreenSync } from '@/hooks/use-window-fullscreen';
 import { app as appApi } from '@/service/commands';
 import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
-import { useFollowNoticesInvalidator } from '@/service/queries';
+import { useFollowNoticesInvalidator, keys } from '@/service/queries';
 import { useUiStore } from '@/stores/ui';
 import { usePinWindow } from '@/hooks/use-pin-window';
 import { isMac } from '@/utils/platform';
@@ -63,6 +64,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       },
       [refreshFollow, aibotPopupOn],
     ),
+  );
+
+  // 设备注册换档完成（启动自动注册/健康探针轮换）：旧设备身份拉过的缓存
+  // 全部失效——顶栏 tab、推荐流、榜单（与 GPUI 壳的 load_tabs 对齐）。
+  const queryClient = useQueryClient();
+  useEvent(
+    EVENTS.deviceRegistered,
+    useCallback(() => {
+      void queryClient.invalidateQueries({ queryKey: keys.feedTabs });
+      void queryClient.invalidateQueries({ queryKey: keys.feedRoot });
+      void queryClient.invalidateQueries({ queryKey: keys.rankRoot });
+    }, [queryClient]),
   );
 
   // 老板键隐藏/恢复：隐藏即暂停全部视频（声音不漏，老板键的意义所在），

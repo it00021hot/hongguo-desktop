@@ -37,6 +37,8 @@ export const keys = {
   /** 缓存目录留空时的默认位置（进程内不变，设置页只在空态展示） */
   defaultCacheDir: ['default-cache-dir'] as const,
   feed: (tab: string) => ['feed', tab] as const,
+  /** 推荐流整组失效用根 key（设备换档后按旧身份拉过的缓存全部翻面） */
+  feedRoot: ['feed'] as const,
   /** 首页顶栏 tab 列表（服务端下发；登录态变化时壳侧过滤，不换 key） */
   feedTabs: ['feed-tabs'] as const,
   newDrama: (gender: number) => ['new-drama', gender] as const,
