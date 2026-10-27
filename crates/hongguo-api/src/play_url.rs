@@ -460,4 +460,70 @@ mod probes {
             Err(e) => println!("[vm-hosts] 官方body ERR {e}"),
         }
     }
+
+    /// 注册→取流全链路活体探针：按当前注册口径注册新设备，立刻用产物
+    /// 档案单集取流。**注册口径升级（`REGISTER_VERSION_*` 变动）后的
+    /// 必跑闸门**——注册身份与取流身份不同源时这里会回 200+0/服务异常
+    /// （docs 第 0 节：匿名/陈旧身份一律 200+0）。
+    /// `cargo test -p hongguo-api probe_register_then_play_live -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "直连真实接口的探测用例"]
+    async fn probe_register_then_play_live() {
+        use hongguo_common::model::ProxyConfig;
+
+        let reg_env = crate::client::ApiEnv::anonymous(ProxyConfig::default());
+        let reg = match crate::register::register_device(&reg_env).await {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[reg-play] register ERR {e}");
+                return;
+            }
+        };
+        println!(
+            "[reg-play] registered device_id={} iid={} new_user={}",
+            reg.device_id, reg.install_id, reg.new_user
+        );
+
+        // 注册产物档案（与 service::registered_profile 同构）：注册指纹 + 身份字段
+        let mut device =
+            hongguo_signer::device::DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
+        device.set("device_id", &reg.device_id);
+        device.set("iid", &reg.install_id);
+        device.set_ttreq(Some(reg.ttreq.clone()));
+        let env = crate::client::ApiEnv {
+            proxy: ProxyConfig::default(),
+            cookie: Some(hongguo_signer::device::anonymous_cookie(&device)),
+            x_tt_token: None,
+            device,
+        };
+
+        let vid = "7677207072068340761"; // 2026-10-08 官方真机 video_model/v1 实流抓包
+        let payload = serde_json::to_vec(&crate::params::single_model_payload(
+            vid,
+            crate::params::SINGLE_CONTENT_TYPE_FALLBACK,
+        ))
+        .expect("payload 序列化不可能失败");
+        match crate::client::api_call_full(
+            crate::client::LQ_API_ORIGIN,
+            crate::params::SINGLE_MODEL_PATH,
+            Some(payload),
+            &[],
+            &env,
+        )
+        .await
+        {
+            Ok(b) => {
+                let head = String::from_utf8_lossy(&b[..120.min(b.len())]);
+                let ok = b.len() > 200
+                    && (b.windows(11).any(|w| w == b"video_model")
+                        || b.windows(9).any(|w| w == b"video_id\""));
+                println!(
+                    "[reg-play] play bytes={} head={head} -> {}",
+                    b.len(),
+                    if ok { "STREAM_OK" } else { "REJECTED?" }
+                );
+            }
+            Err(e) => println!("[reg-play] play ERR {e}"),
+        }
+    }
 }

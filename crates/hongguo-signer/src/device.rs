@@ -22,12 +22,13 @@ pub const APP_VERSION_CODE: u64 = 74232;
 pub const APP_VERSION_CODE_STR: &str = "74232";
 pub const APP_VERSION_NAME: &str = "7.4.2.32";
 
-/// 注册指纹钉定的版本身份（73932 活形态，2026-10-27 取流矩阵实证，与
-/// hgplayer 同口径）。注册请求与注册产物档案**终生钉这套身份**，不随
-/// [`APP_VERSION_CODE`] 走——升当前版本与注册指纹不同源，取流实测即挂。
-pub const REGISTER_VERSION_CODE: u64 = 73932;
-pub const REGISTER_VERSION_CODE_STR: &str = "73932";
-pub const REGISTER_VERSION_NAME: &str = "7.3.9.32";
+/// 注册指纹钉定的版本身份（74232 活形态：2026-10-27 Python 活体实测
+/// `new_user:1`，官方 7.4.2.32 APK bdinstall 装配器静态对齐）。注册请求
+/// 与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——
+/// 升当前版本与注册指纹不同源，取流实测即挂。
+pub const REGISTER_VERSION_CODE: u64 = 74232;
+pub const REGISTER_VERSION_CODE_STR: &str = "74232";
+pub const REGISTER_VERSION_NAME: &str = "7.4.2.32";
 
 /// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
 /// 机型段与档案指纹一致，改机型要整组同换）。
@@ -42,13 +43,14 @@ pub fn video_ua() -> String {
     )
 }
 
-/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段为
-/// 73932 时代 Cronet 形态。与 [`video_ua`] 各自和所属版本身份成套
-/// （注册口径 vs 当前客户端口径），不可混搭。
+/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段
+/// 为 7.4.2.32 起官方统一的 tt-ok 形态（旧 Cronet 尾段在 74232 匿名
+/// 请求上已被服务端按旧指纹拒）。与 [`video_ua`] 各自和所属版本身份
+/// 成套（注册口径 vs 当前客户端口径），不可混搭。
 pub fn register_ua() -> String {
     format!(
         "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
-         Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
+         Build/UKQ1.230804.001;tt-ok/3.12.13.20)",
         REGISTER_VERSION_CODE_STR
     )
 }
@@ -125,8 +127,8 @@ impl DeviceProfile {
     }
 
     /// 设备注册用的全新档案：版本身份**原生钉注册口径**（
-    /// [`REGISTER_VERSION_CODE_STR`] 73932 活形态，2026-10-27 取流矩阵
-    /// 实证），UA 为 73932 时代 Cronet 尾段（[`register_ua`]），Xiaomi 14
+    /// [`REGISTER_VERSION_CODE_STR`] 74232 活形态，2026-10-27 活体
+    /// 实测），UA 为 7.4.2.32 tt-ok 尾段（[`register_ua`]），Xiaomi 14
     /// 指纹，**不带** device_id/iid（首次注册 query 里不能有空值形态的
     /// 字段）。cdid/openudid 由调用方生成后填入——注册请求与注册产物
     /// 档案共用本构造，指纹天然同源；匿名档案经 [`anonymous_profile`]
@@ -185,7 +187,7 @@ impl DeviceProfile {
         &self.user_agent
     }
 
-    /// 覆盖档案 UA（注册探针复刻 73932 时代 Cronet 尾段用；UA 与字段
+    /// 覆盖档案 UA（注册探针换口径对照用；UA 与字段
     /// 必须成套的约束由调用方保证）。
     pub fn set_user_agent(&mut self, ua: &str) {
         self.user_agent = ua.to_string();
@@ -392,7 +394,7 @@ mod tests {
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
     }
 
-    /// 双口径构造钉死：注册档案原生钉注册口径（73932 + Cronet 尾段），
+    /// 双口径构造钉死：注册档案原生钉注册口径（74232 + tt-ok 尾段），
     /// 匿名档案对齐当前客户端口径（74232 + tt-ok 尾段）——两套身份各自
     /// 成套，改口径只动常量与构造器，不许在调用点散写。
     #[test]
@@ -408,7 +410,7 @@ mod tests {
         }
         assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
         assert_eq!(reg.user_agent(), register_ua());
-        assert!(reg.user_agent().contains("Cronet/TTNetVersion"));
+        assert!(reg.user_agent().contains("tt-ok/3.12.13.20"));
         assert_eq!(reg.get("device_id"), "", "首次注册不带 device_id");
         assert_eq!(reg.get("iid"), "");
 

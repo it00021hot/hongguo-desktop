@@ -24,7 +24,9 @@
 | 能力 | 信息流/搜索/详情可读，**不可取流**（video_model 回 200+0） | 全量可用；取流按会话新鲜度放行，注册即用即活 |
 
 **设备注册 `POST log.snssdk.com/service/2/device_register/`**（实现
-`hongguo-api::register`，73932 口径，`new_user:1` 实测通过）：
+`hongguo-api::register`，74232 口径，2026-10-27 `new_user:1` 活体实测 +
+注册→取流全链路探针 `probe_register_then_play_live` 实证；端点与加密
+自 73932 起未变，7.4.2.32 APK 静态考证见其 bdinstall 装配器）：
 
 - 入参 query：40 参公共指纹——`_rticket, ac, aid, appTheme, app_name,
   app_type, cdid, channel, cpu_support64, cronet_version, device_brand,
@@ -34,19 +36,21 @@
   minor_status, need_personal_recommend, openudid, os, os_api, os_version,
   package, resolution, ssmix, ts, tt_data, ttnet_version,
   update_version_code, use_store_region_cookie, version_code, version_name`
-  （版本身份字段覆写 73932/7.3.9.32）。
+  （版本身份字段覆写 74232/7.4.2.32）。
 - 入参头：签名五件套 + `sdk-version: 2` + `x-ss-stub: {body MD5 大写}` +
   `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
   `log-encode-type: gzip` + `x-ss-dp: 8662` + `passport-sdk-version:
   5051452` + `x-vc-bdturing-sdk-version: 4.0.3.cn`；零 cookie。
-- 入参 body：TT-Encrypt V5 包 73932 指纹注册 JSON。加密格式（实现
+- 入参 body：TT-Encrypt V5 包 74232 指纹注册 JSON。加密格式（实现
   `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
   - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
   - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
     derive[0..16]`、`iv = derive[16..32]`（**包内无 IV 字段，iv 不上线**）
   - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
-- 注册 JSON 关键字段（全表见 `reg73932_json_str`）：`device_model: "Xiaomi 14"`、
-  `sdk_version: "3.7.3-rc.116-douyin"`、`sig_hash: aea615ab…`、
+- 注册 JSON 关键字段（全表见 `register_json_str`）：`device_model: "Xiaomi 14"`、
+  `sdk_version: "4.3.2-rc.44"`、`sdk_target_version: 30`、`sdk_flavor: "cnInner"`、
+  `git_hash: "27660d0"`、`scene: 2`（74232 bdinstall 代际五件）、
+  `sig_hash: aea615ab…`、
   `display_name: "红果短剧"`、`custom.client_ipv4 = "116.130.x.x" 随机伪值`
   （服务端不校验真实出口 IP）。身份字段生成规则：
   - `cdid` / `clientudid` / `req_id`：各自独立 UUIDv4。
