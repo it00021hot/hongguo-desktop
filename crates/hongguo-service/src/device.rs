@@ -65,7 +65,7 @@ pub fn write_meta(store: &Store, meta: &BootstrapMeta) {
     }
 }
 
-/// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 版本对齐。
+/// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
 /// 返回 (现役档案, 来源)。不走网络——探针与轮换在壳的 bootstrap 后台任务里。
 pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
     match store.device_profile() {
@@ -74,6 +74,11 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
             let ancient = p.get("cdid").is_empty();
             if dead_listed || ancient {
                 return repave_anonymous(store, &p, dead_listed);
+            }
+            // 注册产物钉注册口径（73932），不参与版本对齐——升 74232 与注册
+            // 指纹不同源，取流实测即挂；来源以轮换元数据为准（注册换档写入）
+            if read_meta(store).source == "registered" {
+                return (heal_registered_profile(store, p), "adopted");
             }
             let mut p = p;
             align_app_version(&mut p);
@@ -85,6 +90,32 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
             (seed_anonymous(store), "anonymous")
         }
     }
+}
+
+/// 注册产物的启动复检：版本键是注册口径就原样放行；被旧版 adopt 的
+/// `align_app_version` 升到当前客户端版本的（与注册指纹不同源，取流即挂），
+/// 从档案自身身份重建为纯注册口径并落库。
+fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
+    if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR {
+        return p;
+    }
+    let healed = registered_profile(&RegisterResult {
+        device_id: p.get("device_id").into(),
+        install_id: p.get("iid").into(),
+        cdid: p.get("cdid").into(),
+        openudid: p.get("openudid").into(),
+        ttreq: p.ttreq().unwrap_or_default().into(),
+        ..Default::default()
+    });
+    log::warn!(
+        "[Device] 注册档案版本键曾被升到 {}（与注册指纹不同源），重建为注册口径 {}",
+        p.get("version_code"),
+        healed.get("version_code")
+    );
+    if let Err(e) = store.save_device_profile(&healed) {
+        log::warn!("[Device] 重建档案落库失败（本次会话仍生效）: {e}");
+    }
+    healed
 }
 
 /// 生成并落库匿名档案（cdid 每次安装生成一份，此后随库稳定）。
@@ -276,6 +307,18 @@ mod tests {
         Store::open_memory().expect("内存库")
     }
 
+    /// 测试注册产物（身份固定，档案字段断言可对照）。
+    fn reg_result() -> RegisterResult {
+        RegisterResult {
+            device_id: "8888888888888888".into(),
+            install_id: "9999999999999999".into(),
+            ttreq: "ttreq-ticket".into(),
+            cdid: "cdid-uuid".into(),
+            openudid: "openudid-hex".into(),
+            ..Default::default()
+        }
+    }
+
     /// 阵亡名单上的库档案：启动同步就重铺静态兜底，旧档进备份行，
     /// 元数据记下轮换痕迹。
     #[test]
@@ -319,14 +362,15 @@ mod tests {
         );
     }
 
-    /// 活着的注册产物（有 cdid、iid 不在名单）：adopt 原样放行，只做版本对齐。
+    /// 有身份但轮换元数据缺 registered 标记的档案（旧版本升级带上来的
+    /// 遗产权档案）：adopt 按匿名口径做版本对齐。
     #[test]
-    fn adopt_keeps_healthy_registered_profile() {
+    fn adopt_aligns_profile_without_registered_meta() {
         let db = store();
         let mut reg = anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
         reg.set("iid", "9999999999999999");
         reg.set("device_id", "8888888888888888");
-        db.save_device_profile(&reg).expect("写注册档案");
+        db.save_device_profile(&reg).expect("写档案");
 
         let (profile, source) = adopt_sync(&db);
         assert_eq!(source, "adopted");
@@ -335,6 +379,56 @@ mod tests {
             profile.get("version_code"),
             hongguo_signer::APP_VERSION_CODE_STR,
             "版本身份对齐到当前客户端"
+        );
+    }
+
+    /// 注册产物档案启动复检：钉注册口径不做版本对齐（升 74232 与注册
+    /// 指纹不同源，取流实测即挂）。
+    #[test]
+    fn adopt_keeps_registered_profile_on_register_regime() {
+        let db = store();
+        db.save_device_profile(&registered_profile(&reg_result()))
+            .expect("写注册档案");
+        let mut meta = read_meta(&db);
+        meta.source = "registered".into();
+        write_meta(&db, &meta);
+
+        let (profile, source) = adopt_sync(&db);
+        assert_eq!(source, "adopted");
+        assert_eq!(
+            profile.get("version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR,
+            "注册口径不被 align 升走"
+        );
+        assert_eq!(profile.user_agent(), hongguo_signer::device::register_ua());
+        assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
+    }
+
+    /// 历史上被 align 升坏的注册档案（版本键 74232）：启动复检从档案
+    /// 自身身份重建为纯注册口径并落库。
+    #[test]
+    fn adopt_heals_version_bumped_registered_profile() {
+        let db = store();
+        let mut damaged = registered_profile(&reg_result());
+        hongguo_signer::device::align_app_version(&mut damaged);
+        db.save_device_profile(&damaged).expect("写受损档案");
+        let mut meta = read_meta(&db);
+        meta.source = "registered".into();
+        write_meta(&db, &meta);
+
+        let (profile, _) = adopt_sync(&db);
+        assert_eq!(
+            profile.get("version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR,
+            "受损注册档案重建回注册口径"
+        );
+        assert_eq!(profile.get("device_id"), "8888888888888888");
+        assert_eq!(profile.get("iid"), "9999999999999999");
+        assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
+        let stored = db.device_profile().expect("读回").expect("已落库");
+        assert_eq!(
+            stored.get("version_code"),
+            hongguo_signer::REGISTER_VERSION_CODE_STR
         );
     }
 

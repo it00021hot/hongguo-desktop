@@ -100,6 +100,11 @@ impl DeviceProfile {
         self.ttreq = ttreq.filter(|t| !t.is_empty());
     }
 
+    /// 本设备 `ttreq` 票（None = 无票）。重建档案时原样搬运。
+    pub fn ttreq(&self) -> Option<&str> {
+        self.ttreq.as_deref()
+    }
+
     /// 按 key 取字段值，缺 key 给空串（与旧 `device_field` 行为一致）。
     pub fn get(&self, key: &str) -> &str {
         self.fields
@@ -259,6 +264,10 @@ const APP_VERSION_FIELDS: [(&str, &str); 4] = [
 /// `cell_selector` 退化成扁平一级结构（无「全部」内容 tab、面板分组丢失，
 /// 2026-10-05 `probe_rank_login_form` 二分实证），73932 才是全量两级结构。
 /// 真实设备升级 app 后同样只是自报新版本号，档案其余字段原样保留。
+///
+/// **注册产物档案不适用**：注册口径终生钉 [`REGISTER_VERSION_CODE_STR`]，
+/// 升当前版本与注册指纹不同源、取流即挂——service 的 adopt 按轮换元数据
+/// 跳过本函数。
 pub fn align_app_version(profile: &mut DeviceProfile) {
     for (k, v) in APP_VERSION_FIELDS {
         profile.set(k, v);
