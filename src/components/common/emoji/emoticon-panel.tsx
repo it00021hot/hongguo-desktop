@@ -250,7 +250,7 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
         </>
       )}
 
-      {tab === 'search' && (
+      {tab === 'search' &&
         // 没输入就不出网格——「没有找到表情」只属于真实搜索后无结果，
         // 空关键词显示它是误导（GPUI 壳同口径）。
         keyword.trim() !== '' && (
@@ -262,8 +262,7 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
             onPick={(item) => onPickImage(item, SCENE_THIRD_PARTY)}
             onMenu={(item, point) => setMenu({ item, point, canRemove: false })}
           />
-        )
-      )}
+        )}
 
       {/* 长按操作菜单（官方同款：添加到表情 / 删除表情） */}
       {menu && (
