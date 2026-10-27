@@ -43,7 +43,7 @@ exclude = ["vendor/*"]
 # 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
 # tauri.conf.json），成员用 `xxx.workspace = true` 继承。
 [workspace.package]
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 # MSRV 跟随当前 stable 工具链（1.99.1）。应用不是库，MSRV 只影响依赖解析。
 rust-version = "1.99.1"
