@@ -1,98 +1,100 @@
-# 红果官方 App API 端点清单（2026-10-03 起持续抓包）
-
+# 红果官方 App API 端点清单
 > 官方 APK（com.phoenix.read 7.3.9.32）静态提取的全量路径清单（1302 条，含本项目
 > 未接的接口域）见 [`hongguo-apk-endpoints.md`](hongguo-apk-endpoints.md)——那份只是
 > 路径在场，参数/签名/响应口径仍以本文件抓包为准。
 
-## 0. 官方 7.4.2.32 对齐（2026-10-26，MuMu 新设备 virgin 实抓三点一线）
+## 0. 公共约定与设备身份
+**版本身份**（全仓唯一出处 `hongguo-signer::device` 常量）：
 
-官方更新 7.4.2.32（versionCode 74232，旧 73932/7.3.9.32）后的实测形态：
+- 业务请求：`version_code/update_version_code/manifest_version_code = 74232`、
+  `version_name = 7.4.2.32`、`pv_player` 与 version_code 同值。
+- UA：`com.phoenix.read/74232 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001;tt-ok/3.12.13.20)`。
+  UA 尾段是匿名风控闸门：73932 时代的 `Cronet/TTNetVersion:…` 尾段在
+  匿名请求上被静默拒。
+- 公共头：`passport-sdk-version: 5051452`、`x-vc-bdturing-sdk-version: 4.0.3.cn`、
+  `sdk-version: 2`、`x-ss-req-ticket: {ms}`。`x-tt-request-tag` 与 `x-tt-dt`
+  业务请求**不带**，匿名带上会被静默拒。
 
-**版本身份与 UA**（全仓唯一出处 `hongguo-signer::device` 常量）：
+**设备身份两态**：
 
-- `version_code/update_version_code/manifest_version_code = 74232`，
-  `version_name = 7.4.2.32`，`pv_player` 与 version_code 同值。
-- UA 尾段换形：`...Build/UKQ1.230804.001;tt-ok/3.12.13.20`
-  （旧的 `Cronet/TTNetVersion:…` 形态在**匿名请求**上被服务端静默拒
-  ——UA 是匿名风控的闸门，已实测从「空响应」翻转为「正常处理」）。
-- 公共头：`passport-sdk-version: 5051452`、`x-vc-bdturing-sdk-version: 4.0.3.cn`
-  （旧值 50561 / 3.7.2.cn）；`x-tt-request-tag` 与 `x-tt-dt` 官方业务请求
-  **不再携带**，匿名带上会被静默拒（已从 signer 统一头移除）。
+| | 匿名档案 | 注册档案 |
+| --- | --- | --- |
+| 档案字段 | cdid + 机型指纹（无 iid/device_id/openudid） | cdid/openudid/device_id/iid + ttreq 票 |
+| cookie | 必须零 cookie（自报未知 install_id 反而被拒） | `install_id={iid}; ttreq={票}`（同源，注册响应 Set-Cookie 下发） |
+| 能力 | 信息流/搜索/详情可读，**不可取流**（video_model 回 200+0） | 全量可用；取流按会话新鲜度放行，注册即用即活 |
 
-**匿名（未登录、无设备身份）读播边界**：
+**设备注册 `POST log.snssdk.com/service/2/device_register/`**（实现
+`hongguo-api::register`，73932 口径，`new_user:1` 实测通过）：
 
-- 全新身份（无 iid/device_id、零 cookie）**信息流 GET 全通**：
-  bookmall/tab、cell/change 等正常下发（官方 virgin 同形态实测）。
-- `novel/player/video_model/v1` 匿名 **200 + 0 字节**——官方 virgin
-  同样取不到流（同批抓包实证）。**播放需要服务端「认识」的设备**：
-  指纹已知（注册过）的设备带 `install_id + ttreq` cookie 即可取流。
-- cookie 形态：`install_id={iid}; ttreq={票}`（注册响应 Set-Cookie 下发，
-  票按 install_id 发放，两者必须同源）。匿名档案必须**零 cookie**
-  ——带自报的未知 install_id 反而被拒。
-
-**设备注册（device_register）7.4.2.32 真实形态**（2026-10-26 virgin 实抓，
-密文样本 `crates/hongguo-api/tests/fixtures/device_register_74232_real.bin`）：
-
-- 域：`https://log5-applog.fqnovel.com/service/2/device_register/`
-  （不是老的 log.snssdk.com）。
-- query 仅四参：`req_id={uuid}&tt_data=a&okhttp_version=4.2.243.31-douyin&use_store_region_cookie=1`。
-- **无任何签名头**（五件套全不带）；`content-type: application/octet-stream;tt-data=a`；
-  `x-ss-stub = body MD5 大写`；cookie 带 passport_csrf_token 对。
-- body：TT-Encrypt V5（`tc` magic 同旧版）包裹的注册 JSON。指纹模板与
-  7.3.9.32 时代差异大：`sdk_version: "4.3.2-rc.44"` / `sdk_version_code: 4030294` /
-  `sdk_target_version: 30` / `sdk_flavor: "cnInner"` / `git_hash: "27660d0"` /
-  `release_build: "a0af56b"` / `sig_hash: "56a962410c494bbaf0b58dba20cae56f"`（新包签名）、
-  `display_name: "红果免费短剧"`；body **不带** install_id/device_id（服务端按
-  cdid/openudid 指纹发号，指纹已知则原样回发 + `new_user:0`）。
-- 成功响应：JSON `device_id/install_id/device_token` + Set-Cookie
-  `install_id` + `ttreq`。
-- **本仓现状（未实测通过）**：完全复刻上述形态后，**已知指纹**用 curl 原样
-  重放可拿回原 ids；用 Rust reqwest 打**新指纹**恒 `device_id:0`（服务端
-  风控对新指纹有 HTTP 层之外的判定，暖场 settings/app_log 后注册仍拒；
-  怀疑点在官方 body 由原生 metasec 加密、可能附带采集字段）。⇒ 走
-  reqwest 的注册链路暂时不可用，游客播放依赖已知设备或登录会话。
+- 入参 query：40 参公共指纹——`_rticket, ac, aid, appTheme, app_name,
+  app_type, cdid, channel, cpu_support64, cronet_version, device_brand,
+  device_platform, device_type, dpi, first_launch_timestamp, host_abi,
+  is_android_fold, is_android_pad, is_guest_mode, is_preinstall, language,
+  last_deeplink_update_version_code, manifest_version_code, md,
+  minor_status, need_personal_recommend, openudid, os, os_api, os_version,
+  package, resolution, ssmix, ts, tt_data, ttnet_version,
+  update_version_code, use_store_region_cookie, version_code, version_name`
+  （版本身份字段覆写 73932/7.3.9.32）。
+- 入参头：签名五件套 + `sdk-version: 2` + `x-ss-stub: {body MD5 大写}` +
+  `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
+  `log-encode-type: gzip` + `x-ss-dp: 8662` + `passport-sdk-version:
+  5051452` + `x-vc-bdturing-sdk-version: 4.0.3.cn`；零 cookie。
+- 入参 body：TT-Encrypt V5 包 73932 指纹注册 JSON。加密格式（实现
+  `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
+  - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
+  - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
+    derive[0..16]`、`iv = derive[16..32]`（**包内无 IV 字段，iv 不上线**）
+  - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
+- 注册 JSON 关键字段（全表见 `reg73932_json_str`）：`device_model: "Xiaomi 14"`、
+  `sdk_version: "3.7.3-rc.116-douyin"`、`sig_hash: aea615ab…`、
+  `display_name: "红果短剧"`、`custom.client_ipv4 = "116.130.x.x" 随机伪值`
+  （服务端不校验真实出口 IP）。身份字段生成规则：
+  - `cdid` / `clientudid` / `req_id`：各自独立 UUIDv4。
+  - `openudid = md5("{cdid}_{N}").hex()[:16]`，`N ∈ [100000, 999999]`。
+  - `apk_first_install_time = now_ms − randInt(100000,500000)`；
+    `first_launch_timestamp = now_sec − randInt(10,60)`。
+- 出参：`{"server_time","device_id","install_id","new_user","device_id_str",
+  "install_id_str","device_token"}` + Set-Cookie `install_id` / `ttreq`。
+  `device_id: 0` = 被静默拒（格式或指纹有变）。
 
 **官方设备身份的确定性**：cdid/openudid 由 ANDROID_ID 等设备种子派生
-（pm clear 后不变）；服务端对同一指纹恒回同一 install_id。这是「清数据
+（pm clear 后不变）；服务端对同一指纹恒回同一 install_id——「清数据
 不掉身份」的根因。
 
 ## 来源与总述
-
-来源：官方 Android App（com.phoenix.read 7.3.9.32 起，现 7.4.2.32）经
-mitmproxy 抓包实测（模拟器冷启动全流程；2026-10-25 起逐域复核口径），
-全部端点均在 `api5-normal-lq.fqnovel.com`，签名五件套
+来源：官方 Android App（com.phoenix.read）mitmproxy 抓包实测。业务端点
+在 `api5-normal-lq.fqnovel.com`（下称 **lq 域**），签名五件套
 （x-gorgon/x-argus/x-ladon/x-helios/x-medusa）+ `x-reading-request: {ticket_ms}-{random}` 头。
 响应普遍为 **brotli 压缩 JSON**（请求头带 `accept-encoding: gzip, deflate, br`）。
 业务参数一律放 **URL query**（POST 也是），POST body 另有 JSON 业务体。
 
-公共参数（每个请求都带，签名覆盖）：`device_platform=android, aid=**, version_code（见第 0 节常量）,
-manifest_version_code, app_name=**, channel=**, device_type=Xiaomi 14 系指纹,
+公共 query 参数（每个请求都带，签名覆盖）：`device_platform=android, aid,
+version_code, manifest_version_code, app_name, channel, device_type,
 device_id/iid/openudid/cdid, os=android, os_version, dpi=460, resolution,
-host_abi=arm64-v8a, _rticket={ms}, sim_region, msToken...`
+host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间戳，
+见 `hongguo-signer::device::DeviceProfile`）。
 
 **请求形态两族**（对齐时别混）：
 
 |           | lq 域 reading 系                                    | sinfonlineb 域播放/推荐流                  |
 | --------- | --------------------------------------------------- | ------------------------------------------ |
 | 端点      | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作          | multi_video_model / landpage               |
-| 头        | x-ss-dp + lc + x-reading-request（无 gorgon/argus） | 全签名五件套                               |
-| POST body | **一律 gzip**（`Content-Encoding: gzip`）           | 项目自有验证形态（未压缩，服务端两种都收） |
+| 头        | x-ss-dp + lc + x-reading-request（无五件套）        | 全签名五件套                               |
+| POST body | **一律 gzip**（`Content-Encoding: gzip`）           | 未压缩（服务端两种都收）                   |
 
-⚠️ **参数必须逐值对齐抓包，不能凭"也能用"保留旧值**——教训：
-send_code 的 `type=1` 能发码但被服务端按"换绑"场景处理（目标号已绑定其它
-账号时报 1001），`type=3731` 才是短信登录发码场景（2026-10-04 实测）。
+**参数必须逐值对齐抓包，不能凭「也能用」保留旧值**：`send_code` 的
+`type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
+报 1001），短信登录发码场景是 `type=3731`。
 
-⚠️ **取流端点形态（2026-10-14 探针实测 + 2026-10-08 抓包）**：
-`multi_video_model/player/v1` 必须打 **lq 域**（真实 App 的形态）；
-sinfonlineb 域与 `preload/v1` 路径均回 **200 + 0 字节**（服务端判签名
-失效的形态，与参数无关——同一 body 换 lq+player 即回完整 video_model）。
-body 逐值对齐抓包：`dr_scene:"player"` + biz_param 含
-`disable_video_relate_book:false`。另：该端点按设备/维度的**限频**存在，
-静态兜底设备被共享消耗时同样回 200+0——排障先分辨「形态错」与「限频」
-（换一个长时间未打该端点的环境对照）。
+**取流端点**：`multi_video_model/player/v1` 必须打 **lq 域**；
+sinfonlineb 域与 `preload/v1` 路径回 **200 + 0 字节**（同一 body 换
+lq+player 即回完整 video_model）。body 逐值对齐抓包：`dr_scene:"player"`
++ biz_param 含 `disable_video_relate_book:false`。该端点有按设备/维度
+的**限频**，身份被消耗尽时同样回 200+0——排障先分辨「形态错」与
+「限频」（换一个长时间未打该端点的环境对照）。取流还要求**活的注册
+身份**（见第 0 节：匿名/陈旧身份一律 200+0）。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
-
 ```
 GET /reading/bookapi/bookmall/cell/change/v        # 注意 /v 不带斜杠
 ```
@@ -132,8 +134,7 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
 （2026年9月 = `date_202609`），与 `panel_selected_items` 相互独立、可
 同时携带；默认（当前月）可不传。
 
-### 1.0 首页推荐流（书城换一换，2026-10-08 抓包 + 逆向全量锁定；2026-10-25 冷启动全参数复对齐）
-
+### 1.0 首页推荐流
 信息流首页的**两段式**数据源（本仓 `fetch_recommend_feed` 同构）：
 
 **首页（切 tab）**：`GET /reading/bookapi/bookmall/tab/v?client_req_type=4&tab_type=<T>`
@@ -197,14 +198,12 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
   形态，注册表分组）→ 单集回落（content_type 取注册表，未知填占位
   1004——服务端对该字段容错实测）。vid→content_type 注册来源：推荐流
   解析（入口 vid）、分集档案解析（整剧各集，`video_data.content_type`）、
-  批量分组、壳起播（整剧注册）。批量形态曾 2026-10-14 恒 200+0，
-  2026-10-25 复测恢复发货；GPUI 壳预取+真播全链已对齐。
-- ⚠️ **曾用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回同一批
-  静态默认列表 + 翻页不回传 session 换源重复——「推荐一直是同一部剧」的
-  根因，2026-10-08 已整体迁到本端点
+  批量分组、壳起播（整剧注册）。
+- ⚠️ **不要用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回
+  同一批静态默认列表，且翻页不回传 session 换源重复——首页推荐必须走
+  本节 bookmall 端点。
 
-### 1.1 内容 tab 与子榜（2026-10-05 抓包锁定）
-
+### 1.1 内容 tab 与子榜
 顶部内容 tab 用 `selected_items` 切换，子榜用 `sub_selected_items`，
 两者成对出现：
 
@@ -231,7 +230,6 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
 | 收藏榜 | `ranklist_followed`      |
 
 ### 1.2 筛选面板（panel_selected_items）
-
 面板选中项用 `panel_selected_items` 传值，**单值**——抓包实测
 每次点击整组替换（女频→点古装后只剩 `cate_308`，不带 `gender_female`）：
 
@@ -259,7 +257,6 @@ parse_cell_selector`）原样展开给前端渲染，不在前端硬编码选项
 - `video_desc` 简介、`category_schema` 分类 schema JSON
 
 ## 2. 新剧推荐
-
 ```
 GET /reading/bookapi/bookmall/cell/change/v1/      # 注意 v1/ 带斜杠，与排行榜不同
 ```
@@ -270,7 +267,6 @@ cell_gender=2(全部)|1|0, change_type=1, client_req_type=1, limit=18, offset=0`
 响应结构与排行榜相同（cell_data[].video_data[]）。
 
 ## 3. 上新日历（新剧页第二 tab）
-
 ```
 GET /reading/user/subscribe/list/v1/
 ```
@@ -292,7 +288,6 @@ GET /reading/user/subscribe/list/v1/
 （前后各一周）+ `default_date`；条目跨日分布时 `has_more/next_offset` 翻页。
 
 ## 4. 找剧（筛选浏览）
-
 ```
 POST /reading/distribution/category/landpage/v1/   # 与首页推荐同端点，JSON body
 ```
@@ -339,7 +334,6 @@ icon_url, enable, position}`（剧名前标签）；同名容器在 plan/v 里�
 「第N季/同IP」。`recommend_info`（JSON 串）含 `rank`（当前列表位次）。
 
 ## 5. 搜索
-
 ```
 GET /reading/bookapi/search/tab/v
 ```
@@ -359,8 +353,7 @@ Cookie 的 `install_id` 一致 + `ttreq` 票）。失效 id 的表现是 **HTTP 
 小说=1 / 用户=27 / 听书=2）。综合 tab 的 `data[]` 每条含 `video_data[]` 剧集数据，
 `has_more`/`next_offset` 控制翻页。
 
-### 5.1 输入联想 `GET /reading/bookapi/search/suggest/v`（2026-10-07 抓包实操锁定）
-
+### 5.1 输入联想 `GET /reading/bookapi/search/suggest/v`
 **查询词参数名是 `q`**（不是 search/tab 的 `query`），业务参数逐值对齐：
 `q=女帝, bookshelf_search_plan=4, bookstore_tab=16, count=0,
 need_personal_recommend=1, need_preload=true, search_source=1, tab_name=feed`。
@@ -376,7 +369,6 @@ reading 轻签名 + 匿名 cookie 实测可用（probe_search_suggest 验证）�
 - 旧版 `query_result`（纯词数组）与 `suggest_result`（null）同时下发，不用
 
 ## 6. 我的预约
-
 ```
 GET /reading/user/subscribe/list/v1/
 ```
@@ -387,8 +379,7 @@ subscribe_offset=0, subscribe_order_type=0, swipe_type=0, tab_type=13`
 登录后条目为扁平形态（`item_id/name/has_subscribed/schedule_publish_time/...`），
 `data.online_total_count` / `offline_total_count` 是两栏计数。
 
-## 7. 预约 / 取消预约（2026-10-04 抓包实操锁定）
-
+## 7. 预约 / 取消预约
 ```
 POST /reading/bookapi/search/uncover_subscribe/v
 ```
@@ -400,13 +391,16 @@ POST /reading/bookapi/search/uncover_subscribe/v
   **必须带登录 cookie**，响应 `code==0` 即成功
   （操作完记得还原用户的原代理）
 
-## 8. 短信登录（passport 系，真机实证）
-
+## 8. 短信登录（passport 系）
 ```
 POST /passport/mobile/send_code/v1/   mobile 密文 + type
 POST /passport/mobile/sms_login/      mobile/code 密文 + csrf cookie
 POST /passport/upsms/verify/          MFA 上行短信轮询（form body）
 ```
+
+> 扫码登录不可用：抖音开放平台 10015（client_key 不放行 web 扫码）+
+> passport 16（aid=8662 无 web 扫码权限）——服务端权限墙，仅短信登录
+> （含 MFA 上行短信）可走。
 
 - `mobile` / `code` 都是 **XOR(0x05) hex 密文**；mobile 密文须带
   **`+86` 国码前缀**（不带按残缺号处理）；`mix_mode=1`
@@ -445,8 +439,7 @@ real_upsms_channel` 做同款替换，未知号码透传（换号靠抓包发现
    拿 cookie
 4. 退出登录**无网络请求**（纯本地清账号）
 
-## 会话有效期与 x-tt-token（2026-10-05 抓包 + 落库数据）
-
+## 会话有效期与 x-tt-token
 - **sessionid 有效期 60 天**：`sid_guard = <sessionid>|<登录时间戳>|5184000|<Expires>`
   （5184000s = 60 天）。手机"登录一次在线很久"的直接原因。
 - **续约**：客户端侧无任何 refresh/auth 端点（passport 路径只有
@@ -462,8 +455,7 @@ real_upsms_channel` 做同款替换，未知号码透传（换号靠抓包发现
   uid_tt(_ss) + odin_tt + d_ticket + n_mh + session_tlb_tag 等 17 个 cookie
   （`extract_cookie_pairs` 全收，同名后值覆盖）+ x-tt-token 头凭据。
 
-## 用户资料（2026-10-07 实测打通）
-
+## 用户资料
 ```
 GET /reading/user/info/v1/    ← lq 域（api5-normal-lq.fqnovel.com）+ 轻签名头 + 登录 cookie
 ```
@@ -480,8 +472,7 @@ GET /reading/user/info/v1/    ← lq 域（api5-normal-lq.fqnovel.com）+ 轻签
 - 头像 CDN 是 `p3.douyinpic.com` / `p9-passport.byteacctimg.com`，前端
   CSP `img-src` 已含 `https:`，`<img>` 直连可显。
 
-## 找剧筛选面板（2026-10-07 抓包实操锁定）
-
+## 找剧筛选面板
 ```
 POST /reading/distribution/category/landpage/v1/   # 与推荐流同端点
 {"need_selector_panel":false,"req_scene":"default","req_type":"only_panel"}
@@ -501,8 +492,7 @@ limit:18 + offset + select_items`（每维单元素数组，空选给 `[]`）；
 - 响应压缩：landpage 系是 **brotli**（抓包 jsonl 里 resp_body 是
   b64(brotli(JSON))，addon.py 的 safe_text 会 b64 保真）
 
-## 相关作品·系列（2026-10-07 抓包详情页懒加载锁定）
-
+## 相关作品·系列
 ```
 GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
     &scene=10&offset=0&limit=0&need_personal_recommend=1&bookstore_tab=0
@@ -520,8 +510,7 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
 - 我们的落点：`detail.rs fetch_related_series` + `related_series` 命令 +
   详情页「相关作品·系列」卡片行（`series-detail-page.tsx RelatedWorks`）
 
-## 详情页头部数据面（2026-10-08 抓包详情页实锤）
-
+## 详情页头部数据面
 三个数据源拼出与官方 App 一致的头部（评分行/热度/徽标/选集时长）：
 
 - **评分 = 剧评接口（9.0 的 series 形态）`data.extra.credibility_score`
@@ -548,19 +537,17 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
   与评论/弹幕/@/创作者档案头像同口径；漏一处就是「详情页创作者筹码没头像」。
   GPUI 壳不走浏览器，另有一道档位坑（见 `docs/gpui-kit-research.md`）。
 
-## 9. 互动操作（2026-10-05 抓包实操全量锁定；2026-10-06 重锁）
-
+## 9. 互动操作
 全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +
 **登录 cookie + x-tt-token**；重放实证无强签名校验（旧 `x-reading-request`
 也过，x-helios/x-medusa 不带也过）。响应 `code==0` 即成功。
 
-⚠️ **2026-10-06 口径漂移事故**：评论区 comment/list 沿用旧形态
-（business_param 带弹幕字段 + server_channel=1000）被服务端拒
-（先报 110001 后报 103001），弹幕形态（comment_source=601）不受影响——
-**评论与弹幕在服务端是两套参数校验**，重新实操抓包锁定如下。
+**评论与弹幕在服务端是两套参数校验**：评论区 comment/list 用弹幕形态
+（business_param 带弹幕字段 + server_channel=1000）会被拒（110001/103001），
+弹幕形态（comment_source=601）不受影响——两族参数不可混用，以下按
+实操抓包记录。
 
 ### 9.0 评论区列表 `POST /novel/commentapi/comment/list/{group_id}/v1/`
-
 ```json
 {
   "aid": 8662,
@@ -585,8 +572,7 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
   列表可用（独立端点 reply/list，见 9.0.1）；更早「无 handler」
   是服务端后上线了该能力
 
-### 9.0.1 回复列表 `POST /novel/commentapi/reply/list/{comment_id}/v1/`（2026-10-10 抓包全量锁定）
-
+### 9.0.1 回复列表 `POST /novel/commentapi/reply/list/{comment_id}/v1/`
 **路径参数是被展开的评论/剧评 id**（不是 group_id）。两个维度同一端点
 但请求形态两套，逐字段照抄：
 
@@ -644,14 +630,12 @@ reply_to_reply_id, reply_to_user_info, stat, sub_reply, user_action}`——
 - 列表数据源（数据面字段）：`expand.score`/`score_suffix_text` 也在
   `data.comment.expand`（剧评本体）在场
 
-### 9.0.2 回复的点赞 = 评论点赞同款（2026-10-10 抓包实锤）
-
+### 9.0.2 回复的点赞 = 评论点赞同款
 对一条**回复**点赞就是 9.2 的评论形态（`object_type=8`、`comment_type=4`、
 business_param 带 shark_param），`object_id` 传 **reply_id**——实测抓包
 （回复 id 7693411634417959705 的赞/取消走的就是这形态）。无独立端点。
 
 ### 9.1 视频点赞 / 取消 `POST /novel/articleapi/do_action/v1/`
-
 ```json
 {
   "action_category": 1,
@@ -678,7 +662,6 @@ business_param 带 shark_param），`object_id` 传 **reply_id**——实测抓�
 - 点赞计数在响应 `action_cnt_data["<vid>"]`（服务端延迟统计，常为 0，别信）
 
 ### 9.2 评论点赞 / 取消 `POST /novel/commentapi/comment/do_action/v1/`
-
 ```json
 {"action_type":8,"business_param":{"shark_param":{...}},
  "comment_type":4,"object_id":"<comment_id>","object_type":8}
@@ -690,8 +673,7 @@ business_param 带 shark_param），`object_id` 传 **reply_id**——实测抓�
 `code=0, data=null`；对**回复**点赞也是这形态（object_id 传 reply_id，
 见 9.0.2）。
 
-### 9.2.1 剧评点赞 / 取消（2026-10-10 抓包实操锁定）
-
+### 9.2.1 剧评点赞 / 取消
 同端点换剧评形态，**三处与评论点赞不同，照抓包别合并**：
 
 ```json
@@ -708,8 +690,7 @@ business_param 带 shark_param），`object_id` 传 **reply_id**——实测抓�
   **`business_param` 是空对象**（评论带 shark_param）
 - 取消点赞 = `action_type: 9`，其余不变（抓包实锤）
 
-### 9.3.0 弹幕拉取滚窗协议 `POST /novel/commentapi/comment/list/{vid}/v1/`（2026-10-25 抓官方 App 7.3.9.32 实流锁定）
-
+### 9.3.0 弹幕拉取滚窗协议 `POST /novel/commentapi/comment/list/{vid}/v1/`
 弹幕形态（`comment_type=20 / comment_source=601 / server_channel=1000 /
 group_type=30 / count=90`）不变，但**不是一次拉全，是 30 秒窗滚动**：
 
@@ -732,7 +713,6 @@ group_type=30 / count=90`）不变，但**不是一次拉全，是 30 秒窗滚�
   变量隔离**全部无关**——分流只在签名头内容本身
 
 ### 9.3 弹幕 / 评论发送 `POST /novel/commentapi/comment/add/v1/`
-
 ```json
 {
   "aid": 8662,
@@ -772,8 +752,7 @@ group_type=30 / count=90`）不变，但**不是一次拉全，是 30 秒窗滚�
 - 响应 `data.comment_info.comment_id` 是新评论的 id（发弹幕成功后本地
   乐观插入用 `expand.offset_time = offset`）
 
-### 9.3.2 剧评（整剧评论）列表 + 发送（2026-10-10 抓包锁定）
-
+### 9.3.2 剧评（整剧评论）列表 + 发送
 **列表** = 同端点换形态：`POST /novel/commentapi/comment/list/<series_id>/v1/`，
 body 与 9.3 拉取同族但维度换剧：`group_id=<series_id>`、`group_type=1`、
 `comment_source=1`、`comment_type=2`、`server_channel=34`、`count=10`、`sort=1`、
@@ -820,13 +799,11 @@ business_param 照抓包全量。**首屏不带 cursor 键**；翻页回传上�
 }
 ```
 
-⚠️ 教训：发送侧误带列表侧参数（comment_source/comment_type/server_channel）
-或回复侧 commit_source=9，服务端返回 **103008「无社区功能」** 拒收——
-报错语义与参数错误毫无关系，只能逐字段对照抓包排除（2026-10-10 实测：
-同账号单集评论可发、剧评被拒，最终定位是形态差异）。
+**发送侧不得混入列表侧参数**（comment_source/comment_type/server_channel）
+或回复侧 `commit_source=9`：服务端返回 **103008「无社区功能」**——报错
+语义与参数错误毫无关系，只能逐字段对照抓包排除。
 
-### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`（2026-10-06 抓包锁定；2026-10-10 复核 + 补剧评形态 + 响应解剖）
-
+### 9.3.1 回复 `POST /novel/commentapi/reply/add/v1/`
 回复**不走 comment/add 带回复字段**，是独立端点。body 与评论形态同构，
 另加顶层 `reply_to_comment_id`（被回复的评论 id）；回复「回复」再加
 顶层 `reply_to_reply_id`（被回复的那条回复 id，多级同端点——2026-10-10
@@ -879,8 +856,7 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
 - 表情以 `[名字]` 文本码直接进 `text`（`[爱慕]` 实测入库原样），
   服务端无表情特殊字段
 
-### 9.3.3 删除自己的评论 / 剧评 / 回复 `POST /novel/commentapi/comment/del/v1/`（2026-10-10 抓包实操锁定）
-
+### 9.3.3 删除自己的评论 / 剧评 / 回复 `POST /novel/commentapi/comment/del/v1/`
 ```json
 { "comment_id": "<id>", "data_type": 9, "service_id": 2 }
 ```
@@ -891,7 +867,6 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
 - 响应 `code=0` + `BaseResp.StatusCode=0` 即成功，data 为 null
 
 ### 9.4 收藏（追剧/书架）`POST /reading/bookapi/bookshelf/video/update/v`
-
 ```json
 {"is_cancelled":false,"shark_extra":{...埋点},
  "update_bookshelf_video_list":[{"book_id":"<series_id>","book_type":2,
@@ -907,8 +882,7 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
   条目字段未在带数据样本中取到——probe 实测我们的容错解析
   （series_id/book_id/item_id 任一）命中 1 条真实收藏）
 
-### 9.4.1 观看进度云上报（2026-10-06 抓包锁定）
-
+### 9.4.1 观看进度云上报
 官方客户端播片时同时打两个接口（约每分钟 + 切集时）：
 
 **`POST /reading/bookapi/read_history/update/v`** —— `book_id`/`vid` 是
@@ -990,7 +964,6 @@ JSON **数字**（精度内直接发数字）：
   线上，与官方 App 会话混存后跨端续播差一集
 
 ### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
-
 query 业务参数：`action_type=3, count=100, offset=0,
 object_type_list=6,15,10`。返回**用户互动过的视频列表**（不是单集查询）：
 `data.mixed_data_list[].video_data{vid, series_id, user_digg, digged_count,
@@ -998,13 +971,11 @@ user_digg_timestamp_ms, video_detail{followed, followed_cnt, series_title}}`。
 用途：打开播放页时 best-effort 回显「已赞/已追」状态（列表 100 条内匹配
 vid / series_id）；单集精确查询接口未抓到。
 
-### 9.6 表情域（2026-10-25 官方 App 7.3.9.32 实抓锁定）
-
+### 9.6 表情域
 官方评论输入框的表情面板已是**四档**（面板图标：🔍 搜索 / 😀 系统表情 /
 ♡ 自定义 / GIF 第三方）。前三档与发送形态逐条如下。
 
 #### 9.6.1 表情列表 `GET /reading/ugc/comment/emoticon/v`
-
 query 业务参数：`count` / `offset` / `search_type` / `keyword`（`keyword` 仅
 搜索档与自定义档带）。`search_type` 四档（抓包逐档实证）：
 
@@ -1041,7 +1012,6 @@ query 业务参数：`count` / `offset` / `search_type` / `keyword`（`keyword` 
 - 官方面板在第三方档顶部标注「内容来自于第三方」
 
 #### 9.6.2 图片上传 `POST /reading/reader/upload/picture/`
-
 - query：`need_encrypt=0`
 - body：**multipart/form-data**（**不 gzip**——reading 族其余接口才 gzip），
   字段名 `picture`，`Content-Type: application/octet-stream`，
@@ -1052,7 +1022,6 @@ query 业务参数：`count` / `offset` / `search_type` / `keyword`（`keyword` 
   `web_uri` 是对象 key
 
 #### 9.6.3 添加 / 删除「我的表情」 `POST /reading/ugc/comment/emoticon/collect/v`
-
 body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序序列化）：
 
 ```json
@@ -1083,7 +1052,6 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   服务端不回显）。两种都按「服务端拒绝」处理，错误原文透传给用户
 
 #### 9.6.4 评论附图（`comment/add` 的 `image_data`）
-
 评论发送（9.3，`data_type=4`/`commit_source=3`）在附图时 body 顶层多
 `image_data`，表情类另带 `business_param.emoji_scene_type`：
 
@@ -1114,8 +1082,7 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   附图（另带 `expand_web_url` / `web_url` 缩略形态 `-image-v1:300:0.heic`）；
   纯图片评论的 `text` 为空串（`content_type=2`）
 
-### 9.4.2 上报时机与历史页口径（2026-10-09 抓包实测；2026-10-25 官方 App 实流复核同形态）
-
+### 9.4.2 上报时机与历史页口径
 样本 `captures/flows-20261025-coldstart.jsonl`（官方 App 冷启动 + 全播放流程）。
 `read_history/update` + `read_progress/upload` 的触发点：
 
@@ -1148,50 +1115,17 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
 未看完取反；搜索为纯客户端标题过滤（placeholder：搜索看过的剧/收藏的剧/
 点赞的剧/预约的剧）。
 
-## 已知未抓 / 待做
-
-- 搜索联想 `suggest/v`：**已实现**（`search.rs search_suggest` +
-  `search_suggest_cmd`，probe 直连验证通过；找剧搜索框防抖 300ms 联想下拉，
-  点击直拨播放）
-- 推荐流 badge：**已实现**（`tag_info.text`，见第 4 节条目标记字段）
-- 设备注册 `POST log.snssdk.com/service/2/device_register/`：**已实现**
-  （`register.rs register_device`，tt_encrypt_v5 加密 body；签名档案须带
-  已激活的 device_id、body 用空指纹新号——服务端按 body 指纹发新号），
-  但**未接入主流程**（当前静态设备档案可用；待其被风控拒发号时再接）
-- ~~扫码登录~~ 2026-10-11 实测**不可行**：反编译拿全协议后真机验证——抖音开放平台
-  10015（APP 类型 client_key 不给走 web 扫码）+ passport 16（aid=8662 无 web
-  扫码权限，番茄 aid=1967 同样拒绝）——**服务端权限墙，客户端无解**。短信登录
-  含 MFA 上行短信已全量落地
-- ~~早期未接端点~~ 2026-10-10 已补齐：
-  `reply/list`（回复列表，9.0.1）、`comment/del`（删除，9.3.3）、
-  剧评点赞（9.2.1）、剧评回复（9.3.1 剧评形态）——全部抓包锁定并落地；
-  剩余未接：`read_history/list/v`（云端历史列表）、`book_pack_fields/v1`、
-  `user/share/short_url/`、`read_progress/list|get`——按需再抓
-- **表情方案（2026-10-25 官方 7.3.9.32 实抓重锁）**：官方评论/弹幕输入框
-  已是**四档面板**（见 9.5 节）——系统表情仍走内置 webp + `[名字]` 文本码
-  （发送侧纯文本，实测 `text:"[微笑]"`），另有第三方 GIF、自定义表情、
-  表情搜索三档走服务端，发送时带 `image_data`。本项目已按 9.5 节落地
-  （`crates/hongguo-api/src/emoticon/` + 两壳表情面板）
-
 ## 抓包数据文件
+抓包工作流在仓库 `captures/`（gitignore，持久保留）：
 
-历史轮次（旧 Windows 抓包机的系统临时目录 `hg_capture/`，易失可能已清，
-不再依赖）。
-
-**现行工作流（自持抓包）**：仓库 `captures/`（已 gitignore，持久保留）——
-
-- `audit.py` **参数对齐审计（硬规矩：新接口/改接口必须先跑它逐字段对齐，
-  不许凭"大概有用"挑字段——2026-10-05 前 type=3731 / channel_mobile 替换 /
-  passport_mfa_token / new_verify_flow 空字段连续四次丢参后的整顿产物）**：
+- `addon.py`：mitmproxy dump 脚本（目标域名过滤，输出 JSONL，
+  `MITM_OUT` 可覆盖输出路径）；`flows-YYYYMMDD.jsonl` 为按日抓包产物
+  （请求头/参数/响应 body b64+brotli）。
+- `audit.py`：参数对齐审计——新接口/改接口必须先跑它逐字段对齐：
   `python captures/audit.py [接口名过滤词]` 输出每个接口抓包在场的
-  query/form body 字段/cookie 键/关键头。注意 addon 存的 cookie 是逗号
-  分隔（audit 已兼容）。`d_ticket` 是服务端历史下发凭据（我们没有
-  来源），不算丢参。
-
-- `addon.py` mitmproxy dump 脚本（目标域名过滤，输出 JSONL，MITM_OUT 可覆盖输出路径）
-- `flows-YYYYMMDD.jsonl` 按日分轮的抓包产物（req 头/参数/resp body b64+brotli）
-
-重放工作流（Windows / macOS 通用）：
+  query/form body 字段/cookie 键/关键头。addon 存的 cookie 是逗号分隔
+  （audit 已兼容）；`d_ticket` 是服务端历史下发凭据（本仓无来源），
+  不算丢参。
 
 1. `mitmdump -p 8080 -s captures/addon.py`（pip 装 mitmproxy ≥12；
    首次运行在 `~/.mitmproxy/` 生成 CA 并信任进系统——macOS 钥匙串 /
