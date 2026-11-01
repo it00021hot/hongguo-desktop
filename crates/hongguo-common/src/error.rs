@@ -83,6 +83,14 @@ pub enum AppError {
     #[error("{0}")]
     Busy(String),
 
+    /// 当前平台不支持的功能（桌面专属能力被移动端调用）。
+    ///
+    /// transparent 同 [`AppError::Auth`] 口径——「仅桌面端可用」的完整语义
+    /// 就在消息里；i18n 资源刻意**不提供** `error.unsupported` 词条，前端
+    /// 归一（`localizedMessage`）查不到译文即回落 message 原文。
+    #[error("{0}")]
+    Unsupported(String),
+
     /// 内部错误（后台任务 join 失败等不应发生的状态）。
     ///
     /// 与 [`AppError::Network`] 分开：这不是网络问题，而是进程内部任务
@@ -111,6 +119,7 @@ impl AppError {
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",
             AppError::Busy(_) => "error.busy",
+            AppError::Unsupported(_) => "error.unsupported",
             AppError::Internal(_) => "error.internal",
         }
     }

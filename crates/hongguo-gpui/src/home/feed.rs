@@ -13,7 +13,7 @@ use hongguo_common::AppError;
 
 use crate::bridge;
 
-use super::NowPlaying;
+use super::pin_playing::{PinItem, pin_playing_front};
 
 /// 沉浸流的 tab 身份（即书城 cell 换一换的 tab_type 契约）。列表由服务端
 /// 下发（[`Self::load_tabs`]），回落三件套见 [`Self::fallback_tabs`]。
@@ -530,17 +530,32 @@ impl super::HomeView {
 
     /// 渲染/交互共用的展示列表：种子（仅推荐 tab）+ 流条目，**按 series_id
     /// 去重**——会话轮换后跨页偶发同条目（Tauri 渲染期同款去重），不去重
-    /// 就是滚轮里同一部剧连出好几遍。换一批（`pin_hold` 开闸）把在播剧换出
-    /// 列表后钉在最前——「在播不动」；跨 tab 切换关闸，首批到位即换片。
+    /// 就是滚轮里同一部剧连出好几遍。在播剧由 [`pin_playing_front`] 无条件
+    /// 钉在最前——「在播不动」；跨 tab 切换关闸，首批到位即换片。
     pub(super) fn display_items(&self) -> Vec<StreamItem> {
         let feed = self.feeds.get(&self.active).expect("源已初始化");
-        assemble_display_items(
-            feed,
-            &self.seeds,
-            self.active.as_str() == "16",
+        let merged = merge_seeded_items(feed, &self.seeds, self.active.as_str() == "16");
+        let pinned = pin_playing_front(
+            merged
+                .into_iter()
+                .map(|i| PinItem::new(i.series_id.clone(), i))
+                .collect(),
             self.pin_hold,
-            self.now.as_ref(),
-        )
+            self.now.as_ref().map(|n| n.series_id.as_str()),
+            || {
+                self.now.as_ref().map(|n| {
+                    PinItem::new(
+                        n.series_id.clone(),
+                        StreamItem {
+                            series_id: n.series_id.clone(),
+                            title: n.title.clone(),
+                            ..Default::default()
+                        },
+                    )
+                })
+            },
+        );
+        pinned.into_iter().map(|p| p.body).collect()
     }
 
     /// 当前 tab 的流是否过期（从未加载 = 不过期——首载由 `load_feed` 负责，
@@ -574,14 +589,13 @@ impl super::HomeView {
     }
 }
 
-/// 展示列表组装（纯函数：`display_items` 的主体抽出来，钉住语义不依赖
-/// HomeView/窗口即可单测）。
-fn assemble_display_items(
+/// 展示列表组装的合并段（纯函数）：种子（仅推荐 tab）并入流条目、按
+/// series_id 去重保序。钉住在 [`pin_playing_front`]（自包含，tests/
+/// 源文件级引入可单测），这里只管两源合一。
+fn merge_seeded_items(
     feed: &SourceFeed,
     seeds: &[StreamItem],
     seeds_active: bool,
-    pin_hold: bool,
-    now: Option<&NowPlaying>,
 ) -> Vec<StreamItem> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut items: Vec<StreamItem> = Vec::with_capacity(seeds.len() + feed.items.len());
@@ -598,22 +612,6 @@ fn assemble_display_items(
         if !i.series_id.is_empty() && seen.insert(i.series_id.clone()) {
             items.push(i.clone());
         }
-    }
-    // 「在播不动」钉：仅换一批/回首页闸门（pin_hold）开着且在播剧已被换出
-    // 列表时插到最前——游标 0 仍是在播，follow_cursor 自然不切；跨 tab 关闸，
-    // 首批到位即换游标处的剧（Tauri pinHold 同口径）。
-    if pin_hold
-        && let Some(now) = now
-        && !seen.contains(&now.series_id)
-    {
-        items.insert(
-            0,
-            StreamItem {
-                series_id: now.series_id.clone(),
-                title: now.title.clone(),
-                ..Default::default()
-            },
-        );
     }
     items
 }

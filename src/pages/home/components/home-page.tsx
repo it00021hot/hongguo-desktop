@@ -19,6 +19,7 @@ import {
   useWatchHistory,
 } from '@/service/queries';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
+import { withPinnedPlaying } from '@/utils/pinned-playing';
 import { resolveResumeEntry } from '@/utils/resume-entry';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/locales';
@@ -205,25 +206,28 @@ export function HomePage() {
     });
   }, [restored, playingId, feed, source, setIndexes]);
 
-  // 在播剧置顶钉：换一批后的新列表里通常没有它，「在播不动」靠把它插
-  // 在最前（标题/封面从档案缓存取，缺失给占位——起播走 store 目标，不受
-  // 影响）。只服务换一批/回首页场景，跨 tab 切换关闸（见 pinHold）。
-  const playingPin = useMemo(() => {
-    if (!pinHold || !playingId || items.some((i) => i.seriesId === playingId)) return null;
-    const cached = queryClient.getQueryData<Series>(keys.seriesEpisodes(playingId));
-    return {
-      seriesId: playingId,
-      title: cached?.title ?? '',
-      cover: cached?.cover ?? '',
-      horizCover: '',
-      heatText: undefined,
-      seasonTag: undefined,
-      badge: undefined,
-    };
-  }, [pinHold, playingId, items, queryClient]);
+  // 在播剧置顶钉：换一批/流过期重开后的新列表里通常没有它，「在播不动」
+  // 靠把它插在最前（标题/封面从档案缓存取，缺失给占位——起播走 store
+  // 目标，不受影响）。**无条件钉**：新流里还含着在播剧时也不能省——游标
+  // 是数组下标，不钉的话换一批后游标 0 就指到别的剧，起点决策把播放目标
+  // 拽走（刷剧被「自动切到别的剧」的根源，机制见 withPinnedPlaying）。
+  // 只服务换一批/回首页场景，跨 tab 切换关闸（见 pinHold）。
   const displayItems = useMemo(
-    () => (playingPin ? [playingPin, ...items] : items),
-    [playingPin, items],
+    () =>
+      withPinnedPlaying(items, pinHold, playingId, () => {
+        if (!playingId) return null;
+        const cached = queryClient.getQueryData<Series>(keys.seriesEpisodes(playingId));
+        return {
+          seriesId: playingId,
+          title: cached?.title ?? '',
+          cover: cached?.cover ?? '',
+          horizCover: '',
+          heatText: undefined,
+          seasonTag: undefined,
+          badge: undefined,
+        };
+      }),
+    [items, pinHold, playingId, queryClient],
   );
 
   // 外部点名消费（详情/历史/搜索卡片、选集切季、剧终接下一季）：游标对到
@@ -284,7 +288,9 @@ export function HomePage() {
   if (!restored && items.length > 0) {
     setRestored(true);
     if (playingId) {
-      const idx = items.findIndex((i) => i.seriesId === playingId);
+      // displayItems 口径:在播剧钉住时它在 displayItems[0],idx=0 不设
+      // (游标默认就是 0);找不到(-1)同样不动
+      const idx = displayItems.findIndex((i) => i.seriesId === playingId);
       if (idx > 0) setIndexes((prev) => ({ ...prev, [source]: idx }));
     }
   }
@@ -300,10 +306,27 @@ export function HomePage() {
   // 回来时会重新对号本地档案，接的是你离开时的那集。
   // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
   // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
+  // 游标是否由用户/点名动作改写（vs 列表移位顶掉游标处内容）：保护分支
+  // 的判据。ref 不驱动渲染，只给 effect 读。
+  const lastIndexRef = useRef(-1);
   useEffect(() => {
     if (!currentSeries) return;
+    const idxChanged = lastIndexRef.current !== index;
+    lastIndexRef.current = index;
     if (playingId === currentSeries.seriesId && (storeVidIndex ?? 0) > 0) return;
     if (progressQuery.isPending || historyPending) return;
+
+    // 在播保护期（pinHold）且游标没动、游标处的剧却被顶掉（钉住条目随
+    // playingId 移位/换批重排）：**对齐游标回在播剧、绝不拽播放目标**。
+    // 这里若 setTarget(游标剧)，钉住会把它挪出游标位，游标处又填入别的
+    // 剧，effect 重跑再拽——「拽 → 移位 → 再拽」永不收敛，正是切剧
+    // Maximum update depth 崩溃的根源。对齐游标是纯 UI 写，一轮收敛。
+    // 游标动了（滚轮/↑↓/点名）则是用户切剧，照旧拽目标换片。
+    if (pinHold && !idxChanged && playingId && playingId !== currentSeries.seriesId) {
+      const idx = displayItems.findIndex((i) => i.seriesId === playingId);
+      setIndexes((prev) => ({ ...prev, [source]: Math.max(idx, 0) }));
+      return;
+    }
 
     // >3 秒都续播（不看片尾）：本地档案 vs 云端历史取新者（共享决策，
     // 与详情页「继续看」/后端 resolve_entry 同口径）
@@ -311,6 +334,12 @@ export function HomePage() {
       localProgress,
       historyItems?.find((i) => i.seriesId === currentSeries.seriesId),
     );
+
+    // 主动切剧即结束「在播保护」：在播剧就是用户刚选的游标剧，钉住已无
+    // 意义，关闸后 displayItems=items 原位语义，继续滚就是下一部推荐。
+    // 不关的话钉住条目随每次切剧挪位，游标处的剧被反复顶换，滚轮永远
+    // 在最前几部里轮回。换一批/回首页会重新开闸（见 restart/goto 消费）。
+    setPinHold(false);
 
     setTarget(currentSeries.seriesId, entry?.index ?? 1);
     if (entry && entry.positionMs > 0) {
@@ -322,7 +351,11 @@ export function HomePage() {
     }
   }, [
     currentSeries,
+    index,
     playingId,
+    pinHold,
+    displayItems,
+    source,
     storeVidIndex,
     localProgress,
     progressQuery.isPending,
@@ -330,6 +363,7 @@ export function HomePage() {
     historyPending,
     setTarget,
     setResumeHint,
+    setPinHold,
   ]);
 
   // 占位封面：横版优先（竖版 3:4 被 object-cover 拉满横屏窗口=整屏发糊）；
@@ -341,9 +375,10 @@ export function HomePage() {
     ? (webCover ?? (isRenderableCover(rawCover) ? rawCover : undefined))
     : undefined;
 
-  // 预取相邻剧（下一部为主、上一部兜底回退）的分集档案：换剧时 resolve 秒回
-  const nextItem = items[index + 1];
-  const prevItem = items[index - 1];
+  // 预取相邻剧（下一部为主、上一部兜底回退）的分集档案：换剧时 resolve 秒回。
+  // index 是 displayItems 的游标(钉住时两表错位 1),必须同表取相邻
+  const nextItem = displayItems[index + 1];
+  const prevItem = displayItems[index - 1];
   useEffect(() => {
     if (nextItem) prefetchEpisodes(nextItem.seriesId);
   }, [nextItem, prefetchEpisodes]);
@@ -369,11 +404,11 @@ export function HomePage() {
   }, []);
   const upcomingIds = useMemo(
     () =>
-      items
+      displayItems
         .slice(index + 1, index + 1 + prefetchBreadth)
         .map((it) => it.seriesId)
         .filter(Boolean),
-    [items, index, prefetchBreadth],
+    [displayItems, index, prefetchBreadth],
   );
   const upcomingKey = upcomingIds.join(',');
   /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期
@@ -398,15 +433,16 @@ export function HomePage() {
 
   // 快滑到源尾部时预取下一页；游标越界时也靠它链式拉齐
   useEffect(() => {
-    if (loadMore && hasMore && !isFetchingMore && items.length - index <= 3) loadMore();
+    if (loadMore && hasMore && !isFetchingMore && displayItems.length - index <= 3) loadMore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, index, items.length, hasMore, isFetchingMore]);
+  }, [source, index, displayItems.length, hasMore, isFetchingMore]);
 
   // 依赖里的 source/长度每变一次本来就要新函数，useCallback 省不了重建。
   // 别按「React Compiler 已启用」的口径写注释——本项目没装编译器插件。
+  // clamp 用 displayItems:游标在这张表上,pin 活跃时它比 items 长 1
   const step = (dir: 1 | -1) => {
     setIndexes((prev) => {
-      const max = Math.max(0, items.length - 1);
+      const max = Math.max(0, displayItems.length - 1);
       return { ...prev, [source]: Math.min(Math.max((prev[source] ?? 0) + dir, 0), max) };
     });
   };

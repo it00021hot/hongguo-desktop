@@ -10,10 +10,6 @@ authors.workspace = true
 [dependencies]
 # IPC / 窗口 / 协议注册的宿主框架。
 tauri = { version = "2", features = ["protocol-asset"] }
-# 评论附图 / 上传自定义表情的系统文件面板：WKWebView 对 `<input type=file>`
-# 不弹选择面板（真实点击到达 input 也不调 runOpenPanel 委托，实测
-# 2026-10-26，WebView2 无此问题），选图改走 Rust 原生对话框。
-rfd = "0.15"
 # 选图后的尺寸/格式解码（`emoticon_pick_image` 一次带齐，前端不再量图）。
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。
@@ -52,14 +48,24 @@ serde_json = "1"
 # 异步 command 的运行时内设施（sleep 轮询）。
 # sync：事件转发器匹配 broadcast::error::RecvError；time：既有用法。
 tokio = { version = "1", features = ["sync", "time"] }
-# 小窗模式的鼠标出界检测（app_cmd）。
-mouse_position = "0.1"
 # panic 取证的本地时间戳（diagnostics）。
 chrono = "0.4"
 log = "0.4"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 tauri-plugin-global-shortcut = "2"
+
+# 桌面专属依赖：rfd 在 Android/iOS 无后端（lib 本体就编译不过——
+# FileDialog 等类型的 trait impl 全部按平台 cfg，移动端缺失），
+# mouse_position 只实现 linux/freebsd/macos/windows。调用点已在源码
+# 按平台门控，依赖表与门控口径保持一致，不进移动端编译图。
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# 评论附图 / 上传自定义表情的系统文件面板：WKWebView 对 `<input type=file>`
+# 不弹选择面板（真实点击到达 input 也不调 runOpenPanel 委托，实测
+# 2026-10-26，WebView2 无此问题），选图改走 Rust 原生对话框。
+rfd = "0.15"
+# 小窗模式的鼠标出界检测（incognito_cmd）。
+mouse_position = "0.1"
 
 # macOS 原生红绿灯的藏/显（小屏模式，app_cmd）：直接对三颗 NSWindowButton
 # setHidden，而不是 set_decorations 切 borderless——tao 的 set_decorations 是

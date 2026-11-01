@@ -42,6 +42,7 @@ import { hevcSession } from '../hooks/hevc-session';
 import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { useFrameHold } from '../hooks/use-frame-hold';
+import { useSwitchVeil } from '../hooks/use-switch-veil';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
 import { useEnhancement } from '../hooks/use-enhancement';
@@ -367,9 +368,17 @@ export function PlayerView({
   /** waiting 后时间轴恢复推进（timeupdate）或重新出画即视为不卡 */
   const videoStalled = stalled.key === streamKey && stalled.on;
 
-  // 同剧切集的末帧定格：取流窗口旧画面继续播、流交换后定格帧顶住，直到
-  // 新集首帧出画——封面只留给切剧接管与初次起播。显隐真值表与抓帧时机
-  // 在 use-frame-hold（同文件名的 test 是观感回归锁）。
+  // 同剧切集的黑幕暗转：切换提交拍淡入盖住（消除「静止末帧硬顶 0.7s 再
+  // 突跳」的卡感），新集首帧出画后淡出揭出已在播放的画面。置位/收口时机
+  // 在 use-switch-veil；显隐真值表（含清晰度切换的定格帧接管）在
+  // use-frame-hold（同文件名的 test 是观感回归锁）。
+  const { veiled } = useSwitchVeil({
+    seriesId,
+    episodeKey,
+    videoLive,
+    error,
+    compatActive: compat != null,
+  });
   const {
     frame: heldFrame,
     holdVisible,
@@ -385,6 +394,7 @@ export function PlayerView({
     playSrc,
     error,
     compatActive: compat != null,
+    veiled,
   });
 
   // ---- 舞台交互三套裁决（滚轮/点击/键盘）抽在 use-player-interactions：
@@ -907,8 +917,19 @@ export function PlayerView({
             )}
           </div>
           {/* 末帧定格层：渲染在切换动画容器外（定格帧是静止参考帧，不跟
-              新内容滑入），同剧切集的流交换间隙由它顶住直到新集首帧出画 */}
+              新内容滑入），清晰度切换的换流间隙由它顶住直到新流出画；
+              同剧切集的间隙归黑幕（z-25 盖过本层），定格帧不再参与 */}
           {heldFrame && <FrameHold frame={heldFrame} hidden={!holdVisible} cover={miniScreen} />}
+          {/* 同剧切集的黑幕：切集提交拍淡入盖住静止期，新集出画后淡出揭出
+              已在播放的画面。z-25：盖过视频/弹幕/互动栏，让位控制栏(z-30)
+              与面板——切换瞬间内容层全部隐入黑暗，操作层照常可用 */}
+          <div
+            aria-hidden
+            className={cn(
+              'pointer-events-none absolute inset-0 z-[25] bg-black transition-opacity duration-200 ease-out',
+              veiled ? 'opacity-100' : 'opacity-0',
+            )}
+          />
         </div>
 
         <ErrorBar chromeShown={chromeShown} error={error} />

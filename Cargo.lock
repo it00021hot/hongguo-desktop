@@ -4190,7 +4190,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-api"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "aes 0.9.3",
  "chrono",
@@ -4210,19 +4210,21 @@ dependencies = [
 
 [[package]]
 name = "hongguo-common"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]
 name = "hongguo-desktop"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-tauri",
  "serde_json",
@@ -4238,7 +4240,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-gpui"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4273,7 +4275,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -4287,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4302,14 +4304,14 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-api"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
 ]
 
 [[package]]
 name = "hongguo-media-platform-macos"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4321,7 +4323,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-media-platform-windows"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
@@ -4335,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-player-api",
  "hongguo-player-macos",
@@ -4345,7 +4347,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-api"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "raw-window-handle",
  "tokio",
@@ -4353,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-macos"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-player-api",
  "hongguo-stream",
@@ -4370,7 +4372,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-player-windows"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "gpui-pre-windows",
  "hongguo-player-api",
@@ -4384,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-protocol"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "base64 0.23.1",
  "hongguo-common",
@@ -4401,7 +4403,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-service"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4426,7 +4428,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-signer"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -4440,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-store"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -4456,7 +4458,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-stream"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "hongguo-common",
  "hongguo-video",
@@ -4466,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-tauri"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "chrono",
  "env_logger",
@@ -4501,7 +4503,7 @@ dependencies = [
 
 [[package]]
 name = "hongguo-video"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -8210,6 +8212,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -11281,6 +11284,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
 dependencies = [
  "rustls-pki-types",
 ]

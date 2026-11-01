@@ -203,6 +203,8 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
     let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
     let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
     if g.maximized {
+        // desktop-only API，同 enter_portrait_screen 的门控说明
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let _ = win.maximize();
     }
     Ok(())
@@ -214,9 +216,18 @@ pub fn exit_mini_screen(app: AppHandle) -> AppResult<()> {
 /// 「钉住」是用户对整个窗口的意图，与窗口大小无关。
 #[tauri::command]
 pub fn set_always_on_top(app: AppHandle, enabled: bool) -> AppResult<()> {
-    use tauri::Manager;
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(enabled);
+    // set_always_on_top 是 desktop-only API；移动端无窗口层级语义，跳过
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = (app, enabled);
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        use tauri::Manager;
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.set_always_on_top(enabled);
+        }
     }
     Ok(())
 }
@@ -354,6 +365,10 @@ pub fn enter_portrait_screen(app: AppHandle, aspect: f64) -> AppResult<()> {
     // 普通进入优先回上次竖屏槽位（三种窗态各记各的），没有记忆才按比例
     // 现算（首次进竖屏）
     if maximized {
+        // maximize/unmaximize 是 desktop-only API（mobile 的 WebviewWindow
+        // 没有这族方法）；移动端该分支不可达（前端未适配窗口形态），只跳过
+        // 最大化还原本身。
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let _ = win.unmaximize();
         fit_portrait(&win, aspect, true);
     } else if !crate::window_state::apply_saved(
@@ -432,6 +447,8 @@ pub fn exit_portrait_screen(app: AppHandle) -> AppResult<()> {
     let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
     let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
     if g.maximized {
+        // desktop-only API，同 enter_portrait_screen 的门控说明
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let _ = win.maximize();
     }
     Ok(())

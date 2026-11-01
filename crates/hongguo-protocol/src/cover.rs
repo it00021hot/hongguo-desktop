@@ -320,11 +320,20 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
         .build()
         .map_err(|e| format!("构建下载 runtime 失败: {e}"))?;
     rt.block_on(async {
-        let resp = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0")
-            .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
-            .build()
-            .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?
+        // Android 的 TLS 证书来源分叉，背景见 common::utils::tls
+        let client = {
+            let builder = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0")
+                .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS));
+            #[cfg(target_os = "android")]
+            let builder = builder.use_preconfigured_tls(
+                hongguo_common::utils::tls::webpki_tls_config().map_err(|e| e.to_string())?,
+            );
+            builder
+                .build()
+                .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?
+        };
+        let resp = client
             .get(remote)
             .send()
             .await
