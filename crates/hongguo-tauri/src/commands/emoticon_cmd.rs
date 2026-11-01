@@ -163,8 +163,22 @@ pub struct PickedImage {
 /// 弃用 `<input type=file>` 的原因：WKWebView 对文件 input 不弹选择面板
 /// （真实点击到达 input 也不调 `runOpenPanel` 委托，
 /// WebView2 无此问题）——选图改走 Rust 原生对话框，两壳同一形态。
+/// 桌面专属：rfd 无 Android/iOS 后端（编译过但方法不存在），移动端如实
+/// 返回不支持；移动端改走 WebView 文件选择器属 UI 适配，另行处理。
 #[tauri::command]
 pub fn emoticon_pick_image() -> AppResult<PickedImage> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return Err(hongguo_common::AppError::Unsupported(
+        "本地选图依赖系统文件面板，移动端暂不支持".into(),
+    ));
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        emoticon_pick_image_desktop()
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn emoticon_pick_image_desktop() -> AppResult<PickedImage> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"])
         .pick_file()

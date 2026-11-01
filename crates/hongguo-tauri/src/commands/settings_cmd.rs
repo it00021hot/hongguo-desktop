@@ -6,6 +6,7 @@ use hongguo_common::AppResult;
 use hongguo_common::model::{ProxyTestResult, Settings};
 use hongguo_service::app_state::AppState;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use super::boss_key_cmd;
 
 /// 读设置。
@@ -30,7 +31,11 @@ pub fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> AppResult<Settings> {
+    // 老板键是桌面专属（global-shortcut 插件），移动端跳过重注册直接落库
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     boss_key_cmd::apply(&app, &settings.boss_key)?;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let _ = &app;
     let saved = hongguo_service::settings_service::save(state.inner(), settings)?;
     Ok(saved)
 }

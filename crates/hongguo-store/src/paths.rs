@@ -15,6 +15,12 @@ use std::sync::{OnceLock, RwLock};
 
 static SHELL_DATA_ROOT: OnceLock<String> = OnceLock::new();
 
+/// 绝对数据根覆盖：移动端（Android/iOS）没有桌面数据目录语义——
+/// `dirs::data_dir()` 在 Android 返回 `None`，回退会落到进程不可写的
+/// `/data/local/tmp`，开库直接失败。壳（Tauri 移动入口）在启动最先
+/// 把 app 私有目录钉进来，一次为准。
+static ABSOLUTE_DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
 /// 缓存根覆盖（用户在设置里配置的 `cache_dir`）。`None` = 跟随数据目录。
 /// 不是 OnceLock：设置保存后要即时作用于**新写入**的缓存（cover 每次写盘、
 /// compat 每次转码前都现调 [`cache_root`]），改目录不用重启。
@@ -24,6 +30,13 @@ static CACHE_ROOT_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// 必须在任何路径解析前调用，一次为准。
 pub fn set_shell_data_root(name: &str) {
     let _ = SHELL_DATA_ROOT.set(name.to_string());
+}
+
+/// 声明本进程的绝对数据根（移动端用，见 [`ABSOLUTE_DATA_ROOT`]）。
+/// 必须在任何路径解析前调用，一次为准；优先级低于 `HONGGUO_DATA_DIR`
+/// （测试重定向与用户显式指定的语义不变）。
+pub fn set_absolute_data_root(dir: &Path) {
+    let _ = ABSOLUTE_DATA_ROOT.set(dir.to_path_buf());
 }
 
 /// 应用缓存根覆盖。启动装载与设置保存后调用（见 `Settings::cache_override`）。
@@ -37,6 +50,9 @@ pub fn set_cache_root_override(dir: Option<PathBuf>) {
 pub fn data_dir() -> PathBuf {
     if let Ok(explicit) = std::env::var("HONGGUO_DATA_DIR") {
         return PathBuf::from(explicit);
+    }
+    if let Some(root) = ABSOLUTE_DATA_ROOT.get() {
+        return root.clone();
     }
     let parent = dirs::data_dir().unwrap_or_else(std::env::temp_dir);
     resolve_data_root(&parent, SHELL_DATA_ROOT.get().map(String::as_str))

@@ -32,22 +32,31 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     // 插件在 Builder::build 阶段初始化并劝退第二个实例；若把开库放在这
     // 之前，再次启动（上一实例还活着——隐身隐藏/小窗模式现在很常见）
     // 的进程会先撞上库锁，被误报成「数据文件损坏」然后退出。
-    let builder = tauri::Builder::default()
-        // 单实例锁要第一个注册：抢在窗口创建与数据库打开之前，第二个进程
-        // 才不会拉起第二套 UI / 撞库锁。双开的直接危害是两个进程互写同一
-        // 个存储——下载记录会随机消失。
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            bring_back_active_window(app);
-        }))
+    //
+    // 移动端门控说明：单实例与全局快捷键两个插件官方在 Android/iOS 整
+    // crate cfg 掉（空壳、`init` 符号不存在），注册必须按平台门控；移动端
+    // 没有多实例与系统级快捷键语义，缺席不构成功能损失（Android 系统层
+    // 天然单实例）。
+    let builder = tauri::Builder::default();
+    // 单实例锁要第一个注册：抢在窗口创建与数据库打开之前，第二个进程
+    // 才不会拉起第二套 UI / 撞库锁。双开的直接危害是两个进程互写同一
+    // 个存储——下载记录会随机消失。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        bring_back_active_window(app);
+    }));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // 更新：签名校验的安装包经 GitHub Releases 的 latest.json 分发；
         // 进程插件只用到 relaunch（下载完成后重启进新版本）
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        // 老板键的全局快捷键（issue #4）：注册/注销走 Rust 侧
-        // （commands/boss_key_cmd），不经前端 → 无需 capabilities
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+    // 老板键的全局快捷键（issue #4）：注册/注销走 Rust 侧
+    // （commands/boss_key_cmd），不经前端 → 无需 capabilities
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = builder
         // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
         .manage(commands::app_cmd::WindowCloseGate::default());
 
@@ -62,6 +71,16 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
     builder
         .setup(|app| {
+            // 移动端数据根：Android 没有桌面数据目录语义（dirs::data_dir()
+            // 返回 None），不注入的话数据根落到不可写的 /data/local/tmp，
+            // 开库直接失败。必须在 build_app_state 之前钉到 app 私有目录。
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager as _;
+                let root = app.path().app_data_dir()?;
+                hongguo_store::paths::set_absolute_data_root(&root);
+                log::info!("[Store] Android 数据根: {}", root.display());
+            }
             // 启动装配的顺序即依赖顺序：先建应用状态（含数据库），装载设置
             // 与下载队列，把待跑任务推入调度。设备健康复检 / 磁盘补登记 /
             // 转码探测不拦启动，各自在 init 里后台化（见 bootstrap/mod.rs）。
@@ -77,6 +96,8 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             // 登录后自动生效；对齐 hongguo-player 的检查节奏）
             hongguo_service::follow_service::start_notice_loop(app_state.clone());
             // 老板键按持久化设置注册（被占用只记日志，不拦启动）
+            // （global-shortcut 插件是桌面专属，见 prepare() 的门控说明）
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             commands::boss_key_cmd::init(app.handle(), &app_state.settings().boss_key);
             // 本地观看历史补传（issue #10）：带账号启动时把离线攒下的行推云端
             if app_state.settings().account.is_some() {
@@ -314,6 +335,8 @@ pub fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
 }
 
 /// 把主窗口带回来（隐身 hide 后的恢复入口，Dock 点击/再次启动共用）。
+/// 只在桌面构建被引用（单实例回调 / macOS Reopen），移动端 cfg 掉避免 dead_code。
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn bring_back_active_window(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("main") {
