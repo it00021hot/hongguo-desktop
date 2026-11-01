@@ -1,20 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-/** 切换类型：同剧切集走末帧定格过渡，切剧走封面接管。 */
+/** 切换类型：同剧切集走黑幕暗转（use-switch-veil），切剧/初次起播走封面接管。 */
 export type SwitchKind = 'episode' | 'series';
 
 /** 定格帧淡出时长（FrameHold 的 transition 是 300ms，出画后再留一拍清掉）。 */
 const HOLD_FADE_MS = 350;
 
 /**
- * 切集闪封面的根治：同剧切集的间隙用「上一集正在显示的那一帧」顶住，
- * 直到新集首帧出画——封面占位只留给切剧与初次起播（那才是它对的内容）。
+ * 换流间隙的末帧定格（清晰度切换专用）。
  *
- * 抓帧必须赶在 episodeKey 变化的那次提交之后、新流地址到达之前
- * （useLayoutEffect）：此刻取流还没回来、旧 `<video>` 仍挂在 DOM 里，是
- * 唯一拿得到「正在显示的帧」的时机；流地址一交换元素就被 key 换掉，
- * 再抓只剩黑。自定义协议的流与页面不同源，画进 canvas 会污染画布——
- * 污染只禁回读，这里从不读回，显示不受影响。
+ * 同剧**切集**已改黑幕暗转（use-switch-veil）：切集间隙由黑幕盖住，静止
+ * 定格帧不再参与——「静止 0.7s 再突跳」的卡感正来自它。定格帧剩下的唯一
+ * 场景是**清晰度切换**（episodeKey 不变、veil 不置）：换档换流换元素，
+ * 抓下的当前帧把间隙顶住（调用方在换档前手动 [`capture`]）。
  */
 export function useFrameHold(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -27,6 +25,8 @@ export function useFrameHold(params: {
   playSrc: string | null;
   error: string | null;
   compatActive: boolean;
+  /** 黑幕在场（同剧切集间隙）：定格帧与封面都退场，观感交给暗转。 */
+  veiled: boolean;
 }) {
   const {
     videoRef,
@@ -38,6 +38,7 @@ export function useFrameHold(params: {
     playSrc,
     error,
     compatActive,
+    veiled,
   } = params;
   const [transition, setTransition] = useState<SwitchKind | null>(null);
   /**
@@ -72,10 +73,10 @@ export function useFrameHold(params: {
     if (!seriesId) return;
     const kind: SwitchKind = prev.seriesId === seriesId ? 'episode' : 'series';
     setTransition(kind);
-    // 同剧切集才定格末帧；切剧走封面接管，定格帧绝不许跨剧泄漏
-    if (kind === 'episode') capture();
-    else setHeld(null);
-  }, [seriesId, episodeKey, capture]);
+    // 切集交给黑幕、切剧交给封面：跨切换的旧帧一律清掉，绝不许泄漏到
+    // 新内容上（换档的帧由调用方在换档前手动抓）
+    setHeld(null);
+  }, [seriesId, episodeKey]);
 
   // 新流出画后定格帧淡出并清掉：一张 ~1080p 帧的 canvas 有几 MB，不留整集
   useEffect(() => {
@@ -86,6 +87,7 @@ export function useFrameHold(params: {
 
   const { holdVisible, coverVisible } = overlayVisibility({
     transition,
+    veiled,
     videoLive,
     switching,
     hasFrame: held !== null,
@@ -99,13 +101,16 @@ export function useFrameHold(params: {
 
 /**
  * 封面与定格帧的显隐真值表（纯函数，用例见 use-frame-hold.test.ts）：
- * - 定格帧：有帧、无出画画面、仍在视频分支（有流地址、无错误、无兜底）；
+ * - 黑幕在场（同剧切集间隙）：定格帧与封面全部退场，观感交给暗转——
+ *   揭幕时新画面已在动，任何静止遮罩都不需要；
+ * - 定格帧：黑幕不在场、有帧、无出画画面、仍在视频分支（换流间隙顶住）；
  * - 封面：画面真空（既没出画也没定格帧顶住），或切剧接管（switching 且
  *   非同剧切集——新剧的封面要立刻顶上，否则就是「切了没反应」）。
- *   同剧切集全程不出封面：取流窗口旧画面继续播，交换后定格帧接棒。
+ *   同剧切集全程不出封面：黑幕接管（换档间隙由定格帧接棒）。
  */
 export function overlayVisibility(v: {
   transition: SwitchKind | null;
+  veiled: boolean;
   videoLive: boolean;
   switching: boolean;
   hasFrame: boolean;
@@ -113,8 +118,10 @@ export function overlayVisibility(v: {
   error: boolean;
   compat: boolean;
 }): { holdVisible: boolean; coverVisible: boolean } {
-  const holdVisible = v.hasFrame && !v.videoLive && v.hasPlaySrc && !v.error && !v.compat;
-  const coverVisible =
-    !holdVisible && (!v.videoLive || (v.switching && v.transition !== 'episode'));
+  const holdVisible =
+    v.hasFrame && !v.videoLive && v.hasPlaySrc && !v.error && !v.compat && !v.veiled;
+  const coverVisible = v.veiled
+    ? false
+    : !holdVisible && (!v.videoLive || (v.switching && v.transition !== 'episode'));
   return { holdVisible, coverVisible };
 }
