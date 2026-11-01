@@ -100,8 +100,9 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
   ```
   签名块在 `gen/android/app/build.gradle.kts`（env 优先、本地回落 gitignored 的 `gen/android/keystore.properties`）；换 keystore 后用户必须卸载重装（签名不同装不上升级包）。
 - workflow_dispatch 的手动菜单只在本文件位于 main 后出现；dev 上验证用 `gh workflow run android.yml --ref dev`。
-- 本地想真机出包才需要：cmdline-tools + platform/build-tools + NDK 装齐并设 `ANDROID_HOME`/`NDK_HOME`；`pnpm tauri android init` 对 `cmdline-tools` 布局有版本名目录要求。gen/android 已存在时**不要**重跑 init（会试图重建工程）。
-- 桌面专属能力已按平台门控（Android 编译通过的前提）：single-instance / global-shortcut 插件注册、老板键（`boss_key_cmd`）、隐身光标轮询（`incognito_cmd`）、本地选图 rfd（`emoticon_cmd`）——移动端命令如实返回 `AppError::Unsupported` 或空操作。门控谓词统一 `#[cfg(not(any(target_os = "android", target_os = "ios")))]`（hongguo-tauri 无 build.rs，`#[cfg(desktop)]` 这类 tauri 注入 cfg 在该 crate 无效）。
+- 本地想真机出包才需要：cmdline-tools + platform/build-tools + NDK 装齐并设 `ANDROID_HOME`/`NDK_HOME`；`pnpm tauri android init` 对 `cmdline-tools` 布局有版本名目录要求。gen/android 已存在时**不要**重跑 init（会试图重建工程）。sdkmanager 包名注意：新版平台带小版本号（`platforms;android-37.0` 而非 `android-37`），NDK 版本号以 `--list` 实查为准，猜版本号会让整条安装命令静默不装。
+- **Windows 本地 gradle 打包两坑**：① tauri CLI 把 .so 符号链接进 jniLibs 需要系统开发者模式——未开启时 Rust 编译全过后挂在链接步；绕法＝手动复制 `target/aarch64-linux-android/release/libhongguo_lib.so` 到 `gen/android/app/src/main/jniLibs/arm64-v8a/` 再 `./gradlew assembleArm64Release -x rustBuildArm64Release`（前端资产嵌在 so 里，无独立 assets）。② gradle 下载发行版与 AGP 依赖极慢时走代理：`GRADLE_OPTS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=<端口> ..."`。
+- 桌面专属能力已按平台门控（Android 编译通过的前提）：single-instance / global-shortcut 插件注册、老板键（`boss_key_cmd`）、隐身光标轮询（`incognito_cmd`）、本地选图 rfd（`emoticon_cmd`）、目录选择（`app_cmd::select_folder`）、窗口形态恢复里的 maximize/unmaximize 与置顶（`window_cmd`）——移动端命令如实返回 `AppError::Unsupported` 或空操作。rfd 与 mouse_position 依赖整体进 target 门控表（rfd 在移动端 lib 本体就编译不过）。门控谓词统一 `#[cfg(not(any(target_os = "android", target_os = "ios")))]`（hongguo-tauri 无 build.rs，`#[cfg(desktop)]` 这类 tauri 注入 cfg 在该 crate 无效）。
 - 数据根：Android 上 `dirs::data_dir()` 为 None，壳在 setup 最先经 `hongguo_store::paths::set_absolute_data_root` 钉到 app 私有目录（`lib.rs` android 分支），漏掉这步 app 开库即退。
 - **已知名册（后续工程，不阻塞出包）**：Android WebView 经自定义协议 Range 起播未真机验证（上线前第一验证点）；移动端 UI 无响应式适配（桌面形态直接跑）；updater 在移动端是空操作（安装静默无事发生）。
 
