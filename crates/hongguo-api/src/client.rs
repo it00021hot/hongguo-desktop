@@ -19,10 +19,23 @@ use hongguo_common::{AppError, AppResult};
 /// 重试次数。
 const MAX_RETRIES: u32 = 3;
 
-/// reading 系（lq 域）统一 origin。轻签名头族（榜单/搜索/弹幕/剧评）与
-/// 取流 `multi_video_model/player/v1` 都在这台机上——真实 App 的取流请求
-/// 打的是 lq 域，sinfonlineb 域的 player/preload 均回 200+0 字节。
+/// reading 系（lq 域）统一 origin。轻签名头族（榜单/搜索/弹幕/剧评）在
+/// 这台机上——顶栏塌缩表（bookmall/tab cr=4）今天仍由它正确服务。
 pub const LQ_API_ORIGIN: &str = "https://api5-normal-lq.fqnovel.com";
+
+/// bookmall 推荐流 + 视频 model/detail 族的统一 origin（2026-10-31 官方
+/// 实流：bookmall/tab 与 player/model 系全在这台机上，POST body 一律
+/// gzip；此前 lq/sinfonlineb 的取流形态已整体失效回 200+0）。域名是
+/// TTNet 动态调度的，钉死任何一台都会随服务端迁移整体失效——下次迁移
+/// 只改本常量与调用方 origin。
+pub const SINFONLINEC_API_ORIGIN: &str = "https://api5-normal-sinfonlinec.fqnovel.com";
+
+/// 单集取流（`video_model/v1`）的发货 origin（2026-10-31 实测：model 族
+/// 在 sinfoninec/a/b/lq 明文边缘全部回 200+0——官方发货走证书钉扎/klink
+/// 通道，mitm 不可见；lf 与裸域 api5-normal 是可发货的明文边缘，单集
+/// 26KB 流表正常下发）。批量 `multi_video_model/player/v1` 在所有明文
+/// 边缘均空，靠「批量空→回落单集」兜底。
+pub const LF_API_ORIGIN: &str = "https://api5-normal-lf.fqnovel.com";
 
 /// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
@@ -140,6 +153,122 @@ pub async fn api_call_full(
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
     api_call_full_with_headers(origin, pathname, body, biz_query, &[], env).await
+}
+
+/// [`api_call_once_allow_empty`] 的 reading 形态：body gzip + reading 系头
+/// ——视频 model 族在 sinfoninec 上的官方线上形态（POST 一律 gzip）。
+/// 空响应不重试不报错（「不发货」是该族的常态，重试只会白等）。
+pub async fn api_call_reading_once_allow_empty(
+    origin: &str,
+    pathname: &str,
+    body: Option<Vec<u8>>,
+    biz_query: &[(String, String)],
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
+    let mut headers = reading_headers();
+    let body = match body {
+        Some(raw) if !raw.is_empty() => {
+            headers.push(("Content-Encoding".into(), "gzip".into()));
+            Some(gzip_bytes(&raw)?)
+        }
+        other => other,
+    };
+    let client = build_client(&env.proxy)?;
+    let resp = send_once(
+        &client,
+        origin,
+        pathname,
+        body.as_deref(),
+        biz_query,
+        &headers,
+        env,
+    )
+    .await?;
+    Ok(resp.bytes)
+}
+
+/// 取流轻请求头里的店区（2026-11-01 竞品实流抓包；值为注册期服务端
+/// 按账号下发的 store_region，CN 区恒此值）。
+const STORE_REGION: &str = "cn-gd";
+
+/// 取流轻请求（2026-11-01 竞品实流抓包逐字段对齐，见
+/// [`crate::params::MODEL_LIGHT_PATH`]）：
+///
+/// - **无签名五件套**——`multi_video_model/v1/` 走 reading 系轻形态，
+///   头 = `reading_headers()` + 客户端标识族（`accept`(protobuf) +
+///   `passport-sdk-version: 5051452` + `sdk-version: 2` +
+///   `x-vc-bdturing-sdk-version` + `x-xs-from-web: 0`，实流逐字段）+
+///   `x-tt-store-region(-src)` + `x-ss-req-ticket` + 档案 cookie；
+/// - query：档案字段**去 `openudid`**、补 `need_personal_recommend=1`，
+///   **字母序** + `_rticket`（无 `ts`）；
+/// - body：POST gzip JSON。
+///
+/// 空响应原样返回空 `Vec`（「不发货」交调用方回落，不重试）。
+pub async fn api_call_model_light(
+    origin: &str,
+    pathname: &str,
+    payload: Vec<u8>,
+    env: &ApiEnv,
+) -> AppResult<Vec<u8>> {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut pairs: Vec<(String, String)> = env
+        .device
+        .iter()
+        .filter(|(k, _)| *k != "openudid")
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    pairs.push(("need_personal_recommend".into(), "1".into()));
+    pairs.push(("_rticket".into(), ms.to_string()));
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    let query = hongguo_signer::ticket::encode_query(
+        &pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect::<Vec<_>>(),
+    );
+
+    let mut headers = reading_headers();
+    headers.extend([
+        (
+            "accept".into(),
+            "application/json; charset=utf-8,application/x-protobuf".into(),
+        ),
+        ("passport-sdk-version".into(), "5051452".into()),
+        ("sdk-version".into(), "2".into()),
+        ("x-vc-bdturing-sdk-version".into(), "4.0.3.cn".into()),
+        ("x-xs-from-web".into(), "0".into()),
+        ("x-ss-req-ticket".into(), ms.to_string()),
+        ("x-tt-store-region".into(), STORE_REGION.into()),
+        ("x-tt-store-region-src".into(), "uid".into()),
+        ("Content-Encoding".into(), "gzip".into()),
+    ]);
+    if let Some(c) = &env.cookie
+        && !c.is_empty()
+    {
+        headers.push(("Cookie".into(), c.clone()));
+    }
+
+    let client = build_client(&env.proxy)?;
+    let mut req = client
+        .post(format!("{origin}{pathname}?{query}"))
+        .body(gzip_bytes(&payload)?);
+    for (k, v) in &headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(AppError::Network(format!("HTTP {}", resp.status())));
+    }
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| AppError::Network(e.to_string()))
 }
 
 /// [`api_call_full`] 的带额外头版本（commentapi 要 `x-reading-request`）。
@@ -298,7 +427,8 @@ pub async fn api_call_full_response(
                     biz_query.len(),
                     body.as_deref().map(|b| b.len()).unwrap_or(0)
                 );
-                last_err = "接口返回空响应（签名可能失效）".to_string();
+                // 载荷只补上下文，别重复 EmptyResponse 变体自己的前缀文案
+                last_err = format!("{origin}{pathname}，连续 {MAX_RETRIES} 次空响应");
             }
             Err(e) => last_err = e.to_string(),
         }

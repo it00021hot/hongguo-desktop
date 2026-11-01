@@ -963,57 +963,24 @@ pub(crate) mod probe {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// 已注册态的探测设备（bookmall 系端点对匿名/陈旧身份拒绝，探测
-    /// 需要注册态身份；device_id/iid/ttreq 为注册产物）。
+    /// 已注册态的探测身份（bookmall 系端点对匿名/陈旧身份拒绝，探测
+    /// 需要注册态身份）。从 `PROBE_DEVICE` 环境变量读档案 JSON——共享的
+    /// 静态注册身份已整体退役（进阵亡名单），不再入库当探针；现役档案
+    /// 导出即得：
+    ///   sqlite3 -readonly <数据目录>/hongguo.db \
+    ///     "SELECT json FROM device_profile WHERE id=1"
     pub fn hg_env(base: &ApiEnv) -> ApiEnv {
-        let pairs: Vec<(&str, &str)> = vec![
-            ("ac", "wifi"),
-            ("aid", "8662"),
-            ("app_name", "novelread"),
-            ("cdid", "babf8a0e-8586-40ca-bb75-20a1a698b43f"),
-            ("channel", "xiaomi_8662_64"),
-            ("device_brand", "xiaomi"),
-            ("device_id", "2715158266032906"),
-            ("device_platform", "android"),
-            ("device_type", "23127PN0CC"),
-            ("dpi", "460"),
-            ("host_abi", "arm64-v8a"),
-            ("iid", "2715158266282762"),
-            ("language", "zh"),
-            (
-                "manifest_version_code",
-                hongguo_signer::REGISTER_VERSION_CODE_STR,
-            ),
-            ("os", "android"),
-            ("os_api", "34"),
-            ("os_version", "14"),
-            ("resolution", "1200*2670"),
-            ("ssmix", "a"),
-            (
-                "update_version_code",
-                hongguo_signer::REGISTER_VERSION_CODE_STR,
-            ),
-            ("version_code", hongguo_signer::REGISTER_VERSION_CODE_STR),
-            ("version_name", hongguo_signer::REGISTER_VERSION_NAME),
-        ];
-        let mut v = serde_json::to_value(hongguo_signer::anonymous_profile(
-            "0f0f0f0f-0000-4000-8000-000000000000",
-        ))
-        .unwrap();
-        v["fields"] = serde_json::Value::Array(
-            pairs
-                .into_iter()
-                .map(|(k, val)| serde_json::json!([k, val]))
-                .collect(),
+        let json = std::env::var("PROBE_DEVICE").expect(
+            "探测需要注册态身份：设 PROBE_DEVICE=<DeviceProfile JSON>，\
+             用 sqlite3 -readonly 从壳数据库 device_profile 表 id=1 行导出",
         );
-        v["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
+        let device: hongguo_signer::device::DeviceProfile =
+            serde_json::from_str(&json).expect("PROBE_DEVICE 不是合法的 DeviceProfile JSON");
         ApiEnv {
             proxy: base.proxy.clone(),
-            device: serde_json::from_value(v).unwrap(),
-            cookie: Some(
-                "store-region=cn-gd; store-region-src=did; install_id=2715158266282762; ttreq=1$5c6c7c7cd605c0a9f176a0533d9c64755b5df874".into(),
-            ),
+            cookie: Some(hongguo_signer::device::anonymous_cookie(&device)),
             x_tt_token: None,
+            device,
         }
     }
 

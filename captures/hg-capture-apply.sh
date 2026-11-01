@@ -25,6 +25,13 @@ APEX_CERTS=$(ls -d /apex/com.android.conscrypt@*/cacerts 2>/dev/null | head -1)
 STAGE=/data/local/tmp/hg-cacerts
 
 # 0) 卸掉上一轮 bind mount，让真实系统证书目录重新可见
+#    zygote 命名空间里也要卸：上一轮可能把 STAGE 挂进了 zygote（见 2.5）
+APEX_UNVERSIONED=/apex/com.android.conscrypt/cacerts
+for z in $(pidof zygote64) $(pidof zygote); do
+  nsenter -t "$z" -m -- umount "$APEX_CERTS" 2>/dev/null
+  nsenter -t "$z" -m -- umount "$APEX_UNVERSIONED" 2>/dev/null
+  nsenter -t "$z" -m -- umount /system/etc/security/cacerts 2>/dev/null
+done
 umount "$APEX_CERTS" 2>/dev/null
 umount /system/etc/security/cacerts 2>/dev/null
 umount /apex/com.android.conscrypt/cacerts 2>/dev/null
@@ -55,11 +62,25 @@ if [ -d "$APEX_UNVERSIONED" ]; then
 fi
 mount -o bind "$STAGE" /system/etc/security/cacerts
 
+# 2.5) 关键：/apex 是私有挂载树，root shell 里做的 bind mount 不会传播进 App 的
+#      mount namespace（/system 那条会）。Android 15 上 Conscrypt 读 APEX，
+#      只挂在 shell 命名空间时 App 侧仍是 `tls alert certificate unknown`。
+#      把同样的 bind 再做进 zygote 的命名空间，App 新进程才会继承。
+#      做完必须重启 App（force-stop 后冷启）：已在跑的进程看不到新挂载。
+for z in $(pidof zygote64) $(pidof zygote); do
+  nsenter -t "$z" -m -- mount -o bind "$STAGE" "$APEX_CERTS" 2>/dev/null
+  if [ -d "$APEX_UNVERSIONED" ]; then
+    nsenter -t "$z" -m -- mount -o bind "$STAGE" "$APEX_UNVERSIONED" 2>/dev/null
+  fi
+  nsenter -t "$z" -m -- mount -o bind "$STAGE" /system/etc/security/cacerts 2>/dev/null
+done
+
 # 3) 封 QUIC：UDP 443 过不了 HTTP 代理，REJECT 逼 TTNet 回落 TCP
 iptables -I OUTPUT -p udp --dport 443 -j REJECT 2>/dev/null
 ip6tables -I OUTPUT -p udp --dport 443 -j REJECT 2>/dev/null
 
 echo APPLY-DONE
 echo "APEX_CERTS=$APEX_CERTS"
+echo "next: adb shell am force-stop com.phoenix.read（App 必须冷启才会读到新证书）"
 ls "$APEX_CERTS" | wc -l
 ls -lZ "$APEX_CERTS/c8750f0d.0"

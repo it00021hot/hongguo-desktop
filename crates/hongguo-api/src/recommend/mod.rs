@@ -4,7 +4,7 @@ mod model;
 
 use serde_json::Value;
 
-use super::client::{ApiEnv, api_call_reading};
+use super::client::{ApiEnv, SINFONLINEC_API_ORIGIN, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use super::discover::check_code;
 use super::rank::RANK_CELL_PATH;
@@ -19,11 +19,11 @@ pub use model::{FeedTabMeta, RecommendTabConfig};
 /// 字面量直传（与旧 landpage genre 直传同一模式）。
 ///
 /// 口径（两段式）：
-/// - **首页**：`GET bookmall/tab/v?client_req_type=4&tab_type=<T>`——目标
-///   tab_item 自带 `bookstore_id` + `cell_id`（⚠️ **每 tab 不同**，用推荐位
-///   的 id 打 tab39 服务端回落混合池、清一色 1004 漫剧——「真人 tab 全是
-///   漫剧」的根因）与会话 `session_id`，首批条目嵌在
-///   `cell_data[0].cell_data[].video_data[]`；
+/// - **首页**：`GET bookmall/tab/v?client_req_type=1028&tab_type=<T>`
+///   （[`SINFONLINEC_API_ORIGIN`]）——目标 tab_item 自带 `bookstore_id` + `cell_id`
+///   （⚠️ **每 tab 不同**，用推荐位的 id 打 tab39 服务端回落混合池、清一色
+///   1004 漫剧——「真人 tab 全是漫剧」的根因）与会话 `session_id`，首批
+///   条目嵌在 `cell_data[0].cell_data[].video_data[]`；
 /// - **翻页**：`GET cell/change/v`，双 id 用该 tab 自己的 + `session_id`
 ///   （首页下发）+ **`filter_ids`=已下发过的 series_id 逗号表**（服务端
 ///   排除已见）+ `offset=上一页响应的 next_offset`（0→6→12 递进）；
@@ -38,7 +38,7 @@ pub async fn fetch_recommend_feed(
 ) -> AppResult<super::discover::FeedPage> {
     let page = if session_id.is_empty() {
         let (cfg, mut page) = fetch_tab_first_page(tab, env).await?;
-        // 首批偶发空批：带着 cr=4 下发的会话直接走 cell/change 补拉
+        // 首批偶发空批：带着首页下发的会话直接走 cell/change 补拉
         if page.items.is_empty()
             && !page.session_id.is_empty()
             && let Ok(fill) = recommend_cell_change(tab, &cfg, &page.session_id, 0, &[], env).await
@@ -254,8 +254,10 @@ async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabCo
     Ok(value)
 }
 
-/// `GET bookmall/tab/v?client_req_type=4&tab_type=<T>` 并过业务 code 检查；
-/// tab 首页与顶栏列表走同一请求。
+/// `GET bookmall/tab/v?client_req_type=4&tab_type=16`（lq 域）——**顶栏塌缩
+/// 表专用**。官方首页面的顶栏请求走证书钉扎通道抓不到，但 lq 的 cr=4
+/// 今天仍正确返回首页四 tab（关注/漫剧/真人剧/推荐，2026-10-31 实测），
+/// cr=1028（书城形态）返回的是书城九 tab，不是本仓首页要的表。
 async fn request_bookstore_tab(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     let q: Vec<(String, String)> = [
         ("auth_aweme", "true"),
@@ -306,15 +308,113 @@ fn flex_str(v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// `GET bookmall/tab/v?client_req_type=4&tab_type=<T>` →（配置, 首页）。
+/// `GET bookmall/tab/v?client_req_type=1028&tab_type=<T>`（sinfoninec 域）——
+/// tab 首页（配置 + 会话 + 嵌套首批）的官方现行形态。
 ///
-/// 切 tab 请求。注意 tab_item 里的
+/// 参数表 2026-10-31 官方实流逐字段对齐（98 项中的本仓可构建子集）：
+/// 身份块（aid/iid/device_id/cdid/version_*/resolution/dpi/…）由签名器
+/// 从设备档案追加；`klink_egdi` 是服务端经 TTNet 下发的网关凭据、本仓无
+/// 来源，不带；`top_tab_monitor_extra` 是顶栏曝光遥测的运行态，不带。
+/// 首页的 `filter_ids` / `rec_filter_info_list` 是**空值在场**（官方同款，
+/// 翻页才有内容）。会话状态族与 [`recommend_cell_change`] 共用同一套
+/// 运行态快照值。
+async fn request_feed_tab_first_page(tab: &str, env: &ApiEnv) -> AppResult<Value> {
+    let uuid = session_uuid();
+    let q: Vec<(String, String)> = [
+        ("filter_ids", ""),
+        ("last_search_query_from_rec", "false"),
+        ("rec_filter_info_list", ""),
+        ("bottom_tab_type_list", "7,0,1,2,3,4"),
+        ("last_tab_index", "0"),
+        ("bookmall_video_last_active_enter_time", "0"),
+        ("is_video_feed_tab_first_request_cold_start", "true"),
+        ("is_horizontal_screen", "false"),
+        ("screen_width_px", "1078"),
+        ("tab_type", tab),
+        ("first_use_category_select", "false"),
+        ("image_shrink_datas_str", FEED_IMAGE_SHRINK),
+        ("last_session_video_tab_type", tab),
+        ("disable_digg_stat", "false"),
+        ("ecom_refresh_type", "0"),
+        ("pad_column_cover", "0"),
+        ("last_cold_start_time", "0"),
+        ("last_tab_type", tab),
+        ("req_rank_category_id", "0"),
+        ("ranklist_in_1col_no_consume_show_times", "0"),
+        ("video_tab_cold_start", "0"),
+        ("offset", "0"),
+        ("video_type_preferences_str", "[]"),
+        ("auth_aweme", "false"),
+        ("cold_start_is_double_gd", "false"),
+        ("item_id", "0"),
+        ("page_entry_time", "0"),
+        ("cold_start_session", "0"),
+        ("tab_index", "0"),
+        ("bookmall_playlet_last_active_enter_time", "0"),
+        ("book_id", "0"),
+        ("ecom_impression_start_time", "0"),
+        ("enable_search_box_collapse", "false"),
+        ("ranklist_in_1col_show_times", "0"),
+        ("landing_bottom_tab_type", "0"),
+        ("bottom_tab_type", "7"),
+        ("top_tab_extra", ""),
+        ("migration_top_tab_enable", "false"),
+        ("auth_backward", "false"),
+        ("video_bottom_tab_bubble_display_count", "0"),
+        ("has_video_cache", "false"),
+        ("pad_column_detail", "0"),
+        ("after_genre_preference_popup", "0"),
+        ("client_req_type", "1028"),
+        ("req_rank_algo", "0"),
+        ("unlimited_short_series_next_offset", "0"),
+        // —— 会话状态族（官方把运行态快照打进 tab 请求，与翻页同一套值）
+        ("normal_session_cnt_in_day", "8"),
+        ("cold_start_session_cnt_in_day", "4"),
+        ("normal_session_id", &format!("{uuid}#1")),
+        ("cold_start_session_id", uuid),
+        ("cold_start_session_cnt_in_life", "32"),
+        ("normal_session_cnt_in_life", "64"),
+        ("charging", "0"),
+        ("har_status", "0"),
+        ("is_power_save_mode", "0"),
+        ("app_dark_mode", "1"),
+        ("screen_brightness", "21"),
+        ("battery_pct", "71"),
+        ("down_speed", "60000"),
+        ("sys_dark_mode", "1"),
+        ("current_volume", "0"),
+        ("app_mini_window", "0"),
+        ("sys_mini_window", "1"),
+        ("font_scale", "100"),
+        ("network_type", "4"),
+        ("rom_version", "V417IR release-keys"),
+        ("need_personal_recommend", "1"),
+        ("recommend_extra", RECOMMEND_EXTRA),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    let bytes = api_call_reading(
+        SINFONLINEC_API_ORIGIN,
+        "/reading/bookapi/bookmall/tab/v",
+        None,
+        &q,
+        env,
+    )
+    .await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析推荐 tab 首页失败: {e}")))?;
+    check_code(&value)?;
+    Ok(value)
+}
+
+/// tab 首页请求 →（配置, 首页）。注意 tab_item 里的
 /// id 字段是 JSON 数字，容忍字符串形态。
 async fn fetch_tab_first_page(
     tab: &str,
     env: &ApiEnv,
 ) -> AppResult<(RecommendTabConfig, super::discover::FeedPage)> {
-    let value = request_bookstore_tab(tab, env).await?;
+    let value = request_feed_tab_first_page(tab, env).await?;
     let tabs = value
         .pointer("/data/tab_item")
         .and_then(Value::as_array)
@@ -613,7 +713,9 @@ async fn recommend_cell_change(
     .filter(|(k, v)| !((*k == "session_id" || *k == "filter_ids") && v.is_empty()))
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    let bytes = api_call_reading(LQ_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
+    // 翻页与 tab 首页同族同源（SINFONLINEC_API_ORIGIN）：会话是首页响应下发的，
+    // 跨域复用同一会话有被拒风险
+    let bytes = api_call_reading(SINFONLINEC_API_ORIGIN, RANK_CELL_PATH, None, &q, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析推荐流失败: {e}")))?;
     check_code(&value)?;

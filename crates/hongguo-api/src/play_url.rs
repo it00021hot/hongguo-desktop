@@ -1,13 +1,13 @@
 //! 取流地址。
 //!
 //! 平台把每集的可用流放在 `video_model`（一个 **JSON 字符串**）里，需要二次解析；
-//! 挑哪一条由 [`super::stream_pick`] 决定。真播链对齐官方 App：
-//! 批量 `multi_video_model/player/v1`（dr_scene=player，
-//! 按 content_type 分组）优先 → 空/类型未知回落单集 `video_model/v1/`
-//! （「批量空 → 回落单集」同链），
+//! 挑哪一条由 [`super::stream_pick`] 决定。取流走**无签名轻请求**
+//! `multi_video_model/v1/`（2026-11-01 竞品实流抓包对齐；旧的
+//! `multi_video_model/player/v1` 与单集 `video_model/v1/` 已整体回
+//! 200+0），批量/单集同端点、只差 `mixed_video_id_map` 里几组 vid，
 //! 见 [`fetch_play_url`] 注释。
 //!
-//! ⚠️ 签名失败时服务端返回 **HTTP 200 + 0 字节**，不是错误码。
+//! ⚠️ 服务端不发货时返回 **HTTP 200 + 0 字节**，不是错误码。
 //!    排查「接口没数据」时第一件事是看字节数，不是状态码。
 
 use std::collections::HashMap;
@@ -87,14 +87,12 @@ pub struct PlayInfo {
 /// `cap` 决定选流模式：在线播放传本机探测结论（无 HEVC 扩展的机器自动
 /// 翻转到 h264）；转码源/下载选流传 `Full` 保持全量候选。
 ///
-/// 取一集的播放地址——真播链对齐官方 App：
+/// 取一集的播放地址——取流链（2026-11-01 实流形态）：
 ///
 /// 1. 批量取流暂存命中（[`fetch_play_batch`] 落的）直接用，不发请求；
-/// 2. 批量 `multi_video_model/player/v1`（dr_scene=player，官方真播请求
-///    形态）带这一集打一次——分组 key 用注册表里的 content_type（见
-///    [`register_content_type`]；**类型未知不猜 key**，直接跳到 3）；
-/// 3. 批量空/未命中回落单集 [`crate::params::SINGLE_MODEL_PATH`]——
-///    「批量空 → 回落单集」回落链。
+/// 2. 轻请求批量端点带这一集打一次——分组 key 用注册表里的
+///    content_type（见 [`register_content_type`]；类型未知时**不猜**，
+///    报 [`AppError::ContentTypeUnknown`] 交调用方先拉分集档案补注册）。
 ///
 /// `definition` 为 `Some` 时取该档位；平台没提供这一档时自动回退到最高档
 /// （见 [`pick_stream_at`]），不会因此播放失败。`cap` 决定选流模式：在线
@@ -123,71 +121,35 @@ pub async fn fetch_play_url(
     }
     batch_cache().lock().remove(vid);
 
-    // 2) 官方真播形态：批量 player（key = 注册表的 content_type）
-    if let Some(ct) = content_type_of(vid) {
-        match fetch_play_player_batch(vid, ct, definition, cap, env).await {
-            Ok(Some(play)) => {
-                log::info!(
-                    "[PlayUrl] {vid} 真播批量命中（ct={ct}，定义 {}）",
-                    play.definition
-                );
-                return Ok(play);
-            }
-            Ok(None) => log::info!("[PlayUrl] {vid} 真播批量空，回落单集"),
-            Err(e) => log::warn!("[PlayUrl] {vid} 真播批量失败（{e}），回落单集"),
+    // 2) 轻请求批量端点（key = 注册表的 content_type）。类型未知**不猜**：
+    //    编一个 ct 打过去即使偶然命中也是纯运气，报
+    //    [`AppError::ContentTypeUnknown`] 交调用方先拉分集档案补注册。
+    let Some(ct) = content_type_of(vid) else {
+        return Err(AppError::ContentTypeUnknown(format!(
+            "vid={vid} 的条目类型未注册（先拉分集档案后再取流）"
+        )));
+    };
+    match fetch_model_light_batch(vid, ct, definition, cap, env).await {
+        Ok(Some(play)) => {
+            log::info!(
+                "[PlayUrl] {vid} 轻请求取流命中（ct={ct}，定义 {}）",
+                play.definition
+            );
+            Ok(play)
         }
+        // 服务端没对这个设备发货（200+0 或响应里没有这一集）。这是设备
+        // 侧信任问题，交给上层如实报错——不做任何身份层面的兜底。
+        Ok(None) => Err(AppError::StreamMiss(format!(
+            "取流未命中 vid={vid}（ct={ct}）"
+        ))),
+        Err(e) => Err(e),
     }
-
-    // 3) 单集回落（官方切集形态：video_model/v1，content_type=剧类型；
-    // 类型未知时只能填占位值——服务端对该字段容错，见
-    // `SINGLE_CONTENT_TYPE_FALLBACK`）
-    let ct = content_type_of(vid).unwrap_or(crate::params::SINGLE_CONTENT_TYPE_FALLBACK);
-    log::info!("[PlayUrl] {vid} 单集取流（ct={ct}）");
-    let payload = serde_json::to_vec(&crate::params::single_model_payload(vid, ct))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
-
-    let bytes = crate::client::api_call_full(
-        crate::client::LQ_API_ORIGIN,
-        crate::params::SINGLE_MODEL_PATH,
-        Some(payload),
-        &[],
-        env,
-    )
-    .await?;
-
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
-
-    // 业务错误码：签名对了但参数/内容不对会走这里
-    check_code(&value)?;
-
-    // 单集响应：data.video_model 是 JSON 字符串（与批量形态的
-    // data[vid].video_model 同构，选流逻辑共用）
-    let model = value
-        .pointer("/data/video_model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| AppError::Media("缺少 video_model".into()))?;
-
-    let parsed: Value = serde_json::from_str(model)
-        .map_err(|e| AppError::Media(format!("video_model 解析失败: {e}")))?;
-
-    let stream = pick_stream_at(&parsed, definition, cap)
-        .ok_or_else(|| AppError::Media("没有可用的视频流".into()))?;
-
-    Ok(PlayInfo {
-        url: stream.url,
-        encrypted: !stream.spade.is_empty(),
-        key_material: stream.spade.into_bytes(),
-        codec: stream.codec.unwrap_or_default(),
-        definition: stream.definition,
-        definitions: list_definitions(&parsed, cap),
-    })
 }
 
-/// 真播批量（官方 player 形态）：单 vid 按 content_type 分组打
-/// `multi_video_model/player/v1`，命中返回解析结果，空响应返回 `None`
-/// （交调用方回落单集）。
-async fn fetch_play_player_batch(
+/// 轻请求批量取流（2026-11-01 竞品实流抓包形态）：单 vid 按 content_type
+/// 分组打 [`crate::params::MODEL_LIGHT_PATH`]，命中返回解析结果，
+/// 空响应/未命中返回 `None`（交调用方报「取流未命中」）。
+async fn fetch_model_light_batch(
     vid: &str,
     content_type: i64,
     definition: Option<u32>,
@@ -195,14 +157,14 @@ async fn fetch_play_player_batch(
     env: &super::client::ApiEnv,
 ) -> AppResult<Option<PlayInfo>> {
     let map = std::collections::BTreeMap::from([(content_type.to_string(), vec![vid.to_string()])]);
-    let payload = serde_json::to_vec(&crate::params::player_model_payload(&map))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
-    // 一次即回：空响应是「回落单集」的正常分支，重试只会白等
-    let bytes = crate::client::api_call_once_allow_empty(
+    let payload = serde_json::to_vec(&crate::params::model_light_payload(&map))
+        .map_err(|e| AppError::Media(e.to_string()))?;
+    // 一次即回：空响应不重试（重试只会白等）。
+    // lq 域 + gzip：2026-11-01 实流取证口径（三方全程 lq 且发货）
+    let bytes = crate::client::api_call_model_light(
         crate::client::LQ_API_ORIGIN,
-        crate::params::PLAYER_MODEL_PATH,
-        Some(payload),
-        &[],
+        crate::params::MODEL_LIGHT_PATH,
+        payload,
         env,
     )
     .await?;
@@ -210,7 +172,7 @@ async fn fetch_play_player_batch(
         return Ok(None);
     }
     let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析真播批量响应失败: {e}")))?;
+        .map_err(|e| AppError::Media(format!("解析取流响应失败: {e}")))?;
     check_code(&value)?;
     let Some(model) = value
         .pointer(&format!("/data/{vid}/video_model"))
@@ -235,12 +197,13 @@ async fn fetch_play_player_batch(
 
 /// 批量取流：起播/切剧时对
 /// 「当前 + 信息流后续几部」（官方 6 个）的入口 vid 打一次
-/// `multi_video_model/player/v1`（dr_scene=player，官方起播批量形态）。
+/// [`crate::params::MODEL_LIGHT_PATH`]（无签名轻请求，2026-11-01
+/// 实流形态）。
 /// 命中落暂存表，[`fetch_play_url`] 使用时取走，不发单集请求。
 ///
 /// `mixed_video_id_map` 按**条目 content_type 原样字符串**分组（key 错配 →
-/// 空响应；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"）。
-/// 空响应时静默跳过（不报错，调用方回落单集）。
+/// 不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"）。
+/// 空响应时静默跳过（不报错，调用方走单集轻请求）。
 ///
 /// 返回成功暂存的条数。
 pub async fn fetch_play_batch(
@@ -257,7 +220,7 @@ pub async fn fetch_play_batch(
     if vids.is_empty() {
         return Ok(0);
     }
-    // 分组 key 即条目类型：顺手进注册表（真播批量/单集选路要用）
+    // 分组 key 即条目类型：顺手进注册表（单集取流选路要用）
     for (key, group) in mixed_video_id_map {
         if let Ok(ct) = key.parse::<i64>() {
             for vid in group {
@@ -265,18 +228,17 @@ pub async fn fetch_play_batch(
             }
         }
     }
-    let payload = serde_json::to_vec(&crate::params::player_model_payload(mixed_video_id_map))
-        .map_err(|e| AppError::Signer(e.to_string()))?;
-    let bytes = crate::client::api_call_once_allow_empty(
+    let payload = serde_json::to_vec(&crate::params::model_light_payload(mixed_video_id_map))
+        .map_err(|e| AppError::Media(e.to_string()))?;
+    let bytes = crate::client::api_call_model_light(
         crate::client::LQ_API_ORIGIN,
-        crate::params::PLAYER_MODEL_PATH,
-        Some(payload),
-        &[],
+        crate::params::MODEL_LIGHT_PATH,
+        payload,
         env,
     )
     .await?;
     if bytes.is_empty() {
-        log::info!("[PlayUrl] 批量取流空响应（{} vid），回落单集", vids.len());
+        log::info!("[PlayUrl] 批量取流空响应（{} vid）", vids.len());
         return Ok(0);
     }
     let value: Value = serde_json::from_slice(&bytes)
@@ -341,131 +303,10 @@ mod tests {
 
 #[cfg(test)]
 mod probes {
-    /// 匿名取流的三域探测（官方 virgin 档案打 reading.snssdk.com，
-    /// 本仓历史口径打 lq 域——lq 对匿名 POST 疑似拒绝）。
-    #[tokio::test]
-    #[ignore = "直连真实接口的探测用例"]
-    async fn probe_video_model_hosts() {
-        use hongguo_common::model::ProxyConfig;
-        let device = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
-        let env = crate::client::ApiEnv {
-            // 走本机 mitm 便于与官方 virgin 请求对照
-            proxy: ProxyConfig {
-                mode: hongguo_common::model::settings::ProxyMode::Manual,
-                url: "http://127.0.0.1:8080".into(),
-            },
-            device,
-            cookie: None,
-            x_tt_token: None,
-        };
-        let vid = "7690617619568675902";
-        let ct = crate::params::SINGLE_CONTENT_TYPE_FALLBACK;
-        let payload = serde_json::to_vec(&crate::params::single_model_payload(vid, ct))
-            .expect("payload 序列化不可能失败");
-        for origin in [
-            crate::client::LQ_API_ORIGIN,
-            "https://api5-normal.fqnovel.com",
-            "https://reading.snssdk.com",
-        ] {
-            match crate::client::api_call_full(
-                origin,
-                crate::params::SINGLE_MODEL_PATH,
-                Some(payload.clone()),
-                &[],
-                &env,
-            )
-            .await
-            {
-                Ok(b) => println!(
-                    "[vm-hosts] {origin} bytes={} head={}",
-                    b.len(),
-                    &String::from_utf8_lossy(&b)[..80.min(b.len())]
-                ),
-                Err(e) => println!("[vm-hosts] {origin} ERR {e}"),
-            }
-        }
-
-        // 官方 virgin 形态：query 只有 8 个版本参数 + cdid（无指纹堆）
-        let minimal = hongguo_signer::device::DeviceProfile::from_pairs(
-            &[
-                ("aid", "8662"),
-                ("device_platform", "android"),
-                ("update_version_code", hongguo_signer::APP_VERSION_CODE_STR),
-                (
-                    "manifest_version_code",
-                    hongguo_signer::APP_VERSION_CODE_STR,
-                ),
-                ("version_name", hongguo_signer::APP_VERSION_NAME),
-                ("version_code", hongguo_signer::APP_VERSION_CODE_STR),
-                ("app_name", "novelread"),
-                ("channel", "tengxun_8662_64"),
-            ],
-            &hongguo_signer::video_ua(),
-        );
-        let env_min = crate::client::ApiEnv {
-            proxy: ProxyConfig::default(),
-            device: minimal,
-            cookie: None,
-            x_tt_token: None,
-        };
-        for origin in [
-            "https://reading.snssdk.com",
-            crate::client::LQ_API_ORIGIN,
-            "https://api5-normal.fqnovel.com",
-        ] {
-            match crate::client::api_call_full(
-                origin,
-                crate::params::SINGLE_MODEL_PATH,
-                Some(payload.clone()),
-                &[],
-                &env_min,
-            )
-            .await
-            {
-                Ok(b) => println!(
-                    "[vm-hosts] 极简 {origin} bytes={} head={}",
-                    b.len(),
-                    &String::from_utf8_lossy(&b)[..80.min(b.len())]
-                ),
-                Err(e) => println!("[vm-hosts] 极简 {origin} ERR {e}"),
-            }
-        }
-
-        // 官方形态对照：body gzip + content-encoding 头
-        // 官方原始 body（vid 7697626904827792409，video_id_type 形态）
-        let official_payload = br#"{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"disable_video_relate_book":false,"from_video_id":"","need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_id_type":0,"video_platform":3},"video_id":"7697626904827792409"}"#.to_vec();
-        let gz_official = {
-            use flate2::write::GzEncoder;
-            use std::io::Write;
-            let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::best());
-            enc.write_all(&official_payload)
-                .expect("gzip 写入内存不可能失败");
-            enc.finish().expect("gzip 收尾不可能失败")
-        };
-        match crate::client::api_call_full_response(
-            "https://reading.snssdk.com",
-            crate::params::SINGLE_MODEL_PATH,
-            Some(gz_official),
-            &[],
-            &[("Content-Encoding".into(), "gzip".into())],
-            &env,
-        )
-        .await
-        {
-            Ok(r) => println!(
-                "[vm-hosts] 官方body bytes={} head={}",
-                r.bytes.len(),
-                &String::from_utf8_lossy(&r.bytes)[..120.min(r.bytes.len())]
-            ),
-            Err(e) => println!("[vm-hosts] 官方body ERR {e}"),
-        }
-    }
-
     /// 注册→取流全链路活体探针：按当前注册口径注册新设备，立刻用产物
-    /// 档案单集取流。**注册口径升级（`REGISTER_VERSION_*` 变动）后的
-    /// 必跑闸门**——注册身份与取流身份不同源时这里会回 200+0/服务异常
-    /// （docs 第 0 节：匿名/陈旧身份一律 200+0）。
-    /// `cargo test -p hongguo-api probe_register_then_play_live -- --ignored --nocapture`
+    /// 档案打轻请求取流。**注册口径升级（`REGISTER_VERSION_*` 变动）后的
+    /// 必跑闸门**——注册身份异常时这里会回 200+0/服务异常。
+    /// `cargo test -p hongguo-api --lib probe_register_then_play_live -- --ignored --nocapture`
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_register_then_play_live() {
@@ -497,32 +338,19 @@ mod probes {
             device,
         };
 
-        let vid = "7677207072068340761";
-        let payload = serde_json::to_vec(&crate::params::single_model_payload(
-            vid,
-            crate::params::SINGLE_CONTENT_TYPE_FALLBACK,
-        ))
-        .expect("payload 序列化不可能失败");
-        match crate::client::api_call_full(
-            crate::client::LQ_API_ORIGIN,
-            crate::params::SINGLE_MODEL_PATH,
-            Some(payload),
-            &[],
-            &env,
-        )
-        .await
+        // 生产链探针：先注册该 vid 的条目类型（7677936624126151705→ct 1
+        // 为 2026-11-01 实流验证过的配对），再走 `fetch_play_url` 全链
+        let vid = "7677936624126151705";
+        super::register_content_type(vid, 1);
+        match super::fetch_play_url(vid, None, crate::stream_pick::DecoderCapability::Full, &env)
+            .await
         {
-            Ok(b) => {
-                let head = String::from_utf8_lossy(&b[..120.min(b.len())]);
-                let ok = b.len() > 200
-                    && (b.windows(11).any(|w| w == b"video_model")
-                        || b.windows(9).any(|w| w == b"video_id\""));
-                println!(
-                    "[reg-play] play bytes={} head={head} -> {}",
-                    b.len(),
-                    if ok { "STREAM_OK" } else { "REJECTED?" }
-                );
-            }
+            Ok(play) => println!(
+                "[reg-play] play OK 定义={} 加密={} url_len={} -> STREAM_OK",
+                play.definition,
+                play.encrypted,
+                play.url.len()
+            ),
             Err(e) => println!("[reg-play] play ERR {e}"),
         }
     }

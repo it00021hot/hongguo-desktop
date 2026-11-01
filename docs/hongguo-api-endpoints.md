@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | 档案字段 | cdid + 机型指纹（无 iid/device_id/openudid） | cdid/openudid/device_id/iid + ttreq 票 |
 | cookie | 必须零 cookie（自报未知 install_id 反而被拒） | `install_id={iid}; ttreq={票}`（同源，注册响应 Set-Cookie 下发） |
-| 能力 | 信息流/搜索/详情可读，**不可取流**（video_model 回 200+0） | 全量可用；取流按会话新鲜度放行，注册即用即活 |
+| 能力 | 信息流/搜索/详情可读，**不可取流**（顶栏 tab 面不同，feed 无短剧 tab） | 全量可用（含取流，见「取流端点」节） |
 
 **设备注册 `POST log.snssdk.com/service/2/device_register/`**（实现
 `hongguo-api::register`，版本身份钉注册口径 `REGISTER_VERSION_*`，
@@ -92,13 +92,43 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**取流端点**：`multi_video_model/player/v1` 必须打 **lq 域**；
-sinfonlineb 域与 `preload/v1` 路径回 **200 + 0 字节**（同一 body 换
-lq+player 即回完整 video_model）。body 逐值对齐抓包：`dr_scene:"player"`
-+ biz_param 含 `disable_video_relate_book:false`。该端点有按设备/维度
-的**限频**，身份被消耗尽时同样回 200+0——排障先分辨「形态错」与
-「限频」（换一个长时间未打该端点的环境对照）。取流还要求**活的注册
-身份**（见第 0 节：匿名/陈旧身份一律 200+0）。
+**取流端点**（2026-11-01 竞品实流 mitm 抓包对齐，本仓同形态实测
+连续发货、真机恢复播放）：
+
+```
+POST /novel/player/multi_video_model/v1/       # 尾斜杠是端点身份的一部分
+```
+
+- **无签名五件套**：reading 系轻请求，头 =
+  `x-ss-dp + lc + x-reading-request` + 客户端标识族（`accept`
+  (protobuf)、`passport-sdk-version: 5051452`、`sdk-version: 2`、
+  `x-vc-bdturing-sdk-version: 4.0.3.cn`、`x-xs-from-web: 0`）+
+  `x-tt-store-region(-src)` + `x-ss-req-ticket` + 档案 cookie——不扣
+  签名，签名五件套在不在场都与发货无关。
+- query：档案字段**去 `openudid`**、补 `need_personal_recommend=1`，
+  **字母序** + `_rticket`（无 `ts`）。
+- body：gzip JSON，`biz_param` 固定八字段（`device_level:4`、
+  `use_server_dns:false`，**无 `dr_scene`/`disable_video_relate_book`/
+  `use_server_dns_scene` 键**）+ `mixed_video_id_map`（key = 条目
+  content_type 原样串。2026-11-01 第三方交叉实证：服务端对错 key 有
+  容忍——hongguo-drama 全部 vid 恒用 `"1004"` 亦正常发货；但真值是
+  guo 实流的唯一忠实形态，本仓取注册表真值）。实现
+  `hongguo-api::params::model_light_payload` +
+  `hongguo-api::client::api_call_model_light`，origin 打 **lq 域**
+  （实流取证：三方全程 lq）。
+- 响应 `data.{vid}.video_model`（JSON 字符串），批量一次回多集；
+  连续多次调用无按设备限频（同一设备 60ms 间隔三连发全发货）。
+- ⚠️ 旧端点 `multi_video_model/player/v1`（dr_scene=player）与单集
+  `video_model/v1/` 已**整体死亡**（200+0）——2026-11-01 实测与
+  身份/版本代际/签名方式无关，任何组合均不发货。服务端迁移取流
+  形态时按本节重新抓包对齐。
+- ⚠️ **设备能否发货由注册代际决定**（同日实流注册请求逐字节解密
+  对齐）：注册 query/JSON 的版本身份（73932/7.3.9.32）、bdinstall SDK
+  代际（`sdk_version 3.7.3-rc.116-douyin` / `sdk_target_version 29` /
+  `git_hash fe95b95` / `sdk_flavor china` / 无 `scene` 键）与 UA 尾段
+  （`Cronet/TTNetVersion:8d40f833 …`，注册头 `lc: 102`）必须成套——
+  代际错配的注册会被静默标记，设备取流持续不发货。详见
+  `hongguo-api::register` 模块文档。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```
@@ -182,26 +212,19 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
 - ⚠️ **翻页必须带 `filter_ids`**：翻页请求 `offset=0` + session +
   filter_ids=已刷过的 series_id，服务端不做会话内去重，漏传会重复刷
   已看过的剧
-- ⚠️ **取流批量双形态**：
+- ⚠️ **取流批量形态**（2026-11-01 迁移后唯一活形态，见「取流端点」节）：
   ① `multi_video_detail/preload`：`series_id` 是**逗号串**（6 部一发），
-  响应 `data[series_id]` 按剧分发（起播后 ~1s，与 ② 同发）；
-  ② `multi_video_model/preload`（`dr_scene:"preload"`）：**纯滑动预取**
-  场景（半屏滑动未起播时）；`multi_video_model/player/v1`
-  （`dr_scene:"player"`）：**起播/切剧时刻**（6 vid：当前 + 信息流后续）。
-  两形态 biz_param 全同、**无 `from_video_id`/`source` 键**；
+  响应 `data[series_id]` 按剧分发（档案预取，非流表）；
+  ② 取流统一走 `multi_video_model/v1/` **无签名轻请求**：
   `mixed_video_id_map` 按**条目 content_type 原样串**分组（key 错配 →
-  空响应；漫剧 feed ct=1004→"1004"、真人剧
-  ct=1→"1"、书城 cell 条目 1001→"1001"）。
-- ⚠️ **剧内切集/单集取流走 `video_model/v1/`**：`content_type` = **这一集所属剧的真实类型，随剧变**
-  （官方样本 1004/1/1001 各配其剧，随剧变，不是协议
-  常量）、`source:4` 在场（批量体无此键）、`video_platform:3`、
-  `from_video_id:""`。另有一冷启动预览形态（`video_platform:0` +
-  `use_server_dns:true` + `use_server_dns_scene:"cold_start_stage"`，
-  半屏预览流专用，本仓无该场景）。
-- 本仓链路（`play_url.rs`）：预取暂存命中直接用 → 批量 player（起播
-  形态，注册表分组）→ 单集回落（content_type 取注册表，未知填占位
-  1004——服务端对该字段容错）。vid→content_type 注册来源：推荐流
-  解析（入口 vid）、分集档案解析（整剧各集，`video_data.content_type`）、
+  不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"、书城 cell 条目
+  1001→"1001"），批量/单集同端点只差 vid 数。旧 `player/v1`、
+  `preload/v1`（dr_scene 族）与单集 `video_model/v1/` 均已 200+0。
+- `content_type` = **这一集所属剧的真实类型，随剧变**（官方样本
+  1004/1/1001 各配其剧，不是协议常量）。
+- 本仓链路（`play_url.rs`）：预取暂存命中直接用 → 轻请求批量/单端点
+  （分组 key 取注册表，未知填占位 1004）。vid→content_type 注册来源：
+  推荐流解析（入口 vid）、分集档案解析（整剧各集，`video_data.content_type`）、
   批量分组、壳起播（整剧注册）。
 - ⚠️ **不要用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回
   同一批静态默认列表，且翻页不回传 session 换源重复——首页推荐必须走

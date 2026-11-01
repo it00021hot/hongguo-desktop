@@ -39,12 +39,17 @@ pub struct BootstrapMeta {
     /// 最近一次换档前的旧 iid。
     #[serde(default)]
     pub previous_iid: Option<String>,
-    /// 上次注册尝试时间（ms epoch；退避判定基准）。
+    /// 上次注册尝试时间（ms epoch；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_attempt_ms: Option<i64>,
-    /// 上次注册失败原因（成功清空）。
+    /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
+    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 =
+    /// 档案出生于旧注册器（bdinstall SDK 代际错配，设备被服务端标记、
+    /// 取流不发货），启动时按全新安装语义一次性迁移到当前代际。
+    #[serde(default)]
+    pub register_regime: String,
 }
 
 pub fn read_meta(store: &Store) -> BootstrapMeta {
@@ -164,8 +169,35 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p
 }
 
-/// 注册退避窗口：失败后 24h 内不重试（服务端按量风控，反复试加重冷却）。
-const REGISTER_BACKOFF_MS: i64 = 24 * 3600 * 1000;
+/// 注册没有「服务端按量冷却」——那是 2026-11-01 被实流取证推翻的旧猜想
+/// （真相是注册代际错配被标记，不是注册次数受限），因此不设任何退避；
+/// 失败只区分两类：网络类（断网/超时）等网恢复就地重试，服务端明确
+/// 拒绝（形态/代际错）重试无意义立即停。
+const REGISTER_RETRY_MS: u64 = 60_000;
+const REGISTER_RETRY_MAX: usize = 30;
+
+/// 注册（带网络恢复重试）：成功返回 true。网络类失败按节奏重试到成功
+/// 或预算耗尽；其他失败立即返回。
+async fn register_with_retry(state: &AppState, reason: &str) -> bool {
+    for attempt in 0..REGISTER_RETRY_MAX {
+        let reg = register_and_swap(state, reason).await;
+        if reg.ok {
+            return true;
+        }
+        if !reg.network {
+            return false;
+        }
+        log::info!(
+            "[Device] {reason}：网络不可用，{}s 后重试（{}/{}）",
+            REGISTER_RETRY_MS / 1000,
+            attempt + 1,
+            REGISTER_RETRY_MAX
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(REGISTER_RETRY_MS)).await;
+    }
+    log::warn!("[Device] {reason}：网络重试预算耗尽（{REGISTER_RETRY_MAX} 次），下次启动再试");
+    false
+}
 
 /// 注册换档结论（壳的设备状态命令用）。
 #[derive(Debug, Clone)]
@@ -173,29 +205,17 @@ pub struct Registration {
     pub ok: bool,
     pub iid: String,
     pub device_id: String,
-    /// skipped=退避期内未尝试；error=注册失败（错误在 meta 里）。
+    /// error=注册失败（错误在 meta 里）。
     pub kind: &'static str,
     pub error: Option<String>,
+    /// 失败是否网络类（连接层断网/超时）：网络类等网恢复重试有意义，
+    /// 服务端明确拒绝没有。
+    pub network: bool,
 }
 
 /// 注册新设备并换档：备份旧档 → 新档落库+热替换 → 元数据记痕迹。
-/// 失败进 [`REGISTER_BACKOFF_MS`] 退避（`force` 绕过，手动重试用）。
-pub async fn register_and_swap(state: &AppState, force: bool, reason: &str) -> Registration {
+pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
     let mut meta = read_meta(&state.store);
-    if !force
-        && let Some(at) = meta.last_register_attempt_ms
-        && now_ms() - at < REGISTER_BACKOFF_MS
-        && meta.last_register_error.is_some()
-    {
-        log::info!("[Device] 注册退避期内（{reason}），跳过");
-        return Registration {
-            ok: false,
-            iid: state.device().get("iid").to_string(),
-            device_id: String::new(),
-            kind: "skipped",
-            error: meta.last_register_error.clone(),
-        };
-    }
     meta.last_register_attempt_ms = Some(now_ms());
     write_meta(&state.store, &meta);
 
@@ -227,10 +247,12 @@ pub async fn register_and_swap(state: &AppState, force: bool, reason: &str) -> R
                 device_id: r.device_id,
                 kind: "registered",
                 error: None,
+                network: false,
             }
         }
         Err(e) => {
             log::warn!("[Device] 注册失败（{reason}）: {e}");
+            let network = matches!(e, hongguo_common::AppError::Network(_));
             meta.last_register_error = Some(e.to_string());
             write_meta(&state.store, &meta);
             Registration {
@@ -239,11 +261,19 @@ pub async fn register_and_swap(state: &AppState, force: bool, reason: &str) -> R
                 device_id: String::new(),
                 kind: "error",
                 error: Some(e.to_string()),
+                network,
             }
         }
     }
 }
 
+/// 取流自愈机制已删（2026-11-01 实流取证结论修正）：服务端对设备的风控
+/// 不是「抽样抽奖」，而是按**注册代际自洽**打分——此前注册器的 bdinstall
+/// SDK 代际拼装错配，注册产物被静默标记、取流不发货；「换设备重摇」
+/// 是在给坏注册器擦屁股，正确做法是把注册器对齐实流（已完成），设备
+/// 出生即干净、终生不换。存量旧代际档案走 [`ensure_registered`] 的一次性
+/// 代际迁移，也不做运行期换档。
+///
 /// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
 fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
     let old_iid = state.device().get("iid").to_string();
@@ -259,18 +289,34 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
     }
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
+    meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
     write_meta(&state.store, meta);
     state.replace_device(profile);
 }
 
 /// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册（实测
-/// ~200ms，首批业务请求即可用上注册身份）；有身份的打一次搜索探针，
-/// 空响应（死设备）也转注册。注册失败维持现状（匿名可读不可播；退避
-/// 期内不重试）。
+/// ~200ms，首批业务请求即可用上注册身份）；有身份的先看注册代际——
+/// 旧注册器代际的档案按全新安装语义**一次性**迁移到当前代际（三方
+/// 竞品同款语义：数据目录新建时现场注册，此后终生不换）；代际正常的
+/// 再打搜索探针，空响应（死设备）也转注册。网络类失败随恢复就地重试
+/// （[`register_with_retry`]），不断网不重启也能续上。
 pub async fn ensure_registered(state: &AppState) {
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
-        register_and_swap(state, false, "启动自动注册").await;
+        register_with_retry(state, "启动自动注册").await;
+        return;
+    }
+    let meta = read_meta(&state.store);
+    if needs_regime_migration(&meta) {
+        log::warn!(
+            "[Device] 库内档案出生于旧注册代际（iid={}，regime={:?}），一次性迁移到 {} 代际",
+            state.device().get("iid"),
+            meta.register_regime,
+            hongguo_signer::REGISTER_VERSION_CODE_STR
+        );
+        // 迁移要么成功（新档出生即当前代际，健康探针不必再做），
+        // 要么服务端明确拒绝/网络预算耗尽（同样轮不到探针说话）
+        register_with_retry(state, "注册代际迁移").await;
         return;
     }
     let env = state.api_env();
@@ -281,10 +327,16 @@ pub async fn ensure_registered(state: &AppState) {
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
                 state.device().get("iid")
             );
-            register_and_swap(state, false, "健康探针判死").await;
+            register_with_retry(state, "健康探针判死").await;
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
+}
+
+/// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
+/// 在标记机制引入前注册的档案都算旧代际）。
+fn needs_regime_migration(meta: &BootstrapMeta) -> bool {
+    meta.register_regime != hongguo_signer::REGISTER_VERSION_CODE_STR
 }
 
 /// 健康探针（找剧搜索是风控最严的一支）：Some(true)=活，Some(false)=
@@ -493,6 +545,24 @@ mod tests {
         assert_eq!(
             db.device_meta_get().expect("读"),
             Some(serde_json::json!({"source": "anonymous"}))
+        );
+    }
+
+    /// 注册代际迁移判定：标记缺失（标记机制前的所有存量档案）或代际
+    /// 不符 → 迁移；当前代际 → 不迁。
+    #[test]
+    fn regime_migration_only_for_mismatched_marker() {
+        let mut meta = BootstrapMeta::default();
+        assert!(
+            needs_regime_migration(&meta),
+            "无标记 = 旧注册器产物，需要迁移"
+        );
+        meta.register_regime = "00000".into();
+        assert!(needs_regime_migration(&meta), "旧代际标记需要迁移");
+        meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
+        assert!(
+            !needs_regime_migration(&meta),
+            "当前代际档案不迁（终生不换设备身份）"
         );
     }
 }

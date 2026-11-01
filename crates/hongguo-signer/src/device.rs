@@ -22,13 +22,16 @@ pub const APP_VERSION_CODE: u64 = 74232;
 pub const APP_VERSION_CODE_STR: &str = "74232";
 pub const APP_VERSION_NAME: &str = "7.4.2.32";
 
-/// 注册指纹钉定的版本身份（当前与 [`APP_VERSION_CODE`] 同值，两套独立
-/// 常量、升级互不牵连）。注册请求
-/// 与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——
-/// 升当前版本与注册指纹不同源，取流即挂。
-pub const REGISTER_VERSION_CODE: u64 = 74232;
-pub const REGISTER_VERSION_CODE_STR: &str = "74232";
-pub const REGISTER_VERSION_NAME: &str = "7.4.2.32";
+/// 注册指纹钉定的版本身份（2026-11-01 竞品实流抓包逐字节对齐：
+/// 注册请求、注册产物档案、取流链全程 73932/7.3.9.32——注册 JSON 里
+/// `sdk_version 3.7.3-rc.116-douyin` 等.bdinstall 代际与该版本成套，
+/// 服务端按「版本 + SDK 代际自洽」给设备做信任评分，身份与代际错配的
+/// 注册会被静默标记、后续取流不发货）。注册请求与注册产物档案
+/// **终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——升当前版本与注册
+/// 指纹不同源，取流即挂。
+pub const REGISTER_VERSION_CODE: u64 = 73932;
+pub const REGISTER_VERSION_CODE_STR: &str = "73932";
+pub const REGISTER_VERSION_NAME: &str = "7.3.9.32";
 
 /// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
 /// 机型段与档案指纹一致，改机型要整组同换）。
@@ -43,14 +46,15 @@ pub fn video_ua() -> String {
     )
 }
 
-/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段
-/// 为官方统一的 tt-ok 形态（旧 Cronet 尾段在匿名请求上已被服务端
-/// 按旧指纹拒）。与 [`video_ua`] 各自和所属版本身份
-/// 成套（注册口径 vs 当前客户端口径），不可混搭。
+/// 与注册指纹配套的 UA：版本段引用 [`REGISTER_VERSION_CODE_STR`]，尾段为
+/// Cronet/TTNet 网络栈形态（2026-11-01 竞品实流抓包：注册与取流全程
+/// 此尾段且服务端发货，此前「Cronet 尾段被拒」的推断是错的——被拒的
+/// 是代际错配的身份，不是尾段本身）。与 [`video_ua`] 各自和所属版本
+/// 身份成套（注册口径 vs 当前客户端口径），不可混搭。
 pub fn register_ua() -> String {
     format!(
         "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
-         Build/UKQ1.230804.001;tt-ok/3.12.13.20)",
+         Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
         REGISTER_VERSION_CODE_STR
     )
 }
@@ -393,9 +397,9 @@ mod tests {
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
     }
 
-    /// 双口径构造钉死：注册档案原生钉注册口径（tt-ok 尾段），
-    /// 匿名档案对齐当前客户端口径（tt-ok 尾段）——两套身份各自
-    /// 成套，改口径只动常量与构造器，不许在调用点散写。
+    /// 双口径构造钉死：注册档案原生钉注册口径（Cronet 尾段，2026-11-01
+    /// 实流取证形态），匿名档案对齐当前客户端口径（tt-ok 尾段）——两套
+    /// 身份各自成套，改口径只动常量与构造器，不许在调用点散写。
     #[test]
     fn register_and_anonymous_profiles_pin_their_regimes() {
         let reg = DeviceProfile::fresh_register_profile("cdid-uuid", "openudid-hex");
@@ -409,7 +413,10 @@ mod tests {
         }
         assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
         assert_eq!(reg.user_agent(), register_ua());
-        assert!(reg.user_agent().contains("tt-ok/3.12.13.20"));
+        assert!(
+            reg.user_agent().contains("Cronet/TTNetVersion:"),
+            "注册口径 UA 尾段必须是 Cronet/TTNet 形态（实流取证）"
+        );
         assert_eq!(reg.get("device_id"), "", "首次注册不带 device_id");
         assert_eq!(reg.get("iid"), "");
 
