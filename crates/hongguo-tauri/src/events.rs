@@ -202,7 +202,7 @@ mod tests {
             ),
             (
                 hongguo_service::device::DEVICE_REGISTERED,
-                ServiceEvent::DeviceRegistered("2715158266282762".into()),
+                ServiceEvent::DeviceRegistered("9999999999999999".into()),
             ),
         ];
         // 映射表在 forward() 里；这里锁定「一个变体一个名字」的名字集，

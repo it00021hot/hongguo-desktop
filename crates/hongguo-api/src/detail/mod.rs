@@ -100,7 +100,16 @@ pub async fn fetch_episode_list(
     let payload = serde_json::to_vec(&crate::params::detail_payload(series_id))
         .map_err(|e| AppError::Signer(e.to_string()))?;
 
-    let bytes = crate::client::api_call(crate::params::DETAIL_PATH, Some(payload), env).await?;
+    // sinfoninec + gzip：2026-10-31 官方实流，detail/preload 打 sinfoninec
+    // 且 body 一律 gzip（sinfonlineb 旧形态已整体回空）
+    let bytes = crate::client::api_call_reading(
+        crate::client::SINFONLINEC_API_ORIGIN,
+        crate::params::DETAIL_PATH,
+        Some(payload),
+        &[],
+        env,
+    )
+    .await?;
 
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析响应失败: {e}")))?;
@@ -118,7 +127,14 @@ pub async fn fetch_episode_lists_batch(
     let joined = series_ids.join(",");
     let payload = serde_json::to_vec(&crate::params::detail_payload(&joined))
         .map_err(|e| AppError::Signer(e.to_string()))?;
-    let bytes = crate::client::api_call(crate::params::DETAIL_PATH, Some(payload), env).await?;
+    let bytes = crate::client::api_call_reading(
+        crate::client::SINFONLINEC_API_ORIGIN,
+        crate::params::DETAIL_PATH,
+        Some(payload),
+        &[],
+        env,
+    )
+    .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析批量详情响应失败: {e}")))?;
     register_episode_types(&value);
@@ -172,7 +188,14 @@ pub async fn fetch_series_meta(
     let body = serde_json::to_vec(&crate::params::video_detail_payload(series_id))
         .map_err(|e| AppError::Signer(e.to_string()))?;
 
-    let bytes = super::client::api_call(VIDEO_DETAIL_PATH, Some(body), env).await?;
+    let bytes = super::client::api_call_reading(
+        super::client::SINFONLINEC_API_ORIGIN,
+        VIDEO_DETAIL_PATH,
+        Some(body),
+        &[],
+        env,
+    )
+    .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析详情元信息失败: {e}")))?;
     parse_series_meta(&value, series_id)
