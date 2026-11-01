@@ -3,6 +3,7 @@ import { Pin } from 'lucide-react';
 import { useLocation } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './app-sidebar';
+import { BottomNav } from './bottom-nav';
 import { ThemeSwitch } from './theme-switch';
 import { WindowButtons } from './window-controls';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -184,30 +185,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             />
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {/* 置顶：钉住/取消整个窗口 */}
+            {/* 置顶与窗口控件是桌面语义（移动端没有窗口层级概念），窄屏全藏：
+                顶栏窄屏只剩分类 tab 插槽（对齐官方顶栏 = tab + 内容的极简形态） */}
             <Button
               variant="ghost"
               size="icon"
               aria-label={t('player.pin')}
               title={t('player.pin')}
               onClick={togglePinned}
-              className={cn(pinned && 'text-primary')}
+              className={cn('hidden md:inline-flex', pinned && 'text-primary')}
             >
               <Pin className={cn('size-4', pinned && 'fill-current')} />
             </Button>
-            <ThemeSwitch />
-            {!mac && <WindowButtons />}
+            <div className="hidden md:flex">
+              <ThemeSwitch />
+            </div>
+            {!mac && (
+              <div className="hidden md:flex">
+                <WindowButtons />
+              </div>
+            )}
           </div>
         </header>
       )}
 
       <div className="flex min-h-0 flex-1">
+        {/* 侧边栏是桌面导航：窄屏由底部导航条承担（对齐官方 App 的底部 tab） */}
         {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <AppSidebar />}
 
-        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
+        <main
+          id="content"
+          className="min-h-0 flex-1 scrollbar-thin overflow-y-auto pb-14 md:pb-0"
+        >
           {children}
         </main>
       </div>
+
+      {/* 移动端底部导航：与小屏播放/全屏播放互斥（纯播放器形态不显导航） */}
+      {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <BottomNav />}
 
       <ConfirmDialog
         open={exitOpen}

@@ -175,7 +175,7 @@ export function SeriesDetailPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-8 py-6">
+    <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-8 md:py-6">
       <Button
         variant="ghost"
         size="sm"
@@ -189,9 +189,9 @@ export function SeriesDetailPage({
       </Button>
 
       {isPending && (
-        <div className="mt-6 flex gap-8">
-          <Skeleton className="aspect-[3/4] w-44 shrink-0 rounded-xl" />
-          <div className="flex flex-1 flex-col gap-4">
+        <div className="mt-6 flex gap-4 md:gap-8">
+          <Skeleton className="aspect-[3/4] w-28 shrink-0 rounded-xl md:w-44" />
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
             <Skeleton className="h-7 w-2/3" />
             <Skeleton className="h-4 w-1/3" />
             <Skeleton className="h-20 w-full" />
@@ -210,14 +210,16 @@ export function SeriesDetailPage({
 
       {activeSeries && (
         <>
-          {/* 头部：封面 + 档案。构图对齐官方客户端详情页，数据全走 App 接口 */}
-          <div className="mt-4 flex gap-8">
-            <div className="bg-muted relative aspect-[3/4] w-44 shrink-0 overflow-hidden rounded-xl">
+          {/* 头部：封面 + 档案。构图对齐官方客户端详情页，数据全走 App 接口。
+              窄屏保持横排（官方窄屏同款）但收紧：海报缩到 w-28、间距减半，
+              给右栏留出可读宽度——宽 393px 下 w-44+gap-8 只剩 ~130px 会逐字换行 */}
+          <div className="mt-4 flex gap-4 md:gap-8">
+            <div className="bg-muted relative aspect-[3/4] w-28 shrink-0 overflow-hidden rounded-xl md:w-44">
               <SeriesCover cover={activeSeries.cover} alt={activeSeries.title} />
             </div>
 
             <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-bold">{activeSeries.title}</h1>
+              <h1 className="text-xl font-bold md:text-2xl">{activeSeries.title}</h1>
               {/* 统计行，排版对齐官方客户端：评分 评分人数 → 红果热度值 → 追剧 → 播放。
                   评分来自剧评接口 extra（credibility_score），热度来自 video_detail
                   （hot_score），两者缺失时该段不渲染不打断行 */}

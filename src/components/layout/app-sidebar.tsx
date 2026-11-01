@@ -63,7 +63,7 @@ export function AppSidebar() {
     <aside
       data-collapsed={collapsed}
       className={cn(
-        'bg-sidebar text-sidebar-foreground flex h-full shrink-0 flex-col border-r transition-[width] duration-200',
+        'bg-sidebar text-sidebar-foreground hidden h-full shrink-0 flex-col border-r transition-[width] duration-200 md:flex',
         collapsed ? 'w-14' : 'w-56',
       )}
     >
