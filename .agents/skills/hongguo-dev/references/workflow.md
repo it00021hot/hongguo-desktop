@@ -89,6 +89,22 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 7. capabilities 是最小权限集（自绘标题栏的逐条 window 动作放行），新增窗口操作要同步 `crates/hongguo-tauri-app/capabilities/default.json`。
 8. **issue 回复在发版后再回**：修复/功能合入 dev ≠ 用户可用——回复「已实现/已修复」时用户更新不到就会追问。顺序：合入 dev → 发版（tag + CHANGELOG）→ 再到 issue 附版本号回复（2026-10-15 教训：@小果AI 未完成时提前回了「其余已实现」，用户实测发现与回复不符）。
 
+## Android 构建（Tauri 壳移动端 APK；GPUI 壳无 Android 路线）
+
+- **构建走 GitHub CI（android.yml，仅 `workflow_dispatch` 手动触发）**，本机不装 Android SDK/NDK。`crates/hongguo-tauri-app/gen/android/`（gradle 工程）已提交入库，构建全在 ubuntu runner 的自带 SDK（`/usr/local/lib/android/sdk`，含 NDK）上完成。
+- 只出 `--target aarch64` 的 release APK；多 ABI 编译时间翻倍且受众增量近零，确需再扩。
+- **签名三 secrets**：`ANDROID_KEYSTORE_BASE64`（keystore 文件 base64）、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEYSTORE_ALIAS`。生成 keystore（本地一次性）：
+  ```bash
+  keytool -genkeypair -v -keystore hongguo-release.keystore -alias hongguo -keyalg RSA -keysize 2048 -validity 10950 -storetype PKCS12
+  base64 -w0 hongguo-release.keystore
+  ```
+  签名块在 `gen/android/app/build.gradle.kts`（env 优先、本地回落 gitignored 的 `gen/android/keystore.properties`）；换 keystore 后用户必须卸载重装（签名不同装不上升级包）。
+- workflow_dispatch 的手动菜单只在本文件位于 main 后出现；dev 上验证用 `gh workflow run android.yml --ref dev`。
+- 本地想真机出包才需要：cmdline-tools + platform/build-tools + NDK 装齐并设 `ANDROID_HOME`/`NDK_HOME`；`pnpm tauri android init` 对 `cmdline-tools` 布局有版本名目录要求。gen/android 已存在时**不要**重跑 init（会试图重建工程）。
+- 桌面专属能力已按平台门控（Android 编译通过的前提）：single-instance / global-shortcut 插件注册、老板键（`boss_key_cmd`）、隐身光标轮询（`incognito_cmd`）、本地选图 rfd（`emoticon_cmd`）——移动端命令如实返回 `AppError::Unsupported` 或空操作。门控谓词统一 `#[cfg(not(any(target_os = "android", target_os = "ios")))]`（hongguo-tauri 无 build.rs，`#[cfg(desktop)]` 这类 tauri 注入 cfg 在该 crate 无效）。
+- 数据根：Android 上 `dirs::data_dir()` 为 None，壳在 setup 最先经 `hongguo_store::paths::set_absolute_data_root` 钉到 app 私有目录（`lib.rs` android 分支），漏掉这步 app 开库即退。
+- **已知名册（后续工程，不阻塞出包）**：Android WebView 经自定义协议 Range 起播未真机验证（上线前第一验证点）；移动端 UI 无响应式适配（桌面形态直接跑）；updater 在移动端是空操作（安装静默无事发生）。
+
 ## 工程背景（改构建配置前必知）
 
 - release profile `opt-level=3 + lto="thin" + strip`：fat LTO 曾让 rustc 段 17-18 分钟，thin 砍半以上。**禁加 `panic="abort"`**（见 SKILL.md 红线 6）。
