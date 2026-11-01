@@ -34,11 +34,13 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                 Box::new(move || {
                     let served =
                         catch_unwind(AssertUnwindSafe(|| respond_local(&path, range.as_deref())));
-                    responder.respond(match served {
+                    let response = match served {
                         Ok(Ok(resp)) => build_response(resp),
                         Ok(Err(msg)) => text_response(StatusCode::BAD_REQUEST, &msg),
                         Err(p) => panic_response(&p),
-                    });
+                    };
+                    log_served(LOCAL_SCHEME, &path, range.as_deref(), &response);
+                    responder.respond(response);
                 })
             })
         })
@@ -52,7 +54,7 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                         let served = catch_unwind(AssertUnwindSafe(|| {
                             respond_stream(&path, range.as_deref())
                         }));
-                        responder.respond(match served {
+                        let response = match served {
                             Ok(Ok(resp)) => build_response(resp),
                             Ok(Err(StreamServeError::BadPath(msg))) => {
                                 text_response(StatusCode::BAD_REQUEST, &msg)
@@ -61,7 +63,9 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                                 text_response(StatusCode::NOT_FOUND, &msg)
                             }
                             Err(p) => panic_response(&p),
-                        });
+                        };
+                        log_served(STREAM_SCHEME, &path, range.as_deref(), &response);
+                        responder.respond(response);
                     })
                 })
             },
@@ -73,13 +77,27 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                 let path = request.uri().path().to_string();
                 Box::new(move || {
                     let served = catch_unwind(AssertUnwindSafe(|| respond_cover(&path)));
-                    responder.respond(match served {
+                    let response = match served {
                         Ok(resp) => build_response(resp),
                         Err(p) => panic_response(&p),
-                    });
+                    };
+                    log_served(COVER_SCHEME, &path, None, &response);
+                    responder.respond(response);
                 })
             })
         })
+}
+
+/// 协议请求日志（info 级）：三端共用一条口径——path / range / 状态 / 字节
+/// 数。此前协议层全静默，「图片/视频挂了」在日志里没有任何痕迹，排查只能
+/// 靠盲猜（2026-11 Android「像没网」实录）。body 只取 len，不拷贝。
+fn log_served(scheme: &str, path: &str, range: Option<&str>, response: &Response<Vec<u8>>) {
+    log::info!(
+        "[Proto:{scheme}] {path} range={} → {} {}B",
+        range.unwrap_or("-"),
+        response.status(),
+        response.body().len()
+    );
 }
 
 /// 取 `Range` 请求头。

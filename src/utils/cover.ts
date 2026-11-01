@@ -1,4 +1,4 @@
-import { isWindows } from '@/utils/platform';
+import { usesSchemeHostForm } from '@/utils/platform';
 
 /**
  * 封面增强工具（无业务依赖的纯函数）。
@@ -10,16 +10,17 @@ import { isWindows } from '@/utils/platform';
 /**
  * HEIC 封面的本地转码代理地址（hongguo-cover 协议，后端 ffmpeg 转 JPEG）。
  *
- * URL 形态按平台：Windows 用 `http://{scheme}.localhost`（WebView2 拦截约定），
- * macOS/Linux 用 `{scheme}://localhost`（WebKit 拦真 scheme）——与 Rust 侧
- * `protocol::scheme_base` 同一套规矩，给错的表现是封面全挂。
+ * URL 形态按平台：Windows/Android 走 `http://{scheme}.localhost`（wry 拦截
+ * 约定，见 `usesSchemeHostForm`），macOS/Linux 用 `{scheme}://localhost`
+ * （WebKit 拦真 scheme）——与 Rust 侧 `protocol::scheme_base` 同一套规矩，
+ * 给错的表现是封面全挂。
  */
 export function coverProxyUrl(remote: string): string {
   const bytes = new TextEncoder().encode(remote);
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   const b64 = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-  const base = isWindows() ? 'http://hongguo-cover.localhost' : 'hongguo-cover://localhost';
+  const base = usesSchemeHostForm() ? 'http://hongguo-cover.localhost' : 'hongguo-cover://localhost';
   return `${base}/c/${b64}`;
 }
 
