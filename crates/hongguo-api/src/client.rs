@@ -82,6 +82,12 @@ fn build_client_uncached(
         .user_agent(hongguo_signer::video_ua())
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10));
+    // Android 上 reqwest("rustls") 默认的 platform-verifier 需要 JNI 初始化
+    // 才可用（背景见 common::utils::tls），缺失时全部 TLS 握手失败——改喂
+    // 编译内置 webpki 根证书。桌面维持默认行为不变。
+    #[cfg(target_os = "android")]
+    let mut builder =
+        builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
 
     match config.resolved() {
         Some(url) => {
