@@ -306,10 +306,27 @@ export function HomePage() {
   // 回来时会重新对号本地档案，接的是你离开时的那集。
   // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
   // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
+  // 游标是否由用户/点名动作改写（vs 列表移位顶掉游标处内容）：保护分支
+  // 的判据。ref 不驱动渲染，只给 effect 读。
+  const lastIndexRef = useRef(-1);
   useEffect(() => {
     if (!currentSeries) return;
+    const idxChanged = lastIndexRef.current !== index;
+    lastIndexRef.current = index;
     if (playingId === currentSeries.seriesId && (storeVidIndex ?? 0) > 0) return;
     if (progressQuery.isPending || historyPending) return;
+
+    // 在播保护期（pinHold）且游标没动、游标处的剧却被顶掉（钉住条目随
+    // playingId 移位/换批重排）：**对齐游标回在播剧、绝不拽播放目标**。
+    // 这里若 setTarget(游标剧)，钉住会把它挪出游标位，游标处又填入别的
+    // 剧，effect 重跑再拽——「拽 → 移位 → 再拽」永不收敛，正是切剧
+    // Maximum update depth 崩溃的根源。对齐游标是纯 UI 写，一轮收敛。
+    // 游标动了（滚轮/↑↓/点名）则是用户切剧，照旧拽目标换片。
+    if (pinHold && !idxChanged && playingId && playingId !== currentSeries.seriesId) {
+      const idx = displayItems.findIndex((i) => i.seriesId === playingId);
+      setIndexes((prev) => ({ ...prev, [source]: Math.max(idx, 0) }));
+      return;
+    }
 
     // >3 秒都续播（不看片尾）：本地档案 vs 云端历史取新者（共享决策，
     // 与详情页「继续看」/后端 resolve_entry 同口径）
@@ -317,6 +334,12 @@ export function HomePage() {
       localProgress,
       historyItems?.find((i) => i.seriesId === currentSeries.seriesId),
     );
+
+    // 主动切剧即结束「在播保护」：在播剧就是用户刚选的游标剧，钉住已无
+    // 意义，关闸后 displayItems=items 原位语义，继续滚就是下一部推荐。
+    // 不关的话钉住条目随每次切剧挪位，游标处的剧被反复顶换，滚轮永远
+    // 在最前几部里轮回。换一批/回首页会重新开闸（见 restart/goto 消费）。
+    setPinHold(false);
 
     setTarget(currentSeries.seriesId, entry?.index ?? 1);
     if (entry && entry.positionMs > 0) {
@@ -328,7 +351,11 @@ export function HomePage() {
     }
   }, [
     currentSeries,
+    index,
     playingId,
+    pinHold,
+    displayItems,
+    source,
     storeVidIndex,
     localProgress,
     progressQuery.isPending,
@@ -336,6 +363,7 @@ export function HomePage() {
     historyPending,
     setTarget,
     setResumeHint,
+    setPinHold,
   ]);
 
   // 占位封面：横版优先（竖版 3:4 被 object-cover 拉满横屏窗口=整屏发糊）；
