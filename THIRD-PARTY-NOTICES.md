@@ -49,21 +49,22 @@ remain with their respective authors. This project itself is licensed under
 
 ## 五、前端 / Frontend
 
-| 组件                                                        | 用途                                   | 许可       |
-| ----------------------------------------------------------- | -------------------------------------- | ---------- |
-| [React](https://react.dev)                                  | UI 运行时                              | MIT        |
-| [TanStack Router](https://tanstack.com/router)              | 路由                                   | MIT        |
-| [TanStack Query](https://tanstack.com/query)                | 服务端状态                             | MIT        |
-| [Zustand](https://github.com/pmndrs/zustand)                | 客户端状态                             | MIT        |
-| [Radix UI](https://www.radix-ui.com)                        | 无障碍组件原语                         | MIT        |
-| [Tailwind CSS](https://tailwindcss.com)                     | 原子化 CSS                             | MIT        |
-| [shadcn/ui](https://ui.shadcn.com)                          | 组件源码（复制到项目内，无运行时依赖） | MIT        |
-| [class-variance-authority](https://github.com/joe-bell/cva) | 组件变体                               | Apache-2.0 |
-| [clsx](https://github.com/lukeed/clsx)                      | 类名合并                               | MIT        |
-| [tailwind-merge](https://github.com/dcastil/tailwind-merge) | Tailwind 类名合并                      | MIT        |
-| [lucide-react](https://lucide.dev)                          | 图标                                   | ISC        |
-| [sonner](https://github.com/emilkowalski/sonner)            | 通知                                   | MIT        |
-| [zod](https://zod.dev)                                      | 运行时类型校验                         | MIT        |
+| 组件                                                                | 用途                                   | 许可       |
+| ------------------------------------------------------------------- | -------------------------------------- | ---------- |
+| [React](https://react.dev)                                          | UI 运行时                              | MIT        |
+| [TanStack Router](https://tanstack.com/router)                      | 路由                                   | MIT        |
+| [TanStack Query](https://tanstack.com/query)                        | 服务端状态                             | MIT        |
+| [Zustand](https://github.com/pmndrs/zustand)                        | 客户端状态                             | MIT        |
+| [Radix UI](https://www.radix-ui.com)                                | 无障碍组件原语                         | MIT        |
+| [Tailwind CSS](https://tailwindcss.com)                             | 原子化 CSS                             | MIT        |
+| [shadcn/ui](https://ui.shadcn.com)                                  | 组件源码（复制到项目内，无运行时依赖） | MIT        |
+| [class-variance-authority](https://github.com/joe-bell/cva)         | 组件变体                               | Apache-2.0 |
+| [clsx](https://github.com/lukeed/clsx)                              | 类名合并                               | MIT        |
+| [tailwind-merge](https://github.com/dcastil/tailwind-merge)         | Tailwind 类名合并                      | MIT        |
+| [lucide-react](https://lucide.dev)                                  | 图标                                   | ISC        |
+| [sonner](https://github.com/emilkowalski/sonner)                    | 通知                                   | MIT        |
+| [zod](https://zod.dev)                                              | 运行时类型校验                         | MIT        |
+| [anime4k-webgpu](https://github.com/Anime4KWebBoost/Anime4K-WebGPU) | 画质增强（Anime4K CNN 2× 着色器）      | MIT        |
 
 ## 六、构建工具 / Build Tooling
 

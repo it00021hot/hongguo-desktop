@@ -101,8 +101,16 @@ fn panic_response(payload: &Box<dyn std::any::Any + Send>) -> Response<Vec<u8>> 
 }
 
 /// 把协议层的元组产物组装成 HTTP 响应。
+///
+/// 统一携带 `Access-Control-Allow-Origin: *`：播放页 `<video>` 以
+/// `crossOrigin="anonymous"` 加载流与本地文件——WebGPU 画质增强要求画面
+/// origin-clean，否则 `copyExternalImageToTexture` 判跨源直接拒绝；媒体
+/// 请求能否过 CORS 检查就看协议响应有没有这个头（对齐官方 CDN 行为：
+/// 其视频直链本就回 ACAO）。
 fn build_response((status, headers, body): ProtocolResponse) -> Response<Vec<u8>> {
-    let mut builder = Response::builder().status(status);
+    let mut builder = Response::builder()
+        .status(status)
+        .header("Access-Control-Allow-Origin", "*");
     for (k, v) in headers {
         builder = builder.header(k, v);
     }

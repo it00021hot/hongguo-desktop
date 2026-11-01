@@ -31,6 +31,9 @@ interface PlayerState {
   /** 弹幕设置面板开合（播放页/沉浸流共享，切集切剧不重置） */
   danmakuPanelOpen: boolean;
   setDanmakuPanelOpen: (open: boolean) => void;
+  /** 画质增强面板开合（与弹幕面板同款：播放页/沉浸流共享，切集切剧不重置） */
+  enhancePanelOpen: boolean;
+  setEnhancePanelOpen: (open: boolean) => void;
   /** 音量竖条浮层开合 */
   volumeOpen: boolean;
   setVolumeOpen: (open: boolean) => void;
@@ -67,6 +70,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setResumeHint: (hint) => set({ resumeHint: hint }),
   danmakuPanelOpen: false,
   setDanmakuPanelOpen: (open) => set({ danmakuPanelOpen: open }),
+  enhancePanelOpen: false,
+  setEnhancePanelOpen: (open) => set({ enhancePanelOpen: open }),
   volumeOpen: false,
   setVolumeOpen: (open) => set({ volumeOpen: open }),
   seriesPanelOpen: false,

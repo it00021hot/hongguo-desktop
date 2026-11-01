@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DanmakuLayer } from './danmaku-layer';
+import { EnhancementLayer } from './enhancement-layer';
 import { PlayerControls } from './controls/player-controls';
 import { MiniScreenControls } from './mini-screen-controls';
 import { InteractionRail } from './interaction-rail';
@@ -43,6 +44,7 @@ import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { useFrameHold } from '../hooks/use-frame-hold';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
+import { useEnhancement } from '../hooks/use-enhancement';
 import { useBingeRelay } from '../hooks/use-binge-relay';
 import { usePlayerOverlay } from '../hooks/use-player-overlay';
 import { usePlayerInteractions } from '../hooks/use-player-interactions';
@@ -240,6 +242,12 @@ export function PlayerView({
    */
   const [decodeBlocked, setDecodeBlocked] = useState<{ key: string } | null>(null);
   const { danmakuOn, danmakuDisplay, updateDanmakuDisplay, toggleDanmaku } = useDanmakuSettings();
+  const {
+    settings: enhanceSettings,
+    update: updateEnhancement,
+    status: enhanceStatus,
+    setStatus: setEnhanceStatus,
+  } = useEnhancement();
   // 弹幕拉取失败不能静默：画面照常播，但用户该知道弹幕为什么没了
   useEffect(() => {
     if (danmakuQuery.isError) {
@@ -591,6 +599,11 @@ export function PlayerView({
                   key={playSrc}
                   ref={videoRef}
                   src={playSrc}
+                  /* crossOrigin=anonymous：画质增强的 WebGPU 帧上传要求画面
+                     origin-clean。流经自定义协议（对页面是跨源），协议响应带
+                     ACAO 头（protocol.rs）时 crossorigin 请求通过 CORS 检查、
+                     保持不 taint——两处缺一不可，第三方同款做法。 */
+                  crossOrigin="anonymous"
                   /* 绝对定位铺满舞台：WKWebView 在流式布局里会把 100% 高度的
                    <video> 按固有纵横比撑大（1100 宽 → 1956 高），舞台裁切后
                    表现为「画面放大、控件全被顶出窗口」（mac 长期已知 bug）。
@@ -652,6 +665,17 @@ export function PlayerView({
                   onRateChange={handleRateChange}
                   onVolumeChange={handleVolumeChange}
                   onError={handleVideoError}
+                />
+                {/* 画质增强层：紧跟 <video>（盖在其上，z-[5] 让位 loading/弹幕）。
+                    available 绑 videoLive——取流间隙/切换间隙自动空转，
+                    新画面出画自动恢复，失败在层内收口退原画 */}
+                <EnhancementLayer
+                  videoRef={videoRef}
+                  src={playSrc}
+                  available={videoLive}
+                  cover={miniScreen}
+                  settings={enhanceSettings}
+                  onStatus={setEnhanceStatus}
                 />
                 {coverBackdrop}
                 {/* 切集/首帧间隙的中央 loading：此刻必然还没有画面（封面占位
@@ -832,6 +856,10 @@ export function PlayerView({
                     onToggleDanmaku={toggleDanmaku}
                     danmakuDisplay={danmakuDisplay}
                     onDanmakuDisplayChange={updateDanmakuDisplay}
+                    enhanceSettings={enhanceSettings}
+                    onEnhanceChange={updateEnhancement}
+                    enhanceStatus={enhanceStatus}
+                    enhanceAvailable={videoLive}
                     immersive
                     visible={chromeShown}
                     // 选中剧的入口只有「观看完整短剧」横条与自动连播完成本集

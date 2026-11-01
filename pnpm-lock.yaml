@@ -23,6 +23,9 @@ importers:
       '@tauri-apps/plugin-updater':
         specifier: ^2.13.1
         version: 2.13.1
+      anime4k-webgpu:
+        specifier: ^1.0.0
+        version: 1.0.0(@webgpu/types@0.1.74)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1796,6 +1799,9 @@ packages:
   '@vitest/spy@5.0.3':
     resolution: {integrity: sha512-XhFysQTB8AZ+P4gMi+Lpo99vg2AZi0qKpaB9yXQl37+CaMEAPO3iH/wGVnSyL5MPERiLezpqTVtrR6UZH5GCXg==}
 
+  '@webgpu/types@0.1.74':
+    resolution: {integrity: sha512-lgiI4hbuLcI9unnm2cL/tvCaQU45dp0xcLWJh5uB/9MBGvIA4F8XIk7nSiBeg+K4xWGYwgZKn80LmERI5CxoTA==}
+
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
     peerDependencies:
@@ -1808,6 +1814,11 @@ packages:
 
   ajv@6.15.0:
     resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
+
+  anime4k-webgpu@1.0.0:
+    resolution: {integrity: sha512-syZZyDRHYukFnDLxdES4AuMHzKwxlu5Lo52yhEEc1hwKQmvza8DGC62/VDPrrWOu4KArU5jh/0yFJQBwetGuxg==}
+    peerDependencies:
+      '@webgpu/types': ^0.1.38
 
   ansis@4.4.0:
     resolution: {integrity: sha512-9k3v7xcHwgdO/DruxGIg4HtjvlAZlcnsX/mzqUb1t3NkYnl9kK2UJ+Gq0io+vQf7iT//BD/HB/NBkUR1LWxoeA==}
@@ -4495,6 +4506,8 @@ snapshots:
 
   '@vitest/spy@5.0.3': {}
 
+  '@webgpu/types@0.1.74': {}
+
   acorn-jsx@5.3.2(acorn@8.19.0):
     dependencies:
       acorn: 8.19.0
@@ -4507,6 +4520,10 @@ snapshots:
       fast-json-stable-stringify: 2.1.0
       json-schema-traverse: 0.4.1
       uri-js: 4.4.1
+
+  anime4k-webgpu@1.0.0(@webgpu/types@0.1.74):
+    dependencies:
+      '@webgpu/types': 0.1.74
 
   ansis@4.4.0: {}
 

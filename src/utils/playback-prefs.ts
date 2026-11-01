@@ -108,6 +108,59 @@ export function writeDanmakuDisplay(s: DanmakuDisplaySettings): void {
   write(DANMAKU_AREA_KEY, s.area);
 }
 
+// ---------------------------------------------------------------- 画质增强
+
+const ENHANCE_KEY = 'hongguo.enhance';
+
+/**
+ * 画质增强设置：Anime4K 2× 与锐化**各自独立开关**（可同时开——Anime4K
+ * 放大后的画面偏软，叠加锐化才是完整形态），锐化强度 0–100。
+ * 两者都关 = 原画。
+ */
+export interface EnhancementSettings {
+  anime4kOn: boolean;
+  sharpenOn: boolean;
+  strength: number;
+}
+
+const ENHANCE_STRENGTH_DEFAULT = 50;
+const ENHANCE_STRENGTH_MAX = 100;
+const ENHANCE_FALLBACK: EnhancementSettings = {
+  anime4kOn: false,
+  sharpenOn: false,
+  strength: ENHANCE_STRENGTH_DEFAULT,
+};
+
+/** 默认全关：增强是观感加分项，不替用户做主。 */
+export function readEnhancement(): EnhancementSettings {
+  try {
+    const raw = window.localStorage.getItem(ENHANCE_KEY);
+    if (!raw) return ENHANCE_FALLBACK;
+    const v: unknown = JSON.parse(raw);
+    if (typeof v !== 'object' || v === null) return ENHANCE_FALLBACK;
+    if (!('anime4kOn' in v) || !('sharpenOn' in v) || !('strength' in v)) return ENHANCE_FALLBACK;
+    const { anime4kOn, sharpenOn, strength } = v as Record<string, unknown>;
+    const s = Number(strength);
+    return {
+      anime4kOn: anime4kOn === true,
+      sharpenOn: sharpenOn === true,
+      strength: Number.isFinite(s)
+        ? Math.min(Math.max(s, 0), ENHANCE_STRENGTH_MAX)
+        : ENHANCE_STRENGTH_DEFAULT,
+    };
+  } catch {
+    return ENHANCE_FALLBACK;
+  }
+}
+
+export function writeEnhancement(s: EnhancementSettings): void {
+  try {
+    window.localStorage.setItem(ENHANCE_KEY, JSON.stringify(s));
+  } catch {
+    // 存不进去不影响本次会话内的增强，下一次启动再退回默认
+  }
+}
+
 // ---------------------------------------------------------------- 隐身模式
 
 const INCOGNITO_KEY = 'hongguo.incognito';

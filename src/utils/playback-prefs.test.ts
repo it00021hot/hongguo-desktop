@@ -2,9 +2,11 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   MAX_RATE,
   MIN_RATE,
+  readEnhancement,
   readMuted,
   readPlaybackRate,
   readVolume,
+  writeEnhancement,
   writeMuted,
   writePlaybackRate,
   writeVolume,
@@ -76,5 +78,36 @@ describe('playback-prefs', () => {
     expect(readPlaybackRate()).toBeCloseTo(MIN_RATE);
     writePlaybackRate(MAX_RATE);
     expect(readPlaybackRate()).toBeCloseTo(MAX_RATE);
+  });
+
+  it('画质增强默认全关、强度 50', () => {
+    expect(readEnhancement()).toEqual({ anime4kOn: false, sharpenOn: false, strength: 50 });
+  });
+
+  it('画质增强设置能跨会话读回（两开关独立）', () => {
+    writeEnhancement({ anime4kOn: true, sharpenOn: true, strength: 80 });
+    expect(readEnhancement()).toEqual({ anime4kOn: true, sharpenOn: true, strength: 80 });
+    writeEnhancement({ anime4kOn: false, sharpenOn: true, strength: 30 });
+    expect(readEnhancement()).toEqual({ anime4kOn: false, sharpenOn: true, strength: 30 });
+  });
+
+  it('非布尔开关与越界强度被归一化，不照单全收', () => {
+    storage.setItem(
+      'hongguo.enhance',
+      JSON.stringify({ anime4kOn: 'yes', sharpenOn: 1, strength: 999 }),
+    );
+    expect(readEnhancement()).toEqual({ anime4kOn: false, sharpenOn: false, strength: 100 });
+    storage.setItem(
+      'hongguo.enhance',
+      JSON.stringify({ anime4kOn: true, sharpenOn: true, strength: -3 }),
+    );
+    expect(readEnhancement()).toEqual({ anime4kOn: true, sharpenOn: true, strength: 0 });
+  });
+
+  it('损坏的画质增强存储值回落到默认值', () => {
+    storage.setItem('hongguo.enhance', '不是JSON');
+    expect(readEnhancement()).toEqual({ anime4kOn: false, sharpenOn: false, strength: 50 });
+    storage.setItem('hongguo.enhance', JSON.stringify({ anime4kOn: true }));
+    expect(readEnhancement()).toEqual({ anime4kOn: false, sharpenOn: false, strength: 50 });
   });
 });
