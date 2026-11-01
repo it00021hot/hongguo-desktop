@@ -86,6 +86,7 @@ pub(crate) mod mini_panel;
 pub(crate) mod minimize;
 pub(crate) mod overlay;
 pub(crate) mod picker;
+pub(crate) mod pin_playing;
 pub(crate) mod playback;
 pub(crate) mod player;
 pub(crate) mod player_icons;
