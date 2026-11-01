@@ -14,6 +14,34 @@ const PREFETCH_CONCURRENCY: usize = 2;
 static PREFETCH_SLOTS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(PREFETCH_CONCURRENCY);
 
+/// 取流表获取（类型注册表守门）：vid 的条目类型未注册时**不猜 key**——
+/// 先拉本剧分集档案（解析侧会把整剧各集的 vid→content_type 一次注册齐）
+/// 再取流。取流未命中（[`AppError::StreamMiss`]）如实上抛：服务端不发货
+/// 是设备侧信任问题，应用层没有兜底解（换设备重摇已在 2026-11-01 取证
+/// 后整体废除）。
+async fn fetch_with_registry(
+    state: &AppState,
+    vid: &str,
+    progress_key: &str,
+    definition: Option<u32>,
+    cap: hongguo_api::stream_pick::DecoderCapability,
+) -> AppResult<hongguo_api::play_url::PlayInfo> {
+    let env = state.api_env();
+    match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
+        Ok(p) => Ok(p),
+        Err(e @ AppError::ContentTypeUnknown(_)) => {
+            // progress_key 形如 "{series_id}:{vid_index}"
+            let series_id = progress_key.split(':').next().unwrap_or("").trim();
+            if series_id.is_empty() || !series_id.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(e);
+            }
+            hongguo_api::detail::fetch_episode_list(series_id, &env).await?;
+            hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// 在线播放就绪后带回的档位信息。
 pub struct Prepared {
     pub url: String,
@@ -76,8 +104,7 @@ pub async fn prepare(
     let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
         hongguo_media_platform::capability::playback::hevc_playable(),
     );
-    let env = state.api_env();
-    let play = hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await?;
+    let play = fetch_with_registry(state, vid, progress_key, definition, cap).await?;
     let want = play.definition;
     // 只记「不指定档位」那次解析到的结果。手动选过 720 之后再点「自动」，
     // 要的仍然是平台给的最高档，而不是上一次手动选的那档。
@@ -155,8 +182,7 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
         hongguo_media_platform::capability::playback::hevc_playable(),
     );
-    let env = state.api_env();
-    let play = match hongguo_api::play_url::fetch_play_url(vid, None, cap, &env).await {
+    let play = match fetch_with_registry(state, vid, progress_key, None, cap).await {
         Ok(p) => p,
         Err(e) => {
             log::info!("[Online] 预取 {vid} 取流表失败（忽略）: {e}");

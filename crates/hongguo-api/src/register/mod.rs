@@ -11,8 +11,9 @@
 //! - query：40 参公共指纹（[`register_query`]，版本身份钉注册口径
 //!   `REGISTER_VERSION_*`，见 `hongguo_signer::device`）
 //! - body：TT-Encrypt V5 加密的注册 JSON（[`register_json_str`]）
-//! - 头：`content-type: application/octet-stream;tt-data=a` + 签名客户端
-//!   五件套 + `lc: 101` + `log-encode-type: gzip` + `x-ss-dp: 8662`
+//! - 头：`content-type: application/octet-stream;tt-data=a` + 注册专属
+//!   头族（`lc: 102` + passport-sdk / sdk-version 标识 + 店区声明 + trace，
+//!   2026-11-01 实流对齐）
 //! - 响应：JSON `device_id/install_id/device_token/new_user` +
 //!   Set-Cookie `install_id` + `ttreq`（票按新 install_id 发放，须随档案
 //!   长期携带）；`device_id: 0` 表示被静默拒绝。
@@ -363,10 +364,11 @@ fn fresh_identity() -> FreshIdentity {
 const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 
 /// 构造 AppLog 注册 JSON 明文（注册口径活形态：基底复刻自 hgplayer
-/// `GenerateProfileWith`/`Header` 反编译，SDK 代际五件 `sdk_version
-/// 4.3.2-rc.44` / `sdk_target_version 30` / `git_hash 27660d0` /
-/// `sdk_flavor cnInner` / `scene 2` 按官方 APK bdinstall
-/// 装配器对齐；版本身份引用
+/// `GenerateProfileWith`/`Header` 反编译，SDK 代际四件 `sdk_version
+/// 3.7.3-rc.116-douyin` / `sdk_target_version 29` / `git_hash fe95b95` /
+/// `sdk_flavor china` 与**无 `scene` 键**为 2026-11-01 竞品实流注册
+/// 密文体逐字段解密对齐（此前 4.3.2-rc.44/cnInner/30/27660d0/scene:2
+/// 的拼装代际错配，设备会被服务端标记、取流不发货）；版本身份引用
 /// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
 /// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
 /// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
@@ -406,7 +408,7 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     h.insert("device_platform".into(), json!("android"));
     h.insert("display_density".into(), json!("xxhdpi"));
     h.insert("display_name".into(), json!("红果短剧"));
-    h.insert("git_hash".into(), json!("27660d0"));
+    h.insert("git_hash".into(), json!("fe95b95"));
     h.insert("guest_mode".into(), json!(0));
     h.insert("ipv6_list".into(), json!([]));
     h.insert("is_system_app".into(), json!(0));
@@ -428,10 +430,9 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     h.insert("resolution".into(), json!("2670x1200"));
     h.insert("rom".into(), json!("hyperos"));
     h.insert("rom_version".into(), json!("OS1.0.32.0.UNCCNXM"));
-    h.insert("scene".into(), json!(2));
-    h.insert("sdk_flavor".into(), json!("cnInner"));
-    h.insert("sdk_target_version".into(), json!(30));
-    h.insert("sdk_version".into(), json!("4.3.2-rc.44"));
+    h.insert("sdk_flavor".into(), json!("china"));
+    h.insert("sdk_target_version".into(), json!(29));
+    h.insert("sdk_version".into(), json!("3.7.3-rc.116-douyin"));
     h.insert("sig_hash".into(), json!("aea615ab910015038f73c47e45d21466"));
     h.insert("sim_serial_number".into(), json!([]));
     h.insert("timezone".into(), json!(8));
@@ -497,6 +498,18 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         x_tt_token: None,
     };
 
+    // 注册头族（2026-11-01 竞品实流注册请求逐字段对齐）：`lc: 102`（注册
+    // 专属，业务请求是 101）+ passport-sdk / sdk-version 标识族 +
+    // x-tt-request-tag + 未取号前的店区声明（src=did）+ W3C trace。
+    let trace_hex = |n: usize| {
+        let mut s = String::with_capacity(n);
+        while s.len() < n * 2 {
+            s.push_str(&format!("{:016x}", rand::random::<u64>()));
+        }
+        s.truncate(n * 2);
+        s
+    };
+    let trace_id = format!("00-{}-{}-01", trace_hex(16), trace_hex(8));
     let response = api_call_full_response(
         REGISTER_ORIGIN,
         REGISTER_PATH,
@@ -504,12 +517,26 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         &q,
         &[
             (
+                "accept".into(),
+                "application/json; charset=utf-8,application/x-protobuf".into(),
+            ),
+            (
                 "Content-Type".into(),
                 "application/octet-stream;tt-data=a".into(),
             ),
-            ("lc".into(), "101".into()),
+            ("lc".into(), "102".into()),
             ("log-encode-type".into(), "gzip".into()),
+            (
+                "passport-sdk-settings".into(),
+                "device_transfer_s_0,device_transfer_ab_1".into(),
+            ),
+            ("passport-sdk-version".into(), "60755".into()),
+            ("sdk-version".into(), "2".into()),
             ("x-ss-dp".into(), "8662".into()),
+            ("x-tt-request-tag".into(), "t=0;n=1".into()),
+            ("x-tt-store-region".into(), "cn".into()),
+            ("x-tt-store-region-src".into(), "did".into()),
+            ("x-tt-trace-id".into(), trace_id),
         ],
         &reg_env,
     )
@@ -648,6 +675,14 @@ mod tests {
             hongguo_signer::REGISTER_VERSION_CODE
         );
         assert_eq!(h["app_version"], hongguo_signer::REGISTER_VERSION_NAME);
+
+        // bdinstall SDK 代际逐字段锁定（2026-11-01 竞品实流注册密文体
+        // 解密对齐——代际拼错设备会被静默标记、取流不发货）
+        assert_eq!(h["git_hash"], "fe95b95");
+        assert_eq!(h["sdk_flavor"], "china");
+        assert_eq!(h["sdk_target_version"], 29);
+        assert_eq!(h["sdk_version"], "3.7.3-rc.116-douyin");
+        assert!(h.get("scene").is_none(), "实流注册 JSON 无 scene 键");
     }
 
     /// 注册端点存活性诊断：[`register_device`] 全链路真机试注。

@@ -80,10 +80,10 @@ async fn probe_play_batch() {
     }
 }
 
-/// 官方批量端点考证探针：
-/// - model/player + dr_scene=player 发货（起播批量形态）；
-/// - mixed_video_id_map 的 key = 条目 content_type 原样串，错配 → 空响应；
-/// - detail/preload 逗号串批量一次回多剧。
+/// 取流轻请求端点考证探针（2026-11-01 实流形态）：
+/// - `multi_video_model/v1/` 无签名轻请求发货（当前唯一活取流端点）；
+/// - mixed_video_id_map 的 key = 条目 content_type 原样串，错配 → 不发货；
+/// - detail/preload 逗号串批量一次回多剧（对照组，验证身份可用性）。
 #[tokio::test]
 #[ignore = "手工探针：打真实接口"]
 async fn probe_official_preload() {
@@ -106,13 +106,12 @@ async fn probe_official_preload() {
             BTreeMap::from([("1001".to_string(), vec![anime_vid.clone()])]),
         ),
     ] {
-        let payload = hongguo_api::params::player_model_payload(&map);
+        let payload = hongguo_api::params::model_light_payload(&map);
         let body = serde_json::to_vec(&payload).unwrap();
-        match hongguo_api::client::api_call_full(
-            hongguo_api::client::LQ_API_ORIGIN,
-            hongguo_api::params::PLAYER_MODEL_PATH,
-            Some(body),
-            &[],
+        match hongguo_api::client::api_call_model_light(
+            hongguo_api::client::LF_API_ORIGIN,
+            hongguo_api::params::MODEL_LIGHT_PATH,
+            body,
             &env,
         )
         .await
@@ -137,30 +136,7 @@ async fn probe_official_preload() {
         }
     }
 
-    // 单集端点官方切集形态（ct=剧类型动态 + source:4）：真人剧 ct=1 验证
-    let payload = hongguo_api::params::single_model_payload(&human_vid, 1);
-    let body = serde_json::to_vec(&payload).unwrap();
-    match hongguo_api::client::api_call_full(
-        hongguo_api::client::LQ_API_ORIGIN,
-        hongguo_api::params::SINGLE_MODEL_PATH,
-        Some(body),
-        &[],
-        &env,
-    )
-    .await
-    {
-        Ok(bytes) => {
-            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            let has_model = v.pointer("/data/video_model").is_some();
-            println!(
-                "SINGLE ct=1: {} 字节，video_model 在场={has_model}",
-                bytes.len()
-            );
-        }
-        Err(e) => println!("SINGLE ct=1 ERR {e}"),
-    }
-
-    // detail/preload 逗号串批量（官方：series_id="id1,id2"）
+    // detail/preload 逗号串批量（官方：series_id="id1,id2"）——对照组
     let series_batch = "7680564528135818302,7683070896516369470".to_string();
     let payload = hongguo_api::params::detail_payload(&series_batch);
     let body = serde_json::to_vec(&payload).unwrap();

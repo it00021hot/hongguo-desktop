@@ -49,6 +49,20 @@ pub enum AppError {
     #[error("{0}")]
     Rejected(String),
 
+    /// 取流未命中：服务端对这个设备/请求没有发货（200+0 或响应里没有
+    /// 这一集的流表）。transparent 同 [`AppError::Rejected`] 口径；
+    /// 与 [`AppError::EmptyResponse`] 分开：这是取流链路的专属信号，
+    /// 调用方据此如实报「取流失败」，不做任何身份层面的兜底。
+    #[error("{0}")]
+    StreamMiss(String),
+
+    /// 条目类型未注册：取流分组 key 需要该 vid 的 content_type，
+    /// 注册表里没有。**不猜**（编一个 key 打过去即使偶然命中也是纯运气），
+    /// 报给调用方先拉分集档案（`fetch_episode_list` 会把整剧各集类型
+    /// 注册进表）再取流。transparent 同 [`AppError::Rejected`] 口径。
+    #[error("{0}")]
+    ContentTypeUnknown(String),
+
     #[error("参数错误: {0}")]
     InvalidArgs(String),
 
@@ -91,6 +105,8 @@ impl AppError {
             AppError::Media(_) => "error.media",
             AppError::Auth(_) => "error.auth",
             AppError::Rejected(_) => "error.rejected",
+            AppError::StreamMiss(_) => "error.streamMiss",
+            AppError::ContentTypeUnknown(_) => "error.contentTypeUnknown",
             AppError::InvalidArgs(_) => "error.invalidArgs",
             AppError::NotFound(_) => "error.notFound",
             AppError::Cancelled => "error.cancelled",

@@ -192,9 +192,10 @@ pub fn save(win: &tauri::WebviewWindow) {
 }
 
 /// 读指定窗态的记忆并校验：尺寸不小于 min（各形态 MIN 同款的「物理几何
-/// 对逻辑下限」朴素比较，v1 起的既定口径），且与任一显示器的工作区相交
-/// ——拔掉显示器/改过布局的旧坐标会把窗口丢到屏外找不回。命中不了记
-/// 日志：「记忆为什么没生效」是这功能最高频的排查诉求。
+/// 对逻辑下限」朴素比较，v1 起的既定口径），且**完整落在**任一显示器的
+/// 工作区内——只要「相交」会放行 title 落在屏外/下半截悬在副屏的旧坐标
+/// （拔掉显示器/改过布局的产物），整窗可见才算数。命中不了记日志：
+/// 「记忆为什么没生效」是这功能最高频的排查诉求。
 fn load_valid(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> Option<Geometry> {
     let slots = load_slots();
     let g = match mode {
@@ -218,12 +219,12 @@ fn load_valid(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> Option
                 let wa = m.work_area();
                 let (mx, my) = (wa.position.x, wa.position.y);
                 let (mw, mh) = (wa.size.width as i32, wa.size.height as i32);
-                mx < right && left < mx + mw && my < bottom && top < my + mh
+                mx <= left && top >= my && right <= mx + mw && bottom <= my + mh
             })
         })
         .unwrap_or(false);
     if !on_screen {
-        log::info!("[Window] {mode:?} 几何记忆不在当前屏幕内，回默认");
+        log::info!("[Window] {mode:?} 几何记忆未完整落在任一屏幕工作区内，回默认");
         return None;
     }
     Some(g)
