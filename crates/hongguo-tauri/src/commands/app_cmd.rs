@@ -17,9 +17,21 @@ pub type WindowCloseGate = Arc<AtomicBool>;
 /// 选择下载目录。
 #[tauri::command]
 pub fn select_folder(app: AppHandle) -> AppResult<Option<String>> {
-    use tauri_plugin_dialog::DialogExt;
-    let picked = app.dialog().file().blocking_pick_folder();
-    Ok(picked.map(|p| p.to_string()))
+    // 移动端 dialog 插件没有 folder picker（只有文件选择），如实拒绝——
+    // 下载目录改选属移动端 UI 适配，另行处理
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
+        return Err(hongguo_common::AppError::Unsupported(
+            "目录选择依赖系统文件夹面板，移动端暂不支持".into(),
+        ));
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app.dialog().file().blocking_pick_folder();
+        Ok(picked.map(|p| p.to_string()))
+    }
 }
 
 /// 打开某剧的任务所在目录。
