@@ -1,7 +1,7 @@
 {
   "name": "hongguo-desktop",
   "private": true,
-  "version": "0.5.8",
+  "version": "0.5.9",
   "type": "module",
   "license": "PolyForm-Noncommercial-1.0.0",
   "description": "红果短剧桌面客户端（Windows / macOS）",
@@ -28,6 +28,7 @@
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.13.1",
+    "anime4k-webgpu": "^1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.52.0",

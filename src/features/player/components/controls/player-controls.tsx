@@ -11,6 +11,7 @@ import {
   RectangleVertical,
   SkipBack,
   SkipForward,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,7 +28,8 @@ import { app as appApi } from '@/service/commands';
 import { formatDuration } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
-import type { DanmakuDisplaySettings } from '@/utils/playback-prefs';
+import type { DanmakuDisplaySettings, EnhancementSettings } from '@/utils/playback-prefs';
+import type { EnhancementStatus } from '../../hooks/use-enhancement';
 import { DownloadSheet } from '../download-sheet';
 import { EpisodePicker } from '../episode-picker';
 import { ChromeSurface } from '../chrome-surface';
@@ -66,6 +68,12 @@ interface Props {
   /** 弹幕显示设置与修改回调（透明度/字号/密度/显示区域） */
   danmakuDisplay: DanmakuDisplaySettings;
   onDanmakuDisplayChange: (patch: Partial<DanmakuDisplaySettings>) => void;
+  /** 画质增强设置与修改回调（档位/锐化强度）；状态由播放页的增强层回写 */
+  enhanceSettings: EnhancementSettings;
+  onEnhanceChange: (patch: Partial<EnhancementSettings>) => void;
+  enhanceStatus: EnhancementStatus;
+  /** 画面可用（有流且已出画）才允许开启增强 */
+  enhanceAvailable: boolean;
   seriesId: string;
   episodes: Episode[];
   currentIndex: number;
@@ -144,6 +152,10 @@ export function PlayerControls({
   onToggleDanmaku,
   danmakuDisplay,
   onDanmakuDisplayChange,
+  enhanceSettings,
+  onEnhanceChange,
+  enhanceStatus,
+  enhanceAvailable,
   seriesId,
   episodes,
   currentIndex,
@@ -194,9 +206,12 @@ export function PlayerControls({
   // 面板/浮层开合在全局播放 store：切集/切剧重挂载不丢
   const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
   const setDanmakuPanelOpen = usePlayerStore((s) => s.setDanmakuPanelOpen);
+  const enhancePanelOpen = usePlayerStore((s) => s.enhancePanelOpen);
+  const setEnhancePanelOpen = usePlayerStore((s) => s.setEnhancePanelOpen);
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const danmakuPanelRef = useRef<HTMLDivElement | null>(null);
+  const enhancePanelRef = useRef<HTMLDivElement | null>(null);
   /** 选集按钮 + 浮层的锚点容器：点外部关闭时用它排除「点在选集按钮上」 */
   const seriesAnchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -305,6 +320,16 @@ export function PlayerControls({
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [danmakuPanelOpen, setDanmakuPanelOpen]);
+
+  // 画质增强面板同款：点外部关闭
+  useEffect(() => {
+    if (!enhancePanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!enhancePanelRef.current?.contains(e.target as Node)) setEnhancePanelOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [enhancePanelOpen, setEnhancePanelOpen]);
 
   // 选集浮层点外部关闭。选中集数**不关**浮层（连选连跳），
   // 浮层常驻在鼠标下方，后续点击都落在浮层内部，永远到不了舞台——
@@ -458,6 +483,94 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* 画质增强：档位三段选 + 锐化强度滑条 + 状态说明，面板贴按钮
+              向上弹（弹幕设置面板同款锚定）。与弹幕面板互斥——两个黑玻璃
+              面板叠着只会互相遮挡。按钮在无流可用时置灰（没有画面可增强） */}
+          <div ref={enhancePanelRef} className="relative flex items-center">
+            <IconButton
+              label={t('player.enhanceSettings')}
+              disabled={!enhanceAvailable}
+              onClick={() => {
+                const next = !enhancePanelOpen;
+                setEnhancePanelOpen(next);
+                if (next) setDanmakuPanelOpen(false);
+              }}
+            >
+              <Sparkles
+                className={cn(
+                  'size-4',
+                  enhanceSettings.anime4kOn || enhanceSettings.sharpenOn || enhancePanelOpen
+                    ? 'text-white'
+                    : 'text-white/70',
+                )}
+              />
+            </IconButton>
+            {enhancePanelOpen && (
+              <div className="absolute right-0 bottom-full z-30 mb-3 w-60 rounded-xl border border-white/10 bg-black/85 p-4 backdrop-blur-sm">
+                <div className="flex flex-col gap-4">
+                  {/* 两个独立开关，可同时开：Anime4K 放大后偏软，叠加锐化
+                      才是完整形态。都关 = 原画 */}
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      aria-pressed={enhanceSettings.anime4kOn}
+                      onClick={() => onEnhanceChange({ anime4kOn: !enhanceSettings.anime4kOn })}
+                      className={cn(
+                        'flex-1 rounded-lg px-2 py-1.5 text-xs transition-colors',
+                        enhanceSettings.anime4kOn
+                          ? 'bg-white text-black'
+                          : 'bg-white/10 text-white/80 hover:bg-white/20',
+                      )}
+                    >
+                      {t('player.enhanceAnime4k')}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={enhanceSettings.sharpenOn}
+                      onClick={() => onEnhanceChange({ sharpenOn: !enhanceSettings.sharpenOn })}
+                      className={cn(
+                        'flex-1 rounded-lg px-2 py-1.5 text-xs transition-colors',
+                        enhanceSettings.sharpenOn
+                          ? 'bg-white text-black'
+                          : 'bg-white/10 text-white/80 hover:bg-white/20',
+                      )}
+                    >
+                      {t('player.enhanceSharpen')}
+                    </button>
+                  </div>
+                  {enhanceSettings.sharpenOn && (
+                    <DisplaySlider
+                      label={t('player.enhanceStrength')}
+                      value={enhanceSettings.strength / 100}
+                      min={0}
+                      max={1}
+                      onChange={(v) => onEnhanceChange({ strength: Math.round(v * 100) })}
+                    />
+                  )}
+                  <p className="text-[11px] leading-relaxed text-white/60">
+                    {t('player.enhanceNote')}
+                  </p>
+                  {enhanceSettings.anime4kOn && (
+                    <p className="text-[11px] leading-relaxed text-white/60">
+                      {t('player.enhanceAnime4kNote')}
+                    </p>
+                  )}
+                  {enhanceStatus.message && (
+                    <p
+                      role="status"
+                      className={cn(
+                        'text-[11px] leading-relaxed',
+                        enhanceStatus.state === 'error' ? 'text-white' : 'text-white/60',
+                      )}
+                    >
+                      {enhanceStatus.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {immersive && (
             <div ref={seriesAnchorRef} className="relative flex items-center">
               <Button
@@ -509,11 +622,16 @@ export function PlayerControls({
             <MiniWindowIcon />
           </IconButton>
 
-          {/* 弹幕设置：「弹」字方框 + 齿轮角标 + 上方浮层面板 */}
+          {/* 弹幕设置：「弹」字方框 + 齿轮角标 + 上方浮层面板。与画质增强
+              面板互斥（同款黑玻璃面板，叠着互相遮挡） */}
           <div ref={danmakuPanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.danmakuSettings')}
-              onClick={() => setDanmakuPanelOpen(!danmakuPanelOpen)}
+              onClick={() => {
+                const next = !danmakuPanelOpen;
+                setDanmakuPanelOpen(next);
+                if (next) setEnhancePanelOpen(false);
+              }}
             >
               <DanmakuSettingsIcon className={danmakuPanelOpen ? 'text-white' : 'text-white/70'} />
             </IconButton>

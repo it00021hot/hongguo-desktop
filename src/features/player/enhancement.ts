@@ -1,0 +1,335 @@
+/**
+ * 画质增强核心：锐化核与 Anime4K WebGPU 渲染器（纯逻辑，无 React）。
+ *
+ * 方案对齐已验证的第三方实现——显示层叠加，不碰播放管线、不改下载文件：
+ * - 锐化：3×3 unsharp 卷积核，交给 SVG feConvolveMatrix（纯合成器效果，
+ *   任何 WebView 可用，是所有降级路径的兜底档）；
+ * - Anime4K：WebGPU compute 链（CNNx2M 2×，动态 import 保持首屏零加载），
+ *   输入纹理优先 GPU 直拷；部分 HEVC 解码器给不出可导入的 GPU backing，
+ *   自动换 OffscreenCanvas 桥（CPU 路径，限速由渲染循环负责）。
+ *
+ * 失败纪律：增强永远不允许弄坏播放本身——任何一环失败都以
+ * EnhancementError(code) 抛出，由叠加层统一映射 i18n 文案并退回原画。
+ */
+
+/** 增强失败的稳定错误码（叠加层映射词条；本模块不硬编码人类语言）。 */
+export type EnhancementErrorCode =
+  | 'noWebgpu' // 运行环境未开放 WebGPU（旧 WKWebView 等）
+  | 'noAdapter' // 拿不到显卡适配器
+  | 'gpuUnsupported' // validation / device lost / uncaptured error——显卡跑不动这套运算
+  | 'inputTooLarge' // 输入超过 1080p（显存与耗时上限）
+  | 'canvasUnavailable' // canvas 拿不到 webgpu 上下文
+  | 'slow' // 连续慢帧，处理跟不上播放节奏
+  | 'restricted' // 片源限制画面处理（跨源 taint，换任何路径都一样）
+  | 'sizeChanged' // 播放中分辨率变化，需重建渲染器
+  | 'notReady' // 视频画面尚未就绪（无尺寸）
+  | 'generic';
+
+export class EnhancementError extends Error {
+  constructor(
+    readonly code: EnhancementErrorCode,
+    cause?: unknown,
+  ) {
+    super(`enhancement: ${code}`, { cause });
+    this.name = 'EnhancementError';
+  }
+}
+
+/**
+ * 锐化强度（0–100）→ 3×3 unsharp 卷积核。
+ *
+ * amount 上限 0.7：再高振铃就会从「更锐」劣化成「更脏」，与第三方实测一致。
+ */
+export function sharpenKernel(strength: number): number[] {
+  const amount = (Math.min(Math.max(strength, 0), 100) / 100) * 0.7;
+  return [0, -amount, 0, -amount, 1 + 4 * amount, -amount, 0, -amount, 0];
+}
+
+/** Anime4K 输入像素上限：1080p。更大输入的显存与耗时不可控，先守住。 */
+const MAX_INPUT_PIXELS = 1920 * 1080;
+/** 单帧预算（ms）：超过记一次慢帧，正常帧清零。 */
+const SLOW_FRAME_MS = 150;
+/** 连续慢帧上限：低端显卡硬扛只会卡成幻灯片，到限主动放弃退原画。 */
+const SLOW_FRAME_LIMIT = 5;
+/** OffscreenCanvas 桥是 CPU 路径，30fps 上限给主线程留喘息。 */
+const BRIDGED_MAX_FPS = 30;
+
+interface FrameUploader {
+  readonly usesCanvas: boolean;
+  upload(): void;
+  dispose(): void;
+}
+
+/** HEVC 帧没有可导入 GPU backing 的报错特征（OperationError "back resource"）。 */
+function isGpuBackingError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    error.name === 'OperationError' &&
+    /back resource/i.test(error.message)
+  );
+}
+
+/**
+ * 视频帧 → 输入纹理。优先 `copyExternalImageToTexture` GPU 直拷（零拷贝），
+ * 桥路径经 OffscreenCanvas 中转（每帧重新 getContext 拿回的是同一实例，
+ * 比维护一对可空变量干净）。
+ */
+function createFrameUploader(
+  video: HTMLVideoElement,
+  queue: GPUQueue,
+  texture: GPUTexture,
+  width: number,
+  height: number,
+): FrameUploader {
+  let bridge: OffscreenCanvas | null = null;
+  return {
+    get usesCanvas() {
+      return bridge !== null;
+    },
+    upload() {
+      if (!bridge) {
+        try {
+          queue.copyExternalImageToTexture({ source: video }, { texture }, [width, height]);
+          return;
+        } catch (error) {
+          // 跨源 taint（自定义协议流可能中招）：换任何上传路径都一样，直接退原画
+          if (error instanceof DOMException && error.name === 'SecurityError') {
+            throw new EnhancementError('restricted', error);
+          }
+          if (!isGpuBackingError(error)) throw error;
+          bridge = new OffscreenCanvas(width, height);
+        }
+      }
+      const context = bridge.getContext('2d', { alpha: false });
+      if (!context) throw new EnhancementError('generic');
+      context.drawImage(video, 0, 0, width, height);
+      queue.copyExternalImageToTexture({ source: bridge }, { texture }, [width, height]);
+    },
+    dispose() {
+      if (bridge) {
+        bridge.width = 0;
+        bridge.height = 0;
+      }
+      bridge = null;
+    },
+  };
+}
+
+/**
+ * 把增强输出画上 canvas 的显示 pass：全屏三角形 + 纹理采样，附带可选的
+ * 3×3 unsharp 锐化（amount>0 时中心 1+4a、四邻 -a，与 SVG 档同一套核）——
+ * Anime4K 放大后的画面偏软，锐化叠在 2× 输出上一次采样完成，不另起 pass。
+ */
+const displayShader = `
+struct Params { amount: f32, texel: vec2f }
+struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
+@vertex fn vertex(@builtin(vertex_index) index: u32) -> Vertex {
+  let positions = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));
+  let p = positions[index];
+  return Vertex(vec4f(p, 0, 1), vec2f((p.x + 1) * 0.5, (1 - p.y) * 0.5));
+}
+@group(0) @binding(0) var imageSampler: sampler;
+@group(0) @binding(1) var image: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@fragment fn fragment(input: Vertex) -> @location(0) vec4f {
+  let c = textureSample(image, imageSampler, input.uv).rgb;
+  if (params.amount <= 0.0) { return vec4f(c, 1.0); }
+  let l = textureSample(image, imageSampler, input.uv + vec2f(-params.texel.x, 0.0)).rgb;
+  let r = textureSample(image, imageSampler, input.uv + vec2f(params.texel.x, 0.0)).rgb;
+  let t = textureSample(image, imageSampler, input.uv + vec2f(0.0, -params.texel.y)).rgb;
+  let b = textureSample(image, imageSampler, input.uv + vec2f(0.0, params.texel.y)).rgb;
+  let sharp = c * (1.0 + 4.0 * params.amount) - (l + r + t + b) * params.amount;
+  return vec4f(clamp(sharp, vec3f(0.0), vec3f(1.0)), 1.0);
+}`;
+
+export interface Anime4KRenderer {
+  dispose(): void;
+  /** 渲一帧。返回 false 表示这一帧没有画（未就绪/被跳过）。 */
+  draw(): Promise<boolean>;
+  /** 实时调锐化强度（0–100），写 uniform 不重建管线。 */
+  setSharpen(strength: number): void;
+}
+
+export interface CreateRendererOptions {
+  /** 生命周期信号：源切换/关档时 abort，渲染器随之释放全部 GPU 资源 */
+  signal: AbortSignal;
+  /** 设备级异步失败（device lost / uncaptured error）的上报口 */
+  onError: (error: EnhancementError) => void;
+  /** 初始锐化强度 0–100（Anime4K 与锐化同开时由显示 pass 应用） */
+  sharpen?: number;
+}
+
+/** 锐化 UI 强度 → 卷积核 amount（与 sharpenKernel 同一映射，上限 0.7 防振铃）。 */
+function sharpenAmountOf(strength: number): number {
+  const clamped = Math.min(Math.max(strength, 0), 100);
+  return (clamped / 100) * 0.7;
+}
+
+/**
+ * 建 Anime4K CNNx2M 2× 渲染器：device 独占（源切换时所有库纹理随之销毁），
+ * 输入纹理 rgba16float（CNN 中间值需要的精度），输出是输入的 2× 尺寸。
+ * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败，
+ * 而不是画出黑帧。
+ */
+export async function createAnime4KRenderer(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  { signal, onError, sharpen = 0 }: CreateRendererOptions,
+): Promise<Anime4KRenderer> {
+  if (!navigator.gpu) throw new EnhancementError('noWebgpu');
+  const width = video.videoWidth;
+  const height = video.videoHeight;
+  if (!width || !height) throw new EnhancementError('notReady');
+  if (width * height > MAX_INPUT_PIXELS) throw new EnhancementError('inputTooLarge');
+  const { CNNx2M } = await import('anime4k-webgpu');
+  signal.throwIfAborted();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  signal.throwIfAborted();
+  if (!adapter) throw new EnhancementError('noAdapter');
+  const device = await adapter.requestDevice();
+
+  let context: GPUCanvasContext | null = null;
+  let uploader: FrameUploader | null = null;
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    signal.removeEventListener('abort', dispose);
+    uploader?.dispose();
+    context?.unconfigure();
+    device.destroy();
+  };
+  if (signal.aborted) {
+    dispose();
+    signal.throwIfAborted();
+  }
+  signal.addEventListener('abort', dispose, { once: true });
+  // 设备级异步失败在 draw 循环之外发生（驱动重置等），上报由叠加层收口
+  const report = (error: EnhancementError) => {
+    if (!disposed) onError(error);
+  };
+  void device.lost.then((info) => report(new EnhancementError('gpuUnsupported', info.reason)));
+  device.addEventListener('uncapturederror', (event) => {
+    event.preventDefault();
+    report(new EnhancementError('gpuUnsupported', event.error));
+  });
+
+  try {
+    const ctx = canvas.getContext('webgpu');
+    if (!ctx) throw new EnhancementError('canvasUnavailable');
+    context = ctx;
+    device.pushErrorScope('validation');
+    const input = device.createTexture({
+      size: [width, height],
+      format: 'rgba16float',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    const up = createFrameUploader(video, device.queue, input, width, height);
+    uploader = up;
+    const anime = new CNNx2M({ device, inputTexture: input });
+    const output = anime.getOutputTexture();
+    canvas.width = output.width;
+    canvas.height = output.height;
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    ctx.configure({ device, format, alphaMode: 'opaque' });
+    const module = device.createShaderModule({ code: displayShader });
+    const pipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vertex' },
+      fragment: { module, entryPoint: 'fragment', targets: [{ format }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    // 锐化参数 uniform（amount + 2× 输出的纹元尺寸；对齐 vec2f 后 16 字节）
+    const uniform = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const writeSharpen = (amount: number) => {
+      device.queue.writeBuffer(
+        uniform,
+        0,
+        new Float32Array([amount, 1 / output.width, 1 / output.height]),
+      );
+    };
+    writeSharpen(sharpenAmountOf(sharpen));
+    const bindings = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
+        },
+        { binding: 1, resource: output.createView() },
+        { binding: 2, resource: { buffer: uniform } },
+      ],
+    });
+    const validationError = await device.popErrorScope();
+    signal.throwIfAborted();
+    if (validationError) throw new EnhancementError('gpuUnsupported', validationError.message);
+
+    let lastFrameAt = -Infinity;
+    let slowFrames = 0;
+    // 冷启动的头几帧要现编译 shader + 等驱动完成管线优化，几乎必然慢——
+    // 直接判死会把「每次启用/换集的 warm-up 尖峰」误杀成设备不支持
+    // （真机上第一次点必退级、第二次才成功就是这么来的）。给一次宽限：
+    // 计满后先重置再观察，真慢的设备第二轮照旧计满判死，只多花几帧。
+    let slowGraceUsed = false;
+    return {
+      dispose,
+      setSharpen(strength: number) {
+        if (disposed) return;
+        writeSharpen(sharpenAmountOf(strength));
+      },
+      async draw() {
+        if (disposed || video.readyState < 2 || video.seeking) return false;
+        if (video.videoWidth !== width || video.videoHeight !== height) {
+          throw new EnhancementError('sizeChanged');
+        }
+        const started = performance.now();
+        // 桥路径 30fps 限速：CPU 中转的帧率收益递减，主线程时间更值钱
+        if (up.usesCanvas && !video.paused && started - lastFrameAt < 1000 / BRIDGED_MAX_FPS) {
+          return false;
+        }
+        lastFrameAt = started;
+        up.upload();
+        const encoder = device.createCommandEncoder();
+        anime.pass(encoder);
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: ctx.getCurrentTexture().createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 1 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindings);
+        pass.draw(3);
+        pass.end();
+        device.queue.submit([encoder.finish()]);
+        // 等真实 GPU 耗时落地再判慢帧，否则低端卡会连续超时后才被察觉
+        await device.queue.onSubmittedWorkDone();
+        const frameMs = performance.now() - started;
+        slowFrames = frameMs > SLOW_FRAME_MS ? slowFrames + 1 : 0;
+        if (slowFrames >= SLOW_FRAME_LIMIT) {
+          if (!slowGraceUsed) {
+            slowGraceUsed = true;
+            slowFrames = 0;
+          } else {
+            // 耗时进 cause 供排查（fail 路径会打出），用户看到的仍是固定文案
+            throw new EnhancementError('slow', `frame ${Math.round(frameMs)}ms`);
+          }
+        }
+        return !disposed;
+      },
+    };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
