@@ -26,39 +26,42 @@
 | cookie | 必须零 cookie（自报未知 install_id 反而被拒） | `install_id={iid}; ttreq={票}`（同源，注册响应 Set-Cookie 下发） |
 | 能力 | 信息流/搜索/详情可读，**不可取流**（顶栏 tab 面不同，feed 无短剧 tab） | 全量可用（含取流，见「取流端点」节） |
 
-**设备注册 `POST log.snssdk.com/service/2/device_register/`**（实现
+**设备注册 `POST log5-applog-lf.fqnovel.com/service/2/device_register/`**（实现
 `hongguo-api::register`，版本身份钉注册口径 `REGISTER_VERSION_*`，
-`new_user:1` 实测通过；端点与加密格式与历史版本一致）：
+`new_user:1` 实测通过。**2026-11-02 起为 applog 裸形态：无签名五件套**——
+此前 log.snssdk.com + 40 参 query + 五件套签名形态实测新注册设备取流
+0/10 出票（读接口全通、唯取流被拒），同日裸形态 11/11 全发货（1080p），
+含前形态被拒的同一 vid；官方注册由 applog SDK 发出、本不带业务签名，
+五件套拿无 device_id 档案参与运算是官方不会产生的组合）：
 
-- 入参 query：40 参公共指纹——`_rticket, ac, aid, appTheme, app_name,
-  app_type, cdid, channel, cpu_support64, cronet_version, device_brand,
-  device_platform, device_type, dpi, first_launch_timestamp, host_abi,
-  is_android_fold, is_android_pad, is_guest_mode, is_preinstall, language,
-  last_deeplink_update_version_code, manifest_version_code, md,
-  minor_status, need_personal_recommend, openudid, os, os_api, os_version,
-  package, resolution, ssmix, ts, tt_data, ttnet_version,
-  update_version_code, use_store_region_cookie, version_code, version_name`
-  （版本身份字段覆写为注册口径 `REGISTER_VERSION_*`）。
-- 入参头：签名五件套 + `sdk-version: 2` + `x-ss-stub: {body MD5 大写}` +
+- 入参 query：固定 4 参 `tt_data=a, cronet_version=8d40f833_2026-03-03,
+  ttnet_version=4.2.243.31-douyin, use_store_region_cookie=1`——指纹身份
+  全部在加密 body 里。
+- 入参头：`User-Agent: {register_ua()}`（Cronet 尾段 + 注册版本身份 +
+  指纹机型）+ `accept: application/json` +
   `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
-  `log-encode-type: gzip` + `x-ss-dp: 8662` + `passport-sdk-version:
-  5051452` + `x-vc-bdturing-sdk-version: 4.0.3.cn`；零 cookie。
+  `log-encode-type: gzip` + `x-ss-dp: 8662` + `x-ss-req-ticket: {ms}` +
+  `sdk-version: 2` + `passport-sdk-version: 5051452` +
+  `x-vc-bdturing-sdk-version: 4.0.3.cn` +
+  `x-neptune: -8|50:51:59:30:40:47:49:39` + `x-ss-stub: {body MD5 大写}`；
+  零 cookie；8 秒超时。
 - 入参 body：TT-Encrypt V5 包注册口径指纹 JSON。加密格式（实现
   `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
   - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
   - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
     derive[0..16]`、`iv = derive[16..32]`（**包内无 IV 字段，iv 不上线**）
   - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
-- 注册 JSON 关键字段（全表见 `register_json_str`）：`device_model: "Xiaomi 14"`、
-  `sdk_version: "4.3.2-rc.44"`、`sdk_target_version: 30`、`sdk_flavor: "cnInner"`、
-  `git_hash: "27660d0"`、`scene: 2`（官方 bdinstall 代际五件）、
-  `sig_hash: aea615ab…`、
-  `display_name: "红果短剧"`、`custom.client_ipv4 = "116.130.x.x" 随机伪值`
+- 注册 JSON 关键字段（全表见 `register_json_str`）：版本身份钉注册口径
+  `73932/7.3.9.32`；bdinstall SDK 代际五件 `sdk_version:
+  "3.7.3-rc.116-douyin"`、`sdk_target_version: 29`、`git_hash: "fe95b95"`、
+  `sdk_flavor: "china"`、无 `scene` 键（2026-11-01 竞品实流注册密文体
+  逐字段解密对齐）；`sig_hash: aea615ab…`、`display_name: "红果短剧"`、
+  机型耦合字段取自指纹池（`fingerprint_for_cdid`，cdid 确定性派生）、
+  `custom.client_ipv4 = "116.130.x.x" 随机伪值`
   （服务端不校验真实出口 IP）。身份字段生成规则：
   - `cdid` / `clientudid` / `req_id`：各自独立 UUIDv4。
-  - `openudid = md5("{cdid}_{N}").hex()[:16]`，`N ∈ [100000, 999999]`。
-  - `apk_first_install_time = now_ms − randInt(100000,500000)`；
-    `first_launch_timestamp = now_sec − randInt(10,60)`。
+  - `openudid`：16 位随机 hex。
+  - `apk_first_install_time = now_ms − 300_000`。
 - 出参：`{"server_time","device_id","install_id","new_user","device_id_str",
   "install_id_str","device_token"}` + Set-Cookie `install_id` / `ttreq`。
   `device_id: 0` = 被静默拒（格式或指纹有变）。
@@ -122,13 +125,16 @@ POST /novel/player/multi_video_model/v1/       # 尾斜杠是端点身份的一�
   `video_model/v1/` 已**整体死亡**（200+0）——2026-11-01 实测与
   身份/版本代际/签名方式无关，任何组合均不发货。服务端迁移取流
   形态时按本节重新抓包对齐。
-- ⚠️ **设备能否发货由注册代际决定**（同日实流注册请求逐字节解密
-  对齐）：注册 query/JSON 的版本身份（73932/7.3.9.32）、bdinstall SDK
-  代际（`sdk_version 3.7.3-rc.116-douyin` / `sdk_target_version 29` /
-  `git_hash fe95b95` / `sdk_flavor china` / 无 `scene` 键）与 UA 尾段
-  （`Cronet/TTNetVersion:8d40f833 …`，注册头 `lc: 102`）必须成套——
-  代际错配的注册会被静默标记，设备取流持续不发货。详见
-  `hongguo-api::register` 模块文档。
+- ⚠️ **设备能否发货由注册形态决定**（2026-11-02 实测修正）：注册 JSON
+  的版本身份（73932/7.3.9.32）与 bdinstall SDK 代际
+  （`sdk_version 3.7.3-rc.116-douyin` / `sdk_target_version 29` /
+  `git_hash fe95b95` / `sdk_flavor china` / 无 `scene` 键）成套是底线
+  （代际错配会被静默标记、取流不发货）；在此基础上传输形态定生死——
+  签名富 query 形态（log.snssdk.com + 五件套 + 40 参 query）实测新注册
+  0/10 出票，同日切 applog 裸形态（无签名 + 4 参 query + 上一节头族）
+  11/11 全发货。运行期自愈：发货资格注册时**抽签**（同设备同 vid 连取
+  结果恒定，换台注册即翻盘），取流连续 2 次未命中即换新注册
+  （1 次/分钟限速，实现 `hongguo_service::device`）。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```

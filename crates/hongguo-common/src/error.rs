@@ -55,7 +55,7 @@ pub enum AppError {
     /// [`AppError::Rejected`] 口径；与 [`AppError::EmptyResponse`] 分开：
     /// 这是取流链路的专属信号，调用方据此如实报「取流失败」，不做任何
     /// 身份层面的兜底；service 的取流健康守护（device::note_stream_miss）
-    /// 据此对照探测自愈。
+    /// 据此换新注册自愈。
     #[error("{0}")]
     StreamMiss(String),
 

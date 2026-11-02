@@ -152,7 +152,7 @@ pub async fn fetch_play_url(
 /// 端点收紧，各身份统一回，125 字节）：`{"Code":110001,"Message":"未知异常",
 /// "BaseResp":{"StatusCode":110001,"StatusMessage":"unknown error"}}`。
 /// 语义上这就是「服务端对这个设备/请求不发货」，归 [`AppError::StreamMiss`]
-/// ——取流健康守护（device::note_stream_miss）据此对照探测自愈，UI 侧
+/// ——取流健康守护（device::note_stream_miss）据此换新注册自愈，UI 侧
 /// 透传服务端原文。
 fn check_model_code(value: &Value) -> AppResult<()> {
     let code = value.get("Code").and_then(Value::as_i64).unwrap_or(0);

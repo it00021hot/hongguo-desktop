@@ -269,14 +269,13 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
     }
 }
 
-/// 取流自愈机制已删（2026-11-01 实流取证结论修正）：服务端对设备的风控
-/// 不是「抽样抽奖」，而是按**注册代际自洽**打分——此前注册器的 bdinstall
-/// SDK 代际拼装错配，注册产物被静默标记、取流不发货；「换设备重摇」
-/// 是在给坏注册器擦屁股，正确做法是把注册器对齐实流（已完成），设备
-/// 出生即干净、终生不换。存量旧代际档案走 [`ensure_registered`] 的一次性
-/// 代际迁移，也不做运行期换档。
-///
 /// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
+///
+/// 运行期换档恢复（2026-11-02 二次修正）：「出生即干净终生不换」的前提
+/// 再次被证伪——注册代际对齐解决的是「形态错被标记」，解决不了**发货
+/// 资格在注册时抽签**（同设备同 vid 连取结果恒定，换台注册即翻盘；
+/// 当日签名富 query 形态实测新注册 0/6 出票）。输家签换新注册即可，
+/// 无需对照裁决（hongguo-drama 同款语义：被拒即换新，1 次/分钟限速）。
 fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
     let old_iid = state.device().get("iid").to_string();
     let new_iid = profile.get("iid").to_string();
@@ -324,28 +323,17 @@ pub async fn ensure_registered(state: &AppState) {
     let env = state.api_env();
     match probe_alive(&env).await {
         Some(true) => {
-            // 搜索通 ≠ 取流通：被标记设备读接口全通、唯取流被拒（2026-11-02
-            // 实录），搜索探针之后追加持流探针 + 对照裁决（发货抖动期单次
-            // 结论不可信，裁决内部带重试与现役复测）。
+            // 搜索通 ≠ 取流通：被标记/抽到输家签的设备读接口全通、唯取流
+            // 被拒（2026-11-02 实录），搜索探针之后追加持流探针；未命中
+            // 直接换新注册（发货资格注册时抽签，换台即翻盘）。
             match probe_stream(state).await {
                 StreamProbe::Alive | StreamProbe::Unknown => {}
-                StreamProbe::Marked(vid) => {
+                StreamProbe::Marked => {
                     log::warn!(
-                        "[Device] 现役档案取流探针未命中（iid={}），对照裁决",
+                        "[Device] 现役档案取流探针未命中（iid={}），换新注册",
                         state.device().get("iid")
                     );
-                    match stream_verdict(state, &vid).await {
-                        StreamVerdict::CurrentMarked(profile) => {
-                            log::warn!(
-                                "[Device] 对照设备能取流、现役复测仍被拒：换档 {}",
-                                profile.get("iid")
-                            );
-                            adopt_control_profile(state, profile);
-                        }
-                        StreamVerdict::Stay(reason) => {
-                            log::warn!("[Device] 按兵不动（{reason}）")
-                        }
-                    }
+                    register_with_retry(state, "取流探针判死").await;
                 }
             }
         }
@@ -378,25 +366,24 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 
 // ---------------------------------------------------------------- 取流健康守护
 
-/// 连续取流未命中多少次触发对照探测。只数**真实播放路径**上的
+/// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
 /// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；健康设备
-/// 不该连续两次取不到流表，被服务端标记的设备则每集必挂——2 次（≈一次
-/// 手动重试）即值得查。
+/// 不该连续两次取不到流，被服务端标记的设备则每集必挂——2 次（≈一次
+/// 手动重试）即值得换。
 const STREAM_MISS_THRESHOLD: u32 = 2;
 
-/// 对照探测的最小间隔（毫秒）：对照也取不到（服务端整体拒发）时不追加
-/// 注册探针把注册端点打得更狠。2026-11-02 故障窗口实测持续小时级，
-/// 10 分钟一轮足够。
-const STREAM_PROBE_MIN_INTERVAL_MS: u64 = 10 * 60_000;
+/// 换新注册的最小间隔（毫秒）：发货资格是注册时抽签，输家签换一台注册
+/// 即翻盘，1 次/分钟足够（hongguo-drama 同款续期限速）。
+const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 60_000;
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-static STREAM_PROBE_AT_MS: AtomicU64 = AtomicU64::new(0);
-static STREAM_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static STREAM_RENEW_AT_MS: AtomicU64 = AtomicU64::new(0);
+static STREAM_RENEW_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-/// 探测是否该发起：连续失败达阈值，且距上次探测过了最小间隔（首轮放行）。
-fn stream_probe_due(fails: u32, last_probe_ms: u64, now: u64) -> bool {
+/// 换新是否该发起：连续失败达阈值，且距上次换新过了最小间隔（首轮放行）。
+fn stream_renew_due(fails: u32, last_renew_ms: u64, now: u64) -> bool {
     fails >= STREAM_MISS_THRESHOLD
-        && (last_probe_ms == 0 || now.saturating_sub(last_probe_ms) >= STREAM_PROBE_MIN_INTERVAL_MS)
+        && (last_renew_ms == 0 || now.saturating_sub(last_renew_ms) >= STREAM_RENEW_MIN_INTERVAL_MS)
 }
 
 /// 取流成功即清零计数（`online::prepare` 每次成功都会调，健康播放不断重置）。
@@ -404,155 +391,33 @@ pub fn note_stream_ok() {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// 取流未命中记账：连续失败达阈值就发起**对照探测**——注册一次性设备取
-/// 同一个 vid，对照能取到流才判定「现役设备被服务端标记」，换档采用对照
-/// 档案；对照同样取不到就是服务端/网络整体问题，按兵不动。
+/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上——发货资格
+/// 是注册时抽签发放的（同设备同 vid 连取结果恒定，2026-11-02 矩阵探针
+/// 实测定型），输家签换台注册即翻盘。对照裁决已删：它把 1 分钟能完成的
+/// 翻盘拖到 10 分钟以上，故障窗口内用户全程无流可播，而「对照也取不到
+/// = 服务端整体拒发」的场景里换新注册同样无害（多打一次注册端点而已）。
 ///
 /// 为什么必须有这道守护：2026-11-02 故障窗口实录——窗口期注册的设备被
-/// 服务端标记后**终生**取不到流，而换设备自愈已删（「出生即干净终生不换」
-/// 的前提被证伪），用户既播不了也无路可走。限频 + 在途闸防止把注册端点
-/// 打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
+/// 服务端标记后**终生**取不到流，用户既播不了也无路可走。限频 + 在途闸
+/// 防止把注册端点打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
 pub fn note_stream_miss(state: &AppState, vid: &str) {
     let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let now = now_ms().max(0) as u64;
-    if !stream_probe_due(fails, STREAM_PROBE_AT_MS.load(Ordering::Relaxed), now) {
+    if !stream_renew_due(fails, STREAM_RENEW_AT_MS.load(Ordering::Relaxed), now) {
         return;
     }
-    if STREAM_PROBE_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+    if STREAM_RENEW_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }
-    STREAM_PROBE_AT_MS.store(now, Ordering::Relaxed);
+    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
     let state = state.clone();
     let vid = vid.to_string();
     crate::runtime::spawn(async move {
-        log::warn!("[Device] 取流连续 {fails} 次未命中，对照探测现役设备（vid={vid}）");
-        match stream_verdict(&state, &vid).await {
-            StreamVerdict::CurrentMarked(profile) => {
-                log::warn!(
-                    "[Device] 对照设备能取流、现役复测仍被拒：现役已被服务端标记，换档 {}",
-                    profile.get("iid")
-                );
-                adopt_control_profile(&state, profile);
-            }
-            StreamVerdict::Stay(reason) => log::warn!("[Device] 按兵不动（{reason}）"),
-        }
-        STREAM_PROBE_IN_FLIGHT.store(false, Ordering::SeqCst);
+        log::warn!("[Device] 取流连续 {fails} 次未命中，换新注册设备（vid={vid}）");
+        register_and_swap(&state, "取流被拒自动换新").await;
+        STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
     });
-}
-
-/// 对照裁决结果。
-enum StreamVerdict {
-    /// 现役确认被标记（对照验证能取流、现役复测仍被拒），带**已验证能取
-    /// 流**的对照档案，直接采用换档。
-    CurrentMarked(DeviceProfile),
-    /// 不换档。原因进日志：对照也取不到（服务端整体）、现役复测能取
-    /// （发货抖动误伤）、或对照注册/网络失败（分不清归属）。
-    Stay(&'static str),
-}
-
-/// 对照裁决最多注册几台对照设备。2026-11-02 矩阵探针实测定型：**发货
-/// 资格是注册时抽签的**——同一台设备同 vid 连取 6 次结果一致（赢家全
-/// 发、输家全拒），换一台注册就能翻盘；所以同一台对照反复重试毫无意义，
-/// 取不到就再注册一台，直到拿到验证能取流的赢家（约 4-6 成出票率，
-/// 4 台 ≈ 87-97% 覆盖）。
-const STREAM_PROBE_REGISTRATIONS: usize = 4;
-/// 现役复测次数：对照能取时再给现役两次机会——能取说明只是误伤
-/// （健康设备不该换），仍被拒才坐实标记。
-const CURRENT_RECHECK_ATTEMPTS: usize = 2;
-/// 复测间隔（毫秒）。
-const CURRENT_RECHECK_DELAY_MS: u64 = 2_000;
-
-/// 对照裁决：逐台注册对照设备、每台试取同一 vid，直到出现**验证能取流**
-/// 的赢家；赢家出现后再复测现役。三种结局——
-/// - 连续多台对照全败 → `Stay`（服务端整体拒发，换谁都一样）；
-/// - 有赢家、现役复测也能取 → `Stay`（现役健康，误伤）；
-/// - 有赢家、现役复测仍被拒 → `CurrentMarked`（现役是输家签，换档采用
-///   赢家——这正是「删库重注册一次就好」的机制化）。
-async fn stream_verdict(state: &AppState, vid: &str) -> StreamVerdict {
-    let proxy = state.settings().proxy;
-    for roll in 1..=STREAM_PROBE_REGISTRATIONS {
-        let reg_env = ApiEnv {
-            proxy: proxy.clone(),
-            device: anonymous_profile(&fresh_cdid()),
-            cookie: None,
-            x_tt_token: None,
-        };
-        let reg = match register_device(&reg_env).await {
-            Ok(r) => r,
-            Err(e) => {
-                log::info!("[Device] 对照设备第 {roll} 台注册失败（{e}），无法裁决");
-                return StreamVerdict::Stay("对照注册失败");
-            }
-        };
-        let control = registered_profile(&reg);
-        let control_env = ApiEnv {
-            proxy: proxy.clone(),
-            device: control,
-            cookie: None,
-            x_tt_token: None,
-        };
-        match hongguo_api::play_url::fetch_play_url(vid, None, stream_cap(), &control_env).await {
-            Ok(_) => {
-                log::info!(
-                    "[Device] 对照设备第 {roll} 台（iid={}）取流成功——拿到赢家签",
-                    reg.install_id
-                );
-                // 赢家在手，复测现役：能取 = 只是误伤，不换；仍被拒 = 输家签坐实
-                let current_env = state.api_env();
-                for attempt in 0..CURRENT_RECHECK_ATTEMPTS {
-                    if attempt > 0 {
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            CURRENT_RECHECK_DELAY_MS,
-                        ))
-                        .await;
-                    }
-                    match hongguo_api::play_url::fetch_play_url(
-                        vid,
-                        None,
-                        stream_cap(),
-                        &current_env,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            log::warn!(
-                                "[Device] 现役复测取流成功（iid={}）：误伤，不换档",
-                                current_env.device.get("iid")
-                            );
-                            return StreamVerdict::Stay("现役复测能取");
-                        }
-                        Err(hongguo_common::AppError::StreamMiss(_)) => {}
-                        Err(_) => return StreamVerdict::Stay("现役复测网络类失败"),
-                    }
-                }
-                return StreamVerdict::CurrentMarked(control_env.device);
-            }
-            Err(hongguo_common::AppError::StreamMiss(_)) => {
-                log::info!(
-                    "[Device] 对照设备第 {roll} 台（iid={}）取流未命中——输家签，再注册",
-                    reg.install_id
-                );
-            }
-            Err(e) => {
-                log::info!("[Device] 对照探测不确定（{e}）");
-                return StreamVerdict::Stay("对照探测网络类失败");
-            }
-        }
-    }
-    log::warn!("[Device] 连续 {STREAM_PROBE_REGISTRATIONS} 台对照均取不到流：服务端整体拒发");
-    StreamVerdict::Stay("对照同样取不到")
-}
-
-/// 采用已验证能取流的对照档案：换档三连 + 事件广播 + 信息流缓存作废
-/// （与 `register_and_swap` 成功路径同款收尾）。
-fn adopt_control_profile(state: &AppState, profile: DeviceProfile) {
-    let mut meta = read_meta(&state.store);
-    swap_profile(state, &mut meta, profile, "registered");
-    hongguo_api::recommend::clear_feed_tabs_cache();
-    state.events().publish(ServiceEvent::DeviceRegistered(
-        state.device().get("iid").to_string(),
-    ));
 }
 
 /// 与在线播放同一份选流口径：无 HEVC 机器预取/探测的必须是 h264，否则
@@ -563,11 +428,11 @@ pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
     )
 }
 
-/// 取流探针结论。Alive=现役能取流；Marked(vid)=现役被拒（带触发 vid，
-/// 对照探测取同一个）；Unknown=网络/服务端问题分不清归属。
+/// 取流探针结论。Alive=现役能取流；Marked=现役被拒；Unknown=网络/服务端
+/// 问题分不清归属。
 enum StreamProbe {
     Alive,
-    Marked(String),
+    Marked,
     Unknown,
 }
 
@@ -590,7 +455,7 @@ async fn probe_stream(state: &AppState) -> StreamProbe {
     };
     match hongguo_api::play_url::fetch_play_url(&vid, None, stream_cap(), &env).await {
         Ok(_) => StreamProbe::Alive,
-        Err(hongguo_common::AppError::StreamMiss(_)) => StreamProbe::Marked(vid),
+        Err(hongguo_common::AppError::StreamMiss(_)) => StreamProbe::Marked,
         Err(_) => StreamProbe::Unknown,
     }
 }
@@ -604,25 +469,26 @@ mod tests {
         Store::open_memory().expect("内存库")
     }
 
-    /// 探测闸门的阈值与限频口径：达阈值才探，首轮放行、间隔内不动、
-    /// 过了间隔放行（2026-11-02 故障窗口的守护回归锁）。
+    /// 换新闸门的阈值与限频口径：达阈值才换，首轮放行、间隔内不动、
+    /// 过了间隔放行（2026-11-02 故障窗口的守护回归锁，间隔 10min→60s
+    /// 随对照裁决删除一并收紧）。
     #[test]
-    fn stream_probe_due_respects_threshold_and_interval() {
-        const MIN: u64 = STREAM_PROBE_MIN_INTERVAL_MS;
-        // 未达阈值：不探
-        assert!(!stream_probe_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
-        // 首次达阈值（从未探过）：放行
-        assert!(stream_probe_due(STREAM_MISS_THRESHOLD, 0, 1000));
-        // 刚探过（间隔内）再连败：限频拦下
-        assert!(!stream_probe_due(
+    fn stream_renew_due_respects_threshold_and_interval() {
+        const MIN: u64 = STREAM_RENEW_MIN_INTERVAL_MS;
+        // 未达阈值：不换
+        assert!(!stream_renew_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
+        // 首次达阈值（从未换过）：放行
+        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 0, 1000));
+        // 刚换过（间隔内）再连败：限频拦下
+        assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD,
             1000,
             1000 + MIN - 1
         ));
         // 过了最小间隔：放行
-        assert!(stream_probe_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
+        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
         // 远超阈值同样受间隔约束
-        assert!(!stream_probe_due(
+        assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD * 10,
             1000,
             1000 + MIN - 1

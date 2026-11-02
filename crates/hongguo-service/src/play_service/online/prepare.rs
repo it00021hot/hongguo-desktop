@@ -104,8 +104,8 @@ pub async fn prepare(
     // 无 HEVC 扩展的机器选流翻转到 h264（官方 CodecStrategy 语义，见 stream_pick）。
     let cap = crate::device::stream_cap();
     let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
-        // 设备/服务端拒发的记账点（真实播放路径）：取流健康守护据此判定
-        // 「现役设备是否被服务端标记」（对照探测，见 device::note_stream_miss）
+        // 设备/服务端拒发的记账点（真实播放路径）：取流健康守护据此
+        // 换新注册自愈（见 device::note_stream_miss）
         Err(e @ AppError::StreamMiss(_)) => {
             crate::device::note_stream_miss(state, vid);
             return Err(e);
