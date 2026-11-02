@@ -146,6 +146,27 @@ pub async fn fetch_play_url(
     }
 }
 
+/// 取流端点的错误信封是 **base 族**（`Code` 大写 + `BaseResp`），不是
+/// reading 系的小写 `code`——[`check_code`] 认不得它，服务端的显式报错会
+/// 被吞成「取流未命中」，把排障引向「设备信任」死路。实测样本（2026-11-02
+/// 端点收紧，各身份统一回，125 字节）：`{"Code":110001,"Message":"未知异常",
+/// "BaseResp":{"StatusCode":110001,"StatusMessage":"unknown error"}}`。
+/// 语义上这就是「服务端对这个设备/请求不发货」，归 [`AppError::StreamMiss`]
+/// ——取流健康守护（device::note_stream_miss）据此对照探测自愈，UI 侧
+/// 透传服务端原文。
+fn check_model_code(value: &Value) -> AppResult<()> {
+    let code = value.get("Code").and_then(Value::as_i64).unwrap_or(0);
+    if code == 0 {
+        return Ok(());
+    }
+    let msg = value
+        .pointer("/BaseResp/StatusMessage")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("Message").and_then(Value::as_str))
+        .unwrap_or("未知错误");
+    Err(AppError::StreamMiss(format!("取流接口返回 {code}: {msg}")))
+}
+
 /// 轻请求批量取流（2026-11-01 竞品实流抓包形态）：单 vid 按 content_type
 /// 分组打 [`crate::params::MODEL_LIGHT_PATH`]，命中返回解析结果，
 /// 空响应/未命中返回 `None`（交调用方报「取流未命中」）。
@@ -174,6 +195,7 @@ async fn fetch_model_light_batch(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析取流响应失败: {e}")))?;
     check_code(&value)?;
+    check_model_code(&value)?;
     let Some(model) = value
         .pointer(&format!("/data/{vid}/video_model"))
         .and_then(Value::as_str)
@@ -244,6 +266,7 @@ pub async fn fetch_play_batch(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析批量取流响应失败: {e}")))?;
     check_code(&value)?;
+    check_model_code(&value)?;
     let mut hits = 0;
     {
         let mut cache = batch_cache().lock();
@@ -299,6 +322,26 @@ mod tests {
         register_content_type("v1", 1);
         assert_eq!(content_type_of("v1"), Some(1));
     }
+
+    /// base 族错误信封必须如实上抛（带服务端 code/message），不许被吞成
+    /// 「取流未命中」——2026-11-02 端点收紧时 `110001 未知异常` 被吞，
+    /// 排障被引向「设备信任」死路的实录。回归锁。
+    #[test]
+    fn model_error_envelope_surfaces_with_server_message() {
+        let v: Value = serde_json::from_str(
+            r#"{"Code":110001,"Message":"未知异常","BaseResp":{"StatusCode":110001,"StatusMessage":"unknown error"}}"#,
+        )
+        .unwrap();
+        let err = check_model_code(&v).unwrap_err().to_string();
+        assert!(err.contains("110001"), "{err}");
+        assert!(err.contains("unknown error"), "{err}");
+    }
+
+    #[test]
+    fn model_success_envelope_without_code_passes() {
+        check_model_code(&serde_json::json!({ "data": {} })).unwrap();
+        check_model_code(&serde_json::json!({ "Code": 0, "data": {} })).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -321,8 +364,12 @@ mod probes {
             }
         };
         println!(
-            "[reg-play] registered device_id={} iid={} new_user={}",
-            reg.device_id, reg.install_id, reg.new_user
+            "[reg-play] registered device_id={} iid={} new_user={} 机型={}（{}）",
+            reg.device_id,
+            reg.install_id,
+            reg.new_user,
+            hongguo_signer::device::fingerprint_for_cdid(&reg.cdid).display,
+            hongguo_signer::device::fingerprint_for_cdid(&reg.cdid).brand
         );
 
         // 注册产物档案（与 service::registered_profile 同构）：注册指纹 + 身份字段

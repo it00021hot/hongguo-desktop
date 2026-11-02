@@ -22,6 +22,20 @@ interface PlayerState {
   gotoNonce: number;
   requestGoto: (seriesId: string, vidIndex: number) => void;
   /**
+   * 外部点名已消费到的 nonce（首页写回）：跨页跳转会卸载并重挂首页，
+   * 只存组件 state 的话，重挂载会拿「当前 nonce」初始化成已消费，
+   * 点名信号死在挂载帧（搜索/历史点开被推荐流顶掉的伴生根因）。
+   */
+  gotoConsumed: number;
+  markGotoConsumed: (nonce: number) => void;
+  /**
+   * 进入播放前的来源路由（含 search 的 href）：播放器「返回」钮回到
+   * 来源页（历史/搜索/榜单…），而不是停在推荐流。null = 没有外部来源
+   * （信息流滚动/重启恢复），不显示返回钮。会话态，不持久化。
+   */
+  returnTo: string | null;
+  setReturnTo: (href: string | null) => void;
+  /**
    * 跨客户端续播提示：云端历史有进度、本地播放档案没有时，信息流把
    * 「该看哪一集 + 集内位置」放这里，播放器起播无本地 resumeAt 时消费。
    * 消费即清；不匹配当前集的残留提示会被忽略（无害）。
@@ -66,6 +80,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     get().setTarget(seriesId, vidIndex);
     set((s) => ({ gotoNonce: s.gotoNonce + 1 }));
   },
+  gotoConsumed: 0,
+  markGotoConsumed: (nonce) => set({ gotoConsumed: nonce }),
+  returnTo: null,
+  setReturnTo: (href) => set({ returnTo: href }),
   resumeHint: null,
   setResumeHint: (hint) => set({ resumeHint: hint }),
   danmakuPanelOpen: false,

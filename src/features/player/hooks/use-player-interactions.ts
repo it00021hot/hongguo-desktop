@@ -5,12 +5,16 @@ import { app as appApi } from '@/service/commands';
 import { portraitAspectOf } from '@/features/player/hooks/use-portrait-window';
 
 /**
- * 舞台三套交互裁决：滚轮切换、点击画面、键盘快捷键。
+ * 舞台四套交互裁决：滚轮/触摸滑动切换、点击画面、键盘快捷键。
  *
- * 滚轮/↑↓ 的语义由宿主注入的 `onWheelStep` 与连播锁定共同决定：
+ * 滚轮/↑↓/触摸滑动的语义由宿主注入的 `onWheelStep` 与连播锁定共同决定：
  * 信息流（沉浸流）= 上一部/下一部剧，从详情/历史等**选定**剧进来
  * （或锁定连播后）= 切上一集/下一集。
  */
+
+/** 触摸滑动的判定阈值（px）：低于它是轻触（走 tap 播放/暂停），高于它
+ *  且纵向显著强于横向才算一次切换——移动端官方 App 的上滑下一部同款。 */
+const SWIPE_THRESHOLD_PX = 60;
 export function usePlayerInteractions(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   /** 方向信号（1=下一个/向下滚，-1=上一个）由交互写入，过渡动画在装配层读 */
@@ -43,9 +47,22 @@ export function usePlayerInteractions(params: {
     volumeOpen,
   } = params;
 
-  // ---- 滚轮切换：沉浸流=上一部/下一部剧，播放页=切集 ----
+  // ---- 切换分派三端同源（滚轮/触摸滑动/键盘）：沉浸流=上一部/下一部剧，
+  //      播放页/连播锁定=切上一集/下一集。选集浮层/下载面板打开时不抢。 ----
+  const stepBy = useCallback(
+    (dir: 1 | -1) => {
+      setSlideDir(dir);
+      // 连播锁定时切换语义变为切集，不跟随宿主页换剧
+      if (inBinge) stepEpisode(dir);
+      else if (onWheelStep) onWheelStep(dir);
+      else stepEpisode(dir);
+    },
+    [inBinge, onWheelStep, stepEpisode, setSlideDir],
+  );
+
+  // ---- 滚轮切换 ----
   // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
-  const wheelLock = useRef(0);
+  const stepLock = useRef(0);
   const onStageWheel = useCallback(
     (e: React.WheelEvent) => {
       // 浮层（评论面板/选集/弹幕设置/倍速清晰度菜单）里的滚动是它自己在滚，
@@ -56,25 +73,41 @@ export function usePlayerInteractions(params: {
       wakeChrome();
       if (seriesPanelOpen || downloading) return;
       const now = Date.now();
-      if (now - wheelLock.current < 400 || Math.abs(e.deltaY) < 15) return;
-      wheelLock.current = now;
-      const dir: 1 | -1 = e.deltaY > 0 ? 1 : -1;
-      setSlideDir(dir);
-      // 连播锁定时滚轮语义变为切集，不跟随宿主页换剧
-      if (inBinge) stepEpisode(dir);
-      else if (onWheelStep) onWheelStep(dir);
-      else stepEpisode(dir);
+      if (now - stepLock.current < 400 || Math.abs(e.deltaY) < 15) return;
+      stepLock.current = now;
+      stepBy(e.deltaY > 0 ? 1 : -1);
     },
-    [
-      seriesPanelOpen,
-      downloading,
-      onWheelStep,
-      stepEpisode,
-      wakeChrome,
-      inBinge,
-      setSlideDir,
-      wheelLock,
-    ],
+    [seriesPanelOpen, downloading, stepBy, wakeChrome, stepLock],
+  );
+
+  // ---- 触摸滑动（移动端 WebView）：上滑下一个/下滑上一个，官方 App 同款。
+  //      touchstart 记起点，touchend 按纵向位移判定；横向位移过半的滑动
+  //      是系统返回手势/详情横滑的领地，不抢。与滚轮共用冷却锁——部分
+  //      WebView 在快速滑动后会补发合成 wheel 事件，共用一把锁防双跳。 ----
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const onStageTouchStart = useCallback((e: React.TouchEvent) => {
+    const t0 = e.touches[0];
+    if (t0) touchStartRef.current = { x: t0.clientX, y: t0.clientY };
+  }, []);
+  const onStageTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const start = touchStartRef.current;
+      touchStartRef.current = null;
+      const t = e.changedTouches[0];
+      if (!start || !t) return;
+      // 浮层/控制栏里开始的滑动是它们自己的手势，不冒泡成切换
+      if ((t.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
+      const dy = t.clientY - start.y;
+      const dx = t.clientX - start.x;
+      if (Math.abs(dy) < SWIPE_THRESHOLD_PX || Math.abs(dy) < Math.abs(dx) * 1.5) return;
+      wakeChrome();
+      if (seriesPanelOpen || downloading) return;
+      const now = Date.now();
+      if (now - stepLock.current < 400) return;
+      stepLock.current = now;
+      stepBy(dy < 0 ? 1 : -1);
+    },
+    [seriesPanelOpen, downloading, stepBy, wakeChrome, stepLock],
   );
 
   // ---- 点击画面 = 播放/暂停（选中剧的唯一入口是「观看完整短剧」横条与
@@ -150,12 +183,9 @@ export function usePlayerInteractions(params: {
       const step = (dir: 1 | -1) => {
         e.preventDefault();
         wakeChrome();
-        // ↑↓ 的语义与滚轮同源：沉浸流（未选定剧）= 切上一部/下一部剧，
-        // 从详情/历史等**选定**剧进来 = 切上一集/下一集
-        setSlideDir(dir);
-        if (inBinge) stepEpisode(dir);
-        else if (onWheelStep) onWheelStep(dir);
-        else stepEpisode(dir);
+        // ↑↓ 的语义与滚轮/触摸滑动同源：沉浸流（未选定剧）= 切上一部/
+        // 下一部剧，从详情/历史等**选定**剧进来 = 切上一集/下一集
+        stepBy(dir);
       };
 
       if (e.key === shortcutKeys.playPause) {
@@ -189,18 +219,16 @@ export function usePlayerInteractions(params: {
     // ref/setState 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
   }, [
     shortcutKeys,
-    stepEpisode,
+    stepBy,
     wakeChrome,
-    onWheelStep,
-    inBinge,
     setBinge,
+    inBinge,
     seriesPanelOpen,
     commentPanelOpen,
     danmakuPanelOpen,
     volumeOpen,
     videoRef,
-    setSlideDir,
   ]);
 
-  return { onStageWheel, onStageClick };
+  return { onStageWheel, onStageTouchStart, onStageTouchEnd, onStageClick };
 }

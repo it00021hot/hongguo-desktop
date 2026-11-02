@@ -1,4 +1,4 @@
-import { useNavigate } from '@tanstack/react-router';
+import { useLocation, useNavigate } from '@tanstack/react-router';
 
 import { usePlayerStore } from '@/stores/player';
 
@@ -9,6 +9,9 @@ import { usePlayerStore } from '@/stores/player';
  * 把游标对到目标剧（流里没有就钉在最前），随后锁连播——从别的页**选定**
  * 一部剧进来，滚轮/↑↓ 是切集（原 /player 语义），Esc 退出连播回到换剧。
  *
+ * 进入前把当前路由记进 store（returnTo）：播放器的「返回」钮据此回到
+ * 来源页（历史/搜索/榜单…）——从哪来回哪去，而不是停在推荐流。
+ *
  * 不预解析分集——首页的 useSeriesEpisodes 自带回落解析与整页加载
  * 反馈（选集表/加载失败态都在那边），调用方只管表达意图。
  *
@@ -18,9 +21,12 @@ import { usePlayerStore } from '@/stores/player';
  */
 export function usePlaySeries() {
   const navigate = useNavigate();
+  const location = useLocation();
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const setBinge = usePlayerStore((s) => s.setBinge);
+  const setReturnTo = usePlayerStore((s) => s.setReturnTo);
   return (seriesId: string, vidIndex?: number) => {
+    setReturnTo(location.href);
     requestGoto(seriesId, vidIndex ?? 0);
     setBinge(seriesId);
     void navigate({ to: '/' });

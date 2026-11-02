@@ -218,7 +218,9 @@ mod probe {
                 .map(|(k, val): (&str, &str)| serde_json::json!([k, val]))
                 .collect(),
         );
-        v["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
+        v["user_agent"] = serde_json::Value::String(
+            hongguo_signer::device::REGISTER_FINGERPRINTS[0].register_ua(),
+        );
         let _hg_env = crate::client::ApiEnv {
             proxy: env.proxy.clone(),
             device: serde_json::from_value(v).unwrap(),
@@ -239,7 +241,9 @@ mod probe {
         }
         own.set("version_name", hongguo_signer::REGISTER_VERSION_NAME);
         let mut ov = serde_json::to_value(&own).unwrap();
-        ov["user_agent"] = serde_json::Value::String(hongguo_signer::device::register_ua());
+        ov["user_agent"] = serde_json::Value::String(
+            hongguo_signer::device::REGISTER_FINGERPRINTS[0].register_ua(),
+        );
         let own_dev: hongguo_signer::device::DeviceProfile = serde_json::from_value(ov).unwrap();
         let env = crate::client::ApiEnv {
             proxy: env.proxy.clone(),

@@ -2,7 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 移动端禁缩放：双击画面放大页面会误触（官方 App 同款禁法；桌面
+        浏览器/WebView2 忽略这两个键无影响） -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>Hongguo</title>
     <!-- 首帧前涂主题（外部文件：CSP 'self' 不收内联脚本），见 public/theme-boot.js -->
     <script src="/theme-boot.js"></script>

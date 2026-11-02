@@ -79,12 +79,18 @@ pub fn encoder_available() -> bool {
     }
 }
 
-/// HEVC 解码 MFT 是否在位（Windows；macOS 的 WKWebView 原生可解 HEVC，恒真）。
+/// HEVC 解码是否在位（Windows 探 MFT；macOS/Android 恒真）。
 ///
 /// 回答的是「在线播放能否把 HEVC 系流直接喂给 WebView」，与转码侧探测
 /// （[`h264_hw_encoder_available`] 等，回答「转码走哪条路」）是两个问题；
 /// 判据同源（同一个 HEVC 解码 MFT 枚举），但不吃 `HONGGUO_NO_PLATFORM`——
 /// 那个开关关的是转码平台层，与播放解码无关。
+///
+/// **Android 恒真**：官方轻请求流表没有 h264 候选（bytevc1/bytevc2 都是
+/// HEVC 系变体，「翻转 h264」选无可选，NoHevc 末轮兜底仍回 HEVC——2026-11
+/// 模拟器实测两种模式取回的密文字节完全一致），翻转没有出路；而真机的
+/// MediaCodec 硬解 HEVC 普遍可用，直连是唯一可播路径。无硬解环境（模拟器）
+/// 解码失败是设备能力极限，由前端重试/错误态如实呈现。
 pub fn hevc_decode_available() -> bool {
     #[cfg(target_os = "windows")]
     {

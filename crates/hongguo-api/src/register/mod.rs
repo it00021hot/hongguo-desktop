@@ -260,9 +260,15 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
 
 /// 注册 query 的公共指纹参数（40 个；`cdid`/`openudid`/时间戳每次生成，
 /// 服务端按这套指纹发新设备号）。版本身份字段直接钉注册口径
-/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]），
-/// 与签名档案（`fresh_register_profile`）同源。
-fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, String)> {
+/// （[`hongguo_signer::REGISTER_VERSION_CODE_STR`]），机型耦合字段取自
+/// 机型指纹（[`hongguo_signer::device::fingerprint_for_cdid`] 的确定性
+/// 派生），与签名档案（`fresh_register_profile`）同源。
+fn register_query(
+    fp: &hongguo_signer::device::RegisterFingerprint,
+    cdid: &str,
+    openudid: &str,
+    now_ms: u64,
+) -> Vec<(String, String)> {
     let pairs: Vec<(&str, String)> = vec![
         ("_rticket", now_ms.to_string()),
         ("ac", "wifi".into()),
@@ -271,13 +277,13 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("app_name", "novelread".into()),
         ("app_type", "normal".into()),
         ("cdid", cdid.into()),
-        ("channel", "xiaomi_8662_64".into()),
+        ("channel", fp.channel()),
         ("cpu_support64", "true".into()),
         ("cronet_version", "8d40f833_2026-03-03".into()),
-        ("device_brand", "xiaomi".into()),
+        ("device_brand", fp.brand.into()),
         ("device_platform", "android".into()),
-        ("device_type", "23127PN0CC".into()),
-        ("dpi", "460".into()),
+        ("device_type", fp.model.into()),
+        ("dpi", fp.dpi.to_string()),
         ("first_launch_timestamp", (now_ms / 1000).to_string()),
         ("host_abi", "arm64-v8a".into()),
         ("is_android_fold", "0".into()),
@@ -295,10 +301,10 @@ fn register_query(cdid: &str, openudid: &str, now_ms: u64) -> Vec<(String, Strin
         ("need_personal_recommend", "1".into()),
         ("openudid", openudid.into()),
         ("os", "android".into()),
-        ("os_api", "34".into()),
-        ("os_version", "14".into()),
+        ("os_api", fp.api.into()),
+        ("os_version", fp.os.into()),
         ("package", "com.phoenix.read".into()),
-        ("resolution", "1200*2670".into()),
+        ("resolution", fp.resolution.into()),
         ("ssmix", "a".into()),
         ("ts", (now_ms / 1000).to_string()),
         ("tt_data", "a".into()),
@@ -373,7 +379,11 @@ const FIRST_INSTALL_BACK_MS: u64 = 300_000;
 /// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
 /// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
 /// `apk_first_install_time` 回拨 100~500 秒。
-fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
+fn register_json_str(
+    fp: &hongguo_signer::device::RegisterFingerprint,
+    id: &FreshIdentity,
+    now_ms: u64,
+) -> String {
     let mut h = serde_json::Map::new();
     h.insert("access".into(), json!("wifi"));
     h.insert("aid".into(), json!(8662));
@@ -387,7 +397,7 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     );
     h.insert("app_version_minor".into(), json!(""));
     h.insert("cdid".into(), json!(id.cdid));
-    h.insert("channel".into(), json!("xiaomi_8662_64"));
+    h.insert("channel".into(), json!(fp.channel()));
     h.insert("clientudid".into(), json!(id.clientudid));
     h.insert("cpu_abi".into(), json!("arm64-v8a"));
     h.insert(
@@ -397,16 +407,16 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
             "filter_warn": 0,
             "is_android_fold": 0,
             "is_android_pad": 0,
-            "web_ua": "Mozilla/5.0 (Linux; Android 14; Xiaomi 14 Build/UKQ1.230804.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36",
+            "web_ua": fp.web_ua(),
         }),
     );
-    h.insert("density_dpi".into(), json!(460));
-    h.insert("device_brand".into(), json!("xiaomi"));
+    h.insert("density_dpi".into(), json!(fp.dpi));
+    h.insert("device_brand".into(), json!(fp.brand));
     h.insert("device_category".into(), json!("phone"));
-    h.insert("device_manufacturer".into(), json!("Xiaomi"));
-    h.insert("device_model".into(), json!("Xiaomi 14"));
+    h.insert("device_manufacturer".into(), json!(fp.manufacturer));
+    h.insert("device_model".into(), json!(fp.display));
     h.insert("device_platform".into(), json!("android"));
-    h.insert("display_density".into(), json!("xxhdpi"));
+    h.insert("display_density".into(), json!(fp.display_density()));
     h.insert("display_name".into(), json!("红果短剧"));
     h.insert("git_hash".into(), json!("fe95b95"));
     h.insert("guest_mode".into(), json!(0));
@@ -421,15 +431,15 @@ fn register_json_str(id: &FreshIdentity, now_ms: u64) -> String {
     h.insert("oaid_may_support".into(), json!(true));
     h.insert("openudid".into(), json!(id.openudid));
     h.insert("os".into(), json!("Android"));
-    h.insert("os_api".into(), json!(34));
-    h.insert("os_version".into(), json!("14"));
+    h.insert("os_api".into(), json!(fp.api.parse::<u32>().unwrap_or(34)));
+    h.insert("os_version".into(), json!(fp.os));
     h.insert("package".into(), json!("com.phoenix.read"));
     h.insert("region".into(), json!("CN"));
-    h.insert("release_build".into(), json!("UKQ1.230804.001_1701234567"));
+    h.insert("release_build".into(), json!(fp.release_build()));
     h.insert("req_id".into(), json!(id.req_id));
-    h.insert("resolution".into(), json!("2670x1200"));
-    h.insert("rom".into(), json!("hyperos"));
-    h.insert("rom_version".into(), json!("OS1.0.32.0.UNCCNXM"));
+    h.insert("resolution".into(), json!(fp.resolution_hxw()));
+    h.insert("rom".into(), json!(fp.rom));
+    h.insert("rom_version".into(), json!(fp.rom_version));
     h.insert("sdk_flavor".into(), json!("china"));
     h.insert("sdk_target_version".into(), json!(29));
     h.insert("sdk_version".into(), json!("3.7.3-rc.116-douyin"));
@@ -465,20 +475,23 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let id = fresh_identity();
+    // 机型指纹由 cdid 确定性派生：注册 query、AppLog JSON、签名档案、
+    // 产物档案四处同源（service 的 registered_profile 用同一派生重建）
+    let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
 
     // 注册档案原生就是注册口径（fresh_register_profile），与 query/body
-    // 同一套常量，零覆写
+    // 同一套常量与同一指纹，零覆写
     let profile =
         hongguo_signer::device::DeviceProfile::fresh_register_profile(&id.cdid, &id.openudid);
 
-    let q = register_query(&id.cdid, &id.openudid, now_ms);
+    let q = register_query(fp, &id.cdid, &id.openudid, now_ms);
 
-    let body = tt_encrypt_v5(register_json_str(&id, now_ms).as_bytes());
+    let body = tt_encrypt_v5(register_json_str(fp, &id, now_ms).as_bytes());
     // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
     if std::env::var("TT_DEBUG").is_ok() {
         let dir = super::capture_dir();
         let _ = std::fs::create_dir_all(&dir);
-        let plain = register_json_str(&id, now_ms);
+        let plain = register_json_str(fp, &id, now_ms);
         let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
         let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
         let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
@@ -642,7 +655,12 @@ mod tests {
             clientudid: "clientudid-uuid".into(),
             req_id: "req-id-uuid".into(),
         };
-        let q = register_query(&id.cdid, &id.openudid, 1_760_000_000_000);
+        let q = register_query(
+            hongguo_signer::device::fingerprint_for_cdid(&id.cdid),
+            &id.cdid,
+            &id.openudid,
+            1_760_000_000_000,
+        );
         let get = |k: &str| {
             q.iter()
                 .find(|(key, _)| key == k)
@@ -663,7 +681,12 @@ mod tests {
         );
         assert_eq!(get("version_name"), hongguo_signer::REGISTER_VERSION_NAME);
 
-        let v: Value = serde_json::from_str(&register_json_str(&id, 1_760_000_000_000)).unwrap();
+        let v: Value = serde_json::from_str(&register_json_str(
+            hongguo_signer::device::fingerprint_for_cdid(&id.cdid),
+            &id,
+            1_760_000_000_000,
+        ))
+        .unwrap();
         let h = &v["header"];
         assert_eq!(h["version_code"], hongguo_signer::REGISTER_VERSION_CODE);
         assert_eq!(
@@ -675,6 +698,14 @@ mod tests {
             hongguo_signer::REGISTER_VERSION_CODE
         );
         assert_eq!(h["app_version"], hongguo_signer::REGISTER_VERSION_NAME);
+
+        // 机型耦合字段与指纹预设同源（query 与 JSON 两侧一致，由同一派生保证）
+        let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
+        assert_eq!(get("channel"), fp.channel());
+        assert_eq!(get("device_brand"), fp.brand);
+        assert_eq!(get("device_type"), fp.model);
+        assert_eq!(h["device_model"], fp.display);
+        assert_eq!(h["device_manufacturer"], fp.manufacturer);
 
         // bdinstall SDK 代际逐字段锁定（2026-11-01 竞品实流注册密文体
         // 解密对齐——代际拼错设备会被静默标记、取流不发货）

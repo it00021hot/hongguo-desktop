@@ -13,8 +13,22 @@ export function isMac(): boolean {
   return navigator.userAgent.toLowerCase().includes('mac');
 }
 
-/** Windows 判定（自定义协议 URL 形态要用：WebView2 走 http://{scheme}.localhost）。 */
+/** Windows 判定（窗口装饰布局用）。 */
 export function isWindows(): boolean {
   if (typeof navigator === 'undefined') return false;
   return navigator.userAgent.toLowerCase().includes('windows');
+}
+
+/**
+ * 自定义协议 URL 是否走 `http://{scheme}.localhost` 宿主形态。
+ *
+ * WebView2（Windows）与 Android WebView 都不能直接请求非标准 scheme——wry
+ * 靠拦截 `http://{scheme}.…` 再转回自定义协议（custom_protocol_workaround，
+ * 两平台同一约定）；macOS 的 WKWebView 拦真 scheme，给宿主形态反而 404。
+ * 与 Rust 侧 `protocol::scheme_base` 同一套规矩，给错的表现是封面/视频全挂。
+ */
+export function usesSchemeHostForm(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent.toLowerCase();
+  return ua.includes('windows') || ua.includes('android');
 }

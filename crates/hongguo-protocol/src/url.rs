@@ -13,17 +13,20 @@ pub use hongguo_common::consts::scheme::{
 
 /// 自定义协议对外的 URL 前缀（按平台选择形态）。
 ///
-/// **Windows**：WebView2 不支持页面内容直接请求非标准 scheme，wry 靠把
-/// `http://{scheme}.…` 开头的请求拦下来再转回自定义协议兜住（`custom_protocol_workaround`），
-/// 必须给 `http://{scheme}.localhost/…`；直接给 `hongguo-stream://…` 不会触发
-/// 协议处理器，表现就是「后端地址取到了、但永远黑屏、日志里一次请求都没有」。
+/// **Windows / Android**：WebView2 与 Android WebView 都不支持页面内容直接
+/// 请求非标准 scheme（Android 的 `shouldInterceptRequest` 只对 http/https
+/// 触发，非 http scheme 连请求都不会发出），wry 靠把 `http://{scheme}.…`
+/// 开头的请求拦下来再转回自定义协议兜住（`custom_protocol_workaround`，
+/// 两平台同一套约定），必须给 `http://{scheme}.localhost/…`；直接给
+/// `hongguo-stream://…` 不会触发协议处理器，表现就是「后端地址取到了、
+/// 但图片/视频永远挂、日志里一次请求都没有」（2026-11 Android APK 实测）。
 ///
 /// **macOS / Linux**：WKWebView（WKURLSchemeHandler）与 webkit2gtk 拦的是
 /// **真 scheme**，`http://hongguo-stream.localhost/…` 会被当成真实 HTTP 请求
 /// 发往不存在的主机 → `<video>` 直接 MediaError 4。必须给 `{scheme}://localhost/…`（`tauri://localhost`
 /// 同款形态，wry 转给 handler 时 host 恒为 localhost）。
 pub fn scheme_base(scheme: &str) -> String {
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "android")) {
         format!("http://{scheme}.localhost")
     } else {
         format!("{scheme}://localhost")

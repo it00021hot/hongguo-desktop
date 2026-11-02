@@ -30,6 +30,7 @@ const FEED_STALE_MS = 5 * 60_000;
 const PREFETCH_FALLBACK_DELAY_MS = 8_000;
 import type { Series } from '@/service/schema';
 import { RECOMMEND_TAB_TYPE, buildTabList } from './home-tabs';
+import { decideStartPoint } from './start-point';
 import { TopBarTabs } from './top-bar-tabs';
 import { BootSplash } from './boot-splash';
 
@@ -236,7 +237,14 @@ export function HomePage() {
   // adjust 模式，与下方游标恢复同款）：条件在重渲染后自然为假，不会循环；
   // 一次性消费：不与用户后续滚动互相拽（信息流自己的 setTarget 不带信号）。
   const gotoNonce = usePlayerStore((s) => s.gotoNonce);
-  const [consumedGoto, setConsumedGoto] = useState(gotoNonce);
+  // 已消费到的 nonce 以 store 为准：外部点名先于首页挂载发生（搜索/历史
+  // 点卡片才跳过来），useState 拿**当前** nonce 初始化会把信号在挂载帧
+  // 就判成「已消费」，整个消费块对跨页进入永远失效——搜索点开被推荐流
+  // 顶掉的伴生根因。store 里的值跨挂载存活，重挂载后仍能对齐游标。
+  const [consumedGoto, setConsumedGoto] = useState(() => usePlayerStore.getState().gotoConsumed);
+  useEffect(() => {
+    usePlayerStore.getState().markGotoConsumed(consumedGoto);
+  }, [consumedGoto]);
   if (consumedGoto !== gotoNonce && playingId && displayItems.length > 0) {
     setConsumedGoto(gotoNonce);
     setPinHold(true);
@@ -306,25 +314,37 @@ export function HomePage() {
   // 回来时会重新对号本地档案，接的是你离开时的那集。
   // 恢复游标的渲染期 setState 让 effect 只在游标生效后的提交上跑一次，
   // 恢复在途（档案未跟上）时 currentSeries 为空自然空转，无需额外闩锁。
-  // 游标是否由用户/点名动作改写（vs 列表移位顶掉游标处内容）：保护分支
-  // 的判据。ref 不驱动渲染，只给 effect 读。
+  // 判定与动作拆在 start-point.ts（纯函数，事故即复现测试）。游标是否
+  // 由用户/点名动作改写（vs 列表移位顶掉游标处内容）是保护分支的判据，
+  // 记在 ref：idxChanged 逐拍重算的话，「档案/进度未就绪」的早退会把它
+  // 吃掉，晚一拍送达的决策误判成「游标没动」，用户刚滚的轮被保护弹回。
   const lastIndexRef = useRef(-1);
+  const cursorMovedRef = useRef(false);
   useEffect(() => {
     if (!currentSeries) return;
-    const idxChanged = lastIndexRef.current !== index;
-    lastIndexRef.current = index;
-    if (playingId === currentSeries.seriesId && (storeVidIndex ?? 0) > 0) return;
+    if (lastIndexRef.current !== index) {
+      lastIndexRef.current = index;
+      cursorMovedRef.current = true;
+    }
     if (progressQuery.isPending || historyPending) return;
 
-    // 在播保护期（pinHold）且游标没动、游标处的剧却被顶掉（钉住条目随
-    // playingId 移位/换批重排）：**对齐游标回在播剧、绝不拽播放目标**。
-    // 这里若 setTarget(游标剧)，钉住会把它挪出游标位，游标处又填入别的
-    // 剧，effect 重跑再拽——「拽 → 移位 → 再拽」永不收敛，正是切剧
-    // Maximum update depth 崩溃的根源。对齐游标是纯 UI 写，一轮收敛。
-    // 游标动了（滚轮/↑↓/点名）则是用户切剧，照旧拽目标换片。
-    if (pinHold && !idxChanged && playingId && playingId !== currentSeries.seriesId) {
-      const idx = displayItems.findIndex((i) => i.seriesId === playingId);
-      setIndexes((prev) => ({ ...prev, [source]: Math.max(idx, 0) }));
+    const decision = decideStartPoint({
+      pinHold,
+      cursorMoved: cursorMovedRef.current,
+      playingId,
+      cursorSeriesId: currentSeries.seriesId,
+      storeVidIndex: storeVidIndex ?? 0,
+      index,
+      items,
+    });
+    // 凡到达决策点（含 wait=起点已定），游标信号都已兑现
+    cursorMovedRef.current = false;
+    if (decision.kind === 'wait') return;
+
+    // 在播保护：对齐游标回在播剧，绝不拽播放目标（保护分支的轮回机制
+    // 见 start-point.ts）——纯 UI 写，一轮收敛。
+    if (decision.kind === 'protect') {
+      setIndexes((prev) => ({ ...prev, [source]: decision.anchorIndex }));
       return;
     }
 
@@ -332,19 +352,25 @@ export function HomePage() {
     // 与详情页「继续看」/后端 resolve_entry 同口径）
     const entry = resolveResumeEntry(
       localProgress,
-      historyItems?.find((i) => i.seriesId === currentSeries.seriesId),
+      historyItems?.find((i) => i.seriesId === decision.seriesId),
     );
 
-    // 主动切剧即结束「在播保护」：在播剧就是用户刚选的游标剧，钉住已无
-    // 意义，关闸后 displayItems=items 原位语义，继续滚就是下一部推荐。
-    // 不关的话钉住条目随每次切剧挪位，游标处的剧被反复顶换，滚轮永远
-    // 在最前几部里轮回。换一批/回首页会重新开闸（见 restart/goto 消费）。
-    setPinHold(false);
-
-    setTarget(currentSeries.seriesId, entry?.index ?? 1);
+    // 主动切剧即结束「在播保护」——但只在游标剧在未钉住的列表里时关闸
+    // （decision.releasePin）：外部点名（搜索/榜单/追更）的目标只以钉住
+    // 占位存在，关闸它就从列表消失、游标 0 落到别的剧，下一拍起点决策
+    // 把播放目标抢走——「搜索点开播错剧」的根源，所以保持钉住。目标在
+    // 流里时关闸恢复原位语义，继续滚就是下一部推荐；换一批/回首页会
+    // 重新开闸（见 restart/goto 消费）。
+    if (decision.releasePin) setPinHold(false);
+    // 撤钉会让钉位之前的内容左移一格，游标按内容重锚到同一步剧
+    const anchorIndex = decision.anchorIndex;
+    if (anchorIndex !== null) {
+      setIndexes((prev) => ({ ...prev, [source]: anchorIndex }));
+    }
+    setTarget(decision.seriesId, entry?.index ?? 1);
     if (entry && entry.positionMs > 0) {
       setResumeHint({
-        seriesId: currentSeries.seriesId,
+        seriesId: decision.seriesId,
         vidIndex: entry.index,
         positionMs: entry.positionMs,
       });
@@ -354,7 +380,7 @@ export function HomePage() {
     index,
     playingId,
     pinHold,
-    displayItems,
+    items,
     source,
     storeVidIndex,
     localProgress,

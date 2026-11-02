@@ -105,11 +105,12 @@ export function RankPage() {
         ))}
         {tabRow.length === 0 && <Skeleton className="h-6 w-64 rounded-full" />}
       </TopBarTabsPortal>
-      <div className="flex min-h-0 flex-1 gap-4">
-        {/* 左侧子榜竖排（首屏未到时骨架占位）。
-            窗口过矮时子榜自己滚，不跟着右侧列表走 */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 md:flex-row md:gap-4">
+        {/* 子榜分类：窄屏横向滚动行（对齐官方的顶部横向 tab 形态——竖排
+            w-36 在 393px 宽下会吃掉 1/3 宽，把榜单卡挤到裁切）；桌面保持
+            左侧竖排。窗口过矮时子榜自己滚，不跟着右侧列表走 */}
         <nav
-          className="flex w-36 shrink-0 scrollbar-thin flex-col gap-1 overflow-y-auto"
+          className="scrollbar-thin flex shrink-0 flex-row gap-1 overflow-x-auto pb-1 md:w-36 md:flex-col md:overflow-x-visible md:overflow-y-auto md:pb-0"
           aria-label={t('rank.subLists')}
         >
           <ToggleGroup
@@ -122,13 +123,13 @@ export function RankPage() {
               setPanel('');
               setBackground('');
             }}
-            className="flex flex-col gap-1"
+            className="flex flex-row gap-1 md:flex-col"
           >
             {(currentTab?.subs ?? []).map((s) => (
               <ToggleGroupItem
                 key={s.id}
                 value={s.id}
-                className="text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground h-auto w-full justify-start rounded-md px-3 py-2 text-left text-sm transition-colors data-[state=on]:font-medium"
+                className="text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground h-auto shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm transition-colors data-[state=on]:font-medium md:w-full"
               >
                 {s.name}
               </ToggleGroupItem>
@@ -136,7 +137,9 @@ export function RankPage() {
           </ToggleGroup>
           {(currentTab?.subs.length ?? 0) === 0 &&
             isLoading &&
-            Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-9 rounded-md" />)}
+            Array.from({ length: 5 }, (_, i) => (
+              <Skeleton key={i} className="h-9 w-24 shrink-0 rounded-md md:w-full" />
+            ))}
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col gap-2">

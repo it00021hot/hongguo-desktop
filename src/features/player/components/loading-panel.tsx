@@ -7,10 +7,14 @@ import type { OnlineProgress } from '@/service/schema';
 
 export function LoadingPanel({
   error,
+  autoRetry,
   buffering,
   retryOnline,
 }: {
   error: string | null;
+  /** 自动重试进行中（null = 未在自动重试）：显示「已重试 N 次」，
+   *  让打开就撞上取流失败的窗口看起来是「在自动修复」，而不是死报错。 */
+  autoRetry: { attempt: number } | null;
   buffering: OnlineProgress | null;
   retryOnline: () => void;
 }) {
@@ -33,6 +37,12 @@ export function LoadingPanel({
                 })
               : t('common.loading'))}
         </span>
+        {autoRetry && (
+          <span className="flex items-center gap-1.5 text-xs text-white/60 drop-shadow-md">
+            <Loader2 className="size-3 animate-spin" aria-hidden />
+            {tf('player.autoRetrying', { attempt: autoRetry.attempt })}
+          </span>
+        )}
         {error && (
           <Button
             size="sm"

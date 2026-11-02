@@ -15,8 +15,13 @@ use hongguo_service::app_state::AppState;
 pub type WindowCloseGate = Arc<AtomicBool>;
 
 /// 选择下载目录。
+///
+/// **必须 async**：同步 command 跑在主线程 IPC 回调里，`blocking_pick_folder`
+/// 在 macOS 上占死主事件循环——面板弹得出来但整机冻结（2026-11-02 mac 实测
+/// 卡死根因）。async command 跑在命令线程池，线程内阻塞等面板正是 dialog
+/// 插件文档要求的用法（main thread 以外）。
 #[tauri::command]
-pub fn select_folder(app: AppHandle) -> AppResult<Option<String>> {
+pub async fn select_folder(app: AppHandle) -> AppResult<Option<String>> {
     // 移动端 dialog 插件没有 folder picker（只有文件选择），如实拒绝——
     // 下载目录改选属移动端 UI 适配，另行处理
     #[cfg(any(target_os = "android", target_os = "ios"))]

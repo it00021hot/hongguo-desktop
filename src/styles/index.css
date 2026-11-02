@@ -165,6 +165,9 @@ button:not(:disabled) {
   html {
     /* 桌面应用不需要移动端安全区 */
     -webkit-text-size-adjust: 100%;
+    /* 移动端 WebView：滑动切剧在舞台边界不再触发系统 overscroll 辉光
+        （Android 触摸滚动到头的发光效果，会被读成「切了没反应」） */
+    overscroll-behavior: none;
   }
 
   body {
