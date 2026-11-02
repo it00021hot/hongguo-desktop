@@ -79,19 +79,21 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 use tauri::Manager as _;
                 let root = app.path().app_data_dir()?;
                 hongguo_store::paths::set_absolute_data_root(&root);
-                // SQLite/libsql 的迁移与排序临时文件走 SQLITE_TMPDIR；不钉的
-                // 话 std::env::temp_dir() 落到 /data/local/tmp（app 无权写），
-                // 迁移 SQL 直接 I/O error，启动被「数据损坏」误报终止。
+                // turso 的迁移/排序临时文件经 tempfile crate 落盘，tempfile
+                // 在 Unix 只认 TMPDIR（缺省 /tmp——Android 上不存在且 app
+                // 无权写，迁移 SQL 直接 I/O error (tempdir)，启动被「数据
+                // 损坏」误报终止；SQLITE_TMPDIR 是 SQLite C 库的约定，
+                // turso 不读）。钉到 app 私有 tmp 目录。
                 let tmpdir = root.join("tmp");
                 let _ = std::fs::create_dir_all(&tmpdir);
                 // SAFETY: setup 在主线程、任何并发读 env 的线程尚未启动——
-                // set_var 的多线程 UB 条件不成立。SQLite 每次取临时目录时
-                // 读该变量，必须在首次开库前设置。
+                // set_var 的多线程 UB 条件不成立。tempfile 每次建临时目录
+                // 都读 TMPDIR，必须在首次开库前设置。
                 unsafe {
-                    std::env::set_var("SQLITE_TMPDIR", &tmpdir);
+                    std::env::set_var("TMPDIR", &tmpdir);
                 }
                 log::info!(
-                    "[Store] Android 数据根: {}（SQLITE_TMPDIR: {}）",
+                    "[Store] Android 数据根: {}（TMPDIR: {}）",
                     root.display(),
                     tmpdir.display()
                 );
