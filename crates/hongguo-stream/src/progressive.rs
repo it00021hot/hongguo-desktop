@@ -205,29 +205,45 @@ pub(crate) fn wait_for_entry(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(EntryLease, EntryMode), StreamReadError> {
     let cache = crate::cache();
-    // 压根没有这一档：说明它已经被清掉了（或从没起播过）。
-    // 这种情况必须立刻报错，不能进等待——等满 30 秒才告诉用户「没这流」，
-    // 在切档的语境下就是一次白等。
-    let Some(entry) = cache.get(vid, definition) else {
-        // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
-        // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
-        log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
-        return Err(StreamReadError::Missing {
-            vid: vid.to_string(),
-            definition,
-        });
-    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
+    // 条目还没注册的两条路，处置完全不同：
+    // - 后台 fill 还在下载（begin_fetch 已标记、条目未建）：**等它注册**——
+    //   prepare 是先返回 URL 再 spawn 填充的，先到的 Range 请求就落在窗口
+    //   里；这里一 404 <video> 直接死（真机实测「在线播放中断 MediaError」，
+    //   Chromium 轮询数次后放弃），等窗口填上就只是多等几百毫秒。
+    // - 压根没人在取（已被清掉/从没起播过）：立即报错不白等——等满 30 秒
+    //   才告诉用户「没这流」，在切档的语境下就是一次白等。
+    let mut entry = cache.get(vid, definition);
+    while entry.is_none() {
+        if cancelled() {
+            return Err(StreamReadError::Cancelled);
+        }
+        if !cache.is_fetching(vid, definition) {
+            // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
+            // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
+            log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
+            return Err(StreamReadError::Missing {
+                vid: vid.to_string(),
+                definition,
+            });
+        }
+        if std::time::Instant::now() >= deadline {
+            log::warn!("[Stream] {vid}@{definition} 等待取流注册条目超时（{WAIT_TIMEOUT_SECS}s）");
+            return Err(StreamReadError::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        entry = cache.get(vid, definition);
+    }
     let lease = EntryLease {
         cache,
         vid: vid.to_string(),
         definition,
-        entry,
+        entry: entry.expect("循环出口保证非空"),
     };
 
     // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
     // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
     // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
-    let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
     let entered = std::time::Instant::now();
     let mut polls: u64 = 0;
     loop {
