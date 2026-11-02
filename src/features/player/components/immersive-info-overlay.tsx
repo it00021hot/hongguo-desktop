@@ -1,11 +1,83 @@
 /** 沉浸流信息叠加层：@剧名/热度/集数/简介压在画面左下（纯 props→JSX）；
- *  选中剧连播时左上角亮「< 第N集」，点返回解除连播回到换剧（手机端同款）。 */
+ *  左上角两枚 pill：选中剧连播时亮「< 第N集」，点返回解除连播回到换剧
+ *  （手机端同款）；有外部来源页（returnTo）时亮「< 返回」，点它回来源页
+ *  ——从历史/搜索进来就回历史/搜索，而不是停在推荐流。 */
 import type { Dispatch, SetStateAction } from 'react';
 import type { UseNavigateResult } from '@tanstack/react-router';
 import { ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
 import { ChromeSurface } from './chrome-surface';
+
+/** 左上角 pill 的共用皮肤（播放器 chrome 黑玻璃，与控制栏一族）。 */
+const PILL_CLASS =
+  'flex h-6 cursor-pointer items-center gap-0.5 rounded-full bg-black/30 pr-2 pl-1 text-xs font-medium text-white drop-shadow-md backdrop-blur-sm transition-colors hover:bg-black/50';
+
+/**
+ * 左上角 pill 行：连播指示 + 返回来源页。
+ *
+ * 与信息叠加分开渲染：pill 是**导航出口**，取流失败/加载中的错误态也
+ * 必须在——用户从历史/搜索进来撞上持续取流失败时，恰恰最需要「退回去」
+ * （那时信息叠加层整个不在，Esc 也要 `<video>` 在场才接键）。
+ * `always` 为真时常显（错误态），否则对齐 chromeShown 随控制栏淡入淡出。
+ */
+export function PlayerChromePills({
+  chromeShown,
+  miniScreen,
+  always = false,
+  inBinge,
+  onExitBinge,
+  vidIndex,
+  returnTo,
+  onReturnToSource,
+}: {
+  chromeShown: boolean;
+  miniScreen: boolean;
+  /** 常显（错误/加载态）：导航出口不随控制栏淡出 */
+  always?: boolean;
+  /** 选中剧连播中：亮「< 第N集」，点返回解除连播回到换剧（手机端同款） */
+  inBinge?: boolean;
+  onExitBinge?: () => void;
+  vidIndex: number;
+  /** 外部来源路由（含 search 的 href，usePlaySeries 记）：非空亮「< 返回」 */
+  returnTo?: string | null;
+  /** 点返回：回来源页（宿主负责导航并清掉 returnTo） */
+  onReturnToSource?: () => void;
+}) {
+  if (!(inBinge || returnTo)) return null;
+  return (
+    // 显隐对齐播放控件（错误态常显）；stopPropagation：点 pill 别触发
+    // 舞台的播放/暂停。
+    <ChromeSurface
+      shown={(always || chromeShown) && !miniScreen}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute top-3 left-3 z-10 flex w-fit items-center gap-1.5"
+    >
+      {inBinge && (
+        <button
+          type="button"
+          onClick={onExitBinge}
+          title={t('player.exitBinge')}
+          className={PILL_CLASS}
+        >
+          <ChevronLeft className="size-3.5" />
+          {tf('player.episodeNo', { index: vidIndex })}
+        </button>
+      )}
+      {returnTo && (
+        <button
+          type="button"
+          onClick={onReturnToSource}
+          title={t('player.backToSourceHint')}
+          className={PILL_CLASS}
+        >
+          <ChevronLeft className="size-3.5" />
+          {t('player.backToSource')}
+        </button>
+      )}
+    </ChromeSurface>
+  );
+}
 
 /**
  * 沉浸流信息叠加：@剧名/集数/简介压在画面左下。
@@ -30,6 +102,8 @@ export function ImmersiveInfoOverlay({
   navigate,
   inBinge,
   onExitBinge,
+  returnTo,
+  onReturnToSource,
 }: {
   chromeShown: boolean;
   miniScreen: boolean;
@@ -49,29 +123,22 @@ export function ImmersiveInfoOverlay({
   inBinge?: boolean;
   /** 点返回：解除连播锁定，滚轮/↑↓ 恢复换剧 */
   onExitBinge?: () => void;
+  /** 外部来源路由（含 search 的 href，usePlaySeries 记）：非空亮「< 返回」 */
+  returnTo?: string | null;
+  /** 点返回：回来源页（宿主负责导航并清掉 returnTo） */
+  onReturnToSource?: () => void;
 }) {
   return (
     <>
-      {/* 连播模式指示 + 返回（手机端同款形态）。显隐完全对齐播放控件：
-        chromeShown 亮、随其淡出，不另立一套时机。静默期控件不亮它也不亮。
-        stopPropagation：点返回别触发舞台的播放/暂停。 */}
-      {inBinge && (
-        <ChromeSurface
-          shown={chromeShown && !miniScreen}
-          onClick={(e) => e.stopPropagation()}
-          className="absolute top-3 left-3 z-10 w-fit"
-        >
-          <button
-            type="button"
-            onClick={onExitBinge}
-            title={t('player.exitBinge')}
-            className="flex h-6 cursor-pointer items-center gap-0.5 rounded-full bg-black/30 pr-2 pl-1 text-xs font-medium text-white drop-shadow-md backdrop-blur-sm transition-colors hover:bg-black/50"
-          >
-            <ChevronLeft className="size-3.5" />
-            {tf('player.episodeNo', { index: vidIndex })}
-          </button>
-        </ChromeSurface>
-      )}
+      <PlayerChromePills
+        chromeShown={chromeShown}
+        miniScreen={miniScreen}
+        inBinge={inBinge}
+        onExitBinge={onExitBinge}
+        vidIndex={vidIndex}
+        returnTo={returnTo}
+        onReturnToSource={onReturnToSource}
+      />
       <ChromeSurface
         shown={chromeShown && !miniScreen}
         className="absolute bottom-28 left-3 z-10 max-w-[62%] transition-all duration-300 data-[shown=false]:bottom-14"

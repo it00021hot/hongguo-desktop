@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouter } from '@tanstack/react-router';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DanmakuLayer } from './danmaku-layer';
@@ -14,7 +14,7 @@ import { CoverBackdrop } from './cover-backdrop';
 import { ErrorBar } from './error-bar';
 import { FrameHold } from './frame-hold';
 import { HevcInstallCard } from './hevc-install-card';
-import { ImmersiveInfoOverlay } from './immersive-info-overlay';
+import { ImmersiveInfoOverlay, PlayerChromePills } from './immersive-info-overlay';
 import { KeyboardHint } from './keyboard-hint';
 import { Loadbar } from './loadbar';
 import { LoadingPanel } from './loading-panel';
@@ -88,6 +88,11 @@ export function PlayerView({
   onFirstFrame?: () => void;
 }) {
   const navigate = useNavigate();
+  // routeTree.gen 的 as any 污染 useRouter 返回值；这里只用 history.push
+  // （与详情页 history.back 的窄化同款）
+  const router = useRouter() as { history: { push: (href: string) => void } };
+  const returnTo = usePlayerStore((s) => s.returnTo);
+  const setReturnTo = usePlayerStore((s) => s.setReturnTo);
   const seriesPanelOpen = usePlayerStore((s) => s.seriesPanelOpen);
   const commentPanelOpen = usePlayerStore((s) => s.commentPanelOpen);
   const danmakuPanelOpen = usePlayerStore((s) => s.danmakuPanelOpen);
@@ -159,6 +164,7 @@ export function PlayerView({
     setSrc,
     error,
     setError,
+    autoRetry,
     retryTick,
     srcKey,
     setSrcKey,
@@ -462,6 +468,14 @@ export function PlayerView({
   const frameless = useUiStore((s) => s.playerFrameless);
   const { pinned, togglePinned } = usePinWindow();
 
+  // 返回来源页（usePlaySeries 进场时记的路由）：从历史/搜索/榜单进来就
+  // 回那里，而不是停在推荐流。消费即清，残留的 returnTo 不给下次会话。
+  const handleReturnToSource = useCallback(() => {
+    const target = usePlayerStore.getState().returnTo;
+    setReturnTo(null);
+    if (target) router.history.push(target);
+  }, [router, setReturnTo]);
+
   const handleEnded = () => {
     // 这个函数写在 `!seriesId || !vidIndex` 的提前返回之前，
     // TS 还没把 store 里的 null 收窄掉，所以这里得自己挡一道。
@@ -723,6 +737,8 @@ export function PlayerView({
                   navigate={navigate}
                   inBinge={inBinge}
                   onExitBinge={() => setBinge(null)}
+                  returnTo={returnTo}
+                  onReturnToSource={handleReturnToSource}
                 />
                 {/* 快捷键提示只在暂停时露一面向中部提示——常驻顶栏会把分类 tab
                   挡死（顶部让位给 tab），平时不打扰。小屏（480 宽）与竖屏窄条
@@ -914,7 +930,23 @@ export function PlayerView({
             ) : (
               <>
                 {coverBackdrop}
-                <LoadingPanel error={error} buffering={buffering} retryOnline={retryOnline} />
+                {/* 错误/加载态的导航出口：取流失败时用户恰恰最需要「退回去」，
+                    而此时信息叠加层与 Esc（要 <video> 在场才接键）都不在——
+                    pill 常显，不随控制栏淡出 */}
+                <PlayerChromePills
+                  chromeShown={chromeShown}
+                  miniScreen={miniScreen}
+                  always
+                  vidIndex={vidIndex}
+                  returnTo={returnTo}
+                  onReturnToSource={handleReturnToSource}
+                />
+                <LoadingPanel
+                  error={error}
+                  autoRetry={autoRetry}
+                  buffering={buffering}
+                  retryOnline={retryOnline}
+                />
               </>
             )}
           </div>

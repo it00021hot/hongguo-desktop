@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { usePlay } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
+import { t } from '@/locales';
 import {
   readMuted,
   readPlaybackRate,
@@ -12,6 +14,14 @@ import {
   writeVolume,
 } from '@/utils/playback-prefs';
 import type { OnlineProgress, VideoDefinition } from '@/service/schema';
+
+/** 取流失败自动重试的节奏：失败页必须**持续**自动恢复，永不退回死报错。
+ *  前 4 拍快节奏（2/5/10/15s）扛瞬时抖动；服务端整段拒发窗口以几十分钟
+ *  计，之后 30s 一拍长期陪跑（每拍仅一次轻量取流，配合后端取流健康守护
+ *  的换档——服务端一开门即自动续播）。 */
+const AUTO_RETRY_FAST_ATTEMPTS = 4;
+const AUTO_RETRY_FAST_DELAYS_MS = [2_000, 5_000, 10_000, 15_000];
+const AUTO_RETRY_SETTLED_DELAY_MS = 30_000;
 
 /**
  * 取流与起播：play mutation、清晰度切换、断供自动重试、在线取流进度
@@ -105,6 +115,50 @@ export function usePlaybackSource(params: {
     setSrc(null);
     setRetry((r) => ({ key: episodeKey, tick: (r.key === episodeKey ? r.tick : 0) + 1 }));
   }, [episodeKey]);
+
+  // 取流健康守护换档到达：正在失败页的话自动重试并明示——换档是后台
+  // 静默发生的，失败页不会自己恢复，用户只会觉得「还是不行/好久才变」
+  // （2026-11-02 故障窗口换档实录）。正在播则不打扰：换档只影响下一次
+  // 取流，画面与缓存流都不动。播放中换档且随后断供的，走既有断供重试。
+  useEvent(
+    EVENTS.deviceRegistered,
+    useCallback(() => {
+      if (!error) return;
+      toast.info(t('player.deviceSwappedRetry'));
+      retryOnline();
+    }, [error, retryOnline]),
+  );
+
+  // 取流失败自动重试：失败页必须是「活」的——换档与服务端发货抖动都会
+  // 让某几拍取不到流，按退避节奏自动重取并显示进度，耗尽才退回手动重试。
+  // 换集清零；手动重试不重置计数（自动预算有限，防止无限转）。等待期间
+  // 用户手动重试/换集的话，定时器凭 key+attempt 读时校验作废。
+  const [autoRetry, setAutoRetry] = useState<{ attempt: number } | null>(null);
+  const autoRetryRef = useRef({ key: '', attempt: 0 });
+  useEffect(() => {
+    if (autoRetryRef.current.key !== episodeKey) {
+      autoRetryRef.current = { key: episodeKey, attempt: 0 };
+    }
+    if (!error) {
+      queueMicrotask(() => setAutoRetry(null));
+      return;
+    }
+    const attempt = autoRetryRef.current.attempt + 1;
+    autoRetryRef.current.attempt = attempt;
+    const show = { attempt };
+    queueMicrotask(() => setAutoRetry(show));
+    const delay =
+      attempt <= AUTO_RETRY_FAST_ATTEMPTS
+        ? AUTO_RETRY_FAST_DELAYS_MS[attempt - 1]
+        : AUTO_RETRY_SETTLED_DELAY_MS;
+    const timer = setTimeout(() => {
+      if (autoRetryRef.current.key !== episodeKey || autoRetryRef.current.attempt !== attempt) {
+        return;
+      }
+      retryOnline();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [error, episodeKey, retryOnline]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent(
@@ -244,6 +298,7 @@ export function usePlaybackSource(params: {
     setSrc,
     error,
     setError,
+    autoRetry,
     retryTick,
     srcKey,
     setSrcKey,
