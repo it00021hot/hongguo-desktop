@@ -179,6 +179,7 @@ pub fn sign_request_with(
                 &url,
                 body.as_deref(),
                 khronos,
+                device.get("cdid"),
                 device.get("device_id"),
                 device.get("version_name"),
             ),

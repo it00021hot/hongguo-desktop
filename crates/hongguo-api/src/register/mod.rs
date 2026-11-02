@@ -46,7 +46,7 @@ use serde_json::{Value, json};
 use super::client::{ApiEnv, build_client};
 use hongguo_common::{AppError, AppResult};
 
-pub const REGISTER_ORIGIN: &str = "https://log5-applog-lf.fqnovel.com";
+pub const REGISTER_ORIGIN: &str = "https://log5-applog.fqnovel.com";
 pub const REGISTER_PATH: &str = "/service/2/device_register/";
 
 /// 注册请求超时（秒）：applog 发号正常 ~300ms，8 秒容忍慢网
@@ -266,13 +266,13 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     })
 }
 
-/// 注册 query（applog 裸形态固定 4 参；指纹身份全部在加密 body 里，
-/// 服务端发号只认 body 解出来的指纹——富 query 是签名形态的历史包袱）。
+/// 注册 query（2026-11-02 官方全新设备实流：固定 3 参——此前多发的
+/// `cronet_version`/`ttnet_version` 两参是竞品形态，官方只带
+/// `okhttp_version`；指纹身份全部在加密 body 里）。
 fn register_query() -> Vec<(String, String)> {
     [
         ("tt_data", "a"),
-        ("cronet_version", "8d40f833_2026-03-03"),
-        ("ttnet_version", "4.2.243.31-douyin"),
+        ("okhttp_version", "4.2.243.31-douyin"),
         ("use_store_region_cookie", "1"),
     ]
     .into_iter()
@@ -322,85 +322,125 @@ fn fresh_identity() -> FreshIdentity {
     }
 }
 
-/// 首次安装时间戳相对当前时间的回拨量（毫秒）：hgplayer `GenerateProfileWith`
-/// 为 `randInt(100000,500000)`（100~500 秒），取中值 300 秒同分布。
-const FIRST_INSTALL_BACK_MS: u64 = 300_000;
+/// 首次安装时间的回拨天数样本：2026-11-02 官方全新设备实流注册体
+/// `apk_first_install_time` 距注册 ≈18.8 天（pm clear 不清包管理器的
+/// firstInstallTime，真实安装都是过去时）。按 cdid 确定性取 1~30 天。
+const FIRST_INSTALL_BACK_MAX_DAYS: u64 = 30;
 
-/// 构造 AppLog 注册 JSON 明文（注册口径活形态：基底复刻自 hgplayer
-/// `GenerateProfileWith`/`Header` 反编译，SDK 代际四件 `sdk_version
-/// 3.7.3-rc.116-douyin` / `sdk_target_version 29` / `git_hash fe95b95` /
-/// `sdk_flavor china` 与**无 `scene` 键**为 2026-11-01 竞品实流注册
-/// 密文体逐字段解密对齐（此前 4.3.2-rc.44/cnInner/30/27660d0/scene:2
-/// 的拼装代际错配，设备会被服务端标记、取流不发货）；版本身份引用
-/// `hongguo_signer::REGISTER_VERSION_*`）：`openudid` 由 cdid 派生
-/// （`md5("{cdid}_{N}").hex()[:16]`，N∈[1e5,1e6)），`client_ipv4` 是
-/// `116.130.x.x` 段随机伪值（服务端不校验真实出口），
-/// `apk_first_install_time` 回拨 100~500 秒。
+/// 官方 App 的身份字段（2026-11-02 全新设备实流注册密文体解密逐字段
+/// 对齐；`sig_hash` 经两份官方 APK（73932/74232）签名证书 MD5 复核一致
+/// = `md5(cert_der)`）。此前本仓建模的是竞品形态（红果短剧/aea615ab
+/// 证书/`_8662_64` 品牌渠道/douyin 代际），与服务端可见的真机指纹不符
+/// ——漫剧（ct=1004）按设备维度的放行差异疑似源于此。
+const OFFICIAL_DISPLAY_NAME: &str = "红果免费短剧";
+const OFFICIAL_SIG_HASH: &str = "56a962410c494bbaf0b58dba20cae56f";
+const OFFICIAL_GIT_HASH: &str = "3a88f4e";
+const OFFICIAL_SDK_VERSION: &str = "3.7.0-rc.34-fanqie-xiaoshuo";
+const OFFICIAL_RELEASE_BUILD: &str = "b5e187f";
+
+/// 构造 AppLog 注册 JSON 明文（2026-11-02 起官方全新设备实流密文体逐
+/// 字段对齐；SDK 代际 `sdk_flavor china` / `sdk_target_version 29` /
+/// 无 `scene` 键与竞品样本一致，保留）。设备耦合字段（机型/分辨率/
+/// ROM/OS）仍取池指纹（官方发真机实值，我们发池声明值，语义相同）；
+/// App 身份字段（display_name/sig_hash/代际/渠道）全部钉官方实值：
+/// 渠道是**构建渠道**固定值不随设备走；`ipv6_list` 与首次安装时间按
+/// cdid 确定性生成（官方样本 3 条 client_anpi、安装距注册 ≈18.8 天）。
 fn register_json_str(
     fp: &hongguo_signer::device::RegisterFingerprint,
     id: &FreshIdentity,
     now_ms: u64,
 ) -> String {
+    let seed = hongguo_signer::md5_hex_upper(id.cdid.as_bytes()).into_bytes();
+    let seed_u64 = |a: u64, b: u64| -> u64 {
+        u64::from_be_bytes([
+            seed[(a % 16) as usize],
+            seed[(b % 16) as usize],
+            seed[((a + 7) % 16) as usize],
+            seed[((b + 5) % 16) as usize],
+            seed[((a + 3) % 16) as usize],
+            seed[((b + 11) % 16) as usize],
+            seed[((a + 1) % 16) as usize],
+            seed[((b + 9) % 16) as usize],
+        ])
+    };
+    // 首次安装：1~30 天前，确定性
+    let back_ms = (seed_u64(0, 1) % (FIRST_INSTALL_BACK_MAX_DAYS * 24 * 3600) + 24 * 3600) * 1000;
+    // link-local + ULA 各一，接口 ID 按 cdid 派生（官方样本形态：3 条
+    // client_anpi，FE80:: 一条 + FD17:625C:F037:2:: 两条）
+    let hex4 = |a: u64, b: u64| format!("{:04X}", (seed_u64(a, b) & 0xffff) as u16);
+    let ipv6 = json!([
+        {"type": "client_anpi", "value": format!("FE80::{}:{}:{}:{}", hex4(2, 3), hex4(4, 5), hex4(6, 7), hex4(8, 9))},
+        {"type": "client_anpi", "value": format!("FD17:625C:F037:2:{}:{}:{}:{}", hex4(10, 11), hex4(12, 13), hex4(14, 15), hex4(0, 5))},
+    ]);
+
     let mut h = serde_json::Map::new();
     h.insert("access".into(), json!("wifi"));
     h.insert("aid".into(), json!(8662));
     h.insert(
         "apk_first_install_time".into(),
-        json!(now_ms - FIRST_INSTALL_BACK_MS),
+        json!(now_ms.saturating_sub(back_ms)),
     );
     h.insert(
         "app_version".into(),
         json!(hongguo_signer::REGISTER_VERSION_NAME),
     );
-    h.insert("app_version_minor".into(), json!(""));
+    h.insert(
+        "app_version_minor".into(),
+        json!(hongguo_signer::REGISTER_VERSION_NAME),
+    );
+    h.insert("carrier".into(), json!("CHINA MOBILE"));
     h.insert("cdid".into(), json!(id.cdid));
-    h.insert("channel".into(), json!(fp.channel()));
+    h.insert(
+        "channel".into(),
+        json!(hongguo_signer::device::BUILD_CHANNEL),
+    );
     h.insert("clientudid".into(), json!(id.clientudid));
     h.insert("cpu_abi".into(), json!("arm64-v8a"));
     h.insert(
         "custom".into(),
         json!({
-            "client_ipv4": format!("116.130.{}.{}", rand::random::<u8>() as u32 % 231 + 10, rand::random::<u8>() as u32 % 231 + 10),
-            "filter_warn": 0,
-            "is_android_fold": 0,
-            "is_android_pad": 0,
-            "web_ua": fp.web_ua(),
+            "account_region_src": "fallback",
+            "host_bit": 64,
+            "account_region": "cn",
+            "dragon_device_type": "phone",
         }),
     );
     h.insert("density_dpi".into(), json!(fp.dpi));
     h.insert("device_brand".into(), json!(fp.brand));
-    h.insert("device_category".into(), json!("phone"));
     h.insert("device_manufacturer".into(), json!(fp.manufacturer));
-    h.insert("device_model".into(), json!(fp.display));
+    h.insert("device_model".into(), json!(fp.model));
     h.insert("device_platform".into(), json!("android"));
     h.insert("display_density".into(), json!(fp.display_density()));
-    h.insert("display_name".into(), json!("红果短剧"));
-    h.insert("git_hash".into(), json!("fe95b95"));
+    h.insert("display_name".into(), json!(OFFICIAL_DISPLAY_NAME));
+    h.insert("git_hash".into(), json!(OFFICIAL_GIT_HASH));
     h.insert("guest_mode".into(), json!(0));
-    h.insert("ipv6_list".into(), json!([]));
+    h.insert("ipv6_list".into(), ipv6);
     h.insert("is_system_app".into(), json!(0));
     h.insert("language".into(), json!("zh"));
     h.insert(
         "manifest_version_code".into(),
         json!(hongguo_signer::REGISTER_VERSION_CODE),
     );
+    h.insert("mcc_mnc".into(), json!("46000"));
     h.insert("not_request_sender".into(), json!(0));
-    h.insert("oaid_may_support".into(), json!(true));
+    h.insert("oaid_may_support".into(), json!(false));
     h.insert("openudid".into(), json!(id.openudid));
     h.insert("os".into(), json!("Android"));
     h.insert("os_api".into(), json!(fp.api.parse::<u32>().unwrap_or(34)));
     h.insert("os_version".into(), json!(fp.os));
     h.insert("package".into(), json!("com.phoenix.read"));
+    h.insert("pre_installed_channel".into(), json!(""));
     h.insert("region".into(), json!("CN"));
-    h.insert("release_build".into(), json!(fp.release_build()));
+    h.insert("release_build".into(), json!(OFFICIAL_RELEASE_BUILD));
     h.insert("req_id".into(), json!(id.req_id));
     h.insert("resolution".into(), json!(fp.resolution_hxw()));
     h.insert("rom".into(), json!(fp.rom));
     h.insert("rom_version".into(), json!(fp.rom_version));
     h.insert("sdk_flavor".into(), json!("china"));
     h.insert("sdk_target_version".into(), json!(29));
-    h.insert("sdk_version".into(), json!("3.7.3-rc.116-douyin"));
-    h.insert("sig_hash".into(), json!("aea615ab910015038f73c47e45d21466"));
+    h.insert("sdk_version".into(), json!(OFFICIAL_SDK_VERSION));
+    h.insert("sig_hash".into(), json!(OFFICIAL_SIG_HASH));
+    h.insert("sim_region".into(), json!("cn"));
     h.insert("sim_serial_number".into(), json!([]));
     h.insert("timezone".into(), json!(8));
     h.insert("tz_name".into(), json!("Asia/Shanghai"));
@@ -452,9 +492,11 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         );
     }
 
-    // applog 裸形态直发：零 cookie（新指纹等服务端发号）、零签名（官方
-    // 注册由 applog SDK 发出）；响应 Set-Cookie 下发本设备自己的 ttreq 票
-    // （按新 install_id 发放），随档案长期携带
+    // applog 裸形态直发（2026-11-02 官方实流对齐）：零 cookie、零签名，
+    // 头族只保留官方实发的 9 个——此前多发的 accept/lc/passport-sdk/
+    // sdk-version/x-ss-dp 五个头是竞品形态（官方注册头族极简）；响应
+    // Set-Cookie 下发本设备自己的 ttreq 票（按新 install_id 发放），随
+    // 档案长期携带
     let query = register_query()
         .iter()
         .map(|(k, v)| format!("{k}={v}"))
@@ -464,13 +506,8 @@ pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
         .post(format!("{REGISTER_ORIGIN}{REGISTER_PATH}?{query}"))
         .timeout(std::time::Duration::from_secs(REGISTER_TIMEOUT_SECS))
         .header("User-Agent", fp.register_ua())
-        .header("accept", "application/json")
         .header("Content-Type", "application/octet-stream;tt-data=a")
-        .header("lc", "101")
         .header("log-encode-type", "gzip")
-        .header("passport-sdk-version", "5051452")
-        .header("sdk-version", "2")
-        .header("x-ss-dp", "8662")
         .header("x-ss-req-ticket", now_ms.to_string())
         .header("x-vc-bdturing-sdk-version", "4.0.3.cn")
         .header("x-neptune", "-8|50:51:59:30:40:47:49:39")
@@ -584,10 +621,10 @@ mod tests {
         assert!(err.to_string().contains("110"));
     }
 
-    /// 注册身份钉注册口径：query 固定 4 参不承载指纹/版本（applog 裸
-    /// 形态——指纹身份只在加密 body 里），body JSON 的版本身份钉注册
-    /// 口径、机型耦合字段与指纹预设同源、SDK 代际逐字段锁定（2026-11-01
-    /// 竞品实流注册密文体解密对齐——代际拼错设备会被静默标记、取流不发货）。
+    /// 注册身份钉注册口径：query 固定 3 参不承载指纹/版本（2026-11-02
+    /// 官方实流——官方只带 okhttp_version，无 cronet/ttnet 两参），body
+    /// JSON 的版本身份钉注册口径、机型耦合字段与指纹预设同源、SDK 代际
+    /// 逐字段锁定。
     #[test]
     fn register_identity_pins_register_regime() {
         assert_eq!(
@@ -595,10 +632,9 @@ mod tests {
             vec![
                 ("tt_data".to_string(), "a".to_string()),
                 (
-                    "cronet_version".to_string(),
-                    "8d40f833_2026-03-03".to_string()
+                    "okhttp_version".to_string(),
+                    "4.2.243.31-douyin".to_string()
                 ),
-                ("ttnet_version".to_string(), "4.2.243.31-douyin".to_string()),
                 ("use_store_region_cookie".to_string(), "1".to_string()),
             ]
         );
@@ -627,19 +663,31 @@ mod tests {
         );
         assert_eq!(h["app_version"], hongguo_signer::REGISTER_VERSION_NAME);
 
-        // 机型耦合字段与指纹预设同源
+        // 机型耦合字段与指纹预设同源；App 身份字段钉官方实值
+        // （2026-11-02 官方全新设备实流密文体解密 + 官方 APK 证书 MD5 复核）
         let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
+        assert_eq!(h["channel"], hongguo_signer::device::BUILD_CHANNEL);
         assert_eq!(h["channel"], fp.channel());
         assert_eq!(h["device_brand"], fp.brand);
-        assert_eq!(h["device_model"], fp.display);
+        assert_eq!(h["device_model"], fp.model);
         assert_eq!(h["device_manufacturer"], fp.manufacturer);
+        assert_eq!(h["display_name"], "红果免费短剧");
+        assert_eq!(h["sig_hash"], "56a962410c494bbaf0b58dba20cae56f");
+        assert_eq!(h["carrier"], "CHINA MOBILE");
+        assert_eq!(h["mcc_mnc"], "46000");
+        assert_eq!(h["sim_region"], "cn");
+        assert_eq!(
+            h["app_version_minor"],
+            hongguo_signer::REGISTER_VERSION_NAME
+        );
+        assert_eq!(h["custom"]["account_region"], "cn");
 
-        // bdinstall SDK 代际逐字段锁定（2026-11-01 竞品实流注册密文体
-        // 解密对齐——代际拼错设备会被静默标记、取流不发货）
-        assert_eq!(h["git_hash"], "fe95b95");
+        // bdinstall SDK 代际逐字段锁定（flavor/git_hash 为 2026-11-02
+        // 官方实流值；china/29/无 scene 键与竞品样本一致，保留）
+        assert_eq!(h["git_hash"], "3a88f4e");
         assert_eq!(h["sdk_flavor"], "china");
         assert_eq!(h["sdk_target_version"], 29);
-        assert_eq!(h["sdk_version"], "3.7.3-rc.116-douyin");
+        assert_eq!(h["sdk_version"], "3.7.0-rc.34-fanqie-xiaoshuo");
         assert!(h.get("scene").is_none(), "实流注册 JSON 无 scene 键");
     }
 

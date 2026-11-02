@@ -3,6 +3,7 @@
 //! 以 `#[path]` 挂到 `medusa.rs` 下。
 
 use super::*;
+use crate::fingerprint_for_cdid;
 
 #[test]
 fn medusa_output_is_base64_and_non_trivial() {
@@ -10,6 +11,7 @@ fn medusa_output_is_base64_and_non_trivial() {
         "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_detail/v1/?aid=8662",
         Some(b"{\"series_id\":123}"),
         1_700_000_000,
+        "cdid-uuid",
         "1905892595378490",
         "7.1.3.32",
     );
@@ -86,16 +88,90 @@ fn xmxor_matches_js_golden() {
 
 #[test]
 fn assemble_medusa_matches_js_golden() {
-    let got = assemble_medusa(
+    // 黄金向量走 assemble_with_proto + JS 移植原始采样 proto（含当年
+    // 的 Redmi 机型组），锚住「管线算法未漂移」；生产 device_proto 已
+    // 按池指纹/per-device 派生（2026-11-02 去硬编码），输入变了所以
+    // 不能再直接拿 assemble_medusa 对这个向量。
+    let got = assemble_with_proto(
         GOLDEN_URL,
         Some(GOLDEN_BODY),
         GOLDEN_KHRONOS,
         "1905892595378490",
         "7.1.3.32",
+        extracted_proto_fixed("1905892595378490"),
         golden_entropy(),
     );
     assert!(
         got.starts_with("A/FTZfcZDJ/XJo9e1tubFVc+Mn3NSAABdRXCpV+OAcMGGGZAjidbZnk"),
         "x-medusa 与现版不一致，实际：{got}"
     );
+}
+
+#[test]
+fn device_proto_matches_fingerprint_and_varies_per_device() {
+    // 机型组与池指纹成套：注册声称什么品牌型号，medusa 里就是什么
+    let fp = fingerprint_for_cdid("cdid-uuid");
+    let (a, b) = (
+        device_proto("cdid-uuid", "111"),
+        device_proto("cdid-uuid", "222"),
+    );
+    let fa = fields_debug(&a);
+    let fb = fields_debug(&b);
+    assert!(
+        fa.contains(&fp.brand) && fa.contains(&fp.model),
+        "机型组应取池指纹（brand={} model={}）: {fa}",
+        fp.brand,
+        fp.model
+    );
+    assert!(fa.contains(&fp.manufacturer));
+    assert_ne!(
+        fa, fb,
+        "不同 device_id 的 proto 应不同（传感器抖动/字段 5）"
+    );
+    assert_ne!(a, b);
+}
+
+/// 把 proto 字段拉成可读串（测试辅助）。
+fn fields_debug(b: &[u8]) -> String {
+    fn varint(b: &[u8], i: &mut usize) -> u64 {
+        let mut v = 0u64;
+        let mut s = 0u32;
+        loop {
+            let x = *b.get(*i).unwrap_or(&0);
+            *i += 1;
+            v |= u64::from(x & 0x7f) << s;
+            if x & 0x80 == 0 {
+                return v;
+            }
+            s += 7;
+        }
+    }
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        let tag = varint(b, &mut i);
+        let (f, wt) = (tag >> 3, tag & 7);
+        match wt {
+            0 => {
+                let v = varint(b, &mut i);
+                out.push_str(&format!("{f}:{v} "));
+            }
+            2 => {
+                let len = varint(b, &mut i) as usize;
+                let end = (i + len).min(b.len());
+                out.push_str(&format!(
+                    "{f}:bytes[{}]={} ",
+                    len,
+                    String::from_utf8_lossy(&b[i..end])
+                ));
+                i = end;
+            }
+            5 => {
+                out.push_str(&format!("{f}:f32 "));
+                i += 4;
+            }
+            _ => break,
+        }
+    }
+    out
 }

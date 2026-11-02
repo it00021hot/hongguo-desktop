@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::md5_hex_upper;
 use crate::protobuf::{FieldType, FieldValue, proto};
 
 /// 应用 id 与渠道号，Medusa 密文里硬编码。
@@ -21,6 +22,10 @@ pub const CHANNEL_ID: &str = "1588093228";
 pub const APP_VERSION_CODE: u64 = 74232;
 pub const APP_VERSION_CODE_STR: &str = "74232";
 pub const APP_VERSION_NAME: &str = "7.4.2.32";
+
+/// 官方 App 的构建渠道（2026-11-02 官方全新设备实流：注册体 channel 与
+/// 取流 query channel 同为此值——渠道属于构建，不随设备品牌走）。
+pub const BUILD_CHANNEL: &str = "seo_laxin_pc_pinzhuan_android";
 
 /// 注册指纹钉定的版本身份（2026-11-01 竞品实流抓包逐字节对齐：
 /// 注册请求、注册产物档案、取流链全程 73932/7.3.9.32——注册 JSON 里
@@ -63,7 +68,7 @@ pub fn video_ua() -> String {
 /// **不在池内**——它本就是另一台 Redmi 真机的采集值，与小米 14 档案混搭
 /// 发货正常（错配被服务端容忍），且无其他机型的 proto 抓包，不盲猜。
 pub struct RegisterFingerprint {
-    /// device_brand 与渠道品牌段（渠道 = `{brand}_8662_64`）
+    /// device_brand（渠道已改为官方构建渠道，见 [`Self::channel`]）
     pub brand: &'static str,
     /// device_type：型号代码
     pub model: &'static str,
@@ -91,17 +96,21 @@ pub struct RegisterFingerprint {
 const REGISTER_BUILD_STAMP: &str = "1701234567";
 
 impl RegisterFingerprint {
-    /// 渠道号：品牌段 + aid + abi 位（`xiaomi_8662_64` 同构）
+    /// 渠道号：官方 App 的**构建渠道**（2026-11-02 全新设备实流：注册体与
+    /// 取流 query 同值）。此前的品牌渠道 `{brand}_8662_64` 是竞品形态。
     pub fn channel(&self) -> String {
-        format!("{}_8662_64", self.brand)
+        BUILD_CHANNEL.to_string()
     }
 
-    /// 注册口径 UA（Cronet 尾段 + 注册版本身份）
+    /// 注册口径 UA（tt-ok 尾段 + 注册版本身份 + 型号代码；2026-11-02
+    /// 官方注册实流：`…/73932 (Linux; U; Android 15; zh_CN_#Hans;
+    /// SM-G9900; Build/V417IR;tt-ok/3.12.13.20)`——此前 Cronet 尾段 +
+    /// 市场名的形态是竞品 UA）
     pub fn register_ua(&self) -> String {
         format!(
-            "com.phoenix.read/{REGISTER_VERSION_CODE_STR} (Linux; U; Android {}; zh_CN; {}; \
-             Build/{}; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
-            self.os, self.display, self.build
+            "com.phoenix.read/{REGISTER_VERSION_CODE_STR} (Linux; U; Android {}; zh_CN_#Hans; {}; \
+             Build/{};tt-ok/3.12.13.20)",
+            self.os, self.model, self.build
         )
     }
 
@@ -537,13 +546,113 @@ pub fn align_app_version(profile: &mut DeviceProfile) {
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
 ///
-/// 除了 device_id 之外全部为固定值——这些是采集自真机的传感器读数、
-/// 区域设置与机型标识，签名侧只做搬运，不做计算。
+/// 设备 proto（x-medusa env.12）：机型组（30~36）按 cdid 确定性恢复
+/// **池指纹**——与注册档案/取流 query 同一套品牌型号，不再全体共用
+/// 一台 Redmi 真机的采集值（官方风控可解出该 proto 与注册身份比对，
+/// 同套才是同源；2026-11-02 去硬编码）。传感器浮点（16~21）在已验证
+/// 发货的量级上按 device_id 确定性抖动 ±3%（真机读数本就因设备而异，
+/// 服务端无法复核具体硬件）；字段 5 的 26 位设备标识与 25~28 的
+/// 安装/启动时间戳同为 device_id 确定性派生。
+pub fn device_proto(cdid: &str, device_id: &str) -> Vec<u8> {
+    let fp = fingerprint_for_cdid(cdid);
+    let seed = md5_hex_upper(device_id.as_bytes()).into_bytes();
+    let jitter = |i: usize, base: f32| -> f32 {
+        let n = (f32::from(seed[i % 32]) - 128.0) / 128.0;
+        base * (1.0 + n * 0.03)
+    };
+    const ALNUM: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut id26 = String::with_capacity(26);
+    for i in 0..26 {
+        let k = (usize::from(seed[i % 32]) ^ (i * 31)) % ALNUM.len();
+        id26.push(ALNUM[k] as char);
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    // 安装时间：1~30 天前，确定性（与注册体 apk_first_install_time 同语义）
+    let days_back = (i64::from(seed[4] % 30) + 1) * 86_400_000;
+    let first = now_ms - days_back;
+
+    proto(&[
+        (1, FieldValue::SInt(1), FieldType::SInt),
+        (2, FieldValue::SInt(2), FieldType::SInt),
+        (3, FieldValue::Str(APP_ID.to_string()), FieldType::Str),
+        (4, FieldValue::Str(device_id.to_string()), FieldType::Str),
+        (5, FieldValue::Str(id26), FieldType::Str),
+        (6, FieldValue::Str("!noperm!".to_string()), FieldType::Str),
+        (7, FieldValue::SInt(-888_888), FieldType::SInt),
+        (8, FieldValue::SInt(-888_888), FieldType::SInt),
+        (9, FieldValue::SInt(3), FieldType::SInt),
+        (10, FieldValue::SInt(-888_888), FieldType::SInt),
+        (11, FieldValue::Str("!notset!".to_string()), FieldType::Str),
+        (
+            12,
+            FieldValue::Str("Asia/Shanghai,8".to_string()),
+            FieldType::Str,
+        ),
+        (13, FieldValue::Str("zh_CN".to_string()), FieldType::Str),
+        (14, FieldValue::SInt(4), FieldType::SInt),
+        (
+            16,
+            FieldValue::Float(jitter(0, 255.249_94)),
+            FieldType::Float,
+        ),
+        (
+            17,
+            FieldValue::Float(jitter(1, 35.585_99)),
+            FieldType::Float,
+        ),
+        (
+            18,
+            FieldValue::Float(jitter(2, 3.467_449_2)),
+            FieldType::Float,
+        ),
+        (
+            19,
+            FieldValue::Float(jitter(3, 3.467_449_2)),
+            FieldType::Float,
+        ),
+        (
+            20,
+            FieldValue::Float(jitter(4, 255.175_49)),
+            FieldType::Float,
+        ),
+        (
+            21,
+            FieldValue::Float(jitter(5, 42.175_44)),
+            FieldType::Float,
+        ),
+        (22, FieldValue::Str("16".to_string()), FieldType::Str),
+        (23, FieldValue::SInt(41), FieldType::SInt),
+        (24, FieldValue::SInt(36), FieldType::SInt),
+        (25, FieldValue::SInt(first), FieldType::SInt),
+        (26, FieldValue::SInt(first), FieldType::SInt),
+        (27, FieldValue::SInt(first), FieldType::SInt),
+        (28, FieldValue::SInt(first + 2), FieldType::SInt),
+        (29, FieldValue::SInt(-1), FieldType::SInt),
+        (30, FieldValue::Str(fp.model.to_string()), FieldType::Str),
+        (31, FieldValue::Str(fp.brand.to_string()), FieldType::Str),
+        (32, FieldValue::Str(fp.model.to_string()), FieldType::Str),
+        (33, FieldValue::Str(fp.model.to_string()), FieldType::Str),
+        (
+            34,
+            FieldValue::Str(fp.manufacturer.to_string()),
+            FieldType::Str,
+        ),
+        (35, FieldValue::Str(fp.brand.to_string()), FieldType::Str),
+        (36, FieldValue::Str(fp.brand.to_string()), FieldType::Str),
+        (38, FieldValue::SInt(31), FieldType::SInt),
+    ])
+}
+
+/// JS 移植时的原始采样（Redmi 真机读数 + Redmi 机型组，除 device_id 外
+/// 全部固定）：**不再用于生产**，只供 [`assemble_with_proto`] 的黄金
+/// 向量锚——输入与当年 JS 移植时逐字节一致，锚住算法未漂移。
 ///
 /// `version_name` 保留但不使用：现版 JS 的 `deviceProto(deviceId, versionName)`
-/// 同样收了它却没写进 body。去掉参数会让两边的调用形状对不上，
-/// 以后有人照 JS 补字段时容易漏掉这一步，所以留着。
-pub fn device_proto(device_id: &str, _version_name: &str) -> Vec<u8> {
+/// 同样收了它却没写进 body。
+pub fn extracted_proto_fixed(device_id: &str) -> Vec<u8> {
     proto(&[
         (1, FieldValue::SInt(1), FieldType::SInt),
         (2, FieldValue::SInt(2), FieldType::SInt),
@@ -672,8 +781,9 @@ mod tests {
         assert_eq!(reg.get("version_name"), REGISTER_VERSION_NAME);
         assert_eq!(reg.user_agent(), fp.register_ua());
         assert!(
-            reg.user_agent().contains("Cronet/TTNetVersion:"),
-            "注册口径 UA 尾段必须是 Cronet/TTNet 形态（实流取证）"
+            reg.user_agent().contains("tt-ok/3.12.13.20")
+                && reg.user_agent().contains("zh_CN_#Hans"),
+            "注册口径 UA 必须是 tt-ok 尾段 + zh_CN_#Hans（2026-11-02 官方注册实流）"
         );
         // 机型组同源：brand/model/channel 与指纹预设一一对应
         assert_eq!(reg.get("device_brand"), fp.brand);

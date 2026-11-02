@@ -11,6 +11,8 @@ use base64::Engine;
 
 use crate::aes_v3::AesV3;
 use crate::constants::{medusa_aes_iv, medusa_aes_key, medusa_sign_key};
+#[cfg(test)]
+use crate::device::extracted_proto_fixed;
 use crate::device::{APP_ID, CHANNEL_ID, device_proto};
 use crate::primitives::{le32, md5_raw, sm3, u32};
 use crate::protobuf::{FieldType, FieldValue, proto};
@@ -128,16 +130,26 @@ impl Entropy {
 /// - `url`：完整 URL（含 query），只取 `'?'` 之后的部分参与签名
 /// - `body`：请求体；GET 传 `None`
 /// - `khronos`：秒级时间戳
+/// - `cdid`：设备档案的 cdid（设备 proto 的机型字段按它确定性恢复池指纹）
 /// - `device_id`：设备档案的 device_id
 /// - `version_name`：设备档案的 version_name
 pub fn build_medusa(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
+    cdid: &str,
     device_id: &str,
     version_name: &str,
 ) -> String {
-    assemble_medusa(url, body, khronos, device_id, version_name, Entropy::draw())
+    assemble_medusa(
+        url,
+        body,
+        khronos,
+        cdid,
+        device_id,
+        version_name,
+        Entropy::draw(),
+    )
 }
 
 /// 用给定随机量装配 x-medusa。测试用固定 `entropy` 对齐 JS 黄金向量。
@@ -145,8 +157,31 @@ pub fn assemble_medusa(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
+    cdid: &str,
     device_id: &str,
     version_name: &str,
+    entropy: Entropy,
+) -> String {
+    assemble_with_proto(
+        url,
+        body,
+        khronos,
+        device_id,
+        version_name,
+        device_proto(cdid, device_id),
+        entropy,
+    )
+}
+
+/// 纯管线装配（设备 proto 由调用方给定）：JS 黄金向量锚专用——输入与
+/// 当年 JS 移植时逐字节一致，锚住「算法未漂移」。
+pub fn assemble_with_proto(
+    url: &str,
+    body: Option<&[u8]>,
+    khronos: u32,
+    device_id: &str,
+    version_name: &str,
+    device_proto_bytes: Vec<u8>,
     entropy: Entropy,
 ) -> String {
     let body_md5 = body.map(md5_raw).unwrap_or([0u8; 16]);
@@ -186,7 +221,7 @@ pub fn assemble_medusa(
         (7, FieldValue::SInt(entropy.env_pid), FieldType::SInt),
         (
             12,
-            FieldValue::Bytes(device_proto(device_id, version_name)),
+            FieldValue::Bytes(device_proto_bytes),
             FieldType::Message,
         ),
         (13, FieldValue::Bytes(nested13), FieldType::Message),

@@ -197,17 +197,19 @@ pub async fn api_call_reading_once_allow_empty(
 /// 按账号下发的 store_region，CN 区恒此值）。
 const STORE_REGION: &str = "cn-gd";
 
-/// 取流轻请求（2026-11-01 竞品实流抓包逐字段对齐，见
+/// 取流轻请求（2026-11-02 起签名必带；路径见
 /// [`crate::params::MODEL_LIGHT_PATH`]）：
 ///
-/// - **无签名五件套**——`multi_video_model/v1/` 走 reading 系轻形态，
-///   头 = `reading_headers()` + 客户端标识族（`accept`(protobuf) +
-///   `passport-sdk-version: 5051452` + `sdk-version: 2` +
-///   `x-vc-bdturing-sdk-version` + `x-xs-from-web: 0`，实流逐字段）+
-///   `x-tt-store-region(-src)` + `x-ss-req-ticket` + 档案 cookie；
-/// - query：档案字段**去 `openudid`**、补 `need_personal_recommend=1`，
-///   **字母序** + `_rticket`（无 `ts`）；
-/// - body：POST gzip JSON。
+/// - **签名五件套必带**——2026-11-02 端点收紧实测：无签名一律
+///   `200 + 0 字节` 静默丢弃（[`hongguo_signer::ticket`] 模块文档描述的
+///   同款症状；域名/路径/body 形态/注册传输形态均与发货无关，同窗对照
+///   带签后 lq 域 + 本路径立即恢复 24KB 流表）。签名由
+///   [`hongguo_signer::ticket::sign_request_with`] 产出，query 随签名
+///   生成：档案字段 + `need_personal_recommend=1` + `ts` + `_rticket`；
+/// - 头：签名头族（UA/accept/x-ss-req-ticket/x-khronos/x-ladon/x-argus/
+///   x-gorgon/x-helios/x-medusa/x-ss-stub…）+ `x-ss-dp + lc` +
+///   `x-tt-store-region(-src)` + `Content-Encoding: gzip` + 档案 cookie；
+/// - body：POST gzip JSON（`x-ss-stub` 对 gzip 后字节取 MD5，与官方一致）。
 ///
 /// 空响应原样返回空 `Vec`（「不发货」交调用方回落，不重试）。
 pub async fn api_call_model_light(
@@ -216,55 +218,53 @@ pub async fn api_call_model_light(
     payload: Vec<u8>,
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let mut pairs: Vec<(String, String)> = env
+    let mut biz_query: Vec<(String, String)> = env
         .device
         .iter()
         .filter(|(k, _)| *k != "openudid")
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    pairs.push(("need_personal_recommend".into(), "1".into()));
-    pairs.push(("_rticket".into(), ms.to_string()));
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    let query = hongguo_signer::ticket::encode_query(
-        &pairs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.clone()))
-            .collect::<Vec<_>>(),
-    );
+    biz_query.push(("need_personal_recommend".into(), "1".into()));
 
-    let mut headers = reading_headers();
-    headers.extend([
-        (
-            "accept".into(),
-            "application/json; charset=utf-8,application/x-protobuf".into(),
-        ),
-        ("passport-sdk-version".into(), "5051452".into()),
-        ("sdk-version".into(), "2".into()),
-        ("x-vc-bdturing-sdk-version".into(), "4.0.3.cn".into()),
-        ("x-xs-from-web".into(), "0".into()),
-        ("x-ss-req-ticket".into(), ms.to_string()),
-        ("x-tt-store-region".into(), STORE_REGION.into()),
-        ("x-tt-store-region-src".into(), "uid".into()),
-        ("Content-Encoding".into(), "gzip".into()),
-    ]);
+    let mut extra = vec![
+        ("x-ss-dp".to_string(), READING_DP.into()),
+        ("lc".to_string(), LC.into()),
+        // 匿名（未登录）取流的店区来源是设备（2026-11-02 全新官方实流）
+        ("x-tt-store-region".to_string(), STORE_REGION.into()),
+        ("x-tt-store-region-src".to_string(), "did".into()),
+        ("Content-Encoding".to_string(), "gzip".into()),
+    ];
     if let Some(c) = &env.cookie
         && !c.is_empty()
     {
-        headers.push(("Cookie".into(), c.clone()));
+        extra.push(("Cookie".to_string(), c.clone()));
+    }
+    // x-tt-token：登录态随请求带短形式（前 56 位，与 send_once 同款）——
+    // 缺了它服务端把登录用户按匿名配额处理（2026-11-03 实录：登录后
+    // 取流全 miss 的真因就是这里没带 token）
+    if let Some(full) = &env.x_tt_token
+        && !full.is_empty()
+    {
+        let short: String = full.chars().take(56).collect();
+        extra.push(("x-tt-token".into(), short));
     }
 
+    let signed = hongguo_signer::ticket::sign_request_with(
+        origin,
+        pathname,
+        Some(gzip_bytes(&payload)?),
+        &env.device,
+        &biz_query,
+        &extra,
+    );
+
     let client = build_client(&env.proxy)?;
-    let mut req = client
-        .post(format!("{origin}{pathname}?{query}"))
-        .body(gzip_bytes(&payload)?);
-    for (k, v) in &headers {
-        req = req.header(k, v);
+    let mut req = client.post(&signed.url);
+    for (k, v) in &signed.headers {
+        req = req.header(k.as_str(), v.as_str());
     }
     let resp = req
+        .body(signed.body.unwrap_or_default())
         .send()
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
@@ -378,16 +378,17 @@ pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
         .map_err(|e| AppError::Network(format!("gzip 压缩失败: {e}")))
 }
 
+/// x-ss-dp：红果 App 的 aid（与 [`hongguo_signer::APP_ID`] 同值）。
+const READING_DP: &str = "8662";
+/// lc：reading 系固定头（值 101，语义上游未公开）。
+const LC: &str = "101";
+
 /// reading 系接口的轻签名头（search / commentapi / 预约共用）。
 ///
 /// 这族接口不带 x-gorgon/x-argus/x-ladon，只要
 /// `x-ss-dp + x-reading-request + lc`（多带签名头也能过）。
 /// `x-reading-request` 形如 `{ticket_ms}-{random u32}`。
 pub fn reading_headers() -> Vec<(String, String)> {
-    /// x-ss-dp：红果 App 的 aid。
-    const READING_DP: &str = "8662";
-    /// lc：reading 系固定头（值 101，语义上游未公开）。
-    const LC: &str = "101";
     let ticket_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())

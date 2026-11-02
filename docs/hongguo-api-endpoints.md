@@ -95,46 +95,57 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**取流端点**（2026-11-01 竞品实流 mitm 抓包对齐，本仓同形态实测
-连续发货、真机恢复播放）：
+**取流端点**（2026-11-02 官方全新设备实流 mitm 抓包对齐 + 本仓带签
+实测连续发货）：
 
 ```
 POST /novel/player/multi_video_model/v1/       # 尾斜杠是端点身份的一部分
 ```
 
-- **无签名五件套**：reading 系轻请求，头 =
-  `x-ss-dp + lc + x-reading-request` + 客户端标识族（`accept`
-  (protobuf)、`passport-sdk-version: 5051452`、`sdk-version: 2`、
-  `x-vc-bdturing-sdk-version: 4.0.3.cn`、`x-xs-from-web: 0`）+
-  `x-tt-store-region(-src)` + `x-ss-req-ticket` + 档案 cookie——不扣
-  签名，签名五件套在不在场都与发货无关。
-- query：档案字段**去 `openudid`**、补 `need_personal_recommend=1`，
-  **字母序** + `_rticket`（无 `ts`）。
-- body：gzip JSON，`biz_param` 固定八字段（`device_level:4`、
-  `use_server_dns:false`，**无 `dr_scene`/`disable_video_relate_book`/
-  `use_server_dns_scene` 键**）+ `mixed_video_id_map`（key = 条目
-  content_type 原样串。2026-11-01 第三方交叉实证：服务端对错 key 有
-  容忍——hongguo-drama 全部 vid 恒用 `"1004"` 亦正常发货；但真值是
-  guo 实流的唯一忠实形态，本仓取注册表真值）。实现
-  `hongguo-api::params::model_light_payload` +
-  `hongguo-api::client::api_call_model_light`，origin 打 **lq 域**
-  （实流取证：三方全程 lq）。
+- ⚠️ **签名五件套必带（2026-11-02 端点收紧，本轮 0 发货的真因）**：
+  无签名一律 `200 + 0 字节` 静默丢弃（signer 模块文档描述的同款症状）。
+  当晚对照实证：域名/路径/body 形态/UA/注册传输形态（签名富形态 vs
+  applog 裸形态）**均与发货无关**——同一次注册，无签名四种形态全灭，
+  带签后 lq 域 + 本路径与 `reading.snssdk.com` + `preload/v1` 皆立即
+  发货（24KB 流表）。签名经
+  `hongguo_signer::ticket::sign_request_with` 产出（x-gorgon/x-argus/
+  x-ladon/x-khronos/x-helios/x-medusa + x-ss-stub 对 gzip 后 body 取
+  MD5），实现 `hongguo-api::client::api_call_model_light`。
+  「签名在不在场都与发货无关」系 2026-11-01 的旧口径，已作废。
+- 头：签名头族（UA/accept/x-ss-req-ticket/x-khronos/x-ladon/x-argus/
+  x-gorgon/x-helios/x-medusa）+ `x-ss-dp + lc` + `x-tt-store-region(-src)`
+  （匿名取店区来源为设备，src=did）+ `Content-Encoding: gzip` +
+  档案 cookie。
+- query：随签名生成——档案字段（去 `openudid`）+
+  `need_personal_recommend=1` + `ts` + `_rticket`（signer 抖动挑
+  x-argus branch=1 的 ticket）。
+- body：gzip JSON，`biz_param` 八字段 + `mixed_video_id_map`（key =
+  条目 content_type 原样串；服务端对错 key 有容忍）。官方 2026-11-02
+  实流带 `dr_scene:"preload"` 且 `device_level:3`，本仓 `device_level:4`
+  无 `dr_scene` 带签同窗实测亦可发货——body 形态非闸门，保持现形态。
+- 域名：TTNet 动态调度，会整体迁移——2026-11-01 发货域 lq，
+  2026-11-02 官方全新设备实流在 `reading.snssdk.com`
+  （`/novel/player/multi_video_model/preload/v1`），同窗 lq 带签亦可
+  发货。下次「全量 200+0」先怀疑域迁移，重抓包对齐 origin。
 - 响应 `data.{vid}.video_model`（JSON 字符串），批量一次回多集；
-  连续多次调用无按设备限频（同一设备 60ms 间隔三连发全发货）。
+  连续多次调用无按设备限频。
 - ⚠️ 旧端点 `multi_video_model/player/v1`（dr_scene=player）与单集
-  `video_model/v1/` 已**整体死亡**（200+0）——2026-11-01 实测与
-  身份/版本代际/签名方式无关，任何组合均不发货。服务端迁移取流
+  `video_model/v1/` 在明文边缘 200+0（2026-11-01 实测）；单集回落
+  走 `api5-normal-lf`（见 `client::LF_API_ORIGIN`）。服务端迁移取流
   形态时按本节重新抓包对齐。
-- ⚠️ **设备能否发货由注册形态决定**（2026-11-02 实测修正）：注册 JSON
-  的版本身份（73932/7.3.9.32）与 bdinstall SDK 代际
-  （`sdk_version 3.7.3-rc.116-douyin` / `sdk_target_version 29` /
-  `git_hash fe95b95` / `sdk_flavor china` / 无 `scene` 键）成套是底线
-  （代际错配会被静默标记、取流不发货）；在此基础上传输形态定生死——
-  签名富 query 形态（log.snssdk.com + 五件套 + 40 参 query）实测新注册
-  0/10 出票，同日切 applog 裸形态（无签名 + 4 参 query + 上一节头族）
-  11/11 全发货。运行期自愈：发货资格注册时**抽签**（同设备同 vid 连取
-  结果恒定，换台注册即翻盘），取流连续 2 次未命中即换新注册
-  （1 次/分钟限速，实现 `hongguo_service::device`）。
+- ⚠️ 注册形态底线不变：注册 JSON 版本身份（73932/7.3.9.32）与
+  bdinstall SDK 代际成套（详见设备注册节），App 身份字段
+  （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
+  **官方实值**（红果免费短剧/56a96241…证书/fanqie-xiaoshuo 代际，
+  此前建模的是竞品形态）。
+- ⚠️ **200+0 的两种成因都要分清**（2026-11-02 深夜定案）：①无签名
+  ——任何内容都拒；②**匿名观看配额耗尽**——官方 App 匿名播到
+  第 9 集同样 200+0 并弹登录引导（官方登录设备 x-tt-token 整晚
+  24/24 全发货）。可持续形态 = 登录（账号授权），换新注册只是
+  重置匿名配额的应急手段：登录态禁换；匿名态 4 次/180s 限频
+  （实现 `hongguo_service::device::note_stream_miss`），启动取流
+  探针已撤（探针 miss = 上场配额耗尽，据它换注册会让每次重启
+  白烧一台设备）。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```
