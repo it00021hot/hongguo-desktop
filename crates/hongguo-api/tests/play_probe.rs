@@ -109,7 +109,7 @@ async fn probe_official_preload() {
         let payload = hongguo_api::params::model_light_payload(&map);
         let body = serde_json::to_vec(&payload).unwrap();
         match hongguo_api::client::api_call_model_light(
-            hongguo_api::client::LF_API_ORIGIN,
+            hongguo_api::client::LQ_API_ORIGIN,
             hongguo_api::params::MODEL_LIGHT_PATH,
             body,
             &env,
@@ -118,18 +118,23 @@ async fn probe_official_preload() {
         {
             Ok(bytes) => {
                 let got: Vec<&String> = map.values().flatten().collect();
-                println!(
-                    "{name}: {} 字节，命中 vids {:?}",
-                    bytes.len(),
-                    got.iter()
-                        .map(|v| serde_json::from_slice::<serde_json::Value>(&bytes)
+                let hits: Vec<&str> = got
+                    .iter()
+                    .map(|v| {
+                        serde_json::from_slice::<serde_json::Value>(&bytes)
                             .ok()
-                            .and_then(|j| j
-                                .pointer(&format!("/data/{v}/video_model"))
-                                .is_some()
-                                .then_some(v.as_str()))
-                            .unwrap_or("?"))
-                        .collect::<Vec<_>>()
+                            .and_then(|j| {
+                                j.pointer(&format!("/data/{v}/video_model"))
+                                    .is_some()
+                                    .then_some(v.as_str())
+                            })
+                            .unwrap_or("?")
+                    })
+                    .collect();
+                println!(
+                    "{name}: {} 字节，body={}，命中 vids {hits:?}",
+                    bytes.len(),
+                    String::from_utf8_lossy(&bytes)
                 );
             }
             Err(e) => println!("{name}: ERR {e}"),
@@ -157,6 +162,59 @@ async fn probe_official_preload() {
             println!("DETAIL 批量: data keys = {keys:?}");
         }
         Err(e) => println!("DETAIL 批量 ERR {e}"),
+    }
+}
+
+/// 发货维度矩阵探针（临时取证）：一台新设备 × 5 个不同 vid × 2 轮取流，
+/// 回答「失败挂在哪一维」——同 vid 重试会不会翻盘（请求级抖动）、不同
+/// vid 有没有稳定差异（per-vid 门控）。
+#[tokio::test]
+#[ignore = "手工探针：打真实接口"]
+async fn probe_delivery_matrix() {
+    let env = hongguo_api::client::ApiEnv::anonymous(Default::default());
+    let reg = hongguo_api::register::register_device(&env)
+        .await
+        .expect("注册失败");
+    let mut device =
+        hongguo_signer::device::DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
+    device.set("device_id", &reg.device_id);
+    device.set("iid", &reg.install_id);
+    device.set_ttreq(Some(reg.ttreq.clone()));
+    let cookie = hongguo_signer::device::anonymous_cookie(&device);
+    let dev_env = hongguo_api::client::ApiEnv {
+        proxy: Default::default(),
+        device,
+        cookie: Some(cookie),
+        x_tt_token: None,
+    };
+    println!("[matrix] iid={}", reg.install_id);
+
+    let page = hongguo_api::recommend::fetch_recommend_feed("36", "", 0, &[], &dev_env)
+        .await
+        .expect("feed 失败");
+    let vids: Vec<(String, i64)> = page
+        .items
+        .iter()
+        .filter(|i| !i.vid.is_empty())
+        .take(5)
+        .map(|i| (i.vid.clone(), i.content_type))
+        .collect();
+    for round in 1..=2 {
+        for (vid, ct) in &vids {
+            hongguo_api::play_url::register_content_type(vid, *ct);
+            let r = match hongguo_api::play_url::fetch_play_url(
+                vid,
+                None,
+                hongguo_api::stream_pick::DecoderCapability::Full,
+                &dev_env,
+            )
+            .await
+            {
+                Ok(_) => "OK".to_string(),
+                Err(e) => format!("ERR({e})").chars().take(48).collect(),
+            };
+            println!("[matrix] round{round} ct={ct} vid={vid} -> {r}");
+        }
     }
 }
 

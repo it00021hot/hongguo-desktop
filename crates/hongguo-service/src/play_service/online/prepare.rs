@@ -89,6 +89,7 @@ pub async fn prepare(
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(state, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
+            crate::device::note_stream_ok();
             return Ok(hit);
         }
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
@@ -101,10 +102,16 @@ pub async fn prepare(
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位
     // 才是缓存的键。贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     // 无 HEVC 扩展的机器选流翻转到 h264（官方 CodecStrategy 语义，见 stream_pick）。
-    let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
-        hongguo_media_platform::capability::playback::hevc_playable(),
-    );
-    let play = fetch_with_registry(state, vid, progress_key, definition, cap).await?;
+    let cap = crate::device::stream_cap();
+    let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
+        // 设备/服务端拒发的记账点（真实播放路径）：取流健康守护据此判定
+        // 「现役设备是否被服务端标记」（对照探测，见 device::note_stream_miss）
+        Err(e @ AppError::StreamMiss(_)) => {
+            crate::device::note_stream_miss(state, vid);
+            return Err(e);
+        }
+        r => r?,
+    };
     let want = play.definition;
     // 只记「不指定档位」那次解析到的结果。手动选过 720 之后再点「自动」，
     // 要的仍然是平台给的最高档，而不是上一次手动选的那档。
@@ -145,6 +152,7 @@ pub async fn prepare(
         }
     });
 
+    crate::device::note_stream_ok();
     Ok(result)
 }
 
@@ -179,13 +187,20 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     }
     // 预取与真实播放同一条选流模式：无 HEVC 机器预取的也必须是 h264，
     // 否则起播时探测结论翻转会命中一条播不了的缓存流。
-    let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
-        hongguo_media_platform::capability::playback::hevc_playable(),
-    );
-    let play = match fetch_with_registry(state, vid, progress_key, None, cap).await {
+    let play = match fetch_with_registry(
+        state,
+        vid,
+        progress_key,
+        None,
+        crate::device::stream_cap(),
+    )
+    .await
+    {
         Ok(p) => p,
         Err(e) => {
-            log::info!("[Online] 预取 {vid} 取流表失败（忽略）: {e}");
+            // 失败被忽略 = 降级（用户播到时现场取流，1-2s 冷链），warn 级
+            // 留痕——「预取像失效」这类反馈只能靠这行日志定案
+            log::warn!("[Online] 预取 {vid} 取流表失败（忽略，播到时现场取）: {e}");
             return Ok(());
         }
     };
@@ -247,7 +262,7 @@ pub async fn ensure_stream_ready(
         && !c.is_fetching(vid, definition)
         && let Err(error) = prefetch_stream(state, vid, progress_key).await
     {
-        log::info!("[Online] 预注册 {vid}@{definition} 失败: {error}");
+        log::warn!("[Online] 预注册 {vid}@{definition} 失败: {error}");
     }
     let deadline = std::time::Instant::now() + READY_TIMEOUT;
     while std::time::Instant::now() < deadline {
@@ -275,6 +290,9 @@ pub fn schedule_next_episode_prefetch(state: AppState, series_id: &str, next_vid
     let Some(vid) =
         crate::play_service::local::episode_vid(&state.store, series_id, next_vid_index)
     else {
+        // 原本静默 return：档案里没有这一集是「预取链整体没生效」的候选
+        // 现场之一，一行不留就永远查不出（越界集号属正常兜底，info 级）
+        log::info!("[Online] 第 {next_vid_index} 集不在档案里，跳过预取（播到时会现场解析）");
         return;
     };
     let progress_key = format!("{series_id}:{next_vid_index}");
@@ -286,7 +304,7 @@ pub fn schedule_next_episode_prefetch(state: AppState, series_id: &str, next_vid
             .await
             .expect("预取信号量常驻到进程结束");
         if let Err(e) = prefetch_stream(&state, &vid, &progress_key).await {
-            log::info!("[Online] 第 {next_vid_index} 集预取失败（忽略）: {e}");
+            log::warn!("[Online] 第 {next_vid_index} 集预取失败（忽略，播到时现场取）: {e}");
         }
     });
 }

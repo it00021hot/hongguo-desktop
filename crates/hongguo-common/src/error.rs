@@ -49,10 +49,13 @@ pub enum AppError {
     #[error("{0}")]
     Rejected(String),
 
-    /// 取流未命中：服务端对这个设备/请求没有发货（200+0 或响应里没有
-    /// 这一集的流表）。transparent 同 [`AppError::Rejected`] 口径；
-    /// 与 [`AppError::EmptyResponse`] 分开：这是取流链路的专属信号，
-    /// 调用方据此如实报「取流失败」，不做任何身份层面的兜底。
+    /// 取流未命中：服务端对这个设备/请求没有发货（200+0、响应里没有
+    /// 这一集的流表、或 base 族错误信封的显式拒绝——如 110001「未知
+    /// 异常」，见 play_url::check_model_code）。transparent 同
+    /// [`AppError::Rejected`] 口径；与 [`AppError::EmptyResponse`] 分开：
+    /// 这是取流链路的专属信号，调用方据此如实报「取流失败」，不做任何
+    /// 身份层面的兜底；service 的取流健康守护（device::note_stream_miss）
+    /// 据此对照探测自愈。
     #[error("{0}")]
     StreamMiss(String),
 
