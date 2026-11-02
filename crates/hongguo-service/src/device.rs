@@ -238,6 +238,13 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
             swap_profile(state, &mut meta, profile, "registered");
             // 换档前发出去的匿名请求产物（顶栏塌缩表等）全部作废
             hongguo_api::recommend::clear_feed_tabs_cache();
+            // 冷启动行为预热：新设备做完官方客户端的冷启动行为序列才有
+            // 深集授权（只注册不预热 = 采集器特征，服务端只发第 1 集）
+            let env = state.api_env();
+            crate::runtime::spawn(async move {
+                let ok = hongguo_api::warmup::run(&env).await;
+                log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
+            });
             state
                 .events()
                 .publish(ServiceEvent::DeviceRegistered(r.install_id.clone()));
@@ -322,21 +329,12 @@ pub async fn ensure_registered(state: &AppState) {
     }
     let env = state.api_env();
     match probe_alive(&env).await {
-        Some(true) => {
-            // 搜索通 ≠ 取流通：被标记/抽到输家签的设备读接口全通、唯取流
-            // 被拒（2026-11-02 实录），搜索探针之后追加持流探针；未命中
-            // 直接换新注册（发货资格注册时抽签，换台即翻盘）。
-            match probe_stream(state).await {
-                StreamProbe::Alive | StreamProbe::Unknown => {}
-                StreamProbe::Marked => {
-                    log::warn!(
-                        "[Device] 现役档案取流探针未命中（iid={}），换新注册",
-                        state.device().get("iid")
-                    );
-                    register_with_retry(state, "取流探针判死").await;
-                }
-            }
-        }
+        // 取流探针已撤（2026-11-02）：探针 miss 的主因是匿名配额耗尽
+        // （上一场播放烧完），不是设备死亡——据此换新注册会让**每次
+        // 重启都白烧一台设备**，且探针自身还要消耗取流调用预算。配额
+        // 耗尽的恢复统一交给播放路径的失败重试 + note_stream_miss
+        // （登录态不换、匿名 4 次/180s）。
+        Some(true) => {}
         Some(false) => {
             log::warn!(
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
@@ -346,6 +344,14 @@ pub async fn ensure_registered(state: &AppState) {
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
+    // 冷启动行为预热：每个进程一次（官方客户端冷启动自然完成这一序列，
+    // 服务端按行为状态发放深集授权——见 warmup 模块文档）
+    let warm_state = state.clone();
+    crate::runtime::spawn(async move {
+        let env = warm_state.api_env();
+        let ok = hongguo_api::warmup::run(&env).await;
+        log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
+    });
 }
 
 /// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
@@ -367,14 +373,15 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 // ---------------------------------------------------------------- 取流健康守护
 
 /// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
-/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；健康设备
-/// 不该连续两次取不到流，被服务端标记的设备则每集必挂——2 次（≈一次
-/// 手动重试）即值得换。
-const STREAM_MISS_THRESHOLD: u32 = 2;
+/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）。
+/// 2026-11-02 起miss 的主因是**匿名观看配额耗尽**（登录态已在上游
+/// 直接禁换）：换新注册只是重置配额的应急手段，同 IP 高频注册会触发
+/// IP 级风控，因此阈值放宽到 4 次 + 失败页自动重试先兜几轮。
+const STREAM_MISS_THRESHOLD: u32 = 4;
 
-/// 换新注册的最小间隔（毫秒）：发货资格是注册时抽签，输家签换一台注册
-/// 即翻盘，1 次/分钟足够（hongguo-drama 同款续期限速）。
-const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 60_000;
+/// 换新注册的最小间隔（毫秒）：3 分钟一次，压住同 IP 的注册频率
+/// （匿名配额 ≈ 分钟级，3 分钟一次意味着连续观看时大约每 2 集换一台）。
+const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 180_000;
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
 static STREAM_RENEW_AT_MS: AtomicU64 = AtomicU64::new(0);
@@ -392,15 +399,24 @@ pub fn note_stream_ok() {
 }
 
 /// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上——发货资格
-/// 是注册时抽签发放的（同设备同 vid 连取结果恒定，2026-11-02 矩阵探针
-/// 实测定型），输家签换台注册即翻盘。对照裁决已删：它把 1 分钟能完成的
-/// 翻盘拖到 10 分钟以上，故障窗口内用户全程无流可播，而「对照也取不到
-/// = 服务端整体拒发」的场景里换新注册同样无害（多打一次注册端点而已）。
+/// 是**匿名观看配额**（2026-11-02 定案）：服务端对匿名设备按设备发放
+/// 限量授权（几分钟/几集），耗尽即 `200+0`——官方 App 自身匿名播到
+/// 第 9 集同样被拒并弹登录引导；登录设备（x-tt-token）整晚 24/24 全
+/// 发货。换新注册 = 重置匿名配额，能救急但同 IP 高频注册迟早触发
+/// IP 级风控，因此：
+/// - **登录态一律不换**：授权走账号，与设备身份无关，换了没意义；
+/// - 匿名态阈值 4 次 + 最小间隔 180s（原 2 次/60s），把注册频率压到
+///   IP 可接受的水平；失败页的 30s 自动重试负责等待配额窗口重开。
 ///
-/// 为什么必须有这道守护：2026-11-02 故障窗口实录——窗口期注册的设备被
-/// 服务端标记后**终生**取不到流，用户既播不了也无路可走。限频 + 在途闸
-/// 防止把注册端点打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
+/// 为什么必须有这道守护：签名缺失的全灭窗口实录（2026-11-02）——无
+/// 签名连第 1 集都不发，换新注册配新签名才能恢复。限频 + 在途闸防止
+/// 把注册端点打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
 pub fn note_stream_miss(state: &AppState, vid: &str) {
+    // 登录态：授权走账号，取流被拒不是设备身份问题，换新注册无意义
+    if state.settings().account.is_some() {
+        log::warn!("[Device] 取流未命中（vid={vid}，登录态不换设备，失败页自动重试）");
+        return;
+    }
     let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let now = now_ms().max(0) as u64;
     if !stream_renew_due(fails, STREAM_RENEW_AT_MS.load(Ordering::Relaxed), now) {
@@ -414,7 +430,7 @@ pub fn note_stream_miss(state: &AppState, vid: &str) {
     let state = state.clone();
     let vid = vid.to_string();
     crate::runtime::spawn(async move {
-        log::warn!("[Device] 取流连续 {fails} 次未命中，换新注册设备（vid={vid}）");
+        log::warn!("[Device] 取流连续 {fails} 次未命中（匿名配额耗尽），换新注册设备（vid={vid}）");
         register_and_swap(&state, "取流被拒自动换新").await;
         STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
     });
@@ -426,38 +442,6 @@ pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
     hongguo_api::stream_pick::DecoderCapability::from_hevc(
         hongguo_media_platform::capability::playback::hevc_playable(),
     )
-}
-
-/// 取流探针结论。Alive=现役能取流；Marked=现役被拒；Unknown=网络/服务端
-/// 问题分不清归属。
-enum StreamProbe {
-    Alive,
-    Marked,
-    Unknown,
-}
-
-/// 现役身份直接打轻请求取流（只取流表不打视频字节，廉价）。搜索探针
-/// 测不出「读通但取流被标记」的死法——2026-11-02 实录：被标记设备读接口
-/// 全通、唯取流 110001/未命中。
-async fn probe_stream(state: &AppState) -> StreamProbe {
-    let env = state.api_env();
-    let Ok(page) = hongguo_api::recommend::fetch_recommend_feed("36", "", 0, &[], &env).await
-    else {
-        return StreamProbe::Unknown;
-    };
-    let Some(vid) = page
-        .items
-        .iter()
-        .find(|i| !i.vid.is_empty())
-        .map(|i| i.vid.clone())
-    else {
-        return StreamProbe::Unknown;
-    };
-    match hongguo_api::play_url::fetch_play_url(&vid, None, stream_cap(), &env).await {
-        Ok(_) => StreamProbe::Alive,
-        Err(hongguo_common::AppError::StreamMiss(_)) => StreamProbe::Marked,
-        Err(_) => StreamProbe::Unknown,
-    }
 }
 
 #[cfg(test)]
