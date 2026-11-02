@@ -38,6 +38,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void appApi.markWindowReady().catch(() => {});
   }, []);
+  // Android 返回到路由栈底：MainActivity 经前端桥（main.tsx）转来的退出
+  // 意图，弹同一份确认框（桌面是关窗拦下来的同一入口）
+  useEffect(() => {
+    const onExit = () => setExitOpen(true);
+    window.addEventListener('hongguo:android-exit', onExit);
+    return () => window.removeEventListener('hongguo:android-exit', onExit);
+  }, []);
   useEvent(
     EVENTS.closeRequested,
     useCallback(() => setExitOpen(true), []),

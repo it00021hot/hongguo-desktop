@@ -77,6 +77,24 @@ const router = createRouter({
 // 启动即应用主题，避免首屏闪烁
 applyTheme(useThemeStore.getState().theme);
 
+// Android 系统返回桥（MainActivity.onBackPressed 经 evaluateJavascript 调）：
+// web 路由栈能回退就回退；栈底转「退出确认」事件（AppShell 弹框，与桌面
+// 关窗同一份确认框——退出会掐断下载任务）。返回 true = 本次返回已被前端
+// 消费；桥缺失时 Kotlin 侧收到 false 走默认退出，保证永远有出路。
+declare global {
+  interface Window {
+    __hgAndroidBack?: () => boolean;
+  }
+}
+window.__hgAndroidBack = () => {
+  if (window.history.length > 1) {
+    router.history.back();
+    return true;
+  }
+  window.dispatchEvent(new CustomEvent('hongguo:android-exit'));
+  return true;
+};
+
 const container = document.getElementById('root');
 if (!container) throw new Error('找不到 #root 挂载点');
 
