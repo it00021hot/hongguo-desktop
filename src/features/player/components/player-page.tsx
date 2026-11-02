@@ -397,9 +397,9 @@ export function PlayerView({
     veiled,
   });
 
-  // ---- 舞台交互三套裁决（滚轮/点击/键盘）抽在 use-player-interactions：
-  //      沉浸流=换剧、选定剧/连播=切集的语义与 400ms 滚轮冷却都在那边
-  const { onStageWheel, onStageClick } = usePlayerInteractions({
+  // ---- 舞台交互四套裁决（滚轮/触摸滑动/点击/键盘）抽在 use-player-interactions：
+  //      沉浸流=换剧、选定剧/连播=切集的语义与 400ms 切换冷却都在那边
+  const { onStageWheel, onStageTouchStart, onStageTouchEnd, onStageClick } = usePlayerInteractions({
     videoRef,
     setSlideDir,
     seriesPanelOpen,
@@ -566,6 +566,8 @@ export function PlayerView({
       <div className="flex min-w-0 flex-1 flex-col">
         <div
           onWheel={onStageWheel}
+          onTouchStart={onStageTouchStart}
+          onTouchEnd={onStageTouchEnd}
           onClick={onStageClickGuarded}
           // 「移入显示」显式接 mouseenter：从画面外重新进入时浏览器可能
           // 没派发 mousemove（如跨窗口边界缓入），靠它兜底亮出控制栏
