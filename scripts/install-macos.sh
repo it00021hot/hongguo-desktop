@@ -79,6 +79,10 @@ ACTUAL="$(shasum -a 256 "${TMP}/${DMG}" | awk '{ print $1 }')"
 [ "${ACTUAL}" = "${EXPECT}" ] || die "SHA256 校验失败（期望 ${EXPECT}，实际 ${ACTUAL}）"
 log "SHA256 校验通过"
 
+# 挂载前清 DMG 隔离标记（若用户误把浏览器下的 DMG 拷进脚本目录再装，
+# 不先清会把 quarantine 传染进 .app）
+xattr -dr com.apple.quarantine "${TMP}/${DMG}" 2>/dev/null || true
+
 log "安装到 ${INSTALL_DIR}/${APP_NAME}…"
 # 不能用 -quiet：它连结果行一起吞掉，挂载点就没法从输出里解析了
 MOUNT="$(hdiutil attach -nobrowse -readonly "${TMP}/${DMG}" | awk -F'\t' 'END { print $NF }')"
@@ -88,7 +92,12 @@ if ! cp -R "${MOUNT}/${APP_NAME}" "${INSTALL_DIR}/"; then
   die "写入 ${INSTALL_DIR} 失败——手动执行：sudo cp -R \"${MOUNT}/${APP_NAME}\" ${INSTALL_DIR}/ && sudo xattr -dr com.apple.quarantine \"${INSTALL_DIR}/${APP_NAME}\""
 fi
 
-# curl 渠道本身不带隔离标记；这里兜底清一次，兼容异常打标的场景
+# 必须清掉并核验：残留 quarantine 时 Gatekeeper 会报「已损坏」；
+# 以前 `|| true` 吞失败，装完仍打不开。
 xattr -dr com.apple.quarantine "${INSTALL_DIR}/${APP_NAME}" 2>/dev/null || true
+if xattr -lr "${INSTALL_DIR}/${APP_NAME}" 2>/dev/null | grep -q 'com.apple.quarantine'; then
+  die "隔离标记未能清除。请手动执行：xattr -dr com.apple.quarantine ${INSTALL_DIR}/${APP_NAME}"
+fi
 
 log "安装完成：${INSTALL_DIR}/${APP_NAME}（${TAG}，${ARCH}），直接打开即可。"
+log "不要用浏览器下载的 DMG 双击安装——那样会带隔离标记，系统会报「已损坏」。"
