@@ -1,10 +1,14 @@
 ---
 
-> ⚠️ **macOS 首次运行**：安装包未做 Apple 公证，浏览器下载的应用带系统隔离标记，
-> 首次打开会提示「已损坏，无法打开」——这是 Gatekeeper 对无证书应用的固定措辞，
-> 文件本身没有损坏。任选其一：
-> 1. 终端执行 `xattr -dr com.apple.quarantine /Applications/Hongguo.app` 后打开；
-> 2. 下载本页 `install-macos.sh`，终端执行 `bash install-macos.sh`（自动校验
->    SHA256 并装入 /Applications，终端下载渠道不带隔离标记）。
+> ⚠️ **macOS 安装**：安装包未做 Apple 公证。**不要用浏览器下载的 DMG 双击安装**——
+> 系统会给文件打隔离标记，打开时报「已损坏，无法打开」（文件本身没坏）。请用：
+>
+> ```bash
+> curl -fsSL -o install-macos.sh https://github.com/it00021hot/hongguo-desktop/releases/latest/download/install-macos.sh
+> bash install-macos.sh
+> ```
+>
+> 若已经装进 `/Applications` 仍报损坏，终端执行：
+> `xattr -dr com.apple.quarantine /Applications/Hongguo.app` 后再打开。
 >
 > 经应用内「检查更新」升级不受此影响。
