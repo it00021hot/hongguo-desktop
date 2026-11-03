@@ -34,7 +34,9 @@ pub async fn ensure_compat(
     source: CompatSource,
     on_progress: impl Fn(f64) + Send + Sync + 'static,
 ) -> AppResult<CompatPlay> {
-    if let Some(p) = cache::cached_path(series_id, vid_index) {
+    // 播放档与合并归档分文件（`.play.mp4`），命中/落盘都走 Playback，不能误用归档路径。
+    let rate = hongguo_media_platform::RateProfile::Playback;
+    if let Some(p) = cache::cached_path_for(series_id, vid_index, rate) {
         on_progress(100.0);
         let url = hongguo_protocol::local::local_play_url(&p.to_string_lossy())
             .ok_or_else(|| AppError::Media("转码产物路径无法转成播放地址".into()))?;
@@ -46,7 +48,7 @@ pub async fn ensure_compat(
         });
     }
 
-    let target = cache::cache_file(series_id, vid_index);
+    let target = cache::cache_file_for(series_id, vid_index, rate);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
@@ -79,11 +81,15 @@ pub async fn ensure_compat(
 
         // 转码必须走 pipeline 的同一个入口——分流链只有一份，复刻私有分流
         // 会让平台硬编接不进来，兼容播放永远拿不到硬编速度。
+        // 播放档：长边封顶 720p + 轻码率——归档档把 1080p 一分钟胀到 ~60MB，软编更是分钟级。
+        let scale_to = crate::transcode_service::pipeline::resolution_of(&plain)
+            .and_then(crate::transcode_service::pipeline::playback_scale);
         let result = crate::transcode_service::pipeline::transcode(
             &series_owned,
             vid_index,
             &plain,
-            None,
+            scale_to,
+            hongguo_media_platform::RateProfile::Playback,
             Some(&report),
         );
 
@@ -263,7 +269,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hg-compat-hit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
-        let p = cache::cache_file("s", 1);
+        let p = cache::cache_file_for("s", 1, hongguo_media_platform::RateProfile::Playback);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, vec![7u8; 200 * 1024]).unwrap();
 
@@ -291,13 +297,17 @@ mod tests {
         let missing = dir.join("nope.mp4");
         let r = ensure_compat("s2", 1, CompatSource::LocalFile(missing), |_| {}).await;
         assert!(r.is_err(), "源不存在时必须报错，不能产出空文件");
-        assert!(!cache::cache_file("s2", 1).exists(), "失败时不应留下产物");
+        assert!(
+            !cache::cache_file_for("s2", 1, hongguo_media_platform::RateProfile::Playback).exists(),
+            "失败时不应留下产物"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn plaintext_source_temp_is_distinct_from_ffmpeg_output_temp() {
-        let target = cache::cache_file("s", 22);
+        let target =
+            cache::cache_file_for("s", 22, hongguo_media_platform::RateProfile::Playback);
         let source = plaintext_temp_path_for(&target);
         let ffmpeg_output = hongguo_common::utils::path::temp_path_for(&target);
         assert_ne!(source, ffmpeg_output, "ffmpeg 会把自己的临时输出误认成输入");
@@ -309,7 +319,8 @@ mod tests {
             std::env::temp_dir().join(format!("hg-compat-temp-cleanup-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
-        let target = cache::cache_file("cleanup", 1);
+        let target =
+            cache::cache_file_for("cleanup", 1, hongguo_media_platform::RateProfile::Playback);
         let source_temp = plaintext_temp_path_for(&target);
 
         let result = ensure_compat(

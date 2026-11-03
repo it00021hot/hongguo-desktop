@@ -14,6 +14,8 @@ use hongguo_common::AppResult;
 
 /// 平台硬编的一次转码请求（与 ffmpeg 侧的 [`crate::ffmpeg::TranscodeRequest`] 同构）。
 pub use hongguo_media_platform_api::PlatformRequest;
+/// 码率档（与 [`PlatformRequest::rate`] 同源）。
+pub use hongguo_media_platform_api::RateProfile;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码。
 /// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、Windows 无硬编 MFT），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。

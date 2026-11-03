@@ -1,19 +1,40 @@
 //! 兼容转码缓存：滚动窗口，最多保留 [`KEEP_EPISODES`] 集，按 atime 淘汰。
+//! 播放档与合并归档分文件名（`.play.mp4` / `.mp4`），避免播放压分辨率后污染合并输入。
 
 use std::path::PathBuf;
 
+use hongguo_media_platform::RateProfile;
 use hongguo_store::paths::compat_cache_dir;
 
-/// 某集的缓存文件名。
+/// 某集的缓存文件名（归档/合并默认）。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
-    compat_cache_dir().join(format!("{}_{:03}.mp4", sanitize(series_id), vid_index))
+    cache_file_for(series_id, vid_index, RateProfile::Archive)
+}
+
+/// 按码率档选缓存路径：播放档带 `.play` 后缀，与归档互不覆盖。
+pub fn cache_file_for(series_id: &str, vid_index: u32, rate: RateProfile) -> PathBuf {
+    let stem = format!("{}_{:03}", sanitize(series_id), vid_index);
+    let name = match rate {
+        RateProfile::Archive => format!("{stem}.mp4"),
+        RateProfile::Playback => format!("{stem}.play.mp4"),
+    };
+    compat_cache_dir().join(name)
 }
 
 /// 命中的缓存路径；没有则 `None`。存在的文件必须够大才算命中，避免把上次的半成品当结果。
 pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
-    let path = cache_file(series_id, vid_index);
+    cached_path_for(series_id, vid_index, RateProfile::Archive)
+}
+
+/// 按码率档查缓存。
+pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
+    let path = cache_file_for(series_id, vid_index, rate);
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if size > 100 * 1024 { Some(path) } else { None }
+    if size > 100 * 1024 {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn sanitize(id: &str) -> String {
@@ -86,6 +107,17 @@ mod tests {
         let p = cache_file("123", 7);
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(name.ends_with("007.mp4"), "实际: {name}");
+    }
+
+    #[test]
+    fn playback_cache_uses_a_distinct_suffix() {
+        let p = cache_file_for("s", 1, RateProfile::Playback);
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.ends_with("001.play.mp4"), "实际: {name}");
+        assert_ne!(
+            cache_file_for("s", 1, RateProfile::Archive),
+            cache_file_for("s", 1, RateProfile::Playback)
+        );
     }
 
     #[test]

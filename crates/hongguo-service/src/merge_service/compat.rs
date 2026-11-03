@@ -142,6 +142,7 @@ pub fn compat_merge(
                                 *vid_index,
                                 source,
                                 scale_to,
+                                hongguo_media_platform::RateProfile::Archive,
                                 Some(cb),
                             );
                             // 会话超订的信号：预期硬编却落在软路——收敛并行度，

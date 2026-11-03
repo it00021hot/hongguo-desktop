@@ -8,17 +8,24 @@ use std::path::Path;
 use crate::transcode_service::cache;
 use hongguo_common::AppResult;
 use hongguo_media::transcode::TranscodeResult;
+use hongguo_media_platform::RateProfile;
+
+/// 兼容播放输出长边上限（720p）。短剧手机竖屏观感够用；1080→720 像素量约 1/2.25，
+/// 码率随分辨率降，缓存体积与软编耗时同量级下降。
+const PLAYBACK_MAX_LONG_EDGE: u32 = 1280;
 
 /// 转码一个文件。
 ///
 /// `scale_to` 给出时把画面统一到该分辨率——短剧各集由平台分别编码，混着不同
 /// 分辨率是常态，不统一的话转码产物依然规格不一，拼接那一步照样过不去。
+/// `rate` 区分合并归档与兼容播放；播放档会走更轻的码率与（ffmpeg 软编）更快 preset。
 /// `on_progress` 收到已编码秒数，用于把进度从「第 N/M 集」细化到集内百分比。
 pub fn transcode(
     series_id: &str,
     vid_index: u32,
     source: &Path,
     scale_to: Option<(u32, u32)>,
+    rate: RateProfile,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
 ) -> AppResult<TranscodeResult> {
     if !source.exists() {
@@ -27,15 +34,15 @@ pub fn transcode(
         ));
     }
 
-    // 命中缓存直接返回
-    if let Some(cached) = cache::cached_path(series_id, vid_index) {
+    // 命中缓存直接返回（播放/合并各用各的文件名，互不踩）
+    if let Some(cached) = cache::cached_path_for(series_id, vid_index, rate) {
         return Ok(TranscodeResult {
             output_path: cached.to_string_lossy().to_string(),
             backend: hongguo_media_platform::capability::selected_backend(),
         });
     }
 
-    let target = cache::cache_file(series_id, vid_index);
+    let target = cache::cache_file_for(series_id, vid_index, rate);
 
     // 分流 1：平台原生编码，不依赖用户装任何东西；失败静默落回 ffmpeg。
     let mut backend: Option<hongguo_media::Backend> = None;
@@ -46,6 +53,7 @@ pub fn transcode(
             input: source,
             output: &target,
             scale_to,
+            rate,
             on_progress,
         },
     ) {
@@ -74,6 +82,7 @@ pub fn transcode(
             input: source,
             output: &target,
             scale_to,
+            rate,
             on_progress,
         };
         match hongguo_media_platform::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
@@ -126,6 +135,23 @@ pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     (v.info.width > 0 && v.info.height > 0).then_some((v.info.width, v.info.height))
 }
 
+/// 兼容播放缩放目标：长边封顶 [`PLAYBACK_MAX_LONG_EDGE`]，已更小则 `None`（保持源分辨率）。
+/// 宽高一律收成偶数（H.264 硬性要求）。
+pub fn playback_scale(src: (u32, u32)) -> Option<(u32, u32)> {
+    let (w, h) = src;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let long = w.max(h);
+    if long <= PLAYBACK_MAX_LONG_EDGE {
+        return None;
+    }
+    let scale = f64::from(PLAYBACK_MAX_LONG_EDGE) / f64::from(long);
+    let nw = ((f64::from(w) * scale) as u32) & !1;
+    let nh = ((f64::from(h) * scale) as u32) & !1;
+    Some((nw.max(2), nh.max(2)))
+}
+
 /// 源分集的总时长（秒）。把 [`transcode`] 的「已编码秒数」回调折成集内比例
 /// 时要用它做分母；读不出来（坏文件/无视频轨）返回 `None`。
 pub fn episode_seconds(path: &Path) -> Option<f64> {
@@ -151,6 +177,14 @@ fn output_is_playable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playback_scale_caps_1080p_to_720p_long_edge() {
+        assert_eq!(playback_scale((1920, 1080)), Some((1280, 720)));
+        assert_eq!(playback_scale((1080, 1920)), Some((720, 1280)));
+        assert_eq!(playback_scale((1280, 720)), None, "已是上限不动");
+        assert_eq!(playback_scale((720, 1280)), None);
+    }
 
     #[test]
     fn garbage_is_not_playable() {

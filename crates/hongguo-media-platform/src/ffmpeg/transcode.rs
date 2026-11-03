@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 
 use super::probe::{Encoder, ffmpeg_path};
 use hongguo_common::{AppError, AppResult};
+use hongguo_media_platform_api::video::RateProfile;
 
 /// 一次转码的输入。
 pub struct TranscodeRequest<'a> {
@@ -18,6 +19,8 @@ pub struct TranscodeRequest<'a> {
     /// 统一到这个分辨率。`None` 表示保持源分辨率。
     /// 短剧各集由平台**分别**编码、同一部剧混着 1080p 与 720p 是常态，合并要求各集规格一致——不缩放的话拼接那一步照样过不去，兼容合并按第 1 集分辨率统一。
     pub scale_to: Option<(u32, u32)>,
+    /// 码率/质量档：合并归档 vs 兼容播放。
+    pub rate: RateProfile,
     /// 已编码秒数的回调，用于把进度从「第 N/M 集」细化到集内百分比。
     pub on_progress: Option<&'a (dyn Fn(f64) + Send + Sync)>,
 }
@@ -104,12 +107,30 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
         "-i".into(),
         req.input.display().to_string(),
     ];
-    args.extend(quality_args(encoder));
+    args.extend(quality_args(encoder, req.rate));
 
-    if let Some((w, h)) = req.scale_to.filter(|(w, h)| *w > 0 && *h > 0) {
+    let scale = req.scale_to.filter(|(w, h)| *w > 0 && *h > 0).map(|(w, h)| (even(w), even(h)));
+    if let Some((w, h)) = scale {
         // H.264 要求宽高为偶数，否则 ffmpeg 直接拒绝
-        let (w, h) = (even(w), even(h));
         args.extend(["-vf".to_string(), format!("scale={w}:{h}")]);
+    }
+
+    // 播放档软编：CRF 仍会因 preset 太快而虚高码率（ultrafast 实测比归档还大），
+    // 用目标分辨率标定 maxrate 把体积钉死；硬编走 CQ/QP，这条上限也无害。
+    if req.rate == RateProfile::Playback {
+        let (w, h) = scale.unwrap_or((1280, 720));
+        let bps = hongguo_media_platform_api::video::bitrate_for_profile(
+            w as usize,
+            h as usize,
+            30.0,
+            RateProfile::Playback,
+        );
+        args.extend([
+            "-maxrate".into(),
+            bps.to_string(),
+            "-bufsize".into(),
+            (bps.saturating_mul(2)).to_string(),
+        ]);
     }
 
     args.extend([
@@ -135,34 +156,32 @@ fn even(v: u32) -> u32 {
     if v.is_multiple_of(2) { v } else { v - 1 }
 }
 
-/// 编码器专属质量参数：硬件分支都用「QP 越低越好」的 0–51 语义表达 crf 23；
-/// MediaFoundation 编码器不吃 `-crf` / `-preset` / `-profile`，质量位 0–100 且**越高越好**——
-/// `h264_mf` 的 60 是实测标定：同一集 VMAF `-quality 60` 得 93.03，与 `libx264 -crf 23` 的 92.97 基本重合（q50 只有 89.70）。
-fn quality_args(encoder: &Encoder) -> Vec<String> {
-    let owned: &[&str] = match encoder.name {
-        "h264_nvenc" => &[
-            "-c:v",
-            "h264_nvenc",
-            "-preset",
-            "p4",
-            "-cq",
-            "23",
-            "-b:v",
-            "0",
+/// 编码器专属质量参数。归档档对齐 crf 23；播放档对齐 crf 28 / 更快 preset——
+/// 兼容兜底以体积与耗时优先，软编（libx264）差一档观感可接受。
+/// MediaFoundation 质量位 0–100 且**越高越好**：归档 60（≈crf23 VMAF 实测），播放 40。
+fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
+    let owned: &[&str] = match (encoder.name, rate) {
+        ("h264_nvenc", RateProfile::Archive) => &[
+            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-b:v", "0",
         ],
-        "h264_qsv" => &["-c:v", "h264_qsv", "-global_quality", "23"],
-        "h264_amf" => &[
+        ("h264_nvenc", RateProfile::Playback) => &[
+            "-c:v", "h264_nvenc", "-preset", "p1", "-cq", "28", "-b:v", "0",
+        ],
+        ("h264_qsv", RateProfile::Archive) => &["-c:v", "h264_qsv", "-global_quality", "23"],
+        ("h264_qsv", RateProfile::Playback) => &["-c:v", "h264_qsv", "-global_quality", "28"],
+        ("h264_amf", RateProfile::Archive) => &[
             "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23",
         ],
-        "h264_mf" => &[
-            "-c:v",
-            "h264_mf",
-            "-rate_control",
-            "quality",
-            "-quality",
-            "60",
+        ("h264_amf", RateProfile::Playback) => &[
+            "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28",
         ],
-        _ => &[
+        ("h264_mf", RateProfile::Archive) => &[
+            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "60",
+        ],
+        ("h264_mf", RateProfile::Playback) => &[
+            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "40",
+        ],
+        (_, RateProfile::Archive) => &[
             "-c:v",
             encoder.name,
             "-preset",
@@ -173,6 +192,19 @@ fn quality_args(encoder: &Encoder) -> Vec<String> {
             "high",
             "-level",
             "4.2",
+        ],
+        // superfast：比归档 veryfast 更快，又避免 ultrafast 把体积撑过归档档（实测 720p 软编反更大）。
+        (_, RateProfile::Playback) => &[
+            "-c:v",
+            encoder.name,
+            "-preset",
+            "superfast",
+            "-crf",
+            "28",
+            "-profile:v",
+            "main",
+            "-level",
+            "4.0",
         ],
     };
     owned.iter().map(|s| (*s).to_string()).collect()
@@ -193,6 +225,7 @@ mod tests {
                 input: Path::new("/nope.mp4"),
                 output: Path::new("/tmp/o.mp4"),
                 scale_to: None,
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &Encoder {
@@ -214,6 +247,7 @@ mod tests {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: None,
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &enc,
@@ -226,6 +260,7 @@ mod tests {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: Some((1920, 1080)),
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &enc,
@@ -249,6 +284,7 @@ mod tests {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: Some((1281, 719)),
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &enc,
@@ -262,12 +298,46 @@ mod tests {
     }
 
     #[test]
+    fn playback_rate_picks_the_fast_soft_encode_preset() {
+        let args = build_args(
+            &TranscodeRequest {
+                input: Path::new("/i.mp4"),
+                output: Path::new("/o.mp4"),
+                scale_to: Some((1280, 720)),
+                rate: RateProfile::Playback,
+                on_progress: None,
+            },
+            &Encoder {
+                name: "libx264",
+                hardware: false,
+            },
+            Path::new("/t.tmp"),
+        );
+        let preset = args
+            .windows(2)
+            .find(|w| w[0] == "-preset")
+            .map(|w| w[1].as_str());
+        let crf = args
+            .windows(2)
+            .find(|w| w[0] == "-crf")
+            .map(|w| w[1].as_str());
+        let maxrate = args
+            .windows(2)
+            .find(|w| w[0] == "-maxrate")
+            .map(|w| w[1].as_str());
+        assert_eq!(preset, Some("superfast"));
+        assert_eq!(crf, Some("28"));
+        assert!(maxrate.is_some_and(|v| v.parse::<i32>().unwrap_or(0) > 0));
+    }
+
+    #[test]
     fn the_output_format_is_always_explicit() {
         let args = build_args(
             &TranscodeRequest {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: None,
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &Encoder {
@@ -287,6 +357,7 @@ mod tests {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: None,
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &Encoder {
@@ -309,6 +380,7 @@ mod tests {
                 input: Path::new("/i.mp4"),
                 output: Path::new("/o.mp4"),
                 scale_to: None,
+                rate: RateProfile::Archive,
                 on_progress: None,
             },
             &Encoder {

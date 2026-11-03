@@ -63,6 +63,7 @@ mod tests {
                 input: &src,
                 output: out,
                 scale_to: None,
+                rate: hongguo_media_platform_api::RateProfile::Archive,
                 on_progress: None,
             })
             .expect("应可转码")
@@ -79,6 +80,7 @@ mod tests {
             input: &src,
             output: &out3,
             scale_to: None,
+            rate: hongguo_media_platform_api::RateProfile::Archive,
             on_progress: None,
         })
         .expect("硬编应可用")

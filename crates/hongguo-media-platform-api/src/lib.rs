@@ -6,3 +6,4 @@ pub mod transcode;
 pub mod video;
 
 pub use transcode::PlatformRequest;
+pub use video::RateProfile;
