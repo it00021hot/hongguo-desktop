@@ -1,17 +1,11 @@
-//! 断点续播读写。
-//!
-//! 存储切到数据库后这里全是对 [`Store`] 的单行/单表操作：
-//! 保存是单行 UPSERT（播放期间每 5 秒一次也不再有整文件重写），
-//! 历史是「每部剧最新一集」的聚合查询 + 档案表取剧名封面。
+//! 断点续播读写。存储切到数据库后全是对 [`hongguo_store::Store`] 的单行/单表操作：
+//! 保存是单行 UPSERT，历史是「每部剧最新一集」的聚合查询 + 档案表取剧名封面。
 
 use crate::app_state::AppState;
 use hongguo_common::model::PlaybackPosition;
 
-/// 保存播放位置（Store 直连版：command 侧把 DB 写入扔进阻塞线程池时用，
-/// 同步 command 占 Tauri 主线程，高频保存不该在那里排队）。
-///
-/// `duration` 由前端回传——后端拿到流的时候还不知道总时长；
-/// 它供展示与前端「看完跳下一集」之类的比例计算使用。
+/// 保存播放位置（Store 直连版：同步 command 占主线程，高频保存不该在那里排队）。
+/// `duration` 由前端回传——后端拿到流的时候还不知道总时长。
 pub fn save_store(
     store: &hongguo_store::Store,
     series_id: &str,
@@ -55,8 +49,6 @@ mod tests {
         dir
     }
 
-    /// 用磁盘文件库构造状态：历史/清空这类断言要验证「真的写进了库」，
-    /// 内存库与 AppState::default 够不到「重启还在」这条语义。
     fn file_state(tag: &str) -> (AppState, PathBuf) {
         let dir = temp_dir(tag);
         let db = dir.join("test.db");
@@ -68,8 +60,6 @@ mod tests {
         )
     }
 
-    /// 「最近看到的那一集」按 updated_at 取最新：回看旧集再切回来，
-    /// 详情页的「继续看」要跟着最新的那行走，而不是集号最大的那行。
     #[test]
     fn series_last_position_follows_latest_row() {
         let (state, dir) = file_state("lastpos");
@@ -97,8 +87,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 断点续播的持久化语义：保存后「重启」（重开同一文件库）还能读回；
-    /// 看过 >3 秒的记录无论多接近片尾都续播那个位置（用户口径：不管片尾）。
     #[test]
     fn save_survives_reopen_and_load_resumes_over_three_seconds() {
         let (state, dir) = file_state("persist");
@@ -117,7 +105,6 @@ mod tests {
             .unwrap();
 
         {
-            // 模拟「重启」：换一个指向同一文件的全新 Store 实例读
             let reopened = hongguo_store::Store::open(dir.join("test.db")).expect("重开测试库");
             let pos = reopened.playback_position("A", 1).unwrap();
             assert!(pos.is_some(), "落库的进度换个连接也要读得到");
@@ -128,7 +115,6 @@ mod tests {
         let a = state.store.playback_position("A", 1).unwrap().unwrap();
         assert_eq!(a.current_time, 10.0, "续播位置原样读回");
         assert!(a.is_resumable());
-        // 不看片尾：290/300 接近结束也照样续播
         let b = state.store.playback_position("B", 1).unwrap().unwrap();
         assert!(b.is_resumable(), "接近片尾也要续播那个位置");
         let c = state.store.playback_position("C", 1).unwrap().unwrap();

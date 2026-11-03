@@ -1,12 +1,7 @@
-//! 摘要原语：MD5 与 SM3。
-//!
-//! JS 版优先用 `node:crypto` 的原生 SM3，Electron 28 内置的 Node 18 + OpenSSL 1.1.1
-//! 没有 SM3，因此回退到纯 JS 实现（`sm3.js`）。两条路径结果一致。
-//! Rust 侧统一用 `sm3` crate（RustCrypto），与纯 JS 实现同为 ITU-T SM3 标准算法，
-//! 不存在宿主环境差异，因此不再需要 JS 那样的回退分支。
+//! 摘要原语：MD5 与 SM3。Rust 侧统一用 `sm3` crate（RustCrypto，ITU-T SM3 标准算法），
+//! 无宿主环境差异，不需要 JS 版因 Electron 内置 OpenSSL 缺 SM3 而设的回退分支。
 
-// sm3 0.3 依赖 digest 0.9，与 md-5 依赖的 digest 0.10 不是同一套 trait，
-// 因此这里分别按各自版本引入，不要试图统一。
+// sm3 0.3 依赖 digest 0.9，与 md-5 依赖的 digest 0.10 不是同一套 trait，按各自版本引入，不要试图统一
 use md5::Digest as Md5Digest;
 use sm3::digest::Digest as Sm3Digest;
 

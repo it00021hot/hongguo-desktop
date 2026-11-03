@@ -1,10 +1,5 @@
-//! 缓存占用统计与一键清理。
-//!
-//! 三处缓存在此汇成一个入口：在线内存流（`play_service::online` 背后的
-//! `StreamCache`）、兼容转码产物（`transcode_service::cache` 落
-//! `compat-cache/`）、封面/头像转码产物（`protocol::cover` 落
-//! `cover-cache/`）。设置页此前只暴露前两处的清理按钮且都不报大小，
-//! cover-cache 更是从来没有清理入口——封面图片只进不出。
+//! 缓存占用统计与一键清理：在线内存流、兼容转码产物（`compat-cache/`）、封面/头像转码产物
+//!（`cover-cache/`）三处缓存在此汇成一个入口；统计口径与清理口径一致，避免「清完数字不变」的假清理。
 
 use serde::Serialize;
 
@@ -73,8 +68,7 @@ pub fn clear() -> CacheClearResult {
     }
 }
 
-/// 目录占用；`ext` 给定时只统计该扩展名的文件（与清理口径一致，统计
-/// 与清理对不上就是「清完数字不变」的假清理）。
+/// 目录占用；`ext` 给定时只统计该扩展名的文件（与清理口径一致）。
 fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
     let mut part = CachePart::default();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -110,12 +104,8 @@ fn clear_dir(dir: &std::path::Path) -> u64 {
     n
 }
 
-// —— 自动清理（TTL + 占用上限）——
-
-/// 自动清理策略。TTL 与上限都独立生效：先按「最后修改时间超过 TTL」删，
-/// 再按「占用超过上限」从最旧开始删到上限以内。
-///
-/// 两档都关（0）时 [`auto_clean`] 什么都不做——用户没配就别动他的缓存。
+/// 自动清理策略。TTL 与上限都独立生效：先按「最后修改时间超过 TTL」删，再按
+/// 「占用超过上限」从最旧开始删到上限以内；两档都关（0）时什么都不做——用户没配就别动他的缓存。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AutoCleanPolicy {
     /// 磁盘缓存占用上限（字节）；0 = 不限。
@@ -138,17 +128,8 @@ struct CacheFile {
     modified: std::time::SystemTime,
 }
 
-/// 收集封面缓存的文件账。
-///
-/// **只收封面/头像转码产物**（`cover-cache/`）：那是纯缓存，删了只影响
-/// 下次显示要重新下载一次。
-///
-/// **兼容转码产物（`compat-cache/`）不进这里**：它由
-/// `transcode_service::cache::trim()` 按磁盘空闲空间自己管预算（2–16GB），
-/// 已有淘汰机制；而它的文件是**正在播的集**的供数源——`hongguo-local://`
-/// 每次 range 请求都重新开文件（见 `hongguo-protocol::local::serve`），
-/// 播到一半被删就会断这一集。平台解不了 HEVC 需要转码兜底时才走这条路，
-/// 但没必要为清缓存冒断播的风险。
+/// 收集封面缓存的文件账。**只收封面/头像转码产物**（纯缓存，删了只影响下次显示要重新下载）；
+/// 兼容转码产物不进这里——它是正在播的集的供数源，播到一半被删会断播，且另有按磁盘空闲的预算机制。
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
     let dir = cover_cache_dir();
@@ -173,23 +154,11 @@ fn collect_files() -> Vec<CacheFile> {
     out
 }
 
-/// 刚落盘不久的文件不删（分钟）。刚写下的封面很可能正要被页面加载
-/// （`ensure_sized_cached` 写 `.tmp` 再 rename），删了会让这一帧的封面
-/// 变成占位块。十分钟足够让所有在途加载走完。
+/// 刚落盘不久的文件不删（分钟）：刚写下的封面很可能正要被页面加载，删了会让这一帧的封面变占位块。
 const MIN_FILE_AGE_MINUTES: u64 = 10;
 
-/// 按策略自动清理磁盘缓存（**只清封面/头像转码产物**）。
-///
-/// - TTL：最后修改时间早于 `ttl_days` 天的文件被删除；
-/// - 上限：剩余占用仍超 `limit_bytes` 时，从最旧的文件开始删到上限以内；
-/// - 刚落盘 10 分钟内的文件一律不删（多半正要被页面加载）；
-/// - 删不掉的文件（权限、占用）跳过，不报错。
-///
-/// 兼容转码产物（`compat-cache/`）**不在范围内**：它是正在播的集的供数源
-/// （`hongguo-local://` 每次 range 请求重新开文件），播到一半被删会断播；
-/// 它另有按磁盘空闲的预算机制（`transcode_service::cache::trim`）。
-///
-/// 返回值与手动 [`clear`] 同构：删掉多少个文件、释放多少字节。
+/// 按策略自动清理磁盘缓存（**只清封面/头像转码产物**）：TTL 过期即删、超上限从最旧开始删、
+/// 刚落盘 10 分钟内不删、删不掉的文件（权限/占用）跳过不报错。返回值与手动 [`clear`] 同构。
 pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheClearResult {
     if policy.is_disabled() {
         return CacheClearResult { items: 0, bytes: 0 };
@@ -197,7 +166,6 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
     let mut files = collect_files();
     let mut removed = 0u64;
     let mut freed = 0u64;
-    // 刚落盘不久的文件一律不删（两段都算）：它多半正要被页面加载。
     let min_age = std::time::Duration::from_secs(MIN_FILE_AGE_MINUTES * 60);
     let age_of = |file: &CacheFile| -> std::time::Duration {
         now.duration_since(file.modified)
@@ -205,7 +173,6 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
     };
     files.retain(|file| age_of(file) >= min_age);
 
-    // 1) TTL：过期即删
     if policy.ttl_days > 0 {
         let ttl = std::time::Duration::from_secs(u64::from(policy.ttl_days) * 24 * 60 * 60);
         let mut expired = Vec::new();
@@ -226,7 +193,6 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
         files = kept;
     }
 
-    // 2) 上限：超了就从最旧的开始删
     if policy.limit_bytes > 0 {
         let mut total: u64 = files.iter().map(|f| f.bytes).sum();
         if total > policy.limit_bytes {
@@ -258,7 +224,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
     }
 }
 
-/// 自动清理周期任务：启动即跑一轮，之后每 [`AUTO_CLEAN_INTERVAL`] 一轮。
+/// 自动清理周期任务：启动即跑一轮，之后每 `AUTO_CLEAN_INTERVAL` 一轮。
 /// 策略每轮从设置里现读——用户改了上限/周期，下一轮就生效。
 pub fn start_auto_clean_loop(state: crate::app_state::AppState) {
     crate::runtime::spawn(async move {
@@ -279,16 +245,13 @@ pub fn start_auto_clean_loop(state: crate::app_state::AppState) {
     });
 }
 
-/// 自动清理的轮询间隔。缓存是慢变量（天级），1 小时一轮足够及时，
-/// 又不至于每小时扫一遍目录。
+/// 自动清理的轮询间隔：缓存是慢变量（天级），1 小时一轮足够及时。
 const AUTO_CLEAN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 落盘用例把数据目录重定向到临时目录（RAII + 全局锁），不然统计和
-    /// 清理扫到的是用户真实的 %APPDATA%。
     #[test]
     fn usage_and_clear_cover_both_disk_caches() {
         let dir = std::env::temp_dir().join(format!("hg-cache-stats-{}", std::process::id()));
@@ -329,33 +292,21 @@ mod tests {
         let u = usage();
         assert_eq!(u.compat.files, 0);
         assert_eq!(u.cover.files, 0);
-        // 清理空缓存也是一次成功操作
         assert_eq!(clear().items, 0);
     }
 
-    /// 写一个缓存文件；`age_days` 表示「它有多老」——测试里通过把
-    /// `now` 往前推来表达过期，不去改文件的 mtime（免得为一个用例引
-    /// 第三方时间戳依赖）。
     fn write_aged(dir: &std::path::Path, name: &str, bytes: usize) {
         std::fs::write(dir.join(name), vec![0u8; bytes]).unwrap();
     }
 
-    /// 「现在」往前推 n 天。
     fn days_ago(days: u64) -> std::time::SystemTime {
         std::time::SystemTime::now() - std::time::Duration::from_secs(days * 24 * 60 * 60)
     }
 
-    /// 「现在」往后推 n 天（表达「文件已经这么老」）。
     fn days_from_now(days: u64) -> std::time::SystemTime {
         std::time::SystemTime::now() + std::time::Duration::from_secs(days * 24 * 60 * 60)
     }
 
-    /// TTL：文件比保留期限老就被删，还新鲜就留下。
-    ///
-    /// 参照时间 `now` 往前推来表达「文件有多老」（不去改文件 mtime，免得
-    /// 为一个用例引第三方时间戳依赖）：同一批文件先用「才 1 天」的参照时间
-    /// 判定（未过期，应留下），再用「已经 10 天」的参照时间判定（过期，应
-    /// 删掉）。
     #[test]
     fn auto_clean_removes_files_older_than_ttl() {
         let dir = std::env::temp_dir().join(format!("hg-cache-ttl-{}", std::process::id()));
@@ -370,13 +321,11 @@ mod tests {
             ttl_days: 3,
         };
 
-        // 参照时间只比文件早 1 天：未过期
         let kept = auto_clean(policy, days_ago(1));
         assert_eq!(kept.items, 0, "未过期不该删");
         assert!(cover.join("a.jpg").exists());
         assert!(cover.join("b.jpg").exists());
 
-        // 参照时间比文件晚 10 天：过期
         let expired = auto_clean(policy, days_from_now(10));
         assert_eq!(expired.items, 2);
         assert_eq!(expired.bytes, 300);
@@ -384,10 +333,6 @@ mod tests {
         assert!(!cover.join("b.jpg").exists());
     }
 
-    /// 上限：超了从最旧开始删到上限以内（写入间隔给不同的 mtime）。
-    ///
-    /// 参照时间往后推一天——刚落盘 10 分钟内的文件有护栏不删（见
-    /// `auto_clean_keeps_fresh_files`）。
     #[test]
     fn auto_clean_trims_to_limit_oldest_first() {
         let dir = std::env::temp_dir().join(format!("hg-cache-cap-{}", std::process::id()));
@@ -415,7 +360,6 @@ mod tests {
         assert!(cover.join("c.jpg").exists());
     }
 
-    /// 两档都关 = 不动用户的数据。
     #[test]
     fn auto_clean_disabled_touches_nothing() {
         let dir = std::env::temp_dir().join(format!("hg-cache-off-{}", std::process::id()));
@@ -430,8 +374,6 @@ mod tests {
         assert!(cover.join("a.jpg").exists());
     }
 
-    /// 刚落盘不久的文件不删——哪怕超上限也不删：它多半正要被页面加载
-    /// （写 `.tmp` 再 rename 刚落盘），删了会让这一帧的封面变占位块。
     #[test]
     fn auto_clean_keeps_fresh_files() {
         let dir = std::env::temp_dir().join(format!("hg-cache-fresh-{}", std::process::id()));
@@ -441,7 +383,6 @@ mod tests {
         std::fs::create_dir_all(&cover).unwrap();
         write_aged(&cover, "a.jpg", 100);
 
-        // 上限 0 字节（超得不能再超），但文件才落盘几秒
         let result = auto_clean(
             AutoCleanPolicy {
                 limit_bytes: 1,
@@ -453,8 +394,6 @@ mod tests {
         assert!(cover.join("a.jpg").exists());
     }
 
-    /// 兼容转码产物（正在播的集的供数源）不在自动清理范围内——它由
-    /// `transcode_service::cache::trim()` 按磁盘空闲自己管预算。
     #[test]
     fn auto_clean_leaves_compat_cache_alone() {
         let dir = std::env::temp_dir().join(format!("hg-cache-compat-{}", std::process::id()));

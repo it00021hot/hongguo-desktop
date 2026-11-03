@@ -1,10 +1,6 @@
-//! 点赞页（Tauri `/liked` = `liked-page.tsx` 的 GPUI 对齐）。
-//!
-//! 「我赞过的视频」：互动 mget 列表过滤 user_digg；卡片网格（封面 3:4 +
-//! 标题 + 红心计数），悬浮出「继续播放」与「取消赞」；右上搜索框按
-//! 标题/seriesId 客户端过滤；管理模式下卡片多选 + 吸底批量条（全选 /
-//! 已选计数 / 批量取消赞带确认）。数据与操作走 `hongguo_api::interact`
-//! （fetch_interaction_state / digg_video），与 Tauri command 同一段。
+//! 点赞页：「我赞过的视频」互动 mget 列表过滤 user_digg；卡片网格（悬浮
+//! 「继续播放」/「取消赞」）+ 搜索框按标题/seriesId 客户端过滤 + 管理模式
+//! 多选批量取消赞。数据走 `hongguo_api::interact`。
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;

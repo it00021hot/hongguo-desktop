@@ -1,17 +1,7 @@
-//! 播放器控制栏自绘图标（B 站播放器形态；Tauri `player-icons.tsx` 的 1:1 移植）。
-//!
-//! 为什么自绘：gpui-kit 的 Lucide 线框与 B 站播放器不是一种语言——弹幕是
-//! 「弹」字、网页全屏是方框+内侧四角、小窗是画中画。与 Tauri 互动栏的
-//! 抖音系自绘图标同一做法：几何内嵌、颜色由调用方传入（`currentColor` 语义），
-//! 不经 AssetSource。
-//!
-//! 两类实现：
-//! - 几何图标（网页全屏/全屏/小窗/关态斜杠）内嵌 SVG 字节交给 `Icon::data`，
-//!   与 Tauri 侧共用同一份路径（`assets/player/*.svg`）；
-//! - 弹幕两枚是汉字：汉字必须走文本渲染（SVG 里的 `<text>` 依赖系统字体回退，
-//!   字形不可控），所以用 div 拼字 + 齿轮角标。
-//!
-//! 改动时两边一起改：`src/features/player/components/controls/player-icons.tsx`。
+//! 播放器控制栏自绘图标（B 站播放器形态）：gpui-kit 的 Lucide 线框与 B 站
+//! 播放器不是一种语言（弹幕是「弹」字、小窗是画中画）。几何图标内嵌 SVG
+//! 字节（`assets/player/*.svg`），弹幕两枚是汉字（SVG 的 `<text>` 字形不可控，
+//! 用 div 拼字 + 齿轮角标）；颜色由调用方传入。
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;

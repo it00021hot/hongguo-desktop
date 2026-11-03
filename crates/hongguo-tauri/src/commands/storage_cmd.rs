@@ -34,9 +34,7 @@ pub fn get_storage_series(state: State<'_, AppState>) -> Vec<StorageSeriesUsage>
     usage::series_usage(&state)
 }
 
-/// 删除某部剧的全部本地文件（含合并产物与残留临时文件）。
-///
-/// 剧集档案保留，之后仍可在线播放或重新下载。
+/// 删除某部剧的全部本地文件（含合并产物与残留临时文件）；剧集档案保留，之后仍可在线播放或重新下载。
 #[tauri::command]
 pub fn delete_series_files(state: State<'_, AppState>, series_id: String) -> AppResult<usize> {
     cleanup::delete_series(&state, &series_id)

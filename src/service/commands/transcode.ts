@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 转码
-
 export const transcode = {
   capability: () => call('decode_capability'),
   redetect: () => call('redetect_capability'),

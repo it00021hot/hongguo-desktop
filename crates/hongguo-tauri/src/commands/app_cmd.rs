@@ -8,22 +8,13 @@ use tauri::{AppHandle, State};
 use hongguo_common::AppResult;
 use hongguo_service::app_state::AppState;
 
-/// 窗口关闭拦截的「前端就绪」闸门：前端界面挂载完成后置位。
-///
-/// 之前就拦截的话，前端一旦没加载出来（白屏/崩溃），被拦下的关闭请求
-/// 永远没人应答，窗口就关不掉了——没 ready 就放行，宁可不确认也不能困住用户。
+/// 窗口关闭拦截的「前端就绪」闸门：前端界面挂载完成后置位。没 ready 就放行——前端白屏/崩溃时被拦的关闭请求永远没人应答，窗口就关不掉了。
 pub type WindowCloseGate = Arc<AtomicBool>;
 
-/// 选择下载目录。
-///
-/// **必须 async**：同步 command 跑在主线程 IPC 回调里，`blocking_pick_folder`
-/// 在 macOS 上占死主事件循环——面板弹得出来但整机冻结（2026-11-02 mac 实测
-/// 卡死根因）。async command 跑在命令线程池，线程内阻塞等面板正是 dialog
-/// 插件文档要求的用法（main thread 以外）。
+/// 选择下载目录。**必须 async**：同步 command 跑在主线程 IPC 回调里，`blocking_pick_folder` 在 macOS 上会占死主事件循环（面板弹得出但整机冻结）；async command 跑在命令线程池，线程内阻塞等面板正是 dialog 插件文档要求的用法。
 #[tauri::command]
 pub async fn select_folder(app: AppHandle) -> AppResult<Option<String>> {
-    // 移动端 dialog 插件没有 folder picker（只有文件选择），如实拒绝——
-    // 下载目录改选属移动端 UI 适配，另行处理
+    // 移动端 dialog 插件没有 folder picker（只有文件选择），如实拒绝——下载目录改选属移动端 UI 适配，另行处理
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = app;
@@ -59,10 +50,7 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>, series_id: String
         .map_err(|e| hongguo_common::AppError::Io(e.to_string()))
 }
 
-/// 用系统默认浏览器打开外部网址。
-///
-/// 只给固定的几个白名单网址用（设置页的 ffmpeg 安装指引），
-/// 不接受任意输入拼 URL，避免变成「前端想打开什么就打开什么」。
+/// 用系统默认浏览器打开外部网址。只给固定的白名单网址用（设置页的 ffmpeg 安装指引），不接受任意输入拼 URL。
 #[tauri::command]
 pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
     use tauri_plugin_opener::OpenerExt;
@@ -81,15 +69,8 @@ pub fn open_external_page(app: AppHandle, page: String) -> AppResult<()> {
         .map_err(|e| hongguo_common::AppError::Io(e.to_string()))
 }
 
-/// 前端界面挂载完成：亮出窗口 + 开启关闭拦截。
-///
-/// 窗口配置 `visible: false`（启动白屏治理：装配与 WebView 加载期间不亮
-/// 白板），本命令是唯一的显示时机——AppShell 挂载、监听就位后才调用，
-/// 此时首帧已提交，用户看到的是完整界面而非白屏。
-///
-/// 显示只发生在 false→true 的那次翻转上：本命令随 AppShell 重挂载会重复
-/// 调用，无条件 show 会把最小化/隐身中的窗口抢到前台。
-/// 关闭拦截沿用原语义：ready 之后自绘 ×/Alt+F4/任务栏关闭转交前端弹确认框。
+/// 前端界面挂载完成：亮出窗口 + 开启关闭拦截。窗口配置 `visible: false`（启动白屏治理），本命令是唯一显示时机——AppShell 挂载、监听就位后才调用，首帧已提交不再白屏。
+/// 显示只发生在 false→true 的那次翻转上：本命令随 AppShell 重挂载会重复调用，无条件 show 会把最小化/隐身中的窗口抢到前台。
 #[tauri::command]
 pub fn mark_window_ready(app: AppHandle, ready: State<'_, WindowCloseGate>) -> AppResult<()> {
     if ready

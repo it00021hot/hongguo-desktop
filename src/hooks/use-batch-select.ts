@@ -1,8 +1,6 @@
 import { useState } from 'react';
 
-/** 列表页批量管理模式的选择状态（进入管理 → 多选 → 批量删除）。
- *  进入管理 → 多选 → 批量删除）。选中集合按条目 id 记。
- *  与 BatchBar/ManageToggle/PickDot（components/batch-manage.tsx）配套。 */
+/** 列表页批量管理模式的选择状态（进入管理 → 多选 → 批量删除），与 batch-manage.tsx 组件配套。 */
 export function useBatchSelect() {
   const [managing, setManaging] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());

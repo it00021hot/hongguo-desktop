@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 
-/**
- * 长按阈值：官方 APK 的 `CollectEmoticonHelper` 用的是 500ms 定时器
- * （按下起表，超时未抬手即判定长按），本仓同款。
- */
+/** 长按阈值（官方 APK CollectEmoticonHelper 同款 500ms）。 */
 const LONG_PRESS_DELAY_MS = 500;
 
 /** 长按落点（视口坐标，菜单就地弹在指针旁）。 */
@@ -22,10 +19,8 @@ export interface LongPressHandlers {
 }
 
 /**
- * 长按识别（官方同款 500ms 阈值）。
- *
- * 长按触发后要吞掉紧随其后的 click——表情格既有点击（插入草稿）又有
- * 长按（收藏），不吞会长按之后又把表情插进草稿。
+ * 长按识别（官方同款 500ms 阈值）。长按触发后要吞掉紧随其后的 click——
+ * 表情格既有点击（插入草稿）又有长按（收藏），不吞会长按后又把表情插进草稿。
  */
 export function useLongPress(onLongPress: (point: LongPressPoint) => void): LongPressHandlers {
   const timer = useRef<number | null>(null);

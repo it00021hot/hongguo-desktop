@@ -1,15 +1,8 @@
 //! 播放页互动栏：收藏 / 评论 / 点赞 / 追更 / 分享（抖音系右缘竖排形态）。
-//!
-//! 布局对齐抖音：**icon 在上、计数在下**，实心纯白 + 投影贴着画面右缘，
-//! 不做圆底按钮。图标为自绘抖音系实心 SVG——lucide 线框形态不像；
-//! fill/stroke 走 currentColor，激活态（红心/黄星）由外层 fill-*/text-* 类接管。
-//! 计数来自剧集档案的 detail 公开计数（匿名可见），登录后 mget 兜底
-//! 「已赞/已追」红标。预约在侧边栏「预约」页，不在这。
-//! 发弹幕入口在控制栏，不在这里。
-//!
-//! 端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、
-//! 状态 mget；口径见 docs 第 9 节。追更 do_action
-//! 34/35、object_type=10。
+//! 布局对齐抖音：icon 在上、计数在下，实心纯白 + 投影；图标为自绘抖音系实心 SVG，
+//! fill/stroke 走 currentColor，激活态由外层 fill-*/text-* 类接管。
+//! 计数来自剧集档案 detail 公开计数（匿名可见），登录后 mget 兜底「已赞/已追」。
+//! 端点：点赞 do_action(3/4)、收藏 bookshelf(0/1)、状态 mget；追更 do_action 34/35、object_type=10。
 
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -28,7 +21,7 @@ import {
 import { usePlayerStore } from '@/stores/player';
 import { useFollowState } from '@/hooks/use-follow-state';
 
-// ── 抖音系实心图标（自绘；激活态类优先于 fill/stroke 属性，直接生效） ──
+// 抖音系实心图标（自绘；激活态类优先于 fill/stroke 属性）
 
 function DouyinStarIcon({ className }: { className?: string }) {
   return (

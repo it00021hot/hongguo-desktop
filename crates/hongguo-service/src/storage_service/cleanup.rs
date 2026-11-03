@@ -1,8 +1,5 @@
-//! 文件清理。
-//!
-//! 每个删除入口都摘掉「文件 + 任务记录」这一对，收尾同步一次任务快照
-//! （[`persist`]）——落盘与摘除同属一个操作语义，编排留在本模块：Tauri
-//! command 与 GPUI 直调走同一段，两个壳不会各自记得（或忘掉）落盘。
+//! 文件清理。每个删除入口都摘掉「文件 + 任务记录」这一对，收尾同步一次任务快照
+//!（`persist`）：编排留在本模块，两个壳不会各自记得（或忘掉）落盘。
 
 use crate::app_state::AppState;
 use hongguo_common::AppResult;
@@ -21,9 +18,8 @@ pub fn delete_episode(state: &AppState, series_id: &str, vid_index: u32) -> AppR
         Some(p) => {
             let path = std::path::Path::new(&p);
             let ok = std::fs::remove_file(path).is_ok();
-            // 记录必须跟文件一起没。留着 completed 记录，播放会照它去开本地文件，
-            // 而文件已经不在 → 直接「媒体处理失败」，回落不到在线流。
-            // 文件本来就缺（记录早发霉）时同样要摘，那是自愈。
+            // 记录必须跟文件一起没：留着 completed 记录，播放会照它去开不存在的文件
+            // →「媒体处理失败」，回落不到在线流。文件本来就缺（记录早发霉）时同样摘，那是自愈。
             state.queue().remove_episode(series_id, vid_index);
             crate::download_service::worker::cleanup_temp(path);
             persist(state)?;
@@ -66,9 +62,7 @@ fn delete_series_files(state: &AppState, series_id: &str) -> AppResult<usize> {
         if std::fs::remove_file(p).is_ok() {
             n += 1;
         }
-        // 记录无条件跟着摘：本函数跑完，这些集在磁盘上已经没有文件了。
-        // 留着 completed 记录，播放会照它去开本地文件 → 「媒体处理失败」，
-        // 回落不到在线流。文件本来就缺（记录早发霉）时同样要摘，那是自愈。
+        // 记录无条件跟着摘：留着 completed 记录，播放会照它去开不存在的文件。
         removed_ids.push(t.id.clone());
         crate::download_service::worker::cleanup_temp(p);
     }

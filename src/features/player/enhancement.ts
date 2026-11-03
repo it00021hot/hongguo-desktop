@@ -1,15 +1,6 @@
 /**
- * 画质增强核心：锐化核与 Anime4K WebGPU 渲染器（纯逻辑，无 React）。
- *
- * 方案对齐已验证的第三方实现——显示层叠加，不碰播放管线、不改下载文件：
- * - 锐化：3×3 unsharp 卷积核，交给 SVG feConvolveMatrix（纯合成器效果，
- *   任何 WebView 可用，是所有降级路径的兜底档）；
- * - Anime4K：WebGPU compute 链（CNNx2M 2×，动态 import 保持首屏零加载），
- *   输入纹理优先 GPU 直拷；部分 HEVC 解码器给不出可导入的 GPU backing，
- *   自动换 OffscreenCanvas 桥（CPU 路径，限速由渲染循环负责）。
- *
- * 失败纪律：增强永远不允许弄坏播放本身——任何一环失败都以
- * EnhancementError(code) 抛出，由叠加层统一映射 i18n 文案并退回原画。
+ * 画质增强核心：锐化核与 Anime4K WebGPU 渲染器（纯逻辑，无 React）。显示层叠加，不碰播放管线、不改下载文件；
+ * 失败纪律：任何一环失败都以 EnhancementError(code) 抛出，由叠加层统一映射 i18n 文案并退回原画。
  */
 
 /** 增强失败的稳定错误码（叠加层映射词条；本模块不硬编码人类语言）。 */
@@ -35,11 +26,7 @@ export class EnhancementError extends Error {
   }
 }
 
-/**
- * 锐化强度（0–100）→ 3×3 unsharp 卷积核。
- *
- * amount 上限 0.7：再高振铃就会从「更锐」劣化成「更脏」，与第三方实测一致。
- */
+/** 锐化强度（0–100）→ 3×3 unsharp 卷积核；amount 上限 0.7（再高振铃从「更锐」劣化成「更脏」）。 */
 export function sharpenKernel(strength: number): number[] {
   const amount = (Math.min(Math.max(strength, 0), 100) / 100) * 0.7;
   return [0, -amount, 0, -amount, 1 + 4 * amount, -amount, 0, -amount, 0];
@@ -69,11 +56,7 @@ function isGpuBackingError(error: unknown): boolean {
   );
 }
 
-/**
- * 视频帧 → 输入纹理。优先 `copyExternalImageToTexture` GPU 直拷（零拷贝），
- * 桥路径经 OffscreenCanvas 中转（每帧重新 getContext 拿回的是同一实例，
- * 比维护一对可空变量干净）。
- */
+/** 视频帧 → 输入纹理：优先 `copyExternalImageToTexture` GPU 直拷（零拷贝），桥路径经 OffscreenCanvas 中转（每帧 getContext 拿回同一实例）。 */
 function createFrameUploader(
   video: HTMLVideoElement,
   queue: GPUQueue,
@@ -115,11 +98,7 @@ function createFrameUploader(
   };
 }
 
-/**
- * 把增强输出画上 canvas 的显示 pass：全屏三角形 + 纹理采样，附带可选的
- * 3×3 unsharp 锐化（amount>0 时中心 1+4a、四邻 -a，与 SVG 档同一套核）——
- * Anime4K 放大后的画面偏软，锐化叠在 2× 输出上一次采样完成，不另起 pass。
- */
+/** 显示 pass：全屏三角形 + 纹理采样，附可选 3×3 unsharp 锐化（与 SVG 档同一套核）——Anime4K 输出偏软，锐化叠在 2× 输出上一次采样完成。 */
 const displayShader = `
 struct Params { amount: f32, texel: vec2f }
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
@@ -166,10 +145,8 @@ function sharpenAmountOf(strength: number): number {
 }
 
 /**
- * 建 Anime4K CNNx2M 2× 渲染器：device 独占（源切换时所有库纹理随之销毁），
- * 输入纹理 rgba16float（CNN 中间值需要的精度），输出是输入的 2× 尺寸。
- * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败，
- * 而不是画出黑帧。
+ * 建 Anime4K CNNx2M 2× 渲染器：device 独占（源切换时全部库纹理随之销毁），输入 rgba16float（CNN 中间值精度），输出 2× 尺寸；
+ * 建管线包在 validation error scope 里——不支持的显卡在这里显式失败而不是画出黑帧。
  */
 export async function createAnime4KRenderer(
   video: HTMLVideoElement,
@@ -272,10 +249,8 @@ export async function createAnime4KRenderer(
 
     let lastFrameAt = -Infinity;
     let slowFrames = 0;
-    // 冷启动的头几帧要现编译 shader + 等驱动完成管线优化，几乎必然慢——
-    // 直接判死会把「每次启用/换集的 warm-up 尖峰」误杀成设备不支持
-    // （真机上第一次点必退级、第二次才成功就是这么来的）。给一次宽限：
-    // 计满后先重置再观察，真慢的设备第二轮照旧计满判死，只多花几帧。
+    // 冷启动头几帧要现编译 shader + 驱动管线优化，几乎必然慢——直接判死会把
+    // warm-up 尖峰误杀成设备不支持（第一次点必退级、第二次才成功）。给一次宽限，真慢的设备第二轮照旧计满判死
     let slowGraceUsed = false;
     return {
       dispose,

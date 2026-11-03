@@ -1,9 +1,4 @@
-/**
- * TanStack Query 的 key 工厂 + 无限滚动通用封装（各查询域共用）。
- *
- * 所有 key 必须从这里出，不要在组件里手写字符串——否则失效（invalidate）
- * 时容易漏掉某个 key，导致界面不刷新。
- */
+/** TanStack Query 的 key 工厂 + 无限滚动通用封装；所有 key 必须从这里出（组件手写字符串失效时容易漏 key）。 */
 import { useCallback, useMemo, useState } from 'react';
 import type { BrowseFilters } from '../schema';
 
@@ -11,17 +6,13 @@ import type { BrowseFilters } from '../schema';
 const RANK = ['rank'] as const;
 const RESERVATIONS = ['reservations'] as const;
 
-/** 抖动区间下限（毫秒）。 */
 const FUZZY_STALE_MIN_MS = 10_000;
-/** 抖动区间宽度（毫秒）：值域 [10s, 10s+20s)。 */
 const FUZZY_STALE_SPAN_MS = 20_000;
 
 /**
- * 白名单外查询的统一节流区间：10-30s、按 query key 哈希派生抖动。
- * 同批挂载的查询过期时刻彼此错开（避免集体过期→集体重拉的请求风暴），
- * 同一 key 跨渲染/重启稳定（不会因重渲染漂移）。白名单：账号（会话
- * 不失效一直用缓存）、媒体/封面、本地真值（设置/能力探测/播放进度）、
- * 以及刻意 staleTime 0 的社交态——它们不走本函数。
+ * 白名单外查询的统一节流区间：10-30s、按 query key 哈希派生抖动——同批挂载的查询过期时刻彼此错开
+ * （避免集体过期→集体重拉的请求风暴），同一 key 跨渲染/重启稳定。白名单（账号、媒体/封面、本地真值、
+ * 刻意 staleTime 0 的社交态）不走本函数。
  */
 export function fuzzyStaleTime(key: readonly unknown[]): number {
   let h = 7;
@@ -66,20 +57,15 @@ export const keys = {
   seriesComments: (seriesId: string) => ['series-comments', seriesId] as const,
   /** 单集评论的回复列表（展开「N 条回复」时按需拉取） */
   commentReplies: (vid: string, commentId: string) => ['comment-replies', vid, commentId] as const,
-  /** 剧评的回复列表 */
   reviewReplies: (seriesId: string, commentId: string) =>
     ['review-replies', seriesId, commentId] as const,
   danmaku: (vid: string) => ['danmaku', vid] as const,
   comments: (vid: string) => ['comments', vid] as const,
   /** 评论 @ 提及候选（登录态，含官方 AI bot 小果） */
   mentionList: (seriesId: string) => ['mention-list', seriesId] as const,
-  /** 第三方表情库（GIF tab） */
   emoticonsThirdParty: ['emoticons', 'third-party'] as const,
-  /** 我上传的自定义表情（♡ tab） */
   emoticonsOwn: ['emoticons', 'own'] as const,
-  /** 表情关键词搜索结果 */
   emoticonSearch: (keyword: string) => ['emoticons', 'search', keyword] as const,
-  /** 创作者主页（详情页点创作者进入：资料头 + 作品列表） */
   creatorProfile: (userId: string) => ['creator-profile', userId] as const,
   creatorWorks: (userId: string) => ['creator-works', userId] as const,
   interactState: ['interact-state'] as const,
@@ -116,11 +102,7 @@ interface InfiniteStream<TPage> {
   refetch: () => Promise<unknown>;
 }
 
-/**
- * 翻页流按业务 id 去重：服务端相邻分页会重叠条目（榜单实测相邻页重叠
- * 10 条，评论/剧评分页同样有），不去重 React 直接报 duplicate key 且
- * 同一条目重复渲染。flatMap 之后、进列表之前必过这一道。
- */
+/** 翻页流按业务 id 去重：服务端相邻分页会重叠条目，不去重 React 直接报 duplicate key 且重复渲染；flatMap 之后、进列表之前必过这一道。 */
 export function dedupBy<T>(items: T[], keyOf: (item: T) => string): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -133,11 +115,7 @@ export function dedupBy<T>(items: T[], keyOf: (item: T) => string): T[] {
   return out;
 }
 
-/**
- * 无限滚动流的通用出口：把 useInfiniteQuery 的结果包装成旧手动累积器
- * 的形状（items/hasMore/isLoading/isFetchingMore/error/loadMore/refresh），
- * 页面侧无感迁移。翻页失败不炸整页——旧内容还在，错误就地展示。
- */
+/** 无限滚动流的通用出口：把 useInfiniteQuery 包装成 items/hasMore/loadMore/refresh 形状；翻页失败不炸整页——旧内容还在，错误就地展示。 */
 export function useInfiniteStream<TPage, TItem>(
   query: InfiniteStream<TPage>,
   flatten: (pages: TPage[]) => TItem[],

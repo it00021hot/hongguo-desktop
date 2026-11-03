@@ -1,12 +1,7 @@
-//! 观看历史页（Tauri `/history` = `history-page.tsx` 的 GPUI 对齐）。
-//!
-//! **双模式**（Tauri issue #10 同款）：登录 = 云端观看记录
-//! （read_history/list，book_type=2 短剧过滤，跨设备）；未登录 = 本地
-//! 观看记录（播放时已落库，删除只动本机，页面顶部给「未登录」提示行）。
-//! 行式列表（封面 + 标题 + 进度徽标 + 相对时间 + 继续播放），顶部
-//! 「全部/未看完/已看完」筛选与标题搜索，管理模式下多选批量删除
-//! （云端一条请求；本地逐剧删）。云端数据与操作走 `hongguo_api::history`，
-//! 本地走 `hongguo_store`，与 Tauri 的 history command 同一段。
+//! 观看历史页，双模式：登录 = 云端观看记录（跨设备）；未登录 = 本地观看
+//! 记录（删除只动本机，顶部给「未登录」提示行）。行式列表 + 全部/未看完/
+//! 已看完筛选 + 标题搜索 + 管理模式批量删除。云端走 `hongguo_api::history`，
+//! 本地走 `hongguo_store`。
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

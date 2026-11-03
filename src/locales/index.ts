@@ -12,8 +12,8 @@ const resources: Record<string, Dict> = {
 export type Locale = keyof typeof resources;
 
 /**
- * 词条路径类型：由中文资源结构递归推导的 `a.b.c` 字面量联合。
- * 513 处 `t()` 调用点全部获得编译期检查——key 拼错/词条改名漏改，tsc 当场报。
+ * 词条路径类型：由中文资源结构递归推导的 `a.b.c` 字面量联合，
+ * t() 调用点全部获得编译期检查（key 拼错/词条改名漏改 tsc 当场报）。
  */
 export type MessageKey = Paths<typeof zhCN>;
 
@@ -31,7 +31,6 @@ function detect(): Locale {
 
 let current: Locale = detect();
 
-/** 当前语言。 */
 export function locale(): Locale {
   return current;
 }
@@ -53,8 +52,7 @@ export function t(path: MessageKey): string {
   }, resources[current]);
 
   if (typeof value === 'string') return value;
-  // 缺词条回落到 key 本身，比显示 undefined 更容易定位问题；dev 下额外
-  // 告警——用户看到 `feed.loadFailed` 原文属于事故，不能只靠回落静默
+  // 缺词条回落 key 本身；dev 下额外告警——用户看到 `feed.loadFailed` 原文属于事故，不能只靠回落静默
   if (import.meta.env.DEV) {
     console.warn(`[i18n] 缺词条: ${path}（当前语言 ${current}）`);
   }
@@ -68,5 +66,4 @@ export function tf(path: MessageKey, vars: Record<string, string | number>): str
   );
 }
 
-// 初始化文档语言
 document.documentElement.lang = current;

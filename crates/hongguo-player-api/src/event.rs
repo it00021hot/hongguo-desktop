@@ -16,10 +16,8 @@ pub enum PlayerEvent {
 }
 
 /// 播放源：在线流或本地成品文件。
-///
-/// 本地成品 = 已下载的那一集（Tauri `play_service::local::resolve_play` 的
-/// 「本地优先」对位）：离线可播、秒开，且**没有档位概念**（本地只有一版，
-/// 清晰度菜单该是空的）。
+/// 本地成品 = 已下载的那一集（Tauri `play_service::local::resolve_play` 的「本地优先」对位）：离线可播、秒开，
+/// 且**没有档位概念**（本地只有一版，清晰度菜单该是空的）。
 #[derive(Clone, Debug)]
 pub enum PlaySource {
     /// 在线流：调用方已 `prepare` 过，缓存里有这一档。

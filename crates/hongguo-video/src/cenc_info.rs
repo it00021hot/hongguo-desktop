@@ -1,7 +1,5 @@
 //! CENC 辅助信息：`saiz`（每样本附加信息大小）与 `senc`（逐样本 IV）。
-//!
-//! 与 [`super::sample_table`] 分文件：那边是「样本在哪、多大」，
-//! 这边是「怎么解密」，两套字段互不相干，放一起反而看不清。
+//! [`super::sample_table`] 管「样本在哪、多大」，这里管「怎么解密」，两套字段分文件。
 
 use super::sample_table::TrackInfo;
 
@@ -24,8 +22,7 @@ pub(super) fn read_saiz(data: &[u8], start: usize, size: usize, info: &mut Track
     if count == 0 {
         return;
     }
-    // 畸形 count 防御（口径同 timing::read_entry_count）：saiz 每条 1 字节，
-    // 卡到 box 容量内，不让预分配按声明值直接爆
+    // 畸形 count 防御（口径同 timing::read_entry_count）：saiz 每条 1 字节，卡到 box 容量内
     let n = (count as usize).min(size.saturating_sub(9)).min(data.len());
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -40,21 +37,17 @@ pub(super) fn read_saiz(data: &[u8], start: usize, size: usize, info: &mut Track
 }
 
 /// 从 `senc` 读每个样本的 IV。
-///
-/// ⚠️ **IV 是 8 字节**，步长也是 8。平台封装时如此（现版 JS 按 `i * 8` 取），
-///    按 CENC 规范的 16 字节读会整体错位——不报错，但解出来全是噪声。
+/// ⚠️ **IV 是 8 字节、步长 8**（平台封装如此，现版 JS 按 `i * 8` 取）；按 CENC 规范的 16 字节读会整体错位——不报错但全是噪声。
 pub(super) fn read_senc(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     if size < 8 {
         return;
     }
-    // version+flags 已占 4 字节，sample_count 紧随其后。
-    // 现版 JS 同样不按 version 分支，这里保持一致。
+    // version+flags 占 4 字节、sample_count 紧随其后；现版 JS 同样不按 version 分支，保持一致
     let count_at = start + 4;
     if count_at + 4 > start + size {
         return;
     }
-    // 畸形 count 防御（口径同 timing::read_entry_count）：每条 IV 8 字节，
-    // 卡到 box 容量内
+    // 畸形 count 防御（口径同 timing::read_entry_count）：每条 IV 8 字节，卡到 box 容量内
     let count = (u32::from_be_bytes([
         data[count_at],
         data[count_at + 1],
@@ -96,7 +89,6 @@ mod tests {
 
     #[test]
     fn reads_saiz_sizes() {
-        // saiz 载荷：flags 由 full_box 写入，接着 default_sample_info_size(1) | count(4) | sizes
         let mut payload = vec![0u8]; // default_sample_info_size = 0
         payload.extend_from_slice(&2u32.to_be_bytes()); // sample_count
         payload.push(8);
@@ -110,8 +102,7 @@ mod tests {
 
     #[test]
     fn reads_senc_ivs() {
-        // ⚠️ IV 是 **8 字节**，步长也是 8（平台封装如此，现版 JS 同样按 `i * 8` 取）。
-        // 按 CENC 规范的 16 字节读会整体错位，解密出来全是噪声且不报错。
+        // ⚠️ IV 是 **8 字节**、步长也是 8（平台封装如此，现版 JS 同样按 `i * 8` 取）
         let mut payload = 2u32.to_be_bytes().to_vec(); // sample_count
         payload.extend_from_slice(&[0x11u8; 8]);
         payload.extend_from_slice(&[0x22u8; 8]);
@@ -126,7 +117,6 @@ mod tests {
 
     #[test]
     fn senc_truncation_stops_without_panic() {
-        // 声明 4 个 IV 但只给 2 个，必须停在给定的数据上而不是越界读
         let mut payload = 4u32.to_be_bytes().to_vec();
         payload.extend_from_slice(&[0x33u8; 8]);
         payload.extend_from_slice(&[0x44u8; 8]);

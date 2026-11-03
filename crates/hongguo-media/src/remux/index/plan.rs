@@ -64,8 +64,7 @@ pub fn read_source_file(moov: &[u8]) -> AppResult<SourceFile> {
         let info = collect_track(moov, trak.start, end)
             .ok_or_else(|| AppError::Media("有 trak 解析不出样本表".into()))?;
 
-        // 偏移停在 0 = 样本表没解析出来。照这样的样本写 mdat 会把文件头当成
-        // 媒体数据拷进产物，而产物照样「能打开」——只能在这里挡住。
+        // 偏移停在 0 = 样本表没解析出来——照这样的样本写 mdat 会把文件头当媒体数据拷进产物，而产物照样「能打开」，只能在这里挡住
         if info.samples.first().is_some_and(|(at, _)| *at == 0) {
             return Err(AppError::Media(
                 "某条轨道的样本偏移没解析出来，拼接后会产出损坏文件".into(),
@@ -116,10 +115,8 @@ fn interleave_order(tracks: &[SourceTrack]) -> Vec<(usize, u32)> {
     all.into_iter().map(|(_, t, i)| (t, i)).collect()
 }
 
-/// 读一条轨道的 `edts/elst`。缺失/畸形返回空，调用方补默认 edit。
-///
-/// `elst` 的 `media_time` 是 media timescale、`segment_duration` 是 movie
-/// timescale；这里只做原样解析，跨集平移在 [`plan`] 里按 media ticks 累加。
+/// 读一条轨道的 `edts/elst`，缺失/畸形返回空，调用方补默认 edit。
+/// `media_time` 是 media timescale、`segment_duration` 是 movie timescale；这里只做原样解析，跨集平移在 [`plan`] 按 media ticks 累加。
 fn read_edits(data: &[u8], trak: &BoxHeader) -> Vec<Edit> {
     let Some(edts) = find_box(data, trak.start, trak.start + trak.size, "edts") else {
         return Vec::new();
@@ -163,10 +160,7 @@ fn read_edits(data: &[u8], trak: &BoxHeader) -> Vec<Edit> {
 }
 
 /// 把所有输入累加成一条完整的索引。
-///
-/// 轨道结构与电影时基必须逐文件一致。`codec_probe` 已经拦过编码参数，这里补的
-/// 是它没管的部分：轨数、轨道类型顺序、`mvhd` 的 timescale。任一对不上都直接
-/// 报错——硬拼出来的文件连索引都过不去。
+/// `codec_probe` 已拦过编码参数，这里补它没管的：轨数、轨道类型顺序、`mvhd` timescale——任一对不上直接报错，硬拼出来的文件连索引都过不去。
 pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
     let Some(first) = files.first() else {
         return Err(AppError::Media("没有待合并的文件".into()));
@@ -204,8 +198,7 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
 
         for (episode, file) in files.iter().enumerate() {
             let track = &file.tracks[t];
-            // 本集 media 起点：源 elst 的 media_time 都是相对**本集** media 的，
-            // 拼到合并轨上要整体平移到本集起点。
+            // 本集 media 起点：源 elst 的 media_time 相对**本集** media，拼到合并轨上要整体平移到本集起点
             let media_start = acc.media_duration as i64;
             let episode_edits = compose_episode_edits(track, media_start, movie_ts);
             acc.movie_duration += episode_edits
@@ -221,9 +214,8 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
         tracks.push(acc.finish());
     }
 
-    // 电影时长取各轨 presentation 的最大值：源 mvhd 是「各集自己的上界」，
-    // 逐集相加会把每集内部的音频/视频毫秒差也加进来（实测 10 集多出 76ms
-    // 尾部空档）。edit list 的段时长之和才是本轨真实的 presentation 结束点。
+    // 电影时长取各轨 presentation 的最大值：源 mvhd 是「各集自己的上界」，逐集相加会把每集内部的音视频毫秒差也加进来
+    // （实测 10 集多出 76ms 尾部空档）；edit list 的段时长之和才是本轨真实的 presentation 结束点
     let movie_duration = tracks
         .iter()
         .map(|t| duration_of(&t.tkhd, TKHD_DURATION))
@@ -234,11 +226,8 @@ pub fn plan(files: &[SourceFile]) -> AppResult<MergeIndex> {
     Ok(MergeIndex { tracks, mvhd })
 }
 
-/// 把一集的源 edit 平移到合并轨的 media 起点；源没有 elst 时补一条默认段。
-///
-/// 默认段让每条轨在每个集边界都有明确的 presentation 映射，播放器不会拿
-/// 「上一条 edit 继续往后推」这种隐式行为解释拼接处。`segment_duration` 为 0
-/// 的畸形 edit 回落到 `tkhd` 时长，避免写出零长段。
+/// 把一集的源 edit 平移到合并轨的 media 起点；源没有 elst 时补一条默认段（每条轨在每个集边界都有明确的 presentation 映射，避免播放器用隐式续推解释拼接处）。
+/// `segment_duration` 为 0 的畸形 edit 回落到 `tkhd` 时长，避免写出零长段。
 fn compose_episode_edits(track: &SourceTrack, media_start: i64, movie_ts: u32) -> Vec<Edit> {
     let segment_fallback = {
         let by_tkhd = duration_of(&track.tkhd, TKHD_DURATION);
@@ -280,9 +269,7 @@ fn compose_episode_edits(track: &SourceTrack, media_start: i64, movie_ts: u32) -
 }
 
 /// 轨道结构一致性。
-///
-/// 报错要指出**具体差在哪**：短剧各集是平台分别编码的，分辨率不统一是常态
-/// （同一部剧里混着 1080p 与 720p），只说「编码参数不同」用户无从下手。
+/// 报错要指出**具体差在哪**：各集是平台分别编码的，分辨率不统一是常态（同一部剧混着 1080p 与 720p），只说「编码参数不同」用户无从下手。
 fn check_structure(files: &[SourceFile]) -> AppResult<()> {
     let base = &files[0].tracks;
     for (k, file) in files.iter().enumerate().skip(1) {
@@ -341,8 +328,7 @@ fn check_structure(files: &[SourceFile]) -> AppResult<()> {
                     ),
                 ));
             }
-            // 逐集时长相加的前提：同一轨的媒体时基一致（stts 的 delta 都是
-            // 「各自 mdhd 时基下的 tick」，混着加就是悄悄改速率）
+            // 逐集时长相加的前提：同一轨的媒体时基一致（stts 的 delta 是「各自 mdhd 时基下的 tick」，混着加就是悄悄改速率）
             if mdhd_timescale(&a.mdhd) != mdhd_timescale(&b.mdhd) {
                 return Err(structure_error(
                     episode,
@@ -405,8 +391,7 @@ impl Accumulator {
             .extend(info.samples.iter().map(|(_, size)| *size as u32));
 
         if info.stts.is_empty() {
-            // 没有 stts 的畸形轨道：按每样本一个单位时长补一条，
-            // 否则后面各集的样本会挤在 t=0 之前
+            // 没有 stts 的畸形轨道：按每样本一个单位时长补一条，否则后面各集的样本会挤在 t=0 之前
             push_run(&mut self.stts, count as u32, 1);
         } else {
             for &(n, delta) in &info.stts {
@@ -419,8 +404,7 @@ impl Accumulator {
                 push_run(&mut self.ctts, count as u32, 0);
             } else {
                 for &(n, offset) in &info.ctts {
-                    // 原样照搬，不加各集起点：合成时间与解码时间同步平移，
-                    // 差值（也就是 offset）不变
+                    // 原样照搬，不加各集起点：合成时间与解码时间同步平移，差值不变
                     push_run(&mut self.ctts, n, offset);
                 }
             }
@@ -472,16 +456,13 @@ fn track_duration(info: &TrackInfo) -> u64 {
     if sum > 0 { sum } else { info.media_duration }
 }
 
-// ── FullBox 字段读写 ─────────────────────────────────────────────
-// 下面的偏移都相对 box 的**载荷**（version 之后的第一个字节）。
-// mvhd / mdhd / tkhd 都是「时间基 + 时长」相邻的同形结构，只有 tkhd 前面
-// 多一个 track_ID 与一个 reserved。
+// FullBox 字段读写：下面的偏移都相对 box 的**载荷**（version 之后的第一个字节）。
+// mvhd / mdhd / tkhd 都是「时间基 + 时长」相邻的同形结构，只有 tkhd 前面多一个 track_ID 与一个 reserved。
 
 const MVHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const MVHD_DURATION: (usize, usize) = (16, 24);
 pub(super) const MDHD_DURATION: (usize, usize) = (16, 24);
-/// `mdhd` 的媒体时基字段（与 `mvhd` 同形：version/flags + creation +
-/// modification + timescale，载荷偏移 12）。
+/// `mdhd` 的媒体时基字段（与 `mvhd` 同形，载荷偏移 12）。
 const MDHD_TIMESCALE: (usize, usize) = (12, 20);
 pub(super) const TKHD_DURATION: (usize, usize) = (20, 28);
 

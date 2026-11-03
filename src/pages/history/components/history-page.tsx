@@ -35,13 +35,8 @@ import { t, tf, type MessageKey } from '@/locales';
 import type { WatchHistoryItem } from '@/service/schema';
 
 /**
- * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，
- * book_type=2 短剧过滤；各端看的记录都在）。
- *
- * 点卡片跳播放器续播；封面是 HEIC 签名 URL，经 enhancedCover 转码代理。
- * 顶部「全部/未看完/已看完」筛选与标题搜索对齐官方客户端：
- * 已看完 = episode_cnt>0 且已看到最后一集（官方客户端同款判定，
- * 不看片内进度）。
+ * 「历史」——云端观看记录（官方 App「历史」同源 read_history/list，book_type=2 短剧过滤）。
+ * 点卡片跳播放器续播；「全部/未看完/已看完」筛选与标题搜索对齐官方客户端。
  */
 
 type HistoryTab = 'all' | 'unfinished' | 'finished';
@@ -59,8 +54,7 @@ const TABS: { key: HistoryTab; labelKey: MessageKey }[] = [
 
 export function HistoryPage() {
   const playSeries = usePlaySeries();
-  // 双模式（issue #10）：登录 = 云端历史（官方 App 同源，跨设备）；
-  // 未登录 = 本地观看记录（播放时已落库，删除只动本机）
+  // 双模式：登录 = 云端历史（跨设备），未登录 = 本地观看记录
   const { data: account } = useAccount();
   const loggedIn = !!account;
   const cloud = useWatchHistory(loggedIn);

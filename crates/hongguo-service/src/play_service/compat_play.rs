@@ -1,14 +1,6 @@
-//! 播放兼容兜底：解码不出来时转成 H.264 再播。
-//!
-//! 平台给的是 HEVC，WebView2 能不能解完全看系统——装了「HEVC 视频扩展」
-//! 就能看，没装就是**有声音没画面**。这里在确认解不出来之后，把这一集转成
-//! H.264 落进兼容缓存，播放器改播转码产物。
-//!
-//! 为什么值得做：黑屏是「看不出为什么也改不了」的死局，而兜底只在这一集上
-//! 付一次转码的代价（之后命中缓存）。转码走 [`pipeline::transcode`] 的统一
-//! 分流链（平台硬编 → ffmpeg）。
-//!
-//! 进度按已编码秒数上报到界面——转码一集要几十秒，没有进度用户只能等。
+//! 播放兼容兜底：解码不出来时转成 H.264 再播（HEVC 能不能解完全看系统装没装「HEVC 视频扩展」）。
+//! 转码走 `pipeline::transcode` 的统一分流链（平台硬编 → ffmpeg），产物落兼容缓存、同一集只转一次；
+//! 进度按已编码秒数上报到界面。
 
 use std::path::{Path, PathBuf};
 
@@ -60,7 +52,6 @@ pub async fn ensure_compat(
     let temp = plaintext_temp_path_for(&target);
     let started = std::time::Instant::now();
 
-    // 1) 落到一个可解复用的明文文件
     let (plain, is_temp) = match source {
         CompatSource::LocalFile(p) => (p.to_path_buf(), false),
         CompatSource::PlainBytes(bytes) => {
@@ -69,8 +60,7 @@ pub async fn ensure_compat(
         }
     };
 
-    // 百分比要拿总时长才折得出来。读不出来就报 0——宁可显示不确定，
-    // 也不要给一个编出来的数字。
+    // 百分比要拿总时长才折得出来；读不出来报 0——宁可显示不确定，也不给一个编出来的数字。
     let total_secs = video_seconds(&plain);
     let report = |secs: f64| {
         let pct = match total_secs {
@@ -81,9 +71,8 @@ pub async fn ensure_compat(
     };
     report(0.0);
 
-    // 2) 转码。分流链（平台硬编 → ffmpeg）在 pipeline 里只有一份，
-    //    这里必须走同一个入口——曾在这里复刻过一条 ffmpeg→软编的私有分流，
-    //    平台硬编接不进来，兼容播放永远拿不到硬编速度。
+    // 2) 转码必须走 pipeline 的同一个入口——分流链只有一份，复刻私有分流
+    //    会让平台硬编接不进来，兼容播放永远拿不到硬编速度。
     let result = crate::transcode_service::pipeline::transcode(
         series_id,
         vid_index,
@@ -112,10 +101,8 @@ pub async fn ensure_compat(
     })
 }
 
-/// 后端标识，给界面提示用。
-///
-/// 没有可用后端时（平台编码器不可用且没装 ffmpeg），产物只可能是此前转好的
-/// 缓存——这时报「none」，不编一个后端名出来。
+/// 后端标识，给界面提示用。没有可用后端时报「none」，不编一个后端名出来
+///（此时产物只可能是此前转好的缓存）。
 fn backend_label(backend: Option<hongguo_media::Backend>) -> String {
     match backend {
         Some(b) => b.decoder_label().to_string(),
@@ -157,9 +144,7 @@ pub enum CompatPhase {
     Ready,
 }
 
-/// 兼容转码进度事件载荷（`compat-play-progress`）。
-///
-/// 与前端 `compatProgressSchema` 两端镜像，改字段同一 commit 改另一端。
+/// 兼容转码进度事件载荷（`compat-play-progress`），与前端 `compatProgressSchema` 两端镜像，改字段同一 commit 改另一端。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompatProgressEvent {
@@ -179,11 +164,9 @@ pub struct CompatPlayResult {
     pub elapsed_ms: u128,
 }
 
-/// 把一集转成 H.264 供本机解不了的机器播放（编排自 tauri 命令平移）。
-///
-/// 播放器确认「有声音没画面」后调它；转好的产物落进兼容缓存，同一集只转一次。
-/// 已下载的走本地文件，没下载的现取现解；进度经事件总线（
-/// `compat-play-progress`）送达壳。
+/// 把一集转成 H.264 供本机解不了的机器播放。
+/// 播放器确认「有声音没画面」后调它；已下载的走本地文件，没下载的现取现解；
+/// 进度经事件总线（`compat-play-progress`）送达壳。
 pub async fn compat_for_playback(
     state: &AppState,
     series_id: &str,
@@ -253,7 +236,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_cached_compat_file_short_circuits() {
-        // 命中缓存时不该碰源，也不再起一次转码
         let dir = std::env::temp_dir().join(format!("hg-compat-hit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
@@ -292,7 +274,6 @@ mod tests {
     #[test]
     fn plaintext_source_temp_is_distinct_from_ffmpeg_output_temp() {
         let target = cache::cache_file("s", 22);
-        // 兼容播放的明文输入不能与流水线为最终输出创建的临时文件重名。
         let source = plaintext_temp_path_for(&target);
         let ffmpeg_output = hongguo_common::utils::path::temp_path_for(&target);
         assert_ne!(source, ffmpeg_output, "ffmpeg 会把自己的临时输出误认成输入");

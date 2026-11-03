@@ -2,43 +2,35 @@ import { create } from 'zustand';
 import { writeLastTarget } from '@/utils/playback-prefs';
 
 interface PlayerState {
-  /** 当前播放的剧集 id */
   seriesId: string | null;
-  /** 当前播放的集号 */
   vidIndex: number | null;
   /**
-   * 选中剧连播（binge）：信息流里主动选了某集 = 要追这部，滚轮/↑↓
-   * 切集而不是换剧。null = 跟随信息流（滚动换剧）。
-   * 跟着剧走：setTarget 切到别的剧自动解除。
+   * 选中剧连播（binge）：信息流里主动选了某集 = 要追这部，滚轮/↑↓切集而不是换剧。
+   * null = 跟随信息流；跟着剧走，setTarget 切到别的剧自动解除。
    */
   bingeSeriesId: string | null;
   setBinge: (seriesId: string | null) => void;
   /**
-   * 外部点名信号（详情/历史/收藏/搜索卡片、选集面板切季、剧终接下一季）：
-   * 首页信息流消费它把游标对到目标剧——流里有就对过去，没有就钉在最前。
-   * 自增计数：同一部剧连续点名也每次生效；区别于信息流自己的
-   * setTarget（游标驱动，不许触发对齐，否则会和用户滚动互相拽）。
+   * 外部点名信号（详情/历史/收藏/搜索卡片、切季、剧终接下一季）：首页信息流消费它把游标对到目标剧。
+   * 自增计数，同一部剧连续点名也生效；区别于信息流自己的 setTarget（游标驱动，不许触发对齐）。
    */
   gotoNonce: number;
   requestGoto: (seriesId: string, vidIndex: number) => void;
   /**
-   * 外部点名已消费到的 nonce（首页写回）：跨页跳转会卸载并重挂首页，
-   * 只存组件 state 的话，重挂载会拿「当前 nonce」初始化成已消费，
-   * 点名信号死在挂载帧（搜索/历史点开被推荐流顶掉的伴生根因）。
+   * 外部点名已消费到的 nonce（首页写回）：跨页跳转会卸载重挂首页，存组件 state 的话重挂载会
+   * 拿「当前 nonce」初始化成已消费，点名信号死在挂载帧。
    */
   gotoConsumed: number;
   markGotoConsumed: (nonce: number) => void;
   /**
-   * 进入播放前的来源路由（含 search 的 href）：播放器「返回」钮回到
-   * 来源页（历史/搜索/榜单…），而不是停在推荐流。null = 没有外部来源
-   * （信息流滚动/重启恢复），不显示返回钮。会话态，不持久化。
+   * 进入播放前的来源路由：播放器「返回」钮回到来源页而不是停在推荐流；
+   * null = 无外部来源，不显示返回钮。会话态，不持久化。
    */
   returnTo: string | null;
   setReturnTo: (href: string | null) => void;
   /**
-   * 跨客户端续播提示：云端历史有进度、本地播放档案没有时，信息流把
-   * 「该看哪一集 + 集内位置」放这里，播放器起播无本地 resumeAt 时消费。
-   * 消费即清；不匹配当前集的残留提示会被忽略（无害）。
+   * 跨客户端续播提示：云端历史有进度、本地播放档案没有时，信息流把「该看哪集 + 集内位置」放这里，
+   * 播放器起播无本地 resumeAt 时消费，消费即清；不匹配当前集的残留提示会被忽略。
    */
   resumeHint: { seriesId: string; vidIndex: number; positionMs: number } | null;
   setResumeHint: (hint: { seriesId: string; vidIndex: number; positionMs: number } | null) => void;
@@ -61,14 +53,8 @@ interface PlayerState {
 }
 
 /**
- * 播放器状态。
- *
- * 只放「跨组件共享的播放上下文」，播放进度等易失数据不放在这里——
- * 那类数据由 TanStack Query 负责缓存与失效。
- *
- * 兼容模式、播完连播这些**是持久化设置**，归 data.json 管、由 `useSettings` 取，
- * 不在这里再抄一份。抄的那份既不从后端读也不往回写，两边对不上，
- * 表现就是「改了没反应、重启又变回默认」。
+ * 播放器状态：只放跨组件共享的播放上下文，易失数据归 TanStack Query；
+ * 兼容模式/连播等持久化设置归 data.json（useSettings），不在 store 抄一份（抄了两边对不上会「改了没反应」）。
  */
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   seriesId: null,
@@ -97,13 +83,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setSeriesPanelOpen: (open) => set({ seriesPanelOpen: open }),
   setCommentPanelOpen: (open) => set({ commentPanelOpen: open }),
   setTarget: (seriesId, vidIndex) => {
-    // 目标持久化：重启后由首页种子（云端历史排头）自然续上，
-    // 进度由本地播放档案的 resumeAt 接上（首页起点决策同口径）
+    // 目标持久化：重启后由首页种子（云端历史排头）自然续上，进度由本地播放档案的 resumeAt 接上
     writeLastTarget({ seriesId, vidIndex });
     set((s) => ({
       seriesId,
       vidIndex,
-      // 连播跟着剧走：切到别的剧自动解除锁定
       bingeSeriesId: s.bingeSeriesId === seriesId ? s.bingeSeriesId : null,
     }));
   },

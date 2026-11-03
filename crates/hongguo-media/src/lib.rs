@@ -1,24 +1,7 @@
-//! 纯 Rust 编解码（hongguo-media crate）。
-//!
-//! - [`backend`]：转码后端的统一标识
-//! - [`bgra`]：4 字节像素的通道序（RGBA ⇄ BGRA，渲染上传用）
-//! - [`demux`]：MP4 轨道/样本解复用
-//! - [`h264`]：avcC 参数集提取（与 [`hevc`] 同构，那边喂 hvcC）
-//! - [`hevc`]：hvcC 参数集提取与 Annex-B 转换
-//! - [`mp4`]：MP4 写出层（`moov` 组装与 `mdat` 布局，快速合并与重新封装共用）
-//! - [`mux`]：H.264 → MP4 重新封装（平台编码后端的收尾件）
-//! - [`remux`]：流复制拼接（快速合并）
-//! - [`codec_probe`]：各集编码是否一致（快速合并的前提）
-//! - [`disk_space`]：输出卷剩余空间
-//! - [`transcode`]：转码结果与文件读取
-//! - [`heif`]：HEIC 封面纯 Rust 解码（封面阶梯的最后一级）
-//!
-//! 定位：**媒体层的公共底座**——容器解析、封装、封面解码。转码的编码环节在
-//! 平台硬编（VideoToolbox / Media Foundation）与 ffmpeg 两条路上；纯 Rust 软解
-//! 软编已随播放兜底链一起移除。平台硬编、ffmpeg 执行与解码能力探测在
-//! `crates/hongguo-media-platform`——它依赖本 crate，反向不成立。
-//!
-//! 本 crate 不依赖 tauri。
+//! 纯 Rust 编解码：**媒体层的公共底座**——容器解析（demux）、MP4 写出（mp4）、H.264 重封装（mux）、
+//! 流复制拼接（remux）、avcC/hvcC 参数集提取、HEIC 封面纯 Rust 解码（heif）、编码一致探测（codec_probe）。
+//! 转码的编码环节在平台硬编（VideoToolbox / Media Foundation）与 ffmpeg 两条路上，
+//! 聚合在 `crates/hongguo-media-platform`——它依赖本 crate，反向不成立；本 crate 不依赖 tauri。
 
 pub mod backend;
 pub mod bgra;

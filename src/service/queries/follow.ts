@@ -6,10 +6,7 @@ import type { FollowNotice } from '../schema';
 import { keys } from './common';
 import { useAccount } from './interact';
 
-// ---------------------------------------------------------------- 追更（列表 / 是否已追 / 更新提醒）
-
-/** 追更列表（cursor 无限翻页）。社交态数据：staleTime 0 每次重拉
- *  （同预约/互动——服务端跟随列表没有「缓存有效期」可言）。 */
+/** 追更列表（cursor 无限翻页），社交态数据 staleTime 0 每次重拉。 */
 export function useFollowUpdates() {
   const { data: account } = useAccount();
   return useInfiniteQuery({
@@ -86,9 +83,7 @@ export function useFollowCheck() {
   });
 }
 
-/** 新通知到达后的统一失效（事件订阅方调）：追更列表/角标，加上出新集
- * 剧的分集缓存——后端虽在线现拉，弹内还有 10-30s 抖动节流，这里失效
- * 才能让正开着的选集立刻见新集（「追更已知 400 集、选集还是 380」）。 */
+/** 新通知到达后的统一失效（事件订阅方调）：追更列表/角标 + 出新集剧的分集缓存——弹内有 10-30s 抖动节流，失效才能让正开着的选集立刻见新集。 */
 export function useFollowNoticesInvalidator() {
   const qc = useQueryClient();
   return useCallback(
@@ -103,7 +98,6 @@ export function useFollowNoticesInvalidator() {
   );
 }
 
-/** 通知列表里是否还有未读（角标用）。 */
 export function unreadNotices(notices: FollowNotice[] | undefined): number {
   return notices?.filter((n) => !n.read).length ?? 0;
 }

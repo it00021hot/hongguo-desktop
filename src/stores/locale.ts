@@ -6,12 +6,7 @@ interface LocaleState {
   set: (l: Locale) => void;
 }
 
-/**
- * 语言状态。
- *
- * 与 `i18n` 模块的纯函数分开：这里负责让 React 能感知语言变化并重渲染，
- * 实际取值仍在 `i18n` 里。
- */
+/** 语言状态：让 React 感知语言变化重渲染，实际取值仍在 `i18n`（locales/index）。 */
 export const useLocaleStore = create<LocaleState>((set) => ({
   locale: locale(),
   set: (l) => {

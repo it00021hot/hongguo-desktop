@@ -11,15 +11,8 @@ import { ErrorState } from '@/components/common/error-state';
 import { t } from '@/locales';
 
 /**
- * 路由级兜底三件套 + 渲染骨架：
- *
- * - RouteError：路由组件抛错（defaultErrorComponent）——应用壳保留，
- *   错误就地展示 + 重试；
- * - RouteNotFound：深链不存在的路由（notFoundComponent）；
- * - PendingFallback：lazy 页面 chunk 加载期间（defaultPendingComponent）。
- *
- * RouterCrashed 是路由体系**之外**的顶层渲染异常（react-error-boundary），
- * 此时连应用壳都不可信，给整页兜底 + 整页刷新重试。
+ * 路由级兜底：RouteError（路由组件抛错，壳保留）/ RouteNotFound（深链不存在）/
+ * PendingFallback（lazy chunk 加载中）；RouterCrashed 是路由体系之外的顶层渲染异常，给整页兜底 + 整页刷新。
  */
 
 /** 路由组件抛错：保留应用壳，就地展示错误与重试。 */

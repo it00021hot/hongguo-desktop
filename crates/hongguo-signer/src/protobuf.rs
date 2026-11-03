@@ -1,7 +1,5 @@
-//! 极简 protobuf 编码。
-//!
-//! Medusa 签名把设备指纹包成 protobuf message 再加密。只需要 wire format 的
-//! 编码侧（不解析、不支持 packed repeated / map），因此这里不做完整实现。
+//! 极简 protobuf 编码：Medusa 签名把设备指纹包成 protobuf message 再加密。
+//! 只需要 wire format 的编码侧（不解析、不支持 packed repeated / map），不做完整实现。
 
 use crate::primitives::zigzag;
 
@@ -59,9 +57,7 @@ pub fn varint(mut value: u64) -> Vec<u8> {
     out
 }
 
-/// 编码单个字段。
-///
-/// `None` 表示该字段被跳过（空字符串 / 空字节 / 空 message）。
+/// 编码单个字段；`None` 表示该字段被跳过（空字符串 / 空字节 / 空 message）。
 pub fn proto_field(tag: u32, value: &FieldValue, ty: &FieldType) -> Option<Vec<u8>> {
     if value.is_skipped() {
         return None;
@@ -120,10 +116,8 @@ mod tests {
 
     #[test]
     fn sint_uses_zigzag() {
-        // tag=1, sint, value=1 → key=0x08, zigzag(1)=2
         let got = proto_field(1, &FieldValue::SInt(1), &FieldType::SInt).unwrap();
         assert_eq!(got, vec![0x08, 0x02]);
-        // value=-1 → zigzag = 1
         let got = proto_field(1, &FieldValue::SInt(-1), &FieldType::SInt).unwrap();
         assert_eq!(got, vec![0x08, 0x01]);
     }

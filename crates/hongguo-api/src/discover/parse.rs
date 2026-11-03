@@ -1,8 +1,4 @@
 //! 发现域的 JSON 解析（信息流 / 找剧面板组装）。
-//!
-//! 跨域共享的字段与错误码助手（check_code/str_field/int_field/num_field/
-//! parse_tags）已收敛进 `hongguo_common::utils::json`（P3-C9），经本域 mod.rs
-//! 再导出，保持 `super::discover::X` 的既有引用路径不变。
 
 use serde_json::Value;
 
@@ -69,11 +65,9 @@ pub(super) fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
         if series_id.is_empty() {
             continue;
         }
-        // sub_title_list：data_type 0=季文本 / 3=分类 / 27=热度
-        // （分类沿用 category_schema 解析，这里只取季与热度）
+        // sub_title_list：data_type 0=季文本 / 3=分类（走 category_schema）/ 27=热度
         let (season_tag, heat_text) = parse_sub_titles(raw.get("sub_title_list"));
-        // 官方运营角标：tag_info（同名字段在 plan/v 里是「第N季/同IP」，
-        // 在 landpage 信息流里是「新剧/爆剧/红果首发」，enable=false 不显）
+        // 官方运营角标：tag_info.text（landpage 里是「新剧/爆剧」等，enable=false 不显）
         let badge = raw
             .pointer("/tag_info/text")
             .and_then(Value::as_str)
@@ -108,9 +102,8 @@ pub(super) fn parse_feed(data: Option<&Value>) -> AppResult<FeedPage> {
     })
 }
 
-/// sub_title_list → (季文本, 热度文本)。data_type 语义：
-/// 0=「第1季」形态、27=热度数值文本（官方配火焰图标）、3=分类（另有
-/// category_schema 承载，这里不取）。两条都算展示增强，缺了给空串。
+/// sub_title_list → (季文本, 热度文本)。data_type 语义：0=季文本、27=热度数值文本、
+/// 3=分类（category_schema 承载，这里不取）。两条都是展示增强，缺了给空串。
 fn parse_sub_titles(list: Option<&Value>) -> (String, String) {
     let mut season = String::new();
     let mut heat = String::new();
@@ -149,7 +142,7 @@ mod tests {
                     "horiz_cover": "h",
                     "vid": "v1",
                     "episode_cnt": 80,
-                    "play_cnt": "12345678",   // 字符串形态的大数
+                    "play_cnt": "12345678",
                     "comment_count": 42,
                     "score": 8.7,
                     "category_schema": "[{\"category_id\":1,\"name\":\"逆袭\"},{\"category_id\":2,\"name\":\"穿越\"}]"
@@ -177,7 +170,6 @@ mod tests {
         assert!(page.items[0].tags.is_empty());
     }
 
-    /// 面板解析：行 type/row_name/选项 id+名（官方样本的形状）。
     #[test]
     fn parses_browse_panel_rows() {
         let v: Value = serde_json::json!({

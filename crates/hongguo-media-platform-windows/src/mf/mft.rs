@@ -16,17 +16,10 @@ use super::decoder::frame_size_of;
 use super::probe::MF_VERSION;
 use super::sample::type_stride;
 
-// ————————————————————————————————————————————————————————————
-// 会话线程：COM/MTA + MFStartup 的生命周期
-// ————————————————————————————————————————————————————————————
-
 /// COM(MTA) + MF 的进程级初始化：**一次初始化，永不拆卸**。
-///
-/// 按会话配对 `CoUninitialize`/`MFShutdown` 会触发 COM 拆卸与 MF 组件后台
-/// 线程（实测微软 HEVC 扩展解码器带常驻工作线程）的退出竞态：全量测试 +
-/// MF 会话并行的进程里，~1/3 在**全部用例通过之后**的退出阶段于
-/// ntdll 固定偏移处访问违例（WER 事件日志实证）。常驻进程（本应用就是）
-/// 一次初始化、交给进程退出统一回收是标准做法，没有泄漏语义。
+/// 按会话配对 `CoUninitialize`/`MFShutdown` 会触发 COM 拆卸与 MF 组件后台线程（实测微软 HEVC 扩展解码器带常驻工作线程）的退出竞态：
+/// 全量测试 + MF 会话并行的进程里，~1/3 在**全部用例通过之后**的退出阶段于 ntdll 固定偏移处访问违例（WER 事件日志实证）。
+/// 常驻进程（本应用就是）一次初始化、交给进程退出统一回收是标准做法，没有泄漏语义。
 pub(super) static SESSION_INIT: std::sync::Once = std::sync::Once::new();
 
 /// 在专用线程上跑 MF 会话。scoped 线程允许闭包借用非 'static 数据
@@ -35,8 +28,7 @@ pub(super) fn run_on_mf_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send)
     std::thread::scope(|s| {
         s.spawn(move || {
             SESSION_INIT.call_once(|| {
-                // RPC_E_CHANGED_MODE：进程已按别的模式初始化过 COM——
-                // 沿用现状即可，MTA 是否由本调用建立不影响会话正确性。
+                // RPC_E_CHANGED_MODE：进程已按别的模式初始化过 COM——沿用现状即可，MTA 是否由本调用建立不影响会话正确性
                 let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
                 if let Err(e) = unsafe { MFStartup(MF_VERSION, 0) } {
                     log::error!("[Platform/mf] MFStartup 失败: {e}");
@@ -77,10 +69,6 @@ pub(super) fn set_codecapi_u32(xform: &IMFTransform, api: &GUID, value: u32, lab
         }
     }
 }
-
-// ————————————————————————————————————————————————————————————
-// MFT 枚举与激活
-// ————————————————————————————————————————————————————————————
 
 pub(super) fn type_info(major: GUID, subtype: GUID) -> MFT_REGISTER_TYPE_INFO {
     MFT_REGISTER_TYPE_INFO {
@@ -125,9 +113,7 @@ pub(super) fn enum_activates(
     }
 }
 
-/// 激活一个 MFT。异步契约的 MFT 必须先在属性表上解锁
-/// （`MF_TRANSFORM_ASYNC_UNLOCK=1`），否则一切调用都回
-/// `MF_E_TRANSFORM_ASYNC_LOCKED`。
+/// 激活一个 MFT。异步契约的 MFT 必须先在属性表上解锁（`MF_TRANSFORM_ASYNC_UNLOCK=1`），否则一切调用都回 `MF_E_TRANSFORM_ASYNC_LOCKED`。
 fn activate_transform(activate: &IMFActivate) -> AppResult<(IMFTransform, bool)> {
     unsafe {
         let xform: IMFTransform = hr(activate.ActivateObject(), "激活 MFT")?;
@@ -143,18 +129,13 @@ fn activate_transform(activate: &IMFActivate) -> AppResult<(IMFTransform, bool)>
     }
 }
 
-// ————————————————————————————————————————————————————————————
-// 同步 MFT 驱动（in-box 软件 MFT 的契约）
-// ————————————————————————————————————————————————————————————
-
 pub(super) enum Pulled {
     NeedMoreInput,
     Sample(IMFSample),
     StreamChange,
 }
 
-/// 同步 MFT：输出缓冲要么 MFT 自己给（`PROVIDES_SAMPLES`），要么按
-/// `GetOutputStreamInfo` 的 `cbSize` 分配。类型协商后要 `refresh_out_info`。
+/// 同步 MFT：输出缓冲要么 MFT 自己给（`PROVIDES_SAMPLES`），要么按 `GetOutputStreamInfo` 的 `cbSize` 分配。类型协商后要 `refresh_out_info`。
 pub(super) struct SyncMft {
     pub(super) xform: IMFTransform,
     pub(super) provides_samples: bool,
@@ -181,12 +162,9 @@ impl SyncMft {
         }
     }
 
-    /// 输出缓冲的分配尺寸：契约下界 cbSize 与「类型几何 + 高度 16 对齐」
-    /// 取大者。HEVC 码流的 coded 高几乎恒为 16 的倍数（显示高 1080 实际
-    /// 写 1088 行，conformance window 裁边），而 cbSize 由声明几何算出——
-    /// 本机 HEVC 扩展对非常规宽度（1924×1080）实测写超声明值，首次取帧
-    /// 即 MF_E_BUFFERTOOSMALL。预留对齐头，解析端只读显示区，多出的尾巴
-    /// 无害。
+    /// 输出缓冲的分配尺寸：契约下界 cbSize 与「类型几何 + 高度 16 对齐」取大者。
+    /// HEVC 码流的 coded 高几乎恒为 16 的倍数（显示高 1080 实际写 1088 行，conformance window 裁边），而 cbSize 由声明几何算出——
+    /// 本机 HEVC 扩展对非常规宽度（1924×1080）实测写超声明值，首次取帧即 MF_E_BUFFERTOOSMALL；预留对齐头，解析端只读显示区，多出的尾巴无害。
     fn out_alloc_size(&self) -> u32 {
         let padded = self
             .current_geometry()
@@ -217,8 +195,7 @@ impl SyncMft {
 
     pub(super) fn pull_once(&mut self) -> AppResult<Pulled> {
         unsafe {
-            // BUFFERTOOSMALL 只放大重配重取一次（输出仍挂在 MFT 里，重取
-            // 即可）；仍不足说明解码器写出连类型几何都装不下，如实上抛
+            // BUFFERTOOSMALL 只放大重配重取一次（输出仍挂在 MFT 里，重取即可）；仍不足说明解码器写出连类型几何都装不下，如实上抛
             let mut retried = false;
             loop {
                 let buf = MFT_OUTPUT_DATA_BUFFER {
@@ -230,11 +207,8 @@ impl SyncMft {
                 let mut arr = [buf];
                 let mut status = 0u32;
                 let r = self.xform.ProcessOutput(0, &mut arr, &mut status);
-                // 所有权先取回再分胜负：`NEED_MORE_INPUT` / `STREAM_CHANGE` 是
-                // pull 循环的常态收尾（拉到没输出为止），留在 ManuallyDrop 里
-                // 不取 = 每次漏一块 out_size 的原生内存（实测 1080p NV12 一路
-                // 每帧 3.1MB、25fps 80MB/s）。pEvents 同理（MFT 塞的事件对象
-                // 也归调用方释放）。
+                // 所有权先取回再分胜负：`NEED_MORE_INPUT` / `STREAM_CHANGE` 是 pull 循环的常态收尾，留在 ManuallyDrop 里不取
+                // = 每次漏一块 out_size 的原生内存（实测 1080p NV12 每帧 3.1MB、25fps 80MB/s）；pEvents 同理（MFT 塞的事件对象也归调用方释放）
                 let s = std::mem::ManuallyDrop::take(&mut arr[0].pSample);
                 let _events = std::mem::ManuallyDrop::take(&mut arr[0].pEvents);
                 match r {
@@ -270,13 +244,8 @@ impl SyncMft {
     }
 }
 
-// ————————————————————————————————————————————————————————————
-// 异步 MFT 驱动（硬件 MFT 的契约：事件循环）
-// ————————————————————————————————————————————————————————————
-
-/// 异步 MFT：只有收到 `METransformNeedInput` 才能喂；`METransformHaveOutput`
-/// 后调 `ProcessOutput` 取样本。NeedInput 到来而队列空时记 `need_input`，
-/// 下一个入队样本直接补发——错过一个事件就永远喂不进了。
+/// 异步 MFT：只有收到 `METransformNeedInput` 才能喂；`METransformHaveOutput` 后调 `ProcessOutput` 取样本。
+/// NeedInput 到来而队列空时记 `need_input`，下一个入队样本直接补发——错过一个事件就永远喂不进了。
 struct AsyncMft {
     xform: IMFTransform,
     event_gen: IMFMediaEventGenerator,
@@ -331,9 +300,7 @@ impl AsyncMft {
         Ok(())
     }
 
-    /// 输出缓冲的分配尺寸：契约下界 cbSize 与「类型几何 + 高度 16 对齐」
-    /// 取大者（同 [`SyncMft::out_alloc_size`]——异步 MFT 同样可能写超
-    /// 声明值）。
+    /// 输出缓冲的分配尺寸：契约下界 cbSize 与「类型几何 + 高度 16 对齐」取大者（同 [`SyncMft::out_alloc_size`]——异步 MFT 同样可能写超声明值）。
     fn out_alloc_size(&self) -> u32 {
         let padded = unsafe {
             self.xform.GetOutputCurrentType(0).ok().and_then(|cur| {
@@ -348,8 +315,7 @@ impl AsyncMft {
 
     fn pull_one(&mut self) -> AppResult<IMFSample> {
         unsafe {
-            // 与 SyncMft::pull_once 同款：缓冲不足按刷新后的契约放大重配，
-            // 只重取一次
+            // 与 SyncMft::pull_once 同款：缓冲不足按刷新后的契约放大重配，只重取一次
             let mut retried = false;
             loop {
                 let sample = if self.provides_samples {
@@ -401,13 +367,9 @@ impl AsyncMft {
         }
     }
 
-    /// 排空异步 MFT。顺序契约：
-    /// ① **把队列里没喂完的样本全部喂完**才能发 `END_OF_STREAM`——NeedInput
-    ///    事件的到达可能滞后（实测首个会话之后事件明显变慢），提早宣告流
-    ///    结束会让 MFT 只编码已收到的帧、剩下的整段丢掉；
-    /// ② `END_OF_STREAM` 之后**还要**发 `COMMAND_DRAIN`，否则有的 MFT
-    ///    （实测 NVIDIA 编码 MFT）永远不发 `METransformDrainComplete`。
-    /// 全程带超时兜底（MFT 卡死时不拖死整个转码）。
+    /// 排空异步 MFT。顺序契约：① **把队列里没喂完的样本全部喂完**才能发 `END_OF_STREAM`——NeedInput 事件的到达可能滞后（实测首个会话之后事件明显变慢），
+    /// 提早宣告流结束会让 MFT 只编码已收到的帧、剩下的整段丢掉；② `END_OF_STREAM` 之后**还要**发 `COMMAND_DRAIN`，
+    /// 否则有的 MFT（实测 NVIDIA 编码 MFT）永远不发 `METransformDrainComplete`。全程带超时兜底（MFT 卡死时不拖死整个转码）。
     fn drain(&mut self, ready: &mut Vec<IMFSample>) -> AppResult<()> {
         let deadline = Instant::now() + Duration::from_secs(60);
         while !self.input_q.is_empty() && !self.drained {
@@ -443,13 +405,8 @@ impl AsyncMft {
     }
 }
 
-// ————————————————————————————————————————————————————————————
-// 统一驱动：解码器/编码器不关心同步还是异步
-// ————————————————————————————————————————————————————————————
-
 /// MFT 的统一驱动：输入侧 `push`，输出侧攒在 `ready` 里由 `take` 收割。
-/// 同步 MFT 解码中可能报输出类型变化（分辨率变化流），置 sticky 标志
-/// `stream_changed`，由 Decoder 重谈输出类型后继续。
+/// 同步 MFT 解码中可能报输出类型变化（分辨率变化流），置 sticky 标志 `stream_changed`，由 Decoder 重谈输出类型后继续。
 pub(super) struct Driver {
     inner: DriverInner,
     ready: Vec<IMFSample>,
@@ -503,8 +460,7 @@ impl Driver {
                             .ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0),
                         "开始流式处理",
                     )?;
-                    // 同步 MFT 也补发 START_OF_STREAM：实测 h264_mf 不发这条
-                    // 会把输入帧当不存在，只吐 SPS/PPS/AUD 不吐 slice。
+                    // 同步 MFT 也补发 START_OF_STREAM：实测 h264_mf 不发这条会把输入帧当不存在，只吐 SPS/PPS/AUD 不吐 slice
                     hr(
                         s.xform
                             .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0),

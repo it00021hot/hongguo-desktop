@@ -1,7 +1,6 @@
 /**
- * 与 Rust `service/download_service/events.rs::names` 一一对应的事件名。
- *
- * 两端必须同步改：Rust 改常量名而这里没改，订阅会静默收不到事件。
+ * 与 Rust `service/download_service/events.rs::names` 一一对应的事件名，
+ * 两端必须同步改，漏改则订阅静默收不到事件。
  */
 export const EVENTS = {
   downloadProgress: 'download-progress',
@@ -24,7 +23,7 @@ export const EVENTS = {
   deviceRegistered: 'device-registered',
   // 老板键切了窗口可见性（boss_key_cmd）：true=已隐藏（前端暂停视频）
   bossKeyHidden: 'boss-key-hidden',
-  // 只由 lib.rs 的 CloseRequested 拦截发出（下载事件之外的应用级事件）
+  // 只由 lib.rs 的 CloseRequested 拦截发出
   closeRequested: 'close-requested',
   // 隐身轮询器（set_incognito）发给主窗口：visible=false 暂停（只在隐身
   // 触发暂停时记「欠播」），visible=true 续播

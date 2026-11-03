@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（下载任务域）。
- */
+/** 下载任务域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 const taskStatusSchema = z.enum(['pending', 'running', 'completed', 'failed', 'stopped']);
@@ -35,9 +33,7 @@ export const queueStatusSchema = z.object({
   active: z.number().int().nonnegative(),
 });
 
-/**
- * 下载进度事件负载（Rust scheduler 按任务节流上报）。
- */
+/** 下载进度事件负载（Rust scheduler 按任务节流上报）。 */
 export const downloadProgressSchema = z.object({
   id: z.string(),
   downloaded: z.number(),

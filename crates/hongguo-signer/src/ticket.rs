@@ -1,8 +1,7 @@
 //! `_rticket` 抖动：挑一个服务端受理的签名分支。
 //!
-//! X-Argus 有 3 个分支，服务端对 branch == 1 的那一档**不受理**（表现为空响应）。
-//! 逐毫秒抖动 `_rticket` 会改变签名摘要，从而改变分支判定，因此这里最多试 32 个
-//! 偏移去找一个可用分支。正常情况下第 1 次就命中，失败率极低。
+//! X-Argus 服务端对 branch == 1 那档**不受理**（空响应）；逐毫秒抖动 `_rticket` 会改变
+//! 签名摘要从而改变分支判定，最多试 32 个偏移找可用分支，正常第 1 次就命中。
 
 use base64::Engine;
 
@@ -18,11 +17,8 @@ pub const API_ORIGIN: &str = "https://api5-normal-sinfonlineb.fqnovel.com";
 /// 抖动上限，与 JS 实现一致。
 const MAX_TICKET_OFFSET: u32 = 32;
 
-/// 查询串编码：与 Python 的 `urlencode` 行为一致。
-///
-/// 单步 `encodeURIComponent` 语义转义：unreserved 集合（含 `!'()`）原样
-/// 保留，其余转义。编码方式**不可改**——签名是 query 字符串的联合函数，
-/// 编码变化即失配。
+/// 查询串编码：与 Python `urlencode` / `encodeURIComponent` 语义一致（unreserved 含 `!'()` 原样保留）。
+/// 编码方式**不可改**——签名是 query 字符串的联合函数，编码变化即失配。
 fn encode_component(item: &str) -> String {
     // encodeURIComponent 的 unreserved 集合：A-Z a-z 0-9 - _ . ! ~ * ' ( )
     const UNRESERVED: &str = "-_.!~*'()";
@@ -47,15 +43,8 @@ pub fn encode_query(values: &[(&str, String)]) -> String {
         .join("&")
 }
 
-/// 挑一个服务端接受的 ticket。
-///
-/// 返回 `(url, query, ticket, khronos)`。`origin` 参数化：业务 API 与
-/// passport / 设备注册走不同域名，签名只关心 pathname+query，域名不影响摘要。
-/// 带业务 query 的 ticket 解析。
-///
-///
-/// 业务参数插在设备参数之后、`ts`/`_rticket` 之前——位置本身也参与签名，
-/// 与实测顺序一致；调用方不再有机会在签名后改 query。
+/// 挑一个服务端接受的 ticket，返回 `(url, query, ticket, khronos)`；签名只关心 pathname+query，`origin` 可换域名。
+/// 业务参数插在设备参数之后、`ts`/`_rticket` 之前——位置本身参与签名，调用方没有机会在签名后改 query。
 pub fn resolve_ticket_with(
     origin: &str,
     pathname: &str,
@@ -80,9 +69,8 @@ pub fn resolve_ticket_with(
         let query = encode_query(&params);
         let body_md5 = body.map(md5_raw).unwrap_or([0u8; 16]);
 
-        // ⚠️ 传进去的必须是 query 的 **SM3 摘要**，不是 query 原文。
-        //    传原文会算出与实际 x-argus 不同的分支，抖动挑出的 ticket
-        //    可能正好落在服务端不受理的 branch 1 上，表现为 HTTP 200 + 0 字节。
+        // ⚠️ 传进去的必须是 query 的 **SM3 摘要**，不是 query 原文——传原文会算出
+        //    与实际 x-argus 不同的分支，抖动挑出的 ticket 可能落在不受理的 branch 1（HTTP 200 + 0 字节）。
         if branch_of(&sm3(query.as_bytes()), &body_md5, &le32(khronos)) != 1 {
             let url = format!("{origin}{pathname}?{query}");
             return (url, query, ticket, khronos);
@@ -105,9 +93,7 @@ pub fn resolve_ticket_with(
 }
 
 /// 一次签名请求所需的全部材料。
-///
-/// 查询串不单独存一份：它已经原样拼在 `url` 里，单独再存一份只会让人
-/// 有机会只改其中一处，把「签过名的 query」与「实际发出的 query」拆开。
+/// 查询串不单独存一份：它已原样拼在 `url` 里，单独再存会让人有机会只改一处，把「签过名的 query」与「实际发出的 query」拆开。
 pub struct SignedRequest {
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -115,11 +101,7 @@ pub struct SignedRequest {
 }
 
 /// 给一个请求补齐全部签名头。
-///
-/// ⚠️ 签名是「URL + body + 时间戳」三者的联合函数，任一处在发出前被改动
-///    （包括 query 参数顺序、URL 编码方式、body 的字节内容）都会导致签名失配，
-///    服务端静默丢弃（HTTP 200 + 空 body）。请勿在签完名之后再动 url / body。
-///
+/// ⚠️ 签名是「URL + body + 时间戳」的联合函数，发出前任何一处被改（含 query 顺序、URL 编码方式、body 字节）都会失配并被静默丢弃——请勿签完再动 url/body。
 /// 不 `#[cfg(test)]` 门控：下游 crate 的测试经 `sign_post` / `sign_get` 调用它。
 pub fn sign_request(
     origin: &str,
@@ -179,18 +161,17 @@ pub fn sign_request_with(
                 &url,
                 body.as_deref(),
                 khronos,
+                device.get("cdid"),
                 device.get("device_id"),
                 device.get("version_name"),
             ),
         ),
     ];
-    // 不带 x-tt-dt / x-tt-request-tag：官方业务请求不带这两个头，
-    // 匿名请求带上会被静默拒（空响应）
+    // 不带 x-tt-dt / x-tt-request-tag：官方业务请求不带这两个头，匿名请求带上会被静默拒（空响应）
 
     if let Some(b) = &body {
-        // 调用方显式给过 content-type（如 passport 系的 form 请求）就不
-        // 再叠默认 JSON——两个同名头会让服务端按第一个解析，form body
-        // 被当 JSON 读，业务字段全丢
+        // 调用方显式给过 content-type（如 passport 系 form 请求）就不再叠默认 JSON——
+        // 两个同名头会让服务端按第一个解析，form body 被当 JSON 读，业务字段全丢
         let has_ct = extra_headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
@@ -216,8 +197,7 @@ fn now_millis() -> u64 {
 }
 
 /// POST + 签名（默认业务 origin）。
-// M3 登录模块的便捷入口；下游 crate 的测试会调用，故不去 #[cfg(test)] 门控
-//（依赖 crate 对下游以非 test 方式编译，门控项会消失）。
+// 下游 crate 的测试会调用，故不做 #[cfg(test)] 门控（门控项对下游非 test 编译会消失）
 pub fn sign_post(pathname: &str, payload: Vec<u8>, device: &DeviceProfile) -> SignedRequest {
     sign_request(API_ORIGIN, pathname, Some(payload), device, &[])
 }
@@ -232,7 +212,6 @@ pub fn sign_get(pathname: &str, device: &DeviceProfile) -> SignedRequest {
 mod tests {
     use super::*;
 
-    /// 测试用档案：匿名形态 + 已激活身份字段（ticket 对 iid 的分支需要）。
     fn test_device() -> DeviceProfile {
         let mut d = crate::device::anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
         d.set("iid", "2715158266282762");
@@ -285,7 +264,6 @@ mod tests {
         ] {
             assert!(names.contains(&required), "缺少签名头 {required}");
         }
-        // GET 不应带 body 相关的头
         assert!(!names.contains(&"x-ss-stub"));
         assert!(signed.body.is_none());
     }
@@ -309,12 +287,10 @@ mod tests {
 
     #[test]
     fn sign_request_honors_custom_origin_and_profile_ua() {
-        // passport / 设备注册走别的域名；UA 必须取自档案而非全局常量，
-        // 注册来的档案换机型时 UA 要跟着换
         let mut device = test_device();
         device.set("device_id", "42");
         let custom_ua = crate::device::REGISTER_FINGERPRINTS[0].register_ua();
-        // 换 UA 不改字段：serde 打个补丁重建（等价于注册流程换机型档案）
+        // 换 UA 不改字段：serde 打补丁重建（等价于注册流程换机型档案）
         let profile: crate::device::DeviceProfile = {
             let mut v = serde_json::to_value(&device).unwrap();
             v["user_agent"] = serde_json::Value::String(custom_ua.clone());
@@ -339,14 +315,12 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .unwrap();
         assert_eq!(ua, custom_ua);
-        // 设备参数照常进 query（含改过的 device_id）
         assert!(signed.url.contains("device_id=42"));
     }
 
     #[test]
     fn resolve_ticket_url_ends_with_its_query() {
-        // url 必须原样带上签过名的那份 query：调用方不再单独持有 query，
-        // 一旦这里拼接分叉，x-gorgon / x-medusa 就会与实际发出的 query 不符
+        // url 必须原样带上签过名的那份 query——拼接分叉会让签名与实际发出的 query 不符
         let device = test_device();
         let (url, query, ticket, khronos) =
             resolve_ticket_with(API_ORIGIN, "/x/v1/", None, &device, &[], 1_700_000_000_000);

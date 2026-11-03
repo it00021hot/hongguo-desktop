@@ -1,12 +1,7 @@
-//! 剧评 tab 渲染（Tauri ReviewList 对齐的视图侧）。
-//!
-//! 数据与操作在 `mod.rs`；本文件只画——剧评行（点赞/回复/删除）/ 回复线程 /
-//! 列表。发评框在 `composer.rs`。
-//!
-//! 可点元素一律用 gpui-kit 的 `base::Button`（自带焦点句柄、Enter/Space 激活、
-//! role 与无障碍名称）；div 不带焦点句柄，键盘用户够不到。视觉仍由 styled 链
-//! 决定，`base::Button` 强制注入的 flex 居中与 `line_height(relative(1.))`
-//! 需要显式改回（`justify_start` / `line_height(phi())`）。
+//! 剧评 tab 渲染：剧评行（点赞/回复/删除）/ 回复线程 / 列表。数据与操作在
+//! `mod.rs`，发评框在 `composer.rs`。可点元素一律用 gpui-kit 的 `base::Button`
+//!（自带焦点句柄与 Enter/Space 激活，div 键盘用户够不到）；它强制注入的
+//! flex 居中与 `line_height(relative(1.))` 需要显式改回。
 
 use gpui_kit::base::Button as BaseButton;
 use gpui_kit::component::Disableable;

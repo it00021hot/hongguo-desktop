@@ -1,17 +1,8 @@
-//! macOS 窗口原语（objc2，零新外部依赖——gpui-pre-macos 的依赖树里已有
-//! 同版本的 objc2 / objc2-app-kit）。
-//!
-//! gpui 没有暴露的窗口系统能力统一落这里，与 [`crate::win32`] 同一定位：
-//! 小屏落位/还原、置顶、竖屏几何、隐身藏显。窗口句柄经 `raw-window-handle`
-//! 的 AppKit 面取（gpui `Window` 实现了 `HasWindowHandle`），拿到 `NSView`
-//! 后转 `NSWindow`。
-//!
-//! 坐标约定：AppKit 的全局坐标是**左下原点**，本文件对外原样使用；
-//! 需要 top-left 语义的调用方（竖屏几何的 `fit_rect`）自己做翻转——两套
-//! 坐标只在 [`crate::portrait`] 的 macOS 分支里交汇。
-//!
-//! 线程纪律：这些方法都必须在主线程调用（gpui 的事件/更新回调本来就在主
-//! 线程）；`MainThreadMarker` 只在需要它的入口（`NSScreen` 静态查询）取。
+//! macOS 窗口原语（objc2，零新外部依赖）：gpui 没有暴露的窗口系统能力
+//! 统一落这里，与 `crate::win32` 同一定位。窗口句柄经 `raw-window-handle`
+//! 的 AppKit 面取 `NSView` 后转 `NSWindow`。坐标约定：AppKit 全局坐标是
+//! 左下原点，本文件对外原样使用，需要 top-left 语义的调用方自己做翻转。
+//! 线程纪律：这些方法都必须在主线程调用。
 
 use std::ffi::c_void;
 use std::sync::Mutex;
@@ -102,12 +93,9 @@ pub(crate) fn screen_frame(window: &Window) -> Option<(f64, f64, f64, f64)> {
     ))
 }
 
-/// 落窗（AppKit 坐标；立即重绘）。
-///
-/// 只接受已经取出的 `NSWindow`：`setFrame_display` 会同步触发 AppKit 的
-/// 尺寸回调，回调要重入 GPUI 的 `App` 才能在下一帧拿到新视口。若在
-/// `App` 借用期内落窗，这次重入会被 `RefCell` 拒绝，视口尺寸从此停在旧值
-///（小窗里渲染大屏布局、拖边看不到内容跟着变）。
+/// 落窗（AppKit 坐标；立即重绘）。只接受已取出的 `NSWindow`：
+/// `setFrame_display` 会同步触发 AppKit 尺寸回调并重入 GPUI `App`——在
+/// `App` 借用期内落窗会被 `RefCell` 拒绝，视口尺寸从此停在旧值。
 pub(crate) fn set_frame(win: &NSWindow, (x, y, w, h): (f64, f64, f64, f64)) {
     let rect = objc2_foundation::NSRect {
         origin: objc2_foundation::NSPoint { x, y },
@@ -119,8 +107,7 @@ pub(crate) fn set_frame(win: &NSWindow, (x, y, w, h): (f64, f64, f64, f64)) {
     win.setFrame_display(rect, true);
 }
 
-/// 钉住/取消钉住（Tauri `set_always_on_top` 同语义）。
-/// 返回 false = 拿不到窗口（调用方不翻状态）。
+/// 钉住/取消钉住。返回 false = 拿不到窗口（调用方不翻状态）。
 pub(crate) fn set_topmost(window: &Window, on: bool) -> bool {
     let Some(win) = ns_window_of(window) else {
         return false;
@@ -134,9 +121,8 @@ pub(crate) fn set_topmost(window: &Window, on: bool) -> bool {
     true
 }
 
-/// 藏/显原生红绿灯的三颗圆点（无边框播放模式用；Tauri 壳 `window_cmd.rs`
-/// 同口径——只 setHidden，**不动 styleMask**：整体替换会抹掉 Overlay 全出血
-/// 依赖的 `FullSizeContentView` 位，窗口尺寸语义跟着漂）。
+/// 藏/显原生红绿灯的三颗圆点（无边框播放模式用）：只 setHidden，不动
+/// styleMask——整体替换会抹掉 Overlay 全出血依赖的 `FullSizeContentView` 位。
 pub(crate) fn set_traffic_lights_hidden(window: &Window, hidden: bool) {
     let Some(win) = ns_window_of(window) else {
         return;
@@ -168,12 +154,8 @@ pub(crate) fn is_minimized(window: &Window) -> bool {
     ns_window_of(window).is_some_and(|win| win.isMiniaturized())
 }
 
-/// 隐藏窗口（隐身模式）。
-///
-/// 延后到执行器下一拍执行——`orderOut` 会同步投递窗口通知（AppKit 的通知
-/// 中心在投递线程上同步送达），gpui 的通知回调要在这时更新窗口状态；在
-/// `handle.update` 借用内调用会撞借用（gpui 用 try_borrow_mut 拒绝那次更新，
-/// 把错吞成 "RefCell already borrowed" 的空 target 日志）。
+/// 隐藏窗口（隐身模式）。延后到执行器下一拍——`orderOut` 同步投递窗口
+/// 通知、gpui 的通知回调要更新窗口状态，在 `handle.update` 借用内调用会撞借用。
 pub(crate) fn hide(window: &Window, cx: &gpui_kit::App) {
     defer_ns_window_op(window, cx, |win| {
         win.orderOut(None);
@@ -197,10 +179,8 @@ pub(crate) fn show_foreground(window: &Window, cx: &gpui_kit::App) {
     }
 }
 
-/// 把 AppKit 窗口操作延后到执行器下一拍。
-///
-/// NSWindow 由 gpui 持有（`Retained` 保活），本地执行器不要求 Send——整窗
-/// 引用可以直接带进任务里。
+/// 把 AppKit 窗口操作延后到执行器下一拍：NSWindow 由 gpui 持有
+/// （`Retained` 保活），本地执行器不要求 Send——整窗引用可直接带进任务。
 fn defer_ns_window_op(
     window: &Window,
     cx: &gpui_kit::App,
@@ -216,16 +196,9 @@ fn defer_ns_window_op(
         .detach();
 }
 
-// —— 全局快捷键（Carbon RegisterEventHotKey）——
-//
-// Tauri 用 tauri-plugin-global-shortcut（macOS 侧也是 Carbon），gpui 没有
-// 全局快捷键面，这里按 `win32.rs` 的同一分工手写 FFI：注册/注销在主线程，
-// 回调只置一个原子标志，壳内 100ms 轮询消费（窗口过程/事件回调里拿不到
-// GPUI 上下文，不能直接动视图）。
-//
-// Carbon 虽被标为 deprecated，但 RegisterEventHotKey 仍是系统级热键的
-// 稳定通路（不申请辅助功能授权，也不需要 Input Monitoring），与 Tauri
-// 的实现同源。
+// 全局快捷键（Carbon RegisterEventHotKey）：gpui 没有这个面，按 win32.rs
+// 同一分工手写 FFI——注册/注销在主线程，回调只置原子标志、壳内轮询消费；
+// Carbon 不申请辅助功能授权，是系统级热键的稳定通路。
 
 #[repr(C)]
 struct EventHotKeyID {

@@ -1,14 +1,7 @@
-//! 列表滚动哨兵：Tauri 各页 `IntersectionObserver` 哨兵的 GPUI 等价物。
-//!
-//! 用法（每个列表页一份）：
-//! 1. 视图里持一个 [`ScrollLoad`]；
-//! 2. 滚动容器挂 `.track_scroll(scroll_load.handle())`；
-//! 3. `render` 开头 `if self.scroll_load.should_load(has_more, loading) { self.load_more(cx) }`。
-//!
-//! 判定基于 [`ScrollHandle`] 的 offset/max_offset：距底 < [`TRIGGER`] 且当前
-//! 允许加载时报一次；滚离底部超过 [`REARM`]（或这一页拉完、`has_more`
-//! 由假转真）后重新武装——一次触底只发一页请求，不会连环翻页。
-//! 各页原有的「加载更多」按钮保留作键盘/无障碍兜底。
+//! 列表滚动哨兵（各列表页一份）：视图持一个 [`ScrollLoad`]，滚动容器挂
+//! `.track_scroll(scroll_load.handle())`，`render` 开头按
+//! [`ScrollLoad::should_load`] 触发翻页。距底 < [`TRIGGER`] 报一次，滚离
+//! 超过 [`REARM`] 后重新武装——一次触底只发一页请求。
 
 use gpui_kit::ScrollHandle;
 

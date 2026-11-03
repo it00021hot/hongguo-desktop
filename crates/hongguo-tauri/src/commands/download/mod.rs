@@ -1,9 +1,4 @@
-//! 下载队列 command。
-//!
-//! 按职责拆分：
-//! - 本文件：查询（任务列表、队列状态）
-//! - [`actions`]：变更（提交、暂停、重试、删除、补登记）——编排在
-//!   service 的 `download_service::actions`
+//! 下载队列 command：本文件是查询（任务列表、队列状态）；变更操作（提交、暂停、重试、删除、补登记）拆在 `actions` / `cleanup` 子模块，编排全在 service 的 `download_service::actions`。
 
 use tauri::State;
 

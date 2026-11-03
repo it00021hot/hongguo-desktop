@@ -16,20 +16,10 @@ import { RankRow } from './rank-row';
 import { normalizeTabs } from './normalize-tabs';
 
 /**
- * 排行榜页：
- * 内容 tab（全部/真人剧/漫剧/AI剧/系列剧）× 左侧子榜竖排 × 右上筛选面板
- * （panel_selected_items 单选），子榜名旁带「N月N日已更新·基于…」描述行。
- *
- * 选项表由接口随行下发（响应 cell_selector）。形态由客户端自报版本号
- * 决定（与登录态无关，设备档案已在后端对齐版本身份），normalizeTabs 保留
- * 一级形态兼容：
- * - 两级结构：tab=内容分类 → sub=子榜（含分组筛选面板行）；
- * - 一级（老版本身份，理论上不再出现）：tab=榜单 → sub=筛选选项平铺。
- *
- * 「演员」tab 响应无剧集数据（celebrity 形态），不提供入口。
+ * 排行榜页：内容 tab × 左侧子榜竖排 × 右上筛选面板（单选），选项表由接口随行下发（cell_selector）。
+ * normalizeTabs 保留一级形态兼容（两级：内容分类 → 子榜；一级老版本身份：榜单 → 筛选项平铺）。
+ * 「演员」tab 响应无剧集数据，不提供入口。
  */
-
-/** 首屏 schema 未到时 tab 行/子榜给骨架占位（形态未知，比整块空白好）。 */
 
 export function RankPage() {
   // 选中态会话级保留（去播放再回来榜单还在原位置）
@@ -110,7 +100,7 @@ export function RankPage() {
             w-36 在 393px 宽下会吃掉 1/3 宽，把榜单卡挤到裁切）；桌面保持
             左侧竖排。窗口过矮时子榜自己滚，不跟着右侧列表走 */}
         <nav
-          className="scrollbar-thin flex shrink-0 flex-row gap-1 overflow-x-auto pb-1 md:w-36 md:flex-col md:overflow-x-visible md:overflow-y-auto md:pb-0"
+          className="flex shrink-0 scrollbar-thin flex-row gap-1 overflow-x-auto pb-1 md:w-36 md:flex-col md:overflow-x-visible md:overflow-y-auto md:pb-0"
           aria-label={t('rank.subLists')}
         >
           <ToggleGroup
@@ -129,7 +119,7 @@ export function RankPage() {
               <ToggleGroupItem
                 key={s.id}
                 value={s.id}
-                className="text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground h-auto shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm transition-colors data-[state=on]:font-medium md:w-full"
+                className="text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[state=on]:bg-primary data-[state=on]:text-primary-foreground h-auto shrink-0 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap transition-colors data-[state=on]:font-medium md:w-full"
               >
                 {s.name}
               </ToggleGroupItem>

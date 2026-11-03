@@ -1,10 +1,6 @@
 //! 最小 MP4 字节构造（仅测试用）。
-//!
-//! 两档：
-//!
-//! - [`mp4`]：只搭 [`super::sample_table::collect_tracks`] 真会读到的那几层，
-//!   样本表与 `mdat` 跟「编码参数是否一致」无关，不搭——搭了只会让断言的对象变模糊。
-//! - [`mp4_with_samples`]：带真实样本表与 `mdat`，给拼接索引的测试用。
+//! [`mp4`] 只搭 [`super::sample_table::collect_tracks`] 真会读到的那几层（样本表与编码参数一致性无关，不搭）；
+//! [`mp4_with_samples`] 带真实样本表与 `mdat`，给拼接索引的测试用。
 
 use super::r#box::build_box;
 
@@ -109,9 +105,7 @@ fn visual_sample_entry(spec: &TrackSpec) -> Vec<u8> {
     let mut payload = vec![0u8; 24];
     payload.extend_from_slice(&(spec.width as u16).to_be_bytes());
     payload.extend_from_slice(&(spec.height as u16).to_be_bytes());
-    // horiz/vert resolution、frame_count、compressorname、depth、pre_defined：
-    // 规范里全为 0，占位即可，解析层不读它们
-    payload.extend_from_slice(&[0u8; 50]);
+    payload.extend_from_slice(&[0u8; 50]); // horiz/vert resolution、frame_count、compressorname、depth、pre_defined：规范全 0，解析层不读
     build_box(spec.codec, &payload)
 }
 
@@ -140,8 +134,7 @@ pub struct TrackPlan {
     pub composition: Option<Vec<i32>>,
     /// 每隔几个样本放一个关键帧。`None` = 不写 `stss` = 全部样本都是关键帧。
     pub sync_every: Option<u32>,
-    /// 源 `edts/elst` 的 `media_time`（media timescale，fixture 下 = 1000）。
-    /// `Some` 才写 edit list；`tkhd` 时长同步改成 presentation 时长。
+    /// 源 `edts/elst` 的 `media_time`（media timescale，fixture 下 = 1000）。`Some` 才写 edit list；`tkhd` 时长同步改成 presentation 时长。
     pub edit_media_time: Option<i64>,
 }
 
@@ -207,12 +200,8 @@ impl TrackPlan {
     }
 }
 
-/// 造一个带真实样本表与 `mdat` 的 MP4。
-///
-/// 布局是 `[ftyp][mdat][moov]`（moov 在后）：`stco` 的偏移不依赖 `moov` 自己的
-/// 大小，构造时就不必「先量一次再重算」。被测的拼接代码走的是另一条路
-/// （faststart + 两次构建），两者不共享逻辑，才不会一起错。
-///
+/// 造一个带真实样本表与 `mdat` 的 MP4，布局 `[ftyp][mdat][moov]`（moov 在后：`stco` 偏移不依赖 moov 自身大小，构造不必「先量一次再重算」）。
+/// 被测的拼接代码走的是另一条路（faststart + 两次构建），与本 fixture 不共享逻辑才不会一起错。
 /// 多轨时按 `轨0样本0, 轨1样本0, 轨0样本1, …` 轮转交织，和真实短剧一致。
 pub fn mp4_with_samples(tracks: &[TrackPlan]) -> Vec<u8> {
     let ftyp = build_box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2");

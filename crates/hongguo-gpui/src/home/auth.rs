@@ -30,8 +30,7 @@ impl super::HomeView {
         !self.my_user_id().is_empty()
     }
 
-    /// 当前登录用户 id（未登录空串）：评论/回复「删除」按钮的 isMine 判据
-    ///（Tauri myUserId 同口径）。
+    /// 当前登录用户 id（未登录空串）：评论/回复「删除」按钮的 isMine 判据。
     pub(super) fn my_user_id(&self) -> String {
         self.state
             .settings()
@@ -47,14 +46,13 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 退出登录（settings.account 清空落库；Tauri login_logout 同口径）。
+    /// 退出登录（settings.account 清空落库）。
     pub(crate) fn login_logout(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = hongguo_service::login_service::flow::logout(&self.state) {
             log::warn!("[Login] 退出失败: {e}");
             return;
         }
-        // 登出即离开播放面（Tauri 登出入口在设置页、播放器早已卸载；本壳
-        // 侧栏直接登出，按卸载语义先停播落进度）
+        // 登出即离开播放面：侧栏直接登出，按卸载语义先停播落进度。
         self.release_for_leave(cx);
         self.mfa_retry = None;
         self.login_message = Some(crate::i18n::t("settings.loggedOut"));
@@ -63,8 +61,8 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 发送短信验证码（编排在 service 的 `login_service::flow`，
-    /// 与 Tauri login_send_code 同一份；csrf 凭据由 service 暂存）。
+    /// 发送短信验证码（编排在 service 的 `login_service::flow`；csrf 凭据
+    /// 由 service 暂存）。
     fn login_send_code(&mut self, cx: &mut Context<Self>) {
         let Some(input) = &self.login_mobile else {
             return;
@@ -116,8 +114,8 @@ impl super::HomeView {
     }
 
     /// 短信验证码登录：编排全在 service 的 `login_service::flow`（落库 +
-    /// MFA 后台轮询 + 资料刷新与 Tauri 同一份）。MFA 转后台后，状态经
-    /// `login-mfa-state` 事件回到 [`HomeView::on_login_mfa_event`]。
+    /// MFA 后台轮询 + 资料刷新）。MFA 转后台后，状态经 `login-mfa-state`
+    /// 事件回到 `on_login_mfa_event`。
     fn login_submit(&mut self, cx: &mut Context<Self>) {
         let Some(mobile_input) = &self.login_mobile else {
             return;
@@ -192,9 +190,8 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 登录 MFA 状态事件（service 后台轮询的出口，与 Tauri 壳同一批事件）：
-    /// 更新面板文案与重试上下文。轮询本身在 service 里跑（进程级任务运行时），
-    /// 壳只做 UI 适配——之前这里有一份与 service 逐行对应的轮询复刻。
+    /// 登录 MFA 状态事件（service 后台轮询的出口）：更新面板文案与重试
+    /// 上下文。轮询本身在 service 里跑，壳只做 UI 适配。
     pub(super) fn on_login_mfa_event(
         &mut self,
         ev: hongguo_service::login_service::events::LoginMfaStateEvent,
@@ -235,7 +232,7 @@ impl super::HomeView {
     /// 表单 + 登录按钮。点遮罩收起。
     pub(super) fn render_login_panel(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let account = self.state.settings().account;
-        // 按钮门槛与 Tauri 登录弹窗同款：手机号 11 位、验证码 ≥4 位
+        // 按钮门槛：手机号 11 位、验证码 ≥4 位。
         let mobile = self
             .login_mobile
             .as_ref()
@@ -267,7 +264,6 @@ impl super::HomeView {
                 let mobile_input = self.login_mobile.clone();
                 let code_input = self.login_code.clone();
                 v_flex()
-                    // Tauri 登录弹窗 512×383（DialogContent max-w-sm + p-6）
                     .w(gpui_kit::px(512.0))
                     .p_6()
                     .gap_4()
@@ -277,7 +273,6 @@ impl super::HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
-                    // 头部：标题 + 说明 + 关闭（Tauri DialogHeader 同构）
                     .child(
                         h_flex()
                             .items_start()
@@ -340,7 +335,7 @@ impl super::HomeView {
                     })
                     .when(account.is_none(), |s| {
                         s.child(
-                            // 手机号：字段标签 + 输入（Tauri FieldLabel 同款）
+                            // 手机号：字段标签 + 输入。
                             v_flex()
                                 .gap_1p5()
                                 .child(
@@ -409,7 +404,6 @@ impl super::HomeView {
                                 })),
                         )
                         .child(
-                            // Tauri loginRiskNote 原文
                             div()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)

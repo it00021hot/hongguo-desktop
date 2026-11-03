@@ -1,9 +1,5 @@
-/** 老板键组合的纯函数（无模块级副作用，可被同置测试直接引用）。
-
- *  老板键是全局快捷键（tauri accelerator，如 "CommandOrControl+Alt+H"），
- *  播放器快捷键是应用内 `e.key` 值（如 "h" / " " / "ArrowLeft"）：全局
- *  组合在应用内按下时 keydown 的 key 就是末段裸键，两者会同时触发，
- *  因此按「末段裸键 vs 播放器键」做冲突比对。 */
+/** 老板键组合的纯函数（无模块级副作用，可被测试直接引用）。全局组合在应用内按下时
+ *  keydown 的 key 就是末段裸键，与播放器快捷键按「末段裸键 vs 播放器键」比对冲突。 */
 
 /** 老板键组合 → 末段裸键名（小写）。空串/残串返回空。 */
 export function bossKeyCoreKey(bossKey: string): string {
@@ -21,8 +17,7 @@ export interface BossKeyConflict {
   label: string;
 }
 
-/** 老板键 vs 播放器快捷键冲突检测。`actions` 由调用方从自己的快捷键
- *  映射展开（可读键名 + e.key 值），本函数保持无依赖。 */
+/** 老板键 vs 播放器快捷键冲突检测；`actions` 由调用方从自己的快捷键映射展开，本函数保持无依赖。 */
 export function bossKeyConflicts(
   bossKey: string,
   actions: { action: string; label: string; key: string }[],

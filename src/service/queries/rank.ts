@@ -6,19 +6,10 @@ import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/re
 import { useEffect, useMemo } from 'react';
 import { dedupBy, fuzzyStaleTime, keys, useInfiniteStream } from './common';
 
-// ---------------------------------------------------------------- 排行榜 / 新剧 / 上新日历 / 预约
-
 /**
- * 一个榜单（内容tab × 子榜 × 筛选 × 月榜 组合缓存；社交态数据不缓存，
- * 每次挂载重拉。切筛选时用 keepPreviousData 保住
- * 旧列表，避免整页闪 loading）。
- *
- * 无限滚动（**对齐官方 App 滚动榜单的协议**）：每页 10 条
- * （limit 参数恒 "0" 不参与），首页 offset=0 不带 session_id；翻页
- * offset=响应的 next_offset（步进 10）并回传响应的 session_id 与
- * rank_version。页间可能重叠——按 seriesId 去重（后端已按会话记账 +
- * filter_ids 让服务端排重，这里是兜底）。tabs 取首页（选项表每页随行
- * 下发）。
+ * 一个榜单（内容tab × 子榜 × 筛选 × 月榜组合缓存，社交态不缓存每次重拉；切筛选 keepPreviousData 保旧列表）。
+ * 对齐官方滚动榜单协议：每页 10 条，翻页回传响应的 next_offset / session_id / rank_version；
+ * 页间可能重叠，按 seriesId 去重兜底；tabs 取首页。
  */
 export function useRank(selected: string, sub: string, panel: string, background: string) {
   const query = useInfiniteQuery({
@@ -49,8 +40,7 @@ export function useRank(selected: string, sub: string, panel: string, background
   const items = useMemo(
     () =>
       dedupBy(query.data?.pages.flatMap((p) => p.items) ?? [], (i) => i.seriesId).map((it, idx) =>
-        // 服务端 recommend_info.rank 是页内位次（每页 1~10、可重复），
-        // 连续名次按拼接序号重算；0 = 无名次榜（预约榜）保持 0
+        // recommend_info.rank 是页内位次（每页 1~10、可重复），连续名次按拼接序号重算；0 = 无名次榜（预约榜）保持 0
         it.rank > 0 ? { ...it, rank: idx + 1 } : it,
       ),
     [query.data],
@@ -75,18 +65,11 @@ function newDramaItems(pages: RankPage[]) {
   return pages.flatMap((p) => p.items);
 }
 
-/**
- * 新剧推荐（无限滚动，按 gender 分缓存）。
- *
- * 每页固定 18 条，下一页 offset 按已拉条数累计；响应不带 has_more，
- * 以空页为终点（旧实现会向空页无限续拉，这里顺手修正）。频道各存一份
- * 缓存，切回看过的频道秒出。
- */
+/** 新剧推荐（按 gender 分缓存）：每页固定 18 条，下一页 offset 按已拉条数累计；响应不带 has_more，以空页为终点。 */
 export function useNewDrama(gender: number) {
   const query = useInfiniteQuery({
     queryKey: keys.newDrama(gender),
-    // pageParam 结构化：offset + 上一页回传的 session_id（翻页
-    // 必须回传；首页不传）
+    // pageParam 结构化：offset + 上一页回传的 session_id（翻页必须回传，首页不传）
     queryFn: ({ pageParam }) => rank.newDrama(gender, pageParam.offset, pageParam.sessionId),
     initialPageParam: { offset: 0, sessionId: '' },
     getNextPageParam: (last, allPages) => {
@@ -99,13 +82,7 @@ export function useNewDrama(gender: number) {
   return useInfiniteStream(query, newDramaItems);
 }
 
-/**
- * 上新日历（date 为空串取默认日；切日期 keepPreviousData 保旧列表平滑过渡）。
- *
- * 服务端是多天混排 + 游标翻页，Rust 按展示日过滤后**单页返回**——这里
- * 用无限查询懒翻页（滚到底再拉下一页），不再一次性串行吃满所有页
- * （那曾是切换日期肉眼可见卡顿的根源）。
- */
+/** 上新日历（date 空串取默认日，切日期 keepPreviousData 平滑过渡）；服务端多天混排 + 游标翻页，Rust 按展示日过滤后单页返回，这里懒翻页。 */
 export function useNewCalendar(date: string) {
   const query = useInfiniteQuery({
     queryKey: keys.newCalendar(date),
@@ -138,14 +115,9 @@ export function useNewCalendar(date: string) {
 }
 
 /**
- * 我的预约（isOnline：已上线 / 待上线 tab）——单页懒翻页。
- *
- * 此前 queryFn 在后端一次性串行拉全：预约上百部时首屏要等几十个串行
- * 请求（issue #11 的「已上线 5–8 秒才出来」）。现与上新日历同构：
- * 首屏一页即回，角标计数直接用响应下发的两个 total（每页响应都带，
- * 首页即真值），滚到底再翻下一页。需要全集做预约态成员判定的消费方
- * （ReserveButton / 选集面板）挂 [`useReservationsFillAll`] 后台补齐，
- * 与本查询共享同一份缓存。
+ * 我的预约（isOnline：已上线 / 待上线 tab），单页懒翻页，首屏一页即回；
+ * 角标计数直接用响应下发的两个 total。需要全集做预约态成员判定的消费方
+ * （ReserveButton / 选集面板）挂 [`useReservationsFillAll`] 后台补齐，共享同一份缓存。
  */
 export function useReservations(isOnline: boolean) {
   const query = useInfiniteQuery({
@@ -168,7 +140,7 @@ export function useReservations(isOnline: boolean) {
   return {
     items,
     /**
-     * 角标计数（首页响应下发；条数兜底只在响应缺 total 时生效）。
+     * 角标计数（首页响应下发，条数兜底只在响应缺 total 时生效）；
      * null = 首页未到，让 tab 显示骨架点而不是冒充「没有预约」。
      */
     count: first ? Math.max(isOnline ? first.onlineTotal : first.offlineTotal, items.length) : null,
@@ -181,12 +153,7 @@ export function useReservations(isOnline: boolean) {
   };
 }
 
-/**
- * 预约全集后台补齐（预约态成员判定用）：ReserveButton / 选集面板要拿
- * 完整列表对号「是否已预约」，挂上后持续翻页直到拉完——预约页先画
- * 一页，剩余页由这里在后台补上，两边共享同一份缓存不重复请求。
- * 失败即停（错误态挡住续拉），下次挂载或失效重拉后自然重试。
- */
+/** 预约全集后台补齐（预约态成员判定用）：挂上后持续翻页直到拉完，与预约页共享同一份缓存；失败即停，重拉后自然重试。 */
 export function useReservationsFillAll(isOnline: boolean) {
   const list = useReservations(isOnline);
   useEffect(() => {
@@ -219,11 +186,8 @@ export function useReservationsDelete() {
 }
 
 /**
- * 预约 / 取消预约一部剧（uncover_subscribe 端点）。
- *
- * 成功后两件事：刷新预约列表（权威源）；**就地翻新榜单缓存里该条的
- * reserved 位**——cell 接口的 online_subscribed 是响应时刻快照，不翻新
- * 的话当前挂载页到下次重拉前预约态不翻面（榜单 staleTime 0，重挂即自愈）。
+ * 预约 / 取消预约一部剧（uncover_subscribe 端点）：刷新预约列表（权威源），
+ * 并就地翻新榜单缓存里该条的 reserved 位——cell 接口的 online_subscribed 是响应时刻快照，不翻新则预约态到下次重拉前不翻面。
  */
 export function useReserveSeries() {
   const queryClient = useQueryClient();

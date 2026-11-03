@@ -1,18 +1,11 @@
-//! hex 编解码（P3-C9 成对化：protocol/cover 的 encode + login 测试的
-//! bytes_from_hex）。
+//! hex 编解码（protocol 封面缓存与 login 测试共用的成对原语）。
 
-/// 字节序列 → 小写 hex 串（来源：protocol/cover.rs 的 `hex`）。
+/// 字节序列 → 小写 hex 串。
 pub fn encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// hex 串 → 字节序列（大小写均可）。
-///
-/// 非法输入（奇数长度/非 hex 字符）直接 panic——消费者是测试与内部可信输入，
-/// 不需要 Result 化。
-///
-/// 不再 `#[cfg(test)]` 门控：迁到 hongguo-common 后下游 crate 的测试（login
-/// 抓包重放）要调它，而依赖 crate 对下游以非 test 方式编译，门控项会消失。
+/// hex 串 → 字节序列（大小写均可）。非法输入（奇数长度/非 hex 字符）直接 panic——消费者是测试与内部可信输入，不需要 Result 化。
 pub fn decode(hex: &str) -> Vec<u8> {
     assert!(hex.len().is_multiple_of(2), "hex 长度必须为偶数: {hex}");
     (0..hex.len())

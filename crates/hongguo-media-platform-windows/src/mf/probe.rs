@@ -1,7 +1,5 @@
-//! 探测与进程级缓存：平台硬编 H.264 编码器可用性（[`HW_ENCODER`] 缓存，
-//! 实编一帧才算数的 [`probe_reports_hardware`]）与 HEVC 解码 MFT 在位
-//! 探测（[`hevc_decoder_present`]，WebView2 能否解 HEVC 的判据）；
-//! [`MF_VERSION`] 是会话线程初始化用的 mfapi 版本号。
+//! 探测与进程级缓存：平台硬编 H.264 编码器可用性（[`HW_ENCODER`] 缓存，实编一帧才算数的 [`probe_reports_hardware`]）
+//! 与 HEVC 解码 MFT 在位探测（[`hevc_decoder_present`]，WebView2 能否解 HEVC 的判据）；[`MF_VERSION`] 是会话线程初始化用的 mfapi 版本号。
 
 use parking_lot::RwLock;
 

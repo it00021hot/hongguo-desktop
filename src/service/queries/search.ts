@@ -4,8 +4,6 @@ import { seriesSearch } from '../commands';
 import type { SearchPage, SearchResult } from '../schema';
 import { dedupBy, fuzzyStaleTime, keys, useInfiniteStream } from './common';
 
-// ---------------------------------------------------------------- 官方 App 搜索
-
 /** 综合首页的精选与翻页列表有重复：按 seriesId 去重。 */
 function appSearchItems(pages: SearchPage[]): SearchResult[] {
   return dedupBy(
@@ -15,11 +13,8 @@ function appSearchItems(pages: SearchPage[]): SearchResult[] {
 }
 
 /**
- * 官方 App 搜索（无限滚动）。
- *
- * 首页只有「精选」少数几条（平台搜索的固定形态），`hasMore` 翻页才是
- * 完整列表；翻页必须带首页发放的 searchId。结果按关键词进缓存：
- * 重复搜索同一关键词秒出，不再全量重拉。
+ * 官方 App 搜索（无限滚动）：首页只有「精选」少数几条（平台搜索固定形态），hasMore 翻页才是完整列表；
+ * 翻页必须带首页发放的 searchId。结果按关键词进缓存，重复搜索同一关键词秒出。
  */
 export function useSeriesSearchApp(query: string) {
   const kw = query.trim();
@@ -39,12 +34,7 @@ export function useSeriesSearchApp(query: string) {
   return useInfiniteStream(query_, appSearchItems);
 }
 
-/**
- * 搜索联想：输入即查，抖动节流内重复输入秒出。
- *
- * 防抖在调用侧（组件里 300ms 才把词递进来），这里只管查；
- * 失败后端已吞掉返回空表，下拉无感消失。
- */
+/** 搜索联想：输入即查（防抖在调用侧）；失败后端已吞掉返回空表，下拉无感消失。 */
 export function useSearchSuggest(q: string) {
   const kw = q.trim();
   return useQuery({

@@ -1,7 +1,4 @@
-//! 样本表收集。
-//!
-//! 从 `stbl` 里读出每个样本的偏移与大小，以及加密所需的 `saiz` / `saio` /
-//! `senc` 辅助信息。这是 CENC 解密的入口数据。
+//! 样本表收集：从 `stbl` 读出每个样本的偏移与大小，以及加密所需的 `saiz` / `saio` / `senc` 辅助信息——CENC 解密的入口数据。
 
 use super::r#box::{find_box, parse_boxes};
 use super::cenc_info;
@@ -32,10 +29,7 @@ pub struct TrackInfo {
     pub samples: Vec<(u64, u64)>,
     /// 每个样本的附加信息大小（CENC subsample 数量相关）
     pub aux_sizes: Vec<u8>,
-    /// `senc` 中每个样本的 IV。
-    ///
-    /// ⚠️ **8 字节**——平台封装时就这么写的（现版 JS 按 `i * 8` 步长取），
-    ///    不是 CENC 规范里的 16 字节。按 16 读会整体错位，解出来全是噪声。
+    /// `senc` 中每个样本的 IV。⚠️ **8 字节**——平台封装如此（现版 JS 按 `i * 8` 步长取），不是规范的 16 字节；按 16 读会整体错位全是噪声。
     pub sample_ivs: Vec<[u8; 8]>,
     /// 原始 `stbl` 的绝对偏移与长度，重建 moov 时需要原样搬运
     pub stbl_offset: usize,
@@ -56,13 +50,9 @@ pub struct TrackInfo {
     pub media_timescale: u32,
     /// `mdhd` 的媒体时长（单位是 media_timescale）
     pub media_duration: u64,
-    /// `edts/elst` 首个非空 edit 的 media_time（秒）。
-    ///
-    /// AAC 编码器延迟（priming）由容器的 edit list 表达：presentation 时间 =
-    /// 媒体时间 − 本值。没有 elst 或全空 edit 时为 0，时间轴不变。
+    /// `edts/elst` 首个非空 edit 的 media_time（秒）：AAC priming 由容器的 edit list 表达，presentation 时间 = 媒体时间 − 本值；没有 elst 或全空 edit 时为 0。
     pub edit_media_start_secs: f64,
-    /// 音频轨的 AudioSpecificConfig（`esds` → DecoderSpecificInfo，AAC 解码
-    /// 器的 extradata）；视频轨与非 AAC 音频轨为空。
+    /// 音频轨的 AudioSpecificConfig（`esds` → DecoderSpecificInfo，AAC 解码器的 extradata）；视频轨与非 AAC 音频轨为空。
     pub decoder_config: Vec<u8>,
 }
 
@@ -83,9 +73,7 @@ pub fn collect_tracks(data: &[u8]) -> AppResult<Vec<TrackInfo>> {
     Ok(tracks)
 }
 
-/// 收集单条轨道。
-///
-/// 从外部（合并的索引重写）传入 `trak` 的载荷区间即可复用同一份解析，
+/// 收集单条轨道：外部（合并的索引重写）传入 `trak` 的载荷区间即可复用同一份解析，
 /// 免得拼接与解复用对同一文件得出两份不一样的轨道信息。
 pub fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo> {
     let mut info = TrackInfo {
@@ -94,7 +82,6 @@ pub fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo>
         ..Default::default()
     };
 
-    // track id
     if let Some(tkhd) = find_box(data, start, end, "tkhd") {
         let base = tkhd.start;
         // version(1) + flags(3)；version 1 用 64 位 id
@@ -116,12 +103,10 @@ pub fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo>
         }
     }
 
-    // stbl 是样本表的根
     let stbl = find_box(data, start, end, "stbl")?;
     info.stbl_offset = stbl.start;
     info.stbl_size = stbl.size;
 
-    // handler type：vide 表示视频轨
     if let Some(hdlr) = find_box(data, start, end, "hdlr") {
         let base = hdlr.start;
         if base + 12 <= hdlr.start + hdlr.size {
@@ -167,14 +152,8 @@ pub fn collect_track(data: &[u8], start: usize, end: usize) -> Option<TrackInfo>
     Some(info)
 }
 
-/// 从 `stsd` 读编码四字符码与编码参数。
-///
-/// 布局：`version+flags(4) + entry_count(4) + entry[size(4) + format(4) + ...]`，
-/// 所以四字符码在载荷偏移 12 处，entry 载荷起点是 `start+16`。宽度/分辨率按
-/// VisualSampleEntry 读，声道/采样率按 AudioSampleEntry 读——两种 entry 的
-/// 固定字段位置不同，混着读会读出别的字段的值。
-///
-/// 读不到就留 0：平台偶发的畸形 box 不该让整条轨道解析失败。
+/// 从 `stsd` 读编码四字符码与编码参数：`version+flags(4) + entry_count(4) + entry[size(4) + format(4) + …]`，四字符码在载荷偏移 12。
+/// 视频按 VisualSampleEntry 读宽高、音频按 AudioSampleEntry 读声道/采样率（两种 entry 固定字段位置不同，混读会读错字段）；读不到就留 0，畸形 box 不让整轨解析失败。
 fn read_stsd(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     if start + 16 > start + size {
         return;
@@ -196,8 +175,7 @@ fn read_stsd(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
         if start + 42 <= start + size {
             info.sample_rate = u16::from_be_bytes([data[start + 40], data[start + 41]]) as u32;
         }
-        // AAC 的 AudioSpecificConfig 藏在 entry 的 `esds` 子 box 里——纯
-        // Rust 解码器（不经过 MP4 demuxer）没有它无法初始化
+        // AAC 的 AudioSpecificConfig 藏在 entry 的 `esds` 子 box 里——纯 Rust 解码器（不经过 MP4 demuxer）没有它无法初始化
         if let Some(asc) = crate::esds::decoder_config_from_stsd(data, start, size) {
             info.decoder_config = asc;
         }
@@ -215,9 +193,7 @@ fn read_stsz(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
         data[start + 6],
         data[start + 7],
     ]);
-    // 畸形 count 防御（口径同 timing::read_entry_count）：条目数不可能超过
-    // 切片字节数，`vec![(0,size); count]` 按这个 count 直接预分配，不卡上限
-    // 会把几 GB 的分配请求直接砸进分配器（实测进程直接 abort）。
+    // 畸形 count 防御（口径同 timing::read_entry_count）：`vec![(0,size); count]` 按声明值预分配，不卡上限会把几 GB 分配请求砸进分配器（实测进程直接 abort）
     let count = (u32::from_be_bytes([
         data[start + 8],
         data[start + 9],
@@ -244,10 +220,7 @@ fn read_stsz(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     };
 }
 
-/// 从 `stco` / `co64` 读 chunk 偏移。
-///
-/// 真实样本偏移需要 `stsc`（样本到 chunk 的映射）才能精确展开；
-/// 本模块只用 chunk 起始偏移配合样本大小累加，足以定位连续存放的加密流。
+/// 从 `stco` / `co64` 读 chunk 起始偏移：精确展开需要 `stsc`，这里用 chunk 起点配样本大小累加，足以定位连续存放的加密流。
 fn read_chunk_offsets(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     if size < 8 {
         return;

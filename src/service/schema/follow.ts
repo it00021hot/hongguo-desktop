@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（追更域：列表 / 更新提醒）。
- */
+/** 追更域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 /** 追更列表里的一部剧（Rust `interact::FollowUpdateItem`）。 */

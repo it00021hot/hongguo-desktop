@@ -1,9 +1,6 @@
 import { t, tf } from '@/locales';
 
-/** 评论区相对时间（刚刚 / N 分钟前 / N 小时前 / 昨天 /
- *  N 天前（30 天内）/ M月D日）。评论面板与剧评回复共用。
- *
- *  入参是 UTC 毫秒时间戳（后端 createTime 口径）。 */
+/** 评论区相对时间（刚刚 / N分钟前 / N小时前 / 昨天 / N天前 / M月D日），评论面板与剧评回复共用；入参是 UTC 毫秒时间戳（后端 createTime 口径）。 */
 export function relativeTime(unixMs: number): string {
   const diff = Date.now() - unixMs;
   if (unixMs <= 0) return '';

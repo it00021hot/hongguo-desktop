@@ -1,8 +1,5 @@
-﻿//! MediaEngine 事件回调 → [`PlayerEvent`]。
-//!
-//! 引擎在自己的线程上调 `EventNotify`，这里只做节流去重 + 送通道（`blocking_send`
-//! 允许在同步线程上用）。事件语义与 macOS 侧的事件线程一致：
-//! 首帧 / 缓冲开始 / 缓冲结束 / 播完 / 失败，各一次。
+﻿//! MediaEngine 事件回调 → [`PlayerEvent`]：引擎在自己的线程上调 `EventNotify`，这里只做节流去重 + 送通道
+//! （`blocking_send` 允许在同步线程上用）。事件语义与 macOS 侧的事件线程一致：首帧 / 缓冲开始 / 缓冲结束 / 播完 / 失败，各一次。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

@@ -1,11 +1,6 @@
-//! Win32 窗口原语（user32 / dwmapi 手写 FFI，零新依赖）。
-//!
-//! gpui 没有暴露的窗口系统能力统一落这里（自 `mini.rs` 迁移），当前调用
-//! 方：`mini`（小屏落位/还原/置顶）、无边框窗口的边框线消除与 `home::
-//! incognito`（隐身藏显）。光标轮询、按窗口藏显在 gpui 的
-//! `PlatformWindow` trait 里只有只读面（`visibility()` 无 setter，全局
-//! 光标位置无 API），组件库也不覆盖——这是本项目仅存的 FFI 面，新增窗口
-//! 系统能力先查 gpui / gpui-component，别往这里堆。
+//! Win32 窗口原语（user32 / dwmapi 手写 FFI，零新依赖）：gpui 没有暴露的
+//! 窗口系统能力统一落这里（光标轮询、按窗口藏显在 `PlatformWindow` 只有
+//! 只读面）。新增窗口系统能力先查 gpui / gpui-component，别往这里堆。
 
 use gpui_kit::Window;
 
@@ -60,13 +55,9 @@ pub(crate) fn hide(hwnd: isize) {
     show_window(hwnd, SW_HIDE);
 }
 
-/// 去掉窗口四周的 1px 系统边框线（Win11 22H2+；失败静默——旧系统没有
-/// 这个属性，保留默认外观）。
-///
-/// gpui 在 Windows 的窗口带 `WS_THICKFRAME`（可缩放边 + 贴靠），DWM 给它
-/// 描一圈边框线；Tauri `decorations:false` 是纯 `WS_POPUP` 所以没有这条
-/// 线。组件库的 TitleBar 只自绘标题栏内容，边框线不归它管——这里按
-/// `DWMWA_BORDER_COLOR = NONE` 关掉线，缩放/贴靠/最大化行为全部保留。
+/// 去掉窗口四周的 1px 系统边框线（Win11 22H2+；失败静默——旧系统没有这个
+/// 属性）：gpui 窗口带 `WS_THICKFRAME`，DWM 给它描一圈边框线，按
+/// `DWMWA_BORDER_COLOR = NONE` 关掉，缩放/贴靠/最大化行为全保留。
 pub(crate) fn hide_border(window: &Window) {
     let Some(hwnd) = hwnd_of(window) else {
         return;
@@ -141,10 +132,8 @@ pub(crate) fn window_rect(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
     (ok != 0).then_some((rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top))
 }
 
-/// 边框偏移（物理像素）：`(左, 顶, 右侧宽, 底部高)`——外框−客户区的四向
-/// 差。SetWindowPos 设外框，而小窗目标 480×270 是 Tauri set_size 的
-/// 「内容尺寸」语义，落位/定尺寸都要补上这个差（只补总差会把底边推进
-/// 任务栏，实测外框底到了 1415 > 工作区底 1376）。
+/// 边框偏移（物理像素）：`(左, 顶, 右侧宽, 底部高)`——外框−客户区的四向差。
+/// SetWindowPos 设外框，而小窗目标是「内容尺寸」语义，落位/定尺寸都要补上这个差。
 pub(crate) fn border_offset(hwnd: isize) -> (i32, i32, i32, i32) {
     let mut client = RECT {
         left: 0,
@@ -230,13 +219,9 @@ pub(crate) const SW_SHOW: i32 = 5;
 pub(crate) const SW_SHOWNA: i32 = 8;
 const MONITOR_DEFAULTTONEAREST: u32 = 2;
 
-/// 已注册的全局快捷键（老板键）状态：注册到本进程自建的**消息窗口**上。
-///
-/// 为什么自建窗口而不是挂 gpui 的窗口：gpui 的窗口过程不对外暴露（没有
-/// 原始消息钩子），WM_HOTKEY 会被它当未知消息丢掉；子类化 gpui 的
-/// HWND 又要动它的窗口过程，风险不对等。自建一个 message-only 窗口
-/// （父 = HWND_MESSAGE）接 WM_HOTKEY，与 gpui 完全隔离——同一线程，
-/// gpui 的消息循环会照常把它派发到我们的窗口过程。
+/// 已注册的全局快捷键（老板键）状态：注册到本进程自建的 message-only
+/// 消息窗口——gpui 的窗口过程不对外暴露，WM_HOTKEY 会被它当未知消息丢掉；
+/// 自建窗口与 gpui 完全隔离，同线程经 gpui 消息循环照常派发。
 static HOTKEY: std::sync::Mutex<Option<HotkeyReg>> = std::sync::Mutex::new(None);
 /// 老板键按下标志（窗口过程置位，壳内轮询消费）。窗口过程跑在主线程的
 /// 消息循环里，拿不到 GPUI 上下文，只能这样把事件递进去。
@@ -248,8 +233,7 @@ struct HotkeyReg {
 }
 
 /// 注册全局快捷键（[`crate::boss_key::accel`] 算好的修饰位 + 虚拟键码）。
-/// 返回 Err = 注册失败（键被别的程序占用等，Tauri 侧同语义）。重复注册先
-/// 注销旧键，失败时旧键会被回落注回。
+/// 返回 Err = 注册失败（键被占用等）。重复注册先注销旧键，失败时旧键会被回落注回。
 pub(crate) fn register_hotkey(mods: u32, vk: u32) -> Result<(), String> {
     let hwnd = message_window()?;
     let id = 1;
@@ -328,13 +312,9 @@ pub(crate) fn post_close(hwnd: isize) {
     }
 }
 
-/// 起拖窗口（自绘顶栏空白带按住拖动）。
-///
-/// `ReleaseCapture + WM_NCLBUTTONDOWN(HTCAPTION)` 是让窗口进系统移动循环的
-/// 标准手法，拖拽手感/贴靠/多显示器全跟系统走。为什么不用 gpui 的
-/// `Window::start_window_move()`：那是平台 trait 的**默认空实现**，
-/// gpui-pre-windows 没有覆写（macOS 那头才接了 performWindowDragWithEvent）
-/// ——Windows 上自绘拖拽只能自己走这一步。
+/// 起拖窗口（自绘顶栏空白带按住拖动）：`ReleaseCapture +
+/// WM_NCLBUTTONDOWN(HTCAPTION)` 进系统移动循环——gpui 的
+/// `Window::start_window_move()` 在 Windows 是默认空实现，用不了。
 pub(crate) fn start_window_move(hwnd: isize) {
     // SAFETY：句柄来自 gpui 的 platform window；WM_NCLBUTTONDOWN 的 wparam
     // 是命中码（HTCAPTION），lparam 客户区坐标 0 = 用当前光标位置
@@ -357,13 +337,9 @@ pub(crate) fn toggle_maximize(hwnd: isize) {
     }
 }
 
-/// 单实例门闩：命名互斥体表征「本进程是唯一实例」，命名事件承载
-/// 「第二次启动请求把窗口带到前台」。
-///
-/// gpui 没有单实例设施，Tauri 侧走 `tauri-plugin-single-instance`——那边第二
-/// 次启动会让插件回调前置已有窗口，而这里是「第二个进程置位事件、首个实例的
-/// 轮询消费」：同一语义，零新依赖。**必须早于数据库打开**（上一个实例可能正
-/// 持库锁：隐身藏窗/小屏形态都在跑）。
+/// 单实例门闩：命名互斥体表征「本进程是唯一实例」，命名事件承载「第二次
+/// 启动请求把窗口带到前台」（gpui 无单实例设施；与 Tauri 插件同语义、零新
+/// 依赖）。必须早于数据库打开——上一个实例可能正持库锁。
 static SINGLETON: std::sync::Mutex<Option<(isize, isize)>> = std::sync::Mutex::new(None);
 
 /// 尝试成为唯一实例。首个实例返回 `Some(事件句柄)`（供轮询前置请求）；

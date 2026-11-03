@@ -1,9 +1,5 @@
-//! 快速合并前的编码一致性探测。
-//!
-//! [`crate::remux::concat_copy`] 会**重写索引**（合并后的样本表覆盖全集，
-//! 时长累加到全集末尾），但样本描述、编解码参数这些 box 是从第 1 集原样搬过去的。
-//! 所以产出的文件能不能播，取决于各集除「样本表」之外的部分是否一致：同一份文件
-//! 在别处解析出的轨道信息必须相同，否则这道闸门给出的结论和实际产物对不上。
+//! 快速合并前的编码一致性探测：[`crate::remux::concat_copy`] 会**重写索引**（合并后的样本表覆盖全集、时长累加到全集末尾），
+//! 但样本描述、编解码参数这些 box 是从第 1 集原样搬过去的——产物能不能播，取决于各集除「样本表」之外的部分是否一致。
 
 use std::path::{Path, PathBuf};
 
@@ -29,13 +25,8 @@ pub struct Consistency {
     pub mismatch_episode: Option<u32>,
 }
 
-/// 检查一批分集能否直接字节拼接。
-///
-/// 以第 1 集为基准。解析失败（文件损坏、不是 MP4）算不一致并指向那一集——
-/// 「读不出来」本身就是不能拼的信号，放过去等于把损坏留给用户。
-///
-/// 不返回 `Result`：它只回答「能不能拼」，解析失败落在哪个集上已经编码进
-/// `mismatch_episode`。
+/// 检查一批分集能否直接字节拼接，以第 1 集为基准；解析失败（文件损坏、不是 MP4）算不一致并指向那一集——「读不出来」本身就是不能拼的信号。
+/// 不返回 `Result`：它只回答「能不能拼」，解析失败落在哪个集上已经编码进 `mismatch_episode`。
 pub fn check(inputs: &[(u32, PathBuf)]) -> Consistency {
     // 少于 2 集无从比较
     if inputs.len() < 2 {
@@ -66,9 +57,7 @@ pub fn check(inputs: &[(u32, PathBuf)]) -> Consistency {
     }
 }
 
-/// 一个文件里全部轨道的指纹，按「视频在前、音频在后、同类按 track_id」排好。
-///
-/// 轨道顺序要归一化：不同集里 `trak` 的排列顺序不同不算不一致。
+/// 一个文件里全部轨道的指纹，按「视频在前、音频在后、同类按 track_id」归一化（不同集里 `trak` 排列顺序不同不算不一致）。
 fn signature_of(path: &Path) -> Option<Vec<TrackSignature>> {
     let mut tracks: Vec<(u32, TrackSignature)> = demux_file(path)
         .ok()?
@@ -131,7 +120,6 @@ mod tests {
 
     #[test]
     fn same_codec_different_resolution_is_a_mismatch() {
-        // 同样 hvc1，1080p 与 720p 拼起来是坏文件：四字符码一样不够
         let dir = temp_dir("resolution");
         let inputs = vec![
             episode(&dir, 1, &[TrackSpec::video(1, b"hvc1", 1920, 1080)]),
@@ -212,7 +200,6 @@ mod tests {
 
     #[test]
     fn track_order_does_not_matter() {
-        // 第 2 集把音轨排在视频轨前面：轨道顺序不同不该算不一致
         let dir = temp_dir("order");
         let inputs = vec![
             episode(
@@ -275,7 +262,6 @@ mod tests {
         std::fs::write(&bad_path, [0xffu8; 512]).unwrap();
         let inputs = vec![good, (2, bad_path)];
 
-        // 解析不出来不是「一致」：那正是最该拦下的一集
         assert_eq!(
             check(&inputs),
             Consistency {
@@ -302,7 +288,6 @@ mod tests {
 
     #[test]
     fn missing_track_count_is_a_mismatch() {
-        // 一集有音轨、另一集没有：轨道集合不同，拼出来的索引也对不上
         let dir = temp_dir("track-count");
         let inputs = vec![
             episode(&dir, 1, &[TrackSpec::video(1, b"hvc1", 1920, 1080)]),

@@ -11,9 +11,8 @@ use hongguo_common::AppError;
 const OFFICIAL_PRELOAD_WINDOW: usize = 6;
 
 impl super::HomeView {
-    /// 连播锁定内的切集（滚轮/↑↓，Tauri useBingeRelay 的 stepEpisode 同款）：
-    /// 越过第 1 集原地不动；滚过末集 = 剧终，走剧终接力（下一季 → 信息流
-    /// 下一条推荐）。
+    /// 连播锁定内的切集（滚轮/↑↓）：越过第 1 集原地不动；滚过末集 = 剧终，
+    /// 走剧终接力（下一季 → 信息流下一条推荐）。
     pub(crate) fn step_episode(&mut self, dir: i32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
             return;
@@ -23,7 +22,6 @@ impl super::HomeView {
             return;
         }
         if next as usize > now.episode_count {
-            // 滚过末集也算剧终（Tauri Ns()→hc() 同款）
             self.ended_generation = self.play_generation;
             log::info!(
                 "[Home][尾进] 片尾前进 gen={} ep {}→剧终/下一部 source=step",
@@ -52,7 +50,7 @@ impl super::HomeView {
     /// [`Self::wheel_cooldown_ready`]，由舞台层滚轮入口先行裁决）。
     pub(crate) fn step(&mut self, dir: i32, cx: &mut Context<Self>) {
         if self.in_binge() {
-            // Tauri 同款：滚轮也是「用户在场」，切集时唤醒悬浮层
+            // 滚轮也是「用户在场」：切集时唤醒悬浮层。
             self.wake_controls(cx);
             self.step_episode(dir, cx);
             return;
@@ -98,8 +96,8 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 滚轮冷却裁决 + 记账：到点可切返回 true 并落章。只由滚轮路径调用    /// （键盘 ↑↓ 不吃这把锁）；换剧与连播切集共用——冷却原写在换剧分支
-    /// 里，连播切集漏网，一次惯性滚动连跳好几集。
+    /// 滚轮冷却裁决 + 记账：到点可切返回 true 并落章。只由滚轮路径调用
+    /// （键盘 ↑↓ 不吃这把锁）；换剧与连播切集共用。
     pub(in crate::home) fn wheel_cooldown_ready(&mut self) -> bool {
         let now = Instant::now();
         if self.wheel_at.is_some_and(|t| {
@@ -111,7 +109,7 @@ impl super::HomeView {
         true
     }
 
-    /// 收起全部浮层/弹层（卸载语义：Tauri 重挂载后一切面板都是关着的）。
+    /// 收起全部浮层/弹层（卸载语义）。
     fn close_overlays(&mut self) {
         self.picker_open = false;
         self.comments_panel_open = false;
@@ -130,8 +128,7 @@ impl super::HomeView {
         self.reply_to = None;
     }
 
-    /// 切到目标剧。旧的引擎继续播到新引擎就位（对齐 Tauri「store 目标
-    /// 变了但画面还在上一部」的切换语义），就位即整体换装。
+    /// 切到目标剧：旧的引擎继续播到新引擎就位，就位即整体换装。
     /// `start_override` 给切清晰度保进度用（None = 走起点决策）。
     pub(in crate::home) fn play_target(
         &mut self,
@@ -140,9 +137,8 @@ impl super::HomeView {
         start_override: Option<f64>,
         cx: &mut Context<Self>,
     ) {
-        // 「在播不动」闸：目标就是在播的那部才拦。引擎不在（被
-        // `release_for_leave` 释放）时不算在播——回首页续播同部剧必须
-        // 放行重走起点决策，否则从落盘进度接上的通道永远打不开。
+        // 「在播不动」闸：目标就是在播的那部才拦；引擎不在（被
+        // release_for_leave 释放）不算在播——回首页续播同部剧必须放行。
         if self
             .now
             .as_ref()
@@ -166,7 +162,7 @@ impl super::HomeView {
         // 不换播放器，旧 Ended/旧尾部读数必须按代次隔离）。
         self.play_generation = self.play_generation.wrapping_add(1);
         // 系统后端连播下一集：队列里已预加载就直接接力，不重建播放器
-        //（重建要走取流表+asset+loader，实测首帧 650-970ms；接力 ~70ms）。
+        //（重建要走取流表+asset+loader，慢一个量级）。
         if start_override.is_none()
             && self.preferred_definition.is_none_or(|definition| {
                 self.now
@@ -197,10 +193,8 @@ impl super::HomeView {
                     self.play_generation,
                     self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
                 );
-                // 缓存的「当前集」要跟着正在播的走：接力不重建播放器，也就不
-                // 走 `prepare`（那里才 `set_current`）。不更新的话，接力后
-                // 真正在播的这一集会被当成「其余的」——按头部预算封顶，而
-                // 上一集反倒享受整集缓存。
+                // 缓存的「当前集」要跟着正在播的走：接力不走 prepare（那里才
+                // set_current），不更新会把在播集当「其余的」按头部预算封顶。
                 hongguo_stream::cache().set_current(&next_vid);
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {
@@ -214,8 +208,7 @@ impl super::HomeView {
                 self.pending_title = None;
                 self.play_error = None;
                 self.wake_controls(cx);
-                // 刚接力的这一集已经消费掉旧 pending；下一集的预加载要
-                // 用新的 now 重新入队，不能被旧请求的 pending 挡住。
+                // 刚接力的集已消费旧 pending；下一集预加载要用新 now 重新入队。
                 self.system_preload_pending = None;
                 if let Some(now) = self.now.clone() {
                     self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
@@ -243,28 +236,20 @@ impl super::HomeView {
                 item.title.as_str()
             }
         );
-        // 播放期系统活动断言（无条件持有，直到用户暂停）：无声/被遮挡/
-        // 后台的进程会被 macOS 深度节流——换集起播的 50ms 轮询实测被拉长
-        // 到 20s、GPUI 渲染循环整个停摆。断言必须挂在**节流打不到的入口**
-        // （用户/连播事件的 UI 路径），不能挂在 render——被节流的恰恰是
-        // render，翻沿永远走不到。暂停即释放（用户在场，恢复由
-        // toggle_pause 重新持有）。
+        // 播放期系统活动断言（无条件持有，直到用户暂停）：无声/被遮挡/后台的
+        // 进程会被 macOS 深度节流——轮询被拉长到 20s、渲染循环整个停摆。断言
+        // 必须挂在节流打不到的 UI 路径，不能挂 render（被节流的恰恰是 render）。
         crate::play_activity::set_active(true);
         self.switching = true;
         // 新的起播/切集目标会重排预加载；旧的 pending 不挡这一次。
         self.system_preload_pending = None;
-        // 新一次起播/切集的计时起点（首帧事件到达时结算耗时）。
         self.system_switch_started = Some(Instant::now());
-        // 新一次起播尝试：清上一轮的失败态（自动重试的记账位只在引擎
-        // 就位时复位——在这里也清会让「失败→重试→失败」死循环）
+        // 新一次起播尝试：清上一轮失败态；自动重试记账位不能在这里清——
+        // 会「失败→重试→失败」死循环（只在引擎就位时复位）。
         self.play_error = None;
-        // 批量预取（双端点）：
-        // ① `multi_video_model/preload`（dr_scene=preload）——「当前 + 信息流
-        // 后续几部」（官方 6 个）的推荐位 vid 按 content_type 原样串分组
-        // 一次批量，命中落 api 层暂存表，起播链先查它；
-        // ② `multi_video_detail/preload`（逗号串 series_id）——同一窗口的
-        // 剧集档案一次批量，落库后换剧 resolve 秒回。批量空响应静默，
-        // 起播照走单集端点。
+        // 批量预取双端点：推荐位 vid 按 content_type 分组批量（命中落 api 层
+        // 暂存表，起播链先查它）；同窗剧集档案批量落库，换剧 resolve 秒回。
+        // 空响应静默，起播照走单集端点。
         let (preload_map, series_window): (
             std::collections::BTreeMap<String, Vec<String>>,
             Vec<String>,
@@ -275,8 +260,8 @@ impl super::HomeView {
                 std::collections::BTreeMap::new();
             let mut series: Vec<String> = Vec::new();
             let mut seen_vids: Vec<String> = Vec::new();
-            // 只收 feed 条目（vid + content_type 在场）——头部「你的内容」
-            // 种子没有类型信息，占名额只会把批量挤没（官方窗口也是纯 feed 条目）
+            // 只收 feed 条目：头部「你的内容」种子没有类型信息，占名额只会
+            // 把批量挤没（官方窗口也是纯 feed 条目）。
             for it in items
                 .iter()
                 .skip(cur)
@@ -310,9 +295,8 @@ impl super::HomeView {
                         Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
                     }
                 }
-                // 档案批量：整窗全量（官方 6 部一发，含在库的——响应带
-                // content_type，顺带把在库旧档案缺的类型补持久化；服务端
-                // 数据是权威源，整包 upsert 覆盖）
+                // 档案批量整窗全量（含在库的）：响应带 content_type，顺带补在库
+                // 旧档案缺的类型；服务端是权威源，整包 upsert 覆盖。
                 if series_window.len() > 1 {
                     match hongguo_api::detail::fetch_episode_lists_batch(&series_window, &env).await
                     {
@@ -335,10 +319,8 @@ impl super::HomeView {
                 }
             });
         }
-        // 旧画面退场：切剧立刻清「画面已就绪」，走新剧封面（切剧不闪上一
-        // 部的残影）；同剧切集/换清晰度不清——原生画面层（AVPlayerLayer /
-        // DComp 视频位）还挂在同一播放器的上一集画面上，新集首帧事件会
-        // 接棒，这正是「切集不闪封面」。
+        // 切剧立刻清「画面已就绪」走新剧封面（不闪上一部残影）；同剧切集/
+        // 换清晰度不清——原生画面层还挂着上一集画面，新集首帧事件会接棒。
         let same_series = self
             .now
             .as_ref()
@@ -357,8 +339,7 @@ impl super::HomeView {
 
         let state = Arc::clone(&self.state);
         let history = self.history.clone().unwrap_or_default();
-        // 事件通道容量小即可：系统播放器只发低频控制事件（首帧/缓冲/播完/
-        // 失败），8 深度足够吸收抖动，通道背压照旧作用在发送端。
+        // 事件通道 8 深度足够：系统播放器只发低频控制事件，背压照旧作用在发送端。
         let (events, rx) = mpsc::channel::<PlayerEvent>(8);
         let epoch = self.epoch.load(Ordering::Relaxed);
         let epoch_shared = Arc::clone(&self.epoch);
@@ -385,11 +366,9 @@ impl super::HomeView {
                     return;
                 }
                 match result {
-                    // 视频位是渲染线程的私有对象，不能在实体借用内建：open
-                    // 过程中的 STA COM 调用会泵窗口消息，a11y 探测/重绘若在
-                    // 泵里重入会撞 HomeView 的借用（实测日志刷「RefCell
-                    // already borrowed」）。先把参数带出 update，借用解除后
-                    // 再开，见下方第二个 update。
+                    // 视频位是渲染线程私有对象，不能在实体借用内建：open 的 STA
+                    // COM 调用会泵窗口消息，泵里重入会撞 HomeView 借用。先把参数
+                    // 带出 update，借用解除后再开（下方第二个 update）。
                     Ok((spec, now)) => deferred = Some((spec, now)),
                     Err(error) => view.handle_play_failure(error, cx),
                 }
@@ -434,38 +413,31 @@ impl super::HomeView {
         epoch: u64,
         cx: &mut Context<Self>,
     ) {
-        // 偏好重放：换集重建播放器（对齐 Tauri `<video>` 卸载重挂）后
-        // 把音量/静音按存值发给新实例。倍速已随打开参数传入，只在分歧时
-        // 补发——同值补发是平白的重复调用（首帧事件还会再补一次）。
+        // 偏好重放：换集重建播放器后把音量/静音按存值发给新实例。倍速已随打开
+        // 参数传入，只在分歧时补发——同值补发是平白的重复调用。
         if (handle.rate() - self.rate).abs() > 1e-9 {
             handle.set_rate(self.rate);
         }
         handle.set_volume(self.volume);
         handle.set_muted(self.muted);
-        // 换播放器前的 force 落盘 + 观看历史（Tauri 切集
-        // persist(force) 同款）：旧播放器与旧 now 还在手里，
-        // 读数有效；首次起播 player 为空自然跳过
+        // 换播放器前 force 落盘 + 观看历史：旧播放器与旧 now 还在手里、读数
+        // 有效；首次起播 player 为空自然跳过。
         self.save_progress_now();
         self.player = Some(handle);
-        // 系统播放器没有内容事件流，弹幕推进/进度落盘靠 30fps 节拍
+        // 系统播放器没有内容事件流，弹幕推进/进度落盘靠 30fps 节拍。
         self.spawn_system_tick(epoch, cx);
-        // 连播锁定跟着目标走（Tauri setTarget 同款）：切到
-        // 别的剧即解除，同剧连播保持
+        // 连播锁定跟着目标走：切到别的剧即解除，同剧连播保持。
         if self.binge.as_deref() != Some(now.series_id.as_str()) {
             self.binge = None;
         }
         self.load_intro(now.series_id.clone(), cx);
-        // 剧终接力的下一季数据面随起播预取（Tauri 起播时
-        // 拉好相关列表同款；剧终时通常已就绪）
+        // 剧终接力的下一季数据面随起播预取（剧终时通常已就绪）。
         self.load_related_seasons(now.series_id.clone(), cx);
-        // 互动数据：集级公开计数（档案）+ mget 最近互动
+        // 互动数据：集级公开计数（档案）+ mget 最近互动。
         self.load_episode_counts(&now, cx);
         self.load_interact_state(cx);
-        // 弹幕按集重拉（社交态不缓存，每次进集都拉）。必须在
-        // now 就位之后、且 series_id 显式传参：以前先于 now 赋值
-        // 调用、内部又依赖 self.now——首播时 now 还是 None 直接
-        // 返回（第一部剧永远没弹幕），换剧时错拿上一部剧的
-        // series_id 当 book_id（服务端参数错配，热剧也拉空）
+        // 弹幕按集重拉（社交态不缓存）。必须在 now 就位之后且显式传 series_id：
+        // 先于赋值调用会首播拿不到弹幕、换剧错拿上一部的 series_id。
         self.load_danmaku(now.vid.clone(), now.series_id.clone(), cx);
         self.now = Some(now);
         // FirstFrame 可能早于 now 赋值到达；这里补一次预加载。
@@ -481,8 +453,7 @@ impl super::HomeView {
         log::warn!("[Home] 起播失败: {e}");
         self.switching = false;
         self.buffering = false;
-        // 对齐 Tauri recovery-policy 的 retry 档：自动重试一次
-        //（换目标/换集失败同样算一次预算），再失败才落错误态
+        // 自动重试一次（换目标/换集失败同样算一次预算），再失败才落错误态。
         if !self.play_retried {
             self.play_retried = true;
             log::info!("[Home] 起播失败，自动重试一次");
@@ -492,8 +463,7 @@ impl super::HomeView {
                 return;
             }
         }
-        // 失败必须可见：此前只写 pending_title，而那行小徽标
-        // 随 switching 消失——用户看到的就是「点了没反应」
+        // 失败必须可见：pending_title 徽标随 switching 消失，必须落可见错误态。
         let message = crate::i18n::app_error_text(&e);
         self.play_error = Some(crate::i18n::tf(
             "common.failedWith",
@@ -501,9 +471,8 @@ impl super::HomeView {
         ));
     }
 
-    /// 切清晰度（Tauri onDefinitionChange 同款）：同集同位重播，缓存按
-    /// (vid, 档位) 分条目——切回去不用重新下载，也不动正在播的那一档。
-    /// `None` = 回到自动（沿用上轮解析到的档位）。
+    /// 切清晰度：同集同位重播，缓存按 (vid, 档位) 分条目——切回去不用重新
+    /// 下载，也不动正在播的那一档。`None` = 回到自动（沿用上轮解析到的档位）。
     pub(in crate::home) fn switch_definition(
         &mut self,
         value: Option<u32>,
@@ -537,8 +506,8 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 选集浮层里点某一集：跳集，**不关浮层**（连选连跳）；
-    /// 信息流里主动选集 = 锁定本剧连播（Tauri onPickEpisode 同款）。
+    /// 选集浮层里点某一集：跳集，不关浮层（连选连跳）；
+    /// 信息流里主动选集 = 锁定本剧连播。
     pub(in crate::home) fn pick_episode(&mut self, vid_index: u32, cx: &mut Context<Self>) {
         let Some(now) = self.now.clone() else {
             return;
@@ -568,8 +537,7 @@ impl super::HomeView {
     }
 
     /// 跳过已看完的剧：接历史里下一部未看完的（按列表顺序，末尾回绕）；
-    /// 都没有就回信息流从当前游标找下一部未完成的。绝不 prepare/prefetch
-    /// 被跳过的剧，也不留播放器/加载态。
+    /// 都没有就回信息流从当前游标找。绝不 prepare/prefetch 被跳过的剧。
     fn skip_finished_series(&mut self, after: &str, cx: &mut Context<Self>) {
         let items = self.history.clone().unwrap_or_default();
         let start = items
@@ -595,8 +563,7 @@ impl super::HomeView {
                 next.title
             );
             self.binge = Some(next.series_id.clone());
-            // 不拿历史行里的集号/秒数硬起播：让起点决策合并本地断点与云端
-            // 历史（本地 5 秒一写更新），并继续走 clamp。
+            // 不拿历史行里的集号/秒数硬起播：让起点决策合并本地断点与云端历史。
             self.play_target(item, None, None, cx);
             return;
         }
@@ -606,8 +573,7 @@ impl super::HomeView {
     }
 
     /// 详情页播放入口（DetailEvent::Play → 壳 → 这里）：明确要追这部，
-    /// 锁定连播；起播集与起点由详情页的继续播放决策给定。标题/封面从
-    /// 档案抄（阻塞池读，UI 线程不碰库）。
+    /// 锁定连播；起播集与起点由详情页的继续播放决策给定。
     pub(crate) fn play_from_detail(
         &mut self,
         series_id: String,
@@ -620,10 +586,9 @@ impl super::HomeView {
             self.skip_finished_series(&series_id, cx);
             return;
         }
-        // 起点复核（Tauri 首页「成为当前剧」effect 同款）：列表页调用方只
-        // 拿得到本地档案，云端观看历史 >3 秒时用云端位置兜底——传上来的
-        // (1, 0.0) 正是「本地没有可续播记录」的形态，显式续播/换集
-        // （idx>1 或带位置）不受影响。
+        // 起点复核：列表页调用方只拿得到本地档案，云端历史 >3 秒时用云端位置
+        // 兜底——传上来的 (1, 0.0) 即「本地没有可续播记录」的形态；显式续播/
+        // 换集不受影响。
         let (vid_index, start_secs) = if vid_index == 1 && start_secs == 0.0 {
             match hongguo_service::play_service::resume::resolve_entry(
                 &self.state.store,
@@ -684,22 +649,20 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 离开首页的卸载清理（Tauri 路由切换 = 组件卸载的同语义）：强落进度、
-    /// 释放引擎、收起浮层。HomeView 实体常驻带来「信息流/游标/封面缓存不
-    /// 丢」，但 Tauri 卸载免费提供的停播面必须在这里补齐——不然解码、
-    /// 声音、自动连播、5 秒落盘在切走后照常跑（切菜单还在播的根源）。
-    /// 回流态不动：回首页由 [`Self::resume_if_idle`] 从落盘进度接上。
+    /// 离开首页的卸载清理：强落进度、释放引擎、收起浮层——HomeView 实体常驻
+    /// 带来缓存不丢，但停播面必须在这里补齐（否则切走后解码/声音/连播/落盘
+    /// 照常跑）。回流态不动：回首页由 [`Self::resume_if_idle`] 接上。
     pub(crate) fn release_for_leave(&mut self, cx: &mut Context<Self>) {
         if self.player.is_none() {
             return;
         }
-        // 先落进度再放引擎：读数来自句柄，Drop 之后就是 0 了
+        // 先落进度再放引擎：读数来自句柄，Drop 之后就是 0 了。
         self.save_progress_now();
-        // 播放期活动断言（防系统闲睡）随引擎一起释放：断言只在用户手动
-        // 暂停时才会收，离开首页不收的话，壳不在前台也照样挡着机器休眠。
+        // 播放期活动断言随引擎一起释放：断言只在用户手动暂停时收，离开不收
+        // 的话壳不在前台也照样挡着机器休眠。
         crate::play_activity::set_active(false);
-        // 陈旧事件与在途起播任务按纪元弃置；句柄 Drop = 任务 abort、音频
-        // 设备释放、事件通道关闭（循环自灭）
+        // 陈旧事件与在途起播任务按纪元弃置；句柄 Drop 即任务 abort、音频设备
+        // 释放、事件通道关闭（循环自灭）。
         if let Some(player) = &self.player {
             player.detach();
         }
@@ -721,23 +684,18 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 回到首页的续播（Tauri 重挂载「挂载默认开闸」同语义）：引擎不在
-    /// （被 [`Self::release_for_leave`] 释放 / 冷启动还没起）就按当前游标
-    /// 重走起点决策——`resolve_entry` 从落盘进度接上，同一部剧同一位置。
-    /// 信息流还没就位时不动，首批落定的冷启动钩子（after_feed_loaded）
-    /// 会接管。
+    /// 回到首页的续播：引擎不在（被 [`Self::release_for_leave`] 释放 /
+    /// 冷启动还没起）就按当前游标重走起点决策——从落盘进度接上。信息流
+    /// 还没就位时不动，首批落定的冷启动钩子会接管。
     pub(crate) fn resume_if_idle(&mut self, cx: &mut Context<Self>) {
-        // 回首页的过期换一批（Tauri FEED_STALE_MS 同款）：流数据比 5 分钟
-        // 更旧就重开会话取新一批——在播剧由 pin_hold 钉在最前继续播（走
-        // 同部剧重走起点决策的通道），滚下去才是新一批。没有在播目标
-        // （冷启动首次）不换，与 Tauri 的 `playingId` 闸同位。
+        // 回首页的过期换一批：流数据 >5 分钟就重开会话取新一批——在播剧由
+        // pin_hold 钉在最前继续播，滚下去才是新一批；无在播目标（冷启动）不换。
         if self.now.is_some() && self.feed_stale() {
             log::info!("[Home] 回首页：流已过期（>5 分钟），换一批（在播不动）");
             self.pin_hold = true;
             self.load_feed(self.active.clone(), true, cx);
-            // 刷新会清列表并把游标归零：目标仍是「在播的那部」，把游标对回
-            // 它在展示列表里的位置（已被换出则 pin 在最前，通常即 0；还在
-            // 种子/新列表里则对到那一位）——Tauri 重挂载后的游标恢复同语义
+            // 刷新清列表并把游标归零：把游标对回「在播的那部」在展示列表里的
+            // 位置（已被换出则 pin 在最前，通常即 0）。
             if let Some(sid) = self.now.as_ref().map(|n| n.series_id.clone())
                 && let Some(pos) = self.display_items().iter().position(|i| i.series_id == sid)
             {
@@ -750,7 +708,6 @@ impl super::HomeView {
         let Some(item) = self.display_items().get(self.cursor()).cloned() else {
             return;
         };
-        // 控制条亮一拍（Tauri 重挂载 chrome 初始可见同款）
         self.controls_until = Some(Instant::now() + Self::CONTROLS_VISIBLE);
         self.play_target(item, None, None, cx);
     }

@@ -1,9 +1,4 @@
-/**
- * 评论附图（图片评论 / 表情评论共用一张图）。
- *
- * 长按 → 「添加到表情」（官方同款：长按别人发的图片可把它收藏进「我的
- * 表情」；官方实包走 `emoticon/collect/v`，`image_id` 填该图片的 id）。
- */
+/** 评论附图（图片评论 / 表情评论共用一张图）：长按 → 「添加到表情」（官方同款收藏，image_id 填该图片 id）。 */
 import { useCallback } from 'react';
 
 import { emoticonPreviewUrl } from '@/service/queries';

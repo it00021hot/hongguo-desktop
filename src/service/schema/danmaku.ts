@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（弹幕 / 评论域）。
- */
+/** 弹幕 / 评论域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 import { normalizeAvatarUrl } from '@/utils/image-url';
 import { emoticonSchema } from './emoticon';
@@ -14,8 +12,7 @@ export const danmakuSchema = z.object({
 });
 export type Danmaku = z.infer<typeof danmakuSchema>;
 
-/** 一条评论区评论（Rust `danmaku::CommentItem`）。发送响应校验复用
- *  （comment/reply/剧评发送现在返回完整对象，commands 层要 parse）。 */
+/** 一条评论区评论（Rust `danmaku::CommentItem`）；发送响应校验复用（发送类接口返回完整对象，commands 层要 parse）。 */
 export const commentItemSchema = z.object({
   commentId: z.string(),
   /** 作者 uid（删除入口对比登录 uid 用；匿名/缺失为空串） */
@@ -46,11 +43,7 @@ export const commentPageSchema = z.object({
 });
 export type CommentPage = z.infer<typeof commentPageSchema>;
 
-/**
- * 剧级评论页 + 剧评分摘要（Rust `danmaku::SeriesReviewPage`）。
- * 评分/评分人数/题材标签在评论响应 extra 里——详情头部的
- * 「8.0分 1074人评分」数据源。
- */
+/** 剧级评论页 + 剧评分摘要（Rust `danmaku::SeriesReviewPage`）；评分/人数/题材标签在响应 extra 里，是详情头部「8.0分 1074人评分」的数据源。 */
 export const seriesReviewPageSchema = z.object({
   ...commentPageSchema.shape,
   /** 剧评分（"8.0"；空串 = 暂无评分） */
@@ -101,8 +94,7 @@ export const creatorProfileSchema = z.object({
 });
 export type CreatorProfile = z.infer<typeof creatorProfileSchema>;
 
-/** 创作者主页的一部作品（Rust `danmaku::CreatorWork`；seriesId 即播放目标）。
- *  旧后端窗口期缺字段 → 各数值/数组走 default。 */
+/** 创作者主页的一部作品（Rust `danmaku::CreatorWork`；seriesId 即播放目标）；旧后端窗口期缺字段 → 各数值/数组走 default。 */
 export const creatorWorkSchema = z.object({
   seriesId: z.string(),
   title: z.string(),

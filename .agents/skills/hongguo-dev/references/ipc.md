@@ -18,9 +18,7 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> StorageUsage {
 
 #[tauri::command]
 pub fn delete_series_files(state: State<'_, AppState>, series_id: String) -> AppResult<usize> {
-    let n = cleanup::delete_series(&state, &series_id)?;
-    after_cleanup(&state)?;
-    Ok(n)
+    cleanup::delete_series(&state, &series_id)
 }
 ```
 
@@ -60,21 +58,26 @@ export const storage = {
 
 后端单一 `AppError` enum，序列化成 `{ kind, message }`：
 
-- `kind` 是前端 i18n key（`error.network`、`error.storeCorrupt`…共 14 个变体），**Rust 侧不硬编码面向用户的文案**；`message` 是后端中文原文，前端 `invoke.ts` 展示译文、原文挂 `error.cause`。**每个 kind 都必须有 zh-CN/en-US 译文**（新增变体同一 commit 两份 locale 同步补）——唯一例外见下条 `Auth`。
-- 变体语义是设计过的，别合并：`StoreLocked`（另一实例在跑）≠ `StoreCorrupt`（真损坏，报错了会让人删库）；`Busy`（现在不行等一下）≠ `InvalidArgs`（参数写错）；`EmptyResponse` 独立存在因为签名失效返回 HTTP 200 + 0 字节；`Cancelled` 供调度器区分取消与磁盘错误；`Internal`（后台任务 join 失败等不应发生的状态）≠ `Network`；`Auth` 是 transparent——消息本身已含完整语义（如「登录失败 1202: 验证码错误」），i18n **刻意不提供** `error.auth` 词条，前端直接展示后端原文（回落逻辑在 `invoke.ts` 的 `localizedMessage`：kind 有词条用译文，没有回落 message 原文）。
+- `kind` 是前端 i18n key，来自 `AppError::i18n_key()`。变体 18 个（`crates/hongguo-common/src/error.rs`，按声明顺序）：`Network`、`EmptyResponse`、`Signer`、`StoreCorrupt`、`StoreLocked`、`Io`、`Decrypt`、`Media`、`Auth`、`Rejected`、`StreamMiss`、`ContentTypeUnknown`、`InvalidArgs`、`NotFound`、`Cancelled`、`Busy`、`Unsupported`、`Internal`。`message` 是 `Display` 原文，前端 `invoke.ts` 展示译文、原文挂 `error.cause`。
+- 有 zh-CN/en-US 词条的 kind：`error.network`、`error.emptyResponse`、`error.signer`、`error.storeCorrupt`、`error.storeLocked`、`error.io`、`error.decrypt`、`error.media`、`error.invalidArgs`、`error.notFound`、`error.cancelled`、`error.busy`、`error.internal`。新增这类变体同一 commit 两份 locale 补齐。
+- 源码注释写明**刻意不提供**词条、前端透传 message：`Auth`（`error.auth`，如「登录失败 1202: 验证码错误」）、`Rejected`（`error.rejected`）、`Unsupported`（`error.unsupported`）。`StreamMiss` 注释写 transparent 同 `Rejected`，locale 里同样没有 `error.streamMiss`。`ContentTypeUnknown` 的 key 是 `error.contentTypeUnknown`，两份 locale 目前也没有这条。回落在 `invoke.ts` 的 `localizedMessage`：kind 有词条用译文，没有则用 message。
+- 变体语义是设计过的，别合并：`StoreLocked`（另一实例在跑）≠ `StoreCorrupt`（真损坏，报错了会让人删库）；`Busy`（现在不行等一下）≠ `InvalidArgs`（参数写错）；`EmptyResponse` 独立存在因为签名失效返回 HTTP 200 + 0 字节；`StreamMiss`（取流未命中，不做身份层兜底）≠ `EmptyResponse`；`Cancelled` 供调度器区分取消与磁盘错误；`Internal`（后台任务 join 失败等不应发生的状态）≠ `Network`；`ContentTypeUnknown` 是条目类型未注册，不猜取流分组 key。`Auth` / `Rejected` / `StreamMiss` / `Unsupported` 是 transparent（`#[error("{0}")]`）。
 - 抛错惯用形态：`AppError::InvalidArgs("并发数必须在 1–10 之间".into())`；`AppError::NotFound(format!("剧集 {series_id}"))` 配 `.ok_or_else`；IO 用 `?`（有 From）。
 - **存进任务/队列的错误只存 i18n key 不存人话**（`queue.mark_failed(&id, e.i18n_key())`）——`DownloadTask.error` 会被前端直接渲染，底层细节只该进日志。
 
 ## 三、事件推送
 
-**service 侧（唯一发布点，无任何 UI/事件机制）**：业务事件是闭集强类型枚举 `hongguo_service::events::ServiceEvent`（14 个变体：下载 6 / 合并 4 / 在线取流 / 兼容转码 / 登录 MFA / 追更提醒），经 `AppState` 的 broadcast 总线发布（容量 1024，订阅者滞后丢旧记日志）。**service 不持有 `AppHandle`，命令层也不发业务事件**。
+**service 侧（唯一发布点，无任何 UI/事件机制）**：业务事件是闭集强类型枚举 `hongguo_service::events::ServiceEvent`（15 个变体：下载 6 / 合并 4 / 在线取流 `OnlineProgress` / 兼容转码 `CompatProgress` / 登录 MFA `LoginMfa` / 追更 `FollowNotices` / 设备注册换档 `DeviceRegistered(String)`，前端名 `device-registered`，常量 `device::DEVICE_REGISTERED`），经 `AppState` 的 broadcast 总线发布（容量 1024，订阅者滞后丢旧记日志）。**service 不持有 `AppHandle`，命令层也不发业务事件**。
+
+**壳专属事件**（不进 `ServiceEvent`，只由 Tauri 壳发出，前端 `EVENTS` / `EVENT_PAYLOADS` 仍要登记）：`boss-key-hidden`（`boss_key_cmd::BOSS_KEY_HIDDEN`）、`close-requested`（`lib.rs` 拦截关闭）、`window-minimize`（`lib.rs` 最小化状态翻转才发）、`incognito-visibility`（`incognito_cmd`）。不要把它们加进 service 枚举。
 
 **壳侧转发**（`crates/hongguo-tauri/src/events.rs`）：bootstrap 阶段订阅一次，`forward` 把每个变体映射成**原名原载荷**的 `app.emit`（`let _ =` 忽略失败，前端不在场发不出去无害）。
 
 ```rust
 // 事件名常量在各域 events 模块：下载/合并/在线/兼容集中在
 // download_service::events::names，登录在 login_service::events::LOGIN_MFA_STATE，
-// 追更在 follow_service::events::FOLLOW_NOTICES
+// 追更在 follow_service::events::FOLLOW_NOTICES，
+// 设备注册在 device::DEVICE_REGISTERED（载荷 = 新 iid 字符串）
 pub mod names {
     pub const DOWNLOAD_PROGRESS: &str = "download-progress";
     // ...
@@ -107,8 +110,8 @@ pub struct LoginMfaStateEvent {
 
 **动手前必读 `docs/hongguo-api-endpoints.md`**（端点抓包台账：路径/参数/响应结构/已踩的坑，每节标注抓包锁定日期）。流程：
 
-1. **`domain/api/<族>.rs`**：路径常量 + `pub async fn fetch_xxx(args..., env: &ApiEnv) -> AppResult<Xxx>`：
-   - 选对调用族（`crates/hongguo-api/src/client.rs`）：`api_call`（默认 lq 域）/ `api_call_at`（指定 origin）/ `api_call_full`（混合 query+body）/ `api_call_full_with_headers`（如 commentapi 的 `x-reading-request`）/ `api_call_full_response`（登录捕获 Set-Cookie）/ `api_call_reading`（reading 系统一入口：轻签名 + gzip body）。
+1. **`crates/hongguo-api/src/<域>/mod.rs`**（`play_url` / `play_strategy` / `warmup` 是同层单文件 `*.rs`）：路径常量 + `pub async fn fetch_xxx(args..., env: &ApiEnv) -> AppResult<Xxx>`：
+   - 选对调用族（`crates/hongguo-api/src/client.rs`）：`api_call`（默认 origin，转 `api_call_full`）/ `api_call_full`（origin + 业务 query + body）/ `api_call_full_with_headers`（额外头，如 commentapi 的 `x-reading-request`）/ `api_call_full_response`（登录捕获 Set-Cookie 与响应头）/ `api_call_reading`（reading：轻签名 + gzip body）/ `api_call_reading_raw`（multipart，body 原样、签名仍按原始 body）/ `api_call_reading_once_allow_empty` 与 `api_call_once_allow_empty`（空响应不重试）/ `api_call_model_light`（取流轻请求，空响应原样交调用方）。
    - client 三条铁律：签名失效是 200+0 字节要显式检查；HTTP 方法必须与签名时一致；每次重试都重新签名。重试 3 次递增退避，耗尽报 `EmptyResponse`。
    - **签名在 client 内部接入，业务代码永远不碰 signer**；Cookie/x-tt-token 在签名之后作为 extra_headers 注入。
    - 响应：`serde_json::from_slice` → `check_code(&value)?`（业务码非 0 报 `AppError::Media(format!("接口返回 {code}: {msg}"))`）→ 手写 `parse_xxx` 到 camelCase 模型。

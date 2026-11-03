@@ -3,10 +3,8 @@
 use crate::app_state::AppState;
 use hongguo_api::client::ApiEnv;
 
-/// 把暂存的 csrf 并进调用环境（覆盖同名 cookie 字段，缺失则追加）。
-///
-/// 发码响应下发的 `passport_csrf_token` 是登录会话凭据，sms_login / 轮询
-/// 都必须带上，否则服务端不认这次会话。
+/// 把暂存的 csrf 并进调用环境（覆盖同名 cookie 字段，缺失则追加）。发码响应下发的
+/// `passport_csrf_token` 是登录会话凭据，sms_login / 轮询都必须带上，否则服务端不认这次会话。
 pub fn with_csrf(state: &AppState, mut env: ApiEnv) -> ApiEnv {
     let Some(csrf) = state.login_csrf.read().clone() else {
         return env;

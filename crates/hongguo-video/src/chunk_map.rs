@@ -1,19 +1,11 @@
-//! chunk → 样本 的换算。
-//!
-//! `stsz` 只给样本**大小**、`stco`/`co64` 只给 chunk **起点**，
-//! 中间缺的一环是 `stsc`：「每个 chunk 装几个样本」。
-//!
-//! ⚠️ 缺了这一步，`samples[i].0` 会全停在 0，解密就会去读文件头——
-//!    **不报错**，只是产物全是噪声。所以这里是独立一个文件，便于单独看。
+//! chunk → 样本 的换算：`stsz` 只给样本**大小**、`stco`/`co64` 只给 chunk **起点**，
+//! 中间缺的一环 `stsc`（「每个 chunk 装几个样本」）由本模块补上。
+//! 缺了这一步 `samples[i].0` 会全停在 0、解密去读文件头——**不报错**，产物全是噪声。
 
 use super::sample_table::TrackInfo;
 
-/// 从 `stsc` 读「每 chunk 多少样本」。
-///
-/// 结构：version+flags(4) | entry_count(4) |
-/// entries: first_chunk(4) samples_per_chunk(4) sample_description_index(4)
-///
-/// 只保留前两个字段——`sample_description_index` 在短剧这类单描述轨道上恒为 1。
+/// 从 `stsc` 读「每 chunk 多少样本」：version+flags(4) | entry_count(4) | entries(first_chunk 4, samples_per_chunk 4, sample_description_index 4)。
+/// 只保留前两个字段——`sample_description_index` 在单描述轨道上恒为 1。
 pub(super) fn read_stsc(data: &[u8], start: usize, size: usize, info: &mut TrackInfo) {
     if size < 8 {
         return;
@@ -50,10 +42,7 @@ pub(super) fn read_stsc(data: &[u8], start: usize, size: usize, info: &mut Track
 }
 
 /// 用 `stsc` + `stco` 把 chunk 偏移展开成每个样本的绝对偏移。
-///
-/// `stsz` 只给样本大小、`stco` 只给 chunk 起点，两者的换算必须靠 `stsc`
-/// 说明「每个 chunk 装几个样本」。缺了这一步，`samples[i].0` 会全停在 0，
-/// 解密就会去读文件头——**不报错，但产物是乱码**。
+/// 缺了 `stsc` 的「每 chunk 装几个样本」，`samples[i].0` 会全停在 0、解密读文件头——**不报错，但产物是乱码**。
 pub(super) fn resolve_sample_offsets(info: &mut TrackInfo) {
     if info.chunk_offsets.is_empty() || info.stsc.is_empty() || info.samples.is_empty() {
         return;

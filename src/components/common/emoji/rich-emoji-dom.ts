@@ -1,12 +1,8 @@
 /** 富文本输入框的 DOM 辅助：表情代码/提及段 ↔ 纯文本 的渲染/序列化纯函数。 */
 import { parseEmojiSegments } from '@/utils/danmaku-emoji';
 
-/** 光标锚点字符：垫在不可编辑 img / 提及 chip 之后，给编辑光标一个
- *  文本节点内的落点（WebKit 光标紧贴不可编辑单元时，后续输入会插到
- *  单元前面）。必须是 \uFEFF（零宽不换行空格）而非 \u200B——后者紧贴
- *  光标时会被 macOS 输入法的组合文本（marked text）误纳入，光标被画进
- *  拼音中间；\uFEFF 是格式字符，IME 组合不理会（ProseMirror 对 WebKit
- *  的同款选择）。serialize 时剥掉，不进 value。 */
+/** 光标锚点字符：垫在不可编辑 img / 提及 chip 之后给光标一个文本落点。
+ *  必须是 \uFEFF 而非 \u200B——后者会被 macOS 输入法的组合文本误纳入；serialize 时剥掉。 */
 export const CARET_ANCHOR = '\uFEFF';
 
 /** renderValue 的渲染选项：`aiName` 是 AI bot 的用户名——提及 chip 对它

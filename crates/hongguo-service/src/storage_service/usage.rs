@@ -15,12 +15,9 @@ pub struct StorageUsage {
     pub files: usize,
 }
 
-/// 按剧聚合的磁盘占用（清理页的剧列表）。
-///
-/// 剧名与分组都取自任务记录（与合并服务同一来源），不依赖剧集档案——
-/// 档案是「看过的剧」的全集，清理页要的是「磁盘上有文件的剧」。
-/// serde camelCase 对齐前端 schema（seriesId），snake_case 会被
-/// zod 校验整单拒收，清理页永远「暂无数据」。
+/// 按剧聚合的磁盘占用（清理页的剧列表）。剧名与分组都取自任务记录（与合并服务同一来源），
+/// 不依赖剧集档案——清理页要的是「磁盘上有文件的剧」。
+/// serde camelCase 对齐前端 schema（seriesId），snake_case 会被 zod 校验整单拒收。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageSeriesUsage {
@@ -104,13 +101,11 @@ mod tests {
         done.mark_completed("已存在.mp4", 0);
         let pending = DownloadTask::new("1", "剧", 2, "v2", "");
         let u = StorageUsage::from_tasks(&[done, pending]);
-        // done 的路径在磁盘上不存在，因此只统计 pending 之外的不应报错
         assert_eq!(u.files, 0, "路径不存在时不应计入");
     }
 
     #[test]
     fn series_aggregation_groups_by_task_and_skips_missing_files() {
-        // metadata 只认磁盘上真实存在的文件，造两个临时文件当成品
         let dir = std::env::temp_dir().join(format!("hongguo-usage-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f1 = dir.join("a.mp4");
@@ -128,7 +123,6 @@ mod tests {
 
         let list = series_from_tasks(&[done1, done2, done3, failed]);
 
-        // 剧一只有一集摸得到文件；剧三（failed）整部不出现
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].series_id, "1");
         assert_eq!(list[0].title, "剧一");

@@ -1,12 +1,6 @@
 /**
- * 播放偏好：倍速 / 音量 / 静音。
- *
- * 为什么必须持久化：切集、加载中、转兼容模式都会让 `<video>` 元素被卸载重建，
- * 新建元素的 `playbackRate`/`volume`/`muted` 一律回到默认值（1 / 1 / false）。
- * 所以「当前值」要存在本模块，「应用回元素」由播放器每次渲染后重放。
- *
- * 静音是独立状态：用户主动静音后 `volume` 仍是原值，不能用 `volume === 0`
- * 反推，否则恢复播放时会把静音悄悄取消。
+ * 播放偏好（倍速/音量/静音）持久化：切集/加载/转兼容都会卸载重建 `<video>`，新元素一律回默认值，
+ * 「当前值」存本模块、由播放器每次渲染后重放。静音是独立状态，不能用 volume===0 反推（否则恢复播放会悄悄取消静音）。
  */
 
 const RATE_KEY = 'hongguo.playbackRate';
@@ -44,7 +38,7 @@ export const writeVolume = (volume: number): void => write(VOLUME_KEY, volume);
 export const readMuted = (): boolean => read(MUTED_KEY, 0, 0, 1) === 1;
 export const writeMuted = (muted: boolean): void => write(MUTED_KEY, muted ? 1 : 0);
 
-// ---------------------------------------------------------------- 弹幕开关
+// 弹幕开关
 
 const DANMAKU_KEY = 'hongguo.danmaku';
 
@@ -66,7 +60,7 @@ export function writeDanmakuEnabled(on: boolean): void {
   }
 }
 
-// ---------------------------------------------------------------- 弹幕显示设置
+// 弹幕显示设置
 
 const DANMAKU_OPACITY_KEY = 'hongguo.danmakuOpacity';
 const DANMAKU_FONT_KEY = 'hongguo.danmakuFontScale';
@@ -108,14 +102,13 @@ export function writeDanmakuDisplay(s: DanmakuDisplaySettings): void {
   write(DANMAKU_AREA_KEY, s.area);
 }
 
-// ---------------------------------------------------------------- 画质增强
+// 画质增强
 
 const ENHANCE_KEY = 'hongguo.enhance';
 
 /**
- * 画质增强设置：Anime4K 2× 与锐化**各自独立开关**（可同时开——Anime4K
- * 放大后的画面偏软，叠加锐化才是完整形态），锐化强度 0–100。
- * 两者都关 = 原画。
+ * 画质增强设置：Anime4K 2× 与锐化各自独立开关（可同时开——Anime4K 放大后的画面偏软，
+ * 叠加锐化才是完整形态），锐化强度 0–100；两者都关 = 原画。
  */
 export interface EnhancementSettings {
   anime4kOn: boolean;
@@ -161,7 +154,7 @@ export function writeEnhancement(s: EnhancementSettings): void {
   }
 }
 
-// ---------------------------------------------------------------- 隐身模式
+// 隐身模式
 
 const INCOGNITO_KEY = 'hongguo.incognito';
 
@@ -182,7 +175,7 @@ export function writeIncognito(on: boolean): void {
   }
 }
 
-// ---------------------------------------------------------------- 上次播放目标
+// 上次播放目标
 
 const LAST_TARGET_KEY = 'hongguo.lastTarget';
 
@@ -191,10 +184,7 @@ export interface LastPlayTarget {
   vidIndex: number;
 }
 
-/**
- * 上次播放目标，供刷新/重启后恢复播放器（进度本身由本地播放档案的
- * resumeAt 保证，这里只记「在看哪部哪集」）。
- */
+/** 上次播放目标：供刷新/重启后恢复播放器（进度本身由本地播放档案的 resumeAt 保证，这里只记「在看哪部哪集」）。 */
 export function readLastTarget(): LastPlayTarget | null {
   try {
     const raw = window.localStorage.getItem(LAST_TARGET_KEY);

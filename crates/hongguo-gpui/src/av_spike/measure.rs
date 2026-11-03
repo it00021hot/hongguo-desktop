@@ -1,14 +1,7 @@
 //! Phase 0 指标测量：2x 上屏节拍、seek 精度、切集空档、变速音高配置。
-//!
-//! 采样方式：独立线程按 2ms 轮询 `AVPlayerItemVideoOutput`，只在
-//! `hasNewPixelBufferForItemTime:` 为真时取帧并记录显示时间戳。这测的是
-//! **播放器实际产出的帧序列**（不是 GPUI 的 layout/paint），和计划里
-//! 「播放器呈现计数，不看 `[Home][paint]`」同口径；`AVPlayerLayer` 的
-//! 合成由窗口服务器完成，进程内看不到逐刷新呈现，故用帧间隔/帧率判定
-//! 合并（详见结论的测量边界）。
-//!
-//! `AVPlayerItemVideoOutput` 在后台线程取帧是 Apple 允许的用法；`AVPlayer`
-//! 的播放控制（play/rate/seek）也在测量线程做，主线程只负责窗口与图层。
+//! 独立线程按 2ms 轮询 `AVPlayerItemVideoOutput` 取帧记显示时间戳——测的是
+//! 播放器实际产出的帧序列（合成在窗口服务器，进程内看不到逐刷新呈现）；
+//! 播放控制在测量线程做，主线程只负责窗口与图层。
 
 use std::time::{Duration, Instant};
 

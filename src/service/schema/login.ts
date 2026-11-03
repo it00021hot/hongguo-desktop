@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（登录域）。
- */
+/** 登录域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 export const passportUserSchema = z.object({
@@ -19,11 +17,8 @@ export const sendCodeOutcomeSchema = z.object({
 });
 
 /**
- * MFA 后台轮询事件负载（`login-mfa-state`，Rust
- * `login_service::events::LoginMfaStateEvent`）：success = 自动登录完成
- * （带昵称）；failed = 验证失败/超时（带 i18n key，文案前端渲染）；
- * waiting = 新一轮上行短信验证提示（serverTip 是服务端下发的展示内容）。
- * 三态字段互斥，discriminated union 钉死。
+ * MFA 后台轮询事件负载（`login-mfa-state`，Rust `login_service::events::LoginMfaStateEvent`）：
+ * success = 自动登录完成；failed = 失败/超时（带 i18n key）；waiting = 新一轮上行短信验证提示。三态互斥。
  */
 export const loginMfaStateSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('success'), name: z.string() }),

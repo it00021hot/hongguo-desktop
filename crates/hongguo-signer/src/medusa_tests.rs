@@ -1,8 +1,7 @@
-//! Medusa 签名的单元测试。
-//!
-//! 以 `#[path]` 挂到 `medusa.rs` 下。
+//! Medusa 签名的单元测试（以 `#[path]` 挂到 `medusa.rs` 下）。
 
 use super::*;
+use crate::fingerprint_for_cdid;
 
 #[test]
 fn medusa_output_is_base64_and_non_trivial() {
@@ -10,24 +9,20 @@ fn medusa_output_is_base64_and_non_trivial() {
         "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_detail/v1/?aid=8662",
         Some(b"{\"series_id\":123}"),
         1_700_000_000,
+        "cdid-uuid",
         "1905892595378490",
         "7.1.3.32",
     );
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(&out)
         .expect("必须是合法 base64");
-    // 20 字节版本前缀 + 4 字节随机种子 + AES 变体输出。
-    // 密文长度不固定：AES 变体的位打包固定读源数据前 248 字节，
-    // 但源数据（protobuf message）里含随机数，zigzag 编码长度随数值变化，
-    // 因此 message 长度会在一定范围内浮动。
+    // 密文长度不固定：message 含随机数，zigzag 编码长度随数值浮动
     assert!(
         decoded.len() > 20 + 4,
         "至少应包含前缀与种子，实际 {} 字节",
         decoded.len()
     );
-    // 前缀首字节固定为 0x03
     assert_eq!(decoded[0], 0x03);
-    // 随机种子的低两字节在 payload 里（第 20..24 位）
     assert_eq!(decoded[23], 1, "种子末字节固定标记为 1");
 }
 
@@ -38,17 +33,8 @@ fn xmxor_preserves_length() {
     assert_eq!(xmxor(&data, &key).len(), 248);
 }
 
-// ============================================================================
-// 黄金向量
-//
-// 下面几组期望值来自现版 JS（`src/native/signer`），在**固定随机源**下导出。
-// 之所以要固定随机量：medusa 内嵌 5 个随机数，直接比对每次都不一样，
-// 只能靠「喂固定熵 → 比对固定输出」把整条流水线钉死。
-// x-helios 的黄金向量在 `helios.rs` 里（它已拆成独立文件）。
-//
-// ⚠️ 服务端签名失效时只返回 HTTP 200 + 0 字节，不给任何错误码。
-//    这类失配无法靠运行时错误发现，只能靠这里的向量在 CI 里拦住。
-// ============================================================================
+// 黄金向量：期望值来自现版 JS（`src/native/signer`）固定随机源导出——medusa 内嵌 5 个随机数，
+// 只能靠「喂固定熵 → 比对固定输出」钉死整条流水线；服务端失配只回 HTTP 200 + 0 字节，只能靠这些向量在 CI 拦住。
 
 const GOLDEN_URL: &str = "https://api5-normal-sinfonlineb.fqnovel.com/x/v1?aid=8662&device_id=1905892595378490&ts=1700000000";
 const GOLDEN_BODY: &[u8] = br#"{"a":1}"#;
@@ -86,16 +72,86 @@ fn xmxor_matches_js_golden() {
 
 #[test]
 fn assemble_medusa_matches_js_golden() {
-    let got = assemble_medusa(
+    // 黄金向量走 assemble_with_proto + JS 移植原始采样 proto，锚住「管线算法未漂移」；生产 device_proto 输入已变，不能再直接对 assemble_medusa
+    let got = assemble_with_proto(
         GOLDEN_URL,
         Some(GOLDEN_BODY),
         GOLDEN_KHRONOS,
         "1905892595378490",
         "7.1.3.32",
+        extracted_proto_fixed("1905892595378490"),
         golden_entropy(),
     );
     assert!(
         got.starts_with("A/FTZfcZDJ/XJo9e1tubFVc+Mn3NSAABdRXCpV+OAcMGGGZAjidbZnk"),
         "x-medusa 与现版不一致，实际：{got}"
     );
+}
+
+#[test]
+fn device_proto_matches_fingerprint_and_varies_per_device() {
+    let fp = fingerprint_for_cdid("cdid-uuid");
+    let (a, b) = (
+        device_proto("cdid-uuid", "111"),
+        device_proto("cdid-uuid", "222"),
+    );
+    let fa = fields_debug(&a);
+    let fb = fields_debug(&b);
+    assert!(
+        fa.contains(fp.brand) && fa.contains(fp.model),
+        "机型组应取池指纹（brand={} model={}）: {fa}",
+        fp.brand,
+        fp.model
+    );
+    assert!(fa.contains(fp.manufacturer));
+    assert_ne!(
+        fa, fb,
+        "不同 device_id 的 proto 应不同（传感器抖动/字段 5）"
+    );
+    assert_ne!(a, b);
+}
+
+/// 把 proto 字段拉成可读串（测试辅助）。
+fn fields_debug(b: &[u8]) -> String {
+    fn varint(b: &[u8], i: &mut usize) -> u64 {
+        let mut v = 0u64;
+        let mut s = 0u32;
+        loop {
+            let x = *b.get(*i).unwrap_or(&0);
+            *i += 1;
+            v |= u64::from(x & 0x7f) << s;
+            if x & 0x80 == 0 {
+                return v;
+            }
+            s += 7;
+        }
+    }
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        let tag = varint(b, &mut i);
+        let (f, wt) = (tag >> 3, tag & 7);
+        match wt {
+            0 => {
+                let v = varint(b, &mut i);
+                out.push_str(&format!("{f}:{v} "));
+            }
+            2 => {
+                let len = varint(b, &mut i) as usize;
+                let end = (i + len).min(b.len());
+                out.push_str(&format!(
+                    "{f}:bytes[{}]={} ",
+                    len,
+                    String::from_utf8_lossy(&b[i..end])
+                ));
+                i = end;
+            }
+            5 => {
+                out.push_str(&format!("{f}:f32 "));
+                i += 4;
+            }
+            _ => break,
+        }
+    }
+    out
 }

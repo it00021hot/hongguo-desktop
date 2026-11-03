@@ -3,8 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { watchHistory } from '../commands';
 import { fuzzyStaleTime, keys } from './common';
 
-// ---------------------------------------------------------------- 云端观看历史
-
 /** 云端观看历史（官方 App「历史」同源；登录后可用，匿名回空表）。
  *  `enabled` 给历史页双模式用（未登录切本地记录，云端不发起）。 */
 export function useWatchHistory(enabled = true) {
@@ -28,7 +26,7 @@ export function useWatchHistoryDelete() {
   });
 }
 
-// ---------------------------------------------------------------- 本地观看历史（issue #10）
+// 本地观看历史
 
 /** 本地观看历史（未登录模式的历史页数据源；字段与云端条目同形）。 */
 export function useLocalHistory(enabled: boolean) {

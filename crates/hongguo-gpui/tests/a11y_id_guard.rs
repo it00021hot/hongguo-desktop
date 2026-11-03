@@ -1,20 +1,7 @@
-//! 守卫：a11y 节点 id 不得重复（详情页实测 panic 的根因）。
-//!
-//! **机制**：gpui 的 accesskit NodeId 是「**有 id 的祖先链**」的哈希
-//! （`gpui-pre/src/element.rs` 的 `GlobalElementId::accesskit_node_id`；没有 id
-//! 的元素不进链）。同一个 ElementId 出现在两条**未加 id**的分支下 → 路径相同
-//! → 同一个 NodeId → a11y 树里出现重复节点：debug 构建直接 panic
-//! （`gpui-pre/src/window/a11y.rs` 的 "Duplicate a11y node id"），release 构建
-//! 静默丢节点。
-//!
-//! **典型触发场景**：详情页「相关作品」与「猜你喜欢」两段都渲染
-//! `detail-related-{series_id}`，而两段容器都没带 id；服务端两个 cell 各自
-//! 下发、客户端不去重，猜你喜欢完全可能命中相关作品里的同 IP 剧 → 同一部剧
-//! 两段都有 → 路径相同 → 打开详情页即崩（debug 构建直接 abort）。
-//!
-//! 本壳是 bin-only（`[[bin]] test = false`——跑起来会开窗口的那种），源码内
-//! 放不了单测，所以这条守卫做成**集成测试**：只读源码文本，不开窗口、不联网
-//! （同 `stage_cover_guard.rs` 的做法）。
+//! 守卫：a11y 节点 id 不得重复。gpui 的 accesskit NodeId 是「有 id 的祖先链」
+//! 哈希——同一 ElementId 出现在两条未加 id 的分支下路径相同，debug 构建
+//! panic、release 静默丢节点。典型触发：详情页「相关作品」与「猜你喜欢」
+//! 同剧同 id。只读源码文本，不开窗口不联网。
 
 use std::path::Path;
 

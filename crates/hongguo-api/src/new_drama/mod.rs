@@ -1,9 +1,6 @@
 //! 新剧推荐接口（详见 docs/hongguo-api-endpoints.md）。
-//!
 //! `GET .../cell/change/v1/`（**v1/ 带斜杠**，与排行榜不同路径），
-//! `selected_items=firstonlinetime_new, cell_gender`；响应形态与排行榜相同
-//! （`data.cell_view.cell_data[].video_data[]`），条目与筛选面板解析复用
-//! rank 域的 `parse_rank_items` / `parse_cell_selector`。
+//! 响应形态与排行榜相同，条目与筛选面板解析复用 rank 域。
 
 use serde_json::Value;
 
@@ -17,9 +14,7 @@ use hongguo_common::{AppError, AppResult};
 pub const NEW_DRAMA_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v1/";
 
 /// 新剧推荐页（`cell_gender`：2=全部；分页 offset/limit）。
-///
-/// 翻页必须回传上一页响应的 `session_id`
-/// （第二页起 session_id 每页都在参；首页不传）。
+/// 翻页必须回传上一页响应的 `session_id`（第二页起每页在参；首页不传）。
 pub async fn fetch_new_drama(
     gender: i64,
     offset: i64,

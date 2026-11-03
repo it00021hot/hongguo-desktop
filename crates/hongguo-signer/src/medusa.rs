@@ -1,16 +1,14 @@
-//! Medusa：当代主力签名。
+//! Medusa：当代主力签名，JS 1:1 移植禁改写法。
 //!
-//! 流程：
-//! 1. 把「设备指纹 + query/body 摘要 + 时间戳」编成 protobuf message
-//! 2. 用 SM3 派生的 key 逐字节变换
-//! 3. 整体反序 + 掩码异或
-//! 4. 自研 AES 变体加密（见 `aes_v3.rs`）
-//! 5. 拼 20 字节版本前缀，base64 输出
+//! 流程：设备指纹 + query/body 摘要 + 时间戳编成 protobuf → SM3 派生 key 逐字节变换 →
+//! 整体反序 + 掩码异或 → AES 变体加密（`aes_v3.rs`）→ 拼 20 字节版本前缀，base64 输出。
 
 use base64::Engine;
 
 use crate::aes_v3::AesV3;
 use crate::constants::{medusa_aes_iv, medusa_aes_key, medusa_sign_key};
+#[cfg(test)]
+use crate::device::extracted_proto_fixed;
 use crate::device::{APP_ID, CHANNEL_ID, device_proto};
 use crate::primitives::{le32, md5_raw, sm3, u32};
 use crate::protobuf::{FieldType, FieldValue, proto};
@@ -85,10 +83,7 @@ pub(crate) fn rand32() -> u32 {
 }
 
 /// Medusa 需要的一次性随机量。
-///
-/// 全部集中在这里而不是散在 `build_medusa` 里，是为了让整条流水线可以在
-/// 测试里喂固定值、与现版 JS 的输出逐字节对齐——这类签名一旦被改错，
-/// 服务端只会静默返回空响应，没有报错可查，只能靠黄金向量兜住。
+/// 全部集中在这里（而非散在 `build_medusa` 里）是为了让整条流水线在测试里喂固定值、与现版 JS 输出逐字节对齐。
 #[derive(Debug, Clone, Copy)]
 pub struct Entropy {
     /// 进程启动次数
@@ -106,9 +101,7 @@ pub struct Entropy {
 }
 
 impl Entropy {
-    /// 按调用顺序抽取一次完整随机量。
-    ///
-    /// 顺序与 JS 版一致：envLaunch → envPid → message[3] → random → packed[1..4]
+    /// 按调用顺序抽取一次完整随机量（顺序与 JS 版一致：envLaunch → envPid → message[3] → random → packed[1..4]）。
     fn draw() -> Self {
         let mut rng = rand::rng();
         Self {
@@ -122,22 +115,25 @@ impl Entropy {
     }
 }
 
-/// 构造 x-medusa 头。
-///
-/// # 参数
-/// - `url`：完整 URL（含 query），只取 `'?'` 之后的部分参与签名
-/// - `body`：请求体；GET 传 `None`
-/// - `khronos`：秒级时间戳
-/// - `device_id`：设备档案的 device_id
-/// - `version_name`：设备档案的 version_name
+/// 构造 x-medusa 头：`url` 只取 `'?'` 之后的部分参与签名，GET 的 `body` 传 `None`；`khronos` 为秒级时间戳。
+/// `cdid` / `device_id` / `version_name` 取设备档案（设备 proto 的机型字段按 cdid 确定性恢复池指纹）。
 pub fn build_medusa(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
+    cdid: &str,
     device_id: &str,
     version_name: &str,
 ) -> String {
-    assemble_medusa(url, body, khronos, device_id, version_name, Entropy::draw())
+    assemble_medusa(
+        url,
+        body,
+        khronos,
+        cdid,
+        device_id,
+        version_name,
+        Entropy::draw(),
+    )
 }
 
 /// 用给定随机量装配 x-medusa。测试用固定 `entropy` 对齐 JS 黄金向量。
@@ -145,8 +141,30 @@ pub fn assemble_medusa(
     url: &str,
     body: Option<&[u8]>,
     khronos: u32,
+    cdid: &str,
     device_id: &str,
     version_name: &str,
+    entropy: Entropy,
+) -> String {
+    assemble_with_proto(
+        url,
+        body,
+        khronos,
+        device_id,
+        version_name,
+        device_proto(cdid, device_id),
+        entropy,
+    )
+}
+
+/// 纯管线装配（设备 proto 由调用方给定）：JS 黄金向量锚专用，锚住「算法未漂移」。
+pub fn assemble_with_proto(
+    url: &str,
+    body: Option<&[u8]>,
+    khronos: u32,
+    device_id: &str,
+    version_name: &str,
+    device_proto_bytes: Vec<u8>,
     entropy: Entropy,
 ) -> String {
     let body_md5 = body.map(md5_raw).unwrap_or([0u8; 16]);
@@ -186,7 +204,7 @@ pub fn assemble_medusa(
         (7, FieldValue::SInt(entropy.env_pid), FieldType::SInt),
         (
             12,
-            FieldValue::Bytes(device_proto(device_id, version_name)),
+            FieldValue::Bytes(device_proto_bytes),
             FieldType::Message,
         ),
         (13, FieldValue::Bytes(nested13), FieldType::Message),

@@ -1,7 +1,6 @@
 //! 登录相关 command：发码 / 短信登录 / MFA 轮询 / 状态 / 退出。
 //!
-//! 只做参数转调；登录编排（发码 / 提交 / MFA 后台轮询 / 账号落库）在
-//! [`hongguo_service::login_service::flow`]——GPUI 壳消费同一份。
+//! 只做参数转调；登录编排（发码 / 提交 / MFA 后台轮询 / 账号落库）在 [`hongguo_service::login_service::flow`]——GPUI 壳消费同一份。
 
 use tauri::State;
 
@@ -18,15 +17,12 @@ pub async fn login_send_code(
     flow::send_code(state.inner(), &mobile).await
 }
 
-/// 短信验证码登录。成功即落库账号；MFA 需二次验证时转后台轮询并返回上下文。
-///
-/// 会话绑定走发码下发的 csrf Cookie（1.1.3 实测），不再有 ticket 回传。
+/// 短信验证码登录。成功即落库账号；MFA 需二次验证时转后台轮询并返回上下文。会话绑定走发码下发的 csrf Cookie。
 #[tauri::command]
 pub async fn login_sms_login(
     state: State<'_, AppState>,
     mobile: String,
     code: String,
-    // MFA 重试上下文（上一次返回的 retryTag / smsCodeKey）
     mfa_retry_tag: Option<String>,
     mfa_sms_code_key: Option<String>,
 ) -> AppResult<LoginResult> {
@@ -37,9 +33,7 @@ pub async fn login_sms_login(
     flow::submit(state.inner(), &mobile, &code, mfa).await
 }
 
-/// MFA 上行短信验证轮询（单次调用；前端 3 秒间隔重发）。
-///
-/// 轮询到 `registered` 后**自动重登**换取会话并落库（用户只需回复短信）。
+/// MFA 上行短信验证轮询（单次调用；前端 3 秒间隔重发）。轮询到 `registered` 后**自动重登**换取会话并落库（用户只需回复短信）。
 #[tauri::command]
 pub async fn login_mfa_verify(state: State<'_, AppState>) -> AppResult<LoginResult> {
     flow::mfa_verify_once(state.inner()).await
@@ -68,7 +62,7 @@ pub async fn login_user_info(
     flow::user_info(state.inner()).await
 }
 
-/// 退出登录（清空账号设置；退出是纯本地操作，1.1.3 实测无网络请求）。
+/// 退出登录（清空账号设置；退出是纯本地操作，无网络请求）。
 #[tauri::command]
 pub fn login_logout(state: State<'_, AppState>) -> AppResult<()> {
     flow::logout(state.inner())

@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 剧集
-
 export const series = {
   /** 分集表（选集/详情/播放器）：在线总是现拉，失败回落本地快照。 */
   episodes: (seriesId: string) => call('get_series_episodes', { seriesId }),

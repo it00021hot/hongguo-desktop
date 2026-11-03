@@ -1,6 +1,4 @@
 //! Range 请求解析与 206 响应构造。
-//!
-//! `<video>` 拖进度条靠的是 Range 请求，解析错了会出现「从头能播、拖动就坏」。
 
 /// 协议响应：`状态码 + 响应头 + 响应体`。
 pub type ProtocolResponse = (u16, Vec<(String, String)>, Vec<u8>);
@@ -18,9 +16,7 @@ pub enum RangeSpec {
     Unsatisfiable,
 }
 
-/// 解析 `Range` 头。
-///
-/// `total` 是资源总大小；`start >= total` 视为不可满足。
+/// 解析 `Range` 头。`total` 是资源总大小；`start >= total` 视为不可满足。
 pub fn parse_range(header: Option<&str>, total: u64) -> RangeSpec {
     let Some(h) = header else {
         return RangeSpec::Full;
@@ -28,7 +24,6 @@ pub fn parse_range(header: Option<&str>, total: u64) -> RangeSpec {
     let Some(spec) = h.trim().strip_prefix("bytes=") else {
         return RangeSpec::Full;
     };
-    // 只处理单区间；多区间（逗号分隔）退化为整文件响应
     if spec.contains(',') {
         return RangeSpec::Full;
     }
@@ -84,9 +79,7 @@ pub fn partial_headers(start: u64, end: u64, total: u64) -> Vec<(String, String)
             format!("bytes {start}-{end}/{total}"),
         ),
         ("Content-Length".into(), (end - start + 1).to_string()),
-        // 不许 WebView2 缓存：流内容随时在变（逐出重建/填充推进），缓存到
-        // 失败瞬间的坏响应后，同一个 URL 怎么重试都拿坏数据
-        // （「在线播放中断、重试无效」的帮凶）。
+        // 不许 WebView2 缓存：流内容随时在变，缓存到失败瞬间的坏响应后，同一个 URL 重试也拿坏数据
         ("Cache-Control".into(), "no-store".into()),
     ]
 }

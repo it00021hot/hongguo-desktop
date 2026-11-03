@@ -10,15 +10,7 @@ use hongguo_api::search::{SearchPage, SuggestItem, search_series, search_suggest
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
 
-/// 拉一个榜单（任意 tab × 子榜 × 筛选 × 月榜组合；offset 游标翻页）。
-///
-/// - `selected`：内容 tab id（all/human/comic_series_rank/ai_playlet/
-///   ranklist_celebrity/series_album；空串按 all 归一）
-/// - `sub`：子榜 id（响应 tabs schema 下发，如 ranklist_hot_sc）
-/// - `panel`：筛选面板选中项（gender_female/cate_308…；None 或空 = 总榜）
-/// - `background`：榜单历史选中项（date_202609 = 2026 年 9 月榜；None/空
-///   = 当前月）
-/// - `offset`/`session_id`：翻页游标；`rank_version`：响应下发的版本戳回传
+/// 拉一个榜单（任意 tab × 子榜 × 筛选 × 月榜组合；offset 游标翻页）。`selected`=内容 tab id、`sub`=子榜 id（响应 tabs schema 下发）、`panel`=筛选面板选中项、`background`=榜单历史选中项（date_YYYYMM，None/空=当前月）；`offset`/`session_id` 翻页游标，`rank_version` 传响应下发的版本戳回传。
 #[expect(
     clippy::too_many_arguments,
     reason = "平铺参数表与 registry.ts 的 IPC 契约一一对应，包结构体反而要二次拆装"
@@ -129,11 +121,7 @@ pub async fn search_suggest_cmd(
     }
 }
 
-/// 我的预约一页（is_online=true 已上线 / false 待上线；匿名空表）。
-///
-/// 单页即回，`offset`/`sessionId` 翻页续传（响应下发回传）——预约页
-/// 懒翻页用；此前后端一次性串行拉全，预约上百部时首屏要等几十个请求
-/// （issue #11 的「已上线 5–8 秒」）。
+/// 我的预约一页（is_online=true 已上线 / false 待上线；匿名空表）。单页即回，`offset`/`session_id` 翻页续传（响应下发回传）——预约页懒翻页用，不做一次性全量串行拉取。
 #[tauri::command]
 pub async fn reservation_list(
     state: State<'_, AppState>,
@@ -220,7 +208,6 @@ pub async fn new_drama_calendar(
 mod tests {
     #[test]
     fn rank_commands_are_async() {
-        // 直连接口的命令必须 async（与 discover_feed 同一条纪律）
         let src = include_str!("rank_cmd.rs");
         for name in [
             "fn rank_list(",

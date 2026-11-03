@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { RelatedItem } from '@/service/schema';
 import { pickNextSeason, seasonFromTitle, seasonNoFromTag } from './season';
 
-/** 造一条 works 条目：tag 是季角标（同 IP 作品不带），episodeCnt 0 = 未上线。 */
 function work(seriesId: string, title: string, tag: string, episodeCnt = 12): RelatedItem {
   return {
     seriesId,
@@ -46,7 +45,6 @@ describe('seasonFromTitle', () => {
 
 describe('pickNextSeason', () => {
   it('列表乱序也按季数接：S3 的下一季是 S4，不是服务端顺序的下一条', () => {
-    // 用户实测「看完第三季直接跳第五季」——works 服务端顺序 S3,S5,S4…
     const works = [
       work('s3', `${NIJIANGJIANG}第三季`, '第3季'),
       work('s5', `${NIJIANGJIANG}第五季`, '第5季'),

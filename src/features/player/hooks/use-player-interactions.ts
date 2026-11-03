@@ -5,15 +5,12 @@ import { app as appApi } from '@/service/commands';
 import { portraitAspectOf } from '@/features/player/hooks/use-portrait-window';
 
 /**
- * 舞台四套交互裁决：滚轮/触摸滑动切换、点击画面、键盘快捷键。
- *
+ * 舞台交互裁决：滚轮/触摸滑动切换、点击画面（播放/暂停）、键盘快捷键。
  * 滚轮/↑↓/触摸滑动的语义由宿主注入的 `onWheelStep` 与连播锁定共同决定：
- * 信息流（沉浸流）= 上一部/下一部剧，从详情/历史等**选定**剧进来
- * （或锁定连播后）= 切上一集/下一集。
+ * 沉浸流 = 上一部/下一部剧，从详情/历史等选定剧进来（或锁定连播后）= 切上一集/下一集。
  */
 
-/** 触摸滑动的判定阈值（px）：低于它是轻触（走 tap 播放/暂停），高于它
- *  且纵向显著强于横向才算一次切换——移动端官方 App 的上滑下一部同款。 */
+/** 触摸滑动判定阈值（px）：低于是轻触（tap 播放/暂停），高于且纵向显著强于横向才算一次切换。 */
 const SWIPE_THRESHOLD_PX = 60;
 export function usePlayerInteractions(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -47,8 +44,7 @@ export function usePlayerInteractions(params: {
     volumeOpen,
   } = params;
 
-  // ---- 切换分派三端同源（滚轮/触摸滑动/键盘）：沉浸流=上一部/下一部剧，
-  //      播放页/连播锁定=切上一集/下一集。选集浮层/下载面板打开时不抢。 ----
+  // 切换分派三端同源（滚轮/触摸滑动/键盘）
   const stepBy = useCallback(
     (dir: 1 | -1) => {
       setSlideDir(dir);
@@ -60,14 +56,12 @@ export function usePlayerInteractions(params: {
     [inBinge, onWheelStep, stepEpisode, setSlideDir],
   );
 
-  // ---- 滚轮切换 ----
-  // 选集浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳。
+  // 滚轮切换：浮层/下载面板打开时不抢滚动；冷却 400ms 防一次惯性滚动连跳
   const stepLock = useRef(0);
   const onStageWheel = useCallback(
     (e: React.WheelEvent) => {
-      // 浮层（评论面板/选集/弹幕设置/倍速清晰度菜单）里的滚动是它自己在滚，
-      // 不冒泡成「切集」。控制栏与面板用 data-wheel-block 标记；Radix 菜单
-      // portal 到 body，真实 DOM 里不是舞台子孙，必须各自带标记才拦得住。
+      // 浮层（评论/选集/弹幕设置/菜单）里的滚动是它自己在滚；Radix 菜单 portal 到
+      // body 不是舞台子孙，必须各自带 data-wheel-block 标记才拦得住
       if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
       // 滚轮也是「用户在场」：切剧/切集时唤醒悬浮层，让新一部的信息亮 3 秒
       wakeChrome();
@@ -80,10 +74,8 @@ export function usePlayerInteractions(params: {
     [seriesPanelOpen, downloading, stepBy, wakeChrome, stepLock],
   );
 
-  // ---- 触摸滑动（移动端 WebView）：上滑下一个/下滑上一个，官方 App 同款。
-  //      touchstart 记起点，touchend 按纵向位移判定；横向位移过半的滑动
-  //      是系统返回手势/详情横滑的领地，不抢。与滚轮共用冷却锁——部分
-  //      WebView 在快速滑动后会补发合成 wheel 事件，共用一把锁防双跳。 ----
+  // 触摸滑动（移动端 WebView）：上滑下一个/下滑上一个；横向位移过半是系统返回手势领地不抢；
+  // 与滚轮共用冷却锁——部分 WebView 快速滑动后会补发合成 wheel 事件，共用一把锁防双跳
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const onStageTouchStart = useCallback((e: React.TouchEvent) => {
     const t0 = e.touches[0];
@@ -95,7 +87,7 @@ export function usePlayerInteractions(params: {
       touchStartRef.current = null;
       const t = e.changedTouches[0];
       if (!start || !t) return;
-      // 浮层/控制栏里开始的滑动是它们自己的手势，不冒泡成切换
+      // 浮层/控制栏里开始的滑动是它们自己的手势
       if ((t.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
       const dy = t.clientY - start.y;
       const dx = t.clientX - start.x;
@@ -110,10 +102,7 @@ export function usePlayerInteractions(params: {
     [seriesPanelOpen, downloading, stepBy, wakeChrome, stepLock],
   );
 
-  // ---- 点击画面 = 播放/暂停（选中剧的唯一入口是「观看完整短剧」横条与
-  //      自动连播完成本集，点画面选中剧的旧手势已移除）----
-  // 控件/面板/互动栏（data-wheel-block 标记区）里的点击是它们自己的事，
-  // 不冒泡成播放/暂停切换。
+  // 点击画面 = 播放/暂停；控件/面板/互动栏（data-wheel-block 区）里的点击是它们自己的事
   const onStageClick = useCallback(
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement | null)?.closest?.('[data-wheel-block]')) return;
@@ -133,9 +122,7 @@ export function usePlayerInteractions(params: {
     const onKey = (e: KeyboardEvent) => {
       const video = videoRef.current;
       if (!video) return;
-      // 输入框里打字时不劫持按键：表单控件之外还要算上富文本输入
-      // （弹幕/评论输入是 contentEditable 的 div，←→/空格/↑↓ 是移动
-      // 光标和输入的一部分，不是快进快退/播放暂停/切集）
+      // 输入框与富文本输入（contentEditable）里打字不劫持按键：←→/空格/↑↓ 是移动光标与输入的一部分
       const el = e.target as HTMLElement | null;
       if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) {
         return;
@@ -143,8 +130,7 @@ export function usePlayerInteractions(params: {
 
       // Esc 固定管「退出选中」——面板语义按键，不随自定义映射
       if (e.key === 'Escape') {
-        // 竖屏铺满先退铺满回竖条（顺序：面板 Esc 之后、退出选中
-        // 之前；面板开着时 Esc 仍归面板）
+        // 顺序：先退竖屏铺满回竖条，再退无边框回常规窗口（面板开着时 Esc 仍归面板）
         const ui = useUiStore.getState();
         if (
           ui.portraitFull &&
@@ -159,8 +145,7 @@ export function usePlayerInteractions(params: {
             .catch(() => undefined);
           return;
         }
-        // 无边框播放先退回常规窗口（红绿灯显回；chrome 由 app-shell 条件
-        // 自动回来）。面板开着时 Esc 仍归面板
+        // 无边框播放先退回常规窗口（红绿灯显回）；面板开着时 Esc 仍归面板
         if (
           ui.playerFrameless &&
           !seriesPanelOpen &&
@@ -172,8 +157,7 @@ export function usePlayerInteractions(params: {
           void appApi.setTrafficLightsVisible(true).catch(() => undefined);
           return;
         }
-        // 面板（评论/选集/弹幕设置）开着时它们的 Esc 只管关面板；
-        // 都没开而处于选中态时，Esc = 退出选中（滚轮/↑↓ 回到换剧）
+        // 面板开着时 Esc 只管关面板；都没开且选中态时 Esc = 退出选中（滚轮/↑↓ 回到换剧）
         if (inBinge && !seriesPanelOpen && !commentPanelOpen && !danmakuPanelOpen && !volumeOpen) {
           setBinge(null);
         }
@@ -183,16 +167,13 @@ export function usePlayerInteractions(params: {
       const step = (dir: 1 | -1) => {
         e.preventDefault();
         wakeChrome();
-        // ↑↓ 的语义与滚轮/触摸滑动同源：沉浸流（未选定剧）= 切上一部/
-        // 下一部剧，从详情/历史等**选定**剧进来 = 切上一集/下一集
+        // ↑↓ 语义与滚轮/触摸滑动同源：未选定剧 = 切剧，选定剧 = 切集
         stepBy(dir);
       };
 
       if (e.key === shortcutKeys.playPause) {
         e.preventDefault();
-        // 空格续播/暂停也要亮一下悬浮层：play 事件不再负责唤醒（分不清
-        // 用户动作和自动起播），而空格没有 pointerdown/mousemove 这类
-        // 天然唤醒路径，得显式算「用户在场」
+        // 空格没有 pointerdown/mousemove 这类天然唤醒路径，须显式算「用户在场」
         wakeChrome();
         if (video.paused) void video.play();
         else video.pause();
@@ -203,8 +184,7 @@ export function usePlayerInteractions(params: {
       } else if (e.key === shortcutKeys.seekForward) {
         e.preventDefault();
         wakeChrome();
-        // metadata 未加载时 duration 是 NaN，WebIDL 对 currentTime 赋
-        // NaN 会抛 TypeError——没有时长就先不钳制右边界
+        // metadata 未加载时 duration 是 NaN，赋 NaN 会抛 TypeError——没有时长就不钳制右边界
         video.currentTime = Number.isFinite(video.duration)
           ? Math.min(video.duration, video.currentTime + 5)
           : video.currentTime + 5;

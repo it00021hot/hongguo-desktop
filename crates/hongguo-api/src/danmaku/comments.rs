@@ -17,14 +17,8 @@ use crate::params::interaction::{
 };
 use hongguo_common::{AppError, AppResult};
 
-/// 播放页评论面板请求体。
-///
-/// 面板是**单集维度**——`group_id=vid`、
-/// `group_type=30`、`server_channel=18`、`comment_source=4`、`count=10`、
-/// `business_param.sort="video_innerflow"`；`need_count` 仅首屏 true
-/// （total 回传本集评论总数，互动栏角标同源），翻页置 false 并回传
-/// 响应下发的会话游标。剧集维度（group=series / channel=27）是沉浸流
-/// 信息流面板的另一条流，只有流内评论（本集评论不在其中），勿混用。
+/// 播放页评论面板请求体（单集维度：`group_id=vid`、`group_type=30`、
+/// `server_channel=18`）；剧集维度是沉浸流另一条流，勿混用。
 pub(super) fn comments_payload(group_id: &str, book_id: &str, cursor: &str) -> Value {
     let mut payload = serde_json::json!({
         "aid": 8662,
@@ -48,7 +42,7 @@ pub(super) fn comments_payload(group_id: &str, book_id: &str, cursor: &str) -> V
         "server_channel": SERVER_CHANNEL_COMMENT,
         "sort": 1,
     });
-    // 首屏不带 cursor 键（官方同款），翻页才回传响应下发的游标原样串
+    // 首屏不带 cursor 键（官方同款），翻页才回传
     if !cursor.is_empty() {
         payload["cursor"] = Value::String(cursor.to_string());
     }
@@ -73,13 +67,8 @@ pub async fn fetch_comments_page(
     parse_comment_page(&v)
 }
 
-/// 剧级评论（详情页「剧评」，整部剧一条线）。
-///
-/// 同一端点换**形态**——`group_id` 是
-/// **series_id**（不是 vid）、`group_type=1`（书/剧维度）、`comment_source=1`、
-/// `comment_type=2`、`server_channel=34`；business_param 是另一组全量字段
-/// （官方对齐，审计纪律）。响应与单集评论同构（common_list_info.total /
-/// data_list），解析复用。
+/// 剧级评论请求体（详情页「剧评」）：同一端点换形态——`group_id` 是
+/// series_id、`group_type=1`、`server_channel=34`，business_param 是另一组全量字段。
 pub(super) fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
     let mut payload = serde_json::json!({
         "aid": 8662,
@@ -110,8 +99,7 @@ pub(super) fn series_comments_payload(group_id: &str, cursor: &str) -> Value {
         "server_channel": SERVER_CHANNEL_REVIEW,
         "sort": 1,
     });
-    // 首屏不带 cursor 键（cursor 缺省，翻页才回传
-    // 响应下发的 `{"session_id":..,"offset":N}` JSON 串原样）
+    // 首屏不带 cursor 键（官方同款），翻页才回传会话游标原样串
     if !cursor.is_empty() {
         payload["cursor"] = Value::String(cursor.to_string());
     }
@@ -154,8 +142,7 @@ pub async fn fetch_series_comments_page(
         .filter(|t| !t.is_empty())
         .map(str::to_string)
         .collect();
-    // 剧评标签统计（extra.filter_tag，「修仙世界观宏大 26」pill 行；
-    // 剧均评分本体 = 上面的 credibility_score）
+    // 剧评标签统计（extra.filter_tag pill 行；评分本体是上面的 credibility_score）
     let tag_stats = v
         .pointer("/data/extra/filter_tag")
         .and_then(Value::as_array)
@@ -181,13 +168,8 @@ pub async fn fetch_series_comments_page(
     })
 }
 
-/// 发剧评（详情页「剧评」tab 的评论框，带评分）。
-///
-/// 剧评形态是 **data_type=2 / commit_source=12 /
-/// comment_type=0**，评分放在 business_param.score（**十分制**，5 星
-/// ×2）；列表侧参数（comment_source/comment_type/server_channel）与
-/// 回复侧 commit_source=9 都会被服务端 103008「无社区功能」拒收。
-/// 返回服务端分配的 comment_id。
+/// 发剧评（详情页剧评框，带评分）。评分在 business_param.score（**十分制**，
+/// 5 星 ×2）；用回复/列表侧参数会被服务端 103008「无社区功能」拒收。返回 comment_id。
 pub async fn send_series_review(
     series_id: &str,
     text: &str,
@@ -233,8 +215,6 @@ pub async fn send_series_review(
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析剧评响应失败: {e}")))?;
     check_comment_code(&value)?;
-    // 响应是完整 comment_info（expand.score 回显评分"10"、头像昵称 uid
-    // 齐全）——整体返回，前端直接置顶插入
     let raw = value
         .pointer("/data/comment_info")
         .ok_or_else(|| AppError::Media("剧评发送响应缺少 comment_info".into()))?;
@@ -252,9 +232,8 @@ fn check_comment_code(v: &Value) -> AppResult<()> {
     Ok(())
 }
 
-/// 单条评论对象（`data_list[].comment` 或发送响应的 `comment_info`，
-/// 两者同构）→ [`CommentItem`]。id/文本缺失返回 None（列表侧跳过、
-/// 发送侧报错由调用方处理）。
+/// 单条评论对象（`data_list[].comment` 或发送响应的 `comment_info`，两者同构）
+/// → [`CommentItem`]。id/文本缺失返回 None。
 pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
     let comment_id = comment
         .get("comment_id")
@@ -274,8 +253,7 @@ pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
     let base = comment.pointer("/common/user_info/base_info");
     Some(CommentItem {
         comment_id,
-        // 删除入口要对比登录 uid；user_id 在 user_info 层（base_info 兜底，
-        // 匿名样本两层都可能缺，缺了前端就不显示删除钮）
+        // 删除入口对比 uid 用；user_info 层优先、base_info 兜底
         user_id: comment
             .pointer("/common/user_info/user_id")
             .or_else(|| comment.pointer("/common/user_info/base_info/user_id"))
@@ -311,8 +289,7 @@ pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
             .pointer("/user_action/user_digg")
             .and_then(Value::as_bool)
             == Some(true),
-        // 剧评评分（expand.score 十分制字符串 + 后缀文案）；单集评论无 expand.score 恒空。
-        // 发送响应同样回显（剧评发送后 comment_info.expand.score="10"）
+        // 剧评评分（expand.score 十分制字符串）；单集评论恒空
         score: comment
             .pointer("/expand/score")
             .map(|x| match x {
@@ -330,11 +307,8 @@ pub(crate) fn parse_comment_item(comment: &Value) -> Option<CommentItem> {
     })
 }
 
-/// 评论附图列表（`common.content.image_data_list.image_data[]`）。
-///
-/// 官方回显的图与发送时的 `image_data` 同构，另带
-/// `expand_web_url` / `web_url`（缩略图形态 `-image-v1:300:0.heic`）——
-/// 渲染优先用 `web_uri`（原图），缩略图走 `thumb_nails`。
+/// 评论附图列表（`common.content.image_data_list.image_data[]`）；
+/// 渲染优先 `web_uri` 原图，缩略图走 `thumb_nails`。
 fn parse_comment_images(comment: &Value) -> Vec<crate::emoticon::Emoticon> {
     comment
         .pointer("/common/content/image_data_list/image_data")
@@ -382,13 +356,8 @@ fn parse_comment_page(v: &Value) -> AppResult<CommentPage> {
     Ok(page)
 }
 
-/// 回复列表请求体——**单集评论维度**：
-/// 路径 `/novel/commentapi/reply/list/{comment_id}/v1/`，
-/// `group_id` 仍是分集 vid，`comment_source=504` / `comment_type=4` /
-/// `server_channel=18`（回复拉取是独立于评论拉取的第三形态，别混用
-/// comment/list 的 4/4/18 组合——source 必须是 504）；`cursor` 首页是
-/// **显式空串**（与剧评维度「首屏无 cursor 键」不同），翻页回传
-/// `comment_list_info.cursor`（数字串 "10"/"20"…）。
+/// 回复列表请求体——单集评论维度（路径在 comment_id；`comment_source=504`
+/// 独立于评论拉取，别混用）；cursor 首页显式空串、翻页回传数字串。
 pub(super) fn comment_replies_payload(
     group_id: &str,
     book_id: &str,
@@ -410,10 +379,8 @@ pub(super) fn comment_replies_payload(
     })
 }
 
-/// 回复列表请求体——**剧评维度**：`group_id` 是 series_id，
-/// `comment_source=501` / `comment_type=2` / `server_channel=34`，
-/// business_param 带 `real_level:2`；**首屏不带 cursor 键**（与 comment/list
-/// 剧评形态同款纪律），翻页才回传；`need_count` 首页 true、翻页 false。
+/// 回复列表请求体——剧评维度（`group_id` 是 series_id、`comment_source=501`、
+/// business_param 带 `real_level:2`）；首屏不带 cursor 键，翻页才回传。
 pub(super) fn review_replies_payload(series_id: &str, comment_id: &str, cursor: &str) -> Value {
     let mut payload = serde_json::json!({
         "business_param": {
@@ -495,8 +462,7 @@ pub(crate) fn parse_reply_item(reply: &Value) -> Option<ReplyItem> {
     let base = common.and_then(|c| c.pointer("/user_info/base_info"));
     Some(ReplyItem {
         reply_id,
-        // 同 CommentItem：删除入口对比 uid 用（回复在两层都有，
-        // user_info 层优先）
+        // 同 CommentItem：删除入口对比 uid 用，user_info 层优先
         user_id: common
             .and_then(|c| c.pointer("/user_info/user_id"))
             .or_else(|| common.and_then(|c| c.pointer("/user_info/base_info/user_id")))
@@ -541,11 +507,8 @@ pub(crate) fn parse_reply_item(reply: &Value) -> Option<ReplyItem> {
     })
 }
 
-/// reply/list 响应 → [`ReplyPage`]。
-///
-/// 结构与 comment/list 不同：条目在 `data.reply_list[]`（不是 data_list），
-/// 分页在 `data.comment_list_info`（不是 common_list_info）；回复体在
-/// 键名**大写**的 `Common` 下（上游序列化怪癖，兼容大小写两种）。
+/// reply/list 响应 → [`ReplyPage`]。结构与 comment/list 不同：条目在
+/// `data.reply_list[]`、分页在 `data.comment_list_info`；回复体在键名大写的 `Common` 下。
 pub(super) fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
     let info = v
         .pointer("/data/comment_list_info")
@@ -577,11 +540,8 @@ pub(super) fn parse_reply_page(v: &Value) -> AppResult<ReplyPage> {
     Ok(page)
 }
 
-// ---------------------------------------------------------------- 创作者主页
-
 /// 创作者主页资料头：`GET /reading/user/profile/get/v:version/?user_id=`，
-/// 取 `data.ugc_user.base_info`（详情页点创作者 →
-/// 主页，头部昵称/头像/简介）。
+/// 取 `data.ugc_user.base_info`（详情页点创作者 → 主页，头部昵称/头像/简介）。
 pub async fn fetch_creator_profile(user_id: &str, env: &ApiEnv) -> AppResult<CreatorProfile> {
     let q = [("user_id".to_string(), user_id.to_string())];
     let bytes = crate::client::api_call_reading(
@@ -629,8 +589,7 @@ pub async fn fetch_creator_profile(user_id: &str, env: &ApiEnv) -> AppResult<Cre
 }
 
 /// 创作者主页作品列表一页：`POST /novel/commentapi/user/profile/{uid}/v1/`。
-/// 请求体按官方形态（作品 tab 形态 tab_type=23）；cursor 传
-/// 上一页 `common_list_info.cursor` 原样串，首页空串。
+/// cursor 传上一页 `common_list_info.cursor` 原样串，首页空串。
 pub async fn fetch_creator_works(
     user_id: &str,
     cursor: &str,
@@ -736,9 +695,7 @@ mod profile_probe {
     use crate::client::ApiEnv;
     use hongguo_common::model::ProxyConfig;
 
-    /// 活体探测：主页资料 + 作品列表全链。uid 463328455691016 = 墨子动漫
-    /// （官方出品方账号，7 部作品）。
-    /// 用法：`cargo test -p hongguo-api fetch_creator -- --ignored --nocapture`
+    /// 活体探测：主页资料 + 作品列表全链（`PROBE_UID` 可覆盖默认锚点 uid）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_creator_homepage_chain() {

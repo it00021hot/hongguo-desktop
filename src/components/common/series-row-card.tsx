@@ -3,15 +3,8 @@ import { Tv } from 'lucide-react';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
 
 /**
- * 剧集列表行卡骨架（排行榜行 / 上新日历行共用）。
- *
- * 交互口径：**卡片整体进详情**（onOpen），播放/预约/详情是行尾
- * 动作列的明确动作，不混在卡片点击里。封面统一走 enhancedCover 转码代理
- * （HEIC 签名 URL 直挂必裂）；悬浮/选中/键盘语义与渐进渲染提示都在这层。
- *
- * 各页差异全部走插槽：leading（榜单名次）、titleExtra（季徽/上线状态徽）、
- * metaLine（元信息行）、description、heatLine（🔥热度行）、trailing（行尾
- * 列顶部，如上线时间）、actions（行尾动作按钮）。
+ * 剧集列表行卡骨架（排行榜行 / 上新日历行共用）：卡片整体进详情，播放/预约/详情是行尾动作列的明确动作。
+ * 各页差异全走插槽：leading / titleExtra / metaLine / description / heatLine / trailing / actions。
  */
 export function SeriesRowCard({
   cover,

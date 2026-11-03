@@ -1,23 +1,6 @@
-//! H.264 → MP4 封装。
-//!
-//! 平台编码器（VideoToolbox / Media Foundation）吐出的 H.264 是 Annex-B 形态的
-//! 裸码流，这里把它封成 MP4：音视频交织写进 `mdat`，样本表与参数集写进 `moov`。
-//!
-//! 四条关键决定：
-//!
-//! - **faststart 恒开**（`moov` 在 `mdat` 之前）：产物走自定义协议送进播放器，
-//!   `moov` 在前才能在只读到文件头时就拿到时长与样本表。偏移在写盘前就算定，
-//!   不像「先写媒体数据再回头搬 `moov`」那样需要按写入序重排样本边界。
-//! - **B 帧按解码序存放，`ctts` 记录合成偏移**：平台硬编器关不掉帧重排
-//!   （本机 VT 会话对 `MaxFrameDelayCount=0` 与 `AllowFrameReordering=0` 都拒收），
-//!   码流天然是解码序 + 非单调显示时间。解码时间取「第 k 小的显示时间」，
-//!   合成偏移 = 显示时间 − 解码时间（有符号，`ctts` version 1）。
-//! - **每样本一个 chunk**：`stco` 直接给每个样本的绝对偏移，不必再按 `stsc`
-//!   展开 chunk 映射。
-//! - **音轨直通**：源音轨解密后已是明文 AAC，原样搬进产物，不解码成 PCM 再重编码。
-//!
-//! 字节组装层（`moov` / `mdat` 布局）在 [`crate::mp4`]——快速合并与重新封装
-//! 共用同一份。
+//! H.264 → MP4 封装：平台编码器（VideoToolbox / Media Foundation）吐出的 Annex-B 裸码流封成 MP4——音视频交织写进 `mdat`，样本表与参数集写进 `moov`。
+//! 关键决定：**faststart 恒开**（`moov` 在前，偏移写盘前算定）；**B 帧按解码序存放、`ctts` 记录合成偏移**（解码时间取「第 k 小的显示时间」，合成偏移 = 显示 − 解码，version 1 有符号）；
+//! **每样本一个 chunk**（`stco` 直接给绝对偏移）；**音轨直通**（明文 AAC 原样搬进产物，不解码重编码）。字节组装层在 [`crate::mp4`]，快速合并与重新封装共用。
 
 mod audio;
 mod avcc;
@@ -48,12 +31,8 @@ struct AudioPlan<'a> {
 }
 
 impl<'a> AudioPlan<'a> {
-    /// 规划一条音轨。
-    ///
-    /// 源片音轨可以比视频轨先开始（红果片源实测：音频 0s、视频首帧 0.133s
-    /// ——AAC priming + 视频轨延迟起步）。这段头部按 `elst` 语义该裁掉：
-    /// 容器没有 edit list 时 presentation 时间轴从 0 起算，早于首帧的音频
-    /// 会让播放器在画面出来之前先播一段没画面的声音。
+    /// 规划一条音轨：源音轨可比视频轨先开始（AAC priming + 视频轨延迟起步），这段头部按 `elst` 语义裁掉——
+    /// 容器没有 edit list 时 presentation 时间轴从 0 起算，早于首帧的音频会让播放器在画面出来前先播一段没画面的声音。
     fn new(audio: &'a AudioTrack, first_video_tick: u64) -> AppResult<Self> {
         let all = to_ticks(audio.samples.iter().map(|(pts, _)| *pts))?;
         let start = all.partition_point(|t| *t < first_video_tick);
@@ -83,10 +62,7 @@ impl<'a> AudioPlan<'a> {
     }
 }
 
-/// 封装成 MP4（faststart）。
-///
-/// `frames` 是编码器的输出：`(显示时间秒, Annex-B 数据, 是否关键帧)`，
-/// 顺序是**解码序**（带 B 帧的码流天然如此）。`audio` 传 `None` 表示没有音轨。
+/// 封装成 MP4（faststart）：`frames` 是编码器输出 `(显示时间秒, Annex-B 数据, 是否关键帧)`，顺序是**解码序**；`audio` 传 `None` 表示没有音轨。
 pub fn mux_h264(
     output: &Path,
     frames: &[(f64, Vec<u8>, bool)],
@@ -137,9 +113,7 @@ pub fn mux_h264(
     };
 
     // 4) 交织顺序：视频按解码时间、音频按显示时间，同一时刻视频在前。
-    //
-    // 视频样本在 `mdat` 里必须保持解码序——`stco` 按写入序记录，而
-    // `stsz`/`stts`/`ctts` 按样本序构建，两者错位整条轨就解不出来。
+    // 视频样本在 `mdat` 里必须保持解码序——`stco` 按写入序记录，而 `stsz`/`stts`/`ctts` 按样本序构建，错位整条轨就解不出来
     let mut schedule: Vec<(u64, u8, usize)> =
         Vec::with_capacity(video_data.len() + audio_plan.as_ref().map_or(0, |p| p.frames.len()));
     for (i, dts) in video_dts.iter().enumerate() {
@@ -179,8 +153,7 @@ pub fn mux_h264(
     let wide = needs_wide_offsets(total_payload);
     let ftyp = ftyp();
     let mut offsets: Vec<Vec<u64>> = specs.iter().map(|s| vec![0u64; s.sizes.len()]).collect();
-    // moov 的长度只取决于样本数与偏移宽度，与偏移的具体数值无关：
-    // 先用占位偏移量一次长度，再带真实偏移重算一次。
+    // moov 长度只取决于样本数与偏移宽度，与偏移数值无关：先用占位偏移量一次长度，再带真实偏移重算一次
     let moov_len = build_moov(&mvhd, &specs, &offsets, wide).len();
     let data_start = mdat_data_start(ftyp.len(), moov_len, wide);
     let mut cursor = data_start;
@@ -226,12 +199,8 @@ pub fn mux_h264(
     Ok(size)
 }
 
-/// 平台后端复用的「音轨直通 + 封装」入口。
-///
-/// 音轨不解码、AAC 直通、faststart 封装，任何后端产出的 MP4 完全同构。
-///
-/// 对外可见是刻意的：平台硬编（VT / MF）在 `hongguo-media-platform`，与本 crate
-/// 不同 crate，但它必须产出与其他后端同构的容器。
+/// 平台后端复用的「音轨直通 + 封装」入口：音轨不解码、AAC 直通、faststart 封装，任何后端产出的 MP4 完全同构。
+/// 对外可见是刻意的：平台硬编（VT / MF）在 `hongguo-media-platform`，与本 crate 不同 crate，但必须产出与其他后端同构的容器。
 pub fn with_audio(
     input: &Path,
     demuxed: &crate::demux::Demuxed,
@@ -269,12 +238,8 @@ fn to_ticks(values: impl Iterator<Item = f64>) -> AppResult<Vec<u64>> {
     Ok(out)
 }
 
-/// 解码时间：第 k 个样本的解码槽位取「第 k 小的显示时间」。
-///
-/// 无 B 帧的流显示序与解码序一致，直接用显示时间。B 帧流必须重排——
-/// `stts` 描述的是解码时间轴，`ctts` 记录合成偏移，两者合起来才是显示时间。
-/// 重复的显示时间（畸形源）按一个刻度顶开：解码时间必须严格递增，
-/// 否则解码器会认为时间轴倒退。
+/// 解码时间：第 k 个样本的解码槽位取「第 k 小的显示时间」。无 B 帧的流显示序与解码序一致，直接用显示时间；B 帧流必须重排（`stts` 是解码轴、`ctts` 记合成偏移）。
+/// 重复的显示时间（畸形源）按一个刻度顶开：解码时间必须严格递增，否则解码器会认为时间轴倒退。
 fn decode_ticks(pts: &[u64]) -> Vec<u64> {
     if pts.windows(2).all(|w| w[1] >= w[0]) {
         return pts.to_vec();
@@ -317,16 +282,12 @@ fn cts(pts: &[u64], dts: &[u64]) -> Vec<i32> {
         .collect()
 }
 
-/// 差值转成有符号 32 位（`ctts` 的取值范围）。
-///
-/// 超出范围时饱和而不是截断——截断出来的偏移会让播放器把帧放到错误的时间点。
+/// 差值转成有符号 32 位（`ctts` 的取值范围）；超范围饱和而不是截断——截断会让播放器把帧放到错误的时间点。
 fn offset_i32(diff: i64) -> i32 {
     i32::try_from(diff).unwrap_or(if diff < 0 { i32::MIN } else { i32::MAX })
 }
 
-/// 同步样本号（1 起）。
-///
-/// 全是关键帧时不写 `stss`——那张表缺省就是「全部同步」。
+/// 同步样本号（1 起）；全是关键帧时不写 `stss`——那张表缺省就是「全部同步」。
 fn sync_samples(frames: &[(f64, Vec<u8>, bool)]) -> Option<Vec<u32>> {
     if frames.iter().all(|(_, _, key)| *key) {
         return None;

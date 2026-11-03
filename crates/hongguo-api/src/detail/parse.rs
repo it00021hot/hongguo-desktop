@@ -19,10 +19,8 @@ pub(super) fn parse_related_series(value: &Value) -> AppResult<RelatedSeries> {
         .unwrap_or_default()
     {
         let cell_name = cell.get("cell_name").and_then(Value::as_str).unwrap_or("");
-        // 猜你喜欢 cell 的条目不在自己的 video_data 里，而在 **cell_data[]**
-        // （二级 cell 列表，cell_name 形如「双列短剧」）各自的 video_data 里
-        // ——只读顶层 video_data 会恒为 0 条；
-        // guess_mvs 结构即此形态。
+        // 猜你喜欢 cell 的条目不在自己的 video_data 里，而在 cell_data[]（二级 cell）
+        // 各自的 video_data 里——只读顶层 video_data 会恒为 0 条。
         let raw_items: Vec<&Value> = match cell.get("video_data").and_then(Value::as_array) {
             Some(arr) if !arr.is_empty() => arr.iter().collect(),
             _ => cell
@@ -95,8 +93,7 @@ pub fn parse_episodes(response: &Value) -> AppResult<EpisodeList> {
 }
 
 /// 批量形态：`data` 的每个 series 各解析一条（官方预取对 6 部剧打一次
-/// `multi_video_detail/preload`，逗号串 series_id，响应 data 按剧分发）。
-/// 单部残缺跳过，不拖垮整批。
+/// `multi_video_detail/preload`）。单部残缺跳过，不拖垮整批。
 pub fn parse_episodes_batch(response: &Value) -> AppResult<Vec<EpisodeList>> {
     check_code_in(response, "详情接口")?;
 
@@ -256,14 +253,12 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
         season,
         tags,
         intro: str_field_any(vd, &["series_intro", "video_desc", "abstract"]),
-        // 官方模型对照字段（VideoDetailVideoData）：防御性
-        // 读取，缺席走默认值
+        // 官方模型对照字段：防御性读取，缺席走默认值
         pay_info: vd.get("pay_info").cloned().unwrap_or(Value::Null),
         // 官方下发为 unix 秒；对外契约统一 UTC 毫秒
         online_time: num_field(vd, "online_time") * 1000,
         update_tag: str_field_any(vd, &["episode_right_text", "update_tag"]),
-        // 追更按钮显隐判定：0=连载中 1=已完结（完结剧
-        // series_status=1 且无 update_info；缺席按连载中处理）
+        // 追更按钮显隐判定：0=连载中 1=已完结；缺席按连载中处理
         series_status: num_field(vd, "series_status"),
         update_frequency: vd
             .pointer("/update_info/show_update_frequency")
@@ -276,9 +271,8 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
     })
 }
 
-/// 解析出品方 / 演职员（main_creator_users）：
-/// base_info 出名字头像，user_tag.sub_title_list 首项出角色
-/// 文案（出品方/主演/配角）。名字为空的条目跳过。
+/// 解析出品方 / 演职员（main_creator_users）：base_info 出名字头像，
+/// user_tag.sub_title_list 首项出角色文案。名字为空的条目跳过。
 fn parse_creators(vd: &Value) -> Vec<SeriesCreator> {
     let mut out = Vec::new();
     for raw in vd
@@ -333,7 +327,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// 实网样本：celebrities 等干扰数组排在 video_list 之前。
     fn real_response() -> Value {
         json!({
             "code": 0,
@@ -401,12 +394,8 @@ mod tests {
         assert!(err.to_string().contains("101000"));
     }
 
-    /// 相关作品解析：cell_name 分流 + tag_info 角标 + score 字符串形态
-    /// + 未上线兜底「即将上线」。
     #[test]
     fn parses_series_meta_from_video_detail() {
-        // 字段平铺在 data[sid] 下（无 video_data 包层），
-        // 计数字段是字符串形态；季徽 data_type=0，题材 data_type=3
         let v: Value = serde_json::json!({
             "code": 0,
             "data": {
@@ -427,8 +416,6 @@ mod tests {
                     ],
                     "pay_info": { "need_pay": true, "price": "18.0" },
                     "online_time": 1790000000,
-                    // 连载剧形态：series_status=0 +
-                    // update_info + episode_right_text「更新至N集」
                     "series_status": 0,
                     "episode_right_text": "更新至45集",
                     "episode_total_cnt": 80,
@@ -479,8 +466,6 @@ mod tests {
                 .unwrap_or(false),
             "pay_info 原样透传"
         );
-        // 出品方：取 base_info 三件 +
-        // sub_title_list 首项做角色；空名条目跳过
         assert_eq!(m.creators.len(), 1);
         assert_eq!(m.creators[0].name, "林间剧场");
         assert_eq!(m.creators[0].role, "出品方");
@@ -488,7 +473,6 @@ mod tests {
         assert_eq!(m.creators[0].avatar, "http://example/av.jpg");
     }
 
-    /// 官方模型对照字段缺席时走默认值（防御性读取语义）。
     #[test]
     fn series_meta_alignment_fields_default_when_absent() {
         let v: Value = serde_json::json!({
@@ -505,7 +489,6 @@ mod tests {
         assert!(m.pay_info.is_null());
     }
 
-    /// 完结剧形态：series_status=1、无 update_info、统计行是「全139集」。
     #[test]
     fn finished_series_has_no_update_info() {
         let v: Value = serde_json::json!({
@@ -528,9 +511,6 @@ mod tests {
 
     #[test]
     fn guess_cell_items_live_in_cell_data() {
-        // 猜你喜欢 cell 的条目走 **cell_data[]**
-        // （二级 cell 各带 video_data），不是自己的 video_data——
-        // 只读 video_data 时猜你喜欢恒为 0 条
         let v: Value = serde_json::json!({
             "code": 0,
             "data": [

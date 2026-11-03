@@ -1,15 +1,6 @@
-//! 封面圆角档的断言：圆角必须落在图片元素上，取值必须跟 Tauri 一致。
-//!
-//! 1. **圆角落在图上**：gpui 的 `ContentMask` 是矩形——父容器的圆角只圆自己
-//!    的底色、不会裁子件；真正能把图角裁圆的是图片自己的 `corner_radii`
-//!    （`paint_image` 带着它上屏）。所以档位必须写进元素样式里，父容器
-//!    的圆角管不了。
-//! 2. **取值对齐 Tauri**：`src/styles/index.css` 的 `--radius: 0.625rem`
-//!    （10px）派生出 md=8px / lg=10px / xl=14px——不是 Tailwind 默认的
-//!    6/8/12。卡片 14px、行内封面 10px、小图 8px。
-//!
-//! 断言走样式层（不开窗口、不出图）：
-//! `cargo test -p hongguo-gpui --test cover_corner`
+//! 封面圆角档断言：圆角必须落在图片元素上（gpui 的 ContentMask 是矩形，
+//! 容器圆角只圆底色不裁子件）；取值 14/10/8px 与 `--radius` 派生一致（不是
+//! Tailwind 默认 6/8/12）。断言走样式层，不开窗口不出图。
 
 #[expect(
     dead_code,

@@ -1,10 +1,6 @@
-//! 找剧页（Tauri `/browse` = `browse-page.tsx` 的 GPUI 对齐）。
-//!
-//! 顶部搜索框（含联想）+ 官方筛选面板（八行维度 + 客户端合成「状态」行，
-//! 可整块折叠、已选计数徽标）+ 结果卡片网格（封面 3:4 + 已下载角标 +
-//! 全 N 集角标 + 热度行 + 题材 chip）。浏览与搜索共用结果区：提交关键词
-//! 原地切搜索结果，退出回筛选流；浏览流按 session 游标翻页。数据走
-//! `hongguo_api::{discover, search}`，与 Tauri 的 browse/search command 同一段。
+//! 找剧页：顶部搜索框（含联想）、官方筛选面板（可整块折叠、已选计数徽标）
+//! 与结果卡片网格。浏览与搜索共用结果区：提交关键词原地切搜索结果，退出回
+//! 筛选流；浏览流按 session 游标翻页。数据走 `hongguo_api::{discover, search}`。
 
 use std::collections::HashMap;
 use std::sync::Arc;

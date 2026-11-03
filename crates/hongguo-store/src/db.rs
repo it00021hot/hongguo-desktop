@@ -1,16 +1,6 @@
-//! 内嵌 Turso 数据库：连接与 schema 迁移。
+//! 内嵌 Turso 数据库：连接与 schema 迁移（`turso` 纯 Rust 无 C 工具链、`Builder::new_local` 本地内嵌；刻意关闭 default features——mimalloc 是全局分配器，不能让库替我们换）。
 //!
-//! 选型背景：替换原 data.json 单文件全量重写存储。
-//! `turso` crate 是 tursodatabase/turso 的官方 Rust API，纯 Rust、无 C 工具链，
-//! 本地内嵌形态（`Builder::new_local`）。刻意关闭 default features：
-//! mimalloc 是全局分配器不能让库替我们换；fts 暂时用不上。
-//!
-//! 并发模型：`Connection` 内部走连接级串行（Turso 引擎语义），
-//! 多个 `connect()` 共享同一数据库文件由库自身做页级加锁，
-//! 因此 AppState 里不再需要 `RwLock<DataStore>`，仓储层拿 `Db` 的克隆即可。
-//!
-//! 事务边界：`begin/commit/rollback` 是三个独立 SQL 语句，不是持有式 API，
-//! 调用方必须在同一 async 任务里成对使用；仓储层提供 `with_tx` 收口。
+//! 并发模型：`Connection` 内部走连接级串行，多个 `connect()` 共享同一文件由库自身做页级加锁，无需外层 `RwLock`。事务边界：`begin/commit/rollback` 是独立 SQL 语句而非持有式 API，调用方必须在同一 async 任务里成对使用，仓储层 `with_tx` 收口。
 
 use std::path::Path;
 
@@ -24,13 +14,8 @@ const SCHEMA_VERSION: i64 = 7;
 
 /// 按版本升序排列的迁移 SQL，第 n 段把 schema 从版本 n 升到 n+1。
 pub static MIGRATIONS: &[&str] = &[
-    // v0 -> v1：初始五张表，对应原 DataStore 的五个字段。
-    // 设计约定：
-    // - 复杂实体（任务/剧集/合并）整行存 JSON 列，serde 模型与 26 处
-    //   alias 兼容逻辑原样复用；只把需要 WHERE/ORDER 的字段提升为列。
-    // - playback 是最热的写入点（前端 5 秒节流上报），全真实列 +
-    //   UPSERT，彻底消灭整文件重写。
-    // - settings 单行表（id=1），与原单例语义一致。
+    // v0 -> v1：初始五张表——复杂实体（任务/剧集/合并）整行存 JSON 列（serde 模型与 alias 兼容逻辑复用），
+    // 只把需要 WHERE/ORDER 的字段提升为列；playback 最热写入点，全真实列 + UPSERT；settings 单行表（id=1）。
     r#"
     CREATE TABLE settings (
         id    INTEGER PRIMARY KEY CHECK (id = 1),
@@ -65,11 +50,7 @@ pub static MIGRATIONS: &[&str] = &[
         updated_at INTEGER NOT NULL
     );
     "#,
-    // v1 -> v2：账号时代的基础表。
-    // - device_profile 单行表：设备注册（M2b）产出的档案整份 JSON 落这里，
-    //   启动装载，签名链路统一从 AppState 取。
-    // - session 单行表：登录态（M3）的 Cookie 与用户资料。先建表占位，
-    //   访问器随登录模块一起落。
+    // v1 -> v2：device_profile 单行表（设备注册档案整份 JSON，启动装载）与 session 单行表（登录态 Cookie/用户资料，先建表占位）。
     r#"
     CREATE TABLE device_profile (
         id   INTEGER PRIMARY KEY CHECK (id = 1),
@@ -82,8 +63,7 @@ pub static MIGRATIONS: &[&str] = &[
         updated_at INTEGER NOT NULL
     );
     "#,
-    // v2 -> v3：webp 封面缓存。信息流的 HEIC 封面 WebView2 渲染不了，
-    // 官网详情页有 webp 版；按 series_id 缓存，一部剧只抓一次。
+    // v2 -> v3：webp 封面缓存（信息流 HEIC 封面 WebView2 渲染不了，按 series_id 一剧一抓）。
     r#"
     CREATE TABLE cover_cache (
         series_id  TEXT PRIMARY KEY,
@@ -91,15 +71,12 @@ pub static MIGRATIONS: &[&str] = &[
         updated_at INTEGER NOT NULL
     );
     "#,
-    // v3 -> v4：官网链路整体下线（数据一律走官方 App 接口），
-    // webp 封面缓存随之作废——HEIC 封面改由本地 hongguo-cover 协议现转。
+    // v3 -> v4：官网链路整体下线（数据一律走官方 App 接口），webp 封面缓存作废——HEIC 封面改由本地 hongguo-cover 协议现转。
     r#"
     DROP TABLE IF EXISTS cover_cache;
     "#,
-    // v4 -> v5：设备档案从单行表扩成多行（1=现役，2=上一代备份，10=
-    // bootstrap 元数据）。老表的 CHECK (id = 1) 锁死单行，SQLite 不能
-    // 直接删约束，按惯例重建表搬数据（「现役 + 上一代」双档案
-    // 形态，对齐 device.json + .bak 的做法）。
+    // v4 -> v5：设备档案从单行扩成多行（1=现役，2=上一代备份，10=bootstrap 元数据）；
+    // 老表的 CHECK (id = 1) 锁死单行，SQLite 不能删约束，按惯例重建表搬数据。
     r#"
     CREATE TABLE device_profile_new (
         id   INTEGER PRIMARY KEY,
@@ -110,11 +87,8 @@ pub static MIGRATIONS: &[&str] = &[
     DROP TABLE device_profile;
     ALTER TABLE device_profile_new RENAME TO device_profile;
     "#,
-    // v5 -> v6：追更的本地两件套。follow_baseline 记「上次检查时服务端
-    // 报的总集数」（追更列表条目 vs 基线 → 判定出新集，首次见到不提示），
-    // follow_notice 存更新提醒（kind: follow=追更更新 / online=预约上线，
-    // kind 留 TEXT 为预约上线提醒留位）。取消追更时基线行随删（重追从头
-    // 计基线）。回滚 SQL：DROP TABLE follow_notice; DROP TABLE follow_baseline;
+    // v5 -> v6：追更两件套——follow_baseline 记上次检查时服务端报的总集数（对照判定出新集，首次见到不提示），
+    // follow_notice 存更新提醒（kind 留 TEXT 为预约上线提醒留位）；取消追更时基线行随删（重追从头计基线）。
     r#"
     CREATE TABLE follow_baseline (
         series_id   TEXT PRIMARY KEY,
@@ -131,10 +105,8 @@ pub static MIGRATIONS: &[&str] = &[
         read      INTEGER NOT NULL DEFAULT 0
     );
     "#,
-    // v6 -> v7：本地观看历史（issue #10：未登录可记录/管理，登录后补传云端）。
-    // 每剧一行（与云端 read_history 的按剧聚合口径一致，行 = 最近看的那集）；
-    // reported 标记该行是否已上报云端（0=待补传，登录态写入即报、报成功回 1）。
-    // 回滚 SQL：DROP TABLE local_history;
+    // v6 -> v7：本地观看历史（未登录可记录/管理，登录后补传云端）——每剧一行（行 = 最近看的那集），
+    // reported 标记该行是否已上报云端（0=待补传）。
     r#"
     CREATE TABLE local_history (
         series_id     TEXT PRIMARY KEY,
@@ -159,16 +131,10 @@ pub struct Db {
 }
 
 impl Db {
-    /// 打开（或创建）数据库文件并跑到最新 schema。
-    ///
-    /// 传入 `":memory:"` 得到内存库，测试用。
+    /// 打开（或创建）数据库文件并跑到最新 schema；传入 `":memory:"` 得到内存库（测试用）。
     pub async fn open(path: impl AsRef<Path>) -> AppResult<Self> {
         let path = path.as_ref().to_string_lossy().into_owned();
-        // 全新安装时数据目录整条不存在，而 Turso 的 build() 只建文件不建
-        // 父目录，直接报 I/O entity not found——曾被映射成「数据损坏」
-        // 引人删库，v0.1.0 全新装机因此必闪退。这里是所有文件库开库的
-        // 唯一收口，建目录收进来，其余落盘方（缓存/下载/诊断）本就各自
-        // create_dir_all。
+        // Turso 的 build() 只建文件不建父目录；这里是所有文件库开库的唯一收口，父目录必须在此自建
         if path != ":memory:"
             && let Some(dir) = Path::new(&path).parent()
         {
@@ -176,10 +142,8 @@ impl Db {
                 .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
         }
         let db: Database = Builder::new_local(&path).build().await.map_err(|e| {
-            // 报错按因分类，别把环境问题一律报成「数据损坏」引人删库。
-            // 锁冲突单列（另一个实例还着库）；I/O 族（NotFound /
-            // PermissionDenied 等）是文件系统层面打不开，数据本身未必坏；
-            // 剩下的（Corrupt/NotAdb）才是真损坏。
+            // 报错按因分类，别把环境问题一律报成「数据损坏」引人删库：
+            // 锁冲突单列；I/O 族是文件系统层面打不开（数据未必坏）；剩下的才是真损坏。
             let text = e.to_string();
             if text.contains("Locking error") || text.contains("locked by another") {
                 AppError::StoreLocked(format!("打开数据库失败: {text}"))
@@ -230,14 +194,7 @@ impl Db {
         Ok(())
     }
 
-    /// 单个迁移步：DDL + 版本号写入同一事务。
-    /// Turso 的 DDL 是事务性的，失败即整体回滚。
-    ///
-    /// 两个实现细节：
-    /// - `execute` 只跑**第一条**语句（Turso 的既定语义），多语句 DDL 必须走
-    ///   `execute_batch`（顺序执行、遇错即停，但不回滚——回滚由外层事务负责）。
-    /// - PRAGMA 不接受绑定参数，版本号只能内联拼接；
-    ///   `target` 是我们自己在 [`MIGRATIONS`] 索引上算出的 i64，不存在注入面。
+    /// 单个迁移步：DDL + 版本号写入同一事务（Turso DDL 事务性，失败整体回滚）。`execute` 只跑第一条语句，多语句 DDL 必须走 `execute_batch`（遇错即停，回滚由外层事务负责）；PRAGMA 不接受绑定参数，版本号只能内联拼接——`target` 是自算 i64，不存在注入面。
     async fn run_migration_step(&self, sql: &str, target: i64) -> AppResult<()> {
         self.conn
             .execute_batch(sql)
@@ -302,9 +259,7 @@ mod tests {
     use super::*;
     use turso::Value;
 
-    /// 异步测试的迷你运行时：项目 test 依赖里没有 tokio 的 macro 也够不着 dev-deps，
-    /// 直接用 turso 自带的 block_on 语义不可靠，这里手写一个最简 future 泵。
-    /// （如果后续 tokio::test 可用，应优先换掉。）
+    /// 异步测试的迷你运行时（项目 test 依赖够不着 tokio::test 宏，手写 block_on 泵）。
     fn run<F: std::future::Future>(fut: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -323,7 +278,6 @@ mod tests {
         run(async {
             let db = Db::open(":memory:").await.expect("打开内存库");
 
-            // 建表 + 异构参数绑定（TEXT/INTEGER/REAL）+ JSON 列
             db.execute(
                 "CREATE TABLE t (k TEXT PRIMARY KEY, n INTEGER, x REAL, j TEXT)",
                 (),
@@ -344,8 +298,6 @@ mod tests {
                 .expect("插入");
             assert_eq!(n, 1);
 
-            // UPSERT：playback 热点的目标形态。刻意只更新部分列，
-            // 验证未被 SET 的列保留旧值（部分更新语义）。
             db.execute(
                 "INSERT INTO t (k, n, x, j) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(k) DO UPDATE SET n = excluded.n, x = excluded.x",
@@ -359,7 +311,6 @@ mod tests {
             .await
             .expect("UPSERT");
 
-            // 查询读回
             let mut rows = db
                 .conn()
                 .query(
@@ -373,11 +324,9 @@ mod tests {
             assert_eq!(n.as_integer().copied(), Some(43));
             let x = row.get_value(1).expect("取 x");
             assert_eq!(x.as_real().copied(), Some(2.5));
-            // j 未参与 UPSERT 的 SET，应保留首次插入的文本
             let j = row.get_value(2).expect("取 j");
             assert_eq!(j.as_text().map(|s| s.as_str()), Some("{\"播放\": 12.5}"));
 
-            // 再来一次全列 UPSERT，把 j 显式置 NULL
             db.execute(
                 "INSERT INTO t (k, n, x, j) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(k) DO UPDATE SET j = excluded.j",
@@ -417,7 +366,6 @@ mod tests {
                         .execute("INSERT INTO t (k) VALUES ('x')", ())
                         .await
                         .map_err(|e| AppError::StoreCorrupt(e.to_string()))?;
-                    // 制造失败：主键冲突
                     conn.execute("INSERT INTO t (k) VALUES ('x')", ())
                         .await
                         .map_err(|e| AppError::StoreCorrupt(e.to_string()))
@@ -425,7 +373,6 @@ mod tests {
                 .await;
             assert!(err.is_err(), "第二次插入同主键必须失败");
 
-            // 回滚后表必须是空的
             let mut rows = db
                 .conn()
                 .query("SELECT COUNT(*) FROM t", ())
@@ -453,7 +400,6 @@ mod tests {
                 .expect("写入 settings");
             }
             {
-                // 重开：migrate 幂等，数据还在
                 let db = Db::open(&path).await.expect("重开文件库");
                 let mut rows = db
                     .conn()
@@ -474,7 +420,6 @@ mod tests {
             let path = tmp_db_path("multi");
             let _ = std::fs::remove_file(&path);
             let db = Db::open(&path).await.expect("打开");
-            // 同一 Database 的第二个连接：仓储层并发用的形态
             let other = db.clone();
             db.execute(
                 "INSERT INTO series (series_id, dismissed, json, updated_at) VALUES ('s1', 0, '{}', 1)",

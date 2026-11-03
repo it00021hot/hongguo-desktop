@@ -1,14 +1,6 @@
-//! MP4 写出层：`moov` 组装与 `mdat` 布局。
-//!
-//! 两条产出路径共用这一份：
-//! - [`crate::remux`]：流复制拼接——索引从源文件搬来，只改时长与偏移；
-//! - [`crate::mux`]：编码后重新封装——索引由编码输出构造。
-//!
-//! 产物布局统一是 `[ftyp][moov][mdat]`（faststart）：`moov` 在前，播放器读文件头
-//! 就能拿到时长与样本表，不必先跳过整个媒体数据。
-//!
-//! 样本表（`stbl`）里的 `ctts` 是**有符号**的（version 1）：B 帧的合成时间与解码
-//! 时间之差可以为负。这一层是本仓 B 帧能力的根基——`ctts` 是一等公民，不是补丁。
+//! MP4 写出层：`moov` 组装与 `mdat` 布局。两条产出路径共用——[`crate::remux`]（索引从源文件搬来，只改时长与偏移）与 [`crate::mux`]（索引由编码输出构造）。
+//! 产物布局统一是 `[ftyp][moov][mdat]`（faststart）：播放器读文件头就能拿到时长与样本表，不必先跳过整个媒体数据。
+//! 样本表里的 `ctts` 是**有符号**的（version 1）：B 帧的合成时间与解码时间之差可以为负——本仓 B 帧能力的根基，`ctts` 是一等公民不是补丁。
 
 use hongguo_video::r#box::build_box;
 
@@ -16,9 +8,7 @@ use hongguo_video::r#box::build_box;
 pub const EDIT_RATE_ONE: i32 = 0x0001_0000;
 
 /// 一条 `edts/elst` 条目：从源媒体时间轴映射到 presentation 时间轴。
-///
-/// `media_time` 是 media timescale；`segment_duration` 是 movie timescale。
-/// 两者时基不同，不能直接相加。`-1` 是空 edit（只占 presentation 时长）。
+/// `media_time` 是 media timescale、`segment_duration` 是 movie timescale，两者时基不同不能直接相加；`-1` 是空 edit（只占 presentation 时长）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edit {
     pub segment_duration: u64,
@@ -64,10 +54,8 @@ pub fn push_run<T: PartialEq>(runs: &mut Vec<(u32, T)>, count: u32, value: T) {
     }
 }
 
-/// 生成 `moov`。
-///
-/// `offsets` 是每条轨道每个样本在输出文件里的绝对偏移。调用方要先用占位偏移
-/// 量一次长度、算出 `mdat` 起点，再带着真实偏移调一次——两次结果长度相同。
+/// 生成 `moov`。`offsets` 是每条轨道每个样本在输出文件里的绝对偏移。
+/// 调用方要先用占位偏移量一次长度、算出 `mdat` 起点，再带着真实偏移调一次——两次结果长度相同。
 pub fn build_moov(mvhd: &[u8], tracks: &[TrackSpec], offsets: &[Vec<u64>], wide: bool) -> Vec<u8> {
     let mut payload = mvhd.to_vec();
     for (t, track) in tracks.iter().enumerate() {
@@ -76,10 +64,8 @@ pub fn build_moov(mvhd: &[u8], tracks: &[TrackSpec], offsets: &[Vec<u64>], wide:
     build_box(b"moov", &payload)
 }
 
-/// `mdat` 的 box 头长度。载荷放不下 32 位时用 largesize，多 8 字节。
-///
-/// 与 [`needs_wide_offsets`] 同源：`stco` 存不下偏移时，`mdat` 的长度同样
-/// 存不下。两个都升到 64 位，才不会出现「索引说得出、box 装不下」。
+/// `mdat` 的 box 头长度；载荷放不下 32 位时用 largesize，多 8 字节。
+/// 与 [`needs_wide_offsets`] 同源：`stco` 存不下偏移时 `mdat` 的长度同样存不下，两个都升到 64 位才不会「索引说得出、box 装不下」。
 pub fn mdat_header_len(wide: bool) -> usize {
     if wide { 16 } else { 8 }
 }
@@ -94,10 +80,8 @@ pub fn needs_wide_offsets(total_payload: u64) -> bool {
     total_payload > u64::from(u32::MAX)
 }
 
-/// `mdat` 的 box 头。载荷装不下 32 位时用 largesize。
-///
-/// 返回的**长度就是真正写出去的字节数**——固定长度的数组会在窄偏移时多写出
-/// 8 个零字节，所有样本偏移随之偏小。
+/// `mdat` 的 box 头，载荷装不下 32 位时用 largesize。
+/// 返回的**长度就是真正写出去的字节数**——固定长度的数组会在窄偏移时多写出 8 个零字节，所有样本偏移随之偏小。
 pub fn mdat_header(total_payload: u64, wide: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(16);
     if wide {
@@ -127,11 +111,8 @@ fn build_trak(track: &TrackSpec, offsets: &[u64], wide: bool) -> Vec<u8> {
     build_box(b"trak", &trak)
 }
 
-/// 逐段 presentation 映射。`tkhd` 的时长是各段之和，`mdhd` 仍是媒体时长；
-/// 播放器靠这张表跳过每段开头的 AAC priming / 视频起始偏移。
-///
-/// 统一写 version 1（64 位时长/有符号 media_time），避免文件超长时截断。
-/// 空 edit 的 `media_time = -1` 按位写回全 1。
+/// 逐段 presentation 映射：`tkhd` 的时长是各段之和、`mdhd` 仍是媒体时长，播放器靠这张表跳过每段开头的 AAC priming / 视频起始偏移。
+/// 统一写 version 1（64 位时长/有符号 media_time），避免文件超长时截断；空 edit 的 `media_time = -1` 按位写回全 1。
 fn edts_box(edits: &[Edit]) -> Vec<u8> {
     if edits.is_empty() {
         return Vec::new();
@@ -171,11 +152,8 @@ fn stts_box(runs: &[(u32, u32)]) -> Vec<u8> {
     build_box(b"stts", &p)
 }
 
-/// 统一发 version 1（有符号）。源文件可能混用 0/1 两个版本，重写成一种，
-/// 才不会在拼接处出现同一份字节被前后解释成不同符号的情况。
-///
-/// FullBox 的 version 是**第 1 个字节**、flags 占后 3 个——写成
-/// `1u32.to_be_bytes()` 会得到 version=0 / flags=1，符号全反。
+/// 统一发 version 1（有符号）：源文件可能混用 0/1 两个版本，重写成一种才不会在拼接处同一份字节被前后解释成不同符号。
+/// FullBox 的 version 是**第 1 个字节**、flags 占后 3 个——写成 `1u32.to_be_bytes()` 会得到 version=0 / flags=1，符号全反。
 fn ctts_box(runs: &[(u32, i32)]) -> Vec<u8> {
     let mut p = vec![1u8, 0, 0, 0]; // version 1 + flags
     p.extend((runs.len() as u32).to_be_bytes());

@@ -1,31 +1,22 @@
-//! 封面资产：把「远端封面 URL → 数据目录里的成品图」做成 gpui 的 [`Asset`]。
-//!
-//! **为什么交给 gpui**：加载这一段（去重、加载态、加载完成后重绘当前视图）
-//! 本来就是框架的活——自造一套「自己解码 + 自己记在途 + 自己 notify 重绘」
-//! 是重复造轮子。壳这边只留业务必需的那一步：下载 → HEIC 转码 → 缩到目标
-//! 尺寸 → 落盘到数据目录（`hongguo_protocol::cover`）。
-//!
-//! 页面拿到的图片元素走 `img(ImageSource::Resource(Resource::Path(..)))`：
-//! 解码、内存缓存、GPU 纹理与重绘都归 gpui 的图片缓存管。
+//! 封面资产：远端封面 URL → 数据目录成品图，做成 gpui 的 [`Asset`]——去重/
+//! 加载态/加载完重绘是框架的活，壳只留「下载 → HEIC 转码 → 缩到目标尺寸 →
+//! 落盘」（`hongguo_protocol::cover`）。页面图片元素走
+//! `img(ImageSource::Resource)`，解码、内存缓存与重绘归 gpui 图片缓存。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gpui_kit::{App, Asset};
 
-/// 转码完成后的重绘合流窗口：每张成品图落盘都要触发一次重绘，渲染期的
-/// [`crate::cover_img`] 查到文件才会把 `img` 画出来。但一次首拉几十张，
-/// 逐张 `cx.refresh()`（全窗重绘）会把主线程拆成碎帧——100ms 窗口内到齐的
-/// 落盘合流为一次重绘。
+/// 转码完成后的重绘合流窗口：一次首拉几十张，逐张全窗重绘会把主线程拆成
+/// 碎帧——100ms 窗口内到齐的落盘合流为一次重绘。
 const REFRESH_COALESCE_MS: u64 = 100;
 
 /// 已有合流刷新在途（避免每次落盘都起一个定时任务）。
 static REFRESH_QUEUED: AtomicBool = AtomicBool::new(false);
 
-/// 请求一次合流的全窗重绘（见 [`REFRESH_COALESCE_MS`]）。
-///
-/// 唤醒检查与置位的次序保证不丢请求：窗口期内到达的落盘要么看到 true
-/// （被紧随其后的 refresh 覆盖），要么看到 false（自己排下一次）。
+/// 请求一次合流的全窗重绘（见 [`REFRESH_COALESCE_MS`]）；唤醒检查与置位的
+/// 次序保证窗口期内到达的落盘不丢请求。
 fn schedule_refresh(cx: &mut App) {
     if REFRESH_QUEUED.swap(true, Ordering::SeqCst) {
         return;
@@ -41,9 +32,7 @@ fn schedule_refresh(cx: &mut App) {
 }
 
 /// 远端封面 URL → 数据目录里的成品图就绪（按长边上限分档）。
-///
-/// 档位放在 Source 里（`gpui::Asset::load` 是静态方法，拿不到实例字段）：
-/// `(封面 URL, 目标长边)`。
+/// 档位放在 Source 里（`gpui::Asset::load` 是静态方法，拿不到实例字段）。
 pub(crate) struct CoverAsset;
 
 impl Asset for CoverAsset {

@@ -32,12 +32,7 @@ function fallbackLabel(id: string): string {
   return hit ? t(hit.labelKey) : id;
 }
 
-/**
- * 服务端顶栏 → 渲染列表（纯函数）。
- *
- * 服务端列表保序直用；关注一律不显示（追更由收藏页承载）；服务端
- * 拉取前/失败/为空时回落本地三件套（i18n 标题）。
- */
+/** 服务端顶栏 → 渲染列表（纯函数）：保序直用；关注一律不显示；拉取前/失败/为空回落本地三件套。 */
 export function buildTabList(serverTabs: FeedTab[] | undefined): HomeTab[] {
   if (!serverTabs?.length) {
     return FALLBACK_TABS.map(({ id, labelKey }) => ({ id, label: t(labelKey) }));

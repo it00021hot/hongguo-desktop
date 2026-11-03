@@ -12,9 +12,8 @@ impl super::HomeView {
         self.save_progress_inner();
     }
 
-    /// 立即落一次进度（不带节流）：关小屏等「要走了」的时刻强制落，
-    /// 别让最后一段播放丢在节流窗里（Tauri onPause 强落同款）；同时强制
-    /// 记一条观看历史（切集/暂停/离开的 force 收尾，Tauri 同款）。
+    /// 立即落一次进度（不带节流）：关小屏等「要走了」的时刻强制落，别让
+    /// 最后一段播放丢在节流窗里；同时强制记一条观看历史（force 收尾）。
     pub(in crate::home) fn save_progress_now(&mut self) {
         self.save_progress_inner();
         self.record_watch_history(true);
@@ -34,11 +33,8 @@ impl super::HomeView {
         });
     }
 
-    /// 观看历史上报心跳：1 秒一拍，取当前播放位置交给节拍判定。
-    ///
-    /// 为什么独立成心跳、不挂在 [`Self::save_progress_maybe`]（系统节拍 +
-    /// 5 秒落盘窗口）上：首报会被量化到 5–10 秒，60 秒节拍也随落盘
-    /// 格点漂移，两个错位叠出来就是历史进度整集滞留。
+    /// 观看历史上报心跳：1 秒一拍，取当前播放位置交给节拍判定。独立成心跳、
+    /// 不挂 5 秒落盘窗口——否则首报被量化、60 秒节拍随落盘格点漂移。
     pub(in crate::home) fn spawn_history_heartbeat(&mut self, cx: &mut Context<Self>) {
         let interval = Duration::from_secs(HISTORY_HEARTBEAT_SECS);
         cx.spawn(async move |this, cx| {
@@ -56,14 +52,10 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 观看历史记录（issue #10）：本地必记 + 登录态顺路上报云端（走
-    /// `history_service::record`，与 Tauri record_watch_history 命令同一段
-    /// service）。
-    ///
-    /// 节拍在 [`super::history_cadence::HistoryCadence`]：新剧 5 秒首报、
-    /// 同剧切集立即翻页、每 60 秒一拍；`force`（暂停/切集/离开）越过节拍
-    /// 直接收尾，但仍守「<5 秒的掠过不进历史」的建行门槛——除非本集已经
-    /// 报过（同剧切集的立即翻页走的就是这条，0.2 秒也要落）。
+    /// 观看历史记录：本地必记 + 登录态顺路上报云端（走
+    /// `history_service::record`）。节拍在 `history_cadence`：新剧 5 秒首报、
+    /// 同剧切集立即翻页、每 60 秒一拍；`force` 越过节拍直接收尾，但仍守
+    /// 「<5 秒的掠过不进历史」的建行门槛——除非本集已经报过。
     fn record_watch_history(&mut self, force: bool) {
         // 拖动进度条期间位置在连跳：等松手落定再报，否则一次拖动打出十几条
         if !force && self.scrubbing.is_some() {

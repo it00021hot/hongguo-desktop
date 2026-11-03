@@ -10,7 +10,7 @@
 > - 带 `POST`/`GET` 的 = 客户端 Retrofit 路径模板（`:xxx` 是路径参数）；无标记的 =
 >   裸路径字符串（官方核心 API 走 TNet 编程式构建，不经 Retrofit 注解）。
 > - 「在用」✅ = 本项目已接入的端点。
-> - 合计 **1302 条**（其中带方法模板 884 条），项目在用 56 条。
+> - 合计 **1302 条**（其中带方法模板 884 条），项目在用 61 条。
 
 ## 汇总
 
@@ -351,7 +351,7 @@
 | `/novel/player/multi_video_model/:dr_scene/v1/` | POST | ✅ | classes14.dex |
 | `/novel/player/multi_video_model/v1/` | POST | ✅ | classes14.dex |
 | `/novel/player/video_detail/v1/` | POST | ✅ | classes14.dex |
-| `/novel/player/video_model/v1/` | POST |  | classes14.dex, classes8.dex |
+| `/novel/player/video_model/v1/` | POST | ✅ | classes14.dex, classes8.dex |
 
 ## 评论 commentapi（弹幕/评论/剧评/回复）（25）
 
@@ -483,8 +483,8 @@
 | `/reading/ugc/booklist/get/v:version/` | GET |  | classes8.dex |
 | `/reading/ugc/booklist/read_history/v:version/` | POST |  | classes8.dex |
 | `/reading/ugc/comic/item/comment/v:version/` | GET |  | classes8.dex |
-| `/reading/ugc/comment/emoticon/collect/v:version/` | POST |  | classes8.dex, classes9.dex |
-| `/reading/ugc/comment/emoticon/v:version/` | GET |  | classes8.dex |
+| `/reading/ugc/comment/emoticon/collect/v:version/` | POST | ✅ | classes8.dex, classes9.dex |
+| `/reading/ugc/comment/emoticon/v:version/` | GET | ✅ | classes8.dex |
 | `/reading/ugc/data/del/v:version/` | POST |  | classes8.dex |
 | `/reading/ugc/dy/access_token/v:version/` | GET |  | classes8.dex |
 | `/reading/ugc/dy/jsb_sig/v:version/` | GET |  | classes8.dex |
@@ -797,7 +797,7 @@
 | `/reading/user/sign/customer` | POST |  | classes8.dex |
 | `/reading/user/sms/code/send` | POST |  | classes8.dex |
 | `/reading/user/sstimor_box_info/v:version/` | GET |  | classes8.dex |
-| `/reading/user/subscribe/delete/v:version/` | POST |  | classes8.dex |
+| `/reading/user/subscribe/delete/v:version/` | POST | ✅ | classes8.dex |
 | `/reading/user/subscribe/list/v:version/` | GET | ✅ | classes8.dex |
 | `/reading/user/switch/info` | GET |  | classes8.dex |
 | `/reading/user/switch/update` | POST |  | classes8.dex |
@@ -994,7 +994,7 @@
 | `/reading/media/image/get/` | GET |  | classes8.dex |
 | `/reading/media/image/resize/` | GET |  | classes8.dex |
 | `/reading/media/image/transfer/` | POST |  | classes8.dex |
-| `/reading/media/play/strategy/` | GET |  | classes8.dex |
+| `/reading/media/play/strategy/` | GET | ✅ | classes8.dex |
 | `/reading/media/streamtts/item/` | POST |  | classes8.dex |
 | `/reading/media/streamtts/template/` | POST |  | classes8.dex |
 | `/reading/media/video/info/` | POST |  | classes8.dex |

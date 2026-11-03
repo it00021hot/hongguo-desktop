@@ -7,13 +7,9 @@ import { IconButton } from './icon-button';
 import { VerticalSlider } from './sliders';
 
 /**
- * 音量按钮 + 竖条浮层。
- *
- * 开合：hover 展开、移出收起——但滑条 `setPointerCapture` 会诱发本层**伪
- * mouseleave**（点击/拖动音量的一瞬浮层被收走，想从 100 连点到 30 必须
- * 反复重开）。对策：浮层内任何 pointerdown 置 hold，mouseleave 见 hold
- * 不收；window pointerup 清 hold 后按指针落点裁决（还在按钮/浮层上就
- * 保持，出去了才收）。
+ * 音量按钮 + 竖条浮层：hover 展开、移出收起。滑条 setPointerCapture 会诱发本层伪
+ * mouseleave——浮层内任何 pointerdown 置 hold（mouseleave 见 hold 不收），window
+ * pointerup 清 hold 后按指针落点裁决。
  */
 export function VolumePopup({
   volume,

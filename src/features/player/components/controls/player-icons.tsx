@@ -1,15 +1,6 @@
-/** 播放器控制栏自绘图标（B 站播放器形态）：弹幕开关 / 弹幕设置 / 网页全屏 / 全屏 / 小窗。
- *
- * 为什么不用 lucide：那套线框与 B 站播放器不是一种语言——弹幕是「弹」字、
- * 网页全屏是方框+内侧四角、小窗是画中画（Lucide 的 Frame/Settings2/MessageSquareText
- * 语义与形态都对不上，用户实测「图标太丑」）。做法与互动栏的抖音系自绘图标一致：
- * 内嵌几何、`stroke/fill` 全 `currentColor`，颜色由外层按钮的 `text-*` 接管。
- *
- * GPUI 壳的 `crates/hongguo-gpui/src/home/player_icons.rs` 是同一份几何的移植
- * （几何图标内嵌同一组 SVG，弹幕字形同尺寸同字重），改动两边一起改。
- *
- * 尺寸：控制栏按钮是 32px 方钮，图标统一 16px（与相邻 lucide 图标同格）。
- */
+/** 播放器控制栏自绘图标（B 站播放器形态）：不用 lucide（弹幕是「弹」字、画中画等形态对不上），
+ *  内嵌几何、stroke/fill 全 currentColor，颜色由外层按钮的 text-* 接管。
+ *  ⚠️ GPUI 壳 `crates/hongguo-gpui/src/home/player_icons.rs` 是同一份几何的移植，改动两边一起改。 */
 import { Settings } from 'lucide-react';
 
 import { cn } from '@/lib/utils';

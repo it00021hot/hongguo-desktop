@@ -1,8 +1,6 @@
 import { call } from '../tauri/invoke';
 import type { MergeMode } from '../schema';
 
-// ---------------------------------------------------------------- 合并
-
 export const merge = {
   tasks: () => call('get_merge_tasks'),
   candidates: () => call('get_merge_candidates'),

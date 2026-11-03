@@ -1,18 +1,6 @@
-//! 同步门面：专用 DB 线程 + 任务队列。
+//! 同步门面 [`Store`]：专用 DB 线程独占 current_thread runtime 串行执行所有 SQL——业务侧对存储的 40 来处访问全是同步调用，不把 async 感染进调度器与 worker（「锁不跨 await」铁律）。
 //!
-//! 为什么需要这层桥：业务代码（commands / services / scheduler）对存储的
-//! 40 来处访问全是**同步**调用，而 turso 是异步 API。与其把 async 一路
-//! 感染进调度器与 worker（它们刻意按「锁不跨 await」的铁律组织），不如
-//! 让一个专职线程独占一个 current_thread runtime 串行执行所有 SQL——
-//! 语义上等价于旧的 `RwLock<DataStore>`，但粒度细到单条语句。
-//!
-//! 线程生命周期：`Store` 是通道发送端的 `Arc`。最后一个 `Store` 克隆
-//! drop 后通道关闭，线程跑完手头的活自然退出。
-//!
-//! 调用语义：门面方法**阻塞**调用方线程直到该批 SQL 完成。本地内嵌库
-//! 的单条语句是微秒到毫秒级，与旧实现「写锁内做整文件 fsync」相比
-//! 只快不慢；唯一要避免的是在一个事务里塞上万行——那种批量操作
-//! （旧档导入）只在启动时发生一次。
+//! 门面方法**阻塞**调用方线程直到该批 SQL 完成（本地内嵌库单条语句微秒到毫秒级）；`Store` 是通道发送端的 `Arc`，最后一个克隆 drop 后通道关闭，线程跑完手头的活自然退出。
 
 use std::sync::Arc;
 
@@ -89,10 +77,7 @@ impl Store {
         Ok(Self { tx: Arc::new(tx) })
     }
 
-    /// 投递一个活并阻塞等结果。通道断开（线程已退出）按存储故障上报。
-    ///
-    /// 闭包签名是显式 HRTB：实体层的 future 借用 `&Db`，其生命周期与本次
-    /// 调用绑定，不能写成 `'static`。
+    /// 投递一个活并阻塞等结果；通道断开（线程已退出）按存储故障上报。闭包签名是显式 HRTB：实体层的 future 借用 `&Db`，生命周期与本次调用绑定，不能写成 `'static`。
     fn exec<T, F>(&self, f: F) -> AppResult<T>
     where
         T: Send + 'static,
@@ -112,8 +97,6 @@ impl Store {
             .map_err(|_| AppError::StoreCorrupt("DB 线程无响应".into()))?
     }
 
-    // ---------- settings ----------
-
     pub fn settings(&self) -> AppResult<Option<Settings>> {
         self.exec(|db| Box::pin(entity::settings(db)))
     }
@@ -122,8 +105,6 @@ impl Store {
         let s = settings.clone();
         self.exec(move |db| Box::pin(async move { entity::save_settings(db, &s).await }))
     }
-
-    // ---------- 追更（基线 + 更新提醒） ----------
 
     pub fn follow_baseline_get(&self, series_id: &str) -> AppResult<Option<i64>> {
         let id = series_id.to_string();
@@ -176,8 +157,6 @@ impl Store {
         self.exec(|db| Box::pin(entity::notices_clear(db)))
     }
 
-    // ---------- 本地观看历史（issue #10） ----------
-
     pub fn upsert_local_history(&self, item: &LocalHistoryItem) -> AppResult<()> {
         let item = item.clone();
         self.exec(move |db| Box::pin(async move { entity::upsert_local_history(db, &item).await }))
@@ -203,8 +182,6 @@ impl Store {
         })
     }
 
-    // ---------- tasks ----------
-
     pub fn tasks(&self) -> AppResult<Vec<DownloadTask>> {
         self.exec(|db| Box::pin(entity::tasks(db)))
     }
@@ -214,8 +191,6 @@ impl Store {
         let snap = snapshot.to_vec();
         self.exec(move |db| Box::pin(async move { entity::replace_tasks(db, &snap).await }))
     }
-
-    // ---------- series ----------
 
     pub fn series_all(&self) -> AppResult<Vec<Series>> {
         self.exec(|db| Box::pin(entity::series_all(db)))
@@ -230,8 +205,6 @@ impl Store {
         let s = series.clone();
         self.exec(move |db| Box::pin(async move { entity::upsert_series(db, &s).await }))
     }
-
-    // ---------- playback ----------
 
     pub fn playback_position(
         &self,
@@ -267,8 +240,6 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::series_last_position(db, &id).await }))
     }
 
-    // ---------- merge ----------
-
     pub fn merge_tasks(&self) -> AppResult<Vec<MergeTask>> {
         self.exec(|db| Box::pin(entity::merge_tasks(db)))
     }
@@ -283,8 +254,6 @@ impl Store {
         let id = id.to_string();
         self.exec(move |db| Box::pin(async move { entity::delete_merge_task(db, &id).await }))
     }
-
-    // ---------- 设备档案 ----------
 
     pub fn device_profile(&self) -> AppResult<Option<hongguo_signer::device::DeviceProfile>> {
         self.exec(|db| Box::pin(entity::device_profile(db)))
@@ -332,7 +301,6 @@ mod tests {
         store.save_settings(&Settings::default()).expect("写设置");
         assert!(store.settings().expect("读设置").is_some());
 
-        // 同一 Store 的克隆共享同一个 DB 线程
         let clone = store.clone();
         clone
             .save_playback_position("A", 1, &PlaybackPosition::new(1.0, 2.0))
@@ -348,11 +316,6 @@ mod tests {
 
     #[test]
     fn open_failure_reports_through_init_channel() {
-        // 用「普通文件下的子路径」构造必然失败：建目录与 open 都得到
-        // ENOTDIR/NOTFOUND 族错误。（原来用 Windows 保留字符做路径，在
-        // macOS 上完全合法——测试假失败之外还会在工作目录里留下一个真库文件。）
-        // 除报错本身外还钉死分类：这是环境问题不是损坏，必须走 Io 而不是
-        // StoreCorrupt——「数据损坏」会引人去删库。
         let file = std::env::temp_dir().join(format!("hg-not-a-dir-{}", std::process::id()));
         std::fs::write(&file, b"x").expect("造一个普通文件");
         let bad = file.join("child.db");
@@ -366,9 +329,6 @@ mod tests {
 
     #[test]
     fn open_creates_missing_parent_dirs_for_fresh_install() {
-        // v0.1.0 回归：全新安装时数据目录整条不存在，Turso 的 build() 不建
-        // 父目录，开库报 I/O entity not found 被映射成「数据损坏」直接
-        // exit(1)——窗口未起即退，表现为装完即闪退。开库必须自建目录。
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("时钟正常")

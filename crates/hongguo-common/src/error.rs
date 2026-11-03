@@ -1,7 +1,6 @@
 //! 统一错误类型。
 //!
-//! 每个变体都带一个 i18n key，前端据此查双语资源，不在 Rust 侧硬编码面向用户的中文，
-//! 也不把原始错误吞掉——错误该暴露就暴露，这里只负责补上下文。
+//! 每个变体带 i18n key 供前端查双语资源，Rust 侧不硬编码面向用户的文案；错误该暴露就暴露，这里只负责补上下文。
 
 /// 应用错误。
 #[derive(Debug, thiserror::Error)]
@@ -18,12 +17,7 @@ pub enum AppError {
     #[error("数据文件损坏: {0}")]
     StoreCorrupt(String),
 
-    /// 数据库文件被另一个进程锁着（另一个实例还活着）。
-    ///
-    /// 与 [`AppError::StoreCorrupt`] 分开：锁冲突不是损坏，把「另一个实例
-    /// 正在运行」报成「数据文件损坏」会让人去删库。正常时序下第二个实例
-    /// 在单实例插件那里就该被劝退（见 lib.rs 的启动顺序注释），走到这一步
-    /// 说明持有者是僵尸进程或非常规启动。
+    /// 数据库文件被另一个进程锁着（另一个实例还活着）——锁冲突不是损坏，报成「数据文件损坏」会让人去删库。
     #[error("数据库被占用: {0}")]
     StoreLocked(String),
 
@@ -36,33 +30,19 @@ pub enum AppError {
     #[error("媒体处理失败: {0}")]
     Media(String),
 
-    /// 登录 / 账号操作失败。transparent：消息本身已含完整语义
-    /// （如「登录失败 1202: 验证码错误」），不再套类别前缀；i18n 资源
-    /// 刻意**不提供** `error.auth` 译文，让前端落到后端原文透传。
+    /// 登录 / 账号操作失败。transparent：消息已含完整语义（如「登录失败 1202: 验证码错误」），i18n 刻意不提供 `error.auth` 译文，前端透传后端原文。
     #[error("{0}")]
     Auth(String),
 
-    /// 服务端业务拒绝（重复收藏、风控、频控等）。transparent：同
-    /// [`AppError::Auth`] 口径——服务端给的原因对用户是有效信息，
-    /// 套「视频处理失败」这类通用文案反而误导；i18n 资源刻意**不提供**
-    /// `error.rejected` 译文，让前端落到后端原文透传。
+    /// 服务端业务拒绝（重复收藏、风控、频控等）。transparent 同 [`AppError::Auth`] 口径：服务端给的原因对用户是有效信息，套通用文案反而误导，i18n 刻意不提供 `error.rejected` 译文。
     #[error("{0}")]
     Rejected(String),
 
-    /// 取流未命中：服务端对这个设备/请求没有发货（200+0、响应里没有
-    /// 这一集的流表、或 base 族错误信封的显式拒绝——如 110001「未知
-    /// 异常」，见 play_url::check_model_code）。transparent 同
-    /// [`AppError::Rejected`] 口径；与 [`AppError::EmptyResponse`] 分开：
-    /// 这是取流链路的专属信号，调用方据此如实报「取流失败」，不做任何
-    /// 身份层面的兜底；service 的取流健康守护（device::note_stream_miss）
-    /// 据此对照探测自愈。
+    /// 取流未命中：服务端对这个设备/请求没有发货（200+0、响应里没有流表、或 base 族错误信封的显式拒绝如 110001）。transparent 同 [`AppError::Rejected`] 口径；与 [`AppError::EmptyResponse`] 分开——调用方据此如实报「取流失败」不做身份层兜底，取流健康守护（device::note_stream_miss）据此换新注册自愈。
     #[error("{0}")]
     StreamMiss(String),
 
-    /// 条目类型未注册：取流分组 key 需要该 vid 的 content_type，
-    /// 注册表里没有。**不猜**（编一个 key 打过去即使偶然命中也是纯运气），
-    /// 报给调用方先拉分集档案（`fetch_episode_list` 会把整剧各集类型
-    /// 注册进表）再取流。transparent 同 [`AppError::Rejected`] 口径。
+    /// 条目类型未注册：取流分组 key 需要的 content_type 不在注册表。不猜 key（偶然命中也是运气），报给调用方先拉分集档案（注册整剧各集类型）再取流。
     #[error("{0}")]
     ContentTypeUnknown(String),
 
@@ -72,32 +52,19 @@ pub enum AppError {
     #[error("未找到: {0}")]
     NotFound(String),
 
-    /// 用户主动取消（一键暂停 / 停止单个任务）。
-    ///
-    /// 单独成变体而不是塞进 [`AppError::Io`]：调度器要靠它把「取消」与
-    /// 「磁盘真出错了」分开处理，中文字面量匹配迟早会被翻译或格式化改掉。
+    /// 用户主动取消（一键暂停 / 停止单个任务）。单独成变体：调度器要靠它区分「取消」与「磁盘真出错」，中文字面量匹配迟早被翻译或格式化改掉。
     #[error("已取消")]
     Cancelled,
 
-    /// 资源正被占用（如同一个输出的合并已经在跑）。
-    ///
-    /// 与 [`AppError::InvalidArgs`] 分开：这不是参数写错了，而是「现在不行、
-    /// 等一下」——前端要能提示用户稍后重试，而不是当成用法错误。
+    /// 资源正被占用（如同一个输出的合并已经在跑）。与 [`AppError::InvalidArgs`] 分开：不是用法错误，而是「现在不行、等一下」，前端要提示稍后重试。
     #[error("{0}")]
     Busy(String),
 
-    /// 当前平台不支持的功能（桌面专属能力被移动端调用）。
-    ///
-    /// transparent 同 [`AppError::Auth`] 口径——「仅桌面端可用」的完整语义
-    /// 就在消息里；i18n 资源刻意**不提供** `error.unsupported` 词条，前端
-    /// 归一（`localizedMessage`）查不到译文即回落 message 原文。
+    /// 当前平台不支持的功能（桌面专属能力被移动端调用）。transparent：「仅桌面端可用」语义就在消息里，i18n 刻意不提供 `error.unsupported` 词条，查不到译文即回落 message 原文。
     #[error("{0}")]
     Unsupported(String),
 
-    /// 内部错误（后台任务 join 失败等不应发生的状态）。
-    ///
-    /// 与 [`AppError::Network`] 分开：这不是网络问题，而是进程内部任务
-    /// 未能完成（如 `spawn_blocking` 的 join 失败）。
+    /// 内部错误（后台任务 join 失败等不应发生的状态），不是网络问题，别与 [`AppError::Network`] 混用。
     #[error("内部错误: {0}")]
     Internal(String),
 }
@@ -172,7 +139,6 @@ mod tests {
 
     #[test]
     fn cancelled_has_its_own_i18n_key() {
-        // 取消不是 IO 错误：前端要能把它和「磁盘满了」区别对待
         assert_eq!(AppError::Cancelled.i18n_key(), "error.cancelled");
         assert_ne!(
             AppError::Cancelled.i18n_key(),
@@ -182,8 +148,6 @@ mod tests {
 
     #[test]
     fn rejected_keeps_server_message_verbatim() {
-        // 服务端拒绝的原因（已添加过该表情 / 风控…）要原样透传，
-        // 不加类别前缀——前缀会把「重复收藏」说成「视频处理失败」。
         let e = AppError::Rejected("已添加过该表情".into());
         assert_eq!(e.i18n_key(), "error.rejected");
         assert_eq!(e.to_string(), "已添加过该表情");

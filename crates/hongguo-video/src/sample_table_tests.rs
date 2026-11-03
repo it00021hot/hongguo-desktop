@@ -1,14 +1,10 @@
-//! MP4 样本表解析的单元测试。
-//!
-//! 以 `#[path]` 挂到 `sample_table.rs` 下，`use super::*` 直接拿实现里的
-//! 私有函数与类型。
+//! MP4 样本表解析的单元测试（以 `#[path]` 挂到 `sample_table.rs` 下）。
 
 use super::*;
 use crate::fixtures::{TrackSpec, full_box, mp4};
 
 #[test]
 fn reads_stsz_variable_sizes() {
-    // stsz 载荷：sample_size(4)=0(变长) | count(4)=3 | sizes[3]
     let mut payload = 0u32.to_be_bytes().to_vec();
     payload.extend_from_slice(&3u32.to_be_bytes()); // count
     payload.extend_from_slice(&100u32.to_be_bytes());
@@ -25,7 +21,6 @@ fn reads_stsz_variable_sizes() {
 
 #[test]
 fn reads_stsz_constant_size() {
-    // sample_size(4)=256 | count(4)=4
     let mut payload = 256u32.to_be_bytes().to_vec();
     payload.extend_from_slice(&4u32.to_be_bytes());
     let stsz = full_box(b"stsz", &payload);
@@ -38,8 +33,7 @@ fn reads_stsz_constant_size() {
 
 #[test]
 fn reads_video_codec_parameters_from_stsd() {
-    // 走完整解析路径：编码参数要真的从 sample entry 里读出来，
-    // 同样两个 hvc1，1080p 与 720p 拼在一起是坏文件
+    // 走完整解析路径：同样两个 hvc1，1080p 与 720p 拼在一起是坏文件
     let data = mp4(&[TrackSpec::video(1, b"hvc1", 1920, 1080)]);
     let tracks = collect_tracks(&data).expect("应能解析出轨道");
 
@@ -89,8 +83,7 @@ fn reads_video_parameters_beside_a_second_video_track() {
 
 #[test]
 fn truncated_stsd_leaves_parameters_at_zero_without_panicking() {
-    // entry 的前 24 字节（reserved / data_reference_index / pre_defined）在，
-    // width 与 height 被截断
+    // entry 的前 24 字节（reserved / data_reference_index / pre_defined）在，width 与 height 被截断
     let mut payload = 1u32.to_be_bytes().to_vec(); // entry_count
     payload.extend_from_slice(&24u32.to_be_bytes()); // entry size
     payload.extend_from_slice(b"hvc1"); // format
@@ -135,7 +128,6 @@ fn stsd_shorter_than_the_entry_header_is_ignored() {
 
 #[test]
 fn single_chunk_offsets_advance_by_sample_size() {
-    // stsz 变长 3 个样本 100/200/300
     let mut payload = 0u32.to_be_bytes().to_vec();
     payload.extend_from_slice(&3u32.to_be_bytes());
     for size in [100u32, 200, 300] {
@@ -146,24 +138,20 @@ fn single_chunk_offsets_advance_by_sample_size() {
     let mut info = TrackInfo::default();
     read_stsz(&stsz, 8, stsz.len() - 8, &mut info);
 
-    // stco 单 chunk：entry_count(4)=1 | offset(4)=1024
+    // stco 单 chunk
     let mut stco_payload = 1u32.to_be_bytes().to_vec();
     stco_payload.extend_from_slice(&1024u32.to_be_bytes());
     let stco = full_box(b"stco", &stco_payload);
     info.wide_offsets = false;
     read_chunk_offsets(&stco, 8, stco.len() - 8, &mut info);
 
-    // 单 chunk 场景下样本偏移按各样本自身大小顺序累加
     assert_eq!(info.samples, vec![(1024, 100), (1124, 200), (1324, 300)]);
     assert_eq!(info.samples.iter().map(|(_, size)| size).sum::<u64>(), 600);
 }
 
-/// 畸形巨 count 的回归锁：`vec![(0,size); count]` 按 count 直接预分配，
-/// 不卡上限时 0x5555_5555 这类 count = 一笔 22.9GB 的分配请求，进程直接 abort。
-/// 防御后 count 被卡到切片字节数内。
+/// 畸形巨 count 的回归锁：`vec![(0,size); count]` 按 count 直接预分配，0x5555_5555 = 一笔 22.9GB 的分配请求，进程直接 abort；防御后 count 被卡到切片字节数内。
 #[test]
 fn absurd_stsz_count_is_capped_not_allocated() {
-    // 定长分支：sample_size=256 | count=0x5555_5555
     let mut payload = 256u32.to_be_bytes().to_vec();
     payload.extend_from_slice(&0x5555_5555u32.to_be_bytes());
     let stsz = full_box(b"stsz", &payload);
@@ -176,7 +164,6 @@ fn absurd_stsz_count_is_capped_not_allocated() {
         "count 必须被卡到切片字节数内"
     );
 
-    // 变长分支：sample_size=0 | count=0x5555_5555 | 无数据
     let mut payload = 0u32.to_be_bytes().to_vec();
     payload.extend_from_slice(&0x5555_5555u32.to_be_bytes());
     let stsz = full_box(b"stsz", &payload);

@@ -1,10 +1,6 @@
 import { DANMAKU_EMOJI_FILES } from './danmaku-emoji-files.generated';
 
-/**
- * 弹幕表情：上游文本里表情以 `[名字]` 代码出现，
- * 渲染时按映射表换成打包进应用的 webp 图片——评论/弹幕同源，评论区
- * 以后要渲染表情也走这里。
- */
+/** 弹幕表情：上游文本里表情以 `[名字]` 代码出现，渲染时按映射表换成打包进应用的 webp 图片（评论/弹幕同源）。 */
 
 // 文件名 → 打包后的资源 URL（构建期哈希，可直接当 img src 用）
 const URLS = import.meta.glob<string>('../assets/emoji/*.webp', {
@@ -21,9 +17,8 @@ const EMOJI_BY_NAME = new Map(
 );
 
 /**
- * 一段解析结果：纯文本、一张表情图，或一个 @ 提及段。
- * 提及段原文形如 `@名字\uFFFC`（U+FFFC 是提及段占位符，服务端契约），
- * `value` 保留原文供序列化还原，`name` 是纯名字供渲染。
+ * 一段解析结果：纯文本、一张表情图，或一个 @ 提及段。提及段原文形如
+ * `@名字\uFFFC`（U+FFFC 是提及段占位符，服务端契约），value 保留原文供序列化，name 是纯名字供渲染。
  */
 export type EmojiSegment =
   | { kind: 'text'; value: string }

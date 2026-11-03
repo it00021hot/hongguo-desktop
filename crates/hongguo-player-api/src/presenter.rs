@@ -1,10 +1,6 @@
-//! 系统播放器呈现层契约（壳无关）。
-//!
-//! [`VideoPresenter`] 只描述「画面往哪儿摆、怎么适配、可见性」这些宿主能
-//! 控制的量；播放控制语义（play/pause/seek/rate）与具体平台实现绑定。
-//! 各平台实现在 `hongguo-player-macos`（AVPlayer + AVPlayerLayer）与
-//! `hongguo-player-windows`（MediaEngine + DirectComposition 视频位），
-//! 平台专属依赖只在那里出现；本 crate 不依赖任何 UI 框架。
+//! 系统播放器呈现层契约（壳无关）：[`VideoPresenter`] 只描述「画面往哪儿摆、怎么适配、可见性」这些宿主能控制的量，
+//! 播放控制语义与具体平台实现绑定。各平台实现在 `hongguo-player-macos`（AVPlayer + AVPlayerLayer）与
+//! `hongguo-player-windows`（MediaEngine + DirectComposition 视频位），平台专属依赖只在那里出现；本 crate 不依赖任何 UI 框架。
 
 /// 舞台矩形（逻辑像素，窗口内容区左上原点）。
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -1,16 +1,7 @@
-//! 表情面板（官方三档：系统表情 / 第三方 GIF / 自定义表情）。
-//!
-//! - **系统表情**：壳内内置（webp + `[名字]` 文本码），发评论仍是纯文本——
-//!   与 Tauri 壳同口径，不走服务端；
-//! - **第三方 GIF**（官方 GIF tab）：服务端 `search_type=2` 下发，官方面板
-//!   顶部标「内容来自于第三方」；选中后作为**附图**发送（`image_data` +
-//!   `business_param.emoji_scene_type=2`）；
-//! - **自定义表情**（官方 ♡ tab）：服务端 `search_type=4&keyword=profile`
-//!   下发我上传的表情（`emoji_scene_type=4`）。
-//!
-//! 图源：官方 emoticon 的 `web_uri` 是静态图（jpeg/png/webp），`dynamic_url`
-//! 才是动图——壳内 `image` crate 不解 gif，按静态图画（Tauri 壳那边放的是
-//! 动图，两边形态差异在此显式说明）。
+//! 表情面板（官方三档：系统表情 / 第三方 GIF / 自定义表情）。系统表情壳内
+//! 内置（webp + `[名字]` 文本码），发评论仍是纯文本；第三方与自定义为服务端
+//! 下发、选中后作为附图发送。图源取 `dynamic_url` 优先（动图），缓存键用
+//! `web_uri`（评论渲染只认它）。
 
 use std::sync::Arc;
 
@@ -30,11 +21,10 @@ const EMOTICON_MAX_FRAMES: usize = 30;
 /// 面板一次预解码的图数（其余等用户滚动时再拉，避免一开面板就几十个请求）。
 const EMOTICON_PREWARM: usize = 40;
 
-/// 面板档位（官方面板顺序：搜索 → 系统表情 → 自定义表情 → 第三方 GIF，
-/// 与 Tauri `EmoticonPanel` 四档同序）。
+/// 面板档位（官方面板顺序：搜索 → 系统表情 → 自定义表情 → 第三方 GIF）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum EmoticonTab {
-    /// 搜索表情（官方 `search_type=1`，逐字前缀匹配）。
+    /// 搜索表情（逐字前缀匹配）。
     Search,
     /// 系统表情（壳内内置）。
     #[default]
@@ -45,7 +35,7 @@ pub(crate) enum EmoticonTab {
     Own,
 }
 
-/// 评论本地图片附件草稿（选图不请求网络，发表时才上传——Tauri 同口径）。
+/// 评论本地图片附件草稿（选图不请求网络，发表时才上传）。
 #[derive(Clone)]
 pub(crate) struct LocalImageAttachment {
     pub bytes: Vec<u8>,
@@ -66,8 +56,7 @@ pub(crate) struct EmoticonPanel {
     pub third_party: Vec<Emoticon>,
     /// 自定义表情列表。
     pub own: Vec<Emoticon>,
-    /// 搜索结果（关键词非空才请求，空关键词保持空列表——Tauri 的
-    /// `enabled && trimmed.length > 0` 同一门）。
+    /// 搜索结果（关键词非空才请求，空关键词保持空列表）。
     pub search: Vec<Emoticon>,
     /// 远端列表在拉。
     pub loading: bool,
@@ -137,7 +126,7 @@ impl HomeView {
             .unwrap_or_default()
     }
 
-    /// 搜索表情（逐字前缀匹配：输入变化即查，Tauri useQuery 同口径）。
+    /// 搜索表情（逐字前缀匹配：输入变化即查）。
     pub(crate) fn search_emoticons(&mut self, cx: &mut Context<Self>) {
         let keyword = self.emoticon_keyword(cx);
         if keyword.is_empty() {
@@ -266,12 +255,9 @@ impl HomeView {
         .detach();
     }
 
-    /// 收藏一张表情到「我的表情」（官方同款：长按/右键 → 「添加到表情」）。
-    ///
-    /// 官方形态：`collect_type=1`，`image_id` 填**源表情 id**，
-    /// `image_url` 填该表情的静态 URL（官方收藏动图表情时传的也是静态
-    /// `web_uri`，`image_type` 仍是 2）；服务端把它并进「我的表情」列表
-    /// （与上传的自定义表情同一列表，`search_type=4&keyword=profile`）。
+    /// 收藏一张表情到「我的表情」（长按/右键 → 「添加到表情」）：`image_id`
+    /// 填源表情 id，`image_url` 填静态 URL（收藏动图也传静态 `web_uri`）；
+    /// 服务端并进「我的表情」同一列表。
     pub(super) fn collect_emoticon(&mut self, item: &Emoticon, cx: &mut Context<Self>) {
         let request = EmoticonCollectRequest {
             collect_type: COLLECT_TYPE_ADD,
@@ -284,10 +270,8 @@ impl HomeView {
         self.run_collect_emoticon(request, "player.emoticon.addDone", cx);
     }
 
-    /// 从「我的表情」删除（官方同款：长按/右键 → 「删除表情」）。
-    ///
-    /// 官方形态：同一端点、`collect_type=2`；服务端回
-    /// `image_data: null`，没有可回显的表情对象。
+    /// 从「我的表情」删除（长按/右键 → 「删除表情」）：同一端点、
+    /// `collect_type=2`；服务端无可回显对象。
     pub(super) fn delete_emoticon(&mut self, item: &Emoticon, cx: &mut Context<Self>) {
         let request = EmoticonCollectRequest {
             collect_type: COLLECT_TYPE_DELETE,
@@ -300,10 +284,8 @@ impl HomeView {
         self.run_collect_emoticon(request, "player.emoticon.removeDone", cx);
     }
 
-    /// 发收藏/删除请求，成功后刷新「我的表情」列表并回执。
-    ///
-    /// 失败必须可见：服务端拒绝（如「已添加过该表情」）沉默下去，用户会
-    /// 以为收藏成功了（Tauri 壳的全局错误 toast 同位）。
+    /// 发收藏/删除请求，成功后刷新「我的表情」列表并回执。失败必须可见：
+    /// 服务端拒绝沉默下去，用户会以为收藏成功了。
     fn run_collect_emoticon(
         &mut self,
         request: EmoticonCollectRequest,
@@ -339,12 +321,8 @@ impl HomeView {
     }
 
     /// 请求一批表情图位图（面板/评论里的图共用一份缓存，URL 命中或在飞
-    /// 即跳过）。
-    ///
-    /// 取图 URL 用 `dynamic_url` 优先——官方 `web_uri` 是静态图（jpeg/png/
-    /// webp），动图在 `dynamic_url`（GIF）；缓存键仍用 `web_uri`（评论渲染
-    /// 只认它）。在飞去重由 [`HomeView::emoticon_fetching`] 承担，滚动到
-    /// 哪请求到哪（渲染期每帧调用本函数，命中后零开销）。
+    /// 即跳过）。取图 URL 用 `dynamic_url` 优先（动图），缓存键仍用 `web_uri`
+    /// （评论渲染只认它）；在飞去重由 [`HomeView::emoticon_fetching`] 承担。
     pub(crate) fn request_emoticon_images(&self, items: &[Emoticon], cx: &Context<Self>) {
         let to_fetch: Vec<(String, String)> = items
             .iter()
@@ -409,12 +387,8 @@ impl HomeView {
     }
 
     /// 选本地图片（评论附图与「上传自定义表情」共用入口）：系统文件面板 →
-    /// 桥线程读字节 + 解码，回主线程按用途分流。
-    ///
-    /// 面板必须用 rfd 的 **Async**FileDialog：同步版在 GPUI 事件回调里阻塞
-    /// 主线程，模态递归进事件循环时 GPUI 的上下文 RefCell 还在借用中，
-    /// 重入直接 panic（`RefCell already borrowed`）；异步版
-    /// 由 rfd 派发到主线程呈现、回调经 waker 驱动，不嵌套 GPUI 的派发。
+    /// 桥线程读字节 + 解码。必须用 rfd 的 AsyncFileDialog——同步版在 GPUI
+    /// 事件回调里阻塞主线程，模态递归重入直接 panic（RefCell already borrowed）。
     pub(super) fn pick_local_image(&mut self, purpose: LocalImagePurpose, cx: &mut Context<Self>) {
         let rx = bridge::spawn(async move {
             let Some(file) = rfd::AsyncFileDialog::new()
@@ -445,7 +419,7 @@ impl HomeView {
                         height: raw.height,
                         format: raw.format,
                     });
-                    // 本地图与表情图两态互斥（官方同款：新附件顶掉旧附件）
+                    // 本地图与表情图两态互斥（新附件顶掉旧附件）。
                     view.comment_attachment = None;
                     cx.notify();
                 }
@@ -464,8 +438,8 @@ impl HomeView {
         .detach();
     }
 
-    /// 上传自定义表情（官方两步：`upload/picture` → collect 收藏进「我的
-    /// 表情」）；成功回执与列表刷新走收藏同一条链。
+    /// 上传自定义表情（两步：`upload/picture` → collect 收藏进「我的表情」）；
+    /// 成功回执与列表刷新走收藏同一条链。
     fn upload_custom_emoticon(&mut self, raw: LocalImageRaw, cx: &mut Context<Self>) {
         if self.emoticon_panel.uploading {
             return;

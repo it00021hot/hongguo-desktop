@@ -1,10 +1,7 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 追更（官方 App API，登录态）
-
 /** 追更域 IPC 封装（登录墙在 service 层，未登录报 `Auth` 原文）。 */
 export const follow = {
-  /** 追更 / 取消追更一部剧。 */
   update: (seriesId: string, follow: boolean) => call('follow_update', { seriesId, follow }),
   /** 追更列表一页；cursor 传上页响应的 cursor（首页空串）。 */
   updates: (cursor: string) => call('follow_updates', { cursor }),
@@ -14,7 +11,6 @@ export const follow = {
   notices: () => call('follow_notices'),
   /** 标记提醒已读，返回改动行数。 */
   noticesRead: (ids: number[]) => call('follow_notices_read', { ids }),
-  /** 清空提醒。 */
   noticesClear: () => call('follow_notices_clear'),
   /** 手动检查更新，返回新增提醒数（未登录报错——用户主动动作要有回音）。 */
   checkUpdates: () => call('follow_check_updates'),

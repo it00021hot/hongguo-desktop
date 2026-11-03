@@ -6,10 +6,8 @@ use hongguo_common::model::{PlayRequest, PlayResponse};
 use hongguo_common::{AppError, AppResult};
 use hongguo_store::Store;
 
-/// 解析播放请求。
-///
-/// `preferOnline` 只在**本地没有这一集**时才起作用：已经下好的文件永远走
-/// `hongguo-local://`，没必要重新下一遍。
+/// 解析播放请求。`preferOnline` 只在**本地没有这一集**时才起作用：
+/// 已下好的文件永远走 `hongguo-local://`，没必要重新下一遍。
 pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
     // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏
@@ -47,13 +45,9 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         )));
     }
 
-    // 兜底走在线流。vid 取自**剧集档案的分集表**（解析剧集时写入），
-    // 不能查下载任务表：任务表只记下载进度，没下过的剧集在那里查不到 vid，
-    // 结果就是「点开没下过的集永远播不了」。
-    //
-    // 档案里查不到就当场解析一次。播放页会同时发「拉分集」和「起播」两个请求，
-    // 起播先到是常态；不在这儿补一次解析，第一下点开必然报「第 N 集缺少 vid」。
-    // （Store 是 DB 线程门面，查询本身阻塞完成，没有「锁跨 await」问题。）
+    // 兜底走在线流。vid 取自**剧集档案的分集表**（解析剧集时写入）——任务表只记下载进度，
+    // 没下过的集在那里查不到 vid。档案里查不到就当场解析一次：播放页会同时发「拉分集」
+    // 和「起播」两个请求，起播先到是常态，不补一次解析第一下点开必然报「缺少 vid」。
     let known = episode_vid(&state.store, &request.series_id, request.vid_index);
     let vid = match known {
         Some(vid) => vid,
@@ -73,9 +67,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     };
 
-    // 剧类型的持久来源：档案在库时整剧各集按 content_type 注册进取流
-    // 注册表（真播批量分组 key / 单集 content_type 用，连播后续集靠它）。
-    // 类型未知（旧档案 0）跳过——不猜值，取流走单集占位（官方回落链）。
+    // 剧类型的持久来源：档案在库时整剧各集按 content_type 注册进取流注册表
+    //（连播后续集靠它）。类型未知（旧档案 0）跳过——不猜值，取流走单集占位。
     if let Ok(Some(series)) = state.store.series_by_id(&request.series_id)
         && series.content_type != 0
     {
@@ -88,11 +81,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
     match online::prepare(state, &vid, &progress_key, request.definition).await {
         Ok(prepared) => {
-            // 连播向后预取：流预取与无 HEVC 机器的预转共用 Settings.
-            // prefetch_episodes 档（issue #6：0=关闭，1=仅下一集，最多 3）。
-            // 集间切换此前完全裸奔，自动连播每集都冷走取流表+探针链
-            // （实测 1.4s）——切剧预取只救得了「换一部剧」。幂等/去重/
-            // 礼让在各 prefetch 内；越界集号由 episode_vid 返 None 兜住。
+            // 连播向后预取：流预取与无 HEVC 机器的预转共用 Settings.prefetch_episodes 档
+            //（0=关闭）；幂等/去重/礼让在各 prefetch 内，越界集号由 episode_vid 兜住。
             crate::play_service::schedule_following_episodes(
                 state,
                 &request.series_id,
@@ -118,10 +108,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     }
 }
 
-/// 从剧集档案的分集表里取某一集的 vid。
-///
-/// 剧集档案是分集目录的唯一权威来源：`resolve_series` 拉到的分集（含 vid）
-/// 会写进数据库。下载任务表只记进度，未下载的集在那里根本没有记录。
+/// 从剧集档案的分集表里取某一集的 vid。剧集档案是分集目录的唯一权威来源
+///（`resolve_series` 拉到的分集含 vid 会写进数据库）；下载任务表只记进度，未下载的集没有记录。
 pub(crate) fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Option<String> {
     store
         .series_by_id(series_id)
@@ -154,7 +142,6 @@ mod tests {
 
     #[test]
     fn finds_vid_for_undownloaded_episode() {
-        // 这一集从没下过，下载任务表里必然没有记录——正是原来的 bug 场景
         let store = store_with(vec![
             Episode {
                 vid_index: 1,
@@ -185,7 +172,6 @@ mod tests {
 
     #[test]
     fn blank_vid_is_treated_as_missing() {
-        // 分集在但 vid 是空串（接口没给）时不能拿空串去取流
         let store = store_with(vec![Episode {
             vid_index: 1,
             vid: "   ".into(),

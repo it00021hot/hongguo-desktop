@@ -1,7 +1,5 @@
-//! 「我的」系列表页右上角的搜索框（对齐官方客户端的历史/收藏/点赞/预约）。
-//!
-//! 纯客户端过滤：列表数据本来就全量在内存里，按标题/seriesId contains 即可，
-//! 不牵动后端。四页共用同一形态（放大镜内嵌 + 细输入框）。
+//! 「我的」系列表页右上角的搜索框（历史/收藏/点赞/预约四页共用同一形态）。
+//! 纯客户端过滤：列表数据全量在内存，按标题/seriesId contains 即可，不牵动后端。
 
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';

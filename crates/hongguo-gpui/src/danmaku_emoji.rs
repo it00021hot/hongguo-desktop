@@ -1,9 +1,6 @@
-//! 弹幕表情：`[名字]` 代码 → 打包 webp 的解码与渲染分段。
-//!
-//! 上游文本里表情以 `[名字]` 代码出现（1–8 个非空白
-//! 字符），渲染时按映射表换打包的 webp 图——弹幕/评论同源。webp 解码用
-//! image crate（feature "webp" 已启用），首次用到才解码并缓存
-//! （`RenderImage` 构造走 [`crate::image_upload::render_image`] 唯一入口）。
+//! 弹幕表情：`[名字]` 代码 → 打包 webp 的解码与渲染分段（弹幕/评论同源）。
+//! webp 用 image crate 解码，首次用到才解码并缓存（`RenderImage` 构造走
+//! [`crate::image_upload::render_image`] 唯一入口）。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,12 +11,8 @@ use gpui_kit::prelude::*;
 
 pub(crate) use crate::emoji_files::EMOJI_FILES;
 
-/// 表情纹理边长：解码后预缩的目标（只缩不放）。120px 原图直接进 sprite
-/// atlas 时显示端只有 20~60 设备像素，而 gpui 的 atlas 不建 mipmap、shader
-/// 只有一层双线性采样，数倍硬缩每像素只采到 2×2 纹素，表情因此发糊；先在
-/// CPU 用高质量滤波缩到贴近显示尺寸，GPU 端倍率落回肉眼无损区间。72 覆盖
-/// 选择器 32px 格 ×2 倍 DPI；弹幕字号拉满的高 DPI 场景会有轻微放大，仍远
-/// 好于原图硬缩。
+/// 表情纹理边长：解码后预缩的目标（只缩不放）。gpui 的 atlas 不建 mipmap、
+/// 数倍硬缩每像素只采到 2×2 纹素、表情发糊——先 CPU 高质量缩到贴近显示尺寸。
 pub(crate) const EMOJI_TEXTURE_PX: u32 = 72;
 
 /// 一段解析结果：纯文本或一张表情图。

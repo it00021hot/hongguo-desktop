@@ -4,15 +4,8 @@ import { emoticon as emoticonCmd } from '../commands';
 import type { Emoticon, EmoticonCollectInput } from '../schema';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 表情（官方表情 / 第三方 GIF / 自定义表情）
-//
-// 官方三档来源：
-// - 第三方表情库：GIF tab，`search_type=2`，一页 100 条，按 offset 翻页；
-// - 我上传的自定义表情：♡ tab，`search_type=4&keyword=profile`；
-// - 关键词搜索：`search_type=1`，官方逐字前缀匹配。
-//
-// 表情是全站用户生产的素材（官方标注「内容来自于第三方」），按社交态
-// 数据处理：不缓存，挂载即拉。
+// 官方三档来源：第三方表情库（GIF tab，search_type=2，一页 100 条按 offset 翻页）、
+// 我上传的自定义表情（♡ tab，search_type=4&keyword=profile）、关键词搜索（search_type=1，逐字前缀匹配）。
 
 /** 第三方表情库（GIF tab）：分页无限滚动。 */
 export function useThirdPartyEmoticons(enabled: boolean) {
@@ -47,12 +40,7 @@ export function useEmoticonSearch(keyword: string, enabled: boolean) {
   });
 }
 
-/**
- * 上传自定义表情：先传图（`/reading/reader/upload/picture/`），再收藏
- * （`/reading/ugc/comment/emoticon/collect/v`）——官方是这两步。
- *
- * 成功后失效「我的表情」列表，新表情立刻出现在 ♡ tab。
- */
+/** 上传自定义表情：先传图再收藏（官方两步）；成功后失效「我的表情」列表，新表情立刻出现在 ♡ tab。 */
 export function useUploadCustomEmoticon() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -80,13 +68,7 @@ export function useUploadCustomEmoticon() {
   });
 }
 
-/**
- * 收藏一张已有表情到「我的表情」（长按表情 → 「添加到表情」）。
- *
- * 官方形态：`image_id` 填**源表情 id**，`image_url` 填该
- * 表情的静态 URL；服务端把它并进「我的表情」列表（与上传的自定义表情
- * 同一列表，同一档 `search_type=4&keyword=profile`）。
- */
+/** 收藏一张已有表情到「我的表情」：官方形态 image_id 填源表情 id、image_url 填静态 URL，并进「我的表情」同一列表。 */
 export function useCollectEmoticon() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -99,12 +81,7 @@ export function useCollectEmoticon() {
   });
 }
 
-/**
- * 从「我的表情」删除（长按自己的表情 → 「删除表情」）。
- *
- * 官方同款：同一端点、`collect_type=2`；服务端回
- * `image_data: null`，所以没有可回显的表情对象。
- */
+/** 从「我的表情」删除（官方同款端点，collect_type=2）；服务端回 image_data: null，没有可回显的表情对象。 */
 export function useDeleteEmoticon() {
   const queryClient = useQueryClient();
   return useMutation({

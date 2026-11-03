@@ -1,11 +1,7 @@
-//! Medusa 的 AES 变体。
+//! Medusa 的 AES 变体：JS 1:1 移植，禁改写法。
 //!
-//! 与标准 AES 的差异集中在三处：
-//! - S-Box 表按 khronos 低 2 位整体平移（从 4 张表里取一段）
-//! - 密钥扩展第 4/8/12 轮用改写的字节选择
-//! - 加密前后各有一层手写的位打包/位解包，不是标准的 ShiftRows
-//!
-//! 所以不能直接换成 `aes` crate 的标准实现。
+//! 与标准 AES 的差异集中在三处——S-Box 按 khronos 低 2 位整体平移、密钥扩展
+//! 第 4/8/12 轮字节选择改写、手写位打包/位解包非标准 ShiftRows——不能换成 `aes` crate。
 
 use crate::constants::sbox;
 use crate::primitives::xor_bytes;
@@ -169,15 +165,12 @@ impl AesV3 {
         out
     }
 
-    /// 加密任意长度输入。
-    ///
-    /// 先把源数据按 8 字节一组做位重排压成 32 字节，末尾补 0x01 标记，
-    /// 再按 16 字节分块 CBC 加密（IV 来自调用方，且每块用上一块密文）。
+    /// 加密任意长度输入：先按 8 字节一组位重排压成 32 字节（末尾补 0x01 标记），
+    /// 再按 16 字节分块 CBC 加密（IV 来自调用方，每块用上一块密文），
     /// 最后把派生出的 32 字节 keystream 反向掩码回源数据的保留位。
     pub fn encrypt(&self, data: &[u8], iv: &[u8]) -> Vec<u8> {
         let source = data.to_vec();
 
-        // 位打包：每 8 字节输入压成 1 字节有效负载
         let mut plaintext = [0u8; 32];
         for (i, item) in plaintext.iter_mut().enumerate().take(31) {
             let at = i * 8;
@@ -200,7 +193,6 @@ impl AesV3 {
             previous = value;
         }
 
-        // 把 keystream 的字节拆回源数据的保留位
         let mut out = source;
         for i in 0..31usize {
             let at = i * 8;
@@ -255,7 +247,6 @@ mod tests {
         let iv = crate::constants::medusa_aes_iv();
         let aes = AesV3::new(&key, 1_700_000_000);
         let out = aes.encrypt(&[0u8; 248], &iv);
-        // 1 字节 keystream 尾 + 248 字节掩码回写
         assert_eq!(out.len(), 249);
     }
 

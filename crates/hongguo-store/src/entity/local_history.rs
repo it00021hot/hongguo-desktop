@@ -1,8 +1,6 @@
-//! 本地观看历史的 SQL 读写（issue #10：未登录可记录/管理，登录后补传云端）。
+//! 本地观看历史的 SQL 读写：每剧一行（PRIMARY KEY series_id，行 = 最近看的那一集），与云端 read_history 的按剧聚合口径一致。
 //!
-//! 每剧一行（PRIMARY KEY series_id，行 = 最近看的那一集），与云端
-//! read_history 的按剧聚合口径一致。`reported` 标记该行是否已上报云端：
-//! UPSERT 一律清 0（写入即视为待同步），登录态上报成功后由 service 回置 1。
+//! `reported` 标记该行是否已上报云端：UPSERT 一律清 0（写入即视为待同步），登录态上报成功后由 service 回置 1。
 
 use turso::Value;
 
@@ -176,7 +174,6 @@ mod tests {
             assert!(pending_local_history(&db, 10).await.unwrap().len() == 1);
             mark_local_history_reported(&db, "s1").await.unwrap();
             assert!(pending_local_history(&db, 10).await.unwrap().is_empty());
-            // 再看同一部剧 → 待传重置（新进度还没报过云端）
             upsert_local_history(&db, &item("s1", 2)).await.unwrap();
             assert_eq!(pending_local_history(&db, 10).await.unwrap().len(), 1);
         });

@@ -1,10 +1,7 @@
 /**
- * 表情发送输入框（弹幕 / 单集评论 / 回复 / 剧评共用的统一封装）。
- *
- * 封装三处原本各自手写的接线：富文本输入（`[名字]` 表情即时渲染）+
- * 表情选择器开合 + ref 插入 + Enter 提交 + 发送按钮 pending 态。
- * 皮肤差异（控制栏胶囊 / 深色面板 / 浅色剧评）全部经 className 注入，
- * 组件本身不含任何业务（发送 mutation / 登录门槛归调用方）。
+ * 表情发送输入框（弹幕 / 单集评论 / 回复 / 剧评共用的统一封装）：富文本输入 +
+ * 表情选择器 + ref 插入 + Enter 提交 + 发送 pending 态。皮肤差异全经 className 注入，
+ * 组件不含业务（发送 mutation / 登录门槛归调用方）。
  */
 import { useImperativeHandle, useRef, useState } from 'react';
 import { ImageIcon } from 'lucide-react';

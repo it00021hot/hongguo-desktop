@@ -1,8 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-/** 播放器可自定义的动作（默认与抖音网页版一致，
- *  快进快退默认 ← →） */
+/** 播放器可自定义的动作（默认与抖音网页版一致，快进快退默认 ← →）。 */
 export type ShortcutAction = 'playPause' | 'seekBack' | 'seekForward' | 'stepPrev' | 'stepNext';
 
 /** 默认键位（仅本 store 内部使用；设置面板展示走 shortcutKeyLabel）。 */
@@ -21,7 +20,6 @@ interface ShortcutsState {
   reset: () => void;
 }
 
-/** 纯 UI 偏好：按键映射。与播放解耦，播放器 hook 从这里读。 */
 export const useShortcutsStore = create<ShortcutsState>()(
   persist(
     (set, get) => ({

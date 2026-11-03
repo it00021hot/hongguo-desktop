@@ -1,8 +1,6 @@
 /**
- * 与 Rust serde 模型对应的 zod schema（剧集域）。
- *
- * 这里是**唯一**的手写契约副本：Rust 侧 `domain/model/*` 改了字段，
- * 这里必须同步改，否则运行时才报错。类型检查的价值就在于此。
+ * 剧集域 zod schema（与 Rust serde 模型对应）。这里是唯一的手写契约副本：
+ * Rust 侧 `domain/model/*` 改了字段这里必须同步改，否则运行时才报错。
  */
 import { z } from 'zod';
 
@@ -35,12 +33,7 @@ export const seriesSchema = z.object({
 
 export type Series = z.infer<typeof seriesSchema>;
 
-/**
- * 一部剧「最近看到的那一集」（Rust `playback::SeriesProgress`）。
- *
- * 本地 playback 表 5 秒一写，是「继续看第 N 集」的第一真值；
- * 云端观看历史（约 1 分钟一报 + 缓存）只做没看过时的兜底。
- */
+/** 一部剧「最近看到的那一集」（Rust `playback::SeriesProgress`）；本地 playback 表 5 秒一写，是「继续看第 N 集」的第一真值，云端历史只做没看过时的兜底。 */
 export const seriesProgressSchema = z.object({
   vidIndex: z.number().int().positive(),
   currentTime: z.number().nonnegative(),

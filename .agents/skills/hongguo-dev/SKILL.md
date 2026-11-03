@@ -22,7 +22,7 @@ when_to_use: 在本仓库做任何开发（新增功能、修 bug、写组件/ho
 | 新增（或改动）IPC 命令、事件、外部 API 端点               | `references/ipc.md`（IPC / 协议是 Tauri 壳专属；外部 API 端点两壳共用）                                                           |
 | 写后端：command、service、store、迁移、测试               | `references/backend.md`（command 层仅 Tauri；service/store 两壳共用）                                                             |
 | 环境搭建 / 日常命令 / 调试 / 提交 / 发版                  | `references/workflow.md`（发版仅 Tauri；GPUI 壳调试与验收在 `gpui.md`）                                                           |
-| 对接官方 App 接口（抓包/端点/参数）                       | `docs/hongguo-api-endpoints.md`（仓库文档，改 domain/api 前必读）                                                                 |
+| 对接官方 App 接口（抓包/端点/参数）                       | `docs/hongguo-api-endpoints.md`（仓库文档，改 `crates/hongguo-api` 前必读）                                                       |
 | 逆向分析官方 APK（协议/端点考证）                         | `references/reverse.md`                                                                                                           |
 
 参考文档没覆盖的判断，回到两条元规则：**同一段逻辑只有一个明确归属**；**不为目录整齐制造转发文件**。
@@ -47,7 +47,7 @@ make release      # 打包发布版（Tauri 壳）
 4. **签名后不能再动 url/body/query**（`signer/ticket.rs` 产出 x-gorgon 等五件套后，连 query 顺序、URL 编码方式都会失配）。
 5. **锁永远不跨 await**（parking_lot guard 非 Send，app_state.rs 模块注释是铁律）。
 6. **Cargo release profile 绝不能加 `panic = "abort"`**——会让 wry objc2 catch 与 protocol 层 catch_unwind 两道防线静默失效。
-9. **signer/ 是 JS 1:1 移植，禁改写法**；vendor/ 四个 patch 依赖有「上游修复后回收」约定。
+9. **signer/ 是 JS 1:1 移植，禁改写法**；vendor/ 两个 patch（`gpui-pre-windows`、`tauri-plugin-webdriver`）有「上游修复后回收」约定。
 10. **开发在 dev 分支**；提交信息按 dev-habits『commit message 规范』（Conventional Commits），本项目附加中文描述；纯移动/结构拆分与行为修改分开提交。
 12. **对接官方接口禁止猜参数**——照 `docs/hongguo-api-endpoints.md` 抓包逐字段对齐（audit.py 出参数表），103008「无社区功能」这类报错八成是形态不对而不是权限。
 13. **抓包对齐必须「请求 + 响应 + UI 效果」三点一线，只对齐请求等于没对齐**（2026-10-10 剧评回复返工实录）：① 响应 body 逐字段解剖——发送类接口（comment/add、reply/add）的响应是**完整对象回显**（头像/昵称/uid/时间/计数/评分），官方 App 把它整个插进列表当 UI 数据源，只取 code/id 丢弃对象 = 自己手拼简陋条目 = 缺 userId 删除按钮出不来、样式与官方 App 两样；② 计数类字段（digg_count 等）服务端有延迟，官方 App UI 是本地 ±1 乐观更新，不抄这层等于「点了没反应」；③ 对照官方 App 实操截图/逆向代码核对**渲染效果**（展开后长什么样、置顶不置顶、回显什么字段），「接口能通」不等于「效果对齐」。逆向官方 APK 时把它的 onSuccess 数据流（响应对象流向哪个缓存/列表）一并拆出来。
@@ -72,7 +72,7 @@ make release      # 打包发布版（Tauri 壳）
 **平台实现一律分 crate**（与媒体层 `hongguo-media-platform-*` 同一口径，不为目录整齐造转发文件）：
 
 - 回放契约 `hongguo-player-api`（`PlayerEvent`/`PlaySource`/`PlayerLike`/舞台几何/`HostWindow`）——不吃 UI、不吃平台实现；
-- 系统播放器实现 `hongguo-player-macos`（AVPlayer）/ `hongguo-player-windows`（MediaEngine + DComp 视频位），平台依赖全在各自 target 表，`#![cfg(target_os = …)]`；
+- 系统播放器实现 `hongguo-player-macos`（AVPlayer）/ `hongguo-player-windows`（MediaEngine frame-server：每帧 `TransferVideoFrame` 写入渲染器纹理，视频 quad 与 GPUI 同画布），平台依赖全在各自 target 表，`#![cfg(target_os = …)]`；
 - 门面 `hongguo-player` 按 target 分派；壳只依赖门面，`#[cfg(target_os)]` 只允许出现在门面与 `platform` 门面里，业务/视图层出现平台分支即返工。
 
-GPUI 壳本身是单 crate；壳内**唯一**允许的平台代码是 `platform/`（业务语义门面，两端各有实现文件）与 `av_spike/`（macOS Phase 0 诊断，`HONGGUO_AV_SPIKE=1`）。新增平台能力先问「能不能进 `hongguo-player-*` / `hongguo-media-platform-*`」，不能才考虑 `platform/`。
+GPUI 壳本身是单 crate；壳内允许的平台代码是 `platform/`（业务语义门面，`macos` / `windows` 两端实现）+ `av_spike/`（macOS Phase 0 诊断，`HONGGUO_AV_SPIKE=1`）+ 入口级 `macos.rs` / `win32.rs`。新增平台能力先问「能不能进 `hongguo-player-*` / `hongguo-media-platform-*`」，不能才考虑 `platform/`。

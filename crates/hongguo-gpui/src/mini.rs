@@ -1,20 +1,14 @@
-//! 小屏播放的窗口几何（Tauri `enter_mini_screen`/`exit_mini_screen` 对齐）：
-//! **同一个窗口**缩成 480×270、落到工作区右下角，退出按快照原样还原——
-//! 不另开窗口、不藏窗、不暂停，播放零中断（「独立置顶小窗」是 Tauri 侧
-//! 已否决的杜撰设计，见 hongguo-tauri `app_cmd.rs` 的注释）。
-//!
-//! 平台差异全部在 [`crate::platform`]：落位公式、坐标空间、边框换算各自
-//! 实现在 windows/macos 子树里，本模块只做业务编排（快照 → 落位 → 还原）。
+//! 小屏播放的窗口几何：同一个窗口缩成 480×270、落到工作区右下角，退出按
+//! 快照原样还原——不另开窗口、不藏窗、不暂停，播放零中断。平台差异全部在
+//! [`crate::platform`]，本模块只做业务编排（快照 → 落位 → 还原）。
 
 use gpui_kit::Window;
 
 pub(crate) use crate::platform::WindowSnapshot;
 
-/// 进入小屏：快照 → 落位。上次小窗几何有效（不小于小屏恢复下限且落在
-/// 任一显示器内）就原样回去——三种窗态各记各的槽位，切形态互不覆盖；
-/// 没有记忆（首次进小屏）才回落 480×270 工作区右下角默认落角。几何不可
-/// 得时返回 `None`，调用方保持原状（与 Tauri 幂等注释同口径：已在小屏时
-/// 调用方不得再进来，否则快照会被小屏几何覆盖）。
+/// 进入小屏：快照 → 落位。上次小窗几何有效就原样回去（三种窗态各记各的
+/// 槽位），没有记忆才回落 480×270 右下角默认落角。几何不可得时返回 `None`，
+/// 调用方保持原状（已在小屏时调用方不得再进来，否则快照会被覆盖）。
 pub(crate) fn enter(window: &mut Window, cx: &gpui_kit::App) -> Option<WindowSnapshot> {
     let saved = crate::platform::snapshot(window)?;
     let prefs = crate::ui_prefs::load();

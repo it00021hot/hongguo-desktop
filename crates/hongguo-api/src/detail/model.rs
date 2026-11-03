@@ -42,9 +42,8 @@ pub struct EpisodeList {
     pub episodes: Vec<Episode>,
     /// 全剧收藏数（video_data.followed_cnt，右栏「☆ N」数据源）
     pub followed_cnt: i64,
-    /// 剧的条目类型（video_data.content_type：漫剧 1004 / 真人剧 1 / 书城
-    /// 条目 1001…）。真播批量分组 key 与单集请求 content_type 的持久来源；
-    /// 0 = 响应未带（取流走单集占位值）。
+    /// 剧的条目类型（video_data.content_type：漫剧 1004 / 真人剧 1 / 书城条目 1001…）；
+    /// 真播批量分组 key 与单集请求 content_type 的持久来源；0 = 响应未带（取流走单集占位值）。
     pub content_type: i64,
 }
 

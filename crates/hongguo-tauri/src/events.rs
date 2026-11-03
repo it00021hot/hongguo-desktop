@@ -1,11 +1,6 @@
-//! service 事件 → 前端事件的转发适配器。
+//! service 事件 → 前端事件的转发适配器：订阅一次，逐条映射为**事件名 + 载荷**原样 `app.emit`。
 //!
-//! service 经 `hongguo_service::events::ServiceEvent` 发布业务事件；本模块
-//! 订阅一次并逐条映射为**事件名 + 载荷**原样 `app.emit`——事件名与载荷结构
-//! 与前端 `service/tauri/types.ts` 的 EVENTS / zod schema 互为镜像（红线 3），
-//! 改任何一侧必须同 commit 改另一侧。
-//!
-//! 订阅须在 bootstrap 阶段建立（早于启动期就可能发布事件的下载恢复）。
+//! 事件名与载荷结构与前端 `service/tauri/types.ts` 的 EVENTS / zod schema 互为镜像（红线 3），改任何一侧必须同 commit 改另一侧；订阅须在 bootstrap 阶段建立（早于启动期就可能发布事件的下载恢复）。
 
 use hongguo_service::app_state::AppState;
 use hongguo_service::download_service::events::names;
@@ -31,9 +26,7 @@ pub fn subscribe(app: &tauri::AppHandle, state: &AppState) {
     });
 }
 
-/// 事件 → (名, 载荷) 映射表。
-///
-/// 新增事件类型必须在这里登记，并把事件名同步到前端 `EVENTS`。
+/// 事件 → (名, 载荷) 映射表。新增事件类型必须在这里登记，并把事件名同步到前端 `EVENTS`。
 fn forward(app: &tauri::AppHandle, event: ServiceEvent) {
     match event {
         ServiceEvent::DownloadTaskAdded(task) => {
@@ -93,8 +86,6 @@ mod tests {
     use hongguo_service::login_service::events::LoginMfaStateEvent;
     use hongguo_service::play_service::online::OnlineProgressEvent;
 
-    /// 事件映射表守护：每个 ServiceEvent 变体都有确定的前端事件名
-    /// （名字集与前端 `EVENTS` 一一对应，改一侧必须同 commit 改另一侧）。
     #[test]
     fn event_names_are_stable() {
         let pairs: Vec<(&str, ServiceEvent)> = vec![
@@ -205,8 +196,6 @@ mod tests {
                 ServiceEvent::DeviceRegistered("9999999999999999".into()),
             ),
         ];
-        // 映射表在 forward() 里；这里锁定「一个变体一个名字」的名字集，
-        // 防止将来加变体时只加事件不登记（前端订阅会静默失效）。
         let names: Vec<&str> = pairs.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,

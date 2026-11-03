@@ -14,12 +14,7 @@ function systemTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-/**
- * 亮/暗主题。
- *
- * 桌面应用没有 cookie，偏好只能落在 localStorage——用 zustand 的 persist
- * 中间件而不是手写 localStorage 读写，避免各处忘记同步。
- */
+/** 亮/暗主题：偏好落 localStorage（persist 中间件，避免手写读写各处不同步）。 */
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
@@ -44,7 +39,6 @@ export const useThemeStore = create<ThemeState>()(
   ),
 );
 
-/** 把主题写到 `<html class="dark">` 上。 */
 export function applyTheme(theme: Theme): void {
   const resolved: 'light' | 'dark' = theme === 'auto' ? systemTheme() : theme;
   document.documentElement.classList.toggle('dark', resolved === 'dark');

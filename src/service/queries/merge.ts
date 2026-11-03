@@ -7,19 +7,11 @@ import { EVENTS } from '../tauri/types';
 import type { MergeMode, MergeTask } from '../schema';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 合并
-
 export function useMergeTasks() {
   return useQuery({ queryKey: keys.mergeTasks, queryFn: merge.tasks });
 }
 
-/**
- * 可合并的剧列表。
- *
- * 候选是按下载队列算出来的，所以下载一完成就要重取：刚下完的那部剧
- * 在这一刻才第一次成为可合并项。挂在下载收尾事件上而不是只靠进页面时拉一次，
- * 否则用户下完切到合并页看到的还是「没有已下载的分集」。
- */
+/** 可合并的剧按下载队列算，下载一完成就要重取（刚下完的剧此刻才第一次成为可合并项）；挂下载收尾事件失效。 */
 export function useMergeCandidates() {
   const qc = useQueryClient();
   const invalidate = useCallback(() => {
@@ -66,10 +58,8 @@ export function useMergeActions() {
 }
 
 /**
- * 订阅合并事件：进度、开始、完成、失败。
- *
- * 兼容合并要逐集转码，可能跑好几分钟，光靠 `useMergeTasks` 的一次性查询
- * 看不到过程。收尾事件触发失效查询，让列表拿到落盘后的最终状态。
+ * 订阅合并事件：兼容合并可能跑好几分钟，收尾事件触发失效让列表拿到落盘后的最终状态。
+ * 进度不失效查询，就地合并进缓存（同 useDownloadTasks）。
  */
 export function useMergeEvents() {
   const qc = useQueryClient();
@@ -77,9 +67,7 @@ export function useMergeEvents() {
     void qc.invalidateQueries({ queryKey: keys.mergeTasks });
   }, [qc]);
 
-  // 进度**不失效查询**，照下载那边的做法就地合并进缓存（见 useDownloadTasks）。
-  // 后端按 1% 步进推送（集内回调在后端打了闸），载荷里 percent/episodeCount
-  // 都已填好且同步落了库；就地合并只是让界面即时跟上，不依赖下次重查。
+  // 进度不失效查询：后端按 1% 步进推送（载荷已落库），就地合并只是让界面即时跟上
   const applyProgress = useCallback(
     (snapshot: MergeTask) => {
       qc.setQueryData<MergeTask[]>(keys.mergeTasks, (tasks) =>

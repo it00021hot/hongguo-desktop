@@ -1,12 +1,5 @@
-//! 协议路径的常驻工作池与 panic 加固。
-//!
-//! WKURLSchemeHandler 在**主线程**的 extern "C" 边界里调协议回调，panic
-//! 无法 unwind 出去，std 只能 abort 全进程（回调里 `thread::spawn` 失败
-//! panic 同样如此）。本模块承载三层防线的前两层：
-//! 1. 壳层注册处的回调体整体 `catch_unwind`（注册是 tauri 胶水，留在壳）；
-//! 2. 请求不「一条一线程」，由常驻工作池消费——无界 per-request 线程正是
-//!    上述 spawn 失败的温床；
-//! 3. serve 本身的 `catch_unwind` 同样在壳层（注册处），炸了回 500。
+//! 协议路径的常驻工作池与 panic 加固：协议回调跑在主线程 extern "C" 边界里，panic 无法 unwind 出去，std 只能 abort 全进程。
+//! 请求不由「一条一线程」消费，而由常驻工作池承接；回调体与 serve 的 `catch_unwind` 防线在壳层注册处。
 
 use std::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
@@ -46,8 +39,7 @@ impl WorkerPool {
                     let rx = std::sync::Arc::clone(&rx);
                     let prefix = prefix.clone();
                     move || loop {
-                        // 持锁等待下一条任务。锁只在 recv 期间持有，任务在锁外
-                        // 执行，任务里的 panic 不可能毒化这把锁
+                        // 锁只在 recv 期间持有，任务在锁外执行，panic 毒不了这把锁
                         let job = rx
                             .lock()
                             .expect("池接收端的锁只在 recv 时持有，不会中毒")
@@ -91,9 +83,7 @@ pub fn file_pool() -> &'static WorkerPool {
     FILE_POOL.get_or_init(|| WorkerPool::new(FILE_WORKERS, "hongguo-proto-file"))
 }
 
-/// 回调统一外壳：解析与派发都包在 `catch_unwind` 里。这是 panic 与 FFI
-/// 边界之间的最后一道闸——哪怕未来有人在回调路径上引入新的 panic 源，
-/// 也只是这一条请求失败，进程不会 abort。
+/// 回调统一外壳：解析与派发都包在 `catch_unwind` 里——panic 与 FFI 边界之间的最后一道闸，新 panic 源只损失一条请求，进程不 abort。
 pub fn guarded(pool: &'static WorkerPool, scheme: &str, mk_job: impl FnOnce() -> Job) {
     match catch_unwind(AssertUnwindSafe(mk_job)) {
         Ok(job) => pool.dispatch(job),
@@ -121,8 +111,6 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    /// panic 加固回归：serve 侧 panic 只能损失那一条请求，工作池与
-    /// 后续任务必须照常，不得拖垮整个进程。
     #[test]
     fn pool_serves_jobs_after_a_panicking_one() {
         let (tx, rx) = mpsc::channel();

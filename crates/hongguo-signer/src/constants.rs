@@ -1,17 +1,11 @@
 //! 字节系签名算法魔数常量。
 //!
-//! 来源：woshishiq1/drpys @ 22261ad  spider/js/红果果[短].js（GPL-3.0）
-//! 本文件由该源文件的常量原样提取生成，未做任何数值改动。
-//!
-//! ⚠️ 这些值是黑盒实测产物，与服务端一一对应。任何一项被改写或"顺手优化"，
-//!    产出的签名都会被服务端**静默丢弃**（表现为 HTTP 200 + 0 字节）。
-//!    所以排查签名问题要开 `RUST_LOG=debug` 看实际响应体字节数，不要只看状态码。
+//! 来源：woshishiq1/drpys @ 22261ad  spider/js/红果果\[短\].js（GPL-3.0），原样提取生成，未做任何数值改动。
+//! 值与服务端一一对应，任何改写都会让签名被静默丢弃（HTTP 200 + 0 字节）。
 
 use base64::Engine;
 
-/// AES 变体使用的 S-Box（Medusa 路径），4 组 × 256 字节。
-///
-/// 解码自 JS 的 `Buffer.from('...', 'base64')`。
+/// AES 变体使用的 S-Box（Medusa 路径），解码自 JS base64 常量，4 组 × 256 字节。
 pub fn sbox() -> Vec<u8> {
     static SBOX_B64: &str = "+n0Ia5xZs0sEXznQOEqRmQBnpiCf9U2Ccybu3xhmgzOAAxn72f6uqqmwUsYL83klTni0NqxdGieeiNu9PGPsSRXBMB/cuFbUbM3KCUPINaPvHvSW0vwOcnuUhNHqRVpiAj/TEoE0K91+5ijypUYTATsh9mE3KSoN7Yyvv51cuyR2D3XkU4nhmI2xmmVwT1RMWKtub4sjxAcRDLrPoKSO2AU9FLLadMPX577Wf95IFj6FkKFVt3dCIsmGUC4X+WQxLJvxbRxEaOPpqJOXyzJX6+Vxaq3AzMfF/WAdoi1Hp+JRaV56zgpBtpWP97mH4DoGEIq1+FvV8LyS/3wvwugbQOwb2r26mJEMsiuDQTRn+wrYdrVGBVlhI3WQhyrjUBVMrLF5667llUcEaPCGPVGLD8qO5LlO8hKCvA7V9+8oJc9bXelqVQLhM76T5/WtnT45JKji+hdX0HoNCDDWuKON/QeaxB5uImSX0h2wv0VmP2zd2yeApxHcpsVS+MC2yFwAc2B7oBkTqsk1SEvTpM2fmfMQREBUfin0Bh+iq6EvPPavhWI2IX9e3yAas7Tm/3KEj2UmlFp36kN4x0rMLBRrxuh0U/zUHM4xcAMYjJY4MonxOl/X+alpt2M3WMI7w3HLnpIBigtNiJu7T21v4P6lSd5WFgntnMEt7oF92XzRLkJbTcGmXepE/UVOG6E/0YnhfS+q26utWcuxzpooyeD2cDlK1/8w9d28VzsRjbLuALbmGlp8+d7EzS6Au7lMpZ+ECMZvQmzwJ+eLOpxR+2chdUExp8ogQyq3v9l68rX4jCwjg0+PYKAEEzcU4wHFY2ZcdIHfWL1okD3SszT0GZMyKdZJrg1L2AeerB4tC0C4crp2EHGo5FYdSP7lwkeR2ocmnR+Ia8CYviUJlzOjhRZef9xuVOn3qcjow3fQgivsAmKKkg4+sA8F8/GWeDiGNhg8JM8KtFPMYWWkx5TVFX5t73kiNRJqjlIGVXtGZFCV4gzt0xcDopuZ6xz8r9Rzafpf9ywev8jh8592gHFIqpStZPuJxmDDMrNN0uBE3V+oscdoIzTJbRJ/t+sVvqnReJOgDJKk10fjisJwqyZBmnmn2BSFj8BvVtCMEbkuPOKdzw7eA11GPs04Qw8zWtkaZWwiO/wwpojqN6K0jY5RnNZA7vn4hPSul+nKCkVnVwQvg1zVxcSCtqORmB9KrJaBbssbCQivGJVJfVTt+hYxOtq4ZvWl8f4QAQZ0zGPffCgl9s6yT4vlvIdpu4YhBwA25wtQWZsc6GJYGWHyvSdeuh3mmUI9DSq13Fsp8C1MU3tqc04/df9LoTUXVXI5INOw/e8C7Hd+5CvbkMEFnnrUUmskEw==";
     base64::engine::general_purpose::STANDARD
@@ -31,7 +25,7 @@ pub const BRANCH2_SV: [u32; 64] = [
     0x40a25632, 0x3df5a9a5, 0xbab37d80, 0x454286dc, 0x3f5d4e78, 0x3d7b75d, 0xb1fe4af7, 0xa5ab26a3,
 ];
 
-/// 变种 MD5 第二分支的 512 字节消息调度顺序（64 组 × 8 字节）。
+/// 变种 MD5 第二分支的消息调度顺序表。
 pub fn branch2_orders() -> Vec<u8> {
     static ORDERS_HEX: &str = "0f0704000908030a060b050d0e010c020f05080c0009020103070e060b0a0d04060500070c000a04080f010b0d09020e060b02050403080101070a000d0c090e0d070e0f0b0208030c0509010004060a0d0902060f0b0a040807000c0503010e0c090f07060f030e020d0405010b0a000c050a090e0802040407030f01060b000b0f0408020a0700090d06010e03050c0b060a0508020c03070f0e090d0001040906080f050800040a0b030d01020c0e090d0c0604070a03030f00080105020e01000d0f090a0b0e0402080703060c0501080a0c0f0905060b000304020e070d04080f000c0f0e0d0a01060207090503040205080d0b0a0606000e0f070c09030a08040f000b01060d0c0709030e05020a070b050f00020e0108030d0c0609040d070f08050f06040b0a0e0c090002030d0c020704010b0e0e08060f09050003";
     hex::decode(ORDERS_HEX).expect("BRANCH2_ORDERS 必须是合法 hex")
@@ -74,14 +68,12 @@ mod tests {
 
     #[test]
     fn sbox_is_1024_bytes() {
-        // Medusa 按 khronos 低 2 位取 4 组共 1024 字节
         assert_eq!(sbox().len(), 1024);
     }
 
     #[test]
     fn branch2_orders_is_320_bytes() {
         // 与 JS 源常量一致：320 字节 = 5 组 × 64 字节
-        // branch2 用 (ivV0 << 6, (ivV0 + 1) << 6) 取 64 字节一组
         assert_eq!(branch2_orders().len(), 320);
     }
 

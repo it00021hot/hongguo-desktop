@@ -36,14 +36,8 @@ import { cn } from '@/lib/utils';
 import type { Series } from '@/service/schema';
 
 /**
- * 剧集详情页（/detail?seriesId=…）。
- *
- * 播放器里点剧名进来：封面/统计/标签/简介 + 继续看 + 选集网格 + 剧评 +
- * 相关推荐。数据全部来自官方 App 接口查询（分集档案 / meta / 观看历史 /
- * 评论 / plan 相关推荐）；「继续看第 N 集」的 N 从云端观看历史推。
- *
- * `prefill`：来源页（榜单行）的档案快照。未上线剧解析分集必然失败，
- * 有 prefill 时错误分支渲染「即将上线」降级视图（档案 + 预约按钮）。
+ * 剧集详情页：封面/统计/标签/简介 + 继续看 + 选集网格 + 剧评 + 相关推荐，数据全走官方接口查询。
+ * prefill（来源页档案快照）给未上线剧渲染「即将上线」降级视图（合成 0 集档案走正常渲染流）。
  */
 export function SeriesDetailPage({
   seriesId,
@@ -89,13 +83,7 @@ export function SeriesDetailPage({
   const activeSeries = series ?? upcomingSeries;
   const upcoming = upcomingSeries != null;
 
-  /**
-   * 「继续看」的集号。本地 playback 表是第一真值（播放期间 5 秒一写，
-   * 切集立即更新）；云端观看历史既滞后（约 1 分钟一报）又有查询缓存，
-   * 只做本地没记录时的兜底——否则就会出现「都看到第二集了还停在第一集」。
-   * 看过 >3 秒就续播那一集的那个位置，不看片尾（与后端 resumeAt 同口径：
-   * 位置 ≤3 秒视为没看过，从头播）。
-   */
+  /** 「继续看」的集号：本地 playback 表是第一真值（5 秒一写），云端历史只做本地没记录时的兜底；看过 >3 秒才续播。 */
   const continueIndex = useMemo(() => {
     // 与首页起点/后端 resolve_entry 同一份决策（utils/resume-entry）
     const entry = resolveResumeEntry(localProgress, historyItem);

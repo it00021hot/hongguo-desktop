@@ -1,19 +1,6 @@
-//! 崩溃取证：把 panic 现场写进数据目录的 `crash.log`。
+//! 崩溃取证：panic 现场写进数据目录 `crash.log`——macOS 上 WKWebView 的协议/IPC 回调在主线程 extern "C" 边界，panic 不能 unwind 直接 abort，经 Finder/Dock 启动的进程 stderr 没接着终端，没有这个钩子事后只有进程状态没有现场。
 //!
-//! 背景：macOS 上 WKWebView 的协议/IPC 回调在主线程的
-//! extern "C" 边界里执行，panic 不能 unwind，直接 abort 全进程；而经
-//! Finder/Dock 启动的进程 stderr 没有接着任何终端——事后手里只有进程
-//! 状态，没有 panic 现场，定位只能靠猜。
-//!
-//! 这个钩子补上取证：
-//! - panic 发生时先把现场（时间/线程/位置/消息）追加到
-//!   `<数据目录>/crash.log`，再交还默认钩子；nounwind 的 abort 之前钩子
-//!   同样会执行，所以闪退也能留下最后一行；
-//! - 同时走一遍 `log::error`，与正常日志同源同格式。
-//!
-//! 钩子只取证、不改变 panic 的传播语义：该被 catch_unwind 接住的照旧
-//! 接住，该 abort 的照旧 abort。钩子自身绝不 panic——所有失败路径都
-//! 静默放弃，取证工具不能成为新的崩溃源。
+//! 钩子只取证、不改变 panic 的传播语义（该 catch 的照旧 catch、该 abort 的照旧 abort）；钩子自身绝不 panic，所有失败路径静默放弃——取证工具不能成为新的崩溃源。
 
 use std::io::Write;
 use std::path::Path;
@@ -59,10 +46,8 @@ fn append_line(path: &Path, line: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    // 超限则整文件重写：保最近现场，防崩溃风暴把磁盘写满。
-    // 不能在 append 句柄上 set_len(0) 续写——Windows 的写入位置仍指旧
-    // 文件末尾，会先垫一截 NUL 到旧长度再写（轮转后文件反而膨胀成 256KB）。
-    // 关掉句柄直接整文件覆盖，语义就是「只剩最新一条」。
+    // 超限则整文件重写：保最近现场，防崩溃风暴写满磁盘。不能在 append 句柄上
+    // set_len(0) 续写——Windows 的写入位置仍指旧文件末尾，会垫 NUL 到旧长度再写；关掉句柄直接覆盖，语义就是「只剩最新一条」。
     if matches!(std::fs::metadata(path), Ok(meta) if meta.len() > CRASH_LOG_MAX_BYTES) {
         let _ = std::fs::write(path, line.as_bytes());
         return;
@@ -81,7 +66,6 @@ fn append_line(path: &Path, line: &str) {
 mod tests {
     use super::*;
 
-    /// 各用例独立的临时目录（进程号隔离，避免并行用例互相踩）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("hongguo-crash-log-{tag}-{}", std::process::id()))
     }

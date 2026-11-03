@@ -1,7 +1,5 @@
 //! 事件接线：service 业务事件泵、播放器事件循环、控制区控件订阅。
-//!
-//! 三条消费循环都在构造期起一次，把异步事件落回视图状态（与 Tauri 壳的
-//! 事件转发同源，一份业务实现两种 UI 适配）。
+//! 三条消费循环都在构造期起一次，把异步事件落回视图状态。
 
 use super::*;
 
@@ -59,9 +57,15 @@ impl HomeView {
             | ServiceEvent::MergeFailed(_) => {}
             ServiceEvent::CompatProgress(_) => {}
             // 注册换档完成：启动时顶栏请求可能先于注册（匿名身份只下发
-            // 推荐单 tab），重拉顶栏拿完整列表
+            // 推荐单 tab），重拉顶栏拿完整列表；失败页对齐 Tauri 自动重试
             ServiceEvent::DeviceRegistered(_) => {
                 self.load_tabs(cx);
+                if self.play_error.is_some() {
+                    self.show_toast(crate::i18n::t("player.deviceSwappedRetry"), cx);
+                    self.play_error = None;
+                    self.play_retried = false;
+                    self.retry_play(cx);
+                }
             }
             // 追更提醒：GPUI 壳的追更页未建，先记日志（通知已落本地库，
             // 页面就位后从这里接 UI 刷新）

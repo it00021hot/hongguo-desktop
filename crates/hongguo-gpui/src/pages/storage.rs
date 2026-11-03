@@ -1,10 +1,6 @@
-//! 磁盘清理页（Tauri `/storage` = `storage-page.tsx` 的 GPUI 对齐）。
-//!
-//! 布局：居中窄列（768px）两张卡——「磁盘占用」总览（总量 + 文件数 +
-//! 删除全部）与「按剧清理」（剧名过滤 + 逐剧行 + 单行删除）；删除全部带
-//! AlertDialog 确认（Tauri 同文案），逐行删除不确认（Tauri 亦然）。
-//! 数据与操作走 `hongguo_service::storage_service`（usage / cleanup），
-//! 与 Tauri 的 `get_storage_*` / `delete_*` command 同一段服务面。
+//! 磁盘清理页：居中窄列两张卡——磁盘占用总览（总量/文件数/删除全部）与
+//! 按剧清理（剧名过滤 + 逐剧行删除）。删除全部带确认，逐行删除不确认。
+//! 数据走 `hongguo_service::storage_service`（usage / cleanup）。
 
 use std::sync::Arc;
 

@@ -1,19 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// 模块链拉到 locales 与 sonner（模块级读 localStorage/navigator、向 head
-// 插样式）——node 测试环境没有这些 global，打桩 + mock 后再动态 import
-// （common.test.ts 同款）
 vi.mock('sonner', () => ({ toast: { error: () => undefined } }));
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
 vi.stubGlobal('navigator', { language: 'zh-CN' });
 vi.stubGlobal('document', { documentElement: { lang: '' } });
 
-/** portraitAspectOf 只读 videoWidth/videoHeight，用最小假元素即可。 */
 function fakeVideo(w: number, h: number): HTMLVideoElement {
   return { videoWidth: w, videoHeight: h } as HTMLVideoElement;
 }
 
-/** 热门手机屏幕比例（iPhone/三星 2340×1080；国产安卓多为 20:9，19.5:9 兼看）。 */
 const PHONE = 9 / 19.5;
 
 describe('portraitAspectOf', () => {

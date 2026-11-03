@@ -5,12 +5,7 @@ import { t, tf } from '@/locales';
 import type { RelatedItem } from '@/service/schema';
 import { ReserveButton } from './reserve-button';
 
-/**
- * 相关推荐卡片 → 详情页 search。
- *
- * 必带档案快照 prefill：未上线剧解析分集必然失败（平台无分集可给），
- * 详情页靠 prefill 渲染「即将上线」降级视图，缺了会整页报错（榜单行同款做法）。
- */
+/** 相关推荐卡片 → 详情页 search；必带档案快照 prefill（未上线剧详情页靠它渲染「即将上线」降级视图，缺了整页报错）。 */
 export function relatedDetailSearch(item: RelatedItem) {
   return {
     seriesId: item.seriesId,

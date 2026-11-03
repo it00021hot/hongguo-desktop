@@ -8,12 +8,7 @@ import { NewCalendarView } from './new-calendar-view';
 import { NewDramaRecommends } from './new-drama-recommends';
 import type { RankItem } from '@/service/schema';
 
-/**
- * 新剧页：新剧推荐 + 上新日历两个视图。
- *
- * 推荐 = `firstonlinetime_new` 按上架时间倒序的翻页流；
- * 日历 = 官方按日期排布的上新表（前后各一周，含未上线条目）。
- */
+/** 新剧页：新剧推荐（firstonlinetime_new 按上架时间倒序）+ 上新日历（官方按日期排布，含未上线条目）两个视图。 */
 
 const GENDERS: { value: number; labelKey: MessageKey }[] = [
   { value: 2, labelKey: 'newDrama.gender.all' },
@@ -22,11 +17,9 @@ const GENDERS: { value: number; labelKey: MessageKey }[] = [
 ];
 
 export function NewDramaPage() {
-  // 频道筛选在页面层：官方把它放在标题行右侧，对推荐/日历两个视图都可见。
-  // 会话级保留（去播放再回来频道与位置都在）
+  // 频道筛选在页面层（官方放标题行右侧，两个视图共用）；会话级保留
   const [gender, setGender] = useSessionState('hongguo.new.gender', 2);
-  // 视图 tab（推荐/日历）：状态自持——tab 胶囊 portal 进 AppShell 顶栏，
-  // 不能再依赖 Radix Tabs 的组件树上下文（Trigger 必须长在 Tabs 里）
+  // 视图 tab 状态自持——tab 胶囊 portal 进 AppShell 顶栏，不能依赖 Radix Tabs 的组件树上下文
   const [view, setView] = useSessionState<'recommend' | 'calendar'>(
     'hongguo.new.view',
     'recommend',

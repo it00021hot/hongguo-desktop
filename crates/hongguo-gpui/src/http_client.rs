@@ -1,9 +1,6 @@
-//! gpui 资源加载的 HTTP 客户端：把远程封面请求桥到 reqwest。
-//!
-//! gpui 的图片缓存要求应用先 `set_http_client`，否则远程资源一律
-//! 「No HttpClient available」。本实现挂在壳已有的 reqwest（与 hongguo-api
-//! 同一条 rustls 线路）上；header 与状态码统一经字符串/u16 转换，避免
-//! 依赖图里 http 1.x 双版本的类型互斥。
+//! gpui 资源加载的 HTTP 客户端：把远程封面请求桥到壳已有的 reqwest（与
+//! hongguo-api 同一条 rustls 线路）；header 与状态码统一经字符串/u16 转换，
+//! 避免 http 1.x 双版本的类型互斥。
 
 use std::sync::Arc;
 

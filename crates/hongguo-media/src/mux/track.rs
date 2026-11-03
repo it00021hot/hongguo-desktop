@@ -1,9 +1,6 @@
-//! 轨道素材构造：把编码输出与源音轨变成 [`crate::mp4::TrackSpec`] 需要的 box。
-//!
-//! 这一层只管「一个 box 长什么样」，不管时间轴怎么算、样本怎么交织——
-//! 那是 [`crate::mux`] 的事。分开的理由：box 的字段布局是**规范**（ISO/IEC
-//! 14496-12 / 14496-15），照着写死即可；而时间轴是**本仓的取舍**，会随
-//! 编码器行为变化，两者的变更节奏完全不同。
+//! 轨道素材构造：把编码输出与源音轨变成 [`crate::mp4::TrackSpec`] 需要的 box。这一层只管「一个 box 长什么样」，
+//! 不管时间轴怎么算、样本怎么交织（那是 [`crate::mux`] 的事）——box 的字段布局是**规范**（ISO/IEC 14496-12 / 14496-15）照写死即可，
+//! 时间轴是**本仓的取舍**会随编码器行为变化，两者变更节奏完全不同。
 
 use hongguo_video::r#box::build_box;
 
@@ -119,10 +116,7 @@ pub fn mvhd(duration_movie: u64, next_track_id: u32) -> Vec<u8> {
     build_box(b"mvhd", &p)
 }
 
-/// `tkhd`：轨道头。
-///
-/// `volume` 只有音频轨非零（0x0100 = 1.0）；`width` / `height` 是 16.16 定点，
-/// 视频轨填分辨率，音频轨填 0。
+/// `tkhd`：轨道头。`volume` 只有音频轨非零（0x0100 = 1.0）；`width` / `height` 是 16.16 定点，视频轨填分辨率、音频轨填 0。
 pub fn tkhd(track_id: u32, duration_movie: u64, width: u32, height: u32, volume: u16) -> Vec<u8> {
     let mut p = Vec::new();
     if duration_movie > u64::from(u32::MAX) {
@@ -160,10 +154,8 @@ pub fn mdhd(timescale: u32, duration: u64) -> Vec<u8> {
     build_box(b"mdhd", &p)
 }
 
-/// 「version + flags + creation + modification + timescale + duration」。
-///
-/// 时长装不下 32 位时用 version 1（64 位时长）——媒体时基下超过 13 小时才会
-/// 触发，但写截断的时长会让播放器把片尾吃掉。
+/// 「version + flags + creation + modification + timescale + duration」；时长装不下 32 位时用 version 1（64 位时长）——
+/// 媒体时基下超过 13 小时才会触发，但写截断的时长会让播放器把片尾吃掉。
 fn timing_head(timescale: u32, duration: u64) -> Vec<u8> {
     let mut p = Vec::new();
     if duration > u64::from(u32::MAX) {
@@ -213,10 +205,7 @@ pub fn smhd() -> Vec<u8> {
     build_box(b"smhd", &p)
 }
 
-/// `dinf`：数据引用。
-///
-/// 只声明「数据就在本文件里」（`url ` 的 flags = 1），不引用外部 URL——
-/// 产物要能脱离源文件独立播放。
+/// `dinf`：数据引用。只声明「数据就在本文件里」（`url ` 的 flags = 1），不引用外部 URL——产物要能脱离源文件独立播放。
 pub fn dinf() -> Vec<u8> {
     let mut url = Vec::new();
     url.extend(1u32.to_be_bytes()); // version 0 + flags = 1（自包含）
@@ -275,11 +264,8 @@ fn stsd_of(entry: &[u8]) -> Vec<u8> {
     build_box(b"stsd", &p)
 }
 
-/// 现造一份 AAC-LC 的 `esds`。
-///
-/// 源音轨没有 `esds` 时才用：采样率与声道取自源的 sample entry，
-/// `AudioSpecificConfig` 按 AAC-LC 编码（对象类型 2）。没有它，播放器
-/// 拿不到解码器初始化参数，音轨解出来是噪声。
+/// 现造一份 AAC-LC 的 `esds`（源音轨没有 `esds` 时才用）：采样率与声道取自源的 sample entry，`AudioSpecificConfig` 按 AAC-LC 编码（对象类型 2）。
+/// 没有它播放器拿不到解码器初始化参数，音轨解出来是噪声。
 fn build_esds(sample_rate: u32, channels: u16) -> Vec<u8> {
     let asc = audio_specific_config(sample_rate, channels);
 
@@ -307,9 +293,7 @@ fn build_esds(sample_rate: u32, channels: u16) -> Vec<u8> {
 }
 
 /// AAC-LC 的 `AudioSpecificConfig`（2 字节）。
-///
-/// 位布局（ISO/IEC 14496-3）：`audioObjectType` 5 bit + `samplingFrequencyIndex`
-/// 4 bit + `channelConfiguration` 4 bit，三个字段都跨字节，按整字节取会整体错位。
+/// 位布局（ISO/IEC 14496-3）：`audioObjectType` 5 bit + `samplingFrequencyIndex` 4 bit + `channelConfiguration` 4 bit，三个字段都跨字节，按整字节取会整体错位。
 fn audio_specific_config(sample_rate: u32, channels: u16) -> [u8; 2] {
     const RATES: [u32; 13] = [
         96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
@@ -344,11 +328,9 @@ mod tests {
     #[test]
     fn video_stsd_carries_the_resolution_and_the_avcc() {
         let stsd = video_stsd(1920, 1080, &avc());
-        // stsd 载荷：version+flags(4) + entry_count(4) + entry box 头(8) + entry 载荷
         assert_eq!(&stsd[8..12], &[0, 0, 0, 0]);
         assert_eq!(&stsd[12..16], &[0, 0, 0, 1]);
         assert_eq!(&stsd[20..24], b"avc1");
-        // sample entry 的固定体 78 字节，之后是 avcC
         assert_eq!(&stsd[24 + 24..24 + 26], &[0x07, 0x80], "1920 = 0x0780");
         assert_eq!(&stsd[24 + 26..24 + 28], &[0x04, 0x38], "1080 = 0x0438");
         // sample entry 的固定体 78 字节之后是 avcC box（头 8 字节）
@@ -364,7 +346,6 @@ mod tests {
         esds.extend_from_slice(&[0xAA; 20]);
         let stsd = audio_stsd(2, 44100, Some(&esds));
         assert_eq!(&stsd[20..24], b"mp4a");
-        // 固定体 28 字节之后是 esds box（头 8 字节）
         assert_eq!(&stsd[24 + 28 + 4..24 + 28 + 8], b"esds");
         assert_eq!(&stsd[24 + 28 + 8..24 + 28 + 8 + 20], &[0xAA; 20]);
     }

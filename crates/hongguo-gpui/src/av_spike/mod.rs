@@ -1,17 +1,7 @@
 //! Phase 0/1a 可行性 spike：`AVPlayer` + `AVPlayerLayer` 放进普通 GPUI 窗口。
-//!
-//! 门控：`HONGGUO_AV_SPIKE=1` 时 `main` 在装配任何业务之前转入本模块，
-//! 默认启动路径完全不经过这里。
-//!
-//! 两种供数模式（`HONGGUO_AV_SPIKE_SOURCE`）：
-//! - `file`（默认）：Phase 0 的整段内存样片，走 `Source::Bytes`；
-//! - `online`：真实在线剧集，经 `hongguo-service` 的 `prepare` / `prefetch_stream`
-//!   注册 `hongguo-stream` 渐进流，delegate 按 `(vid, 档位)` 绑定、按需解密供数。
-//!
-//! 在线模式用独立的 `hongguo-gpui-av-spike` 数据根（不碰用户档案）；设备档案
-//! 走静态兜底，不需要登录。样片路径可用 `HONGGUO_AV_SPIKE_SAMPLE` 覆盖。
-//!
-//! 本模块只做 macos：`AVFoundation` 是系统框架，不引入任何外部 crate。
+//! 门控 `HONGGUO_AV_SPIKE=1`（默认启动路径完全不经过这里）；供数模式经
+//! `HONGGUO_AV_SPIKE_SOURCE`（file 整段内存样片 / online 真实剧集渐进流），
+//! 在线模式用独立数据根、不碰用户档案。仅 macOS。
 
 pub(crate) use hongguo_player::{avf, loader};
 mod measure;

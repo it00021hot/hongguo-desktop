@@ -1,15 +1,6 @@
-//! 页面空态 / 错误态的共用件。
-//!
-//! 形态基线是 Tauri 壳：`components/ui/empty.tsx`（Empty 容器 + Header
-//! （图标 / 标题 / 说明）+ Content（动作区)）与 `components/common/error-state.tsx`
-//! （失败文案 + 可选错误详情 + 重试动作）。组件本体用 gpui-kit 的 `Empty`
-//! 系列——它与 Tauri 的 `empty.tsx` 同源同构（同一套 shadcn 组件：虚线边框
-//! 容器 + 居中三段式），所以换成库组件是「向基线靠拢」而不是换皮。
-//!
-//! 加载态不在此列：首拉加载已按 Tauri 的骨架屏口径走（`pages/skeleton.rs`，
-//! 卡片网格 / 列表行两种形态），空态与错误态只管「没有数据」与「出了错」。
-//!
-//! 播放器区也不在此列：那里的浮层是播放器深色皮肤的一部分，形态另算。
+//! 页面空态 / 错误态的共用件（gpui-kit 的 `Empty` 系列：虚线边框容器 +
+//! 居中三段式）。加载态走骨架屏（`pages/skeleton.rs`）、播放器浮层另算，
+//! 这里只管「没有数据」与「出了错」。
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::empty::{

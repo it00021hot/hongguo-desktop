@@ -4,12 +4,8 @@ import { useAccount, useFollowToggle, useIsFollowing } from '@/service/queries';
 import { t } from '@/locales';
 
 /**
- * 追更状态的共享逻辑（详情页 FollowButton 与播放页互动栏同源）：
- *
- * - 「是否已追」没有独立接口：拉追更列表第一页本地判成员（service 层口径）；
- * - 乐观翻转：点击立即换态，失败回滚并弹服务端原文（`Auth` 透传）；
- * - 乐观值带着 seriesId 存（派生时校验），翻剧/翻集自动失效，不用 effect 重置；
- * - 登录墙：未登录时 `set()` 弹提示并返回 false（入口常在，对齐官方客户端）。
+ * 追更状态共享逻辑（详情页 FollowButton 与播放页互动栏同源）：乐观翻转失败回滚并弹服务端原文；
+ * 未登录时 `set()` 弹提示并返回 false（登录墙，对齐官方客户端）。
  */
 export function useFollowState(seriesId: string) {
   const { data: account } = useAccount();

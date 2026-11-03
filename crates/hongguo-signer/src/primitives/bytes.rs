@@ -50,7 +50,6 @@ mod tests {
 
     #[test]
     fn xor_bytes_cycles_key() {
-        // 长度取 a，密钥 2 字节循环：0^aa, 1^bb, 2^aa, 3^bb, 4^aa
         let out = xor_bytes(&[0, 1, 2, 3, 4], &[0xaa, 0xbb]);
         assert_eq!(out, vec![0xaa, 0xba, 0xa8, 0xb8, 0xae]);
     }

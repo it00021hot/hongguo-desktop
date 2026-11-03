@@ -187,8 +187,7 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
                 }
                 std::thread::sleep(Duration::from_millis(2));
                 if window.elapsed() >= Duration::from_secs(5) {
-                    // 0 帧也要打：暂停恢复后「画面冻结、声音继续」的形态
-                    // 就是 presented 归零而 rate>0，静默会把它藏住。
+                    // 0 帧也要打：暂停恢复后「画面冻结、声音继续」的形态就是 presented 归零而 rate>0，静默会把它藏住
                     let (fps, max_gap, med_gap) = if samples.len() > 1 {
                         let first = samples.first().unwrap().0;
                         let elapsed = samples.last().unwrap().0.duration_since(first).as_secs_f64();
@@ -215,11 +214,8 @@ fn spawn_metrics(player: SendRetained, output: SendRetained, stop: Arc<AtomicBoo
         .expect("metrics 线程创建失败");
 }
 
-/// 打开一集系统播放器。返回的门面已实现 [`PlayerLike`]；图层由 render 侧
-/// 调用 `attach` 挂载（tokio 线程不能碰 AppKit）。
-///
-/// 返回 `None` = 播放器/画面位起不来，调用方走起播失败——与 Windows 实现同一套
-/// 契约（门面 `hongguo_player::open` 的返回类型由两边实现共同决定）。
+/// 打开一集系统播放器。返回的门面已实现 [`PlayerLike`]；图层由 render 侧调用 `attach` 挂载（tokio 线程不能碰 AppKit）。
+/// 返回 `None` = 播放器/画面位起不来，调用方走起播失败——与 Windows 实现同一套契约（门面 `hongguo_player::open` 的返回类型由两边实现共同决定）。
 pub fn open(
     source: PlaySource,
     start_secs: f64,
@@ -300,8 +296,7 @@ impl PlayerLike for SystemPlayer {
 
     fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
-        // playImmediately：跳过 AVF 的就绪评估直接以目标倍速起播——普通
-        // play() 在自定义源上恢复呈现会间歇性门 1–2s（音频先行，画面卡住）
+        // playImmediately：跳过 AVF 的就绪评估直接以目标倍速起播——普通 play() 在自定义源上恢复呈现会间歇性门 1–2s（音频先行，画面卡住）
         let rate = f64::from_bits(self.rate.load(Ordering::Relaxed));
         avf::play_immediately(self.player.get(), rate as f32);
     }
@@ -361,21 +356,20 @@ impl PlayerLike for SystemPlayer {
             return true;
         }
         if preloaded.is_some() {
-            // 只维护一个下一项；旧预加载留在队列里会造成切集错位。
+            // 只维护一个下一项；旧预加载留在队列里会造成切集错位
             return false;
         }
         let url = avf::custom_url(&format!("{vid}-{definition}")).expect("下一集 URL");
         let asset = avf::asset_with_url(&url);
         let handle = loader::attach(
             &asset,
-            loader::Source::Stream {
-                vid: vid.to_string(),
-                definition,
-                // 切到这一集后由同一 loader 在头部预算处继续唤醒续填；
-                // 未切之前 resume_fill 也会因 is_next 放行。
-                on_stall,
-            },
-        );
+                loader::Source::Stream {
+                    vid: vid.to_string(),
+                    definition,
+                    // 切到这一集后由同一 loader 在头部预算处继续唤醒续填；未切之前 resume_fill 也会因 is_next 放行
+                    on_stall,
+                },
+            );
         let item = avf::item_with_asset(&asset);
         avf::set_spectral_pitch(&item);
         // SAFETY: nil 表示追加到队尾；item 由队列持有。
@@ -405,8 +399,7 @@ impl PlayerLike for SystemPlayer {
     }
 
     fn attach(&self, host: &HostWindow) {
-        // 只建/复用宿主；可见性由紧随其后的 submit_stage 决定，避免 attach
-        // 先把层亮出来、下一行又按 system_ready=false 藏回去的抖动。
+        // 只建/复用宿主；可见性由紧随其后的 submit_stage 决定，避免 attach 先把层亮出来、下一行又按 system_ready=false 藏回去的抖动
         let _ = view::ensure(host, self.player.get());
     }
 

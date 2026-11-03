@@ -1,22 +1,8 @@
 //! 评论类文本（评论正文 / 回复正文 / 剧评回复）的富文本解析与渲染。
-//!
-//! ## 为什么不能把文本拆成多个 flex item
-//!
-//! GPUI 的文本只有拿到**确定宽度**才折行：`TextLayout::layout` 的 `wrap_width`
-//! 取 `known_dimensions.width`，取不到才看 `available_space.width` 是不是
-//! `Definite`，两者都没有就按 max-content 排版（gpui-pre 0.3.9
-//! `elements/text.rs`）。而 flex 布局里每个 item 的 flex base size 都按
-//! max-content 量（taffy 0.13 `compute/flexbox.rs` 的
-//! `determine_flex_base_size`），文本一旦被拆成多个 item（提及、表情各自成件），
-//! 整段中文不折行、横向撑出面板——这正是评论文字飞出面板右边界的原因。
-//!
-//! 所以这里把**连续文本合成一段**，用 `StyledText` 的高亮区间区分颜色，整段作为
-//! 单个文本节点渲染；外层用列容器（列会 stretch 子件）给出确定宽度 → 正常换行。
-//! 表情图仍是独立元素（GPUI 没有行内图），表情码的位置决定文本段的切分。
-//!
-//! 口径对齐 Tauri 壳 `CommentText` / `EmojiText`：提及段 `@名字\u{FFFC}` 染蓝
-//! （开头的提及前缀命中 AI bot 时追加琥珀「Ai」后缀），`[名字]` 表情码换内联
-//! 表情图。
+//! 连续文本必须合成一段渲染：GPUI 文本只有拿到确定宽度才折行，flex 里每个
+//! item 按 max-content 量宽——拆成多个 item（提及、表情各自成件）整段中文
+//! 不折行、横向撑出面板。表情图仍是独立元素，表情码位置决定文本段切分；
+//! 提及段 `@名字\u{FFFC}` 染蓝，`[名字]` 表情码换内联表情图。
 
 use std::ops::Range;
 use std::sync::Arc;

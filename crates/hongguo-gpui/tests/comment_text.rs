@@ -1,14 +1,6 @@
-//! 评论富文本的换行与回复前缀断言。
-//!
-//! 1. 长正文在固定宽度列里**必须折行**：GPUI 的文本只有拿到确定宽度才折行
-//!    （`TextLayout::layout` 的 `wrap_width` 取 `known_dimensions.width`），
-//!    文本被拆成多个 flex item 时每个 item 按 max-content 测量，整段中文
-//!    不折行、横向撑出面板右边界；
-//! 2. 回复行在被回复人昵称为空时**不加**「回复 @某人：」前缀（官方手机 App 与
-//!    Tauri 壳同款——回复评论本条时只显示正文）。
-//!
-//! 需要 gpui 的 test-support（`screenshot` feature 已连带开启），运行方式：
-//! `cargo test -p hongguo-gpui --features screenshot --test comment_text`
+//! 评论富文本断言：长正文在固定宽度列里必须折行（拆成多个 flex item 会按
+//! max-content 测量、横向撑出面板）；回复行被回复人昵称为空时不加
+//! 「回复 @某人：」前缀。需 test-support（screenshot feature）。
 
 #[path = "../src/comment_text.rs"]
 mod comment_text;

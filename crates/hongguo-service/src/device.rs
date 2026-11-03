@@ -1,14 +1,7 @@
-//! 设备档案的启动同步（adopt）：读库 → 阵亡名单/远古快照预筛 → 版本对齐。
-//!
-//! 从壳的 bootstrap 迁入（双壳共用：Tauri 与 GPUI 的启动装配走同一段设备
-//! 引导，「操作一致」的第一层）。纯 store + signer，不走网络——健康探针与
-//! 轮换是异步生命周期，留在各壳的 bootstrap（Tauri 侧挂 async_runtime；
-//! GPUI 侧待其生命周期装配时接入同一套）。
-//!
-//! 注册链路走 TT-Encrypt V5 格式（见 hongguo-api::register 模块文档）：
-//! 匿名档案仍是无身份时的启动兜底，
-//! [`ensure_registered`] 在壳启动后台把匿名/死档案自动换档为注册产物
-//! （注册口径活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
+//! 设备档案的启动同步（adopt）：读库 → 阵亡名单/远古快照预筛 → 版本对齐；双壳共用。
+//! 纯 store + signer，不走网络——健康探针与轮换是异步生命周期，留在各壳的 bootstrap。
+//! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
+//! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -25,10 +18,8 @@ use crate::events::ServiceEvent;
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
 
-/// 已被淘汰、必须从库里重铺的档案 install_id（含**全部静态
-/// 兜底档案**——共享身份是风控暴露面，一并退役；匿名档案取代之）。
-/// **今后每次淘汰档案，旧 iid 必须追加进名单**——健康探针只兜「未来的死」，
-/// 名单兜「已知的死」，缺补会让老用户再次集体阵亡。
+/// 已被淘汰、必须从库里重铺的档案 install_id（含全部静态兜底档案——共享身份是风控暴露面）。
+/// 今后每次淘汰档案，旧 iid 必须追加进名单：名单兜「已知的死」，缺补会让老用户再次集体阵亡。
 pub const RETIRED_STATIC_IIDS: &[&str] = &["1905892595382586", "2715158266282762"];
 
 /// 轮换元数据（`device_profile` 元数据行，JSON 文档）。
@@ -47,9 +38,8 @@ pub struct BootstrapMeta {
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
-    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 =
-    /// 档案出生于旧注册器（bdinstall SDK 代际错配，设备被服务端标记、
-    /// 取流不发货），启动时按全新安装语义一次性迁移到当前代际。
+    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 = 档案出生于旧注册器
+    ///（被服务端标记、取流不发货），启动时按全新安装语义一次性迁移到当前代际。
     #[serde(default)]
     pub register_regime: String,
 }
@@ -81,8 +71,7 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
             if dead_listed || ancient {
                 return repave_anonymous(store, &p, dead_listed);
             }
-            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须
-            // 同源，否则取流被拒；来源以轮换元数据为准（注册换档写入）
+            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须同源，否则取流被拒。
             if read_meta(store).source == "registered" {
                 return (heal_registered_profile(store, p), "adopted");
             }
@@ -98,11 +87,12 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
     }
 }
 
-/// 注册产物的启动复检：版本键是注册口径就原样放行；被旧版 adopt 的
-/// `align_app_version` 升到当前客户端版本的（与注册指纹不同源，取流即挂），
-/// 从档案自身身份重建为纯注册口径并落库。
+/// 注册产物的启动复检：版本与渠道都符合当前注册口径才原样放行；否则（版本被旧版
+/// `align_app_version` 升走、或渠道仍是存量旧值）从档案自身身份重建为当前注册口径并落库。
 fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
-    if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR {
+    if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR
+        && p.get("channel") == hongguo_signer::device::BUILD_CHANNEL
+    {
         return p;
     }
     let healed = registered_profile(&RegisterResult {
@@ -114,9 +104,11 @@ fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
         ..Default::default()
     });
     log::warn!(
-        "[Device] 注册档案版本键曾被升到 {}（与注册指纹不同源），重建为注册口径 {}",
+        "[Device] 注册档案身份键与当前口径不符（version={} channel={}），重建为 version={} channel={}",
         p.get("version_code"),
-        healed.get("version_code")
+        p.get("channel"),
+        healed.get("version_code"),
+        healed.get("channel")
     );
     if let Err(e) = store.save_device_profile(&healed) {
         log::warn!("[Device] 重建档案落库失败（本次会话仍生效）: {e}");
@@ -157,11 +149,8 @@ fn repave_anonymous(
     (profile, "anonymous")
 }
 
-/// 注册产物 → 现役档案：与注册请求共用
-/// [`DeviceProfile::fresh_register_profile`] 构造（指纹字段集、顺序与 UA
-/// 天然同源，编译期保证），只补注册响应下发的设备身份。
-///
-/// 注册口径活形态钉在构造器里，**不做** `align_app_version`
+/// 注册产物 → 现役档案：与注册请求共用 [`DeviceProfile::fresh_register_profile`] 构造，
+/// 只补注册响应下发的设备身份。注册口径钉在构造器里，**不做** `align_app_version`
 /// （自报版本与注册指纹必须同源，否则取流被拒）。
 pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     let mut p = DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
@@ -171,10 +160,8 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p
 }
 
-/// 注册没有「服务端按量冷却」——那是 2026-11-01 被实流取证推翻的旧猜想
-/// （真相是注册代际错配被标记，不是注册次数受限），因此不设任何退避；
-/// 失败只区分两类：网络类（断网/超时）等网恢复就地重试，服务端明确
-/// 拒绝（形态/代际错）重试无意义立即停。
+/// 注册重试节奏：失败只区分网络类（断网/超时，等网恢复就地重试）与服务端明确拒绝
+/// （形态/代际错，重试无意义立即停）。
 const REGISTER_RETRY_MS: u64 = 60_000;
 const REGISTER_RETRY_MAX: usize = 30;
 
@@ -236,8 +223,16 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
             );
             let profile = registered_profile(&r);
             swap_profile(state, &mut meta, profile, "registered");
-            // 换档前发出去的匿名请求产物（顶栏塌缩表等）全部作废
+            // 换档前发出去的匿名请求产物（顶栏塌缩表、批量预取流）全部作废
             hongguo_api::recommend::clear_feed_tabs_cache();
+            hongguo_api::play_url::clear_batch_cache();
+            // 冷启动行为预热：新设备做完官方客户端的冷启动行为序列才有
+            // 深集授权（只注册不预热 = 采集器特征，服务端只发第 1 集）
+            let env = state.api_env();
+            crate::runtime::spawn(async move {
+                let ok = hongguo_api::warmup::run(&env).await;
+                log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
+            });
             state
                 .events()
                 .publish(ServiceEvent::DeviceRegistered(r.install_id.clone()));
@@ -269,14 +264,8 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
     }
 }
 
-/// 取流自愈机制已删（2026-11-01 实流取证结论修正）：服务端对设备的风控
-/// 不是「抽样抽奖」，而是按**注册代际自洽**打分——此前注册器的 bdinstall
-/// SDK 代际拼装错配，注册产物被静默标记、取流不发货；「换设备重摇」
-/// 是在给坏注册器擦屁股，正确做法是把注册器对齐实流（已完成），设备
-/// 出生即干净、终生不换。存量旧代际档案走 [`ensure_registered`] 的一次性
-/// 代际迁移，也不做运行期换档。
-///
 /// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
+/// 注册代际对齐解决不了「发货资格在注册时抽签」——输家签换新注册即可（1 次/分钟限速）。
 fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
     let old_iid = state.device().get("iid").to_string();
     let new_iid = profile.get("iid").to_string();
@@ -296,12 +285,9 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
     state.replace_device(profile);
 }
 
-/// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册（实测
-/// ~200ms，首批业务请求即可用上注册身份）；有身份的先看注册代际——
-/// 旧注册器代际的档案按全新安装语义**一次性**迁移到当前代际（三方
-/// 竞品同款语义：数据目录新建时现场注册，此后终生不换）；代际正常的
-/// 再打搜索探针，空响应（死设备）也转注册。网络类失败随恢复就地重试
-/// （[`register_with_retry`]），不断网不重启也能续上。
+/// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册；有身份的先看注册代际，
+/// 旧代际档案按全新安装语义**一次性**迁移到当前代际；代际正常的再打搜索探针，
+/// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
@@ -316,48 +302,31 @@ pub async fn ensure_registered(state: &AppState) {
             meta.register_regime,
             hongguo_signer::REGISTER_VERSION_CODE_STR
         );
-        // 迁移要么成功（新档出生即当前代际，健康探针不必再做），
-        // 要么服务端明确拒绝/网络预算耗尽（同样轮不到探针说话）
+        // 迁移成功即新档出生当前代际（探针不必再做）；拒绝/预算耗尽同样轮不到探针说话
         register_with_retry(state, "注册代际迁移").await;
         return;
     }
     let env = state.api_env();
     match probe_alive(&env).await {
-        Some(true) => {
-            // 搜索通 ≠ 取流通：被标记设备读接口全通、唯取流被拒（2026-11-02
-            // 实录），搜索探针之后追加持流探针 + 对照裁决（发货抖动期单次
-            // 结论不可信，裁决内部带重试与现役复测）。
-            match probe_stream(state).await {
-                StreamProbe::Alive | StreamProbe::Unknown => {}
-                StreamProbe::Marked(vid) => {
-                    log::warn!(
-                        "[Device] 现役档案取流探针未命中（iid={}），对照裁决",
-                        state.device().get("iid")
-                    );
-                    match stream_verdict(state, &vid).await {
-                        StreamVerdict::CurrentMarked(profile) => {
-                            log::warn!(
-                                "[Device] 对照设备能取流、现役复测仍被拒：换档 {}",
-                                profile.get("iid")
-                            );
-                            adopt_control_profile(state, profile);
-                        }
-                        StreamVerdict::Stay(reason) => {
-                            log::warn!("[Device] 按兵不动（{reason}）")
-                        }
-                    }
-                }
-            }
-        }
+        Some(true) => {}
         Some(false) => {
             log::warn!(
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
                 state.device().get("iid")
             );
+            // 成功时 register_and_swap 已 spawn warmup；失败则旧档已死，预热无意义
             register_with_retry(state, "健康探针判死").await;
+            return;
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
+    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权（见 warmup 模块文档）
+    let warm_state = state.clone();
+    crate::runtime::spawn(async move {
+        let env = warm_state.api_env();
+        let ok = hongguo_api::warmup::run(&env).await;
+        log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
+    });
 }
 
 /// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
@@ -376,27 +345,23 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
     }
 }
 
-// ---------------------------------------------------------------- 取流健康守护
+/// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
+/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；miss 主因是
+/// 匿名观看配额耗尽，换新注册只是重置配额的应急手段，同 IP 高频注册会触发 IP 级风控。
+const STREAM_MISS_THRESHOLD: u32 = 4;
 
-/// 连续取流未命中多少次触发对照探测。只数**真实播放路径**上的
-/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；健康设备
-/// 不该连续两次取不到流表，被服务端标记的设备则每集必挂——2 次（≈一次
-/// 手动重试）即值得查。
-const STREAM_MISS_THRESHOLD: u32 = 2;
-
-/// 对照探测的最小间隔（毫秒）：对照也取不到（服务端整体拒发）时不追加
-/// 注册探针把注册端点打得更狠。2026-11-02 故障窗口实测持续小时级，
-/// 10 分钟一轮足够。
-const STREAM_PROBE_MIN_INTERVAL_MS: u64 = 10 * 60_000;
+/// 换新注册的最小间隔（毫秒）：3 分钟一次，压住同 IP 的注册频率
+/// （匿名配额 ≈ 分钟级，3 分钟一次意味着连续观看时大约每 2 集换一台）。
+const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 180_000;
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-static STREAM_PROBE_AT_MS: AtomicU64 = AtomicU64::new(0);
-static STREAM_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static STREAM_RENEW_AT_MS: AtomicU64 = AtomicU64::new(0);
+static STREAM_RENEW_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-/// 探测是否该发起：连续失败达阈值，且距上次探测过了最小间隔（首轮放行）。
-fn stream_probe_due(fails: u32, last_probe_ms: u64, now: u64) -> bool {
+/// 换新是否该发起：连续失败达阈值，且距上次换新过了最小间隔（首轮放行）。
+fn stream_renew_due(fails: u32, last_renew_ms: u64, now: u64) -> bool {
     fails >= STREAM_MISS_THRESHOLD
-        && (last_probe_ms == 0 || now.saturating_sub(last_probe_ms) >= STREAM_PROBE_MIN_INTERVAL_MS)
+        && (last_renew_ms == 0 || now.saturating_sub(last_renew_ms) >= STREAM_RENEW_MIN_INTERVAL_MS)
 }
 
 /// 取流成功即清零计数（`online::prepare` 每次成功都会调，健康播放不断重置）。
@@ -404,155 +369,41 @@ pub fn note_stream_ok() {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// 取流未命中记账：连续失败达阈值就发起**对照探测**——注册一次性设备取
-/// 同一个 vid，对照能取到流才判定「现役设备被服务端标记」，换档采用对照
-/// 档案；对照同样取不到就是服务端/网络整体问题，按兵不动。
-///
-/// 为什么必须有这道守护：2026-11-02 故障窗口实录——窗口期注册的设备被
-/// 服务端标记后**终生**取不到流，而换设备自愈已删（「出生即干净终生不换」
-/// 的前提被证伪），用户既播不了也无路可走。限频 + 在途闸防止把注册端点
-/// 打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
+/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上（换新 = 重置匿名观看配额）。
+/// 登录态一律不换（授权走账号，与设备身份无关）；阈值 + 最小间隔压住同 IP 注册频率，
+/// 失败页的自动重试负责等待配额窗口重开；预取失败与网络错误不计（前者静默、后者另有重试）。
 pub fn note_stream_miss(state: &AppState, vid: &str) {
+    // 登录态：授权走账号，取流被拒不是设备身份问题，换新注册无意义
+    if state.settings().account.is_some() {
+        log::warn!("[Device] 取流未命中（vid={vid}，登录态不换设备，失败页自动重试）");
+        return;
+    }
     let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let now = now_ms().max(0) as u64;
-    if !stream_probe_due(fails, STREAM_PROBE_AT_MS.load(Ordering::Relaxed), now) {
+    if !stream_renew_due(fails, STREAM_RENEW_AT_MS.load(Ordering::Relaxed), now) {
         return;
     }
-    if STREAM_PROBE_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+    if STREAM_RENEW_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }
-    STREAM_PROBE_AT_MS.store(now, Ordering::Relaxed);
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
     let state = state.clone();
     let vid = vid.to_string();
     crate::runtime::spawn(async move {
-        log::warn!("[Device] 取流连续 {fails} 次未命中，对照探测现役设备（vid={vid}）");
-        match stream_verdict(&state, &vid).await {
-            StreamVerdict::CurrentMarked(profile) => {
-                log::warn!(
-                    "[Device] 对照设备能取流、现役复测仍被拒：现役已被服务端标记，换档 {}",
-                    profile.get("iid")
-                );
-                adopt_control_profile(&state, profile);
-            }
-            StreamVerdict::Stay(reason) => log::warn!("[Device] 按兵不动（{reason}）"),
-        }
-        STREAM_PROBE_IN_FLIGHT.store(false, Ordering::SeqCst);
+        log::warn!("[Device] 取流连续 {fails} 次未命中（匿名配额耗尽），换新注册设备（vid={vid}）");
+        let ok = register_and_swap(&state, "取流被拒自动换新").await.ok;
+        // 成功才写冷却/清零——失败保留 miss 计数且不锁 3 分钟，下一次 miss 可再触发
+        record_stream_renew_outcome(ok, now_ms().max(0) as u64);
+        STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
     });
 }
 
-/// 对照裁决结果。
-enum StreamVerdict {
-    /// 现役确认被标记（对照验证能取流、现役复测仍被拒），带**已验证能取
-    /// 流**的对照档案，直接采用换档。
-    CurrentMarked(DeviceProfile),
-    /// 不换档。原因进日志：对照也取不到（服务端整体）、现役复测能取
-    /// （发货抖动误伤）、或对照注册/网络失败（分不清归属）。
-    Stay(&'static str),
-}
-
-/// 对照裁决最多注册几台对照设备。2026-11-02 矩阵探针实测定型：**发货
-/// 资格是注册时抽签的**——同一台设备同 vid 连取 6 次结果一致（赢家全
-/// 发、输家全拒），换一台注册就能翻盘；所以同一台对照反复重试毫无意义，
-/// 取不到就再注册一台，直到拿到验证能取流的赢家（约 4-6 成出票率，
-/// 4 台 ≈ 87-97% 覆盖）。
-const STREAM_PROBE_REGISTRATIONS: usize = 4;
-/// 现役复测次数：对照能取时再给现役两次机会——能取说明只是误伤
-/// （健康设备不该换），仍被拒才坐实标记。
-const CURRENT_RECHECK_ATTEMPTS: usize = 2;
-/// 复测间隔（毫秒）。
-const CURRENT_RECHECK_DELAY_MS: u64 = 2_000;
-
-/// 对照裁决：逐台注册对照设备、每台试取同一 vid，直到出现**验证能取流**
-/// 的赢家；赢家出现后再复测现役。三种结局——
-/// - 连续多台对照全败 → `Stay`（服务端整体拒发，换谁都一样）；
-/// - 有赢家、现役复测也能取 → `Stay`（现役健康，误伤）；
-/// - 有赢家、现役复测仍被拒 → `CurrentMarked`（现役是输家签，换档采用
-///   赢家——这正是「删库重注册一次就好」的机制化）。
-async fn stream_verdict(state: &AppState, vid: &str) -> StreamVerdict {
-    let proxy = state.settings().proxy;
-    for roll in 1..=STREAM_PROBE_REGISTRATIONS {
-        let reg_env = ApiEnv {
-            proxy: proxy.clone(),
-            device: anonymous_profile(&fresh_cdid()),
-            cookie: None,
-            x_tt_token: None,
-        };
-        let reg = match register_device(&reg_env).await {
-            Ok(r) => r,
-            Err(e) => {
-                log::info!("[Device] 对照设备第 {roll} 台注册失败（{e}），无法裁决");
-                return StreamVerdict::Stay("对照注册失败");
-            }
-        };
-        let control = registered_profile(&reg);
-        let control_env = ApiEnv {
-            proxy: proxy.clone(),
-            device: control,
-            cookie: None,
-            x_tt_token: None,
-        };
-        match hongguo_api::play_url::fetch_play_url(vid, None, stream_cap(), &control_env).await {
-            Ok(_) => {
-                log::info!(
-                    "[Device] 对照设备第 {roll} 台（iid={}）取流成功——拿到赢家签",
-                    reg.install_id
-                );
-                // 赢家在手，复测现役：能取 = 只是误伤，不换；仍被拒 = 输家签坐实
-                let current_env = state.api_env();
-                for attempt in 0..CURRENT_RECHECK_ATTEMPTS {
-                    if attempt > 0 {
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            CURRENT_RECHECK_DELAY_MS,
-                        ))
-                        .await;
-                    }
-                    match hongguo_api::play_url::fetch_play_url(
-                        vid,
-                        None,
-                        stream_cap(),
-                        &current_env,
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            log::warn!(
-                                "[Device] 现役复测取流成功（iid={}）：误伤，不换档",
-                                current_env.device.get("iid")
-                            );
-                            return StreamVerdict::Stay("现役复测能取");
-                        }
-                        Err(hongguo_common::AppError::StreamMiss(_)) => {}
-                        Err(_) => return StreamVerdict::Stay("现役复测网络类失败"),
-                    }
-                }
-                return StreamVerdict::CurrentMarked(control_env.device);
-            }
-            Err(hongguo_common::AppError::StreamMiss(_)) => {
-                log::info!(
-                    "[Device] 对照设备第 {roll} 台（iid={}）取流未命中——输家签，再注册",
-                    reg.install_id
-                );
-            }
-            Err(e) => {
-                log::info!("[Device] 对照探测不确定（{e}）");
-                return StreamVerdict::Stay("对照探测网络类失败");
-            }
-        }
+/// 取流换新结果落账：成功才写冷却时间并清零 miss；失败不动，避免错误锁窗。
+fn record_stream_renew_outcome(ok: bool, now: u64) {
+    if !ok {
+        return;
     }
-    log::warn!("[Device] 连续 {STREAM_PROBE_REGISTRATIONS} 台对照均取不到流：服务端整体拒发");
-    StreamVerdict::Stay("对照同样取不到")
-}
-
-/// 采用已验证能取流的对照档案：换档三连 + 事件广播 + 信息流缓存作废
-/// （与 `register_and_swap` 成功路径同款收尾）。
-fn adopt_control_profile(state: &AppState, profile: DeviceProfile) {
-    let mut meta = read_meta(&state.store);
-    swap_profile(state, &mut meta, profile, "registered");
-    hongguo_api::recommend::clear_feed_tabs_cache();
-    state.events().publish(ServiceEvent::DeviceRegistered(
-        state.device().get("iid").to_string(),
-    ));
+    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
+    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
 /// 与在线播放同一份选流口径：无 HEVC 机器预取/探测的必须是 h264，否则
@@ -561,38 +412,6 @@ pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
     hongguo_api::stream_pick::DecoderCapability::from_hevc(
         hongguo_media_platform::capability::playback::hevc_playable(),
     )
-}
-
-/// 取流探针结论。Alive=现役能取流；Marked(vid)=现役被拒（带触发 vid，
-/// 对照探测取同一个）；Unknown=网络/服务端问题分不清归属。
-enum StreamProbe {
-    Alive,
-    Marked(String),
-    Unknown,
-}
-
-/// 现役身份直接打轻请求取流（只取流表不打视频字节，廉价）。搜索探针
-/// 测不出「读通但取流被标记」的死法——2026-11-02 实录：被标记设备读接口
-/// 全通、唯取流 110001/未命中。
-async fn probe_stream(state: &AppState) -> StreamProbe {
-    let env = state.api_env();
-    let Ok(page) = hongguo_api::recommend::fetch_recommend_feed("36", "", 0, &[], &env).await
-    else {
-        return StreamProbe::Unknown;
-    };
-    let Some(vid) = page
-        .items
-        .iter()
-        .find(|i| !i.vid.is_empty())
-        .map(|i| i.vid.clone())
-    else {
-        return StreamProbe::Unknown;
-    };
-    match hongguo_api::play_url::fetch_play_url(&vid, None, stream_cap(), &env).await {
-        Ok(_) => StreamProbe::Alive,
-        Err(hongguo_common::AppError::StreamMiss(_)) => StreamProbe::Marked(vid),
-        Err(_) => StreamProbe::Unknown,
-    }
 }
 
 #[cfg(test)]
@@ -604,32 +423,49 @@ mod tests {
         Store::open_memory().expect("内存库")
     }
 
-    /// 探测闸门的阈值与限频口径：达阈值才探，首轮放行、间隔内不动、
-    /// 过了间隔放行（2026-11-02 故障窗口的守护回归锁）。
     #[test]
-    fn stream_probe_due_respects_threshold_and_interval() {
-        const MIN: u64 = STREAM_PROBE_MIN_INTERVAL_MS;
-        // 未达阈值：不探
-        assert!(!stream_probe_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
-        // 首次达阈值（从未探过）：放行
-        assert!(stream_probe_due(STREAM_MISS_THRESHOLD, 0, 1000));
-        // 刚探过（间隔内）再连败：限频拦下
-        assert!(!stream_probe_due(
+    fn stream_renew_due_respects_threshold_and_interval() {
+        const MIN: u64 = STREAM_RENEW_MIN_INTERVAL_MS;
+        assert!(!stream_renew_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
+        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 0, 1000));
+        assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD,
             1000,
             1000 + MIN - 1
         ));
-        // 过了最小间隔：放行
-        assert!(stream_probe_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
-        // 远超阈值同样受间隔约束
-        assert!(!stream_probe_due(
+        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
+        assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD * 10,
             1000,
             1000 + MIN - 1
         ));
     }
 
-    /// 测试注册产物（身份固定，档案字段断言可对照）。
+    #[test]
+    fn stream_renew_outcome_only_stamps_on_success() {
+        STREAM_MISS_COUNT.store(STREAM_MISS_THRESHOLD, Ordering::Relaxed);
+        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
+
+        record_stream_renew_outcome(false, 5_000);
+        assert_eq!(
+            STREAM_MISS_COUNT.load(Ordering::Relaxed),
+            STREAM_MISS_THRESHOLD,
+            "失败不得清零 miss"
+        );
+        assert_eq!(
+            STREAM_RENEW_AT_MS.load(Ordering::Relaxed),
+            0,
+            "失败不得写冷却"
+        );
+
+        record_stream_renew_outcome(true, 5_000);
+        assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
+        assert_eq!(STREAM_RENEW_AT_MS.load(Ordering::Relaxed), 5_000);
+
+        STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
+    }
+
     fn reg_result() -> RegisterResult {
         RegisterResult {
             device_id: "8888888888888888".into(),
@@ -641,8 +477,6 @@ mod tests {
         }
     }
 
-    /// 阵亡名单上的库档案：启动同步就重铺静态兜底，旧档进备份行，
-    /// 元数据记下轮换痕迹。
     #[test]
     fn adopt_repaves_dead_listed_profile_with_backup() {
         let db = store();
@@ -652,7 +486,6 @@ mod tests {
 
         let (profile, source) = adopt_sync(&db);
         assert_eq!(source, "anonymous");
-        // 重铺为匿名档案：无设备身份
         assert_eq!(profile.get("iid"), "");
 
         let backup = db
@@ -666,7 +499,6 @@ mod tests {
         assert_eq!(meta.previous_iid.as_deref(), Some("1905892595382586"));
     }
 
-    /// 旧静态兜底档案（共享身份，已整体退役）：adopt 也重铺匿名。
     #[test]
     fn adopt_repaves_legacy_baked_static_profile() {
         let db = store();
@@ -684,8 +516,6 @@ mod tests {
         );
     }
 
-    /// 有身份但轮换元数据缺 registered 标记的档案（旧版本升级带上来的
-    /// 遗产权档案）：adopt 按匿名口径做版本对齐。
     #[test]
     fn adopt_aligns_profile_without_registered_meta() {
         let db = store();
@@ -704,8 +534,6 @@ mod tests {
         );
     }
 
-    /// 注册产物档案启动复检：钉注册口径不做版本对齐（自报版本与注册
-    /// 指纹不同源时取流被拒）。
     #[test]
     fn adopt_keeps_registered_profile_on_register_regime() {
         let db = store();
@@ -729,8 +557,6 @@ mod tests {
         assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
     }
 
-    /// 被 align 升到当前客户端口径的注册档案（版本键偏离注册口径）：
-    /// 启动复检从档案自身身份重建为纯注册口径并落库。
     #[test]
     fn adopt_heals_version_bumped_registered_profile() {
         let db = store();
@@ -757,7 +583,6 @@ mod tests {
         );
     }
 
-    /// 库里没档案：生成并落库匿名档案（cdid 随库稳定）。
     #[test]
     fn adopt_seeds_anonymous_when_db_empty() {
         let db = store();
@@ -773,9 +598,6 @@ mod tests {
         );
     }
 
-    /// 注册产物档案与注册请求共用同一构造：版本身份钉注册口径、
-    /// UA 为注册形态，身份键来自注册响应且按「指纹在前、身份在后」的
-    /// 顺序落位（签名 query 顺序敏感）。
     #[test]
     fn registered_profile_shares_register_fingerprint() {
         let reg = RegisterResult {
@@ -809,7 +631,6 @@ mod tests {
         );
     }
 
-    /// 元数据行的读写往返（含空→有→覆盖）。
     #[test]
     fn device_meta_roundtrip() {
         let db = store();
@@ -825,8 +646,6 @@ mod tests {
         );
     }
 
-    /// 注册代际迁移判定：标记缺失（标记机制前的所有存量档案）或代际
-    /// 不符 → 迁移；当前代际 → 不迁。
     #[test]
     fn regime_migration_only_for_mismatched_marker() {
         let mut meta = BootstrapMeta::default();

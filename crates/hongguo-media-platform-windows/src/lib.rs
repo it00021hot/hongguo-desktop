@@ -1,23 +1,14 @@
 #![cfg(target_os = "windows")]
-//! Windows 平台原生实现（hongguo-media-platform-windows crate）。
-//!
-//! - Media Foundation（[`mf`]）：HEVC 转码硬解 → NV12 → H.264 编码
-//!   （硬件 MFT 优先；软编 h264_mf 仅测试通道）
-//! - WIC（[`cover`]）：HEIC 封面平台级静图解码（HEIF/HEVC 扩展在则走系统
-//!   解码器，运行时探测、可失败静默）
-//!
-//! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform`
-//! 按编译目标选择本 crate；本 crate 不依赖门面（反向即 Cargo 依赖环）。
-//! 其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
+//! Windows 平台原生实现：Media Foundation（[`mf`]）——HEVC 转码硬解 → NV12 → H.264 编码（硬件 MFT 优先；软编 h264_mf 仅测试通道）；
+//! WIC（[`cover`]）——HEIC 封面平台级静图解码（HEIF/HEVC 扩展在则走系统解码器，运行时探测、可失败静默）。
+//! 接口语义由 `hongguo-media-platform-api` 定义，门面 `hongguo-media-platform` 按编译目标选择本 crate（反向即 Cargo 依赖环）；其余目标上空壳编译（`#![cfg]` 剥掉全部内容）。
 
 mod cover;
 mod mf;
 
 pub use cover::heic_to_jpeg;
 
-/// 平台编码层可用时执行 HEVC→H.264 转码。
-///
-/// 仅硬件 MFT 接生产（h264_mf 软编不接，见 [`encoder_available`]）。
+/// 平台编码层可用时执行 HEVC→H.264 转码；仅硬件 MFT 接生产（h264_mf 软编不接，见 [`encoder_available`]）。
 pub use mf::transcode_h264;
 
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。

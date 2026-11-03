@@ -1,15 +1,7 @@
-//! 追更服务：开关 / 列表 / 更新检查（对齐 hongguo-player v1.2.1，抓包口径见
-//! captures/capture-requests-20261015.md）。
-//!
-//! 语义：
-//! - **登录墙**：追更必须登录态（服务端跟随列表），未登录报 `Auth` 透传原文；
-//! - **是否已追没有独立接口**——拉追更列表第一页（count=20）本地判成员
-//!   （player 同款；追超过 20 部时老剧会误判未追，接受此口径）；
-//! - **更新检查**：列表条目的服务端总集数 vs 本地基线，出新集落 `follow_notice`
-//!   并发事件；基线不存在（首次见到）只记基线不提示。取消追更删基线，重追
-//!   从当前集数重新起算，不补发历史更新；
-//! - **通知检查定时器**：启动后立即查一次，之后每 20 分钟一次（player 同款
-//!   周期）；未登录时空转，登录后自动开始出通知。
+//! 追更服务：开关 / 列表 / 更新检查（对齐 hongguo-player，抓包口径见 captures/）。
+//! 语义：追更必须登录态（未登录报 `Auth` 透传原文）；是否已追没有独立接口——拉列表
+//! 第一页本地判成员（追超过一页时老剧会误判未追，接受此口径）；更新检查比对服务端
+//! 总集数与本地基线，出新集落通知并发事件；基线不存在只记基线，取消追更删基线。
 
 pub mod events;
 
@@ -35,8 +27,7 @@ pub async fn toggle(state: &AppState, series_id: &str, follow: bool) -> AppResul
     let env = state.api_env();
     hongguo_api::interact::follow_update(series_id, follow, &env).await?;
     if follow {
-        // 立即记基线为当前集数：从现在起出新集才提示（服务端条目下次检查
-        // 会带最新 episode_cnt，基线抢先写当前值兜住「追完马上检查」的窗口）
+        // 立即记基线为当前集数，兜住「追完马上检查」的窗口
         let _ = refresh_baseline(state, series_id).await;
     } else {
         state.store.follow_baseline_delete(series_id)?;
@@ -74,8 +65,7 @@ pub fn clear_notices(state: &AppState) -> AppResult<()> {
 }
 
 /// 更新检查一轮：出新集落通知 + 发事件，返回本轮新增通知数。
-/// 未登录直接返回 0（定时器场景不报错刷屏；手动「检查更新」由 command 层
-/// 决定是否要先过登录墙提示）。
+/// 未登录直接返回 0（定时器场景不报错刷屏；手动「检查更新」由 command 层决定是否先过登录墙提示）。
 pub async fn check_updates(state: &AppState) -> AppResult<usize> {
     if state.settings().account.is_none() {
         return Ok(0);
@@ -158,7 +148,7 @@ async fn refresh_baseline(state: &AppState, series_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 启动通知检查定时器：先立即查一轮，之后每 [`CHECK_INTERVAL`] 一轮。
+/// 启动通知检查定时器：先立即查一轮，之后每 `CHECK_INTERVAL` 一轮。
 /// 壳装配期调用一次（两壳共用）；任务常驻到进程结束。
 pub fn start_notice_loop(state: crate::app_state::AppState) {
     crate::runtime::spawn(async move {

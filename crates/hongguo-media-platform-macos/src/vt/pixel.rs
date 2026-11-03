@@ -1,20 +1,13 @@
-//! 像素桥与 CF 小工具：CVPixelBuffer / CMSampleBuffer 的裸指针包装（跨回调
-//! 通道搬运）、CF 字典/数字助手、IOSurface 背板属性，以及像素搬移会话
-//! （[`Transfer`]，缩放与 VideoRange → FullRange 区间转换共用）。
-//!
-//! 注意：VT 回调 trampoline（decode_cb / encode_cb）的 refcon 裸指针指向
-//! Decompressor / Compressor 内部的 `Box<Sender>` 队列，回调与所属类型必须
-//! 同文件——分别在 decode.rs / encode.rs，不在本文件。
+//! 像素桥与 CF 小工具：CVPixelBuffer / CMSampleBuffer 的裸指针包装（跨回调通道搬运）、CF 字典/数字助手、IOSurface 背板属性，
+//! 以及像素搬移会话（[`Transfer`]，缩放与 VideoRange → FullRange 区间转换共用）。
+//! 注意：VT 回调 trampoline（decode_cb / encode_cb）的 refcon 裸指针指向 Decompressor / Compressor 内部的 `Box<Sender>` 队列，
+//! 回调与所属类型必须同文件——分别在 decode.rs / encode.rs，不在本文件。
 
 use std::os::raw::c_void;
 
 use hongguo_common::{AppError, AppResult};
 
 use super::ffi;
-
-// ————————————————————————————————————————————————————————————
-// 裸指针包装：跨回调通道搬运 CF 对象
-// ————————————————————————————————————————————————————————————
 
 /// 解码输出的像素缓冲。回调里 retain，Drop 时释放。
 #[repr(transparent)]
@@ -73,10 +66,6 @@ pub(super) fn os(status: ffi::OSStatus, what: &str) -> AppResult<()> {
     }
 }
 
-// ————————————————————————————————————————————————————————————
-// CF 小工具
-// ————————————————————————————————————————————————————————————
-
 /// 建一个小字典（键值都是借来的 CF 引用）。
 pub(super) unsafe fn make_dict(
     entries: &[(ffi::CFTypeRef, ffi::CFTypeRef)],
@@ -122,10 +111,6 @@ pub(super) unsafe fn iosurface_attrs() -> ffi::CFMutableDictionaryRef {
 pub(super) unsafe fn empty_dict() -> ffi::CFMutableDictionaryRef {
     unsafe { make_dict(&[]) }
 }
-
-// ————————————————————————————————————————————————————————————
-// 缩放
-// ————————————————————————————————————————————————————————————
 
 pub(super) struct Transfer {
     session: ffi::VTPixelTransferSessionRef,

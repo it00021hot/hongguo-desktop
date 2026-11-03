@@ -1,11 +1,7 @@
-//! 新剧页（Tauri `/new` = `new-drama-page.tsx` 的 GPUI 对齐）。
-//!
-//! 两个视图：新剧推荐（`firstonlinetime_new` 倒序流，频道筛选 全部/男频/
-//! 女频，封面网格 + 翻页）与上新日历（日期条 + 当日上新行卡，未上线可
-//! 预约）。视图 tab 按壳约定放主体区顶部（Tauri 在顶栏 portal 同位）。
-//! 点击分流：未上线进详情（带 prefill 走「即将上线」降级视图），已上线
-//! 直接起播。数据走 `hongguo_api::{new_drama, calendar}`，与 Tauri 的
-//! new_drama 系列 command 同一段。
+//! 新剧页，两个视图：新剧推荐（倒序流 + 频道筛选 + 封面网格翻页）与上新
+//! 日历（日期条 + 当日上新行卡，未上线可预约）。点击分流：未上线进详情
+//! （prefill 走「即将上线」降级视图），已上线直接起播。数据走
+//! `hongguo_api::{new_drama, calendar}`。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

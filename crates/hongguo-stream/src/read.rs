@@ -1,18 +1,6 @@
-//! 字节级读取 API：给 `AVAssetResourceLoader` 这类「要 offset/length、没有
-//! HTTP Range 头」的消费者用。
-//!
-//! 与 [`crate::serve`] 的关系：**同一套等待/解密/ReaderDemand**，只是出口
-//! 不同——`serve` 产出 `(状态码, 响应头, 响应体)`，这里产出
-//! [`StreamChunk`]。HTTP 头、206/416 是协议壳语义，不属于数据面。
-//!
-//! 语义约定（AVFoundation 依赖这些约定）：
-//! - [`total_len`] 在渐进流注册后立刻返回 `plain_len`，不需要等任何字节；
-//! - `len = None` 表示读到明文末尾；`len = Some(n)` 最多读 `n` 字节，
-//!   越过末尾自动截断（不报错）；
-//! - `start > total` 才是 [`StreamReadError::OutOfRange`]；`start == total`
-//!   是合法的 EOF 读，返回空 `bytes`；
-//! - 数据未就绪时阻塞等待（最多 30s），`cancelled` 命中或条目被逐出立即
-//!   返回错误并注销读者登记。
+//! 字节级读取 API：给 `AVAssetResourceLoader` 这类「要 offset/length、没有 HTTP Range 头」的
+//! 消费者用，与 [`crate::serve`] 共用同一套等待/解密/ReaderDemand。
+//! 语义：`start == total` 是合法 EOF 空读，`len` 越过末尾自动截断，未就绪时阻塞等待（最多 30s）。
 
 use std::fmt;
 use std::sync::Arc;
@@ -23,7 +11,6 @@ use crate::progressive::{EntryMode, read_plain_range, wait_for_entry};
 /// 一次字节读取的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamChunk {
-    /// 明文总长（与 [`total_len`] 一致）。
     pub total: u64,
     /// 本次读取的起始偏移。
     pub start: u64,
@@ -64,11 +51,9 @@ impl fmt::Display for StreamReadError {
 
 impl std::error::Error for StreamReadError {}
 
-/// 这一档的明文总长。渐进流注册后立即可用（`plain_len`）；整集模式要等
-/// 数据全部落盘后才有值（`None` 表示还没就绪）。
-///
-/// AVFoundation 的 `contentInformationRequest.contentLength` 依赖它——必须
-/// 在创建 `AVURLAsset` 之前拿到，所以调用方应先等本函数返回 `Some`。
+/// 这一档的明文总长；渐进流注册后立即可用，整集模式要等数据全部就绪（`None` 表示还没就绪）。
+/// AVFoundation 的 `contentInformationRequest.contentLength` 必须在创建 `AVURLAsset` 前拿到，
+/// 调用方应先等本函数返回 `Some`。
 pub fn total_len(vid: &str, definition: u32) -> Option<u64> {
     let entry = crate::cache().get(vid, definition)?;
     if let Some(progressive) = entry.progressive.lock().as_ref() {
@@ -78,10 +63,8 @@ pub fn total_len(vid: &str, definition: u32) -> Option<u64> {
     (size > 0).then_some(size)
 }
 
-/// 读一段明文。数据未就绪时阻塞等待（最多 30s）。
-///
-/// 不关心取消语义的调用方用这个；播放器的 seek / 切集路径应使用
-/// [`read_range_cancellable`]，否则旧位置的读取会拖住填充调度。
+/// 读一段明文，数据未就绪时阻塞等待（最多 30s）。
+/// seek / 切集路径应改用 [`read_range_cancellable`]，否则旧位置的读取会拖住填充调度。
 pub fn read_range(
     vid: &str,
     definition: u32,

@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 存储
-
 export const storage = {
   usage: () => call('get_storage_usage'),
   /** 按剧聚合的占用（清理页列表，只含磁盘上真有文件的剧） */

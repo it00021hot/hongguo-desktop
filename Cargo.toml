@@ -43,7 +43,7 @@ exclude = ["vendor/*"]
 # 各 crate 共享的 package 字段：发版只改这里一处（另需改 package.json 与
 # tauri.conf.json），成员用 `xxx.workspace = true` 继承。
 [workspace.package]
-version = "0.5.11"
+version = "0.6.0"
 edition = "2024"
 # MSRV 跟随当前 stable 工具链（1.99.1）。应用不是库，MSRV 只影响依赖解析。
 rust-version = "1.99.1"
@@ -90,6 +90,14 @@ tauri-plugin-webdriver = { path = "vendor/tauri_plugin_webdriver" }
 opt-level = 3
 lto = "thin"
 strip = true
+
+# dev 档只留行号级调试信息。全量 debuginfo（DWARF 生成 + PDB 落盘）是
+# make dev 编译段的大头——release 提交（全 crate 版本号变更）后首次 dev
+# 全 workspace 重编实测 1m10s，行号级砍掉变量级调试数据后编译与链接显著
+# 提速。栈回溯仍带文件与行号（Win32 dump 的 .pdata + 行号符号化不受影响），
+# 代价只是调试器里看不到变量值；release 的 strip=true 不动。
+[profile.dev]
+debug = "line-tables-only"
 
 # 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
 #

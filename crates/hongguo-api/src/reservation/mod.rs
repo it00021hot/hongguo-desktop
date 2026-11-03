@@ -1,7 +1,6 @@
-//! 预约接口（列表 + 预约/取消预约）。
-//!
-//! 列表与上新日历共用 `GET /reading/user/subscribe/list/v1/`（预约
-//! `tab_type=13` + `is_online`；路径常量与响应解析归 calendar 域）。
+//! 预约接口（列表 + 预约/取消预约）。列表与上新日历共用
+//! `GET /reading/user/subscribe/list/v1/`（预约 tab_type=13）；
+//! 路径常量与响应解析归 calendar 域。
 
 use serde_json::Value;
 
@@ -11,38 +10,15 @@ use super::danmaku::LQ_API_ORIGIN;
 use super::discover::check_code;
 use hongguo_common::{AppError, AppResult};
 
-/// 预约 / 取消预约端点。
-/// `POST`，body 为 **gzip 压缩的 JSON**（带 `Content-Encoding: gzip`）：
-/// `{"item_id": <series_id>, "item_type": 1, "op_type": 1 预约 / 2 取消,
-/// "shark_param": {埋点上下文}, "wish_list_all_del": 0}`；query 只放
-/// 设备指纹，头是 reading 轻签名（无 gorgon/argus），**必须带登录
-/// cookie**。响应 `code==0` 即成功。
+/// 预约 / 取消预约端点：`POST`，body 为 **gzip 压缩的 JSON**
+///（`op_type` 1 预约 / 2 取消），reading 轻签名、**必须带登录 cookie**；响应 `code==0` 即成功。
 pub const SUBSCRIBE_OP_PATH: &str = "/reading/bookapi/search/uncover_subscribe/v";
 
 /// 批量删除预约端点。
 pub const SUBSCRIBE_DELETE_PATH: &str = "/reading/user/subscribe/delete/v";
 
-/// 预约列表拉全（is_online=true 已上线 / false 待上线）。
-///
-/// **串行翻页拉全，只给「需要全集做成员判定」的消费方用**（GPUI 壳的
-/// 预约态对号：picker / detail 相关推荐）；预约页 itself 走
-/// [`fetch_reservations_page`] 单页懒翻页——拉全是串行的，预约上百部时
-/// 首屏要等几十个请求，issue #11 的「已上线 5–8 秒才出来」就是它。
-///
-/// 登录后响应条目是扁平形态（`item_id/name/has_subscribed/...`），
-/// 匿名空表；与日历共用 [`super::calendar::parse_calendar_item`] 的双形态解析。
-///
-/// **session_id 协议**：列表接口绝不能自造
-/// 进程级恒定 session_id——服务端按它维护浏览会话快照，操作
-/// （预约/取消）之后用同一个 session_id 再读，拿到的永远是操作前
-/// 的缓存列表，表现就是「取消预约无效」「新预约不出现」（同一时刻
-/// 去掉 session_id 立即读到新状态；官方客户端的列表请求从不
-/// 带该参数，翻页时才续传响应下发的值）。所以首页不带，翻页续传
-/// 首页响应下发的 session_id。
-///
-/// tab 角标计数不直接信响应的 `*_total_count`：该键在部分形态下缺失
-/// （解析层缺省为 0），这里翻页拉全后用全量条数兜底——请求本身按
-/// is_online 由服务端过滤，条数即该 tab 的真实总数。
+/// 预约列表拉全（串行翻页，只给「需要全集做成员判定」的消费方用；预约页走 [`fetch_reservations_page`] 懒翻页）。
+/// **session_id 绝不能自造常量**（服务端按它快照会话，操作后重读命中操作前缓存）；角标计数按拉全条数兜底（响应 total 部分形态缺失）。
 pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<CalendarPage> {
     let mut merged = fetch_reservations_page(is_online, 0, None, env).await?;
     let server_total = if is_online {
@@ -50,11 +26,9 @@ pub async fn fetch_reservations(is_online: bool, env: &ApiEnv) -> AppResult<Cale
     } else {
         merged.offline_total
     };
-    // 翻页拉全；上限 20 页防服务端分页异常时失控，空页即止。
-    // 续页 session_id 用首页响应下发的值（协议：响应下发、翻页续传）
+    // 翻页拉全；上限 20 页防空转，空页即止；续页 session_id 用首页响应下发的值
     let mut session_id = merged.session_id.clone();
-    // 服务端分页异常的防线：offset 不前进即止；series_id 去重
-    // （重复页最多浪费一页请求，不会把角标计数撑大）
+    // 分页异常防线：offset 不前进即止；series_id 去重（重复页不撑大角标计数）
     let mut seen: std::collections::HashSet<String> =
         merged.items.iter().map(|i| i.series_id.clone()).collect();
     for _ in 0..19 {
@@ -103,14 +77,8 @@ fn finalize_reservations(
     page
 }
 
-/// 拉一页预约列表（tab_type=13 形态，每页 20 条）——预约页的入口：
-/// 单页即回，`has_more/next_offset/session_id` 交给调用方懒翻页
-/// （此前一次性串行拉全，预约多时首屏肉眼可见地慢）。
-///
-/// `session_id`：None = 首页（列表请求从不自带）；
-/// Some = 翻页续传首页响应下发的值。绝不能传进程级自造常量——服务端
-/// 按它维护会话快照，操作后的重读会命中操作前的缓存（fetch_reservations
-/// 文档有归因记录）。
+/// 拉一页预约列表（tab_type=13 形态，每页 20 条）——预约页入口，单页即回。
+/// `session_id`：None = 首页（列表请求从不自带）；Some = 翻页续传首页响应下发的值，绝不能传自造常量。
 pub async fn fetch_reservations_page(
     is_online: bool,
     offset: i64,
@@ -166,10 +134,8 @@ pub async fn reserve_series(series_id: &str, reserve: bool, env: &ApiEnv) -> App
     check_code(&value)
 }
 
-/// 批量删除预约：
-/// `POST /reading/user/subscribe/delete/v`，body
-/// `{item_id:[数字], all_select:false, not_del_item_id:[], is_online, tab_type:13}`。
-/// item_id 即 subscribe 列表条目的 series_id（与 reserve_series 同源）。
+/// 批量删除预约：`POST /reading/user/subscribe/delete/v`；
+/// `item_id` 即 subscribe 列表条目的 series_id（与 reserve_series 同源）。
 pub async fn delete_reservations(
     item_ids: &[String],
     all_select: bool,
@@ -212,7 +178,6 @@ mod tests {
     use super::super::calendar::CalendarItem;
     use super::*;
 
-    /// 预约列表（tab_type=13）登录态响应：扁平条目 + has_subscribed。
     #[test]
     fn parses_reservation_list_with_subscribed_flag() {
         let data: Value = serde_json::json!({
@@ -244,8 +209,6 @@ mod tests {
         assert_eq!(page.offline_total, 1, "待上线计数供 tab 徽标用");
     }
 
-    /// 服务端没回 `*_total_count`（该键部分形态缺失，解析层缺省 0）时，
-    /// 拉全收尾用全量条数兜底——角标不再恒 0。
     #[test]
     fn finalize_reservations_falls_back_to_item_count() {
         let page = CalendarPage {
@@ -265,7 +228,6 @@ mod tests {
         assert_eq!(offline.online_total, 0);
     }
 
-    /// 预约操作的 body：gzip 可解回，JSON 字段形态一致。
     #[test]
     fn reserve_payload_roundtrips_through_gzip() {
         let raw = br#"{"item_id":7692797468404091929,"item_type":1,"op_type":1}"#;
@@ -275,7 +237,6 @@ mod tests {
         let mut out = Vec::new();
         std::io::Read::read_to_end(&mut back, &mut out).expect("解压");
         assert_eq!(out, raw);
-        // 压缩流带 gzip 魔数 1f 8b（服务端按 Content-Encoding: gzip 解）
         assert_eq!(&gz[..2], &[0x1f, 0x8b]);
     }
 }
@@ -285,9 +246,7 @@ pub(crate) mod probe {
     use super::*;
     use crate::rank::probe::anon_env;
 
-    /// 预约列表直连。匿名返回空表；设 HG_RESERVE_COOKIES（登录
-    /// cookie）则验证两个 tab 的解析（已上线=嵌套、待上线=扁平，
-    /// 同接口按 tab 分发两种 schema）。
+    /// 预约列表直连：匿名空表；HG_RESERVE_COOKIES 登录态验证两 tab 解析。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_reservations() {
@@ -326,11 +285,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// 预约 / 取消预约往返直连（需要登录态）。
-    ///
-    /// HG_RESERVE_COOKIES 提供登录 cookie；
-    /// HG_RESERVE_SERIES 指定目标剧。
-    /// 流程：取消 → 列表应为空 → 重新预约 → 列表应含该剧。
+    /// 预约/取消往返直连（HG_RESERVE_COOKIES 登录态，HG_RESERVE_SERIES 指定目标剧）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_reserve_roundtrip() {

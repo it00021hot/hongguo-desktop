@@ -1,19 +1,6 @@
-//! 真实短剧文件的端到端验证（仅测试用）。
+//! 真实短剧文件的端到端验证（仅测试用）：用真实码流验证 ① 索引重写在平台封装器产出的文件上同样成立、② 产物被 `ffprobe` 认成一条完整时间轴、③ ffmpeg 路线的 H.264 能播——合成 fixture 证明不了这些。
 //!
-//! 用真实码流验证三件在合成 fixture 上证明不了的事：
-//!
-//! 1. 索引重写在**平台封装器**产出的文件上同样成立（HEVC Main profile 带 B 帧、
-//!    `ctts` 非空、chunk 不止一个、stsc 多条目）。
-//! 2. 产物被 `ffprobe` 认成一条**完整**的时间轴，而不是「只能播第 1 集」。
-//! 3. ffmpeg 路线产出的 H.264 能播。
-//!
-//! 全部用例由 `HONGGUO_E2E_DIR` 门控：没设就整体跳过，真实文件不进
-//! `make test-rust`。跑法：
-//!
-//! ```text
-//! HONGGUO_E2E_DIR=<一堆已解密 mp4 所在目录> cargo test --lib testing::media_pipeline_e2e -- --nocapture
-//! HONGGUO_DATA_DIR=<临时目录> # 让 compat-cache 落在临时目录，不碰真实存档
-//! ```
+//! 全部用例由 `HONGGUO_E2E_DIR` 门控：没设就整体跳过，真实文件不进 `make test-rust`。跑法：`HONGGUO_E2E_DIR=<已解密 mp4 所在目录> HONGGUO_DATA_DIR=<临时目录> cargo test --lib testing::media_pipeline_e2e -- --nocapture`。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,10 +12,7 @@ use hongguo_media::remux::concat_copy;
 use hongguo_media_platform::ffmpeg;
 use hongguo_media_platform::ffmpeg::transcode_with_ffmpeg;
 
-/// 没设就整体跳过：真实文件不进 `make test-rust`。
-///
-/// Rust 的 `#[test]` 没有「跳过」，所以每个用例开头都 `let Some(..) = .. else { return }`。
-/// 这里**不能**用 `expect`——那会让没准备数据的机器直接红一片。
+/// 没设就整体跳过：真实文件不进 `make test-rust`。Rust 的 `#[test]` 没有「跳过」，每个用例开头 `let Some(..) = .. else { return }`；不能用 `expect`——没准备数据的机器会直接红一片。
 fn e2e_dir() -> Option<PathBuf> {
     std::env::var("HONGGUO_E2E_DIR").ok().map(PathBuf::from)
 }
@@ -51,11 +35,7 @@ fn episodes() -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-/// 能参与合并的子集：与第 1 集编码参数不一致的那几集被剔掉。
-///
-/// 短剧各集是平台**分别**编码的，同一部剧里混着不同分辨率是常态，所以「全部
-/// 一起合」经常根本不成立。判定复用应用自己的 [`hongguo_media::codec_probe`]，
-/// 保证测试里的口径和界面上的口径是同一份。
+/// 能参与合并的子集：与第 1 集编码参数不一致的那几集被剔掉——平台逐集编码，同一部剧混分辨率是常态。判定复用应用自己的 [`hongguo_media::codec_probe`]，测试口径与界面同一份。
 fn mergeable_episodes() -> Option<(Vec<PathBuf>, Option<u32>)> {
     let files = episodes()?;
     let numbered: Vec<(u32, PathBuf)> = files
@@ -178,8 +158,6 @@ fn mixed_resolution_episodes_are_refused_with_a_readable_message() {
     let dir = scratch("mixed");
     let out = dir.join("合集.mp4");
 
-    // 这批数据里通常混着不同分辨率的集（平台逐集编码，同一部剧不保证同规格）。
-    // 有不一致就验拒绝，没有就说明这份数据刚好一致，顺带确认能合。
     let numbered: Vec<(u32, PathBuf)> = files
         .iter()
         .enumerate()
@@ -254,7 +232,7 @@ fn real_episodes_merge_into_one_continuous_timeline() {
         elapsed
     );
 
-    // 最硬的一条：逐样本比对字节。ffprobe 只看时长，音画错位它查不出来。
+    // 逐样本比对字节：ffprobe 只看时长，音画错位它查不出来
     let data = std::fs::read(&out).unwrap();
     let sources: Vec<Vec<(u64, u64)>> = files
         .iter()
@@ -272,8 +250,6 @@ fn real_episodes_merge_into_one_continuous_timeline() {
     let mut sample_idx = 0usize;
     for i in 0..video.info.samples.len() {
         let (at, len) = video.info.samples[i];
-        // 产物是一条连续时间轴，i 是**合并后**的全局样本号；
-        // 取源时要用「当前集内的第几个样本」，两者不是一回事。
         let (src_at, src_len) = sources[file_idx][sample_idx];
         assert_eq!(len, src_len, "第 {i} 个样本大小与源不一致");
         let a = read_range(&data, at, len);
@@ -318,7 +294,6 @@ fn real_merge_is_accepted_by_ffprobe() {
         (got - expected).abs() < expected * 0.02,
         "ffprobe 认不出完整时间轴：产物 {got:.2}s，各集之和 {expected:.2}s"
     );
-    // 帧数是各集之和——字节级拼接做不到这一点，ffprobe 的时长会停在第 1 集
     let frames = |p: &Path| -> u64 {
         probe(p)["streams"]
             .as_array()
@@ -371,10 +346,6 @@ fn ffmpeg_transcode_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 平台管线端到端：验证解码 → Annex-B → 封装本身。
-///
-/// macOS 的生产入口就是「硬编优先、Apple 软编回落」，任何 mac 都能跑
-/// （CI 含金量在这里：不依赖 GPU）；测试分发器在 Windows 侧仍接软编通道。
 #[test]
 fn platform_pipeline_produces_playable_h264() {
     let Some(mut all) = episodes() else { return };
@@ -407,7 +378,6 @@ fn platform_pipeline_produces_playable_h264() {
     }
 
     assert_eq!(video_codec(&out), "h264", "产物应是 H.264");
-    // 源带音轨时必须直通为 AAC；纯视频源（合成 fixture）产物同样纯视频
     let src_has_audio = hongguo_media::demux::demux_file(&src)
         .map(|d| d.audio_track().is_some())
         .unwrap_or(false);
@@ -420,8 +390,6 @@ fn platform_pipeline_produces_playable_h264() {
         (got - source).abs() < source * 0.05,
         "转码后时长 {got:.2}s 应接近源 {source:.2}s"
     );
-    // 拼接硬约束的预演：第 2 集之后各集要在第 1 集的参数集下可解，
-    // 产物码流必须自带 SPS/PPS——这里只验「moov 与样本表自洽」
     let verified = hongguo_media::demux::demux_file(&out).expect("产物应能再次解复用");
     assert!(
         verified
@@ -432,11 +400,6 @@ fn platform_pipeline_produces_playable_h264() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 平台**硬编会话**端到端：真实 HEVC 单集 → H.264。
-///
-/// 生产入口已不区分硬软（`Enable` 策略），这条用「探测说有硬编」作门控，
-/// 专验硬编会话本身——Apple Silicon 的 macOS CI 上会真跑；其余机器安静跳过
-/// （软会话路径由上一条用例在任何 mac 上覆盖）。
 #[test]
 fn platform_transcode_produces_playable_h264() {
     if !hongguo_media_platform::platform::h264_hw_encoder_available() {
@@ -445,7 +408,6 @@ fn platform_transcode_produces_playable_h264() {
     }
     let Some(mut all) = episodes() else { return };
     let src = all.swap_remove(0);
-    // 平台路径只接 HEVC；H.264 源归 ffmpeg 直转，不在这条链上
     let is_hevc = hongguo_media::demux::demux_file(&src)
         .ok()
         .and_then(|d| {
@@ -502,7 +464,6 @@ fn ffmpeg_output_is_decodable() {
         eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
         return;
     };
-    // 挑最小的一集：慢的不是代码而是等待
     let Some(all) = episodes() else { return };
     let src = all
         .into_iter()
@@ -530,11 +491,9 @@ fn compat_merge_end_to_end_via_ffmpeg() {
     let Some((all, _)) = mergeable_episodes() else {
         return;
     };
-    // 只取三集：整集转码本来就慢，没必要跑那么久
     let inputs: Vec<PathBuf> = all.into_iter().take(3).collect();
     let dir = scratch("compat");
 
-    // 逐集转码到 compat-cache，再流复制拼接——和 compat.rs 里同一条流水线
     let mut transcoded = Vec::new();
     for (i, src) in inputs.iter().enumerate() {
         let target = dir.join(format!("{:03}.mp4", i + 1));
@@ -561,15 +520,11 @@ fn compat_merge_end_to_end_via_ffmpeg() {
 
 #[test]
 fn compat_merge_unifies_mixed_resolutions_by_scaling() {
-    // 兼容合并逐集转码但**不缩放**的话，产物依然规格不一，拼接照样过不去——
-    // 实测一部 11 集的剧（10 集 1080p、1 集 720p）走到拼接才失败，
-    // 前面十几分钟的转码全白做。统一到首集分辨率后这条路才通。
     let Some(encoder) = ffmpeg::h264_encoder() else {
         eprintln!("[e2e] 没探到可用的 H.264 编码器，跳过");
         return;
     };
     let Some(files) = episodes() else { return };
-    // 挑一集 1080p 与一集非 1080p
     let mut picks: Vec<PathBuf> = Vec::new();
     for p in &files {
         let tracks = hongguo_media::demux::demux_file(p).unwrap();
@@ -595,7 +550,7 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
         v.info.media_duration as f64 / v.info.media_timescale.max(1) as f64
     };
 
-    // 不缩放：拼接必须拒绝（这就是之前白干十几分钟的那条路）
+    // 不缩放：拼接必须拒绝
     let mut raw = Vec::new();
     for (i, src) in picks.iter().enumerate() {
         let t = dir.join(format!("raw{:03}.mp4", i + 1));
@@ -641,9 +596,7 @@ fn compat_merge_unifies_mixed_resolutions_by_scaling() {
 
 #[test]
 fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
-    // 门控：没有 ffmpeg 时整条兼容合并会静默落到别的后端，测试结果就没有意义了
     let Some(encoder) = ffmpeg::h264_encoder() else {
-        // 没装 ffmpeg 是合法状态（项目本来就承诺零外部依赖），不是失败
         eprintln!(
             "[e2e] 没探到可用的 H.264 编码器，跳过：{:?}",
             ffmpeg::ffmpeg_path()
@@ -658,8 +611,6 @@ fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
     );
     let cap = hongguo_media_platform::capability::probe::detect();
     if cap.platform_encoder {
-        // 平台层可用＝分流已定：ffmpeg 整层不探（探测严格按优先级，高优先
-        // 级可用就不看下一级），两个 ffmpeg 字段恒 false 是预期
         assert!(
             !cap.has_ffmpeg && !cap.h264_hw_encoder,
             "平台编码层可用时 ffmpeg 兜底层应整层跳过，实际 has_ffmpeg={} hw={}",
@@ -678,8 +629,6 @@ fn the_installed_ffmpeg_is_actually_used_by_the_transcode_path() {
 
 #[tokio::test]
 async fn compat_playback_transcodes_a_real_hevc_episode() {
-    // 兜底转码的端到端：真实 HEVC 源 → 转成 H.264 → 产物自带 avc1 轨。
-    // 这是「播放兜底能救回黑屏机器」的前提。
     let Some(files) = episodes() else { return };
     let src = files[0].clone();
     let dir = std::env::temp_dir().join(format!("hg-e2e-cplay-{}", std::process::id()));
@@ -690,7 +639,6 @@ async fn compat_playback_transcodes_a_real_hevc_episode() {
     let got = match cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(&src), &|_| {}).await
     {
         Ok(v) => v,
-        // 这台机器没有可用的转码后端时跳过，而不是判失败
         Err(e) => {
             eprintln!("[e2e] 兜底转码不可用，跳过: {e}");
             let _ = std::fs::remove_dir_all(&dir);
@@ -712,7 +660,6 @@ async fn compat_playback_transcodes_a_real_hevc_episode() {
         got.elapsed_ms
     );
 
-    // 第二次命中缓存，不再转一次
     let again = cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(&src), &|_| {})
         .await
         .expect("命中缓存不该失败");

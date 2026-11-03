@@ -1,24 +1,6 @@
 //! 表情域：官方表情 / 第三方 GIF / 自定义表情
-//! （口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
-//!
-//! 三个端点：
-//! - `GET /reading/ugc/comment/emoticon/v`——表情列表。`search_type` 分档：
-//!   1 = 关键词搜索（`keyword` 带 `+` 前缀表示前缀匹配）、2 = 第三方表情库
-//!   （GIF tab，分页 `offset`/`next_offset`）、4 = 我的表情（`keyword=profile`，
-//!   官方「♡」档 = 我上传的自定义表情 + 我收藏的官方表情，同一列表）。
-//!   3 档官方每次开面板都并发拉，但收藏前后恒空、面板也无入口，
-//!   本仓不实现。响应 `data.info_list[]` 为 [`Emoticon`]，另有
-//!   `has_more`/`next_offset`；
-//! - `POST /reading/reader/upload/picture/`——图片上传（multipart，字段名
-//!   `picture`，query `need_encrypt=0`），返回 [`PictureUpload`]；
-//! - `POST /reading/ugc/comment/emoticon/collect/v`——添加 / 删除「我的
-//!   表情」（`collect_type` 1 = 添加 / 2 = 删除）：上传本地图片存成我的
-//!   表情（`image_id` 空串），或把一张已有表情收藏进来（`image_id` 填
-//!   源表情 id），响应 `data.image_data` 为 [`Emoticon`]。
-//!
-//! 官方协议是 snake_case、对外模型是 camelCase——两侧映射在本文件里显式
-//! 写死（[`parse_emoticon`] / [`image_data_value`]），不靠 serde 的
-//! `rename_all` 一套键名两头通吃。
+//!（口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
+//! snake_case 官方协议 ↔ camelCase 对外模型的映射显式写死，不走 serde rename_all。
 
 pub mod model;
 
@@ -43,10 +25,8 @@ const PICTURE_UPLOAD_PATH: &str = "/reading/reader/upload/picture/";
 /// 收藏/添加自定义表情。
 const EMOTICON_COLLECT_PATH: &str = "/reading/ugc/comment/emoticon/collect/v";
 
-/// 拉一页表情。
-///
-/// `search_type` 见 [`crate::params::emoticon`]；`keyword` 仅搜索档需要
-/// （第三方档传 `None`，我的表情档传 `profile`）。
+/// 拉一页表情。`search_type` 见 [`crate::params::emoticon`]；
+/// `keyword` 仅搜索档需要（第三方档传 `None`，我的表情档传 `profile`）。
 pub async fn list_emoticons(
     search_type: i64,
     count: i64,
@@ -121,11 +101,8 @@ pub async fn list_own_emoticons(count: i64, offset: i64, env: &ApiEnv) -> AppRes
     .await
 }
 
-/// 上传一张图片（评论附图 / 自定义表情共用）。
-///
-/// multipart 形态照官方：字段名 `picture`，`Content-Type:
-/// application/octet-stream`，`Content-Transfer-Encoding: binary`，
-/// 带 `Content-Length`；body **不 gzip**（reading 族其余接口才 gzip）。
+/// 上传一张图片（评论附图 / 自定义表情共用）。multipart 形态照官方
+///（字段名 `picture`、octet-stream、binary、带 Content-Length）；body **不 gzip**。
 pub async fn upload_picture(
     bytes: &[u8],
     filename: &str,
@@ -161,15 +138,8 @@ pub async fn upload_picture(
     })
 }
 
-/// 把一张已上传的图片存成自定义表情，或把一张已有表情收藏进「我的表情」
-/// （♡ tab 的「上传自定义表情」与长按「添加到表情」共用本端点）。
-///
-/// 请求体是**扁平** JSON（不是 `business_param` 形态），字段见
-/// [`EmoticonCollectRequest`]：上传走 `image_id=""` + 上传接口返回的完整
-/// 签名 URL；收藏已有表情走 `image_id` = 源表情 id + 该表情的 URL。
-///
-/// 返回值：添加（`collect_type=1`）服务端回完整表情对象；删除
-/// （`collect_type=2`）回 `image_data: null`——此时返回 `None`。
+/// 收藏/添加自定义表情（♡ tab「上传自定义表情」与长按「添加到表情」共用）。
+/// 请求体是**扁平** JSON（字段见 [`EmoticonCollectRequest`]）；删除（collect_type=2）回 null → 返回 `None`。
 pub async fn collect_emoticon(
     req: &EmoticonCollectRequest,
     env: &ApiEnv,
@@ -240,9 +210,7 @@ pub fn parse_emoticon(value: &Value) -> Option<Emoticon> {
 }
 
 /// [`Emoticon`] → 官方 `image_data` 条目（snake_case 写出）。
-///
-/// 字段在场性照官方：本地图片只有 `web_uri`/宽高/`format`/
-/// `image_type`，表情类另带 `id`/`dynamic_url`/`thumb_nails` 等。
+/// 字段在场性照官方：本地图片只有 web_uri/宽高/format/image_type，表情类另带 id 等。
 pub fn image_data_value(image: &Emoticon) -> Value {
     let mut obj = Map::new();
     obj.insert("web_uri".into(), Value::String(image.web_uri.clone()));
@@ -290,9 +258,8 @@ fn thumb_value(thumb: &EmoticonThumb) -> Value {
     Value::Object(obj)
 }
 
-/// 服务端业务拒绝用 `Rejected` 变体透传原文（与互动域同口径，见
-/// `interact/mod.rs`）：「已添加过该表情」这类具体原因对用户是有效信息，
-/// 套「视频处理失败」这类通用文案反而误导。
+/// 服务端业务拒绝用 `Rejected` 变体透传原文（与互动域同口径）：
+/// 具体原因对用户是有效信息，套通用文案反而误导。
 fn check_code(value: &Value) -> AppResult<()> {
     if value.get("code").and_then(Value::as_i64) == Some(0) {
         return Ok(());
@@ -379,7 +346,6 @@ mod tests {
 
     #[test]
     fn local_picture_image_data_omits_absent_fields() {
-        // 本地图片评论的 image_data 只有 web_uri/宽高/格式/image_type
         let image = Emoticon {
             web_uri: "https://p0-reading-private.fqnovel.com/x~tplv-s85hriknmn-jpeg.jpeg?lk3s=1"
                 .into(),
@@ -421,9 +387,6 @@ mod tests {
 
     #[test]
     fn collect_request_matches_official_capture() {
-        // 官方形态（长按评论里的 GIF → 「添加到表情」）：
-        // image_id 是**源表情 id**，image_url 是该表情的静态 URL，
-        // image_type=2（动图）但 URL 仍是静态 webp。
         use crate::params::emoticon::COLLECT_TYPE_ADD;
         let req = EmoticonCollectRequest {
             collect_type: COLLECT_TYPE_ADD,
@@ -445,9 +408,6 @@ mod tests {
 
     #[test]
     fn collect_request_keeps_official_field_order() {
-        // 官方体按 key 字母序序列化（collect_type → image_height → image_id
-        // → image_type → image_url → image_width），本仓结构体按同序声明，
-        // 逐字节形态与官方一致。
         let text = serde_json::to_string(&EmoticonCollectRequest::default()).unwrap();
         assert_eq!(
             text,
@@ -457,8 +417,6 @@ mod tests {
 
     #[test]
     fn server_rejection_passes_through_original_message() {
-        // 重复收藏服务端回 101066「已添加过该表情」：原文透传，不套
-        // 「视频处理失败」这类通用前缀——前缀会把重复收藏说成视频问题。
         let value = serde_json::json!({"code": 101066, "message": "已添加过该表情 "});
         let err = check_code(&value).unwrap_err();
         assert_eq!(err.i18n_key(), "error.rejected");

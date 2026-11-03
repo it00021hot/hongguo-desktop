@@ -1,11 +1,6 @@
-//! 下载管理页（Tauri `/tasks` = `tasks-page.tsx` 的 GPUI 对齐）。
-//!
-//! 表格：多选列 + 剧名（含失败原因）+ 集数 + 状态徽标 + 大小（下载中给
-//! 进度条）+ 行内操作（停止/重试/打开文件夹/删除）；顶部一行队列状态与
-//! 批量操作（一键启动/暂停/重试全部失败/全选/选中失败项/扫描补登记）；
-//! 有选中时吸底条给「可释放体积 + 删除」。数据与操作走
-//! `hongguo_service::download_service`（queue 快照 + actions），与 Tauri
-//! 的 download command 同一段；进度靠 `download-*` 事件即时刷新。
+//! 下载管理页：多选表格（剧名/集数/状态徽标/大小/行内操作）+ 顶部队列状态
+//! 与批量操作 + 有选中时的吸底条（可释放体积 + 删除）。数据走
+//! `hongguo_service::download_service`，进度靠 `download-*` 事件即时刷新。
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

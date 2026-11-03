@@ -21,10 +21,7 @@ pub fn default_cache_dir() -> String {
     hongguo_service::settings_service::default_cache_dir()
 }
 
-/// 存设置（立即生效，无需重启）。老板键**先注册后落库**：注册失败（组合
-/// 键被其他程序占用等）整个保存不提交——先落库的话错误返回了坏键却已
-/// 入库，重启后照样注册不上，用户还以为存上了（v0.5.0 保存「无反应」
-/// 排查实录）。未变化的重注册在 apply 内早退，不产生额外开销。
+/// 存设置（立即生效，无需重启）。老板键**先注册后落库**：注册失败（组合键被其他程序占用等）整个保存不提交——先落库的话错误返回了坏键却已入库，重启后照样注册不上；未变化的重注册在 apply 内早退，不产生额外开销。
 #[tauri::command]
 pub fn save_settings(
     app: tauri::AppHandle,

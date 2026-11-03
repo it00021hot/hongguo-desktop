@@ -59,15 +59,10 @@ pub fn clear_probe_cache() {
     *PROBE.write() = None;
 }
 
-/// 探测纪律与 ffmpeg 侧同一套：「能建会话」不算数，编码器自己说「我走了
-/// 硬件」才算。`RequireHardware` 在 Intel Mac 上常见 -12903 误报（明明有
-/// QuickSync 却枚举不到），所以用 `Enable`（允许硬件、不强制）建会话，
-/// **实编一帧**后读 `UsingHardwareAcceleratedVideoEncoder`。
-///
-/// 探测帧必须用**真实分辨率**（1080p）：VT 按分辨率挑编码器实例，小帧
-/// 会落到软编实例上、真实会话却是硬件——本机实证过（256×256 报 hw=false，
-/// 生产 1080p 会话 CPU 8% 跑 2× 实时/路，明显是硬件）。分辨率下限的教训
-/// 与 ffmpeg 侧 nvenc（64×64 误判不可用）同源：探测形状要贴近真实使用。
+/// 探测纪律与 ffmpeg 侧同一套：「能建会话」不算数，编码器自己说「我走了硬件」才算。
+/// `RequireHardware` 在 Intel Mac 上常见 -12903 误报（明明有 QuickSync 却枚举不到），所以用 `Enable`（允许硬件、不强制）建会话，**实编一帧**后读 `UsingHardwareAcceleratedVideoEncoder`。
+/// 探测帧必须用**真实分辨率**（1080p）：VT 按分辨率挑编码器实例，小帧会落到软编实例上、真实会话却是硬件——本机实证过（256×256 报 hw=false，
+/// 生产 1080p 会话 CPU 8% 跑 2× 实时/路，明显是硬件）；分辨率下限的教训与 ffmpeg 侧 nvenc（64×64 误判不可用）同源：探测形状要贴近真实使用。
 unsafe fn probe_reports_hardware() -> AppResult<bool> {
     unsafe {
         let mut c = Compressor::new(1920, 1080, 6_000_000)?;
@@ -99,8 +94,7 @@ unsafe fn make_test_frame(width: usize) -> AppResult<Pb> {
         os(st, "建探测帧")?;
         let pb = Pb(pb);
         os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁探测帧")?;
-        // 逐平面逐行铺 0x80。IOSurface 的整块分配不等于「stride×高×1.5」的
-        // 纸面加和（平面各自对齐）——按整块 memset 实测越界段错误。
+        // 逐平面逐行铺 0x80：IOSurface 的整块分配不等于「stride×高×1.5」的纸面加和（平面各自对齐），按整块 memset 实测越界段错误
         for plane in 0..ffi::CVPixelBufferGetPlaneCount(pb.0) {
             let base = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, plane) as *mut u8;
             let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, plane);

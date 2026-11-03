@@ -1,10 +1,6 @@
-//! 排行榜页（Tauri `/rank` = `rank-page.tsx` 的 GPUI 对齐）。
-//!
-//! 内容 tab（全部/真人剧/漫剧…由接口下发）× 左侧子榜竖排 × 右上筛选面板
-//! （子榜自带 panel 行，单选；内联展开形态，Tauri 是弹出层）+ 榜单行卡
-//! （名次 | 封面 | 标题/季徽/元信息/简介/热度行 | 播放+详情 / 预约）。
-//! 数据走 `hongguo_api::rank::fetch_rank_ex`（selected/sub/panel/offset/
-//! session 全参），与 Tauri 的 rank_list command 同一段。
+//! 排行榜页：内容 tab（接口下发）× 左侧子榜竖排 × 右上筛选面板（单选）+
+//! 榜单行卡（名次 | 封面 | 元信息 | 播放+详情/预约）。数据走
+//! `hongguo_api::rank::fetch_rank_ex`（全参）。
 
 use std::collections::HashMap;
 use std::sync::Arc;

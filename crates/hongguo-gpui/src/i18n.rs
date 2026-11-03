@@ -1,7 +1,5 @@
-//! GPUI 壳文案资源：直接复用 Tauri 壳的 `src/locales/*.json`。
-//!
-//! 两壳共用同一份词条，避免同一句文案在两个资源文件里漂移。GPUI 是
-//! bin-only crate，资源在编译期嵌入；运行时只解析一次并扁平化成
+//! GPUI 壳文案资源：直接复用 Tauri 壳的 `src/locales/*.json`（两壳共用同一
+//! 份词条，避免文案漂移）。编译期嵌入，运行时解析一次并扁平化成
 //! `a.b.c -> value`，切换语言只改进程内的 `Locale`。
 
 use std::collections::HashMap;

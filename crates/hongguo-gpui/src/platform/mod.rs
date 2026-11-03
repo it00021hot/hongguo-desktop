@@ -1,13 +1,7 @@
 //! 窗口系统原语的门面：业务模块（小屏 / 竖屏 / 隐身 / 老板键 / 单实例）
-//! 只调这里，不写任何 `#[cfg(target_os)]`——平台实现的差异全部落在
-//! [`windows`] / [`macos`] 两个子树里。
-//!
-//! 与既有分层的关系：
-//! - [`crate::win32`]：Win32 裸 FFI（user32 / dwmapi / 全局快捷键 / 命名
-//!   互斥体），Windows 平台实现的底座；
-//! - [`crate::macos`]：AppKit 裸 FFI（objc2），macOS 平台实现的底座；
-//! - 本模块：**业务语义层**——小屏落位、竖屏几何、置顶、藏显、快照还原，
-//!   两端各自的坐标/边框换算都在各自实现里，调用方看到的是一套统一 API。
+//! 只调这里，不写任何 `#[cfg(target_os)]`——平台差异全部落在 `windows` /
+//! `macos` 两个子树里（各自是 Win32 / AppKit 裸 FFI 底座）；本模块是业务
+//! 语义层，调用方看到一套统一 API。
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -44,17 +38,15 @@ pub(crate) struct WindowSnapshot {
     pub(crate) maximized: bool,
 }
 
-/// 小屏尺寸（Tauri MINI_W/MINI_H 同参）。
+/// 小屏尺寸。
 pub(crate) const MINI_W: f64 = 480.0;
 pub(crate) const MINI_H: f64 = 270.0;
 
-/// 小屏落位边距（工作区右下角，Tauri MINI_MARGIN 同参）。
+/// 小屏落位边距（工作区右下角）。
 pub(crate) const MINI_MARGIN: f64 = 16.0;
 
-/// 当前所有显示器的矩形 `(x, y, w, h)`（逻辑像素，与 gpui 窗口 bounds 同一
-/// 坐标空间）——只有 Windows 的记忆槽位用这套 gpui 坐标；macOS 走
-/// [`macos::memory_display_rects`] 的 AppKit 全局外框（gpui 在 macOS 丢了
-/// 显示器原点，多屏必错位）。
+/// 当前所有显示器的矩形 `(x, y, w, h)`（逻辑像素，与 gpui 窗口 bounds
+/// 同一坐标空间）。
 #[cfg(target_os = "windows")]
 pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
     cx.displays()
@@ -71,9 +63,8 @@ pub(crate) fn display_rects(cx: &gpui_kit::App) -> Vec<(f32, f32, f32, f32)> {
         .collect()
 }
 
-/// GPUI 窗口 → 契约的宿主窗口描述（[`hongguo_player::HostWindow`]）。
-///
-/// 系统播放器实现不依赖 gpui：壳在这里把原生句柄与 DPI 缩放解出来交给它。
+/// GPUI 窗口 → 契约的宿主窗口描述（[`hongguo_player::HostWindow`]）：
+/// 系统播放器实现不依赖 gpui，壳在这里把原生句柄与 DPI 缩放解出来交给它。
 pub(crate) fn host_window(window: &gpui_kit::Window) -> Option<hongguo_player::HostWindow> {
     let handle = raw_window_handle::HasWindowHandle::window_handle(window)
         .ok()?
@@ -106,8 +97,8 @@ pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
     }
 }
 
-/// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器视频位用）。
-/// 各平台的差异见 [`windows`] / [`macos`] 里的同名实现；无系统后端的目标恒等。
+/// GPUI prepaint 的舞台原点 → 窗口绝对坐标（系统播放器视频位用）；各平台
+/// 差异见 `windows` / `macos` 里的同名实现，无系统后端的目标恒等。
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn stage_origin(x: f32, y: f32, _chrome_top: f32) -> (f32, f32) {
     (x, y)

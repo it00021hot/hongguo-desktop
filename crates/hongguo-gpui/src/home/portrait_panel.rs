@@ -1,11 +1,6 @@
-//! 竖屏播放：进入/退出/铺满档切换与竖屏形态的紧凑控制条（Tauri
-//! `use-portrait-window` + `MiniScreenControls variant="portrait"` 对齐）。
-//!
-//! 窗口几何在 [`crate::portrait`]；这里只管播放侧状态与 UI：
-//! - 比例取「实际在播的档位尺寸」（没有档位表就用解码帧尺寸），过手机形
-//!   地板（`portrait::geom::aspect_of_video`）；
-//! - 换集/换清晰度导致比例变化 >1% 时重适配（Tauri REFIT_DELTA 同值）；
-//! - 竖屏里没有大屏控制栏：渲染紧凑条（无剧名块、无置顶，多一个铺满档）。
+//! 竖屏播放：进入/退出/铺满档切换与竖屏形态的紧凑控制条。窗口几何在
+//! [`crate::portrait`]；这里只管播放侧：比例取「实际在播的档位尺寸」过手机形
+//! 地板，比例变化 >1% 重适配；竖屏里渲染紧凑条（无剧名块、无置顶、多铺满档）。
 
 use gpui_kit::component::Disableable;
 use gpui_kit::component::IconName;

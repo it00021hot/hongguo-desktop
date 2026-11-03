@@ -1,11 +1,6 @@
-//! 服务事件泵：订阅 `hongguo_service::events`，转发为 GPUI 侧可 await 的通道。
-//!
-//! service 的业务事件（登录 MFA 状态、下载进度/状态等）经 tokio broadcast
-//! 发布；本泵把它们转发进 `tokio::sync::mpsc` 无界通道——接收端是同步
-//! 原语，不依赖 tokio 上下文，可在 GPUI 执行器上直接 await（与
-//! `bridge.rs` 同款约定）。消费方（HomeView）在构造时起一条 `cx.spawn`
-//! 循环，把事件落到视图状态——与 Tauri 壳消费同一批事件（一份业务实现，
-//! 两种 UI 适配）。
+//! 服务事件泵：订阅 `hongguo_service::events` 的 tokio broadcast，转发进
+//! mpsc 无界通道——接收端不依赖 tokio 上下文，可在 GPUI 执行器上直接 await
+//! （与 `bridge.rs` 同款约定）；消费方构造时起 spawn 循环落到视图状态。
 
 use hongguo_service::app_state::AppState;
 use hongguo_service::events::ServiceEvent;

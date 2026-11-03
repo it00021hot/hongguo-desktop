@@ -303,27 +303,17 @@ pub(crate) fn visibility(window: &Window) -> bool {
     is_visible(window)
 }
 
-/// 把窗口操作派发到执行器（主线程）再执行。
-///
-/// **不能在调用点同步做**：这些函数都从点击回调/轮询回调里进来，而回调正嵌在
-/// 窗口过程的一次 `handle.update` 里；同步 `SetWindowPos` 会让 WM_SIZE
-/// **同步重入**同一个 update——重入被 gpui 拒绝（`log_err` 吞掉），视口
-/// 从此停在旧尺寸（实测舞台停在 1024×680、控制条画到 270 高的窗口外）。
-/// gpui 自己的 `resize()` 也是把 SetWindowPos 派发到执行器绕开这一点。
-///
-/// `ShowWindow` 同理：它同步派发 WM_SHOWWINDOW/WM_SIZE/WM_ACTIVATE 到我们
-/// 自己的窗口过程，gpui 的窗口过程要在这时更新窗口状态——撞上借用时 gpui
-/// 同样用 `log_err` 吞掉（正文是 std 的 "RefCell already borrowed"，且因
-/// 依赖 crate 的路径拼不出日志 target，看起来像无出处的裸行）。
+/// 把窗口操作派发到执行器（主线程）再执行。不能在调用点同步做：这些函数从
+/// 点击/轮询回调里进来，而回调嵌在窗口过程的一次 `handle.update` 里，同步
+/// `SetWindowPos`/`ShowWindow` 会同步重入同一个 update——重入被 gpui 拒绝，
+/// 视口从此停在旧尺寸。gpui 自己的 `resize()` 也是派发到执行器绕开这一点。
 fn defer_window_op(window: &Window, cx: &gpui_kit::App, op: impl FnOnce() + Send + 'static) {
     window.spawn(cx, async move |_| op()).detach();
 }
 
-/// 起拖窗口（小窗整窗拖动；顶栏用的是同一套 Win32 系统移动循环）。
-///
-/// `WM_NCLBUTTONDOWN(HTCAPTION)` 会同步进入系统移动循环：在 gpui 事件分发
-/// 当口同步派发 WM_* 会撞它的借用，所以经 [`defer_window_op`] 挪到执行器
-/// 下一拍——物理按键仍按着，移动循环照进（顶栏拖窗踩过同款）。
+/// 起拖窗口（小窗整窗拖动；顶栏用同一套系统移动循环）。`WM_NCLBUTTONDOWN
+/// (HTCAPTION)` 会同步进系统移动循环、在 gpui 事件分发当口会撞借用，所以经
+/// [`defer_window_op`] 挪到执行器下一拍——物理按键仍按着，移动循环照进。
 pub(crate) fn start_window_move(window: &Window, cx: &gpui_kit::App) {
     let Some(hwnd) = crate::win32::hwnd_of(window) else {
         return;

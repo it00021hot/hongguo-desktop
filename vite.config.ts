@@ -34,6 +34,13 @@ export default defineConfig({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
+    warmup: {
+      // tauri dev 先起 Vite 再编译 Rust（~1min），这段窗口 Vite 纯闲置。
+      // dev 首帧的大头是把 277 个源模块逐个按需转换再经 HTTP 送达 WebView2
+      // （实测 webview 进来后还要等 ~60s 才挂载、期间是黑窗）——预热让
+      // 转换在编译窗口内做完，webview 进来直接命中热缓存，前端秒级挂载。
+      clientFiles: ['./index.html', './src/main.tsx'],
+    },
     watch: {
       // target/ 在 workspace 化后位于仓库根，不排除的话 chokidar 会去盯
       // target/debug/deps 下的 exe/pdb——被运行中的进程锁住，Windows 上报 EBUSY。

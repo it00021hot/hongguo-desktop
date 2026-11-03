@@ -66,9 +66,7 @@ impl ProgressThrottle {
     }
 }
 
-/// 事件载荷（强类型，红线 10：禁 `json!` 裸拼）。字段与前端
-/// `service/tauri/events.ts` 的 zod schema 一一对应，改任何一侧字段必须
-/// **同 commit** 改另一侧（事件坏掉是静默的，载荷漂移只会 console.error）。
+/// 事件载荷（强类型，禁 `json!` 裸拼）：字段与前端 zod schema 一一对应，改任何一侧字段必须**同 commit** 改另一侧。
 /// 单任务事件：完成 / 停止共用（`download-completed` / `download-stopped`）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TaskEvent {
@@ -128,7 +126,6 @@ mod tests {
     fn tiny_change_is_throttled() {
         let t = ProgressThrottle::default();
         t.should_send("a", 10.0);
-        // 间隔不足 500ms 且变化 <0.5%，应被节流
         assert!(!t.should_send("a", 10.2));
     }
 
@@ -136,7 +133,6 @@ mod tests {
     fn large_change_still_respects_interval() {
         let t = ProgressThrottle::default();
         t.should_send("a", 10.0);
-        // 变化很大，但间隔不足 500ms —— 两个条件是 AND，仍应被节流
         assert!(!t.should_send("a", 90.0));
     }
 

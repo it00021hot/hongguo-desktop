@@ -1,9 +1,6 @@
-//! 顶栏与页面筛选共用的胶囊 tab。
-//!
-//! 尺寸和状态直接对齐 Tauri `TopBarTab`：
-//! `rounded-full px-3 py-1 text-xs`，选中为 primary 实底，未选中为 muted
-//! 文字 + hover accent。GPUI 通用 Button 的 small 尺寸不是胶囊，调用点各写
-//! 一遍会再次漂移，所以只在主题令牌上收口一次。
+//! 顶栏与页面筛选共用的胶囊 tab：`rounded-full px-3 py-1 text-xs`，选中为
+//! primary 实底、未选中为 muted 文字 + hover accent。通用 Button 的 small
+//! 尺寸不是胶囊，调用点各写一遍会漂移，只在主题令牌上收口一次。
 
 use gpui_kit::component::button::{Button as ComponentButton, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::{ActiveTheme, Sizable};

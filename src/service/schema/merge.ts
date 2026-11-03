@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（合并域）。
- */
+/** 合并域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 const mergeModeSchema = z.enum(['quick', 'compat']);
@@ -40,9 +38,8 @@ export const mergePreflightSchema = z.object({
   // 快速合并是字节级顺序拼接，编码不一致会产出连索引都过不去的文件
   codecConsistent: z.boolean(),
   codecMismatchEpisode: z.number().int().positive().nullable(),
-  // warnings 是 i18n key，键集由 Rust merge_service::prepare 定义（当前
-  // 三处：noDownloads / codecMismatch / insufficientSpace）——Rust 新增
-  // 警告键必须同一 commit 扩这个枚举，漏了会在响应校验当场暴露
+  // warnings 是 i18n key，键集由 Rust merge_service::prepare 定义（noDownloads / codecMismatch /
+  // insufficientSpace）——Rust 新增警告键必须同一 commit 扩这个枚举，漏了响应校验当场暴露
   warnings: z.array(
     z.enum(['merge.noDownloads', 'merge.codecMismatch', 'merge.insufficientSpace']),
   ),

@@ -1,7 +1,6 @@
 //! 追更的本地领域模型（更新提醒通知）。
 //!
-//! 追更列表本身是服务端接口的传输结构（`hongguo_api::interact::FollowUpdateItem`），
-//! 不落库；这里只有更新检查的产物——通知（落 `follow_notice` 表，走 IPC 给前端）。
+//! 追更列表本身是服务端接口的传输结构（`hongguo_api::interact::FollowUpdateItem`），不落库；这里只有更新检查的产物——通知（落 `follow_notice` 表，走 IPC 给前端）。
 
 use serde::{Deserialize, Serialize};
 

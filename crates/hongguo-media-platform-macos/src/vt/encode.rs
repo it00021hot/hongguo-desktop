@@ -1,8 +1,5 @@
-//! H.264 编码：VTCompressionSession 会话（[`Compressor`]，硬编优先，无硬编
-//! 回落 Apple 内置软编会话），输出 AVCC 样本转 Annex-B。
-//!
-//! 编码输出回调 [`encode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>`
-//! 队列——回调与所属类型必须同文件。
+//! H.264 编码：VTCompressionSession 会话（[`Compressor`]，硬编优先、无硬编回落 Apple 内置软编会话），输出 AVCC 样本转 Annex-B。
+//! 编码输出回调 [`encode_cb`] 的 refcon 裸指针指向会话内部的 `Box<Sender>` 队列——回调与所属类型必须同文件。
 
 use std::os::raw::c_void;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -11,10 +8,6 @@ use hongguo_common::AppResult;
 
 use super::ffi;
 use super::pixel::{CmSb, Pb, iosurface_attrs, make_dict, make_int, os};
-
-// ————————————————————————————————————————————————————————————
-// 编码
-// ————————————————————————————————————————————————————————————
 
 pub(super) struct Compressor {
     session: ffi::VTCompressionSessionRef,
@@ -52,9 +45,8 @@ unsafe extern "C" fn encode_cb(
 }
 
 impl Compressor {
-    /// 建 H.264 编码会话：`Enable` 策略——有硬编用硬编，没有就落 Apple
-    /// 内置软编会话。曾经还有 `Require`（探测确认硬编后才放行生产），
-    /// 软编会话转正后两态合一，探测的 hw/sw 结论只喂徽标与并行度。
+    /// 建 H.264 编码会话：`Enable` 策略——有硬编用硬编，没有就落 Apple 内置软编会话。
+    /// 曾有的 `Require`（探测确认硬编才放行生产）随软编会话转正两态合一，探测的 hw/sw 结论只喂徽标与并行度。
     pub(super) unsafe fn new(width: usize, height: usize, bitrate: i32) -> AppResult<Self> {
         unsafe {
             let spec = make_dict(&[(
@@ -63,8 +55,7 @@ impl Compressor {
                 ffi::kCFBooleanTrue as ffi::CFTypeRef,
             )]);
 
-            // 源缓冲属性：NV12 + IOSurface。解码输出是同格式同尺寸的 IOSurface
-            // 背板缓冲，Apple Silicon 上编码器直接吃 GPU 表面，不过 CPU。
+            // 源缓冲属性：NV12 + IOSurface——解码输出是同格式同尺寸的 IOSurface 背板缓冲，Apple Silicon 上编码器直接吃 GPU 表面不过 CPU
             let pixel_format =
                 make_int(ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32);
             let w = make_int(width as i32);
@@ -112,20 +103,13 @@ impl Compressor {
             ffi::CFRelease(spec as ffi::CFTypeRef);
             os(status, "建 H.264 硬编会话")?;
 
-            // 质量与码控。VT 没有 CRF：码率按分辨率×帧率标定（见 `bitrate_for`）。
-            // MaxFrameDelayCount=0 关掉帧延迟（也就没有 B 帧重排）：输出顺序=输入
-            // 顺序，pts 标注与封装器的「严格递增」要求都不受干扰。
-            // ProfileLevel 在个别第三方硬编上可能不吃：不致命，别让会话白建。
+            // 质量与码控：VT 没有 CRF，码率按分辨率×帧率标定（见 `bitrate_for`）；ProfileLevel 个别第三方硬编可能不吃，不致命别让会话白建。
             let bitrate_num = make_int(bitrate);
             let gop = make_int(250);
-            let no_delay = make_int(0);
-            let no_reorder = make_int(0);
-            // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余
-            // 尽力而为——实测部分编码器拒收 MaxFrameDelayCount=0 / 自定义 profile。
-            // **AllowFrameReordering 必须关掉**：B 帧重排一旦被编码器打开（硬编
-            // 会话会拒收 MaxFrameDelayCount=0，本机实证），输出落进解码序 +
-            // 非单调 PTS，递增兜底只能把乱序帧顶到错误的时间上——产物帧序乱掉
-            // （真实剧集 B 帧流首跑即现）。下游 mux 的契约就是单调显示序。
+            // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效），其余尽力而为。**AllowFrameReordering 关掉**是简化取向、不是正确性闸门：
+            // 关掉后无 B 帧，输出序=输入序，stts 平凡、不写 ctts，流式收割（take_outputs）即输入序；就算被拒收，PTS 透传 + mux 的「解码序 + ctts」也能正确封装非单调显示时间。
+            // 契约类型是 CFBoolean——传 CFNumber 会被会话校验拒收（OSStatus -12900）等于没关（此前传数值 0，重排从未真正关掉过）。
+            // 帧延迟（MaxFrameDelayCount）只影响出帧快慢、不影响顺序，离线转码无所谓；本机硬编实测拒收 0 值，请求它只会在每轮启动刷一条拒收警告，不设。
             let required = os(
                 ffi::VTSessionSetProperty(
                     session,
@@ -138,17 +122,12 @@ impl Compressor {
                 (
                     "AllowFrameReordering",
                     ffi::kVTCompressionPropertyKey_AllowFrameReordering,
-                    no_reorder as ffi::CFTypeRef,
+                    ffi::kCFBooleanFalse as ffi::CFTypeRef,
                 ),
                 (
                     "MaxKeyFrameInterval",
                     ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
                     gop as ffi::CFTypeRef,
-                ),
-                (
-                    "MaxFrameDelayCount",
-                    ffi::kVTCompressionPropertyKey_MaxFrameDelayCount,
-                    no_delay as ffi::CFTypeRef,
                 ),
             ] {
                 let st = ffi::VTSessionSetProperty(session, key, value);
@@ -168,7 +147,6 @@ impl Compressor {
             );
             ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
             ffi::CFRelease(gop as ffi::CFTypeRef);
-            ffi::CFRelease(no_delay as ffi::CFTypeRef);
             required?;
 
             Ok(Compressor {
@@ -245,9 +223,7 @@ impl Compressor {
     }
 
     /// 把一个编码样本转成封装器要的 Annex-B；返回 `(Annex-B, 是否关键帧)`。
-    ///
-    /// 关键帧前插 SPS/PPS：拼接器重建 moov 时样本描述取自第 1 集，后续各集
-    /// 的码流必须自带参数集才能在第 1 集的 avcC 之下解码。
+    /// 关键帧前插 SPS/PPS：拼接器重建 moov 时样本描述取自第 1 集，后续各集的码流必须自带参数集才能在第 1 集的 avcC 之下解码。
     pub(super) unsafe fn sample_to_unit(&mut self, sb: &CmSb) -> AppResult<(Vec<u8>, bool)> {
         unsafe {
             let block = ffi::CMSampleBufferGetDataBuffer(sb.0);
@@ -259,14 +235,11 @@ impl Compressor {
                 "读编码输出",
             )?;
             let raw = std::slice::from_raw_parts(data, total);
-            // VT 输出的 H.264 是 4 字节长度前缀（AVCC）；Annex-B 转换与
-            // hongguo_media::hevc 是同一份实现
+            // VT 输出的 H.264 是 4 字节长度前缀（AVCC）；Annex-B 转换与 hongguo_media::hevc 是同一份实现
             let mut annexb = hongguo_media::hevc::to_annexb(raw, 4);
 
-            // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上
-            // （拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带
-            // 参数集才能在第 1 集 avcC 之下解码）。第三个布尔是 is_keyframe，
-            // 与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
+            // 关键帧（同步样本）前插 SPS/PPS；首个输出样本无论标没标都带上（后续各集码流必须自带参数集，理由见函数文档）。
+            // 返回的布尔是 is_keyframe，与 mux_h264 的契约一致——`sync` 就是「可独立解码」。
             let sync = is_sync_sample(sb.0);
             if sync || self.parameter_sets.is_none() {
                 let desc = ffi::CMSampleBufferGetFormatDescription(sb.0);
@@ -283,10 +256,9 @@ impl Compressor {
     }
 }
 
-/// VT 编码输出的同步样本判定：`kCMSampleAttachmentKey_NotSync` 缺省或为 false
-/// 即同步样本。压缩输出的约定是**非同步帧必带 NotSync=true，同步帧省略该键**
-/// （Apple 示例代码一律按 `!contains(key)` 判）——首帧 IDR 不带这个键，
-/// 按「缺省即非同步」判会把首帧标成非关键帧，封装器直接拒收。
+/// VT 编码输出的同步样本判定：`kCMSampleAttachmentKey_NotSync` 缺省或为 false 即同步样本。
+/// 压缩输出的约定是**非同步帧必带 NotSync=true，同步帧省略该键**（Apple 示例一律按 `!contains(key)` 判）——
+/// 按「缺省即非同步」判会把首帧 IDR 标成非关键帧，封装器直接拒收。
 unsafe fn is_sync_sample(sb: ffi::CMSampleBufferRef) -> bool {
     unsafe {
         let array = ffi::CMSampleBufferGetSampleAttachmentsArray(sb, 0);

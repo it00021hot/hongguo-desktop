@@ -2,18 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { seriesMetaSchema } from './detail';
 
-/**
- * 详情页创作者头像的地址规整。
- *
- * 服务端下发的是**签名 http** 地址（video_detail 的
- * `main_creator_users[].base_info.user_avatar`，实包样本）：
- * `http://p3-reading-sign.fqnovelpic.com/novel-pic/<hash>~tplv-...jpeg?lk3s=...&x-signature=...`
- * ——直挂 `<img>` 会被 WebView 拦掉（混合内容 / CSP `img-src` 没有 `http:`），
- * 头像整块空白。
- *
- * 其它头像域（评论 / 弹幕 / @提及 / 创作者档案）都在 schema 层过
- * `normalizeAvatarUrl`，这里钉住「同口径」，别再漏。
- */
 describe('详情元信息契约', () => {
   const baseMeta = {
     seriesId: '7678638019280112702',
@@ -26,7 +14,6 @@ describe('详情元信息契约', () => {
     tags: ['末世'],
   };
 
-  /** 造一个创作者条目（头像地址可换）。 */
   const creator = (avatar: string) => ({
     userId: '2007062623837002',
     name: '郡园',

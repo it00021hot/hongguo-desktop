@@ -1,14 +1,7 @@
 //! 接口调用：重试与空响应判定。
 //!
-//! ⚠️ 服务端在签名失效时返回 **HTTP 200 + 0 字节**，不是错误码。
-//! 只看状态码会把失败误判成成功，所以这里显式检查响应体长度。
-//!
-//! 两条与签名强相关、不能搞错的约定：
-//!
-//! 1. **方法必须与签名时一致。** 签名覆盖 body 字节，带 body 的请求发成
-//!    `GET` 会让服务端算出的摘要与 `x-gorgon` / `x-ss-stub` 不符，直接静默丢弃。
-//! 2. **每次重试都要重新签名。** 时间戳与 `_rticket` 已经过期，复用旧签名
-//!    等于拿一张过期的票去敲门。
+//! ⚠️ 服务端签名失效返回 HTTP 200 + 0 字节——必须检查响应体长度，
+//! 只看状态码会把失败当成功。
 
 use std::time::Duration;
 
@@ -16,46 +9,27 @@ use reqwest::Proxy;
 
 use hongguo_common::{AppError, AppResult};
 
-/// 重试次数。
 const MAX_RETRIES: u32 = 3;
 
-/// reading 系（lq 域）统一 origin。轻签名头族（榜单/搜索/弹幕/剧评）在
-/// 这台机上——顶栏塌缩表（bookmall/tab cr=4）今天仍由它正确服务。
 pub const LQ_API_ORIGIN: &str = "https://api5-normal-lq.fqnovel.com";
 
-/// bookmall 推荐流 + 视频 model/detail 族的统一 origin（2026-10-31 官方
-/// 实流：bookmall/tab 与 player/model 系全在这台机上，POST body 一律
-/// gzip；此前 lq/sinfonlineb 的取流形态已整体失效回 200+0）。域名是
-/// TTNet 动态调度的，钉死任何一台都会随服务端迁移整体失效——下次迁移
-/// 只改本常量与调用方 origin。
 pub const SINFONLINEC_API_ORIGIN: &str = "https://api5-normal-sinfonlinec.fqnovel.com";
 
-/// 单集取流（`video_model/v1`）的发货 origin（2026-10-31 实测：model 族
-/// 在 sinfoninec/a/b/lq 明文边缘全部回 200+0——官方发货走证书钉扎/klink
-/// 通道，mitm 不可见；lf 与裸域 api5-normal 是可发货的明文边缘，单集
-/// 26KB 流表正常下发）。批量 `multi_video_model/player/v1` 在所有明文
-/// 边缘均空，靠「批量空→回落单集」兜底。
 pub const LF_API_ORIGIN: &str = "https://api5-normal-lf.fqnovel.com";
 
-/// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
+/// 新通道取流 origin；失败回退 [`LQ_API_ORIGIN`]。
+pub const READING_API_ORIGIN: &str = "https://reading.snssdk.com";
+
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
 
-/// CDN 取流重试次数（**失败重试 3 次，退避 300ms×(第几次)**——CDN 抖动是
-/// 常态）。本文件的 Range 自愈与 service 的在线填充两侧同源，改这里一处。
+/// 与 service 的在线填充侧同源，改这里一处。
 pub const STREAM_RETRY_ATTEMPTS: u32 = 3;
 
-/// 第 `attempt`（0 基）次失败后的退避时长（`it()` 口径）。
 pub fn stream_retry_backoff(attempt: u32) -> Duration {
     Duration::from_millis(300 * (attempt as u64 + 1))
 }
 
-/// 按配置取 HTTP client（进程级按解析后的代理地址缓存）。
-///
-/// `reqwest::Client` 自带连接池，**每次新建等于把 TLS 握手/代理连接全部
-/// 付一遍**——预约页翻页、榜单连打这类连续请求被整体放大（issue #11 的
-/// 「已上线 5–8 秒」里相当一块在这）。缓存键是解析后的代理地址：用户改
-/// 代理设置即得到新 client（旧连接池随引用释放），免重启；构造失败不缓存，
-/// 下次调用重试。
+/// 按配置取 HTTP client（进程级按解析后的代理地址缓存；改代理即换池，免重启）。
 pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<reqwest::Client> {
     static CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
@@ -73,8 +47,7 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
     Ok(client)
 }
 
-/// 真构造（`build_client` 的缓存未命中分支）：UA 与超时是全局契约，
-/// 不随代理配置变。
+/// UA 与超时是全局契约，不随代理配置变。
 fn build_client_uncached(
     config: &hongguo_common::model::ProxyConfig,
 ) -> AppResult<reqwest::Client> {
@@ -82,9 +55,7 @@ fn build_client_uncached(
         .user_agent(hongguo_signer::video_ua())
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10));
-    // Android 上 reqwest("rustls") 默认的 platform-verifier 需要 JNI 初始化
-    // 才可用（背景见 common::utils::tls），缺失时全部 TLS 握手失败——改喂
-    // 编译内置 webpki 根证书。桌面维持默认行为不变。
+    // Android：platform-verifier 需要 JNI 初始化，缺失时 TLS 全挂，喂 webpki 根
     #[cfg(target_os = "android")]
     let mut builder =
         builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
@@ -105,30 +76,20 @@ fn build_client_uncached(
         .map_err(|e| AppError::Network(format!("构造 HTTP client 失败: {e}")))
 }
 
-/// 一次官方 API 调用的全部环境：代理、设备档案、会话 Cookie。
-///
-/// 三者都从 `AppState` 快照而来（应用壳的 `AppStateInner::api_env`），
-/// 调用链上以值传递，避免中途被设置修改后出现「签名用 A 设备、请求带 B Cookie」
-/// 之类的半新半旧状态。
+/// 一次官方 API 调用的全部环境（从 `AppState` 快照，以值传递防半新半旧）。
 #[derive(Debug, Clone)]
 pub struct ApiEnv {
     pub proxy: hongguo_common::model::ProxyConfig,
     pub device: hongguo_signer::device::DeviceProfile,
-    /// 会话 Cookie（`k=v; k=v` 形态）。未登录为 None。
-    /// Cookie 不参与签名，走 `extra_headers` 注入。
+    /// 会话 Cookie（不参与签名，签名后注入）。
     pub cookie: Option<String>,
-    /// x-tt-token 长凭据（登录响应头下发；在场则以短形式随全部请求头
-    /// 携带——这也是将来服务端滑动续期时新值的载体）
+    /// x-tt-token 长凭据；请求带前 56 位短形式。
     pub x_tt_token: Option<String>,
 }
 
 impl ApiEnv {
-    /// 未登录的默认环境：匿名游客档案（官方匿名形态，无设备身份）
-    /// + 默认 origin。
-    ///
-    /// 测试基线专用（生产走登录态 / 注册档案）。不 `#[cfg(test)]` 门控：下游
-    /// crate（本仓 crates/hongguo-service 的测试）要用，而依赖 crate 对下游以非
-    /// test 方式编译，门控项会消失。
+    /// 未登录默认环境（匿名游客档案）。不 `#[cfg(test)]` 门控：下游
+    /// crate 的测试要用。
     pub fn anonymous(proxy: hongguo_common::model::ProxyConfig) -> Self {
         Self {
             proxy,
@@ -140,17 +101,11 @@ impl ApiEnv {
 }
 
 /// 调用官方 App 接口，返回响应体字节。
-///
-/// # 参数
-/// - `pathname`：以 `/` 开头的接口路径
-/// - `body`：请求体字节。`Some` 走 POST，`None` 走 GET
-/// - `env`：代理 / 设备 / 会话
 pub async fn api_call(pathname: &str, body: Option<Vec<u8>>, env: &ApiEnv) -> AppResult<Vec<u8>> {
     api_call_full(hongguo_signer::API_ORIGIN, pathname, body, &[], env).await
 }
 
-/// 全参数形态：origin + 业务 query + body。reading 系接口是混合参数
-/// （部分参数在 query、部分在 body 的 biz_param），都从这里走。
+/// 全参数形态（origin + 业务 query + body）。
 pub async fn api_call_full(
     origin: &str,
     pathname: &str,
@@ -161,9 +116,7 @@ pub async fn api_call_full(
     api_call_full_with_headers(origin, pathname, body, biz_query, &[], env).await
 }
 
-/// [`api_call_once_allow_empty`] 的 reading 形态：body gzip + reading 系头
-/// ——视频 model 族在 sinfoninec 上的官方线上形态（POST 一律 gzip）。
-/// 空响应不重试不报错（「不发货」是该族的常态，重试只会白等）。
+/// reading 形态（gzip body）；空响应不重试不报错。
 pub async fn api_call_reading_once_allow_empty(
     origin: &str,
     pathname: &str,
@@ -193,78 +146,60 @@ pub async fn api_call_reading_once_allow_empty(
     Ok(resp.bytes)
 }
 
-/// 取流轻请求头里的店区（2026-11-01 竞品实流抓包；值为注册期服务端
-/// 按账号下发的 store_region，CN 区恒此值）。
 const STORE_REGION: &str = "cn-gd";
 
-/// 取流轻请求（2026-11-01 竞品实流抓包逐字段对齐，见
-/// [`crate::params::MODEL_LIGHT_PATH`]）：
-///
-/// - **无签名五件套**——`multi_video_model/v1/` 走 reading 系轻形态，
-///   头 = `reading_headers()` + 客户端标识族（`accept`(protobuf) +
-///   `passport-sdk-version: 5051452` + `sdk-version: 2` +
-///   `x-vc-bdturing-sdk-version` + `x-xs-from-web: 0`，实流逐字段）+
-///   `x-tt-store-region(-src)` + `x-ss-req-ticket` + 档案 cookie；
-/// - query：档案字段**去 `openudid`**、补 `need_personal_recommend=1`，
-///   **字母序** + `_rticket`（无 `ts`）；
-/// - body：POST gzip JSON。
-///
-/// 空响应原样返回空 `Vec`（「不发货」交调用方回落，不重试）。
+/// 取流轻请求：签名五件套必带（缺失被服务端静默丢弃），空响应原样返回
+/// 空 `Vec`（「不发货」交调用方回落，不重试）。
 pub async fn api_call_model_light(
     origin: &str,
     pathname: &str,
     payload: Vec<u8>,
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let mut pairs: Vec<(String, String)> = env
+    let mut biz_query: Vec<(String, String)> = env
         .device
         .iter()
         .filter(|(k, _)| *k != "openudid")
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    pairs.push(("need_personal_recommend".into(), "1".into()));
-    pairs.push(("_rticket".into(), ms.to_string()));
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    let query = hongguo_signer::ticket::encode_query(
-        &pairs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.clone()))
-            .collect::<Vec<_>>(),
-    );
+    biz_query.push(("need_personal_recommend".into(), "1".into()));
 
-    let mut headers = reading_headers();
-    headers.extend([
-        (
-            "accept".into(),
-            "application/json; charset=utf-8,application/x-protobuf".into(),
-        ),
-        ("passport-sdk-version".into(), "5051452".into()),
-        ("sdk-version".into(), "2".into()),
-        ("x-vc-bdturing-sdk-version".into(), "4.0.3.cn".into()),
-        ("x-xs-from-web".into(), "0".into()),
-        ("x-ss-req-ticket".into(), ms.to_string()),
-        ("x-tt-store-region".into(), STORE_REGION.into()),
-        ("x-tt-store-region-src".into(), "uid".into()),
-        ("Content-Encoding".into(), "gzip".into()),
-    ]);
+    let mut extra = vec![
+        ("x-ss-dp".to_string(), READING_DP.into()),
+        ("lc".to_string(), LC.into()),
+        ("x-tt-store-region".to_string(), STORE_REGION.into()),
+        ("x-tt-store-region-src".to_string(), "did".into()),
+        ("Content-Encoding".to_string(), "gzip".into()),
+    ];
     if let Some(c) = &env.cookie
         && !c.is_empty()
     {
-        headers.push(("Cookie".into(), c.clone()));
+        extra.push(("Cookie".to_string(), c.clone()));
+    }
+    // 登录态短形式 token：缺了被服务端按匿名配额处理
+    if let Some(full) = &env.x_tt_token
+        && !full.is_empty()
+    {
+        let short: String = full.chars().take(56).collect();
+        extra.push(("x-tt-token".into(), short));
     }
 
+    let signed = hongguo_signer::ticket::sign_request_with(
+        origin,
+        pathname,
+        Some(gzip_bytes(&payload)?),
+        &env.device,
+        &biz_query,
+        &extra,
+    );
+
     let client = build_client(&env.proxy)?;
-    let mut req = client
-        .post(format!("{origin}{pathname}?{query}"))
-        .body(gzip_bytes(&payload)?);
-    for (k, v) in &headers {
-        req = req.header(k, v);
+    let mut req = client.post(&signed.url);
+    for (k, v) in &signed.headers {
+        req = req.header(k.as_str(), v.as_str());
     }
     let resp = req
+        .body(signed.body.unwrap_or_default())
         .send()
         .await
         .map_err(|e| AppError::Network(e.to_string()))?;
@@ -277,7 +212,7 @@ pub async fn api_call_model_light(
         .map_err(|e| AppError::Network(e.to_string()))
 }
 
-/// [`api_call_full`] 的带额外头版本（commentapi 要 `x-reading-request`）。
+/// [`api_call_full`] 的带额外头版本。
 pub async fn api_call_full_with_headers(
     origin: &str,
     pathname: &str,
@@ -291,9 +226,7 @@ pub async fn api_call_full_with_headers(
         .map(|r| r.bytes)
 }
 
-/// 单次发送、空响应不重试不报错（回空 body）。批量取流预取专用：
-/// 批量形态可能直接回 200+0（服务端不发货），它是「发了即回」
-/// 的常态而非故障——重试只会让每次切剧白等 6 秒，一次即回。
+/// 批量取流预取专用：空响应是「不发货」常态，发了即回，不重试。
 pub async fn api_call_once_allow_empty(
     origin: &str,
     pathname: &str,
@@ -315,23 +248,16 @@ pub async fn api_call_once_allow_empty(
     Ok(resp.bytes)
 }
 
-/// 响应体 + Set-Cookie（passport 登录捕获会话用，其余调用走
-/// [`api_call_full_with_headers`] 自动丢弃 cookie）。
+/// 响应体 + Set-Cookie + 全部响应头（登录捕获会话 / x-tt-token 用）。
 pub struct ApiCallResponse {
     pub bytes: Vec<u8>,
-    /// Set-Cookie 原始行（`k=v; Path=/; ...` 形态，未清洗）。
+    /// Set-Cookie 原始行（未清洗）。
     pub set_cookies: Vec<String>,
-    /// 全部响应头（小写名）。目前只为提取 `x-tt-token`（登录响应头
-    /// 下发的长凭据，Set-Cookie / body 里都没有）。
+    /// 全部响应头（小写名）。
     pub headers: Vec<(String, String)>,
 }
 
-/// reading 系（lq 域）统一调用入口：轻签名头 + POST body 一律 gzip。
-///
-/// 这族接口的 POST（弹幕/预约/筛选）全部
-/// `Content-Encoding: gzip`，GET/POST 都带 `x-ss-dp + lc +
-/// x-reading-request`。走 sinfonlineb 域的播放/推荐流是项目原有
-/// 验证形态（未压缩 + 全签名），不走这里。
+/// reading 系统一入口：轻签名头 + POST body 一律 gzip。
 pub async fn api_call_reading(
     origin: &str,
     pathname: &str,
@@ -350,11 +276,7 @@ pub async fn api_call_reading(
     api_call_full_with_headers(origin, pathname, body, biz_query, &headers, env).await
 }
 
-/// reading 系接口的**原样 body** 变体：body 不 gzip，`Content-Type` 由调用方
-/// 指定（图片上传的 `multipart/form-data; boundary=…` 用）。
-///
-/// 签名侧照常按原始 body 算摘要（`x-ss-stub`），与官方 App 一致——
-/// 官方上传的 multipart body 也是原样参与签名。
+/// body 原样（multipart 上传），签名仍按原始 body 算摘要。
 pub async fn api_call_reading_raw(
     origin: &str,
     pathname: &str,
@@ -368,7 +290,7 @@ pub async fn api_call_reading_raw(
     api_call_full_with_headers(origin, pathname, Some(body), biz_query, &headers, env).await
 }
 
-/// gzip 压缩（reading 系 POST body 的线上形态）。
+/// gzip 压缩（reading 系 POST body 形态）。
 pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
     use std::io::Write;
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -378,16 +300,13 @@ pub fn gzip_bytes(raw: &[u8]) -> AppResult<Vec<u8>> {
         .map_err(|e| AppError::Network(format!("gzip 压缩失败: {e}")))
 }
 
-/// reading 系接口的轻签名头（search / commentapi / 预约共用）。
-///
-/// 这族接口不带 x-gorgon/x-argus/x-ladon，只要
-/// `x-ss-dp + x-reading-request + lc`（多带签名头也能过）。
-/// `x-reading-request` 形如 `{ticket_ms}-{random u32}`。
+/// x-ss-dp：红果 App 的 aid。
+const READING_DP: &str = "8662";
+/// lc：reading 系固定头。
+const LC: &str = "101";
+
+/// reading 系轻签名头（不带 x-gorgon 族，只要这三样）。
 pub fn reading_headers() -> Vec<(String, String)> {
-    /// x-ss-dp：红果 App 的 aid。
-    const READING_DP: &str = "8662";
-    /// lc：reading 系固定头（值 101，语义上游未公开）。
-    const LC: &str = "101";
     let ticket_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -433,7 +352,6 @@ pub async fn api_call_full_response(
                     biz_query.len(),
                     body.as_deref().map(|b| b.len()).unwrap_or(0)
                 );
-                // 载荷只补上下文，别重复 EmptyResponse 变体自己的前缀文案
                 last_err = format!("{origin}{pathname}，连续 {MAX_RETRIES} 次空响应");
             }
             Err(e) => last_err = e.to_string(),
@@ -446,17 +364,14 @@ pub async fn api_call_full_response(
     Err(AppError::EmptyResponse(last_err))
 }
 
-/// 请求视频 CDN 直链：只带 App UA，被 403 拒时补官网 Referer 重试一次。
-///
-/// 下载落盘（worker）与在线取流（play_service）都走这里，两边口径必须一致：
-/// 防盗链规则在同一时刻只有一种，一边能过一边过不了只能是实现漂移。
+/// 请求视频 CDN 直链（下载与在线取流共用）：裸 UA 优先，403 补官网
+/// Referer 重试一次。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
     let send = |referer: bool| {
         let mut req = client
             .get(url)
             .header("User-Agent", hongguo_signer::video_ua())
-            // MP4 已经压缩，HTTP gzip 会破坏 Range 偏移并可能让 reqwest
-            // 在读响应体时解压失败。视频必须按原始字节收取。
+            // MP4 已压缩，HTTP gzip 会破坏 Range 偏移：必须按原始字节收
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
         if referer {
             req = req.header("Referer", hongguo_signer::VIDEO_REFERER);
@@ -493,8 +408,6 @@ fn ensure_stream(url: &str, resp: reqwest::Response) -> AppResult<reqwest::Respo
     }
 }
 
-/// 从 URL 里抠出主机名，失败就原样返回——只用于错误信息，不值得为它引入
-/// 完整的 URL 解析错误处理。
 fn host_of(url: &str) -> &str {
     url.split("//")
         .nth(1)
@@ -502,28 +415,19 @@ fn host_of(url: &str) -> &str {
         .unwrap_or(url)
 }
 
-// ---------------------------------------------------------------- 视频 Range 请求
-
-/// 探测请求的总超时。只取 1 字节，健康 CDN 秒级；卡死连接不该吃 client 默认 30s。
+/// 探测请求的总超时（只取 1 字节）。
 const VIDEO_RANGE_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 等响应头的上限。真正卡死的连接通常卡在这里，不能等到整个 body 超时。
+/// 等响应头的上限。
 const VIDEO_RANGE_HEADER_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 读取停滞超时：连续这么久没有**任何**新字节就报错。
-///
-/// 这是「卡死连接」和「慢但仍在传」的分界。不能用总耗时（1MB 在 68KB/s
-/// 以下会误杀健康慢网）；只要每 10s 有推进，就继续读。
+/// 读取停滞超时：「卡死」与「慢但仍在传」的分界。
 const VIDEO_RANGE_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 单次 Range 请求的总上限（兜底防「每 9s 来一个字节」的假活跃连接）。
-/// 正常的 1MB 块远小于它。
+/// 单次 Range 请求总上限（兜底假活跃连接）。
 const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 用 `Range: bytes=0-0` 探测直链总长。
-///
-/// 返回 `Err` 表示该 CDN 不支持 Range（回了 200）——流式取流的前提不成立，
-/// 调用方据此回落整集路径。
+/// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
     let resp = client
         .get(url)
@@ -553,17 +457,8 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
         .ok_or_else(|| AppError::Network(format!("Content-Range 无法解析总长: {cr}")))
 }
 
-/// 取直链的一段密文 `[start, end]`（闭区间，按字节计；`Range: bytes=start-end`）。
-///
-/// 与 [`get_video_stream`] 同一套头（裸 UA 优先、403 补 Referer）。
-/// 非 206 一律按不支持 Range 报错，交给调用方回落。
-///
-/// 取流重试口径：
-/// - **失败重试 3 次，退避 300ms×(第几次)**——CDN 抖动是常态；
-/// - **CDN 忽略 Range 回 200 全量时切片自愈**而不是报错：按已收字节量
-///   跳过前缀、只留 Range 请求的数据段。再多做一步——
-///   边收边丢、收够即断，不为切 1MB 白拉整集；
-/// - 个别节点 403 裸 UA，补 Referer 重试一次（本应用独有的节点差异）。
+/// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
+/// 切片自愈；403 补 Referer 重试一次）。
 pub async fn get_video_range(
     client: &reqwest::Client,
     url: &str,
@@ -625,7 +520,7 @@ async fn get_video_range_once(
         ))
     };
     if status == reqwest::StatusCode::PARTIAL_CONTENT {
-        // 206：响应体就是请求的那段（短读语义由调用方处理）
+        // 206：响应体就是请求的那段
         let mut bytes = Vec::with_capacity((end - start + 1) as usize);
         loop {
             match tokio::time::timeout(VIDEO_RANGE_STALL_TIMEOUT, stream.next()).await {
@@ -637,13 +532,13 @@ async fn get_video_range_once(
         }
         Ok(bytes)
     } else {
-        // 200：CDN 忽略了 Range 回全量——边收边切，收满要的区间就断流
+        // 200：CDN 忽略了 Range 回全量——边收边切，收满即断流
         let mut cutter = RangeCutter::new(start, end);
         loop {
             match tokio::time::timeout(VIDEO_RANGE_STALL_TIMEOUT, stream.next()).await {
                 Ok(Some(Ok(chunk))) => {
                     if cutter.push(&chunk) {
-                        break; // 收够了，剩余字节不要了（提前断开连接）
+                        break;
                     }
                 }
                 Ok(Some(Err(e))) => return Err(AppError::Network(e.to_string())),
@@ -671,10 +566,7 @@ async fn send_range_request(
     }
 }
 
-/// 200 全量响应里切 `[start, end]` 的状态机（`push` 返回 true = 收够了）。
-///
-/// 独立成结构体是为了能单测：跳过 `start` 之前、取满 `end-start+1` 即止，
-/// 与到达顺序/分块边界无关。
+/// 200 全量响应里切 `[start, end]` 的状态机（独立成结构以便单测）。
 struct RangeCutter {
     skip_left: u64,
     want: usize,
@@ -705,8 +597,7 @@ impl RangeCutter {
         self.out.len() >= self.want
     }
 
-    /// 取出切好的区间。全量响应比请求区间短时给到有多少（短读语义），
-    /// 一个字节都没落到说明 start 越界，按错误处理。
+    /// 取出切好的区间；一个字节都没落到说明 start 越界，按错误处理。
     fn finish(self) -> AppResult<Vec<u8>> {
         if self.out.is_empty() {
             return Err(AppError::Network("200 全量响应未覆盖请求区间的起点".into()));
@@ -715,10 +606,7 @@ impl RangeCutter {
     }
 }
 
-/// 发一次请求。签名在此处生成，与请求方法在同一个分支里决定，不会错配。
-///
-/// Cookie 不参与签名（字节面只覆盖 query + body + 时间戳），作为 extra_headers
-/// 在签名完成后注入——顺序上先签名后补 Cookie，不会被签进摘要里。
+/// 签名在此生成；Cookie 不参与签名，签名后注入。
 async fn send_once(
     client: &reqwest::Client,
     origin: &str,
@@ -734,9 +622,6 @@ async fn send_once(
     {
         extra.push(("Cookie".into(), c.clone()));
     }
-    // x-tt-token：登录响应头下发的凭据，短形式（前 56 位）随请求带——
-    // 业务请求一律在场（官方对齐；也是服务端
-    // 滑动续期时新值的下发载体）
     if let Some(full) = &env.x_tt_token
         && !full.is_empty()
     {
@@ -812,7 +697,6 @@ mod tests {
 
     #[test]
     fn range_cutter_slices_target_from_full_body() {
-        // 200 全量 [0..100)，要 [30..49]：跨多个分块喂入，收满即止
         let body: Vec<u8> = (0..100u8).collect();
         let mut cutter = RangeCutter::new(30, 49);
         assert!(!cutter.push(&body[0..40]), "还差 10 字节");
@@ -830,7 +714,6 @@ mod tests {
 
     #[test]
     fn range_cutter_short_body_gives_what_exists() {
-        // 全量响应比请求区间短：给到有多少（短读语义由调用方处理）
         let body: Vec<u8> = vec![9u8; 5];
         let mut cutter = RangeCutter::new(0, 99);
         cutter.push(&body);
@@ -846,7 +729,6 @@ mod tests {
 
     #[test]
     fn retry_count_is_sane() {
-        // 常量在编译期已知，这条断言的作用是「改动时有人会看见」
         assert!((1..=5).contains(&MAX_RETRIES));
     }
 
@@ -868,13 +750,11 @@ mod tests {
 
     #[test]
     fn client_builds_for_default_proxy() {
-        // 探针与测试都走默认代理，构造成功即说明配置可用
         let _ = build_client(&ProxyConfig::default());
     }
 
     #[test]
     fn direct_mode_builds_no_proxy_client() {
-        // 构造成功即说明直连配置被接受
         let _ = build_client(&ProxyConfig {
             mode: ProxyMode::Direct,
             url: "http://127.0.0.1:7890".into(),
@@ -898,13 +778,7 @@ mod tests {
         assert!(err.is_err(), "非法代理地址应报错而不是静默忽略");
     }
 
-    // ---------------------------------------------------------------- 视频 CDN 直链
-
-    /// 起一个只服务有限次请求的本地 HTTP 服务。
-    ///
-    /// 每个连接只读一个请求、回一个写死的响应就关连接（`Connection: close`，
-    /// 强制客户端为下一次请求新开连接——否则连接复用会让「第二个请求」
-    /// 仍然落在第一条 TCP 上，测试就等不到第二次 accept）。
+    /// 起一个只服务有限次请求的本地 HTTP 服务（每连接一请求即关）。
     fn serve_once(responses: Vec<&'static str>) -> std::net::SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -936,7 +810,6 @@ mod tests {
 
     #[tokio::test]
     async fn video_stream_sends_bare_ua_first() {
-        // 第一个连接只用来观察请求头：不应带 Referer（带了会被主流 CDN 边缘 403）
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let observer = std::thread::spawn(move || read_request_from(listener));
@@ -979,7 +852,6 @@ mod tests {
 
     #[tokio::test]
     async fn video_range_allows_a_slow_but_flowing_body() {
-        // 慢但一直在传：每 1s 到 1 字节，不能被总耗时超时误杀（停滞超时 10s）。
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
@@ -1008,8 +880,6 @@ mod tests {
 
     #[tokio::test]
     async fn video_stream_retries_with_referer_on_403() {
-        // 服务端：第一次裸 UA → 403；第二次带 Referer → 200。
-        // 两边各记下收到的请求头，验证「先裸、后补」的顺序。
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 

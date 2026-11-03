@@ -18,10 +18,8 @@ function subscribeSlot(onChange: () => void) {
 }
 
 /**
- * 把内容 portal 进顶栏中部插槽。
- *
- * 插槽用 DOM id 直取：比 context/ref state 链路稳（那套在运行中出现过
- * 拿不到元素、tab 整排消失的问题）。
+ * 把内容 portal 进顶栏中部插槽。插槽用 DOM id 直取（比 context/ref 链路稳），
+ * 配合上面的 useSyncExternalStore 订阅 DOM 变化——首帧 render 阶段插槽还没提交，提交后自动跟上。
  */
 export function TopBarTabsPortal({ children }: { children: React.ReactNode }) {
   const slot = useSyncExternalStore(

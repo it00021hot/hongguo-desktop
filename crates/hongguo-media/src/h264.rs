@@ -1,19 +1,7 @@
-//! H.264（AVC）参数集提取：avcC 记录 → SPS/PPS NAL 数组 + 长度前缀字节数。
-//!
-//! 与 [`crate::hevc`] 同构（那边喂 hvcC）：解码端两种形态各取所需——
-//! VideoToolbox 要裸 NAL 数组、Media Foundation 要整条 avcC 记录
-//!（`MF_MT_MPEG_SEQUENCE_HEADER`），所以两个出口都提供。
-//!
-//! avcC 载荷布局（ISO/IEC 14496-15 5.3.3.1，AVCDecoderConfigurationRecord）：
-//!
-//! ```text
-//! [0]      configurationVersion (1)
-//! [1..4]   AVCProfileIndication / profile_compatibility / AVCLevelIndication
-//! [4]      lengthSizeMinusOne（低 2 位）
-//! [5]      numOfSequenceParameterSets（低 5 位）
-//! 之后     逐条 SPS：u16 长度 + 载荷
-//! 之后      numOfPictureParameterSets(1) + 逐条 PPS：u16 长度 + 载荷
-//! ```
+//! H.264（AVC）参数集提取：avcC 记录 → SPS/PPS NAL 数组 + 长度前缀字节数，与 [`crate::hevc`] 同构（那边喂 hvcC）。
+//! 解码端两种形态各取所需——VideoToolbox 要裸 NAL 数组、Media Foundation 要整条 avcC 记录（`MF_MT_MPEG_SEQUENCE_HEADER`）。
+//! avcC 载荷布局（ISO/IEC 14496-15 5.3.3.1，AVCDecoderConfigurationRecord）：字节 0 configurationVersion、字节 1..4 profile/compat/level、
+//! 字节 4 lengthSizeMinusOne（低 2 位）、字节 5 numOfSPS（低 5 位），之后逐条 SPS（u16 长度 + 载荷），再 numOfPPS(1) + 逐条 PPS。
 
 use hongguo_common::{AppError, AppResult};
 use hongguo_video::sample_table::TrackInfo;
@@ -61,7 +49,6 @@ pub fn param_nalus_from_avcc(avcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
     let mut nalus: Vec<Vec<u8>> = Vec::new();
     let mut pos = 6usize;
 
-    // SPS 数组
     let num_sps = (avcc[5] & 0x1f) as usize;
     for _ in 0..num_sps {
         let len = read_u16(avcc, pos)?;
@@ -75,7 +62,6 @@ pub fn param_nalus_from_avcc(avcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
         pos = end;
     }
 
-    // PPS 数组
     let num_pps = *avcc
         .get(pos)
         .ok_or_else(|| AppError::Media("avcC 缺 PPS 计数".into()))? as usize;

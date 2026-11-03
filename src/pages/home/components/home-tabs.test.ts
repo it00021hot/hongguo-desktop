@@ -1,14 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// home-tabs 的模块链拉到 locales（模块级读 localStorage/navigator 探测并
-// 初始化语言）——node 测试环境没有这些 global，在动态 import 前打桩
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
 vi.stubGlobal('navigator', { language: 'zh-CN' });
 vi.stubGlobal('document', { documentElement: { lang: '' } });
 
 const { buildTabList, RECOMMEND_TAB_TYPE } = await import('./home-tabs');
 
-/** 官方样本形态的顶栏（45/36/39/16 保序，仅 16 带 bookstoreId）。 */
 function serverTabs() {
   return [
     { tabType: '45', title: '关注', bookstoreId: null },

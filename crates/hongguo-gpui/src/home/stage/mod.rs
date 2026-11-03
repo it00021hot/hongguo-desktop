@@ -1,5 +1,5 @@
 //! 舞台渲染：tab 顶栏、沉浸舞台（封面占位层 / 视频槽二选一）、信息叠加层。
-//! 画面由系统播放器的原生层（AVPlayerLayer / DComp 视频位）合成，GPUI 只
+//! 画面由系统播放器合成（macOS AVPlayerLayer / Windows 视频 quad 同画布），GPUI 只
 //! 在未出画时铺封面占位——本文件不写平台分支。
 
 use std::sync::Arc;
@@ -18,15 +18,9 @@ const STAGE_DIAG_EVERY_SECS: u64 = 5;
 /// 当前/目标这一部，攒着不释放只是白占内存。
 const STAGE_COVER_LIMIT: usize = 8;
 
-/// 一部剧的全屏占位封面所处的状态。
-///
-/// 三态各挡一件事：
-/// - [`StageCover::Loading`]：请求已在途，**同剧不再重复发**。封面是异步
-///   下载+转码+解码的，只看「已完成的表」的话，连点切集时每一集都会再发
-///   一次 1024 档请求（实测「每集都获取封面」的根因）。
-/// - [`StageCover::Ready`]：图已就绪，同剧换集直接复用。
-/// - [`StageCover::Failed`]：这部的封面取不到，不再每次切集重试（1024 档的
-///   下载+转码很贵，重试只会反复烧流量）。
+/// 一部剧的全屏占位封面所处的状态。Loading = 请求已在途、同剧不再重复发
+/// （封面异步下载，不记账则连点切集每集都重发 1024 档请求）；Ready = 图已
+/// 就绪、同剧换集直接复用；Failed = 取不到、不再每次切集重试（1024 档很贵）。
 pub(crate) enum StageCover {
     Loading,
     Ready(Arc<RenderImage>),

@@ -24,40 +24,27 @@ use crate::ui_button::button as Button;
 use super::super::danmaku::DM_LANE_GAP;
 
 impl HomeView {
-    /// 沉浸舞台：**同一时刻只露一层内容**——出画了露原生画面（GPUI 只留
-    /// 点击皮），没出画露封面。
-    ///
-    /// 曾经视频与封面两层都画、封面垫在视频下面：视频是 object-contain
-    /// （上下留黑边），封面就从黑边里透出来——用户看到的正是「上下各一条
-    /// 封面夹着中间的画面」。二选一渲染，结构上不可能叠。
-    ///
-    /// 层序仍与 Tauri `player-page.tsx` 一致：有画面时是画面，没有时是封面；
-    /// 取流的间隙看到的是这部剧的封面而不是黑屏。
-    ///
-    /// 返回 `Div`（不是 AnyElement）：调用方要挂滚轮监听与 `.id`。
+    /// 沉浸舞台：同一时刻只露一层内容——出画露原生画面（GPUI 只留点击皮），
+    /// 没出画露封面。返回 `Div`（不是 AnyElement）：调用方要挂滚轮监听与 `.id`。
     pub(in crate::home) fn render_stage(
         &self,
         window: &mut gpui_kit::Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::Div {
         let theme = cx.theme().clone();
-        // 出画判定：画面由原生层（AVPlayerLayer / DComp 视频位）合成，末帧
-        // 从不进 GPUI。`system_video_ready` 是首帧事件置的「画面已就绪」；
-        // 同剧切集时播放器没换，原生层仍显示上一集的最后一帧——只要别用
-        // 海报盖住它即可（切剧时该标志会被清，海报照旧该出）。
+        // 出画判定：`system_video_ready` 是首帧事件置的「画面已就绪」；同剧切集
+        // 播放器没换，原生层仍显示上一集末帧——别用海报盖住它（切剧时标志会被清）。
         let system_ready = self.system_video_ready;
         let video_ready = system_ready;
-        // 系统播放器：画面层跟随舞台矩形（上一帧 prepaint 的 bounds），
-        // 主线程挂载/更新原生 NSView + AVPlayerLayer。
+        // 系统播放器：画面层跟随舞台矩形（上一帧 prepaint 的 bounds）。
         if let Some(player) = &self.player {
-            // 系统播放器只认契约的宿主窗口描述（原生句柄 + DPI 缩放）；把 gpui
-            // 窗口解成它这事归 platform 门面，视图这里不写平台分支。
+            // 系统播放器只认契约的宿主窗口描述（原生句柄 + DPI 缩放）；gpui 窗口
+            // → host 的解算归 platform 门面，视图不写平台分支。
             if let Some(host) = crate::platform::host_window(window) {
                 player.attach(&host);
             }
-            // 顶栏 44px 只在 chrome 可见时占位（小屏/沉浸全屏没有顶栏）。
-            // prepaint 原点 → 窗口绝对坐标的差异（Windows 已含顶栏、macOS 需补）
-            // 属于窗口系统，归 `platform` 门面，这里不写平台常量。
+            // 顶栏 44px 只在 chrome 可见时占位（小屏/沉浸全屏没有顶栏）；
+            // prepaint 原点 → 窗口绝对坐标的平台差异归 `platform` 门面换算。
             let chrome_top = if self.mini.is_some() || self.immersive {
                 0.0
             } else {
@@ -75,9 +62,8 @@ impl HomeView {
             };
             player.submit_stage(bounds, fit, system_ready);
         }
-        // 周期状态取证（5s 一跳）：封面收不收、帧/图/切换位各在哪一档，
-        // 一行钉死——排障不用再猜是事件没到还是渲染没跟上。带舞台尺寸
-        //（FFI 缩放后布局是否跟随重排，小屏排障靠它）。
+        // 周期状态取证（5s 一跳）：一行钉死封面/帧/切换位各在哪一档，排障不用
+        // 猜是事件没到还是渲染没跟上；带舞台尺寸（FFI 缩放后布局是否跟随重排）。
         if self.stage_diag_at.get().elapsed() >= Duration::from_secs(STAGE_DIAG_EVERY_SECS) {
             self.stage_diag_at.set(Instant::now());
             let stage_size = self
@@ -91,8 +77,8 @@ impl HomeView {
                     )
                 })
                 .unwrap_or_else(|| "?".into());
-            // 内存分解：进程涨内存时要能拆到「流缓存 / 封面 / 头像」三处，
-            // 否则只能靠猜。封面与头像是解码后的 RGBA（像素数 × 4 字节）。
+            // 内存分解：进程涨内存时拆「流缓存/封面/头像」三处；解码 RGBA 按
+            // 像素数 × 4 字节计。
             let (stream_bytes, stream_entries) = hongguo_stream::cache().stats();
             // 只统计已就绪的封面（在途/失败的条目没有图）。
             let ready_covers: Vec<_> = self
@@ -138,8 +124,8 @@ impl HomeView {
             );
             #[cfg(feature = "perf-probe")]
             {
-                // GPUI 内建 profiler：draw 是 layout+paint，present 间隔是
-                // 实际出帧节奏；两个数一对比就知道慢在画还是慢在等。
+                // GPUI 内建 profiler：draw 是 layout+paint，present 间隔是实际
+                // 出帧节奏；两个数一对比就知道慢在画还是慢在等。
                 let perf = window.frame_duration_snapshot();
                 let draw = &perf.draw_duration_histogram;
                 let interval = &perf.present_interval_histogram;
@@ -165,11 +151,10 @@ impl HomeView {
                 );
             }
         }
-        // 占位封面取**目标剧**（游标位）：切剧瞬间游标已指向下一部，先出
-        // 它的封面；无封面条目（书架种子）退回首帧方向已在播的那部。
+        // 占位封面取目标剧（游标位）：切剧瞬间游标已指向下一部，先出它的封面；
+        // 无封面条目（书架种子）退回首帧方向已在播的那部。
         let cover_sid = self.stage_cover_target();
-        // 封面层：图 + 压暗（Tauri 的 `brightness-[0.55]`；GPUI 没有亮度滤镜，
-        // 用等价的 45% 黑罩）。
+        // 封面层：图 + 45% 黑罩压暗（GPUI 没有亮度滤镜）。
         let cover: gpui_kit::AnyElement = match cover_sid
             .as_ref()
             .filter(|_| !video_ready)
@@ -186,26 +171,19 @@ impl HomeView {
                     img(ImageSource::Render(Arc::clone(bitmap)))
                         .absolute()
                         .size_full()
-                        // 竖版封面铺满横屏舞台走 Cover（裁切，不拉伸）——与
-                        // Tauri `player-page.tsx` 的 object-cover 同语义。
-                        // 别用 Fill：那是拉伸，400×572 的海报会被横向拉宽
-                        // ~1.7 倍（人物变胖）。
+                        // 竖版封面铺横屏舞台走 Cover（裁切不拉伸）；别用 Fill
+                        // ——那是拉伸，海报会变形。
                         .object_fit(ObjectFit::Cover),
                 )
                 .child(div().absolute().size_full().bg(gpui_kit::rgba(0x00000073)))
                 .into_any_element(),
             None => div().absolute().size_full().into_any_element(),
         };
-        // 视频层：画面由下层原生层合成，GPUI 只留一张点击皮（切暂停/小窗
-        // 拖动）。未出画时这里不渲染——封面/占位由上面的 cover 层与 spinner
-        // 兜住。外层 div 接点击切暂停（对齐 Tauri 点击画面暂停/继续）：控制
-        // 条是兄弟层，点它不会冒泡到这里。
+        // 视频层：画面由下层原生层合成，GPUI 只留点击皮（切暂停/小窗拖动）；
+        // 未出画不渲染——封面/占位由上面的 cover 层与 spinner 兜住。
         let video: gpui_kit::AnyElement = if system_ready {
-            // 系统后端：画面由下层 AVPlayerLayer 合成，这里只留点击层。
-            //
-            // keyboard-skip: 点画面暂停是**鼠标便利层**，不是独立的键盘入口——
-            // 同一动作的键盘入口是控制栏的播放/暂停钮与舞台的空格快捷键；把它
-            // 做成按钮会在无障碍树里多出一个覆盖整块画面的巨按钮。
+            // keyboard-skip: 点画面暂停是鼠标便利层，键盘入口在控制栏播放钮与
+            // 空格快捷键；做成按钮会在无障碍树里多出覆盖整块画面的巨按钮。
             div()
                 .absolute()
                 .size_full()
@@ -215,9 +193,8 @@ impl HomeView {
                     this.wake_on_input(cx);
                     this.toggle_pause(cx);
                 }))
-                // 小窗拖窗：按下记起点，**在这层上**判位移（鼠标移动事件派发给
-                // 命中的最内层元素，挂在根容器上收不到——上一版就是因此拖不动）。
-                // 位移 <3px 视为单击（照常暂停），超过才起拖。
+                // 小窗拖窗：必须在这层上判位移（鼠标移动派发给命中的最内层元素，
+                // 挂根容器收不到）；<3px 视为单击（照常暂停），超过才起拖。
                 .on_mouse_down(
                     gpui_kit::MouseButton::Left,
                     cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, _| {
@@ -267,8 +244,8 @@ impl HomeView {
         let letterbox = system_ready
             .then(|| self.render_stage_letterbox())
             .flatten();
-        // 缓冲角标（右上）：播放器缓冲事件（Buffering/Ready）驱动，区别于
-        // 左上的切剧提示；压在画面上，拦下鼠标（不拦点它=点画面暂停）
+        // 缓冲角标（右上）：播放器缓冲事件驱动，区别于左上的切剧提示；压在
+        // 画面上并拦下鼠标（不拦的话点它=点画面暂停）。
         let buffering_badge = (self.buffering && self.player.is_some()).then(|| {
             h_flex()
                 .absolute()
@@ -295,11 +272,9 @@ impl HomeView {
                         .child(crate::i18n::t("player.bufferingShort")),
                 )
         });
-        // 控制条（底部悬浮，鼠标活动时可见）；小屏换紧凑条（Tauri
-        // MiniScreenControls 同款，与同一套状态源协作）
+        // 控制条（底部悬浮，鼠标活动时可见）；小屏换紧凑条。
         let in_mini = self.mini.is_some();
-        // 竖屏也是「紧凑形态」：控制条走竖屏形态，浮层/互动栏同小屏收起
-        //（Tauri portrait 的 visible 门控与 miniScreen 同列）
+        // 竖屏也是「紧凑形态」：控制条走竖屏形态，浮层/互动栏同小屏收起。
         let in_portrait = self.portrait.is_some();
         let controls = (self.engine_ready() && self.controls_visible()).then(|| {
             if in_mini {
@@ -327,9 +302,6 @@ impl HomeView {
             // 每帧取一次「现在」：弹幕位置是它的纯函数（见 `DmFlight`）。
             let dm_now = std::time::Instant::now();
             let dm_paused = self.player.as_ref().is_some_and(|p| p.is_paused());
-            // 重绘节拍跟合成器：播放中挂一个长周期 repeat 动画，GPUI 每个合成
-            // 帧请求一次重绘（60/120Hz 自适应，与视频 fps 无关）；暂停时摘掉，
-            // 静止画面不烧 CPU。位置本身是挂钟的纯函数（见 `DmFlight`）。
             let base = div()
                 .absolute()
                 .size_full()
@@ -338,8 +310,6 @@ impl HomeView {
                 .children(self.danmaku_flights.iter().map(|f| {
                     let top = f.lane as f32 * (font_px + DM_LANE_GAP);
                     let x = f.x_offset(stage_w, dm_now) as f32;
-                    // 表情分段：[名字] 换打包 webp（1.3 字号，基线下沉
-                    // 0.28em），文本段照旧
                     let segments = crate::danmaku_emoji::parse_emoji_segments(&f.text);
                     div()
                         .absolute()
@@ -368,9 +338,9 @@ impl HomeView {
                             }
                         }))
                 }));
-            // 重绘节拍跟合成器：播放中挂长周期 repeat 动画，GPUI 每个合成帧
-            // 请求一次重绘（60/120Hz 自适应，与视频 fps 无关）；暂停时摘掉，
-            // 静止画面不烧 CPU。位置本身是挂钟的纯函数（见 `DmFlight`）。
+            // 重绘节拍跟合成器：播放中挂长周期 repeat 动画，GPUI 每个合成帧请求
+            // 一次重绘（60/120Hz 自适应，与视频 fps 无关）；暂停时摘掉，静止画面
+            // 不烧 CPU。位置是挂钟的纯函数（见 `DmFlight`）。
             if dm_paused {
                 base.into_any_element()
             } else {
@@ -382,17 +352,15 @@ impl HomeView {
                 .into_any_element()
             }
         });
-        // 信息叠加层（左下）：剧名/集数/热度/简介——闲置淡出与控制条
-        // 同时机（Tauri chromeShown 同款，静默期不亮）；小屏不渲染
-        //（剧名/简介在小窗紧凑条里，见 Tauri miniScreen 面板隐藏同款）
+        // 信息叠加层（左下）：剧名/集数/热度/简介，闲置淡出与控制条同时机；
+        // 小屏不渲染（剧名/简介在小窗紧凑条里）。
         let overlay = (!in_mini && self.controls_visible()).then(|| self.render_overlay(cx));
-        // 互动栏（右缘竖排：收藏/评论/点赞/分享）与评论面板（右侧滑出）；
-        // 小屏都收起（Tauri InteractionRail visible={…&& !miniScreen} 同款）；
-        // 评论面板打开时互动栏让位（面板就盖在右缘）
+        // 互动栏（右缘竖排：收藏/评论/点赞/分享）与评论面板（右侧滑出）：
+        // 小屏都收起；评论面板打开时互动栏让位（面板就盖在右缘）。
         let rail = (!in_mini && self.controls_visible() && !self.comments_panel_open)
             .then(|| self.render_interaction_rail(cx));
-        // 顶部加载条只对「真正在加载的未完成项」亮：看切换/缓冲/播放器已起
-        // 但首帧未到。已看完被跳过时三者都为空，条自然熄。
+        // 顶部加载条只对「真正在加载的未完成项」亮：切换 / 缓冲 / 播放器已起但
+        // 首帧未到；已看完被跳过时三者都为空，条自然熄。
         let loadbar = self.switching
             || self.buffering
             || (self.player.is_some() && !self.system_video_ready && self.play_error.is_none());
@@ -410,9 +378,8 @@ impl HomeView {
         }
         let comment_panel =
             (!in_mini && self.comments_panel_open).then(|| self.render_comment_panel(cx));
-        // HEVC 安装引导（Tauri HevcInstallCard floating 形态）：本机解不了
-        // HEVC 且本会话没点过「暂不安装」时才出现——GPUI 选流已提前降档到
-        // H.264，它是「提画质」的主动提示，不是失败后的补救卡
+        // HEVC 安装引导：本机解不了 HEVC 且本会话没点过「暂不安装」才出现
+        // ——选流已提前降档 H.264，这是「提画质」的主动提示，不是失败补救。
         let hevc_prompt = (!hongguo_service::capability_service::hevc_playable()
             && !self.hevc_prompt_dismissed)
             .then(|| self.render_hevc_prompt(cx));
@@ -429,33 +396,26 @@ impl HomeView {
             })
             .relative()
             .overflow_hidden()
-            // 播放快捷键（映射可在设置页自定义，默认对齐 Tauri
-            // use-player-interactions：空格暂停/继续、←→ 快退/快进 5 秒、
-            // ↑↓ 切上一部/下一部剧）。键盘事件只派发给焦点子树，焦点锚就
-            // 在本元素上。
+            // 播放快捷键（映射可在设置页自定义）。键盘事件只派发给焦点子树，
+            // 焦点锚就在本元素上。
             .key_context("HomeStage")
             .track_focus(&self.focus)
             .on_key_down(
                 cx.listener(|this, ev: &gpui_kit::KeyDownEvent, window, cx| {
-                    // 按键是真实输入：解除连播静默（Tauri wakeChrome 同款）——
-                    // **先做**，不受下面的输入框守卫影响：在输入框里打字同样是
-                    // 「用户在场」（控件该亮），守卫只该拦「快捷键」不该拦
-                    // 「用户在场」这一条副作用。
+                    // 按键是真实输入：先解除连播静默，不受下面输入框守卫影响
+                    // ——守卫只该拦「快捷键」，不该拦「用户在场」这一条副作用。
                     this.wake_on_input(cx);
-                    // 焦点在输入框时不劫持快捷键（Tauri use-player-interactions
-                    // 的 isEditableTarget 守卫同款）：空格/←→/↑↓ 在输入框里是
-                    // 移动光标与输入的一部分，不是暂停/快进/切集；Esc 也归输入框。
+                    // 焦点在输入框时不劫持快捷键：空格/←→/↑↓ 在输入框里是移动
+                    // 光标与输入的一部分，不是暂停/快进/切集；Esc 也归输入框。
                     if gpui_kit::component::WindowExt::focused_input(window, cx).is_some() {
                         return;
                     }
                     let keys = this.shortcut_keys.clone();
                     let key = ev.keystroke.key.as_str();
                     if key == keys.play_pause {
-                        // 焦点在舞台的**子控件**上时，空格让位给那个控件：gpui 的
-                        // 按钮在 KeyUp 阶段把 Enter/Space 转成 click，舞台这里再
-                        // 翻一次就是双触发——按一次空格既激活按钮又翻暂停，两次
-                        // 翻转等于什么都没发生（控制栏「播放/暂停」钮点过之后按
-                        // 空格没反应，就是这个）。
+                        // 焦点在舞台子控件上时空格让位给那个控件：gpui 的按钮在
+                        // KeyUp 阶段把 Enter/Space 转成 click，这里再翻一次就是
+                        // 双触发——两次翻转等于什么都没发生。
                         let focus_on_child = window
                             .focused(cx)
                             .is_some_and(|handle| handle != this.focus);
@@ -467,30 +427,27 @@ impl HomeView {
                         this.seek_by(-5.0, cx);
                     } else if key == keys.seek_forward {
                         this.seek_by(5.0, cx);
-                    // ↑↓ 是信息流切剧——小屏里没有流上下文（Tauri 小屏是
-                    // 纯播放页同款），误触切剧=播放重启，直接吞掉
+                    // ↑↓ 是信息流切剧——小屏没有流上下文，误触切剧=播放重启，直接吞掉。
                     } else if key == keys.step_next && this.mini.is_none() {
                         this.step(1, cx);
                     } else if key == keys.step_prev && this.mini.is_none() {
                         this.step(-1, cx);
-                    // F = 播放器全屏（真沉浸：OS 全屏 + chrome 全藏）；竖屏里
-                    // 让位给铺满档（Tauri：竖屏中全屏键语义换成铺满切换）
+                    // F = 播放器全屏（OS 全屏 + chrome 全藏）；竖屏里让位给铺满档。
                     } else if key == "f" {
                         if this.portrait.is_some() {
                             this.toggle_portrait_full(window, cx);
                         } else {
                             this.toggle_immersive_fullscreen(window, cx);
                         }
-                    // Esc 固定管「退出选中」（Tauri 同款语义）：小屏 →
-                    // 沉浸全屏 → 浮层面板 → 竖屏铺满 → 连播锁定，逐层退出
+                    // Esc 固定管「退出选中」，逐层退出：小屏 → 沉浸全屏 →
+                    // 浮层面板 → 竖屏铺满 → 连播锁定。
                     } else if key == "escape" {
                         if this.mini.is_some() {
                             this.exit_mini(window, cx);
                         } else if this.immersive {
                             this.toggle_immersive_fullscreen(window, cx);
                         } else if this.frameless {
-                            // 无边框先退回常规窗口（红绿灯显回；chrome 随
-                            // immersive_fullscreen() 翻面），再轮到浮层
+                            // 无边框先退回常规窗口（红绿灯显回），再轮到浮层。
                             this.toggle_frameless(window, cx);
                         } else if this.picker_open {
                             this.picker_open = false;
@@ -500,12 +457,10 @@ impl HomeView {
                         } else if this.dm_panel_open {
                             this.dm_panel_open = false;
                         } else if this.comments_panel_open {
-                            // 评论面板开着 Esc 先关面板（Tauri 面板自带 Esc
-                            // 监听同序；面板守卫期间不退连播）
+                            // Esc 先关评论面板（守卫期间不退连播）。
                             this.close_comments_panel(cx);
                         } else if this.portrait_full {
-                            // 竖屏铺满先退铺满回竖条（Tauri portraitFull 分支
-                            // 同序：面板之后、退出选中之前）
+                            // 竖屏铺满先退铺满回竖条（面板之后、退出选中之前）。
                             this.toggle_portrait_full(window, cx);
                         } else if this.in_binge() {
                             this.binge = None;
@@ -518,8 +473,8 @@ impl HomeView {
             .child(if video_ready {
                 video
             } else {
-                // 占位层也要铺满舞台：哨兵读的是子层矩形，给个 0×0 的 div
-                // 会让日志恒报「视频层 0」，哨兵就成了假警报源
+                // 占位层也要铺满舞台：哨兵读的是子层矩形，0×0 的 div 会让哨兵
+                // 恒报「视频层 0」，成了假警报源。
                 div().absolute().size_full().into_any_element()
             })
 
@@ -528,17 +483,15 @@ impl HomeView {
             .children(overlay)
             .children(rail)
             .children(hevc_prompt)
-            // 「下载到本地」浮层在壳层整窗渲染（见 `downloads.rs` 头注释）
+            // 「下载到本地」浮层在壳层整窗渲染（见 `downloads.rs` 头注释）。
             .children(buffering_badge)
-            // 连播锁定指示 + 返回（Tauri immersive-info-overlay 同款：左上
-            // 「< 第N集」，点它解除锁定；显隐跟随悬浮层总闸）；小屏不渲染
-            //（集数信息在紧凑条里，480 宽叠不下）
+            // 连播锁定指示 + 返回（左上「< 第N集」，点它解除锁定，显隐跟随
+            // 悬浮层总闸）；小屏不渲染（集数信息在紧凑条里，480 宽叠不下）。
             .children(
                 (self.in_binge() && !in_mini && self.controls_visible()).then(|| {
                     let now = self.now.as_ref().expect("in_binge 已验 now 在");
-                    // 解除连播锁定 → base::Button 承担 role/focus/Enter-Space
-                    // （Tauri `immersive-info-overlay` 同款 <button>）。库强制
-                    // flex row + 主轴居中，这里补回原 h_flex 的左对齐。
+                    // base::Button 承担 role/focus/Enter-Space；库强制 flex row
+                    // + 主轴居中，这里补回原 h_flex 的左对齐。
                     BaseButton::new("binge-pill")
                         .accessibility_label(crate::i18n::t("player.exitBinge"))
                         .absolute()
@@ -560,8 +513,8 @@ impl HomeView {
                         .cursor_pointer()
                         .hover(|s| s.bg(gpui_kit::rgba(0x00000080)))
                         .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
-                        // 拦截放 on_click 内（同元素 on_mouse_down(stop) 会
-                        // 杀掉点击合成，见分类 tab 处注释）
+                        // 拦截放 on_click 内：同元素 on_mouse_down(stop) 会杀掉
+                        // 点击合成。
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.binge = None;
                             cx.stop_propagation();
@@ -578,13 +531,9 @@ impl HomeView {
                         ))
                 }),
             )
-            // 分类 tab 已上移壳顶栏（`HomeView::render_top_tabs`，Tauri
-            // `TopBarTabs` portal 同位）——舞台顶部只留左上连播胶囊与
-            // 右上弹幕入口，不再有第二层 tab 条。
-            // 起播失败态（Tauri error-state 对齐）：画面中央错误 + 重试。
-            // 失败必须可见——此前只写 pending_title，而那行小徽标随
-            // switching 消失，用户看到的就是「切 tab / 换剧没反应」。
-            // 铺一层捕获拦下鼠标（错误卡后面是画面，点了会暂停/选中）
+            // 起播失败态：画面中央错误 + 重试，失败必须可见（此前只写
+            // pending_title，那行小徽标随 switching 消失）；铺一层捕获拦下
+            // 鼠标（错误卡后面是画面，点了会暂停/选中）。
             .children(self.play_error.as_ref().map(|err| {
                 v_flex()
                     .absolute()
@@ -604,7 +553,7 @@ impl HomeView {
                         div()
                             .text_sm()
                             .text_color(gpui_kit::rgb(0xffffff))
-                            // 前缀由写入方拼（起播失败/播放失败），这里原样展示
+                            // 前缀由写入方拼（起播失败/播放失败），这里原样展示。
                             .child(SharedString::from(err.clone())),
                     )
                     .child(
@@ -620,13 +569,10 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 选集浮层开着：舞台铺一层透明捕获层，点画面=关闭。捕获层
-            // 拦下鼠标下传（舞台的播放/暂停不该收到这次点击）。
-            //
-            // 注意它**只管画面**：控制条画在它之上，而控制条根节点拦
-            // 鼠标下传（bar.rs），捕获层压根收不到控制条上的点击——浮层
-            // 「点外部关闭」由浮层自己的 on_mouse_down_out 负责
-            // （home/picker.rs），别指望这张层。
+            // 选集浮层开着：舞台铺一层透明捕获层，点画面=关闭，拦下鼠标下传
+            // （舞台的播放/暂停不该收到这次点击）。注意它只管画面：控制条画在
+            // 它之上且根节点拦下传，捕获层收不到控制条的点击——浮层「点外部
+            // 关闭」由浮层自己的 on_mouse_down_out 负责（home/picker.rs）。
             .children(
                 (self.picker_open && !in_mini && self.engine_ready()).then(|| {
                     div()
@@ -644,9 +590,8 @@ impl HomeView {
                         .into_any_element()
                 }),
             )
-            // 暂停时的快捷键提示胶囊（Tauri KeyboardHint 同款：38% 高度居中、
-            // 不拦鼠标；小屏/竖屏装不下不渲染，错误态让位错误条）。文案与
-            // Tauri 同一条静态提示（那边快捷键同样可自定义，提示也是默认键位口径）。
+            // 暂停时的快捷键提示胶囊：不拦鼠标；小屏/竖屏装不下不渲染，
+            // 错误态让位错误条。
             .children(
                 (self.player.as_ref().is_some_and(|p| p.is_paused())
                     && self.play_error.is_none()
@@ -673,9 +618,8 @@ impl HomeView {
                             .into_any_element()
                     }),
             )
-            // 弹幕设置面板开着：同款捕获层（点齿轮外的任意处=关闭；齿轮
-            // 本体在层下面，点击被层拦下即「点了只关闭」，与 Tauri 点外
-            // 关闭语义一致）
+            // 弹幕设置面板开着：同款捕获层，点齿轮外的任意处=关闭（齿轮本体
+            // 在层下面，点击被层拦下即「点了只关闭」）。
             .children((self.dm_panel_open && !in_mini).then(|| {
                 div()
                     .absolute()
@@ -690,8 +634,7 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 轻量提示（Tauri toast 同位）：舞台顶部居中，分类 tab 行的
-            // 下方；无指针监听不吃点击
+            // 轻量提示：舞台顶部居中；无指针监听不吃点击。
             .children(self.toast.as_ref().map(|t| {
                 div()
                     .absolute()
@@ -712,14 +655,11 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 小屏拖拽条（Tauri MiniDragBar 同款）：顶栏在小屏不渲染，窗口
-            // 拖动职责落在这条 24px 顶带。两条平台路径：Windows 靠
-            // WindowControlArea::Drag 走 WM_NCHITTEST 的 HTCAPTION；macOS 的
-            // hit test 是**空实现**（gpui-pre-macos 的 on_hit_test_window_
-            // control 什么都不做），必须显式 start_window_move 才进 NSWindow
-            // 的拖动循环——只打 WindowControlArea 的话这条带在 macOS 上是
-            // 死区（用户实测小窗拖不动）。拦下鼠标下传，拖拽残留的 click
-            // 不能触发「点画面暂停」
+            // 小屏拖拽条：顶栏在小屏不渲染，窗口拖动落在这条 24px 顶带。
+            // Windows 靠 WindowControlArea::Drag 走 HTCAPTION；macOS 的 hit
+            // test 是空实现，必须显式 start_window_move——只打
+            // WindowControlArea 的话这条带在 macOS 上是拖不动的死区。拦下
+            // 鼠标下传，拖拽残留的 click 不能触发「点画面暂停」。
             .children(in_mini.then(|| {
                 div()
                     .id("mini-drag-bar")
@@ -732,8 +672,8 @@ impl HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, window, cx| {
                             cx.stop_propagation();
-                            // Windows 上这里是平台默认的空实现，HTCAPTION
-                            // 已经接管；macOS 上它才是真正起拖的那一下
+                            // Windows 上 HTCAPTION 已接管；macOS 上这一下才是
+                            // 真正起拖的那一下。
                             window.start_window_move();
                         }),
                     )
@@ -741,19 +681,15 @@ impl HomeView {
                     .into_any_element()
             }))
             .children(controls)
-            // 连播横条必须在控制条之后：控制条的 40px 透明悬停热区与它
-            // 重叠，后画的横条才是更高的命中层。
+            // 连播横条必须在控制条之后：控制条的 40px 透明悬停热区与它重叠，
+            // 后画的横条才是更高的命中层。
             .children(self.render_binge_entry(cx))
-            // 评论面板必须是这一层**最后**画的：它底边在 56px、发送输入行
-            // 又压在自身底部，而控制条根节点带 40px 透明热区（总高约 90px）
-            // ——面板若画在控制条之前，输入行的下半截会被热区吃掉，点击落不
-            // 到输入框上（用户实测「评论输入完全打不了字」的根因）。
+            // 评论面板必须是这一层最后画的：控制条根节点带 40px 透明热区（总高
+            // 约 90px），面板若画在控制条之前，输入行下半截的点击会被热区吃掉
+            // ——输入框打不了字。
             .children(comment_panel)
-            // 顶部 2px 加载细条（Tauri loadbar 同款）：切换在途 / 首帧未出 /
-            // 缓冲中亮，30% 宽的胶囊在轨道里循环滑动（CSS keyframes 同参：
-            // 1.1s 从 -110% 滑到 +440%，按胶囊自身宽计 = 轨道的 -0.33→1.32）。
-            // 用 gpui 的 Animation 驱动：它有独立的连续帧请求，不依赖播放帧率
-            //（切换间隙恰好没有帧可驱动重绘）。
+            // 顶部 2px 加载细条：用 gpui Animation 驱动（有独立的连续帧请求，
+            // 不依赖播放帧率——切换间隙恰好没有帧可驱动重绘）。
             .children(loadbar.then(|| {
                 div()
                     .absolute()
@@ -779,12 +715,10 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // Windows 系统 frame-server 的帧泵跟着渲染帧走（player-windows 的
-            // `present_frame` 在每帧 submit_stage 里泵）：弹幕在飞时弹幕动画
-            // 就在驱动重绘，弹幕关/无在飞时靠这个零尺寸连续帧元素顶住泵频
-            // ——否则只剩 33ms 节拍在推，2x 内容会丢一半帧（实测
-            // WM_METRICS rendered 133/5s、dropped 142/5s；对齐后零丢帧）。
-            // 零尺寸子元素不吃点击，舞台的暂停/双击命中不受影响。
+            // Windows frame-server 的帧泵跟着渲染帧走：弹幕在飞时由弹幕动画
+            // 驱动重绘，弹幕关/无在飞时靠这个零尺寸连续帧元素顶住泵频——否则
+            // 只剩 33ms 节拍在推，2x 内容会丢一半帧。零尺寸子元素不吃点击，
+            // 舞台的暂停/双击命中不受影响。
             .children((system_ready
                 && self
                     .player
@@ -807,16 +741,14 @@ impl HomeView {
                     )
                     .into_any_element()
             }))
-            // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（Tauri 同址，
-            // 见 `controls.rs` 的 stage-picker-wrap）
-            // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）
+            // 选集浮层本体挂在控制栏「选集」按钮 wrapper 里（见 `controls.rs`
+            // 的 stage-picker-wrap）。
+            // 登录面板（居中卡片，盖整窗；壳侧栏「登录/退出登录」入口开关）。
             .children(self.login_panel_open.then(|| self.render_login_panel(cx)))
-            // 小窗顶部 18px 交给系统当标题栏（`WindowControlArea::Drag` →
-            // WM_NCHITTEST 回 HTCAPTION）。原因：无边框窗仍带 `WS_THICKFRAME`，
-            // 顶部原本是 resize 热区——鼠标未到可见边就变 resize 光标，按下既
-            // 不移动也不缩放（GPUI 的 min/max 尺寸把它夹住）。改成 HTCAPTION
-            // 后这一段能拖、光标也正常；**追加在末尾**不破坏哨兵下标（cover=0、
-            // video=1）。
+            // 小窗顶部 18px 交给系统当标题栏（WindowControlArea::Drag →
+            // HTCAPTION）：无边框窗顶部原本是 WS_THICKFRAME 的 resize 热区，
+            // 按下既不移动也不缩放；改 HTCAPTION 后能拖、光标正常。追加在
+            // 末尾不破坏哨兵下标（cover=0、video=1）。
             .when(self.mini.is_some(), |el| {
                 el.child(
                     div()
@@ -828,9 +760,8 @@ impl HomeView {
                         .window_control_area(gpui_kit::WindowControlArea::Drag),
                 )
             })
-            // 布局哨兵：子层矩形只在这里可见，两次准备绘制之间比对（见字段注释）。
-            // 第一个子层是封面槽（恒在、恒为舞台整块），出画时第二个是视频层、
-            // 尺寸必须与它一致——不一致就是布局回归。
+            // 布局哨兵：第一个子层是封面槽（恒在、恒为舞台整块），出画时第二个
+            // 是视频层、尺寸必须与它一致——不一致就是布局回归（见字段注释）。
             .on_children_prepainted(move |bounds, _window, _cx| {
                 let Some(cover) = bounds.first() else { return };
                 let size = |b: &gpui_kit::Bounds<gpui_kit::Pixels>| {

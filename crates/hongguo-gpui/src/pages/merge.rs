@@ -1,10 +1,6 @@
-//! 一键合并页（Tauri `/merge` = `merge-page.tsx` 的 GPUI 对齐）。
-//!
-//! 布局：居中窄列两张卡——「一键合并」表单（选剧 + 输出名 + 快速/兼容
-//! 模式 + 合并前校验 + 开始按钮）与「合并任务」列表（状态 / 体积 / 进度 /
-//! 打开文件夹 / 删除记录）。数据与操作走 `hongguo_service::merge_service`
-//! 与 `store.merge_tasks`，与 Tauri 的 `get_merge_*` / `merge_*` command
-//! 同一段服务面；进度与成败经 `ServiceEvent::Merge*` 事件流。
+//! 一键合并页：居中窄列两张卡——合并表单（选剧 + 输出名 + 快速/兼容模式）
+//! 与合并任务列表（状态/体积/进度/打开文件夹/删除）。数据走
+//! `hongguo_service::merge_service`，进度与成败经 `ServiceEvent::Merge*`。
 
 use std::sync::Arc;
 

@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-/**
- * 返回保留浏览位置（找剧/排行榜/新剧去播放后再
- * 回来，保留筛选和浏览位置）。会话级：sessionStorage 承载，重开应用
- * 不复旧位——去播放是临时离开，不是收藏锚点。
- */
+/** 浏览位置保留（找剧/榜单/新剧去播放再回来）：会话级 sessionStorage 承载，重开应用不复旧位。 */
 
 /** 挂载时读 sessionStorage 的 useState；变更即时写回（支持函数式更新）。 */
 export function useSessionState<T>(
@@ -34,10 +30,8 @@ export function useSessionState<T>(
 }
 
 /**
- * 滚动位置记忆：卸载时把 `getEl()` 的 scrollTop 存进 sessionStorage，
- * `ready` 翻真（数据已渲染）后一次性恢复。用户没滚动过就不覆盖已存
- * 位置（避免 StrictMode 重挂载把存档清零）。列表页滚动容器各不相同
- * （找剧在全局 #content，榜单/新剧在页面内部容器），所以收 getter。
+ * 滚动位置记忆：卸载时把 `getEl()` 的 scrollTop 存 sessionStorage，`ready` 翻真后一次性恢复；
+ * 用户没滚动过不覆盖已存位置（避免 StrictMode 重挂载把存档清零）。列表页滚动容器各异，所以收 getter。
  */
 export function useScrollRestore(key: string, getEl: () => HTMLElement | null, ready: boolean) {
   const scrolledRef = useRef(false);

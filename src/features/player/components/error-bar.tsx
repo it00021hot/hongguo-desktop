@@ -1,12 +1,7 @@
 /** 页面级错误提示条：画面右上角的浮层胶囊（纯 props→JSX）。 */
 import { cn } from '@/lib/utils';
 
-/**
- * 页面级杂物的浮层化：错误条压在画面**右上角**——
- * 左上贴着顶栏应用名会被读成「挡标题」，左下是剧名信息层，
- * 右上只在评论区面板打开时让位。跟随悬浮层淡出。
- * 连播/看完自动删不再在此放开关，统一去设置页改。
- */
+/** 错误条压在画面右上角（左上是应用名、左下是剧名信息层，右上只在评论区打开时让位）；跟随悬浮层淡出。 */
 export function ErrorBar({ chromeShown, error }: { chromeShown: boolean; error: string | null }) {
   return (
     <div

@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（云端观看历史 / 存储域）。
- */
+/** 云端观看历史 / 存储域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 /** 云端观看历史的一条（Rust `history::WatchHistoryItem`，官方 App「历史」同源）。 */
@@ -20,8 +18,7 @@ const watchHistoryItemSchema = z.object({
 
 export type WatchHistoryItem = z.infer<typeof watchHistoryItemSchema>;
 
-/** 本地观看历史的一行（Rust `LocalHistoryItem`）：字段与云端条目完全
- *  同形，历史页两种模式共用同一张卡片的渲染。 */
+/** 本地观看历史的一行（Rust `LocalHistoryItem`）：字段与云端条目完全同形，历史页两种模式共用同一张卡片渲染。 */
 export const localHistoryItemSchema = watchHistoryItemSchema;
 export type LocalHistoryItem = z.infer<typeof localHistoryItemSchema>;
 

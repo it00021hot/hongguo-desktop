@@ -1,13 +1,6 @@
-//! 共用任务运行时：进程级多线程 Tokio 运行时。
-//!
-//! 定位与 Tauri 的 async_runtime 等价（语义上是同一回事）：全局运行时，
-//! **任意线程可调** [`spawn`]。service 会被协议回调、主线程等无 Tokio
-//! 上下文的线程调用（见红线 1），后台任务不得依赖
-//! 调用点上下文；两个壳共用本机制，不再把壳专属运行时传进 service。
-//!
-//! 与壳的分工：Tauri 壳的 command 自身仍跑在 Tauri 的运行时上（那是壳的
-//! IPC 设施）；service 内部的长期任务（下载调度、取流填充、登录轮询、
-//! 资料刷新、阻塞重活）一律由本运行时承载。
+//! 共用任务运行时：进程级多线程 Tokio 运行时，任意线程可调 [`spawn`]（语义与 Tauri 的
+//! async_runtime 等价）。service 会被协议回调、主线程等无 Tokio 上下文的线程调用，
+//! 后台任务不得依赖调用点上下文；service 内部的长期任务一律由本运行时承载。
 
 use std::future::Future;
 use std::sync::OnceLock;

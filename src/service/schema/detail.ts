@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（详情域：相关作品 / 剧集元信息）。
- */
+/** 详情域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 import { normalizeAvatarUrl } from '@/utils/image-url';
@@ -47,12 +45,8 @@ export const seriesMetaSchema = z.object({
   tags: z.array(z.string()),
   /** 剧情简介（series_intro，详情页与播放器简介面板共用） */
   intro: z.string().default(''),
-  /** 官方模型对照新增（防御性读取，缺席为 undefined）：payInfo=付费信息
-   *  原样 / onlineTime=上线毫秒时间戳 / updateTag=官方统计行原文
-   *  （「全139集」/「更新至83集」）/ seriesStatus=连载状态（0=连载中
-   *  1=已完结，追更按钮显隐判定）/ updateFrequency=更新频率
-   *  （「每周六更新5集」，完结剧无）/ episodeTotalCnt=全剧总集数 /
-   *  latestConsumedVid=服务端续播锚点 vid */
+  // 官方模型对照新增（防御性读取，缺席为 undefined）：onlineTime=上线毫秒时间戳；updateTag=官方统计行原文
+  // （「全139集」）；seriesStatus=0 连载中/1 已完结（追更按钮显隐判定）；episodeTotalCnt=总集数；latestConsumedVid=续播锚点 vid
   payInfo: z.unknown().optional(),
   onlineTime: z.number().optional(),
   updateTag: z.string().optional(),
@@ -60,17 +54,13 @@ export const seriesMetaSchema = z.object({
   updateFrequency: z.string().optional(),
   episodeTotalCnt: z.number().optional(),
   latestConsumedVid: z.string().optional(),
-  /** 出品方 / 演职员（main_creator_users；
-   *  旧后端无此字段 → default 空数组） */
+  /** 出品方 / 演职员（main_creator_users；旧后端无此字段 → default 空数组） */
   creators: z
     .array(
       z.object({
         userId: z.string(),
         name: z.string(),
-        /** 头像 CDN 地址规整（同评论/弹幕/创作者档案头像：http→https 绕开
-         *  CSP/ATS，heic→jpeg，格式说不清的走本地代理）——服务端下发的是
-         *  `http://p3-reading-sign.fqnovelpic.com/...~tplv-...jpeg?lk3s=...`
-         *  这样的**签名 http** 地址，直挂 <img> 会被 WebView 拦掉（整块空白） */
+        // 签名 http 头像地址直挂 <img> 会被 WebView 的 CSP/ATS 拦掉（整块空白），须规整（heic→jpeg、说不清的走本地代理）
         avatar: z.string().transform(normalizeAvatarUrl),
         role: z.string(),
       }),

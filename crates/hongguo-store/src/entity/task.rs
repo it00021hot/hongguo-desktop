@@ -25,10 +25,7 @@ pub async fn tasks(db: &Db) -> AppResult<Vec<DownloadTask>> {
     Ok(out)
 }
 
-/// 用队列快照整体替换任务表（persist_tasks 的 DB 形态）。
-///
-/// DELETE + 批量 INSERT 放在一个事务里：这是一份内存快照的镜像，
-/// 任何时刻中断都不能留下「半新半旧」的混合。
+/// 用队列快照整体替换任务表（persist_tasks 的 DB 形态）。DELETE + 批量 INSERT 放在一个事务里：这是一份内存快照的镜像，任何时刻中断都不能留下「半新半旧」的混合。
 pub async fn replace_tasks(db: &Db, snapshot: &[DownloadTask]) -> AppResult<()> {
     db.with_tx(|conn| async move {
         let conn = &conn;
@@ -76,7 +73,6 @@ mod tests {
             replace_tasks(&db, &[a.clone(), b.clone()]).await.unwrap();
             assert_eq!(tasks(&db).await.unwrap().len(), 2);
 
-            // 快照里删掉一条，镜像后任务表也要少一条
             replace_tasks(&db, std::slice::from_ref(&a)).await.unwrap();
             let list = tasks(&db).await.unwrap();
             assert_eq!(list.len(), 1);

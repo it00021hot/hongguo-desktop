@@ -1,14 +1,10 @@
 import { browseFiltersSchema, type BrowseFilters } from '../schema';
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 发现（首页推荐流 / 找剧）
-
 export const discover = {
   /**
-   * 首页推荐流（书城换一换，recommend/tab 同源）。
-   * tab：'16'=推荐、'36'=漫剧、'39'=真人剧；sessionId 首页空串（走
-   * bookmall/tab cr=4），翻页回传上一页会话 + offset（nextOffset）+
-   * filterIds（已下发过的 series_id，服务端排除已见）。
+   * 首页推荐流（书城换一换同源）。tab：'16'=推荐、'36'=漫剧、'39'=真人剧；
+   * sessionId 首页空串，翻页回传上页会话 + offset + filterIds（已下发过的 series_id，服务端排除已见）
    */
   recommendFeed: (tab: string, offset: number, sessionId: string, filterIds: string[]) =>
     call('recommend_feed', { tab, offset, sessionId, filterIds }),

@@ -6,12 +6,9 @@ import { app as appApi } from '@/service/commands';
 import { exitPortraitScreen } from '@/features/player/hooks/use-portrait-window';
 
 /**
- * 小屏播放：同一窗口缩成 480×270 落到屏幕
- * 右下角，侧栏隐藏、控件换紧凑条——video 元素原地不动，播放零中断
- * （不暂停、不落库、不换页）。
- *
- * 播放器只有首页沉浸流一个宿主（/player 已并回首页）：小屏进出全程
- * 原地完成，信息流的顶部 tab/悬浮层在 miniScreen 下各自收敛不渲染。
+ * 小屏播放：同一窗口缩成 480×270 落屏幕右下角，侧栏隐藏、控件换紧凑条——
+ * video 元素原地不动，播放零中断（不暂停、不落库、不换页）。播放器只有首页沉浸流一个宿主，
+ * 小屏进出全程原地完成。
  */
 
 export function useMiniWindow(params: {
@@ -37,16 +34,14 @@ export function useMiniWindow(params: {
     if (useUiStore.getState().windowFullscreen) {
       void applyWindowFullscreen(false).catch(() => undefined);
     }
-    // 竖屏几何快照是单份的：先还原大窗再进小屏，否则小屏快照记的是
-    // 竖条几何，退出小屏会停在竖条尺寸（exitPortraitScreen 幂等，非竖屏 no-op）
+    // 竖屏几何快照是单份的：先还原大窗再进小屏，否则小屏快照记的是竖条几何（exitPortraitScreen 幂等）
     exitPortraitScreen();
     // 大屏的浮层面板带不进 480×270 的小窗：进小屏前一并收掉
     setCommentPanelOpen(false);
     setDanmakuPanelOpen(false);
     setVolumeOpen(false);
     setSeriesPanelOpen(false);
-    // 悬停态跟着旧控制栏一起卸载：组件卸载不触发 mouseleave，残留 true 会让
-    // 小屏里鼠标已经离开画面、控制条却常显不收
+    // 悬停态跟着旧控制栏一起卸载（组件卸载不触发 mouseleave）
     setControlsHovered(false);
     setMiniScreen(true);
     void appApi.enterMiniScreen().catch((e: Error) => toast.error(e.message));

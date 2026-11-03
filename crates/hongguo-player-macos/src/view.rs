@@ -1,15 +1,6 @@
-//! 原生视频宿主视图：挂在 GPUI 视图**下面**的一层 NSView + AVPlayerLayer。
-//!
-//! 透明洞机制：
-//! 1. 系统后端时**壳**把窗口背景设成透明（Metal 层 clear alpha=0），这里再把
-//!    窗口铺黑，桌面不会从洞里透出来；黑边由 GPUI 自己画（两平台同一段代码）；
-//! 2. GPUI 壳根/舞台在播放时只画透明背景，叠层（控制条/弹幕/浮层）仍由
-//!    GPUI 画在视频层之上；
-//! 3. 视频 NSView 作为 contentView 的子视图插在 GPUIView 之下，rect 跟随
-//!    `stage_bounds`（GPUI 逻辑像素、左上原点），这里翻成 AppKit 左下原点。
-//!
-//! 线程纪律：`prepare_window` / `ensure` / `submit` / `hide` 只在主线程
-//! （GPUI render/回调）调用；全局宿主跨集复用，避免每集重建视图。
+//! 原生视频宿主视图：挂在 GPUI 视图**下面**的一层 NSView + AVPlayerLayer。透明洞机制：系统后端时**壳**把窗口背景设成透明（Metal 层 clear alpha=0），
+//! 这里再把窗口铺黑（桌面不从洞里透出，黑边由 GPUI 自己画）；GPUI 壳播放时只画透明背景、叠层仍画在视频层之上；视频 NSView 插在 GPUIView 之下，
+//! rect 跟随 `stage_bounds`（GPUI 逻辑像素左上原点，这里翻成 AppKit 左下原点）。线程纪律：`prepare_window` / `ensure` / `submit` / `hide` 只在主线程调用；全局宿主跨集复用。
 
 use std::ffi::CStr;
 use std::sync::Mutex;
@@ -27,15 +18,9 @@ use raw_window_handle::RawWindowHandle;
 use super::avf;
 
 /// 包在「禁用隐式动画」的 CATransaction 里执行几何变更。
-///
-/// **为什么必须**：`player_layer` 是裸 CALayer 子层（没有 NSView 托管，
-/// AppKit 不会替它关动作），直接 `setFrame:` / `setVideoGravity:` 会触发
-/// Core Animation 默认的 0.25s 隐式动画。平时帧帧同值无感；**切形态**
-/// （全屏↔正常、小窗、竖屏）时窗口在动、GPUI 黑边逐帧就位，视频层却带着
-/// 缓动在后面追——三层不同步就是用户实测的「切播放模式画面卡顿」。禁掉
-/// 动作后几何立即生效，与 GPUI 同拍。
-///
-/// 线程纪律：必须在主线程调用（本文件全部入口都在主线程）。
+/// **为什么必须**：`player_layer` 是裸 CALayer 子层（没有 NSView 托管，AppKit 不会替它关动作），直接 `setFrame:` / `setVideoGravity:` 会触发
+/// Core Animation 默认的 0.25s 隐式动画——**切形态**（全屏↔正常、小窗、竖屏）时窗口在动、GPUI 黑边逐帧就位，视频层却带着缓动在后面追，
+/// 三层不同步就是用户实测的「切播放模式画面卡顿」；禁掉动作后几何立即生效，与 GPUI 同拍。线程纪律：必须在主线程调用。
 fn without_implicit_actions<T>(f: impl FnOnce() -> T) -> T {
     // begin/commit 必须配对，本函数保证。
     CATransaction::begin();
@@ -183,11 +168,8 @@ fn ns_view(host: &HostWindow) -> Option<&NSView> {
     Some(unsafe { &*(handle.ns_view.as_ptr() as *const NSView) })
 }
 
-/// 系统后端启动时调用一次：窗口背景铺黑。
-///
-/// 透明是由**壳**设的（GPUI 的 `set_background_appearance(Transparent)`，Metal
-/// 层清成 alpha=0 才有洞）——窗口外观属于 UI 框架语义，不在播放器实现里。
-/// 这里铺黑：视频 contain 的黑边/尚未出画的区域仍然是黑，而不是桌面。
+/// 系统后端启动时调用一次：窗口背景铺黑。透明是由**壳**设的（GPUI 的 `set_background_appearance(Transparent)`，Metal 层清成 alpha=0 才有洞）
+/// ——窗口外观属于 UI 框架语义，不在播放器实现里；这里铺黑让 contain 黑边/尚未出画的区域仍然是黑而不是桌面。
 #[cfg(target_os = "macos")]
 pub fn prepare_window(host: &HostWindow) {
     let Some(view) = ns_view(host) else { return };

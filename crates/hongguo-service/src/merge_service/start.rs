@@ -1,9 +1,6 @@
-//! 合并任务的启动编排（自 tauri 命令平移；命令层不再持有这段业务流）。
-//!
-//! 职责：占用输出名 → 登记 running 记录并广播 → 后台 blocking 线程跑合并
-//! （进度 1% 步进广播 + 落库）→ 结束写回结果并广播。重活派发到共用任务
-//! 运行时的阻塞池——同步 command 跑在主线程上，直接转码会让窗口停摆
-//! （合并页「未响应」的历史根因）。
+//! 合并任务的启动编排：占用输出名 → 登记 running 记录并广播 → 后台 blocking 线程跑合并
+//!（进度 1% 步进广播 + 落库）→ 结束写回结果并广播。重活派发到共用任务运行时的阻塞池，
+//! 直接在调用线程转码会让窗口停摆。
 
 use std::sync::Arc;
 
@@ -14,20 +11,16 @@ use super::{compat, guard, progress, quick};
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
 
-/// 启动合并。返回 running 任务快照（前端据此刷新列表，后续走事件）。
-///
-/// 合并本身失败不返回 Err：任务记录已经带上失败原因与 i18n key，事件也
-/// 发过了，返回 Err 只会让前端多弹一个 toast。
+/// 启动合并，返回 running 任务快照（前端据此刷新列表，后续走事件）。
+/// 合并本身失败不返回 Err：任务记录已带失败原因与 i18n key，事件也发过了。
 pub fn merge_series(
     state: &AppState,
     series_id: &str,
     output_name: &str,
     mode: MergeMode,
 ) -> AppResult<MergeTask> {
-    // 先占坑再干活。少了这一步，用户每点一次「开始合并」就多开一条
-    // blocking 任务，界面上会攒出一串同名「合并中」，而它们在抢同一个
-    // 输出文件、还各占一份 CPU。按输出名去重，不按剧：
-    // 同一剧换输出名产出的是不同文件，允许并行。
+    // 先占坑再干活：按输出名去重（同一剧换输出名产出的是不同文件，允许并行）；
+    // 不去重的话每点一次按钮就多开一条 blocking 任务，抢同一个输出文件、各占一份 CPU。
     let slot = guard::try_acquire(output_name)
         .ok_or_else(|| AppError::Busy(format!("《{output_name}》正在合并中，等这次跑完再试")))?;
 
@@ -51,8 +44,7 @@ pub fn merge_series(
 
     let mut task = MergeTask::new(series_id, &series_title, output_name, mode);
     task.status = MergeStatus::Running;
-    // 开跑就落库。跑到结束才落的话，进程一崩这十几分钟的进度就凭空消失，
-    // 用户重开应用既看不到「刚才合过」也看不到「合到哪了」。
+    // 开跑就落库：进程一崩，重开应用至少还能看到「合到哪了」。
     upsert(state, &task);
     // 合并可能跑好几分钟，先广播「开始了」，UI 立刻能看到 running 状态
     state
@@ -78,12 +70,10 @@ pub fn merge_series(
             }
             let mut snapshot = t.clone();
             snapshot.percent = percent;
-            // 参与集数在任务登记时数不出来（要等合并内部盘点输入），
-            // 每次上报都带上，运行中的快照才不用一直挂着 0
+            // 参与集数在任务登记时数不出来（要等合并内部盘点输入），每次上报都带上。
             snapshot.episode_count = total;
             events.publish(ServiceEvent::MergeProgress(snapshot.clone()));
-            // 进度同步落库：get_merge_tasks 中途就能看到，进程崩了重开
-            // 也至少能停在「最后跨过的那个百分点」
+            // 进度同步落库：进程崩了重开至少停在「最后跨过的那个百分点」。
             upsert(&progress_state, &snapshot);
         })
     };
@@ -93,8 +83,7 @@ pub fn merge_series(
     let owned_task = task.clone();
 
     crate::runtime::spawn_blocking(move || {
-        // slot 随这条闭包一起活到合并结束，Drop 时自动释放占用。
-        // 中途 panic 也会释放：用户不必重启就能再点一次。
+        // slot 随闭包活到合并结束，Drop 时自动释放占用（中途 panic 也会释放）。
         let slot = slot;
         let result = match mode {
             MergeMode::Quick => quick::quick_merge(
@@ -115,8 +104,7 @@ pub fn merge_series(
             ),
         };
 
-        // 用户主动取消：记录已经在 delete_merge_task 里删掉了。
-        // 这里再写回去就是「刚删掉又冒出来」，所以直接收工不发事件。
+        // 用户主动取消：记录已在 delete_merge_task 里删掉，再写回去就是「刚删掉又冒出来」。
         if matches!(result, Err(AppError::Cancelled)) {
             log::info!("[Merge] {} 已取消，不再写回记录", owned_output);
             return;
@@ -129,8 +117,7 @@ pub fn merge_series(
                 task.episode_count = count;
             }
             Err(e) => {
-                // 与下载任务同一个约定：记录里存 i18n key（前端会 t() 它），
-                // 内部细节只进日志。直接把 e.to_string() 存进去等于把后端术语糊给用户。
+                // 与下载任务同一约定：记录里存 i18n key（前端会 t() 它），内部细节只进日志。
                 log::error!("[Merge] {} 合并失败: {e}", task.output_name);
                 task.mark_failed(e.i18n_key());
             }
@@ -158,11 +145,8 @@ pub fn merge_series(
     Ok(task)
 }
 
-/// 把合并任务写进数据库。失败只记日志。
-///
-/// 记录本身不是产物：为了写一条状态把整个任务判失败，会让用户以为
-/// 白转了十几分钟。开始时先插一条 running 记录让 UI 立刻看到任务；
-/// 跑完后再用同一条覆盖它。
+/// 把合并任务写进数据库，失败只记日志（记录本身不是产物，为写状态把任务判失败会让用户以为白转了）。
+/// 开始时先插一条 running 记录让 UI 立刻看到任务；跑完后再用同一条覆盖它。
 fn upsert(state: &AppState, task: &MergeTask) {
     if let Err(e) = state.store.upsert_merge_task(task) {
         log::error!("[Merge] 合并记录落库失败: {e}");
@@ -174,8 +158,7 @@ mod tests {
     use super::*;
 
     /// 转码工作必须派发到共用运行时的阻塞池，而不是留在 command/主线程里跑。
-    ///
-    /// 假针拼接再匹配：断言字符串自身会出现在本文件里，直接写会永远为真。
+    ///（假针拼接再匹配：断言字符串自身会出现在本文件里，直接写会永远为真。）
     #[test]
     fn merge_work_runs_on_the_blocking_pool() {
         let needle = ["crate::runtime::spawn", "_blocking(move ||"].concat();

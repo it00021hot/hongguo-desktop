@@ -17,13 +17,8 @@ export function emptyFailureCounts(): FailureCounts {
 }
 
 /**
- * 裁决一次在线播放失败后的恢复动作。
- *
- * decode（3/4）不是单一语义：既有确定性失败（私有编码、无 HEVC 扩展），
- * 也有瞬时管线故障（CDN 坏块、解码器 hiccup）——重取一条防缓存钉的新流
- * 能否存活就是两者的判别器，所以 decode 首次与其他错误一样先重试，复发
- * 才升级整集转码兜底（分钟级代价只付在确定性失败上）。network/other 维持
- * 既有语义：重试一次，复发落错误页。
+ * 裁决一次在线播放失败后的恢复动作。decode（3/4）不是单一语义：确定性失败与瞬时管线故障都落这，
+ * 重取一条防缓存钉的新流能否存活是判别器——decode 首次与其他错误一样先重试，复发才升级整集转码兜底。
  */
 export function recoveryAction(kind: MediaErrorKind, counts: FailureCounts): RecoveryAction {
   if (counts[kind] < RETRY_BUDGET_PER_KIND) return 'retry';

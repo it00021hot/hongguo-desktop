@@ -17,25 +17,9 @@ pub use model::{CalendarItem, CalendarPage};
 /// 预约列表与上新日历共用。
 pub const SUBSCRIBE_LIST_PATH: &str = "/reading/user/subscribe/list/v1/";
 
-/// 上新日历（subscribe/list 的日历形态：tab_type=5 + need_calendar_schema）。
-///
-/// 三处协议差异：
-/// - **首页请求不带 `target_date`，但必须带 `need_personal_recommend=1`**——
-///   缺了它服务端回的是「全部定档剧」混排（含大量已上线），条目集与官方
-///   App 完全对不上；带上后回「个性化预约推荐」混排（未上线 + 人预约数）；
-/// - **翻页三键齐传 `offset` + `subscribe_offset`（同值）+ `session_id`（响应
-///   回传）**——只传 offset 服务端无视，永远回同一页（死循环同页）；
-/// - **响应是多天混排，按 `default_date`/选中日过滤后才是一天的条目**——
-///   他家首页响应照样 has_more=true，滚到底第二页回来无新增才显示
-///   「没有更多了」。
-///
-/// 切日期的真实参数是 **`target_date=YYYYMMDD`**
-/// （翻页请求里也始终在参）。响应条目有两种 schema（嵌套
-/// `subscribe_data.*` / 扁平 `item_id/name...`），[`parse_calendar_item`] 都吃。
-///
-/// **单页返回 + 游标**：响应带 `has_more/next_offset/session_id`，前端滚动
-/// 到底再翻下一页（懒翻页）——此前这里一次性串行吃满 16 页
-/// 才返回，切换日期等于把整天的请求全打完再画，肉眼可见地卡。
+/// 上新日历（subscribe/list 日历形态）：首页必须带 `need_personal_recommend=1`；
+/// 翻页三键齐传 offset/subscribe_offset/session_id（只传 offset 永远回同一页）。
+/// 响应是多天混排，按展示日过滤后才是一天的条目。
 pub async fn fetch_new_calendar(
     date: Option<&str>,
     cursor: Option<(i64, &str)>,
@@ -59,9 +43,8 @@ pub async fn fetch_new_calendar(
     if let Some(day) = &active_day_input {
         q.push(("target_date".to_string(), day.clone()));
     }
-    // 翻页三键齐传 offset + subscribe_offset（同值）+ session_id（响应回传；
-    // 只传 offset 服务端无视，永远回同一页）；首页请求绝
-    // 不能自带 session_id（命中服务端会话缓存，见 fetch_reservations）
+    // 翻页三键齐传（只传 offset 服务端无视，永远回同一页）；
+    // 首页请求绝不能自带 session_id（命中服务端会话缓存）
     if let Some((offset, session_id)) = &cursor {
         q.push(("offset".to_string(), offset.to_string()));
         q.push(("subscribe_offset".to_string(), offset.to_string()));
@@ -83,9 +66,8 @@ pub async fn fetch_new_calendar(
         .filter(|i| beijing_date(i.publish_time) == active_day)
         .cloned()
         .collect();
-    // 过滤后为空但原始非空（首页、未显式选日）：beijing_date 解析不了
-    // publish_time（未定档条目）会全被滤掉——保留原始顺序兜底，避免某天
-    // 误显示为空；显式选日的空页交给前端自动续拉下一页
+    // 过滤后为空但原始非空（首页未选日）：未定档条目 publish_time 解析不了
+    // 会全被滤掉——保留原始顺序兜底；显式选日的空页交给前端自动续拉
     if items.is_empty() && !page.items.is_empty() && active_day_input.is_none() {
         items = page.items.clone();
     }
@@ -180,13 +162,8 @@ pub(super) fn parse_calendar(data: Option<&Value>) -> AppResult<CalendarPage> {
     })
 }
 
-/// 一条日历条目，两种 schema 都吃（服务端按请求形态分发）：
-///
-/// - 嵌套形态（匿名请求）：`subscribe_data.{series_id,title,vid,...}` +
-///   顶层 `category/rec_tags/schedule_publish_time/is_online`；
-/// - 扁平形态（带 install_id Cookie 或 target_date）：字段直接在条目上
-///   （`item_id/name/cover/item_desc/sub_title_list/...`），没有 vid——
-///   前端点击走 seriesId 解析详情，vid 留空无害。
+/// 一条日历条目，两种 schema 都吃：嵌套形态（匿名请求，`subscribe_data.*`）与
+/// 扁平形态（带 install_id Cookie 或 target_date，字段直接在条目上，无 vid）。
 fn parse_calendar_item(raw: &Value) -> Option<CalendarItem> {
     if let Some(sd) = raw.get("subscribe_data") {
         let series_id = sd
@@ -259,7 +236,6 @@ fn string_array(node: &Value, key: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// 官方样本形状：subscribe_items + calendar_schema（日历形态）。
     #[test]
     fn parses_calendar_page() {
         let data: Value = serde_json::json!({
@@ -312,8 +288,6 @@ mod tests {
         assert_eq!(page.online_unread_count_text, "");
     }
 
-    /// 带 install_id Cookie / target_date 时服务端
-    /// 下发扁平条目（无 subscribe_data，无 vid）。
     #[test]
     fn parses_flat_calendar_items() {
         let data: Value = serde_json::json!({
@@ -379,7 +353,6 @@ pub(crate) mod probe {
         );
         assert!(!page.dates.is_empty(), "日历应带日期列表");
         assert!(!page.items.is_empty(), "当日应有上新条目");
-        // 对照：显式传一个非默认日期——混排按该日过滤后单页返回
         let other = page.dates.last().map(String::as_str).expect("至少一个日期");
         let page2 = fetch_new_calendar(Some(other), None, &env)
             .await
@@ -392,8 +365,7 @@ pub(crate) mod probe {
         );
     }
 
-    /// 日历 `target_date` 直查：生产同款环境（静态档案 + 匿名 Cookie）下
-    /// 看响应形态与条目归属。
+    /// 日历 `target_date` 直查（生产同款环境：静态档案 + 匿名 Cookie）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_calendar_target_date() {

@@ -7,7 +7,7 @@
 | -------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------- | -------------------- |
 | 包名 / 可执行文件 / `productName`            | `Hongguo`                                          | 固定不本地化                                                | 改 `tauri.conf.json` |
 | macOS 系统显示名（Dock / Finder / 菜单栏）   | zh：红果播放器 · zh-Hant：紅果播放器 · en：Hongguo | `Contents/Resources/<lang>.lproj/InfoPlist.strings`         | `make assets`        |
-| macOS 窗口标题（Mission Control / 窗口菜单） | 同上，跟随界面语言                                 | 运行时 `setTitle(t('app.name'))`（`src/routes/__root.tsx`） | —                    |
+| macOS 窗口标题（Mission Control / 窗口菜单） | 同上，跟随界面语言                                 | 运行时 `setTitle(t('app.name'))`（`src/pages/__root.tsx`） | —                    |
 | Windows 快捷方式名 /「应用和功能」           | 同上                                               | 安装时按系统语言定（NSIS）                                  | `make assets`        |
 
 **包名不本地化**：改名等于换了应用——LaunchServices 注册、单实例认亲、更新

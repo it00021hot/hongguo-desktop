@@ -16,7 +16,7 @@ use crate::bridge;
 use super::pin_playing::{PinItem, pin_playing_front};
 
 /// 沉浸流的 tab 身份（即书城 cell 换一换的 tab_type 契约）。列表由服务端
-/// 下发（[`Self::load_tabs`]），回落三件套见 [`Self::fallback_tabs`]。
+/// 下发（`load_tabs`），回落三件套见 `fallback_tabs`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Source(Arc<str>);
 
@@ -26,7 +26,7 @@ impl Source {
         Self("16".into())
     }
 
-    /// 服务端列表到手前的回落三件套（抓包锁定：推荐16/漫剧36/真人剧39）。
+    /// 服务端列表到手前的回落三件套（推荐 16 / 漫剧 36 / 真人剧 39）。
     pub(crate) fn fallback_tabs() -> [Self; 3] {
         [Self("16".into()), Self("36".into()), Self("39".into())]
     }
@@ -56,15 +56,15 @@ pub(super) struct StreamItem {
     pub(super) series_id: String,
     pub(super) title: String,
     pub(super) cover: String,
-    /// 横版封面优先做全屏占位（竖版拉满横屏会糊，Tauri 同口径）。
+    /// 横版封面优先做全屏占位（竖版拉满横屏会糊）。
     pub(super) horiz_cover: String,
     pub(super) heat_text: String,
     pub(super) season_tag: String,
     pub(super) badge: String,
     /// 推荐位的 vid（批量取流预取用；种子条目可能为空）。
     pub(super) vid: String,
-    /// 条目 content_type（批量预取 `mixed_video_id_map` 的分组 key 原样串
-    /// 来源；种子/钉住条目无值 = 0，不进批量）。
+    /// 条目 content_type（批量预取的分组 key 原样串来源；种子/钉住条目
+    /// 无值 = 0，不进批量）。
     pub(super) content_type: i64,
 }
 
@@ -95,29 +95,26 @@ pub(super) struct SourceFeed {
     pub(super) loading: bool,
     pub(super) fetching_more: bool,
     pub(super) failed: Option<String>,
-    /// 首批（含换一批）落定时刻：「回首页过期换一批」的判定源
-    /// （Tauri react-query dataUpdatedAt 同语义）。
+    /// 首批（含换一批）落定时刻：「回首页过期换一批」的判定源。
     loaded_at: Option<std::time::Instant>,
     /// 首批自动重试已用预算（见 [`FEED_AUTO_RETRIES`]）；成功落定内容或
     /// 用户手动重试时清零。
     pub(super) auto_retries: u32,
 }
 
-/// 首批自动重试预算上限：打开应用的首屏请求最容易撞上网络/代理未就绪
-/// 这类瞬时故障，失败即落「重试」按钮让人手点很蠢——预算内自动退避
-/// 重拉，烧完才落手动卡。
+/// 首批自动重试预算上限：首屏请求最容易撞上网络/代理未就绪的瞬时故障，
+/// 预算内自动退避重拉，烧完才落手动重试卡。
 const FEED_AUTO_RETRIES: u32 = 3;
 
 /// 自动重试基础退避：第 n 次失败后等 `BASE * 2^(n-1)`（1s/2s/4s）。
 const FEED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批
-/// （Tauri `FEED_STALE_MS` 同款）。
+/// 「换一批」过期阈值：回首页时流数据比这更旧就重开会话取新一批。
 pub(super) const FEED_STALE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 impl SourceFeed {
     /// 本会话已下发的全部 series_id（翻页 `filter_ids` 的料：服务端据此
-    /// 排除已见，官方抓包语义「已下发的 series_id 逗号表」；保序去重）。
+    /// 排除已见；保序去重）。
     fn seen_series_ids(&self) -> Vec<String> {
         let mut seen: HashSet<String> = HashSet::new();
         self.items
@@ -129,8 +126,6 @@ impl SourceFeed {
 }
 
 impl super::HomeView {
-    // —— 数据：推荐流 ——
-
     /// 拉一个 tab 的首批（`restart` = 换一批：重开会话、游标归零；在播剧
     /// 由渲染期的钉住逻辑保持在画面上）。
     pub(super) fn load_feed(&mut self, source: Source, restart: bool, cx: &mut Context<Self>) {
@@ -176,8 +171,7 @@ impl super::HomeView {
         cx.spawn(async move |this, cx| {
             let result = rx.await.expect("tokio 桥不会丢弃发送端");
             // 坏结果（请求失败或空页）先记账判重试：预算内保持「加载中」并按
-            // 退避自动重拉，手动重试卡只在预算烧完后出现（打开应用的首屏请求
-            // 最容易撞上瞬时故障，让人手点重试很蠢）。
+            // 退避自动重拉，手动重试卡只在预算烧完后出现。
             let retry_after = this.update(cx, |view, _| {
                 let feed = view.feeds.get_mut(&source).expect("源已初始化");
                 let bad = match &result {
@@ -201,7 +195,7 @@ impl super::HomeView {
                 let _ = this.update(cx, |view, cx| {
                     let feed = view.feeds.get_mut(&source).expect("源已初始化");
                     // 放开 loading 闸再走 load_feed（其 early-return 拦在途请求）；
-                    // 清上一轮落下的失败卡，等这轮的判定
+                    // 清上一轮落下的失败卡。
                     feed.loading = false;
                     feed.failed = None;
                     view.load_feed(source.clone(), false, cx);
@@ -255,11 +249,9 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 同会话续拉下一页（游标临近尾部时调用）。
-    ///
-    /// 翻页三件套必须带 `filter_ids`（已下发过的 series_id，服务端排除
-    /// 已见）——不带就是滚动重复的根因
-    /// （服务端不做会话内去重，Tauri useFeed 累积 filterIds 同口径）。
+    /// 同会话续拉下一页（游标临近尾部时调用）。翻页三件套必须带
+    /// `filter_ids`（已下发过的 series_id，服务端排除已见）——不带就是
+    /// 滚动重复的根因（服务端不做会话内去重）。
     pub(super) fn load_more(&mut self, source: Source, cx: &mut Context<Self>) {
         let (session, offset, filter_ids) = {
             let feed = self.feeds.get(&source).expect("源已初始化");
@@ -295,13 +287,12 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 首批/续页就位后的钩子：冷启动（引擎未起）自动播当前源第一条——对齐
-    /// Tauri「起点决策 effect」的自动起播；已在播则只做游标跟随（种子到位、
-    /// 换批、翻页都会改列表，游标指到的剧变了就该切过去）。
+    /// 首批/续页就位后的钩子：冷启动（引擎未起）自动播当前源第一条；已在播
+    /// 则只做游标跟随（种子到位、换批、翻页都会改列表，游标指到的剧变了
+    /// 就该切过去）。
     fn after_feed_loaded(&mut self, source: Source, cx: &mut Context<Self>) {
         // 冷启动被按住（启动目的地不是首页）：不起播也不预取——人还在别的
-        // 页，首页的剧不应该已经在播。回首页由 resume_if_idle 接管续播，
-        // 不经过这个闸。
+        // 页。回首页由 resume_if_idle 接管续播。
         if self.cold_start_held {
             cx.notify();
             return;
@@ -322,8 +313,7 @@ impl super::HomeView {
     }
 
     /// 列表结构变了（种子到位/翻页/换批）后跟上游标：游标指的剧与在播的
-    /// 不一致就切过去——Tauri 的起点决策 effect 同语义（currentSeries 变了
-    /// 就 setTarget，无闩锁）；切换途中不追，起播落定后各有出口。
+    /// 不一致就切过去；切换途中不追，起播落定后各有出口。
     fn follow_cursor(&mut self, cx: &mut Context<Self>) {
         if self.switching || self.now.is_none() {
             return;
@@ -341,9 +331,8 @@ impl super::HomeView {
         self.play_target(item, None, None, cx);
     }
 
-    /// 顶栏 tab 列表（服务端下发；拉取失败静默保留回落三件套，api 层已有
-    /// 日志）。关注 45 一律不显示——追更由收藏页承载（Tauri buildTabList
-    /// 同口径）。
+    /// 顶栏 tab 列表（服务端下发；拉取失败静默保留回落三件套）。关注 45
+    /// 一律不显示——追更由收藏页承载。
     pub(super) fn load_tabs(&mut self, cx: &mut Context<Self>) {
         const FOLLOW_TAB_TYPE: &str = "45";
         let state = Arc::clone(&self.state);
@@ -392,10 +381,9 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 观看历史（推荐 tab 种子 + 起点兜底）——**历史源按登录态切换**
-    ///（Tauri `88f5edf` 同款）：登录读云端（跨端续播），匿名读本地记录。
-    /// 匿名也发起云端查询会拿回设备级历史行（设备上做过的测试残留），
-    /// 命中看过的剧就一律「续播」到那条记录的集数。
+    /// 观看历史（推荐 tab 种子 + 起点兜底）——历史源按登录态切换：登录读
+    /// 云端（跨端续播），匿名读本地记录。匿名也发起云端查询会拿回设备级
+    /// 历史行（测试残留），命中看过的剧就一律「续播」到那条记录的集数。
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
         if self.history_pending {
             return;
@@ -467,8 +455,8 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 「你的内容」排前：云端历史种子（书架随后由 [`Self::load_seeds_meta`]
-    /// 补进同一段）。写进独立数组，不动流缓存（Tauri seedItems 同款）。
+    /// 「你的内容」排前：云端历史种子（书架随后补进同一段）。写进独立数组，
+    /// 不动流缓存。
     fn merge_seeds(&mut self, cx: &mut Context<Self>) {
         let Some(history) = &self.history else {
             return;
@@ -491,8 +479,8 @@ impl super::HomeView {
         self.follow_cursor(cx);
     }
 
-    /// 书架种子（历史之后）：标题/封面缺，起播后由档案解析自然补上
-    /// （Tauri 同口径：书架条目只带 series_id）。种子段内部去重。
+    /// 书架种子（历史之后）：标题/封面缺，起播后由档案解析自然补上。
+    /// 种子段内部去重。
     fn load_seeds_meta(&mut self, cx: &mut Context<Self>) {
         let state = Arc::clone(&self.state);
         let account = state.settings().account.filter(|a| !a.user_id.is_empty());
@@ -526,12 +514,9 @@ impl super::HomeView {
         .detach();
     }
 
-    // —— 展示列表：钉住在播 + 种子已并入 ——
-
-    /// 渲染/交互共用的展示列表：种子（仅推荐 tab）+ 流条目，**按 series_id
-    /// 去重**——会话轮换后跨页偶发同条目（Tauri 渲染期同款去重），不去重
-    /// 就是滚轮里同一部剧连出好几遍。在播剧由 [`pin_playing_front`] 无条件
-    /// 钉在最前——「在播不动」；跨 tab 切换关闸，首批到位即换片。
+    /// 渲染/交互共用的展示列表：种子（仅推荐 tab）+ 流条目，按 series_id
+    /// 去重（会话轮换后跨页偶发同条目，不去重就是同一部剧连出好几遍）；
+    /// 在播剧由 [`pin_playing_front`] 无条件钉在最前——「在播不动」。
     pub(super) fn display_items(&self) -> Vec<StreamItem> {
         let feed = self.feeds.get(&self.active).expect("源已初始化");
         let merged = merge_seeded_items(feed, &self.seeds, self.active.as_str() == "16");
@@ -567,9 +552,8 @@ impl super::HomeView {
             .is_some_and(|t| t.elapsed() >= FEED_STALE)
     }
 
-    /// 游标位置（展示列表下标，夹到已加载范围）。语义**对齐 Tauri**：游标是
-    /// 位置不是身份，列表头部插了种子就落在种子上（冷启动正是这样切到
-    /// 「你的内容」第一条，见 `player-page/start` 的起点决策 effect）。
+    /// 游标位置（展示列表下标，夹到已加载范围）。游标是位置不是身份：
+    /// 列表头部插了种子就落在种子上（冷启动由此切到「你的内容」第一条）。
     pub(super) fn cursor(&self) -> usize {
         let max = self.display_items().len().saturating_sub(1);
         (*self.indexes.get(&self.active).expect("游标已初始化")).min(max)
@@ -590,8 +574,7 @@ impl super::HomeView {
 }
 
 /// 展示列表组装的合并段（纯函数）：种子（仅推荐 tab）并入流条目、按
-/// series_id 去重保序。钉住在 [`pin_playing_front`]（自包含，tests/
-/// 源文件级引入可单测），这里只管两源合一。
+/// series_id 去重保序。钉住由 [`pin_playing_front`] 负责，这里只管两源合一。
 fn merge_seeded_items(
     feed: &SourceFeed,
     seeds: &[StreamItem],
@@ -599,8 +582,7 @@ fn merge_seeded_items(
 ) -> Vec<StreamItem> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut items: Vec<StreamItem> = Vec::with_capacity(seeds.len() + feed.items.len());
-    // 种子只属于推荐 tab（tab_type 16）：类型 tab 的头一条必须是该类型
-    // 的剧（Tauri home-page 同口径）
+    // 种子只属于推荐 tab（tab_type 16）：类型 tab 的头一条必须是该类型的剧。
     if seeds_active {
         for s in seeds {
             if !s.series_id.is_empty() && seen.insert(s.series_id.clone()) {

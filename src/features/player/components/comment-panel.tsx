@@ -1,16 +1,8 @@
-//! 沉浸流评论面板：右侧滑出（「评论 · N」列）。
-//!
-//! 列表（头像/昵称/文本/时间/♡）+ 底部发评论框；评论点赞走
-//! commentapi/comment/do_action（8/9）。数据与弹幕同端点不同形态——
-//! 评论形态 business_param 是 need_count/req_type +
-//! server_channel=18（沿用弹幕形会被 103001 拒），need_count 顺带带回
-//! 评论总数（头部计数用）。
-//!
-//! 回复：发送走 reply/add 独立端点；回复**列表**走 reply/list 独立端点
-//! （评论维度 src=504/ch=18）——「展开 N 条回复」原地内联展开
-//! （不隐藏其他评论），自己发的回复仍本地追加一份（服务端列表有延迟）。
-//! 回复行格式：`回复 @xxx：` 前缀在
-//! 正文行（@ 浅蓝高亮）、相对时间（N 天前）、头像 32px。
+//! 沉浸流评论面板：右侧滑出。列表 + 底部发评论框；评论点赞走 comment/do_action（8/9）。
+//! 数据与弹幕同端点不同形态——评论形态 business_param 是 need_count/req_type + server_channel=18
+//! （沿用弹幕形会被 103001 拒），need_count 顺带带回评论总数。
+//! 回复：发送走 reply/add、列表走 reply/list（src=504/ch=18），「展开 N 条回复」原地内联展开，
+//! 自己发的回复仍本地追加一份（服务端列表有延迟）。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Heart, Loader2, X } from 'lucide-react';
@@ -77,13 +69,8 @@ function CommentText({ text, aiName }: { text: string; aiName?: string }) {
 }
 import type { CommentItem, Emoticon, ReplyItem, ReplyPage } from '@/service/schema';
 
-/**
- * 评论附件（官方同款两种形态）：
- * - 表情图片（第三方 GIF / 自定义表情 / 搜索结果）：服务端下发的表情对象
- *   直接进 `image_data`，附 `business_param.emoji_scene_type`（2 / 4）；
- * - 本地图片：选图后**不立即上传**（官方实测选图无请求），点「发表」才
- *   走 `/reading/reader/upload/picture/`，再把签名 URL 填进 `image_data`。
- */
+/** 评论附件（官方同款两种形态）：表情图片直接进 image_data（附 emoji_scene_type 2/4）；
+ *  本地图片选图后不立即上传（官方同款），点「发表」才上传、签名 URL 填进 image_data。 */
 type CommentAttachment =
   | { kind: 'emoticon'; item: Emoticon; sceneType: number }
   | { kind: 'local'; local: LocalImageAttachment };

@@ -12,13 +12,8 @@ import { Progress } from '@/components/ui/progress';
 import { t, tf } from '@/locales';
 import { useUpdate } from './update-context';
 
-/** 全局更新弹层：发现新版先亮出更新内容，用户点「下载更新」才开始下载
- *  （只下载不安装，关掉弹层不中断）；下载完成后点「立即更新」才安装重启。
- *  重开入口是设置卡的「查看新版本」。
- *
- *  主按钮刻意用普通 Button 而不是 AlertDialogAction——Radix 的 Action 一点
- *  就关弹层（还会触发 dismiss 记下「稍后」），进度条会跟着消失；用普通 Button
- *  让弹层原地留守，实时显示下载进度，「稍后」才负责关闭。 */
+/** 全局更新弹层：发现新版先亮更新内容，点「下载更新」开始下载（关掉弹层不中断），下载完「立即更新」安装重启。
+ *  主按钮用普通 Button 而非 AlertDialogAction——Radix Action 一点就关弹层，进度条会跟着消失。 */
 export function UpdateDialog() {
   const {
     available,

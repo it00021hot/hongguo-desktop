@@ -1,8 +1,5 @@
-//! MP4 box 树解析。
-//!
-//! MP4 由嵌套的 box 组成，每个 box 是 `[4 字节长度][4 字节类型][载荷]`。
-//! 长度占 4 字节且为 1 时表示真实长度是 64 位（largesize），为 0 表示
-//! 「到文件末尾」。两种都必须正确处理，否则会解析错位。
+//! MP4 box 树解析：每个 box 是 `[4 字节长度][4 字节类型][载荷]`；
+//! 长度为 1 表示真实长度是 64 位（largesize）、为 0 表示「到文件末尾」，两种都必须正确处理否则解析错位。
 
 /// 一个 box 的头部。
 #[derive(Debug, Clone, PartialEq)]
@@ -15,9 +12,7 @@ pub struct BoxHeader {
     pub size: usize,
     /// 整个 box（含头部）的长度
     pub total_size: usize,
-    /// 头部本身的长度：常规 box 是 8，用 largesize 时是 16。
-    /// 要把 `[start, start+size]` 连头带尾原样取出来时需要它——
-    /// 直接减 8 会在 largesize box 上错位。
+    /// 头部本身的长度：常规 box 是 8，largesize 是 16——把载荷连头带尾原样取出时需要它，直接减 8 在 largesize box 上会错位。
     pub header_size: usize,
 }
 
@@ -81,11 +76,8 @@ pub fn parse_boxes(data: &[u8], start: usize, end: usize) -> Vec<BoxHeader> {
         });
 
         pos = payload_start + payload_size;
-        // 不需要「防停滞」守卫：header_size ≥ 8，每次迭代 pos 至少前进 8，
-        // 唯一的特殊分支（size == 0 延伸到末尾）也会把 pos 推到 end。
-        // 曾经在这里放 `if pos <= payload_start { break }`，结果把**载荷为空
-        // 的合法 box**（比如恰好 8 字节的 `free`）误判成停滞，后续所有 box
-        // 直接消失——实测 ffmpeg 产出的文件就带这种 box。
+        // 不需要「防停滞」守卫：header_size ≥ 8，pos 每次至少前进 8（size==0 分支也把 pos 推到 end）；
+        // 曾放过守卫，把载荷为空的合法 box（恰好 8 字节的 free）误判成停滞、其后所有 box 消失
     }
 
     out
@@ -97,7 +89,6 @@ pub fn find_box(data: &[u8], start: usize, end: usize, kind: &str) -> Option<Box
         if b.is(kind) {
             return Some(b);
         }
-        // 容器类 box 向下找
         if matches!(
             b.kind_str().as_str(),
             "moov" | "trak" | "mdia" | "minf" | "stbl" | "moof" | "traf" | "edts"
@@ -124,8 +115,7 @@ mod tests {
 
     #[test]
     fn an_empty_box_does_not_stop_the_scan() {
-        // 回归钉住：恰好 8 字节的空 `free` box 曾被「防停滞」守卫误判，
-        // 其后的 mdat/moov 全部消失。ffmpeg 产出的文件就带这种 box。
+        // 回归钉住：恰好 8 字节的空 free box 曾被「防停滞」守卫误判，其后所有 box 消失
         let data: Vec<u8> = [
             box_of("ftyp", b"xxxx"),
             box_of("free", b""),
@@ -168,7 +158,6 @@ mod tests {
 
     #[test]
     fn handles_size_zero_to_end() {
-        // size == 0 表示延伸到末尾
         let mut data = Vec::new();
         data.extend_from_slice(&0u32.to_be_bytes());
         data.extend_from_slice(b"mdat");
@@ -184,8 +173,8 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&1u32.to_be_bytes());
         data.extend_from_slice(b"mdat");
-        data.extend_from_slice(&16u64.to_be_bytes()); // 真实总长 16
-        data.extend_from_slice(&[7u8; 0]); // 无载荷
+        data.extend_from_slice(&16u64.to_be_bytes());
+        data.extend_from_slice(&[7u8; 0]);
 
         let boxes = parse_boxes(&data, 0, data.len());
         assert_eq!(boxes.len(), 1);
@@ -200,7 +189,6 @@ mod tests {
         data.extend_from_slice(b"mdat");
         data.extend_from_slice(&[1, 2]);
 
-        // 不应 panic，也不应返回越界的 box
         let boxes = parse_boxes(&data, 0, data.len());
         assert_eq!(boxes.len(), 1);
     }

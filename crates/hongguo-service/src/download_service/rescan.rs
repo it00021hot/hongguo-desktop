@@ -1,14 +1,7 @@
-//! 从磁盘补回下载任务记录。
-//!
-//! 用于任务记录丢失/被清空、或早期版本直接下载没登记的情况——
-//! 只要磁盘上有文件且能对上集号，就重新登记为「已完成」。启动时自动跑一遍
-//! （壳的 `bootstrap::rescan`），下载管理页也有手动入口（`rescan_downloads`）。
-//!
-//! 认集号两步走：
-//! 1. **精确寻址**：按当前命名模板把档案里每集的文件名算出来，存在即登记。
-//!    「剧名 007 标题」这种结尾不是数字的模板只有这条路能对上。
-//! 2. **尾数扫描兜底**：模板改过、档案里没有的孤儿文件，按文件名末尾数字认集号
-//!    （与合并收集、现版的行为一致）。
+//! 从磁盘补回下载任务记录：记录丢失/被清空、或早期版本没登记时，只要磁盘上有文件
+//! 且能对上集号就重新登记为「已完成」。启动自动跑一遍，下载管理页也有手动入口。
+//! 认集号两步走：1) 精确寻址——按当前命名模板算文件名（结尾非数字的模板只有这条路）；
+//! 2) 尾数扫描兜底——模板改过、档案里没有的孤儿文件按文件名末尾数字认集号。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,10 +10,8 @@ use crate::app_state::AppState;
 use hongguo_common::AppResult;
 use hongguo_common::model::{DownloadTask, Series, Settings};
 
-/// 判定「磁盘上这个文件是一条有效分集」的最小体积。
-///
-/// 与合并收集（[`crate::merge_service`]）的口径一致：小于它的多半是
-/// 上次中断留下的残缺文件，登记成已完成只会让播放时打不开。
+/// 判定「磁盘上这个文件是一条有效分集」的最小体积；与合并收集口径一致，
+/// 小于它的多半是上次中断留下的残缺文件。
 const MIN_EPISODE_BYTES: u64 = 100 * 1024;
 
 /// 尾数扫描认的集号最长位数。四位数封顶，避免把「2023 合集」这类年份当集号。
@@ -34,10 +25,8 @@ pub struct RescanSummary {
     pub scanned_series: usize,
 }
 
-/// 从磁盘补回任务记录。
-///
-/// 只加不改：已有任务记录的集（无论什么状态）一律不动——把失败中的任务
-/// 悄悄改成已完成，比少登记一条更让人困惑。
+/// 从磁盘补回任务记录。只加不改：已有任务记录的集（无论什么状态）一律不动
+/// ——把失败中的任务悄悄改成已完成，比少登记一条更让人困惑。
 pub fn rescan_from_disk(state: &AppState) -> AppResult<RescanSummary> {
     let settings = state.settings();
     let series_list: Vec<Series> = state.store.series_all()?;
@@ -58,7 +47,6 @@ pub fn rescan_from_disk(state: &AppState) -> AppResult<RescanSummary> {
         summary.scanned_series += 1;
 
         for (vid_index, path) in found {
-            // 再次确认体积：精确寻址与扫描两个来源都过同一道闸
             let Ok(meta) = std::fs::metadata(&path) else {
                 continue;
             };
@@ -188,12 +176,6 @@ mod tests {
     use super::*;
     use hongguo_common::model::{Episode, TaskStatus};
 
-    /// 临时目录 + **数据目录重定向守卫**。
-    ///
-    /// `rescan_from_disk` 补回任务时会真的落盘 data.json——不重定向的话，
-    /// 跑一次测试就把开发机的下载记录覆盖成测试夹具（剧名「我的剧」会
-    /// 出现在真实应用里，真踩过一次）。守卫必须在测试体内存活到结尾，
-    /// 所以和目录一起返回，调用方想省都省不掉。
     fn sandbox(tag: &str) -> (PathBuf, hongguo_store::paths::ScopedDataDir) {
         let dir = std::env::temp_dir().join(format!("hg-rescan-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -230,14 +212,12 @@ mod tests {
         }
     }
 
-    /// series_dir 推导走的是 `settings.series_dir(title)` = `<root>/红果短剧/<title>`。
     fn make_series_dir(root: &Path, title: &str) -> PathBuf {
         let dir = root.join("红果短剧").join(title);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    /// 写一个过体积门槛的分集文件（内容不重要，够大即可）。
     fn write_episode(dir: &Path, name: &str) {
         std::fs::write(dir.join(name), vec![0u8; MIN_EPISODE_BYTES as usize + 1]).unwrap();
     }
@@ -265,10 +245,8 @@ mod tests {
         state.replace_settings(settings_with_dir(&root));
         let dir = make_series_dir(&root, "我的剧");
 
-        // 命名模板是 TitleIndex：精确寻址应认出第 1、2 集
         write_episode(&dir, "我的剧 001.mp4");
         write_episode(&dir, "我的剧 002.mp4");
-        // 档案里没有第 5 集：尾数扫描兜底
         write_episode(&dir, "我的剧 005.mp4");
 
         let summary = rescan_from_disk(&state).expect("扫描应成功");
@@ -281,7 +259,6 @@ mod tests {
         };
         assert_eq!(got, vec![1, 2, 5]);
 
-        // 补回的任务必须是已完成、带路径带体积
         let t5 = state
             .queue()
             .all()
@@ -305,7 +282,6 @@ mod tests {
         let dir = make_series_dir(&root, "我的剧");
         write_episode(&dir, "我的剧 001.mp4");
 
-        // 第 1 集已有记录（哪怕失败中）：不能被覆盖成已完成
         let failed = DownloadTask::new("1", "我的剧", 1, "v1", "第1集标题");
         let id = state.queue().enqueue(failed).id;
 
@@ -326,9 +302,7 @@ mod tests {
         state.replace_settings(settings_with_dir(&root));
         let dir = make_series_dir(&root, "我的剧");
 
-        // 小于 100KB 的残缺文件
         std::fs::write(dir.join("我的剧 001.mp4"), b"tiny").unwrap();
-        // 合并产物不算分集
         write_episode(&dir, "我的剧 合集.mp4");
 
         let summary = rescan_from_disk(&state).expect("扫描应成功");
@@ -339,7 +313,6 @@ mod tests {
 
     #[test]
     fn title_index_episode_template_is_matched_exactly() {
-        // 「剧名 007 标题」结尾不是数字，尾数扫描对它是盲的——必须靠精确寻址
         let (root, _scope) = sandbox("title-template");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![7]));
@@ -360,11 +333,10 @@ mod tests {
 
     #[test]
     fn prefers_task_record_dir_over_settings_derivation() {
-        // 下载根目录后来改了：设置推导出的目录是空的，但任务记录里的旧路径还在
         let (root, _scope) = sandbox("moved-root");
         let state = AppState::default();
         series_in(&state, series_with("我的剧", vec![1, 2]));
-        state.replace_settings(settings_with_dir(&root)); // 新根目录（无文件）
+        state.replace_settings(settings_with_dir(&root));
 
         let old_dir = root.join("旧根").join("我的剧");
         std::fs::create_dir_all(&old_dir).unwrap();

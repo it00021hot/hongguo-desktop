@@ -9,9 +9,7 @@ pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
     compat_cache_dir().join(format!("{}_{:03}.mp4", sanitize(series_id), vid_index))
 }
 
-/// 命中的缓存路径；没有则 `None`。
-///
-/// 存在的文件必须够大才算命中，避免把上次的半成品当结果。
+/// 命中的缓存路径；没有则 `None`。存在的文件必须够大才算命中，避免把上次的半成品当结果。
 pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
     let path = cache_file(series_id, vid_index);
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -24,22 +22,13 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-/// 兼容转码缓存上限的**下界**。
-///
-/// 低于这个值就没意义了：一部剧的转码产物动辄几百 MB，缓存放不下两集，
-/// 合并时每集都要重转一遍。
+/// 兼容转码缓存上限的下界：低于它缓存放不下两集，合并时每集都要重转一遍。
 const CAP_FLOOR: u64 = 2 * 1024 * 1024 * 1024;
 
-/// 兼容转码缓存上限的**上界**。
-///
-/// 再大的盘也不该让缓存吃掉几十 GB——它是可重算的中间产物，不是用户的数据。
+/// 兼容转码缓存上限的上界：缓存是可重算的中间产物，不是用户的数据。
 const CAP_CEILING: u64 = 16 * 1024 * 1024 * 1024;
 
-/// 本次淘汰用多少字节做上限。
-///
-/// 固定 4GB 是拍脑袋的：大盘上限制太紧（250 集的剧按 libx264 crf23 约 6GB，
-/// 必然反复淘汰重转），小盘上又放得太满。跟着可用空间走更合理：
-/// **最多占当前空闲的一成**，落在 [2GB, 16GB] 之间。
+/// 本次淘汰用多少字节做上限：最多占当前空闲的一成，落在 [2GB, 16GB] 之间。
 fn effective_cap() -> u64 {
     let free = hongguo_media::disk_space::free_space_at(&compat_cache_dir()).unwrap_or(0);
     if free == 0 {

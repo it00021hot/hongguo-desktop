@@ -1,19 +1,7 @@
-//! 排行榜接口（详见 docs/hongguo-api-endpoints.md）。
+//! 排行榜接口（端点口径见 docs/hongguo-api-endpoints.md）。
 //!
-//! `GET /reading/bookapi/bookmall/cell/change/v`（**/v 无斜杠**），固定
-//! `cell_id=7470092475068071998, tab_type=26, selected_items=all`，榜单用
-//! `sub_selected_items` 切换；响应是 `data.cell_view.cell_data[].video_data[]`
-//! （每块一条，`recommend_info` 是二次序列化 JSON 字符串，内含排名 `rank`）。
-//!
-//! 翻页协议：每页 10 条、`next_offset` 步进 10；
-//! 首页 `offset=0` + `unlimited_selector_change_type=2` 不带 session；
-//! 翻页 `offset=next_offset` + `usct=1` + 回传 `session_id` 与
-//! `filter_ids`（已下发 series_id 表）；`rank_version` 响应下发、后续
-//! 回传。月榜用 `background_selected_items=date_YYYYMM`（选项在响应
-//! `background_selector`）。
-//!
-//! bookmall 系对设备敏感（静态旧设备报 ILLEGAL_ACCESS 110），设备注册实现前，
-//! 探测用例走已注册设备档案。
+//! bookmall 系对设备敏感（静态旧设备报 ILLEGAL_ACCESS 110），探测用例
+//! 需要注册态身份（见本模块 `probe::hg_env`）。
 
 mod model;
 
@@ -26,11 +14,10 @@ use hongguo_common::{AppError, AppResult};
 
 pub use model::{RankItem, RankPage, RankPanelItem, RankPanelRow, RankSubList, RankTab};
 
-/// 排行榜（书城 cell 换一换，/v 无斜杠）。
+/// 排行榜（书城 cell 换一换）。
 pub const RANK_CELL_PATH: &str = "/reading/bookapi/bookmall/cell/change/v";
 
-/// 排行榜页的 8 个「全部」tab 子榜（probe 遍历用；生产路径的选项表由
-/// 响应 `cell_selector` schema 下发，前端直接用字符串 id）。
+/// 排行榜页的 8 个「全部」tab 子榜（probe 遍历用）。
 #[cfg(test)]
 pub(crate) const ALL_TAB_SUBS: &[&str] = &[
     "ranklist_hot_sc",
@@ -43,21 +30,8 @@ pub(crate) const ALL_TAB_SUBS: &[&str] = &[
     "ranklist_followed",
 ];
 
-/// 一次榜单请求的定位参数（内容 tab × 子榜 × 筛选 × 月榜 + 翻页游标）。
-///
-/// 字段与官方 query 一一对应：
-/// - `selected`：内容 tab `selected_items`（all/human/comic_series_rank/
-///   ai_playlet/ranklist_celebrity/series_album；空串按 all 归一）
-/// - `sub`：子榜 `sub_selected_items`（ranklist_hot_sc/human_hot_sc…）
-/// - `panel`：筛选面板选中项 `panel_selected_items`（gender_female /
-///   cate_308 / style_1685…；单值——官方每次点击整组替换）
-/// - `background`：榜单历史选中项 `background_selected_items`
-///   （date_202609=date 的 2026 年 9 月榜；None/空 = 当前月，不传）
-/// - `offset` / `session_id`：翻页游标（首页 offset=0 不带 session；
-///   翻页 offset=响应 next_offset（步进 10）并回传同一 session_id；
-///   每页 10 条，推荐型榜单页间会有重叠，由本模块按 session 记账去重
-///   并在翻页时回传 `filter_ids` 让服务端排重）
-/// - `rank_version`：最近一次响应下发的版本戳，官方客户端全局回传
+/// 一次榜单请求的定位参数（内容 tab × 子榜 × 筛选 × 月榜 + 翻页游标），
+/// 字段与官方 query 一一对应。
 #[derive(Debug, Clone, Default)]
 pub struct RankReq<'a> {
     pub selected: &'a str,
@@ -69,9 +43,8 @@ pub struct RankReq<'a> {
     pub rank_version: &'a str,
 }
 
-/// `unlimited_selector_change_type`：首屏（无会话）=2，翻页续载=1
-/// （续载带 2
-/// 会被服务端当换一批处理，是「滚动加载重复/错乱」的根因）。
+/// `unlimited_selector_change_type`：首屏=2，翻页续载=1（续载带 2 会被
+/// 服务端当「换一批」处理）。
 fn selector_change_type(req: &RankReq<'_>) -> &'static str {
     if req.offset == 0 && req.session_id.is_empty() {
         "2"
@@ -80,32 +53,29 @@ fn selector_change_type(req: &RankReq<'_>) -> &'static str {
     }
 }
 
-/// 对外窗口大小（`rank_list` 每次返回会话榜单的 10 条切片，前端翻页
-/// 游标即窗口起点）。
+/// 对外窗口大小（每次返回会话榜单的 10 条切片）。
 const RANK_WINDOW: usize = 10;
 
-/// 单次请求最多向上游补的页数（护栏：上游 has_more 异常常真时的死循环）。
+/// 单次请求最多向上游补的页数（护栏：上游 has_more 异常常真时防死循环）。
 const RANK_FILL_PAGES_MAX: usize = 5;
 
-/// 会话账本里会话数的上限（会话是短命的浏览上下文，超出整体重置，
-/// 最坏情况是旧游标重放从零重建账本，前端去重兜底）。
+/// 会话账本里会话数的上限（超出整体重置）。
 const RANK_BOOK_SESSIONS: usize = 32;
 
-/// 一个浏览会话的累积榜单视图（见 [`fetch_rank_ex`] 的窗口契约）。
+/// 一个浏览会话的累积榜单视图。
 #[derive(Default)]
 struct RankSessionBook {
-    /// 累积条目（官方榜单序；上游重复交付按 series_id 不重付）
+    /// 累积条目（官方榜单序）
     items: Vec<RankItem>,
-    /// 上游会话 id（补深时回传给它；空 = 尚未向上游开过会话）
+    /// 上游会话 id（空 = 尚未向上游开过会话）
     upstream_session: String,
-    /// 最近一次上游响应下发的版本戳（窗口应答统一回传）
+    /// 最近一次上游响应下发的版本戳
     rank_version: String,
-    /// 上游是否还有更多（窗口应答在账本浅于窗口时用它收尾）
+    /// 上游是否还有更多
     upstream_has_more: bool,
-    /// 上游续载游标（= 最近一次响应的 next_offset；官方交付 11 条时
-    /// next=10，续载 offset 跟它走而不是跟账本长度走）
+    /// 上游续载游标（= 最近一次响应的 next_offset）
     upstream_offset: i64,
-    /// 选项表（上游每次响应都随行下发，存最新一份）
+    /// 选项表（每次响应都随行下发，存最新一份）
     tabs: Vec<RankTab>,
 }
 
@@ -117,8 +87,7 @@ fn session_books() -> &'static std::sync::Mutex<std::collections::HashMap<String
     BOOKS.get_or_init(std::sync::Mutex::default)
 }
 
-/// 合并一页上游条目进账本：按 series_id 追加未见条目，保持交付序
-/// （推荐型榜单相邻页会重叠 10 条，重叠部分不重付）。
+/// 合并一页上游条目进账本：按 series_id 去重，保持交付序。
 fn merge_into_book(book: &mut RankSessionBook, items: Vec<RankItem>) {
     let seen: std::collections::HashSet<String> =
         book.items.iter().map(|i| i.series_id.clone()).collect();
@@ -127,7 +96,6 @@ fn merge_into_book(book: &mut RankSessionBook, items: Vec<RankItem>) {
 }
 
 /// 会话榜单的 `[offset, offset+10)` 窗口切片。
-/// 返回（窗口条目, 窗口后是否还有货）。
 fn book_window(book: &RankSessionBook, offset: usize) -> (Vec<RankItem>, bool) {
     let end = (offset + RANK_WINDOW).min(book.items.len());
     let items = book.items[offset.min(end)..end].to_vec();
@@ -135,7 +103,6 @@ fn book_window(book: &RankSessionBook, offset: usize) -> (Vec<RankItem>, bool) {
     (items, has_more)
 }
 
-/// 上游一页的解析产物（fetch_upstream 的返回）。
 struct UpstreamPage {
     items: Vec<RankItem>,
     tabs: Vec<RankTab>,
@@ -145,8 +112,7 @@ struct UpstreamPage {
     next_offset: i64,
 }
 
-/// 打一页上游（query 形态即官方形态：首屏 usct=2 无会话，续载 usct=1
-/// + session + filter_ids）。`filter_ids` 由调用方从账本生成（带尾逗号）。
+/// 打一页上游（首屏无会话，续载带 session + filter_ids）。
 async fn fetch_upstream(
     selected: &str,
     req: &RankReq<'_>,
@@ -162,9 +128,7 @@ async fn fetch_upstream(
         ("client_req_type", "2"),
         ("client_template", "2"),
         ("gender", "2"),
-        // 官方原样：limit 恒 "0"（页长服务端定，limit 参数不参与）
         ("limit", "0"),
-        // cell/change 全族都在参（个性化混排）
         ("need_personal_recommend", "1"),
         ("offset", &req.offset.to_string()),
         ("sub_selected_items", req.sub),
@@ -213,7 +177,6 @@ async fn fetch_upstream(
     })
 }
 
-/// 上游没下发会话 id 时的本地兜底（正常官方形态恒下发，护栏而已）。
 fn fallback_session() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -221,8 +184,6 @@ fn fallback_session() -> String {
     format!("local-{}", now.as_millis())
 }
 
-/// 落账本（容量上限内；中毒锁恢复而非 unwrap——账本失效不该让榜单
-/// 请求陪葬，app_cmd.rs 既有纪律）。
 fn store_book(session_id: &str, book: RankSessionBook) {
     let mut books = session_books().lock().unwrap_or_else(|p| p.into_inner());
     if !books.contains_key(session_id) && books.len() >= RANK_BOOK_SESSIONS {
@@ -231,15 +192,9 @@ fn store_book(session_id: &str, book: RankSessionBook) {
     books.insert(session_id.to_string(), book);
 }
 
-/// 拉任意 tab × 子榜 × 筛选 × 月榜组合的榜单窗口。
-///
-/// **对外契约是窗口而非上游页**：`offset` 是会话榜单的窗口起点，同一
-/// (session, offset) 重复请求恒得同一批条目。这是机制性的：`session +
-/// filter_ids` 上游协议是顺序增量语义（fid 全局排异——带满 fid 重放旧
-/// 窗口服务端会跳到未见段），而前端 staleTime=0
-/// 的重挂载会按存储游标重放全部页，直接透传就会「中间缺 20 条」。所以
-/// 后端持有累积账本 [`RankSessionBook`]：窗口从账本切片（幂等），账本
-/// 不够深才按官方协议顺序向上游补页。
+/// 拉任意组合的榜单窗口。**对外契约是窗口而非上游页**：同一
+/// (session, offset) 重复请求恒得同一批条目——后端持有累积账本，
+/// 窗口从账本切片（幂等），账本不够深才按官方协议顺序向上游补页。
 pub async fn fetch_rank_ex(req: RankReq<'_>, env: &ApiEnv) -> AppResult<RankPage> {
     let selected = if req.selected.trim().is_empty() {
         "all"
@@ -247,11 +202,9 @@ pub async fn fetch_rank_ex(req: RankReq<'_>, env: &ApiEnv) -> AppResult<RankPage
         req.selected
     };
     let offset = req.offset.max(0) as usize;
-    // 本请求对应的会话键（新会话分支会把它从空串换成铸出的 id）
     let mut session = req.session_id.to_string();
 
-    // 无会话或账本已被清（进程重启/容量清理）：开新会话落账本。键用
-    // 请求带来的 session（前端存储的旧游标保持有效），没有就本地铸一个。
+    // 无会话或账本已被清：开新会话落账本，键沿用请求带来的 session
     let known = !req.session_id.is_empty() && {
         session_books()
             .lock()
@@ -289,8 +242,7 @@ pub async fn fetch_rank_ex(req: RankReq<'_>, env: &ApiEnv) -> AppResult<RankPage
         store_book(&session, book);
     }
 
-    // 补深到窗口深度：短锁读态 → 无锁拉上游 → 短锁合并（锁绝不跨 await；
-    // 并发补深各拉一页，合并按 series_id 去重，无害）。
+    // 补深到窗口深度：短锁读态 → 无锁拉上游 → 短锁合并（锁绝不跨 await）
     for _ in 0..RANK_FILL_PAGES_MAX {
         let (need_fill, up_session, up_rv, up_offset, filter_ids) = {
             let books = session_books().lock().unwrap_or_else(|p| p.into_inner());
@@ -344,7 +296,7 @@ pub async fn fetch_rank_ex(req: RankReq<'_>, env: &ApiEnv) -> AppResult<RankPage
         }
     }
 
-    // 窗口应答（账本切片，幂等——同 (session, offset) 重放恒得同批条目）
+    // 窗口应答（账本切片，幂等）
     let books = session_books().lock().unwrap_or_else(|p| p.into_inner());
     let book = books
         .get(&session)
@@ -364,7 +316,7 @@ pub async fn fetch_rank_ex(req: RankReq<'_>, env: &ApiEnv) -> AppResult<RankPage
     })
 }
 
-/// `rank_version` 的容错提取（响应里是 JSON 数字，请求回传字符串形态）。
+/// `rank_version` 的容错提取（响应是 JSON 数字，请求回传字符串形态）。
 fn rank_version_field(data: Option<&Value>) -> Option<String> {
     let v = data?.get("rank_version")?;
     v.as_str()
@@ -372,8 +324,7 @@ fn rank_version_field(data: Option<&Value>) -> Option<String> {
         .or_else(|| v.as_i64().map(|n| n.to_string()))
 }
 
-/// selector 面板行展开：row_name + 选项表（panel_selector /
-/// background_selector 的 inner_rows 同构共用）。
+/// selector 面板行展开（panel_selector / background_selector 同构共用）。
 fn parse_selector_rows(rows: &[Value]) -> Vec<RankPanelRow> {
     rows.iter()
         .filter_map(|row| {
@@ -400,18 +351,10 @@ fn parse_selector_rows(rows: &[Value]) -> Vec<RankPanelRow> {
         .collect()
 }
 
-/// 展开响应 `data.cell_view.cell_selector` 的 tab → 子榜 → 面板选项表。
+/// 展开 `data.cell_view.cell_selector` 的 tab → 子榜 → 面板选项表。
 ///
-/// 结构：
-/// `outer_row.items[]`（内容 tab，selector_item_id）→ `sub_cell_selector.
-/// outer_row.items[]`（子榜，sub_title 为描述行）→ `panel_selector.
-/// inner_rows[]`（筛选行）与 `background_selector.inner_rows[]`（月榜行）。
-///
-/// 形态由**客户端自报版本号**决定（与登录态无关）：较新版本身份下发
-/// 两级全量结构；过旧的版本身份退化成扁平一级结构（无「全部」tab、
-/// 面板分组丢失）。设备档案已在启动时对齐版本
-/// （[`hongguo_signer::device::align_app_version`]），
-/// 一级形态的兼容归一保留在前端 normalizeTabs 里。
+/// 结构形态由客户端自报版本号决定：较新版本是两级全量结构，过旧版本
+/// 退化成扁平一级结构（一级形态的兼容归一在前端 normalizeTabs）。
 pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
     let Some(tabs) = data
         .and_then(|d| d.get("cell_view"))
@@ -437,12 +380,8 @@ pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
                     arr.iter()
                         .filter_map(|sub| {
                             let sid = str_field(sub, "selector_item_id");
-                            // 一级形态（老版本身份）下 sub 层是筛选选项，
-                            // 「总榜」的 id 为空但必须保留（前端靠它渲染回退
-                            // 选项）。判定用结构而非文案——服务端改「总榜」
-                            // 二字时按文案过滤会静默丢掉回退选项：空 id 但带
-                            // panel_selector 的才是异常（二级子榜必须有 id），
-                            // 空 id 叶子按「全部」哨兵保留。
+                            // 空 id 但带 panel_selector 的是异常二级子榜；
+                            // 空 id 叶子是「全部」哨兵，必须保留
                             if sid.is_empty() && sub.get("panel_selector").is_some() {
                                 return None;
                             }
@@ -452,9 +391,6 @@ pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
                                 .and_then(Value::as_array)
                                 .map(|rows| parse_selector_rows(rows))
                                 .unwrap_or_default();
-                            // 榜单历史（月榜）选项行：background_selector 与
-                            // panel_selector 同构（综合行 date_all + 年份行
-                            // date_YYYYMM），仅月榜型子榜下发
                             let background = sub
                                 .get("background_selector")
                                 .and_then(|p| p.get("inner_rows"))
@@ -481,7 +417,7 @@ pub(super) fn parse_cell_selector(data: Option<&Value>) -> Vec<RankTab> {
         .collect()
 }
 
-/// 遍历 `data` 下所有 `video_data` 数组（cell_data 是嵌套结构，逐块平铺）。
+/// 遍历 `data` 下所有 `video_data` 数组（cell_data 嵌套结构逐块平铺）。
 fn collect_video_data(node: &Value, out: &mut Vec<Value>) {
     if let Some(arr) = node.as_array() {
         for item in arr {
@@ -544,7 +480,7 @@ pub(super) fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>>
             sub_title: str_field(raw, "sub_title"),
             score: num_field(raw, "score"),
             play_cnt: int_field(raw, "play_cnt"),
-            // 未上线判定：预约榜条目分集数为 0（已上线剧恒 >0）
+            // 预约榜条目分集数为 0（已上线剧恒 >0）
             upcoming: int_field(raw, "episode_cnt") == 0,
             reserved: raw
                 .get("online_subscribed")
@@ -567,10 +503,8 @@ pub(super) fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>>
             tags: super::discover::parse_tags(raw.get("category_schema")),
         });
     }
-    // 交付序就是官方榜单序（热度单调递减），绝不能按 recommend_info.rank
-    // 排序——它是页内位次（每页都是 1~10，首页甚至
-    // 出过 5,5 缺 9），跨页排序会把列表搅乱；全局连续名次由前端按拼接
-    // 序号重排。这里 rank 只当「服务端给没给名次」的标记（0=无，如预约榜）
+    // 交付序就是官方榜单序，绝不能按 recommend_info.rank 排序——
+    // 它是页内位次（每页都是 1~10），rank 只当「有无名次」的标记
     Ok(items)
 }
 
@@ -578,7 +512,6 @@ pub(super) fn parse_rank_items(data: Option<&Value>) -> AppResult<Vec<RankItem>>
 mod tests {
     use super::*;
 
-    /// 单字段条目构造（去重/账本类测试用）。
     fn item(id: &str) -> RankItem {
         RankItem {
             series_id: id.into(),
@@ -586,7 +519,7 @@ mod tests {
         }
     }
 
-    /// 官方样本形状：cell_data 每块 1 条 + recommend_info 二次序列化。
+    /// 官方样本形状。
     #[test]
     fn parses_rank_items_from_cell_view() {
         let data: Value = serde_json::json!({
@@ -624,7 +557,6 @@ mod tests {
         assert_eq!(it.sub_title, "玄幻·全200集");
     }
 
-    /// cell_selector 样本：tab → 子榜 → 面板行三层展开。
     #[test]
     fn parses_cell_selector_schema() {
         let data: Value = serde_json::json!({
@@ -696,21 +628,16 @@ mod tests {
         );
         assert_eq!(sub.panel.len(), 2);
         assert_eq!(sub.panel[0].name, "综合");
-        // 「总榜」id 为空 = 清除筛选，也要在场（前端靠它渲染回退选项）
         assert_eq!(sub.panel[0].items[0].name, "总榜");
         assert_eq!(sub.panel[0].items[0].id, "");
         assert_eq!(sub.panel[0].items[1].id, "gender_female");
         assert_eq!(sub.panel[1].items[0].id, "cate_308");
         assert!(tabs[0].subs[1].panel.is_empty(), "无面板的子榜收空表");
         assert_eq!(tabs[1].subs[0].panel[0].items[0].id, "style_1685");
-        // 无 cell_selector 的响应（旧缓存/异常）不报错
         assert!(parse_cell_selector(Some(&serde_json::json!({}))).is_empty());
     }
 
-    /// 一级形态（老版本身份的退化结构，由
-    /// version_code 决定、与登录态无关）：outer_row 直接是榜单，
-    /// sub_cell_selector 是**筛选选项**（女频/男频/题材…，无 panel 层），
-    /// 「总榜」选项 id 为空但要保留。
+    /// 一级形态（老版本身份的退化结构）样本。
     #[test]
     fn parses_flat_login_selector_schema() {
         let data: Value = serde_json::json!({
@@ -753,9 +680,6 @@ mod tests {
         assert!(tabs[1].subs.is_empty(), "无 sub_cell_selector 收空表");
     }
 
-    /// 回归：空 id 条目的取舍按结构判定，不依赖
-    /// 服务端文案——「总榜」改名后空 id 叶子选项仍要保留；空 id 却带
-    /// panel_selector 的是异常二级子榜，无论叫什么都丢。
     #[test]
     fn empty_id_kept_by_structure_not_by_label() {
         let data: Value = serde_json::json!({
@@ -788,8 +712,6 @@ mod tests {
         assert_eq!(tabs[0].subs[0].name, "全部");
     }
 
-    /// 回归：推荐型榜单相邻页重叠 10 条，合并进账本按 series_id 去重、
-    /// 保持官方榜单序（窗口切片与 filter_ids 都靠这份顺序）。
     #[test]
     fn merge_into_book_dedups_keeping_order() {
         let mut book = RankSessionBook::default();
@@ -799,8 +721,6 @@ mod tests {
         assert_eq!(ids, ["a", "b", "c"], "重叠的 b 与页内重复的 b 都不重付");
     }
 
-    /// 窗口切片：幂等窗口 + 收尾语义（窗口后有货=有更多；账本浅于窗口
-    /// 且上游已尽=到底）。
     #[test]
     fn book_window_slices_and_terminates() {
         let mut book = RankSessionBook {
@@ -817,7 +737,6 @@ mod tests {
             ["a", "b", "c"]
         );
         assert!(has_more, "上游未尽即有更多");
-        // 窗口起点越过账本：空窗，是否到底跟上游走
         let (items, has_more) = book_window(&book, 30);
         assert!(items.is_empty());
         assert!(has_more);
@@ -827,9 +746,6 @@ mod tests {
         assert!(!has_more, "上游已尽且账本浅于窗口=到底");
     }
 
-    /// 官方形态无一例外：首屏（offset=0 且无会话）usct=2，
-    /// 翻页续载（offset>0 或带会话）usct=1——续载带 2 会被服务端当
-    /// 「换一批」处理，是滚动加载重复/错乱的根因。
     #[test]
     fn selector_change_type_fresh_vs_continuation() {
         let fresh = RankReq {
@@ -843,7 +759,6 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(selector_change_type(&page2), "1");
-        // 带会话即便 offset 异常为 0 也算续载（会话在即是续载语境）
         let resume = RankReq {
             offset: 0,
             session_id: "s1",
@@ -852,7 +767,6 @@ mod tests {
         assert_eq!(selector_change_type(&resume), "1");
     }
 
-    /// rank_version 响应是 JSON 数字、请求回传字符串：容错两种形态。
     #[test]
     fn rank_version_field_accepts_number_and_string() {
         let data: Value = serde_json::json!({ "rank_version": 1792166880_i64 });
@@ -868,8 +782,6 @@ mod tests {
         assert_eq!(rank_version_field(Some(&serde_json::json!({}))), None);
     }
 
-    /// 翻页 filter_ids 取自会话账本里「已交付」的 series_id，顺序保持
-    /// 官方榜单序（官方形态：逗号连接 + 尾逗号）。
     #[test]
     fn book_keeps_delivery_order_for_filter_ids() {
         let mut book = RankSessionBook::default();
@@ -883,8 +795,6 @@ mod tests {
         assert_eq!(fid, "a,b,c");
     }
 
-    /// 月榜选项（background_selector）：综合行
-    /// date_all + 年份行 date_YYYYMM，与 panel_selector 同构展开。
     #[test]
     fn parses_background_selector_schema() {
         let data: Value = serde_json::json!({
@@ -919,9 +829,6 @@ mod tests {
         assert_eq!(bg[1].items[1].id, "date_202609");
     }
 
-    /// 回归：条目保持服务端交付序，绝不能按 recommend_info.rank 排序——
-    /// 它是页内位次（每页都是 1~10 且可重复），跨页
-    /// 排序会把拼接后的列表搅乱；全局名次由前端按序号重排。
     #[test]
     fn rank_items_keep_delivery_order() {
         let data: Value = serde_json::json!({
@@ -952,9 +859,8 @@ mod tests {
     }
 }
 
-/// 直连真实接口的探测用例（全部 `#[ignore]`，用后即删）。本模块的
-/// `anon_env` / `hg_env` 同时供 recommend / new_drama / reservation /
-/// calendar 各域 probe 复用。
+/// 直连真实接口的探测用例（全部 `#[ignore]`）；`anon_env` / `hg_env`
+/// 供 recommend / new_drama / reservation / calendar 各域 probe 复用。
 #[cfg(test)]
 pub(crate) mod probe {
     use super::*;
@@ -963,12 +869,8 @@ pub(crate) mod probe {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// 已注册态的探测身份（bookmall 系端点对匿名/陈旧身份拒绝，探测
-    /// 需要注册态身份）。从 `PROBE_DEVICE` 环境变量读档案 JSON——共享的
-    /// 静态注册身份已整体退役（进阵亡名单），不再入库当探针；现役档案
-    /// 导出即得：
-    ///   sqlite3 -readonly <数据目录>/hongguo.db \
-    ///     "SELECT json FROM device_profile WHERE id=1"
+    /// 已注册态的探测身份：从 `PROBE_DEVICE` 环境变量读档案 JSON
+    /// （sqlite3 -readonly 从壳数据库 device_profile 表 id=1 行导出）。
     pub fn hg_env(base: &ApiEnv) -> ApiEnv {
         let json = std::env::var("PROBE_DEVICE").expect(
             "探测需要注册态身份：设 PROBE_DEVICE=<DeviceProfile JSON>，\
@@ -984,7 +886,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// 临时探测：榜单 cell 的 limit/offset 分页行为（用后即删）。
+    /// 榜单 cell 的 limit/offset 分页行为。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_paging() {
@@ -1039,8 +941,7 @@ pub(crate) mod probe {
         }
     }
 
-    /// 排行榜筛选面板 schema 直连：dump 完整响应到 captures/，供提取
-    /// `unlimited_selector`（panel_selected_items 的选项 id 表）。
+    /// 筛选面板 schema 直连，dump 完整响应到 captures/。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_selector_schema() {
@@ -1073,10 +974,8 @@ pub(crate) mod probe {
         println!("[rank-selector] {} bytes -> {}", bytes.len(), out.display());
     }
 
-    /// 排行榜 cell_selector 形态二分：服务端是否按客户端版本号分发
-    /// 两级（内容 tab × 子榜 × 分组面板）/ 一级（扁平榜单）结构。
-    /// 用法：PROBE_DEVICE / PROBE_COOKIE 由真实库导出，
-    /// `PROBE_VARIANT=asis|vreg cargo test probe_rank_login_form -- --ignored --nocapture`
+    /// cell_selector 形态二分：服务端按客户端版本号分发两级 / 一级结构。
+    /// 用法：`PROBE_VARIANT=asis|vreg cargo test probe_rank_login_form -- --ignored --nocapture`
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_login_form() {
@@ -1142,8 +1041,7 @@ pub(crate) mod probe {
         );
     }
 
-    /// 排行榜 cell_selector 形态二分（补充）：注册口径版本身份 + 匿名
-    /// （无会话），区分「版本号」与「登录会话」哪个才是 schema 分发开关。
+    /// 形态二分补充：注册口径版本 + 匿名（区分版本号与会话哪个是开关）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_login_form_anon() {
@@ -1410,9 +1308,7 @@ pub(crate) mod probe {
         );
     }
 
-    /// 深滚逐页对照（排查热播榜缺 20 条场景）：用项目代码路径连拉
-    /// 到 has_more=false，逐页打印 条数/末6位 series_id/账本 filter 数，
-    /// 与官方对照逐页 diff。
+    /// 深滚逐页对照：连拉到 has_more=false，逐页打印与官方 diff。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_deep_paging_diff() {
@@ -1457,10 +1353,8 @@ pub(crate) mod probe {
         }
     }
 
-    /// 重挂载重拉模拟（排查热播榜缺 20 条场景）：正常翻 3 页后，
-    /// 按前端重拉形态再请求第 2 页（同 session、fid=账本全部已见），
-    /// 看服务端回「原窗口 11~20 位」还是「跳过已见的 32 位起」——
-    /// 前者是后端误去重问题，后者是 fid 全局排异问题。
+    /// 重挂载重拉模拟：翻 3 页后按前端重拉形态再请求第 2 页，
+    /// 判定服务端回原窗口还是跳过已见。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_rank_refetch_simulation() {
@@ -1490,7 +1384,6 @@ pub(crate) mod probe {
         }
         println!("[首轮3页] 共 {} 条: {pass1:?}", pass1.len());
 
-        // 模拟重挂载重拉：第 1 页（新会话）+ 第 2 页（旧会话满 fid）
         let p1 = fetch_rank_ex(
             RankReq {
                 selected: "all",

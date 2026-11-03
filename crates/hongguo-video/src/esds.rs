@@ -1,24 +1,12 @@
 //! `esds` → AudioSpecificConfig（AAC 解码器的 extradata）。
-//!
-//! 音频样本入口（`mp4a`）里的 `esds` box 是一串 MPEG-4 描述符：
-//!
-//! ```text
-//! ES_Descriptor(0x03)
-//! └─ DecoderConfigDescriptor(0x04)
-//!    └─ DecoderSpecificInfo(0x05)   ← AudioSpecificConfig，裸 AAC 解码必需
-//! ```
-//!
-//! 裸 AAC 解码器不走 MP4 demuxer 时，没有这串字节就无法初始化——
-//! 解出来的是噪声或直接拒开。描述符长度是变长编码（每字节 7 位，
-//! 高位续传），遍历必须按这个读。
+//! 描述符串：ES_Descriptor(0x03) ⊃ DecoderConfigDescriptor(0x04) ⊃ DecoderSpecificInfo(0x05)；
+//! 裸 AAC 解码器不走 MP4 demuxer 时没有这串字节无法初始化。描述符长度是变长编码（每字节 7 位、高位续传），遍历必须按这个读。
 
 use crate::r#box::parse_boxes;
 use hongguo_common::{AppError, AppResult};
 
-/// 从 `esds` box 载荷提取 DecoderSpecificInfo（AudioSpecificConfig）。
-///
-/// 载荷开头是 FullBox 的 `version+flags(4)`，其后才是描述符串。0x05 嵌在
-/// 0x04 体内、0x04 又嵌在 0x03 体内——逐层下潜，不在一层找。
+/// 从 `esds` box 载荷提取 DecoderSpecificInfo（AudioSpecificConfig）：载荷开头是 FullBox 的 `version+flags(4)`。
+/// 0x05 嵌在 0x04 体内、0x04 又嵌在 0x03 体内——逐层下潜，不在一层找。
 pub fn decoder_specific_info(esds_payload: &[u8]) -> AppResult<Vec<u8>> {
     if esds_payload.len() < 4 {
         return Err(AppError::Decrypt("esds 载荷过短".into()));
@@ -27,8 +15,7 @@ pub fn decoder_specific_info(esds_payload: &[u8]) -> AppResult<Vec<u8>> {
     let mut pos = 4usize; // version + flags
     while let Some((tag, body_start, body_end)) = next_descriptor(esds_payload, pos, end) {
         match tag {
-            // ES_Descriptor：ES_ID(2) + stream priority/flags(1)，flags 置位
-            // 时跟可选字段（streamDependence 2 / OCR 2 / reserved 1）
+            // ES_Descriptor：ES_ID(2) + stream priority/flags(1)，flags 置位时跟可选字段（streamDependence 2 / OCR 2 / reserved 1）
             0x03 => {
                 let mut p = body_start + 3;
                 if p <= body_end {
@@ -64,9 +51,7 @@ pub fn decoder_specific_info(esds_payload: &[u8]) -> AppResult<Vec<u8>> {
     ))
 }
 
-/// 在描述符串 `[pos, end)` 里找指定 tag 的描述符，回其载荷区间。
-///
-/// `fixed_head` 是调用方要跳过的固定字段长度（如 0x04 的 13 字节头）。
+/// 在描述符串 `[pos, end)` 里找指定 tag 的描述符，回其载荷区间；`fixed_head` 是调用方要跳过的固定字段长度（如 0x04 的 13 字节头）。
 fn find_in_body(
     data: &[u8],
     mut pos: usize,
@@ -110,13 +95,9 @@ fn next_descriptor(data: &[u8], pos: usize, end: usize) -> Option<(u8, usize, us
 }
 
 /// 从轨道所在的 stsd 载荷里找到 `esds` 并提取 AudioSpecificConfig。
-///
-/// 音频 sample entry 的固定体长度各家不一致（ISO 24 字节、QuickTime 变体到
-/// 44），固定字段里的零字节还会让逐盒解析提前误判 size=0——不按布局算，
-/// 在 entry 扩展区里**容错扫描** `esds` fourcc：命中处向前读 size 字段并
-/// 校验（≥8 且不越 entry），音频 entry 里这个四字符码不存在歧义。
+/// 音频 sample entry 固定体长度各家不一（ISO 24 / QuickTime 变体到 44），固定字段的零字节还会让逐盒解析误判 size=0——
+/// 所以不按布局算，在 entry 扩展区**容错扫描** `esds` fourcc：命中处向前读 size 并校验（≥8 且不越 entry）。
 pub fn decoder_config_from_stsd(data: &[u8], start: usize, size: usize) -> Option<Vec<u8>> {
-    // stsd 每轨只装一个 sample entry：取第一个，找不到就是没有
     let b = parse_boxes(data, start + 8, start + size)
         .into_iter()
         .next()?;
@@ -130,7 +111,6 @@ pub fn decoder_config_from_stsd(data: &[u8], start: usize, size: usize) -> Optio
         if &data[i..i + 4] == b"esds" {
             let size =
                 u32::from_be_bytes([data[i - 4], data[i - 3], data[i - 2], data[i - 1]]) as usize;
-            // size 覆盖整个 box 且不越 entry 才认
             if size >= 12 && i - 4 + size <= entry_end {
                 let payload = data.get(i + 4..i - 4 + size)?;
                 return decoder_specific_info(payload).ok();

@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 播放
-
 export const play = {
   series: (
     seriesId: string,

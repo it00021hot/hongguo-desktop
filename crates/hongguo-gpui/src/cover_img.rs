@@ -1,13 +1,7 @@
-//! 封面元素：远端 URL → 数据目录里的成品图 → gpui 的 `img()` 负责解码、
-//! 内存缓存、GPU 纹理与「加载完成后重绘」。
-//!
-//! **分工**：壳这边只做业务那一步（下载 + HEIC 转码 + 缩放 + 落盘，见
-//! [`crate::cover_asset`]），解码与缓存全交给组件库——同一张封面在首页、
-//! 找剧、历史、收藏里共用一份解码结果。
-//!
-//! **渲染期是纯函数**（只查文件在不在，不碰 `cx`）：成品图由页面的数据
-//! 到达处 [`prewarm`] 排好转码，转码完成后 gpui 刷新窗口，文件在了自然
-//! 就画得出来。这样各页面的渲染代码不用为「要不要可变借用 cx」操心。
+//! 封面元素：远端 URL → 数据目录成品图 → gpui 的 `img()` 管解码/缓存/重绘；
+//! 壳只做「下载 + HEIC 转码 + 缩放 + 落盘」（见 [`crate::cover_asset`]）。
+//! 渲染期是纯函数（只查文件在不在，不碰 `cx`）：成品图由 [`prewarm`] 排好
+//! 转码，转码完成后 gpui 刷新窗口，文件在了自然画得出。
 
 use std::path::PathBuf;
 
@@ -23,11 +17,8 @@ use crate::cover_asset::CoverAsset;
 /// 多 px 宽。
 const FULL_MAX_EDGE: u32 = 1024;
 
-/// 封面字节 → 原图尺寸的 RenderImage（舞台全屏占位用）。
-///
-/// **为什么这一处自己解**：gpui 的资产加载接口要 `&mut Window`，而舞台渲染
-/// 拿到的是 `&Window`；全屏占位也只有当前这一集（图），不值得为它改一整条
-/// 渲染链的借用。
+/// 封面字节 → 原图尺寸的 RenderImage（舞台全屏占位用）。这一处自己解：gpui
+/// 资产加载要 `&mut Window`，舞台渲染拿到的是 `&Window`。
 pub(crate) fn decode_full(bytes: &[u8]) -> Option<std::sync::Arc<gpui_kit::RenderImage>> {
     let decoded = match image::load_from_memory(bytes) {
         Ok(decoded) => decoded,
@@ -51,9 +42,7 @@ pub(crate) fn decode_full(bytes: &[u8]) -> Option<std::sync::Arc<gpui_kit::Rende
 }
 
 /// 取一张封面字节（同步管线投阻塞池；oneshot 回传给 GPUI 执行器 await）。
-///
-/// **给谁用**：账号头像（壳侧栏 / 设置页）不在封面链路里，且要跟账号状态
-/// 同步，走「自己取字节 + 立刻出图」比等资产缓存快半拍。
+/// 给账号头像用——不在封面链路里、要跟账号状态同步。
 pub(crate) fn fetch(remote: String) -> oneshot::Receiver<Result<Vec<u8>, String>> {
     crate::bridge::spawn(async move {
         tokio::task::spawn_blocking(move || {

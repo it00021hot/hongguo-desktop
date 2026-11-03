@@ -2,17 +2,14 @@
 
 use std::cmp::Ordering;
 
-/// 本机解码能力对选流的约束。
-///
-/// 语义对齐官方 TTVideoEngine 的 `CodecStrategy`：能力决定「谁参赛、怎么排」，
-/// 而不是把解不了的流硬喂给解码器。
+/// 本机解码能力对选流的约束（语义对齐官方 TTVideoEngine `CodecStrategy`：
+/// 能力决定「谁参赛、怎么排」，不把解不了的流硬喂给解码器）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecoderCapability {
     /// 系统 HEVC 解码在位：现状行为，清晰度优先。
     Full,
-    /// 无 HEVC 解码（Windows 缺「HEVC 视频扩展」）：h264 最优先、未知编码
-    /// 次之、HEVC 系保留为末选——宁选能播的 720p h264，也不选必黑屏的
-    /// 1080p h265；整集只有 HEVC 时仍取流，黑屏后由转码兜底接住。
+    /// 无 HEVC 解码（Windows 缺「HEVC 视频扩展」）：h264 最优先、未知编码次之、
+    /// HEVC 系末选；整集只有 HEVC 时仍取流，黑屏后由转码兜底接住。
     NoHevc,
 }
 
@@ -40,14 +37,8 @@ pub struct StreamScore {
     pub codec_tier: u8,
 }
 
-/// 择优顺序按模式分两套：
-///
-/// - **Full**：清晰度 > 像素 > 编码器偏好 > 码率。编码器一项要**反向**比较——
-///   rank 越小越好，而 `Ord` 的语义是「大者胜」，直接用 derive 会把 bytevc1
-///   排在 h265 前面。
-/// - **NoHevc**：编码可解性 > 清晰度 > 像素 > 码率（官方维度序列语义）。
-///   此模式下能解的永远压过解不了的，同层内再比清晰度。层级同样是
-///   「小者优」，反向比较（同上，别再踩一遍）。
+/// 择优顺序按模式分两套：**Full** = 清晰度 > 像素 > 编码器偏好（rank 小者优，反向比较）> 码率；
+/// **NoHevc** = 编码可解性 > 清晰度 > 像素 > 码率（官方维度序列语义，层级同样反向比较）。
 impl Ord for StreamScore {
     fn cmp(&self, other: &Self) -> Ordering {
         if self.no_hevc {

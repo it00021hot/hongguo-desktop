@@ -1,11 +1,6 @@
-//! 网络代理。
-//!
-//! 三种模式：跟随系统环境变量 / 手动指定 / 强制直连。
-//! 保存设置后立即生效——`build_client` 每次按当前配置构造 client，
-//! API 解析、视频下载、图片加载统一走它，无需重启。
-//!
-//! client 的构造本身归网络层（[`hongguo_api::client`]），
-//! 这里只管「代理配得好不好、连不连得通」。
+//! 网络代理：跟随系统环境变量 / 手动指定 / 强制直连三种模式，保存后立即生效
+//!（`build_client` 每次按当前配置构造 client，无需重启）。client 构造归网络层
+//!（[`hongguo_api::client`]），这里只管「代理配得好不好、连不连得通」。
 
 use std::time::Instant;
 
@@ -27,9 +22,8 @@ pub async fn test_proxy(draft: &ProxyConfig) -> AppResult<ProxyTestResult> {
 
     let elapsed_ms = started.elapsed().as_millis();
     match result {
-        // 收到任何 HTTP 状态码都算连通：探测地址是 API 主域的裸根，CDN 在
-        // 根路径常态回 404——「有响应」本身就证明 DNS/TCP/TLS/代理全通。
-        // 按 2xx 判定会把可用的代理误报成 404 失败。
+        // 收到任何 HTTP 状态码都算连通：探测地址在根路径常态回 404，
+        // 「有响应」本身就证明全通；按 2xx 判定会把可用代理误报成失败。
         Ok(resp) => Ok(ProxyTestResult {
             ok: true,
             elapsed_ms,

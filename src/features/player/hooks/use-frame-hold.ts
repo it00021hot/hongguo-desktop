@@ -7,12 +7,8 @@ export type SwitchKind = 'episode' | 'series';
 const HOLD_FADE_MS = 350;
 
 /**
- * 换流间隙的末帧定格（清晰度切换专用）。
- *
- * 同剧**切集**已改黑幕暗转（use-switch-veil）：切集间隙由黑幕盖住，静止
- * 定格帧不再参与——「静止 0.7s 再突跳」的卡感正来自它。定格帧剩下的唯一
- * 场景是**清晰度切换**（episodeKey 不变、veil 不置）：换档换流换元素，
- * 抓下的当前帧把间隙顶住（调用方在换档前手动 [`capture`]）。
+ * 换流间隙的末帧定格（清晰度切换专用）：换档换流换元素时抓下的当前帧把间隙顶住（调用方换档前手动 capture）。
+ * 同剧切集已改黑幕暗转（use-switch-veil），静止定格帧不再参与。
  */
 export function useFrameHold(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -42,9 +38,8 @@ export function useFrameHold(params: {
   } = params;
   const [transition, setTransition] = useState<SwitchKind | null>(null);
   /**
-   * 定格帧与抓帧时的流指纹：新流（≠抓帧来源）真正出画后据此判定帧已
-   * 功成身退——抓帧来源自身还在播（取流窗口）时不算，否则帧会在切换
-   * 途中被误清（清晰度切换全程 srcKey 不变，尤其踩这条）。
+   * 定格帧与抓帧时的流指纹：新流真正出画后据此判定帧已功成身退——抓帧来源
+   * 自身还在播（取流窗口）时不算，否则帧会在切换途中被误清（清晰度切换全程 srcKey 不变）。
    */
   const [held, setHeld] = useState<{ canvas: HTMLCanvasElement; fromStream: string } | null>(null);
   const prevTargetRef = useRef<{ seriesId: string | null; episodeKey: string }>({
@@ -73,8 +68,7 @@ export function useFrameHold(params: {
     if (!seriesId) return;
     const kind: SwitchKind = prev.seriesId === seriesId ? 'episode' : 'series';
     setTransition(kind);
-    // 切集交给黑幕、切剧交给封面：跨切换的旧帧一律清掉，绝不许泄漏到
-    // 新内容上（换档的帧由调用方在换档前手动抓）
+    // 切集交给黑幕、切剧交给封面：跨切换的旧帧一律清掉，绝不许泄漏到新内容上
     setHeld(null);
   }, [seriesId, episodeKey]);
 
@@ -101,12 +95,8 @@ export function useFrameHold(params: {
 
 /**
  * 封面与定格帧的显隐真值表（纯函数，用例见 use-frame-hold.test.ts）：
- * - 黑幕在场（同剧切集间隙）：定格帧与封面全部退场，观感交给暗转——
- *   揭幕时新画面已在动，任何静止遮罩都不需要；
- * - 定格帧：黑幕不在场、有帧、无出画画面、仍在视频分支（换流间隙顶住）；
- * - 封面：画面真空（既没出画也没定格帧顶住），或切剧接管（switching 且
- *   非同剧切集——新剧的封面要立刻顶上，否则就是「切了没反应」）。
- *   同剧切集全程不出封面：黑幕接管（换档间隙由定格帧接棒）。
+ * 黑幕在场两者全退场；定格帧 = 有帧且画面未出画且仍在视频分支（换流间隙顶住）；
+ * 封面 = 画面真空或切剧接管（同剧切集全程不出封面，黑幕接管）。
  */
 export function overlayVisibility(v: {
   transition: SwitchKind | null;

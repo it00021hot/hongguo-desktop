@@ -1,11 +1,7 @@
 /** 播放器自绘滑杆：竖向音量条（VolumePopup 用）与弹幕设置面板横滑条行（DisplaySlider）。 */
 import { useRef } from 'react';
 
-/**
- * 竖向滑条（音量浮层用）。div 自绘而不是 `<input type=range>` 转向：
- * 竖向 range 的厂商伪元素在 WebView2 上表现不可控，自绘三段（轨道/已填/
- * 滑块）和 ScrubBar 同一套视觉。
- */
+/** 竖向滑条（音量浮层用）：div 自绘而非竖向 range——其厂商伪元素在 WebView2 上表现不可控；视觉与 ScrubBar 同套。 */
 export function VerticalSlider({
   value,
   onChange,

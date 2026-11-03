@@ -8,22 +8,9 @@ import { EmoticonPanel } from './emoticon-panel';
 
 /**
  * 弹幕发送框 / 评论区共用的表情选择入口：笑脸按钮 + 面板。
- *
- * 焦点纪律（保住输入框光标的关键）：trigger 与面板里的表情格子
- * 都 mousedown preventDefault，且 Popover 的开/关自动聚焦一并禁掉——
- * 焦点全程留在输入框，插入永远落在真实光标处，选完接着打字无感；
- * 格子连选不关面板，点外部/Esc 由 Popover 收起。
- *
- * 滚轮纪律：面板打开期间在 document capture 层吞掉全部 wheel——
- * 「在选择器边上一滚就切集」不再可能；data-wheel-block 让播放器的
- * wheel 交互裁决跳过面板自身（网格滚动是浏览器默认行为）。
- *
- * 定位：默认贴按钮浮起（side=top + 碰撞规避）；发送区带附加行时
- * （评论区：附件预览 / 回复目标）改锚到**发送区顶边**——面板浮在评论
- * 列表上方，发送区自己那几行不会被面板盖住。详见 `anchorTo`。
- *
- * 面板内四档（系统表情 / 第三方 GIF / 自定义 / 搜索）见 EmoticonPanel；
- * 这里只报「选了哪个表情」——系统表情给文本码，表情图片给图片载荷。
+ * 焦点纪律：trigger 与格子均 mousedown preventDefault、禁 Popover 自动聚焦——焦点全程留在输入框，选完接着打字；格子连选不关面板。
+ * 滚轮纪律：面板打开期间 document capture 层吞掉全部 wheel（「在选择器边上一滚就切集」不可能发生）；
+ * 默认贴按钮浮起，发送区带附加行时改锚 `send-area`（面板浮在评论列表上方）。
  */
 export function EmojiPickerButton({
   open,
@@ -40,11 +27,8 @@ export function EmojiPickerButton({
   onPickImage?: (item: Emoticon, sceneType: number) => void;
   align?: 'left' | 'right';
   /**
-   * 面板锚点：
-   * - `trigger`（默认）：贴按钮浮起，适合发送区没有附加行的场景；
-   * - `send-area`：贴在**发送区顶边**，发送区自己的行（附件预览、回复
-   *   目标）不会被面板盖住。调用方需把发送区容器设为 `relative`
-   *   （锚点元素靠它定位）。
+   * 面板锚点：`trigger`（默认）贴按钮浮起；`send-area` 贴发送区顶边，
+   * 发送区自己的行（附件预览/回复目标）不会被面板盖住。调用方需把发送区容器设为 `relative`。
    */
   anchorTo?: 'trigger' | 'send-area';
 }) {

@@ -5,9 +5,7 @@ use futures_util::StreamExt;
 use hongguo_common::model::Settings;
 use hongguo_common::{AppError, AppResult};
 
-/// 取一集并解密成明文字节（CDN 下载 + CENC 解密）。
-///
-/// 在线播放与兼容转码都要这一步，抽出来避免两份「取流 + 解密」逻辑各自漂移。
+/// 取一集并解密成明文（CDN 下载 + CENC 解密），在线播放与兼容转码共用一份实现避免漂移。
 pub async fn fetch_plain(
     play: &hongguo_api::play_url::PlayInfo,
     settings: &Settings,
