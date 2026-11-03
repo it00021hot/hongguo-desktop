@@ -98,11 +98,15 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
     }
 }
 
-/// 注册产物的启动复检：版本键是注册口径就原样放行；被旧版 adopt 的
-/// `align_app_version` 升到当前客户端版本的（与注册指纹不同源，取流即挂），
-/// 从档案自身身份重建为纯注册口径并落库。
+/// 注册产物的启动复检：版本与渠道都符合当前注册口径才原样放行；版本
+/// 被旧版 adopt 的 `align_app_version` 升到当前客户端版本的（与注册指纹
+/// 不同源，取流即挂），或渠道仍是写死旧值的存量档案（渠道是构建身份，
+/// 官方 query channel 恒等于构建渠道，2026-11-03 官方抓包）——从档案
+/// 自身身份重建为当前注册口径并落库。
 fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
-    if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR {
+    if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR
+        && p.get("channel") == hongguo_signer::device::BUILD_CHANNEL
+    {
         return p;
     }
     let healed = registered_profile(&RegisterResult {
@@ -114,9 +118,11 @@ fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
         ..Default::default()
     });
     log::warn!(
-        "[Device] 注册档案版本键曾被升到 {}（与注册指纹不同源），重建为注册口径 {}",
+        "[Device] 注册档案身份键与当前口径不符（version={} channel={}），重建为 version={} channel={}",
         p.get("version_code"),
-        healed.get("version_code")
+        p.get("channel"),
+        healed.get("version_code"),
+        healed.get("channel")
     );
     if let Err(e) = store.save_device_profile(&healed) {
         log::warn!("[Device] 重建档案落库失败（本次会话仍生效）: {e}");

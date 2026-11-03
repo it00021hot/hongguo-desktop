@@ -19,13 +19,20 @@ pub const CHANNEL_ID: &str = "1588093228";
 
 /// 官方客户端版本身份（全仓唯一出处）。
 /// query / 注册模板 / UA 一律引用这三常量，禁止再散写魔法值。
-pub const APP_VERSION_CODE: u64 = 74232;
-pub const APP_VERSION_CODE_STR: &str = "74232";
-pub const APP_VERSION_NAME: &str = "7.4.2.32";
+///
+/// ⚠️ 线上报 73932 而非包的真实版本（2026-11-03 官方 74232 包 virgin
+/// 抓包实测：注册体解密 version_code=73932、取流 query 版本族与
+/// pv_player 主导形态全 73932、UA 世代混发以 73932 为主——官方灰度期
+/// 新包自报旧版本号，服务端按 73932 批次分发 schema）。跟随官方。
+pub const APP_VERSION_CODE: u64 = 73932;
+pub const APP_VERSION_CODE_STR: &str = "73932";
+pub const APP_VERSION_NAME: &str = "7.3.9.32";
 
-/// 官方 App 的构建渠道（2026-11-02 官方全新设备实流：注册体 channel 与
-/// 取流 query channel 同为此值——渠道属于构建，不随设备品牌走）。
-pub const BUILD_CHANNEL: &str = "seo_laxin_pc_pinzhuan_android";
+/// 官方 App 的构建渠道（2026-11-03 官方 74232 包 virgin 抓包：注册体
+/// 解密 channel、取流/settings query channel 三处同为
+/// `seo_laxin_pc_android`；「pinzhuan」在任何抓包中从未出现）。
+/// 渠道属于构建，不随设备品牌走。
+pub const BUILD_CHANNEL: &str = "seo_laxin_pc_android";
 
 /// 注册指纹钉定的版本身份（2026-11-01 竞品实流抓包逐字节对齐：
 /// 注册请求、注册产物档案、取流链全程 73932/7.3.9.32——注册 JSON 里
@@ -96,8 +103,10 @@ pub struct RegisterFingerprint {
 const REGISTER_BUILD_STAMP: &str = "1701234567";
 
 impl RegisterFingerprint {
-    /// 渠道号：官方 App 的**构建渠道**（2026-11-02 全新设备实流：注册体与
-    /// 取流 query 同值）。此前的品牌渠道 `{brand}_8662_64` 是竞品形态。
+    /// 渠道号：官方 App 的**构建渠道**（2026-11-03 官方 74232 包 virgin
+    /// 抓包三重一致：注册体解密、settings query、取流 query 全为
+    /// `seo_laxin_pc_android`；此前的品牌渠道 `{brand}_8662_64` 与
+    /// 「pinzhuan」写死值均无抓包依据）。此前的品牌渠道形态是竞品。
     pub fn channel(&self) -> String {
         BUILD_CHANNEL.to_string()
     }
@@ -533,15 +542,17 @@ const APP_VERSION_FIELDS: [(&str, &str); 4] = [
 ///
 /// 过旧的版本身份会让服务端下发退化的扁平 schema；本函数把自报版本
 /// 对齐到当前客户端。真实设备升级 app 后同样只是自报新版本号，
-/// 档案其余字段原样保留。
+/// 档案其余字段原样保留。渠道（`channel`）同为构建身份：存量档案
+/// 冻结的旧渠道值在此归一到 [`BUILD_CHANNEL`]（官方 query channel
+/// 恒等于构建渠道）。
 ///
-/// **注册产物档案不适用**：注册口径终生钉 [`REGISTER_VERSION_CODE_STR`]，
-/// 升当前版本与注册指纹不同源、取流即挂——service 的 adopt 按轮换元数据
-/// 跳过本函数。
+/// **注册产物档案不适用**（service 的 adopt 按轮换元数据跳过本函数走
+/// `heal_registered_profile`，渠道归一在那边做）。
 pub fn align_app_version(profile: &mut DeviceProfile) {
     for (k, v) in APP_VERSION_FIELDS {
         profile.set(k, v);
     }
+    profile.set("channel", BUILD_CHANNEL);
 }
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
