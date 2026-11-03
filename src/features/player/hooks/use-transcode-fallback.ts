@@ -93,7 +93,7 @@ export function useTranscodeFallback(params: {
               ? t('player.compatCached')
               : tf('player.compatDone', {
                   backend: r.backend,
-                  seconds: Math.round(r.elapsedMs / 100),
+                  seconds: Math.round(r.elapsedMs / 1000),
                 }),
           );
         },
