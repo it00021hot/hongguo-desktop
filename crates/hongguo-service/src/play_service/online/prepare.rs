@@ -65,6 +65,8 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
+    // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
+    super::super::ensure_play_strategy_poller(state);
     let c = cache();
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀
     c.set_current(vid);

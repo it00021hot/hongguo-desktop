@@ -17,6 +17,7 @@ pub mod interact;
 pub mod login;
 pub mod new_drama;
 pub mod params;
+pub mod play_strategy;
 pub mod play_url;
 pub mod rank;
 pub mod recommend;

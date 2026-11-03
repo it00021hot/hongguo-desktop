@@ -67,6 +67,35 @@ fn compat_offsets(count: u32) -> std::ops::RangeInclusive<u32> {
     1..=count.min(COMPAT_PREFETCH_LIMIT)
 }
 
+/// 播放策略轮询（行为画像对齐，2026-11-03 官方 74232 实流）：播放器栈
+/// 播放期每 `query_gap` 秒（响应下发，默认 300s）拉一次
+/// `/reading/media/play/strategy/`。**只取不施策**——官方的默认倍速/
+/// 高峰降档/分辨率干预不落地（用户明确不对齐这两项行为）。
+/// 首次在线播放触发，进程内一次；失败按既有节拍顺延。
+pub fn ensure_play_strategy_poller(state: &AppState) {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let state = state.clone();
+    crate::runtime::spawn(async move {
+        let mut gap = hongguo_api::play_strategy::DEFAULT_QUERY_GAP_SECS;
+        loop {
+            let env = state.api_env();
+            match hongguo_api::play_strategy::fetch_play_strategy(&env).await {
+                Ok(g) => {
+                    gap = g;
+                    log::info!("[PlayStrategy] 播放策略拉取成功，轮询间隔 {gap}s");
+                }
+                Err(e) => {
+                    log::warn!("[PlayStrategy] 拉取失败（{e}），按 {gap}s 节拍顺延");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
