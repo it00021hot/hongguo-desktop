@@ -114,22 +114,11 @@ jobs:
             exit 1
           fi
           # macOS 产物未做 Apple 公证：浏览器下载的应用带隔离标记，Gatekeeper
-          # 首启提示「已损坏」。指引与版本内容无关，不入 CHANGELOG，固定附加在
-          # Release 说明尾部；配套的 install-macos.sh 由 checksums job 随版上传。
-          MACOS_NOTE=$(cat <<'MACOS_NOTE_EOF'
-
----
-
-> ⚠️ **macOS 首次运行**：安装包未做 Apple 公证，浏览器下载的应用带系统隔离标记，
-> 首次打开会提示「已损坏，无法打开」——这是 Gatekeeper 对无证书应用的固定措辞，
-> 文件本身没有损坏。任选其一：
-> 1. 终端执行 `xattr -dr com.apple.quarantine /Applications/Hongguo.app` 后打开；
-> 2. 下载本页 `install-macos.sh`，终端执行 `bash install-macos.sh`（自动校验
->    SHA256 并装入 /Applications，终端下载渠道不带隔离标记）。
->
-> 经应用内「检查更新」升级不受此影响。
-MACOS_NOTE_EOF
-)
+          # 首启提示「已损坏」。指引与版本内容无关、不入 CHANGELOG，固定附加在
+          # Release 说明尾部（正文在 scripts/release-macos-note.md——heredoc 顶格
+          # 正文会截断 YAML `|` 块，v0.6.0 起发版流水线因此 0s 失败）。
+          # 配套的 install-macos.sh 由 checksums job 随版上传。
+          MACOS_NOTE=$(cat scripts/release-macos-note.md)
           {
             echo "body<<CHANGELOG_BODY_EOF"
             printf '%s\n%s\n' "$BODY" "$MACOS_NOTE"
