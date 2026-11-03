@@ -636,7 +636,13 @@ async fn compat_playback_transcodes_a_real_hevc_episode() {
     let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
 
     use hongguo_service::play_service::compat_play as cp;
-    let got = match cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(&src), &|_| {}).await
+    let got = match cp::ensure_compat(
+        "e2e-cp",
+        1,
+        cp::CompatSource::LocalFile(src.clone()),
+        |_| {},
+    )
+    .await
     {
         Ok(v) => v,
         Err(e) => {
@@ -660,7 +666,7 @@ async fn compat_playback_transcodes_a_real_hevc_episode() {
         got.elapsed_ms
     );
 
-    let again = cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(&src), &|_| {})
+    let again = cp::ensure_compat("e2e-cp", 1, cp::CompatSource::LocalFile(src), |_| {})
         .await
         .expect("命中缓存不该失败");
     assert!(again.cached, "第二次应当命中缓存");

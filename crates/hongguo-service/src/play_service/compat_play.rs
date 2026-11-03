@@ -3,6 +3,7 @@
 //! 进度按已编码秒数上报到界面。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -26,12 +27,12 @@ pub struct CompatPlay {
 /// 给一集准备兼容格式产物，返回可播放地址。
 ///
 /// `source` 是这一集的**明文 MP4**：已下载的给本地路径，没下载的给整集明文字节。
-/// `on_progress` 收到 0–100 的百分比。
+/// `on_progress` 收到 0–100 的百分比；owned 回调是因为转码段要整体进阻塞池（'static）。
 pub async fn ensure_compat(
     series_id: &str,
     vid_index: u32,
-    source: CompatSource<'_>,
-    on_progress: &(dyn Fn(f64) + Send + Sync),
+    source: CompatSource,
+    on_progress: impl Fn(f64) + Send + Sync + 'static,
 ) -> AppResult<CompatPlay> {
     if let Some(p) = cache::cached_path(series_id, vid_index) {
         on_progress(100.0);
@@ -51,43 +52,56 @@ pub async fn ensure_compat(
     }
     let temp = plaintext_temp_path_for(&target);
     let started = std::time::Instant::now();
+    let series_owned = series_id.to_string();
 
-    let (plain, is_temp) = match source {
-        CompatSource::LocalFile(p) => (p.to_path_buf(), false),
-        CompatSource::PlainBytes(bytes) => {
-            std::fs::write(&temp, &bytes).map_err(|e| AppError::Io(e.to_string()))?;
-            (temp.clone(), true)
-        }
-    };
-
-    // 百分比要拿总时长才折得出来；读不出来报 0——宁可显示不确定，也不给一个编出来的数字。
-    let total_secs = video_seconds(&plain);
-    let report = |secs: f64| {
-        let pct = match total_secs {
-            Some(t) if t > 0.0 => (secs / t * 100.0).clamp(0.0, 100.0),
-            _ => 0.0,
+    // 写盘 + demux + 编码是分钟级阻塞，占专用阻塞池的线程，不能占 async 工作线程。
+    let progress = Arc::new(on_progress);
+    let progress_in_task = Arc::clone(&progress);
+    let result = crate::runtime::spawn_blocking(move || {
+        let (plain, is_temp) = match source {
+            CompatSource::LocalFile(p) => (p, false),
+            CompatSource::PlainBytes(bytes) => {
+                std::fs::write(&temp, &bytes).map_err(|e| AppError::Io(e.to_string()))?;
+                (temp.clone(), true)
+            }
         };
-        on_progress(pct);
-    };
-    report(0.0);
 
-    // 2) 转码必须走 pipeline 的同一个入口——分流链只有一份，复刻私有分流
-    //    会让平台硬编接不进来，兼容播放永远拿不到硬编速度。
-    let result = crate::transcode_service::pipeline::transcode(
-        series_id,
-        vid_index,
-        &plain,
-        None,
-        Some(&report),
-    );
+        // 百分比要拿总时长才折得出来；读不出来报 0——宁可显示不确定，也不给一个编出来的数字。
+        let total_secs = video_seconds(&plain);
+        let report = move |secs: f64| {
+            let pct = match total_secs {
+                Some(t) if t > 0.0 => (secs / t * 100.0).clamp(0.0, 100.0),
+                _ => 0.0,
+            };
+            progress_in_task(pct);
+        };
+        report(0.0);
 
-    // 源明文只是中间产物，转码成功或失败都要清理，避免残留敏感媒体数据。
-    if is_temp {
-        let _ = std::fs::remove_file(&plain);
-    }
-    let result = result?;
+        // 转码必须走 pipeline 的同一个入口——分流链只有一份，复刻私有分流
+        // 会让平台硬编接不进来，兼容播放永远拿不到硬编速度。
+        let result = crate::transcode_service::pipeline::transcode(
+            &series_owned,
+            vid_index,
+            &plain,
+            None,
+            Some(&report),
+        );
 
-    on_progress(100.0);
+        // 源明文只是中间产物，转码成功或失败都要清理，避免残留敏感媒体数据。
+        if is_temp {
+            let _ = std::fs::remove_file(&plain);
+        }
+        // 新产物已进缓存：按「最多保留 3 集」的滚动窗口收敛一轮。合并路径不经这里——
+        // 中途逐出会让拼接拿到断路径，它消费完就地删除。
+        if result.is_ok() {
+            cache::trim();
+        }
+        result
+    })
+    .await
+    .map_err(|e| AppError::Media(format!("兼容转码任务异常结束: {e}")))??;
+
+    progress(100.0);
     let elapsed = started.elapsed();
     let url = hongguo_protocol::local::local_play_url(&result.output_path)
         .ok_or_else(|| AppError::Media("转码产物路径无法转成播放地址".into()))?;
@@ -128,9 +142,9 @@ fn video_seconds(path: &Path) -> Option<f64> {
 }
 
 /// 这一集的明文从哪来。
-pub enum CompatSource<'a> {
+pub enum CompatSource {
     /// 已下载的本地文件
-    LocalFile(&'a PathBuf),
+    LocalFile(PathBuf),
     /// 未下载：整集取回 + 解密后的明文字节
     PlainBytes(Vec<u8>),
 }
@@ -175,12 +189,17 @@ pub async fn compat_for_playback(
 ) -> AppResult<CompatPlayResult> {
     let key = format!("{series_id}:{vid_index}");
     let events = state.events().clone();
-    let emit = |percent: f64, phase: CompatPhase| {
-        events.publish(ServiceEvent::CompatProgress(CompatProgressEvent {
-            key: key.clone(),
-            percent,
-            phase,
-        }));
+    // 进度回调要随转码任务进阻塞池（'static）：emit 自持克隆，各分支再克隆出独立回调
+    let emit = {
+        let key = key.clone();
+        let events = events.clone();
+        move |percent: f64, phase: CompatPhase| {
+            events.publish(ServiceEvent::CompatProgress(CompatProgressEvent {
+                key: key.clone(),
+                percent,
+                phase,
+            }));
+        }
     };
 
     // 优先用已下载的本地文件：不用再走网络，也不用等取流
@@ -190,9 +209,13 @@ pub async fn compat_for_playback(
         .map(PathBuf::from);
 
     let result = if let Some(p) = local {
-        ensure_compat(series_id, vid_index, CompatSource::LocalFile(&p), &|pct| {
-            emit(pct, CompatPhase::Transcoding)
-        })
+        let emit_tc = emit.clone();
+        ensure_compat(
+            series_id,
+            vid_index,
+            CompatSource::LocalFile(p),
+            move |pct| emit_tc(pct, CompatPhase::Transcoding),
+        )
         .await
     } else {
         let Some(vid) = vid else {
@@ -211,11 +234,12 @@ pub async fn compat_for_playback(
         // 取流占前 20%，转码占后 80%：两段都动，但用户看到的是一条连续的进度
         emit(0.0, CompatPhase::Downloading);
         let plain = crate::play_service::online::fetch_plain(&play, &settings).await?;
+        let emit_tc = emit.clone();
         ensure_compat(
             series_id,
             vid_index,
             CompatSource::PlainBytes(plain),
-            &|pct| emit(20.0 + pct * 0.8, CompatPhase::Transcoding),
+            move |pct| emit_tc(20.0 + pct * 0.8, CompatPhase::Transcoding),
         )
         .await
     };
@@ -243,7 +267,7 @@ mod tests {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, vec![7u8; 200 * 1024]).unwrap();
 
-        let got = ensure_compat("s", 1, CompatSource::PlainBytes(Vec::new()), &|_| {})
+        let got = ensure_compat("s", 1, CompatSource::PlainBytes(Vec::new()), |_| {})
             .await
             .expect("命中缓存不该失败");
         assert!(got.cached, "应当命中缓存");
@@ -265,7 +289,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let _scope = hongguo_store::paths::ScopedDataDir::new(&dir);
         let missing = dir.join("nope.mp4");
-        let r = ensure_compat("s2", 1, CompatSource::LocalFile(&missing), &|_| {}).await;
+        let r = ensure_compat("s2", 1, CompatSource::LocalFile(missing), |_| {}).await;
         assert!(r.is_err(), "源不存在时必须报错，不能产出空文件");
         assert!(!cache::cache_file("s2", 1).exists(), "失败时不应留下产物");
         let _ = std::fs::remove_dir_all(&dir);
@@ -292,7 +316,7 @@ mod tests {
             "cleanup",
             1,
             CompatSource::PlainBytes(vec![1, 2, 3]),
-            &|_| {},
+            |_| {},
         )
         .await;
 
