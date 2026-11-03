@@ -22,7 +22,7 @@ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222" pnpm tauri 
 - 环境变量必须在 app 进程启动**之前**设置（WebView2 由 app 进程派生，env 继承）。
   实例已经在跑时注入不了，只能关掉重启。
 - 起来之后 `http://127.0.0.1:9222/json` 列出 targets，`webSocketDebuggerUrl` 就是连接入口。
-- **单实例约束不变**：端口 1420 + SQLite 锁，第二个 `tauri dev` 起不来。用户自己开着
+- **单实例约束不变**：端口 1420 + Turso 库文件锁（`hongguo.db`），第二个 `tauri dev` 起不来。用户自己开着
   dev 会话时，要么请他关掉，要么退回 computer-use 路线（见文末分工）。
 
 ## 工具：`scripts/cdp.mjs`

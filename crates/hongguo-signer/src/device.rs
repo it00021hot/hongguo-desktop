@@ -352,7 +352,7 @@ impl DeviceProfile {
     /// query 里不能有空值形态的字段）；cdid/openudid 由调用方生成后填入，注册
     /// 请求与产物档案共用本构造。
     ///
-    /// 不 `#[cfg(test)]` 门控：下游 crate（domain/api/register）的测试要用，
+    /// 不 `#[cfg(test)]` 门控：下游 crate（`hongguo-api` 的 `register`）的测试要用，
     /// 而依赖 crate 对下游以非 test 方式编译，门控项会消失。
     pub fn fresh_register_profile(cdid: &str, openudid: &str) -> Self {
         Self::register_profile_with(fingerprint_for_cdid(cdid), cdid, openudid)

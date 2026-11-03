@@ -6,7 +6,7 @@ use gpui_kit::div;
 
 impl HomeView {
     /// 系统后端：把 contain 的黑边画成黑色。透明洞的边界是视频矩形而非整个
-    /// 舞台——Windows 的 DComp 透明窗没有窗口底色兜底，黑边不自己画就会漏出
+    /// 舞台——Windows 透明窗没有窗口底色兜底，黑边不自己画就会漏出
     /// 后面的窗口。换算与 `hongguo-player-windows` 的舞台几何同参；取不到原生
     /// 尺寸（metadata 未就绪）时不画；小屏是 cover 铺满，没有黑边。
     pub(super) fn render_stage_letterbox(&self) -> Option<gpui_kit::AnyElement> {

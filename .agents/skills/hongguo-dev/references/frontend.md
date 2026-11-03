@@ -55,7 +55,7 @@ export function useSaveSettings() {
 }
 ```
 
-- **事件驱动失效**：后端事件到了就 invalidate 对应 key（范例 `useSeriesEpisodes` 里 `useEvent(seriesArchiveUpdated)` 回调中 `invalidateQueries`）。
+- **事件驱动失效**：后端事件到了就 invalidate 对应 key。范例在 `components/layout/app-shell.tsx`：`useEvent(EVENTS.followNotices, …)` 里 `refreshFollow(payload.notices)`（追更通知缓存）；`useEvent(EVENTS.deviceRegistered, …)` 里对 `keys.feedTabs` / `keys.feedRoot` / `keys.rankRoot` 做 `invalidateQueries`（设备换档后重拉身份敏感数据）。
 - **staleTime 有意识地决定**：`useSeriesProgress` 故意不给 staleTime（详情页每次挂载必须现读本地真值），别无脑抄别人的配置。
 - 无限滚动统一走 `useInfiniteStream` 封装（items/hasMore/loadMore 形状，翻页失败不炸整页）。
 - 长任务挂起兜底：invoke 加 `Promise.race` 30s 超时（Rust 热重载会丢在途 invoke 的应答，promise 永不 settle）。
@@ -63,7 +63,7 @@ export function useSaveSettings() {
 
 ## Zustand（跨组件 UI/会话状态）
 
-一个关注点一个 store（`stores/player|ui|theme|locale`）。写法照 `ui.ts`：
+一个关注点一个 store（`stores/player|ui|theme|locale|shortcuts`）。写法照 `ui.ts`：
 
 ```ts
 export const useUiStore = create<UiState>()(
@@ -80,7 +80,7 @@ export const useUiStore = create<UiState>()(
 ## i18n
 
 - `t('path.to.key')` 取词条、`tf(path, { vars })` 插值；**资源结构由 zh-CN.json 决定，en-US.json 必须与之完全一致**（type Dict = typeof zhCN 编译期约束）——加词条两个文件都要加。
-- 后端错误 kind 就是 i18n key（`error.network`…，定义在 `crates/hongguo-common/src/error.rs`，14 个变体），新 AppError 变体要补 `error.*` 词条——**每个 kind 都必须有译文**，两份 locale 同一 commit 补齐。唯一例外 `Auth`：transparent，消息本身是完整人话（如「登录失败 1202: 验证码错误」），i18n **刻意不提供** `error.auth` 词条，前端透传后端原文（回落逻辑在 `invoke.ts` 的 `localizedMessage`）。
+- 后端错误 kind 就是 i18n key（定义在 `crates/hongguo-common/src/error.rs`，18 个变体，名单与语义见 `references/ipc.md` 错误契约节）。有词条的 kind 两份 locale 同一 commit 补齐。源码注释写明刻意不提供词条、前端透传原文的是 `Auth` / `Rejected` / `Unsupported`；`StreamMiss` 注释写 transparent 同 `Rejected`，locale 也没有 `error.streamMiss`。`ContentTypeUnknown` 的 key `error.contentTypeUnknown` 目前同样没有词条。回落在 `invoke.ts` 的 `localizedMessage`：kind 有词条用译文，没有则用 message。
 - 缺词条回落显示 key 本身——比 undefined 好定位。
 
 ## 路由与搜索参数（有真坑）

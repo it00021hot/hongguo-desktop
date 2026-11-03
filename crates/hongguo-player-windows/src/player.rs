@@ -79,7 +79,7 @@ pub struct SystemPlayer {
     presented: AtomicBool,
 }
 
-// SAFETY: Media Foundation 与 DirectComposition 的接口都是自由线程的；本结构的
+// SAFETY: Media Foundation 的接口是自由线程的；本结构的
 // 所有方法只在 GPUI 主线程调用（`PlayerLike` 的调用点全在视图/事件回调里），
 // `Drop` 在任意线程只做 Release。与 macOS 侧 `SendRetained` 同一套约定。
 unsafe impl Send for SystemPlayer {}

@@ -81,7 +81,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 ## 发版（仅 Tauri 壳；GPUI 壳暂未入发布管线）
 
 1. **发版走 GitHub CI（release.yml），本地不跑 `make release`**——推 `vX.Y.Z` tag 即触发：三平台矩阵构建 + 上传安装包与 `.sig`，收尾组装 updater `latest.json` 与 SHA256SUMS。
-2. **每次发版先改版本号文件再提交、再打 tag**：`package.json` / `crates/hongguo-tauri-app/tauri.conf.json` / `crates/hongguo-tauri-app/Cargo.toml` 三处同值，跑 `cargo update -p hongguo-desktop` 同步 Cargo.lock 一并提交（`chore(release): vX.Y.Z`）。CI 构建前还会把 tag 号写进 tauri.conf.json，版本号唯一来源是 tag。
+2. **每次发版先改版本号再提交、再打 tag**：根 `Cargo.toml` 的 `[workspace.package].version`、`package.json`、`crates/hongguo-tauri-app/tauri.conf.json` 三处同值。`crates/hongguo-tauri-app/Cargo.toml` 是 `version.workspace = true`，不要在那里改版本；该成员包名仍是 `hongguo-desktop`。全部 workspace 成员都继承这一版本，跑 `cargo update --workspace` 把 `Cargo.lock` 里各 `hongguo-*` 的 version 刷齐后一并提交（`chore(release): vX.Y.Z`）。CI 构建前还会把 tag 号写进 tauri.conf.json，版本号唯一来源是 tag。
 3. **发版提交必须先补 `CHANGELOG.md` 对应 `## [x.y.z]` 段落**（✨ 新增 / ⚡ 优化 / 🐛 修复，格式见文件头）：CI 从这里提取该版本段落作 GitHub Release 说明和应用内更新弹窗内容，段落缺失流水线直接失败——更新内容必填，不写「优化体验若干」式空话。
 4. 流程：dev 验收 → 合入 main（--no-ff）→ 推 main → 在 main 打 tag 推送。
 5. updater 走 GitHub Releases（`endpoints` 指向 `latest.json`），Windows `installMode: quiet`，NSIS 用仓库自带模板 + installerHooks（`make nsis` 保持模板同步）。

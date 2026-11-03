@@ -4,8 +4,6 @@
 
 ## 1. 结论：帧与内容同一张渲染目标
 
-## 1. 结论：帧与内容同一张渲染目标
-
 MediaEngine 的 **frame-server 模式**（不给 `PLAYBACK_VISUAL`，给
 `MF_MEDIA_ENGINE_DXGI_MANAGER` + `MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT`）下，
 引擎只解码不合成；应用每帧用 `TransferVideoFrame` 把当前帧转进一块 BGRA
@@ -74,11 +72,16 @@ MediaEngine（frame-server：系统解码/音频时钟/倍速/seek）
 | `ENDED` | `Ended` | 每 item 一次；代次幂等仍在壳侧 |
 | `ERROR` / `STREAMRENDERINGERROR` | `Failed` | 带 `param1`（MF_MEDIA_ENGINE_ERR）与 `param2`（HRESULT） |
 
-## 5. 运行
+## 5. 运行与线程纪律
 
 自研引擎与 `VIDEO_BACKEND` 开关已整体删除（2026-10-23），系统播放器是唯一
 路线；播放器/视频位创建失败时 `open_system_player` 返回 `None`，壳走
 「自动重试一次 → 可见错误态」——不 panic、不静默黑屏。
+
+**STA 线程纪律**：引擎、属性表、`IMFByteStream` 全在 GPUI 主线程（STA，
+`OleInitialize`）创建；`MFStartup` 与引擎同线程一次。MediaEngine 控制方法
+本身是自由线程的，但壳侧 `PlayerLike` 调用点也都在主线程——不要把创建挪到
+后台 tokio 任务。
 
 ```bash
 make gpui                      # 唯一播放路线：macOS AVPlayer；Windows frame-server

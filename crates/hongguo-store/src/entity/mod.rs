@@ -1,4 +1,4 @@
-//! 实体读写：settings / tasks / series / playback / merge_tasks 等六组的 SQL 实现。设计约定：复杂实体（任务/剧集/合并）整行存 JSON 列，只把需要 WHERE / ORDER / JOIN 的字段提升为列；playback 是最热写入点（前端 5 秒节流上报），全真实列 + UPSERT；所有多行写操作包在单个事务里。
+//! 实体读写：device / follow / local_history / merge / playback / series / settings / task 八个模块的 SQL 实现。设计约定：复杂实体（任务/剧集/合并）整行存 JSON 列，只把需要 WHERE / ORDER / JOIN 的字段提升为列；playback 是最热写入点（前端 5 秒节流上报），全真实列 + UPSERT；所有多行写操作包在单个事务里。
 //!
 //! 本模块全部是 `async fn`，跑在 [`crate::bridge`] 的专用 DB 线程上、由同步门面 [`crate::Store`] 逐方法转调；不要在业务代码里直接调用。
 

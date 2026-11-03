@@ -29,7 +29,7 @@ tauri-plugin-process = "2.4.0"
 # 未引用的代码随后被 lto+strip 剔除。驱动脚本见 scripts/webdriver.mjs，
 # 说明见 docs/webview-cdp-testing.md。
 tauri-plugin-webdriver = "0.2"
-# 业务编排层（AppState / 九域 service）。
+# 业务编排层（AppState、各域 service，以及 device 模块）。
 hongguo-service = { path = "../hongguo-service" }
 # 自定义 URI 协议供数逻辑（本 crate 只做 Builder 注册胶水与 HTTP 组装）。
 hongguo-protocol = { path = "../hongguo-protocol" }

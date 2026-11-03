@@ -3,12 +3,12 @@
 <div align="center">
 
 ![平台](https://img.shields.io/badge/平台-Windows%20%2F%20macOS-blue?style=for-the-badge)
-![技术栈](https://img.shields.io/badge/技术栈-Tauri%202%20%2B%20Rust%20%2B%20React%2019-47848F?style=for-the-badge)
+![技术栈](https://img.shields.io/badge/技术栈-Tauri%202%20%2B%20GPUI%20%2B%20Rust-47848F?style=for-the-badge)
 ![协议](https://img.shields.io/badge/协议-PolyForm%20Noncommercial%201.0.0-blueviolet?style=for-the-badge)
 
 **非官方红果短剧桌面客户端 —— 沉浸浏览 · 排行榜 · 弹幕播放 · 批量下载 · 一键合并**
 
-纯 Rust 解密与编解码内核 · 安装包不捆绑任何外部二进制 · 边下边播 · 小窗 / 隐身播放
+Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service / api / store · 安装包不捆绑任何外部二进制
 
 [English](./README.en.md) · [声明与免责](./NOTICE) · [第三方组件](./THIRD-PARTY-NOTICES.md)
 
@@ -31,16 +31,18 @@
 
 ## 📖 简介
 
-红果播放器（Hongguo）是面向**红果短剧**的 Windows / macOS 桌面客户端：
-[Rust](https://rust-lang.org) 业务内核 + [Tauri 2](https://tauri.app) 桌面外壳 + React 19 界面层。
+红果播放器（Hongguo）是面向**红果短剧**的 Windows / macOS 桌面客户端。
+它有两套壳、同一套业务内核：[Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生自绘壳。
+两壳共用 `hongguo-service`、`hongguo-api`、`hongguo-store`。
 
 它内置字节系短剧 App 的完整协议栈——设备注册、五头请求签名、取流、弹幕、互动、
 观看历史、短信登录——并配有一套 **CENC-AES-CTR 原生流式解密引擎**。解密、解复用、
-转码、封装全部由纯 Rust 完成，**安装包不捆绑 FFmpeg 或任何外部二进制**。
+封装由纯 Rust 完成；HEVC → H.264 转码先走平台硬编（VideoToolbox / Media Foundation），
+再回落 ffmpeg。**安装包不捆绑 FFmpeg 或任何外部二进制**。
 
 - **在线播放不落盘**：自定义协议渐进供数、边下边解，首帧不必等整集
 - **下载直接产出标准 MP4**：流式解密 + 原子落盘，断网断电不留残缺文件
-- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg，两级回退
+- **兼容模式全自动**：HEVC 解不动时自动转 H.264——平台硬编 → ffmpeg；两者都失败则报错，没有纯 Rust 视频转码兜底
 - **数据落 Turso 内嵌数据库**：纯 Rust、无 C 工具链依赖，带 schema 迁移链与坏档自动恢复
 
 ---
@@ -109,7 +111,7 @@
 
 - 账户卡（登录 / MFA / 退出）、下载目录（手填 + 系统选择器）、命名模板、并发数
 - **网络代理**：跟随系统 / 手动指定（含常用端口预设）/ 强制直连，一键测试显示耗时
-- **转码后端徽章**：实时显示当前走的是硬件加速 / 软件加速 / 标准（纯 Rust），支持重新检测
+- **转码后端徽章**：实时显示当前走的是硬件加速 / 软件加速 / 不可用，支持重新检测
 - 播完自动下一集、看完自动删除开关
 - **主题**：自动 / 浅色 / 深色（默认深色）；**中英双语**界面，跟随系统语言
 - **应用内更新**：检查更新 → 下载（进度显示）→ 安装（minisign 验签，Windows 静默安装）
@@ -122,13 +124,15 @@
 
 | 层     | 选型                                                                                            |
 | ------ | ----------------------------------------------------------------------------------------------- |
-| 桌面壳 | [Tauri 2](https://tauri.app)（系统 WebView，无 Electron）                                       |
+| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store` |
 | 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                     |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v5）                      |
+| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`） |
 | 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                          |
-| 编解码 | rusty_h265（纯 Rust）+ 自写 MP4 封装 + VideoToolbox / Media Foundation（平台硬编）+ 可选 ffmpeg |
+| 编解码 | 视频 remux / MP4 封装为纯 Rust；`rusty_h265` 只做 HEIF 封面软解，不是主视频路径；HEVC→H.264 为平台硬编（VideoToolbox / Media Foundation）再回落 ffmpeg |
 
-### 前端
+### 前端（仅 Tauri WebView 壳）
+
+GPUI 壳用 GPUI Kit 自绘，不经过下面这层。
 
 | 层          | 选型                                                  |
 | ----------- | ----------------------------------------------------- |
@@ -142,14 +146,15 @@
 
 ## 🏗️ 架构亮点
 
-- **自定义 URI 协议**：`hongguo-stream://` 渐进流（首探 256KB → 盒游走定位 moov →
-  1MB 分块顺序填充，首帧只依赖头 + 尾 + 样本表）；`hongguo-local://` 本地文件 Range
-  播放；`hongguo-cover://` 封面代理（HEIC → JPEG，磁盘哈希缓存）
+- **自定义 URI 协议**（scheme：`hongguo-stream`、`hongguo-local`、`hongguo-cover`）：
+  macOS 为 `{scheme}://localhost/...`，Windows 为 `http://{scheme}.localhost/...`。
+  `hongguo-stream` 渐进流（首探 256KB → 盒游走定位 moov → 1MB 分块顺序填充，首帧只依赖头 + 尾 + 样本表）；
+  `hongguo-local` 本地文件 Range 播放；`hongguo-cover` 封面代理（HEIC → JPEG，磁盘哈希缓存）
 - **签名栈**：`x-gorgon` / `x-argus` / `x-ladon` / `x-helios` / `x-medusa` 五头签名，
   黄金向量单测锁定正确性
 - **两级转码回退**：macOS VideoToolbox / Windows Media Foundation 平台硬编 →
   ffmpeg（硬编码器 NVENC / QSV / AMF，软编 libx264），
-  启动时探测并常驻徽章展示；两者都不可用时直接报错，没有纯软解兜底
+  启动时探测并常驻徽章展示；两者都不可用时直接报错，没有纯 Rust 视频转码兜底
 - **可靠性**：单实例锁、协议回调三层 panic 防线、crash.log 取证、数据库坏档自动恢复、
   任务中断恢复、旧 JSON 存档一次性幂等迁移
 
@@ -184,6 +189,8 @@ Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Si
 
 ```bash
 make dev            # Vite + Tauri 开发模式（= pnpm tauri:dev）
+make gpui           # 启动 GPUI 原生壳
+make gpui-preview   # GPUI 壳离屏预览矩阵（改界面后验收）
 make release        # 打包 NSIS / DMG（= pnpm tauri:build）
 make test           # vitest 前端单测
 make test-rust      # cargo test
@@ -192,9 +199,11 @@ make typecheck      # tsc --noEmit
 make assets         # 重新生成图标 / macOS 名称本地化（离线）
 ```
 
-> **无需安装 FFmpeg**——解密、解复用、合并是纯 Rust 零外部依赖，开箱即用。
-> 系统里如果恰好有 ffmpeg，只有「HEVC → H.264 转码」这一步会自动改用它来加速，
-> 没有它也不影响任何功能。
+文档索引见 [docs/README.md](./docs/README.md)，使用排查见 [docs/faq.md](./docs/faq.md)。
+
+> **安装包不捆绑 FFmpeg**——解密、解复用、合并是纯 Rust。没有 ffmpeg 时，
+> HEVC → H.264 仍可走平台编码器（macOS VideoToolbox / Windows Media Foundation）。
+> 平台编码器与 ffmpeg 都不可用时，兼容模式会失败。
 
 ---
 
@@ -206,8 +215,8 @@ hongguo-desktop/
 │   ├── hongguo-common/                 # 共用底座：领域模型 / 统一错误 / 纯工具 / 跨端常量
 │   ├── hongguo-signer/                 # 字节系请求签名 + 设备注册原语（JS 1:1 移植，常量黑盒锁定勿改）
 │   ├── hongguo-video/                    # MP4 解析与 CENC 解密
-│   ├── hongguo-api/                    # 官方 App 接口客户端（14 域，按端点域目录化）
-│   ├── hongguo-media/                  # 纯 Rust 编解码（demux / hevc / remux / transcode / 封面 HEIF）
+│   ├── hongguo-api/                    # 官方 App 接口客户端（模块在 crates/hongguo-api/src/）
+│   ├── hongguo-media/                  # 媒体底座：纯 Rust demux / remux / MP4 封装；rusty_h265 只做 HEIF 封面软解
 │   ├── hongguo-media-platform-api/     # 平台媒体契约（帧载体 / 解码器 trait / 转码请求）
 │   ├── hongguo-media-platform-macos/   # macOS 实现（VideoToolbox 转码链）
 │   ├── hongguo-media-platform-windows/ # Windows 实现（Media Foundation / WIC）
@@ -215,11 +224,14 @@ hongguo-desktop/
 │   ├── hongguo-store/                  # Turso 内嵌数据库（entity/ 按聚合拆分 / 迁移链 / 坏档恢复）
 │   ├── hongguo-stream/                 # 在线流契约（渐进流 / 按 (vid, 档位) 分条的缓存 / Range 应答）
 │   ├── hongguo-protocol/               # 自定义 URI 供数（hongguo-local / stream / cover）
-│   ├── hongguo-player/                 # 系统播放器门面（macOS AVPlayer / Windows MediaEngine，契约在 hongguo-player-api）
-│   ├── hongguo-service/                # 应用服务：九域编排 + AppState + 共用运行时/事件总线（无 UI 框架依赖）
+│   ├── hongguo-player-api/             # 回放契约（PlayerEvent / PlaySource / PlayerLike，无 UI、无平台实现）
+│   ├── hongguo-player-macos/           # macOS 系统播放器（AVPlayer）
+│   ├── hongguo-player-windows/         # Windows 系统播放器（Media Foundation Media Engine）
+│   ├── hongguo-player/                 # 系统播放器门面（按目标分派到 macos / windows 实现）
+│   ├── hongguo-service/                # 应用服务：download / play / merge / login / series / settings / storage / transcode / capability / follow / history + device；AppState + 共用运行时/事件总线（无 UI 框架依赖）
 │   ├── hongguo-tauri/                  # Tauri 装配：commands / bootstrap / 协议注册 / 事件转发
 │   ├── hongguo-tauri-app/              # Tauri 应用入口（tauri.conf.json / capabilities / icons / generate_context!）
-│   └── hongguo-gpui/                   # GPUI 壳（与 Tauri 同一套 service）
+│   └── hongguo-gpui/                   # GPUI 完整原生壳（与 Tauri 共用同一套 service，不是桩）
 └── src/
     ├── pages/           # TanStack 文件路由（薄壳）+ 页面实现就近放置
     ├── features/        # 复杂能力域（player 播放引擎 / update 自动更新）
@@ -247,9 +259,10 @@ hongguo-desktop/
 
 ### 播放页黑屏但有声音
 
-视频是 HEVC 编码，系统 WebView 解码需要硬件支持。应用已内置「兼容模式」：转成
-H.264 后播放——平台硬编（Apple 芯片 VideoToolbox / Windows Media Foundation）→
-ffmpeg（NVENC/QSV/AMF 硬编，或 libx264 软编），自动回退，无需手动配置。
+视频是 HEVC 编码。应用内「兼容模式」会转成 H.264 再播放——平台硬编（Apple 芯片
+VideoToolbox / Windows Media Foundation）→ ffmpeg（NVENC/QSV/AMF 硬编，或 libx264 软编）。
+两者都不可用时兼容模式失败。Windows 上缺 HEVC 视频扩展，或 Tauri 壳缺 WebView2 运行时，
+安装步骤见 [docs/faq.md](./docs/faq.md)。
 
 ### 签名魔数能改吗
 

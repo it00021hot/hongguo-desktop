@@ -3,12 +3,12 @@
 <div align="center">
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%2F%20macOS-blue?style=for-the-badge)
-![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20Rust%20%2B%20React%2019-47848F?style=for-the-badge)
+![Stack](https://img.shields.io/badge/Stack-Tauri%202%20%2B%20GPUI%20%2B%20Rust-47848F?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blueviolet?style=for-the-badge)
 
 **Unofficial Hongguo short-drama desktop client — immersive feed · charts · danmaku playback · batch download · one-click merge**
 
-Pure-Rust decryption & codec core · Installer bundles no external binaries · Stream while downloading · Mini-window / stealth playback
+Tauri 2 + React 19 WebView shell and a GPUI native shell · both share hongguo-service / api / store · installer bundles no external binaries
 
 [中文](./README.md) · [NOTICE](./NOTICE) · [Third-party notices](./THIRD-PARTY-NOTICES.md)
 
@@ -32,21 +32,24 @@ See [NOTICE](./NOTICE) for the full statement and [LICENSE](./LICENSE) for licen
 ## 📖 Overview
 
 Hongguo is a Windows / macOS desktop client for **Hongguo Short Drama** (the short-drama
-channel of Fanqie Novel): a **Rust** core, a [Tauri 2](https://tauri.app) shell, and a
-React 19 UI.
+channel of Fanqie Novel). It ships two shells on one business core: a
+[Tauri 2](https://tauri.app) + React 19 WebView shell, and a GPUI native shell. Both share
+`hongguo-service`, `hongguo-api`, and `hongguo-store`.
 
 It implements the complete ByteDance short-drama app protocol stack — device registration,
 five-header request signing, stream fetching, danmaku, interactions, watch history, SMS
 login — together with a **native CENC-AES-CTR streaming decryption engine**. Decryption,
-demuxing, transcoding and muxing are done entirely in pure Rust: **the installer ships no
-FFmpeg and no external binaries at all**.
+demuxing and muxing are pure Rust. HEVC → H.264 transcode uses platform hardware
+(VideoToolbox / Media Foundation) first, then ffmpeg. **The installer ships no FFmpeg and
+no external binaries.**
 
 - **Streaming never touches disk** — a custom protocol feeds the player progressively,
   decrypting on the fly; the first frame doesn't wait for the whole episode
 - **Downloads are standard MP4** — streaming decryption + atomic rename, no truncated
   files on disconnect
 - **Fully automatic compatibility mode** — when HEVC can't be decoded, it transcodes to
-  H.264 with a two-level fallback: platform hardware → ffmpeg
+  H.264: platform hardware → ffmpeg. If both fail, compat mode errors; there is no
+  pure-Rust video transcode fallback
 - **Data lives in an embedded Turso database** — pure Rust, no C toolchain, with a schema
   migration chain and automatic recovery
 
@@ -134,7 +137,7 @@ FFmpeg and no external binaries at all**.
   template, concurrency
 - **Proxy**: follow system / manual (common port presets) / force direct, with a one-click
   latency test
-- **Transcode backend badge**: live indication of hardware / software / unavailable mode,
+- **Transcode backend badge**: live indication of hardware / software / unavailable,
   with re-detection
 - Auto-next and auto-delete-after-watching toggles
 - **Theme**: auto / light / dark (dark default); **bilingual UI** (Chinese / English),
@@ -150,13 +153,15 @@ FFmpeg and no external binaries at all**.
 
 | Layer    | Choice                                                                                          |
 | -------- | ----------------------------------------------------------------------------------------------- |
-| Shell    | [Tauri 2](https://tauri.app) (system webview, no Electron)                                      |
+| Shell    | [Tauri 2](https://tauri.app) + React 19 WebView shell, plus a GPUI native shell; shared `hongguo-service` / `hongguo-api` / `hongguo-store` |
 | Language | Rust 2024 edition · tokio · reqwest (rustls)                                                    |
-| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v5)              |
+| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v7, `SCHEMA_VERSION = 7`) |
 | Crypto   | aes / ctr / sm3 / md-5 and other pure-Rust crates (CENC-AES-CTR)                                |
-| Codecs   | rusty_h265 (pure Rust) + in-house MP4 muxer + VideoToolbox / Media Foundation + optional ffmpeg |
+| Codecs   | Video remux / MP4 mux is pure Rust; `rusty_h265` is HEIF cover soft-decode only, not the main video path; HEVC→H.264 is platform hardware (VideoToolbox / Media Foundation), then ffmpeg |
 
-### Frontend
+### Frontend (Tauri WebView shell only)
+
+The GPUI shell draws with GPUI Kit and does not use the stack below.
 
 | Layer          | Choice                                                |
 | -------------- | ----------------------------------------------------- |
@@ -170,16 +175,18 @@ FFmpeg and no external binaries at all**.
 
 ## 🏗️ Architecture Highlights
 
-- **Custom URI schemes**: `hongguo-stream://` progressive streaming (256 KB head probe →
-  box-walking to locate `moov` → 1 MB sequential chunk fill; the first frame only needs
-  head + tail + sample table); `hongguo-local://` local file playback with Range support;
-  `hongguo-cover://` cover proxy (HEIC → JPEG with an on-disk hash cache)
+- **Custom URI schemes** (`hongguo-stream`, `hongguo-local`, `hongguo-cover`):
+  macOS uses `{scheme}://localhost/...`; Windows uses `http://{scheme}.localhost/...`.
+  `hongguo-stream` is progressive (256 KB head probe → box-walking to locate `moov` →
+  1 MB sequential chunk fill; the first frame only needs head + tail + sample table);
+  `hongguo-local` is local-file playback with Range support; `hongguo-cover` proxies
+  covers (HEIC → JPEG with an on-disk hash cache)
 - **Signing stack**: five signature headers (`x-gorgon` / `x-argus` / `x-ladon` /
   `x-helios` / `x-medusa`) locked by golden-vector unit tests
 - **Two-level transcode fallback**: platform hardware (VideoToolbox on macOS / Media
   Foundation on Windows) → ffmpeg (hardware NVENC / QSV / AMF, or software libx264);
   probed at startup and shown as a badge. With neither available the transcode fails
-  outright — there is no pure-software fallback
+  outright — there is no pure-Rust video transcode fallback
 - **Reliability**: single-instance lock, three-layer panic guard on protocol callbacks,
   crash.log forensics, database corruption recovery, interrupted-job resume, and a
   one-shot idempotent migration from the legacy JSON archive
@@ -198,6 +205,8 @@ FFmpeg and no external binaries at all**.
 
 ```bash
 make dev            # Vite + Tauri dev mode (= pnpm tauri:dev)
+make gpui           # launch the GPUI native shell
+make gpui-preview   # offscreen GPUI preview matrix (run after UI changes)
 make release        # bundle NSIS / DMG (= pnpm tauri:build)
 make test           # vitest unit tests
 make test-rust      # cargo test
@@ -206,9 +215,12 @@ make typecheck      # tsc --noEmit
 make assets         # regenerate icons / macOS name localization (offline)
 ```
 
-> **No FFmpeg setup required** — decryption, demuxing and merging are pure Rust with zero
-> external dependencies. If ffmpeg happens to be installed, only the **HEVC → H.264
-> transcode** step switches to it for speed; nothing breaks without it.
+Doc index: [docs/README.md](./docs/README.md). Troubleshooting: [docs/faq.md](./docs/faq.md).
+
+> **The installer does not bundle FFmpeg** — decryption, demuxing and merging are pure
+> Rust. Without ffmpeg, HEVC → H.264 still uses the platform encoder (VideoToolbox on
+> macOS / Media Foundation on Windows). If both the platform encoder and ffmpeg are
+> unavailable, compatibility mode fails.
 
 ---
 
@@ -220,8 +232,8 @@ hongguo-desktop/
 │   ├── hongguo-common/                 # Shared foundation: domain models / unified error / pure helpers / cross-surface constants
 │   ├── hongguo-signer/                 # ByteDance request signing + device registration primitives (JS 1:1 port, constants black-box locked)
 │   ├── hongguo-video/                    # MP4 parsing & CENC decryption
-│   ├── hongguo-api/                    # Official API clients (14 domains, one directory per endpoint domain)
-│   ├── hongguo-media/                  # Pure-Rust codecs (demux / hevc / remux / transcode / HEIF covers)
+│   ├── hongguo-api/                    # Official API client (modules under crates/hongguo-api/src/)
+│   ├── hongguo-media/                  # Media base: pure-Rust demux / remux / MP4 mux; rusty_h265 is HEIF cover soft-decode only
 │   ├── hongguo-media-platform-api/     # Platform media contract (frame carriers / decoder traits / transcode requests)
 │   ├── hongguo-media-platform-macos/   # macOS implementation (VideoToolbox transcode chain)
 │   ├── hongguo-media-platform-windows/ # Windows implementation (Media Foundation / WIC)
@@ -229,11 +241,14 @@ hongguo-desktop/
 │   ├── hongguo-store/                  # Turso embedded database (entity/ split by aggregate / migrations / recovery)
 │   ├── hongguo-stream/                 # Online stream contract (progressive stream / per (vid, definition) cache / Range replies)
 │   ├── hongguo-protocol/               # Custom URI providers (hongguo-local / stream / cover)
-│   ├── hongguo-player/                 # System player facade (macOS AVPlayer / Windows MediaEngine; contract in hongguo-player-api)
-│   ├── hongguo-service/                # App services: nine domains + AppState + shared runtime/event bus (no UI framework deps)
+│   ├── hongguo-player-api/             # Playback contract (PlayerEvent / PlaySource / PlayerLike; no UI, no platform impl)
+│   ├── hongguo-player-macos/           # macOS system player (AVPlayer)
+│   ├── hongguo-player-windows/         # Windows system player (Media Foundation Media Engine)
+│   ├── hongguo-player/                 # System player facade (dispatches to the macos / windows impl)
+│   ├── hongguo-service/                # App services: download / play / merge / login / series / settings / storage / transcode / capability / follow / history + device; AppState + shared runtime/event bus (no UI framework deps)
 │   ├── hongguo-tauri/                  # Tauri assembly: commands / bootstrap / protocol registration / event forwarding
 │   ├── hongguo-tauri-app/              # Tauri app entry (tauri.conf.json / capabilities / icons / generate_context!)
-│   └── hongguo-gpui/                   # GPUI shell (same service layer as Tauri)
+│   └── hongguo-gpui/                   # Full GPUI native shell (same service layer as Tauri, not a stub)
 └── src/
     ├── pages/           # TanStack file routes (thin shells) + page implementations nearby
     ├── features/        # Complex capability domains (player engine / auto update)
@@ -262,10 +277,11 @@ app with `RUST_LOG=debug`.
 
 ### Black screen with audio
 
-The video is HEVC and the system webview needs hardware support to decode it. The built-in
-compatibility mode handles this: it transcodes to H.264 automatically — platform hardware
-(VideoToolbox on Apple silicon / Media Foundation on Windows) → ffmpeg (NVENC/QSV/AMF hardware
-or libx264 software), with automatic fallback and no manual configuration.
+The video is HEVC. Compatibility mode transcodes it to H.264 — platform hardware
+(VideoToolbox on Apple silicon / Media Foundation on Windows) → ffmpeg (NVENC/QSV/AMF
+hardware, or libx264). If both are unavailable, compatibility mode fails. On Windows,
+installing the HEVC Video Extension or the WebView2 runtime for the Tauri shell is covered
+in [docs/faq.md](./docs/faq.md).
 
 ### Can I edit the signature constants?
 

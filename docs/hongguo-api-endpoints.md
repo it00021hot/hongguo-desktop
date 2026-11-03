@@ -85,9 +85,9 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 
 **请求形态两族**（对齐时别混）：
 
-|           | lq 域 reading 系                                    | sinfonlineb 域播放/推荐流                  |
+|           | lq 域 reading 系                                    | sinfonlineb 域（landpage）                 |
 | --------- | --------------------------------------------------- | ------------------------------------------ |
-| 端点      | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作          | multi_video_model / landpage               |
+| 端点      | 榜单/新剧/日历/预约列表/搜索/弹幕/预约操作          | landpage（取流见下节，不走这一列）         |
 | 头        | x-ss-dp + lc + x-reading-request（无五件套）        | 全签名五件套                               |
 | POST body | **一律 gzip**（`Content-Encoding: gzip`）           | 未压缩（服务端两种都收）                   |
 
@@ -95,44 +95,62 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**取流端点**（2026-11-02 官方全新设备实流 mitm 抓包对齐 + 本仓带签
-实测连续发货）：
+**取流端点**（对齐 `params.rs` 路径常量与 `play_url.rs` 选路。三路都走
+`hongguo-api::client::api_call_model_light`，签名经
+`hongguo_signer::ticket::sign_request_with`）：
 
 ```
-POST /novel/player/multi_video_model/v1/       # 尾斜杠是端点身份的一部分
+# 批量 fetch_play_batch：主路径；空响应或请求失败回退下一行
+POST https://reading.snssdk.com/novel/player/multi_video_model/player/v1
+    # PLAYER_MODEL_PATH，无尾斜杠
+POST https://api5-normal-lq.fqnovel.com/novel/player/multi_video_model/v1/
+    # MODEL_LIGHT_PATH，尾斜杠是端点身份的一部分
+
+# 单集 fetch_play_url：批量暂存未命中后的主路径；空/失败回退 MODEL_LIGHT_PATH
+POST https://reading.snssdk.com/novel/player/video_model/v1/
+    # SINGLE_MODEL_PATH，尾斜杠是端点身份的一部分
 ```
 
-- ⚠️ **签名五件套必带（2026-11-02 端点收紧，本轮 0 发货的真因）**：
-  无签名一律 `200 + 0 字节` 静默丢弃（signer 模块文档描述的同款症状）。
-  当晚对照实证：域名/路径/body 形态/UA/注册传输形态（签名富形态 vs
-  applog 裸形态）**均与发货无关**——同一次注册，无签名四种形态全灭，
-  带签后 lq 域 + 本路径与 `reading.snssdk.com` + `preload/v1` 皆立即
-  发货（24KB 流表）。签名经
-  `hongguo_signer::ticket::sign_request_with` 产出（x-gorgon/x-argus/
-  x-ladon/x-khronos/x-helios/x-medusa + x-ss-stub 对 gzip 后 body 取
-  MD5），实现 `hongguo-api::client::api_call_model_light`。
+- 选路：`fetch_play_url` 先取批量暂存（命中且未过 10 分钟 TTL 则 pop
+  直接用）。批量 `fetch_play_batch` 打 `PLAYER_MODEL_PATH`
+  （`READING_API_ORIGIN` = `reading.snssdk.com`），空字节或请求失败回退
+  `MODEL_LIGHT_PATH`（`LQ_API_ORIGIN` = `api5-normal-lq.fqnovel.com`），
+  两次都空则静默 0 条。单集打 `SINGLE_MODEL_PATH`（同一 reading 域），
+  空/失败回退同一条 light；两次都空归 `StreamMiss`。
+  `player/v1` 与 `video_model/v1/` 是当前主路径。
+- ⚠️ **签名五件套必带**：无签名一律 `200 + 0 字节` 静默丢弃（signer
+  模块文档描述的同款症状）。签名头：UA / accept / x-ss-req-ticket /
+  x-khronos / x-ladon / x-argus / x-gorgon / x-helios / x-medusa，
+  `x-ss-stub` 对 **gzip 后** body 取 MD5。另加 `x-ss-dp + lc` +
+  `x-tt-store-region`（`cn-gd`）+ `x-tt-store-region-src=did` +
+  `Content-Encoding: gzip` + 档案 cookie。登录态带 `x-tt-token` 前
+  56 字符；缺了按匿名配额处理。
   「签名在不在场都与发货无关」系 2026-11-01 的旧口径，已作废。
-- 头：签名头族（UA/accept/x-ss-req-ticket/x-khronos/x-ladon/x-argus/
-  x-gorgon/x-helios/x-medusa）+ `x-ss-dp + lc` + `x-tt-store-region(-src)`
-  （匿名取店区来源为设备，src=did）+ `Content-Encoding: gzip` +
-  档案 cookie。
-- query：随签名生成——档案字段（去 `openudid`）+
-  `need_personal_recommend=1` + `ts` + `_rticket`（signer 抖动挑
-  x-argus branch=1 的 ticket）。
-- body：gzip JSON，`biz_param` 八字段 + `mixed_video_id_map`（key =
-  条目 content_type 原样串；服务端对错 key 有容忍）。官方 2026-11-02
-  实流带 `dr_scene:"preload"` 且 `device_level:3`，本仓 `device_level:4`
-  无 `dr_scene` 带签同窗实测亦可发货——body 形态非闸门，保持现形态。
-- 域名：TTNet 动态调度，会整体迁移——2026-11-01 发货域 lq，
-  2026-11-02 官方全新设备实流在 `reading.snssdk.com`
-  （`/novel/player/multi_video_model/preload/v1`），同窗 lq 带签亦可
-  发货。下次「全量 200+0」先怀疑域迁移，重抓包对齐 origin。
-- 响应 `data.{vid}.video_model`（JSON 字符串），批量一次回多集；
-  连续多次调用无按设备限频。
-- ⚠️ 旧端点 `multi_video_model/player/v1`（dr_scene=player）与单集
-  `video_model/v1/` 在明文边缘 200+0（2026-11-01 实测）；单集回落
-  走 `api5-normal-lf`（见 `client::LF_API_ORIGIN`）。服务端迁移取流
-  形态时按本节重新抓包对齐。
+- query：`sign_request_with` 先铺设备档案全字段（含 `openudid`），再接
+  `api_call_model_light` 的业务 query（档案字段去掉 `openudid` +
+  `need_personal_recommend=1`），最后 `ts` + `_rticket`。`_rticket`
+  逐毫秒抖动，**避开** x-argus branch=1（该档服务端不受理，同样 200+0）。
+- body 三套，都是 gzip JSON：
+  - 批量主路径 `player_model_payload`：`biz_param` 十字段
+    （`device_level:3`、`use_server_dns:true`、
+    `use_server_dns_scene:"cold_start_stage"`、`video_platform:1024`，
+    含 `disable_video_relate_book`）+ `dr_scene:"player"` +
+    `mixed_video_id_map`。
+  - 单集主路径 `single_model_payload`：`biz_param` 同多集，仅
+    `video_platform:3`；顶层 `content_type` + `video_id`（无
+    `mixed_video_id_map`、无 `dr_scene`）。
+  - 回退 `model_light_payload`：`biz_param` 八字段（`device_level:4`、
+    `use_server_dns:false`、`video_platform:1024`，**无** `dr_scene` /
+    `disable_video_relate_book` / `use_server_dns_scene`）+
+    `mixed_video_id_map`。key 是条目 content_type 的原样字符串
+    （错配不发货：漫剧 1004→`"1004"`、真人剧 1→`"1"`、书城 1001→`"1001"`）。
+- 域名：新通道 `https://reading.snssdk.com`，回退
+  `https://api5-normal-lq.fqnovel.com`。TTNet 会整体迁域，下次「全量
+  200+0」先怀疑 origin 迁移，重抓包对齐。空响应不重试，交给上面的回退。
+- 响应：`data.{vid}.video_model` 是 JSON 字符串，批量一次回多集；单集
+  新通道另兼容 `/data/video_model`。错误信封是 base 族（`Code` 大写 +
+  `BaseResp`），非 0 归 `StreamMiss`（reading 系小写 `code` 另走
+  `check_code`）。
 - ⚠️ 注册形态底线不变：注册 JSON 版本身份（73932/7.3.9.32）与
   bdinstall SDK 代际成套（详见设备注册节），App 身份字段
   （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
@@ -142,7 +160,8 @@ POST /novel/player/multi_video_model/v1/       # 尾斜杠是端点身份的一�
   ——任何内容都拒；②**匿名观看配额耗尽**——官方 App 匿名播到
   第 9 集同样 200+0 并弹登录引导（官方登录设备 x-tt-token 整晚
   24/24 全发货）。可持续形态 = 登录（账号授权），换新注册只是
-  重置匿名配额的应急手段：登录态禁换；匿名态 4 次/180s 限频
+  重置匿名配额的应急手段：登录态禁换；匿名态连续 4 次 `StreamMiss`
+  且距上次换新 ≥180s 才换设备
   （实现 `hongguo_service::device::note_stream_miss`），启动取流
   探针已撤（探针 miss = 上场配额耗尽，据它换注册会让每次重启
   白烧一台设备）。
@@ -224,25 +243,28 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
   - `secondary_infos`：data_type 缺省/0=季徽（「第1季」）、3=题材、4=评分
     （「9.6分」）
 - 内容按时间桶在服务端轮换，「换一批」= 新会话重拉（filter_ids 清空）
-- 我们的落点：`rank.rs fetch_recommend_feed`（两段式 + 配置进程缓存 +
-  抓包已知值兜底）+ `recommend_feed` 命令 + `useFeed` 三件套翻页
+- 我们的落点：`recommend/mod.rs`（`fetch_recommend_feed`）（两段式 +
+  配置进程缓存 + 抓包已知值兜底）+ `discover_cmd` + `useFeed` 三件套翻页
 - ⚠️ **翻页必须带 `filter_ids`**：翻页请求 `offset=0` + session +
   filter_ids=已刷过的 series_id，服务端不做会话内去重，漏传会重复刷
   已看过的剧
-- ⚠️ **取流批量形态**（2026-11-01 迁移后唯一活形态，见「取流端点」节）：
-  ① `multi_video_detail/preload`：`series_id` 是**逗号串**（6 部一发），
-  响应 `data[series_id]` 按剧分发（档案预取，非流表）；
-  ② 取流统一走 `multi_video_model/v1/` **无签名轻请求**：
+- ⚠️ **取流选路**（`play_url.rs`，见「取流端点」节）：批量暂存命中
+  （10 分钟 TTL）直接用；未命中的批量走 `PLAYER_MODEL_PATH`
+  （`multi_video_model/player/v1`），空响应或请求失败回退
+  `MODEL_LIGHT_PATH`（`multi_video_model/v1/`）。单集走
+  `SINGLE_MODEL_PATH`（`video_model/v1/`），空/失败同样回退 light。
+  三路都带签名五件套（`api_call_model_light`）。
   `mixed_video_id_map` 按**条目 content_type 原样串**分组（key 错配 →
   不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"、书城 cell 条目
-  1001→"1001"），批量/单集同端点只差 vid 数。旧 `player/v1`、
-  `preload/v1`（dr_scene 族）与单集 `video_model/v1/` 均已 200+0。
+  1001→"1001"）。未注册 content_type 不猜 key。
+- 档案预取（非流表）：`multi_video_detail/preload` 的 `series_id` 是
+  **逗号串**（6 部一发），响应 `data[series_id]` 按剧分发。
 - `content_type` = **这一集所属剧的真实类型，随剧变**（官方样本
   1004/1/1001 各配其剧，不是协议常量）。
-- 本仓链路（`play_url.rs`）：预取暂存命中直接用 → 轻请求批量/单端点
-  （分组 key 取注册表，未知填占位 1004）。vid→content_type 注册来源：
+- 单集链路（`fetch_play_url`）：批量暂存命中直接用 → 否则
+  `video_model/v1/`，空/失败再回退 light。vid→content_type 注册来源：
   推荐流解析（入口 vid）、分集档案解析（整剧各集，`video_data.content_type`）、
-  批量分组、壳起播（整剧注册）。
+  批量分组、壳起播（整剧注册）。未注册报 `ContentTypeUnknown`，不填占位。
 - ⚠️ **不要用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回
   同一批静态默认列表，且翻页不回传 session 换源重复——首页推荐必须走
   本节 bookmall 端点。
@@ -579,7 +601,7 @@ JPEG，前端直连 <img> 可显)/score(字符串"8.0")/play_cnt/episode_cnt
   `img-src`（无 `http:`）与混合内容拦掉** → `<img>` 空白。所以 Tauri 壳这处
   必须过 `normalizeAvatarUrl`（http→https；见 `src/utils/image-url.ts`），
   与评论/弹幕/@/创作者档案头像同口径；漏一处就是「详情页创作者筹码没头像」。
-  GPUI 壳不走浏览器，另有一道档位坑（见 `docs/gpui-kit-research.md`）。
+  GPUI 壳不走浏览器 CSP，但仍须封面档位与预热一致（见 `.agents/skills/hongguo-dev/references/gpui.md` 已知坑「封面成品图」）。
 
 ## 9. 互动操作
 全部 **body = gzip JSON**（`Content-Encoding: gzip`）+ reading 轻签名头 +

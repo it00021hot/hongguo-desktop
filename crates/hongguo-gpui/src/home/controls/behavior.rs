@@ -42,7 +42,7 @@ impl HomeView {
                         started.elapsed().as_secs_f64() * 1000.0
                     );
                 }
-                // 画面由 AVPlayerLayer / DComp 视频位自己合成：首帧事件只置
+                // 画面由 AVPlayerLayer / 视频 quad 自己合成：首帧事件只置
                 // 「画面已就绪」，视图据此打透明洞。
                 self.system_video_ready = true;
                 self.first_frame_generation = self.play_generation;

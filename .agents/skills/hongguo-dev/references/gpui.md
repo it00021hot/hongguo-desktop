@@ -45,7 +45,11 @@
 
 ## 已知坑（每条锁着一条纪律）
 
-- **cargo test 与本壳 bin**：`[[bin]] test = false` 是铁的——cargo test 会把无测试框架的 bin 当用例**直接执行**，本壳一跑就开窗口，把全仓测试挂死。要测的东西放 `tests/`（集成测试）：现状 `preview_scenes`（纯数据覆盖率，默认构建可跑）与 `emoji_insert`（需 `screenshot` feature）。bin 无 lib 目标，集成测试进不了 crate 内部，唯一通路是 `#[path]` 源文件级引入（`scenes.rs` 自洽、不引 `super::*` 就是为这个）；`#[cfg(test)]` 单测在这 crate 里永远跑不了。
+- **cargo test 与本壳 bin**：`[[bin]] test = false` 是铁的——cargo test 会把无测试框架的 bin 当用例**直接执行**，本壳一跑就开窗口，把全仓测试挂死。要测的东西放 `tests/`（集成测试，见 `Cargo.toml` 的 `[[test]]`，不止 `preview_scenes` 与 `emoji_insert`）。默认构建可跑：`preview_scenes`、`cover_corner`、`stage_cover_guard`、`a11y_id_guard`、`avatar_edge_guard`、`keyboard_reachability`。需 `screenshot` feature：`emoji_insert`、`skin_input`、`tab_click_repro`、`binge_click_repro`、`comment_input_click`、`toolbar_click`、`browse_suggest_keys`、`browse_grid_geometry`、`comment_text`、`picker_dismiss`、`volume_drag`、`overlay_layering`。bin 无 lib 目标，集成测试进不了 crate 内部，唯一通路是 `#[path]` 源文件级引入（`scenes.rs` 自洽、不引 `super::*` 就是为这个）；`#[cfg(test)]` 单测在这 crate 里永远跑不了。
 - **RenderImage 纪律**：造 `RenderImage` 全壳只许 `image_upload.rs` 一处，且必须过 RGBA→BGRA（源码守卫测试盯着）。
+- **焦点环**：gpui 无默认焦点环；全壳收口在 `tokens::focus_ring`（页面级）与 `home/skin_focus::skin_focus_ring`（播放器红皮肤区），禁各页私写一份。
+- **`base::Button` 换载体**：库强制 `flex` + `items_center` + `justify_center` + `line_height(1)`。竖排卡要显式 `.flex_col().items_stretch().justify_start().line_height(gpui_kit::phi())`，否则像素与 Tauri 侧漂移。
+- **封面成品图按「URL 哈希 + edge 档位」寻址**（`hongguo_protocol::cover::sized_cache_path`）：预热 edge 必须等于渲染 edge；调用方不传档位——`cover_img` 内 `card()` / `avatar()` 固定常量，避免预热与渲染错配导致空白图。
 - **交叉 clippy 排除本壳**：gpui 系依赖的 build script 要 bindgen Apple 框架头，Windows 宿主没有 macOS SDK 生不出来；macOS 覆盖由 Mac 本机与 CI 承担（见 Makefile lint 注释）。别为了让交叉 clippy 过去改依赖。
 - **screenshot feature 的依赖口径**：不启用 gpui-kit 的 test-support（会连带拉起 gpui-fast 加速栈，与 gpui-pre 在 unicode-properties 上版本打架解不开）；开 gpui-pre / gpui-pre-platform 两家**同版本** test-support 即可（`render_to_image` 实现门控在这两处）。
+- **壳内平台代码**：`platform/`（业务语义门面）+ `av_spike/`（macOS Phase 0 诊断）+ `macos.rs` / `win32.rs`（入口级平台胶水）；业务/视图层禁止 `#[cfg(target_os)]`。

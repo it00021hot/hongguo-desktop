@@ -10,7 +10,8 @@ crates/hongguo-tauri（装配 + IPC 薄层）
 └─ commands/            # 薄：参数校验 + 转调 service/api（<域>_cmd.rs 或 <域>/ 目录）
 
 crates/hongguo-service（业务编排，无任何 UI 框架，两壳共用）
-├─ <域>_service/        # 九域一个服务一个目录：download/play/merge/login/series/settings/storage/transcode/capability
+├─ <域>_service/        # download/play/merge/login/series/settings/storage/transcode/capability/follow/history
+├─ device.rs            # 设备档案（adopt / 注册换档），不是 *_service
 ├─ app_state.rs         # AppState = Arc<AppStateInner>（Tauri 壳 manage 注入，GPUI 壳直接构造）
 ├─ runtime.rs           # 共用任务运行时（后台任务任意线程可派发）
 └─ events.rs            # ServiceEvent 业务事件总线（壳订阅适配，契约见 references/ipc.md 事件节）
@@ -18,13 +19,13 @@ crates/hongguo-service（业务编排，无任何 UI 框架，两壳共用）
 
 - command 与 service 不是一一镜像：`<域>_cmd.rs` 大多转调同名 service，另有直连 `hongguo_api` 的外呼命令（rank/discover/danmaku…，必须 async）与窗口类命令（window_cmd）。
 
-- 已迁出的 crate：`crates/hongguo-common`（领域模型 `model` / 统一错误 `AppError` / 纯工具 `utils` / 跨端常量 `consts`）、`crates/hongguo-signer`（请求签名，JS 1:1 禁改）、`crates/hongguo-video`（MP4 解析与 CENC 解密）、`crates/hongguo-api`（官方接口客户端，14 域；改端点前必读 `docs/hongguo-api-endpoints.md`）、`crates/hongguo-store`（Turso 持久化：db 迁移 / entity 六组实体 / bridge 同步门面 / 旧档导入与坏档恢复）、`crates/hongguo-stream`（在线流契约：渐进流 / 缓存 / Range 应答 / 进程级 `cache()` 单例）、`crates/hongguo-media`（纯 Rust 编解码：demux / hevc / mp4 写出层 / mux 封装 / remux / transcode / heif 等）。本 crate 用 `hongguo_common::…` / `hongguo_signer::…` / `hongguo_video::…` / `hongguo_api::…` / `hongguo_store::…` / `hongguo_stream::…` / `hongguo_media::…` 引用；常量归属规则见 common 的 `consts/mod.rs` 头注释。
+- 已迁出的 crate：`crates/hongguo-common`（领域模型 `model` / 统一错误 `AppError` / 纯工具 `utils` / 跨端常量 `consts`）、`crates/hongguo-signer`（请求签名，JS 1:1 禁改）、`crates/hongguo-video`（MP4 解析与 CENC 解密）、`crates/hongguo-api`（官方接口客户端，业务域 18 个：calendar / danmaku / detail / discover / emoticon / history / interact / login / new_drama / play_strategy / play_url / rank / recommend / register / reservation / search / stream_pick / warmup，另有 client / params；改端点前必读 `docs/hongguo-api-endpoints.md`）、`crates/hongguo-store`（Turso 持久化：db 迁移 / `entity/` 八个模块 device、follow、local_history、merge、playback、series、settings、task / bridge 同步门面）、`crates/hongguo-stream`（在线流契约：渐进流 / 缓存 / Range 应答 / 进程级 `cache()` 单例）、`crates/hongguo-media`（纯 Rust 编解码：demux / hevc / mp4 写出层 / mux 封装 / remux / transcode / heif 等）。本 crate 用 `hongguo_common::…` / `hongguo_signer::…` / `hongguo_video::…` / `hongguo_api::…` / `hongguo_store::…` / `hongguo_stream::…` / `hongguo_media::…` 引用；常量归属规则见 common 的 `consts/mod.rs` 头注释。
 
 - **媒体层三块**：纯 Rust 编解码在 `hongguo-media`；平台硬编（VT / MF / WIC）与 ffmpeg 执行在 `hongguo-media-platform` 门面（平台实现在 `hongguo-media-platform-{macos,windows}`，`ffmpeg` 外部进程与 `capability` 能力探测聚合并留在此）；帧契约在 `hongguo-media-platform-api`。方向恒为「平台/ffmpeg/能力探测 → 纯 Rust 核心」，不许反向（核心不依赖 tauri/gpui）。
 
 - **在线流的两侧分工（`hongguo-stream` 是唯一交点）**：填数据在 `crates/hongguo-service/src/play_service/online/`（`hongguo_stream::cache()` 拿全局缓存，塞 `ProgressiveStream` / 明文），答 Range 的注册胶水在 `crates/hongguo-tauri/src/protocol.rs`（供数逻辑在 `hongguo-protocol` 的 `serve`）。两边都只往下依赖 stream 契约——**别再让协议层回头调 service**（历史上协议层直接调 play_service 的缓存入口，与 service 用本层类型构成双向耦合，2026-10-11 修掉）。
 
-- command 层两条硬纪律（有静态测试扫源码）：禁 `tokio::spawn`/`Handle::current`/`block_on`（主线程 IPC 回调无 Tokio 上下文，会 panic→abort）；起后台任务用 `tauri::async_runtime::spawn`。
+- command 层两条硬纪律（有静态测试扫源码）：禁 `tokio::spawn`/`Handle::current`/`block_on`（主线程 IPC 回调无 Tokio 上下文，会 panic→abort）；起后台任务优先 `hongguo_service::runtime::spawn`，只有需要 Tauri 设施（`AppHandle`、窗口、`spawn_blocking` 进 Tauri 运行时）时才用 `tauri::async_runtime`。
 - **锁不跨 await**：`AppStateInner` 的字段全是 `RwLock`（parking_lot，guard 非 Send）。读状态走快照方法 `state.settings()` / `state.queue()` / `state.device()`（clone 出来用），绝不把 guard 带过 await 点。
 - 外呼命令标准开头：`let env = state.api_env();`——一次调用链内环境（代理+设备+Cookie）不变，避免「签名用 A 设备、请求带 B Cookie」。
 - service 层「归一化与校验一体」：校验的是归一化之后的结果，拆两个函数会留下顺序写反的窗口（settings_service 注释）。
@@ -42,9 +43,7 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> StorageUsage {
 
 #[tauri::command]
 pub fn delete_series_files(state: State<'_, AppState>, series_id: String) -> AppResult<usize> {
-    let n = cleanup::delete_series(&state, &series_id)?;
-    after_cleanup(&state)?; // 清理后同步任务状态并落盘
-    Ok(n)
+    cleanup::delete_series(&state, &series_id)
 }
 ```
 
@@ -61,7 +60,7 @@ pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
 }
 ```
 
-**entity.rs**：全部 `pub async fn`（无 trait），只被 bridge 转调，业务代码不直接碰。存储设计：复杂实体整行存 JSON 列，只把需要 WHERE/ORDER/JOIN 的字段提升为列；playback 是最热写路径（前端 5 秒节流上报）用全真实列 + UPSERT；多行写包单事务（`db.with_tx`）。
+**entity/**：八个模块（`device` / `follow` / `local_history` / `merge` / `playback` / `series` / `settings` / `task`），全部 `pub async fn`（无 trait），只被 bridge 转调，业务代码不直接碰。存储设计：复杂实体整行存 JSON 列，只把需要 WHERE/ORDER/JOIN 的字段提升为列；playback 是最热写路径（前端 5 秒节流上报）用全真实列 + UPSERT；多行写包单事务（`db.with_tx`）。
 
 **schema 迁移流程**（db.rs）：
 
@@ -70,11 +69,11 @@ pub fn series_by_id(&self, series_id: &str) -> AppResult<Option<Series>> {
 3. 约束变更走「建新表 → INSERT SELECT → DROP → RENAME」（SQLite 不能改约束）；
 4. 多语句 DDL 必须 `execute_batch`（Turso 的 execute 只跑第一条）。
 
-新实体全链路：db.rs 迁移 → entity.rs 读写 → bridge.rs 门面方法 → （必要时）json_migrate.rs 补旧档导入 → bootstrap/store.rs 启动装载。
+新实体全链路：db.rs 迁移 → `entity/` 对应模块读写 → bridge.rs 门面方法 → `crates/hongguo-tauri/src/bootstrap/store.rs` 启动装载。
 
 ## 错误处理
 
-单一 `AppError`（thiserror）序列化 `{kind, message}`，kind 即前端 i18n key。变体语义设计（别合并）：`StoreLocked`≠`StoreCorrupt`、`Busy`≠`InvalidArgs`、`EmptyResponse`（签名失效=200+0字节）独立、`Cancelled` 供调度器、`Auth` transparent。队列表只存 i18n key 不存人话。详见 references/ipc.md 错误契约节。
+单一 `AppError`（thiserror）序列化 `{kind, message}`，18 个变体与 i18n 例外见 `references/ipc.md` 错误契约节。别合并：`StoreLocked`≠`StoreCorrupt`、`Busy`≠`InvalidArgs`、`StreamMiss`≠`EmptyResponse`、`Internal`≠`Network`；`Cancelled` 供调度器；`Auth` / `Rejected` / `StreamMiss` / `Unsupported` 为 transparent。队列表只存 i18n key 不存人话。
 
 ## 测试规范
 
