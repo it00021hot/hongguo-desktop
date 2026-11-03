@@ -1,4 +1,4 @@
-/** 窄屏官方同款 chrome：右上倍速、底三键+细进度、横屏「全屏观看」贴画面底边。 */
+/** 窄屏官方同款 chrome：右上倍速、底细进度；横片「全屏观看」= 锁横屏 + 藏壳栏。 */
 import {
   useCallback,
   useEffect,
@@ -8,12 +8,13 @@ import {
   type RefObject,
 } from 'react';
 import { ChevronRight, Download, ListVideo, MonitorPlay, Sparkles } from 'lucide-react';
-import { toast } from 'sonner';
-import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { formatDuration } from '@/utils/format';
 import { readPlaybackRate, writePlaybackRate } from '@/utils/playback-prefs';
 import type { DanmakuDisplaySettings, EnhancementSettings } from '@/utils/playback-prefs';
 import type { VideoDefinition } from '@/service/schema';
+import { useUiStore } from '@/stores/ui';
+import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
+import { setAndroidLandscape } from '@/utils/android-shell';
 import { t, tf } from '@/locales';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -52,14 +53,23 @@ function Segmented<T extends string | number>({
   options,
   labelOf,
   onChange,
+  columns,
 }: {
   value: T;
   options: readonly T[];
   labelOf: (v: T) => string;
   onChange: (v: T) => void;
+  /** 固定列数：避免末项被拉成整行宽（倍速 3x 曾独占第二行） */
+  columns?: number;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div
+      className={cn(
+        'grid gap-1.5',
+        columns ? undefined : 'grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))]',
+      )}
+      style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+    >
       {options.map((opt) => {
         const on = opt === value;
         return (
@@ -68,7 +78,7 @@ function Segmented<T extends string | number>({
             type="button"
             onClick={() => onChange(opt)}
             className={cn(
-              'min-w-12 flex-1 rounded-lg px-2 py-2 font-mono text-xs transition-colors',
+              'rounded-lg px-2 py-2 font-mono text-xs transition-colors',
               on ? 'bg-white/20 text-white' : 'bg-white/5 text-white/70 hover:bg-white/10',
             )}
           >
@@ -134,6 +144,9 @@ export function PhonePlayerChrome({
   const [duration, setDuration] = useState(0);
   const [landscape, setLandscape] = useState(false);
   const [fsTop, setFsTop] = useState<number | null>(null);
+  // Android 上窗口 setFullscreen 基本空操作；窄屏「全屏观看」走 UI 沉浸（playerFrameless 藏顶栏/底栏）
+  const immersive = useUiStore((s) => s.playerFrameless);
+  const setImmersive = useUiStore((s) => s.setPlayerFrameless);
 
   const syncFullscreenAnchor = useCallback(() => {
     const video = videoRef.current;
@@ -151,7 +164,7 @@ export function PhonePlayerChrome({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    setRate(video.playbackRate);
+    setRate(readPlaybackRate());
     setCurrent(video.currentTime);
     setDuration(Number.isFinite(video.duration) ? video.duration : 0);
     const syncLandscape = () => {
@@ -163,7 +176,7 @@ export function PhonePlayerChrome({
       setCurrent(video.currentTime);
       setDuration(Number.isFinite(video.duration) ? video.duration : 0);
     };
-    const onRate = () => setRate(video.playbackRate);
+    const onRate = () => setRate(readPlaybackRate());
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('durationchange', onTime);
     video.addEventListener('ratechange', onRate);
@@ -185,14 +198,15 @@ export function PhonePlayerChrome({
     const ro = new ResizeObserver(() => syncFullscreenAnchor());
     ro.observe(stage);
     return () => ro.disconnect();
-  }, [landscape, syncFullscreenAnchor]);
+  }, [landscape, immersive, syncFullscreenAnchor]);
 
   const applyRate = (next: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.playbackRate = next;
+    // 先写 prefs 镜像，再贴到元素——贴回 effect 与 UI 都以镜像为准，
+    // 避免 Android WebView 不派发 ratechange 时被旧值打回
     writePlaybackRate(next);
     setRate(next);
+    const video = videoRef.current;
+    if (video) video.playbackRate = next;
   };
 
   const seekTo = (ratio: number) => {
@@ -203,10 +217,12 @@ export function PhonePlayerChrome({
     setCurrent(next);
   };
 
-  const enterFullscreen = () => {
-    void applyWindowFullscreen(true).catch((e: Error) =>
-      toast.error(tf('player.fullscreenFailed', { error: e.message })),
-    );
+  const toggleImmersive = () => {
+    const next = !useUiStore.getState().playerFrameless;
+    setImmersive(next);
+    // 真机：锁 Activity 横屏（完整画面铺满横屏）；桌面窄窗顺带试窗口全屏
+    setAndroidLandscape(next);
+    void applyWindowFullscreen(next).catch(() => undefined);
   };
 
   const enhanceOn = enhanceSettings.anime4kOn || enhanceSettings.sharpenOn;
@@ -234,7 +250,7 @@ export function PhonePlayerChrome({
         </button>
       </ChromeSurface>
 
-      {/* 横屏：落在 letterbox 黑边（画面下方），不挡画面 */}
+      {/* 横片：落在 letterbox 黑边；点了锁 Activity 横屏 + 藏壳栏（完整画面铺满） */}
       {landscape && fsTop != null && (
         <ChromeSurface
           shown={visible}
@@ -247,12 +263,12 @@ export function PhonePlayerChrome({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                enterFullscreen();
+                toggleImmersive();
               }}
               className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/55 px-3.5 py-2 text-sm text-white backdrop-blur-sm hover:bg-black/70"
             >
               <MonitorPlay className="size-4" />
-              {t('player.watchFullscreen')}
+              {immersive ? t('player.exitWatchFullscreen') : t('player.watchFullscreen')}
             </button>
           </div>
         </ChromeSurface>
@@ -306,6 +322,7 @@ export function PhonePlayerChrome({
                 options={RATES}
                 labelOf={(r) => `${r}x`}
                 onChange={applyRate}
+                columns={3}
               />
             </section>
             <section className="flex flex-col gap-2">

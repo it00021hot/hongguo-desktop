@@ -2,10 +2,12 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   MAX_RATE,
   MIN_RATE,
+  readDanmakuDisplay,
   readEnhancement,
   readMuted,
   readPlaybackRate,
   readVolume,
+  resetPlaybackPrefsMemory,
   writeEnhancement,
   writeMuted,
   writePlaybackRate,
@@ -29,15 +31,30 @@ let storage: ReturnType<typeof installLocalStorage>;
 describe('playback-prefs', () => {
   beforeEach(() => {
     storage = installLocalStorage();
+    resetPlaybackPrefsMemory();
   });
 
   it('首次读取回落到默认值', () => {
     expect(readPlaybackRate()).toBe(1);
     expect(readVolume()).toBe(1);
     expect(readMuted()).toBe(false);
+    expect(readDanmakuDisplay()).toEqual({
+      opacity: 0.5,
+      fontScale: 0.5,
+      density: 0.5,
+      area: 0.25,
+    });
   });
 
   it('倍速能跨会话读回', () => {
+    writePlaybackRate(2);
+    expect(readPlaybackRate()).toBe(2);
+  });
+
+  it('倍速 write 后不依赖 ratechange 也能被贴回 effect 读到', () => {
+    // 模拟 Android WebView：程序化改倍速不派发事件，只走 write 镜像
+    writePlaybackRate(1.5);
+    expect(readPlaybackRate()).toBe(1.5);
     writePlaybackRate(2);
     expect(readPlaybackRate()).toBe(2);
   });
@@ -54,11 +71,12 @@ describe('playback-prefs', () => {
     expect(readMuted()).toBe(true);
   });
 
-  it('越界的倍速被夹回合法区间而不是照单全收', () => {
+  it('越界的倍速拒绝写入，保留原合法值', () => {
+    writePlaybackRate(2);
     writePlaybackRate(999);
-    expect(readPlaybackRate()).toBe(1);
+    expect(readPlaybackRate()).toBe(2);
     writePlaybackRate(0.01);
-    expect(readPlaybackRate()).toBe(1);
+    expect(readPlaybackRate()).toBe(2);
   });
 
   it('损坏的存储值回落到默认值', () => {

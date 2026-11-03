@@ -213,6 +213,7 @@
     "downloadToLocal": "Download to local",
     "more": "More",
     "watchFullscreen": "Watch fullscreen",
+    "exitWatchFullscreen": "Exit fullscreen",
     "fullscreen": "Fullscreen",
     "fullscreenFailed": "Failed to toggle fullscreen: {error}",
     "frameless": "Frameless window",

@@ -1,12 +1,15 @@
 package com.hongguo.desktop
 
+import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.WindowInsets
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import kotlin.math.max
 
 class MainActivity : TauriActivity() {
   /** onWebViewCreate 存下的 WebView 引用：返回键桥与 insets 都挂在它上面。 */
@@ -14,6 +17,8 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    // 信息流是竖滑形态：默认锁竖屏；「全屏观看」再临时切横屏
+    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
     super.onCreate(savedInstanceState)
   }
 
@@ -36,20 +41,21 @@ class MainActivity : TauriActivity() {
   }
 
   // enableEdgeToEdge 让 WebView 铺到状态栏/导航条底下：顶栏 tab 被状态栏
-  // 盖住点不了，底部导航条被手势条压着。把 systemBars insets 折成 WebView
-  // 的布局 margin——**不能用 padding**：WebView（Chromium）不支持 padding，
-  // 网页内容照旧铺满 view，状态栏照样叠在顶栏上（真机实测）。margin 收缩
-  // view 本体，内容区避开系统栏，系统栏区域露出主题窗口底色。返回 insets
-  // 不消费，Chromium 子树的 insets 分发照常。
+  // 盖住点不了，底部导航条被手势条压着。把 systemBars + IME insets 折成
+  // WebView 的布局 margin——**不能用 padding**：WebView（Chromium）不支持
+  // padding。IME 必须进 bottom margin，否则软键盘会盖住底栏发弹幕输入框。
+  // 返回 insets 不消费，Chromium 子树的 insets 分发照常。
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     webViewRef = webView
     webView.setBackgroundColor(surfaceBackgroundColor())
+    webView.addJavascriptInterface(AndroidBridge(this), "HongguoAndroid")
     webView.setOnApplyWindowInsetsListener { v, insets ->
       val (left, top, right, bottom) =
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val i = insets.getInsets(WindowInsets.Type.systemBars())
-            listOf(i.left, i.top, i.right, i.bottom)
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            val ime = insets.getInsets(WindowInsets.Type.ime())
+            listOf(bars.left, bars.top, bars.right, max(bars.bottom, ime.bottom))
           } else {
             @Suppress("DEPRECATION")
             listOf(
@@ -73,5 +79,23 @@ class MainActivity : TauriActivity() {
     val tv = TypedValue()
     return if (theme.resolveAttribute(android.R.attr.colorBackground, tv, true)) tv.data
     else Color.WHITE
+  }
+
+  /**
+   * 给前端的横屏锁：全屏观看横片时锁 SENSOR_LANDSCAPE，退出回 SENSOR_PORTRAIT
+   * （信息流竖滑，不能停在横屏）。
+   */
+  fun setLandscapeLocked(on: Boolean) {
+    requestedOrientation =
+        if (on) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+  }
+}
+
+/** JS ↔ Kotlin 桥：前端 `window.HongguoAndroid.setLandscape(true/false)`。 */
+class AndroidBridge(private val activity: MainActivity) {
+  @JavascriptInterface
+  fun setLandscape(on: Boolean) {
+    activity.runOnUiThread { activity.setLandscapeLocked(on) }
   }
 }

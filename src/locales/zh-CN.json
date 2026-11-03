@@ -213,6 +213,7 @@
     "downloadToLocal": "下载到本地",
     "more": "更多",
     "watchFullscreen": "全屏观看",
+    "exitWatchFullscreen": "退出全屏",
     "fullscreen": "全屏",
     "fullscreenFailed": "全屏切换失败：{error}",
     "frameless": "无边框窗口",

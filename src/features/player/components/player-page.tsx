@@ -424,7 +424,7 @@ export function PlayerView({
   const { pinned, togglePinned } = usePinWindow();
   // 窄于 md：手机端 / 缩到手机宽的桌面窗——全量控制栏必然溢出，画面用 cover 填满
   const narrow = useNarrowScreen();
-  // 小窗一律 cover；窄屏仅竖屏片源 cover，横屏 contain（官方 letterbox，避免裁掉画面）
+  // 小窗一律 cover；窄屏仅竖屏片源 cover，横屏 contain（完整画面 +「全屏观看」沉浸放大舞台）
   const coverFill = miniScreen || (narrow && videoPortrait);
 
   // 返回来源页（usePlaySeries 进场时记的路由），消费即清

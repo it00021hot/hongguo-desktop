@@ -16,6 +16,7 @@ import { useFollowNoticesInvalidator, keys } from '@/service/queries';
 import { useUiStore } from '@/stores/ui';
 import { usePinWindow } from '@/hooks/use-pin-window';
 import { isMac } from '@/utils/platform';
+import { setAndroidLandscape } from '@/utils/android-shell';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
@@ -136,6 +137,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!playerSurface && useUiStore.getState().playerFrameless) {
       useUiStore.getState().setPlayerFrameless(false);
+      // 离开播放页时解开 Android 横屏锁（全屏观看中切走路由）
+      setAndroidLandscape(false);
       void appApi.setTrafficLightsVisible(true).catch(() => undefined);
     }
   }, [playerSurface]);
