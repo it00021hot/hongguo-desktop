@@ -214,8 +214,16 @@ pub fn compat_merge(
         .filter(|t| t.info.is_video)
         .map(|t| t.info.samples.len())
         .sum();
+    // 拼接已消费全部转码产物：兼容缓存是播放侧的 3 集滚动窗口，合并的瞬时多集
+    // 文件就地删除，不等下一轮 trim（校验失败的分支不删——重试还能命中缓存）。
+    let mut cleaned = 0usize;
+    for p in &transcoded {
+        if std::fs::remove_file(p).is_ok() {
+            cleaned += 1;
+        }
+    }
     log::info!(
-        "[Merge] {output_name} 完成：{count} 集 / {frames} 个视频样本 / {:.1}MB",
+        "[Merge] {output_name} 完成：{count} 集 / {frames} 个视频样本 / {:.1}MB，清理 {cleaned} 个转码产物",
         size as f64 / 1048576.0
     );
     Ok((output, size, count))

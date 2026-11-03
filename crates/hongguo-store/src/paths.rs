@@ -75,9 +75,6 @@ pub fn cover_cache_dir() -> PathBuf {
     cache_root().join("cover-cache")
 }
 
-/// 兼容转码缓存上限（沿用现版 4GB）。
-pub const COMPAT_CACHE_MAX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-
 /// 数据库文件完整路径。
 pub fn db_file() -> PathBuf {
     data_dir().join(DB_FILE)
@@ -155,11 +152,6 @@ mod tests {
         assert_eq!(db_file(), data_dir().join(DB_FILE), "库不受缓存根影响");
         set_cache_root_override(None);
         assert_eq!(compat_cache_dir(), data_dir().join("compat-cache"));
-    }
-
-    #[test]
-    fn limits_match_legacy_values() {
-        assert_eq!(COMPAT_CACHE_MAX_BYTES, 4_294_967_296);
     }
 
     #[test]

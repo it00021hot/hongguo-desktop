@@ -109,8 +109,6 @@ pub fn transcode(
         });
     };
 
-    cache::trim();
-
     log::info!(
         "[Transcode] {series_id} 第 {vid_index} 集完成，后端 {}",
         backend.decoder_label()

@@ -1,8 +1,8 @@
-//! 兼容转码缓存：上限 4GB，按 atime 淘汰。
+//! 兼容转码缓存：滚动窗口，最多保留 [`KEEP_EPISODES`] 集，按 atime 淘汰。
 
 use std::path::PathBuf;
 
-use hongguo_store::paths::{COMPAT_CACHE_MAX_BYTES, compat_cache_dir};
+use hongguo_store::paths::compat_cache_dir;
 
 /// 某集的缓存文件名。
 pub fn cache_file(series_id: &str, vid_index: u32) -> PathBuf {
@@ -22,32 +22,19 @@ fn sanitize(id: &str) -> String {
         .collect()
 }
 
-/// 兼容转码缓存上限的下界：低于它缓存放不下两集，合并时每集都要重转一遍。
-const CAP_FLOOR: u64 = 2 * 1024 * 1024 * 1024;
+/// 最多保留的集数：兼容播放是「当前集 + 预转下一集」的滚动窗口，三份有余；
+/// 攒多了就是吃磁盘（实测能滚到 14GB+）。合并转码的瞬时多集不经这里约束——
+/// 中途逐出会让拼接拿到断路径，消费完就地删除（见 `merge_service::compat`）。
+const KEEP_EPISODES: usize = 3;
 
-/// 兼容转码缓存上限的上界：缓存是可重算的中间产物，不是用户的数据。
-const CAP_CEILING: u64 = 16 * 1024 * 1024 * 1024;
-
-/// 本次淘汰用多少字节做上限：最多占当前空闲的一成，落在 [2GB, 16GB] 之间。
-fn effective_cap() -> u64 {
-    let free = hongguo_media::disk_space::free_space_at(&compat_cache_dir()).unwrap_or(0);
-    if free == 0 {
-        // 查不到空闲就退回旧行为，不因为一次探测失败就把缓存清光
-        return COMPAT_CACHE_MAX_BYTES;
-    }
-    (free / 10).clamp(CAP_FLOOR, CAP_CEILING)
-}
-
-/// 按 atime 淘汰到上限以下。
+/// 按 atime 淘汰：只保留最近 [`KEEP_EPISODES`] 个文件，返回删除数。
+/// 被占用的文件（正在被播放器读）删不掉就跳过，宁可暂时多留一个。
 pub fn trim() -> usize {
     let dir = compat_cache_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return 0;
     };
-    let cap = effective_cap();
-
-    let mut items: Vec<(std::time::SystemTime, PathBuf, u64)> = Vec::new();
-    let mut total = 0u64;
+    let mut items: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("mp4") {
@@ -58,21 +45,16 @@ pub fn trim() -> usize {
             .accessed()
             .or_else(|_| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH);
-        total += m.len();
-        items.push((at, p, m.len()));
+        items.push((at, p));
     }
-    if total <= cap {
+    if items.len() <= KEEP_EPISODES {
         return 0;
     }
-
-    items.sort_by_key(|(t, _, _)| *t);
+    items.sort_by_key(|(t, _)| *t);
+    let excess = items.len() - KEEP_EPISODES;
     let mut removed = 0;
-    for (_, p, size) in items {
-        if total <= cap {
-            break;
-        }
-        if std::fs::remove_file(&p).is_ok() {
-            total -= size;
+    for (_, p) in &items[..excess] {
+        if std::fs::remove_file(p).is_ok() {
             removed += 1;
         }
     }
@@ -97,6 +79,7 @@ pub fn clear() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hongguo_store::paths::ScopedDataDir;
 
     #[test]
     fn cache_file_is_padded() {
@@ -110,5 +93,35 @@ mod tests {
         let p = cache_file("a/b:c", 1);
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(!name.contains('/') && !name.contains(':'));
+    }
+
+    #[test]
+    fn trim_keeps_only_the_newest_episodes() {
+        let dir = std::env::temp_dir().join(format!("hg-trim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        std::fs::create_dir_all(compat_cache_dir()).unwrap();
+        for i in 1..=5 {
+            std::fs::write(cache_file("s", i), vec![0u8; 128]).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        assert_eq!(trim(), 2, "5 个文件应删掉最旧的 2 个");
+        assert!(!cache_file("s", 1).exists() && !cache_file("s", 2).exists());
+        assert!(cache_file("s", 3).exists() && cache_file("s", 5).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trim_below_the_cap_is_a_no_op() {
+        let dir = std::env::temp_dir().join(format!("hg-trim-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        std::fs::create_dir_all(compat_cache_dir()).unwrap();
+        for i in 1..=3 {
+            std::fs::write(cache_file("s", i), vec![0u8; 128]).unwrap();
+        }
+        assert_eq!(trim(), 0, "未超上限不动文件");
+        assert!(cache_file("s", 1).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
