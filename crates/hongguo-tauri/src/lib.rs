@@ -184,11 +184,21 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
                 // 兜底显示：窗口改由 mark_window_ready（前端挂载）亮出后，
                 // 前端崩溃/加载失败会让它永远藏着——超时强制亮出。宁可亮出
-                // 一个白屏（能关、能被单实例二次启动拉回），不能无窗可关。
+                // 一个空窗（能关、能被单实例二次启动拉回），不能无窗可关。
+                // dev 的前端冷启动要等 Vite 转换整个模块图（实测 ~75s），
+                // 10s 阈值必然误触发、亮出一个无内容的黑窗，故 dev 档拉长
+                // （前端真挂了走 Ctrl+C / 单实例二次启动拉回）；release 前端
+                // 秒级就绪（实测 FCP ~1.2s），保持 10s。
+                const FRONTEND_READY_FALLBACK_SECS: u64 =
+                    if cfg!(debug_assertions) { 120 } else { 10 };
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    std::thread::sleep(std::time::Duration::from_secs(
+                        FRONTEND_READY_FALLBACK_SECS,
+                    ));
                     if !fallback_ready.load(Ordering::Acquire) {
-                        log::warn!("[Window] 前端 10s 未就绪，兜底显示窗口");
+                        log::warn!(
+                            "[Window] 前端 {FRONTEND_READY_FALLBACK_SECS}s 未就绪，兜底显示窗口"
+                        );
                         let _ = fallback_window.show();
                         let _ = fallback_window.set_focus();
                     }

@@ -91,6 +91,14 @@ opt-level = 3
 lto = "thin"
 strip = true
 
+# dev 档只留行号级调试信息。全量 debuginfo（DWARF 生成 + PDB 落盘）是
+# make dev 编译段的大头——release 提交（全 crate 版本号变更）后首次 dev
+# 全 workspace 重编实测 1m10s，行号级砍掉变量级调试数据后编译与链接显著
+# 提速。栈回溯仍带文件与行号（Win32 dump 的 .pdata + 行号符号化不受影响），
+# 代价只是调试器里看不到变量值；release 的 strip=true 不动。
+[profile.dev]
+debug = "line-tables-only"
+
 # 只对这一个依赖关掉 debug 断言，别把自己的代码也一起降级。
 #
 # `rusty_h265-accel` 的去块滤波在帧边界有个过严的 `debug_assert`
