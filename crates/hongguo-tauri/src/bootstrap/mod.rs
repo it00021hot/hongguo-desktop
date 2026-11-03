@@ -6,5 +6,6 @@ pub mod device;
 pub mod downloader;
 pub mod events;
 pub mod rescan;
+pub mod status_log;
 pub mod store;
 pub mod transcoder;

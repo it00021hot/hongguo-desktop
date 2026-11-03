@@ -10,6 +10,9 @@ authors.workspace = true
 [dependencies]
 # IPC / 窗口 / 协议注册的宿主框架。
 tauri = { version = "2", features = ["protocol-asset"] }
+# 周期状态日志读本进程 RSS/private（status_log）。已在依赖图里（hongguo-media 传递引入），
+# feature 按需裁剪到 system。
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # 选图后的尺寸/格式解码（`emoticon_pick_image` 一次带齐，前端不再量图）。
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。

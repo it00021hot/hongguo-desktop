@@ -4518,6 +4518,7 @@ dependencies = [
  "rfd 0.15.4",
  "serde",
  "serde_json",
+ "sysinfo 0.40.1",
  "tauri",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
@@ -9399,6 +9400,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e8a3edbe0394ce115f3917a00349dd242be09eb5a091ed509eaf67b55cfb8a8"
 dependencies = [
  "libc",
+ "memchr",
+ "ntapi",
  "objc2-core-foundation",
  "objc2-io-kit",
  "windows 0.62.2",
