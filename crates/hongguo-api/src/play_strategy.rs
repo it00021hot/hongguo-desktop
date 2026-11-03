@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::client::ApiEnv;
 use hongguo_common::{AppError, AppResult};
-use hongguo_signer::device::{fingerprint_for_cdid, DeviceProfile};
+use hongguo_signer::device::fingerprint_for_cdid;
 
 /// 播放策略端点（官方播放器栈，api5 sinfonlinea 边缘）。
 pub const PLAY_STRATEGY_PATH: &str = "/reading/media/play/strategy/";

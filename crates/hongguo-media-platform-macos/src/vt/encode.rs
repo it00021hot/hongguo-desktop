@@ -113,19 +113,18 @@ impl Compressor {
             os(status, "建 H.264 硬编会话")?;
 
             // 质量与码控。VT 没有 CRF：码率按分辨率×帧率标定（见 `bitrate_for`）。
-            // MaxFrameDelayCount=0 关掉帧延迟（也就没有 B 帧重排）：输出顺序=输入
-            // 顺序，pts 标注与封装器的「严格递增」要求都不受干扰。
             // ProfileLevel 在个别第三方硬编上可能不吃：不致命，别让会话白建。
             let bitrate_num = make_int(bitrate);
             let gop = make_int(250);
-            let no_delay = make_int(0);
-            let no_reorder = make_int(0);
-            // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余
-            // 尽力而为——实测部分编码器拒收 MaxFrameDelayCount=0 / 自定义 profile。
-            // **AllowFrameReordering 必须关掉**：B 帧重排一旦被编码器打开（硬编
-            // 会话会拒收 MaxFrameDelayCount=0，本机实证），输出落进解码序 +
-            // 非单调 PTS，递增兜底只能把乱序帧顶到错误的时间上——产物帧序乱掉
-            // （真实剧集 B 帧流首跑即现）。下游 mux 的契约就是单调显示序。
+            // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效）；其余尽力而为。
+            // **AllowFrameReordering 关掉**是简化取向、不是正确性闸门：关掉后无
+            // B 帧，输出序=输入序，stts 平凡、不写 ctts，流式收割（take_outputs）
+            // 即输入序；就算被编码器拒收，PTS 透传 + mux 的「解码序 + ctts」也能
+            // 正确封装非单调显示时间。契约类型是 CFBoolean——传 CFNumber 会被
+            // 会话校验拒收（OSStatus -12900）等于没关（2026-11-03 启动警告实录，
+            // 此前传的一直是数值 0，重排从未真正关掉过）。帧延迟
+            // （MaxFrameDelayCount）只影响出帧快慢、不影响顺序，离线转码无所谓，
+            // 且本机硬编实测拒收 0 值——请求它只会在每轮启动刷一条拒收警告，不设。
             let required = os(
                 ffi::VTSessionSetProperty(
                     session,
@@ -138,17 +137,12 @@ impl Compressor {
                 (
                     "AllowFrameReordering",
                     ffi::kVTCompressionPropertyKey_AllowFrameReordering,
-                    no_reorder as ffi::CFTypeRef,
+                    ffi::kCFBooleanFalse as ffi::CFTypeRef,
                 ),
                 (
                     "MaxKeyFrameInterval",
                     ffi::kVTCompressionPropertyKey_MaxKeyFrameInterval,
                     gop as ffi::CFTypeRef,
-                ),
-                (
-                    "MaxFrameDelayCount",
-                    ffi::kVTCompressionPropertyKey_MaxFrameDelayCount,
-                    no_delay as ffi::CFTypeRef,
                 ),
             ] {
                 let st = ffi::VTSessionSetProperty(session, key, value);
@@ -168,7 +162,6 @@ impl Compressor {
             );
             ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
             ffi::CFRelease(gop as ffi::CFTypeRef);
-            ffi::CFRelease(no_delay as ffi::CFTypeRef);
             required?;
 
             Ok(Compressor {

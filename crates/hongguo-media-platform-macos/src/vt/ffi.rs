@@ -307,7 +307,6 @@ unsafe extern "C" {
     pub static kVTDecompressionPropertyKey_RealTime: CFStringRef;
     pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxKeyFrameInterval: CFStringRef;
-    pub static kVTCompressionPropertyKey_MaxFrameDelayCount: CFStringRef;
     pub static kVTCompressionPropertyKey_AllowFrameReordering: CFStringRef;
     pub static kVTCompressionPropertyKey_ProfileLevel: CFStringRef;
     pub static kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder: CFStringRef;
