@@ -130,13 +130,21 @@ pub mod emoticon {
 /// 分集详情接口路径。
 pub const DETAIL_PATH: &str = "/novel/player/multi_video_detail/preload/v1";
 
-/// 清晰度列表（取流地址）批量接口路径（2026-11-01 竞品实流抓包）。
+/// 新通道·多集取流路径（**官方 74232 实流形态**，2026-11-03 virgin 抓包 +
+/// 同窗探针实测发货 26KB 流表；origin 走
+/// [`crate::client::READING_API_ORIGIN`]）。2026-11-01「player/v1 全体
+/// 200+0」的实测在 11-02 签名修复之前，结论已作废。
 ///
-/// ⚠️ 这是当前**唯一活着的取流端点**：reading 系**无签名**轻请求
-/// （见 [`crate::client::api_call_model_light`]），body 见
-/// [`model_light_payload`]。旧路径 `multi_video_model/player/v1` 与
-/// 单集 `video_model/v1/` 已整体回 200+0（2026-11-01 实测，两种形态
-/// 无论签名/身份/版本代际如何均不发货）。
+/// 失败回退 [`MODEL_LIGHT_PATH`]（竞品形态，2026-11-01 抓包，同探针
+/// 实测仍发货——双通道并存，按官方优先排序）。
+pub const PLAYER_MODEL_PATH: &str = "/novel/player/multi_video_model/player/v1";
+
+/// 新通道·单集取流路径（官方 74232 实流；多集空响应时的单集回落，
+/// 亦打 [`crate::client::READING_API_ORIGIN`]）。失败回退旧通道。
+pub const SINGLE_MODEL_PATH: &str = "/novel/player/video_model/v1/";
+
+/// 旧通道·批量取流路径（2026-11-01 竞品实流抓包；探针实测仍发货，
+/// 作为新通道的回退保留）。
 pub const MODEL_LIGHT_PATH: &str = "/novel/player/multi_video_model/v1/";
 
 /// 详情页头部元信息端点。
@@ -257,6 +265,101 @@ pub fn model_light_payload(
             video_platform: 1024,
         },
         mixed_video_id_map: mixed_video_id_map.clone(),
+    }
+}
+
+// ---------------------------------------------------------------- 新通道官方形态
+
+/// 官方多集取流 body（`biz_param` 十字段含
+/// `disable_video_relate_book`/`use_server_dns_scene`，`dr_scene:"player"`）。
+/// 键集 = 2026-11-03 官方 74232 virgin 抓包逐字段。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlayerModelBizParam {
+    #[serde(rename = "detail_page_version")]
+    pub detail_page_version: i64,
+    #[serde(rename = "device_level")]
+    pub device_level: i64,
+    #[serde(rename = "disable_digg_stat")]
+    pub disable_digg_stat: bool,
+    #[serde(rename = "disable_video_relate_book")]
+    pub disable_video_relate_book: bool,
+    #[serde(rename = "need_all_video_definition")]
+    pub need_all_video_definition: bool,
+    #[serde(rename = "need_mp4_align")]
+    pub need_mp4_align: bool,
+    #[serde(rename = "use_os_player")]
+    pub use_os_player: bool,
+    #[serde(rename = "use_server_dns")]
+    pub use_server_dns: bool,
+    #[serde(rename = "use_server_dns_scene")]
+    pub use_server_dns_scene: &'static str,
+    #[serde(rename = "video_platform")]
+    pub video_platform: i64,
+}
+
+/// 官方多集取流请求体（端点 [`PLAYER_MODEL_PATH`]）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlayerModelPayload {
+    #[serde(rename = "biz_param")]
+    pub biz_param: PlayerModelBizParam,
+    #[serde(rename = "dr_scene")]
+    pub dr_scene: &'static str,
+    #[serde(rename = "mixed_video_id_map")]
+    pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
+}
+
+/// 构造官方多集取流请求体（`device_level:3`、`use_server_dns:true`，
+/// 场景固定 `cold_start_stage`、`dr_scene:"player"`）。
+pub fn player_model_payload(
+    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
+) -> PlayerModelPayload {
+    PlayerModelPayload {
+        biz_param: PlayerModelBizParam {
+            detail_page_version: 0,
+            device_level: 3,
+            disable_digg_stat: false,
+            disable_video_relate_book: false,
+            need_all_video_definition: true,
+            need_mp4_align: false,
+            use_os_player: false,
+            use_server_dns: true,
+            use_server_dns_scene: "cold_start_stage",
+            video_platform: 1024,
+        },
+        dr_scene: "player",
+        mixed_video_id_map: mixed_video_id_map.clone(),
+    }
+}
+
+/// 官方单集取流请求体（端点 [`SINGLE_MODEL_PATH`]）：`video_platform:3`、
+/// `from_video_id` 空串、顶层 `content_type` + `video_id`。
+#[derive(Debug, Clone, Serialize)]
+pub struct SingleModelPayload {
+    #[serde(rename = "biz_param")]
+    pub biz_param: PlayerModelBizParam,
+    #[serde(rename = "content_type")]
+    pub content_type: i64,
+    #[serde(rename = "video_id")]
+    pub video_id: String,
+}
+
+/// 构造官方单集取流请求体（biz_param 同多集，仅 `video_platform` 换 3）。
+pub fn single_model_payload(content_type: i64, video_id: &str) -> SingleModelPayload {
+    SingleModelPayload {
+        biz_param: PlayerModelBizParam {
+            detail_page_version: 0,
+            device_level: 3,
+            disable_digg_stat: false,
+            disable_video_relate_book: false,
+            need_all_video_definition: true,
+            need_mp4_align: false,
+            use_os_player: false,
+            use_server_dns: true,
+            use_server_dns_scene: "cold_start_stage",
+            video_platform: 3,
+        },
+        content_type,
+        video_id: video_id.to_string(),
     }
 }
 

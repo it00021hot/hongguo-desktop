@@ -167,9 +167,12 @@ fn check_model_code(value: &Value) -> AppResult<()> {
     Err(AppError::StreamMiss(format!("取流接口返回 {code}: {msg}")))
 }
 
-/// 轻请求批量取流（2026-11-01 竞品实流抓包形态）：单 vid 按 content_type
-/// 分组打 [`crate::params::MODEL_LIGHT_PATH`]，命中返回解析结果，
-/// 空响应/未命中返回 `None`（交调用方报「取流未命中」）。
+/// 轻请求批量取流：单 vid 按 content_type 走
+/// 新通道（官方 74232 形态：`reading.snssdk.com + video_model/v1/`，
+/// 官方 body 逐字段）优先，空响应/网络失败回退旧通道
+/// （`api5-normal-lq + MODEL_LIGHT_PATH`，2026-11-01 竞品形态，同探针
+/// 实测仍发货）。两次都空才算未命中（返回 `None`，交调用方报
+/// 「取流未命中」）。
 async fn fetch_model_light_batch(
     vid: &str,
     content_type: i64,
@@ -178,17 +181,27 @@ async fn fetch_model_light_batch(
     env: &super::client::ApiEnv,
 ) -> AppResult<Option<PlayInfo>> {
     let map = std::collections::BTreeMap::from([(content_type.to_string(), vec![vid.to_string()])]);
-    let payload = serde_json::to_vec(&crate::params::model_light_payload(&map))
+    let new_payload = serde_json::to_vec(&crate::params::single_model_payload(content_type, vid))
         .map_err(|e| AppError::Media(e.to_string()))?;
-    // 一次即回：空响应不重试（重试只会白等）。
-    // lq 域 + gzip：2026-11-01 实流取证口径（三方全程 lq 且发货）
-    let bytes = crate::client::api_call_model_light(
-        crate::client::LQ_API_ORIGIN,
-        crate::params::MODEL_LIGHT_PATH,
-        payload,
+    // 新通道一次即回：空响应不重试（重试只会白等），直接回退
+    let bytes = match crate::client::api_call_model_light(
+        crate::client::READING_API_ORIGIN,
+        crate::params::SINGLE_MODEL_PATH,
+        new_payload,
         env,
     )
-    .await?;
+    .await
+    {
+        Ok(b) if !b.is_empty() => b,
+        Ok(_) => {
+            log::info!("[PlayUrl] 单集新通道空响应，回退旧通道");
+            fallback_model_light(&map, env).await?
+        }
+        Err(e) => {
+            log::warn!("[PlayUrl] 单集新通道请求失败（{e}），回退旧通道");
+            fallback_model_light(&map, env).await?
+        }
+    };
     if bytes.is_empty() {
         return Ok(None);
     }
@@ -196,10 +209,12 @@ async fn fetch_model_light_batch(
         .map_err(|e| AppError::Media(format!("解析取流响应失败: {e}")))?;
     check_code(&value)?;
     check_model_code(&value)?;
-    let Some(model) = value
+    // 新通道单集端点按 video_id 归位；兼容旧通道的 map 形态，两个指针都试
+    let model = value
         .pointer(&format!("/data/{vid}/video_model"))
         .and_then(Value::as_str)
-    else {
+        .or_else(|| value.pointer("/data/video_model").and_then(Value::as_str));
+    let Some(model) = model else {
         return Ok(None);
     };
     let parsed: Value = serde_json::from_str(model)
@@ -217,11 +232,31 @@ async fn fetch_model_light_batch(
     }))
 }
 
-/// 批量取流：起播/切剧时对
-/// 「当前 + 信息流后续几部」（官方 6 个）的入口 vid 打一次
-/// [`crate::params::MODEL_LIGHT_PATH`]（无签名轻请求，2026-11-01
-/// 实流形态）。
-/// 命中落暂存表，[`fetch_play_url`] 使用时取走，不发单集请求。
+/// 旧通道（竞品形态）取流：lq 域 + [`crate::params::MODEL_LIGHT_PATH`]。
+/// 2026-11-03 同窗探针实测仍发货，作为新通道的回退保留。
+async fn fallback_model_light(
+    map: &std::collections::BTreeMap<String, Vec<String>>,
+    env: &super::client::ApiEnv,
+) -> AppResult<Vec<u8>> {
+    let payload = serde_json::to_vec(&crate::params::model_light_payload(map))
+        .map_err(|e| AppError::Media(e.to_string()))?;
+    crate::client::api_call_model_light(
+        crate::client::LQ_API_ORIGIN,
+        crate::params::MODEL_LIGHT_PATH,
+        payload,
+        env,
+    )
+    .await
+}
+
+/// 批量取流：起播/切剧时对「当前 + 信息流后续几部」（官方 6 个）的入口
+/// vid 打一次取流接口。命中落暂存表，[`fetch_play_url`] 使用时取走，
+/// 不发单集请求。
+///
+/// 新通道优先（官方 74232 实流形态：`reading.snssdk.com +
+/// multi_video_model/player/v1`，官方 body 含 `dr_scene:"player"`），
+/// 空响应/网络失败回退旧通道（`api5-normal-lq + MODEL_LIGHT_PATH`，
+/// 2026-11-01 竞品形态，同探针实测仍发货）。
 ///
 /// `mixed_video_id_map` 按**条目 content_type 原样字符串**分组（key 错配 →
 /// 不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"）。
@@ -250,15 +285,27 @@ pub async fn fetch_play_batch(
             }
         }
     }
-    let payload = serde_json::to_vec(&crate::params::model_light_payload(mixed_video_id_map))
-        .map_err(|e| AppError::Media(e.to_string()))?;
-    let bytes = crate::client::api_call_model_light(
-        crate::client::LQ_API_ORIGIN,
-        crate::params::MODEL_LIGHT_PATH,
-        payload,
+    let new_payload =
+        serde_json::to_vec(&crate::params::player_model_payload(mixed_video_id_map))
+            .map_err(|e| AppError::Media(e.to_string()))?;
+    let bytes = match crate::client::api_call_model_light(
+        crate::client::READING_API_ORIGIN,
+        crate::params::PLAYER_MODEL_PATH,
+        new_payload,
         env,
     )
-    .await?;
+    .await
+    {
+        Ok(b) if !b.is_empty() => b,
+        Ok(_) => {
+            log::info!("[PlayUrl] 批量新通道空响应，回退旧通道");
+            fallback_model_light(mixed_video_id_map, env).await?
+        }
+        Err(e) => {
+            log::warn!("[PlayUrl] 批量新通道请求失败（{e}），回退旧通道");
+            fallback_model_light(mixed_video_id_map, env).await?
+        }
+    };
     if bytes.is_empty() {
         log::info!("[PlayUrl] 批量取流空响应（{} vid）", vids.len());
         return Ok(0);

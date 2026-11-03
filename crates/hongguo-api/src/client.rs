@@ -37,6 +37,11 @@ pub const SINFONLINEC_API_ORIGIN: &str = "https://api5-normal-sinfonlinec.fqnove
 /// 边缘均空，靠「批量空→回落单集」兜底。
 pub const LF_API_ORIGIN: &str = "https://api5-normal-lf.fqnovel.com";
 
+/// 新通道·取流 origin（官方 74232 实流：多集 player/v1、单集
+/// video_model/v1/、详情 preload 全在这台机上；2026-11-03 virgin 抓包 +
+/// 同窗探针实测发货 26KB 流表）。失败回退 [`LQ_API_ORIGIN`]（旧通道）。
+pub const READING_API_ORIGIN: &str = "https://reading.snssdk.com";
+
 /// 重试间隔基数，按 `2s * (i + 1)` 递增，与现版一致。
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
 
