@@ -5,10 +5,7 @@ import { interact as interactCmd, login } from '../commands';
 import type { InteractionItem, InteractionState } from '../schema';
 import { fuzzyStaleTime, keys } from './common';
 
-// ---------------------------------------------------------------- 互动（点赞 / 收藏 / 书架）
-
-/** 最近互动状态（登录后才拉；匿名接口静默拒）。回显带全站计数，
- *  属社交态数据——每次挂载重拉，不缓存。 */
+/** 最近互动状态（登录后才拉，匿名接口静默拒）；社交态数据每次挂载重拉，不缓存。 */
 export function useInteractionState() {
   const { data: account } = useAccount();
   return useQuery({
@@ -30,11 +27,7 @@ export function useBookshelf() {
   });
 }
 
-/**
- * 登录/退出后的统一缓存刷新：账号态、互动回显、书架、预约一起失效。
- * 任何登录成功/退出入口都该调（LoginDialog / 侧边栏账户区），否则
- * 互动栏与列表页要等 staleTime 过期才翻面。
- */
+/** 登录/退出后的统一缓存刷新：账号态、互动回显、书架、预约一起失效；任何登录成功/退出入口都该调，否则要等 staleTime 过期才翻面。 */
 export function useAuthRefresh() {
   const qc = useQueryClient();
   return useCallback(() => {
@@ -45,15 +38,12 @@ export function useAuthRefresh() {
   }, [qc]);
 }
 
-/** 点赞 / 取消点赞一集。 */
 export function useVideoDigg() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { vid: string; seriesId: string; digg: boolean }) =>
       interactCmd.videoDigg(input.vid, input.seriesId, input.digg),
-    // 乐观更新：互动回显接口（ugc/action/mget）是「最近互动列表」，
-    // 剧集不在列表里时状态永远是 false——不乐观写的话按钮永不点亮、
-    // 二次点击也不会走取消分支
+    // 乐观更新：互动回显接口是「最近互动列表」，剧不在列表时状态恒 false——不乐观写按钮永不点亮
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: keys.interactState });
       const prev = queryClient.getQueryData<InteractionState>(keys.interactState);
@@ -88,14 +78,12 @@ export function useVideoDigg() {
   });
 }
 
-/** 收藏 / 取消收藏一部剧。 */
 export function useSeriesCollect() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { seriesId: string; collect: boolean }) =>
       interactCmd.seriesCollect(input.seriesId, input.collect),
-    // 乐观写 followed（详情页/互动栏的收藏态都从 interactState 匹配），
-    // 权威数据源是书架列表（onSuccess 里失效重拉）
+    // 乐观写 followed（详情页/互动栏收藏态从 interactState 匹配），权威源是书架列表
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: keys.interactState });
       const prev = queryClient.getQueryData<InteractionState>(keys.interactState);
@@ -127,8 +115,7 @@ export function useSeriesCollect() {
       if (ctx?.prev) queryClient.setQueryData(keys.interactState, ctx.prev);
     },
     onSuccess: () => {
-      // 收藏态的权威回显走书架列表；interactState 的回显是 best-effort，
-      // 不失效它——服务端列表延迟回带旧值会把乐观态顶回去
+      // 收藏态权威回显走书架列表；interactState 回显是 best-effort，不失效——服务端延迟回带旧值会把乐观态顶回去
       void queryClient.invalidateQueries({ queryKey: keys.bookshelf });
     },
   });
@@ -147,9 +134,8 @@ export function useSeriesCollectBatch() {
 }
 
 /**
- * 当前登录态（null = 未登录）。登录信息在缓存白名单内：会话不失效就
- * 一直是真，长期缓存，仅登录/退出的 `useAuthRefresh` 显式失效——
- * 不进 10-30s 抖动区间（那是给「可能变更」数据的节流）。
+ * 当前登录态（null = 未登录）。登录信息属缓存白名单：staleTime Infinity 长期缓存，
+ * 仅登录/退出的 `useAuthRefresh` 显式失效，不进 10-30s 抖动节流区间。
  */
 export function useAccount() {
   return useQuery({

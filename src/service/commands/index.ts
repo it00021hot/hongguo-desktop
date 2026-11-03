@@ -1,10 +1,6 @@
 /**
- * 全部 IPC 调用集中在这里（按域拆分，此处统一出口）。
- *
- * 组件不要直接 `invoke`——统一走这里才能保证 zod 校验与错误归一，
- * 也让「后端改了 command 签名」这件事在类型检查时立刻暴露。
- *
- * 参数名与 Rust 侧严格一致（Tauri 会把 JS 对象的键直接映射为 command 参数名）。
+ * 全部 IPC 调用统一出口（组件禁止直接 invoke）；参数名与 Rust 侧严格一致
+ * （Tauri 把 JS 对象的键直接映射为 command 参数名）。
  */
 export { app } from './app';
 export { capability } from './capability';

@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 登录
-
 export const login = {
   sendCode: (mobile: string) => call('login_send_code', { mobile }),
   smsLogin: (mobile: string, code: string, mfa?: { retryTag: string; smsCodeKey: string }) =>

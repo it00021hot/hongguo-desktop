@@ -1,12 +1,6 @@
-//! CENC-AES-CTR 流式解密。
-//!
-//! 与现版 JS 完全一致的实现方式：每个 16 字节块用
-//! `IV 前 8 字节 || 块序号(8 字节大端)` 作为 AES-128-ECB 的输入，
-//! 加密结果即该块的 keystream，与密文异或。
-//!
-//! ⚠️ 平台封装时 `senc` 里的 IV 只有 **8 字节**（不是规范里的 16）。
-//!    所以 [`new_decryptor`] 收 8 字节，块计数器从 0 重新起算——
-//!    沿用 IV 的后半段会让 keystream 整体偏移，解出来全是噪声。
+//! CENC-AES-CTR 流式解密，与现版 JS 完全一致：每个 16 字节块用 `IV 前 8 字节 || 块序号(8 字节大端)`
+//! 作为 AES-128-ECB 的输入，加密结果即该块的 keystream，与密文异或。
+//! ⚠️ 平台封装 `senc` 里的 IV 只有 **8 字节**（非规范的 16）；[`new_decryptor`] 收 8 字节、块计数器从 0 起算——沿用 IV 后半段会让 keystream 整体偏移。
 
 use aes::Aes128;
 use aes::cipher::{KeyIvInit, StreamCipher};
@@ -28,10 +22,7 @@ pub fn decrypt_sample(cipher: &mut Aes128Ctr, data: &mut [u8]) {
     cipher.apply_keystream(data);
 }
 
-/// 样本内第 `block` 块的计数器块：`IV 前 8 字节 || 块序号(8 字节大端)`。
-///
-/// 与 [`new_decryptor`] 的初始块自洽：块 0 就是初始块本身，
-/// 之后逐块加一——这正是 `Ctr128BE` 全 128 位大端计数的递增方式。
+/// 样本内第 `block` 块的计数器块：`IV 前 8 字节 || 块序号(8 字节大端)`，与 [`new_decryptor`] 的初始块自洽（块 0 = 初始块本身）。
 fn counter_block(iv: &[u8; 8], block: u64) -> [u8; 16] {
     let mut b = [0u8; 16];
     b[..8].copy_from_slice(iv);
@@ -39,14 +30,9 @@ fn counter_block(iv: &[u8; 8], block: u64) -> [u8; 16] {
     b
 }
 
-/// 从样本内第 `skip` 字节起解密一段（流式播放按 Range 惰性解密用）。
-///
-/// CTR 是计数器模式，任意子区间都能独立解：先算出起点落在第几个 16 字节块、
-/// 块内偏移多少，再逐块生成 keystream 异或。**不需要样本的前缀字节**——
-/// 这正是「边下边播」不必等整集的原因。
-///
-/// 正确性与 [`decrypt_sample`] 的对齐由测试锁住：`skip=0` 必须与整样本解密
-/// 逐字节一致，`skip=k` 必须等于整样本解密结果的第 k 字节起的切片。
+/// 从样本内第 `skip` 字节起解密一段（流式播放按 Range 惰性解密用）：CTR 任意子区间可独立解——
+/// 先算起点落在第几个 16 字节块、块内偏移多少，再逐块生成 keystream 异或，**不需要样本前缀**。
+/// 正确性与 [`decrypt_sample`] 的对齐由测试锁住（skip=0 与整样本逐字节一致，skip=k 等于整样本解密的对应切片）。
 pub fn decrypt_range(key: &[u8; 16], iv: &[u8; 8], skip: usize, data: &mut [u8]) {
     use aes::cipher::{BlockCipherEncrypt, KeyInit};
     let cipher = Aes128::new(key.into());
@@ -92,7 +78,6 @@ mod tests {
         decrypt_sample(&mut d, &mut buf);
         assert_ne!(buf, original, "应被加密改变");
 
-        // 用同一 IV 从头再跑一次即还原
         let mut d2 = new_decryptor(&key, &iv);
         decrypt_sample(&mut d2, &mut buf);
         assert_eq!(buf, original);
@@ -115,11 +100,8 @@ mod tests {
         let iv = [2u8; 8];
         let mut buf = vec![0u8; 37];
         decrypt_sample(&mut new_decryptor(&key, &iv), &mut buf);
-        // 不应 panic，且产生了非零输出
         assert!(buf.iter().any(|b| *b != 0));
     }
-
-    // ---------------------------------------------------------------- 区间解密
 
     /// 整样本解密一次，作为对照基准。
     fn whole_decrypt(key: &[u8; 16], iv: &[u8; 8], plain: &[u8]) -> Vec<u8> {
@@ -130,8 +112,7 @@ mod tests {
 
     #[test]
     fn range_decrypt_from_zero_matches_whole_sample() {
-        // 交叉验证：手工计数器块构造与 Ctr128BE 的整样本解密必须逐字节一致，
-        // 否则流式路径与落盘路径会产出两种不同的明文
+        // 交叉验证：手工计数器块构造与 Ctr128BE 整样本解密必须逐字节一致，否则流式与落盘路径产出两种明文
         let key = [0x42u8; 16];
         let iv = [0x24u8; 8];
         let plain: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
@@ -162,7 +143,6 @@ mod tests {
 
     #[test]
     fn range_decrypt_across_many_blocks() {
-        // 跨 64+ 块的长区间（真实样本几十 KB 到几 MB）
         let key = [3u8; 16];
         let iv = [4u8; 8];
         let plain: Vec<u8> = (0..4096u32).map(|i| (i % 199) as u8).collect();

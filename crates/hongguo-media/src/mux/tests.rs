@@ -1,8 +1,5 @@
-//! 封装器的单元测试。
-//!
-//! 测的是「写出来的 MP4 能不能被自己的 demuxer 读回去」：轨道描述符、样本
-//! 数、样本边界逐字节、`ctts` 的合成偏移。解码器级的验证（真码流能被
-//! ffprobe / 平台解码器认）由真实码流的 e2e 承担。
+//! 封装器的单元测试：测「写出来的 MP4 能不能被自己的 demuxer 读回去」——轨道描述符、样本数、样本边界逐字节、`ctts` 合成偏移。
+//! 解码器级的验证（真码流能被 ffprobe / 平台解码器认）由真实码流的 e2e 承担。
 
 use super::*;
 
@@ -58,16 +55,12 @@ fn audio_track(samples: Vec<(f64, Vec<u8>)>) -> AudioTrack {
     }
 }
 
-/// 产物必须真能解复用，且轨道描述符写成 avc1。
-///
-/// 封装器不解析 H.264 语法，哑 NAL 即可：写进去的样本要能原样读回来。
-/// 解码器级的验证由真实码流的 e2e（ffprobe）承担。
+/// 产物必须真能解复用且轨道描述符写成 avc1；封装器不解析 H.264 语法、哑 NAL 即可，解码器级验证由真实码流 e2e 承担。
 #[test]
 fn muxed_output_is_a_playable_avc1_mp4() {
     let dir = temp_dir("avc1");
     let out = dir.join("out.mp4");
 
-    // 3 帧：首帧是带 SPS(7)/PPS(8) 的 IDR，其余是普通帧
     let mut frames: Vec<(f64, Vec<u8>, bool)> = Vec::new();
     let (first, _) = idr_frame();
     frames.push((0.0, first, true));
@@ -87,7 +80,6 @@ fn muxed_output_is_a_playable_avc1_mp4() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 没有帧时不产出文件，也不该 panic。
 #[test]
 fn empty_frames_are_rejected() {
     let dir = temp_dir("empty");
@@ -97,7 +89,6 @@ fn empty_frames_are_rejected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 首帧不是关键帧时拒收：产物没有同步起点，播放器起不来播。
 #[test]
 fn a_stream_without_a_leading_keyframe_is_rejected() {
     let dir = temp_dir("nokey");
@@ -107,13 +98,8 @@ fn a_stream_without_a_leading_keyframe_is_rejected() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// B 帧流（解码序 + 非单调 PTS）封装回归。
-///
-/// 曾整段翻车两次——faststart 搬移假设写入序≈pts 序（样本边界错位），
-/// 以及 PTS 透传撞上「写入序严格 PTS 递增」的校验。封装器不解析 H.264
-/// 语法，哑 NAL 即可做字节级核对：解复用回来的每个样本必须与写入帧的
-/// AVCC 形态逐字节一致，且样本序=写入序（解码序）。哑帧不可解码，
-/// 解码器级的验证由真实码流的 e2e（ffprobe）承担。
+/// B 帧流回归（曾整段翻车两次：faststart 搬移假设写入序≈pts 序、PTS 透传撞「写入序严格递增」校验）；
+/// 哑 NAL 做字节级核对：解复用回来的每个样本必须与写入帧的 AVCC 形态逐字节一致，样本序=写入序（解码序）。
 #[test]
 fn bframe_decode_order_stream_survives_the_mux() {
     // 解码序 + 非单调 PTS（I P B B 型 GOP 重复几轮）
@@ -153,10 +139,7 @@ fn bframe_decode_order_stream_survives_the_mux() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// B 帧的合成偏移要落在 `ctts` 里，且带符号（version 1）。
-///
-/// 显示序 I B B P 对应的解码序是 I P B B——`stts` 描述解码时间轴，
-/// `ctts` 补上「显示时间 − 解码时间」，两者合起来才是显示时间。
+/// B 帧的合成偏移要落在 `ctts` 里且带符号（version 1）：`stts` 描述解码时间轴，`ctts` 补「显示时间 − 解码时间」。
 #[test]
 fn the_ctts_table_carries_the_composition_offsets() {
     let dir = temp_dir("ctts");
@@ -182,8 +165,7 @@ fn the_ctts_table_carries_the_composition_offsets() {
         .iter()
         .flat_map(|&(n, o)| std::iter::repeat_n(o, n as usize))
         .collect();
-    // 解码时间取「显示时间的升序」：0, 0.04, 0.08, 0.12
-    // 合成偏移 = 显示 − 解码：0, +0.08, 0, −0.04（秒）
+    // 解码时间取「显示时间的升序」0/0.04/0.08/0.12；合成偏移 = 显示 − 解码：0, +0.08, 0, −0.04（秒）
     let expect: Vec<i32> = display
         .iter()
         .zip([0.0f64, 0.04, 0.08, 0.12])
@@ -193,15 +175,14 @@ fn the_ctts_table_carries_the_composition_offsets() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 早于首帧视频的音频要裁掉：容器没有 edit list，那段音频会让播放器
-/// 在画面出来之前先播一段没画面的声音。
+/// 早于首帧视频的音频要裁掉：容器没有 edit list，那段音频会让播放器在画面出来前先播一段没画面的声音。
 #[test]
 fn audio_before_the_first_video_frame_is_dropped() {
     let dir = temp_dir("trim");
     let out = dir.join("trim.mp4");
     let mut frames: Vec<(f64, Vec<u8>, bool)> = Vec::new();
     let (first, _) = idr_frame();
-    frames.push((0.2, first, true)); // 首帧视频在 0.2s
+    frames.push((0.2, first, true));
     let (second, _) = plain_frame(1);
     frames.push((0.24, second, false));
 
@@ -216,7 +197,6 @@ fn audio_before_the_first_video_frame_is_dropped() {
 
     let demuxed = crate::demux::demux_file(&out).expect("产物应可解复用");
     let audio_track_info = demuxed.audio_track().expect("应有音轨");
-    // 0.2s 之前（约 8 帧）被裁掉
     assert!(
         audio_track_info.info.samples.len() < 40,
         "早于首帧视频的音频应被裁掉，实际 {} 帧",
@@ -246,8 +226,7 @@ fn the_source_esds_is_carried_over() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 真实规模复现：3000 帧 × ~4KB + AAC 音频交织——小样本全过但真机
-/// 产物在 ~302 帧处样本边界炸开，规模/交织相关就靠这条钉住。
+/// 真实规模复现：3000 帧 × ~4KB + AAC 音频交织——小样本全过但真机产物在 ~302 帧处样本边界炸开，规模/交织相关就靠这条钉住。
 #[test]
 fn bframe_stream_at_realistic_scale_with_audio() {
     let n = 3000usize;

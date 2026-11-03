@@ -1,20 +1,8 @@
 //! `AVAssetResourceLoader` 供数：把一集的明文按 offset/length 喂给 AVFoundation。
-//!
-//! 两种数据源：
-//! - [`Source::Stream`]：生产形态——`hongguo-stream` 的 `(vid, 档位)` 渐进流，
-//!   按需等待密文区间、惰性解密；`contentLength` 用 `plain_len`。
-//! - [`Source::Bytes`]：Phase 0 的整段内存样片（spike 对照用）。
-//!
-//! 关键语义：
-//! - `AVAssetResourceLoader.delegate` 是 **weak**，delegate 必须由调用方强引用；
-//! - `contentType` 是 UTI（`public.mpeg-4`），且必须落在
-//!   `contentInformationRequest.allowedContentTypes` 内，否则 `finishLoading`
-//!   抛 ObjC 异常（Rust 侧无法 catch，会 abort）；
-//! - 必须声明 `byteRangeAccessSupported=YES` + `contentLength`，否则 seek 失败；
-//! - `shouldWait` 必须**立即返回**，回包进有界工作池；同步阻塞会让 AVFoundation
-//!   不消费已回字节（Phase 1a 实测首帧 2s 超时）；
-//! - `didCancelLoadingRequest:` 与 `shouldWait` 在不同线程上跑（并发 dispatch
-//!   queue + 工作池），取消位才送得进来。
+//! 数据源：[`Source::Stream`] 生产形态（`hongguo-stream` 的 `(vid, 档位)` 渐进流，按需等待密文区间、惰性解密）与 [`Source::Bytes`]（spike 对照样片）。
+//! 关键语义：`AVAssetResourceLoader.delegate` 是 **weak** 必须由调用方强引用；`contentType` 是 UTI（`public.mpeg-4`）且必须落在
+//! `allowedContentTypes` 内否则 `finishLoading` 抛 ObjC 异常（Rust 侧无法 catch，会 abort）；必须声明 `byteRangeAccessSupported=YES` + `contentLength` 否则 seek 失败；
+//! `shouldWait` 必须**立即返回**、回包进有界工作池（同步阻塞会让 AVFoundation 不消费已回字节，实测首帧 2s 超时）；`didCancelLoadingRequest:` 与 `shouldWait` 在不同线程上跑，取消位才送得进来。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

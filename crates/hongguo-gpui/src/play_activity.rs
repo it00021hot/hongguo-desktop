@@ -1,14 +1,8 @@
-//! 播放期的系统活动断言：播放中防止系统闲睡/整机休眠，并向系统声明
-//! 「本进程在做用户级工作」——静音、设备缺失等无声播放场景下，桌面
-//! 进程仍可能被系统的节能策略降级，主流播放器（VLC/IINA）播放期间都
-//! 持有同类断言。用户暂停即释放（用户在场与否由交互决定）。
-//!
-//! 平台形态：macOS = `NSProcessInfo beginActivityWithOptions:reason:`
-//! （objc2 绑定，token 由 `Retained` 持有——手写裸 `objc_msgSend` 时它只是
-//! autorelease 对象，自动释放池一清就悬空，恢复播放时 `endActivity` 撞上
-//! 已销毁对象直接 SIGSEGV）；
-//! Windows = `SetThreadExecutionState`（ES_CONTINUOUS 逐线程生效，调用点
-//! 固定在主线程）。其余目标空操作。
+//! 播放期的系统活动断言：播放中防止系统闲睡/整机休眠（无声播放场景下桌面
+//! 进程仍会被节能策略降级，主流播放器播放期间都持同类断言）。用户暂停即
+//! 释放。平台形态：macOS = `NSProcessInfo beginActivity`（token 由 `Retained`
+//! 持有，裸 objc_msgSend 会在自动释放后悬空 SIGSEGV）；Windows =
+//! `SetThreadExecutionState`（逐线程生效，固定主线程调用）。其余目标空操作。
 
 #[cfg(target_os = "macos")]
 mod imp {

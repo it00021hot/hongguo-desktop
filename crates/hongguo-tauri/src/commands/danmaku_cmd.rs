@@ -11,14 +11,7 @@ use hongguo_api::danmaku::{
 use hongguo_common::{AppError, AppResult};
 use hongguo_service::app_state::AppState;
 
-/// 拉一集弹幕的**一窗**（官方滚窗协议；medusa 风控降级下没有
-/// 全量拉取路线，壳侧随播放进度逐窗推进——GPUI `advance_danmaku_window`
-/// 与 Tauri 播放页滚窗 effect 同语义）。
-///
-/// `groupId` 是分集 vid，`bookId` 是 series_id，都来自剧集档案的分集表；
-/// `startMs` 播放位置窗起点（首页 0，之后传上一窗响应的 `nextStartMs`）；
-/// `durationSecs` 该集时长（秒，分集表 duration，body 里换算毫秒）；
-/// `cursor` 上一窗响应的 `nextCursor` 原样回传（首页空串）。
+/// 拉一集弹幕的**一窗**（官方滚窗协议；壳侧随播放进度逐窗推进，双壳同语义）。`group_id` 是分集 vid、`book_id` 是 series_id（来自剧集档案分集表）；`start_ms` 窗起点、`duration_secs` 该集时长（秒）、`cursor` 上一窗响应的 `next_cursor` 原样回传（首页空串）。
 #[tauri::command]
 pub async fn danmaku_window(
     state: State<'_, AppState>,
@@ -44,9 +37,7 @@ pub async fn danmaku_window(
     page
 }
 
-/// 拉播放页**评论区一页**（单集维度流，官方形态：
-/// group=vid / group_type=30 / channel=18 / sort=video_innerflow——
-/// 面板整页与互动栏角标同源）。cursor 翻页（响应会话游标原样回传）。
+/// 拉播放页**评论区一页**（单集维度流：group=vid / group_type=30 / channel=18 / sort=video_innerflow，面板整页与互动栏角标同源）。cursor 翻页（响应会话游标原样回传）。
 #[tauri::command]
 pub async fn comment_list(
     state: State<'_, AppState>,
@@ -77,10 +68,7 @@ pub async fn comment_list(
     }
 }
 
-/// 拉**剧级评论**的一页（详情页「剧评」tab：整部剧一条线，不是单集评论）。
-///
-/// 同端点换形态——`group_type=1`、`comment_source=1`、
-/// `server_channel=34`，group_id 是 series_id。响应与单集评论同构。
+/// 拉**剧级评论**的一页（详情页「剧评」tab：整部剧一条线）。同端点换形态——`group_type=1`、`comment_source=1`、`server_channel=34`，group_id 是 series_id，响应与单集评论同构。
 #[tauri::command]
 pub async fn series_comment_list(
     state: State<'_, AppState>,
@@ -92,9 +80,7 @@ pub async fn series_comment_list(
     fetch_series_comments_page(&series_id, &cursor, &env).await
 }
 
-/// 发剧评（详情页「剧评」评论框；整剧维度，与 series_comment_list 同组）。
-/// score 为十分制评分（5 星 ×2，1–10）。需登录态，匿名会被服务端拒绝
-/// （错误原样上抛给 toast）。
+/// 发剧评（详情页「剧评」评论框；整剧维度）。score 为十分制评分（5 星 ×2，1–10）；需登录态，匿名会被服务端拒绝（错误原样上抛给 toast）。
 #[tauri::command]
 pub async fn series_review_send(
     state: State<'_, AppState>,
@@ -121,8 +107,7 @@ pub async fn series_review_send(
     send_series_review(&series_id, &text, score, &env).await
 }
 
-/// 拉一条**单集评论**的回复列表一页（回复流与面板同单集维度：
-/// group=vid / group_type=30 / channel=18 / source=504）。`cursor` 翻页。
+/// 拉一条**单集评论**的回复列表一页（回复流与面板同单集维度：group=vid / group_type=30 / channel=18 / source=504）。`cursor` 翻页。
 #[tauri::command]
 pub async fn comment_replies(
     state: State<'_, AppState>,

@@ -12,14 +12,8 @@ import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
 import type { CreatorWork } from '@/service/schema';
 import { t, tf } from '@/locales';
 
-/**
- * 创作者主页（主演/出品方点进来的个人主页）。
- *
- * 头部 = reading/user/profile/get（昵称/头像/
- * 简介），作品列表 = commentapi/user/profile/{uid}（剧级条目，video_id
- * 语义 = series_id，可直接当播放目标）。点击作品 = 起播（统一首页沉浸
- * 流，与追更/历史点卡片同一套 usePlaySeries）。
- */
+/** 创作者主页：头部 reading/user/profile/get，作品列表 commentapi/user/profile/{uid}
+ *  （video_id 语义 = series_id，可直接当播放目标）；点作品 = usePlaySeries 起播。 */
 export function CreatorHomePage({ userId }: { userId: string }) {
   const navigate = useNavigate();
   // routeTree.gen 的 as any 污染 useRouter 返回值；这里只用 history.back

@@ -1,17 +1,6 @@
-//! 业务事件总线：service 发布，壳订阅适配（去 Tauri 化的核心一环）。
-//!
-//! service 的业务状态变化（下载进度/状态、在线取流进度、登录 MFA 状态）
-//! 统一在这里以 **强类型事件** 发布；Tauri 壳把事件映射成原名原载荷的
-//! 前端事件（`hongguo-tauri/src/events.rs`），GPUI 壳转成自己的 UI 状态
-//! 更新。service 不再接触任何具体 UI/事件机制、不再持有 `AppHandle`。
-//!
-//! 传输语义：tokio broadcast（多订阅者、容量 1024）。进度类事件已按
-//! 0.5%/500ms 节流，容量足够吸收瞬时突发；订阅者滞后时丢弃旧事件并记
-//! 日志——与原先「emit 尽力送达」的语义一致，壳侧列表数据另有快照查询
-//! 兜底（队列状态等）。
-//!
-//! 契约锁定：事件名常量与载荷结构沿用各域既有定义（前端 zod 镜像），
-//! 序列化形状由 `tests/wire_contract.rs` 快照守护，重构期间不得漂移。
+//! 业务事件总线：service 发布强类型事件，壳订阅适配（Tauri 壳映射成原名原载荷的前端事件，
+//! GPUI 壳转成 UI 状态更新）。传输为 tokio broadcast：订阅者滞后时丢弃旧事件并记日志，
+//! 壳侧列表数据另有快照查询兜底；事件名与载荷形状由 `tests/wire_contract.rs` 快照守护。
 
 use tokio::sync::broadcast;
 
@@ -58,8 +47,8 @@ pub enum ServiceEvent {
     LoginMfa(LoginMfaStateEvent),
     /// 更新提醒有新条目（`follow-notices`，载荷 = 本次新增的通知）。
     FollowNotices(FollowNoticesEvent),
-    /// 设备注册换档完成（载荷 = 新 iid）：启动自动注册/健康探针轮换成功
-    /// 后发布。身份敏感的数据（顶栏 tab 等）收到后应重拉。
+    /// 设备注册换档完成（载荷 = 新 iid）：启动自动注册/健康探针轮换成功后发布，
+    /// 身份敏感的数据（顶栏 tab 等）收到后应重拉。
     DeviceRegistered(String),
 }
 

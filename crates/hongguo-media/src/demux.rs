@@ -34,9 +34,7 @@ impl Demuxed {
 
 /// 从内存解复用。
 pub fn demux_bytes(data: &[u8]) -> AppResult<Demuxed> {
-    // 两条失败路径都只把原因放进返回值，而调用方（合并前的编码一致性检查）
-    // 只能报告「第 N 集解析不出来」——具体坏在哪个 box 上就丢了。这里补一条日志，
-    // 否则线上遇到坏文件只能靠猜。
+    // 调用方（合并前的编码一致性检查）只能报告「第 N 集解析不出来」，具体坏在哪个 box 上就丢了——补一条日志
     let tracks = collect_tracks(data).map_err(|e| {
         log::error!("[Media] 解析轨道失败: {e}");
         e
@@ -68,8 +66,7 @@ pub fn demux_file(path: &Path) -> AppResult<Demuxed> {
     }
     match demux_bytes(&buf) {
         Ok(d) => Ok(d),
-        // faststart 关闭的产物（B 帧流）moov 在文件尾，头部 8MB 只有
-        // ftyp+mdat——按顶层 box 跳读定位 moov，整箱读回再解。
+        // faststart 关闭的产物（B 帧流）moov 在文件尾，头部 8MB 只有 ftyp+mdat——按顶层 box 跳读定位 moov
         Err(e) if (head_len as u64) < file_size => {
             let moov = read_tail_moov(path, file_size).map_err(|_| e)?;
             demux_bytes(&moov)
@@ -134,8 +131,7 @@ mod tests {
 
     #[test]
     fn tail_moov_is_found_when_faststart_is_off() {
-        // B 帧流关 faststart 后 moov 在 mdat 之后：单个 9MB 样本把 mdat
-        // 顶过 8MB 头部读窗，moov 落到头部窗外——必须能定位尾部 moov
+        // B 帧流关 faststart 后 moov 在 mdat 之后：单个 9MB 样本把 mdat 顶过 8MB 头部读窗，必须能定位尾部 moov
         use hongguo_video::fixtures::{TrackPlan, mp4_with_samples};
         let dir = std::env::temp_dir().join(format!("hg-demux-tail-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

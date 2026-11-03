@@ -24,9 +24,7 @@ pub enum MergeStatus {
     Cancelled,
 }
 
-/// 一个合并任务。
-///
-/// 发给前端转 camelCase（前端 schema 同步声明）。
+/// 一个合并任务。发给前端转 camelCase（前端 schema 同步声明）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeTask {
@@ -89,13 +87,7 @@ impl MergeTask {
     }
 }
 
-/// 一部可合并的剧。合并页的下拉列表用它。
-///
-/// 候选来自**下载队列**而不是剧集档案：合并真正吃的是队列里已完成、
-/// 文件仍在的分集（判定见 `service::merge_service::done_inputs`）。
-/// 档案会被 `dismiss` 软删除（用户在磁盘清理页「移除记录」），
-/// 但本地文件和任务记录都还在，那部剧照样合得起来——
-/// 按档案取候选会让「下过的剧选不到、没下过的剧排在前面」。
+/// 一部可合并的剧（合并页下拉列表）。候选来自**下载队列**而非剧集档案：合并真正吃的是队列里已完成、文件仍在的分集（判定见 `service::merge_service::done_inputs`）——档案可被 dismiss 软删除，但本地文件与任务记录还在，那部剧照样合得起来。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeCandidate {
@@ -179,7 +171,6 @@ mod tests {
 
     #[test]
     fn merge_task_goes_out_as_camel_case() {
-        // 前端 mergeTaskSchema 声明 camelCase
         let t = MergeTask::new("1", "剧", "out", MergeMode::Quick);
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["seriesId"], "1");
@@ -190,7 +181,6 @@ mod tests {
 
     #[test]
     fn preflight_goes_out_as_camel_case() {
-        // 前端 mergePreflightSchema 声明 camelCase
         let v = serde_json::to_value(preflight()).unwrap();
         assert_eq!(v["episodeCount"], 7);
         assert_eq!(v["estimatedSize"], 100);
@@ -203,7 +193,6 @@ mod tests {
 
     #[test]
     fn preflight_reports_unknown_free_space_as_null() {
-        // 「查不到」与「空间是 0」是两件事：填 0 会让前端恒定显示空间不足
         let v = serde_json::to_value(MergePreflight {
             free_space: None,
             ..preflight()
@@ -214,7 +203,6 @@ mod tests {
 
     #[test]
     fn preflight_carries_i18n_keys_not_displayed_text() {
-        // 后端只给 key：文案在前端资源表里翻，Rust 侧不硬编码面向用户的句子
         let p = MergePreflight {
             ok: false,
             episode_count: 0,
@@ -234,7 +222,6 @@ mod tests {
 
     #[test]
     fn preflight_field_set_matches_the_frontend_contract() {
-        // 前端 mergePreflightSchema 声明了这七个键，多一个少一个都会对不上
         let v = serde_json::to_value(preflight()).unwrap();
         let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
         keys.sort_unstable();
@@ -254,7 +241,6 @@ mod tests {
 
     #[test]
     fn preflight_reports_the_mismatched_episode() {
-        // 快速合并被拒时，前端要能指到具体是哪一集对不上
         let p = MergePreflight {
             codec_consistent: false,
             codec_mismatch_episode: Some(2),

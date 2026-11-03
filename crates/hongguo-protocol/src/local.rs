@@ -1,8 +1,6 @@
 //! 本地成品文件供给（`hongguo-local://`）。
 //!
-//! 路径不直接进 URL——`file://` 那样的明文路径会被日志与 Referer 带出去，
-//! 这里统一用 base64url 编码后放进 `hongguo-local://f/<encoded>`，
-//! 服务端再解回来并**校验扩展名**，避免协议被用来读任意文件。
+//! 路径不明文进 URL（`file://` 明文路径会被日志与 Referer 带出去）：统一 base64url 编码放 `hongguo-local://f/<encoded>`，服务端解回并校验扩展名，防协议被用来读任意文件。
 
 use std::path::PathBuf;
 
@@ -13,9 +11,7 @@ use hongguo_stream::range::{ProtocolResponse, RangeSpec, parse_range, partial_he
 /// 协议里允许播放的扩展名（小写）。
 const ALLOWED: &[&str] = &["mp4", "mkv", "webm", "mov", "m4v"];
 
-/// 供给本地文件。
-///
-/// 返回 `(HTTP 状态码, 响应头, 响应体)`。
+/// 供给本地文件，返回 `(HTTP 状态码, 响应头, 响应体)`。
 pub fn serve(raw_path: &str, range_header: Option<&str>) -> Result<ProtocolResponse, String> {
     let path = resolve_path(raw_path)?;
     let total = std::fs::metadata(&path)

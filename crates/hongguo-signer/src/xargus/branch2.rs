@@ -1,5 +1,4 @@
-//! X-Argus f13 的分支 2：变种 MD5 路径。
-//!
+//! X-Argus f13 的分支 2：变种 MD5 路径，JS 1:1 移植禁改写法。
 //! 四组不同的非线性函数 / 移位表依次跑 16 轮，末尾附一个自定义累加和。
 
 use crate::constants::{BRANCH2_SV, branch2_orders};
@@ -165,8 +164,7 @@ fn branch2_f13(
     let pad: Vec<u8> = seed
         .iter()
         .map(|&v| {
-            // JS: (value | (value << 8)) >> shift & 255
-            // 先在 u16 里拼成双字节再右移，避免 u8 左移溢出
+            // JS: (value | (value << 8)) >> shift & 255——先在 u16 拼双字节再右移，避免 u8 左移溢出
             let combined = u16::from(v) | (u16::from(v) << 8);
             ((combined >> shift) & 255) as u8
         })

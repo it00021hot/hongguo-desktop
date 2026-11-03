@@ -1,12 +1,6 @@
-//! Tauri 壳层装配（hongguo-tauri crate）。
+//! Tauri 壳层装配：插件注册、全局状态注入、自定义协议挂载、command 挂载——[`prepare`] 产出装好的 `Builder`；`build(generate_context!)` 与 `.run()` 留在 `crates/hongguo-tauri-app`（`generate_context` 必须与 tauri.conf.json 同 crate）。
 //!
-//! 插件注册、全局状态注入、自定义协议挂载、command 挂载——Tauri 应用的
-//! 全部装配在这里；[`prepare`] 产出装好的 `Builder`，`build(generate_context!)`
-//! 与 `.run()` 留在 `crates/hongguo-tauri-app`（`generate_context` 必须与 tauri.conf.json
-//! 同 crate）。
-//!
-//! GPUI 壳（`hongguo-gpui`）**不消费本 crate**——它直接构造
-//! `hongguo_service::AppStateInner` 并调用 service，绕开 IPC 与 WebView 供数。
+//! GPUI 壳（`hongguo-gpui`）不消费本 crate——它直接构造 `hongguo_service::AppStateInner` 并调用 service，绕开 IPC 与 WebView 供数。
 
 pub mod bootstrap;
 pub mod commands;
@@ -21,26 +15,15 @@ use hongguo_common::{AppError, AppResult};
 
 /// 装配 Tauri 应用（插件、状态、协议、command）。在 `build(context)` 之前调用。
 pub fn prepare() -> tauri::Builder<tauri::Wry> {
-    // 不装 logger 的话全树 `log::` 调用都是空操作，抓取/下载失败会静默消失。
-    // 调试时用 RUST_LOG=debug 打开详细日志。
+    // 不装 logger 全树 log:: 调用都是空操作、失败会静默消失；调试用 RUST_LOG=debug 开详细日志
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    // panic 取证要抢在一切事故之前装好：主线程 FFI 回调里的 panic 会直接
-    // abort，stderr 又常常没接着终端，crash.log 是唯一能留下的现场。
+    // panic 取证抢在一切事故之前装好：主线程 FFI 回调里的 panic 直接 abort，stderr 常没接着终端，crash.log 是唯一能留下的现场
     diagnostics::install_panic_hook();
 
-    // ⚠️ 启动顺序：**数据库在 .setup() 里打开，必须排在单实例插件之后**。
-    // 插件在 Builder::build 阶段初始化并劝退第二个实例；若把开库放在这
-    // 之前，再次启动（上一实例还活着——隐身隐藏/小窗模式现在很常见）
-    // 的进程会先撞上库锁，被误报成「数据文件损坏」然后退出。
-    //
-    // 移动端门控说明：单实例与全局快捷键两个插件官方在 Android/iOS 整
-    // crate cfg 掉（空壳、`init` 符号不存在），注册必须按平台门控；移动端
-    // 没有多实例与系统级快捷键语义，缺席不构成功能损失（Android 系统层
-    // 天然单实例）。
+    // ⚠️ 启动顺序：数据库在 .setup() 里打开，必须排在单实例插件之后——否则二次启动（上一实例还活着）先撞库锁，被误报「数据文件损坏」。
+    // 移动端门控：单实例与全局快捷键插件官方在 Android/iOS 整 crate cfg 掉，注册必须按平台门控（移动端无多实例与系统级快捷键语义）。
     let builder = tauri::Builder::default();
-    // 单实例锁要第一个注册：抢在窗口创建与数据库打开之前，第二个进程
-    // 才不会拉起第二套 UI / 撞库锁。双开的直接危害是两个进程互写同一
-    // 个存储——下载记录会随机消失。
+    // 单实例锁第一个注册：抢在窗口创建与数据库打开之前
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         bring_back_active_window(app);
@@ -48,21 +31,18 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        // 更新：签名校验的安装包经 GitHub Releases 的 latest.json 分发；
-        // 进程插件只用到 relaunch（下载完成后重启进新版本）
+        // 更新：安装包经 GitHub Releases 的 latest.json 分发；进程插件只用到 relaunch
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
-    // 老板键的全局快捷键（issue #4）：注册/注销走 Rust 侧
-    // （commands/boss_key_cmd），不经前端 → 无需 capabilities
+    // 老板键全局快捷键：注册/注销走 Rust 侧，不经前端 → 无需 capabilities
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
     let builder = builder
         // 窗口关闭拦截的「前端就绪」闸门（见 setup 里的 CloseRequested 处理）
         .manage(commands::app_cmd::WindowCloseGate::default());
 
-    // dev 专属自动化端口（127.0.0.1:4445）：macOS 的 WKWebView 没有对外调试
-    // 协议，W3C WebDriver 由 app 内嵌服务器实现（依赖无条件编译，cargo 不支持
-    // 按 debug_assertions 选依赖）。release 构建此行整体不存在，不留任何自动化面。
+    // dev 专属自动化端口（127.0.0.1:4445）：WKWebView 没有对外调试协议，W3C WebDriver 由 app 内嵌服务器实现；
+    // release 构建此行整体不存在，不留任何自动化面。
     #[cfg(debug_assertions)]
     let builder = builder.plugin(tauri_plugin_webdriver::init());
 
@@ -71,24 +51,17 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
     builder
         .setup(|app| {
-            // 移动端数据根：Android 没有桌面数据目录语义（dirs::data_dir()
-            // 返回 None），不注入的话数据根落到不可写的 /data/local/tmp，
-            // 开库直接失败。必须在 build_app_state 之前钉到 app 私有目录。
+            // Android 没有桌面数据目录语义（dirs::data_dir() 返回 None），不注入数据根会落到不可写的 /data/local/tmp；必须在 build_app_state 之前钉到 app 私有目录
             #[cfg(target_os = "android")]
             {
                 use tauri::Manager as _;
                 let root = app.path().app_data_dir()?;
                 hongguo_store::paths::set_absolute_data_root(&root);
-                // turso 的迁移/排序临时文件经 tempfile crate 落盘，tempfile
-                // 在 Unix 只认 TMPDIR（缺省 /tmp——Android 上不存在且 app
-                // 无权写，迁移 SQL 直接 I/O error (tempdir)，启动被「数据
-                // 损坏」误报终止；SQLITE_TMPDIR 是 SQLite C 库的约定，
-                // turso 不读）。钉到 app 私有 tmp 目录。
+                // tempfile 在 Unix 只认 TMPDIR（Android 缺省 /tmp 不存在且 app 无权写，迁移 SQL 直接 I/O error 被误报「数据损坏」；
+                // SQLITE_TMPDIR 是 SQLite C 库的约定，turso 不读），钉到 app 私有 tmp 目录
                 let tmpdir = root.join("tmp");
                 let _ = std::fs::create_dir_all(&tmpdir);
-                // SAFETY: setup 在主线程、任何并发读 env 的线程尚未启动——
-                // set_var 的多线程 UB 条件不成立。tempfile 每次建临时目录
-                // 都读 TMPDIR，必须在首次开库前设置。
+                // SAFETY: setup 在主线程、任何并发读 env 的线程尚未启动，set_var 的多线程 UB 条件不成立；tempfile 建临时目录时读 TMPDIR，必须在首次开库前设置
                 unsafe {
                     std::env::set_var("TMPDIR", &tmpdir);
                 }
@@ -98,9 +71,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                     tmpdir.display()
                 );
             }
-            // 启动装配的顺序即依赖顺序：先建应用状态（含数据库），装载设置
-            // 与下载队列，把待跑任务推入调度。设备健康复检 / 磁盘补登记 /
-            // 转码探测不拦启动，各自在 init 里后台化（见 bootstrap/mod.rs）。
+            // 启动装配的顺序即依赖顺序；设备健康复检 / 磁盘补登记 / 转码探测不拦启动，各自在 init 里后台化（见 bootstrap/mod.rs）
             let app_state = build_app_state();
             app.manage(app_state.clone());
             bootstrap::store::init(app.handle())?;
@@ -109,11 +80,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
             bootstrap::transcoder::init()?;
-            // 追更更新检查：启动查一轮 + 每 20 分钟一轮（未登录空转，
-            // 登录后自动生效；对齐 hongguo-player 的检查节奏）
+            // 追更更新检查：启动查一轮 + 每 20 分钟一轮（未登录空转，登录后自动生效）
             hongguo_service::follow_service::start_notice_loop(app_state.clone());
             // 老板键按持久化设置注册（被占用只记日志，不拦启动）
-            // （global-shortcut 插件是桌面专属，见 prepare() 的门控说明）
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             commands::boss_key_cmd::init(app.handle(), &app_state.settings().boss_key);
             // 本地观看历史补传（issue #10）：带账号启动时把离线攒下的行推云端
@@ -124,27 +93,21 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 });
             }
 
-            // 窗口关闭一律先问前端：自绘 ×、Alt+F4、任务栏关闭都走
-            // CloseRequested，前端 ready 后拦截并让它弹退出确认框
-            // （退出会掐断正在跑的下载任务）；没 ready（前端白屏/崩溃）
-            // 就放行——宁可少问一句，绝不能把窗口变成关不掉。
+            // 窗口关闭一律先问前端：CloseRequested 被拦截后前端弹退出确认框（退出会掐断正在跑的下载任务）；
+            // 前端没 ready（白屏/崩溃）就放行——宁可少问一句，绝不能把窗口变成关不掉
             use std::sync::atomic::Ordering;
             use tauri::{Emitter, Manager};
             if let Some(window) = app.get_webview_window("main") {
-                // 窗口几何记忆（issue #11）：窗口还藏着（mark_window_ready
-                // 才亮出）就先恢复上次几何，再挂防抖落盘
+                // 窗口还藏着（mark_window_ready 才亮出）就先恢复上次几何，再挂防抖落盘
                 window_state::restore(&window);
                 let ready = app
                     .state::<commands::app_cmd::WindowCloseGate>()
                     .inner()
                     .clone();
                 let win = window.clone();
-                // 最小化检测：WebView2 最小化时不派发 visibilitychange（实测
-                // 恒 visible），前端拿不到——Rust 侧在 Resized 里查
-                // is_minimized，状态翻转才 emit（避免每次 resize 都发）
+                // WebView2 最小化时不派发 visibilitychange，前端拿不到——Rust 侧在 Resized 里查 is_minimized，状态翻转才 emit
                 let minimized = std::sync::atomic::AtomicBool::new(false);
-                // 几何防抖的 epoch：移动/缩放事件递增，saver 线程 500ms
-                // 轮询、变了才快照写盘
+                // 几何防抖的 epoch：移动/缩放事件递增，saver 线程 500ms 轮询、变了才快照写盘
                 let geometry_epoch = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                 window_state::spawn_saver(win.clone(), std::sync::Arc::clone(&geometry_epoch));
                 // 兜底显示用的副本先克隆：win/ready 都要 move 进下面的事件闭包
@@ -182,13 +145,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                     }
                 });
 
-                // 兜底显示：窗口改由 mark_window_ready（前端挂载）亮出后，
-                // 前端崩溃/加载失败会让它永远藏着——超时强制亮出。宁可亮出
-                // 一个空窗（能关、能被单实例二次启动拉回），不能无窗可关。
-                // dev 的前端冷启动要等 Vite 转换整个模块图（实测 ~75s），
-                // 10s 阈值必然误触发、亮出一个无内容的黑窗，故 dev 档拉长
-                // （前端真挂了走 Ctrl+C / 单实例二次启动拉回）；release 前端
-                // 秒级就绪（实测 FCP ~1.2s），保持 10s。
+                // 兜底显示：窗口改由 mark_window_ready（前端挂载）亮出后，前端崩溃/加载失败会让它永远藏着——超时强制亮出，
+                // 宁可亮出空窗（能关、能被单实例二次启动拉回）也不能无窗可关。dev 档拉长（Vite 冷启动要转换整个模块图，
+                // 10s 必误触发亮黑窗）；release 前端秒级就绪，保持 10s。
                 const FRONTEND_READY_FALLBACK_SECS: u64 =
                     if cfg!(debug_assertions) { 120 } else { 10 };
                 std::thread::spawn(move || {
@@ -348,9 +307,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
 /// `.run()` 的事件回调（由壳转交）：处理需要进程级入口的事件。
 pub fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
-    // macOS 点 Dock 图标：隐身模式把窗口整个藏起来后，鼠标唤不回
-    // （隐藏窗口不参与命中测试），Dock 是系统级的恢复入口。
-    // `Reopen` 变体只存在于 macOS 构建。
+    // macOS 点 Dock 图标：隐身模式把窗口整个藏起来后鼠标唤不回（隐藏窗口不参与命中测试），Dock 是系统级的恢复入口
     #[cfg(target_os = "macos")]
     if let tauri::RunEvent::Reopen { .. } = event {
         bring_back_active_window(app);
@@ -373,13 +330,7 @@ fn bring_back_active_window(app: &tauri::AppHandle) {
     }
 }
 
-/// 打开数据库并组装应用状态。失败即终止启动（不带病起窗口：用户在空库
-/// 上改的设置，等下次旧库恢复时会静默丢掉）。
-///
-/// 只在 `.setup()` 里调用——必须晚于单实例插件，否则上一实例还活着时
-/// （隐身隐藏/小窗模式）这里会撞库锁。锁冲突给一次短暂重试（真双开的
-/// 败者本该在插件阶段就被劝退，走到这里多半是极端竞态），仍锁着就带着
-/// 明确指引退出，而不是误报「数据文件损坏」。
+/// 打开数据库并组装应用状态，失败即终止启动（不带病起窗口）。只在 `.setup()` 里调用——必须晚于单实例插件；锁冲突给一次短暂重试，仍锁着就带明确指引退出，不误报「数据文件损坏」。
 fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
     let db = match open_store_with_lock_retry() {
         Ok(db) => db,
@@ -396,12 +347,8 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
             std::process::exit(1);
         }
     };
-    // 设备档案：库里没有就落一份静态兜底档案（设备注册 M2b 落位后，
-    // 这里读到的会是注册产物）。旧档案的版本身份要对齐到当前客户端
-    // 版本——服务端按自报 version_code 分发功能 schema（排行榜选项表
-    // 在老版本号下退化为扁平结构），真实设备升级 app 也是同理。
-    // 阵亡名单/远古快照的淘汰重铺与启动后的健康探针、失效轮换都在
-    // [`bootstrap::device`]（adopt → 探针 → 轮换的行为层）。
+    // 设备档案：库里没有就落一份静态兜底档案；旧档案的版本身份要对齐到当前客户端版本——服务端按自报 version_code 分发功能 schema
+    // （排行榜选项表在老版本号下退化为扁平结构）。阵亡名单淘汰重铺与启动后的健康探针、失效轮换在 [`bootstrap::device`]。
     let (device, device_source) = hongguo_service::device::adopt_sync(&db);
     log::info!(
         "[Device] 现役档案 iid={}（{device_source}）",
@@ -423,20 +370,11 @@ fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
     }
 }
 
-/// 并发分配压力测试：与业务无关的纯 alloc/free 风暴。
-///
-/// 背景：曾经 `rusty_h264-common` 默认给整个测试进程强装第三方分配器
-/// `rusty_alloc`（feature unification 关不掉），它在高并发下存在间歇性
-/// 崩溃（表现为荒唐大小的分配失败 → abort）。那个分配器连同整条纯 Rust
-/// 转码兜底都已从依赖树里彻底摘掉，进程跑标准 Rust 分配器。这个测试留着
-/// 当并发分配的回归护栏：**它若崩，先怀疑分配/并发本身**，别在业务代码里找。
+/// 并发分配压力测试：与业务无关的纯 alloc/free 风暴——它若崩，先怀疑分配/并发本身，别在业务代码里找。
 #[cfg(test)]
 mod alloc_stress {
     use std::sync::Barrier;
 
-    /// 模拟 mp4 流式解密测试的分配指纹：高频短命小块（几十~几百字节）、
-    /// 精确 with_capacity、Vec 增长 realloc、周期性整块清空。
-    /// **与业务无关**——它若崩，只说明分配/并发有问题，与业务逻辑无关。
     #[test]
     fn concurrent_alloc_free_storm_is_stable() {
         const THREADS: usize = 16;
@@ -454,16 +392,13 @@ mod alloc_stress {
                         rng ^= rng >> 7;
                         rng ^= rng << 17;
                         let n = 32 + (rng % 960) as usize;
-                        // 精确容量分配 + 局部写满（streaming_tests 的主模式）
                         let mut v: Vec<(u64, u64)> = Vec::with_capacity(n / 16);
                         for i in 0..n / 16 {
                             v.push((rng.wrapping_add(i as u64), i as u64));
                         }
                         total = total.wrapping_add(v.len());
-                        // 短命小块换手
                         let s = vec![0x5Au8; 8 + (rng % 128) as usize];
                         total = total.wrapping_add(s.len());
-                        // 偶发增长式 realloc
                         if rng.is_multiple_of(61) {
                             let mut g = Vec::new();
                             for _ in 0..64 {

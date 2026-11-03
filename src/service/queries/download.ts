@@ -7,14 +7,9 @@ import { useEvent } from '../tauri/events';
 import { EVENTS } from '../tauri/types';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 下载
-
 /**
- * 下载任务列表。
- *
- * 进度事件每 500ms 一次，失效查询等于整表重拉一遍。这里就地合并进缓存：
- * 任务集合变化仍然由 `useDownloadEvents` 触发重新请求，
- * 纯进度更新只改对应任务的那两个字段，缓存里也只有一份真相。
+ * 下载任务列表：进度事件（每 500ms）不整表重拉，就地合并进缓存只改对应任务字段；
+ * 任务集合变化仍由 `useDownloadEvents` 触发重新请求。
  */
 export function useDownloadTasks() {
   const qc = useQueryClient();
@@ -66,13 +61,8 @@ export function useDownloadActions() {
 }
 
 /**
- * 订阅下载任务的结构性事件。
- *
- * 进度事件不在这里：它由 `useDownloadTasks` 自己去合并，
- * 在根布局再订一份等于同一事件被处理两遍。
- *
- * 注意：事件名数量固定，所以这里逐个显式调用 `useEvent`，
- * 不能放进循环——React Hooks 规则禁止在条件或循环里调 Hook。
+ * 订阅下载任务的结构性事件；进度事件不在这里（由 `useDownloadTasks` 自己合并，
+ * 根布局再订一份等于同一事件处理两遍）。事件名数量固定，须逐个显式调用 `useEvent`，不能放进循环。
  */
 export function useDownloadEvents() {
   const qc = useQueryClient();

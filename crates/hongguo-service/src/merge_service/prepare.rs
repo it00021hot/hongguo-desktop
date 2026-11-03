@@ -1,7 +1,5 @@
-//! 合并前校验：把「能不能合并」一次问清楚。
-//!
-//! 三件事：哪些集能参与合并、输出卷还放不放得下、各集的编码是否一致。
-//! 结果里带的是 i18n key，由前端查资源表翻成用户看得懂的文案。
+//! 合并前校验：把「能不能合并」一次问清楚——哪些集能参与合并、输出卷放不放得下、
+//! 各集编码是否一致。结果里带的是 i18n key，由前端查资源表翻成用户文案。
 
 use std::path::Path;
 
@@ -52,10 +50,7 @@ pub fn preflight(state: &AppState, series_id: &str) -> AppResult<MergePreflight>
     })
 }
 
-/// 按固定顺序拼出提示 key。
-///
-/// 顺序固定：先说「为什么不能快速合并」，再说「还有没有位置放」——
-/// 编码不一致是这次合并能不能做的问题，空间只是做完之后放不放得下。
+/// 按固定顺序拼出提示 key：先「编码不一致」（这次合并能不能做），再「空间不足」（做完放不放得下）。
 fn warnings_for(
     estimated_size: u64,
     free_space: Option<u64>,
@@ -66,12 +61,10 @@ fn warnings_for(
         warnings.push("merge.codecMismatch".to_string());
     }
     match free_space {
-        // 留 10% 余量：产物是边写边算的，估算与实际总有几 MB 的差；
-        // 卡在边界上失败比少判一点糟糕得多。
+        // 留 10% 余量：产物是边写边算的，估算与实际总有几 MB 的差，卡在边界上失败更糟。
         Some(free) if estimated_size + estimated_size / 10 > free => {
             warnings.push("merge.insufficientSpace".to_string());
         }
-        // 余量够、或压根查不到余量，都没有要提示的事
         _ => {}
     }
     warnings
@@ -193,7 +186,6 @@ mod tests {
 
     #[test]
     fn a_small_merge_never_reports_insufficient_space() {
-        // 余量查得到且远大于预计大小时，不该出现空间不足的提示
         let dir = temp_dir("fits");
         let state = state_with_dir(&dir);
         add_episode(
@@ -232,8 +224,6 @@ mod tests {
 
     #[test]
     fn equal_size_and_free_space_fits() {
-        // 10% 余量之内不算不足：产物是边写边算的，估算与实际总有几 MB 的差，
-        // 卡在边界上失败比少判一点糟糕得多
         assert!(warnings_for(100, Some(110), None).is_empty());
         assert_eq!(
             warnings_for(100, Some(109), None),

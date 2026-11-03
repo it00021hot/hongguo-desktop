@@ -1,24 +1,7 @@
-//! 流式解密：不整集等待的明文视图。
-//!
-//! 在线播放的原路径是「整集取回 → 整集解密 → 原子交给协议」，首帧要等
-//! 全部字节。本模块把它改成**按需**：只凭 moov 就能回答「明文第 X 字节
-//! 来自密文哪里、要不要异或 keystream」，协议层按 Range 取一段、解一段。
-//!
-//! ## 为什么可行（三条事实，缺一不可）
-//!
-//! 1. **CTR 解密不改样本长度**，重建 moov 只动 moov 自己——moov 之前的
-//!    明文偏移与密文偏移**一一对应**；moov 之后的内容按
-//!    `新 moov 长 − 旧 moov 长` 整体平移。
-//! 2. **CTR 是计数器模式**，样本内任意子区间都能独立解（见
-//!    [`crate::crypto::cenc::decrypt_range`]），不需要样本前缀。
-//! 3. **异或可交换**：多轨样本重叠时，整文件解密是多次原地异或，
-//!    与「逐字节异或所有覆盖样本的 keystream」等价——所以这里不必关心
-//!    轨道顺序与重叠方式，逐字节与 [`super::decrypt_buffer`] 一致
-//!    （由测试锁住）。
-//!
-//! 布局保持原位替换（新 moov 顶旧 moov 的位置，见 [`super::deprotect`]），
-//! 不合成 faststart：WebView2 自己会对尾部 moov 发 Range 请求，
-//! `hongguo-local://` 播放 moov 在尾部的本地分集一直是日常主路径。
+//! 流式解密：只凭 moov 回答「明文第 X 字节来自密文哪里、要不要异或 keystream」，协议层按 Range 取一段、解一段。
+//! 可行性三条事实：CTR 解密不改样本长度（moov 前明文/密文偏移一一对应，moov 后按 moov 长度差整体平移）；
+//! CTR 任意子区间可独立解；异或可交换（多轨重叠与整文件多次原地异或等价，与 [`super::decrypt_buffer`] 逐字节一致，由测试锁住）。
+//! 布局原位替换、不合成 faststart：WebView2 对尾部 moov 发 Range 请求是日常主路径。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,11 +38,8 @@ pub struct StreamingPlan {
 }
 
 impl StreamingPlan {
-    /// 从 moov 区域构建计划。
-    ///
-    /// `moov_region` 是从旧 moov box 头开始的密文切片（尾部预取或头部
-    /// 缓冲里截出来的），`moov_abs_start` 是它在完整密文中的绝对偏移。
-    /// 区间内的 stco 值是绝对文件偏移，所以切片解析与整文件解析同构。
+    /// 从 moov 区域构建计划：`moov_region` 是从旧 moov box 头开始的密文切片，`moov_abs_start` 是其绝对偏移。
+    /// 区间内 stco 值是绝对文件偏移，所以切片解析与整文件解析同构。
     pub fn build(
         moov_region: &[u8],
         moov_abs_start: u64,
@@ -101,8 +81,7 @@ impl StreamingPlan {
         let (new_moov, old_moov_end) = match rebuilt {
             Some(r) => (r.bytes, r.end as u64),
             None => {
-                // 没有加密标记：调用方对明文流不建计划，走到这里按
-                // 「明文原样保留」兜底（与 deprotect 的处理一致）
+                // 没有加密标记：按「明文原样保留」兜底（与 deprotect 的处理一致）
                 (
                     moov_region.to_vec(),
                     moov_abs_start + moov_region.len() as u64,
@@ -129,17 +108,13 @@ impl StreamingPlan {
 
     /// 明文 moov 与旧 moov 的长度差：明文偏移 → 密文偏移的平移量。
     fn tail_delta(&self) -> i64 {
-        // 明文里 moov 之后的第 X 字节 ↔ 密文里 X − delta 处。
-        // 旧 moov 长 = new_len + cipher_len − plain_len（由 plain_len 的构成式反解），
-        // 用 i64：head-moov 布局下 plain_len < cipher_len，u64 直接减会下溢
+        // 明文里 moov 之后的第 X 字节 ↔ 密文 X − delta 处；旧 moov 长由 plain_len 构成式反解，用 i64 防 head-moov 布局下溢
         let new_len = self.new_moov.len() as i64;
         let old_len = new_len + self.cipher_len as i64 - self.plain_len as i64;
         new_len - old_len
     }
 
-    /// 明文区间 `[start, end)` 依赖的密文区间（用于判断数据是否就位）。
-    ///
-    /// 返回升序区间；明文里的 moov 段不依赖任何密文。
+    /// 明文区间 `[start, end)` 依赖的密文区间（升序返回；明文里的 moov 段不依赖任何密文）。
     pub fn cipher_ranges_needed(&self, start: u64, end: u64) -> Vec<(u64, u64)> {
         let mut out: Vec<(u64, u64)> = Vec::new();
         let moov_plain_end = self.moov_start + self.new_moov.len() as u64;
@@ -161,9 +136,7 @@ impl StreamingPlan {
     }
 
     /// 渲染明文区间 `[start, end)` 进 `out`（长度必须等于 `end − start`）。
-    ///
-    /// **调用方必须先保证** [`Self::cipher_ranges_needed`] 给出的密文区间
-    /// 已在 `sparse` 里就位；这里不做等待，只做映射与解密。
+    /// **调用方必须先保证** [`Self::cipher_ranges_needed`] 给出的密文区间已在 `sparse` 就位；这里不做等待，只做映射与解密。
     pub fn render(&self, start: u64, end: u64, sparse: &SparseBuffer, out: &mut [u8]) {
         assert_eq!(out.len(), (end - start) as usize, "out 长度必须等于区间长");
         let moov_plain_end = self.moov_start + self.new_moov.len() as u64;
@@ -191,10 +164,8 @@ impl StreamingPlan {
         }
     }
 
-    /// 把密文区间 `[cs, ce)` 变换后写进 `out[out_base..]`。
-    ///
-    /// 先原样拷贝，再对覆盖到的样本段逐个异或 keystream——重叠段天然按
-    /// 异或组合，与整文件解密的多次原地异或等价。
+    /// 把密文区间 `[cs, ce)` 变换后写进 `out[out_base..]`：先原样拷贝，再对覆盖到的样本段逐个异或 keystream
+    /// （重叠段天然按异或组合，与整文件解密的多次原地异或等价）。
     fn render_cipher(
         &self,
         cs: u64,
@@ -232,14 +203,9 @@ impl StreamingPlan {
     }
 }
 
-/// 在缓冲里定位 moov box。
-///
-/// `buf` 是已取回的一段密文，`base` 是它的绝对起点。moov 的四字符码在
-/// 密文里也可能作为普通样本数据出现，所以要验证声明的 box 长度能落在
-/// 文件内；多个候选时优先「恰好到文件末尾」的那个（moov 通常是最后
-/// 一个 box）。
-///
-/// 返回 `(绝对起点, 含头总长)`。
+/// 在缓冲里定位 moov box，返回 `(绝对起点, 含头总长)`。
+/// moov 四字符码可能作为普通样本数据出现在密文里，所以要验证声明的 box 长度落在文件内；
+/// 多个候选时优先「恰好到文件末尾」的那个（moov 通常是最后一个 box）。
 pub fn locate_moov(buf: &[u8], base: u64, file_len: u64) -> Option<(u64, u64)> {
     let mut first_valid: Option<(u64, u64)> = None;
     let mut exact_end: Option<(u64, u64)> = None;
@@ -272,13 +238,9 @@ fn find_fourcc(buf: &[u8], needle: &[u8; 4], from: usize) -> Option<usize> {
     (from..=buf.len() - needle.len()).find(|&i| &buf[i..i + needle.len()] == needle)
 }
 
-/// 解析一段**从盒边界开始**的顶层盒表，返回最后一个「头部完整」的盒的
-/// 结束偏移（绝对坐标 = `base + 头部推算出的盒尾`）。
-///
-/// 盒本体允许伸出缓冲外——mdat 的 size 写在 8 字节头里，256KB 首探就
-/// 足够算出「mdat 之后 = 尾部 moov 的落点」，这也是流式取数按 64KB
-/// 步进盒游走的跳转依据。size==1 按 largesize（16 字节头）解析；
-/// size==0（到 EOF）视同解析终止（同样不当作合法盒）。
+/// 解析一段**从盒边界开始**的顶层盒表，返回最后一个「头部完整」的盒的结束偏移（绝对坐标）。
+/// 盒本体允许伸出缓冲外——mdat 的 size 写在 8 字节头里，256KB 首探就能算出尾部 moov 的落点
+/// （流式取数按 64KB 步进盒游走的跳转依据）；size==1 按 largesize（16 字节头）解析，size==0（到 EOF）视同解析终止。
 pub fn top_boxes_end(buf: &[u8], base: u64) -> Option<u64> {
     let mut pos = 0usize;
     let mut end = base;
@@ -310,12 +272,8 @@ pub fn top_boxes_end(buf: &[u8], base: u64) -> Option<u64> {
     (end > base).then_some(end)
 }
 
-// ---------------------------------------------------------------- 稀疏缓冲
-
 /// 稀疏密文缓冲：已下载区间 + 就绪通知。
-///
-/// 整集常驻内存与现行在线播放同一量级（今天还要同时留密文与明文两份
-/// 过渡副本，这里只有密文一份 + 应答时的小缓冲）。
+/// 整集常驻内存与现行在线播放同一量级（只有密文一份 + 应答时的小缓冲）。
 pub struct SparseBuffer {
     len: u64,
     data: Mutex<Vec<u8>>,
@@ -339,8 +297,7 @@ impl SparseBuffer {
         self.len
     }
 
-    /// 空流（总长为 0）。与 [`Self::len`] 配对——pub 类型暴露了 `len` 就该给
-    /// `is_empty`，否则调用方只能用 `len() == 0` 表达。
+    /// 空流（总长为 0）。与 [`Self::len`] 配对——pub 类型暴露了 `len` 就该给 `is_empty`。
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -445,10 +402,9 @@ mod tests {
 
     #[test]
     fn top_boxes_end_computes_mdat_end_from_header_alone() {
-        // 尾-moov 布局：ftyp(32) + 巨型 mdat(1_000_000) —— 缓冲里只有 mdat 头，
-        // 盒尾仍应从头部 size 算出（256KB 首探定位尾部 moov 的关键）
+        // 尾-moov 布局：缓冲里只有 mdat 头，盒尾仍应从头部 size 算出（256KB 首探定位尾部 moov 的关键）
         let mut buf = box_bytes(32, b"ftyp", 0);
-        buf.extend(box_bytes(1_000_000, b"mdat", 0)); // 本体被截断
+        buf.extend(box_bytes(1_000_000, b"mdat", 0));
         assert_eq!(top_boxes_end(&buf, 0), Some(32 + 1_000_000));
     }
 
@@ -458,13 +414,11 @@ mod tests {
         buf.extend(box_bytes(40, b"free", 2));
         buf.extend(box_bytes(60, b"mdat", 3));
         assert_eq!(top_boxes_end(&buf, 0), Some(120));
-        // 非零 base（游走的第二段）：绝对坐标
         assert_eq!(top_boxes_end(&buf, 5000), Some(5120));
     }
 
     #[test]
     fn top_boxes_end_stops_on_zero_size_box() {
-        // size==0（到 EOF）不支持，视同解析终止：只算到前一个盒的尾
         let mut buf = box_bytes(16, b"ftyp", 0);
         let mut zero = 0u32.to_be_bytes().to_vec();
         zero.extend_from_slice(b"mdat");
@@ -475,7 +429,6 @@ mod tests {
 
     #[test]
     fn top_boxes_end_parses_largesize_header() {
-        // size==1 → largesize(u64)：16 字节头，本体允许伸出缓冲
         let mut v = 1u32.to_be_bytes().to_vec();
         v.extend_from_slice(b"mdat");
         v.extend_from_slice(&100_000u64.to_be_bytes());
@@ -487,7 +440,6 @@ mod tests {
     fn top_boxes_end_rejects_garbage() {
         assert_eq!(top_boxes_end(&[], 0), None);
         assert_eq!(top_boxes_end(&[1, 2, 3], 0), None);
-        // 头部 size 小于 8：损坏，解析终止
         assert_eq!(top_boxes_end(&[0, 0, 0, 4, b'm', 0, 0, 0], 0), None);
     }
 
@@ -500,21 +452,21 @@ mod tests {
         assert!(!b.covers(100, 151));
         assert_eq!(b.downloaded(), 50);
 
-        b.write(150, &[7u8; 50]); // 相邻合并
+        b.write(150, &[7u8; 50]);
         assert!(b.covers(100, 200));
         assert_eq!(b.downloaded(), 100);
 
-        b.write(0, &[7u8; 30]); // 与 100 不相邻
+        b.write(0, &[7u8; 30]);
         assert!(!b.covers(0, 200));
-        b.write(30, &[7u8; 70]); // 填上中间
+        b.write(30, &[7u8; 70]);
         assert!(b.covers(0, 200));
     }
 
     #[test]
     fn next_gap_walks_holes() {
         let b = SparseBuffer::new(100);
-        b.write(10, &[0u8; 20]); // [10,30)
-        b.write(50, &[0u8; 10]); // [50,60)
+        b.write(10, &[0u8; 20]);
+        b.write(50, &[0u8; 10]);
         assert_eq!(b.next_gap(0), Some((0, 10)));
         assert_eq!(b.next_gap(10), Some((30, 50)));
         assert_eq!(b.next_gap(55), Some((60, 100)));
@@ -541,7 +493,6 @@ mod tests {
 
     #[test]
     fn locate_finds_tail_moov() {
-        // [ftyp][mdat][moov]：moov 应被定位到且长度精确到文件尾
         let ftyp = super::super::r#box::build_box(b"ftyp", b"isom");
         let mdat = super::super::r#box::build_box(b"mdat", &[0u8; 40]);
         let moov = super::super::r#box::build_box(b"moov", &[0u8; 60]);
@@ -551,7 +502,6 @@ mod tests {
         let len = file.len() as u64;
         let moov_abs = (ftyp.len() + mdat.len()) as u64;
 
-        // 模拟只有尾部预取的那段（恰好从 moov 头开始）
         let tail = &file[moov_abs as usize..];
         assert_eq!(
             locate_moov(tail, moov_abs, len),
@@ -561,7 +511,6 @@ mod tests {
 
     #[test]
     fn locate_rejects_false_fourcc_inside_data() {
-        // mdat 载荷里埋一个假 "moov" 四字符码，长度声明越界 → 不能认
         let mut payload = vec![0u8; 20];
         payload[4..8].copy_from_slice(b"moov");
         payload[0..4].copy_from_slice(&u32::MAX.to_be_bytes());
@@ -571,7 +520,6 @@ mod tests {
 
     #[test]
     fn locate_prefers_the_exact_end_candidate() {
-        // 两个合法候选：一个在中间，一个恰好到文件尾——取后者
         let inner = super::super::r#box::build_box(b"moov", &[0u8; 10]);
         let mut head = super::super::r#box::build_box(b"free", &[0u8; 4]);
         head.extend_from_slice(&inner);
@@ -579,7 +527,6 @@ mod tests {
         let mut file = head;
         file.extend_from_slice(&last);
         let len = file.len() as u64;
-        // 最后那个 moov 的起点：free(12) + 中间 moov(8+10)
         let last_moov = (12 + 8 + 10) as u64;
         let (abs, size) = locate_moov(&file, 0, len).unwrap();
         assert_eq!((abs, size), (last_moov, (8 + 12) as u64));

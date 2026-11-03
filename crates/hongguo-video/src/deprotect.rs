@@ -1,15 +1,6 @@
-//! 去除 CENC 加密标记。
-//!
-//! 解密采样数据只做了一半：视频轨的样本入口仍然是 `encv`，`sinf`/`schm`/`tenc`
-//! 也都还在。按 MP4 规范这就等于「声明自己是一段加密视频」，播放器会去找
-//! CENC 密钥、找不到就拒绝播放（Windows 报 `0xC00D36C4` 就是这么来的）。
-//!
-//! 这里把入口类型还原成 `frma` 里记录的原始格式（通常 `hvc1`）并摘掉 `sinf`。
-//! 摘 box 会让 `moov` 变短，`mdat` 整体前移，所以 `stco`/`co64` 里的
-//! 每个 chunk 偏移都必须同步减去同一个差值——漏改一处，播放器就会读到
-//! 错位数据而且**不报错**，只会花屏或卡死。
-//!
-//! ⚠️ 顺序要求：必须先解密采样数据、再调用本模块；反过来会把密钥信息一起抹掉。
+//! 去除 CENC 加密标记：把样本入口（encv/enca…）还原成 `frma` 记录的原始格式并摘掉 `sinf` 等保护 box——
+//! 入口仍是加密类型时播放器会去找 CENC 密钥、找不到就拒绝播放（Windows 报 `0xC00D36C4` 就是这么来的）。
+//! 摘 box 会让 mdat 整体前移，`stco`/`co64` 必须同步平移同一差值——漏改一处播放器读到错位数据且**不报错**；⚠️ 必须先解密采样数据再调用本模块。
 
 use hongguo_common::{AppError, AppResult};
 
@@ -22,13 +13,10 @@ const PROTECTION_BOXES: &[&[u8; 4]] = &[b"sinf", b"saiz", b"saio", b"senc"];
 /// 加密样本入口类型 → 未加密时的类型。
 const ENCRYPTED_ENTRIES: &[&[u8; 4]] = &[b"encv", b"enca", b"encs", b"enct"];
 
-/// 把已经解密过采样数据的 MP4 还原成普通可播放的 MP4。
-///
-/// 返回重写后的完整文件字节。长度会变（通常变短）。
+/// 把已经解密过采样数据的 MP4 还原成普通可播放的 MP4，返回重写后的完整文件字节（长度会变，通常变短）。
 pub fn deprotect(data: &[u8]) -> AppResult<Vec<u8>> {
     let Some(rebuilt) = rebuild_moov_region(data, 0)? else {
-        // 没有加密标记说明本来就是明文，原样返回——不是错误。
-        // 整段已解密的流、或非 CENC 封装的流都会走到这里。
+        // 没有加密标记说明本来就是明文（整段已解密或非 CENC 封装），原样返回而不是错误
         log::info!("[DeProtect] 没有加密标记，按明文原样保留");
         return Ok(data.to_vec());
     };
@@ -38,7 +26,6 @@ pub fn deprotect(data: &[u8]) -> AppResult<Vec<u8>> {
     let mut out = Vec::with_capacity(data.len());
     out.extend_from_slice(&data[..rebuilt.start]);
     out.extend_from_slice(&rebuilt.bytes);
-    // moov 之后的内容（mdat 等）原样跟上
     out.extend_from_slice(&data[rebuilt.end..]);
     Ok(out)
 }
@@ -53,21 +40,13 @@ pub struct RebuiltMoov {
     pub end: usize,
 }
 
-/// 重建 moov：加密入口还原 + 摘保护 box + stco 平移。
-///
-/// `region` 是从旧 moov box 头开始的密文切片；`base` 是它在完整文件中的
-/// 绝对偏移——stco 里的值是绝对文件偏移，平移阈值必须用绝对值比，
-/// 只给切片时尾部-moov 的样本会被错误平移。
-///
-/// 「原位替换」指布局语义（新 moov 顶旧 moov 的位置，其后内容整体平移
-/// `新长 − 旧长`），既被 [`deprotect`] 用于整文件重写，也被流式解密
-/// （[`super::streaming`]）用于明文偏移映射。
-///
-/// 返回 `None` 表示没有加密标记，无需重建。
+/// 重建 moov：加密入口还原 + 摘保护 box + stco 平移；`region` 为从旧 moov box 头开始的密文切片，`base` 为其绝对偏移。
+/// stco 值是绝对文件偏移，平移阈值必须用绝对值比（只给切片时尾部-moov 的样本会被错误平移）；
+/// 「原位替换」指新 moov 顶旧 moov 位置、其后内容整体平移 `新长 − 旧长`；返回 `None` 表示没有加密标记。
 pub fn rebuild_moov_region(region: &[u8], base: usize) -> AppResult<Option<RebuiltMoov>> {
     let moov = find_box(region, 0, region.len(), "moov")
         .ok_or_else(|| AppError::Media("文件里没有 moov，不是可解析的 MP4".into()))?;
-    let moov_start = moov.start - 8; // 载荷起点减去 8 字节头（相对 region）
+    let moov_start = moov.start - 8;
     let moov_end = moov.start + moov.size;
 
     let Some(mut new_moov) = rebuild_video_stsd(region, moov_start, moov_end)? else {
@@ -85,9 +64,7 @@ pub fn rebuild_moov_region(region: &[u8], base: usize) -> AppResult<Option<Rebui
     }))
 }
 
-/// 重建 moov：把视频轨 `stsd` 里的加密入口换成普通入口。
-///
-/// 返回 `None` 表示整部片子里没有加密标记，无需重建。
+/// 重建 moov：把 `stsd` 里的加密入口换成普通入口；返回 `None` 表示整部片子里没有加密标记。
 fn rebuild_video_stsd(
     data: &[u8],
     moov_start: usize,
@@ -111,11 +88,8 @@ fn rebuild_video_stsd(
     Ok(Some(build_box(b"moov", &out)))
 }
 
-/// `container` 的直接子 box，返回 `(子 box 完整字节, 类型)`。
-///
-/// ⚠️ `container` **含自身的 8 字节头**（本模块的递归就是这么切的）。
-/// 子 box 从偏移 8 开始——起点写成 0 会把容器自己当成第一个子 box，
-/// 递归随即原地踏步，这个坑踩过一次。
+/// `container` 的直接子 box，返回 `(子 box 完整字节, 类型)`；`container` **含自身 8 字节头**（本模块的递归就是这么切的）。
+/// 子 box 从偏移 8 开始——写成 0 会把容器自己当成第一个子 box，递归随即原地踏步。
 fn children(container: &[u8]) -> Vec<(&[u8], [u8; 4])> {
     let mut v: Vec<(&[u8], [u8; 4])> = parse_boxes(container, 8, container.len())
         .into_iter()
@@ -125,10 +99,7 @@ fn children(container: &[u8]) -> Vec<(&[u8], [u8; 4])> {
     v
 }
 
-/// 重建单个 trak：改写其中的 stsd。
-///
-/// 音视频都要处理——实测平台流里音轨同样是 `enca`，只改视频轨的话
-/// 产物里会残留一半的加密标记，播放器照样拒绝。
+/// 重建单个 trak：改写其中的 stsd。音视频都要处理——平台流里音轨同样是 `enca`，只改视频轨会残留一半加密标记。
 fn rebuild_trak(trak: &[u8], changed: &mut bool) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(trak.len());
     for (child, kind) in children(trak) {
@@ -138,8 +109,7 @@ fn rebuild_trak(trak: &[u8], changed: &mut bool) -> Vec<u8> {
             out.extend_from_slice(child);
         }
     }
-    // 连 box 头一起返回：调用方把它当**完整子 box** 拼回去。
-    // 只还内容的话每层都少 8 字节，结构会静默错位——不报错，只是花屏。
+    // 连 box 头一起返回：调用方把它当**完整子 box** 拼回去——只还内容每层少 8 字节，结构静默错位不报错
     build_box(b"trak", &out)
 }
 
@@ -173,8 +143,7 @@ fn rebuild_stbl(stbl: &[u8], changed: &mut bool) -> Vec<u8> {
         if &kind == b"stsd" {
             out.extend_from_slice(&rebuild_stsd(child, changed));
         } else if PROTECTION_BOXES.contains(&&kind) {
-            // CENC 的采样辅助信息在 stbl 里是平级 box，解密后已无意义，
-            // 留着会让播放器继续按加密流处理
+            // CENC 采样辅助信息解密后已无意义，留着会让播放器继续按加密流处理
             *changed = true;
         } else {
             out.extend_from_slice(child);
@@ -221,9 +190,8 @@ fn rebuild_stsd(stsd: &[u8], changed: &mut bool) -> Vec<u8> {
 
 /// 加密入口 → 普通入口：改类型、摘掉保护信息。
 fn plain_entry(entry: &[u8]) -> Vec<u8> {
-    // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底
+    // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底（encv 几乎总是 HEVC）
     let original = original_format(entry).unwrap_or_else(|| {
-        // encv 几乎总是 HEVC；其余按类型推断
         match &entry[4..8] {
             b"enca" => *b"mp4a",
             _ => *b"hvc1",
@@ -270,9 +238,7 @@ fn original_format(entry: &[u8]) -> Option<[u8; 4]> {
 }
 
 /// moov 长度变化后，把所有指向 moov 之后的 chunk 偏移平移 `delta`。
-///
-/// `stco` / `co64` 位于 `stbl` **内部**，所以要沿着 moov 的层级往下走，
-/// 而不是去 moov 外面找。漏改一处播放器就会读到错位数据而且不报错。
+/// `stco` / `co64` 位于 `stbl` **内部**，要沿 moov 的层级往下走；漏改一处播放器就会读到错位数据而且不报错。
 fn shift_chunk_offsets(moov: &mut [u8], threshold: usize, delta: i64) {
     fn walk(moov: &mut [u8], start: usize, end: usize, threshold: usize, delta: i64) {
         for b in parse_boxes(moov, start, end) {
@@ -320,8 +286,7 @@ fn patch_offsets(
             buf.copy_from_slice(&moov[at..at + 8]);
             u64::from_be_bytes(buf)
         };
-        // 只平移指向 moov 之后的偏移；落在 moov 内部的（不该有）保持不动，
-        // 宁可偏移不完美也不能把指向 box 内部的偏移改坏
+        // 只平移指向 moov 之后的偏移；宁可偏移不完美也不能把指向 box 内部的偏移改坏
         if value < threshold as u64 {
             continue;
         }
@@ -419,9 +384,8 @@ mod tests {
         let moov = build_box(b"moov", &trak);
         let mdat = build_box(b"mdat", sample);
 
-        // stco 偏移在文件中的位置：**搜出来**，不要手算。
-        // 手算过一次，偏了 8 字节，把 box 类型覆盖成乱码，排查时极具迷惑性。
-        // find_box 会递归下钻；parse_boxes 只看顶层，找不到 moov 里的 stco。
+        // stco 偏移在文件中的位置**搜出来**、不要手算（手算曾偏 8 字节把 box 类型覆盖成乱码）；
+        // find_box 会递归下钻，parse_boxes 只看顶层、找不到 moov 里的 stco
         let ftyp = build_box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2");
         let mut data = ftyp;
         let sample_at = (data.len() + moov.len() + 8) as u32;
@@ -446,7 +410,6 @@ mod tests {
         assert!(!has(b"sinf"), "不该再出现 sinf");
         assert!(!has(b"tenc"), "不该再出现 tenc");
         assert!(!has(b"cenc"), "不该再出现 cenc 方案名");
-        // 非保护 box 要保留
         assert!(has(b"hvcC"));
         assert!(has(b"btrt"));
         assert!(has(b"stco"));
@@ -458,8 +421,6 @@ mod tests {
         let mp4 = encrypted_mp4(&sample);
         let out = deprotect(&mp4).unwrap();
 
-        // 重写后 moov 变短，mdat 前移；stco 必须同步平移，
-        // 否则这里读到的就不是样本数据了
         let tracks = collect_tracks(&out).expect("产物应可解析");
         let (offset, size) = tracks[0].samples[0];
         assert_eq!(size as usize, sample.len());
@@ -473,7 +434,6 @@ mod tests {
 
     #[test]
     fn plain_file_passes_through_untouched() {
-        // 没有加密标记 = 本来就是明文，原样返回而不是报错
         let ftyp = build_box(b"ftyp", b"isom");
         let moov = build_box(b"moov", &build_box(b"mvhd", &[0u8; 100]));
         let mut data = ftyp;

@@ -1,7 +1,5 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 下载
-
 export const download = {
   tasks: () => call('get_download_tasks'),
   status: () => call('get_queue_status'),

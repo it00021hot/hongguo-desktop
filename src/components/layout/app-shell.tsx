@@ -220,10 +220,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* 侧边栏是桌面导航：窄屏由底部导航条承担（对齐官方 App 的底部 tab） */}
         {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <AppSidebar />}
 
-        <main
-          id="content"
-          className="min-h-0 flex-1 scrollbar-thin overflow-y-auto pb-14 md:pb-0"
-        >
+        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto pb-14 md:pb-0">
           {children}
         </main>
       </div>

@@ -3,16 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { capability, play, transcode } from '../commands';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 播放与转码
-
 /**
- * 起播。
- *
- * preferOnline 恒为 true：已下载的那一集后端仍优先走本地文件，
- * 没下载的走在线流——与原版一致，否则「点开没下过的集」永远播不了。
- *
- * `definition` 不传则取平台给的最高档；传了但平台没有这一档时后端自动回退，
- * 响应里的 `definition` 是**实际生效**的那档，菜单以它为准。
+ * 起播：preferOnline 恒为 true（已下载的那集后端仍优先走本地文件，没下载的走在线流）。
+ * `definition` 不传取平台最高档，传了没有该档时后端自动回退——响应里的 definition 是实际生效档，菜单以它为准。
  */
 export function usePlay() {
   return useMutation({
@@ -56,10 +49,8 @@ export function useDecodeCapability() {
 }
 
 /**
- * 本机 WebView2 能否解 HEVC。
- *
- * 后端是廉价的 MFT 枚举 + 进程级缓存，会话内结论不变；装完扩展走安装
- * 命令的返回值刷新缓存，不靠 staleTime 过期。
+ * 本机 WebView2 能否解 HEVC：后端是廉价的 MFT 枚举 + 进程级缓存，会话内结论不变；
+ * 装完扩展走安装命令的返回值刷新缓存，不靠 staleTime 过期。
  */
 export function usePlaybackCapability() {
   return useQuery({
@@ -86,12 +77,7 @@ export function useInstallHevcExtension() {
   });
 }
 
-/**
- * 重新探测 ffmpeg。
- *
- * 装完 ffmpeg 之后**当前进程的环境变量不会更新**，不重探就一直报「未检测到」。
- * 这条命令丢弃后端缓存重新探一次，比让用户去重启应用合理。
- */
+/** 重新探测 ffmpeg：装完 ffmpeg 当前进程环境变量不会更新，须丢弃后端缓存重探一次（免重启）。 */
 export function useRedetectCapability() {
   const qc = useQueryClient();
   return useMutation({
@@ -102,11 +88,7 @@ export function useRedetectCapability() {
   });
 }
 
-/**
- * 播放兼容兜底：把解不出来的一集转成 H.264。
- *
- * 只有在确认「有声音没画面」之后才调——提前转码等于白转。
- */
+/** 播放兼容兜底：把解不出来的一集转成 H.264；只在确认「有声音没画面」之后才调，提前转码等于白转。 */
 export function useCompatPlayback() {
   return useMutation({ mutationFn: transcode.transcodeForPlayback });
 }

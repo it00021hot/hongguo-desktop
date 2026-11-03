@@ -1,15 +1,8 @@
-//! 老板键组合的纯函数（无副作用、无 crate 依赖——集成测试按源文件引入，
-//! 见 `tests/boss_key.rs`）。
-//!
-//! 形态与 Tauri 完全一致：tauri accelerator 串（如 `"CommandOrControl+Alt+H"`，
-//! 捕获自键盘物理键、末段是裸键名），空串 = 未启用。注册参数（修饰位 +
-//! Win32 虚拟键码）也在这里算，`win32` 只负责把参数交给系统。
-//!
-//! 注册参数（MOD_* / `parse` / `Hotkey`）两端都编译：Windows 直接交给
-//! `RegisterHotKey`，macOS 经 [`carbon_mods`]/[`mac_keycode`] 换成 Carbon
-//! 的修饰位与键码（两个映射都是纯函数，集成测试覆盖）。
-//!
-//! 修饰键位（Win32 `RegisterHotKey` 的 fsModifiers 值；与系统 ABI 对齐）。
+//! 老板键组合的纯函数（无副作用、无 crate 依赖——集成测试按源文件引入）。
+//! 形态：tauri accelerator 串（空串 = 未启用）；注册参数（MOD_* / `parse` /
+//! `Hotkey`）也在这里算，`win32` 只负责交给系统，macOS 经 [`carbon_mods`] /
+//! [`mac_keycode`] 换成 Carbon 修饰位与键码。
+//! 修饰键位是 Win32 `RegisterHotKey` 的 fsModifiers 值（与系统 ABI 对齐）。
 pub(crate) const MOD_ALT: u32 = 0x0001;
 pub(crate) const MOD_CONTROL: u32 = 0x0002;
 pub(crate) const MOD_SHIFT: u32 = 0x0004;

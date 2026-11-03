@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（搜索域）。
- */
+/** 搜索域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 /** App 搜索的一条结果（Rust `search::SearchResult`）。 */

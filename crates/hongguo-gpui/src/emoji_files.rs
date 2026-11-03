@@ -2,7 +2,7 @@
 //! 从客户端 bundle 提取；webp 资产在 assets/emoji/）。重新生成：
 //! 从 generated.ts 照抄对表 + 复制 webp 到 assets/emoji/。
 
-/// [名字] 代码 → 打包的 webp 字节。
+/// `[名字]` 代码 → 打包的 webp 字节。
 pub(crate) const EMOJI_FILES: &[(&str, &[u8])] = &[
     ("[微笑]", include_bytes!("../assets/emoji/e01.webp")),
     ("[偷笑]", include_bytes!("../assets/emoji/e02.webp")),

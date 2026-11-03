@@ -3,8 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settings } from '../commands';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 设置
-
 export function useSettings() {
   return useQuery({ queryKey: keys.settings, queryFn: settings.get });
 }

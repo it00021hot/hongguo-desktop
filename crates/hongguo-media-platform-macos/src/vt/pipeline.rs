@@ -14,13 +14,8 @@ use super::encode::Compressor;
 use super::ffi;
 use super::pixel::{CmSb, Pb, Transfer};
 
-/// 平台编码层执行 HEVC→H.264 转码；HEVC 以外的源返回 `None`
-/// （留给 ffmpeg——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
-///
-/// 闸门是「VT 会话能建」而不是「必须硬编」：会话有硬编走硬编，没有就落
-/// Apple 内置软编会话——后者仍然显著快于 ffmpeg（本机 i7
-/// 实测 44.9s 集：VT 链 ≈5.9s，libx264 18.2s），且同样不依赖
-/// 用户装任何东西。会话真建不出来（罕见）由管线落回下一条路。
+/// 平台编码层执行 HEVC→H.264 转码；HEVC 以外的源返回 `None`（留给 ffmpeg——H.264 源直转，没必要绕 GPU）。
+/// 闸门是「VT 会话能建」而不是「必须硬编」：没有硬编落 Apple 内置软编会话，仍显著快于 ffmpeg（本机 44.9s 集：VT ≈5.9s vs libx264 18.2s）且同样不依赖用户装任何东西；会话真建不出来（罕见）由管线落回下一条路。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
@@ -30,14 +25,7 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     Some(run(req, &demuxed, &video.info))
 }
 
-// ————————————————————————————————————————————————————————————
-// 编排
-// ————————————————————————————————————————————————————————————
-
-// 码率标定 bitrate_for 收敛到 super::video（mf/vt 两侧原本逐字节相同）。
-
-/// 一帧解码输出 →（缩放）→ 编码 → 收割产物。`pts` 是该帧与源槽位配对
-/// 好的显示时间（见 run() 流水注释）。
+/// 一帧解码输出 →（缩放）→ 编码 → 收割产物。`pts` 是该帧与源槽位配对好的显示时间（见 run() 流水注释）。
 #[expect(
     clippy::too_many_arguments,
     reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
@@ -84,12 +72,8 @@ fn process_frame(
     emit_outputs(compressor, units, on_progress)
 }
 
-/// 收割编码器已就绪的输出。
-///
-/// 显示时间读**输出样本自带的 PTS**（编码器保留编码时传入的时间戳），
-/// 原样透传不做单调顶开：编码器即使开着帧重排（输出落进解码序），每帧
-/// 携带的仍是自己的真实显示时间，非单调交给 mux 按「解码序 + ctts」封装
-/// （真实剧集 B 帧流首跑实证：回退顶开会把标题帧顶进转场中间）。
+/// 收割编码器已就绪的输出：显示时间读**输出样本自带的 PTS**（编码器保留编码时传入的时间戳），原样透传不做单调顶开。
+/// 编码器即使开着帧重排（输出落进解码序），每帧携带的仍是自己的真实显示时间，非单调交给 mux 按「解码序 + ctts」封装（真实剧集 B 帧流实证：回退顶开会把标题帧顶进转场中间）。
 fn emit_outputs(
     compressor: &mut Compressor,
     units: &mut Vec<(f64, Vec<u8>, bool)>,
@@ -97,10 +81,8 @@ fn emit_outputs(
 ) -> AppResult<()> {
     for sb in compressor.take_outputs() {
         let (annexb, keyframe) = unsafe { compressor.sample_to_unit(&sb) }?;
-        // PTS **原样透传**。解码侧按源时间轴精确配对后，发射序=解码序，
-        // 显示时间天然非单调——任何「回退顶开」都会把真实显示顺序打乱
-        // （真实剧集 B 帧流首跑实证：标题帧被顶进转场中间）。非单调交给
-        // 封装器：按时间戳交织、写 ctts，这正是 MP4 B 帧的标准形态。
+        // PTS **原样透传**：解码侧按源时间轴精确配对后，发射序=解码序，显示时间天然非单调——任何「回退顶开」都会打乱真实显示顺序（实证：标题帧被顶进转场中间）。
+        // 非单调交给封装器按时间戳交织、写 ctts，这正是 MP4 B 帧的标准形态。
         let pts = output_pts_secs(&sb);
         units.push((pts, annexb, keyframe));
         if let Some(cb) = on_progress {
@@ -137,8 +119,7 @@ fn run(
 ) -> AppResult<()> {
     let started = Instant::now();
 
-    // 1) 参数集与源时间轴。hvcC 里可能混着非参数集 NAL（实测 libx265 会把
-    //    两 KB 的 SEI 塞进 hvcC），格式描述只收 VPS/SPS/PPS，其余剔除。
+    // 1) 参数集与源时间轴：hvcC 里可能混着非参数集 NAL（实测 libx265 会把两 KB 的 SEI 塞进 hvcC），格式描述只收 VPS/SPS/PPS，其余剔除
     let (raw_sets, _) = hongguo_media::hevc::read_parameter_set_nalus(req.input, video)?;
     let parameter_sets: Vec<Vec<u8>> = raw_sets
         .into_iter()
@@ -146,8 +127,7 @@ fn run(
         .collect();
     let fps = video.average_framerate().unwrap_or(25.0);
     let frame_dur = 1.0 / fps;
-    // 每个样本自己的显示时间（stts 累计 + ctts 合成偏移）；空表退化为按
-    // 平均帧率均摊。帧与时间槽的配对全靠它，见下面的流水注释。
+    // 每个样本自己的显示时间（stts 累计 + ctts 合成偏移）；空表退化为按平均帧率均摊。帧与时间槽的配对全靠它，见下面的流水注释
     let mut source_pts = video.sample_pts();
     if source_pts.is_empty() {
         source_pts = (0..video.samples.len()).map(|i| i as f64 / fps).collect();
@@ -157,15 +137,9 @@ fn run(
         .map(|(w, h)| ((w & !1) as usize, (h & !1) as usize));
 
     // 2) 解码 → （缩放）→ 编码 流水。两个「顺序不可信」，各修各的：
-    //
-    // - **解码吐出序不可信**：同步解码（回调在 decode() 内触发）没有
-    //   B 帧重排，吐出的是解码序；解码回调把喂入的显示时间原样带回，
-    //   帧↔显示时间按 PTS 认领，绝不按吐出顺序排位。
-    // - **编码器输入必须是显示序**：编码器契约按显示序收帧、自行构造
-    //   B 帧 GOP 并写 POC。把解码序直接喂进去，POC 会把解码序固化成
-    //   显示序——产物按解码序播放（真实剧集实证：标题帧闪现在转场前，
-    //   showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序
-    //   喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
+    // - **解码吐出序不可信**：同步解码（回调在 decode() 内触发）没有 B 帧重排，吐出的是解码序；解码回调把喂入的显示时间原样带回，帧↔显示时间按 PTS 认领，绝不按吐出顺序排位。
+    // - **编码器输入必须是显示序**：编码器契约按显示序收帧、自行构造 B 帧 GOP 并写 POC；把解码序直接喂进去，POC 会把解码序固化成显示序——产物按解码序播放
+    //   （真实剧集实证：标题帧闪现在转场前，showinfo 呈现序 0, 0.533, 0.067…）。配对好的帧按容器时间槽顺序喂编码器；槽内帧未到就继续解码下一个样本，内存以重排窗口为界。
     // 转码只处理 HEVC 源（H.264 源在 ffmpeg 侧直转），解码会话固定按 HEVC 建
     let decoder = unsafe { Decompressor::new(VideoCodec::Hevc, &parameter_sets)? };
     let mut slot_times = source_pts.clone();

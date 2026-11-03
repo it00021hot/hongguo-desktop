@@ -5,8 +5,7 @@ use hongguo_api::login::{self, PassportUser};
 use hongguo_common::model::AccountState;
 use hongguo_common::{AppError, AppResult};
 
-/// 登录成功产物 → 账号快照（`login_at` 用 UTC 毫秒时间戳，与全库其它
-/// 时间字段一致；曾用秒级导致前端展示口径不同）。
+/// 登录成功产物 → 账号快照（`login_at` 用 UTC 毫秒时间戳，与全库其它时间字段一致）。
 pub fn account_from_login(
     mobile: String,
     cookies: String,
@@ -36,25 +35,19 @@ pub fn persist_account(state: &AppState, account: Option<AccountState>) -> AppRe
     Ok(())
 }
 
-/// 登录成功收尾：消费一次性凭据、落库账号、后台刷新资料。
-///
-/// 登录成功即清 csrf / MFA 流程（一次性凭据）。
+/// 登录成功收尾：消费一次性凭据（csrf / MFA 流程）、落库账号、后台刷新资料与离线历史补传。
 pub fn complete_login(state: &AppState, account: AccountState) -> AppResult<()> {
     *state.login_csrf.write() = None;
     *state.login_mfa.write() = None;
     persist_account(state, Some(account))?;
     refresh_profile_after_login(state.clone());
-    // 离线历史补传（issue #10）：登录前攒下的本地观看历史推云端
     let st = state.clone();
     crate::runtime::spawn(async move { crate::history_service::upload_pending(&st).await });
     Ok(())
 }
 
-/// 登录成功后跟进刷新用户资料（best-effort）：sms_login 响应给的是
-/// **默认昵称 + 低清头像**（`用户17xxx` + 120x256），真昵称/高清头像/
-/// raw_profile（红果号等长尾字段）都在 user_info——不跟进的话设置页
-/// 显示的就是默认档案。
-/// 失败只记日志：登录本身已成功，资料拉不下来不该让登录报错。
+/// 登录成功后跟进刷新用户资料（best-effort）：sms_login 响应给的是默认昵称 + 低清头像，
+/// 真昵称/高清头像/raw_profile 都在 user_info；失败只记日志，不让登录报错。
 pub fn refresh_profile_after_login(state: AppState) {
     crate::runtime::spawn(async move {
         match login::user_info(&state.api_env()).await {
@@ -80,13 +73,9 @@ pub fn refresh_profile_after_login(state: AppState) {
 }
 
 /// 校验会话有效性并刷新用户信息（会话过期返回错误）。
-///
-/// user_id **绝不能**用响应里的 user_id 刷新：user_info 端点返回的是
-/// encode_user_id 加密形态（`#c1967_…` 71 字符），数字 uid 只在 sms_login
-/// 响应里——覆盖会让「删除自己的评论」的 isMine 判定（对比评论作者数字
-/// user_id）永远不成立。但存量坏值可以从本响应的
-/// req_id（字段名伪装的数字 uid，与 sms_login 的数字 user_id 同值）就地
-/// 自愈，不用退出重登。
+/// user_id **绝不能**用响应里的 user_id 刷新：user_info 返回的是 encode_user_id 加密形态，
+/// 数字 uid 只在 sms_login 响应里——覆盖会让评论 isMine 判定永远不成立。
+/// 存量坏值可从本响应的 req_id（伪装字段名的数字 uid）就地自愈。
 pub async fn fetch_and_refresh_user(state: &AppState) -> AppResult<PassportUser> {
     if state.settings().account.is_none() {
         return Err(AppError::Auth("未登录".into()));
@@ -104,8 +93,7 @@ pub async fn fetch_and_refresh_user(state: &AppState) -> AppResult<PassportUser>
         if !user.avatar_url.is_empty() {
             acc.avatar_url = user.avatar_url.clone();
         }
-        // 原文整体落库：红果号（biz_user_id）/vip_info 等 60+ 长尾字段
-        // 按需从 raw_profile 读取，不再为个别字段加解析路径
+        // 原文整体落库：红果号/vip_info 等长尾字段按需从 raw_profile 读取。
         acc.raw_profile = user.raw.clone();
         persist_account(state, Some(acc))?;
     }

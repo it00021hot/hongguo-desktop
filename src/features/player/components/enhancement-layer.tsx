@@ -1,15 +1,7 @@
 /**
- * 画质增强叠加层：Anime4K（WebGPU canvas 盖在视频上）与锐化两个独立
- * 开关的运行时宿主。
- *
- * - 只开锐化：SVG 卷积滤镜打到 `<video>` 上（纯合成器效果，全平台可用）；
- * - 开 Anime4K：WebGPU canvas 盖在视频上，锐化（若同开）直接进显示
- *   着色器、对 2× 输出做 unsharp——开关切换与拖滑条都只写 uniform，
- *   不重建渲染器。
- *
- * 显示层增强——不碰播放管线，任何失败只收掉增强画面本身，播放不受
- * 影响；每条失败路径都给人话 + 下一步。canvas 尺寸 = 增强输出分辨率，
- * 适配交给 object-fit，与 `<video>` 同一套裁切口径（小屏 cover / 其余 contain）。
+ * 画质增强叠加层：Anime4K 与锐化两个独立开关的运行时宿主。只开锐化走 SVG 卷积滤镜；
+ * 开 Anime4K 时 WebGPU canvas 盖在视频上、锐化进显示着色器（开关/滑条只写 uniform 不重建渲染器）。
+ * 显示层增强——不碰播放管线，任何失败只收掉增强画面本身；canvas 尺寸适配交给 object-fit（与 <video> 同口径）。
  */
 import { useEffect, useId, useRef } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';

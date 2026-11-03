@@ -1,7 +1,4 @@
-//! 索引重建的单元测试。
-//!
-//! 测的是 [`plan`] 产出的素材（样本数、时长、`stts` / `ctts` / `stss` 游程）
-//! 与交织顺序，不碰文件 IO——落盘与字节搬运在 `remux.rs` 的用例里验证。
+//! 索引重建的单元测试：测 [`plan`] 产出的素材（样本数、时长、`stts` / `ctts` / `stss` 游程）与交织顺序，不碰文件 IO——落盘与字节搬运在 `remux.rs` 的用例里验证。
 
 use super::*;
 use crate::mp4::{Edit, build_moov, mdat_data_start, mdat_header_len, needs_wide_offsets};
@@ -33,9 +30,7 @@ fn durations_are_summed_per_track() {
     let merged = plan(&files).unwrap();
 
     assert_eq!(merged.tracks[0].sizes.len(), 10, "样本数是三集之和");
-    // fixture 每样本 1 个单位时长 → 媒体时基下累计 10
     assert_eq!(duration_of(&merged.tracks[0].mdhd, MDHD_DURATION), 10);
-    // mvhd 的电影时基也是 1000，所以 mvhd 与 tkhd 同样累计到 10
     assert_eq!(duration_of(&merged.tracks[0].tkhd, TKHD_DURATION), 10);
     assert_eq!(duration_of(&merged.mvhd, MVHD_DURATION), 10);
 }
@@ -48,7 +43,6 @@ fn durations_are_summed_separately_for_each_track() {
     ];
     let merged = plan(&files).unwrap();
 
-    // 两条轨各自推进：视频 6、音频 14，不共用一个游程
     assert_eq!(merged.tracks[0].sizes.len(), 6);
     assert_eq!(merged.tracks[1].sizes.len(), 14);
     assert_eq!(duration_of(&merged.tracks[0].mdhd, MDHD_DURATION), 6);
@@ -57,7 +51,6 @@ fn durations_are_summed_separately_for_each_track() {
 
 #[test]
 fn ragged_durations_stay_separate_runs() {
-    // 每样本时长都不同的轨道，拼接后相邻游程不能被误合并
     let files = vec![
         source(&[TrackPlan::video_ragged(samples(4))]),
         source(&[TrackPlan::video_ragged(samples(4))]),
@@ -74,13 +67,11 @@ fn ragged_durations_stay_separate_runs() {
         merged.tracks[0].stts.iter().map(|(n, _)| *n).sum::<u32>(),
         8
     );
-    // 时长 = (1+2+3+4) * 2 = 20
     assert_eq!(duration_of(&merged.tracks[0].mdhd, MDHD_DURATION), 20);
 }
 
 #[test]
 fn equal_runs_from_adjacent_files_are_merged() {
-    // fixture 默认每样本时长都是 1，三集拼起来应该压成一条游程
     let files = vec![
         source(&[TrackPlan::video(samples(3))]),
         source(&[TrackPlan::video(samples(4))]),
@@ -93,16 +84,14 @@ fn equal_runs_from_adjacent_files_are_merged() {
 fn a_file_without_ctts_mixes_with_files_that_have_it() {
     let files = vec![
         source(&[TrackPlan::video_with_b_frames(samples(4))]),
-        // 这一集没有 ctts
         source(&[TrackPlan::video(samples(3))]),
         source(&[TrackPlan::video_with_b_frames(samples(2))]),
     ];
     let merged = plan(&files).unwrap();
 
     let ctts = &merged.tracks[0].ctts;
-    // 条目覆盖的样本数必须等于总样本数，缺一段就会让后面的样本整体错位
     assert_eq!(ctts.iter().map(|(n, _)| *n).sum::<u32>(), 9);
-    // 第 2 集整段补 0；它后面紧接着的第 3 集首个样本也是 0，两段并成一条游程
+    // 第 2 集整段补 0；紧接着的第 3 集首个样本也是 0，两段并成一条游程
     assert_eq!(ctts, &vec![(2, 0), (2, -1024), (4, 0), (1, -1024)]);
     // 展开成逐样本：源里是 [0,0,-1024,-1024] / [0,0,0] / [0,-1024]
     assert_eq!(
@@ -141,7 +130,6 @@ fn sync_sample_numbers_are_shifted_by_the_preceding_files() {
 
 #[test]
 fn a_file_without_stss_contributes_every_sample_as_a_keyframe() {
-    // 音频轨不写 stss（全部样本都是同步样本），视频轨写
     let files = vec![
         source(&[TrackPlan::video(samples(4)), TrackPlan::audio(samples(3))]),
         source(&[TrackPlan::video(samples(2)), TrackPlan::audio(samples(2))]),
@@ -153,15 +141,12 @@ fn a_file_without_stss_contributes_every_sample_as_a_keyframe() {
         Some([1u32, 5].as_slice()),
         "视频轨：每 5 帧一个关键帧 → 第 1 集得 1、第 2 集的 1 平移 4 得 5"
     );
-    // 音频轨两集都没有 stss → 全部样本都是关键帧
     assert_eq!(merged.tracks[1].stss, Some(vec![1, 2, 3, 4, 5]));
 }
 
 #[test]
 fn audio_priming_edit_is_skipped_in_every_episode() {
-    // 每集音频 6 tick、edit 跳过开头 2 tick，视频 4 tick：合并后音频媒体仍是
-    // 12 tick，但 presentation 是 8 tick；每集 audio edit 的 media_time 平移
-    // 到本集 media 起点（0+2、6+2），不再靠改末样本制造假时长。
+    // 每集音频 6 tick、edit 跳过开头 2 tick：合并后媒体仍是 12 tick、presentation 8 tick；每集 audio edit 的 media_time 平移到本集 media 起点
     let audio = TrackPlan::audio_with_priming(samples(6), 2);
     let files = vec![
         source(&[TrackPlan::video(samples(4)), audio.clone()]),
@@ -232,8 +217,7 @@ fn edit_media_times_accumulate_across_three_episodes() {
 
 #[test]
 fn tracks_without_edits_get_contiguous_default_edits() {
-    // 源没有 elst 时也要在每个集边界写一段显式 edit，避免播放器用隐式
-    // 「上一条继续往后推」解释拼接处。
+    // 源没有 elst 时也要在每个集边界写一段显式 edit，避免播放器用隐式续推解释拼接处
     let files = vec![
         source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(4))]),
         source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(4))]),
@@ -259,7 +243,6 @@ fn tracks_without_edits_get_contiguous_default_edits() {
 
 #[test]
 fn interleave_order_follows_the_source_layout() {
-    // fixture 按「轨0样本0, 轨1样本0, 轨0样本1, …」轮转交织
     let file = source(&[TrackPlan::video(samples(3)), TrackPlan::audio(samples(3))]);
     assert_eq!(
         file.order,
@@ -339,8 +322,7 @@ fn moov_writes_audio_edits_per_episode() {
 
 #[test]
 fn the_two_moov_builds_have_the_same_length() {
-    // `prepare` 靠「长度只取决于样本数与偏移宽度」用占位偏移量一次长度。
-    // 这条用例把那个前提钉住：一旦偏移宽度变了，长度就必须跟着变。
+    // 把「moov 长度只取决于样本数与偏移宽度」的前提钉住：一旦偏移宽度变了，长度就必须跟着变
     let files = vec![
         source(&[TrackPlan::video(samples(3))]),
         source(&[TrackPlan::video(samples(5))]),
@@ -361,7 +343,6 @@ fn the_two_moov_builds_have_the_same_length() {
         build_moov(&merged.mvhd, &merged.tracks, &zeros, false).len(),
         build_moov(&merged.mvhd, &merged.tracks, &real, false).len()
     );
-    // 升到 64 位偏移时表更大，宽度确实体现在长度上
     assert!(
         build_moov(&merged.mvhd, &merged.tracks, &real, true).len()
             > build_moov(&merged.mvhd, &merged.tracks, &real, false).len()

@@ -1,15 +1,8 @@
-//! MediaEngine 供数：把一集的明文按 offset/length 喂给 Media Foundation。
-//!
-//! 数据源固定是 `hongguo-stream` 的 `(vid, 档位)` 渐进流（与 macOS 的
-//! `av_presenter/loader.rs` 同一段供数语义，只是宿主接口换成了 `IMFByteStream`）：
-//! 按需等待密文区间、惰性解密；`GetLength` 用 `plain_len`。
-//!
-//! spike 实测的两个硬约束（见 `docs/gpui-system-player-windows.md`）：
-//! 1. MediaEngine 的供数**只走异步接口**：`BeginRead` 返回 `E_NOTIMPL` 会让它
-//!    静默停在「取到长度」之后，一个字节都不读、一个事件都不发；
-//! 2. 允许在 `BeginRead` 内同步完成：读到位 → 建 `IMFAsyncResult` → 立刻
-//!    `MFInvokeCallback`，`EndRead` 再取字节数。读本身是阻塞的（与 macOS
-//!    loader 同一套等待/重试），跑在 MF 自己的工作线程上。
+//! MediaEngine 供数：把一集的明文按 offset/length 喂给 Media Foundation。数据源固定是 `hongguo-stream` 的 `(vid, 档位)` 渐进流
+//! （与 macOS 的 `av_presenter/loader.rs` 同一段供数语义，只是宿主接口换成 `IMFByteStream`）：按需等待密文区间、惰性解密，`GetLength` 用 `plain_len`。
+//! spike 实测的两个硬约束（见 `docs/gpui-system-player-windows.md`）：① MediaEngine 供数**只走异步接口**——`BeginRead` 返回 `E_NOTIMPL` 会让它
+//! 静默停在「取到长度」之后，一个字节都不读、一个事件都不发；② 允许在 `BeginRead` 内同步完成（读到位 → 建 `IMFAsyncResult` → 立刻 `MFInvokeCallback`，
+//! `EndRead` 再取字节数）——读本身阻塞（与 macOS loader 同一套等待/重试），跑在 MF 自己的工作线程上。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

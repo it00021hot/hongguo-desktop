@@ -1,8 +1,6 @@
-//! 分集列表：调接口 + 解析。
-//!
-//! 分集在响应里的位置是固定的：`data[series_id].video_data.video_list[]`。
-//! 不要用「递归找第一个数组」的办法——`video_data` 下面还有 `celebrities`、
-//! `abstract_tags` 等一堆数组，猜出来的必然是错的，而且不会报错。
+//! 分集列表：调接口 + 解析。分集在响应里的位置固定：
+//! `data[series_id].video_data.video_list[]`（不要「递归找第一个数组」——
+//! video_data 下还有 celebrities 等数组，猜出来必错且不报错）。
 
 mod model;
 mod parse;
@@ -12,31 +10,18 @@ use serde_json::Value;
 use hongguo_common::{AppError, AppResult};
 
 pub use model::{EpisodeList, RelatedSeries, SeriesCreator, SeriesMeta};
-// 保持公共路径 `detail::RelatedItem` 可用（被 `RelatedSeries` 聚合引用，
-// crate 内暂无直接引用者）。作为 crate 公开再导出，rustc 不再按
-// unused_imports 处理，故不需要 `#[expect]`。
+// 保持公共路径 `detail::RelatedItem` 可用；公开再导出后 rustc 不再按 unused_imports 处理
 pub use model::RelatedItem;
 pub use parse::{parse_episodes, parse_episodes_batch, parse_series_meta};
 
 use parse::parse_related_series;
 
-/// 相关作品（同系列各季 + 同 IP 作品）。
-///
-/// 端点（详情页「相关推荐」tab 懒加载）：
-/// `GET /reading/bookapi/plan/v?book_id=<series_id>&from=detail_page_more_related
-/// &scene=10&...`（reading 族轻签名头，lq 域）。响应 `data[]` 是 cell 列表：
-/// `cell_name:"相关作品"` 的 cell 里 `video_data[]` 每项带 `tag_info.text`
-/// 角标（`第1季`/`同IP`/…）。
+/// 相关作品端点（详情页「相关推荐」懒加载，lq 域轻签名）：
+/// 响应 `data[]` 是 cell 列表，`cell_name:"相关作品"` 的 cell 里 `video_data[]` 带 `tag_info.text` 角标。
 pub const PLAN_PATH: &str = "/reading/bookapi/plan/v";
 
-/// 拉一部剧的相关作品·系列。
-///
-/// 服务端对 plan/v 的**首次调用**下发冷响应——猜你喜欢 cell 还在但
-/// `cell_data` 里的短剧子格稀少甚至为空，连打会逐次填充（同进程
-/// 4 连打 guess 1→6→8→9）。客户端每次进详情页只打一次、
-/// 前端还带 10 分钟缓存，冷响应会原样上屏成「猜你喜欢消失」。
-/// 对策：guess 空时递增退避重试（至多 4 调），取首个非空结果；works
-/// 各次稳定不受影响，全空就退最后一次的响应。
+/// 拉一部剧的相关作品·系列。plan/v 首次调用下发冷响应（guess 子格稀少甚至空，连打逐次填充），
+/// 故 guess 空时递增退避重试（至多 4 调）取首个非空；全空退最后一次响应。
 pub async fn fetch_related_series(
     series_id: &str,
     env: &super::client::ApiEnv,
@@ -60,8 +45,7 @@ pub async fn fetch_related_series(
     .collect();
 
     let mut last = RelatedSeries::default();
-    /// 相关推荐的重试次数与递增退避（400/700/1000ms）。冷填充通常
-    /// 第二次就有数据，连冷到第四次极罕见（间隔拉长给服务端填充留时间）。
+    /// 相关推荐的重试次数与递增退避（400/700/1000ms）。
     const PLAN_RETRY_ATTEMPTS: u8 = 4;
     const PLAN_RETRY_BASE_MS: u64 = 400;
     const PLAN_RETRY_STEP_MS: u64 = 300;
@@ -100,8 +84,7 @@ pub async fn fetch_episode_list(
     let payload = serde_json::to_vec(&crate::params::detail_payload(series_id))
         .map_err(|e| AppError::Signer(e.to_string()))?;
 
-    // sinfoninec + gzip：2026-10-31 官方实流，detail/preload 打 sinfoninec
-    // 且 body 一律 gzip（sinfonlineb 旧形态已整体回空）
+    // sinfoninec 域 + gzip body（sinfonlineb 旧形态已整体回空）
     let bytes = crate::client::api_call_reading(
         crate::client::SINFONLINEC_API_ORIGIN,
         crate::params::DETAIL_PATH,
@@ -117,9 +100,8 @@ pub async fn fetch_episode_list(
     parse_episodes(&value)
 }
 
-/// 批量拉多部剧的分集档案（官方预取形态）：
-/// 一次 `multi_video_detail/preload`，`series_id` 是**逗号串**（官方 6 部
-/// 一发），响应 `data[series_id]` 按剧分发。单部残缺由解析层跳过。
+/// 批量拉多部剧的分集档案（官方预取形态）：一次 `multi_video_detail/preload`，
+/// `series_id` 是**逗号串**（官方 6 部一发）；单部残缺由解析层跳过。
 pub async fn fetch_episode_lists_batch(
     series_ids: &[String],
     env: &super::client::ApiEnv,
@@ -141,9 +123,7 @@ pub async fn fetch_episode_lists_batch(
     parse_episodes_batch(&value)
 }
 
-/// 档案响应里的 vid → content_type 进注册表（`video_data.content_type`
-/// 剧级在场；整剧各集同型）。批量取流（预取/真播）
-/// 的分组 key 来源之一——连播的后续集就靠这里注册。
+/// 档案响应里的 vid → content_type 进注册表（批量取流分组 key 的来源之一）。
 fn register_episode_types(response: &Value) {
     let Some(data) = response.get("data").and_then(Value::as_object) else {
         return;
@@ -172,10 +152,7 @@ fn register_episode_types(response: &Value) {
     }
 }
 
-// ---------------------------------------------------------------- 剧集元信息
-
-/// 详情页头部元信息端点：
-/// `POST /novel/player/video_detail/v1/`，body `{"biz_param":{…},"series_id"}`。
+/// 详情页头部元信息端点：`POST /novel/player/video_detail/v1/`。
 /// 追剧数/播放量/季徽/题材标签/备案号都在这里——preload 分集接口不带这些。
 pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
 
@@ -205,8 +182,7 @@ pub async fn fetch_series_meta(
 mod probe {
     use super::*;
 
-    /// 详情响应里的公开计数盘点（信息流 landpage 的 comment_count 恒 0、
-    /// 无点赞/收藏数——右栏计数需要一个真实来源）。
+    /// 详情响应里的公开计数盘点（信息流 comment_count 恒 0，右栏计数需真实来源）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_detail_counts() {
@@ -231,7 +207,6 @@ mod probe {
         for k in count_keys {
             println!("  {k} = {}", first_ep[k]);
         }
-        // followed_cnt 的路径定位（候选指针逐个试）
         for ptr in [
             "/video_data/followed_cnt",
             "/video_data/video_detail/followed_cnt",
@@ -253,15 +228,11 @@ mod probe {
 mod probe2 {
     use super::*;
 
-    /// 活体探测：plan/v 的真实 cell 结构 + 剧评响应 extra 的评分字段。
-    /// 用法：`PROBE_SERIES_ID=<id> cargo test probe_live -- --ignored --nocapture`
-    /// （默认疯神镇妖官）。probe_detail_related_series 是原有探测，见下。
+    /// 活体探测：plan/v 真实 cell 结构 + 剧评评分字段（PROBE_SERIES_ID 可指定）。
     #[ignore = "直连真实接口的探测用例"]
     #[tokio::test]
     async fn probe_fengshen_live() {
         let proxy = hongguo_common::model::ProxyConfig::default();
-        // PROBE_DEVICE_FILE 给真实设备档案（默认静态兜底档案）：
-        // 评分/猜你喜欢疑随设备信任度下发，匿名静态档案拿到的是空。
         let env = match std::env::var("PROBE_DEVICE_FILE") {
             Ok(path) => {
                 let json = std::fs::read_to_string(&path).expect("读设备档案");
@@ -304,7 +275,6 @@ mod probe2 {
             Err(e) => println!("[meta] ERR: {e}"),
         }
 
-        // video_detail 原始响应里搜评分键（头部 8.0分 的可能来源）
         let payload = serde_json::to_vec(&serde_json::json!({
             "biz_param": {
                 "caller_scene": "single_col", "detail_page_version": 1,
@@ -337,7 +307,6 @@ mod probe2 {
             }
         }
 
-        // 原始 plan 响应的 cell 名与条数（不经解析，防解析器吞内容）
         let biz_query: Vec<(String, String)> = [
             ("book_id", sid.as_str()),
             ("bookstore_tab", "0"),
@@ -364,8 +333,6 @@ mod probe2 {
         )
         .await
         .expect("plan raw");
-        // PROBE_DUMP_SET 时把原始响应落盘，供离线分析（服务端结构常变，
-        // 反复编译探测太慢）。
         if let Ok(dir) = std::env::var("PROBE_DUMP") {
             let path = std::path::Path::new(&dir).join("plan-raw.json");
             std::fs::write(&path, &bytes).expect("写 plan-raw.json");
@@ -385,8 +352,6 @@ mod probe2 {
                 .map(|a| a.len())
                 .unwrap_or(0);
             println!("[plan raw] cell={name} items={n}");
-            // cell 里的其它数组字段（guess_mvs tag 暗示猜你喜欢
-            // 可能不走 video_data 而走专用字段）
             if let Some(obj) = cell.as_object() {
                 for (k, val) in obj {
                     if k == "video_data" || k == "cell_name" {

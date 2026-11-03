@@ -1,11 +1,6 @@
-//! 云端观看历史（`read_history/list/v`）。
-//!
-//! 官方 App 侧栏「历史」的数据源：账号维度的播放记录（含在官方客户端
-//! 看的），比本地播放档案全。query 只要 `limit/offset/query_soft_deleted`，
-//! 登录态必备（匿名回空表）。
-//!
-//! 注意字段形态：`vid`/`book_id` 在响应里是 JSON 数字，统一转成字符串
-//! 承载，避免 js 侧精度失真。
+//! 云端观看历史（`read_history/list/v`）：账号维度播放记录（含在官方客户端
+//! 看的），登录态必备（匿名回空表）。`vid`/`book_id` 响应里是 JSON 数字，
+//! 统一转字符串承载，避免 js 侧精度失真。
 
 mod model;
 
@@ -26,8 +21,7 @@ const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v
 /// 拉一页云端观看历史。
 pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
     let q: Vec<(String, String)> = [
-        // book_type=2 是**短剧过滤**的关键：缺了它会落进无名字的阅读历史
-        // 子集。
+        // book_type=2 是短剧过滤的关键：缺了会落进无名字的阅读历史子集
         ("book_type", "2"),
         ("full_field", "false"),
         ("is_first_load", "true"),
@@ -69,8 +63,7 @@ fn parse_history(data: Option<&Value>) -> AppResult<WatchHistoryPage> {
             series_id,
             title: str_field(raw, "book_name"),
             cover: str_field(raw, "thumb_url"),
-            // 线上 vid_index 统一 0 基（官方 App / 我们对齐后
-            // 的写入都是），+1 转回领域值（前端/本地存储 1 基）
+            // 线上 0 基 → +1 转回领域值（前端/本地存储 1 基）
             vid_index: raw
                 .get("vid_index")
                 .and_then(Value::as_i64)
@@ -120,18 +113,14 @@ fn num_to_string(v: &Value) -> String {
     }
 }
 
-/// vid_index 基准换算：领域值（前端 / 本地存储）一律 **1 基**，官方线上
-/// 协议（read_history/update、read_progress/upload，含删除形态）一律
-/// **0 基**（官方第 1 集 vid_index=0）。1 基值直发线上会导致跨端
-/// 续播差一集，写侧统一在此换算。
+/// vid_index 基准换算：领域值（前端/本地存储）1 基，官方线上协议一律 0 基
+///（官方第 1 集 vid_index=0）。1 基直发会导致跨端续播差一集，写侧统一在此换算。
 fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
 
-/// 批量删除云端观看历史：
-/// 复用 `read_history/update`，每条带 `is_delete=true + use_soft_delete=true`，
-/// 其余进度字段全零（官方删除样本形态）。响应 `update_fail_datas` 非空 =
-/// 部分失败，报错给上层。
+/// 批量删除云端观看历史：复用 `read_history/update`，每条带
+/// `is_delete=true + use_soft_delete=true`；响应 `update_fail_datas` 非空 = 部分失败。
 pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv) -> AppResult<()> {
     if items.is_empty() {
         return Ok(());
@@ -191,15 +180,8 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 观看进度上报（官方双接口）：
-/// 官方客户端播片时同时打 `read_history/update` 与 `read_progress/upload`，
-/// 云端「历史」页的写入端。约每分钟一次 + 切集时触发。
-///
-/// 两接口字段形态刻意不同（官方原样）：update 里 book_id/vid 是 JSON
-/// **数字**，upload 里 book_id/item_id 是**字符串**；duration/retain 等
-/// 官方传 0 的字段保持 0。`player_accumulate_total_time` 官方样本里
-/// 等于当时进度，这里同用 position_ms 承载（我们未单独累计观看时长）。
-/// `vid_index` 收领域值（1 基，前端/本地存储原样传入），线上按 0 基发送。
+/// 观看进度上报（官方双接口 read_history/update + read_progress/upload，约每分钟 + 切集触发）。
+/// 两接口字段形态刻意不同（update 的 id 是数字、upload 是字符串）；`vid_index` 收 1 基领域值、线上按 0 基发送。
 pub async fn report_watch_progress(
     series_id: &str,
     vid: &str,
@@ -320,7 +302,6 @@ fn check_update_fails(v: &Value) -> AppResult<()> {
 mod tests {
     use super::*;
 
-    /// 基准换算：领域 1 基 ↔ 线上 0 基；0/负值钳 0（不发负数下标）。
     #[test]
     fn wire_vid_index_converts_domain_to_zero_based() {
         assert_eq!(wire_vid_index(1), 0, "第 1 集 → 线上 0");
@@ -329,7 +310,6 @@ mod tests {
         assert_eq!(wire_vid_index(-3), 0);
     }
 
-    /// 云端行读取：线上 0 基 +1 转领域值；缺席/负值按第 1 集兜底。
     #[test]
     fn parse_history_maps_zero_based_wire() {
         let data = serde_json::json!({
@@ -359,10 +339,7 @@ pub(crate) mod probe {
         assert!(check_update_fails(&bad).is_err(), "非空明细=被拒");
     }
 
-    /// 云端历史真实返回验证（对号入座：同账号在客户端显示最近记录）。
-    /// `PROBE_DEVICE` / `PROBE_COOKIE` 由真实库导出；`PROBE_COOKIE_HG` /
-    /// `PROBE_TOKEN` 可选，用官方会话做对照。
-    /// `cargo test probe_watch_history -- --ignored --nocapture`
+    /// 云端历史真实返回验证（PROBE_DEVICE / PROBE_COOKIE 由真实库导出）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_watch_history() {
@@ -377,7 +354,6 @@ pub(crate) mod probe {
             serde_json::from_str(&device_json).expect("device json");
         let mut device = device;
         hongguo_signer::device::align_app_version(&mut device);
-        // 官方会话对照：外部导出的 cookie 是逗号分隔（addon 形态），转分号
         let cookie_raw = hg_cookie.unwrap_or(account_cookie);
         let cookie = cookie_raw.replace(", ", "; ");
         let env = ApiEnv {
@@ -399,7 +375,6 @@ pub(crate) mod probe {
         }
     }
 
-    /// unix 毫秒 → 本地可读时间（探测打印用，UTC+8 简化）。
     fn chrono_like(ms: i64) -> String {
         let dt = ms / 1000 + 8 * 3600;
         let days = dt.div_euclid(86_400);

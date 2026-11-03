@@ -1,10 +1,6 @@
-//! 收藏页（Tauri `/collections` = `collection-page.tsx` 的 GPUI 对齐）。
-//!
-//! 书架列表（bookshelf/video/list）：卡片网格（封面 3:4 + 标题 + 共 N 集），
-//! 悬浮出「继续播放」与「取消收藏」；左上类型筛选（全部/真人剧/漫剧，按
-//! 条目 content_type）+ 搜索框 + 管理模式（多选后一请求批量取消收藏）。
-//! 数据与操作走 `hongguo_api::interact`（fetch_bookshelf / collect_series /
-//! collect_series_batch），与 Tauri 的 bookshelf 系列 command 同一段。
+//! 收藏页：书架卡片网格（悬浮「继续播放」/「取消收藏」），左上类型筛选 +
+//! 搜索框 + 管理模式（多选后一请求批量取消收藏）。数据走
+//! `hongguo_api::interact`（fetch_bookshelf / collect_series*）。
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;

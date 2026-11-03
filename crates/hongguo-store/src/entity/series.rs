@@ -20,8 +20,7 @@ pub async fn series_all(db: &Db) -> AppResult<Vec<Series>> {
         let json = col_text(&row, 0)?;
         let mut s: Series = serde_json::from_str(&json)
             .map_err(|e| AppError::StoreCorrupt(format!("剧行反序列化失败: {e}")))?;
-        // dismissed 的权威值在列上：json 里的是登记时的快照，会被
-        // set_dismissed / upsert 的保留语义甩在后面
+        // dismissed 的权威值在列上：json 里的是登记时的快照，会被 upsert 的保留语义甩在后面
         s.dismissed = col_i64(&row, 1)? != 0;
         out.push(s);
     }
@@ -78,8 +77,6 @@ mod tests {
     fn series_upsert_preserves_dismissed_and_returns_by_id() {
         let db = mem_db();
         rt().block_on(async {
-            // dismissed 的写入入口已随「移除记录」功能下线，这里直接
-            // 构造一条带旧标记的档案，验证 upsert 不复活它
             let s = Series {
                 series_id: "1".into(),
                 title: "剧".into(),
@@ -88,7 +85,6 @@ mod tests {
             };
             upsert_series(&db, &s).await.unwrap();
 
-            // 重新解析登记不复活
             let fresh = Series {
                 dismissed: false,
                 title: "剧（新版）".into(),

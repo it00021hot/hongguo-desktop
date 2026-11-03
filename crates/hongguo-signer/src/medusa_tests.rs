@@ -1,6 +1,4 @@
-//! Medusa 签名的单元测试。
-//!
-//! 以 `#[path]` 挂到 `medusa.rs` 下。
+//! Medusa 签名的单元测试（以 `#[path]` 挂到 `medusa.rs` 下）。
 
 use super::*;
 use crate::fingerprint_for_cdid;
@@ -18,18 +16,13 @@ fn medusa_output_is_base64_and_non_trivial() {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(&out)
         .expect("必须是合法 base64");
-    // 20 字节版本前缀 + 4 字节随机种子 + AES 变体输出。
-    // 密文长度不固定：AES 变体的位打包固定读源数据前 248 字节，
-    // 但源数据（protobuf message）里含随机数，zigzag 编码长度随数值变化，
-    // 因此 message 长度会在一定范围内浮动。
+    // 密文长度不固定：message 含随机数，zigzag 编码长度随数值浮动
     assert!(
         decoded.len() > 20 + 4,
         "至少应包含前缀与种子，实际 {} 字节",
         decoded.len()
     );
-    // 前缀首字节固定为 0x03
     assert_eq!(decoded[0], 0x03);
-    // 随机种子的低两字节在 payload 里（第 20..24 位）
     assert_eq!(decoded[23], 1, "种子末字节固定标记为 1");
 }
 
@@ -40,17 +33,8 @@ fn xmxor_preserves_length() {
     assert_eq!(xmxor(&data, &key).len(), 248);
 }
 
-// ============================================================================
-// 黄金向量
-//
-// 下面几组期望值来自现版 JS（`src/native/signer`），在**固定随机源**下导出。
-// 之所以要固定随机量：medusa 内嵌 5 个随机数，直接比对每次都不一样，
-// 只能靠「喂固定熵 → 比对固定输出」把整条流水线钉死。
-// x-helios 的黄金向量在 `helios.rs` 里（它已拆成独立文件）。
-//
-// ⚠️ 服务端签名失效时只返回 HTTP 200 + 0 字节，不给任何错误码。
-//    这类失配无法靠运行时错误发现，只能靠这里的向量在 CI 里拦住。
-// ============================================================================
+// 黄金向量：期望值来自现版 JS（`src/native/signer`）固定随机源导出——medusa 内嵌 5 个随机数，
+// 只能靠「喂固定熵 → 比对固定输出」钉死整条流水线；服务端失配只回 HTTP 200 + 0 字节，只能靠这些向量在 CI 拦住。
 
 const GOLDEN_URL: &str = "https://api5-normal-sinfonlineb.fqnovel.com/x/v1?aid=8662&device_id=1905892595378490&ts=1700000000";
 const GOLDEN_BODY: &[u8] = br#"{"a":1}"#;
@@ -88,10 +72,7 @@ fn xmxor_matches_js_golden() {
 
 #[test]
 fn assemble_medusa_matches_js_golden() {
-    // 黄金向量走 assemble_with_proto + JS 移植原始采样 proto（含当年
-    // 的 Redmi 机型组），锚住「管线算法未漂移」；生产 device_proto 已
-    // 按池指纹/per-device 派生（2026-11-02 去硬编码），输入变了所以
-    // 不能再直接拿 assemble_medusa 对这个向量。
+    // 黄金向量走 assemble_with_proto + JS 移植原始采样 proto，锚住「管线算法未漂移」；生产 device_proto 输入已变，不能再直接对 assemble_medusa
     let got = assemble_with_proto(
         GOLDEN_URL,
         Some(GOLDEN_BODY),
@@ -109,7 +90,6 @@ fn assemble_medusa_matches_js_golden() {
 
 #[test]
 fn device_proto_matches_fingerprint_and_varies_per_device() {
-    // 机型组与池指纹成套：注册声称什么品牌型号，medusa 里就是什么
     let fp = fingerprint_for_cdid("cdid-uuid");
     let (a, b) = (
         device_proto("cdid-uuid", "111"),

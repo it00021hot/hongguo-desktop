@@ -1,8 +1,5 @@
-//! 合并服务：快速合并（流复制）与兼容合并（转码）。
-//!
-//! 三条路径（前置校验、快速合并、兼容合并）都要先回答同一个问题：
-//! 「哪些集真的可以参与合并」。答案统一由 [`done_inputs`] 给出，
-//! 三处各写一遍时迟早会漂移成三种口径。
+//! 合并服务：快速合并（流复制）与兼容合并（转码）。三条路径（前置校验、快速合并、兼容合并）
+//! 的「哪些集真的可以参与合并」统一由 [`done_inputs`] 给出——三处各写一遍迟早漂成三种口径。
 
 pub mod compat;
 pub mod guard;
@@ -17,10 +14,8 @@ use crate::app_state::AppState;
 use hongguo_common::model::MergeCandidate;
 use hongguo_common::{AppError, AppResult};
 
-/// 某剧可参与合并的分集，按集号升序。
-///
-/// 「已完成」与「文件存在」必须同时成立：用户在系统里删过文件时任务记录
-/// 仍留着 completed，只看状态就会把一个不存在的路径交给拼接器。
+/// 某剧可参与合并的分集，按集号升序。「已完成」与「文件存在」必须同时成立：
+/// 用户在系统里删过文件时任务记录仍留着 completed，只看状态就会把不存在的路径交给拼接器。
 pub fn done_inputs(state: &AppState, series_id: &str) -> Vec<(u32, PathBuf)> {
     hongguo_media::remux::sort_by_index(
         &state
@@ -45,15 +40,9 @@ pub(crate) fn output_file(
         .join(format!("{output_name} 合集.mp4"))
 }
 
-/// 可合并的剧列表，按可合并集数倒序。
-///
-/// 从下载队列聚合而不是读剧集档案：合并的输入是本地分集文件，
-/// 「档案还在不在」与「能不能合」是两件事。用户在磁盘清理页移除过记录的剧，
-/// 文件和任务都还在，照样该出现在这里；反过来一部集都没下的剧
-/// 出现在下拉里，选中后只会得到一句「没有已下载的分集」。
-///
-/// 剧名取自任务记录里的 `series_title`（提交下载时从档案抄的），
-/// 档案缺失时也还有名字，不会退化成一条空白的候选项。
+/// 可合并的剧列表，按可合并集数倒序。从下载队列聚合而不是读剧集档案：
+/// 「档案还在不在」与「能不能合」是两件事（磁盘清理页移除过记录的剧文件和任务都还在，照样该出现）。
+/// 剧名取自任务记录里的 `series_title`，档案缺失时也还有名字。
 pub fn candidates(state: &AppState) -> Vec<MergeCandidate> {
     let mut by_series: std::collections::HashMap<String, MergeCandidate> =
         std::collections::HashMap::new();
@@ -86,10 +75,8 @@ pub fn candidates(state: &AppState) -> Vec<MergeCandidate> {
     list
 }
 
-/// 删除一条合并任务记录（只删记录，不删已产出的文件）。
-///
-/// 找不到就报 [`AppError::NotFound`]，与 `stop_download` / `retry_task` 同一口径：
-/// 返回 `Ok` 却什么都没删，调用方会以为删掉了。
+/// 删除一条合并任务记录（只删记录，不删已产出的文件）。找不到就报 [`AppError::NotFound`]，
+/// 与 `stop_download` / `retry_task` 同一口径：返回 `Ok` 却什么都没删，调用方会以为删掉了。
 pub fn remove_task(state: &AppState, id: &str) -> AppResult<()> {
     if state.store.delete_merge_task(id)? == 0 {
         return Err(AppError::NotFound(format!("合并任务 {id}")));
@@ -102,7 +89,6 @@ mod tests {
     use super::*;
     use hongguo_common::model::{DownloadTask, MergeMode, MergeTask};
 
-    /// 造一个指向真实临时文件、状态为已完成的分集。
     fn done_task(
         dir: &std::path::Path,
         series_id: &str,
@@ -145,14 +131,10 @@ mod tests {
         let dir = temp_dir("skip");
         let state = AppState::default();
 
-        // 已完成且文件在
         state.queue().enqueue(done_task(&dir, "1", 1, "keep.mp4"));
-        // 别的剧的已完成分集不参与本剧合并
         state.queue().enqueue(done_task(&dir, "2", 9, "other.mp4"));
-        // 已完成但文件已被用户在系统里删掉
         state.queue().enqueue(done_task(&dir, "1", 2, "gone.mp4"));
         std::fs::remove_file(dir.join("gone.mp4")).unwrap();
-        // 未完成
         state
             .queue()
             .enqueue(DownloadTask::new("1", "剧", 3, "v", ""));
@@ -166,7 +148,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 造一部已下载多集的剧，返回入队后的任务列表已就绪。
+    /// 造一部已下载多集的剧。
     fn enqueue_series(
         state: &AppState,
         dir: &std::path::Path,
@@ -188,7 +170,6 @@ mod tests {
         let dir = temp_dir("cand-registry");
         let state = AppState::default();
         enqueue_series(&state, &dir, "1", "下过的剧", 3);
-        // 档案被软删除（磁盘清理页「移除记录」）：文件和任务都还在，照样合得起来
         state
             .store
             .upsert_series(&hongguo_common::model::Series {
@@ -198,7 +179,6 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        // 档案在但一集没下：不该出现在候选里
         state
             .store
             .upsert_series(&hongguo_common::model::Series {
@@ -228,7 +208,6 @@ mod tests {
         enqueue_series(&state, &dir, "1", "少", 1);
         enqueue_series(&state, &dir, "2", "多", 5);
 
-        // 已完成但文件被用户在系统里删了：不能算进去
         let mut orphan = DownloadTask::new("3", "孤儿", 1, "v", "");
         orphan.mark_completed(&dir.join("orphan.mp4").to_string_lossy(), 10);
         state.queue().enqueue(orphan);
@@ -261,13 +240,10 @@ mod tests {
 
         remove_task(&state, &a.id).expect("存在的记录应当删得掉");
 
-        // get_merge_tasks 读的就是库里这份
         let left = state.store.merge_tasks().unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, b.id, "只删指定的那条");
 
-        // 删的动作本身就是 DELETE，不存在「只删内存」的形态；
-        // 用一次全新查询确认真的没了（而不是缓存效应）
         assert_eq!(
             state
                 .store

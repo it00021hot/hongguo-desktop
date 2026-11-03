@@ -36,8 +36,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     return update;
   }, []);
 
-  /** 检查结果落地后的弹层决策：手动检查总要有回执（有新版的走更新弹层、
-   *  没新版的走「已是最新」弹层）；启动检查只对没被「稍后」过的新版弹。 */
+  /** 检查结果落地后的弹层决策：手动检查总要有回执；启动检查只对没被「稍后」过的新版弹。 */
   const presentResult = useCallback((update: Update | null, manual: boolean) => {
     if (!update) {
       if (manual) setUpToDateOpen(true);
@@ -111,10 +110,8 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       });
   }, [available]);
 
-  // 启动检查一次：查到新版本且用户没对它点过「稍后」就自动弹更新提醒；
-  // 无新版/失败保持安静（还没有 release 时 404 是常态）。版本号只用于卡片
-  // 副行，取不到不挡功能。setState 都发生在网络回调里，不是 effect 同步
-  // 连锁渲染，规则误报这里豁免。
+  // 启动检查一次：查到新版本且没被「稍后」过才自动弹；无新版/失败保持安静（还没有 release 时 404 是常态）
+  // 版本号只用于卡片副行；setState 都发生在网络回调里，规则误报这里豁免
   useEffect(() => {
     getVersion()
       .then((v) => setVersion(v))

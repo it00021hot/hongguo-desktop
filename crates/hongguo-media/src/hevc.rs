@@ -1,23 +1,6 @@
-//! HEVC 参数集读取：`hvcC` → Annex-B。
-//!
-//! MP4 里 HEVC 参数集存在 `hvcC` box（长度前缀格式），而解码器要的是
-//! Annex-B（起始码分隔）。少这一步，解码器拿不到 SPS/PPS/VPS，
-//! **首个 IDR 帧必然解不出来**，而且不会报错——只表现为一直黑屏。
-//!
-//! `hvcC` 结构（ISO/IEC 14496-15）：
-//!
-//! ```text
-//! configurationVersion(1) | profile byte(1) | 4×reserved(4)
-//! | minSpatialSegmentation(2) | parallelismType(1) | chromaFormat(1)
-//! | bitDepthLuma(1) | bitDepthChroma(1) | avgFrameRate(2)
-//! | constantFrameRate(1) | numTemporalLayers(1) | temporalIdNested(1)
-//! | lengthSizeMinusOne(1)
-//! | numOfArrays(1)
-//! | arrays[numOfArrays]: array_completeness(1) | NAL_unit_type(1)
-//!                    | numNalus(2) | nalus[numNalus]
-//! ```
-//!
-//! 解码只关心 `lengthSizeMinusOne` 与 `arrays` 里的参数集。
+//! HEVC 参数集读取：`hvcC` → Annex-B。MP4 里 HEVC 参数集存在 `hvcC` box（长度前缀格式），解码器要的是 Annex-B（起始码分隔）——
+//! 少这一步解码器拿不到 SPS/PPS/VPS，**首个 IDR 帧必然解不出来**且不报错，只表现为一直黑屏。
+//! `hvcC` 结构（ISO/IEC 14496-15）：configurationVersion…lengthSizeMinusOne(1) + numOfArrays(1) + arrays[]（array_completeness | NAL_unit_type | numNalus | nalus）；解码只关心 lengthSizeMinusOne 与 arrays。
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -26,11 +9,7 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_video::r#box::find_box;
 use hongguo_video::sample_table::TrackInfo;
 
-/// VisualSampleEntry 载荷长度（ISO/IEC 14496-15）：
-/// reserved(6) + data_ref_idx(2) + pre_defined(2) + reserved(2) + pre_defined[3](12)
-/// + width(2) + height(2) + horiz/vert res(8) + reserved(4) + frame_count(2)
-/// + compressorname(32) + depth(2) + pre_defined(2)。
-///
+/// VisualSampleEntry 载荷长度（ISO/IEC 14496-15）：reserved(6)+data_ref_idx(2)+pre_defined(2)+reserved(2)+pre_defined[3](12)+width/height(4)+res(8)+reserved(4)+frame_count(2)+compressorname(32)+depth(2)+pre_defined(2)。
 /// 之后的扩展区才是 hvcC / avcC——`h264` 模块的 avcC 查找共用同一常量。
 pub(crate) const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 
@@ -38,26 +17,19 @@ pub(crate) const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
 pub(crate) const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 /// 是否是 HEVC 轨：`hev1` / `hvc1`，以及解密后仍带 `encv` 标记的加密轨。
-///
-/// 判定只写这一份。平台编码后端（VT / MF）的前置校验和
-/// [`read_parameter_set_nalus`] 必须给出同一个答案，否则会出现「校验说不是
-/// HEVC、解析却仍当 HEVC 处理」这种自相矛盾的失败路径。
+/// 判定只写这一份：平台后端前置校验与 [`read_parameter_set_nalus`] 必须给出同一答案，否则出现自相矛盾的失败路径。
 pub fn is_hevc(codec: &str) -> bool {
     codec.starts_with("hev") || codec.starts_with("hvc") || codec == "encv"
 }
 
 /// 从 MP4 读出 HEVC 参数集，每条一个 NAL（无起始码）。
-///
-/// 平台解码器（VideoToolbox 的 `CMVideoFormatDescriptionCreateFrom…ParameterSets`）
-/// 要的就是这种「裸 NAL + 各自长度」的形态，走 Annex-B 反而要再剥一次起始码。
+/// 平台解码器（VideoToolbox 的 `CMVideoFormatDescriptionCreateFrom…ParameterSets`）要的就是这种形态，走 Annex-B 反而要再剥一次起始码。
 pub fn read_parameter_set_nalus(
     path: &Path,
     track: &TrackInfo,
 ) -> AppResult<(Vec<Vec<u8>>, usize)> {
-    // ⚠️ CENC 加密后 stsd 的 format 是 `encv`，**不是** `hvc1`——解密只覆盖
-    //    样本字节，不改这个字段（现版 JS 同样如此，改了反而会与 App 不一致）。
-    //    真正的原始格式藏在 `frma` 里，但短剧的视频轨只有 HEVC 一种可能，
-    //    所以这里把 `encv` 一并当作 HEVC 处理。
+    // ⚠️ CENC 加密后 stsd 的 format 是 `encv` 而非 `hvc1`——解密只覆盖样本字节、不改这个字段（现版 JS 同样如此）。
+    //    真正的原始格式藏在 `frma` 里，但短剧的视频轨只有 HEVC 一种可能，`encv` 一并当作 HEVC 处理。
     if !is_hevc(&track.codec) {
         return Err(AppError::Media(format!(
             "不是 HEVC 轨（codec = {}）",
@@ -65,15 +37,13 @@ pub fn read_parameter_set_nalus(
         )));
     }
 
-    // 找 hvcC：它在 stsd 的 sample entry 里
     let sample_entry = find_hvc_c(path, track)?;
     let hvcc = read_box_payload(path, sample_entry.0, sample_entry.1)?;
     param_nalus_from_hvcc(&hvcc)
 }
 
-/// [`read_parameter_set_nalus`] 的内存形态：从**已拿到的文件头部字节**
-/// （须覆盖 moov）提取参数集。在线流播放没有文件可读——样本表 + 渐进流的
-/// 头部区间就是全部元数据，解析逻辑与文件形态同一份。
+/// [`read_parameter_set_nalus`] 的内存形态：从**已拿到的文件头部字节**（须覆盖 moov）提取参数集。
+/// 在线流播放没有文件可读——样本表 + 渐进流的头部区间就是全部元数据，解析逻辑与文件形态同一份。
 pub fn param_nalus_from_head(head: &[u8], track: &TrackInfo) -> AppResult<(Vec<Vec<u8>>, usize)> {
     if !is_hevc(&track.codec) {
         return Err(AppError::Media(format!(
@@ -91,9 +61,7 @@ pub fn param_nalus_from_head(head: &[u8], track: &TrackInfo) -> AppResult<(Vec<V
 }
 
 /// hvcC 的**原始载荷**（box header 之后、未拆装的整体记录）。
-///
-/// Media Foundation 的解码 MFT 经 `MF_MT_MPEG_SEQUENCE_HEADER` 吃的就是
-/// 这份容器原始形态（VT 要裸 NAL 数组、MF 要整条记录，两个出口各取所需）。
+/// Media Foundation 的解码 MFT 经 `MF_MT_MPEG_SEQUENCE_HEADER` 吃的就是这份容器原始形态（VT 要裸 NAL 数组、MF 要整条记录）。
 pub fn hvcc_payload_from_head(head: &[u8], track: &TrackInfo) -> AppResult<Vec<u8>> {
     if !is_hevc(&track.codec) {
         return Err(AppError::Media(format!(
@@ -110,21 +78,15 @@ pub fn hvcc_payload_from_head(head: &[u8], track: &TrackInfo) -> AppResult<Vec<u
 }
 
 /// 解析 hvcC **载荷**（box header 之后的部分）：参数集 NAL 数组 + 长度前缀字节数。
-///
-/// MP4（stsd sample entry）与 HEIF（ipco 属性）里的 hvcC 载荷布局完全一致，
-/// 封面软解（[`crate::heif`]）与此共用这一份解析。
+/// MP4（stsd sample entry）与 HEIF（ipco 属性）里的 hvcC 载荷布局完全一致，封面软解（[`crate::heif`]）与此共用。
 pub fn param_nalus_from_hvcc(hvcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
     // hvcC 固定头 23 字节，其后才是参数集数组
     if hvcc.len() < 23 {
         return Err(AppError::Media("hvcC 长度异常".into()));
     }
 
-    // hvcC 载荷布局（0-based，ISO/IEC 14496-15）：
-    //   [21] = constantFrameRate(2) | numTemporalLayers(3)
-    //          | temporalIdNested(1) | lengthSizeMinusOne(2)
-    //   [22] = numOfArrays
-    //   [23..] = arrays
-    // 固定头 22 字节 + numOfArrays 1 字节 = 最小 23 字节。
+    // hvcC 载荷布局（0-based，ISO/IEC 14496-15）：[21] = constantFrameRate(2)|numTemporalLayers(3)|temporalIdNested(1)|lengthSizeMinusOne(2)，
+    // [22] = numOfArrays，[23..] = arrays；固定头 22 字节 + numOfArrays 1 字节 = 最小 23 字节
     let length_size = (hvcc[21] & 0x03) as usize + 1;
     let num_arrays = hvcc[22] as usize;
 
@@ -135,8 +97,7 @@ pub fn param_nalus_from_hvcc(hvcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
         if pos + 3 > hvcc.len() {
             break;
         }
-        // array 头：array_completeness(1) + reserved(1) + NAL_unit_type(6) = 1 字节，
-        // 随后 2 字节 numNalus
+        // array 头：array_completeness(1) + reserved(1) + NAL_unit_type(6) = 1 字节，随后 2 字节 numNalus
         let num_nalus = u16::from_be_bytes([hvcc[pos + 1], hvcc[pos + 2]]) as usize;
         pos += 3;
 
@@ -161,9 +122,7 @@ pub fn param_nalus_from_hvcc(hvcc: &[u8]) -> AppResult<(Vec<Vec<u8>>, usize)> {
     Ok((out, length_size))
 }
 
-/// 把一个 MP4 样本（长度前缀 NAL 串）转成 Annex-B。
-///
-/// `length_size` 来自 hvcC 的 `lengthSizeMinusOne + 1`，通常是 4。
+/// 把一个 MP4 样本（长度前缀 NAL 串）转成 Annex-B；`length_size` 来自 hvcC 的 `lengthSizeMinusOne + 1`，通常是 4。
 /// 遇到长度为 0 或越界的 NAL 就停止——截断的样本不该把后面的字节当 NAL 读。
 pub fn to_annexb(sample: &[u8], length_size: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(sample.len() + 16);
@@ -200,8 +159,7 @@ fn find_hvc_c(path: &Path, track: &TrackInfo) -> AppResult<(u64, u64)> {
 
 /// [`find_hvc_c`] 的内存形态（[`param_nalus_from_head`] 用）。
 fn find_hvc_c_in(data: &[u8], track: &TrackInfo) -> AppResult<(u64, u64)> {
-    // stbl 的位置与大小在解析轨道时（`collect_track`）就记在 track 上了，
-    // 直接用——**不要在它自己的载荷范围里再找一次 stbl**，那里没有它自己。
+    // stbl 的位置与大小在解析轨道时（`collect_track`）已记在 track 上，直接用——不要在它自己的载荷范围里再找一次 stbl
     if track.stbl_size == 0 {
         return Err(AppError::Media("轨道没有 stbl".into()));
     }
@@ -209,11 +167,8 @@ fn find_hvc_c_in(data: &[u8], track: &TrackInfo) -> AppResult<(u64, u64)> {
     let stsd = find_box(data, track.stbl_offset, stbl_end, "stsd")
         .ok_or_else(|| AppError::Media("找不到 stsd".into()))?;
 
-    // stsd 是 FullBox：载荷开头 8 字节是 version+flags(4) 与 entry_count(4)，
-    // 之后才是 sample entry 列表。`b.start` 是**载荷**起点，不是 box 起点。
-    //
-    // sample entry 的扩展区（hvcC / avcC / sinf）位于 VisualSampleEntry 载荷的
-    // 78 字节之后——加密轨的 format 是 `encv`，但这部分布局与普通轨一致。
+    // stsd 是 FullBox：载荷开头 8 字节是 version+flags(4) 与 entry_count(4)，之后才是 sample entry 列表（`b.start` 是载荷起点）。
+    // sample entry 扩展区（hvcC / avcC / sinf）位于 VisualSampleEntry 载荷 78 字节之后；加密轨 format 是 `encv`，但这部分布局与普通轨一致。
     for b in hongguo_video::r#box::parse_boxes(data, stsd.start + 8, stsd.start + stsd.size) {
         let entry_end = b.start + b.size;
         let inner = b.start + VISUAL_SAMPLE_ENTRY_PAYLOAD;
@@ -264,7 +219,6 @@ mod tests {
 
     #[test]
     fn to_annexb_stops_on_bad_length() {
-        // 声明长度 100 但数据不足，应停止而不是 panic
         let sample = vec![0x00, 0x00, 0x64, 0x11, 0x22];
         let out = to_annexb(&sample, 3);
         assert!(out.is_empty());

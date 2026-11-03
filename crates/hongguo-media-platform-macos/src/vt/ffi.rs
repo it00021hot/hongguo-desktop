@@ -1,11 +1,6 @@
-//! VideoToolbox / CoreMedia / CoreVideo 的最小 FFI 声明。
-//!
-//! 只声明转码链路用到的符号。VideoToolbox 是纯 C API（CF 对象），
-//! 不需要 ObjC 运行时，手写声明比引 objc2 系省掉一整套版本依赖。
-//! `#[link(kind = "framework")]` 在 Apple 目标上会以 `-framework` 链接。
-//!
-//! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、
-//! VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
+//! VideoToolbox / CoreMedia / CoreVideo 的最小 FFI 声明，只声明转码链路用到的符号。
+//! VideoToolbox 是纯 C API（CF 对象），不需要 ObjC 运行时，手写声明比引 objc2 系省掉一整套版本依赖；`#[link(kind = "framework")]` 在 Apple 目标上以 `-framework` 链接。
+//! 字段/签名以 macOS SDK 头文件为准（VTCompressionSession.h、VTDecompressionSession.h、CMSampleBuffer.h、CVPixelBuffer.h）。
 #![allow(
     non_camel_case_types,
     non_snake_case,
@@ -28,7 +23,6 @@ pub type OSType = u32;
 pub type OSStatus = i32;
 pub type Boolean = u8;
 
-// —— 会话与对象引用（全部按不透明 CF 对象处理）——
 pub type VTSessionRef = *mut c_void;
 pub type VTDecompressionSessionRef = VTSessionRef;
 pub type VTCompressionSessionRef = VTSessionRef;
@@ -112,8 +106,7 @@ unsafe extern "C" {
     pub static kCFAllocatorDefault: CFAllocatorRef;
     pub static kCFBooleanTrue: CFBooleanRef;
     pub static kCFBooleanFalse: CFBooleanRef;
-    /// `CFDictionaryKeyCallBacks` / `CFDictionaryValueCallBacks` 的默认值，
-    /// 按不透明内存块声明（64 位下各 48 字节：version + 5 个函数指针）
+    /// `CFDictionaryKeyCallBacks` / `CFDictionaryValueCallBacks` 的默认值，按不透明内存块声明（64 位下各 48 字节：version + 5 个函数指针）
     pub static kCFTypeDictionaryKeyCallBacks: [u8; 48];
     pub static kCFTypeDictionaryValueCallBacks: [u8; 48];
 
@@ -184,10 +177,8 @@ unsafe extern "C" {
         extensions: CFDictionaryRef,
         formatDescriptionOut: *mut CMVideoFormatDescriptionRef,
     ) -> OSStatus;
-    /// H.264 参数集建格式描述。参数集顺序必须是 SPS 在前、PPS 在后；
-    /// `NALUnitHeaderLength` 传样本长度前缀字节数（本仓库的 MP4 样本恒 4）。
-    /// 与 HEVC 版本不同：没有 `extensions` 参数，输出类型是
-    /// `CMFormatDescriptionRef`（两者都是 `*mut c_void`）。
+    /// H.264 参数集建格式描述：参数集顺序必须 SPS 在前、PPS 在后；`NALUnitHeaderLength` 传样本长度前缀字节数（本仓库的 MP4 样本恒 4）。
+    /// 与 HEVC 版本不同：没有 `extensions` 参数，输出类型是 `CMFormatDescriptionRef`（两者都是 `*mut c_void`）。
     pub fn CMVideoFormatDescriptionCreateFromH264ParameterSets(
         allocator: CFAllocatorRef,
         parameterSetCount: usize,
@@ -238,8 +229,7 @@ unsafe extern "C" {
     pub static kCVPixelBufferWidthKey: CFStringRef;
     pub static kCVPixelBufferHeightKey: CFStringRef;
     pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
-    /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧
-    /// 新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）。
+    /// 输出缓冲池的最小缓冲数：解码会话按它预分配 IOSurface，避免每帧新建/回收（VT 默认按需分配，帧率高时分配开销进帧时延）
     pub static kCVPixelBufferPoolMinimumBufferCountKey: CFStringRef;
 
     pub fn CVPixelBufferCreate(
@@ -257,8 +247,7 @@ unsafe extern "C" {
     pub fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVPixelBufferRef, flags: u32) -> OSStatus;
     pub fn CVPixelBufferGetBaseAddress(pixelBuffer: CVPixelBufferRef) -> *mut c_void;
     pub fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVPixelBufferRef) -> usize;
-    // 平面级访问：IOSurface 背板下整块分配不等于「stride×高×1.5」的纸面
-    // 加和（平面各自对齐），按整块 memset 会越界——探测帧填充必须逐平面。
+    // 平面级访问：IOSurface 背板下整块分配不等于「stride×高×1.5」的纸面加和（平面各自对齐），按整块 memset 会越界——探测帧填充必须逐平面
     pub fn CVPixelBufferGetPlaneCount(pixelBuffer: CVPixelBufferRef) -> usize;
     pub fn CVPixelBufferGetBaseAddressOfPlane(
         pixelBuffer: CVPixelBufferRef,
@@ -271,8 +260,7 @@ unsafe extern "C" {
     pub fn CVPixelBufferGetHeightOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize)
     -> usize;
     pub fn CVPixelBufferGetWidthOfPlane(pixelBuffer: CVPixelBufferRef, planeIndex: usize) -> usize;
-    // 输出缓冲池：播放路径按分辨率建一个池反复取 420f 缓冲，避免逐帧
-    // 新建 IOSurface（分配开销比区间换算本身还大）。
+    // 输出缓冲池：播放路径按分辨率建一个池反复取 420f 缓冲，避免逐帧新建 IOSurface（分配开销比区间换算本身还大）
     pub fn CVPixelBufferPoolCreate(
         allocator: CFAllocatorRef,
         poolAttributes: CFDictionaryRef,
@@ -291,19 +279,13 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: CFStringRef;
-    /// 解码侧：显式请求硬件解码器。
-    ///
-    /// 不传规格（或传 `null`）时 VideoToolbox **可以自由落软解**——实测本机
-    /// 1080p HEVC 落软解要 46.8ms/帧（30fps 只需 33ms），解码跟不上实时，
-    /// 音画偏差会一直滚大。播放是实时场景，必须点名要走硬解。
+    /// 解码侧：显式请求硬件解码器。不传规格（或传 `null`）时 VideoToolbox **可以自由落软解**——实测本机
+    /// 1080p HEVC 落软解要 46.8ms/帧（30fps 只需 33ms）解码跟不上实时、音画偏差一直滚大；播放是实时场景，必须点名要走硬解。
     pub static kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: CFStringRef;
     /// 解码会话属性：当前用的到底是不是硬件解码器（建会话后查一次留痕）。
     pub static kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder: CFStringRef;
-    /// 解码会话属性：实时播放（不是转码/导出）。
-    ///
-    /// 打开后 VT 允许解码器按实时流取舍（更浅的流水线、更少的参考帧缓存），
-    /// 是播放路径的主流设置（ffmpeg videotoolbox / mpv 同款）。不设时解码器
-    /// 按「离线导出」档跑，帧时延更大——内容帧率一旦逼近吞吐就持续落后。
+    /// 解码会话属性：实时播放（不是转码/导出）。打开后 VT 允许解码器按实时流取舍（更浅的流水线、更少的参考帧缓存），
+    /// 是播放路径的主流设置（ffmpeg videotoolbox / mpv 同款）；不设时按「离线导出」档跑，帧时延更大，内容帧率逼近吞吐就持续落后。
     pub static kVTDecompressionPropertyKey_RealTime: CFStringRef;
     pub static kVTCompressionPropertyKey_AverageBitRate: CFStringRef;
     pub static kVTCompressionPropertyKey_MaxKeyFrameInterval: CFStringRef;
@@ -363,9 +345,8 @@ unsafe extern "C" {
         session: VTDecompressionSessionRef,
         sampleBuffer: CMSampleBufferRef,
         decodeFlags: u32,
-        // 每帧的 refCon，原样出现在输出回调的 sourceFrameRefCon 里。
-        // 曾经漏掉这个参数：调用方的 infoFlagsOut 被它吃掉，真正的
-        // infoFlagsOut 读到栈上垃圾，解码一启动就写野指针段错误。
+        // 每帧的 refCon，原样出现在输出回调的 sourceFrameRefCon 里。曾经漏掉这个参数：
+        // 调用方的 infoFlagsOut 被它吃掉、真正的 infoFlagsOut 读到栈上垃圾，解码一启动就写野指针段错误
         sourceFrameRefCon: *mut c_void,
         infoFlagsOut: *mut u32,
     ) -> OSStatus;

@@ -1,14 +1,7 @@
-//! 设备档案的启动同步（adopt）：读库 → 阵亡名单/远古快照预筛 → 版本对齐。
-//!
-//! 从壳的 bootstrap 迁入（双壳共用：Tauri 与 GPUI 的启动装配走同一段设备
-//! 引导，「操作一致」的第一层）。纯 store + signer，不走网络——健康探针与
-//! 轮换是异步生命周期，留在各壳的 bootstrap（Tauri 侧挂 async_runtime；
-//! GPUI 侧待其生命周期装配时接入同一套）。
-//!
-//! 注册链路走 TT-Encrypt V5 格式（见 hongguo-api::register 模块文档）：
-//! 匿名档案仍是无身份时的启动兜底，
-//! [`ensure_registered`] 在壳启动后台把匿名/死档案自动换档为注册产物
-//! （注册口径活形态）——播放取流需要服务端「认识」的设备，匿名不可播。
+//! 设备档案的启动同步（adopt）：读库 → 阵亡名单/远古快照预筛 → 版本对齐；双壳共用。
+//! 纯 store + signer，不走网络——健康探针与轮换是异步生命周期，留在各壳的 bootstrap。
+//! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
+//! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -25,10 +18,8 @@ use crate::events::ServiceEvent;
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
 
-/// 已被淘汰、必须从库里重铺的档案 install_id（含**全部静态
-/// 兜底档案**——共享身份是风控暴露面，一并退役；匿名档案取代之）。
-/// **今后每次淘汰档案，旧 iid 必须追加进名单**——健康探针只兜「未来的死」，
-/// 名单兜「已知的死」，缺补会让老用户再次集体阵亡。
+/// 已被淘汰、必须从库里重铺的档案 install_id（含全部静态兜底档案——共享身份是风控暴露面）。
+/// 今后每次淘汰档案，旧 iid 必须追加进名单：名单兜「已知的死」，缺补会让老用户再次集体阵亡。
 pub const RETIRED_STATIC_IIDS: &[&str] = &["1905892595382586", "2715158266282762"];
 
 /// 轮换元数据（`device_profile` 元数据行，JSON 文档）。
@@ -47,9 +38,8 @@ pub struct BootstrapMeta {
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
-    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 =
-    /// 档案出生于旧注册器（bdinstall SDK 代际错配，设备被服务端标记、
-    /// 取流不发货），启动时按全新安装语义一次性迁移到当前代际。
+    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 = 档案出生于旧注册器
+    ///（被服务端标记、取流不发货），启动时按全新安装语义一次性迁移到当前代际。
     #[serde(default)]
     pub register_regime: String,
 }
@@ -81,8 +71,7 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
             if dead_listed || ancient {
                 return repave_anonymous(store, &p, dead_listed);
             }
-            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须
-            // 同源，否则取流被拒；来源以轮换元数据为准（注册换档写入）
+            // 注册产物钉注册口径，不参与版本对齐——自报版本与注册指纹必须同源，否则取流被拒。
             if read_meta(store).source == "registered" {
                 return (heal_registered_profile(store, p), "adopted");
             }
@@ -98,11 +87,8 @@ pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
     }
 }
 
-/// 注册产物的启动复检：版本与渠道都符合当前注册口径才原样放行；版本
-/// 被旧版 adopt 的 `align_app_version` 升到当前客户端版本的（与注册指纹
-/// 不同源，取流即挂），或渠道仍是写死旧值的存量档案（渠道是构建身份，
-/// 官方 query channel 恒等于构建渠道，2026-11-03 官方抓包）——从档案
-/// 自身身份重建为当前注册口径并落库。
+/// 注册产物的启动复检：版本与渠道都符合当前注册口径才原样放行；否则（版本被旧版
+/// `align_app_version` 升走、或渠道仍是存量旧值）从档案自身身份重建为当前注册口径并落库。
 fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
     if p.get("version_code") == hongguo_signer::REGISTER_VERSION_CODE_STR
         && p.get("channel") == hongguo_signer::device::BUILD_CHANNEL
@@ -163,11 +149,8 @@ fn repave_anonymous(
     (profile, "anonymous")
 }
 
-/// 注册产物 → 现役档案：与注册请求共用
-/// [`DeviceProfile::fresh_register_profile`] 构造（指纹字段集、顺序与 UA
-/// 天然同源，编译期保证），只补注册响应下发的设备身份。
-///
-/// 注册口径活形态钉在构造器里，**不做** `align_app_version`
+/// 注册产物 → 现役档案：与注册请求共用 [`DeviceProfile::fresh_register_profile`] 构造，
+/// 只补注册响应下发的设备身份。注册口径钉在构造器里，**不做** `align_app_version`
 /// （自报版本与注册指纹必须同源，否则取流被拒）。
 pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     let mut p = DeviceProfile::fresh_register_profile(&reg.cdid, &reg.openudid);
@@ -177,10 +160,8 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p
 }
 
-/// 注册没有「服务端按量冷却」——那是 2026-11-01 被实流取证推翻的旧猜想
-/// （真相是注册代际错配被标记，不是注册次数受限），因此不设任何退避；
-/// 失败只区分两类：网络类（断网/超时）等网恢复就地重试，服务端明确
-/// 拒绝（形态/代际错）重试无意义立即停。
+/// 注册重试节奏：失败只区分网络类（断网/超时，等网恢复就地重试）与服务端明确拒绝
+/// （形态/代际错，重试无意义立即停）。
 const REGISTER_RETRY_MS: u64 = 60_000;
 const REGISTER_RETRY_MAX: usize = 30;
 
@@ -283,12 +264,7 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
 }
 
 /// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
-///
-/// 运行期换档恢复（2026-11-02 二次修正）：「出生即干净终生不换」的前提
-/// 再次被证伪——注册代际对齐解决的是「形态错被标记」，解决不了**发货
-/// 资格在注册时抽签**（同设备同 vid 连取结果恒定，换台注册即翻盘；
-/// 当日签名富 query 形态实测新注册 0/6 出票）。输家签换新注册即可，
-/// 无需对照裁决（hongguo-drama 同款语义：被拒即换新，1 次/分钟限速）。
+/// 注册代际对齐解决不了「发货资格在注册时抽签」——输家签换新注册即可（1 次/分钟限速）。
 fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
     let old_iid = state.device().get("iid").to_string();
     let new_iid = profile.get("iid").to_string();
@@ -308,12 +284,9 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
     state.replace_device(profile);
 }
 
-/// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册（实测
-/// ~200ms，首批业务请求即可用上注册身份）；有身份的先看注册代际——
-/// 旧注册器代际的档案按全新安装语义**一次性**迁移到当前代际（三方
-/// 竞品同款语义：数据目录新建时现场注册，此后终生不换）；代际正常的
-/// 再打搜索探针，空响应（死设备）也转注册。网络类失败随恢复就地重试
-/// （[`register_with_retry`]），不断网不重启也能续上。
+/// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册；有身份的先看注册代际，
+/// 旧代际档案按全新安装语义**一次性**迁移到当前代际；代际正常的再打搜索探针，
+/// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
@@ -328,18 +301,12 @@ pub async fn ensure_registered(state: &AppState) {
             meta.register_regime,
             hongguo_signer::REGISTER_VERSION_CODE_STR
         );
-        // 迁移要么成功（新档出生即当前代际，健康探针不必再做），
-        // 要么服务端明确拒绝/网络预算耗尽（同样轮不到探针说话）
+        // 迁移成功即新档出生当前代际（探针不必再做）；拒绝/预算耗尽同样轮不到探针说话
         register_with_retry(state, "注册代际迁移").await;
         return;
     }
     let env = state.api_env();
     match probe_alive(&env).await {
-        // 取流探针已撤（2026-11-02）：探针 miss 的主因是匿名配额耗尽
-        // （上一场播放烧完），不是设备死亡——据此换新注册会让**每次
-        // 重启都白烧一台设备**，且探针自身还要消耗取流调用预算。配额
-        // 耗尽的恢复统一交给播放路径的失败重试 + note_stream_miss
-        // （登录态不换、匿名 4 次/180s）。
         Some(true) => {}
         Some(false) => {
             log::warn!(
@@ -350,8 +317,7 @@ pub async fn ensure_registered(state: &AppState) {
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
-    // 冷启动行为预热：每个进程一次（官方客户端冷启动自然完成这一序列，
-    // 服务端按行为状态发放深集授权——见 warmup 模块文档）
+    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权（见 warmup 模块文档）
     let warm_state = state.clone();
     crate::runtime::spawn(async move {
         let env = warm_state.api_env();
@@ -376,13 +342,9 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
     }
 }
 
-// ---------------------------------------------------------------- 取流健康守护
-
 /// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
-/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）。
-/// 2026-11-02 起miss 的主因是**匿名观看配额耗尽**（登录态已在上游
-/// 直接禁换）：换新注册只是重置配额的应急手段，同 IP 高频注册会触发
-/// IP 级风控，因此阈值放宽到 4 次 + 失败页自动重试先兜几轮。
+/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；miss 主因是
+/// 匿名观看配额耗尽，换新注册只是重置配额的应急手段，同 IP 高频注册会触发 IP 级风控。
 const STREAM_MISS_THRESHOLD: u32 = 4;
 
 /// 换新注册的最小间隔（毫秒）：3 分钟一次，压住同 IP 的注册频率
@@ -404,19 +366,9 @@ pub fn note_stream_ok() {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上——发货资格
-/// 是**匿名观看配额**（2026-11-02 定案）：服务端对匿名设备按设备发放
-/// 限量授权（几分钟/几集），耗尽即 `200+0`——官方 App 自身匿名播到
-/// 第 9 集同样被拒并弹登录引导；登录设备（x-tt-token）整晚 24/24 全
-/// 发货。换新注册 = 重置匿名配额，能救急但同 IP 高频注册迟早触发
-/// IP 级风控，因此：
-/// - **登录态一律不换**：授权走账号，与设备身份无关，换了没意义；
-/// - 匿名态阈值 4 次 + 最小间隔 180s（原 2 次/60s），把注册频率压到
-///   IP 可接受的水平；失败页的 30s 自动重试负责等待配额窗口重开。
-///
-/// 为什么必须有这道守护：签名缺失的全灭窗口实录（2026-11-02）——无
-/// 签名连第 1 集都不发，换新注册配新签名才能恢复。限频 + 在途闸防止
-/// 把注册端点打狠；预取失败与网络错误不计（前者静默、后者另有重试）。
+/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上（换新 = 重置匿名观看配额）。
+/// 登录态一律不换（授权走账号，与设备身份无关）；阈值 + 最小间隔压住同 IP 注册频率，
+/// 失败页的自动重试负责等待配额窗口重开；预取失败与网络错误不计（前者静默、后者另有重试）。
 pub fn note_stream_miss(state: &AppState, vid: &str) {
     // 登录态：授权走账号，取流被拒不是设备身份问题，换新注册无意义
     if state.settings().account.is_some() {
@@ -459,25 +411,17 @@ mod tests {
         Store::open_memory().expect("内存库")
     }
 
-    /// 换新闸门的阈值与限频口径：达阈值才换，首轮放行、间隔内不动、
-    /// 过了间隔放行（2026-11-02 故障窗口的守护回归锁，间隔 10min→60s
-    /// 随对照裁决删除一并收紧）。
     #[test]
     fn stream_renew_due_respects_threshold_and_interval() {
         const MIN: u64 = STREAM_RENEW_MIN_INTERVAL_MS;
-        // 未达阈值：不换
         assert!(!stream_renew_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
-        // 首次达阈值（从未换过）：放行
         assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 0, 1000));
-        // 刚换过（间隔内）再连败：限频拦下
         assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD,
             1000,
             1000 + MIN - 1
         ));
-        // 过了最小间隔：放行
         assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
-        // 远超阈值同样受间隔约束
         assert!(!stream_renew_due(
             STREAM_MISS_THRESHOLD * 10,
             1000,
@@ -485,7 +429,6 @@ mod tests {
         ));
     }
 
-    /// 测试注册产物（身份固定，档案字段断言可对照）。
     fn reg_result() -> RegisterResult {
         RegisterResult {
             device_id: "8888888888888888".into(),
@@ -497,8 +440,6 @@ mod tests {
         }
     }
 
-    /// 阵亡名单上的库档案：启动同步就重铺静态兜底，旧档进备份行，
-    /// 元数据记下轮换痕迹。
     #[test]
     fn adopt_repaves_dead_listed_profile_with_backup() {
         let db = store();
@@ -508,7 +449,6 @@ mod tests {
 
         let (profile, source) = adopt_sync(&db);
         assert_eq!(source, "anonymous");
-        // 重铺为匿名档案：无设备身份
         assert_eq!(profile.get("iid"), "");
 
         let backup = db
@@ -522,7 +462,6 @@ mod tests {
         assert_eq!(meta.previous_iid.as_deref(), Some("1905892595382586"));
     }
 
-    /// 旧静态兜底档案（共享身份，已整体退役）：adopt 也重铺匿名。
     #[test]
     fn adopt_repaves_legacy_baked_static_profile() {
         let db = store();
@@ -540,8 +479,6 @@ mod tests {
         );
     }
 
-    /// 有身份但轮换元数据缺 registered 标记的档案（旧版本升级带上来的
-    /// 遗产权档案）：adopt 按匿名口径做版本对齐。
     #[test]
     fn adopt_aligns_profile_without_registered_meta() {
         let db = store();
@@ -560,8 +497,6 @@ mod tests {
         );
     }
 
-    /// 注册产物档案启动复检：钉注册口径不做版本对齐（自报版本与注册
-    /// 指纹不同源时取流被拒）。
     #[test]
     fn adopt_keeps_registered_profile_on_register_regime() {
         let db = store();
@@ -585,8 +520,6 @@ mod tests {
         assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
     }
 
-    /// 被 align 升到当前客户端口径的注册档案（版本键偏离注册口径）：
-    /// 启动复检从档案自身身份重建为纯注册口径并落库。
     #[test]
     fn adopt_heals_version_bumped_registered_profile() {
         let db = store();
@@ -613,7 +546,6 @@ mod tests {
         );
     }
 
-    /// 库里没档案：生成并落库匿名档案（cdid 随库稳定）。
     #[test]
     fn adopt_seeds_anonymous_when_db_empty() {
         let db = store();
@@ -629,9 +561,6 @@ mod tests {
         );
     }
 
-    /// 注册产物档案与注册请求共用同一构造：版本身份钉注册口径、
-    /// UA 为注册形态，身份键来自注册响应且按「指纹在前、身份在后」的
-    /// 顺序落位（签名 query 顺序敏感）。
     #[test]
     fn registered_profile_shares_register_fingerprint() {
         let reg = RegisterResult {
@@ -665,7 +594,6 @@ mod tests {
         );
     }
 
-    /// 元数据行的读写往返（含空→有→覆盖）。
     #[test]
     fn device_meta_roundtrip() {
         let db = store();
@@ -681,8 +609,6 @@ mod tests {
         );
     }
 
-    /// 注册代际迁移判定：标记缺失（标记机制前的所有存量档案）或代际
-    /// 不符 → 迁移；当前代际 → 不迁。
     #[test]
     fn regime_migration_only_for_mismatched_marker() {
         let mut meta = BootstrapMeta::default();

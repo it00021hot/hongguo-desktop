@@ -10,10 +10,6 @@ use super::decoder::Nv12Frame;
 use super::mft::{Pulled, SyncMft, hr};
 use super::sample::{nv12_sample, sample_to_bytes, set_size_rate, type_stride, video_type};
 
-// ————————————————————————————————————————————————————————————
-// 缩放：Video Processor MFT（同步、NV12→NV12）
-// ————————————————————————————————————————————————————————————
-
 pub(super) struct Scaler {
     mft: SyncMft,
     width: usize,

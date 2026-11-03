@@ -1,7 +1,6 @@
 //! service 事件订阅的启动接线。
 //!
-//! 顺序要求：本步必须早于 [`crate::bootstrap::downloader`]——启动恢复会
-//! 立即触发下载调度，进度事件从那一刻起就会发布。
+//! 顺序要求：本步必须早于 [`crate::bootstrap::downloader`]——启动恢复会立即触发下载调度，进度事件从那一刻起就会发布。
 
 use tauri::Manager;
 

@@ -18,17 +18,10 @@ impl super::Shell {
         crate::ui_prefs::save(prefs);
     }
 
-    /// 侧栏（Tauri app-sidebar 对齐）：13 目的地，展开 160px 图标+文字、
-    /// 折叠 56px 纯图标（tooltip 出标签）；追更带未读角标；贴底账户区
-    /// （头像/昵称；已登录点进设置页）+ 折叠钮。
-    ///
-    /// 展开态比 Tauri 的 224px 窄：导航标签最长 4 个汉字（英文字段最长
-    /// "Reservations"），224px 右侧会空掉近一百像素。160px 仍容得下最长
-    /// 标签与追更角标，标签与昵称按 Tauri 同款截断（min-w-0 + truncate）。
-    ///
-    /// 导航行与账户行用组件库的**基础层**按钮（`gpui_kit::base::Button`）：
-    /// 焦点句柄、Tab 可达、Enter/Space 激活、role/aria 与焦点环都由库负责，
-    /// 视觉仍由本壳给（基础层不接管布局与配色）。
+    /// 侧栏：13 目的地，展开 160px 图标+文字、折叠 56px 纯图标（tooltip 出
+    /// 标签）；追更带未读角标；贴底账户区（未登录开登录面板，已登录进设置页）
+    /// 与折叠钮。导航行与账户行用组件库基础层按钮（`gpui_kit::base::Button`），
+    /// 焦点/键盘激活/无障碍由库负责，视觉由本壳给。
     pub(super) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let collapsed = self.sidebar_collapsed;
         // 头像懒加载守卫：账号在且 URL 变化才触发一次（幂等）
@@ -48,8 +41,7 @@ impl super::Shell {
                 }
             })
             .unwrap_or_else(|| crate::i18n::t("nav.accountFallback"));
-        // 贴底账户区（Tauri AccountButton 同位）：未登录开登录面板；
-        // 已登录点进设置页（退出登录在设置页账户卡，Tauri 同款）
+        // 贴底账户区：未登录开登录面板；已登录点进设置页（退出登录在设置页账户卡）
         let account_row = gpui_kit::base::Button::new("nav-account")
             .accessibility_label(account_label.clone())
             .flex()

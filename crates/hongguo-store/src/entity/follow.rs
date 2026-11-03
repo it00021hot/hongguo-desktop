@@ -8,8 +8,6 @@ use hongguo_common::{AppError, AppResult};
 
 use super::{col_i64, col_text, map_db_err};
 
-// ---------- 基线（上次检查时的服务端总集数） ----------
-
 /// 某剧的基线集数；无基线（首次见到）返回 `None`。
 pub async fn baseline_get(db: &Db, series_id: &str) -> AppResult<Option<i64>> {
     let mut rows = db
@@ -50,8 +48,6 @@ pub async fn baseline_delete(db: &Db, series_id: &str) -> AppResult<()> {
     .await?;
     Ok(())
 }
-
-// ---------- 通知 ----------
 
 /// 落一条通知，返回行 id。
 pub async fn notice_insert(

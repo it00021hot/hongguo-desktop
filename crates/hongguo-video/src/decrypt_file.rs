@@ -1,26 +1,12 @@
-//! 落盘解密。
-//!
-//! 做法与现版一致：**整文件读入 → 原地覆盖视频轨样本的密文 → 整体写出**。
-//! 采样数据解开后由 [`super::deprotect`] 摘掉加密标记（`encv`→`hvc1`、
-//! 移除 `sinf`/`tenc`），否则产物仍被播放器当成加密流。
-//!
-//! ⚠️ 不要改成「重排文件 + 重建 moov」那套看似省内存的写法：
-//!    那样必须同步改写 `stco` / `stsz`，漏一处 `stco` 就会让播放器
-//!    读到错位数据——而且**不报错**。整文件进内存换来的是「布局不变」，
-//!    音轨、`stco`、采样表全都是现成的。单集短剧 10~100 MB，这个代价可以接受。
+//! 落盘解密：整文件读入 → 原地覆盖视频轨样本的密文 → 整体写出，随后 [`super::deprotect`] 摘掉加密标记（否则产物仍被当成加密流）。
+//! ⚠️ 不要改成「重排文件 + 重建 moov」那套看似省内存的写法：那必须同步改写 `stco` / `stsz`，漏一处 `stco` 播放器就读到错位数据且**不报错**。
+//! 整文件进内存换来「布局不变」（音轨、`stco`、采样表全是现成的），单集短剧 10~100 MB 代价可接受。
 
 use std::path::Path;
 
 use hongguo_common::{AppError, AppResult};
 
-/// 解密一个 MP4 文件。
-///
-/// # 参数
-/// - `src`：加密源文件（通常是 `.enc.tmp`）
-/// - `dst`：解密后的成品
-/// - `key`：AES-128 密钥
-///
-/// 返回成品字节数。
+/// 解密一个 MP4 文件：`src` 为加密源文件（通常是 `.enc.tmp`），`dst` 为解密后的成品，`key` 为 AES-128 密钥，返回成品字节数。
 pub fn decrypt_mp4_file(src: &Path, dst: &Path, key: &[u8; 16]) -> AppResult<u64> {
     let data = std::fs::read(src).map_err(|e| AppError::Io(format!("读取源文件失败: {e}")))?;
     let plain = super::decrypt_buffer::decrypt_mp4_buffer(&data, key)?;
@@ -99,10 +85,8 @@ mod tests {
         let hdlr = build_box(b"hdlr", &[&[0u8; 8][..], b"vide", &[0u8; 12][..]].concat());
 
         // stco 偏移字段在文件中的位置（**含前面的 ftyp**）：
-        //   ftyp + moov头(8) + trak头(8) + tkhd
-        //   + mdia头(8) + hdlr + minf头(8)
-        //   + stbl头(8) + stsd + stsz + stsc
-        //   + stco头(8) + version/flags(4) + count(4)
+        //   ftyp + moov头(8) + trak头(8) + tkhd + mdia头(8) + hdlr + minf头(8) + stbl头(8)
+        //   + stsd + stsz + stsc + stco头(8) + version/flags(4) + count(4)
         let ftyp = build_box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2");
         let stco_entry_at = ftyp.len()
             + 8 /* moov */
@@ -154,7 +138,6 @@ mod tests {
         let s = tracks[0].samples[0];
         assert!(s.0 > 0, "样本偏移应由 stsc+stco 推出，不能停在 0：{s:?}");
         assert_eq!(s.1, 32);
-        // 偏移应指向 mdat 载荷（moov 之后）
         assert!(s.0 as usize + 32 <= mp4.len());
         assert_eq!(&mp4[s.0 as usize..s.0 as usize + 4], &[0xab; 4]);
     }
@@ -173,7 +156,6 @@ mod tests {
         // 关键性质：长度不变——moov / stco / 音轨都保持原样
         assert_eq!(n as usize, mp4.len());
         assert_eq!(out.len(), mp4.len());
-        // 头部 box 结构必须完好
         assert_eq!(&out[..4], &mp4[..4], "ftyp 头不应被改动");
         assert!(collect_tracks(&out).is_ok(), "产物必须仍是可解析的 MP4");
 
@@ -199,7 +181,6 @@ mod tests {
 
         let r = decrypt_mp4_file(&src, &dst, &[0u8; 16]);
         assert!(r.is_err());
-        // 失败时不该留下一个半成品
         assert!(!dst.exists(), "解密失败不应留下产物");
         let _ = std::fs::remove_dir_all(&dir);
     }

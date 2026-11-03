@@ -1,14 +1,7 @@
-//! 壳窗口：持久侧栏导航 + 顶栏 + 内容区视图切换（Tauri `app-shell` /
-//! `app-sidebar` 的 GPUI 对齐形态）。
-//!
-//! 侧栏目的地对齐 Tauri 客户端的信息架构（13 项，逐页接真数据）。
-//! 可折叠：展开 160px 图标+文字，折叠 56px 纯图标（tooltip 出标签，
-//! Tauri collapsed 同款）。贴底账户区（登录面板复用首页的）+ 折叠钮。
-//!
-//! 顶栏自绘（Tauri `app-shell` 44px 薄行对齐）：中部是当前页面分类 tab 的
-//! 居中槽（Tauri `TopBarTabsPortal` 同位；首页/排行榜/新剧三页自带），
-//! 右端置顶 / 外观 / 窗口钮，空白带按住拖窗、双击最大化。
-//! 为什么不用组件库 TitleBar：见 [`Shell::render_toolbar`] 头注释。
+//! 壳窗口：持久侧栏导航（13 项目的地，可折叠 160/56px）+ 顶栏 + 内容区
+//! 视图切换。顶栏自绘 44px 薄行：中部当前页分类 tab 槽、右端置顶/外观/
+//! 窗口钮，空白带按住拖窗、双击最大化。为什么不用组件库 TitleBar：见
+//! `Shell::render_toolbar` 头注释。
 
 mod account;
 #[cfg(feature = "screenshot")]
@@ -49,9 +42,8 @@ use crate::pages::tasks::TasksView;
 
 pub(crate) use self::nav::Dest;
 
-/// 窗口几何防抖落盘间隔（Tauri `window_state::spawn_saver` 的 500ms 同参）。
-/// 移动/缩放每停一下就在这之后落盘，退出路径（关闭回调 / Cmd+Q / 强杀）
-/// 不再决定记忆能否保住。
+/// 窗口几何防抖落盘间隔：移动/缩放每停一下就在这之后落盘，退出路径不再
+/// 决定记忆能否保住。
 const GEOMETRY_SAVE_DEBOUNCE_MS: u64 = 500;
 
 /// 壳窗口实体：持有各视图实体，切换当前目的地。服务面由视图各自持有。
@@ -85,13 +77,11 @@ pub struct Shell {
     detail_series: Option<String>,
     /// 侧栏追更未读角标（本地通知未读数；未登录恒 0）。
     follow_unread: usize,
-    /// 退出确认框已经弹过（Tauri CloseRequested 的「已问过」闸门）：再收到
-    /// 关闭请求就直接放行——宁可少问一句，绝不把窗口变成关不掉的
-    ///（Tauri「前端未就绪就放行」同精神）。
+    /// 退出确认框已经弹过：再收到关闭请求就直接放行——宁可少问一句，
+    /// 绝不把窗口变成关不掉的。
     exit_asked: bool,
     /// 上次采样的常态窗口几何 [x, y, w, h]（render 逐帧刷新，非小屏/
-    /// 竖屏/全屏/最大化/最小化才覆盖）。随关闭落盘，下次启动恢复（issue
-    /// #11）。
+    /// 竖屏/全屏/最大化/最小化才覆盖）。随关闭落盘，下次启动恢复。
     win_bounds: [f32; 4],
     /// 上次采样的小屏几何 [x, y, w, h]（小屏中逐帧刷新）。三种窗态各记
     /// 各的槽位，切形态互不覆盖；进小屏时由 [`crate::mini`] 取用。
@@ -156,7 +146,6 @@ impl Shell {
             HomeEvent::AccountChanged => this.on_account_changed(cx),
             // 互动登录墙：切设置页（账号卡登录入口）
             HomeEvent::OpenSettings => this.enter_dest(Dest::Settings, cx),
-            // 下载提交成功：切下载任务页（Tauri navigate('/tasks') 同款）
             HomeEvent::OpenTasks => this.enter_dest(Dest::Tasks, cx),
             // chrome 显隐变了（无边框/沉浸全屏）：壳重绘才会重读
             // `immersive_fullscreen()`，否则顶栏/侧栏停在旧状态
@@ -239,8 +228,7 @@ impl Shell {
                     this.open_detail_with_prefill(series_id, Some(prefill), cx);
                 }
                 ReservationEvent::Login => {
-                    // 切回首页开登录面板（Tauri 弹 LoginDialog 的同位入口）；
-                    // 回首页即重挂载语义，续播跟着走
+                    // 切回首页开登录面板；回首页即重挂载语义，续播跟着走。
                     this.dest = Dest::Home;
                     this.feed.update(cx, |home, cx| {
                         home.resume_if_idle(cx);
@@ -285,7 +273,7 @@ impl Shell {
                     this.open_detail_with_prefill(series_id, Some(prefill), cx);
                 }
                 FollowsEvent::Login => {
-                    // 切回首页开登录面板（Tauri 弹 LoginDialog 的同位入口）
+                    // 切回首页开登录面板。
                     this.dest = Dest::Home;
                     this.feed.update(cx, |home, cx| {
                         home.resume_if_idle(cx);
@@ -350,8 +338,7 @@ impl Shell {
             }
             Dest::Home
         };
-        // UI 偏好盘上有就按盘上（Tauri 默认折叠、展开后持久化记住；主题默认
-        // auto，开窗前的应用见 main.rs）
+        // UI 偏好盘上有就按盘上。
         let ui_prefs = crate::ui_prefs::load();
         let mut shell = Self {
             dest,
@@ -423,12 +410,10 @@ impl Shell {
         }
         shell.refresh_follow_unread(cx);
         shell.ensure_account_avatar(cx);
-        // 壳级轮询：全局快捷键（老板键）与「第二次启动前置窗口」。
-        // 两项能力都由平台层提供（`SHELL_POLLER`）——macOS 尚未实现注册与
-        // 单实例前置，不空转一条每秒 10 拍的循环。
-        //
-        // WM_HOTKEY 只能在轮询里递进 GPUI（窗口过程跑在主线程消息循环里，
-        // 拿不到 GPUI 上下文），窗口过程是「按下沿置位」，100ms 一拍不会漏。
+        // 壳级轮询：全局快捷键（老板键）与「第二次启动前置窗口」。两项能力
+        // 都由平台层提供（`SHELL_POLLER`）。WM_HOTKEY 只能在轮询里递进 GPUI
+        //（窗口过程跑在主线程消息循环里，拿不到 GPUI 上下文），按下沿置位、
+        // 100ms 一拍不会漏。
         if crate::platform::SHELL_POLLER {
             let handle = window.window_handle();
             cx.spawn(async move |this, cx| {
@@ -436,8 +421,7 @@ impl Shell {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
-                    // 第二次启动请求前置窗口（单实例；Tauri bring_back_active_window
-                    // 同款：显示 + 还原最小化 + 聚焦）
+                    // 第二次启动请求前置窗口（显示 + 还原最小化 + 聚焦）。
                     if crate::platform::take_focus_request() {
                         let _ = handle.update(cx, |_, window, cx| {
                             crate::platform::restore_from_minimized(window, cx);
@@ -449,8 +433,7 @@ impl Shell {
                         continue;
                     }
                     // 先查可见性：藏显放实体更新之外——它同步派发窗口消息，
-                    // gpui 的窗口过程要更新窗口状态，在 update 里调用会撞
-                    // 借用（实测日志刷「RefCell already borrowed」六连）。
+                    // gpui 的窗口过程要更新窗口状态，在 update 里调用会撞借用。
                     let Ok(visible) =
                         handle.update(cx, |_, window, _| crate::platform::visibility(window))
                     else {
@@ -458,10 +441,8 @@ impl Shell {
                     };
                     let ok = this
                         .update(cx, |shell, cx| {
-                            // 入参是「这次要藏起来吗」：当前可见 = 本次按下去
-                            // 是藏（暂停），当前不可见 = 本次是按回来（续播）。
-                            // 这里写反过一次（传 !visible），实测症状是「藏起来
-                            // 还在响、按回来反而暂停」。
+                            // 入参是「这次要藏起来吗」：当前可见 = 本次按下去是藏
+                            // （暂停），当前不可见 = 本次是按回来（续播）。
                             shell.boss_key_playback(visible, cx);
                         })
                         .is_ok();
@@ -483,11 +464,8 @@ impl Shell {
             })
             .detach();
         }
-        // 跟随系统：系统外观切换（Windows 主题 / macOS 外观）时重算主题档。
-        // 显式 light/dark 不受影响（钉住的外观不会触发这个回调）。
-        // 预览不挂：预览场景的主题由矩阵按 case 指定（scene 的 mode），
-        // headless 窗口一挂上这个回调就会用宿主外观（Light）把场景主题
-        // 盖掉——dark 场景全部渲染成亮色。
+        // 跟随系统：系统外观切换时重算主题档；显式 light/dark 不受影响。
+        // 预览不挂：headless 窗口挂上这个回调会用宿主外观把场景主题盖掉。
         if !crate::preview::is_active() {
             cx.observe_window_appearance(window, |this, window, cx| {
                 if this.theme == crate::ui_prefs::ThemePref::Auto {

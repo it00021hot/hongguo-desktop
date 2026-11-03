@@ -10,10 +10,6 @@ use windows::core::GUID;
 
 use super::mft::hr;
 
-// ————————————————————————————————————————————————————————————
-// 媒体类型与样本小工具
-// ————————————————————————————————————————————————————————————
-
 const HNS: f64 = 10_000_000.0;
 
 pub(super) fn secs_to_hns(s: f64) -> i64 {
@@ -68,14 +64,9 @@ pub(super) fn type_stride(t: &IMFMediaType, width: usize) -> usize {
         .unwrap_or(width)
 }
 
-/// 建样本骨架前半：`MFCreateSample` → 建定长缓冲 → `Lock`，返回
-/// （样本, 缓冲, 可写指针）。拷贝完成后必须把同一对样本/缓冲交给
-/// [`finish_sample`] 收尾（`Unlock` → `SetCurrentLength` → `AddBuffer` →
-/// 时间戳/时长）。
-///
-/// SAFETY：`unsafe fn` 的调用方须保证返回的裸指针只在 `buf` 存活且未
-/// `Unlock` 期间使用（即 `finish_sample` 之前）——两个约定由
-/// [`nv12_sample`] 以固定顺序满足。
+/// 建样本骨架前半：`MFCreateSample` → 建定长缓冲 → `Lock`，返回（样本, 缓冲, 可写指针）。
+/// 拷贝完成后必须把同一对样本/缓冲交给 [`finish_sample`] 收尾（`Unlock` → `SetCurrentLength` → `AddBuffer` → 时间戳/时长）。
+/// SAFETY：`unsafe fn` 的调用方须保证返回的裸指针只在 `buf` 存活且未 `Unlock` 期间使用（即 `finish_sample` 之前）——两个约定由 [`nv12_sample`] 以固定顺序满足。
 pub(super) unsafe fn locked_buffer(len: usize) -> AppResult<(IMFSample, IMFMediaBuffer, *mut u8)> {
     unsafe {
         let sample = hr(MFCreateSample(), "建样本")?;
@@ -86,10 +77,8 @@ pub(super) unsafe fn locked_buffer(len: usize) -> AppResult<(IMFSample, IMFMedia
     }
 }
 
-/// 建样本骨架后半：`Unlock` → `SetCurrentLength(len)` → `AddBuffer` →
-/// `SetSampleTime` / `SetSampleDuration`。时间戳/时长为负（缺失）时跳过
-/// 设置——读取侧（[`sample_to_bytes`]）对「未设置」与负值同样映射 -1 交给
-/// 上层递增兜底，两条旧路径（无条件设置/条件设置）在此收敛。
+/// 建样本骨架后半：`Unlock` → `SetCurrentLength(len)` → `AddBuffer` → `SetSampleTime` / `SetSampleDuration`。
+/// 时间戳/时长为负（缺失）时跳过设置——读取侧（[`sample_to_bytes`]）对「未设置」与负值同样映射 -1 交给上层递增兜底，两条旧路径在此收敛。
 pub(super) unsafe fn finish_sample(
     sample: &IMFSample,
     buf: &IMFMediaBuffer,

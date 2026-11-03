@@ -1,8 +1,5 @@
-//! 设置服务：归一化与校验。
-//!
-//! 保存时收敛并发到 1–10，并立即应用到下载调度器——无需重启（与现版一致）。
-//! 保存编排（归一化 → 换内存态 → 调度器并发 → 落库）在本模块：两个壳
-//! （Tauri command / GPUI 直调）走同一段，不各自记步骤。
+//! 设置服务：归一化与校验。保存时收敛并发到 1–10 并立即应用到下载调度器，无需重启。
+//! 保存编排（归一化 → 换内存态 → 调度器并发 → 落库）在本模块，两个壳走同一段。
 pub mod proxy;
 
 use crate::app_state::AppState;
@@ -21,18 +18,15 @@ pub fn save(state: &AppState, settings: Settings) -> AppResult<Settings> {
     let normalized = normalize(settings)?;
 
     state.replace_settings(normalized.clone());
-    // 并发上限立即应用到调度器。光改数字不够：调高并发时在途任务数不会
-    // 自己涨，新坑要等某个任务完成才被补上——一集下载数分钟，期间下载页
-    // 会一直显示「并发 n/上限」不满。保存后补一轮派发（kick 与提交/启动/
-    // 恢复同通道）；降低或不变时 kick 因坑满/无可跑任务自然空转。
+    // 并发上限立即应用到调度器：调高并发时在途任务数不会自己涨，保存后补一轮派发
+    //（降低或不变时 kick 因坑满/无可跑任务自然空转）。
     state.queue().set_limit(normalized.max_concurrency);
     crate::download_service::kick(state.clone());
-    // 缓存根即时生效于新写入（旧目录残留不迁移，见 Settings::cache_dir）
+    // 缓存根即时生效于新写入（旧目录残留不迁移）
     hongguo_store::paths::set_cache_root_override(
         normalized.cache_override().map(std::path::PathBuf::from),
     );
 
-    // 落库
     state.store.save_settings(&normalized)?;
 
     Ok(normalized)
@@ -46,17 +40,14 @@ pub fn apply_cache_root(settings: &Settings) {
     );
 }
 
-/// 未配置 `cache_dir` 时的缓存位置：跟随数据目录（其下再分 `compat-cache/`
-/// 与 `cover-cache/`）。设置页留空时要把实际路径显示出来——「跟随数据目录」
-/// 本身没告诉用户文件落哪儿。两壳共用这一段解析，别在各自壳里拼路径。
+/// 未配置 `cache_dir` 时的缓存位置：跟随数据目录（其下再分 `compat-cache/` 与 `cover-cache/`）。
+/// 设置页留空时要把实际路径显示出来；两壳共用这一段解析，别在各自壳里拼路径。
 pub fn default_cache_dir() -> String {
     hongguo_store::paths::data_dir().display().to_string()
 }
 
-/// 归一化并校验设置。
-///
-/// 两步是一体的：校验的是**归一化之后**的结果，拆成两个函数就会留下
-/// 「先校验再归一化」这种顺序写反的窗口——校验通过的值未必是真正要用的值。
+/// 归一化并校验设置，两步是一体的：校验的是**归一化之后**的结果，
+/// 拆成两个函数会留下「先校验再归一化」顺序写反的窗口。
 pub fn normalize(settings: Settings) -> AppResult<Settings> {
     let mut settings = settings;
     settings.clamp_concurrency();
@@ -68,13 +59,11 @@ pub fn normalize(settings: Settings) -> AppResult<Settings> {
     // cache_dir 允许空（= 跟随数据目录），只裁空白
     settings.cache_dir = settings.cache_dir.trim().to_string();
     settings.boss_key = settings.boss_key.trim().to_string();
-    // 缓存自动清理两档：上限 0 = 不限、周期 0 = 关闭，负数无意义（u32 收
-    // 不到，但旧库/手改的 JSON 可能给负数，这里按 0 处理）。
+    // 缓存自动清理两档：上限 0 = 不限、周期 0 = 关闭；旧库/手改的 JSON 可能给负数，按 0 处理。
     settings.cache_limit_mb = settings.cache_limit_mb.min(MAX_CACHE_LIMIT_MB);
     settings.cache_ttl_days = settings.cache_ttl_days.min(MAX_CACHE_TTL_DAYS);
 
-    // 后置条件：clamp_concurrency 一旦失效，队列就会带着 0 并发启动，
-    // 那时候没有任何地方会报错，这里是唯一的检查点。
+    // 后置条件检查点：clamp_concurrency 一旦失效，队列会带着 0 并发启动且无处报错。
     if settings.download_dir.is_empty() {
         return Err(AppError::InvalidArgs("下载目录不能为空".into()));
     }

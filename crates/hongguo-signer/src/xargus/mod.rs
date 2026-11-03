@@ -1,13 +1,6 @@
-//! X-Argus 用的自研哈希（f13）—— 分支判定与统一入口。
-//!
-//! 服务端用 query / body / 时间戳推导出 3 个分支之一，客户端必须算出同一个分支，
-//! 算错分支等于没签名。三个分支的分布由 `branch` 决定：
-//!
-//! - `branch == 0`：重量级路径（见 [`branch0`]）——112 轮消息扩展 + 变体轮函数
-//! - `branch == 2`：变种 MD5 路径（见 [`branch2`]）
-//! - 其它：直通路径——拼 sm3 前 16 字节 + body 摘要
-//!
-//! 三个分支实现差异极大，拆成独立文件；这里只保留判定与分发。
+//! X-Argus 用的自研哈希（f13）：分支判定与统一入口，JS 1:1 移植禁改写法。
+//! 服务端按 query / body / 时间戳推导出 3 个分支之一，算错分支等于没签名：
+//! `branch == 0` 重量级路径（[`branch0`]）、`branch == 2` 变种 MD5（[`branch2`]）、其它直通。
 
 pub mod branch0;
 pub mod branch2;
@@ -17,26 +10,16 @@ use crate::primitives::{get_iv, le32, sum_md5};
 pub use branch0::compute as branch0_f13;
 pub use branch2::compute as branch2_f13;
 
-/// 判定给定请求落在哪个分支（0 / 1 / 2）。
-///
-/// 只需要 query 串、body 摘要字节和时间戳字节，可用于发请求前预判。
-/// 返回 `0`（重量级）、`1`（**服务端不受理**）或 `2`（变种 MD5）。
+/// 判定给定请求落在哪个分支（0 / 1 / 2）：只需 query 串、body 摘要字节和时间戳字节，可发请求前预判。
+/// 返回 `1` 表示**服务端不受理**（ticket 抖动要避开）。
 pub fn branch_of(query: &[u8], body_md5: &[u8], ts_bytes: &[u8]) -> u32 {
     let iv = get_iv(get_iv(get_iv(0x2023_0928, query), body_md5), ts_bytes);
     let low = iv & 15;
     low - ((low * 171) >> 9) * 3
 }
 
-/// 计算 f13 摘要（最终作为 x-argus 头的负载）。
-///
-/// # 参数
-/// - `query_sm3`：query 串的 SM3 摘要
-/// - `body_md5`：body 的 MD5 摘要；GET 时传 16 个 0
-/// - `ts_bytes`：小端 4 字节 khronos
-/// - `khronos`：秒级时间戳
-///
-/// 返回长度随分支而异：branch 0 / branch 2 为 20 字节，直通分支为 36 字节
-/// （sm3 前 16 + body 摘要 16 + 校验和 4）。这是算法本身的设计，不要强行统一。
+/// 计算 f13 摘要（x-argus 头的负载）：`query_sm3` 为 query 的 SM3 摘要，`body_md5` GET 传 16 个 0，`ts_bytes` 为小端 4 字节 khronos。
+/// 返回长度随分支而异（branch 0/2 为 20 字节，直通为 36 字节 = sm3 前 16 + body 摘要 + 校验和 4）——算法本身的设计，不要强行统一。
 pub fn hash_f13(query_sm3: &[u8], body_md5: &[u8], ts_bytes: &[u8], khronos: u32) -> Vec<u8> {
     let iv = get_iv(get_iv(get_iv(0x2023_0928, query_sm3), body_md5), ts_bytes);
     let low = iv & 15;
@@ -75,7 +58,6 @@ mod tests {
     #[test]
     fn f13_length_matches_branch() {
         let (q, b, _, k) = fixture();
-        // 抖动足够多的 ticket，三个分支都会出现，长度必须与分支匹配
         let mut lengths = std::collections::HashSet::new();
         for offset in 0..200u32 {
             let ts = le32(k + offset);
@@ -107,7 +89,6 @@ mod tests {
 
     #[test]
     fn branch_distribution_hits_all_three() {
-        // 抖动 64 个 ticket 必须能观察到多个分支，否则 _rticket 抖动无从生效
         let mut seen = std::collections::HashSet::new();
         for i in 0..200u32 {
             let query = format!("a=1&t={i}");
@@ -124,13 +105,7 @@ mod tests {
         assert_eq!(hash_f13(&q, &b, &t, k), hash_f13(&q, &b, &t, k));
     }
 
-    /// 三个分支都要有黄金向量。
-    ///
-    /// ⚠️ 曾经只测了 branch 2，结果 `BRANCH0_TT[61]` 多抄了一位十六进制
-    ///    （`0x284ba7` 写成 `0x284ba7a`）而无人察觉——branch 0 占约 1/3 的请求，
-    ///    实测失败率 12.5%，表现为**间歇性** HTTP 200 + 0 字节，极难归因。
-    ///
-    ///    下面 24 个向量覆盖 branch 0 / 1 / 2 三条路径，长度与内容都锁死。
+    /// 三个分支都要有黄金向量——branch 0 一度无向量、常量抄错一位无人察觉（间歇性失配极难归因）。
     #[test]
     fn f13_matches_js_golden_vectors_for_all_branches() {
         const QUERY_HEAD: &str = "iid=1905892595382586&device_id=1905892595378490&ac=wifi&channel=update_64&aid=8662&app_name=novelread&version_code=71332&version_name=7.1.3.32&device_platform=android&os=android&ssmix=a&device_type=25053RT47C&device_brand=Redmi&language=zh&os_api=36&os_version=16&manifest_version_code=71332&resolution=1280*2772&dpi=520&update_version_code=71332&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=71332&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0";

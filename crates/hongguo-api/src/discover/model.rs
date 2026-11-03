@@ -55,8 +55,6 @@ pub struct FeedPage {
     pub session_id: String,
 }
 
-// ---------------------------------------------------------------- 找剧（筛选浏览）
-
 /// 找剧筛选面板的一行（一个维度）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,8 +66,7 @@ pub struct SelectorItem {
 }
 
 /// 找剧筛选面板的一行。`row_type` 即 select_items 的键
-/// （genre/category_dim_theme/category_dim_role/category_dim_epoch/
-/// sort/gender/online_time/duration）。
+///（genre/category_dim_*/sort/gender/online_time/duration）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectorRow {
@@ -95,8 +92,7 @@ pub struct BrowseFilters {
     pub online_time: String,
     /// 长度：`duration_0_60`/`duration_60_120`/`duration_120_plus`
     pub duration: String,
-    /// 完结状态（官方 SelectorPanel 行为：客户端
-    /// 合成筛选项，选中值走请求体顶层 `creation_status` 参数）：
+    /// 完结状态（官方客户端合成筛选项，选中值走请求体顶层 `creation_status` 参数）：
     /// 空=全部 / `creation_status_0`=已完结 / `creation_status_1`=连载中
     pub creation_status: String,
 }
@@ -128,7 +124,6 @@ impl BrowseFilters {
 mod tests {
     use super::*;
 
-    /// 筛选条件 → select_items：选中值包单元素数组，空选给空数组。
     #[test]
     fn browse_filters_build_select_items() {
         let f = BrowseFilters {
@@ -140,7 +135,6 @@ mod tests {
         assert_eq!(si["genre"], serde_json::json!(["comic_series"]));
         assert_eq!(si["online_time"], serde_json::json!(["days_7"]));
         assert_eq!(si["sort"], serde_json::json!([]));
-        // duration 维度也要在场（面板有「长度」行）
         assert!(si.get("duration").is_some());
         assert_eq!(si["duration"], serde_json::json!([]));
     }

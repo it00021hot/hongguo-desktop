@@ -35,17 +35,9 @@ import { TopBarTabs } from './top-bar-tabs';
 import { BootSplash } from './boot-splash';
 
 /**
- * 首页：沉浸式播放器流（官方客户端同款形态）。
- *
- * 视频**铺满整页**，顶部居中是分类 tab 胶囊——列表由服务端下发
- * （bookmall/tab 响应 tab_item[]：tab_type/标题/顺序，拉取前/失败回落
- * 本地三件套；关注一律不显示，追更由收藏页承载），内容随服务端时间桶
- * 轮换。滚轮 / ↑↓ 在当前源内切上一部/下一部剧；剧名/集数/简介叠加在
- * 画面左下，鼠标静止 3 秒连同互动栏一起淡出。
- * （推荐 tab 头部已种入云端历史+书架，「你的内容」不缺位。）
- *
- * 切换要快：进入当前剧就预取相邻剧的分集档案；当前剧首帧一出画再预取
- * 下一部的流（后端瞄准续播集）——真正切过去时只剩取流时间。
+ * 首页：沉浸式播放器流（官方客户端同款形态）。视频铺满整页，顶部居中分类 tab 胶囊
+ * （服务端下发，拉取前/失败回落本地三件套；关注一律不显示）。滚轮/↑↓ 在当前源内切上一部/下一部剧。
+ * 切换要快：进当前剧就预取相邻剧的分集档案；首帧一出画再预取下一部的流（后端瞄准续播集）。
  */
 
 /** 源内一条：沉浸流只消费这几个身份字段。 */
@@ -91,12 +83,11 @@ export function HomePage() {
   const [source, setSource] = useState<string>(readSource);
   /** 每源独立游标：切 tab 回来还在上次刷到的位置。 */
   const [indexes, setIndexes] = useState<Record<string, number>>({});
-  /** 「在播不动」闸门：换一批（重开会话）后的新列表通常不含在播剧，
-   *  把它钉在最前保住在播画面。跨 tab 切换必须关闸——否则在播剧占住
-   *  新源的第 0 位，播放器目标永远不换，看起来「点了没反应」；关闸后
-   *  新源首批一到，当前剧就落到该 tab 游标处，切 tab 即换片。
-   *  挂载默认开闸：从别的菜单回首页时在播剧往往不在信息流里，钉住它
-   *  才能「切菜单回来不换视频」。 */
+  /**
+   * 「在播不动」闸门：换一批后的新列表通常不含在播剧，钉在最前保住在播画面。
+   * 跨 tab 切换必须关闸（否则在播剧占住新源第 0 位，播放器目标永远不换）；
+   * 挂载默认开闸——回首页时在播剧往往不在信息流里，钉住才能「切菜单回来不换视频」。
+   */
   const [pinHold, setPinHold] = useState(true);
 
   const feed = useFeed(source);
@@ -109,14 +100,10 @@ export function HomePage() {
   /** 回首页恢复是否已尝试（一次性；见下方渲染期恢复块）。 */
   const [restored, setRestored] = useState(false);
 
-  // 登录后的「你的内容」种子：观看历史 + 书架（追更）排在推荐流最前
-  // ——同一个号打开就是你的剧，对齐官方客户端（首页就是书架/续看驱动）。
-  // 历史/书架条目没有横版封面，标题等 currentSeries 解析出来自然显示。
+  // 登录后的「你的内容」种子：观看历史 + 书架（追更）排在推荐流最前（首页即书架/续看驱动）
   const { data: account } = useAccount();
-  // 历史源双模式（与历史页同款判定）：登录读云端（跨端续播），匿名读
-  // 本地记录。云端接口匿名也不报错，会回设备级历史行——那是匿名期快速
-  // 测试留下的 vi=0/pos=0 垃圾，拿它当续播依据就是「每次都回第 1 集」
-  // 的根源；本应用的真进度在本地历史/播放档案里。
+  // 历史源双模式：登录读云端（跨端续播），匿名读本地记录——云端匿名回的设备级
+  // 历史行是匿名期快速测试留下的垃圾（vi=0/pos=0），拿它当续播依据就是「每次都回第 1 集」的根源
   const loggedIn = !!account;
   const cloudHistory = useWatchHistory(loggedIn);
   const localHistory = useLocalHistory(!loggedIn);
@@ -125,11 +112,8 @@ export function HomePage() {
   // 顶栏 tab 列表（服务端下发；拉取前/失败回落三件套，见 buildTabList）
   const { data: serverTabs } = useFeedTabs();
   const homeTabs = useMemo(() => buildTabList(serverTabs), [serverTabs]);
-  // 服务端列表到手后校验持久化的选中 tab：被服务端撤掉（或登录态变化后
-  // 失去数据面的关注）就重置回推荐 tab，别停在拉不到数据的死 tab 上。
-  // 回落三件套期间不校验——持久化 id 可能是服务端新 tab，等真列表说话。
-  // 渲染期 setState（官方 adjust 模式，与下方游标恢复同款）：条件在重渲染
-  // 后自然为假，不会循环。
+  // 服务端列表到手后校验持久化的选中 tab：被服务端撤掉就重置回推荐 tab；
+  // 回落三件套期间不校验（持久化 id 可能是新 tab，等真列表说话）。渲染期 setState，条件在重渲染后自然为假
   if (serverTabs?.length && !homeTabs.some((t) => t.id === source)) {
     setSource(RECOMMEND_TAB_TYPE);
     try {
@@ -158,9 +142,7 @@ export function HomePage() {
   // 三 tab 同一数据面，统一成 StreamItem[]。
   // useMemo 稳定身份：数组每渲染新建会让依赖它的 effect/哨兵反复重跑。
   const feedItems = feed.items;
-  // 「你的内容」种子只属于推荐 tab：漫剧/真人是服务端类型 tab，头一条必须
-  // 是该类型的剧——种子(最近看过)排头会把刚看完的那部顶在前面，点 tab
-  // 看起来毫无反应(实测:刚看完动漫点真人,头部还是那部动漫)。
+  // 「你的内容」种子只属于推荐 tab：漫剧/真人是服务端类型 tab，种子排头会把刚看完的顶在前面（点 tab 像没反应）
   const items: StreamItem[] = useMemo(() => {
     const activeSeeds = source === RECOMMEND_TAB_TYPE ? seedItems : [];
     return [
@@ -189,29 +171,23 @@ export function HomePage() {
   const isFetchingMore = feed.isFetchingMore;
   const loadMore = feed.loadMore;
 
-  // ---- 回首页换一批（>5 分钟过期）但在播剧不动 ----
-  // 恢复（游标对回 store 目标剧）落定后，若推荐流已过期：重开会话取新
-  // 一批（reset 语义，原地重放只会是旧会话），游标
-  // 归零；在播剧由下方置顶钉住继续播，滚下去才是新一批。
+  // 回首页换一批（>5 分钟过期）但在播剧不动：重开会话取新一批（reset 语义），游标归零；
+  // 在播剧由置顶钉住继续播
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!restored || !playingId) return;
     if (feed.isRefreshing || feed.isLoading) return;
     if (!(feed.dataUpdatedAt > 0 && Date.now() - feed.dataUpdatedAt > FEED_STALE_MS)) return;
     feed.restart();
-    // 钉住在播 + 游标归零一起放微任务：effect 体里同步 setState 会触发
-    // react-hooks 告警
+    // 钉住 + 游标归零放微任务：effect 体里同步 setState 会触发 react-hooks 告警
     queueMicrotask(() => {
       setPinHold(true);
       setIndexes((prev) => ({ ...prev, [source]: 0 }));
     });
   }, [restored, playingId, feed, source, setIndexes]);
 
-  // 在播剧置顶钉：换一批/流过期重开后的新列表里通常没有它，「在播不动」
-  // 靠把它插在最前（标题/封面从档案缓存取，缺失给占位——起播走 store
-  // 目标，不受影响）。**无条件钉**：新流里还含着在播剧时也不能省——游标
-  // 是数组下标，不钉的话换一批后游标 0 就指到别的剧，起点决策把播放目标
-  // 拽走（刷剧被「自动切到别的剧」的根源，机制见 withPinnedPlaying）。
+  // 在播剧置顶钉：换一批/流过期重开后的新列表通常没有它，**无条件钉**（游标是数组下标，
+  // 不钉换一批后游标 0 就指到别的剧，起点决策把播放目标拽走——机制见 withPinnedPlaying）。
   // 只服务换一批/回首页场景，跨 tab 切换关闸（见 pinHold）。
   const displayItems = useMemo(
     () =>
@@ -231,16 +207,11 @@ export function HomePage() {
     [items, pinHold, playingId, queryClient],
   );
 
-  // 外部点名消费（详情/历史/搜索卡片、选集切季、剧终接下一季）：游标对到
-  // 目标剧——流里有就对过去，没有就 pinHold + 落到钉位（第 0 位）。
-  // 数据面未就绪就先不消费，等下一次渲染补齐。渲染期 setState（官方
-  // adjust 模式，与下方游标恢复同款）：条件在重渲染后自然为假，不会循环；
-  // 一次性消费：不与用户后续滚动互相拽（信息流自己的 setTarget 不带信号）。
+  // 外部点名消费（详情/历史/搜索卡片、切季、剧终接力）：游标对到目标剧——流里有就对过去，
+  // 没有就 pinHold + 落钉位；数据面未就绪先不消费。渲染期 setState；一次性消费，不与用户滚动互相拽。
   const gotoNonce = usePlayerStore((s) => s.gotoNonce);
-  // 已消费到的 nonce 以 store 为准：外部点名先于首页挂载发生（搜索/历史
-  // 点卡片才跳过来），useState 拿**当前** nonce 初始化会把信号在挂载帧
-  // 就判成「已消费」，整个消费块对跨页进入永远失效——搜索点开被推荐流
-  // 顶掉的伴生根因。store 里的值跨挂载存活，重挂载后仍能对齐游标。
+  // 已消费 nonce 以 store 为准：外部点名先于首页挂载发生，useState 拿当前 nonce
+  // 初始化会把信号在挂载帧判成「已消费」；store 里的值跨挂载存活
   const [consumedGoto, setConsumedGoto] = useState(() => usePlayerStore.getState().gotoConsumed);
   useEffect(() => {
     usePlayerStore.getState().markGotoConsumed(consumedGoto);
@@ -274,30 +245,21 @@ export function HomePage() {
 
   /**
    * 当前剧的档案：走 `get_series_episodes`（本地命中秒回，缺失才回落解析），
-   * **不走 resolve_series**——那是每次都打网络的解析，预取的缓存它吃不到，
-   * 滚轮切剧会在「正在准备」上白等一拍。预取 effect 已经把下一部剧的
-   * 分集档案灌进同一份缓存，这里直接命中。
+   * 不走 resolve_series——那是每次打网络的解析，预取的缓存它吃不到。
    */
   const seriesQuery = useSeriesEpisodes(currentId ?? '');
   const currentSeries = seriesQuery.data;
-  // 两路进度源（官方 App「跟上历史进度」同款）：
-  // - 本地播放档案：本应用 5 秒一写的真值（毫秒级 IPC）
-  // - 云端观看历史：跨客户端（官方 App 看过的也算），种子区
-  //   已在用同一查询，这里共享缓存
+  // 两路进度源：本地播放档案（5 秒一写真值）+ 云端观看历史（跨客户端），种子区已在用同一查询
   const progressQuery = useSeriesProgress(currentId ?? '');
   const localProgress = progressQuery.data;
 
-  // 回首页恢复（切菜单回来不换视频）：store 目标剧还在信息流里 → 游标
-  // 对回那部剧。信息流游标是本组件 state，切菜单重挂载会归零，不恢复的
-  // 话起点决策会把目标换成第一部、正在看的视频被顶掉。
-  // 渲染期 setState（官方 adjust 模式）：置位后本组件立即以新游标重渲染，
-  // effect 只在最终提交后跑一次——起点决策自然对准恢复的那部剧，无需
-  // 额外闩锁。只恢复一次：之后用户滚走再滚回，不再拽游标。
+  // 回首页恢复（切菜单回来不换视频）：store 目标剧还在流里 → 游标对回那部剧
+  // （游标是组件 state，重挂载会归零，不恢复则起点决策把目标换成第一部、正在看的视频被顶掉）。
+  // 渲染期 setState 只恢复一次：之后用户滚走再滚回不再拽游标。
   if (!restored && items.length > 0) {
     setRestored(true);
     if (playingId) {
-      // displayItems 口径:在播剧钉住时它在 displayItems[0],idx=0 不设
-      // (游标默认就是 0);找不到(-1)同样不动
+      // 在播剧钉住时它在 displayItems[0]，idx=0 不设（游标默认就是 0）
       const idx = displayItems.findIndex((i) => i.seriesId === playingId);
       if (idx > 0) setIndexes((prev) => ({ ...prev, [source]: idx }));
     }
@@ -355,12 +317,8 @@ export function HomePage() {
       historyItems?.find((i) => i.seriesId === decision.seriesId),
     );
 
-    // 主动切剧即结束「在播保护」——但只在游标剧在未钉住的列表里时关闸
-    // （decision.releasePin）：外部点名（搜索/榜单/追更）的目标只以钉住
-    // 占位存在，关闸它就从列表消失、游标 0 落到别的剧，下一拍起点决策
-    // 把播放目标抢走——「搜索点开播错剧」的根源，所以保持钉住。目标在
-    // 流里时关闸恢复原位语义，继续滚就是下一部推荐；换一批/回首页会
-    // 重新开闸（见 restart/goto 消费）。
+    // 主动切剧即结束「在播保护」——但只在游标剧在未钉住的列表里时关闸（decision.releasePin）：
+    // 外部点名的目标只以钉住占位存在，关闸它就从列表消失、起点决策把播放目标抢走（「搜索点开播错剧」的根源）
     if (decision.releasePin) setPinHold(false);
     // 撤钉会让钉位之前的内容左移一格，游标按内容重锚到同一步剧
     const anchorIndex = decision.anchorIndex;
@@ -392,9 +350,7 @@ export function HomePage() {
     setPinHold,
   ]);
 
-  // 占位封面：横版优先（竖版 3:4 被 object-cover 拉满横屏窗口=整屏发糊）；
-  // 再挑 WebView 渲染得了的 URL。eagerProxy：HEIC 源不等 webp 网络请求，
-  // 立即给本地转码代理——切剧瞬间的全屏占位黑一秒都是「卡顿感」的来源
+  // 占位封面横版优先（竖版拉满横屏会糊）；HEIC 源立即给本地转码代理（切剧瞬间黑一秒都是「卡顿感」）
   const rawCover = current?.horizCover || current?.cover || '';
   const webCover = enhancedCover(rawCover);
   const coverForPlayer = current
@@ -412,14 +368,8 @@ export function HomePage() {
     if (prevItem) prefetchEpisodes(prevItem.seriesId);
   }, [prevItem, prefetchEpisodes]);
 
-  // 预取下一部剧续播集的**流**（取流表 + 渐进填充头部）：滚过去时缓存已
-  // 就绪，首帧只等头部数据。触发时机 = 当前剧首帧一出画（PlayerView 回
-  // 调）——在播那一路站稳了，带宽才让给铺垫；固定延迟会让下一部的就绪
-  // 时间跟着延迟走，快滚时预取干脆来不及。起播被卡住（自动播被 WebView
-  // 拦、网络慢）时首帧信号不来，兜底定时照发——慢是慢，不能不备。
-  // 广度 = 预取档位（0=全关）：后续 B 部每部预取入口集（issue #11：只铺
-  // 紧邻下一部时快滑 3-5 部全是冷启动）。同一部剧只取一次；失败不算数，
-  // 下次再成为「后续部」时允许重试。
+  // 预取下一部剧续播集的流：触发时机 = 当前剧首帧一出画（在播站稳了带宽才让给铺垫）；
+  // 起播被卡住时兜底定时照发。广度 = 预取档位；同一部只取一次，失败不算数下次重试
   const { data: settings } = useSettings();
   const prefetchBreadth = settings?.prefetchEpisodes ?? 3;
   const streamPrefetched = useRef(new Set<string>());
@@ -437,8 +387,7 @@ export function HomePage() {
     [displayItems, index, prefetchBreadth],
   );
   const upcomingKey = upcomingIds.join(',');
-  /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期
-      对号，切剧瞬间自动回到「未出画」，无需 effect 追着清）。 */
+  /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期对号，切剧瞬间自动回到「未出画」）。 */
   const [firstFrameFor, setFirstFrameFor] = useState('');
   const stageLive = current !== undefined && firstFrameFor === current.seriesId;
   useEffect(() => {

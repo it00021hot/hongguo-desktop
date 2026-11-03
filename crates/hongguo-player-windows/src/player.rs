@@ -1,22 +1,6 @@
-//! Windows 系统播放器：MediaEngine frame-server 模式的 [`PlayerLike`] /
-//! [`VideoPresenter`] 实现。
-//!
-//! 与 macOS 实现的 `player.rs` 对位：引擎自己解码、自己出声；本层只做控制面
-//! （播放/暂停/seek/倍速/音量）、帧泵与舞台几何。与 macOS 的差异在画面通路：
-//! 引擎经 `TransferVideoFrame` 把帧写进渲染器设备上的 BGRA 纹理，视频 quad
-//! （vendor 补丁）把它与 GPUI 内容画进**同一张渲染目标**——没有独立合成层，
-//! 缩放/黑边/窗口形态全部是同画布语义（对齐 nsh-platform-windows 的 video）。
-//!
-//! **每帧泵**（[`SystemPlayer::present_frame`]，由壳的 `submit_stage` 每帧带进
-//! 来，即 vsync 节奏）：`OnVideoStreamTick` 报新帧才 `TransferVideoFrame`，
-//! 暂停自然停在最后一帧。
-//!
-//! **每集一个新引擎**（对齐 nsh 的 video 纪律）：换源
-//! （`SetSourceFromByteStream`）只换源不关旧源，旧解码器的显存帧池与 CPU 参考
-//! 帧逐集滞留；`IMFMediaEngine` 没有「只关源」的 API（`Stop` 属 MediaSession）。
-//! 每集新引擎 + Drop 里显式 `Shutdown`，旧解码器随引擎一起释放；解码设备是
-//! 渲染器那台（[`mf::device_manager`] 进程级共享），新建引擎不再各自付设备的
-//! 开销（换源复用会逐集滞留显存/私有内存；共享设备 + 新引擎后走平）。
+//! Windows 系统播放器：MediaEngine frame-server 模式的 [`PlayerLike`] / [`VideoPresenter`] 实现（与 macOS 实现的 `player.rs` 对位）；引擎自己解码出声，本层只做控制面、帧泵与舞台几何。
+//! 画面通路：引擎经 `TransferVideoFrame` 把帧写进渲染器设备上的 BGRA 纹理，视频 quad（vendor 补丁）把它与 GPUI 内容画进**同一张渲染目标**——没有独立合成层，缩放/黑边/窗口形态全是同画布语义。
+//! **每帧泵**（[`SystemPlayer::present_frame`]，由壳的 `submit_stage` 每帧带进来即 vsync 节奏）：`OnVideoStreamTick` 报新帧才 TransferVideoFrame，暂停自然停在最后一帧；**每集一个新引擎**——换源不关旧源会逐集滞留显存/参考帧且 `IMFMediaEngine` 没有「只关源」API，故每集新引擎 + Drop 显式 `Shutdown`，解码设备用渲染器那台（[`mf::device_manager`] 进程级共享）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -66,10 +50,8 @@ struct FrameTexture {
     size: (u32, u32),
     generation: u64,
     /// 纹理里已经有画面（`TransferVideoFrame` 至少写过一帧）。
-    ///
-    /// 换集时新引擎的首帧还没解出来，这块纹理是空的：把它发到视频位就是
-    /// 把「黑」当画面发出去——用户看到的正是切集瞬间闪一帧黑。空纹理一律
-    /// 不发，等这一集的首帧到了再接棒（视频位保持上一集的末帧）。
+    /// 换集时新引擎的首帧还没解出来、这块纹理是空的：发到视频位就是把「黑」当画面发出去（用户看到的正是切集瞬间闪一帧黑）——
+    /// 空纹理一律不发，等这一集的首帧到了再接棒（视频位保持上一集的末帧）。
     has_frame: bool,
 }
 
@@ -268,10 +250,7 @@ impl SystemPlayer {
     }
 
     /// 帧泵：壳每帧经 `submit_stage` 进来一次（vsync 节奏）。
-    ///
-    /// ① `OnVideoStreamTick` 报新帧才 `TransferVideoFrame` 进纹理（暂停自然
-    /// 停在最后一帧）；② 按舞台几何把纹理落点提交给视频 quad；③ 倍速补发与
-    /// 统计取证顺路。
+    /// ① `OnVideoStreamTick` 报新帧才 `TransferVideoFrame` 进纹理（暂停自然停在最后一帧）；② 按舞台几何把纹理落点提交给视频 quad；③ 倍速补发与统计取证顺路。
     fn present_frame(&self) {
         self.try_apply_rate();
         let staged = *self.staged.lock().expect("舞台锁 poisoned");
@@ -323,8 +302,7 @@ impl SystemPlayer {
             }
             frame.has_frame = true;
         }
-        // 首帧还没解出来：视频位保持上一集的末帧（切集不闪黑），等这一集的
-        // 首帧接棒。空纹理发出去就是闪一帧黑。
+        // 首帧还没解出来：视频位保持上一集的末帧（切集不闪黑），等这一集的首帧接棒——空纹理发出去就是闪一帧黑
         if !frame.has_frame {
             return;
         }
@@ -366,10 +344,8 @@ impl SystemPlayer {
         true
     }
 
-    /// 把期望倍速补发给引擎（引擎只在 metadata 就绪后才认这个值）。
-    ///
-    /// 节流到 [`RATE_RETRY_EVERY`]：`present_frame` 每帧都会调它，而
-    /// `IsPlaybackRateSupported` 是一次 COM 往返。
+    /// 把期望倍速补发给引擎（引擎只在 metadata 就绪后才认这个值）；节流到 [`RATE_RETRY_EVERY`]——
+    /// `present_frame` 每帧都会调它，而 `IsPlaybackRateSupported` 是一次 COM 往返。
     fn try_apply_rate(&self) {
         let desired = self.rate();
         let applied = f64::from_bits(self.applied_rate.load(Ordering::SeqCst));
@@ -416,11 +392,8 @@ impl SystemPlayer {
     }
 }
 
-/// 舞台几何换算：视频原生尺寸 → 窗口内的视频矩形（物理像素；`contain` 留
-/// 黑边、`cover` 溢出由 GPUI 裁——视频 quad 在场景之下，黑边就是舞台背景）。
-///
-/// **落点对齐到整物理像素**：分数坐标 + 双线性采样会让画面最外圈半个像素
-/// 采到纹理之外，叠出一条浅色细线。取整后视频与纹理 1:1 映射，边缘像素完整；
+/// 舞台几何换算：视频原生尺寸 → 窗口内的视频矩形（物理像素；`contain` 留黑边、`cover` 溢出由 GPUI 裁——视频 quad 在场景之下，黑边就是舞台背景）。
+/// **落点对齐到整物理像素**：分数坐标 + 双线性采样会让画面最外圈半个像素采到纹理之外，叠出一条浅色细线；取整后视频与纹理 1:1 映射、边缘像素完整，
 /// 舞台原点同样取整，窗口拖动/缩放时不会出现 1px 抖动。
 fn geometry(
     bounds: PresenterBounds,
@@ -578,20 +551,16 @@ impl VideoPresenter for SystemPlayer {
 
 impl Drop for SystemPlayer {
     fn drop(&mut self) {
-        // 显式 Shutdown：不调的话引擎的媒体会话（连同旧源的解码器显存帧池）
-        // 会被 MF 工作队列挂活到进程结束——这正是此前逐集滞留的根源之一。
+        // 显式 Shutdown：不调的话引擎的媒体会话（连同旧源的解码器显存帧池）会被 MF 工作队列挂活到进程结束——这正是此前逐集滞留的根源之一
         unsafe {
             self.engine.Pause().ok();
             self.engine.Shutdown().ok();
         }
-        // 字节流是本集独占的：Close 让在途读尽快退出（否则旧集的读线程会
-        // 一直挂到 30s 超时，每集漏一个线程）。
+        // 字节流是本集独占的：Close 让在途读尽快退出（否则旧集的读线程会一直挂到 30s 超时，每集漏一个线程）
         if let Some(stream) = &self._stream {
             unsafe { stream.Close() }.ok();
         }
-        // **不清视频位的帧**：帧是窗口级共享资源（quad 按 HWND 注册），不属于
-        // 本集。换集时旧播放器先死、新引擎首帧还没解出来，这里清帧就是切集
-        // 瞬间闪一帧黑。帧的清理由「画面不再可见」触发（`detach()` / 舞台
-        // visible=false），换集则保持上一集末帧顶住画面，等新集首帧接棒。
+        // **不清视频位的帧**：帧是窗口级共享资源（quad 按 HWND 注册），不属于本集——换集时旧播放器先死、新引擎首帧还没解出来，这里清帧就是切集瞬间闪一帧黑。
+        // 帧的清理由「画面不再可见」触发（`detach()` / 舞台 visible=false），换集则保持上一集末帧顶住画面，等新集首帧接棒。
     }
 }

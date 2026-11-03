@@ -1,12 +1,5 @@
-//! 表情 command：官方表情 / 第三方 GIF / 自定义表情（口径见
-//! `docs/hongguo-api-endpoints.md` 第 9.5 节）。
-//!
-//! 能力一一对应官方面板的入口：
-//! - GIF tab → `emoticon_list` 的 `thirdParty` 档；
-//! - ♡ tab（我的表情）→ `emoticon_list` 的 `own` 档；
-//! - ♡ tab 的「+」上传 → `emoticon_upload` + `emoticon_collect`；
-//! - 长按表情「添加到表情」→ `emoticon_collect`（带源表情 id）；
-//! - 长按自己的表情「删除表情」→ `emoticon_delete`（同一端点，`collect_type=2`）。
+//! 表情 command：官方表情 / 第三方 GIF / 自定义表情（口径见 `docs/hongguo-api-endpoints.md` 第 9.5 节）。
+//! 入口一一对应官方面板：GIF tab → `emoticon_list` thirdParty 档、♡ tab → own 档、「+」上传 → `emoticon_upload`+`emoticon_collect`、长按「添加到表情」→ `emoticon_collect`（带源表情 id）、长按「删除表情」→ `emoticon_delete`（同一端点 `collect_type=2`）。
 
 use serde::Deserialize;
 use tauri::State;
@@ -85,17 +78,8 @@ pub async fn emoticon_upload(
     upload_picture(&bytes, &filename, &env).await
 }
 
-/// 把一张已有表情收藏进「我的表情」（长按表情 → 「添加到表情」）。
-///
-/// 官方形态：`collect_type=1`，`image_id` 填**源表情 id**
-/// （收藏别人发的表情即填它的 id；上传本地图片时为空串），`image_url` 填该
-/// 表情的 URL（官方取 `dynamic_url ?: web_url ?: web_uri`）。
-///
-/// 返回服务端落库后的表情对象（带 `id` 与 `expandWebUrl`）——前端直接
-/// 插进「我的表情」列表。
-///
-/// 重复收藏服务端会拒绝（`101066 已添加过该表情`），或回 `code=0` 但
-/// `image_data` 为空；两种都按「服务端拒绝」透传原文，不套通用错误前缀。
+/// 把一张已有表情收藏进「我的表情」（长按表情 → 添加）。官方形态：`collect_type=1`、`image_id` 填**源表情 id**（上传本地图片时为空串）、`image_url` 填该表情 URL（官方取 `dynamic_url ?: web_url ?: web_uri`）；返回服务端落库后的表情对象（带 `id` 与 `expandWebUrl`）供前端直接插列表。
+/// 重复收藏服务端会拒绝（`101066 已添加过该表情`）或回 `code=0` 但 `image_data` 为空——两种都按「服务端拒绝」透传原文，不套通用错误前缀。
 #[tauri::command]
 pub async fn emoticon_collect(
     state: State<'_, AppState>,
@@ -121,10 +105,7 @@ pub async fn emoticon_collect(
     })
 }
 
-/// 从「我的表情」里删除一个表情（长按自己的表情 → 「删除表情」）。
-///
-/// 官方形态：与添加同一端点，只把 `collect_type` 换成 2；
-/// 服务端回 `image_data: null`——没有可回显的表情对象，所以这里只回成功。
+/// 从「我的表情」里删除一个表情（长按自己的表情 → 删除）。与添加同一端点，只把 `collect_type` 换成 2；服务端回 `image_data: null`——没有可回显的表情对象，这里只回成功。
 #[tauri::command]
 pub async fn emoticon_delete(
     state: State<'_, AppState>,
@@ -158,13 +139,8 @@ pub struct PickedImage {
     pub format: String,
 }
 
-/// 弹系统文件面板选一张本地图片（评论附图 / 上传自定义表情共用）。
-///
-/// 弃用 `<input type=file>` 的原因：WKWebView 对文件 input 不弹选择面板
-/// （真实点击到达 input 也不调 `runOpenPanel` 委托，
-/// WebView2 无此问题）——选图改走 Rust 原生对话框，两壳同一形态。
-/// 桌面专属：rfd 无 Android/iOS 后端（编译过但方法不存在），移动端如实
-/// 返回不支持；移动端改走 WebView 文件选择器属 UI 适配，另行处理。
+/// 弹系统文件面板选一张本地图片（评论附图 / 上传自定义表情共用）。弃用 `<input type=file>`：WKWebView 对文件 input 不弹选择面板（不调 `runOpenPanel` 委托），选图改走 Rust 原生对话框两壳同一形态。
+/// 桌面专属：rfd 无 Android/iOS 后端，移动端如实返回不支持（改走 WebView 文件选择器属 UI 适配，另行处理）。
 #[tauri::command]
 pub fn emoticon_pick_image() -> AppResult<PickedImage> {
     #[cfg(any(target_os = "android", target_os = "ios"))]

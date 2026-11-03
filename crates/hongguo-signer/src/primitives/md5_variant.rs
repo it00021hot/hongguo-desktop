@@ -1,14 +1,9 @@
-//! 变种 MD5 累加器。
-//!
-//! X-Argus 的分支选择与校验和都依赖这两个非标准函数，
-//! 它们是自研哈希的组成部分，**不能用标准 MD5 替代**。
+//! 变种 MD5 累加器：X-Argus 的分支选择与校验和都依赖这两个非标准函数，JS 1:1 移植禁改写法。
+//! **不能用标准 MD5 替代**。
 
 use super::bits::u32;
 
-/// 分支判定的初始向量递推。
-///
-/// 对应 JS 的 `getIv(iv, data)`：按字节下标奇偶走两条不同的递推式。
-/// 注意 JS 中 `value >>> 4` 等运算是无符号 32 位语义。
+/// 分支判定的初始向量递推，对应 JS 的 `getIv(iv, data)`：按字节下标奇偶走两条不同的递推式（无符号 32 位语义）。
 pub fn get_iv(iv: u32, data: &[u8]) -> u32 {
     let mut value = u32(iv as u64);
     for (i, &byte) in data.iter().enumerate() {
@@ -23,10 +18,7 @@ pub fn get_iv(iv: u32, data: &[u8]) -> u32 {
     value
 }
 
-/// 自定义累加和，返回 32 位。
-///
-/// 对应 JS 的 `sumMd5(data)`。注意 JS 用 `data[i]` 访问，
-/// 传入长度必须 ≥ 12（JS 版本依赖调用方保证）。
+/// 自定义累加和（JS `sumMd5`），返回 32 位；传入长度必须 ≥ 12（JS 版依赖调用方保证）。
 pub fn sum_md5(data: &[u8]) -> u32 {
     debug_assert!(data.len() >= 12, "sum_md5 需要至少 12 字节输入");
     let mut check: u32 = 0x2022_0420;
@@ -57,7 +49,6 @@ mod tests {
 
     #[test]
     fn get_iv_even_branch() {
-        // 单字节走偶数分支
         let got = get_iv(0x2023_0928, &[0x00]);
         let expected = u32(((0x2023_0928u32 >> 4) ^ 0x2023_0928 ^ (0x2023_0928u32 << 6)) as u64);
         assert_eq!(got, expected);

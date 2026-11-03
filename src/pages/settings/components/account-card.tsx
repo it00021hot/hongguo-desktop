@@ -10,12 +10,7 @@ import { t } from '@/locales';
 import type { AccountState } from '@/service/schema';
 import { LoginDialog } from './login-dialog';
 
-/**
- * 从 user_info 原文（rawProfile JSON）提取红果号（biz_user_id）。
- * 手机 App「我的」页展示的账号就是这个值——它不在登录响应里，
- * 只有 user_info 下发。原文缺失（旧账号未刷新
- * 资料）时返回空串，卡片不显示该行。
- */
+/** 从 user_info 原文（rawProfile JSON）提取红果号（biz_user_id）——它只在 user_info 下发；原文缺失返回空串。 */
 function hongguoId(account: AccountState): string {
   if (!account.rawProfile) return '';
   try {
@@ -27,12 +22,7 @@ function hongguoId(account: AccountState): string {
   }
 }
 
-/**
- * 账户卡片：登录态展示 + 登录弹窗入口。
- *
- * 登录流程（含 MFA 上行短信等待）在 LoginDialog / Rust 后台轮询里，
- * 这里只负责展示账号与退出。
- */
+/** 账户卡片：登录态展示 + 登录弹窗入口；登录流程（含 MFA）在 LoginDialog / Rust 后台轮询里。 */
 export function AccountCard({
   account,
   onChanged,

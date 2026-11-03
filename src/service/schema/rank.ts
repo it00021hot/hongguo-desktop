@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（排行 / 新剧 / 上新日历 / 预约域）。
- */
+/** 排行 / 新剧 / 上新日历 / 预约域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 /** 榜单条目（Rust `rank::RankItem`）。 */
@@ -9,8 +7,7 @@ const rankItemSchema = z.object({
   title: z.string(),
   cover: z.string(),
   vid: z.string(),
-  /** 榜单名次（连续名次，从 1 起；0 表示该榜无名次，如预约榜。
-   *  服务端 recommend_info.rank 是页内位次，前端按拼接序号重排） */
+  // 榜单名次（连续名次从 1 起；0 = 该榜无名次如预约榜）。服务端 recommend_info.rank 是页内位次，前端按拼接序号重排
   rank: z.number().int().nonnegative(),
   /** "玄幻·全200集" 形态的副标题 */
   subTitle: z.string(),

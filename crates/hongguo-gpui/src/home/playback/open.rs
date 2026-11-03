@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// 一次起播请求的完整参数（结构体承载，[`Self::play_task`] 的参数面收敛）。
+/// 一次起播请求的完整参数（结构体承载，`play_task` 的参数面收敛）。
 pub(super) struct PlayRequest {
     pub(super) item: StreamItem,
     /// 连播指定集号（None = 走起点决策）。
@@ -28,8 +28,7 @@ pub(super) struct SystemSpec {
 
 impl super::HomeView {
     /// 起播链（tokio 线程）：解析档案 → 起点决策 → prepare → 打开参数带回
-    /// 主线程。与 Tauri 同一段服务面；起点 >3 秒续播，本地档案优先、云端
-    /// 历史兜底。
+    /// 主线程。起点 >3 秒续播，本地档案优先、云端历史兜底。
     pub(super) async fn play_task(
         state: Arc<AppStateInner>,
         history: Vec<WatchHistoryItem>,

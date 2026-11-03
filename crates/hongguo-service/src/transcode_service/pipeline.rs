@@ -1,15 +1,7 @@
-//! 转码流水线编排。
-//!
-//! 分流策略（整个媒体层的关键决策）：
-//! - **平台原生硬编可用**（VideoToolbox / Media Foundation）→ 接近实时
-//! - **装了 ffmpeg** → 用 ffmpeg，有硬件编码器时接近实时
-//! - **都没有** → 做不了转码，直接报错
-//!
-//! 两条路都产出 H.264 MP4，对上层完全一致；上游失败时自动落回下一条，
-//! 不让用户卡死。实际走了哪条由 [`hongguo_media::Backend`] 报告，谁都不许
-//! 再拿字符串猜。
-//!
-//! 谁在用：合并功能的「兼容格式合并」（`merge_service::compat`）与播放兼容兜底。
+//! 转码流水线编排。分流策略（媒体层的关键决策）：平台原生硬编可用 → 用平台；
+//! 装了 ffmpeg → 用 ffmpeg（有硬件编码器时接近实时）；都没有 → 直接报错。
+//! 两条路都产出 H.264 MP4，上游失败自动落回下一条；实际走了哪条由
+//! [`hongguo_media::Backend`] 报告，谁都不许再拿字符串猜。
 
 use std::path::Path;
 
@@ -45,12 +37,9 @@ pub fn transcode(
 
     let target = cache::cache_file(series_id, vid_index);
 
-    // 分流 1：平台原生编码（macOS：VideoToolbox，硬编优先、Apple 软编回落；
-    // Windows：Media Foundation 硬编）。不依赖用户装任何东西；
-    // 会话建不出来/失败会静默落回 ffmpeg。
+    // 分流 1：平台原生编码，不依赖用户装任何东西；失败静默落回 ffmpeg。
     let mut backend: Option<hongguo_media::Backend> = None;
-    // 两条路都试过但都没成时，最后一个真实原因要透给用户——没有第三档兜底了，
-    // 吞掉它就只剩一句「没找到 ffmpeg」的假话。
+    // 两条路都失败时，最后一个真实原因要透给用户——吞掉它就只剩一句「没找到 ffmpeg」的假话。
     let mut last_error: Option<String> = None;
     if let Some(done) = hongguo_media_platform::platform::transcode_h264(
         &hongguo_media_platform::platform::PlatformRequest {
@@ -89,8 +78,8 @@ pub fn transcode(
         };
         match hongguo_media_platform::ffmpeg::transcode_with_ffmpeg(&req, &encoder) {
             Ok(()) => {
-                // 退出码 0 不等于文件可播（极端场景：磁盘写满截断、被杀毒软件
-                // 半路锁文件）。合并那头有产物校验，这里对齐同一道闸。
+                // 退出码 0 不等于文件可播（磁盘写满截断、被杀毒软件半路锁文件），
+                // 与合并那头的产物校验对齐同一道闸。
                 if output_is_playable(&target) {
                     backend = Some(if encoder.hardware {
                         hongguo_media::Backend::FfmpegHw
@@ -112,9 +101,7 @@ pub fn transcode(
 
     let Some(backend) = backend else {
         return Err(match last_error {
-            // 两条路都试过了但都没成：把真实原因带出去，别让用户去猜。
             Some(e) => hongguo_common::AppError::Media(format!("转码失败：{e}")),
-            // 一条路都没有：机器上没有任何可用后端。
             None => hongguo_common::AppError::Media(
                 "没有可用的转码后端：系统编码器不可用，且未找到 ffmpeg。请安装 ffmpeg 后重试。"
                     .into(),
@@ -151,15 +138,11 @@ pub fn episode_seconds(path: &Path) -> Option<f64> {
     (n > 0).then_some(n as f64 / fps)
 }
 
-/// 转码产物是否真的可播：能解复用且有视频样本。
-///
-/// 与合并产物校验（`merge_service::compat`）同一口径：一个「有 moov、能打开、
-/// 只播得动前几秒」的坏文件用户看不出问题，只会觉得「功能有毛病」。
+/// 转码产物是否真的可播：能解复用且有视频样本（与合并产物校验同一口径）。
 fn output_is_playable(path: &Path) -> bool {
     match hongguo_media::demux::demux_file(path) {
         Ok(d) => d.video_track().is_some_and(|t| !t.info.samples.is_empty()),
-        // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志
-        // 就只剩「为什么没用上硬编」的悬案（B 帧 ctts 形态曾踩过）
+        // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
         Err(e) => {
             log::warn!("[Transcode] 产物校验：解复用失败: {e}");
             false

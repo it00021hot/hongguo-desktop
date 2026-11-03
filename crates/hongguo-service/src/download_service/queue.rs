@@ -1,12 +1,6 @@
-//! 下载队列状态机。
-//!
-//! 只管任务集合与状态流转；并发由 [`super::scheduler`] 控制，
-//! 单集执行在 [`super::worker`]，事件发射在 [`super::events`]。
-//!
-//! 拆成三个文件，避免这个文件长成新的 main.js：
-//! - 本文件：状态流转（写路径）——改动频繁，要跟调度器对齐
-//! - `queue_query.rs`：只读聚合（读路径）——只被 UI 读，改动少
-//! - `queue_tests.rs`：单元测试
+//! 下载队列状态机：只管任务集合与状态流转；并发由 [`super::scheduler`] 控制，单集执行在
+//! [`super::worker`]，事件发射在 [`super::events`]。拆三个文件：本文件是写路径（改动频繁），
+//! `queue_query.rs` 是只读聚合（读路径），`queue_tests.rs` 是单元测试。
 
 #[cfg(test)]
 #[path = "queue_tests.rs"]
@@ -66,7 +60,6 @@ impl DownloadQueue {
     /// 入队，返回新任务。
     pub fn enqueue(&self, task: DownloadTask) -> DownloadTask {
         let mut guard = self.tasks.write();
-        // 同一集已在队列里就不重复入队
         if let Some(existing) = guard
             .iter()
             .find(|t| t.series_id == task.series_id && t.vid_index == task.vid_index)
@@ -189,9 +182,7 @@ impl DownloadQueue {
     }
 
     /// 摘掉某剧某集的任务记录（本地文件已被清掉时用）。
-    ///
-    /// 记录留着比文件没了更糟：播放按「已完成」判定走本地协议去开那个文件，
-    /// 而文件已经不在，于是直接变成「媒体处理失败」，连回落在线流的机会都没有。
+    /// 记录留着比文件没了更糟：播放按「已完成」判定去开那个不在的文件，直接「媒体处理失败」，连回落在线流的机会都没有。
     pub fn remove_episode(&self, series_id: &str, vid_index: u32) -> usize {
         let mut guard = self.tasks.write();
         let before = guard.len();
@@ -236,10 +227,8 @@ impl DownloadQueue {
         *self.limit.read()
     }
 
-    /// 归还一个运行名额（任务收尾时调用）。
-    ///
-    /// 用 `saturating_sub` 而非硬减：`pause_all` 会把计数直接清零，
-    /// 而在途任务要等下一轮才回来报告收尾，硬减会在 usize 上 panic。
+    /// 归还一个运行名额（任务收尾时调用）。用 `saturating_sub` 而非硬减：
+    /// `pause_all` 会把计数清零而在途任务尚未收尾，硬减会在 usize 上 panic。
     /// 读锁必须在写锁之前放开，否则 `parking_lot` 会自己等死。
     fn release_active(&self) {
         let next = self.active.read().saturating_sub(1);

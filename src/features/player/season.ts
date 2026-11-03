@@ -1,10 +1,8 @@
 //! 同系列各季的季数解析与「下一季」挑选。
 //!
-//! 数据面是 plan/v 的相关作品列表（`RelatedItem.works`）：**同系列各季带
-//! 「第N季」角标，同 IP 作品不带**（episode-picker 同款判定）。服务端顺序
-//! 不可信（实测《逆江湖》各季播放量乱序），「列表下一条」会跳季/倒退，
-//! 所以接力选季一律走季数：大于当前季的**最小已上线季**（episodeCnt 0 =
-//! 未上线/预约，不可播，不当候选）。
+//! 数据面是 plan/v 的相关作品列表（`RelatedItem.works`）：同系列各季带「第N季」
+//! 角标，同 IP 作品不带。服务端顺序不可信，「列表下一条」会跳季/倒退，接力选季
+//! 一律走季数：大于当前季的最小已上线季（episodeCnt 0 = 未上线，不当候选）。
 
 import type { RelatedItem } from '@/service/schema';
 
@@ -43,16 +41,9 @@ export function seasonFromTitle(title: string): number | null {
   return m ? chineseNumeral(m[1]!) : null;
 }
 
-/**
- * 挑下一季：同系列（带季角标）里**大于当前季的最小已上线季**。
- *
- * - 当前季数来源：works 里的自身条目角标 → 当前标题解析。都没有（无标
- *   第一季，plan/v 又只回其他季）→ 视作第 1 季，接最小季。
- * - 列表乱序无关；跳号（下一季未上线被排除后接再下一季）是内容断裂，
- *   由平台决定，照接。
- * - 返回 null = 判不出（列表无带标季/当前季比所有带标季都高），调用方
- *   走自己的回落。
- */
+/** 挑下一季：同系列（带季角标）里大于当前季的最小已上线季。当前季数来源：
+ *  works 自身条目角标 → 当前标题解析，都没有视作第 1 季接最小季；
+ *  返回 null = 判不出，调用方走自己的回落。 */
 export function pickNextSeason(
   works: RelatedItem[],
   currentSeriesId: string,

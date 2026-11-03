@@ -5,12 +5,8 @@ import { useAccount, useSendDanmaku } from '@/service/queries';
 import { t } from '@/locales';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
 
-/** 控制栏内的弹幕发送框（常驻控制栏左段）。
- *
- * 输入 Enter / 点「发送」提交；offset 取控件自己持有的播放秒数（实时）。
- * 未登录点发送给指路提示；vid 未就绪时静默忽略。
- * 表情：`[名字]` 代码——选择器插入代码，弹幕层渲染成图。
- * 输入/表情/发送接线统一走 EmojiSendBox（与评论/回复/剧评同源）。 */
+/** 控制栏内的弹幕发送框（常驻控制栏左段）：Enter/点发送提交，offset 取控件持有的播放秒数；
+ *  未登录给指路提示，vid 未就绪静默忽略；输入/表情/发送接线统一走 EmojiSendBox。 */
 export function DanmakuSendBox({ vid, currentSec }: { vid: string; currentSec: number }) {
   const [text, setText] = useState('');
   const send = useSendDanmaku();

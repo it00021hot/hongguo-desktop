@@ -1,15 +1,11 @@
 import { call } from '../tauri/invoke';
 
-// ---------------------------------------------------------------- 观看历史
-
 /** 云端观看历史（官方 App「历史」同源；登录后可用，匿名回空表）。 */
 export const watchHistory = {
   list: (offset = 0) => call('watch_history_list', { offset }),
   /**
-   * 记录观看历史（issue #10）：本地必记（未登录也有历史），登录态顺路
-   * 上报云端。后端失败只记日志——fire-and-forget 即可。展示元数据嵌在
-   * `meta` 里与 Rust 命令的 `Option<RecordHistoryMeta>` 同形（平铺会被
-   * serde 静默丢弃，见 registry 契约表注释）。
+   * 记录观看历史：本地必记（未登录也有历史），登录态顺路上报云端，后端失败只记日志。
+   * meta 必须与 Rust 命令同形嵌套（平铺被 serde 静默丢弃，见 registry 契约表注释）。
    */
   record: (item: {
     seriesId: string;

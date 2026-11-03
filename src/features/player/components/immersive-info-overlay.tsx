@@ -14,12 +14,8 @@ const PILL_CLASS =
   'flex h-6 cursor-pointer items-center gap-0.5 rounded-full bg-black/30 pr-2 pl-1 text-xs font-medium text-white drop-shadow-md backdrop-blur-sm transition-colors hover:bg-black/50';
 
 /**
- * 左上角 pill 行：连播指示 + 返回来源页。
- *
- * 与信息叠加分开渲染：pill 是**导航出口**，取流失败/加载中的错误态也
- * 必须在——用户从历史/搜索进来撞上持续取流失败时，恰恰最需要「退回去」
- * （那时信息叠加层整个不在，Esc 也要 `<video>` 在场才接键）。
- * `always` 为真时常显（错误态），否则对齐 chromeShown 随控制栏淡入淡出。
+ * 左上角 pill 行：连播指示 + 返回来源页。与信息叠加分开渲染：pill 是导航出口，
+ * 取流失败/加载中（信息叠加不在、Esc 也要 <video> 在场）时也必须在。`always` 常显，否则随 chromeShown。
  */
 export function PlayerChromePills({
   chromeShown,
@@ -80,13 +76,8 @@ export function PlayerChromePills({
 }
 
 /**
- * 沉浸流信息叠加：@剧名/集数/简介压在画面左下。
- * 控制栏弹出时整体抬到控制栏上沿之上（bottom-28），隐藏时落回
- * bottom-14——两者transition 联动，不再互相遮挡。
- * 小屏模式不用这坨：紧凑控件条自带收敛的剧名行。
- *
- * 无自身状态：简介展开态（introExpanded/setIntroExpanded）与跳详情的
- * navigate 都由宿主持有、经 props 接线，本组件只做展示。
+ * 沉浸流信息叠加：@剧名/集数/简介压在画面左下；控制栏弹出时整体抬到控制栏上沿之上（bottom-28 联动）。
+ * 小屏不用这坨（紧凑控件条自带剧名行）。无自身状态：简介展开态与跳详情的 navigate 都由宿主持有。
  */
 export function ImmersiveInfoOverlay({
   chromeShown,

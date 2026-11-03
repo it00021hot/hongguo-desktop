@@ -1,9 +1,6 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（播放与转码域）。
- */
+/** 播放与转码域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
-/** 一档清晰度。 */
 const videoDefinitionSchema = z.object({
   value: z.number().int().positive(),
   width: z.number().int().nonnegative(),
@@ -23,7 +20,6 @@ export const playResponseSchema = z.object({
   definitions: z.array(videoDefinitionSchema),
 });
 
-/** 转码能力：探测「这台机器会走哪条路」。 */
 export const decodeCapabilitySchema = z.object({
   hasFfmpeg: z.boolean(),
   h264HwEncoder: z.boolean(),
@@ -33,12 +29,7 @@ export const decodeCapabilitySchema = z.object({
   platformHwEncoder: z.boolean(),
 });
 
-/**
- * 在线播放的取流/解密进度。
- *
- * 整集取回 + 解密期间界面上原本只有一个转圈，用户既看不出在动还是卡住，
- * 也看不到还要多久。这个事件把「已收 / 总量 / 百分比 / 阶段」送上来。
- */
+/** 在线播放的取流/解密进度：把「已收/总量/百分比/阶段」送上来，替代只有一个转圈的等待。 */
 export const onlineProgressSchema = z.object({
   /** 缓存键，格式是 `{seriesId}:{vidIndex}` */
   key: z.string(),

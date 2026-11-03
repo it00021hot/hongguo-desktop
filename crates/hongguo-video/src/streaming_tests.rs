@@ -1,18 +1,9 @@
-//! 流式解密的黄金等价测试。
-//!
-//! 唯一可信的正确性标准：**惰性渲染出的每个字节都与
-//! [`super::decrypt_buffer::decrypt_mp4_buffer`] 的整文件解密一致**——
-//! 两条路径产出不同，说明流式路径在某个区间算错了偏移或 keystream，
-//! 而那种错法在真机上表现为「播得动前几秒、一 seek 就花屏」。
-//!
-//! fixture 覆盖三类边角：音视频样本交错、**跨轨样本重叠**（音频样本压在
-//! 视频样本上，双轨都解——XOR 组合律的用武之地）、非 16 字节对齐的
-//! 样本长度（37/129 这类奇数，检验区间解密的首块对齐）。
+//! 流式解密的黄金等价测试：唯一正确性标准是**惰性渲染出的每个字节都与 [`super::decrypt_buffer::decrypt_mp4_buffer`] 的整文件解密一致**
+//! （两条路径产出不同 = 流式路径算错偏移或 keystream，真机表现为「播得动前几秒、一 seek 就花屏」）。
+//! fixture 覆盖三类边角：音视频样本交错、**跨轨样本重叠**（双轨都解，XOR 组合律）、非 16 字节对齐的样本长度。
 
-// 作为 pub 测试辅助模块暴露给下游 crate 后：`feature = "test-support"` 的 lib
-// 构建里 `#[test]` 函数不存在，只服务于它们的辅助函数与 import 会显得未使用——
-// 这不是死代码，只是构建视角不同。用 allow 而非 expect：本 crate 的 test 构建里
-// 这些项确实被使用，expect 会因 lint 未触发（unfulfilled）而报错。
+// 作为 pub 测试辅助模块暴露给下游 crate 后：feature "test-support" 的 lib 构建里没有 #[test]，
+// 辅助函数与 import 显得未使用——用 allow 而非 expect：本 crate 的 test 构建里确实被使用，expect 会报 unfulfilled
 #![allow(dead_code, unused_imports)]
 
 use super::streaming::{SparseBuffer, StreamingPlan, locate_moov};
@@ -244,8 +235,7 @@ fn lazy_render_matches_whole_file_decrypt_tail_moov() {
 
     let out = render_all(&plan, &sparse);
     assert_eq!(out, reference, "惰性渲染必须与整文件解密逐字节一致");
-    // 不与 plain 直接比前缀：fixture 的音频样本故意压在视频样本上，
-    // reference（整文件解密）对重叠字节就是双重异或的——那正是要锁住的行为
+    // 不与 plain 直接比前缀：fixture 音频样本故意压在视频样本上，reference 对重叠字节就是双重异或——正是要锁住的行为
 }
 
 #[test]
@@ -267,8 +257,7 @@ fn lazy_render_matches_whole_file_decrypt_head_moov() {
 
 #[test]
 fn windowed_render_matches_whole_file_decrypt() {
-    // 按 7 字节一窗渲染（比 16 字节块还小，专门打首块对齐），
-    // 拼起来必须仍与整文件解密一致——协议层就是按任意 Range 取的
+    // 按 7 字节一窗渲染（比 16 字节块还小，专门打首块对齐）——协议层就是按任意 Range 取的
     let (_plain, cipher, key) = assemble(true);
     let reference = decrypt_mp4_buffer(&cipher, &key).unwrap();
 
@@ -291,7 +280,6 @@ fn windowed_render_matches_whole_file_decrypt() {
 
 #[test]
 fn random_sized_ranges_also_match() {
-    // 混合窗口大小（1/3/16/64/999 字节）逐段渲染，覆盖各种对齐情形
     let (_plain, cipher, key) = assemble(true);
     let reference = decrypt_mp4_buffer(&cipher, &key).unwrap();
 
@@ -332,14 +320,12 @@ fn cipher_ranges_needed_split_around_moov() {
 
     assert_eq!(ranges.len(), 2, "moov 前后各一段: {ranges:?}");
     assert!(ranges[0].1 <= moov_abs, "第一段不得伸进旧 moov: {ranges:?}");
-    // 尾段映射回密文时应从旧 moov 之后开始
     assert!(ranges[1].0 >= moov_abs + old_len as u64, "{ranges:?}");
 }
 
 #[test]
 fn plain_len_shrinks_with_the_rebuilt_moov() {
-    // 重建的 moov 摘掉了 sinf/senc 等保护 box，明文应比密文短，
-    // 差值正是新旧 moov 的长度差
+    // 重建的 moov 摘掉了 sinf/senc 等保护 box，明文应比密文短，差值正是新旧 moov 的长度差
     let (_plain, cipher, key) = assemble(true);
     let (region, moov_abs) = moov_region_of(&cipher);
     let plan = StreamingPlan::build(&region, moov_abs, cipher.len() as u64, &key).unwrap();

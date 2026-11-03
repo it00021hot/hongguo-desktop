@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 本地观看历史的一行（issue #10：未登录落本地可记可管，登录后补传云端）。
-/// 字段与云端 `history::WatchHistoryItem` 一一同名（camelCase），历史页
-/// 两种模式共用同一张卡片的渲染。
+/// 本地观看历史的一行（issue #10：未登录落本地可记可管，登录后补传云端）。字段与云端 `history::WatchHistoryItem` 一一同名（camelCase），历史页两种模式共用同一张卡片。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalHistoryItem {

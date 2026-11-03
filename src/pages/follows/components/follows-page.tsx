@@ -37,13 +37,8 @@ import { t, tf, locale } from '@/locales';
 import type { FollowNotice, FollowUpdateItem } from '@/service/schema';
 
 /**
- * 追更页：「追更的剧 / 更新提醒」双 tab。
- *
- * - 追更的剧：游标翻页列表，状态行「已追平 / N 集未看 · 连载中/已完结」；
- *   管理模式批量取消追更（逐条 do_action 35，player 同款）；
- * - 更新提醒：本地通知（追更更新 / 预约上线），点条目跳播放并标记已读；
- *   「检查更新」手动触发一轮（定时器已在后端跑，按钮是 player 同款的
- *   立即回音入口）。
+ * 追更页：「追更的剧 / 更新提醒」双 tab。追更列表管理模式批量取消追更（逐条 do_action 35）；
+ * 更新提醒点条目跳播放并标记已读，「检查更新」是立即回音入口（定时轮询已在后端跑）。
  */
 
 export function FollowsPage() {

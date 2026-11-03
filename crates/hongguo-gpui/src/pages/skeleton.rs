@@ -1,18 +1,6 @@
-//! 加载骨架（对齐 Tauri `components/ui/skeletons.tsx`）。
-//!
-//! 形态三种，都是 Tauri 侧现成件的对齐物：
-//! - 封面网格（收藏 / 喜欢 / 创作者）：只出封面，`aspect-[3/4] rounded-xl`；
-//! - 卡片网格（找剧 / 新剧推荐）：封面 + 标题行 + 副标题行
-//!   （Tauri `SkeletonCardGrid`）；
-//! - 横向行（历史 / 追更 / 榜单 / 预约 / 日历）：整行占位
-//!   （Tauri `SkeletonRows`）。
-//!
-//! 组件本体用组件库的 `Skeleton`：它渲染 `bg(theme.skeleton)` + 2 秒
-//! opacity 脉冲，与 Tauri 的 `bg-accent animate-pulse` 同构（`animate-pulse`
-//! 就是 2s、opacity 1→0.5）。
-//!
-//! 网格骨架沿用真实卡片的几何（封面网格按调用页给的卡宽/封面高；卡片网格
-//! 与真实网格同列数、同间距、同 3:4 封面），数据到位时不会跳版。
+//! 加载骨架，三种形态：封面网格（只出封面）、卡片网格（封面 + 标题行 +
+//! 副标题行）、横向行（整行占位）。本体用组件库 `Skeleton`（2 秒 opacity
+//! 脉冲）。网格骨架沿用真实卡片的几何——数据到位时不会跳版。
 
 use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};

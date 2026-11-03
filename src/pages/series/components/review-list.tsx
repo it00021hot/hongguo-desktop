@@ -1,13 +1,7 @@
 /**
- * 剧评列表（详情页「剧评」tab 内容）。
- *
- * 三块结构：
- * - 剧均评分块（credibility_score + score_cnt；空 = 暂无评分）
- * - 发评框（评分星级 + 表情 + 文本，见 ReviewComposer）
- * - 评论列表：每条带评分星（expand.score 十分制 ÷2 显示）、评分后缀文案、
- *   ♡ 点赞（do_action object_type=2 剧评形态）与「回复 / 展开 N 条回复」
- *   （reply/add 剧评形态 commit_source=13 + reply/list src=501），滚动到底
- *   自动翻页（游标 = 响应 cursor 原样回传）
+ * 剧评列表（详情页「剧评」tab）：剧均评分块 + 发评框 + 评论列表。
+ * 每条带评分星（expand.score 十分制 ÷2）、点赞（object_type=2 剧评形态）与
+ * 「回复 / 展开 N 条回复」（reply/add commit_source=13 + reply/list src=501），滚动到底自动翻页。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Heart, Loader2, Star } from 'lucide-react';

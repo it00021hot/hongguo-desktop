@@ -1,13 +1,6 @@
 /**
- * IPC 命令注册表：命令名 → 入参 schema + 响应 schema。
- *
- * 与 `EVENTS` 同性质的「两端镜像」——Rust 侧命令改名/增删参数，**同一
- * commit** 改这里；漏改的表现在编译期（命令名拼错、参数键名不对、响应
- * 形状漂移都会被 tsc/zod 当场拦下），不再靠运行时撞错。
- *
- * 入参 schema 只做编译期约束不做运行时 parse（入参都是本端构造的值，
- * dev-habits #14）；响应 schema 必填——`z.literal(null)` 这类轻 schema
- * 也算 schema，禁 `z.any()`。
+ * IPC 命令契约表（与 EVENTS 同为两端镜像）：Rust 侧命令改名/增删参数，同一 commit 改这里。
+ * 响应 schema 必填（`z.literal(null)` 也算），禁 `z.any()`；入参 schema 只做编译期约束。
  */
 import { z } from 'zod';
 import {
@@ -69,15 +62,11 @@ import {
 /** Rust 命令返回 `()` 序列化成 null；归一成 undefined 让调用侧当 void 用。 */
 const voidResp = z.null().transform(() => undefined);
 
-/** 入参为空（不传 / 传 undefined 等价）。 */
 const noArgs = z.undefined();
 
-/**
- * 命令 → 契约。键名 = Rust `#[tauri::command]` 函数名（snake_case，
- * dev-habits #53）。
- */
+/** 键名 = Rust `#[tauri::command]` 函数名（snake_case），两端同步改。 */
 export const COMMANDS = {
-  // ---- 应用 / 窗口 --------------------------------------------------
+  // 应用 / 窗口
   select_folder: { args: noArgs, response: z.string().nullable() },
   open_folder: { args: z.object({ seriesId: z.string() }), response: voidResp },
   open_external_page: { args: z.object({ page: z.string() }), response: voidResp },
@@ -101,7 +90,7 @@ export const COMMANDS = {
   /** 退出确认后的真退出（CloseRequested 被拦后唯一的退出路径） */
   exit_app: { args: noArgs, response: voidResp },
 
-  // ---- 解码能力 -----------------------------------------------------
+  // 解码能力
   playback_capability: { args: noArgs, response: playbackCapabilitySchema },
   install_hevc_extension: { args: noArgs, response: hevcInstallResultSchema },
   decode_capability: { args: noArgs, response: decodeCapabilitySchema },
@@ -111,7 +100,7 @@ export const COMMANDS = {
     response: transcodePlaybackSchema,
   },
 
-  // ---- 合并 ---------------------------------------------------------
+  // 合并
   get_merge_tasks: { args: noArgs, response: mergeTaskSchema.array() },
   get_merge_candidates: { args: noArgs, response: mergeCandidateSchema.array() },
   merge_preflight: {
@@ -125,7 +114,7 @@ export const COMMANDS = {
   delete_merge_task: { args: z.object({ id: z.string() }), response: voidResp },
   open_merge_output: { args: z.object({ id: z.string() }), response: voidResp },
 
-  // ---- 弹幕 / 评论 / 剧评 --------------------------------------------
+  // 弹幕 / 评论 / 剧评
   danmaku_window: {
     args: z.object({
       groupId: z.string(),
@@ -183,7 +172,7 @@ export const COMMANDS = {
     response: commentItemSchema,
   },
 
-  // ---- 发现（推荐流 / 找剧）------------------------------------------
+  // 发现（推荐流 / 找剧）
   recommend_feed: {
     args: z.object({
       tab: z.string(),
@@ -204,7 +193,7 @@ export const COMMANDS = {
     response: feedPageSchema,
   },
 
-  // ---- 下载 ---------------------------------------------------------
+  // 下载
   get_download_tasks: { args: noArgs, response: downloadTaskSchema.array() },
   get_queue_status: { args: noArgs, response: queueStatusSchema },
   download_batch: {
@@ -222,7 +211,7 @@ export const COMMANDS = {
   resume_all: { args: noArgs, response: z.number() },
   rescan_downloads: { args: noArgs, response: z.number() },
 
-  // ---- 互动（官方 App API）--------------------------------------------
+  // 互动（官方 App API）
   danmaku_send: {
     args: z.object({
       groupId: z.string(),
@@ -237,21 +226,19 @@ export const COMMANDS = {
       groupId: z.string(),
       bookId: z.string(),
       text: z.string(),
-      // @提及评论（可选；三字段同时在场才生效，contextCommentIds
-      // 进 aibot_mention_context——官方传最近评论 id；mentionUserName
-      // 是被提及者昵称，text 前缀与 rich_text 段文本都用它）
+      // @提及评论（可选，三字段同时在场才生效；mentionUserName 同时用作
+      // text 前缀与 rich_text 段文本，contextCommentIds 传最近评论 id）
       mentionUserId: z.string().optional(),
       mentionUserName: z.string().optional(),
       contextCommentIds: z.array(z.string()).optional(),
-      // 附图评论（可选；body 顶层多 image_data，
-      // 表情类另带 business_param.emoji_scene_type——第三方 2 /
-      // 自定义 4；本地图片评论不带该字段）
+      // 附图评论（可选，body 顶层多 image_data；表情类另带
+      // business_param.emoji_scene_type：第三方 2 / 自定义 4）
       image: emoticonSchema.nullable().optional(),
       emojiSceneType: z.number().nullable().optional(),
     }),
     response: commentItemSchema,
   },
-  // ---- 表情（官方表情 / 第三方 GIF / 自定义表情）------------------------
+  // 表情（官方表情 / 第三方 GIF / 自定义表情）
   emoticon_list: {
     args: z.object({
       source: z.enum(['thirdParty', 'own']),
@@ -334,7 +321,7 @@ export const COMMANDS = {
   interaction_state: { args: noArgs, response: interactionStateSchema },
   bookshelf_list: { args: noArgs, response: bookshelfEntrySchema.array() },
 
-  // ---- 追更 ---------------------------------------------------------
+  // 追更
   follow_update: {
     args: z.object({ seriesId: z.string(), follow: z.boolean() }),
     response: voidResp,
@@ -352,7 +339,7 @@ export const COMMANDS = {
   follow_notices_clear: { args: noArgs, response: voidResp },
   follow_check_updates: { args: noArgs, response: z.number() },
 
-  // ---- 登录 ---------------------------------------------------------
+  // 登录
   login_send_code: {
     args: z.object({ mobile: z.string() }),
     response: sendCodeOutcomeSchema,
@@ -372,7 +359,7 @@ export const COMMANDS = {
   login_user_info: { args: noArgs, response: passportUserSchema },
   login_logout: { args: noArgs, response: voidResp },
 
-  // ---- 播放 ---------------------------------------------------------
+  // 播放
   play_series: {
     args: z.object({
       request: z.object({
@@ -400,7 +387,7 @@ export const COMMANDS = {
     response: seriesProgressSchema.nullable(),
   },
 
-  // ---- 排行榜 / 新剧 / 预约 / 搜索 -------------------------------------
+  // 排行榜 / 新剧 / 预约 / 搜索
   rank_list: {
     args: z.object({
       selected: z.string(),
@@ -461,14 +448,14 @@ export const COMMANDS = {
     response: suggestItemSchema.array(),
   },
 
-  // ---- 剧集 ---------------------------------------------------------
+  // 剧集
   get_series_episodes: { args: z.object({ seriesId: z.string() }), response: seriesSchema },
   get_series_snapshot: { args: z.object({ seriesId: z.string() }), response: seriesSchema },
   resolve_series: { args: z.object({ input: z.string() }), response: seriesSchema },
   related_series: { args: z.object({ seriesId: z.string() }), response: relatedSeriesSchema },
   series_meta: { args: z.object({ seriesId: z.string() }), response: seriesMetaSchema },
 
-  // ---- 设置 ---------------------------------------------------------
+  // 设置
   get_settings: { args: noArgs, response: settingsSchema },
   save_settings: {
     args: z.object({ settings: settingsSchema }),
@@ -481,7 +468,7 @@ export const COMMANDS = {
     response: proxyTestResultSchema,
   },
 
-  // ---- 存储 ---------------------------------------------------------
+  // 存储
   get_storage_usage: { args: noArgs, response: storageUsageSchema },
   get_storage_series: { args: noArgs, response: storageSeriesUsageSchema.array() },
   get_cache_usage: { args: noArgs, response: cacheUsageSchema },
@@ -493,15 +480,13 @@ export const COMMANDS = {
   },
   delete_all_downloaded: { args: noArgs, response: z.number() },
 
-  // ---- 云端观看历史 ---------------------------------------------------
+  // 云端观看历史
   watch_history_list: {
     args: z.object({ offset: z.number() }),
     response: watchHistoryPageSchema,
   },
-  // 记录观看历史（本地必记 + 登录态顺路上报云端，issue #10）。
-  // 展示元数据必须与 Rust 命令同形嵌套在 meta 里：serde 按顶层键找
-  // `meta`，平铺会被 Option 静默吞成 None（剧名/封面/总集数全落空默认），
-  // 历史页整页「未知剧集」——契约表就是这道形状错配的唯一闸门。
+  // 记录观看历史（本地必记 + 登录态顺路上报云端）。meta 必须与 Rust 命令同形嵌套：
+  // 平铺会被 serde 静默吞成 None，历史页整页「未知剧集」——契约表是这道错配的唯一闸门。
   record_watch_history: {
     args: z.object({
       seriesId: z.string(),
@@ -530,13 +515,10 @@ export const COMMANDS = {
   },
 } satisfies Record<string, { args: z.ZodType; response: z.ZodType }>;
 
-/** 命令名全集。 */
 export type CommandName = keyof typeof COMMANDS;
 
-/** 命令入参（noArgs 命令为 undefined）。 */
 type CommandArgs<C extends CommandName> = z.infer<(typeof COMMANDS)[C]['args']>;
 
-/** 命令响应（经响应 schema 校验后的形状）。 */
 export type CommandResponse<C extends CommandName> = z.infer<(typeof COMMANDS)[C]['response']>;
 
 /** 入参包：noArgs 命令可不传；其余命令必传对应形状。 */

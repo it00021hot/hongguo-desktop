@@ -1,28 +1,6 @@
-//! 离屏 UI 预览流水线：无头窗口渲染**真实壳代码** + 假数据快照 → PNG。
-//!
-//! 窗口从头到尾不显示（`show: false`），画面不经过窗口服务器，直接从
-//! 渲染目标读回——验收各功能菜单的视觉时不依赖屏幕、不依赖系统授权。
-//! 与 `screenshot.rs`（对**运行中**窗口进程内抓帧）互补：那边验真实数据
-//! 与播放链路，这边验布局/主题/面板的全矩阵分支，且完全离线确定。
-//!
-//! 机制（gpui 自带测试基建 + 本仓库的编排）：
-//! 1. `--render-preview <目录>` 进预览模式（`screenshot` feature 编入管线，
-//!    它已连带开启 gpui 的 test-support 与 Metal 无头渲染器）；
-//! 2. 数据根指到 `hongguo-gpui-preview-<pid>` 临时目录（与真实数据平级、
-//!    互不接触），跑完即删；
-//! 3. 每个场景一个 [`gpui_kit::HeadlessAppContext`]（独立主题/字号全局），
-//!    `gpui_kit::open_window` 开 `show:false` 窗口挂真实 `Shell`，种子注入
-//!    （`home/preview_seed.rs` + `preview/fixtures/`）后 `draw` 两帧，
-//!    `capture_screenshot` 存 `<场景名>.png`。
-//!
-//! 已知边界（预览图的预期形态，不是 bug）：
-//! - 无播放引擎：进度条 00:00/00:00、无已播填充；弹幕无在飞条目；
-//! - 封面/头像为合成渐变图，评论头像走首字占位；
-//! - gpui 的无头渲染器只有 Metal（macOS）/ wgpu（Linux）实现，Windows 上
-//!   `current_headless_renderer` 返回 `None`，截图会报错退出。
-//!
-//! 用法：`make gpui-preview`（= `cargo run -p hongguo-gpui --features
-//! screenshot -- --render-preview <目录>`）。
+//! 离屏 UI 预览流水线：无头窗口（`show:false`）渲染真实壳代码 + 假数据
+//! 快照 → PNG——验收布局/主题/面板的全矩阵分支，完全离线确定；与
+//! `screenshot.rs`（对运行中窗口进程内抓帧）互补。用法：`make gpui-preview`。
 
 // 场景矩阵与假数据只被管线消费：默认构建（无 screenshot）连模块都不编入，
 // 免得 pub(crate) 未用触发 dead_code；覆盖率测试经 #[path] 自行引入 scenes。
@@ -75,9 +53,8 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
         if let Err(e) = render_case(&case, &state, output) {
             anyhow::bail!("场景 {} 渲染失败: {e:#}", case.name);
         }
-        // mini / portrait 场景翻的是进程级全局（各自的静态），跑完复位，
-        // 不让后续场景继承形态（portrait 漏复位时侧栏/顶栏 tab 槽全变竖屏
-        // 形态，交互探针的 tab 也整个消失）。
+        // mini / portrait 场景翻的是进程级全局，跑完复位，不让后续场景继承
+        // 形态（portrait 漏复位时侧栏/顶栏 tab 槽全变竖屏形态）。
         crate::mini::set_active(false);
         crate::portrait::set_active(false);
     }
@@ -131,8 +108,7 @@ fn render_case(
         )
     })?;
     // 首帧：种子注入后立即布局一次，面板/叠层的位置计算才有基准。
-    // Result 层次：Entity::update（实体已释放/场景键名写错）一层，闭包
-    // 把它带出后 update_window（窗口已关）再包一层，故内 `?` 外 `??`。
+    // Result 两层包装（实体已释放一层、窗口已关再一层），故内 `?` 外 `??`。
     cx.update_window(handle, |_, window, cx| -> anyhow::Result<()> {
         shell.update(cx, |shell, cx| {
             shell.debug_preview_seed(case.scene, window, cx)
@@ -159,11 +135,9 @@ fn render_case(
     Ok(())
 }
 
-/// 交互探针：无头 Shell 上派**进程内**鼠标事件点真实的舞台 tab 按钮，
-/// 断言切源生效。与出图矩阵同一套构建与种子；不猜按钮几何——沿 tab 条
-/// 所在高度横扫点击，源离开「推荐」即证明 on_click 可达。等价真实点击
-/// 路径（move → down → up 全走 gpui 事件分发），`make gpui-preview` 每次
-/// 必跑，tab 点击失效会让流水线显性失败。
+/// 交互探针：无头 Shell 上派进程内鼠标事件点真实的 tab 按钮，断言切源
+/// 生效——出图验不了点击的另一半，tab 点击失效会让流水线显性失败。
+/// 不猜按钮几何：沿 tab 条高度横扫，源离开「推荐」即证明 on_click 可达。
 #[cfg(feature = "screenshot")]
 fn interaction_probe(
     state: &std::sync::Arc<hongguo_service::app_state::AppStateInner>,
@@ -201,18 +175,16 @@ fn interaction_probe(
         Ok(())
     })??;
 
-    // tab 是异步就位的（假网络 404 → 回落三件套走 bridge）：不等它落定
-    // 就开扫，扫的时候 tab 条还是空的，点击全部落空（实测踩中）。与
-    // render_case 同款等待：run_until_parked + 推时钟 + 二帧。
+    // tab 是异步就位的（假网络 404 → 回落三件套走 bridge）：不等落定就开扫
+    // 会全部落空。与 render_case 同款等待。
     cx.run_until_parked();
     cx.advance_clock(std::time::Duration::from_millis(200));
     cx.update_window(handle, |_, window, cx| {
         let _ = window.draw(cx);
     })?;
-    // tab 条带：壳顶栏（h 44px）里的分类 tab（分类 tab 已从舞台 top_3 上移
-    // 壳顶栏，扫舞台顶部会全部落空）；横跨内容区全宽（x 取 240..1010，避开
-    // 侧栏 160），多档高度每 8px 点一次，直到源离开「推荐」。点击推荐本身
-    // = 换一批（源不变），漫剧是第一个会翻源的点。
+    // tab 条带在壳顶栏（分类 tab 已从舞台 top_3 上移壳顶栏，扫舞台顶部会
+    // 全部落空）；横跨内容区全宽（避开侧栏），多档高度每 8px 点一次，直到
+    // 源离开「推荐」。点击推荐本身 = 换一批（源不变），漫剧是第一个翻源点。
     let switched_at = cx.update_window(handle, |_, window, cx| -> Option<(f32, f32)> {
         for y in [14.0, 22.0, 30.0, 38.0] {
             for x in (240..1010).step_by(8) {

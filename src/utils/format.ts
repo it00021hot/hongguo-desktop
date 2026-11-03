@@ -25,11 +25,7 @@ export function formatPlayCount(n: number): string {
   return String(n);
 }
 
-/**
- * 计数人性化（详情页头部精度）：万/亿带一位小数，整数省略小数点——
- * 27.05万 → 「27.1万」、40.26万 → 「40.3万」、3786.01万 → 「3786万」；
- * 列表卡片用的 formatPlayCount 保持整数万不变。
- */
+/** 计数人性化（详情页头部精度）：万/亿带一位小数，整数省略小数点；列表卡片用的 formatPlayCount 保持整数万不变。 */
 export function formatCountPrecise(n: number): string {
   if (n >= 100_000_000) return `${trimTrailingZero((n / 100_000_000).toFixed(1))}亿`;
   if (n >= 10_000) return `${trimTrailingZero((n / 10_000).toFixed(1))}万`;

@@ -5,16 +5,9 @@ import { cn } from '@/lib/utils';
 import { CARET_ANCHOR, renderValue, serialize } from './rich-emoji-dom';
 
 /**
- * 富文本输入框：`[名字]` 表情代码即时渲染成内嵌图片（<input> 装不下图，
- * 用 contenteditable 实现）。value 仍是含代码的纯文本——提交/校验逻辑
- * 与普通输入框完全一致，只是「看」的方式变了。
- *
- * DOM 不归 React 管（受控重渲染会和光标打架）：组件自己维护——
- * - onInput 时把 DOM 序列化回纯文本上报；
- * - 仅当外部 value 与 DOM 不一致时（清空/外部赋值）才重建 DOM；
- * - 选择器插入走 ref.insertEmoji()：优先插在已记的光标处（面板打开时
- *   焦点在菜单里，输入框失焦，光标位置靠 selectionchange 持续记录），
- *   没有记录就追加到末尾。
+ * 富文本输入框：`[名字]` 表情代码即时渲染成内嵌图片（contenteditable 实现），value 仍是含代码的纯文本。
+ * DOM 不归 React 管（受控重渲染会和光标打架）：onInput 序列化上报；仅外部 value 与 DOM 不一致时才重建；
+ * 选择器插入走 ref.insertEmoji()——优先插在已记光标处（靠 selectionchange 持续记录），没有记录就追加末尾。
  */
 
 export interface RichEmojiInputHandle {

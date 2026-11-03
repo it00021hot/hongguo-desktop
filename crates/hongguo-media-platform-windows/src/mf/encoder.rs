@@ -15,10 +15,6 @@ use super::sample::{
     video_type,
 };
 
-// ————————————————————————————————————————————————————————————
-// 编码：H.264 MFT（硬件优先 / 测试回落软件）
-// ————————————————————————————————————————————————————————————
-
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum EncoderKind {
     /// 硬件 MFT（`MFT_ENUM_FLAG_HARDWARE`），探测验证过才用
@@ -31,14 +27,11 @@ pub(super) enum EncoderKind {
 pub(super) struct Encoder {
     driver: Driver,
     stride: usize,
-    /// SPS/PPS（Annex-B），关键帧前插用（拼接器重建 moov 时样本描述取自
-    /// 第 1 集，后续各集码流必须自带参数集）。编码器把它放在输出类型的
-    /// `MF_MT_MPEG_SEQUENCE_HEADER` 或首个输出样本里，两处都试。
+    /// SPS/PPS（Annex-B），关键帧前插用（拼接器重建 moov 时样本描述取自第 1 集，后续各集码流必须自带参数集）。
+    /// 编码器把它放在输出类型的 `MF_MT_MPEG_SEQUENCE_HEADER` 或首个输出样本里，两处都试。
     param_sets: Option<Vec<u8>>,
     out_type: IMFMediaType,
-    /// 每次喂帧记录的显示时间（秒），输出按到达顺序配对取用——
-    /// 实测 h264_mf 会无视输入时间戳、按自己的 30fps 假设重打输出时间，
-    /// NVENC 则原样保留；不信任回传值，统一用喂入值。
+    /// 每次喂帧记录的显示时间（秒），输出按到达顺序配对取用——实测 h264_mf 无视输入时间戳、按自己的 30fps 假设重打输出时间，NVENC 则原样保留；不信任回传值，统一用喂入值。
     fed_pts: VecDeque<f64>,
 }
 
@@ -91,9 +84,8 @@ impl Encoder {
         fps_den: u32,
         bitrate: i32,
     ) -> AppResult<Encoder> {
-        // 类型协商顺序：硬件编码 MFT 普遍要求**先设输出类型再设输入**
-        // （NVIDIA 的 MFT 先设输入直接回 MF_E_INVALIDTYPE 0xC00D6D60），
-        // in-box 软件编码器两种顺序都收。两种顺序各试一遍。
+        // 类型协商顺序：硬件编码 MFT 普遍要求**先设输出类型再设输入**（NVIDIA 的 MFT 先设输入直接回 MF_E_INVALIDTYPE 0xC00D6D60），
+        // in-box 软件编码器两种顺序都收——两种顺序各试一遍
         let mut last = AppError::Media("编码 MFT 类型协商失败".into());
         for output_first in [true, false] {
             match Self::negotiate_types(a, width, height, fps_num, fps_den, bitrate, output_first) {
@@ -116,8 +108,7 @@ impl Encoder {
         let (mut driver, xform) = Driver::new(a)?;
         let build_input = |xform: &IMFTransform| -> AppResult<()> {
             unsafe {
-                // 输入类型：优先用 MFT 列出的 NV12 模板（保住它自带的属性），
-                // 帧尺寸/帧率/行距由我们覆盖；列不出再自建。
+                // 输入类型：优先用 MFT 列出的 NV12 模板（保住它自带的属性），帧尺寸/帧率/行距由我们覆盖；列不出再自建
                 let mut offered = None;
                 let mut i = 0u32;
                 loop {
@@ -145,9 +136,8 @@ impl Encoder {
             }
         };
         let build_output = |xform: &IMFTransform| -> AppResult<()> {
-            // 码控走 ICodecAPI（对齐 ffmpeg mfenc 的配置面）：不设的话
-            // h264_mf 处于不可用的默认码控状态——实测只吐 SPS/PPS/AUD、
-            // 一帧 slice 都不编。全部尽力而为，硬要求仍只有媒体类型上的码率。
+            // 码控走 ICodecAPI（对齐 ffmpeg mfenc 的配置面）：不设的话 h264_mf 处于不可用的默认码控状态——
+            // 实测只吐 SPS/PPS/AUD、一帧 slice 都不编。全部尽力而为，硬要求仍只有媒体类型上的码率
             set_codecapi_u32(
                 xform,
                 &CODECAPI_AVEncCommonRateControlMode,
@@ -164,8 +154,7 @@ impl Encoder {
             set_codecapi_u32(xform, &CODECAPI_AVEncMPVDefaultBPictureCount, 0, "关 B 帧");
             set_codecapi_u32(xform, &CODECAPI_AVEncCommonRealTime, 1, "实时码控");
             unsafe {
-                // 输出类型：H.264 + 码率。只有码率是硬性要求（码控失效=质量
-                // 目标失效，对齐 vt 侧的分档）；profile 与 GOP 间隔尽力而为。
+                // 输出类型：H.264 + 码率。只有码率是硬性要求（码控失效=质量目标失效，对齐 vt 侧的分档）；profile 与 GOP 间隔尽力而为
                 let o = video_type(MFVideoFormat_H264)?;
                 set_size_rate(&o, width as u32, height as u32, fps_num, fps_den)?;
                 hr(
@@ -224,9 +213,7 @@ impl Encoder {
     }
 
     /// 收割编码输出（Annex-B 单元 + 是否关键帧 + 显示时间）。
-    ///
-    /// 显示时间取喂帧时记录的时间轴（按到达顺序配对）；配不上（异常多出
-    /// 的输出）给 NaN，由上层递增兜底顶开。
+    /// 显示时间取喂帧时记录的时间轴（按到达顺序配对）；配不上（异常多出的输出）给 NaN，由上层递增兜底顶开。
     pub(super) fn take_units(&mut self) -> AppResult<Vec<(f64, Vec<u8>, bool)>> {
         self.driver.harvest()?;
         let samples = self.driver.take();
@@ -235,17 +222,15 @@ impl Encoder {
             let (raw, t, _d) = sample_to_bytes(&s)?;
             let keyframe = sample_is_clean(&s);
             if self.param_sets.is_none() {
-                // 类型里没有就重读一次（有的 MFT 首样本后才填序列头），
-                // 再不行从这个样本里解析（两处形态都见过）
+                // 类型里没有就重读一次（有的 MFT 首样本后才填序列头），再不行从这个样本里解析（两处形态都见过）
                 let mut ps = read_type_param_sets(&self.out_type);
                 if ps.is_none() {
                     ps = param_sets_annexb_or_none(&raw);
                 }
                 self.param_sets = ps;
             }
-            // 编码器输出格式实测不统一：h264_mf 直接吐 Annex-B（起始码
-            // 开头），别的可能给 AVCC——按单元嗅探，别把 Annex-B 当 AVCC
-            // 转换（长度字段走读会错读起始码，把 slice 整段丢掉）。
+            // 编码器输出格式实测不统一：h264_mf 直接吐 Annex-B（起始码开头），别的可能给 AVCC——按单元嗅探，
+            // 别把 Annex-B 当 AVCC 转换（长度字段走读会错读起始码，把 slice 整段丢掉）
             let mut annexb = if raw.starts_with(&[0, 0, 0, 1]) || raw.starts_with(&[0, 0, 1]) {
                 raw.clone()
             } else {

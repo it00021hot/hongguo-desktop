@@ -70,14 +70,9 @@ function withDurationFallback(
 }
 
 /**
- * 浏览页：顶部一个搜索框，下面是官方筛选面板 + 结果网格。
- *
- * 数据走官方 App 的找剧接口（landpage 筛选面板 + 多维 select_items），
- * 体裁/主题/设定/背景/推荐/受众/时间/长度八行，
- * 每行单选，「全部」即空选；选项表随服务端下发，不写死。
- *
- * 搜索与浏览共用同一块结果区：提交关键词就原地切成搜索结果，
- * 清空或退出就回到筛选列表。
+ * 浏览页：顶部搜索框 + 官方筛选面板 + 结果网格。数据走官方找剧接口
+ * （landpage 筛选面板 + 多维 select_items，八行每行单选、「全部」即空选，选项表随服务端下发）。
+ * 搜索与浏览共用同一块结果区：提交关键词原地切搜索结果，清空/退出回筛选列表。
  */
 export function BrowsePage() {
   const filtersCollapsed = useUiStore((s) => s.browseFiltersCollapsed);
@@ -101,8 +96,7 @@ export function BrowsePage() {
   const [submitted, setSubmitted] = useSessionState('hongguo.browse.submitted', '');
   const searching = submitted !== '';
 
-  // ---- 输入联想：停 300ms 才发请求，
-  //      有 seriesId 的条目点击直进播放器，纯词条目回填发起搜索 ----
+  // 输入联想：停 300ms 才发请求；带 seriesId 的条目直进播放器，纯词条目回填发起搜索
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(keyword), 300);

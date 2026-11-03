@@ -1,10 +1,6 @@
-//! 我的预约页（Tauri `/reservations` = `reservation-page.tsx` 的 GPUI 对齐）。
-//!
-//! 「已上线/待上线」两个 tab（带计数）+ 搜索 + 管理批量删除；行卡片 =
-//! 封面（左下上线日期角标）+ 标题/评分/简介/标签/上线时间 + 动作列
-//! （已上线 = 播放 + 详情；未上线 = 取消预约）。未登录给登录入口。
-//! 数据与操作走 `hongguo_api::reservation`（fetch_reservations /
-//! reserve_series / delete_reservations），与 Tauri 的预约 command 同一段。
+//! 我的预约页：「已上线/待上线」两个 tab（带计数）+ 搜索 + 管理批量删除；
+//! 行卡带上线日期角标与动作列（已上线 = 播放+详情，未上线 = 取消预约）。
+//! 未登录给登录入口。数据走 `hongguo_api::reservation`。
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;

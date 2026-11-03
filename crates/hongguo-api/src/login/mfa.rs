@@ -1,7 +1,5 @@
 //! MFA 上行短信验证：upsms/verify 轮询 + registered 后的重登流程。
-//!
-//! 归属边界：MFA 检测入口在 mod.rs 的 parse_login_response（sms_login
-//! 响应解析的一部分），这里只承载 MFA 场景自己的上下行请求与 cookie 处理。
+//! MFA 检测入口在 mod.rs 的 parse_login_response，这里只承载 MFA 场景自己的请求与 cookie 处理。
 
 use serde_json::Value;
 
@@ -13,12 +11,8 @@ use super::{
 use crate::client::{ApiEnv, api_call_full_response};
 use hongguo_common::{AppError, AppResult};
 
-/// MFA 上行短信的**真实可回复通道号**。
-///
-/// API `verify_ways[].channel_mobile` 下发的是 9515211003（宁夏银川 95
-/// 扩展号段）——回复到它服务端收不到。真实通道是 10691859839103
-/// （运营商 106 网关，接口下发数据中不存在该号码，来自客户端内置）：
-/// 按 95 号段回复无法通过 MFA，按 106 通道可以。
+/// MFA 上行短信的真实可回复通道号：接口下发的 95 扩展号段服务端收不到回复，
+/// 按 106 通道回复才能通过 MFA。
 const REAL_UPSMS_CHANNEL: &str = "10691859839103";
 const STUB_UPSMS_CHANNEL: &str = "9515211003";
 
@@ -32,10 +26,8 @@ pub(super) fn real_upsms_channel(api_channel: &str) -> &str {
     }
 }
 
-/// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key，
-/// 成功即下发会话 cookie（客户端轮询到 registered 后
-/// 自动发这一次请求完成登录；cookie 带 registered 响应下发的
-/// 新 passport_mfa_token）。
+/// MFA 通过后的正式登录：原验证码 + retry_tag + 密文 sms_code_key；
+/// cookie 带 registered 响应下发的新 passport_mfa_token。
 pub async fn mfa_relogin(
     env: &ApiEnv,
     mobile: &str,
@@ -70,11 +62,8 @@ fn with_mfa_cookie(env: &ApiEnv, token: &str) -> ApiEnv {
     next
 }
 
-/// MFA 上行短信验证轮询（单次调用，前端 3 秒间隔重发）。
-///
-/// body 是 form-urlencoded 的 MFA 上下文，
-/// `biz_params` 为 JSON 串；成功判据是 `data.registered==true`（不是
-/// cookie——会话要靠 [`mfa_relogin`] 再发一次登录）。
+/// MFA 上行短信验证轮询（单次调用，前端 3 秒间隔重发）。body 是
+/// form-urlencoded 的 MFA 上下文（`biz_params` 为 JSON 串）；成功判据是 `data.registered==true`。
 pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsState> {
     let biz = serde_json::json!({
         "passport_mfa_retry_tag": ctx.retry_tag,
@@ -93,8 +82,7 @@ pub async fn upsms_verify(ctx: &MfaContext, env: &ApiEnv) -> AppResult<UpsmsStat
         ("request_tag_from", "h5".to_string()),
         ("verify_reason", ctx.verify_reason.clone()),
         ("verify_scene", ctx.verify_scene.clone()),
-        // 在场的两个空值字段（官方原样对齐，服务端可能参与
-        // 形态校验——type=3731 的教训：空也要带）
+        // 两个空值字段也要在场（官方原样对齐，服务端可能参与形态校验）
         ("new_verify_flow", String::new()),
         ("verify_ticket", String::new()),
     ]
@@ -139,8 +127,7 @@ fn interpret_upsms_response(
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
-                // registered 响应会 Set-Cookie 一个新的（长）token，
-                // 紧随其后的 mfa_relogin 必须带它
+                // registered 响应 Set-Cookie 新 token，紧随其后的 mfa_relogin 必须带它
                 let mfa_token = extract_cookie_pairs(set_cookies)
                     .split("; ")
                     .find(|kv| kv.starts_with("passport_mfa_token="))
@@ -169,8 +156,6 @@ fn interpret_upsms_response(
 mod tests {
     use super::*;
 
-    /// 通道号替换：只有已知的 95 号段替换，未知号码透传（服务端换号时
-    /// 要显式发现而不是被静默吞掉）。
     #[test]
     fn replaces_stub_upsms_channel_only() {
         assert_eq!(real_upsms_channel("9515211003"), "10691859839103");
@@ -179,8 +164,6 @@ mod tests {
         assert_eq!(real_upsms_channel(""), "");
     }
 
-    /// 回归：upsms 响应解读打真实判据函数——
-    /// 1045 等待 / registered+新 token 成功 / 其他码报错。
     #[test]
     fn interprets_upsms_response_states() {
         let waiting = serde_json::json!({"error_code": 1045, "message": "waiting"});
@@ -201,7 +184,6 @@ mod tests {
             other => panic!("期望 Registered，实际 {other:?}"),
         }
 
-        // code==0 但 registered 缺失：按等待处理（防御形态）
         let ambiguous = serde_json::json!({"data": {}});
         assert!(matches!(
             interpret_upsms_response(&ambiguous, &[], "old").unwrap(),
@@ -213,7 +195,6 @@ mod tests {
         assert!(err.to_string().contains("1003"));
     }
 
-    /// with_mfa_cookie：覆盖已有同名字段、无 Cookie 时新建、空 token 原样。
     #[test]
     fn merges_mfa_cookie_into_env() {
         let mk = |cookie: Option<&str>| ApiEnv {

@@ -3,8 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { storage } from '../commands';
 import { keys } from './common';
 
-// ---------------------------------------------------------------- 存储
-
 export function useStorageUsage() {
   return useQuery({ queryKey: keys.storageUsage, queryFn: storage.usage });
 }

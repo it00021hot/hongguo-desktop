@@ -1,8 +1,5 @@
-//! `timing` 的单元测试。
-//!
-//! 四张表都是「定长字段 + 变长条目」的同形结构，测点集中在两处容易错的地方：
-//! **条目的符号**（ctts 的 version 决定）和**字段偏移**（mdhd/tkhd 的 version 1
-//! 把定长字段从 4 字节换成 8 字节）。
+//! `timing` 的单元测试：四张表都是「定长字段 + 变长条目」的同形结构，测点集中在两处容易错的地方——
+//! **条目的符号**（ctts 的 version 决定）和**字段偏移**（mdhd/tkhd 的 version 1 把定长字段从 4 字节换成 8 字节）。
 
 use super::*;
 use crate::r#box::build_box;
@@ -40,7 +37,6 @@ fn stts_reads_run_length_entries() {
     read_stts(&data, 8, data.len() - 8, &mut info);
 
     assert_eq!(info.stts, vec![(1, 1001), (9, 1001)]);
-    // 条目数远小于样本数：正是压缩表示的意义
     assert_eq!(info.stts.iter().map(|(n, _)| *n).sum::<u32>(), 10);
 }
 
@@ -68,8 +64,7 @@ fn ctts_version_0_reads_unsigned_offsets() {
     let mut info = info_with_samples(1);
     read_ctts(&data, 8, data.len() - 8, &mut info);
 
-    // version 0 的 2048 必须是 +2048：按 i32 直读只有在符号位为 0 时才对，
-    // 这条用例把「读错符号」的代价钉住
+    // version 0 的 2048 必须是 +2048：把「读错符号」的代价钉住
     assert_eq!(info.ctts, vec![(1, 2048)]);
 }
 
@@ -83,7 +78,6 @@ fn a_huge_entry_count_cannot_overrun_the_box() {
     let mut info = info_with_samples(0);
     read_stts(&data, 8, data.len() - 8, &mut info);
 
-    // 按 box 实际长度夹住，不能按声明的 count 去分配
     assert_eq!(info.stts.len(), 0);
 }
 
@@ -169,7 +163,6 @@ fn sample_pts_are_real_seconds_for_cfr_sources() {
     let pts = info.sample_pts();
 
     assert_eq!(pts.len(), 90);
-    // 512/15360 = 1/30s
     assert_eq!(pts[0], 0.0);
     assert!((pts[1] - 1.0 / 30.0).abs() < 1e-9);
     assert!((pts[89] - 89.0 / 30.0).abs() < 1e-9);
@@ -178,9 +171,7 @@ fn sample_pts_are_real_seconds_for_cfr_sources() {
 
 #[test]
 fn sample_pts_fold_in_ctts_offsets() {
-    // B 帧（version 1 负偏移）：解码序 I,P,B；显示序 I,B,P。
-    // pts = dts + ctts → 按数组下标是 [0, 2d, d]，**非单调**正是 B 帧的语义，
-    // 「显示序下递增」由消费方（解码器输出序）保证。
+    // B 帧（version 1 负偏移）：解码序 I,P,B；显示序 I,B,P → pts 按数组下标 [0, 2d, d] 非单调，正是 B 帧语义
     let mut info = cfr_info(3);
     info.ctts = vec![(1, 0), (1, 512), (1, -512)];
 
@@ -195,7 +186,6 @@ fn sample_pts_fold_in_ctts_offsets() {
         pts
     );
     assert!((pts[2] - d).abs() < 1e-9, "B 帧提前显示，实际 {:?}", pts);
-    // 按显示时间排序后必须严格递增（负偏移平移不改相对次序）
     let mut display = pts.clone();
     display.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert!(display.windows(2).all(|w| w[1] > w[0]));
@@ -232,8 +222,7 @@ fn sample_pts_without_stts_is_empty() {
 
 #[test]
 fn zero_delta_runs_surface_as_duplicates_for_the_output_side_to_fix() {
-    // 畸形表：一半样本 delta 为 0。展开层如实返回重复值——「输出序严格递增」
-    // 的不变量属于编码输出侧（codec.rs），这里不替它做决定
+    // 畸形表：一半样本 delta 为 0；「输出序严格递增」的不变量属于编码输出侧，这里不替它做决定
     let mut info = info_with_samples(4);
     info.media_timescale = 1_000;
     info.stts = vec![(2, 0), (2, 500)];
@@ -241,8 +230,7 @@ fn zero_delta_runs_surface_as_duplicates_for_the_output_side_to_fix() {
     let pts = info.sample_pts();
 
     assert_eq!(pts.len(), 4);
-    // stts 语义：样本的 dts 是「排在它前面的 delta 」之和，所以
-    // delta 序列 [0,0,500,500] → dts = [0, 0, 0, 500]
+    // stts 语义：样本 dts 是「排在它前面的 delta」之和，delta 序列 [0,0,500,500] → dts = [0, 0, 0, 500]
     assert_eq!(pts[0], 0.0);
     assert_eq!(pts[1], 0.0, "delta=0 的畸形段如实产生重复值");
     assert_eq!(pts[2], 0.0);
@@ -335,8 +323,7 @@ fn elst_zero_timescale_is_ignored() {
 
 #[test]
 fn timeline_shifts_by_edit_media_start() {
-    // priming 修剪：媒体时间 0 的样本在 presentation 轴上落在 0 之前，
-    // 由消费方按「pts ≥ 起点」过滤——这正是 AAC 前置静音的归宿。
+    // priming 修剪：媒体时间 0 的样本在 presentation 轴上落在 0 之前，由消费方按「pts ≥ 起点」过滤
     let mut info = info_with_samples(2);
     info.media_timescale = 44_100;
     info.stts = vec![(2, 1024)];
@@ -345,7 +332,6 @@ fn timeline_shifts_by_edit_media_start() {
     let pts = info.sample_pts();
     assert!((pts[0] + 1024.0 / 44_100.0).abs() < 1e-9, "首样本落到 0 前");
     assert!(pts[1].abs() < 1e-9, "第二个样本才是 presentation 起点");
-    // dts 与 pts 同量平移：两轴差不因 elst 改变
     let dts = info.timeline().0;
     assert!((dts[0] - pts[0]).abs() < 1e-12);
 }

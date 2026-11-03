@@ -82,10 +82,9 @@ impl HomeView {
                 }
                 self.prefetch_next_stream(cx);
                 // 相邻剧分集档案预取（换剧秒回）：挂在首帧而不是周期事件上
-                // ——首帧每次起播必到，换剧就不必多等一次 resolve_series
-                // 的网络往返。
+                // ——首帧每次起播必到，不必多等一次 resolve 的网络往返。
                 self.prefetch_neighbor_archives();
-                // 新集首帧出画 = 连播静默期结束（Tauri 首播解除静默同款）
+                // 新集首帧出画 = 连播静默期结束。
                 self.silent_until_input = false;
             }
             // 播放器缓冲状态（供数断流/恢复，系统播放器的卡顿事件）
@@ -98,10 +97,8 @@ impl HomeView {
             }
             PlayerEvent::Failed(msg) => {
                 self.buffering = false;
-                // 播放中致命失败同样走 retry 档（对齐 Tauri recovery-policy
-                // 的 network/other：自动重试一次，复发才落错误态）——起播
-                // 失败与这里共用同一个 play_retried 预算（播放器就位即复位）。
-                // 播放器已停、时钟冻结在失败位置，读它就是续播断点。
+                // 播放中致命失败同样走 retry 档：自动重试一次，复发才落错误态
+                // ——与起播失败共用同一个 play_retried 预算（播放器就位即复位）。
                 if !self.play_retried
                     && let Some(item) = self.display_items().get(self.cursor()).cloned()
                 {
@@ -122,9 +119,8 @@ impl HomeView {
                     cx.notify();
                     return;
                 }
-                // 播放器致命失败即自停（shutdown），封面背后不会再有画面——
-                // 失败必须落可见错误态：只写 pending_title 的话，那行小徽标
-                // 随 switching 消失，用户看到的就是「无声无息卡在封面」
+                // 播放器致命失败即自停，封面背后不会再有画面——失败必须落
+                // 可见错误态（pending_title 徽标会随 switching 消失）。
                 self.play_error = Some(crate::i18n::tf(
                     "common.failedWith",
                     &[("message", msg.as_str())],
@@ -140,13 +136,13 @@ impl HomeView {
         };
         if player.is_paused() {
             player.resume();
-            // 恢复播放重新持有活动断言（play_target 持有、用户暂停释放）
+            // 恢复播放重新持有活动断言（play_target 持有、用户暂停释放）。
             crate::play_activity::set_active(true);
         } else {
             player.pause();
-            // 暂停 = 用户在场，系统可以休眠；主流播放器同语义
+            // 暂停 = 用户在场，系统可以休眠。
             crate::play_activity::set_active(false);
-            // 暂停 = force 落盘 + 补一条观看历史（Tauri persist(force) 同款）
+            // 暂停 = force 落盘 + 补一条观看历史。
             self.save_progress_now();
         }
         self.wake_controls(cx);
@@ -186,12 +182,12 @@ impl HomeView {
     }
 
     /// 鼠标活动/操作刷新控制条可见窗；隐藏→可见的沿上排一次性定时器，
-    /// 静止到期后靠它（或播放中的节拍重算）触发隐藏。真实输入同时
-    /// 解除连播静默（Tauri wakeOnInput 同款）。
+    /// 静止到期后靠它（或播放中的节拍重算）触发隐藏。真实输入同时解除
+    /// 连播静默（走 [`Self::wake_on_input`]）。
     pub(in crate::home) fn wake_controls(&mut self, cx: &mut Context<Self>) {
-        // 静默期闸门（Tauri wakeOnMove 同款）：连播静默起步后，「用户在场」
-        // 只认真实输入（点击/按键/滚轮——它们显式走这里之外的解除路径）与
-        // 首帧；指针移动不算，不然静默刚起就被一次晃动解除，悬浮层全亮
+        // 静默期闸门：连播静默起步后「用户在场」只认真实输入（显式走
+        // [`Self::wake_on_input`]）与首帧；指针移动不算，不然静默刚起就被
+        // 一次晃动解除、悬浮层全亮。
         if self.silent_until_input {
             return;
         }
@@ -207,18 +203,16 @@ impl HomeView {
         }
     }
 
-    /// 真实输入的「用户在场」：解除连播静默并亮悬浮层（Tauri
-    /// pointerdown/按键 wakeChrome 同款——与 [`Self::wake_controls`] 的差
-    /// 别就在静默期是否放行）。点击画面、键盘、滚轮切剧走这里。
+    /// 真实输入的「用户在场」：解除连播静默并亮悬浮层（与
+    /// [`Self::wake_controls`] 的差别就在静默期是否放行）。
     pub(in crate::home) fn wake_on_input(&mut self, cx: &mut Context<Self>) {
         self.silent_until_input = false;
         self.wake_controls(cx);
     }
 
-    /// 任一面板打开即常显（Tauri panelOpen 同一集合：选集/评论/弹幕设置/
-    /// 音量/下载）。倍速/清晰度下拉菜单与表情网格虽不是「面板」，但开着时
-    /// 指针不在控制条本体上、hover 养不了常显窗——不进来就会被节拍重算
-    /// 连菜单一起收掉。
+    /// 任一面板打开即常显（选集/评论/弹幕设置/音量/下载）。倍速/清晰度
+    /// 下拉菜单与表情网格虽不是「面板」，但开着时 hover 养不了常显窗——
+    /// 不进来就会被节拍重算连菜单一起收掉。
     fn panel_open(&self) -> bool {
         self.picker_open
             || self.comments_panel_open
@@ -230,9 +224,9 @@ impl HomeView {
             || self.danmaku_emoji_open
     }
 
-    /// 悬浮层总闸（Tauri chromeShown 同款裁决）：连播静默期一票否决（面板
-    /// 照常）；否则 悬停控制栏 / 拖进度 / 暂停 / 活动窗未到期 / 面板开 任一
-    /// 即亮。指针离开舞台的立即收由舞台 on_hover 清 controls_until 实现。
+    /// 悬浮层总闸：连播静默期一票否决（面板照常）；否则 悬停控制栏 / 拖
+    /// 进度 / 暂停 / 活动窗未到期 / 面板开 任一即亮。指针离开舞台的立即收
+    /// 由舞台 on_hover 清 controls_until 实现。
     pub(in crate::home) fn controls_visible(&self) -> bool {
         if self.silent_until_input {
             return self.panel_open();
@@ -244,9 +238,8 @@ impl HomeView {
             || self.panel_open()
     }
 
-    /// 隐身模式开关（Tauri incognito 同语义）：开 = 起光标轮询，鼠标脱离
-    /// 窗口即暂停 + 藏窗，回到窗口矩形原地重现 + 续播；关 = 停轮询并带回
-    /// 窗口。实现见 [`crate::incognito`]。
+    /// 隐身模式开关：开 = 起光标轮询，鼠标脱离窗口即暂停 + 藏窗，回到窗口
+    /// 矩形原地重现 + 续播；关 = 停轮询并带回窗口。实现见 `crate::incognito`。
     pub(in crate::home) fn toggle_incognito(
         &mut self,
         window: &mut gpui_kit::Window,

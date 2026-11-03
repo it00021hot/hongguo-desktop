@@ -12,16 +12,10 @@ use gpui_kit::prelude::*;
 use crate::ui_button::button as Button;
 
 impl super::Shell {
-    /// 顶栏（自绘，Tauri `app-shell` header 的 44px 横贯薄行对齐）：
-    /// 中部是各页分类 tab 的居中槽（Tauri `TOP_BAR_SLOT_ID` portal 同位），
-    /// 右侧置顶 / 外观 / 窗口钮；空白带按住拖窗（>4px 才起拖）、双击最大化。
-    ///
-    /// 为什么自绘：组件库 `TitleBar` 为 Windows 把整条 bar 标成
-    /// `WindowControlArea::Drag`（OS 级 HTCAPTION），落进去的可点控件点击
-    /// 全被原生命中测试吞成拖拽（置顶钮上一版就栽在这）。自绘后拖拽改手动
-    /// （`start_window_move`），控件走正常命中路径；窗口钮仍用
-    /// `WindowControlArea`（Min/Max/Close）交给 OS 原生处理——关闭请求照旧
-    /// 走 WM_CLOSE 的退出确认守卫。
+    /// 顶栏（自绘 44px 横贯薄行）：中部各页分类 tab 的居中槽、右侧置顶/外观/
+    /// 窗口钮；空白带按住拖窗（>4px 才起拖）、双击最大化。必须自绘：组件库
+    /// `TitleBar` 把整条 bar 标成 `WindowControlArea::Drag`，落进去的可点控件
+    /// 点击全被原生命中测试吞成拖拽；自绘后拖拽改手动，窗口钮仍交给 OS 原生。
     pub(super) fn render_toolbar(
         &mut self,
         window: &mut Window,

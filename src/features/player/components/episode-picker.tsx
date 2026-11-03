@@ -1,12 +1,6 @@
-//! 选集浮层内容卡（「选集 | 系列剧」双 tab，从控制栏按钮向上弹）。
-//!
-//! 定位由父级负责（贴着控制栏「选集」按钮向上弹，弹幕设置面板同款），
-//! 本组件只负责内容：选集 tab = 范围 tab + 8 列数字网格；系列剧 tab =
-//! 同系列各季卡片（当前季高亮「播放中」，未上线季给预约）。
-//! 不放假选简介/推荐。
-//!
-//! 根节点 onClick stopPropagation：浮层里的任何点击都不许落回舞台——
-//! 舞台的单击裁决是播放/暂停切换，点选集把视频点停了就是这里漏的。
+//! 选集浮层内容卡（「选集 | 系列剧」双 tab）。定位由父级负责，本组件只负责内容：
+//! 选集 tab = 范围 tab + 8 列数字网格；系列剧 tab = 同系列各季卡片（当前季「播放中」，未上线季可预约）。
+//! 根节点 onClick stopPropagation：浮层里的任何点击都不许落回舞台（舞台单击 = 播放/暂停切换）。
 
 import { useEffect, useMemo, useState } from 'react';
 import { BellRing, ChevronDown, Play } from 'lucide-react';
@@ -41,10 +35,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
   const [tab, setTab] = useState<'grid' | 'series'>('grid');
   const { data: series } = useSeriesEpisodes(seriesId);
   const { data: tasks } = useDownloadTasks();
-  /**
-   * 手动翻到哪个范围段：记下当时的当前集——一旦当前集变了（连播/点选），
-   * 覆盖作废，自动跟回当前集所在段。
-   */
+  /** 手动翻到的范围段（记当时的当前集）：当前集变了即覆盖作废，自动跟回当前集所在段。 */
   const [groupOverride, setGroupOverride] = useState<{ group: number; at: number } | null>(null);
 
   const episodes = series?.episodes ?? [];
@@ -66,7 +57,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
     return set;
   }, [tasks, seriesId]);
 
-  // ---- 系列剧 tab：各季卡片，未上线季可预约 ----
+  // 系列剧 tab：各季卡片，未上线季可预约
   const { data: related } = useRelatedSeries(seriesId);
   const requestGoto = usePlayerStore((s) => s.requestGoto);
   const setBinge = usePlayerStore((s) => s.setBinge);
@@ -74,9 +65,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
   const { mutate: reserve, isPending: reserving } = useReserveSeries();
   const seasons = useMemo(() => {
     const list = (related?.works ?? []).filter((w) => seasonNoFromTag(w.tag) != null);
-    // plan/v 只回其他季，不回正在播的这部——系列剧列表里
-    // 当前季也在（红框 + 播放中），缺的从剧集档案合成一份补进头部。
-    // 档案没有 tag/playCnt，卡片副标题留空即可，「播放中」就是它的说明。
+    // plan/v 只回其他季：当前季从剧集档案合成一份补进头部（「播放中」就是说明）
     if (series && !list.some((w) => w.seriesId === series.seriesId)) {
       list.unshift({
         seriesId: series.seriesId,
@@ -97,8 +86,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
     [offlineReservations],
   );
   const switchSeason = (item: RelatedItem) => {
-    // 统一首页播放：点名跳新季（信息流游标对到它，流里没有就钉最前），
-    // 并锁连播——选了某一季 = 追这一季（滚轮/↑↓ 切集，Esc 退出）
+    // 统一首页播放：点名跳新季并锁连播（选了某一季 = 追这一季）
     requestGoto(item.seriesId, 1);
     setBinge(item.seriesId);
     onClose();
@@ -141,8 +129,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
             >
               {label}
               {badge != null && (
-                // 字号/行高走 Badge 自带的 text-xs（12px/16px），居中机理与
-                // 详情页标签完全一致；只收内边距，别再压字号
+                // 字号/行高走 Badge 自带 text-xs（与详情页标签同款），只收内边距
                 <Badge className="ml-1 rounded-full bg-red-500 px-1.5 py-0">{badge}</Badge>
               )}
               {tab === key && (
@@ -200,9 +187,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
                   key={ep.vidIndex}
                   type="button"
                   onClick={() => {
-                    // 选中**不关**浮层：连选连跳，浮层常驻
-                    // 鼠标下方，后续点击永远落在浮层内部——这是「选集穿透
-                    // 成画面点击暂停」的结构性根治。关闭走 Esc/收起/点外部
+                    // 选中不关浮层：连选连跳，关闭走 Esc/收起/点外部
                     onSelect(ep.vidIndex);
                   }}
                   title={ep.title || tf('player.epShort', { index: ep.vidIndex })}
@@ -228,8 +213,7 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
           </div>
         </>
       ) : (
-        /* 系列剧 tab：各季卡片（封面 + 剧名 + 季·数据，右侧
-           播放中/预约/播放）。plan 封面是 HEIC 签名 URL，必须走 SeriesCover。 */
+        /* 系列剧 tab：各季卡片；plan 封面是 HEIC 签名 URL，必须走 SeriesCover */
         <div className="flex flex-col gap-2">
           {seasons.map((item) => {
             const current = item.seriesId === seriesId;

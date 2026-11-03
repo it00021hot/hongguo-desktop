@@ -47,16 +47,6 @@ pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<(
     }))
 }
 
-// ————————————————————————————————————————————————————————————
-// 码率
-// ————————————————————————————————————————————————————————————
-
-// 码率标定 bitrate_for 收敛到 super::video（mf/vt 两侧原本逐字节相同）。
-
-// ————————————————————————————————————————————————————————————
-// 编排（与 vt 侧逐段对应）
-// ————————————————————————————————————————————————————————————
-
 /// 下一帧的显示时间：按升序时间轴逐帧取，重复/回退按半帧顶开。
 fn next_pts(sorted_pts: &[f64], cursor: &mut usize, last: &mut Option<f64>, frame_dur: f64) -> f64 {
     let mut p = sorted_pts
@@ -192,9 +182,8 @@ fn run(
     let mut encoder: Option<Encoder> = None;
     let mut out_dims: Option<(usize, usize)> = None;
     let mut pts_cursor = 0usize;
-    // 喂入时间轴与输出时间轴各用各的游标：混用会让输出兜底拿「喂到第几帧」
-    // 当基准，把首输出时间错顶（实测 h264_mf 缓冲 33 帧后一次性吐出时，
-    // 首帧 0.08 被顶成 0.78）。
+    // 喂入时间轴与输出时间轴各用各的游标：混用会让输出兜底拿「喂到第几帧」当基准，把首输出时间错顶
+    // （实测 h264_mf 缓冲 33 帧后一次性吐出时，首帧 0.08 被顶成 0.78）
     let mut last_pts: Option<f64> = None;
     let mut out_last: Option<f64> = None;
 

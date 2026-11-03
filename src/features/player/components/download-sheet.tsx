@@ -18,12 +18,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-/**
- * 播放器里的「下载到本地」。
- *
- * 与下载页共用同一个选集器：几百集的剧不可能手点，
- * 「全选 / 区间语法 / 后 30 集」这些能力必须在这里也在。
- */
+/** 播放器里的「下载到本地」：与下载页共用同一个选集器（全选 / 区间语法 / 后 30 集在这里也可用）。 */
 export function DownloadSheet({ seriesId, episodes, defaultSelected, open, onOpenChange }: Props) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<number[]>(defaultSelected);

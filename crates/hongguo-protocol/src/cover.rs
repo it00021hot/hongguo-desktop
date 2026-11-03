@@ -1,17 +1,5 @@
-//! 封面/头像转码供给（`hongguo-cover://`）。
-//!
-//! 红果系的条目封面全是 HEIC（fqnovelpic CDN 签名 URL；改扩展名/换
-//! tplv 模板一律 403，签名锁整个 path），WebView2 只在
-//! 装了 HEVC 扩展的机器上能直接渲染。这里把「下载 HEIC → ffmpeg 转
-//! JPEG」收进后端：前端把原图 URL base64url 后拼 `{scheme}/c/{…}` 交给
-//! `<img>`，产物按 URL 哈希落盘缓存，同一张只转一次。
-//!
-//! 评论/剧评头像也走这条管线：无扩展名/`.image` 等
-//! 「格式说不清」的地址交给后端**魔数嗅探**——已是 jpeg/png/webp 就
-//! 原样透传（不转码、无损），真是 HEIC 才进下面的转码阶梯。
-//!
-//! 官方客户端同样要过这一步——抓包里的封面也是 HEIC，
-//! 能显示靠的是客户端自解，不是接口给了别的格式。
+//! 封面/头像转码供给（`hongguo-cover://`）：红果条目封面全是 HEIC（WebView 需 HEVC 扩展才能直渲），后端收拢「下载 HEIC → 转 JPEG」，产物按 URL 哈希落盘缓存，同一张只转一次。
+//! 评论/剧评头像等「格式说不清」的地址走魔数嗅探：已是 jpeg/png/webp 原样透传，真是 HEIC 才进转码阶梯。
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
@@ -20,10 +8,7 @@ use hongguo_common::utils::hex;
 
 use hongguo_stream::range::ProtocolResponse;
 
-/// 供给封面/头像转码。
-///
-/// 返回 `(HTTP 状态码, 响应头, 响应体)`；任何失败都返回 `Err`（协议层
-/// 回 404，前端 `<img>` 的 onError 会落到占位图）。
+/// 供给封面/头像转码，返回 `(HTTP 状态码, 响应头, 响应体)`；任何失败返回 `Err`（协议层回 404，前端 `<img>` onError 落占位图）。
 pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     let encoded = raw_path
         .trim_start_matches('/')
@@ -37,7 +22,6 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
         return Err("只允许转发 https 封面地址".into());
     }
 
-    // 缓存命中：.jpg（转码/历史产物）优先，其次透传的 .png/.webp
     for (ext, ct) in [JPEG_KIND, PNG_KIND, WEBP_KIND] {
         if let Ok(bytes) = std::fs::read(cache_path(&remote, ext)) {
             return Ok((200, headers(ct, bytes.len()), bytes));
@@ -45,14 +29,10 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     }
 
     let (bytes, ext, ct) = acquire(&remote).map_err(|e| {
-        // 曾几何时这里是静默 404：全机封面挂光日志里一个字都没有。
-        // 失败要留痕——URL 哈希级缓存后只发生一次，噪声可控。
         log::warn!("[Cover] 封面/头像获取失败: {e} ({remote})");
         e
     })?;
-    // 写缓存前必须确保目录存在：cover-cache 没有任何启动/清理路径会创建
-    // （兼容转码缓存有转码服务负责建，这里没有）——全新安装的机器上目录
-    // 不存在，下载转码全部成功也会死在最后一步写盘，且曾是零日志静默 404。
+    // cover-cache 目录没有任何启动/清理路径会创建，写盘前必须先 ensure
     ensure_cache_dir()?;
     // 先写临时文件再改名：转一半的图不该被缓存住
     let final_path = cache_path(&remote, ext);
@@ -96,18 +76,12 @@ fn headers(ct: &str, len: usize) -> Vec<(String, String)> {
     ]
 }
 
-/// 取回「必定可渲染」的封面字节（给非 WebView 壳的公开入口）：与 [`serve`]
-/// 同一条三级阶梯、**同一份磁盘缓存**。返回 `(字节, Content-Type)`。
-///
-/// **磁盘缓存当源头**（与 WebView 侧同源）：命中直接读数据目录的
-/// `cover-cache/<sha256(url)>.<ext>`，不再下载+转码；未命中才走阶梯，转完
-/// 落盘再返回——同一张封面全进程只转一次，重启也在。
+/// 取回「必定可渲染」的封面字节（非 WebView 壳的公开入口）：磁盘缓存当源头，未命中才走 [`serve`] 同一条阶梯，转完落盘——同一张封面全进程只转一次，重启也在。
 pub fn acquire_renderable(remote: &str) -> Result<(Vec<u8>, &'static str), String> {
     if let Some((bytes, ct)) = cached_renderable(remote) {
         return Ok((bytes, ct));
     }
     let (bytes, ext, ct) = acquire(remote)?;
-    // 写盘前必须确保目录存在（`serve` 里的同一条纪律）。
     ensure_cache_dir()?;
     let final_path = cache_path(remote, ext);
     let tmp = cache_tmp(remote);
@@ -120,10 +94,7 @@ pub fn acquire_renderable(remote: &str) -> Result<(Vec<u8>, &'static str), Strin
     Ok((bytes, ct))
 }
 
-/// 磁盘缓存里已转码好的封面字节与类型（没有则 `None`）。
-///
-/// 给非 WebView 壳的「按需重新解码」用：内存里的解码结果被逐出后，从这里
-/// 重新取字节再解码——本地文件读，比重新下载转码快一个量级。
+/// 磁盘缓存里已转码好的封面字节与类型；内存解码结果被逐出后从这里重新取字节再解码，本地读比重新下载转码快一个量级。
 pub fn cached_renderable(remote: &str) -> Option<(Vec<u8>, &'static str)> {
     for (ext, ct) in [JPEG_KIND, PNG_KIND, WEBP_KIND] {
         if let Ok(bytes) = std::fs::read(cache_path(remote, ext)) {
@@ -133,21 +104,14 @@ pub fn cached_renderable(remote: &str) -> Option<(Vec<u8>, &'static str)> {
     None
 }
 
-/// 各档位的长边上限（像素）。
-///
-/// 官方封面是 400×572 的海报，解成 RGBA 是 915KB/张；按用途缩过之后差一个
-/// 数量级。gpui 的 `img()` 不做缩放，缩放必须在落盘前做完——数据目录里存的
-/// 就是显示尺寸的图。
+/// 卡片档长边上限（像素）。缩放必须在落盘前做完——gpui 的 `img()` 不缩放，数据目录里存的就是显示尺寸的图。
 pub const EDGE_CARD: u32 = 320;
 /// 头像档（评论/回复头像只画 24–44px 的圆）。
 pub const EDGE_AVATAR: u32 = 64;
 /// 全屏占位档（舞台占位按窗口像素铺，1080p 屏上有一千多 px 宽）。
 pub const EDGE_FULL: u32 = 1024;
 
-/// 某一档封面在磁盘上的路径（`<sha256>-<edge>.jpg`）。
-///
-/// 纯函数：调用方不必等文件就绪就能算出路径（gpui 的 `img()` 拿路径当
-/// 来源，文件没就绪时先显示占位，资产加载完成后自动重绘）。
+/// 某一档封面在磁盘上的路径（`<sha256>-<edge>.jpg`）；纯函数，文件未就绪时调用方也能先算出路径当来源。
 pub fn sized_cache_path(remote: &str, edge: u32) -> std::path::PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(remote.as_bytes());
@@ -155,9 +119,7 @@ pub fn sized_cache_path(remote: &str, edge: u32) -> std::path::PathBuf {
     hongguo_store::paths::cover_cache_dir().join(format!("{digest}-{edge}.jpg"))
 }
 
-/// 确保某一档封面在磁盘上，返回它的路径。
-///
-/// 磁盘命中直接返回；否则下载 → HEIC 转码 → 缩到该档尺寸 → 落盘。
+/// 确保某一档封面在磁盘上并返回路径：磁盘命中直接返回，否则下载 → HEIC 转码 → 缩到该档尺寸 → 落盘。
 pub fn ensure_sized_cached(remote: &str, edge: u32) -> Result<std::path::PathBuf, String> {
     let path = sized_cache_path(remote, edge);
     if path.exists() {
@@ -224,10 +186,8 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
         return Ok((bytes, ext, ct));
     }
 
-    // 1) 平台级：封面静图解码（Windows 走 WIC——HEIF/HEVC 扩展在则用系统
-    //    解码器，扩展没有会缓存「不可用」，本进程内不再尝试，「重新检测」
-    //    清缓存；其余平台本层不可用直接返回 None 掉级——同一签名，公共
-    //    调用方不需要平台分支）
+    // 1) 平台级：封面静图解码（Windows 走 WIC，HEIF/HEVC 扩展缺失会缓存
+    //    「不可用」、「重新检测」清缓存后重试；其余平台返回 None 掉级，调用方不需要平台分支）
     if let Some(result) =
         hongguo_media_platform::platform::cover::heic_to_jpeg(bytes_of(&mut downloaded, remote)?)
     {
@@ -239,9 +199,7 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
 
     // 2) ffmpeg 级：直接吃 http 输入，一步到位
     if let Some(ffmpeg) = hongguo_media_platform::ffmpeg::probe::ffmpeg_path() {
-        // ffmpeg 自己不会建目录：tmp 落在 cover-cache 里，全新安装/新壳数据域
-        // 下目录不存在，转码会死在「Could not open file」（bbae897 修了
-        // respond 写盘路径，这里当时漏了同一刀）
+        // ffmpeg 自己不会建目录：tmp 落在 cover-cache 里，必须先 ensure
         ensure_cache_dir()?;
         let tmp = cache_tmp(remote);
         let mut cmd = std::process::Command::new(ffmpeg);
@@ -354,11 +312,6 @@ mod tests {
     use super::sniff_kind;
     use super::{EDGE_AVATAR, EDGE_CARD, sized_cache_path};
 
-    /// 档位参与成品图寻址：预热档位与渲染档位错配时**必然取不到文件**。
-    ///
-    /// 这是「头像整块空白」的机械根源（详情页创作者头像按
-    /// 封面档 320 预热、渲染侧找头像档 64 即触发）。改档位名等于换文件——所以渲染侧
-    /// 与预热侧必须共用同一个档位常量。
     #[test]
     fn sized_cache_path_is_edge_scoped() {
         let url = "https://example.com/a.jpeg?sig=1";
@@ -396,7 +349,6 @@ mod tests {
 
     #[test]
     fn heic_and_garbage_unknown() {
-        // HEIC: ftyp box，major brand heic
         let heic = [
             0u8, 0, 0, 24, b'f', b't', b'y', b'p', b'h', b'e', b'i', b'c',
         ];

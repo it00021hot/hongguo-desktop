@@ -1,14 +1,7 @@
-//! 老板键（全局快捷键隐藏/显示主窗口）——Tauri `boss_key_cmd.rs` 同语义移植。
-//!
-//! 值形态与 Tauri 一致：`Settings.boss_key` 存 tauri accelerator 串
-//!（`"CommandOrControl+Alt+H"`，空串 = 未启用），解析/展示/冲突检测在
-//! [`accel`]（纯函数，集成测试覆盖）。注册能力由 [`crate::platform`] 提供：
-//! Windows 走手写 Win32 FFI、macOS 走 Carbon `RegisterEventHotKey`
-//!（Tauri 用 tauri-plugin-global-shortcut，gpui 没有全局快捷键面，两侧
-//! 都是手写）；注册失败如实报错，不留「存上了却从不生效」的假象。
-//!
-//! 切换语义与 Tauri 一致：可见 → 隐藏（先暂停播放，声音不漏）；隐藏 →
-//! 显示 + 聚焦（前端续播）。
+//! 老板键（全局快捷键隐藏/显示主窗口）。值形态：tauri accelerator 串
+//! （空串 = 未启用），解析/冲突检测在 [`accel`]；注册能力由
+//! [`crate::platform`] 提供（Win32 FFI / Carbon）。切换语义：可见 → 隐藏
+//! （先暂停，声音不漏）；隐藏 → 显示 + 聚焦（续播）。
 
 pub(crate) mod accel;
 
@@ -20,10 +13,7 @@ use crate::playback_prefs::ShortcutKeys;
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 
 /// 注册（或换绑 / 注销）老板键。空串 = 注销现有键；注册失败返回可读错误，
-/// 并尽力把旧键回滚注回（Tauri `rollback_register` 同款）。
-///
-/// 调用点与 Tauri 同序：**先注册后落库**——注册失败整个保存不提交，避免
-/// 「错误返回了、坏键却已入库，重启照样注册不上」。
+/// 并尽力把旧键回滚注回。调用点必须先注册后落库——注册失败整个保存不提交。
 pub(crate) fn apply(spec: &str) -> Result<(), String> {
     let spec = spec.trim().to_string();
     let mut cur = CURRENT

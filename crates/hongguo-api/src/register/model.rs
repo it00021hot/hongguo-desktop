@@ -1,11 +1,6 @@
 //! 注册域数据模型（device_register 响应解包出的注册产物）。
 
 /// 注册产物（gzip JSON 响应的解包）。
-///
-/// 备注：TT-Encrypt V5 的解密方向生产未用到（注册只加密）；解密侧的
-/// 对拍基准是入库的真实样本（`tests/fixtures/register_req_real.bin` /
-/// `py_enc_accepted.hex`），哈希原语的事实源是 hongguo-signer 的
-/// `tt_hash.rs`（上游 Python 参考实现未入库，考证见其模块文档）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegisterResult {
@@ -19,8 +14,7 @@ pub struct RegisterResult {
     #[serde(default)]
     pub new_user: bool,
     /// 本次注册使用的指纹（cdid/openudid 必须随档案长期携带：后续业务
-    /// query 的设备指纹要与服务端登记的注册指纹一致）。
-    /// parse_register 不填，register_device 补。
+    /// query 的设备指纹要与服务端登记的注册指纹一致）；parse_register 不填，register_device 补。
     #[serde(default)]
     pub cdid: String,
     #[serde(default)]

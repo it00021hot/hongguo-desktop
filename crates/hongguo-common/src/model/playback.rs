@@ -19,15 +19,10 @@ pub struct PlaybackPosition {
 /// 全部剧集的播放进度。
 pub type PlaybackMap = BTreeMap<String, BTreeMap<u32, PlaybackPosition>>;
 
-/// 续播阈值（秒）：看过超过这个数才接上原位，否则视为没看过从头播。
-/// 用户口径，一处定义供 Rust 侧各消费点引用（前端 utils/resume-entry
-/// 同口径，技术栈不同不共享实现）。
+/// 续播阈值（秒）：看过超过这个数才接上原位，否则视为没看过从头播。用户口径一处定义（前端 utils/resume-entry 同口径，技术栈不同不共享实现）。
 pub const RESUME_THRESHOLD_SECS: f64 = 3.0;
 
-/// 一部剧「最近看到的那一集」。发给前端 `seriesProgressSchema`，camelCase。
-///
-/// 详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，
-/// 比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
+/// 一部剧「最近看到的那一集」，发前端 `seriesProgressSchema`（camelCase）。详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，比云端观看历史（约 1 分钟一报 + 缓存）新鲜。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SeriesProgress {
@@ -98,10 +93,7 @@ pub struct PlayResponse {
     pub definitions: Vec<VideoDefinition>,
 }
 
-/// 一档清晰度。发给前端 `videoDefinitionSchema`。
-///
-/// 派生 `Ord` 是为了在取流侧按 (档位, 宽, 高) 升序去重后再反转，
-/// 那样「高到低」就是一次反转，不必写比较函数。
+/// 一档清晰度，发前端 `videoDefinitionSchema`。派生 `Ord`：取流侧按 (档位, 宽, 高) 升序去重后一次反转即得「高到低」，不必写比较函数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoDefinition {
@@ -117,7 +109,6 @@ mod tests {
 
     #[test]
     fn new_records_current_timestamp() {
-        // 续播进度按 updated_at 排序，构造时必须打上当前时间戳
         let before = chrono::Utc::now().timestamp_millis();
         let p = PlaybackPosition::new(10.0, 100.0);
         assert!(p.updated_at >= before, "updated_at 应在构造时刷新");
@@ -130,10 +121,8 @@ mod tests {
             "≤3 秒从头播"
         );
         assert!(PlaybackPosition::new(3.5, 100.0).is_resumable());
-        // 不看片尾：95%+、临近结束的记录照样续播
         assert!(PlaybackPosition::new(96.0, 100.0).is_resumable());
         assert!(PlaybackPosition::new(299.0, 300.0).is_resumable());
-        // 时长未知也按已播秒数判定
         assert!(PlaybackPosition::new(999.0, 0.0).is_resumable());
     }
 
@@ -146,8 +135,6 @@ mod tests {
 
     #[test]
     fn play_request_reads_frontend_camel_case() {
-        // 前端 playRequestSchema 发出的是 camelCase；之前这里是 snake_case，
-        // 反序列化直接 missing field，play_series 根本进不来
         let r: PlayRequest = serde_json::from_str(
             r#"{"seriesId":"7687919221593885758","vidIndex":3,"filePath":"","preferOnline":true}"#,
         )
@@ -182,7 +169,6 @@ mod tests {
 
     #[test]
     fn play_request_accepts_a_definition() {
-        // 不带 definition 的旧调用要照常工作：None = 取最高档
         let r: PlayRequest = serde_json::from_str(r#"{"seriesId":"1","vidIndex":2}"#).unwrap();
         assert_eq!(r.definition, None);
 

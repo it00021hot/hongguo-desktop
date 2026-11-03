@@ -1,10 +1,6 @@
 //! 单集执行：取流 → 流式下载 → 解密 → 落盘。
-//!
-//! 防损机制：先写 `.enc.tmp`，解密成功后才改名 `.mp4`，中途断网不会留下
-//! 残缺文件——下次重试能干净地从头再来。
-//!
-//! 设置（尤其代理）由调用方传入：worker 自己 `AppState::default()` 拿到的永远是
-//! 默认值，会让用户在设置里配的代理失效。
+//! 防损：先写 `.enc.tmp`，解密成功后才改名 `.mp4`，中途断网不留残缺文件。
+//! 设置（尤其代理）由调用方传入：worker 自己拿默认值会让用户配的代理失效。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,10 +13,8 @@ use hongguo_common::model::Settings;
 use hongguo_common::utils::path::temp_path_for;
 use hongguo_common::{AppError, AppResult};
 
-/// 下载与解密的进度回调。
-///
-/// 回调用 `Arc<dyn Fn>` 持有而非借用：worker 在 `tokio::spawn` 里跑，
-/// 借用的闭包会让整个 future 变成非 `Send`，spawn 就编不过。
+/// 下载与解密的进度回调。回调用 `Arc<dyn Fn>` 持有而非借用：
+/// worker 在 spawn 里跑，借用的闭包会让整个 future 变成非 `Send`。
 pub struct ProgressSink {
     pub throttle: Arc<ProgressThrottle>,
     pub on_progress: Arc<dyn Fn(u64, u64) + Send + Sync>,
@@ -101,13 +95,9 @@ pub async fn download_episode(
     Ok(size)
 }
 
-/// 收尾：密流解密后写出成品，明流直接改名。
-///
-/// 两条路径都要清掉临时文件：
-/// - 解密失败时留着它，下次重试会被当成「上次下了一半」直接复用；
-/// - 解密成功时它已经没用了，不删的话用户目录里会一直多一个同体积的
-///   `.enc.tmp`（CENC 是原地加密，密文明文一样大，看着像下了两份）。
-/// - 明流走 `rename`，临时文件已经不在原处，这里的删除是 no-op。
+/// 收尾：密流解密后写出成品，明流直接改名。两条路径都要清掉临时文件：
+/// 解密失败时留着它会被下次重试当成「上次下了一半」复用；解密成功时它已没用
+///（CENC 原地加密，密文明文一样大，不删看着像下了两份）；明流 rename 后删除是 no-op。
 fn finalize(temp: &Path, output: &Path, episode: &EpisodeDownload) -> AppResult<()> {
     let result: AppResult<()> = if episode.encrypted {
         match hongguo_video::crypto::key_derive::derive_key(&episode.key_material) {
@@ -136,9 +126,6 @@ mod tests {
     /// 测试用的取消标志（构造 EpisodeDownload 需要一个借用）
     static CANCEL_SLOT: AtomicBool = AtomicBool::new(false);
 
-    // `temp_path_for` 本身的用例随函数迁到了 `hongguo_common::utils::path`
-    // （同一份断言不留两处）；这里只留 worker 自己的清理语义。
-
     #[test]
     fn cleanup_temp_is_idempotent() {
         let dir = std::env::temp_dir().join(format!("hg-worker-{}", std::process::id()));
@@ -148,7 +135,7 @@ mod tests {
         std::fs::write(&tmp, b"x").unwrap();
         cleanup_temp(&out);
         assert!(!tmp.exists());
-        cleanup_temp(&out); // 再删一次不应报错
+        cleanup_temp(&out);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -165,7 +152,7 @@ mod tests {
             on_progress: Arc::new(cb),
         };
         sink.report("id", 100, 1000);
-        sink.report("id", 101, 1000); // 1% 变化但间隔不足
+        sink.report("id", 101, 1000);
         assert_eq!(
             seen.lock().expect("锁未被 poison").len(),
             1,
@@ -175,7 +162,6 @@ mod tests {
 
     #[test]
     fn finalize_clears_temp_on_decrypt_failure() {
-        // 输出路径不可写时，临时文件应被清理
         let dir = std::env::temp_dir().join(format!("hg-finalize-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let temp = dir.join("a.enc.tmp");

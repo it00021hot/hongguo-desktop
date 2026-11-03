@@ -1,9 +1,4 @@
-/**
- * 选集区间语法解析。
- *
- * 支持 `1-50`、`1-10, 25, 30-45`、`1, 3, 5`。空串返回空数组（不是全部），
- * 这样调用方能区分「没填」与「全选」。
- */
+/** 选集区间语法解析（`1-50`、`1-10, 25, 30-45`）；空串返回空数组（不是全部），调用方能区分「没填」与「全选」。 */
 export function parseRange(input: string, max = Number.MAX_SAFE_INTEGER): number[] {
   const trimmed = input.trim();
   if (!trimmed) return [];

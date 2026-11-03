@@ -24,14 +24,10 @@ mod mini;
 mod progress;
 mod volume;
 
-/// 播放器浮层钮的皮肤（Tauri `IconButton` 同款）：透明底、白字、
-/// hover 铺 20% 白——**颜色不跟主题走**。
-///
-/// 为什么非要用 `custom` 变体：`ghost` 的前景与 hover 文字色都取自主题
-/// （`secondary_foreground`），亮色主题下就是深色字压在画面上（用户实测
-/// 「亮色主题下都看不到按钮」）；而 gpui 的 `Button` 内部已占用 hover 层，
-/// 实例 `text_color` 盖不住悬停态，只有 custom 变体能同时把 normal/hover/active
-/// 三态颜色一次钉死，同时保留 Button 的 tooltip / 焦点语义。
+/// 播放器浮层钮的皮肤：透明底、白字、hover 铺 20% 白——颜色不跟主题走。
+/// 必须用 `custom` 变体：`ghost` 的前景/hover 取自主题，亮色主题下是深色字
+/// 压在画面上；且 gpui Button 内部已占用 hover 层、实例 `text_color` 盖不住
+/// 悬停态，只有 custom 变体能一次钉死三态颜色并保留 tooltip/焦点语义。
 pub(super) fn chrome_variant(cx: &gpui_kit::App) -> ButtonCustomVariant {
     let transparent: gpui_kit::Hsla = gpui_kit::rgba(0x00000000).into();
     ButtonCustomVariant::new(cx)
@@ -41,22 +37,12 @@ pub(super) fn chrome_variant(cx: &gpui_kit::App) -> ButtonCustomVariant {
         .active(gpui_kit::rgba(0xffffff4d).into())
 }
 
-/// 播放器/评论面板里的输入框：在元素**真正渲染的那一拍**，临时把主题里
-/// 光标 / 占位符 / 选区 / **编辑器底色**四个 token 换成播放器皮肤值，
-/// 再把 `Input` 交给组件渲染，然后立刻还原。
-///
-/// 为什么只能这么做：`Input` 在 `RenderOnce::render` 里从 `cx.theme()` 把
-/// 这几个颜色拷进 `InputState` 的 editor style（`set_editor_style` 是
-/// gpui-component 的 crate 内部 API），应用侧没有实例级覆盖入口。播放器是
-/// 固定深色皮肤，亮色主题的默认值是「近黑光标 + 深灰占位符」，压在深色
-/// 胶囊/面板上就是隐形。`Theme::global_mut` 不广播主题变更、不动其它字段
-/// （见其注释），我们的改写与还原在同一个同步渲染调用内完成，正文色仍由
-/// 调用方的 `.text_color()` 决定（正文取继承色）。
-///
-/// 编辑器底色必须显式透明：`appearance(false)` 只关掉 `Input` 容器的底色，
-/// 而 gpui-base 的 editor 元素自己会**逐行涂 `editor_background`**（未设置
-/// 时回落 `input_background()`——亮色下就是白底块，实测两种主题都穿了帮，
-/// 见 feed-comments 预览）。底色由外层胶囊/输入框容器画。
+/// 播放器/评论面板里的输入框：在元素真正渲染的那一拍，临时把主题里光标/
+/// 占位符/选区/编辑器底色四个 token 换成播放器皮肤值，再交组件渲染后立刻
+/// 还原。只能这么做：`Input` 在 render 里从 `cx.theme()` 拷走颜色（crate
+/// 内部 API），应用侧没有实例级覆盖入口；改写与还原在同一同步渲染调用内
+/// 完成。编辑器底色必须显式透明——editor 元素自己会逐行涂
+/// `editor_background`，不设就是亮色白底块。
 #[derive(gpui_kit::IntoElement)]
 pub(super) struct SkinnedInput {
     inner: gpui_kit::component::input::Input,

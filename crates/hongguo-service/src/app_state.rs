@@ -1,8 +1,5 @@
-//! 全局应用状态。
-//!
-//! 只持有跨模块共享的句柄，不放业务逻辑。设置与队列的并发控制用
-//! `parking_lot` 的读写锁，避免在 async 上下文里跨 await 持锁；
-//! 持久化则交给 [`Store`]（专职 DB 线程，天然串行，不需要外层锁）。
+//! 全局应用状态：只持有跨模块共享的句柄，不放业务逻辑。
+//! 设置与队列的并发控制用 `parking_lot` 读写锁（锁绝不跨 await）；持久化交给 [`Store`]（专职 DB 线程，天然串行）。
 
 use std::sync::Arc;
 
@@ -15,10 +12,8 @@ use crate::events::ServiceEvents;
 use hongguo_common::model::settings::Settings;
 use hongguo_store::Store;
 
-/// 全局状态，由 Tauri 的 `manage` 注入。
-///
-/// 用 `Arc<AppState>` 形式挂到 Tauri，这样 command 层既能拿 `State<'_, Arc<AppState>>`
-/// 的借用，也能在需要 `'static` 所有权时（如 spawn 后台任务）直接克隆。
+/// 全局状态，由 Tauri 的 `manage` 注入（`Arc<AppState>` 形式：command 层可拿借用，
+/// spawn 后台任务需要 `'static` 所有权时直接克隆）。
 pub struct AppStateInner {
     /// 持久化数据（Turso 内嵌库，DB 线程串行执行）
     pub store: Store,
@@ -26,8 +21,8 @@ pub struct AppStateInner {
     pub settings: RwLock<Settings>,
     /// 当前设备档案（设备注册成功后被整体替换）
     device: RwLock<hongguo_signer::device::DeviceProfile>,
-    /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档
-    /// 已发生」，触发对身份敏感的数据（顶栏 tab 等）重拉。
+    /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档已发生」，
+    /// 触发身份敏感的数据（顶栏 tab 等）重拉。
     device_generation: AtomicU64,
     /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
     /// 不落库：发码会话本身分钟级有效，重启即重新发码。
@@ -129,13 +124,9 @@ impl AppStateInner {
         self.device_generation.load(Ordering::Relaxed)
     }
 
-    /// 一次 API 调用所需的完整环境快照：代理 + 设备 + 会话 Cookie。
-    ///
-    /// 快照语义是刻意的：一次调用链内环境不变，避免「签名用 A 设备、
-    /// 请求带 B Cookie」的半新半旧。Cookie 不参与签名（走 extra_headers 注入）。
-    ///
-    /// Cookie 的组成是「账号字段优先、匿名兜底补缺」：reading 系接口按
-    /// `install_id` 风控，未登录也不能裸奔（会被 0 字节响应拒）。
+    /// 一次 API 调用所需的完整环境快照（代理 + 设备 + 会话 Cookie），快照语义刻意：
+    /// 一次调用链内环境不变，避免「签名用 A 设备、请求带 B Cookie」的半新半旧。
+    /// Cookie 组成是「账号字段优先、匿名兜底补缺」：reading 系接口按 `install_id` 风控，未登录不能裸奔。
     pub fn api_env(&self) -> hongguo_api::client::ApiEnv {
         let settings = self.settings();
         let device = self.device();
@@ -147,8 +138,7 @@ impl AppStateInner {
         hongguo_api::client::ApiEnv {
             proxy: settings.proxy,
             cookie: Some(merge_session_cookie(account_cookie, &device)),
-            // x-tt-token（登录响应头凭据）：在账号里就带上，send_once 统一
-            // 以 56 位短形式注入请求头
+            // x-tt-token（登录响应头凭据）：在账号里就带上，send_once 统一以 56 位短形式注入请求头
             x_tt_token: settings
                 .account
                 .as_ref()
@@ -159,11 +149,8 @@ impl AppStateInner {
     }
 }
 
-/// 合并会话 Cookie：匿名兜底（`install_id` / `store-region` / `ttreq`）打底，
-/// 账号字段（`sessionid` 等）覆盖同名字段。
-///
-/// 解析按 `k=v; k=v` 形态逐对处理，账号侧的分号后空格容忍；合并保序，
-/// 兜底字段在前、账号新增字段追加在后——与抓包的 Cookie 顺序一致。
+/// 合并会话 Cookie：匿名兜底（`install_id` / `store-region` / `ttreq`）打底，账号字段（`sessionid` 等）覆盖同名字段。
+/// 解析按 `k=v; k=v` 逐对处理；合并保序——兜底在前、账号新增在后，与抓包的 Cookie 顺序一致。
 fn merge_session_cookie(
     account: Option<&str>,
     device: &hongguo_signer::device::DeviceProfile,
@@ -207,7 +194,6 @@ mod tests {
         assert!(cookie.contains("store-region=cn-gd"));
         assert!(cookie.contains("ttreq=1$abc"));
         assert!(!cookie.contains("sessionid"), "匿名形态不应有会话字段");
-        // 匿名档案（无 iid）：零 cookie 打底
         let bare = hongguo_signer::anonymous_profile(&hongguo_signer::fresh_cdid());
         assert_eq!(merge_session_cookie(None, &bare), "");
     }
@@ -218,14 +204,12 @@ mod tests {
         let mut device = hongguo_signer::anonymous_profile(&cdid);
         device.set("iid", "4175317900247834");
         let cookie = merge_session_cookie(Some("sessionid=abc; store-region=cn-sh"), &device);
-        // 账号字段覆盖同名、追加新增，兜底字段保留
         assert!(
             cookie.contains("store-region=cn-sh"),
             "账号属地应覆盖兜底值"
         );
         assert!(cookie.contains("sessionid=abc"));
         assert!(cookie.contains(&format!("install_id={}", device.get("iid"))));
-        // 形态合法：每段都是 k=v
         assert!(cookie.split("; ").all(|p| p.split_once('=').is_some()));
     }
     #[test]
@@ -233,7 +217,6 @@ mod tests {
         let state = AppState::default();
         let mut s = state.settings();
         s.max_concurrency = 7;
-        // 改副本不应影响全局
         assert_eq!(state.settings().max_concurrency, 3);
     }
 

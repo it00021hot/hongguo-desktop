@@ -9,12 +9,9 @@ interface Item {
 
 const item = (seriesId: string, title = ''): Item => ({ seriesId, title });
 
-/** 占位工厂(流里没有在播剧时才会被调用)。 */
 const placeholderFor = (pin: Item) => () => pin;
 
 describe('withPinnedPlaying', () => {
-  // 复现「刷剧中被自动切到别的剧」:流里含在播剧时旧逻辑不钉,换一批后
-  // 游标 0 指到别的剧,起点决策把播放目标拽走。钉住必须在场,这是回归锁。
   it('流里含在播剧时也钉到最前(旧逻辑此处不钉,正是误切根源)', () => {
     const playing = item('p', '在播剧');
     const out = withPinnedPlaying(

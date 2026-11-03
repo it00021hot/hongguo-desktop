@@ -1,13 +1,7 @@
-//! AVFoundation 的最小 FFI 面（spike 专用）。
-//!
-//! 只包 AVPlayer spike（`HONGGUO_AV_SPIKE=1` 诊断入口）用到的调用：
+//! AVFoundation 的最小 FFI 面（spike 专用）：只包 AVPlayer spike（`HONGGUO_AV_SPIKE=1` 诊断入口）用到的调用——
 //! `AVPlayer` / `AVPlayerItem` / `AVPlayerLayer` / `AVPlayerItemVideoOutput`。
-//! 不引入 objc2-av-foundation 绑定 crate：类按名字从运行时取，方法用
-//! `msg_send!` 直投；框架链接由 `#[link(name = "AVFoundation")]` 负责。
-//!
-//! `CMTime` 的 Objective-C 编码是匿名结构体 `{?=qiIq}`（不是 `{CMTime=...}`，
-//! 本机实测 `-duration` 的签名就是 `{?=qiIq}`），编码写错 `msg_send!` 会在
-//! debug 断言里 panic。
+//! 不引入 objc2-av-foundation 绑定 crate：类按名字从运行时取，方法用 `msg_send!` 直投；框架链接由 `#[link(name = "AVFoundation")]` 负责。
+//! `CMTime` 的 Objective-C 编码是匿名结构体 `{?=qiIq}`（不是 `{CMTime=...}`，本机实测如此），编码写错 `msg_send!` 会在 debug 断言里 panic。
 
 use std::ffi::CStr;
 use std::ptr::NonNull;
@@ -202,10 +196,7 @@ pub fn replace_item(player: &AnyObject, item: &AnyObject) {
 }
 
 /// 零容差 seek：目标帧前的关键帧由系统解码补齐，落点精确到帧。
-///
-/// 这里用的是已废弃的 `seekToTime:toleranceBefore:toleranceAfter:`：spike
-/// 不需要 completion block（block2 会引入新依赖），完成后由调用方轮询
-/// `currentTime` 判定。
+/// 用已废弃的 `seekToTime:toleranceBefore:toleranceAfter:`：spike 不需要 completion block（block2 会引入新依赖），完成后由调用方轮询 `currentTime` 判定。
 pub fn seek_exact(player: &AnyObject, to: CmTime) {
     // SAFETY: 公开实例方法；两个 tolerance 都是 CMTime 值类型。
     let _: () = unsafe {
@@ -271,8 +262,6 @@ pub fn custom_url(episode: &str) -> Option<Retained<NSURL>> {
     )))
 }
 
-// —— 系统播放器壳需要的补充读取（Phase 1b） ——
-
 use objc2_foundation::NSSize;
 
 pub fn current_item(player: &AnyObject) -> Option<&AnyObject> {
@@ -329,10 +318,8 @@ pub fn disable_auto_advance(player: &AnyObject) {
     let _: () = unsafe { msg_send![player, setActionAtItemEnd: 0isize] };
 }
 
-/// 关闭「自动等待以减少卡顿」。数据来自本地渐进流（自定义 scheme 供数、
-/// 起播前已预填头部），AVF 的防卡顿算法在这种源上没有真实带宽样本可估，
-/// 暂停恢复时会间歇性把视频呈现门住 1–2s（音频先行）——实测形态即
-/// 「暂停再播画面卡住、声音继续」。本地源立即起播是官方推荐口径。
+/// 关闭「自动等待以减少卡顿」：数据来自本地渐进流（自定义 scheme 供数、起播前已预填头部），AVF 的防卡顿算法没有真实带宽样本可估，
+/// 暂停恢复时会间歇性把视频呈现门住 1–2s（音频先行）——实测形态即「暂停再播画面卡住、声音继续」。本地源立即起播是官方推荐口径。
 pub fn disable_wait_to_minimize_stalling(player: &AnyObject) {
     // SAFETY: 公开 BOOL 属性。
     let _: () = unsafe { msg_send![player, setAutomaticallyWaitsToMinimizeStalling: false] };

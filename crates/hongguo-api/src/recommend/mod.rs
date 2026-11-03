@@ -12,23 +12,8 @@ use hongguo_common::{AppError, AppResult};
 
 pub use model::{FeedTabMeta, RecommendTabConfig};
 
-/// 拉一页首页推荐流（书城换一换）。
-///
-/// tab 表（bookmall/tab 下发）：推荐 16 / 漫剧 36 / 真人剧 39 / 关注 45
-/// （关注是登录后的追更流，不在这条数据面里）。生产链路里 tab 由前端
-/// 字面量直传（与旧 landpage genre 直传同一模式）。
-///
-/// 口径（两段式）：
-/// - **首页**：`GET bookmall/tab/v?client_req_type=1028&tab_type=<T>`
-///   （[`SINFONLINEC_API_ORIGIN`]）——目标 tab_item 自带 `bookstore_id` + `cell_id`
-///   （⚠️ **每 tab 不同**，用推荐位的 id 打 tab39 服务端回落混合池、清一色
-///   1004 漫剧——「真人 tab 全是漫剧」的根因）与会话 `session_id`，首批
-///   条目嵌在 `cell_data[0].cell_data[].video_data[]`；
-/// - **翻页**：`GET cell/change/v`，双 id 用该 tab 自己的 + `session_id`
-///   （首页下发）+ **`filter_ids`=已下发过的 series_id 逗号表**（服务端
-///   排除已见）+ `offset=上一页响应的 next_offset`（0→6→12 递进）；
-/// - 内容按时间桶在服务端轮换，「换一批」= 新会话重拉（filter_ids 清空），
-///   不做客户端偏移。
+/// 拉一页首页推荐流（书城换一换），两段式：首页 `bookmall/tab`（配置+会话+首批），
+/// 翻页 `cell/change`（`filter_ids`=已下发 series_id 逗号表，服务端排除已见）。
 pub async fn fetch_recommend_feed(
     tab: &str,
     session_id: &str,
@@ -79,18 +64,8 @@ fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
 /// 即完整顶栏），也是种子语义的归属 tab（「你的内容」只进推荐 tab——壳侧口径）。
 const RECOMMEND_TAB_TYPE: &str = "16";
 
-/// 顶栏 tab 列表（服务端下发）。
-///
-/// 一次 cr=4 请求（推荐 tab）的 `tab_item[]` 就是完整顶栏：tab_type/title/
-/// 顺序即官方顶栏顺序，线格式见 [`FeedTabMeta`]；
-/// 非活跃 tab 的 bookstore_id 为 null，切换到该 tab 时它自己的 cr=4 才带。
-/// 进程缓存按 [`TAB_CONFIG_TTL`] 节奏复验，重取失败沿用旧列表
-/// （stale-while-error）——运营调整晚一刻到达，好过顶栏整体报错。
-///
-/// 身份时序：匿名身份打本端点只会回推荐单 tab（服务端按身份下发完整
-/// 顶栏）——单 tab 结果视为「身份未就绪」，不进缓存直接返回空表，调用方
-/// 保留回落三件套；注册换档后调 [`clear_feed_tabs_cache`] 再重拉即得
-/// 完整顶栏。
+/// 顶栏 tab 列表（服务端下发，一次 cr=4 请求的 `tab_item[]` 即完整顶栏）。
+/// 单 tab 结果视为身份未就绪：不缓存、返回空表由调用方回落；复验失败沿用旧值。
 pub async fn fetch_feed_tabs(env: &ApiEnv) -> AppResult<Vec<FeedTabMeta>> {
     if let Some(cached) = cached_feed_tabs() {
         if cached.at.elapsed() < TAB_CONFIG_TTL {
@@ -180,10 +155,8 @@ fn cached_feed_tabs() -> Option<CachedFeedTabs> {
 
 /// 配置进程内缓存（首页 cr=4 与翻页共享；失败回落已知值）。
 ///
-/// 条目带时间戳做 TTL 过期：cell_id/bookstore_id 原本
-/// 按服务端常量假设永不重取，运营调整后只能靠重启恢复。现在超过
-/// [`TAB_CONFIG_TTL`] 后下次使用会先重取一次，重取失败继续用旧值
-/// （stale-while-error）——翻页不会因此重打配置请求。
+/// 条目带时间戳做 TTL 过期：超过 [`TAB_CONFIG_TTL`] 后下次使用先重取一次，
+/// 重取失败继续用旧值（stale-while-error）。
 #[derive(Clone)]
 struct CachedTabConfig {
     cfg: RecommendTabConfig,
@@ -218,8 +191,7 @@ fn cached_tab_config(tab: &str) -> Option<CachedTabConfig> {
 }
 
 /// 解析 tab 的 cell 配置：进程缓存命中且未过期直接用；过期先重取一次，
-/// 重取失败沿用旧值（stale-while-error）。无缓存时现场取（bookmall/tab
-/// cr=4），再不行回落已知值（同样缓存住，免得每页都重试配置请求）。
+/// 失败沿用旧值。无缓存时现场取，再不行回落已知值（同样缓存住，免得每页都重试）。
 async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabConfig> {
     if let Some(cached) = cached_tab_config(tab) {
         if cached.at.elapsed() < TAB_CONFIG_TTL {
@@ -254,9 +226,7 @@ async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabCo
     Ok(value)
 }
 
-/// `GET bookmall/tab/v?client_req_type=4&tab_type=16`（lq 域）——**顶栏塌缩
-/// 表专用**。官方首页面的顶栏请求走证书钉扎通道抓不到，但 lq 的 cr=4
-/// 今天仍正确返回首页四 tab（关注/漫剧/真人剧/推荐，2026-10-31 实测），
+/// `GET bookmall/tab/v?client_req_type=4`（lq 域）——顶栏塌缩表专用；
 /// cr=1028（书城形态）返回的是书城九 tab，不是本仓首页要的表。
 async fn request_bookstore_tab(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     let q: Vec<(String, String)> = [
@@ -308,16 +278,8 @@ fn flex_str(v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// `GET bookmall/tab/v?client_req_type=1028&tab_type=<T>`（sinfoninec 域）——
-/// tab 首页（配置 + 会话 + 嵌套首批）的官方现行形态。
-///
-/// 参数表 2026-10-31 官方实流逐字段对齐（98 项中的本仓可构建子集）：
-/// 身份块（aid/iid/device_id/cdid/version_*/resolution/dpi/…）由签名器
-/// 从设备档案追加；`klink_egdi` 是服务端经 TTNet 下发的网关凭据、本仓无
-/// 来源，不带；`top_tab_monitor_extra` 是顶栏曝光遥测的运行态，不带。
-/// 首页的 `filter_ids` / `rec_filter_info_list` 是**空值在场**（官方同款，
-/// 翻页才有内容）。会话状态族与 [`recommend_cell_change`] 共用同一套
-/// 运行态快照值。
+/// `GET bookmall/tab/v?client_req_type=1028`（sinfoninec 域）——tab 首页
+/// （配置 + 会话 + 嵌套首批）的官方现行形态；会话状态族与翻页共用同一套值。
 async fn request_feed_tab_first_page(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     let uuid = session_uuid();
     let q: Vec<(String, String)> = [
@@ -367,7 +329,7 @@ async fn request_feed_tab_first_page(tab: &str, env: &ApiEnv) -> AppResult<Value
         ("client_req_type", "1028"),
         ("req_rank_algo", "0"),
         ("unlimited_short_series_next_offset", "0"),
-        // —— 会话状态族（官方把运行态快照打进 tab 请求，与翻页同一套值）
+        // 会话状态族（官方把运行态快照打进 tab 请求，与翻页同一套值）
         ("normal_session_cnt_in_day", "8"),
         ("cold_start_session_cnt_in_day", "4"),
         ("normal_session_id", &format!("{uuid}#1")),
@@ -423,10 +385,8 @@ async fn fetch_tab_first_page(
         .iter()
         .find(|t| flex_str(t.get("tab_type")).as_deref() == Some(tab))
         .ok_or_else(|| AppError::Media(format!("推荐 tab 响应无 tab={tab}")))?;
-    // cell_data[] 里有多个 cell：推荐流是嵌套 cell_data[].video_data[] 非空的
-    // 那个（cell_name=「猜你喜欢」，show_type=407）；[0] 可能是空的金刚位
-    // 运营卡（show_type=583）——不能按位置取，按内容取。
-    // bookstore_id 在 tab_item 顶层。
+    // 多个 cell 里按内容取推荐流（嵌套 video_data 非空的那个），不能按位置
+    // 取——[0] 可能是空的金刚位运营卡。
     let mut cell_id = String::new();
     let mut items = Vec::new();
     let cells = item
@@ -456,7 +416,6 @@ async fn fetch_tab_first_page(
         if cell_items.is_empty() {
             continue;
         }
-        // 第一个带条目的 cell 即推荐流 cell；后续 cell（换一换位等）不取
         if cell_id.is_empty() {
             cell_id = flex_str(cell.get("cell_id_str"))
                 .or_else(|| flex_str(cell.get("cell_id")))
@@ -468,8 +427,7 @@ async fn fetch_tab_first_page(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::Media(format!("推荐 tab 配置缺 bookstore_id: tab={tab}")))?;
     if cell_id.is_empty() {
-        // 没有任何带条目的 cell：配置退回 [0] 的 id（空金刚位场景），条目为空
-        // 由调用方的补拉分支兜底
+        // 无带条目的 cell（空金刚位场景）：退回 [0] 的 id，空首批由调用方补拉兜底
         cell_id = flex_str(item.pointer("/cell_data/0/cell_id_str"))
             .or_else(|| flex_str(item.pointer("/cell_data/0/cell_id")))
             .unwrap_or_default();
@@ -478,9 +436,8 @@ async fn fetch_tab_first_page(
         cell_id,
         bookstore_id,
     };
-    // tab 级 has_more 是 tab 列表语义（恒 false），流的分页真值由翻页的
-    // cell/change 给——这里乐观置 true，翻到空页自然停；首批无 offset，
-    // 第一次翻页 offset=0，之后用响应 next_offset 递进
+    // 流的分页真值由翻页 cell/change 给，这里乐观置 true，翻到空页自然停；
+    // 首批无 offset，首次翻页 offset=0，之后按响应 next_offset 递进
     let page = super::discover::FeedPage {
         session_id: flex_str(item.get("session_id")).unwrap_or_default(),
         has_more: true,
@@ -490,11 +447,7 @@ async fn fetch_tab_first_page(
     Ok((cfg, page))
 }
 
-// ---------------------------------------------------------------- 会话与曝光上下文
-
-/// 官方 cell/change 的图片缩略规格（base64(JSON)：
-/// 360 中图 / 屏宽大图 / 99 小图——宽度跟随设备屏宽，本仓
-/// 档案 1078 与 tab/v 同源）。
+/// 官方 cell/change 的图片缩略规格（base64(JSON)：360 中图 / 屏宽大图 / 99 小图）。
 const FEED_IMAGE_SHRINK: &str = "W3siaW1hZ2VfdHlwZSI6MiwiaW1hZ2Vfd2lkdGgiOjM2MCwic2hyaW5rX3R5cGUiOjJ9LHsiaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==";
 
 /// 官方 cell/change 的推荐补充上下文：base64 即
@@ -505,8 +458,7 @@ const RECOMMEND_EXTRA: &str =
 /// NPS 插入位配额（官方恒值）。
 const NPS_INSERT_RANK_JSON: &str = r#"{"1":3,"3":3,"2":3,"4":3}"#;
 
-/// 进程生命周期的会话 UUID。官方每次启动发三枚 uuid 作 session_uuid /
-/// normal_session_id / cold_start_session_id；本仓用同一枚派生两形态
+/// 进程生命周期的会话 UUID：官方一次启动发三枚，本仓用同一枚派生两形态
 /// （裸 uuid 与 `uuid#1`）——服务端只要求同会话内一致。
 fn session_uuid() -> &'static str {
     static UUID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -605,11 +557,8 @@ fn rec_impression_of(raw: &Value) -> Option<RecImpression> {
     })
 }
 
-/// 翻页：`GET cell/change/v`（session + filter_ids 排除已见 +
-/// `offset=上一页响应的 next_offset`（0→6→12 递进）；
-/// 双 id 用目标 tab 自己的）。
-///
-/// 参数表按官方 App 逐字段对齐：业务零值族 + 会话状态族 + 个性化上下文三部分都在参。
+/// 翻页：`GET cell/change/v`——双 id 用目标 tab 自己的，`filter_ids` 排除已见，
+/// `offset` 用上一页响应的 next_offset。
 async fn recommend_cell_change(
     tab: &str,
     cfg: &RecommendTabConfig,
@@ -631,7 +580,7 @@ async fn recommend_cell_change(
         r#"{{"first_screen_impression_gids":[],"has_active_refresh":false,"latest_impression_gids":"{latest_gids}"}}"#
     );
     let q: Vec<(String, String)> = [
-        // —— 业务零值族（官方恒 0/false，缺失会被当无个性化上下文处理）
+        // 业务零值族（官方恒 0/false，缺失会被当无个性化上下文处理）
         ("author_id", "0"),
         ("book_comment_id", "0"),
         ("category_id", "0"),
@@ -681,7 +630,7 @@ async fn recommend_cell_change(
         ("video_tab_cold_start", "0"),
         ("video_type_preferences_str", "[]"),
         ("web_page_version_code", "0"),
-        // —— 会话状态族（官方客户端的运行态快照，服务端按存在性个性化）
+        // 会话状态族（官方客户端运行态快照，服务端按存在性个性化）
         ("app_dark_mode", "1"),
         ("app_launch_times", "0"),
         ("app_mini_window", "0"),
@@ -704,7 +653,7 @@ async fn recommend_cell_change(
         ("screen_brightness", "21"),
         ("sys_dark_mode", "1"),
         ("sys_mini_window", "1"),
-        // —— 排除与去重（翻页语义核心）
+        // 排除与去重（翻页语义核心）
         ("session_id", session_id),
         ("filter_ids", &filter_ids.join(",")),
     ]
@@ -723,8 +672,7 @@ async fn recommend_cell_change(
 }
 
 /// cell/change 响应 → FeedPage。条目在 `cell_view.cell_data[].video_data[]`，
-/// 身份字段在条目的 `video_detail`（series_title/series_cover/episode_cnt/
-/// category_schema…），与 landpage 的 title/cover 族不同名。
+/// 身份字段在条目的 `video_detail`（与 landpage 的 title/cover 族不同名）。
 fn parse_recommend_feed(data: Option<&Value>) -> AppResult<super::discover::FeedPage> {
     use super::discover::FeedPage;
     let data = data.ok_or_else(|| AppError::Media("推荐流响应缺少 data".into()))?;
@@ -764,8 +712,7 @@ fn parse_recommend_feed(data: Option<&Value>) -> AppResult<super::discover::Feed
 /// 一条推荐流条目（cell/change 与 bookmall/tab 嵌套 cell 共用同一形态）。
 fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
     let det = raw.get("video_detail");
-    // series_id 双形态：条目顶层数字（JSON number 直接 to_string 无损）
-    // 与 video_detail.series_id_str，前者在则用前者
+    // series_id 双形态：顶层数字/字符串优先，兜 video_detail.series_id_str
     let series_id = raw
         .get("series_id")
         .and_then(Value::as_str)
@@ -821,9 +768,8 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
             .unwrap_or_default()
             .to_string(),
         horiz_cover: String::new(),
-        // 推荐位 vid 两个位置都见过：顶层 vid 与
-        // video_detail.video_list[0].vid（起点集）——
-        // 批量取流预取的 vid 源就是它，两级回落兜住
+        // 推荐位 vid 两个位置都见过：顶层 vid 与 video_detail.video_list[0].vid，
+        // 两级回落；批量取流预取的 vid 源就是它
         vid: raw
             .get("vid")
             .map(|v| match v {
@@ -869,9 +815,8 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
             .unwrap_or(0.0),
         tags: super::discover::parse_tags(det.and_then(|d| d.get("category_schema"))),
         season_tag,
-        // 热度行（火焰图标 + 文案）：条目级 rec_tags 里
-        // data_type=1 的 content——「共217万人在追」「逆袭榜 No.3」「真人剧
-        // 新番榜 No.4」等，多段全部拼接
+        // 热度行：条目级 rec_tags 里 data_type=1 的 content 多段拼接
+        //（「共217万人在追」「逆袭榜 No.3」等）
         heat_text: raw
             .get("rec_tags")
             .and_then(Value::as_array)
@@ -883,8 +828,7 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
                     .join(" · ")
             })
             .unwrap_or_default(),
-        // 运营角标 pill（「新剧」等，官方随 tag_info.bg_color 下发颜色，
-        // 前端用主题色即可）
+        // 运营角标 pill（「新剧」等；官方随 tag_info.bg_color 下发颜色，前端用主题色即可）
         badge: det
             .and_then(|d| d.pointer("/tag_info/text"))
             .and_then(Value::as_str)
@@ -901,8 +845,6 @@ fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
 mod tests {
     use super::*;
 
-    /// 样本形状：
-    /// 条目身份在 video_detail，series_id 顶层是数字、季徽的 data_type 缺省。
     #[test]
     fn parses_recommend_feed_entries() {
         let data: Value = serde_json::json!({
@@ -949,7 +891,6 @@ mod tests {
         );
         assert_eq!(it.title, "谁把我仙侠游戏退出键扣了3D版");
         assert_eq!(it.vid, "7677203040796953624");
-        // series_cover 空串时回落 series_cover_uri
         assert!(it.cover.contains("douyinpic"));
         assert_eq!(it.episode_cnt, 248);
         assert_eq!(it.play_cnt, 17_050_000);
@@ -970,9 +911,6 @@ mod tests {
         assert_eq!(page.session_id, "20261008181149086C4BCA8151179AD830");
     }
 
-    /// 顶栏列表解析（官方样本形状）：顺序即顶栏顺序
-    /// 关注/漫剧/真人剧/推荐，仅活跃 tab（16）带 bookstore_id，tab_type
-    /// 数字/字符串双形态，缺 tab_type 的残缺条目跳过。
     #[test]
     fn parses_feed_tab_bar() {
         let value = serde_json::json!({
@@ -1003,8 +941,7 @@ pub(crate) mod probe {
     use super::*;
     use crate::rank::probe::anon_env;
 
-    /// 顶栏列表直连探测（游客拿到 45/36/39/16 四个
-    /// tab，顺序即官方顶栏，仅 16 带 bookstore_id）。
+    /// 顶栏列表直连探测：游客应得 45/36/39/16 四个 tab，仅 16 带 bookstore_id。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_feed_tabs() {
@@ -1019,10 +956,7 @@ pub(crate) mod probe {
         assert!(tabs.iter().any(|t| t.tab_type == RECOMMEND_TAB_TYPE));
     }
 
-    /// 首页推荐流两段式全链路：首页 `bookmall/tab cr=4`（每 tab 自带 bookstore_id/
-    /// cell_id + 会话 + 嵌套首批），翻页 `cell/change`（双 id + session +
-    /// filter_ids 排除已见 + offset 恒 0）。验证各 tab 类型过滤（39 全
-    /// ct=1 真人剧）与翻页不重复。
+    /// 首页推荐流两段式全链路探测：各 tab 类型过滤与翻页不重复。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_recommend_tab_bookstore() {
@@ -1059,13 +993,11 @@ pub(crate) mod probe {
                 p2.has_more,
                 p2.items.iter().map(|i| i.content_type).collect::<Vec<_>>()
             );
-            // filter_ids 排除已见是翻页语义的核心：服务端必须避开它
             assert_eq!(overlap, 0, "tab={tab} 翻页不应回已见条目");
         }
     }
 
-    /// cr=4 响应的 cell 结构全量 dump（tab36 含多个 cell、不同
-    /// cell_id——翻页用的是与 bookstore_id 同前缀的那个）。
+    /// cr=4 响应的 cell 结构全量 dump。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_recommend_tab_cells() {
@@ -1077,7 +1009,6 @@ pub(crate) mod probe {
             cfg.bookstore_id,
             page.items.len()
         );
-        // 直接打原始请求 dump cell_data[*] 全量结构
         let q: Vec<(String, String)> = [
             ("auth_aweme", "true"),
             ("auth_backward", "true"),

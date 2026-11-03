@@ -1,12 +1,6 @@
-//! 设备指纹。
-//!
-//! 签名头与 query 参数必须来自同一份设备档案：Medusa 会把 device_id 和
-//! version_name 打进密文，服务端两边比对，不一致直接判为伪造。
-//!
-//! 档案有 owned 形态 [`DeviceProfile`]（可从数据库装载、可被设备注册流程
-//! 改写字段）；游客身份走 [`anonymous_profile`]——当前官方版本起
-//! 未登录读播**不再需要设备注册**，仅凭 cdid + 签名即可，
-//! 共享的静态兜底档案已废除。
+//! 设备指纹：签名头与 query 参数必须来自同一份设备档案——Medusa 会把 device_id 和
+//! version_name 写进密文，服务端两边比对，不一致直接判为伪造。
+//! 游客身份走 [`anonymous_profile`]：当前官方版本未登录读播不需要设备注册。
 
 use serde::{Deserialize, Serialize};
 
@@ -17,39 +11,23 @@ use crate::protobuf::{FieldType, FieldValue, proto};
 pub const APP_ID: &str = "8662";
 pub const CHANNEL_ID: &str = "1588093228";
 
-/// 官方客户端版本身份（全仓唯一出处）。
-/// query / 注册模板 / UA 一律引用这三常量，禁止再散写魔法值。
-///
-/// ⚠️ 线上报 73932 而非包的真实版本（2026-11-03 官方 74232 包 virgin
-/// 抓包实测：注册体解密 version_code=73932、取流 query 版本族与
-/// pv_player 主导形态全 73932、UA 世代混发以 73932 为主——官方灰度期
-/// 新包自报旧版本号，服务端按 73932 批次分发 schema）。跟随官方。
+/// 官方客户端版本身份（全仓唯一出处，query / 注册模板 / UA 一律引用这三常量，禁止散写魔法值）。
+/// 线上报 73932 而非包的真实版本（官方灰度期新包自报旧版本号），跟随官方。
 pub const APP_VERSION_CODE: u64 = 73932;
 pub const APP_VERSION_CODE_STR: &str = "73932";
 pub const APP_VERSION_NAME: &str = "7.3.9.32";
 
-/// 官方 App 的构建渠道（2026-11-03 官方 74232 包 virgin 抓包：注册体
-/// 解密 channel、取流/settings query channel 三处同为
-/// `seo_laxin_pc_android`；「pinzhuan」在任何抓包中从未出现）。
-/// 渠道属于构建，不随设备品牌走。
+/// 官方 App 的构建渠道（注册体 / settings query / 取流 query 三处一致），渠道属于构建，不随设备品牌走。
 pub const BUILD_CHANNEL: &str = "seo_laxin_pc_android";
 
-/// 注册指纹钉定的版本身份（2026-11-01 竞品实流抓包逐字节对齐：
-/// 注册请求、注册产物档案、取流链全程 73932/7.3.9.32——注册 JSON 里
-/// `sdk_version 3.7.3-rc.116-douyin` 等.bdinstall 代际与该版本成套，
-/// 服务端按「版本 + SDK 代际自洽」给设备做信任评分，身份与代际错配的
-/// 注册会被静默标记、后续取流不发货）。注册请求与注册产物档案
-/// **终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——升当前版本与注册
-/// 指纹不同源，取流即挂。
+/// 注册指纹钉定的版本身份，与 .bdinstall SDK 代际成套（身份与代际错配的注册会被静默标记、后续取流不发货）。
+/// 注册请求与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——升当前版本与注册指纹不同源，取流即挂。
 pub const REGISTER_VERSION_CODE: u64 = 73932;
 pub const REGISTER_VERSION_CODE_STR: &str = "73932";
 pub const REGISTER_VERSION_NAME: &str = "7.3.9.32";
 
-/// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，
-/// 机型段与档案指纹一致，改机型要整组同换）。
-///
-/// UA 尾段为官方统一的 `tt-ok/3.12.13.20` 形态，
-/// 匿名请求的机型段会在服务端过风控名单，跟着换。
+/// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，机型段与档案指纹一致，改机型要整组同换）。
+/// UA 尾段为官方统一的 `tt-ok/3.12.13.20` 形态；匿名请求的机型段会在服务端过风控名单，跟着换。
 pub fn video_ua() -> String {
     format!(
         "com.phoenix.read/{} (Linux; U; Android 14; zh_CN; Xiaomi 14; \
@@ -58,22 +36,12 @@ pub fn video_ua() -> String {
     )
 }
 
-// ---------------------------------------------------------------- 注册机型指纹池
-
 /// 注册机型指纹：注册 query / AppLog JSON / 产物档案 / UA 里**机型耦合**
-/// 的字段组（品牌/型号/市场名/制造商/Build/OS/dpi/分辨率/ROM），整组同源。
-///
-/// 2026-11-02 多机型池化：此前全量用户都顶着同一套「Xiaomi 14」指纹，
-/// 共享暴露面是注册抽奖（发货资格在注册时抽签发放，见 service 取流健康
-/// 守护的取证）的候选权重，池化把共享面摊开。池内全部是公开市场参数的
-/// **真实机型组合**；首项 = 2026-11-01 逐字节取证的小米 14 原形态
-/// （cdid 哈希命中即与历史行为完全一致）。
-///
+/// 的字段组（品牌/型号/市场名/制造商/Build/OS/dpi/分辨率/ROM），整组同源；
+/// 池内全部是公开市场参数的真实机型组合。
 /// 指纹由 **cdid 确定性派生**（[`fingerprint_for_cdid`]）：注册请求、注册
-/// 产物档案、后续重建从同一 cdid 推出同一指纹，两侧天然同源；cdid 本身是
-/// 随机 UUID，注册自然散布全池。传感器读数的 protobuf（[`device_proto`]）
-/// **不在池内**——它本就是另一台 Redmi 真机的采集值，与小米 14 档案混搭
-/// 发货正常（错配被服务端容忍），且无其他机型的 proto 抓包，不盲猜。
+/// 产物档案、后续重建从同一 cdid 推出同一指纹。传感器读数的 protobuf
+/// （[`device_proto`]）不在池内——那是另一台 Redmi 真机的采集值，错配被服务端容忍。
 pub struct RegisterFingerprint {
     /// device_brand（渠道已改为官方构建渠道，见 [`Self::channel`]）
     pub brand: &'static str,
@@ -103,18 +71,12 @@ pub struct RegisterFingerprint {
 const REGISTER_BUILD_STAMP: &str = "1701234567";
 
 impl RegisterFingerprint {
-    /// 渠道号：官方 App 的**构建渠道**（2026-11-03 官方 74232 包 virgin
-    /// 抓包三重一致：注册体解密、settings query、取流 query 全为
-    /// `seo_laxin_pc_android`；此前的品牌渠道 `{brand}_8662_64` 与
-    /// 「pinzhuan」写死值均无抓包依据）。此前的品牌渠道形态是竞品。
+    /// 渠道号：官方 App 的**构建渠道** [`BUILD_CHANNEL`]（注册体 / settings query / 取流 query 三处一致；品牌渠道形态是竞品）。
     pub fn channel(&self) -> String {
         BUILD_CHANNEL.to_string()
     }
 
-    /// 注册口径 UA（tt-ok 尾段 + 注册版本身份 + 型号代码；2026-11-02
-    /// 官方注册实流：`…/73932 (Linux; U; Android 15; zh_CN_#Hans;
-    /// SM-G9900; Build/V417IR;tt-ok/3.12.13.20)`——此前 Cronet 尾段 +
-    /// 市场名的形态是竞品 UA）
+    /// 注册口径 UA（tt-ok 尾段 + 注册版本身份 + 型号代码；此前 Cronet 尾段 + 市场名的形态是竞品 UA）。
     pub fn register_ua(&self) -> String {
         format!(
             "com.phoenix.read/{REGISTER_VERSION_CODE_STR} (Linux; U; Android {}; zh_CN_#Hans; {}; \
@@ -167,8 +129,7 @@ impl RegisterFingerprint {
     }
 }
 
-/// 十台常用机型（小米系 3 / vivo 系 3 / OPPO 一加 2 / 荣耀 / 三星），
-/// 全部 Android 14（os_api 34）——与注册口径的 SDK 代际取证同版。
+/// 十台常用机型（小米系 3 / vivo 系 3 / OPPO 一加 2 / 荣耀 / 三星），全部 Android 14（os_api 34），与注册口径的 SDK 代际同版。
 pub const REGISTER_FINGERPRINTS: &[RegisterFingerprint] = &[
     RegisterFingerprint {
         brand: "xiaomi",
@@ -311,16 +272,13 @@ pub fn fingerprint_for_cdid(cdid: &str) -> &'static RegisterFingerprint {
 }
 
 /// 视频 CDN 403 时补上的官网 Referer（直链被拒的最后手段）。
-///
-/// CDN 的防盗链是两类规则并存：主流边缘对**任何**带 Referer 的请求直接 403
-/// （所以首选裸 UA），个别节点却反过来要求 Referer。遇到 403 补上它再试一次，
-/// 两类都能过。
+/// CDN 防盗链两类规则并存：主流边缘对**任何**带 Referer 的请求直接 403（首选裸 UA），
+/// 个别节点却反过来要求 Referer——403 后补上它再试一次，两类都能过。
 pub const VIDEO_REFERER: &str = "https://novelquickapp.com/";
 
 /// 一份设备档案。
 ///
-/// 字段是**保序**键值对：顺序就是签名 query 的参数顺序，签名对它敏感，
-/// 所以绝不排序、不去重，只按构造时的顺序搬运。
+/// 字段是**保序**键值对：顺序就是签名 query 的参数顺序，签名对它敏感，绝不排序、不去重，只按构造顺序搬运；
 /// `user_agent` 与字段必须成套（系统版本号两边一致），改机型要整组换。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeviceProfile {
@@ -329,8 +287,7 @@ pub struct DeviceProfile {
     #[serde(default = "default_user_agent")]
     user_agent: String,
     /// 设备维度的 `ttreq` 票（注册响应 Set-Cookie 下发，按 install_id 发放）。
-    /// None = 无票（匿名档案零 cookie；注册档案必有票）。不进 `fields`——
-    /// 那是要参与签名 query 的，票只该出现在 Cookie。
+    /// None = 无票（匿名档案零 cookie；注册档案必有票）。不进 `fields`——那是参与签名 query 的，票只该出现在 Cookie。
     #[serde(default)]
     ttreq: Option<String>,
 }
@@ -390,13 +347,10 @@ impl DeviceProfile {
         }
     }
 
-    /// 设备注册用的全新档案：版本身份**原生钉注册口径**
-    /// （[`REGISTER_VERSION_CODE_STR`]），UA 为注册口径 Cronet 尾段，
-    /// 机型指纹由 cdid 从 [`REGISTER_FINGERPRINTS`] 池确定性抽取
-    /// （[`fingerprint_for_cdid`]），**不带** device_id/iid（首次注册 query
-    /// 里不能有空值形态的字段）。cdid/openudid 由调用方生成后填入——注册
-    /// 请求与注册产物档案共用本构造，指纹天然同源；匿名档案经
-    /// [`anonymous_profile`] 对齐到当前客户端口径。
+    /// 设备注册用的全新档案：版本身份与 UA 钉注册口径，机型指纹由 cdid 从
+    /// [`REGISTER_FINGERPRINTS`] 池确定性抽取，**不带** device_id/iid（首次注册
+    /// query 里不能有空值形态的字段）；cdid/openudid 由调用方生成后填入，注册
+    /// 请求与产物档案共用本构造。
     ///
     /// 不 `#[cfg(test)]` 门控：下游 crate（domain/api/register）的测试要用，
     /// 而依赖 crate 对下游以非 test 方式编译，门控项会消失。
@@ -404,9 +358,7 @@ impl DeviceProfile {
         Self::register_profile_with(fingerprint_for_cdid(cdid), cdid, openudid)
     }
 
-    /// 用指定机型指纹构造注册档案（[`fresh_register_profile`] 的显式指纹
-    /// 形态；注册请求与产物档案对同一 cdid 必须取同一指纹，由
-    /// [`fingerprint_for_cdid`] 的确定性派生保证）。
+    /// 用指定机型指纹构造注册档案（同一 cdid 两侧必须同指纹，由 [`fingerprint_for_cdid`] 的确定性派生保证）。
     pub fn register_profile_with(fp: &RegisterFingerprint, cdid: &str, openudid: &str) -> Self {
         let mut dev = Self::from_owned_fields(
             vec![
@@ -471,12 +423,9 @@ impl DeviceProfile {
     }
 }
 
-/// 匿名游客档案（官方匿名形态）：注册指纹基底去 `openudid`，版本
-/// 身份与 UA 对齐当前客户端（[`align_app_version`] + 指纹自身的
-/// tt-ok 尾段 UA），`pv_player` 随版本身份同值——
-/// **不带 iid/device_id/openudid、零 cookie**，服务端对匿名读播全量放行。
-/// `cdid` 由调用方生成并落库，安装期内保持稳定
-/// （官方同款行为：pm clear 后身份不变，就是 cdid/指纹没变）。
+/// 匿名游客档案（官方匿名形态）：注册指纹基底去 `openudid`，版本身份与 UA 对齐当前客户端，
+/// `pv_player` 随版本身份同值——**不带 iid/device_id/openudid、零 cookie**，服务端对匿名读播全量放行。
+/// `cdid` 由调用方生成并落库，安装期内保持稳定（官方 pm clear 后身份不变，就是 cdid/指纹没变）。
 pub fn anonymous_profile(cdid: &str) -> DeviceProfile {
     let fp = fingerprint_for_cdid(cdid);
     let mut p = DeviceProfile::register_profile_with(fp, cdid, "");
@@ -511,10 +460,9 @@ pub fn fresh_cdid() -> String {
     )
 }
 
-/// 未登录时的匿名 Cookie：reading 系按 `install_id` 风控——**匿名档案
-/// （无 iid）必须零 cookie**（官方 virgin 形态，带未知 install_id 反而
-/// 被静默拒）；注册档案带自己的 install_id + 票。passport_csrf_token
-/// 空值字段只在有 install_id 的形态在场（登录发码语义需要）。
+/// 未登录时的匿名 Cookie：reading 系按 `install_id` 风控——**匿名档案（无 iid）必须零 cookie**
+/// （带未知 install_id 反而被静默拒）；注册档案带自己的 install_id + 票。
+/// passport_csrf_token 空值字段只在有 install_id 的形态在场（登录发码语义需要）。
 pub fn anonymous_cookie(device: &DeviceProfile) -> String {
     let iid = device.get("iid");
     if iid.is_empty() {
@@ -529,8 +477,7 @@ pub fn anonymous_cookie(device: &DeviceProfile) -> String {
     cookie
 }
 
-/// 当前客户端自报的版本身份（与档案 / 注册模板同源：
-/// 见顶部 [`APP_VERSION_CODE`] 常量）。
+/// 当前客户端自报的版本身份（与档案 / 注册模板同源，见 [`APP_VERSION_CODE`]）。
 const APP_VERSION_FIELDS: [(&str, &str); 4] = [
     ("version_code", APP_VERSION_CODE_STR),
     ("version_name", APP_VERSION_NAME),
@@ -538,16 +485,9 @@ const APP_VERSION_FIELDS: [(&str, &str); 4] = [
     ("update_version_code", APP_VERSION_CODE_STR),
 ];
 
-/// 把设备档案的「App 版本身份」对齐到当前版本（device_id/iid 身份不动）。
-///
-/// 过旧的版本身份会让服务端下发退化的扁平 schema；本函数把自报版本
-/// 对齐到当前客户端。真实设备升级 app 后同样只是自报新版本号，
-/// 档案其余字段原样保留。渠道（`channel`）同为构建身份：存量档案
-/// 冻结的旧渠道值在此归一到 [`BUILD_CHANNEL`]（官方 query channel
-/// 恒等于构建渠道）。
-///
-/// **注册产物档案不适用**（service 的 adopt 按轮换元数据跳过本函数走
-/// `heal_registered_profile`，渠道归一在那边做）。
+/// 把设备档案的「App 版本身份」对齐到当前版本（device_id/iid 身份不动）：过旧的版本身份会让服务端
+/// 下发退化的扁平 schema；渠道（`channel`）同为构建身份，存量旧渠道值在此归一到 [`BUILD_CHANNEL`]。
+/// **注册产物档案不适用**（service 的 adopt 按轮换元数据跳过本函数走 `heal_registered_profile`）。
 pub fn align_app_version(profile: &mut DeviceProfile) {
     for (k, v) in APP_VERSION_FIELDS {
         profile.set(k, v);
@@ -557,12 +497,9 @@ pub fn align_app_version(profile: &mut DeviceProfile) {
 
 /// 构造设备信息 protobuf（Medusa message 的 field 12）。
 ///
-/// 设备 proto（x-medusa env.12）：机型组（30~36）按 cdid 确定性恢复
-/// **池指纹**——与注册档案/取流 query 同一套品牌型号，不再全体共用
-/// 一台 Redmi 真机的采集值（官方风控可解出该 proto 与注册身份比对，
-/// 同套才是同源；2026-11-02 去硬编码）。传感器浮点（16~21）在已验证
-/// 发货的量级上按 device_id 确定性抖动 ±3%（真机读数本就因设备而异，
-/// 服务端无法复核具体硬件）；字段 5 的 26 位设备标识与 25~28 的
+/// 机型组（30~36）按 cdid 确定性恢复**池指纹**，与注册档案/取流 query 同一套品牌型号
+/// （官方风控可解出该 proto 与注册身份比对，同套才是同源）；传感器浮点（16~21）在已验证
+/// 发货的量级上按 device_id 确定性抖动 ±3%；字段 5 的 26 位设备标识与 25~28 的
 /// 安装/启动时间戳同为 device_id 确定性派生。
 pub fn device_proto(cdid: &str, device_id: &str) -> Vec<u8> {
     let fp = fingerprint_for_cdid(cdid);
@@ -657,12 +594,9 @@ pub fn device_proto(cdid: &str, device_id: &str) -> Vec<u8> {
     ])
 }
 
-/// JS 移植时的原始采样（Redmi 真机读数 + Redmi 机型组，除 device_id 外
-/// 全部固定）：**不再用于生产**，只供 [`assemble_with_proto`] 的黄金
-/// 向量锚——输入与当年 JS 移植时逐字节一致，锚住算法未漂移。
-///
-/// `version_name` 保留但不使用：现版 JS 的 `deviceProto(deviceId, versionName)`
-/// 同样收了它却没写进 body。
+/// JS 移植时的原始采样（Redmi 真机读数 + Redmi 机型组，除 device_id 外全部固定）：
+/// **不再用于生产**，只供 `assemble_with_proto` 的黄金向量锚——输入与当年 JS 移植时逐字节一致，锚住算法未漂移。
+/// `version_name` 保留但不使用：现版 JS 的 `deviceProto(deviceId, versionName)` 同样收了它却没写进 body。
 pub fn extracted_proto_fixed(device_id: &str) -> Vec<u8> {
     proto(&[
         (1, FieldValue::SInt(1), FieldType::SInt),
@@ -756,12 +690,10 @@ mod tests {
     fn anonymous_profile_has_no_device_identity() {
         let device = anonymous_profile("0f0f0f0f-0000-4000-8000-000000000000");
         assert_eq!(device.get("cdid"), "0f0f0f0f-0000-4000-8000-000000000000");
-        // 匿名形态：无 iid/device_id/openudid（官方 virgin 形态）
         assert_eq!(device.get("iid"), "");
         assert_eq!(device.get("device_id"), "");
         assert_eq!(device.get("openudid"), "");
         assert_eq!(device.get("version_name"), APP_VERSION_NAME);
-        // UA 里的系统版本必须与设备档案的 os_version 一致
         assert_eq!(device.get("os_version"), "14");
         assert!(device.user_agent().contains("Android 14"));
         assert!(device.user_agent().contains(APP_VERSION_CODE_STR));
@@ -773,10 +705,6 @@ mod tests {
         assert_eq!(keys.len(), total, "设备档案不应出现重复 key");
     }
 
-    /// 双口径构造钉死：注册档案原生钉注册口径（Cronet 尾段，2026-11-01
-    /// 实流取证形态），匿名档案对齐当前客户端口径（tt-ok 尾段）——两套
-    /// 身份各自成套，改口径只动常量与构造器，不许在调用点散写。
-    /// 机型耦合字段与 UA 必须来自同一预设（cdid 确定性派生）。
     #[test]
     fn register_and_anonymous_profiles_pin_their_regimes() {
         let fp = fingerprint_for_cdid("cdid-uuid");
@@ -796,7 +724,6 @@ mod tests {
                 && reg.user_agent().contains("zh_CN_#Hans"),
             "注册口径 UA 必须是 tt-ok 尾段 + zh_CN_#Hans（2026-11-02 官方注册实流）"
         );
-        // 机型组同源：brand/model/channel 与指纹预设一一对应
         assert_eq!(reg.get("device_brand"), fp.brand);
         assert_eq!(reg.get("device_type"), fp.model);
         assert_eq!(reg.get("channel"), fp.channel());
@@ -815,8 +742,6 @@ mod tests {
         assert!(anon.user_agent().contains("tt-ok/"));
     }
 
-    /// 指纹池与派生：池非空且预设互不相同；同一 cdid 恒得同一指纹，
-    /// 不同 cdid 有分散度（不允许全池塌缩到单项）。
     #[test]
     fn fingerprint_pool_is_diverse_and_derivation_is_deterministic() {
         assert!(REGISTER_FINGERPRINTS.len() >= 8, "池太小就失去池化意义");
@@ -832,9 +757,7 @@ mod tests {
         let a = fingerprint_for_cdid("cdid-one");
         let b = fingerprint_for_cdid("cdid-one");
         assert!(std::ptr::eq(a, b), "同一 cdid 派生必须确定");
-        // 分散度：10 个不同 cdid 应命中多个预设（md5 均匀性）。判等用
-        // model（池内互异已断言），不用指针——const 引用重物化下指针
-        // 相等不可靠。
+        // 分散度判等用 model（池内互异），不用指针——const 引用重物化下指针相等不可靠
         let hits: std::collections::HashSet<&str> = (0..10)
             .map(|i| fingerprint_for_cdid(&format!("cdid-{i}")).model)
             .collect();
@@ -865,8 +788,7 @@ mod tests {
             "空值 csrf 字段必须在场（缺失时 send_code 走换绑分支报 1001）"
         );
         assert!(cookie.contains("store-region=cn-gd"));
-        // 匿名档案（无 iid）：官方 virgin 形态零 cookie——带未知 install_id
-        // 反而会被静默拒
+        // 匿名档案（无 iid）必须零 cookie——带未知 install_id 反而被静默拒
         let bare = anonymous_profile(&fresh_cdid());
         assert_eq!(anonymous_cookie(&bare), "");
     }
@@ -878,20 +800,14 @@ mod tests {
         device.set("iid", "42");
         let idx = device.iter().position(|(k, _)| k == "iid").unwrap();
         device.set("iid", "43");
-        // 覆盖发生在原位置，不改变字段顺序
         assert_eq!(device.iter().nth(idx), Some(("iid", "43")));
-        // 已存在的 key（cdid 已进匿名档案）走覆盖，不动顺序
         let cdid_pos = device.iter().position(|(k, _)| k == "cdid").unwrap();
         device.set("cdid", "abc");
         assert_eq!(device.iter().nth(cdid_pos), Some(("cdid", "abc")));
-        // 档案外的新 key 追加在尾部（注册流程补 openudid 等字段）
         device.set("openudid", "xyz");
         assert_eq!(device.iter().last(), Some(("openudid", "xyz")));
     }
 
-    /// 旧档案启动时对齐版本身份：四个版本字段
-    /// 原位覆盖，设备身份（device_id/iid/cdid）与其余字段不动——服务端
-    /// 按自报版本号分发功能 schema（过旧版本下排行榜选项表退化为扁平）。
     #[test]
     fn align_app_version_bumps_only_version_fields() {
         let mut legacy = DeviceProfile::from_pairs(
@@ -911,11 +827,9 @@ mod tests {
         assert_eq!(legacy.get("version_name"), APP_VERSION_NAME);
         assert_eq!(legacy.get("manifest_version_code"), APP_VERSION_CODE_STR);
         assert_eq!(legacy.get("update_version_code"), APP_VERSION_CODE_STR);
-        // 身份字段原样
         assert_eq!(legacy.get("iid"), "1905892595382586");
         assert_eq!(legacy.get("device_id"), "1905892595378490");
         assert_eq!(legacy.get("cdid"), "abc-uuid");
-        // 字段顺序不受影响（签名 query 顺序敏感的注释契约）
         let mut keys: Vec<&str> = legacy.iter().map(|(k, _)| k).collect();
         keys.truncate(3);
         assert_eq!(keys, vec!["iid", "device_id", "cdid"]);
@@ -923,7 +837,7 @@ mod tests {
 
     #[test]
     fn profile_roundtrips_through_serde() {
-        // 设备注册后档案要落库，serde 往返必须无损（含字段顺序）
+        // 落库往返必须无损，含字段顺序
         let cdid = fresh_cdid();
         let device = anonymous_profile(&cdid);
         let json = serde_json::to_string(&device).unwrap();
@@ -936,7 +850,6 @@ mod tests {
 
     #[test]
     fn legacy_json_without_user_agent_falls_back() {
-        // schema 演进容错：旧档没有 user_agent 字段时回落到 video_ua()
         let json = r#"{"fields":[["aid","8662"]]}"#;
         let back: DeviceProfile = serde_json::from_str(json).unwrap();
         assert_eq!(back.user_agent(), video_ua());

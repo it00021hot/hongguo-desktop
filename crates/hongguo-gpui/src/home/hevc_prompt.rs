@@ -1,13 +1,7 @@
-//! 缺 HEVC 扩展时的安装引导（Tauri `HevcInstallCard` 的 proactive 形态）。
-//!
-//! Tauri 有两档：解码失败后的**居中主卡**（要么装扩展、要么转兼容格式）与
-//! 提前告知的**底部悬浮卡**。GPUI 侧选流时就会按 `hevc_playable()` 让接口
-//! 下发 H.264（`DecoderCapability::from_hevc`，见 `home/playback/open.rs`），不会
-//! 走到「有声音没画面」那条路——所以这里只做 proactive 那一档：告诉用户当前
-//! 是降档画质，装好扩展后续剧集自动切回 H.265。
-//!
-//! 会话记忆对齐 Tauri `hevc-session`：点过「暂不安装」本进程不再打扰
-//!（切剧/小窗重挂都不重弹），重启应用重置。
+//! 缺 HEVC 扩展时的安装引导（proactive 形态）：GPUI 选流时已按
+//! `hevc_playable()` 让接口下发 H.264，不会走到「有声音没画面」——这里只做
+//! 提前告知（当前是降档画质，装好扩展后续剧集自动切回 H.265）。点过
+//! 「暂不安装」本进程不再打扰，重启应用重置。
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::Disableable;

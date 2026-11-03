@@ -1,15 +1,11 @@
-//! X-Gorgon
-//!
-//! 历史最久的一代签名，对 query + body 做摘要后用 RC4 变种混淆。
+//! X-Gorgon：历史最久的一代签名，对 query + body 做摘要后用 RC4 变种混淆，JS 1:1 移植禁改写法。
 //! 现在仍然必带，但服务端实际校验强度弱于 X-Argus / Medusa。
 
 use crate::constants::{GORGON_PREFIX, GORGON_SDK_VERSION};
 use crate::primitives::{be32, md5_raw, reverse_bits, u32};
 
-/// RC4 变种混淆。
-///
-/// 与标准 RC4 的差异：KSA 阶段交换写法不同，且 PRGA 阶段用 `s[(y+y) & 255]`
-/// 而非 `s[(s[i]+s[j]) & 255]`。这个非标准取样是签名匹配的关键。
+/// RC4 变种混淆：KSA 阶段交换写法不同，PRGA 用 `s[(y+y) & 255]` 而非 `s[(s[i]+s[j]) & 255]`。
+/// 这个非标准取样是签名匹配的关键。
 pub fn rc4_gorgon(data: &[u8], key: &[u8]) -> Vec<u8> {
     debug_assert!(!key.is_empty(), "RC4 密钥不能为空");
     let mut s: [u8; 256] = [0; 256];
@@ -40,17 +36,8 @@ pub fn rc4_gorgon(data: &[u8], key: &[u8]) -> Vec<u8> {
     out
 }
 
-/// 计算 x-gorgon 请求头。
-///
-/// 组成：`[md5(query)[0:4] | md5(body)[0:4] | 4B 空 | sdkVersion(4B LE) | khronos(4B BE)]`
-/// → RC4 混淆 → 逐字节 nibble 交换 + 邻位异或 + 取反
-/// → 前缀 '8404' + 2 字节随机种子 + 标志位 + 密文，整体 hex 编码
-///
-/// # 参数
-/// - `query`：URL 查询串（不含 '?'）
-/// - `body`：请求体；GET 时传 `None`
-/// - `khronos`：服务端时间戳（秒）
-/// - `random`：0..=65535 的随机种子
+/// 计算 x-gorgon 请求头：`[md5(query)[0:4] | md5(body)[0:4] | 4B 空 | sdkVersion(4B LE) | khronos(4B BE)]`
+/// → RC4 混淆 → 逐字节 nibble 交换 + 邻位异或 + 取反 → 前缀 '8404' + 种子 + 标志位 + 密文，hex 编码；`body` GET 传 `None`。
 pub fn x_gorgon(query: &str, body: Option<&[u8]>, khronos: u32, random: u32) -> String {
     let sdk = GORGON_SDK_VERSION.to_le_bytes();
 
@@ -76,8 +63,7 @@ pub fn x_gorgon(query: &str, body: Option<&[u8]>, khronos: u32, random: u32) -> 
     ];
     let mut out = rc4_gorgon(&input, &key);
 
-    // 逐字节变换：nibble 交换 → 与下一字节异或 → 反转比特 → 取反
-    // 下一字节在末尾回绕到 out[0]
+    // 逐字节变换：nibble 交换 → 与下一字节异或（末尾回绕到 out[0]）→ 反转比特 → 取反
     let n = out.len();
     for i in 0..n {
         let value = out[i];
@@ -102,7 +88,6 @@ mod tests {
 
     #[test]
     fn gorgon_length_is_stable() {
-        // 2 字节前缀 + 4 字节种子标志 + 20 字节密文 = 26 字节 = 52 hex 字符
         let got = x_gorgon("a=1", Some(b"{}"), 1_700_000_000, 0x1234);
         assert_eq!(got.len(), 52);
     }
@@ -136,7 +121,6 @@ mod tests {
 
     #[test]
     fn rc4_gorgon_is_not_standard_rc4() {
-        // 标准 RC4 在此处应产出不同结果，确认我们走的是变体
         let data = b"hello world!";
         let key = b"\x4a\x40\x16\x00\x47\x6c\x01\x00";
         let got = rc4_gorgon(data, key);
@@ -145,10 +129,7 @@ mod tests {
 
     #[test]
     fn matches_js_golden_vector() {
-        // 现版 JS 在固定设备档案 / body / khronos / random 下的输出。
-        // KSA 的 `s[i] = s[j]` 一旦被误写成 swap，这里立刻红。
-        // 输入是硬编码的旧档案 query：golden 的意义就是「给定输入 →
-        // 给定输出」，不随兜底档案刷新而漂移。
+        // 现版 JS 固定输入下的输出；KSA 的 `s[i] = s[j]` 被误写成 swap 会立刻红
         const QUERY: &str = concat!(
             "iid=1905892595382586&device_id=1905892595378490&ac=wifi&channel=update_64",
             "&aid=8662&app_name=novelread&version_code=71332&version_name=7.1.3.32",

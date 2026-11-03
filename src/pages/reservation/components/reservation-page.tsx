@@ -31,23 +31,13 @@ import { usePlaySeries } from '@/hooks/use-play-series';
 import type { CalendarItem } from '@/service/schema';
 
 /**
- * 我的预约：已上线 / 待上线两个 tab（带计数），
- * 卡片 = 封面（左下上线日期角标 / 右下集数角标）+ 标题 + 简介一行 +
- * 分类标签。卡片一律进详情（排行榜预约榜同款口径，未上线剧落地
- * 「即将上线」降级视图）；行尾动作列已上线 = 播放 + 详情，
- * 未上线 = 取消预约。
- *
- * 列表单页懒翻页：首屏一页即回、角标计数用响应下发
- * 的 total，滚到底再翻下一页——此前一次性串行拉全，预约上百部时
- * 「已上线」要等 5–8 秒才出来（issue #11）。搜索态在后台把剩余页补齐
- * （对全量条目过滤）。
- *
- * 预约列表接口需要登录，匿名返回空表——未登录时给登录入口而不是空列表。
+ * 我的预约：已上线 / 待上线双 tab（带计数）。卡片一律进详情（未上线落地「即将上线」降级视图）；
+ * 行尾动作已上线 = 播放 + 详情，未上线 = 取消预约。列表单页懒翻页，搜索态后台把剩余页补齐再过滤。
+ * 预约接口需要登录（匿名空表）——未登录时给登录入口而不是空列表。
  */
 
 export function ReservationPage() {
-  // tab/搜索词会话级保留：进详情再返回，停在离开时的 tab（此前回落到
-  // 已上线 tab，是返回体验的头号槽点）
+  // tab/搜索词会话级保留（进详情再返回停在离开时的 tab）
   const [online, setOnline] = useSessionState('hongguo.reservation.tab', true);
   const [query, setQuery] = useSessionState('hongguo.reservation.query', '');
   const { data: account } = useAccount();
@@ -59,8 +49,7 @@ export function ReservationPage() {
   const batchDelete = useReservationsDelete();
   // 标题搜索（对齐官方客户端「搜索预约的剧」）：客户端过滤，条目自带标题
   const shown = current.items.filter((item) => matchListQuery(query, item.title, item.seriesId));
-  // 搜索要对全量条目过滤：搜索态下后台持续翻页补齐（失败即停，重试走
-  // 列表自身的失效/重挂）；普通浏览仍是一页懒翻
+  // 搜索要对全量条目过滤：搜索态下后台持续翻页补齐；普通浏览仍是一页懒翻
   useEffect(() => {
     if (query === '' || current.error || current.isLoading || !current.hasMore) return;
     if (current.isFetchingMore) return;

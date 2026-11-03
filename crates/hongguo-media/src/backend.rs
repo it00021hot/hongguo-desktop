@@ -1,12 +1,6 @@
-//! 转码后端的统一标识。
-//!
-//! 探测、并行度、超订信号都围绕「这次转码实际走了哪条路」。曾经各处用
-//! `decoder` 字符串 `contains("rusty")` 互相猜口径，一个枚举说清楚。
-//! 顺序即优先级：平台硬编 → ffmpeg 硬编 → ffmpeg 软编。
-//!
-//! **没有第四档**：纯 Rust 软解软编已随播放兜底链一起移除。机器上既没有
-//! 平台编码器、也没装 ffmpeg 时，转码根本做不了——那是「没有后端」，不是
-//! 枚举里的一个「档次」，用 `Option::None` 表达。
+//! 转码后端的统一标识：探测、并行度、超订信号都围绕「这次转码实际走了哪条路」，一个枚举说清口径（不再用 `decoder` 字符串互相猜）。
+//! 顺序即优先级：平台硬编 → ffmpeg 硬编 → ffmpeg 软编。**没有第四档**——纯 Rust 软解软编已随播放兜底链移除；
+//! 既无平台编码器也没装 ffmpeg 时转码根本做不了，那是「没有后端」用 `Option::None` 表达，不是枚举里的一个档次。
 
 /// 转码实际走的后端。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -21,10 +15,7 @@ pub enum Backend {
 }
 
 impl Backend {
-    /// 编码是否真的发生在硬件上。
-    ///
-    /// 与设置页的速度三档措辞（硬件/软件加速）同一个口径：`FfmpegSw`
-    /// 尽管经过 ffmpeg，编码仍在 CPU 上，不算硬件。
+    /// 编码是否真的发生在硬件上：与设置页的速度三档措辞同一口径——`FfmpegSw` 尽管经过 ffmpeg，编码仍在 CPU 上，不算硬件。
     pub fn is_hardware(self) -> bool {
         matches!(self, Backend::Platform | Backend::FfmpegHw)
     }
@@ -54,7 +45,6 @@ mod tests {
 
     #[test]
     fn serializes_as_camel_case() {
-        // 前端直接消费这个枚举的序列化形态
         assert_eq!(
             serde_json::to_string(&Backend::FfmpegHw).unwrap(),
             "\"ffmpegHw\""

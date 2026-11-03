@@ -27,11 +27,7 @@ import { useUiStore } from '@/stores/ui';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 
-/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题。
- *
- * 播放不设菜单入口：播放已并回首页沉浸流（无独立 /player 路由），入口是
- * 各页的「播放/继续播放」；独立菜单 + 页内历史与独立的历史页重复。
- * 找剧排第二（用户指定），紧跟首页推荐。 */
+/** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题；播放不设菜单入口（已并回首页沉浸流）。 */
 const NAV_ITEMS = [
   { key: 'home', to: '/', icon: Flame },
   { key: 'browse', to: '/browse', icon: Compass },

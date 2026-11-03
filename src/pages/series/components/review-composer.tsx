@@ -8,12 +8,8 @@ import { cn } from '@/lib/utils';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
 
 /**
- * 剧评输入框（剧评 tab 顶部；Enter/发布提交，成功后缓存失效重取置顶）。
- *
- * 评分随发送走（business_param.score 十分制 = 星级
- * ×2），「我的评分」五星级未选时禁发——score 是剧评身份的一部分，不选
- * 等于没评。表情/输入/发送接线统一走 EmojiSendBox（与弹幕/评论同源）。
- * 登录门槛走后端拒绝 + toast 指路（与互动按钮同一口径）。
+ * 剧评输入框：评分随发送走（十分制 = 星级 ×2），未选星级禁发——score 是剧评身份的一部分。
+ * 表情/输入/发送统一走 EmojiSendBox；登录门槛走后端拒绝 + toast 指路。
  */
 export function ReviewComposer({ seriesId }: { seriesId: string }) {
   const send = useSendSeriesReview(seriesId);

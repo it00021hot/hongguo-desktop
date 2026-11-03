@@ -1,10 +1,7 @@
-//! 「下载到本地」浮层（Tauri `DownloadSheet` + `EpisodeRangePicker` 同款）：
-//! 集数网格逐集勾选、快捷区间（全选/反选/清空/前 10/前 30/后 30）、区间语法
-//! 输入（`1-50`、`1-10, 25, 30-45`），提交走 `download_service::actions::
-//! enqueue_batch`，成功切下载任务页。
-//!
-//! 浮层由壳在**整窗**层渲染（Tauri Sheet 固定 `inset-x-0 bottom-0`，横贯
-//! 侧栏）——`Shell::render` 取 `render_downloads_sheet`，舞台不再自己画。
+//! 「下载到本地」浮层：集数网格逐集勾选、快捷区间（全选/反选/清空/前 10/
+//! 前 30/后 30）、区间语法输入（`1-50`、`1-10, 25, 30-45`），提交走
+//! `download_service::actions::enqueue_batch`，成功切下载任务页。浮层由壳在
+//! 整窗层渲染（`Shell::render` 取 `render_downloads_sheet`）。
 
 use std::sync::Arc;
 

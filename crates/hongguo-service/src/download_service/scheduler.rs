@@ -1,18 +1,7 @@
-//! 下载调度器：后台驱动 worker。
-//!
-//! 职责：从队列挑可运行任务 → 按并发上限派发 → 收尾更新状态。
-//! 单集的具体执行在 [`crate::download_service::worker`]。
-//!
-//! ## 为什么到处是 owned
-//!
-//! 任务体跑在共用任务运行时的 `spawn` 里（见 [`crate::runtime`]），
-//! 要求整个 future 是 `Send`。
-//! 本模块大量使用 `parking_lot` 的锁，其 guard **不是 `Send`**——只要 guard
-//! 存活跨越 `.await`，编译器就会拒绝。因此：
-//!
-//! - 锁只在同步块里取，取完立刻把需要的数据 clone 出来
-//! - 跨 `.await` 传递的一律用 owned 值（`Arc`、`String`、`PathBuf`）
-//! - 进度回调用 `Arc<dyn Fn + Send + Sync>` 持有，不借用栈上的闭包
+//! 下载调度器：后台驱动 worker（挑任务 → 按并发上限派发 → 收尾更新状态），单集执行在
+//! [`crate::download_service::worker`]。
+//! 到处是 owned：任务体跑在共用运行时的 `spawn` 里（future 必须 `Send`），而 parking_lot
+//! guard 不是 `Send`——锁绝不跨 `.await`，只在同步块里取，跨 await 一律传 owned 值。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,9 +19,8 @@ use hongguo_common::{AppError, AppResult};
 pub struct DownloadScheduler {
     /// 一键暂停时置位，让在途任务尽快收尾（同时阻断新派发）
     cancel: Arc<AtomicBool>,
-    /// 每任务取消位（单个停止用）：任务 id → 标志。
-    /// 任务收尾时移除；[`Self::cancel_task`] 对尚未登记的任务先建后置位，
-    /// 把「已派发、未开跑」的窗口也盖住。
+    /// 每任务取消位（单个停止用）：任务 id → 标志，任务收尾时移除；
+    /// `cancel_task` 对尚未登记的任务先建后置位，盖住「已派发、未开跑」的窗口。
     flags: Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
     /// 正在运行的任务数
     running: Arc<Mutex<usize>>,
@@ -75,9 +63,7 @@ impl DownloadScheduler {
     }
 
     /// 取消单个任务（真实取消：在途 worker 在下个分片检查点退出）。
-    ///
-    /// 对尚未登记的任务先建后置位——「已派发、未开跑」的窗口里，
-    /// 标志会被 [`Self::execute_inner`] 读到并立即按取消收尾。
+    /// 对尚未登记的任务先建后置位——「已派发、未开跑」的窗口里标志会被 `execute_inner` 读到并按取消收尾。
     pub fn cancel_task(&self, id: &str) {
         self.flags
             .lock()
@@ -86,10 +72,8 @@ impl DownloadScheduler {
             .store(true, Ordering::SeqCst);
     }
 
-    /// 调度一轮：把能跑的任务派出去。
-    ///
-    /// 在「启动、提交、恢复」时调用；每个任务完成时会自动再触发下一轮
-    /// （见 [`Self::execute`] 末尾的 [`Self::reschedule`]）。
+    /// 调度一轮：把能跑的任务派出去。在「启动、提交、恢复」时调用；
+    /// 每个任务完成时会自动再触发下一轮（见 `execute` 末尾的 `reschedule`）。
     pub async fn run_once(self: &Arc<Self>, state: AppState) {
         if self.is_cancelled() {
             return;
@@ -107,10 +91,8 @@ impl DownloadScheduler {
         }
     }
 
-    /// 完成一个任务后重新调度。
-    ///
-    /// 单独抽出来是为了断开递归类型：`execute` 不直接 `await` `run_once`，
-    /// 否则两者的 opaque future 会形成环，编译器无法确定大小。
+    /// 完成一个任务后重新调度。单独抽出来是为了断开递归类型：
+    /// `execute` 不直接 `await` `run_once`，否则两者的 opaque future 会形成环，编译器无法确定大小。
     fn reschedule(self: &Arc<Self>, state: AppState) {
         let sched = Arc::clone(self);
         crate::runtime::spawn(async move {
@@ -146,9 +128,7 @@ impl DownloadScheduler {
 
     /// 执行单个任务并收尾。
     async fn execute(self: Arc<Self>, state: AppState, task: DownloadTask) {
-        // 编译期自检：断言 execute_inner 的 future 是 Send，
-        // 这样一旦某天又引入非 Send 的持有物，报错会精确指向这一行，
-        // 而不是外层 spawn 那行。
+        // 编译期自检：execute_inner 的 future 必须是 Send，回归时让报错精确指向这一行
         fn assert_send<T: Send>(_: &T) {}
         let fut = self.execute_inner(state.clone(), task);
         assert_send(&fut);
@@ -158,9 +138,7 @@ impl DownloadScheduler {
     async fn execute_inner(self: Arc<Self>, state: AppState, task: DownloadTask) {
         let id = task.id.clone();
         let queue = state.queue();
-        // 每任务取消位：本任务这一轮的标志（worker 在分片边界读取）。
-        // 停止命令可能先于本行到达（cancel_task 先建后置位），所以用
-        // entry 取现值，不覆盖已有的 true。
+        // 取消位：worker 在分片边界读取；停止命令可能先到（先建后置位），entry 取现值不覆盖已有的 true。
         let flag = self
             .flags
             .lock()
@@ -192,8 +170,7 @@ impl DownloadScheduler {
                         super::events::TaskEvent { id },
                     ));
                 } else {
-                    // 队列里记 i18n key，不记「网络请求失败: dns 错误」这种人话：
-                    // `DownloadTask.error` 是被前端直接渲染的，底层细节只该进日志。
+                    // 队列里记 i18n key：DownloadTask.error 被前端直接渲染，底层细节只该进日志。
                     log::error!("[Download] 任务 {id} 失败: {e}");
                     queue.mark_failed(&id, e.i18n_key());
                     self.throttle.forget(&id);
@@ -213,7 +190,6 @@ impl DownloadScheduler {
         ));
         persist(&state);
 
-        // 继续派发下一个（走 reschedule 断开递归类型）
         self.reschedule(state);
     }
 }
@@ -236,8 +212,7 @@ async fn run_one(
     }
     let settings = state.settings();
 
-    // 1) 取流地址（签名 + 清晰度择优）
-    // 下载固定取最高档：清晰度切换是播放时的交互，下载侧没有这个概念。
+    // 下载固定取最高档：清晰度切换是播放时的交互，下载侧没有这个概念；
     // 选流模式保持 Full（下载件不做解码能力翻转），下载件的播放走既有 compat 兜底。
     let play = hongguo_api::play_url::fetch_play_url(
         &task.vid,
@@ -248,7 +223,6 @@ async fn run_one(
     .await
     .map_err(|e| AppError::Network(e.to_string()))?;
 
-    // 2) 输出路径（档案查询是单条 SQL，同步快查即回）
     let series_title = state
         .store
         .series_by_id(&task.series_id)
@@ -261,7 +235,6 @@ async fn run_one(
         .series_dir(&series_title)
         .join(format!("{file_name}.mp4"));
 
-    // 3) 下载
     let episode = EpisodeDownload {
         id: task.id.clone(),
         video_url: play.url,
@@ -278,8 +251,7 @@ async fn run_one(
     let events = state.events().clone();
     let on_progress = move |downloaded: u64, total: u64| {
         queue.update_progress(&task_id, downloaded, total);
-        // 百分比只有 [`DownloadTask::percent`] 一个口径：调度器自己再算一遍
-        // 的话，clamp 之类的修正迟早会只落在一处
+        // 百分比只有 DownloadTask::percent 一个口径，不在调度器里再算一遍。
         let percent = queue.get(&task_id).map(|t| t.percent()).unwrap_or(0.0);
         events.publish(ServiceEvent::DownloadProgress(
             super::events::ProgressEvent {
@@ -301,8 +273,7 @@ async fn run_one(
 
 /// 把队列写回磁盘。
 fn persist(state: &AppState) {
-    // 调度器跑在后台任务里，没有调用方能接住错误；
-    // 落盘失败已由 `persist_tasks` 记进日志，这里只需让它在这里终止。
+    // 调度器跑在后台任务里，没有调用方能接住错误；落盘失败已由 persist_tasks 记进日志。
     let _ = crate::download_service::persist_tasks(&state.store, &state.queue(), "Download");
 }
 
@@ -331,7 +302,6 @@ mod tests {
 
     #[test]
     fn cancel_task_survives_the_dispatch_window() {
-        // 停一个「已派发、未开跑」的任务：先建后置位，登记时不得被覆盖
         let s = DownloadScheduler::new();
         s.cancel_task("t1");
         let flag = s
@@ -368,9 +338,6 @@ mod tests {
 
     #[test]
     fn raising_limit_lets_claim_fill_new_slots() {
-        // 设置页调高并发（保存即改 limit + kick）的调度侧行为：在途任务
-        // 停在旧上限时，新上限下一轮 claim 要能把新坑一次补满，满编后
-        // 不再多派——否则下载页会长时间显示「并发 n/上限」不满。
         let s = DownloadScheduler::new();
         let state = AppState::default();
         let queue = state.queue();
@@ -390,8 +357,6 @@ mod tests {
 
     #[test]
     fn failed_task_records_i18n_key_not_internal_detail() {
-        // 模拟一次失败：调度器落进队列的就是 `e.i18n_key()`，
-        // 前端渲染的 DownloadTask.error 因此是 `error.*` 而不是中文串
         let queue = DownloadQueue::new();
         let t = queue.enqueue(DownloadTask::new("1", "剧", 1, "v", "第1集"));
         let e = AppError::Network("dns 解析失败".into());

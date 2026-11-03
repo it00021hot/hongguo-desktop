@@ -1,8 +1,6 @@
 //! 设置与代理配置。
 //!
-//! ⚠️ `Settings` 两种形态都要：落盘在 `data.json`（沿用 Electron 版的 snake_case
-//! 键名以便平滑迁移），同时又是设置页的 IPC 载荷（前端 `settingsSchema` 声明
-//! camelCase）。所以字段一律 camelCase 收发，用 `alias` 兼容旧落盘键。
+//! `Settings` 两种形态都要：落盘在 `data.json`（沿用 Electron 版 snake_case 键名平滑迁移），又是设置页 IPC 载荷（camelCase）——字段一律 camelCase 收发，`alias` 兼容旧落盘键。
 
 use serde::{Deserialize, Serialize};
 
@@ -31,10 +29,7 @@ pub struct ProxyConfig {
     pub url: String,
 }
 
-/// 代理模式的兼容读取。
-///
-/// 旧版 `ProxyMode` 用了 `#[serde(tag = "mode")]`，落盘成 `{"mode":"system"}`；
-/// 现在契约要求裸字符串 `"system"`。两种都要能读，否则升级即丢代理设置。
+/// 代理模式的兼容读取：旧版落盘成 `{"mode":"system"}`（serde tag 形态），现在契约是裸字符串——两种都要能读，否则升级即丢代理设置。
 fn deserialize_mode<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ProxyMode, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -76,7 +71,6 @@ impl ProxyConfig {
                 }
             }
             ProxyMode::System => {
-                // 依次读常见环境变量，与系统「跟随系统」语义一致
                 for key in [
                     "HTTPS_PROXY",
                     "https_proxy",
@@ -135,11 +129,7 @@ pub fn sanitize_folder_name(name: &str) -> String {
     }
 }
 
-/// 清洗文件名。
-///
-/// 规则与目录名完全一致，长度也就跟着 [`FOLDER_NAME_MAX`]：文件名是单段路径，
-/// 不必再为「红果短剧」子目录预留长度，所以没必要给一个更宽、上限更高的数字——
-/// 那只会让人以为文件名的上限与目录名不同。
+/// 清洗文件名：规则与目录名完全一致，上限同 `FOLDER_NAME_MAX`（文件名是单段路径，不必为子目录预留长度）。
 pub fn sanitize_file_name(name: &str) -> String {
     sanitize_folder_name(name)
 }
@@ -187,9 +177,7 @@ pub struct Settings {
     /// 改动即时生效于新写入，旧目录残留不迁移（与 download_dir 同语义）。
     #[serde(default)]
     pub cache_dir: String,
-    /// 磁盘缓存占用上限（MB；0 = 不限）。超过上限后自动删除最旧的缓存文件
-    /// （封面/头像转码产物与兼容转码产物都算），见
-    /// `hongguo_service::storage_service::cache::auto_clean`。
+    /// 磁盘缓存占用上限（MB；0 = 不限），超限后自动删最旧的缓存文件（封面/头像与兼容转码产物都算），见 `hongguo_service::storage_service::cache::auto_clean`。
     #[serde(default)]
     pub cache_limit_mb: u32,
     /// 缓存自动清理周期（天；0 = 关闭）。超过这个天数的缓存文件在自动清理
@@ -285,8 +273,7 @@ impl Settings {
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     }
 
-    /// 缓存上限（字节）：0 = 不限。给
-    /// `hongguo_service::storage_service::cache::auto_clean` 用。
+    /// 缓存上限（字节）：0 = 不限。给 `hongguo_service::storage_service::cache::auto_clean` 用。
     pub fn cache_limit_bytes(&self) -> u64 {
         u64::from(self.cache_limit_mb) * 1024 * 1024
     }
@@ -351,8 +338,6 @@ mod tests {
 
     #[test]
     fn clamp_prefetch_episodes_bounds() {
-        // 上限 10（issue #11：连播预取放开到用户自设），对齐 StreamCache
-        // 预取标记位；0 = 关闭预取是合法值
         let mut s = Settings {
             prefetch_episodes: 99,
             ..Default::default()
@@ -440,7 +425,6 @@ mod tests {
 
     #[test]
     fn reads_legacy_plain_and_tagged_proxy_modes() {
-        // 旧版带 tag 的对象写法与新版裸字符串写法都要能读
         let tagged: ProxyConfig =
             serde_json::from_str(r#"{"mode":{"mode":"direct"},"url":""}"#).unwrap();
         assert_eq!(tagged.mode, ProxyMode::Direct);
@@ -450,14 +434,12 @@ mod tests {
 
     #[test]
     fn unknown_proxy_mode_is_rejected() {
-        // 不认识的值不能悄悄回落成 system，那等于把用户的代理设置改掉
         let err = serde_json::from_str::<ProxyConfig>(r#"{"mode":"nonsense"}"#).unwrap_err();
         assert!(err.to_string().contains("nonsense"), "实际: {err}");
     }
 
     #[test]
     fn goes_out_as_camel_case_for_ipc() {
-        // 前端 settingsSchema / proxyConfigSchema / namingTemplateSchema
         let s = Settings {
             download_dir: "D:\\dl".into(),
             cache_dir: "D:\\cache".into(),
@@ -526,7 +508,6 @@ mod tests {
 
     #[test]
     fn cache_policy_defaults_to_off() {
-        // 默认两档都关：不主动删用户的数据
         let s = Settings::default();
         assert_eq!(s.cache_limit_mb, 0);
         assert_eq!(s.cache_ttl_days, 0);
@@ -534,7 +515,6 @@ mod tests {
 
     #[test]
     fn old_store_without_cache_policy_reads_as_off() {
-        // 老库没有这两个字段：serde(default) 让它们是 0（关），不是崩
         let s: Settings =
             serde_json::from_str(r#"{"downloadDir":"/tmp","maxConcurrency":3,"theme":"dark"}"#)
                 .unwrap();
@@ -557,7 +537,6 @@ mod tests {
 
     #[test]
     fn folder_name_strips_trailing_dot_and_space() {
-        // Windows 不允许目录名以点或空格结尾
         assert_eq!(sanitize_folder_name("剧名. "), "剧名");
     }
 
@@ -570,7 +549,6 @@ mod tests {
     fn names_are_length_bounded() {
         let long = "剧".repeat(200);
         assert_eq!(sanitize_folder_name(&long).chars().count(), FOLDER_NAME_MAX);
-        // 文件名复用同一套规则，上限也就同一个
         assert_eq!(sanitize_file_name(&long), sanitize_folder_name(&long));
     }
 }

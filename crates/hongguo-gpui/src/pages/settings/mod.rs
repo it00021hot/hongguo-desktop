@@ -1,11 +1,6 @@
-//! 设置页（Tauri `/settings` = `settings-page.tsx` 的 GPUI 对齐）。
-//!
-//! 卡片：账户（登录态/退出）/ 下载目录（可选目录）/ 命名与并发 / 网络代理
-//! （含测试连接）/ 播放（三开关 + 转码后端探测 + ffmpeg 指引）/ 存储
-//! （缓存目录 + 占用与缓存清理）/ 更新（版本展示）/ 保存。草稿语义同
-//! Tauri：改过才进草稿，保存成功丢草稿回「跟随服务端」。保存与探测走
-//! service（`settings_service::save`、`storage_service`、`capability::probe`），
-//! 与 Tauri 的 settings/transcode command 同一段。
+//! 设置页：账户 / 下载目录 / 命名与并发 / 网络代理（含测试连接）/ 播放
+//! （三开关 + 转码后端探测）/ 存储（占用与清理）/ 更新 / 保存。草稿语义：
+//! 改过才进草稿，保存成功丢草稿。保存与探测走 service。
 
 use std::sync::Arc;
 

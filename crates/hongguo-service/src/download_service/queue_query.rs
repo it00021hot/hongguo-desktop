@@ -1,7 +1,5 @@
-//! 下载队列的只读聚合。
-//!
-//! 与 `queue.rs` 的分工：那边管状态流转（写），这里只提供查询（读）。
-//! 两者都挂在同一个 `impl DownloadQueue` 上，因此方法可以直接互相调用。
+//! 下载队列的只读聚合：与 `queue.rs`（写路径）分工，两者挂在同一个
+//! `impl DownloadQueue` 上，方法可以直接互相调用。
 
 use super::DownloadQueue;
 use hongguo_common::model::{QueueStatus, TaskStatus};

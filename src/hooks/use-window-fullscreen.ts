@@ -5,16 +5,9 @@ import { tf } from '@/locales';
 import { useUiStore } from '@/stores/ui';
 
 /**
- * 窗口级全屏：走原生
- * 窗口全屏，不走元素 requestFullscreen——WKWebView 里元素全屏只置 DOM 状态
- * （fullscreenElement 置位、promise 成功），原生呈现永不发生，窗口纹丝不动；
- * 就算能呈现，Portal 到 body 的浮层（倍速/清晰度菜单）在全屏元素子树外
- * 也不可见。窗口全屏这两个坑都不存在，切集重挂载（旧实现换成稳定祖先的
- * 缘由）更与全屏无关。
- *
- * store 只是窗口真值的镜像：applyWindowFullscreen 是唯一写入口（先调后端
- * 再落 store，usePinWindow 同款）；系统侧变化（Esc 退全屏、mac 绿按钮）
- * 经 resize 事件回流（useWindowFullscreenSync，挂应用壳一次）。
+ * 窗口级全屏，不走元素 requestFullscreen——WKWebView 里元素全屏只置 DOM 状态、原生呈现永不发生，
+ * Portal 到 body 的浮层在全屏元素子树外也不可见。store 只是窗口真值的镜像：applyWindowFullscreen
+ * 是唯一写入口（先调后端再落 store）；系统侧变化（Esc、mac 绿按钮）经 resize 事件回流（useWindowFullscreenSync）。
  */
 
 /** 设定窗口全屏。后端失败时 store 不翻转，按钮图标不撒谎。 */

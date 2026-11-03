@@ -1,7 +1,6 @@
 //! 互动 command：点赞 / 收藏 / 发弹幕 / 发评论 / 互动状态。
 //!
-//! 全部要求登录态（cookie + x-tt-token 随 `api_env` 走），匿名调用会被
-//! 服务端静默拒绝——前端应在未登录时禁用入口而非放行重试。
+//! 全部要求登录态（cookie + x-tt-token 随 `api_env` 走），匿名调用会被服务端静默拒绝——前端应在未登录时禁用入口而非放行重试。
 
 use serde::Deserialize;
 use tauri::State;
@@ -45,21 +44,8 @@ pub async fn danmaku_send(
     Ok(cid)
 }
 
-/// 发一条播放页评论（与面板同流：单集维度 group=vid / group_type=30）。
-/// 返回**服务端回显的完整评论对象**（头像/昵称/uid/时间齐全）——
-/// 前端直接插列表顶部。
-///
-/// `mention_user_id` + `context_comment_ids` 同时在场 = **@提及评论**
-/// （rich_text tp=15/uri=uid +
-/// business_param.aibot_mention_context=最近评论 id 嵌套数组；官方单集
-/// 流里的提及评论带 AI 回复）。
-/// `mention_user_name` 是被提及者昵称——text 前缀与段文本都是
-/// `@昵称\u{FFFC}`，缺了会张冠李戴成「小果」。
-///
-/// `image` 在场 = **附图评论**：body 顶层多
-/// `image_data`，表情类另带 `business_param.emoji_scene_type`（第三方
-/// 表情 2 / 自定义表情 4；本地图片评论**不带**）。附图与 @提及是官方两套
-/// 形态，附图在场时走附图流（正文可空）。
+/// 发一条播放页评论（与面板同流：单集维度 group=vid / group_type=30），返回**服务端回显的完整评论对象**（头像/昵称/uid/时间齐全）供前端直接插列表顶部。
+/// `mention_user_id` + `context_comment_ids` 同在 = **@提及评论**（rich_text tp=15/uri=uid + business_param.aibot_mention_context），`mention_user_name` 是被提及者昵称——text 前缀与段文本都是 `@昵称\u{FFFC}`，缺了会张冠李戴；`image` 在场 = **附图评论**（第三方表情 2 / 自定义表情 4，本地图片不带 emoji_scene_type；附图与 @提及是官方两套形态，附图在场时走附图流、正文可空）。
 #[expect(
     clippy::too_many_arguments,
     reason = "平铺参数表与 registry.ts 的 IPC 契约一一对应，包结构体反而要二次拆装"
@@ -79,8 +65,7 @@ pub async fn comment_send(
     let env = state.api_env();
     let text = text.trim().to_string();
     let mention = match (mention_user_id, mention_user_name, context_comment_ids) {
-        // 上下文 id 允许为空（面板无评论时也能 @；官方上下文是软信息，
-        // 实包为最近评论 id，缺失不影响提及生效）
+        // 上下文 id 允许为空（面板无评论时也能 @；官方上下文是软信息，缺失不影响提及生效）
         (Some(uid), Some(name), Some(ids)) if !uid.trim().is_empty() => Some(CommentMention {
             user_id: uid.trim().to_string(),
             user_name: name,
@@ -112,10 +97,7 @@ pub async fn mention_list(
     fetch_mention_list(&series_id, &env).await
 }
 
-/// 回复一条评论（或一条回复）。回复流与面板同单集维度（group=vid /
-/// group_type=30）。`reply_to_reply_id` 回复「回复」时传被回复的那条
-/// 回复 id（多级），纯评论回复传空。返回**服务端回显的完整回复对象**——
-/// 前端直接插回复区（同款行为）。
+/// 回复一条评论（或一条回复），回复流与面板同单集维度（group=vid / group_type=30）。`reply_to_reply_id` 回复「回复」时传被回复的那条回复 id（多级），纯评论回复传空；返回**服务端回显的完整回复对象**供前端直接插回复区。
 #[tauri::command]
 pub async fn comment_reply(
     state: State<'_, AppState>,

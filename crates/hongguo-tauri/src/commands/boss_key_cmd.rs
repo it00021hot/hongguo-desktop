@@ -1,14 +1,7 @@
-//! 老板键：全局快捷键隐藏 / 显示主窗口（issue #4）。
+//! 老板键：全局快捷键隐藏 / 显示主窗口。注册走 tauri-plugin-global-shortcut（Rust 侧直调，不经前端 → 无需 capabilities）。
+//! 切换语义：窗口可见 → 隐藏并向前端发事件（暂停播放，声音不漏）；已隐藏 → 显示 + 聚焦（前端续播）。快捷键持久化在 `Settings.boss_key`（空串 = 关闭），启动装载与保存设置后各 apply 一次，换键先注销旧键。GPUI 壳无此层。
 //!
-//! 注册走 tauri-plugin-global-shortcut（Rust 侧直调，不经前端 → 无需
-//! capabilities）。切换语义：窗口可见 → 隐藏并向前端发事件（暂停播放，
-//! 声音不漏）；已隐藏 → 显示 + 聚焦（前端续播）。快捷键持久化在
-//! `Settings.boss_key`（空串 = 关闭），启动装载与保存设置后各 apply 一次；
-//! 换键时先注销旧键。GPUI 壳无此层（全局快捷键插件是 Tauri 侧能力）。
-//!
-//! 桌面专属：global-shortcut 插件官方在 Android/iOS 整 crate cfg 掉
-//! （`init`/类型符号不存在），除 `set_boss_key` 命令（移动端返回
-//! [`AppError::Unsupported`]）外全部实现按平台门控。
+//! 桌面专属：global-shortcut 插件官方在 Android/iOS 整 crate cfg 掉，除 `set_boss_key` 命令（移动端返回 [`AppError::Unsupported`]）外全部实现按平台门控。
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::Mutex;
@@ -30,11 +23,7 @@ pub const BOSS_KEY_HIDDEN: &str = "boss-key-hidden";
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 
-/// 注册（或换绑 / 注销）老板键。空串 = 注销现有键。
-/// 注册失败（快捷键被其他程序占用等）返回错误；所有失败路径都把旧键
-/// 回滚注回插件并同步 CURRENT——不留「设置里有键、实际没生效」或
-/// 「插件占着键、CURRENT 却是空」的漂移态（后者会让之后每次换键都撞
-/// already registered，保存永久失败）。
+/// 注册（或换绑 / 注销）老板键，空串 = 注销现有键。所有失败路径都把旧键回滚注回插件并同步 CURRENT——不留「设置里有键、实际没生效」或「插件占着键、CURRENT 却是空」的漂移态（后者会让之后每次换键都撞 already registered，保存永久失败）。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn apply(app: &AppHandle, shortcut: &str) -> AppResult<()> {
     let shortcut = shortcut.trim().to_string();
@@ -85,9 +74,7 @@ fn boss_key_fired(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
     }
 }
 
-/// 新键注册失败时把旧键尽力注回插件，返回实际生效的键（None = 没回滚成）。
-/// 失败不外泄：保存本身已经在报错，回滚失败只让旧老板键失效一次，
-/// 下次保存成功即自愈。
+/// 新键注册失败时把旧键尽力注回插件，返回实际生效的键（None = 没回滚成）。失败不外泄：保存本身已经在报错，回滚失败只让旧老板键失效一次，下次保存成功即自愈。
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn rollback_register(app: &AppHandle, old: Option<&str>) -> Option<String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -131,8 +118,7 @@ fn toggle(app: &AppHandle) {
 /// 设置保存后的重注册钩子（settings_cmd::save_settings 调用）。
 #[tauri::command]
 pub fn set_boss_key(app: AppHandle, shortcut: String) -> AppResult<()> {
-    // 移动端没有全局快捷键插件（桌面专属），如实拒绝而不是假成功——
-    // 假成功会让设置页显示「已保存」但老板键永远不生效
+    // 移动端没有全局快捷键插件（桌面专属），如实拒绝——假成功会让设置页显示「已保存」但老板键永远不生效
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = (app, &shortcut);

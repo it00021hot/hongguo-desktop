@@ -180,7 +180,6 @@ mod tests {
 
     #[test]
     fn completed_task_reports_full_percent() {
-        // 调度器的进度事件直接复用这个口径，完成态必须报到 100
         let mut t = DownloadTask::new("1", "t", 1, "v", "");
         t.mark_completed("a.mp4", 100);
         assert_eq!(t.percent(), 100.0);
@@ -226,7 +225,6 @@ mod tests {
 
     #[test]
     fn task_goes_out_as_camel_case_for_ipc() {
-        // 前端 downloadTaskSchema 声明的是 camelCase
         let t = DownloadTask::new("1", "剧", 2, "v2", "第二集");
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["seriesId"], "1");

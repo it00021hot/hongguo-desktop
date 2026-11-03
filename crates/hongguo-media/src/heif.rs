@@ -1,22 +1,6 @@
-//! HEIC 静图纯 Rust 解码：HEIF 容器 → rusty_h265 → JPEG。
-//!
-//! 封面转码能力阶梯的最后一级（平台 WIC/VT → ffmpeg → 本级），ffmpeg 与
-//! 平台解码器都没有的机器靠它保证封面可用（无它时封面在协议层静默 404）。
-//!
-//! 平台态：Windows 上是 WIC 之后的真兜底；macOS 上通常**休眠**——
-//! WKWebView 原生解 HEIC，前端不进代理，本级因此也轮不到。但模块跨平台
-//! 无条件编译（依赖 jpeg-encoder 同为主依赖，见 Cargo.toml）：代理入口是
-//! 通用的，留一条纯软解兜底零成本，macOS CI 侧还顺带持续编译测试它。
-//!
-//! 「HEIC = HEVC 进 HEIF 容器」：`meta` box 里 `pitm` 选主 item、`iinf`
-//! 声明类型（hvc1）、`ipco` 存属性（hvcC 参数集）、`iloc` 给出 mdat 里的
-//! 字节区间——与 MP4 的 stsd/sample 机制同源，所以参数集解析与视频管线
-//! 共用 [`crate::hevc::param_nalus_from_hvcc`]，解码复用转码同款
-//! rusty_h265 用法。
-//!
-//! 已知边界（红果 CDN 样本形态）：单 `hvc1` item、数据在
-//! `mdat`（construction_method 0）。Apple 相机那种 grid 拼贴 HEIC 目前
-//! 不支持——遇到时明确报错而不是解出错图；CDN 现网没有这种形态。
+//! HEIC 静图纯 Rust 解码：HEIF 容器 → rusty_h265 → JPEG——封面转码能力阶梯的最后一级（平台 WIC/VT → ffmpeg → 本级），无它时封面在协议层静默 404。
+//! 平台态：Windows 是 WIC 之后的真兜底；macOS 通常休眠（WKWebView 原生解 HEIC，前端不进代理），但模块跨平台无条件编译、代理入口通用，留一条纯软解兜底零成本。
+//! 「HEIC = HEVC 进 HEIF 容器」：meta box 的 pitm/iinf/ipco(hvcC)/iloc 与 MP4 的 stsd/sample 机制同源，参数集解析与视频管线共用 [`crate::hevc::param_nalus_from_hvcc`]；已知边界（红果 CDN 样本形态）：单 `hvc1` item、数据在 `mdat`（construction_method 0），grid 拼贴不支持、遇到时明确报错而不是解出错图。
 
 use rusty_h265::Decoder;
 
@@ -61,8 +45,6 @@ fn params_len(param_nalus: &[Vec<u8>]) -> usize {
     param_nalus.iter().map(|n| n.len() + START_CODE.len()).sum()
 }
 
-// ---------------------------------------------------------------- HEIF 解析
-
 /// 主 item（hvc1）的解码所需材料：hvcC 载荷与图像数据字节区间。
 struct PrimaryHvc1<'a> {
     hvcc: &'a [u8],
@@ -104,8 +86,7 @@ impl<'a> PrimaryHvc1<'a> {
                 b"pitm" => primary_id = parse_pitm(&data[b.payload.clone()])?,
                 b"iloc" => loc = parse_iloc(&data[b.payload.clone()], primary_id)?,
                 b"iprp" => {
-                    // 属性容器：iprp（普通容器 box）→ ipco → hvcC。多属性时
-                    // 取第一个 hvcC——CDN 样本每 item 一份（ipma 一对一关联）
+                    // 属性容器：iprp（普通容器 box）→ ipco → hvcC；多属性时取第一个 hvcC（CDN 样本每 item 一份）
                     for child in boxes_in(data, b.payload.start, b.payload.end) {
                         if child.typ == *b"ipco" {
                             hvcc = find_hvcc(data, child.payload.start, child.payload.end);
@@ -245,8 +226,7 @@ fn parse_iloc(payload: &[u8], primary_id: u32) -> AppResult<Option<(u64, u64)>> 
         } else {
             c.u32()? as u64
         };
-        // v1/v2 在 item_ID 后直接是 construction_method——中间没有 reserved
-        // （真机样本钉过：base=808 正好是 mdat 数据起点，少读一个 u16 全对齐）
+        // v1/v2 在 item_ID 后直接是 construction_method，中间没有 reserved（真机样本钉过：base=808 正好是 mdat 数据起点，少读一个 u16 全对齐）
         let construction_method = if version >= 1 { c.u16()? } else { 0 };
         let _data_ref_index = c.u16()?;
         let base_offset = c.bytes(base_offset_size)?;
@@ -301,10 +281,7 @@ impl Cursor<'_> {
     }
 }
 
-// ---------------------------------------------------------------- 帧处理
-
-/// rusty_h265 帧 → 8bit 4:2:0 平面（与 transcode/codec 的 extract_yuv 同一
-/// 口径：crop 之后的可见区，10bit 右移取高字节）。
+/// rusty_h265 帧 → 8bit 4:2:0 平面（与 transcode/codec 的 extract_yuv 同一口径：crop 之后的可见区，10bit 右移取高字节）。
 fn extract_yuv420(frame: &rusty_h265::Frame) -> (Vec<u8>, Vec<u8>, Vec<u8>, usize, usize) {
     let p = &frame.picture;
     let (crop_x, crop_y, crop_w, crop_h) = p.crop;
@@ -360,8 +337,7 @@ fn yuv420_to_rgb(y: &[u8], u: &[u8], v: &[u8], w: usize, h: usize) -> Vec<u8> {
             &v[(row / 2) * cw..(row / 2 + 1) * cw],
         );
         for col in 0..w {
-            // 先各自 >>13 归一到 0..255 / ±127 量级，再乘矩阵系数——
-            // 否则「Y 放大 × 矩阵系数」两级定点连乘会溢出 i32
+            // 先各自 >>13 归一到 0..255 / ±127 量级，再乘矩阵系数——两级定点连乘会溢出 i32
             let luma = ((yr[col] as i32 - 16) * Y_SCALE) >> 13;
             let cb = ((ur[col / 2] as i32 - 128) * C_SCALE) >> 13;
             let cr = ((vr[col / 2] as i32 - 128) * C_SCALE) >> 13;
@@ -413,9 +389,7 @@ fn read_u32(buf: &[u8], pos: usize) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// 真实 CDN 样本回归（tests/fixtures/heic-cover-sample.heic，25KB，
-    /// fqnovelpic 封面原样）：单 hvc1 item + hvcC/ispe/iloc。整条链
-    /// （解析 → 软解 → JPEG）产物必须是合法 JPEG。
+    /// 真实 CDN 样本回归（tests/fixtures/heic-cover-sample.heic，fqnovelpic 封面原样）：整条链产物必须是合法 JPEG。
     #[test]
     fn decodes_real_cdn_sample_to_jpeg() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -426,17 +400,13 @@ mod tests {
         assert!(jpg.len() > 1_000, "封面产物不应是空壳");
     }
 
-    /// 非 HEIF 输入必须在解析层报错，而不是往后传炸弹。
     #[test]
     fn rejects_garbage_input() {
         let err = decode_primary_to_jpeg(b"not a heif file at all......");
         assert!(err.is_err(), "垃圾输入必须报错");
     }
 
-    /// 解码器层面的健壮性：随机字节喂进去要报错或什么都不吐，**不能崩**。
-    ///
-    /// 封面是外部数据（CDN 上的 HEIC），解码器是第三方纯 Rust 实现——这里崩
-    /// 一次就是整个进程崩，代价远高于"这张封面出不来"。
+    /// 封面是外部数据、解码器是第三方纯 Rust 实现——喂垃圾不能崩（崩一次就是整个进程崩）。
     #[test]
     fn the_hevc_decoder_survives_garbage_without_panicking() {
         let mut d = rusty_h265::Decoder::new();
@@ -444,7 +414,6 @@ mod tests {
         let _ = d.push_annexb(&garbage, None);
         let _ = d.next_frame();
         d.flush();
-        // 再取一次也不该 panic
         let _ = d.next_frame();
     }
 }

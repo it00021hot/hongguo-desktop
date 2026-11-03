@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DANMAKU_EMOJI_LIST, parseEmojiSegments } from './danmaku-emoji';
 
-// 资源 URL 是构建期哈希值，断言「是个字符串」就够；expect.any 返回 any，
-// cast 成 string 让对象字面量过 type-aware 规则
 const anyUrl = expect.any(String) as string;
 
 describe('danmaku emoji', () => {

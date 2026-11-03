@@ -1,6 +1,4 @@
-/**
- * 与 Rust serde 模型对应的 zod schema（发现域：首页推荐流 / 找剧筛选）。
- */
+/** 发现域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
 
 /** 信息流的一条剧集卡片（Rust `discover::FeedItem` 的 camelCase 序列化）。 */
@@ -35,8 +33,7 @@ export const feedPageSchema = z.object({
 export type FeedItem = z.infer<typeof feedItemSchema>;
 export type FeedPage = z.infer<typeof feedPageSchema>;
 
-/** 首页顶栏 tab 条目（Rust `recommend::FeedTabMeta`，bookmall/tab 响应
- *  tab_item[] 下发；顺序即官方顶栏顺序，非活跃 tab 的 bookstoreId 为 null）。 */
+/** 首页顶栏 tab 条目（Rust `recommend::FeedTabMeta`；顺序即官方顶栏顺序，非活跃 tab 的 bookstoreId 为 null）。 */
 export const feedTabSchema = z.object({
   tabType: z.string(),
   /** 服务端下发标题（中文原文，直显） */

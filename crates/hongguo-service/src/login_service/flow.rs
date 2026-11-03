@@ -1,8 +1,6 @@
 //! 登录流程编排：发码 / 提交 / MFA 单次校验 / 取消 / 退出 / 状态 / 资料刷新。
-//!
 //! 编排只有这一份：Tauri 命令与 GPUI 面板都调这里。MFA 后台轮询经
-//! [`polling::spawn_mfa_polling`] 起（共用任务运行时），状态经事件总线
-//! （`LoginMfaStateEvent`，前端事件 `login-mfa-state`）送达壳。
+//! `polling::spawn_mfa_polling` 起，状态经事件总线（`LoginMfaStateEvent`）送达壳。
 
 use serde::Serialize;
 
@@ -87,7 +85,6 @@ pub async fn submit(
 }
 
 /// MFA 上行短信验证轮询（单次调用；前端 3 秒间隔重发时用）。
-///
 /// 轮询到 `registered` 后**自动重登**换取会话并落库（用户只需回复短信）。
 pub async fn mfa_verify_once(state: &AppState) -> AppResult<LoginResult> {
     let flow = state
@@ -138,7 +135,7 @@ pub async fn user_info(state: &AppState) -> AppResult<PassportUser> {
     account::fetch_and_refresh_user(state).await
 }
 
-/// 退出登录（清空账号设置；纯本地操作，1.1.3 实测无网络请求）。
+/// 退出登录（清空账号设置；纯本地操作）。
 pub fn logout(state: &AppState) -> AppResult<()> {
     *state.login_csrf.write() = None;
     *state.login_mfa.write() = None;
@@ -158,9 +155,8 @@ pub(crate) fn mfa_view(ctx: &MfaContext) -> LoginResult {
 
 /// 登录命令的统一返回：成功 / 需 MFA / MFA 等待中。
 #[derive(Debug, Clone, Serialize)]
-// enum 级 rename_all 只作用于变体名（tag 值）；变体字段必须各自
-// 再标一次 camelCase——否则 Mfa 序列化成 retry_tag 之类 snake_case，
-// 前端 zod 校验直接挂
+// enum 级 rename_all 只作用于变体名（tag 值）；变体字段必须各自再标一次 camelCase，
+// 否则 Mfa 序列化成 retry_tag 之类 snake_case，前端 zod 校验直接挂
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum LoginResult {
     #[serde(rename_all = "camelCase")]
@@ -184,9 +180,6 @@ pub enum LoginResult {
 mod tests {
     use super::*;
 
-    /// Mfa 变体的序列化形状必须与前端 loginResultSchema 逐字段一致
-    /// （一次 zod 校验失败事故的回归锁）。channel_mobile 用替换后的
-    /// 真实通道号（parse 层已做 95→106 修正，这里锁序列化形状）。
     #[test]
     fn mfa_serializes_to_frontend_shape() {
         let r = mfa_view(&MfaContext {

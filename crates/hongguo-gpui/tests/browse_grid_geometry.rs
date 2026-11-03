@@ -1,14 +1,6 @@
-//! 剧集卡片网格的几何断言：找剧页与 Tauri `SeriesCardGrid` 对齐的守卫。
-//!
-//! 断言的是**规则**（不是某一屏的像素）：
-//! 1. 响应式列数 = Tauri 断点（sm 640 / md 768 / lg 1024 / 2xl 1536）；
-//! 2. 行内每张卡等宽 = （容器宽 − 间隙）/ 列数（与 CSS grid 的 `1fr` 列同解）；
-//! 3. 封面盒高 = 宽 ÷ 3:4（Tauri `aspect-[3/4]`）；
-//! 4. 末行不满一排时真实卡保持列宽、右侧留空（不把残卡拉成巨卡）；
-//! 5. 同行卡片等高（Tauri grid 默认 `align-items: stretch`）。
-//!
-//! 需要 gpui 的 test-support（`screenshot` feature 已连带开启），运行方式：
-//! `cargo test -p hongguo-gpui --features screenshot --test browse_grid_geometry`
+//! 剧集卡片网格的几何断言（断言规则而非某一屏像素）：响应式列数、行内等宽
+//! =（容器宽 − 间隙）/ 列数、封面高 = 宽 ÷ 3:4、末行缺卡保持列宽右侧留空、
+//! 同行等高。需 test-support（screenshot feature）。
 
 #[path = "../src/pages/grid.rs"]
 mod grid;

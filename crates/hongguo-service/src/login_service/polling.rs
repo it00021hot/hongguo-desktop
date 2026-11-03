@@ -11,10 +11,8 @@ const MFA_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// 轮询间隔。
 const MFA_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// MFA 上行短信验证的展示文案（补上「回复 X 到 Y」）。
-///
-/// 通道号已在 tips 里出现时不再补，避免重复。`tips` 是服务端下发的展示
-/// 内容，原样透传，不做 i18n。
+/// MFA 上行短信验证的展示文案（补上「回复 X 到 Y」；通道号已在 tips 里出现时不再补）。
+/// `tips` 是服务端下发的展示内容，原样透传，不做 i18n。
 pub fn mfa_tips(ctx: &MfaContext) -> String {
     if ctx.channel_mobile.is_empty() || ctx.tips.contains(&ctx.channel_mobile) {
         ctx.tips.clone()
@@ -87,7 +85,6 @@ pub fn spawn_mfa_polling(state: AppState) {
                             return;
                         }
                         Ok(LoginOutcome::Mfa(next)) => {
-                            // 新一轮验证（换了方式）：替换流程继续等
                             *state.login_mfa.write() = Some(MfaFlow {
                                 ctx: (*next).clone(),
                                 mobile: flow.mobile.clone(),

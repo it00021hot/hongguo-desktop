@@ -9,14 +9,8 @@ use crate::app_state::AppState;
 use hongguo_common::model::MergeTask;
 use hongguo_common::{AppError, AppResult};
 
-/// 快速合并某剧已下载的分集。
-///
-/// 流复制没有「逐集」的天然边界——`concat_copy` 一次拼完，所以这里只在
-/// 开始前与结束后各报一次进度。取消只能在开写前检查一次：拼接本身是
-/// 顺序字节拷贝，中途打断会留下半截文件。
-///
-/// 收 `&AppState` 而不是 command 的 `State<'_, _>`：合并在后台线程上跑，
-/// 那里拿不到 command 的生命周期借用（见壳内 `commands::merge_cmd::merge_series`）。
+/// 快速合并某剧已下载的分集。流复制没有「逐集」的天然边界——`concat_copy` 一次拼完，
+/// 只在开始前与结束后各报一次进度；取消只能在开写前检查一次（拼接中途打断会留下半截文件）。
 pub fn quick_merge(
     state: &AppState,
     series_id: &str,
@@ -47,10 +41,8 @@ pub fn quick_merge(
     Ok((output, size, count))
 }
 
-/// 编码不一致就拒绝，不产出文件。
-///
-/// [`hongguo_media::remux::concat_copy`] 是整文件字节级顺序拼接：各集的容器
-/// 结构或编码参数对不上时，产物连索引都过不去。
+/// 编码不一致就拒绝，不产出文件：`concat_copy` 是整文件字节级顺序拼接，
+/// 各集容器结构或编码参数对不上时产物连索引都过不去。
 fn ensure_codec_consistent(inputs: &[(u32, PathBuf)]) -> AppResult<()> {
     if let Some(episode) = hongguo_media::codec_probe::check(inputs).mismatch_episode {
         return Err(AppError::Media(format!(
@@ -79,7 +71,6 @@ mod tests {
 
     #[test]
     fn mismatching_encodings_are_refused() {
-        // UI 把快速合并置灰只是提示；真正的保证必须落在执行点上
         let dir = temp_dir("mismatch");
         let inputs = vec![
             episode(&dir, 1, &TrackSpec::video(1, b"hvc1", 1920, 1080)),

@@ -12,11 +12,6 @@ import {
   writeVolume,
 } from './playback-prefs';
 
-/**
- * 测试环境是 node，没有 window.localStorage。
- * 这里塞一个最小实现——本模块只在函数里读它，测试再晚装也能生效。
- * 不为此引入 jsdom：一个存储桩不值得多一个依赖。
- */
 function installLocalStorage() {
   const map = new Map<string, string>();
   const storage = {
@@ -31,7 +26,6 @@ function installLocalStorage() {
 
 let storage: ReturnType<typeof installLocalStorage>;
 
-/** 切集会重建 <video>，新建元素的倍速恒为 1，所以这些值必须跨会话留存。 */
 describe('playback-prefs', () => {
   beforeEach(() => {
     storage = installLocalStorage();
@@ -54,7 +48,6 @@ describe('playback-prefs', () => {
   });
 
   it('静音是独立状态，不会被音量归零顶掉', () => {
-    // 用户静音后 volume 仍是原值，恢复时不能把静音悄悄取消
     writeVolume(0.8);
     writeMuted(true);
     expect(readVolume()).toBeCloseTo(0.8);

@@ -10,13 +10,6 @@ import { downloadProgressSchema, downloadTaskSchema } from './download';
 import { loginMfaStateSchema } from './login';
 import { rankPageSchema } from './rank';
 
-/**
- * 响应契约 fixture：按 Rust serde 模型的既有形状（出处见
- * `docs/hongguo-api-endpoints.md` 与各 schema 注释）手建的「 Rust 会产出
- * 什么」。这层网防的是**前端 schema 被无意改严/改形**与 serde 漂移——
- * Rust 模型改动当天这里会红（配合原计划批次三的 Rust 侧 struct 化）。
- */
-
 const commentItem = {
   commentId: '7350000000000000001',
   userName: '用户甲',
@@ -31,7 +24,6 @@ const commentItem = {
 describe('弹幕/评论/剧评契约', () => {
   it('commentItem：完整字段过校验，缺省字段补默认', () => {
     const parsed = commentItemSchema.parse(commentItem);
-    // userId/score/scoreSuffixText 是 default 字段
     expect(parsed.userId).toBe('');
     expect(parsed.score).toBe('');
   });
@@ -107,7 +99,6 @@ describe('登录 MFA 事件三态', () => {
     expect(loginMfaStateSchema.safeParse({ state: 'waiting', serverTip: '回复短信' }).success).toBe(
       true,
     );
-    // Rust 侧只发这三种；出现别的 state 是契约漂移
     expect(loginMfaStateSchema.safeParse({ state: 'pending' }).success).toBe(false);
   });
 });
@@ -138,7 +129,6 @@ describe('下载域契约', () => {
     expect(
       downloadProgressSchema.safeParse({ id: '1', downloaded: 1, total: 2, percent: 50 }).success,
     ).toBe(true);
-    // Rust 端 percent 恒有（clamp 到 0.0），缺字段即漂移
     expect(downloadProgressSchema.safeParse({ id: '1', downloaded: 1, total: 2 }).success).toBe(
       false,
     );

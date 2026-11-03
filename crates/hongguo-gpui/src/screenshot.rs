@@ -1,13 +1,8 @@
-//! 在进程内把窗口**已渲染的场景**存成 PNG（`feature = "screenshot"`）。
-//!
-//! 存在的理由：macOS 上 `screencapture` 抓别的进程窗口要屏幕录制授权，CI/
-//! 无头环境拿不到，抓到的只有壁纸（现象：窗口在,截出来是桌面）。GPUI 自带
-//! `Window::render_to_image`——把最近一帧的场景渲到离屏纹理再读回像素，不
-//! 经过窗口服务器，不需要任何系统授权。这是图形链路唯一可靠的取证手段。
-//!
-//! 用法：`HONGGUO_SHOT=/tmp/shot.png HONGGUO_SHOT_COUNT=6 make gpui-screenshot`
-//! （或 `cargo run -p hongguo-gpui --features screenshot`），产物为
-//! `/tmp/shot.png.1`…`N`，间隔 `HONGGUO_SHOT_INTERVAL_MS`（默认 1500ms）。
+//! 在进程内把窗口已渲染的场景存成 PNG（`feature = "screenshot"`）：macOS 上
+//! `screencapture` 抓别的进程要屏幕录制授权，无头环境拿不到；GPUI 的
+//! `Window::render_to_image` 不经窗口服务器、零授权，是图形链路唯一可靠的
+//! 取证手段。用法：`HONGGUO_SHOT=<路径> HONGGUO_SHOT_COUNT=N`（产物
+//! `<路径>.1…N`，间隔 `HONGGUO_SHOT_INTERVAL_MS`，默认 1500ms）。
 
 use std::time::Duration;
 

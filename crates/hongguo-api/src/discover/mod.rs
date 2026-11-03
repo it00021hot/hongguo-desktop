@@ -1,18 +1,6 @@
-//! 发现类接口：推荐信息流（榜单落地页）。
-//!
-//! 口径：
-//! - 路径 `/reading/distribution/category/landpage/v1/`，**必须 POST**（GET 404）；
-//! - **官方 body 协议**：业务参数全部在
-//!   POST body——`client_req_type/limit/offset/req_type:"only_content"/
-//!   select_items{genre:[...]}`。`genre` 取值：真人剧=short_play、
-//!   漫剧=comic_series、AI剧=ai_series（selector 面板的「体裁」维度，
-//!   服务端过滤，条目自带的 content_type 数字不可靠：1 里混着动漫）；
-//! - 响应信封 `{"code": 0, "data": {video_data[], next_offset, has_more, session_id}}`；
-//! - `video_data[].category_schema` 是**二次序列化的 JSON 字符串**（题材标签表）。
-//!
-//! 预约日历（`search/uncover_subscribe`）与书城 tab（`bookmall/tab`）的
-//! 必填参数尚未破解（POST 报 100103 PARAM_INVALID，GET 404），探测用例
-//! 留在文末 `probe` 模块，待补参后转正。
+//! 发现类接口：推荐信息流（榜单落地页 landpage，必须 POST）与找剧筛选。
+//! 业务参数全部在 POST body（`genre` 取值 short_play/comic_series/ai_series，
+//! 服务端过滤——条目自带的 content_type 数字不可靠）。
 
 mod model;
 mod parse;
@@ -24,12 +12,9 @@ use hongguo_common::{AppError, AppResult};
 use hongguo_signer::API_ORIGIN;
 
 pub use model::{BrowseFilters, FeedItem, FeedPage, SelectorRow};
-// 保持公共路径 `discover::SelectorItem` 可用（被 `SelectorRow` 聚合引用，
-// crate 内暂无直接引用者）。作为 crate 公开再导出，rustc 不再按
-// unused_imports 处理，故不需要 `#[expect]`。
+// 保持公共路径 `discover::SelectorItem` 可用；公开再导出后 rustc 不再按 unused_imports 处理
 pub use model::SelectorItem;
-// JSON/字段助手已收敛进 utils::json（P3-C9）；这里再导出，保持
-// `super::discover::X` 的既有跨域引用路径不变（rank/search/… 共 6 域）。
+// 再导出 utils::json 助手，保持 `super::discover::X` 的既有跨域引用路径不变
 pub(crate) use hongguo_common::utils::json::{
     check_code, int_field, num_field, parse_tags, str_field,
 };
@@ -39,13 +24,10 @@ use parse::{parse_browse_panel, parse_feed};
 /// 推荐信息流落地页。
 pub const LANDPAGE_PATH: &str = "/reading/distribution/category/landpage/v1/";
 
-// 首页推荐流已迁移到书城 cell 换一换（recommend 模块 fetch_recommend_feed）；
-// landpage 只服务找剧筛选浏览。
+// 首页推荐流已迁移到书城换一换（recommend 模块）；landpage 只服务找剧筛选浏览
 
 /// 拉找剧筛选面板（八行维度选项，选项表随服务端运营变化，不落死）。
-///
-/// 请求体只有三个键，
-/// 响应 `data.selector_rows[]`。
+/// 请求体只有三个键，响应 `data.selector_rows[]`。
 pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
     let body = serde_json::to_vec(&serde_json::json!({
         "need_selector_panel": false,
@@ -64,12 +46,7 @@ pub async fn fetch_browse_panel(env: &ApiEnv) -> AppResult<Vec<SelectorRow>> {
 }
 
 /// 拉一页找剧结果（与推荐流同端点，多维 select_items 服务端过滤）。
-///
-/// `session_id` 首页传空串，翻页传上一页响应里的值（服务端按它记住筛选上下文）。
-/// 每页 20 条（用户指定；响应 next_offset 游标会跟着走，翻页无算术依赖）。
-///
-/// `creation_status` 仅在选中时在参，
-/// 全部选省略整个键（他家不发空串）。
+/// `session_id` 首页空串、翻页传上一页响应里的值；`creation_status` 仅选中时在参，全部选省略整个键。
 pub async fn fetch_browse(
     filters: &BrowseFilters,
     offset: i64,
@@ -87,8 +64,6 @@ pub async fn fetch_browse(
         "select_items": filters.to_select_items(),
         "session_id": session_id,
     });
-    // 完结状态筛选：客户端合成的「完结状态」行选中值
-    // 走 body 顶层；全部选时不发该键（他家省略）
     if !filters.creation_status.is_empty() {
         body["creation_status"] = serde_json::Value::String(filters.creation_status.clone());
     }
@@ -104,14 +79,12 @@ pub async fn fetch_browse(
 mod probe {
     use super::*;
 
-    /// 真实接口探测（不进常规测试套件）：
-    /// `cargo test probe_ -- --ignored --nocapture`
+    /// 真实接口探测用的匿名环境（`cargo test probe_ -- --ignored --nocapture`）。
     fn anon_env() -> ApiEnv {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
     }
 
-    /// 弹幕列表直连验证（vid 在路径里、参数在顶层、
-    /// x-reading-request 头 = ticket-random）。
+    /// 弹幕列表直连验证（vid 在路径里、参数在顶层、x-reading-request 头）。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_danmaku_verified() {
@@ -138,7 +111,6 @@ mod probe {
             "sort": 1,
         });
         let bytes = serde_json::to_vec(&body).unwrap();
-        // x-reading-request: {ticket_ms}-{random}
         let ticket = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -170,8 +142,6 @@ mod probe {
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_bookmall_verified() {
         let env = anon_env();
-        // 干净重放：设备字段全进 DeviceProfile（签名器只拼这一套），业务参数只留
-        // 非设备项，UA/版本与设备字段成套（官方客户端形态）。
         let pairs = vec![
             ("ac", r#"wifi"#),
             ("aid", r#"8662"#),
@@ -229,7 +199,6 @@ mod probe {
             ),
             x_tt_token: None,
         };
-        // 对照：我们自己的匿名档案，仅版本身份压到注册口径（UA 保留我们的机型）
         let mut own = hongguo_signer::anonymous_profile("0f0f0f0f-0000-4000-8000-000000000001");
         for key in [
             "version_code",
@@ -279,8 +248,6 @@ mod probe {
         .map(|(k, v): (&str, &str)| (k.to_string(), v.to_string()))
         .collect();
 
-        // 对照实验：设备 cookie（install_id/ttreq 是
-        // 设备注册回执）。带与不带各打一次，隔离 ILLEGAL_ACCESS 的成因。
         let mut with_cookie = env.clone();
         with_cookie.cookie = Some("passport_csrf_token=; passport_csrf_token_default=; store-region=cn-gd; store-region-src=did; install_id=2169800441475978; ttreq=1$f814f969f9b9fe3c43ab008c4e981e84d23a6b4d".to_string());
         let no_cookie = crate::client::api_call_full(
@@ -498,8 +465,7 @@ mod probe_browse {
 #[cfg(test)]
 mod probe_panel_cookie {
     use super::*;
-    /// 带登录 cookie 的面板请求——对比匿名探测（8 行）验证服务端是否
-    /// 按登录态下发不同面板（官方 App 只有 7 行，缺 duration）。
+    /// 带登录 cookie 的面板请求，对比匿名探测验证是否按登录态下发不同面板。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_browse_panel_with_cookies() {
@@ -521,8 +487,7 @@ mod probe_panel_cookie {
 #[cfg(test)]
 mod probe_duration {
     use super::*;
-    /// duration 维度筛选是否被服务端接受（面板可能按设备不下发该行，
-    /// 但 select_items 带它要有意义才算可用）。
+    /// duration 维度筛选是否被服务端接受。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_browse_duration_filter() {

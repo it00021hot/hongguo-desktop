@@ -21,14 +21,9 @@ use crate::ui_button::button as Button;
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 /// `list()` 变高虚拟列表的喂养状态（页面持有一份，`list(state, …)` 挂元素）。
-///
-/// ListState 的条目数要显式对账，两种对账语义不同：
-/// - **整替**（换键 / 新搜索 / 首页重拉）→ [`Self::replace`] 标记新代数，
-///   下次 [`Self::sync`] 走 `reset`——测量缓存作废、滚动回顶；
-/// - **追加翻页** → 不动代数，sync 时走 `splice` 追加——已有行的测量与
-///   滚动位置原样保留。
-///
-/// 可见行之外不参与布局/解码/绘制，滚多深每帧成本都恒定。
+/// 条目数显式对账，两种语义：整替（换键/新搜索）→ [`Self::replace`] 标新
+/// 代数、sync 走 `reset`（测量缓存作废、滚动回顶）；追加翻页 → 不动代数、
+/// sync 走 `splice`（已有行的测量与滚动位置保留）。可见行之外不参与布局。
 pub(crate) struct VirtualRows {
     state: gpui_kit::ListState,
     epoch: u64,
@@ -94,16 +89,10 @@ pub(crate) fn search_box(input: &Entity<InputState>, cx: &App) -> gpui_kit::Div 
         )
 }
 
-/// 选择圆钮（Tauri PickDot）：选中实心主色 + 对勾，未选空心圈。
-///
-/// 用 gpui-base 的无样式 `Checkbox`：勾选语义、焦点、键盘激活与无障碍
-/// （role=checkbox / aria-checked）由库负责，形状与配色由本壳给（圆点 =
-/// Tauri 同款；库自带的 `component::checkbox` 是方框，形态对不上）。根节点
-/// 显式给 20px，命中区与原来那个手搓圆点一致。
-///
-/// 点击必须拦冒泡：圆钮是**卡片按钮的子节点**（卡片在管理态的点击也是
-/// 「切换选中」），不拦的话同一次点击既触发圆钮的 on_change 又冒泡到卡片
-/// 的 on_click → 切换两次 = 什么都没发生（点圆钮没反应）。
+/// 选择圆钮：选中实心主色 + 对勾，未选空心圈。用 gpui-base 的无样式
+/// `Checkbox`（勾选语义/焦点/键盘激活/无障碍由库负责，库自带 checkbox 是
+/// 方框、形态对不上）。点击必须拦冒泡：圆钮是卡片按钮的子节点，不拦的话
+/// 同一次点击既触发 on_change 又冒泡到卡片 on_click → 切换两次 = 没切换。
 pub(crate) fn pick_dot(
     id: ElementId,
     picked: bool,

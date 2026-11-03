@@ -52,11 +52,8 @@ import { markPickerClosed } from '../../playback-signals';
 const RATES = [0.75, 1, 1.25, 1.5, 2, 3];
 
 /**
- * 控件按钮的统一样式。
- *
- * 悬浮层压在深色视频上，必须固定白字。默认 `ghost` 变体的 hover 底色来自
- * 主题 token，浅色主题下会变成一块浅灰糊在画面上，所以这里覆盖掉。
- * 常态完全透明——只有鼠标真的移上去才给一点反馈。
+ * 控件按钮统一样式：悬浮层压在深色视频上必须固定白字（ghost 变体 hover 底色来自
+ * 主题 token，浅色主题下会糊在画面上，所以覆盖）；常态完全透明。
  */
 const CHROME_BUTTON = 'h-8 gap-1.5 bg-transparent text-white hover:bg-white/20 hover:text-white';
 
@@ -78,11 +75,8 @@ interface Props {
   episodes: Episode[];
   currentIndex: number;
   /**
-   * 下载面板是否打开。
-   *
-   * 状态由播放器持有而不是控件内部：连播要不要继续只有播放器知道，
-   * 控件自己藏起来的话，播完自动下一集照样切集，
-   * `PlayerView` 带着 key 整体重挂载，面板和勾选一起被吃掉。
+   * 下载面板开合状态由播放器持有：连播要不要继续只有播放器知道，
+   * 控件自己藏起来的话播完自动下一集照样切集，面板和勾选一起被吃掉。
    */
   downloading: boolean;
   onDownloadingChange: (open: boolean) => void;
@@ -91,44 +85,26 @@ interface Props {
   /** 本集提供的全部档位。只有一档时不渲染切换菜单 */
   definitions: VideoDefinition[];
   /**
-   * 当前播放地址。`<video>` 以它为 `key`，换清晰度就会**重建元素**，
-   * 所以它同时是控件 effect 的依赖键：切清晰度、或兜底转成 H.264 之后
-   * 地址变了，事件监听跟着重建——绑在旧元素上时，新元素的 `play` 事件
-   * 收不到，播放按钮就会一直卡在「暂停」图标。
+   * 当前播放地址。`<video>` 以它为 `key`，换清晰度就会重建元素，所以它同时是
+   * 控件 effect 的依赖键：地址变了事件监听跟着重建，绑在旧元素上新元素的 play 事件收不到。
    */
   src: string | null;
   /** 选清晰度。`undefined` 表示交回后端自动取最高档 */
   onDefinitionChange: (definition: number | undefined) => void;
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
-  /**
-   * 进入小屏播放：同一窗口原地缩成 480×270 落屏幕右下角，播放零中断
-   * （见 use-mini-window）。这里只挂按钮，状态编排都在宿主。
-   */
+  /** 进入小屏播放：只挂按钮，状态编排都在宿主（见 use-mini-window）。 */
   onOpenMini: () => void;
-  /**
-   * 进入竖屏播放（几何与 IME 组合都收在 use-portrait-window，宿主持有）。
-   * 竖屏形态的控件由 MiniScreenControls 承担，本组件只在横屏出现，
-   * 所以这里只有「进入」方向，没有退出键。
-   */
+  /** 进入竖屏播放（几何与 IME 组合都收在 use-portrait-window）；竖屏形态控件由 MiniScreenControls 承担，本组件只在横屏出现。 */
   onEnterPortrait: () => void;
   /** 隐身模式开关（鼠标离开窗口自动隐藏 + 暂停）。状态在播放页。 */
   incognito: boolean;
   onToggleIncognito: () => void;
-  /**
-   * 沉浸流形态开关：为 true 时控制栏带「选集」入口（贴按钮向上弹的
-   * 数字网格）。不传即无。
-   */
+  /** 沉浸流形态开关：为 true 时控制栏带「选集」入口。 */
   immersive?: boolean;
   /** 选集浮层里点选某一集（跳集，由播放器接 store） */
   onPickEpisode?: (vidIndex: number) => void;
-  /**
-   * 悬浮层可见性（受控）。
-   *
-   * 裁决在 PlayerView：静止倒计时 / 暂停 / 任一面板打开都在那一层算好，
-   * 这里不再自养一套定时器——两套定时器各行其是时，就会出现
-   * 「控制栏还在、简介没了」或反过来的精神分裂。
-   */
+  /** 悬浮层可见性（受控）：裁决在 PlayerView，这里不自养定时器（两套定时器会出现「控制栏还在、简介没了」）。 */
   visible: boolean;
   /** 指针进入/离开控制栏本体：悬在控制栏上时不许静止倒计时收起（宿主页裁决） */
   onControlsEnter?: () => void;
@@ -136,15 +112,9 @@ interface Props {
 }
 
 /**
- * 自绘播放控件。
- *
- * 不用原生 `controls`：它既不跟主题，也放不下「下载到本地 / 清晰度」这类业务动作。
- * 媒体状态（进度、时长、音量、倍速）全部由本组件持有——原生控件撤掉后，
- * 没人再替我们发 `timeupdate`，状态只能自己接。
- *
- * 快进/快退不占按钮位，由快捷键 `←` `→` 承担；播放键旁的步进按钮是
- * **上一集 / 下一集**（与 `↑` `↓` 同一逻辑）。完整选集在控制栏的「选集」
- * 浮层，这里只给最常用的「接着看下一集」一个单击入口。
+ * 自绘播放控件。不用原生 `controls`（不跟主题、放不下业务动作）；媒体状态全部
+ * 由本组件持有（原生控件撤掉后没人再发 timeupdate）。快进/快退由快捷键承担，
+ * 步进按钮是上一集/下一集；完整选集在「选集」浮层。
  */
 export function PlayerControls({
   videoRef,
@@ -184,8 +154,7 @@ export function PlayerControls({
   const [rate, setRate] = useState(1);
   // 全屏：窗口级真值（Esc/绿按钮变化经 useWindowFullscreenSync 回流）
   const { fullscreen, toggleFullscreen } = useWindowFullscreen();
-  // 无边框播放：chrome 全藏不进 OS 全屏。
-  // 与全屏互斥——点全屏先退无边框，点无边框先退全屏
+  // 无边框播放与全屏互斥：点全屏先退无边框，点无边框先退全屏
   const frameless = useUiStore((s) => s.playerFrameless);
   const setFrameless = useUiStore((s) => s.setPlayerFrameless);
   const toggleFrameless = () => {
@@ -246,16 +215,12 @@ export function PlayerControls({
     video.addEventListener('volumechange', onVolume);
     video.addEventListener('ratechange', onRate);
 
-    // 元素可能在挂载后才拿到 src 变化，进来先同步一次。小屏切回大屏时
-    // 控件是对**正在播的流**挂载的（video 不随大小屏切换卸载），当前
-    // 时间不补同步的话进度条会先闪一拍 0:00
+    // 元素可能在挂载后才拿到 src 变化，进来先同步一次；小屏切回大屏时控件对正在播的流挂载，不补同步进度条会闪 0:00
     onMeta();
     onTime();
     onVolume();
     onRate();
-    // 播放态双向同步：新元素还没起播时 `paused` 本来就是 true，无脑置位
-    // 会把「正在播」刷成暂停；反过来小屏切回大屏时元素**正在播**，`play`
-    // 事件不会再来了，不推一把按钮就永远停在暂停态（视频明明在走）
+    // 播放态双向同步：小屏切回大屏时元素正在播、play 事件不会再来了，不推一把按钮永远停在暂停态
     if (video.paused) onPauseEvt();
     else onPlay();
 
@@ -331,10 +296,8 @@ export function PlayerControls({
     return () => document.removeEventListener('mousedown', onDown);
   }, [enhancePanelOpen, setEnhancePanelOpen]);
 
-  // 选集浮层点外部关闭。选中集数**不关**浮层（连选连跳），
-  // 浮层常驻在鼠标下方，后续点击都落在浮层内部，永远到不了舞台——
-  // 「选着选着视频暂停了」的穿透从结构上不可能再发生。
-  // mousedown 先关、click 后到：关浮层打进点击冷却，这一下不会变成暂停。
+  // 选集浮层点外部关闭：选中集数不关浮层（连选连跳）；mousedown 先关、click 后到，
+  // 关浮层打进点击冷却这一下不会变成暂停
   useEffect(() => {
     if (!seriesPanelOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -364,15 +327,9 @@ export function PlayerControls({
       onMouseEnter={onControlsEnter}
       onMouseLeave={onControlsLeave}
       className={cn(
-        // 纯悬浮：不要任何底色/渐变蒙版，就一组裸图标压在画面上。
-        // 可读性靠白色 + 投影，不靠底板——底板一加就变成一条色块，破坏了画面。
-        //
-        // 投影是 filter：非 none 的 filter 会把本层变成 stacking context，
-        // 从这里向上弹的浮层（选集/弹幕设置/音量）的 z-30 全被困在层内、
-        // 整棵按 z:auto 参与舞台排序，重叠区压不过 z-10 信息层/z-20 互动栏
-        // ——悬浮无手形、点击算「外部」直接关浮层。所以 root 必须自带 z-30 抬整层；同时
-        // pointer-events-none 让出指针（透明 padding 不截获悬停/点击/滚轮，
-        // 也不反过来盖住互动栏底端），两行内容可见时 auto 接回。
+        // 纯悬浮：无底色蒙版，可读性靠白色 + 投影。root 自带 z-30 抬整层（非 none 的
+        // filter 会把本层变成 stacking context，困住向上弹的浮层），pointer-events-none
+        // 让出指针（透明 padding 不截获悬停/点击/滚轮），两行内容可见时 auto 接回
         'pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col gap-2 px-4 pt-10 pb-3 text-white',
         'drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]',
       )}
@@ -414,15 +371,11 @@ export function PlayerControls({
           {formatDuration(current)} / {formatDuration(duration)}
         </span>
 
-        {/* 弹幕发送框（控制栏左段时间之后，常驻）。
-            w-52 在窄舞台下放不下，允许收缩到 w-32，输入框本身 min-w-0 兜底 */}
+        {/* 弹幕发送框（常驻）；窄舞台下允许收缩，输入框 min-w-0 兜底 */}
         <DanmakuSendBox vid={currentVid ? `${currentVid}:${seriesId}` : ''} currentSec={current} />
 
         <div className="ml-auto flex items-center gap-1">
-          {/* modal={false}：modal 菜单开着时会把整个 body 设成
-              pointer-events:none（只有弹层自己豁免），控件重挂载撞上它就是
-              大片区域悬浮不灵/点不动——选集浮层底下两排点不了就是它。非模态
-              菜单不动 body，行为对齐普通弹层（点外部/选中即收）。 */}
+          {/* modal={false}：modal 菜单会把 body 设成 pointer-events:none，控件重挂载撞上就是大片区域点不动 */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className={cn(CHROME_BUTTON, 'font-mono')}>
@@ -441,9 +394,8 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* 清晰度切换。本地已下载的集只有一版，definitions 为空——
-              这时按钮照常出现但置灰并说明原因：直接不渲染会让用户以为
-              「这个功能本来就没有」，而在线流那一集它又出现了。 */}
+          {/* 清晰度切换：本地已下载的集只有一版（definitions 空）时按钮置灰并说明原因，
+              直接不渲染会让用户以为功能本来就没有 */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
@@ -483,9 +435,7 @@ export function PlayerControls({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* 画质增强：档位三段选 + 锐化强度滑条 + 状态说明，面板贴按钮
-              向上弹（弹幕设置面板同款锚定）。与弹幕面板互斥——两个黑玻璃
-              面板叠着只会互相遮挡。按钮在无流可用时置灰（没有画面可增强） */}
+          {/* 画质增强：档位三段选 + 锐化强度滑条 + 状态说明，与弹幕面板互斥；无流可用时置灰 */}
           <div ref={enhancePanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.enhanceSettings')}
@@ -585,11 +535,8 @@ export function PlayerControls({
                   : t('player.episodes')}
               </Button>
               {seriesPanelOpen && (
-                // 贴着按钮向上弹（弹幕设置面板同款锚定）。宽度必须写死在
-                // wrapper 上——% 会相对按钮宽度塌缩，8 列网格直接挤死。
-                // z-30 压过互动栏(z-20)：浮层打开时 chromeShown 恒真、互动栏
-                // 可见且可悬停，不抬层它会盖住浮层右下几列按钮（悬浮不吃、
-                // 点击被吃）。所有从控制栏向上弹的浮层统一 z-30。
+                // 贴按钮向上弹。宽度写死在 wrapper（% 会相对按钮宽度塌缩）；
+                // z-30 压过互动栏(z-20)——浮层打开时互动栏可见可悬停，不抬层会盖住浮层右下几列
                 <div className="absolute right-0 bottom-full z-30 mb-3 max-h-[62vh] w-[460px] max-w-[92vw] scrollbar-thin overflow-y-auto">
                   <EpisodePicker
                     seriesId={seriesId}
@@ -616,14 +563,12 @@ export function PlayerControls({
             {t('player.download')}
           </Button>
 
-          {/* 小屏播放：同一窗口缩成 480×270 落屏幕右下角，
-              播放不断——不是系统 PiP（尺寸归系统管），也不是第二个窗口 */}
+          {/* 小屏播放：同一窗口缩成 480×270，播放不断——不是系统 PiP 也不是第二个窗口 */}
           <IconButton label={t('player.miniWindow')} onClick={onOpenMini}>
             <MiniWindowIcon />
           </IconButton>
 
-          {/* 弹幕设置：「弹」字方框 + 齿轮角标 + 上方浮层面板。与画质增强
-              面板互斥（同款黑玻璃面板，叠着互相遮挡） */}
+          {/* 弹幕设置面板，与画质增强面板互斥 */}
           <div ref={danmakuPanelRef} className="relative flex items-center">
             <IconButton
               label={t('player.danmakuSettings')}
@@ -678,9 +623,7 @@ export function PlayerControls({
             />
           </IconButton>
 
-          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局——旧的横向展开
-              会把弹幕按钮挤走），浮层盖在按钮上方，移出即收起。
-              交互保持逻辑见 VolumePopup（pointer capture 伪 mouseleave 坑）。 */}
+          {/* 音量：hover 弹出竖条浮层（绝对定位不占布局，旧的横向展开会把弹幕按钮挤走） */}
           <VolumePopup
             volume={volume}
             muted={muted}
@@ -688,22 +631,17 @@ export function PlayerControls({
             onSetVolume={setVolumeValue}
           />
 
-          {/* 隐身模式（一只眼睛）：开启后鼠标离开窗口 → 整窗透明 + 暂停，
-              鼠标回来即恢复显示。看不该看的东西时的「闪避键」 */}
+          {/* 隐身模式：开启后鼠标离开窗口 → 整窗透明 + 暂停，回来即恢复 */}
           <IconButton label={t('player.incognito')} onClick={onToggleIncognito}>
             <Eye className={cn('size-4', incognito ? 'text-white' : 'text-white/55')} aria-hidden />
           </IconButton>
 
-          {/* 竖屏播放：窗口收窄成按视频宽高比算宽的竖条，
-              竖屏视频刚好包住画面不留两侧黑边。小屏里不出现（本组件不渲染
-              在小屏）；竖屏中的控件是 MiniScreenControls 竖屏形态，所以
-              这里只做「进入」入口 */}
+          {/* 竖屏播放：窗口收窄成竖条包住画面；小屏不出现，竖屏中的控件是 MiniScreenControls 竖屏形态 */}
           <IconButton label={t('player.portrait')} onClick={onEnterPortrait}>
             <RectangleVertical className="size-4" />
           </IconButton>
 
-          {/* 无边框播放：chrome 全藏但不进
-              OS 全屏，窗口保持原几何；macOS 红绿灯一并藏。与全屏互斥 */}
+          {/* 无边框播放：chrome 全藏但不进 OS 全屏，窗口保持原几何；与全屏互斥 */}
           <IconButton
             label={t(frameless ? 'player.exitFrameless' : 'player.frameless')}
             onClick={toggleFrameless}

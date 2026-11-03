@@ -16,19 +16,14 @@ pub fn hevc_playable() -> bool {
     hongguo_media_platform::capability::playback::hevc_playable()
 }
 
-/// HEVC 视频扩展 appx 的下载直链与期望 SHA-256。
-///
-/// 链接是维护者 Gitee 仓库根目录的仓库内直链（国内直连友好；原 pixeldrain
-/// 镜像直链已被其反盗链策略 403 拒绝），换镜像时同步改这两个常量；哈希
-/// 不一致一律拒装——防链接被换、传输损坏，也防文件床的任何意外。
+/// HEVC 视频扩展 appx 的下载直链与期望 SHA-256。换镜像时同步改这两个常量；
+/// 哈希不一致一律拒装——防链接被换、传输损坏。
 const HEVC_APPX_URL: &str =
     "https://gitee.com/it00021hot/hongguo-desktop/raw/main/HEVC视频扩展-双击安装.appx";
 const HEVC_APPX_SHA256: &str = "46695112aa70a05faf71c69ecf4ff0502a3b82d152168d3ffb67219eafe51b85";
 
 /// 按需下载并安装 HEVC 视频扩展，返回安装后的能力重探结果。
-///
-/// `Add-AppxPackage` 是用户级安装：免管理员、不依赖 App Installer；包为微软
-/// 商店签名，Win10 1709+ 侧载默认放开。无论成败都清理临时文件。
+/// `Add-AppxPackage` 用户级安装（免管理员）；无论成败都清理临时文件。
 pub async fn install_hevc_extension(proxy: ProxyConfig) -> AppResult<bool> {
     let path = temp_path()?;
     download(&path, proxy).await?;
@@ -48,7 +43,6 @@ pub async fn install_hevc_extension(proxy: ProxyConfig) -> AppResult<bool> {
 fn temp_path() -> AppResult<PathBuf> {
     let mut p = std::env::temp_dir();
     p.push("hongguo-hevc-extension.appx");
-    // 上次异常退出可能留下半截文件，独占写入前先清场
     let _ = std::fs::remove_file(&p);
     Ok(p)
 }

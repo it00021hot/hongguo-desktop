@@ -25,16 +25,9 @@ const DM_FONT_MIN = 15;
 const DM_FONT_MAX = 22;
 
 /**
- * 弹幕渲染层（DOM 形态，替代旧 canvas）：
- *
- * 每条弹幕是一个绝对定位的 `<span>`，Web Animations API 线性滚过一屏，
- * 位置更新交给浏览器合成器，rAF 只负责按 `video.currentTime` 入场——
- * 暂停即冻结（动画 pause）、倍速同步（动画 playbackRate）、seek 由时间
- * 跳变检测兜底（清屏重建入场游标）。
- *
- * 文本排版走 CSS：600 字重 + 柔和投影（`0 1px 3px rgba(0,0,0,.9)`）
- * 替代旧实现的 2px 硬描边——描边是「弹幕刺眼」
- * 的根源。`[名字]` 表情代码按映射表换成打包的 webp 图。
+ * 弹幕渲染层（DOM 形态）：每条弹幕一个绝对定位 `<span>`，Web Animations API 线性滚过一屏，
+ * 位置更新交给浏览器合成器，rAF 只按 video.currentTime 入场——暂停即冻结、倍速同步（动画 playbackRate）、
+ * seek 由时间跳变检测兜底。文本 600 字重 + 柔和投影；`[名字]` 表情代码按映射表换 webp 图。
  */
 export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
   const layerRef = useRef<HTMLDivElement | null>(null);
@@ -74,10 +67,8 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
     /** 每条泳道「最早可再入场」的视频时刻 */
     let laneFreeAt: number[] = [];
     /**
-     * 当前绑定的 video 元素。player-page 里「切集 / 加载中都会让
-     * `<video>` 被卸载重建」（重取流时 src 撤下再挂回），元素会被换成
-     * 新实例——effect 只跑一次，不能在挂载时抓死，tick 里每帧从 ref
-     * 现取、变了就重绑（重置游标 + 清屏）。
+     * 当前绑定的 video 元素：切集/加载中会让 `<video>` 卸载重建、effect 只跑一次，
+     * tick 里每帧从 ref 现取、变了就重绑（重置游标 + 清屏）。
      */
     let boundVideo: HTMLVideoElement | null = null;
     let lastTime = 0;
@@ -88,9 +79,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
       const settings = displayRef.current;
       width = rect.width;
       height = rect.height;
-      // 基准字号：默认 22px（设置范围 14–40）。旧公式 height/22
-      // 在桌面窗口会顶到 26px，大一号显得粗重「不够柔和」——小窗（小屏
-      // 播放）仍按高度缩放，上限钉在 22。
+      // 基准字号：默认 22px（旧公式 height/22 在桌面窗口会顶到 26px 显得粗重）；小窗仍按高度缩放，上限钉在 22
       const base = Math.min(DM_FONT_MAX, Math.max(DM_FONT_MIN, height / 30));
       fontPx = Math.max(10, Math.round(base * settings.fontScale));
       // 泳道只分布在显示区域内（area = 占画面高度的比例）
@@ -130,9 +119,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
           img.src = seg.url;
           img.alt = seg.value;
           img.draggable = false;
-          // 1.3em 见方、基线下沉 0.28em。display:inline-block 必须显式给：
-          // Tailwind preflight 的 img{display:block} 会把表情图踢到文本
-          // 下一行（弹幕被撑成两行高），white-space:nowrap 拦不住块级盒
+          // display:inline-block 必须显式给：Tailwind preflight 的 img{display:block} 会把表情图踢到文本下一行
           img.style.cssText =
             'display:inline-block;width:1.3em;height:1.3em;margin:0 1px;' +
             'vertical-align:-0.28em;object-fit:contain';
@@ -164,8 +151,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
         ],
         { duration: CROSS_MS, easing: 'linear', fill: 'forwards' },
       );
-      // 速度是固定的墙钟时长（不随视频倍速变）；只做暂停冻结。之前跟着
-      // video.playbackRate 走，2x 播放时弹幕快一倍，被用户指出弹幕偏快。
+      // 速度固定墙钟时长（不随视频倍速变——2x 时弹幕偏快被用户指出过）；只做暂停冻结
       if (video.paused) anim.pause();
       anim.onfinish = () => {
         el.remove();
@@ -211,8 +197,7 @@ export function DanmakuLayer({ videoRef, items, enabled, display }: Props) {
         if (!d || d.offsetMs / 1000 > t) break;
         spawned += 1;
         if (!d.text) continue;
-        // 密度：按显示比例丢弃（随机均匀，不做确定性抽样——
-        // 丢的是「哪一条」无所谓，要的是「同屏条数按比例变稀」）
+        // 密度：按显示比例随机均匀丢弃（要的是「同屏条数按比例变稀」）
         if (Math.random() > displayRef.current.density) continue;
         fire(d.text, t, video);
       }

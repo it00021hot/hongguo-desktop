@@ -1,12 +1,6 @@
-//! 流复制拼接（快速合并）。
-//!
-//! 不解码不编码，但**必须重写索引**：把 N 个各自从 t=0 开始的样本表拼成一条从 0
-//! 连续到全集末尾的时间轴。整文件字节级顺序拼接做不到这件事——第 1 集的 `stco`
-//! 只覆盖第 1 集的 `mdat`，播放器读完就停，后面的集拿不到索引。索引怎么重建见
-//! [`index`]。
-//!
-//! 产物布局固定为 `[ftyp][moov][mdat]`（faststart）：moov 在前，播放器读文件头
-//! 就能拿到时长与样本表，不必先跳过整个媒体数据。
+//! 流复制拼接（快速合并）：不解码不编码，但**必须重写索引**——把 N 个各自从 t=0 开始的样本表拼成一条从 0 连续到全集末尾的时间轴。
+//! 整文件字节级顺序拼接做不到这件事：第 1 集的 `stco` 只覆盖第 1 集的 `mdat`，播放器读完就停；索引怎么重建见 `index` 模块。
+//! 产物布局固定为 `[ftyp][moov][mdat]`（faststart）。
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -26,12 +20,8 @@ pub fn sort_by_index(files: &[(u32, PathBuf)]) -> Vec<(u32, PathBuf)> {
     v
 }
 
-/// 流复制合并。
-///
-/// 快速合并要求所有输入的编码一致：由 [`crate::codec_probe::check`] 探测、
-/// 在 `service::merge_service::quick::quick_merge`（上层壳）上强制执行。
-/// [`index::plan`] 里的结构检查是第二道闸，管的是探测不到的轨数、轨道顺序与
-/// 电影时基——任一对不上都只会产出连索引都过不去的文件。
+/// 流复制合并。快速合并要求所有输入的编码一致：由 [`crate::codec_probe::check`] 探测、在 `service::merge_service::quick::quick_merge`（上层壳）强制执行；
+/// `index::plan` 的结构检查是第二道闸，管探测不到的轨数、轨道顺序与电影时基——任一对不上只会产出连索引都过不去的文件。
 pub fn concat_copy(inputs: &[PathBuf], output: &Path) -> AppResult<(u64, usize)> {
     if inputs.is_empty() {
         return Err(AppError::Media("没有待合并的文件".into()));
@@ -55,9 +45,7 @@ pub fn concat_copy(inputs: &[PathBuf], output: &Path) -> AppResult<(u64, usize)>
 }
 
 /// 读出全部输入、规划索引、算出每个样本在产物里的偏移。
-///
-/// 解析只做一次：`write_output` 复用这里的结果，不重新读文件头——否则
-/// 「规划时看到的内容」与「实际拷贝的内容」可能不是同一份。
+/// 解析只做一次：`write_output` 复用这里的结果，不重新读文件头——否则「规划时看到的内容」与「实际拷贝的内容」可能不是同一份。
 struct Prepared {
     ftyp: Vec<u8>,
     moov: Vec<u8>,
@@ -89,8 +77,7 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
         .sum();
     let wide = needs_wide_offsets(total_payload);
 
-    // moov 长度只取决于样本数与偏移宽度，与偏移的具体数值无关：
-    // 先用占位偏移量一次长度，再带真实偏移重算一次。
+    // moov 长度只取决于样本数与偏移宽度，与偏移数值无关：先用占位偏移量一次长度，再带真实偏移重算一次
     let placeholders: Vec<Vec<u64>> = plan
         .tracks
         .iter()
@@ -180,9 +167,7 @@ fn read_exact_at(
 }
 
 /// 读出顶层 `ftyp` 与 `moov` 的完整字节。
-///
-/// 按 box 声明的长度精确定位，不走「先读前 N 兆」那条路：moov 可能超过那个量，
-/// 截断会让 `parse_boxes` **静默**少解析，产物就会「少几条样本表」而不报错。
+/// 按 box 声明的长度精确定位，不走「先读前 N 兆」那条路：moov 可能超过那个量，截断会让 `parse_boxes` **静默**少解析、产物「少几条样本表」而不报错。
 fn read_header_boxes(path: &Path) -> AppResult<(Vec<u8>, Vec<u8>)> {
     let mut file = std::fs::File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
     let file_len = file
@@ -248,10 +233,6 @@ fn read_header_boxes(path: &Path) -> AppResult<(Vec<u8>, Vec<u8>)> {
     }
 }
 
-// 真实短剧文件的端到端验证曾挂在 `remux/` 下，但它同时要平台硬编、ffmpeg 与
-// 服务层（compat_play），三边都不属于本 crate——已随 3b 迁到壳里的
-// `crates/hongguo-tauri/src/testing/media_pipeline_e2e.rs`。
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,9 +290,7 @@ mod tests {
 
         let data = std::fs::read(&out).unwrap();
         let tracks = collect_tracks(&data).unwrap();
-        // 样本数是三集之和——字节级拼接做不到这一点
         assert_eq!(tracks[0].sample_count, 10);
-        // 时长（每样本 1 个单位）同样是三集之和
         assert_eq!(tracks[0].media_duration, 10);
         let payload: u64 = (0..3).map(|i| 100 + i * 3).sum::<u64>()
             + (0..5).map(|i| 100 + i * 3).sum::<u64>()
@@ -348,9 +327,7 @@ mod tests {
 
     #[test]
     fn composition_offsets_are_copied_verbatim_not_shifted() {
-        // B 帧的合成偏移在拼接后必须原样保留：解码时间整体平移了各集时长，
-        // 合成时间同步平移，两者差值（也就是 offset）不变。再加一次起点偏移，
-        // 错位会逐集累积。
+        // 合成偏移必须原样保留：解码时间整体平移各集时长、合成时间同步平移，差值不变；再加起点偏移会逐集累积错位
         let dir = temp_dir("ctts");
         let a = (0..4).map(|i| vec![(i + 1) as u8; 80 + i]).collect();
         let b = (0..4).map(|i| vec![(i + 9) as u8; 90 + i]).collect();
@@ -364,8 +341,7 @@ mod tests {
         let data = std::fs::read(&out).unwrap();
         let tracks = collect_tracks(&data).unwrap();
         assert_eq!(tracks[0].sample_count, 8);
-        // 源里是 [0,0,-1024,-1024] 拼 [0,0,-1024,-1024]，合并后逐样本仍是同一组取值，
-        // 没有任何一项被加上第 2 集的起点
+        // 源里两组 [0,0,-1024,-1024]，合并后逐样本仍是同一组取值，没有任何一项被加上第 2 集的起点
         let offsets: Vec<i32> = tracks[0]
             .ctts
             .iter()
@@ -392,8 +368,7 @@ mod tests {
         let tracks = collect_tracks(&data).unwrap();
         assert_eq!(tracks.len(), 2);
 
-        // 产物的 mdat 必须是「视频0 音频0 视频1 音频1 …」的交织排布，
-        // 而不是把整条视频轨写完再写音频轨
+        // 产物的 mdat 必须是「视频0 音频0 视频1 音频1 …」的交织排布，而不是整条视频轨写完再写音频轨
         let v = &tracks[0].samples;
         let a = &tracks[1].samples;
         for i in 0..4 {

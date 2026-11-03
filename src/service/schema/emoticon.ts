@@ -1,9 +1,6 @@
 /**
- * 表情域 zod schema（Rust `hongguo_api::emoticon` 模型的镜像）。
- *
- * 官方表情 / 第三方 GIF / 自定义表情 / 本地图片
- * 四类共用同一套字段，差别在 `imageType` 与可选字段是否在场——
- * 第三方 GIF `imageType=2`，自定义表情与本地图片 `imageType=1`。
+ * 表情域 zod schema（Rust `hongguo_api::emoticon` 模型镜像）。官方表情 / 第三方 GIF /
+ * 自定义表情 / 本地图片四类共用同一套字段，差别在 imageType（第三方 GIF=2，自定义与本地图片=1）与可选字段是否在场。
  */
 import { z } from 'zod';
 
@@ -56,11 +53,7 @@ export const pictureUploadSchema = z.object({
 });
 export type PictureUpload = z.infer<typeof pictureUploadSchema>;
 
-/**
- * 选本地图片结果（Rust `emoticon_cmd::PickedImage`）。用户取消时
- * `bytes` 为空数组——选图已改走 Rust 原生文件面板（WKWebView 不弹
- * `<input type=file>` 的选择面板），取消没有独立错误形态，用空载荷表达。
- */
+/** 选本地图片结果（Rust `emoticon_cmd::PickedImage`）；用户取消时 bytes 为空数组——取消没有独立错误形态，用空载荷表达。 */
 export const pickedImageSchema = z.object({
   bytes: z.number().array(),
   filename: z.string(),
@@ -71,12 +64,8 @@ export const pickedImageSchema = z.object({
 export type PickedImage = z.infer<typeof pickedImageSchema>;
 
 /**
- * 收藏 / 删除表情的入参（Rust `emoticon_cmd` 的命令参数）。
- *
- * 官方形态：`image_id` 填**源表情 id**（收藏别人发的
- * 表情即填它的 id；上传本地图片时为空串），`image_url` 填该表情的
- * 静态 URL——官方收藏动图表情时传的也是静态 `web_uri`（`image_type`
- * 仍是 2）。
+ * 收藏 / 删除表情的入参。官方形态：image_id 填源表情 id（上传本地图片时为空串），
+ * image_url 填该表情的静态 URL——收藏动图表情传的也是静态 web_uri（image_type 仍是 2）。
  */
 export const emoticonCollectInputSchema = z.object({
   imageId: z.string(),

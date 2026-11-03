@@ -25,14 +25,9 @@ import type { LoginResult } from '@/service/schema';
 const RETRY_DEFAULT_SECS = 60;
 
 /**
- * 登录弹窗：表单 → MFA 上行短信等待 → 自动登录。
- *
- * MFA 轮询在 **Rust 后台**（3s 一次，回复短信后自动登录并发
- * `login-mfa-state` 事件）——弹窗关掉也不丢状态，重新打开仍能看到
- * 等待中的验证；成功事件到达时若弹窗已关，用 toast 提示。
- *
- * 登录成功统一在这里失效账号相关缓存（useAuthRefresh）：互动栏/书架/
- * 预约立刻翻面，不等 staleTime。
+ * 登录弹窗：表单 → MFA 上行短信等待 → 自动登录。MFA 轮询在 Rust 后台
+ * （3s 一次，回复短信后自动登录并发 `login-mfa-state` 事件）——弹窗关掉不丢状态。
+ * 登录成功统一在这里 useAuthRefresh 失效账号相关缓存。
  */
 export function LoginDialog({
   open,

@@ -4,14 +4,10 @@ use std::path::Path;
 
 use sysinfo::Disks;
 
-/// 输出目录所在卷的剩余字节数。
-///
-/// 查不到时返回 `None` 而不是 0：调用方要能区分「没空间了」和「不知道有多少空间」，
-/// 填 0 会让「空间不足」的判断永远成立。
+/// 输出目录所在卷的剩余字节数；查不到时返回 `None` 而不是 0——填 0 会让「空间不足」的判断永远成立。
 pub fn free_space_at(path: &Path) -> Option<u64> {
-    // 用 `absolute` 而不是 `canonicalize`：后者在 Windows 上返回带 `\\?\` 的
-    // verbatim 路径，与 sysinfo 报的挂载点（`C:`）不是同一个 prefix 组件，
-    // 拿去做前缀匹配永远不中。`absolute` 同样能把相对路径补成绝对路径。
+    // 用 `absolute` 而不是 `canonicalize`：后者在 Windows 上返回带 `\\?\` 的 verbatim 路径，
+    // 与 sysinfo 报的挂载点（`C:`）不是同一个 prefix 组件，拿去做前缀匹配永远不中
     let path = std::path::absolute(path).ok()?;
     // 下载目录可能还没建，这种「查不到」不是错误
     if !path.exists() {

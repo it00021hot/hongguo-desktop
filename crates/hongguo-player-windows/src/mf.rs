@@ -1,16 +1,9 @@
 //! Media Foundation 引擎的薄封装：进程级初始化、共享解码设备、引擎创建、倍速能力探测。
-//!
-//! 线程纪律（spike 实测得出，见 `docs/gpui-system-player-windows.md` §5）：
-//! 引擎、属性表、`IMFByteStream` 全在 **GPUI 主线程（STA）** 创建；MediaEngine
-//! 的控制方法本身是自由线程的，壳侧的 `PlayerLike` 调用也都在主线程。
-//! `MFStartup` 与引擎同线程一次。
-//!
-//! **解码设备就是渲染器那台**（对齐 nsh-platform-windows 的 gfx 纪律）：渲染器
-//! 设备在 vendor 补丁里补了 `VIDEO_SUPPORT` 与多线程保护后，frame-server 引擎
-//! 经 `IMFDXGIDeviceManager` 直接在它上面解码，`TransferVideoFrame` 产出的
-//! 纹理渲染器当场就能采样——零拷贝、零跨设备。历史教训：给 GPUI 设备但**不补
-//! 旗标**，开播 60ms 内 `DXGI_ERROR_DEVICE_REMOVED`（Phase 2 坑 3）；让引擎
-//! 每集自建设备，旧引擎 Shutdown 后开销 MF/驱动不归还（连播内存逐集上涨）。
+//! 线程纪律（spike 实测，见 `docs/gpui-system-player-windows.md` §5）：引擎、属性表、`IMFByteStream` 全在 **GPUI 主线程（STA）** 创建；
+//! MediaEngine 的控制方法本身是自由线程的，壳侧 `PlayerLike` 调用也都在主线程；`MFStartup` 与引擎同线程一次。
+//! **解码设备就是渲染器那台**（对齐 nsh-platform-windows 的 gfx 纪律）：渲染器设备在 vendor 补丁里补了 `VIDEO_SUPPORT` 与多线程保护后，
+//! frame-server 引擎经 `IMFDXGIDeviceManager` 直接在它上面解码，`TransferVideoFrame` 产出的纹理渲染器当场就能采样——零拷贝、零跨设备。
+//! 历史教训：给 GPUI 设备但**不补旗标**，开播 60ms 内 `DXGI_ERROR_DEVICE_REMOVED`；让引擎每集自建设备，旧引擎 Shutdown 后开销 MF/驱动不归还（连播内存逐集上涨）。
 
 use std::sync::{Mutex, OnceLock};
 
@@ -95,14 +88,9 @@ pub(super) fn device_manager(
     Some(manager)
 }
 
-/// 创建 MediaEngine（frame-server 模式：引擎解码，应用每帧
-/// `TransferVideoFrame` 取画面——落点由播放器经视频 quad 提交）。
-///
-/// 两个属性缺一不可：
-/// - `MF_MEDIA_ENGINE_CALLBACK`：事件回调（首帧/缓冲/播完/失败）；
-/// - `MF_MEDIA_ENGINE_DXGI_MANAGER` + `MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT`：
-///   解码设备与输出像素格式，**合起来决定 frame-server 模式**（不给
-///   `PLAYBACK_VISUAL` 就不是 rendering mode）。
+/// 创建 MediaEngine（frame-server 模式：引擎解码，应用每帧 `TransferVideoFrame` 取画面——落点由播放器经视频 quad 提交）。
+/// 两个属性缺一不可：`MF_MEDIA_ENGINE_CALLBACK`（事件回调：首帧/缓冲/播完/失败）；
+/// `MF_MEDIA_ENGINE_DXGI_MANAGER` + `MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT`（解码设备与输出像素格式，**合起来决定 frame-server 模式**——不给 `PLAYBACK_VISUAL` 就不是 rendering mode）。
 pub(super) fn create_engine(
     device: &ID3D11Device,
     generation: u64,

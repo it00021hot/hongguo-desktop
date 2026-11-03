@@ -8,19 +8,8 @@ import { STREAM_SCHEME } from '@/utils/scheme';
 import type { CompatProgress, Series } from '@/service/schema';
 
 /**
- * 转码兜底：`videoWidth === 0` 探测 + H.264 转码 + 最终供流地址裁决。
- *
- * `videoWidth === 0` 而声音正常，是「系统解不了这一集编码」的确凿信号——
- * 容器解析得出时长、样本照样缓冲到位，唯独送进解码器的码流缺参数集。
- * 这时把这一集转成 H.264 换一条路走，产物落缓存，同一集只转一次。
- *
- * 状态一律带 `key`（集标识）并在**读时**过滤，而不是在换集时清空：
- * 清空要在 effect 里同步 setState，会触发级联渲染（eslint 会拦）；
- * 带 key 读时过滤则是天生正确的——上一集的产物自动失效，不需要谁去清它。
- *
- * 最终喂给 `<video>` 的地址（playSrc）也在这里收口：它要叠「兜底产物
- * 优先」与「重试防缓存钉」两层裁决，两层的输入分属取流（src/retryTick）
- * 与兜底（compatSrc）两侧，放同一处推导才不会出现两份 playSrc 各算各的。
+ * 转码兜底：videoWidth===0 而声音正常 = 系统解不了编码，转 H.264 换路走（产物落缓存，同一集只转一次）；
+ * playSrc 在此收口，叠「兜底产物优先」与「重试防缓存钉」两层裁决。状态带集 key 读时过滤，换集自动失效。
  */
 export function useTranscodeFallback(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -69,9 +58,8 @@ export function useTranscodeFallback(params: {
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它 */
   const baseSrc = compatSrc ?? src;
   /**
-   * 重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应（自定义协议历史上
-   * 没带 no-store），同一个地址重试永远拿坏数据。后端处理器只解析 path，
-   * query 是纯缓存钉（后端已补 no-store，这层双保险兜老进程/旧缓存）。
+   * 重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应，同一个地址重试永远拿坏数据；
+   * 后端只解析 path，query 是纯缓存钉（后端已补 no-store，这层双保险兜旧缓存）。
    */
   const playSrc =
     baseSrc && baseSrc.includes(STREAM_SCHEME) && retryTick > 0
@@ -119,10 +107,8 @@ export function useTranscodeFallback(params: {
     // ref 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
   }, [seriesId, vidIndex, episodeKey, currentSeries, mutateCompat, srcKeyRef, setSrcKey]);
 
-  // 解码失败探测：播放在走、画面出不来、且时间确实在推进。
-  // 三个条件缺一不可——刚起播那一瞬间 videoWidth 本来就是 0。
-  // 命中后走 onDecodeFailure 裁决：无 HEVC 机器先问「装扩展还是转兼容」，
-  // 其余情况直接兜底转码。
+  // 解码失败探测：播放在走、画面出不来、时间在推进，三个条件缺一不可（刚起播 videoWidth 本来就是 0）；
+  // 命中走 onDecodeFailure 裁决：无 HEVC 机器先问「装扩展还是转兼容」，其余直接兜底转码
   useEffect(() => {
     if (!playSrc || compatSrc || error) return;
     const v = videoRef.current;
@@ -136,8 +122,7 @@ export function useTranscodeFallback(params: {
     return () => clearInterval(timer);
   }, [playSrc, compatSrc, error, onDecodeFailure, videoRef]);
 
-  // 换集就换一把「已兜底过」的记号：产物与进度都靠 key 自己失效，
-  // 这里只需允许新的一集再兜底一次。
+  // 换集换「已兜底过」记号：产物与进度靠 key 自己失效，这里只需允许新一集再兜底一次
   useEffect(() => {
     compatStarted.current = false;
   }, [episodeKey]);

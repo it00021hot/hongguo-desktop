@@ -1,17 +1,7 @@
-//! 找剧页搜索联想的键盘派发断言：输入框获得焦点时，挂在其祖先上的冒泡
-//! `on_key_down`（联想导航用）还能不能看到 ↑↓ / Enter / Esc。
-//!
-//! 背景：输入框自己在 "Input" key context 里绑了 MoveUp/MoveDown/Enter/
-//! Escape（gpui-base 的绑定表），而 gpui 的按键派发顺序是「绑定（action）
-//! 先、key listener 后」——所以这里的断言钉死两件事：
-//!   1. 祖先的冒泡 listener 仍能收到这四个键（联想导航靠它工作）；
-//!   2. 单行输入里 ↑↓ 不挪光标（输入框的 MoveUp/MoveDown 是空动作），
-//!      Enter 的 action 只补发 InputEvent::PressEnter（找剧页不订阅它）。
-//!
-//! 结论变了就是 gpui 升级改了派发语义，找剧页的键盘导航要一起复查。
-//!
-//! 需要 gpui 的 test-support（`screenshot` feature 已连带开启），运行方式：
-//! `cargo test -p hongguo-gpui --features screenshot --test browse_suggest_keys`
+//! 找剧页搜索联想的键盘派发断言：输入框获焦时，祖先上的冒泡 `on_key_down`
+//! 仍能看到 ↑↓/Enter/Esc（联想导航靠它）；单行输入里 ↑↓ 不挪光标。gpui 的
+//! 派发顺序是「绑定（action）先、key listener 后」——结论变了就是 gpui 升级
+//! 改了派发语义，找剧页键盘导航要一起复查。需 test-support（screenshot feature）。
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -41,19 +41,16 @@ const DM_WINDOW_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5)
 /// 滚窗连败放弃上限（装饰性数据，不无限重试）。
 const DM_WINDOW_MAX_FAILS: u32 = 3;
 
-/// 在飞的弹幕：泳道 + 入场墙钟 + 估宽。位置每渲染帧按「播放中才走的
-/// 墙钟」推进——暂停即冻结（锚点清空），倍速不改变滚动速度
-///（倍速下弹幕也不变速）。progress 以「屏宽」为单位的
-/// 滚动进度：x = stage_w − progress × (stage_w + 估宽)，progress ≥ 1 出屏。
+/// 在飞的弹幕：泳道 + 入场墙钟 + 估宽。progress 以「屏宽」为单位的滚动进度
+/// （x = stage_w − progress × (stage_w + 估宽)，≥1 出屏）；暂停冻结、倍速不变速。
 pub(super) struct DmFlight {
     pub(super) text: String,
     pub(super) lane: usize,
     width: f32,
     /// 锚点时刻的滚动进度（0 = 刚出右沿，1 = 滚出一屏）。
     progress: f64,
-    /// 播放中才有锚点：进度 = `progress` + 锚点以来的挂钟 / DM_CROSS_SECS。
-    /// 位置因此是「渲染时刻」的纯函数——重绘多少 Hz都不影响速度与线性度，
-    /// 暂停时锚点清空、进度冻结（tick 负责折叠）。
+    /// 播放中才有锚点：进度 = `progress` + 锚点以来挂钟 / DM_CROSS_SECS——
+    /// 位置是渲染时刻的纯函数，暂停时锚点清空、进度冻结。
     anchor_at: Option<std::time::Instant>,
 }
 
@@ -77,9 +74,7 @@ fn dm_text_width(text: &str, font_px: f32) -> f32 {
     crate::danmaku_emoji::segment_widths(text, font_px)
 }
 
-/// 滚过一屏的时长（durationMs 默认 9000，这里换算成秒——dt 与
-/// 它必须同单位。旧写法 `dt(秒) / 9000(毫秒)` 差了 1000 倍：弹幕从右缘
-/// 以 ~0.5px/4s 的速度爬行，等于永久不可见——「弹幕一条没有」的最终根因）。
+/// 滚过一屏的时长（协议 durationMs 默认 9000，换算成秒——dt 与它必须同单位）。
 const DM_CROSS_SECS: f64 = 9.0;
 /// 同一泳道相邻两条的入场间隔（1.4 墙钟秒；记账按倍速折算成媒体秒，见
 /// spawn 占位处）。
@@ -91,24 +86,13 @@ const DM_MIN_LANES: usize = 4;
 /// 基准字号范围（默认上限 22px）。
 const DM_FONT_MIN: f32 = 15.0;
 const DM_FONT_MAX: f32 = 22.0;
-/// 弹幕字数上限（Tauri maxLength 同语义）。
+/// 弹幕字数上限。
 const DM_MAX_LEN: usize = 100;
 
 impl super::HomeView {
-    /// 拉当前集的弹幕**首窗**（group_id = vid，book_id = series_id；社交态
-    /// 不缓存，每次进集都重拉——Tauri useDanmaku staleTime 0 同款）。拉完
-    /// 游标落到当前播放位置，由 tick 按「位置之前的不补放」自然对齐；
-    /// 后续窗由 tick 在逼近窗口边界时推进（[`Self::advance_danmaku_window`]，
-    /// 官方滚窗协议）。
-    ///
-    /// `series_id` 由调用方显式传入（进集时就是**这一集所属剧**的 id）。
-    /// 以前从 `self.now` 现取有两个时序坑：调用点在 `view.now` 赋值之前，
-    /// 首播时 now 还是 None 直接返回（会话第一部剧永远没弹幕）；换剧时又
-    /// 错拿上一部剧的 id（服务端参数错配，热剧也拉空）。同集重进也重拉
-    /// （vid 去重闸已撤——社交态不缓存是既定纪律）。
-    ///
-    /// 完成回调按 vid 校验：快速切剧时旧集的响应晚到，不得覆盖新集
-    /// （Tauri react-query 按 key 隔离的等价物）。
+    /// 拉当前集的弹幕首窗（社交态不缓存，每次进集重拉），游标落到当前播放
+    /// 位置（之前的不补放）；`series_id` 必须显式传本集所属剧 id，回调按 vid
+    /// 校验防快速切剧时旧响应覆盖新集。
     pub(super) fn load_danmaku(&mut self, vid: String, series_id: String, cx: &mut Context<Self>) {
         if self.danmaku_fetching {
             return;
@@ -119,9 +103,7 @@ impl super::HomeView {
         self.danmaku_cursor = 0;
         self.danmaku_flights.clear();
         self.danmaku_lane_free.clear();
-        // 滚窗状态归零；时长/起点取播放器当前值（流注册后即可用；拿不到
-        // 传 0——start/duration 不影响响应内容，
-        // 只影响协议语义的对齐度）
+        // 滚窗状态归零；时长/起点取播放器当前值（拿不到传 0——不影响响应内容）。
         let (pos_ms, duration_ms) = self
             .player
             .as_ref()
@@ -165,19 +147,16 @@ impl super::HomeView {
                             page.next_start_ms
                         );
                         view.adopt_danmaku_page(page, true);
-                        // 游标直接落到当前播放位置：位置之前的历史不补放。
-                        // 归零的话 tick 会把开头到当前位置的弹幕**全部一次性
-                        // 入场**——续播（起点 >3s）/中途进集必现「弹幕糊一脸」，
-                        // 这正是本函数头注释承诺的「自然对齐」该有的样子
+                        // 游标直接落到当前播放位置：归零的话 tick 会把开头到当前
+                        // 位置的弹幕全部一次性入场（续播必现「弹幕糊一脸」）。
                         let pos = view.player.as_ref().map_or(0.0, |p| p.position_secs());
                         view.danmaku_cursor = view
                             .danmaku_items
                             .partition_point(|d| (d.offset_ms as f64) / 1000.0 <= pos);
                     }
                     Err(e) => {
-                        // 拉取失败留空列表（装饰性数据，不影响主功能），
-                        // 同集内不自动重试；但必须可见——不然用户分不清
-                        // 「这集本来没弹幕」和「坏了」（Tauri toast 同文案）
+                        // 拉取失败留空列表（装饰性数据，同集内不自动重试），但
+                        // 必须可见——不然分不清「这集本来没弹幕」和「坏了」。
                         log::warn!("[Home] 弹幕拉取失败: {e}");
                         view.danmaku_items = Arc::new(Vec::new());
                         let message = crate::i18n::app_error_text(&e);
@@ -196,12 +175,9 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 一窗弹幕落账：追加进列表（窗口按时间序拉取，offset 天然有序）并
-    /// 记录滚窗游标。`replace` = 首窗覆盖空列表；后续窗只 append。
-    ///
-    /// 推进判据是「cursor 非空且 end 前进」而非 has_more——降级形态
-    /// （medusa 风控低档）一窗就 has_more=false 但 cursor 照发，官方
-    /// 照样按 30 秒滚窗；has_more 只表示窗内还有分页。
+    /// 一窗弹幕落账：追加进列表（offset 天然有序）并记录滚窗游标；
+    /// `replace` = 首窗覆盖空列表。推进判据是「cursor 非空且 end 前进」而非
+    /// has_more——降级形态一窗就 has_more=false 但 cursor 照发。
     fn adopt_danmaku_page(&mut self, page: hongguo_api::danmaku::DanmakuWindowPage, replace: bool) {
         let mut items = if replace {
             Vec::with_capacity(page.items.len())
@@ -217,10 +193,8 @@ impl super::HomeView {
         self.danmaku_window.fail_count = 0;
     }
 
-    /// 播放位置逼近未拉窗口时预拉下一窗（官方节奏是 30 秒窗口边界一拉，
-    /// 这里提前 [`DM_WINDOW_LEAD_MS`] 给请求留时间，边界处才不断档）。
-    /// 失败按次退避，连败 [`DM_WINDOW_MAX_FAILS`] 次放弃本集后续窗
-    /// （装饰性数据，不无限重试）。
+    /// 播放位置逼近未拉窗口时预拉下一窗（提前 [`DM_WINDOW_LEAD_MS`] 留请求
+    /// 时间，边界不断档）；失败按次退避，连败 [`DM_WINDOW_MAX_FAILS`] 次放弃。
     fn advance_danmaku_window(&mut self, cx: &mut Context<Self>) {
         if self.danmaku_fetching || !self.danmaku_on {
             return;
@@ -301,8 +275,7 @@ impl super::HomeView {
     }
 
     /// 弹幕 tick（33ms 系统节拍驱动，见 `playback/preload.rs`）：seek 跳变
-    /// 检测 → 入场（offset 落在 (上一帧, 当前] 的按密度抽样发射）→ 在飞
-    /// 推进与出屏回收。暂停时锚点清空，位置冻结。
+    /// 检测 → 入场（offset 落在 (上一帧, 当前] 的按密度抽样）→ 推进与出屏回收。
     pub(super) fn danmaku_tick(&mut self, cx: &mut Context<Self>) {
         // 滚窗推进先于入场：逼近窗口边界时补拉下一窗（弹幕关着不拉）
         self.advance_danmaku_window(cx);
@@ -314,8 +287,7 @@ impl super::HomeView {
         };
         let pos = player.position_secs();
         let paused = player.is_paused();
-        // 倍速在 tick 开头取一次：泳道占用折算用（值在整个 tick 内不变，
-        // 借 `player` 的时间越短越好）
+        // 倍速在 tick 开头取一次：泳道占用折算用（整个 tick 内不变）。
         let rate = player.rate();
         // seek 跳变（倒跳/大幅前跳）：游标二分重置 + 清空在飞
         if pos < self.danmaku_last_pos - 0.05 || pos > self.danmaku_last_pos + 1.5 {
@@ -332,9 +304,7 @@ impl super::HomeView {
             .danmaku_last_tick
             .replace(now)
             .map_or(0.0, |t| now.duration_since(t).as_secs_f64());
-        // 字号与泳道数都按舞台**高**算（显示区域滑杆
-        // 缩的就是这条高）。以前这里错传舞台宽——入场估宽用的字号与渲染
-        // 字号错位、泳道数随宽度走，「显示区域」滑杆完全失效
+        // 字号与泳道数都按舞台高算（显示区域滑杆缩的就是这条高，不是宽）。
         let stage_h = self
             .stage_rects
             .get()
@@ -367,10 +337,9 @@ impl super::HomeView {
             if d.text.is_empty() || self.dm_rand() > self.dm_density {
                 continue;
             }
-            // 泳道：挑最早空出来的那条并占位（叠满时自然排队）。占用期按
-            // 「滚动 DM_LANE_BUSY_S 墙钟秒」折算成媒体秒（× 倍速）——在飞
-            // 弹幕按墙钟推进，占用期却用媒体秒记账的话，倍速下泳道提前复用，
-            // 新弹幕压在还没滚出右沿的旧弹幕上（叠幕必现）
+            // 泳道：挑最早空出来的那条并占位（叠满时自然排队）。占用期按墙钟
+            // 折算成媒体秒（× 倍速）——在飞弹幕按墙钟推进，占用期用媒体秒记账
+            // 的话倍速下泳道提前复用、新弹幕压在没滚出右沿的旧弹幕上。
             let mut pick = 0usize;
             for (i, free) in self.danmaku_lane_free.iter().enumerate() {
                 if *free < self.danmaku_lane_free[pick] {
@@ -417,8 +386,7 @@ impl super::HomeView {
         lanes.max(DM_MIN_LANES)
     }
 
-    /// 弹幕设置滑杆：更新对应显示参数；变更即落盘（Tauri
-    /// use-danmaku-settings 每次 set 就写同款——Release 才写的话，拖动中
+    /// 弹幕设置滑杆：更新对应显示参数；变更即落盘（Release 才写的话，拖动中
     /// 关进程会丢一整轮调整）。
     pub(super) fn on_dm_slider_event(
         &mut self,
@@ -442,15 +410,14 @@ impl super::HomeView {
         cx.notify();
     }
 
-    /// 提交弹幕（发送框 Enter 或发送按钮）：未登录给可见指引（Tauri
-    /// toast.info「互动需要先登录」同位），成功 toast + 本地乐观插入
-    /// （发送的弹幕立刻上屏），失败 toast 带服务端原文。
+    /// 提交弹幕（发送框 Enter 或发送按钮）：未登录给可见指引，成功 toast +
+    /// 本地乐观插入（发送的弹幕立刻上屏），失败 toast 带服务端原文。
     pub(super) fn submit_danmaku(&mut self, cx: &mut Context<Self>) {
         let Some(input) = &self.danmaku_input else {
             return;
         };
-        // 100 字上限（Tauri maxLength 同语义）。gpui 的 InputState 没有内建
-        // 长度闸，提交时截断——超长部分进不了服务端，视觉上仍可输入
+        // gpui 的 InputState 没有内建长度闸，提交时截断——超长部分进不了
+        // 服务端，视觉上仍可输入。
         let text = input.read(cx).value().trim().to_string();
         if text.is_empty() || self.danmaku_sending {
             return;
@@ -492,9 +459,8 @@ impl super::HomeView {
                 match result {
                     Ok((text, offset_ms, cid)) => {
                         log::info!("[Home] 弹幕已发送 cid={cid}");
-                        // 本地乐观插入：排序进 items（cursor 会自然捡起上屏）。
-                        // 拉取任务还握着 Arc 时插不进去就算了——下一拍 tick
-                        // 照常把它捡起来上屏（Tauri setQueryData 同语义）
+                        // 本地乐观插入：排序进 items（cursor 自然捡起上屏）；
+                        // 拉取任务握着 Arc 插不进就算了，下一拍 tick 照常捡起。
                         let item = Danmaku {
                             comment_id: cid,
                             text: text.clone(),
@@ -506,12 +472,11 @@ impl super::HomeView {
                             items.insert(at, item);
                         }
                         view.show_toast(crate::i18n::t("player.interact.danmakuSent"), cx);
-                        // 输入框清空走渲染期（set_value 需要 window），这里只立标志
+                        // 输入框清空走渲染期（set_value 需要 window），这里只立标志。
                         view.danmaku_clear_input = true;
                     }
                     Err(e) => {
-                        // 失败必须可见：风控/频控拒绝时静默的话，用户以为
-                        // 发成功了（Tauri 全局 MutationCache onError 同位）
+                        // 失败必须可见：静默的话用户以为发成功了。
                         log::warn!("[Home] 弹幕发送失败: {e}");
                         let message = crate::i18n::app_error_text(&e);
                         view.show_toast(
@@ -526,13 +491,9 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 弹幕设置面板的一行（Tauri DisplaySlider 同构：label 上 + 百分比读数
-    /// 右 + 滑杆下）。字色/字重与 Tauri 对齐：label 白 90%、读数等宽白 70%。
-    ///
-    /// 滑杆钉播放器白皮肤（组件默认取主题令牌，亮色主题下会变成
-    /// 「深色填充 + 浅色轨道」压在黑面板上——Tauri 是白 25% 轨道、白填充、
-    /// 白滑块，见 DisplaySlider）：`.bg` 管 bar（轨道取 20% 透明度、
-    /// 已填段全色、滑块外圈 50%），`.text_color` 管滑块芯。
+    /// 弹幕设置面板的一行（label 上 + 百分比读数右 + 滑杆下）。滑杆钉播放器
+    /// 白皮肤：`.bg` 管 bar（轨道 20% 透明、已填段全色、滑块外圈 50%），
+    /// `.text_color` 管滑块芯。
     pub(super) fn dm_setting_row(
         &self,
         label: impl Into<SharedString>,

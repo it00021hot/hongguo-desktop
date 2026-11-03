@@ -1,16 +1,8 @@
-//! WIC 静图解码（Windows）：HEIC → 32bppBGR → JPEG。
-//!
-//! 平台级的封面通路。WIC 本体每台 Windows 都有，但 HEIF/HEIC **解码器**
-//! 是可选商店扩展（「HEIF 图像扩展」+「HEVC 视频扩展」；OEM 机型常预装，
-//! 纯净安装经常没有）——所以与 MF 硬编同一条探测纪律：**运行时试，
-//! 不假设存在**。解码器创建失败（典型为 COMPONENTNOTFOUND）就缓存
-//! 「不可用」，封面链路掉到 ffmpeg/纯软解；「重新检测」清缓存重试。
-//!
-//! 管线：内存 IStream → `CreateDecoderFromStream` → 首帧 →
-//! FormatConverter 统一到 32bppBGR → `CopyPixels` → 交换 B/R →
-//! jpeg-encoder 编码。编码不依赖 WIC 的 JPEG encoder（同样是可选组件），
-//! 统一用我们自己的 [`jpeg_encoder`]，与纯软解级（[`hongguo_media::heif`]）
-//! 共享同一产物口径。
+//! WIC 静图解码（Windows）：HEIC → 32bppBGR → JPEG。WIC 本体每台 Windows 都有，但 HEIF/HEIC **解码器**
+//! 是可选商店扩展（「HEIF 图像扩展」+「HEVC 视频扩展」；OEM 机型常预装，纯净安装经常没有）——与 MF 硬编同一条探测纪律：**运行时试，不假设存在**。
+//! 解码器创建失败（典型 COMPONENTNOTFOUND）就缓存「不可用」，封面链路掉到 ffmpeg/纯软解，「重新检测」清缓存重试。
+//! 管线：内存 IStream → `CreateDecoderFromStream` → 首帧 → FormatConverter 统一到 32bppBGR → `CopyPixels` → 交换 B/R → jpeg-encoder 编码；
+//! 编码不依赖 WIC 的 JPEG encoder（同为可选组件），统一用自己的 [`jpeg_encoder`]，与纯软解级（[`hongguo_media::heif`]）共享同一产物口径。
 
 use windows::Win32::Foundation::{GlobalFree, WINCODEC_ERR_COMPONENTNOTFOUND};
 use windows::Win32::Graphics::Imaging::{
@@ -34,8 +26,7 @@ pub fn clear_probe_cache() {
 }
 
 /// HEIC 字节 → JPEG。本机没有 HEIF 解码器时返回 `None`（调用方掉级），
-/// 有解码器但图像解不开时返回 `Err`（这张图换别的路大概率也不行，但
-/// 调用方仍会尝试下一级，不赌单个样本）。
+/// 有解码器但图像解不开时返回 `Err`（这张图换别的路大概率也不行，但调用方仍会尝试下一级，不赌单个样本）。
 pub fn heic_to_jpeg(heic: &[u8]) -> Option<Result<Vec<u8>, String>> {
     if HEIC_DECODER_MISSING.load(std::sync::atomic::Ordering::Acquire) {
         return None;
@@ -59,8 +50,7 @@ enum HeicError {
 }
 
 fn try_decode(heic: &[u8]) -> Result<Vec<u8>, HeicError> {
-    // worker 线程不是 COM 线程：进 MTA（与 mf 同款）。已初始化过或不匹配
-    // 的返回值都不致命，套间仍在，继续用。
+    // worker 线程不是 COM 线程：进 MTA（与 mf 同款）；已初始化过或不匹配的返回值都不致命，套间仍在继续用
     let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     decode_with_factory(heic)
 }

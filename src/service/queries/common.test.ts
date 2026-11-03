@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { dedupBy, fuzzyStaleTime } from './common';
 
-// feed.ts 的模块链拉到 locales 与 tauri/invoke（模块级读 localStorage/
-// navigator/document 探测并初始化语言）——node 测试环境没有这些 global，
-// 在动态 import 前打桩，feedItems 用动态 import 拉进来
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} });
 vi.stubGlobal('navigator', { language: 'zh-CN' });
 vi.stubGlobal('document', { documentElement: { lang: '' } });
 
-/** 构造一页推荐流（相邻页重叠 seriesId，模拟推荐位轮换）。 */
 function page(ids: string[]): import('../schema').FeedPage {
   return {
     items: ids.map((seriesId) => ({

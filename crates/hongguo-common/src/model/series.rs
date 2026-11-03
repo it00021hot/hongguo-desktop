@@ -1,7 +1,6 @@
 //! 剧集领域模型。
 //!
-//! 字段一律 camelCase：落库整行存 JSON 列、走 IPC 都用同一形态
-//! （前端 `schema.ts` 同步声明 camelCase）。
+//! 字段一律 camelCase：落库整行存 JSON 列、走 IPC 都用同一形态（前端 `schema.ts` 同步声明 camelCase）。
 
 use serde::{Deserialize, Serialize};
 
@@ -19,10 +18,7 @@ pub struct Series {
     /// 旧档案缓存缺省 0 = 不显示）
     #[serde(default)]
     pub followed_cnt: i64,
-    /// 剧的条目类型（官方 content_type：漫剧 1004 / 真人剧 1 / 书城条目
-    /// 1001…）。真播批量分组 key 与单集请求 content_type 的持久来源——
-    /// 起播时整剧各集按它注册进取流注册表；0 = 未知（旧档案缓存），
-    /// 取流走单集占位值（服务端对该字段容错）。
+    /// 剧的条目类型（官方 content_type：漫剧 1004 / 真人剧 1 / 书城条目 1001…）：真播批量分组 key 与单集请求 content_type 的持久来源，起播时整剧各集按它注册进取流注册表；0 = 未知（旧档案缓存），取流走单集占位值（服务端对该字段容错）。
     #[serde(default)]
     pub content_type: i64,
     #[serde(default)]
@@ -83,7 +79,6 @@ mod tests {
 
     #[test]
     fn old_data_without_dismissed_still_parses() {
-        // 库里的旧 JSON 行没有 dismissed 字段（该列后加）：default 补 false
         let json = r#"{"seriesId":"1","title":"t"}"#;
         let s: Series = serde_json::from_str(json).unwrap();
         assert!(!s.dismissed);
@@ -91,7 +86,6 @@ mod tests {
 
     #[test]
     fn goes_out_as_camel_case_for_ipc() {
-        // 前端 seriesSchema / episodeSchema 声明的是 camelCase
         let s = Series {
             series_id: "1".into(),
             title: "剧".into(),
@@ -114,7 +108,6 @@ mod tests {
 
     #[test]
     fn reads_camel_case_payload_back() {
-        // resolve_series 的返回值要能通过前端同一份 schema 的往返
         let json = r#"{"seriesId":"1","title":"剧","cover":"c","episodeCount":2,"tags":["爱情"],"episodes":[{"vidIndex":1,"vid":"v","title":"t","fileStem":"f"}],"dismissed":false}"#;
         let s: Series = serde_json::from_str(json).unwrap();
         assert_eq!(s.episodes[0].vid_index, 1);

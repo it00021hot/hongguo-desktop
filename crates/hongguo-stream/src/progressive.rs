@@ -14,19 +14,12 @@ use hongguo_video::streaming::{SparseBuffer, StreamingPlan};
 /// 等待数据就绪的最长时间（秒）。超时返回 502，避免请求永久挂起。
 const WAIT_TIMEOUT_SECS: u64 = 30;
 
-/// 渐进式在线流的开放 Range 默认窗口：一次回 4MB。
-///
-/// 整集模式的窗口语义见 [`respond`]（默认一次给到底）；渐进模式必须开窗口，
+/// 渐进式在线流的开放 Range 默认窗口：一次回 4MB。必须开窗口，
 /// 否则 `bytes=0-` 要等整集下载完才应答，渐进就没有意义了。
 const PROGRESSIVE_WINDOW: u64 = 4 * 1024 * 1024;
 
-/// 渐进式在线流：稀疏密文 + 解密计划，协议层按 Range 惰性解密。
-///
-/// `plan` 为 `None` 表示未加密流（官网兜底链路），明文就是密文本身。
-///
-/// `cdn_url`/`proxy` 供「预取只填头部、转为当前集后续填余下」的恢复填充用
-/// （见 `service::play_service::online` 侧 fill）——没有它们，续填就得把取流表
-/// 那次接口调用整个重放一遍。
+/// 渐进式在线流：稀疏密文 + 解密计划，协议层按 Range 惰性解密；`plan` 为 `None` 表示未加密流。
+/// `cdn_url`/`proxy` 供预取转正后的恢复填充按 Range 续拉，免去重放取流表那次接口调用。
 pub struct ProgressiveStream {
     pub sparse: Arc<SparseBuffer>,
     pub plan: Option<Arc<StreamingPlan>>,
@@ -41,18 +34,7 @@ pub struct ProgressiveStream {
 }
 
 /// 读者需求登记表：serve 在等哪个区间，填充调度器就先下哪个区间。
-///
-/// 取代旧版的 `seek_hint: AtomicU64` 单值提示。单值提示有三处先天缺陷，
-/// 正是「回绕补洞死循环」的根因：
-/// - `fetch_max` 单调只升：播放器往回 seek 之后提示**降不下来**，
-///   填充永远追着一个不再需要的高位区间跑；
-/// - 从不清零：需求满足后提示还留在原地，持续把回绕后的游标顶回去，
-///   洞在提示之前时填充就在「回绕 → 顶回 → 回绕」里空转；
-/// - 标量只有一个位置：并发的读者（解封装探针 + 播放读）互相顶掉彼此。
-///
-/// 登记表把「谁在等哪段」原样交给调度器：回跳立即反映、满足即销、
-/// 多读者按到达顺序服务。填充侧的调度策略见
-/// `play_service::online::fill_remaining_with_client`。
+/// 回跳立即反映、需求满足即销、多读者按到达顺序服务（取代旧版单调只升的 `seek_hint`）。
 pub struct ReaderDemand {
     /// 按到达顺序排列的登记（push 顺序即 FIFO 服务顺序）
     inner: Mutex<Vec<Ticket>>,
@@ -101,18 +83,12 @@ impl ReaderDemand {
         !self.inner.lock().is_empty()
     }
 
-    /// 最早到达、且仍有未覆盖区间的需求：返回它**区间内第一个洞**的起点。
-    ///
-    /// 传 `sparse` 而不是让调用方自己查覆盖：洞的定位必须和覆盖表在同一把
-    /// 锁的视野里做，否则「查完已就绪、实际又有洞」的竞态会把调度器指到
-    /// 已覆盖的位置空转一轮。全就绪（或无人等）返回 `None`，调度器退回
-    /// 顺序填充。
+    /// 最早到达、且仍有未覆盖区间的需求：返回它区间内第一个洞的起点。洞的定位必须和
+    /// 覆盖表在同一把锁的视野里做，否则竞态会把调度器指到已覆盖的位置空转；全就绪（或无人等）返回 `None`。
     pub fn first_wanted(&self, sparse: &SparseBuffer) -> Option<u64> {
         let tickets = self.inner.lock();
         for t in tickets.iter() {
             for (a, b) in t.ranges.iter() {
-                // 区间内的第一个洞：next_gap(a) 给出 a 起第一个未覆盖处，
-                // 落在 (a,b) 之外说明这段已就绪，试下一段
                 if let Some((gap, _)) = sparse.next_gap(*a)
                     && gap < *b
                 {
@@ -153,13 +129,8 @@ pub fn serve(
     serve_inner(vid, definition, range_header, &|| false)
 }
 
-/// [`serve`] 的可取消变体：等待区间就绪期间逐片检查 `cancelled`，命中即
-/// 注销读者登记并立即报错返回。
-///
-/// 播放引擎 seek 之后，还堵在旧位置上的读取必须尽快退场：读者登记不注销，
-/// 填充调度器会按 FIFO 先把旧区间的字节下完才轮到新位置——白耗一路带宽，
-/// 还把 seek 的就绪时间拖长一个区间。整集模式数据全在内存、从不等待，
-/// 取消对它无意义（等都不等）。
+/// [`serve`] 的可取消变体：等待期间逐片检查 `cancelled`，命中即注销读者登记并立即报错返回。
+/// seek 后堵在旧位置的读取必须尽快退场，否则调度器按 FIFO 先下完旧区间才轮到新位置。
 pub fn serve_cancellable(
     vid: &str,
     definition: u32,
@@ -169,10 +140,8 @@ pub fn serve_cancellable(
     serve_inner(vid, definition, range_header, &cancelled)
 }
 
-/// 读取期间持有的条目租约：判断条目是否仍是缓存里的同一条。
-///
-/// 条目被逐出或同键重建（新 Arc）后，手里这份的填充必然已经死亡；继续等
-/// 只会等满 30s，所以每个等待切片都要用 [`is_current`](Self::is_current) 复查。
+/// 读取期间持有的条目租约：条目被逐出或同键重建后，手里这份的填充必然已死亡，
+/// 每个等待切片都要用 [`is_current`](Self::is_current) 复查。
 pub(crate) struct EntryLease {
     cache: &'static crate::StreamCache,
     vid: String,
@@ -194,11 +163,8 @@ pub(crate) enum EntryMode {
     Progressive(Arc<ProgressiveStream>),
 }
 
-/// 等条目就绪并拿到租约。
-///
-/// `serve()`（HTTP Range）与 [`crate::read`]（AVFoundation 字节读取）共用这
-/// 一段等待：两条路只是对“要哪段字节”的表达不同，就绪判定、取消/逐出
-/// 语义必须完全一致。
+/// 等条目就绪并拿到租约。`serve()`（HTTP Range）与 [`crate::read`]（字节读取）共用：
+/// 两条路只是对“要哪段字节”的表达不同，就绪判定、取消/逐出语义必须完全一致。
 pub(crate) fn wait_for_entry(
     vid: &str,
     definition: u32,
@@ -206,21 +172,14 @@ pub(crate) fn wait_for_entry(
 ) -> Result<(EntryLease, EntryMode), StreamReadError> {
     let cache = crate::cache();
     let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
-    // 条目还没注册的两条路，处置完全不同：
-    // - 后台 fill 还在下载（begin_fetch 已标记、条目未建）：**等它注册**——
-    //   prepare 是先返回 URL 再 spawn 填充的，先到的 Range 请求就落在窗口
-    //   里；这里一 404 <video> 直接死（真机实测「在线播放中断 MediaError」，
-    //   Chromium 轮询数次后放弃），等窗口填上就只是多等几百毫秒。
-    // - 压根没人在取（已被清掉/从没起播过）：立即报错不白等——等满 30 秒
-    //   才告诉用户「没这流」，在切档的语境下就是一次白等。
+    // 条目未注册时分两种处置：后台还在取流（begin_fetch 已标记）就等它注册——
+    // prepare 先返回 URL 再 spawn 填充，先到的 Range 请求落在这个窗口；没人在取则立即报错不白等。
     let mut entry = cache.get(vid, definition);
     while entry.is_none() {
         if cancelled() {
             return Err(StreamReadError::Cancelled);
         }
         if !cache.is_fetching(vid, definition) {
-            // 播放中的 video 还会持续发 Range 请求，这里一 404 它就直接死。
-            // 必须留痕：否则用户只看到「视频处理失败」，后端却一片安静。
             log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
             return Err(StreamReadError::Missing {
                 vid: vid.to_string(),
@@ -241,9 +200,7 @@ pub(crate) fn wait_for_entry(
         entry: entry.expect("循环出口保证非空"),
     };
 
-    // 两条路：整集模式（数据一次性原子写进 buffer）等 filled；
-    // 渐进模式等计划注册（plain_len 已知即可应答，字节按区间再等）。
-    // 取流失败回落整集时，两条都可能出现，谁先就绪走谁。
+    // 两条就绪路径：整集模式等 filled、渐进模式等计划注册，取流失败回落整集时谁先就绪走谁。
     let entered = std::time::Instant::now();
     let mut polls: u64 = 0;
     loop {
@@ -258,8 +215,6 @@ pub(crate) fn wait_for_entry(
         }
         let prog = lease.entry.progressive.lock().clone();
         let filled = *lease.entry.filled.lock();
-        // 首轮就绪是常态（渐进入注册即应答），只在异常等待时留痕：排障
-        // 「换集卡 20s」类问题看「已等 Xs」的一行即定位
         if filled > 0 {
             if polls > 1 {
                 log::info!(
@@ -306,7 +261,6 @@ fn serve_inner(
         wait_for_entry(vid, definition, cancelled).map_err(|error| error.to_string())?;
 
     match mode {
-        // 整集模式：size 只在 store 里从 0 变成真实值一次，之后再不变
         EntryMode::Whole => {
             // 锁序与 store 一致（buffer → size），避免与写入侧交叉等待。
             let buffer = lease.entry.buffer.lock();
@@ -320,10 +274,7 @@ fn serve_inner(
 }
 
 /// 渐进模式应答：把明文 Range 映射回密文区间，等齐、解密、拼装。
-///
-/// `lease` 在等待期间被逐出/同键重建时立即放弃——手里的渐进流已经没人喂
-/// 了，等满超时只是把断流拖长成 30 秒黑屏。`cancelled` 命中（播放端 seek
-/// 重定位）时同样立即放弃，注销读者登记。
+/// 等待期间条目被逐出/同键重建（`lease` 失效）或 `cancelled` 命中（seek 重定位）都立即放弃并注销读者登记。
 fn serve_progressive(
     prog: &Arc<ProgressiveStream>,
     range_header: Option<&str>,
@@ -335,9 +286,8 @@ fn serve_progressive(
         RangeSpec::Full => (0, plain_len),
         RangeSpec::Closed { start, end } => (start, end + 1),
         RangeSpec::Open { start } => {
-            // 窗口 0 与整集模式的 stream_window 同义：一次给到末尾。
-            // 不能原样参与加法——end==start 会让下方 end-1 下溢（start=0
-            // 时 debug panic，release 出非法 Content-Range）
+            // 窗口 0 与整集模式同义（一次给到末尾）；不能原样参与加法——
+            // end==start 会让下方 end-1 下溢（start=0 时 debug panic）
             (
                 start,
                 open_range_end(start, progressive_window(), plain_len),
@@ -376,9 +326,7 @@ fn serve_progressive(
 }
 
 /// 读一段明文 `[start, end)`：等依赖的密文区间、登记读者需求、惰性解密。
-///
-/// `serve()` 与 [`crate::read`] 的字节读取都走这里——HTTP 头、206 状态码
-/// 是壳层语义，数据面的等待/解密/需求登记只有这一份实现。
+/// `serve()` 与 [`crate::read`] 的字节读取共用这一份实现，HTTP 头/206 是壳层语义。
 pub(crate) fn read_plain_range(
     prog: &ProgressiveStream,
     start: u64,
@@ -390,13 +338,10 @@ pub(crate) fn read_plain_range(
         return Ok(Vec::new());
     }
 
-    // 先把需求登记进 ReaderDemand（填充调度器据此优先下这一段），再在覆盖
-    // 表的条件变量上等：字节一落盘立即唤醒。
     let needed = prog.needed(start, end);
     if !prog.sparse.wait_cover(&needed, Duration::ZERO) {
         let deadline = std::time::Instant::now() + Duration::from_secs(WAIT_TIMEOUT_SECS);
-        // 切片等待：数据到达由条件变量即时唤醒；切片只是给「条目被逐出」
-        // 与总超时留个检查点，不再是 50ms 轮询。
+        // 切片等待：数据到达由条件变量即时唤醒；切片只是给「条目被逐出」与总超时留检查点。
         const WAIT_SLICE: Duration = Duration::from_millis(200);
         let ticket = prog.demand.register(&needed);
         let outcome = loop {
@@ -416,7 +361,6 @@ pub(crate) fn read_plain_range(
                 break Err(StreamReadError::Replaced);
             }
             if std::time::Instant::now() >= deadline {
-                // 典型成因：填充线程停摆或网络断供，播放追上了填充前沿
                 log::warn!(
                     "[Stream] 等待明文区间 {start}-{end} 的密文就绪超时（{WAIT_TIMEOUT_SECS}s），填充可能停摆"
                 );
@@ -453,9 +397,8 @@ fn open_range_end(start: u64, window: u64, plain_len: u64) -> u64 {
     }
 }
 
-/// 开放式 Range 单次供给的窗口大小。`0` = 一次给到末尾（默认）。
-///
-/// 见 [`respond`] 里 `RangeSpec::Open` 分支的说明：窗口大小可调，默认一次给完。
+/// 开放式 Range 单次供给的窗口大小。`0` = 一次给到末尾（默认），
+/// 可用 `HONGGUO_STREAM_WINDOW` 覆盖。
 fn stream_window() -> u64 {
     static WINDOW: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *WINDOW.get_or_init(|| {
@@ -466,10 +409,8 @@ fn stream_window() -> u64 {
     })
 }
 
-/// 按 Range 切一段数据出来（整集模式）。
-///
-/// 只在 `size` 已经就绪之后调用，而那意味着整集明文全部在内存里了
-/// （见 [`super::StreamCache::store`]），所以每一种 Range 都一定切得出来，没有「等数据」。
+/// 按 Range 切一段数据出来（整集模式）。只在 `size` 已经就绪之后调用——那意味着
+/// 整集明文全部在内存里，每一种 Range 都一定切得出来，没有「等数据」。
 fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
     match range {
         RangeSpec::Full => (
@@ -488,13 +429,7 @@ fn respond(buffer: &[u8], range: RangeSpec, size: u64) -> ProtocolResponse {
             partial_headers(start, end, size),
             buffer[start as usize..=end as usize].to_vec(),
         ),
-        // 开放式：默认一次给到文件末尾。设 `HONGGUO_STREAM_WINDOW`（字节）会
-        // 切成「只回一窗」——这是上游 Electron 版的做法（`SERVE_WINDOW = 512KB`）。
-        //
-        // 本项目历史上试过分段回、因为 seek 时请求乱序而回滚过；用真实 WebView2
-        // 重测后（`bytes=0-` → `524288-` → `1048576-` … 整条序列）**没有复现**，
-        // seek 到 60% 照常推进、无 MediaError。所以这里保留开关，让窗口大小
-        // 可调；数据侧仍然是整集下完才交给协议。
+        // 开放式：默认一次给到文件末尾；设 `HONGGUO_STREAM_WINDOW`（字节）可切成只回一窗。
         RangeSpec::Open { start } => {
             let end = match stream_window() {
                 0 => size - 1,
@@ -523,9 +458,6 @@ mod tests {
     use crate::StreamCache;
     use std::sync::atomic::AtomicBool;
 
-    /// 回归：`HONGGUO_STREAM_WINDOW=0` 曾让开放 Range 的 end==start，
-    /// `end-1` 在 start=0 时 u64 下溢（debug panic / release 非法头）。
-    /// 现约定窗口 0 与整集模式同义：一次给到末尾。
     #[test]
     fn zero_window_means_till_end_not_underflow() {
         assert_eq!(open_range_end(0, 0, 1_000), 1_000);
@@ -535,7 +467,6 @@ mod tests {
         assert_eq!(open_range_end(999, 100, 1_000), 1_000);
     }
 
-    /// 造一个「已填好 size + 全部字节」的条目。
     fn ready_stream(vid: &str, definition: u32, len: usize) {
         let c = crate::cache();
         c.remove(vid, definition);
@@ -553,8 +484,6 @@ mod tests {
             .map(|(_, v)| v.as_str())
     }
 
-    // ---- 播放数据面：<video> 实际会发的几类请求 ----
-
     #[test]
     fn serves_full_body_after_fill() {
         ready_stream("v-full", 1080, 4096);
@@ -564,7 +493,6 @@ mod tests {
         assert_eq!(header(&headers, "Content-Type"), Some("video/mp4"));
         assert_eq!(header(&headers, "Accept-Ranges"), Some("bytes"));
         assert_eq!(header(&headers, "Content-Length"), Some("4096"));
-        // 不许 WebView2 缓存：缓存到失败瞬间的坏响应，重试就永远拿坏数据
         assert_eq!(header(&headers, "Cache-Control"), Some("no-store"));
     }
 
@@ -583,9 +511,6 @@ mod tests {
 
     #[test]
     fn open_range_returns_everything_from_the_offset() {
-        // 开放式 Range 是 <video> 起播的第一枪，必须给 206 + Content-Range。
-        // 而且要一次给到文件末尾：整集早已在内存里，分段只会逼 <video> 反复
-        // 续取，seek 时请求乱序，WebView2 会直接报错。
         ready_stream("v-open", 1080, 4096);
         let (status, headers, body) = serve("v-open", 1080, Some("bytes=0-")).unwrap();
         assert_eq!(status, 206);
@@ -596,7 +521,6 @@ mod tests {
 
     #[test]
     fn open_range_after_a_seek_also_reaches_the_end() {
-        // 切清晰度会按续播位置 seek，`bytes=X-` 落在文件中段。
         ready_stream("v-seek", 1080, 4096);
         let (status, _, _) = serve("v-seek", 1080, Some("bytes=1146880-")).unwrap();
         assert_eq!(status, 416, "超出总长的偏移仍应是不可满足");
@@ -628,16 +552,11 @@ mod tests {
 
     #[test]
     fn serve_fails_fast_when_entry_is_replaced_midwait() {
-        // 等待中的条目被逐出/同键重建后，手里那份永远不会有数据（它的填充
-        // 已随逐出死亡）——必须立即报错让前端自动重试接手，而不是等满
-        // 30s 才把断流交给用户（「视频处理失败」那次事故的收尾半段）。
         let c = crate::cache();
         c.remove("v-stale", 1080);
-        // 建一个空条目（无明文、无渐进）：serve 会进等待
         c.set_definitions("v-stale", 1080, &[]);
         let handle = std::thread::spawn(|| serve("v-stale", 1080, Some("bytes=0-")));
         std::thread::sleep(Duration::from_millis(300));
-        // 同键重建 = 「切走又切回触发的重取」竞态
         c.remove("v-stale", 1080);
         c.set_definitions("v-stale", 1080, &[]);
         let started = std::time::Instant::now();
@@ -649,13 +568,8 @@ mod tests {
         );
     }
 
-    // ---- 清晰度切换：一集的多个档位互不干扰 ----
-
     #[test]
     fn switching_quality_leaves_the_previous_one_serving_its_own_bytes() {
-        // 「切档后报视频处理失败」的那个 bug：切档曾经会清空同一条缓存，
-        // 于是正在播的旧 <video> 下一发 Range 请求就拿不到自己的数据。
-        // 按 (vid, 档位) 分条目之后，切档对上一档是零影响。
         const FILL_1080: u8 = 0xA1;
         const FILL_720: u8 = 0xB2;
         let c = crate::cache();
@@ -678,16 +592,11 @@ mod tests {
 
     #[test]
     fn a_definition_that_was_never_fetched_is_not_served() {
-        // 切到还没下过的档位：不能退而求其次拿别的档位的数据糊弄 `<video>`，
-        // 那正是「容器索引对不上 → 解码失败」的来源。
         ready_stream("v-only-1080", 1080, 256);
         let err = serve("v-only-1080", 720, Some("bytes=0-")).expect_err("没下过的档位应报错");
         assert!(err.contains("没有正在准备的在线流"), "实际: {err}");
     }
 
-    // ---------------------------------------------------------------- 渐进模式
-
-    /// 注册一条带真实解密计划的渐进流，返回 (稀疏缓冲, 密文, 明文参照, 明文总长)。
     fn progressive_fixture(vid: &str, def: u32) -> (Arc<SparseBuffer>, Vec<u8>, Vec<u8>, u64) {
         use hongguo_video::decrypt_buffer::decrypt_mp4_buffer;
         use hongguo_video::streaming::StreamingPlan;
@@ -712,7 +621,6 @@ mod tests {
         };
         let c = crate::cache();
         c.remove(vid, def);
-        // 渐进注册是非复活式的：fixture 先物化条目（prepare 的 begin_fetch 等价物）
         assert!(c.begin_fetch(vid, def));
         c.end_fetch(vid, def);
         assert!(c.set_progressive(vid, def, Arc::new(prog)));
@@ -723,7 +631,6 @@ mod tests {
     fn progressive_serves_decrypted_range_as_data_arrives() {
         let (sparse, cipher, reference, plain_len) = progressive_fixture("v-prog", 720);
 
-        // 数据未到时后台写入，serve 应等到就绪再给出**解密后**的字节
         let writer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(60));
             sparse.write(0, &cipher);
@@ -745,7 +652,6 @@ mod tests {
         sparse.write(0, &cipher);
 
         let (status, headers, body) = serve("v-prog-open", 720, Some("bytes=30-")).unwrap();
-        // fixture 很小（<4MB 窗口），开放式给到明文末尾
         assert_eq!(status, 206);
         assert_eq!(body, &reference[30..]);
         assert_eq!(
@@ -770,7 +676,6 @@ mod tests {
 
     #[test]
     fn progressive_identity_stream_serves_raw_bytes() {
-        // 未加密流（plan = None）：明文就是密文，原样供数
         let c = crate::cache();
         let data: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
         let sparse = SparseBuffer::new(data.len() as u64);
@@ -803,7 +708,6 @@ mod tests {
         });
         std::thread::sleep(Duration::from_millis(150));
 
-        // 还在等的时候：应有读者登记，且第一个需求洞指向缺口的起点
         let c = crate::cache();
         let prog = c
             .get("v-prog-demand", 720)
@@ -820,14 +724,11 @@ mod tests {
         let (ok, len) = server.join().unwrap();
         assert!(ok);
         assert_eq!(len, 10);
-        // 应答完成后登记销掉：残留的登记会占住调度优先级
         assert!(!prog.demand.has_waiters(), "应答完成后登记应注销");
     }
 
     #[test]
     fn cancellable_serve_exits_promptly_and_unregisters_demand() {
-        // seek 重定位后，堵在旧位置上的读取必须尽快退场：登记不注销，填充
-        // 调度器会按 FIFO 先把旧区间下完才轮到新位置（白耗带宽拖慢 seek）。
         let (sparse, cipher, _reference, _len) = progressive_fixture("v-prog-cancel", 720);
 
         let cancel = Arc::new(AtomicBool::new(false));
@@ -845,7 +746,6 @@ mod tests {
             .expect("渐进条目应在");
         assert!(prog.demand.has_waiters(), "等待期间应留下需求登记");
 
-        // 取消：应在远小于 30s 超时的时间内报错退场
         let started = std::time::Instant::now();
         cancel.store(true, Ordering::Relaxed);
         let result = server.join().expect("serve 线程不应 panic");
@@ -856,10 +756,8 @@ mod tests {
         );
         assert!(result.is_err(), "取消的读取应报错而不是返回数据");
 
-        // 登记已注销：填充调度器不再被旧需求占住优先级
         assert!(!prog.demand.has_waiters(), "取消后读者登记应注销");
 
-        // 同一条流取消后仍可正常读取（数据随后补齐）
         sparse.write(0, &cipher);
         let (status, _, body) = serve("v-prog-cancel", 720, Some("bytes=10-19")).expect("应成功");
         assert_eq!(status, 206);
@@ -868,7 +766,6 @@ mod tests {
 
     #[test]
     fn progressive_is_reported_ready_before_any_data() {
-        // 计划注册即可应答：拉分集与起播两个并发请求不必等整集
         let c = crate::cache();
         c.remove("v-prog-ready", 720);
         let sparse = SparseBuffer::new(16);
@@ -888,8 +785,6 @@ mod tests {
 
     #[test]
     fn progressive_registration_does_not_resurrect_an_evicted_entry() {
-        // 条目被逐出 = 用户已切走：渐进注册必须作废（否则填充把没人要的
-        // 条目重新插回缓存，白占串行队列——切集黑屏链路的一环）
         let c = crate::cache();
         c.remove("v-prog-gone", 720);
         let prog = ProgressiveStream {
@@ -906,7 +801,6 @@ mod tests {
 
     #[test]
     fn set_progressive_yields_to_whole_mode_data() {
-        // 整集数据已写入后，渐进注册应被拒绝（回落路径赢了的情形）
         let c = StreamCache::default();
         c.store("v-race", 720, &[1u8; 8]);
         let prog = ProgressiveStream {
@@ -919,8 +813,6 @@ mod tests {
         };
         assert!(!c.set_progressive("v-race", 720, Arc::new(prog)));
     }
-
-    // ------------------------------------------------ 字节级读取（AVFoundation）
 
     use crate::read::StreamReadError;
     use crate::{read_range, read_range_cancellable, total_len};
@@ -936,7 +828,6 @@ mod tests {
         assert_eq!(chunk.start, 100);
         assert_eq!(chunk.bytes, reference);
 
-        // 与 HTTP 版逐字节一致：两条路共用同一份数据面
         let (status, _, body) = serve("v-bytes-whole", 1080, Some("bytes=100-149")).unwrap();
         assert_eq!(status, 206);
         assert_eq!(body, chunk.bytes);
@@ -970,7 +861,6 @@ mod tests {
     #[test]
     fn byte_progressive_len_is_known_before_any_data() {
         let (sparse, cipher, reference, plain_len) = progressive_fixture("v-bytes-prog", 720);
-        // contentLength 必须在 AVURLAsset 创建前就可用
         assert_eq!(total_len("v-bytes-prog", 720), Some(plain_len));
 
         let writer = std::thread::spawn(move || {
@@ -1016,7 +906,6 @@ mod tests {
         );
         assert!(!prog.demand.has_waiters(), "取消后读者登记应注销");
 
-        // 条目仍可用：数据随后补齐即可正常读
         sparse.write(0, &cipher);
         let chunk = read_range("v-bytes-cancel", 720, 10, Some(10)).expect("取消后应可重读");
         assert_eq!(chunk.bytes, &cipher[10..20]);
@@ -1031,7 +920,6 @@ mod tests {
 
     #[test]
     fn byte_reads_identity_progressive_stream() {
-        // 未加密流（plan=None）：明文就是密文，字节 API 与 serve 同源
         let c = crate::cache();
         let data: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
         let sparse = SparseBuffer::new(data.len() as u64);
@@ -1054,16 +942,14 @@ mod tests {
         assert_eq!(chunk.bytes, &data[100..200]);
     }
 
-    // ------------------------------------------------------------- 需求登记表
-
     #[test]
     fn reader_demand_serves_fifo_and_clears_on_unregister() {
         let d = ReaderDemand::new();
         let sparse = SparseBuffer::new(100);
-        sparse.write(0, &[0u8; 10]); // 0-10 就绪
+        sparse.write(0, &[0u8; 10]);
 
-        let t1 = d.register(&[(0, 10)]); // 已就绪的区间
-        let t2 = d.register(&[(80, 90)]); // 后到的、未就绪
+        let t1 = d.register(&[(0, 10)]);
+        let t2 = d.register(&[(80, 90)]);
         assert_eq!(
             d.first_wanted(&sparse),
             Some(80),
@@ -1079,14 +965,13 @@ mod tests {
 
     #[test]
     fn reader_demand_lands_inside_mid_range_hole() {
-        // 需求区间头尾就绪、中段有洞：调度器应指到区间内的洞，而不是越过它
         let d = ReaderDemand::new();
         let sparse = SparseBuffer::new(100);
-        sparse.write(10, &[0u8; 10]); // 10-20
-        sparse.write(25, &[0u8; 5]); // 25-30
+        sparse.write(10, &[0u8; 10]);
+        sparse.write(25, &[0u8; 5]);
         d.register(&[(10, 40)]);
         assert_eq!(d.first_wanted(&sparse), Some(20));
-        sparse.write(20, &[0u8; 5]); // 20-25，区间前半补齐
+        sparse.write(20, &[0u8; 5]);
         assert_eq!(
             d.first_wanted(&sparse),
             Some(30),
@@ -1096,7 +981,6 @@ mod tests {
 
     #[test]
     fn reader_demand_fifo_never_starves_early_reader() {
-        // 先到的读者没就绪前，后到者不能插队（多读者并发的公平性）
         let d = ReaderDemand::new();
         let sparse = SparseBuffer::new(100);
         d.register(&[(60, 70)]);

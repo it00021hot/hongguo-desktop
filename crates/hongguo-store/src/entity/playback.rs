@@ -36,10 +36,7 @@ pub async fn playback_position(
     }))
 }
 
-/// 读一部剧「最近看到的那一集」及其位置（按 updated_at 取最新一行）。
-///
-/// 详情页「继续看第 N 集」的真值来源：本地 playback 表 5 秒一写，
-/// 永远比云端观看历史（约 1 分钟一报 + 接口缓存）新鲜。
+/// 读一部剧「最近看到的那一集」及其位置（按 updated_at 取最新一行）；详情页「继续看第 N 集」的真值来源——本地表 5 秒一写，比云端观看历史（约 1 分钟一报 + 接口缓存）新鲜。
 pub async fn series_last_position(
     db: &Db,
     series_id: &str,
@@ -101,8 +98,6 @@ mod tests {
     fn playback_upsert_is_per_episode() {
         let db = mem_db();
         rt().block_on(async {
-            // updated_at 显式给定：PlaybackPosition::new 打的是毫秒时间戳，
-            // 三条同毫秒构造的话「最新一集」断言会因同值排序不定而随机失败
             let at = |t: f64, updated: i64| PlaybackPosition {
                 current_time: t,
                 duration: 100.0,
@@ -112,7 +107,6 @@ mod tests {
             save_playback_position(&db, "A", 1, &p1).await.unwrap();
             let p2 = at(50.0, 300);
             save_playback_position(&db, "A", 2, &p2).await.unwrap();
-            // 同一集再写是覆盖不是新增
             let p1b = at(20.0, 200);
             save_playback_position(&db, "A", 1, &p1b).await.unwrap();
 

@@ -1,20 +1,11 @@
-//! 实体读写：settings / tasks / series / playback / merge_tasks 的 SQL 实现。
+//! 实体读写：settings / tasks / series / playback / merge_tasks 等六组的 SQL 实现。设计约定：复杂实体（任务/剧集/合并）整行存 JSON 列，只把需要 WHERE / ORDER / JOIN 的字段提升为列；playback 是最热写入点（前端 5 秒节流上报），全真实列 + UPSERT；所有多行写操作包在单个事务里。
 //!
-//! 设计约定：
-//! - 复杂实体（任务/剧集/合并）整行存 JSON 列，serde 模型原样复用；
-//!   只把需要 WHERE / ORDER / JOIN 的字段提升为列。
-//! - playback 是最热的写入点（前端 5 秒节流上报），全真实列 + UPSERT。
-//! - 所有多行写操作包在单个事务里，中途失败不落半截数据。
-//!
-//! 本模块全部是 `async fn`，跑在 [`crate::bridge`] 的专用 DB 线程上，
-//! 由同步门面 [`crate::Store`] 逐方法转调；不要在业务代码里直接调用。
+//! 本模块全部是 `async fn`，跑在 [`crate::bridge`] 的专用 DB 线程上、由同步门面 [`crate::Store`] 逐方法转调；不要在业务代码里直接调用。
 
 use hongguo_common::{AppError, AppResult};
 
 #[cfg(test)]
 use crate::db::Db;
-
-// ---------- 取列小工具 ----------
 
 fn col_text(row: &turso::Row, i: usize) -> AppResult<String> {
     row.get_value(i)
@@ -76,8 +67,6 @@ pub use series::{series_all, series_by_id, upsert_series};
 pub use settings::{save_settings, settings};
 pub use task::{replace_tasks, tasks};
 
-// ---------- 测试公共件（各实体子模块测试共用） ----------
-
 #[cfg(test)]
 fn rt() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -98,7 +87,6 @@ mod tests {
 
     #[test]
     fn task_status_column_matches_model() {
-        // status 列是给将来 WHERE 用的，必须与 serde 形态一致（小写驼峰、无引号）
         assert_eq!(status_text(&TaskStatus::Running), "running");
     }
 }

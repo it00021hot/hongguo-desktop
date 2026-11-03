@@ -5,16 +5,10 @@ use super::*;
 use gpui_kit::div;
 
 impl HomeView {
-    /// 系统后端：把 contain 的黑边画成黑色。
-    ///
-    /// 透明洞的边界是**视频矩形**，不是整个舞台。视频位在 GPUI 内容之下，舞台
-    /// 背景一透明，黑边就成了「洞」：Windows 的 DComp 透明窗没有窗口底色兜底，
-    /// 会直接漏出后面的窗口（实测截屏里能看到别的窗口内容）；macOS 靠窗口黑底
-    /// 遮住，但两侧共用这段代码之后行为一致——黑边由 GPUI 自己画，窗口底色
-    /// 只作最后的兜底。
-    ///
-    /// 换算与 `hongguo-player-windows` 的舞台几何同参：contain 居中换算宽高，
-    /// 取不到原生尺寸（metadata 未就绪）时不画；小屏是 `cover` 铺满，没有黑边。
+    /// 系统后端：把 contain 的黑边画成黑色。透明洞的边界是视频矩形而非整个
+    /// 舞台——Windows 的 DComp 透明窗没有窗口底色兜底，黑边不自己画就会漏出
+    /// 后面的窗口。换算与 `hongguo-player-windows` 的舞台几何同参；取不到原生
+    /// 尺寸（metadata 未就绪）时不画；小屏是 cover 铺满，没有黑边。
     pub(super) fn render_stage_letterbox(&self) -> Option<gpui_kit::AnyElement> {
         if self.mini.is_some() {
             return None;

@@ -7,10 +7,6 @@ use hongguo_common::{AppError, AppResult};
 use super::mft::hr;
 use super::sample::{sample_to_bytes, type_stride, video_type};
 
-// ————————————————————————————————————————————————————————————
-// 解码：HEVC MFT → NV12 系统内存
-// ————————————————————————————————————————————————————————————
-
 /// 一帧解码输出：连续 NV12 字节 + 自身 stride（别假设等于 width）。
 pub(super) struct Nv12Frame {
     pub(super) data: Vec<u8>,
@@ -22,15 +18,10 @@ pub(super) struct Nv12Frame {
 }
 
 /// 解码器：**IMFSourceReader**（MF 的高层读入 API）。
-///
-/// 为什么不手工驱动解码 MFT：实机反复实证，微软 HEVC 扩展解码器手工
-/// `ProcessInput`/`ProcessOutput` 会建会话成功但永远不出帧（序列头喂
-/// hvcC 记录或 Annex-B 串、补 START_OF_STREAM、配 D3D11 管理器都救不回，
-/// 后者还会段错误——该解码器疑似进程级单例 + DXVA 门控）；而
-/// SourceReader 对同一文件稳定解出全部帧。它内部就是同一套解码 MFT +
-/// 参数集/样本形态/DXVA 的正确装配，还自动吃到硬件解。h264 编码 MFT
-/// 手工驱动则实证可用（NVIDIA/软编都通），两边的驱动契约不对称是 MF
-/// 的现实，如实各取所长。
+/// 不手工驱动解码 MFT 的原因（实机反复实证）：微软 HEVC 扩展解码器手工 `ProcessInput`/`ProcessOutput` 会建会话成功但永远不出帧
+/// （序列头喂 hvcC 或 Annex-B、补 START_OF_STREAM、配 D3D11 管理器都救不回，后者还会段错误——疑似进程级单例 + DXVA 门控）；
+/// SourceReader 对同一文件稳定解出全部帧（内部就是同一套解码 MFT + 参数集/样本形态/DXVA 的正确装配，还自动吃到硬件解）。
+/// h264 编码 MFT 手工驱动则实证可用（NVIDIA/软编都通）——两边驱动契约不对称是 MF 的现实，如实各取所长。
 pub(super) struct Decoder {
     reader: IMFSourceReader,
     width: usize,
@@ -59,11 +50,9 @@ impl Decoder {
             )?;
             let cur = hr(reader.GetCurrentMediaType(stream), "读解码输出类型")?;
             let (w, h) = frame_size_of(&cur)?;
-            // 解码面尺寸 ≠ 轨道声明尺寸是常态而非异常：编码器按对齐取整
-            // （实测红果源声明 1922×1080，解码面 1928×1080）。原来严格相等
-            // 校验直接拒了这类源，平台层全灭、静默落到慢得多的 ffmpeg 软编。
-            // 真正要拒的只有「解出来的画面比声明还小」（内容真缺了）或
-            // 离谱地大（参数装配错了）；对齐差交给缩放/合并的统一分辨率去收。
+            // 解码面尺寸 ≠ 轨道声明尺寸是常态而非异常：编码器按对齐取整（实测红果源声明 1922×1080、解码面 1928×1080），
+            // 严格相等校验会拒掉这类源、平台层全灭静默落到 ffmpeg 软编。真正要拒的只有「解出来比声明还小」（内容真缺了）或离谱地大（参数装配错了）；
+            // 对齐差交给缩放/合并的统一分辨率去收
             if w < width || h < height || w > width + 64 || h > height + 64 {
                 return Err(AppError::Media(format!(
                     "解码分辨率 {w}x{h} 与轨道声明 {width}x{height} 相差过大"
