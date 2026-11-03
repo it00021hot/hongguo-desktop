@@ -302,6 +302,9 @@ async fn build_progressive(
         let key = hongguo_video::crypto::key_derive::derive_key(&play.key_material)?;
         let plan = StreamingPlan::build(&region, moov_start, total, &key)?;
         let plain_len = plan.plain_len();
+        // moov 密文已折进计划；稀疏里再留一份是双份（连播时每集数 MB 的「rss 残渣」主因）。
+        // covered 保留，填充不会回填；渲染走计划里的重建 moov，不再读这段密文。
+        sparse.forget_data(moov_start, moov_start + moov_size);
         Arc::new(ProgressiveStream {
             sparse: sparse.clone(),
             plan: Some(Arc::new(plan)),

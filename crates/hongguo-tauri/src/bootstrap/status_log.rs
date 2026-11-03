@@ -6,7 +6,8 @@ use std::time::Duration;
 /// 采样间隔。内存涨幅是分钟级现象，30s 足够定位斜率，日志噪音可控。
 const INTERVAL: Duration = Duration::from_secs(30);
 
-/// 启动周期状态日志任务：进程 RSS / private、流缓存（字节、条目数）、兼容转码缓存磁盘占用。
+/// 启动周期状态日志任务：进程 RSS / private、流缓存（字节、条目数；含解密计划常驻）、
+/// 兼容转码缓存磁盘占用。stream_cache 与 rss 的差额应是基线杂项，不应再随连播每集爬升。
 pub fn init() -> tauri::Result<()> {
     hongguo_service::runtime::spawn(async move {
         let pid = sysinfo::Pid::from_u32(std::process::id());

@@ -106,6 +106,13 @@ impl StreamingPlan {
         self.plain_len
     }
 
+    /// 本计划常驻内存字节数：重建后的 moov + 样本段索引。
+    /// 流缓存的 `entry_weight` 必须把它算进去——只数稀疏缓冲会把每集约数 MB 的计划漏成「rss 残渣」。
+    pub fn footprint_bytes(&self) -> u64 {
+        let segments = self.segments.len() * std::mem::size_of::<SampleSeg>();
+        (self.new_moov.len() + segments) as u64
+    }
+
     /// 明文 moov 与旧 moov 的长度差：明文偏移 → 密文偏移的平移量。
     fn tail_delta(&self) -> i64 {
         // 明文里 moov 之后的第 X 字节 ↔ 密文 X − delta 处；旧 moov 长由 plain_len 构成式反解，用 i64 防 head-moov 布局下溢
@@ -362,6 +369,26 @@ impl SparseBuffer {
             .sum()
     }
 
+    /// 丢掉 `[start, end)` 内**整块落在区间里**的数据面，保留 covered 不变。
+    /// 用途：流式计划建好后，moov 密文已折进计划的重建 moov，稀疏里再留一份是双份；
+    /// covered 仍声称就绪，填充不会把洞填回来，解密渲染也只读计划里的 moov。
+    /// 与区间部分相交的边界块不动（里面可能还有样本数据）。
+    pub fn forget_data(&self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        let mut chunks = self.chunks.lock();
+        let first = (start / CHUNK_BYTES as u64) as usize;
+        let last_exclusive = end.div_ceil(CHUNK_BYTES as u64) as usize;
+        for idx in first..last_exclusive.min(chunks.len()) {
+            let chunk_start = idx as u64 * CHUNK_BYTES as u64;
+            let chunk_end = chunk_start + self.chunk_len_of(idx) as u64;
+            if chunk_start >= start && chunk_end <= end {
+                chunks[idx] = None;
+            }
+        }
+    }
+
     /// 拷出一段密文。**不做就绪检查**——调用方先 `covers`。
     pub fn read_into(&self, start: u64, out: &mut [u8]) {
         let chunks = self.chunks.lock();
@@ -480,6 +507,28 @@ mod tests {
         assert_eq!(sparse.downloaded(), 100);
         assert!(sparse.covers(0, 100));
         assert!(!sparse.covers(0, 101));
+    }
+
+    #[test]
+    fn sparse_buffer_forget_data_drops_fully_covered_chunks_keeps_covered() {
+        let sparse = SparseBuffer::new(4 * CHUNK_BYTES as u64);
+        // 写满 0..3 块：中间整块可被 forget，首尾与区间相交的不动
+        sparse.write(0, &vec![1u8; 3 * CHUNK_BYTES]);
+        assert_eq!(sparse.allocated(), 3 * CHUNK_BYTES as u64);
+        let moov_start = CHUNK_BYTES as u64;
+        let moov_end = 3 * CHUNK_BYTES as u64;
+        sparse.forget_data(moov_start, moov_end);
+        assert!(sparse.covers(moov_start, moov_end), "covered 口径不变，填充不回填");
+        assert_eq!(
+            sparse.next_gap(0),
+            Some((3 * CHUNK_BYTES as u64, 4 * CHUNK_BYTES as u64)),
+            "forget 不制造填充可见的洞"
+        );
+        assert_eq!(
+            sparse.allocated(),
+            CHUNK_BYTES as u64,
+            "只丢掉完全落在区间内的第 1、2 块，第 0 块边界相交保留"
+        );
     }
 
     #[test]
