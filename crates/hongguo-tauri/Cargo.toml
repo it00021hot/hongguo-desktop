@@ -19,7 +19,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 # 更新：签名校验的安装包经 GitHub Releases 的 latest.json 分发；
 # 进程插件只用到 relaunch（下载完成后重启进新版本）
-tauri-plugin-updater = "2.13.2"
+tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2.4.0"
 # dev 调试通路：在 app 里内嵌 W3C WebDriver 服务器（127.0.0.1:4445），macOS 的
 # WKWebView 没有对外 CDP/远程调试协议（桌面目标被 Apple 私有 entitlement 锁给

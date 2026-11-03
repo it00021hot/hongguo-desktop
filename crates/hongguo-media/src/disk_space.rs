@@ -14,10 +14,10 @@ pub fn free_space_at(path: &Path) -> Option<u64> {
         return None;
     }
 
-    let disks = Disks::new_with_refreshed_list();
+    // 0.40：枚举失败（不支持平台等）返回 Err——与「查不到」同归 None
+    let disks = Disks::new_with_refreshed_list().ok()?;
     // 挂载点会互相嵌套（根 `/` 与 `/mnt/data`），取最长匹配的那个
     disks
-        .list()
         .iter()
         .filter(|d| path.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().components().count())

@@ -19,7 +19,7 @@ rusty_h265 = "0.6.0"
 # 封面 HEIC 解码后的 JPEG 编码（纯 Rust、零 unsafe）
 jpeg-encoder = "0.6"
 # 合并前校验「输出卷还剩多少字节」，只开 disk
-sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
+sysinfo = { version = "0.40", default-features = false, features = ["disk"] }
 
 [dev-dependencies]
 # 本 crate 的测试要造 MP4 样本与比对序列化产物，开启 hongguo-video 的测试辅助模块。
