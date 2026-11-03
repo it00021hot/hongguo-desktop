@@ -220,7 +220,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* 侧边栏是桌面导航：窄屏由底部导航条承担（对齐官方 App 的底部 tab） */}
         {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <AppSidebar />}
 
-        <main id="content" className="min-h-0 flex-1 scrollbar-thin overflow-y-auto pb-14 md:pb-0">
+        {/* BottomNav 是壳 flex 列的末子（sticky），自己占位；不再给 main 叠
+            pb-14——叠了会在播放器与底栏之间空出一截黑边（手机端尤甚）。
+            小窗/竖屏/全屏时底栏不挂载，同样不需要占位。 */}
+        <main id="content" className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {children}
         </main>
       </div>

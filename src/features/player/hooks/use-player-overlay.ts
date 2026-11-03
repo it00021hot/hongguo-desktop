@@ -12,6 +12,13 @@ export function usePlayerOverlay(params: {
   commentPanelOpen: boolean;
   danmakuPanelOpen: boolean;
   volumeOpen: boolean;
+  /** 窄屏倍速/清晰度底部 Sheet 打开时，悬浮层常显且不被静默期关掉 */
+  phoneMoreOpen?: boolean;
+  /** 窄屏选集 / 增强 Sheet */
+  phoneSeriesOpen?: boolean;
+  phoneEnhanceOpen?: boolean;
+  /** 窄屏发弹幕底栏打开时，悬浮层常显 */
+  phoneDanmakuSendOpen?: boolean;
   /**
    * 挂载时悬浮层是否点亮。自动连播切集传 false：静默起步；paused 初值同步视同
    * 「在播」，否则 paused=true 的常显规则会让操作栏照样亮出来（「自动下一集抢占鼠标」的来源）。
@@ -25,6 +32,10 @@ export function usePlayerOverlay(params: {
     commentPanelOpen,
     danmakuPanelOpen,
     volumeOpen,
+    phoneMoreOpen = false,
+    phoneSeriesOpen = false,
+    phoneEnhanceOpen = false,
+    phoneDanmakuSendOpen = false,
     startVisible = true,
     silenced = false,
   } = params;
@@ -49,7 +60,15 @@ export function usePlayerOverlay(params: {
 
   // 悬浮层整体可见性：任一面板打开或暂停时常显，其余由上面的倒计时裁决；
   // 简介/互动栏/控制栏全部吃这一个值（控制栏弹出时简介同步抬升也靠它）
-  const panelOpen = seriesPanelOpen || commentPanelOpen || danmakuPanelOpen || volumeOpen;
+  const panelOpen =
+    seriesPanelOpen ||
+    commentPanelOpen ||
+    danmakuPanelOpen ||
+    volumeOpen ||
+    phoneMoreOpen ||
+    phoneSeriesOpen ||
+    phoneEnhanceOpen ||
+    phoneDanmakuSendOpen;
   const chromeShown = silenced
     ? panelOpen
     : paused || chromeVisible || controlsHovered || panelOpen;

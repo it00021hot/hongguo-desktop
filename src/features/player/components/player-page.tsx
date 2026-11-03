@@ -6,6 +6,10 @@ import { DanmakuLayer } from './danmaku-layer';
 import { EnhancementLayer } from './enhancement-layer';
 import { PlayerControls } from './controls/player-controls';
 import { MiniScreenControls } from './mini-screen-controls';
+import { PhonePlayerChrome } from './phone-player-chrome';
+import { PhoneDanmakuSend } from './phone-danmaku-send';
+import { PhoneSeriesSheet } from './phone-series-sheet';
+import { DownloadSheet } from './download-sheet';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
 import { ChromeSurface } from './chrome-surface';
@@ -53,6 +57,7 @@ import { useMiniWindow } from '../hooks/use-mini-window';
 import { usePortraitWindow } from '../hooks/use-portrait-window';
 import { isAutoAdvanceStart, isPickerClickCooldown, markAutoAdvance } from '../playback-signals';
 import { usePinWindow } from '@/hooks/use-pin-window';
+import { useNarrowScreen } from '@/hooks/use-match-media';
 
 /** 自动连播静默硬上限：主闸门是「首播之前不唤醒」，这只兜起播失败的死局。 */
 const QUIET_WINDOW_MS = 8_000;
@@ -156,6 +161,17 @@ export function PlayerView({
 
   /** 下载面板是否打开。开着时不让连播把这一集换掉。 */
   const [downloading, setDownloading] = useState(false);
+  /** 窄屏 Sheet 开合提到本层，避免切集 key 重挂丢掉 */
+  const [phoneMoreOpen, setPhoneMoreOpen] = useState(false);
+  const [phoneSeriesOpen, setPhoneSeriesOpen] = useState(false);
+  const [phoneEnhanceOpen, setPhoneEnhanceOpen] = useState(false);
+  const [phoneDanmakuSendOpen, setPhoneDanmakuSendOpen] = useState(false);
+  /** 片源竖屏态带集指纹：切集后未出 metadata 前不算竖屏 → narrow 走 contain，避免横屏被旧态裁切 */
+  const [portraitByKey, setPortraitByKey] = useState<{ key: string; on: boolean }>({
+    key: '',
+    on: false,
+  });
+  const videoPortrait = portraitByKey.key === episodeKey && portraitByKey.on;
 
   // 选集与「下载到本地」都要完整分集表，从剧集档案直接取
   const { data: currentSeries } = useSeriesEpisodes(seriesId);
@@ -176,8 +192,12 @@ export function PlayerView({
   }
   const handleLoadedMetadataWithDanmaku = useCallback(() => {
     handleLoadedMetadata();
-    setDanmakuStartSecs(Math.floor(videoRef.current?.currentTime ?? 0));
-  }, [handleLoadedMetadata, videoRef]);
+    const video = videoRef.current;
+    if (video && video.videoWidth > 0 && video.videoHeight > 0 && episodeKey) {
+      setPortraitByKey({ key: episodeKey, on: video.videoHeight >= video.videoWidth });
+    }
+    setDanmakuStartSecs(Math.floor(video?.currentTime ?? 0));
+  }, [handleLoadedMetadata, videoRef, episodeKey]);
   const danmakuQuery = useDanmaku(
     currentVid ? `${currentVid}:${seriesId}` : '',
     currentEpisode?.duration ?? 0,
@@ -294,6 +314,10 @@ export function PlayerView({
       commentPanelOpen,
       danmakuPanelOpen,
       volumeOpen,
+      phoneMoreOpen,
+      phoneSeriesOpen,
+      phoneEnhanceOpen,
+      phoneDanmakuSendOpen,
       startVisible: !quietStart,
       silenced: quietArmed,
     });
@@ -398,6 +422,10 @@ export function PlayerView({
   // 无边框播放：这里只消费状态（拖拽条显隐），开关在控制栏
   const frameless = useUiStore((s) => s.playerFrameless);
   const { pinned, togglePinned } = usePinWindow();
+  // 窄于 md：手机端 / 缩到手机宽的桌面窗——全量控制栏必然溢出，画面用 cover 填满
+  const narrow = useNarrowScreen();
+  // 小窗一律 cover；窄屏仅竖屏片源 cover，横屏 contain（官方 letterbox，避免裁掉画面）
+  const coverFill = miniScreen || (narrow && videoPortrait);
 
   // 返回来源页（usePlaySeries 进场时记的路由），消费即清
   const handleReturnToSource = useCallback(() => {
@@ -538,8 +566,9 @@ export function PlayerView({
                      绝对定位把盒子钉死在舞台内，object-contain 只管留黑边。 */
                   className={cn(
                     'absolute inset-0 size-full',
-                    // 小屏 object-cover：迷你窗固定 16:9，竖版源用 contain 会留大片黑边，小窗里裁切比黑边可取
-                    miniScreen ? 'object-cover' : 'object-contain',
+                    // 小屏 / 手机窄舞台 object-cover：窗形与片源常不一致，
+                    // contain 会留大片黑边，裁切比黑边可取
+                    coverFill ? 'object-cover' : 'object-contain',
                   )}
                   autoPlay
                   onLoadedMetadata={handleLoadedMetadataWithDanmaku}
@@ -590,7 +619,7 @@ export function PlayerView({
                   videoRef={videoRef}
                   src={playSrc}
                   available={videoLive}
-                  cover={miniScreen}
+                  cover={coverFill}
                   settings={enhanceSettings}
                   onStatus={setEnhanceStatus}
                 />
@@ -612,8 +641,9 @@ export function PlayerView({
                   display={danmakuDisplay}
                 />
                 <ImmersiveInfoOverlay
-                  chromeShown={chromeShown}
+                  chromeShown={chromeShown && !phoneDanmakuSendOpen}
                   miniScreen={miniScreen}
+                  narrow={narrow && !portrait}
                   overlayMeta={overlayMeta}
                   title={currentSeries?.title}
                   episodeCount={currentSeries?.episodeCount}
@@ -627,9 +657,17 @@ export function PlayerView({
                   onExitBinge={() => setBinge(null)}
                   returnTo={returnTo}
                   onReturnToSource={handleReturnToSource}
+                  onOpenDanmakuSend={
+                    narrow && !portrait
+                      ? () => {
+                          setPhoneDanmakuSendOpen(true);
+                          wakeChrome();
+                        }
+                      : undefined
+                  }
                 />
-                {/* 快捷键提示只在暂停时露出；常驻顶栏会把分类 tab 挡死。小屏与竖屏窄条装不下 */}
-                {paused && !error && !miniScreen && !portrait && <KeyboardHint />}
+                {/* 快捷键提示只在暂停时露出；常驻顶栏会把分类 tab 挡死。小屏/竖屏/窄屏装不下 */}
+                {paused && !error && !miniScreen && !portrait && !narrow && <KeyboardHint />}
                 {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽） */}
                 {/* 沉浸流评论区：右侧滑出（💬 触发）；进小屏时已收起 */}
                 {commentPanelOpen && !miniScreen && (
@@ -658,7 +696,10 @@ export function PlayerView({
                   <ChromeSurface
                     shown={chromeShown}
                     data-wheel-block
-                    className="absolute inset-x-3 bottom-14 z-10"
+                    className={cn(
+                      'absolute inset-x-3 z-10',
+                      narrow && !portrait ? 'bottom-10' : 'bottom-14',
+                    )}
                   >
                     <button
                       type="button"
@@ -683,7 +724,8 @@ export function PlayerView({
                     </button>
                   </ChromeSurface>
                 )}
-                {/* 控制栏大小屏两套形态共用同一个 <video>，切大小屏播放零中断 */}
+                {/* 控制栏：小屏 / 竖屏 / 手机窄舞台用紧凑条，宽屏才上全量栏；
+                    共用同一个 <video>，切换形态播放零中断 */}
                 {miniScreen ? (
                   <MiniScreenControls
                     videoRef={videoRef}
@@ -710,7 +752,7 @@ export function PlayerView({
                     onControlsLeave={() => setControlsHovered(false)}
                   />
                 ) : portrait ? (
-                  // 竖屏窄条：控件对齐小窗紧凑条（全量控制栏在竖条里必然溢出）；⤢ = 退出竖屏
+                  // 竖屏窄条：控件对齐小窗紧凑条；⤢ = 退出竖屏
                   <MiniScreenControls
                     variant="portrait"
                     videoRef={videoRef}
@@ -732,6 +774,69 @@ export function PlayerView({
                     }}
                     onControlsLeave={() => setControlsHovered(false)}
                   />
+                ) : narrow ? (
+                  // 窄屏官方同款：右上倍速 + 底三键/细进度；Sheet 提到本层防切集重挂
+                  <>
+                    <PhonePlayerChrome
+                      videoRef={videoRef}
+                      visible={chromeShown && !phoneDanmakuSendOpen}
+                      moreOpen={phoneMoreOpen}
+                      onMoreOpenChange={setPhoneMoreOpen}
+                      enhanceOpen={phoneEnhanceOpen}
+                      onEnhanceOpenChange={setPhoneEnhanceOpen}
+                      onOpenSeries={() => {
+                        setPhoneSeriesOpen(true);
+                        if (!inBinge) setBinge(seriesId);
+                      }}
+                      episodeCount={currentSeries?.episodeCount ?? 0}
+                      definition={activeDefinition}
+                      definitions={definitions}
+                      onDefinitionChange={(d) => {
+                        captureFrame();
+                        setDefinition(d);
+                      }}
+                      danmakuOn={danmakuOn}
+                      onToggleDanmaku={toggleDanmaku}
+                      danmakuDisplay={danmakuDisplay}
+                      onDanmakuDisplayChange={updateDanmakuDisplay}
+                      enhanceSettings={enhanceSettings}
+                      onEnhanceChange={updateEnhancement}
+                      enhanceStatus={enhanceStatus}
+                      enhanceAvailable={videoLive}
+                      onDownloadingChange={setDownloading}
+                      onControlsEnter={() => {
+                        setControlsHovered(true);
+                        wakeChrome();
+                      }}
+                      onControlsLeave={() => setControlsHovered(false)}
+                    />
+                    <PhoneDanmakuSend
+                      open={phoneDanmakuSendOpen}
+                      onOpenChange={setPhoneDanmakuSendOpen}
+                      videoRef={videoRef}
+                      vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                    />
+                    <PhoneSeriesSheet
+                      open={phoneSeriesOpen}
+                      onOpenChange={setPhoneSeriesOpen}
+                      seriesId={seriesId}
+                      title={currentSeries?.title}
+                      cover={currentSeries?.cover}
+                      intro={meta?.intro}
+                      episodeCount={currentSeries?.episodeCount ?? 0}
+                      currentIndex={vidIndex}
+                      onPickEpisode={(idx) => {
+                        setTarget(seriesId, idx);
+                      }}
+                    />
+                    <DownloadSheet
+                      seriesId={seriesId}
+                      episodes={currentSeries?.episodes ?? []}
+                      defaultSelected={vidIndex ? [vidIndex] : []}
+                      open={downloading}
+                      onOpenChange={setDownloading}
+                    />
+                  </>
                 ) : (
                   <PlayerControls
                     videoRef={videoRef}
@@ -821,7 +926,7 @@ export function PlayerView({
           </div>
           {/* 末帧定格层：渲染在切换动画容器外（静止参考帧不跟新内容滑入）；
               同剧切集的间隙归黑幕，定格帧不参与 */}
-          {heldFrame && <FrameHold frame={heldFrame} hidden={!holdVisible} cover={miniScreen} />}
+          {heldFrame && <FrameHold frame={heldFrame} hidden={!holdVisible} cover={coverFill} />}
           {/* 同剧切集的黑幕：切集提交拍淡入盖住静止期，新集出画后淡出（z-25 让位控制栏与面板） */}
           <div
             aria-hidden

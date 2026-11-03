@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useRouter } from '@tanstack/react-router';
 import { ArrowLeft, Flame, Heart, Hourglass, Play, Star, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
@@ -50,6 +50,8 @@ export function SeriesDetailPage({
   // routeTree.gen 的 as any 污染 useRouter 返回值；这里只用 history.back
   const router = useRouter() as { history: { back: () => void } };
   const playSeries = usePlaySeries();
+  const [introExpanded, setIntroExpanded] = useState(false);
+  const [detailTab, setDetailTab] = useState('episodes');
 
   const { data: series, isPending, isError, error } = useSeriesEpisodes(seriesId || null);
   const { data: localProgress } = useSeriesProgress(seriesId ?? '');
@@ -163,7 +165,7 @@ export function SeriesDetailPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-8 md:py-6">
+    <div className="mx-auto w-full max-w-6xl px-4 py-4 pb-36 md:px-8 md:py-6 md:pb-6">
       <Button
         variant="ghost"
         size="sm"
@@ -198,20 +200,30 @@ export function SeriesDetailPage({
 
       {activeSeries && (
         <>
-          {/* 头部：封面 + 档案。构图对齐官方客户端详情页，数据全走 App 接口。
-              窄屏保持横排（官方窄屏同款）但收紧：海报缩到 w-28、间距减半，
-              给右栏留出可读宽度——宽 393px 下 w-44+gap-8 只剩 ~130px 会逐字换行 */}
-          <div className="mt-4 flex gap-4 md:gap-8">
+          {/* 头部：海报+标题同行顶对齐；简介/出品方/开播钮全宽在下（官方同款，
+              避免简介塞进右栏导致海报与标题视觉错位） */}
+          <div className="mt-4 flex items-start gap-3 md:gap-8">
             <div className="bg-muted relative aspect-[3/4] w-28 shrink-0 overflow-hidden rounded-xl md:w-44">
               <SeriesCover cover={activeSeries.cover} alt={activeSeries.title} />
             </div>
 
-            <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-bold md:text-2xl">{activeSeries.title}</h1>
-              {/* 统计行，排版对齐官方客户端：评分 评分人数 → 红果热度值 → 追剧 → 播放。
-                  评分来自剧评接口 extra（credibility_score），热度来自 video_detail
-                  （hot_score），两者缺失时该段不渲染不打断行 */}
-              <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <div className="min-w-0 flex-1 pt-0.5">
+              <h1 className="text-lg leading-snug font-bold md:text-2xl">{activeSeries.title}</h1>
+              {(meta?.updateTag ||
+                activeSeries.episodeCount > 0 ||
+                (meta && meta.hotScore > 0)) && (
+                <p className="text-muted-foreground mt-1.5 text-sm md:hidden">
+                  {meta?.updateTag ||
+                    tf('detail.allEpisodesBadge', { count: activeSeries.episodeCount })}
+                  {meta && meta.hotScore > 0 && (
+                    <>
+                      {' · '}
+                      {tf('detail.heatValue', { count: formatCountPrecise(meta.hotScore) })}
+                    </>
+                  )}
+                </p>
+              )}
+              <div className="text-muted-foreground mt-2 hidden flex-wrap items-center gap-x-3 gap-y-1 text-sm md:flex">
                 {reviewScore && (
                   <span className="flex items-baseline gap-1.5">
                     <span className="text-star text-xl leading-none font-bold">
@@ -243,15 +255,10 @@ export function SeriesDetailPage({
                 )}
               </div>
 
-              {/* 更新频率（连载剧独有，「每周六更新5集」，官方在统计行下单独
-                  一行；完结剧无 update_info 不渲染） */}
               {meta?.updateFrequency && (
                 <div className="text-muted-foreground mt-1 text-sm">{meta.updateFrequency}</div>
               )}
 
-              {/* 季徽（高亮）+「全 N 集」+ 题材标签——行构成与官方客户端一致；
-                  题材来自 video_detail secondary_infos，档案自带 tags 是解析兜底。
-                  未上线剧红底「全 0 集」（0 集也要亮出来） */}
               {(meta ? !!meta.season || meta.tags.length > 0 : activeSeries.tags.length > 0) ||
               activeSeries.episodes.length > 0 ||
               upcoming ? (
@@ -266,8 +273,6 @@ export function SeriesDetailPage({
                       variant={upcoming ? 'default' : 'secondary'}
                       className={upcoming ? 'bg-hot text-primary-foreground' : ''}
                     >
-                      {/* 官方统计行原文优先（完结「全139集」/ 连载「更新至83集」）；
-                          旧后端窗口期回落本地集数拼「全 N 集」 */}
                       {meta?.updateTag ||
                         tf('detail.allEpisodesBadge', { count: activeSeries.episodes.length })}
                     </Badge>
@@ -279,109 +284,126 @@ export function SeriesDetailPage({
                   ))}
                 </div>
               ) : null}
-
-              {/* 简介常驻全文（无收起/展开） */}
-              {intro && (
-                <p className="text-muted-foreground mt-4 text-sm leading-relaxed">{intro}</p>
-              )}
-
-              {/* 出品方 / 演职员（main_creator_users，对齐官方详情页 creators
-                  块：头像 + 名字 + 角色行）。点击跳**创作者主页**
-                  （commentapi/user/profile，非搜索；userId 是条目
-                  自带的 user_id）。旧条目无 uid 时不可点（仅展示） */}
-              {meta && meta.creators.length > 0 && (
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  {meta.creators.map((c) => (
-                    <button
-                      key={c.userId + c.name}
-                      type="button"
-                      onClick={
-                        c.userId
-                          ? () =>
-                              void navigate({
-                                to: '/creator',
-                                search: { userId: c.userId },
-                              })
-                          : undefined
-                      }
-                      disabled={!c.userId}
-                      className={cn(
-                        'flex items-center gap-2 rounded-full border py-1 pr-3 pl-1 transition-colors',
-                        c.userId && 'hover:bg-sidebar-accent cursor-pointer',
-                      )}
-                      title={tf('detail.creatorHome', { name: c.name })}
-                    >
-                      {c.avatar ? (
-                        <img
-                          src={c.avatar}
-                          alt=""
-                          className="size-7 rounded-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="bg-muted grid size-7 place-items-center rounded-full">
-                          <UserRound className="text-muted-foreground size-4" aria-hidden />
-                        </span>
-                      )}
-                      <span className="text-left leading-tight">
-                        <span className="block text-xs font-medium">{c.name}</span>
-                        {c.role && (
-                          <span className="text-muted-foreground block text-[10px]">{c.role}</span>
-                        )}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                {upcoming ? (
-                  /* 未上线：动作行换「⏳ 即将上线 + 预约」，
-                     播放/收藏/点赞无从谈起 */
-                  <>
-                    <span className="text-hot flex items-center gap-1.5 text-sm font-medium">
-                      <Hourglass className="size-4" aria-hidden />
-                      {t('player.comingSoon')}
-                    </span>
-                    <ReserveButton seriesId={seriesId} />
-                  </>
-                ) : (
-                  <>
-                    <Button size="sm" onClick={() => playEpisode(continueIndex)}>
-                      <Play className="size-4" aria-hidden />
-                      {continueIndex > 1
-                        ? tf('detail.continueEpisode', { index: continueIndex })
-                        : t('detail.playFirst')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={onCollect}
-                      className={cn(collected && 'text-star')}
-                    >
-                      <Star
-                        className={cn('size-4', collected && 'fill-star text-star')}
-                        aria-hidden
-                      />
-                      {t(collected ? 'detail.collected' : 'detail.collect')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={onDigg}
-                      className={cn(digged && 'text-hot')}
-                    >
-                      <Heart className={cn('size-4', digged && 'fill-hot text-hot')} aria-hidden />
-                      {t('player.interact.like')}
-                    </Button>
-                    {/* 追更（对齐官方详情页）：仅连载中的剧显示——
-                        完结剧 series_status=1 且无追更钮（「全139集」），
-                        连载剧 series_status=0（「更新至83集」+「每周六更新5集」） */}
-                    {meta?.seriesStatus === 0 && <FollowButton seriesId={seriesId} />}
-                  </>
-                )}
-              </div>
             </div>
+          </div>
+
+          {intro && (
+            <div className="mt-5">
+              <h2 className="mb-1.5 text-sm font-semibold">{t('detail.plotIntro')}</h2>
+              <p
+                className={cn(
+                  'text-muted-foreground text-sm leading-relaxed',
+                  !introExpanded && 'line-clamp-2',
+                )}
+              >
+                {intro}
+              </p>
+              {!introExpanded && intro.length > 48 && (
+                <button
+                  type="button"
+                  onClick={() => setIntroExpanded(true)}
+                  className="text-primary mt-1 cursor-pointer text-sm"
+                >
+                  {t('player.introExpand')}
+                </button>
+              )}
+            </div>
+          )}
+
+          {meta && meta.creators.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {meta.creators.map((c) => (
+                <button
+                  key={c.userId + c.name}
+                  type="button"
+                  onClick={
+                    c.userId
+                      ? () =>
+                          void navigate({
+                            to: '/creator',
+                            search: { userId: c.userId },
+                          })
+                      : undefined
+                  }
+                  disabled={!c.userId}
+                  className={cn(
+                    'flex items-center gap-2 rounded-full border py-1 pr-3 pl-1 transition-colors',
+                    c.userId && 'hover:bg-sidebar-accent cursor-pointer',
+                  )}
+                  title={tf('detail.creatorHome', { name: c.name })}
+                >
+                  {c.avatar ? (
+                    <img
+                      src={c.avatar}
+                      alt=""
+                      className="size-7 rounded-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="bg-muted grid size-7 place-items-center rounded-full">
+                      <UserRound className="text-muted-foreground size-4" aria-hidden />
+                    </span>
+                  )}
+                  <span className="text-left leading-tight">
+                    <span className="block text-xs font-medium">{c.name}</span>
+                    {c.role && (
+                      <span className="text-muted-foreground block text-[10px]">{c.role}</span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {upcoming ? (
+              <>
+                <span className="text-hot flex items-center gap-1.5 text-sm font-medium">
+                  <Hourglass className="size-4" aria-hidden />
+                  {t('player.comingSoon')}
+                </span>
+                <ReserveButton seriesId={seriesId} />
+              </>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  className="w-full md:w-auto"
+                  onClick={() => playEpisode(continueIndex)}
+                >
+                  <Play className="size-4" aria-hidden />
+                  {continueIndex > 1
+                    ? tf('detail.continueEpisode', { index: continueIndex })
+                    : t('detail.playFirst')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onCollect}
+                  className={cn('hidden md:inline-flex', collected && 'text-star')}
+                >
+                  <Star
+                    className={cn('size-4', collected && 'fill-star text-star')}
+                    aria-hidden
+                  />
+                  {t(collected ? 'detail.collected' : 'detail.collect')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onDigg}
+                  className={cn('hidden md:inline-flex', digged && 'text-hot')}
+                >
+                  <Heart className={cn('size-4', digged && 'fill-hot text-hot')} aria-hidden />
+                  {t('player.interact.like')}
+                </Button>
+                {meta?.seriesStatus === 0 && (
+                  <span className="hidden md:inline-flex">
+                    <FollowButton seriesId={seriesId} />
+                  </span>
+                )}
+              </>
+            )}
           </div>
 
           {/* 备案号：放在头部块之下、tab 之上（独立一行小字） */}
@@ -392,7 +414,7 @@ export function SeriesDetailPage({
           {/* 选集 / 剧评 / 相关推荐。
               推荐 tab 每次被打开都换一批（官方客户端同款）：feed 游标前进一页，
               第一次打开除外——第一批本来就是新的。 */}
-          <Tabs defaultValue="episodes" className="mt-8">
+          <Tabs value={detailTab} onValueChange={setDetailTab} className="mt-8">
             <TabsList>
               <TabsTrigger value="episodes">
                 {t('detail.tabEpisodes')}
@@ -425,34 +447,51 @@ export function SeriesDetailPage({
                   )}
                 </Empty>
               ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {/* 选集格对齐官方客户端：序号 + 第 N 集 + 右侧时长角标。
-                      接口的 title 是整句剧情简介（不是集名），照排会挤成一团，
-                      官方客户端同款做法是统一显示「第 N 集」 */}
-                  {activeSeries.episodes.map((ep) => (
-                    <button
-                      key={ep.vidIndex}
-                      type="button"
-                      onClick={() => playEpisode(ep.vidIndex)}
-                      className={cn(
-                        'bg-card hover:border-foreground/30 flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors',
-                        ep.vidIndex === continueIndex && 'border-primary text-primary',
-                      )}
-                    >
-                      <span className="w-8 shrink-0 text-center font-mono text-sm font-semibold">
+                <>
+                  {/* 窄屏：官方数字方格；宽屏：序号+第N集+时长卡片 */}
+                  <div className="grid grid-cols-6 gap-2 md:hidden">
+                    {activeSeries.episodes.map((ep) => (
+                      <button
+                        key={ep.vidIndex}
+                        type="button"
+                        onClick={() => playEpisode(ep.vidIndex)}
+                        className={cn(
+                          'relative grid aspect-square place-items-center rounded-lg text-sm tabular-nums transition-colors',
+                          ep.vidIndex === continueIndex
+                            ? 'bg-primary font-semibold text-primary-foreground'
+                            : 'bg-muted text-foreground hover:bg-muted/80',
+                        )}
+                      >
                         {ep.vidIndex}
-                      </span>
-                      <span className="truncate text-sm">
-                        {tf('player.epShort', { index: ep.vidIndex })}
-                      </span>
-                      {ep.duration > 0 && (
-                        <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
-                          {formatDuration(ep.duration)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="hidden grid-cols-2 gap-3 sm:grid-cols-3 md:grid lg:grid-cols-4 2xl:grid-cols-5">
+                    {activeSeries.episodes.map((ep) => (
+                      <button
+                        key={ep.vidIndex}
+                        type="button"
+                        onClick={() => playEpisode(ep.vidIndex)}
+                        className={cn(
+                          'bg-card hover:border-foreground/30 flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors',
+                          ep.vidIndex === continueIndex && 'border-primary text-primary',
+                        )}
+                      >
+                        <span className="w-8 shrink-0 text-center font-mono text-sm font-semibold">
+                          {ep.vidIndex}
                         </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                        <span className="truncate text-sm">
+                          {tf('player.epShort', { index: ep.vidIndex })}
+                        </span>
+                        {ep.duration > 0 && (
+                          <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
+                            {formatDuration(ep.duration)}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </TabsContent>
 
@@ -470,6 +509,31 @@ export function SeriesDetailPage({
               {relatedGuess.length > 0 && <GuessYouLike items={relatedGuess} />}
             </TabsContent>
           </Tabs>
+
+          {/* 窄屏 sticky（BottomNav 上方）：收藏 | 点赞；剧评在 tab 里发 */}
+          {!upcoming && (
+            <div className="bg-background/95 supports-backdrop-filter:bg-background/80 fixed inset-x-0 bottom-14 z-30 flex gap-2 border-t px-4 py-2.5 backdrop-blur-sm md:hidden">
+              <Button
+                variant="outline"
+                className={cn('h-10 flex-1', collected && 'text-star')}
+                onClick={onCollect}
+              >
+                <Star
+                  className={cn('size-4', collected && 'fill-star text-star')}
+                  aria-hidden
+                />
+                {t(collected ? 'detail.collected' : 'detail.collect')}
+              </Button>
+              <Button
+                variant="outline"
+                className={cn('h-10 flex-1', digged && 'text-hot')}
+                onClick={onDigg}
+              >
+                <Heart className={cn('size-4', digged && 'fill-hot text-hot')} aria-hidden />
+                {t('player.interact.like')}
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>

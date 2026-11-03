@@ -8,6 +8,7 @@ import { ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { t, tf } from '@/locales';
 import { ChromeSurface } from './chrome-surface';
+import { DanmakuSwitchIcon } from './controls/player-icons';
 
 /** 左上角 pill 的共用皮肤（播放器 chrome 黑玻璃，与控制栏一族）。 */
 const PILL_CLASS =
@@ -82,6 +83,7 @@ export function PlayerChromePills({
 export function ImmersiveInfoOverlay({
   chromeShown,
   miniScreen,
+  narrow,
   overlayMeta,
   title,
   episodeCount,
@@ -95,9 +97,12 @@ export function ImmersiveInfoOverlay({
   onExitBinge,
   returnTo,
   onReturnToSource,
+  onOpenDanmakuSend,
 }: {
   chromeShown: boolean;
   miniScreen: boolean;
+  /** 窄屏：底栏只有细进度，简介贴进度上方（桌面 bottom-28 是给高控制栏的） */
+  narrow?: boolean;
   /** 信息流条目自带的展示标记（热度文本/季角标/运营角标） */
   overlayMeta?: { heatText?: string; seasonTag?: string; badge?: string };
   /** 剧名（按钮 title 提示与 @标题正文共用；档案未到时为 undefined） */
@@ -118,6 +123,8 @@ export function ImmersiveInfoOverlay({
   returnTo?: string | null;
   /** 点返回：回来源页（宿主负责导航并清掉 returnTo） */
   onReturnToSource?: () => void;
+  /** 窄屏：官方左下「弹」→ 打开发送输入（关弹幕在倍速 Sheet） */
+  onOpenDanmakuSend?: () => void;
 }) {
   return (
     <>
@@ -132,8 +139,27 @@ export function ImmersiveInfoOverlay({
       />
       <ChromeSurface
         shown={chromeShown && !miniScreen}
-        className="absolute bottom-28 left-3 z-10 max-w-[62%] transition-all duration-300 data-[shown=false]:bottom-14"
+        className={cn(
+          'absolute left-3 z-10 max-w-[62%] transition-all duration-300',
+          narrow
+            ? 'bottom-10 data-[shown=false]:bottom-6'
+            : 'bottom-28 data-[shown=false]:bottom-14',
+        )}
       >
+        {/* 窄屏「弹」：贴信息块左缘、热度/剧名上方；点开发送框（非开关） */}
+        {narrow && onOpenDanmakuSend && (
+          <button
+            type="button"
+            aria-label={t('player.interact.danmaku')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenDanmakuSend();
+            }}
+            className="mb-1.5 grid size-7 place-items-center rounded-md bg-black/40 text-white backdrop-blur-sm hover:bg-black/55"
+          >
+            <DanmakuSwitchIcon className="text-white" />
+          </button>
+        )}
         {/* 热度行（剧名上方） */}
         {overlayMeta?.heatText && (
           <p className="text-xs font-medium text-amber-300/90 drop-shadow-md">
@@ -179,7 +205,10 @@ export function ImmersiveInfoOverlay({
           // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角。
           // 容器吃掉点击（防触发舞台暂停/继续），展开交互只在按钮上
           <div
-            className="mt-1 flex max-w-[36%] items-end gap-2"
+            className={cn(
+              'mt-1 flex items-end gap-2',
+              narrow ? 'max-w-full' : 'max-w-[36%]',
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <p
