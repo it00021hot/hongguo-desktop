@@ -147,9 +147,17 @@ fn store(mode: Mode, g: Geometry) {
     }
 }
 
+/// 显示器工作区 `(x, y, w, h)`，物理像素，与 `Geometry` 同空间。
+type WorkArea = (i32, i32, i32, i32);
+
 /// 当前几何按当前窗态路由落盘（saver 防抖与 CloseRequested 共用）：小屏中记小屏槽、竖屏中记竖屏槽。最大化/全屏/最小化中的几何不进任何槽位；塌缩尺寸过 MIN_SAVE 地板不写——宁可丢一拍，不毒化槽位。
+///
+/// 窗口尚未 `visible` 时不落盘：启动时 `restore` 的 `set_size`/`set_position` 在
+/// macOS/Windows 上是异步入队的，saver 若在中间态取样会把「贴底窗被 resize
+/// 锚点拽歪」的坐标写进档，下一轮又被校验丢掉（issue #15）。
 pub fn save(win: &tauri::WebviewWindow) {
-    if win.is_maximized().unwrap_or(false)
+    if !win.is_visible().unwrap_or(false)
+        || win.is_maximized().unwrap_or(false)
         || win.is_fullscreen().unwrap_or(false)
         || win.is_minimized().unwrap_or(false)
     {
@@ -178,7 +186,78 @@ pub fn save(win: &tauri::WebviewWindow) {
     );
 }
 
-/// 读指定窗态的记忆并校验：尺寸不小于 min，且**完整落在**任一显示器工作区内——只要「相交」会放行 title 悬在屏外/半截悬在副屏的旧坐标（拔显示器/改过布局的产物），整窗可见才算数；未命中记日志（「记忆为什么没生效」是最高频排查诉求）。
+fn monitor_work_areas(win: &tauri::WebviewWindow) -> Vec<WorkArea> {
+    win.available_monitors()
+        .map(|monitors| {
+            monitors
+                .iter()
+                .map(|m| {
+                    let wa = m.work_area();
+                    (
+                        wa.position.x,
+                        wa.position.y,
+                        wa.size.width as i32,
+                        wa.size.height as i32,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `g` 与工作区是否相交（GPUI `window_restore` 同口径；比「完整落在」宽松，
+/// 影子边/异步恢复的轻微越界仍算有效记忆）。
+fn intersects_work_area(g: Geometry, (wx, wy, ww, wh): WorkArea) -> bool {
+    let (gx2, gy2) = (g.x + g.width as i32, g.y + g.height as i32);
+    g.x < wx + ww && gx2 > wx && g.y < wy + wh && gy2 > wy
+}
+
+/// 把几何钳进最合适的工作区：优先包含窗口中心的屏，否则交面积最大的，
+/// 再否则主屏（列表首项）。贴边越界只挪回可见，不丢记忆（issue #15）。
+fn clamp_to_work_areas(g: Geometry, areas: &[WorkArea]) -> Geometry {
+    let Some(wa) = pick_work_area(g, areas) else {
+        return g;
+    };
+    let (wx, wy, ww, wh) = wa;
+    let gw = g.width as i32;
+    let gh = g.height as i32;
+    let max_x = (wx + ww - gw).max(wx);
+    let max_y = (wy + wh - gh).max(wy);
+    Geometry {
+        x: g.x.clamp(wx, max_x),
+        y: g.y.clamp(wy, max_y),
+        width: g.width,
+        height: g.height,
+    }
+}
+
+fn pick_work_area(g: Geometry, areas: &[WorkArea]) -> Option<WorkArea> {
+    if areas.is_empty() {
+        return None;
+    }
+    let cx = g.x.saturating_add_unsigned(g.width / 2);
+    let cy = g.y.saturating_add_unsigned(g.height / 2);
+    if let Some(&wa) = areas.iter().find(|&&(x, y, w, h)| {
+        x <= cx && cx < x.saturating_add(w) && y <= cy && cy < y.saturating_add(h)
+    }) {
+        return Some(wa);
+    }
+    areas
+        .iter()
+        .copied()
+        .filter(|&wa| intersects_work_area(g, wa))
+        .max_by_key(|&(wx, wy, ww, wh)| {
+            let x0 = g.x.max(wx);
+            let y0 = g.y.max(wy);
+            let x1 = (g.x + g.width as i32).min(wx + ww);
+            let y1 = (g.y + g.height as i32).min(wy + wh);
+            (x1 - x0).max(0) as i64 * (y1 - y0).max(0) as i64
+        })
+        .or_else(|| areas.first().copied())
+}
+
+/// 读指定窗态的记忆：尺寸过小丢弃；否则钳进当前工作区再恢复——越界只挪回
+/// 可见，不再整份作废（「贴左下角重启下移出屏 → 再开被重置」的闭环）。
 fn load_valid(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> Option<Geometry> {
     let slots = load_slots();
     let g = match mode {
@@ -194,26 +273,24 @@ fn load_valid(win: &tauri::WebviewWindow, mode: Mode, min: (f64, f64)) -> Option
         );
         return None;
     }
-    let (left, top, right, bottom) = (g.x, g.y, g.x + g.width as i32, g.y + g.height as i32);
-    let on_screen = win
-        .available_monitors()
-        .map(|monitors| {
-            monitors.iter().any(|m| {
-                let wa = m.work_area();
-                let (mx, my) = (wa.position.x, wa.position.y);
-                let (mw, mh) = (wa.size.width as i32, wa.size.height as i32);
-                mx <= left && top >= my && right <= mx + mw && bottom <= my + mh
-            })
-        })
-        .unwrap_or(false);
-    if !on_screen {
-        log::info!("[Window] {mode:?} 几何记忆未完整落在任一屏幕工作区内，回默认");
-        return None;
+    let areas = monitor_work_areas(win);
+    let clamped = clamp_to_work_areas(g, &areas);
+    if clamped != g {
+        log::info!(
+            "[Window] {mode:?} 几何记忆 ({},{}) {}×{} 越出工作区，钳到 ({},{})",
+            g.x,
+            g.y,
+            g.width,
+            g.height,
+            clamped.x,
+            clamped.y
+        );
     }
-    Some(g)
+    Some(clamped)
 }
 
-/// 把几何原样落回窗口（物理坐标）。
+/// 把几何落回窗口（物理坐标）。先 size 后 position：macOS `setContentSize`
+/// 保 AppKit 左下原点，先改尺寸会暂时拽走 top-left，必须再 set_position 钉回。
 fn apply(win: &tauri::WebviewWindow, g: Geometry) {
     let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
     let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
@@ -351,5 +428,69 @@ mod tests {
         let slots = parse(&text);
         assert!(slots.normal.is_some());
         assert_eq!(slots.mini, None);
+    }
+
+    /// 1080p 去菜单栏后的工作区（物理像素）：y 从 30 起、高 1050。
+    const WA: WorkArea = (0, 30, 1920, 1050);
+
+    #[test]
+    fn clamp_pulls_bottom_overflow_back_into_work_area() {
+        // 贴底后下移出屏：底边 240+840=1080 > 工作区底 1080？工作区底=30+1050=1080，
+        // 再下移 40 → y=280 时底=1120 越界。
+        let g = Geometry {
+            x: 0,
+            y: 280,
+            width: 1280,
+            height: 840,
+        };
+        let got = clamp_to_work_areas(g, &[WA]);
+        assert_eq!(got.y, 30 + 1050 - 840, "底边钳到工作区底");
+        assert_eq!(got.x, 0);
+        assert_eq!((got.width, got.height), (1280, 840));
+    }
+
+    #[test]
+    fn clamp_keeps_flush_bottom_left_unchanged() {
+        let g = Geometry {
+            x: 0,
+            y: 30 + 1050 - 840,
+            width: 1280,
+            height: 840,
+        };
+        assert_eq!(clamp_to_work_areas(g, &[WA]), g);
+    }
+
+    #[test]
+    fn clamp_uses_primary_when_memory_is_on_unplugged_display() {
+        let g = Geometry {
+            x: 5000,
+            y: 5000,
+            width: 800,
+            height: 600,
+        };
+        let got = clamp_to_work_areas(g, &[WA]);
+        // 完全飞出时按轴钳到最近边：右下角 (1920-800, 30+1050-600)
+        assert_eq!(got.x, 1920 - 800);
+        assert_eq!(got.y, 30 + 1050 - 600);
+    }
+
+    #[test]
+    fn intersects_accepts_partial_overlap() {
+        let g = Geometry {
+            x: -100,
+            y: 100,
+            width: 800,
+            height: 600,
+        };
+        assert!(intersects_work_area(g, WA));
+        assert!(!intersects_work_area(
+            Geometry {
+                x: -900,
+                y: 100,
+                width: 800,
+                height: 600,
+            },
+            WA
+        ));
     }
 }

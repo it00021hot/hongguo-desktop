@@ -1,7 +1,5 @@
-//! 应用服务层（hongguo-service crate）：download / play / merge / login / series / settings /
-//! storage / transcode / capability / follow / history 各有 `*_service`，另有 [`device`] 模块
-//! + 全局业务状态 [`app_state`]。后台任务统一走
-//! [`runtime`]、业务事件统一走 [`events`]；本 crate **不依赖任何 UI 框架**，与壳的 commands 同名同构。
+//! 应用服务层：各域 `*_service`、[`device`]、全局状态 [`app_state`]；后台任务走 [`runtime`]，
+//! 业务事件走 [`events`]。本 crate **不依赖任何 UI 框架**，与壳的 commands 同名同构。
 
 pub mod app_state;
 pub mod capability_service;
