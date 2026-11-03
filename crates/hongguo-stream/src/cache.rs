@@ -39,10 +39,11 @@ impl Default for StreamEntry {
     }
 }
 
-/// 条目的内存占位（字节）：渐进流按明文总长计，整集按落盘明文计。
+/// 条目的内存占位（字节）：渐进流按稀疏缓冲的实际分配计（惰性分块下预取条目只占
+/// 已写到的块，整集口径会数倍虚高），整集模式按落盘明文计。
 fn entry_weight(e: &StreamEntry) -> u64 {
     if let Some(p) = &*e.progressive.lock() {
-        p.plain_len
+        p.sparse.allocated()
     } else {
         *e.size.lock()
     }
