@@ -88,6 +88,7 @@ node scripts/cdp.mjs probe browse   # 裂图+网络失败体检，退出码可�
 6. 改应用名/图标后：`make assets` 重新生成并**提交产物**（构建不依赖本机 Python/网络）。
 7. capabilities 是最小权限集（自绘标题栏的逐条 window 动作放行），新增窗口操作要同步 `crates/hongguo-tauri-app/capabilities/default.json`。
 8. **issue 回复在发版后再回**：修复/功能合入 dev ≠ 用户可用——回复「已实现/已修复」时用户更新不到就会追问。顺序：合入 dev → 发版（tag + CHANGELOG）→ 再到 issue 附版本号回复（2026-10-15 教训：@小果AI 未完成时提前回了「其余已实现」，用户实测发现与回复不符）。
+9. **macOS 产物未做 Apple 公证**（无开发者账号）：Release 说明由 release.yml 的 Extract 步骤固定附加首启指引（与版本内容无关，不入 CHANGELOG）；`scripts/install-macos.sh` 在 checksums job 开头随版上传、自己也进 SHA256SUMS——脚本走终端下载渠道（不带隔离标记），用户绕开 Gatekeeper「已损坏」弹窗（2026-11-03 用户实测踩坑）。
 
 ## Android 构建（Tauri 壳移动端 APK；GPUI 壳无 Android 路线）
 

@@ -155,6 +155,23 @@
 
 ---
 
+## 📥 安装
+
+从 [GitHub Releases](https://github.com/it00021hot/hongguo-desktop/releases/latest) 下载：
+Windows 双击 `*_x64-setup.exe`；macOS 按芯片选 `*_aarch64.dmg`（Apple Silicon）或 `*_x64.dmg`（Intel）。
+
+> **macOS 首次运行提示「已损坏，无法打开」？** 安装包未做 Apple 公证，浏览器下载的应用
+> 会带系统隔离标记，Gatekeeper 对无证书应用的固定措辞就是「已损坏」——文件本身没有损坏。
+> 任选其一：
+>
+> - 终端执行 `xattr -dr com.apple.quarantine /Applications/Hongguo.app` 后打开；
+> - 下载 Release 资产里的 `install-macos.sh`，终端执行 `bash install-macos.sh [tag]`
+>   （自动选架构、校验 SHA256、装入 /Applications；终端下载渠道不带隔离标记，不会遇到该弹窗）。
+>
+> 通过应用内「检查更新」升级不受此影响。
+
+---
+
 ## 💻 开发
 
 ### 环境要求
