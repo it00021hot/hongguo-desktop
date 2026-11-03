@@ -223,8 +223,9 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
             );
             let profile = registered_profile(&r);
             swap_profile(state, &mut meta, profile, "registered");
-            // 换档前发出去的匿名请求产物（顶栏塌缩表等）全部作废
+            // 换档前发出去的匿名请求产物（顶栏塌缩表、批量预取流）全部作废
             hongguo_api::recommend::clear_feed_tabs_cache();
+            hongguo_api::play_url::clear_batch_cache();
             // 冷启动行为预热：新设备做完官方客户端的冷启动行为序列才有
             // 深集授权（只注册不预热 = 采集器特征，服务端只发第 1 集）
             let env = state.api_env();
@@ -313,7 +314,9 @@ pub async fn ensure_registered(state: &AppState) {
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
                 state.device().get("iid")
             );
+            // 成功时 register_and_swap 已 spawn warmup；失败则旧档已死，预热无意义
             register_with_retry(state, "健康探针判死").await;
+            return;
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
@@ -383,15 +386,24 @@ pub fn note_stream_miss(state: &AppState, vid: &str) {
     if STREAM_RENEW_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }
-    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
     let state = state.clone();
     let vid = vid.to_string();
     crate::runtime::spawn(async move {
         log::warn!("[Device] 取流连续 {fails} 次未命中（匿名配额耗尽），换新注册设备（vid={vid}）");
-        register_and_swap(&state, "取流被拒自动换新").await;
+        let ok = register_and_swap(&state, "取流被拒自动换新").await.ok;
+        // 成功才写冷却/清零——失败保留 miss 计数且不锁 3 分钟，下一次 miss 可再触发
+        record_stream_renew_outcome(ok, now_ms().max(0) as u64);
         STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
     });
+}
+
+/// 取流换新结果落账：成功才写冷却时间并清零 miss；失败不动，避免错误锁窗。
+fn record_stream_renew_outcome(ok: bool, now: u64) {
+    if !ok {
+        return;
+    }
+    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
+    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
 /// 与在线播放同一份选流口径：无 HEVC 机器预取/探测的必须是 h264，否则
@@ -427,6 +439,31 @@ mod tests {
             1000,
             1000 + MIN - 1
         ));
+    }
+
+    #[test]
+    fn stream_renew_outcome_only_stamps_on_success() {
+        STREAM_MISS_COUNT.store(STREAM_MISS_THRESHOLD, Ordering::Relaxed);
+        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
+
+        record_stream_renew_outcome(false, 5_000);
+        assert_eq!(
+            STREAM_MISS_COUNT.load(Ordering::Relaxed),
+            STREAM_MISS_THRESHOLD,
+            "失败不得清零 miss"
+        );
+        assert_eq!(
+            STREAM_RENEW_AT_MS.load(Ordering::Relaxed),
+            0,
+            "失败不得写冷却"
+        );
+
+        record_stream_renew_outcome(true, 5_000);
+        assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
+        assert_eq!(STREAM_RENEW_AT_MS.load(Ordering::Relaxed), 5_000);
+
+        STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
     }
 
     fn reg_result() -> RegisterResult {

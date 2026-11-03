@@ -23,6 +23,11 @@ fn batch_cache() -> &'static Mutex<HashMap<String, (Instant, PlayInfo)>> {
     BATCH_CACHE.get_or_init(Mutex::default)
 }
 
+/// 清空批量取流暂存（设备换档后调用：旧设备预取的 PlayInfo 不能给新身份复用）。
+pub fn clear_batch_cache() {
+    batch_cache().lock().clear();
+}
+
 /// vid → content_type 注册表（进程内缓存）：批量取流的 `mixed_video_id_map`
 /// 分组 key 必须与条目 content_type 一致（错配 → 空响应）；未注册的 vid 不猜 key，走单集回落。
 static CONTENT_TYPES: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
@@ -303,6 +308,20 @@ mod tests {
         assert_eq!(content_type_of("未注册"), None);
         register_content_type("v1", 1);
         assert_eq!(content_type_of("v1"), Some(1));
+    }
+
+    #[test]
+    fn clear_batch_cache_drops_stale_prefetch() {
+        batch_cache().lock().insert(
+            "vid-old-device".into(),
+            (Instant::now(), PlayInfo::default()),
+        );
+        assert!(batch_cache().lock().contains_key("vid-old-device"));
+        clear_batch_cache();
+        assert!(
+            batch_cache().lock().is_empty(),
+            "换档后旧设备预取必须清空"
+        );
     }
 
     #[test]
