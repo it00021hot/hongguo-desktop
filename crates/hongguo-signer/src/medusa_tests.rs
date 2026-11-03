@@ -118,12 +118,12 @@ fn device_proto_matches_fingerprint_and_varies_per_device() {
     let fa = fields_debug(&a);
     let fb = fields_debug(&b);
     assert!(
-        fa.contains(&fp.brand) && fa.contains(&fp.model),
+        fa.contains(fp.brand) && fa.contains(fp.model),
         "机型组应取池指纹（brand={} model={}）: {fa}",
         fp.brand,
         fp.model
     );
-    assert!(fa.contains(&fp.manufacturer));
+    assert!(fa.contains(fp.manufacturer));
     assert_ne!(
         fa, fb,
         "不同 device_id 的 proto 应不同（传感器抖动/字段 5）"
