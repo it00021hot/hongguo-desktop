@@ -80,6 +80,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             bootstrap::rescan::init(app.handle())?;
             bootstrap::downloader::init(app.handle())?;
             bootstrap::transcoder::init()?;
+            bootstrap::status_log::init()?;
             // 追更更新检查：启动查一轮 + 每 20 分钟一轮（未登录空转，登录后自动生效）
             hongguo_service::follow_service::start_notice_loop(app_state.clone());
             // 老板键按持久化设置注册（被占用只记日志，不拦启动）

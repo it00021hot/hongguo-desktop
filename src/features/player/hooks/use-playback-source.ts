@@ -38,10 +38,8 @@ export function usePlaybackSource(params: {
   /** 现在这条流属于哪一集——不带这道闸，信息流切剧时旧画面的秒数会记到新剧头上。 */
   const srcKeyRef = useRef('');
 
-  // 切集 / 加载中都会让 <video> 被卸载重建，新元素的倍速音量静音一律回默认值，「用户设的值」存这里每次渲染后贴回
-  const playbackRateRef = useRef(readPlaybackRate());
-  const volumeRef = useRef(readVolume());
-  const mutedRef = useRef(readMuted());
+  // 切集 / 加载中都会让 <video> 被卸载重建，新元素的倍速音量静音一律回默认值；
+  // 「用户设的值」以 playback-prefs 进程镜像为准，每次渲染后贴回（见 read/writePlaybackRate）
 
   const resumeHint = usePlayerStore((s) => s.resumeHint);
   const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
@@ -206,18 +204,22 @@ export function usePlaybackSource(params: {
     void video.play().catch(() => undefined);
   }, [videoRef, pendingSeek]);
 
-  // 每次渲染后把倍速/音量/静音贴回当前元素；依赖故意留空——元素重建的时机（切集/加载/转码）不由本组件依赖决定
+  // 每次渲染后把倍速/音量/静音贴回当前元素；依赖故意留空——元素重建的时机（切集/加载/转码）不由本组件依赖决定。
+  // 必须读 prefs 镜像（不是仅靠 ratechange 回写的 ref）：Android WebView 程序化改倍速常不派发事件。
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (Math.abs(video.playbackRate - playbackRateRef.current) > 0.001) {
-      video.playbackRate = playbackRateRef.current;
+    const rate = readPlaybackRate();
+    const volume = readVolume();
+    const muted = readMuted();
+    if (Math.abs(video.playbackRate - rate) > 0.001) {
+      video.playbackRate = rate;
     }
-    if (Math.abs(video.volume - volumeRef.current) > 0.001) {
-      video.volume = volumeRef.current;
+    if (Math.abs(video.volume - volume) > 0.001) {
+      video.volume = volume;
     }
-    if (video.muted !== mutedRef.current) {
-      video.muted = mutedRef.current;
+    if (video.muted !== muted) {
+      video.muted = muted;
     }
   });
 
@@ -225,7 +227,6 @@ export function usePlaybackSource(params: {
   const handleRateChange = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     const rate = e.currentTarget.playbackRate;
     if (Number.isFinite(rate) && rate > 0) {
-      playbackRateRef.current = rate;
       writePlaybackRate(rate);
     }
   }, []);
@@ -234,13 +235,9 @@ export function usePlaybackSource(params: {
   const handleVolumeChange = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
     const el = e.currentTarget;
     if (Number.isFinite(el.volume) && el.volume >= 0 && el.volume <= 1) {
-      volumeRef.current = el.volume;
       writeVolume(el.volume);
     }
-    if (el.muted !== mutedRef.current) {
-      mutedRef.current = el.muted;
-      writeMuted(el.muted);
-    }
+    writeMuted(el.muted);
   }, []);
 
   return {

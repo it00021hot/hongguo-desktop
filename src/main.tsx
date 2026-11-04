@@ -8,7 +8,12 @@ import { toast } from 'sonner';
 import { routeTree } from './pages/routeTree.gen';
 import { PendingFallback, RendererCrashed, RouteError } from './components/common/route-fallbacks';
 import { applyTheme, useThemeStore } from './stores/theme';
+import { useUiStore } from './stores/ui';
+import { setAndroidLandscape } from './utils/android-shell';
+import { installImeInsetBridge } from './utils/ime-inset';
 import './styles/index.css';
+
+installImeInsetBridge();
 
 /** 全局错误 toast 的文案：kind 译文 + 后端原文（若两者不同）。
  * 「视频处理失败（接口返回 7001: 无权限）」比一句孤立译文可定位得多。 */
@@ -68,14 +73,19 @@ const router = createRouter({
 // 启动即应用主题，避免首屏闪烁
 applyTheme(useThemeStore.getState().theme);
 
-// Android 系统返回桥（MainActivity.onBackPressed 经 evaluateJavascript 调）：web 路由栈
-// 能回退就回退，栈底转「退出确认」事件（AppShell 弹框，与桌面关窗同一份确认框）；返回 true = 已被前端消费
+// Android 系统返回桥（MainActivity.onBackPressed 经 evaluateJavascript 调）：
+// 横屏全屏中 → 先退出全屏；否则 web 路由回退；栈底转退出确认。返回 true = 已被前端消费。
 declare global {
   interface Window {
     __hgAndroidBack?: () => boolean;
   }
 }
 window.__hgAndroidBack = () => {
+  if (useUiStore.getState().playerFrameless) {
+    useUiStore.getState().setPlayerFrameless(false);
+    setAndroidLandscape(false);
+    return true;
+  }
   if (window.history.length > 1) {
     router.history.back();
     return true;

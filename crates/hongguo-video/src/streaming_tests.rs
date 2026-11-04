@@ -230,8 +230,14 @@ fn lazy_render_matches_whole_file_decrypt_tail_moov() {
     let (region, moov_abs) = moov_region_of(&cipher);
     let plan =
         StreamingPlan::build(&region, moov_abs, cipher.len() as u64, &key).expect("计划应构建成功");
+    assert!(
+        plan.footprint_bytes() > 0,
+        "加密计划必有 moov/样本段常驻，流缓存 entry_weight 靠它入账"
+    );
     let sparse = SparseBuffer::new(cipher.len() as u64);
     sparse.write(0, &cipher);
+    // 生产路径：计划建好后丢掉 moov 密文块（covered 保留）；渲染必须仍与整文件解密一致
+    sparse.forget_data(moov_abs, moov_abs + region.len() as u64);
 
     let out = render_all(&plan, &sparse);
     assert_eq!(out, reference, "惰性渲染必须与整文件解密逐字节一致");

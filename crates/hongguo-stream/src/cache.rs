@@ -39,10 +39,17 @@ impl Default for StreamEntry {
     }
 }
 
-/// 条目的内存占位（字节）：渐进流按明文总长计，整集按落盘明文计。
+/// 条目的内存占位（字节）：渐进流 = 稀疏缓冲实际分配 + 解密计划常驻
+///（`new_moov` + 样本段索引；漏算会让每集约数 MB 的计划变成 Status 对不上的 rss 残渣，
+/// 预算逐出也会偏松）；整集模式按落盘明文计。
 fn entry_weight(e: &StreamEntry) -> u64 {
     if let Some(p) = &*e.progressive.lock() {
-        p.plain_len
+        let plan = p
+            .plan
+            .as_ref()
+            .map(|pl| pl.footprint_bytes())
+            .unwrap_or(0);
+        p.sparse.allocated() + plan
     } else {
         *e.size.lock()
     }

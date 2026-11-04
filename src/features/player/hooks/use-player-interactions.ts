@@ -3,6 +3,7 @@ import { useShortcutsStore } from '@/stores/shortcuts';
 import { useUiStore } from '@/stores/ui';
 import { app as appApi } from '@/service/commands';
 import { portraitAspectOf } from '@/features/player/hooks/use-portrait-window';
+import { setAndroidLandscape } from '@/utils/android-shell';
 
 /**
  * 舞台交互裁决：滚轮/触摸滑动切换、点击画面（播放/暂停）、键盘快捷键。
@@ -154,6 +155,8 @@ export function usePlayerInteractions(params: {
           !volumeOpen
         ) {
           ui.setPlayerFrameless(false);
+          // 与窄屏「全屏观看」成对：Esc 退出时一并解开 Android 横屏锁
+          setAndroidLandscape(false);
           void appApi.setTrafficLightsVisible(true).catch(() => undefined);
           return;
         }

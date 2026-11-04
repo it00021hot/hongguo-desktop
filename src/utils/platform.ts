@@ -14,6 +14,12 @@ export function isWindows(): boolean {
   return navigator.userAgent.toLowerCase().includes('windows');
 }
 
+/** Android WebView（无系统 HEVC 扩展可装，不可解即自动兼容转码）。 */
+export function isAndroid(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.userAgent.toLowerCase().includes('android');
+}
+
 /**
  * 自定义协议 URL 是否走 `http://{scheme}.localhost` 宿主形态：WebView2 与 Android WebView
  * 不能直接请求非标准 scheme（wry 拦 http 再转回），macOS WKWebView 拦真 scheme、给宿主形态反而 404

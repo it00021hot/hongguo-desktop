@@ -168,6 +168,7 @@ button:not(:disabled) {
     /* 移动端 WebView：滑动切剧在舞台边界不再触发系统 overscroll 辉光
         （Android 触摸滚动到头的发光效果，会被读成「切了没反应」） */
     overscroll-behavior: none;
+    height: 100%;
   }
 
   body {
@@ -175,6 +176,11 @@ button:not(:disabled) {
     /* Tauri 桌面窗口不滚动，滚动交给内容区 */
     overflow: hidden;
     user-select: none;
+    height: 100%;
+  }
+
+  #root {
+    height: 100%;
   }
 
   /* 可选中的内容（链接、路径、错误信息）要能选中复制 */

@@ -180,7 +180,9 @@ pub(crate) fn wait_for_entry(
             return Err(StreamReadError::Cancelled);
         }
         if !cache.is_fetching(vid, definition) {
-            log::warn!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
+            // debug：连播/预算淘汰后 WebView 仍会对旧 URL 打并发 Range，每条一 warn 会刷爆日志；
+            // 真正卡死看下方 Timeout。错误仍回给协议层（404），播放器走自愈。
+            log::debug!("[Stream] 请求无对应缓存条目: {vid}@{definition}（已被逐出或从未就绪）");
             return Err(StreamReadError::Missing {
                 vid: vid.to_string(),
                 definition,
@@ -206,18 +208,19 @@ pub(crate) fn wait_for_entry(
     loop {
         polls += 1;
         if cancelled() {
-            log::info!("[Stream] {vid}@{definition} 等待就绪前已被取消（seek 重定位）");
+            log::debug!("[Stream] {vid}@{definition} 等待就绪前已被取消（seek 重定位）");
             return Err(StreamReadError::Cancelled);
         }
         if !lease.is_current() {
-            log::warn!("[Stream] {vid}@{definition} 等待就绪时条目已被逐出/重建，立即放弃");
+            // 连播切走会逐出当前键；与 Missing 同属预期竞态，不抬 warn
+            log::debug!("[Stream] {vid}@{definition} 等待就绪时条目已被逐出/重建，立即放弃");
             return Err(StreamReadError::Replaced);
         }
         let prog = lease.entry.progressive.lock().clone();
         let filled = *lease.entry.filled.lock();
         if filled > 0 {
             if polls > 1 {
-                log::info!(
+                log::debug!(
                     "[Stream][probe] mode 就绪(整集): polls={polls} 等 {:.3}s",
                     entered.elapsed().as_secs_f64()
                 );
@@ -226,7 +229,7 @@ pub(crate) fn wait_for_entry(
         }
         if let Some(progressive) = prog {
             if polls > 1 {
-                log::info!(
+                log::debug!(
                     "[Stream][probe] mode 就绪(渐进): polls={polls} 等 {:.3}s",
                     entered.elapsed().as_secs_f64()
                 );
@@ -234,7 +237,7 @@ pub(crate) fn wait_for_entry(
             return Ok((lease, EntryMode::Progressive(progressive)));
         }
         if polls == 1 || polls.is_multiple_of(40) {
-            log::info!(
+            log::debug!(
                 "[Stream][probe] mode 等待中: filled={filled} prog=false 已等 {:.3}s",
                 entered.elapsed().as_secs_f64()
             );
@@ -349,13 +352,13 @@ pub(crate) fn read_plain_range(
                 break Ok(());
             }
             if cancelled() {
-                log::info!(
+                log::debug!(
                     "[Stream] 等待明文区间 {start}-{end} 期间被取消（seek 重定位），注销读者登记退场"
                 );
                 break Err(StreamReadError::Cancelled);
             }
             if !lease.is_current() {
-                log::warn!(
+                log::debug!(
                     "[Stream] 等待明文区间 {start}-{end} 时条目已被逐出/重建，立即放弃（不再等满 {WAIT_TIMEOUT_SECS}s）"
                 );
                 break Err(StreamReadError::Replaced);

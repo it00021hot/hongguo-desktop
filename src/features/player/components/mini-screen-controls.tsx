@@ -24,9 +24,10 @@ import { ChromeSurface } from './chrome-surface';
 const MINI_RATES = [1, 1.5, 2, 3];
 
 /**
- * 紧凑控制条，两种形态共用一行按钮集：`mini`（小窗，顶栏已摘掉，剧名/简介/置顶长在条上，⤢ 退小屏）、
- * `portrait`（竖屏窄条，剧名/简介归 ImmersiveInfoOverlay，⤢ 位置给铺满切换）。
- * 挂在舞台底部、与全量控制栏共用同一个 `<video>`（切换形态视频不卸载零中断）；
+ * 紧凑控制条，两种形态共用一行按钮集：
+ * - `mini`：小窗（顶栏已摘，剧名/简介/置顶长在条上，⤢ 退小屏）
+ * - `portrait`：竖屏窄条（剧名归 ImmersiveInfoOverlay，⤢ 位给铺满）
+ * 窄屏手机形态见 PhonePlayerChrome。挂在舞台底部、与全量控制栏共用同一个 `<video>`；
  * 状态从 video 元素事件里读，写操作直接改元素并落偏好。
  */
 export function MiniScreenControls({
@@ -49,7 +50,7 @@ export function MiniScreenControls({
   onControlsEnter,
   onControlsLeave,
 }: {
-  /** 控件形态：mini = 小窗（默认）；portrait = 竖屏窄条 */
+  /** 控件形态：mini = 小窗；portrait = 竖屏窄条 */
   variant?: 'mini' | 'portrait';
   videoRef: React.RefObject<HTMLVideoElement | null>;
   title?: string;
@@ -58,7 +59,7 @@ export function MiniScreenControls({
   total: number;
   hasNext: boolean;
   onStepEpisode: (delta: 1 | -1) => void;
-  /** 退出当前紧凑形态回大窗（mini = 退出小屏；portrait = 退出竖屏），图标文案随形态 */
+  /** 退出当前紧凑形态回大窗 */
   onExpand: () => void;
   incognitoOn: boolean;
   onToggleIncognito: () => void;
@@ -73,6 +74,8 @@ export function MiniScreenControls({
   onControlsLeave: () => void;
 }) {
   const portrait = variant === 'portrait';
+  // 剧名行只给小窗：portrait 有 ImmersiveInfoOverlay
+  const showTitleRow = !portrait;
   const [paused, setPaused] = useState(true);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -147,8 +150,8 @@ export function MiniScreenControls({
     >
       {/* 剧名/集数/简介贴着进度条上方（官方客户端小屏同款三行形态），宽度
           收敛 + 截断（小屏 480 宽，长剧名长简介都不挡画面）。portrait
-          形态不渲染——竖屏的剧名/简介由 ImmersiveInfoOverlay 承担 */}
-      {!portrait && (
+          不渲染——剧名/简介由 ImmersiveInfoOverlay 承担 */}
+      {showTitleRow && (
         <div className="pointer-events-none max-w-[62%]">
           <p className="truncate text-xs font-semibold drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
             @{title || t('player.miniTitle')}
@@ -214,14 +217,13 @@ export function MiniScreenControls({
           <MiniButton label={t('player.incognito')} onClick={onToggleIncognito}>
             <Eye className={cn('size-4', incognitoOn ? 'text-white' : 'text-white/55')} />
           </MiniButton>
-          {/* 置顶只有 mini 形态要：portrait 的顶栏常驻，同款置顶钮已在顶栏 */}
-          {!portrait && (
+          {/* 置顶只有 mini：portrait 顶栏已有 */}
+          {showTitleRow && (
             <MiniButton label={t('player.pin')} onClick={() => onTogglePinned?.()}>
               <Pin className={cn('size-4', pinned ? 'fill-current' : 'text-white/55')} />
             </MiniButton>
           )}
-          {/* 铺满切换只有 portrait 形态要：小窗尺寸固定无档位可言。
-              竖屏里铺满/收回是核心档位，Esc 退铺满回竖条 */}
+          {/* 铺满切换只有 portrait：小窗尺寸固定 */}
           {portrait && (
             <MiniButton
               label={portraitFull ? t('player.exitPortraitFill') : t('player.portraitFill')}

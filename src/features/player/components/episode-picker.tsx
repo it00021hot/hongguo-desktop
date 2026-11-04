@@ -26,12 +26,14 @@ interface Props {
   currentIndex: number;
   onSelect: (vidIndex: number) => void;
   onClose: () => void;
+  /** 嵌进半屏 Sheet：去掉外层对话框皮与收起钮（父级 Sheet 已有关闭） */
+  embedded?: boolean;
 }
 
 /** 每个范围段的集数（30 个一段）。 */
 const GROUP_SIZE = 30;
 
-export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Props) {
+export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose, embedded }: Props) {
   const [tab, setTab] = useState<'grid' | 'series'>('grid');
   const { data: series } = useSeriesEpisodes(seriesId);
   const { data: tasks } = useDownloadTasks();
@@ -104,12 +106,17 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
   return (
     // 根节点拦 click：浮层内的点击（选集/切季/预约/收起）不冒泡成舞台的播放/暂停切换
     <div
-      role="dialog"
+      role={embedded ? undefined : 'dialog'}
       aria-label={t('player.episodes')}
       onClick={(e) => e.stopPropagation()}
-      className="w-full scrollbar-thin overflow-y-auto rounded-xl bg-neutral-900/95 p-4 text-neutral-100 shadow-2xl backdrop-blur-sm"
+      className={cn(
+        'w-full scrollbar-thin overflow-y-auto text-neutral-100',
+        embedded
+          ? 'bg-transparent p-0'
+          : 'rounded-xl bg-neutral-900/95 p-4 shadow-2xl backdrop-blur-sm',
+      )}
     >
-      {/* 头部：选集 | 系列剧 双 tab + 全N集 + 收起 */}
+      {/* 头部：选集 | 系列剧 双 tab + 全N集 + 收起（embedded 无收起，Sheet 自带关闭） */}
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-end gap-4">
           {(
@@ -144,14 +151,16 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose }: Pro
               {tf('player.totalEpisodes', { count: total })}
             </span>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid size-7 place-items-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-white"
-            aria-label={t('common.close')}
-          >
-            <ChevronDown className="size-4" />
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid size-7 place-items-center rounded-md text-neutral-400 hover:bg-neutral-800 hover:text-white"
+              aria-label={t('common.close')}
+            >
+              <ChevronDown className="size-4" />
+            </button>
+          )}
         </div>
       </div>
 

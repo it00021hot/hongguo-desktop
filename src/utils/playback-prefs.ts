@@ -10,6 +10,22 @@ const MUTED_KEY = 'hongguo.muted';
 export const MIN_RATE = 0.25;
 export const MAX_RATE = 4;
 
+/**
+ * 进程内镜像：write 同步更新，read 优先返回。
+ * Android WebView 对程序化 `video.playbackRate = n` 常不派发 ratechange，
+ * 若只靠事件回写 ref，下一帧贴回 effect 会用旧值把倍速打回 1x。
+ */
+let liveRate: number | undefined;
+let liveVolume: number | undefined;
+let liveMuted: boolean | undefined;
+
+/** 测试用：清进程镜像，让下次 read 回落 storage / 默认值。 */
+export function resetPlaybackPrefsMemory(): void {
+  liveRate = undefined;
+  liveVolume = undefined;
+  liveMuted = undefined;
+}
+
 /** 读一个数值偏好；越界或损坏时回落到默认值。 */
 function read(key: string, fallback: number, min: number, max: number): number {
   try {
@@ -29,14 +45,35 @@ function write(key: string, value: number): void {
   }
 }
 
-export const readPlaybackRate = (): number => read(RATE_KEY, 1, MIN_RATE, MAX_RATE);
-export const writePlaybackRate = (rate: number): void => write(RATE_KEY, rate);
+export const readPlaybackRate = (): number => {
+  if (liveRate !== undefined) return liveRate;
+  return (liveRate = read(RATE_KEY, 1, MIN_RATE, MAX_RATE));
+};
+export const writePlaybackRate = (rate: number): void => {
+  // 越界不进镜像也不落盘——下次 read 仍是合法默认/旧值（与 storage read 钳制同口径）
+  if (!Number.isFinite(rate) || rate < MIN_RATE || rate > MAX_RATE) return;
+  liveRate = rate;
+  write(RATE_KEY, rate);
+};
 
-export const readVolume = (): number => read(VOLUME_KEY, 1, 0, 1);
-export const writeVolume = (volume: number): void => write(VOLUME_KEY, volume);
+export const readVolume = (): number => {
+  if (liveVolume !== undefined) return liveVolume;
+  return (liveVolume = read(VOLUME_KEY, 1, 0, 1));
+};
+export const writeVolume = (volume: number): void => {
+  if (!Number.isFinite(volume) || volume < 0 || volume > 1) return;
+  liveVolume = volume;
+  write(VOLUME_KEY, volume);
+};
 
-export const readMuted = (): boolean => read(MUTED_KEY, 0, 0, 1) === 1;
-export const writeMuted = (muted: boolean): void => write(MUTED_KEY, muted ? 1 : 0);
+export const readMuted = (): boolean => {
+  if (liveMuted !== undefined) return liveMuted;
+  return (liveMuted = read(MUTED_KEY, 0, 0, 1) === 1);
+};
+export const writeMuted = (muted: boolean): void => {
+  liveMuted = muted;
+  write(MUTED_KEY, muted ? 1 : 0);
+};
 
 // 弹幕开关
 
@@ -79,11 +116,12 @@ export interface DanmakuDisplaySettings {
   area: number;
 }
 
+/** 默认 50/50/50/25（不透明度/字号/密度/显示区域，UI 以百分比展示）。 */
 const DANMAKU_DEFAULTS: DanmakuDisplaySettings = {
-  opacity: 0.9,
-  fontScale: 1,
-  density: 1,
-  area: 1,
+  opacity: 0.5,
+  fontScale: 0.5,
+  density: 0.5,
+  area: 0.25,
 };
 
 export function readDanmakuDisplay(): DanmakuDisplaySettings {

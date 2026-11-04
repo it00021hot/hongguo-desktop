@@ -25,12 +25,42 @@ export GRADLE_OPTS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7897 -Dhttp.pr
 
 APK="crates/hongguo-tauri-app/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
 JNI_LIB="crates/hongguo-tauri-app/gen/android/app/src/main/jniLibs/arm64-v8a/libhongguo_lib.so"
+# Cursor/沙箱会把 CARGO_TARGET_DIR 指到临时目录；tauri 产物不在仓库根 target/。
+CARGO_TARGET="${CARGO_TARGET_DIR:-target}"
+SO_CANDIDATES=(
+  "${CARGO_TARGET}/aarch64-linux-android/release/libhongguo_lib.so"
+  "target/aarch64-linux-android/release/libhongguo_lib.so"
+)
 
 echo "== [1/3] tauri android build（rust + 前端资产；符号链接步失败属预期） =="
+# 符号链接失败时 tauri 非 0，但 .so 可能已产出；真正成败看下面 so 是否含 MediaCodec 标记。
 pnpm tauri android build --apk --target aarch64 || true
 
 echo "== [2/3] 手动铺 so + gradle 打包 =="
-cp "target/aarch64-linux-android/release/libhongguo_lib.so" "$JNI_LIB"
+SO=""
+for candidate in "${SO_CANDIDATES[@]}"; do
+  if [[ -f "$candidate" ]]; then
+    # 取更新的那份，避免沙箱产物与仓库根旧 so 混用
+    if [[ -z "$SO" || "$candidate" -nt "$SO" ]]; then
+      SO="$candidate"
+    fi
+  fi
+done
+if [[ -z "$SO" ]]; then
+  echo "找不到 libhongguo_lib.so（CARGO_TARGET_DIR=${CARGO_TARGET}）" >&2
+  exit 1
+fi
+if ! grep -a -q "HONGGUO_ANDROID_MC_V1" "$SO"; then
+  echo "so 缺少 Android MediaCodec 标记（Rust 交叉编译可能失败）: $SO" >&2
+  exit 1
+fi
+echo "使用 so: $SO"
+# tauri 成功符号链接时 JNI_LIB 已指向同一 so；Windows Git Bash 下 path 比较不可靠，按 symlink / cmp 跳过。
+if [[ -L "$JNI_LIB" ]]; then
+  echo "jniLibs 已是符号链接，跳过 cp"
+elif ! cmp -s "$SO" "$JNI_LIB" 2>/dev/null; then
+  cp -f "$SO" "$JNI_LIB"
+fi
 cd crates/hongguo-tauri-app/gen/android
 ./gradlew.bat assembleArm64Release -x rustBuildArm64Release --no-daemon
 

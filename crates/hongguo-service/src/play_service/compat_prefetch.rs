@@ -67,7 +67,7 @@ async fn check_and_prefetch(
         series_id,
         vid_index,
         super::compat_play::CompatSource::PlainBytes(plain),
-        &|_| {},
+        |_| {},
     )
     .await?;
     Ok(true)

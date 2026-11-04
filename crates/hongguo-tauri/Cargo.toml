@@ -10,6 +10,9 @@ authors.workspace = true
 [dependencies]
 # IPC / 窗口 / 协议注册的宿主框架。
 tauri = { version = "2", features = ["protocol-asset"] }
+# 周期状态日志读本进程 RSS/private（status_log）。已在依赖图里（hongguo-media 传递引入），
+# feature 按需裁剪到 system。
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # 选图后的尺寸/格式解码（`emoticon_pick_image` 一次带齐，前端不再量图）。
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # 单实例锁：两个进程同时写 data.json 会让下载记录随机丢一条。
@@ -19,7 +22,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 # 更新：签名校验的安装包经 GitHub Releases 的 latest.json 分发；
 # 进程插件只用到 relaunch（下载完成后重启进新版本）
-tauri-plugin-updater = "2.13.2"
+tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2.4.0"
 # dev 调试通路：在 app 里内嵌 W3C WebDriver 服务器（127.0.0.1:4445），macOS 的
 # WKWebView 没有对外 CDP/远程调试协议（桌面目标被 Apple 私有 entitlement 锁给

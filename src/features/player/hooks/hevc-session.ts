@@ -13,7 +13,7 @@ export const hevcSession = {
   isDismissed(): boolean {
     return dismissedThisSession;
   },
-  /** 用户选了「暂不安装，转兼容格式」：本会话解码失败径直兜底 */
+  /** 用户选了「暂不安装，转兼容格式」，或 Android 软解判假：本会话起播径直兼容、不再问 */
   authorizeCompat(): void {
     compatAuthorizedThisSession = true;
   },

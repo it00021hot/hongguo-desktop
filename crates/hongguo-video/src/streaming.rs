@@ -106,6 +106,13 @@ impl StreamingPlan {
         self.plain_len
     }
 
+    /// 本计划常驻内存字节数：重建后的 moov + 样本段索引。
+    /// 流缓存的 `entry_weight` 必须把它算进去——只数稀疏缓冲会把每集约数 MB 的计划漏成「rss 残渣」。
+    pub fn footprint_bytes(&self) -> u64 {
+        let segments = self.segments.len() * std::mem::size_of::<SampleSeg>();
+        (self.new_moov.len() + segments) as u64
+    }
+
     /// 明文 moov 与旧 moov 的长度差：明文偏移 → 密文偏移的平移量。
     fn tail_delta(&self) -> i64 {
         // 明文里 moov 之后的第 X 字节 ↔ 密文 X − delta 处；旧 moov 长由 plain_len 构成式反解，用 i64 防 head-moov 布局下溢
@@ -273,20 +280,26 @@ pub fn top_boxes_end(buf: &[u8], base: u64) -> Option<u64> {
 }
 
 /// 稀疏密文缓冲：已下载区间 + 就绪通知。
-/// 整集常驻内存与现行在线播放同一量级（只有密文一份 + 应答时的小缓冲）。
+/// 数据面按块惰性分配：写哪段分配哪段——预取条目只填头部 20% 时不再为整集预占内存，
+/// 免逐出池的常驻字节随实际下载量走，而不是随整集长度走。
 pub struct SparseBuffer {
     len: u64,
-    data: Mutex<Vec<u8>>,
+    /// 按块的数据面：`chunks[i]` 覆盖 `[i*CHUNK_BYTES, min((i+1)*CHUNK_BYTES, len))`，
+    /// `None` = 该块没人写过（`covered` 声称就绪的区间必然已分配，见 [`Self::write`]）。
+    chunks: Mutex<Vec<Option<Box<[u8]>>>>,
     /// 已就绪区间，升序且互不重叠
     covered: Mutex<Vec<(u64, u64)>>,
     cv: Condvar,
 }
 
+/// 存储分块大小：与填充侧 1MB 的 Range 步长同量级，惰性分配的超出以一块为界。
+const CHUNK_BYTES: usize = 1024 * 1024;
+
 impl SparseBuffer {
     pub fn new(len: u64) -> Arc<Self> {
         Arc::new(Self {
             len,
-            data: Mutex::new(vec![0u8; len as usize]),
+            chunks: Mutex::new(Vec::new()),
             covered: Mutex::new(Vec::new()),
             cv: Condvar::new(),
         })
@@ -302,15 +315,33 @@ impl SparseBuffer {
         self.len == 0
     }
 
-    /// 写入一段密文并唤醒等待者。
+    /// 第 `idx` 块的字节长：末块允许比 `CHUNK_BYTES` 短。
+    fn chunk_len_of(&self, idx: usize) -> usize {
+        let base = idx as u64 * CHUNK_BYTES as u64;
+        (self.len - base).min(CHUNK_BYTES as u64) as usize
+    }
+
+    /// 写入一段密文并唤醒等待者。写到哪块就分配哪块。
     pub fn write(&self, start: u64, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
         {
-            let mut data = self.data.lock();
+            let mut chunks = self.chunks.lock();
             let s = start as usize;
-            data[s..s + bytes.len()].copy_from_slice(bytes);
+            let mut pos = 0usize;
+            while pos < bytes.len() {
+                let idx = (s + pos) / CHUNK_BYTES;
+                let in_off = (s + pos) % CHUNK_BYTES;
+                let n = (CHUNK_BYTES - in_off).min(bytes.len() - pos);
+                if chunks.len() <= idx {
+                    chunks.resize(idx + 1, None);
+                }
+                let chunk = chunks[idx]
+                    .get_or_insert_with(|| vec![0u8; self.chunk_len_of(idx)].into_boxed_slice());
+                chunk[in_off..in_off + n].copy_from_slice(&bytes[pos..pos + n]);
+                pos += n;
+            }
         }
         let mut covered = self.covered.lock();
         merge_run(&mut covered, start, start + bytes.len() as u64);
@@ -328,11 +359,57 @@ impl SparseBuffer {
         self.covered.lock().iter().map(|(a, b)| b - a).sum()
     }
 
+    /// 实际占用的内存字节数（已分配块的总长）。惰性分配下随真实下载量走。
+    pub fn allocated(&self) -> u64 {
+        self.chunks
+            .lock()
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, c)| c.is_some().then_some(self.chunk_len_of(idx) as u64))
+            .sum()
+    }
+
+    /// 丢掉 `[start, end)` 内**整块落在区间里**的数据面，保留 covered 不变。
+    /// 用途：流式计划建好后，moov 密文已折进计划的重建 moov，稀疏里再留一份是双份；
+    /// covered 仍声称就绪，填充不会把洞填回来，解密渲染也只读计划里的 moov。
+    /// 与区间部分相交的边界块不动（里面可能还有样本数据）。
+    pub fn forget_data(&self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        let mut chunks = self.chunks.lock();
+        let first = (start / CHUNK_BYTES as u64) as usize;
+        let last_exclusive = end.div_ceil(CHUNK_BYTES as u64) as usize;
+        for idx in first..last_exclusive.min(chunks.len()) {
+            let chunk_start = idx as u64 * CHUNK_BYTES as u64;
+            let chunk_end = chunk_start + self.chunk_len_of(idx) as u64;
+            if chunk_start >= start && chunk_end <= end {
+                chunks[idx] = None;
+            }
+        }
+    }
+
     /// 拷出一段密文。**不做就绪检查**——调用方先 `covers`。
     pub fn read_into(&self, start: u64, out: &mut [u8]) {
-        let data = self.data.lock();
+        let chunks = self.chunks.lock();
         let s = start as usize;
-        out.copy_from_slice(&data[s..s + out.len()]);
+        let mut pos = 0usize;
+        while pos < out.len() {
+            let idx = (s + pos) / CHUNK_BYTES;
+            let in_off = (s + pos) % CHUNK_BYTES;
+            let n = (CHUNK_BYTES - in_off).min(out.len() - pos);
+            match chunks.get(idx).and_then(|c| c.as_deref()) {
+                Some(chunk) => out[pos..pos + n].copy_from_slice(&chunk[in_off..in_off + n]),
+                None => {
+                    debug_assert!(
+                        false,
+                        "read_into 的区间应当已覆盖（调用方先 covers），未分配块读到零"
+                    );
+                    out[pos..pos + n].fill(0);
+                }
+            }
+            pos += n;
+        }
     }
 
     /// 从 `from` 起找第一个未覆盖区间；全满返回 `None`。
@@ -415,6 +492,82 @@ mod tests {
         buf.extend(box_bytes(60, b"mdat", 3));
         assert_eq!(top_boxes_end(&buf, 0), Some(120));
         assert_eq!(top_boxes_end(&buf, 5000), Some(5120));
+    }
+
+    #[test]
+    fn sparse_buffer_allocates_lazily_per_chunk() {
+        let sparse = SparseBuffer::new(3 * CHUNK_BYTES as u64 + 7);
+        assert_eq!(sparse.allocated(), 0, "没写过不预占");
+        sparse.write(0, &[1u8; 100]);
+        assert_eq!(
+            sparse.allocated(),
+            CHUNK_BYTES as u64,
+            "只分配被写到的块（整块粒度）"
+        );
+        assert_eq!(sparse.downloaded(), 100);
+        assert!(sparse.covers(0, 100));
+        assert!(!sparse.covers(0, 101));
+    }
+
+    #[test]
+    fn sparse_buffer_forget_data_drops_fully_covered_chunks_keeps_covered() {
+        let sparse = SparseBuffer::new(4 * CHUNK_BYTES as u64);
+        // 写满 0..3 块：中间整块可被 forget，首尾与区间相交的不动
+        sparse.write(0, &vec![1u8; 3 * CHUNK_BYTES]);
+        assert_eq!(sparse.allocated(), 3 * CHUNK_BYTES as u64);
+        let moov_start = CHUNK_BYTES as u64;
+        let moov_end = 3 * CHUNK_BYTES as u64;
+        sparse.forget_data(moov_start, moov_end);
+        assert!(sparse.covers(moov_start, moov_end), "covered 口径不变，填充不回填");
+        assert_eq!(
+            sparse.next_gap(0),
+            Some((3 * CHUNK_BYTES as u64, 4 * CHUNK_BYTES as u64)),
+            "forget 不制造填充可见的洞"
+        );
+        assert_eq!(
+            sparse.allocated(),
+            CHUNK_BYTES as u64,
+            "只丢掉完全落在区间内的第 1、2 块，第 0 块边界相交保留"
+        );
+    }
+
+    #[test]
+    fn sparse_buffer_write_across_chunks_and_short_tail_read_back() {
+        let total = 2 * CHUNK_BYTES as u64 + 11;
+        let sparse = SparseBuffer::new(total);
+        // 跨块写：中缝两侧各一半
+        let payload: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        let at = CHUNK_BYTES as u64 - 2048;
+        sparse.write(at, &payload);
+        let mut out = vec![0u8; 4096];
+        sparse.read_into(at, &mut out);
+        assert_eq!(out, payload);
+        // 末块短块：只写末尾 11 字节
+        sparse.write(total - 11, &[9u8; 11]);
+        let mut tail_out = vec![0u8; 11];
+        sparse.read_into(total - 11, &mut tail_out);
+        assert_eq!(tail_out, [9u8; 11]);
+        assert_eq!(
+            sparse.allocated(),
+            CHUNK_BYTES as u64 * 2 + 11,
+            "前两块整块 + 末块只按 11 字节分配"
+        );
+        assert_eq!(sparse.chunk_len_of(2), 11, "末块按总长收尾");
+    }
+
+    #[test]
+    fn sparse_buffer_sequential_writes_read_back_as_a_whole() {
+        let sparse = SparseBuffer::new(10);
+        sparse.write(0, &[]);
+        assert_eq!(sparse.allocated(), 0, "空写不分配");
+        sparse.write(0, &[1, 2, 3]);
+        sparse.write(3, &[4, 5]);
+        sparse.write(5, &[6, 7, 8, 9, 10]);
+        assert_eq!(sparse.downloaded(), 10);
+        assert_eq!(sparse.next_gap(0), None);
+        let mut out = [0u8; 10];
+        sparse.read_into(0, &mut out);
+        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! 编码：H.264 MFT（硬件优先 / 测试回落软件），跑在 [`super::mft::Driver`]
+//! 编码：H.264 MFT（硬件优先，无硬编回落 in-box 软件），跑在 [`super::mft::Driver`]
 //! 的统一驱动之上；参数集的来源与码流形态归一见 [`super::annexb`]。
 
 use std::collections::VecDeque;
@@ -19,8 +19,7 @@ use super::sample::{
 pub(super) enum EncoderKind {
     /// 硬件 MFT（`MFT_ENUM_FLAG_HARDWARE`），探测验证过才用
     Hardware,
-    /// in-box 软件编码器（h264_mf，同步 MFT）——测试通道
-    #[cfg(any(test, feature = "test-support"))]
+    /// in-box 软件编码器（h264_mf，同步 MFT）——无硬编时正式分流回落
     Software,
 }
 
@@ -49,7 +48,6 @@ impl Encoder {
                 MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER
             }
             // 没有 SOFTWARE 标志：软件 MFT = SYNCMFT（不带 HARDWARE）
-            #[cfg(any(test, feature = "test-support"))]
             EncoderKind::Software => MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
         };
         let activaes = enum_activates(
@@ -60,7 +58,6 @@ impl Encoder {
         )?;
         let label = match kind {
             EncoderKind::Hardware => "硬件",
-            #[cfg(any(test, feature = "test-support"))]
             EncoderKind::Software => "软件",
         };
         let mut last = AppError::Media(format!("没有可用的{label} H.264 编码 MFT"));

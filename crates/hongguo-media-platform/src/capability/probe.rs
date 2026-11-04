@@ -15,7 +15,7 @@ pub struct DecodeCapability {
     pub has_ffmpeg: bool,
     /// ffmpeg 侧有**真正走硬件**的 H.264 编码器（nvenc/qsv/amf/能开 `-hw_encoding` 的 mf）
     pub h264_hw_encoder: bool,
-    /// 平台原生编码层可用（macOS VT 会话可建即真含 Apple 软编 / Windows 有硬件 MFT），不依赖用户装任何东西
+    /// 平台原生编码层可用（macOS VT / Windows MF / Android MediaCodec 会话可建即真，含各端软编），不依赖用户装任何东西
     pub platform_encoder: bool,
     /// 平台原生**硬编**可用——只用于徽标「硬件加速」档与并行度，不是 macOS 生产闸门（软编会话同样进生产）
     pub platform_hw_encoder: bool,
@@ -50,12 +50,12 @@ pub fn redetect() -> DecodeCapability {
     c
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
 fn redetect_platform() {
     crate::platform::clear_probe_cache();
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
 fn redetect_platform() {}
 
 fn probe() -> DecodeCapability {
