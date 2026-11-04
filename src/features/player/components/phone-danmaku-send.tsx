@@ -1,5 +1,5 @@
 /** 窄屏竖屏发弹幕：点左下「弹」弹出底栏输入；底边跟原生 IME 高度走，不被键盘盖住。 */
-import { useEffect, useState, type RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import { toast } from 'sonner';
 import { useAccount, useSendDanmaku } from '@/service/queries';
 import { t } from '@/locales';
@@ -19,14 +19,16 @@ export function PhoneDanmakuSend({
   vid: string;
 }) {
   const [text, setText] = useState('');
+  // 关栏清草稿：渲染期跟随 open 复位（含父层直接 setOpen(false)），避免 effect 同步 setState
+  const [textForOpen, setTextForOpen] = useState(open);
+  if (open !== textForOpen) {
+    setTextForOpen(open);
+    if (!open) setText('');
+  }
   const imeBottom = useImeBottom();
   const send = useSendDanmaku();
   const { data: account } = useAccount();
   const loggedIn = !!account;
-
-  useEffect(() => {
-    if (!open) setText('');
-  }, [open]);
 
   if (!open) return null;
 

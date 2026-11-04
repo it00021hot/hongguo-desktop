@@ -212,7 +212,8 @@ export function PhoneLandscapeChrome({
             className="min-w-0 flex-1"
             onFocusCapture={() => setInputFocused(true)}
             onBlurCapture={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              const next = e.relatedTarget;
+              if (!(next instanceof Node) || !e.currentTarget.contains(next)) {
                 setInputFocused(false);
               }
             }}
