@@ -113,10 +113,11 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
 
 - 选路：`fetch_play_url` 先取批量暂存（命中且未过 10 分钟 TTL 则 pop
   直接用）。批量 `fetch_play_batch` 打 `PLAYER_MODEL_PATH`
-  （`READING_API_ORIGIN` = `reading.snssdk.com`），空字节或请求失败回退
+  （`READING_API_ORIGIN` = `reading.snssdk.com`），空字节、请求失败或条目无可播放流时回退
   `MODEL_LIGHT_PATH`（`LQ_API_ORIGIN` = `api5-normal-lq.fqnovel.com`），
-  两次都空则静默 0 条。单集打 `SINGLE_MODEL_PATH`（同一 reading 域），
-  空/失败回退同一条 light；两次都空归 `StreamMiss`。
+  仅补取未命中的 vid，两个通道都无可播放流则静默 0 条。单集打
+  `SINGLE_MODEL_PATH`（同一 reading 域），空/请求失败/无可播放流回退同一条 light；
+  两个通道都无可播放流归 `StreamMiss`。
   `player/v1` 与 `video_model/v1/` 是当前主路径。
 - ⚠️ **签名五件套必带**：无签名一律 `200 + 0 字节` 静默丢弃（signer
   模块文档描述的同款症状）。签名头：UA / accept / x-ss-req-ticket /
@@ -151,6 +152,11 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
   新通道另兼容 `/data/video_model`。错误信封是 base 族（`Code` 大写 +
   `BaseResp`），非 0 归 `StreamMiss`（reading 系小写 `code` 另走
   `check_code`）。
+- **2026-11-04 可播性回退取证**：同一登录设备、同一漫剧第 9 集，单集与
+  多集新通道均返回 `code=0`、完整 `video_model` 和 5 档 `bytevc2`，
+  同时旧通道返回 5 档 `bytevc1`。`bytevc2` 是本机播放器不支持的私有编码，
+  响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向旧通道
+  补取缺失或不可播的 vid，并保留新通道已命中的条目。
 - ⚠️ 注册形态底线不变：注册 JSON 版本身份（73932/7.3.9.32）与
   bdinstall SDK 代际成套（详见设备注册节），App 身份字段
   （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
@@ -250,9 +256,9 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
   已看过的剧
 - ⚠️ **取流选路**（`play_url.rs`，见「取流端点」节）：批量暂存命中
   （10 分钟 TTL）直接用；未命中的批量走 `PLAYER_MODEL_PATH`
-  （`multi_video_model/player/v1`），空响应或请求失败回退
+  （`multi_video_model/player/v1`），空响应、请求失败或条目不可播时回退
   `MODEL_LIGHT_PATH`（`multi_video_model/v1/`）。单集走
-  `SINGLE_MODEL_PATH`（`video_model/v1/`），空/失败同样回退 light。
+  `SINGLE_MODEL_PATH`（`video_model/v1/`），空/请求失败/无可播放流同样回退 light。
   三路都带签名五件套（`api_call_model_light`）。
   `mixed_video_id_map` 按**条目 content_type 原样串**分组（key 错配 →
   不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"、书城 cell 条目
@@ -262,7 +268,7 @@ outer_row.items[].background_selector.inner_rows[]`，与 panel_selector
 - `content_type` = **这一集所属剧的真实类型，随剧变**（官方样本
   1004/1/1001 各配其剧，不是协议常量）。
 - 单集链路（`fetch_play_url`）：批量暂存命中直接用 → 否则
-  `video_model/v1/`，空/失败再回退 light。vid→content_type 注册来源：
+  `video_model/v1/`，空/请求失败/无可播放流再回退 light。vid→content_type 注册来源：
   推荐流解析（入口 vid）、分集档案解析（整剧各集，`video_data.content_type`）、
   批量分组、壳起播（整剧注册）。未注册报 `ContentTypeUnknown`，不填占位。
 - ⚠️ **不要用 landpage（找页筛选端点）当首页推荐**：匿名设备永远回
