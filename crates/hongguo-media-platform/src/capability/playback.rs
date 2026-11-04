@@ -1,7 +1,8 @@
-//! 播放解码能力探测：本机 WebView2 能否解 HEVC——回答「在线播放能不能把 HEVC 系流直接喂给 `<video>`」（转码侧走哪条路见 [`super::probe`]）。
+//! 播放解码能力探测：本机 WebView 能否解 HEVC——回答「在线播放能不能把 HEVC 系流直接喂给 `<video>`」（转码侧走哪条路见 [`super::probe`]）。
 //! Windows：Chromium/WebView2 的 HEVC 解码走 Media Foundation，解码 MFT 来自系统「HEVC 视频扩展」——MFT 不在位则 h265/bytevc1 一律黑屏
-//! （容器解析正常、样本照常缓冲，唯独参数集送不进解码器，MediaError code=3 或长时间 `videoWidth === 0`）；判据与平台转码探测同源（[`crate::platform`]）。macOS WKWebView 原生支持 HEVC，恒可解。
-//! `HONGGUO_NO_HEVC` 强制按不可解处理（对齐 `HONGGUO_NO_FFMPEG` / `HONGGUO_NO_PLATFORM` 约定），开发机即可全链验收无扩展机器的行为。
+//! （容器解析正常、样本照常缓冲，唯独参数集送不进解码器，MediaError code=3 或长时间 `videoWidth === 0`）；判据与平台转码探测同源（[`crate::platform`]）。
+//! Android：只有非软解 MediaCodec 才算 WebView 可播；google / c2.android 软解仅服务转码（[`crate::platform::hevc_decode_available`]）。macOS WKWebView 原生支持 HEVC，恒可解。
+//! `HONGGUO_NO_HEVC` 强制按不可解处理（对齐 `HONGGUO_NO_FFMPEG` / `HONGGUO_NO_PLATFORM` 约定，仅开发开关）。
 
 use parking_lot::RwLock;
 

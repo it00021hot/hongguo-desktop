@@ -28,7 +28,7 @@ pub use pipeline::transcode_h264;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::transcode_h264_for_tests;
 pub use probe::hevc_decoder_present;
-pub use probe::{clear_probe_cache, h264_hw_encoder_available};
+pub use probe::{clear_probe_cache, h264_hw_encoder_available, h264_sw_encoder_available};
 
 // 下方 tests 原样保留，引用的跨子模块名字由此供给。
 #[cfg(test)]

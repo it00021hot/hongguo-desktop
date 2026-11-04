@@ -1,10 +1,12 @@
-//! 平台层的统一门面：编译期按目标选择实现（macOS / Windows）。[`cover`] 封面平台级静图解码（Windows WIC；其余平台返回 `None`，调用方无需写平台分支）。
+//! 平台层的统一门面：编译期按目标选择实现（macOS / Windows / Android）。[`cover`] 封面平台级静图解码（Windows WIC；其余平台返回 `None`，调用方无需写平台分支）。
 //! 无状态分发：转码、能力探测、探测缓存清理（同名转发到实现 crate）；调用方只认本模块，不感知具体平台实现与原生 API。
 //! 探测纪律与 ffmpeg 侧一致：**列表里有 ≠ 能用**，必须真实建会话试编一帧（试编帧不能小于 256×256，nvenc 曾在 64×64 上误判不可用）；
 //! 任何探测失败都安静返回不可用让分流链落到 ffmpeg，两者都没有时转码直接报错。
 
 pub mod cover;
 
+#[cfg(target_os = "android")]
+use hongguo_media_platform_android as imp;
 #[cfg(target_os = "macos")]
 use hongguo_media_platform_macos as imp;
 #[cfg(target_os = "windows")]
@@ -18,16 +20,20 @@ pub use hongguo_media_platform_api::PlatformRequest;
 pub use hongguo_media_platform_api::RateProfile;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码。
-/// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、Windows 无硬编 MFT），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。
+/// 返回 `None` 表示本机平台层不接这个源（HEVC 以外、被 `HONGGUO_NO_PLATFORM` 关闭、无可用编解码会话），`Some(Err)` 表示试过但失败——两者都落回分流链的下一条路。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     if disabled_by_env() {
         return None;
     }
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
     {
         imp::transcode_h264(req)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         let _ = req;
         None
@@ -35,47 +41,57 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
 }
 
 /// 平台**硬编**编码器当前是否可用（含探测缓存）。
-/// 只喂能力徽标与并行度策略——macOS 的生产闸门是 [`encoder_available`]，软编会话也算数。
+/// 只喂能力徽标与并行度策略——macOS / Windows / Android 的生产闸门是 [`encoder_available`]，软编会话也算数。
 pub fn h264_hw_encoder_available() -> bool {
     if disabled_by_env() {
         return false;
     }
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
     {
         imp::h264_hw_encoder_available()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         false
     }
 }
 
-/// 平台编码层当前是否可用（含探测缓存）：macOS VT 会话可建即真（含 Apple 软编会话）、Windows 仅指有硬件 MFT（h264_mf 软编不接）。
+/// 平台编码层当前是否可用（含探测缓存）：macOS VT / Windows MF / Android MediaCodec 会话可建即真（含各端软编回落）。
 /// `selected_backend` 与分流链的准入口径。
 pub fn encoder_available() -> bool {
     if disabled_by_env() {
         return false;
     }
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
     {
         imp::encoder_available()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         false
     }
 }
 
-/// HEVC 解码是否在位（Windows 探 MFT；macOS/Android 恒真）：回答「在线播放能否把 HEVC 系流直接喂给 WebView」，与转码侧探测（回答「转码走哪条路」）是两个问题。
-/// 判据同源（同一个 HEVC 解码 MFT 枚举）但不吃 `HONGGUO_NO_PLATFORM`——那个开关关的是转码平台层，与播放解码无关。
-/// **Android 恒真**：官方轻请求流表没有 h264 候选（bytevc1/bytevc2 都是 HEVC 系变体），翻转没有出路；真机 MediaCodec 硬解 HEVC 普遍可用，直连是唯一可播路径；
-/// 无硬解环境（模拟器）解码失败是设备能力极限，由前端重试/错误态如实呈现。
+/// HEVC 解码是否在位：回答「在线播放能否把 HEVC 系流直接喂给 WebView」，与转码侧探测是两个问题。
+/// 不吃 `HONGGUO_NO_PLATFORM`。Windows 探 MF；Android 探非软解 MediaCodec（软解只服务转码）；其余（含 macOS）恒真。
 pub fn hevc_decode_available() -> bool {
     #[cfg(target_os = "windows")]
     {
         imp::hevc_decoder_present()
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "android")]
+    {
+        imp::hevc_webview_decode_available()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
     {
         true
     }
@@ -83,7 +99,7 @@ pub fn hevc_decode_available() -> bool {
 
 /// 丢弃平台侧的探测缓存，下次读取时重新探测（设置页「重新检测」用）。
 pub fn clear_probe_cache() {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
     {
         imp::clear_probe_cache();
     }
@@ -97,15 +113,19 @@ pub fn disabled_by_env() -> bool {
 }
 
 /// 仅测试构建：跑完整平台链路（解码/Annex-B/封装/时间戳），让没有硬编的机器（含 CI）也能验证管线本身。
-/// macOS 生产入口本就是「硬编优先、软编回落」直接走它（e2e 测的就是发布行为）；Windows 分发到 `_for_tests`（h264_mf 软编仅测试通道）。
-/// e2e 统一从这里走，不直接引用 `vt::`/`mf::`（否则另一平台的测试构建编不过）；门控 `test-support`——跨 crate 后 `pub(crate)` 够不着。
+/// macOS / Android 生产入口直接走正式路径；Windows 分发到 `_for_tests`（强制 in-box 软编）。
+/// e2e 统一从这里走，不直接引用 `vt::`/`mf::`/`mc::`（否则另一平台的测试构建编不过）；门控 `test-support`——跨 crate 后 `pub(crate)` 够不着。
 #[cfg(feature = "test-support")]
 pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
     {
         imp::transcode_h264_for_tests(req)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "windows",
+        target_os = "android"
+    )))]
     {
         let _ = req;
         None

@@ -7,8 +7,12 @@ import { EnhancementLayer } from './enhancement-layer';
 import { PlayerControls } from './controls/player-controls';
 import { MiniScreenControls } from './mini-screen-controls';
 import { PhonePlayerChrome } from './phone-player-chrome';
+import { PhoneLandscapeChrome } from './phone-landscape-chrome';
 import { PhoneDanmakuSend } from './phone-danmaku-send';
 import { PhoneSeriesSheet } from './phone-series-sheet';
+import { setAndroidLandscape } from '@/utils/android-shell';
+import { isAndroid } from '@/utils/platform';
+import { applyWindowFullscreen } from '@/hooks/use-window-fullscreen';
 import { DownloadSheet } from './download-sheet';
 import { InteractionRail } from './interaction-rail';
 import { CommentPanel } from './comment-panel';
@@ -264,9 +268,14 @@ export function PlayerView({
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
 
-  // 解码失败的裁决：无 HEVC 机器先出主卡问「装扩展还是转兼容」（会话已授权转兼容的径直兜底）；其余直接转
+  // 解码失败的裁决：Windows 无 HEVC 先出主卡问「装扩展还是转兼容」；Android 无扩展可装，直接兼容转码
   const decodeBlocking = decodeBlocked?.key === episodeKey;
   const requestDecodeFallback = useCallback(() => {
+    if (isAndroid()) {
+      hevcSession.authorizeCompat();
+      startCompat();
+      return;
+    }
     if (hevcPlayable === false && !hevcSession.compatAuthorized()) {
       setDecodeBlocked({ key: episodeKey });
       return;
@@ -421,11 +430,33 @@ export function PlayerView({
   });
   // 无边框播放：这里只消费状态（拖拽条显隐），开关在控制栏
   const frameless = useUiStore((s) => s.playerFrameless);
+  const setPlayerFrameless = useUiStore((s) => s.setPlayerFrameless);
   const { pinned, togglePinned } = usePinWindow();
   // 窄于 md：手机端 / 缩到手机宽的桌面窗——全量控制栏必然溢出，画面用 cover 填满
   const narrow = useNarrowScreen();
+  // 窄屏「全屏观看」：锁横屏 + 藏壳栏后的独立播映壳（对齐官方，不再叠信息流控件）
+  const landscapeWatch = frameless && narrow;
   // 小窗一律 cover；窄屏仅竖屏片源 cover，横屏 contain（完整画面 +「全屏观看」沉浸放大舞台）
-  const coverFill = miniScreen || (narrow && videoPortrait);
+  const coverFill = miniScreen || (narrow && videoPortrait && !landscapeWatch);
+
+  // 横屏全屏中切到竖片：官方也会退回竖屏信息流，避免竖片被硬锁在横屏里
+  useEffect(() => {
+    if (!frameless || !videoPortrait) return;
+    setPlayerFrameless(false);
+    setAndroidLandscape(false);
+    void applyWindowFullscreen(false).catch(() => undefined);
+  }, [frameless, videoPortrait, setPlayerFrameless]);
+
+  const exitLandscapeWatch = useCallback(() => {
+    setPlayerFrameless(false);
+    setAndroidLandscape(false);
+    setPhoneDanmakuSendOpen(false);
+    void applyWindowFullscreen(false).catch(() => undefined);
+  }, [setPlayerFrameless]);
+
+  useEffect(() => {
+    if (landscapeWatch) setPhoneDanmakuSendOpen(false);
+  }, [landscapeWatch]);
 
   // 返回来源页（usePlaySeries 进场时记的路由），消费即清
   const handleReturnToSource = useCallback(() => {
@@ -536,8 +567,8 @@ export function PlayerView({
             !chromeShown && 'cursor-none',
           )}
         >
-          {/* 小屏/无边框都没有顶栏：拖拽条顶上（无边框模式下它是唯一的移窗抓手） */}
-          {(miniScreen || frameless) && <MiniDragBar />}
+          {/* 小屏/桌面无边框都没有顶栏：拖拽条顶上；窄屏横屏全屏不挂（那是播映壳，不是移窗） */}
+          {(miniScreen || (frameless && !narrow)) && <MiniDragBar />}
           {/* 抖音式切换过渡：key 绑「实际供数的流」（取流中旧流继续播，动画精确落在
               新内容出画那一帧），内容按方向滑入 + 淡入。方向在事件里先写进 state
               再换目标，切换动作到流地址交换之间必隔一次渲染。 */}
@@ -640,32 +671,35 @@ export function PlayerView({
                   enabled={danmakuOn}
                   display={danmakuDisplay}
                 />
-                <ImmersiveInfoOverlay
-                  chromeShown={chromeShown && !phoneDanmakuSendOpen}
-                  miniScreen={miniScreen}
-                  narrow={narrow && !portrait}
-                  overlayMeta={overlayMeta}
-                  title={currentSeries?.title}
-                  episodeCount={currentSeries?.episodeCount}
-                  seriesId={seriesId}
-                  vidIndex={vidIndex}
-                  intro={meta?.intro}
-                  introExpanded={introExpanded}
-                  setIntroExpanded={setIntroExpanded}
-                  navigate={navigate}
-                  inBinge={inBinge}
-                  onExitBinge={() => setBinge(null)}
-                  returnTo={returnTo}
-                  onReturnToSource={handleReturnToSource}
-                  onOpenDanmakuSend={
-                    narrow && !portrait
-                      ? () => {
-                          setPhoneDanmakuSendOpen(true);
-                          wakeChrome();
-                        }
-                      : undefined
-                  }
-                />
+                {/* 横屏全屏是独立播映壳：不再叠信息流简介/@剧名/「弹」 */}
+                {!landscapeWatch && (
+                  <ImmersiveInfoOverlay
+                    chromeShown={chromeShown && !phoneDanmakuSendOpen}
+                    miniScreen={miniScreen}
+                    narrow={narrow && !portrait}
+                    overlayMeta={overlayMeta}
+                    title={currentSeries?.title}
+                    episodeCount={currentSeries?.episodeCount}
+                    seriesId={seriesId}
+                    vidIndex={vidIndex}
+                    intro={meta?.intro}
+                    introExpanded={introExpanded}
+                    setIntroExpanded={setIntroExpanded}
+                    navigate={navigate}
+                    inBinge={inBinge}
+                    onExitBinge={() => setBinge(null)}
+                    returnTo={returnTo}
+                    onReturnToSource={handleReturnToSource}
+                    onOpenDanmakuSend={
+                      narrow && !portrait
+                        ? () => {
+                            setPhoneDanmakuSendOpen(true);
+                            wakeChrome();
+                          }
+                        : undefined
+                    }
+                  />
+                )}
                 {/* 快捷键提示只在暂停时露出；常驻顶栏会把分类 tab 挡死。小屏/竖屏/窄屏装不下 */}
                 {paused && !error && !miniScreen && !portrait && !narrow && <KeyboardHint />}
                 {/* 沉浸流分类 tab 栏已上移 AppShell 顶栏（portal 插槽） */}
@@ -681,7 +715,9 @@ export function PlayerView({
                 <InteractionRail
                   seriesId={seriesId}
                   vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                  visible={chromeShown && !commentPanelOpen && !miniScreen}
+                  visible={
+                    chromeShown && !commentPanelOpen && !miniScreen && !landscapeWatch
+                  }
                   title={currentSeries?.title}
                   // 公开计数来自剧集档案（detail 接口逐集下发），匿名可见
                   commentCount={currentEpisode?.commentCount}
@@ -691,8 +727,8 @@ export function PlayerView({
                   seriesStatus={meta?.seriesStatus}
                 />
                 {/* 沉浸流底部「观看完整短剧 · 全N集」横条：进入选中剧连播态的唯一手动入口，
-                  已选中时不渲染。显隐跟随播放控件，小屏不渲染。 */}
-                {onWheelStep && currentSeries && !miniScreen && !inBinge && (
+                  已选中时不渲染。显隐跟随播放控件，小屏/横屏全屏不渲染。 */}
+                {onWheelStep && currentSeries && !miniScreen && !inBinge && !landscapeWatch && (
                   <ChromeSurface
                     shown={chromeShown}
                     data-wheel-block
@@ -775,47 +811,113 @@ export function PlayerView({
                     onControlsLeave={() => setControlsHovered(false)}
                   />
                 ) : narrow ? (
-                  // 窄屏官方同款：右上倍速 + 底三键/细进度；Sheet 提到本层防切集重挂
+                  // 窄屏：竖屏信息流 chrome；横屏全屏换独立播映壳（对齐官方）
                   <>
-                    <PhonePlayerChrome
-                      videoRef={videoRef}
-                      visible={chromeShown && !phoneDanmakuSendOpen}
-                      moreOpen={phoneMoreOpen}
-                      onMoreOpenChange={setPhoneMoreOpen}
-                      enhanceOpen={phoneEnhanceOpen}
-                      onEnhanceOpenChange={setPhoneEnhanceOpen}
-                      onOpenSeries={() => {
-                        setPhoneSeriesOpen(true);
-                        if (!inBinge) setBinge(seriesId);
-                      }}
-                      episodeCount={currentSeries?.episodeCount ?? 0}
-                      definition={activeDefinition}
-                      definitions={definitions}
-                      onDefinitionChange={(d) => {
-                        captureFrame();
-                        setDefinition(d);
-                      }}
-                      danmakuOn={danmakuOn}
-                      onToggleDanmaku={toggleDanmaku}
-                      danmakuDisplay={danmakuDisplay}
-                      onDanmakuDisplayChange={updateDanmakuDisplay}
-                      enhanceSettings={enhanceSettings}
-                      onEnhanceChange={updateEnhancement}
-                      enhanceStatus={enhanceStatus}
-                      enhanceAvailable={videoLive}
-                      onDownloadingChange={setDownloading}
-                      onControlsEnter={() => {
-                        setControlsHovered(true);
-                        wakeChrome();
-                      }}
-                      onControlsLeave={() => setControlsHovered(false)}
-                    />
-                    <PhoneDanmakuSend
-                      open={phoneDanmakuSendOpen}
-                      onOpenChange={setPhoneDanmakuSendOpen}
-                      videoRef={videoRef}
-                      vid={currentVid ? `${currentVid}:${seriesId}` : ''}
-                    />
+                    {landscapeWatch ? (
+                      <PhoneLandscapeChrome
+                        videoRef={videoRef}
+                        visible={chromeShown}
+                        title={currentSeries?.title}
+                        vidIndex={vidIndex}
+                        episodeCount={currentSeries?.episodeCount ?? 0}
+                        definition={activeDefinition}
+                        definitions={definitions}
+                        onDefinitionChange={(d) => {
+                          captureFrame();
+                          setDefinition(d);
+                        }}
+                        danmakuOn={danmakuOn}
+                        onToggleDanmaku={toggleDanmaku}
+                        onOpenMore={() => setPhoneMoreOpen(true)}
+                        onOpenSeries={() => {
+                          setPhoneSeriesOpen(true);
+                          if (!inBinge) setBinge(seriesId);
+                        }}
+                        onExit={exitLandscapeWatch}
+                        vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                        onControlsEnter={() => {
+                          setControlsHovered(true);
+                          wakeChrome();
+                        }}
+                        onControlsLeave={() => setControlsHovered(false)}
+                      />
+                    ) : (
+                      <PhonePlayerChrome
+                        videoRef={videoRef}
+                        visible={chromeShown && !phoneDanmakuSendOpen}
+                        moreOpen={phoneMoreOpen}
+                        onMoreOpenChange={setPhoneMoreOpen}
+                        enhanceOpen={phoneEnhanceOpen}
+                        onEnhanceOpenChange={setPhoneEnhanceOpen}
+                        onOpenSeries={() => {
+                          setPhoneSeriesOpen(true);
+                          if (!inBinge) setBinge(seriesId);
+                        }}
+                        episodeCount={currentSeries?.episodeCount ?? 0}
+                        definition={activeDefinition}
+                        definitions={definitions}
+                        onDefinitionChange={(d) => {
+                          captureFrame();
+                          setDefinition(d);
+                        }}
+                        danmakuOn={danmakuOn}
+                        onToggleDanmaku={toggleDanmaku}
+                        danmakuDisplay={danmakuDisplay}
+                        onDanmakuDisplayChange={updateDanmakuDisplay}
+                        enhanceSettings={enhanceSettings}
+                        onEnhanceChange={updateEnhancement}
+                        enhanceStatus={enhanceStatus}
+                        enhanceAvailable={videoLive}
+                        onDownloadingChange={setDownloading}
+                        onControlsEnter={() => {
+                          setControlsHovered(true);
+                          wakeChrome();
+                        }}
+                        onControlsLeave={() => setControlsHovered(false)}
+                      />
+                    )}
+                    {/* 横屏全屏时 Sheet 仍挂在这里：播映壳只负责触发 moreOpen */}
+                    {landscapeWatch && (
+                      <PhonePlayerChrome
+                        sheetsOnly
+                        videoRef={videoRef}
+                        visible={false}
+                        moreOpen={phoneMoreOpen}
+                        onMoreOpenChange={setPhoneMoreOpen}
+                        enhanceOpen={phoneEnhanceOpen}
+                        onEnhanceOpenChange={setPhoneEnhanceOpen}
+                        onOpenSeries={() => {
+                          setPhoneSeriesOpen(true);
+                          if (!inBinge) setBinge(seriesId);
+                        }}
+                        episodeCount={currentSeries?.episodeCount ?? 0}
+                        definition={activeDefinition}
+                        definitions={definitions}
+                        onDefinitionChange={(d) => {
+                          captureFrame();
+                          setDefinition(d);
+                        }}
+                        danmakuOn={danmakuOn}
+                        onToggleDanmaku={toggleDanmaku}
+                        danmakuDisplay={danmakuDisplay}
+                        onDanmakuDisplayChange={updateDanmakuDisplay}
+                        enhanceSettings={enhanceSettings}
+                        onEnhanceChange={updateEnhancement}
+                        enhanceStatus={enhanceStatus}
+                        enhanceAvailable={videoLive}
+                        onDownloadingChange={setDownloading}
+                        onControlsEnter={() => undefined}
+                        onControlsLeave={() => undefined}
+                      />
+                    )}
+                    {!landscapeWatch && (
+                      <PhoneDanmakuSend
+                        open={phoneDanmakuSendOpen}
+                        onOpenChange={setPhoneDanmakuSendOpen}
+                        videoRef={videoRef}
+                        vid={currentVid ? `${currentVid}:${seriesId}` : ''}
+                      />
+                    )}
                     <PhoneSeriesSheet
                       open={phoneSeriesOpen}
                       onOpenChange={setPhoneSeriesOpen}
@@ -883,10 +985,8 @@ export function PlayerView({
                 {/* 兜底转码浮层：转一集几十秒，没有它用户只能盯着黑屏 */}
                 {compat && <CompatOverlay compat={compat} />}
 
-                {/* HEVC 安装引导：底部悬浮（proactive，降档播放时提示）与居中主卡
-                  （blocking，解码失败必须二选一）两种形态；
-                  装好且画面没在播时借 retryOnline 重试起播。 */}
-                {hevcPlayable === false && !compat && !compatSrc && (
+                {/* HEVC 安装引导（仅 Windows）：底部悬浮 / 居中主卡；Android 无扩展可装，解码失败直接兼容转码 */}
+                {hevcPlayable === false && !compat && !compatSrc && !isAndroid() && (
                   <HevcInstallCard
                     hevcPlayable={false}
                     variant={decodeBlocking ? 'blocking' : 'floating'}

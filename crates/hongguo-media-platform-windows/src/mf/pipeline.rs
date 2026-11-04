@@ -16,25 +16,27 @@ use super::mft::run_on_mf_thread;
 use super::probe::h264_hw_encoder_available;
 use super::scaler::Scaler;
 
-/// 平台硬编可用时执行转码；不可用返回 `None`（HEVC 以外的源也返回 `None`，
-/// 留给 ffmpeg——H.264 源在 ffmpeg 侧是直转，没必要绕 GPU）。
+/// 平台编码层执行转码：硬编优先，无硬编回落 in-box 软件 MFT（h264_mf）。
+/// HEVC 以外的源返回 `None`（留给 ffmpeg——H.264 源直转，没必要绕平台层）。
+/// 硬编与软编都不可用时也返回 `None`（落 ffmpeg）；解 HEVC 仍依赖系统扩展。
 pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
-    if !h264_hw_encoder_available() {
-        return None;
-    }
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
     let video = demuxed.video_track()?;
     if !hongguo_media::hevc::is_hevc(&video.info.codec) {
         return None;
     }
-    Some(run_on_mf_thread(|| {
-        run(req, &demuxed, &video.info, EncoderKind::Hardware)
-    }))
+    let kind = if h264_hw_encoder_available() {
+        EncoderKind::Hardware
+    } else if super::probe::h264_sw_encoder_available() {
+        EncoderKind::Software
+    } else {
+        return None;
+    };
+    Some(run_on_mf_thread(|| run(req, &demuxed, &video.info, kind)))
 }
 
-/// 仅测试构建：以「回落软件编码器」的策略跑完整链路，让没有硬编的机器
-/// 也能验证管线本身（解码/Annex-B/封装/时间戳）。硬件与否由探测测试另行验证。
-/// 门控对齐 [`crate::transcode_h264_for_tests`]（壳 e2e 走 test-support）。
+/// 仅测试构建：强制软件编码器跑完整链路（解码/Annex-B/封装/时间戳），
+/// 让没有硬编的 CI 也能验证管线本身。
 #[cfg(any(test, feature = "test-support"))]
 pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     let demuxed = hongguo_media::demux::demux_file(req.input).ok()?;
@@ -223,7 +225,7 @@ fn run(
     )?;
 
     if units.is_empty() {
-        return Err(AppError::Media("平台硬编没有产出任何帧".into()));
+        return Err(AppError::Media("平台编码没有产出任何帧".into()));
     }
 
     // 4) 音轨直通 + 封装（与其他后端同一套代码，faststart）

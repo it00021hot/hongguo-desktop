@@ -146,7 +146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { pinned, togglePinned } = usePinWindow();
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       <a href="#content" className="skip-to-content">
         {t('common.skipToContent')}
       </a>

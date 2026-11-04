@@ -1,0 +1,25 @@
+[package]
+name = "hongguo-media-platform-android"
+description = "红果桌面版 Android 平台原生化：MediaCodec HEVC 解 → H.264 编（契约见 hongguo-media-platform-api）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
+hongguo-common = { path = "../hongguo-common" }
+hongguo-media = { path = "../hongguo-media" }
+hongguo-video = { path = "../hongguo-video" }
+log = "0.4"
+parking_lot = "0.12"
+
+# 仅 Android 目标拉 NDK；宿主（Windows/macOS）上空壳，不编 mediandk。
+[target.'cfg(target_os = "android")'.dependencies]
+# api-level-28：AMediaCodec_getName（辨软/硬解）；运行时 API<28 不调用。
+ndk = { version = "0.9", features = ["media", "api-level-28"] }
+
+[features]
+# 门面 test-support 转发；Android 生产入口与测试同路径（硬软由系统选）。
+test-support = []

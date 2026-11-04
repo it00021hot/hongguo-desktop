@@ -4321,6 +4321,7 @@ version = "0.6.1"
 dependencies = [
  "hongguo-common",
  "hongguo-media",
+ "hongguo-media-platform-android",
  "hongguo-media-platform-api",
  "hongguo-media-platform-macos",
  "hongguo-media-platform-windows",
@@ -4328,6 +4329,19 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hongguo-media-platform-android"
+version = "0.6.1"
+dependencies = [
+ "hongguo-common",
+ "hongguo-media",
+ "hongguo-media-platform-api",
+ "hongguo-video",
+ "log",
+ "ndk",
+ "parking_lot",
 ]
 
 [[package]]

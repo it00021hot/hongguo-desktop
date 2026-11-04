@@ -1,9 +1,10 @@
-/** 窄屏发弹幕：点左下「弹」弹出底栏输入（官方同款；开关弹幕在倍速 Sheet）。 */
+/** 窄屏竖屏发弹幕：点左下「弹」弹出底栏输入；底边跟原生 IME 高度走，不被键盘盖住。 */
 import { useEffect, useState, type RefObject } from 'react';
 import { toast } from 'sonner';
 import { useAccount, useSendDanmaku } from '@/service/queries';
 import { t } from '@/locales';
 import { EmojiSendBox } from '@/components/common/emoji/emoji-send-box';
+import { useImeBottom } from '@/utils/ime-inset';
 
 export function PhoneDanmakuSend({
   open,
@@ -18,6 +19,7 @@ export function PhoneDanmakuSend({
   vid: string;
 }) {
   const [text, setText] = useState('');
+  const imeBottom = useImeBottom();
   const send = useSendDanmaku();
   const { data: account } = useAccount();
   const loggedIn = !!account;
@@ -53,14 +55,16 @@ export function PhoneDanmakuSend({
       <button
         type="button"
         aria-label={t('common.close')}
-        className="absolute inset-0 z-20 cursor-default"
+        className="fixed inset-0 z-40 cursor-default"
         onClick={(e) => {
           e.stopPropagation();
           onOpenChange(false);
         }}
       />
+      {/* fixed + 原生 IME 抬升：不吃 absolute/100vh，华为 WebView 也能贴在键盘上方 */}
       <div
-        className="absolute inset-x-0 bottom-0 z-30 px-3 pb-3 pt-2"
+        className="fixed inset-x-0 z-50 px-3 pb-3 pt-2"
+        style={{ bottom: imeBottom }}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >

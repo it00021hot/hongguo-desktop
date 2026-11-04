@@ -10,7 +10,10 @@ import { PendingFallback, RendererCrashed, RouteError } from './components/commo
 import { applyTheme, useThemeStore } from './stores/theme';
 import { useUiStore } from './stores/ui';
 import { setAndroidLandscape } from './utils/android-shell';
+import { installImeInsetBridge } from './utils/ime-inset';
 import './styles/index.css';
+
+installImeInsetBridge();
 
 /** 全局错误 toast 的文案：kind 译文 + 后端原文（若两者不同）。
  * 「视频处理失败（接口返回 7001: 无权限）」比一句孤立译文可定位得多。 */

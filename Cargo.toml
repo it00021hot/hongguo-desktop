@@ -18,6 +18,7 @@ members = [
     "crates/hongguo-media",
     "crates/hongguo-media-platform",
     "crates/hongguo-media-platform-api",
+    "crates/hongguo-media-platform-android",
     "crates/hongguo-media-platform-macos",
     "crates/hongguo-media-platform-windows",
     "crates/hongguo-video",

@@ -93,6 +93,8 @@ function Segmented<T extends string | number>({
 export function PhonePlayerChrome({
   videoRef,
   visible,
+  /** 横屏全屏壳接管画面控件时只挂倍速/增强 Sheet，避免拆两份面板 */
+  sheetsOnly = false,
   moreOpen,
   onMoreOpenChange,
   enhanceOpen,
@@ -116,6 +118,7 @@ export function PhonePlayerChrome({
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   visible: boolean;
+  sheetsOnly?: boolean;
   moreOpen: boolean;
   onMoreOpenChange: (open: boolean) => void;
   enhanceOpen: boolean;
@@ -229,72 +232,76 @@ export function PhonePlayerChrome({
 
   return (
     <>
-      {/* 量舞台尺寸：与 video 同级铺满的空层，不挡指针 */}
-      <div ref={stageRef} className="pointer-events-none absolute inset-0 z-0" aria-hidden />
+      {!sheetsOnly && (
+        <>
+          {/* 量舞台尺寸：与 video 同级铺满的空层，不挡指针 */}
+          <div ref={stageRef} className="pointer-events-none absolute inset-0 z-0" aria-hidden />
 
-      <ChromeSurface
-        shown={visible}
-        data-wheel-block
-        onClick={(e) => e.stopPropagation()}
-        onMouseEnter={onControlsEnter}
-        onMouseLeave={onControlsLeave}
-        className="absolute top-3 right-3 z-30 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
-      >
-        <button
-          type="button"
-          aria-label={t('player.playbackRate')}
-          onClick={() => onMoreOpenChange(true)}
-          className="rounded-full bg-black/35 px-2.5 py-1 font-mono text-xs backdrop-blur-sm hover:bg-black/50"
-        >
-          {rate}x
-        </button>
-      </ChromeSurface>
-
-      {/* 横片：落在 letterbox 黑边；点了锁 Activity 横屏 + 藏壳栏（完整画面铺满） */}
-      {landscape && fsTop != null && (
-        <ChromeSurface
-          shown={visible}
-          data-wheel-block
-          className="pointer-events-none absolute inset-x-0 z-20"
-          style={{ top: fsTop }}
-        >
-          <div className="flex justify-center">
+          <ChromeSurface
+            shown={visible}
+            data-wheel-block
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={onControlsEnter}
+            onMouseLeave={onControlsLeave}
+            className="absolute top-3 right-3 z-30 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
+          >
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleImmersive();
-              }}
-              className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/55 px-3.5 py-2 text-sm text-white backdrop-blur-sm hover:bg-black/70"
+              aria-label={t('player.playbackRate')}
+              onClick={() => onMoreOpenChange(true)}
+              className="rounded-full bg-black/35 px-2.5 py-1 font-mono text-xs backdrop-blur-sm hover:bg-black/50"
             >
-              <MonitorPlay className="size-4" />
-              {immersive ? t('player.exitWatchFullscreen') : t('player.watchFullscreen')}
+              {rate}x
             </button>
-          </div>
-        </ChromeSurface>
-      )}
+          </ChromeSurface>
 
-      {/* 底：仅细进度（增强/选集/下载进倍速面板） */}
-      <ChromeSurface
-        shown={visible}
-        data-wheel-block
-        onClick={(e) => e.stopPropagation()}
-        onMouseEnter={onControlsEnter}
-        onMouseLeave={onControlsLeave}
-        className="absolute inset-x-0 bottom-0 z-30 px-3 pt-4 pb-1.5 text-white"
-      >
-        <div className="mb-0.5 flex justify-between font-mono text-[10px] text-white/70 tabular-nums">
-          <span>{formatDuration(current)}</span>
-          <span>{formatDuration(duration)}</span>
-        </div>
-        <ScrubBar
-          current={Math.min(current, duration || 0)}
-          duration={duration}
-          onSeek={seekTo}
-          onScrubStart={() => undefined}
-          onScrubEnd={() => undefined}
-        />
-      </ChromeSurface>
+          {/* 横片：落在 letterbox 黑边；点了锁 Activity 横屏 + 藏壳栏（完整画面铺满） */}
+          {landscape && fsTop != null && !immersive && (
+            <ChromeSurface
+              shown={visible}
+              data-wheel-block
+              className="pointer-events-none absolute inset-x-0 z-20"
+              style={{ top: fsTop }}
+            >
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleImmersive();
+                  }}
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/55 px-3.5 py-2 text-sm text-white backdrop-blur-sm hover:bg-black/70"
+                >
+                  <MonitorPlay className="size-4" />
+                  {t('player.watchFullscreen')}
+                </button>
+              </div>
+            </ChromeSurface>
+          )}
+
+          {/* 底：仅细进度（增强/选集/下载进倍速面板） */}
+          <ChromeSurface
+            shown={visible}
+            data-wheel-block
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={onControlsEnter}
+            onMouseLeave={onControlsLeave}
+            className="absolute inset-x-0 bottom-0 z-30 px-3 pt-4 pb-1.5 text-white"
+          >
+            <div className="mb-0.5 flex justify-between font-mono text-[10px] text-white/70 tabular-nums">
+              <span>{formatDuration(current)}</span>
+              <span>{formatDuration(duration)}</span>
+            </div>
+            <ScrubBar
+              current={Math.min(current, duration || 0)}
+              duration={duration}
+              onSeek={seekTo}
+              onScrubStart={() => undefined}
+              onScrubEnd={() => undefined}
+            />
+          </ChromeSurface>
+        </>
+      )}
 
       {/* 倍速 / 清晰度 / 弹幕 */}
       <Sheet
