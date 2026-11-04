@@ -26,4 +26,9 @@ describe('recoveryAction', () => {
     expect(recoveryAction('network', counts)).toBe('errorPage');
     expect(recoveryAction('decode', counts)).toBe('retry');
   });
+
+  it('已知不可解时 decode 径直兜底——不再烧一次必败的原生重试', () => {
+    expect(recoveryAction('decode', emptyFailureCounts(), true)).toBe('fallback');
+    expect(recoveryAction('network', emptyFailureCounts(), true)).toBe('retry');
+  });
 });

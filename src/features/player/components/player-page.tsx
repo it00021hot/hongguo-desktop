@@ -252,7 +252,7 @@ export function PlayerView({
   // 真正实现依赖 hook 回传的 startCompat，定义在 hook 之后经 ref 同步
   const onDecodeFailureRef = useRef<() => void>(() => {});
   const onDecodeFailure = useCallback(() => onDecodeFailureRef.current(), []);
-  const { compatSrc, compat, playSrc, streamKey, startCompat } = useTranscodeFallback({
+  const { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat } = useTranscodeFallback({
     videoRef,
     seriesId,
     vidIndex,
@@ -263,12 +263,14 @@ export function PlayerView({
     srcKeyRef,
     setSrcKey,
     currentSeries,
+    hevcPlayable,
+    android: isAndroid(),
     onDecodeFailure,
   });
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
 
-  // 解码失败的裁决：Windows 无 HEVC 先出主卡问「装扩展还是转兼容」；Android 无扩展可装，直接兼容转码
+  // 解码失败的裁决：Windows 无 HEVC 先出主卡问「装扩展还是转兼容」；Android / 已授权会话由 hook 主动转
   const decodeBlocking = decodeBlocked?.key === episodeKey;
   const requestDecodeFallback = useCallback(() => {
     if (isAndroid()) {
@@ -316,6 +318,13 @@ export function PlayerView({
     enabled: settings?.pauseOnMinimize ?? true,
   });
 
+  // 窄屏 / 无边框要尽早算：横屏播映壳会派生关掉弹幕发送层，overlay 也吃同一结论
+  const frameless = useUiStore((s) => s.playerFrameless);
+  const setPlayerFrameless = useUiStore((s) => s.setPlayerFrameless);
+  const narrow = useNarrowScreen();
+  const landscapeWatch = frameless && narrow;
+  const phoneDanmakuComposerOpen = phoneDanmakuSendOpen && !landscapeWatch;
+
   // 沉浸流悬浮层显隐状态机抽在 use-player-overlay（静默期 silenced 一票否决）
   const { paused, setPaused, chromeShown, wakeChrome, hideChrome, setControlsHovered } =
     usePlayerOverlay({
@@ -326,7 +335,7 @@ export function PlayerView({
       phoneMoreOpen,
       phoneSeriesOpen,
       phoneEnhanceOpen,
-      phoneDanmakuSendOpen,
+      phoneDanmakuSendOpen: phoneDanmakuComposerOpen,
       startVisible: !quietStart,
       silenced: quietArmed,
     });
@@ -428,14 +437,7 @@ export function PlayerView({
   const { portrait, portraitFull, togglePortrait, togglePortraitFull } = usePortraitWindow({
     videoRef,
   });
-  // 无边框播放：这里只消费状态（拖拽条显隐），开关在控制栏
-  const frameless = useUiStore((s) => s.playerFrameless);
-  const setPlayerFrameless = useUiStore((s) => s.setPlayerFrameless);
   const { pinned, togglePinned } = usePinWindow();
-  // 窄于 md：手机端 / 缩到手机宽的桌面窗——全量控制栏必然溢出，画面用 cover 填满
-  const narrow = useNarrowScreen();
-  // 窄屏「全屏观看」：锁横屏 + 藏壳栏后的独立播映壳（对齐官方，不再叠信息流控件）
-  const landscapeWatch = frameless && narrow;
   // 小窗一律 cover；窄屏仅竖屏片源 cover，横屏 contain（完整画面 +「全屏观看」沉浸放大舞台）
   const coverFill = miniScreen || (narrow && videoPortrait && !landscapeWatch);
 
@@ -453,10 +455,6 @@ export function PlayerView({
     setPhoneDanmakuSendOpen(false);
     void applyWindowFullscreen(false).catch(() => undefined);
   }, [setPlayerFrameless]);
-
-  useEffect(() => {
-    if (landscapeWatch) setPhoneDanmakuSendOpen(false);
-  }, [landscapeWatch]);
 
   // 返回来源页（usePlaySeries 进场时记的路由），消费即清
   const handleReturnToSource = useCallback(() => {
@@ -516,7 +514,7 @@ export function PlayerView({
     const online = playSrc?.includes(STREAM_SCHEME) ?? false;
     if (online && !compatSrc && !compat) {
       const kind = classifyMediaError(me?.code);
-      const action = recoveryAction(kind, failuresOf());
+      const action = recoveryAction(kind, failuresOf(), forceCompat || hevcPlayable === false);
       recordFailure(kind);
       if (action === 'retry') {
         retryOnline();
@@ -674,7 +672,7 @@ export function PlayerView({
                 {/* 横屏全屏是独立播映壳：不再叠信息流简介/@剧名/「弹」 */}
                 {!landscapeWatch && (
                   <ImmersiveInfoOverlay
-                    chromeShown={chromeShown && !phoneDanmakuSendOpen}
+                    chromeShown={chromeShown && !phoneDanmakuComposerOpen}
                     miniScreen={miniScreen}
                     narrow={narrow && !portrait}
                     overlayMeta={overlayMeta}
@@ -844,7 +842,7 @@ export function PlayerView({
                     ) : (
                       <PhonePlayerChrome
                         videoRef={videoRef}
-                        visible={chromeShown && !phoneDanmakuSendOpen}
+                        visible={chromeShown && !phoneDanmakuComposerOpen}
                         moreOpen={phoneMoreOpen}
                         onMoreOpenChange={setPhoneMoreOpen}
                         enhanceOpen={phoneEnhanceOpen}
@@ -874,6 +872,7 @@ export function PlayerView({
                           wakeChrome();
                         }}
                         onControlsLeave={() => setControlsHovered(false)}
+                        onEnterLandscape={() => setPhoneDanmakuSendOpen(false)}
                       />
                     )}
                     {/* 横屏全屏时 Sheet 仍挂在这里：播映壳只负责触发 moreOpen */}
@@ -912,7 +911,7 @@ export function PlayerView({
                     )}
                     {!landscapeWatch && (
                       <PhoneDanmakuSend
-                        open={phoneDanmakuSendOpen}
+                        open={phoneDanmakuComposerOpen}
                         onOpenChange={setPhoneDanmakuSendOpen}
                         videoRef={videoRef}
                         vid={currentVid ? `${currentVid}:${seriesId}` : ''}
@@ -985,7 +984,7 @@ export function PlayerView({
                 {/* 兜底转码浮层：转一集几十秒，没有它用户只能盯着黑屏 */}
                 {compat && <CompatOverlay compat={compat} />}
 
-                {/* HEVC 安装引导（仅 Windows）：底部悬浮 / 居中主卡；Android 无扩展可装，解码失败直接兼容转码 */}
+                {/* HEVC 安装引导（仅 Windows）：底部悬浮 / 居中主卡；Android 由 hook 主动转兼容 */}
                 {hevcPlayable === false && !compat && !compatSrc && !isAndroid() && (
                   <HevcInstallCard
                     hevcPlayable={false}
@@ -1006,21 +1005,27 @@ export function PlayerView({
             ) : (
               <>
                 {coverBackdrop}
-                {/* 错误/加载态的导航出口：取流失败时信息叠加层与 Esc 都不在，pill 常显 */}
-                <PlayerChromePills
-                  chromeShown={chromeShown}
-                  miniScreen={miniScreen}
-                  always
-                  vidIndex={vidIndex}
-                  returnTo={returnTo}
-                  onReturnToSource={handleReturnToSource}
-                />
-                <LoadingPanel
-                  error={error}
-                  autoRetry={autoRetry}
-                  buffering={buffering}
-                  retryOnline={retryOnline}
-                />
+                {/* 主动兼容途中故意不喂原生 src：浮层要挂在无 <video> 分支，否则转码进度看不见 */}
+                {compat && <CompatOverlay compat={compat} />}
+                {!compat && (
+                  <>
+                    {/* 错误/加载态的导航出口：取流失败时信息叠加层与 Esc 都不在，pill 常显 */}
+                    <PlayerChromePills
+                      chromeShown={chromeShown}
+                      miniScreen={miniScreen}
+                      always
+                      vidIndex={vidIndex}
+                      returnTo={returnTo}
+                      onReturnToSource={handleReturnToSource}
+                    />
+                    <LoadingPanel
+                      error={error}
+                      autoRetry={autoRetry}
+                      buffering={buffering}
+                      retryOnline={retryOnline}
+                    />
+                  </>
+                )}
               </>
             )}
           </div>

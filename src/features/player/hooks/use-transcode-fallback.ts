@@ -6,10 +6,13 @@ import { EVENTS } from '@/service/tauri/types';
 import { t, tf } from '@/locales';
 import { STREAM_SCHEME } from '@/utils/scheme';
 import type { CompatProgress, Series } from '@/service/schema';
+import { hevcSession } from './hevc-session';
+import { decideCompatPlayback, resolvePlayBaseSrc } from './compat-policy';
 
 /**
  * 转码兜底：videoWidth===0 而声音正常 = 系统解不了编码，转 H.264 换路走（产物落缓存，同一集只转一次）；
- * playSrc 在此收口，叠「兜底产物优先」与「重试防缓存钉」两层裁决。状态带集 key 读时过滤，换集自动失效。
+ * Android / 已授权会话在能力判假后主动转兼容，不先喂 HEVC。
+ * playSrc 在此收口，叠「兜底产物优先」「主动兼容挡原生」「重试防缓存钉」三层裁决。
  */
 export function useTranscodeFallback(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -23,6 +26,10 @@ export function useTranscodeFallback(params: {
   srcKeyRef: React.RefObject<string>;
   setSrcKey: (key: string) => void;
   currentSeries?: Series;
+  /** 后端 HEVC 可播结论；`undefined` = 探测未返回 */
+  hevcPlayable: boolean | undefined;
+  /** Android：无扩展安装路径，软解判假即强制兼容 */
+  android: boolean;
   /**
    * 解码失败的裁决入口（轮询命中后调用）：父层据此决定直接兜底转码，
    * 还是先弹「装扩展 vs 转兼容」的主卡（无 HEVC 机器）。
@@ -40,6 +47,8 @@ export function useTranscodeFallback(params: {
     srcKeyRef,
     setSrcKey,
     currentSeries,
+    hevcPlayable,
+    android,
     onDecodeFailure,
   } = params;
   const compatPlay = useCompatPlayback();
@@ -51,12 +60,18 @@ export function useTranscodeFallback(params: {
   /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
   const compatStarted = useRef(false);
 
+  const { forceCompat, holdNative } = decideCompatPlayback({
+    hevcPlayable,
+    android,
+    compatAuthorized: hevcSession.compatAuthorized(),
+  });
+
   /** 兜底产物地址，只认当前这一集 */
   const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
   /** 兜底进度，只认当前这一集 */
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
-  /** 实际喂给 `<video>` 的地址：有兜底产物就用它 */
-  const baseSrc = compatSrc ?? src;
+  /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
+  const baseSrc = resolvePlayBaseSrc(src, compatSrc, holdNative);
   /**
    * 重试要换 URL：WebView2 可能缓存了失败瞬间的坏响应，同一个地址重试永远拿坏数据；
    * 后端只解析 path，query 是纯缓存钉（后端已补 no-store，这层双保险兜旧缓存）。
@@ -88,14 +103,17 @@ export function useTranscodeFallback(params: {
           setSrcKey(episodeKey);
           setCompatResult({ key: episodeKey, url: r.url });
           setCompatProgress(null);
-          toast.success(
-            r.cached
-              ? t('player.compatCached')
-              : tf('player.compatDone', {
-                  backend: r.backend,
-                  seconds: Math.round(r.elapsedMs / 1000),
-                }),
-          );
+          // 主动兼容 + 缓存命中是预期路径（软解机连播），不再每集弹 toast 打扰
+          if (r.cached) {
+            if (!forceCompat) toast.success(t('player.compatCached'));
+          } else {
+            toast.success(
+              tf('player.compatDone', {
+                backend: r.backend,
+                seconds: Math.round(r.elapsedMs / 1000),
+              }),
+            );
+          }
         },
         onError: (e) => {
           setCompatProgress(null);
@@ -105,12 +123,33 @@ export function useTranscodeFallback(params: {
       },
     );
     // ref 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
-  }, [seriesId, vidIndex, episodeKey, currentSeries, mutateCompat, srcKeyRef, setSrcKey]);
+  }, [
+    seriesId,
+    vidIndex,
+    episodeKey,
+    currentSeries,
+    mutateCompat,
+    srcKeyRef,
+    setSrcKey,
+    forceCompat,
+  ]);
+
+  // 换集先清「已兜底」记号，必须排在主动兼容 effect 之前——否则同 commit 里先 start 再被清掉会丢闸
+  useEffect(() => {
+    compatStarted.current = false;
+  }, [episodeKey]);
+
+  // 已知不可解：起播前主动转兼容（Android 软解 / 本会话已选转兼容），省掉首集黑屏等待
+  useEffect(() => {
+    if (!forceCompat || !seriesId || !vidIndex) return;
+    if (android) hevcSession.authorizeCompat();
+    startCompat();
+  }, [forceCompat, seriesId, vidIndex, episodeKey, android, startCompat]);
 
   // 解码失败探测：播放在走、画面出不来、时间在推进，三个条件缺一不可（刚起播 videoWidth 本来就是 0）；
   // 命中走 onDecodeFailure 裁决：无 HEVC 机器先问「装扩展还是转兼容」，其余直接兜底转码
   useEffect(() => {
-    if (!playSrc || compatSrc || error) return;
+    if (!playSrc || compatSrc || error || forceCompat) return;
     const v = videoRef.current;
     if (!v) return;
     const timer = setInterval(() => {
@@ -120,12 +159,7 @@ export function useTranscodeFallback(params: {
       }
     }, 1200);
     return () => clearInterval(timer);
-  }, [playSrc, compatSrc, error, onDecodeFailure, videoRef]);
+  }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
 
-  // 换集换「已兜底过」记号：产物与进度靠 key 自己失效，这里只需允许新一集再兜底一次
-  useEffect(() => {
-    compatStarted.current = false;
-  }, [episodeKey]);
-
-  return { compatSrc, compat, playSrc, streamKey, startCompat };
+  return { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat };
 }

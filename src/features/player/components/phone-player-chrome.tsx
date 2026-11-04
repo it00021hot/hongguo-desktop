@@ -115,6 +115,8 @@ export function PhonePlayerChrome({
   onDownloadingChange,
   onControlsEnter,
   onControlsLeave,
+  /** 进入横屏全屏时关掉竖屏弹幕发送层（由父层收状态，避免 effect 同步 setState） */
+  onEnterLandscape,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   visible: boolean;
@@ -139,6 +141,7 @@ export function PhonePlayerChrome({
   onDownloadingChange: (open: boolean) => void;
   onControlsEnter: () => void;
   onControlsLeave: () => void;
+  onEnterLandscape?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [danmakuPanel, setDanmakuPanel] = useState(false);
@@ -225,6 +228,7 @@ export function PhonePlayerChrome({
     setImmersive(next);
     // 真机：锁 Activity 横屏（完整画面铺满横屏）；桌面窄窗顺带试窗口全屏
     setAndroidLandscape(next);
+    if (next) onEnterLandscape?.();
     void applyWindowFullscreen(next).catch(() => undefined);
   };
 
