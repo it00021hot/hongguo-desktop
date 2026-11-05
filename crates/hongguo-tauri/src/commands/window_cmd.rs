@@ -56,8 +56,10 @@ pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()
 /// 父视图必须同样高 44，否则 y 被短容器顶到上沿。
 #[cfg(target_os = "macos")]
 const TITLEBAR_HEIGHT: f64 = 44.0;
+/// 灯 origin.x 与顶栏右端留白（`pr-4` = 16px）对称；三颗灯含间距占 60px，
+/// 顶栏左内距 84 = 16 + 60 + 8（前端 `pl-[84px]` 同步）。
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHT_X: f64 = 12.0;
+const TRAFFIC_LIGHT_X: f64 = 16.0;
 
 /// 把三颗灯钉进 44px 顶栏正中。`y = (44 - 灯高) / 2`，灯心 = 22，与顶栏
 /// `items-center` 的导航钮同轴。直接父视图一并拉到 44，否则 origin 被短条顶上去。
@@ -138,7 +140,7 @@ fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
 /// `set_traffic_lights_hidden` 共用，避免重复取句柄）。
 #[cfg(target_os = "macos")]
 fn align_traffic_lights_on_window(ns_window: &objc2_app_kit::NSWindow) {
-    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowButton};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSWindowButton};
     use objc2_foundation::NSPoint;
 
     let Some(close) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
@@ -191,7 +193,7 @@ fn align_traffic_lights_on_window(ns_window: &objc2_app_kit::NSWindow) {
     zoom.updateTrackingAreas();
 
     // 窗口坐标自下而上；换成距顶，好跟 WebDriver 里导航钮的 getBoundingClientRect 对
-    let in_window = unsafe { close.convertRect_toView(close.bounds(), None) };
+    let in_window = close.convertRect_toView(close.bounds(), None);
     let win_h = ns_window.frame().size.height;
     let light_cy = in_window.origin.y + in_window.size.height / 2.0;
     let center_from_top = win_h - light_cy;

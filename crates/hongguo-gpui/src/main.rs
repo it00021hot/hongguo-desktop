@@ -337,14 +337,14 @@ fn main() {
                         options.window_background =
                             gpui_kit::WindowBackgroundAppearance::Transparent;
                         // 标题空着的话任务栏是一条空白条目，认不出这个窗口。
-                        // 红绿灯 (12, 16)：gpui-pre-macos 把 y 写成按钮 origin，
-                        // 容器高 = 灯高 + 2y；44 顶栏 + ~12 灯 → y=16，心在 22，
-                        // 与顶栏 items_center 的 28px 钮同轴（Cursor 同款公式）。
+                        // 红绿灯 (16, 15)：gpui-pre-macos 把 y 当按钮 origin、灯高 14，
+                        // 心 = 15 + 7 = 22，与 44px 顶栏 items_center 的 28px 钮同轴；
+                        // x=16 与顶栏右端留白对称（三颗占 60，顶栏左内距 84）。
                         options.titlebar = Some(gpui_kit::TitlebarOptions {
                             title: Some("红果".into()),
                             traffic_light_position: Some(gpui_kit::point(
-                                gpui_kit::px(12.0),
                                 gpui_kit::px(16.0),
+                                gpui_kit::px(15.0),
                             )),
                             ..gpui_kit::component::TitleBar::title_bar_options()
                         });

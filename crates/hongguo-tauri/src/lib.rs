@@ -133,6 +133,11 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                             #[cfg(target_os = "macos")]
                             commands::window_cmd::align_traffic_lights(&align_app);
                         }
+                        // 窗口获焦（含启动亮窗后首次成为 key）时 AppKit 会重排标题栏，灯被打回默认位
+                        #[cfg(target_os = "macos")]
+                        tauri::WindowEvent::Focused(true) => {
+                            commands::window_cmd::align_traffic_lights(&align_app);
+                        }
                         _ => {}
                     }
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event

@@ -234,8 +234,8 @@ impl super::Shell {
             .bg(bg)
             .border_b_1()
             .border_color(border)
-            // 连贯顶栏：mac 左 76 给红绿灯（灯 origin 由 main 的 (12,16) 钉）；右 16 防贴边。
-            .when(mac, |s| s.pl(gpui_kit::px(76.0)).pr(gpui_kit::px(16.0)))
+            // 连贯顶栏：mac 左 84 给红绿灯（灯 origin (16,15)，三颗占 60 + 8 留白）；右 16 防贴边。
+            .when(mac, |s| s.pl(gpui_kit::px(84.0)).pr(gpui_kit::px(16.0)))
             .when(!mac, |s| s.pl_2().pr_0())
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
             .on_mouse_down(

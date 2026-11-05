@@ -155,8 +155,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-      {/* 连贯顶栏：横贯全宽 44px；mac 左 76 给红绿灯。
-          顶栏钮一律 items-center（心 y=22）；红绿灯由 Rust 按 Cursor 公式
+      {/* 连贯顶栏：横贯全宽 44px；mac 左 84 给红绿灯（灯 origin x=16，三颗占 60，留 8 白）。
+          顶栏钮一律 items-center（心 y=22）；红绿灯由 Rust 在获焦/缩放/显回时按
           y=floor((44-灯高)/2) 钉 origin，不在前端挤 padding。
           侧栏在顶栏下方。⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
       {showChrome && (
@@ -164,7 +164,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           data-tauri-drag-region="deep"
           className={cn(
             'bg-titlebar relative flex h-11 shrink-0 items-center gap-3 border-b text-[14px]',
-            mac ? 'pr-4 pl-[76px]' : 'px-3',
+            mac ? 'pr-4 pl-[84px]' : 'px-3',
           )}
         >
           <TitlebarNav />
