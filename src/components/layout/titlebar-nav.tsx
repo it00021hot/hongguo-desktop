@@ -8,8 +8,24 @@ import { usePlayerStore } from '@/stores/player';
 import { useUiStore } from '@/stores/ui';
 import { t } from '@/locales';
 
+/** TanStack Router 在 history.state 上挂的 idx；DOM 类型是 any，收成 unknown 再收窄。 */
+function historyIdx(): number {
+  if (typeof window === 'undefined') return 0;
+  const state: unknown = window.history.state;
+  if (typeof state !== 'object' || state === null || !('idx' in state)) return 0;
+  const idx = Reflect.get(state, 'idx');
+  return typeof idx === 'number' ? idx : 0;
+}
+
+/** useRouter() 的 history 在本仓库 ESLint 下被推成 any；与详情页同口径收窄。 */
+type NavHistory = {
+  push: (to: string) => void;
+  back: () => void;
+  forward: () => void;
+};
+
 export function TitlebarNav() {
-  const router = useRouter();
+  const router = useRouter() as { history: NavHistory };
   const locationKey = useRouterState({ select: (s) => s.location.href });
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
@@ -17,10 +33,7 @@ export function TitlebarNav() {
   const setReturnTo = usePlayerStore((s) => s.setReturnTo);
   // 读 locationKey 仅为订阅路由变化；idx 取自 history.state
   void locationKey;
-  const idx =
-    typeof window !== 'undefined' && typeof window.history.state?.idx === 'number'
-      ? window.history.state.idx
-      : 0;
+  const idx = historyIdx();
   const canBack = idx > 0 || !!returnTo;
   const canForward =
     typeof window !== 'undefined' && idx < Math.max(0, window.history.length - 1);
@@ -29,7 +42,7 @@ export function TitlebarNav() {
     const target = usePlayerStore.getState().returnTo;
     if (target) {
       setReturnTo(null);
-      void router.history.push(target);
+      router.history.push(target);
       return;
     }
     router.history.back();

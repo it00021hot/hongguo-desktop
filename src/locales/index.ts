@@ -27,7 +27,7 @@ function detect(): Locale {
   try {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved && saved in resources) return saved as Locale;
+      if (saved && saved in resources) return saved;
     }
   } catch {
     /* 隐私模式 / 无 DOM 的测试环境 */
