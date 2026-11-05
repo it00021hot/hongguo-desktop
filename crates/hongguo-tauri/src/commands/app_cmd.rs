@@ -82,6 +82,9 @@ pub fn mark_window_ready(app: AppHandle, ready: State<'_, WindowCloseGate>) -> A
             let _ = w.show();
             let _ = w.set_focus();
         }
+        // 亮窗后钉红绿灯：tao 的 trafficLightPosition 不设 origin，须自钉。
+        #[cfg(target_os = "macos")]
+        super::window_cmd::align_traffic_lights(&app);
     }
     Ok(())
 }
