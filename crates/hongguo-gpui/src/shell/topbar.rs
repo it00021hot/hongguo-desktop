@@ -234,7 +234,7 @@ impl super::Shell {
             .bg(bg)
             .border_b_1()
             .border_color(border)
-            // 连贯顶栏：mac 左 76 给红绿灯，钮与 y=16 红绿灯同轴；右 16 防贴边。
+            // 连贯顶栏：mac 左 76 给红绿灯（灯 origin 由 main 的 (12,16) 钉）；右 16 防贴边。
             .when(mac, |s| s.pl(gpui_kit::px(76.0)).pr(gpui_kit::px(16.0)))
             .when(!mac, |s| s.pl_2().pr_0())
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
@@ -319,9 +319,7 @@ impl super::Shell {
                     .items_center()
                     .child(tabs)
             }))
-            // 左右簇：h_full + items_center，28px 钮在 44px 行里垂直居中
-            //（与 y=16 红绿灯同高；勿让钮自身拉高，图标会贴顶）。
-
+            // 左右簇：h_full + items_center，28px 钮心 y=22，与灯同轴。
             .child(
                 h_flex()
                     .h_full()

@@ -155,9 +155,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-      {/* 连贯顶栏：横贯全宽 44px；mac 左 76 给红绿灯，后退/前进/侧栏钮跟灯同轴。
-          侧栏在顶栏下方——收起只缩导航轨，不顶破顶栏。
-          ⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
+      {/* 连贯顶栏：横贯全宽 44px；mac 左 76 给红绿灯。
+          顶栏钮一律 items-center（心 y=22）；红绿灯由 Rust 按 Cursor 公式
+          y=floor((44-灯高)/2) 钉 origin，不在前端挤 padding。
+          侧栏在顶栏下方。⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
       {showChrome && (
         <header
           data-tauri-drag-region="deep"

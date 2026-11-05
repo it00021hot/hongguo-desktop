@@ -52,6 +52,49 @@ pub fn set_traffic_lights_visible(app: AppHandle, visible: bool) -> AppResult<()
     Ok(())
 }
 
+/// 顶栏高度（前端 `h-11`）。灯的 origin.y 在**直接父视图**里、自下而上；
+/// 父视图必须同样高 44，否则 y 被短容器顶到上沿。
+#[cfg(target_os = "macos")]
+const TITLEBAR_HEIGHT: f64 = 44.0;
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHT_X: f64 = 12.0;
+
+/// 把三颗灯钉进 44px 顶栏正中。`y = (44 - 灯高) / 2`，灯心 = 22，与顶栏
+/// `items-center` 的导航钮同轴。直接父视图一并拉到 44，否则 origin 被短条顶上去。
+/// 不走 tao 的 `trafficLightPosition`：它只改容器高、不改 origin.y，还会在
+/// resize 时把容器压回去。
+#[cfg(target_os = "macos")]
+pub(crate) fn align_traffic_lights(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.run_on_main_thread({
+        let app = app.clone();
+        move || {
+            place_traffic_lights(&app);
+            // AppKit 标题栏 layout 会在本轮把灯吸回顶部（默认 MinYMargin）。
+            // run_on_main_thread 走主队列异步，下一轮 layout 之后再钉一次才留得住。
+            let again = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                place_traffic_lights(&again);
+            });
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn place_traffic_lights(app: &AppHandle) {
+    use objc2_app_kit::NSWindow;
+    use tauri::Manager;
+
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(ptr) = win.ns_window() else {
+        return;
+    };
+    let ns_window = unsafe { &*(ptr as *const NSWindow) };
+    align_traffic_lights_on_window(ns_window);
+}
+
 /// 藏/显 macOS 原生红绿灯的三颗圆点（小屏模式用）。刻意**不动 styleMask**：
 /// tao 的 `set_decorations` 是整体替换 styleMask，会把 Overlay 全出血依赖的
 /// `FullSizeContentView` 位一起抹掉（标题条重新占位、整个内容被顶下去），
@@ -83,8 +126,86 @@ fn set_traffic_lights_hidden(app: &AppHandle, hidden: bool) {
                     btn.setHidden(hidden);
                 }
             }
+            // 显回后同线程再钉 origin（AppKit 可能已把灯打回默认位）
+            if !hidden {
+                align_traffic_lights_on_window(ns_window);
+            }
         }
     });
+}
+
+/// 主线程内对已取到的 `NSWindow` 钉红绿灯（供 `align_traffic_lights` /
+/// `set_traffic_lights_hidden` 共用，避免重复取句柄）。
+#[cfg(target_os = "macos")]
+fn align_traffic_lights_on_window(ns_window: &objc2_app_kit::NSWindow) {
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindowButton};
+    use objc2_foundation::NSPoint;
+
+    let Some(close) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
+        return;
+    };
+    let Some(miniaturize) = ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton)
+    else {
+        return;
+    };
+    let Some(zoom) = ns_window.standardWindowButton(NSWindowButton::ZoomButton) else {
+        return;
+    };
+    let Some(button_bar) = (unsafe { close.superview() }) else {
+        return;
+    };
+    let Some(titlebar) = (unsafe { button_bar.superview() }) else {
+        return;
+    };
+
+    let close_frame = close.frame();
+    let button_h = close_frame.size.height;
+    let button_w = close_frame.size.width;
+    let gap = miniaturize.frame().origin.x - close_frame.origin.x - button_w;
+    // 灯心 = y + 灯高/2 = 22，与 h-11 顶栏正中一致
+    let y = ((TITLEBAR_HEIGHT - button_h) / 2.0).floor();
+
+    let mut titlebar_frame = titlebar.frame();
+    titlebar_frame.size.height = TITLEBAR_HEIGHT;
+    titlebar_frame.origin.y = ns_window.frame().size.height - TITLEBAR_HEIGHT;
+    titlebar.setFrame(titlebar_frame);
+
+    // setFrameOrigin 的 y 相对直接父视图；父视图不拉到 44，灯会被顶到上沿
+    let mut bar_frame = button_bar.frame();
+    bar_frame.size.height = TITLEBAR_HEIGHT;
+    bar_frame.origin.y = 0.0;
+    button_bar.setFrame(bar_frame);
+
+    // 默认 MinYMargin 把灯钉在父视图顶上，layout 一跑就把 origin 吃掉
+    let stick_bottom = NSAutoresizingMaskOptions::ViewMaxYMargin;
+    close.setAutoresizingMask(stick_bottom);
+    miniaturize.setAutoresizingMask(stick_bottom);
+    zoom.setAutoresizingMask(stick_bottom);
+    close.setFrameOrigin(NSPoint::new(TRAFFIC_LIGHT_X, y));
+    miniaturize.setFrameOrigin(NSPoint::new(TRAFFIC_LIGHT_X + button_w + gap, y));
+    zoom.setFrameOrigin(NSPoint::new(TRAFFIC_LIGHT_X + 2.0 * (button_w + gap), y));
+    titlebar.updateTrackingAreas();
+    button_bar.updateTrackingAreas();
+    close.updateTrackingAreas();
+    miniaturize.updateTrackingAreas();
+    zoom.updateTrackingAreas();
+
+    // 窗口坐标自下而上；换成距顶，好跟 WebDriver 里导航钮的 getBoundingClientRect 对
+    let in_window = unsafe { close.convertRect_toView(close.bounds(), None) };
+    let win_h = ns_window.frame().size.height;
+    let light_cy = in_window.origin.y + in_window.size.height / 2.0;
+    let center_from_top = win_h - light_cy;
+    let (content_h, content_bottom) = ns_window
+        .contentView()
+        .map(|view| {
+            let frame = view.frame();
+            (frame.size.height, frame.origin.y)
+        })
+        .unwrap_or((win_h, 0.0));
+    let from_content_top = (content_bottom + content_h) - light_cy;
+    log::debug!(
+        "[Window] 红绿灯心距窗顶 {center_from_top:.1} 距内容顶 {from_content_top:.1}（灯高 {button_h:.1} 内容高 {content_h:.0}）"
+    );
 }
 
 /// 进入小屏播放（对齐官方客户端的「小屏播放」行为）：**同一个窗口**缩成 480×270、落到工作区右下角——不另开窗口、不藏主窗、不暂停，`<video>` 元素原地不动、播放零中断。

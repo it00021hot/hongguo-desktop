@@ -83,6 +83,10 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSView",
     "NSWindow",
 ] }
+# 红绿灯 origin 对齐（NSPoint / NSRect）；与 hongguo-gpui 同版本。
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSGeometry",
+] }
 
 [dev-dependencies]
 # e2e（testing/media_pipeline_e2e.rs）要构造 MP4 样本与重定向数据目录。

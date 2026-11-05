@@ -337,9 +337,9 @@ fn main() {
                         options.window_background =
                             gpui_kit::WindowBackgroundAppearance::Transparent;
                         // 标题空着的话任务栏是一条空白条目，认不出这个窗口。
-                        // 红绿灯坐标对齐 Tauri trafficLightPosition (12, 16)：
-                        // 44px 顶栏里与后退/前进/侧栏钮垂直居中同高；库默认
-                        // (9, 9) 会偏上，按钮看起来「没居中」。
+                        // 红绿灯 (12, 16)：gpui-pre-macos 把 y 写成按钮 origin，
+                        // 容器高 = 灯高 + 2y；44 顶栏 + ~12 灯 → y=16，心在 22，
+                        // 与顶栏 items_center 的 28px 钮同轴（Cursor 同款公式）。
                         options.titlebar = Some(gpui_kit::TitlebarOptions {
                             title: Some("红果".into()),
                             traffic_light_position: Some(gpui_kit::point(

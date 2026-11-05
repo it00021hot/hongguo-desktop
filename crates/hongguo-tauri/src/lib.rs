@@ -101,6 +101,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             if let Some(window) = app.get_webview_window("main") {
                 // 窗口还藏着（mark_window_ready 才亮出）就先恢复上次几何，再挂防抖落盘
                 window_state::restore(&window);
+                // 红绿灯按 Cursor 公式钉进 44px 顶栏（tao 配置位不够，见 window_cmd）
+                #[cfg(target_os = "macos")]
+                commands::window_cmd::align_traffic_lights(app.handle());
                 let ready = app
                     .state::<commands::app_cmd::WindowCloseGate>()
                     .inner()
@@ -116,6 +119,8 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 let fallback_window = win.clone();
                 let close_save_window = win.clone();
                 let close_save_epoch = std::sync::Arc::clone(&geometry_epoch);
+                #[cfg(target_os = "macos")]
+                let align_app = app.handle().clone();
                 window.on_window_event(move |event| {
                     match event {
                         tauri::WindowEvent::CloseRequested { .. } => {
@@ -124,6 +129,9 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                         }
                         tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
                             close_save_epoch.fetch_add(1, std::sync::atomic::Ordering::Release);
+                            // AppKit 在缩放时把红绿灯打回默认位，再钉回 44px 正中
+                            #[cfg(target_os = "macos")]
+                            commands::window_cmd::align_traffic_lights(&align_app);
                         }
                         _ => {}
                     }

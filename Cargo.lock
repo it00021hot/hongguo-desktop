@@ -4529,6 +4529,7 @@ dependencies = [
  "mouse_position",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "rfd 0.15.4",
  "serde",
  "serde_json",
