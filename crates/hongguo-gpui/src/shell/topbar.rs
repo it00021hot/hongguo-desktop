@@ -225,8 +225,6 @@ impl super::Shell {
                 ))
         });
 
-        // 首页视频贴底边：亮色分隔线会看成白边，这条边不画。
-        let home = self.dest == Dest::Home;
         h_flex()
             .id("app-toolbar")
             .relative()
@@ -234,12 +232,11 @@ impl super::Shell {
             .flex_shrink_0()
             .items_center()
             .bg(bg)
-            .when(!home, |s| s.border_b_1().border_color(border))
-            // Codex 布局：红绿灯压在通顶侧栏上，内容列顶栏不再留 76；
-            // 右侧仍留边，避免图标贴窗缘。
-            .pl_2()
-            .when(mac, |s| s.pr(gpui_kit::px(16.0)))
-            .when(!mac, |s| s.pr_0())
+            .border_b_1()
+            .border_color(border)
+            // 连贯顶栏：mac 左 76 给红绿灯，钮与 y=16 红绿灯同轴；右 16 防贴边。
+            .when(mac, |s| s.pl(gpui_kit::px(76.0)).pr(gpui_kit::px(16.0)))
+            .when(!mac, |s| s.pl_2().pr_0())
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,

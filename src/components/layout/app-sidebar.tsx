@@ -23,7 +23,6 @@ import { login } from '@/service/commands';
 import { useUiStore } from '@/stores/ui';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
-import { isMac } from '@/utils/platform';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题；播放不设菜单入口（已并回首页沉浸流）。 */
 const NAV_ITEMS = [
@@ -45,7 +44,6 @@ const NAV_ITEMS = [
 ] as const;
 
 export function AppSidebar() {
-  const mac = isMac();
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: account } = useAccount();
@@ -58,13 +56,10 @@ export function AppSidebar() {
       data-collapsed={collapsed}
       className={cn(
         'bg-sidebar text-sidebar-foreground hidden h-full shrink-0 flex-col border-r transition-[width] duration-200 md:flex',
-        // Codex：通顶侧栏；mac 折叠至少 76 罩住红绿灯，展开 220
-        collapsed ? (mac ? 'w-[76px]' : 'w-14') : 'w-[220px]',
+        // 顶栏横贯全宽，侧栏从顶栏下起；收起 56 / 展开 224，不再为红绿灯撑宽
+        collapsed ? 'w-14' : 'w-56',
       )}
     >
-      {/* 顶带与内容列顶栏同高：mac 红绿灯落在此。不加底边——
-          Codex 侧栏通顶是一整块，横线只画在内容列顶栏。 */}
-      <div className="h-11 w-full shrink-0" />
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
         {NAV_ITEMS.map((item) => {
           const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);

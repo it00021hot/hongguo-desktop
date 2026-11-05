@@ -140,17 +140,16 @@ impl gpui_kit::Render for Shell {
         // 首页视频洞：亮色描边贴黑画面会看成一圈白边——干脆不画。
         let bordered =
             !video_hole && !window.is_maximized() && !window.is_fullscreen();
-        // Codex 布局：侧栏通顶（红绿灯压在侧栏上方空白）+ 顶栏只盖内容列。
-        // 根在有视频洞时透明（露出下层播放器），否则铺主题底；壳层本身实色。
-        // 外层 v_flex 只为下载浮层横贯底边（与侧栏无关）。
+        // 连贯顶栏：顶栏横贯全宽，侧栏在其下；视频洞时根透明露出播放器。
         v_flex()
             .image_cache(self.cover_image_cache.clone())
             .id("shell")
             .size_full()
+            .bg(theme.background)
             .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
-            .when(!video_hole, |el| el.bg(theme.background))
             .when(bordered, |el| el.border_1().border_color(theme.border))
             .text_color(theme.foreground)
+            .children(toolbar)
             .child(
                 h_flex()
                     .flex_1()
@@ -162,15 +161,9 @@ impl gpui_kit::Render for Shell {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .children(toolbar)
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
-                                    .when(!video_hole, |el| el.bg(theme.background))
-                                    .child(content),
-                            ),
+                            .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
+                            .when(!video_hole, |el| el.bg(theme.background))
+                            .child(content),
                     ),
             )
             .children(download_sheet)
