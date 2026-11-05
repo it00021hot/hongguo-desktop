@@ -58,7 +58,7 @@ export function TitlebarNav() {
     <div className="relative z-10 flex h-full shrink-0 items-center gap-0.5">
       <Button
         variant="ghost"
-        size="icon"
+        size="icon-sm"
         aria-label={t('nav.back')}
         title={t('nav.backHint')}
         disabled={!canBack}
@@ -69,7 +69,7 @@ export function TitlebarNav() {
       </Button>
       <Button
         variant="ghost"
-        size="icon"
+        size="icon-sm"
         aria-label={t('nav.forward')}
         title={t('nav.forwardHint')}
         disabled={!canForward}
@@ -80,7 +80,7 @@ export function TitlebarNav() {
       </Button>
       <Button
         variant="ghost"
-        size="icon"
+        size="icon-sm"
         aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
         title={collapsed ? t('nav.expand') : t('nav.collapse')}
         onClick={toggleSidebar}

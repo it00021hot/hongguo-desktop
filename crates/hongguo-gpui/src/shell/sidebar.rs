@@ -176,31 +176,15 @@ impl super::Shell {
                 row
             }
         };
-        // Codex：侧栏通顶——顶部 44px 留给红绿灯（mac）/作拖拽带，导航在下方。
-        let mac = cfg!(target_os = "macos");
-        // 折叠宽：mac 至少 76 才能罩住 trafficLight x=12 起的三灯；其它平台 56。
-        let rail_w = if collapsed {
-            if mac { 76.0 } else { 56.0 }
-        } else {
-            220.0
-        };
-        // 首页视频贴右边：亮色分隔线会看成白边，这条边不画。
-        let home = self.dest == Dest::Home;
+        // 顶栏横贯全宽，侧栏从其下起：收起 56 / 展开 224。
         v_flex()
-            .w(gpui_kit::px(rail_w))
+            .w(gpui_kit::px(if collapsed { 56.0 } else { 224.0 }))
             .h_full()
             .flex_shrink_0()
             .bg(theme.sidebar)
-            .when(!home, |s| s.border_r_1().border_color(theme.sidebar_border))
+            .border_r_1()
+            .border_color(theme.sidebar_border)
             .id("shell-sidebar")
-            .child(
-                // 顶带：与内容列顶栏同高，红绿灯落在此；空白可拖窗。
-                // 不加底边——Codex 侧栏从上到下是一整块，横线只画在内容列顶栏。
-                div()
-                    .h(gpui_kit::px(44.0))
-                    .w_full()
-                    .flex_shrink_0(),
-            )
             .child(
                 v_flex()
                     .id("shell-sidebar-nav")

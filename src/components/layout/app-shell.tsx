@@ -155,58 +155,55 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {t('common.skipToContent')}
       </a>
 
-      {/* Codex 布局：侧栏通顶（红绿灯压在侧栏顶带）+ 顶栏只盖内容列。 */}
+      {/* 连贯顶栏：横贯全宽 44px；mac 左 76 给红绿灯，后退/前进/侧栏钮跟灯同轴。
+          侧栏在顶栏下方——收起只缩导航轨，不顶破顶栏。
+          ⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
+      {showChrome && (
+        <header
+          data-tauri-drag-region="deep"
+          className={cn(
+            'bg-titlebar relative flex h-11 shrink-0 items-center gap-3 border-b text-[14px]',
+            mac ? 'pr-4 pl-[76px]' : 'px-3',
+          )}
+        >
+          <TitlebarNav />
+          {!portrait && (
+            <div
+              id={TOP_BAR_SLOT_ID}
+              className="pointer-events-none absolute inset-y-0 left-0 right-0 mx-auto flex w-fit items-center justify-center"
+            />
+          )}
+          <div className="ml-auto flex h-full shrink-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('player.pin')}
+              title={t('player.pin')}
+              onClick={togglePinned}
+              className={cn('hidden size-7 md:inline-flex', pinned && 'text-primary')}
+            >
+              <Pin className={cn('size-4', pinned && 'fill-current')} />
+            </Button>
+            <div className="hidden h-full items-center md:flex">
+              <ThemeSwitch />
+            </div>
+            {!mac && (
+              <div className="hidden md:flex">
+                <WindowButtons />
+              </div>
+            )}
+          </div>
+        </header>
+      )}
+
       <div className="flex min-h-0 flex-1">
         {showSidebar && <AppSidebar />}
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* ⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
-          {showChrome && (
-            <header
-              data-tauri-drag-region="deep"
-              className={cn(
-                // h-11=44px，与侧栏顶带同高；items-center 让 28px 钮与 y=16 红绿灯同轴
-                'bg-titlebar relative flex h-11 shrink-0 items-center gap-3 border-b px-2 text-[14px]',
-                mac ? 'pr-4' : 'pr-0',
-              )}
-            >
-              <TitlebarNav />
-              {!portrait && (
-                <div
-                  id={TOP_BAR_SLOT_ID}
-                  className="pointer-events-none absolute inset-y-0 left-0 right-0 mx-auto flex w-fit items-center justify-center"
-                />
-              )}
-              <div className="ml-auto flex h-full shrink-0 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t('player.pin')}
-                  title={t('player.pin')}
-                  onClick={togglePinned}
-                  className={cn('hidden size-7 md:inline-flex', pinned && 'text-primary')}
-                >
-                  <Pin className={cn('size-4', pinned && 'fill-current')} />
-                </Button>
-                <div className="hidden h-full items-center md:flex">
-                  <ThemeSwitch />
-                </div>
-                {!mac && (
-                  <div className="hidden md:flex">
-                    <WindowButtons />
-                  </div>
-                )}
-              </div>
-            </header>
-          )}
-
-          <main
-            id="content"
-            className="scrollbar-thin bg-background min-h-0 flex-1 overflow-y-auto"
-          >
-            {children}
-          </main>
-        </div>
+        <main
+          id="content"
+          className="scrollbar-thin bg-background min-h-0 flex-1 overflow-y-auto"
+        >
+          {children}
+        </main>
       </div>
 
       {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <BottomNav />}
