@@ -2,7 +2,7 @@
 //! 挑哪一条由 [`super::stream_pick`] 决定；批量/单集同端点，见 [`fetch_play_url`]。
 //! ⚠️ 服务端不发货时返回 **HTTP 200 + 0 字节**——排查「接口没数据」先看字节数，不是状态码。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -95,7 +95,19 @@ pub async fn fetch_play_url(
             "vid={vid} 的条目类型未注册（先拉分集档案后再取流）"
         )));
     };
-    match fetch_model_light_batch(vid, ct, definition, cap, env).await {
+    match fetch_model_light_batch(
+        vid,
+        ct,
+        definition,
+        cap,
+        env,
+        [
+            crate::client::READING_API_ORIGIN,
+            crate::client::LQ_API_ORIGIN,
+        ],
+    )
+    .await
+    {
         Ok(Some(play)) => {
             log::info!(
                 "[PlayUrl] {vid} 轻请求取流命中（ct={ct}，定义 {}）",
@@ -103,7 +115,7 @@ pub async fn fetch_play_url(
             );
             Ok(play)
         }
-        // 服务端没对这个设备发货（200+0 或响应里没有这一集）：设备侧信任问题，不做身份层面兜底
+        // 两个通道都没有可用流；仅凭此结果不能判定设备身份失效。
         Ok(None) => Err(AppError::StreamMiss(format!(
             "取流未命中 vid={vid}（ct={ct}）"
         ))),
@@ -126,44 +138,62 @@ fn check_model_code(value: &Value) -> AppResult<()> {
     Err(AppError::StreamMiss(format!("取流接口返回 {code}: {msg}")))
 }
 
-/// 轻请求批量取流（单 vid）：新通道优先，空响应/网络失败回退旧通道；
-/// 两次都空才算未命中（返回 `None`）。
+/// 新通道给出可播放流才算命中；只有 bytevc2 等不可播编码时仍须回退。
 async fn fetch_model_light_batch(
     vid: &str,
     content_type: i64,
     definition: Option<u32>,
     cap: super::stream_pick::DecoderCapability,
     env: &super::client::ApiEnv,
+    origins: [&str; 2],
 ) -> AppResult<Option<PlayInfo>> {
     let map = std::collections::BTreeMap::from([(content_type.to_string(), vec![vid.to_string()])]);
     let new_payload = serde_json::to_vec(&crate::params::single_model_payload(content_type, vid))
         .map_err(|e| AppError::Media(e.to_string()))?;
-    // 新通道一次即回：空响应不重试（重试只会白等），直接回退
-    let bytes = match crate::client::api_call_model_light(
-        crate::client::READING_API_ORIGIN,
+    match crate::client::api_call_model_light(
+        origins[0],
         crate::params::SINGLE_MODEL_PATH,
         new_payload,
         env,
     )
     .await
     {
-        Ok(b) if !b.is_empty() => b,
-        Ok(_) => {
-            log::info!("[PlayUrl] 单集新通道空响应，回退旧通道");
-            fallback_model_light(&map, env).await?
+        Ok(bytes) => {
+            if let Some(value) = parse_model_response(&bytes)?
+                && let Some(play) = play_info(&value, vid, definition, cap)?
+            {
+                return Ok(Some(play));
+            }
+            log::info!("[PlayUrl] 单集新通道无可播放流，回退旧通道（vid={vid}）");
         }
         Err(e) => {
             log::warn!("[PlayUrl] 单集新通道请求失败（{e}），回退旧通道");
-            fallback_model_light(&map, env).await?
         }
+    }
+    let bytes = fallback_model_light(&map, env, origins[1]).await?;
+    let Some(value) = parse_model_response(&bytes)? else {
+        return Ok(None);
     };
+    play_info(&value, vid, definition, cap)
+}
+
+fn parse_model_response(bytes: &[u8]) -> AppResult<Option<Value>> {
     if bytes.is_empty() {
         return Ok(None);
     }
-    let value: Value = serde_json::from_slice(&bytes)
+    let value: Value = serde_json::from_slice(bytes)
         .map_err(|e| AppError::Media(format!("解析取流响应失败: {e}")))?;
     check_code(&value)?;
     check_model_code(&value)?;
+    Ok(Some(value))
+}
+
+fn play_info(
+    value: &Value,
+    vid: &str,
+    definition: Option<u32>,
+    cap: super::stream_pick::DecoderCapability,
+) -> AppResult<Option<PlayInfo>> {
     // 新通道单集端点按 video_id 归位；兼容旧通道的 map 形态，两个指针都试
     let model = value
         .pointer(&format!("/data/{vid}/video_model"))
@@ -191,24 +221,37 @@ async fn fetch_model_light_batch(
 async fn fallback_model_light(
     map: &std::collections::BTreeMap<String, Vec<String>>,
     env: &super::client::ApiEnv,
+    origin: &str,
 ) -> AppResult<Vec<u8>> {
     let payload = serde_json::to_vec(&crate::params::model_light_payload(map))
         .map_err(|e| AppError::Media(e.to_string()))?;
-    crate::client::api_call_model_light(
-        crate::client::LQ_API_ORIGIN,
-        crate::params::MODEL_LIGHT_PATH,
-        payload,
-        env,
-    )
-    .await
+    crate::client::api_call_model_light(origin, crate::params::MODEL_LIGHT_PATH, payload, env).await
 }
 
 /// 批量取流：起播/切剧时对「当前 + 信息流后续几部」的入口 vid 打一次，命中落暂存表由 [`fetch_play_url`] 取走。
-/// 新通道优先、空响应/失败回退旧通道；`mixed_video_id_map` 按条目 content_type 原样字符串分组（错配不发货）；空响应静默跳过。
+/// 新通道中缺失或不可播的条目单独回退，保留已命中的流。
 pub async fn fetch_play_batch(
     mixed_video_id_map: &std::collections::BTreeMap<String, Vec<String>>,
     cap: super::stream_pick::DecoderCapability,
     env: &super::client::ApiEnv,
+) -> AppResult<usize> {
+    fetch_play_batch_at(
+        mixed_video_id_map,
+        cap,
+        env,
+        [
+            crate::client::READING_API_ORIGIN,
+            crate::client::LQ_API_ORIGIN,
+        ],
+    )
+    .await
+}
+
+async fn fetch_play_batch_at(
+    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
+    cap: super::stream_pick::DecoderCapability,
+    env: &super::client::ApiEnv,
+    origins: [&str; 2],
 ) -> AppResult<usize> {
     let vids: Vec<String> = mixed_video_id_map
         .values()
@@ -227,71 +270,89 @@ pub async fn fetch_play_batch(
             }
         }
     }
-    let new_payload =
-        serde_json::to_vec(&crate::params::player_model_payload(mixed_video_id_map))
-            .map_err(|e| AppError::Media(e.to_string()))?;
-    let bytes = match crate::client::api_call_model_light(
-        crate::client::READING_API_ORIGIN,
+    let new_payload = serde_json::to_vec(&crate::params::player_model_payload(mixed_video_id_map))
+        .map_err(|e| AppError::Media(e.to_string()))?;
+    let primary = match crate::client::api_call_model_light(
+        origins[0],
         crate::params::PLAYER_MODEL_PATH,
         new_payload,
         env,
     )
     .await
     {
-        Ok(b) if !b.is_empty() => b,
-        Ok(_) => {
-            log::info!("[PlayUrl] 批量新通道空响应，回退旧通道");
-            fallback_model_light(mixed_video_id_map, env).await?
-        }
+        Ok(bytes) => parse_model_response(&bytes)?,
         Err(e) => {
             log::warn!("[PlayUrl] 批量新通道请求失败（{e}），回退旧通道");
-            fallback_model_light(mixed_video_id_map, env).await?
+            None
         }
     };
-    if bytes.is_empty() {
-        log::info!("[PlayUrl] 批量取流空响应（{} vid）", vids.len());
-        return Ok(0);
+    let mut plays = batch_plays(primary.as_ref(), &vids, cap);
+    let missing: BTreeMap<String, Vec<String>> = mixed_video_id_map
+        .iter()
+        .filter_map(|(ct, group)| {
+            let missing: Vec<String> = group
+                .iter()
+                .filter(|vid| !plays.contains_key(vid.trim()))
+                .map(|vid| vid.trim().to_string())
+                .filter(|vid| !vid.is_empty())
+                .collect();
+            (!missing.is_empty()).then(|| (ct.clone(), missing))
+        })
+        .collect();
+    if !missing.is_empty() {
+        log::info!(
+            "[PlayUrl] 批量新通道 {}/{} vid 无可播放流，回退旧通道",
+            missing.values().map(Vec::len).sum::<usize>(),
+            vids.len()
+        );
+        match fallback_model_light(&missing, env, origins[1])
+            .await
+            .and_then(|bytes| parse_model_response(&bytes))
+        {
+            Ok(value) => {
+                let missing_vids: Vec<String> = missing.values().flatten().cloned().collect();
+                plays.extend(batch_plays(value.as_ref(), &missing_vids, cap));
+            }
+            Err(e) if plays.is_empty() => return Err(e),
+            Err(e) => log::warn!("[PlayUrl] 批量回退失败，保留已命中流: {e}"),
+        }
     }
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析批量取流响应失败: {e}")))?;
-    check_code(&value)?;
-    check_model_code(&value)?;
-    let mut hits = 0;
+    let hits = plays.len();
     {
         let mut cache = batch_cache().lock();
-        for vid in &vids {
-            let Some(model) = value
-                .pointer(&format!("/data/{vid}/video_model"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let Ok(parsed) = serde_json::from_str::<Value>(model) else {
-                continue;
-            };
-            let Some(stream) = pick_stream_at(&parsed, None, cap) else {
-                continue;
-            };
-            cache.insert(
-                vid.clone(),
-                (
-                    Instant::now(),
-                    PlayInfo {
-                        url: stream.url,
-                        encrypted: !stream.spade.is_empty(),
-                        key_material: stream.spade.clone().into_bytes(),
-                        codec: stream.codec.unwrap_or_default(),
-                        definition: stream.definition,
-                        definitions: list_definitions(&parsed, cap),
-                    },
-                ),
-            );
-            hits += 1;
+        for (vid, play) in plays {
+            cache.insert(vid, (Instant::now(), play));
         }
     }
     log::info!("[PlayUrl] 批量取流 {}/{} vid 落暂存表", hits, vids.len());
     Ok(hits)
 }
+
+fn batch_plays(
+    value: Option<&Value>,
+    vids: &[String],
+    cap: super::stream_pick::DecoderCapability,
+) -> HashMap<String, PlayInfo> {
+    let Some(value) = value else {
+        return HashMap::new();
+    };
+    vids.iter()
+        .filter_map(|vid| {
+            // 批量响应中的单条坏数据不影响其它条目，失败项交备用通道补齐。
+            value
+                .pointer(&format!("/data/{vid}/video_model"))?
+                .as_str()?;
+            play_info(value, vid, None, cap)
+                .ok()
+                .flatten()
+                .map(|play| (vid.clone(), play))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "play_url_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {
@@ -318,10 +379,7 @@ mod tests {
         );
         assert!(batch_cache().lock().contains_key("vid-old-device"));
         clear_batch_cache();
-        assert!(
-            batch_cache().lock().is_empty(),
-            "换档后旧设备预取必须清空"
-        );
+        assert!(batch_cache().lock().is_empty(), "换档后旧设备预取必须清空");
     }
 
     #[test]
