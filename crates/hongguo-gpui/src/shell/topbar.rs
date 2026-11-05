@@ -23,8 +23,8 @@ impl super::Shell {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let border = theme.border;
-        let bg = theme.sidebar;
+        let border = theme.title_bar_border;
+        let bg = theme.title_bar;
         let fg = theme.secondary_foreground;
         let hover_bg = theme.secondary_hover;
         let danger = theme.danger;
@@ -225,6 +225,8 @@ impl super::Shell {
                 ))
         });
 
+        // 首页视频贴底边：亮色分隔线会看成白边，这条边不画。
+        let home = self.dest == Dest::Home;
         h_flex()
             .id("app-toolbar")
             .relative()
@@ -232,13 +234,12 @@ impl super::Shell {
             .flex_shrink_0()
             .items_center()
             .bg(bg)
-            .border_b_1()
-            .border_color(border)
-            // mac：左 76 给红绿灯让位（Tauri trafficLight x=12 收尾）；右
-            // 用显式 16px（Tauri `pr-3`=12px 在圆角窗上仍显贴边，多留一点）。
-            // Windows 右端仍 pr_0，窗口钮贴边。
-            .when(mac, |s| s.pl(gpui_kit::px(76.0)).pr(gpui_kit::px(16.0)))
-            .when(!mac, |s| s.pl_2().pr_0())
+            .when(!home, |s| s.border_b_1().border_color(border))
+            // Codex 布局：红绿灯压在通顶侧栏上，内容列顶栏不再留 76；
+            // 右侧仍留边，避免图标贴窗缘。
+            .pl_2()
+            .when(mac, |s| s.pr(gpui_kit::px(16.0)))
+            .when(!mac, |s| s.pr_0())
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,

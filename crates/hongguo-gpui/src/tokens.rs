@@ -12,14 +12,23 @@ pub(crate) fn apply(mode: ThemeMode, cx: &mut App) {
     Theme::change(mode, None, cx);
     Theme::update(cx, |theme| {
         let dark = mode.is_dark();
-        let background = color(dark, 0x0a0a0a, 0xffffff);
-        let card = color(dark, 0x171717, 0xffffff);
-        let foreground = color(dark, 0xfafafa, 0x0a0a0a);
-        let muted_surface = color(dark, 0x262626, 0xf5f5f5);
-        let muted_foreground = color(dark, 0xa3a3a3, 0x737373);
-        let primary = color(dark, 0xfafafa, 0x171717);
-        let primary_foreground = color(dark, 0x171717, 0xfafafa);
-        let sidebar = color(dark, 0x171717, 0xfafafa);
+        // 内容底对齐 Codex 设置「背景」`#181818` / 亮色白底
+        let background = color(dark, 0x181818, 0xffffff);
+        let card = color(dark, 0x212121, 0xffffff);
+        // 前景对齐 Codex：暗色白字 / 亮色 `#1A1C1F`
+        let foreground = color(dark, 0xffffff, 0x1a1c1f);
+        let muted_surface = color(dark, 0x2a2a2a, 0xebebeb);
+        let muted_foreground = color(dark, 0xa3a3a3, 0x5c5c5c);
+        let primary = color(dark, 0xffffff, 0x1a1c1f);
+        let primary_foreground = color(dark, 0x181818, 0xffffff);
+        // 壳层实色（顶栏+侧栏同色）：暗 `#181818`、亮浅灰 `#F4F4F4`
+        // ——纯白壳在视频旁发飘、选中态看不见
+        let chrome = color(dark, 0x181818, 0xf4f4f4);
+        let sidebar = chrome;
+        let title_bar = chrome;
+        let sidebar_foreground = color(dark, 0xffffff, 0x1a1c1f);
+        // 选中/悬停：亮色 `#E5E5E5` 才压得住浅灰底
+        let chrome_hover = color(dark, 0x2a2a2a, 0xe5e5e5);
         let border = if dark {
             gpui_kit::rgba(0xffffff1f).into()
         } else {
@@ -69,16 +78,19 @@ pub(crate) fn apply(mode: ThemeMode, cx: &mut App) {
         theme.colors.input = input;
         theme.colors.ring = color(dark, 0x737373, 0xa3a3a3);
         theme.colors.sidebar = sidebar;
-        theme.colors.sidebar_foreground = foreground;
-        theme.colors.sidebar_primary = primary;
-        theme.colors.sidebar_primary_foreground = primary_foreground;
-        theme.colors.sidebar_accent = muted_surface;
-        theme.colors.sidebar_accent_foreground = foreground;
+        theme.colors.sidebar_foreground = sidebar_foreground;
+        theme.colors.sidebar_primary = chrome_hover;
+        theme.colors.sidebar_primary_foreground = sidebar_foreground;
+        theme.colors.sidebar_accent = chrome_hover;
+        theme.colors.sidebar_accent_foreground = sidebar_foreground;
         theme.colors.sidebar_border = border;
-        theme.colors.title_bar = sidebar;
+        theme.colors.title_bar = title_bar;
         theme.colors.title_bar_border = border;
-        theme.colors.status_bar = sidebar;
+        theme.colors.status_bar = title_bar;
         theme.colors.status_bar_border = border;
+        // Codex 外观：界面 14 / 代码 12；壳层 text_base≈14px，text_xs≈12px。
+        theme.font_size = gpui_kit::px(14.0);
+        theme.mono_font_size = gpui_kit::px(12.0);
         theme.colors.skeleton = muted_surface;
         theme.colors.switch = color(dark, 0x404040, 0xd4d4d4);
         theme.colors.danger = danger;
@@ -148,7 +160,7 @@ impl CoverShape {
 
 fn color(dark: bool, dark_value: u32, light_value: u32) -> Hsla {
     let value = if dark { dark_value } else { light_value };
-    // `rgba` 取 0xRRGGBBAA；这里的语义令牌只写 RGB，统一补不透明 alpha。
+    // `rgba` 取 0xRRGGBBAA
     gpui_kit::rgba((value << 8) | 0xff).into()
 }
 

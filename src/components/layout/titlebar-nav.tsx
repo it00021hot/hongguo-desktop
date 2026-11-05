@@ -39,8 +39,10 @@ export function TitlebarNav() {
     router.history.forward();
   }, [router]);
 
+  // 顶栏 44px（h-11）里垂直居中，与 trafficLightPosition y=16 的红绿灯同高。
+  // 命中盒 28（size-7）+ 图标 16（size-4），对齐 GPUI / Tauri 约定。
   return (
-    <div className="relative z-10 flex shrink-0 items-center gap-0.5">
+    <div className="relative z-10 flex h-full shrink-0 items-center gap-0.5">
       <Button
         variant="ghost"
         size="icon"

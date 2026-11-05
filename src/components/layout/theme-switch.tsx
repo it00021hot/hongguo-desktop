@@ -29,10 +29,15 @@ export function ThemeSwitch() {
   const setLocaleValue = useLocaleStore((s) => s.set);
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex h-full items-center gap-1">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={t('search.langLabel')}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('search.langLabel')}
+            className="size-7"
+          >
             <Languages className="size-4" />
           </Button>
         </DropdownMenuTrigger>
@@ -48,7 +53,12 @@ export function ThemeSwitch() {
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={t('common.toggleTheme')}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('common.toggleTheme')}
+            className="size-7"
+          >
             {resolved === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
           </Button>
         </DropdownMenuTrigger>

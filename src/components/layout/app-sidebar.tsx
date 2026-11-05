@@ -23,6 +23,7 @@ import { login } from '@/service/commands';
 import { useUiStore } from '@/stores/ui';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
+import { isMac } from '@/utils/platform';
 
 /** 导航项定义。图标与 key 一一对应，`__root.tsx` 用它取标题；播放不设菜单入口（已并回首页沉浸流）。 */
 const NAV_ITEMS = [
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export function AppSidebar() {
+  const mac = isMac();
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: account } = useAccount();
@@ -56,12 +58,14 @@ export function AppSidebar() {
       data-collapsed={collapsed}
       className={cn(
         'bg-sidebar text-sidebar-foreground hidden h-full shrink-0 flex-col border-r transition-[width] duration-200 md:flex',
-        collapsed ? 'w-14' : 'w-56',
+        // Codex：通顶侧栏；mac 折叠至少 76 罩住红绿灯，展开 220
+        collapsed ? (mac ? 'w-[76px]' : 'w-14') : 'w-[220px]',
       )}
     >
-      {/* 顶栏（红绿灯/logo/应用名）横贯全宽，长在 AppShell 上——侧边栏
-          从顶栏下方开始，折叠不再影响顶部区域。 */}
-      <nav className="flex flex-1 flex-col gap-1 p-2">
+      {/* 顶带与内容列顶栏同高：mac 红绿灯落在此。不加底边——
+          Codex 侧栏通顶是一整块，横线只画在内容列顶栏。 */}
+      <div className="h-11 w-full shrink-0" />
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
         {NAV_ITEMS.map((item) => {
           const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to);
           const Icon = item.icon;
@@ -71,7 +75,8 @@ export function AppSidebar() {
               key={item.key}
               to={item.to}
               className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+                // Codex 界面字号 14px；选中淡底不反色
+                'flex items-center gap-3 rounded-md px-3 py-2 text-[14px] transition-colors',
                 active
                   ? 'bg-sidebar-primary text-sidebar-primary-foreground font-medium'
                   : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
@@ -122,7 +127,7 @@ export function AppSidebar() {
   );
 }
 
-/** 贴底账户入口：未登录「我的 / 登录」开登录弹窗；已登录点头像进设置页
+/** 贴底账户入口：未登录点「我的」开登录弹窗；已登录点头像进设置页
  * （退出入口在设置页账户卡）。 */
 function AccountButton({ collapsed }: { collapsed: boolean }) {
   const { data: account } = useAccount();
@@ -154,7 +159,7 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
         else void navigate({ to: '/settings' });
       }}
       className={cn(
-        'text-sidebar-foreground hover:bg-sidebar-accent flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+        'text-sidebar-foreground hover:bg-sidebar-accent flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-[14px] transition-colors',
         collapsed && 'justify-center px-0',
       )}
       // 折叠态由 Radix Tooltip 出标签：原生 title 会叠出第二层浮层
@@ -166,14 +171,8 @@ function AccountButton({ collapsed }: { collapsed: boolean }) {
       ) : (
         <UserRound className="size-4 shrink-0" />
       )}
-      {!collapsed && (
-        <>
-          <span className="truncate">{label}</span>
-          {!account && (
-            <span className="text-primary ml-auto shrink-0 text-xs">{t('nav.login')}</span>
-          )}
-        </>
-      )}
+      {/* 未登录也只显示「我的」：整行可点开登录，不再旁挂「登录」二字 */}
+      {!collapsed && <span className="truncate">{label}</span>}
     </button>
   );
 
