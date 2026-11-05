@@ -15,8 +15,8 @@ const PILL_CLASS =
   'flex h-6 cursor-pointer items-center gap-0.5 rounded-full bg-black/30 pr-2 pl-1 text-xs font-medium text-white drop-shadow-md backdrop-blur-sm transition-colors hover:bg-black/50';
 
 /**
- * 左上角 pill 行：连播指示 + 返回来源页。与信息叠加分开渲染：pill 是导航出口，
- * 取流失败/加载中（信息叠加不在、Esc 也要 <video> 在场）时也必须在。`always` 常显，否则随 chromeShown。
+ * 左上角 pill 行：仅连播指示。回来源页改走顶栏 ←（TitlebarNav + returnTo），
+ * 不再叠在推荐画面上。
  */
 export function PlayerChromePills({
   chromeShown,
@@ -25,8 +25,6 @@ export function PlayerChromePills({
   inBinge,
   onExitBinge,
   vidIndex,
-  returnTo,
-  onReturnToSource,
 }: {
   chromeShown: boolean;
   miniScreen: boolean;
@@ -36,12 +34,8 @@ export function PlayerChromePills({
   inBinge?: boolean;
   onExitBinge?: () => void;
   vidIndex: number;
-  /** 外部来源路由（含 search 的 href，usePlaySeries 记）：非空亮「< 返回」 */
-  returnTo?: string | null;
-  /** 点返回：回来源页（宿主负责导航并清掉 returnTo） */
-  onReturnToSource?: () => void;
 }) {
-  if (!(inBinge || returnTo)) return null;
+  if (!inBinge) return null;
   return (
     // 显隐对齐播放控件（错误态常显）；stopPropagation：点 pill 别触发
     // 舞台的播放/暂停。
@@ -50,28 +44,15 @@ export function PlayerChromePills({
       onClick={(e) => e.stopPropagation()}
       className="absolute top-3 left-3 z-10 flex w-fit items-center gap-1.5"
     >
-      {inBinge && (
-        <button
-          type="button"
-          onClick={onExitBinge}
-          title={t('player.exitBinge')}
-          className={PILL_CLASS}
-        >
-          <ChevronLeft className="size-3.5" />
-          {tf('player.episodeNo', { index: vidIndex })}
-        </button>
-      )}
-      {returnTo && (
-        <button
-          type="button"
-          onClick={onReturnToSource}
-          title={t('player.backToSourceHint')}
-          className={PILL_CLASS}
-        >
-          <ChevronLeft className="size-3.5" />
-          {t('player.backToSource')}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={onExitBinge}
+        title={t('player.exitBinge')}
+        className={PILL_CLASS}
+      >
+        <ChevronLeft className="size-3.5" />
+        {tf('player.episodeNo', { index: vidIndex })}
+      </button>
     </ChromeSurface>
   );
 }
@@ -95,8 +76,6 @@ export function ImmersiveInfoOverlay({
   navigate,
   inBinge,
   onExitBinge,
-  returnTo,
-  onReturnToSource,
   onOpenDanmakuSend,
 }: {
   chromeShown: boolean;
@@ -119,10 +98,6 @@ export function ImmersiveInfoOverlay({
   inBinge?: boolean;
   /** 点返回：解除连播锁定，滚轮/↑↓ 恢复换剧 */
   onExitBinge?: () => void;
-  /** 外部来源路由（含 search 的 href，usePlaySeries 记）：非空亮「< 返回」 */
-  returnTo?: string | null;
-  /** 点返回：回来源页（宿主负责导航并清掉 returnTo） */
-  onReturnToSource?: () => void;
   /** 窄屏：官方左下「弹」→ 打开发送输入（关弹幕在倍速 Sheet） */
   onOpenDanmakuSend?: () => void;
 }) {
@@ -134,8 +109,6 @@ export function ImmersiveInfoOverlay({
         inBinge={inBinge}
         onExitBinge={onExitBinge}
         vidIndex={vidIndex}
-        returnTo={returnTo}
-        onReturnToSource={onReturnToSource}
       />
       <ChromeSurface
         shown={chromeShown && !miniScreen}

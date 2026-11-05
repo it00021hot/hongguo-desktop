@@ -40,7 +40,6 @@ export function DownloadSheet({ seriesId, episodes, defaultSelected, open, onOpe
           onOpenChange(false);
           void navigate({ to: '/tasks' });
         },
-        onError: (e) => toast.error(e.message),
       },
     );
   };

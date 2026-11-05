@@ -287,7 +287,6 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose, embed
                         {
                           onSuccess: () =>
                             toast.success(reserved ? t('player.unreserved') : t('player.reserved')),
-                          onError: (err) => toast.error(String(err)),
                         },
                       );
                     }}

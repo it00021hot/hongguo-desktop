@@ -56,7 +56,24 @@ impl super::BrowseView {
         self.suggest_items.clear();
         self.suggest_open = false;
         if !item.series_id.is_empty() {
-            self.play_series(item.series_id.clone(), cx);
+            let title = if item.book_title.is_empty() {
+                item.word.clone()
+            } else {
+                item.book_title.clone()
+            };
+            let cover = if item.cover.is_empty() {
+                item.book_cover.clone()
+            } else {
+                item.cover.clone()
+            };
+            self.open_detail(
+                item.series_id.clone(),
+                title,
+                cover,
+                Vec::new(),
+                String::new(),
+                cx,
+            );
             return;
         }
         self.keyword.update(cx, |input, cx| {

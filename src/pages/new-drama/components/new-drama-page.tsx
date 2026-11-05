@@ -2,7 +2,6 @@ import { useNavigate } from '@tanstack/react-router';
 import { TopBarTab, TopBarTabsPortal } from '@/components/layout/top-bar-tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { t, type MessageKey } from '@/locales';
-import { usePlaySeries } from '@/hooks/use-play-series';
 import { useSessionState } from '@/hooks/use-scroll-restore';
 import { NewCalendarView } from './new-calendar-view';
 import { NewDramaRecommends } from './new-drama-recommends';
@@ -25,17 +24,9 @@ export function NewDramaPage() {
     'recommend',
   );
 
-  const playSeries = usePlaySeries();
   const navigate = useNavigate();
-  // 点击分流（对齐排行榜预约榜口径）：未上线剧进详情——详情解析分集必然
-  // 失败，带上行内档案快照撑起「即将上线」降级视图 + 预约；已上线直接播
-  const goDetailUpcoming = (item: {
-    seriesId: string;
-    title: string;
-    cover: string;
-    tags?: string[];
-    description: string;
-  }) =>
+  // 推荐卡一律进详情（排行榜/日历同口径）；未上线带 prefill 撑降级视图。
+  const handleSelect = (item: RankItem) =>
     void navigate({
       to: '/detail',
       search: {
@@ -46,10 +37,6 @@ export function NewDramaPage() {
         desc: item.description,
       },
     });
-  const handleSelect = (item: RankItem) => {
-    if (item.upcoming) goDetailUpcoming(item);
-    else playSeries(item.seriesId);
-  };
 
   return (
     // 视图 tab 已上移 AppShell 顶栏（TopBarTabsPortal，见下）。

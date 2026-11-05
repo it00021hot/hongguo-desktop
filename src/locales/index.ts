@@ -24,9 +24,17 @@ type Paths<T> = {
 const STORAGE_KEY = 'hongguo-locale';
 
 function detect(): Locale {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved && saved in resources) return saved;
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved && saved in resources) return saved as Locale;
+    }
+  } catch {
+    /* 隐私模式 / 无 DOM 的测试环境 */
+  }
+  const lang =
+    typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : 'zh-cn';
+  return lang.startsWith('zh') ? 'zh-CN' : 'en-US';
 }
 
 let current: Locale = detect();
@@ -38,8 +46,16 @@ export function locale(): Locale {
 /** 切换语言并持久化。 */
 export function setLocale(next: Locale): void {
   current = next;
-  localStorage.setItem(STORAGE_KEY, next);
-  document.documentElement.lang = next;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, next);
+    }
+  } catch {
+    /* 隐私模式 / 无 DOM 的测试环境 */
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = next;
+  }
 }
 
 /** 取词条；`a.b.c` 形式查嵌套对象。 */
@@ -66,4 +82,6 @@ export function tf(path: MessageKey, vars: Record<string, string | number>): str
   );
 }
 
-document.documentElement.lang = current;
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = current;
+}

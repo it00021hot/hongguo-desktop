@@ -147,17 +147,106 @@ pub(super) enum View {
     Creator,
 }
 
+/// 壳导航书签（顶栏后退/前进）：目的地 + 详情剧 id（非详情页为 None）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NavMark {
+    pub(super) dest: Dest,
+    pub(super) detail_series: Option<String>,
+}
+
+const NAV_STACK_CAP: usize = 32;
+
 impl super::Shell {
+    fn current_mark(&self) -> NavMark {
+        NavMark {
+            dest: self.dest,
+            detail_series: if self.dest == Dest::Detail {
+                self.detail_series.clone()
+            } else {
+                None
+            },
+        }
+    }
+
+    /// 即将离开当前页时记账；同页不推。前进栈清空（浏览器同语义）。
+    fn push_nav_before(&mut self, next: &NavMark) {
+        let cur = self.current_mark();
+        if cur == *next {
+            return;
+        }
+        self.nav_back.push(cur);
+        if self.nav_back.len() > NAV_STACK_CAP {
+            self.nav_back.remove(0);
+        }
+        self.nav_forward.clear();
+    }
+
+    pub(super) fn can_nav_back(&self) -> bool {
+        !self.nav_back.is_empty()
+    }
+
+    pub(super) fn can_nav_forward(&self) -> bool {
+        !self.nav_forward.is_empty()
+    }
+
+    pub(super) fn nav_back(&mut self, cx: &mut Context<Self>) {
+        let Some(prev) = self.nav_back.pop() else {
+            return;
+        };
+        self.nav_forward.push(self.current_mark());
+        if self.nav_forward.len() > NAV_STACK_CAP {
+            self.nav_forward.remove(0);
+        }
+        self.restore_mark(prev, cx);
+    }
+
+    pub(super) fn nav_forward(&mut self, cx: &mut Context<Self>) {
+        let Some(next) = self.nav_forward.pop() else {
+            return;
+        };
+        self.nav_back.push(self.current_mark());
+        if self.nav_back.len() > NAV_STACK_CAP {
+            self.nav_back.remove(0);
+        }
+        self.restore_mark(next, cx);
+    }
+
+    fn restore_mark(&mut self, mark: NavMark, cx: &mut Context<Self>) {
+        match mark.dest {
+            Dest::Detail => {
+                let Some(series_id) = mark.detail_series else {
+                    self.apply_dest(Dest::Home, cx);
+                    return;
+                };
+                self.apply_open_detail(series_id, None, cx);
+            }
+            Dest::Creator => self.apply_dest(Dest::Creator, cx),
+            dest => self.apply_dest(dest, cx),
+        }
+    }
+
     /// 切换目的地并触发进入钩子（侧栏点击与 `HONGGUO_PAGE` 取证开关共用）。
     /// 首页播放器的生命周期跟着走（Tauri 路由卸载/重挂载的同语义）：离开
     /// 首页停播落进度，回首页从落盘进度接上。
     pub(super) fn enter_dest(&mut self, dest: Dest, cx: &mut Context<Self>) {
+        self.push_nav_before(&NavMark {
+            dest,
+            detail_series: None,
+        });
+        self.apply_dest(dest, cx);
+    }
+
+    fn apply_dest(&mut self, dest: Dest, cx: &mut Context<Self>) {
         if dest == Dest::Home {
             self.feed.update(cx, |home, cx| home.resume_if_idle(cx));
         } else {
             self.feed.update(cx, |home, cx| home.release_for_leave(cx));
         }
         self.dest = dest;
+        if dest != Dest::Detail {
+            // 侧栏切走：详情书签只留在后退栈里，当前不再挂着
+            self.detail_series = None;
+        }
         match dest {
             Dest::Rank => self.rank.update(cx, RankView::load),
             Dest::Browse => self.browse.update(cx, BrowseView::load),
@@ -193,7 +282,7 @@ impl super::Shell {
     }
 
     /// 页面「继续播放」的统一入口：切回首页沉浸流起播（详情页播放同通道，
-    /// 页面间不互相持有）。
+    /// 页面间不互相持有）。来源页进后退栈——顶栏 ← 等同 Tauri returnTo。
     pub(super) fn start_play(
         &mut self,
         series_id: String,
@@ -201,7 +290,12 @@ impl super::Shell {
         start_secs: f64,
         cx: &mut Context<Self>,
     ) {
+        self.push_nav_before(&NavMark {
+            dest: Dest::Home,
+            detail_series: None,
+        });
         self.dest = Dest::Home;
+        self.detail_series = None;
         self.feed.update(cx, |home, cx| {
             home.play_from_detail(series_id, vid_index, start_secs, cx)
         });
@@ -223,6 +317,19 @@ impl super::Shell {
         if self.dest == Dest::Detail && self.detail_series.as_deref() == Some(&series_id) {
             return;
         }
+        self.push_nav_before(&NavMark {
+            dest: Dest::Detail,
+            detail_series: Some(series_id.clone()),
+        });
+        self.apply_open_detail(series_id, prefill, cx);
+    }
+
+    fn apply_open_detail(
+        &mut self,
+        series_id: String,
+        prefill: Option<crate::detail::DetailPrefill>,
+        cx: &mut Context<Self>,
+    ) {
         // 进详情页 = 离开首页沉浸流（Tauri /detail 是独立路由，进入即卸载
         // 首页）：停播落进度。从别的页进来时引擎多半已被 enter_dest 释放，
         // 这里的无条件调用只是兜「首页还没切走」的路径。
@@ -252,27 +359,28 @@ impl super::Shell {
     pub(super) fn on_detail_event(&mut self, event: DetailEvent, cx: &mut Context<Self>) {
         match event {
             DetailEvent::Back => {
-                self.dest = Dest::Home;
-                // 回首页续播（Tauri 返回重挂载「挂载默认开闸」同语义）
-                self.feed.update(cx, |home, cx| home.resume_if_idle(cx));
-                cx.notify();
+                if self.can_nav_back() {
+                    self.nav_back(cx);
+                } else {
+                    self.apply_dest(Dest::Home, cx);
+                }
             }
             DetailEvent::Play {
                 series_id,
                 vid_index,
                 start_secs,
             } => {
-                self.dest = Dest::Home;
-                self.feed.update(cx, |home, cx| {
-                    home.play_from_detail(series_id, vid_index, start_secs, cx)
-                });
-                cx.notify();
+                self.start_play(series_id, vid_index, start_secs, cx);
             }
             DetailEvent::OpenSettings => {
                 self.enter_dest(Dest::Settings, cx);
             }
             // 出品方/演职员芯片 → 创作者主页（详情实体保留，返回原地恢复）
             DetailEvent::OpenCreator(user_id) => {
+                self.push_nav_before(&NavMark {
+                    dest: Dest::Creator,
+                    detail_series: None,
+                });
                 self.creator.update(cx, |view, cx| view.load(user_id, cx));
                 self.dest = Dest::Creator;
                 cx.notify();
@@ -280,15 +388,17 @@ impl super::Shell {
         }
     }
 
-    /// 创作者主页返回：回来源详情页（实体保留原样）；没有详情来源时回首页
-    /// 续播（与详情返回同语义）。
+    /// 创作者主页返回：优先顶栏后退栈；否则回来源详情或首页。
     pub(super) fn close_creator(&mut self, cx: &mut Context<Self>) {
+        if self.can_nav_back() {
+            self.nav_back(cx);
+            return;
+        }
         if self.detail.is_some() && self.detail_series.is_some() {
             self.dest = Dest::Detail;
+            cx.notify();
         } else {
-            self.dest = Dest::Home;
-            self.feed.update(cx, |home, cx| home.resume_if_idle(cx));
+            self.apply_dest(Dest::Home, cx);
         }
-        cx.notify();
     }
 }

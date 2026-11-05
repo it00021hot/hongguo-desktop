@@ -335,7 +335,6 @@ export function CommentPanel({ vid, onClose }: Props) {
             setReplySectionOpen(comment.commentId, true);
           }
         },
-        onError: (e) => toast.error(String(e)),
       },
     );
   };
@@ -367,33 +366,25 @@ export function CommentPanel({ vid, onClose }: Props) {
           // 发送成功强制展开回复区，让新回复立刻可见
           setReplySectionOpen(parent.commentId, true);
         },
-        onError: (e) => toast.error(String(e)),
       },
     );
   };
 
   /** 评论 / 回复通用点赞（do_action 8/9，回复同形态传 reply_id）。
-   *  乐观写进对应 query 缓存（hooks 内失败回滚 + 调用方 toast）——
-   *  显示值直读缓存，面板重开不再回跳旧值。 */
+   *  乐观写进对应 query 缓存（hooks 内失败回滚）——显示值直读缓存，面板重开不再回跳旧值。 */
   const onCommentDigg = (id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
       return;
     }
-    commentDigg.mutate(
-      { commentId: id, digg: nextLiked },
-      { onError: (e) => toast.error(String(e)) },
-    );
+    commentDigg.mutate({ commentId: id, digg: nextLiked });
   };
   const onReplyDigg = (parentId: string, id: string, nextLiked: boolean) => {
     if (!loggedIn) {
       toast.info(t('player.interact.loginRequired'));
       return;
     }
-    replyDigg.mutate(
-      { commentId: parentId, replyId: id, digg: nextLiked },
-      { onError: (e) => toast.error(String(e)) },
-    );
+    replyDigg.mutate({ commentId: parentId, replyId: id, digg: nextLiked });
   };
 
   /** 回复某条回复（二级回复）：定位到所属评论的回复框并带上 @ 对方。 */

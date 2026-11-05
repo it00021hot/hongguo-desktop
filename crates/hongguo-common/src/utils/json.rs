@@ -25,6 +25,28 @@ pub fn check_code_in(value: &Value, label: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 业务拒绝：`code != 0` 归 [`AppError::Rejected`]，透传服务端原文（表情收藏「已添加过」等对用户有意义的文案）。
+/// 与 [`check_code`]（→ Media）分流：互动/表情等用户动作域用本函数，媒体取流解析用 Media。
+pub fn check_code_rejected(value: &Value, action: &str) -> AppResult<()> {
+    if value.get("code").and_then(Value::as_i64) == Some(0) {
+        return Ok(());
+    }
+    let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    let msg = value
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .pointer("/BaseResp/StatusMessage")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("未知错误")
+        .trim();
+    Err(AppError::Rejected(format!(
+        "{action}被服务端拒绝（{code}）: {msg}"
+    )))
+}
+
 /// 单键字符串字段：缺失或非字符串给空串。
 pub fn str_field(v: &Value, key: &str) -> String {
     v.get(key)

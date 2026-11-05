@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use hongguo_player_api::{
     HostWindow, PlaySource, PlayerEvent, PlayerLike, PresenterBounds, PresenterFit, VideoPresenter,
 };
-use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::{NSArray, NSString, NSURL};
@@ -22,6 +21,28 @@ use super::{avf, loader, view};
 
 /// 事件线程轮询间隔（缓冲/播完/失败都从这里出）。
 const EVENT_TICK: Duration = Duration::from_millis(100);
+/// AVPlayerItem 向前缓冲上限（秒）。自定义 scheme 没有带宽样本，不钉会
+/// 把明文整集塞进 CoreMedia。钉 0 = 系统自选（往往更狠），不能当「关缓存」。
+/// 数据缓存只认 hongguo-stream；这里只压 CoreMedia 工作集（关不掉，只能压）。
+const FORWARD_BUFFER_SECS: f64 = 2.0;
+
+/// 已备好、尚未挂上播放器的下一集（对齐 Tauri：不提前把下一项塞进
+/// AVQueuePlayer，避免 CoreMedia 同时囤当前+下一集缓冲）。
+struct PreloadSlot {
+    vid: String,
+    definition: u32,
+    loader: loader::LoaderHandle,
+    asset: SendRetained,
+    item: SendRetained,
+}
+
+impl PreloadSlot {
+    /// 未接力就丢掉：主动松 CoreMedia（自定义 scheme 无 NSURLCache 可清）。
+    fn discard(self) {
+        avf::clear_resource_loader_delegate(self.asset.get());
+        avf::cancel_loading(self.asset.get());
+    }
+}
 
 struct SendRetained(Retained<AnyObject>);
 
@@ -42,17 +63,20 @@ impl SendRetained {
 
 pub struct SystemPlayer {
     player: SendRetained,
-    /// delegate 是 weak：句柄必须活到这一集播放结束。
-    _loader: Mutex<Option<loader::LoaderHandle>>,
+    /// 当前集的 resourceLoader 句柄（delegate 是 weak，必须保活到本集结束）。
+    /// 接力时换成下一集的句柄，旧句柄随之 Drop——之前用 Vec 只进不出，
+    /// 连播几千集就把几千个 Loader + CoreMedia 缓存钉死在进程里。
+    current_loader: Mutex<Option<loader::LoaderHandle>>,
+    /// 当前集 asset：卸集时 `cancelLoading` + 清 delegate（自定义 scheme
+    /// 没有 NSURLCache 可清；松缓冲靠卸 asset，对齐 Tauri 换 `video.src`）。
+    current_asset: Mutex<Option<SendRetained>>,
     stop: Arc<AtomicBool>,
     event_thread: Mutex<Option<JoinHandle<()>>>,
     paused: AtomicBool,
     rate: AtomicU64,
     stage: Mutex<(Option<PresenterBounds>, PresenterFit)>,
-    /// 已预加载的下一集 (vid, 档位)；AVQueuePlayer 的下一项。
-    preloaded: Mutex<Option<(String, u32)>>,
-    /// 预加载项的 delegate 句柄（weak delegate 必须保活）。
-    next_loaders: Mutex<Vec<loader::LoaderHandle>>,
+    /// 已备好的下一集（未入队）；接力时 `replaceCurrentItem` 挂上。
+    preloaded: Mutex<Option<PreloadSlot>>,
 }
 
 impl SystemPlayer {
@@ -243,8 +267,10 @@ pub fn open(
             (avf::asset_with_url(&url), None)
         }
     };
+    let current_asset = SendRetained(asset.clone());
     let item = avf::item_with_asset(&asset);
     avf::set_spectral_pitch(&item);
+    avf::set_preferred_forward_buffer_duration(&item, FORWARD_BUFFER_SECS);
     // 取证开关：附加视频输出，在系统后端的真实壳里量 2x 产帧节奏。
     let metrics = std::env::var("HONGGUO_AV_METRICS").is_ok_and(|value| value == "1");
     let metrics_output = metrics.then(|| {
@@ -267,14 +293,14 @@ pub fn open(
     let metrics_player = player.clone();
     let system = Arc::new(SystemPlayer {
         player: SendRetained(player),
-        _loader: Mutex::new(loader_handle),
+        current_loader: Mutex::new(loader_handle),
+        current_asset: Mutex::new(Some(current_asset)),
         stop: Arc::new(AtomicBool::new(false)),
         event_thread: Mutex::new(None),
         paused: AtomicBool::new(false),
         rate: AtomicU64::new(rate.to_bits()),
         stage: Mutex::new((None, PresenterFit::Contain)),
         preloaded: Mutex::new(None),
-        next_loaders: Mutex::new(Vec::new()),
     });
     system.spawn_events(events);
     if let Some(output) = metrics_output {
@@ -351,50 +377,84 @@ impl PlayerLike for SystemPlayer {
         let mut preloaded = self.preloaded.lock().expect("预加载锁 poisoned");
         if preloaded
             .as_ref()
-            .is_some_and(|(current, def)| current == vid && *def == definition)
+            .is_some_and(|slot| slot.vid == vid && slot.definition == definition)
         {
             return true;
         }
-        if preloaded.is_some() {
-            // 只维护一个下一项；旧预加载留在队列里会造成切集错位
-            return false;
+        if let Some(old) = preloaded.take() {
+            // 目标变了：丢掉旧预制片，松它的 CoreMedia 缓冲
+            old.discard();
         }
         let url = avf::custom_url(&format!("{vid}-{definition}")).expect("下一集 URL");
         let asset = avf::asset_with_url(&url);
         let handle = loader::attach(
             &asset,
-                loader::Source::Stream {
-                    vid: vid.to_string(),
-                    definition,
-                    // 切到这一集后由同一 loader 在头部预算处继续唤醒续填；未切之前 resume_fill 也会因 is_next 放行
-                    on_stall,
-                },
-            );
+            loader::Source::Stream {
+                vid: vid.to_string(),
+                definition,
+                // 切到这一集后由同一 loader 在头部预算处继续唤醒续填；未切之前 resume_fill 也会因 is_next 放行
+                on_stall,
+            },
+        );
         let item = avf::item_with_asset(&asset);
         avf::set_spectral_pitch(&item);
-        // SAFETY: nil 表示追加到队尾；item 由队列持有。
-        let nil: *mut AnyObject = std::ptr::null_mut();
-        let _: () = unsafe { msg_send![self.player.get(), insertItem: &*item, afterItem: nil] };
-        *preloaded = Some((vid.to_string(), definition));
-        self.next_loaders
-            .lock()
-            .expect("预加载句柄锁 poisoned")
-            .push(handle);
-        log::info!("[AvPresenter] 预加载下一集 {vid}@{definition}");
+        avf::set_preferred_forward_buffer_duration(&item, FORWARD_BUFFER_SECS);
+        // 不 insert 进 AVQueuePlayer：与 Tauri 换 src 同口径——CoreMedia 只
+        // 缓冲当前集；下一集数据靠 hongguo-stream 缓存预热，挂载时再 replace。
+        *preloaded = Some(PreloadSlot {
+            vid: vid.to_string(),
+            definition,
+            loader: handle,
+            asset: SendRetained(asset),
+            item: SendRetained(item),
+        });
+        log::info!("[AvPresenter] 预加载下一集 {vid}@{definition}（未入队）");
         true
     }
 
     fn advance_preloaded(&self, vid: &str) -> bool {
         let mut slot = self.preloaded.lock().expect("预加载锁 poisoned");
-        match slot.as_ref() {
-            Some((preloaded_vid, _)) if preloaded_vid == vid => {
-                slot.take();
-            }
-            _ => return false,
+        let Some(next) = slot.as_ref() else {
+            return false;
+        };
+        if next.vid != vid {
+            return false;
         }
+        let next = slot.take().expect("上面已验 Some");
         drop(slot);
-        avf::advance_to_next_item(self.player.get());
-        log::info!("[AvPresenter] advanceToNextItem 接力（{vid}）");
+        // 对齐 Tauri `<video src>` 换源：replace 卸掉上一集 item，再挂预制片。
+        // CoreMedia 无公开「清缓存」API；松缓冲靠卸 item + cancelLoading。
+        let previous = self
+            .current_asset
+            .lock()
+            .expect("当前 asset 锁 poisoned")
+            .take();
+        let PreloadSlot {
+            vid: _,
+            definition: _,
+            loader,
+            asset,
+            item,
+        } = next;
+        avf::replace_item(self.player.get(), item.get());
+        if let Some(prev) = previous {
+            avf::clear_resource_loader_delegate(prev.get());
+            avf::cancel_loading(prev.get());
+        }
+        *self
+            .current_loader
+            .lock()
+            .expect("当前 loader 锁 poisoned") = Some(loader);
+        *self
+            .current_asset
+            .lock()
+            .expect("当前 asset 锁 poisoned") = Some(asset);
+        drop(item);
+        log::info!("[AvPresenter] replaceCurrentItem 接力（{vid}）");
+        let rate = f64::from_bits(self.rate.load(Ordering::Relaxed));
+        if !self.paused.load(Ordering::SeqCst) {
+            avf::play_immediately(self.player.get(), rate as f32);
+        }
         true
     }
 
@@ -448,6 +508,22 @@ impl Drop for SystemPlayer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         avf::pause(self.player.get());
+        if let Some(slot) = self.preloaded.lock().expect("预加载锁 poisoned").take() {
+            slot.discard();
+        }
+        if let Some(asset) = self
+            .current_asset
+            .lock()
+            .expect("当前 asset 锁 poisoned")
+            .take()
+        {
+            avf::clear_resource_loader_delegate(asset.get());
+            avf::cancel_loading(asset.get());
+        }
+        *self
+            .current_loader
+            .lock()
+            .expect("当前 loader 锁 poisoned") = None;
         if let Some(thread) = self
             .event_thread
             .lock()

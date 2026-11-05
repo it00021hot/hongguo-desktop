@@ -1,27 +1,23 @@
 use super::*;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, ImageSource, ObjectFit, Role, SharedString, div, img};
 
-use crate::ui_button::button as Button;
-
 impl super::Shell {
     /// 侧栏折叠态落盘（`ui_prefs` 读-改-写，Tauri zustand persist 同语义）。
-    fn persist_sidebar_collapsed(&self) {
+    pub(super) fn persist_sidebar_collapsed(&self) {
         let mut prefs = crate::ui_prefs::load();
         prefs.sidebar_collapsed = self.sidebar_collapsed;
         crate::ui_prefs::save(prefs);
     }
 
     /// 侧栏：13 目的地，展开 160px 图标+文字、折叠 56px 纯图标（tooltip 出
-    /// 标签）；追更带未读角标；贴底账户区（未登录开登录面板，已登录进设置页）
-    /// 与折叠钮。导航行与账户行用组件库基础层按钮（`gpui_kit::base::Button`），
-    /// 焦点/键盘激活/无障碍由库负责，视觉由本壳给。
+    /// 标签）；追更带未读角标；贴底账户区（未登录开登录面板，已登录进设置页）。
+    /// 折叠入口在顶栏（红绿灯同行）。导航行与账户行用组件库基础层按钮。
     pub(super) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let collapsed = self.sidebar_collapsed;
         // 头像懒加载守卫：账号在且 URL 变化才触发一次（幂等）
@@ -51,7 +47,8 @@ impl super::Shell {
             .rounded_md()
             .px_3()
             .py(gpui_kit::px(7.0))
-            .text_sm()
+            // rem=14（Codex 界面字号）时 text_base=14px
+            .text_base()
             .cursor_pointer()
             .text_color(theme.muted_foreground)
             .hover(|s| s.bg(theme.secondary_hover))
@@ -77,27 +74,20 @@ impl super::Shell {
                     .object_fit(ObjectFit::Cover)
                     .into_any_element(),
                 None => gpui_kit::component::Icon::new(IconName::UserRound)
-                    .small()
+                    // Tauri 侧栏 `size-4`（16px），勿用 `.small()`（14px）
+                    .with_size(gpui_kit::px(16.0))
                     .text_color(theme.muted_foreground)
                     .into_any_element(),
             })
             .when(!collapsed, |s| {
+                // 未登录也只显示「我的」：整行可点开登录，不再旁挂「登录」二字。
                 s.child(
-                    // 昵称按 Tauri 同款截断（`<span class="truncate">`）：
-                    // 侧栏收窄后长昵称不能顶到右侧的「登录」标签上。
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
                         .child(SharedString::from(account_label.clone())),
                 )
-                .children((!logged_in).then(|| {
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(theme.primary)
-                        .child(crate::i18n::t("nav.login"))
-                }))
             });
         let item = |dest: Dest| {
             let active = self.dest == dest;
@@ -122,16 +112,14 @@ impl super::Shell {
                 .rounded_md()
                 .px_3()
                 .py_2()
-                .text_sm()
+                // rem=14 时 text_base=14px，对齐 Codex 界面字号
+                .text_base()
                 .cursor_pointer()
                 .when(collapsed, |s| s.justify_center().px_0())
-                .text_color(if active {
-                    theme.primary_foreground
-                } else {
-                    theme.sidebar_foreground
-                })
+                .text_color(theme.sidebar_foreground)
+                // Codex 选中：淡底+字重，不反色（非 primary 实心块）
                 .when(active, |s| {
-                    s.bg(theme.primary)
+                    s.bg(theme.sidebar_primary)
                         .font_weight(gpui_kit::FontWeight::MEDIUM)
                 })
                 .hover(|s| {
@@ -156,12 +144,9 @@ impl super::Shell {
                             .color(theme.danger)
                             .child(
                                 gpui_kit::component::Icon::new(dest.icon())
-                                    .small()
-                                    .text_color(if active {
-                                        theme.primary_foreground
-                                    } else {
-                                        theme.sidebar_foreground
-                                    }),
+                                    // Tauri `<Icon className="size-4" />`
+                                    .with_size(gpui_kit::px(16.0))
+                                    .text_color(theme.sidebar_foreground),
                             ),
                     ),
                 )
@@ -191,63 +176,48 @@ impl super::Shell {
                 row
             }
         };
+        // Codex：侧栏通顶——顶部 44px 留给红绿灯（mac）/作拖拽带，导航在下方。
+        let mac = cfg!(target_os = "macos");
+        // 折叠宽：mac 至少 76 才能罩住 trafficLight x=12 起的三灯；其它平台 56。
+        let rail_w = if collapsed {
+            if mac { 76.0 } else { 56.0 }
+        } else {
+            220.0
+        };
+        // 首页视频贴右边：亮色分隔线会看成白边，这条边不画。
+        let home = self.dest == Dest::Home;
         v_flex()
-            .w(gpui_kit::px(if collapsed { 56.0 } else { 160.0 }))
+            .w(gpui_kit::px(rail_w))
             .h_full()
             .flex_shrink_0()
-            .bg(theme.background)
-            .border_r_1()
-            .border_color(theme.border)
-            .p_2()
-            .gap_1()
+            .bg(theme.sidebar)
+            .when(!home, |s| s.border_r_1().border_color(theme.sidebar_border))
             .id("shell-sidebar")
-            .overflow_y_scroll()
-            .children(Dest::ALL.map(item))
             .child(
+                // 顶带：与内容列顶栏同高，红绿灯落在此；空白可拖窗。
+                // 不加底边——Codex 侧栏从上到下是一整块，横线只画在内容列顶栏。
                 div()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .pt_2()
-                    .mt_auto()
-                    .child(account_row),
+                    .h(gpui_kit::px(44.0))
+                    .w_full()
+                    .flex_shrink_0(),
             )
             .child(
-                div()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .pt_2()
-                    .child(if collapsed {
-                        // 折叠态只剩一枚图标：组件 Button 的根是 shrink-to-fit
-                        // 宽度，直接摆会贴内容区左边（实测偏左 7.5px）。撑满
-                        // 整条内容区，图标才落在中线上——Tauri 侧同款
-                        // `className="w-full"`（collapsed 时不加 justify-start，
-                        // 由按钮自身居中）。
-                        Button::new("sidebar-expand")
-                            .icon(IconName::PanelLeft)
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .tooltip(crate::i18n::t("nav.expand"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_collapsed = false;
-                                this.persist_sidebar_collapsed();
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                    } else {
-                        Button::new("sidebar-collapse")
-                            .icon(IconName::PanelLeftClose)
-                            .ghost()
-                            .small()
-                            .label(crate::i18n::t("nav.collapse"))
-                            .tooltip(crate::i18n::t("nav.collapse"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_collapsed = true;
-                                this.persist_sidebar_collapsed();
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                    }),
+                v_flex()
+                    .id("shell-sidebar-nav")
+                    .flex_1()
+                    .min_h_0()
+                    .p_2()
+                    .gap_0p5()
+                    .overflow_y_scroll()
+                    .children(Dest::ALL.map(item))
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(theme.sidebar_border)
+                            .pt_2()
+                            .mt_auto()
+                            .child(account_row),
+                    ),
             )
             .into_any_element()
     }

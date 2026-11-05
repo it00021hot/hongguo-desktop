@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './app-sidebar';
 import { BottomNav } from './bottom-nav';
 import { ThemeSwitch } from './theme-switch';
+import { TitlebarNav } from './titlebar-nav';
 import { WindowButtons } from './window-controls';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
@@ -145,93 +146,69 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // 置顶开关与播放器（大屏顶栏/小屏紧凑条两个入口）共用同一份实现
   const { pinned, togglePinned } = usePinWindow();
 
+  const showChrome = !miniScreen && !playerFullscreen && !playerFrameless;
+  const showSidebar = showChrome && !portrait;
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       <a href="#content" className="skip-to-content">
         {t('common.skipToContent')}
       </a>
 
-      {/* 横贯全宽的顶栏（一条 44px 薄行）：原生红绿灯
-            （mac）/logo/应用名在左，中部是各页 portal 进来的分类 tab（无则
-            留空，页面标题不在此显示——导航位置由侧栏高亮表达），置顶/主题/
-            语言/窗口控件钉在右端。
-            小屏播放整个顶栏不渲染——小屏是纯播放器，窗口钮/拖拽
-            由紧凑控制条与播放页拖拽条承担（mac 的原生红绿灯也由后端在
-            enter_mini_screen 里一并摘掉）。
-
-            顶栏在侧边栏**上方**而不是长在侧边栏里——侧边栏折叠不影响顶部，
-            播放/沉浸流时控件也固定在顶栏，不会被弹幕或画面内容盖住。
-
-            mac 左内边距给原生红绿灯让位：trafficLightPosition x=12 起排，
-            三个 12pt 圆点 + 8pt 间距到 ~64px 收尾，76px 起排 logo 不贴不挤。
-
-            ⚠️ 必须写 `deep`：Tauri 2.x 的 `data-tauri-drag-region` 裸属性**只认
-            自己**，点子元素会被判成「不是拖拽区」而直接返回 false（见 tauri 的
-            src/window/scripts/drag.js）。所以整棵子树都要能拖，就得显式写 deep。 */}
-      {!miniScreen && !playerFullscreen && !playerFrameless && (
-        <header
-          data-tauri-drag-region="deep"
-          className={cn(
-            'bg-sidebar relative flex h-11 shrink-0 items-center gap-3 border-b',
-            mac ? 'pr-3 pl-[76px]' : 'px-3',
-          )}
-        >
-          {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
-                左右组宽度不等（红绿灯位 vs 控件），flex-1 的「剩余空间
-                居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用
-                transform（半像素平移会让文字发糊）。
-                容器 pointer-events-none：空白带不拦截、仍可拖窗；
-                tab 内容自己在 portal wrapper 里开 auto。
-
-                竖屏时不渲染插槽：窄条（~390px）里整排 tab 与右侧置顶/
-                主题/窗口钮必然叠压（绝对定位 w-fit 不收缩）；竖屏=沉浸
-                看剧，切 tab 退出竖屏再说。容器缺席时 portal 侧
-                useSyncExternalStore 自动渲染 null，退出竖屏容器回来
-                MutationObserver 即时跟上，tab 无需自己感知竖屏。 */}
-          {!portrait && (
-            <div
-              id={TOP_BAR_SLOT_ID}
-              className="pointer-events-none absolute inset-x-0 mx-auto flex w-fit items-center justify-center"
-            />
-          )}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            {/* 置顶与窗口控件是桌面语义（移动端没有窗口层级概念），窄屏全藏：
-                顶栏窄屏只剩分类 tab 插槽（对齐官方顶栏 = tab + 内容的极简形态） */}
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={t('player.pin')}
-              title={t('player.pin')}
-              onClick={togglePinned}
-              className={cn('hidden md:inline-flex', pinned && 'text-primary')}
-            >
-              <Pin className={cn('size-4', pinned && 'fill-current')} />
-            </Button>
-            <div className="hidden md:flex">
-              <ThemeSwitch />
-            </div>
-            {!mac && (
-              <div className="hidden md:flex">
-                <WindowButtons />
-              </div>
-            )}
-          </div>
-        </header>
-      )}
-
+      {/* Codex 布局：侧栏通顶（红绿灯压在侧栏顶带）+ 顶栏只盖内容列。 */}
       <div className="flex min-h-0 flex-1">
-        {/* 侧边栏是桌面导航：窄屏由底部导航条承担（对齐官方 App 的底部 tab） */}
-        {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <AppSidebar />}
+        {showSidebar && <AppSidebar />}
 
-        {/* BottomNav 是壳 flex 列的末子（sticky），自己占位；不再给 main 叠
-            pb-14——叠了会在播放器与底栏之间空出一截黑边（手机端尤甚）。
-            小窗/竖屏/全屏时底栏不挂载，同样不需要占位。 */}
-        <main id="content" className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-          {children}
-        </main>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* ⚠️ drag-region 必须 deep：Tauri 2 裸属性只认自身节点 */}
+          {showChrome && (
+            <header
+              data-tauri-drag-region="deep"
+              className={cn(
+                // h-11=44px，与侧栏顶带同高；items-center 让 28px 钮与 y=16 红绿灯同轴
+                'bg-titlebar relative flex h-11 shrink-0 items-center gap-3 border-b px-2 text-[14px]',
+                mac ? 'pr-4' : 'pr-0',
+              )}
+            >
+              <TitlebarNav />
+              {!portrait && (
+                <div
+                  id={TOP_BAR_SLOT_ID}
+                  className="pointer-events-none absolute inset-y-0 left-0 right-0 mx-auto flex w-fit items-center justify-center"
+                />
+              )}
+              <div className="ml-auto flex h-full shrink-0 items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('player.pin')}
+                  title={t('player.pin')}
+                  onClick={togglePinned}
+                  className={cn('hidden size-7 md:inline-flex', pinned && 'text-primary')}
+                >
+                  <Pin className={cn('size-4', pinned && 'fill-current')} />
+                </Button>
+                <div className="hidden h-full items-center md:flex">
+                  <ThemeSwitch />
+                </div>
+                {!mac && (
+                  <div className="hidden md:flex">
+                    <WindowButtons />
+                  </div>
+                )}
+              </div>
+            </header>
+          )}
+
+          <main
+            id="content"
+            className="scrollbar-thin bg-background min-h-0 flex-1 overflow-y-auto"
+          >
+            {children}
+          </main>
+        </div>
       </div>
 
-      {/* 移动端底部导航：与小屏播放/全屏播放互斥（纯播放器形态不显导航） */}
       {!miniScreen && !playerFullscreen && !playerFrameless && !portrait && <BottomNav />}
 
       <ConfirmDialog

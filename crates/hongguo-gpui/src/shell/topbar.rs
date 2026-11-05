@@ -5,6 +5,7 @@ use gpui_kit::component::Icon;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::Disableable;
 use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable};
 use gpui_kit::div;
 use gpui_kit::prelude::*;
@@ -22,8 +23,8 @@ impl super::Shell {
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
-        let border = theme.border;
-        let bg = theme.sidebar;
+        let border = theme.title_bar_border;
+        let bg = theme.title_bar;
         let fg = theme.secondary_foreground;
         let hover_bg = theme.secondary_hover;
         let danger = theme.danger;
@@ -36,23 +37,73 @@ impl super::Shell {
         let tabs = (!in_portrait).then(|| self.render_top_tabs(cx)).flatten();
         let pinned = self.feed.read(cx).pinned();
         let is_maximized = window.is_maximized();
+        let can_back = self.can_nav_back();
+        let can_forward = self.can_nav_forward();
+        let sidebar_collapsed = self.sidebar_collapsed;
+
+        // 顶栏图标钮：Tauri `size-7` 命中盒 + `size-4` 图标字号。组件库
+        // `.icon()` 会按钮边长 ×0.75 推图标（28→21），对不齐；改 child 钉 16。
+        let toolbar_icon = |id: &'static str, name: IconName| {
+            Button::new(id)
+                .ghost()
+                .w(gpui_kit::px(28.0))
+                .h(gpui_kit::px(28.0))
+                .p_0()
+                .child(Icon::new(name).with_size(gpui_kit::px(16.0)))
+        };
+
+        // 顶栏左簇（红绿灯右侧，Cursor/IDE 同款）：后退 / 前进 / 侧栏折叠。
+        // 播放器里不再叠「返回」pill——从历史/搜索进推荐播，用这里的 ←。
+        let back_button = toolbar_icon("toolbar-back", IconName::ArrowLeft)
+            .disabled(!can_back)
+            .tooltip(crate::i18n::t("nav.backHint"))
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.nav_back(cx);
+            }));
+        let forward_button = toolbar_icon("toolbar-forward", IconName::ArrowRight)
+            .disabled(!can_forward)
+            .tooltip(crate::i18n::t("nav.forwardHint"))
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.nav_forward(cx);
+            }));
+        let sidebar_toggle = toolbar_icon(
+            "toolbar-sidebar",
+            if sidebar_collapsed {
+                IconName::PanelLeft
+            } else {
+                IconName::PanelLeftClose
+            },
+        )
+        .tooltip(crate::i18n::t(if sidebar_collapsed {
+            "nav.expand"
+        } else {
+            "nav.collapse"
+        }))
+        .on_click(cx.listener(|this, _, _, cx| {
+            cx.stop_propagation();
+            this.sidebar_collapsed = !this.sidebar_collapsed;
+            this.persist_sidebar_collapsed();
+            cx.notify();
+        }));
 
         // 置顶（Tauri 顶栏钉住钮同位）：与小屏紧凑条共用同一份状态
-        let pin_button = Button::new("toolbar-pin")
-            .icon(if pinned {
+        let pin_button = toolbar_icon(
+            "toolbar-pin",
+            if pinned {
                 IconName::Pin
             } else {
                 IconName::PinOff
-            })
-            .ghost()
-            .small()
-            .tooltip(crate::i18n::t("player.pin"))
-            .on_click(cx.listener(|this, _, window, cx| {
-                cx.stop_propagation();
-                this.feed
-                    .update(cx, |view, cx| view.toggle_pinned(window, cx));
-                cx.notify();
-            }));
+            },
+        )
+        .tooltip(crate::i18n::t("player.pin"))
+        .on_click(cx.listener(|this, _, window, cx| {
+            cx.stop_propagation();
+            this.feed
+                .update(cx, |view, cx| view.toggle_pinned(window, cx));
+            cx.notify();
+        }));
 
         // 语言（Tauri ThemeSwitch 的语言菜单同位）：资源与 Tauri 共用；
         // 切换后刷新整个窗口，子实体不需要各自保存一份 locale。
@@ -75,10 +126,7 @@ impl super::Shell {
             }
             menu
         };
-        let language_button = Button::new("toolbar-language")
-            .icon(IconName::Languages)
-            .ghost()
-            .small()
+        let language_button = toolbar_icon("toolbar-language", IconName::Languages)
             .tooltip(crate::i18n::t("search.langLabel"))
             .dropdown_menu(language_menu);
 
@@ -121,10 +169,7 @@ impl super::Shell {
             crate::ui_prefs::ThemePref::Light => IconName::Sun,
             crate::ui_prefs::ThemePref::Dark => IconName::Moon,
         };
-        let theme_button = Button::new("toolbar-theme")
-            .icon(theme_icon)
-            .ghost()
-            .small()
+        let theme_button = toolbar_icon("toolbar-theme", theme_icon)
             .tooltip(crate::i18n::t("settings.appearance"))
             .dropdown_menu(theme_menu);
 
@@ -180,6 +225,8 @@ impl super::Shell {
                 ))
         });
 
+        // 首页视频贴底边：亮色分隔线会看成白边，这条边不画。
+        let home = self.dest == Dest::Home;
         h_flex()
             .id("app-toolbar")
             .relative()
@@ -187,13 +234,12 @@ impl super::Shell {
             .flex_shrink_0()
             .items_center()
             .bg(bg)
-            .border_b_1()
-            .border_color(border)
-            // 左右不留内边距：绝对定位的 tab 槽按内容盒定位，留出左内边距
-            // 会把槽整体推偏几个像素（Tauri 的 inset-x-0 按边框盒，居中在
-            // 整窗中线）。顶栏左侧本就不放内容（Tauri 同为空），macOS 的
-            // 原生红绿灯不受影响
-            .pr_0()
+            .when(!home, |s| s.border_b_1().border_color(border))
+            // Codex 布局：红绿灯压在通顶侧栏上，内容列顶栏不再留 76；
+            // 右侧仍留边，避免图标贴窗缘。
+            .pl_2()
+            .when(mac, |s| s.pr(gpui_kit::px(16.0)))
+            .when(!mac, |s| s.pr_0())
             // 拖窗/双击（见函数头注释）：阈值防按钮误拖
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
@@ -276,6 +322,19 @@ impl super::Shell {
                     .items_center()
                     .child(tabs)
             }))
+            // 左右簇：h_full + items_center，28px 钮在 44px 行里垂直居中
+            //（与 y=16 红绿灯同高；勿让钮自身拉高，图标会贴顶）。
+
+            .child(
+                h_flex()
+                    .h_full()
+                    .items_center()
+                    .gap_0p5()
+                    .flex_shrink_0()
+                    .child(back_button)
+                    .child(forward_button)
+                    .child(sidebar_toggle),
+            )
             .child(
                 h_flex()
                     .ml_auto()

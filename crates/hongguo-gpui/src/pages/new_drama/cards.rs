@@ -35,23 +35,20 @@ impl NewDramaView {
         cx.emit(NewDramaEvent::OpenDetail { series_id, prefill });
     }
 
-    /// 推荐卡点击分流（Tauri handleSelect 同口径）。
+    /// 推荐卡点击：一律进详情（排行榜/日历「卡片一律进详情」同口径；
+    /// 播放走详情页「继续看」）。
     fn select_rank_item(&self, item: &RankItem, cx: &mut Context<Self>) {
-        if item.upcoming {
-            self.open_detail(
-                item.series_id.clone(),
-                DetailPrefill {
-                    title: item.title.clone(),
-                    cover: item.cover.clone(),
-                    tags: item.tags.clone(),
-                    desc: item.description.clone(),
-                    reserved: item.reserved,
-                },
-                cx,
-            );
-        } else {
-            self.play_series(item.series_id.clone(), cx);
-        }
+        self.open_detail(
+            item.series_id.clone(),
+            DetailPrefill {
+                title: item.title.clone(),
+                cover: item.cover.clone(),
+                tags: item.tags.clone(),
+                desc: item.description.clone(),
+                reserved: item.reserved,
+            },
+            cx,
+        );
     }
 
     /// 虚拟列表条目：按列数分块的推荐行（卡宽由网格槽给——Tauri grid-cols 同

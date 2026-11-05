@@ -3,6 +3,25 @@ import { appErrorSchema } from '../schema';
 import { t, type MessageKey } from '@/locales';
 import { COMMANDS, type CallRest, type CommandName, type CommandResponse } from './registry';
 
+/** IPC 失败：保留 Rust `AppError.kind`，UI 按 kind 分支，不靠中文原文子串。 */
+export class AppInvokeError extends Error {
+  readonly kind: string;
+  constructor(kind: string, message: string, cause?: unknown) {
+    super(localizedMessage(kind, message), { cause: cause ?? message });
+    this.name = 'AppInvokeError';
+    this.kind = kind;
+  }
+}
+
+export function isAppInvokeError(e: unknown): e is AppInvokeError {
+  return e instanceof AppInvokeError;
+}
+
+/** 登录墙：`AppError::Auth` 序列化为 `error.auth`（i18n 刻意无译文，message 为后端原文）。 */
+export function isAuthError(e: unknown): boolean {
+  return isAppInvokeError(e) && e.kind === 'error.auth';
+}
+
 /**
  * 类型化 invoke：契约表在 `./registry`（与 EVENTS 同为两端镜像）；响应过 zod 校验，
  * 失败即后端改了契约（`error.badPayload`，原始 issue 挂 cause）。
@@ -28,9 +47,7 @@ function toError(e: unknown): Error {
   if (e && typeof e === 'object' && 'kind' in e && 'message' in e) {
     const parsed = appErrorSchema.safeParse(e);
     if (parsed.success) {
-      const error = new Error(localizedMessage(parsed.data.kind, parsed.data.message));
-      error.cause = parsed.data.message;
-      return error;
+      return new AppInvokeError(parsed.data.kind, parsed.data.message);
     }
   }
   if (e instanceof Error) return e;

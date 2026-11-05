@@ -33,7 +33,10 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.subsec_nanos())
                     .unwrap_or(0);
-                let delay = 1000 + (ns % 4000) as u64;
+                // 预取错峰：1~5s 抖动，避免与起播抢带宽
+                const PREFETCH_DELAY_MIN_MS: u64 = 1000;
+                const PREFETCH_DELAY_SPAN_MS: u64 = 4000;
+                let delay = PREFETCH_DELAY_MIN_MS + (ns as u64 % PREFETCH_DELAY_SPAN_MS);
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
         }

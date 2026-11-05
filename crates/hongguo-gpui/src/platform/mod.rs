@@ -87,7 +87,7 @@ pub(crate) fn open_system_player(
     hongguo_player::open(source, start_secs, rate, events, on_stall)
 }
 
-/// 系统后端窗口外观：先让 GPUI 清成 alpha=0（透明洞的 UI 框架侧），再把窗口
+/// 系统后端窗口外观：先让 GPUI 开透明通道（视频洞靠内容 alpha=0），再把窗口
 /// 交给播放器实现铺黑/挂视频位——窗口外观不属于播放器，句柄之外的语义都留在壳。
 pub(crate) fn prepare_system_window(window: &gpui_kit::Window) {
     window.set_background_appearance(gpui_kit::WindowBackgroundAppearance::Transparent);

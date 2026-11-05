@@ -32,6 +32,10 @@
     },
     "collapse": "收起",
     "expand": "展开",
+    "back": "后退",
+    "forward": "前进",
+    "backHint": "返回上一页",
+    "forwardHint": "前进到下一页",
     "reservations": {
       "title": "预约"
     },
@@ -631,6 +635,13 @@
     "loadingMore": "正在加载更多…",
     "end": "没有更多了"
   },
+  "number": {
+    "yi": "{value}亿",
+    "wan": "{value}万",
+    "baiwan": "{value}百万",
+    "million": "{value}M",
+    "thousand": "{value}K"
+  },
   "rank": {
     "subLists": "子榜列表",
     "filter": {
@@ -639,6 +650,7 @@
       "all": "总榜",
       "month": "月榜"
     },
+    "allTab": "全部",
     "loadFailed": "榜单加载失败",
     "empty": "这个榜单暂时没有内容",
     "detail": "详情"

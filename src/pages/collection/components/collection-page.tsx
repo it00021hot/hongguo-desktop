@@ -31,6 +31,7 @@ import {
   useSeriesCollectBatch,
   useSeriesMeta,
 } from '@/service/queries';
+import { isAuthError } from '@/service/tauri/invoke';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
 import { usePlaySeries } from '@/hooks/use-play-series';
 import { t, tf, type MessageKey } from '@/locales';
@@ -96,8 +97,7 @@ export function CollectionPage() {
     );
   }
   if (error) {
-    const notLoggedIn = error.message.includes('未登录');
-    if (notLoggedIn) {
+    if (isAuthError(error)) {
       return (
         <ErrorState
           message={t('collections.loginRequired')}

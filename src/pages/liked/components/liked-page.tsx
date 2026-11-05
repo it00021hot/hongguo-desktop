@@ -41,6 +41,7 @@ export function LikedPage() {
   // 端点，do_action 单条语义；全跑完统一回显 + 汇总失败数）
   const batch = useBatchSelect();
   const batchUndo = useMutation({
+    meta: { silentOnError: true },
     mutationFn: async (items: InteractionItem[]) => {
       const results = await Promise.allSettled(
         items.map((i) => interactCmd.videoDigg(i.vid, i.seriesId, false)),

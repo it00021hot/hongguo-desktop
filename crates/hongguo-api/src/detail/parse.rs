@@ -256,16 +256,16 @@ pub fn parse_series_meta(response: &Value, series_id: &str) -> AppResult<SeriesM
         // 官方模型对照字段：防御性读取，缺席走默认值
         pay_info: vd.get("pay_info").cloned().unwrap_or(Value::Null),
         // 官方下发为 unix 秒；对外契约统一 UTC 毫秒
-        online_time: num_field(vd, "online_time") * 1000,
+        online_time: int_field(vd, "online_time") * 1000,
         update_tag: str_field_any(vd, &["episode_right_text", "update_tag"]),
         // 追更按钮显隐判定：0=连载中 1=已完结；缺席按连载中处理
-        series_status: num_field(vd, "series_status"),
+        series_status: int_field(vd, "series_status"),
         update_frequency: vd
             .pointer("/update_info/show_update_frequency")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
-        episode_total_cnt: num_field(vd, "episode_total_cnt"),
+        episode_total_cnt: int_field(vd, "episode_total_cnt"),
         latest_consumed_vid: str_field_any(vd, &["latest_consumed_item_id"]),
         creators: parse_creators(vd),
     })
@@ -308,18 +308,6 @@ fn parse_creators(vd: &Value) -> Vec<SeriesCreator> {
         });
     }
     out
-}
-
-/// 计数字段：JSON 数字直取，字符串形态回退解析（与 followed_cnt 同款容错）。
-fn num_field(v: &Value, key: &str) -> i64 {
-    v.get(key)
-        .and_then(Value::as_i64)
-        .or_else(|| {
-            v.get(key)
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse().ok())
-        })
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

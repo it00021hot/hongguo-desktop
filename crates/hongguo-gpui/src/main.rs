@@ -337,8 +337,15 @@ fn main() {
                         options.window_background =
                             gpui_kit::WindowBackgroundAppearance::Transparent;
                         // 标题空着的话任务栏是一条空白条目，认不出这个窗口。
+                        // 红绿灯坐标对齐 Tauri trafficLightPosition (12, 16)：
+                        // 44px 顶栏里与后退/前进/侧栏钮垂直居中同高；库默认
+                        // (9, 9) 会偏上，按钮看起来「没居中」。
                         options.titlebar = Some(gpui_kit::TitlebarOptions {
                             title: Some("红果".into()),
+                            traffic_light_position: Some(gpui_kit::point(
+                                gpui_kit::px(12.0),
+                                gpui_kit::px(16.0),
+                            )),
                             ..gpui_kit::component::TitleBar::title_bar_options()
                         });
                         options
@@ -468,15 +475,6 @@ fn build_app_state() -> Arc<AppStateInner> {
     state
 }
 
-/// 开库；被锁时稍等重试一次。
 fn open_store_with_lock_retry() -> hongguo_common::AppResult<Store> {
-    match Store::open(hongguo_store::paths::db_file()) {
-        Ok(db) => Ok(db),
-        Err(AppError::StoreLocked(first)) => {
-            log::warn!("[Store] 数据库暂时被锁（{first}），1s 后重试一次");
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            Store::open(hongguo_store::paths::db_file())
-        }
-        Err(e) => Err(e),
-    }
+    Store::open_with_lock_retry(hongguo_store::paths::db_file())
 }

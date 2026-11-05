@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { formatBytes, formatCountPrecise, formatDuration } from './format';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { setLocale } from '@/locales';
+import {
+  formatBytes,
+  formatCountCompact,
+  formatCountPrecise,
+  formatDuration,
+  formatPlayCount,
+} from './format';
+
+beforeAll(() => {
+  setLocale('zh-CN');
+});
 
 describe('formatBytes', () => {
   it('零与负数', () => {
@@ -41,5 +52,17 @@ describe('formatCountPrecise', () => {
   it('亿位与万位以下', () => {
     expect(formatCountPrecise(150_000_000)).toBe('1.5亿');
     expect(formatCountPrecise(1247)).toBe('1247');
+  });
+});
+
+describe('formatPlayCount / formatCountCompact', () => {
+  it('播放量整数万', () => {
+    expect(formatPlayCount(34_560)).toBe('3万');
+    expect(formatPlayCount(150_000_000)).toBe('1.5亿');
+  });
+
+  it('互动栏百万档', () => {
+    expect(formatCountCompact(1_400_000)).toBe('1.4百万');
+    expect(formatCountCompact(14_000)).toBe('1.4万');
   });
 });

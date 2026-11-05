@@ -29,11 +29,13 @@ pub(crate) fn pill_tab(
         // `button:not(:disabled){cursor:pointer}` 同款）。
         .cursor_pointer()
         .label(label)
+        // rem=14 时 text_sm≈12px，对齐 Codex 代码字号 / Tauri `text-xs` 观感。
+        // `.small()` 的 button_text_size 也是 text_sm，内外一致。
         .small()
         // ButtonRounded 没有 Full 档；胶囊必须大于任一实际高度的一半。
         .rounded(px(999.0))
         .px_3()
-        .text_xs()
+        .text_sm()
         .when(active, |button| {
             button.primary().font_weight(FontWeight::MEDIUM)
         })

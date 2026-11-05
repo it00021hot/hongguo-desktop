@@ -11,10 +11,13 @@ use hongguo_common::AppError;
 
 use super::NowPlaying;
 use crate::bridge;
+use crate::home::player_icons;
 
 /// 互动栏 item 的展示参数（[`super::HomeView::rail_item`] 收拢散参用）。
 struct RailItem {
     icon: gpui_kit::component::Icon,
+    /// 图标边长（Tauri：星/心/分享 size-7，评论气泡光学补偿 size-8）。
+    icon_px: f32,
     count: i64,
     active: bool,
     /// 激活态着色（红心/黄星）；未激活恒纯白（抖音系贴画面右缘形态）。
@@ -396,7 +399,8 @@ impl super::HomeView {
             .child(self.rail_item(
                 "collect",
                 RailItem {
-                    icon: gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Star),
+                    icon: player_icons::douyin_star(),
+                    icon_px: 28.0,
                     count: collect_count,
                     active: collected,
                     active_color: gpui_kit::rgba(0xfacc15ff),
@@ -410,9 +414,9 @@ impl super::HomeView {
             .child(self.rail_item(
                 "comments",
                 RailItem {
-                    icon: gpui_kit::component::Icon::new(
-                        gpui_kit::assets::IconName::MessageCircleMore,
-                    ),
+                    // 气泡宽扁、实心面积小 → 光学补偿 +1 档（Tauri size-8）
+                    icon: player_icons::douyin_comment(),
+                    icon_px: 32.0,
                     count: comment_count,
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
@@ -426,7 +430,8 @@ impl super::HomeView {
             .child(self.rail_item(
                 "digg",
                 RailItem {
-                    icon: gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Heart),
+                    icon: player_icons::douyin_heart(),
+                    icon_px: 28.0,
                     count: digg_count,
                     active: digged,
                     active_color: gpui_kit::rgba(0xef4444ff),
@@ -444,6 +449,7 @@ impl super::HomeView {
                     "follow",
                     RailItem {
                         icon: gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Tv),
+                        icon_px: 28.0,
                         count: 0,
                         active: follow_on,
                         // Tauri 追更态用 text-primary（语义令牌，非皮肤色）
@@ -463,7 +469,8 @@ impl super::HomeView {
             .child(self.rail_item(
                 "share",
                 RailItem {
-                    icon: gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Forward),
+                    icon: player_icons::douyin_share(),
+                    icon_px: 28.0,
                     count: 0,
                     active: false,
                     active_color: gpui_kit::rgba(0xffffffff),
@@ -488,6 +495,7 @@ impl super::HomeView {
     ) -> gpui_kit::AnyElement {
         let RailItem {
             icon,
+            icon_px,
             count,
             active,
             active_color,
@@ -538,11 +546,14 @@ impl super::HomeView {
             )
             .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
             .on_click(on_click)
-            .child(icon.size_7().text_color(if active {
-                active_color
-            } else {
-                gpui_kit::rgb(0xffffff)
-            }))
+            .child(
+                icon.size(gpui_kit::px(icon_px))
+                    .text_color(if active {
+                        active_color
+                    } else {
+                        gpui_kit::rgb(0xffffff)
+                    }),
+            )
             .children((count > 0).then(|| {
                 div()
                     .text_xs()

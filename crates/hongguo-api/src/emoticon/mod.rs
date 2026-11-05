@@ -14,6 +14,7 @@ use crate::client::ApiEnv;
 use crate::params::emoticon::{
     OWN_EMOTICON_KEYWORD, SEARCH_TYPE_MINE, SEARCH_TYPE_SEARCH, SEARCH_TYPE_THIRD_PARTY,
 };
+use hongguo_common::utils::json::check_code_rejected;
 use hongguo_common::{AppError, AppResult};
 
 use super::danmaku::LQ_API_ORIGIN;
@@ -47,7 +48,7 @@ pub async fn list_emoticons(
             .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析表情列表响应失败: {e}")))?;
-    check_code(&value)?;
+    check_code_rejected(&value, "表情操作")?;
     let data = value.get("data").cloned().unwrap_or(Value::Null);
     Ok(EmoticonPage {
         items: data
@@ -123,7 +124,7 @@ pub async fn upload_picture(
     .await?;
     let value: Value = serde_json::from_slice(&raw)
         .map_err(|e| AppError::Media(format!("解析图片上传响应失败: {e}")))?;
-    check_code(&value)?;
+    check_code_rejected(&value, "表情操作")?;
     Ok(PictureUpload {
         web_uri: value
             .get("web_uri")
@@ -151,7 +152,7 @@ pub async fn collect_emoticon(
             .await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析收藏表情响应失败: {e}")))?;
-    check_code(&value)?;
+    check_code_rejected(&value, "表情操作")?;
     Ok(value.pointer("/data/image_data").and_then(parse_emoticon))
 }
 
@@ -256,28 +257,6 @@ fn thumb_value(thumb: &EmoticonThumb) -> Value {
     obj.insert("height".into(), Value::from(thumb.height));
     obj.insert("format".into(), Value::String(thumb.format.clone()));
     Value::Object(obj)
-}
-
-/// 服务端业务拒绝用 `Rejected` 变体透传原文（与互动域同口径）：
-/// 具体原因对用户是有效信息，套通用文案反而误导。
-fn check_code(value: &Value) -> AppResult<()> {
-    if value.get("code").and_then(Value::as_i64) == Some(0) {
-        return Ok(());
-    }
-    let code = value.get("code").and_then(Value::as_i64).unwrap_or(-1);
-    let msg = value
-        .get("message")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            value
-                .pointer("/BaseResp/StatusMessage")
-                .and_then(Value::as_str)
-        })
-        .unwrap_or("未知错误")
-        .trim();
-    Err(AppError::Rejected(format!(
-        "表情操作被服务端拒绝（{code}）: {msg}"
-    )))
 }
 
 /// multipart 边界（每次请求唯一，避免与文件内容撞串）。
@@ -418,7 +397,7 @@ mod tests {
     #[test]
     fn server_rejection_passes_through_original_message() {
         let value = serde_json::json!({"code": 101066, "message": "已添加过该表情 "});
-        let err = check_code(&value).unwrap_err();
+        let err = check_code_rejected(&value, "表情操作").unwrap_err();
         assert_eq!(err.i18n_key(), "error.rejected");
         assert!(
             err.to_string().contains("已添加过该表情"),

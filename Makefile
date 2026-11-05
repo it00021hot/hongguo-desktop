@@ -31,7 +31,7 @@ dev:
 dev-sandbox:
 	node scripts/dev-sandbox.mjs
 
-# 与 Tauri dev 并行无冲突，但共享同一数据库：双壳同开后启动者撞库锁退出。
+# 数据根与 Tauri 壳平级分离（set_shell_data_root，见 paths.rs），双壳可并存不撞库锁。
 gpui:
 	cargo run -p hongguo-gpui
 

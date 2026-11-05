@@ -1,7 +1,7 @@
 //! 壳窗口：持久侧栏导航（13 项目的地，可折叠 160/56px）+ 顶栏 + 内容区
-//! 视图切换。顶栏自绘 44px 薄行：中部当前页分类 tab 槽、右端置顶/外观/
-//! 窗口钮，空白带按住拖窗、双击最大化。为什么不用组件库 TitleBar：见
-//! `Shell::render_toolbar` 头注释。
+//! 视图切换。顶栏自绘 44px 薄行：左簇后退/前进/侧栏折叠（红绿灯同行）、
+//! 中部分类 tab 槽、右端置顶/外观/窗口钮；空白带按住拖窗、双击最大化。
+//! 为什么不用组件库 TitleBar：见 `Shell::render_toolbar` 头注释。
 
 mod account;
 #[cfg(feature = "screenshot")]
@@ -99,6 +99,10 @@ pub struct Shell {
     /// 顶栏拖窗的按下起点：移动超过阈值才 `start_window_move`（按钮上的
     /// 轻微抖动不误起拖）。
     toolbar_drag: Option<gpui_kit::Point<gpui_kit::Pixels>>,
+    /// 壳内后退栈（顶栏 ←；从其它页进推荐播/详情时推入）。
+    nav_back: Vec<nav::NavMark>,
+    /// 壳内前进栈（顶栏 →；后退时把当前帧推入）。
+    nav_forward: Vec<nav::NavMark>,
 }
 
 impl Shell {
@@ -163,12 +167,8 @@ impl Shell {
         })
         .detach();
         cx.subscribe(&browse, |this, _, event: &BrowseEvent, cx| {
-            let BrowseEvent::Play {
-                series_id,
-                vid_index,
-                start_secs,
-            } = event.clone();
-            this.start_play(series_id, vid_index, start_secs, cx);
+            let BrowseEvent::OpenDetail { series_id, prefill } = event.clone();
+            this.open_detail_with_prefill(series_id, Some(prefill), cx);
         })
         .detach();
         cx.subscribe(
@@ -287,11 +287,9 @@ impl Shell {
         .detach();
         cx.subscribe(&creator, |this, _, event: &CreatorEvent, cx| {
             match event.clone() {
-                CreatorEvent::Play {
-                    series_id,
-                    vid_index,
-                    start_secs,
-                } => this.start_play(series_id, vid_index, start_secs, cx),
+                CreatorEvent::OpenDetail { series_id, prefill } => {
+                    this.open_detail_with_prefill(series_id, Some(prefill), cx);
+                }
                 CreatorEvent::Back => this.close_creator(cx),
             }
         })
@@ -373,6 +371,8 @@ impl Shell {
             account_avatar_url: None,
             account_avatar_pending: false,
             toolbar_drag: None,
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
         };
         // 启动目的地不是首页：按住首页信息流的冷启动自动开播——信息流
         // 异步加载完成时人还在别的页，不按住的话 after_feed_loaded 会照常

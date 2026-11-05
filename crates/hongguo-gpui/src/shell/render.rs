@@ -137,29 +137,40 @@ impl gpui_kit::Render for Shell {
         let video_hole = self.dest == Dest::Home && !crate::preview::is_active();
         // 窗口 1px 自绘边框（DWMWA_BORDER_COLOR 已关系统线，深色桌面下无边框
         // 连缩放边都摸不到）：跟主题走；最大化/全屏时贴屏幕边，画了反而怪。
-        let bordered = !window.is_maximized() && !window.is_fullscreen();
+        // 首页视频洞：亮色描边贴黑画面会看成一圈白边——干脆不画。
+        let bordered =
+            !video_hole && !window.is_maximized() && !window.is_fullscreen();
+        // Codex 布局：侧栏通顶（红绿灯压在侧栏上方空白）+ 顶栏只盖内容列。
+        // 根在有视频洞时透明（露出下层播放器），否则铺主题底；壳层本身实色。
+        // 外层 v_flex 只为下载浮层横贯底边（与侧栏无关）。
         v_flex()
-            // 封面解码结果的内存缓存挂全应用：同一张封面在首页/找剧/历史/
-            // 收藏共用一份，容量有上限（超出释放 GPU 纹理）。
             .image_cache(self.cover_image_cache.clone())
             .id("shell")
             .size_full()
-            .bg(theme.background)
             .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
+            .when(!video_hole, |el| el.bg(theme.background))
             .when(bordered, |el| el.border_1().border_color(theme.border))
             .text_color(theme.foreground)
-            .children(toolbar)
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    // 小屏/沉浸全屏时侧栏藏掉（视频区吃满，播放跟随窗口）
                     .children(sidebar)
                     .child(
-                        // 内容区：吃掉剩余宽度；过载时只允许它收缩（coding-guides
-                        // 「flex_1 仍可能拒绝收缩」），滚动归视图自己。
-                        v_flex().flex_1().min_w_0().child(content),
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .children(toolbar)
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .when(video_hole, |el| el.bg(crate::tokens::scrim(0)))
+                                    .when(!video_hole, |el| el.bg(theme.background))
+                                    .child(content),
+                            ),
                     ),
             )
             .children(download_sheet)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,7 +19,6 @@ import {
   useSearchSuggest,
   useSeriesSearchApp,
 } from '@/service/queries';
-import { usePlaySeries } from '@/hooks/use-play-series';
 import { useScrollRestore, useSessionState } from '@/hooks/use-scroll-restore';
 import { useUiStore } from '@/stores/ui';
 import { t, tf } from '@/locales';
@@ -112,11 +112,31 @@ export function BrowsePage() {
     keyword.trim().length >= 2 &&
     keyword === debounced &&
     suggestions.length > 0;
-  const playSeries = usePlaySeries();
+  const navigate = useNavigate();
+  const openDetail = (card: {
+    seriesId: string;
+    title?: string;
+    cover?: string;
+    tags?: string[];
+  }) =>
+    void navigate({
+      to: '/detail',
+      search: {
+        seriesId: card.seriesId,
+        title: card.title ?? '',
+        cover: card.cover ?? '',
+        tags: (card.tags ?? []).join(','),
+        desc: '',
+      },
+    });
   const pickSuggest = (item: SuggestItem) => {
     setSuggestOpen(false);
     if (item.seriesId) {
-      playSeries(item.seriesId);
+      openDetail({
+        seriesId: item.seriesId,
+        title: item.bookTitle || item.word,
+        cover: item.cover || item.bookCover,
+      });
       return;
     }
     setKeyword(item.word);
@@ -242,9 +262,14 @@ export function BrowsePage() {
     setSubmitted(value);
   };
 
-  // 点卡片直接跳播放：分集解析由播放页自己拉（失败有整页错误态），
-  // 这里不再经选集抽屉中转——下载也在播放器里做。
-  const handleSelect = (card: SeriesCard) => playSeries(card.seriesId);
+  // 卡片一律进详情（排行榜/预约同口径）；播放走详情页「继续看」。
+  const handleSelect = (card: SeriesCard) =>
+    openDetail({
+      seriesId: card.seriesId,
+      title: card.seriesTitle,
+      cover: card.cover,
+      tags: card.tags,
+    });
 
   return (
     <div className="flex flex-col gap-4 p-6">

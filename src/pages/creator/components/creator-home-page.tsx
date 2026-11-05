@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { ErrorState } from '@/components/common/error-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
-import { usePlaySeries } from '@/hooks/use-play-series';
 import { useCreatorProfile, useCreatorWorks, usePrefetchSeriesEpisodes } from '@/service/queries';
 import { formatCountPrecise } from '@/utils/format';
 import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
@@ -13,7 +12,7 @@ import type { CreatorWork } from '@/service/schema';
 import { t, tf } from '@/locales';
 
 /** 创作者主页：头部 reading/user/profile/get，作品列表 commentapi/user/profile/{uid}
- *  （video_id 语义 = series_id，可直接当播放目标）；点作品 = usePlaySeries 起播。 */
+ *  （video_id 语义 = series_id）；点作品 = 进详情（排行榜「卡片一律进详情」同口径）。 */
 export function CreatorHomePage({ userId }: { userId: string }) {
   const navigate = useNavigate();
   // routeTree.gen 的 as any 污染 useRouter 返回值；这里只用 history.back
@@ -103,7 +102,7 @@ export function CreatorHomePage({ userId }: { userId: string }) {
   );
 }
 
-/** 作品网格（3:4 封面卡：标题 + 集数/热度/播放行；点击起播）。 */
+/** 作品网格（3:4 封面卡：标题 + 集数/热度/播放行；点击进详情）。 */
 function WorksGrid({
   works,
   hasMore,
@@ -115,7 +114,7 @@ function WorksGrid({
   onLoadMore: () => void;
   loadingMore: boolean;
 }) {
-  const playSeries = usePlaySeries();
+  const navigate = useNavigate();
   const prefetch = usePrefetchSeriesEpisodes();
   const sentinel = useRef<HTMLDivElement | null>(null);
 
@@ -145,7 +144,18 @@ function WorksGrid({
             key={w.seriesId}
             type="button"
             onMouseEnter={() => prefetch(w.seriesId)}
-            onClick={() => playSeries(w.seriesId)}
+            onClick={() =>
+              void navigate({
+                to: '/detail',
+                search: {
+                  seriesId: w.seriesId,
+                  title: w.title,
+                  cover: w.cover,
+                  tags: w.tags.join(','),
+                  desc: w.intro,
+                },
+              })
+            }
             className="group relative cursor-pointer overflow-hidden rounded-xl bg-neutral-900 text-left"
             title={w.title}
           >

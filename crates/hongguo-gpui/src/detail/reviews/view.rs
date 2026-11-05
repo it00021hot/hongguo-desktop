@@ -189,6 +189,8 @@ impl super::super::DetailView {
     pub(crate) fn render_reviews(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         v_flex()
+            .w_full()
+            .min_w_0()
             .mt_4()
             .gap_4()
             // 发评框（Tauri ReviewComposer 同位：列表在它下面）
@@ -294,9 +296,13 @@ impl super::super::DetailView {
                             .and_then(|(_, t)| t.clone());
                         let reply_input = self.review_reply_input.clone();
                         v_flex()
+                            .w_full()
+                            .min_w_0()
                             .gap_2()
                             .child(
                                 h_flex()
+                                    .w_full()
+                                    .min_w_0()
                                     .items_start()
                                     .gap_3()
                                     .child(
@@ -353,10 +359,16 @@ impl super::super::DetailView {
                                                     ),
                                             )
                                             .child(
-                                                div()
+                                                // 正文必须走 comment_text：列容器给确定宽度才折行
+                                                // （旧 render_review_text 整段按 max-content，中文不折）。
+                                                v_flex()
                                                     .text_sm()
                                                     .line_height(gpui_kit::relative(1.6))
-                                                    .child(render_review_text(&c.text)),
+                                                    .child(crate::comment_text::render(
+                                                        &crate::comment_text::comment_body(
+                                                            &c.text, None,
+                                                        ),
+                                                    )),
                                             )
                                             // 动作行（Tauri ReviewList 同款：♥点赞 /
                                             // 回复 / 删除（自己的）/ 展开回复）
@@ -693,20 +705,3 @@ fn review_date(ts_ms: i64) -> String {
         .unwrap_or_default()
 }
 
-fn render_review_text(text: &str) -> gpui_kit::AnyElement {
-    let mut row = div().flex().flex_wrap().items_center();
-    for seg in crate::danmaku_emoji::parse_emoji_segments(text) {
-        row = row.child(match seg {
-            crate::danmaku_emoji::EmojiSegment::Text(t) => {
-                div().child(SharedString::from(t)).into_any_element()
-            }
-            crate::danmaku_emoji::EmojiSegment::Emoji(img) => {
-                gpui_kit::img(gpui_kit::ImageSource::Render(img))
-                    .size(gpui_kit::px(18.0))
-                    .object_fit(gpui_kit::ObjectFit::Contain)
-                    .into_any_element()
-            }
-        });
-    }
-    row.into_any_element()
-}

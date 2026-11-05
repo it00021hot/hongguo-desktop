@@ -1,15 +1,17 @@
 # AGENTS.md — hongguo-desktop
 
-红果短剧（Hongguo）非官方桌面客户端：Tauri 2 官方壳（React 19 WebView）+ GPUI 自绘壳（GPUI Kit）+ 纯 Rust 业务内核。Windows / macOS。仅供学习研究（PolyForm Noncommercial），不存储、不分发任何影视内容。
+红果短剧（Hongguo）非官方桌面客户端：Tauri 2 官方壳（React 19 WebView）+ GPUI 自绘壳（GPUI Kit）+ 纯 Rust 业务内核。Windows / macOS，另有 Android 移动端路线（Tauri 壳 arm64 APK，CI 手动触发构建，详见 workflow.md「Android 构建」节）。仅供学习研究（PolyForm Noncommercial），不存储、不分发任何影视内容。
 
 ## 开始任何开发前
 
 **动手前先读两个 skill：用户级 `dev-habits`（跨项目工程宪法，经 Skill 工具调用）→ `.agents/skills/hongguo-dev/SKILL.md`（本项目规范，只写 dev-habits 没有的内容）**，两者互补缺一不可，再按任务读对应参考文档：
 
+> 用户级 skill（`dev-habits` / `gpui-ui-design` 等）装自 <https://github.com/it00021hot/skills>；新机器缺失时补装：`npx skills add it00021hot/skills@dev-habits -g`（`-g` 装到 `~/.agents/skills/`，不带则装进当前项目）。`find-skills` / `impeccable` 不在此仓库，来自社区源。
+
 | 你要做的事                                                                       | 先读                                                                                                                                               |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 任何开发动作（通用工程宪法：做事方式 / 质量 / 测试 / 安全 / 契约 / 日志 / 并发） | 用户级 `dev-habits` skill（门禁表在其 SKILL.md，先读它再读下表）                                                                                   |
-| 环境搭建 / 日常命令 / 调试 / 提交 / 发版                                         | `.agents/skills/hongguo-dev/references/workflow.md`                                                                                                |
+| 环境搭建 / 日常命令 / 调试 / 提交 / 发版 / Android 构建                          | `.agents/skills/hongguo-dev/references/workflow.md`                                                                                                |
 | 新增（或改动）IPC 命令、事件、外部 API 端点                                      | `.agents/skills/hongguo-dev/references/ipc.md`                                                                                                     |
 | 写前端：组件 / hooks / 查询 / store / 样式 / i18n / 路由                         | `.agents/skills/hongguo-dev/references/frontend.md`                                                                                                |
 | 写后端：command / service / store / 迁移 / 测试                                  | `.agents/skills/hongguo-dev/references/backend.md`                                                                                                 |
@@ -32,6 +34,7 @@
 - `crates/hongguo-media-platform-api/` 平台媒体契约：`PlatformRequest` / 共享码率策略（`bitrate_for`）。实现 crate 的公共上游；本 crate 不依赖任何实现，引用方向反了就是 Cargo 依赖环
 - `crates/hongguo-media-platform-macos/` macOS 平台实现：VideoToolbox 转码链（硬编优先、软编回落）；平台依赖全在 target 表，`#![cfg(target_os = "macos")]`，异目标空壳
 - `crates/hongguo-media-platform-windows/` Windows 平台实现：Media Foundation 转码链（HEVC 硬解 → H.264 硬编）+ WIC 封面静图；`#![cfg(target_os = "windows")]`，异目标空壳
+- `crates/hongguo-media-platform-android/` Android 平台实现：MediaCodec HEVC 解 → H.264 编（硬/软由系统选，契约同 media-platform-api）；`ndk` 依赖只进 android target 表，`#![cfg(target_os = "android")]`，异目标空壳
 - `crates/hongguo-media-platform/` 平台层门面：按编译目标 re-export 实现 crate + 分派无状态操作（转码 / 探测 / 清缓存 / HEIC 封面 `platform::cover`），`ffmpeg`（外部进程的探测与执行）与 `capability`（解码能力探测）聚合并留在此；转码两级分流编排仍在 service 的 `transcode_service::pipeline`。`platform::transcode_h264_for_tests` 由 feature `test-support` 门控（壳 e2e 用）。无 tauri/gpui 依赖
 - `crates/hongguo-protocol/` 自定义 URI 协议供数逻辑：`url`（按平台的 URL 形态与编解码）+ `local` + `cover`（HEIC 封面三级转码阶梯）+ `pool`（常驻工作池与 panic 加固）+ `serve`（三路供数入口，产出元组）。**无 tauri 依赖**——HTTP 组装与 Builder 注册是壳胶水（hongguo-tauri 的 `protocol.rs`）
 - `crates/hongguo-service/` 业务编排层：`download` / `play` / `merge` / `login` / `series` / `settings` / `storage` / `transcode` / `capability` / `follow` / `history` 各有 `*_service`，另有 `device` 模块（设备档案）+ 全局业务状态 `AppState`（壳经 Tauri `manage` 注入，GPUI 壳直接构造）+ 共用任务运行时 `runtime`（后台任务任意线程可派发）+ 业务事件总线 `events`（`ServiceEvent`，壳订阅适配）。**不依赖任何 UI 框架**（源码静态闸扫 tauri 引用）：进度与状态只发布事件，发送机制由壳决定
@@ -49,8 +52,11 @@ Tauri 壳的前后端只通过三条通道交互：IPC command、事件推送、
 ## 常用命令
 
 ```bash
-make dev        # 开发模式（Vite + Tauri，端口 1420 固定、单实例）
+make dev        # 开发模式（Vite + Tauri，端口 1420 固定、单实例）——需普通终端，受限沙箱内会失败
+make dev-sandbox # 沙箱模式开发：profile/数据/临时目录全重定向到 target/（agent/受限终端专用）
 make gpui       # 启动 GPUI 壳
+make gpui-app   # GPUI 壳打 macOS .app（通知/Dock 身份需要 bundle；裸二进制跑不起来）
+make gpui-preview # 离屏渲染 UI 预览矩阵到 /tmp/hongguo-gpui-preview（macOS only，改界面后必跑）
 make test       # 前端 vitest（= pnpm test）
 make test-rust  # cargo test
 make lint       # 质量闸门一票否决：ESLint + Prettier + cargo clippy×3（Windows 宿主 + macOS 双目标交叉）
@@ -58,6 +64,8 @@ make typecheck  # tsc 两个 tsconfig --noEmit
 make fmt        # cargo fmt
 make release    # tauri build 打包
 ```
+
+Android APK 平时走 CI 手动触发（`gh workflow run android.yml --ref dev`）；Windows 本地真机出包用 `bash scripts/android-build.sh`（三段绕法的背景见 workflow.md）。
 
 包管理用 pnpm。门禁命令必须**裸跑**确认退出码——管道（如 `pnpm x | tail`）会吞掉失败。
 
@@ -80,6 +88,8 @@ make release    # tauri build 打包
 
 ## 其他 gotcha
 
+- 双壳可并存：`make gpui` 启动时经 `paths::set_shell_data_root("hongguo-gpui")` 把数据根钉到与默认根平级的独立目录（如 macOS `~/Library/Application Support/hongguo-gpui`，Tauri 壳用 `hongguo-downloader`），库/缓存互不共用、不撞库锁。
+- Android 的桌面专属能力（single-instance / 全局快捷键 / 老板键 / rfd 选图选目录等）按平台门控，谓词统一 `#[cfg(not(any(target_os = "android", target_os = "ios")))]`——hongguo-tauri 无 build.rs，`#[cfg(desktop)]` 这类 tauri 注入 cfg 在该 crate 无效；数据根须在 setup 最先 `set_absolute_data_root` 钉到 app 私有目录（Android 上 `dirs::data_dir()` 为 None）。完整清单见 workflow.md「Android 构建」节。
 - git hooks 需克隆后手动启用：`git config core.hooksPath .githooks`（pre-commit 跑三目标 clippy + cargo test + eslint）。
 - CI 跑 dev 分支推送与 PR：三目标 clippy + cargo test + eslint + 新增文件 800 行上限闸门（`scripts/check-file-size.sh`，约 300 行是拆分提醒线）。
 - 用户可见文案改动必须同步 `src/locales/zh-CN.json` 与 `en-US.json` 两份。
