@@ -20,6 +20,7 @@ import {
 } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 import { useFollowState } from '@/hooks/use-follow-state';
+import { formatCountCompact } from '@/utils/format';
 
 // 抖音系实心图标（自绘；激活态类优先于 fill/stroke 属性）
 
@@ -95,14 +96,6 @@ interface InteractionRailProps {
   /** 连载状态（video_detail series_status：0=连载中 1=已完结，官方追更钮
    *  显隐判定源；undefined=meta 未到，回落追更列表判定） */
   seriesStatus?: number;
-}
-
-/** 计数格式化：抖音系「1.4万」样式。 */
-function fmtCount(n: number): string {
-  if (n >= 100_0000) return `${(n / 100_0000).toFixed(1).replace(/\.0$/, '')}百万`;
-  if (n >= 10_000)
-    return `${(n / 10_000).toFixed(n % 10_000 >= 1000 ? 1 : 0).replace(/\.0$/, '')}万`;
-  return `${n}`;
 }
 
 /** 画面右缘竖排互动栏（悬浮在 stage 内，跟随悬浮层淡出）。 */
@@ -207,20 +200,20 @@ export function InteractionRail({
           <DouyinStarIcon className={cn('size-7', collected && 'fill-amber-400 text-amber-400')} />
         }
         label={t('player.interact.collect')}
-        text={collectCount > 0 ? fmtCount(collectCount) : undefined}
+        text={collectCount > 0 ? formatCountCompact(collectCount) : undefined}
         onClick={onCollect}
       />
       {/* 气泡形状宽扁、实心面积小，同尺寸下视觉偏小 → icon 光学校偿 +1 档（size-8） */}
       <RailItem
         icon={<DouyinCommentIcon className="size-8" />}
         label={t('player.interact.comments')}
-        text={commentCount && commentCount > 0 ? fmtCount(commentCount) : undefined}
+        text={commentCount && commentCount > 0 ? formatCountCompact(commentCount) : undefined}
         onClick={() => setCommentPanelOpen(true)}
       />
       <RailItem
         icon={<DouyinHeartIcon className={cn('size-7', digged && 'fill-red-500 text-red-500')} />}
         label={t('player.interact.like')}
-        text={diggCount > 0 ? fmtCount(diggCount) : undefined}
+        text={diggCount > 0 ? formatCountCompact(diggCount) : undefined}
         onClick={onDigg}
       />
       {/* 追更（📺 + 已追态高亮）：仅连载中的剧显示——已完结剧不会有新集 */}

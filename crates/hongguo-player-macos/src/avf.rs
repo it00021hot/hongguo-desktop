@@ -107,15 +107,44 @@ pub fn item_with_asset(asset: &AnyObject) -> Retained<AnyObject> {
     }
 }
 
+/// 限制 AVPlayerItem 向前缓冲（秒）。0 = 系统自选（往往偏狠）；自定义
+/// scheme 供数时没有真实带宽样本，不钉上限会把整集明文都塞进
+/// CoreMedia 缓冲。
+pub fn set_preferred_forward_buffer_duration(item: &AnyObject, secs: f64) {
+    // SAFETY: 公开 NSTimeInterval 属性。
+    let _: () = unsafe { msg_send![item, setPreferredForwardBufferDuration: secs] };
+}
+
 /// `AVQueuePlayer`：队列会预加载下一项，用来测切集接力。
 pub fn queue_player(items: &NSArray<AnyObject>) -> Retained<AnyObject> {
     // SAFETY: 公开类方法 +queuePlayerWithItems:。
     unsafe { msg_send![class(c"AVQueuePlayer"), queuePlayerWithItems: items] }
 }
 
+/// `AVQueuePlayer.advanceToNextItem`（spike 诊断队列接力用；生产路径走
+/// [`replace_item`] + [`cancel_loading`]）。
 pub fn advance_to_next_item(queue: &AnyObject) {
     // SAFETY: 公开实例方法。
     let _: () = unsafe { msg_send![queue, advanceToNextItem] };
+}
+
+/// 取消 asset 上未完成的属性/资源加载。自定义 scheme 下 CoreMedia 没有
+/// 「清空 HTTP 缓存」的公开 API；卸上一集时显式 cancel，避免等 dealloc
+/// 才松缓冲。
+pub fn cancel_loading(asset: &AnyObject) {
+    // SAFETY: AVAsset 公开实例方法。
+    let _: () = unsafe { msg_send![asset, cancelLoading] };
+}
+
+/// 卸掉 resourceLoader delegate，切断继续向旧 asset 要字节。
+pub fn clear_resource_loader_delegate(asset: &AnyObject) {
+    // SAFETY: resourceLoader 恒非空；delegate/queue 允许 nil。
+    let resource_loader: *mut AnyObject = unsafe { msg_send![asset, resourceLoader] };
+    if resource_loader.is_null() {
+        return;
+    }
+    let nil: *mut AnyObject = std::ptr::null_mut();
+    let _: () = unsafe { msg_send![resource_loader, setDelegate: nil, queue: nil] };
 }
 
 /// 帧时间戳出口：`hasNewPixelBufferForItemTime:` 判定后由

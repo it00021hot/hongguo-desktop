@@ -34,6 +34,8 @@ export function useIsFollowing(seriesId: string | null) {
 export function useFollowToggle() {
   const qc = useQueryClient();
   return useMutation({
+    // 调用方（useFollowState）有登录墙 + 定制 toast，全局错误 toast 静默
+    meta: { silentOnError: true },
     mutationFn: (input: { seriesId: string; follow: boolean }) =>
       followCmd.update(input.seriesId, input.follow),
     onSuccess: (_data, input) => {
@@ -65,6 +67,8 @@ export function useFollowNoticesMutations() {
     onSuccess: invalidate,
   });
   const clear = useMutation({
+    // 追更页清空提醒有定制 toast
+    meta: { silentOnError: true },
     mutationFn: () => followCmd.noticesClear(),
     onSuccess: invalidate,
   });
@@ -75,6 +79,8 @@ export function useFollowNoticesMutations() {
 export function useFollowCheck() {
   const qc = useQueryClient();
   return useMutation({
+    // 追更页有定制成功/失败 toast
+    meta: { silentOnError: true },
     mutationFn: () => followCmd.checkUpdates(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.followNotices });

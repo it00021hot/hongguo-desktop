@@ -60,8 +60,18 @@ impl super::BrowseView {
             })
             .on_click({
                 let series_id = series_id.to_string();
+                let title = title.to_string();
+                let cover = cover_url.to_string();
+                let tags = tags.clone();
                 cx.listener(move |this, _, _, cx| {
-                    this.play_series(series_id.clone(), cx);
+                    this.open_detail(
+                        series_id.clone(),
+                        title.clone(),
+                        cover.clone(),
+                        tags.clone(),
+                        String::new(),
+                        cx,
+                    );
                 })
             })
             .child(

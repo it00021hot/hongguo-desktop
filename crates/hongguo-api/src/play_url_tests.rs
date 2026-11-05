@@ -8,6 +8,47 @@ use super::*;
 use crate::client::ApiEnv;
 use crate::stream_pick::DecoderCapability;
 
+#[test]
+fn registry_roundtrip_and_zero_skip() {
+    register_content_type("v1", 1004);
+    register_content_type("", 1);
+    register_content_type("v-zero", 0);
+    assert_eq!(content_type_of("v1"), Some(1004));
+    assert_eq!(content_type_of(""), None);
+    assert_eq!(content_type_of("v-zero"), None);
+    assert_eq!(content_type_of("未注册"), None);
+    register_content_type("v1", 1);
+    assert_eq!(content_type_of("v1"), Some(1));
+}
+
+#[test]
+fn clear_batch_cache_drops_stale_prefetch() {
+    batch_cache().lock().insert(
+        "vid-old-device".into(),
+        (Instant::now(), PlayInfo::default()),
+    );
+    assert!(batch_cache().lock().contains_key("vid-old-device"));
+    clear_batch_cache();
+    assert!(batch_cache().lock().is_empty(), "换档后旧设备预取必须清空");
+}
+
+#[test]
+fn model_error_envelope_surfaces_with_server_message() {
+    let v: Value = serde_json::from_str(
+        r#"{"Code":110001,"Message":"未知异常","BaseResp":{"StatusCode":110001,"StatusMessage":"unknown error"}}"#,
+    )
+    .unwrap();
+    let err = check_model_code(&v).unwrap_err().to_string();
+    assert!(err.contains("110001"), "{err}");
+    assert!(err.contains("unknown error"), "{err}");
+}
+
+#[test]
+fn model_success_envelope_without_code_passes() {
+    check_model_code(&serde_json::json!({ "data": {} })).unwrap();
+    check_model_code(&serde_json::json!({ "Code": 0, "data": {} })).unwrap();
+}
+
 struct Request {
     path: String,
     body: Value,
@@ -25,7 +66,7 @@ fn mock(responses: Vec<Vec<u8>>) -> (String, JoinHandle<Vec<Request>>) {
                 match listener.accept() {
                     Ok((stream, _)) => break stream,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline, "备用通道未收到预期请求");
+                        assert!(Instant::now() < deadline, "mock 未收到预期请求");
                         std::thread::sleep(Duration::from_millis(5));
                     }
                     Err(e) => panic!("accept: {e}"),
@@ -78,7 +119,6 @@ fn mock(responses: Vec<Vec<u8>>) -> (String, JoinHandle<Vec<Request>>) {
     (origin, thread)
 }
 
-// 2026-11-04 本机实测：主通道只给 bytevc2，备用通道同一 vid 给 bytevc1。
 fn model(codec: &str) -> String {
     json!({"video_list": [{
         "main_url": "https://cdn.example/video.mp4",
@@ -92,6 +132,10 @@ fn response(data: Value) -> Vec<u8> {
     serde_json::to_vec(&json!({"code": 0, "BaseResp": {"StatusCode": 0}, "data": data})).unwrap()
 }
 
+fn error_envelope() -> Vec<u8> {
+    serde_json::to_vec(&json!({"Code": 110001, "Message": "test failure"})).unwrap()
+}
+
 #[tokio::test]
 async fn single_private_codec_falls_back_for_both_response_shapes() {
     for data in [
@@ -103,13 +147,13 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
             response(json!({"single-private": {"video_model": model("bytevc1")}})),
         ]);
         let env = ApiEnv::anonymous(Default::default());
-        let play = fetch_model_light_batch(
+        let play = fetch_single_at(
             "single-private",
             1004,
             None,
             DecoderCapability::Full,
             &env,
-            [&origin, &origin],
+            (&origin, &origin),
         )
         .await
         .unwrap()
@@ -132,13 +176,13 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
 async fn single_playable_primary_does_not_call_fallback() {
     let (origin, server) = mock(vec![response(json!({"video_model": model("h264")}))]);
     let env = ApiEnv::anonymous(Default::default());
-    let play = fetch_model_light_batch(
+    let play = fetch_single_at(
         "single-primary",
         1,
         None,
         DecoderCapability::NoHevc,
         &env,
-        [&origin, &origin],
+        (&origin, &origin),
     )
     .await
     .unwrap()
@@ -155,13 +199,13 @@ async fn single_empty_or_missing_primary_still_falls_back() {
             response(json!({"single-empty": {"video_model": model("h264")}})),
         ]);
         let env = ApiEnv::anonymous(Default::default());
-        let play = fetch_model_light_batch(
+        let play = fetch_single_at(
             "single-empty",
             1,
             None,
             DecoderCapability::NoHevc,
             &env,
-            [&origin, &origin],
+            (&origin, &origin),
         )
         .await
         .unwrap()
@@ -169,6 +213,28 @@ async fn single_empty_or_missing_primary_still_falls_back() {
         assert_eq!(play.codec, "h264");
         assert_eq!(server.join().unwrap().len(), 2);
     }
+}
+
+#[tokio::test]
+async fn single_primary_error_envelope_falls_back() {
+    let (origin, server) = mock(vec![
+        error_envelope(),
+        response(json!({"single-envelope": {"video_model": model("h264")}})),
+    ]);
+    let env = ApiEnv::anonymous(Default::default());
+    let play = fetch_single_at(
+        "single-envelope",
+        1,
+        None,
+        DecoderCapability::NoHevc,
+        &env,
+        (&origin, &origin),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(play.codec, "h264");
+    assert_eq!(server.join().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -190,7 +256,7 @@ async fn batch_only_falls_back_for_unplayable_or_missing_entries() {
     ]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::Full, &env, [&origin, &origin])
+        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
             .await
             .unwrap(),
         3
@@ -207,17 +273,36 @@ async fn batch_only_falls_back_for_unplayable_or_missing_entries() {
 async fn batch_preserves_primary_hits_if_fallback_fails() {
     let (origin, server) = mock(vec![
         response(json!({"batch-keep": {"video_model": model("h264")}})),
-        serde_json::to_vec(&json!({"Code": 110001, "Message": "test failure"})).unwrap(),
+        error_envelope(),
     ]);
     let map = BTreeMap::from([("1".into(), vec!["batch-keep".into(), "batch-failed".into()])]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::Full, &env, [&origin, &origin])
+        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
             .await
             .unwrap(),
         1
     );
     assert_eq!(server.join().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn batch_primary_error_envelope_falls_back_all() {
+    let (origin, server) = mock(vec![
+        error_envelope(),
+        response(json!({"batch-envelope": {"video_model": model("h264")}})),
+    ]);
+    let map = BTreeMap::from([("1".into(), vec!["batch-envelope".into()])]);
+    let env = ApiEnv::anonymous(Default::default());
+    assert_eq!(
+        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
+            .await
+            .unwrap(),
+        1
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].path.contains(crate::params::MODEL_LIGHT_PATH));
 }
 
 #[tokio::test]
@@ -228,13 +313,13 @@ async fn single_two_unplayable_responses_return_miss() {
     ]);
     let env = ApiEnv::anonymous(Default::default());
     assert!(
-        fetch_model_light_batch(
+        fetch_single_at(
             "single-miss",
             1004,
             None,
             DecoderCapability::Full,
             &env,
-            [&origin, &origin]
+            (&origin, &origin)
         )
         .await
         .unwrap()

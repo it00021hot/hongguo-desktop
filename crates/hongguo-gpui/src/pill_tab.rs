@@ -29,7 +29,9 @@ pub(crate) fn pill_tab(
         // `button:not(:disabled){cursor:pointer}` 同款）。
         .cursor_pointer()
         .label(label)
-        .small()
+        // xsmall → button_text_size=text_xs；`.small()` 会把标签抬成 text_sm，
+        // 和 Tauri `text-xs` 胶囊对不齐（外链 `.text_xs()` 盖不过内容层）。
+        .xsmall()
         // ButtonRounded 没有 Full 档；胶囊必须大于任一实际高度的一半。
         .rounded(px(999.0))
         .px_3()

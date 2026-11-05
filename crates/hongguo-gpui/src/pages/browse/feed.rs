@@ -101,18 +101,24 @@ impl super::BrowseView {
         self.load_browse_page(cx);
     }
 
-    pub(super) fn play_series(&self, series_id: String, cx: &mut Context<Self>) {
-        let (vid_index, start_secs) = hongguo_service::play_service::resume::resolve_entry(
-            &self.state.store,
-            &series_id,
-            &[],
-        )
-        .ok()
-        .unwrap_or((1, 0.0));
-        cx.emit(BrowseEvent::Play {
+    pub(super) fn open_detail(
+        &self,
+        series_id: String,
+        title: String,
+        cover: String,
+        tags: Vec<String>,
+        desc: String,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(BrowseEvent::OpenDetail {
             series_id,
-            vid_index,
-            start_secs,
+            prefill: DetailPrefill {
+                title,
+                cover,
+                tags,
+                desc,
+                reserved: false,
+            },
         });
     }
 }

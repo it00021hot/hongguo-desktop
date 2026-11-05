@@ -8,11 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crate::app_state::AppState;
 use hongguo_common::AppResult;
+use hongguo_common::consts::units::MIN_MEDIA_BYTES as MIN_EPISODE_BYTES;
 use hongguo_common::model::{DownloadTask, Series, Settings};
-
-/// 判定「磁盘上这个文件是一条有效分集」的最小体积；与合并收集口径一致，
-/// 小于它的多半是上次中断留下的残缺文件。
-const MIN_EPISODE_BYTES: u64 = 100 * 1024;
 
 /// 尾数扫描认的集号最长位数。四位数封顶，避免把「2023 合集」这类年份当集号。
 const MAX_INDEX_DIGITS: usize = 4;

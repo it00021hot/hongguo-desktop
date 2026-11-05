@@ -32,6 +32,10 @@
     },
     "collapse": "Collapse",
     "expand": "Expand",
+    "back": "Back",
+    "forward": "Forward",
+    "backHint": "Go back",
+    "forwardHint": "Go forward",
     "reservations": {
       "title": "Reservations"
     },
@@ -631,6 +635,13 @@
     "loadingMore": "Loading more…",
     "end": "No more items"
   },
+  "number": {
+    "yi": "{value}B",
+    "wan": "{value}0K",
+    "baiwan": "{value}M",
+    "million": "{value}M",
+    "thousand": "{value}K"
+  },
   "rank": {
     "subLists": "Sub lists",
     "filter": {
@@ -639,6 +650,7 @@
       "all": "Overall",
       "month": "Monthly"
     },
+    "allTab": "All",
     "loadFailed": "Failed to load ranking",
     "empty": "Nothing in this list yet",
     "detail": "Details"

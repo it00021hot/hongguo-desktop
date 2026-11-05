@@ -91,3 +91,7 @@ pub async fn upload_pending(state: &AppState) {
         log::info!("[History] 本地历史补传 {done}/{} 条", pending.len());
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;

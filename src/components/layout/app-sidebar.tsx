@@ -14,11 +14,8 @@ import {
   Combine,
   HardDrive,
   Settings,
-  PanelLeftClose,
-  PanelLeft,
   UserRound,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LoginDialog } from '@/pages/settings/components/login-dialog';
 import { unreadNotices, useAccount, useAuthRefresh, useFollowNotices } from '@/service/queries';
@@ -48,7 +45,6 @@ const NAV_ITEMS = [
 
 export function AppSidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
-  const toggle = useUiStore((s) => s.toggleSidebar);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { data: account } = useAccount();
   // 追更角标：未读提醒数（登录后才拉；后端定时检查出新集时事件会刷新缓存）
@@ -121,19 +117,7 @@ export function AppSidebar() {
       <div className="border-t p-2">
         <AccountButton collapsed={collapsed} />
       </div>
-
-      <div className="border-t p-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggle}
-          className={cn('w-full', !collapsed && 'justify-start gap-2')}
-          aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
-        >
-          {collapsed ? <PanelLeft className="size-4" /> : <PanelLeftClose className="size-4" />}
-          {!collapsed && <span className="text-sm">{t('nav.collapse')}</span>}
-        </Button>
-      </div>
+      {/* 折叠钮已挪到顶栏（红绿灯同行） */}
     </aside>
   );
 }

@@ -129,9 +129,7 @@ export function SettingsPage() {
           setProxyUrl(null);
           setCacheDirDraft(null);
         },
-        // 失败必须有回音：后端报错（老板键被占用注册失败这类）静默的
-        // 话，用户眼里就是「点了没反应」（v0.5.0 保存无反应排查实录）
-        onError: (e) => toast.error(String(e)),
+        // 失败由全局 MutationCache toast（v0.5.0 曾静默无反应，现统一走全局）
       },
     );
   };

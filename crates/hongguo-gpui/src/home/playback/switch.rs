@@ -193,8 +193,8 @@ impl super::HomeView {
                     self.play_generation,
                     self.now.as_ref().map(|now| now.vid_index).unwrap_or(0)
                 );
-                // 缓存的「当前集」要跟着正在播的走：接力不走 prepare（那里才
-                // set_current），不更新会把在播集当「其余的」按头部预算封顶。
+                // 缓存的「当前集」要跟着正在播的走：接力不走 prepare，
+                // set_current 内会按预算逐出旧集（否则长会话无界堆流缓存）。
                 hongguo_stream::cache().set_current(&next_vid);
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {

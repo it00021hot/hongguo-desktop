@@ -68,8 +68,8 @@ pub async fn prepare(
     // 记下当前集：逐出策略保它、预填礼让它、切走后旧填充据此自杀。
     // 一次只看一集的**语义下有界保留**：全清的话，信息流切剧目标一弹，
     // 正在被 `<video>` 读的那条流就被逐掉，播放追上缓冲前沿只能超时。
+    // set_current 内已跑 retain_playing_set（连播接力同路，不依赖 prepare）。
     c.set_current(vid);
-    c.retain_playing_set(vid);
 
     // 不指定档位时先认上一轮解析到的档位（缓存键必须有具体档位）；连 auto 记录都没有时，
     // 认领同 vid 任一已就绪条目，避免整条取流链路重走一遍，也让「拉分集」与「起播」
@@ -306,3 +306,7 @@ async fn wait_for_fetch(c: &StreamCache, vid: &str, definition: u32) -> AppResul
         tokio::time::sleep(POLL).await;
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_tests.rs"]
+mod tests;

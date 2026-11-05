@@ -1,6 +1,6 @@
 //! 创作者主页（详情页「出品方/演职员」芯片点入）：资料头（昵称/头像/简介，
-//! 资料失败不打断作品列表）+ 作品列表（游标翻页，点击起播）。页面发事件给
-//! 壳（Play/Back），页面间不互相持有。
+//! 资料失败不打断作品列表）+ 作品列表（游标翻页，点击进详情）。页面发事件给
+//! 壳（OpenDetail/Back），页面间不互相持有。
 
 use std::sync::Arc;
 
@@ -16,16 +16,17 @@ use hongguo_api::danmaku::{CreatorProfile, CreatorWork};
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
+use crate::detail::DetailPrefill;
 use crate::home::fmt::format_play_count;
 use crate::ui_button::button as Button;
 
-/// 创作者页发往壳的事件（壳订阅后切目的地/起播）。
+/// 创作者页发往壳的事件（壳订阅后切目的地）。
 #[derive(Debug, Clone)]
 pub(crate) enum CreatorEvent {
-    Play {
+    /// 作品卡进详情（排行榜「卡片一律进详情」同口径）。
+    OpenDetail {
         series_id: String,
-        vid_index: u32,
-        start_secs: f64,
+        prefill: DetailPrefill,
     },
     /// 返回：回到来源页（详情页）或首页（壳裁决）。
     Back,
@@ -185,15 +186,16 @@ impl CreatorView {
         .detach();
     }
 
-    fn play_series(&self, series_id: &str, cx: &mut Context<Self>) {
-        let (vid_index, start_secs) =
-            hongguo_service::play_service::resume::resolve_entry(&self.state.store, series_id, &[])
-                .ok()
-                .unwrap_or((1, 0.0));
-        cx.emit(CreatorEvent::Play {
-            series_id: series_id.to_string(),
-            vid_index,
-            start_secs,
+    fn open_detail(&self, work: &CreatorWork, cx: &mut Context<Self>) {
+        cx.emit(CreatorEvent::OpenDetail {
+            series_id: work.series_id.clone(),
+            prefill: DetailPrefill {
+                title: work.title.clone(),
+                cover: work.cover.clone(),
+                tags: work.tags.clone(),
+                desc: work.intro.clone(),
+                reserved: false,
+            },
         });
     }
 
@@ -339,9 +341,9 @@ impl CreatorView {
                 }
             })
             .on_click({
-                let sid = work.series_id.clone();
+                let work = work.clone();
                 cx.listener(move |this, _, _, cx| {
-                    this.play_series(&sid, cx);
+                    this.open_detail(&work, cx);
                 })
             })
             .child(

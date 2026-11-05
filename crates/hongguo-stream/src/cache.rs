@@ -281,11 +281,14 @@ impl StreamCache {
         }
     }
 
-    /// 记下当前正在看的 vid（prepare 时调用；逐出策略与填充礼让据此判断）。
+    /// 记下当前正在看的 vid（prepare / 连播接力都走这里；逐出与填充礼让据此判断）。
+    /// 写入后立刻按预算逐出：系统播放器队列接力不走 `prepare`，若只改 current
+    /// 不逐出，旧集会无界堆积（长会话实测可到百条 / GB 级）。
     pub fn set_current(&self, vid: &str) {
         *self.current.lock() = vid.to_string();
         self.prefetch.lock().retain(|(v, _)| v != vid);
         *self.next.lock() = None;
+        self.retain_playing_set(vid);
     }
 
     /// 标记系统播放器队列里即将接力的下一集（只保留一条）。
@@ -503,11 +506,29 @@ mod tests {
         assert!(!present(&c, "o1", 1080), "最旧的被逐出");
 
         c.set_current("o4");
-        c.retain_playing_set("o4");
         assert!(
             present(&c, "cur", 1080),
             "刚切走的上一部仍在保留窗内（挂载的 <video> 可能还在读它）"
         );
+    }
+
+    #[test]
+    fn set_current_itself_runs_retain() {
+        // 连播接力只调 set_current；逐出必须嵌在里面，不能依赖 prepare。
+        let c = StreamCache::default();
+        c.store("big-cur", 1080, &[0u8; 10]);
+        for i in 0..6 {
+            c.store(&format!("f{i}"), 1080, &[0u8; 10]);
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        c.set_current("big-cur");
+        assert!(present(&c, "big-cur", 1080), "当前集必留");
+        assert!(!present(&c, "f0", 1080));
+        assert!(!present(&c, "f1", 1080));
+        assert!(!present(&c, "f2", 1080));
+        assert!(present(&c, "f3", 1080));
+        assert!(present(&c, "f4", 1080));
+        assert!(present(&c, "f5", 1080));
     }
 
     #[test]

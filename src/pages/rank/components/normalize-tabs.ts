@@ -3,9 +3,13 @@ import type { RankSubList, RankTab } from '@/service/schema';
 
 /**
  * 服务端两种 selector 形态归一成统一的「内容tab → 子榜(含筛选面板)」。
- * `filterTitle` 只在一级形态（老版本身份）用作合成面板行标题，由调用方传 t(...)，本函数保持纯数据变换。
+ * `filterTitle` / `allTabName` 由调用方传 t(...)，本函数保持纯数据变换。
  */
-export function normalizeTabs(tabs: RankTab[], filterTitle: string): RankTab[] {
+export function normalizeTabs(
+  tabs: RankTab[],
+  filterTitle: string,
+  allTabName: string,
+): RankTab[] {
   if (tabs.length === 0) return [];
   // 两级形态的标志是「全部」tab（id=all）；其余 tab id 都是内容分类
   if (tabs.some((tab) => tab.id === 'all')) {
@@ -15,7 +19,7 @@ export function normalizeTabs(tabs: RankTab[], filterTitle: string): RankTab[] {
   return [
     {
       id: 'all',
-      name: '全部',
+      name: allTabName,
       subs: tabs.map<RankSubList>((tab) => ({
         id: tab.id,
         name: tab.name,

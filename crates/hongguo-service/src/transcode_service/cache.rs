@@ -30,7 +30,7 @@ pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
 pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
     let path = cache_file_for(series_id, vid_index, rate);
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if size > 100 * 1024 {
+    if size > hongguo_common::consts::units::MIN_MEDIA_BYTES {
         Some(path)
     } else {
         None

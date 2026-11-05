@@ -1,27 +1,23 @@
 use super::*;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::v_flex;
 use gpui_kit::component::{ActiveTheme, Sizable};
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, ImageSource, ObjectFit, Role, SharedString, div, img};
 
-use crate::ui_button::button as Button;
-
 impl super::Shell {
     /// 侧栏折叠态落盘（`ui_prefs` 读-改-写，Tauri zustand persist 同语义）。
-    fn persist_sidebar_collapsed(&self) {
+    pub(super) fn persist_sidebar_collapsed(&self) {
         let mut prefs = crate::ui_prefs::load();
         prefs.sidebar_collapsed = self.sidebar_collapsed;
         crate::ui_prefs::save(prefs);
     }
 
     /// 侧栏：13 目的地，展开 160px 图标+文字、折叠 56px 纯图标（tooltip 出
-    /// 标签）；追更带未读角标；贴底账户区（未登录开登录面板，已登录进设置页）
-    /// 与折叠钮。导航行与账户行用组件库基础层按钮（`gpui_kit::base::Button`），
-    /// 焦点/键盘激活/无障碍由库负责，视觉由本壳给。
+    /// 标签）；追更带未读角标；贴底账户区（未登录开登录面板，已登录进设置页）。
+    /// 折叠入口在顶栏（红绿灯同行）。导航行与账户行用组件库基础层按钮。
     pub(super) fn render_sidebar(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let collapsed = self.sidebar_collapsed;
         // 头像懒加载守卫：账号在且 URL 变化才触发一次（幂等）
@@ -77,7 +73,8 @@ impl super::Shell {
                     .object_fit(ObjectFit::Cover)
                     .into_any_element(),
                 None => gpui_kit::component::Icon::new(IconName::UserRound)
-                    .small()
+                    // Tauri 侧栏 `size-4`（16px），勿用 `.small()`（14px）
+                    .with_size(gpui_kit::px(16.0))
                     .text_color(theme.muted_foreground)
                     .into_any_element(),
             })
@@ -156,7 +153,8 @@ impl super::Shell {
                             .color(theme.danger)
                             .child(
                                 gpui_kit::component::Icon::new(dest.icon())
-                                    .small()
+                                    // Tauri `<Icon className="size-4" />`
+                                    .with_size(gpui_kit::px(16.0))
                                     .text_color(if active {
                                         theme.primary_foreground
                                     } else {
@@ -211,44 +209,7 @@ impl super::Shell {
                     .mt_auto()
                     .child(account_row),
             )
-            .child(
-                div()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .pt_2()
-                    .child(if collapsed {
-                        // 折叠态只剩一枚图标：组件 Button 的根是 shrink-to-fit
-                        // 宽度，直接摆会贴内容区左边（实测偏左 7.5px）。撑满
-                        // 整条内容区，图标才落在中线上——Tauri 侧同款
-                        // `className="w-full"`（collapsed 时不加 justify-start，
-                        // 由按钮自身居中）。
-                        Button::new("sidebar-expand")
-                            .icon(IconName::PanelLeft)
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .tooltip(crate::i18n::t("nav.expand"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_collapsed = false;
-                                this.persist_sidebar_collapsed();
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                    } else {
-                        Button::new("sidebar-collapse")
-                            .icon(IconName::PanelLeftClose)
-                            .ghost()
-                            .small()
-                            .label(crate::i18n::t("nav.collapse"))
-                            .tooltip(crate::i18n::t("nav.collapse"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_collapsed = true;
-                                this.persist_sidebar_collapsed();
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                    }),
-            )
+            // 折叠钮已挪到顶栏（红绿灯同行）；侧栏底只留账户区。
             .into_any_element()
     }
 }

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AppSidebar } from './app-sidebar';
 import { BottomNav } from './bottom-nav';
 import { ThemeSwitch } from './theme-switch';
+import { TitlebarNav } from './titlebar-nav';
 import { WindowButtons } from './window-controls';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
@@ -176,6 +177,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             mac ? 'pr-3 pl-[76px]' : 'px-3',
           )}
         >
+          {/* 左簇：后退 / 前进 / 侧栏折叠（红绿灯右侧，IDE 同款）。
+              推荐播里的「返回」pill 已撤，从其它页起播靠这里的 ←。 */}
+          <TitlebarNav />
           {/* 中部插槽：各页 portal 进来的分类 tab。绝对定位真居中——
                 左右组宽度不等（红绿灯位 vs 控件），flex-1 的「剩余空间
                 居中」会明显偏右。inset-x-0 + mx-auto + w-fit 居中且不用

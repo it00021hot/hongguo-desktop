@@ -18,6 +18,7 @@ use hongguo_api::search::{SearchResult, SuggestItem};
 use hongguo_service::app_state::AppStateInner;
 
 use crate::bridge;
+use crate::detail::DetailPrefill;
 use crate::home::fmt::format_play_count;
 use crate::ui_button::button as Button;
 
@@ -31,13 +32,13 @@ mod render;
 mod search;
 mod suggest;
 
-/// 找剧页发往壳的事件（壳订阅后切目的地/起播）。
+/// 找剧页发往壳的事件（壳订阅后切目的地）。
 #[derive(Debug, Clone)]
 pub(crate) enum BrowseEvent {
-    Play {
+    /// 整卡进详情（排行榜/预约「卡片一律进详情」同口径）。
+    OpenDetail {
         series_id: String,
-        vid_index: u32,
-        start_secs: f64,
+        prefill: DetailPrefill,
     },
 }
 

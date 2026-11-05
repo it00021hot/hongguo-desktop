@@ -1,3 +1,5 @@
+import { locale, tf } from '@/locales';
+
 /** 体积格式化：字节 → 可读字符串。 */
 export function formatBytes(bytes: number, decimals = 1): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -18,18 +20,52 @@ export function formatDuration(seconds: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-/** 播放量人性化：1.2亿 / 3456万 / 8921。 */
+/** 播放量人性化：中文 1.2亿 / 3456万；英文 120M / 34.6K。 */
 export function formatPlayCount(n: number): string {
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}亿`;
-  if (n >= 10_000) return `${Math.round(n / 10_000)}万`;
+  if (locale() === 'zh-CN') {
+    if (n >= 100_000_000) return tf('number.yi', { value: (n / 100_000_000).toFixed(1) });
+    if (n >= 10_000) return tf('number.wan', { value: Math.round(n / 10_000) });
+    return String(n);
+  }
+  if (n >= 1_000_000) return tf('number.million', { value: trimTrailingZero((n / 1_000_000).toFixed(1)) });
+  if (n >= 10_000) return tf('number.thousand', { value: trimTrailingZero((n / 1_000).toFixed(1)) });
   return String(n);
 }
 
-/** 计数人性化（详情页头部精度）：万/亿带一位小数，整数省略小数点；列表卡片用的 formatPlayCount 保持整数万不变。 */
+/** 计数人性化（详情页头部精度）：万/亿带一位小数；列表卡片用的 formatPlayCount 保持整数万不变。 */
 export function formatCountPrecise(n: number): string {
-  if (n >= 100_000_000) return `${trimTrailingZero((n / 100_000_000).toFixed(1))}亿`;
-  if (n >= 10_000) return `${trimTrailingZero((n / 10_000).toFixed(1))}万`;
-  return String(n);
+  if (locale() === 'zh-CN') {
+    if (n >= 100_000_000) {
+      return tf('number.yi', { value: trimTrailingZero((n / 100_000_000).toFixed(1)) });
+    }
+    if (n >= 10_000) {
+      return tf('number.wan', { value: trimTrailingZero((n / 10_000).toFixed(1)) });
+    }
+    return String(n);
+  }
+  return formatPlayCount(n);
+}
+
+/**
+ * 互动栏计数：中文「1.4万 / 1.2百万」；英文走 {@link formatPlayCount}。
+ * 百万档仅中文 UI 使用（官方抖音系展示）。
+ */
+export function formatCountCompact(n: number): string {
+  if (locale() === 'zh-CN') {
+    if (n >= 1_000_000) {
+      return tf('number.baiwan', {
+        value: trimTrailingZero((n / 1_000_000).toFixed(1)),
+      });
+    }
+    if (n >= 10_000) {
+      const decimals = n % 10_000 >= 1000 ? 1 : 0;
+      return tf('number.wan', {
+        value: trimTrailingZero((n / 10_000).toFixed(decimals)),
+      });
+    }
+    return String(n);
+  }
+  return formatPlayCount(n);
 }
 
 /** 去掉 toFixed(1) 尾部的 「.0」。 */

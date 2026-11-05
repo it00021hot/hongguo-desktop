@@ -1,6 +1,11 @@
 //! 首页推荐流接口（书城换一换；详见 docs/hongguo-api-endpoints.md）。
 
+
+mod cache;
 mod model;
+mod parse;
+mod session;
+
 
 use serde_json::Value;
 
@@ -10,10 +15,19 @@ use super::discover::check_code;
 use super::rank::RANK_CELL_PATH;
 use hongguo_common::{AppError, AppResult};
 
+pub use cache::clear_feed_tabs_cache;
 pub use model::{FeedTabMeta, RecommendTabConfig};
 
-/// 拉一页首页推荐流（书城换一换），两段式：首页 `bookmall/tab`（配置+会话+首批），
-/// 翻页 `cell/change`（`filter_ids`=已下发 series_id 逗号表，服务端排除已见）。
+use cache::{
+    TAB_CONFIG_TTL, cache_feed_tabs_insert, cache_tab_config_insert, cached_feed_tabs,
+    cached_tab_config, flex_str, known_tab_config, parse_feed_tabs,
+};
+use parse::{parse_recommend_feed, recommend_feed_entry};
+use session::{
+    FEED_IMAGE_SHRINK, NPS_INSERT_RANK_JSON, RECOMMEND_EXTRA, recent_impressions,
+    rec_filter_info_list, session_runtime_pairs, session_uuid,
+};
+
 pub async fn fetch_recommend_feed(
     tab: &str,
     session_id: &str,
@@ -43,21 +57,6 @@ pub async fn fetch_recommend_feed(
         super::play_url::register_content_type(&item.vid, item.content_type);
     }
     Ok(page)
-}
-
-/// 已知的每 tab 配置（服务端按 tab 下发的常量）。`fetch_tab_first_page` 失败时的兜底，
-/// 供翻页继续可用（首页已成功过的会话不依赖它）。
-fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
-    let (cell_id, bookstore_id) = match tab {
-        "16" => ("7294257141911650341", "7294257258253254693"),
-        "36" => ("7597343008509411390", "7597343072904560702"),
-        "39" => ("7650476176527343678", "7650476689721409598"),
-        _ => return None,
-    };
-    Some(RecommendTabConfig {
-        cell_id: cell_id.into(),
-        bookstore_id: bookstore_id.into(),
-    })
 }
 
 /// 推荐 tab 在顶栏里的 tab_type：顶栏列表请求的源 tab（其响应 `tab_item[]`
@@ -100,98 +99,6 @@ pub async fn fetch_feed_tabs(env: &ApiEnv) -> AppResult<Vec<FeedTabMeta>> {
     Ok(tabs)
 }
 
-/// 清空顶栏列表进程缓存（注册换档后调用：换档前的匿名塌缩表不应再被
-/// TTL 复用）。
-pub fn clear_feed_tabs_cache() {
-    *FEED_TABS_CACHE.get_or_init(FeedTabsCache::default).lock() = None;
-}
-
-/// tab_item[] → 顶栏列表（保序）。缺 tab_type 的残缺条目跳过。
-fn parse_feed_tabs(value: &Value) -> AppResult<Vec<FeedTabMeta>> {
-    let tabs = value
-        .pointer("/data/tab_item")
-        .and_then(Value::as_array)
-        .ok_or_else(|| AppError::Media("推荐 tab 响应缺 tab_item".into()))?;
-    Ok(tabs
-        .iter()
-        .filter_map(|t| {
-            let tab_type = flex_str(t.get("tab_type"))?;
-            Some(FeedTabMeta {
-                tab_type,
-                title: t
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                bookstore_id: flex_str(t.get("bookstore_id")).filter(|s| !s.is_empty()),
-            })
-        })
-        .collect())
-}
-
-/// 顶栏列表缓存（与 tab 配置同 TTL；stale-while-error）。
-#[derive(Clone)]
-struct CachedFeedTabs {
-    tabs: Vec<FeedTabMeta>,
-    at: std::time::Instant,
-}
-
-type FeedTabsCache = parking_lot::Mutex<Option<CachedFeedTabs>>;
-static FEED_TABS_CACHE: std::sync::OnceLock<FeedTabsCache> = std::sync::OnceLock::new();
-
-fn cache_feed_tabs_insert(tabs: Vec<FeedTabMeta>) {
-    *FEED_TABS_CACHE.get_or_init(FeedTabsCache::default).lock() = Some(CachedFeedTabs {
-        tabs,
-        at: std::time::Instant::now(),
-    });
-}
-
-fn cached_feed_tabs() -> Option<CachedFeedTabs> {
-    FEED_TABS_CACHE
-        .get_or_init(FeedTabsCache::default)
-        .lock()
-        .clone()
-}
-
-/// 配置进程内缓存（首页 cr=4 与翻页共享；失败回落已知值）。
-///
-/// 条目带时间戳做 TTL 过期：超过 [`TAB_CONFIG_TTL`] 后下次使用先重取一次，
-/// 重取失败继续用旧值（stale-while-error）。
-#[derive(Clone)]
-struct CachedTabConfig {
-    cfg: RecommendTabConfig,
-    at: std::time::Instant,
-}
-
-/// 配置复验间隔：服务端常量假设下 1 小时重验一次足够及时，开销可忽略。
-const TAB_CONFIG_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
-
-type TabConfigCache = parking_lot::Mutex<std::collections::HashMap<String, CachedTabConfig>>;
-static TAB_CONFIG_CACHE: std::sync::OnceLock<TabConfigCache> = std::sync::OnceLock::new();
-
-fn cache_tab_config_insert(tab: &str, cfg: RecommendTabConfig) {
-    TAB_CONFIG_CACHE
-        .get_or_init(TabConfigCache::default)
-        .lock()
-        .insert(
-            tab.to_string(),
-            CachedTabConfig {
-                cfg,
-                at: std::time::Instant::now(),
-            },
-        );
-}
-
-fn cached_tab_config(tab: &str) -> Option<CachedTabConfig> {
-    TAB_CONFIG_CACHE
-        .get_or_init(TabConfigCache::default)
-        .lock()
-        .get(tab)
-        .cloned()
-}
-
-/// 解析 tab 的 cell 配置：进程缓存命中且未过期直接用；过期先重取一次，
-/// 失败沿用旧值。无缓存时现场取，再不行回落已知值（同样缓存住，免得每页都重试）。
 async fn resolve_tab_config(tab: &str, env: &ApiEnv) -> AppResult<RecommendTabConfig> {
     if let Some(cached) = cached_tab_config(tab) {
         if cached.at.elapsed() < TAB_CONFIG_TTL {
@@ -269,17 +176,6 @@ async fn request_bookstore_tab(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     Ok(value)
 }
 
-/// tab_item 字段数字/字符串双形态，容忍后归一为字符串。
-fn flex_str(v: Option<&Value>) -> Option<String> {
-    match v {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Number(n)) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
-/// `GET bookmall/tab/v?client_req_type=1028`（sinfoninec 域）——tab 首页
-/// （配置 + 会话 + 嵌套首批）的官方现行形态；会话状态族与翻页共用同一套值。
 async fn request_feed_tab_first_page(tab: &str, env: &ApiEnv) -> AppResult<Value> {
     let uuid = session_uuid();
     let q: Vec<(String, String)> = [
@@ -329,32 +225,18 @@ async fn request_feed_tab_first_page(tab: &str, env: &ApiEnv) -> AppResult<Value
         ("client_req_type", "1028"),
         ("req_rank_algo", "0"),
         ("unlimited_short_series_next_offset", "0"),
-        // 会话状态族（官方把运行态快照打进 tab 请求，与翻页同一套值）
-        ("normal_session_cnt_in_day", "8"),
-        ("cold_start_session_cnt_in_day", "4"),
-        ("normal_session_id", &format!("{uuid}#1")),
-        ("cold_start_session_id", uuid),
-        ("cold_start_session_cnt_in_life", "32"),
-        ("normal_session_cnt_in_life", "64"),
-        ("charging", "0"),
-        ("har_status", "0"),
-        ("is_power_save_mode", "0"),
-        ("app_dark_mode", "1"),
-        ("screen_brightness", "21"),
-        ("battery_pct", "71"),
-        ("down_speed", "60000"),
-        ("sys_dark_mode", "1"),
         ("current_volume", "0"),
-        ("app_mini_window", "0"),
-        ("sys_mini_window", "1"),
-        ("font_scale", "100"),
-        ("network_type", "4"),
         ("rom_version", "V417IR release-keys"),
         ("need_personal_recommend", "1"),
         ("recommend_extra", RECOMMEND_EXTRA),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
+    .chain(
+        session_runtime_pairs(uuid)
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v)),
+    )
     .collect();
     let bytes = api_call_reading(
         SINFONLINEC_API_ORIGIN,
@@ -448,117 +330,6 @@ async fn fetch_tab_first_page(
 }
 
 /// 官方 cell/change 的图片缩略规格（base64(JSON)：360 中图 / 屏宽大图 / 99 小图）。
-const FEED_IMAGE_SHRINK: &str = "W3siaW1hZ2VfdHlwZSI6MiwiaW1hZ2Vfd2lkdGgiOjM2MCwic2hyaW5rX3R5cGUiOjJ9LHsiaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==";
-
-/// 官方 cell/change 的推荐补充上下文：base64 即
-/// `{"recent_dislike_gid":[],"session_app_stay_time":0}`。
-const RECOMMEND_EXTRA: &str =
-    "eyJyZWNlbnRfZGlzbGlrZV9naWQiOltdLCJzZXNzaW9uX2FwcF9zdGF5X3RpbWUiOjB9";
-
-/// NPS 插入位配额（官方恒值）。
-const NPS_INSERT_RANK_JSON: &str = r#"{"1":3,"3":3,"2":3,"4":3}"#;
-
-/// 进程生命周期的会话 UUID：官方一次启动发三枚，本仓用同一枚派生两形态
-/// （裸 uuid 与 `uuid#1`）——服务端只要求同会话内一致。
-fn session_uuid() -> &'static str {
-    static UUID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    UUID.get_or_init(uuid_v4)
-}
-
-/// 随机 UUID v4（不为此引入 uuid crate，rand 随机字节拼 8-4-4-4-12）。
-fn uuid_v4() -> String {
-    let mut b: [u8; 16] = rand::random();
-    b[6] = b[6] & 0x0f | 0x40; // version 4
-    b[8] = b[8] & 0x3f | 0x80; // variant 10xx
-    let hex = |range: std::ops::Range<usize>| {
-        b[range]
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect::<String>()
-    };
-    format!(
-        "{}-{}-{}-{}-{}",
-        hex(0..4),
-        hex(4..6),
-        hex(6..8),
-        hex(8..10),
-        hex(10..16)
-    )
-}
-
-/// 一条已下发条目的曝光记录：响应卡片 `cell_extra_data.rec_filter_info`
-/// 的原样保留（content_type 字符串与 filter_id_map 不做映射猜测）。
-#[derive(Clone)]
-struct RecImpression {
-    content_type: String,
-    rec_group_id: i64,
-    filter_id_map: serde_json::Value,
-}
-
-/// 最近曝光环容量：官方 latest_impression_gids 一次 2~6 个，取 8 留余量。
-const IMPRESSION_CAP: usize = 8;
-
-type ImpressionRing = parking_lot::Mutex<Vec<RecImpression>>;
-static RECENT_IMPRESSIONS: std::sync::OnceLock<ImpressionRing> = std::sync::OnceLock::new();
-
-/// 记录一批曝光（翻页请求把它原样回传给服务端做个性化去重上下文）。
-fn push_impressions(items: impl IntoIterator<Item = RecImpression>) {
-    let ring = RECENT_IMPRESSIONS.get_or_init(|| parking_lot::Mutex::new(Vec::new()));
-    let mut guard = ring.lock();
-    for item in items {
-        if guard.iter().any(|i| i.rec_group_id == item.rec_group_id) {
-            continue;
-        }
-        guard.push(item);
-    }
-    let excess = guard.len().saturating_sub(IMPRESSION_CAP);
-    if excess > 0 {
-        guard.drain(0..excess);
-    }
-}
-
-fn recent_impressions() -> Vec<RecImpression> {
-    RECENT_IMPRESSIONS
-        .get_or_init(|| parking_lot::Mutex::new(Vec::new()))
-        .lock()
-        .clone()
-}
-
-/// 曝光记录 → `rec_filter_info_list` 线格式（官方键序 content_type /
-/// filter_id_map / rec_group_id，rec_group_id 是数字）。
-fn rec_filter_info_list(items: &[RecImpression]) -> serde_json::Value {
-    serde_json::Value::Array(
-        items
-            .iter()
-            .map(|i| {
-                serde_json::json!({
-                    "content_type": i.content_type,
-                    "filter_id_map": i.filter_id_map,
-                    "rec_group_id": i.rec_group_id,
-                })
-            })
-            .collect(),
-    )
-}
-
-/// 从响应卡片提取曝光记录；卡片不带 `cell_extra_data.rec_filter_info`
-/// （部分运营卡）则返回 None，不猜测类型映射。
-fn rec_impression_of(raw: &Value) -> Option<RecImpression> {
-    let info = raw.pointer("/cell_extra_data/rec_filter_info")?;
-    let content_type = info
-        .get("content_type")
-        .and_then(Value::as_str)?
-        .to_string();
-    let rec_group_id = info.get("rec_group_id").and_then(Value::as_i64)?;
-    Some(RecImpression {
-        content_type,
-        rec_group_id,
-        filter_id_map: info.get("filter_id_map").cloned().unwrap_or(Value::Null),
-    })
-}
-
-/// 翻页：`GET cell/change/v`——双 id 用目标 tab 自己的，`filter_ids` 排除已见，
-/// `offset` 用上一页响应的 next_offset。
 async fn recommend_cell_change(
     tab: &str,
     cfg: &RecommendTabConfig,
@@ -630,29 +401,10 @@ async fn recommend_cell_change(
         ("video_tab_cold_start", "0"),
         ("video_type_preferences_str", "[]"),
         ("web_page_version_code", "0"),
-        // 会话状态族（官方客户端运行态快照，服务端按存在性个性化）
-        ("app_dark_mode", "1"),
         ("app_launch_times", "0"),
-        ("app_mini_window", "0"),
-        ("battery_pct", "71"),
-        ("charging", "0"),
-        ("cold_start_session_cnt_in_day", "4"),
-        ("cold_start_session_cnt_in_life", "32"),
-        ("cold_start_session_id", uuid),
         ("current_volume", "0"),
-        ("down_speed", "60000"),
-        ("font_scale", "100"),
         ("gender", "2"),
-        ("har_status", "0"),
-        ("is_power_save_mode", "0"),
-        ("network_type", "4"),
-        ("normal_session_cnt_in_day", "8"),
-        ("normal_session_cnt_in_life", "64"),
-        ("normal_session_id", &format!("{uuid}#1")),
         ("rom_version", "V417IR release-keys"),
-        ("screen_brightness", "21"),
-        ("sys_dark_mode", "1"),
-        ("sys_mini_window", "1"),
         // 排除与去重（翻页语义核心）
         ("session_id", session_id),
         ("filter_ids", &filter_ids.join(",")),
@@ -661,6 +413,11 @@ async fn recommend_cell_change(
     // 空会话/空排除表不发对应键（与调用方约定一致：首页会话还没建立）
     .filter(|(k, v)| !((*k == "session_id" || *k == "filter_ids") && v.is_empty()))
     .map(|(k, v)| (k.to_string(), v.to_string()))
+    .chain(
+        session_runtime_pairs(uuid)
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v)),
+    )
     .collect();
     // 翻页与 tab 首页同族同源（SINFONLINEC_API_ORIGIN）：会话是首页响应下发的，
     // 跨域复用同一会话有被拒风险
@@ -671,270 +428,9 @@ async fn recommend_cell_change(
     parse_recommend_feed(value.get("data"))
 }
 
-/// cell/change 响应 → FeedPage。条目在 `cell_view.cell_data[].video_data[]`，
-/// 身份字段在条目的 `video_detail`（与 landpage 的 title/cover 族不同名）。
-fn parse_recommend_feed(data: Option<&Value>) -> AppResult<super::discover::FeedPage> {
-    use super::discover::FeedPage;
-    let data = data.ok_or_else(|| AppError::Media("推荐流响应缺少 data".into()))?;
-    let mut items = Vec::new();
-    for cell in data
-        .pointer("/cell_view/cell_data")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
-        for raw in cell
-            .get("video_data")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-        {
-            if let Some(it) = recommend_feed_entry(raw) {
-                items.push(it);
-            }
-        }
-    }
-    Ok(FeedPage {
-        has_more: data
-            .get("has_more")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        next_offset: data.get("next_offset").and_then(Value::as_i64).unwrap_or(0),
-        session_id: data
-            .get("session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        items,
-    })
-}
-
-/// 一条推荐流条目（cell/change 与 bookmall/tab 嵌套 cell 共用同一形态）。
-fn recommend_feed_entry(raw: &Value) -> Option<super::discover::FeedItem> {
-    let det = raw.get("video_detail");
-    // series_id 双形态：顶层数字/字符串优先，兜 video_detail.series_id_str
-    let series_id = raw
-        .get("series_id")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            raw.get("series_id")
-                .and_then(Value::as_i64)
-                .map(|n| n.to_string())
-        })
-        .or_else(|| {
-            det.and_then(|d| d.get("series_id_str"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
-    if series_id.is_empty() {
-        return None;
-    }
-    // 卡片自带的曝光上下文进最近曝光环（翻页 rec_filter_info_list 的数据源）
-    if let Some(impression) = rec_impression_of(raw) {
-        push_impressions(std::iter::once(impression));
-    }
-    let season_tag = det
-        .and_then(|d| d.get("secondary_infos"))
-        .and_then(Value::as_array)
-        .and_then(|arr| {
-            // 季徽：data_type 缺省或 0 的第一条（「第1季」，highlight）
-            arr.iter().find_map(|it| {
-                let dt = it.get("data_type").and_then(Value::as_i64);
-                (dt.is_none() || dt == Some(0))
-                    .then(|| it.get("content").and_then(Value::as_str))
-                    .flatten()
-                    .map(str::to_string)
-            })
-        })
-        .unwrap_or_default();
-    Some(super::discover::FeedItem {
-        series_id,
-        title: det
-            .and_then(|d| d.get("series_title"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        cover: det
-            .and_then(|d| d.get("series_cover"))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                det.and_then(|d| d.get("series_cover_uri"))
-                    .and_then(Value::as_str)
-            })
-            .unwrap_or_default()
-            .to_string(),
-        horiz_cover: String::new(),
-        // 推荐位 vid 两个位置都见过：顶层 vid 与 video_detail.video_list[0].vid，
-        // 两级回落；批量取流预取的 vid 源就是它
-        vid: raw
-            .get("vid")
-            .map(|v| match v {
-                Value::Number(n) => n.to_string(),
-                Value::String(s) => s.clone(),
-                _ => String::new(),
-            })
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                det.and_then(|d| d.get("video_list"))
-                    .and_then(Value::as_array)
-                    .and_then(|arr| arr.first())
-                    .and_then(|v| v.get("vid"))
-                    .map(|v| match v {
-                        Value::Number(n) => n.to_string(),
-                        Value::String(s) => s.clone(),
-                        _ => String::new(),
-                    })
-            })
-            .unwrap_or_default(),
-        episode_cnt: det
-            .and_then(|d| d.get("episode_cnt"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0) as u32,
-        play_cnt: det
-            .and_then(|d| d.get("series_play_cnt"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
-        comment_count: 0,
-        // 评分（secondary_infos data_type=4，「9.6分」形态；无则 0）
-        score: det
-            .and_then(|d| d.get("secondary_infos"))
-            .and_then(Value::as_array)
-            .and_then(|arr| {
-                arr.iter().find_map(|it| {
-                    (it.get("data_type").and_then(Value::as_i64) == Some(4))
-                        .then(|| it.get("content").and_then(Value::as_str))
-                        .flatten()
-                        .and_then(|s| s.trim_end_matches('分').parse::<f64>().ok())
-                })
-            })
-            .unwrap_or(0.0),
-        tags: super::discover::parse_tags(det.and_then(|d| d.get("category_schema"))),
-        season_tag,
-        // 热度行：条目级 rec_tags 里 data_type=1 的 content 多段拼接
-        //（「共217万人在追」「逆袭榜 No.3」等）
-        heat_text: raw
-            .get("rec_tags")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter(|t| t.get("data_type").and_then(Value::as_i64) == Some(1))
-                    .filter_map(|t| t.get("content").and_then(Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            })
-            .unwrap_or_default(),
-        // 运营角标 pill（「新剧」等；官方随 tag_info.bg_color 下发颜色，前端用主题色即可）
-        badge: det
-            .and_then(|d| d.pointer("/tag_info/text"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        content_type: det
-            .and_then(|d| d.get("content_type"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_recommend_feed_entries() {
-        let data: Value = serde_json::json!({
-            "has_more": true,
-            "next_offset": 6,
-            "session_id": "20261008181149086C4BCA8151179AD830",
-            "cell_view": {
-                "cell_data": [
-                    { "video_data": [{
-                        "series_id": 7677187660368055321_i64,
-                        "vid": 7677203040796953624_i64,
-                        "rec_tags": [
-                            { "content": "真人剧新番榜 No.4", "data_type": 1 },
-                            { "content": "4920万热度", "data_type": 1 },
-                            { "content": "不展示的杂项", "data_type": 9 }
-                        ],
-                        "video_detail": {
-                            "series_id_str": "7677187660368055321",
-                            "series_title": "谁把我仙侠游戏退出键扣了3D版",
-                            "series_cover": "",
-                            "series_cover_uri": "https://p3-sign.douyinpic.com/x~tplv.image",
-                            "episode_cnt": 248,
-                            "series_play_cnt": 17050000,
-                            "content_type": 1004,
-                            "category_schema": "[{\"category_id\":755,\"name\":\"脑洞\"},{\"category_id\":37,\"name\":\"穿越\"}]",
-                            "tag_info": { "text": "新剧", "bg_color": ["#00AE83"] },
-                            "secondary_infos": [
-                                { "content": "第1季", "highlight": true },
-                                { "content": "9.6分", "data_type": 4 },
-                                { "content": "异界", "data_type": 3 }
-                            ]
-                        }
-                    }]},
-                    { "video_data": [{ "vid": 123_i64, "video_detail": { "series_title": "缺 id 的废条目" } }] }
-                ]
-            }
-        });
-        let page = parse_recommend_feed(Some(&data)).unwrap();
-        assert_eq!(page.items.len(), 1, "缺 series_id 的条目要跳过");
-        let it = &page.items[0];
-        assert_eq!(
-            it.series_id, "7677187660368055321",
-            "顶层数字 series_id 无损转字符串"
-        );
-        assert_eq!(it.title, "谁把我仙侠游戏退出键扣了3D版");
-        assert_eq!(it.vid, "7677203040796953624");
-        assert!(it.cover.contains("douyinpic"));
-        assert_eq!(it.episode_cnt, 248);
-        assert_eq!(it.play_cnt, 17_050_000);
-        assert_eq!(it.content_type, 1004);
-        assert_eq!(it.tags, vec!["脑洞", "穿越"]);
-        assert_eq!(
-            it.season_tag, "第1季",
-            "data_type 缺省的 secondary_info 是季徽"
-        );
-        assert_eq!(
-            it.heat_text, "真人剧新番榜 No.4 · 4920万热度",
-            "热度行 = rec_tags data_type=1 拼接"
-        );
-        assert_eq!(it.badge, "新剧", "运营角标 = video_detail.tag_info.text");
-        assert_eq!(it.score, 9.6, "评分 = secondary data_type=4 去掉「分」");
-        assert!(page.has_more);
-        assert_eq!(page.next_offset, 6);
-        assert_eq!(page.session_id, "20261008181149086C4BCA8151179AD830");
-    }
-
-    #[test]
-    fn parses_feed_tab_bar() {
-        let value = serde_json::json!({
-            "data": { "tab_item": [
-                { "tab_type": 45, "title": "关注" },
-                { "tab_type": 36, "title": "漫剧", "bookstore_id": null },
-                { "tab_type": 39, "title": "真人剧" },
-                { "title": "缺 tab_type 的废条目" },
-                { "tab_type": "16", "title": "推荐", "bookstore_id": "7294257258253254693" }
-            ]}
-        });
-        let tabs = parse_feed_tabs(&value).unwrap();
-        assert_eq!(
-            tabs.iter().map(|t| t.tab_type.as_str()).collect::<Vec<_>>(),
-            ["45", "36", "39", "16"],
-            "保序且跳过残缺条目"
-        );
-        assert_eq!(tabs[0].title, "关注");
-        assert_eq!(tabs[0].bookstore_id, None, "游客态关注无数据面");
-        assert_eq!(tabs[1].bookstore_id, None);
-        assert_eq!(tabs[3].title, "推荐");
-        assert_eq!(tabs[3].bookstore_id.as_deref(), Some("7294257258253254693"));
-    }
-}
+#[path = "recommend_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 pub(crate) mod probe {

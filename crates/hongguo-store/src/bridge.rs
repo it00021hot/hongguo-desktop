@@ -35,6 +35,19 @@ impl Store {
         Self::spawn_open(path.as_ref().to_string_lossy().into_owned())
     }
 
+    /// 开库；被锁时稍等重试一次（覆盖两实例几乎同时启动、败者尚未退出的窗口期）。
+    pub fn open_with_lock_retry(path: impl AsRef<std::path::Path>) -> AppResult<Self> {
+        match Self::open(&path) {
+            Ok(db) => Ok(db),
+            Err(AppError::StoreLocked(first)) => {
+                log::warn!("[Store] 数据库暂时被锁（{first}），1s 后重试一次");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                Self::open(path)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// 内存库（测试与 `AppState::default`）。
     pub fn open_memory() -> AppResult<Self> {
         Self::spawn_open(":memory:".to_string())

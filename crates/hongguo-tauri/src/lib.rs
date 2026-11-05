@@ -358,17 +358,8 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
     std::sync::Arc::new(hongguo_service::AppStateInner::with_device(db, device))
 }
 
-/// 开库；被锁时稍等重试一次（覆盖两实例几乎同时启动、败者尚未退出的窗口期）。
 fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
-    match hongguo_store::Store::open(hongguo_store::paths::db_file()) {
-        Ok(db) => Ok(db),
-        Err(AppError::StoreLocked(first)) => {
-            log::warn!("[Store] 数据库暂时被锁（{first}），1s 后重试一次");
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            hongguo_store::Store::open(hongguo_store::paths::db_file())
-        }
-        Err(e) => Err(e),
-    }
+    hongguo_store::Store::open_with_lock_retry(hongguo_store::paths::db_file())
 }
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴——它若崩，先怀疑分配/并发本身，别在业务代码里找。

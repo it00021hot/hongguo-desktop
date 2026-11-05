@@ -158,9 +158,12 @@ impl HomeView {
 
     /// 选集浮层入口（Tauri immersive 同款：ListVideo 图标 + 总集数）。
     pub(super) fn render_picker_entry(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        // 选集浮层入口（Tauri immersive 同款：ListVideo 图标 +
-        // 总集数；浮层**贴按钮**向上弹——Tauri 的 EpisodePicker
-        // 就挂在按钮 wrapper 里，右缘与按钮对齐）
+        // 选集浮层入口（Tauri immersive `CHROME_BUTTON` 同款：h-8 / gap-1.5 /
+        // ListVideo size-4 +「选集 · 全N集」；浮层**贴按钮**向上弹）。
+        //
+        // 不用组件库 Button：其 content 链 `size_full` + `min_w_0`，在相对
+        // 定位 wrapper 里会被撑成宽胶囊，图标/文案挤到左侧一坨空白——
+        // 截图像「选集按钮坏了」。改 BaseButton 内容自适应宽度。
         //
         // 入口按钮的矩形哨兵：浮层「点外部关闭」要把按钮本身排除
         // 在外（Tauri 的锚点 = 按钮 + 浮层）。点按钮那一下交给按钮的
@@ -168,6 +171,17 @@ impl HomeView {
         // 把它打开——面板关不掉还反复横跳。第一个子层就是按钮（浮层
         // 是 deferred 子层，排在后面）。
         let entry_bounds = Rc::clone(&self.picker_entry_bounds);
+        let label = match self.now.as_ref() {
+            Some(now) if now.episode_count > 0 => format!(
+                "{} · {}",
+                crate::i18n::t("player.episodes"),
+                crate::i18n::tf(
+                    "player.totalEpisodes",
+                    &[("count", &now.episode_count.to_string())],
+                )
+            ),
+            _ => crate::i18n::t("player.episodes"),
+        };
         div()
             // prepaint 哨兵是 Div 的方法：必须在 .id() 变 Stateful 之前挂
             .on_children_prepainted(move |children, _, _| {
@@ -177,26 +191,35 @@ impl HomeView {
             })
             .id("stage-picker-wrap")
             .relative()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
             .child(
-                Button::new("stage-picker")
-                    .icon(gpui_kit::assets::IconName::ListVideo)
-                    .label(match self.now.as_ref() {
-                        Some(now) if now.episode_count > 0 => {
-                            format!(
-                                "{} · {}",
-                                crate::i18n::t("player.episodes"),
-                                crate::i18n::tf(
-                                    "player.totalEpisodes",
-                                    &[("count", &now.episode_count.to_string())],
-                                )
-                            )
-                        }
-                        _ => crate::i18n::t("player.episodes"),
-                    })
-                    .custom(chrome_variant(cx))
+                BaseButton::new("stage-picker")
+                    .accessibility_label(label.clone())
+                    .flex()
+                    .flex_shrink_0()
+                    // 高度跟右段下载/倍速同档（组件库 Button::small = h_6）；
+                    // 图标 16px / gap-1.5 对齐 Tauri CHROME_BUTTON 的 ListVideo。
+                    .h_6()
+                    .px_2()
+                    .gap_1p5()
+                    .items_center()
+                    .justify_center()
+                    .rounded(gpui_kit::px(6.0))
                     .cursor_pointer()
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
+                    .text_color(gpui_kit::rgba(0xffffffe6))
+                    .hover(|s| s.bg(gpui_kit::rgba(0xffffff33)))
+                    .active(|s| s.bg(gpui_kit::rgba(0xffffff4d)))
+                    .line_height(gpui_kit::phi())
+                    .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx)))
+                    .child(
+                        gpui_kit::component::Icon::new(gpui_kit::assets::IconName::ListVideo)
+                            .size(gpui_kit::px(16.0))
+                            .text_color(gpui_kit::rgba(0xffffffe6)),
+                    )
+                    .child(div().text_sm().whitespace_nowrap().child(label)),
             )
             .children(self.picker_open.then(|| {
                 // deferred：后画的兄弟钮（下载/全屏…）不许盖住浮层

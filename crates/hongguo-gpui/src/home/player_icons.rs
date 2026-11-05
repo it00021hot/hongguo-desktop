@@ -20,6 +20,11 @@ const MINI_WINDOW: &[u8] = include_bytes!("../../assets/player/mini-window.svg")
 const DANMAKU_OFF: &[u8] = include_bytes!("../../assets/player/danmaku-off.svg");
 /// 评论附图的「图片」入口（lucide image 几何，与 Tauri 同一份 lucide 路径）。
 const COMMENT_IMAGE: &[u8] = include_bytes!("../../assets/player/image.svg");
+/// 互动栏抖音系实心图标（Tauri `interaction-rail` Douyin*Icon 1:1）。
+const DOUYIN_STAR: &[u8] = include_bytes!("../../assets/player/douyin-star.svg");
+const DOUYIN_COMMENT: &[u8] = include_bytes!("../../assets/player/douyin-comment.svg");
+const DOUYIN_HEART: &[u8] = include_bytes!("../../assets/player/douyin-heart.svg");
+const DOUYIN_SHARE: &[u8] = include_bytes!("../../assets/player/douyin-share.svg");
 
 /// 弹幕图标格（px）：与 Tauri 侧 16px 同格，字形 11px 同源。
 /// 图标内部几何是栅格化尺寸（不随 rem 缩放），与 gpui-kit `Icon` 的固定档位同义。
@@ -43,6 +48,26 @@ pub(super) fn mini_window() -> Icon {
 /// 评论发送区「图片」入口图标（本地附图，Tauri lucide ImageIcon 同源）。
 pub(super) fn comment_image() -> Icon {
     Icon::default().data(COMMENT_IMAGE)
+}
+
+/// 互动栏收藏星（Tauri DouyinStarIcon）。
+pub(super) fn douyin_star() -> Icon {
+    Icon::default().data(DOUYIN_STAR)
+}
+
+/// 互动栏评论气泡（Tauri DouyinCommentIcon；视觉偏小，调用方用 size_8）。
+pub(super) fn douyin_comment() -> Icon {
+    Icon::default().data(DOUYIN_COMMENT)
+}
+
+/// 互动栏点赞心（Tauri DouyinHeartIcon）。
+pub(super) fn douyin_heart() -> Icon {
+    Icon::default().data(DOUYIN_HEART)
+}
+
+/// 互动栏分享箭头（Tauri DouyinShareIcon；禁 Lucide Forward，视觉重心偏右）。
+pub(super) fn douyin_share() -> Icon {
+    Icon::default().data(DOUYIN_SHARE)
 }
 
 /// 弹幕开关：B 站同款「弹」字；关闭时加一道反斜杠（颜色由调用方压暗）。

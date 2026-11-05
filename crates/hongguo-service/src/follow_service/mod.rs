@@ -160,3 +160,7 @@ pub fn start_notice_loop(state: crate::app_state::AppState) {
         }
     });
 }
+
+#[cfg(test)]
+#[path = "follow_tests.rs"]
+mod tests;

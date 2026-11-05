@@ -11,7 +11,6 @@ use gpui_kit::component::IconName;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::h_flex;
-use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{ElementId, SharedString, div};
@@ -269,11 +268,18 @@ impl super::HomeView {
                     .child(range)
             }));
 
-        // 8 列数字网格（右上角下载完成角标：绿点 = 该集已下载可离线播）
+        // 8 列数字网格（Tauri `grid-cols-8 gap-2` + `h-9`）：格宽按面板
+        // 内宽均分——写死 48px 在 460 面板里只排得下 7 列，看起来像坏了。
+        const PICKER_WIDTH: f32 = 460.0;
+        const PICKER_PAD: f32 = 16.0;
+        const GRID_COLS: f32 = 8.0;
+        const GRID_GAP: f32 = 8.0;
+        let cell_w =
+            (PICKER_WIDTH - PICKER_PAD * 2.0 - GRID_GAP * (GRID_COLS - 1.0)) / GRID_COLS;
         let grid = div()
             .flex()
             .flex_wrap()
-            .gap_2()
+            .gap(gpui_kit::px(GRID_GAP))
             .children((start..=end).map(|n| {
                 let active = n == now.vid_index;
                 let downloaded = self.done_vids.contains(&n);
@@ -286,7 +292,7 @@ impl super::HomeView {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .w(gpui_kit::px(48.0))
+                    .w(gpui_kit::px(cell_w))
                     .h(gpui_kit::px(36.0))
                     .rounded(gpui_kit::px(6.0))
                     .text_sm()
@@ -324,25 +330,28 @@ impl super::HomeView {
                     }))
             }));
 
-        v_flex()
+        // 选集 tab 正文：范围段（多于一段才出）+ 数字网格——Tauri 同款，
+        // 一段时也必须出网格（旧逻辑 `group_count > 1` 才挂 grid，≤30 集
+        // 的剧打开浮层只剩空壳头部）。
+        let grid_body = div()
+            .children((group_count > 1).then_some(group_tabs))
+            .child(grid);
+
+        // 外层 absolute 只管定位/宽/高/滚动；内层才是内容卡。左缘对齐入口
+        // 按钮（倍速/清晰度 `Anchor::BottomLeft` 同款），不走右缘。
+        // **禁止**把 `overflow_y_scrollbar` 挂在 absolute 根上——高度会塌成 0。
+        div()
             .id("picker-panel")
             .absolute()
-            // 贴「选集」按钮向上弹（Tauri EpisodePicker 挂按钮 wrapper 同款：
-            // 右缘与按钮对齐、间距 8）
-            .right_0()
+            .left_0()
             .bottom(gpui_kit::relative(1.0))
-            .mb(gpui_kit::px(8.0))
-            .w(gpui_kit::px(452.0))
+            .mb_3()
+            .w(gpui_kit::px(PICKER_WIDTH))
+            // 相对定位父是按钮 wrap，`relative` 百分比会塌；钉像素近似 62vh。
             .max_h(gpui_kit::px(440.0))
-            .p_4()
-            .rounded(crate::tokens::radius::CARD)
-            .bg(gpui_kit::rgba(0x171717f2))
-            .overflow_y_scrollbar()
+            .overflow_y_scroll()
             // 点外部关闭（Tauri 同款）：锚点 = 入口按钮 + 浮层，落在之外
-            // 即收起。这是**窗口级**监听（capture 阶段、按命中盒判内外），
-            // 不吞底下控件的点击——控制条按钮照常响应，浮层顺手收掉。
-            // 舞台层那张捕获层只铺在画面上（控制条在它之上），点控制条的
-            // 按钮它压根收不到，浮层就这么一直挂着（用户实测）。
+            // 即收起。窗口级监听（capture、按命中盒判内外），不吞底下控件。
             .on_mouse_down_out(cx.listener(|this, ev: &gpui_kit::MouseDownEvent, _, cx| {
                 // 入口按钮本身不算「点外部」：那一下交给按钮的 on_click
                 // 收起（这里先关的话，按钮的 on_click 又会把它打开）
@@ -355,8 +364,7 @@ impl super::HomeView {
                 this.picker_group_override = None;
                 cx.notify();
             }))
-            // 浮层内的任何点击都不许落到捕获层/舞台（点选集把视频点停了
-            // 就是这里漏的——Tauri EpisodePicker 根节点 onClick 同款）
+            // 浮层内点击不许落到捕获层/舞台（Tauri EpisodePicker onClick 同款）
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
@@ -365,17 +373,21 @@ impl super::HomeView {
                 gpui_kit::MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
-            // 滚轮拦下（Tauri seriesPanelOpen 守卫同语义）：浮层列表自己在
-            // 滚，不冒泡成舞台切剧
+            // 滚轮拦下：浮层自己滚，不冒泡成舞台切剧
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .child(header)
-            .children(if self.picker_tab_series {
-                Some(self.render_seasons_tab(cx))
-            } else {
-                (group_count > 1)
-                    .then_some(group_tabs)
-                    .map(|tabs| div().child(tabs).child(grid).into_any_element())
-            })
+            .child(
+                v_flex()
+                    .w_full()
+                    .p(gpui_kit::px(PICKER_PAD))
+                    .rounded(crate::tokens::radius::CARD)
+                    .bg(gpui_kit::rgba(0x171717f2))
+                    .child(header)
+                    .child(if self.picker_tab_series {
+                        self.render_seasons_tab(cx)
+                    } else {
+                        grid_body.into_any_element()
+                    }),
+            )
             .into_any_element()
     }
 

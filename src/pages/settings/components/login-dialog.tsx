@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Send, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { login as loginApi } from '@/service/commands';
-import { useEvent } from '@/service/tauri/events';
+import { useEvent, type EventPayload } from '@/service/tauri/events';
 import { localizedMessage } from '@/service/tauri/invoke';
 import { EVENTS } from '@/service/tauri/types';
 import { useAuthRefresh } from '@/service/queries';
@@ -57,21 +57,25 @@ export function LoginDialog({
   }, [countdown]);
 
   // 后台 MFA 轮询事件：成功（自动登录完成）/ 失败 / 新一轮验证提示
-  useEvent(EVENTS.loginMfaState, (payload) => {
-    if (payload.state === 'success') {
-      setMfaTips(null);
-      setCode('');
-      refreshAuth();
-      toast.success(tf('settings.loginSuccess', { name: payload.name }));
-      onOpenChange(false);
-      onSuccess();
-    } else if (payload.state === 'failed') {
-      setMfaTips(null);
-      toast.error(localizedMessage(payload.messageKind, payload.message));
-    } else {
-      setMfaTips(payload.serverTip);
-    }
-  });
+  const onMfaState = useCallback(
+    (payload: EventPayload<typeof EVENTS.loginMfaState>) => {
+      if (payload.state === 'success') {
+        setMfaTips(null);
+        setCode('');
+        refreshAuth();
+        toast.success(tf('settings.loginSuccess', { name: payload.name }));
+        onOpenChange(false);
+        onSuccess();
+      } else if (payload.state === 'failed') {
+        setMfaTips(null);
+        toast.error(localizedMessage(payload.messageKind, payload.message));
+      } else {
+        setMfaTips(payload.serverTip);
+      }
+    },
+    [refreshAuth, onOpenChange, onSuccess],
+  );
+  useEvent(EVENTS.loginMfaState, onMfaState);
 
   useEffect(() => {
     if (!open) return;

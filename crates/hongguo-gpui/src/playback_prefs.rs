@@ -55,13 +55,13 @@ pub(crate) struct PlaybackPrefs {
     pub(crate) keys: ShortcutKeys,
 }
 
-/// 弹幕显示参数默认值（Tauri DANMAKU_DEFAULTS 同款）。
+/// 弹幕显示参数默认值（Tauri `DANMAKU_DEFAULTS`：50%/50%/50%/25%）。
 pub(crate) const DM_DEFAULTS: DanmakuPrefs = DanmakuPrefs {
     on: true,
-    opacity: 0.9,
-    font_scale: 1.0,
-    density: 1.0,
-    area: 1.0,
+    opacity: 0.5,
+    font_scale: 0.5,
+    density: 0.5,
+    area: 0.25,
 };
 
 /// 弹幕显示参数（与播放偏好同文件承载）。

@@ -8,7 +8,7 @@ interface Props {
   cards: SeriesCard[];
   /** 每部剧已下载的集数，用于卡片角标 */
   downloadedMap?: Record<string, number>;
-  /** 选中这部剧：直接起播（usePlaySeries 点名回首页沉浸流） */
+  /** 选中这部剧：进详情（排行榜「卡片一律进详情」同口径） */
   onSelect: (card: SeriesCard) => void;
 }
 
