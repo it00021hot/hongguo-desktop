@@ -5,6 +5,7 @@
 pub mod consts;
 pub mod error;
 pub mod model;
+pub mod offline_qa;
 pub mod utils;
 
 pub use error::{AppError, AppResult};

@@ -735,6 +735,10 @@ pub async fn ensure_registered(state: &AppState) {
         log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
         return;
     }
+    if hongguo_common::offline_qa::enabled() {
+        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
+        return;
+    }
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
         register_with_retry(state, "启动自动注册").await;
@@ -1579,6 +1583,23 @@ mod tests {
         ensure_registered(&fresh).await;
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn offline_qa_does_not_lift_a_missing_trusted_block() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        ensure_registered(&memory).await;
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert!(registration_blocked(&read_meta(&memory.store), now_ms()));
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
     }
 
     #[test]

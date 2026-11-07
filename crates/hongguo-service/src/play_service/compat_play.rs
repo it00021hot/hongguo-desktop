@@ -20,8 +20,16 @@ pub struct CompatPlay {
     pub cached: bool,
     /// 实际用的转码后端
     pub backend: String,
-    /// 转码耗时（毫秒），命中缓存时为 0
+    /// 转码耗时（毫秒）。提前交出首段时只计到首段落盘，命中缓存时为 0
     pub elapsed_ms: u128,
+    /// 地址在整片写完前就可用，后续字节从同一路径继续读
+    pub progressive: bool,
+}
+
+enum PrefixNote {
+    Ready,
+    Finished,
+    Failed(String),
 }
 
 /// 给一集准备兼容格式产物，返回可播放地址。
@@ -34,6 +42,26 @@ pub async fn ensure_compat(
     source: CompatSource,
     on_progress: impl Fn(f64) + Send + Sync + 'static,
 ) -> AppResult<CompatPlay> {
+    ensure_inner(series_id, vid_index, source, on_progress, false).await
+}
+
+/// 首段可播就返回地址，转码在同一路径上继续。整片结束前缓存不会把半成品当成命中。
+pub async fn ensure_compat_progressive(
+    series_id: &str,
+    vid_index: u32,
+    source: CompatSource,
+    on_progress: impl Fn(f64) + Send + Sync + 'static,
+) -> AppResult<CompatPlay> {
+    ensure_inner(series_id, vid_index, source, on_progress, true).await
+}
+
+async fn ensure_inner(
+    series_id: &str,
+    vid_index: u32,
+    source: CompatSource,
+    on_progress: impl Fn(f64) + Send + Sync + 'static,
+    at_prefix: bool,
+) -> AppResult<CompatPlay> {
     // 播放档与合并归档分文件（`.play.mp4`），命中/落盘都走 Playback，不能误用归档路径。
     let rate = hongguo_media_platform::RateProfile::Playback;
     if let Some(p) = cache::cached_path_for(series_id, vid_index, rate) {
@@ -45,6 +73,7 @@ pub async fn ensure_compat(
             cached: true,
             backend: backend_label(hongguo_media_platform::capability::selected_backend()),
             elapsed_ms: 0,
+            progressive: false,
         });
     }
 
@@ -59,7 +88,18 @@ pub async fn ensure_compat(
     // 写盘 + demux + 编码是分钟级阻塞，占专用阻塞池的线程，不能占 async 工作线程。
     let progress = Arc::new(on_progress);
     let progress_in_task = Arc::clone(&progress);
-    let result = crate::runtime::spawn_blocking(move || {
+    let target_for_task = target.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+    let tx_for_task = std::sync::Arc::clone(&tx);
+    let handoff = at_prefix;
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if at_prefix {
+        hongguo_protocol::grow::open(&target).map_err(AppError::Media)?;
+        register_cancel(series_id, vid_index, std::sync::Arc::clone(&cancel_flag));
+    }
+    let cancel_for_task = std::sync::Arc::clone(&cancel_flag);
+    let task = crate::runtime::spawn_blocking(move || {
         let (plain, is_temp) = match source {
             CompatSource::LocalFile(p) => (p, false),
             CompatSource::PlainBytes(bytes) => {
@@ -84,6 +124,28 @@ pub async fn ensure_compat(
         // 播放档：长边封顶 720p + 轻码率——归档档把 1080p 一分钟胀到 ~60MB，软编更是分钟级。
         let scale_to = crate::transcode_service::pipeline::resolution_of(&plain)
             .and_then(crate::transcode_service::pipeline::playback_scale);
+        let committed = {
+            let path = target_for_task.clone();
+            let tx = std::sync::Arc::clone(&tx_for_task);
+            move |len: u64| {
+                hongguo_protocol::grow::commit(&path, len);
+                if let Some(sender) = tx.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                    let _ = sender.send(PrefixNote::Ready);
+                }
+            }
+        };
+        let stop = {
+            let flag = std::sync::Arc::clone(&cancel_for_task);
+            move || flag.load(std::sync::atomic::Ordering::SeqCst)
+        };
+        let hooks = if handoff {
+            crate::transcode_service::pipeline::TranscodeHooks {
+                on_committed: Some(&committed),
+                is_cancelled: Some(&stop),
+            }
+        } else {
+            crate::transcode_service::pipeline::TranscodeHooks::default()
+        };
         let result = crate::transcode_service::pipeline::transcode(
             &series_owned,
             vid_index,
@@ -91,7 +153,23 @@ pub async fn ensure_compat(
             scale_to,
             hongguo_media_platform::RateProfile::Playback,
             Some(&report),
+            hooks,
         );
+        if handoff {
+            match &result {
+                Ok(_) => hongguo_protocol::grow::finish(&target_for_task),
+                Err(AppError::Cancelled) => hongguo_protocol::grow::cancel(&target_for_task),
+                Err(err) => hongguo_protocol::grow::fail(&target_for_task, err.to_string()),
+            }
+            if let Some(sender) = tx_for_task.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                let note = match &result {
+                    Ok(_) => PrefixNote::Finished,
+                    Err(AppError::Cancelled) => PrefixNote::Failed("已取消".into()),
+                    Err(err) => PrefixNote::Failed(err.to_string()),
+                };
+                let _ = sender.send(note);
+            }
+        }
 
         // 源明文只是中间产物，转码成功或失败都要清理，避免残留敏感媒体数据。
         if is_temp {
@@ -102,10 +180,43 @@ pub async fn ensure_compat(
         if result.is_ok() {
             cache::trim();
         }
+        clear_cancel(&series_owned, vid_index);
         result
-    })
-    .await
-    .map_err(|e| AppError::Media(format!("兼容转码任务异常结束: {e}")))??;
+    });
+    if at_prefix {
+        let note = rx
+            .await
+            .map_err(|_| AppError::Media("转码任务在交出地址前结束".into()))?;
+        let elapsed = started.elapsed();
+        let url = hongguo_protocol::local::local_play_url(&target.to_string_lossy())
+            .ok_or_else(|| AppError::Media("转码产物路径无法转成播放地址".into()))?;
+        return match note {
+            PrefixNote::Ready => {
+                log::info!("[Compat] 第 {vid_index} 集首段可播，后续继续写入同一路径");
+                Ok(CompatPlay {
+                    url,
+                    cached: false,
+                    backend: backend_label(hongguo_media_platform::capability::selected_backend()),
+                    elapsed_ms: elapsed.as_millis(),
+                    progressive: true,
+                })
+            }
+            PrefixNote::Finished => {
+                progress(100.0);
+                Ok(CompatPlay {
+                    url,
+                    cached: false,
+                    backend: backend_label(hongguo_media_platform::capability::selected_backend()),
+                    elapsed_ms: elapsed.as_millis(),
+                    progressive: false,
+                })
+            }
+            PrefixNote::Failed(message) => Err(AppError::Media(message)),
+        };
+    }
+    let result = task
+        .await
+        .map_err(|e| AppError::Media(format!("兼容转码任务异常结束: {e}")))??;
 
     progress(100.0);
     let elapsed = started.elapsed();
@@ -118,11 +229,73 @@ pub async fn ensure_compat(
         cached: false,
         backend,
         elapsed_ms: elapsed.as_millis(),
+        progressive: false,
     })
 }
 
 /// 后端标识，给界面提示用。没有可用后端时报「none」，不编一个后端名出来
 ///（此时产物只可能是此前转好的缓存）。
+fn cancel_slots() -> std::sync::MutexGuard<
+    'static,
+    std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+> {
+    static SLOTS: std::sync::OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        >,
+    > = std::sync::OnceLock::new();
+    SLOTS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+fn cancel_key(series_id: &str, vid_index: u32) -> String {
+    format!("{series_id}:{vid_index}")
+}
+
+fn register_cancel(
+    series_id: &str,
+    vid_index: u32,
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    cancel_slots().insert(cancel_key(series_id, vid_index), flag);
+}
+
+fn clear_cancel(series_id: &str, vid_index: u32) {
+    cancel_slots().remove(&cancel_key(series_id, vid_index));
+}
+
+/// 停止这一集还在写的兼容转码，并叫醒等在首段之后的读取。
+pub fn cancel_compat(series_id: &str, vid_index: u32) {
+    if let Some(flag) = cancel_slots()
+        .get(&cancel_key(series_id, vid_index))
+        .cloned()
+    {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    let path = cache::cache_file_for(
+        series_id,
+        vid_index,
+        hongguo_media_platform::RateProfile::Playback,
+    );
+    hongguo_protocol::grow::cancel(&path);
+}
+
+async fn play_compat(
+    at_prefix: bool,
+    series_id: &str,
+    vid_index: u32,
+    source: CompatSource,
+    on_progress: impl Fn(f64) + Send + Sync + 'static,
+) -> AppResult<CompatPlay> {
+    if at_prefix {
+        ensure_compat_progressive(series_id, vid_index, source, on_progress).await
+    } else {
+        ensure_compat(series_id, vid_index, source, on_progress).await
+    }
+}
+
 fn backend_label(backend: Option<hongguo_media::Backend>) -> String {
     match backend {
         Some(b) => b.decoder_label().to_string(),
@@ -182,6 +355,8 @@ pub struct CompatPlayResult {
     pub cached: bool,
     pub backend: String,
     pub elapsed_ms: u128,
+    /// 首段已经可播，整片还在同一路径上继续写
+    pub progressive: bool,
 }
 
 /// 把一集转成 H.264 供本机解不了的机器播放。
@@ -192,6 +367,26 @@ pub async fn compat_for_playback(
     series_id: &str,
     vid_index: u32,
     vid: Option<String>,
+) -> AppResult<CompatPlayResult> {
+    compat_for_playback_with(state, series_id, vid_index, vid, false).await
+}
+
+/// Tauri 播放链：首段可播即返回。GPUI 仍走 [`compat_for_playback`]，等整片落完。
+pub async fn compat_for_playback_prefix(
+    state: &AppState,
+    series_id: &str,
+    vid_index: u32,
+    vid: Option<String>,
+) -> AppResult<CompatPlayResult> {
+    compat_for_playback_with(state, series_id, vid_index, vid, true).await
+}
+
+async fn compat_for_playback_with(
+    state: &AppState,
+    series_id: &str,
+    vid_index: u32,
+    vid: Option<String>,
+    at_prefix: bool,
 ) -> AppResult<CompatPlayResult> {
     crate::cold_start::wait().await;
     let key = format!("{series_id}:{vid_index}");
@@ -217,7 +412,8 @@ pub async fn compat_for_playback(
 
     let result = if let Some(p) = local {
         let emit_tc = emit.clone();
-        ensure_compat(
+        play_compat(
+            at_prefix,
             series_id,
             vid_index,
             CompatSource::LocalFile(p),
@@ -238,7 +434,8 @@ pub async fn compat_for_playback(
         emit(0.0, CompatPhase::Downloading);
         let plain = crate::play_service::online::fetch_plain(&play, &settings).await?;
         let emit_tc = emit.clone();
-        let decoded = ensure_compat(
+        let decoded = play_compat(
+            at_prefix,
             series_id,
             vid_index,
             CompatSource::PlainBytes(plain),
@@ -259,7 +456,8 @@ pub async fn compat_for_playback(
             if !hongguo_bytevc2::is_bytevc2(&fallback.codec) {
                 let plain = crate::play_service::online::fetch_plain(&fallback, &settings).await?;
                 let emit_tc = emit.clone();
-                ensure_compat(
+                play_compat(
+                    at_prefix,
                     series_id,
                     vid_index,
                     CompatSource::PlainBytes(plain),
@@ -281,6 +479,7 @@ pub async fn compat_for_playback(
         cached: r.cached,
         backend: r.backend,
         elapsed_ms: r.elapsed_ms,
+        progressive: r.progressive,
     })
 }
 

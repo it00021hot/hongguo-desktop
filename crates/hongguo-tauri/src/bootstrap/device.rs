@@ -63,6 +63,10 @@ fn status_inner(state: &AppState, meta: &BootstrapMeta) -> DeviceStatus {
 /// 手动重试注册（设置页命令）：注册一次，成功换档 registered，
 /// 失败维持现役并记录错误（错误已由 register_and_swap 写进元数据）。
 pub async fn retry_register(state: &AppState) -> DeviceStatus {
+    if hongguo_common::offline_qa::enabled() {
+        log::info!("[Device] 离线 QA：忽略手动重试，不发起注册");
+        return status(state);
+    }
     let _ = hongguo_service::device::register_and_swap(state, "手动重试").await;
     status(state)
 }

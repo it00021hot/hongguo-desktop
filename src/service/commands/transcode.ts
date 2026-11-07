@@ -5,4 +5,6 @@ export const transcode = {
   redetect: () => call('redetect_capability'),
   transcodeForPlayback: (args: { seriesId: string; vidIndex: number; vid?: string }) =>
     call('transcode_for_playback', args),
+  cancelCompat: (args: { seriesId: string; vidIndex: number }) =>
+    call('cancel_compat_playback', args),
 };

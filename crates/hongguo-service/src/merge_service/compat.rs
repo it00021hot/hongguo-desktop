@@ -144,6 +144,7 @@ pub fn compat_merge(
                                 scale_to,
                                 hongguo_media_platform::RateProfile::Archive,
                                 Some(cb),
+                                pipeline::TranscodeHooks::default(),
                             );
                             // 会话超订的信号：预期硬编却落在软路——收敛并行度，
                             // 后续集不再超订（偶发回落多收敛一次，代价只是保守些）。

@@ -165,6 +165,7 @@ fn compat_play_result_shape() {
         cached: true,
         backend: "VT".into(),
         elapsed_ms: 0,
+        progressive: false,
     })
     .unwrap();
     assert_eq!(
@@ -174,6 +175,7 @@ fn compat_play_result_shape() {
             "cached": true,
             "backend": "VT",
             "elapsedMs": 0,
+            "progressive": false,
         })
     );
 }

@@ -11,7 +11,15 @@ const SEQUENCE: &str = include_str!("warmup_sequence.json");
 /// 顺序连发（对照实验即此节奏，已验证解锁）。
 const REQUEST_INTERVAL_MS: u64 = 60;
 
-/// 重写 query 中的身份字段；档案已携带的字段由签名器统一注入，去掉避免重复。
+/// 按固化序列重发。离线 QA 直接返回 0，不改设备状态。
+pub async fn run(env: &ApiEnv) -> usize {
+    if hongguo_common::offline_qa::enabled() {
+        log::info!("[Warmup] 离线 QA：跳过行为预热");
+        return 0;
+    }
+    run_sequence(env).await
+}
+
 fn rewrite_query(path: &str, env: &ApiEnv) -> (String, Vec<(String, String)>) {
     let (base, q) = match path.split_once('?') {
         Some((b, q)) => (b.to_string(), q.to_string()),
@@ -92,7 +100,7 @@ fn is_play_path(path: &str) -> bool {
 
 /// 执行冷启动行为预热：按官方序列顺序重发（身份重写 + 逐条重签名），返回成功（2xx）条数。
 /// 单条失败/超时不中断整体（预热是尽力而为的行为铺垫，个别失败不影响解锁效果）。
-pub async fn run(env: &ApiEnv) -> usize {
+async fn run_sequence(env: &ApiEnv) -> usize {
     let Ok(seq) = serde_json::from_str::<Vec<Value>>(SEQUENCE) else {
         return 0;
     };

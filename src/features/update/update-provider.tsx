@@ -4,6 +4,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { toast } from 'sonner';
 import { tf } from '@/locales';
+import { offlineQa } from '@/utils/offline-qa';
 import { UpdateContext, type UpdateContextValue, type UpdatePhase } from './update-context';
 
 /** 「稍后」记到 localStorage：同版本启动检查不再自动弹 */
@@ -113,6 +114,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   // 启动检查一次：查到新版本且没被「稍后」过才自动弹；无新版/失败保持安静（还没有 release 时 404 是常态）
   // 版本号只用于卡片副行；setState 都发生在网络回调里，规则误报这里豁免
   useEffect(() => {
+    if (offlineQa()) return;
     getVersion()
       .then((v) => setVersion(v))
       .catch(() => {});

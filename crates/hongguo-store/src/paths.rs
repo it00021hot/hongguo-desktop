@@ -31,6 +31,28 @@ pub fn set_cache_root_override(dir: Option<PathBuf>) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = dir;
 }
 
+/// 离线 QA 必须自带绝对数据目录，且不能是默认用户目录 `hongguo-downloader`。
+/// 未开离线 QA 时直接通过，正式启动仍走默认目录。
+pub fn offline_qa_data_dir_ok() -> Result<(), String> {
+    if !hongguo_common::offline_qa::enabled() {
+        return Ok(());
+    }
+    let explicit = std::env::var("HONGGUO_DATA_DIR").unwrap_or_default();
+    let path = PathBuf::from(explicit.trim());
+    if explicit.trim().is_empty() || !path.is_absolute() {
+        return Err(
+            "HONGGUO_OFFLINE_QA 已设置，但 HONGGUO_DATA_DIR 不是绝对路径，拒绝打开默认用户目录"
+                .into(),
+        );
+    }
+    if let Some(parent) = dirs::data_dir()
+        && path == resolve_data_root(&parent, None)
+    {
+        return Err("HONGGUO_OFFLINE_QA 不能使用默认用户数据目录".into());
+    }
+    Ok(())
+}
+
 /// 应用数据目录。
 pub fn data_dir() -> PathBuf {
     if let Ok(explicit) = std::env::var("HONGGUO_DATA_DIR") {

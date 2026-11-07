@@ -83,6 +83,8 @@ fn main() {
         rate: RateProfile::Playback,
         on_progress: None,
         on_playable_prefix: Some(&on_prefix),
+        on_committed: None,
+        is_cancelled: None,
     })
     .expect("原分辨率转码");
     println!("full_wall_ns={}", full_started.elapsed().as_nanos());

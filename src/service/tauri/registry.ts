@@ -99,6 +99,10 @@ export const COMMANDS = {
     args: z.object({ seriesId: z.string(), vidIndex: z.number(), vid: z.string().optional() }),
     response: transcodePlaybackSchema,
   },
+  cancel_compat_playback: {
+    args: z.object({ seriesId: z.string(), vidIndex: z.number() }),
+    response: voidResp,
+  },
 
   // 合并
   get_merge_tasks: { args: noArgs, response: mergeTaskSchema.array() },

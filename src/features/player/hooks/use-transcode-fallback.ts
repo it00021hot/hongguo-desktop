@@ -58,7 +58,11 @@ export function useTranscodeFallback(params: {
   /** mutate 引用恒定；整个 mutation 对象每渲染都是新的，进依赖会重置探测计时 */
   const mutateCompat = compatPlay.mutate;
 
-  const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
+  const [compatResult, setCompatResult] = useState<{
+    key: string;
+    url: string;
+    progressive: boolean;
+  } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
   /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
   const compatStarted = useRef(false);
@@ -72,6 +76,7 @@ export function useTranscodeFallback(params: {
 
   /** 兜底产物地址，只认当前这一集 */
   const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
+  const progressive = compatResult?.key === episodeKey && compatResult.progressive;
   /** 兜底进度，只认当前这一集 */
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
@@ -105,8 +110,8 @@ export function useTranscodeFallback(params: {
         onSuccess: (r) => {
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setCompatResult({ key: episodeKey, url: r.url });
-          setCompatProgress(null);
+          setCompatResult({ key: episodeKey, url: r.url, progressive: r.progressive });
+          if (!r.progressive) setCompatProgress(null);
           // 主动兼容 + 缓存命中是预期路径（软解机连播），不再每集弹 toast 打扰
           if (r.cached) {
             if (!forceCompat) toast.success(t('player.compatCached'));
@@ -165,5 +170,5 @@ export function useTranscodeFallback(params: {
     return () => clearInterval(timer);
   }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
 
-  return { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat };
+  return { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat, progressive };
 }

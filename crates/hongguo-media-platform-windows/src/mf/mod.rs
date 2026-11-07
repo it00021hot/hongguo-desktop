@@ -68,6 +68,8 @@ mod tests {
                 rate: hongguo_media_platform_api::RateProfile::Archive,
                 on_progress: None,
                 on_playable_prefix: None,
+                on_committed: None,
+                is_cancelled: None,
             })
             .expect("应可转码")
             .expect("应成功");
@@ -86,6 +88,8 @@ mod tests {
             rate: hongguo_media_platform_api::RateProfile::Archive,
             on_progress: None,
             on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: None,
         })
         .expect("硬编应可用")
         .expect("应成功");

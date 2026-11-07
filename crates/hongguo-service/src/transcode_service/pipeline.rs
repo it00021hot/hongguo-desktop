@@ -20,6 +20,13 @@ const PLAYBACK_MAX_LONG_EDGE: u32 = 1280;
 /// 分辨率是常态，不统一的话转码产物依然规格不一，拼接那一步照样过不去。
 /// `rate` 区分合并归档与兼容播放；播放档会走更轻的码率与（ffmpeg 软编）更快 preset。
 /// `on_progress` 收到已编码秒数，用于把进度从「第 N/M 集」细化到集内百分比。
+/// 播放档边写边读的回调。合并路径保持默认空。
+#[derive(Clone, Copy, Default)]
+pub struct TranscodeHooks<'a> {
+    pub on_committed: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    pub is_cancelled: Option<&'a (dyn Fn() -> bool + Send + Sync)>,
+}
+
 pub fn transcode(
     series_id: &str,
     vid_index: u32,
@@ -27,7 +34,11 @@ pub fn transcode(
     scale_to: Option<(u32, u32)>,
     rate: RateProfile,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
+    hooks: TranscodeHooks<'_>,
 ) -> AppResult<TranscodeResult> {
+    if hooks.is_cancelled.is_some_and(|cancelled| cancelled()) {
+        return Err(hongguo_common::AppError::Cancelled);
+    }
     if !source.exists() {
         return Err(hongguo_common::AppError::NotFound(
             source.display().to_string(),
@@ -56,6 +67,8 @@ pub fn transcode(
                 rate,
                 on_progress,
                 on_playable_prefix: None,
+                on_committed: hooks.on_committed,
+                is_cancelled: hooks.is_cancelled,
             },
         ) {
             let _ = std::fs::remove_file(&target);
@@ -85,6 +98,8 @@ pub fn transcode(
             rate,
             on_progress,
             on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: hooks.is_cancelled,
         },
     ) {
         match done {

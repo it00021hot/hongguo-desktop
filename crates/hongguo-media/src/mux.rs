@@ -18,7 +18,7 @@ use crate::mp4::{TrackSpec, build_moov, mdat_data_start, mdat_header, needs_wide
 pub use audio::{AudioTrack, collect};
 pub use fragment::{
     AnnexbFrame, GrowingH264, prefix_is_independently_decodable, read_fragment_video,
-    split_completed_gop,
+    split_completed_gop, take_run,
 };
 use track::{AudioSpec, VideoSpec};
 

@@ -367,6 +367,7 @@ pub async fn api_call_full_response(
 /// 请求视频 CDN 直链（下载与在线取流共用）：裸 UA 优先，403 补官网
 /// Referer 重试一次。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
+    refuse_external(url)?;
     let send = |referer: bool| {
         let mut req = client
             .get(url)
@@ -429,6 +430,7 @@ const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
+    refuse_external(url)?;
     let resp = client
         .get(url)
         .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
@@ -459,12 +461,22 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 
 /// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
 /// 切片自愈；403 补 Referer 重试一次）。
+fn refuse_external(url: &str) -> AppResult<()> {
+    if hongguo_common::offline_qa::external_url_forbidden(url) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn get_video_range(
     client: &reqwest::Client,
     url: &str,
     start: u64,
     end: u64,
 ) -> AppResult<Vec<u8>> {
+    refuse_external(url)?;
     let mut last_err = None;
     for attempt in 0..STREAM_RETRY_ATTEMPTS {
         match get_video_range_once(client, url, start, end).await {
@@ -616,6 +628,11 @@ async fn send_once(
     extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<ApiCallResponse> {
+    if hongguo_common::offline_qa::external_url_forbidden(origin) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie
         && !c.is_empty()

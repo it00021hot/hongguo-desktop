@@ -72,4 +72,6 @@ export const transcodePlaybackSchema = z.object({
   cached: z.boolean(),
   backend: z.string(),
   elapsedMs: z.number(),
+  /** 首段已可播，后续字节还在同一地址上增长 */
+  progressive: z.boolean().default(false),
 });

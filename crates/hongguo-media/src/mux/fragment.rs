@@ -80,7 +80,7 @@ impl GrowingH264 {
         video: &[(f64, Vec<u8>, bool)],
         audio: &[(f64, Vec<u8>)],
     ) -> AppResult<u64> {
-        if video.is_empty() || !video[0].2 {
+        if video.is_empty() || (!self.started && !video[0].2) {
             return Err(AppError::Media("片段缺少同步样本".into()));
         }
         let timed = time_samples(video, true)?;
@@ -121,6 +121,22 @@ impl GrowingH264 {
 
 /// 编码器输出的一帧：显示时间、Annex-B、是否同步样本。
 pub type AnnexbFrame = (f64, Vec<u8>, bool);
+
+/// 从已编码帧前面取 `count` 帧。`require_sync` 时第一帧必须是同步样本。
+pub fn take_run(
+    units: &mut Vec<AnnexbFrame>,
+    count: usize,
+    require_sync: bool,
+) -> Option<(Vec<AnnexbFrame>, Option<f64>)> {
+    if count == 0 || units.len() < count {
+        return None;
+    }
+    if require_sync && !units[0].2 {
+        return None;
+    }
+    let next = units.get(count).map(|unit| unit.0);
+    Some((units.drain(0..count).collect(), next))
+}
 
 /// 第二个关键帧出现时，把它之前的样本切成一个封闭 GOP，并返回后一个关键帧的显示时间。
 pub fn split_completed_gop(units: &mut Vec<AnnexbFrame>) -> Option<(Vec<AnnexbFrame>, f64)> {

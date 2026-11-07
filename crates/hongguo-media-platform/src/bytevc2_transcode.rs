@@ -213,12 +213,22 @@ fn push_frame(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+const PUBLISH_FRAMES: usize = 30;
+
 fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
+    if pass.req.is_cancelled.is_some_and(|cancelled| cancelled()) {
+        return Err(AppError::Cancelled);
+    }
     if pass.live.size.is_none() {
         pass.live.size = pass.encoder.coded_size();
     }
-    while let Some((gop, next_pts)) = pass.encoder.take_completed_gop() {
-        write_gop(pass.live, &gop, Some(next_pts), pass.req, pass.started)?;
+    loop {
+        let require_sync = pass.live.writer.is_none();
+        let Some((gop, next_pts)) = pass.encoder.take_publish_run(PUBLISH_FRAMES, require_sync)
+        else {
+            break;
+        };
+        write_gop(pass.live, &gop, next_pts, pass.req, pass.started)?;
     }
     Ok(())
 }
@@ -231,7 +241,7 @@ fn write_gop(
     req: &PlatformRequest<'_>,
     started: Instant,
 ) -> AppResult<()> {
-    if gop.is_empty() || !gop[0].2 {
+    if gop.is_empty() || (live.writer.is_none() && !gop[0].2) {
         return Err(AppError::Media("H.264 片段缺少同步样本".into()));
     }
     let (width, height) = live
@@ -252,6 +262,9 @@ fn write_gop(
         .as_mut()
         .expect("片段文件刚打开")
         .push(gop, &audio)?;
+    if let Some(cb) = req.on_committed {
+        cb(bytes);
+    }
     if live.announced {
         return Ok(());
     }

@@ -19,7 +19,7 @@ pub fn redetect_capability() -> DecodeCapability {
     hongguo_media_platform::capability::probe::redetect()
 }
 
-/// 把一集转成 H.264 供本机解不了的机器播放（播放器确认「有声音没画面」后调）。转好的产物落兼容缓存同一集只转一次；已下载走本地文件、没下载的现取现解；进度经 `compat-play-progress` 推送。
+/// 把一集转成 H.264。首段可播就返回地址，整片在同一路径上继续写。
 #[tauri::command]
 pub async fn transcode_for_playback(
     state: State<'_, AppState>,
@@ -27,11 +27,17 @@ pub async fn transcode_for_playback(
     vid_index: u32,
     vid: Option<String>,
 ) -> AppResult<CompatPlayResult> {
-    hongguo_service::play_service::compat_play::compat_for_playback(
+    hongguo_service::play_service::compat_play::compat_for_playback_prefix(
         state.inner(),
         &series_id,
         vid_index,
         vid,
     )
     .await
+}
+
+/// 停止这一集还在写的兼容转码。
+#[tauri::command]
+pub fn cancel_compat_playback(series_id: String, vid_index: u32) {
+    hongguo_service::play_service::compat_play::cancel_compat(&series_id, vid_index);
 }

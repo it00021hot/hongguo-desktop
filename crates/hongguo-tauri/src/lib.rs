@@ -71,6 +71,10 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                     tmpdir.display()
                 );
             }
+            if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
+                log::error!("[OfflineQA] {msg}");
+                return Err(std::io::Error::other(msg).into());
+            }
             // 启动装配的顺序即依赖顺序；设备健康复检 / 磁盘补登记 / 转码探测不拦启动，各自在 init 里后台化（见 bootstrap/mod.rs）
             let app_state = build_app_state();
             app.manage(app_state.clone());
@@ -78,16 +82,21 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             bootstrap::device::init(app.handle())?;
             bootstrap::events::init(app.handle())?;
             bootstrap::rescan::init(app.handle())?;
-            bootstrap::downloader::init(app.handle())?;
-            bootstrap::transcoder::init()?;
+            if hongguo_common::offline_qa::enabled() {
+                log::info!("[OfflineQA] 跳过下载续跑、转码预热、追更轮询与历史补传");
+            } else {
+                bootstrap::downloader::init(app.handle())?;
+                bootstrap::transcoder::init()?;
+            }
             bootstrap::status_log::init()?;
-            // 追更更新检查：启动查一轮 + 每 20 分钟一轮（未登录空转，登录后自动生效）
-            hongguo_service::follow_service::start_notice_loop(app_state.clone());
+            if !hongguo_common::offline_qa::enabled() {
+                hongguo_service::follow_service::start_notice_loop(app_state.clone());
+            }
             // 老板键按持久化设置注册（被占用只记日志，不拦启动）
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             commands::boss_key_cmd::init(app.handle(), &app_state.settings().boss_key);
             // 本地观看历史补传（issue #10）：带账号启动时把离线攒下的行推云端
-            if app_state.settings().account.is_some() {
+            if app_state.settings().account.is_some() && !hongguo_common::offline_qa::enabled() {
                 let st = app_state.clone();
                 hongguo_service::runtime::spawn(async move {
                     hongguo_service::history_service::upload_pending(&st).await;
@@ -308,6 +317,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,
             commands::transcode_cmd::transcode_for_playback,
+            commands::transcode_cmd::cancel_compat_playback,
             // 存储
             commands::storage_cmd::get_storage_usage,
             commands::storage_cmd::get_storage_series,

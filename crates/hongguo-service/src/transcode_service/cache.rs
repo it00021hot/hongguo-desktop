@@ -29,6 +29,9 @@ pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
 /// 按码率档查缓存。
 pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
     let path = cache_file_for(series_id, vid_index, rate);
+    if hongguo_protocol::grow::is_incomplete(&path) {
+        return None;
+    }
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     if size > hongguo_common::consts::units::MIN_MEDIA_BYTES {
         Some(path)
@@ -59,6 +62,9 @@ pub fn trim() -> usize {
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("mp4") {
+            continue;
+        }
+        if hongguo_protocol::grow::is_incomplete(&p) {
             continue;
         }
         let Ok(m) = e.metadata() else { continue };
