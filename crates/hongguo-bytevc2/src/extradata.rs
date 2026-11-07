@@ -1,7 +1,7 @@
-//! 配置记录 → Annex-B：对齐官方 `convertByteVC2Extradata`（`vc2_dec.cpp`）。
+//! 配置记录 → Annex-B：对齐官方 `convertByteVC2Extradata`。
 //!
-//! 布局与标准 `vvcC` 同族但更松：字节 1 的 bit0 = PTL 是否在场，bit1..3 = `lengthSizeMinusOne`
-//! （官方用 3 bit；librempeg 的 CBS 拆包侧固定按 4 字节长度前缀读样本）。
+//! 字节 1 的 bit0 = PTL 是否在场，bit1..3 = `lengthSizeMinusOne`。PTL 在场时按官方字节游标跳到
+//! `num_arrays`，不是 ISO `vvcC` 的位域。
 
 use hongguo_common::{AppError, AppResult};
 
@@ -24,11 +24,11 @@ pub fn annexb_from_extradata(extradata: &[u8]) -> AppResult<Vec<u8>> {
     }
 
     let flags = extradata[1];
-    let mut pos = 2usize;
-
-    if flags & 1 != 0 {
-        pos = skip_ptl(extradata, pos)?;
-    }
+    let mut pos = if flags & 1 != 0 {
+        arrays_after_ptl(extradata)?
+    } else {
+        2
+    };
 
     if pos >= extradata.len() {
         return Err(AppError::Media("bytevc2 extradata 缺 num_arrays".into()));
@@ -64,67 +64,49 @@ pub fn annexb_from_extradata(extradata: &[u8]) -> AppResult<Vec<u8>> {
     Ok(out)
 }
 
-/// 跳过 PTL 段（官方路径：在 bit0 置位时走到 arrays 之前）。
-/// 实现按 librempeg `cbs_h266_split_fragment` 的 VVCC PTL 跳读口径收敛，避免猜字段。
-fn skip_ptl(data: &[u8], mut pos: usize) -> AppResult<usize> {
-    // num_sublayers 等：至少还要 3 字节才能安全读完常见头
-    if pos + 3 > data.len() {
-        return Err(AppError::Media("bytevc2 PTL 截断".into()));
-    }
-    let ol = u16::from_be_bytes([data[pos], data[pos + 1]]);
-    let num_sublayers = ((ol >> 4) & 7) as usize;
-    pos += 2;
-    pos += 1; // 对齐官方/librempeg 再跳 1
-
-    if pos >= data.len() {
-        return Err(AppError::Media("bytevc2 PTL constraint 截断".into()));
-    }
-    let num_bytes_constraint_info = (data[pos] & 0x3f) as usize;
-    pos += 1;
-    pos = pos
-        .checked_add(2 + num_bytes_constraint_info)
+/// PTL 在场时，`num_arrays` 的下标。游标与 `libttmplayer` `convertByteVC2Extradata` 一致。
+fn arrays_after_ptl(data: &[u8]) -> AppResult<usize> {
+    let base = match data.get(4).copied() {
+        Some(n) if n > 1 => n as usize,
+        _ => 1,
+    } - 1;
+    let flag_at = base
+        .checked_add(8)
         .ok_or_else(|| AppError::Media("bytevc2 PTL 溢出".into()))?;
-    if pos > data.len() {
-        return Err(AppError::Media("bytevc2 PTL constraint 越界".into()));
-    }
-
-    if num_sublayers > 1 {
-        if pos >= data.len() {
-            return Err(AppError::Media("bytevc2 PTL sublayer 截断".into()));
+    let mut bits = *data
+        .get(flag_at)
+        .ok_or_else(|| AppError::Media("bytevc2 PTL 截断".into()))?;
+    let mut cursor = base
+        .checked_add(9)
+        .ok_or_else(|| AppError::Media("bytevc2 PTL 溢出".into()))?;
+    for _ in 0..8 {
+        if bits & 0x80 != 0 {
+            cursor = cursor
+                .checked_add(1)
+                .ok_or_else(|| AppError::Media("bytevc2 PTL 溢出".into()))?;
         }
-        let b = data[pos];
-        pos += 1;
-        let mut present = 0usize;
-        for i in 0..(num_sublayers - 1) {
-            if (b >> (7 - i)) & 1 != 0 {
-                present += 1;
-            }
-        }
-        pos = pos
-            .checked_add(present)
-            .ok_or_else(|| AppError::Media("bytevc2 PTL sublayer 溢出".into()))?;
-        if pos > data.len() {
-            return Err(AppError::Media("bytevc2 PTL sublayer 越界".into()));
-        }
+        bits = bits.wrapping_shl(1);
     }
-
-    // num_sub_profiles (1) + 4*n
-    if pos >= data.len() {
-        return Err(AppError::Media("bytevc2 PTL profiles 截断".into()));
+    let profiles = *data
+        .get(cursor)
+        .ok_or_else(|| AppError::Media("bytevc2 PTL profiles 截断".into()))?
+        as usize;
+    let advance = if profiles == 0 {
+        1
+    } else {
+        profiles
+            .checked_mul(4)
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| AppError::Media("bytevc2 PTL profiles 溢出".into()))?
+    };
+    cursor = cursor
+        .checked_add(advance)
+        .and_then(|n| n.checked_add(8))
+        .ok_or_else(|| AppError::Media("bytevc2 PTL 溢出".into()))?;
+    if cursor >= data.len() {
+        return Err(AppError::Media("bytevc2 extradata 缺 num_arrays".into()));
     }
-    let num_sub_profiles = data[pos] as usize;
-    pos += 1;
-    pos = pos
-        .checked_add(num_sub_profiles.saturating_mul(4))
-        .ok_or_else(|| AppError::Media("bytevc2 PTL profiles 溢出".into()))?;
-    if pos > data.len() {
-        return Err(AppError::Media("bytevc2 PTL profiles 越界".into()));
-    }
-
-    // 官方随后还有一段对齐到 arrays；剩余未知字节按「找到 arrays 计数」太脆。
-    // librempeg 在非 header 路径不走这里；官方 convert 在 bit0=0 时直接 arrays。
-    // bit0=1 的样本用完再收紧——先要求调用方给到 arrays 起点已对齐的缓冲。
-    Ok(pos)
+    Ok(cursor)
 }
 
 #[cfg(test)]
@@ -164,5 +146,36 @@ mod tests {
     #[test]
     fn rejects_short_buffer() {
         assert!(annexb_from_extradata(&[0; 8]).is_err());
+    }
+
+    /// `flags=0x07`：PTL 在场，`data[4]=1`、存在位图为 0、无 sub-profile。
+    /// `num_arrays` 在固定 8 字节尾巴之后。
+    #[test]
+    fn ptl_present_lands_on_arrays() {
+        let mut raw = vec![0u8; 26];
+        raw[0] = 1;
+        raw[1] = 0x07;
+        raw[4] = 1;
+        raw[18] = 1;
+        raw[19] = 0x8f;
+        raw[20] = 0;
+        raw[21] = 1;
+        raw[22] = 0;
+        raw[23] = 2;
+        raw[24] = 0x00;
+        raw[25] = 0x79;
+        let out = annexb_from_extradata(&raw).unwrap();
+        assert_eq!(out, [0, 0, 0, 1, 0x00, 0x79]);
+        assert_eq!(length_size_from_extradata(&raw).unwrap(), 4);
+    }
+
+    #[test]
+    fn official_bv2c_yields_parameter_sets() {
+        let raw = include_bytes!("official_bv2c.bin");
+        assert_eq!(raw[1], 0x07);
+        let out = annexb_from_extradata(raw).unwrap();
+        assert!(out.starts_with(&[0, 0, 0, 1]));
+        assert!(out.len() > 4, "官方样本必须抽出参数集");
+        assert_eq!(&out[4..6], &[0x00, 0x79]);
     }
 }

@@ -198,6 +198,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn official_plaintext_emits_a_frame() {
+        let path = Path::new("/tmp/hg-bytevc2-plain.mp4");
+        if !path.is_file() {
+            return;
+        }
+        let source = open_plaintext(path).expect("打开官方明文");
+        let mut frames = 0usize;
+        let mut dims = (0usize, 0usize);
+        let stopped = source.decode(|frame| {
+            dims = (frame.width, frame.height);
+            frames += 1;
+            if frames >= 8 {
+                return Err(AppError::Media("stop".into()));
+            }
+            Ok(())
+        });
+        assert_eq!(frames, 8, "应解出 8 帧再停: {stopped:?} dims={dims:?}");
+        assert!(dims.0 >= 2 && dims.1 >= 2, "实际 {dims:?}");
+    }
+
+    #[test]
     fn missing_file_is_an_io_error() {
         let err = decode_plaintext_mp4(Path::new("/no/such/bytevc2.mp4"), |_| Ok(())).unwrap_err();
         assert!(matches!(err, AppError::Io(_)), "实际 {err}");
