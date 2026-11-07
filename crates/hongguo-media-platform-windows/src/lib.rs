@@ -27,6 +27,9 @@ pub fn encoder_available() -> bool {
     mf::h264_hw_encoder_available() || mf::h264_sw_encoder_available()
 }
 
+/// ByteVC2 解出的 I420 编成 H.264。会话建在 Media Foundation 线程上。
+pub use mf::{YuvEncoder, with_encoder_thread};
+
 /// 丢弃平台侧的探测缓存（MF 硬编/HEVC 解码 MFT + WIC HEIF 解码器），
 /// 下次读取时重新探测（设置页「重新检测」用）。
 pub fn clear_probe_cache() {

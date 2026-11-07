@@ -15,7 +15,6 @@ const ARTICLE_DO_ACTION_PATH: &str = "/novel/articleapi/do_action/v1/";
 const COMMENT_DO_ACTION_PATH: &str = "/novel/commentapi/comment/do_action/v1/";
 const BOOKSHELF_UPDATE_PATH: &str = "/reading/bookapi/bookshelf/video/update/v";
 
-
 pub(super) fn video_digg_action_type(digg: bool) -> i64 {
     if digg { 3 } else { 4 }
 }

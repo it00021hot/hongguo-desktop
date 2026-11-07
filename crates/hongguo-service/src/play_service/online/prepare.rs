@@ -1,11 +1,33 @@
 //! 取流准备与预取编排：解析档位、抢取流权、复用/等待在途取流、连播预取。
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use hongguo_common::model::VideoDefinition;
 use hongguo_common::{AppError, AppResult};
 use hongguo_stream::{StreamCache, cache};
+use parking_lot::Mutex;
 
 use super::fill::{fill, resume_fill};
 use crate::app_state::AppState;
+
+/// `(vid, definition) → codec_type`：缓存命中时仍要知道要不要走兼容转码。
+static STREAM_CODECS: LazyLock<Mutex<HashMap<(String, u32), String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn remember_codec(vid: &str, definition: u32, codec: &str) {
+    STREAM_CODECS
+        .lock()
+        .insert((vid.to_string(), definition), codec.to_string());
+}
+
+fn remembered_codec(vid: &str, definition: u32) -> String {
+    STREAM_CODECS
+        .lock()
+        .get(&(vid.to_string(), definition))
+        .cloned()
+        .unwrap_or_default()
+}
 
 /// 预取（换剧 + 连播共用）的并发上限：每路要先走「取流表 + 探针链」再排填充门闸，
 /// 多路同时探针会在慢网/弱机上抢当前播放的带宽与 CPU；2 路足够让下一个目标先热。
@@ -46,6 +68,8 @@ pub struct Prepared {
     pub definition: u32,
     /// 本集提供的全部档位
     pub definitions: Vec<VideoDefinition>,
+    /// 选中流编码（`bytevc2` 时前端/壳走兼容转码）。
+    pub codec: String,
 }
 
 /// 准备在线播放，返回流地址与档位信息。
@@ -62,6 +86,7 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
+    crate::cold_start::wait().await;
     // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
     super::super::ensure_play_strategy_poller(state);
     let c = cache();
@@ -86,7 +111,7 @@ pub async fn prepare(
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(state, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
-            crate::device::note_stream_ok();
+            crate::device::note_stream_ok(state);
             return Ok(hit);
         }
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
@@ -100,14 +125,22 @@ pub async fn prepare(
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
     let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
-        // 设备/服务端拒发的记账点（真实播放路径）：取流健康守护据此换新注册自愈
         Err(e @ AppError::StreamMiss(_)) => {
             crate::device::note_stream_miss(state, vid);
             return Err(e);
         }
+        // 全程空字节：现役身份被拒发货 → 匿名换档一次再取
+        Err(AppError::EmptyResponse(msg)) => {
+            log::warn!("[Online] {vid} 取流空响应：{msg}");
+            if !crate::device::recover_after_empty_stream(state, vid).await {
+                return Err(AppError::EmptyResponse(msg));
+            }
+            fetch_with_registry(state, vid, progress_key, definition, cap).await?
+        }
         r => r?,
     };
     let want = play.definition;
+    remember_codec(vid, want, &play.codec);
     // 只记「不指定档位」那次解析到的结果：手动选过 720 再点「自动」，
     // 要的仍然是平台给的最高档，而不是上一次手动选的那档。
     if definition.is_none() {
@@ -129,12 +162,14 @@ pub async fn prepare(
         url,
         definition: want,
         definitions: play.definitions.clone(),
+        codec: play.codec.clone(),
     };
     let settings = state.settings();
     let owned = vid.to_string();
     let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
+    crate::device::note_stream_ok(state);
     let state = state.clone();
     crate::runtime::spawn(async move {
         let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, false).await;
@@ -146,7 +181,6 @@ pub async fn prepare(
         }
     });
 
-    crate::device::note_stream_ok();
     Ok(result)
 }
 
@@ -156,6 +190,7 @@ fn prepared(c: &StreamCache, vid: &str, definition: u32) -> Option<Prepared> {
         url: hongguo_protocol::stream_url(vid, definition),
         definition,
         definitions,
+        codec: remembered_codec(vid, definition),
     })
 }
 
@@ -167,6 +202,7 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     if vid.is_empty() {
         return Ok(());
     }
+    crate::cold_start::wait().await;
     let c = cache();
     // 已解析过档位且条目在场/在取：无事可做
     if let Some(want) = c.auto_definition(vid)

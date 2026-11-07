@@ -286,8 +286,9 @@ impl super::HomeView {
             bridge::spawn(async move {
                 let env = state.api_env();
                 if !preload_map.is_empty() {
-                    let cap = hongguo_api::stream_pick::DecoderCapability::from_hevc(
+                    let cap = hongguo_api::stream_pick::DecoderCapability::from_probes(
                         hongguo_service::capability_service::hevc_playable(),
+                        hongguo_media_platform::capability::bytevc2_decode_available(),
                     );
                     match hongguo_api::play_url::fetch_play_batch(&preload_map, cap, &env).await {
                         Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),

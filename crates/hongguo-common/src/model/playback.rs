@@ -91,6 +91,12 @@ pub struct PlayResponse {
     /// 本集提供的全部档位，供切换菜单渲染
     #[serde(default)]
     pub definitions: Vec<VideoDefinition>,
+    /// 选中流的 `codec_type`（如 `bytevc1` / `bytevc2`）；本地文件为空。
+    #[serde(default)]
+    pub codec: String,
+    /// 系统播放器 / WebView 不能直喂，必须先走兼容转码（典型：`bytevc2`）。
+    #[serde(default)]
+    pub needs_compat: bool,
 }
 
 /// 一档清晰度，发前端 `videoDefinitionSchema`。派生 `Ord`：取流侧按 (档位, 宽, 高) 升序去重后一次反转即得「高到低」，不必写比较函数。
@@ -157,6 +163,8 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }],
+            codec: "bytevc1".into(),
+            needs_compat: false,
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["url"], "hongguo-stream://v1");
@@ -164,6 +172,8 @@ mod tests {
         assert_eq!(v["resumeAt"], 12.5);
         assert_eq!(v["definition"], 1080);
         assert_eq!(v["definitions"][0]["value"], 1080);
+        assert_eq!(v["codec"], "bytevc1");
+        assert_eq!(v["needsCompat"], false);
         assert!(v.get("resume_at").is_none());
     }
 

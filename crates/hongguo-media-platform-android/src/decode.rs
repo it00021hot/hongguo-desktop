@@ -31,9 +31,8 @@ pub struct Nv12Frame {
 
 impl HevcDecoder {
     pub fn new(width: usize, height: usize, csd: &[u8]) -> AppResult<Self> {
-        let codec = MediaCodec::from_decoder_type("video/hevc").ok_or_else(|| {
-            AppError::Media("本机没有 HEVC MediaCodec 解码器".into())
-        })?;
+        let codec = MediaCodec::from_decoder_type("video/hevc")
+            .ok_or_else(|| AppError::Media("本机没有 HEVC MediaCodec 解码器".into()))?;
         let mut fmt = MediaFormat::new();
         fmt.set_str("mime", "video/hevc");
         fmt.set_i32("width", width as i32);

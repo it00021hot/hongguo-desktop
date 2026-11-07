@@ -82,6 +82,14 @@ fn rewrite_json_body(body: &str, env: &ApiEnv) -> Option<Vec<u8>> {
     gzip_bytes(serde_json::to_vec(&v).ok()?.as_slice()).ok()
 }
 
+/// 取流类路径：序列里残留的旧抓包会带着**别的 vid / 旧 body**重放，
+/// 空响应会被服务端记成该设备的发货失败，把刚注册的身份直接烧废。
+/// 行为预热只铺设定/书城/账号类，取流留给正式起播。
+fn is_play_path(path: &str) -> bool {
+    let base = path.split_once('?').map(|(b, _)| b).unwrap_or(path);
+    base.contains("/novel/player/")
+}
+
 /// 执行冷启动行为预热：按官方序列顺序重发（身份重写 + 逐条重签名），返回成功（2xx）条数。
 /// 单条失败/超时不中断整体（预热是尽力而为的行为铺垫，个别失败不影响解锁效果）。
 pub async fn run(env: &ApiEnv) -> usize {
@@ -100,6 +108,9 @@ pub async fn run(env: &ApiEnv) -> usize {
         ) else {
             continue;
         };
+        if is_play_path(path) {
+            continue;
+        }
         let (pathname, biz_query) = rewrite_query(path, env);
         let body = item
             .get("body")
@@ -143,4 +154,17 @@ pub async fn run(env: &ApiEnv) -> usize {
         tokio::time::sleep(std::time::Duration::from_millis(REQUEST_INTERVAL_MS)).await;
     }
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_play_path;
+
+    #[test]
+    fn play_paths_are_skipped_from_warmup() {
+        assert!(is_play_path("/novel/player/video_model/v1/?x=1"));
+        assert!(is_play_path("/novel/player/multi_video_model/preload/v1"));
+        assert!(!is_play_path("/reading/bookapi/bookmall/tab/v?x=1"));
+        assert!(!is_play_path("/service/settings/v3/"));
+    }
 }

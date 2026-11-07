@@ -282,12 +282,21 @@ fn fresh_identity() -> FreshIdentity {
 /// 首次安装时间回拨天数上限：真实安装都是过去时（pm clear 不清 firstInstallTime），按 cdid 确定性取 1~30 天。
 const FIRST_INSTALL_BACK_MAX_DAYS: u64 = 30;
 
-/// 官方 App 身份字段（官方注册密文体逐字段对齐；`sig_hash` = `md5(cert_der)`）。
+/// 官方 App 身份字段（7.4.3.32 APK 实值；`sig_hash` = `md5(cert_der)`）。
+/// bdinstall：`h90.j`（`sdk_version`/`git_hash`/`sdk_flavor`/`sdk_target_version`/
+/// `sdk_version_code`）+ `assets/ss.properties` 的 `release_build`。
 const OFFICIAL_DISPLAY_NAME: &str = "红果免费短剧";
 const OFFICIAL_SIG_HASH: &str = "56a962410c494bbaf0b58dba20cae56f";
-const OFFICIAL_GIT_HASH: &str = "3a88f4e";
-const OFFICIAL_SDK_VERSION: &str = "3.7.0-rc.34-fanqie-xiaoshuo";
-const OFFICIAL_RELEASE_BUILD: &str = "b5e187f";
+const OFFICIAL_GIT_HASH: &str = "27660d0";
+const OFFICIAL_SDK_VERSION: &str = "4.3.2-rc.44";
+const OFFICIAL_SDK_VERSION_CODE: i64 = 4_030_294;
+const OFFICIAL_SDK_TARGET_VERSION: i64 = 30;
+const OFFICIAL_SDK_FLAVOR: &str = "cnInner";
+const OFFICIAL_RELEASE_BUILD: &str = "652bb85_20261028";
+
+/// 注册代际：`version_code` + bdinstall SDK 指纹。SDK 常量变更时 bump，
+/// 触发库内档案按全新安装语义迁移（旧指纹注册的设备会被静默拒发货）。
+pub const REGISTER_REGIME: &str = "74332:4.3.2-rc.44";
 
 /// 构造 AppLog 注册 JSON 明文（官方实流密文体逐字段对齐）。设备耦合字段
 /// 取池指纹；App 身份字段钉官方实值；`ipv6_list` 与首次安装时间按 cdid 确定性生成。
@@ -365,7 +374,8 @@ fn register_json_str(
         json!(hongguo_signer::REGISTER_VERSION_CODE),
     );
     h.insert("mcc_mnc".into(), json!("46000"));
-    h.insert("not_request_sender".into(), json!(0));
+    // h90.g：`not_request_sender = 1`（bdinstall 默认）
+    h.insert("not_request_sender".into(), json!(1));
     h.insert("oaid_may_support".into(), json!(false));
     h.insert("openudid".into(), json!(id.openudid));
     h.insert("os".into(), json!("Android"));
@@ -379,9 +389,13 @@ fn register_json_str(
     h.insert("resolution".into(), json!(fp.resolution_hxw()));
     h.insert("rom".into(), json!(fp.rom));
     h.insert("rom_version".into(), json!(fp.rom_version));
-    h.insert("sdk_flavor".into(), json!("china"));
-    h.insert("sdk_target_version".into(), json!(29));
+    h.insert("sdk_flavor".into(), json!(OFFICIAL_SDK_FLAVOR));
+    h.insert(
+        "sdk_target_version".into(),
+        json!(OFFICIAL_SDK_TARGET_VERSION),
+    );
     h.insert("sdk_version".into(), json!(OFFICIAL_SDK_VERSION));
+    h.insert("sdk_version_code".into(), json!(OFFICIAL_SDK_VERSION_CODE));
     h.insert("sig_hash".into(), json!(OFFICIAL_SIG_HASH));
     h.insert("sim_region".into(), json!("cn"));
     h.insert("sim_serial_number".into(), json!([]));
@@ -597,11 +611,15 @@ mod tests {
         );
         assert_eq!(h["custom"]["account_region"], "cn");
 
-        assert_eq!(h["git_hash"], "3a88f4e");
-        assert_eq!(h["sdk_flavor"], "china");
-        assert_eq!(h["sdk_target_version"], 29);
-        assert_eq!(h["sdk_version"], "3.7.0-rc.34-fanqie-xiaoshuo");
+        assert_eq!(h["git_hash"], "27660d0");
+        assert_eq!(h["sdk_flavor"], "cnInner");
+        assert_eq!(h["sdk_target_version"], 30);
+        assert_eq!(h["sdk_version"], "4.3.2-rc.44");
+        assert_eq!(h["sdk_version_code"], 4_030_294);
+        assert_eq!(h["not_request_sender"], 1);
+        assert_eq!(h["release_build"], "652bb85_20261028");
         assert!(h.get("scene").is_none(), "实流注册 JSON 无 scene 键");
+        assert_eq!(REGISTER_REGIME, "74332:4.3.2-rc.44");
     }
 
     /// 注册端点存活性诊断：真机试注，device_id=0 / 报错即形态有变。

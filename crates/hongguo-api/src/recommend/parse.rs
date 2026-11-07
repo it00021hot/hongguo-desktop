@@ -172,4 +172,3 @@ pub(super) fn recommend_feed_entry(raw: &Value) -> Option<crate::discover::FeedI
             .unwrap_or(0),
     })
 }
-

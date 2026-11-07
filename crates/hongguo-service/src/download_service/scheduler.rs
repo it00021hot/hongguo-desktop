@@ -217,7 +217,7 @@ async fn run_one(
     let play = hongguo_api::play_url::fetch_play_url(
         &task.vid,
         None,
-        hongguo_api::stream_pick::DecoderCapability::Full,
+        hongguo_api::stream_pick::DecoderCapability::full(),
         &state.api_env(),
     )
     .await

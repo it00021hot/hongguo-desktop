@@ -109,7 +109,10 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
     ];
     args.extend(quality_args(encoder, req.rate));
 
-    let scale = req.scale_to.filter(|(w, h)| *w > 0 && *h > 0).map(|(w, h)| (even(w), even(h)));
+    let scale = req
+        .scale_to
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(|(w, h)| (even(w), even(h)));
     if let Some((w, h)) = scale {
         // H.264 要求宽高为偶数，否则 ffmpeg 直接拒绝
         args.extend(["-vf".to_string(), format!("scale={w}:{h}")]);
@@ -162,10 +165,24 @@ fn even(v: u32) -> u32 {
 fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
     let owned: &[&str] = match (encoder.name, rate) {
         ("h264_nvenc", RateProfile::Archive) => &[
-            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-b:v", "0",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p4",
+            "-cq",
+            "23",
+            "-b:v",
+            "0",
         ],
         ("h264_nvenc", RateProfile::Playback) => &[
-            "-c:v", "h264_nvenc", "-preset", "p1", "-cq", "28", "-b:v", "0",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p1",
+            "-cq",
+            "28",
+            "-b:v",
+            "0",
         ],
         ("h264_qsv", RateProfile::Archive) => &["-c:v", "h264_qsv", "-global_quality", "23"],
         ("h264_qsv", RateProfile::Playback) => &["-c:v", "h264_qsv", "-global_quality", "28"],
@@ -176,10 +193,20 @@ fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
             "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28",
         ],
         ("h264_mf", RateProfile::Archive) => &[
-            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "60",
+            "-c:v",
+            "h264_mf",
+            "-rate_control",
+            "quality",
+            "-quality",
+            "60",
         ],
         ("h264_mf", RateProfile::Playback) => &[
-            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "40",
+            "-c:v",
+            "h264_mf",
+            "-rate_control",
+            "quality",
+            "-quality",
+            "40",
         ],
         (_, RateProfile::Archive) => &[
             "-c:v",

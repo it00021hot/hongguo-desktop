@@ -24,6 +24,7 @@ pub struct DeviceStatus {
 pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::Manager;
     let state = app.state::<AppState>().inner().clone();
+    hongguo_service::device::arm_cold_start();
     tauri::async_runtime::spawn(async move {
         hongguo_service::device::ensure_registered(&state).await;
     });

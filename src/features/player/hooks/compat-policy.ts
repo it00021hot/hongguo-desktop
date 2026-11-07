@@ -19,12 +19,16 @@ export function decideCompatPlayback(input: {
   hevcPlayable: boolean | undefined;
   android: boolean;
   compatAuthorized: boolean;
+  /** 后端标明本集必须转兼容（典型 bytevc2） */
+  needsCompat?: boolean;
 }): CompatPlaybackDecision {
-  const { hevcPlayable, android, compatAuthorized } = input;
+  const { hevcPlayable, android, compatAuthorized, needsCompat } = input;
   const knownUnplayable = hevcPlayable === false;
-  const forceCompat = knownUnplayable && (android || compatAuthorized);
+  const forceCompat =
+    Boolean(needsCompat) || (knownUnplayable && (android || compatAuthorized));
   // Android 能力未回前也不喂 HEVC：软解机会白下整集密文；硬解只多等一次廉价探测
-  const holdNative = forceCompat || (android && hevcPlayable === undefined);
+  const holdNative =
+    forceCompat || (android && hevcPlayable === undefined) || Boolean(needsCompat);
   return { forceCompat, holdNative };
 }
 

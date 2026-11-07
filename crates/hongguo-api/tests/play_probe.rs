@@ -34,7 +34,7 @@ async fn probe_play_url() {
         }
     }
     for (name, vid) in &picks {
-        match fetch_play_url(vid, None, DecoderCapability::Full, &env).await {
+        match fetch_play_url(vid, None, DecoderCapability::full(), &env).await {
             Ok(info) => println!(
                 "{name} OK 定义={} codec={} url前60={}",
                 info.definition,
@@ -45,7 +45,7 @@ async fn probe_play_url() {
         }
     }
     // 未注册类型的 vid：应直接走单集回落，不猜 key
-    match fetch_play_url("7680041581440683070", None, DecoderCapability::Full, &env).await {
+    match fetch_play_url("7680041581440683070", None, DecoderCapability::full(), &env).await {
         Ok(info) => println!(
             "未注册类型 OK（单集回落）定义={} url前60={}",
             info.definition,
@@ -71,7 +71,7 @@ async fn probe_play_batch() {
         ),
         ("1".to_string(), vec!["7687873056332598296".to_string()]),
     ]);
-    match hongguo_api::play_url::fetch_play_batch(&map, DecoderCapability::Full, &env).await {
+    match hongguo_api::play_url::fetch_play_batch(&map, DecoderCapability::full(), &env).await {
         Ok(n) => println!(
             "BATCH OK 暂存 {n}/{}",
             map.values().map(Vec::len).sum::<usize>()
@@ -205,7 +205,7 @@ async fn probe_delivery_matrix() {
             let r = match hongguo_api::play_url::fetch_play_url(
                 vid,
                 None,
-                hongguo_api::stream_pick::DecoderCapability::Full,
+                hongguo_api::stream_pick::DecoderCapability::full(),
                 &dev_env,
             )
             .await

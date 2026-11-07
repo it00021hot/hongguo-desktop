@@ -38,6 +38,17 @@ describe('decideCompatPlayback', () => {
       decideCompatPlayback({ hevcPlayable: true, android: false, compatAuthorized: true }),
     ).toEqual({ forceCompat: false, holdNative: false });
   });
+
+  it('forces compat when backend marks needsCompat (bytevc2)', () => {
+    expect(
+      decideCompatPlayback({
+        hevcPlayable: true,
+        android: false,
+        compatAuthorized: false,
+        needsCompat: true,
+      }),
+    ).toEqual({ forceCompat: true, holdNative: true });
+  });
 });
 
 describe('resolvePlayBaseSrc', () => {

@@ -17,6 +17,9 @@ pub use vt::h264_hw_encoder_available;
 /// 丢弃平台侧的探测缓存，下次读取时重新探测（设置页「重新检测」用）。
 pub use vt::clear_probe_cache;
 
+/// ByteVC2 解出的 I420 编成 H.264。编码会话就在调用线程上建。
+pub use vt::{YuvEncoder, with_encoder_thread};
+
 /// 仅测试构建 / 门面 test-support：跑完整平台链路；macOS 生产入口本就是「硬编优先、软编回落」直接复用——e2e 测的就是发布行为。
 #[cfg(any(test, feature = "test-support"))]
 pub fn transcode_h264_for_tests(

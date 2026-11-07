@@ -30,6 +30,8 @@ export function useTranscodeFallback(params: {
   hevcPlayable: boolean | undefined;
   /** Android：无扩展安装路径，软解判假即强制兼容 */
   android: boolean;
+  /** 后端标明本集必须转兼容（bytevc2 等） */
+  needsCompat?: boolean;
   /**
    * 解码失败的裁决入口（轮询命中后调用）：父层据此决定直接兜底转码，
    * 还是先弹「装扩展 vs 转兼容」的主卡（无 HEVC 机器）。
@@ -49,6 +51,7 @@ export function useTranscodeFallback(params: {
     currentSeries,
     hevcPlayable,
     android,
+    needsCompat,
     onDecodeFailure,
   } = params;
   const compatPlay = useCompatPlayback();
@@ -64,6 +67,7 @@ export function useTranscodeFallback(params: {
     hevcPlayable,
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
+    needsCompat,
   });
 
   /** 兜底产物地址，只认当前这一集 */

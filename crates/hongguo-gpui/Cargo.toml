@@ -158,6 +158,7 @@ hongguo-stream = { path = "../hongguo-stream" }
 # hongguo-player-* crate）：壳只认契约，不写平台分支，也不直接摸平台依赖。
 hongguo-player = { path = "../hongguo-player" }
 hongguo-media = { path = "../hongguo-media" }
+hongguo-bytevc2 = { path = "../hongguo-bytevc2" }
 # 设置页的转码能力探测（ffmpeg/硬件编码）：与 Tauri 的 decode_capability
 # command 同一段（probe::detect / redetect）。
 hongguo-media-platform = { path = "../hongguo-media-platform" }

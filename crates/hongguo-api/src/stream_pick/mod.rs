@@ -1,6 +1,6 @@
 //! 清晰度择优：从 `video_list` 里挑出最该下的那一条。
 //! ⚠️ 流元数据全在 `video_meta` 子对象、`definition` 带 `p` 后缀——照旧 schema 读会全取到 0；
-//! 无 HEVC 机器走 [`DecoderCapability::NoHevc`]（语义对齐官方 CodecStrategy：宁选能播的 720p h264）。
+//! 无 HEVC 机器走 [`DecoderCapability::no_hevc`]（语义对齐官方 CodecStrategy：宁选能播的 720p h264）。
 
 mod model;
 
@@ -10,17 +10,21 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-/// 编码器偏好排序里「排不进前两档」的编码器。
-const UNRANKED_CODEC: u8 = 2;
+/// 编码器偏好：不可播 / 未识别。
+const UNRANKED_CODEC: u8 = 3;
+/// `bytevc2` 可播时的偏好位（次于 bytevc1；需 `cap.bytevc2`）。
+const BYTEVC2_RANK: u8 = 2;
 
 /// 无 HEVC 模式的编码层级（官方 FALLBACK 序列的桌面版）。
 const NO_HEVC_H264: u8 = 0;
 const NO_HEVC_UNKNOWN: u8 = 1;
 const NO_HEVC_HEVC: u8 = 2;
 
-/// 编码器偏好排序：平台优先 `h265`/`h264`，其次 `bytevc1`，其余（含 `bytevc2`）最后。
-/// 同一清晰度下优先标准编码器——ffmpeg 与系统播放器的兼容性差异很大。
+/// 编码器偏好排序：`h265`/`h264` > `bytevc1` > `bytevc2` > 其余。
 fn codec_rank(codec: &str) -> u8 {
+    if hongguo_bytevc2::is_bytevc2(codec) {
+        return BYTEVC2_RANK;
+    }
     match codec {
         "h265" | "h264" | "h265_hvc1" | "hevc" | "hvc1" | "avc1" => 0,
         "bytevc1" => 1,
@@ -52,11 +56,17 @@ fn codec_of(v: &Value) -> &str {
         .unwrap_or_default()
 }
 
-/// 这条流能不能直接喂给播放器：`bytevc2` 是字节私有编码必黑屏（Chromium 不认不退软解）；
-/// 平台按集分配编码器，判据落在每条流自己的 `codec_type`，没报编码器按能播处理（明确不可播才排除）。
-pub fn is_playable(v: &Value) -> bool {
+/// 这条流本机最终能否播：标准编码可直喂；`bytevc2` 需内置 Rust 解码器再转码；
+/// 没报编码器按能播处理（明确不可播才排除）。
+pub fn is_playable(v: &Value, cap: DecoderCapability) -> bool {
     let codec = codec_of(v);
-    codec.is_empty() || codec_rank(codec) < UNRANKED_CODEC
+    if codec.is_empty() {
+        return true;
+    }
+    if hongguo_bytevc2::is_bytevc2(codec) {
+        return cap.bytevc2;
+    }
+    codec_rank(codec) < UNRANKED_CODEC
 }
 
 /// 计算一条流在指定能力模式下的分数。
@@ -89,10 +99,11 @@ pub fn stream_score_with(v: &Value, cap: DecoderCapability) -> StreamScore {
         pixels: dim("vwidth").saturating_mul(dim("vheight")),
         codec_rank: codec_rank(codec),
         bitrate,
-        no_hevc: cap == DecoderCapability::NoHevc,
-        codec_tier: match cap {
-            DecoderCapability::Full => 0,
-            DecoderCapability::NoHevc => codec_tier_no_hevc(codec),
+        no_hevc: !cap.hevc,
+        codec_tier: if cap.hevc {
+            0
+        } else {
+            codec_tier_no_hevc(codec)
         },
     }
 }
@@ -149,11 +160,11 @@ pub fn list_definitions(model: &Value, cap: DecoderCapability) -> Vec<Definition
         if v.get("main_url").and_then(Value::as_str).is_none() {
             continue;
         }
-        if !is_playable(v) {
+        if !is_playable(v, cap) {
             continue;
         }
         let score = stream_score_with(v, cap);
-        if cap == DecoderCapability::NoHevc && score.codec_tier >= NO_HEVC_HEVC {
+        if !cap.hevc && score.codec_tier >= NO_HEVC_HEVC {
             continue;
         }
         // def_num 为 0 说明元数据缺失，列出来只会让菜单多一个看不懂的项
@@ -189,7 +200,7 @@ fn best_in(
         if v.get("main_url").and_then(Value::as_str).is_none() {
             continue;
         }
-        if !is_playable(v) {
+        if !is_playable(v, cap) {
             continue;
         }
         let score = stream_score_with(v, cap);
@@ -215,14 +226,13 @@ pub fn pick_stream_at(
     cap: DecoderCapability,
 ) -> Option<PlayStream> {
     let list = model.get("video_list")?.as_array()?;
-    let chosen = match cap {
-        DecoderCapability::Full => {
-            best_in(list, cap, target, false).or_else(|| best_in(list, cap, None, false))
-        }
-        DecoderCapability::NoHevc => best_in(list, cap, target, true)
+    let chosen = if cap.hevc {
+        best_in(list, cap, target, false).or_else(|| best_in(list, cap, None, false))
+    } else {
+        best_in(list, cap, target, true)
             .or_else(|| best_in(list, cap, None, true))
             .or_else(|| best_in(list, cap, target, false))
-            .or_else(|| best_in(list, cap, None, false)),
+            .or_else(|| best_in(list, cap, None, false))
     };
     let (score, v) = chosen?;
     Some(PlayStream {
@@ -279,7 +289,7 @@ mod tests {
 
     #[test]
     fn picks_highest_definition_from_real_schema() {
-        let s = pick_stream_at(&real_model(), None, DecoderCapability::Full).unwrap();
+        let s = pick_stream_at(&real_model(), None, DecoderCapability::full()).unwrap();
         assert_eq!(s.url, "https://cdn/1080.mp4");
         assert_eq!(s.spade, "KEY1080");
         assert_eq!(s.codec.as_deref(), Some("bytevc1"));
@@ -288,7 +298,7 @@ mod tests {
 
     #[test]
     fn unplayable_definitions_are_kept_out_of_the_menu() {
-        let defs = list_definitions(&real_model(), DecoderCapability::Full);
+        let defs = list_definitions(&real_model(), DecoderCapability::full());
         assert_eq!(
             defs.iter().map(|d| d.value).collect::<Vec<_>>(),
             vec![1080],
@@ -297,14 +307,29 @@ mod tests {
     }
 
     #[test]
+    fn bytevc2_enters_menu_when_capability_allows() {
+        let cap = DecoderCapability::full().with_bytevc2(true);
+        let defs = list_definitions(&real_model(), cap);
+        assert_eq!(
+            defs.iter().map(|d| d.value).collect::<Vec<_>>(),
+            vec![1080, 720, 360],
+            "有 bvc2 解码器时 bytevc2 档也进菜单"
+        );
+        let s = pick_stream_at(&real_model(), None, cap).unwrap();
+        assert_eq!(s.codec.as_deref(), Some("bytevc1"), "同剧仍优先 bytevc1");
+        let only = pick_stream_at(&multi_codec_model(), Some(720), cap).unwrap();
+        assert_eq!(only.codec.as_deref(), Some("bytevc1"), "同档仍优先标准编码");
+    }
+
+    #[test]
     fn a_standard_codec_in_the_same_definition_keeps_the_option_alive() {
-        let defs = list_definitions(&multi_codec_model(), DecoderCapability::Full);
+        let defs = list_definitions(&multi_codec_model(), DecoderCapability::full());
         assert_eq!(defs.iter().map(|d| d.value).collect::<Vec<_>>(), vec![720]);
     }
 
     #[test]
     fn picks_the_playable_stream_when_a_definition_has_several_codecs() {
-        let s = pick_stream_at(&multi_codec_model(), Some(720), DecoderCapability::Full)
+        let s = pick_stream_at(&multi_codec_model(), Some(720), DecoderCapability::full())
             .expect("720p 应可选");
         assert_eq!(
             s.url, "https://cdn/720-standard.mp4",
@@ -315,7 +340,7 @@ mod tests {
 
     #[test]
     fn an_unplayable_definition_falls_back_to_the_best_playable_one() {
-        let s = pick_stream_at(&real_model(), Some(720), DecoderCapability::Full)
+        let s = pick_stream_at(&real_model(), Some(720), DecoderCapability::full())
             .expect("应回退而不是报错");
         assert_eq!(s.url, "https://cdn/1080.mp4");
         assert_eq!(s.definition, 1080);
@@ -323,14 +348,14 @@ mod tests {
 
     #[test]
     fn picks_the_requested_definition() {
-        let s = pick_stream_at(&multi_codec_model(), Some(720), DecoderCapability::Full)
+        let s = pick_stream_at(&multi_codec_model(), Some(720), DecoderCapability::full())
             .expect("720p 应可选");
         assert_eq!(s.definition, 720);
     }
 
     #[test]
     fn unavailable_definition_falls_back_to_the_best() {
-        let s = pick_stream_at(&real_model(), Some(2160), DecoderCapability::Full)
+        let s = pick_stream_at(&real_model(), Some(2160), DecoderCapability::full())
             .expect("应回退而不是报错");
         assert_eq!(s.definition, 1080);
     }
@@ -343,7 +368,7 @@ mod tests {
                 { "main_url": "b", "video_meta": {} }
             ]
         });
-        let defs = list_definitions(&model, DecoderCapability::Full);
+        let defs = list_definitions(&model, DecoderCapability::full());
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].value, 1080);
     }
@@ -355,7 +380,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|v| stream_score_with(v, DecoderCapability::Full))
+            .map(|v| stream_score_with(v, DecoderCapability::full()))
             .collect();
         assert_eq!(
             scores.iter().map(|s| s.def_num).collect::<Vec<_>>(),
@@ -381,7 +406,7 @@ mod tests {
     fn bitrate_falls_back_to_real_bitrate() {
         let v = json!({ "video_meta": { "real_bitrate": 88888, "codec_type": "h265" } });
         assert_eq!(
-            stream_score_with(&v, DecoderCapability::Full).bitrate,
+            stream_score_with(&v, DecoderCapability::full()).bitrate,
             88888
         );
     }
@@ -396,7 +421,7 @@ mod tests {
                     "vheight": 1920, "bitrate": 500000, "codec_type": "h265" } }
             ]
         });
-        let s = pick_stream_at(&model, None, DecoderCapability::Full).unwrap();
+        let s = pick_stream_at(&model, None, DecoderCapability::full()).unwrap();
         assert_eq!(s.url, "h265", "同清晰度同码率应优先标准编码器");
     }
 
@@ -408,7 +433,7 @@ mod tests {
                 { "main_url": "only-one", "video_meta": { "definition": "360p" } }
             ]
         });
-        let s = pick_stream_at(&model, None, DecoderCapability::Full).unwrap();
+        let s = pick_stream_at(&model, None, DecoderCapability::full()).unwrap();
         assert_eq!(s.url, "only-one");
     }
 
@@ -417,16 +442,21 @@ mod tests {
         let model = json!({
             "video_list": [{ "main_url": "plain", "video_meta": { "definition": "720p" } }]
         });
-        let s = pick_stream_at(&model, None, DecoderCapability::Full).unwrap();
+        let s = pick_stream_at(&model, None, DecoderCapability::full()).unwrap();
         assert!(s.spade.is_empty(), "无 encrypt_info 时密钥应为空");
     }
 
     #[test]
     fn empty_list_is_none() {
         assert!(
-            pick_stream_at(&json!({ "video_list": [] }), None, DecoderCapability::Full).is_none()
+            pick_stream_at(
+                &json!({ "video_list": [] }),
+                None,
+                DecoderCapability::full()
+            )
+            .is_none()
         );
-        assert!(pick_stream_at(&json!({}), None, DecoderCapability::Full).is_none());
+        assert!(pick_stream_at(&json!({}), None, DecoderCapability::full()).is_none());
     }
 
     fn hevc_vs_h264_model() -> Value {
@@ -444,17 +474,17 @@ mod tests {
 
     #[test]
     fn no_hevc_machine_drops_to_the_playable_definition() {
-        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.url, "https://cdn/720-h264.mp4");
         assert_eq!(s.codec.as_deref(), Some("h264"));
         assert_eq!(s.definition, 720);
-        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::Full).unwrap();
+        let s = pick_stream_at(&hevc_vs_h264_model(), None, DecoderCapability::full()).unwrap();
         assert_eq!(s.url, "https://cdn/1080-hevc.mp4");
     }
 
     #[test]
     fn no_hevc_machine_keeps_hevc_only_gears_out_of_the_menu() {
-        let defs = list_definitions(&hevc_vs_h264_model(), DecoderCapability::NoHevc);
+        let defs = list_definitions(&hevc_vs_h264_model(), DecoderCapability::no_hevc());
         assert_eq!(
             defs.iter().map(|d| d.value).collect::<Vec<_>>(),
             vec![720],
@@ -472,19 +502,19 @@ mod tests {
                     "vheight": 1280, "bitrate": 600000, "codec_type": "h264" } }
             ]
         });
-        let s = pick_stream_at(&model, Some(720), DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&model, Some(720), DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.url, "h264");
     }
 
     #[test]
     fn no_hevc_last_resort_skips_bytevc2_but_keeps_standard_hevc() {
-        let s = pick_stream_at(&multi_codec_model(), None, DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&multi_codec_model(), None, DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.codec.as_deref(), Some("bytevc1"));
     }
 
     #[test]
     fn no_hevc_whole_hevc_episode_still_yields_a_stream_as_last_resort() {
-        let s = pick_stream_at(&real_model(), None, DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&real_model(), None, DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.definition, 1080, "末选取 HEVC 里最高的 1080p bytevc1");
     }
 
@@ -496,7 +526,7 @@ mod tests {
                     "vwidth": 720, "vheight": 1280, "bitrate": 300000 } }
             ]
         });
-        let s = pick_stream_at(&model, None, DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&model, None, DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.url, "mystery");
     }
 
@@ -510,13 +540,13 @@ mod tests {
                     "vwidth": 720, "vheight": 1280, "bitrate": 400000, "codec_type": "h264" } }
             ]
         });
-        let s = pick_stream_at(&model, Some(720), DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&model, Some(720), DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.url, "h264", "同档位确定的 h264 优先于未知编码");
     }
 
     #[test]
     fn no_hevc_pinned_hevc_only_definition_falls_back_silently() {
-        let s = pick_stream_at(&real_model(), Some(720), DecoderCapability::NoHevc).unwrap();
+        let s = pick_stream_at(&real_model(), Some(720), DecoderCapability::no_hevc()).unwrap();
         assert_eq!(s.definition, 1080);
     }
 
@@ -530,7 +560,7 @@ mod tests {
                     "vwidth": 720, "vheight": 1280, "bitrate": 400000, "codec_type": "h264" } }
             ]
         });
-        let defs = list_definitions(&model, DecoderCapability::NoHevc);
+        let defs = list_definitions(&model, DecoderCapability::no_hevc());
         assert_eq!(
             defs.iter().map(|d| d.value).collect::<Vec<_>>(),
             vec![1080, 720]

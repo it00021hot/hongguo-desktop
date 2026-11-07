@@ -53,14 +53,21 @@ async fn check_and_prefetch(
     let env = state.api_env();
     // NoHevc 视角看下一集：有可选流（h264/未知编码）就不用转
     let probe =
-        hongguo_api::play_url::fetch_play_url(vid, None, DecoderCapability::NoHevc, &env).await?;
+        hongguo_api::play_url::fetch_play_url(vid, None, DecoderCapability::no_hevc(), &env)
+            .await?;
     if !probe.definitions.is_empty() {
         return Ok(false);
     }
     log::info!("[CompatPrefetch] 第 {vid_index} 集 HEVC-only，后台预转兼容产物");
-    // Full 取流拿 HEVC 源（转码源必须全量候选）。
-    let play =
-        hongguo_api::play_url::fetch_play_url(vid, None, DecoderCapability::Full, &env).await?;
+    // Full + bytevc2：转码源必须全量候选（含 bvc2，由内置 Rust 解码器解）。
+    let play = hongguo_api::play_url::fetch_play_url(
+        vid,
+        None,
+        DecoderCapability::full()
+            .with_bytevc2(hongguo_media_platform::capability::bytevc2_decode_available()),
+        &env,
+    )
+    .await?;
     let settings = state.settings();
     let plain = super::online::fetch_plain(&play, &settings).await?;
     super::compat_play::ensure_compat(

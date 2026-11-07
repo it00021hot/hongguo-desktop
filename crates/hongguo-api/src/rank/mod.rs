@@ -47,9 +47,9 @@ pub struct RankReq<'a> {
 mod parse;
 mod session;
 
-pub use session::fetch_rank_ex;
 /// 新剧榜等兄弟域复用同一套 cell_view 解析。
 pub(crate) use parse::{parse_cell_selector, parse_rank_items};
+pub use session::fetch_rank_ex;
 
 // 测试 / probe 经 `use super::*` 取这些符号（与拆分前同名同可见性）。
 #[cfg(test)]

@@ -148,14 +148,47 @@ impl super::HomeView {
                     &item.series_id,
                     ep.vid_index,
                 );
-                (
-                    hongguo_player::PlaySource::Online {
-                        vid: ep.vid.clone(),
-                        definition: prepared.definition,
-                    },
-                    prepared.definitions,
-                    prepared.definition,
-                )
+                if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
+                    // 系统播放器不解 bvc2：先兼容转成 H.264 再走本地源（对齐 Tauri needsCompat）。
+                    log::info!(
+                        "[Home] {} 第 {} 集 codec={}，走兼容转码",
+                        item.series_id,
+                        ep.vid_index,
+                        prepared.codec
+                    );
+                    let compat = hongguo_service::play_service::compat_play::compat_for_playback(
+                        &state,
+                        &item.series_id,
+                        ep.vid_index,
+                        Some(ep.vid.clone()),
+                    )
+                    .await?;
+                    let path = hongguo_service::transcode_service::cache::cached_path_for(
+                        &item.series_id,
+                        ep.vid_index,
+                        hongguo_media_platform::RateProfile::Playback,
+                    )
+                    .ok_or_else(|| {
+                        hongguo_common::AppError::Media(format!(
+                            "兼容转码完成但缓存未命中（{}）",
+                            compat.url
+                        ))
+                    })?;
+                    (
+                        hongguo_player::PlaySource::Local { path },
+                        prepared.definitions,
+                        prepared.definition,
+                    )
+                } else {
+                    (
+                        hongguo_player::PlaySource::Online {
+                            vid: ep.vid.clone(),
+                            definition: prepared.definition,
+                        },
+                        prepared.definitions,
+                        prepared.definition,
+                    )
+                }
             }
         };
         let on_stall: Option<Arc<dyn Fn() + Send + Sync>> = {

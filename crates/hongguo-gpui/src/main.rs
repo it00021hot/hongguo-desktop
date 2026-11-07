@@ -468,6 +468,7 @@ fn build_app_state() -> Arc<AppStateInner> {
     hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
     // 设备生命周期：匿名/死档案自动注册，失败 24h 退避。匿名可读不可播，
     // 注册成功才有取流。
+    hongguo_service::device::arm_cold_start();
     hongguo_service::runtime::spawn({
         let state = state.clone();
         async move { hongguo_service::device::ensure_registered(&state).await }

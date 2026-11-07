@@ -151,51 +151,61 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
             "single-private",
             1004,
             None,
-            DecoderCapability::Full,
+            DecoderCapability::full(),
             &env,
             (&origin, &origin),
         )
         .await
         .unwrap()
+        .into_play()
         .unwrap();
         assert_eq!(play.codec, "bytevc1");
         assert_eq!(play.definition, 1080);
         assert!(play.encrypted);
         let requests = server.join().unwrap();
         assert_eq!(requests.len(), 2);
-        assert!(requests[0].path.contains(crate::params::SINGLE_MODEL_PATH));
-        assert!(requests[1].path.contains(crate::params::MODEL_LIGHT_PATH));
+        // 默认 saas 批量体只有 bytevc2 时落到单集体。
+        assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
         assert_eq!(
-            requests[1].body["mixed_video_id_map"],
+            requests[0].body["biz_param"]["device_level"], 3,
+            "saas 体 device_level=High"
+        );
+        assert_eq!(
+            requests[0].body["mixed_video_id_map"],
             json!({"1004": ["single-private"]})
         );
+        assert!(requests[1].path.contains(crate::params::SINGLE_MODEL_PATH));
     }
 }
 
 #[tokio::test]
-async fn single_playable_primary_does_not_call_fallback() {
+async fn single_playable_saas_does_not_call_fallbacks() {
     let (origin, server) = mock(vec![response(json!({"video_model": model("h264")}))]);
     let env = ApiEnv::anonymous(Default::default());
     let play = fetch_single_at(
         "single-primary",
         1,
         None,
-        DecoderCapability::NoHevc,
+        DecoderCapability::no_hevc(),
         &env,
         (&origin, &origin),
     )
     .await
     .unwrap()
+    .into_play()
     .unwrap();
     assert_eq!(play.codec, "h264");
-    assert_eq!(server.join().unwrap().len(), 1);
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
+    assert_eq!(requests[0].body["biz_param"]["device_level"], 3);
 }
 
 #[tokio::test]
-async fn single_empty_or_missing_primary_still_falls_back() {
-    for primary in [Vec::new(), response(json!({}))] {
+async fn single_empty_or_missing_saas_still_falls_back_to_single_channel() {
+    for saas in [Vec::new(), response(json!({}))] {
         let (origin, server) = mock(vec![
-            primary,
+            saas,
             response(json!({"single-empty": {"video_model": model("h264")}})),
         ]);
         let env = ApiEnv::anonymous(Default::default());
@@ -203,12 +213,13 @@ async fn single_empty_or_missing_primary_still_falls_back() {
             "single-empty",
             1,
             None,
-            DecoderCapability::NoHevc,
+            DecoderCapability::no_hevc(),
             &env,
             (&origin, &origin),
         )
         .await
         .unwrap()
+        .into_play()
         .unwrap();
         assert_eq!(play.codec, "h264");
         assert_eq!(server.join().unwrap().len(), 2);
@@ -216,7 +227,7 @@ async fn single_empty_or_missing_primary_still_falls_back() {
 }
 
 #[tokio::test]
-async fn single_primary_error_envelope_falls_back() {
+async fn single_saas_error_envelope_falls_back_to_single_channel() {
     let (origin, server) = mock(vec![
         error_envelope(),
         response(json!({"single-envelope": {"video_model": model("h264")}})),
@@ -226,12 +237,13 @@ async fn single_primary_error_envelope_falls_back() {
         "single-envelope",
         1,
         None,
-        DecoderCapability::NoHevc,
+        DecoderCapability::no_hevc(),
         &env,
         (&origin, &origin),
     )
     .await
     .unwrap()
+    .into_play()
     .unwrap();
     assert_eq!(play.codec, "h264");
     assert_eq!(server.join().unwrap().len(), 2);
@@ -256,7 +268,7 @@ async fn batch_only_falls_back_for_unplayable_or_missing_entries() {
     ]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
+        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
             .await
             .unwrap(),
         3
@@ -278,7 +290,7 @@ async fn batch_preserves_primary_hits_if_fallback_fails() {
     let map = BTreeMap::from([("1".into(), vec!["batch-keep".into(), "batch-failed".into()])]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
+        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
             .await
             .unwrap(),
         1
@@ -295,35 +307,64 @@ async fn batch_primary_error_envelope_falls_back_all() {
     let map = BTreeMap::from([("1".into(), vec!["batch-envelope".into()])]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::Full, &env, (&origin, &origin))
+        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
             .await
             .unwrap(),
         1
     );
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 2);
-    assert!(requests[1].path.contains(crate::params::MODEL_LIGHT_PATH));
+    assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
+    assert!(requests[0].body.get("dr_scene").is_none());
+    assert_eq!(requests[0].body["biz_param"]["use_server_dns"], true);
+    assert_eq!(
+        requests[0].body["biz_param"]["use_server_dns_scene"],
+        "cold_start_stage"
+    );
+    assert!(requests[1].path.contains(crate::params::PLAYER_MODEL_PATH));
 }
 
 #[tokio::test]
-async fn single_two_unplayable_responses_return_miss() {
+async fn single_unplayable_responses_return_miss() {
     let (origin, server) = mock(vec![
         response(json!({"video_model": model("bytevc2")})),
         response(json!({"single-miss": {"video_model": model("bytevc2")}})),
+        response(json!({"video_model": model("bytevc2")})),
     ]);
     let env = ApiEnv::anonymous(Default::default());
-    assert!(
+    assert!(matches!(
         fetch_single_at(
             "single-miss",
             1004,
             None,
-            DecoderCapability::Full,
+            DecoderCapability::full(),
             &env,
             (&origin, &origin)
         )
         .await
-        .unwrap()
-        .is_none()
-    );
-    assert_eq!(server.join().unwrap().len(), 2);
+        .unwrap(),
+        SingleFetch::NoPlayable
+    ));
+    assert_eq!(server.join().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn single_all_empty_bodies_are_silent_empty() {
+    // saas + 单集 + light 三跳全空
+    let (origin, server) = mock(vec![Vec::new(), Vec::new(), Vec::new()]);
+    let env = ApiEnv::anonymous(Default::default());
+    assert!(matches!(
+        fetch_single_at(
+            "single-silent",
+            1004,
+            None,
+            DecoderCapability::full(),
+            &env,
+            (&origin, &origin)
+        )
+        .await
+        .unwrap(),
+        SingleFetch::SilentEmpty
+    ));
+    assert_eq!(server.join().unwrap().len(), 3);
 }

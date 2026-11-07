@@ -18,6 +18,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         error: String::new(),
         definition: 0,
         definitions: Vec::new(),
+        codec: String::new(),
+        needs_compat: false,
     };
 
     // 调用方直接给了路径就用它
@@ -77,6 +79,10 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     }
 
+    // 同一部剧的当前集和后面几集必须打在同一次批量里。分开打时服务端只给第一集，
+    // 切到下一集就是空响应。
+    warm_episode_window(state, &request.series_id, request.vid_index).await;
+
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
     match online::prepare(state, &vid, &progress_key, request.definition).await {
@@ -88,6 +94,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
                 &request.series_id,
                 request.vid_index,
             );
+            let needs_compat = hongguo_bytevc2::is_bytevc2(&prepared.codec);
             Ok(PlayResponse {
                 url: prepared.url,
                 online: true,
@@ -95,6 +102,8 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
                 error: String::new(),
                 definition: prepared.definition,
                 definitions: prepared.definitions,
+                codec: prepared.codec,
+                needs_compat,
             })
         }
         Err(e) => Ok(PlayResponse {
@@ -104,12 +113,46 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             error: e.to_string(),
             definition: 0,
             definitions: Vec::new(),
+            codec: String::new(),
+            needs_compat: false,
         }),
     }
 }
 
 /// 从剧集档案的分集表里取某一集的 vid。剧集档案是分集目录的唯一权威来源
 ///（`resolve_series` 拉到的分集含 vid 会写进数据库）；下载任务表只记进度，未下载的集没有记录。
+/// 当前集连同后面若干集一次取回。`prefetch_episodes = 0` 时仍带上下一集，手动切集才有流。
+async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) {
+    let Some(series) = state.store.series_by_id(series_id).ok().flatten() else {
+        return;
+    };
+    if series.content_type == 0 {
+        return;
+    }
+    let last = vid_index.saturating_add(state.settings().prefetch_episodes.max(1));
+    let group: Vec<String> = series
+        .episodes
+        .iter()
+        .filter(|ep| {
+            ep.vid_index >= vid_index
+                && ep.vid_index <= last
+                && !ep.vid.trim().is_empty()
+                && !hongguo_api::play_url::has_play_cached(ep.vid.trim())
+        })
+        .map(|ep| ep.vid.trim().to_string())
+        .collect();
+    if group.is_empty() {
+        return;
+    }
+    let mut map = std::collections::BTreeMap::new();
+    map.insert(series.content_type.to_string(), group);
+    let env = state.api_env();
+    match hongguo_api::play_url::fetch_play_batch(&map, crate::device::stream_cap(), &env).await {
+        Ok(n) => log::info!("[Play] {series_id} 从第 {vid_index} 集批量取到 {n} 集"),
+        Err(e) => log::warn!("[Play] 批量取流失败，回落单集: {e}"),
+    }
+}
+
 pub(crate) fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Option<String> {
     store
         .series_by_id(series_id)

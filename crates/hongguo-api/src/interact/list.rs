@@ -16,7 +16,6 @@ const BOOKSHELF_LIST_PATH: &str = "/reading/bookapi/bookshelf/video/list/v";
 const UGC_MGET_PATH: &str = "/reading/ugc/action/mget/v";
 const FOLLOW_LIST_PATH: &str = "/novel/articleapi/relation/get_user_action/v1/";
 
-
 const COMMENT_SOURCE_AT_MENTION: i64 = 1511;
 
 /// 拉评论 @ 提及候选（relation/list）。官方列表含官方 AI bot「小果」
