@@ -150,10 +150,6 @@ fn merge_block_sources(db: BlockSource, side: BlockSource) -> BootstrapMeta {
     }
 }
 
-fn refuse_offline_output(path: &std::path::Path) -> hongguo_common::AppResult<()> {
-    hongguo_store::paths::refuse_offline_output(path).map_err(hongguo_common::AppError::InvalidArgs)
-}
-
 fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
     let path = store.db_path();
     if path == std::path::Path::new(":memory:") {
@@ -172,13 +168,13 @@ fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::A
     let path = block_sidecar(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制旁路".into())
     })?;
-    refuse_offline_output(&path)?;
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    std::fs::write(&tmp, &raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -191,9 +187,13 @@ fn marker_state(store: &Store) -> BlockSource {
     let Some(path) = unknown_marker(store) else {
         return BlockSource::Absent;
     };
-    match std::fs::metadata(&path) {
+    let Ok(path) = hongguo_store::paths::prepare_qa_io(&path) else {
+        return BlockSource::Unreadable;
+    };
+    match std::fs::symlink_metadata(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
         Err(_) => BlockSource::Unreadable,
+        Ok(meta) if meta.file_type().is_symlink() => BlockSource::Unreadable,
         Ok(_) => BlockSource::Unreadable,
     }
 }
@@ -202,11 +202,11 @@ fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
     let path = unknown_marker(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的未知限制标记".into())
     })?;
-    refuse_offline_output(&path)?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    std::fs::write(&tmp, b"unknown\n").map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    hongguo_store::paths::qa_write(&tmp, b"unknown\n")
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -218,6 +218,9 @@ fn journal_path(store: &Store) -> Option<std::path::PathBuf> {
 fn journal_state(store: &Store) -> BlockSource {
     let Some(path) = journal_path(store) else {
         return BlockSource::Absent;
+    };
+    let Ok(path) = hongguo_store::paths::prepare_qa_io(&path) else {
+        return BlockSource::Unreadable;
     };
     match std::fs::read_to_string(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
@@ -236,20 +239,20 @@ fn write_journal(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResu
     let path = journal_path(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制日志".into())
     })?;
-    refuse_offline_output(&path)?;
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
-    std::fs::write(&tmp, &raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
     if FAIL_JOURNAL_RENAMES.load(Ordering::Relaxed) > 0 {
         FAIL_JOURNAL_RENAMES.fetch_sub(1, Ordering::Relaxed);
-        let _ = std::fs::remove_file(&tmp);
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         return Err(hongguo_common::AppError::Io(
             "故障注入：限制日志改名".into(),
         ));
     }
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -258,7 +261,7 @@ fn remove_journal(store: &Store) -> hongguo_common::AppResult<()> {
     let Some(path) = journal_path(store) else {
         return Ok(());
     };
-    match std::fs::remove_file(&path) {
+    match hongguo_store::paths::qa_remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
@@ -269,7 +272,7 @@ fn remove_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
     let Some(path) = unknown_marker(store) else {
         return Ok(());
     };
-    match std::fs::remove_file(&path) {
+    match hongguo_store::paths::qa_remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
@@ -284,7 +287,7 @@ fn remove_block_sidecar(store: &Store) -> hongguo_common::AppResult<()> {
     let Some(path) = block_sidecar(store) else {
         return Ok(());
     };
-    match std::fs::remove_file(&path) {
+    match hongguo_store::paths::qa_remove_file(&path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
@@ -672,11 +675,11 @@ fn restore_bytes(
     let (Some(path), Some(bytes)) = (path, bytes) else {
         return Ok(());
     };
-    refuse_offline_output(&path)?;
     let tmp = std::path::PathBuf::from(format!("{}.restore.tmp", path.display()));
-    std::fs::write(&tmp, bytes).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    hongguo_store::paths::qa_write(&tmp, bytes)
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
 }
@@ -1672,6 +1675,75 @@ mod tests {
             None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn temp_symlinks_do_not_change_an_outside_sentinel() {
+        clear_force_block();
+        let root = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-a-io-scratch")
+            })
+            .join(format!("side-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("mock-prod");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let isolated = std::fs::canonicalize(&isolated).unwrap();
+        let sentinel = outside.join("SENTINEL");
+        std::fs::write(&sentinel, b"KEEP").unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&isolated);
+        let previous_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let db = Store::open(isolated.join("hongguo.db")).unwrap();
+        let link_to = |name: &std::path::Path| {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&sentinel, name).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_file(&sentinel, name).unwrap();
+        };
+        let unknown_tmp =
+            std::path::PathBuf::from(format!("{}.tmp", unknown_marker(&db).unwrap().display()));
+        link_to(&unknown_tmp);
+        assert!(write_unknown_marker(&db).is_err());
+        let journal_tmp =
+            std::path::PathBuf::from(format!("{}.tmp", journal_path(&db).unwrap().display()));
+        link_to(&journal_tmp);
+        assert!(write_journal(&db, &BootstrapMeta::default()).is_err());
+        let restore_tmp = std::path::PathBuf::from(format!(
+            "{}.restore.tmp",
+            block_sidecar(&db).unwrap().display()
+        ));
+        link_to(&restore_tmp);
+        assert!(restore_bytes(block_sidecar(&db), Some(b"RESTORED")).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
+        assert!(
+            std::fs::symlink_metadata(&unknown_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::symlink_metadata(&journal_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::symlink_metadata(&restore_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        match previous_qa {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

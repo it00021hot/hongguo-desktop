@@ -151,7 +151,7 @@ fn prepare_online() -> [SpikeEpisode; 2] {
     let data_dir = std::env::current_dir()
         .unwrap_or_default()
         .join("target/av-spike/data");
-    if let Err(error) = std::fs::create_dir_all(&data_dir) {
+    if let Err(error) = hongguo_common::offline_qa::qa_create_dir_all(&data_dir) {
         log::error!("[AvSpike] 创建 spike 数据目录失败: {error}");
         std::process::exit(4);
     }

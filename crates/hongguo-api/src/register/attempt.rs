@@ -316,18 +316,22 @@ fn dump_debug(
     body: &[u8],
 ) {
     let dir = crate::capture_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = hongguo_common::offline_qa::qa_create_dir_all(&dir);
     let plain = register_json_str(fp, id, now_ms);
-    let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
+    let _ =
+        hongguo_common::offline_qa::qa_write(&dir.join("rust_reg_plain.json"), plain.as_bytes());
     let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
-    let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
+    let _ = hongguo_common::offline_qa::qa_write(&dir.join("rust_reg_body.hex"), hex.as_bytes());
     let meta = serde_json::json!({
         "cdid": id.cdid,
         "openudid": id.openudid,
         "clientudid": id.clientudid,
         "req_id": id.req_id
     });
-    let _ = std::fs::write(dir.join("rust_reg_meta.json"), meta.to_string());
+    let _ = hongguo_common::offline_qa::qa_write(
+        &dir.join("rust_reg_meta.json"),
+        meta.to_string().as_bytes(),
+    );
 }
 
 #[cfg(test)]

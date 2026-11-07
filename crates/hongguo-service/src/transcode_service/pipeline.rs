@@ -71,11 +71,11 @@ pub fn transcode(
                 is_cancelled: hooks.is_cancelled,
             },
         ) {
-            let _ = std::fs::remove_file(&target);
+            let _ = hongguo_store::paths::qa_remove_file(&target);
             return Err(err);
         }
         if !output_is_playable(&target) {
-            let _ = std::fs::remove_file(&target);
+            let _ = hongguo_store::paths::qa_remove_file(&target);
             return Err(hongguo_common::AppError::Media(
                 "ByteVC2 解码产物无法播放".into(),
             ));
@@ -109,7 +109,7 @@ pub fn transcode(
                 } else {
                     log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
                     last_error = Some("平台编码器产出的文件无法播放".to_string());
-                    let _ = std::fs::remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(&target);
                 }
             }
             Err(e) => {
@@ -143,7 +143,7 @@ pub fn transcode(
                 } else {
                     log::warn!("[Transcode] ffmpeg 产物校验未通过，删除产物");
                     last_error = Some("ffmpeg 产出的文件无法播放".to_string());
-                    let _ = std::fs::remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(&target);
                 }
             }
             Err(e) => {

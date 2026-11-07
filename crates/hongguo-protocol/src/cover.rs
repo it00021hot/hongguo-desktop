@@ -37,12 +37,12 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     // 先写临时文件再改名：转一半的图不该被缓存住
     let final_path = cache_path(&remote, ext);
     let tmp = cache_tmp(&remote);
-    if let Err(e) = std::fs::write(&tmp, &bytes) {
+    if let Err(e) = hongguo_store::paths::qa_write(&tmp, &bytes) {
         let msg = format!("写封面缓存失败: {e}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &final_path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &final_path);
     Ok((200, headers(ct, bytes.len()), bytes))
 }
 
@@ -85,12 +85,12 @@ pub fn acquire_renderable(remote: &str) -> Result<(Vec<u8>, &'static str), Strin
     ensure_cache_dir()?;
     let final_path = cache_path(remote, ext);
     let tmp = cache_tmp(remote);
-    if let Err(error) = std::fs::write(&tmp, &bytes) {
+    if let Err(error) = hongguo_store::paths::qa_write(&tmp, &bytes) {
         let msg = format!("写封面缓存失败: {error}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &final_path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &final_path);
     Ok((bytes, ct))
 }
 
@@ -129,12 +129,12 @@ pub fn ensure_sized_cached(remote: &str, edge: u32) -> Result<std::path::PathBuf
     let sized = resize_to(&bytes, edge)?;
     ensure_cache_dir()?;
     let tmp = path.with_extension("tmp");
-    if let Err(error) = std::fs::write(&tmp, &sized) {
+    if let Err(error) = hongguo_store::paths::qa_write(&tmp, &sized) {
         let msg = format!("写封面缓存失败: {error}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &path);
     Ok(path)
 }
 
@@ -167,7 +167,7 @@ fn resize_to(bytes: &[u8], edge: u32) -> Result<Vec<u8>, String> {
 /// 缓存目录就位（每次写盘前查一次，存在时是一次 exists 开销）。
 fn ensure_cache_dir() -> Result<(), String> {
     let dir = hongguo_store::paths::cover_cache_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| {
+    hongguo_store::paths::qa_create_dir_all(&dir).map_err(|e| {
         let msg = format!("创建封面缓存目录失败: {e}");
         log::warn!("[Cover] {msg}");
         msg
@@ -232,7 +232,7 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
                 .map(|bytes| (bytes, JPEG_KIND.0, JPEG_KIND.1))
                 .map_err(|e| format!("读取转码产物失败: {e}"));
         }
-        let _ = std::fs::remove_file(&tmp);
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         log::warn!(
             "[Cover] ffmpeg 转码失败，落纯软解: {}",
             String::from_utf8_lossy(&out.stderr).trim()

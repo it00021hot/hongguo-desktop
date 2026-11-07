@@ -33,9 +33,12 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
     };
 
     if let Some(parent) = req.output.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_common::offline_qa::qa_create_dir_all(parent)
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
     let temp = hongguo_common::utils::path::temp_path_for(req.output);
+    let temp = hongguo_common::offline_qa::prepare_qa_io(&temp).map_err(AppError::Io)?;
+    hongguo_common::offline_qa::prepare_qa_io(req.output).map_err(AppError::Io)?;
 
     let args = build_args(req, encoder, &temp);
 
@@ -77,11 +80,11 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
             }
         });
         let out = child.wait_with_output().map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
+            let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
             AppError::Media(format!("等待 ffmpeg 失败: {e}"))
         })?;
         if !out.status.success() {
-            let _ = std::fs::remove_file(&temp);
+            let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
             return Err(AppError::Media(format!(
                 "ffmpeg 转码失败: {}",
                 String::from_utf8_lossy(&out.stderr)
@@ -90,8 +93,8 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
         Ok(())
     })?;
 
-    std::fs::rename(&temp, req.output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
+    hongguo_common::offline_qa::qa_rename(&temp, req.output).map_err(|e| {
+        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok(())

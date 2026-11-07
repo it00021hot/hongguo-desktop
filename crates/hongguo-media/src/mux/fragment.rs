@@ -56,9 +56,11 @@ impl GrowingH264 {
             return Err(AppError::Media("片段封装缺少分辨率或时长".into()));
         }
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+            hongguo_common::offline_qa::qa_create_dir_all(parent)
+                .map_err(|e| AppError::Io(e.to_string()))?;
         }
-        let file = File::create(path).map_err(|e| AppError::Io(e.to_string()))?;
+        let file =
+            hongguo_common::offline_qa::qa_create(path).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             file,
             sequence: 1,

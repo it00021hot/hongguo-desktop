@@ -175,8 +175,8 @@ pub(crate) fn save_to(path: &Path, prefs: &PlaybackPrefs) {
         prefs.keys.step_prev,
         prefs.keys.step_next
     );
-    if std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, path))
+    if hongguo_common::offline_qa::qa_write(&tmp, text.as_bytes())
+        .and_then(|_| hongguo_common::offline_qa::qa_rename(&tmp, path))
         .is_err()
     {
         log::warn!("[Home] 播放偏好写盘失败（下次启动回默认）");

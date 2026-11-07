@@ -16,7 +16,7 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     {
         let result = imp_thread(|| drive(req));
         if result.is_err() {
-            let _ = std::fs::remove_file(req.output);
+            let _ = hongguo_common::offline_qa::qa_remove_file(req.output);
         }
         result
     }
@@ -126,7 +126,8 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
             live.prefix_bytes,
             started.elapsed().as_nanos()
         );
-        std::fs::write(&path, body).map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
+        hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
+            .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
     }
     log::info!(
         "[ByteVC2] 解帧并编成 H.264：{frames} 帧（{width}x{height}，{fps:.2} fps），耗时 {:?}",

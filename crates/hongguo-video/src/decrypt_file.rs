@@ -11,9 +11,10 @@ pub fn decrypt_mp4_file(src: &Path, dst: &Path, key: &[u8; 16]) -> AppResult<u64
     let data = std::fs::read(src).map_err(|e| AppError::Io(format!("读取源文件失败: {e}")))?;
     let plain = super::decrypt_buffer::decrypt_mp4_buffer(&data, key)?;
     if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_common::offline_qa::qa_create_dir_all(parent)
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
-    std::fs::write(dst, &plain).map_err(|e| AppError::Io(e.to_string()))?;
+    hongguo_common::offline_qa::qa_write(dst, &plain).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(plain.len() as u64)
 }
 

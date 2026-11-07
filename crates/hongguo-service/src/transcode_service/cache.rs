@@ -55,7 +55,7 @@ const KEEP_EPISODES: usize = 3;
 /// 被占用的文件（正在被播放器读）删不掉就跳过，宁可暂时多留一个。
 pub fn trim() -> usize {
     let dir = compat_cache_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {
         return 0;
     };
     let mut items: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
@@ -81,7 +81,7 @@ pub fn trim() -> usize {
     let excess = items.len() - KEEP_EPISODES;
     let mut removed = 0;
     for (_, p) in &items[..excess] {
-        if std::fs::remove_file(p).is_ok() {
+        if hongguo_store::paths::qa_remove_file(p).is_ok() {
             removed += 1;
         }
     }
@@ -91,10 +91,10 @@ pub fn trim() -> usize {
 pub fn clear() -> usize {
     let dir = compat_cache_dir();
     let mut n = 0;
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) {
         for e in entries.flatten() {
             if e.path().extension().and_then(|x| x.to_str()) == Some("mp4")
-                && std::fs::remove_file(e.path()).is_ok()
+                && hongguo_store::paths::qa_remove_file(&e.path()).is_ok()
             {
                 n += 1;
             }

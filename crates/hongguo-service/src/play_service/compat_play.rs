@@ -79,7 +79,7 @@ async fn ensure_inner(
 
     let target = cache::cache_file_for(series_id, vid_index, rate);
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_store::paths::qa_create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
     let temp = plaintext_temp_path_for(&target);
     let started = std::time::Instant::now();
@@ -103,7 +103,8 @@ async fn ensure_inner(
         let (plain, is_temp) = match source {
             CompatSource::LocalFile(p) => (p, false),
             CompatSource::PlainBytes(bytes) => {
-                std::fs::write(&temp, &bytes).map_err(|e| AppError::Io(e.to_string()))?;
+                hongguo_store::paths::qa_write(&temp, &bytes)
+                    .map_err(|e| AppError::Io(e.to_string()))?;
                 (temp.clone(), true)
             }
         };
@@ -173,7 +174,7 @@ async fn ensure_inner(
 
         // 源明文只是中间产物，转码成功或失败都要清理，避免残留敏感媒体数据。
         if is_temp {
-            let _ = std::fs::remove_file(&plain);
+            let _ = hongguo_store::paths::qa_remove_file(&plain);
         }
         // 新产物已进缓存：按「最多保留 3 集」的滚动窗口收敛一轮。合并路径不经这里——
         // 中途逐出会让拼接拿到断路径，它消费完就地删除。

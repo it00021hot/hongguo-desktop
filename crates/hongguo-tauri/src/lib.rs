@@ -65,7 +65,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 // tempfile 在 Unix 只认 TMPDIR（Android 缺省 /tmp 不存在且 app 无权写，迁移 SQL 直接 I/O error 被误报「数据损坏」；
                 // SQLITE_TMPDIR 是 SQLite C 库的约定，turso 不读），钉到 app 私有 tmp 目录
                 let tmpdir = root.join("tmp");
-                let _ = std::fs::create_dir_all(&tmpdir);
+                let _ = hongguo_common::offline_qa::qa_create_dir_all(&tmpdir);
                 // SAFETY: setup 在主线程、任何并发读 env 的线程尚未启动，set_var 的多线程 UB 条件不成立；tempfile 建临时目录时读 TMPDIR，必须在首次开库前设置
                 unsafe {
                     std::env::set_var("TMPDIR", &tmpdir);

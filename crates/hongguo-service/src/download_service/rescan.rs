@@ -118,7 +118,7 @@ fn episode_files_on_disk(
     }
 
     // 2) 尾数扫描兜底：排序保证同名同集号时结果确定
-    let mut names: Vec<String> = std::fs::read_dir(dir)
+    let mut names: Vec<String> = hongguo_store::paths::qa_read_dir(dir)
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())

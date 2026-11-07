@@ -1,6 +1,15 @@
 //! 显式离线 QA。默认关闭，正式启动路径不读这个开关。
 //! 只有环境变量精确等于 [`ON`] 才开启，与 Vite 注入前端的取值同一条规则。
 //! 打开后拒绝真实 host 不是 loopback 的请求，不改变「无可信状态不自动注册」。
+//! 写和删走 [`io`]：在系统调用前解析现存祖先，不按文件名枚举。
+
+mod io;
+
+pub use io::{
+    isolation_root, note_production_root, prepare_qa_io, qa_clear_for_replace, qa_create,
+    qa_create_dir_all, qa_open_append, qa_read_dir, qa_remove_dir_all, qa_remove_file, qa_rename,
+    qa_write, validate_isolated_dir,
+};
 
 /// 进程环境变量。未设置、空串或其他值都是正式联网行为。
 pub const ENV: &str = "HONGGUO_OFFLINE_QA";

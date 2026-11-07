@@ -71,7 +71,7 @@ pub fn clear() -> CacheClearResult {
 /// 目录占用；`ext` 给定时只统计该扩展名的文件（与清理口径一致）。
 fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
     let mut part = CachePart::default();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) else {
         return part;
     };
     for e in entries.flatten() {
@@ -94,9 +94,9 @@ fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
 /// 清空目录下全部文件，返回删掉的个数。目录不存在按空处理。
 fn clear_dir(dir: &std::path::Path) -> u64 {
     let mut n = 0;
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    if let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) {
         for e in entries.flatten() {
-            if std::fs::remove_file(e.path()).is_ok() {
+            if hongguo_store::paths::qa_remove_file(&e.path()).is_ok() {
                 n += 1;
             }
         }
@@ -133,7 +133,7 @@ struct CacheFile {
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
     let dir = cover_cache_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {
         return out;
     };
     for entry in entries.flatten() {
@@ -185,7 +185,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
             }
         }
         for file in expired {
-            if std::fs::remove_file(&file.path).is_ok() {
+            if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
                 removed += 1;
                 freed += file.bytes;
             }
@@ -201,7 +201,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
                 if total <= policy.limit_bytes {
                     break;
                 }
-                if std::fs::remove_file(&file.path).is_ok() {
+                if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
                     removed += 1;
                     freed += file.bytes;
                     total = total.saturating_sub(file.bytes);
@@ -415,5 +415,44 @@ mod tests {
             compat.join("series_001.mp4").exists(),
             "兼容转码产物不能被自动清理删掉（会断正在播的集）"
         );
+    }
+
+    #[test]
+    fn qa_cleanup_does_not_follow_a_cache_directory_symlink() {
+        let root = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-a-io-scratch")
+            })
+            .join(format!("clear-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("mock-prod");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let sentinel = outside.join("SENTINEL");
+        std::fs::write(&sentinel, b"KEEP").unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&isolated);
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let cover = cover_cache_dir();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &cover).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside, &cover).unwrap();
+        assert_eq!(clear_dir(&cover), 0);
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
+        assert!(
+            std::fs::symlink_metadata(&cover)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
