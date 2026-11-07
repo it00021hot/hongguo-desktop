@@ -35,9 +35,12 @@ pub struct BootstrapMeta {
     /// 最近一次换档前的旧 iid。
     #[serde(default)]
     pub previous_iid: Option<String>,
-    /// 上次注册尝试时间（ms epoch；诊断记录，不参与任何判定）。
+    /// 上次注册尝试时间（ms epoch）。空响应换档用它做冷却。
     #[serde(default)]
     pub last_register_attempt_ms: Option<i64>,
+    /// 现役档案是否已经拿到过非空码流。没有发货记录的档案在冷却内仍允许再换一次。
+    #[serde(default)]
+    pub play_shipped: bool,
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
@@ -283,6 +286,7 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
     meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
+    meta.play_shipped = false;
     write_meta(&state.store, meta);
     state.replace_device(profile);
 }
@@ -348,9 +352,15 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
 
-/// 取流成功即清零 miss 计数（诊断用）。
-pub fn note_stream_ok() {
+/// 取流成功：清零 miss 计数，并记下这台设备已经发过货。
+pub fn note_stream_ok(state: &AppState) {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+    let mut meta = read_meta(&state.store);
+    if meta.play_shipped {
+        return;
+    }
+    meta.play_shipped = true;
+    write_meta(&state.store, &meta);
 }
 
 /// 取流未命中记账（有响应体但挑不出可播流）。不换设备——与空响应
@@ -360,20 +370,37 @@ pub fn note_stream_miss(_state: &AppState, vid: &str) {
     log::warn!("[Device] 取流未命中 vid={vid} 连续={fails}（有响应无可播档）");
 }
 
-/// 空响应换档冷却：同 IP 高频注册会风控，空响应恢复最多按这个间隔一次。
+/// 空响应换档冷却：同 IP 高频注册会风控。已经发过货的档案按这个间隔最多换一次。
 const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
+/// 还没发过货的档案在冷却里最多再换这么多次（注册抽签的输家）。
+const UNSHIPPED_ROLLS_IN_COOLDOWN: u32 = 2;
 
-/// 取流全程空响应时恢复：优先等冷启动预热；冷却外才匿名换档一次。
-/// 冷却内不换档（防同 IP 打爆注册），但仍补一轮预热再让调用方重试——
-/// 常见竞态是起播早于后台预热完成。
+static UNSHIPPED_ROLLS: AtomicU32 = AtomicU32::new(0);
+
+/// 冷却内是否还允许换档。已发货的档案遵守冷却；没发过货的档案还有有限次数。
+fn allow_empty_reregister(in_cooldown: bool, play_shipped: bool, unshipped_rolls: u32) -> bool {
+    if !in_cooldown {
+        return true;
+    }
+    !play_shipped && unshipped_rolls < UNSHIPPED_ROLLS_IN_COOLDOWN
+}
+
+/// 取流全程空响应时恢复：没发过货的档案即使还在冷却内也再换一次；
+/// 已经发过货的档案冷却内只补预热。换档本身会先跑完冷启动预热。
 pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
     let now = now_ms();
     let meta = read_meta(&state.store);
     let in_cooldown = meta
         .last_register_attempt_ms
         .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
-    if !in_cooldown {
-        log::warn!("[Device] 取流空响应 vid={vid}，匿名换档恢复身份");
+    let rolls = UNSHIPPED_ROLLS.load(Ordering::Relaxed);
+    if allow_empty_reregister(in_cooldown, meta.play_shipped, rolls) {
+        if in_cooldown {
+            UNSHIPPED_ROLLS.fetch_add(1, Ordering::Relaxed);
+            log::warn!("[Device] 取流空响应 vid={vid}，现役档案尚未发货，冷却内继续换档");
+        } else {
+            log::warn!("[Device] 取流空响应 vid={vid}，匿名换档恢复身份");
+        }
         if !register_with_retry(state, "取流空响应恢复").await {
             return false;
         }
@@ -412,8 +439,24 @@ mod tests {
     #[test]
     fn note_stream_ok_clears_miss_count() {
         STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
-        note_stream_ok();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        note_stream_ok(&state);
         assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
+        assert!(read_meta(&state.store).play_shipped);
+    }
+
+    #[test]
+    fn unshipped_device_may_reregister_inside_cooldown() {
+        assert!(allow_empty_reregister(false, false, 0));
+        assert!(allow_empty_reregister(true, false, 0));
+        assert!(allow_empty_reregister(true, false, 1));
+        assert!(!allow_empty_reregister(
+            true,
+            false,
+            UNSHIPPED_ROLLS_IN_COOLDOWN
+        ));
+        assert!(!allow_empty_reregister(true, true, 0));
+        assert!(allow_empty_reregister(false, true, 9));
     }
 
     fn reg_result() -> RegisterResult {
