@@ -1323,7 +1323,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mut no_read = std::fs::metadata(&side).unwrap().permissions();
-            no_read.set_mode(0);
+            no_read.set_mode(0o000);
             std::fs::set_permissions(&side, no_read).unwrap();
         }
         assert!(
@@ -1461,23 +1461,23 @@ mod tests {
         assert!(registration_blocked(&read_meta(&state.store), now_ms()));
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
 
-fn libc_euid() -> u32 {
+    fn libc_euid() -> u32 {
+        #[cfg(unix)]
+        {
+            unsafe { libc_geteuid() }
+        }
+        #[cfg(not(unix))]
+        {
+            1
+        }
+    }
+
     #[cfg(unix)]
-    {
-        unsafe { libc_geteuid() }
+    unsafe fn libc_geteuid() -> u32 {
+        unsafe extern "C" {
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() }
     }
-    #[cfg(not(unix))]
-    {
-        1
-    }
-}
-
-#[cfg(unix)]
-unsafe fn libc_geteuid() -> u32 {
-    unsafe extern "C" {
-        fn geteuid() -> u32;
-    }
-    unsafe { geteuid() }
 }
