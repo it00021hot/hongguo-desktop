@@ -61,12 +61,48 @@ pub struct BootstrapMeta {
 }
 
 pub fn read_meta(store: &Store) -> BootstrapMeta {
-    store
+    let mut meta: BootstrapMeta = store
         .device_meta_get()
         .ok()
         .flatten()
         .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(side) = read_block_sidecar(store) {
+        meta.register_block_manual = side.register_block_manual;
+        meta.register_block_until_ms = side.register_block_until_ms;
+    }
+    meta
+}
+
+fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
+    let path = store.db_path();
+    if path == std::path::Path::new(":memory:") {
+        return None;
+    }
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".register-block");
+    Some(std::path::PathBuf::from(name))
+}
+
+fn read_block_sidecar(store: &Store) -> Option<BootstrapMeta> {
+    let path = block_sidecar(store)?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    let path = block_sidecar(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制旁路".into())
+    })?;
+    let raw = serde_json::to_string(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    std::fs::write(path, raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))
+}
+
+fn remove_block_sidecar(store: &Store) {
+    if let Some(path) = block_sidecar(store) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 pub fn write_meta(store: &Store, meta: &BootstrapMeta) {
@@ -242,9 +278,15 @@ async fn register_and_swap_at(
     };
     let material = RegisterMaterial::mint();
     match register_retrying(&reg_env, &material, origin, REGISTER_RETRY_MAX, pause).await {
-        Ok(r) => finish_register(state, &mut meta, r, reason).await,
+        Ok(r) => {
+            log::info!("[Device] 服务端返回了注册响应（{reason}），开始本地激活");
+            finish_register(state, &mut meta, r, reason).await
+        }
         Err(RegisterAttemptError::Blocked(block)) => {
-            persist_block(state, &mut meta, block);
+            if let Err(e) = persist_block(state, &mut meta, block) {
+                REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                return refused(state, &format!("注册限制没有落盘，停止自动注册: {e}"));
+            }
             refused(state, "注册被拒绝或限流")
         }
         Err(RegisterAttemptError::ReuseOnly) => {
@@ -273,25 +315,41 @@ async fn finish_register(
     reg: RegisterResult,
     reason: &str,
 ) -> Registration {
-    log::info!("[Device] 注册成功（{reason}）");
-    let profile = registered_profile(&reg);
+    let activated = activate_registration(state, meta, &reg, reason);
+    if !activated.ok {
+        return activated;
+    }
+    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
+    log::info!("[Device] 冷启动行为预热完成（{warmed} 条）");
+    activated
+}
+
+/// 本地激活：事务提交并替换内存之后才记成功、才发事件。
+fn activate_registration(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    reg: &RegisterResult,
+    reason: &str,
+) -> Registration {
+    let profile = registered_profile(reg);
     meta.last_register_error = None;
     meta.register_block_manual = false;
     meta.register_block_until_ms = None;
     if let Err(e) = swap_profile(state, meta, profile, "registered") {
         return refused(state, &e.to_string());
     }
+    remove_block_sidecar(&state.store);
+    REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
     hongguo_api::recommend::clear_feed_tabs_cache();
     hongguo_api::play_url::clear_batch_cache();
-    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
-    log::info!("[Device] 冷启动行为预热完成（{warmed} 条）");
+    log::info!("[Device] 本地档案已激活（{reason}）");
     state
         .events()
         .publish(ServiceEvent::DeviceRegistered(reg.install_id.clone()));
     Registration {
         ok: true,
-        iid: reg.install_id,
-        device_id: reg.device_id,
+        iid: reg.install_id.clone(),
+        device_id: reg.device_id.clone(),
         kind: "registered",
         error: None,
         network: false,
@@ -330,12 +388,27 @@ fn install_reuse(state: &AppState, profile: &DeviceProfile) -> hongguo_common::A
     swap_profile(state, &mut meta, profile.clone(), "reuse")
 }
 
-/// 限制窗口写入元数据。写失败则本进程继续拒绝，不把失败当成可以换身份。
-fn persist_block(state: &AppState, meta: &mut BootstrapMeta, block: RegisterBlock) {
+/// 限制窗口必须留下重启后仍能读到的记录。主行写失败时改写库旁边的限制文件；两边都失败则返回错误。
+fn persist_block(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    block: RegisterBlock,
+) -> hongguo_common::AppResult<()> {
     apply_register_block(meta, block);
-    if let Err(e) = write_meta_strict(&state.store, meta) {
-        REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
-        log::warn!("[Device] 注册限制没写入库，本进程仍停止自动注册: {e}");
+    match write_meta_strict(&state.store, meta) {
+        Ok(()) => {
+            remove_block_sidecar(&state.store);
+            Ok(())
+        }
+        Err(db_err) => match write_block_sidecar(&state.store, meta) {
+            Ok(()) => Ok(()),
+            Err(side_err) => {
+                REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                Err(hongguo_common::AppError::StoreCorrupt(format!(
+                    "{db_err}；旁路也失败: {side_err}"
+                )))
+            }
+        },
     }
 }
 
@@ -850,5 +923,188 @@ mod tests {
             !needs_regime_migration(&meta),
             "当前代际档案不迁（终生不换设备身份）"
         );
+    }
+
+    fn clear_force_block() {
+        REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn activation_rolls_back_steps_one_and_three_without_a_success_event() {
+        clear_force_block();
+        for step in [1_u8, 3] {
+            let dir = std::env::temp_dir()
+                .join(format!("hg-activate-fault-{step}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let db = Store::open(dir.join("device.db")).unwrap();
+            let old = registered_profile(&reg_result());
+            db.save_device_profile(&old).unwrap();
+            let mut meta = BootstrapMeta {
+                source: "registered".into(),
+                register_regime: "keep-me".into(),
+                ..BootstrapMeta::default()
+            };
+            write_meta_strict(&db, &meta).unwrap();
+            let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+                db.clone(),
+                old.clone(),
+            ));
+            let mut rx = state.events().subscribe();
+            state.store.fail_next_device_swap(step);
+            let fresh = RegisterResult {
+                install_id: "3333333333333333".into(),
+                device_id: "4444444444444444".into(),
+                ..reg_result()
+            };
+            let got = activate_registration(&state, &mut meta, &fresh, "故障注入");
+            assert!(!got.ok, "第 {step} 步失败不能报激活成功");
+            assert_eq!(state.device().get("iid"), old.get("iid"));
+            assert_eq!(
+                db.device_profile().unwrap().unwrap().get("iid"),
+                old.get("iid")
+            );
+            assert_eq!(read_meta(&db).register_regime, "keep-me");
+            assert!(rx.try_recv().is_err(), "第 {step} 步失败不发成功事件");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn activation_commit_updates_memory_and_emits_once() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-activate-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old,
+        ));
+        let mut rx = state.events().subscribe();
+        let mut meta = read_meta(&db);
+        let fresh = RegisterResult {
+            install_id: "5555555555555555".into(),
+            device_id: "6666666666666666".into(),
+            ..reg_result()
+        };
+        let got = activate_registration(&state, &mut meta, &fresh, "提交成功");
+        assert!(got.ok);
+        assert_eq!(state.device().get("iid"), "5555555555555555");
+        assert_eq!(
+            db.device_profile().unwrap().unwrap().get("iid"),
+            "5555555555555555"
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            ServiceEvent::DeviceRegistered(_)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn failed_meta_write_still_blocks_after_reopen() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-block-side-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = read_meta(&db);
+        persist_block(
+            &state,
+            &mut meta,
+            RegisterBlock::Until {
+                until_ms: now_ms() + 120_000,
+            },
+        )
+        .expect("主行失败后旁路应留下限制");
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(
+            registration_blocked(&read_meta(&reopened), now_ms()),
+            "重启后仍应读到限制"
+        );
+        let state =
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_device(reopened, old));
+        hongguo_api::register::reset_register_http_sends();
+        let got = register_and_swap(&state, "重启后").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        assert_eq!(state.device().get("iid"), "9999999999999999");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_store_cannot_hide_a_failed_block_write() {
+        clear_force_block();
+        let db = store();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        state.store.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        let err = persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap_err();
+        assert!(err.to_string().contains("旁路也失败"));
+        assert!(REGISTER_FORCE_BLOCK.load(Ordering::Relaxed));
+        assert!(registration_blocked(&BootstrapMeta::default(), now_ms()));
+        clear_force_block();
+    }
+
+    #[tokio::test]
+    async fn reuse_entries_reject_incomplete_profiles_without_http() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let db = store();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db,
+            old.clone(),
+        ));
+        let dir = std::env::temp_dir().join(format!("hg-reuse-fields-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        files.push(dir.join("missing.json"));
+        let broken = dir.join("broken.json");
+        std::fs::write(&broken, "{").unwrap();
+        files.push(broken);
+        for key in ["cdid", "openudid", "device_id", "iid"] {
+            let mut profile = old.clone();
+            profile.set(key, "");
+            let path = dir.join(format!("{key}.json"));
+            std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+            files.push(path);
+        }
+        let mut no_ticket = old.clone();
+        no_ticket.set_ttreq(None);
+        let ticket_path = dir.join("ttreq.json");
+        std::fs::write(&ticket_path, serde_json::to_string(&no_ticket).unwrap()).unwrap();
+        files.push(ticket_path);
+        let prev = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        for path in &files {
+            unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", path) };
+            let before = hongguo_api::register::register_http_sends();
+            let registered = register_and_swap(&state, "复用").await;
+            let recovered = recover_after_empty_stream(&state, "vid").await;
+            ensure_registered(&state).await;
+            assert!(!registered.ok);
+            assert!(!recovered);
+            assert_eq!(hongguo_api::register::register_http_sends(), before);
+            assert_eq!(state.device().get("iid"), old.get("iid"));
+        }
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", v),
+                None => std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

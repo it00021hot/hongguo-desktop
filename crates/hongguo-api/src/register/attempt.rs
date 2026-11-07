@@ -385,8 +385,38 @@ mod tests {
                 .to_string()
                 .contains("缺少")
         );
+        for key in ["cdid", "openudid", "device_id", "iid"] {
+            let mut value: serde_json::Value = serde_json::from_str(
+                r#"{"fields":[["cdid","c"],["openudid","o"],["device_id","d"],["iid","i"]],"ttreq":"t","user_agent":"ua"}"#,
+            )
+            .unwrap();
+            for item in value.get_mut("fields").unwrap().as_array_mut().unwrap() {
+                if item[0] == key {
+                    item[1] = serde_json::Value::String(String::new());
+                }
+            }
+            let path = std::env::temp_dir().join(format!("hg-reuse-{key}-{}", std::process::id()));
+            std::fs::write(&path, value.to_string()).unwrap();
+            let err = load_reuse_profile(&path).unwrap_err();
+            assert!(err.to_string().contains(key), "实际 {err}");
+            let _ = std::fs::remove_file(path);
+        }
+        let no_ticket =
+            std::env::temp_dir().join(format!("hg-reuse-noticket-{}", std::process::id()));
+        std::fs::write(
+            &no_ticket,
+            r#"{"fields":[["cdid","c"],["openudid","o"],["device_id","d"],["iid","i"]],"user_agent":"ua"}"#,
+        )
+        .unwrap();
+        assert!(
+            load_reuse_profile(&no_ticket)
+                .unwrap_err()
+                .to_string()
+                .contains("ttreq")
+        );
         let _ = std::fs::remove_file(&broken);
         let _ = std::fs::remove_file(&partial);
+        let _ = std::fs::remove_file(no_ticket);
     }
 
     #[tokio::test]
