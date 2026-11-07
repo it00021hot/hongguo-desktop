@@ -33,20 +33,26 @@ pub fn collect(input: &Path, demuxed: &crate::demux::Demuxed) -> AppResult<Optio
     let head = read_head(input, &track.info)?;
     let (channels, sample_rate) = read_entry_params(&head, &track.info)?;
     let esds = read_esds(&head, &track.info);
+    let timeline = presentation_seconds(&track.info);
 
     // 只读音轨样本所在的区间，不把整个文件读进来：视频轨动辄几十上百 MB，整文件读一次会白占一份与转码无关的内存
     let mut samples = Vec::with_capacity(track.info.samples.len());
-    let mut pts = 0.0f64;
     let mut file = std::fs::File::open(input).map_err(|e| AppError::Io(e.to_string()))?;
-    for &(offset, size) in &track.info.samples {
+    for (index, &(offset, size)) in track.info.samples.iter().enumerate() {
+        let pts = timeline
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| index as f64 * 1024.0 / f64::from(sample_rate.max(1)));
+        // 编辑表把 priming 标到 0 之前。封装层不接受负时间戳，这些包不进产物。
+        if pts < 0.0 {
+            continue;
+        }
         file.seek(SeekFrom::Start(offset))
             .map_err(|e| AppError::Io(e.to_string()))?;
         let mut frame = vec![0u8; size as usize];
         file.read_exact(&mut frame)
             .map_err(|e| AppError::Media(format!("读取音轨样本失败: {e}")))?;
         samples.push((pts, frame));
-        // AAC 每帧固定 1024 个采样，时间戳按累计秒数给
-        pts += 1024.0 / f64::from(sample_rate.max(1));
     }
 
     Ok(Some(AudioTrack {
@@ -55,6 +61,11 @@ pub fn collect(input: &Path, demuxed: &crate::demux::Demuxed) -> AppResult<Optio
         esds,
         samples,
     }))
+}
+
+/// 源样本表的显示时间（秒）。有 `stts` 时用它，不用「每帧 1024 采样」——HE-AAC 一帧是 2048 个输出采样。
+fn presentation_seconds(track: &TrackInfo) -> Vec<f64> {
+    track.sample_pts()
 }
 
 /// 读出覆盖 `stbl` 的头部字节：`stbl` 恒在 moov 里位置靠前，只读这么多就够解析参数，不必为几个字节把上百 MB 读进内存。
@@ -192,6 +203,55 @@ mod tests {
         let (stbl, track) = track_with(mp4a_stsd(2, 44100, Some(&esds_box)));
         let got = read_esds(&stbl, &track).expect("应找到 esds");
         assert_eq!(got, esds_box);
+    }
+
+    #[test]
+    fn he_aac_frame_spacing_comes_from_the_sample_table() {
+        let mut track = TrackInfo {
+            media_timescale: 44_100,
+            stts: vec![(6, 2048)],
+            edit_media_start_secs: 7106.0 / 44_100.0,
+            samples: vec![(0, 1); 6],
+            ..TrackInfo::default()
+        };
+        track.sample_count = 6;
+        let kept = presentation_seconds(&track)
+            .into_iter()
+            .filter(|pts| *pts >= 0.0)
+            .collect::<Vec<_>>();
+        assert_eq!(kept.len(), 2, "7106 个采样的 priming 落在前 4 帧");
+        let step = kept[1] - kept[0];
+        let expected = 2048.0 / 44_100.0;
+        assert!(
+            (step - expected).abs() < 1e-9,
+            "应沿用 2048 采样，实际步长 {step}"
+        );
+        assert!(
+            (step - 1024.0 / 44_100.0).abs() > 0.01,
+            "不能把 HE-AAC 当成 1024 采样"
+        );
+    }
+
+    #[test]
+    fn plaintext_he_aac_keeps_source_duration() {
+        let path = std::path::Path::new("/tmp/hg-bytevc2-plain.mp4");
+        if !path.is_file() {
+            return;
+        }
+        let demuxed = crate::demux::demux_file(path).expect("明文应能解复用");
+        let audio = collect(path, &demuxed).expect("读音轨").expect("应有音轨");
+        assert!(audio.samples.iter().all(|(pts, _)| *pts >= 0.0));
+        assert!(audio.samples.len() < 4210, "priming 包不应进入产物");
+        assert!(audio.samples.len() > 4200);
+        let step =
+            audio.samples[audio.samples.len() / 2].0 - audio.samples[audio.samples.len() / 2 - 1].0;
+        assert!(step > 0.04, "中点相邻包应接近 2048/44100，实际 {step}");
+        let last = audio.samples.len() - 1;
+        let end = audio.samples[last].0 + (audio.samples[last].0 - audio.samples[last - 1].0);
+        assert!(
+            (end - 195.349).abs() < 0.05,
+            "呈现结束应接近源音轨 195.349 秒，实际 {end}"
+        );
     }
 
     #[test]
