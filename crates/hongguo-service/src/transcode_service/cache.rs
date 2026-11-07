@@ -82,13 +82,13 @@ pub fn completion_matches(path: &std::path::Path) -> bool {
     let Some(hash) = lines.next() else {
         return false;
     };
-    let Ok(meta) = std::fs::metadata(path) else {
+    let Ok(meta) = std::fs::metadata(&path) else {
         return false;
     };
     if meta.len() != len {
         return false;
     }
-    let Ok(bytes) = std::fs::read(path) else {
+    let Ok(bytes) = std::fs::read(&path) else {
         return false;
     };
     sha256_hex(&bytes) == hash
