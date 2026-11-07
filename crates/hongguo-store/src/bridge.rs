@@ -280,6 +280,31 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::save_device_profile(db, &p).await }))
     }
 
+    /// 备份现役、写入新现役、写入元数据，三者同一事务。失败则库内仍是旧档。
+    pub fn commit_device_swap(&self, profile_json: &str, meta_json: &str) -> AppResult<()> {
+        let profile_json = profile_json.to_string();
+        let meta_json = meta_json.to_string();
+        self.exec(move |db| {
+            Box::pin(async move { entity::commit_device_swap(db, &profile_json, &meta_json).await })
+        })
+    }
+
+    /// 隔离库故障注入：`fail_after` 为 1/2/3 时在该步之后回滚。
+    pub fn commit_device_swap_fault(
+        &self,
+        profile_json: &str,
+        meta_json: &str,
+        fail_after: u8,
+    ) -> AppResult<()> {
+        let profile_json = profile_json.to_string();
+        let meta_json = meta_json.to_string();
+        self.exec(move |db| {
+            Box::pin(async move {
+                entity::commit_device_swap_at(db, &profile_json, &meta_json, Some(fail_after)).await
+            })
+        })
+    }
+
     /// 换档前把现役档案复制到备份行（见 [`entity::backup_device_profile`]）。
     pub fn backup_device_profile(&self) -> AppResult<bool> {
         self.exec(|db| Box::pin(entity::backup_device_profile(db)))

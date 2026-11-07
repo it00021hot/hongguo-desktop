@@ -746,6 +746,15 @@ mod probes {
 
     async fn probe_env_from_file_or_register()
     -> Result<crate::client::ApiEnv, Box<dyn std::error::Error>> {
+        if let Some(path) = crate::register::reuse_json_path() {
+            let device = crate::register::load_reuse_profile(&path)?;
+            return Ok(crate::client::ApiEnv {
+                proxy: ProxyConfig::default(),
+                cookie: Some(hongguo_signer::device::anonymous_cookie(&device)),
+                x_tt_token: None,
+                device,
+            });
+        }
         if let Ok(path) = std::env::var("HONGGUO_PROBE_DEVICE_JSON") {
             let raw = std::fs::read_to_string(path)?;
             let device: DeviceProfile = serde_json::from_str(&raw)?;

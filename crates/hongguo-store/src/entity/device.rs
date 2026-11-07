@@ -105,6 +105,64 @@ pub async fn device_meta_get(db: &Db) -> AppResult<Option<serde_json::Value>> {
         .map_err(|e| AppError::StoreCorrupt(format!("设备元数据反序列化失败: {e}")))
 }
 
+/// 现役、备份、元数据一次提交。中途失败由调用方的事务回滚，不会留下半套档案。
+pub async fn commit_device_swap(db: &Db, profile_json: &str, meta_json: &str) -> AppResult<()> {
+    commit_device_swap_at(db, profile_json, meta_json, None).await
+}
+
+/// `fail_after` 为 1/2/3 时在对应写入后返回错误，供隔离库故障注入。生产路径传 `None`。
+pub async fn commit_device_swap_at(
+    db: &Db,
+    profile_json: &str,
+    meta_json: &str,
+    fail_after: Option<u8>,
+) -> AppResult<()> {
+    let profile_json = profile_json.to_string();
+    let meta_json = meta_json.to_string();
+    db.with_tx(move |conn| {
+        let profile_json = profile_json.clone();
+        let meta_json = meta_json.clone();
+        async move {
+            conn.execute(
+                "INSERT INTO device_profile (id, json)
+                 SELECT ?1, json FROM device_profile WHERE id = ?2
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [
+                    Value::Integer(DEVICE_ROW_BACKUP),
+                    Value::Integer(DEVICE_ROW_ACTIVE),
+                ],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(1) {
+                return Err(AppError::StoreCorrupt("故障注入：备份之后".into()));
+            }
+            conn.execute(
+                "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [Value::Integer(DEVICE_ROW_ACTIVE), Value::Text(profile_json)],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(2) {
+                return Err(AppError::StoreCorrupt("故障注入：现役之后".into()));
+            }
+            conn.execute(
+                "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [Value::Integer(DEVICE_ROW_META), Value::Text(meta_json)],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(3) {
+                return Err(AppError::StoreCorrupt("故障注入：元数据之后".into()));
+            }
+            Ok(())
+        }
+    })
+    .await
+}
+
 /// 写 bootstrap 元数据文档（整文档覆盖）。
 pub async fn device_meta_set(db: &Db, meta: &serde_json::Value) -> AppResult<()> {
     let json = serde_json::to_string(meta)

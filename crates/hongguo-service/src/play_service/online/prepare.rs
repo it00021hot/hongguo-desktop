@@ -111,7 +111,7 @@ pub async fn prepare(
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(state, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
-            crate::device::note_stream_ok(state);
+            crate::device::note_play_address(state);
             return Ok(hit);
         }
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
@@ -169,7 +169,7 @@ pub async fn prepare(
     let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
-    crate::device::note_stream_ok(state);
+    crate::device::note_play_address(state);
     let state = state.clone();
     crate::runtime::spawn(async move {
         let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, false).await;

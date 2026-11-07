@@ -3,10 +3,13 @@
 //! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
 //! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use hongguo_api::client::ApiEnv;
-use hongguo_api::register::{RegisterResult, register_device};
+use hongguo_api::register::{
+    RegisterAttemptError, RegisterBlock, RegisterMaterial, RegisterResult, load_reuse_profile,
+    register_retrying, reuse_json_path,
+};
 use hongguo_common::utils::time::now_ms;
 use hongguo_signer::device::{DeviceProfile, align_app_version, anonymous_profile, fresh_cdid};
 use hongguo_store::Store;
@@ -38,9 +41,15 @@ pub struct BootstrapMeta {
     /// 上次注册尝试时间（ms epoch）。空响应换档用它做冷却。
     #[serde(default)]
     pub last_register_attempt_ms: Option<i64>,
-    /// 现役档案是否已经拿到过非空码流。没有发货记录的档案在冷却内仍允许再换一次。
+    /// 曾经解复用到至少一个明文视频样本。不是播放地址就绪，也不是首帧已上屏。
     #[serde(default)]
     pub play_shipped: bool,
+    /// 注册限制的绝对截止时间（毫秒）。到点之前重启也不注册。
+    #[serde(default)]
+    pub register_block_until_ms: Option<i64>,
+    /// 拒绝响应没有可解析的 Retry-After。不自动恢复，重启也不清掉。
+    #[serde(default)]
+    pub register_block_manual: bool,
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
@@ -61,11 +70,15 @@ pub fn read_meta(store: &Store) -> BootstrapMeta {
 }
 
 pub fn write_meta(store: &Store, meta: &BootstrapMeta) {
-    if let Ok(v) = serde_json::to_value(meta)
-        && let Err(e) = store.device_meta_set(&v)
-    {
+    if let Err(e) = write_meta_strict(store, meta) {
         log::warn!("[Device] 元数据落库失败（不影响换档）: {e}");
     }
+}
+
+fn write_meta_strict(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    let v = serde_json::to_value(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    store.device_meta_set(&v)
 }
 
 /// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
@@ -167,32 +180,16 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p
 }
 
-/// 注册重试节奏：失败只区分网络类（断网/超时，等网恢复就地重试）与服务端明确拒绝
-/// （形态/代际错，重试无意义立即停）。
+/// 瞬态失败的重试次数与间隔。同一次尝试复用同一份身份材料。
 const REGISTER_RETRY_MS: u64 = 60_000;
 const REGISTER_RETRY_MAX: usize = 30;
 
-/// 注册（带网络恢复重试）：成功返回 true。网络类失败按节奏重试到成功
-/// 或预算耗尽；其他失败立即返回。
+/// 元数据没写成时，本进程仍拒绝注册。重启后只认已经落库的限制。
+static REGISTER_FORCE_BLOCK: AtomicBool = AtomicBool::new(false);
+
+/// 注册（带同一材料的瞬态重试）。拒绝、限流、只复用模式都不换身份。
 async fn register_with_retry(state: &AppState, reason: &str) -> bool {
-    for attempt in 0..REGISTER_RETRY_MAX {
-        let reg = register_and_swap(state, reason).await;
-        if reg.ok {
-            return true;
-        }
-        if !reg.network {
-            return false;
-        }
-        log::info!(
-            "[Device] {reason}：网络不可用，{}s 后重试（{}/{}）",
-            REGISTER_RETRY_MS / 1000,
-            attempt + 1,
-            REGISTER_RETRY_MAX
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(REGISTER_RETRY_MS)).await;
-    }
-    log::warn!("[Device] {reason}：网络重试预算耗尽（{REGISTER_RETRY_MAX} 次），下次启动再试");
-    false
+    register_and_swap(state, reason).await.ok
 }
 
 /// 注册换档结论（壳的设备状态命令用）。
@@ -209,86 +206,186 @@ pub struct Registration {
     pub network: bool,
 }
 
-/// 注册新设备并换档：备份旧档 → 新档落库+热替换 → 元数据记痕迹。
+/// 注册新设备并换档。库提交成功后才替换内存、才发成功事件。
 pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
-    let mut meta = read_meta(&state.store);
-    meta.last_register_attempt_ms = Some(now_ms());
-    write_meta(&state.store, &meta);
+    register_and_swap_at(
+        state,
+        reason,
+        hongguo_api::register::REGISTER_ORIGIN,
+        std::time::Duration::from_millis(REGISTER_RETRY_MS),
+    )
+    .await
+}
 
+async fn register_and_swap_at(
+    state: &AppState,
+    reason: &str,
+    origin: &str,
+    pause: std::time::Duration,
+) -> Registration {
+    if let Some(refusal) = reuse_refusal(state) {
+        return refusal;
+    }
+    let mut meta = read_meta(&state.store);
+    if registration_blocked(&meta, now_ms()) {
+        return refused(state, "注册限制仍有效");
+    }
+    meta.last_register_attempt_ms = Some(now_ms());
+    if let Err(e) = write_meta_strict(&state.store, &meta) {
+        return refused(state, &e.to_string());
+    }
     let reg_env = ApiEnv {
         proxy: state.settings().proxy,
         device: anonymous_profile(&fresh_cdid()),
         cookie: None,
         x_tt_token: None,
     };
-    match register_device(&reg_env).await {
-        Ok(r) => {
-            log::info!(
-                "[Device] 注册成功（{reason}）device_id={} iid={}",
-                r.device_id,
-                r.install_id
-            );
-            let profile = registered_profile(&r);
-            swap_profile(state, &mut meta, profile, "registered");
-            // 换档前发出去的匿名请求产物（顶栏塌缩表、批量预取流）全部作废
-            hongguo_api::recommend::clear_feed_tabs_cache();
-            hongguo_api::play_url::clear_batch_cache();
-            // 冷启动行为预热必须等完再放行：官方冷启动序列完成后才有发货资格；
-            // 异步 fire-and-forget 会让起播抢在预热前打空响应。
-            let env = state.api_env();
-            let ok = hongguo_api::warmup::run(&env).await;
-            log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-            state
-                .events()
-                .publish(ServiceEvent::DeviceRegistered(r.install_id.clone()));
-            meta.last_register_error = None;
-            write_meta(&state.store, &meta);
-            Registration {
-                ok: true,
-                iid: r.install_id,
-                device_id: r.device_id,
-                kind: "registered",
-                error: None,
-                network: false,
-            }
+    let material = RegisterMaterial::mint();
+    match register_retrying(&reg_env, &material, origin, REGISTER_RETRY_MAX, pause).await {
+        Ok(r) => finish_register(state, &mut meta, r, reason).await,
+        Err(RegisterAttemptError::Blocked(block)) => {
+            persist_block(state, &mut meta, block);
+            refused(state, "注册被拒绝或限流")
         }
-        Err(e) => {
-            log::warn!("[Device] 注册失败（{reason}）: {e}");
-            let network = matches!(e, hongguo_common::AppError::Network(_));
-            meta.last_register_error = Some(e.to_string());
-            write_meta(&state.store, &meta);
+        Err(RegisterAttemptError::ReuseOnly) => {
+            reuse_refusal(state).unwrap_or_else(|| refused(state, "只复用模式禁止注册"))
+        }
+        Err(err) => {
+            let app_err = hongguo_common::AppError::from(err);
+            let network = matches!(app_err, hongguo_common::AppError::Network(_));
+            meta.last_register_error = Some(app_err.to_string());
+            let _ = write_meta_strict(&state.store, &meta);
             Registration {
                 ok: false,
                 iid: state.device().get("iid").to_string(),
                 device_id: String::new(),
                 kind: "error",
-                error: Some(e.to_string()),
+                error: Some(app_err.to_string()),
                 network,
             }
         }
     }
 }
 
-/// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
-/// 注册代际对齐解决不了「发货资格在注册时抽签」——输家签换新注册即可（1 次/分钟限速）。
-fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
+async fn finish_register(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    reg: RegisterResult,
+    reason: &str,
+) -> Registration {
+    log::info!("[Device] 注册成功（{reason}）");
+    let profile = registered_profile(&reg);
+    meta.last_register_error = None;
+    meta.register_block_manual = false;
+    meta.register_block_until_ms = None;
+    if let Err(e) = swap_profile(state, meta, profile, "registered") {
+        return refused(state, &e.to_string());
+    }
+    hongguo_api::recommend::clear_feed_tabs_cache();
+    hongguo_api::play_url::clear_batch_cache();
+    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
+    log::info!("[Device] 冷启动行为预热完成（{warmed} 条）");
+    state
+        .events()
+        .publish(ServiceEvent::DeviceRegistered(reg.install_id.clone()));
+    Registration {
+        ok: true,
+        iid: reg.install_id,
+        device_id: reg.device_id,
+        kind: "registered",
+        error: None,
+        network: false,
+    }
+}
+
+fn refused(state: &AppState, message: &str) -> Registration {
+    log::warn!("[Device] {message}");
+    Registration {
+        ok: false,
+        iid: state.device().get("iid").to_string(),
+        device_id: String::new(),
+        kind: "error",
+        error: Some(message.to_string()),
+        network: false,
+    }
+}
+
+fn reuse_refusal(state: &AppState) -> Option<Registration> {
+    let path = reuse_json_path()?;
+    match load_reuse_profile(&path) {
+        Ok(profile) => {
+            if state.device().get("iid") != profile.get("iid")
+                && let Err(e) = install_reuse(state, &profile)
+            {
+                return Some(refused(state, &e.to_string()));
+            }
+            Some(refused(state, "只复用模式禁止注册"))
+        }
+        Err(e) => Some(refused(state, &e.to_string())),
+    }
+}
+
+fn install_reuse(state: &AppState, profile: &DeviceProfile) -> hongguo_common::AppResult<()> {
+    let mut meta = read_meta(&state.store);
+    swap_profile(state, &mut meta, profile.clone(), "reuse")
+}
+
+/// 限制窗口写入元数据。写失败则本进程继续拒绝，不把失败当成可以换身份。
+fn persist_block(state: &AppState, meta: &mut BootstrapMeta, block: RegisterBlock) {
+    apply_register_block(meta, block);
+    if let Err(e) = write_meta_strict(&state.store, meta) {
+        REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+        log::warn!("[Device] 注册限制没写入库，本进程仍停止自动注册: {e}");
+    }
+}
+
+pub fn registration_blocked(meta: &BootstrapMeta, now_ms: i64) -> bool {
+    if REGISTER_FORCE_BLOCK.load(Ordering::Relaxed) || meta.register_block_manual {
+        return true;
+    }
+    meta.register_block_until_ms
+        .is_some_and(|until| now_ms < until)
+}
+
+pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
+    match block {
+        RegisterBlock::Until { until_ms } => {
+            meta.register_block_until_ms = Some(until_ms);
+            meta.register_block_manual = false;
+        }
+        RegisterBlock::Manual => {
+            meta.register_block_manual = true;
+            meta.register_block_until_ms = None;
+        }
+    }
+}
+
+/// 空响应是否还要注册。冷却、限制窗口、只复用模式都不注册。
+pub fn empty_stream_should_register(in_cooldown: bool, blocked: bool, reuse: bool) -> bool {
+    !in_cooldown && !blocked && !reuse
+}
+
+/// 备份、现役、元数据同一事务。提交成功后才替换内存。
+fn swap_profile(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    profile: DeviceProfile,
+    source: &str,
+) -> hongguo_common::AppResult<()> {
     let old_iid = state.device().get("iid").to_string();
     let new_iid = profile.get("iid").to_string();
-    if old_iid != new_iid {
-        if let Err(e) = state.store.backup_device_profile() {
-            log::warn!("[Device] 旧档备份失败（继续换档）: {e}");
-        }
-        if let Err(e) = state.store.save_device_profile(&profile) {
-            log::warn!("[Device] 新档落库失败（本次会话仍生效）: {e}");
-        }
-        log::info!("[Device] 换档 {old_iid} → {new_iid}（{source}）");
-    }
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
     meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
     meta.play_shipped = false;
-    write_meta(&state.store, meta);
+    let profile_json = serde_json::to_string(&profile)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    let meta_json = serde_json::to_string(&*meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    state.store.commit_device_swap(&profile_json, &meta_json)?;
     state.replace_device(profile);
+    log::info!("[Device] 换档完成（{source}）");
+    Ok(())
 }
 
 /// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册；有身份的先看注册代际，
@@ -296,6 +393,14 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
 /// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
     let _release_playback = crate::cold_start::ReleaseOnDrop;
+    if reuse_json_path().is_some() {
+        let _ = register_and_swap(state, "只复用").await;
+        return;
+    }
+    if registration_blocked(&read_meta(&state.store), now_ms()) {
+        log::warn!("[Device] 注册限制仍有效，启动不注册");
+        return;
+    }
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
         register_with_retry(state, "启动自动注册").await;
@@ -352,15 +457,26 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
 
-/// 取流成功：清零 miss 计数，并记下这台设备已经发过货。
-pub fn note_stream_ok(state: &AppState) {
+/// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
+pub fn note_play_address(_state: &AppState) {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+}
+
+/// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
+pub fn note_plain_video_sample(state: &AppState, plain: &[u8]) -> bool {
+    let ready = hongguo_media::demux::demux_bytes(plain)
+        .ok()
+        .and_then(|d| d.video_track().map(|t| !t.info.samples.is_empty()))
+        .unwrap_or(false);
+    if !ready {
+        return false;
+    }
     let mut meta = read_meta(&state.store);
     if meta.play_shipped {
-        return;
+        return true;
     }
     meta.play_shipped = true;
-    write_meta(&state.store, &meta);
+    write_meta_strict(&state.store, &meta).is_ok()
 }
 
 /// 取流未命中记账（有响应体但挑不出可播流）。不换设备——与空响应
@@ -370,51 +486,37 @@ pub fn note_stream_miss(_state: &AppState, vid: &str) {
     log::warn!("[Device] 取流未命中 vid={vid} 连续={fails}（有响应无可播档）");
 }
 
-/// 空响应换档冷却：同 IP 高频注册会风控。已经发过货的档案按这个间隔最多换一次。
+/// 空响应换档冷却。窗口内只预热，不注册。
 const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
-/// 还没发过货的档案在冷却里最多再换这么多次（注册抽签的输家）。
-const UNSHIPPED_ROLLS_IN_COOLDOWN: u32 = 2;
 
-static UNSHIPPED_ROLLS: AtomicU32 = AtomicU32::new(0);
-
-/// 冷却内是否还允许换档。已发货的档案遵守冷却；没发过货的档案还有有限次数。
-fn allow_empty_reregister(in_cooldown: bool, play_shipped: bool, unshipped_rolls: u32) -> bool {
-    if !in_cooldown {
-        return true;
-    }
-    !play_shipped && unshipped_rolls < UNSHIPPED_ROLLS_IN_COOLDOWN
-}
-
-/// 取流全程空响应时恢复：没发过货的档案即使还在冷却内也再换一次；
-/// 已经发过货的档案冷却内只补预热。换档本身会先跑完冷启动预热。
+/// 取流全程空响应时恢复。限制窗口和只复用模式不注册、不预热。
 pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
     let now = now_ms();
     let meta = read_meta(&state.store);
     let in_cooldown = meta
         .last_register_attempt_ms
         .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
-    let rolls = UNSHIPPED_ROLLS.load(Ordering::Relaxed);
-    if allow_empty_reregister(in_cooldown, meta.play_shipped, rolls) {
-        if in_cooldown {
-            UNSHIPPED_ROLLS.fetch_add(1, Ordering::Relaxed);
-            log::warn!("[Device] 取流空响应 vid={vid}，现役档案尚未发货，冷却内继续换档");
-        } else {
-            log::warn!("[Device] 取流空响应 vid={vid}，匿名换档恢复身份");
-        }
-        if !register_with_retry(state, "取流空响应恢复").await {
+    let blocked = registration_blocked(&meta, now);
+    let reuse = reuse_json_path().is_some();
+    if reuse {
+        let _ = reuse_refusal(state);
+        log::warn!("[Device] 取流空响应 vid={vid}，只复用模式不注册");
+        return false;
+    }
+    if !empty_stream_should_register(in_cooldown, blocked, reuse) {
+        if blocked {
+            log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
         }
-    } else {
-        log::warn!(
-            "[Device] 取流空响应 vid={vid}，距上次注册 {}s，冷却中只补预热",
-            meta.last_register_attempt_ms
-                .map(|prev| (now - prev) / 1000)
-                .unwrap_or(0)
-        );
+        log::warn!("[Device] 取流空响应 vid={vid}，冷却中只补预热");
+        let n = hongguo_api::warmup::run(&state.api_env()).await;
+        log::info!("[Device] 空响应恢复预热完成（{n} 条）");
+        return true;
     }
-    let env = state.api_env();
-    let n = hongguo_api::warmup::run(&env).await;
-    log::info!("[Device] 空响应恢复预热完成（{n} 条）");
+    log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
+    if !register_with_retry(state, "取流空响应恢复").await {
+        return false;
+    }
     true
 }
 
@@ -437,26 +539,115 @@ mod tests {
     }
 
     #[test]
-    fn note_stream_ok_clears_miss_count() {
+    fn note_play_address_does_not_mark_a_sample() {
         STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
         let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
-        note_stream_ok(&state);
+        note_play_address(&state);
         assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
-        assert!(read_meta(&state.store).play_shipped);
+        assert!(!read_meta(&state.store).play_shipped);
+        assert!(!note_plain_video_sample(&state, b"not-a-video"));
+        assert!(!read_meta(&state.store).play_shipped);
     }
 
     #[test]
-    fn unshipped_device_may_reregister_inside_cooldown() {
-        assert!(allow_empty_reregister(false, false, 0));
-        assert!(allow_empty_reregister(true, false, 0));
-        assert!(allow_empty_reregister(true, false, 1));
-        assert!(!allow_empty_reregister(
-            true,
-            false,
-            UNSHIPPED_ROLLS_IN_COOLDOWN
+    fn empty_recovery_does_not_add_unofficial_rolls() {
+        assert!(empty_stream_should_register(false, false, false));
+        assert!(!empty_stream_should_register(true, false, false));
+        assert!(!empty_stream_should_register(false, true, false));
+        assert!(!empty_stream_should_register(false, false, true));
+    }
+
+    #[test]
+    fn register_block_survives_reopen_and_manual_has_no_expiry() {
+        let dir = std::env::temp_dir().join(format!("hg-block-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).expect("临时库");
+        let mut meta = BootstrapMeta::default();
+        apply_register_block(
+            &mut meta,
+            RegisterBlock::Until {
+                until_ms: now_ms() + 60_000,
+            },
+        );
+        write_meta_strict(&db, &meta).expect("写入限制");
+        drop(db);
+        let reopened = Store::open(&path).expect("重启后的临时库");
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let mut manual = BootstrapMeta::default();
+        apply_register_block(&mut manual, RegisterBlock::Manual);
+        write_meta_strict(&reopened, &manual).expect("写入无头限制");
+        drop(reopened);
+        let again = Store::open(&path).expect("再次打开");
+        let loaded = read_meta(&again);
+        assert!(loaded.register_block_manual);
+        assert!(loaded.register_block_until_ms.is_none());
+        assert!(registration_blocked(&loaded, now_ms() + 86_400_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn swap_fault_keeps_old_profile_and_skips_success() {
+        let dir = std::env::temp_dir().join(format!("hg-swap-fault-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).expect("临时库");
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).expect("旧档");
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
         ));
-        assert!(!allow_empty_reregister(true, true, 0));
-        assert!(allow_empty_reregister(false, true, 9));
+        let mut rx = state.events().subscribe();
+        let mut meta = read_meta(&db);
+        let profile_json = serde_json::to_string(&registered_profile(&RegisterResult {
+            install_id: "111".into(),
+            device_id: "222".into(),
+            ..reg_result()
+        }))
+        .unwrap();
+        let meta_json = serde_json::to_string(&meta).unwrap();
+        let err = db
+            .commit_device_swap_fault(&profile_json, &meta_json, 2)
+            .expect_err("注入故障");
+        assert!(err.to_string().contains("故障注入"));
+        let kept = db.device_profile().expect("读").expect("旧档还在");
+        assert_eq!(kept.get("iid"), old.get("iid"));
+        assert_eq!(state.device().get("iid"), old.get("iid"));
+        assert!(rx.try_recv().is_err(), "失败不发成功事件");
+        let mut newer = old.clone();
+        newer.set("iid", "1234567890123456");
+        let generation = state.device_generation();
+        swap_profile(&state, &mut meta, newer, "registered").expect("成功提交才换内存");
+        assert_eq!(state.device().get("iid"), "1234567890123456");
+        assert!(state.device_generation() > generation);
+        assert_eq!(
+            db.device_profile_backup().unwrap().unwrap().get("iid"),
+            old.get("iid")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn reuse_mode_and_rejection_do_not_register() {
+        hongguo_api::register::reset_register_http_sends();
+        let db = store();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(db, old));
+        let missing = std::env::temp_dir().join(format!("hg-reuse-svc-{}", std::process::id()));
+        let prev = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &missing) };
+        let got = register_and_swap(&state, "只复用缺文件").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        assert_eq!(state.device().get("iid"), "9999999999999999");
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", v),
+                None => std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON"),
+            }
+        }
+        let _ = std::fs::remove_file(&missing);
     }
 
     fn reg_result() -> RegisterResult {

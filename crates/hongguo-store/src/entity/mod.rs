@@ -50,8 +50,8 @@ mod settings;
 mod task;
 
 pub use device::{
-    backup_device_profile, device_meta_get, device_meta_set, device_profile, device_profile_backup,
-    save_device_profile,
+    backup_device_profile, commit_device_swap, commit_device_swap_at, device_meta_get,
+    device_meta_set, device_profile, device_profile_backup, save_device_profile,
 };
 pub use follow::{
     baseline_delete, baseline_get, baseline_set, notice_insert, notices_clear, notices_list,

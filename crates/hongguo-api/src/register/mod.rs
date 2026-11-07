@@ -2,13 +2,18 @@
 //! 服务端按加密 body 的指纹发放 device_id/install_id（播放取流需要服务端「认识」的设备）；
 //! TT-Encrypt V5 线上格式与 applog 裸形态详见 docs/hongguo-api-endpoints.md。
 
+mod attempt;
 mod model;
 
+pub use attempt::{
+    RegisterAttemptError, RegisterBlock, RegisterMaterial, block_from_retry_after,
+    load_reuse_profile, register_device, register_http_sends, register_material, register_retrying,
+    reset_register_http_sends, reuse_json_path,
+};
 pub use model::RegisterResult;
 
 use serde_json::{Value, json};
 
-use super::client::{ApiEnv, build_client};
 use hongguo_common::{AppError, AppResult};
 
 pub const REGISTER_ORIGIN: &str = "https://log5-applog.fqnovel.com";
@@ -237,48 +242,6 @@ fn register_query() -> Vec<(String, String)> {
     .collect()
 }
 
-/// 新设备指纹：cdid / openudid / clientudid / req_id 一次生成。
-struct FreshIdentity {
-    cdid: String,
-    openudid: String,
-    clientudid: String,
-    req_id: String,
-}
-
-fn fresh_identity() -> FreshIdentity {
-    fn uuid_v4() -> String {
-        let b: [u8; 16] = rand::random();
-        format!(
-            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0],
-            b[1],
-            b[2],
-            b[3],
-            b[4],
-            b[5],
-            b[6] & 0x0f | 0x40,
-            b[7],
-            b[8] & 0x3f | 0x80,
-            b[9],
-            b[10],
-            b[11],
-            b[12],
-            b[13],
-            b[14],
-            b[15]
-        )
-    }
-    FreshIdentity {
-        cdid: uuid_v4(),
-        openudid: {
-            let b: [u8; 8] = rand::random();
-            b.iter().map(|x| format!("{x:02x}")).collect()
-        },
-        clientudid: uuid_v4(),
-        req_id: uuid_v4(),
-    }
-}
-
 /// 首次安装时间回拨天数上限：真实安装都是过去时（pm clear 不清 firstInstallTime），按 cdid 确定性取 1~30 天。
 const FIRST_INSTALL_BACK_MAX_DAYS: u64 = 30;
 
@@ -302,7 +265,7 @@ pub const REGISTER_REGIME: &str = "74332:4.3.2-rc.44";
 /// 取池指纹；App 身份字段钉官方实值；`ipv6_list` 与首次安装时间按 cdid 确定性生成。
 fn register_json_str(
     fp: &hongguo_signer::device::RegisterFingerprint,
-    id: &FreshIdentity,
+    id: &RegisterMaterial,
     now_ms: u64,
 ) -> String {
     let seed = hongguo_signer::md5_hex_upper(id.cdid.as_bytes()).into_bytes();
@@ -417,89 +380,6 @@ fn register_json_str(
     Value::Object(o).to_string()
 }
 
-/// 注册一台全新设备（applog 裸形态）：无签名头族 + TT-Encrypt V5 加密指纹 JSON。
-/// `env` 只取代理设置；响应 Set-Cookie 的 ttreq 票随 [`RegisterResult`] 带回。
-pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let id = fresh_identity();
-    // 机型指纹由 cdid 确定性派生：注册 JSON、UA、产物档案同源
-    let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
-
-    let body = tt_encrypt_v5(register_json_str(fp, &id, now_ms).as_bytes());
-    // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
-    if std::env::var("TT_DEBUG").is_ok() {
-        let dir = super::capture_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let plain = register_json_str(fp, &id, now_ms);
-        let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
-        let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
-        let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
-        let meta = serde_json::json!({"cdid": id.cdid, "openudid": id.openudid, "clientudid": id.clientudid, "req_id": id.req_id});
-        let _ = std::fs::write(
-            dir.join("rust_reg_meta.json"),
-            serde_json::to_string(&meta).unwrap(),
-        );
-    }
-
-    // applog 裸形态直发：零 cookie、零签名，头族只保留官方实发的；
-    // 响应 Set-Cookie 下发本设备的 ttreq 票（按新 install_id 发放），随档案长期携带
-    let query = register_query()
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    let response = build_client(&env.proxy)?
-        .post(format!("{REGISTER_ORIGIN}{REGISTER_PATH}?{query}"))
-        .timeout(std::time::Duration::from_secs(REGISTER_TIMEOUT_SECS))
-        .header("User-Agent", fp.register_ua())
-        .header("Content-Type", "application/octet-stream;tt-data=a")
-        .header("log-encode-type", "gzip")
-        .header("x-ss-req-ticket", now_ms.to_string())
-        .header("x-vc-bdturing-sdk-version", "4.0.3.cn")
-        .header("x-neptune", "-8|50:51:59:30:40:47:49:39")
-        .header("x-ss-stub", hongguo_signer::md5_hex_upper(&body))
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    if !response.status().is_success() {
-        return Err(AppError::Network(format!("HTTP {}", response.status())));
-    }
-    let set_cookies: Vec<String> = response
-        .headers()
-        .get_all(reqwest::header::SET_COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok().map(str::to_string))
-        .collect();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?
-        .to_vec();
-
-    let mut result = parse_register(&bytes)?;
-    result.cdid = id.cdid.clone();
-    result.openudid = id.openudid.clone();
-    result.ttreq = set_cookies
-        .iter()
-        .find_map(|c| {
-            let head = c.split(';').next()?.trim();
-            head.strip_prefix("ttreq=").map(|s| s.to_string())
-        })
-        .unwrap_or_default();
-    if result.device_id == "0" {
-        let text = String::from_utf8_lossy(&bytes);
-        return Err(AppError::Media(format!(
-            "注册被服务端静默拒绝（device_id=0），加密或指纹形态可能过期；原始响应: {}",
-            &text[..text.len().min(400)]
-        )));
-    }
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,14 +450,14 @@ mod tests {
             ]
         );
 
-        let id = FreshIdentity {
-            cdid: "cdid-uuid".into(),
-            openudid: "openudid-hex".into(),
-            clientudid: "clientudid-uuid".into(),
-            req_id: "req-id-uuid".into(),
-        };
+        let id = RegisterMaterial::from_parts(
+            "cdid-uuid",
+            "openudid-hex",
+            "clientudid-uuid",
+            "req-id-uuid",
+        );
         let v: Value = serde_json::from_str(&register_json_str(
-            hongguo_signer::device::fingerprint_for_cdid(&id.cdid),
+            hongguo_signer::device::fingerprint_for_cdid(id.cdid()),
             &id,
             1_760_000_000_000,
         ))
@@ -626,7 +506,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_register_live() {
-        let env = ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
+        let env = crate::client::ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
         match register_device(&env).await {
             Ok(r) => println!(
                 "[register-live] device_id={} install_id={} new_user={} ttreq={}",
