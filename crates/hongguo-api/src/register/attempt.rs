@@ -470,10 +470,11 @@ mod tests {
         assert_eq!(register_http_sends(), 2);
         let saved = bodies.lock().unwrap().clone();
         assert_eq!(saved.len(), 2);
-        let first = cdid_of(&saved[0]);
-        let second = cdid_of(&saved[1]);
+        let first = identity_of(&saved[0]);
+        let second = identity_of(&saved[1]);
         assert_eq!(first, second);
-        assert_eq!(first, material.cdid());
+        assert_eq!(first.0, material.cdid());
+        assert!(first.1.len() >= 8 && first.2.len() >= 8 && first.3.len() >= 8);
     }
 
     #[tokio::test]
@@ -501,10 +502,16 @@ mod tests {
         assert_eq!(register_http_sends(), 0);
     }
 
-    fn cdid_of(body: &[u8]) -> String {
+    fn identity_of(body: &[u8]) -> (String, String, String, String) {
         let (plain, _) = super::super::tt_decrypt_v5(body).expect("夹具请求体应能解密");
         let v: serde_json::Value = serde_json::from_slice(&plain).unwrap();
-        v["header"]["cdid"].as_str().unwrap().to_string()
+        let header = &v["header"];
+        (
+            header["cdid"].as_str().unwrap().to_string(),
+            header["openudid"].as_str().unwrap().to_string(),
+            header["clientudid"].as_str().unwrap().to_string(),
+            header["req_id"].as_str().unwrap().to_string(),
+        )
     }
 
     async fn loopback(

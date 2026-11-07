@@ -69,6 +69,7 @@ pub struct BootstrapMeta {
 static BLOCK_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static FAIL_SIDECAR_WRITES: AtomicU32 = AtomicU32::new(0);
 static FAIL_SIDECAR_DELETES: AtomicU32 = AtomicU32::new(0);
+static FAIL_JOURNAL_RENAMES: AtomicU32 = AtomicU32::new(0);
 
 enum BlockSource {
     Absent,
@@ -78,8 +79,24 @@ enum BlockSource {
 
 pub fn read_meta(store: &Store) -> BootstrapMeta {
     let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
-    let mut meta = merge_block_sources(load_db_block(store), load_sidecar_block(store));
-    if matches!(marker_state(store), BlockSource::Unreadable) {
+    load_meta_locked(store)
+}
+
+fn load_meta_locked(store: &Store) -> BootstrapMeta {
+    let db = load_db_block(store);
+    let side = load_sidecar_block(store);
+    let mut meta = merge_block_sources(db, side);
+    let no_record = matches!(
+        (load_db_block(store), load_sidecar_block(store)),
+        (BlockSource::Absent, BlockSource::Absent)
+    );
+    if no_record
+        || matches!(marker_state(store), BlockSource::Unreadable)
+        || matches!(journal_state(store), BlockSource::Unreadable)
+        || matches!(load_db_block(store), BlockSource::Unreadable)
+        || matches!(load_sidecar_block(store), BlockSource::Unreadable)
+    {
+        // 没有可读的持久记录，或记录损坏：无自动注册资格。
         meta.register_block_unknown = true;
     }
     meta
@@ -186,6 +203,59 @@ fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
         let _ = std::fs::remove_file(&tmp);
         hongguo_common::AppError::Io(e.to_string())
     })
+}
+
+fn journal_path(store: &Store) -> Option<std::path::PathBuf> {
+    block_sidecar(store).map(|path| std::path::PathBuf::from(format!("{}.journal", path.display())))
+}
+
+fn journal_state(store: &Store) -> BlockSource {
+    let Some(path) = journal_path(store) else {
+        return BlockSource::Absent;
+    };
+    match std::fs::read_to_string(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
+            Ok(meta) => {
+                let _ = meta;
+                BlockSource::Unreadable
+            }
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn write_journal(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    let path = journal_path(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制日志".into())
+    })?;
+    let raw = serde_json::to_string(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    std::fs::write(&tmp, &raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    if FAIL_JOURNAL_RENAMES.load(Ordering::Relaxed) > 0 {
+        FAIL_JOURNAL_RENAMES.fetch_sub(1, Ordering::Relaxed);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(hongguo_common::AppError::Io(
+            "故障注入：限制日志改名".into(),
+        ));
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+fn remove_journal(store: &Store) -> hongguo_common::AppResult<()> {
+    let Some(path) = journal_path(store) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
 }
 
 fn remove_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
@@ -385,7 +455,7 @@ async fn register_and_swap_at(
     }
     let mut meta = read_meta(&state.store);
     if registration_blocked(&meta, now_ms()) {
-        return refused(state, "注册限制仍有效");
+        return refused(state, "无可信持久状态或限制仍有效，不自动注册");
     }
     meta.last_register_attempt_ms = Some(now_ms());
     if let Err(e) = write_meta_strict(&state.store, &meta) {
@@ -547,29 +617,57 @@ fn persist_block(
     }
 }
 
-/// 显式解除限制。读失败、旁文件删不掉或主库写失败时保持限制，启动流程不会调用这里。
+/// 显式解除限制。任何一步失败都留下仍能阻断的记录；启动流程不会调用这里。
 pub fn clear_register_block(store: &Store) -> hongguo_common::AppResult<()> {
     let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    let saved_side = block_sidecar(store).and_then(|path| std::fs::read(path).ok());
+    let saved_marker = unknown_marker(store).and_then(|path| std::fs::read(path).ok());
+    let mut blocking = load_meta_locked(store);
+    blocking.register_block_unknown = true;
+    write_journal(store, &blocking)?;
     remove_block_sidecar(store)?;
-    remove_unknown_marker(store)?;
-    let mut meta = match load_db_block(store) {
+    if let Err(err) = remove_unknown_marker(store) {
+        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+        return Err(err);
+    }
+    let mut cleared = match load_db_block(store) {
         BlockSource::Present(meta) => meta,
         BlockSource::Absent => BootstrapMeta::default(),
         BlockSource::Unreadable => {
+            restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+            restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
             return Err(hongguo_common::AppError::StoreCorrupt(
                 "主库限制不可读，不能解除".into(),
             ));
         }
     };
-    meta.register_block_manual = false;
-    meta.register_block_until_ms = None;
-    meta.register_block_unknown = false;
-    meta.register_block_seq = next_block_seq(store);
-    write_meta_strict(store, &meta)?;
-    remove_block_sidecar(store)?;
-    remove_unknown_marker(store)?;
+    cleared.register_block_manual = false;
+    cleared.register_block_until_ms = None;
+    cleared.register_block_unknown = false;
+    cleared.register_block_seq = next_block_seq(store);
+    if let Err(err) = write_meta_strict(store, &cleared) {
+        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+        restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
+        return Err(err);
+    }
+    remove_journal(store)?;
     REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
     Ok(())
+}
+
+fn restore_bytes(
+    path: Option<std::path::PathBuf>,
+    bytes: Option<&[u8]>,
+) -> hongguo_common::AppResult<()> {
+    let (Some(path), Some(bytes)) = (path, bytes) else {
+        return Ok(());
+    };
+    let tmp = std::path::PathBuf::from(format!("{}.restore.tmp", path.display()));
+    std::fs::write(&tmp, bytes).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
 }
 
 pub fn registration_blocked(meta: &BootstrapMeta, now_ms: i64) -> bool {
@@ -634,7 +732,7 @@ pub async fn ensure_registered(state: &AppState) {
         return;
     }
     if registration_blocked(&read_meta(&state.store), now_ms()) {
-        log::warn!("[Device] 注册限制仍有效，启动不注册");
+        log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
         return;
     }
     if state.device().get("iid").is_empty() {
@@ -1459,6 +1557,102 @@ mod tests {
             join.join().unwrap();
         }
         assert!(registration_blocked(&read_meta(&state.store), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn missing_trusted_state_has_no_automatic_registration() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        assert!(read_meta(&memory.store).register_block_unknown);
+        ensure_registered(&memory).await;
+        let registered = register_and_swap(&memory, "无可信状态").await;
+        assert!(!registered.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+
+        let dir = std::env::temp_dir().join(format!("hg-no-trust-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let fresh = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        assert!(read_meta(&fresh.store).register_block_unknown);
+        ensure_registered(&fresh).await;
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_keeps_sidecar_block_when_db_write_fails() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-clear-db-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        db.fail_next_meta_writes(1);
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db.clone()));
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        assert!(block_sidecar(&db).unwrap().is_file());
+        db.fail_next_meta_writes(1);
+        assert!(clear_register_block(&db).is_err());
+        drop(state);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_left_by_a_crash_still_blocks_after_reopen() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-journal-crash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let journal = journal_path(&db).unwrap();
+        std::fs::write(
+            &journal,
+            serde_json::to_string(&BootstrapMeta {
+                register_block_manual: true,
+                register_block_seq: 3,
+                ..BootstrapMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(read_meta(&reopened).register_block_unknown);
+        assert!(registration_blocked(&read_meta(&reopened), i64::MAX));
+        FAIL_JOURNAL_RENAMES.store(1, Ordering::Relaxed);
+        let err = clear_register_block(&reopened).unwrap_err();
+        assert!(err.to_string().contains("改名"));
+        let tmp = std::path::PathBuf::from(format!("{}.tmp", journal.display()));
+        assert!(!tmp.exists(), "改名失败不能留下半截日志");
+        assert!(journal.is_file());
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retry_after_survives_reopen_until_the_deadline() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-until-reopen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        let mut meta = BootstrapMeta::default();
+        let until = now_ms() + 60_000;
+        persist_block(&state, &mut meta, RegisterBlock::Until { until_ms: until }).unwrap();
+        drop(state);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        let loaded = read_meta(&reopened);
+        assert!(!loaded.register_block_unknown);
+        assert!(registration_blocked(&loaded, until - 1));
+        assert!(!registration_blocked(&loaded, until));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
