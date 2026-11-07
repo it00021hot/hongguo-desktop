@@ -39,7 +39,7 @@ pub fn offline_qa_data_dir_ok() -> Result<(), String> {
     isolated_data_dir().map(|_| ())
 }
 
-/// 开库前的最后一道门：无效目录、生产目录及其别名都在创建父目录之前失败。
+/// 开库前的最后一道门：父目录、最终文件和旁路文件都要在创建或跟随符号链接之前拒绝。
 pub(crate) fn refuse_offline_store_open(db_path: &Path) -> Result<(), String> {
     if !hongguo_common::offline_qa::enabled() || db_path == Path::new(":memory:") {
         return Ok(());
@@ -56,7 +56,55 @@ pub(crate) fn refuse_offline_store_open(db_path: &Path) -> Result<(), String> {
     if parent_canon != allowed {
         return Err("离线 QA 拒绝打开隔离目录以外的库".into());
     }
+    for path in offline_output_paths(db_path) {
+        refuse_offline_output(&path)?;
+    }
     Ok(())
+}
+
+/// 写入前检查最终路径。已有符号链接直接拒绝，不删除、不跟随。
+pub fn refuse_offline_output(path: &Path) -> Result<(), String> {
+    if !hongguo_common::offline_qa::enabled() || path == Path::new(":memory:") {
+        return Ok(());
+    }
+    let allowed = isolated_data_dir()?;
+    if !stays_inside_isolation(path, &allowed) {
+        return Err(format!(
+            "离线 QA 拒绝隔离目录以外的最终路径 {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn offline_output_paths(db_path: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![db_path.to_path_buf()];
+    for suffix in [
+        "-wal",
+        "-shm",
+        ".register-block",
+        ".register-block.unknown",
+        ".register-block.journal",
+        ".register-block.tmp",
+    ] {
+        let mut name = db_path.as_os_str().to_os_string();
+        name.push(suffix);
+        paths.push(PathBuf::from(name));
+    }
+    paths
+}
+
+fn stays_inside_isolation(path: &Path, allowed: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => false,
+        Ok(_) => std::fs::canonicalize(path)
+            .ok()
+            .is_some_and(|canon| canon == allowed || canon.starts_with(allowed)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            path.is_absolute() && (path == allowed || path.starts_with(allowed))
+        }
+        Err(_) => false,
+    }
 }
 
 fn isolated_data_dir() -> Result<PathBuf, String> {
@@ -138,11 +186,22 @@ pub fn data_dir() -> PathBuf {
 /// 缓存根：用户配置优先，否则跟随数据目录。数据库/崩溃日志/下载等用户数据
 /// 不走这里——可配置的只有可随时清的缓存。
 fn cache_root() -> PathBuf {
-    CACHE_ROOT_OVERRIDE
+    let configured = CACHE_ROOT_OVERRIDE
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .unwrap_or_else(data_dir)
+        .clone();
+    if hongguo_common::offline_qa::enabled() {
+        let Ok(allowed) = isolated_data_dir() else {
+            return data_dir();
+        };
+        if let Some(config) = configured
+            && stays_inside_isolation(&config, &allowed)
+        {
+            return config;
+        }
+        return allowed;
+    }
+    configured.unwrap_or_else(data_dir)
 }
 
 /// 由「系统数据目录 + 壳声明」解析数据根：未声明 = Electron 迁移的默认根；
@@ -357,6 +416,50 @@ mod tests {
 
         let _off = EnvRestore::set(hongguo_common::offline_qa::ENV, "0");
         assert!(offline_qa_data_dir_ok().is_ok());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn offline_final_file_symlink_and_cache_override_stay_inside() {
+        let _lock = TEST_PATH_INPUTS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = scratch("final-link");
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let prod = root.join("system-data").join("hongguo-downloader");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&prod).unwrap();
+        let outside = prod.join("hongguo.db");
+        std::fs::write(&outside, b"keep-prod").unwrap();
+        let db = isolated.join(DB_FILE);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &db).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, &db).unwrap();
+        let sidecar = PathBuf::from(format!("{}.register-block", db.display()));
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &sidecar).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, &sidecar).unwrap();
+        let _qa = EnvRestore::set(hongguo_common::offline_qa::ENV, "1");
+        let _data = EnvRestore::set("HONGGUO_DATA_DIR", &isolated.to_string_lossy());
+        let err = refuse_offline_store_open(&db).unwrap_err();
+        assert!(err.contains("最终路径") || err.contains("符号"));
+        assert!(crate::Store::open(&db).is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"keep-prod");
+        assert!(
+            std::fs::symlink_metadata(&db)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(refuse_offline_output(&sidecar).is_err());
+        set_cache_root_override(Some(prod.clone()));
+        let cover = cover_cache_dir();
+        assert!(cover.starts_with(std::fs::canonicalize(&isolated).unwrap()));
+        assert!(!prod.join("cover-cache").exists());
+        set_cache_root_override(None);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -17,11 +17,15 @@ function withFlag(flag: string | undefined, run: () => void) {
 }
 
 describe('offline host', () => {
-  it('userinfo 里的 localhost 不是主机', () => {
+  it('与 WHATWG 一样取 host，反斜杠和前导空白不再当成 loopback', () => {
     expect(requestHost('http://localhost:80@example.com/a')).toBe('example.com');
     expect(requestHost('http://127.0.0.1:80@example.com/a')).toBe('example.com');
     expect(requestHost('http://user:pass@127.0.0.1/a')).toBe('127.0.0.1');
-    expect(requestHost('http://[::1]:80/a')).toBe('::1');
+    expect(requestHost('http://[::1]:80/a')).toBe('[::1]');
+    expect(requestHost('https://example.com\\@127.0.0.1/a.jpeg')).toBe('example.com');
+    expect(requestHost(' https://example.com/a.jpeg')).toBe('example.com');
+    expect(requestHost('//example.com/a.jpeg')).toBe('example.com');
+    expect(requestHost('https:/example.com/a.jpeg')).toBe('example.com');
   });
 
   it('只有精确的 1 才离线，外部地址不会交给 img', () => {
@@ -40,7 +44,10 @@ describe('offline host', () => {
       expect(normalizeAvatarUrl('https://cdn.example/a.jpeg')).toBe('');
       expect(isRenderableCover('http://127.0.0.1/a.jpeg')).toBe(true);
       expect(pageImageSrc('http://localhost:80@example.com/a.jpeg')).toBe('');
-      expect(pageImageSrc('blob:http://localhost/preview')).toBe('blob:http://localhost/preview');
+      expect(pageImageSrc('https://example.com\\@127.0.0.1/a.jpeg')).toBe('');
+      expect(pageImageSrc(' https://example.com/a.jpeg')).toBe('');
+      expect(pageImageSrc('//example.com/a.jpeg')).toBe('');
+      expect(pageImageSrc('blob:http://127.0.0.1/preview')).toBe('blob:http://127.0.0.1/preview');
     });
   });
 });

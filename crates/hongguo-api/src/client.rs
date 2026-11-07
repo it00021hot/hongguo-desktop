@@ -474,7 +474,7 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 /// 切片自愈；403 补 Referer 重试一次）。
 fn offline_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        if hongguo_common::offline_qa::external_url_forbidden(attempt.url().as_str()) {
+        if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
             attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
         } else {
             attempt.follow()

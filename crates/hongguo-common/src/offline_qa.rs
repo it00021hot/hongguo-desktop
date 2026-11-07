@@ -12,40 +12,30 @@ pub fn enabled() -> bool {
     std::env::var(ENV).ok().as_deref() == Some(ON)
 }
 
-/// 离线 QA 下，真实 host 不是 loopback 的 URL 不能发出。未开启时一律放行。
-pub fn external_url_forbidden(url: &str) -> bool {
-    enabled() && !is_loopback_url(url)
-}
-
-/// 按 RFC 3986 取 authority 里最后一个 `@` 之后的 host。userinfo 里的 localhost 不算主机。
-pub fn request_host(url: &str) -> Option<String> {
-    let after_scheme = url.split_once("://")?.1;
-    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() {
-        return None;
+/// 离线 QA 下，解析后不是 loopback HTTP(S) 的地址不能发出。解析失败同样拒绝。
+/// 解析器是 `url` crate，与 reqwest 发送前用的是同一套。
+pub fn external_url_forbidden(raw: &str) -> bool {
+    if !enabled() {
+        return false;
     }
-    let hostport = match authority.rfind('@') {
-        Some(at) => &authority[at + 1..],
-        None => authority,
-    };
-    if hostport.is_empty() {
-        return None;
-    }
-    let host = if let Some(rest) = hostport.strip_prefix('[') {
-        let end = rest.find(']')?;
-        &rest[..end]
-    } else {
-        hostport.split(':').next().unwrap_or("")
-    };
-    if host.is_empty() {
-        None
-    } else {
-        Some(host.to_ascii_lowercase())
+    match url::Url::parse(raw) {
+        Ok(parsed) => !offline_target_allowed(&parsed),
+        Err(_) => true,
     }
 }
 
-pub fn is_loopback_url(url: &str) -> bool {
-    request_host(url).is_some_and(|host| matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1"))
+/// 已经由发送端解析好的 URL。重定向每一跳把 reqwest 的 `Url` 交进来，不再拆字符串。
+pub fn parsed_url_forbidden(parsed: &url::Url) -> bool {
+    enabled() && !offline_target_allowed(parsed)
+}
+
+fn offline_target_allowed(parsed: &url::Url) -> bool {
+    matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some_and(is_loopback_host)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim_matches(|ch| ch == '[' || ch == ']');
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 #[cfg(test)]
@@ -72,6 +62,12 @@ mod tests {
         assert!(!external_url_forbidden("http://localhost/x"));
         assert!(!external_url_forbidden("http://[::1]:80/x"));
         assert!(!external_url_forbidden("http://user:pass@127.0.0.1/a"));
+        assert!(external_url_forbidden(
+            "https://example.com\\@127.0.0.1/a.jpeg"
+        ));
+        assert!(external_url_forbidden(" https://example.com/a.jpeg"));
+        assert!(external_url_forbidden("https:/example.com/a.jpeg"));
+        assert!(external_url_forbidden("not a url"));
         unsafe { std::env::set_var(ENV, "0") };
         assert!(!enabled());
         unsafe { std::env::set_var(ENV, "") };

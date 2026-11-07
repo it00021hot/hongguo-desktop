@@ -150,6 +150,10 @@ fn merge_block_sources(db: BlockSource, side: BlockSource) -> BootstrapMeta {
     }
 }
 
+fn refuse_offline_output(path: &std::path::Path) -> hongguo_common::AppResult<()> {
+    hongguo_store::paths::refuse_offline_output(path).map_err(hongguo_common::AppError::InvalidArgs)
+}
+
 fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
     let path = store.db_path();
     if path == std::path::Path::new(":memory:") {
@@ -168,6 +172,7 @@ fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::A
     let path = block_sidecar(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制旁路".into())
     })?;
+    refuse_offline_output(&path)?;
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
@@ -197,6 +202,7 @@ fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
     let path = unknown_marker(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的未知限制标记".into())
     })?;
+    refuse_offline_output(&path)?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
     std::fs::write(&tmp, b"unknown\n").map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
@@ -230,6 +236,7 @@ fn write_journal(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResu
     let path = journal_path(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制日志".into())
     })?;
+    refuse_offline_output(&path)?;
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
     let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
@@ -665,6 +672,7 @@ fn restore_bytes(
     let (Some(path), Some(bytes)) = (path, bytes) else {
         return Ok(());
     };
+    refuse_offline_output(&path)?;
     let tmp = std::path::PathBuf::from(format!("{}.restore.tmp", path.display()));
     std::fs::write(&tmp, bytes).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
@@ -730,16 +738,16 @@ fn swap_profile(
 /// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
     let _release_playback = crate::cold_start::ReleaseOnDrop;
+    if reuse_json_path().is_some() {
+        let _ = reuse_refusal(state);
+        return;
+    }
     if registration_blocked(&read_meta(&state.store), now_ms()) {
         log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
         return;
     }
     if hongguo_common::offline_qa::enabled() {
-        log::info!("[Device] 离线 QA：不注册、不复用档案、不打健康探针、不做行为预热");
-        return;
-    }
-    if reuse_json_path().is_some() {
-        let _ = register_and_swap(state, "只复用").await;
+        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
         return;
     }
     if state.device().get("iid").is_empty() {
@@ -832,6 +840,13 @@ const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
 
 /// 取流全程空响应时恢复。限制窗口和只复用模式不注册、不预热。
 pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
+    if hongguo_common::offline_qa::enabled() {
+        if reuse_json_path().is_some() {
+            let _ = reuse_refusal(state);
+        }
+        log::warn!("[Device] 离线 QA：取流空响应 vid={vid} 不注册、不预热");
+        return false;
+    }
     let now = now_ms();
     let meta = read_meta(&state.store);
     let in_cooldown = meta
@@ -1616,6 +1631,47 @@ mod tests {
             Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
             None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
         }
+    }
+
+    #[tokio::test]
+    async fn normal_reuse_keeps_the_block_and_does_not_register() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let previous_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
+        let previous_reuse = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) };
+        let dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.qa-a-premise-scratch")
+            })
+            .join(format!("reuse-normal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let profile = registered_profile(&reg_result());
+        let path = dir.join("device.json");
+        std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &path) };
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        ensure_registered(&memory).await;
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert_eq!(memory.device().get("iid"), "9999999999999999");
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        assert!(!recover_after_empty_stream(&memory, "vid").await);
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        match previous_reuse {
+            Some(value) => unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", value) },
+            None => unsafe { std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON") },
+        }
+        match previous_qa {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

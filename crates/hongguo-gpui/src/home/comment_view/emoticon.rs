@@ -492,7 +492,7 @@ async fn fetch_emoticon_image(url: String) -> Option<DecodedEmoticon> {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if hongguo_common::offline_qa::external_url_forbidden(attempt.url().as_str()) {
+                if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
                     attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
                 } else {
                     attempt.follow()
