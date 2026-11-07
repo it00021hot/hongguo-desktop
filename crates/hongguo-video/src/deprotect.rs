@@ -13,6 +13,13 @@ const PROTECTION_BOXES: &[&[u8; 4]] = &[b"sinf", b"saiz", b"saio", b"senc"];
 /// 加密样本入口类型 → 未加密时的类型。
 const ENCRYPTED_ENTRIES: &[&[u8; 4]] = &[b"encv", b"enca", b"encs", b"enct"];
 
+/// VisualSampleEntry 固定载荷（不含 8 字节 box 头）：ISO/IEC 14496-12。
+/// 子 box（`hvcC` / `bv2C` / `sinf`…）从 `8 +` 本值起。
+const VISUAL_SAMPLE_ENTRY_PAYLOAD: usize = 78;
+
+/// AudioSampleEntry 固定载荷（不含 8 字节 box 头）。
+const AUDIO_SAMPLE_ENTRY_PAYLOAD: usize = 28;
+
 /// 把已经解密过采样数据的 MP4 还原成普通可播放的 MP4，返回重写后的完整文件字节（长度会变，通常变短）。
 pub fn deprotect(data: &[u8]) -> AppResult<Vec<u8>> {
     let Some(rebuilt) = rebuild_moov_region(data, 0)? else {
@@ -188,9 +195,22 @@ fn rebuild_stsd(stsd: &[u8], changed: &mut bool) -> Vec<u8> {
     build_box(b"stsd", &entries)
 }
 
+/// 样本入口子 box 起点（含 8 字节头）。音视频固定字段长度不同，从 16 扫会把
+/// width/height 等当成 box 头，既读丢 `frma`（回落成错误的 `hvc1`），也剥不掉 `sinf`。
+fn sample_entry_children_at(entry: &[u8]) -> usize {
+    match &entry[4..8] {
+        b"enca" => 8 + AUDIO_SAMPLE_ENTRY_PAYLOAD,
+        _ => 8 + VISUAL_SAMPLE_ENTRY_PAYLOAD,
+    }
+}
+
 /// 加密入口 → 普通入口：改类型、摘掉保护信息。
 fn plain_entry(entry: &[u8]) -> Vec<u8> {
-    // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底（encv 几乎总是 HEVC）
+    let children_at = sample_entry_children_at(entry);
+    if entry.len() < children_at {
+        return entry.to_vec();
+    }
+    // 类型取 `sinf/frma` 里记录的原始格式；取不到就用编码名兜底
     let original = original_format(entry).unwrap_or_else(|| {
         match &entry[4..8] {
             b"enca" => *b"mp4a",
@@ -198,8 +218,8 @@ fn plain_entry(entry: &[u8]) -> Vec<u8> {
         }
     });
 
-    let mut children: Vec<u8> = Vec::with_capacity(entry.len());
-    for b in parse_boxes(entry, 16, entry.len()) {
+    let mut children: Vec<u8> = Vec::with_capacity(entry.len().saturating_sub(children_at));
+    for b in parse_boxes(entry, children_at, entry.len()) {
         if PROTECTION_BOXES.contains(&&b.kind) {
             continue;
         }
@@ -207,11 +227,8 @@ fn plain_entry(entry: &[u8]) -> Vec<u8> {
         children.extend_from_slice(&entry[start..b.start + b.size]);
     }
 
-    let mut head: Vec<u8> = Vec::with_capacity(16);
-    head.extend_from_slice(&[0u8; 4]); // 入口大小占位
-    head.extend_from_slice(&original);
-    head.extend_from_slice(&entry[8..16]); // 6 字节保留 + 2 字节 data_ref
-
+    let mut head = entry[..children_at].to_vec();
+    head[4..8].copy_from_slice(&original);
     let total = (head.len() + children.len()) as u32;
     head[..4].copy_from_slice(&total.to_be_bytes());
     head.extend_from_slice(&children);
@@ -220,7 +237,11 @@ fn plain_entry(entry: &[u8]) -> Vec<u8> {
 
 /// `sinf` → `frma` 的载荷前 4 字节就是加密前的原始样本格式。
 fn original_format(entry: &[u8]) -> Option<[u8; 4]> {
-    let sinf = parse_boxes(entry, 16, entry.len())
+    let children_at = sample_entry_children_at(entry);
+    if entry.len() < children_at {
+        return None;
+    }
+    let sinf = parse_boxes(entry, children_at, entry.len())
         .into_iter()
         .find(|b| b.kind == *b"sinf")?;
     let frma = parse_boxes(entry, sinf.start, sinf.start + sinf.size)
@@ -314,21 +335,20 @@ mod tests {
     }
 
     /// 造一个最小的加密 MP4：`moov(vide trak(stbl(stsd(encv+sinf), stco), ...)) + mdat`
-    fn encrypted_mp4(sample: &[u8]) -> Vec<u8> {
-        let frma = build_box(b"frma", b"hvc1");
+    fn encrypted_mp4_with_frma(sample: &[u8], frma_fourcc: &[u8; 4], cfg_fourcc: &[u8; 4]) -> Vec<u8> {
+        let frma = build_box(b"frma", frma_fourcc);
         let schm = build_box(b"schm", &cat(&[&[0u8; 4], b"cenc", &[0u8; 4]]));
         let schi = build_box(b"schi", &build_box(b"tenc", &[0u8; 4]));
         let sinf = build_box(b"sinf", &cat(&[&frma, &schm, &schi]));
-        let hvcc = build_box(b"hvcC", &[0u8; 8]);
+        let cfg = build_box(cfg_fourcc, &[0u8; 8]);
         let btrt = build_box(b"btrt", &[0u8; 12]);
 
-        // stsd 条目：大小占位 + encv + 6 保留 + 2 data_ref + hvcC + btrt + sinf
+        // VisualSampleEntry：8 头 + 78 固定载荷，之后才是 hvcC/bv2C/sinf
         let mut entry: Vec<u8> = Vec::new();
         entry.extend_from_slice(&[0u8; 4]);
         entry.extend_from_slice(b"encv");
-        entry.extend_from_slice(&[0u8; 6]);
-        entry.extend_from_slice(&[0u8; 2]);
-        entry.extend_from_slice(&hvcc);
+        entry.extend_from_slice(&[0u8; VISUAL_SAMPLE_ENTRY_PAYLOAD]);
+        entry.extend_from_slice(&cfg);
         entry.extend_from_slice(&btrt);
         entry.extend_from_slice(&sinf);
         let entry_size = entry.len() as u32;
@@ -399,6 +419,10 @@ mod tests {
         data
     }
 
+    fn encrypted_mp4(sample: &[u8]) -> Vec<u8> {
+        encrypted_mp4_with_frma(sample, b"hvc1", b"hvcC")
+    }
+
     #[test]
     fn turns_encv_into_hvc1_and_drops_sinf() {
         let mp4 = encrypted_mp4(&[0x11u8; 64]);
@@ -413,6 +437,18 @@ mod tests {
         assert!(has(b"hvcC"));
         assert!(has(b"btrt"));
         assert!(has(b"stco"));
+    }
+
+    #[test]
+    fn turns_encv_into_bvc2_when_frma_says_so() {
+        let mp4 = encrypted_mp4_with_frma(&[0x22u8; 32], b"bvc2", b"bv2C");
+        let out = deprotect(&mp4).expect("应能去除加密标记");
+        let has = |tag: &[u8; 4]| out.windows(4).any(|w| w == tag);
+        assert!(has(b"bvc2"), "frma=bvc2 时应还原成 bvc2");
+        assert!(!has(b"hvc1"), "不应误回落成 hvc1");
+        assert!(!has(b"encv"));
+        assert!(!has(b"sinf"));
+        assert!(has(b"bv2C"));
     }
 
     #[test]

@@ -30,6 +30,7 @@
 - `crates/hongguo-api/` 官方接口客户端。业务域 18 个：`calendar` / `danmaku` / `detail` / `discover` / `emoticon` / `history` / `interact` / `login` / `new_drama` / `play_strategy` / `play_url` / `rank` / `recommend` / `register` / `reservation` / `search` / `stream_pick` / `warmup`（另有 `client` / `params`）。改端点或参数前必读 `docs/hongguo-api-endpoints.md`。commentapi 互动枚举（object_type / comment_type / commit_source / data_type 等，值即契约）集中在 `params::interaction`，使用点只引用不写字面量
 - `crates/hongguo-store/` 持久化：Turso 内嵌库（`db` 连接与 schema 迁移 / `entity/` 八个模块 `device` / `follow` / `local_history` / `merge` / `playback` / `series` / `settings` / `task` / `bridge` 同步门面）；`paths::ScopedDataDir` 是 feature `test-support` 门控的测试辅助（落盘用例把数据目录重定向到临时目录）。无 tauri 依赖
 - `crates/hongguo-stream/` 在线流契约：内存渐进流（`ProgressiveStream`）、按 (vid, 档位) 分条的缓存（`StreamCache`）、Range 应答（`serve`）+ `range`（RangeSpec/ProtocolResponse）、进程级 `cache()` 单例。**填充侧（service）与应答侧（protocol）共用的上游**——两侧都只往下依赖它，禁止反向。无 tauri 依赖
+- `crates/hongguo-bytevc2/` ByteVC2（`bvc2`）识别与参数集/样本 Annex-B 转换（对照 librempeg `cbs_bvc2` + 官方 `convertByteVC2Extradata`）；不解帧，解码交给带 `bvc2` 的 ffmpeg（librempeg）
 - `crates/hongguo-media/` 媒体公共底座：demux / hevc / mp4（MP4 写出层）/ mux（H.264 封装）/ remux / transcode / codec_probe / disk_space / heif / backend；`tests/fixtures/` 放随代码走的样本。无 tauri 依赖
 - `crates/hongguo-media-platform-api/` 平台媒体契约：`PlatformRequest` / 共享码率策略（`bitrate_for`）。实现 crate 的公共上游；本 crate 不依赖任何实现，引用方向反了就是 Cargo 依赖环
 - `crates/hongguo-media-platform-macos/` macOS 平台实现：VideoToolbox 转码链（硬编优先、软编回落）；平台依赖全在 target 表，`#![cfg(target_os = "macos")]`，异目标空壳

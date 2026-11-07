@@ -3,7 +3,7 @@
 //! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
 //! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use hongguo_api::client::ApiEnv;
 use hongguo_api::register::{RegisterResult, register_device};
@@ -38,8 +38,9 @@ pub struct BootstrapMeta {
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
-    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 = 档案出生于旧注册器
-    ///（被服务端标记、取流不发货），启动时按全新安装语义一次性迁移到当前代际。
+    /// 现役档案的注册代际（[`hongguo_api::register::REGISTER_REGIME`]）。
+    /// 缺失或不符 = 档案出生于旧注册器（被服务端标记、取流不发货），
+    /// 启动时按全新安装语义一次性迁移到当前代际。
     #[serde(default)]
     pub register_regime: String,
 }
@@ -226,13 +227,11 @@ pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
             // 换档前发出去的匿名请求产物（顶栏塌缩表、批量预取流）全部作废
             hongguo_api::recommend::clear_feed_tabs_cache();
             hongguo_api::play_url::clear_batch_cache();
-            // 冷启动行为预热：新设备做完官方客户端的冷启动行为序列才有
-            // 深集授权（只注册不预热 = 采集器特征，服务端只发第 1 集）
+            // 冷启动行为预热必须等完再放行：官方冷启动序列完成后才有发货资格；
+            // 异步 fire-and-forget 会让起播抢在预热前打空响应。
             let env = state.api_env();
-            crate::runtime::spawn(async move {
-                let ok = hongguo_api::warmup::run(&env).await;
-                log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-            });
+            let ok = hongguo_api::warmup::run(&env).await;
+            log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
             state
                 .events()
                 .publish(ServiceEvent::DeviceRegistered(r.install_id.clone()));
@@ -280,7 +279,7 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
     }
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
-    meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
+    meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
     write_meta(&state.store, meta);
     state.replace_device(profile);
 }
@@ -300,7 +299,7 @@ pub async fn ensure_registered(state: &AppState) {
             "[Device] 库内档案出生于旧注册代际（iid={}，regime={:?}），一次性迁移到 {} 代际",
             state.device().get("iid"),
             meta.register_regime,
-            hongguo_signer::REGISTER_VERSION_CODE_STR
+            hongguo_api::register::REGISTER_REGIME
         );
         // 迁移成功即新档出生当前代际（探针不必再做）；拒绝/预算耗尽同样轮不到探针说话
         register_with_retry(state, "注册代际迁移").await;
@@ -332,7 +331,7 @@ pub async fn ensure_registered(state: &AppState) {
 /// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
 /// 在标记机制引入前注册的档案都算旧代际）。
 fn needs_regime_migration(meta: &BootstrapMeta) -> bool {
-    meta.register_regime != hongguo_signer::REGISTER_VERSION_CODE_STR
+    meta.register_regime != hongguo_api::register::REGISTER_REGIME
 }
 
 /// 健康探针（找剧搜索是风控最严的一支）：Some(true)=活，Some(false)=
@@ -345,72 +344,58 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
     }
 }
 
-/// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
-/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；miss 主因是
-/// 匿名观看配额耗尽，换新注册只是重置配额的应急手段，同 IP 高频注册会触发 IP 级风控。
-const STREAM_MISS_THRESHOLD: u32 = 4;
-
-/// 换新注册的最小间隔（毫秒）：3 分钟一次，压住同 IP 的注册频率
-/// （匿名配额 ≈ 分钟级，3 分钟一次意味着连续观看时大约每 2 集换一台）。
-const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 180_000;
-
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-static STREAM_RENEW_AT_MS: AtomicU64 = AtomicU64::new(0);
-static STREAM_RENEW_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-/// 换新是否该发起：连续失败达阈值，且距上次换新过了最小间隔（首轮放行）。
-fn stream_renew_due(fails: u32, last_renew_ms: u64, now: u64) -> bool {
-    fails >= STREAM_MISS_THRESHOLD
-        && (last_renew_ms == 0 || now.saturating_sub(last_renew_ms) >= STREAM_RENEW_MIN_INTERVAL_MS)
-}
-
-/// 取流成功即清零计数（`online::prepare` 每次成功都会调，健康播放不断重置）。
+/// 取流成功即清零 miss 计数（诊断用）。
 pub fn note_stream_ok() {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
 }
 
-/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上（换新 = 重置匿名观看配额）。
-/// 登录态一律不换（授权走账号，与设备身份无关）；阈值 + 最小间隔压住同 IP 注册频率，
-/// 失败页的自动重试负责等待配额窗口重开；预取失败与网络错误不计（前者静默、后者另有重试）。
-pub fn note_stream_miss(state: &AppState, vid: &str) {
-    // 登录态：授权走账号，取流被拒不是设备身份问题，换新注册无意义
-    if state.settings().account.is_some() {
-        log::warn!("[Device] 取流未命中（vid={vid}，登录态不换设备，失败页自动重试）");
-        return;
-    }
+/// 取流未命中记账（有响应体但挑不出可播流）。不换设备——与空响应
+/// （[`recover_after_empty_stream`]）分开。
+pub fn note_stream_miss(_state: &AppState, vid: &str) {
     let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    let now = now_ms().max(0) as u64;
-    if !stream_renew_due(fails, STREAM_RENEW_AT_MS.load(Ordering::Relaxed), now) {
-        return;
-    }
-    if STREAM_RENEW_IN_FLIGHT.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let state = state.clone();
-    let vid = vid.to_string();
-    crate::runtime::spawn(async move {
-        log::warn!("[Device] 取流连续 {fails} 次未命中（匿名配额耗尽），换新注册设备（vid={vid}）");
-        let ok = register_and_swap(&state, "取流被拒自动换新").await.ok;
-        // 成功才写冷却/清零——失败保留 miss 计数且不锁 3 分钟，下一次 miss 可再触发
-        record_stream_renew_outcome(ok, now_ms().max(0) as u64);
-        STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
-    });
+    log::warn!("[Device] 取流未命中 vid={vid} 连续={fails}（有响应无可播档）");
 }
 
-/// 取流换新结果落账：成功才写冷却时间并清零 miss；失败不动，避免错误锁窗。
-fn record_stream_renew_outcome(ok: bool, now: u64) {
-    if !ok {
-        return;
+/// 空响应换档冷却：同 IP 高频注册会风控，空响应恢复最多按这个间隔一次。
+const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
+
+/// 取流全程空响应时恢复：优先等冷启动预热；冷却外才匿名换档一次。
+/// 冷却内不换档（防同 IP 打爆注册），但仍补一轮预热再让调用方重试——
+/// 常见竞态是起播早于后台预热完成。
+pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
+    let now = now_ms();
+    let meta = read_meta(&state.store);
+    let in_cooldown = meta
+        .last_register_attempt_ms
+        .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
+    if !in_cooldown {
+        log::warn!("[Device] 取流空响应 vid={vid}，匿名换档恢复身份");
+        if !register_with_retry(state, "取流空响应恢复").await {
+            return false;
+        }
+    } else {
+        log::warn!(
+            "[Device] 取流空响应 vid={vid}，距上次注册 {}s，冷却中只补预热",
+            meta
+                .last_register_attempt_ms
+                .map(|prev| (now - prev) / 1000)
+                .unwrap_or(0)
+        );
     }
-    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+    let env = state.api_env();
+    let n = hongguo_api::warmup::run(&env).await;
+    log::info!("[Device] 空响应恢复预热完成（{n} 条）");
+    true
 }
 
-/// 与在线播放同一份选流口径：无 HEVC 机器预取/探测的必须是 h264，否则
-/// 探测结论与真实播放翻转（见 `play_service::online::prepare`）。
+/// 与在线播放同一份选流口径：HEVC + ByteVC2 探测结论一并传入，
+/// 否则选流与真实可播能力翻转（见 `play_service::online::prepare`）。
 pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
-    hongguo_api::stream_pick::DecoderCapability::from_hevc(
+    hongguo_api::stream_pick::DecoderCapability::from_probes(
         hongguo_media_platform::capability::playback::hevc_playable(),
+        hongguo_media_platform::capability::bytevc2_decode_available(),
     )
 }
 
@@ -424,46 +409,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_renew_due_respects_threshold_and_interval() {
-        const MIN: u64 = STREAM_RENEW_MIN_INTERVAL_MS;
-        assert!(!stream_renew_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
-        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 0, 1000));
-        assert!(!stream_renew_due(
-            STREAM_MISS_THRESHOLD,
-            1000,
-            1000 + MIN - 1
-        ));
-        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
-        assert!(!stream_renew_due(
-            STREAM_MISS_THRESHOLD * 10,
-            1000,
-            1000 + MIN - 1
-        ));
-    }
-
-    #[test]
-    fn stream_renew_outcome_only_stamps_on_success() {
-        STREAM_MISS_COUNT.store(STREAM_MISS_THRESHOLD, Ordering::Relaxed);
-        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
-
-        record_stream_renew_outcome(false, 5_000);
-        assert_eq!(
-            STREAM_MISS_COUNT.load(Ordering::Relaxed),
-            STREAM_MISS_THRESHOLD,
-            "失败不得清零 miss"
-        );
-        assert_eq!(
-            STREAM_RENEW_AT_MS.load(Ordering::Relaxed),
-            0,
-            "失败不得写冷却"
-        );
-
-        record_stream_renew_outcome(true, 5_000);
+    fn note_stream_ok_clears_miss_count() {
+        STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
+        note_stream_ok();
         assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
-        assert_eq!(STREAM_RENEW_AT_MS.load(Ordering::Relaxed), 5_000);
-
-        STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
-        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
     }
 
     fn reg_result() -> RegisterResult {
@@ -655,7 +604,13 @@ mod tests {
         );
         meta.register_regime = "00000".into();
         assert!(needs_regime_migration(&meta), "旧代际标记需要迁移");
+        // 仅 version_code、无 SDK 指纹的旧标记也要迁（74332 ≠ 74332:4.3.2-rc.44）
         meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
+        assert!(
+            needs_regime_migration(&meta),
+            "缺 SDK 指纹的旧代际标记需要迁移"
+        );
+        meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
         assert!(
             !needs_regime_migration(&meta),
             "当前代际档案不迁（终生不换设备身份）"

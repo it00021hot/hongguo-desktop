@@ -43,8 +43,8 @@ pub(super) struct RankSessionBook {
     pub(super) tabs: Vec<RankTab>,
 }
 
-pub(super) fn session_books() -> &'static std::sync::Mutex<std::collections::HashMap<String, RankSessionBook>>
-{
+pub(super) fn session_books()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, RankSessionBook>> {
     static BOOKS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, RankSessionBook>>,
     > = std::sync::OnceLock::new();

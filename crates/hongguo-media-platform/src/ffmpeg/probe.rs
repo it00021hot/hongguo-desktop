@@ -17,6 +17,8 @@ const EXTRA_PATHS: &[&str] = &[
 
 #[cfg(target_os = "macos")]
 const EXTRA_PATHS: &[&str] = &[
+    // librempeg（带 bvc2）优先于 Homebrew 原版 ffmpeg
+    "/opt/librempeg/bin/ffmpeg",
     "/opt/homebrew/bin/ffmpeg",
     "/usr/local/bin/ffmpeg",
     "/usr/bin/ffmpeg",
@@ -41,6 +43,19 @@ fn detect() -> Option<PathBuf> {
     if std::env::var_os("HONGGUO_NO_FFMPEG").is_some() {
         log::info!("[FFmpeg] HONGGUO_NO_FFMPEG 已设置，本次按未安装处理");
         return None;
+    }
+    // 0) 显式覆盖 / 用户级 librempeg（带 bvc2）
+    if let Some(p) = std::env::var_os("HONGGUO_FFMPEG") {
+        let path = PathBuf::from(p);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let local = PathBuf::from(home).join(".local/librempeg/bin/ffmpeg");
+        if local.exists() {
+            return Some(local);
+        }
     }
     // 1) PATH
     if let Some(p) = probe_command("ffmpeg") {

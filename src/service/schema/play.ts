@@ -18,6 +18,10 @@ export const playResponseSchema = z.object({
   // 本地文件播放时 definitions 为空数组，前端据此隐藏切换菜单。
   definition: z.number().int().nonnegative(),
   definitions: z.array(videoDefinitionSchema),
+  /** 选中流编码；本地文件为空串 */
+  codec: z.string().default(''),
+  /** WebView 不能直喂（如 bytevc2），必须先兼容转码 */
+  needsCompat: z.boolean().default(false),
 });
 
 export const decodeCapabilitySchema = z.object({

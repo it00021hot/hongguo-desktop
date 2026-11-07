@@ -67,6 +67,8 @@ export function usePlaybackSource(params: {
   /** 本集实际生效的档位与全部可选档位，由起播响应带回。 */
   const [activeDefinition, setActiveDefinition] = useState(0);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
+  /** 后端标明必须兼容转码（典型 bytevc2） */
+  const [needsCompat, setNeedsCompat] = useState(false);
 
   const { mutate: play } = usePlay();
 
@@ -160,6 +162,7 @@ export function usePlaybackSource(params: {
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
           setDefinitions(res.definitions);
+          setNeedsCompat(Boolean(res.needsCompat));
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -175,6 +178,7 @@ export function usePlaybackSource(params: {
           setSrcKey('');
           setError(e.message);
           setSrc(null);
+          setNeedsCompat(false);
         },
       },
     );
@@ -256,6 +260,7 @@ export function usePlaybackSource(params: {
     setDefinition,
     activeDefinition,
     definitions,
+    needsCompat,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,

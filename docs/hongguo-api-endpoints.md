@@ -26,42 +26,38 @@
 | cookie | 必须零 cookie（自报未知 install_id 反而被拒） | `install_id={iid}; ttreq={票}`（同源，注册响应 Set-Cookie 下发） |
 | 能力 | 信息流/搜索/详情可读，**不可取流**（顶栏 tab 面不同，feed 无短剧 tab） | 全量可用（含取流，见「取流端点」节） |
 
-**设备注册 `POST log5-applog-lf.fqnovel.com/service/2/device_register/`**（实现
-`hongguo-api::register`，版本身份钉注册口径 `REGISTER_VERSION_*`，
-`new_user:1` 实测通过。**2026-11-02 起为 applog 裸形态：无签名五件套**——
-此前 log.snssdk.com + 40 参 query + 五件套签名形态实测新注册设备取流
-0/10 出票（读接口全通、唯取流被拒），同日裸形态 11/11 全发货（1080p），
-含前形态被拒的同一 vid；官方注册由 applog SDK 发出、本不带业务签名，
-五件套拿无 device_id 档案参与运算是官方不会产生的组合）：
+**设备注册 `POST log5-applog.fqnovel.com/service/2/device_register/`**（实现
+`hongguo-api::register`；TNC 把字面量 `log.snssdk.com` 派发到
+`log5-applog.fqnovel.com`。版本身份钉 `REGISTER_VERSION_*`，代际标记
+`REGISTER_REGIME = "74332:4.3.2-rc.44"`。**applog 裸形态：无签名五件套**——
+官方由 bdinstall SDK 发出、本不带业务签名）：
 
-- 入参 query：固定 4 参 `tt_data=a, cronet_version=8d40f833_2026-03-03,
-  ttnet_version=4.2.243.31-douyin, use_store_region_cookie=1`——指纹身份
-  全部在加密 body 里。
-- 入参头：`User-Agent: {register_ua()}`（Cronet 尾段 + 注册版本身份 +
-  指纹机型）+ `accept: application/json` +
-  `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
-  `log-encode-type: gzip` + `x-ss-dp: 8662` + `x-ss-req-ticket: {ms}` +
-  `sdk-version: 2` + `passport-sdk-version: 5051452` +
+- 入参 query：固定 3 参 `tt_data=a, okhttp_version=4.2.243.31-douyin,
+  use_store_region_cookie=1`（`gm0.b` 对 `device_register` 路径追加后两参；
+  指纹身份全部在加密 body 里）。
+- 入参头：`User-Agent: {register_ua()}` +
+  `content-type: application/octet-stream;tt-data=a` +
+  `log-encode-type: gzip` + `x-ss-req-ticket: {ms}` +
   `x-vc-bdturing-sdk-version: 4.0.3.cn` +
   `x-neptune: -8|50:51:59:30:40:47:49:39` + `x-ss-stub: {body MD5 大写}`；
-  零 cookie；8 秒超时。
+  零 cookie；8 秒超时。bdinstall 本体只强制 `Content-Type`，其余由 TTNet
+  拦截层补。
 - 入参 body：TT-Encrypt V5 包注册口径指纹 JSON。加密格式（实现
   `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
   - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
   - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
     derive[0..16]`、`iv = derive[16..32]`（**包内无 IV 字段，iv 不上线**）
   - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
-- 注册 JSON 关键字段（全表见 `register_json_str`）：版本身份钉注册口径
-  `73932/7.3.9.32`；bdinstall SDK 代际五件 `sdk_version:
-  "3.7.3-rc.116-douyin"`、`sdk_target_version: 29`、`git_hash: "fe95b95"`、
-  `sdk_flavor: "china"`、无 `scene` 键（2026-11-01 竞品实流注册密文体
-  逐字段解密对齐）；`sig_hash: aea615ab…`、`display_name: "红果短剧"`、
-  机型耦合字段取自指纹池（`fingerprint_for_cdid`，cdid 确定性派生）、
-  `custom.client_ipv4 = "116.130.x.x" 随机伪值`
-  （服务端不校验真实出口 IP）。身份字段生成规则：
-  - `cdid` / `clientudid` / `req_id`：各自独立 UUIDv4。
-  - `openudid`：16 位随机 hex。
-  - `apk_first_install_time = now_ms − 300_000`。
+- 注册 JSON 关键字段（全表见 `register_json_str`；**7.4.3.32 APK 实值**）：
+  版本身份 `74332/7.4.3.32`；bdinstall `h90.j`：`sdk_version: "4.3.2-rc.44"`、
+  `sdk_version_code: 4030294`、`sdk_target_version: 30`、`git_hash: "27660d0"`、
+  `sdk_flavor: "cnInner"`、`not_request_sender: 1`；`assets/ss.properties`：
+  `release_build: "652bb85_20261028"`；`sig_hash` =
+  `md5(cert_der) = 56a962410c494bbaf0b58dba20cae56f`、`display_name:
+  "红果免费短剧"`；无 `scene` 键。机型耦合字段取自指纹池
+  （`fingerprint_for_cdid`）。身份字段：`cdid`/`clientudid`/`req_id` 各自
+  UUIDv4；`openudid` 16 位随机 hex；`apk_first_install_time` 按 cdid
+  确定性回拨 1~30 天。
 - 出参：`{"server_time","device_id","install_id","new_user","device_id_str",
   "install_id_str","device_token"}` + Set-Cookie `install_id` / `ttreq`。
   `device_id: 0` = 被静默拒（格式或指纹有变）。
@@ -155,23 +151,22 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
   `StreamMiss`（reading 系小写 `code` 另走 `check_code`）。
 - **2026-11-04 可播性回退取证**：同一登录设备、同一漫剧第 9 集，单集与
   多集新通道均返回 `code=0`、完整 `video_model` 和 5 档 `bytevc2`，
-  同时旧通道返回 5 档 `bytevc1`。`bytevc2` 是本机播放器不支持的私有编码，
-  响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向旧通道
-  补取缺失或不可播的 vid，并保留新通道已命中的条目。
-- ⚠️ 注册形态底线不变：注册 JSON 版本身份（73932/7.3.9.32）与
+  同时旧通道返回 5 档 `bytevc1`。`bytevc2`（MP4 fourcc `bvc2`）需 librempeg
+  的 `bvc2` 解码器经兼容转码才可播（`hongguo-bytevc2` + `needsCompat`）；无解码器
+  时选流仍排除。响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向
+  旧通道补取缺失或不可播的 vid，并保留新通道已命中的条目。
+- ⚠️ 注册形态底线不变：注册 JSON 版本身份（74332/7.4.3.32，与取流 query 同值）与
   bdinstall SDK 代际成套（详见设备注册节），App 身份字段
   （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
   **官方实值**（红果免费短剧/56a96241…证书/fanqie-xiaoshuo 代际，
   此前建模的是竞品形态）。
-- ⚠️ **200+0 的两种成因都要分清**（2026-11-02 深夜定案）：①无签名
-  ——任何内容都拒；②**匿名观看配额耗尽**——官方 App 匿名播到
-  第 9 集同样 200+0 并弹登录引导（官方登录设备 x-tt-token 整晚
-  24/24 全发货）。可持续形态 = 登录（账号授权），换新注册只是
-  重置匿名配额的应急手段：登录态禁换；匿名态连续 4 次 `StreamMiss`
-  且距上次换新 ≥180s 才换设备
-  （实现 `hongguo_service::device::note_stream_miss`），启动取流
-  探针已撤（探针 miss = 上场配额耗尽，据它换注册会让每次重启
-  白烧一台设备）。
+- ⚠️ **200+0 与「有包不可播」要分清**（2026-11-07 修订）：①无签名
+  ——任何内容都拒；②取流**全程空字节**（设备身份被拒发货）→ 桌面走
+  `recover_after_empty_stream` **匿名换档一次**（10 分钟冷却，避免同 IP
+  高频注册风控），换档后跑冷启动预热再重试取流——官方 App 匿名也可播，
+  不把空响应误写成「必须登录」；③有响应体但挑不出本机能播的档（编码/
+  能力）→ `StreamMiss`，`note_stream_miss` 只记账、不换设备。登录态
+  （x-tt-token）是另一条可持续授权路径，与空响应恢复正交。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```

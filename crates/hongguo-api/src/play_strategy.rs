@@ -18,7 +18,7 @@ pub const PLAY_STRATEGY_PATH: &str = "/reading/media/play/strategy/";
 /// 播放器栈 origin（play/strategy 官方实流落点）。
 pub const MEDIA_API_ORIGIN: &str = "https://api5-normal-sinfonlinea.fqnovel.com";
 
-/// 播放器栈自报的真实版本（与业务栈灰度自报 73932 并存，各照抄各自实流）。
+/// 播放策略接口单独自报的版本。业务 query 的版本身份在 signer，是 74332 / 7.4.3.32。
 const MEDIA_VERSION_CODE_STR: &str = "74232";
 
 /// 服务端未下发 `query_gap` 时的轮询间隔（官方响应默认值）。
@@ -35,7 +35,11 @@ fn media_stack_env(env: &ApiEnv) -> ApiEnv {
     device.set("pv_player", MEDIA_VERSION_CODE_STR);
     let ua = fingerprint_for_cdid(device.get("cdid"))
         .register_ua()
-        .replacen(hongguo_signer::REGISTER_VERSION_CODE_STR, MEDIA_VERSION_CODE_STR, 1);
+        .replacen(
+            hongguo_signer::REGISTER_VERSION_CODE_STR,
+            MEDIA_VERSION_CODE_STR,
+            1,
+        );
     device.set_user_agent(&ua);
     let mut media_env = env.clone();
     media_env.device = device;
@@ -51,14 +55,9 @@ pub async fn fetch_play_strategy(env: &ApiEnv) -> AppResult<u64> {
         ("device_score".to_string(), "0".to_string()),
         ("need_personal_recommend".to_string(), "1".to_string()),
     ];
-    let bytes = crate::client::api_call_full(
-        MEDIA_API_ORIGIN,
-        PLAY_STRATEGY_PATH,
-        None,
-        &biz,
-        &media_env,
-    )
-    .await?;
+    let bytes =
+        crate::client::api_call_full(MEDIA_API_ORIGIN, PLAY_STRATEGY_PATH, None, &biz, &media_env)
+            .await?;
     let v: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("播放策略响应非 JSON: {e}")))?;
     let code = v.pointer("/code").and_then(Value::as_i64).unwrap_or(-1);
@@ -104,9 +103,15 @@ mod tests {
         let media = media_stack_env(&env);
         assert_eq!(media.device.get("version_code"), MEDIA_VERSION_CODE_STR);
         assert_eq!(media.device.get("pv_player"), MEDIA_VERSION_CODE_STR);
-        assert_eq!(media.device.get("manifest_version_code"), MEDIA_VERSION_CODE_STR);
+        assert_eq!(
+            media.device.get("manifest_version_code"),
+            MEDIA_VERSION_CODE_STR
+        );
         assert_eq!(media.device.get("channel"), env.device.get("channel"));
-        assert_eq!(media.device.get("device_type"), env.device.get("device_type"));
+        assert_eq!(
+            media.device.get("device_type"),
+            env.device.get("device_type")
+        );
         assert!(media.device.user_agent().contains(MEDIA_VERSION_CODE_STR));
         assert!(!media.device.user_agent().contains("Cronet"));
     }

@@ -128,6 +128,7 @@ export function PlayerView({
     setDefinition,
     activeDefinition,
     definitions,
+    needsCompat,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -184,6 +185,7 @@ export function PlayerView({
     currentSeries,
     hevcPlayable,
     android: isAndroid(),
+    needsCompat,
     onDecodeFailure,
   });
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */

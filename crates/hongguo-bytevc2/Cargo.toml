@@ -1,0 +1,13 @@
+[package]
+name = "hongguo-bytevc2"
+description = "ByteVC2（bvc2）识别与参数集转换：对照 librempeg cbs_bvc2 / 官方 convertByteVC2Extradata"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+hongguo-common = { path = "../hongguo-common" }
+
+[dev-dependencies]

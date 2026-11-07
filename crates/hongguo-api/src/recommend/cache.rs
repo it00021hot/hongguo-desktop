@@ -18,7 +18,6 @@ pub(super) fn known_tab_config(tab: &str) -> Option<RecommendTabConfig> {
     })
 }
 
-
 pub fn clear_feed_tabs_cache() {
     *FEED_TABS_CACHE.get_or_init(FeedTabsCache::default).lock() = None;
 }
@@ -83,8 +82,10 @@ pub(super) struct CachedTabConfig {
 /// 配置复验间隔：服务端常量假设下 1 小时重验一次足够及时，开销可忽略。
 pub(super) const TAB_CONFIG_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
 
-pub(super) type TabConfigCache = parking_lot::Mutex<std::collections::HashMap<String, CachedTabConfig>>;
-pub(super) static TAB_CONFIG_CACHE: std::sync::OnceLock<TabConfigCache> = std::sync::OnceLock::new();
+pub(super) type TabConfigCache =
+    parking_lot::Mutex<std::collections::HashMap<String, CachedTabConfig>>;
+pub(super) static TAB_CONFIG_CACHE: std::sync::OnceLock<TabConfigCache> =
+    std::sync::OnceLock::new();
 
 pub(super) fn cache_tab_config_insert(tab: &str, cfg: RecommendTabConfig) {
     TAB_CONFIG_CACHE

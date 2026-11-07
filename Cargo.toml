@@ -13,6 +13,7 @@
 resolver = "3"
 members = [
     "crates/hongguo-api",
+    "crates/hongguo-bytevc2",
     "crates/hongguo-common",
     "crates/hongguo-gpui",
     "crates/hongguo-media",

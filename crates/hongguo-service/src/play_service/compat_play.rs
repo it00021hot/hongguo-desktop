@@ -229,11 +229,13 @@ pub async fn compat_for_playback(
         };
         let settings = state.settings();
         let env = state.api_env();
-        // 转码源必须保持全量候选：HEVC-only 的剧集兜底转码还要拿 HEVC 源
+        // 转码源保持全量候选：HEVC-only 要拿 HEVC；bytevc2-only 要拿 bvc2（librempeg）
         let play = hongguo_api::play_url::fetch_play_url(
             &vid,
             None,
-            hongguo_api::stream_pick::DecoderCapability::Full,
+            hongguo_api::stream_pick::DecoderCapability::full().with_bytevc2(
+                hongguo_media_platform::capability::bytevc2_decode_available(),
+            ),
             &env,
         )
         .await?;
@@ -263,6 +265,80 @@ pub async fn compat_for_playback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 真机冒烟：明文 bvc2 → ensure_compat → 产物须为 H.264（需本机 librempeg）。
+    #[tokio::test]
+    #[ignore = "依赖 /tmp/hg-bytevc2-plain.mp4 与本机带 bvc2 的 ffmpeg"]
+    async fn live_bytevc2_plain_transcodes_to_h264() {
+        let plain = std::path::PathBuf::from("/tmp/hg-bytevc2-plain.mp4");
+        assert!(
+            plain.is_file(),
+            "先跑 hongguo-api::probe_bytevc2_sample_live 落明文样本"
+        );
+        let probe = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                plain.to_str().unwrap(),
+            ])
+            .output()
+            .expect("ffprobe");
+        let codec = String::from_utf8_lossy(&probe.stdout);
+        assert!(
+            codec.contains("bvc2"),
+            "明文样本应是 bvc2，实际={codec}"
+        );
+        assert!(
+            hongguo_media_platform::capability::bytevc2_decode_available(),
+            "本机 ffmpeg 须带 bvc2"
+        );
+
+        let sid = format!("bvc2-smoke-{}", std::process::id());
+        let got = ensure_compat(
+            &sid,
+            1,
+            CompatSource::LocalFile(plain),
+            |_| {},
+        )
+        .await
+        .expect("bytevc2 兼容转码应成功");
+        assert!(!got.cached);
+        let out = cache::cached_path_for(&sid, 1, hongguo_media_platform::RateProfile::Playback)
+            .expect("转码产物应在缓存");
+        let out_probe = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                out.to_str().unwrap(),
+            ])
+            .output()
+            .expect("ffprobe out");
+        let out_codec = String::from_utf8_lossy(&out_probe.stdout);
+        assert!(
+            out_codec.contains("h264"),
+            "兼容产物须为 h264，实际={out_codec} backend={}",
+            got.backend
+        );
+        let _ = std::fs::remove_file(&out);
+        println!(
+            "[bvc2-smoke] OK backend={} elapsed_ms={} out={}",
+            got.backend,
+            got.elapsed_ms,
+            out.display()
+        );
+    }
 
     #[tokio::test]
     async fn a_cached_compat_file_short_circuits() {

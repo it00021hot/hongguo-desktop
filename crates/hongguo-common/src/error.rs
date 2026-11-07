@@ -38,7 +38,9 @@ pub enum AppError {
     #[error("{0}")]
     Rejected(String),
 
-    /// 取流未命中：服务端对这个设备/请求没有发货（200+0、响应里没有流表、或 base 族错误信封的显式拒绝如 110001）。transparent 同 [`AppError::Rejected`] 口径；与 [`AppError::EmptyResponse`] 分开——调用方据此如实报「取流失败」不做身份层兜底，取流健康守护（device::note_stream_miss）据此换新注册自愈。
+    /// 取流未命中：有响应但挑不出可播流，或 base 族错误信封显式拒绝。
+    /// 与 [`AppError::EmptyResponse`]（全程 200+0 空字节）分开——空响应由
+    /// service 层匿名换档恢复；本变体只记账不换设备。
     #[error("{0}")]
     StreamMiss(String),
 
