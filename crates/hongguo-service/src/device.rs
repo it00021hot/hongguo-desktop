@@ -50,6 +50,12 @@ pub struct BootstrapMeta {
     /// 拒绝响应没有可解析的 Retry-After。不自动恢复，重启也不清掉。
     #[serde(default)]
     pub register_block_manual: bool,
+    /// 限制记录的单调序号。主库与旁文件冲突时序号大的生效，相同则主库优先。
+    #[serde(default)]
+    pub register_block_seq: u64,
+    /// 读到了限制位置但内容不可用。只在内存里置位，解析失败不能把它当成 false。
+    #[serde(default)]
+    pub register_block_unknown: bool,
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
@@ -60,18 +66,71 @@ pub struct BootstrapMeta {
     pub register_regime: String,
 }
 
+static BLOCK_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static FAIL_SIDECAR_WRITES: AtomicU32 = AtomicU32::new(0);
+static FAIL_SIDECAR_DELETES: AtomicU32 = AtomicU32::new(0);
+
+enum BlockSource {
+    Absent,
+    Present(BootstrapMeta),
+    Unreadable,
+}
+
 pub fn read_meta(store: &Store) -> BootstrapMeta {
-    let mut meta: BootstrapMeta = store
-        .device_meta_get()
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    if let Some(side) = read_block_sidecar(store) {
-        meta.register_block_manual = side.register_block_manual;
-        meta.register_block_until_ms = side.register_block_until_ms;
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    let mut meta = merge_block_sources(load_db_block(store), load_sidecar_block(store));
+    if matches!(marker_state(store), BlockSource::Unreadable) {
+        meta.register_block_unknown = true;
     }
     meta
+}
+
+fn load_db_block(store: &Store) -> BlockSource {
+    match store.device_meta_get() {
+        Err(_) => BlockSource::Unreadable,
+        Ok(None) => BlockSource::Absent,
+        Ok(Some(value)) => match serde_json::from_value::<BootstrapMeta>(value) {
+            Ok(meta) => BlockSource::Present(meta),
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn load_sidecar_block(store: &Store) -> BlockSource {
+    let Some(path) = block_sidecar(store) else {
+        return BlockSource::Absent;
+    };
+    match std::fs::read_to_string(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
+            Ok(meta) => BlockSource::Present(meta),
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn merge_block_sources(db: BlockSource, side: BlockSource) -> BootstrapMeta {
+    if matches!(db, BlockSource::Unreadable) || matches!(side, BlockSource::Unreadable) {
+        let mut meta = match (db, side) {
+            (BlockSource::Present(meta), _) | (_, BlockSource::Present(meta)) => meta,
+            _ => BootstrapMeta::default(),
+        };
+        meta.register_block_unknown = true;
+        return meta;
+    }
+    match (db, side) {
+        (BlockSource::Present(db), BlockSource::Present(side)) => {
+            if side.register_block_seq > db.register_block_seq {
+                side
+            } else {
+                db
+            }
+        }
+        (BlockSource::Present(meta), BlockSource::Absent)
+        | (BlockSource::Absent, BlockSource::Present(meta)) => meta,
+        _ => BootstrapMeta::default(),
+    }
 }
 
 fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
@@ -84,25 +143,87 @@ fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(name))
 }
 
-fn read_block_sidecar(store: &Store) -> Option<BootstrapMeta> {
-    let path = block_sidecar(store)?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
-}
-
 fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    if FAIL_SIDECAR_WRITES.load(Ordering::Relaxed) > 0 {
+        FAIL_SIDECAR_WRITES.fetch_sub(1, Ordering::Relaxed);
+        return Err(hongguo_common::AppError::Io("故障注入：旁文件写入".into()));
+    }
     let path = block_sidecar(store).ok_or_else(|| {
         hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制旁路".into())
     })?;
     let raw = serde_json::to_string(meta)
         .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
-    std::fs::write(path, raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    std::fs::write(&tmp, &raw).map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
 }
 
-fn remove_block_sidecar(store: &Store) {
-    if let Some(path) = block_sidecar(store) {
-        let _ = std::fs::remove_file(path);
+fn unknown_marker(store: &Store) -> Option<std::path::PathBuf> {
+    block_sidecar(store).map(|path| std::path::PathBuf::from(format!("{}.unknown", path.display())))
+}
+
+fn marker_state(store: &Store) -> BlockSource {
+    let Some(path) = unknown_marker(store) else {
+        return BlockSource::Absent;
+    };
+    match std::fs::metadata(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(_) => BlockSource::Unreadable,
     }
+}
+
+fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
+    let path = unknown_marker(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的未知限制标记".into())
+    })?;
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    std::fs::write(&tmp, b"unknown\n").map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+fn remove_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
+    let Some(path) = unknown_marker(store) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
+}
+
+fn remove_block_sidecar(store: &Store) -> hongguo_common::AppResult<()> {
+    if FAIL_SIDECAR_DELETES.load(Ordering::Relaxed) > 0 {
+        FAIL_SIDECAR_DELETES.fetch_sub(1, Ordering::Relaxed);
+        return Err(hongguo_common::AppError::Io("故障注入：旁文件删除".into()));
+    }
+    let Some(path) = block_sidecar(store) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
+}
+
+fn next_block_seq(store: &Store) -> u64 {
+    let db = match load_db_block(store) {
+        BlockSource::Present(meta) => meta.register_block_seq,
+        _ => 0,
+    };
+    let side = match load_sidecar_block(store) {
+        BlockSource::Present(meta) => meta.register_block_seq,
+        _ => 0,
+    };
+    db.max(side).saturating_add(1)
 }
 
 pub fn write_meta(store: &Store, meta: &BootstrapMeta) {
@@ -331,15 +452,19 @@ fn activate_registration(
     reg: &RegisterResult,
     reason: &str,
 ) -> Registration {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
     let profile = registered_profile(reg);
     meta.last_register_error = None;
     meta.register_block_manual = false;
     meta.register_block_until_ms = None;
+    meta.register_block_unknown = false;
+    meta.register_block_seq = next_block_seq(&state.store);
     if let Err(e) = swap_profile(state, meta, profile, "registered") {
         return refused(state, &e.to_string());
     }
-    remove_block_sidecar(&state.store);
-    REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    if remove_block_sidecar(&state.store).is_ok() && remove_unknown_marker(&state.store).is_ok() {
+        REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    }
     hongguo_api::recommend::clear_feed_tabs_cache();
     hongguo_api::play_url::clear_batch_cache();
     log::info!("[Device] 本地档案已激活（{reason}）");
@@ -388,32 +513,70 @@ fn install_reuse(state: &AppState, profile: &DeviceProfile) -> hongguo_common::A
     swap_profile(state, &mut meta, profile.clone(), "reuse")
 }
 
-/// 限制窗口必须留下重启后仍能读到的记录。主行写失败时改写库旁边的限制文件；两边都失败则返回错误。
+/// 限制窗口必须留下重启后仍能读到的记录。主库失败时写旁文件；两边都失败再写未知标记。
 fn persist_block(
     state: &AppState,
     meta: &mut BootstrapMeta,
     block: RegisterBlock,
 ) -> hongguo_common::AppResult<()> {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
     apply_register_block(meta, block);
+    meta.register_block_seq = next_block_seq(&state.store);
+    meta.register_block_unknown = false;
     match write_meta_strict(&state.store, meta) {
         Ok(()) => {
-            remove_block_sidecar(&state.store);
+            let _ = remove_block_sidecar(&state.store);
+            let _ = remove_unknown_marker(&state.store);
             Ok(())
         }
         Err(db_err) => match write_block_sidecar(&state.store, meta) {
             Ok(()) => Ok(()),
-            Err(side_err) => {
-                REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
-                Err(hongguo_common::AppError::StoreCorrupt(format!(
-                    "{db_err}；旁路也失败: {side_err}"
-                )))
-            }
+            Err(side_err) => match write_unknown_marker(&state.store) {
+                Ok(()) => {
+                    REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                    Ok(())
+                }
+                Err(marker_err) => {
+                    REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                    Err(hongguo_common::AppError::StoreCorrupt(format!(
+                        "{db_err}；旁路也失败: {side_err}；未知标记也失败: {marker_err}"
+                    )))
+                }
+            },
         },
     }
 }
 
+/// 显式解除限制。读失败、旁文件删不掉或主库写失败时保持限制，启动流程不会调用这里。
+pub fn clear_register_block(store: &Store) -> hongguo_common::AppResult<()> {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    remove_block_sidecar(store)?;
+    remove_unknown_marker(store)?;
+    let mut meta = match load_db_block(store) {
+        BlockSource::Present(meta) => meta,
+        BlockSource::Absent => BootstrapMeta::default(),
+        BlockSource::Unreadable => {
+            return Err(hongguo_common::AppError::StoreCorrupt(
+                "主库限制不可读，不能解除".into(),
+            ));
+        }
+    };
+    meta.register_block_manual = false;
+    meta.register_block_until_ms = None;
+    meta.register_block_unknown = false;
+    meta.register_block_seq = next_block_seq(store);
+    write_meta_strict(store, &meta)?;
+    remove_block_sidecar(store)?;
+    remove_unknown_marker(store)?;
+    REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
 pub fn registration_blocked(meta: &BootstrapMeta, now_ms: i64) -> bool {
-    if REGISTER_FORCE_BLOCK.load(Ordering::Relaxed) || meta.register_block_manual {
+    if REGISTER_FORCE_BLOCK.load(Ordering::Relaxed)
+        || meta.register_block_unknown
+        || meta.register_block_manual
+    {
         return true;
     }
     meta.register_block_until_ms
@@ -1107,4 +1270,214 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn retry_after_blocks_until_the_deadline_and_not_after() {
+        clear_force_block();
+        let meta = BootstrapMeta {
+            register_block_until_ms: Some(1_000_000),
+            ..BootstrapMeta::default()
+        };
+        assert!(registration_blocked(&meta, 999_999));
+        assert!(!registration_blocked(&meta, 1_000_000));
+        assert!(!registration_blocked(&meta, 1_000_001));
+        let manual = BootstrapMeta {
+            register_block_manual: true,
+            register_block_until_ms: Some(1),
+            ..BootstrapMeta::default()
+        };
+        assert!(registration_blocked(&manual, i64::MAX));
+    }
+
+    #[test]
+    fn corrupt_or_unreadable_sidecar_stays_blocked_until_explicit_clear() {
+        clear_force_block();
+        assert_ne!(libc_euid(), 0, "权限测试不能在 root 下得出假通过");
+        let dir = std::env::temp_dir().join(format!("hg-side-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        let side = block_sidecar(&db).unwrap();
+        std::fs::write(&side, "{").unwrap();
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        let loaded = read_meta(&reopened);
+        assert!(loaded.register_block_unknown);
+        assert!(registration_blocked(&loaded, now_ms()));
+        let mode = std::fs::metadata(&side).unwrap().permissions().readonly();
+        let mut perms = std::fs::metadata(&side).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&side, perms).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut no_read = std::fs::metadata(&side).unwrap().permissions();
+            no_read.set_mode(0);
+            std::fs::set_permissions(&side, no_read).unwrap();
+        }
+        assert!(
+            std::fs::read_to_string(&side).is_err(),
+            "当前用户应读不了旁文件，readonly={mode}"
+        );
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        FAIL_SIDECAR_DELETES.store(1, Ordering::Relaxed);
+        assert!(clear_register_block(&reopened).is_err());
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut back = std::fs::metadata(&side).unwrap().permissions();
+            back.set_mode(0o644);
+            std::fs::set_permissions(&side, back).unwrap();
+        }
+        clear_register_block(&reopened).unwrap();
+        let cleared = read_meta(&reopened);
+        assert!(!cleared.register_block_unknown);
+        assert!(!registration_blocked(&cleared, now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_sidecar_does_not_replace_a_newer_db_block() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-side-seq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let newer = BootstrapMeta {
+            register_block_manual: true,
+            register_block_seq: 4,
+            ..BootstrapMeta::default()
+        };
+        write_meta_strict(&db, &newer).unwrap();
+        let stale = BootstrapMeta {
+            register_block_seq: 1,
+            ..BootstrapMeta::default()
+        };
+        std::fs::write(
+            block_sidecar(&db).unwrap(),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+        let loaded = read_meta(&db);
+        assert!(loaded.register_block_manual);
+        assert_eq!(loaded.register_block_seq, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newer_sidecar_still_blocks_when_db_block_expired() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-side-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        write_meta_strict(
+            &db,
+            &BootstrapMeta {
+                register_block_until_ms: Some(1),
+                register_block_seq: 1,
+                ..BootstrapMeta::default()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            block_sidecar(&db).unwrap(),
+            serde_json::to_string(&BootstrapMeta {
+                register_block_manual: true,
+                register_block_seq: 5,
+                ..BootstrapMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(registration_blocked(&read_meta(&db), i64::MAX));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dual_write_failure_leaves_unknown_marker_across_reopen() {
+        clear_force_block();
+        FAIL_SIDECAR_WRITES.store(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("hg-dual-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(read_meta(&reopened).register_block_unknown);
+        hongguo_api::register::reset_register_http_sends();
+        let state =
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_device(reopened, old));
+        let got = register_and_swap(&state, "双写失败后重启").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_block_reads_do_not_clear_the_restriction() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-block-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        let mut joins = Vec::new();
+        for _ in 0..4 {
+            let state = state.clone();
+            joins.push(std::thread::spawn(move || {
+                for _ in 0..20 {
+                    assert!(registration_blocked(&read_meta(&state.store), now_ms()));
+                    let mut meta = read_meta(&state.store);
+                    persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+                }
+            }));
+        }
+        for join in joins {
+            join.join().unwrap();
+        }
+        assert!(registration_blocked(&read_meta(&state.store), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+fn libc_euid() -> u32 {
+    #[cfg(unix)]
+    {
+        unsafe { libc_geteuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        1
+    }
+}
+
+#[cfg(unix)]
+unsafe fn libc_geteuid() -> u32 {
+    unsafe extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
 }
