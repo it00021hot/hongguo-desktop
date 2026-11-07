@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard};
 use std::time::Duration;
 
-use hongguo_stream::range::{ProtocolResponse, RangeSpec, parse_range};
+use hongguo_stream::range::ProtocolResponse;
 
 use crate::local::{content_type, local_play_url};
 
@@ -119,29 +119,112 @@ pub(crate) fn serve_if_registered(
     Some(serve_live(path, range_header))
 }
 
+enum Want {
+    Full,
+    From(u64),
+    Closed { start: u64, end: u64 },
+    Suffix(u64),
+    Malformed,
+}
+
+fn classify_range(header: Option<&str>) -> Want {
+    let Some(header) = header else {
+        return Want::Full;
+    };
+    let Some(spec) = header.trim().strip_prefix("bytes=") else {
+        return Want::Full;
+    };
+    if spec.contains(',') {
+        return Want::Full;
+    }
+    let Some((start_s, end_s)) = spec.split_once('-') else {
+        return Want::Malformed;
+    };
+    if start_s.is_empty() {
+        return match end_s.parse::<u64>() {
+            Ok(0) | Err(_) => Want::Malformed,
+            Ok(len) => Want::Suffix(len),
+        };
+    }
+    let Ok(start) = start_s.parse::<u64>() else {
+        return Want::Malformed;
+    };
+    if end_s.is_empty() {
+        return Want::From(start);
+    }
+    let Ok(end) = end_s.parse::<u64>() else {
+        return Want::Malformed;
+    };
+    if start > end {
+        Want::Malformed
+    } else {
+        Want::Closed { start, end }
+    }
+}
+
 fn serve_live(path: &Path, range_header: Option<&str>) -> Result<ProtocolResponse, String> {
-    let spec = parse_range(range_header, u64::MAX);
-    let start = match spec {
-        RangeSpec::Full => 0,
-        RangeSpec::Open { start } | RangeSpec::Closed { start, .. } => start,
-        RangeSpec::Unsatisfiable => 0,
-    };
-    let closed_end = match spec {
-        RangeSpec::Closed { end, .. } => Some(end),
-        _ => None,
-    };
-    let (committed, phase, message) = wait_until(path, start)?;
-    if start >= committed {
+    match classify_range(range_header) {
+        Want::Malformed => Ok(unsatisfiable(known_total(path))),
+        Want::Suffix(len) => serve_suffix(path, len),
+        Want::Full => serve_from(path, 0, None),
+        Want::From(start) => serve_from(path, start, None),
+        Want::Closed { start, end } => serve_from(path, start, Some(end)),
+    }
+}
+
+fn known_total(path: &Path) -> Option<u64> {
+    let slot = lookup(path)?;
+    let state = lock_state(&slot);
+    (state.phase == Phase::Done).then_some(state.committed)
+}
+
+fn serve_suffix(path: &Path, len: u64) -> Result<ProtocolResponse, String> {
+    let (committed, phase, message) = wait_until(path, u64::MAX)?;
+    if phase != Phase::Done {
         return Ok(terminal(phase, &message));
     }
-    let mut take = committed - start;
-    if let Some(end) = closed_end {
-        take = take.min(end.saturating_sub(start).saturating_add(1));
+    if committed == 0 {
+        return Ok(unsatisfiable(Some(0)));
     }
+    let start = committed.saturating_sub(len);
+    serve_slice(path, start, committed - 1, committed, phase)
+}
+
+fn serve_from(
+    path: &Path,
+    start: u64,
+    closed_end: Option<u64>,
+) -> Result<ProtocolResponse, String> {
+    let (committed, phase, message) = wait_until(path, start)?;
+    if start >= committed {
+        return Ok(if phase == Phase::Done {
+            unsatisfiable(Some(committed))
+        } else {
+            terminal(phase, &message)
+        });
+    }
+    let end = closed_end
+        .unwrap_or(committed.saturating_sub(1))
+        .min(committed.saturating_sub(1));
+    if start > end {
+        return Ok(unsatisfiable((phase == Phase::Done).then_some(committed)));
+    }
+    serve_slice(path, start, end, committed, phase)
+}
+
+fn serve_slice(
+    path: &Path,
+    start: u64,
+    end: u64,
+    committed: u64,
+    phase: Phase,
+) -> Result<ProtocolResponse, String> {
+    let mut take = end.saturating_sub(start).saturating_add(1);
+    take = take.min(committed.saturating_sub(start));
     take = take.min(GROW_CHUNK);
     let bytes = read_file(path, start, take)?;
-    let end = start + bytes.len() as u64;
-    let reaches = end == committed;
+    let actual_end = start + bytes.len() as u64;
+    let reaches = actual_end == committed;
     let signal = match phase {
         Phase::Done if reaches => "done",
         Phase::Cancelled if reaches => "cancelled",
@@ -153,7 +236,7 @@ fn serve_live(path: &Path, range_header: Option<&str>) -> Result<ProtocolRespons
     } else {
         "*".into()
     };
-    let last = end.saturating_sub(1);
+    let last = actual_end.saturating_sub(1);
     Ok((
         206,
         vec![
@@ -168,6 +251,21 @@ fn serve_live(path: &Path, range_header: Option<&str>) -> Result<ProtocolRespons
         ],
         bytes,
     ))
+}
+
+fn unsatisfiable(total: Option<u64>) -> ProtocolResponse {
+    let total = total
+        .map(|len| len.to_string())
+        .unwrap_or_else(|| "*".into());
+    (
+        416,
+        vec![
+            ("Content-Range".into(), format!("bytes */{total}")),
+            ("Content-Type".into(), "text/plain".into()),
+            ("Content-Length".into(), "0".into()),
+        ],
+        Vec::new(),
+    )
 }
 
 fn wait_until(path: &Path, start: u64) -> Result<(u64, Phase, String), String> {
@@ -207,10 +305,11 @@ fn terminal(phase: Phase, message: &str) -> ProtocolResponse {
 }
 
 fn read_file(path: &Path, start: u64, len: u64) -> Result<Vec<u8>, String> {
+    let len = usize::try_from(len).map_err(|_| "区间过大".to_string())?;
     let mut file = File::open(path).map_err(|e| format!("打开文件失败: {e}"))?;
     file.seek(SeekFrom::Start(start))
         .map_err(|e| format!("定位失败: {e}"))?;
-    let mut buf = vec![0u8; len as usize];
+    let mut buf = vec![0u8; len];
     file.read_exact(&mut buf)
         .map_err(|e| format!("读取文件失败: {e}"))?;
     Ok(buf)
@@ -237,9 +336,20 @@ mod tests {
     use crate::local::serve;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/offline-qa-unit")
+        let base = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-b-scratch")
+            });
+        let dir = base
+            .join("grow-unit")
             .join(format!("{name}-{}", std::process::id()));
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            std::env::current_dir().unwrap().join(dir)
+        };
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("clip.mp4")
@@ -358,5 +468,57 @@ mod tests {
         let err = open(&path).unwrap_err();
         assert!(err.contains("视频"), "实际 {err}");
         assert!(!is_incomplete(&path));
+    }
+
+    #[test]
+    fn suffix_over_range_and_malformed_ranges_keep_their_status() {
+        let path = scratch("range");
+        std::fs::write(&path, b"abcdef").unwrap();
+        open(&path).unwrap();
+        commit(&path, 6);
+        finish(&path);
+        let suffix = serve(&encoded(&path), Some("bytes=-2")).unwrap();
+        assert_eq!(suffix.0, 206);
+        assert_eq!(suffix.2, b"ef");
+        assert_eq!(header(&suffix.1, "Content-Range"), Some("bytes 4-5/6"));
+        let past = serve(&encoded(&path), Some("bytes=10-")).unwrap();
+        assert_eq!(past.0, 416);
+        assert_eq!(header(&past.1, "Content-Range"), Some("bytes */6"));
+        let bad = serve(&encoded(&path), Some("bytes=abc-def")).unwrap();
+        assert_eq!(bad.0, 416);
+        assert!(header(&bad.1, "Content-Range").is_some());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn empty_and_growing_suffix_do_not_overflow() {
+        let path = scratch("empty");
+        std::fs::write(&path, b"").unwrap();
+        open(&path).unwrap();
+        finish(&path);
+        let empty = serve(&encoded(&path), Some("bytes=-2")).unwrap();
+        assert_eq!(empty.0, 416);
+        assert_eq!(header(&empty.1, "Content-Range"), Some("bytes */0"));
+
+        let growing = scratch("suffix-wait");
+        std::fs::write(&growing, b"abcdef").unwrap();
+        open(&growing).unwrap();
+        commit(&growing, 6);
+        let path2 = growing.clone();
+        let reader = thread::spawn(move || serve(&encoded(&path2), Some("bytes=-2")).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&growing)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(b"XYZ").unwrap();
+        commit(&growing, 9);
+        finish(&growing);
+        let response = reader.join().unwrap();
+        assert_eq!(response.0, 206);
+        assert_eq!(response.2, b"YZ");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let _ = std::fs::remove_dir_all(growing.parent().unwrap());
     }
 }

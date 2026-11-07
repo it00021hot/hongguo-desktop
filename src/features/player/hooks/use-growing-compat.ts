@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { transcode } from '@/service/commands';
 import { classifyGrow } from './growing-media';
+import { cancelProducerOn } from './growing-fallback';
 
 const MIME_CANDIDATES = [
   'video/mp4; codecs="avc1.64001F, mp4a.40.5"',
@@ -16,30 +17,49 @@ export function useGrowingCompat(
   url: string | null,
   seriesId: string | null,
   vidIndex: number | null,
+  onUnavailable: () => void,
 ) {
   useEffect(() => {
-    if (!url || !seriesId || vidIndex == null) return;
+    const leave = () => {
+      if (seriesId && vidIndex != null && cancelProducerOn('leave')) {
+        void transcode.cancelCompat({ seriesId, vidIndex });
+      }
+    };
+    if (!url || !seriesId || vidIndex == null) return leave;
     const video = videoRef.current;
     const MediaSourceCtor = window.MediaSource;
-    if (!video || !MediaSourceCtor) return;
-    const mime = MIME_CANDIDATES.find((item) => MediaSourceCtor.isTypeSupported(item));
-    if (!mime) return;
+    const mime = MediaSourceCtor
+      ? MIME_CANDIDATES.find((item) => MediaSourceCtor.isTypeSupported(item))
+      : undefined;
+    if (!video || !MediaSourceCtor || !mime) {
+      onUnavailable();
+      return leave;
+    }
     const source = new MediaSourceCtor();
     const objectUrl = URL.createObjectURL(source);
     const abort = new AbortController();
     let stopped = false;
     video.src = objectUrl;
     source.addEventListener('sourceopen', () => {
-      const buffer = source.addSourceBuffer(mime);
-      void pull(url, abort.signal, buffer, source, () => stopped);
+      let buffer: SourceBuffer;
+      try {
+        buffer = source.addSourceBuffer(mime);
+      } catch {
+        if (!cancelProducerOn('mse-failed')) onUnavailable();
+        return;
+      }
+      void pull(url, abort.signal, buffer, source, () => stopped).catch(() => {
+        abort.abort();
+        if (!cancelProducerOn('mse-failed')) onUnavailable();
+      });
     });
     return () => {
       stopped = true;
       abort.abort();
       URL.revokeObjectURL(objectUrl);
-      void transcode.cancelCompat({ seriesId, vidIndex });
+      leave();
     };
-  }, [url, seriesId, vidIndex, videoRef]);
+  }, [url, seriesId, vidIndex, videoRef, onUnavailable]);
 }
 
 async function pull(

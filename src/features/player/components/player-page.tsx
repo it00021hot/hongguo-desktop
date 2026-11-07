@@ -173,8 +173,17 @@ export function PlayerView({
 
   // 转码兜底：onDecodeFailure 代理须先于 hook 创建
   const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
-  const { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat, progressive } =
-    useTranscodeFallback({
+  const {
+    compatSrc,
+    compat,
+    playSrc,
+    streamKey,
+    startCompat,
+    forceCompat,
+    progressive,
+    showCompleteSrc,
+    noteGrowingUnavailable,
+  } = useTranscodeFallback({
     videoRef,
     seriesId,
     vidIndex,
@@ -190,7 +199,13 @@ export function PlayerView({
     needsCompat,
     onDecodeFailure,
   });
-  useGrowingCompat(videoRef, progressive ? playSrc : null, seriesId, vidIndex);
+  useGrowingCompat(
+    videoRef,
+    progressive ? playSrc : null,
+    seriesId,
+    vidIndex,
+    noteGrowingUnavailable,
+  );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
 
@@ -438,7 +453,7 @@ export function PlayerView({
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={progressive ? undefined : playSrc}
+                  src={showCompleteSrc ? playSrc : undefined}
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',

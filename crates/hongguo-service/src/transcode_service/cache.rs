@@ -26,18 +26,77 @@ pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
     cached_path_for(series_id, vid_index, RateProfile::Archive)
 }
 
-/// 按码率档查缓存。
+/// 按码率档查缓存。只有完成标识和当前文件一致才算命中。
 pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
     let path = cache_file_for(series_id, vid_index, rate);
-    if hongguo_protocol::grow::is_incomplete(&path) {
+    if hongguo_protocol::grow::is_incomplete(&path) || !completion_matches(&path) {
         return None;
     }
-    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if size > hongguo_common::consts::units::MIN_MEDIA_BYTES {
-        Some(path)
-    } else {
-        None
+    Some(path)
+}
+
+fn marker_path(path: &std::path::Path) -> PathBuf {
+    PathBuf::from(format!("{}.complete", path.display()))
+}
+
+fn marker_partial(path: &std::path::Path) -> PathBuf {
+    PathBuf::from(format!("{}.complete.writing", path.display()))
+}
+
+/// 把完成标识绑到当前文件字节。写到临时名再改名；改名失败则没有完成标识。
+pub fn seal_complete(path: &std::path::Path) -> std::io::Result<()> {
+    let bytes = std::fs::read(path)?;
+    let body = format!("1\n{}\n{}\n", bytes.len(), sha256_hex(&bytes));
+    let partial = marker_partial(path);
+    let dest = marker_path(path);
+    hongguo_store::paths::qa_write(&partial, body.as_bytes())?;
+    if let Err(err) = hongguo_store::paths::qa_rename(&partial, &dest) {
+        let _ = hongguo_store::paths::qa_remove_file(&partial);
+        return Err(err);
     }
+    Ok(())
+}
+
+pub fn discard_completion(path: &std::path::Path) {
+    let _ = hongguo_store::paths::qa_remove_file(&marker_path(path));
+    let _ = hongguo_store::paths::qa_remove_file(&marker_partial(path));
+}
+
+pub fn completion_matches(path: &std::path::Path) -> bool {
+    let Ok(marker) = hongguo_store::paths::prepare_qa_io(&marker_path(path)) else {
+        return false;
+    };
+    let Ok(path) = hongguo_store::paths::prepare_qa_io(path) else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read_to_string(marker) else {
+        return false;
+    };
+    let mut lines = raw.lines();
+    if lines.next() != Some("1") {
+        return false;
+    }
+    let Ok(len) = lines.next().unwrap_or("").parse::<u64>() else {
+        return false;
+    };
+    let Some(hash) = lines.next() else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != len {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    sha256_hex(&bytes) == hash
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn sanitize(id: &str) -> String {
@@ -82,6 +141,7 @@ pub fn trim() -> usize {
     let mut removed = 0;
     for (_, p) in &items[..excess] {
         if hongguo_store::paths::qa_remove_file(p).is_ok() {
+            discard_completion(p);
             removed += 1;
         }
     }
@@ -160,6 +220,54 @@ mod tests {
         }
         assert_eq!(trim(), 0, "未超上限不动文件");
         assert!(cache_file("s", 1).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let base = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-b-scratch")
+            });
+        let dir = base
+            .join("cache-unit")
+            .join(format!("{name}-{}", std::process::id()));
+        if dir.is_absolute() {
+            dir
+        } else {
+            std::env::current_dir().unwrap().join(dir)
+        }
+    }
+
+    #[test]
+    fn only_a_sealed_file_is_a_completed_cache_hit() {
+        let dir = scratch_dir("seal");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _scope = ScopedDataDir::new(&dir);
+        let path = cache_file_for("seal", 1, RateProfile::Playback);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let payload = b"complete-payload-ok".to_vec();
+        std::fs::write(&path, &payload).unwrap();
+        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        std::fs::write(marker_partial(&path), b"1\n1\nabc\n").unwrap();
+        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        seal_complete(&path).unwrap();
+        let hit = cached_path_for("seal", 1, RateProfile::Playback).unwrap();
+        assert_eq!(std::fs::read(hit).unwrap(), payload);
+
+        hongguo_protocol::grow::open(&path).unwrap();
+        hongguo_protocol::grow::cancel(&path);
+        discard_completion(&path);
+        assert!(!hongguo_protocol::grow::is_incomplete(&path));
+        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+
+        std::fs::create_dir(marker_path(&path)).unwrap();
+        assert!(seal_complete(&path).is_err());
+        assert!(cached_path_for("seal", 1, RateProfile::Playback).is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -52,8 +52,8 @@ export const compatProgressSchema = z.object({
   /** 缓存键，格式 {seriesId}:{vidIndex} */
   key: z.string(),
   percent: z.number(),
-  /** downloading | transcoding | ready */
-  phase: z.enum(['downloading', 'transcoding', 'ready']),
+  /** downloading | transcoding | ready | completed | failed */
+  phase: z.enum(['downloading', 'transcoding', 'ready', 'completed', 'failed']),
 });
 
 export type CompatProgress = z.infer<typeof compatProgressSchema>;
