@@ -450,6 +450,9 @@ async fn register_and_swap_at(
     origin: &str,
     pause: std::time::Duration,
 ) -> Registration {
+    if hongguo_common::offline_qa::enabled() {
+        return refused(state, "离线 QA 不发起注册");
+    }
     if let Some(refusal) = reuse_refusal(state) {
         return refusal;
     }
@@ -727,16 +730,16 @@ fn swap_profile(
 /// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
     let _release_playback = crate::cold_start::ReleaseOnDrop;
-    if reuse_json_path().is_some() {
-        let _ = register_and_swap(state, "只复用").await;
-        return;
-    }
     if registration_blocked(&read_meta(&state.store), now_ms()) {
         log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
         return;
     }
     if hongguo_common::offline_qa::enabled() {
-        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
+        log::info!("[Device] 离线 QA：不注册、不复用档案、不打健康探针、不做行为预热");
+        return;
+    }
+    if reuse_json_path().is_some() {
+        let _ = register_and_swap(state, "只复用").await;
         return;
     }
     if state.device().get("iid").is_empty() {
@@ -1593,9 +1596,22 @@ mod tests {
         unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
         let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
         ensure_registered(&memory).await;
+        let reuse_path = std::env::current_dir()
+            .unwrap()
+            .join(".qa-a-offline-scratch")
+            .join("reuse-not-created.json");
+        let previous_reuse = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &reuse_path) };
+        let registered = register_and_swap(&memory, "离线").await;
+        assert!(!registered.ok);
+        assert!(!reuse_path.exists());
         assert!(read_meta(&memory.store).register_block_unknown);
         assert!(registration_blocked(&read_meta(&memory.store), now_ms()));
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        match previous_reuse {
+            Some(value) => unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", value) },
+            None => unsafe { std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON") },
+        }
         match previous {
             Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
             None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },

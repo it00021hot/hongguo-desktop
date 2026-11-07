@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { t } from '@/locales';
+import { pageImageSrc } from '@/utils/offline-qa';
 import { cn } from '@/lib/utils';
 import {
   useCollectEmoticon,
@@ -173,7 +174,7 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
               onClick={() => onPickEmoji(e.name.slice(1, -1))}
               className="grid cursor-pointer place-items-center rounded-md p-1 transition-colors hover:bg-white/15"
             >
-              <img src={e.url} alt={e.name} draggable={false} className="size-6 object-contain" />
+              <img src={pageImageSrc(e.url)} alt={e.name} draggable={false} className="size-6 object-contain" />
             </button>
           ))}
         </div>

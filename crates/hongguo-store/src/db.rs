@@ -134,12 +134,17 @@ impl Db {
     /// 打开（或创建）数据库文件并跑到最新 schema；传入 `":memory:"` 得到内存库（测试用）。
     pub async fn open(path: impl AsRef<Path>) -> AppResult<Self> {
         let path = path.as_ref().to_string_lossy().into_owned();
-        // Turso 的 build() 只建文件不建父目录；这里是所有文件库开库的唯一收口，父目录必须在此自建
-        if path != ":memory:"
-            && let Some(dir) = Path::new(&path).parent()
-        {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
+        // Turso 的 build() 只建文件不建父目录。离线 QA 必须在这一步之前失败，不能先把目录建出来再拒绝。
+        if path != ":memory:" {
+            if let Err(msg) = crate::paths::refuse_offline_store_open(Path::new(&path)) {
+                return Err(AppError::InvalidArgs(msg));
+            }
+            if !hongguo_common::offline_qa::enabled()
+                && let Some(dir) = Path::new(&path).parent()
+            {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| AppError::Io(format!("创建数据目录失败: {e}")))?;
+            }
         }
         let db: Database = Builder::new_local(&path).build().await.map_err(|e| {
             // 报错按因分类，别把环境问题一律报成「数据损坏」引人删库：

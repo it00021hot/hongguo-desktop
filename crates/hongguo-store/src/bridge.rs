@@ -37,7 +37,11 @@ impl std::fmt::Debug for Store {
 impl Store {
     /// 打开文件库（含 schema 迁移）。
     pub fn open(path: impl AsRef<std::path::Path>) -> AppResult<Self> {
-        Self::spawn_open(path.as_ref().to_string_lossy().into_owned())
+        let path = path.as_ref();
+        if let Err(msg) = crate::paths::refuse_offline_store_open(path) {
+            return Err(AppError::InvalidArgs(msg));
+        }
+        Self::spawn_open(path.to_string_lossy().into_owned())
     }
 
     /// 开库；被锁时稍等重试一次（覆盖两实例几乎同时启动、败者尚未退出的窗口期）。

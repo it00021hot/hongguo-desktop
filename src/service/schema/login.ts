@@ -1,11 +1,12 @@
 /** 登录域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 export const passportUserSchema = z.object({
   userId: z.string(),
   name: z.string(),
   mobile: z.string(),
-  avatarUrl: z.string().catch(''),
+  avatarUrl: z.string().catch('').transform(pageImageSrc),
 });
 
 /** 发码结果：mobileTicket 登录时必须回传 */

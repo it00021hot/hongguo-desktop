@@ -273,6 +273,9 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 15;
 /// 同步 GET。worker 线程上没有 runtime：借用 DB 线程同款 current_thread
 /// 内联 runtime 跑一段 async（reqwest 本身是异步 API）。
 fn http_get(remote: &str) -> Result<Vec<u8>, String> {
+    if hongguo_common::offline_qa::external_url_forbidden(remote) {
+        return Err("离线 QA 拒绝外部封面请求".into());
+    }
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -287,6 +290,21 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
             let builder = builder.use_preconfigured_tls(
                 hongguo_common::utils::tls::webpki_tls_config().map_err(|e| e.to_string())?,
             );
+            let builder = if hongguo_common::offline_qa::enabled() {
+                builder
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                        if hongguo_common::offline_qa::external_url_forbidden(
+                            attempt.url().as_str(),
+                        ) {
+                            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+                        } else {
+                            attempt.follow()
+                        }
+                    }))
+            } else {
+                builder
+            };
             builder
                 .build()
                 .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?
@@ -309,8 +327,23 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::http_get;
     use super::sniff_kind;
     use super::{EDGE_AVATAR, EDGE_CARD, sized_cache_path};
+
+    #[test]
+    fn offline_cover_download_returns_before_http() {
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let err = http_get("https://example.com/a.heic").expect_err("封面客户端必须先拒绝");
+        assert!(err.contains("离线 QA"));
+        let err = http_get("http://localhost:80@example.com/a.jpg").expect_err("伪 host");
+        assert!(err.contains("离线 QA"));
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+    }
 
     #[test]
     fn sized_cache_path_is_edge_scoped() {

@@ -34,7 +34,11 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
     static CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
     > = std::sync::OnceLock::new();
-    let key = config.resolved().unwrap_or_default();
+    let key = if hongguo_common::offline_qa::enabled() {
+        "offline-qa".to_string()
+    } else {
+        config.resolved().unwrap_or_default()
+    };
     let clients = CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = clients
         .lock()
@@ -60,14 +64,19 @@ fn build_client_uncached(
     let mut builder =
         builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
 
-    match config.resolved() {
-        Some(url) => {
-            let proxy =
-                Proxy::all(&url).map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
-            builder = builder.proxy(proxy);
-        }
-        None => {
-            builder = builder.no_proxy();
+    if hongguo_common::offline_qa::enabled() {
+        // 配置里的代理和默认重定向都能把 loopback 请求带到外部主机。开关打开时这两条都不走。
+        builder = builder.no_proxy().redirect(offline_redirect_policy());
+    } else {
+        match config.resolved() {
+            Some(url) => {
+                let proxy = Proxy::all(&url)
+                    .map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
+                builder = builder.proxy(proxy);
+            }
+            None => {
+                builder = builder.no_proxy();
+            }
         }
     }
 
@@ -193,6 +202,8 @@ pub async fn api_call_model_light(
         &extra,
     );
 
+    refuse_external(origin)?;
+    refuse_external(&signed.url)?;
     let client = build_client(&env.proxy)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
@@ -461,6 +472,20 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 
 /// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
 /// 切片自愈；403 补 Referer 重试一次）。
+fn offline_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if hongguo_common::offline_qa::external_url_forbidden(attempt.url().as_str()) {
+            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+pub fn refuse_external_send(url: &str) -> AppResult<()> {
+    refuse_external(url)
+}
+
 fn refuse_external(url: &str) -> AppResult<()> {
     if hongguo_common::offline_qa::external_url_forbidden(url) {
         return Err(AppError::Network(
@@ -664,6 +689,11 @@ async fn send_once(
         ),
     };
 
+    if hongguo_common::offline_qa::external_url_forbidden(&signed.url) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
     let mut req = match &signed.body {
         Some(bytes) => client.post(&signed.url).body(bytes.clone()),
         None => client.get(&signed.url),
@@ -763,6 +793,25 @@ mod tests {
     fn get_signature_has_no_body() {
         let signed = sign_get("/x/v1/", &ApiEnv::anonymous(ProxyConfig::default()).device);
         assert!(signed.body.is_none(), "GET 签名不应带 body");
+    }
+
+    #[tokio::test]
+    async fn offline_userinfo_host_returns_before_send() {
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let err = get_video_stream(&client, "http://localhost:80@example.com/a")
+            .await
+            .expect_err("userinfo 里的 localhost 不是主机");
+        assert!(err.to_string().contains("离线 QA"));
+        let err = get_video_range(&client, "http://127.0.0.1:80@example.com/a", 0, 1)
+            .await
+            .expect_err("userinfo 里的 127.0.0.1 不是主机");
+        assert!(err.to_string().contains("离线 QA"));
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
     }
 
     #[test]

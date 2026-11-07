@@ -236,6 +236,7 @@ async fn post_register(
     origin: &str,
     now_ms: u64,
 ) -> Result<RegisterResult, RegisterAttemptError> {
+    crate::client::refuse_external_send(origin).map_err(RegisterAttemptError::Failed)?;
     let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
     let body = tt_encrypt_v5(register_json_str(fp, id, now_ms).as_bytes());
     if std::env::var("TT_DEBUG").is_ok() {
@@ -246,6 +247,8 @@ async fn post_register(
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("&");
+    let url = format!("{origin}{REGISTER_PATH}?{query}");
+    crate::client::refuse_external_send(&url).map_err(RegisterAttemptError::Failed)?;
     HTTP_SENDS.fetch_add(1, Ordering::Relaxed);
     let response = build_client(&env.proxy)
         .map_err(RegisterAttemptError::Failed)?
@@ -340,6 +343,27 @@ mod tests {
 
     fn env() -> ApiEnv {
         ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default())
+    }
+
+    #[tokio::test]
+    async fn offline_register_post_does_not_count_a_send() {
+        let _guard = lock().await;
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        reset_register_http_sends();
+        let err = post_register(
+            &env(),
+            &RegisterMaterial::mint(),
+            "http://127.0.0.1:80@example.com",
+            1,
+        )
+        .await;
+        assert!(err.is_err());
+        assert_eq!(register_http_sends(), 0);
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
     }
 
     #[test]

@@ -31,30 +31,100 @@ pub fn set_cache_root_override(dir: Option<PathBuf>) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = dir;
 }
 
-/// 离线 QA 必须自带绝对数据目录，且不能是默认用户目录 `hongguo-downloader`。
-/// 未开离线 QA 时直接通过，正式启动仍走默认目录。
+/// 离线 QA 必须自带已经存在的真实目录。未开离线 QA 时直接通过，正式启动仍走默认目录。
 pub fn offline_qa_data_dir_ok() -> Result<(), String> {
     if !hongguo_common::offline_qa::enabled() {
         return Ok(());
     }
-    let explicit = std::env::var("HONGGUO_DATA_DIR").unwrap_or_default();
-    let path = PathBuf::from(explicit.trim());
-    if explicit.trim().is_empty() || !path.is_absolute() {
+    isolated_data_dir().map(|_| ())
+}
+
+/// 开库前的最后一道门：无效目录、生产目录及其别名都在创建父目录之前失败。
+pub(crate) fn refuse_offline_store_open(db_path: &Path) -> Result<(), String> {
+    if !hongguo_common::offline_qa::enabled() || db_path == Path::new(":memory:") {
+        return Ok(());
+    }
+    let allowed = isolated_data_dir()?;
+    let Some(parent) = db_path.parent() else {
+        return Err("离线 QA 拒绝没有父目录的库路径".into());
+    };
+    if !parent.exists() {
+        return Err("离线 QA 拒绝创建数据目录".into());
+    }
+    let parent_canon =
+        std::fs::canonicalize(parent).map_err(|e| format!("离线 QA 无法规范化库目录: {e}"))?;
+    if parent_canon != allowed {
+        return Err("离线 QA 拒绝打开隔离目录以外的库".into());
+    }
+    Ok(())
+}
+
+fn isolated_data_dir() -> Result<PathBuf, String> {
+    let raw = std::env::var("HONGGUO_DATA_DIR").unwrap_or_default();
+    validate_isolated_dir(&raw, &production_candidates())
+}
+
+fn production_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(parent) = dirs::data_dir() {
+        out.push(resolve_data_root(&parent, None));
+        if let Some(name) = SHELL_DATA_ROOT.get() {
+            out.push(resolve_data_root(&parent, Some(name.as_str())));
+        }
+    }
+    if let Some(root) = ABSOLUTE_DATA_ROOT.get() {
+        out.push(root.clone());
+    }
+    out
+}
+
+/// 不创建目录。`production` 用规范化路径比较；生产目录尚不存在时按词法绝对路径拒绝同路径和子目录。
+fn validate_isolated_dir(raw: &str, production: &[PathBuf]) -> Result<PathBuf, String> {
+    if raw != raw.trim() || raw.is_empty() {
+        return Err("HONGGUO_DATA_DIR 为空或带首尾空白，拒绝在开库前另开一个目录".into());
+    }
+    let path = Path::new(raw);
+    if !path.is_absolute() {
         return Err(
             "HONGGUO_OFFLINE_QA 已设置，但 HONGGUO_DATA_DIR 不是绝对路径，拒绝打开默认用户目录"
                 .into(),
         );
     }
-    if let Some(parent) = dirs::data_dir()
-        && path == resolve_data_root(&parent, None)
-    {
-        return Err("HONGGUO_OFFLINE_QA 不能使用默认用户数据目录".into());
+    let meta = std::fs::symlink_metadata(path).map_err(|_| {
+        "HONGGUO_DATA_DIR 不存在。离线 QA 只使用预先建好的真实目录，不会创建它".to_string()
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err("HONGGUO_DATA_DIR 是符号链接，离线 QA 拒绝别名".into());
     }
-    Ok(())
+    if !meta.is_dir() {
+        return Err("HONGGUO_DATA_DIR 不是目录".into());
+    }
+    let canon =
+        std::fs::canonicalize(path).map_err(|e| format!("无法规范化 HONGGUO_DATA_DIR: {e}"))?;
+    for root in production {
+        if path_conflicts(&canon, root) {
+            return Err("HONGGUO_OFFLINE_QA 不能使用生产数据目录、它的子目录或别名".into());
+        }
+    }
+    Ok(canon)
+}
+
+fn path_conflicts(candidate: &Path, production: &Path) -> bool {
+    let prod = std::fs::canonicalize(production).unwrap_or_else(|_| production.to_path_buf());
+    candidate == prod || candidate.starts_with(&prod)
 }
 
 /// 应用数据目录。
 pub fn data_dir() -> PathBuf {
+    if hongguo_common::offline_qa::enabled() {
+        if let Ok(dir) = isolated_data_dir() {
+            return dir;
+        }
+        // 校验失败也不回落到生产目录。开库入口会在创建任何文件前拒绝。
+        return PathBuf::from(
+            std::env::var("HONGGUO_DATA_DIR").unwrap_or_else(|_| "offline-qa-rejected".into()),
+        );
+    }
     if let Ok(explicit) = std::env::var("HONGGUO_DATA_DIR") {
         return PathBuf::from(explicit);
     }
@@ -184,5 +254,109 @@ mod tests {
         let tauri = resolve_data_root(parent, None);
         assert_eq!(tauri, Path::new("/data/hongguo-downloader"));
         assert!(!gpui.starts_with(&tauri) && !tauri.starts_with(&gpui));
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let base = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-a-offline-scratch")
+            });
+        let dir = base.join("hg-offline-qa-scratch").join(name);
+        if dir.is_absolute() {
+            dir
+        } else {
+            std::env::current_dir().unwrap().join(dir)
+        }
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    #[test]
+    fn offline_missing_dir_does_not_create_a_database() {
+        let _lock = TEST_PATH_INPUTS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let missing = scratch("missing");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert!(!missing.exists());
+        let _qa = EnvRestore::set(hongguo_common::offline_qa::ENV, "1");
+        let _dir = EnvRestore::set("HONGGUO_DATA_DIR", &missing.to_string_lossy());
+        let db = missing.join(DB_FILE);
+        let opened = crate::Store::open(&db);
+        assert!(opened.is_err());
+        assert!(!missing.exists(), "拒绝发生在创建目录之前");
+        assert!(!db.exists(), "拒绝发生在创建数据库文件之前");
+    }
+
+    #[test]
+    fn offline_rejects_symlink_file_blank_and_production_alias() {
+        let _lock = TEST_PATH_INPUTS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = scratch("alias");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let real = root.join("real");
+        let nested = root.join("prod").join("child");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        let link = root.join("link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&real, &link).unwrap();
+        let file = root.join("not-a-dir");
+        std::fs::write(&file, b"keep").unwrap();
+        let real_abs = std::fs::canonicalize(&real).unwrap();
+        let nested_abs = std::fs::canonicalize(&nested).unwrap();
+        let prod = nested_abs.parent().unwrap().to_path_buf();
+        let _qa = EnvRestore::set(hongguo_common::offline_qa::ENV, "1");
+
+        let link_err = validate_isolated_dir(&link.to_string_lossy(), &[]).unwrap_err();
+        assert!(link_err.contains("符号链接"));
+        let _link_dir = EnvRestore::set("HONGGUO_DATA_DIR", &link.to_string_lossy());
+        assert!(crate::Store::open(link.join(DB_FILE)).is_err());
+        assert!(!real.join(DB_FILE).exists());
+
+        let file_err = validate_isolated_dir(&file.to_string_lossy(), &[]).unwrap_err();
+        assert!(file_err.contains("不是目录"));
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
+
+        let blank = format!(" {} ", real_abs.display());
+        assert!(validate_isolated_dir(&blank, &[]).is_err());
+
+        let nested_err =
+            validate_isolated_dir(&nested_abs.to_string_lossy(), std::slice::from_ref(&prod))
+                .unwrap_err();
+        assert!(nested_err.contains("生产"));
+        assert!(
+            validate_isolated_dir(&real_abs.to_string_lossy(), std::slice::from_ref(&prod)).is_ok()
+        );
+
+        let _off = EnvRestore::set(hongguo_common::offline_qa::ENV, "0");
+        assert!(offline_qa_data_dir_ok().is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

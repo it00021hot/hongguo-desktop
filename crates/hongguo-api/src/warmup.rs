@@ -101,6 +101,9 @@ fn is_play_path(path: &str) -> bool {
 /// 执行冷启动行为预热：按官方序列顺序重发（身份重写 + 逐条重签名），返回成功（2xx）条数。
 /// 单条失败/超时不中断整体（预热是尽力而为的行为铺垫，个别失败不影响解锁效果）。
 async fn run_sequence(env: &ApiEnv) -> usize {
+    if hongguo_common::offline_qa::enabled() {
+        return 0;
+    }
     let Ok(seq) = serde_json::from_str::<Vec<Value>>(SEQUENCE) else {
         return 0;
     };
@@ -153,6 +156,9 @@ async fn run_sequence(env: &ApiEnv) -> usize {
         }
         if let Some(b) = &signed.body {
             req = req.body(b.clone());
+        }
+        if crate::client::refuse_external_send(&signed.url).is_err() {
+            return ok;
         }
         if let Ok(resp) = req.send().await
             && resp.status().is_success()

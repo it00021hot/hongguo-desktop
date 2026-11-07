@@ -10,6 +10,7 @@ import { formatCountPrecise } from '@/utils/format';
 import { SENTINEL_ROOT_MARGIN_PX } from '@/utils/infinite-scroll';
 import type { CreatorWork } from '@/service/schema';
 import { t, tf } from '@/locales';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 /** 创作者主页：头部 reading/user/profile/get，作品列表 commentapi/user/profile/{uid}
  *  （video_id 语义 = series_id）；点作品 = 进详情（排行榜「卡片一律进详情」同口径）。 */
@@ -53,9 +54,9 @@ export function CreatorHomePage({ userId }: { userId: string }) {
         </div>
       ) : profile.data ? (
         <div className="mt-4 flex items-center gap-4">
-          {profile.data.avatar && (
+          {pageImageSrc(profile.data.avatar) && (
             <img
-              src={profile.data.avatar}
+              src={pageImageSrc(profile.data.avatar)}
               alt=""
               className="size-16 shrink-0 rounded-full object-cover"
             />
@@ -159,9 +160,9 @@ function WorksGrid({
             className="group relative cursor-pointer overflow-hidden rounded-xl bg-neutral-900 text-left"
             title={w.title}
           >
-            {w.cover ? (
+            {pageImageSrc(w.cover) ? (
               <img
-                src={w.cover}
+                src={pageImageSrc(w.cover)}
                 alt=""
                 loading="lazy"
                 className="aspect-[3/4] w-full object-cover transition-opacity group-hover:opacity-80"

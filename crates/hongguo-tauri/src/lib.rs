@@ -28,6 +28,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         bring_back_active_window(app);
     }));
+    let builder = builder.plugin(OfflineQaInit);
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -51,6 +52,10 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
     builder
         .setup(|app| {
+            if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
+                log::error!("[OfflineQA] {msg}");
+                return Err(std::io::Error::other(msg).into());
+            }
             // Android 没有桌面数据目录语义（dirs::data_dir() 返回 None），不注入数据根会落到不可写的 /data/local/tmp；必须在 build_app_state 之前钉到 app 私有目录
             #[cfg(target_os = "android")]
             {
@@ -70,10 +75,6 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                     root.display(),
                     tmpdir.display()
                 );
-            }
-            if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
-                log::error!("[OfflineQA] {msg}");
-                return Err(std::io::Error::other(msg).into());
             }
             // 启动装配的顺序即依赖顺序；设备健康复检 / 磁盘补登记 / 转码探测不拦启动，各自在 init 里后台化（见 bootstrap/mod.rs）
             let app_state = build_app_state();
@@ -382,7 +383,28 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
 }
 
 fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
+    if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
+        return Err(AppError::InvalidArgs(msg));
+    }
     hongguo_store::Store::open_with_lock_retry(hongguo_store::paths::db_file())
+}
+
+/// 页面脚本运行前写入与 Rust 相同的开关值。未设置、空串、`0` 都写成空串。
+struct OfflineQaInit;
+
+impl<R: tauri::Runtime> tauri::plugin::Plugin<R> for OfflineQaInit {
+    fn name(&self) -> &'static str {
+        "hongguo-offline-qa"
+    }
+
+    fn initialization_script(&self) -> Option<String> {
+        let flag = if hongguo_common::offline_qa::enabled() {
+            "1"
+        } else {
+            ""
+        };
+        Some(format!("window.__HONGGUO_OFFLINE_QA={flag:?};"))
+    }
 }
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴——它若崩，先怀疑分配/并发本身，别在业务代码里找。
