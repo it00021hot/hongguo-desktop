@@ -44,6 +44,14 @@ impl YuvEncoder {
         Ok(())
     }
 
+    pub fn coded_size(&self) -> Option<(usize, usize)> {
+        self.out_dims
+    }
+
+    pub fn take_completed_gop(&mut self) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
+        hongguo_media::mux::split_completed_gop(&mut self.units)
+    }
+
     pub fn finish(mut self) -> AppResult<EncodedVideo> {
         let Some(compressor) = self.compressor.as_mut() else {
             return Err(AppError::Media("ByteVC2 没有帧可编码".into()));

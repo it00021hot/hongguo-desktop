@@ -55,6 +55,7 @@ pub fn transcode(
                 scale_to,
                 rate,
                 on_progress,
+                on_playable_prefix: None,
             },
         ) {
             let _ = std::fs::remove_file(&target);
@@ -83,6 +84,7 @@ pub fn transcode(
             scale_to,
             rate,
             on_progress,
+            on_playable_prefix: None,
         },
     ) {
         match done {
@@ -202,14 +204,23 @@ pub fn episode_seconds(path: &Path) -> Option<f64> {
 
 /// 转码产物是否真的可播：能解复用且有视频样本（与合并产物校验同一口径）。
 fn output_is_playable(path: &Path) -> bool {
-    match hongguo_media::demux::demux_file(path) {
-        Ok(d) => d.video_track().is_some_and(|t| !t.info.samples.is_empty()),
-        // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
-        Err(e) => {
-            log::warn!("[Transcode] 产物校验：解复用失败: {e}");
-            false
-        }
+    let demuxed = hongguo_media::demux::demux_file(path);
+    if demuxed
+        .as_ref()
+        .ok()
+        .and_then(|d| d.video_track())
+        .is_some_and(|t| !t.info.samples.is_empty())
+    {
+        return true;
     }
+    if hongguo_media::mux::prefix_is_independently_decodable(path) {
+        return true;
+    }
+    // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
+    if let Err(e) = demuxed {
+        log::warn!("[Transcode] 产物校验：解复用失败: {e}");
+    }
+    false
 }
 
 #[cfg(test)]

@@ -13,6 +13,8 @@ mod extradata;
 mod sample;
 
 pub use codec::{CONFIG_BOX, FOURCC, WIRE_NAME, is_bytevc2, is_bytevc2_fourcc};
-pub use decode::{DecodedFrame, Plaintext, decode_plaintext_mp4, open_plaintext};
+pub use decode::{
+    DecodedFrame, Plaintext, decode_plaintext_mp4, open_plaintext, presentation_tick,
+};
 pub use extradata::{annexb_from_extradata, length_size_from_extradata};
 pub use sample::sample_to_annexb;

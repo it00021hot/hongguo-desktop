@@ -15,6 +15,14 @@ use crate::container::{self, Bytevc2Track};
 use crate::extradata::annexb_from_extradata;
 use crate::sample::sample_to_annexb;
 
+/// 送进解码器的显示时间刻度。与封装层 90kHz 相同，重排后按这个刻度还原秒。
+const PRESENTATION_TIMESCALE: i64 = 90_000;
+
+/// 显示时间（秒）→ 90kHz 刻度。相等比较用这个，避免 1/30 的二进制误差。
+pub fn presentation_tick(secs: f64) -> i64 {
+    (secs * PRESENTATION_TIMESCALE as f64).round() as i64
+}
+
 /// 一帧 8-bit 4:2:0。10/12-bit 源在打包时右移到 8-bit，供平台 H.264 编码器使用。
 pub struct DecodedFrame {
     pub width: usize,
@@ -22,6 +30,8 @@ pub struct DecodedFrame {
     pub y: Vec<u8>,
     pub u: Vec<u8>,
     pub v: Vec<u8>,
+    /// 源样本的显示时间（秒）。样本表给不出逐样本时间时为 `None`，调用方不能当成 0。
+    pub pts: Option<f64>,
 }
 
 /// 已打开的明文 ByteVC2。帧率在解帧前就可用，编码会话按它建时间轴。
@@ -75,10 +85,12 @@ fn decode_track(
 ) -> AppResult<()> {
     let length_size = crate::length_size_from_extradata(&track.config)?;
     let params = annexb_from_extradata(&track.config)?;
+    let timeline = track.info.sample_pts();
+    let stamp_pts = timeline.len() == track.info.samples.len() && !timeline.is_empty();
     let mut dec =
         H266Decoder::new(&CodecParameters::video(CodecId::new(CODEC_ID_STR))).map_err(map_err)?;
     let mut sent_params = false;
-    for &(offset, size) in &track.info.samples {
+    for (index, &(offset, size)) in track.info.samples.iter().enumerate() {
         let raw = container::read_sample(path, offset, size)?;
         let sample = sample_to_annexb(&raw, length_size);
         if sample.is_empty() {
@@ -92,7 +104,11 @@ fn decode_track(
             with_params.extend_from_slice(&sample);
             with_params
         };
-        let packet = Packet::new(0, TimeBase::new(1, 90_000), annexb);
+        let mut packet = Packet::new(0, TimeBase::new(1, PRESENTATION_TIMESCALE), annexb);
+        if stamp_pts {
+            let ticks = presentation_tick(timeline[index]);
+            packet = packet.with_pts(ticks);
+        }
         dec.send_packet(&packet).map_err(map_err)?;
         drain(&mut dec, on_frame)?;
     }
@@ -152,12 +168,16 @@ fn pack_frame(dec: &H266Decoder, frame: &oxideav_core::VideoFrame) -> AppResult<
     } else {
         (vec![128u8; cw * ch], vec![128u8; cw * ch])
     };
+    let pts = frame
+        .pts
+        .map(|ticks| ticks as f64 / PRESENTATION_TIMESCALE as f64);
     Ok(DecodedFrame {
         width,
         height,
         y,
         u,
         v,
+        pts,
     })
 }
 
@@ -197,6 +217,9 @@ fn map_err(err: OxideError) -> AppError {
 mod tests {
     use super::*;
 
+    const COMPOSITION_OFFSET_SECS: f64 = 0.2;
+    const MID_TOLERANCE_SECS: f64 = 0.002;
+
     #[test]
     fn official_plaintext_emits_a_frame() {
         let path = Path::new("/tmp/hg-bytevc2-plain.mp4");
@@ -216,6 +239,62 @@ mod tests {
         });
         assert_eq!(frames, 8, "应解出 8 帧再停: {stopped:?} dims={dims:?}");
         assert!(dims.0 >= 2 && dims.1 >= 2, "实际 {dims:?}");
+    }
+
+    #[test]
+    fn official_plaintext_frames_follow_source_presentation_time() {
+        let path = Path::new("/tmp/hg-bytevc2-plain.mp4");
+        if !path.is_file() {
+            return;
+        }
+        let source = open_plaintext(path).expect("打开官方明文");
+        let mut pts = Vec::new();
+        let _ = source.decode(|frame| {
+            pts.push(frame.pts.expect("官方样本表应带出显示时间"));
+            if pts.len() >= 8 {
+                return Err(AppError::Media("stop".into()));
+            }
+            Ok(())
+        });
+        assert_eq!(pts.len(), 8, "实际 {pts:?}");
+        let track = crate::container::open_track(path).expect("打开轨");
+        let mut expect: Vec<i64> = track
+            .info
+            .sample_pts()
+            .into_iter()
+            .take(8)
+            .map(presentation_tick)
+            .collect();
+        let mut got: Vec<i64> = pts.iter().copied().map(presentation_tick).collect();
+        expect.sort_unstable();
+        got.sort_unstable();
+        assert_eq!(got, expect, "回调时间应是这 8 个源样本的显示时间");
+    }
+
+    #[test]
+    fn official_plaintext_decode_midpoint_is_the_composition_offset() {
+        let path = Path::new("/tmp/hg-bytevc2-plain.mp4");
+        if !path.is_file() {
+            return;
+        }
+        let track = crate::container::open_track(path).expect("打开轨");
+        let pts = track.info.sample_pts();
+        let mid = pts.len() / 2;
+        let mut present = pts.clone();
+        present.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let fps = track.info.average_framerate().expect("帧率");
+        let composition = pts[mid] - present[mid];
+        assert!(
+            (composition - COMPOSITION_OFFSET_SECS).abs() < MID_TOLERANCE_SECS,
+            "解码序 {} 显示序 {} 差 {composition}",
+            pts[mid],
+            present[mid]
+        );
+        assert!(
+            (present[mid] - mid as f64 / fps).abs() < MID_TOLERANCE_SECS,
+            "显示序中点 {} 帧率 {fps}",
+            present[mid]
+        );
     }
 
     #[test]

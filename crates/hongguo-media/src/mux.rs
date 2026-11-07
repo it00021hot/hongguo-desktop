@@ -4,6 +4,7 @@
 
 mod audio;
 mod avcc;
+mod fragment;
 mod track;
 
 use std::io::Write;
@@ -14,7 +15,11 @@ use hongguo_video::r#box::build_box;
 
 use crate::mp4::{TrackSpec, build_moov, mdat_data_start, mdat_header, needs_wide_offsets};
 
-pub use audio::AudioTrack;
+pub use audio::{AudioTrack, collect};
+pub use fragment::{
+    AnnexbFrame, GrowingH264, prefix_is_independently_decodable, read_fragment_video,
+    split_completed_gop,
+};
 use track::{AudioSpec, VideoSpec};
 
 /// 媒体时基：90kHz。视频与音频共用，25/30/60fps 都能整除。
