@@ -44,6 +44,34 @@ pub fn transcode(
 
     let target = cache::cache_file_for(series_id, vid_index, rate);
 
+    // ByteVC2 只走内置 Rust 解帧 + 平台 H.264 编码。失败不落 ffmpeg：
+    // ffmpeg 解 ByteVC2 不在这条路径上。
+    if is_bytevc2_source(source) {
+        log::info!("[Transcode] {series_id} 第 {vid_index} 集走 ByteVC2 内置解码");
+        if let Err(err) = hongguo_media_platform::transcode_bytevc2(
+            &hongguo_media_platform::platform::PlatformRequest {
+                input: source,
+                output: &target,
+                scale_to,
+                rate,
+                on_progress,
+            },
+        ) {
+            let _ = std::fs::remove_file(&target);
+            return Err(err);
+        }
+        if !output_is_playable(&target) {
+            let _ = std::fs::remove_file(&target);
+            return Err(hongguo_common::AppError::Media(
+                "ByteVC2 解码产物无法播放".into(),
+            ));
+        }
+        return Ok(TranscodeResult {
+            output_path: target.to_string_lossy().to_string(),
+            backend: Some(hongguo_media::Backend::Platform),
+        });
+    }
+
     // 分流 1：平台原生编码，不依赖用户装任何东西；失败静默落回 ffmpeg。
     let mut backend: Option<hongguo_media::Backend> = None;
     // 两条路都失败时，最后一个真实原因要透给用户——吞掉它就只剩一句「没找到 ffmpeg」的假话。
@@ -128,6 +156,16 @@ pub fn transcode(
     })
 }
 
+fn is_bytevc2_source(path: &Path) -> bool {
+    hongguo_media::demux::demux_file(path)
+        .ok()
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| hongguo_bytevc2::is_bytevc2(&t.info.codec))
+        })
+        .unwrap_or(false)
+}
+
 /// 某个文件的目标分辨率（宽高）。读不出来返回 `None`。
 pub fn resolution_of(path: &Path) -> Option<(u32, u32)> {
     let tracks = hongguo_media::demux::demux_file(path).ok()?;
@@ -177,6 +215,20 @@ fn output_is_playable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bytevc2_fourcc_is_recognized_as_its_own_source() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-bvc2-src-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("b.mp4");
+        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
+        assert!(is_bytevc2_source(&path));
+        let h264 = dir.join("a.mp4");
+        std::fs::write(&h264, mp4(&[TrackSpec::video(1, b"avc1", 64, 64)])).unwrap();
+        assert!(!is_bytevc2_source(&h264));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn playback_scale_caps_1080p_to_720p_long_edge() {

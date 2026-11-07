@@ -390,7 +390,10 @@ fn register_json_str(
     h.insert("rom".into(), json!(fp.rom));
     h.insert("rom_version".into(), json!(fp.rom_version));
     h.insert("sdk_flavor".into(), json!(OFFICIAL_SDK_FLAVOR));
-    h.insert("sdk_target_version".into(), json!(OFFICIAL_SDK_TARGET_VERSION));
+    h.insert(
+        "sdk_target_version".into(),
+        json!(OFFICIAL_SDK_TARGET_VERSION),
+    );
     h.insert("sdk_version".into(), json!(OFFICIAL_SDK_VERSION));
     h.insert("sdk_version_code".into(), json!(OFFICIAL_SDK_VERSION_CODE));
     h.insert("sig_hash".into(), json!(OFFICIAL_SIG_HASH));

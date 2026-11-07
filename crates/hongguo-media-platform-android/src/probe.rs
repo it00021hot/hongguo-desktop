@@ -69,10 +69,7 @@ fn android_sdk_int() -> i32 {
 }
 
 unsafe extern "C" {
-    fn __system_property_get(
-        name: *const std::ffi::c_char,
-        value: *mut std::ffi::c_char,
-    ) -> u32;
+    fn __system_property_get(name: *const std::ffi::c_char, value: *mut std::ffi::c_char) -> u32;
 }
 
 /// H.264 编码会话是否可建（软硬皆可）。

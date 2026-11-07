@@ -56,7 +56,7 @@ fn codec_of(v: &Value) -> &str {
         .unwrap_or_default()
 }
 
-/// 这条流本机最终能否播：标准编码可直喂；`bytevc2` 需 ffmpeg/librempeg 带 `bvc2` 再转码；
+/// 这条流本机最终能否播：标准编码可直喂；`bytevc2` 需内置 Rust 解码器再转码；
 /// 没报编码器按能播处理（明确不可播才排除）。
 pub fn is_playable(v: &Value, cap: DecoderCapability) -> bool {
     let codec = codec_of(v);
@@ -318,11 +318,7 @@ mod tests {
         let s = pick_stream_at(&real_model(), None, cap).unwrap();
         assert_eq!(s.codec.as_deref(), Some("bytevc1"), "同剧仍优先 bytevc1");
         let only = pick_stream_at(&multi_codec_model(), Some(720), cap).unwrap();
-        assert_eq!(
-            only.codec.as_deref(),
-            Some("bytevc1"),
-            "同档仍优先标准编码"
-        );
+        assert_eq!(only.codec.as_deref(), Some("bytevc1"), "同档仍优先标准编码");
     }
 
     #[test]
@@ -453,7 +449,12 @@ mod tests {
     #[test]
     fn empty_list_is_none() {
         assert!(
-            pick_stream_at(&json!({ "video_list": [] }), None, DecoderCapability::full()).is_none()
+            pick_stream_at(
+                &json!({ "video_list": [] }),
+                None,
+                DecoderCapability::full()
+            )
+            .is_none()
         );
         assert!(pick_stream_at(&json!({}), None, DecoderCapability::full()).is_none());
     }

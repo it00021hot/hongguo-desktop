@@ -156,14 +156,13 @@ impl super::HomeView {
                         ep.vid_index,
                         prepared.codec
                     );
-                    let compat =
-                        hongguo_service::play_service::compat_play::compat_for_playback(
-                            &state,
-                            &item.series_id,
-                            ep.vid_index,
-                            Some(ep.vid.clone()),
-                        )
-                        .await?;
+                    let compat = hongguo_service::play_service::compat_play::compat_for_playback(
+                        &state,
+                        &item.series_id,
+                        ep.vid_index,
+                        Some(ep.vid.clone()),
+                    )
+                    .await?;
                     let path = hongguo_service::transcode_service::cache::cached_path_for(
                         &item.series_id,
                         ep.vid_index,

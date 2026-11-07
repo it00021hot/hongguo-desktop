@@ -36,11 +36,6 @@ mod tests {
         sample.extend_from_slice(&2u32.to_be_bytes());
         sample.extend_from_slice(&[0xaa, 0xbb]);
         let out = sample_to_annexb(&sample, 4);
-        assert_eq!(
-            out,
-            [
-                0, 0, 0, 1, 0x11, 0x22, 0x33, 0, 0, 0, 1, 0xaa, 0xbb
-            ]
-        );
+        assert_eq!(out, [0, 0, 0, 1, 0x11, 0x22, 0x33, 0, 0, 0, 1, 0xaa, 0xbb]);
     }
 }

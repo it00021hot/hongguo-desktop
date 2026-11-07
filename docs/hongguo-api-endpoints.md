@@ -151,9 +151,10 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
   `StreamMiss`（reading 系小写 `code` 另走 `check_code`）。
 - **2026-11-04 可播性回退取证**：同一登录设备、同一漫剧第 9 集，单集与
   多集新通道均返回 `code=0`、完整 `video_model` 和 5 档 `bytevc2`，
-  同时旧通道返回 5 档 `bytevc1`。`bytevc2`（MP4 fourcc `bvc2`）需 librempeg
-  的 `bvc2` 解码器经兼容转码才可播（`hongguo-bytevc2` + `needsCompat`）；无解码器
-  时选流仍排除。响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向
+  同时旧通道返回 5 档 `bytevc1`。`bytevc2`（MP4 fourcc `bvc2`）由
+  `hongguo-bytevc2` 按 Annex-B 纯 Rust 解帧，再经平台 H.264 编码器兼容转码
+  （`needsCompat`）。运行时不调用 ffmpeg / librempeg 解 ByteVC2。
+  `HONGGUO_NO_BYTEVC2` 时选流仍排除。响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向
   旧通道补取缺失或不可播的 vid，并保留新通道已命中的条目。
 - ⚠️ 注册形态底线不变：注册 JSON 版本身份（74332/7.4.3.32，与取流 query 同值）与
   bdinstall SDK 代际成套（详见设备注册节），App 身份字段

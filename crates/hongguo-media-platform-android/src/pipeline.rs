@@ -41,9 +41,7 @@ fn run(
     let frame_dur = 1.0 / fps;
     let mut sorted_pts = video.sample_pts();
     if sorted_pts.is_empty() {
-        sorted_pts = (0..video.samples.len())
-            .map(|i| i as f64 / fps)
-            .collect();
+        sorted_pts = (0..video.samples.len()).map(|i| i as f64 / fps).collect();
     } else {
         sorted_pts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     }

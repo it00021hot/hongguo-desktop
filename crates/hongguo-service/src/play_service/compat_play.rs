@@ -193,6 +193,7 @@ pub async fn compat_for_playback(
     vid_index: u32,
     vid: Option<String>,
 ) -> AppResult<CompatPlayResult> {
+    crate::cold_start::wait().await;
     let key = format!("{series_id}:{vid_index}");
     let events = state.events().clone();
     // 进度回调要随转码任务进阻塞池（'static）：emit 自持克隆，各分支再克隆出独立回调
@@ -229,27 +230,48 @@ pub async fn compat_for_playback(
         };
         let settings = state.settings();
         let env = state.api_env();
-        // 转码源保持全量候选：HEVC-only 要拿 HEVC；bytevc2-only 要拿 bvc2（librempeg）
-        let play = hongguo_api::play_url::fetch_play_url(
-            &vid,
-            None,
-            hongguo_api::stream_pick::DecoderCapability::full().with_bytevc2(
-                hongguo_media_platform::capability::bytevc2_decode_available(),
-            ),
-            &env,
-        )
-        .await?;
+        // 转码源保持全量候选：HEVC 走平台硬编；bytevc2 走内置 Rust 解帧。
+        let cap = hongguo_api::stream_pick::DecoderCapability::full()
+            .with_bytevc2(hongguo_media_platform::capability::bytevc2_decode_available());
+        let play = hongguo_api::play_url::fetch_play_url(&vid, None, cap, &env).await?;
         // 取流占前 20%，转码占后 80%：两段都动，但用户看到的是一条连续的进度
         emit(0.0, CompatPhase::Downloading);
         let plain = crate::play_service::online::fetch_plain(&play, &settings).await?;
         let emit_tc = emit.clone();
-        ensure_compat(
+        let decoded = ensure_compat(
             series_id,
             vid_index,
             CompatSource::PlainBytes(plain),
             move |pct| emit_tc(20.0 + pct * 0.8, CompatPhase::Transcoding),
         )
-        .await
+        .await;
+        if let Err(err) = &decoded
+            && hongguo_bytevc2::is_bytevc2(&play.codec)
+        {
+            log::warn!("[Compat] ByteVC2 内置解码失败，改取不含 bytevc2 的档: {err}");
+            let fallback = hongguo_api::play_url::fetch_play_url(
+                &vid,
+                None,
+                hongguo_api::stream_pick::DecoderCapability::full(),
+                &env,
+            )
+            .await?;
+            if !hongguo_bytevc2::is_bytevc2(&fallback.codec) {
+                let plain = crate::play_service::online::fetch_plain(&fallback, &settings).await?;
+                let emit_tc = emit.clone();
+                ensure_compat(
+                    series_id,
+                    vid_index,
+                    CompatSource::PlainBytes(plain),
+                    move |pct| emit_tc(20.0 + pct * 0.8, CompatPhase::Transcoding),
+                )
+                .await
+            } else {
+                decoded
+            }
+        } else {
+            decoded
+        }
     };
 
     emit(100.0, CompatPhase::Ready);
@@ -266,68 +288,33 @@ pub async fn compat_for_playback(
 mod tests {
     use super::*;
 
-    /// 真机冒烟：明文 bvc2 → ensure_compat → 产物须为 H.264（需本机 librempeg）。
+    /// 真机冒烟：明文 bvc2 → 内置 Rust 解帧 → 产物须为 H.264。
     #[tokio::test]
-    #[ignore = "依赖 /tmp/hg-bytevc2-plain.mp4 与本机带 bvc2 的 ffmpeg"]
+    #[ignore = "依赖 /tmp/hg-bytevc2-plain.mp4"]
     async fn live_bytevc2_plain_transcodes_to_h264() {
         let plain = std::path::PathBuf::from("/tmp/hg-bytevc2-plain.mp4");
         assert!(
             plain.is_file(),
             "先跑 hongguo-api::probe_bytevc2_sample_live 落明文样本"
         );
-        let probe = std::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name",
-                "-of",
-                "csv=p=0",
-                plain.to_str().unwrap(),
-            ])
-            .output()
-            .expect("ffprobe");
-        let codec = String::from_utf8_lossy(&probe.stdout);
+        let demuxed = hongguo_media::demux::demux_file(&plain).expect("明文应能解复用");
+        let codec = &demuxed.video_track().expect("应有视频轨").info.codec;
         assert!(
-            codec.contains("bvc2"),
+            hongguo_bytevc2::is_bytevc2(codec),
             "明文样本应是 bvc2，实际={codec}"
-        );
-        assert!(
-            hongguo_media_platform::capability::bytevc2_decode_available(),
-            "本机 ffmpeg 须带 bvc2"
         );
 
         let sid = format!("bvc2-smoke-{}", std::process::id());
-        let got = ensure_compat(
-            &sid,
-            1,
-            CompatSource::LocalFile(plain),
-            |_| {},
-        )
-        .await
-        .expect("bytevc2 兼容转码应成功");
+        let got = ensure_compat(&sid, 1, CompatSource::LocalFile(plain), |_| {})
+            .await
+            .expect("bytevc2 兼容转码应成功");
         assert!(!got.cached);
         let out = cache::cached_path_for(&sid, 1, hongguo_media_platform::RateProfile::Playback)
             .expect("转码产物应在缓存");
-        let out_probe = std::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name",
-                "-of",
-                "csv=p=0",
-                out.to_str().unwrap(),
-            ])
-            .output()
-            .expect("ffprobe out");
-        let out_codec = String::from_utf8_lossy(&out_probe.stdout);
+        let out_demux = hongguo_media::demux::demux_file(&out).expect("产物应能解复用");
+        let out_codec = &out_demux.video_track().expect("产物应有视频轨").info.codec;
         assert!(
-            out_codec.contains("h264"),
+            hongguo_media::h264::is_h264(out_codec),
             "兼容产物须为 h264，实际={out_codec} backend={}",
             got.backend
         );
@@ -382,8 +369,7 @@ mod tests {
 
     #[test]
     fn plaintext_source_temp_is_distinct_from_ffmpeg_output_temp() {
-        let target =
-            cache::cache_file_for("s", 22, hongguo_media_platform::RateProfile::Playback);
+        let target = cache::cache_file_for("s", 22, hongguo_media_platform::RateProfile::Playback);
         let source = plaintext_temp_path_for(&target);
         let ffmpeg_output = hongguo_common::utils::path::temp_path_for(&target);
         assert_ne!(source, ffmpeg_output, "ffmpeg 会把自己的临时输出误认成输入");

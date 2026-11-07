@@ -138,8 +138,7 @@ impl gpui_kit::Render for Shell {
         // 窗口 1px 自绘边框（DWMWA_BORDER_COLOR 已关系统线，深色桌面下无边框
         // 连缩放边都摸不到）：跟主题走；最大化/全屏时贴屏幕边，画了反而怪。
         // 首页视频洞：亮色描边贴黑画面会看成一圈白边——干脆不画。
-        let bordered =
-            !video_hole && !window.is_maximized() && !window.is_fullscreen();
+        let bordered = !video_hole && !window.is_maximized() && !window.is_fullscreen();
         // 连贯顶栏：顶栏横贯全宽，侧栏在其下；视频洞时根透明露出播放器。
         v_flex()
             .image_cache(self.cover_image_cache.clone())

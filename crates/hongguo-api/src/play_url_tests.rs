@@ -167,8 +167,7 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
         // 默认 saas 批量体只有 bytevc2 时落到单集体。
         assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
         assert_eq!(
-            requests[0].body["biz_param"]["device_level"],
-            3,
+            requests[0].body["biz_param"]["device_level"], 3,
             "saas 体 device_level=High"
         );
         assert_eq!(

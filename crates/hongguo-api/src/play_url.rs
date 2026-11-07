@@ -221,10 +221,7 @@ async fn fetch_single_at(
             }
             match play_from_bytes(&bytes, vid, definition, cap) {
                 Ok(Some(play)) => {
-                    log::info!(
-                        "[PlayUrl] 默认批量体命中（vid={vid} codec={}）",
-                        play.codec
-                    );
+                    log::info!("[PlayUrl] 默认批量体命中（vid={vid} codec={}）", play.codec);
                     return Ok(SingleFetch::Hit(play));
                 }
                 Ok(None) => log::info!(
@@ -254,10 +251,7 @@ async fn fetch_single_at(
             }
             match play_from_bytes(&bytes, vid, definition, cap)? {
                 Some(play) => {
-                    log::info!(
-                        "[PlayUrl] 单集体命中（vid={vid} codec={}）",
-                        play.codec
-                    );
+                    log::info!("[PlayUrl] 单集体命中（vid={vid} codec={}）", play.codec);
                     return Ok(SingleFetch::Hit(play));
                 }
                 None => log::info!(
@@ -643,7 +637,7 @@ mod probes {
         }
     }
 
-    /// 只打新通道，落盘一份 bytevc2 样本给 ffmpeg 验证。
+    /// 只打新通道，落盘一份 bytevc2 样本。解码验证走内置 Rust 路径，不调用 ffmpeg。
     /// `HONGGUO_PROBE_DEVICE_JSON` 指向已注册档案 JSON 时复用，避免白烧设备。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
@@ -735,53 +729,18 @@ mod probes {
                         let plain_path = "/tmp/hg-bytevc2-plain.mp4";
                         std::fs::write(plain_path, &plain).unwrap();
                         println!("[bytevc2] decrypted {plain_path} bytes={}", plain.len());
-                        let dec = std::process::Command::new("ffmpeg")
-                            .args([
-                                "-hide_banner",
-                                "-y",
-                                "-i",
-                                plain_path,
-                                "-frames:v",
-                                "1",
-                                "-f",
-                                "null",
-                                "-",
-                            ])
-                            .output();
-                        match dec {
-                            Ok(o) => println!(
-                                "[bytevc2] decode1 status={} stderr={}",
-                                o.status,
-                                String::from_utf8_lossy(&o.stderr)
-                                    .chars()
-                                    .take(400)
-                                    .collect::<String>()
-                            ),
-                            Err(e) => println!("[bytevc2] decode ERR {e}"),
+                        match hongguo_bytevc2::decode_plaintext_mp4(
+                            std::path::Path::new(plain_path),
+                            |_| Ok(()),
+                        ) {
+                            Ok(fps) => println!("[bytevc2] rust decode ok fps={fps}"),
+                            Err(e) => println!("[bytevc2] rust decode ERR {e}"),
                         }
                     }
                     Err(e) => println!("[bytevc2] decrypt ERR {e}"),
                 },
                 Err(e) => println!("[bytevc2] key ERR {e}"),
             }
-        }
-        let out = std::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=codec_name,codec_tag_string,profile,width,height",
-                "-of",
-                "json",
-                path,
-            ])
-            .output();
-        match out {
-            Ok(o) => println!(
-                "[bytevc2] ffprobe {}",
-                String::from_utf8_lossy(&o.stdout).trim()
-            ),
-            Err(e) => println!("[bytevc2] ffprobe ERR {e}"),
         }
     }
 

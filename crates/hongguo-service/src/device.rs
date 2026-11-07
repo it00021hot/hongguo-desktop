@@ -18,6 +18,9 @@ use crate::events::ServiceEvent;
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
 
+/// 冷启动预热完成前挡住起播。壳在拉起 [`ensure_registered`] 之前调用。
+pub use crate::cold_start::arm as arm_cold_start;
+
 /// 已被淘汰、必须从库里重铺的档案 install_id（含全部静态兜底档案——共享身份是风控暴露面）。
 /// 今后每次淘汰档案，旧 iid 必须追加进名单：名单兜「已知的死」，缺补会让老用户再次集体阵亡。
 pub const RETIRED_STATIC_IIDS: &[&str] = &["1905892595382586", "2715158266282762"];
@@ -288,6 +291,7 @@ fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfi
 /// 旧代际档案按全新安装语义**一次性**迁移到当前代际；代际正常的再打搜索探针，
 /// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
+    let _release_playback = crate::cold_start::ReleaseOnDrop;
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
         register_with_retry(state, "启动自动注册").await;
@@ -313,19 +317,17 @@ pub async fn ensure_registered(state: &AppState) {
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
                 state.device().get("iid")
             );
-            // 成功时 register_and_swap 已 spawn warmup；失败则旧档已死，预热无意义
+            // 成功时 register_and_swap 已同步跑完预热；失败则旧档已死，预热无意义
             register_with_retry(state, "健康探针判死").await;
             return;
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
-    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权（见 warmup 模块文档）
-    let warm_state = state.clone();
-    crate::runtime::spawn(async move {
-        let env = warm_state.api_env();
-        let ok = hongguo_api::warmup::run(&env).await;
-        log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-    });
+    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权。
+    // 必须等完再放行起播，不能后台 fire-and-forget。
+    let env = state.api_env();
+    let ok = hongguo_api::warmup::run(&env).await;
+    log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
 }
 
 /// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
@@ -378,8 +380,7 @@ pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
     } else {
         log::warn!(
             "[Device] 取流空响应 vid={vid}，距上次注册 {}s，冷却中只补预热",
-            meta
-                .last_register_attempt_ms
+            meta.last_register_attempt_ms
                 .map(|prev| (now - prev) / 1000)
                 .unwrap_or(0)
         );

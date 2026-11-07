@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 pub struct DecoderCapability {
     /// 系统 HEVC 可解（WebView / 系统播放器可直喂 `h265`/`bytevc1`）。
     pub hevc: bool,
-    /// ffmpeg（librempeg）带 `bvc2` 解码器：`bytevc2` 可经转码播放。
+    /// 内置 Rust ByteVC2 解码器可用：`bytevc2` 可经转码播放。
     pub bytevc2: bool,
 }
 

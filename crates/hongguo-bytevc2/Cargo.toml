@@ -1,6 +1,6 @@
 [package]
 name = "hongguo-bytevc2"
-description = "ByteVC2（bvc2）识别与参数集转换：对照 librempeg cbs_bvc2 / 官方 convertByteVC2Extradata"
+description = "ByteVC2（bvc2）识别、参数集转换与纯 Rust 解帧"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,5 +9,10 @@ authors.workspace = true
 
 [dependencies]
 hongguo-common = { path = "../hongguo-common" }
+hongguo-video = { path = "../hongguo-video" }
+# 纯 Rust H.266 解帧。librempeg 的 bvc2 解码器就是 VVC 核 + 固定 4 字节长度前缀，
+# 运行时不链接、不调用 ffmpeg / librempeg。0.0.11 是当前 crates.io 最新版（MIT）。
+oxideav-h266 = "=0.0.11"
+oxideav-core = "0.1.43"
 
 [dev-dependencies]

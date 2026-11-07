@@ -163,9 +163,7 @@ mod tests {
     #[test]
     fn play_paths_are_skipped_from_warmup() {
         assert!(is_play_path("/novel/player/video_model/v1/?x=1"));
-        assert!(is_play_path(
-            "/novel/player/multi_video_model/preload/v1"
-        ));
+        assert!(is_play_path("/novel/player/multi_video_model/preload/v1"));
         assert!(!is_play_path("/reading/bookapi/bookmall/tab/v?x=1"));
         assert!(!is_play_path("/service/settings/v3/"));
     }

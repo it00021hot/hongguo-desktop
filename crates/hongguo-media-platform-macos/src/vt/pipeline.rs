@@ -54,13 +54,8 @@ fn process_frame(
             Some((w, h)) => (w, h),
             None => (src_w, src_h),
         };
-        let c = unsafe {
-            Compressor::new(
-                out_w,
-                out_h,
-                bitrate_for_profile(out_w, out_h, fps, rate),
-            )?
-        };
+        let c =
+            unsafe { Compressor::new(out_w, out_h, bitrate_for_profile(out_w, out_h, fps, rate))? };
         // 编码器自报硬编还是软编——只进日志，产物两边都是能播的 H.264
         let hw = unsafe { c.using_hardware() }.unwrap_or(false);
         log::info!(
@@ -100,7 +95,7 @@ fn emit_outputs(
 }
 
 /// CMTime → 秒。timescale 非法时按 0 处理，交给递增兜底。
-pub(super) fn cm_time_secs(t: ffi::CMTime) -> f64 {
+pub(crate) fn cm_time_secs(t: ffi::CMTime) -> f64 {
     if t.timescale <= 0 {
         0.0
     } else {

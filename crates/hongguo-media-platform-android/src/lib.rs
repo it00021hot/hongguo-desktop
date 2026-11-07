@@ -17,6 +17,7 @@ mod encode;
 mod pipeline;
 mod probe;
 mod yuv;
+mod yuv_in;
 
 /// 平台编码层可用时执行 HEVC→H.264 转码。
 pub use pipeline::transcode_h264;
@@ -35,6 +36,9 @@ pub use probe::hevc_webview_decode_available;
 
 /// 丢弃探测缓存。
 pub use probe::clear_probe_cache;
+
+/// ByteVC2 解出的 I420 编成 H.264。
+pub use yuv_in::{YuvEncoder, with_encoder_thread};
 
 /// 测试通道：与生产同路径（设备上无法强制「只要软编」时与正式入口一致）。
 #[cfg(any(test, feature = "test-support"))]

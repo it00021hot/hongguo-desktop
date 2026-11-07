@@ -86,6 +86,7 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
+    crate::cold_start::wait().await;
     // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
     super::super::ensure_play_strategy_poller(state);
     let c = cache();
@@ -201,6 +202,7 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     if vid.is_empty() {
         return Ok(());
     }
+    crate::cold_start::wait().await;
     let c = cache();
     // 已解析过档位且条目在场/在取：无事可做
     if let Some(want) = c.auto_definition(vid)
