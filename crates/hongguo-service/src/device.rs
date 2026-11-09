@@ -912,9 +912,12 @@ pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
     }
     log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
     // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
+    // 成功时不在此 Release——交还 prepare 独占首包批量；否则 recover 返回放闩与
+    // prepare 再 rearm 之间的 READY 窗口会被预取抢跑烧掉新身份（本轮自测 0/5）。
+    // 失败必须放行，避免门闩永久 PENDING。
     crate::cold_start::rearm();
-    let _playback_gate = crate::cold_start::ReleaseOnDrop;
     if !register_with_retry(state, "取流空响应恢复").await {
+        crate::cold_start::release();
         return false;
     }
     true
