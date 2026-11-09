@@ -744,6 +744,11 @@ pub async fn ensure_registered(state: &AppState) {
         return;
     }
     if registration_blocked(&read_meta(&state.store), now_ms()) {
+        // G1：离线 QA 下 registration_blocked 早退也要打出清单可检索句，
+        // 不改变不注册语义，仅补日志对齐 ZERO-EXTERNAL-CHECKLIST。
+        if hongguo_common::offline_qa::enabled() {
+            log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
+        }
         log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
         return;
     }
