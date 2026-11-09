@@ -319,6 +319,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::transcode_cmd::redetect_capability,
             commands::transcode_cmd::transcode_for_playback,
             commands::transcode_cmd::cancel_compat_playback,
+            commands::transcode_cmd::qa_offline_local_play,
             // 存储
             commands::storage_cmd::get_storage_usage,
             commands::storage_cmd::get_storage_series,

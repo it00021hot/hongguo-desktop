@@ -555,6 +555,103 @@ async fn compat_for_playback_with(
     })
 }
 
+/// 离线 QA 固定缓存键：与前端面板 / 取消命令共用。
+pub const QA_OFFLINE_LOCAL_SERIES: &str = "qa-offline-local";
+pub const QA_OFFLINE_LOCAL_VID: u32 = 1;
+const QA_OFFLINE_DEFAULT_REL: &str = "inputs/hg-bytevc2-plain.mp4";
+
+/// 仅 `HONGGUO_OFFLINE_QA=1`：隔离目录内本地明文样本走兼容转码首段/MSE。
+/// `file_path` 空则默认 `$HONGGUO_DATA_DIR/inputs/hg-bytevc2-plain.mp4`；路径必须落在隔离根内。
+pub async fn qa_offline_local_play(
+    state: &AppState,
+    file_path: String,
+) -> AppResult<CompatPlayResult> {
+    if !hongguo_common::offline_qa::enabled() {
+        return Err(AppError::Unsupported(
+            "qa_offline_local_play 仅在 HONGGUO_OFFLINE_QA=1 时可用".into(),
+        ));
+    }
+    let path = resolve_qa_offline_local_path(&file_path)?;
+    let key = format!("{QA_OFFLINE_LOCAL_SERIES}:{QA_OFFLINE_LOCAL_VID}");
+    let events = state.events().clone();
+    let emit = {
+        let key = key.clone();
+        let events = events.clone();
+        move |percent: f64, phase: CompatPhase| {
+            events.publish(ServiceEvent::CompatProgress(CompatProgressEvent {
+                key: key.clone(),
+                percent,
+                phase,
+            }));
+        }
+    };
+    let emit_tc = emit.clone();
+    let result = play_compat(
+        true,
+        QA_OFFLINE_LOCAL_SERIES,
+        QA_OFFLINE_LOCAL_VID,
+        CompatSource::LocalFile(path),
+        move |pct| emit_tc(pct, CompatPhase::Transcoding),
+        {
+            let emit = emit.clone();
+            move |ok| {
+                if ok {
+                    emit(100.0, CompatPhase::Completed);
+                } else {
+                    emit(0.0, CompatPhase::Failed);
+                }
+            }
+        },
+    )
+    .await;
+    match &result {
+        Ok(play) if play.progressive => emit(99.0, CompatPhase::Ready),
+        Ok(_) => emit(100.0, CompatPhase::Completed),
+        Err(_) => emit(0.0, CompatPhase::Failed),
+    }
+    let r = result?;
+    Ok(CompatPlayResult {
+        url: r.url,
+        cached: r.cached,
+        backend: r.backend,
+        elapsed_ms: r.elapsed_ms,
+        progressive: r.progressive,
+    })
+}
+
+fn resolve_qa_offline_local_path(file_path: &str) -> AppResult<PathBuf> {
+    let raw = file_path.trim();
+    let candidate = if raw.is_empty() {
+        let root = hongguo_common::offline_qa::isolation_root().map_err(AppError::InvalidArgs)?;
+        root.join(QA_OFFLINE_DEFAULT_REL)
+    } else {
+        let p = PathBuf::from(raw);
+        if !p.is_absolute() {
+            return Err(AppError::InvalidArgs(
+                "离线 QA 本地样本路径必须是绝对路径".into(),
+            ));
+        }
+        p
+    };
+    if hongguo_protocol::local::local_play_url(&candidate.to_string_lossy()).is_none() {
+        return Err(AppError::InvalidArgs(
+            "只允许播放视频文件（mp4/mkv/webm/mov/m4v）".into(),
+        ));
+    }
+    let bound = hongguo_common::offline_qa::prepare_qa_io(&candidate).map_err(AppError::InvalidArgs)?;
+    let meta = std::fs::metadata(&bound).map_err(|e| {
+        AppError::NotFound(format!("本地样本不存在: {}: {e}", bound.display()))
+    })?;
+    if !meta.is_file() {
+        return Err(AppError::InvalidArgs(format!(
+            "本地样本不是普通文件: {}",
+            bound.display()
+        )));
+    }
+    Ok(bound)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +700,26 @@ mod tests {
         hongguo_protocol::grow::open(&target).expect("终态之后可以重新登记");
         hongguo_protocol::grow::fail(&target, "清理");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    #[tokio::test]
+    async fn qa_offline_local_play_refuses_when_switch_off() {
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) };
+        let store = hongguo_store::Store::open_memory().expect("mem");
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store));
+        let err = qa_offline_local_play(&state, String::new())
+            .await
+            .expect_err("正式模式必须拒绝");
+        assert!(
+            matches!(err, AppError::Unsupported(_)),
+            "实际={err:?}"
+        );
+        match previous {
+            Some(v) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, v) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
     }
 
     #[tokio::test]

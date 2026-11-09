@@ -41,3 +41,11 @@ pub async fn transcode_for_playback(
 pub fn cancel_compat_playback(series_id: String, vid_index: u32) {
     hongguo_service::play_service::compat_play::cancel_compat(&series_id, vid_index);
 }
+/// 离线 QA：本地明文样本走兼容转码首段（MSE）。正式模式返回 Unsupported。
+#[tauri::command]
+pub async fn qa_offline_local_play(
+    state: State<'_, AppState>,
+    file_path: String,
+) -> AppResult<CompatPlayResult> {
+    hongguo_service::play_service::compat_play::qa_offline_local_play(state.inner(), file_path).await
+}
