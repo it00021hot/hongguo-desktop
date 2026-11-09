@@ -77,7 +77,7 @@ export function useGrowingCompat(
         return;
       }
       buffer.addEventListener('error', failConsumer);
-      void pull(url, abort.signal, buffer, source, () => stopped, onUnavailable).catch(
+      void pull(url, abort.signal, buffer, source, () => stopped, onUnavailable, video).catch(
         failConsumer,
       );
     };
@@ -104,8 +104,10 @@ async function pull(
   source: MediaSource,
   stopped: () => boolean,
   onUnavailable: () => void,
+  video?: HTMLVideoElement | null,
 ) {
   let offset = 0;
+  let kickedPlay = false;
   for (;;) {
     if (stopped() || signal.aborted) return;
     const response = await fetch(url, { headers: { Range: `bytes=${offset}-` }, signal });
@@ -128,6 +130,11 @@ async function pull(
       return;
     }
     await append(buffer, bytes);
+    // 冷 progressive：首段 append 后 autoPlay 常仍 paused，显式 play 才能计入可见首帧
+    if (!kickedPlay && video) {
+      kickedPlay = true;
+      void video.play().catch(() => undefined);
+    }
     offset = decision.nextOffset;
     if (decision.thenFinish) {
       if (source.readyState === 'open') source.endOfStream();

@@ -124,6 +124,11 @@ function OfflineQaLocalPlayPanelInner() {
           ? `缓存命中 (${result.backend})`
           : `首段就绪 progressive=${result.progressive} backend=${result.backend} ${result.elapsedMs}ms`,
       );
+      // MSE 挂上后仍可能 paused；下一帧再踢一次 play
+      queueMicrotask(() => {
+        const v = videoRef.current;
+        if (v) void v.play().catch(() => undefined);
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus(`失败: ${msg}`);
