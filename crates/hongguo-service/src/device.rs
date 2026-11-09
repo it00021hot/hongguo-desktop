@@ -709,9 +709,10 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
 
 /// 空响应是否还要注册。
 ///
-/// - `play_ok_blocks_this_series`：本进程该剧已取流成功 → 同剧空包不换档（防单 vid 毒化）。
-/// - `cross_series_rearm`：本进程已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
+/// - `play_ok_blocks_this_series`：本进程**当前身份代次**下该剧已取流成功 → 同剧空包不换档（防单 vid 毒化）。
+/// - `cross_series_rearm`：本进程当前代次已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
 ///   允许再换档，且不受冷却压制（否则剧A换档后 10 分钟内剧B永久空，见 REQ-HG-001）。
+/// - `cross_series_budget`：跨剧烧新身份仍有进程内预算；耗尽后不再注册（旧剧回点走已选档复用）。
 /// - 限制窗口 / 只复用仍一律不注册。
 ///
 /// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
@@ -723,12 +724,13 @@ pub fn empty_stream_should_register(
     reuse: bool,
     play_ok_blocks_this_series: bool,
     cross_series_rearm: bool,
+    cross_series_budget: bool,
 ) -> bool {
     if blocked || reuse || play_ok_blocks_this_series {
         return false;
     }
     if cross_series_rearm {
-        return true;
+        return cross_series_budget;
     }
     !in_cooldown
 }
@@ -833,43 +835,109 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 }
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-/// 本进程已成功取到播放地址的 series_id 集合。
+/// 本进程已成功取到播放地址的 series_id → 当时的 `device_generation`。
 ///
-/// 判定键 = `series_id`（不是进程级布尔）：同剧 PLAY_OK 后该剧空包不自动换档；
-/// 换到另一部剧再 EmptyResponse 必须允许再换档（REQ-HG-001 / CROSS-GENRE-GEAR）。
+/// 判定键 = `series_id` + **身份代次**：同剧在当前身份下 PLAY_OK 后空包不自动换档；
+/// 换身份后再回点该剧 Empty，不得被旧代次闩永久挡死（REQ-HG-001 / CROSS-GEAR-RESIDUAL）。
 /// 跨进程「已发货」元数据仍不可信，不能用库内 play_shipped 抑制换档。
-static PLAY_OK_SERIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+static PLAY_OK_SERIES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// 本剧是否已在本进程取流成功 → 抑制该剧自动换档。
-/// `series_id` 缺失时：若集合非空则保守抑制（保持旧「本进程已成功」语义）。
-fn play_ok_blocks_series(series_id: Option<&str>) -> bool {
-    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+/// 各剧上次 PLAY_OK 时的现役档案：旧剧回点优先复用，避免再烧新身份。
+static PLAY_OK_PROFILES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, DeviceProfile>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 跨剧烧新身份的进程内上限（不含冷启首次空响应换档）。
+/// 旧剧回点走已选档复用，不计入此上限。独立验 registered=7 的连刷面由此收口。
+const CROSS_SERIES_REGISTER_CAP: u32 = 2;
+static CROSS_SERIES_REGISTER_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// 本剧是否已在本进程**当前身份代次**取流成功 → 抑制该剧自动换档。
+/// `series_id` 缺失时：若当前代次已有任一 PLAY_OK 则保守抑制。
+fn play_ok_blocks_series(series_id: Option<&str>, current_gen: u64) -> bool {
+    let map = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
     match series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => set.contains(s),
-        None => !set.is_empty(),
+        Some(s) => map.get(s).is_some_and(|g| *g == current_gen),
+        None => map.values().any(|g| *g == current_gen),
     }
 }
 
-/// 跨剧再换档：集合非空且当前剧不在集合内。
-fn cross_series_rearm(series_id: Option<&str>) -> bool {
-    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+/// 跨剧 / 旧身份回点再换档：本剧未在当前代次发货，且（当前代次已有其它剧 PLAY_OK，
+/// 或本剧曾在旧代次发货——复用档不可用时允许受预算约束的再注册）。
+fn cross_series_rearm(series_id: Option<&str>, current_gen: u64) -> bool {
+    let map = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    let any_current = map.values().any(|g| *g == current_gen);
     match series_id.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => !set.is_empty() && !set.contains(s),
+        Some(s) => {
+            if map.get(s).is_some_and(|g| *g == current_gen) {
+                return false;
+            }
+            let stale_self = map.get(s).is_some_and(|g| *g != current_gen);
+            any_current || stale_self
+        }
         None => false,
     }
 }
 
+fn cross_series_budget_remaining() -> bool {
+    CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed) < CROSS_SERIES_REGISTER_CAP
+}
+
 /// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
 /// `series_id`：写入本进程 PLAY_OK 剧集合的判定键；缺失则不记剧（不扩大禁换档面）。
-pub fn note_play_address(_state: &AppState, series_id: Option<&str>) {
+/// 同时缓存现役档案，供旧剧回点复用。
+pub fn note_play_address(state: &AppState, series_id: Option<&str>) {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
     if let Some(s) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let device_gen = state.device_generation();
         PLAY_OK_SERIES
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(s.to_string());
+            .insert(s.to_string(), device_gen);
+        // 已选档只在「无档」或「同 iid」时更新，避免后来在另一身份上的误记覆盖可复用档。
+        let current = state.device();
+        let current_iid = current.get("iid").to_string();
+        let mut profiles = PLAY_OK_PROFILES.lock().unwrap_or_else(|e| e.into_inner());
+        let keep_old = profiles.get(s).is_some_and(|p| {
+            let iid = p.get("iid");
+            !iid.is_empty() && iid != current_iid
+        });
+        if !keep_old {
+            profiles.insert(s.to_string(), current);
+        }
     }
+}
+
+/// 旧剧回点：若缓存档与现役不同，切回该剧 PLAY_OK 时的身份（不注册）。
+fn restore_play_ok_profile(state: &AppState, series_id: &str) -> bool {
+    let Some(profile) = PLAY_OK_PROFILES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(series_id)
+        .cloned()
+    else {
+        return false;
+    };
+    let current_iid = state.device().get("iid").to_string();
+    let cached_iid = profile.get("iid").to_string();
+    if cached_iid.is_empty() || cached_iid == current_iid {
+        return false;
+    }
+    let mut meta = read_meta(&state.store);
+    if let Err(e) = swap_profile(state, &mut meta, profile, "play_ok_reuse") {
+        log::warn!("[Device] 旧剧回点复用已选档失败 series={series_id}: {e}");
+        return false;
+    }
+    hongguo_api::recommend::clear_feed_tabs_cache();
+    hongguo_api::play_url::clear_batch_cache();
+    // 不在此处刷新 PLAY_OK 代次：等 prepare 取址成功走 note_play_address，
+    // 避免复用后仍空时被「本剧已发货」误闩。
+    log::warn!(
+        "[Device] 旧剧回点复用已选档 series={series_id} iid={cached_iid}（不注册）"
+    );
+    true
 }
 
 /// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
@@ -933,23 +1001,64 @@ pub async fn recover_after_empty_stream(
         return true;
     }
 
+    // 旧剧回点：换身份后再次 Empty → 优先切回该剧已选档，不烧新身份。
+    if let Some(sid) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let current_iid = state.device().get("iid").to_string();
+        let cached_other = PLAY_OK_PROFILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(sid)
+            .is_some_and(|p| {
+                let iid = p.get("iid");
+                !iid.is_empty() && iid != current_iid
+            });
+        if cached_other {
+            crate::cold_start::rearm();
+            if restore_play_ok_profile(state, sid) {
+                // 复用档也要预热，否则半冷身份上邻集/首包仍空。
+                let warmed = hongguo_api::warmup::run(&state.api_env()).await;
+                log::info!("[Device] 旧剧回点复用档预热完成（{warmed} 条）");
+                return true;
+            }
+            crate::cold_start::release();
+        }
+    }
+
     let now = now_ms();
     let meta = read_meta(&state.store);
     let in_cooldown = meta
         .last_register_attempt_ms
         .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
     let blocked = registration_blocked(&meta, now);
-    let play_ok_blocks = play_ok_blocks_series(series_id);
-    let rearm_cross = cross_series_rearm(series_id);
-    if !empty_stream_should_register(in_cooldown, blocked, false, play_ok_blocks, rearm_cross) {
+    let current_gen = state.device_generation();
+    let play_ok_blocks = play_ok_blocks_series(series_id, current_gen);
+    let rearm_cross = cross_series_rearm(series_id, current_gen);
+    let budget = cross_series_budget_remaining();
+    if !empty_stream_should_register(
+        in_cooldown,
+        blocked,
+        false,
+        play_ok_blocks,
+        rearm_cross,
+        budget,
+    ) {
         if blocked {
             log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
         }
         if play_ok_blocks {
-            // 同剧已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
+            // 同剧当前身份已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
             log::warn!(
                 "[Device] 取流空响应 vid={vid}，本进程本剧已取流成功，不自动换档 series={}",
+                series_id.unwrap_or("")
+            );
+            return false;
+        }
+        if rearm_cross && !budget {
+            log::warn!(
+                "[Device] 取流空响应 vid={vid}，跨剧换档达上限（{}/{}），不烧新身份 series={}",
+                CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed),
+                CROSS_SERIES_REGISTER_CAP,
                 series_id.unwrap_or("")
             );
             return false;
@@ -959,8 +1068,10 @@ pub async fn recover_after_empty_stream(
     }
     if rearm_cross {
         log::warn!(
-            "[Device] 取流空响应 vid={vid}，跨剧允许再换档 series={}（判定键=series_id）",
-            series_id.unwrap_or("")
+            "[Device] 取流空响应 vid={vid}，跨剧允许再换档 series={}（判定键=series_id，预算 {}/{}）",
+            series_id.unwrap_or(""),
+            CROSS_SERIES_REGISTER_COUNT.load(Ordering::Relaxed),
+            CROSS_SERIES_REGISTER_CAP
         );
     } else {
         log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
@@ -973,6 +1084,13 @@ pub async fn recover_after_empty_stream(
     if !register_with_retry(state, "取流空响应恢复").await {
         crate::cold_start::release();
         return false;
+    }
+    if rearm_cross {
+        let n = CROSS_SERIES_REGISTER_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        log::info!(
+            "[Device] 跨剧换档计数 {n}/{CROSS_SERIES_REGISTER_CAP} series={}",
+            series_id.unwrap_or("")
+        );
     }
     true
 }
@@ -1004,12 +1122,64 @@ mod tests {
         assert!(!read_meta(&state.store).play_shipped);
         assert!(!note_plain_video_sample(&state, b"not-a-video"));
         assert!(!read_meta(&state.store).play_shipped);
-        assert!(play_ok_blocks_series(Some("series-a")));
-        assert!(!play_ok_blocks_series(Some("series-b")));
-        assert!(cross_series_rearm(Some("series-b")));
-        assert!(!cross_series_rearm(Some("series-a")));
+        let device_gen = state.device_generation();
+        assert!(play_ok_blocks_series(Some("series-a"), device_gen));
+        assert!(!play_ok_blocks_series(Some("series-b"), device_gen));
+        assert!(cross_series_rearm(Some("series-b"), device_gen));
+        assert!(!cross_series_rearm(Some("series-a"), device_gen));
+        // 换身份代次后：旧剧闩失效，允许恢复路径（回点复用/再换档）。
+        state.replace_device(anonymous_profile(&fresh_cdid()));
+        let device_gen2 = state.device_generation();
+        assert_ne!(device_gen, device_gen2);
+        assert!(!play_ok_blocks_series(Some("series-a"), device_gen2));
+        assert!(cross_series_rearm(Some("series-a"), device_gen2));
         // 测试隔离：清掉本用例写入的剧集合，避免污染同进程其它用例。
         PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        PLAY_OK_PROFILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
+    #[test]
+    fn play_ok_profile_restores_after_identity_change() {
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        PLAY_OK_PROFILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        let mut first = anonymous_profile(&fresh_cdid());
+        first.set("iid", "1111111111111111");
+        first.set("device_id", "1111111111111111");
+        let first_iid = first.get("iid").to_string();
+        state.replace_device(first);
+        note_play_address(&state, Some("series-a"));
+        assert!(PLAY_OK_PROFILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get("series-a")
+            .is_some_and(|p| p.get("iid") == first_iid));
+        // 换到另一身份后，旧剧回点应复用已选档（不注册）。
+        let mut other = anonymous_profile(&fresh_cdid());
+        other.set("iid", "2222222222222222");
+        other.set("device_id", "2222222222222222");
+        state.replace_device(other);
+        assert_ne!(state.device().get("iid"), first_iid);
+        assert!(restore_play_ok_profile(&state, "series-a"));
+        assert_eq!(state.device().get("iid"), first_iid);
+        assert_eq!(read_meta(&state.store).source, "play_ok_reuse");
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        PLAY_OK_PROFILES
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
@@ -1017,25 +1187,37 @@ mod tests {
 
     #[test]
     fn empty_recovery_does_not_add_unofficial_rolls() {
-        assert!(empty_stream_should_register(false, false, false, false, false));
-        assert!(!empty_stream_should_register(true, false, false, false, false));
-        assert!(!empty_stream_should_register(false, true, false, false, false));
-        assert!(!empty_stream_should_register(false, false, true, false, false));
+        assert!(empty_stream_should_register(
+            false, false, false, false, false, true
+        ));
+        assert!(!empty_stream_should_register(
+            true, false, false, false, false, true
+        ));
+        assert!(!empty_stream_should_register(
+            false, true, false, false, false, true
+        ));
+        assert!(!empty_stream_should_register(
+            false, false, true, false, false, true
+        ));
         assert!(
-            !empty_stream_should_register(false, false, false, true, false),
+            !empty_stream_should_register(false, false, false, true, false, true),
             "同剧已取流成功不自动换档"
         );
         assert!(
-            empty_stream_should_register(false, false, false, false, false),
+            empty_stream_should_register(false, false, false, false, false, true),
             "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
         );
         assert!(
-            empty_stream_should_register(true, false, false, false, true),
+            empty_stream_should_register(true, false, false, false, true, true),
             "跨剧再换档可越过冷却"
         );
         assert!(
-            !empty_stream_should_register(true, false, false, true, true),
+            !empty_stream_should_register(true, false, false, true, true, true),
             "同剧 PLAY_OK 优先于跨剧再换档标志"
+        );
+        assert!(
+            !empty_stream_should_register(true, false, false, false, true, false),
+            "跨剧预算耗尽不再烧新身份"
         );
     }
 

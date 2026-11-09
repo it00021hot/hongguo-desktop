@@ -130,7 +130,8 @@ pub async fn prepare(
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(state, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
-            crate::device::note_play_address(state, series_id_for_latch);
+            // 不在缓存命中记 PLAY_OK：缓存可能来自旧身份，误记会把已选档/代次闩污染到现役身份，
+            // 旧剧回点被「本剧已发货」误挡（CROSS-GEAR-RESIDUAL）。
             return Ok(hit);
         }
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
