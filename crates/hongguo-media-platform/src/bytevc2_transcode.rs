@@ -214,6 +214,10 @@ fn push_frame(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+/// 首段尽快交出：约 0.25–0.5s（30fps 下 8–15 帧）即可独立解码起播。
+const FIRST_PUBLISH_FRAMES: usize = 8;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+/// 后续片段保持约 1s，降低 MSE append 频率。
 const PUBLISH_FRAMES: usize = 30;
 
 fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
@@ -224,8 +228,9 @@ fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
         pass.live.size = pass.encoder.coded_size();
     }
     loop {
-        let require_sync = pass.live.writer.is_none();
-        let Some((gop, next_pts)) = pass.encoder.take_publish_run(PUBLISH_FRAMES, require_sync)
+        let first = pass.live.writer.is_none();
+        let need = if first { FIRST_PUBLISH_FRAMES } else { PUBLISH_FRAMES };
+        let Some((gop, next_pts)) = pass.encoder.take_publish_run(need, first)
         else {
             break;
         };

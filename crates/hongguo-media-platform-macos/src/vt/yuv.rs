@@ -16,6 +16,8 @@ pub struct YuvEncoder {
     transfer: Option<Transfer>,
     out_dims: Option<(usize, usize)>,
     units: Vec<(f64, Vec<u8>, bool)>,
+    /// 下一帧强制关键帧（首帧起播 / 重新开片段）
+    force_next_keyframe: bool,
 }
 
 impl YuvEncoder {
@@ -28,6 +30,7 @@ impl YuvEncoder {
             transfer: None,
             out_dims: None,
             units: Vec::new(),
+            force_next_keyframe: true,
         }
     }
 
@@ -39,7 +42,9 @@ impl YuvEncoder {
             None => pb,
         };
         let compressor = self.compressor.as_mut().expect("会话刚建好");
-        unsafe { compressor.encode(&frame_pb, frame.pts, frame.dur)? };
+        let force = self.force_next_keyframe;
+        self.force_next_keyframe = false;
+        unsafe { compressor.encode(&frame_pb, frame.pts, frame.dur, force)? };
         self.harvest()?;
         Ok(())
     }
@@ -92,9 +97,12 @@ impl YuvEncoder {
             None => (width, height),
         };
         let bitrate = bitrate_for_profile(out_w, out_h, self.fps, self.rate);
-        self.compressor = Some(unsafe { Compressor::new(out_w, out_h, bitrate)? });
+        let low_latency = self.rate == RateProfile::Playback;
+        self.compressor = Some(unsafe { Compressor::new(out_w, out_h, bitrate, low_latency)? });
         self.out_dims = Some((out_w, out_h));
-        log::info!("[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h}");
+        log::info!(
+            "[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h} low_latency={low_latency}"
+        );
         Ok(())
     }
 

@@ -10,23 +10,14 @@ use hongguo_store::Store;
 /// 已下好的文件永远走 `hongguo-local://`，没必要重新下一遍。
 pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
-    // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏
-    let local_response = |url: String, online: bool| PlayResponse {
-        url,
-        online,
-        resume_at,
-        error: String::new(),
-        definition: 0,
-        definitions: Vec::new(),
-        codec: String::new(),
-        needs_compat: false,
-    };
+    // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏。
+    // bytevc2 等需兼容转码时标 needs_compat，前端走同一 growing 管线（未登录本地实播最小接线）。
 
     // 调用方直接给了路径就用它
     if !request.file_path.trim().is_empty() {
         let url = hongguo_protocol::local::local_play_url(&request.file_path)
             .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(local_response(url, false));
+        return Ok(local_file_response(&request.file_path, url, resume_at));
     }
 
     // 已下载的那一集走本地协议
@@ -37,7 +28,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     if let Some(path) = local
         && let Some(url) = hongguo_protocol::local::local_play_url(&path)
     {
-        return Ok(local_response(url, false));
+        return Ok(local_file_response(&path, url, resume_at));
     }
 
     if !request.prefer_online {
@@ -117,6 +108,34 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             needs_compat: false,
         }),
     }
+}
+
+
+/// 本地成品 / 显式 filePath：探测编码，bytevc2 标 needs_compat 以便正式播放器走 progressive 兼容。
+fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
+    let (codec, needs_compat) = probe_local_codec(path);
+    PlayResponse {
+        url,
+        online: false,
+        resume_at,
+        error: String::new(),
+        definition: 0,
+        definitions: Vec::new(),
+        codec,
+        needs_compat,
+    }
+}
+
+fn probe_local_codec(path: &str) -> (String, bool) {
+    let Ok(demuxed) = hongguo_media::demux::demux_file(std::path::Path::new(path)) else {
+        return (String::new(), false);
+    };
+    let Some(track) = demuxed.video_track() else {
+        return (String::new(), false);
+    };
+    let codec = track.info.codec.clone();
+    let needs_compat = hongguo_bytevc2::is_bytevc2(&codec);
+    (codec, needs_compat)
 }
 
 /// 从剧集档案的分集表里取某一集的 vid。剧集档案是分集目录的唯一权威来源
@@ -227,5 +246,33 @@ mod tests {
     fn unknown_series_is_none() {
         let store = store_with(vec![]);
         assert!(episode_vid(&store, "nope", 1).is_none());
+    }
+
+    #[test]
+    fn local_bytevc2_file_marks_needs_compat() {
+        let plain = std::path::PathBuf::from("/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4");
+        if !plain.is_file() {
+            eprintln!("skip: sample missing");
+            return;
+        }
+        let path = plain.to_string_lossy().to_string();
+        let url = hongguo_protocol::local::local_play_url(&path).expect("url");
+        let resp = super::local_file_response(&path, url, 0.0);
+        assert!(resp.needs_compat, "bytevc2 本地文件必须 needs_compat");
+        assert!(hongguo_bytevc2::is_bytevc2(&resp.codec), "codec={}", resp.codec);
+        assert!(!resp.online);
+        assert!(resp.error.is_empty());
+    }
+
+    #[test]
+    fn local_missing_file_does_not_force_compat() {
+        let resp = super::local_file_response(
+            "/tmp/hongguo-definitely-missing-local-play.mp4",
+            "hongguo-local://x".into(),
+            1.5,
+        );
+        assert!(!resp.needs_compat);
+        assert!(resp.codec.is_empty());
+        assert_eq!(resp.resume_at, 1.5);
     }
 }
