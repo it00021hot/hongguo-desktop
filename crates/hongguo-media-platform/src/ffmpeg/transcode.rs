@@ -110,7 +110,7 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
         "-i".into(),
         req.input.display().to_string(),
     ];
-    args.extend(quality_args(encoder, req.rate));
+    args.extend(quality_args_for(encoder, req.rate));
 
     let scale = req
         .scale_to
@@ -165,7 +165,7 @@ fn even(v: u32) -> u32 {
 /// 编码器专属质量参数。归档档对齐 crf 23；播放档对齐 crf 28 / 更快 preset——
 /// 兼容兜底以体积与耗时优先，软编（libx264）差一档观感可接受。
 /// MediaFoundation 质量位 0–100 且**越高越好**：归档 60（≈crf23 VMAF 实测），播放 40。
-fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
+pub(crate) fn quality_args_for(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
     let owned: &[&str] = match (encoder.name, rate) {
         ("h264_nvenc", RateProfile::Archive) => &[
             "-c:v",

@@ -55,22 +55,52 @@ pub fn transcode(
 
     let target = cache::cache_file_for(series_id, vid_index, rate);
 
-    // ByteVC2 只走内置 Rust 解帧 + 平台 H.264 编码。失败不落 ffmpeg：
-    // ffmpeg 解 ByteVC2 不在这条路径上。
+    // ByteVC2：优先 ffmpeg（本机 librempeg/带 bvc2 的构建约几十倍实时，可过中点）；
+    // 仅当本机没有 ffmpeg/H.264 编码器时，才走内置 Rust 解帧 + 平台 H.264。
+    // ffmpeg 已开写渐进文件后不再回落 Rust，避免 grow 前缀已交付又换生产者。
     if is_bytevc2_source(source) {
+        let platform_req = hongguo_media_platform::platform::PlatformRequest {
+            input: source,
+            output: &target,
+            scale_to,
+            rate,
+            on_progress,
+            on_playable_prefix: None,
+            on_committed: hooks.on_committed,
+            is_cancelled: hooks.is_cancelled,
+        };
+        if let Some(ff) = hongguo_media_platform::ffmpeg::try_transcode_bytevc2(&platform_req) {
+            return match ff {
+                Ok(()) if output_is_playable(&target) => {
+                    let encoder = hongguo_media_platform::ffmpeg::h264_encoder();
+                    let backend = if encoder.is_some_and(|e| e.hardware) {
+                        hongguo_media::Backend::FfmpegHw
+                    } else {
+                        hongguo_media::Backend::FfmpegSw
+                    };
+                    log::info!(
+                        "[Transcode] {series_id} 第 {vid_index} 集 ByteVC2 走 ffmpeg 快路径（{}）",
+                        backend.decoder_label()
+                    );
+                    Ok(TranscodeResult {
+                        output_path: target.to_string_lossy().to_string(),
+                        backend: Some(backend),
+                    })
+                }
+                Ok(()) => {
+                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    Err(hongguo_common::AppError::Media(
+                        "ByteVC2 ffmpeg 产物无法播放".into(),
+                    ))
+                }
+                Err(err) => {
+                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    Err(err)
+                }
+            };
+        }
         log::info!("[Transcode] {series_id} 第 {vid_index} 集走 ByteVC2 内置解码");
-        if let Err(err) = hongguo_media_platform::transcode_bytevc2(
-            &hongguo_media_platform::platform::PlatformRequest {
-                input: source,
-                output: &target,
-                scale_to,
-                rate,
-                on_progress,
-                on_playable_prefix: None,
-                on_committed: hooks.on_committed,
-                is_cancelled: hooks.is_cancelled,
-            },
-        ) {
+        if let Err(err) = hongguo_media_platform::transcode_bytevc2(&platform_req) {
             let _ = hongguo_store::paths::qa_remove_file(&target);
             return Err(err);
         }
