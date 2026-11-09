@@ -60,6 +60,11 @@ export function retainProducerOnRemount(seriesId: string, vidIndex: number): voi
   pendingCancels.delete(key);
 }
 
+/** 丢弃挂起的推迟取消（不触发）。显式 restart 前调用，避免与立即 cancelCompat 叠杀。 */
+export function flushPendingProducerCancel(seriesId: string, vidIndex: number): void {
+  retainProducerOnRemount(seriesId, vidIndex);
+}
+
 /** 测试用：清空挂起的取消定时器。 */
 export function resetPendingProducerCancelsForTests(): void {
   for (const t of pendingCancels.values()) clearTimeout(t);

@@ -11,7 +11,10 @@ import { useEvent } from '@/service/tauri/events';
 import { EVENTS } from '@/service/tauri/types';
 import type { CompatProgress } from '@/service/schema';
 import { useGrowingCompat } from '@/features/player/hooks/use-growing-compat';
-import { wholeFileSrc } from '@/features/player/hooks/growing-fallback';
+import {
+  flushPendingProducerCancel,
+  wholeFileSrc,
+} from '@/features/player/hooks/growing-fallback';
 
 /** 与后端 qa_offline_local_play 固定缓存键一致 */
 export const QA_OFFLINE_LOCAL_SERIES = 'qa-offline-local';
@@ -102,12 +105,19 @@ function OfflineQaLocalPlayPanelInner() {
     setProgressive(false);
     setStatus('启动兼容转码…');
     try {
-      void transcode.cancelCompat({
-        seriesId: QA_OFFLINE_LOCAL_SERIES,
-        vidIndex: QA_OFFLINE_LOCAL_VID,
-      });
+      // 丢掉挂起的 remount 推迟 cancel，再显式停旧任务；稍等让 grow 槽位落到 Cancelled
+      flushPendingProducerCancel(QA_OFFLINE_LOCAL_SERIES, QA_OFFLINE_LOCAL_VID);
+      await Promise.resolve(
+        transcode.cancelCompat({
+          seriesId: QA_OFFLINE_LOCAL_SERIES,
+          vidIndex: QA_OFFLINE_LOCAL_VID,
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 120));
       const result = await transcode.qaOfflineLocalPlay(filePath.trim());
-      setUrl(result.url);
+      // 同 path 的 hongguo-local URL 不变时仍要换 key，强制 video/MSE 重建
+      const bust = result.progressive ? `${result.url}${result.url.includes('?') ? '&' : '?'}r=${Date.now()}` : result.url;
+      setUrl(bust);
       setProgressive(Boolean(result.progressive));
       setStatus(
         result.cached
