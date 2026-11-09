@@ -19,3 +19,8 @@ export function wholeFileSrc(input: {
 export function cancelProducerOn(reason: 'leave' | 'mse-failed'): boolean {
   return reason === 'leave';
 }
+
+/** MSE 效果清理是否应取消后台：仅换集/卸载，不因交接整片或 MSE 失败。 */
+export function cancelProducerOnMseCleanup(reason: 'episode-leave' | 'mse-effect'): boolean {
+  return reason === 'episode-leave';
+}

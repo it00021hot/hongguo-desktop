@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { cancelProducerOn, wholeFileSrc } from './growing-fallback';
+import {
+  cancelProducerOn,
+  cancelProducerOnMseCleanup,
+  wholeFileSrc,
+} from './growing-fallback';
 
 const payload = 'hongguo-local://localhost/f/complete';
 
@@ -52,8 +56,10 @@ describe('whole file fallback', () => {
     ).toBe(payload);
   });
 
-  it('does not cancel the producer when MSE fails', () => {
+  it('does not cancel the producer when MSE fails or the MSE effect cleans up', () => {
     expect(cancelProducerOn('mse-failed')).toBe(false);
     expect(cancelProducerOn('leave')).toBe(true);
+    expect(cancelProducerOnMseCleanup('mse-effect')).toBe(false);
+    expect(cancelProducerOnMseCleanup('episode-leave')).toBe(true);
   });
 });

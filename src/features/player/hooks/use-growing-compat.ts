@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { transcode } from '@/service/commands';
 import { classifyGrow } from './growing-media';
-import { cancelProducerOn } from './growing-fallback';
+import { cancelProducerOn, cancelProducerOnMseCleanup } from './growing-fallback';
 
 const MIME_CANDIDATES = [
   'video/mp4; codecs="avc1.64001F, mp4a.40.5"',
@@ -11,6 +11,9 @@ const MIME_CANDIDATES = [
 /**
  * 把增长中的兼容地址喂给 `<video>`。一次拉取的结束只代表这段字节到了，
  * 整片结束只认 `done`。屏幕是否出画不在这里断言。
+ *
+ * MSE 不支持/初始化/fetch/append 失败只停消费并通知上层等整片；
+ * 换集/卸载才取消生产任务，避免取消后再等待同一任务。
  */
 export function useGrowingCompat(
   videoRef: React.RefObject<HTMLVideoElement | null>,
@@ -20,12 +23,20 @@ export function useGrowingCompat(
   onUnavailable: () => void,
 ) {
   useEffect(() => {
-    const leave = () => {
-      if (seriesId && vidIndex != null && cancelProducerOn('leave')) {
+    return () => {
+      if (
+        seriesId &&
+        vidIndex != null &&
+        cancelProducerOnMseCleanup('episode-leave') &&
+        cancelProducerOn('leave')
+      ) {
         void transcode.cancelCompat({ seriesId, vidIndex });
       }
     };
-    if (!url || !seriesId || vidIndex == null) return leave;
+  }, [seriesId, vidIndex]);
+
+  useEffect(() => {
+    if (!url || !seriesId || vidIndex == null) return;
     const video = videoRef.current;
     const MediaSourceCtor = window.MediaSource;
     const mime = MediaSourceCtor
@@ -33,31 +44,41 @@ export function useGrowingCompat(
       : undefined;
     if (!video || !MediaSourceCtor || !mime) {
       onUnavailable();
-      return leave;
+      return;
     }
     const source = new MediaSourceCtor();
     const objectUrl = URL.createObjectURL(source);
     const abort = new AbortController();
     let stopped = false;
+    const failConsumer = () => {
+      if (stopped) return;
+      abort.abort();
+      if (!cancelProducerOn('mse-failed')) onUnavailable();
+    };
     video.src = objectUrl;
-    source.addEventListener('sourceopen', () => {
+    const onSourceOpen = () => {
       let buffer: SourceBuffer;
       try {
         buffer = source.addSourceBuffer(mime);
       } catch {
-        if (!cancelProducerOn('mse-failed')) onUnavailable();
+        failConsumer();
         return;
       }
-      void pull(url, abort.signal, buffer, source, () => stopped).catch(() => {
-        abort.abort();
-        if (!cancelProducerOn('mse-failed')) onUnavailable();
-      });
-    });
+      buffer.addEventListener('error', failConsumer);
+      void pull(url, abort.signal, buffer, source, () => stopped).catch(failConsumer);
+    };
+    source.addEventListener('sourceopen', onSourceOpen);
     return () => {
       stopped = true;
       abort.abort();
+      source.removeEventListener('sourceopen', onSourceOpen);
       URL.revokeObjectURL(objectUrl);
-      leave();
+      if (video.src === objectUrl) {
+        video.removeAttribute('src');
+        video.load();
+      }
+      // 交接整片或 MSE 失败清理时不取消生产任务
+      void cancelProducerOnMseCleanup('mse-effect');
     };
   }, [url, seriesId, vidIndex, videoRef, onUnavailable]);
 }
@@ -101,15 +122,23 @@ function append(buffer: SourceBuffer, bytes: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     const done = () => {
       buffer.removeEventListener('updateend', done);
+      buffer.removeEventListener('error', onError);
       resolve();
     };
+    const onError = () => {
+      buffer.removeEventListener('updateend', done);
+      buffer.removeEventListener('error', onError);
+      reject(new Error('SourceBuffer error'));
+    };
     buffer.addEventListener('updateend', done);
+    buffer.addEventListener('error', onError);
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     try {
       buffer.appendBuffer(copy);
     } catch (error) {
       buffer.removeEventListener('updateend', done);
+      buffer.removeEventListener('error', onError);
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });

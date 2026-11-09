@@ -80,12 +80,23 @@ export function useTranscodeFallback(params: {
   /** 兜底产物地址，只认当前这一集 */
   const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
   const progressive = compatResult?.key === episodeKey && compatResult.progressive;
+  const producer =
+    compatProgress?.phase === 'failed'
+      ? ('failed' as const)
+      : compatProgress?.phase === 'completed'
+        ? ('completed' as const)
+        : progressive
+          ? ('running' as const)
+          : ('completed' as const);
+  // Completed 事件本身也算「可以接整片」：不能先清 waiting 再指望 wholeFileSrc。
+  const waitingForWhole =
+    waitingWholeFile || compatProgress?.phase === 'completed';
   const wholeSrc = wholeFileSrc({
     episodeKey,
     eventKey: compatProgress?.key ?? compatResult?.key ?? null,
-    producer: compatProgress?.phase === 'failed' ? 'failed' : progressive ? 'running' : 'completed',
+    producer,
     completeUrl: compatSrc,
-    waiting: waitingWholeFile,
+    waiting: waitingForWhole,
   });
   /** 兜底进度，只认当前这一集 */
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
@@ -111,8 +122,8 @@ export function useTranscodeFallback(params: {
           setCompatResult((prev) =>
             prev && prev.key === episodeKey ? { ...prev, progressive: false } : prev,
           );
-          setWaitingFor(null);
-          setCompatProgress(null);
+          // 保留 completed 相位，让 wholeFileSrc 在 MSE 回退等待后拿到整片地址
+          setCompatProgress({ key: episodeKey, percent: 100, phase: 'completed' });
           return;
         }
         if (p.phase === 'failed') {
