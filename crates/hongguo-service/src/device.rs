@@ -707,18 +707,30 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
     }
 }
 
-/// 空响应是否还要注册。冷却、限制窗口、只复用、**本进程已取流成功**都不自动换档。
+/// 空响应是否还要注册。
+///
+/// - `play_ok_blocks_this_series`：本进程该剧已取流成功 → 同剧空包不换档（防单 vid 毒化）。
+/// - `cross_series_rearm`：本进程已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
+///   允许再换档，且不受冷却压制（否则剧A换档后 10 分钟内剧B永久空，见 REQ-HG-001）。
+/// - 限制窗口 / 只复用仍一律不注册。
 ///
 /// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
-/// PLAY_OK 后，把同一 DeviceProfile（iid/cdid/ttreq/Cookie/body 一致）迁到二次进程
-/// 再取流会得到 0 字节空包——跨进程「已发货」是假阳性，压制换档会让日常永久空响应。
+/// PLAY_OK 后，把同一 DeviceProfile 迁到二次进程再取流会得到 0 字节空包——跨进程
+/// 「已发货」是假阳性，压制换档会让日常永久空响应。
 pub fn empty_stream_should_register(
     in_cooldown: bool,
     blocked: bool,
     reuse: bool,
-    play_ok_this_process: bool,
+    play_ok_blocks_this_series: bool,
+    cross_series_rearm: bool,
 ) -> bool {
-    !in_cooldown && !blocked && !reuse && !play_ok_this_process
+    if blocked || reuse || play_ok_blocks_this_series {
+        return false;
+    }
+    if cross_series_rearm {
+        return true;
+    }
+    !in_cooldown
 }
 
 /// 备份、现役、元数据同一事务。提交成功后才替换内存。
@@ -821,14 +833,43 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 }
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-/// 本进程是否已成功拿到过播放地址。跨进程「已发货」元数据不可信：报文对照证明
-/// 同 DeviceProfile 迁到二次进程后即使请求字段一致仍空包，不能用库内 play_shipped 抑制换档。
-static PLAY_OK_THIS_PROCESS: AtomicBool = AtomicBool::new(false);
+/// 本进程已成功取到播放地址的 series_id 集合。
+///
+/// 判定键 = `series_id`（不是进程级布尔）：同剧 PLAY_OK 后该剧空包不自动换档；
+/// 换到另一部剧再 EmptyResponse 必须允许再换档（REQ-HG-001 / CROSS-GENRE-GEAR）。
+/// 跨进程「已发货」元数据仍不可信，不能用库内 play_shipped 抑制换档。
+static PLAY_OK_SERIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// 本剧是否已在本进程取流成功 → 抑制该剧自动换档。
+/// `series_id` 缺失时：若集合非空则保守抑制（保持旧「本进程已成功」语义）。
+fn play_ok_blocks_series(series_id: Option<&str>) -> bool {
+    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => set.contains(s),
+        None => !set.is_empty(),
+    }
+}
+
+/// 跨剧再换档：集合非空且当前剧不在集合内。
+fn cross_series_rearm(series_id: Option<&str>) -> bool {
+    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => !set.is_empty() && !set.contains(s),
+        None => false,
+    }
+}
 
 /// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
-pub fn note_play_address(_state: &AppState) {
+/// `series_id`：写入本进程 PLAY_OK 剧集合的判定键；缺失则不记剧（不扩大禁换档面）。
+pub fn note_play_address(_state: &AppState, series_id: Option<&str>) {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
-    PLAY_OK_THIS_PROCESS.store(true, Ordering::Release);
+    if let Some(s) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(s.to_string());
+    }
 }
 
 /// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
@@ -865,7 +906,11 @@ static EMPTY_RECOVER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 ///
 /// 换档预热窗口会 [`crate::cold_start::rearm`]：并发取流若在预热未完成时打到新身份，
 /// 服务端对该 vid 记空响应后同一设备再取也是空包（见 play_url 单飞注释）。
-pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
+pub async fn recover_after_empty_stream(
+    state: &AppState,
+    vid: &str,
+    series_id: Option<&str>,
+) -> bool {
     if hongguo_common::offline_qa::enabled() {
         if reuse_json_path().is_some() {
             let _ = reuse_refusal(state);
@@ -894,23 +939,32 @@ pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
         .last_register_attempt_ms
         .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
     let blocked = registration_blocked(&meta, now);
-    let play_ok_this_process = PLAY_OK_THIS_PROCESS.load(Ordering::Acquire);
-    if !empty_stream_should_register(in_cooldown, blocked, false, play_ok_this_process) {
+    let play_ok_blocks = play_ok_blocks_series(series_id);
+    let rearm_cross = cross_series_rearm(series_id);
+    if !empty_stream_should_register(in_cooldown, blocked, false, play_ok_blocks, rearm_cross) {
         if blocked {
             log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
         }
-        if play_ok_this_process {
-            // 本进程已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
+        if play_ok_blocks {
+            // 同剧已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
             log::warn!(
-                "[Device] 取流空响应 vid={vid}，本进程已取流成功，不自动换档"
+                "[Device] 取流空响应 vid={vid}，本进程本剧已取流成功，不自动换档 series={}",
+                series_id.unwrap_or("")
             );
             return false;
         }
         log::warn!("[Device] 取流空响应 vid={vid}，冷却中不换档");
         return false;
     }
-    log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
+    if rearm_cross {
+        log::warn!(
+            "[Device] 取流空响应 vid={vid}，跨剧允许再换档 series={}（判定键=series_id）",
+            series_id.unwrap_or("")
+        );
+    } else {
+        log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
+    }
     // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
     // 成功时不在此 Release——交还 prepare 独占首包批量；否则 recover 返回放闩与
     // prepare 再 rearm 之间的 READY 窗口会被预取抢跑烧掉新身份（本轮自测 0/5）。
@@ -945,26 +999,43 @@ mod tests {
     fn note_play_address_does_not_mark_a_sample() {
         STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
         let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
-        note_play_address(&state);
+        note_play_address(&state, Some("series-a"));
         assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
         assert!(!read_meta(&state.store).play_shipped);
         assert!(!note_plain_video_sample(&state, b"not-a-video"));
         assert!(!read_meta(&state.store).play_shipped);
+        assert!(play_ok_blocks_series(Some("series-a")));
+        assert!(!play_ok_blocks_series(Some("series-b")));
+        assert!(cross_series_rearm(Some("series-b")));
+        assert!(!cross_series_rearm(Some("series-a")));
+        // 测试隔离：清掉本用例写入的剧集合，避免污染同进程其它用例。
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     #[test]
     fn empty_recovery_does_not_add_unofficial_rolls() {
-        assert!(empty_stream_should_register(false, false, false, false));
-        assert!(!empty_stream_should_register(true, false, false, false));
-        assert!(!empty_stream_should_register(false, true, false, false));
-        assert!(!empty_stream_should_register(false, false, true, false));
+        assert!(empty_stream_should_register(false, false, false, false, false));
+        assert!(!empty_stream_should_register(true, false, false, false, false));
+        assert!(!empty_stream_should_register(false, true, false, false, false));
+        assert!(!empty_stream_should_register(false, false, true, false, false));
         assert!(
-            !empty_stream_should_register(false, false, false, true),
-            "本进程已取流成功不自动换档"
+            !empty_stream_should_register(false, false, false, true, false),
+            "同剧已取流成功不自动换档"
         );
         assert!(
-            empty_stream_should_register(false, false, false, false),
+            empty_stream_should_register(false, false, false, false, false),
             "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
+        );
+        assert!(
+            empty_stream_should_register(true, false, false, false, true),
+            "跨剧再换档可越过冷却"
+        );
+        assert!(
+            !empty_stream_should_register(true, false, false, true, true),
+            "同剧 PLAY_OK 优先于跨剧再换档标志"
         );
     }
 
@@ -1430,7 +1501,7 @@ mod tests {
             unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", path) };
             let before = hongguo_api::register::register_http_sends();
             let registered = register_and_swap(&state, "复用").await;
-            let recovered = recover_after_empty_stream(&state, "vid").await;
+            let recovered = recover_after_empty_stream(&state, "vid", None).await;
             ensure_registered(&state).await;
             assert!(!registered.ok);
             assert!(!recovered);
@@ -1715,7 +1786,7 @@ mod tests {
         assert_eq!(memory.device().get("iid"), "9999999999999999");
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
         unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
-        assert!(!recover_after_empty_stream(&memory, "vid").await);
+        assert!(!recover_after_empty_stream(&memory, "vid", None).await);
         assert!(read_meta(&memory.store).register_block_unknown);
         assert_eq!(hongguo_api::register::register_http_sends(), 0);
         match previous_reuse {

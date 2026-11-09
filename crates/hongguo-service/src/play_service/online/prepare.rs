@@ -95,6 +95,16 @@ pub async fn prepare(
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
+    // PLAY_OK 闩判定键 = series_id：优先集窗，其次 progress_key 前缀。
+    let series_id_for_latch: Option<&str> = series_window
+        .map(|(s, _)| s)
+        .or_else(|| {
+            progress_key
+                .split(':')
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        });
     crate::cold_start::wait().await;
     // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
     super::super::ensure_play_strategy_poller(state);
@@ -120,7 +130,7 @@ pub async fn prepare(
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
             resume_fill(state, vid, want, progress_key);
             log::info!("[Online] {vid} 档位 {want} 已缓存，直接复用");
-            crate::device::note_play_address(state);
+            crate::device::note_play_address(state, series_id_for_latch);
             return Ok(hit);
         }
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
@@ -141,7 +151,7 @@ pub async fn prepare(
         // 全程空字节：现役身份被拒发货 → 匿名换档一次再取
         Err(AppError::EmptyResponse(msg)) => {
             log::warn!("[Online] {vid} 取流空响应：{msg}");
-            if !crate::device::recover_after_empty_stream(state, vid).await {
+            if !crate::device::recover_after_empty_stream(state, vid, series_id_for_latch).await {
                 return Err(AppError::EmptyResponse(msg));
             }
             // recover 成功时门闩保持 PENDING（不放行）；此处再挂 ReleaseOnDrop，
@@ -201,7 +211,7 @@ pub async fn prepare(
     let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
-    crate::device::note_play_address(state);
+    crate::device::note_play_address(state, series_id_for_latch);
     let state = state.clone();
     crate::runtime::spawn(async move {
         let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, false).await;
