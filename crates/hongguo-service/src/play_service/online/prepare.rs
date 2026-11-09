@@ -149,8 +149,13 @@ pub async fn prepare(
                 log::info!(
                     "[Online] 换档后重跑集窗批量 series={series_id} idx={vid_index}（避免邻集空包）"
                 );
-                crate::play_service::local::warm_episode_window(state, series_id, vid_index)
-                    .await;
+                crate::play_service::local::warm_episode_window_gated(
+                    state,
+                    series_id,
+                    vid_index,
+                    false,
+                )
+                .await;
             } else {
                 log::warn!(
                     "[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）"

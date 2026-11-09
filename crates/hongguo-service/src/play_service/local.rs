@@ -153,6 +153,16 @@ fn probe_local_codec(path: &str) -> (String, bool) {
 /// 必须在**将要发货的身份**上调用：换档恢复后若只对当前 vid 单集重试，邻集会永久空包
 ///（服务端同身份先单集发货后再打其它 vid 返回 0 字节；同批多 vid 可一次发齐）。
 pub async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) {
+    warm_episode_window_gated(state, series_id, vid_index, true).await;
+}
+
+/// `wait_gate=false`：调用方已持有冷启动门闩（换档后独占首包），禁止再 wait，否则自锁。
+pub async fn warm_episode_window_gated(
+    state: &AppState,
+    series_id: &str,
+    vid_index: u32,
+    wait_gate: bool,
+) {
     let Some(series) = state.store.series_by_id(series_id).ok().flatten() else {
         return;
     };
@@ -178,7 +188,9 @@ pub async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u
     let want = group.len();
     let mut map = std::collections::BTreeMap::new();
     map.insert(series.content_type.to_string(), group);
-    crate::cold_start::wait().await;
+    if wait_gate {
+        crate::cold_start::wait().await;
+    }
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_batch(&map, crate::device::stream_cap(), &env).await {
         Ok(n) => log::info!(
