@@ -139,6 +139,10 @@ pub async fn prepare(
             if !crate::device::recover_after_empty_stream(state, vid).await {
                 return Err(AppError::EmptyResponse(msg));
             }
+            // recover 返回时冷启动门闩已释放；信息流预取/其它 prepare 会抢先在新身份上
+            // 单集发货，导致下面的集窗批量 0 命中。再拉上门闩，独占首包批量。
+            crate::cold_start::rearm();
+            let _hold_gate = crate::cold_start::ReleaseOnDrop;
             // 换档前的 warm 打在旧身份上（常 0 命中）。新身份上必须先批量邻集，
             // 再取当前集——先单集发货后再打邻集，服务端对其它 vid 返回空包。
             if let Some((series_id, vid_index)) = series_window {
