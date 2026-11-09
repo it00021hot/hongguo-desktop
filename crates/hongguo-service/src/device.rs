@@ -13,6 +13,7 @@ use hongguo_api::register::{
 use hongguo_common::utils::time::now_ms;
 use hongguo_signer::device::{DeviceProfile, align_app_version, anonymous_profile, fresh_cdid};
 use hongguo_store::Store;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
@@ -706,9 +707,15 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
     }
 }
 
-/// 空响应是否还要注册。冷却、限制窗口、只复用模式都不注册。
-pub fn empty_stream_should_register(in_cooldown: bool, blocked: bool, reuse: bool) -> bool {
-    !in_cooldown && !blocked && !reuse
+/// 空响应是否还要注册。冷却、限制窗口、只复用、**已发货**都不自动换档。
+/// 已发货档案的空包多为单 vid 一锤子毒化，换档会烧掉仍能播其它集的可信身份。
+pub fn empty_stream_should_register(
+    in_cooldown: bool,
+    blocked: bool,
+    reuse: bool,
+    play_shipped: bool,
+) -> bool {
+    !in_cooldown && !blocked && !reuse && !play_shipped
 }
 
 /// 备份、现役、元数据同一事务。提交成功后才替换内存。
@@ -844,7 +851,13 @@ pub fn note_stream_miss(_state: &AppState, vid: &str) {
 /// 空响应换档冷却。窗口内只预热，不注册。
 const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
 
+/// 空响应恢复串行锁：并发 prepare/prefetch 共用一次换档+预热，避免半新身份上抢打取流。
+static EMPTY_RECOVER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
 /// 取流全程空响应时恢复。限制窗口和只复用模式不注册、不预热。
+///
+/// 换档预热窗口会 [`crate::cold_start::rearm`]：并发取流若在预热未完成时打到新身份，
+/// 服务端对该 vid 记空响应后同一设备再取也是空包（见 play_url 单飞注释）。
 pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
     if hongguo_common::offline_qa::enabled() {
         if reuse_json_path().is_some() {
@@ -853,29 +866,47 @@ pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
         log::warn!("[Device] 离线 QA：取流空响应 vid={vid} 不注册、不预热");
         return false;
     }
-    let now = now_ms();
-    let meta = read_meta(&state.store);
-    let in_cooldown = meta
-        .last_register_attempt_ms
-        .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
-    let blocked = registration_blocked(&meta, now);
     let reuse = reuse_json_path().is_some();
     if reuse {
         let _ = reuse_refusal(state);
         log::warn!("[Device] 取流空响应 vid={vid}，只复用模式不注册");
         return false;
     }
-    if !empty_stream_should_register(in_cooldown, blocked, reuse) {
+
+    let gen_before = state.device_generation();
+    let _recover_guard = EMPTY_RECOVER_LOCK.lock().await;
+    // 等锁期间别人已换档：复用结果，禁止再注册。
+    if state.device_generation() > gen_before {
+        log::info!("[Device] 取流空响应 vid={vid}，复用并发换档结果（不注册）");
+        return true;
+    }
+
+    let now = now_ms();
+    let meta = read_meta(&state.store);
+    let in_cooldown = meta
+        .last_register_attempt_ms
+        .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
+    let blocked = registration_blocked(&meta, now);
+    if !empty_stream_should_register(in_cooldown, blocked, false, meta.play_shipped) {
         if blocked {
             log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
         }
-        log::warn!("[Device] 取流空响应 vid={vid}，冷却中只补预热");
+        if meta.play_shipped {
+            log::warn!(
+                "[Device] 取流空响应 vid={vid}，现役已发货，不自动换档（只补预热）"
+            );
+        } else {
+            log::warn!("[Device] 取流空响应 vid={vid}，冷却中只补预热");
+        }
         let n = hongguo_api::warmup::run(&state.api_env()).await;
         log::info!("[Device] 空响应恢复预热完成（{n} 条）");
         return true;
     }
     log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
+    // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
+    crate::cold_start::rearm();
+    let _playback_gate = crate::cold_start::ReleaseOnDrop;
     if !register_with_retry(state, "取流空响应恢复").await {
         return false;
     }
@@ -913,10 +944,14 @@ mod tests {
 
     #[test]
     fn empty_recovery_does_not_add_unofficial_rolls() {
-        assert!(empty_stream_should_register(false, false, false));
-        assert!(!empty_stream_should_register(true, false, false));
-        assert!(!empty_stream_should_register(false, true, false));
-        assert!(!empty_stream_should_register(false, false, true));
+        assert!(empty_stream_should_register(false, false, false, false));
+        assert!(!empty_stream_should_register(true, false, false, false));
+        assert!(!empty_stream_should_register(false, true, false, false));
+        assert!(!empty_stream_should_register(false, false, true, false));
+        assert!(
+            !empty_stream_should_register(false, false, false, true),
+            "已发货不自动换档"
+        );
     }
 
     #[test]

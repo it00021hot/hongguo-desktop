@@ -477,6 +477,7 @@ async fn compat_for_playback_with(
         // 转码源保持全量候选：HEVC 走平台硬编；bytevc2 走内置 Rust 解帧。
         let cap = hongguo_api::stream_pick::DecoderCapability::full()
             .with_bytevc2(hongguo_media_platform::capability::bytevc2_decode_available());
+        crate::cold_start::wait().await;
         let play = hongguo_api::play_url::fetch_play_url(&vid, None, cap, &env).await?;
         // 取流占前 20%，转码占后 80%：两段都动，但用户看到的是一条连续的进度
         emit(0.0, CompatPhase::Downloading);
@@ -504,6 +505,7 @@ async fn compat_for_playback_with(
             && hongguo_bytevc2::is_bytevc2(&play.codec)
         {
             log::warn!("[Compat] ByteVC2 内置解码失败，改取不含 bytevc2 的档: {err}");
+            crate::cold_start::wait().await;
             let fallback = hongguo_api::play_url::fetch_play_url(
                 &vid,
                 None,

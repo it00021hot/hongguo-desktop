@@ -50,6 +50,7 @@ async fn check_and_prefetch(
 ) -> hongguo_common::AppResult<bool> {
     use hongguo_api::stream_pick::DecoderCapability;
 
+    crate::cold_start::wait().await;
     let env = state.api_env();
     // NoHevc 视角看下一集：有可选流（h264/未知编码）就不用转
     let probe =

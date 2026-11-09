@@ -165,6 +165,7 @@ async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) 
     }
     let mut map = std::collections::BTreeMap::new();
     map.insert(series.content_type.to_string(), group);
+    crate::cold_start::wait().await;
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_batch(&map, crate::device::stream_cap(), &env).await {
         Ok(n) => log::info!("[Play] {series_id} 从第 {vid_index} 集批量取到 {n} 集"),

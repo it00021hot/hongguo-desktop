@@ -17,6 +17,12 @@ pub fn arm() {
     let _ = STATE.compare_exchange(OPEN, PENDING, Ordering::AcqRel, Ordering::Acquire);
 }
 
+/// 会话中途空响应换档：预热完成前再次挡住取流。
+/// 与 [`arm`] 不同，READY 之后也能重新拉上门闩，避免换档预热窗口被并发取流烧废新身份。
+pub fn rearm() {
+    STATE.store(PENDING, Ordering::Release);
+}
+
 /// 预热结束（成功或注册失败放弃）后放行。
 pub fn release() {
     STATE.store(READY, Ordering::Release);
@@ -53,5 +59,21 @@ mod tests {
         let started = Instant::now();
         super::wait().await;
         assert!(started.elapsed() < Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn rearm_blocks_until_release() {
+        super::release();
+        super::rearm();
+        let wait = tokio::spawn(async {
+            super::wait().await;
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!wait.is_finished(), "rearm 后门闩应仍挡住 wait");
+        super::release();
+        tokio::time::timeout(Duration::from_millis(500), wait)
+            .await
+            .expect("release 后 wait 应返回")
+            .expect("wait task");
     }
 }

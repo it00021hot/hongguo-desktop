@@ -243,3 +243,87 @@ async fn probe_feed_vids() {
         }
     }
 }
+
+
+#[tokio::test]
+#[ignore = "手工探针：用 HONGGUO_REUSE_DEVICE_JSON 对账取流空响应"]
+async fn probe_sign_1004_with_reuse_device() {
+    use hongguo_signer::device::{DeviceProfile, anonymous_cookie};
+    let path = std::env::var("HG_DEVICE_JSON").expect("HG_DEVICE_JSON");
+    let raw = std::fs::read_to_string(&path).expect("read device json");
+    let device: DeviceProfile = serde_json::from_str(&raw).expect("parse device");
+    assert!(!device.get("iid").is_empty(), "iid");
+    assert!(device.ttreq().is_some(), "ttreq required");
+    let cookie = anonymous_cookie(&device);
+    let env = ApiEnv {
+        proxy: Default::default(),
+        cookie: Some(cookie),
+        x_tt_token: None,
+        device: device.clone(),
+    };
+    println!(
+        "device iid={} brand={} type={} ttreq_len={}",
+        device.get("iid"),
+        device.get("device_brand"),
+        device.get("device_type"),
+        device.ttreq().map(|t| t.len()).unwrap_or(0)
+    );
+    let warmed = hongguo_api::warmup::run(&env).await;
+    println!("warmup_ok={warmed}");
+
+    // 先拉推荐拿活 vid，再打 brush 失败集
+    let mut cases: Vec<(String, i64, String)> = Vec::new();
+    if let Ok(page) = hongguo_api::recommend::fetch_recommend_feed("16", "", 0, &[], &env).await {
+        for it in page.items.iter().filter(|i| !i.vid.is_empty()).take(2) {
+            cases.push((format!("feed:{}", it.title), it.content_type, it.vid.clone()));
+        }
+    }
+    // brush 空响应目标 + 同会话曾命中的 vid
+    cases.push((
+        "brush-fail".into(),
+        1004,
+        "7697465811157404697".into(),
+    ));
+    cases.push((
+        "brush-hit-after-swap".into(),
+        1004,
+        "7701967150029753368".into(),
+    ));
+
+    for (name, ct, vid) in &cases {
+        hongguo_api::play_url::register_content_type(vid, *ct);
+        match fetch_play_url(vid, None, DecoderCapability::full(), &env).await {
+            Ok(info) => println!(
+                "OK {name} vid={vid} def={} codec={} url60={}",
+                info.definition,
+                info.codec,
+                &info.url[..60.min(info.url.len())]
+            ),
+            Err(e) => println!("ERR {name} vid={vid} {e}"),
+        }
+    }
+}
+
+
+#[tokio::test]
+#[ignore = "手工探针：单 vid"]
+async fn probe_single_vid_device() {
+    use hongguo_signer::device::{DeviceProfile, anonymous_cookie};
+    let path = std::env::var("HG_DEVICE_JSON").expect("HG_DEVICE_JSON");
+    let vid = std::env::var("HG_PROBE_VID").expect("HG_PROBE_VID");
+    let ct: i64 = std::env::var("HG_PROBE_CT").unwrap_or_else(|_| "1004".into()).parse().unwrap();
+    let device: DeviceProfile = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let env = ApiEnv {
+        proxy: Default::default(),
+        cookie: Some(anonymous_cookie(&device)),
+        x_tt_token: None,
+        device: device.clone(),
+    };
+    let warmed = hongguo_api::warmup::run(&env).await;
+    hongguo_api::play_url::register_content_type(&vid, ct);
+    println!("iid={} warmup={} ct={} vid={}", device.get("iid"), warmed, ct, vid);
+    match fetch_play_url(&vid, None, DecoderCapability::full(), &env).await {
+        Ok(info) => println!("OK def={} codec={} url60={}", info.definition, info.codec, &info.url[..60.min(info.url.len())]),
+        Err(e) => println!("ERR {e}"),
+    }
+}

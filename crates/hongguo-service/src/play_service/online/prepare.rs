@@ -45,6 +45,8 @@ async fn fetch_with_registry(
     definition: Option<u32>,
     cap: hongguo_api::stream_pick::DecoderCapability,
 ) -> AppResult<hongguo_api::play_url::PlayInfo> {
+    // 空响应换档预热窗口会 rearm 门闩；此处再等一次，避免起播/预取在半新身份上打空包。
+    crate::cold_start::wait().await;
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
         Ok(p) => Ok(p),
