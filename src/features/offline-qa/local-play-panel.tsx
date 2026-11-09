@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -122,15 +122,6 @@ function OfflineQaLocalPlayPanelInner() {
       setBusy(false);
     }
   };
-
-  useEffect(() => {
-    return () => {
-      void transcode.cancelCompat({
-        seriesId: QA_OFFLINE_LOCAL_SERIES,
-        vidIndex: QA_OFFLINE_LOCAL_VID,
-      });
-    };
-  }, []);
 
   return (
     <Card data-testid="qa-offline-local-play">

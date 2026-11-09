@@ -1,7 +1,12 @@
 import { useEffect } from 'react';
 import { transcode } from '@/service/commands';
 import { classifyGrow, decidePullAction } from './growing-media';
-import { cancelProducerOn, cancelProducerOnMseCleanup } from './growing-fallback';
+import {
+  cancelProducerOn,
+  cancelProducerOnMseCleanup,
+  retainProducerOnRemount,
+  scheduleProducerCancel,
+} from './growing-fallback';
 
 const MIME_CANDIDATES = [
   'video/mp4; codecs="avc1.64001F, mp4a.40.5"',
@@ -24,6 +29,9 @@ export function useGrowingCompat(
   onUnavailable: () => void,
 ) {
   useEffect(() => {
+    if (seriesId && vidIndex != null) {
+      retainProducerOnRemount(seriesId, vidIndex);
+    }
     return () => {
       if (
         seriesId &&
@@ -31,7 +39,10 @@ export function useGrowingCompat(
         cancelProducerOnMseCleanup('episode-leave') &&
         cancelProducerOn('leave')
       ) {
-        void transcode.cancelCompat({ seriesId, vidIndex });
+        // 推迟取消：同集 remount 会 retain，避免 harness/StrictMode 误杀 progressive
+        scheduleProducerCancel(seriesId, vidIndex, (args) => {
+          void transcode.cancelCompat(args);
+        });
       }
     };
   }, [seriesId, vidIndex]);
