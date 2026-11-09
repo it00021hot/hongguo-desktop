@@ -38,15 +38,20 @@ static PREFETCH_SLOTS: tokio::sync::Semaphore =
 /// 取流表获取（类型注册表守门）：vid 的条目类型未注册时**不猜 key**——先拉本剧分集档案
 ///（解析侧会把整剧各集的 vid→content_type 一次注册齐）再取流。取流未命中（[`AppError::StreamMiss`]）
 /// 如实上抛：服务端不发货是设备侧信任问题，应用层没有兜底解。
+/// `wait_gate=false`：调用方已持有冷启动门闩（换档后独占首包），禁止再 wait，否则自锁。
 async fn fetch_with_registry(
     state: &AppState,
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
     cap: hongguo_api::stream_pick::DecoderCapability,
+    wait_gate: bool,
 ) -> AppResult<hongguo_api::play_url::PlayInfo> {
-    // 空响应换档预热窗口会 rearm 门闩；此处再等一次，避免起播/预取在半新身份上打空包。
-    crate::cold_start::wait().await;
+    // 空响应换档预热窗口会 rearm 门闩；默认再等一次，避免起播/预取在半新身份上打空包。
+    // 持闩路径（EmptyResponse 恢复）必须跳过，否则与 ReleaseOnDrop 同作用域自等 PENDING。
+    if wait_gate {
+        crate::cold_start::wait().await;
+    }
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
         Ok(p) => Ok(p),
@@ -128,7 +133,7 @@ pub async fn prepare(
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
-    let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
+    let play = match fetch_with_registry(state, vid, progress_key, definition, cap, true).await {
         Err(e @ AppError::StreamMiss(_)) => {
             crate::device::note_stream_miss(state, vid);
             return Err(e);
@@ -161,7 +166,8 @@ pub async fn prepare(
                     "[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）"
                 );
             }
-            fetch_with_registry(state, vid, progress_key, definition, cap).await?
+            // 持闩中：不得 wait，否则与 warm 同理自锁（测侧 8d7cb5b7 独立验挂死点）
+            fetch_with_registry(state, vid, progress_key, definition, cap, false).await?
         }
         r => r?,
     };
@@ -244,6 +250,7 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
         progress_key,
         None,
         crate::device::stream_cap(),
+        true,
     )
     .await
     {
