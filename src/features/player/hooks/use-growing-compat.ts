@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { transcode } from '@/service/commands';
-import { classifyGrow } from './growing-media';
+import { classifyGrow, decidePullAction } from './growing-media';
 import { cancelProducerOn, cancelProducerOnMseCleanup } from './growing-fallback';
 
 const MIME_CANDIDATES = [
@@ -13,6 +13,7 @@ const MIME_CANDIDATES = [
  * 整片结束只认 `done`。屏幕是否出画不在这里断言。
  *
  * MSE 不支持/初始化/fetch/append 失败只停消费并通知上层等整片；
+ * grow cancelled/failed 同样必须 onUnavailable，不能只靠进度事件或换集。
  * 换集/卸载才取消生产任务，避免取消后再等待同一任务。
  */
 export function useGrowingCompat(
@@ -65,7 +66,9 @@ export function useGrowingCompat(
         return;
       }
       buffer.addEventListener('error', failConsumer);
-      void pull(url, abort.signal, buffer, source, () => stopped).catch(failConsumer);
+      void pull(url, abort.signal, buffer, source, () => stopped, onUnavailable).catch(
+        failConsumer,
+      );
     };
     source.addEventListener('sourceopen', onSourceOpen);
     return () => {
@@ -89,6 +92,7 @@ async function pull(
   buffer: SourceBuffer,
   source: MediaSource,
   stopped: () => boolean,
+  onUnavailable: () => void,
 ) {
   let offset = 0;
   for (;;) {
@@ -101,17 +105,20 @@ async function pull(
       bytes.byteLength,
       offset,
     );
-    if (step.kind === 'cancelled' || step.kind === 'failed') {
+    const decision = decidePullAction(step);
+    if (decision.action === 'unavailable') {
       if (source.readyState === 'open') source.endOfStream('network');
+      // grow cancelled/failed：必须通知上层，不能只 return 或只靠 Failed 进度/换集
+      if (!stopped()) onUnavailable();
       return;
     }
-    if (step.kind === 'finished') {
+    if (decision.action === 'finish') {
       if (source.readyState === 'open') source.endOfStream();
       return;
     }
     await append(buffer, bytes);
-    offset = step.nextOffset;
-    if (step.finished) {
+    offset = decision.nextOffset;
+    if (decision.thenFinish) {
       if (source.readyState === 'open') source.endOfStream();
       return;
     }
