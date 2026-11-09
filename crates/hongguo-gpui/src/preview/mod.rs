@@ -62,7 +62,8 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
     interaction_probe(&state)?;
     drop(state);
     let data_dir = hongguo_store::paths::data_dir();
-    if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+    // QA 下必须走统一边界；隔离根本身拒绝整根删除，避免预览清理误删预建数据根。
+    if let Err(e) = hongguo_store::paths::qa_remove_dir_all(&data_dir) {
         log::warn!("[Preview] 临时数据目录清理失败（不影响产物）: {e}");
     }
     log::info!("[Preview] 全部场景完成 → {}", output.display());

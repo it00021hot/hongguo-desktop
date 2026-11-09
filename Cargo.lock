@@ -4254,6 +4254,7 @@ version = "0.6.5"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
+ "libc",
  "rustls",
  "serde",
  "serde_json",

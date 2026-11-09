@@ -66,6 +66,16 @@ pub fn qa_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     hongguo_common::offline_qa::qa_write(path, bytes)
 }
 
+pub fn qa_read(path: &Path) -> std::io::Result<Vec<u8>> {
+    sync_production_roots();
+    hongguo_common::offline_qa::qa_read(path)
+}
+
+pub fn qa_read_to_string(path: &Path) -> std::io::Result<String> {
+    sync_production_roots();
+    hongguo_common::offline_qa::qa_read_to_string(path)
+}
+
 pub fn qa_rename(from: &Path, to: &Path) -> std::io::Result<()> {
     sync_production_roots();
     hongguo_common::offline_qa::qa_rename(from, to)
@@ -501,6 +511,44 @@ mod tests {
         assert!(!inside.exists());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
         set_cache_root_override(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn offline_refuses_db_wal_symlink_before_open() {
+        let _lock = TEST_PATH_INPUTS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = scratch("wal-link");
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let sentinel = outside.join("SENTINEL");
+        std::fs::write(&sentinel, b"KEEP").unwrap();
+        let db = isolated.join(DB_FILE);
+        std::fs::write(&db, b"not-a-real-db").unwrap();
+        let wal = PathBuf::from(format!("{}-wal", db.display()));
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&sentinel, &wal).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&sentinel, &wal).unwrap();
+        let _qa = EnvRestore::set(hongguo_common::offline_qa::ENV, "1");
+        let _data = EnvRestore::set("HONGGUO_DATA_DIR", &isolated.to_string_lossy());
+        let err = crate::Store::open(&db).expect_err("wal symlink must refuse open");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("符号链接") || msg.contains("旁路") || msg.contains("引擎"),
+            "unexpected {msg}"
+        );
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
+        assert!(
+            std::fs::symlink_metadata(&wal)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

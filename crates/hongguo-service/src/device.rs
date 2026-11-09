@@ -117,7 +117,7 @@ fn load_sidecar_block(store: &Store) -> BlockSource {
     let Some(path) = block_sidecar(store) else {
         return BlockSource::Absent;
     };
-    match std::fs::read_to_string(&path) {
+    match hongguo_store::paths::qa_read_to_string(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
         Err(_) => BlockSource::Unreadable,
         Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
@@ -219,10 +219,7 @@ fn journal_state(store: &Store) -> BlockSource {
     let Some(path) = journal_path(store) else {
         return BlockSource::Absent;
     };
-    let Ok(path) = hongguo_store::paths::prepare_qa_io(&path) else {
-        return BlockSource::Unreadable;
-    };
-    match std::fs::read_to_string(&path) {
+    match hongguo_store::paths::qa_read_to_string(&path) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
         Err(_) => BlockSource::Unreadable,
         Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
@@ -633,8 +630,9 @@ fn persist_block(
 /// 显式解除限制。任何一步失败都留下仍能阻断的记录；启动流程不会调用这里。
 pub fn clear_register_block(store: &Store) -> hongguo_common::AppResult<()> {
     let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
-    let saved_side = block_sidecar(store).and_then(|path| std::fs::read(path).ok());
-    let saved_marker = unknown_marker(store).and_then(|path| std::fs::read(path).ok());
+    let saved_side = block_sidecar(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
+    let saved_marker =
+        unknown_marker(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
     let mut blocking = load_meta_locked(store);
     blocking.register_block_unknown = true;
     write_journal(store, &blocking)?;
