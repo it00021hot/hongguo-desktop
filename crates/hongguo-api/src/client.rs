@@ -157,6 +157,153 @@ pub async fn api_call_reading_once_allow_empty(
 
 const STORE_REGION: &str = "cn-gd";
 
+
+/// 取流请求级快照（HG_DUMP_REQ_DIR=目录时写入）。用于同进程 PLAY_OK vs 二次进程空的报文对照。
+/// 不落 body 明文（gzip 后只记 sha256/len）；query/头字段全量可 diff；Cookie 保留键与 ttreq 有无，ttreq 值截断。
+fn dump_signed_play_req(
+    tag: &str,
+    origin: &str,
+    pathname: &str,
+    signed: &hongguo_signer::ticket::SignedRequest,
+    env: &ApiEnv,
+    resp_len: usize,
+) {
+    let Some(dir) = std::env::var_os("HG_DUMP_REQ_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let label = std::env::var("HG_DUMP_REQ_TAG").unwrap_or_else(|_| tag.to_string());
+
+    let url = &signed.url;
+    let (path_part, query_part) = match url.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (url.clone(), String::new()),
+    };
+    // path 可能含 origin
+    let path_only = path_part
+        .strip_prefix(origin)
+        .unwrap_or(pathname)
+        .to_string();
+
+    let mut query_map = serde_json::Map::new();
+    for pair in query_part.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        query_map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+    }
+
+    let mut headers = serde_json::Map::new();
+    let mut cookie_keys: Vec<String> = Vec::new();
+    let mut cookie_has_ttreq = false;
+    let mut cookie_ttreq_prefix = String::new();
+    let mut cookie_has_install_id = false;
+    for (k, v) in &signed.headers {
+        let lk = k.to_ascii_lowercase();
+        if lk == "cookie" {
+            for part in v.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+                if let Some((ck, cv)) = part.split_once('=') {
+                    cookie_keys.push(ck.to_string());
+                    if ck == "ttreq" {
+                        cookie_has_ttreq = true;
+                        cookie_ttreq_prefix = cv.chars().take(12).collect::<String>() + "…";
+                    }
+                    if ck == "install_id" || ck == "iid" {
+                        cookie_has_install_id = true;
+                    }
+                }
+            }
+            headers.insert(
+                k.clone(),
+                serde_json::json!({
+                    "keys": cookie_keys,
+                    "has_ttreq": cookie_has_ttreq,
+                    "ttreq_prefix": cookie_ttreq_prefix,
+                    "has_install_id": cookie_has_install_id,
+                    "raw_len": v.len(),
+                }),
+            );
+        } else {
+            headers.insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+    }
+
+    let body_len = signed.body.as_ref().map(|b| b.len()).unwrap_or(0);
+    let body_sha = signed
+        .body
+        .as_ref()
+        .map(|b| b.iter().map(|x| format!("{x:02x}")).collect::<String>())
+        .unwrap_or_default();
+    let body_raw_preview = signed.body.as_ref().and_then(|gz| {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut d = GzDecoder::new(gz.as_slice());
+        let mut raw = Vec::new();
+        d.read_to_end(&mut raw).ok()?;
+        Some(String::from_utf8_lossy(&raw).into_owned())
+    });
+
+    let iid = env.device.get("iid").to_string();
+    let cdid = env.device.get("cdid").to_string();
+    let device_id = env.device.get("device_id").to_string();
+    let device_ttreq = env.device.ttreq().map(|t| {
+        let pref: String = t.chars().take(12).collect();
+        format!("{pref}…len={}", t.len())
+    });
+
+    let snap = serde_json::json!({
+        "tag": label,
+        "origin": origin,
+        "pathname": pathname,
+        "path_in_url": path_only,
+        "url_len": url.len(),
+        "query": query_map,
+        "headers": headers,
+        "body_gzip_hex": body_sha,
+        "body_gzip_len": body_len,
+        "body_ungzip_utf8": body_raw_preview,
+        "device": {
+            "iid": iid,
+            "cdid": cdid,
+            "device_id": device_id,
+            "ttreq": device_ttreq,
+            "brand": env.device.get("device_brand"),
+            "type": env.device.get("device_type"),
+        },
+        "env": {
+            "has_cookie": env.cookie.as_ref().map(|c| !c.is_empty()).unwrap_or(false),
+            "has_x_tt_token": env.x_tt_token.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+            "x_tt_token_len": env.x_tt_token.as_ref().map(|t| t.len()).unwrap_or(0),
+        },
+        "resp_bytes": resp_len,
+    });
+
+    let file = dir.join(format!("{seq}-{label}.json"));
+    if let Ok(s) = serde_json::to_string_pretty(&snap) {
+        let _ = std::fs::write(&file, s);
+        // also append one-line index
+        let idx = dir.join("INDEX.txt");
+        let line = format!(
+            "{seq}\t{label}\tiid={}\tresp_bytes={resp_len}\tfile={}\n",
+            env.device.get("iid"),
+            file.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+        );
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(idx)
+            .ok();
+        if let Some(ref mut f) = f {
+            use std::io::Write;
+            let _ = f.write_all(line.as_bytes());
+        }
+        log::info!("[DumpReq] wrote {}", file.display());
+    }
+}
+
 /// 取流轻请求：签名五件套必带（缺失被服务端静默丢弃），空响应原样返回
 /// 空 `Vec`（「不发货」交调用方回落，不重试）。
 pub async fn api_call_model_light(
@@ -209,6 +356,13 @@ pub async fn api_call_model_light(
     for (k, v) in &signed.headers {
         req = req.header(k.as_str(), v.as_str());
     }
+    // clone body for dump after move into req
+    let body_for_dump = signed.body.clone();
+    let signed_for_dump = hongguo_signer::ticket::SignedRequest {
+        url: signed.url.clone(),
+        headers: signed.headers.clone(),
+        body: body_for_dump,
+    };
     let resp = req
         .body(signed.body.unwrap_or_default())
         .send()
@@ -217,10 +371,13 @@ pub async fn api_call_model_light(
     if !resp.status().is_success() {
         return Err(AppError::Network(format!("HTTP {}", resp.status())));
     }
-    resp.bytes()
+    let bytes = resp
+        .bytes()
         .await
         .map(|b| b.to_vec())
-        .map_err(|e| AppError::Network(e.to_string()))
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    dump_signed_play_req("model_light", origin, pathname, &signed_for_dump, env, bytes.len());
+    Ok(bytes)
 }
 
 /// [`api_call_full`] 的带额外头版本。

@@ -707,15 +707,18 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
     }
 }
 
-/// 空响应是否还要注册。冷却、限制窗口、只复用、**已发货**都不自动换档。
-/// 已发货档案的空包多为单 vid 一锤子毒化，换档会烧掉仍能播其它集的可信身份。
+/// 空响应是否还要注册。冷却、限制窗口、只复用、**本进程已取流成功**都不自动换档。
+///
+/// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
+/// PLAY_OK 后，把同一 DeviceProfile（iid/cdid/ttreq/Cookie/body 一致）迁到二次进程
+/// 再取流会得到 0 字节空包——跨进程「已发货」是假阳性，压制换档会让日常永久空响应。
 pub fn empty_stream_should_register(
     in_cooldown: bool,
     blocked: bool,
     reuse: bool,
-    play_shipped: bool,
+    play_ok_this_process: bool,
 ) -> bool {
-    !in_cooldown && !blocked && !reuse && !play_shipped
+    !in_cooldown && !blocked && !reuse && !play_ok_this_process
 }
 
 /// 备份、现役、元数据同一事务。提交成功后才替换内存。
@@ -818,10 +821,14 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
 }
 
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
+/// 本进程是否已成功拿到过播放地址。跨进程「已发货」元数据不可信：报文对照证明
+/// 同 DeviceProfile 迁到二次进程后即使请求字段一致仍空包，不能用库内 play_shipped 抑制换档。
+static PLAY_OK_THIS_PROCESS: AtomicBool = AtomicBool::new(false);
 
 /// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
 pub fn note_play_address(_state: &AppState) {
     STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+    PLAY_OK_THIS_PROCESS.store(true, Ordering::Release);
 }
 
 /// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
@@ -887,21 +894,21 @@ pub async fn recover_after_empty_stream(state: &AppState, vid: &str) -> bool {
         .last_register_attempt_ms
         .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
     let blocked = registration_blocked(&meta, now);
-    if !empty_stream_should_register(in_cooldown, blocked, false, meta.play_shipped) {
+    let play_ok_this_process = PLAY_OK_THIS_PROCESS.load(Ordering::Acquire);
+    if !empty_stream_should_register(in_cooldown, blocked, false, play_ok_this_process) {
         if blocked {
             log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
         }
-        if meta.play_shipped {
+        if play_ok_this_process {
+            // 本进程已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
             log::warn!(
-                "[Device] 取流空响应 vid={vid}，现役已发货，不自动换档（只补预热）"
+                "[Device] 取流空响应 vid={vid}，本进程已取流成功，不自动换档"
             );
-        } else {
-            log::warn!("[Device] 取流空响应 vid={vid}，冷却中只补预热");
+            return false;
         }
-        let n = hongguo_api::warmup::run(&state.api_env()).await;
-        log::info!("[Device] 空响应恢复预热完成（{n} 条）");
-        return true;
+        log::warn!("[Device] 取流空响应 vid={vid}，冷却中不换档");
+        return false;
     }
     log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
     // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
@@ -950,7 +957,11 @@ mod tests {
         assert!(!empty_stream_should_register(false, false, true, false));
         assert!(
             !empty_stream_should_register(false, false, false, true),
-            "已发货不自动换档"
+            "本进程已取流成功不自动换档"
+        );
+        assert!(
+            empty_stream_should_register(false, false, false, false),
+            "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
         );
     }
 
