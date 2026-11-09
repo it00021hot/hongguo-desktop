@@ -285,6 +285,7 @@ async fn prepare_online_inner(
         &item.vid,
         "av-spike-a",
         Some(definition_a),
+        None,
     )
     .await
     .map_err(|error| format!("prepare A 失败: {error}"))?;
@@ -309,7 +310,7 @@ async fn prepare_online_inner(
         None => {
             log::warn!("[AvSpike] prefetch B 未就绪，回落 prepare（A 已标记预取保活）");
             hongguo_stream::cache().mark_prefetch(&item.vid, prepared_a.definition);
-            hongguo_service::play_service::online::prepare(state, &vid_b, "av-spike-b", None)
+            hongguo_service::play_service::online::prepare(state, &vid_b, "av-spike-b", None, None)
                 .await
                 .map_err(|error| format!("prepare B 失败: {error}"))?
                 .definition

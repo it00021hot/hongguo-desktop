@@ -137,8 +137,21 @@ impl super::HomeView {
                 )
             }
             None => {
-                let prepared =
-                    prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
+                // 与 Tauri resolve_play 同口径：起播前批量邻集；换档后 prepare 内再跑一次。
+                hongguo_service::play_service::local::warm_episode_window(
+                    &state,
+                    &item.series_id,
+                    ep.vid_index,
+                )
+                .await;
+                let prepared = prepare(
+                    &state,
+                    &ep.vid,
+                    &progress_key,
+                    preferred_definition,
+                    Some((item.series_id.as_str(), ep.vid_index)),
+                )
+                .await?;
                 // 与 Tauri `play_service::local::resolve_play` 共用同一调度：
                 // 在线起播后把本剧后续 1..=prefetch_episodes 集同时排进流
                 // 预取与（无 HEVC 时的）兼容预转。GPUI 自己起播曾漏掉这步，

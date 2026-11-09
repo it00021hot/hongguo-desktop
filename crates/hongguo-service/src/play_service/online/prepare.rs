@@ -83,6 +83,8 @@ pub async fn prepare(
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
+    // 同剧集窗：换档成功后必须在新身份上重跑批量，否则邻集空包。
+    series_window: Option<(&str, u32)>,
 ) -> AppResult<Prepared> {
     let vid = vid.trim();
     if vid.is_empty() {
@@ -136,6 +138,19 @@ pub async fn prepare(
             log::warn!("[Online] {vid} 取流空响应：{msg}");
             if !crate::device::recover_after_empty_stream(state, vid).await {
                 return Err(AppError::EmptyResponse(msg));
+            }
+            // 换档前的 warm 打在旧身份上（常 0 命中）。新身份上必须先批量邻集，
+            // 再取当前集——先单集发货后再打邻集，服务端对其它 vid 返回空包。
+            if let Some((series_id, vid_index)) = series_window {
+                log::info!(
+                    "[Online] 换档后重跑集窗批量 series={series_id} idx={vid_index}（避免邻集空包）"
+                );
+                crate::play_service::local::warm_episode_window(state, series_id, vid_index)
+                    .await;
+            } else {
+                log::warn!(
+                    "[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）"
+                );
             }
             fetch_with_registry(state, vid, progress_key, definition, cap).await?
         }
