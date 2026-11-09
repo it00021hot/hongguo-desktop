@@ -34,7 +34,11 @@ pub fn build_client(config: &hongguo_common::model::ProxyConfig) -> AppResult<re
     static CLIENTS: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>,
     > = std::sync::OnceLock::new();
-    let key = config.resolved().unwrap_or_default();
+    let key = if hongguo_common::offline_qa::enabled() {
+        "offline-qa".to_string()
+    } else {
+        config.resolved().unwrap_or_default()
+    };
     let clients = CLIENTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = clients
         .lock()
@@ -60,14 +64,19 @@ fn build_client_uncached(
     let mut builder =
         builder.use_preconfigured_tls(hongguo_common::utils::tls::webpki_tls_config()?);
 
-    match config.resolved() {
-        Some(url) => {
-            let proxy =
-                Proxy::all(&url).map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
-            builder = builder.proxy(proxy);
-        }
-        None => {
-            builder = builder.no_proxy();
+    if hongguo_common::offline_qa::enabled() {
+        // 配置里的代理和默认重定向都能把 loopback 请求带到外部主机。开关打开时这两条都不走。
+        builder = builder.no_proxy().redirect(offline_redirect_policy());
+    } else {
+        match config.resolved() {
+            Some(url) => {
+                let proxy = Proxy::all(&url)
+                    .map_err(|e| AppError::Network(format!("代理地址无效: {e}")))?;
+                builder = builder.proxy(proxy);
+            }
+            None => {
+                builder = builder.no_proxy();
+            }
         }
     }
 
@@ -148,6 +157,153 @@ pub async fn api_call_reading_once_allow_empty(
 
 const STORE_REGION: &str = "cn-gd";
 
+
+/// 取流请求级快照（HG_DUMP_REQ_DIR=目录时写入）。用于同进程 PLAY_OK vs 二次进程空的报文对照。
+/// 不落 body 明文（gzip 后只记 sha256/len）；query/头字段全量可 diff；Cookie 保留键与 ttreq 有无，ttreq 值截断。
+fn dump_signed_play_req(
+    tag: &str,
+    origin: &str,
+    pathname: &str,
+    signed: &hongguo_signer::ticket::SignedRequest,
+    env: &ApiEnv,
+    resp_len: usize,
+) {
+    let Some(dir) = std::env::var_os("HG_DUMP_REQ_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let label = std::env::var("HG_DUMP_REQ_TAG").unwrap_or_else(|_| tag.to_string());
+
+    let url = &signed.url;
+    let (path_part, query_part) = match url.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (url.clone(), String::new()),
+    };
+    // path 可能含 origin
+    let path_only = path_part
+        .strip_prefix(origin)
+        .unwrap_or(pathname)
+        .to_string();
+
+    let mut query_map = serde_json::Map::new();
+    for pair in query_part.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        query_map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+    }
+
+    let mut headers = serde_json::Map::new();
+    let mut cookie_keys: Vec<String> = Vec::new();
+    let mut cookie_has_ttreq = false;
+    let mut cookie_ttreq_prefix = String::new();
+    let mut cookie_has_install_id = false;
+    for (k, v) in &signed.headers {
+        let lk = k.to_ascii_lowercase();
+        if lk == "cookie" {
+            for part in v.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+                if let Some((ck, cv)) = part.split_once('=') {
+                    cookie_keys.push(ck.to_string());
+                    if ck == "ttreq" {
+                        cookie_has_ttreq = true;
+                        cookie_ttreq_prefix = cv.chars().take(12).collect::<String>() + "…";
+                    }
+                    if ck == "install_id" || ck == "iid" {
+                        cookie_has_install_id = true;
+                    }
+                }
+            }
+            headers.insert(
+                k.clone(),
+                serde_json::json!({
+                    "keys": cookie_keys,
+                    "has_ttreq": cookie_has_ttreq,
+                    "ttreq_prefix": cookie_ttreq_prefix,
+                    "has_install_id": cookie_has_install_id,
+                    "raw_len": v.len(),
+                }),
+            );
+        } else {
+            headers.insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+    }
+
+    let body_len = signed.body.as_ref().map(|b| b.len()).unwrap_or(0);
+    let body_sha = signed
+        .body
+        .as_ref()
+        .map(|b| b.iter().map(|x| format!("{x:02x}")).collect::<String>())
+        .unwrap_or_default();
+    let body_raw_preview = signed.body.as_ref().and_then(|gz| {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut d = GzDecoder::new(gz.as_slice());
+        let mut raw = Vec::new();
+        d.read_to_end(&mut raw).ok()?;
+        Some(String::from_utf8_lossy(&raw).into_owned())
+    });
+
+    let iid = env.device.get("iid").to_string();
+    let cdid = env.device.get("cdid").to_string();
+    let device_id = env.device.get("device_id").to_string();
+    let device_ttreq = env.device.ttreq().map(|t| {
+        let pref: String = t.chars().take(12).collect();
+        format!("{pref}…len={}", t.len())
+    });
+
+    let snap = serde_json::json!({
+        "tag": label,
+        "origin": origin,
+        "pathname": pathname,
+        "path_in_url": path_only,
+        "url_len": url.len(),
+        "query": query_map,
+        "headers": headers,
+        "body_gzip_hex": body_sha,
+        "body_gzip_len": body_len,
+        "body_ungzip_utf8": body_raw_preview,
+        "device": {
+            "iid": iid,
+            "cdid": cdid,
+            "device_id": device_id,
+            "ttreq": device_ttreq,
+            "brand": env.device.get("device_brand"),
+            "type": env.device.get("device_type"),
+        },
+        "env": {
+            "has_cookie": env.cookie.as_ref().map(|c| !c.is_empty()).unwrap_or(false),
+            "has_x_tt_token": env.x_tt_token.as_ref().map(|t| !t.is_empty()).unwrap_or(false),
+            "x_tt_token_len": env.x_tt_token.as_ref().map(|t| t.len()).unwrap_or(0),
+        },
+        "resp_bytes": resp_len,
+    });
+
+    let file = dir.join(format!("{seq}-{label}.json"));
+    if let Ok(s) = serde_json::to_string_pretty(&snap) {
+        let _ = std::fs::write(&file, s);
+        // also append one-line index
+        let idx = dir.join("INDEX.txt");
+        let line = format!(
+            "{seq}\t{label}\tiid={}\tresp_bytes={resp_len}\tfile={}\n",
+            env.device.get("iid"),
+            file.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+        );
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(idx)
+            .ok();
+        if let Some(ref mut f) = f {
+            use std::io::Write;
+            let _ = f.write_all(line.as_bytes());
+        }
+        log::info!("[DumpReq] wrote {}", file.display());
+    }
+}
+
 /// 取流轻请求：签名五件套必带（缺失被服务端静默丢弃），空响应原样返回
 /// 空 `Vec`（「不发货」交调用方回落，不重试）。
 pub async fn api_call_model_light(
@@ -193,11 +349,20 @@ pub async fn api_call_model_light(
         &extra,
     );
 
+    refuse_external(origin)?;
+    refuse_external(&signed.url)?;
     let client = build_client(&env.proxy)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
         req = req.header(k.as_str(), v.as_str());
     }
+    // clone body for dump after move into req
+    let body_for_dump = signed.body.clone();
+    let signed_for_dump = hongguo_signer::ticket::SignedRequest {
+        url: signed.url.clone(),
+        headers: signed.headers.clone(),
+        body: body_for_dump,
+    };
     let resp = req
         .body(signed.body.unwrap_or_default())
         .send()
@@ -206,10 +371,13 @@ pub async fn api_call_model_light(
     if !resp.status().is_success() {
         return Err(AppError::Network(format!("HTTP {}", resp.status())));
     }
-    resp.bytes()
+    let bytes = resp
+        .bytes()
         .await
         .map(|b| b.to_vec())
-        .map_err(|e| AppError::Network(e.to_string()))
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    dump_signed_play_req("model_light", origin, pathname, &signed_for_dump, env, bytes.len());
+    Ok(bytes)
 }
 
 /// [`api_call_full`] 的带额外头版本。
@@ -367,6 +535,7 @@ pub async fn api_call_full_response(
 /// 请求视频 CDN 直链（下载与在线取流共用）：裸 UA 优先，403 补官网
 /// Referer 重试一次。
 pub async fn get_video_stream(client: &reqwest::Client, url: &str) -> AppResult<reqwest::Response> {
+    refuse_external(url)?;
     let send = |referer: bool| {
         let mut req = client
             .get(url)
@@ -429,6 +598,7 @@ const VIDEO_RANGE_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `Range: bytes=0-0` 探测直链总长；CDN 不支持 Range（回 200）即 Err。
 pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u64> {
+    refuse_external(url)?;
     let resp = client
         .get(url)
         .timeout(VIDEO_RANGE_PROBE_TIMEOUT)
@@ -459,12 +629,36 @@ pub async fn probe_video_len(client: &reqwest::Client, url: &str) -> AppResult<u
 
 /// 取直链的一段密文（失败重试 3 次；CDN 忽略 Range 回 200 时按字节
 /// 切片自愈；403 补 Referer 重试一次）。
+fn offline_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
+            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+pub fn refuse_external_send(url: &str) -> AppResult<()> {
+    refuse_external(url)
+}
+
+fn refuse_external(url: &str) -> AppResult<()> {
+    if hongguo_common::offline_qa::external_url_forbidden(url) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn get_video_range(
     client: &reqwest::Client,
     url: &str,
     start: u64,
     end: u64,
 ) -> AppResult<Vec<u8>> {
+    refuse_external(url)?;
     let mut last_err = None;
     for attempt in 0..STREAM_RETRY_ATTEMPTS {
         match get_video_range_once(client, url, start, end).await {
@@ -616,6 +810,11 @@ async fn send_once(
     extra_headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<ApiCallResponse> {
+    if hongguo_common::offline_qa::external_url_forbidden(origin) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
     let mut extra: Vec<(String, String)> = extra_headers.to_vec();
     if let Some(c) = &env.cookie
         && !c.is_empty()
@@ -647,6 +846,11 @@ async fn send_once(
         ),
     };
 
+    if hongguo_common::offline_qa::external_url_forbidden(&signed.url) {
+        return Err(AppError::Network(
+            "离线 QA 拒绝外部请求，且不改变注册阻断".into(),
+        ));
+    }
     let mut req = match &signed.body {
         Some(bytes) => client.post(&signed.url).body(bytes.clone()),
         None => client.get(&signed.url),
@@ -746,6 +950,25 @@ mod tests {
     fn get_signature_has_no_body() {
         let signed = sign_get("/x/v1/", &ApiEnv::anonymous(ProxyConfig::default()).device);
         assert!(signed.body.is_none(), "GET 签名不应带 body");
+    }
+
+    #[tokio::test]
+    async fn offline_userinfo_host_returns_before_send() {
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let err = get_video_stream(&client, "http://localhost:80@example.com/a")
+            .await
+            .expect_err("userinfo 里的 localhost 不是主机");
+        assert!(err.to_string().contains("离线 QA"));
+        let err = get_video_range(&client, "http://127.0.0.1:80@example.com/a", 0, 1)
+            .await
+            .expect_err("userinfo 里的 127.0.0.1 不是主机");
+        assert!(err.to_string().contains("离线 QA"));
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
     }
 
     #[test]

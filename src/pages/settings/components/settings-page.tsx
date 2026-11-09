@@ -36,6 +36,8 @@ import { AccountCard } from './account-card';
 import { ShortcutCard } from './shortcut-card';
 import { BossKeyCard, resolveBossKeyConflicts } from './boss-key-card';
 import { ToggleRow } from './toggle-row';
+import { offlineQa } from '@/utils/offline-qa';
+import { OfflineQaLocalPlayPanel } from '@/features/offline-qa/local-play-panel';
 
 /** ffmpeg 安装路径随平台：Windows 走 winget + gyan 构建，macOS 走
  *  Homebrew + 官方下载页（官方页列有各 mac 构建源）。 */
@@ -138,6 +140,8 @@ export function SettingsPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       {/* 账户（短信登录） */}
       <AccountCard account={current.account ?? null} onChanged={() => void refetchSettings()} />
+
+      {offlineQa() ? <OfflineQaLocalPlayPanel /> : null}
 
       {/* 目录 */}
       <Card>

@@ -155,6 +155,14 @@ fn compat_phase_serializes_lowercase() {
         serde_json::to_string(&CompatPhase::Ready).unwrap(),
         "\"ready\""
     );
+    assert_eq!(
+        serde_json::to_string(&CompatPhase::Completed).unwrap(),
+        "\"completed\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CompatPhase::Failed).unwrap(),
+        "\"failed\""
+    );
 }
 
 /// 兜底转码的返回形状（前端 `compatPlayResultSchema` 镜像）。
@@ -165,6 +173,7 @@ fn compat_play_result_shape() {
         cached: true,
         backend: "VT".into(),
         elapsed_ms: 0,
+        progressive: false,
     })
     .unwrap();
     assert_eq!(
@@ -174,6 +183,7 @@ fn compat_play_result_shape() {
             "cached": true,
             "backend": "VT",
             "elapsedMs": 0,
+            "progressive": false,
         })
     );
 }

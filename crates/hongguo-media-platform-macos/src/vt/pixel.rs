@@ -25,6 +25,43 @@ impl Clone for Pb {
 }
 
 impl Pb {
+    /// 把紧密 8-bit I420 写进新的 NV12 `CVPixelBuffer`。
+    pub(super) unsafe fn from_i420(
+        y: &[u8],
+        u: &[u8],
+        v: &[u8],
+        width: usize,
+        height: usize,
+    ) -> AppResult<Self> {
+        if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+            return Err(AppError::Media(format!("帧尺寸无法编码: {width}x{height}")));
+        }
+        let chroma = width / 2 * height / 2;
+        if y.len() < width * height || u.len() < chroma || v.len() < chroma {
+            return Err(AppError::Media("I420 平面长度不足".into()));
+        }
+        unsafe {
+            let mut raw: ffi::CVPixelBufferRef = std::ptr::null_mut();
+            let attrs = iosurface_attrs();
+            let status = ffi::CVPixelBufferCreate(
+                ffi::kCFAllocatorDefault,
+                width,
+                height,
+                ffi::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                attrs,
+                &mut raw,
+            );
+            ffi::CFRelease(attrs as ffi::CFTypeRef);
+            os(status, "建 NV12 缓冲")?;
+            let pb = Pb(raw);
+            os(ffi::CVPixelBufferLockBaseAddress(pb.0, 0), "锁 NV12 缓冲")?;
+            let copied = copy_i420(&pb, y, u, v, width, height);
+            ffi::CVPixelBufferUnlockBaseAddress(pb.0, 0);
+            copied?;
+            Ok(pb)
+        }
+    }
+
     pub(super) fn dims(&self) -> (usize, usize) {
         unsafe {
             (
@@ -33,6 +70,63 @@ impl Pb {
             )
         }
     }
+}
+
+unsafe fn copy_i420(
+    pb: &Pb,
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    width: usize,
+    height: usize,
+) -> AppResult<()> {
+    unsafe {
+        if ffi::CVPixelBufferGetPlaneCount(pb.0) < 2 {
+            return Err(AppError::Media("NV12 缓冲不是双平面".into()));
+        }
+        copy_plane(pb, 0, y, width, height, 1)?;
+        let uv = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, 1) as *mut u8;
+        if uv.is_null() {
+            return Err(AppError::Media("NV12 色度平面为空".into()));
+        }
+        let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, 1);
+        let cw = width / 2;
+        let ch = height / 2;
+        for row in 0..ch {
+            let dst = uv.add(row * stride);
+            for col in 0..cw {
+                *dst.add(col * 2) = u[row * cw + col];
+                *dst.add(col * 2 + 1) = v[row * cw + col];
+            }
+        }
+    }
+    Ok(())
+}
+
+unsafe fn copy_plane(
+    pb: &Pb,
+    plane: usize,
+    src: &[u8],
+    width: usize,
+    height: usize,
+    bytes_per_sample: usize,
+) -> AppResult<()> {
+    unsafe {
+        let base = ffi::CVPixelBufferGetBaseAddressOfPlane(pb.0, plane) as *mut u8;
+        if base.is_null() {
+            return Err(AppError::Media("NV12 亮度平面为空".into()));
+        }
+        let stride = ffi::CVPixelBufferGetBytesPerRowOfPlane(pb.0, plane);
+        let row_bytes = width * bytes_per_sample;
+        for row in 0..height {
+            std::ptr::copy_nonoverlapping(
+                src.as_ptr().add(row * row_bytes),
+                base.add(row * stride),
+                row_bytes,
+            );
+        }
+    }
+    Ok(())
 }
 
 impl Drop for Pb {

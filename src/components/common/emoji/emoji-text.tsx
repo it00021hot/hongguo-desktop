@@ -1,5 +1,6 @@
 /** 表情文本渲染件：把 `[名字]` 表情代码渲染成内嵌表情图（评论区展示用）。 */
 import { parseEmojiSegments } from '@/utils/danmaku-emoji';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 /** 评论/回复文本：`[名字]` 表情代码渲染成图，
  *  其余文本原样保留。 */
@@ -11,7 +12,7 @@ export function EmojiText({ text }: { text: string }) {
           return (
             <img
               key={i}
-              src={seg.url}
+              src={pageImageSrc(seg.url)}
               alt={seg.value}
               title={seg.value}
               draggable={false}

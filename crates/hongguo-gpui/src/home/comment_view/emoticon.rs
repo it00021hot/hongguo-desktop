@@ -484,7 +484,26 @@ impl HomeView {
 /// 原生动画；静图单帧。动图帧数封顶 [`EMOTICON_MAX_FRAMES`]（预warm几十个
 /// 表情 × 每个几十帧的位图内存必须有个上界）。
 async fn fetch_emoticon_image(url: String) -> Option<DecodedEmoticon> {
-    let response = reqwest::get(&url).await.ok()?;
+    if hongguo_common::offline_qa::external_url_forbidden(&url) {
+        log::info!("[Home] 离线 QA 跳过外部表情图");
+        return None;
+    }
+    let response = if hongguo_common::offline_qa::enabled() {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
+                    attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+                } else {
+                    attempt.follow()
+                }
+            }))
+            .build()
+            .ok()?;
+        client.get(&url).send().await.ok()?
+    } else {
+        reqwest::get(&url).await.ok()?
+    };
     let bytes = response.bytes().await.ok()?.to_vec();
     let decoded = if bytes.starts_with(b"GIF8") {
         decode_gif(&bytes).map(DecodedEmoticon::Animated)

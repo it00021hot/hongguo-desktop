@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { wholeFileSrc } from './growing-fallback';
 import { toast } from 'sonner';
 import { useCompatPlayback } from '@/service/queries';
 import { useEvent } from '@/service/tauri/events';
@@ -30,6 +31,8 @@ export function useTranscodeFallback(params: {
   hevcPlayable: boolean | undefined;
   /** Android：无扩展安装路径，软解判假即强制兼容 */
   android: boolean;
+  /** 后端标明本集必须转兼容（bytevc2 等） */
+  needsCompat?: boolean;
   /**
    * 解码失败的裁决入口（轮询命中后调用）：父层据此决定直接兜底转码，
    * 还是先弹「装扩展 vs 转兼容」的主卡（无 HEVC 机器）。
@@ -49,14 +52,21 @@ export function useTranscodeFallback(params: {
     currentSeries,
     hevcPlayable,
     android,
+    needsCompat,
     onDecodeFailure,
   } = params;
   const compatPlay = useCompatPlayback();
   /** mutate 引用恒定；整个 mutation 对象每渲染都是新的，进依赖会重置探测计时 */
   const mutateCompat = compatPlay.mutate;
 
-  const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
+  const [compatResult, setCompatResult] = useState<{
+    key: string;
+    url: string;
+    progressive: boolean;
+  } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
+  const [waitingFor, setWaitingFor] = useState<string | null>(null);
+  const waitingWholeFile = waitingFor === episodeKey;
   /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
   const compatStarted = useRef(false);
 
@@ -64,10 +74,30 @@ export function useTranscodeFallback(params: {
     hevcPlayable,
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
+    needsCompat,
   });
 
   /** 兜底产物地址，只认当前这一集 */
   const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
+  const progressive = compatResult?.key === episodeKey && compatResult.progressive;
+  const producer =
+    compatProgress?.phase === 'failed'
+      ? ('failed' as const)
+      : compatProgress?.phase === 'completed'
+        ? ('completed' as const)
+        : progressive
+          ? ('running' as const)
+          : ('completed' as const);
+  // Completed 事件本身也算「可以接整片」：不能先清 waiting 再指望 wholeFileSrc。
+  const waitingForWhole =
+    waitingWholeFile || compatProgress?.phase === 'completed';
+  const wholeSrc = wholeFileSrc({
+    episodeKey,
+    eventKey: compatProgress?.key ?? compatResult?.key ?? null,
+    producer,
+    completeUrl: compatSrc,
+    waiting: waitingForWhole,
+  });
   /** 兜底进度，只认当前这一集 */
   const compat = compatProgress?.key === episodeKey ? compatProgress : null;
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
@@ -85,9 +115,28 @@ export function useTranscodeFallback(params: {
 
   useEvent(
     EVENTS.compatPlayProgress,
-    useCallback((p: CompatProgress) => {
-      setCompatProgress(p);
-    }, []),
+    useCallback(
+      (p: CompatProgress) => {
+        if (p.key !== episodeKey) return;
+        if (p.phase === 'completed') {
+          setCompatResult((prev) =>
+            prev && prev.key === episodeKey ? { ...prev, progressive: false } : prev,
+          );
+          // 保留 completed 相位，让 wholeFileSrc 在 MSE 回退等待后拿到整片地址
+          setCompatProgress({ key: episodeKey, percent: 100, phase: 'completed' });
+          return;
+        }
+        if (p.phase === 'failed') {
+          setCompatResult((prev) => (prev && prev.key === episodeKey ? null : prev));
+          setWaitingFor(null);
+          setCompatProgress(null);
+          return;
+        }
+        if (p.phase === 'ready' && p.percent >= 100) return;
+        setCompatProgress(p);
+      },
+      [episodeKey],
+    ),
   );
 
   const startCompat = useCallback(() => {
@@ -101,7 +150,8 @@ export function useTranscodeFallback(params: {
         onSuccess: (r) => {
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setCompatResult({ key: episodeKey, url: r.url });
+          setCompatResult({ key: episodeKey, url: r.url, progressive: r.progressive });
+          if (r.progressive) return;
           setCompatProgress(null);
           // 主动兼容 + 缓存命中是预期路径（软解机连播），不再每集弹 toast 打扰
           if (r.cached) {
@@ -139,6 +189,10 @@ export function useTranscodeFallback(params: {
     compatStarted.current = false;
   }, [episodeKey]);
 
+  const noteGrowingUnavailable = useCallback(() => {
+    setWaitingFor(episodeKey);
+  }, [episodeKey]);
+
   // 已知不可解：起播前主动转兼容（Android 软解 / 本会话已选转兼容），省掉首集黑屏等待
   useEffect(() => {
     if (!forceCompat || !seriesId || !vidIndex) return;
@@ -161,5 +215,16 @@ export function useTranscodeFallback(params: {
     return () => clearInterval(timer);
   }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
 
-  return { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat };
+  const showCompleteSrc = wholeSrc != null || (!progressive && !waitingWholeFile);
+  return {
+    compatSrc,
+    compat,
+    playSrc,
+    streamKey,
+    startCompat,
+    forceCompat,
+    progressive,
+    showCompleteSrc,
+    noteGrowingUnavailable,
+  };
 }

@@ -11,9 +11,11 @@ mod ffi;
 mod pipeline;
 mod pixel;
 mod probe;
+mod yuv;
 
 pub use pipeline::transcode_h264;
 pub use probe::{clear_probe_cache, encoder_available, h264_hw_encoder_available};
+pub use yuv::{YuvEncoder, with_encoder_thread};
 
 #[cfg(test)]
 mod tests {

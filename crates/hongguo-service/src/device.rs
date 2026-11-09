@@ -3,13 +3,17 @@
 //! 注册链路走 TT-Encrypt V5（见 hongguo-api::register）：[`ensure_registered`] 把匿名/死档案
 //! 自动换档为注册产物——播放取流需要服务端「认识」的设备，匿名不可播。
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use hongguo_api::client::ApiEnv;
-use hongguo_api::register::{RegisterResult, register_device};
+use hongguo_api::register::{
+    RegisterAttemptError, RegisterBlock, RegisterMaterial, RegisterResult, load_reuse_profile,
+    register_retrying, reuse_json_path,
+};
 use hongguo_common::utils::time::now_ms;
 use hongguo_signer::device::{DeviceProfile, align_app_version, anonymous_profile, fresh_cdid};
 use hongguo_store::Store;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::app_state::AppState;
 use crate::events::ServiceEvent;
@@ -17,6 +21,9 @@ use crate::events::ServiceEvent;
 /// 设备注册换档的前端事件名（`ServiceEvent::DeviceRegistered` 对外名字，
 /// 壳转发与前端 `EVENTS.deviceRegistered` 共用；载荷 = 新 iid）。
 pub const DEVICE_REGISTERED: &str = "device-registered";
+
+/// 冷启动预热完成前挡住起播。壳在拉起 [`ensure_registered`] 之前调用。
+pub use crate::cold_start::arm as arm_cold_start;
 
 /// 已被淘汰、必须从库里重铺的档案 install_id（含全部静态兜底档案——共享身份是风控暴露面）。
 /// 今后每次淘汰档案，旧 iid 必须追加进名单：名单兜「已知的死」，缺补会让老用户再次集体阵亡。
@@ -32,33 +39,281 @@ pub struct BootstrapMeta {
     /// 最近一次换档前的旧 iid。
     #[serde(default)]
     pub previous_iid: Option<String>,
-    /// 上次注册尝试时间（ms epoch；诊断记录，不参与任何判定）。
+    /// 上次注册尝试时间（ms epoch）。空响应换档用它做冷却。
     #[serde(default)]
     pub last_register_attempt_ms: Option<i64>,
+    /// 曾经解复用到至少一个明文视频样本。不是播放地址就绪，也不是首帧已上屏。
+    #[serde(default)]
+    pub play_shipped: bool,
+    /// 注册限制的绝对截止时间（毫秒）。到点之前重启也不注册。
+    #[serde(default)]
+    pub register_block_until_ms: Option<i64>,
+    /// 拒绝响应没有可解析的 Retry-After。不自动恢复，重启也不清掉。
+    #[serde(default)]
+    pub register_block_manual: bool,
+    /// 限制记录的单调序号。主库与旁文件冲突时序号大的生效，相同则主库优先。
+    #[serde(default)]
+    pub register_block_seq: u64,
+    /// 读到了限制位置但内容不可用。只在内存里置位，解析失败不能把它当成 false。
+    #[serde(default)]
+    pub register_block_unknown: bool,
     /// 上次注册失败原因（成功清空；诊断记录，不参与任何判定）。
     #[serde(default)]
     pub last_register_error: Option<String>,
-    /// 现役档案的注册代际（`REGISTER_VERSION_CODE_STR`）。缺失或不符 = 档案出生于旧注册器
-    ///（被服务端标记、取流不发货），启动时按全新安装语义一次性迁移到当前代际。
+    /// 现役档案的注册代际（[`hongguo_api::register::REGISTER_REGIME`]）。
+    /// 缺失或不符 = 档案出生于旧注册器（被服务端标记、取流不发货），
+    /// 启动时按全新安装语义一次性迁移到当前代际。
     #[serde(default)]
     pub register_regime: String,
 }
 
+static BLOCK_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static FAIL_SIDECAR_WRITES: AtomicU32 = AtomicU32::new(0);
+static FAIL_SIDECAR_DELETES: AtomicU32 = AtomicU32::new(0);
+static FAIL_JOURNAL_RENAMES: AtomicU32 = AtomicU32::new(0);
+
+enum BlockSource {
+    Absent,
+    Present(BootstrapMeta),
+    Unreadable,
+}
+
 pub fn read_meta(store: &Store) -> BootstrapMeta {
-    store
-        .device_meta_get()
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    load_meta_locked(store)
+}
+
+fn load_meta_locked(store: &Store) -> BootstrapMeta {
+    let db = load_db_block(store);
+    let side = load_sidecar_block(store);
+    let mut meta = merge_block_sources(db, side);
+    let no_record = matches!(
+        (load_db_block(store), load_sidecar_block(store)),
+        (BlockSource::Absent, BlockSource::Absent)
+    );
+    if no_record
+        || matches!(marker_state(store), BlockSource::Unreadable)
+        || matches!(journal_state(store), BlockSource::Unreadable)
+        || matches!(load_db_block(store), BlockSource::Unreadable)
+        || matches!(load_sidecar_block(store), BlockSource::Unreadable)
+    {
+        // 没有可读的持久记录，或记录损坏：无自动注册资格。
+        meta.register_block_unknown = true;
+    }
+    meta
+}
+
+fn load_db_block(store: &Store) -> BlockSource {
+    match store.device_meta_get() {
+        Err(_) => BlockSource::Unreadable,
+        Ok(None) => BlockSource::Absent,
+        Ok(Some(value)) => match serde_json::from_value::<BootstrapMeta>(value) {
+            Ok(meta) => BlockSource::Present(meta),
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn load_sidecar_block(store: &Store) -> BlockSource {
+    let Some(path) = block_sidecar(store) else {
+        return BlockSource::Absent;
+    };
+    match hongguo_store::paths::qa_read_to_string(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
+            Ok(meta) => BlockSource::Present(meta),
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn merge_block_sources(db: BlockSource, side: BlockSource) -> BootstrapMeta {
+    if matches!(db, BlockSource::Unreadable) || matches!(side, BlockSource::Unreadable) {
+        let mut meta = match (db, side) {
+            (BlockSource::Present(meta), _) | (_, BlockSource::Present(meta)) => meta,
+            _ => BootstrapMeta::default(),
+        };
+        meta.register_block_unknown = true;
+        return meta;
+    }
+    match (db, side) {
+        (BlockSource::Present(db), BlockSource::Present(side)) => {
+            if side.register_block_seq > db.register_block_seq {
+                side
+            } else {
+                db
+            }
+        }
+        (BlockSource::Present(meta), BlockSource::Absent)
+        | (BlockSource::Absent, BlockSource::Present(meta)) => meta,
+        _ => BootstrapMeta::default(),
+    }
+}
+
+fn block_sidecar(store: &Store) -> Option<std::path::PathBuf> {
+    let path = store.db_path();
+    if path == std::path::Path::new(":memory:") {
+        return None;
+    }
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".register-block");
+    Some(std::path::PathBuf::from(name))
+}
+
+fn write_block_sidecar(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    if FAIL_SIDECAR_WRITES.load(Ordering::Relaxed) > 0 {
+        FAIL_SIDECAR_WRITES.fetch_sub(1, Ordering::Relaxed);
+        return Err(hongguo_common::AppError::Io("故障注入：旁文件写入".into()));
+    }
+    let path = block_sidecar(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制旁路".into())
+    })?;
+    let raw = serde_json::to_string(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+fn unknown_marker(store: &Store) -> Option<std::path::PathBuf> {
+    block_sidecar(store).map(|path| std::path::PathBuf::from(format!("{}.unknown", path.display())))
+}
+
+fn marker_state(store: &Store) -> BlockSource {
+    let Some(path) = unknown_marker(store) else {
+        return BlockSource::Absent;
+    };
+    let Ok(path) = hongguo_store::paths::prepare_qa_io(&path) else {
+        return BlockSource::Unreadable;
+    };
+    match std::fs::symlink_metadata(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(meta) if meta.file_type().is_symlink() => BlockSource::Unreadable,
+        Ok(_) => BlockSource::Unreadable,
+    }
+}
+
+fn write_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
+    let path = unknown_marker(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的未知限制标记".into())
+    })?;
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    hongguo_store::paths::qa_write(&tmp, b"unknown\n")
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+fn journal_path(store: &Store) -> Option<std::path::PathBuf> {
+    block_sidecar(store).map(|path| std::path::PathBuf::from(format!("{}.journal", path.display())))
+}
+
+fn journal_state(store: &Store) -> BlockSource {
+    let Some(path) = journal_path(store) else {
+        return BlockSource::Absent;
+    };
+    match hongguo_store::paths::qa_read_to_string(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => BlockSource::Absent,
+        Err(_) => BlockSource::Unreadable,
+        Ok(raw) => match serde_json::from_str::<BootstrapMeta>(&raw) {
+            Ok(meta) => {
+                let _ = meta;
+                BlockSource::Unreadable
+            }
+            Err(_) => BlockSource::Unreadable,
+        },
+    }
+}
+
+fn write_journal(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    let path = journal_path(store).ok_or_else(|| {
+        hongguo_common::AppError::StoreCorrupt("内存库没有可落盘的限制日志".into())
+    })?;
+    let raw = serde_json::to_string(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
+    hongguo_store::paths::qa_write(&tmp, raw.as_bytes())
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    if FAIL_JOURNAL_RENAMES.load(Ordering::Relaxed) > 0 {
+        FAIL_JOURNAL_RENAMES.fetch_sub(1, Ordering::Relaxed);
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+        return Err(hongguo_common::AppError::Io(
+            "故障注入：限制日志改名".into(),
+        ));
+    }
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+fn remove_journal(store: &Store) -> hongguo_common::AppResult<()> {
+    let Some(path) = journal_path(store) else {
+        return Ok(());
+    };
+    match hongguo_store::paths::qa_remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
+}
+
+fn remove_unknown_marker(store: &Store) -> hongguo_common::AppResult<()> {
+    let Some(path) = unknown_marker(store) else {
+        return Ok(());
+    };
+    match hongguo_store::paths::qa_remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
+}
+
+fn remove_block_sidecar(store: &Store) -> hongguo_common::AppResult<()> {
+    if FAIL_SIDECAR_DELETES.load(Ordering::Relaxed) > 0 {
+        FAIL_SIDECAR_DELETES.fetch_sub(1, Ordering::Relaxed);
+        return Err(hongguo_common::AppError::Io("故障注入：旁文件删除".into()));
+    }
+    let Some(path) = block_sidecar(store) else {
+        return Ok(());
+    };
+    match hongguo_store::paths::qa_remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(hongguo_common::AppError::Io(err.to_string())),
+    }
+}
+
+fn next_block_seq(store: &Store) -> u64 {
+    let db = match load_db_block(store) {
+        BlockSource::Present(meta) => meta.register_block_seq,
+        _ => 0,
+    };
+    let side = match load_sidecar_block(store) {
+        BlockSource::Present(meta) => meta.register_block_seq,
+        _ => 0,
+    };
+    db.max(side).saturating_add(1)
 }
 
 pub fn write_meta(store: &Store, meta: &BootstrapMeta) {
-    if let Ok(v) = serde_json::to_value(meta)
-        && let Err(e) = store.device_meta_set(&v)
-    {
+    if let Err(e) = write_meta_strict(store, meta) {
         log::warn!("[Device] 元数据落库失败（不影响换档）: {e}");
     }
+}
+
+fn write_meta_strict(store: &Store, meta: &BootstrapMeta) -> hongguo_common::AppResult<()> {
+    let v = serde_json::to_value(meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    store.device_meta_set(&v)
 }
 
 /// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
@@ -160,32 +415,16 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p
 }
 
-/// 注册重试节奏：失败只区分网络类（断网/超时，等网恢复就地重试）与服务端明确拒绝
-/// （形态/代际错，重试无意义立即停）。
+/// 瞬态失败的重试次数与间隔。同一次尝试复用同一份身份材料。
 const REGISTER_RETRY_MS: u64 = 60_000;
 const REGISTER_RETRY_MAX: usize = 30;
 
-/// 注册（带网络恢复重试）：成功返回 true。网络类失败按节奏重试到成功
-/// 或预算耗尽；其他失败立即返回。
+/// 元数据没写成时，本进程仍拒绝注册。重启后只认已经落库的限制。
+static REGISTER_FORCE_BLOCK: AtomicBool = AtomicBool::new(false);
+
+/// 注册（带同一材料的瞬态重试）。拒绝、限流、只复用模式都不换身份。
 async fn register_with_retry(state: &AppState, reason: &str) -> bool {
-    for attempt in 0..REGISTER_RETRY_MAX {
-        let reg = register_and_swap(state, reason).await;
-        if reg.ok {
-            return true;
-        }
-        if !reg.network {
-            return false;
-        }
-        log::info!(
-            "[Device] {reason}：网络不可用，{}s 后重试（{}/{}）",
-            REGISTER_RETRY_MS / 1000,
-            attempt + 1,
-            REGISTER_RETRY_MAX
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(REGISTER_RETRY_MS)).await;
-    }
-    log::warn!("[Device] {reason}：网络重试预算耗尽（{REGISTER_RETRY_MAX} 次），下次启动再试");
-    false
+    register_and_swap(state, reason).await.ok
 }
 
 /// 注册换档结论（壳的设备状态命令用）。
@@ -202,93 +441,343 @@ pub struct Registration {
     pub network: bool,
 }
 
-/// 注册新设备并换档：备份旧档 → 新档落库+热替换 → 元数据记痕迹。
+/// 注册新设备并换档。库提交成功后才替换内存、才发成功事件。
 pub async fn register_and_swap(state: &AppState, reason: &str) -> Registration {
-    let mut meta = read_meta(&state.store);
-    meta.last_register_attempt_ms = Some(now_ms());
-    write_meta(&state.store, &meta);
+    register_and_swap_at(
+        state,
+        reason,
+        hongguo_api::register::REGISTER_ORIGIN,
+        std::time::Duration::from_millis(REGISTER_RETRY_MS),
+    )
+    .await
+}
 
+async fn register_and_swap_at(
+    state: &AppState,
+    reason: &str,
+    origin: &str,
+    pause: std::time::Duration,
+) -> Registration {
+    if hongguo_common::offline_qa::enabled() {
+        return refused(state, "离线 QA 不发起注册");
+    }
+    if let Some(refusal) = reuse_refusal(state) {
+        return refusal;
+    }
+    let mut meta = read_meta(&state.store);
+    if registration_blocked(&meta, now_ms()) {
+        return refused(state, "无可信持久状态或限制仍有效，不自动注册");
+    }
+    meta.last_register_attempt_ms = Some(now_ms());
+    if let Err(e) = write_meta_strict(&state.store, &meta) {
+        return refused(state, &e.to_string());
+    }
     let reg_env = ApiEnv {
         proxy: state.settings().proxy,
         device: anonymous_profile(&fresh_cdid()),
         cookie: None,
         x_tt_token: None,
     };
-    match register_device(&reg_env).await {
+    let material = RegisterMaterial::mint();
+    match register_retrying(&reg_env, &material, origin, REGISTER_RETRY_MAX, pause).await {
         Ok(r) => {
-            log::info!(
-                "[Device] 注册成功（{reason}）device_id={} iid={}",
-                r.device_id,
-                r.install_id
-            );
-            let profile = registered_profile(&r);
-            swap_profile(state, &mut meta, profile, "registered");
-            // 换档前发出去的匿名请求产物（顶栏塌缩表、批量预取流）全部作废
-            hongguo_api::recommend::clear_feed_tabs_cache();
-            hongguo_api::play_url::clear_batch_cache();
-            // 冷启动行为预热：新设备做完官方客户端的冷启动行为序列才有
-            // 深集授权（只注册不预热 = 采集器特征，服务端只发第 1 集）
-            let env = state.api_env();
-            crate::runtime::spawn(async move {
-                let ok = hongguo_api::warmup::run(&env).await;
-                log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-            });
-            state
-                .events()
-                .publish(ServiceEvent::DeviceRegistered(r.install_id.clone()));
-            meta.last_register_error = None;
-            write_meta(&state.store, &meta);
-            Registration {
-                ok: true,
-                iid: r.install_id,
-                device_id: r.device_id,
-                kind: "registered",
-                error: None,
-                network: false,
-            }
+            log::info!("[Device] 服务端返回了注册响应（{reason}），开始本地激活");
+            finish_register(state, &mut meta, r, reason).await
         }
-        Err(e) => {
-            log::warn!("[Device] 注册失败（{reason}）: {e}");
-            let network = matches!(e, hongguo_common::AppError::Network(_));
-            meta.last_register_error = Some(e.to_string());
-            write_meta(&state.store, &meta);
+        Err(RegisterAttemptError::Blocked(block)) => {
+            if let Err(e) = persist_block(state, &mut meta, block) {
+                REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                return refused(state, &format!("注册限制没有落盘，停止自动注册: {e}"));
+            }
+            refused(state, "注册被拒绝或限流")
+        }
+        Err(RegisterAttemptError::ReuseOnly) => {
+            reuse_refusal(state).unwrap_or_else(|| refused(state, "只复用模式禁止注册"))
+        }
+        Err(err) => {
+            let app_err = hongguo_common::AppError::from(err);
+            let network = matches!(app_err, hongguo_common::AppError::Network(_));
+            meta.last_register_error = Some(app_err.to_string());
+            let _ = write_meta_strict(&state.store, &meta);
             Registration {
                 ok: false,
                 iid: state.device().get("iid").to_string(),
                 device_id: String::new(),
                 kind: "error",
-                error: Some(e.to_string()),
+                error: Some(app_err.to_string()),
                 network,
             }
         }
     }
 }
 
-/// 换档三连：旧档进备份行 → 新档落库+热替换 → 元数据更新来源。
-/// 注册代际对齐解决不了「发货资格在注册时抽签」——输家签换新注册即可（1 次/分钟限速）。
-fn swap_profile(state: &AppState, meta: &mut BootstrapMeta, profile: DeviceProfile, source: &str) {
+async fn finish_register(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    reg: RegisterResult,
+    reason: &str,
+) -> Registration {
+    let activated = activate_registration(state, meta, &reg, reason);
+    if !activated.ok {
+        return activated;
+    }
+    let warmed = hongguo_api::warmup::run(&state.api_env()).await;
+    log::info!("[Device] 冷启动行为预热完成（{warmed} 条）");
+    activated
+}
+
+/// 本地激活：事务提交并替换内存之后才记成功、才发事件。
+fn activate_registration(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    reg: &RegisterResult,
+    reason: &str,
+) -> Registration {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    let profile = registered_profile(reg);
+    meta.last_register_error = None;
+    meta.register_block_manual = false;
+    meta.register_block_until_ms = None;
+    meta.register_block_unknown = false;
+    meta.register_block_seq = next_block_seq(&state.store);
+    if let Err(e) = swap_profile(state, meta, profile, "registered") {
+        return refused(state, &e.to_string());
+    }
+    if remove_block_sidecar(&state.store).is_ok() && remove_unknown_marker(&state.store).is_ok() {
+        REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    }
+    hongguo_api::recommend::clear_feed_tabs_cache();
+    hongguo_api::play_url::clear_batch_cache();
+    log::info!("[Device] 本地档案已激活（{reason}）");
+    state
+        .events()
+        .publish(ServiceEvent::DeviceRegistered(reg.install_id.clone()));
+    Registration {
+        ok: true,
+        iid: reg.install_id.clone(),
+        device_id: reg.device_id.clone(),
+        kind: "registered",
+        error: None,
+        network: false,
+    }
+}
+
+fn refused(state: &AppState, message: &str) -> Registration {
+    log::warn!("[Device] {message}");
+    Registration {
+        ok: false,
+        iid: state.device().get("iid").to_string(),
+        device_id: String::new(),
+        kind: "error",
+        error: Some(message.to_string()),
+        network: false,
+    }
+}
+
+fn reuse_refusal(state: &AppState) -> Option<Registration> {
+    let path = reuse_json_path()?;
+    match load_reuse_profile(&path) {
+        Ok(profile) => {
+            if state.device().get("iid") != profile.get("iid")
+                && let Err(e) = install_reuse(state, &profile)
+            {
+                return Some(refused(state, &e.to_string()));
+            }
+            Some(refused(state, "只复用模式禁止注册"))
+        }
+        Err(e) => Some(refused(state, &e.to_string())),
+    }
+}
+
+fn install_reuse(state: &AppState, profile: &DeviceProfile) -> hongguo_common::AppResult<()> {
+    let mut meta = read_meta(&state.store);
+    swap_profile(state, &mut meta, profile.clone(), "reuse")
+}
+
+/// 限制窗口必须留下重启后仍能读到的记录。主库失败时写旁文件；两边都失败再写未知标记。
+fn persist_block(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    block: RegisterBlock,
+) -> hongguo_common::AppResult<()> {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    apply_register_block(meta, block);
+    meta.register_block_seq = next_block_seq(&state.store);
+    meta.register_block_unknown = false;
+    match write_meta_strict(&state.store, meta) {
+        Ok(()) => {
+            let _ = remove_block_sidecar(&state.store);
+            let _ = remove_unknown_marker(&state.store);
+            Ok(())
+        }
+        Err(db_err) => match write_block_sidecar(&state.store, meta) {
+            Ok(()) => Ok(()),
+            Err(side_err) => match write_unknown_marker(&state.store) {
+                Ok(()) => {
+                    REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                    Ok(())
+                }
+                Err(marker_err) => {
+                    REGISTER_FORCE_BLOCK.store(true, Ordering::Relaxed);
+                    Err(hongguo_common::AppError::StoreCorrupt(format!(
+                        "{db_err}；旁路也失败: {side_err}；未知标记也失败: {marker_err}"
+                    )))
+                }
+            },
+        },
+    }
+}
+
+/// 显式解除限制。任何一步失败都留下仍能阻断的记录；启动流程不会调用这里。
+pub fn clear_register_block(store: &Store) -> hongguo_common::AppResult<()> {
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    let saved_side = block_sidecar(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
+    let saved_marker =
+        unknown_marker(store).and_then(|path| hongguo_store::paths::qa_read(&path).ok());
+    let mut blocking = load_meta_locked(store);
+    blocking.register_block_unknown = true;
+    write_journal(store, &blocking)?;
+    remove_block_sidecar(store)?;
+    if let Err(err) = remove_unknown_marker(store) {
+        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+        return Err(err);
+    }
+    let mut cleared = match load_db_block(store) {
+        BlockSource::Present(meta) => meta,
+        BlockSource::Absent => BootstrapMeta::default(),
+        BlockSource::Unreadable => {
+            restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+            restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
+            return Err(hongguo_common::AppError::StoreCorrupt(
+                "主库限制不可读，不能解除".into(),
+            ));
+        }
+    };
+    cleared.register_block_manual = false;
+    cleared.register_block_until_ms = None;
+    cleared.register_block_unknown = false;
+    cleared.register_block_seq = next_block_seq(store);
+    if let Err(err) = write_meta_strict(store, &cleared) {
+        restore_bytes(block_sidecar(store), saved_side.as_deref())?;
+        restore_bytes(unknown_marker(store), saved_marker.as_deref())?;
+        return Err(err);
+    }
+    remove_journal(store)?;
+    REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    Ok(())
+}
+
+fn restore_bytes(
+    path: Option<std::path::PathBuf>,
+    bytes: Option<&[u8]>,
+) -> hongguo_common::AppResult<()> {
+    let (Some(path), Some(bytes)) = (path, bytes) else {
+        return Ok(());
+    };
+    let tmp = std::path::PathBuf::from(format!("{}.restore.tmp", path.display()));
+    hongguo_store::paths::qa_write(&tmp, bytes)
+        .map_err(|e| hongguo_common::AppError::Io(e.to_string()))?;
+    hongguo_store::paths::qa_rename(&tmp, &path).map_err(|e| {
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
+        hongguo_common::AppError::Io(e.to_string())
+    })
+}
+
+pub fn registration_blocked(meta: &BootstrapMeta, now_ms: i64) -> bool {
+    if REGISTER_FORCE_BLOCK.load(Ordering::Relaxed)
+        || meta.register_block_unknown
+        || meta.register_block_manual
+    {
+        return true;
+    }
+    meta.register_block_until_ms
+        .is_some_and(|until| now_ms < until)
+}
+
+pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
+    match block {
+        RegisterBlock::Until { until_ms } => {
+            meta.register_block_until_ms = Some(until_ms);
+            meta.register_block_manual = false;
+        }
+        RegisterBlock::Manual => {
+            meta.register_block_manual = true;
+            meta.register_block_until_ms = None;
+        }
+    }
+}
+
+/// 空响应是否还要注册。
+///
+/// - `play_ok_blocks_this_series`：本进程该剧已取流成功 → 同剧空包不换档（防单 vid 毒化）。
+/// - `cross_series_rearm`：本进程已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
+///   允许再换档，且不受冷却压制（否则剧A换档后 10 分钟内剧B永久空，见 REQ-HG-001）。
+/// - 限制窗口 / 只复用仍一律不注册。
+///
+/// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
+/// PLAY_OK 后，把同一 DeviceProfile 迁到二次进程再取流会得到 0 字节空包——跨进程
+/// 「已发货」是假阳性，压制换档会让日常永久空响应。
+pub fn empty_stream_should_register(
+    in_cooldown: bool,
+    blocked: bool,
+    reuse: bool,
+    play_ok_blocks_this_series: bool,
+    cross_series_rearm: bool,
+) -> bool {
+    if blocked || reuse || play_ok_blocks_this_series {
+        return false;
+    }
+    if cross_series_rearm {
+        return true;
+    }
+    !in_cooldown
+}
+
+/// 备份、现役、元数据同一事务。提交成功后才替换内存。
+fn swap_profile(
+    state: &AppState,
+    meta: &mut BootstrapMeta,
+    profile: DeviceProfile,
+    source: &str,
+) -> hongguo_common::AppResult<()> {
     let old_iid = state.device().get("iid").to_string();
     let new_iid = profile.get("iid").to_string();
-    if old_iid != new_iid {
-        if let Err(e) = state.store.backup_device_profile() {
-            log::warn!("[Device] 旧档备份失败（继续换档）: {e}");
-        }
-        if let Err(e) = state.store.save_device_profile(&profile) {
-            log::warn!("[Device] 新档落库失败（本次会话仍生效）: {e}");
-        }
-        log::info!("[Device] 换档 {old_iid} → {new_iid}（{source}）");
-    }
     meta.source = source.to_string();
     meta.previous_iid = Some(old_iid).filter(|i| i != &new_iid);
-    meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
-    write_meta(&state.store, meta);
+    meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
+    meta.play_shipped = false;
+    let profile_json = serde_json::to_string(&profile)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    let meta_json = serde_json::to_string(&*meta)
+        .map_err(|e| hongguo_common::AppError::StoreCorrupt(e.to_string()))?;
+    state.store.commit_device_swap(&profile_json, &meta_json)?;
     state.replace_device(profile);
+    log::info!("[Device] 换档完成（{source}）");
+    Ok(())
 }
 
 /// 启动后台生命周期：无设备身份（匿名/全新安装）**立即**注册；有身份的先看注册代际，
 /// 旧代际档案按全新安装语义**一次性**迁移到当前代际；代际正常的再打搜索探针，
 /// 空响应（死设备）也转注册。网络类失败随恢复就地重试（`register_with_retry`）。
 pub async fn ensure_registered(state: &AppState) {
+    let _release_playback = crate::cold_start::ReleaseOnDrop;
+    if reuse_json_path().is_some() {
+        let _ = reuse_refusal(state);
+        return;
+    }
+    if registration_blocked(&read_meta(&state.store), now_ms()) {
+        // G1：离线 QA 下 registration_blocked 早退也要打出清单可检索句，
+        // 不改变不注册语义，仅补日志对齐 ZERO-EXTERNAL-CHECKLIST。
+        if hongguo_common::offline_qa::enabled() {
+            log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
+        }
+        log::warn!("[Device] 无可信持久状态或限制仍有效，启动不自动注册");
+        return;
+    }
+    if hongguo_common::offline_qa::enabled() {
+        log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
+        return;
+    }
     if state.device().get("iid").is_empty() {
         log::info!("[Device] 现役无设备身份（匿名），启动注册");
         register_with_retry(state, "启动自动注册").await;
@@ -300,7 +789,7 @@ pub async fn ensure_registered(state: &AppState) {
             "[Device] 库内档案出生于旧注册代际（iid={}，regime={:?}），一次性迁移到 {} 代际",
             state.device().get("iid"),
             meta.register_regime,
-            hongguo_signer::REGISTER_VERSION_CODE_STR
+            hongguo_api::register::REGISTER_REGIME
         );
         // 迁移成功即新档出生当前代际（探针不必再做）；拒绝/预算耗尽同样轮不到探针说话
         register_with_retry(state, "注册代际迁移").await;
@@ -314,25 +803,23 @@ pub async fn ensure_registered(state: &AppState) {
                 "[Device] 现役档案探针空响应（iid={}），转注册轮换",
                 state.device().get("iid")
             );
-            // 成功时 register_and_swap 已 spawn warmup；失败则旧档已死，预热无意义
+            // 成功时 register_and_swap 已同步跑完预热；失败则旧档已死，预热无意义
             register_with_retry(state, "健康探针判死").await;
             return;
         }
         None => log::info!("[Device] 探针不确定（网络/服务端），按兵不动"),
     }
-    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权（见 warmup 模块文档）
-    let warm_state = state.clone();
-    crate::runtime::spawn(async move {
-        let env = warm_state.api_env();
-        let ok = hongguo_api::warmup::run(&env).await;
-        log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
-    });
+    // 冷启动行为预热：每个进程一次，服务端按行为状态发放深集授权。
+    // 必须等完再放行起播，不能后台 fire-and-forget。
+    let env = state.api_env();
+    let ok = hongguo_api::warmup::run(&env).await;
+    log::info!("[Device] 冷启动行为预热完成（{ok} 条）");
 }
 
 /// 是否需要注册代际迁移：代际标记与当前注册器不符（含缺失——任何
 /// 在标记机制引入前注册的档案都算旧代际）。
 fn needs_regime_migration(meta: &BootstrapMeta) -> bool {
-    meta.register_regime != hongguo_signer::REGISTER_VERSION_CODE_STR
+    meta.register_regime != hongguo_api::register::REGISTER_REGIME
 }
 
 /// 健康探针（找剧搜索是风控最严的一支）：Some(true)=活，Some(false)=
@@ -345,72 +832,157 @@ async fn probe_alive(env: &ApiEnv) -> Option<bool> {
     }
 }
 
-/// 连续取流未命中多少次触发换新注册。只数**真实播放路径**上的
-/// [`hongguo_common::AppError::StreamMiss`]（预取失败静默，不计）；miss 主因是
-/// 匿名观看配额耗尽，换新注册只是重置配额的应急手段，同 IP 高频注册会触发 IP 级风控。
-const STREAM_MISS_THRESHOLD: u32 = 4;
-
-/// 换新注册的最小间隔（毫秒）：3 分钟一次，压住同 IP 的注册频率
-/// （匿名配额 ≈ 分钟级，3 分钟一次意味着连续观看时大约每 2 集换一台）。
-const STREAM_RENEW_MIN_INTERVAL_MS: u64 = 180_000;
-
 static STREAM_MISS_COUNT: AtomicU32 = AtomicU32::new(0);
-static STREAM_RENEW_AT_MS: AtomicU64 = AtomicU64::new(0);
-static STREAM_RENEW_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+/// 本进程已成功取到播放地址的 series_id 集合。
+///
+/// 判定键 = `series_id`（不是进程级布尔）：同剧 PLAY_OK 后该剧空包不自动换档；
+/// 换到另一部剧再 EmptyResponse 必须允许再换档（REQ-HG-001 / CROSS-GENRE-GEAR）。
+/// 跨进程「已发货」元数据仍不可信，不能用库内 play_shipped 抑制换档。
+static PLAY_OK_SERIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
 
-/// 换新是否该发起：连续失败达阈值，且距上次换新过了最小间隔（首轮放行）。
-fn stream_renew_due(fails: u32, last_renew_ms: u64, now: u64) -> bool {
-    fails >= STREAM_MISS_THRESHOLD
-        && (last_renew_ms == 0 || now.saturating_sub(last_renew_ms) >= STREAM_RENEW_MIN_INTERVAL_MS)
-}
-
-/// 取流成功即清零计数（`online::prepare` 每次成功都会调，健康播放不断重置）。
-pub fn note_stream_ok() {
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
-}
-
-/// 取流未命中记账：连续失败达阈值就**换新注册**一台设备顶上（换新 = 重置匿名观看配额）。
-/// 登录态一律不换（授权走账号，与设备身份无关）；阈值 + 最小间隔压住同 IP 注册频率，
-/// 失败页的自动重试负责等待配额窗口重开；预取失败与网络错误不计（前者静默、后者另有重试）。
-pub fn note_stream_miss(state: &AppState, vid: &str) {
-    // 登录态：授权走账号，取流被拒不是设备身份问题，换新注册无意义
-    if state.settings().account.is_some() {
-        log::warn!("[Device] 取流未命中（vid={vid}，登录态不换设备，失败页自动重试）");
-        return;
+/// 本剧是否已在本进程取流成功 → 抑制该剧自动换档。
+/// `series_id` 缺失时：若集合非空则保守抑制（保持旧「本进程已成功」语义）。
+fn play_ok_blocks_series(series_id: Option<&str>) -> bool {
+    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => set.contains(s),
+        None => !set.is_empty(),
     }
+}
+
+/// 跨剧再换档：集合非空且当前剧不在集合内。
+fn cross_series_rearm(series_id: Option<&str>) -> bool {
+    let set = PLAY_OK_SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    match series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => !set.is_empty() && !set.contains(s),
+        None => false,
+    }
+}
+
+/// 播放地址已解析。只清连续未命中，不表示明文样本或画面就绪。
+/// `series_id`：写入本进程 PLAY_OK 剧集合的判定键；缺失则不记剧（不扩大禁换档面）。
+pub fn note_play_address(_state: &AppState, series_id: Option<&str>) {
+    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+    if let Some(s) = series_id.map(str::trim).filter(|s| !s.is_empty()) {
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(s.to_string());
+    }
+}
+
+/// 调用方已经解复用出至少一个视频样本时才记下。取消、失败、只有地址都不记。
+pub fn note_plain_video_sample(state: &AppState, plain: &[u8]) -> bool {
+    let ready = hongguo_media::demux::demux_bytes(plain)
+        .ok()
+        .and_then(|d| d.video_track().map(|t| !t.info.samples.is_empty()))
+        .unwrap_or(false);
+    if !ready {
+        return false;
+    }
+    let mut meta = read_meta(&state.store);
+    if meta.play_shipped {
+        return true;
+    }
+    meta.play_shipped = true;
+    write_meta_strict(&state.store, &meta).is_ok()
+}
+
+/// 取流未命中记账（有响应体但挑不出可播流）。不换设备——与空响应
+/// （[`recover_after_empty_stream`]）分开。
+pub fn note_stream_miss(_state: &AppState, vid: &str) {
     let fails = STREAM_MISS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    let now = now_ms().max(0) as u64;
-    if !stream_renew_due(fails, STREAM_RENEW_AT_MS.load(Ordering::Relaxed), now) {
-        return;
-    }
-    if STREAM_RENEW_IN_FLIGHT.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let state = state.clone();
-    let vid = vid.to_string();
-    crate::runtime::spawn(async move {
-        log::warn!("[Device] 取流连续 {fails} 次未命中（匿名配额耗尽），换新注册设备（vid={vid}）");
-        let ok = register_and_swap(&state, "取流被拒自动换新").await.ok;
-        // 成功才写冷却/清零——失败保留 miss 计数且不锁 3 分钟，下一次 miss 可再触发
-        record_stream_renew_outcome(ok, now_ms().max(0) as u64);
-        STREAM_RENEW_IN_FLIGHT.store(false, Ordering::SeqCst);
-    });
+    log::warn!("[Device] 取流未命中 vid={vid} 连续={fails}（有响应无可播档）");
 }
 
-/// 取流换新结果落账：成功才写冷却时间并清零 miss；失败不动，避免错误锁窗。
-fn record_stream_renew_outcome(ok: bool, now: u64) {
-    if !ok {
-        return;
+/// 空响应换档冷却。窗口内只预热，不注册。
+const EMPTY_RECOVER_COOLDOWN_MS: i64 = 10 * 60 * 1000;
+
+/// 空响应恢复串行锁：并发 prepare/prefetch 共用一次换档+预热，避免半新身份上抢打取流。
+static EMPTY_RECOVER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
+/// 取流全程空响应时恢复。限制窗口和只复用模式不注册、不预热。
+///
+/// 换档预热窗口会 [`crate::cold_start::rearm`]：并发取流若在预热未完成时打到新身份，
+/// 服务端对该 vid 记空响应后同一设备再取也是空包（见 play_url 单飞注释）。
+pub async fn recover_after_empty_stream(
+    state: &AppState,
+    vid: &str,
+    series_id: Option<&str>,
+) -> bool {
+    if hongguo_common::offline_qa::enabled() {
+        if reuse_json_path().is_some() {
+            let _ = reuse_refusal(state);
+        }
+        log::warn!("[Device] 离线 QA：取流空响应 vid={vid} 不注册、不预热");
+        return false;
     }
-    STREAM_RENEW_AT_MS.store(now, Ordering::Relaxed);
-    STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
+    let reuse = reuse_json_path().is_some();
+    if reuse {
+        let _ = reuse_refusal(state);
+        log::warn!("[Device] 取流空响应 vid={vid}，只复用模式不注册");
+        return false;
+    }
+
+    let gen_before = state.device_generation();
+    let _recover_guard = EMPTY_RECOVER_LOCK.lock().await;
+    // 等锁期间别人已换档：复用结果，禁止再注册。
+    if state.device_generation() > gen_before {
+        log::info!("[Device] 取流空响应 vid={vid}，复用并发换档结果（不注册）");
+        return true;
+    }
+
+    let now = now_ms();
+    let meta = read_meta(&state.store);
+    let in_cooldown = meta
+        .last_register_attempt_ms
+        .is_some_and(|prev| now.saturating_sub(prev) < EMPTY_RECOVER_COOLDOWN_MS);
+    let blocked = registration_blocked(&meta, now);
+    let play_ok_blocks = play_ok_blocks_series(series_id);
+    let rearm_cross = cross_series_rearm(series_id);
+    if !empty_stream_should_register(in_cooldown, blocked, false, play_ok_blocks, rearm_cross) {
+        if blocked {
+            log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
+            return false;
+        }
+        if play_ok_blocks {
+            // 同剧已发过货：空包更像单 vid 毒化，不换档；也不假恢复重试。
+            log::warn!(
+                "[Device] 取流空响应 vid={vid}，本进程本剧已取流成功，不自动换档 series={}",
+                series_id.unwrap_or("")
+            );
+            return false;
+        }
+        log::warn!("[Device] 取流空响应 vid={vid}，冷却中不换档");
+        return false;
+    }
+    if rearm_cross {
+        log::warn!(
+            "[Device] 取流空响应 vid={vid}，跨剧允许再换档 series={}（判定键=series_id）",
+            series_id.unwrap_or("")
+        );
+    } else {
+        log::warn!("[Device] 取流空响应 vid={vid}，尝试换档");
+    }
+    // 拉上门闩：换档+预热完成前，prepare/prefetch 的 wait 挡住取流，避免烧废新身份。
+    // 成功时不在此 Release——交还 prepare 独占首包批量；否则 recover 返回放闩与
+    // prepare 再 rearm 之间的 READY 窗口会被预取抢跑烧掉新身份（本轮自测 0/5）。
+    // 失败必须放行，避免门闩永久 PENDING。
+    crate::cold_start::rearm();
+    if !register_with_retry(state, "取流空响应恢复").await {
+        crate::cold_start::release();
+        return false;
+    }
+    true
 }
 
-/// 与在线播放同一份选流口径：无 HEVC 机器预取/探测的必须是 h264，否则
-/// 探测结论与真实播放翻转（见 `play_service::online::prepare`）。
+/// 与在线播放同一份选流口径：HEVC + ByteVC2 探测结论一并传入，
+/// 否则选流与真实可播能力翻转（见 `play_service::online::prepare`）。
 pub(crate) fn stream_cap() -> hongguo_api::stream_pick::DecoderCapability {
-    hongguo_api::stream_pick::DecoderCapability::from_hevc(
+    hongguo_api::stream_pick::DecoderCapability::from_probes(
         hongguo_media_platform::capability::playback::hevc_playable(),
+        hongguo_media_platform::capability::bytevc2_decode_available(),
     )
 }
 
@@ -424,46 +996,140 @@ mod tests {
     }
 
     #[test]
-    fn stream_renew_due_respects_threshold_and_interval() {
-        const MIN: u64 = STREAM_RENEW_MIN_INTERVAL_MS;
-        assert!(!stream_renew_due(STREAM_MISS_THRESHOLD - 1, 0, 1000));
-        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 0, 1000));
-        assert!(!stream_renew_due(
-            STREAM_MISS_THRESHOLD,
-            1000,
-            1000 + MIN - 1
-        ));
-        assert!(stream_renew_due(STREAM_MISS_THRESHOLD, 1000, 1000 + MIN));
-        assert!(!stream_renew_due(
-            STREAM_MISS_THRESHOLD * 10,
-            1000,
-            1000 + MIN - 1
-        ));
+    fn note_play_address_does_not_mark_a_sample() {
+        STREAM_MISS_COUNT.store(3, Ordering::Relaxed);
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        note_play_address(&state, Some("series-a"));
+        assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
+        assert!(!read_meta(&state.store).play_shipped);
+        assert!(!note_plain_video_sample(&state, b"not-a-video"));
+        assert!(!read_meta(&state.store).play_shipped);
+        assert!(play_ok_blocks_series(Some("series-a")));
+        assert!(!play_ok_blocks_series(Some("series-b")));
+        assert!(cross_series_rearm(Some("series-b")));
+        assert!(!cross_series_rearm(Some("series-a")));
+        // 测试隔离：清掉本用例写入的剧集合，避免污染同进程其它用例。
+        PLAY_OK_SERIES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     #[test]
-    fn stream_renew_outcome_only_stamps_on_success() {
-        STREAM_MISS_COUNT.store(STREAM_MISS_THRESHOLD, Ordering::Relaxed);
-        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
-
-        record_stream_renew_outcome(false, 5_000);
-        assert_eq!(
-            STREAM_MISS_COUNT.load(Ordering::Relaxed),
-            STREAM_MISS_THRESHOLD,
-            "失败不得清零 miss"
+    fn empty_recovery_does_not_add_unofficial_rolls() {
+        assert!(empty_stream_should_register(false, false, false, false, false));
+        assert!(!empty_stream_should_register(true, false, false, false, false));
+        assert!(!empty_stream_should_register(false, true, false, false, false));
+        assert!(!empty_stream_should_register(false, false, true, false, false));
+        assert!(
+            !empty_stream_should_register(false, false, false, true, false),
+            "同剧已取流成功不自动换档"
         );
-        assert_eq!(
-            STREAM_RENEW_AT_MS.load(Ordering::Relaxed),
-            0,
-            "失败不得写冷却"
+        assert!(
+            empty_stream_should_register(false, false, false, false, false),
+            "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
         );
+        assert!(
+            empty_stream_should_register(true, false, false, false, true),
+            "跨剧再换档可越过冷却"
+        );
+        assert!(
+            !empty_stream_should_register(true, false, false, true, true),
+            "同剧 PLAY_OK 优先于跨剧再换档标志"
+        );
+    }
 
-        record_stream_renew_outcome(true, 5_000);
-        assert_eq!(STREAM_MISS_COUNT.load(Ordering::Relaxed), 0);
-        assert_eq!(STREAM_RENEW_AT_MS.load(Ordering::Relaxed), 5_000);
+    #[test]
+    fn register_block_survives_reopen_and_manual_has_no_expiry() {
+        let dir = std::env::temp_dir().join(format!("hg-block-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).expect("临时库");
+        let mut meta = BootstrapMeta::default();
+        apply_register_block(
+            &mut meta,
+            RegisterBlock::Until {
+                until_ms: now_ms() + 60_000,
+            },
+        );
+        write_meta_strict(&db, &meta).expect("写入限制");
+        drop(db);
+        let reopened = Store::open(&path).expect("重启后的临时库");
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let mut manual = BootstrapMeta::default();
+        apply_register_block(&mut manual, RegisterBlock::Manual);
+        write_meta_strict(&reopened, &manual).expect("写入无头限制");
+        drop(reopened);
+        let again = Store::open(&path).expect("再次打开");
+        let loaded = read_meta(&again);
+        assert!(loaded.register_block_manual);
+        assert!(loaded.register_block_until_ms.is_none());
+        assert!(registration_blocked(&loaded, now_ms() + 86_400_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        STREAM_MISS_COUNT.store(0, Ordering::Relaxed);
-        STREAM_RENEW_AT_MS.store(0, Ordering::Relaxed);
+    #[test]
+    fn swap_fault_keeps_old_profile_and_skips_success() {
+        let dir = std::env::temp_dir().join(format!("hg-swap-fault-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).expect("临时库");
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).expect("旧档");
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        let mut rx = state.events().subscribe();
+        let mut meta = read_meta(&db);
+        let profile_json = serde_json::to_string(&registered_profile(&RegisterResult {
+            install_id: "111".into(),
+            device_id: "222".into(),
+            ..reg_result()
+        }))
+        .unwrap();
+        let meta_json = serde_json::to_string(&meta).unwrap();
+        let err = db
+            .commit_device_swap_fault(&profile_json, &meta_json, 2)
+            .expect_err("注入故障");
+        assert!(err.to_string().contains("故障注入"));
+        let kept = db.device_profile().expect("读").expect("旧档还在");
+        assert_eq!(kept.get("iid"), old.get("iid"));
+        assert_eq!(state.device().get("iid"), old.get("iid"));
+        assert!(rx.try_recv().is_err(), "失败不发成功事件");
+        let mut newer = old.clone();
+        newer.set("iid", "1234567890123456");
+        let generation = state.device_generation();
+        swap_profile(&state, &mut meta, newer, "registered").expect("成功提交才换内存");
+        assert_eq!(state.device().get("iid"), "1234567890123456");
+        assert!(state.device_generation() > generation);
+        assert_eq!(
+            db.device_profile_backup().unwrap().unwrap().get("iid"),
+            old.get("iid")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn reuse_mode_and_rejection_do_not_register() {
+        hongguo_api::register::reset_register_http_sends();
+        let db = store();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(db, old));
+        let missing = std::env::temp_dir().join(format!("hg-reuse-svc-{}", std::process::id()));
+        let prev = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &missing) };
+        let got = register_and_swap(&state, "只复用缺文件").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        assert_eq!(state.device().get("iid"), "9999999999999999");
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", v),
+                None => std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON"),
+            }
+        }
+        let _ = std::fs::remove_file(&missing);
     }
 
     fn reg_result() -> RegisterResult {
@@ -655,10 +1321,645 @@ mod tests {
         );
         meta.register_regime = "00000".into();
         assert!(needs_regime_migration(&meta), "旧代际标记需要迁移");
+        // 仅 version_code、无 SDK 指纹的旧标记也要迁（74332 ≠ 74332:4.3.2-rc.44）
         meta.register_regime = hongguo_signer::REGISTER_VERSION_CODE_STR.into();
+        assert!(
+            needs_regime_migration(&meta),
+            "缺 SDK 指纹的旧代际标记需要迁移"
+        );
+        meta.register_regime = hongguo_api::register::REGISTER_REGIME.into();
         assert!(
             !needs_regime_migration(&meta),
             "当前代际档案不迁（终生不换设备身份）"
         );
+    }
+
+    fn clear_force_block() {
+        REGISTER_FORCE_BLOCK.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn activation_rolls_back_steps_one_and_three_without_a_success_event() {
+        clear_force_block();
+        for step in [1_u8, 3] {
+            let dir = std::env::temp_dir()
+                .join(format!("hg-activate-fault-{step}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let db = Store::open(dir.join("device.db")).unwrap();
+            let old = registered_profile(&reg_result());
+            db.save_device_profile(&old).unwrap();
+            let mut meta = BootstrapMeta {
+                source: "registered".into(),
+                register_regime: "keep-me".into(),
+                ..BootstrapMeta::default()
+            };
+            write_meta_strict(&db, &meta).unwrap();
+            let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+                db.clone(),
+                old.clone(),
+            ));
+            let mut rx = state.events().subscribe();
+            state.store.fail_next_device_swap(step);
+            let fresh = RegisterResult {
+                install_id: "3333333333333333".into(),
+                device_id: "4444444444444444".into(),
+                ..reg_result()
+            };
+            let got = activate_registration(&state, &mut meta, &fresh, "故障注入");
+            assert!(!got.ok, "第 {step} 步失败不能报激活成功");
+            assert_eq!(state.device().get("iid"), old.get("iid"));
+            assert_eq!(
+                db.device_profile().unwrap().unwrap().get("iid"),
+                old.get("iid")
+            );
+            assert_eq!(read_meta(&db).register_regime, "keep-me");
+            assert!(rx.try_recv().is_err(), "第 {step} 步失败不发成功事件");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn activation_commit_updates_memory_and_emits_once() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-activate-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old,
+        ));
+        let mut rx = state.events().subscribe();
+        let mut meta = read_meta(&db);
+        let fresh = RegisterResult {
+            install_id: "5555555555555555".into(),
+            device_id: "6666666666666666".into(),
+            ..reg_result()
+        };
+        let got = activate_registration(&state, &mut meta, &fresh, "提交成功");
+        assert!(got.ok);
+        assert_eq!(state.device().get("iid"), "5555555555555555");
+        assert_eq!(
+            db.device_profile().unwrap().unwrap().get("iid"),
+            "5555555555555555"
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            ServiceEvent::DeviceRegistered(_)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn failed_meta_write_still_blocks_after_reopen() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-block-side-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = read_meta(&db);
+        persist_block(
+            &state,
+            &mut meta,
+            RegisterBlock::Until {
+                until_ms: now_ms() + 120_000,
+            },
+        )
+        .expect("主行失败后旁路应留下限制");
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(
+            registration_blocked(&read_meta(&reopened), now_ms()),
+            "重启后仍应读到限制"
+        );
+        let state =
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_device(reopened, old));
+        hongguo_api::register::reset_register_http_sends();
+        let got = register_and_swap(&state, "重启后").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        assert_eq!(state.device().get("iid"), "9999999999999999");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_store_cannot_hide_a_failed_block_write() {
+        clear_force_block();
+        let db = store();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        state.store.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        let err = persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap_err();
+        assert!(err.to_string().contains("旁路也失败"));
+        assert!(REGISTER_FORCE_BLOCK.load(Ordering::Relaxed));
+        assert!(registration_blocked(&BootstrapMeta::default(), now_ms()));
+        clear_force_block();
+    }
+
+    #[tokio::test]
+    async fn reuse_entries_reject_incomplete_profiles_without_http() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let db = store();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db,
+            old.clone(),
+        ));
+        let dir = std::env::temp_dir().join(format!("hg-reuse-fields-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        files.push(dir.join("missing.json"));
+        let broken = dir.join("broken.json");
+        std::fs::write(&broken, "{").unwrap();
+        files.push(broken);
+        for key in ["cdid", "openudid", "device_id", "iid"] {
+            let mut profile = old.clone();
+            profile.set(key, "");
+            let path = dir.join(format!("{key}.json"));
+            std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+            files.push(path);
+        }
+        let mut no_ticket = old.clone();
+        no_ticket.set_ttreq(None);
+        let ticket_path = dir.join("ttreq.json");
+        std::fs::write(&ticket_path, serde_json::to_string(&no_ticket).unwrap()).unwrap();
+        files.push(ticket_path);
+        let prev = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        for path in &files {
+            unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", path) };
+            let before = hongguo_api::register::register_http_sends();
+            let registered = register_and_swap(&state, "复用").await;
+            let recovered = recover_after_empty_stream(&state, "vid", None).await;
+            ensure_registered(&state).await;
+            assert!(!registered.ok);
+            assert!(!recovered);
+            assert_eq!(hongguo_api::register::register_http_sends(), before);
+            assert_eq!(state.device().get("iid"), old.get("iid"));
+        }
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", v),
+                None => std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retry_after_blocks_until_the_deadline_and_not_after() {
+        clear_force_block();
+        let meta = BootstrapMeta {
+            register_block_until_ms: Some(1_000_000),
+            ..BootstrapMeta::default()
+        };
+        assert!(registration_blocked(&meta, 999_999));
+        assert!(!registration_blocked(&meta, 1_000_000));
+        assert!(!registration_blocked(&meta, 1_000_001));
+        let manual = BootstrapMeta {
+            register_block_manual: true,
+            register_block_until_ms: Some(1),
+            ..BootstrapMeta::default()
+        };
+        assert!(registration_blocked(&manual, i64::MAX));
+    }
+
+    #[test]
+    fn corrupt_or_unreadable_sidecar_stays_blocked_until_explicit_clear() {
+        clear_force_block();
+        assert_ne!(libc_euid(), 0, "权限测试不能在 root 下得出假通过");
+        let dir = std::env::temp_dir().join(format!("hg-side-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        let side = block_sidecar(&db).unwrap();
+        std::fs::write(&side, "{").unwrap();
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        let loaded = read_meta(&reopened);
+        assert!(loaded.register_block_unknown);
+        assert!(registration_blocked(&loaded, now_ms()));
+        let mode = std::fs::metadata(&side).unwrap().permissions().readonly();
+        let mut perms = std::fs::metadata(&side).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&side, perms).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut no_read = std::fs::metadata(&side).unwrap().permissions();
+            no_read.set_mode(0o000);
+            std::fs::set_permissions(&side, no_read).unwrap();
+        }
+        assert!(
+            std::fs::read_to_string(&side).is_err(),
+            "当前用户应读不了旁文件，readonly={mode}"
+        );
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        FAIL_SIDECAR_DELETES.store(1, Ordering::Relaxed);
+        assert!(clear_register_block(&reopened).is_err());
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut back = std::fs::metadata(&side).unwrap().permissions();
+            back.set_mode(0o644);
+            std::fs::set_permissions(&side, back).unwrap();
+        }
+        clear_register_block(&reopened).unwrap();
+        let cleared = read_meta(&reopened);
+        assert!(!cleared.register_block_unknown);
+        assert!(!registration_blocked(&cleared, now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stale_sidecar_does_not_replace_a_newer_db_block() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-side-seq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let newer = BootstrapMeta {
+            register_block_manual: true,
+            register_block_seq: 4,
+            ..BootstrapMeta::default()
+        };
+        write_meta_strict(&db, &newer).unwrap();
+        let stale = BootstrapMeta {
+            register_block_seq: 1,
+            ..BootstrapMeta::default()
+        };
+        std::fs::write(
+            block_sidecar(&db).unwrap(),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+        let loaded = read_meta(&db);
+        assert!(loaded.register_block_manual);
+        assert_eq!(loaded.register_block_seq, 4);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newer_sidecar_still_blocks_when_db_block_expired() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-side-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        write_meta_strict(
+            &db,
+            &BootstrapMeta {
+                register_block_until_ms: Some(1),
+                register_block_seq: 1,
+                ..BootstrapMeta::default()
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            block_sidecar(&db).unwrap(),
+            serde_json::to_string(&BootstrapMeta {
+                register_block_manual: true,
+                register_block_seq: 5,
+                ..BootstrapMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(registration_blocked(&read_meta(&db), i64::MAX));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dual_write_failure_leaves_unknown_marker_across_reopen() {
+        clear_force_block();
+        FAIL_SIDECAR_WRITES.store(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("hg-dual-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let old = registered_profile(&reg_result());
+        db.save_device_profile(&old).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_device(
+            db.clone(),
+            old.clone(),
+        ));
+        db.fail_next_meta_writes(1);
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        drop(state);
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(read_meta(&reopened).register_block_unknown);
+        hongguo_api::register::reset_register_http_sends();
+        let state =
+            std::sync::Arc::new(crate::app_state::AppStateInner::with_device(reopened, old));
+        let got = register_and_swap(&state, "双写失败后重启").await;
+        assert!(!got.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_block_reads_do_not_clear_the_restriction() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-block-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        let mut joins = Vec::new();
+        for _ in 0..4 {
+            let state = state.clone();
+            joins.push(std::thread::spawn(move || {
+                for _ in 0..20 {
+                    assert!(registration_blocked(&read_meta(&state.store), now_ms()));
+                    let mut meta = read_meta(&state.store);
+                    persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+                }
+            }));
+        }
+        for join in joins {
+            join.join().unwrap();
+        }
+        assert!(registration_blocked(&read_meta(&state.store), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn missing_trusted_state_has_no_automatic_registration() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        assert!(read_meta(&memory.store).register_block_unknown);
+        ensure_registered(&memory).await;
+        let registered = register_and_swap(&memory, "无可信状态").await;
+        assert!(!registered.ok);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+
+        let dir = std::env::temp_dir().join(format!("hg-no-trust-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Store::open(dir.join("device.db")).unwrap();
+        let fresh = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        assert!(read_meta(&fresh.store).register_block_unknown);
+        ensure_registered(&fresh).await;
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn offline_qa_does_not_lift_a_missing_trusted_block() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        ensure_registered(&memory).await;
+        let reuse_path = std::env::current_dir()
+            .unwrap()
+            .join(".qa-a-offline-scratch")
+            .join("reuse-not-created.json");
+        let previous_reuse = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &reuse_path) };
+        let registered = register_and_swap(&memory, "离线").await;
+        assert!(!registered.ok);
+        assert!(!reuse_path.exists());
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert!(registration_blocked(&read_meta(&memory.store), now_ms()));
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        match previous_reuse {
+            Some(value) => unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", value) },
+            None => unsafe { std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON") },
+        }
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+    }
+
+    #[tokio::test]
+    async fn normal_reuse_keeps_the_block_and_does_not_register() {
+        clear_force_block();
+        hongguo_api::register::reset_register_http_sends();
+        let previous_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
+        let previous_reuse = std::env::var_os("HONGGUO_REUSE_DEVICE_JSON");
+        unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) };
+        let dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../.qa-a-premise-scratch")
+            })
+            .join(format!("reuse-normal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let profile = registered_profile(&reg_result());
+        let path = dir.join("device.json");
+        std::fs::write(&path, serde_json::to_string(&profile).unwrap()).unwrap();
+        unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", &path) };
+        let memory = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(store()));
+        ensure_registered(&memory).await;
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert_eq!(memory.device().get("iid"), "9999999999999999");
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        assert!(!recover_after_empty_stream(&memory, "vid", None).await);
+        assert!(read_meta(&memory.store).register_block_unknown);
+        assert_eq!(hongguo_api::register::register_http_sends(), 0);
+        match previous_reuse {
+            Some(value) => unsafe { std::env::set_var("HONGGUO_REUSE_DEVICE_JSON", value) },
+            None => unsafe { std::env::remove_var("HONGGUO_REUSE_DEVICE_JSON") },
+        }
+        match previous_qa {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn temp_symlinks_do_not_change_an_outside_sentinel() {
+        clear_force_block();
+        let root = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-a-io-scratch")
+            })
+            .join(format!("side-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("mock-prod");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let isolated = std::fs::canonicalize(&isolated).unwrap();
+        let sentinel = outside.join("SENTINEL");
+        std::fs::write(&sentinel, b"KEEP").unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&isolated);
+        let previous_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let db = Store::open(isolated.join("hongguo.db")).unwrap();
+        let link_to = |name: &std::path::Path| {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&sentinel, name).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_file(&sentinel, name).unwrap();
+        };
+        let unknown_tmp =
+            std::path::PathBuf::from(format!("{}.tmp", unknown_marker(&db).unwrap().display()));
+        link_to(&unknown_tmp);
+        assert!(write_unknown_marker(&db).is_err());
+        let journal_tmp =
+            std::path::PathBuf::from(format!("{}.tmp", journal_path(&db).unwrap().display()));
+        link_to(&journal_tmp);
+        assert!(write_journal(&db, &BootstrapMeta::default()).is_err());
+        let restore_tmp = std::path::PathBuf::from(format!(
+            "{}.restore.tmp",
+            block_sidecar(&db).unwrap().display()
+        ));
+        link_to(&restore_tmp);
+        assert!(restore_bytes(block_sidecar(&db), Some(b"RESTORED")).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
+        assert!(
+            std::fs::symlink_metadata(&unknown_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::symlink_metadata(&journal_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::symlink_metadata(&restore_tmp)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        match previous_qa {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn clear_keeps_sidecar_block_when_db_write_fails() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-clear-db-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        db.fail_next_meta_writes(1);
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db.clone()));
+        let mut meta = BootstrapMeta::default();
+        persist_block(&state, &mut meta, RegisterBlock::Manual).unwrap();
+        assert!(block_sidecar(&db).unwrap().is_file());
+        db.fail_next_meta_writes(1);
+        assert!(clear_register_block(&db).is_err());
+        drop(state);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_left_by_a_crash_still_blocks_after_reopen() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-journal-crash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let journal = journal_path(&db).unwrap();
+        std::fs::write(
+            &journal,
+            serde_json::to_string(&BootstrapMeta {
+                register_block_manual: true,
+                register_block_seq: 3,
+                ..BootstrapMeta::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        drop(db);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        assert!(read_meta(&reopened).register_block_unknown);
+        assert!(registration_blocked(&read_meta(&reopened), i64::MAX));
+        FAIL_JOURNAL_RENAMES.store(1, Ordering::Relaxed);
+        let err = clear_register_block(&reopened).unwrap_err();
+        assert!(err.to_string().contains("改名"));
+        let tmp = std::path::PathBuf::from(format!("{}.tmp", journal.display()));
+        assert!(!tmp.exists(), "改名失败不能留下半截日志");
+        assert!(journal.is_file());
+        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retry_after_survives_reopen_until_the_deadline() {
+        clear_force_block();
+        let dir = std::env::temp_dir().join(format!("hg-until-reopen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("device.db");
+        let db = Store::open(&path).unwrap();
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::with_db(db));
+        let mut meta = BootstrapMeta::default();
+        let until = now_ms() + 60_000;
+        persist_block(&state, &mut meta, RegisterBlock::Until { until_ms: until }).unwrap();
+        drop(state);
+        clear_force_block();
+        let reopened = Store::open(&path).unwrap();
+        let loaded = read_meta(&reopened);
+        assert!(!loaded.register_block_unknown);
+        assert!(registration_blocked(&loaded, until - 1));
+        assert!(!registration_blocked(&loaded, until));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn libc_euid() -> u32 {
+        #[cfg(unix)]
+        {
+            unsafe { libc_geteuid() }
+        }
+        #[cfg(not(unix))]
+        {
+            1
+        }
+    }
+
+    #[cfg(unix)]
+    unsafe fn libc_geteuid() -> u32 {
+        unsafe extern "C" {
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() }
     }
 }

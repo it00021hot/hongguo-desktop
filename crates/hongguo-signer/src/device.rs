@@ -12,19 +12,23 @@ pub const APP_ID: &str = "8662";
 pub const CHANNEL_ID: &str = "1588093228";
 
 /// 官方客户端版本身份（全仓唯一出处，query / 注册模板 / UA 一律引用这三常量，禁止散写魔法值）。
-/// 线上报 73932 而非包的真实版本（官方灰度期新包自报旧版本号），跟随官方。
-pub const APP_VERSION_CODE: u64 = 73932;
-pub const APP_VERSION_CODE_STR: &str = "73932";
-pub const APP_VERSION_NAME: &str = "7.3.9.32";
+/// 7.4.3.32 `SingleAppContext.getVersionCode` 写死 `0x1225c`，`getVersion` 写死 `7.4.3.32`。
+/// `NetUtil.putCommonParamsWithLevel` 的 `version_code` / `version_name` 走这两个方法，
+/// 不读 manifest meta。`manifest_version_code` 是 `PackageInfo.versionCode`（同样 74332），
+/// `update_version_code` 是 manifest meta `UPDATE_VERSION_CODE`（同样 74332）。
+pub const APP_VERSION_CODE: u64 = 74332;
+pub const APP_VERSION_CODE_STR: &str = "74332";
+pub const APP_VERSION_NAME: &str = "7.4.3.32";
 
-/// 官方 App 的构建渠道（注册体 / settings query / 取流 query 三处一致），渠道属于构建，不随设备品牌走。
-pub const BUILD_CHANNEL: &str = "seo_laxin_pc_android";
+/// 官方 App 的构建渠道。7.4.3.32 `assets/ss.properties` 的 `meta_umeng_channel=update_64`，
+/// `SingleAppContext.getChannel` 读它，`NetUtil` 写进 query 的 `channel`。
+pub const BUILD_CHANNEL: &str = "update_64";
 
-/// 注册指纹钉定的版本身份，与 .bdinstall SDK 代际成套（身份与代际错配的注册会被静默标记、后续取流不发货）。
-/// 注册请求与注册产物档案**终生钉这套身份**，不随 [`APP_VERSION_CODE`] 走——升当前版本与注册指纹不同源，取流即挂。
-pub const REGISTER_VERSION_CODE: u64 = 73932;
-pub const REGISTER_VERSION_CODE_STR: &str = "73932";
-pub const REGISTER_VERSION_NAME: &str = "7.3.9.32";
+/// 注册指纹钉定的版本身份。这个包的注册和取流用同一套 `getVersion` / `getVersionCode`，
+/// 两边必须同值：Medusa 把 `version_name` 写进密文，和 query 不一致会被判伪造。
+pub const REGISTER_VERSION_CODE: u64 = 74332;
+pub const REGISTER_VERSION_CODE_STR: &str = "74332";
+pub const REGISTER_VERSION_NAME: &str = "7.4.3.32";
 
 /// 与设备档案配套的 UA（App 版本段引用 [`APP_VERSION_CODE_STR`]，机型段与档案指纹一致，改机型要整组同换）。
 /// UA 尾段为官方统一的 `tt-ok/3.12.13.20` 形态；匿名请求的机型段会在服务端过风控名单，跟着换。

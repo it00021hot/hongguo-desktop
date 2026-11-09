@@ -1,3 +1,4 @@
+import { externalPageUrl } from '@/utils/offline-qa';
 import { usesSchemeHostForm } from '@/utils/platform';
 
 /** 封面增强工具（无业务依赖的纯函数）：封面只有「原图 / 本地代理」两条路，都失败由组件 onError 占位图兜底。 */
@@ -20,6 +21,7 @@ export function coverProxyUrl(remote: string): string {
 
 /** WebView2 能直接渲染的封面格式（与后端 is_renderable_cover 同口径）。 */
 export function isRenderableCover(url: string): boolean {
+  if (externalPageUrl(url)) return false;
   const path = url.split('?')[0] ?? url;
   const lower = path.toLowerCase();
   if (
@@ -42,5 +44,6 @@ export function isRenderableCover(url: string): boolean {
  * WebView 解不了的源给本地转码代理地址。纯同步无查询——组件渲染期直调。
  */
 export function enhancedCover(source: string): string | undefined {
-  return source !== '' && !isRenderableCover(source) ? coverProxyUrl(source) : undefined;
+  if (source === '' || externalPageUrl(source)) return undefined;
+  return !isRenderableCover(source) ? coverProxyUrl(source) : undefined;
 }

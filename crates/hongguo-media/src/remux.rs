@@ -27,18 +27,19 @@ pub fn concat_copy(inputs: &[PathBuf], output: &Path) -> AppResult<(u64, usize)>
         return Err(AppError::Media("没有待合并的文件".into()));
     }
     if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_common::offline_qa::qa_create_dir_all(parent)
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
 
     let temp = hongguo_common::utils::path::temp_path_for(output);
-    // 上一轮崩在中途会留下半个临时文件，先清掉再动手
-    let _ = std::fs::remove_file(&temp);
+    hongguo_common::offline_qa::qa_clear_for_replace(&temp)
+        .map_err(|e| AppError::Io(e.to_string()))?;
 
     let prepared = prepare(inputs)?;
     let (size, count) = write_output(inputs, &temp, &prepared)?;
 
-    std::fs::rename(&temp, output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
+    hongguo_common::offline_qa::qa_rename(&temp, output).map_err(|e| {
+        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok((size, count))
@@ -119,7 +120,8 @@ fn prepare(inputs: &[PathBuf]) -> AppResult<Prepared> {
 }
 
 fn write_output(inputs: &[PathBuf], temp: &Path, prepared: &Prepared) -> AppResult<(u64, usize)> {
-    let mut out = std::fs::File::create(temp).map_err(|e| AppError::Io(e.to_string()))?;
+    let mut out =
+        hongguo_common::offline_qa::qa_create(temp).map_err(|e| AppError::Io(e.to_string()))?;
     let write = |out: &mut std::fs::File, buf: &[u8]| -> AppResult<()> {
         out.write_all(buf).map_err(|e| AppError::Io(e.to_string()))
     };

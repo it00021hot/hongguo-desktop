@@ -11,7 +11,15 @@ const SEQUENCE: &str = include_str!("warmup_sequence.json");
 /// 顺序连发（对照实验即此节奏，已验证解锁）。
 const REQUEST_INTERVAL_MS: u64 = 60;
 
-/// 重写 query 中的身份字段；档案已携带的字段由签名器统一注入，去掉避免重复。
+/// 按固化序列重发。离线 QA 直接返回 0，不改设备状态。
+pub async fn run(env: &ApiEnv) -> usize {
+    if hongguo_common::offline_qa::enabled() {
+        log::info!("[Warmup] 离线 QA：跳过行为预热");
+        return 0;
+    }
+    run_sequence(env).await
+}
+
 fn rewrite_query(path: &str, env: &ApiEnv) -> (String, Vec<(String, String)>) {
     let (base, q) = match path.split_once('?') {
         Some((b, q)) => (b.to_string(), q.to_string()),
@@ -82,9 +90,20 @@ fn rewrite_json_body(body: &str, env: &ApiEnv) -> Option<Vec<u8>> {
     gzip_bytes(serde_json::to_vec(&v).ok()?.as_slice()).ok()
 }
 
+/// 取流类路径：序列里残留的旧抓包会带着**别的 vid / 旧 body**重放，
+/// 空响应会被服务端记成该设备的发货失败，把刚注册的身份直接烧废。
+/// 行为预热只铺设定/书城/账号类，取流留给正式起播。
+fn is_play_path(path: &str) -> bool {
+    let base = path.split_once('?').map(|(b, _)| b).unwrap_or(path);
+    base.contains("/novel/player/")
+}
+
 /// 执行冷启动行为预热：按官方序列顺序重发（身份重写 + 逐条重签名），返回成功（2xx）条数。
 /// 单条失败/超时不中断整体（预热是尽力而为的行为铺垫，个别失败不影响解锁效果）。
-pub async fn run(env: &ApiEnv) -> usize {
+async fn run_sequence(env: &ApiEnv) -> usize {
+    if hongguo_common::offline_qa::enabled() {
+        return 0;
+    }
     let Ok(seq) = serde_json::from_str::<Vec<Value>>(SEQUENCE) else {
         return 0;
     };
@@ -100,6 +119,9 @@ pub async fn run(env: &ApiEnv) -> usize {
         ) else {
             continue;
         };
+        if is_play_path(path) {
+            continue;
+        }
         let (pathname, biz_query) = rewrite_query(path, env);
         let body = item
             .get("body")
@@ -135,6 +157,9 @@ pub async fn run(env: &ApiEnv) -> usize {
         if let Some(b) = &signed.body {
             req = req.body(b.clone());
         }
+        if crate::client::refuse_external_send(&signed.url).is_err() {
+            return ok;
+        }
         if let Ok(resp) = req.send().await
             && resp.status().is_success()
         {
@@ -143,4 +168,17 @@ pub async fn run(env: &ApiEnv) -> usize {
         tokio::time::sleep(std::time::Duration::from_millis(REQUEST_INTERVAL_MS)).await;
     }
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_play_path;
+
+    #[test]
+    fn play_paths_are_skipped_from_warmup() {
+        assert!(is_play_path("/novel/player/video_model/v1/?x=1"));
+        assert!(is_play_path("/novel/player/multi_video_model/preload/v1"));
+        assert!(!is_play_path("/reading/bookapi/bookmall/tab/v?x=1"));
+        assert!(!is_play_path("/service/settings/v3/"));
+    }
 }

@@ -40,7 +40,7 @@ pub(crate) fn requested_dir() -> Option<std::path::PathBuf> {
 /// 跑完整场景矩阵。任何一张渲染失败即中止（后续产物已落盘保留）。
 #[cfg(feature = "screenshot")]
 pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(output)?;
+    hongguo_common::offline_qa::qa_create_dir_all(output)?;
     // 数据根最先声明（与 main 的交互壳同一纪律）：预览专用目录与真实
     // 数据平级，账号/设备档案/数据库完全不碰，跑完删除。
     hongguo_store::paths::set_shell_data_root(&format!(
@@ -62,7 +62,8 @@ pub(crate) fn run(output: &std::path::Path) -> anyhow::Result<()> {
     interaction_probe(&state)?;
     drop(state);
     let data_dir = hongguo_store::paths::data_dir();
-    if let Err(e) = std::fs::remove_dir_all(&data_dir) {
+    // QA 下必须走统一边界；隔离根本身拒绝整根删除，避免预览清理误删预建数据根。
+    if let Err(e) = hongguo_store::paths::qa_remove_dir_all(&data_dir) {
         log::warn!("[Preview] 临时数据目录清理失败（不影响产物）: {e}");
     }
     log::info!("[Preview] 全部场景完成 → {}", output.display());

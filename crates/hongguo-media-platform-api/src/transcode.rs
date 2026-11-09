@@ -16,4 +16,10 @@ pub struct PlatformRequest<'a> {
     pub rate: RateProfile,
     /// 已编码秒数的回调（0.0–时长秒），用于集内进度
     pub on_progress: Option<&'a (dyn Fn(f64) + Send + Sync)>,
+    /// 首个可独立解码的 GOP 已写入 `output` 时调用。同一路径之后继续追加，总长此时还在涨。
+    pub on_playable_prefix: Option<&'a (dyn Fn(&Path) + Send + Sync)>,
+    /// 每写完一段可读取字节就回调当前文件长度。
+    pub on_committed: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    /// 为真时停止继续编码。
+    pub is_cancelled: Option<&'a (dyn Fn() -> bool + Send + Sync)>,
 }

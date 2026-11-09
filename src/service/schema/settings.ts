@@ -1,5 +1,6 @@
 /** 设置域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 const namingTemplateSchema = z.enum(['titleIndex', 'titleIndexEpisode', 'onlyTitle']);
 
@@ -16,7 +17,7 @@ export const accountStateSchema = z.object({
   cookies: z.string(),
   userName: z.string(),
   // 旧库/旧后端无此字段：宽松兜空串
-  avatarUrl: z.string().catch(''),
+  avatarUrl: z.string().catch('').transform(pageImageSrc),
   userId: z.string(),
   loginAt: z.number(),
   /** x-tt-token 长凭据（旧账号为空） */

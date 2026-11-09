@@ -151,7 +151,7 @@ fn prepare_online() -> [SpikeEpisode; 2] {
     let data_dir = std::env::current_dir()
         .unwrap_or_default()
         .join("target/av-spike/data");
-    if let Err(error) = std::fs::create_dir_all(&data_dir) {
+    if let Err(error) = hongguo_common::offline_qa::qa_create_dir_all(&data_dir) {
         log::error!("[AvSpike] 创建 spike 数据目录失败: {error}");
         std::process::exit(4);
     }
@@ -285,6 +285,7 @@ async fn prepare_online_inner(
         &item.vid,
         "av-spike-a",
         Some(definition_a),
+        None,
     )
     .await
     .map_err(|error| format!("prepare A 失败: {error}"))?;
@@ -309,7 +310,7 @@ async fn prepare_online_inner(
         None => {
             log::warn!("[AvSpike] prefetch B 未就绪，回落 prepare（A 已标记预取保活）");
             hongguo_stream::cache().mark_prefetch(&item.vid, prepared_a.definition);
-            hongguo_service::play_service::online::prepare(state, &vid_b, "av-spike-b", None)
+            hongguo_service::play_service::online::prepare(state, &vid_b, "av-spike-b", None, None)
                 .await
                 .map_err(|error| format!("prepare B 失败: {error}"))?
                 .definition
@@ -350,8 +351,9 @@ async fn probe_candidate(
     env: &hongguo_api::client::ApiEnv,
     vid: &str,
 ) -> Result<(u32, u64), String> {
-    let capability = hongguo_api::stream_pick::DecoderCapability::from_hevc(
+    let capability = hongguo_api::stream_pick::DecoderCapability::from_probes(
         hongguo_media_platform::capability::playback::hevc_playable(),
+        hongguo_media_platform::capability::bytevc2_decode_available(),
     );
     let play = hongguo_api::play_url::fetch_play_url(vid, None, capability, env)
         .await

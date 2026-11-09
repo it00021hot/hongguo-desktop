@@ -4225,8 +4225,10 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-signer",
+ "hongguo-video",
  "log",
  "parking_lot",
  "rand 0.10.3",
@@ -4237,15 +4239,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hongguo-bytevc2"
+version = "0.6.5"
+dependencies = [
+ "hongguo-common",
+ "hongguo-video",
+ "oxideav-core",
+ "oxideav-h266",
+]
+
+[[package]]
 name = "hongguo-common"
 version = "0.6.5"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
+ "libc",
  "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "url",
  "uuid",
  "webpki-roots",
 ]
@@ -4279,6 +4293,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "hongguo-api",
+ "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
@@ -4319,6 +4334,7 @@ dependencies = [
 name = "hongguo-media-platform"
 version = "0.6.5"
 dependencies = [
+ "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform-android",
@@ -4451,6 +4467,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hongguo-api",
+ "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
@@ -6903,6 +6920,36 @@ name = "owo-colors"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
+
+[[package]]
+name = "oxideav-core"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce90bfbe978dfc46d0c98d137b7c4566ac8eaae8c9209585eb53a8aedb0ef53c"
+dependencies = [
+ "bytemuck",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "oxideav-h266"
+version = "0.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48f33c9bda3d5f5e83b9342c9cfc602a9ba4bee83bce54e24fc7ad0299fc386f"
+dependencies = [
+ "oxideav-core",
+ "oxideav-pixfmt",
+]
+
+[[package]]
+name = "oxideav-pixfmt"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6fc45d2f088d2f8b6d8d8f6288e0f3f115a020427d15a283a6ede2a9f9f1827"
+dependencies = [
+ "oxideav-core",
+]
 
 [[package]]
 name = "pack1"

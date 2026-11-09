@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 /**
  * 封面占位图（裂图自愈）：onError 后整层退场，不留破图标压在画面上。
@@ -10,7 +11,7 @@ export function CoverBackdrop({ src, hidden }: { src: string; hidden: boolean })
   if (broken) return null;
   return (
     <img
-      src={src}
+      src={pageImageSrc(src)}
       alt=""
       aria-hidden
       onError={() => setBroken(true)}

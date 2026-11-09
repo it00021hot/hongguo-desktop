@@ -17,10 +17,19 @@ pub struct ReqwestClient {
 impl ReqwestClient {
     /// 构造并安装进 gpui 全局（封面 CDN 是签名 URL，UA 用浏览器形态）。
     pub fn install(cx: &mut App) {
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0")
-            .build()
-            .expect("reqwest 客户端初始化失败");
+        let mut builder = reqwest::Client::builder().user_agent("Mozilla/5.0");
+        if hongguo_common::offline_qa::enabled() {
+            builder = builder
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
+                        attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+                    } else {
+                        attempt.follow()
+                    }
+                }));
+        }
+        let client = builder.build().expect("reqwest 客户端初始化失败");
         cx.set_http_client(Arc::new(Self { client }));
     }
 }
@@ -59,6 +68,9 @@ impl HttpClient for ReqwestClient {
             }
         };
 
+        if hongguo_common::offline_qa::external_url_forbidden(&url) {
+            return Box::pin(async { Err(anyhow!("离线 QA 拒绝外部请求")) });
+        }
         let client = self.client.clone();
         // reqwest（hyper）的 DNS 解析需要 tokio 反应器；gpui 执行器线程上
         // 没有。转发到壳的常驻 tokio 运行时执行，oneshot 回传。

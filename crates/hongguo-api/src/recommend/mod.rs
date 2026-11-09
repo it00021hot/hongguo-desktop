@@ -1,11 +1,9 @@
 //! 首页推荐流接口（书城换一换；详见 docs/hongguo-api-endpoints.md）。
 
-
 mod cache;
 mod model;
 mod parse;
 mod session;
-
 
 use serde_json::Value;
 
@@ -24,8 +22,8 @@ use cache::{
 };
 use parse::{parse_recommend_feed, recommend_feed_entry};
 use session::{
-    FEED_IMAGE_SHRINK, NPS_INSERT_RANK_JSON, RECOMMEND_EXTRA, recent_impressions,
-    rec_filter_info_list, session_runtime_pairs, session_uuid,
+    FEED_IMAGE_SHRINK, NPS_INSERT_RANK_JSON, RECOMMEND_EXTRA, rec_filter_info_list,
+    recent_impressions, session_runtime_pairs, session_uuid,
 };
 
 pub async fn fetch_recommend_feed(

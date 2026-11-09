@@ -47,7 +47,12 @@ unsafe extern "C" fn encode_cb(
 impl Compressor {
     /// 建 H.264 编码会话：`Enable` 策略——有硬编用硬编，没有就落 Apple 内置软编会话。
     /// 曾有的 `Require`（探测确认硬编才放行生产）随软编会话转正两态合一，探测的 hw/sw 结论只喂徽标与并行度。
-    pub(super) unsafe fn new(width: usize, height: usize, bitrate: i32) -> AppResult<Self> {
+    pub(super) unsafe fn new(
+        width: usize,
+        height: usize,
+        bitrate: i32,
+        low_latency: bool,
+    ) -> AppResult<Self> {
         unsafe {
             let spec = make_dict(&[(
                 ffi::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder
@@ -105,7 +110,13 @@ impl Compressor {
 
             // 质量与码控：VT 没有 CRF，码率按分辨率×帧率标定（见 `bitrate_for`）；ProfileLevel 个别第三方硬编可能不吃，不致命别让会话白建。
             let bitrate_num = make_int(bitrate);
-            let gop = make_int(250);
+            // 播放档要尽快交出首段：GOP 收短 + RealTime；归档仍用长 GOP / 非实时。
+            let gop = make_int(if low_latency { 30 } else { 250 });
+            let realtime = if low_latency {
+                ffi::kCFBooleanTrue as ffi::CFTypeRef
+            } else {
+                ffi::kCFBooleanFalse as ffi::CFTypeRef
+            };
             // 只有 AverageBitRate 是硬性要求（码控失效=质量目标失效），其余尽力而为。**AllowFrameReordering 关掉**是简化取向、不是正确性闸门：
             // 关掉后无 B 帧，输出序=输入序，stts 平凡、不写 ctts，流式收割（take_outputs）即输入序；就算被拒收，PTS 透传 + mux 的「解码序 + ctts」也能正确封装非单调显示时间。
             // 契约类型是 CFBoolean——传 CFNumber 会被会话校验拒收（OSStatus -12900）等于没关（此前传数值 0，重排从未真正关掉过）。
@@ -143,7 +154,7 @@ impl Compressor {
             let _ = ffi::VTSessionSetProperty(
                 session,
                 ffi::kVTCompressionPropertyKey_RealTime,
-                ffi::kCFBooleanFalse as ffi::CFTypeRef,
+                realtime,
             );
             ffi::CFRelease(bitrate_num as ffi::CFTypeRef);
             ffi::CFRelease(gop as ffi::CFTypeRef);
@@ -164,23 +175,33 @@ impl Compressor {
         frame: &Pb,
         pts_secs: f64,
         duration_secs: f64,
+        force_keyframe: bool,
     ) -> AppResult<()> {
         unsafe {
             const TS: i32 = 90_000;
             let pts = ffi::CMTimeMake((pts_secs * f64::from(TS)).round() as i64, TS);
             let dur = ffi::CMTimeMake((duration_secs * f64::from(TS)).round() as i64, TS);
-            os(
-                ffi::VTCompressionSessionEncodeFrame(
-                    self.session,
-                    frame.0,
-                    pts,
-                    dur,
-                    std::ptr::null(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                ),
-                "编码帧",
-            )
+            let props = if force_keyframe {
+                make_dict(&[(
+                    ffi::kVTEncodeFrameOptionKey_ForceKeyFrame as ffi::CFTypeRef,
+                    ffi::kCFBooleanTrue as ffi::CFTypeRef,
+                )])
+            } else {
+                std::ptr::null()
+            };
+            let status = ffi::VTCompressionSessionEncodeFrame(
+                self.session,
+                frame.0,
+                pts,
+                dur,
+                props,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            if !props.is_null() {
+                ffi::CFRelease(props as ffi::CFTypeRef);
+            }
+            os(status, "编码帧")
         }
     }
 

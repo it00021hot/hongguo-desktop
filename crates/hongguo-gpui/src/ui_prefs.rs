@@ -169,8 +169,8 @@ pub(crate) fn save_to(path: &Path, prefs: &UiPrefs) {
         prefs.portrait_w,
         prefs.portrait_h,
     );
-    if std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, path))
+    if hongguo_common::offline_qa::qa_write(&tmp, text.as_bytes())
+        .and_then(|_| hongguo_common::offline_qa::qa_rename(&tmp, path))
         .is_err()
     {
         log::warn!("[Shell] UI 偏好写盘失败（下次启动回默认）");

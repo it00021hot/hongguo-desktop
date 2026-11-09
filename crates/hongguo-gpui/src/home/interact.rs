@@ -546,14 +546,11 @@ impl super::HomeView {
             )
             .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
             .on_click(on_click)
-            .child(
-                icon.size(gpui_kit::px(icon_px))
-                    .text_color(if active {
-                        active_color
-                    } else {
-                        gpui_kit::rgb(0xffffff)
-                    }),
-            )
+            .child(icon.size(gpui_kit::px(icon_px)).text_color(if active {
+                active_color
+            } else {
+                gpui_kit::rgb(0xffffff)
+            }))
             .children((count > 0).then(|| {
                 div()
                     .text_xs()

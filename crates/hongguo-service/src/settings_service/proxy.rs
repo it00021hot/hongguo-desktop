@@ -10,6 +10,7 @@ use hongguo_common::model::{ProxyConfig, ProxyTestResult};
 
 /// 测试代理连通性，返回耗时。
 pub async fn test_proxy(draft: &ProxyConfig) -> AppResult<ProxyTestResult> {
+    hongguo_api::client::refuse_external_send("https://api5-normal-sinfonlineb.fqnovel.com/")?;
     let client = build_client(draft)?;
     let started = Instant::now();
 

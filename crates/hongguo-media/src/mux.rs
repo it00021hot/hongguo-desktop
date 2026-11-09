@@ -4,6 +4,7 @@
 
 mod audio;
 mod avcc;
+mod fragment;
 mod track;
 
 use std::io::Write;
@@ -14,7 +15,11 @@ use hongguo_video::r#box::build_box;
 
 use crate::mp4::{TrackSpec, build_moov, mdat_data_start, mdat_header, needs_wide_offsets};
 
-pub use audio::AudioTrack;
+pub use audio::{AudioTrack, collect};
+pub use fragment::{
+    AnnexbFrame, GrowingH264, prefix_is_independently_decodable, read_fragment_video,
+    split_completed_gop, take_run,
+};
 use track::{AudioSpec, VideoSpec};
 
 /// 媒体时基：90kHz。视频与音频共用，25/30/60fps 都能整除。
@@ -167,13 +172,16 @@ pub fn mux_h264(
 
     // 7) 落盘：[ftyp][moov][mdat]
     if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_common::offline_qa::qa_create_dir_all(parent)
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
     let temp = hongguo_common::utils::path::temp_path_for(output);
-    // 上一轮崩在中途会留下半个临时文件，先清掉再动手
-    let _ = std::fs::remove_file(&temp);
+    // 上一轮崩在中途会留下半个临时文件。符号链接在解析阶段拒绝，不会删到外面。
+    hongguo_common::offline_qa::qa_clear_for_replace(&temp)
+        .map_err(|e| AppError::Io(e.to_string()))?;
     {
-        let mut file = std::fs::File::create(&temp).map_err(|e| AppError::Io(e.to_string()))?;
+        let mut file = hongguo_common::offline_qa::qa_create(&temp)
+            .map_err(|e| AppError::Io(e.to_string()))?;
         let write = |file: &mut std::fs::File, buf: &[u8]| -> AppResult<()> {
             file.write_all(buf).map_err(|e| AppError::Io(e.to_string()))
         };
@@ -192,8 +200,8 @@ pub fn mux_h264(
     let size = std::fs::metadata(&temp)
         .map_err(|e| AppError::Io(e.to_string()))?
         .len();
-    std::fs::rename(&temp, output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
+    hongguo_common::offline_qa::qa_rename(&temp, output).map_err(|e| {
+        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok(size)

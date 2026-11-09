@@ -704,4 +704,3 @@ fn review_date(ts_ms: i64) -> String {
         .map(|dt| dt.format("%Y/%m/%d").to_string())
         .unwrap_or_default()
 }
-

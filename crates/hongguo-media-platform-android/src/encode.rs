@@ -27,9 +27,8 @@ pub struct H264Encoder {
 
 impl H264Encoder {
     pub fn new(width: usize, height: usize, fps: f64, bitrate: i32) -> AppResult<Self> {
-        let codec = open_encoder().ok_or_else(|| {
-            AppError::Media("本机没有 H.264 MediaCodec 编码器".into())
-        })?;
+        let codec = open_encoder()
+            .ok_or_else(|| AppError::Media("本机没有 H.264 MediaCodec 编码器".into()))?;
         let mut fmt = MediaFormat::new();
         fmt.set_str("mime", "video/avc");
         fmt.set_i32("width", width as i32);

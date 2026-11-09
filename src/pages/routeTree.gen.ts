@@ -19,6 +19,7 @@ import { Route as HistoryRouteImport } from './history'
 import { Route as LikedRouteImport } from './liked'
 import { Route as MergeRouteImport } from './merge'
 import { Route as NewRouteImport } from './new'
+import { Route as QaOfflineLocalRouteImport } from './qa-offline-local'
 import { Route as RankRouteImport } from './rank'
 import { Route as ReservationsRouteImport } from './reservations'
 import { Route as SettingsRouteImport } from './settings'
@@ -75,6 +76,11 @@ const NewRoute = NewRouteImport.update({
   path: '/new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QaOfflineLocalRoute = QaOfflineLocalRouteImport.update({
+  id: '/qa-offline-local',
+  path: '/qa-offline-local',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RankRoute = RankRouteImport.update({
   id: '/rank',
   path: '/rank',
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
+  '/qa-offline-local': typeof QaOfflineLocalRoute
   '/rank': typeof RankRoute
   '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
+  '/qa-offline-local': typeof QaOfflineLocalRoute
   '/rank': typeof RankRoute
   '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/liked': typeof LikedRoute
   '/merge': typeof MergeRoute
   '/new': typeof NewRoute
+  '/qa-offline-local': typeof QaOfflineLocalRoute
   '/rank': typeof RankRoute
   '/reservations': typeof ReservationsRoute
   '/settings': typeof SettingsRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/liked'
     | '/merge'
     | '/new'
+    | '/qa-offline-local'
     | '/rank'
     | '/reservations'
     | '/settings'
@@ -183,6 +193,7 @@ export interface FileRouteTypes {
     | '/liked'
     | '/merge'
     | '/new'
+    | '/qa-offline-local'
     | '/rank'
     | '/reservations'
     | '/settings'
@@ -200,6 +211,7 @@ export interface FileRouteTypes {
     | '/liked'
     | '/merge'
     | '/new'
+    | '/qa-offline-local'
     | '/rank'
     | '/reservations'
     | '/settings'
@@ -218,6 +230,7 @@ export interface RootRouteChildren {
   LikedRoute: typeof LikedRoute
   MergeRoute: typeof MergeRoute
   NewRoute: typeof NewRoute
+  QaOfflineLocalRoute: typeof QaOfflineLocalRoute
   RankRoute: typeof RankRoute
   ReservationsRoute: typeof ReservationsRoute
   SettingsRoute: typeof SettingsRoute
@@ -297,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof NewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/qa-offline-local': {
+      id: '/qa-offline-local'
+      path: '/qa-offline-local'
+      fullPath: '/qa-offline-local'
+      preLoaderRoute: typeof QaOfflineLocalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/rank': {
       id: '/rank'
       path: '/rank'
@@ -346,6 +366,7 @@ const rootRouteChildren: RootRouteChildren = {
   LikedRoute: LikedRoute,
   MergeRoute: MergeRoute,
   NewRoute: NewRoute,
+  QaOfflineLocalRoute: QaOfflineLocalRoute,
   RankRoute: RankRoute,
   ReservationsRoute: ReservationsRoute,
   SettingsRoute: SettingsRoute,

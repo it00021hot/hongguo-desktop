@@ -34,6 +34,7 @@ import { useIncognitoMode } from './incognito';
 import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
+import { useGrowingCompat } from '../hooks/use-growing-compat';
 import { useFrameHold } from '../hooks/use-frame-hold';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
@@ -128,6 +129,7 @@ export function PlayerView({
     setDefinition,
     activeDefinition,
     definitions,
+    needsCompat,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -171,7 +173,17 @@ export function PlayerView({
 
   // 转码兜底：onDecodeFailure 代理须先于 hook 创建
   const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
-  const { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat } = useTranscodeFallback({
+  const {
+    compatSrc,
+    compat,
+    playSrc,
+    streamKey,
+    startCompat,
+    forceCompat,
+    progressive,
+    showCompleteSrc,
+    noteGrowingUnavailable,
+  } = useTranscodeFallback({
     videoRef,
     seriesId,
     vidIndex,
@@ -184,8 +196,16 @@ export function PlayerView({
     currentSeries,
     hevcPlayable,
     android: isAndroid(),
+    needsCompat,
     onDecodeFailure,
   });
+  useGrowingCompat(
+    videoRef,
+    progressive ? playSrc : null,
+    seriesId,
+    vidIndex,
+    noteGrowingUnavailable,
+  );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
 
@@ -433,7 +453,7 @@ export function PlayerView({
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={playSrc}
+                  src={showCompleteSrc ? playSrc : undefined}
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',

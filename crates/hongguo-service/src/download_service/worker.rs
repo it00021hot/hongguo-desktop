@@ -58,7 +58,7 @@ pub async fn download_episode(
     sink: &ProgressSink,
 ) -> AppResult<u64> {
     if let Some(parent) = episode.output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_store::paths::qa_create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
     }
 
     let temp_path = temp_path_for(&episode.output_path);
@@ -67,14 +67,15 @@ pub async fn download_episode(
     let resp = hongguo_api::client::get_video_stream(&client, &episode.video_url).await?;
 
     let total = resp.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(&temp_path).map_err(|e| AppError::Io(e.to_string()))?;
+    let mut file =
+        hongguo_store::paths::qa_create(&temp_path).map_err(|e| AppError::Io(e.to_string()))?;
 
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         if episode.cancelled.load(Ordering::SeqCst) {
             drop(file);
-            let _ = std::fs::remove_file(&temp_path);
+            let _ = hongguo_store::paths::qa_remove_file(&temp_path);
             return Err(AppError::Cancelled);
         }
         let chunk = chunk.map_err(|e| AppError::Network(e.to_string()))?;
@@ -107,16 +108,17 @@ fn finalize(temp: &Path, output: &Path, episode: &EpisodeDownload) -> AppResult<
             Err(e) => Err(e),
         }
     } else {
-        std::fs::rename(temp, output).map_err(|e| AppError::Io(format!("改名失败: {e}")))
+        hongguo_store::paths::qa_rename(temp, output)
+            .map_err(|e| AppError::Io(format!("改名失败: {e}")))
     };
 
-    let _ = std::fs::remove_file(temp);
+    let _ = hongguo_store::paths::qa_remove_file(temp);
     result
 }
 
 /// 清理残留的临时文件。
 pub fn cleanup_temp(output: &Path) {
-    let _ = std::fs::remove_file(temp_path_for(output));
+    let _ = hongguo_store::paths::qa_remove_file(&temp_path_for(output));
 }
 
 #[cfg(test)]

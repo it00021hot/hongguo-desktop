@@ -25,7 +25,6 @@ pub(super) fn session_runtime_pairs(uuid: &str) -> [(&'static str, String); 18] 
     ]
 }
 
-
 pub(super) const FEED_IMAGE_SHRINK: &str = "W3siaW1hZ2VfdHlwZSI6MiwiaW1hZ2Vfd2lkdGgiOjM2MCwic2hyaW5rX3R5cGUiOjJ9LHsiaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7ImltYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==";
 
 /// 官方 cell/change 的推荐补充上下文：base64 即

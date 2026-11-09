@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+hongguo-bytevc2 = { path = "../hongguo-bytevc2" }
 hongguo-common = { path = "../hongguo-common" }
 hongguo-signer = { path = "../hongguo-signer" }
 aes = "0.9"
@@ -29,3 +30,6 @@ reqwest = { version = "0.13", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+hongguo-video = { path = "../hongguo-video" }

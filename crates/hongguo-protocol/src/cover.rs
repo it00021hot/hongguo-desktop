@@ -23,7 +23,7 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     }
 
     for (ext, ct) in [JPEG_KIND, PNG_KIND, WEBP_KIND] {
-        if let Ok(bytes) = std::fs::read(cache_path(&remote, ext)) {
+        if let Ok(bytes) = hongguo_store::paths::qa_read(&cache_path(&remote, ext)) {
             return Ok((200, headers(ct, bytes.len()), bytes));
         }
     }
@@ -37,12 +37,12 @@ pub fn serve(raw_path: &str) -> Result<ProtocolResponse, String> {
     // 先写临时文件再改名：转一半的图不该被缓存住
     let final_path = cache_path(&remote, ext);
     let tmp = cache_tmp(&remote);
-    if let Err(e) = std::fs::write(&tmp, &bytes) {
+    if let Err(e) = hongguo_store::paths::qa_write(&tmp, &bytes) {
         let msg = format!("写封面缓存失败: {e}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &final_path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &final_path);
     Ok((200, headers(ct, bytes.len()), bytes))
 }
 
@@ -85,19 +85,19 @@ pub fn acquire_renderable(remote: &str) -> Result<(Vec<u8>, &'static str), Strin
     ensure_cache_dir()?;
     let final_path = cache_path(remote, ext);
     let tmp = cache_tmp(remote);
-    if let Err(error) = std::fs::write(&tmp, &bytes) {
+    if let Err(error) = hongguo_store::paths::qa_write(&tmp, &bytes) {
         let msg = format!("写封面缓存失败: {error}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &final_path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &final_path);
     Ok((bytes, ct))
 }
 
 /// 磁盘缓存里已转码好的封面字节与类型；内存解码结果被逐出后从这里重新取字节再解码，本地读比重新下载转码快一个量级。
 pub fn cached_renderable(remote: &str) -> Option<(Vec<u8>, &'static str)> {
     for (ext, ct) in [JPEG_KIND, PNG_KIND, WEBP_KIND] {
-        if let Ok(bytes) = std::fs::read(cache_path(remote, ext)) {
+        if let Ok(bytes) = hongguo_store::paths::qa_read(&cache_path(remote, ext)) {
             return Some((bytes, ct));
         }
     }
@@ -122,19 +122,21 @@ pub fn sized_cache_path(remote: &str, edge: u32) -> std::path::PathBuf {
 /// 确保某一档封面在磁盘上并返回路径：磁盘命中直接返回，否则下载 → HEIC 转码 → 缩到该档尺寸 → 落盘。
 pub fn ensure_sized_cached(remote: &str, edge: u32) -> Result<std::path::PathBuf, String> {
     let path = sized_cache_path(remote, edge);
-    if path.exists() {
-        return Ok(path);
+    if let Ok(bound) = hongguo_store::paths::prepare_qa_io(&path) {
+        if hongguo_store::paths::qa_read(&bound).is_ok() {
+            return Ok(bound);
+        }
     }
     let (bytes, _) = acquire_renderable(remote)?;
     let sized = resize_to(&bytes, edge)?;
     ensure_cache_dir()?;
     let tmp = path.with_extension("tmp");
-    if let Err(error) = std::fs::write(&tmp, &sized) {
+    if let Err(error) = hongguo_store::paths::qa_write(&tmp, &sized) {
         let msg = format!("写封面缓存失败: {error}");
         log::warn!("[Cover] {msg}");
         return Err(msg);
     }
-    let _ = std::fs::rename(&tmp, &path);
+    let _ = hongguo_store::paths::qa_rename(&tmp, &path);
     Ok(path)
 }
 
@@ -167,7 +169,7 @@ fn resize_to(bytes: &[u8], edge: u32) -> Result<Vec<u8>, String> {
 /// 缓存目录就位（每次写盘前查一次，存在时是一次 exists 开销）。
 fn ensure_cache_dir() -> Result<(), String> {
     let dir = hongguo_store::paths::cover_cache_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| {
+    hongguo_store::paths::qa_create_dir_all(&dir).map_err(|e| {
         let msg = format!("创建封面缓存目录失败: {e}");
         log::warn!("[Cover] {msg}");
         msg
@@ -228,11 +230,11 @@ fn acquire(remote: &str) -> Result<(Vec<u8>, &'static str, &'static str), String
         }
         let out = cmd.output().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
         if out.status.success() {
-            return std::fs::read(&tmp)
+            return hongguo_store::paths::qa_read(&tmp)
                 .map(|bytes| (bytes, JPEG_KIND.0, JPEG_KIND.1))
                 .map_err(|e| format!("读取转码产物失败: {e}"));
         }
-        let _ = std::fs::remove_file(&tmp);
+        let _ = hongguo_store::paths::qa_remove_file(&tmp);
         log::warn!(
             "[Cover] ffmpeg 转码失败，落纯软解: {}",
             String::from_utf8_lossy(&out.stderr).trim()
@@ -273,6 +275,9 @@ const DOWNLOAD_TIMEOUT_SECS: u64 = 15;
 /// 同步 GET。worker 线程上没有 runtime：借用 DB 线程同款 current_thread
 /// 内联 runtime 跑一段 async（reqwest 本身是异步 API）。
 fn http_get(remote: &str) -> Result<Vec<u8>, String> {
+    if hongguo_common::offline_qa::external_url_forbidden(remote) {
+        return Err("离线 QA 拒绝外部封面请求".into());
+    }
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -287,6 +292,19 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
             let builder = builder.use_preconfigured_tls(
                 hongguo_common::utils::tls::webpki_tls_config().map_err(|e| e.to_string())?,
             );
+            let builder = if hongguo_common::offline_qa::enabled() {
+                builder
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                        if hongguo_common::offline_qa::parsed_url_forbidden(attempt.url()) {
+                            attempt.error(std::io::Error::other("离线 QA 拒绝重定向到外部地址"))
+                        } else {
+                            attempt.follow()
+                        }
+                    }))
+            } else {
+                builder
+            };
             builder
                 .build()
                 .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?
@@ -309,8 +327,23 @@ fn http_get(remote: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::http_get;
     use super::sniff_kind;
     use super::{EDGE_AVATAR, EDGE_CARD, sized_cache_path};
+
+    #[test]
+    fn offline_cover_download_returns_before_http() {
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let err = http_get("https://example.com/a.heic").expect_err("封面客户端必须先拒绝");
+        assert!(err.contains("离线 QA"));
+        let err = http_get("http://localhost:80@example.com/a.jpg").expect_err("伪 host");
+        assert!(err.contains("离线 QA"));
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+    }
 
     #[test]
     fn sized_cache_path_is_edge_scoped() {
@@ -356,4 +389,50 @@ mod tests {
         assert_eq!(sniff_kind(b"not an image"), None);
         assert_eq!(sniff_kind(&[]), None);
     }
+
+
+    #[test]
+    fn qa_cached_renderable_refuses_outside_symlink() {
+        let root = std::env::temp_dir().join(format!(
+            "hg-cover-read-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(isolated.join("cover-cache")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret.jpg");
+        std::fs::write(&secret, b"LEAK-BYTES").unwrap();
+
+        let prev_qa = std::env::var_os(hongguo_common::offline_qa::ENV);
+        let prev_data = std::env::var_os("HONGGUO_DATA_DIR");
+        unsafe {
+            std::env::set_var(hongguo_common::offline_qa::ENV, "1");
+            std::env::set_var("HONGGUO_DATA_DIR", &isolated);
+        }
+
+        let remote = "https://example.com/cover-hit.jpeg";
+        let path = super::cache_path(remote, "jpg");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&secret, &path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&secret, &path).unwrap();
+        assert!(super::cached_renderable(remote).is_none());
+        assert_eq!(std::fs::read(&secret).unwrap(), b"LEAK-BYTES");
+
+        match prev_qa {
+            Some(v) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, v) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        match prev_data {
+            Some(v) => unsafe { std::env::set_var("HONGGUO_DATA_DIR", v) },
+            None => unsafe { std::env::remove_var("HONGGUO_DATA_DIR") },
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
+
