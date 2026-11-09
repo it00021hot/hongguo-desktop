@@ -282,7 +282,7 @@ fn write_gop(
     live.prefix_samples = gop.len() as u32;
     live.prefix_bytes = bytes;
     log::info!(
-        "[ByteVC2] 首段可播：{} 帧，{bytes} 字节",
+        "[ByteVC2] 首段可播：{} 帧，{bytes} 字节（audio_end-bounded）",
         live.prefix_samples
     );
     if let Some(cb) = req.on_playable_prefix {
