@@ -234,7 +234,10 @@ fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
         else {
             break;
         };
-        write_gop(pass.live, &gop, next_pts, pass.req, pass.started)?;
+        // next_pts 为空只表示「当前缓冲里没有下一帧」，不是整片结束；
+        // 若把 None 传给 write_gop 会把剩余整轨 AAC 塞进本段，MSE 首段会胀到数 MB 且解不出宽高。
+        let audio_end = next_pts.or_else(|| gop.last().map(|(pts, _, _)| *pts + 1.0 / 30.0));
+        write_gop(pass.live, &gop, audio_end, pass.req, pass.started)?;
     }
     Ok(())
 }
