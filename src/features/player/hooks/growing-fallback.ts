@@ -1,7 +1,8 @@
-/** 渐进播放失败后的画面地址。增长中或已取消的同一路径不能直接交给 video。 */
+import type { CompatProgress } from '@/service/schema';
 
 export type ProducerState = 'running' | 'completed' | 'failed' | 'cancelled';
 
+/** 离线 QA 在渐进播放失败后只接已完成的整片。 */
 export function wholeFileSrc(input: {
   episodeKey: string;
   eventKey: string | null;
@@ -13,6 +14,38 @@ export function wholeFileSrc(input: {
   if (input.producer === 'failed' || input.producer === 'cancelled') return null;
   if (!input.waiting || input.producer !== 'completed' || !input.completeUrl) return null;
   return input.completeUrl;
+}
+
+export function compatMediaMode(
+  progressive: boolean,
+  waitingForWholeFile: boolean,
+  phase: CompatProgress['phase'] | undefined,
+): 'growing' | 'waiting' | 'file' {
+  if (!progressive) return 'file';
+  if (!waitingForWholeFile) return 'growing';
+  return phase === 'completed' ? 'file' : 'waiting';
+}
+
+export function mergeCompatProgress(
+  current: CompatProgress | null,
+  next: CompatProgress,
+): CompatProgress | null {
+  // ready 的固定 99% 只代表首段就绪。
+  if (next.phase === 'ready') return current;
+  if (current?.key === next.key) {
+    if (current.phase === 'completed' || current.percent > next.percent) return current;
+    if (current.phase === 'transcoding' && next.phase === 'downloading') return current;
+  }
+  return next;
+}
+
+export function visibleCompatProgress(
+  progress: CompatProgress | null,
+  videoLive: boolean,
+): CompatProgress | null {
+  return !videoLive && (progress?.phase === 'downloading' || progress?.phase === 'transcoding')
+    ? progress
+    : null;
 }
 
 /** 离开这一集才取消生产任务。MSE 失败只停消费，不能取消后再等同一任务。 */

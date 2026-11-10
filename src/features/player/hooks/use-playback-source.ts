@@ -259,6 +259,7 @@ export function usePlaybackSource(params: {
     setSrcKey,
     srcKeyRef,
     lastKnownRef,
+    pendingSeek,
     buffering,
     definition,
     setDefinition,

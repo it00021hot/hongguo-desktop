@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { compatPlaybackKey, wholeFileSrc } from './growing-fallback';
+import { compatMediaMode, compatPlaybackKey, mergeCompatProgress } from './growing-fallback';
 import { toast } from 'sonner';
 import { useCompatPlayback } from '@/service/queries';
 import { useEvent } from '@/service/tauri/events';
@@ -25,6 +25,7 @@ export function useTranscodeFallback(params: {
   src: string | null;
   retryTick: number;
   srcKeyRef: React.RefObject<string>;
+  pendingSeekRef: React.RefObject<number>;
   setSrcKey: (key: string) => void;
   currentSeries?: Series;
   /** 后端 HEVC 可播结论；`undefined` = 探测未返回 */
@@ -50,6 +51,7 @@ export function useTranscodeFallback(params: {
     src,
     retryTick,
     srcKeyRef,
+    pendingSeekRef,
     setSrcKey,
     currentSeries,
     hevcPlayable,
@@ -85,23 +87,7 @@ export function useTranscodeFallback(params: {
   const compatSrc = compatResult?.key === compatKey ? compatResult.url : null;
   const progressive = compatResult?.key === compatKey && compatResult.progressive;
   const compat = compatProgress?.key === compatKey ? compatProgress : null;
-  const producer =
-    compat?.phase === 'failed'
-      ? ('failed' as const)
-      : compat?.phase === 'completed'
-        ? ('completed' as const)
-        : progressive
-          ? ('running' as const)
-          : ('completed' as const);
-  // Completed 事件本身也算「可以接整片」：不能先清 waiting 再指望 wholeFileSrc。
-  const waitingForWhole = waitingWholeFile || compat?.phase === 'completed';
-  const wholeSrc = wholeFileSrc({
-    episodeKey: compatKey,
-    eventKey: compat?.key ?? compatResult?.key ?? null,
-    producer,
-    completeUrl: compatSrc,
-    waiting: waitingForWhole,
-  });
+  const mediaMode = compatMediaMode(progressive, waitingWholeFile, compat?.phase);
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
   const baseSrc = resolvePlayBaseSrc(src, compatSrc, holdNative);
   /**
@@ -120,22 +106,13 @@ export function useTranscodeFallback(params: {
     useCallback(
       (p: CompatProgress) => {
         if (p.key !== compatKey) return;
-        if (p.phase === 'completed') {
-          setCompatResult((prev) =>
-            prev && prev.key === compatKey ? { ...prev, progressive: false } : prev,
-          );
-          // 保留 completed 相位，让 wholeFileSrc 在 MSE 回退等待后拿到整片地址
-          setCompatProgress({ key: compatKey, percent: 100, phase: 'completed' });
-          return;
-        }
         if (p.phase === 'failed') {
           setCompatResult((prev) => (prev && prev.key === compatKey ? null : prev));
           setWaitingFor(null);
           setCompatProgress(null);
           return;
         }
-        if (p.phase === 'ready' && p.percent >= 100) return;
-        setCompatProgress(p);
+        setCompatProgress((prev) => mergeCompatProgress(prev, p));
       },
       [compatKey],
     ),
@@ -197,8 +174,10 @@ export function useTranscodeFallback(params: {
   }, [compatKey]);
 
   const noteGrowingUnavailable = useCallback(() => {
+    const position = videoRef.current?.currentTime;
+    if (position !== undefined && position > 0) pendingSeekRef.current = position;
     setWaitingFor(compatKey);
-  }, [compatKey]);
+  }, [compatKey, pendingSeekRef, videoRef]);
 
   // 已知不可解：起播前主动转兼容（Android 软解 / 本会话已选转兼容），省掉首集黑屏等待
   useEffect(() => {
@@ -222,7 +201,6 @@ export function useTranscodeFallback(params: {
     return () => clearInterval(timer);
   }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
 
-  const showCompleteSrc = wholeSrc != null || (!progressive && !waitingWholeFile);
   return {
     compatSrc,
     compat,
@@ -230,8 +208,8 @@ export function useTranscodeFallback(params: {
     streamKey,
     startCompat,
     forceCompat,
-    progressive,
-    showCompleteSrc,
+    progressive: mediaMode === 'growing',
+    showCompleteSrc: mediaMode === 'file',
     noteGrowingUnavailable,
   };
 }

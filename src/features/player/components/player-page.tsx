@@ -35,6 +35,7 @@ import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { useGrowingCompat } from '../hooks/use-growing-compat';
+import { visibleCompatProgress } from '../hooks/growing-fallback';
 import { useFrameHold } from '../hooks/use-frame-hold';
 import { useSwitchSilence } from '../hooks/use-switch-silence';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
@@ -126,6 +127,7 @@ export function PlayerView({
     setSrcKey,
     srcKeyRef,
     lastKnownRef,
+    pendingSeek,
     buffering,
     setDefinition,
     activeDefinition,
@@ -178,7 +180,7 @@ export function PlayerView({
   const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
   const {
     compatSrc,
-    compat,
+    compat: compatProgress,
     playSrc,
     streamKey,
     startCompat,
@@ -195,6 +197,7 @@ export function PlayerView({
     src,
     retryTick,
     srcKeyRef,
+    pendingSeekRef: pendingSeek,
     setSrcKey,
     currentSeries,
     hevcPlayable,
@@ -204,6 +207,8 @@ export function PlayerView({
     sourceReady,
     onDecodeFailure,
   });
+  const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
+  const compat = visibleCompatProgress(compatProgress, videoLive);
   useGrowingCompat(
     videoRef,
     progressive ? playSrc : null,
@@ -280,7 +285,6 @@ export function PlayerView({
 
   /** 简介展开态：切剧重挂载自然收回。 */
   const [introExpanded, setIntroExpanded] = useState(false);
-  const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
 
   // 同剧切集黑幕暗转：置位/收口在 use-switch-veil，显隐真值表在 use-frame-hold
   const { veiled } = useSwitchVeil({
