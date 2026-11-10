@@ -22,6 +22,10 @@ concurrency:
 
 jobs:
   lint-and-test:
+    env:
+      # 从 crate 自带源码构建，保证链接到目标架构的 VVdeC。
+      SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL: always
+      PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -72,8 +76,20 @@ jobs:
       - name: ESLint
         run: pnpm exec eslint . --max-warnings=0
 
+      - name: Install pkg-config for VVdeC
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install pkgconf --version 3.0.10 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pkgconfDir = Join-Path $env:ProgramFiles 'pkgconf-3.0.10'
+          & (Join-Path $pkgconfDir 'pkg-config.exe') --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pkgconfDir >> $env:GITHUB_PATH
+
       - name: Rust tests
-        run: cargo test --workspace --lib
+        # 离线 QA 与故障注入测试会修改进程级状态。
+        run: cargo test --workspace --lib -- --test-threads=1
 
       - name: Rust clippy（零警告 + 忽略标签禁令）
         run: cargo clippy --workspace ${{ matrix.clippy_args }} -- -D warnings -D clippy::allow_attributes
