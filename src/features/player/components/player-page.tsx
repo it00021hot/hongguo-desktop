@@ -174,6 +174,8 @@ export function PlayerView({
 
   // 转码兜底：onDecodeFailure 代理须先于 hook 创建
   const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
+  const sourceReady = srcKey === episodeKey && Boolean(src);
+  const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
   const {
     compatSrc,
     compat,
@@ -198,6 +200,8 @@ export function PlayerView({
     hevcPlayable,
     android: isAndroid(),
     needsCompat,
+    definition: compatDefinition,
+    sourceReady,
     onDecodeFailure,
   });
   useGrowingCompat(
@@ -206,6 +210,7 @@ export function PlayerView({
     seriesId,
     vidIndex,
     noteGrowingUnavailable,
+    compatDefinition,
   );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;

@@ -171,19 +171,20 @@ impl super::HomeView {
                         &item.series_id,
                         ep.vid_index,
                         Some(ep.vid.clone()),
+                        Some(prepared.definition),
                     )
                     .await?;
-                    let path = hongguo_service::transcode_service::cache::cached_path_for(
+                    let path = hongguo_service::transcode_service::cache::playback_file(
                         &item.series_id,
                         ep.vid_index,
-                        hongguo_media_platform::RateProfile::Playback,
-                    )
-                    .ok_or_else(|| {
-                        hongguo_common::AppError::Media(format!(
+                        Some(prepared.definition),
+                    );
+                    if !path.is_file() {
+                        return Err(hongguo_common::AppError::Media(format!(
                             "兼容转码完成但缓存未命中（{}）",
                             compat.url
-                        ))
-                    })?;
+                        )));
+                    }
                     (
                         hongguo_player::PlaySource::Local { path },
                         prepared.definitions,

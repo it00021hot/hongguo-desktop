@@ -29,31 +29,36 @@ export function cancelProducerOnMseCleanup(reason: 'episode-leave' | 'mse-effect
 const PENDING_CANCEL_MS = 150;
 const pendingCancels = new Map<string, ReturnType<typeof setTimeout>>();
 
-function episodeCancelKey(seriesId: string, vidIndex: number): string {
-  return `${seriesId}:${vidIndex}`;
+export function compatPlaybackKey(episodeKey: string, definition?: number): string {
+  return definition === undefined ? episodeKey : `${episodeKey}:${definition}`;
 }
 
 /** 卸载/换集时调度取消；同 key 在窗口内 remount 可 retain 掉。 */
 export function scheduleProducerCancel(
   seriesId: string,
   vidIndex: number,
-  cancel: (args: { seriesId: string; vidIndex: number }) => void,
+  cancel: (args: { seriesId: string; vidIndex: number; definition?: number }) => void,
+  definition?: number,
 ): void {
-  const key = episodeCancelKey(seriesId, vidIndex);
+  const key = compatPlaybackKey(`${seriesId}:${vidIndex}`, definition);
   const prev = pendingCancels.get(key);
   if (prev !== undefined) clearTimeout(prev);
   pendingCancels.set(
     key,
     setTimeout(() => {
       pendingCancels.delete(key);
-      cancel({ seriesId, vidIndex });
+      cancel({ seriesId, vidIndex, definition });
     }, PENDING_CANCEL_MS),
   );
 }
 
 /** 同集 remount 时撤销尚未触发的取消。 */
-export function retainProducerOnRemount(seriesId: string, vidIndex: number): void {
-  const key = episodeCancelKey(seriesId, vidIndex);
+export function retainProducerOnRemount(
+  seriesId: string,
+  vidIndex: number,
+  definition?: number,
+): void {
+  const key = compatPlaybackKey(`${seriesId}:${vidIndex}`, definition);
   const prev = pendingCancels.get(key);
   if (prev === undefined) return;
   clearTimeout(prev);

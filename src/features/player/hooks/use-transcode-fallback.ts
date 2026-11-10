@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { wholeFileSrc } from './growing-fallback';
+import { compatPlaybackKey, wholeFileSrc } from './growing-fallback';
 import { toast } from 'sonner';
 import { useCompatPlayback } from '@/service/queries';
 import { useEvent } from '@/service/tauri/events';
@@ -33,6 +33,8 @@ export function useTranscodeFallback(params: {
   android: boolean;
   /** 后端标明本集必须转兼容（bytevc2 等） */
   needsCompat?: boolean;
+  definition?: number;
+  sourceReady: boolean;
   /**
    * 解码失败的裁决入口（轮询命中后调用）：父层据此决定直接兜底转码，
    * 还是先弹「装扩展 vs 转兼容」的主卡（无 HEVC 机器）。
@@ -53,6 +55,8 @@ export function useTranscodeFallback(params: {
     hevcPlayable,
     android,
     needsCompat,
+    definition,
+    sourceReady,
     onDecodeFailure,
   } = params;
   const compatPlay = useCompatPlayback();
@@ -66,39 +70,38 @@ export function useTranscodeFallback(params: {
   } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
   const [waitingFor, setWaitingFor] = useState<string | null>(null);
-  const waitingWholeFile = waitingFor === episodeKey;
-  /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
+  const compatKey = sourceReady ? compatPlaybackKey(episodeKey, definition) : '';
+  const waitingWholeFile = waitingFor === compatKey;
+  const activeCompatKey = useRef(compatKey);
   const compatStarted = useRef(false);
 
   const { forceCompat, holdNative } = decideCompatPlayback({
     hevcPlayable,
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
-    needsCompat,
+    needsCompat: sourceReady && needsCompat,
   });
 
-  /** 兜底产物地址，只认当前这一集 */
-  const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
-  const progressive = compatResult?.key === episodeKey && compatResult.progressive;
+  const compatSrc = compatResult?.key === compatKey ? compatResult.url : null;
+  const progressive = compatResult?.key === compatKey && compatResult.progressive;
+  const compat = compatProgress?.key === compatKey ? compatProgress : null;
   const producer =
-    compatProgress?.phase === 'failed'
+    compat?.phase === 'failed'
       ? ('failed' as const)
-      : compatProgress?.phase === 'completed'
+      : compat?.phase === 'completed'
         ? ('completed' as const)
         : progressive
           ? ('running' as const)
           : ('completed' as const);
   // Completed 事件本身也算「可以接整片」：不能先清 waiting 再指望 wholeFileSrc。
-  const waitingForWhole = waitingWholeFile || compatProgress?.phase === 'completed';
+  const waitingForWhole = waitingWholeFile || compat?.phase === 'completed';
   const wholeSrc = wholeFileSrc({
-    episodeKey,
-    eventKey: compatProgress?.key ?? compatResult?.key ?? null,
+    episodeKey: compatKey,
+    eventKey: compat?.key ?? compatResult?.key ?? null,
     producer,
     completeUrl: compatSrc,
     waiting: waitingForWhole,
   });
-  /** 兜底进度，只认当前这一集 */
-  const compat = compatProgress?.key === episodeKey ? compatProgress : null;
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
   const baseSrc = resolvePlayBaseSrc(src, compatSrc, holdNative);
   /**
@@ -116,17 +119,17 @@ export function useTranscodeFallback(params: {
     EVENTS.compatPlayProgress,
     useCallback(
       (p: CompatProgress) => {
-        if (p.key !== episodeKey) return;
+        if (p.key !== compatKey) return;
         if (p.phase === 'completed') {
           setCompatResult((prev) =>
-            prev && prev.key === episodeKey ? { ...prev, progressive: false } : prev,
+            prev && prev.key === compatKey ? { ...prev, progressive: false } : prev,
           );
           // 保留 completed 相位，让 wholeFileSrc 在 MSE 回退等待后拿到整片地址
-          setCompatProgress({ key: episodeKey, percent: 100, phase: 'completed' });
+          setCompatProgress({ key: compatKey, percent: 100, phase: 'completed' });
           return;
         }
         if (p.phase === 'failed') {
-          setCompatResult((prev) => (prev && prev.key === episodeKey ? null : prev));
+          setCompatResult((prev) => (prev && prev.key === compatKey ? null : prev));
           setWaitingFor(null);
           setCompatProgress(null);
           return;
@@ -134,22 +137,23 @@ export function useTranscodeFallback(params: {
         if (p.phase === 'ready' && p.percent >= 100) return;
         setCompatProgress(p);
       },
-      [episodeKey],
+      [compatKey],
     ),
   );
 
   const startCompat = useCallback(() => {
-    if (!seriesId || !vidIndex || compatStarted.current) return;
+    if (!seriesId || !vidIndex || !compatKey || compatStarted.current) return;
     compatStarted.current = true;
-    setCompatProgress({ key: episodeKey, percent: 0, phase: 'downloading' });
+    setCompatProgress({ key: compatKey, percent: 0, phase: 'downloading' });
     const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
     mutateCompat(
-      { seriesId, vidIndex, vid: ep?.vid },
+      { seriesId, vidIndex, vid: ep?.vid, definition },
       {
         onSuccess: (r) => {
+          if (activeCompatKey.current !== compatKey) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setCompatResult({ key: episodeKey, url: r.url, progressive: r.progressive });
+          setCompatResult({ key: compatKey, url: r.url, progressive: r.progressive });
           if (r.progressive) return;
           setCompatProgress(null);
           // 主动兼容 + 缓存命中是预期路径（软解机连播），不再每集弹 toast 打扰
@@ -165,6 +169,7 @@ export function useTranscodeFallback(params: {
           }
         },
         onError: (e) => {
+          if (activeCompatKey.current !== compatKey) return;
           setCompatProgress(null);
           compatStarted.current = false;
           toast.error(tf('player.compatFailed', { reason: e.message }));
@@ -176,6 +181,8 @@ export function useTranscodeFallback(params: {
     seriesId,
     vidIndex,
     episodeKey,
+    compatKey,
+    definition,
     currentSeries,
     mutateCompat,
     srcKeyRef,
@@ -183,14 +190,15 @@ export function useTranscodeFallback(params: {
     forceCompat,
   ]);
 
-  // 换集先清「已兜底」记号，必须排在主动兼容 effect 之前——否则同 commit 里先 start 再被清掉会丢闸
+  // 换集或档位后先更新任务身份，再由下一段 effect 启动兼容。
   useEffect(() => {
+    activeCompatKey.current = compatKey;
     compatStarted.current = false;
-  }, [episodeKey]);
+  }, [compatKey]);
 
   const noteGrowingUnavailable = useCallback(() => {
-    setWaitingFor(episodeKey);
-  }, [episodeKey]);
+    setWaitingFor(compatKey);
+  }, [compatKey]);
 
   // 已知不可解：起播前主动转兼容（Android 软解 / 本会话已选转兼容），省掉首集黑屏等待
   useEffect(() => {

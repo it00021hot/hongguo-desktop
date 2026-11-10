@@ -26,20 +26,22 @@ pub async fn transcode_for_playback(
     series_id: String,
     vid_index: u32,
     vid: Option<String>,
+    definition: Option<u32>,
 ) -> AppResult<CompatPlayResult> {
     hongguo_service::play_service::compat_play::compat_for_playback_prefix(
         state.inner(),
         &series_id,
         vid_index,
         vid,
+        definition,
     )
     .await
 }
 
 /// 停止这一集还在写的兼容转码。
 #[tauri::command]
-pub fn cancel_compat_playback(series_id: String, vid_index: u32) {
-    hongguo_service::play_service::compat_play::cancel_compat(&series_id, vid_index);
+pub fn cancel_compat_playback(series_id: String, vid_index: u32, definition: Option<u32>) {
+    hongguo_service::play_service::compat_play::cancel_compat(&series_id, vid_index, definition);
 }
 /// 离线 QA：本地明文样本走兼容转码首段（MSE）。正式模式返回 Unsupported。
 #[tauri::command]
@@ -47,5 +49,6 @@ pub async fn qa_offline_local_play(
     state: State<'_, AppState>,
     file_path: String,
 ) -> AppResult<CompatPlayResult> {
-    hongguo_service::play_service::compat_play::qa_offline_local_play(state.inner(), file_path).await
+    hongguo_service::play_service::compat_play::qa_offline_local_play(state.inner(), file_path)
+        .await
 }

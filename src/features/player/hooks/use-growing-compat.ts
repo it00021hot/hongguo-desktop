@@ -27,10 +27,11 @@ export function useGrowingCompat(
   seriesId: string | null,
   vidIndex: number | null,
   onUnavailable: () => void,
+  definition?: number,
 ) {
   useEffect(() => {
     if (seriesId && vidIndex != null) {
-      retainProducerOnRemount(seriesId, vidIndex);
+      retainProducerOnRemount(seriesId, vidIndex, definition);
     }
     return () => {
       if (
@@ -40,12 +41,17 @@ export function useGrowingCompat(
         cancelProducerOn('leave')
       ) {
         // 推迟取消：同集 remount 会 retain，避免 harness/StrictMode 误杀 progressive
-        scheduleProducerCancel(seriesId, vidIndex, (args) => {
-          void transcode.cancelCompat(args);
-        });
+        scheduleProducerCancel(
+          seriesId,
+          vidIndex,
+          (args) => {
+            void transcode.cancelCompat(args);
+          },
+          definition,
+        );
       }
     };
-  }, [seriesId, vidIndex]);
+  }, [seriesId, vidIndex, definition]);
 
   useEffect(() => {
     if (!url || !seriesId || vidIndex == null) return;

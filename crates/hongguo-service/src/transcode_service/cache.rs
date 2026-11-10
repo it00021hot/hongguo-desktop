@@ -21,6 +21,16 @@ pub fn cache_file_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Pat
     compat_cache_dir().join(name)
 }
 
+pub fn playback_file(series_id: &str, vid_index: u32, definition: Option<u32>) -> PathBuf {
+    match definition {
+        Some(definition) => compat_cache_dir().join(format!(
+            "{}_{vid_index:03}.{definition}.play.mp4",
+            sanitize(series_id)
+        )),
+        None => cache_file_for(series_id, vid_index, RateProfile::Playback),
+    }
+}
+
 /// 命中的缓存路径；没有则 `None`。存在的文件必须够大才算命中，避免把上次的半成品当结果。
 pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
     cached_path_for(series_id, vid_index, RateProfile::Archive)
@@ -29,10 +39,11 @@ pub fn cached_path(series_id: &str, vid_index: u32) -> Option<PathBuf> {
 /// 按码率档查缓存。只有完成标识和当前文件一致才算命中。
 pub fn cached_path_for(series_id: &str, vid_index: u32, rate: RateProfile) -> Option<PathBuf> {
     let path = cache_file_for(series_id, vid_index, rate);
-    if hongguo_protocol::grow::is_incomplete(&path) || !completion_matches(&path) {
-        return None;
-    }
-    Some(path)
+    is_complete(&path).then_some(path)
+}
+
+pub(crate) fn is_complete(path: &std::path::Path) -> bool {
+    !hongguo_protocol::grow::is_incomplete(path) && completion_matches(path)
 }
 
 fn marker_path(path: &std::path::Path) -> PathBuf {

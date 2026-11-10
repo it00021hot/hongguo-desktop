@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cancelProducerOn,
   cancelProducerOnMseCleanup,
@@ -70,6 +70,14 @@ describe('whole file fallback', () => {
 describe('remount-safe producer cancel', () => {
   afterEach(() => {
     resetPendingProducerCancelsForTests();
+  });
+
+  it('cancels the old definition when another definition of the same episode opens', async () => {
+    const cancel = vi.fn();
+    scheduleProducerCancel('s', 1, cancel, 720);
+    retainProducerOnRemount('s', 1, 1080);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    expect(cancel).toHaveBeenCalledWith({ seriesId: 's', vidIndex: 1, definition: 720 });
   });
 
   it('does not fire cancel when the same episode remounts within the grace window', async () => {

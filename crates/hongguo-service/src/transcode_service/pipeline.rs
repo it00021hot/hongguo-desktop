@@ -29,9 +29,8 @@ pub struct TranscodeHooks<'a> {
 }
 
 pub fn transcode(
-    series_id: &str,
-    vid_index: u32,
     source: &Path,
+    target: &Path,
     scale_to: Option<(u32, u32)>,
     rate: RateProfile,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
@@ -47,14 +46,12 @@ pub fn transcode(
     }
 
     // 命中缓存直接返回（播放/合并各用各的文件名，互不踩）
-    if let Some(cached) = cache::cached_path_for(series_id, vid_index, rate) {
+    if cache::is_complete(target) {
         return Ok(TranscodeResult {
-            output_path: cached.to_string_lossy().to_string(),
+            output_path: target.to_string_lossy().to_string(),
             backend: hongguo_media_platform::capability::selected_backend(),
         });
     }
-
-    let target = cache::cache_file_for(series_id, vid_index, rate);
 
     // ByteVC2：默认走进程内 vvdec + 平台 H.264，不拉起外部 ffmpeg。
     // ffmpeg/librempeg 仅在 HONGGUO_ALLOW_FFMPEG=1 时作为调试 fallback，
@@ -62,7 +59,7 @@ pub fn transcode(
     if is_bytevc2_source(source) {
         let platform_req = hongguo_media_platform::platform::PlatformRequest {
             input: source,
-            output: &target,
+            output: target,
             scale_to,
             rate,
             on_progress,
@@ -70,9 +67,9 @@ pub fn transcode(
             on_committed: hooks.on_committed,
             is_cancelled: hooks.is_cancelled,
         };
-        log::info!("[Transcode] {series_id} 第 {vid_index} 集走 ByteVC2 内置解码（vvdec）");
+        log::info!("[Transcode] ByteVC2 内置解码: {}", target.display());
         let builtin = hongguo_media_platform::transcode_bytevc2(&platform_req);
-        if builtin.is_ok() && output_is_playable(&target) {
+        if builtin.is_ok() && output_is_playable(target) {
             return Ok(TranscodeResult {
                 output_path: target.to_string_lossy().to_string(),
                 backend: Some(hongguo_media::Backend::Platform),
@@ -80,17 +77,17 @@ pub fn transcode(
         }
         let builtin_err = match builtin {
             Ok(()) => {
-                let _ = hongguo_store::paths::qa_remove_file(&target);
+                let _ = hongguo_store::paths::qa_remove_file(target);
                 hongguo_common::AppError::Media("ByteVC2 解码产物无法播放".into())
             }
             Err(err) => {
-                let _ = hongguo_store::paths::qa_remove_file(&target);
+                let _ = hongguo_store::paths::qa_remove_file(target);
                 err
             }
         };
         if let Some(ff) = hongguo_media_platform::ffmpeg::try_transcode_bytevc2(&platform_req) {
             return match ff {
-                Ok(()) if output_is_playable(&target) => {
+                Ok(()) if output_is_playable(target) => {
                     let encoder = hongguo_media_platform::ffmpeg::h264_encoder();
                     let backend = if encoder.is_some_and(|e| e.hardware) {
                         hongguo_media::Backend::FfmpegHw
@@ -98,8 +95,9 @@ pub fn transcode(
                         hongguo_media::Backend::FfmpegSw
                     };
                     log::info!(
-                        "[Transcode] {series_id} 第 {vid_index} 集 ByteVC2 走 ffmpeg 调试 fallback（{}）",
-                        backend.decoder_label()
+                        "[Transcode] ByteVC2 走 ffmpeg 调试 fallback（{}）: {}",
+                        backend.decoder_label(),
+                        target.display()
                     );
                     Ok(TranscodeResult {
                         output_path: target.to_string_lossy().to_string(),
@@ -107,13 +105,13 @@ pub fn transcode(
                     })
                 }
                 Ok(()) => {
-                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                     Err(hongguo_common::AppError::Media(
                         "ByteVC2 ffmpeg 产物无法播放".into(),
                     ))
                 }
                 Err(err) => {
-                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                     Err(err)
                 }
             };
@@ -128,7 +126,7 @@ pub fn transcode(
     if let Some(done) = hongguo_media_platform::platform::transcode_h264(
         &hongguo_media_platform::platform::PlatformRequest {
             input: source,
-            output: &target,
+            output: target,
             scale_to,
             rate,
             on_progress,
@@ -139,12 +137,12 @@ pub fn transcode(
     ) {
         match done {
             Ok(()) => {
-                if output_is_playable(&target) {
+                if output_is_playable(target) {
                     backend = Some(hongguo_media::Backend::Platform);
                 } else {
                     log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
                     last_error = Some("平台编码器产出的文件无法播放".to_string());
-                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                 }
             }
             Err(e) => {
@@ -160,7 +158,7 @@ pub fn transcode(
     {
         let req = hongguo_media_platform::ffmpeg::TranscodeRequest {
             input: source,
-            output: &target,
+            output: target,
             scale_to,
             rate,
             on_progress,
@@ -169,7 +167,7 @@ pub fn transcode(
             Ok(()) => {
                 // 退出码 0 不等于文件可播（磁盘写满截断、被杀毒软件半路锁文件），
                 // 与合并那头的产物校验对齐同一道闸。
-                if output_is_playable(&target) {
+                if output_is_playable(target) {
                     backend = Some(if encoder.hardware {
                         hongguo_media::Backend::FfmpegHw
                     } else {
@@ -178,7 +176,7 @@ pub fn transcode(
                 } else {
                     log::warn!("[Transcode] ffmpeg 产物校验未通过，删除产物");
                     last_error = Some("ffmpeg 产出的文件无法播放".to_string());
-                    let _ = hongguo_store::paths::qa_remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                 }
             }
             Err(e) => {
@@ -199,8 +197,9 @@ pub fn transcode(
     };
 
     log::info!(
-        "[Transcode] {series_id} 第 {vid_index} 集完成，后端 {}",
-        backend.decoder_label()
+        "[Transcode] 转码完成，后端 {}: {}",
+        backend.decoder_label(),
+        target.display()
     );
     Ok(TranscodeResult {
         output_path: target.to_string_lossy().to_string(),

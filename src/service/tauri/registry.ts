@@ -97,11 +97,20 @@ export const COMMANDS = {
   decode_capability: { args: noArgs, response: decodeCapabilitySchema },
   redetect_capability: { args: noArgs, response: decodeCapabilitySchema },
   transcode_for_playback: {
-    args: z.object({ seriesId: z.string(), vidIndex: z.number(), vid: z.string().optional() }),
+    args: z.object({
+      seriesId: z.string(),
+      vidIndex: z.number(),
+      vid: z.string().optional(),
+      definition: z.number().optional(),
+    }),
     response: transcodePlaybackSchema,
   },
   cancel_compat_playback: {
-    args: z.object({ seriesId: z.string(), vidIndex: z.number() }),
+    args: z.object({
+      seriesId: z.string(),
+      vidIndex: z.number(),
+      definition: z.number().optional(),
+    }),
     response: voidResp,
   },
   qa_offline_local_play: {

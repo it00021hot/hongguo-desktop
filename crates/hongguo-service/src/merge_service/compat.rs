@@ -138,9 +138,8 @@ pub fn compat_merge(
                             );
                             let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
                             let r = pipeline::transcode(
-                                series_id,
-                                *vid_index,
                                 source,
+                                &cache::cache_file(series_id, *vid_index),
                                 scale_to,
                                 hongguo_media_platform::RateProfile::Archive,
                                 Some(cb),
