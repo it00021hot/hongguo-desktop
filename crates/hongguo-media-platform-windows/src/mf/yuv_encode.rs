@@ -59,9 +59,7 @@ impl YuvEncoder {
         self.out_dims
     }
 
-    pub fn take_completed_gop(
-        &mut self,
-    ) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
+    pub fn take_completed_gop(&mut self) -> Option<(Vec<hongguo_media::mux::AnnexbFrame>, f64)> {
         hongguo_media::mux::split_completed_gop(&mut self.units)
     }
 
@@ -117,7 +115,7 @@ impl YuvEncoder {
         let bitrate = bitrate_for_profile(out_w, out_h, self.fps, self.rate);
         self.encoder = Some(Encoder::new(out_w, out_h, fps_num, 1, bitrate, kind)?);
         self.out_dims = Some((out_w, out_h));
-        log::info!("[ByteVC2] Media Foundation 编码会话 {out_w}x{out_h}");
+        log::info!("[ByteVC2] Media Foundation H.264 编码会话 {out_w}x{out_h} backend={kind:?}");
         Ok(())
     }
 }

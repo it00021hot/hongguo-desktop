@@ -106,6 +106,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "需要支持 H.264 硬编的 Windows 真机"]
+    fn hardware_probe_requires_a_real_encoded_sample() {
+        assert!(
+            h264_hw_encoder_available(),
+            "硬编探测应拿到实际编码的 H.264 样本"
+        );
+    }
+
+    #[test]
     fn param_sets_annexb_parses_both_shapes() {
         // Annex-B 形态：SPS(7) + IDR(5) + PPS(8) → 只留 7/8
         let annexb = [

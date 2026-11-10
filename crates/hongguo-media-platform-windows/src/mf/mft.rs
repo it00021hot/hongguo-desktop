@@ -254,6 +254,8 @@ struct AsyncMft {
     drained: bool,
     provides_samples: bool,
     out_size: u32,
+    output_type: Option<IMFMediaType>,
+    output_type_changed: bool,
 }
 
 impl AsyncMft {
@@ -281,7 +283,7 @@ impl AsyncMft {
                             break;
                         }
                     },
-                    METransformHaveOutput => ready.push(self.pull_one()?),
+                    METransformHaveOutput => ready.extend(self.pull_one()?),
                     METransformMarker => {}
                     METransformDrainComplete => {
                         self.drained = true;
@@ -313,7 +315,49 @@ impl AsyncMft {
         self.out_size.max(padded)
     }
 
-    fn pull_one(&mut self) -> AppResult<IMFSample> {
+    fn refresh_out_info(&mut self) -> AppResult<()> {
+        let info = hr(unsafe { self.xform.GetOutputStreamInfo(0) }, "读输出流信息")?;
+        self.provides_samples = (info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
+        self.out_size = info.cbSize;
+        Ok(())
+    }
+
+    fn renegotiate_output_type(&mut self) -> AppResult<()> {
+        let configured = self
+            .output_type
+            .as_ref()
+            .ok_or_else(|| AppError::Media("Media Foundation 尚未配置编码输出类型".into()))?;
+        let output_type = unsafe {
+            let subtype = hr(configured.GetGUID(&MF_MT_SUBTYPE), "读编码输出格式")?;
+            let mut index = 0;
+            let offered = loop {
+                let offered = hr(
+                    self.xform.GetOutputAvailableType(0, index),
+                    "枚举变更后的编码输出类型",
+                )?;
+                if offered.GetGUID(&MF_MT_SUBTYPE) == Ok(subtype) {
+                    break offered;
+                }
+                index += 1;
+            };
+            for key in [MF_MT_FRAME_SIZE, MF_MT_FRAME_RATE] {
+                let value = hr(configured.GetUINT64(&key), "读编码输出几何")?;
+                hr(offered.SetUINT64(&key, value), "保留编码输出几何")?;
+            }
+            for key in [MF_MT_AVG_BITRATE, MF_MT_INTERLACE_MODE, MF_MT_MPEG2_PROFILE] {
+                if let Ok(value) = configured.GetUINT32(&key) {
+                    hr(offered.SetUINT32(&key, value), "保留编码输出参数")?;
+                }
+            }
+            hr(self.xform.SetOutputType(0, &offered, 0), "重设编码输出类型")?;
+            hr(self.xform.GetOutputCurrentType(0), "读变更后的编码输出类型")?
+        };
+        self.output_type = Some(output_type);
+        self.output_type_changed = true;
+        self.refresh_out_info()
+    }
+
+    fn pull_one(&mut self) -> AppResult<Option<IMFSample>> {
         unsafe {
             // 与 SyncMft::pull_once 同款：缓冲不足按刷新后的契约放大重配，只重取一次
             let mut retried = false;
@@ -341,17 +385,22 @@ impl AsyncMft {
                 let _events = std::mem::ManuallyDrop::take(&mut arr[0].pEvents);
                 match r {
                     Ok(()) => {
-                        return s.ok_or_else(|| {
+                        return s.map(Some).ok_or_else(|| {
                             AppError::Media("Media Foundation 输出样本缺失".into())
                         });
+                    }
+                    Err(e)
+                        if is_code(&e, MF_E_TRANSFORM_STREAM_CHANGE)
+                            && status & MFT_PROCESS_OUTPUT_STATUS_NEW_STREAMS.0 as u32 == 0 =>
+                    {
+                        self.renegotiate_output_type()?;
+                        // 异步 MFT 要等下一条 HaveOutput 事件再取样本。
+                        return Ok(None);
                     }
                     Err(e) if is_code(&e, MF_E_BUFFERTOOSMALL) && !retried => {
                         retried = true;
                         let declared = self.out_size;
-                        let info = hr(self.xform.GetOutputStreamInfo(0), "读输出流信息")?;
-                        self.provides_samples =
-                            (info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
-                        self.out_size = info.cbSize;
+                        self.refresh_out_info()?;
                         log::warn!(
                             "[Platform/mf] ProcessOutput 缓冲不足（声明 cbSize={declared}，刷新后 {}），放大重配重取",
                             self.out_size
@@ -431,6 +480,8 @@ impl Driver {
                 drained: false,
                 provides_samples: false,
                 out_size: 0,
+                output_type: None,
+                output_type_changed: false,
             })
         } else {
             DriverInner::Sync(SyncMft {
@@ -468,10 +519,8 @@ impl Driver {
                     )?;
                 }
                 DriverInner::Async(a) => {
-                    let info = hr(a.xform.GetOutputStreamInfo(0), "读输出流信息")?;
-                    a.provides_samples =
-                        (info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
-                    a.out_size = info.cbSize;
+                    a.output_type = Some(hr(a.xform.GetOutputCurrentType(0), "读编码输出类型")?);
+                    a.refresh_out_info()?;
                     log::info!(
                         "[Platform/mf] 异步 MFT 输出契约：provides_samples={}，单帧缓冲 {}B",
                         a.provides_samples,
@@ -567,5 +616,16 @@ impl Driver {
 
     pub(super) fn take(&mut self) -> Vec<IMFSample> {
         std::mem::take(&mut self.ready)
+    }
+
+    pub(super) fn take_changed_output_type(&mut self) -> Option<IMFMediaType> {
+        let DriverInner::Async(a) = &mut self.inner else {
+            return None;
+        };
+        if std::mem::take(&mut a.output_type_changed) {
+            a.output_type.clone()
+        } else {
+            None
+        }
     }
 }

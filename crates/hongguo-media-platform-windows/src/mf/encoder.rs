@@ -213,6 +213,10 @@ impl Encoder {
     /// 显示时间取喂帧时记录的时间轴（按到达顺序配对）；配不上（异常多出的输出）给 NaN，由上层递增兜底顶开。
     pub(super) fn take_units(&mut self) -> AppResult<Vec<(f64, Vec<u8>, bool)>> {
         self.driver.harvest()?;
+        if let Some(out_type) = self.driver.take_changed_output_type() {
+            self.param_sets = read_type_param_sets(&out_type);
+            self.out_type = out_type;
+        }
         let samples = self.driver.take();
         let mut units = Vec::with_capacity(samples.len());
         for s in samples {
