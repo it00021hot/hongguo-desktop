@@ -1,8 +1,8 @@
 //! ByteVC2 → H.264 via ffmpeg when the local build can decode `bvc2` (librempeg / patched ffmpeg).
 //!
-//! Pure-Rust oxideav decode of the same 720p30 sample is ~0.8× realtime; under WebView playback
-//! contention it falls to ~0.1× and never buffers past midpoint. ffmpeg finishes the same file in
-//! a few seconds (~50×), and with fragmented MP4 can hand a playable prefix in well under 3s.
+//! Built-in path (default vvdec + platform H.264) is the no-ffmpeg acceptance route and already
+//! clears ≥1.5× on the 720p30 sample (~20×+). This ffmpeg/librempeg `bvc2` path stays a debug
+//! fallback until product flips the default off. oxideav remains an optional decode backend.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;

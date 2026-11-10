@@ -117,20 +117,28 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
     }
     let width = encoded.width;
     let height = encoded.height;
+    let wall_ns = started.elapsed().as_nanos();
+    let media_secs = (frames as f64) / if fps > 0.0 { fps } else { 30.0 };
+    let wall_secs = (wall_ns as f64) / 1_000_000_000.0;
+    let realtime_x = if wall_secs > 0.0 {
+        media_secs / wall_secs
+    } else {
+        0.0
+    };
+    let decoder = hongguo_bytevc2::active_decoder_name();
     if let Some(path) = stage_log {
         let decode_ns = loop_ns.saturating_sub(push_ns);
         let body = format!(
-            "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"prefix_ready_ns\":{},\"prefix_video_samples\":{},\"prefix_bytes\":{},\"wall_ns\":{}}}\n",
+            "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"prefix_ready_ns\":{},\"prefix_video_samples\":{},\"prefix_bytes\":{},\"wall_ns\":{wall_ns}}}\n",
             live.ready_ns,
             live.prefix_samples,
             live.prefix_bytes,
-            started.elapsed().as_nanos()
         );
         hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
     }
     log::info!(
-        "[ByteVC2] 解帧并编成 H.264：{frames} 帧（{width}x{height}，{fps:.2} fps），耗时 {:?}",
+        "[ByteVC2] 解帧并编成 H.264：{frames} 帧（{width}x{height}，{fps:.2} fps，decoder={decoder}），耗时 {:?} ≈{realtime_x:.2}× realtime（无 ffmpeg 进程）",
         started.elapsed()
     );
     Ok(())
