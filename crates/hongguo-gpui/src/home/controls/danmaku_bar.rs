@@ -96,7 +96,7 @@ impl HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
                     .child(self.render_danmaku_pill(cx, PillWidth::Fixed))
             }))
             .child(
@@ -290,7 +290,7 @@ impl HomeView {
                     )
                     // 滚轮拦下（Tauri emoji-picker data-wheel-block
                     // 同款）：表情网格上滚不切剧
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
                     .child(
                         div()
                             .id("danmaku-emoji-grid")

@@ -17,9 +17,9 @@ hongguo-media = { path = "../hongguo-media" }
 # 样本表类型（TrackInfo）：平台硬解要把 hvcC 参数集转 Annex-B 喂解码器。
 hongguo-video = { path = "../hongguo-video" }
 log = "0.4"
-parking_lot = "0.12"
+parking_lot = "0.13"
 # 封面 WIC 级解码后的 JPEG 编码（与 hongguo-media 的 heif 软解级同一产物口径）。
-jpeg-encoder = "0.6"
+jpeg-encoder = "0.7.1"
 
 # 本 crate 只在 Windows 目标上编译出内容（其余目标为空壳）；平台专属依赖
 # 全部进本表，macOS 宿主上连依赖都不构建。

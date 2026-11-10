@@ -53,7 +53,7 @@ license = "PolyForm-Noncommercial-1.0.0"
 authors = ["hongguo-desktop contributors"]
 
 [patch.crates-io]
-# gpui-pre-windows 0.3.9 的渲染器没有视频画面的落点，而系统播放器
+# gpui-pre-windows 0.3.12 的渲染器没有视频画面的落点，而系统播放器
 # （Media Foundation Media Engine 的 frame-server 模式）经 TransferVideoFrame
 # 把帧写进渲染器设备上的纹理，需要渲染器把它画出来——且必须与 GPUI 内容
 # 同画布（macOS 侧的对应结构是 AVPlayerLayer 插在 GPUIView 之下）。
@@ -62,15 +62,8 @@ authors = ["hongguo-desktop contributors"]
 # （上一代独立 DComp 视觉位方案的整类坑——跨画布半像素缝、两 swapchain
 # 错帧、z 序反直觉——在单画布下结构性不存在），并补上渲染器设备的
 # VIDEO_SUPPORT 与多线程保护（见 crates/hongguo-player-windows/src/view.rs）。
-# 上游 0.3.9 为当前最新版，待其提供原生视频挂点后回收。
+# 待上游提供原生视频挂点后回收。
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
-# tauri-plugin-webdriver 0.2.3 在 Windows 上声明 webview2-com 0.38 / windows
-# 0.61，而 tauri 2.12 已把 webview2-com 抬到 0.39（windows 0.62）——同一依赖图
-# 里两套 windows-core 类型不互通，插件 platform/windows.rs 拿 tauri 侧的
-# ICoreWebView2 配自家旧版 handler 直接编译失败（macOS 不受影响，webview2-com
-# 只进 Windows 目标）。vendor 补丁把三件套抬到 0.39/0.62 并适配 API 改动。
-# 上游 0.2.3 为最新版，待兼容版发布后回收。
-tauri-plugin-webdriver = { path = "vendor/tauri_plugin_webdriver" }
 
 # CI 实测（Windows，2026-10）：fat LTO + 单 codegen 单元让 rustc 段 17-18 分钟，
 # 是发版流水线的大头。换 thin LTO + 默认并行单元后编译时间砍半以上；本项目的

@@ -217,7 +217,7 @@ impl HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
                     // 百分比读数（Tauri VolumePopup 同款）
                     .child(
                         div()

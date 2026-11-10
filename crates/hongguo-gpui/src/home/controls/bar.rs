@@ -73,7 +73,7 @@ impl HomeView {
             )
             // 滚轮同拦（Tauri 控制条 data-wheel-block 同款）：悬在控制栏上
             // 滚不该把剧切了
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             // 容器内边距（Tauri PlayerControls 同款）：px-4 左右 16、pt-10
             // 上方 40 悬停缓冲（热区高过进度条，好上手）、pb-3 底 12；行间
             // gap-2 = 8

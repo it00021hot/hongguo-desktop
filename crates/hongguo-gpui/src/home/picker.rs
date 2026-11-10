@@ -373,7 +373,7 @@ impl super::HomeView {
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             // 滚轮拦下：浮层自己滚，不冒泡成舞台切剧
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(
                 v_flex()
                     .w_full()

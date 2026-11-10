@@ -38,15 +38,15 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v6.1.1
         with:
-          version: 12.17.0
+          version: 12.18.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 26.13.0
           cache: pnpm
@@ -58,7 +58,7 @@ jobs:
           # 靠 runner 预装组件混过去，钉版本后 clippy 必须显式声明
           components: clippy
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2.9.3
         with:
           workspaces: .
           key: ${{ matrix.rust_target }}
