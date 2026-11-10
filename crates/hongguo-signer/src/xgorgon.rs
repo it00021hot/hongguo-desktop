@@ -39,7 +39,42 @@ pub fn rc4_gorgon(data: &[u8], key: &[u8]) -> Vec<u8> {
 /// 计算 x-gorgon 请求头：`[md5(query)[0:4] | md5(body)[0:4] | 4B 空 | sdkVersion(4B LE) | khronos(4B BE)]`
 /// → RC4 混淆 → 逐字节 nibble 交换 + 邻位异或 + 取反 → 前缀 '8404' + 种子 + 标志位 + 密文，hex 编码；`body` GET 传 `None`。
 pub fn x_gorgon(query: &str, body: Option<&[u8]>, khronos: u32, random: u32) -> String {
-    let sdk = GORGON_SDK_VERSION.to_le_bytes();
+    assemble(
+        query,
+        body,
+        khronos,
+        random,
+        [0x40, 0x01],
+        GORGON_SDK_VERSION,
+    )
+}
+
+pub fn x_gorgon_v5(
+    query: &str,
+    body: Option<&[u8]>,
+    khronos: u32,
+    random: u16,
+    flags: [u8; 2],
+) -> String {
+    assemble(
+        query,
+        body,
+        khronos,
+        u32::from(random),
+        flags,
+        crate::medusa_v5::SDK_VERSION_CODE,
+    )
+}
+
+fn assemble(
+    query: &str,
+    body: Option<&[u8]>,
+    khronos: u32,
+    random: u32,
+    frame: [u8; 2],
+    sdk_version: u32,
+) -> String {
+    let sdk = sdk_version.to_le_bytes();
 
     let query_md5 = md5_raw(query.as_bytes());
     let body_md5 = body.map(md5_raw).unwrap_or([0u8; 16]);
@@ -53,12 +88,12 @@ pub fn x_gorgon(query: &str, body: Option<&[u8]>, khronos: u32, random: u32) -> 
 
     let key = [
         0x4a,
-        0x40,
+        frame[0],
         0x16,
         ((random >> 8) & 255) as u8,
         0x47,
         0x6c,
-        0x01,
+        frame[1],
         (random & 255) as u8,
     ];
     let mut out = rc4_gorgon(&input, &key);
@@ -76,8 +111,7 @@ pub fn x_gorgon(query: &str, body: Option<&[u8]>, khronos: u32, random: u32) -> 
     result.extend_from_slice(&GORGON_PREFIX);
     result.push((random & 255) as u8);
     result.push(((random >> 8) & 255) as u8);
-    result.push(0x40);
-    result.push(0x01);
+    result.extend_from_slice(&frame);
     result.extend_from_slice(&out);
     hex::encode(result)
 }

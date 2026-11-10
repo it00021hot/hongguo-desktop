@@ -109,8 +109,7 @@ export function PhoneLandscapeChrome({
     onDefinitionChange(next === 0 ? undefined : next);
   };
 
-  const definitionLabel =
-    definition > 0 ? `${definition}P` : t('player.definitionAuto');
+  const definitionLabel = definition > 0 ? `${definition}P` : t('player.definitionAuto');
 
   const submit = () => {
     const content = text.trim();
@@ -159,10 +158,7 @@ export function PhoneLandscapeChrome({
         <div className="min-w-0 flex-1 truncate text-sm font-medium drop-shadow-md">
           {title ?? ''}
           {vidIndex > 0 && (
-            <span className="text-white/75">
-              {' '}
-              {tf('player.episodeNo', { index: vidIndex })}
-            </span>
+            <span className="text-white/75"> {tf('player.episodeNo', { index: vidIndex })}</span>
           )}
         </div>
       </ChromeSurface>

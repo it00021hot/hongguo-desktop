@@ -9,9 +9,11 @@ authors.workspace = true
 
 [dependencies]
 # 算法本体是 JS 1:1 移植（禁改写法），依赖只服务于原语与序列化。
+aes = "0.9"
 base64 = "0.23"
 hex = "0.4"
 md-5 = "0.11"
+sha1 = "0.11"
 sm3 = "0.5"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }

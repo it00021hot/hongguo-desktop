@@ -13,7 +13,7 @@ hongguo-common = { path = "../hongguo-common" }
 hongguo-media = { path = "../hongguo-media" }
 hongguo-video = { path = "../hongguo-video" }
 log = "0.4"
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # 仅 Android 目标拉 NDK；宿主（Windows/macOS）上空壳，不编 mediandk。
 [target.'cfg(target_os = "android")'.dependencies]

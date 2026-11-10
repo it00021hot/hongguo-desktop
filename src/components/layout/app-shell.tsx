@@ -171,7 +171,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {!portrait && (
             <div
               id={TOP_BAR_SLOT_ID}
-              className="pointer-events-none absolute inset-y-0 left-0 right-0 mx-auto flex w-fit items-center justify-center"
+              className="pointer-events-none absolute inset-y-0 right-0 left-0 mx-auto flex w-fit items-center justify-center"
             />
           )}
           <div className="ml-auto flex h-full shrink-0 items-center gap-1">
@@ -199,10 +199,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-h-0 flex-1">
         {showSidebar && <AppSidebar />}
-        <main
-          id="content"
-          className="scrollbar-thin bg-background min-h-0 flex-1 overflow-y-auto"
-        >
+        <main id="content" className="bg-background min-h-0 flex-1 scrollbar-thin overflow-y-auto">
           {children}
         </main>
       </div>

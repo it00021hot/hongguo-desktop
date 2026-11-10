@@ -21,6 +21,14 @@ pub fn helios(khronos: u32) -> String {
 
 /// 用给定随机数装配 x-helios（随机数内嵌在结果里，测试喂固定值才能与现版 JS 逐字节对齐）。
 pub fn assemble_helios(khronos: u32, random: u32) -> String {
+    assemble(khronos, random, CHANNEL_ID)
+}
+
+pub fn assemble_helios_v5(khronos: u32, random: u32) -> String {
+    assemble(khronos, random, crate::medusa_v5::LICENSE_CHANNEL)
+}
+
+fn assemble(khronos: u32, random: u32, channel: &str) -> String {
     let mut seed_input = Vec::with_capacity(4 + APP_ID.len());
     seed_input.extend_from_slice(&le32(random));
     seed_input.extend_from_slice(APP_ID.as_bytes());
@@ -39,7 +47,7 @@ pub fn assemble_helios(khronos: u32, random: u32) -> String {
     let table = diffuse(&mut words);
 
     let mut output: Vec<u8> = Vec::new();
-    for chunk in pad(&khronos).chunks(16) {
+    for chunk in pad(&khronos, channel).chunks(16) {
         let mut a = u64::from_le_bytes(chunk[..8].try_into().expect("8 字节"));
         let mut b = u64::from_le_bytes(chunk[8..].try_into().expect("8 字节"));
         // 只取前 34 项：`diffuse` 会算出 35 个，现版同样只用前 34 个
@@ -79,8 +87,8 @@ fn diffuse(words: &mut Vec<u64>) -> Vec<u64> {
 
 /// 把 `khronos-CHANNEL_ID-APP_ID` 补齐到 16 的倍数：填充字节取 `16 - (len % 16)`，
 /// 长度恰为 16 倍数时也填 0x10——现版做法，不要「顺手修正」成 1。
-fn pad(khronos: &u32) -> Vec<u8> {
-    let text = format!("{khronos}-{CHANNEL_ID}-{APP_ID}").into_bytes();
+fn pad(khronos: &u32, channel: &str) -> Vec<u8> {
+    let text = format!("{khronos}-{channel}-{APP_ID}").into_bytes();
     let mut out = vec![(16 - (text.len() % 16)) as u8; (text.len() + 1).div_ceil(16) * 16];
     out[..text.len()].copy_from_slice(&text);
     out
@@ -107,7 +115,7 @@ mod tests {
 
     #[test]
     fn pad_fills_to_16_boundary() {
-        let p = pad(&1_700_000_000);
+        let p = pad(&1_700_000_000, CHANNEL_ID);
         assert_eq!(p.len(), 32);
         assert_eq!(&p[..26], b"1700000000-1588093228-8662");
         assert!(p[26..].iter().all(|b| *b == 6));

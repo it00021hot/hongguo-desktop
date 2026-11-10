@@ -44,13 +44,10 @@ export function useQuietStart() {
   }, []);
 
   /** 点击/滚轮/按键是铁证：解除静默并唤醒。 */
-  const wakeOnInput = useCallback(
-    (wakeChrome: () => void) => {
-      setQuietArmed(false);
-      wakeChrome();
-    },
-    [],
-  );
+  const wakeOnInput = useCallback((wakeChrome: () => void) => {
+    setQuietArmed(false);
+    wakeChrome();
+  }, []);
 
   return {
     quietStart,

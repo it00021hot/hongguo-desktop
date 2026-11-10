@@ -18,6 +18,7 @@ pub mod constants;
 pub mod device;
 pub mod helios;
 pub mod medusa;
+pub mod medusa_v5;
 pub mod primitives;
 pub mod protobuf;
 pub mod ticket;

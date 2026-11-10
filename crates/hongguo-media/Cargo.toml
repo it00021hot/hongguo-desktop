@@ -15,9 +15,9 @@ hongguo-video = { path = "../hongguo-video" }
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
 # HEVC 解码：HEIC 封面纯 Rust 软解（封面阶梯的最后一级，零外部依赖）
-rusty_h265 = "0.6.0"
+rusty_h265 = "0.7.1"
 # 封面 HEIC 解码后的 JPEG 编码（纯 Rust、零 unsafe）
-jpeg-encoder = "0.6"
+jpeg-encoder = "0.7.1"
 # 合并前校验「输出卷还剩多少字节」，只开 disk
 sysinfo = { version = "0.40", default-features = false, features = ["disk"] }
 

@@ -12,16 +12,41 @@ pub mod resume;
 /// 兼容预转的硬上限：兼容预转是「整集下载 + 整集转码」，不能跟在线流预取档位线性放大
 /// （无 HEVC 的旧机多集同时转码会吃满 CPU/磁盘，反而拖慢当前集）。只保下一集，够连播兜底。
 const COMPAT_PREFETCH_LIMIT: u32 = 1;
+/// 7.4.3.32 的常态后续模型窗口。
+const OFFICIAL_PRELOAD_LIMIT: u32 = 3;
 
 /// 当前在线集起播后，按设置向后铺同一部剧的后续集。两个壳都必须从同一入口调度：
 /// 在线预取解决「下一集冷走取流表」、兼容预转解决「无 HEVC 机器下一集要整集转码」，
 /// 只调其中一路会让某类设备自动连播黑屏。在线预取**逐集串行 + 随机 1~5s 间隔**
 ///（取流域按调用次数节流，N 集同时发会触发按设备限速）；兼容预转只铺 `COMPAT_PREFETCH_LIMIT` 集。
 pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vid_index: u32) {
-    let count = state.settings().prefetch_episodes;
+    let v5 = hongguo_api::metasec::playback_configured().unwrap_or(false);
+    let mut count = state.settings().prefetch_episodes;
+    if v5 {
+        count = count.min(OFFICIAL_PRELOAD_LIMIT);
+    }
+    if count == 0 {
+        return;
+    }
     let online_state = state.clone();
     let sid = series_id.to_string();
     crate::runtime::spawn(async move {
+        if v5 {
+            local::prefetch_episode_models(
+                &online_state,
+                &sid,
+                current_vid_index.saturating_add(1)..=current_vid_index.saturating_add(count),
+                hongguo_api::params::PlayerModelScene::Player,
+            )
+            .await;
+        }
+        for offset in compat_offsets(count) {
+            compat_prefetch::schedule_next_episode(
+                online_state.clone(),
+                &sid,
+                current_vid_index + offset,
+            );
+        }
         for offset in online_offsets(count) {
             online::schedule_next_episode_prefetch(
                 online_state.clone(),
@@ -41,13 +66,6 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
             }
         }
     });
-    for offset in compat_offsets(count) {
-        compat_prefetch::schedule_next_episode(
-            state.clone(),
-            series_id,
-            current_vid_index + offset,
-        );
-    }
 }
 
 fn online_offsets(count: u32) -> std::ops::RangeInclusive<u32> {

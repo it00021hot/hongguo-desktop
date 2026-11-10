@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { offlineQa } from '@/utils/offline-qa';
-import {
-  classifyGrow,
-  decidePullAction,
-  shouldNotifyUnavailable,
-} from './growing-media';
+import { classifyGrow, decidePullAction, shouldNotifyUnavailable } from './growing-media';
 
 describe('classifyGrow', () => {
   it('treats one 206 as a chunk and keeps reading', () => {
@@ -49,9 +45,7 @@ describe('pull grow terminal → onUnavailable', () => {
     expect(shouldNotifyUnavailable({ kind: 'cancelled' })).toBe(true);
     expect(shouldNotifyUnavailable({ kind: 'failed' })).toBe(true);
     expect(shouldNotifyUnavailable({ kind: 'finished' })).toBe(false);
-    expect(
-      shouldNotifyUnavailable({ kind: 'data', nextOffset: 1, finished: true }),
-    ).toBe(false);
+    expect(shouldNotifyUnavailable({ kind: 'data', nextOffset: 1, finished: true })).toBe(false);
   });
 
   it('maps cancelled/failed pull decisions to unavailable, not silent return', () => {

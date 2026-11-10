@@ -124,7 +124,7 @@ export function PhoneSeriesSheet({
           ))}
         </div>
 
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div className="min-h-0 flex-1 scrollbar-thin overflow-y-auto px-4 py-3">
           {tab === 'intro' ? (
             <p className="text-sm leading-relaxed whitespace-pre-wrap text-white/75">
               {intro?.trim() ? intro : t('player.introEmpty')}

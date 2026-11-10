@@ -24,11 +24,9 @@ export function decideCompatPlayback(input: {
 }): CompatPlaybackDecision {
   const { hevcPlayable, android, compatAuthorized, needsCompat } = input;
   const knownUnplayable = hevcPlayable === false;
-  const forceCompat =
-    Boolean(needsCompat) || (knownUnplayable && (android || compatAuthorized));
+  const forceCompat = Boolean(needsCompat) || (knownUnplayable && (android || compatAuthorized));
   // Android 能力未回前也不喂 HEVC：软解机会白下整集密文；硬解只多等一次廉价探测
-  const holdNative =
-    forceCompat || (android && hevcPlayable === undefined) || Boolean(needsCompat);
+  const holdNative = forceCompat || (android && hevcPlayable === undefined) || Boolean(needsCompat);
   return { forceCompat, holdNative };
 }
 

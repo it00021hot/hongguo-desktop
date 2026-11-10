@@ -31,10 +31,10 @@ fn main() {
             mid = Some(frame.pts);
         }
         last = Some((frame.width, frame.height, frame.pts));
-        if let Some(n) = limit {
-            if frames >= n {
-                return Err(hongguo_common::AppError::Media("limit".into()));
-            }
+        if let Some(n) = limit
+            && frames >= n
+        {
+            return Err(hongguo_common::AppError::Media("limit".into()));
         }
         Ok(())
     });

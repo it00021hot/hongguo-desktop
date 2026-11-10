@@ -543,17 +543,12 @@ export function PlayerView({
                 )}
                 {paused && !error && !miniScreen && !portrait && !narrow && <KeyboardHint />}
                 {commentPanelOpen && !miniScreen && (
-                  <CommentPanel
-                    vid={currentVidKey}
-                    onClose={() => setCommentPanelOpen(false)}
-                  />
+                  <CommentPanel vid={currentVidKey} onClose={() => setCommentPanelOpen(false)} />
                 )}
                 <InteractionRail
                   seriesId={seriesId}
                   vid={currentVidKey}
-                  visible={
-                    chromeShown && !commentPanelOpen && !miniScreen && !landscapeWatch
-                  }
+                  visible={chromeShown && !commentPanelOpen && !miniScreen && !landscapeWatch}
                   title={currentSeries?.title}
                   commentCount={currentEpisode?.commentCount}
                   diggCount={currentEpisode?.diggCount}

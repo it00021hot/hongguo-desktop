@@ -355,6 +355,14 @@ impl Store {
         self.exec(|db| Box::pin(entity::device_meta_get(db)))
     }
 
+    pub fn sdk_session(&self) -> AppResult<Option<serde_json::Value>> {
+        self.exec(|db| Box::pin(entity::sdk_session(db)))
+    }
+
+    pub fn save_sdk_session(&self, session: serde_json::Value) -> AppResult<()> {
+        self.exec(move |db| Box::pin(async move { entity::save_sdk_session(db, &session).await }))
+    }
+
     /// 写 bootstrap 元数据（整文档覆盖）。
     pub fn device_meta_set(&self, meta: &serde_json::Value) -> AppResult<()> {
         if self.meta_faults.load(Ordering::Relaxed) > 0 {

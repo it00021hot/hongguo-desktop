@@ -9,6 +9,8 @@ pub struct RegisterResult {
     pub install_id: String,
     #[serde(default)]
     pub device_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub klink_egdi: Option<String>,
     #[serde(default)]
     pub server_time: i64,
     #[serde(default)]

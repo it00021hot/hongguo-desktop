@@ -36,4 +36,4 @@ windows = { version = "0.62", features = [
 windows-core = "0.62"
 # 视频 quad（vendored 补丁，见根 Cargo.toml 的 [patch.crates-io]）：
 # TransferVideoFrame 的纹理与 GPUI 内容画进同一张渲染目标。
-gpui-pre-windows = { version = "=0.3.9", package = "gpui-pre-windows", default-features = false }
+gpui-pre-windows = { version = "=0.3.12", package = "gpui-pre-windows", default-features = false }

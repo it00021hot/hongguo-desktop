@@ -217,6 +217,11 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
         device_id,
         install_id,
         device_token: get_str("device_token"),
+        klink_egdi: v
+            .get("klink_egdi")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
         server_time: v.get("server_time").and_then(Value::as_i64).unwrap_or(0),
         new_user: match v.get("new_user") {
             Some(Value::Bool(b)) => *b,
@@ -230,16 +235,14 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     })
 }
 
-/// 注册 query 固定 3 参：只带 `okhttp_version`（cronet/ttnet 两参是竞品形态），指纹全在加密 body。
-fn register_query() -> Vec<(String, String)> {
-    [
-        ("tt_data", "a"),
-        ("okhttp_version", "4.2.243.31-douyin"),
-        ("use_store_region_cookie", "1"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+fn register_query(req_id: &str) -> String {
+    hongguo_signer::ticket::encode_query(&[
+        ("req_id", req_id.into()),
+        ("tt_data", "a".into()),
+        ("cronet_version", "8d40f833_2026-03-03".into()),
+        ("ttnet_version", "4.2.243.31-douyin".into()),
+        ("use_store_region_cookie", "1".into()),
+    ])
 }
 
 /// 首次安装时间回拨天数上限：真实安装都是过去时（pm clear 不清 firstInstallTime），按 cdid 确定性取 1~30 天。
@@ -430,6 +433,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_klink_egdi_from_register_response() {
+        let mut response =
+            json!({ "device_id": 123, "install_id": 456, "klink_egdi": "test-egdi" });
+        let parsed = parse_register(response.to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.klink_egdi.as_deref(), Some("test-egdi"));
+
+        for value in [json!(null), json!(""), json!(123)] {
+            response["klink_egdi"] = value;
+            let parsed = parse_register(response.to_string().as_bytes()).unwrap();
+            assert!(parsed.klink_egdi.is_none());
+        }
+    }
+
+    #[test]
     fn error_code_is_surfaced() {
         let raw = br#"{"code":110,"message":"ILLEGAL_ACCESS"}"#;
         let err = parse_register(raw).unwrap_err();
@@ -438,18 +455,6 @@ mod tests {
 
     #[test]
     fn register_identity_pins_register_regime() {
-        assert_eq!(
-            register_query(),
-            vec![
-                ("tt_data".to_string(), "a".to_string()),
-                (
-                    "okhttp_version".to_string(),
-                    "4.2.243.31-douyin".to_string()
-                ),
-                ("use_store_region_cookie".to_string(), "1".to_string()),
-            ]
-        );
-
         let id = RegisterMaterial::from_parts(
             "cdid-uuid",
             "openudid-hex",

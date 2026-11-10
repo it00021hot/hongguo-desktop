@@ -101,9 +101,8 @@ pub mod emoticon {
 /// 分集详情接口路径。
 pub const DETAIL_PATH: &str = "/novel/player/multi_video_detail/preload/v1";
 
-/// 7.4.3.32 播放器在 `video_player_api_dr_scene` 打开时才把 `dr_scene` 填进路径
-///（空值写成 `default`，不是写死 `player`）。默认开关是关的，批量取流不走这里。
 pub const PLAYER_MODEL_PATH: &str = "/novel/player/multi_video_model/player/v1";
+const PRELOAD_MODEL_PATH: &str = "/novel/player/multi_video_model/preload/v1";
 
 /// 新通道·单集取流路径（官方 74232 实流；多集空响应时的单集回落，
 /// 亦打 [`crate::client::READING_API_ORIGIN`]）。失败回退旧通道。
@@ -226,8 +225,6 @@ pub fn model_light_payload(
     }
 }
 
-/// 官方多集取流 body（`biz_param` 十字段含 `disable_video_relate_book`/
-/// `use_server_dns_scene`，`dr_scene:"player"`）；键集与官方实流逐字段一致。
 #[derive(Debug, Clone, Serialize)]
 pub struct PlayerModelBizParam {
     #[serde(rename = "detail_page_version")]
@@ -246,19 +243,34 @@ pub struct PlayerModelBizParam {
     pub use_os_player: bool,
     #[serde(rename = "use_server_dns")]
     pub use_server_dns: bool,
-    #[serde(rename = "use_server_dns_scene")]
+    #[serde(rename = "use_server_dns_scene", skip_serializing_if = "str::is_empty")]
     pub use_server_dns_scene: &'static str,
     #[serde(rename = "video_platform")]
     pub video_platform: i64,
 }
 
-/// 官方多集取流请求体（端点 [`PLAYER_MODEL_PATH`]）。
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerModelScene {
+    Player,
+    Preload,
+}
+
+impl PlayerModelScene {
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::Player => PLAYER_MODEL_PATH,
+            Self::Preload => PRELOAD_MODEL_PATH,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PlayerModelPayload {
     #[serde(rename = "biz_param")]
     pub biz_param: PlayerModelBizParam,
     #[serde(rename = "dr_scene")]
-    pub dr_scene: &'static str,
+    pub dr_scene: PlayerModelScene,
     #[serde(rename = "mixed_video_id_map")]
     pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
 }
@@ -275,65 +287,65 @@ pub struct SaasModelPayload {
     pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
 }
 
-/// 构造 [`SaasModelPayload`]。`biz_param` 与 [`player_model_payload`] 相同，
-/// 只是不带路径段用的 `dr_scene`。
 pub fn saas_model_payload(mixed_video_id_map: &BTreeMap<String, Vec<String>>) -> SaasModelPayload {
-    let PlayerModelPayload {
-        biz_param,
-        mixed_video_id_map,
-        ..
-    } = player_model_payload(mixed_video_id_map);
     SaasModelPayload {
-        biz_param,
-        mixed_video_id_map,
-    }
-}
-
-/// 构造官方多集取流请求体（`device_level:3`、`use_server_dns:true`，
-/// 场景固定 `cold_start_stage`、`dr_scene:"player"`）。
-pub fn player_model_payload(
-    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
-) -> PlayerModelPayload {
-    PlayerModelPayload {
         biz_param: PlayerModelBizParam {
-            detail_page_version: 0,
-            device_level: 3,
-            disable_digg_stat: false,
-            disable_video_relate_book: false,
-            need_all_video_definition: true,
-            need_mp4_align: false,
-            use_os_player: false,
             use_server_dns: true,
             use_server_dns_scene: "cold_start_stage",
-            video_platform: 1024,
+            ..player_model_biz_param()
         },
-        dr_scene: "player",
         mixed_video_id_map: mixed_video_id_map.clone(),
     }
 }
 
-/// 单集 biz。`uu4.b.a` 在 `MultiVideoModelOpt.enable=false`（缺省）时写
-/// `video_id_type`，不写顶层 `content_type`。普通剧集 `ft4.f$a.a` 把类型设成
-/// `VideoSeriesIdType.VideoId`（wire 0）。`need_all_video_definition` /
-/// `need_mp4_align` 走 `SeriesResolutionABValue` 的缺省 false。
+pub fn player_model_payload(
+    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
+    scene: PlayerModelScene,
+) -> PlayerModelPayload {
+    PlayerModelPayload {
+        biz_param: player_model_biz_param(),
+        dr_scene: scene,
+        mixed_video_id_map: mixed_video_id_map.clone(),
+    }
+}
+
+fn player_model_biz_param() -> PlayerModelBizParam {
+    PlayerModelBizParam {
+        detail_page_version: 0,
+        device_level: 3,
+        disable_digg_stat: false,
+        disable_video_relate_book: false,
+        need_all_video_definition: true,
+        need_mp4_align: false,
+        use_os_player: false,
+        use_server_dns: false,
+        use_server_dns_scene: "",
+        video_platform: 1024,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SingleModelBizParam {
+    #[serde(rename = "detail_page_version")]
+    pub detail_page_version: i64,
     #[serde(rename = "device_level")]
     pub device_level: i64,
+    #[serde(rename = "disable_digg_stat")]
+    pub disable_digg_stat: bool,
+    #[serde(rename = "disable_video_relate_book")]
+    pub disable_video_relate_book: bool,
     #[serde(rename = "from_video_id")]
     pub from_video_id: String,
     #[serde(rename = "need_all_video_definition")]
     pub need_all_video_definition: bool,
     #[serde(rename = "need_mp4_align")]
     pub need_mp4_align: bool,
+    #[serde(rename = "source")]
+    pub source: i64,
     #[serde(rename = "use_os_player")]
     pub use_os_player: bool,
     #[serde(rename = "use_server_dns")]
     pub use_server_dns: bool,
-    #[serde(rename = "use_server_dns_scene")]
-    pub use_server_dns_scene: &'static str,
-    #[serde(rename = "video_id_type")]
-    pub video_id_type: i64,
     #[serde(rename = "video_platform")]
     pub video_platform: i64,
 }
@@ -343,26 +355,29 @@ pub struct SingleModelBizParam {
 pub struct SingleModelPayload {
     #[serde(rename = "biz_param")]
     pub biz_param: SingleModelBizParam,
+    #[serde(rename = "content_type")]
+    pub content_type: i64,
     #[serde(rename = "video_id")]
     pub video_id: String,
 }
 
-/// 构造官方单集取流请求体。`s0.g` 在发出前把 DNS 标志盖成 true + `cold_start_stage`，
-/// 平台空则 Outer（wire 3），设备档 High（wire 3）。桌面壳走系统播放器，
-/// `use_os_player` 按调用方标志写成 true（官方把这个值交给调用方，不在 `s0.g` 里写死）。
-pub fn single_model_payload(video_id: &str) -> SingleModelPayload {
+pub fn single_model_payload(video_id: &str, content_type: i64) -> SingleModelPayload {
+    const PLAYER_SOURCE: i64 = 4;
     SingleModelPayload {
         biz_param: SingleModelBizParam {
+            detail_page_version: 0,
             device_level: 3,
+            disable_digg_stat: false,
+            disable_video_relate_book: false,
             from_video_id: String::new(),
-            need_all_video_definition: false,
+            need_all_video_definition: true,
             need_mp4_align: false,
-            use_os_player: true,
-            use_server_dns: true,
-            use_server_dns_scene: "cold_start_stage",
-            video_id_type: 0,
+            source: PLAYER_SOURCE,
+            use_os_player: false,
+            use_server_dns: false,
             video_platform: 3,
         },
+        content_type,
         video_id: video_id.to_string(),
     }
 }
@@ -459,20 +474,65 @@ mod tests {
     }
 
     #[test]
-    fn single_model_payload_matches_default_branch() {
-        let body = serde_json::to_value(single_model_payload("vid-1")).unwrap();
-        assert!(body.get("content_type").is_none());
-        assert!(body.get("dr_scene").is_none());
-        assert_eq!(body["video_id"], "vid-1");
-        assert_eq!(body["biz_param"]["video_id_type"], 0);
-        assert_eq!(body["biz_param"]["video_platform"], 3);
-        assert_eq!(body["biz_param"]["device_level"], 3);
-        assert_eq!(body["biz_param"]["need_all_video_definition"], false);
-        assert_eq!(body["biz_param"]["use_os_player"], true);
-        assert_eq!(body["biz_param"]["use_server_dns"], true);
+    fn player_model_payload_matches_captured_batch_body() {
+        let group = BTreeMap::from([("1004".to_string(), vec!["123".to_string()])]);
+        let body =
+            serde_json::to_value(player_model_payload(&group, PlayerModelScene::Player)).unwrap();
         assert_eq!(
-            body["biz_param"]["use_server_dns_scene"],
-            "cold_start_stage"
+            body,
+            serde_json::json!({
+                "biz_param": {
+                    "detail_page_version": 0,
+                    "device_level": 3,
+                    "disable_digg_stat": false,
+                    "disable_video_relate_book": false,
+                    "need_all_video_definition": true,
+                    "need_mp4_align": false,
+                    "use_os_player": false,
+                    "use_server_dns": false,
+                    "video_platform": 1024
+                },
+                "dr_scene": "player",
+                "mixed_video_id_map": {"1004": ["123"]}
+            })
+        );
+        let preload =
+            serde_json::to_value(player_model_payload(&group, PlayerModelScene::Preload)).unwrap();
+        assert_eq!(preload["dr_scene"], "preload");
+        assert_eq!(preload["biz_param"], body["biz_param"]);
+        assert_eq!(preload["mixed_video_id_map"], body["mixed_video_id_map"]);
+        assert_eq!(
+            PlayerModelScene::Player.path(),
+            "/novel/player/multi_video_model/player/v1"
+        );
+        assert_eq!(
+            PlayerModelScene::Preload.path(),
+            "/novel/player/multi_video_model/preload/v1"
+        );
+    }
+
+    #[test]
+    fn single_model_payload_matches_captured_body() {
+        let body = serde_json::to_value(single_model_payload("vid-1", 1004)).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "biz_param": {
+                    "detail_page_version": 0,
+                    "device_level": 3,
+                    "disable_digg_stat": false,
+                    "disable_video_relate_book": false,
+                    "from_video_id": "",
+                    "need_all_video_definition": true,
+                    "need_mp4_align": false,
+                    "source": 4,
+                    "use_os_player": false,
+                    "use_server_dns": false,
+                    "video_platform": 3
+                },
+                "content_type": 1004,
+                "video_id": "vid-1"
+            })
         );
     }
 

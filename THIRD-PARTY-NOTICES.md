@@ -68,11 +68,11 @@ remain with their respective authors. This project itself is licensed under
 
 ## 六、媒体解码核 / Media Decoders
 
-| 组件 | 用途 | 许可 |
-| --- | --- | --- |
+| 组件                                                                  | 用途                                                  | 许可                                                         |
+| --------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
 | [Fraunhofer VVdeC / libvvdec](https://github.com/fraunhoferhhi/vvdec) | ByteVC2/H.266 软解主核（经 `vvdec`/`vvdec-sys` 嵌入） | BSD-3-Clause-Clear（**不含专利授权**；产品已确认可嵌入发版） |
-| [vvdec / vvdec-sys](https://github.com/cadubentzen/vvdec-rs) | libvvdec 的 Rust 绑定 | BSD-3-Clause-Clear |
-| [oxideav-h266](https://crates.io/crates/oxideav-h266) | ByteVC2/H.266 纯 Rust 解核回退 / 测试夹具 | MIT |
+| [vvdec / vvdec-sys](https://github.com/cadubentzen/vvdec-rs)          | libvvdec 的 Rust 绑定                                 | BSD-3-Clause-Clear                                           |
+| [oxideav-h266](https://crates.io/crates/oxideav-h266)                 | ByteVC2/H.266 纯 Rust 解核回退 / 测试夹具             | MIT                                                          |
 
 ## 七、构建工具 / Build Tooling
 

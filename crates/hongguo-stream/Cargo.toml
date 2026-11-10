@@ -13,7 +13,7 @@ hongguo-common = { path = "../hongguo-common" }
 # 流数据面的下层原语：稀疏密文缓冲 + 惰性解密计划。
 hongguo-video = { path = "../hongguo-video" }
 # 条目锁与 LRU 时间戳；本 crate 全程同步，不引异步运行时。
-parking_lot = "0.12"
+parking_lot = "0.13"
 log = "0.4"
 
 [dev-dependencies]

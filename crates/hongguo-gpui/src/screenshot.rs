@@ -121,7 +121,7 @@ pub(crate) fn install(
                                 cx,
                             );
                             window.dispatch_event(
-                                gpui_kit::PlatformInput::ScrollWheel(gpui_kit::ScrollWheelEvent {
+                                gpui_kit::PlatformInput::Scroll(gpui_kit::ScrollEvent {
                                     position: center,
                                     delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
                                         gpui_kit::px(0.0),
@@ -129,6 +129,7 @@ pub(crate) fn install(
                                     )),
                                     modifiers: Default::default(),
                                     touch_phase: gpui_kit::TouchPhase::Started,
+                                    source: gpui_kit::ScrollSource::Pointer,
                                 }),
                                 cx,
                             );
@@ -218,17 +219,16 @@ pub(crate) fn install(
                                     cx,
                                 );
                                 window.dispatch_event(
-                                    gpui_kit::PlatformInput::ScrollWheel(
-                                        gpui_kit::ScrollWheelEvent {
-                                            position: center,
-                                            delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
-                                                gpui_kit::px(0.0),
-                                                gpui_kit::px(-dy),
-                                            )),
-                                            modifiers: Default::default(),
-                                            touch_phase: gpui_kit::TouchPhase::Started,
-                                        },
-                                    ),
+                                    gpui_kit::PlatformInput::Scroll(gpui_kit::ScrollEvent {
+                                        position: center,
+                                        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                                            gpui_kit::px(0.0),
+                                            gpui_kit::px(-dy),
+                                        )),
+                                        modifiers: Default::default(),
+                                        touch_phase: gpui_kit::TouchPhase::Started,
+                                        source: gpui_kit::ScrollSource::Pointer,
+                                    }),
                                     cx,
                                 );
                             });

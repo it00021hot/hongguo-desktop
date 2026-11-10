@@ -54,15 +54,15 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6.1.1
         with:
-          version: 12.17.0
+          version: 12.18.0
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 26.13.0
           cache: pnpm
@@ -73,7 +73,7 @@ jobs:
           targets: ${{ matrix.rust_target }}
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@v2.9.3
         with:
           workspaces: .
           key: ${{ matrix.rust_target }}
@@ -146,7 +146,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and upload
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ steps.signing.outputs.key }}
@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
 
       - name: Build and upload latest.json
         env:
@@ -186,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
 
       # 先传脚本再下载全部资产做校验和：install-macos.sh 自己也进 SHA256SUMS
       - name: Upload macOS install script

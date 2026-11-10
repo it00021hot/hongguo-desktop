@@ -89,8 +89,7 @@ export function useTranscodeFallback(params: {
           ? ('running' as const)
           : ('completed' as const);
   // Completed 事件本身也算「可以接整片」：不能先清 waiting 再指望 wholeFileSrc。
-  const waitingForWhole =
-    waitingWholeFile || compatProgress?.phase === 'completed';
+  const waitingForWhole = waitingWholeFile || compatProgress?.phase === 'completed';
   const wholeSrc = wholeFileSrc({
     episodeKey,
     eventKey: compatProgress?.key ?? compatResult?.key ?? null,

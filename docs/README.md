@@ -16,6 +16,7 @@
 | --- | --- |
 | [hongguo-api-endpoints.md](./hongguo-api-endpoints.md) | 官方接口抓包台账（路径 / 签名 / 响应 / 坑）——改端点前必读 |
 | [hongguo-apk-endpoints.md](./hongguo-apk-endpoints.md) | APK 静态路径清单（「在用」列标本仓已接端点） |
+| [req-hg-003-playback-parity.md](./req-hg-003-playback-parity.md) | 播放对齐调查交接、Craft 证据与运行时验收状态（进行中） |
 | [webview-cdp-testing.md](./webview-cdp-testing.md) | Tauri WebView CDP / macOS WebDriver 调试 |
 
 ## 实现说明（已落地）

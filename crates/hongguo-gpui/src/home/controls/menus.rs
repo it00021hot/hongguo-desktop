@@ -302,7 +302,7 @@ impl HomeView {
                         gpui_kit::MouseButton::Left,
                         cx.listener(|_, _, _, cx| cx.stop_propagation()),
                     )
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
                     .child(self.dm_setting_row(
                         crate::i18n::t("player.danmakuOpacity"),
                         &self.dm_opacity_slider,

@@ -33,7 +33,9 @@ export function classifyGrow(
 }
 
 /** pull 对 grow cancelled/failed 必须通知上层，不能只靠 Failed 进度或换集。 */
-export function shouldNotifyUnavailable(step: GrowStep): boolean {
+export function shouldNotifyUnavailable(
+  step: GrowStep,
+): step is Extract<GrowStep, { kind: 'cancelled' | 'failed' }> {
   return step.kind === 'cancelled' || step.kind === 'failed';
 }
 

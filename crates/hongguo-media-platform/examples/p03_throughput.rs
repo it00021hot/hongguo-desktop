@@ -32,7 +32,7 @@ fn main() {
         on_progress: Some(&|pts| {
             let ms = t0.elapsed().as_millis() as u64;
             let prev = last_log.load(Ordering::Relaxed);
-            if ms.saturating_sub(prev) >= 2000 || pts >= 90.0 && pts < 91.0 {
+            if ms.saturating_sub(prev) >= 2000 || (90.0..91.0).contains(&pts) {
                 last_log.store(ms, Ordering::Relaxed);
                 let factor = if ms > 0 { pts / (ms as f64 / 1000.0) } else { 0.0 };
                 eprintln!("progress pts={pts:.2} wall_ms={ms} x={factor:.3}");

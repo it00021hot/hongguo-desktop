@@ -382,10 +382,7 @@ export function SeriesDetailPage({
                   onClick={onCollect}
                   className={cn('hidden md:inline-flex', collected && 'text-star')}
                 >
-                  <Star
-                    className={cn('size-4', collected && 'fill-star text-star')}
-                    aria-hidden
-                  />
+                  <Star className={cn('size-4', collected && 'fill-star text-star')} aria-hidden />
                   {t(collected ? 'detail.collected' : 'detail.collect')}
                 </Button>
                 <Button
@@ -458,7 +455,7 @@ export function SeriesDetailPage({
                         className={cn(
                           'relative grid aspect-square place-items-center rounded-lg text-sm tabular-nums transition-colors',
                           ep.vidIndex === continueIndex
-                            ? 'bg-primary font-semibold text-primary-foreground'
+                            ? 'bg-primary text-primary-foreground font-semibold'
                             : 'bg-muted text-foreground hover:bg-muted/80',
                         )}
                       >
@@ -518,10 +515,7 @@ export function SeriesDetailPage({
                 className={cn('h-10 flex-1', collected && 'text-star')}
                 onClick={onCollect}
               >
-                <Star
-                  className={cn('size-4', collected && 'fill-star text-star')}
-                  aria-hidden
-                />
+                <Star className={cn('size-4', collected && 'fill-star text-star')} aria-hidden />
                 {t(collected ? 'detail.collected' : 'detail.collect')}
               </Button>
               <Button

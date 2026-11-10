@@ -1,8 +1,8 @@
 //! 观看历史：本地落库 + 云端同步（未登录本地可记可管，登录后补传）。
-//! [`record`]：播放进度里程碑由壳按播放位置判定后调用——本地 UPSERT 必做，登录态顺路上报云端，
-//! 成功回置 reported，上报失败不影响本地行。[`upload_pending`]：把离线期间攒下的 reported=0 行逐条补传。
+//! [`record`]：播放进度里程碑先落库，再按账号或原设备会话发送。
+//! 账号上报成功回置 reported，上报失败不影响本地行。[`upload_pending`]：把离线期间攒下的 reported=0 行逐条补传。
 
-use hongguo_api::history::report_watch_progress;
+use hongguo_api::history::{report_guest_watch_progress, report_watch_progress};
 use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::{AppError, AppResult};
 
@@ -11,7 +11,7 @@ use crate::app_state::AppState;
 /// 单轮补传上限：一次登录补几百条足够，剩下的留给下次触发。
 const UPLOAD_BATCH: usize = 100;
 
-/// 记录一条观看历史（本地必记 + 登录态顺路上报云端）。
+/// 记录一条观看历史，并同步到当前账号或原设备会话。
 pub async fn record(state: &AppState, item: &LocalHistoryItem) -> AppResult<()> {
     let logged_in = state.settings().account.is_some();
     {
@@ -21,10 +21,21 @@ pub async fn record(state: &AppState, item: &LocalHistoryItem) -> AppResult<()> 
             .await
             .map_err(|e| AppError::Internal(format!("本地历史落库任务失败: {e}")))??;
     }
+    let env = state.api_env();
     if !logged_in {
+        if let Err(error) = report_guest_watch_progress(
+            &item.series_id,
+            &item.vid,
+            i64::from(item.vid_index),
+            item.position_ms.max(0),
+            &env,
+        )
+        .await
+        {
+            log::warn!("[History] 匿名历史更新失败（已保存到本地）: {error}");
+        }
         return Ok(());
     }
-    let env = state.api_env();
     match report_watch_progress(
         &item.series_id,
         &item.vid,

@@ -324,7 +324,7 @@ impl super::HomeView {
                     gpui_kit::MouseButton::Left,
                     cx.listener(|_, _, _, cx| cx.stop_propagation()),
                 )
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 // 浮层本身不是控件：面板里的控件各自已是 base::Button，键盘走
                 // Tab 即可；这里只需要「点不到底下的画面」。拦住 mouse_down 就
                 // 够了——gpui 的 click 由「同一元素上按下+抬起」合成，按下被

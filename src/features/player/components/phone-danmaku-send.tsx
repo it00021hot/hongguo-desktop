@@ -65,7 +65,7 @@ export function PhoneDanmakuSend({
       />
       {/* fixed + 原生 IME 抬升：不吃 absolute/100vh，华为 WebView 也能贴在键盘上方 */}
       <div
-        className="fixed inset-x-0 z-50 px-3 pb-3 pt-2"
+        className="fixed inset-x-0 z-50 px-3 pt-2 pb-3"
         style={{ bottom: imeBottom }}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}

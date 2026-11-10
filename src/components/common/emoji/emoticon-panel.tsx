@@ -174,7 +174,12 @@ export function EmoticonPanel({ onPickEmoji, onPickImage, allowImages }: Props) 
               onClick={() => onPickEmoji(e.name.slice(1, -1))}
               className="grid cursor-pointer place-items-center rounded-md p-1 transition-colors hover:bg-white/15"
             >
-              <img src={pageImageSrc(e.url)} alt={e.name} draggable={false} className="size-6 object-contain" />
+              <img
+                src={pageImageSrc(e.url)}
+                alt={e.name}
+                draggable={false}
+                className="size-6 object-contain"
+              />
             </button>
           ))}
         </div>

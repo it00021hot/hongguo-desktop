@@ -136,6 +136,14 @@ fn error_envelope() -> Vec<u8> {
     serde_json::to_vec(&json!({"Code": 110001, "Message": "test failure"})).unwrap()
 }
 
+fn local_origins(origin: &str) -> PlayOrigins<'_> {
+    PlayOrigins {
+        player: origin,
+        saas: origin,
+        light: origin,
+    }
+}
+
 #[tokio::test]
 async fn single_private_codec_falls_back_for_both_response_shapes() {
     for data in [
@@ -153,7 +161,7 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
             None,
             DecoderCapability::full(),
             &env,
-            (&origin, &origin),
+            local_origins(&origin),
         )
         .await
         .unwrap()
@@ -164,22 +172,23 @@ async fn single_private_codec_falls_back_for_both_response_shapes() {
         assert!(play.encrypted);
         let requests = server.join().unwrap();
         assert_eq!(requests.len(), 2);
-        // 默认 saas 批量体只有 bytevc2 时落到单集体。
-        assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
+        assert!(requests[0].path.contains(crate::params::SINGLE_MODEL_PATH));
         assert_eq!(
             requests[0].body["biz_param"]["device_level"], 3,
-            "saas 体 device_level=High"
+            "单集 device_level=High"
         );
+        assert_eq!(requests[0].body["content_type"], 1004);
+        assert_eq!(requests[0].body["video_id"], "single-private");
         assert_eq!(
-            requests[0].body["mixed_video_id_map"],
+            requests[1].body["mixed_video_id_map"],
             json!({"1004": ["single-private"]})
         );
-        assert!(requests[1].path.contains(crate::params::SINGLE_MODEL_PATH));
+        assert!(requests[1].path.contains(crate::params::MODEL_LIGHT_PATH));
     }
 }
 
 #[tokio::test]
-async fn single_playable_saas_does_not_call_fallbacks() {
+async fn single_playable_model_does_not_call_fallbacks_or_duplicate_query() {
     let (origin, server) = mock(vec![response(json!({"video_model": model("h264")}))]);
     let env = ApiEnv::anonymous(Default::default());
     let play = fetch_single_at(
@@ -188,7 +197,7 @@ async fn single_playable_saas_does_not_call_fallbacks() {
         None,
         DecoderCapability::no_hevc(),
         &env,
-        (&origin, &origin),
+        local_origins(&origin),
     )
     .await
     .unwrap()
@@ -197,15 +206,17 @@ async fn single_playable_saas_does_not_call_fallbacks() {
     assert_eq!(play.codec, "h264");
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].path.contains(crate::params::MODEL_LIGHT_PATH));
+    assert!(requests[0].path.contains(crate::params::SINGLE_MODEL_PATH));
     assert_eq!(requests[0].body["biz_param"]["device_level"], 3);
+    assert_eq!(requests[0].path.matches("aid=").count(), 1);
+    assert_eq!(requests[0].path.matches("cdid=").count(), 1);
 }
 
 #[tokio::test]
-async fn single_empty_or_missing_saas_still_falls_back_to_single_channel() {
-    for saas in [Vec::new(), response(json!({}))] {
+async fn single_empty_or_missing_model_falls_back_to_saas() {
+    for single in [Vec::new(), response(json!({}))] {
         let (origin, server) = mock(vec![
-            saas,
+            single,
             response(json!({"single-empty": {"video_model": model("h264")}})),
         ]);
         let env = ApiEnv::anonymous(Default::default());
@@ -215,7 +226,7 @@ async fn single_empty_or_missing_saas_still_falls_back_to_single_channel() {
             None,
             DecoderCapability::no_hevc(),
             &env,
-            (&origin, &origin),
+            local_origins(&origin),
         )
         .await
         .unwrap()
@@ -227,7 +238,7 @@ async fn single_empty_or_missing_saas_still_falls_back_to_single_channel() {
 }
 
 #[tokio::test]
-async fn single_saas_error_envelope_falls_back_to_single_channel() {
+async fn single_error_envelope_falls_back_to_saas() {
     let (origin, server) = mock(vec![
         error_envelope(),
         response(json!({"single-envelope": {"video_model": model("h264")}})),
@@ -239,7 +250,7 @@ async fn single_saas_error_envelope_falls_back_to_single_channel() {
         None,
         DecoderCapability::no_hevc(),
         &env,
-        (&origin, &origin),
+        local_origins(&origin),
     )
     .await
     .unwrap()
@@ -268,9 +279,14 @@ async fn batch_only_falls_back_for_unplayable_or_missing_entries() {
     ]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
-            .await
-            .unwrap(),
+        fetch_play_batch_at(
+            &map,
+            DecoderCapability::full(),
+            &env,
+            local_origins(&origin)
+        )
+        .await
+        .unwrap(),
         3
     );
     let requests = server.join().unwrap();
@@ -290,9 +306,14 @@ async fn batch_preserves_primary_hits_if_fallback_fails() {
     let map = BTreeMap::from([("1".into(), vec!["batch-keep".into(), "batch-failed".into()])]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
-            .await
-            .unwrap(),
+        fetch_play_batch_at(
+            &map,
+            DecoderCapability::full(),
+            &env,
+            local_origins(&origin)
+        )
+        .await
+        .unwrap(),
         1
     );
     assert_eq!(server.join().unwrap().len(), 2);
@@ -307,9 +328,14 @@ async fn batch_primary_error_envelope_falls_back_all() {
     let map = BTreeMap::from([("1".into(), vec!["batch-envelope".into()])]);
     let env = ApiEnv::anonymous(Default::default());
     assert_eq!(
-        fetch_play_batch_at(&map, DecoderCapability::full(), &env, (&origin, &origin))
-            .await
-            .unwrap(),
+        fetch_play_batch_at(
+            &map,
+            DecoderCapability::full(),
+            &env,
+            local_origins(&origin)
+        )
+        .await
+        .unwrap(),
         1
     );
     let requests = server.join().unwrap();
@@ -339,7 +365,7 @@ async fn single_unplayable_responses_return_miss() {
             None,
             DecoderCapability::full(),
             &env,
-            (&origin, &origin)
+            local_origins(&origin)
         )
         .await
         .unwrap(),
@@ -350,7 +376,7 @@ async fn single_unplayable_responses_return_miss() {
 
 #[tokio::test]
 async fn single_all_empty_bodies_are_silent_empty() {
-    // saas + 单集 + light 三跳全空
+    // 单集 + saas + light 三跳全空
     let (origin, server) = mock(vec![Vec::new(), Vec::new(), Vec::new()]);
     let env = ApiEnv::anonymous(Default::default());
     assert!(matches!(
@@ -360,7 +386,7 @@ async fn single_all_empty_bodies_are_silent_empty() {
             None,
             DecoderCapability::full(),
             &env,
-            (&origin, &origin)
+            local_origins(&origin)
         )
         .await
         .unwrap(),
