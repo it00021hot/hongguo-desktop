@@ -96,15 +96,13 @@ pub async fn prepare(
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
     // PLAY_OK 闩判定键 = series_id：优先集窗，其次 progress_key 前缀。
-    let series_id_for_latch: Option<&str> = series_window
-        .map(|(s, _)| s)
-        .or_else(|| {
-            progress_key
-                .split(':')
-                .next()
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-        });
+    let series_id_for_latch: Option<&str> = series_window.map(|(s, _)| s).or_else(|| {
+        progress_key
+            .split(':')
+            .next()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+    });
     crate::cold_start::wait().await;
     // 播放策略轮询（行为画像对齐）：首次在线播放触发，进程内仅启动一次
     super::super::ensure_play_strategy_poller(state);
@@ -166,16 +164,11 @@ pub async fn prepare(
                     "[Online] 换档后重跑集窗批量 series={series_id} idx={vid_index}（避免邻集空包）"
                 );
                 crate::play_service::local::warm_episode_window_gated(
-                    state,
-                    series_id,
-                    vid_index,
-                    false,
+                    state, series_id, vid_index, false,
                 )
                 .await;
             } else {
-                log::warn!(
-                    "[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）"
-                );
+                log::warn!("[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）");
             }
             // 持闩中：不得 wait，否则与 warm 同理自锁（测侧 8d7cb5b7 独立验挂死点）
             fetch_with_registry(state, vid, progress_key, definition, cap, false).await?
@@ -212,7 +205,7 @@ pub async fn prepare(
     let owned_key = progress_key.to_string();
     // `cache()` 返回 `&'static StreamCache`，可以直接带进 spawn 的 future
     let c = cache();
-    crate::device::note_play_address(state, series_id_for_latch);
+    crate::device::note_play_address(state, series_id_for_latch, Some(vid));
     let state = state.clone();
     crate::runtime::spawn(async move {
         let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, false).await;
