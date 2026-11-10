@@ -132,18 +132,33 @@ fn box_payload_start(data: &[u8]) -> Option<usize> {
     Some(if size32 == 1 { 16 } else { 8 })
 }
 
-/// 按样本表从文件读一块样本。
-pub fn read_sample(path: &Path, offset: u64, size: u64) -> AppResult<Vec<u8>> {
-    if size == 0 {
-        return Ok(Vec::new());
+/// 按样本表顺序读样本。文件只打开一次，样本缓冲由调用方复用——
+/// 一集有几千个样本，逐样本 `open` + 新分配在解码循环里是纯开销。
+pub struct SampleReader {
+    file: File,
+}
+
+impl SampleReader {
+    pub fn open(path: &Path) -> AppResult<Self> {
+        let file = File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
+        Ok(Self { file })
     }
-    let mut file = File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
-    file.seek(SeekFrom::Start(offset))
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    let mut buf = vec![0u8; size as usize];
-    file.read_exact(&mut buf)
-        .map_err(|e| AppError::Io(e.to_string()))?;
-    Ok(buf)
+
+    /// 把一块样本读进 `buf`（先清空）。`size == 0` 时 `buf` 为空。
+    pub fn read_into(&mut self, offset: u64, size: u64, buf: &mut Vec<u8>) -> AppResult<()> {
+        buf.clear();
+        if size == 0 {
+            return Ok(());
+        }
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        buf.resize(size as usize, 0);
+        self.file
+            .read_exact(buf)
+            .map_err(|e| AppError::Io(e.to_string()))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +194,27 @@ mod tests {
         let moov = build_box(b"moov", &trak);
         let found = config_in_moov(&moov).expect("应找到 bv2C");
         assert_eq!(found, config_payload);
+    }
+
+    #[test]
+    fn sample_reader_reuses_one_buffer_across_reads() {
+        let dir = std::env::temp_dir().join(format!("hg-bvc2-reader-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("临时目录");
+        let path = dir.join("samples.bin");
+        std::fs::write(&path, [1u8, 2, 3, 4, 5, 6, 7, 8]).expect("写样本");
+        let mut reader = SampleReader::open(&path).expect("打开");
+        let mut buf = Vec::new();
+        reader.read_into(4, 3, &mut buf).expect("后段");
+        assert_eq!(buf, [5, 6, 7]);
+        reader.read_into(0, 2, &mut buf).expect("回读前段");
+        assert_eq!(buf, [1, 2]);
+        reader.read_into(0, 0, &mut buf).expect("空样本");
+        assert!(buf.is_empty());
+        assert!(
+            reader.read_into(6, 4, &mut buf).is_err(),
+            "越过文件尾应报错"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

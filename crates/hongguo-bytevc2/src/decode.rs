@@ -6,12 +6,13 @@
 //! `HONGGUO_BYTEVC2_DECODER=oxideav` 回退到 oxideav-h266（需启用 `oxideav` feature）。
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use hongguo_common::{AppError, AppResult};
 
-use crate::container::{self, Bytevc2Track};
+use crate::container::{self, Bytevc2Track, SampleReader};
 use crate::extradata::annexb_from_extradata;
-use crate::sample::sample_to_annexb;
+use crate::sample::append_annexb;
 
 /// 送进解码器的显示时间刻度。与封装层 90kHz 相同，重排后按这个刻度还原秒。
 const PRESENTATION_TIMESCALE: i64 = 90_000;
@@ -30,6 +31,9 @@ pub fn active_decoder_name() -> &'static str {
 }
 
 /// 一帧 8-bit 4:2:0。10/12-bit 源在打包时右移到 8-bit，供平台 H.264 编码器使用。
+///
+/// 平面缓冲来自本次解码的缓冲池，帧销毁时自动归还——1080p 一帧约 3 MB，
+/// 逐帧向系统要新页再清零比拷贝本身还贵。
 pub struct DecodedFrame {
     pub width: usize,
     pub height: usize,
@@ -38,6 +42,65 @@ pub struct DecodedFrame {
     pub v: Vec<u8>,
     /// 源样本的显示时间（秒）。样本表给不出逐样本时间时为 `None`，调用方不能当成 0。
     pub pts: Option<f64>,
+    pool: Option<Arc<PlanePool>>,
+}
+
+impl Drop for DecodedFrame {
+    fn drop(&mut self) {
+        let Some(pool) = self.pool.take() else {
+            return;
+        };
+        pool.give_luma(std::mem::take(&mut self.y));
+        pool.give_chroma(std::mem::take(&mut self.u));
+        pool.give_chroma(std::mem::take(&mut self.v));
+    }
+}
+
+/// 池里最多留多少块空闲亮度缓冲（色度是它的两倍）。在途帧数由调用方的队列深度决定，
+/// 这里只是给「归还后暂存」设个上限，防止异常调用方把内存撑大。
+const POOL_MAX_LUMA: usize = 16;
+
+/// 解码帧平面缓冲池。亮度、色度尺寸不同，分开存，避免小缓冲被拿去装大平面反复扩容。
+#[derive(Default)]
+struct PlanePool {
+    luma: Mutex<Vec<Vec<u8>>>,
+    chroma: Mutex<Vec<Vec<u8>>>,
+}
+
+impl PlanePool {
+    fn take(list: &Mutex<Vec<Vec<u8>>>) -> Vec<u8> {
+        list.lock()
+            .ok()
+            .and_then(|mut free| free.pop())
+            .unwrap_or_default()
+    }
+
+    fn give(list: &Mutex<Vec<Vec<u8>>>, buf: Vec<u8>, max: usize) {
+        if buf.capacity() == 0 {
+            return;
+        }
+        if let Ok(mut free) = list.lock()
+            && free.len() < max
+        {
+            free.push(buf);
+        }
+    }
+
+    fn take_luma(&self) -> Vec<u8> {
+        Self::take(&self.luma)
+    }
+
+    fn take_chroma(&self) -> Vec<u8> {
+        Self::take(&self.chroma)
+    }
+
+    fn give_luma(&self, buf: Vec<u8>) {
+        Self::give(&self.luma, buf, POOL_MAX_LUMA);
+    }
+
+    fn give_chroma(&self, buf: Vec<u8>) {
+        Self::give(&self.chroma, buf, POOL_MAX_LUMA * 2);
+    }
 }
 
 /// 已打开的明文 ByteVC2。帧率在解帧前就可用，编码会话按它建时间轴。
@@ -182,24 +245,27 @@ fn decode_track_vvdec(
         .num_threads(vvdec_thread_count())
         .build()
         .map_err(map_vvdec_err)?;
+    let pool = Arc::new(PlanePool::default());
+    let mut reader = SampleReader::open(path)?;
+    // 样本缓冲与 Annex-B 缓冲整集复用；vvdec 在 `decode` 返回前已把载荷拷进自己的码流缓冲。
+    let mut raw = Vec::new();
+    let mut annexb = Vec::new();
     let mut sent_params = false;
 
     for (index, &(offset, size)) in track.info.samples.iter().enumerate() {
-        let raw = container::read_sample(path, offset, size)?;
-        let sample = sample_to_annexb(&raw, length_size);
-        if sample.is_empty() {
+        reader.read_into(offset, size, &mut raw)?;
+        annexb.clear();
+        let first_au = !sent_params;
+        if first_au {
+            annexb.extend_from_slice(&params);
+        }
+        let prefix = annexb.len();
+        append_annexb(&raw, length_size, &mut annexb);
+        if annexb.len() == prefix {
             continue;
         }
-        let first_au = !sent_params;
-        let annexb = if sent_params {
-            sample
-        } else {
-            sent_params = true;
-            let mut with_params = params.clone();
-            with_params.extend_from_slice(&sample);
-            with_params
-        };
-        let mut au = AccessUnit::new(annexb);
+        sent_params = true;
+        let mut au = AccessUnit::new(annexb.as_slice());
         // 首包（参数集+样本）标 RAP，便于随机接入。
         if first_au {
             au.is_random_access_point = true;
@@ -211,7 +277,7 @@ fn decode_track_vvdec(
             }
         }
         match dec.decode(au) {
-            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame)?)?,
+            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame, &pool)?)?,
             Ok(None) => {}
             Err(VvError::TryAgain) => {}
             Err(e) => return Err(map_vvdec_err(e)),
@@ -222,7 +288,7 @@ fn decode_track_vvdec(
     }
     loop {
         match dec.flush() {
-            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame)?)?,
+            Ok(Some(frame)) => on_frame(pack_vvdec_frame(&frame, &pool)?)?,
             Ok(None) | Err(VvError::Eof) => break,
             Err(VvError::RestartRequired) => break,
             Err(e) => return Err(map_vvdec_err(e)),
@@ -232,7 +298,7 @@ fn decode_track_vvdec(
 }
 
 #[cfg(feature = "vvdec")]
-fn pack_vvdec_frame(frame: &vvdec::Frame) -> AppResult<DecodedFrame> {
+fn pack_vvdec_frame(frame: &vvdec::Frame, pool: &Arc<PlanePool>) -> AppResult<DecodedFrame> {
     use vvdec::{ColorFormat, PlaneComponent};
 
     let width = (frame.width() as usize) & !1;
@@ -246,9 +312,7 @@ fn pack_vvdec_frame(frame: &vvdec::Frame) -> AppResult<DecodedFrame> {
         10 => 2,
         12 => 4,
         other => {
-            return Err(AppError::Media(format!(
-                "ByteVC2 位深暂不支持: {other}"
-            )));
+            return Err(AppError::Media(format!("ByteVC2 位深暂不支持: {other}")));
         }
     };
     let with_chroma = match frame.color_format() {
@@ -263,44 +327,51 @@ fn pack_vvdec_frame(frame: &vvdec::Frame) -> AppResult<DecodedFrame> {
     let y_plane = frame
         .plane(PlaneComponent::Y)
         .ok_or_else(|| AppError::Media("ByteVC2 帧缺 Y 平面".into()))?;
-    let y = plane8_raw(
+    let mut y = pool.take_luma();
+    plane8_into(
         y_plane.as_ref(),
         y_plane.stride() as usize,
         width,
         height,
         y_plane.bytes_per_sample() as usize,
         shift,
+        &mut y,
     )?;
     let cw = width / 2;
     let ch = height / 2;
-    let (u, v) = if with_chroma {
+    let mut u = pool.take_chroma();
+    let mut v = pool.take_chroma();
+    if with_chroma {
         let u_plane = frame
             .plane(PlaneComponent::U)
             .ok_or_else(|| AppError::Media("ByteVC2 帧缺 U 平面".into()))?;
         let v_plane = frame
             .plane(PlaneComponent::V)
             .ok_or_else(|| AppError::Media("ByteVC2 帧缺 V 平面".into()))?;
-        (
-            plane8_raw(
-                u_plane.as_ref(),
-                u_plane.stride() as usize,
-                cw,
-                ch,
-                u_plane.bytes_per_sample() as usize,
-                shift,
-            )?,
-            plane8_raw(
-                v_plane.as_ref(),
-                v_plane.stride() as usize,
-                cw,
-                ch,
-                v_plane.bytes_per_sample() as usize,
-                shift,
-            )?,
-        )
+        plane8_into(
+            u_plane.as_ref(),
+            u_plane.stride() as usize,
+            cw,
+            ch,
+            u_plane.bytes_per_sample() as usize,
+            shift,
+            &mut u,
+        )?;
+        plane8_into(
+            v_plane.as_ref(),
+            v_plane.stride() as usize,
+            cw,
+            ch,
+            v_plane.bytes_per_sample() as usize,
+            shift,
+            &mut v,
+        )?;
     } else {
-        (vec![128u8; cw * ch], vec![128u8; cw * ch])
-    };
+        for plane in [&mut u, &mut v] {
+            plane.clear();
+            plane.resize(cw * ch, 128);
+        }
+    }
     let pts = frame
         .cts()
         .map(|ticks| ticks as f64 / PRESENTATION_TIMESCALE as f64);
@@ -311,6 +382,7 @@ fn pack_vvdec_frame(frame: &vvdec::Frame) -> AppResult<DecodedFrame> {
         u,
         v,
         pts,
+        pool: Some(Arc::clone(pool)),
     })
 }
 
@@ -319,14 +391,19 @@ fn map_vvdec_err(err: vvdec::Error) -> AppError {
     AppError::Media(format!("ByteVC2 vvdec 解码失败: {err}"))
 }
 
-fn plane8_raw(
+/// 把一个平面收紧成 8-bit、去掉行尾填充，写进 `out`（先清空，容量复用）。
+///
+/// 高位深走「小端 u16 右移再封顶」：按行用定长迭代器写，编译器能在 NEON / SSE2 / AVX2 上
+/// 自动向量化（逐元素 `push` 带容量检查，向量化不了）。结果与逐像素标量实现逐字节一致。
+fn plane8_into(
     data: &[u8],
     stride: usize,
     width: usize,
     height: usize,
     bytes_per_sample: usize,
     shift: u8,
-) -> AppResult<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> AppResult<()> {
     let bps = if shift == 0 {
         1usize
     } else {
@@ -336,19 +413,48 @@ fn plane8_raw(
     if data.len() < need || stride < width * bps {
         return Err(AppError::Media("ByteVC2 帧平面越界".into()));
     }
-    let mut out = Vec::with_capacity(width * height);
+    out.clear();
+    out.reserve(width * height);
+    if shift == 0 && stride == width {
+        out.extend_from_slice(&data[..width * height]);
+        return Ok(());
+    }
     for row in 0..height {
         let start = row * stride;
         if shift == 0 {
             out.extend_from_slice(&data[start..start + width]);
             continue;
         }
-        for col in 0..width {
-            let i = start + col * 2;
-            let sample = u16::from_le_bytes([data[i], data[i + 1]]);
-            out.push((sample >> shift).min(255) as u8);
-        }
+        let src = &data[start..start + width * 2];
+        out.extend(
+            src.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|px| (u16::from_le_bytes(*px) >> shift).min(255) as u8),
+        );
     }
+    Ok(())
+}
+
+#[cfg(any(feature = "oxideav", test))]
+fn plane8_raw(
+    data: &[u8],
+    stride: usize,
+    width: usize,
+    height: usize,
+    bytes_per_sample: usize,
+    shift: u8,
+) -> AppResult<Vec<u8>> {
+    let mut out = Vec::new();
+    plane8_into(
+        data,
+        stride,
+        width,
+        height,
+        bytes_per_sample,
+        shift,
+        &mut out,
+    )?;
     Ok(out)
 }
 
@@ -366,23 +472,24 @@ fn decode_track_oxideav(
     let params = annexb_from_extradata(&track.config)?;
     let timeline = track.info.sample_pts();
     let stamp_pts = timeline.len() == track.info.samples.len() && !timeline.is_empty();
-    let mut dec =
-        H266Decoder::new(&CodecParameters::video(CodecId::new(CODEC_ID_STR))).map_err(map_oxide_err)?;
+    let mut dec = H266Decoder::new(&CodecParameters::video(CodecId::new(CODEC_ID_STR)))
+        .map_err(map_oxide_err)?;
+    let mut reader = SampleReader::open(path)?;
+    let mut raw = Vec::new();
     let mut sent_params = false;
     for (index, &(offset, size)) in track.info.samples.iter().enumerate() {
-        let raw = container::read_sample(path, offset, size)?;
-        let sample = sample_to_annexb(&raw, length_size);
-        if sample.is_empty() {
+        reader.read_into(offset, size, &mut raw)?;
+        // 回退核的 `Packet` 要拿走载荷所有权，这里每包一块新缓冲。
+        let mut annexb = Vec::with_capacity(raw.len() + 16);
+        if !sent_params {
+            annexb.extend_from_slice(&params);
+        }
+        let prefix = annexb.len();
+        append_annexb(&raw, length_size, &mut annexb);
+        if annexb.len() == prefix {
             continue;
         }
-        let annexb = if sent_params {
-            sample
-        } else {
-            sent_params = true;
-            let mut with_params = params.clone();
-            with_params.extend_from_slice(&sample);
-            with_params
-        };
+        sent_params = true;
         let mut packet = Packet::new(0, TimeBase::new(1, PRESENTATION_TIMESCALE), annexb);
         if stamp_pts {
             let ticks = presentation_tick(timeline[index]);
@@ -466,6 +573,7 @@ fn pack_oxide_frame(
         u,
         v,
         pts,
+        pool: None,
     })
 }
 
@@ -591,6 +699,123 @@ mod tests {
         );
     }
 
+    /// 改写前的逐像素标量实现，留作向量化版本的逐字节对照。
+    fn plane8_reference(
+        data: &[u8],
+        stride: usize,
+        width: usize,
+        height: usize,
+        shift: u8,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(width * height);
+        for row in 0..height {
+            let start = row * stride;
+            if shift == 0 {
+                out.extend_from_slice(&data[start..start + width]);
+                continue;
+            }
+            for col in 0..width {
+                let i = start + col * 2;
+                let sample = u16::from_le_bytes([data[i], data[i + 1]]);
+                out.push((sample >> shift).min(255) as u8);
+            }
+        }
+        out
+    }
+
+    fn noise(len: usize) -> Vec<u8> {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 32) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn plane8_matches_scalar_reference_for_every_depth() {
+        // 奇数宽 + 行尾填充，覆盖向量化循环的收尾与跨行。
+        let (width, height) = (37usize, 9usize);
+        for (shift, bps) in [(0u8, 1usize), (2, 2), (4, 2)] {
+            let stride = width * bps + 6;
+            let data = noise(stride * height);
+            let got = plane8_raw(&data, stride, width, height, bps, shift).expect("打包");
+            assert_eq!(
+                got,
+                plane8_reference(&data, stride, width, height, shift),
+                "shift={shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn plane8_saturates_out_of_range_samples() {
+        // 10-bit 容器里出现超出 10-bit 的值时封顶到 255，不回绕。
+        let data = [0xffu8, 0xff, 0x00, 0x04, 0xfc, 0x03];
+        let got = plane8_raw(&data, 6, 3, 1, 2, 2).expect("打包");
+        assert_eq!(got, [255, 255, 255]);
+    }
+
+    #[test]
+    fn plane8_reuses_the_callers_buffer() {
+        let data = noise(64 * 4);
+        let mut out = Vec::with_capacity(4096);
+        let before = out.as_ptr();
+        plane8_into(&data, 64, 64, 4, 1, 0, &mut out).expect("第一次");
+        plane8_into(&data, 64, 32, 4, 1, 0, &mut out).expect("第二次");
+        assert_eq!(out.len(), 32 * 4);
+        assert_eq!(out.as_ptr(), before, "容量够时不应重新分配");
+    }
+
+    #[test]
+    fn plane8_rejects_short_planes() {
+        let mut out = Vec::new();
+        assert!(plane8_into(&[0u8; 10], 4, 4, 3, 1, 0, &mut out).is_err());
+        assert!(
+            plane8_into(&[0u8; 64], 4, 4, 2, 2, 2, &mut out).is_err(),
+            "步长小于行宽"
+        );
+    }
+
+    #[test]
+    fn dropped_frames_hand_their_planes_back_to_the_pool() {
+        let pool = Arc::new(PlanePool::default());
+        let mut y = pool.take_luma();
+        y.resize(64, 1);
+        let y_ptr = y.as_ptr();
+        let mut u = pool.take_chroma();
+        u.resize(16, 2);
+        let mut v = pool.take_chroma();
+        v.resize(16, 3);
+        drop(DecodedFrame {
+            width: 8,
+            height: 8,
+            y,
+            u,
+            v,
+            pts: None,
+            pool: Some(Arc::clone(&pool)),
+        });
+        assert_eq!(pool.luma.lock().expect("锁").len(), 1);
+        assert_eq!(pool.chroma.lock().expect("锁").len(), 2);
+        let reused = pool.take_luma();
+        assert_eq!(reused.as_ptr(), y_ptr, "下一帧应拿回同一块亮度缓冲");
+    }
+
+    #[test]
+    fn pool_caps_idle_buffers() {
+        let pool = PlanePool::default();
+        for _ in 0..POOL_MAX_LUMA + 5 {
+            pool.give_luma(vec![0u8; 8]);
+        }
+        assert_eq!(pool.luma.lock().expect("锁").len(), POOL_MAX_LUMA);
+        pool.give_chroma(Vec::new());
+        assert!(pool.chroma.lock().expect("锁").is_empty(), "空缓冲不入池");
+    }
+
     #[test]
     fn missing_file_is_an_io_error() {
         let err = decode_plaintext_mp4(Path::new("/no/such/bytevc2.mp4"), |_| Ok(())).unwrap_err();
@@ -600,7 +825,9 @@ mod tests {
     #[cfg(feature = "oxideav")]
     #[test]
     fn flat_grey_idr_decodes_to_i420() {
-        use oxideav_core::{CodecId, CodecParameters, Decoder, Error as OxideError, Frame, Packet, TimeBase};
+        use oxideav_core::{
+            CodecId, CodecParameters, Decoder, Error as OxideError, Frame, Packet, TimeBase,
+        };
         use oxideav_h266::CODEC_ID_STR;
         use oxideav_h266::decoder::H266Decoder;
         use oxideav_h266::encoder_pipeline::encode_idr_with_residuals;
