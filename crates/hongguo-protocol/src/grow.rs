@@ -91,15 +91,18 @@ pub fn commit(path: &Path, len: u64) {
 }
 
 pub fn finish(path: &Path) {
-    close(path, Phase::Done, String::new());
+    match std::fs::metadata(path) {
+        Ok(file) => close(path, Phase::Done, String::new(), Some(file.len())),
+        Err(error) => fail(path, format!("读取已完成视频长度失败: {error}")),
+    }
 }
 
 pub fn fail(path: &Path, message: impl Into<String>) {
-    close(path, Phase::Failed, message.into());
+    close(path, Phase::Failed, message.into(), None);
 }
 
 pub fn cancel(path: &Path) {
-    close(path, Phase::Cancelled, "已取消".into());
+    close(path, Phase::Cancelled, "已取消".into(), None);
 }
 
 /// 还有写入在进行。完成后的整文件按普通本地响应供给。
@@ -315,12 +318,15 @@ fn read_file(path: &Path, start: u64, len: u64) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-fn close(path: &Path, phase: Phase, message: String) {
+fn close(path: &Path, phase: Phase, message: String, final_len: Option<u64>) {
     let Some(slot) = lookup(path) else {
         return;
     };
     let mut state = lock_state(&slot);
     if state.phase == Phase::Open {
+        if let Some(len) = final_len {
+            state.committed = len;
+        }
         state.phase = phase;
         state.message = message;
     }
@@ -446,6 +452,20 @@ mod tests {
         assert_eq!(response.0, 500);
         assert_eq!(response.2, "转码失败".as_bytes());
         assert_eq!(header(&response.1, GROW_HEADER), Some("failed"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_finished_file_serves_ranges_without_intermediate_commits() {
+        let path = scratch("finished-without-prefix");
+        open(&path).unwrap();
+        std::fs::write(&path, b"whole-file").unwrap();
+        finish(&path);
+
+        let response = serve(&encoded(&path), Some("bytes=0-1")).unwrap();
+        assert_eq!(response.0, 206);
+        assert_eq!(response.2, b"wh");
+        assert_eq!(header(&response.1, "Content-Range"), Some("bytes 0-1/10"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
