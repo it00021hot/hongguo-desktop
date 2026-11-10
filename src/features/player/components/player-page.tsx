@@ -36,6 +36,7 @@ import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
 import { useGrowingCompat } from '../hooks/use-growing-compat';
 import { useFrameHold } from '../hooks/use-frame-hold';
+import { useSwitchSilence } from '../hooks/use-switch-silence';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
@@ -208,6 +209,8 @@ export function PlayerView({
   );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
+  // 切换在途时旧流闭嘴（封面已接管画面，声音不能继续压在新剧上）
+  const { isSwitchPause, holdIfSwitching } = useSwitchSilence({ videoRef, switching });
 
   const { decodeBlocking, handleVideoError, clearDecodeBlocked } = useMediaRecovery({
     videoRef,
@@ -461,7 +464,8 @@ export function PlayerView({
                   )}
                   autoPlay
                   onLoadedMetadata={handleLoadedMetadataWithDanmaku}
-                  onPlay={() => {
+                  onPlay={(e) => {
+                    if (holdIfSwitching(e.currentTarget)) return;
                     markPlayed();
                     setPaused(false);
                   }}
@@ -471,6 +475,7 @@ export function PlayerView({
                     onFirstFrame?.();
                   }}
                   onPause={(e) => {
+                    if (isSwitchPause(e.currentTarget)) return;
                     if (!playedOnceRef.current) return;
                     setPaused(true);
                     persist(e.currentTarget.currentTime, true);
