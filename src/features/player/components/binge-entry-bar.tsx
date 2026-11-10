@@ -21,10 +21,7 @@ export function BingeEntryBar({
     <ChromeSurface
       shown={chromeShown}
       data-wheel-block
-      className={cn(
-        'absolute inset-x-3 z-10',
-        narrow && !portrait ? 'bottom-10' : 'bottom-14',
-      )}
+      className={cn('absolute inset-x-3 z-10', narrow && !portrait ? 'bottom-10' : 'bottom-14')}
     >
       <button
         type="button"

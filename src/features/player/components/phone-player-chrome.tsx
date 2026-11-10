@@ -1,12 +1,5 @@
 /** 窄屏官方同款 chrome：右上倍速、底细进度；横片「全屏观看」= 锁横屏 + 藏壳栏。 */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ChevronRight, Download, ListVideo, MonitorPlay, Sparkles } from 'lucide-react';
 import { formatDuration } from '@/utils/format';
 import { readPlaybackRate, writePlaybackRate } from '@/utils/playback-prefs';

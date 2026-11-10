@@ -27,8 +27,10 @@ export function formatPlayCount(n: number): string {
     if (n >= 10_000) return tf('number.wan', { value: Math.round(n / 10_000) });
     return String(n);
   }
-  if (n >= 1_000_000) return tf('number.million', { value: trimTrailingZero((n / 1_000_000).toFixed(1)) });
-  if (n >= 10_000) return tf('number.thousand', { value: trimTrailingZero((n / 1_000).toFixed(1)) });
+  if (n >= 1_000_000)
+    return tf('number.million', { value: trimTrailingZero((n / 1_000_000).toFixed(1)) });
+  if (n >= 10_000)
+    return tf('number.thousand', { value: trimTrailingZero((n / 1_000).toFixed(1)) });
   return String(n);
 }
 

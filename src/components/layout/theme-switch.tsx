@@ -32,12 +32,7 @@ export function ThemeSwitch() {
     <div className="flex h-full items-center gap-1">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('search.langLabel')}
-            className="size-7"
-          >
+          <Button variant="ghost" size="icon" aria-label={t('search.langLabel')} className="size-7">
             <Languages className="size-4" />
           </Button>
         </DropdownMenuTrigger>
