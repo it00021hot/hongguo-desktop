@@ -1,18 +1,27 @@
 [package]
 name = "hongguo-bytevc2"
-description = "ByteVC2（bvc2）识别、参数集转换与纯 Rust 解帧"
+description = "ByteVC2（bvc2）识别、参数集转换与解帧（默认 libvvdec，oxideav 可回退）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = ["vvdec", "oxideav"]
+# Fraunhofer VVdeC（Clear BSD）。本机可用 pkg-config 的 libvvdec；否则 vvdec-sys 走 vendored CMake。
+vvdec = ["dep:vvdec"]
+# 纯 Rust H.266（oxideav）。保留为 HONGGUO_BYTEVC2_DECODER=oxideav / 无 vvdec 时的回退与测试夹具。
+oxideav = ["dep:oxideav-h266", "dep:oxideav-core"]
+
 [dependencies]
 hongguo-common = { path = "../hongguo-common" }
 hongguo-video = { path = "../hongguo-video" }
-# 纯 Rust H.266 解帧。librempeg 的 bvc2 解码器就是 VVC 核 + 固定 4 字节长度前缀，
+# 默认主核：VVdeC 安全绑定（BSD-3-Clause-Clear，与 libvvdec 对齐）。
+vvdec = { version = "0.6.11", optional = true }
+# 纯 Rust H.266。librempeg 的 bvc2 解码器就是 VVC 核 + 固定 4 字节长度前缀，
 # 运行时不链接、不调用 ffmpeg / librempeg。0.0.11 是当前 crates.io 最新版（MIT）。
-oxideav-h266 = "=0.0.11"
-oxideav-core = "0.1.43"
+oxideav-h266 = { version = "=0.0.11", optional = true }
+oxideav-core = { version = "0.1.43", optional = true }
 
 [dev-dependencies]
