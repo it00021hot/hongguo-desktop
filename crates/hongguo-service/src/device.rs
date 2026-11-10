@@ -316,9 +316,9 @@ fn write_meta_strict(store: &Store, meta: &BootstrapMeta) -> hongguo_common::App
     store.device_meta_set(&v)
 }
 
-/// 只初始化新安装或可识别的旧版匿名档案。
+/// 只初始化新设备库或可识别的匿名档案，保留既有注册限制。
 pub fn open_application_store(path: &std::path::Path) -> hongguo_common::AppResult<Store> {
-    let first_install = path.parent().is_some_and(pristine_data_dir);
+    let first_install = is_new_device_db(path);
     let store = Store::open_with_lock_retry(path)?;
     if hongguo_common::offline_qa::enabled() || reuse_json_path().is_some() {
         return Ok(store);
@@ -329,19 +329,26 @@ pub fn open_application_store(path: &std::path::Path) -> hongguo_common::AppResu
         && matches!(marker_state(&store), BlockSource::Absent)
         && matches!(journal_state(&store), BlockSource::Absent)
     {
-        let legacy = store
+        let anonymous = store
             .device_profile()
             .ok()
             .flatten()
-            .filter(is_legacy_anonymous);
-        if first_install || legacy.is_some() {
-            store.initialize_device_meta(serde_json::json!({"source": "anonymous"}), legacy)?;
+            .filter(is_known_anonymous);
+        if first_install || anonymous.is_some() {
+            store.initialize_device_meta(serde_json::json!({"source": "anonymous"}), anonymous)?;
         }
     }
     Ok(store)
 }
 
-fn is_legacy_anonymous(profile: &DeviceProfile) -> bool {
+fn is_known_anonymous(profile: &DeviceProfile) -> bool {
+    let cdid = profile.get("cdid");
+    if !is_generated_cdid(cdid) {
+        return false;
+    }
+    if *profile == anonymous_profile(cdid) {
+        return true;
+    }
     let version = profile.get("version_code");
     let channel = profile.get("channel");
     let supported = match (version, profile.get("version_name"), channel) {
@@ -359,15 +366,7 @@ fn is_legacy_anonymous(profile: &DeviceProfile) -> bool {
     if !supported {
         return false;
     }
-    let cdid = profile.get("cdid").as_bytes();
-    cdid.len() == 36
-        && cdid[14] == b'4'
-        && matches!(cdid[19], b'8' | b'9' | b'a' | b'b')
-        && cdid.iter().enumerate().all(|(i, &byte)| match i {
-            8 | 13 | 18 | 23 => byte == b'-',
-            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
-        })
-        && profile.get("aid") == hongguo_signer::device::APP_ID
+    profile.get("aid") == hongguo_signer::device::APP_ID
         && profile.get("app_name") == "novelread"
         && profile
             .user_agent()
@@ -381,14 +380,25 @@ fn is_legacy_anonymous(profile: &DeviceProfile) -> bool {
             .all(|(field, _)| !matches!(field, "iid" | "device_id" | "openudid"))
 }
 
-fn pristine_data_dir(dir: &std::path::Path) -> bool {
-    match std::fs::symlink_metadata(dir) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-        Ok(meta) if meta.is_dir() => {
-            std::fs::read_dir(dir).is_ok_and(|mut files| files.next().is_none())
-        }
-        _ => false,
-    }
+fn is_generated_cdid(cdid: &str) -> bool {
+    let bytes = cdid.as_bytes();
+    bytes.len() == 36
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
+        && bytes.iter().enumerate().all(|(index, &byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+}
+
+fn is_new_device_db(path: &std::path::Path) -> bool {
+    path != std::path::Path::new(":memory:")
+        && ["", "-wal", "-shm", "-journal"].iter().all(|suffix| {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            std::fs::symlink_metadata(name)
+                .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound)
+        })
 }
 
 /// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
@@ -873,8 +883,8 @@ pub async fn ensure_registered(state: &AppState) {
         log::info!("[Device] 离线 QA：不注册、不打健康探针、不做行为预热");
         return;
     }
-    if state.device().get("iid").is_empty() {
-        log::info!("[Device] 现役无设备身份（匿名），启动注册");
+    if !hongguo_api::register::has_registered_ids(&state.device()) {
+        log::info!("[Device] 缺少有效注册身份，启动自动注册");
         register_with_retry(state, "启动自动注册").await;
         return;
     }
@@ -1829,17 +1839,34 @@ mod tests {
     fn new_install_initializes_registration_but_missing_metadata_in_old_store_stays_blocked() {
         let root = std::env::temp_dir().join(format!("hg-new-install-{}", fresh_cdid()));
         let first_path = root.join("first").join("hongguo.db");
+        std::fs::create_dir_all(first_path.parent().unwrap()).unwrap();
+        std::fs::write(first_path.with_file_name("window-state.json"), "{}").unwrap();
         let first = open_application_store(&first_path).unwrap();
         assert!(!read_meta(&first).register_block_unknown);
         assert_eq!(read_meta(&first).source, "anonymous");
 
         let old_path = root.join("old").join("hongguo.db");
         let old = Store::open(&old_path).unwrap();
-        adopt_sync(&old);
         drop(old);
         let reopened = open_application_store(&old_path).unwrap();
         assert!(read_meta(&reopened).register_block_unknown);
         drop(first);
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn interrupted_first_start_resumes_registration_without_changing_the_anonymous_profile() {
+        let root = std::env::temp_dir().join(format!("hg-resume-install-{}", fresh_cdid()));
+        let path = root.join("hongguo.db");
+        let old = Store::open(&path).unwrap();
+        let (device, _) = adopt_sync(&old);
+        assert!(read_meta(&old).register_block_unknown);
+        drop(old);
+
+        let reopened = open_application_store(&path).unwrap();
+        assert!(!read_meta(&reopened).register_block_unknown);
+        assert_eq!(reopened.device_profile().unwrap(), Some(device));
         drop(reopened);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1860,13 +1887,7 @@ mod tests {
             ("v0507", "74232", "7.4.2.32", "xiaomi_8662_64", false),
             ("current", "74332", "7.4.3.32", "update_64", true),
             ("unknown-channel", "73932", "7.3.9.32", "unknown", true),
-            (
-                "retained-block",
-                "73932",
-                "7.3.9.32",
-                "seo_laxin_pc_android",
-                true,
-            ),
+            ("retained-block", "74332", "7.4.3.32", "update_64", true),
             (
                 "previously-registered",
                 "73932",
@@ -1900,6 +1921,9 @@ mod tests {
             if name == "previously-registered" {
                 profile.set("iid", "123");
                 profile.set("device_id", "456");
+            }
+            if name == "current" {
+                profile.set("device_type", "unrecognized");
             }
             store.save_device_profile(&profile).unwrap();
             if name == "retained-block" {

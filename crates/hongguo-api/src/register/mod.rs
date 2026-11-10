@@ -15,6 +15,7 @@ pub use model::RegisterResult;
 use serde_json::{Value, json};
 
 use hongguo_common::{AppError, AppResult};
+use hongguo_signer::device::DeviceProfile;
 
 pub const REGISTER_ORIGIN: &str = "https://log5-applog.fqnovel.com";
 pub const REGISTER_PATH: &str = "/service/2/device_register/";
@@ -210,8 +211,15 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     } else {
         install_id
     };
-    if device_id.is_empty() {
-        return Err(AppError::Media("注册响应缺少 device_id".into()));
+    if device_id == "0" {
+        return Err(AppError::Media(
+            "注册被服务端静默拒绝（device_id=0）".into(),
+        ));
+    }
+    for (field, value) in [("device_id", &device_id), ("install_id", &install_id)] {
+        if !is_registered_id(value) {
+            return Err(AppError::Media(format!("注册响应缺少有效的 {field}")));
+        }
     }
     Ok(RegisterResult {
         device_id,
@@ -233,6 +241,14 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
         openudid: String::new(),
         ttreq: String::new(),
     })
+}
+
+pub fn has_registered_ids(profile: &DeviceProfile) -> bool {
+    is_registered_id(profile.get("device_id")) && is_registered_id(profile.get("iid"))
+}
+
+fn is_registered_id(value: &str) -> bool {
+    value.bytes().all(|byte| byte.is_ascii_digit()) && !value.trim_start_matches('0').is_empty()
 }
 
 fn register_query(req_id: &str) -> String {
@@ -430,6 +446,22 @@ mod tests {
         assert_eq!(r.device_token, "AAAY");
         assert_eq!(r.server_time, 1791016810);
         assert!(r.new_user);
+    }
+
+    #[test]
+    fn incomplete_registration_does_not_produce_an_identity() {
+        for (response, field) in [
+            (json!({"device_id": 123}), "install_id"),
+            (json!({"device_id": 123, "install_id": 0}), "install_id"),
+            (json!({"device_id": 0, "install_id": 456}), "device_id"),
+            (
+                json!({"device_id": "invalid", "install_id": 456}),
+                "device_id",
+            ),
+        ] {
+            let error = parse_register(response.to_string().as_bytes()).unwrap_err();
+            assert!(error.to_string().contains(field), "{error}");
+        }
     }
 
     #[test]

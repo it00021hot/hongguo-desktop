@@ -290,11 +290,6 @@ async fn post_register(
             head.strip_prefix("ttreq=").map(str::to_string)
         })
         .unwrap_or_default();
-    if result.device_id == "0" {
-        return Err(RegisterAttemptError::Failed(AppError::Media(
-            "注册被服务端静默拒绝（device_id=0）".into(),
-        )));
-    }
     Ok(result)
 }
 

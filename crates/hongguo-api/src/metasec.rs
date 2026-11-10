@@ -65,14 +65,12 @@ impl MetaSec {
     }
 
     fn session(&self, device: &DeviceProfile) -> AppResult<(String, Arc<Session>)> {
-        let (did, iid) = (device.get("device_id"), device.get("iid"));
-        if [did, iid].iter().any(|value| {
-            value.is_empty() || *value == "0" || !value.bytes().all(|b| b.is_ascii_digit())
-        }) {
+        if !crate::register::has_registered_ids(device) {
             return Err(AppError::InvalidArgs(
                 "MetaSec requires an existing registered device profile".into(),
             ));
         }
+        let (did, iid) = (device.get("device_id"), device.get("iid"));
         let key = hex::encode(sm3(format!("{did}:{iid}:{}", device.get("cdid")).as_bytes()));
         let session = self.sessions.lock().entry(key.clone()).or_default().clone();
         Ok((key, session))
