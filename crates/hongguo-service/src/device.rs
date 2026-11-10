@@ -316,6 +316,81 @@ fn write_meta_strict(store: &Store, meta: &BootstrapMeta) -> hongguo_common::App
     store.device_meta_set(&v)
 }
 
+/// 只初始化新安装或可识别的旧版匿名档案。
+pub fn open_application_store(path: &std::path::Path) -> hongguo_common::AppResult<Store> {
+    let first_install = path.parent().is_some_and(pristine_data_dir);
+    let store = Store::open_with_lock_retry(path)?;
+    if hongguo_common::offline_qa::enabled() || reuse_json_path().is_some() {
+        return Ok(store);
+    }
+    let _guard = BLOCK_IO.lock().unwrap_or_else(|e| e.into_inner());
+    if matches!(load_db_block(&store), BlockSource::Absent)
+        && matches!(load_sidecar_block(&store), BlockSource::Absent)
+        && matches!(marker_state(&store), BlockSource::Absent)
+        && matches!(journal_state(&store), BlockSource::Absent)
+    {
+        let legacy = store
+            .device_profile()
+            .ok()
+            .flatten()
+            .filter(is_legacy_anonymous);
+        if first_install || legacy.is_some() {
+            store.initialize_device_meta(serde_json::json!({"source": "anonymous"}), legacy)?;
+        }
+    }
+    Ok(store)
+}
+
+fn is_legacy_anonymous(profile: &DeviceProfile) -> bool {
+    let version = profile.get("version_code");
+    let channel = profile.get("channel");
+    let supported = match (version, profile.get("version_name"), channel) {
+        ("73932", "7.3.9.32", "seo_laxin_pc_android")
+        | ("74232", "7.4.2.32", "seo_laxin_pc_pinzhuan_android") => true,
+        ("74232", "7.4.2.32", channel) => channel.strip_suffix("_8662_64").is_some_and(|brand| {
+            brand == profile.get("device_brand")
+                && matches!(
+                    brand,
+                    "xiaomi" | "redmi" | "iqoo" | "vivo" | "oppo" | "oneplus" | "honor" | "samsung"
+                )
+        }),
+        _ => false,
+    };
+    if !supported {
+        return false;
+    }
+    let cdid = profile.get("cdid").as_bytes();
+    cdid.len() == 36
+        && cdid[14] == b'4'
+        && matches!(cdid[19], b'8' | b'9' | b'a' | b'b')
+        && cdid.iter().enumerate().all(|(i, &byte)| match i {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+        })
+        && profile.get("aid") == hongguo_signer::device::APP_ID
+        && profile.get("app_name") == "novelread"
+        && profile
+            .user_agent()
+            .starts_with(&format!("com.phoenix.read/{version} "))
+        && ["manifest_version_code", "update_version_code", "pv_player"]
+            .iter()
+            .all(|field| profile.get(field) == version)
+        && profile.ttreq().is_none()
+        && profile
+            .iter()
+            .all(|(field, _)| !matches!(field, "iid" | "device_id" | "openudid"))
+}
+
+fn pristine_data_dir(dir: &std::path::Path) -> bool {
+    match std::fs::symlink_metadata(dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Ok(meta) if meta.is_dir() => {
+            std::fs::read_dir(dir).is_ok_and(|mut files| files.next().is_none())
+        }
+        _ => false,
+    }
+}
+
 /// 启动同步装配：读库 → 阵亡名单/远古快照预筛 → 注册产物复检/版本对齐。
 /// 返回 (现役档案, 来源)。不走网络——探针与轮换在壳的 bootstrap 后台任务里。
 pub fn adopt_sync(store: &Store) -> (DeviceProfile, &'static str) {
@@ -1748,6 +1823,108 @@ mod tests {
             profile.get("cdid"),
             "落库的 cdid 与现役一致"
         );
+    }
+
+    #[test]
+    fn new_install_initializes_registration_but_missing_metadata_in_old_store_stays_blocked() {
+        let root = std::env::temp_dir().join(format!("hg-new-install-{}", fresh_cdid()));
+        let first_path = root.join("first").join("hongguo.db");
+        let first = open_application_store(&first_path).unwrap();
+        assert!(!read_meta(&first).register_block_unknown);
+        assert_eq!(read_meta(&first).source, "anonymous");
+
+        let old_path = root.join("old").join("hongguo.db");
+        let old = Store::open(&old_path).unwrap();
+        adopt_sync(&old);
+        drop(old);
+        let reopened = open_application_store(&old_path).unwrap();
+        assert!(read_meta(&reopened).register_block_unknown);
+        drop(first);
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn upgrade_initializes_only_recognized_legacy_anonymous_profiles() {
+        let root = std::env::temp_dir().join(format!("hg-upgrade-{}", fresh_cdid()));
+        for (name, version, version_name, channel, blocked) in [
+            ("v065", "73932", "7.3.9.32", "seo_laxin_pc_android", false),
+            (
+                "v0512",
+                "74232",
+                "7.4.2.32",
+                "seo_laxin_pc_pinzhuan_android",
+                false,
+            ),
+            ("v0511", "74232", "7.4.2.32", "redmi_8662_64", false),
+            ("v0507", "74232", "7.4.2.32", "xiaomi_8662_64", false),
+            ("current", "74332", "7.4.3.32", "update_64", true),
+            ("unknown-channel", "73932", "7.3.9.32", "unknown", true),
+            (
+                "retained-block",
+                "73932",
+                "7.3.9.32",
+                "seo_laxin_pc_android",
+                true,
+            ),
+            (
+                "previously-registered",
+                "73932",
+                "7.3.9.32",
+                "seo_laxin_pc_android",
+                true,
+            ),
+        ] {
+            let path = root.join(name).join("hongguo.db");
+            let store = Store::open(&path).unwrap();
+            let cdid = fresh_cdid();
+            let mut profile = anonymous_profile(&cdid);
+            for field in [
+                "version_code",
+                "manifest_version_code",
+                "update_version_code",
+                "pv_player",
+            ] {
+                profile.set(field, version);
+            }
+            profile.set("channel", channel);
+            if let Some(brand) = channel.strip_suffix("_8662_64") {
+                profile.set("device_brand", brand);
+            }
+            profile.set("version_name", version_name);
+            profile.set_user_agent(
+                &profile
+                    .user_agent()
+                    .replace(hongguo_signer::APP_VERSION_CODE_STR, version),
+            );
+            if name == "previously-registered" {
+                profile.set("iid", "123");
+                profile.set("device_id", "456");
+            }
+            store.save_device_profile(&profile).unwrap();
+            if name == "retained-block" {
+                write_block_sidecar(
+                    &store,
+                    &BootstrapMeta {
+                        register_block_manual: true,
+                        ..BootstrapMeta::default()
+                    },
+                )
+                .unwrap();
+            }
+            drop(store);
+
+            let upgraded = open_application_store(&path).unwrap();
+            assert_eq!(
+                registration_blocked(&read_meta(&upgraded), now_ms()),
+                blocked,
+                "{name}"
+            );
+            let preserved = upgraded.device_profile().unwrap().unwrap();
+            assert_eq!(preserved.get("cdid"), cdid);
+            assert_eq!(preserved.get("iid"), profile.get("iid"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

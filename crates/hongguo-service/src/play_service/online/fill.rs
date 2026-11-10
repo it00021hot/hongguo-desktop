@@ -154,9 +154,6 @@ pub(super) async fn fill(
     }
 }
 
-/// 旧签名模式沿用的预取比例。
-const NON_CURRENT_HEAD_PERCENT: u64 = 20;
-
 /// 当前集无上限。系统播放器可提前读取下一集，但读取需求仍受预取预算约束。
 fn fill_budget(
     c: &StreamCache,
@@ -170,12 +167,9 @@ fn fill_budget(
     if c.current_has_waiters() {
         return FillBudget::Yield;
     }
-    let len = prog.sparse.len();
-    FillBudget::Bounded(
-        prefetch_bytes
-            .unwrap_or_else(|| len.saturating_mul(NON_CURRENT_HEAD_PERCENT) / 100)
-            .min(len),
-    )
+    prefetch_bytes.map_or(FillBudget::Yield, |bytes| {
+        FillBudget::Bounded(bytes.min(prog.sparse.len()))
+    })
 }
 
 /// 填充调度器一次容量决策的结果：`Unbounded` 填满整集（已升格当前集或本流读者在等）、
@@ -576,9 +570,9 @@ mod scheduler_tests {
         assert!(
             matches!(
                 fill_budget(&c, "v-prefetch", &prog, None),
-                FillBudget::Bounded(2_000_000)
+                FillBudget::Yield
             ),
-            "非当前集应只填开头 20%"
+            "没有预取预算的非当前集应让位"
         );
         assert!(matches!(
             fill_budget(&c, "v-prefetch", &prog, Some(DYNAMIC_BYTES)),
@@ -613,7 +607,10 @@ mod scheduler_tests {
 
         let other = progressive_of(10_000_000);
         assert!(
-            matches!(fill_budget(&c, "v-other", &other, None), FillBudget::Yield),
+            matches!(
+                fill_budget(&c, "v-other", &other, Some(1024)),
+                FillBudget::Yield
+            ),
             "在播的那一路在等数据时，其余的流该让位"
         );
     }

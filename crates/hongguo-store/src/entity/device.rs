@@ -26,9 +26,13 @@ pub async fn sdk_session(db: &Db) -> AppResult<Option<serde_json::Value>> {
     let Some(row) = rows.next().await.map_err(map_db_err)? else {
         return Ok(None);
     };
-    serde_json::from_str(&col_text(&row, 0)?)
-        .map(Some)
-        .map_err(|_| AppError::StoreCorrupt("MetaSec session storage is invalid".into()))
+    match serde_json::from_str(&col_text(&row, 0)?) {
+        Ok(session) => Ok(Some(session)),
+        Err(_) => {
+            log::warn!("[MetaSec] 本机会话缓存无法解析，将重新交换");
+            Ok(None)
+        }
+    }
 }
 
 pub async fn save_sdk_session(db: &Db, session: &serde_json::Value) -> AppResult<()> {
@@ -201,6 +205,36 @@ pub async fn device_meta_set(db: &Db, meta: &serde_json::Value) -> AppResult<()>
         "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
          ON CONFLICT(id) DO UPDATE SET json = excluded.json",
         [Value::Integer(DEVICE_ROW_META), Value::Text(json)],
+    )
+    .await?;
+    Ok(())
+}
+
+/// 初始化时要求设备表为空，或仅包含此前核对过的旧匿名档案。
+pub async fn initialize_device_meta(
+    db: &Db,
+    meta: &serde_json::Value,
+    legacy: Option<&hongguo_signer::device::DeviceProfile>,
+) -> AppResult<()> {
+    let json = serde_json::to_string(meta)
+        .map_err(|e| AppError::StoreCorrupt(format!("设备元数据序列化失败: {e}")))?;
+    let expected_active = legacy
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| AppError::StoreCorrupt(format!("旧设备档案序列化失败: {e}")))?;
+    let expected_rows = i64::from(expected_active.is_some());
+    db.execute(
+        "INSERT INTO device_profile (id, json)
+         SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM device_profile) = ?3
+           AND (?3 = 0 OR EXISTS (SELECT 1 FROM device_profile WHERE id = ?4 AND json = ?5))
+         ON CONFLICT(id) DO NOTHING",
+        [
+            Value::Integer(DEVICE_ROW_META),
+            Value::Text(json),
+            Value::Integer(expected_rows),
+            Value::Integer(DEVICE_ROW_ACTIVE),
+            expected_active.map_or(Value::Null, Value::Text),
+        ],
     )
     .await?;
     Ok(())

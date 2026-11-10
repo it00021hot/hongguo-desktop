@@ -71,7 +71,7 @@ pub async fn prefetch_feed(
             media.push((id, episode.vid_index));
         }
     }
-    if hongguo_api::metasec::playback_configured()? && !models.is_empty() {
+    if !models.is_empty() {
         crate::cold_start::wait().await;
         if let Err(error) = play_url::fetch_play_scene(
             &models,

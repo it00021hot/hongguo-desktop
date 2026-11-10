@@ -8,7 +8,7 @@ pub use model::{WatchHistoryItem, WatchHistoryPage};
 
 use serde_json::Value;
 
-use super::client::{ApiEnv, SINFONLINEA_API_ORIGIN, api_call_model_light, api_call_reading};
+use super::client::{ApiEnv, SINFONLINEA_API_ORIGIN, api_call_playback_v5, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::utils::json::{check_code, str_field};
@@ -245,9 +245,6 @@ pub async fn report_guest_watch_progress(
     report: Option<&GuestPlaybackReport>,
     env: &ApiEnv,
 ) -> AppResult<()> {
-    if !crate::metasec::playback_configured()? {
-        return Ok(());
-    }
     let body = history_update_body(
         &item.series_id,
         &item.vid,
@@ -280,7 +277,7 @@ pub async fn report_guest_watch_progress(
 async fn send_guest_report(path: &str, body: Value, env: &ApiEnv) -> AppResult<()> {
     let raw = serde_json::to_vec(&body)
         .map_err(|e| AppError::Media(format!("构造匿名播放上报失败: {e}")))?;
-    let bytes = api_call_model_light(SINFONLINEA_API_ORIGIN, path, raw, env).await?;
+    let bytes = api_call_playback_v5(SINFONLINEA_API_ORIGIN, path, raw, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Media(format!("解析匿名播放上报响应失败: {e}")))?;
     check_code(&value)?;

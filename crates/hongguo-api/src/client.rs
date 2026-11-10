@@ -309,17 +309,13 @@ fn dump_signed_play_req(
     }
 }
 
-/// 取流轻请求：配置 MetaSec v5 时先准备本身份的 SDK token，再生成 Cronet 六头。
-/// 空响应原样返回
-/// 空 `Vec`（「不发货」交调用方回落，不重试）。
-pub async fn api_call_model_light(
+/// 播放请求使用当前身份的 MetaSec v5 会话签名。
+pub(crate) async fn api_call_playback_v5(
     origin: &str,
     pathname: &str,
     payload: Vec<u8>,
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let biz_query = [("need_personal_recommend".into(), "1".into())];
-
     let mut extra = vec![
         ("x-ss-dp".to_string(), READING_DP.into()),
         ("lc".to_string(), LC.into()),
@@ -344,17 +340,7 @@ pub async fn api_call_model_light(
     let client = build_client(&env.proxy)?;
     let body = gzip_bytes(&payload)?;
     let signed =
-        match crate::metasec::sign_playback(&client, origin, pathname, &body, &extra, env).await? {
-            Some(signed) => signed,
-            None => hongguo_signer::ticket::sign_request_with(
-                origin,
-                pathname,
-                Some(body),
-                &env.device,
-                &biz_query,
-                &extra,
-            ),
-        };
+        crate::metasec::sign_playback(&client, origin, pathname, &body, &extra, env).await?;
     refuse_external(&signed.url)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
@@ -383,7 +369,7 @@ pub async fn api_call_model_light(
         .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     log::debug!("[PlayUrl] {pathname} HTTP {status}, {} bytes", bytes.len());
     dump_signed_play_req(
-        "model_light",
+        "playback_v5",
         origin,
         pathname,
         &signed_for_dump,
@@ -405,28 +391,6 @@ pub async fn api_call_full_with_headers(
     api_call_full_response(origin, pathname, body, biz_query, extra_headers, env)
         .await
         .map(|r| r.bytes)
-}
-
-/// 批量取流预取专用：空响应是「不发货」常态，发了即回，不重试。
-pub async fn api_call_once_allow_empty(
-    origin: &str,
-    pathname: &str,
-    body: Option<Vec<u8>>,
-    biz_query: &[(String, String)],
-    env: &ApiEnv,
-) -> AppResult<Vec<u8>> {
-    let client = build_client(&env.proxy)?;
-    let resp = send_once(
-        &client,
-        origin,
-        pathname,
-        body.as_deref(),
-        biz_query,
-        &[],
-        env,
-    )
-    .await?;
-    Ok(resp.bytes)
 }
 
 /// 响应体 + Set-Cookie + 全部响应头（登录捕获会话 / x-tt-token 用）。

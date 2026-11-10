@@ -71,7 +71,7 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     }
 
-    warm_episode_window(state, &request.series_id, request.vid_index).await?;
+    warm_episode_window(state, &request.series_id, request.vid_index).await;
 
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
@@ -85,7 +85,6 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
     .await
     {
         Ok(prepared) => {
-            // 连播向后预取与兼容预转由同一入口调度。
             crate::play_service::schedule_following_episodes(
                 state,
                 &request.series_id,
@@ -143,50 +142,11 @@ fn probe_local_codec(path: &str) -> (String, bool) {
     (codec, needs_compat)
 }
 
-/// v5 只预热首集。旧签名沿用当前集和邻集的窗口。
-pub async fn warm_episode_window(
-    state: &AppState,
-    series_id: &str,
-    vid_index: u32,
-) -> AppResult<()> {
-    if hongguo_api::metasec::playback_configured()? {
-        if vid_index == 1 {
-            prefetch_episode_models(state, series_id, 1..=1, PlayerModelScene::Preload).await;
-        }
-        return Ok(());
+/// 首集预热只取该集模型。
+pub async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) {
+    if vid_index == 1 {
+        prefetch_episode_models(state, series_id, 1..=1, PlayerModelScene::Preload).await;
     }
-    let Some(series) = state.store.series_by_id(series_id).ok().flatten() else {
-        return Ok(());
-    };
-    if series.content_type == 0 {
-        return Ok(());
-    }
-    let first = vid_index.saturating_sub(1).max(1);
-    let last = vid_index.saturating_add(super::DEFAULT_PREFETCH_COUNT);
-    let group: Vec<String> = series
-        .episodes
-        .iter()
-        .filter(|ep| {
-            ep.vid_index >= first
-                && ep.vid_index <= last
-                && !ep.vid.trim().is_empty()
-                && !hongguo_api::play_url::has_play_cached(ep.vid.trim())
-        })
-        .map(|ep| ep.vid.trim().to_string())
-        .collect();
-    if group.is_empty() {
-        return Ok(());
-    }
-    let want = group.len();
-    let mut map = std::collections::BTreeMap::new();
-    map.insert(series.content_type.to_string(), group);
-    crate::cold_start::wait().await;
-    let env = state.api_env();
-    match hongguo_api::play_url::fetch_play_batch(&map, crate::device::stream_cap(), &env).await {
-        Ok(n) => log::info!("[Play] {series_id} 集窗 {first}..={last} 批量取到 {n}/{want} 集"),
-        Err(e) => log::warn!("[Play] 批量取流失败，回落单集: {e}"),
-    }
-    Ok(())
 }
 
 pub(super) async fn prefetch_episode_models(

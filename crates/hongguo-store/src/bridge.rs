@@ -372,6 +372,18 @@ impl Store {
         let meta = meta.clone();
         self.exec(move |db| Box::pin(async move { entity::device_meta_set(db, &meta).await }))
     }
+
+    pub fn initialize_device_meta(
+        &self,
+        meta: serde_json::Value,
+        legacy: Option<hongguo_signer::device::DeviceProfile>,
+    ) -> AppResult<()> {
+        self.exec(move |db| {
+            Box::pin(
+                async move { entity::initialize_device_meta(db, &meta, legacy.as_ref()).await },
+            )
+        })
+    }
 }
 
 #[cfg(test)]

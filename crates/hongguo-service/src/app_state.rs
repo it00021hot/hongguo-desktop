@@ -55,15 +55,10 @@ impl AppStateInner {
     /// 装载好的档案；测试与默认路径用匿名档案）。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
         if store.db_path() != std::path::Path::new(":memory:") {
-            let config = store.db_path().with_file_name("metasec.json");
-            if config.try_exists().unwrap_or(true)
-                || std::env::var_os("HONGGUO_METASEC_IMAGE").is_some()
-            {
-                hongguo_api::metasec::configure_app(
-                    config,
-                    Arc::new(SdkSessionStore(store.clone())),
-                );
-            }
+            hongguo_api::metasec::configure_app(
+                store.db_path(),
+                Arc::new(SdkSessionStore(store.clone())),
+            );
         }
         Self {
             store,
@@ -93,11 +88,13 @@ impl hongguo_api::metasec::SessionStore for SdkSessionStore {
         if record.get("profile").and_then(serde_json::Value::as_str) != Some(profile_key) {
             return Ok(None);
         }
-        serde_json::from_value(record.get("token").cloned().unwrap_or_default())
-            .map(Some)
-            .map_err(|_| {
-                hongguo_common::AppError::StoreCorrupt("MetaSec token storage is invalid".into())
-            })
+        match serde_json::from_value(record.get("token").cloned().unwrap_or_default()) {
+            Ok(token) => Ok(Some(token)),
+            Err(_) => {
+                log::warn!("[MetaSec] 本机会话缓存格式不兼容，将重新交换");
+                Ok(None)
+            }
+        }
     }
 
     fn save(
@@ -225,6 +222,28 @@ fn merge_session_cookie(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hongguo_api::metasec::SessionStore as _;
+
+    #[test]
+    fn incompatible_sdk_session_is_a_cache_miss() {
+        let store = Store::open_memory().unwrap();
+        let sessions = SdkSessionStore(store.clone());
+        let token = hongguo_api::metasec::sdi::SdiToken {
+            status: 200,
+            value: "test-session".into(),
+        };
+        sessions.save("active", &token).unwrap();
+        assert_eq!(sessions.load("active").unwrap().unwrap().status, 200);
+        assert!(sessions.load("other").unwrap().is_none());
+
+        store
+            .save_sdk_session(serde_json::json!({
+                "profile": "active",
+                "token": {"status": 200}
+            }))
+            .unwrap();
+        assert!(sessions.load("active").unwrap().is_none());
+    }
 
     #[test]
     fn merge_cookie_anonymous_only_when_no_account() {

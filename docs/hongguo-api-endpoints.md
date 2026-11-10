@@ -93,70 +93,20 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**取流端点**（对齐 `params.rs` 路径常量与 `play_url.rs` 选路。三路都走
-`hongguo-api::client::api_call_model_light`，签名经
-`hongguo_signer::ticket::sign_request_with`）：
+**桌面取流端点**统一使用当前设备的 MetaSec v5 会话和 Cronet 六头。首次在线取流自动准备并验证所需的官方发行包片段。
 
 ```
-# 桌面批量依次尝试
-POST https://reading.snssdk.com/novel/player/multi_video_model/v1/
-POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1
-POST https://api5-normal-lq.fqnovel.com/novel/player/multi_video_model/v1/
-
-# 桌面单集批量暂存未命中时先走实抓的单集路径
 POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/preload/v1
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1
 ```
 
-- 选路：单集先查 10 分钟批量暂存，未命中打 `SINGLE_MODEL_PATH`，再试
-  reading 域 SaaS 体与 light 体。批量只对未命中或不可播的 vid 继续尝试
-  `/player/v1` 和 lq 域 light 体。官方实抓的搜索预取走 `/multi_video_model/preload/v1`，
-  剧内预取走 `/multi_video_model/player/v1`，跳集走单集。见
-  [REQ-HG-003 同 vid 对照](./req-hg-003-playback-parity.md#同-vid-运行时对照)。
-- ⚠️ **签名五件套必带**：无签名一律 `200 + 0 字节` 静默丢弃（signer
-  模块文档描述的同款症状）。签名头：UA / accept / x-ss-req-ticket /
-  x-khronos / x-ladon / x-argus / x-gorgon / x-helios / x-medusa，
-  `x-ss-stub` 对 **gzip 后** body 取 MD5。另加 `x-ss-dp + lc` +
-  `x-tt-store-region`（`cn-gd`）+ `x-tt-store-region-src=did` +
-  `Content-Encoding: gzip` + 档案 cookie。登录态带 `x-tt-token` 前
-  56 字符；缺了按匿名配额处理。
-  「签名在不在场都与发货无关」系 2026-11-01 的旧口径，已作废。
-- query：桌面 signer 注入设备档案字段，取流层只加业务参数
-  `need_personal_recommend=1`，随后 signer 追加 `ts`、`_rticket`。
-  官方实抓将 `_rticket` 放在第 4 项且没有 `ts`、`openudid`。
-  当前桌面 signer 的分支规避来自移植实现，官方非空样本不能用它解释。
-- body 都是 gzip JSON：
-  - 批量 SaaS 体 `saas_model_payload` 使用 `use_server_dns:true` 与
-    `use_server_dns_scene:"cold_start_stage"`，省略 `dr_scene`。
-  - 批量场景体 `player_model_payload` 使用 `device_level:3`、
-    `use_server_dns:false`、`video_platform:1024` 和对应路径的 `dr_scene`，
-    省略 DNS scene，携带 `mixed_video_id_map`。
-  - 单集 `single_model_payload` 顶层为 `biz_param`、`content_type`、`video_id`。
-    实抓跳集口径用 `source:4`、`video_platform:3`、
-    `need_all_video_definition:true`、`use_os_player:false`、`use_server_dns:false`。
-  - 回退 `model_light_payload`：`biz_param` 八字段（`device_level:4`、
-    `use_server_dns:false`、`video_platform:1024`，**无** `dr_scene` /
-    `disable_video_relate_book` / `use_server_dns_scene`）+
-    `mixed_video_id_map`。key 是条目 content_type 的原样字符串
-    （错配不发货：漫剧 1004→`"1004"`、真人剧 1→`"1"`、书城 1001→`"1001"`）。
-- 响应：`data.{vid}.video_model` 是 JSON 字符串，批量一次回多集；单集
-  新通道另兼容 `/data/video_model`。错误信封是 base 族（`Code` 大写 +
-  `BaseResp`）；新通道非 0 / 解析失败先回退旧通道，旧通道仍失败才归
-  `StreamMiss`（reading 系小写 `code` 另走 `check_code`）。
-- **2026-11-04 可播性回退取证**：同一登录设备、同一漫剧第 9 集，单集与
-  多集新通道均返回 `code=0`、完整 `video_model` 和 5 档 `bytevc2`，
-  同时旧通道返回 5 档 `bytevc1`。`bytevc2`（MP4 fourcc `bvc2`）由
-  `hongguo-bytevc2` 按 Annex-B 纯 Rust 解帧，再经平台 H.264 编码器兼容转码
-  （`needsCompat`）。运行时不调用 ffmpeg / librempeg 解 ByteVC2。
-  `HONGGUO_NO_BYTEVC2` 时选流仍排除。响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向
-  旧通道补取缺失或不可播的 vid，并保留新通道已命中的条目。
-- ⚠️ 注册形态底线不变：注册 JSON 版本身份（74332/7.4.3.32，与取流 query 同值）与
-  bdinstall SDK 代际成套（详见设备注册节），App 身份字段
-  （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
-  **官方实值**（红果免费短剧/56a96241…证书/fanqie-xiaoshuo 代际，
-  此前建模的是竞品形态）。
-- **200+0 与「有包不可播」要分清**：全程空体返回 `EmptyResponse`，有响应体但
-  挑不出可播档返回 `StreamMiss`，两者都保留播放中的设备身份。
-  注册遇 403/429 及其他非瞬态拒绝会停止自动注册，有 `Retry-After` 时持久化截止时间。
+- 点播先查有效的模型缓存，未命中发单集请求。首页和首集预取走 `preload/v1`，同剧后续预取走 `player/v1`。
+- 签名头为 `x-khronos`、`x-ladon`、`x-argus`、`x-gorgon`、`x-helios`、`x-medusa`。签名使用最终 URL 和 gzip 后的 body。带 `x-ss-stub`、`x-ss-dp`、`lc`、`x-tt-store-region`、`x-tt-store-region-src`、`Content-Encoding: gzip` 与档案 cookie。实抓 query 将 `_rticket` 放在第 4 项。
+- 批量场景体使用 `device_level:3`、`use_server_dns:false`、`video_platform:1024` 与对应的 `dr_scene`。按条目 `content_type` 原样分组到 `mixed_video_id_map`。
+- 单集体顶层为 `biz_param`、`content_type`、`video_id`。实抓跳集口径用 `source:4`、`video_platform:3`、`need_all_video_definition:true`、`use_os_player:false`、`use_server_dns:false`。
+- `data.{vid}.video_model` 是 JSON 字符串，单集也支持 `data.video_model`。单集 HTTP 200 空体归 `EmptyResponse`，有包无可用流及 base 族非零错误归 `StreamMiss`。reading 系小写 `code` 走 `check_code`。支持 ByteVC2 的档位由内置解码器解帧并转成 H.264 供系统播放器使用。
+- 原档案验证、配置方式与历史端点证据见 [REQ-HG-003 播放对齐交接](./req-hg-003-playback-parity.md)。
 
 ### 预取动态配置
 

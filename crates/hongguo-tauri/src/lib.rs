@@ -387,7 +387,7 @@ fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
     if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
         return Err(AppError::InvalidArgs(msg));
     }
-    hongguo_store::Store::open_with_lock_retry(hongguo_store::paths::db_file())
+    hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())
 }
 
 /// 页面脚本运行前写入与 Rust 相同的开关值。未设置、空串、`0` 都写成空串。

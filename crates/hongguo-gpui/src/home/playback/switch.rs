@@ -256,78 +256,40 @@ impl super::HomeView {
         // 新一次起播尝试：清上一轮失败态；自动重试记账位不能在这里清——
         // 会「失败→重试→失败」死循环（只在引擎就位时复位）。
         self.play_error = None;
-        // 批量预取双端点：推荐位 vid 按 content_type 分组批量（命中落 api 层
-        // 暂存表，起播链先查它）；同窗剧集档案批量落库，换剧 resolve 秒回。
-        // 空响应静默，起播照走单集端点。
-        let (preload_map, series_window): (
-            std::collections::BTreeMap<String, Vec<String>>,
-            Vec<String>,
-        ) = {
+        // 批量补齐推荐位的分集档案与类型，媒体预取由首页共用策略处理。
+        let series_window = {
             let items = self.display_items();
-            let cur = self.cursor();
-            let mut map: std::collections::BTreeMap<String, Vec<String>> =
-                std::collections::BTreeMap::new();
-            let mut series: Vec<String> = Vec::new();
-            let mut seen_vids: Vec<String> = Vec::new();
-            // 只收 feed 条目：头部「你的内容」种子没有类型信息，占名额只会
-            // 把批量挤没（官方窗口也是纯 feed 条目）。
-            for it in items
+            let mut series = Vec::new();
+            for item in items
                 .iter()
-                .skip(cur)
+                .skip(self.cursor())
                 .filter(|it| !it.vid.is_empty() && it.content_type != 0)
                 .take(OFFICIAL_PRELOAD_WINDOW)
             {
-                if !series.contains(&it.series_id) {
-                    series.push(it.series_id.clone());
+                if !series.contains(&item.series_id) {
+                    series.push(item.series_id.clone());
                 }
-                if seen_vids.contains(&it.vid) {
-                    continue;
-                }
-                seen_vids.push(it.vid.clone());
-                map.entry(it.content_type.to_string())
-                    .or_default()
-                    .push(it.vid.clone());
             }
-            (map, series)
+            series
         };
-        if !preload_map.is_empty() || series_window.len() > 1 {
+        if series_window.len() > 1 {
             let state = Arc::clone(&self.state);
             bridge::spawn(async move {
                 let env = state.api_env();
-                if !preload_map.is_empty()
-                    && !hongguo_api::metasec::playback_configured().unwrap_or(false)
-                {
-                    let cap = hongguo_api::stream_pick::DecoderCapability::from_probes(
-                        hongguo_service::capability_service::hevc_playable(),
-                        hongguo_media_platform::capability::bytevc2_decode_available(),
-                    );
-                    match hongguo_api::play_url::fetch_play_batch(&preload_map, cap, &env).await {
-                        Ok(n) if n > 0 => log::info!("[Home] 批量预取命中 {n} 条"),
-                        Ok(_) => {}
-                        Err(e) => log::warn!("[Home] 批量预取失败: {e}"),
-                    }
-                }
-                // 档案批量整窗全量（含在库的）：响应带 content_type，顺带补在库
-                // 旧档案缺的类型；服务端是权威源，整包 upsert 覆盖。
-                if series_window.len() > 1 {
-                    match hongguo_api::detail::fetch_episode_lists_batch(&series_window, &env).await
-                    {
-                        Ok(lists) => {
-                            let count = lists.len();
-                            for list in lists {
-                                let sid = list.series_id.clone();
-                                let series =
-                                    hongguo_service::series_service::resolver::series_from_list(
-                                        list,
-                                    );
-                                if let Err(e) = state.store.upsert_series(&series) {
-                                    log::warn!("[Home] 预取档案落库失败（{sid}）: {e}");
-                                }
+                match hongguo_api::detail::fetch_episode_lists_batch(&series_window, &env).await {
+                    Ok(lists) => {
+                        let count = lists.len();
+                        for list in lists {
+                            let sid = list.series_id.clone();
+                            let series =
+                                hongguo_service::series_service::resolver::series_from_list(list);
+                            if let Err(e) = state.store.upsert_series(&series) {
+                                log::warn!("[Home] 预取档案落库失败（{sid}）: {e}");
                             }
-                            log::info!("[Home] 批量档案预取 {count} 部落库");
                         }
-                        Err(e) => log::warn!("[Home] 批量档案预取失败（忽略）: {e}"),
+                        log::info!("[Home] 批量档案预取 {count} 部落库");
                     }
+                    Err(e) => log::warn!("[Home] 批量档案预取失败（忽略）: {e}"),
                 }
             });
         }
@@ -466,7 +428,7 @@ impl super::HomeView {
         self.switching = false;
         self.buffering = false;
         // 自动重试一次（换目标/换集失败同样算一次预算），再失败才落错误态。
-        if !self.play_retried {
+        if !self.play_retried && !matches!(e, hongguo_common::AppError::PlaybackMaterials(_)) {
             self.play_retried = true;
             log::info!("[Home] 起播失败，自动重试一次");
             if let Some(item) = self.display_items().get(self.cursor()).cloned() {

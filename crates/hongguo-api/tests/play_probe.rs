@@ -1,5 +1,4 @@
-//! 取流请求探针（手工跑，#[ignore] 门控）：真播链（批量 player 优先 →
-//! 单集回落）直调 fetch_play_url，验证选流出直链。
+//! v5 取流请求探针（手工跑，需本地 MetaSec v5 材料）。
 //! `cargo test -p hongguo-api --test play_probe -- --ignored --nocapture`
 
 use hongguo_api::client::ApiEnv;
@@ -71,97 +70,19 @@ async fn probe_play_batch() {
         ),
         ("1".to_string(), vec!["7687873056332598296".to_string()]),
     ]);
-    match hongguo_api::play_url::fetch_play_batch(&map, DecoderCapability::full(), &env).await {
+    match hongguo_api::play_url::fetch_play_scene(
+        &map,
+        hongguo_api::params::PlayerModelScene::Player,
+        DecoderCapability::full(),
+        &env,
+    )
+    .await
+    {
         Ok(n) => println!(
             "BATCH OK 暂存 {n}/{}",
             map.values().map(Vec::len).sum::<usize>()
         ),
         Err(e) => println!("BATCH ERR {e}"),
-    }
-}
-
-/// 取流轻请求端点考证探针（2026-11-01 实流形态）：
-/// - `multi_video_model/v1/` 无签名轻请求发货（当前唯一活取流端点）；
-/// - mixed_video_id_map 的 key = 条目 content_type 原样串，错配 → 不发货；
-/// - detail/preload 逗号串批量一次回多剧（对照组，验证身份可用性）。
-#[tokio::test]
-#[ignore = "手工探针：打真实接口"]
-async fn probe_official_preload() {
-    use std::collections::BTreeMap;
-    let env = hongguo_api::client::ApiEnv::anonymous(Default::default());
-    // 急诊摸鱼王 ep1（feed ct=1004）；三大反骨仔 ep1（tab39 feed ct=1）
-    let anime_vid = "7680669690372312089".to_string();
-    let human_vid = "7687873056332598296".to_string();
-
-    for (name, map) in [
-        (
-            "A ct=1004放1004 + ct=1放1",
-            BTreeMap::from([
-                ("1004".to_string(), vec![anime_vid.clone()]),
-                ("1".to_string(), vec![human_vid.clone()]),
-            ]),
-        ),
-        (
-            "B key错配 ct=1004放1001",
-            BTreeMap::from([("1001".to_string(), vec![anime_vid.clone()])]),
-        ),
-    ] {
-        let payload = hongguo_api::params::model_light_payload(&map);
-        let body = serde_json::to_vec(&payload).unwrap();
-        match hongguo_api::client::api_call_model_light(
-            hongguo_api::client::LQ_API_ORIGIN,
-            hongguo_api::params::MODEL_LIGHT_PATH,
-            body,
-            &env,
-        )
-        .await
-        {
-            Ok(bytes) => {
-                let got: Vec<&String> = map.values().flatten().collect();
-                let hits: Vec<&str> = got
-                    .iter()
-                    .map(|v| {
-                        serde_json::from_slice::<serde_json::Value>(&bytes)
-                            .ok()
-                            .and_then(|j| {
-                                j.pointer(&format!("/data/{v}/video_model"))
-                                    .is_some()
-                                    .then_some(v.as_str())
-                            })
-                            .unwrap_or("?")
-                    })
-                    .collect();
-                println!(
-                    "{name}: {} 字节，body={}，命中 vids {hits:?}",
-                    bytes.len(),
-                    String::from_utf8_lossy(&bytes)
-                );
-            }
-            Err(e) => println!("{name}: ERR {e}"),
-        }
-    }
-
-    // detail/preload 逗号串批量（官方：series_id="id1,id2"）——对照组
-    let series_batch = "7680564528135818302,7683070896516369470".to_string();
-    let payload = hongguo_api::params::detail_payload(&series_batch);
-    let body = serde_json::to_vec(&payload).unwrap();
-    match hongguo_api::client::api_call_full(
-        hongguo_api::client::LQ_API_ORIGIN,
-        hongguo_api::params::DETAIL_PATH,
-        Some(body),
-        &[],
-        &env,
-    )
-    .await
-    {
-        Ok(bytes) => {
-            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            let keys = v
-                .pointer("/data")
-                .map(|d| d.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()));
-            println!("DETAIL 批量: data keys = {keys:?}");
-        }
-        Err(e) => println!("DETAIL 批量 ERR {e}"),
     }
 }
 
@@ -244,7 +165,6 @@ async fn probe_feed_vids() {
     }
 }
 
-
 #[tokio::test]
 #[ignore = "手工探针：用 HONGGUO_REUSE_DEVICE_JSON 对账取流空响应"]
 async fn probe_sign_1004_with_reuse_device() {
@@ -275,15 +195,15 @@ async fn probe_sign_1004_with_reuse_device() {
     let mut cases: Vec<(String, i64, String)> = Vec::new();
     if let Ok(page) = hongguo_api::recommend::fetch_recommend_feed("16", "", 0, &[], &env).await {
         for it in page.items.iter().filter(|i| !i.vid.is_empty()).take(2) {
-            cases.push((format!("feed:{}", it.title), it.content_type, it.vid.clone()));
+            cases.push((
+                format!("feed:{}", it.title),
+                it.content_type,
+                it.vid.clone(),
+            ));
         }
     }
     // brush 空响应目标 + 同会话曾命中的 vid
-    cases.push((
-        "brush-fail".into(),
-        1004,
-        "7697465811157404697".into(),
-    ));
+    cases.push(("brush-fail".into(), 1004, "7697465811157404697".into()));
     cases.push((
         "brush-hit-after-swap".into(),
         1004,
@@ -304,15 +224,18 @@ async fn probe_sign_1004_with_reuse_device() {
     }
 }
 
-
 #[tokio::test]
 #[ignore = "手工探针：单 vid"]
 async fn probe_single_vid_device() {
     use hongguo_signer::device::{DeviceProfile, anonymous_cookie};
     let path = std::env::var("HG_DEVICE_JSON").expect("HG_DEVICE_JSON");
     let vid = std::env::var("HG_PROBE_VID").expect("HG_PROBE_VID");
-    let ct: i64 = std::env::var("HG_PROBE_CT").unwrap_or_else(|_| "1004".into()).parse().unwrap();
-    let device: DeviceProfile = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let ct: i64 = std::env::var("HG_PROBE_CT")
+        .unwrap_or_else(|_| "1004".into())
+        .parse()
+        .unwrap();
+    let device: DeviceProfile =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let env = ApiEnv {
         proxy: Default::default(),
         cookie: Some(anonymous_cookie(&device)),
@@ -321,9 +244,20 @@ async fn probe_single_vid_device() {
     };
     let warmed = hongguo_api::warmup::run(&env).await;
     hongguo_api::play_url::register_content_type(&vid, ct);
-    println!("iid={} warmup={} ct={} vid={}", device.get("iid"), warmed, ct, vid);
+    println!(
+        "iid={} warmup={} ct={} vid={}",
+        device.get("iid"),
+        warmed,
+        ct,
+        vid
+    );
     match fetch_play_url(&vid, None, DecoderCapability::full(), &env).await {
-        Ok(info) => println!("OK def={} codec={} url60={}", info.definition, info.codec, &info.url[..60.min(info.url.len())]),
+        Ok(info) => println!(
+            "OK def={} codec={} url60={}",
+            info.definition,
+            info.codec,
+            &info.url[..60.min(info.url.len())]
+        ),
         Err(e) => println!("ERR {e}"),
     }
 }

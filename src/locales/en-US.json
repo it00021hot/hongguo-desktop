@@ -561,6 +561,7 @@
     "network": "Cannot reach the server. Check your connection or the proxy in Settings.",
     "emptyResponse": "The server returned nothing. Please try again in a moment.",
     "signer": "The request could not be prepared. Please try again.",
+    "playbackMaterials": "The online playback components could not be verified. Update the app and try again.",
     "storeCorrupt": "Local records could not be read. Restart the app and try again.",
     "io": "A file could not be read or written. Check your free disk space.",
     "decrypt": "This episode cannot be played. Download it again and retry.",

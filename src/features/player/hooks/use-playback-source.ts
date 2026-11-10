@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { usePlay } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 import { useEvent } from '@/service/tauri/events';
+import { isAppInvokeError } from '@/service/tauri/invoke';
 import { EVENTS } from '@/service/tauri/types';
 import { t } from '@/locales';
 import {
@@ -45,6 +46,7 @@ export function usePlaybackSource(params: {
   const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [playbackMaterialsError, setPlaybackMaterialsError] = useState(false);
   /**
    * srcKeyRef 的 state 镜像（同点写入）：渲染期据此判定「切换在途」——
    * 目标已变、新流未到时新剧的封面+加载胶囊立即接管，否则用户看到「切了没反应」。
@@ -84,10 +86,10 @@ export function usePlaybackSource(params: {
   useEvent(
     EVENTS.deviceRegistered,
     useCallback(() => {
-      if (!error) return;
+      if (!error || playbackMaterialsError) return;
       toast.info(t('player.deviceSwappedRetry'));
       retryOnline();
-    }, [error, retryOnline]),
+    }, [error, playbackMaterialsError, retryOnline]),
   );
 
   // 取流失败自动重试：按退避节奏自动重取并显示进度，耗尽才退回手动重试；
@@ -98,7 +100,7 @@ export function usePlaybackSource(params: {
     if (autoRetryRef.current.key !== episodeKey) {
       autoRetryRef.current = { key: episodeKey, attempt: 0 };
     }
-    if (!error) {
+    if (!error || playbackMaterialsError) {
       queueMicrotask(() => setAutoRetry(null));
       return;
     }
@@ -117,7 +119,7 @@ export function usePlaybackSource(params: {
       retryOnline();
     }, delay);
     return () => clearTimeout(timer);
-  }, [error, episodeKey, retryOnline]);
+  }, [error, episodeKey, playbackMaterialsError, retryOnline]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent(
@@ -158,6 +160,7 @@ export function usePlaybackSource(params: {
         onSuccess: (res) => {
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
+          setPlaybackMaterialsError(false);
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
@@ -176,6 +179,7 @@ export function usePlaybackSource(params: {
         onError: (e) => {
           srcKeyRef.current = '';
           setSrcKey('');
+          setPlaybackMaterialsError(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
           setError(e.message);
           setSrc(null);
           setNeedsCompat(false);

@@ -104,13 +104,8 @@ pub const DETAIL_PATH: &str = "/novel/player/multi_video_detail/preload/v1";
 pub const PLAYER_MODEL_PATH: &str = "/novel/player/multi_video_model/player/v1";
 const PRELOAD_MODEL_PATH: &str = "/novel/player/multi_video_model/preload/v1";
 
-/// 新通道·单集取流路径（官方 74232 实流；多集空响应时的单集回落，
-/// 亦打 [`crate::client::READING_API_ORIGIN`]）。失败回退旧通道。
+/// 单集取流路径。
 pub const SINGLE_MODEL_PATH: &str = "/novel/player/video_model/v1/";
-
-/// 7.4.3.32 默认批量取流路径（`mGetVideoModelRxJava`，AB `video_player_api_dr_scene`
-/// 关闭时走这里）。旧 light 体也打这条路径，只是 body 不同。
-pub const MODEL_LIGHT_PATH: &str = "/novel/player/multi_video_model/v1/";
 
 /// 详情页头部元信息端点。
 pub const VIDEO_DETAIL_PATH: &str = "/novel/player/video_detail/v1/";
@@ -170,61 +165,6 @@ pub fn detail_payload(series_id: &str) -> DetailPayload {
     }
 }
 
-/// 批量取流请求体（竞品实流抓包 1:1）：`biz_param` 固定八字段
-///（**无 `dr_scene`**）+ `mixed_video_id_map`。
-#[derive(Debug, Clone, Serialize)]
-pub struct ModelLightPayload {
-    #[serde(rename = "biz_param")]
-    pub biz_param: ModelLightBizParam,
-    #[serde(rename = "mixed_video_id_map")]
-    pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
-}
-
-/// 轻请求体 biz_param——键集与取值与抓包体逐键一致
-///（老形态的 `dr_scene`/`disable_video_relate_book`/`use_server_dns_scene` 键不存在）。
-#[derive(Debug, Clone, Serialize)]
-pub struct ModelLightBizParam {
-    #[serde(rename = "detail_page_version")]
-    pub detail_page_version: i64,
-    #[serde(rename = "device_level")]
-    pub device_level: i64,
-    #[serde(rename = "disable_digg_stat")]
-    pub disable_digg_stat: bool,
-    #[serde(rename = "need_all_video_definition")]
-    pub need_all_video_definition: bool,
-    #[serde(rename = "need_mp4_align")]
-    pub need_mp4_align: bool,
-    #[serde(rename = "use_os_player")]
-    pub use_os_player: bool,
-    #[serde(rename = "use_server_dns")]
-    pub use_server_dns: bool,
-    #[serde(rename = "video_platform")]
-    pub video_platform: i64,
-}
-
-/// 构造批量取流请求体（端点 [`MODEL_LIGHT_PATH`]）。
-///
-/// `mixed_video_id_map` 的 key 是**条目 content_type 的原样字符串**
-/// （key 错配 → 不发货；漫剧 feed ct=1004→"1004"、真人剧 ct=1→"1"、
-/// 书城 cell 条目 1001→"1001"）。
-pub fn model_light_payload(
-    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
-) -> ModelLightPayload {
-    ModelLightPayload {
-        biz_param: ModelLightBizParam {
-            detail_page_version: 0,
-            device_level: 4,
-            disable_digg_stat: false,
-            need_all_video_definition: true,
-            need_mp4_align: false,
-            use_os_player: false,
-            use_server_dns: false,
-            video_platform: 1024,
-        },
-        mixed_video_id_map: mixed_video_id_map.clone(),
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct PlayerModelBizParam {
     #[serde(rename = "detail_page_version")]
@@ -243,8 +183,6 @@ pub struct PlayerModelBizParam {
     pub use_os_player: bool,
     #[serde(rename = "use_server_dns")]
     pub use_server_dns: bool,
-    #[serde(rename = "use_server_dns_scene", skip_serializing_if = "str::is_empty")]
-    pub use_server_dns_scene: &'static str,
     #[serde(rename = "video_platform")]
     pub video_platform: i64,
 }
@@ -275,29 +213,6 @@ pub struct PlayerModelPayload {
     pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
 }
 
-/// 7.4.3.32 `wb5.s0.f` 的默认发送体：`VideoPlayerApiDrSceneV715.enable` 的
-/// 缺省值是 false，于是走 `mGetVideoModelRxJava`
-///（[`MODEL_LIGHT_PATH`]）。发送前把 `use_server_dns` 写成 true、
-/// `use_server_dns_scene` 写成 `cold_start_stage`，body 里没有 `dr_scene`。
-#[derive(Debug, Clone, Serialize)]
-pub struct SaasModelPayload {
-    #[serde(rename = "biz_param")]
-    pub biz_param: PlayerModelBizParam,
-    #[serde(rename = "mixed_video_id_map")]
-    pub mixed_video_id_map: BTreeMap<String, Vec<String>>,
-}
-
-pub fn saas_model_payload(mixed_video_id_map: &BTreeMap<String, Vec<String>>) -> SaasModelPayload {
-    SaasModelPayload {
-        biz_param: PlayerModelBizParam {
-            use_server_dns: true,
-            use_server_dns_scene: "cold_start_stage",
-            ..player_model_biz_param()
-        },
-        mixed_video_id_map: mixed_video_id_map.clone(),
-    }
-}
-
 pub fn player_model_payload(
     mixed_video_id_map: &BTreeMap<String, Vec<String>>,
     scene: PlayerModelScene,
@@ -319,7 +234,6 @@ fn player_model_biz_param() -> PlayerModelBizParam {
         need_mp4_align: false,
         use_os_player: false,
         use_server_dns: false,
-        use_server_dns_scene: "",
         video_platform: 1024,
     }
 }
@@ -450,27 +364,9 @@ mod tests {
     fn paths_have_no_trailing_slash() {
         assert!(!DETAIL_PATH.ends_with('/'));
         assert!(DETAIL_PATH.contains("/preload/v1"));
-        assert!(MODEL_LIGHT_PATH.ends_with('/'));
-        assert!(MODEL_LIGHT_PATH.contains("/multi_video_model/v1/"));
-        assert!(!MODEL_LIGHT_PATH.contains("player/v1"));
-    }
-
-    #[test]
-    fn saas_model_payload_matches_default_branch() {
-        let body = serde_json::to_value(saas_model_payload(&BTreeMap::from([(
-            "1".to_string(),
-            vec!["v1".to_string()],
-        )])))
-        .unwrap();
-        assert!(body.get("dr_scene").is_none());
-        assert_eq!(body["biz_param"]["device_level"], 3);
-        assert_eq!(body["biz_param"]["video_platform"], 1024);
-        assert_eq!(body["biz_param"]["use_server_dns"], true);
-        assert_eq!(
-            body["biz_param"]["use_server_dns_scene"],
-            "cold_start_stage"
-        );
-        assert_eq!(body["mixed_video_id_map"]["1"][0], "v1");
+        assert!(!PlayerModelScene::Preload.path().ends_with('/'));
+        assert!(!PlayerModelScene::Player.path().ends_with('/'));
+        assert!(SINGLE_MODEL_PATH.ends_with('/'));
     }
 
     #[test]
@@ -537,30 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn model_light_payload_matches_capture() {
-        let map = BTreeMap::from([
-            ("1004".to_string(), vec!["v1".to_string()]),
-            ("1".to_string(), vec!["v2".to_string()]),
-        ]);
-        let p = model_light_payload(&map);
-        assert_eq!(p.mixed_video_id_map.len(), 2);
-        let body = serde_json::to_value(&p).unwrap();
-        assert!(body.get("dr_scene").is_none(), "轻请求体无 dr_scene 键");
-        assert!(
-            body.pointer("/biz_param/from_video_id").is_none()
-                && body.pointer("/biz_param/source").is_none()
-                && body
-                    .pointer("/biz_param/disable_video_relate_book")
-                    .is_none()
-                && body.pointer("/biz_param/use_server_dns_scene").is_none(),
-            "biz_param 键集与抓包体逐键一致"
-        );
-        assert_eq!(body["biz_param"]["device_level"], 4);
-        assert_eq!(body["biz_param"]["video_platform"], 1024);
-        assert!(!body["biz_param"]["use_server_dns"].as_bool().unwrap());
-    }
-
-    #[test]
     fn detail_payload_uses_preload_scene() {
         let p = detail_payload("123");
         assert_eq!(p.dr_scene, "preload");
@@ -569,30 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn model_light_payload_keeps_groups_verbatim() {
-        let p = model_light_payload(&BTreeMap::from([
-            ("1".to_string(), vec!["v1".to_string()]),
-            (
-                "1004".to_string(),
-                vec!["v123".to_string(), "v456".to_string()],
-            ),
-        ]));
-        let vids = p.mixed_video_id_map.get("1004").expect("分组 1004 在场");
-        assert_eq!(vids, &["v123".to_string(), "v456".to_string()]);
-        assert!(p.mixed_video_id_map.contains_key("1"));
-        assert_eq!(p.biz_param.video_platform, 1024);
-    }
-
-    #[test]
     fn payloads_serialize_with_server_field_names() {
-        let p = serde_json::to_value(model_light_payload(&BTreeMap::from([(
-            "1".to_string(),
-            vec!["v1".to_string()],
-        )])))
-        .unwrap();
-        assert!(p.get("biz_param").is_some());
-        assert!(p.get("mixed_video_id_map").is_some());
-        assert!(p["biz_param"].get("need_all_video_definition").is_some());
         let d = serde_json::to_value(video_detail_payload("s1")).unwrap();
         assert_eq!(d["series_id"], "s1");
         assert_eq!(d["biz_param"]["video_id_type"], 1);

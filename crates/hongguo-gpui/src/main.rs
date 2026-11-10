@@ -477,5 +477,5 @@ fn build_app_state() -> Arc<AppStateInner> {
 }
 
 fn open_store_with_lock_retry() -> hongguo_common::AppResult<Store> {
-    Store::open_with_lock_retry(hongguo_store::paths::db_file())
+    hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())
 }

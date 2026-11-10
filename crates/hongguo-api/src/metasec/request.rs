@@ -19,6 +19,7 @@ const SDI_PATH: &str = "/sdi/get_token";
 const PLAY_FLAGS: u64 = 0x0504;
 const SDI_FLAGS: u64 = 2;
 const COLD_COUNTER: i64 = 694_367;
+const SDK_ENVIRONMENT_CHANNEL: &[u8] = b"seo_laxin_pc_android";
 const QUERY_FIELDS: &[&str] = &[
     "os",
     "ssmix",
@@ -90,19 +91,9 @@ pub(crate) async fn sign_playback(
     body: &[u8],
     headers: &[(String, String)],
     env: &ApiEnv,
-) -> AppResult<Option<SignedRequest>> {
-    if !path.starts_with("/novel/player/")
-        && !matches!(
-            path,
-            crate::history::READ_HISTORY_UPDATE_PATH | crate::history::READ_PROGRESS_UPLOAD_PATH
-        )
-    {
-        return Ok(None);
-    }
-    let Some(metasec) = MetaSec::configured()? else {
-        return Ok(None);
-    };
+) -> AppResult<SignedRequest> {
     refuse_external_send(origin)?;
+    let metasec = MetaSec::required(client).await?;
     let (profile_key, session) = metasec.session(&env.device)?;
     let initial = session
         .initial
@@ -149,13 +140,7 @@ pub(crate) async fn sign_playback(
         ticket: now_millis()?,
         sdk: false,
     };
-    Ok(Some(sign(
-        metasec,
-        &env.device,
-        request,
-        headers.to_vec(),
-        Some(token),
-    )?))
+    sign(metasec, &env.device, request, headers.to_vec(), Some(token))
 }
 
 async fn exchange_and_save(
@@ -253,7 +238,7 @@ fn sign(
     let khronos = (request.ticket / 1000) as u32;
     let url = format!("{}{}?{query}", request.origin, request.path);
     refuse_external_send(&url)?;
-    let state = SignatureState::new(metasec, device, request.ticket, token, request.sdk);
+    let state = SignatureState::new(device, request.ticket, token, request.sdk);
     let context = RequestContext {
         device_id: device.get("device_id"),
         version_name: device.get("version_name"),
@@ -398,13 +383,7 @@ struct SignatureState {
 }
 
 impl SignatureState {
-    fn new(
-        metasec: &MetaSec,
-        device: &DeviceProfile,
-        ticket: u64,
-        token: Option<&str>,
-        sdk: bool,
-    ) -> Self {
+    fn new(device: &DeviceProfile, ticket: u64, token: Option<&str>, sdk: bool) -> Self {
         static SIGNED: AtomicU64 = AtomicU64::new(0);
         let count = SIGNED.fetch_add(1, Ordering::Relaxed) + 1;
         let mut counters = Vec::new();
@@ -420,7 +399,7 @@ impl SignatureState {
         append_signed(&mut environment, 1, if sdk { 1 } else { count as i64 });
         append_bytes(&mut environment, 6, b"v04.10.03.04-bugfix");
         append_signed(&mut environment, 7, i64::from(std::process::id()));
-        append_bytes(&mut environment, 8, metasec.environment_label.as_bytes());
+        append_bytes(&mut environment, 8, SDK_ENVIRONMENT_CHANNEL);
         append_bytes(&mut environment, 12, &signing_device(device));
         append_bytes(&mut environment, 13, &[]);
         append_bytes(&mut environment, 14, device.get("version_name").as_bytes());

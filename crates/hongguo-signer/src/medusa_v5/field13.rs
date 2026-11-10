@@ -1,4 +1,4 @@
-//! 有界解释 APK 7.4.3.32 的 F13 字节码。只读用户提供并核验过的 ELF。
+//! 有界解释经过校验的 APK 7.4.3.32 F13 字节码。
 
 use std::collections::BTreeMap;
 use std::fmt;

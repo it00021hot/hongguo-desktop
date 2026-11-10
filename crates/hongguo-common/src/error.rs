@@ -14,6 +14,9 @@ pub enum AppError {
     #[error("签名计算失败: {0}")]
     Signer(String),
 
+    #[error("MetaSec v5: {0}")]
+    PlaybackMaterials(&'static str),
+
     #[error("数据文件损坏: {0}")]
     StoreCorrupt(String),
 
@@ -78,6 +81,7 @@ impl AppError {
             AppError::Network(_) => "error.network",
             AppError::EmptyResponse(_) => "error.emptyResponse",
             AppError::Signer(_) => "error.signer",
+            AppError::PlaybackMaterials(_) => "error.playbackMaterials",
             AppError::StoreCorrupt(_) => "error.storeCorrupt",
             AppError::StoreLocked(_) => "error.storeLocked",
             AppError::Io(_) => "error.io",

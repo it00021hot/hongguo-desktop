@@ -18,7 +18,6 @@ pub use prefetch::prefetch_budget;
 /// 当前在线集起播后，向后铺同一部剧的后续集。两个壳从同一入口调度：
 /// 在线预取按动态字节预算铺媒体，兼容转码由实际选中的分集触发。
 pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vid_index: u32) {
-    let v5 = hongguo_api::metasec::playback_configured().unwrap_or(false);
     let online_state = state.clone();
     let sid = series_id.to_string();
     crate::runtime::spawn(async move {
@@ -27,15 +26,13 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
         if count == 0 {
             return;
         }
-        if v5 {
-            local::prefetch_episode_models(
-                &online_state,
-                &sid,
-                current_vid_index.saturating_add(1)..=current_vid_index.saturating_add(count),
-                hongguo_api::params::PlayerModelScene::Player,
-            )
-            .await;
-        }
+        local::prefetch_episode_models(
+            &online_state,
+            &sid,
+            current_vid_index.saturating_add(1)..=current_vid_index.saturating_add(count),
+            hongguo_api::params::PlayerModelScene::Player,
+        )
+        .await;
         for offset in 1..=count {
             online::schedule_next_episode_prefetch(
                 online_state.clone(),

@@ -143,7 +143,7 @@ impl super::HomeView {
                     &item.series_id,
                     ep.vid_index,
                 )
-                .await?;
+                .await;
                 let prepared = prepare(
                     &state,
                     &ep.vid,
@@ -152,10 +152,7 @@ impl super::HomeView {
                     Some((item.series_id.as_str(), ep.vid_index)),
                 )
                 .await?;
-                // 与 Tauri `play_service::local::resolve_play` 共用同一调度：
-                // 在线起播后把本剧后续候选排进流
-                // 预取与（无 HEVC 时的）兼容预转。GPUI 自己起播曾漏掉这步，
-                // 只预取了信息流下一部剧，自动连播到下一集仍然冷启动。
+                // 在线起播后按两壳共用的动态策略预取后续集。
                 hongguo_service::play_service::schedule_following_episodes(
                     &state,
                     &item.series_id,
