@@ -71,6 +71,11 @@ rfd = "0.17.2"
 # 小窗模式的鼠标出界检测（incognito_cmd）。
 mouse_position = "0.1"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
+
 # macOS 原生红绿灯的藏/显（小屏模式，app_cmd）：直接对三颗 NSWindowButton
 # setHidden，而不是 set_decorations 切 borderless——tao 的 set_decorations 是
 # **整体替换 styleMask**，会把 Overlay 全出血依赖的 FullSizeContentView 位抹掉。

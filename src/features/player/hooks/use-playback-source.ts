@@ -201,16 +201,19 @@ export function usePlaybackSource(params: {
     lastKnownRef,
   ]);
 
-  const handleLoadedMetadata = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (pendingSeek.current > 0 && pendingSeek.current < video.duration) {
-      video.currentTime = pendingSeek.current;
-    }
-    pendingSeek.current = 0;
-    // metadata 就绪后再显式播一次：autoPlay 属性带声音时会被 WebView 拦下，只靠属性就是「自动播一下就停住」
-    void video.play().catch(() => undefined);
-  }, [videoRef, pendingSeek]);
+  const handleLoadedMetadata = useCallback(
+    (autoplay = true) => {
+      const video = videoRef.current;
+      if (!video) return;
+      if (pendingSeek.current > 0 && pendingSeek.current < video.duration) {
+        video.currentTime = pendingSeek.current;
+      }
+      pendingSeek.current = 0;
+      // metadata 就绪后再显式播一次：autoPlay 属性带声音时会被 WebView 拦下，只靠属性就是「自动播一下就停住」
+      if (autoplay) void video.play().catch(() => undefined);
+    },
+    [videoRef, pendingSeek],
+  );
 
   // 每次渲染后把倍速/音量/静音贴回当前元素；依赖故意留空——元素重建的时机（切集/加载/转码）不由本组件依赖决定。
   // 必须读 prefs 镜像（不是仅靠 ratechange 回写的 ref）：Android WebView 程序化改倍速常不派发事件。

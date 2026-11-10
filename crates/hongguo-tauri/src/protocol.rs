@@ -16,6 +16,8 @@ use hongguo_stream::range::ProtocolResponse;
 
 /// 注册全部自定义协议。必须在 `setup` 之前调用（Builder 阶段）。
 pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    #[cfg(target_os = "windows")]
+    let direct_bytevc2 = std::sync::Arc::new(crate::direct_bytevc2::DirectPlayback::default());
     builder
         .register_asynchronous_uri_scheme_protocol(LOCAL_SCHEME, move |_ctx, request, responder| {
             guarded(file_pool(), LOCAL_SCHEME, move || {
@@ -34,32 +36,39 @@ pub fn register(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wr
                 })
             })
         })
-        .register_asynchronous_uri_scheme_protocol(
-            STREAM_SCHEME,
-            move |_ctx, request, responder| {
-                guarded(stream_pool(), STREAM_SCHEME, move || {
-                    let range = range_header(&request);
-                    let path = request.uri().path().to_string();
-                    Box::new(move || {
-                        let served = catch_unwind(AssertUnwindSafe(|| {
-                            respond_stream(&path, range.as_deref())
-                        }));
-                        let response = match served {
-                            Ok(Ok(resp)) => build_response(resp),
-                            Ok(Err(StreamServeError::BadPath(msg))) => {
-                                text_response(StatusCode::BAD_REQUEST, &msg)
-                            }
-                            Ok(Err(StreamServeError::Serve(msg))) => {
-                                text_response(StatusCode::NOT_FOUND, &msg)
-                            }
-                            Err(p) => panic_response(&p),
-                        };
-                        log_served(STREAM_SCHEME, &path, range.as_deref(), &response);
-                        responder.respond(response);
-                    })
+        .register_asynchronous_uri_scheme_protocol(STREAM_SCHEME, move |ctx, request, responder| {
+            #[cfg(target_os = "windows")]
+            if request
+                .uri()
+                .path()
+                .starts_with(crate::direct_bytevc2::PATH_PREFIX)
+            {
+                direct_bytevc2.dispatch(ctx, request, responder);
+                return;
+            }
+            #[cfg(not(target_os = "windows"))]
+            let _ = ctx;
+            guarded(stream_pool(), STREAM_SCHEME, move || {
+                let range = range_header(&request);
+                let path = request.uri().path().to_string();
+                Box::new(move || {
+                    let served =
+                        catch_unwind(AssertUnwindSafe(|| respond_stream(&path, range.as_deref())));
+                    let response = match served {
+                        Ok(Ok(resp)) => build_response(resp),
+                        Ok(Err(StreamServeError::BadPath(msg))) => {
+                            text_response(StatusCode::BAD_REQUEST, &msg)
+                        }
+                        Ok(Err(StreamServeError::Serve(msg))) => {
+                            text_response(StatusCode::NOT_FOUND, &msg)
+                        }
+                        Err(p) => panic_response(&p),
+                    };
+                    log_served(STREAM_SCHEME, &path, range.as_deref(), &response);
+                    responder.respond(response);
                 })
-            },
-        )
+            })
+        })
         .register_asynchronous_uri_scheme_protocol(COVER_SCHEME, move |_ctx, request, responder| {
             // 首次命中的封面要下载 + ffmpeg 转码（秒级阻塞），丢到后台池出结果再回包
             guarded(file_pool(), COVER_SCHEME, move || {

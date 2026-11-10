@@ -24,7 +24,11 @@ pub struct Bytevc2Track {
 /// 读出 ByteVC2 轨。不是 `bvc2` 时返回错误，调用方不要把它送去 HEVC 解码。
 pub fn open_track(path: &Path) -> AppResult<Bytevc2Track> {
     let moov = read_moov(path)?;
-    let tracks = collect_tracks(&moov)?;
+    track_from_moov(&moov)
+}
+
+pub(crate) fn track_from_moov(moov: &[u8]) -> AppResult<Bytevc2Track> {
+    let tracks = collect_tracks(moov)?;
     let info = tracks
         .into_iter()
         .find(|t| t.is_video)
@@ -35,46 +39,62 @@ pub fn open_track(path: &Path) -> AppResult<Bytevc2Track> {
             info.codec
         )));
     }
-    let config = config_in_moov(&moov)?;
+    let config = config_in_moov(moov)?;
     Ok(Bytevc2Track { info, config })
 }
 
 fn read_moov(path: &Path) -> AppResult<Vec<u8>> {
-    let mut file = File::open(path).map_err(|e| AppError::Io(e.to_string()))?;
-    let file_size = file
+    let mut reader = SampleReader::open(path)?;
+    let file_size = reader
+        .file
         .metadata()
         .map_err(|e| AppError::Io(e.to_string()))?
         .len();
+    read_moov_at(file_size, |offset, size, bytes| {
+        reader.read_into(offset, size, bytes)
+    })
+    .map(|(_, moov)| moov)
+}
+
+pub(crate) fn read_moov_at(
+    file_size: u64,
+    mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
+) -> AppResult<(u64, Vec<u8>)> {
     let mut pos = 0u64;
-    while pos + 8 <= file_size {
-        file.seek(SeekFrom::Start(pos))
-            .map_err(|e| AppError::Io(e.to_string()))?;
-        let mut header = [0u8; 16];
-        file.read_exact(&mut header[..8])
-            .map_err(|e| AppError::Io(e.to_string()))?;
+    let mut header = Vec::with_capacity(16);
+    while file_size.saturating_sub(pos) >= 8 {
+        read(pos, 8, &mut header)?;
+        if header.len() != 8 {
+            return Err(AppError::Media("MP4 box 头不完整".into()));
+        }
         let size32 = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        let is_moov = &header[4..8] == b"moov";
         let (box_size, header_len) = match size32 {
             1 => {
-                file.read_exact(&mut header[8..16])
-                    .map_err(|e| AppError::Io(e.to_string()))?;
+                if file_size - pos < 16 {
+                    return Err(AppError::Media("MP4 扩展头长度越界".into()));
+                }
+                read(pos + 8, 8, &mut header)?;
+                if header.len() != 8 {
+                    return Err(AppError::Media("MP4 扩展头不完整".into()));
+                }
                 (
-                    u64::from_be_bytes(header[8..16].try_into().expect("8 字节")),
+                    u64::from_be_bytes(header[..8].try_into().expect("8 字节")),
                     16u64,
                 )
             }
             0 => (file_size - pos, 8u64),
             n => (u64::from(n), 8u64),
         };
-        if box_size < header_len || pos + box_size > file_size {
+        if box_size < header_len || box_size > file_size - pos {
             return Err(AppError::Media("MP4 box 长度越界".into()));
         }
-        if &header[4..8] == b"moov" {
-            let mut buf = vec![0u8; box_size as usize];
-            file.seek(SeekFrom::Start(pos))
-                .map_err(|e| AppError::Io(e.to_string()))?;
-            file.read_exact(&mut buf)
-                .map_err(|e| AppError::Io(e.to_string()))?;
-            return Ok(buf);
+        if is_moov {
+            read(pos, box_size, &mut header)?;
+            if header.len() as u64 != box_size {
+                return Err(AppError::Media("MP4 moov 不完整".into()));
+            }
+            return Ok((pos, header));
         }
         pos += box_size;
     }

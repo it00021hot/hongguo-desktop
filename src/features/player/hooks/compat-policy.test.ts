@@ -49,6 +49,18 @@ describe('decideCompatPlayback', () => {
       }),
     ).toEqual({ forceCompat: true, holdNative: true });
   });
+
+  it('keeps Windows direct ByteVC2 out of compatibility playback', () => {
+    expect(
+      decideCompatPlayback({
+        hevcPlayable: false,
+        android: false,
+        compatAuthorized: true,
+        needsCompat: true,
+        directPlayback: true,
+      }),
+    ).toEqual({ forceCompat: false, holdNative: false });
+  });
 });
 
 describe('resolvePlayBaseSrc', () => {

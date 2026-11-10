@@ -4621,6 +4621,7 @@ dependencies = [
  "chrono",
  "env_logger",
  "hongguo-api",
+ "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
@@ -4649,6 +4650,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-webdriver",
  "tokio",
+ "webview2-com",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

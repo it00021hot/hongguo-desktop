@@ -105,7 +105,7 @@ POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/
 - 签名头为 `x-khronos`、`x-ladon`、`x-argus`、`x-gorgon`、`x-helios`、`x-medusa`。签名使用最终 URL 和 gzip 后的 body。带 `x-ss-stub`、`x-ss-dp`、`lc`、`x-tt-store-region`、`x-tt-store-region-src`、`Content-Encoding: gzip` 与档案 cookie。实抓 query 将 `_rticket` 放在第 4 项。
 - 批量场景体使用 `device_level:3`、`use_server_dns:false`、`video_platform:1024` 与对应的 `dr_scene`。按条目 `content_type` 原样分组到 `mixed_video_id_map`。
 - 单集体顶层为 `biz_param`、`content_type`、`video_id`。实抓跳集口径用 `source:4`、`video_platform:3`、`need_all_video_definition:true`、`use_os_player:false`、`use_server_dns:false`。
-- `data.{vid}.video_model` 是 JSON 字符串，单集也支持 `data.video_model`。单集 HTTP 200 空体归 `EmptyResponse`，有包无可用流及 base 族非零错误归 `StreamMiss`。reading 系小写 `code` 走 `check_code`。支持 ByteVC2 的档位由内置解码器解帧并转成 H.264 供系统播放器使用。
+- `data.{vid}.video_model` 是 JSON 字符串，单集也支持 `data.video_model`。单集 HTTP 200 空体归 `EmptyResponse`，有包无可用流及 base 族非零错误归 `StreamMiss`。reading 系小写 `code` 走 `check_code`。Windows Tauri 在线 ByteVC2 由内置解码器解帧后直接显示。其余兼容播放路径仍转成 H.264 供系统播放器使用。验证范围见 [播放对齐交接](./req-hg-003-playback-parity.md#windows-tauri-在线-bytevc2-直播放)。
 - 原档案验证、配置方式与历史端点证据见 [REQ-HG-003 播放对齐交接](./req-hg-003-playback-parity.md)。
 
 ### 预取动态配置

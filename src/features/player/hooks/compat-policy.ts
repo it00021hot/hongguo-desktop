@@ -21,7 +21,9 @@ export function decideCompatPlayback(input: {
   compatAuthorized: boolean;
   /** 后端标明本集必须转兼容（典型 bytevc2） */
   needsCompat?: boolean;
+  directPlayback?: boolean;
 }): CompatPlaybackDecision {
+  if (input.directPlayback) return { forceCompat: false, holdNative: false };
   const { hevcPlayable, android, compatAuthorized, needsCompat } = input;
   const knownUnplayable = hevcPlayable === false;
   const forceCompat = Boolean(needsCompat) || (knownUnplayable && (android || compatAuthorized));

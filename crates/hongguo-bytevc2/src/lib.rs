@@ -12,6 +12,8 @@ mod codec;
 mod container;
 mod decode;
 mod extradata;
+#[cfg(feature = "vvdec")]
+mod indexed;
 mod sample;
 
 pub use codec::{CONFIG_BOX, FOURCC, WIRE_NAME, is_bytevc2, is_bytevc2_fourcc};
@@ -20,4 +22,6 @@ pub use decode::{
     presentation_tick,
 };
 pub use extradata::{annexb_from_extradata, length_size_from_extradata};
+#[cfg(feature = "vvdec")]
+pub use indexed::IndexedBytevc2;
 pub use sample::sample_to_annexb;

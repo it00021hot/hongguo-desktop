@@ -189,7 +189,13 @@ fn decode_track(
         Backend::Vvdec => {
             #[cfg(feature = "vvdec")]
             {
-                decode_track_vvdec(path, track, on_frame)
+                let mut reader = SampleReader::open(path)?;
+                decode_track_vvdec(
+                    track,
+                    0,
+                    |offset, size, bytes| reader.read_into(offset, size, bytes),
+                    on_frame,
+                )
             }
             #[cfg(not(feature = "vvdec"))]
             {
@@ -230,9 +236,10 @@ fn vvdec_thread_count() -> i32 {
 }
 
 #[cfg(feature = "vvdec")]
-fn decode_track_vvdec(
-    path: &Path,
+pub(crate) fn decode_track_vvdec(
     track: &Bytevc2Track,
+    start_index: usize,
+    mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
     on_frame: &mut impl FnMut(DecodedFrame) -> AppResult<()>,
 ) -> AppResult<()> {
     use vvdec::{AccessUnit, Decoder, Error as VvError};
@@ -246,14 +253,13 @@ fn decode_track_vvdec(
         .build()
         .map_err(map_vvdec_err)?;
     let pool = Arc::new(PlanePool::default());
-    let mut reader = SampleReader::open(path)?;
     // 样本缓冲与 Annex-B 缓冲整集复用；vvdec 在 `decode` 返回前已把载荷拷进自己的码流缓冲。
     let mut raw = Vec::new();
     let mut annexb = Vec::new();
     let mut sent_params = false;
 
-    for (index, &(offset, size)) in track.info.samples.iter().enumerate() {
-        reader.read_into(offset, size, &mut raw)?;
+    for (index, &(offset, size)) in track.info.samples.iter().enumerate().skip(start_index) {
+        read(offset, size, &mut raw)?;
         annexb.clear();
         let first_au = !sent_params;
         if first_au {

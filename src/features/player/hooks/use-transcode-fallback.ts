@@ -34,6 +34,7 @@ export function useTranscodeFallback(params: {
   android: boolean;
   /** 后端标明本集必须转兼容（bytevc2 等） */
   needsCompat?: boolean;
+  directPlayback: boolean;
   definition?: number;
   sourceReady: boolean;
   /**
@@ -57,6 +58,7 @@ export function useTranscodeFallback(params: {
     hevcPlayable,
     android,
     needsCompat,
+    directPlayback,
     definition,
     sourceReady,
     onDecodeFailure,
@@ -82,6 +84,7 @@ export function useTranscodeFallback(params: {
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
     needsCompat: sourceReady && needsCompat,
+    directPlayback,
   });
 
   const compatSrc = compatResult?.key === compatKey ? compatResult.url : null;
@@ -119,7 +122,7 @@ export function useTranscodeFallback(params: {
   );
 
   const startCompat = useCallback(() => {
-    if (!seriesId || !vidIndex || !compatKey || compatStarted.current) return;
+    if (directPlayback || !seriesId || !vidIndex || !compatKey || compatStarted.current) return;
     compatStarted.current = true;
     setCompatProgress({ key: compatKey, percent: 0, phase: 'downloading' });
     const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
@@ -165,6 +168,7 @@ export function useTranscodeFallback(params: {
     srcKeyRef,
     setSrcKey,
     forceCompat,
+    directPlayback,
   ]);
 
   // 换集或档位后先更新任务身份，再由下一段 effect 启动兼容。
@@ -189,7 +193,7 @@ export function useTranscodeFallback(params: {
   // 解码失败探测：播放在走、画面出不来、时间在推进，三个条件缺一不可（刚起播 videoWidth 本来就是 0）；
   // 命中走 onDecodeFailure 裁决：无 HEVC 机器先问「装扩展还是转兼容」，其余直接兜底转码
   useEffect(() => {
-    if (!playSrc || compatSrc || error || forceCompat) return;
+    if (!playSrc || compatSrc || error || forceCompat || directPlayback) return;
     const v = videoRef.current;
     if (!v) return;
     const timer = setInterval(() => {
@@ -199,7 +203,7 @@ export function useTranscodeFallback(params: {
       }
     }, 1200);
     return () => clearInterval(timer);
-  }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
+  }, [playSrc, compatSrc, error, forceCompat, directPlayback, onDecodeFailure, videoRef]);
 
   return {
     compatSrc,
