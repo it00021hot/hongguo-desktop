@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { keys, useSavePosition } from '@/service/queries';
+import { keys, useAccount, useSavePosition } from '@/service/queries';
 import { watchHistory } from '@/service/commands';
 import type { Series } from '@/service/schema';
 import { FIRST_REPORT_MS, HistoryCadence } from './history-cadence';
+import { GuestPlaybackHistory } from './guest-playback-history';
 
 /** 进度保存间隔（毫秒）。太频繁会写爆磁盘，太稀疏丢进度。 */
 const SAVE_INTERVAL = 5_000;
+const guestTotals = new Map<string, number>();
+let queuedHistory = Promise.resolve();
+
+type HistoryItem = Parameters<typeof watchHistory.record>[0];
 
 /**
  * 播放进度持久化：5 秒节流落盘 + 历史上报心跳 + 卸载补写；srcKeyRef/lastKnownRef 由取流侧持有、这里只读。
@@ -34,44 +39,56 @@ export function usePlaybackProgress(params: {
     currentSeries,
   } = params;
   const { mutate: savePosition } = useSavePosition();
+  const { data: account } = useAccount();
+  const isGuest = account === null;
+  const isLoggedIn = account != null;
   const queryClient = useQueryClient();
   const lastSaved = useRef(0);
   /** 上报节拍记账（一次播放生命周期一份，随组件卸载丢弃） */
   const cadence = useRef<HistoryCadence | null>(null);
   cadence.current ??= new HistoryCadence();
+  const guestHistory = useRef<GuestPlaybackHistory | null>(null);
+  guestHistory.current ??= new GuestPlaybackHistory(guestTotals);
+
+  const writeHistory = useCallback(
+    (item: HistoryItem) => {
+      queuedHistory = queuedHistory
+        .then(() => watchHistory.record(item))
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: keys.watchHistory, refetchType: 'none' });
+          void queryClient.invalidateQueries({ queryKey: keys.localHistory, refetchType: 'none' });
+        })
+        .catch(() => {});
+    },
+    [queryClient],
+  );
+
+  const historyItem = useCallback(
+    (time: number, total: number, vid: string): HistoryItem | null => {
+      if (!seriesId || !vidIndex || !vid) return null;
+      return {
+        seriesId,
+        vid,
+        vidIndex,
+        positionMs: Math.round(time * 1000),
+        durationMs: Math.round(total * 1000),
+        meta: {
+          title: currentSeries?.title ?? '',
+          cover: currentSeries?.cover ?? '',
+          episodeCnt: currentSeries?.episodeCount ?? 0,
+        },
+      };
+    },
+    [seriesId, vidIndex, currentSeries],
+  );
 
   /** 发一条观看历史（本地必记 + 登录态顺路上报云端，后端失败只记日志）。 */
   const reportHistory = useCallback(
     (time: number, total: number, vid: string) => {
-      if (!seriesId || !vidIndex || !vid) return;
-      void watchHistory
-        .record({
-          seriesId,
-          vid,
-          vidIndex,
-          positionMs: Math.round(time * 1000),
-          durationMs: Math.round(total * 1000),
-          meta: {
-            title: currentSeries?.title ?? '',
-            cover: currentSeries?.cover ?? '',
-            episodeCnt: currentSeries?.episodeCount ?? 0,
-          },
-        })
-        .then(() => {
-          // 上报落定把历史查询标记过期（refetchType: 'none'）：历史页下次挂载必拉新；
-          // 不立刻重拉——首页种子吃同一份缓存，播放中重排会把正在看的视频顶掉
-          void queryClient.invalidateQueries({
-            queryKey: keys.watchHistory,
-            refetchType: 'none',
-          });
-          void queryClient.invalidateQueries({
-            queryKey: keys.localHistory,
-            refetchType: 'none',
-          });
-        })
-        .catch(() => {});
+      const item = historyItem(time, total, vid);
+      if (item) writeHistory(item);
     },
-    [seriesId, vidIndex, currentSeries, queryClient],
+    [historyItem, writeHistory],
   );
 
   /** 历史上报心跳：timeupdate 播放位置驱动（暂停即停、窗口最小化不被后台节流）；节拍判定见 HistoryCadence。 */
@@ -84,12 +101,48 @@ export function usePlaybackProgress(params: {
       // seek 途中 timeupdate 会在连跳的位置上连发：等 seek 落定再报，否则一次拖动打出十几条上报
       if (video?.seeking) return;
       const positionMs = Math.round(time * 1000);
-      if (!cadence.current!.due({ episodeKey, seriesId, positionMs })) return;
       const total = video && Number.isFinite(video.duration) ? video.duration : 0;
+      if (isGuest) {
+        if (!video || video.paused || video.ended) return;
+        const guest = guestHistory.current!;
+        const observedAtMs = Date.now();
+        if (guest.isActive(seriesId, currentVid)) {
+          guest.observe(positionMs, Math.round(total * 1000), observedAtMs);
+        } else {
+          const item = historyItem(time, total, currentVid);
+          if (item) guest.begin(item, observedAtMs).forEach(writeHistory);
+        }
+        return;
+      }
+      if (!isLoggedIn || !cadence.current!.due({ episodeKey, seriesId, positionMs })) return;
       reportHistory(time, total, currentVid);
     },
-    [seriesId, vidIndex, episodeKey, currentVid, reportHistory, srcKeyRef, videoRef],
+    [
+      seriesId,
+      vidIndex,
+      episodeKey,
+      currentVid,
+      isGuest,
+      isLoggedIn,
+      historyItem,
+      writeHistory,
+      reportHistory,
+      srcKeyRef,
+      videoRef,
+    ],
   );
+
+  const seeking = useCallback(() => {
+    if (srcKeyRef.current === episodeKey) guestHistory.current!.seek();
+  }, [episodeKey, srcKeyRef]);
+
+  useEffect(() => {
+    const guest = guestHistory.current!;
+    return () => {
+      const item = guest.finish();
+      if (item) writeHistory(item);
+    };
+  }, [writeHistory]);
 
   /**
    * 记录播放位置。force 绕过节流：暂停/播完/离开页面后不会再有 timeupdate，
@@ -100,19 +153,24 @@ export function usePlaybackProgress(params: {
       // 流不是这一集的（信息流切剧、play 在途旧流还在播）：秒数不能串到新剧头上
       if (srcKeyRef.current !== episodeKey) return;
       if (!seriesId || !vidIndex) return;
-      const now = Date.now();
-      if (!force && now - lastSaved.current < SAVE_INTERVAL) return;
-      lastSaved.current = now;
       // 时长直接从元素读：不维护第二份免得两处对不上，后端靠它判断「接近片尾就别续播」
       const video = videoRef.current;
       const total = video && Number.isFinite(video.duration) ? video.duration : 0;
       lastKnownRef.current = { key: episodeKey, time, duration: total };
+      const now = Date.now();
+      if (!force && now - lastSaved.current < SAVE_INTERVAL) return;
+      lastSaved.current = now;
       savePosition({ seriesId, vidIndex, currentTime: time, duration: total });
+      if (!isLoggedIn) return;
       // 收尾上报仍守 5 秒建行门槛（快滑掠过不落噪点行），本集已报过就照报（同剧切集的立即翻页走这条）
       const positionMs = Math.round(time * 1000);
       const eligible = positionMs >= FIRST_REPORT_MS || cadence.current!.hasReported(episodeKey);
-      if (force && currentVid && eligible) {
-        cadence.current!.note({ episodeKey, seriesId, positionMs });
+      if (
+        force &&
+        currentVid &&
+        eligible &&
+        cadence.current!.note({ episodeKey, seriesId, positionMs })
+      ) {
         reportHistory(time, total, currentVid);
       }
     },
@@ -122,6 +180,7 @@ export function usePlaybackProgress(params: {
       vidIndex,
       episodeKey,
       savePosition,
+      isLoggedIn,
       currentVid,
       reportHistory,
       lastKnownRef,
@@ -139,16 +198,25 @@ export function usePlaybackProgress(params: {
       // 从头就没播过不写（否则给从未看过的集落 0 秒记录）；key 对不上 = 位置属于别的集，写进去就是串集
       if (key !== episodeKey || time <= 0) return;
       savePosition({ seriesId, vidIndex, currentTime: time, duration });
+      if (!isLoggedIn) return;
       // 最后一次也记历史，与心跳同门槛：<5 秒的掠过不进历史（否则首页快滑一路全是 1 秒的「未知剧集」行）
       const vid = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex)?.vid ?? '';
       const positionMs = Math.round(time * 1000);
       const eligible = positionMs >= FIRST_REPORT_MS || cadence.current!.hasReported(episodeKey);
-      if (vid && eligible) {
-        cadence.current!.note({ episodeKey, seriesId, positionMs });
+      if (vid && eligible && cadence.current!.note({ episodeKey, seriesId, positionMs })) {
         reportHistory(time, duration, vid);
       }
     };
-  }, [seriesId, vidIndex, episodeKey, savePosition, reportHistory, currentSeries, lastKnownRef]);
+  }, [
+    seriesId,
+    vidIndex,
+    episodeKey,
+    isLoggedIn,
+    savePosition,
+    reportHistory,
+    currentSeries,
+    lastKnownRef,
+  ]);
 
-  return { persist, report };
+  return { persist, report, seeking };
 }

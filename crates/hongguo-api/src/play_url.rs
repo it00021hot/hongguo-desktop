@@ -3,7 +3,7 @@
 //! ⚠️ 服务端不发货时返回 **HTTP 200 + 0 字节**——排查「接口没数据」先看字节数，不是状态码。
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -13,13 +13,13 @@ use super::stream_pick::{Definition, list_definitions, pick_stream_at};
 use hongguo_common::utils::json::check_code;
 use hongguo_common::{AppError, AppResult};
 
-/// 批量取流结果的暂存表：`fetch_play_batch` 命中时落这里，
-/// [`fetch_play_url`] 使用时取走（pop + TTL 双保险——直链有时效）。
-static BATCH_CACHE: OnceLock<Mutex<HashMap<String, (Instant, PlayInfo)>>> = OnceLock::new();
+/// 已取到的原始流表，切档时从同一模型重新选流。
+type ModelCache = HashMap<String, (Instant, Arc<Value>)>;
+static BATCH_CACHE: OnceLock<Mutex<ModelCache>> = OnceLock::new();
 /// 批量结果有效期：响应自带 expire_time（小时级），取保守 10 分钟。
 const BATCH_TTL: Duration = Duration::from_secs(600);
 
-fn batch_cache() -> &'static Mutex<HashMap<String, (Instant, PlayInfo)>> {
+fn batch_cache() -> &'static Mutex<ModelCache> {
     BATCH_CACHE.get_or_init(Mutex::default)
 }
 
@@ -30,7 +30,7 @@ fn play_flight() -> &'static tokio::sync::Mutex<()> {
     FLIGHT.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn cached_play(vid: &str) -> Option<PlayInfo> {
+fn cached_model(vid: &str) -> Option<Arc<Value>> {
     let mut cache = batch_cache().lock();
     let fresh = cache
         .get(vid)
@@ -39,18 +39,31 @@ fn cached_play(vid: &str) -> Option<PlayInfo> {
         cache.remove(vid);
         return None;
     }
-    cache.get(vid).map(|(_, play)| play.clone())
+    cache.get(vid).map(|(_, model)| Arc::clone(model))
+}
+
+fn cached_play(
+    vid: &str,
+    definition: Option<u32>,
+    cap: super::stream_pick::DecoderCapability,
+) -> Option<PlayInfo> {
+    select_play(cached_model(vid)?.as_ref(), definition, cap)
 }
 
 /// 这一集的流是否已经取到、还在有效期内。切集前用来决定要不要再打一次批量。
 pub fn has_play_cached(vid: &str) -> bool {
-    cached_play(vid).is_some()
+    cached_model(vid).is_some()
 }
 
-fn store_play(vid: &str, play: PlayInfo) {
-    batch_cache()
-        .lock()
-        .insert(vid.to_string(), (Instant::now(), play));
+fn store_models(models: impl IntoIterator<Item = (String, Value)>) {
+    let now = Instant::now();
+    let mut cache = batch_cache().lock();
+    cache.retain(|_, (stored_at, _)| now.duration_since(*stored_at) < BATCH_TTL);
+    cache.extend(
+        models
+            .into_iter()
+            .map(|(vid, model)| (vid, (now, Arc::new(model)))),
+    );
 }
 
 /// 清空批量取流暂存（设备换档后调用：旧设备预取的 PlayInfo 不能给新身份复用）。
@@ -84,6 +97,7 @@ fn content_type_of(vid: &str) -> Option<i64> {
 pub struct PlayInfo {
     /// 视频直链
     pub url: String,
+    pub file_hash: Option<String>,
     /// 是否为 CENC 加密流
     pub encrypted: bool,
     /// 加密密钥材料（`spade_a` 原始值，派生在 worker 里做）
@@ -119,7 +133,7 @@ pub async fn fetch_play_url(
     cap: super::stream_pick::DecoderCapability,
     env: &super::client::ApiEnv,
 ) -> AppResult<PlayInfo> {
-    if let Some(play) = cached_play(vid) {
+    if let Some(play) = cached_play(vid, definition, cap) {
         log::info!(
             "[PlayUrl] {vid} 命中已取到的流（定义 {}，编码 {}）",
             play.definition,
@@ -138,16 +152,16 @@ pub async fn fetch_play_url(
         )));
     };
     let _flight = play_flight().lock().await;
-    if let Some(play) = cached_play(vid) {
+    if let Some(play) = cached_play(vid, definition, cap) {
         return Ok(play);
     }
     match fetch_single_at(vid, ct, definition, cap, env, default_origins()).await {
-        Ok(SingleFetch::Hit(play)) => {
+        Ok(SingleFetch::Hit { model, play }) => {
             log::info!(
                 "[PlayUrl] {vid} 轻请求取流命中（ct={ct}，定义 {}）",
                 play.definition
             );
-            store_play(vid, play.clone());
+            store_models([(vid.to_string(), model)]);
             Ok(play)
         }
         // 有响应体但挑不出本机能播的流（编码/档位）——不是设备空响应。
@@ -164,7 +178,7 @@ pub async fn fetch_play_url(
 
 /// 单集取流结论：命中 / 有包不可播 / 全程空响应。
 enum SingleFetch {
-    Hit(PlayInfo),
+    Hit { model: Value, play: PlayInfo },
     NoPlayable,
     SilentEmpty,
 }
@@ -173,7 +187,7 @@ enum SingleFetch {
 impl SingleFetch {
     fn into_play(self) -> Option<PlayInfo> {
         match self {
-            Self::Hit(play) => Some(play),
+            Self::Hit { play, .. } => Some(play),
             Self::NoPlayable | Self::SilentEmpty => None,
         }
     }
@@ -227,7 +241,7 @@ async fn fetch_single_at(
         };
         saw_payload |= !bytes.is_empty();
         match play_from_bytes(&bytes, vid, definition, cap) {
-            Ok(Some(play)) => return Ok(SingleFetch::Hit(play)),
+            Ok(Some((model, play))) => return Ok(SingleFetch::Hit { model, play }),
             Ok(None) => log::info!("[PlayUrl] {path} 无可播流 vid={vid} bytes={}", bytes.len()),
             Err(e) => log::warn!("[PlayUrl] {path} 响应不可用 vid={vid}: {e}"),
         }
@@ -250,12 +264,12 @@ async fn fetch_single_at(
             saw_payload = true;
         }
         match play_from_bytes(&bytes, vid, definition, cap) {
-            Ok(Some(play)) => {
+            Ok(Some((model, play))) => {
                 log::info!(
                     "[PlayUrl] 旧 light 命中（vid={vid} origin={origin} codec={}）",
                     play.codec
                 );
-                return Ok(SingleFetch::Hit(play));
+                return Ok(SingleFetch::Hit { model, play });
             }
             Ok(None) => log::info!(
                 "[PlayUrl] 旧 light @{origin} 无可播流（vid={vid} bytes={}）",
@@ -288,18 +302,19 @@ fn play_from_bytes(
     vid: &str,
     definition: Option<u32>,
     cap: super::stream_pick::DecoderCapability,
-) -> AppResult<Option<PlayInfo>> {
+) -> AppResult<Option<(Value, PlayInfo)>> {
     let Some(value) = parse_model_response(bytes)? else {
         return Ok(None);
     };
-    let play = play_info(&value, vid, definition, cap)?;
-    if play.is_none() && !bytes.is_empty() {
+    let selected = parse_video_model(&value, vid)?
+        .and_then(|model| select_play(&model, definition, cap).map(|play| (model, play)));
+    if selected.is_none() {
         log::info!(
             "[PlayUrl] 有响应但挑不出系统能播的流 vid={vid} {}",
             stream_brief(&value)
         );
     }
-    Ok(play)
+    Ok(selected)
 }
 
 /// 挑流失败时记下各档编码，方便对上 `VideoInfo.extractFields` 的 `codec_type`。
@@ -341,41 +356,36 @@ fn stream_brief(value: &Value) -> String {
     format!("version={:?} {}", inner.get("version"), brief.join(","))
 }
 
-fn play_info(
-    value: &Value,
-    vid: &str,
-    definition: Option<u32>,
-    cap: super::stream_pick::DecoderCapability,
-) -> AppResult<Option<PlayInfo>> {
+fn parse_video_model(value: &Value, vid: &str) -> AppResult<Option<Value>> {
     // 新通道单集端点按 video_id 归位；兼容旧通道的 map 形态，两个指针都试
     let model = value
         .pointer(&format!("/data/{vid}/video_model"))
         .and_then(Value::as_str)
         .or_else(|| value.pointer("/data/video_model").and_then(Value::as_str));
     let Some(model) = model else {
-        let hint: String = value
-            .get("data")
-            .map(ToString::to_string)
-            .unwrap_or_default()
-            .chars()
-            .take(180)
-            .collect();
-        log::info!("[PlayUrl] data 里没有 video_model vid={vid} {hint}");
+        log::info!("[PlayUrl] data 里没有 video_model vid={vid}");
         return Ok(None);
     };
-    let parsed: Value = serde_json::from_str(model)
-        .map_err(|e| AppError::Media(format!("video_model 解析失败: {e}")))?;
-    let Some(stream) = pick_stream_at(&parsed, definition, cap) else {
-        return Ok(None);
-    };
-    Ok(Some(PlayInfo {
+    serde_json::from_str(model)
+        .map(Some)
+        .map_err(|e| AppError::Media(format!("video_model 解析失败: {e}")))
+}
+
+fn select_play(
+    model: &Value,
+    definition: Option<u32>,
+    cap: super::stream_pick::DecoderCapability,
+) -> Option<PlayInfo> {
+    let stream = pick_stream_at(model, definition, cap)?;
+    Some(PlayInfo {
         url: stream.url,
+        file_hash: stream.file_hash,
         encrypted: !stream.spade.is_empty(),
         key_material: stream.spade.into_bytes(),
         codec: stream.codec.unwrap_or_default(),
         definition: stream.definition,
-        definitions: list_definitions(&parsed, cap),
-    }))
+        definitions: list_definitions(model, cap),
+    })
 }
 
 /// AB 打开时的多集路径：[`crate::params::PLAYER_MODEL_PATH`]，`dr_scene` 在 body 里是 `player`。
@@ -440,11 +450,9 @@ pub async fn fetch_play_scene(
             .await?;
     let response = parse_model_response(&bytes)?;
     let vids: Vec<_> = pending.into_values().flatten().collect();
-    let plays = batch_plays(response.as_ref(), &vids, cap);
-    let hits = plays.len();
-    for (vid, play) in plays {
-        store_play(&vid, play);
-    }
+    let models = batch_models(response.as_ref(), &vids, cap);
+    let hits = models.len();
+    store_models(models);
     Ok(hits)
 }
 
@@ -496,10 +504,10 @@ async fn fetch_play_batch_at(
             None
         }
     };
-    let mut plays = batch_plays(primary_value.as_ref(), &vids, cap);
+    let mut models = batch_models(primary_value.as_ref(), &vids, cap);
     // `/player/v1` 留在主域：7.4.3.32 只在 AB `video_player_api_dr_scene` 打开、
     // 且 drScene 为 player 时才走这条。
-    let missing = missing_groups(mixed_video_id_map, &plays);
+    let missing = missing_groups(mixed_video_id_map, &models);
     if !missing.is_empty() {
         log::info!(
             "[PlayUrl] 默认批量 {}/{} vid 无可播放流，改走 /player/v1",
@@ -512,12 +520,12 @@ async fn fetch_play_batch_at(
         {
             Ok(value) => {
                 let retry: Vec<String> = missing.values().flatten().cloned().collect();
-                plays.extend(batch_plays(value.as_ref(), &retry, cap));
+                models.extend(batch_models(value.as_ref(), &retry, cap));
             }
             Err(e) => log::warn!("[PlayUrl] /player/v1 回退失败: {e}"),
         }
     }
-    let missing = missing_groups(mixed_video_id_map, &plays);
+    let missing = missing_groups(mixed_video_id_map, &models);
     if !missing.is_empty() {
         match fallback_model_light(&missing, env, origins.light)
             .await
@@ -525,33 +533,28 @@ async fn fetch_play_batch_at(
         {
             Ok(value) => {
                 let retry: Vec<String> = missing.values().flatten().cloned().collect();
-                plays.extend(batch_plays(value.as_ref(), &retry, cap));
+                models.extend(batch_models(value.as_ref(), &retry, cap));
             }
-            Err(e) if plays.is_empty() => return Err(e),
+            Err(e) if models.is_empty() => return Err(e),
             Err(e) => log::warn!("[PlayUrl] light 体回退失败，保留已命中流: {e}"),
         }
     }
-    let hits = plays.len();
-    {
-        let mut cache = batch_cache().lock();
-        for (vid, play) in plays {
-            cache.insert(vid, (Instant::now(), play));
-        }
-    }
+    let hits = models.len();
+    store_models(models);
     log::info!("[PlayUrl] 批量取流 {}/{} vid 落暂存表", hits, vids.len());
     Ok(hits)
 }
 
 fn missing_groups(
     map: &BTreeMap<String, Vec<String>>,
-    plays: &HashMap<String, PlayInfo>,
+    models: &HashMap<String, Value>,
 ) -> BTreeMap<String, Vec<String>> {
     map.iter()
         .filter_map(|(ct, group)| {
             let missing: Vec<String> = group
                 .iter()
                 .map(|vid| vid.trim())
-                .filter(|vid| !vid.is_empty() && !plays.contains_key(*vid))
+                .filter(|vid| !vid.is_empty() && !models.contains_key(*vid))
                 .map(str::to_string)
                 .collect();
             (!missing.is_empty()).then(|| (ct.clone(), missing))
@@ -559,18 +562,20 @@ fn missing_groups(
         .collect()
 }
 
-fn batch_plays(
+fn batch_models(
     value: Option<&Value>,
     vids: &[String],
     cap: super::stream_pick::DecoderCapability,
-) -> HashMap<String, PlayInfo> {
+) -> HashMap<String, Value> {
     let Some(value) = value else {
         return HashMap::new();
     };
     vids.iter()
-        .filter_map(|vid| match play_info(value, vid, None, cap) {
-            Ok(Some(play)) => Some((vid.clone(), play)),
-            Ok(None) => None,
+        .filter_map(|vid| match parse_video_model(value, vid) {
+            Ok(Some(model)) if pick_stream_at(&model, None, cap).is_some() => {
+                Some((vid.clone(), model))
+            }
+            Ok(_) => None,
             Err(e) => {
                 log::warn!("[PlayUrl] 批量条目 {vid} 解析失败，跳过: {e}");
                 None

@@ -324,7 +324,7 @@ export function PlayerView({
     [onStageClick],
   );
 
-  const { persist, report } = usePlaybackProgress({
+  const { persist, report, seeking } = usePlaybackProgress({
     videoRef,
     seriesId,
     vidIndex,
@@ -465,9 +465,10 @@ export function PlayerView({
                     markPlayed();
                     setPaused(false);
                   }}
-                  onPlaying={() => {
+                  onPlaying={(event) => {
                     markLive();
                     markStalled(false);
+                    report(event.currentTarget.currentTime);
                     onFirstFrame?.();
                   }}
                   onPause={(e) => {
@@ -477,6 +478,7 @@ export function PlayerView({
                   }}
                   onLoadedData={() => markLive()}
                   onWaiting={() => markStalled(true)}
+                  onSeeking={seeking}
                   onCanPlay={() => markStalled(false)}
                   onTimeUpdate={(e) => {
                     if (e.currentTarget.currentTime > 0.1) {

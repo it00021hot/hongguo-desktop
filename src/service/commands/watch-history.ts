@@ -1,4 +1,5 @@
 import { call } from '../tauri/invoke';
+import type { GuestPlaybackReport } from '../schema/history';
 
 /** 云端观看历史（官方 App「历史」同源；登录后可用，匿名回空表）。 */
 export const watchHistory = {
@@ -13,7 +14,7 @@ export const watchHistory = {
     vidIndex: number;
     positionMs: number;
     durationMs: number;
-    meta: { title: string; cover: string; episodeCnt: number };
+    meta: { title: string; cover: string; episodeCnt: number; guest?: GuestPlaybackReport };
   }) => call('record_watch_history', item),
   /** 批量删除云端历史（read_history/update 的 is_delete+use_soft_delete 形态）。 */
   delete: (items: { seriesId: string; vid: string; vidIndex: number }[]) =>

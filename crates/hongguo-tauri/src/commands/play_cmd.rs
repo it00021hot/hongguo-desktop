@@ -15,37 +15,13 @@ pub async fn play_series(
     hongguo_service::play_service::local::resolve_play(state.inner(), &request).await
 }
 
-/// 预取一部剧的在线流（沉浸流刷剧：前端按预取档位对**后续每部**各调一次）。幂等且静默：本地没档案先解析登记，流已取/在取直接返回，取流失败不报错——预取是优化，失败大不了现场取。
-/// 每部只铺入口集（只填开头一段，转正当前集才续满整集）；同剧后续集的连播铺集由起播的 `schedule_following_episodes` 负责；档位 0=全关（含换剧预取）。
+/// 预取首页候选剧的入口流。
 #[tauri::command]
-pub async fn play_prefetch(state: State<'_, AppState>, series_id: String) -> AppResult<()> {
-    if state.settings().prefetch_episodes == 0 {
-        return Ok(());
-    }
-    let series = match state.store.series_by_id(&series_id)? {
-        Some(s) => s,
-        None => {
-            let env = state.api_env();
-            let s =
-                hongguo_service::series_service::resolver::resolve_series(&series_id, &env).await?;
-            hongguo_service::series_service::registry::upsert_and_persist(&state, s.clone())?;
-            s
-        }
-    };
-    // 起点与首页同一份续播决策（resolve_entry）：看过 >3 秒的剧预取上次看到的那一集；没看过或入口集已不在分集表（下架/重排）回落第 1 集
-    let entry = hongguo_service::play_service::resume::resolve_entry(&state.store, &series_id, &[])
-        .map(|(idx, _)| idx)?;
-    let entry = if series.episodes.iter().any(|e| e.vid_index == entry) {
-        entry
-    } else {
-        1
-    };
-    hongguo_service::play_service::online::schedule_next_episode_prefetch(
-        state.inner().clone(),
-        &series_id,
-        entry,
-    );
-    Ok(())
+pub async fn play_prefetch(
+    state: State<'_, AppState>,
+    series_ids: Vec<String>,
+) -> AppResult<Vec<String>> {
+    hongguo_service::play_service::prefetch_feed(state.inner(), series_ids, &[]).await
 }
 
 /// 同步 command 会占 **Tauri 主线程**——播放时每 5 秒一次的进度保存与其它 IPC 在主线程排队，是「窗口未响应」的候选元凶；改 async 并把 DB 查询扔进阻塞线程池，主线程只做调度。

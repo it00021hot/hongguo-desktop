@@ -24,6 +24,7 @@ pub struct AppStateInner {
     /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档已发生」，
     /// 触发身份敏感的数据（顶栏 tab 等）重拉。
     device_generation: AtomicU64,
+    pub(crate) prefetch_policy: crate::play_service::PrefetchCache,
     /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
     /// 不落库：发码会话本身分钟级有效，重启即重新发码。
     pub login_csrf: RwLock<Option<String>>,
@@ -69,6 +70,7 @@ impl AppStateInner {
             settings: RwLock::new(Settings::default()),
             device: RwLock::new(device),
             device_generation: AtomicU64::new(0),
+            prefetch_policy: Default::default(),
             login_csrf: RwLock::new(None),
             login_mfa: RwLock::new(None),
             queue: RwLock::new(Arc::new(DownloadQueue::new())),

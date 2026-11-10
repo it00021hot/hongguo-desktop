@@ -158,6 +158,12 @@ POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/
   挑不出可播档返回 `StreamMiss`，两者都保留播放中的设备身份。
   注册遇 403/429 及其他非瞬态拒绝会停止自动注册，有 `Retry-After` 时持久化截止时间。
 
+### 预取动态配置
+
+- `GET https://abtest3-misc-lq.zijieapi.com/common` 带 `cj_pay_sdk_version=8.1.7`、`ecomterm_sdk_version=44900`、`account_region=cn-gd`。`code=0` 时读取 `data.<配置名>.val`，包括 `peak_time_v629` 和 `peak_time_video_preload_opt_v605`。
+- `POST https://is-lq.snssdk.com/service/settings/v3/` 使用 `Content-Type: application/json` 和单字节请求体 `0x00`。实抓业务参数含 `app=1`、`settings_time`、`font_scale=100`、WiFi 的 `network_type=4`、`account_region=cn-gd`。响应的 `data.settings_time` 供下次增量刷新，`data.settings.video_preload_prepare_v619` 提供候选数、字节预算和压制档。压制档每项采用 `集数x字节数`。
+- 官方先读 AB 实验，再读普通设置，最后用内置默认值。原档案的实读结果见 [播放对齐交接](./req-hg-003-playback-parity.md#首页预取与媒体磁盘缓存)。
+
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```
 GET /reading/bookapi/bookmall/cell/change/v        # 注意 /v 不带斜杠
@@ -934,8 +940,8 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
   以容错解析为准——series_id/book_id/item_id 任一命中即认）
 
 ### 9.4.1 观看进度云上报
-官方客户端播片时同时打两个接口（约每分钟 + 切集时）。2026-11-10
-《全球死考》实抓均走 `api5-normal-sinfonlinea.fqnovel.com`。
+2026-11-10 官方 APK 的《全球死考》匿名观看上报均走
+`api5-normal-sinfonlinea.fqnovel.com`。触发事件见 9.4.2。
 
 **`POST /reading/bookapi/read_history/update/v`** —— `book_id`/`vid` 是
 JSON **数字**（精度内直接发数字）：
@@ -1008,8 +1014,8 @@ JSON **数字**（精度内直接发数字）：
 - `read_history/update` 的观看进度形态发送 **1 基集号**。实抓首集、ep13 分别为 1、13。
   `read_progress/upload` 通过 `item_id` 标识短剧分集，实抓首集与 ep13–21 的
   `vid_index` 都是 0。历史列表与删除沿用原有 0 基契约。
-- `history/mod.rs::report_watch_progress` 由播放器的上报心跳调用，两次请求共用当前设备环境。
-  桌面匿名上报仍由 service 跳过。累计时长字段与当前播放位置可能不同，现实现仍沿用 position_ms。
+- 两条匿名请求都用当前设备的 MetaSec v5 会话和 Cronet 六头，`read_history/update` 的 `update_timestamp_ms` 为 0。片内位置与累计播放时长分别记账。
+- 官方匿名切到《全球死考》第 13 集时曾上报当前位置 0、累计 20,563 毫秒。连续复测同样在位置 0 上报累计 15,559 毫秒；回到第 13 集时上报已保存的位置 40,522 毫秒，累计为 72,097 毫秒。
 
 ### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
 query 业务参数：`action_type=3, count=100, offset=0,
@@ -1130,7 +1136,15 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   纯图片评论的 `text` 为空串（`content_type=2`）
 
 ### 9.4.2 上报时机与历史页口径
-`read_history/update` + `read_progress/upload` 的触发点：
+官方 APK 7.4.3.32 匿名会话，实测《全球死考》第一季第 1、13、14 集及第二季首集：
+
+- 首次进剧发 `read_history/update` 和一集的 `read_progress/upload`，位置与累计都可为 0。
+- 切集、回访只更新新集历史，起点可以是 0 或该集已保存位置。回到第 13 集没有再次请求单集模型。
+- 暂停、恢复、打开选集面板、拖动及连续播放 65 秒期间没有出现额外的历史或进度请求。播放累计时长随实际播放增加，跳转目标位置单独处理。
+- 播放一段后离开播放器，先更新当前集历史，再把已看过的各集最新进度合批发送。实测长播退出发了 3 集，约 9 秒退出发了 2 集，约 3 秒回访退出没有新增请求。Tauri 用 5 秒实际播放作为短退出门槛，精确边界尚未实测。
+- 用「系列剧」切到另一季，先更新旧季当前集历史，再更新新季选中集历史，最后上传进度批包，新季在前，旧季在后。新季初播的位置与累计均为 0。切回原季时续播第 14 集的 15,514 毫秒位置，累计 197,722 毫秒。两个方向的请求均返回 `code=0`。
+
+以下节拍来自参考桌面端 v1.1.6（提交 `7800cf43f`），仍用在桌面原有登录态逻辑中：
 
 - **起播 5s 首报**：成对双接口，`current_play_position` 恰为 5000；
 - **每 ~60s 播放时长**：仅 `read_progress/upload`（暂停期间不计时）；
@@ -1139,13 +1153,12 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   自己的 5s 里程碑再报；
 - **关窗口不上报**（最后一条流量就是最后事件的上报，无 close flush）。
 
-本项目口径（两壳同规则：
+原有桌面节拍（
 `src/features/player/hooks/history-cadence.ts` ↔
 `crates/hongguo-gpui/src/home/history_cadence.rs`）：**上报心跳与 5 秒落盘
 节流解耦**，按播放位置判定节拍——新剧起播 5s 首报；**同剧切集立即报新集**
-（历史行按剧聚合，切集后还显示上一集就是错的，比官方节奏激进一步，官方要
-等新集自己的 5s 里程碑）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
-的前跳）立即补；暂停/切集/退出 force 收尾（仍守 <5 秒不建行的噪点门槛）。
+（历史行按剧聚合）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
+的前跳）立即补；暂停、切集和退出收尾（仍守 <5 秒不建行的门槛）。Tauri 匿名会话使用上面的 APK 实测口径。两种模式都保留每次播放位置采样，落盘独立节流。
 上报落定后把 `watch-history` / `local-history` 查询标记过期但**不立刻重拉**
 （`refetchType: 'none'`：首页「你的内容」种子吃同一份缓存，播放中重排会把
 游标指到别的剧），历史页下次打开必拉新行。

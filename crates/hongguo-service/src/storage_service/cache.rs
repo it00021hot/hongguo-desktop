@@ -1,5 +1,4 @@
-//! 缓存占用统计与一键清理：在线内存流、兼容转码产物（`compat-cache/`）、封面/头像转码产物
-//!（`cover-cache/`）三处缓存在此汇成一个入口；统计口径与清理口径一致，避免「清完数字不变」的假清理。
+//! 缓存占用统计与一键清理：在线内存流、在线媒体区间、兼容转码及封面转码。
 
 use serde::Serialize;
 
@@ -14,12 +13,14 @@ pub struct CachePart {
     pub bytes: u64,
 }
 
-/// 三处缓存的占用总览（前端直接消费）。
+/// 缓存占用总览（前端直接消费）。
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheUsage {
     /// 在线流缓存：在内存里，不占磁盘。
     pub online: CachePart,
+    /// 在线加密媒体区间。
+    pub online_disk: CachePart,
     /// 兼容转码缓存：磁盘 `compat-cache/`，只统计 `.mp4`（与清理口径一致）。
     pub compat: CachePart,
     /// 封面/头像转码缓存：磁盘 `cover-cache/`。
@@ -27,19 +28,24 @@ pub struct CacheUsage {
 }
 
 impl CacheUsage {
-    /// 磁盘占用合计。在线流活在内存里，重启即消失，不混进磁盘数字。
+    /// 磁盘占用合计。
     pub fn disk_bytes(&self) -> u64 {
-        self.compat.bytes + self.cover.bytes
+        self.online_disk.bytes + self.compat.bytes + self.cover.bytes
     }
 }
 
 /// 当前占用总览。
 pub fn usage() -> CacheUsage {
     let (files, bytes) = crate::play_service::online::status();
+    let (disk_files, disk_bytes) = crate::play_service::online::disk::usage();
     CacheUsage {
         online: CachePart {
             files: files as u64,
             bytes,
+        },
+        online_disk: CachePart {
+            files: disk_files,
+            bytes: disk_bytes,
         },
         compat: dir_part(&compat_cache_dir(), Some("mp4")),
         cover: dir_part(&cover_cache_dir(), None),
@@ -56,15 +62,16 @@ pub struct CacheClearResult {
     pub bytes: u64,
 }
 
-/// 一键清空三处缓存。
+/// 一键清空缓存。
 pub fn clear() -> CacheClearResult {
     let before = usage();
     let online = crate::play_service::online::clear();
+    let (disk_files, disk_bytes) = crate::play_service::online::disk::clear();
     let compat = crate::transcode_service::cache::clear();
     let cover = clear_dir(&cover_cache_dir());
     CacheClearResult {
-        items: online as u64 + compat as u64 + cover,
-        bytes: before.disk_bytes(),
+        items: online as u64 + disk_files + compat as u64 + cover,
+        bytes: disk_bytes + before.compat.bytes + before.cover.bytes,
     }
 }
 

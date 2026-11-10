@@ -173,14 +173,14 @@ pub struct AccountState {
 pub struct Settings {
     /// 下载根目录
     pub download_dir: String,
-    /// 缓存根目录（转码缓存与封面缓存落在这里的子目录）；空 = 跟随数据目录。
+    /// 在线媒体、兼容转码和封面缓存的根目录；空 = 跟随数据目录。
     /// 改动即时生效于新写入，旧目录残留不迁移（与 download_dir 同语义）。
     #[serde(default)]
     pub cache_dir: String,
-    /// 磁盘缓存占用上限（MB；0 = 不限），超限后自动删最旧的缓存文件（封面/头像与兼容转码产物都算），见 `hongguo_service::storage_service::cache::auto_clean`。
+    /// 封面与头像缓存占用上限（MB；0 = 不限）。
     #[serde(default)]
     pub cache_limit_mb: u32,
-    /// 缓存自动清理周期（天；0 = 关闭）。超过这个天数的缓存文件在自动清理
+    /// 封面与头像缓存清理周期（天；0 = 关闭）。超过这个天数的缓存文件在自动清理
     /// 时被删除（按最后修改时间判定）。
     #[serde(default)]
     pub cache_ttl_days: u32,
@@ -201,10 +201,6 @@ pub struct Settings {
     /// 最小化自动暂停，恢复窗口后继续播。
     #[serde(default = "default_true")]
     pub pause_on_minimize: bool,
-    /// 连播预取集数（0=关闭；1=仅下一集）。流预取与 HEVC 预转共用此档，
-    /// 起播后按它向后多铺几集（issue #6：减少切集等待、可关）
-    #[serde(default = "default_prefetch_episodes")]
-    pub prefetch_episodes: u32,
     /// 老板键全局快捷键（tauri accelerator 形态，如 "CommandOrControl+Alt+H"；
     /// 空 = 未启用）。注册在壳侧（issue #4：隐藏/显示主窗口）
     #[serde(default)]
@@ -219,10 +215,6 @@ pub struct Settings {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_prefetch_episodes() -> u32 {
-    3
 }
 
 fn default_theme() -> String {
@@ -246,7 +238,6 @@ impl Default for Settings {
             auto_delete_after_play: false,
             auto_next_episode: true,
             pause_on_minimize: true,
-            prefetch_episodes: default_prefetch_episodes(),
             boss_key: String::new(),
             theme: default_theme(),
             account: None,
@@ -258,12 +249,6 @@ impl Settings {
     /// 收敛并发到 1–10，保存前调用。
     pub fn clamp_concurrency(&mut self) {
         self.max_concurrency = self.max_concurrency.clamp(1, 10);
-    }
-
-    /// 收敛预取集数到 0–10（0=关闭；连播与换剧铺的部/集数都挂这一档，
-    /// 上限对齐 StreamCache 的预取标记位）。
-    pub fn clamp_prefetch_episodes(&mut self) {
-        self.prefetch_episodes = self.prefetch_episodes.min(10);
     }
 
     /// 缓存根覆盖值：非空给 `Some`，空表示跟随数据目录（`None`）。
@@ -337,16 +322,20 @@ mod tests {
     }
 
     #[test]
-    fn clamp_prefetch_episodes_bounds() {
-        let mut s = Settings {
-            prefetch_episodes: 99,
-            ..Default::default()
-        };
-        s.clamp_prefetch_episodes();
-        assert_eq!(s.prefetch_episodes, 10);
-        s.prefetch_episodes = 0;
-        s.clamp_prefetch_episodes();
-        assert_eq!(s.prefetch_episodes, 0);
+    fn legacy_prefetch_count_is_discarded_on_save() {
+        let original = Settings::default();
+        let mut saved = serde_json::to_value(&original).unwrap();
+        for count in [0, 1, 10] {
+            saved["prefetchEpisodes"] = serde_json::json!(count);
+            let loaded: Settings = serde_json::from_value(saved.clone()).unwrap();
+            assert_eq!(loaded, original);
+            assert!(
+                serde_json::to_value(loaded)
+                    .unwrap()
+                    .get("prefetchEpisodes")
+                    .is_none()
+            );
+        }
     }
 
     #[test]
@@ -454,7 +443,6 @@ mod tests {
             auto_delete_after_play: false,
             auto_next_episode: true,
             pause_on_minimize: true,
-            prefetch_episodes: 1,
             boss_key: "CommandOrControl+Alt+H".into(),
             theme: "auto".into(),
             account: None,
@@ -468,7 +456,6 @@ mod tests {
         assert_eq!(v["autoDeleteAfterPlay"], false);
         assert_eq!(v["autoNextEpisode"], true);
         assert_eq!(v["pauseOnMinimize"], true);
-        assert_eq!(v["prefetchEpisodes"], 1);
         assert_eq!(v["bossKey"], "CommandOrControl+Alt+H");
         assert_eq!(v["naming"], "titleIndex");
         assert_eq!(v["proxy"]["mode"], "direct");

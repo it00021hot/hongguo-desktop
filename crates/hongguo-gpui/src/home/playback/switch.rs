@@ -196,6 +196,15 @@ impl super::HomeView {
                 // 缓存的「当前集」要跟着正在播的走：接力不走 prepare，
                 // set_current 内会按预算逐出旧集（否则长会话无界堆流缓存）。
                 hongguo_stream::cache().set_current(&next_vid);
+                if let Some(now) = self.now.as_ref() {
+                    let progress_key = format!("{}:{next_index}", now.series_id);
+                    hongguo_service::play_service::online::resume_fill(
+                        &self.state,
+                        &next_vid,
+                        now.definition,
+                        &progress_key,
+                    );
+                }
                 self.save_progress_now();
                 if let Some(now) = self.now.as_mut() {
                     now.vid_index = next_index;
@@ -285,7 +294,9 @@ impl super::HomeView {
             let state = Arc::clone(&self.state);
             bridge::spawn(async move {
                 let env = state.api_env();
-                if !preload_map.is_empty() {
+                if !preload_map.is_empty()
+                    && !hongguo_api::metasec::playback_configured().unwrap_or(false)
+                {
                     let cap = hongguo_api::stream_pick::DecoderCapability::from_probes(
                         hongguo_service::capability_service::hevc_playable(),
                         hongguo_media_platform::capability::bytevc2_decode_available(),

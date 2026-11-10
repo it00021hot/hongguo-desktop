@@ -47,7 +47,7 @@ export function useSeriesMeta(seriesId: string) {
 
 /**
  * 一部剧最近看到的那一集（本地 playback 表，5 秒一写的真值）。
- * 故意不给 staleTime：详情页每次挂载现读，必须是本地最新值。
+ * 切剧返回和详情页挂载都读本地最新值。
  */
 export function useSeriesProgress(seriesId: string) {
   return useQuery({
@@ -56,6 +56,7 @@ export function useSeriesProgress(seriesId: string) {
     enabled: seriesId !== '',
     // 本地 playback 表读取，失败退化成从头播即可，不值得打扰
     meta: { silentOnError: true },
+    staleTime: 0,
     gcTime: 60_000,
   });
 }

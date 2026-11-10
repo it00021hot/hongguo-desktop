@@ -87,9 +87,6 @@ impl super::SettingsView {
                 let concurrency = saved.max_concurrency as f32;
                 self.concurrency
                     .update(cx, |state, cx| state.set_value(concurrency, window, cx));
-                let prefetch = saved.prefetch_episodes as f32;
-                self.prefetch
-                    .update(cx, |state, cx| state.set_value(prefetch, window, cx));
             }
             Err(e) => {
                 log::warn!("[Settings] 保存失败: {e}");

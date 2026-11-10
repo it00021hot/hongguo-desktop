@@ -237,6 +237,11 @@ pub fn pick_stream_at(
     let (score, v) = chosen?;
     Some(PlayStream {
         url: v.get("main_url")?.as_str()?.to_string(),
+        file_hash: v
+            .pointer("/video_meta/file_hash")
+            .and_then(Value::as_str)
+            .filter(|hash| !hash.is_empty())
+            .map(str::to_owned),
         spade: v
             .get("encrypt_info")
             .and_then(|e| e.get("spade_a"))

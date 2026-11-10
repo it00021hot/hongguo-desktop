@@ -25,7 +25,7 @@ fn registry_roundtrip_and_zero_skip() {
 fn clear_batch_cache_drops_stale_prefetch() {
     batch_cache().lock().insert(
         "vid-old-device".into(),
-        (Instant::now(), PlayInfo::default()),
+        (Instant::now(), Arc::new(Value::Null)),
     );
     assert!(batch_cache().lock().contains_key("vid-old-device"));
     clear_batch_cache();
@@ -142,6 +142,32 @@ fn local_origins(origin: &str) -> PlayOrigins<'_> {
         saas: origin,
         light: origin,
     }
+}
+
+#[tokio::test]
+async fn cached_model_selects_the_requested_definition_and_can_return_to_auto() {
+    let vid = "cached-multiple-definitions";
+    let video_model = json!({"video_list": [
+        {"main_url": "https://cdn.example/1080.mp4", "video_meta": {"definition": "1080p", "codec_type": "h264"}},
+        {"main_url": "https://cdn.example/720.mp4", "video_meta": {"definition": "720p", "codec_type": "h264"}}
+    ]})
+    .to_string();
+    let (origin, server) = mock(vec![response(json!({vid: {"video_model": video_model}}))]);
+    let group = BTreeMap::from([("1004".to_string(), vec![vid.to_string()])]);
+    let cap = DecoderCapability::full();
+    let env = ApiEnv::anonymous(Default::default());
+    assert_eq!(
+        fetch_play_batch_at(&group, cap, &env, local_origins(&origin))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(server.join().unwrap().len(), 1);
+
+    let selected = fetch_play_url(vid, Some(720), cap, &env).await.unwrap();
+    let automatic = fetch_play_url(vid, None, cap, &env).await.unwrap();
+    assert_eq!(selected.url, "https://cdn.example/720.mp4");
+    assert_eq!(automatic.url, "https://cdn.example/1080.mp4");
 }
 
 #[tokio::test]

@@ -197,7 +197,8 @@ impl super::SettingsView {
         };
         let cache_line = match &self.cache_usage {
             Some(cache_usage) => {
-                let size = format_bytes(cache_usage.compat.bytes + cache_usage.cover.bytes);
+                let size = format_bytes(cache_usage.disk_bytes());
+                let online_disk = format_bytes(cache_usage.online_disk.bytes);
                 let compat = format_bytes(cache_usage.compat.bytes);
                 let cover = format_bytes(cache_usage.cover.bytes);
                 let online = cache_usage.online.files.to_string();
@@ -205,6 +206,7 @@ impl super::SettingsView {
                     "settings.cacheUsage",
                     &[
                         ("size", size.as_str()),
+                        ("onlineDisk", online_disk.as_str()),
                         ("compat", compat.as_str()),
                         ("cover", cover.as_str()),
                         ("online", online.as_str()),

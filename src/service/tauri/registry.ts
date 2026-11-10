@@ -39,6 +39,7 @@ import {
   proxyConfigSchema,
   proxyTestResultSchema,
   queueStatusSchema,
+  guestPlaybackReportSchema,
   localHistoryItemSchema,
   rankPageSchema,
   relatedSeriesSchema,
@@ -380,7 +381,10 @@ export const COMMANDS = {
     }),
     response: playResponseSchema,
   },
-  play_prefetch: { args: z.object({ seriesId: z.string() }), response: voidResp },
+  play_prefetch: {
+    args: z.object({ seriesIds: z.array(z.string()) }),
+    response: z.array(z.string()),
+  },
   save_playback_position: {
     args: z.object({
       seriesId: z.string(),
@@ -506,6 +510,7 @@ export const COMMANDS = {
         title: z.string(),
         cover: z.string(),
         episodeCnt: z.number(),
+        guest: guestPlaybackReportSchema.optional(),
       }),
     }),
     response: voidResp,

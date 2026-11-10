@@ -118,23 +118,6 @@ impl super::SettingsView {
                             .child(crate::i18n::t("settings.concurrencyDesc")),
                     ),
             )
-            .child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(Label::new(format!(
-                        "{} — {}",
-                        crate::i18n::t("settings.prefetchEpisodes"),
-                        current.prefetch_episodes
-                    )))
-                    .child(Slider::new(&self.prefetch))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(crate::i18n::t("settings.prefetchEpisodesDesc")),
-                    ),
-            )
             .into_any_element()
     }
 

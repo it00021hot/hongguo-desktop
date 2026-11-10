@@ -115,7 +115,6 @@ pub(crate) struct SettingsView {
     naming_select: Entity<SelectState<SearchableVec<SharedString>>>,
     proxy_select: Entity<SelectState<SearchableVec<SharedString>>>,
     concurrency: Entity<SliderState>,
-    prefetch: Entity<SliderState>,
     capability: Option<DecodeCapability>,
     redetecting: bool,
     redetect_done: bool,
@@ -162,13 +161,6 @@ impl SettingsView {
         let concurrency = cx.new(|_| {
             SliderState::new()
                 .min(1.)
-                .max(10.)
-                .step(1.)
-                .default_value(3.)
-        });
-        let prefetch = cx.new(|_| {
-            SliderState::new()
-                .min(0.)
                 .max(10.)
                 .step(1.)
                 .default_value(3.)
@@ -223,14 +215,6 @@ impl SettingsView {
             },
         )
         .detach();
-        cx.subscribe_in(&prefetch, window, |this, _, event: &SliderEvent, _, cx| {
-            let SliderEvent::Change(value) = event else {
-                return;
-            };
-            let n = value.start().round().clamp(0.0, 10.0) as u32;
-            this.patch(cx, |s| s.prefetch_episodes = n);
-        })
-        .detach();
         Self {
             state,
             loaded: false,
@@ -244,7 +228,6 @@ impl SettingsView {
             naming_select,
             proxy_select,
             concurrency,
-            prefetch,
             capability: None,
             redetecting: false,
             redetect_done: false,

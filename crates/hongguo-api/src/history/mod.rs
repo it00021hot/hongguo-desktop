@@ -10,13 +10,32 @@ use serde_json::Value;
 
 use super::client::{ApiEnv, SINFONLINEA_API_ORIGIN, api_call_model_light, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
+use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::utils::json::{check_code, str_field};
 use hongguo_common::utils::time::now_ms;
 use hongguo_common::{AppError, AppResult};
 
 pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
 pub(crate) const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
-const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
+pub(crate) const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestPlaybackReport {
+    pub cumulative_ms: i64,
+    pub observed_at_ms: i64,
+    pub progress: Vec<GuestProgressItem>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestProgressItem {
+    pub series_id: String,
+    pub vid: String,
+    pub position_ms: i64,
+    pub cumulative_ms: i64,
+    pub observed_at_ms: i64,
+}
 
 /// 拉一页云端观看历史。
 pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
@@ -222,26 +241,50 @@ pub async fn report_watch_progress(
 
 /// 官方匿名播放在原设备会话下更新当前一集的历史。
 pub async fn report_guest_watch_progress(
-    series_id: &str,
-    vid: &str,
-    vid_index: i64,
-    position_ms: i64,
+    item: &LocalHistoryItem,
+    report: Option<&GuestPlaybackReport>,
     env: &ApiEnv,
 ) -> AppResult<()> {
     if !crate::metasec::playback_configured()? {
         return Ok(());
     }
-    let body = history_update_body(series_id, vid, vid_index, position_ms, now_ms(), 0);
+    let body = history_update_body(
+        &item.series_id,
+        &item.vid,
+        i64::from(item.vid_index),
+        item.position_ms,
+        report.map_or(item.position_ms, |sample| sample.cumulative_ms),
+        report.map_or(item.updated_at_ms, |sample| sample.observed_at_ms),
+        0,
+    );
+    let update = send_guest_report(READ_HISTORY_UPDATE_PATH, body, env).await;
+    if update.is_ok() {
+        log::debug!("[History] 匿名历史更新成功，集号 {}", item.vid_index);
+    }
+    let Some(report) = report.filter(|sample| !sample.progress.is_empty()) else {
+        return update;
+    };
+    let books: Vec<_> = report.progress.iter().map(guest_progress_item).collect();
+    let progress = send_guest_report(
+        READ_PROGRESS_UPLOAD_PATH,
+        serde_json::json!({"books": books}),
+        env,
+    )
+    .await;
+    if progress.is_ok() {
+        log::debug!("[History] 匿名进度上传成功，共 {} 集", books.len());
+    }
+    update.and(progress)
+}
+
+async fn send_guest_report(path: &str, body: Value, env: &ApiEnv) -> AppResult<()> {
     let raw = serde_json::to_vec(&body)
-        .map_err(|e| AppError::Media(format!("构造匿名历史上报失败: {e}")))?;
-    let bytes =
-        api_call_model_light(SINFONLINEA_API_ORIGIN, READ_HISTORY_UPDATE_PATH, raw, env).await?;
+        .map_err(|e| AppError::Media(format!("构造匿名播放上报失败: {e}")))?;
+    let bytes = api_call_model_light(SINFONLINEA_API_ORIGIN, path, raw, env).await?;
     let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析匿名历史上报响应失败: {e}")))?;
+        .map_err(|e| AppError::Media(format!("解析匿名播放上报响应失败: {e}")))?;
     check_code(&value)?;
-    check_update_fails(&value)?;
-    log::debug!("[History] 匿名历史更新成功，集号 {vid_index}");
-    Ok(())
+    check_update_fails(&value)
 }
 
 fn watch_progress_bodies(
@@ -251,8 +294,16 @@ fn watch_progress_bodies(
     position_ms: i64,
     now: i64,
 ) -> (Value, Value) {
-    let update_body = history_update_body(series_id, vid, vid_index, position_ms, now, now);
-    let upload_body = progress_upload_body(series_id, vid, position_ms, now);
+    let update_body = history_update_body(
+        series_id,
+        vid,
+        vid_index,
+        position_ms,
+        position_ms,
+        now,
+        now,
+    );
+    let upload_body = serde_json::json!({"books": [progress_upload_item(series_id, vid, position_ms, position_ms, now)]});
     (update_body, upload_body)
 }
 
@@ -261,6 +312,7 @@ fn history_update_body(
     vid: &str,
     vid_index: i64,
     position_ms: i64,
+    cumulative_ms: i64,
     now: i64,
     update_timestamp: i64,
 ) -> Value {
@@ -279,7 +331,7 @@ fn history_update_body(
             "is_multi_season": 0,
             "meet_guide_comment_tag": false,
             "origin_novel_book_id": 0,
-            "player_accumulate_total_time": position_ms,
+            "player_accumulate_total_time": cumulative_ms,
             "read_timestamp_ms": now,
             "recent_reads": 0,
             "retain_video_play_time": 0,
@@ -296,9 +348,24 @@ fn history_update_body(
     })
 }
 
-fn progress_upload_body(series_id: &str, vid: &str, position_ms: i64, now: i64) -> Value {
+fn guest_progress_item(sample: &GuestProgressItem) -> Value {
+    progress_upload_item(
+        &sample.series_id,
+        &sample.vid,
+        sample.position_ms,
+        sample.cumulative_ms,
+        sample.observed_at_ms,
+    )
+}
+
+fn progress_upload_item(
+    series_id: &str,
+    vid: &str,
+    position_ms: i64,
+    cumulative_ms: i64,
+    now: i64,
+) -> Value {
     serde_json::json!({
-        "books": [{
             "book_id": series_id,
             "book_type": 2,
             "channel_id": 0,
@@ -312,12 +379,11 @@ fn progress_upload_body(series_id: &str, vid: &str, position_ms: i64, now: i64) 
             "page_index": 0,
             "page_progress_rate": 0,
             "paragraph_offset": 0,
-            "player_cumulative_total_duration": position_ms,
+            "player_cumulative_total_duration": cumulative_ms,
             "progress_type": 0,
             "read_timestamp_ms": now,
             "tone_id": 0,
             "vid_index": 0,
-        }],
     })
 }
 
@@ -358,6 +424,29 @@ mod tests {
             assert_eq!(upload["books"][0]["vid_index"], 0);
             assert_eq!(upload["books"][0]["item_id"], vid.to_string());
         }
+    }
+
+    #[test]
+    fn guest_reports_keep_cumulative_playback_separate_from_episode_position() {
+        let update = history_update_body("100", "113", 13, 0, 15_559, 1000, 0);
+        assert_eq!(update["update_datas"][0]["current_play_position"], 0);
+        assert_eq!(
+            update["update_datas"][0]["player_accumulate_total_time"],
+            15_559
+        );
+        assert_eq!(update["update_datas"][0]["update_timestamp_ms"], 0);
+
+        let progress = guest_progress_item(&GuestProgressItem {
+            series_id: "100".into(),
+            vid: "113".into(),
+            position_ms: 40_522,
+            cumulative_ms: 72_097,
+            observed_at_ms: 2000,
+        });
+        assert_eq!(progress["item_id"], "113");
+        assert_eq!(progress["current_play_time"], 40_522);
+        assert_eq!(progress["player_cumulative_total_duration"], 72_097);
+        assert_eq!(progress["read_timestamp_ms"], 2000);
     }
 
     #[test]

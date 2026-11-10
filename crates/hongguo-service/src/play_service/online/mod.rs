@@ -4,6 +4,7 @@
 //! 红线：起后台填充任务一律走共用任务运行时 [`crate::runtime`]，不裸 `tokio::spawn`——
 //! `resume_fill` 是同步入口、可能被协议/回调线程调用（无 Tokio 上下文，裸 spawn 会 panic→abort）。
 
+pub(crate) mod disk;
 mod fill;
 mod plain;
 mod prepare;
@@ -11,9 +12,7 @@ mod progress;
 
 pub use fill::resume_fill;
 pub use plain::{fetch_plain, fetch_plain_with};
-pub use prepare::{
-    Prepared, ensure_stream_ready, prefetch_stream, prepare, schedule_next_episode_prefetch,
-};
+pub use prepare::{Prepared, ensure_stream_ready, prefetch_stream, prepare, schedule_next_episode_prefetch};
 pub use progress::{OnlineProgressEvent, ProgressReporter, ProgressSink};
 
 use hongguo_stream::cache;

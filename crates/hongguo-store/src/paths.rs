@@ -184,6 +184,10 @@ pub fn compat_cache_dir() -> PathBuf {
     cache_root().join("compat-cache")
 }
 
+pub fn online_cache_dir() -> PathBuf {
+    cache_root().join("online-cache")
+}
+
 /// 封面转码缓存目录（HEIC→JPEG 产物，按 URL 哈希寻址，可随时清）。
 pub fn cover_cache_dir() -> PathBuf {
     cache_root().join("cover-cache")

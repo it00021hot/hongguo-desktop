@@ -2,7 +2,9 @@
 
 use serde::Deserialize;
 
-use hongguo_api::history::{WatchHistoryPage, delete_watch_history, fetch_watch_history};
+use hongguo_api::history::{
+    GuestPlaybackReport, WatchHistoryPage, delete_watch_history, fetch_watch_history,
+};
 use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::utils::time::now_ms;
 use hongguo_common::{AppError, AppResult};
@@ -64,6 +66,7 @@ pub async fn record_watch_history(
         title: String::new(),
         cover: String::new(),
         episode_cnt: 0,
+        guest: None,
     });
     let item = LocalHistoryItem {
         series_id,
@@ -76,7 +79,23 @@ pub async fn record_watch_history(
         episode_cnt: meta.episode_cnt,
         updated_at_ms: now_ms(),
     };
-    hongguo_service::history_service::record(state.inner(), &item).await
+    if let Some(report) = &meta.guest {
+        let valid_id = |id: &str| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit());
+        if report.cumulative_ms < 0
+            || report.observed_at_ms <= 0
+            || report.progress.iter().any(|sample| {
+                !valid_id(&sample.series_id)
+                    || !valid_id(&sample.vid)
+                    || sample.position_ms < 0
+                    || sample.cumulative_ms < 0
+                    || sample.observed_at_ms <= 0
+            })
+        {
+            return Err(AppError::InvalidArgs("匿名播放进度参数无效".into()));
+        }
+    }
+    hongguo_service::history_service::record_playback(state.inner(), &item, meta.guest.as_ref())
+        .await
 }
 
 /// 记录时的展示元数据（剧名/封面/总集数）：播放器手里现成，落进本地行
@@ -87,6 +106,7 @@ pub struct RecordHistoryMeta {
     title: String,
     cover: String,
     episode_cnt: u32,
+    guest: Option<GuestPlaybackReport>,
 }
 
 /// 本地观看历史（未登录模式的历史页数据源；字段与云端条目同形）。

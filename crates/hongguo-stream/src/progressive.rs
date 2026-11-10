@@ -29,6 +29,8 @@ pub struct ProgressiveStream {
     pub demand: ReaderDemand,
     /// CDN 视频地址（恢复填充直接按 Range 续拉）
     pub cdn_url: String,
+    /// 续填时沿用起播阶段生成的磁盘资源键。
+    pub media_cache_key: Option<String>,
     /// 取流时的代理配置（恢复填充重建 client 用）
     pub proxy: hongguo_common::model::ProxyConfig,
 }

@@ -91,7 +91,12 @@ pub(crate) async fn sign_playback(
     headers: &[(String, String)],
     env: &ApiEnv,
 ) -> AppResult<Option<SignedRequest>> {
-    if !path.starts_with("/novel/player/") && path != crate::history::READ_HISTORY_UPDATE_PATH {
+    if !path.starts_with("/novel/player/")
+        && !matches!(
+            path,
+            crate::history::READ_HISTORY_UPDATE_PATH | crate::history::READ_PROGRESS_UPLOAD_PATH
+        )
+    {
         return Ok(None);
     }
     let Some(metasec) = MetaSec::configured()? else {

@@ -95,6 +95,7 @@ impl PartialOrd for StreamScore {
 /// 挑到的一条流。
 pub struct PlayStream {
     pub url: String,
+    pub file_hash: Option<String>,
     pub spade: String,
     pub codec: Option<String>,
     /// 实际选中的档位。发生回退时它是自动挑的那档，不是请求的那档。

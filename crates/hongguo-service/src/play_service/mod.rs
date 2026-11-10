@@ -3,34 +3,30 @@
 use crate::app_state::AppState;
 
 pub mod compat_play;
-pub mod compat_prefetch;
+mod feed;
 pub mod local;
 pub mod online;
 pub mod position;
+mod prefetch;
 pub mod resume;
 
-/// 兼容预转的硬上限：兼容预转是「整集下载 + 整集转码」，不能跟在线流预取档位线性放大
-/// （无 HEVC 的旧机多集同时转码会吃满 CPU/磁盘，反而拖慢当前集）。只保下一集，够连播兜底。
-const COMPAT_PREFETCH_LIMIT: u32 = 1;
-/// 7.4.3.32 的常态后续模型窗口。
-const OFFICIAL_PRELOAD_LIMIT: u32 = 3;
+pub use feed::prefetch_feed;
+pub use hongguo_api::prefetch_policy::DEFAULT_PREFETCH_COUNT;
+pub(crate) use prefetch::PrefetchCache;
+pub use prefetch::prefetch_budget;
 
-/// 当前在线集起播后，按设置向后铺同一部剧的后续集。两个壳都必须从同一入口调度：
-/// 在线预取解决「下一集冷走取流表」、兼容预转解决「无 HEVC 机器下一集要整集转码」，
-/// 只调其中一路会让某类设备自动连播黑屏。在线预取**逐集串行 + 随机 1~5s 间隔**
-///（取流域按调用次数节流，N 集同时发会触发按设备限速）；兼容预转只铺 `COMPAT_PREFETCH_LIMIT` 集。
+/// 当前在线集起播后，向后铺同一部剧的后续集。两个壳从同一入口调度：
+/// 在线预取按动态字节预算铺媒体，兼容转码由实际选中的分集触发。
 pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vid_index: u32) {
     let v5 = hongguo_api::metasec::playback_configured().unwrap_or(false);
-    let mut count = state.settings().prefetch_episodes;
-    if v5 {
-        count = count.min(OFFICIAL_PRELOAD_LIMIT);
-    }
-    if count == 0 {
-        return;
-    }
     let online_state = state.clone();
     let sid = series_id.to_string();
     crate::runtime::spawn(async move {
+        let budget = prefetch_budget(&online_state).await;
+        let count = budget.count;
+        if count == 0 {
+            return;
+        }
         if v5 {
             local::prefetch_episode_models(
                 &online_state,
@@ -40,18 +36,12 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
             )
             .await;
         }
-        for offset in compat_offsets(count) {
-            compat_prefetch::schedule_next_episode(
-                online_state.clone(),
-                &sid,
-                current_vid_index + offset,
-            );
-        }
-        for offset in online_offsets(count) {
+        for offset in 1..=count {
             online::schedule_next_episode_prefetch(
                 online_state.clone(),
                 &sid,
-                current_vid_index + offset,
+                current_vid_index.saturating_add(offset),
+                budget.bytes,
             );
             if offset < count {
                 let ns = std::time::SystemTime::now()
@@ -66,14 +56,6 @@ pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vi
             }
         }
     });
-}
-
-fn online_offsets(count: u32) -> std::ops::RangeInclusive<u32> {
-    1..=count
-}
-
-fn compat_offsets(count: u32) -> std::ops::RangeInclusive<u32> {
-    1..=count.min(COMPAT_PREFETCH_LIMIT)
 }
 
 /// 播放策略轮询（行为画像对齐）：播放器栈播放期每 `query_gap` 秒（响应下发，默认 300s）
@@ -101,20 +83,4 @@ pub fn ensure_play_strategy_poller(state: &AppState) {
             tokio::time::sleep(std::time::Duration::from_secs(gap)).await;
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compat_prefetch_does_not_scale_with_the_stream_budget() {
-        assert_eq!(
-            online_offsets(10).collect::<Vec<_>>(),
-            (1..=10).collect::<Vec<_>>()
-        );
-        assert_eq!(compat_offsets(10).collect::<Vec<_>>(), vec![1]);
-        assert_eq!(compat_offsets(0).collect::<Vec<_>>(), Vec::<u32>::new());
-        assert_eq!(compat_offsets(1).collect::<Vec<_>>(), vec![1]);
-    }
 }

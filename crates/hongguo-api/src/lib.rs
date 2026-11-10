@@ -16,6 +16,7 @@ pub mod new_drama;
 pub mod params;
 pub mod play_strategy;
 pub mod play_url;
+pub mod prefetch_policy;
 pub mod rank;
 pub mod recommend;
 pub mod register;

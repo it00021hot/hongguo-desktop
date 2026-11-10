@@ -104,16 +104,8 @@ pub async fn prepare(
     // set_current 内已跑 retain_playing_set（连播接力同路，不依赖 prepare）。
     c.set_current(vid);
 
-    // 不指定档位时先认上一轮解析到的档位（缓存键必须有具体档位）；连 auto 记录都没有时，
-    // 认领同 vid 任一已就绪条目，避免整条取流链路重走一遍，也让「拉分集」与「起播」
-    // 两个并发请求认到同一条缓存。
-    let want = match definition.or_else(|| c.auto_definition(vid)) {
-        Some(w) => Some(w),
-        None => c.ready_any(vid).map(|(d, _)| {
-            c.remember_auto(vid, d);
-            d
-        }),
-    };
+    // 自动档只认自动选流的结果。手动缓存的一档不能代替自动选流。
+    let want = definition.or_else(|| c.auto_definition(vid));
     if let Some(want) = want {
         if let Some(hit) = prepared(c, vid, want) {
             // 预取只填了头部的条目：转正后立刻续填余下（后台，不挡播放）
@@ -126,7 +118,9 @@ pub async fn prepare(
         // 另一个请求正在把这一档取下来：等它，而不是自己也发一次下载。
         if c.is_fetching(vid, want) {
             log::info!("[Online] {vid} 档位 {want} 正在取流，等待复用");
-            return wait_for_fetch(c, vid, want).await;
+            let result = wait_for_fetch(c, vid, want).await?;
+            resume_fill(state, vid, want, progress_key);
+            return Ok(result);
         }
     }
 
@@ -147,6 +141,10 @@ pub async fn prepare(
     if definition.is_none() {
         c.remember_auto(vid, want);
     }
+    if let Some(hit) = prepared(c, vid, want) {
+        resume_fill(state, vid, want, progress_key);
+        return Ok(hit);
+    }
     log::info!(
         "[Online] {vid} 选中档位 {want}（共 {} 档可选）",
         play.definitions.len()
@@ -154,7 +152,9 @@ pub async fn prepare(
 
     if !c.begin_fetch(vid, want) {
         // 抢取流权时又被别人插队（窗口极窄），转为等待
-        return wait_for_fetch(c, vid, want).await;
+        let result = wait_for_fetch(c, vid, want).await?;
+        resume_fill(state, vid, want, progress_key);
+        return Ok(result);
     }
     c.set_definitions(vid, want, &play.definitions);
     let url = hongguo_protocol::stream_url(vid, want);
@@ -173,7 +173,7 @@ pub async fn prepare(
     crate::device::note_play_address(state, series_id_for_latch, Some(vid));
     let state = state.clone();
     crate::runtime::spawn(async move {
-        let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, false).await;
+        let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, None).await;
         // 取流权一直持有到数据落盘：中途放开会让并发的第二个请求重新下一遍。
         c.end_fetch(&owned, want);
         if let Err(e) = filled {
@@ -198,9 +198,14 @@ fn prepared(c: &StreamCache, vid: &str, definition: u32) -> Option<Prepared> {
 /// 预取一集的流（沉浸流「一切就下一部」的后台铺垫）：提前走完「取流表 + 建渐进流」
 /// 两步贵的前置，数据后台渐进填充；用户真滚过去时 `prepare` 命中 ready，首帧只等头部数据区间。
 /// 幂等（已有条目/已在取流静默返回）；失败同样静默——预取是锦上添花，不把噪音推给前端。
-pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) -> AppResult<()> {
+pub async fn prefetch_stream(
+    state: &AppState,
+    vid: &str,
+    progress_key: &str,
+    bytes: u64,
+) -> AppResult<()> {
     let vid = vid.trim();
-    if vid.is_empty() {
+    if vid.is_empty() || bytes == 0 {
         return Ok(());
     }
     crate::cold_start::wait().await;
@@ -247,7 +252,17 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
     let settings = state.settings();
     let state = state.clone();
     crate::runtime::spawn(async move {
-        let filled = fill(&state, c, &owned, &owned_key, want, &play, &settings, true).await;
+        let filled = fill(
+            &state,
+            c,
+            &owned,
+            &owned_key,
+            want,
+            &play,
+            &settings,
+            Some(bytes),
+        )
+        .await;
         c.end_fetch(&owned, want);
         if let Err(e) = filled {
             log::warn!("[Online] 预取填充 {owned} 失败: {e}");
@@ -265,6 +280,7 @@ pub async fn ensure_stream_ready(
     vid: &str,
     definition: u32,
     progress_key: &str,
+    bytes: u64,
 ) -> bool {
     const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     if hongguo_stream::total_len(vid, definition).is_some() {
@@ -280,7 +296,7 @@ pub async fn ensure_stream_ready(
     resume_fill(state, vid, definition, progress_key);
     if !c.exists(vid, definition)
         && !c.is_fetching(vid, definition)
-        && let Err(error) = prefetch_stream(state, vid, progress_key).await
+        && let Err(error) = prefetch_stream(state, vid, progress_key, bytes).await
     {
         log::warn!("[Online] 预注册 {vid}@{definition} 失败: {error}");
     }
@@ -293,14 +309,18 @@ pub async fn ensure_stream_ready(
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    log::warn!("[Online] {vid}@{definition} 预注册超时（继续由 loader 等待）");
+    log::debug!("[Online] {vid}@{definition} 预注册超时，切集后现场取流");
     false
 }
 
-/// 集间流预取的统一入口：同剧连播与换剧都走这里，铺几集由 `Settings.prefetch_episodes`
-/// 统一控制（0=全关）。不预取则自动连播每集都要冷走一遍取流表+探针链；
+/// 同剧连播与换剧共用的单集媒体预取入口。
 /// 幂等与礼让全部复用 [`prefetch_stream`]。档案里查不到该集的 vid 就放弃（播到时现场解析）。
-pub fn schedule_next_episode_prefetch(state: AppState, series_id: &str, next_vid_index: u32) {
+pub fn schedule_next_episode_prefetch(
+    state: AppState,
+    series_id: &str,
+    next_vid_index: u32,
+    bytes: u64,
+) {
     let Some(vid) =
         crate::play_service::local::episode_vid(&state.store, series_id, next_vid_index)
     else {
@@ -315,7 +335,7 @@ pub fn schedule_next_episode_prefetch(state: AppState, series_id: &str, next_vid
             .acquire()
             .await
             .expect("预取信号量常驻到进程结束");
-        if let Err(e) = prefetch_stream(&state, &vid, &progress_key).await {
+        if let Err(e) = prefetch_stream(&state, &vid, &progress_key, bytes).await {
             log::warn!("[Online] 第 {next_vid_index} 集预取失败（忽略，播到时现场取）: {e}");
         }
     });

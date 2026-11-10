@@ -16,16 +16,20 @@ pub fn get_storage_usage(state: State<'_, AppState>) -> StorageUsage {
     usage::usage(&state)
 }
 
-/// 三处缓存（在线内存流 / 兼容转码 / 封面转码）的占用总览。
+/// 缓存占用总览。
 #[tauri::command]
-pub fn get_cache_usage() -> CacheUsage {
-    cache::usage()
+pub async fn get_cache_usage() -> AppResult<CacheUsage> {
+    tauri::async_runtime::spawn_blocking(cache::usage)
+        .await
+        .map_err(|e| hongguo_common::AppError::Internal(format!("读取缓存占用失败: {e}")))
 }
 
 /// 一键清空全部缓存。cover-cache 此前没有任何清理入口，别再拆回多个按钮。
 #[tauri::command]
-pub fn clear_cache() -> CacheClearResult {
-    cache::clear()
+pub async fn clear_cache() -> AppResult<CacheClearResult> {
+    tauri::async_runtime::spawn_blocking(cache::clear)
+        .await
+        .map_err(|e| hongguo_common::AppError::Internal(format!("清理缓存失败: {e}")))
 }
 
 /// 按剧聚合的本地占用（清理页剧列表，只含磁盘上真有文件的剧）。
