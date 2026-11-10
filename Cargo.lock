@@ -4575,6 +4575,7 @@ dependencies = [
 name = "hongguo-signer"
 version = "0.6.5"
 dependencies = [
+ "aes 0.9.4",
  "base64 0.23.1",
  "chrono",
  "hex",
@@ -4582,6 +4583,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
+ "sha1",
  "sm3",
 ]
 
@@ -9203,6 +9205,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4eceb519ec34d8290aaf6e46f435102f2bfa63f22b05a144fb16ab266d3b198"
 dependencies = [
  "stable_deref_trait",
+]
+
+[[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]

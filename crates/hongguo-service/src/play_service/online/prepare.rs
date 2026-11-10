@@ -35,23 +35,15 @@ const PREFETCH_CONCURRENCY: usize = 2;
 static PREFETCH_SLOTS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(PREFETCH_CONCURRENCY);
 
-/// 取流表获取（类型注册表守门）：vid 的条目类型未注册时**不猜 key**——先拉本剧分集档案
-///（解析侧会把整剧各集的 vid→content_type 一次注册齐）再取流。取流未命中（[`AppError::StreamMiss`]）
-/// 如实上抛：服务端不发货是设备侧信任问题，应用层没有兜底解。
-/// `wait_gate=false`：调用方已持有冷启动门闩（换档后独占首包），禁止再 wait，否则自锁。
+/// 缺少条目类型时先拉本剧分集档案。同一次取流沿用同一设备快照。
 async fn fetch_with_registry(
     state: &AppState,
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
     cap: hongguo_api::stream_pick::DecoderCapability,
-    wait_gate: bool,
 ) -> AppResult<hongguo_api::play_url::PlayInfo> {
-    // 空响应换档预热窗口会 rearm 门闩；默认再等一次，避免起播/预取在半新身份上打空包。
-    // 持闩路径（EmptyResponse 恢复）必须跳过，否则与 ReleaseOnDrop 同作用域自等 PENDING。
-    if wait_gate {
-        crate::cold_start::wait().await;
-    }
+    crate::cold_start::wait().await;
     let env = state.api_env();
     match hongguo_api::play_url::fetch_play_url(vid, definition, cap, &env).await {
         Ok(p) => Ok(p),
@@ -88,15 +80,14 @@ pub async fn prepare(
     vid: &str,
     progress_key: &str,
     definition: Option<u32>,
-    // 同剧集窗：换档成功后必须在新身份上重跑批量，否则邻集空包。
-    series_window: Option<(&str, u32)>,
+    series_context: Option<(&str, u32)>,
 ) -> AppResult<Prepared> {
     let vid = vid.trim();
     if vid.is_empty() {
         return Err(AppError::InvalidArgs("缺少 vid".into()));
     }
     // PLAY_OK 闩判定键 = series_id：优先集窗，其次 progress_key 前缀。
-    let series_id_for_latch: Option<&str> = series_window.map(|(s, _)| s).or_else(|| {
+    let series_id_for_latch: Option<&str> = series_context.map(|(s, _)| s).or_else(|| {
         progress_key
             .split(':')
             .next()
@@ -142,36 +133,10 @@ pub async fn prepare(
     // 还没有键可查：先做一次很小的接口调用把流表拿回来，解析出的真实档位才是缓存的键；
     // 贵的那一步（整集下载 + 解密）要等拿到取流权之后才发生。
     let cap = crate::device::stream_cap();
-    let play = match fetch_with_registry(state, vid, progress_key, definition, cap, true).await {
+    let play = match fetch_with_registry(state, vid, progress_key, definition, cap).await {
         Err(e @ AppError::StreamMiss(_)) => {
             crate::device::note_stream_miss(state, vid);
             return Err(e);
-        }
-        // 全程空字节：现役身份被拒发货 → 匿名换档一次再取
-        Err(AppError::EmptyResponse(msg)) => {
-            log::warn!("[Online] {vid} 取流空响应：{msg}");
-            if !crate::device::recover_after_empty_stream(state, vid, series_id_for_latch).await {
-                return Err(AppError::EmptyResponse(msg));
-            }
-            // recover 成功时门闩保持 PENDING（不放行）；此处再挂 ReleaseOnDrop，
-            // 独占首包批量+持闩 fetch，结束后才放行，避免 READY 窗口被预取抢跑。
-            crate::cold_start::rearm();
-            let _hold_gate = crate::cold_start::ReleaseOnDrop;
-            // 换档前的 warm 打在旧身份上（常 0 命中）。新身份上必须先批量邻集，
-            // 再取当前集——先单集发货后再打邻集，服务端对其它 vid 返回空包。
-            if let Some((series_id, vid_index)) = series_window {
-                log::info!(
-                    "[Online] 换档后重跑集窗批量 series={series_id} idx={vid_index}（避免邻集空包）"
-                );
-                crate::play_service::local::warm_episode_window_gated(
-                    state, series_id, vid_index, false,
-                )
-                .await;
-            } else {
-                log::warn!("[Online] 换档后无集窗上下文，只能单集重试（邻集可能空包）");
-            }
-            // 持闩中：不得 wait，否则与 warm 同理自锁（测侧 8d7cb5b7 独立验挂死点）
-            fetch_with_registry(state, vid, progress_key, definition, cap, false).await?
         }
         r => r?,
     };
@@ -254,7 +219,6 @@ pub async fn prefetch_stream(state: &AppState, vid: &str, progress_key: &str) ->
         progress_key,
         None,
         crate::device::stream_cap(),
-        true,
     )
     .await
     {

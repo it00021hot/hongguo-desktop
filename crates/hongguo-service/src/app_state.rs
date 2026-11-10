@@ -53,6 +53,17 @@ impl AppStateInner {
     /// [`AppStateInner::with_db`] 的带设备版本（启动装配时传入库里
     /// 装载好的档案；测试与默认路径用匿名档案）。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
+        if store.db_path() != std::path::Path::new(":memory:") {
+            let config = store.db_path().with_file_name("metasec.json");
+            if config.try_exists().unwrap_or(true)
+                || std::env::var_os("HONGGUO_METASEC_IMAGE").is_some()
+            {
+                hongguo_api::metasec::configure_app(
+                    config,
+                    Arc::new(SdkSessionStore(store.clone())),
+                );
+            }
+        }
         Self {
             store,
             settings: RwLock::new(Settings::default()),
@@ -64,6 +75,36 @@ impl AppStateInner {
             scheduler: RwLock::new(Arc::new(DownloadScheduler::new())),
             events: ServiceEvents::new(),
         }
+    }
+}
+
+struct SdkSessionStore(Store);
+
+impl hongguo_api::metasec::SessionStore for SdkSessionStore {
+    fn load(
+        &self,
+        profile_key: &str,
+    ) -> hongguo_common::AppResult<Option<hongguo_api::metasec::sdi::SdiToken>> {
+        let Some(record) = self.0.sdk_session()? else {
+            return Ok(None);
+        };
+        if record.get("profile").and_then(serde_json::Value::as_str) != Some(profile_key) {
+            return Ok(None);
+        }
+        serde_json::from_value(record.get("token").cloned().unwrap_or_default())
+            .map(Some)
+            .map_err(|_| {
+                hongguo_common::AppError::StoreCorrupt("MetaSec token storage is invalid".into())
+            })
+    }
+
+    fn save(
+        &self,
+        profile_key: &str,
+        token: &hongguo_api::metasec::sdi::SdiToken,
+    ) -> hongguo_common::AppResult<()> {
+        self.0
+            .save_sdk_session(serde_json::json!({"profile": profile_key, "token": token}))
     }
 }
 

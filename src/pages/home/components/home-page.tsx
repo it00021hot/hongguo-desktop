@@ -94,6 +94,7 @@ export function HomePage() {
   const prefetchEpisodes = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const playingId = usePlayerStore((s) => s.seriesId);
+  const bingeSeriesId = usePlayerStore((s) => s.bingeSeriesId);
   // store 目标的集号（0 = 只点名了剧，集号待本组件的起点决策补上）
   const storeVidIndex = usePlayerStore((s) => s.vidIndex);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
@@ -380,11 +381,13 @@ export function HomePage() {
   }, []);
   const upcomingIds = useMemo(
     () =>
-      displayItems
-        .slice(index + 1, index + 1 + prefetchBreadth)
-        .map((it) => it.seriesId)
-        .filter(Boolean),
-    [displayItems, index, prefetchBreadth],
+      bingeSeriesId === currentId
+        ? []
+        : displayItems
+            .slice(index + 1, index + 1 + prefetchBreadth)
+            .map((it) => it.seriesId)
+            .filter(Boolean),
+    [bingeSeriesId, currentId, displayItems, index, prefetchBreadth],
   );
   const upcomingKey = upcomingIds.join(',');
   /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期对号，切剧瞬间自动回到「未出画」）。 */

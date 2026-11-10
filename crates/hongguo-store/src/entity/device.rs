@@ -12,6 +12,36 @@ use super::{col_text, map_db_err};
 const DEVICE_ROW_ACTIVE: i64 = 1;
 const DEVICE_ROW_BACKUP: i64 = 2;
 const DEVICE_ROW_META: i64 = 10;
+const DEVICE_ROW_SDK_SESSION: i64 = 11;
+
+pub async fn sdk_session(db: &Db) -> AppResult<Option<serde_json::Value>> {
+    let mut rows = db
+        .conn()
+        .query(
+            "SELECT json FROM device_profile WHERE id = ?1",
+            [Value::Integer(DEVICE_ROW_SDK_SESSION)],
+        )
+        .await
+        .map_err(map_db_err)?;
+    let Some(row) = rows.next().await.map_err(map_db_err)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&col_text(&row, 0)?)
+        .map(Some)
+        .map_err(|_| AppError::StoreCorrupt("MetaSec session storage is invalid".into()))
+}
+
+pub async fn save_sdk_session(db: &Db, session: &serde_json::Value) -> AppResult<()> {
+    let json = serde_json::to_string(session)
+        .map_err(|_| AppError::StoreCorrupt("cannot encode MetaSec session storage".into()))?;
+    db.execute(
+        "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+         ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+        [Value::Integer(DEVICE_ROW_SDK_SESSION), Value::Text(json)],
+    )
+    .await?;
+    Ok(())
+}
 
 /// 读设备档案。从未注册过（表空）返回 None，调用方用静态兜底档案。
 pub async fn device_profile(db: &Db) -> AppResult<Option<hongguo_signer::device::DeviceProfile>> {

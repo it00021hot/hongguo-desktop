@@ -11,6 +11,7 @@ pub mod emoticon;
 pub mod history;
 pub mod interact;
 pub mod login;
+pub mod metasec;
 pub mod new_drama;
 pub mod params;
 pub mod play_strategy;

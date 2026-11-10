@@ -350,12 +350,14 @@ fn heal_registered_profile(store: &Store, p: DeviceProfile) -> DeviceProfile {
     {
         return p;
     }
+    let klink_egdi = p.get("klink_egdi");
     let healed = registered_profile(&RegisterResult {
         device_id: p.get("device_id").into(),
         install_id: p.get("iid").into(),
         cdid: p.get("cdid").into(),
         openudid: p.get("openudid").into(),
         ttreq: p.ttreq().unwrap_or_default().into(),
+        klink_egdi: (!klink_egdi.is_empty()).then(|| klink_egdi.into()),
         ..Default::default()
     });
     log::warn!(
@@ -412,6 +414,9 @@ pub fn registered_profile(reg: &RegisterResult) -> DeviceProfile {
     p.set("device_id", &reg.device_id);
     p.set("iid", &reg.install_id);
     p.set_ttreq(Some(reg.ttreq.clone()));
+    if let Some(klink_egdi) = reg.klink_egdi.as_deref().filter(|value| !value.is_empty()) {
+        p.set("klink_egdi", klink_egdi);
+    }
     p
 }
 
@@ -717,31 +722,35 @@ pub fn apply_register_block(meta: &mut BootstrapMeta, block: RegisterBlock) {
 /// - `cross_series_rearm`：本进程当前代次已有其它剧 PLAY_OK，当前空包来自**另一部剧** →
 ///   允许再换档，且不受冷却压制（否则剧A换档后 10 分钟内剧B永久空，见 REQ-HG-001）。
 /// - `cross_series_budget`：跨剧烧新身份仍有进程内预算；耗尽后不再注册（旧剧回点走已选档复用）。
-/// - 限制窗口 / 只复用仍一律不注册。
+/// - 限制窗口一律不注册，只复用模式在进入此判定前返回。
 ///
 /// 注意：库内 `play_shipped` **不能**用来抑制换档。req-diff 证据表明隔离同进程
 /// PLAY_OK 后，把同一 DeviceProfile 迁到二次进程再取流会得到 0 字节空包——跨进程
 /// 「已发货」是假阳性，压制换档会让日常永久空响应。
-pub fn empty_stream_should_register(
+#[cfg_attr(test, derive(Default))]
+struct EmptyStreamRegistration {
     in_cooldown: bool,
     blocked: bool,
-    reuse: bool,
     play_ok_blocks_this_vid: bool,
     cross_series_rearm: bool,
     cross_series_budget: bool,
     same_series_expand: bool,
     same_series_expand_budget: bool,
-) -> bool {
-    if blocked || reuse || play_ok_blocks_this_vid {
-        return false;
+}
+
+impl EmptyStreamRegistration {
+    fn should_register(&self) -> bool {
+        if self.blocked || self.play_ok_blocks_this_vid {
+            return false;
+        }
+        if self.same_series_expand {
+            return self.same_series_expand_budget;
+        }
+        if self.cross_series_rearm {
+            return self.cross_series_budget;
+        }
+        !self.in_cooldown
     }
-    if same_series_expand {
-        return same_series_expand_budget;
-    }
-    if cross_series_rearm {
-        return cross_series_budget;
-    }
-    !in_cooldown
 }
 
 /// 备份、现役、元数据同一事务。提交成功后才替换内存。
@@ -1152,16 +1161,16 @@ pub async fn recover_after_empty_stream(
     let expand_budget = same_series_expand_budget_remaining();
     let rearm_cross = cross_series_rearm(series_id, current_gen);
     let budget = cross_series_budget_remaining();
-    if !empty_stream_should_register(
+    let registration = EmptyStreamRegistration {
         in_cooldown,
         blocked,
-        false,
-        play_ok_blocks,
-        rearm_cross,
-        budget,
-        expand,
-        expand_budget,
-    ) {
+        play_ok_blocks_this_vid: play_ok_blocks,
+        cross_series_rearm: rearm_cross,
+        cross_series_budget: budget,
+        same_series_expand: expand,
+        same_series_expand_budget: expand_budget,
+    };
+    if !registration.should_register() {
         if blocked {
             log::warn!("[Device] 取流空响应 vid={vid}，注册限制中，不换身份");
             return false;
@@ -1379,48 +1388,76 @@ mod tests {
 
     #[test]
     fn empty_recovery_does_not_add_unofficial_rolls() {
-        assert!(empty_stream_should_register(
-            false, false, false, false, false, true, false, true
-        ));
-        assert!(!empty_stream_should_register(
-            true, false, false, false, false, true, false, true
-        ));
-        assert!(!empty_stream_should_register(
-            false, true, false, false, false, true, false, true
-        ));
-        assert!(!empty_stream_should_register(
-            false, false, true, false, false, true, false, true
-        ));
+        let ready = EmptyStreamRegistration::default();
+        let cooldown = EmptyStreamRegistration {
+            in_cooldown: true,
+            ..ready
+        };
+        let cross_series = EmptyStreamRegistration {
+            cross_series_rearm: true,
+            cross_series_budget: true,
+            ..cooldown
+        };
+        let same_series = EmptyStreamRegistration {
+            same_series_expand: true,
+            same_series_expand_budget: true,
+            ..cooldown
+        };
+        assert!(!cooldown.should_register());
         assert!(
-            !empty_stream_should_register(false, false, false, true, false, true, false, true),
+            !EmptyStreamRegistration {
+                blocked: true,
+                ..ready
+            }
+            .should_register()
+        );
+        assert!(
+            !EmptyStreamRegistration {
+                play_ok_blocks_this_vid: true,
+                ..ready
+            }
+            .should_register(),
             "已发货 vid 不自动换档"
         );
         assert!(
-            empty_stream_should_register(false, false, false, false, false, true, false, true),
+            ready.should_register(),
             "仅库内 play_shipped 不应抑制——二次进程仍应允许换档恢复"
         );
+        assert!(cross_series.should_register(), "跨剧再换档可越过冷却");
         assert!(
-            empty_stream_should_register(true, false, false, false, true, true, false, true),
-            "跨剧再换档可越过冷却"
-        );
-        assert!(
-            !empty_stream_should_register(true, false, false, true, true, true, false, true),
+            !EmptyStreamRegistration {
+                play_ok_blocks_this_vid: true,
+                ..cross_series
+            }
+            .should_register(),
             "已发货 vid 优先于跨剧再换档标志"
         );
         assert!(
-            !empty_stream_should_register(true, false, false, false, true, false, false, true),
+            !EmptyStreamRegistration {
+                cross_series_budget: false,
+                ..cross_series
+            }
+            .should_register(),
             "跨剧预算耗尽不再烧新身份"
         );
         assert!(
-            empty_stream_should_register(true, false, false, false, false, true, true, true),
+            same_series.should_register(),
             "同剧窗外后集可越过冷却再换档"
         );
         assert!(
-            !empty_stream_should_register(true, false, false, false, false, true, true, false),
+            !EmptyStreamRegistration {
+                same_series_expand_budget: false,
+                ..same_series
+            }
+            .should_register(),
             "同剧窗外预算耗尽不再烧新身份"
         );
         assert!(
-            !empty_stream_should_register(true, false, false, true, false, true, true, true),
+            !EmptyStreamRegistration {
+                play_ok_blocks_this_vid: true,
+                ..same_series
+            }
+            .should_register(),
             "已发货 vid 优先于窗外扩窗"
         );
     }
@@ -1444,15 +1481,22 @@ mod tests {
             "vid-later",
             device_gen
         ));
-        assert!(empty_stream_should_register(
-            true, false, false, false, false, true, true, true
-        ));
+        let registration = EmptyStreamRegistration {
+            in_cooldown: true,
+            same_series_expand: true,
+            same_series_expand_budget: same_series_expand_budget_remaining(),
+            ..Default::default()
+        };
+        assert!(registration.should_register());
         // 预算耗尽后窗外也不再注册。
         SAME_SERIES_EXPAND_COUNT.store(SAME_SERIES_EXPAND_CAP, Ordering::Relaxed);
-        assert!(!same_series_expand_budget_remaining());
-        assert!(!empty_stream_should_register(
-            true, false, false, false, false, true, true, false
-        ));
+        assert!(
+            !EmptyStreamRegistration {
+                same_series_expand_budget: same_series_expand_budget_remaining(),
+                ..registration
+            }
+            .should_register()
+        );
         SAME_SERIES_EXPAND_COUNT.store(0, Ordering::Relaxed);
         // 同剧新身份发货后集：已选档应更新，且未发货后集不得视为可回点。
         let mut later_id = anonymous_profile(&fresh_cdid());
@@ -1663,8 +1707,11 @@ mod tests {
     #[test]
     fn adopt_heals_version_bumped_registered_profile() {
         let db = store();
-        let mut damaged = registered_profile(&reg_result());
-        hongguo_signer::device::align_app_version(&mut damaged);
+        let mut damaged = registered_profile(&RegisterResult {
+            klink_egdi: Some("test-egdi".into()),
+            ..reg_result()
+        });
+        damaged.set("version_code", "1");
         db.save_device_profile(&damaged).expect("写受损档案");
         let mut meta = read_meta(&db);
         meta.source = "registered".into();
@@ -1679,11 +1726,13 @@ mod tests {
         assert_eq!(profile.get("device_id"), "8888888888888888");
         assert_eq!(profile.get("iid"), "9999999999999999");
         assert_eq!(profile.ttreq(), Some("ttreq-ticket"));
+        assert_eq!(profile.get("klink_egdi"), "test-egdi");
         let stored = db.device_profile().expect("读回").expect("已落库");
         assert_eq!(
             stored.get("version_code"),
             hongguo_signer::REGISTER_VERSION_CODE_STR
         );
+        assert_eq!(stored.get("klink_egdi"), "test-egdi");
     }
 
     #[test]

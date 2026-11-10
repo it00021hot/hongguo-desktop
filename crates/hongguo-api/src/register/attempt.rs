@@ -242,17 +242,13 @@ async fn post_register(
     if std::env::var("TT_DEBUG").is_ok() {
         dump_debug(id, fp, now_ms, &body);
     }
-    let query = register_query()
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&");
+    let query = register_query(&id.req_id);
     let url = format!("{origin}{REGISTER_PATH}?{query}");
     crate::client::refuse_external_send(&url).map_err(RegisterAttemptError::Failed)?;
     HTTP_SENDS.fetch_add(1, Ordering::Relaxed);
     let response = build_client(&env.proxy)
         .map_err(RegisterAttemptError::Failed)?
-        .post(format!("{origin}{REGISTER_PATH}?{query}"))
+        .post(url)
         .timeout(Duration::from_secs(REGISTER_TIMEOUT_SECS))
         .header("User-Agent", fp.register_ua())
         .header("Content-Type", "application/octet-stream;tt-data=a")
@@ -498,11 +494,18 @@ mod tests {
         assert_eq!(register_http_sends(), 2);
         let saved = bodies.lock().unwrap().clone();
         assert_eq!(saved.len(), 2);
-        let first = identity_of(&saved[0]);
-        let second = identity_of(&saved[1]);
+        let first = identity_of(&saved[0].body);
+        let second = identity_of(&saved[1].body);
         assert_eq!(first, second);
         assert_eq!(first.0, material.cdid());
         assert!(first.1.len() >= 8 && first.2.len() >= 8 && first.3.len() >= 8);
+        let expected_target = format!(
+            "{REGISTER_PATH}?req_id={}&tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin&use_store_region_cookie=1",
+            first.3
+        );
+        for request in &saved {
+            assert_eq!(request.target, expected_target);
+        }
     }
 
     #[tokio::test]
@@ -542,12 +545,21 @@ mod tests {
         )
     }
 
+    #[derive(Clone)]
+    struct RegisterRequest {
+        target: String,
+        body: Vec<u8>,
+    }
+
     async fn loopback(
         status: &'static str,
         extra_headers: &'static str,
         body: &'static str,
         accepts: usize,
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>) {
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Vec<RegisterRequest>>>,
+    ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         assert_eq!(addr.ip().to_string(), "127.0.0.1");
@@ -561,8 +573,8 @@ mod tests {
                 if peer.ip().to_string() != "127.0.0.1" {
                     break;
                 }
-                let body_bytes = read_body(&mut sock).await;
-                saved.lock().unwrap().push(body_bytes);
+                let request = read_request(&mut sock).await;
+                saved.lock().unwrap().push(request);
                 let resp = format!(
                     "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{extra_headers}\r\n{body}",
                     body.len()
@@ -574,20 +586,26 @@ mod tests {
         (format!("http://{addr}"), seen)
     }
 
-    async fn read_body(sock: &mut tokio::net::TcpStream) -> Vec<u8> {
+    async fn read_request(sock: &mut tokio::net::TcpStream) -> RegisterRequest {
         use tokio::io::AsyncReadExt;
         let mut buf = Vec::new();
         let mut tmp = [0u8; 4096];
         loop {
             let n = sock.read(&mut tmp).await.unwrap_or(0);
             if n == 0 {
-                return buf;
+                panic!("请求在 HTTP 头结束前关闭");
             }
             buf.extend_from_slice(&tmp[..n]);
             let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
                 continue;
             };
             let header = String::from_utf8_lossy(&buf[..header_end]);
+            let target = header
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .expect("请求行含目标路径")
+                .to_string();
             let len = header
                 .lines()
                 .find_map(|line| {
@@ -605,7 +623,8 @@ mod tests {
                 }
                 buf.extend_from_slice(&tmp[..n]);
             }
-            return buf.get(start..start + len).unwrap_or_default().to_vec();
+            let body = buf.get(start..start + len).unwrap_or_default().to_vec();
+            return RegisterRequest { target, body };
         }
     }
 }

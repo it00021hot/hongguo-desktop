@@ -8,14 +8,14 @@ pub use model::{WatchHistoryItem, WatchHistoryPage};
 
 use serde_json::Value;
 
-use super::client::{ApiEnv, api_call_reading};
+use super::client::{ApiEnv, SINFONLINEA_API_ORIGIN, api_call_model_light, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
 use hongguo_common::utils::json::{check_code, str_field};
 use hongguo_common::utils::time::now_ms;
 use hongguo_common::{AppError, AppResult};
 
 pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
-const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
+pub(crate) const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
 const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
 
 /// 拉一页云端观看历史。
@@ -113,8 +113,7 @@ fn num_to_string(v: &Value) -> String {
     }
 }
 
-/// vid_index 基准换算：领域值（前端/本地存储）1 基，官方线上协议一律 0 基
-///（官方第 1 集 vid_index=0）。1 基直发会导致跨端续播差一集，写侧统一在此换算。
+/// 历史删除沿用 0 基索引。
 fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
@@ -180,8 +179,7 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 观看进度上报（官方双接口 read_history/update + read_progress/upload，约每分钟 + 切集触发）。
-/// 两接口字段形态刻意不同（update 的 id 是数字、upload 是字符串）；`vid_index` 收 1 基领域值、线上按 0 基发送。
+/// 历史更新发送 1 基集号，进度上传通过 `item_id` 识别集。
 pub async fn report_watch_progress(
     series_id: &str,
     vid: &str,
@@ -189,12 +187,86 @@ pub async fn report_watch_progress(
     position_ms: i64,
     env: &ApiEnv,
 ) -> AppResult<()> {
-    let now = now_ms();
-    let book_num = str_or_num(series_id);
-    let vid_num = str_or_num(vid);
-    let update_body = serde_json::json!({
+    let (update_body, upload_body) =
+        watch_progress_bodies(series_id, vid, vid_index, position_ms, now_ms());
+    let update_raw = serde_json::to_vec(&update_body)
+        .map_err(|e| AppError::Media(format!("构造历史上报失败: {e}")))?;
+    let bytes = api_call_reading(
+        SINFONLINEA_API_ORIGIN,
+        READ_HISTORY_UPDATE_PATH,
+        Some(update_raw),
+        &[],
+        env,
+    )
+    .await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析历史上报响应失败: {e}")))?;
+    check_code(&v)?;
+    check_update_fails(&v)?;
+
+    let upload_raw = serde_json::to_vec(&upload_body)
+        .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
+    let bytes = api_call_reading(
+        SINFONLINEA_API_ORIGIN,
+        READ_PROGRESS_UPLOAD_PATH,
+        Some(upload_raw),
+        &[],
+        env,
+    )
+    .await?;
+    let v: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
+    check_code(&v)?;
+    Ok(())
+}
+
+/// 官方匿名播放在原设备会话下更新当前一集的历史。
+pub async fn report_guest_watch_progress(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    env: &ApiEnv,
+) -> AppResult<()> {
+    if !crate::metasec::playback_configured()? {
+        return Ok(());
+    }
+    let body = history_update_body(series_id, vid, vid_index, position_ms, now_ms(), 0);
+    let raw = serde_json::to_vec(&body)
+        .map_err(|e| AppError::Media(format!("构造匿名历史上报失败: {e}")))?;
+    let bytes =
+        api_call_model_light(SINFONLINEA_API_ORIGIN, READ_HISTORY_UPDATE_PATH, raw, env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析匿名历史上报响应失败: {e}")))?;
+    check_code(&value)?;
+    check_update_fails(&value)?;
+    log::debug!("[History] 匿名历史更新成功，集号 {vid_index}");
+    Ok(())
+}
+
+fn watch_progress_bodies(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    now: i64,
+) -> (Value, Value) {
+    let update_body = history_update_body(series_id, vid, vid_index, position_ms, now, now);
+    let upload_body = progress_upload_body(series_id, vid, position_ms, now);
+    (update_body, upload_body)
+}
+
+fn history_update_body(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    now: i64,
+    update_timestamp: i64,
+) -> Value {
+    serde_json::json!({
         "update_datas": [{
-            "book_id": book_num,
+            "book_id": str_or_num(series_id),
             "book_type": 2,
             "chapter_index": 0,
             "current_play_position": position_ms,
@@ -214,15 +286,18 @@ pub async fn report_watch_progress(
             "season_index": 0,
             "series_play_cnt": 0,
             "tone_id": 0,
-            "update_timestamp_ms": now,
+            "update_timestamp_ms": update_timestamp,
             "use_soft_delete": false,
             "user_digg": false,
             "user_playlet_comment_flag": false,
-            "vid": vid_num,
-            "vid_index": wire_vid_index(vid_index),
+            "vid": str_or_num(vid),
+            "vid_index": vid_index,
         }],
-    });
-    let upload_body = serde_json::json!({
+    })
+}
+
+fn progress_upload_body(series_id: &str, vid: &str, position_ms: i64, now: i64) -> Value {
+    serde_json::json!({
         "books": [{
             "book_id": series_id,
             "book_type": 2,
@@ -241,39 +316,9 @@ pub async fn report_watch_progress(
             "progress_type": 0,
             "read_timestamp_ms": now,
             "tone_id": 0,
-            "vid_index": wire_vid_index(vid_index),
+            "vid_index": 0,
         }],
-    });
-
-    let update_raw = serde_json::to_vec(&update_body)
-        .map_err(|e| AppError::Media(format!("构造历史上报失败: {e}")))?;
-    let bytes = api_call_reading(
-        LQ_API_ORIGIN,
-        READ_HISTORY_UPDATE_PATH,
-        Some(update_raw),
-        &[],
-        env,
-    )
-    .await?;
-    let v: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析历史上报响应失败: {e}")))?;
-    check_code(&v)?;
-    check_update_fails(&v)?;
-
-    let upload_raw = serde_json::to_vec(&upload_body)
-        .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
-    let bytes = api_call_reading(
-        LQ_API_ORIGIN,
-        READ_PROGRESS_UPLOAD_PATH,
-        Some(upload_raw),
-        &[],
-        env,
-    )
-    .await?;
-    let v: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
-    check_code(&v)?;
-    Ok(())
+    })
 }
 
 /// 数字型 id 字段：可解析就发 JSON 数字（对齐官方），否则原样字符串。
@@ -303,7 +348,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wire_vid_index_converts_domain_to_zero_based() {
+    fn progress_report_uses_the_episode_index_only_in_history_update() {
+        let series_id = "7697459724635098174";
+        for (episode, vid) in [(1, 7697465535398677529_u64), (13, 7697465038512065561)] {
+            let (update, upload) =
+                watch_progress_bodies(series_id, &vid.to_string(), episode, 5000, 1);
+            assert_eq!(update["update_datas"][0]["vid_index"], episode);
+            assert_eq!(update["update_datas"][0]["vid"], vid);
+            assert_eq!(upload["books"][0]["vid_index"], 0);
+            assert_eq!(upload["books"][0]["item_id"], vid.to_string());
+        }
+    }
+
+    #[test]
+    fn history_delete_converts_domain_to_zero_based() {
         assert_eq!(wire_vid_index(1), 0, "第 1 集 → 线上 0");
         assert_eq!(wire_vid_index(8), 7);
         assert_eq!(wire_vid_index(0), 0, "0/负值护栏");

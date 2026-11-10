@@ -13,6 +13,8 @@ const MAX_RETRIES: u32 = 3;
 
 pub const LQ_API_ORIGIN: &str = "https://api5-normal-lq.fqnovel.com";
 
+pub(crate) const SINFONLINEA_API_ORIGIN: &str = "https://api5-normal-sinfonlinea.fqnovel.com";
+
 pub const SINFONLINEC_API_ORIGIN: &str = "https://api5-normal-sinfonlinec.fqnovel.com";
 
 pub const LF_API_ORIGIN: &str = "https://api5-normal-lf.fqnovel.com";
@@ -157,9 +159,8 @@ pub async fn api_call_reading_once_allow_empty(
 
 const STORE_REGION: &str = "cn-gd";
 
-
 /// 取流请求级快照（HG_DUMP_REQ_DIR=目录时写入）。用于同进程 PLAY_OK vs 二次进程空的报文对照。
-/// 不落 body 明文（gzip 后只记 sha256/len）；query/头字段全量可 diff；Cookie 保留键与 ttreq 有无，ttreq 值截断。
+/// 会话票据只保留字段名与长度。
 fn dump_signed_play_req(
     tag: &str,
     origin: &str,
@@ -193,13 +194,18 @@ fn dump_signed_play_req(
     let mut query_map = serde_json::Map::new();
     for pair in query_part.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-        query_map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        let value = if k == "klink_egdi" {
+            serde_json::json!({ "length": v.len() })
+        } else {
+            serde_json::Value::String(v.to_string())
+        };
+        query_map.insert(k.to_string(), value);
     }
 
     let mut headers = serde_json::Map::new();
     let mut cookie_keys: Vec<String> = Vec::new();
     let mut cookie_has_ttreq = false;
-    let mut cookie_ttreq_prefix = String::new();
+    let mut cookie_ttreq_len = None;
     let mut cookie_has_install_id = false;
     for (k, v) in &signed.headers {
         let lk = k.to_ascii_lowercase();
@@ -209,7 +215,7 @@ fn dump_signed_play_req(
                     cookie_keys.push(ck.to_string());
                     if ck == "ttreq" {
                         cookie_has_ttreq = true;
-                        cookie_ttreq_prefix = cv.chars().take(12).collect::<String>() + "…";
+                        cookie_ttreq_len = Some(cv.len());
                     }
                     if ck == "install_id" || ck == "iid" {
                         cookie_has_install_id = true;
@@ -221,11 +227,13 @@ fn dump_signed_play_req(
                 serde_json::json!({
                     "keys": cookie_keys,
                     "has_ttreq": cookie_has_ttreq,
-                    "ttreq_prefix": cookie_ttreq_prefix,
+                    "ttreq_len": cookie_ttreq_len,
                     "has_install_id": cookie_has_install_id,
                     "raw_len": v.len(),
                 }),
             );
+        } else if lk == "x-tt-token" {
+            headers.insert(k.clone(), serde_json::json!({ "length": v.len() }));
         } else {
             headers.insert(k.clone(), serde_json::Value::String(v.clone()));
         }
@@ -249,10 +257,7 @@ fn dump_signed_play_req(
     let iid = env.device.get("iid").to_string();
     let cdid = env.device.get("cdid").to_string();
     let device_id = env.device.get("device_id").to_string();
-    let device_ttreq = env.device.ttreq().map(|t| {
-        let pref: String = t.chars().take(12).collect();
-        format!("{pref}…len={}", t.len())
-    });
+    let device_ttreq_len = env.device.ttreq().map(str::len);
 
     let snap = serde_json::json!({
         "tag": label,
@@ -269,7 +274,7 @@ fn dump_signed_play_req(
             "iid": iid,
             "cdid": cdid,
             "device_id": device_id,
-            "ttreq": device_ttreq,
+            "ttreq_len": device_ttreq_len,
             "brand": env.device.get("device_brand"),
             "type": env.device.get("device_type"),
         },
@@ -304,7 +309,8 @@ fn dump_signed_play_req(
     }
 }
 
-/// 取流轻请求：签名五件套必带（缺失被服务端静默丢弃），空响应原样返回
+/// 取流轻请求：配置 MetaSec v5 时先准备本身份的 SDK token，再生成 Cronet 六头。
+/// 空响应原样返回
 /// 空 `Vec`（「不发货」交调用方回落，不重试）。
 pub async fn api_call_model_light(
     origin: &str,
@@ -312,13 +318,7 @@ pub async fn api_call_model_light(
     payload: Vec<u8>,
     env: &ApiEnv,
 ) -> AppResult<Vec<u8>> {
-    let mut biz_query: Vec<(String, String)> = env
-        .device
-        .iter()
-        .filter(|(k, _)| *k != "openudid")
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    biz_query.push(("need_personal_recommend".into(), "1".into()));
+    let biz_query = [("need_personal_recommend".into(), "1".into())];
 
     let mut extra = vec![
         ("x-ss-dp".to_string(), READING_DP.into()),
@@ -340,18 +340,22 @@ pub async fn api_call_model_light(
         extra.push(("x-tt-token".into(), short));
     }
 
-    let signed = hongguo_signer::ticket::sign_request_with(
-        origin,
-        pathname,
-        Some(gzip_bytes(&payload)?),
-        &env.device,
-        &biz_query,
-        &extra,
-    );
-
     refuse_external(origin)?;
-    refuse_external(&signed.url)?;
     let client = build_client(&env.proxy)?;
+    let body = gzip_bytes(&payload)?;
+    let signed =
+        match crate::metasec::sign_playback(&client, origin, pathname, &body, &extra, env).await? {
+            Some(signed) => signed,
+            None => hongguo_signer::ticket::sign_request_with(
+                origin,
+                pathname,
+                Some(body),
+                &env.device,
+                &biz_query,
+                &extra,
+            ),
+        };
+    refuse_external(&signed.url)?;
     let mut req = client.post(&signed.url);
     for (k, v) in &signed.headers {
         req = req.header(k.as_str(), v.as_str());
@@ -367,16 +371,25 @@ pub async fn api_call_model_light(
         .body(signed.body.unwrap_or_default())
         .send()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    if !resp.status().is_success() {
-        return Err(AppError::Network(format!("HTTP {}", resp.status())));
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(AppError::Network(format!("HTTP {status}")));
     }
     let bytes = resp
         .bytes()
         .await
         .map(|b| b.to_vec())
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    dump_signed_play_req("model_light", origin, pathname, &signed_for_dump, env, bytes.len());
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
+    log::debug!("[PlayUrl] {pathname} HTTP {status}, {} bytes", bytes.len());
+    dump_signed_play_req(
+        "model_light",
+        origin,
+        pathname,
+        &signed_for_dump,
+        env,
+        bytes.len(),
+    );
     Ok(bytes)
 }
 
@@ -862,7 +875,7 @@ async fn send_once(
     let resp = req
         .send()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     if !resp.status().is_success() {
         return Err(AppError::Network(format!("HTTP {}", resp.status())));
     }
@@ -884,7 +897,7 @@ async fn send_once(
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(e.without_url().to_string()))?;
     Ok(ApiCallResponse {
         bytes: bytes.to_vec(),
         set_cookies,

@@ -90,12 +90,13 @@ fn rewrite_json_body(body: &str, env: &ApiEnv) -> Option<Vec<u8>> {
     gzip_bytes(serde_json::to_vec(&v).ok()?.as_slice()).ok()
 }
 
-/// 取流类路径：序列里残留的旧抓包会带着**别的 vid / 旧 body**重放，
-/// 空响应会被服务端记成该设备的发货失败，把刚注册的身份直接烧废。
-/// 行为预热只铺设定/书城/账号类，取流留给正式起播。
-fn is_play_path(path: &str) -> bool {
+/// 取流由播放器发起。MetaSec 报告与令牌请求由 SDK 生成，历史记录携带旧 did 且缺少 SDK 请求体。
+fn skip_replay(host: &str, path: &str) -> bool {
     let base = path.split_once('?').map(|(b, _)| b).unwrap_or(path);
     base.contains("/novel/player/")
+        || (host.starts_with("mssdk")
+            && host.ends_with(".zijieapi.com")
+            && matches!(base, "/ri/report" | "/sdi/get_token"))
 }
 
 /// 执行冷启动行为预热：按官方序列顺序重发（身份重写 + 逐条重签名），返回成功（2xx）条数。
@@ -119,7 +120,7 @@ async fn run_sequence(env: &ApiEnv) -> usize {
         ) else {
             continue;
         };
-        if is_play_path(path) {
+        if skip_replay(host, path) {
             continue;
         }
         let (pathname, biz_query) = rewrite_query(path, env);
@@ -172,13 +173,38 @@ async fn run_sequence(env: &ApiEnv) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::is_play_path;
+    use super::{SEQUENCE, skip_replay};
 
     #[test]
     fn play_paths_are_skipped_from_warmup() {
-        assert!(is_play_path("/novel/player/video_model/v1/?x=1"));
-        assert!(is_play_path("/novel/player/multi_video_model/preload/v1"));
-        assert!(!is_play_path("/reading/bookapi/bookmall/tab/v?x=1"));
-        assert!(!is_play_path("/service/settings/v3/"));
+        let host = "api5-normal-sinfonlinea.fqnovel.com";
+        assert!(skip_replay(host, "/novel/player/video_model/v1/?x=1"));
+        assert!(skip_replay(
+            host,
+            "/novel/player/multi_video_model/preload/v1"
+        ));
+        assert!(!skip_replay(host, "/reading/bookapi/bookmall/tab/v?x=1"));
+        assert!(!skip_replay(host, "/service/settings/v3/"));
+    }
+
+    #[test]
+    fn metasec_runtime_requests_are_skipped_from_recorded_warmup() {
+        let rows: Vec<serde_json::Value> = serde_json::from_str(SEQUENCE).unwrap();
+        let mut checked = 0;
+        for row in rows {
+            let host = row["host"].as_str().unwrap();
+            let path = row["path"].as_str().unwrap();
+            let base = path.split('?').next().unwrap();
+            if host.starts_with("mssdk") && matches!(base, "/sdi/get_token" | "/ri/report") {
+                assert!(skip_replay(host, path), "replayed MetaSec endpoint {base}");
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "warmup fixture did not exercise MetaSec endpoints"
+        );
+        assert!(!skip_replay("mssdk.zijieapi.com", "/service/settings/v3/"));
+        assert!(!skip_replay("reading.snssdk.com", "/ri/report"));
     }
 }

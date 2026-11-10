@@ -35,23 +35,33 @@ impl AesV3 {
         let start = word_size * 256;
         let box_ = all[start..start + 256].to_vec();
 
+        Self::with_parameters(
+            key,
+            box_,
+            CON2[word_size],
+            ORDER[word_size],
+            INIT_WORD[word_size],
+        )
+    }
+
+    pub(crate) fn with_parameters(
+        key: &[u8],
+        box_: Vec<u8>,
+        con2: [usize; 4],
+        order: [usize; 16],
+        init: u32,
+    ) -> Self {
+        let keys = Self::expand(key, &box_, init);
         Self {
             box_,
-            con2: CON2[word_size],
-            order: ORDER[word_size],
-            keys: Self::expand(key, word_size),
+            con2,
+            order,
+            keys,
         }
     }
 
     /// 密钥扩展：12 组 4 字节轮密钥。
-    fn expand(key: &[u8], word_size: usize) -> [[u8; 4]; 12] {
-        let init = INIT_WORD[word_size];
-        let sbox_ = {
-            let all = sbox();
-            let start = word_size * 256;
-            all[start..start + 256].to_vec()
-        };
-
+    fn expand(key: &[u8], sbox_: &[u8], init: u32) -> [[u8; 4]; 12] {
         // JS: 4 个槽位写的都是同一个 init（writeUInt32LE(init, i * 4)）
         let mut initial = Vec::with_capacity(16);
         for _ in 0..4 {
@@ -140,7 +150,7 @@ impl AesV3 {
     }
 
     /// 单个 16 字节块。
-    fn block(&self, value: &[u8]) -> Vec<u8> {
+    pub(crate) fn block(&self, value: &[u8]) -> Vec<u8> {
         let mut state = [[0u8; 4]; 4];
         for i in 0..4 {
             state[i].copy_from_slice(&value[i * 4..i * 4 + 4]);

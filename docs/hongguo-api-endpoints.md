@@ -32,9 +32,10 @@
 `REGISTER_REGIME = "74332:4.3.2-rc.44"`。**applog 裸形态：无签名五件套**——
 官方由 bdinstall SDK 发出、本不带业务签名）：
 
-- 入参 query：固定 3 参 `tt_data=a, okhttp_version=4.2.243.31-douyin,
-  use_store_region_cookie=1`（`gm0.b` 对 `device_register` 路径追加后两参；
-  指纹身份全部在加密 body 里）。
+- 入参 query（2026-11-10 官方 7.4.3.32 实抓）：依次为 `req_id`、
+  `tt_data=a`、`cronet_version=8d40f833_2026-03-03`、
+  `ttnet_version=4.2.243.31-douyin`、`use_store_region_cookie=1`。
+  同一次注册重试沿用 URL 和加密 body 内的 `req_id`。
 - 入参头：`User-Agent: {register_ua()}` +
   `content-type: application/octet-stream;tt-data=a` +
   `log-encode-type: gzip` + `x-ss-req-ticket: {ms}` +
@@ -59,7 +60,8 @@
   UUIDv4；`openudid` 16 位随机 hex；`apk_first_install_time` 按 cdid
   确定性回拨 1~30 天。
 - 出参：`{"server_time","device_id","install_id","new_user","device_id_str",
-  "install_id_str","device_token"}` + Set-Cookie `install_id` / `ttreq`。
+  "install_id_str","device_token","klink_egdi"}` + Set-Cookie `install_id` / `ttreq`。
+  `klink_egdi` 随当前档案存储，由同一身份的业务请求使用。
   `device_id: 0` = 被静默拒（格式或指纹有变）。
 
 **官方设备身份的确定性**：cdid/openudid 由 ANDROID_ID 等设备种子派生
@@ -96,26 +98,20 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `hongguo_signer::ticket::sign_request_with`）：
 
 ```
-# 批量 fetch_play_batch：主路径；空响应或请求失败回退下一行
-POST https://reading.snssdk.com/novel/player/multi_video_model/player/v1
-    # PLAYER_MODEL_PATH，无尾斜杠
+# 桌面批量依次尝试
+POST https://reading.snssdk.com/novel/player/multi_video_model/v1/
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1
 POST https://api5-normal-lq.fqnovel.com/novel/player/multi_video_model/v1/
-    # MODEL_LIGHT_PATH，尾斜杠是端点身份的一部分
 
-# 单集 fetch_play_url：批量暂存未命中后的主路径；空/失败回退 MODEL_LIGHT_PATH
-POST https://reading.snssdk.com/novel/player/video_model/v1/
-    # SINGLE_MODEL_PATH，尾斜杠是端点身份的一部分
+# 桌面单集批量暂存未命中时先走实抓的单集路径
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/
 ```
 
-- 选路：`fetch_play_url` 先取批量暂存（命中且未过 10 分钟 TTL 则 pop
-  直接用）。批量 `fetch_play_batch` 打 `PLAYER_MODEL_PATH`
-  （`READING_API_ORIGIN` = `reading.snssdk.com`），空字节、请求失败、响应不可用
-  （解析失败 / 非 0 错误信封）或条目无可播放流时回退
-  `MODEL_LIGHT_PATH`（`LQ_API_ORIGIN` = `api5-normal-lq.fqnovel.com`），
-  仅补取未命中的 vid，两个通道都无可播放流则静默 0 条。单集打
-  `SINGLE_MODEL_PATH`（同一 reading 域），空/请求失败/响应不可用/无可播放流回退同一条 light；
-  两个通道都无可播放流归 `StreamMiss`。
-  `player/v1` 与 `video_model/v1/` 是当前主路径。
+- 选路：单集先查 10 分钟批量暂存，未命中打 `SINGLE_MODEL_PATH`，再试
+  reading 域 SaaS 体与 light 体。批量只对未命中或不可播的 vid 继续尝试
+  `/player/v1` 和 lq 域 light 体。官方实抓的搜索预取走 `/multi_video_model/preload/v1`，
+  剧内预取走 `/multi_video_model/player/v1`，跳集走单集。见
+  [REQ-HG-003 同 vid 对照](./req-hg-003-playback-parity.md#同-vid-运行时对照)。
 - ⚠️ **签名五件套必带**：无签名一律 `200 + 0 字节` 静默丢弃（signer
   模块文档描述的同款症状）。签名头：UA / accept / x-ss-req-ticket /
   x-khronos / x-ladon / x-argus / x-gorgon / x-helios / x-medusa，
@@ -124,27 +120,24 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
   `Content-Encoding: gzip` + 档案 cookie。登录态带 `x-tt-token` 前
   56 字符；缺了按匿名配额处理。
   「签名在不在场都与发货无关」系 2026-11-01 的旧口径，已作废。
-- query：`sign_request_with` 先铺设备档案全字段（含 `openudid`），再接
-  `api_call_model_light` 的业务 query（档案字段去掉 `openudid` +
-  `need_personal_recommend=1`），最后 `ts` + `_rticket`。`_rticket`
-  逐毫秒抖动，**避开** x-argus branch=1（该档服务端不受理，同样 200+0）。
-- body 三套，都是 gzip JSON：
-  - 批量主路径 `player_model_payload`：`biz_param` 十字段
-    （`device_level:3`、`use_server_dns:true`、
-    `use_server_dns_scene:"cold_start_stage"`、`video_platform:1024`，
-    含 `disable_video_relate_book`）+ `dr_scene:"player"` +
-    `mixed_video_id_map`。
-  - 单集主路径 `single_model_payload`：`biz_param` 同多集，仅
-    `video_platform:3`；顶层 `content_type` + `video_id`（无
-    `mixed_video_id_map`、无 `dr_scene`）。
+- query：桌面 signer 注入设备档案字段，取流层只加业务参数
+  `need_personal_recommend=1`，随后 signer 追加 `ts`、`_rticket`。
+  官方实抓将 `_rticket` 放在第 4 项且没有 `ts`、`openudid`。
+  当前桌面 signer 的分支规避来自移植实现，官方非空样本不能用它解释。
+- body 都是 gzip JSON：
+  - 批量 SaaS 体 `saas_model_payload` 使用 `use_server_dns:true` 与
+    `use_server_dns_scene:"cold_start_stage"`，省略 `dr_scene`。
+  - 批量场景体 `player_model_payload` 使用 `device_level:3`、
+    `use_server_dns:false`、`video_platform:1024` 和对应路径的 `dr_scene`，
+    省略 DNS scene，携带 `mixed_video_id_map`。
+  - 单集 `single_model_payload` 顶层为 `biz_param`、`content_type`、`video_id`。
+    实抓跳集口径用 `source:4`、`video_platform:3`、
+    `need_all_video_definition:true`、`use_os_player:false`、`use_server_dns:false`。
   - 回退 `model_light_payload`：`biz_param` 八字段（`device_level:4`、
     `use_server_dns:false`、`video_platform:1024`，**无** `dr_scene` /
     `disable_video_relate_book` / `use_server_dns_scene`）+
     `mixed_video_id_map`。key 是条目 content_type 的原样字符串
     （错配不发货：漫剧 1004→`"1004"`、真人剧 1→`"1"`、书城 1001→`"1001"`）。
-- 域名：新通道 `https://reading.snssdk.com`，回退
-  `https://api5-normal-lq.fqnovel.com`。TTNet 会整体迁域，下次「全量
-  200+0」先怀疑 origin 迁移，重抓包对齐。空响应不重试，交给上面的回退。
 - 响应：`data.{vid}.video_model` 是 JSON 字符串，批量一次回多集；单集
   新通道另兼容 `/data/video_model`。错误信封是 base 族（`Code` 大写 +
   `BaseResp`）；新通道非 0 / 解析失败先回退旧通道，旧通道仍失败才归
@@ -161,13 +154,9 @@ POST https://reading.snssdk.com/novel/player/video_model/v1/
   （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
   **官方实值**（红果免费短剧/56a96241…证书/fanqie-xiaoshuo 代际，
   此前建模的是竞品形态）。
-- ⚠️ **200+0 与「有包不可播」要分清**（2026-11-07 修订）：①无签名
-  ——任何内容都拒；②取流**全程空字节**时，桌面在 10 分钟冷却外才会
-  `recover_after_empty_stream` 换一次身份，冷却内只预热。这是本端策略，
-  不是官方 APK 的换档规则。403/429 及其他非瞬态拒绝会停止自动注册：
-  有 `Retry-After`（秒数或 HTTP 日期）就持久化截止时间，没有则不自动恢复，
-  重启不逃窗口。瞬态重试沿用同一次身份材料。③有响应体但挑不出本机能播的档
-  → `StreamMiss`，只记账、不换设备。登录态（x-tt-token）与空响应恢复正交。
+- **200+0 与「有包不可播」要分清**：全程空体返回 `EmptyResponse`，有响应体但
+  挑不出可播档返回 `StreamMiss`，两者都保留播放中的设备身份。
+  注册遇 403/429 及其他非瞬态拒绝会停止自动注册，有 `Retry-After` 时持久化截止时间。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```
@@ -945,7 +934,8 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
   以容错解析为准——series_id/book_id/item_id 任一命中即认）
 
 ### 9.4.1 观看进度云上报
-官方客户端播片时同时打两个接口（约每分钟 + 切集时）：
+官方客户端播片时同时打两个接口（约每分钟 + 切集时）。2026-11-10
+《全球死考》实抓均走 `api5-normal-sinfonlinea.fqnovel.com`。
 
 **`POST /reading/bookapi/read_history/update/v`** —— `book_id`/`vid` 是
 JSON **数字**（精度内直接发数字）：
@@ -979,7 +969,7 @@ JSON **数字**（精度内直接发数字）：
       "user_digg": false,
       "user_playlet_comment_flag": false,
       "vid": 7690802329313872921,
-      "vid_index": 0
+      "vid_index": 1
     }
   ]
 }
@@ -1015,15 +1005,11 @@ JSON **数字**（精度内直接发数字）：
 }
 ```
 
-- 官方传 0 的字段（duration/retain/episode_cnt 等）照抄 0；
-  `player_accumulate_total_time` 样本里等于当时进度，我们同用 position_ms
-- 我们实现：`history.rs report_watch_progress` 一次打双接口；**触发在播放器
-  的上报心跳里**（`history-cadence.ts` / `history_cadence.rs` 两壳同规则，
-  见 §9.4.2），匿名后端静默跳过。
-  ⚠️ **vid_index 基准**：线上协议是 **0 基**（第 1 集 = 0），
-  域值（前端/本地存储）是 1 基——写侧统一 -1 换算
-  （`wire_vid_index`，删除形态同源），读侧 +1 转回。1 基直发
-  会与官方 App 会话混存后跨端续播差一集
+- `read_history/update` 的观看进度形态发送 **1 基集号**。实抓首集、ep13 分别为 1、13。
+  `read_progress/upload` 通过 `item_id` 标识短剧分集，实抓首集与 ep13–21 的
+  `vid_index` 都是 0。历史列表与删除沿用原有 0 基契约。
+- `history/mod.rs::report_watch_progress` 由播放器的上报心跳调用，两次请求共用当前设备环境。
+  桌面匿名上报仍由 service 跳过。累计时长字段与当前播放位置可能不同，现实现仍沿用 position_ms。
 
 ### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
 query 业务参数：`action_type=3, count=100, offset=0,

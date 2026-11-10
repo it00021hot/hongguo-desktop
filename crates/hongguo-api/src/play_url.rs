@@ -96,14 +96,19 @@ pub struct PlayInfo {
     pub definitions: Vec<Definition>,
 }
 
-/// `(新通道 origin, 旧通道 origin)`；生产固定 reading → lq，测试可注入本地 mock。
-type PlayOrigins<'a> = (&'a str, &'a str);
+#[derive(Clone, Copy)]
+struct PlayOrigins<'a> {
+    player: &'a str,
+    saas: &'a str,
+    light: &'a str,
+}
 
 fn default_origins() -> PlayOrigins<'static> {
-    (
-        crate::client::READING_API_ORIGIN,
-        crate::client::LQ_API_ORIGIN,
-    )
+    PlayOrigins {
+        player: crate::client::SINFONLINEA_API_ORIGIN,
+        saas: crate::client::READING_API_ORIGIN,
+        light: crate::client::LQ_API_ORIGIN,
+    }
 }
 
 /// 取一集的播放地址：批量暂存命中直接用；`definition` 缺档自动回退最高档（[`pick_stream_at`]）；
@@ -189,87 +194,51 @@ fn check_model_code(value: &Value) -> AppResult<()> {
     Err(AppError::StreamMiss(format!("取流接口返回 {code}: {msg}")))
 }
 
-/// 单集取流，对齐 7.4.3.32 `wb5.s0`：
-/// 1) 官方默认批量体 `saas_model_payload`（`mGetVideoModelRxJava`，High=3 / Mixed=1024）
-/// 2) 单集 `getVideoModelRxJava`（Outer=3）
-/// 3) 旧 light 体（device_level=4）末跳——桌面常靠它拿 `bytevc1`
 async fn fetch_single_at(
     vid: &str,
     content_type: i64,
     definition: Option<u32>,
     cap: super::stream_pick::DecoderCapability,
     env: &super::client::ApiEnv,
-    (primary, fallback): PlayOrigins<'_>,
+    origins: PlayOrigins<'_>,
 ) -> AppResult<SingleFetch> {
     let map = BTreeMap::from([(content_type.to_string(), vec![vid.to_string()])]);
     let mut saw_payload = false;
 
-    // ① 官方默认：reading 域 multi_video_model/v1 + saas 体（无 dr_scene）
+    let single_payload =
+        serde_json::to_vec(&crate::params::single_model_payload(vid, content_type))
+            .map_err(|e| AppError::Media(e.to_string()))?;
     let saas_payload = serde_json::to_vec(&crate::params::saas_model_payload(&map))
         .map_err(|e| AppError::Media(e.to_string()))?;
-    match crate::client::api_call_model_light(
-        primary,
-        crate::params::MODEL_LIGHT_PATH,
-        saas_payload,
-        env,
-    )
-    .await
-    {
-        Ok(bytes) => {
-            if !bytes.is_empty() {
-                saw_payload = true;
+    for (origin, path, payload) in [
+        (
+            origins.player,
+            crate::params::SINGLE_MODEL_PATH,
+            single_payload,
+        ),
+        (origins.saas, crate::params::MODEL_LIGHT_PATH, saas_payload),
+    ] {
+        let bytes = match crate::client::api_call_model_light(origin, path, payload, env).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::warn!("[PlayUrl] {path} 请求失败 vid={vid}: {e}");
+                continue;
             }
-            match play_from_bytes(&bytes, vid, definition, cap) {
-                Ok(Some(play)) => {
-                    log::info!("[PlayUrl] 默认批量体命中（vid={vid} codec={}）", play.codec);
-                    return Ok(SingleFetch::Hit(play));
-                }
-                Ok(None) => log::info!(
-                    "[PlayUrl] 默认批量体无可播流（vid={vid} bytes={}）",
-                    bytes.len()
-                ),
-                Err(e) => log::warn!("[PlayUrl] 默认批量体响应不可用（{e}）"),
-            }
+        };
+        saw_payload |= !bytes.is_empty();
+        match play_from_bytes(&bytes, vid, definition, cap) {
+            Ok(Some(play)) => return Ok(SingleFetch::Hit(play)),
+            Ok(None) => log::info!("[PlayUrl] {path} 无可播流 vid={vid} bytes={}", bytes.len()),
+            Err(e) => log::warn!("[PlayUrl] {path} 响应不可用 vid={vid}: {e}"),
         }
-        Err(e) => log::warn!("[PlayUrl] 默认批量体请求失败（{e}）"),
     }
 
-    // ② 单集 video_model/v1（s0.g）
-    let new_payload = serde_json::to_vec(&crate::params::single_model_payload(vid))
-        .map_err(|e| AppError::Media(e.to_string()))?;
-    match crate::client::api_call_model_light(
-        primary,
-        crate::params::SINGLE_MODEL_PATH,
-        new_payload,
-        env,
-    )
-    .await
-    {
-        Ok(bytes) => {
-            if !bytes.is_empty() {
-                saw_payload = true;
-            }
-            match play_from_bytes(&bytes, vid, definition, cap)? {
-                Some(play) => {
-                    log::info!("[PlayUrl] 单集体命中（vid={vid} codec={}）", play.codec);
-                    return Ok(SingleFetch::Hit(play));
-                }
-                None => log::info!(
-                    "[PlayUrl] 单集体无可播流（vid={vid} bytes={}）",
-                    bytes.len()
-                ),
-            }
-        }
-        Err(e) => log::warn!("[PlayUrl] 单集体请求失败（{e}）"),
-    }
-
-    // ③ 旧 light 末跳（lq 优先，常出 bytevc1）
-    let origins: &[&str] = if primary == fallback {
-        &[fallback]
+    let light_origins: &[&str] = if origins.saas == origins.light {
+        &[origins.light]
     } else {
-        &[fallback, primary]
+        &[origins.light, origins.saas]
     };
-    for origin in origins {
+    for origin in light_origins {
         let bytes = match fallback_model_light(&map, env, origin).await {
             Ok(b) => b,
             Err(e) => {
@@ -415,10 +384,10 @@ async fn fallback_player_model(
     env: &super::client::ApiEnv,
     origin: &str,
 ) -> AppResult<Vec<u8>> {
-    let payload = serde_json::to_vec(&crate::params::player_model_payload(map))
+    let scene = crate::params::PlayerModelScene::Player;
+    let payload = serde_json::to_vec(&crate::params::player_model_payload(map, scene))
         .map_err(|e| AppError::Media(e.to_string()))?;
-    crate::client::api_call_model_light(origin, crate::params::PLAYER_MODEL_PATH, payload, env)
-        .await
+    crate::client::api_call_model_light(origin, scene.path(), payload, env).await
 }
 
 /// 旧通道取流：[`crate::params::MODEL_LIGHT_PATH`]，origin 由调用方传入（生产为 lq 域）。
@@ -442,11 +411,48 @@ pub async fn fetch_play_batch(
     fetch_play_batch_at(mixed_video_id_map, cap, env, default_origins()).await
 }
 
+/// Run one observed v5 batch scene with the current device and reuse fresh models.
+pub async fn fetch_play_scene(
+    mixed_video_id_map: &BTreeMap<String, Vec<String>>,
+    scene: crate::params::PlayerModelScene,
+    cap: super::stream_pick::DecoderCapability,
+    env: &super::client::ApiEnv,
+) -> AppResult<usize> {
+    let _flight = play_flight().lock().await;
+    let pending: BTreeMap<_, Vec<_>> = mixed_video_id_map
+        .iter()
+        .filter_map(|(ct, vids)| {
+            let vids: Vec<_> = vids
+                .iter()
+                .filter(|vid| !vid.is_empty() && !has_play_cached(vid))
+                .cloned()
+                .collect();
+            (!vids.is_empty()).then(|| (ct.clone(), vids))
+        })
+        .collect();
+    if pending.is_empty() {
+        return Ok(0);
+    }
+    let payload = serde_json::to_vec(&crate::params::player_model_payload(&pending, scene))
+        .map_err(|error| AppError::Media(error.to_string()))?;
+    let bytes =
+        crate::client::api_call_model_light(default_origins().player, scene.path(), payload, env)
+            .await?;
+    let response = parse_model_response(&bytes)?;
+    let vids: Vec<_> = pending.into_values().flatten().collect();
+    let plays = batch_plays(response.as_ref(), &vids, cap);
+    let hits = plays.len();
+    for (vid, play) in plays {
+        store_play(&vid, play);
+    }
+    Ok(hits)
+}
+
 async fn fetch_play_batch_at(
     mixed_video_id_map: &BTreeMap<String, Vec<String>>,
     cap: super::stream_pick::DecoderCapability,
     env: &super::client::ApiEnv,
-    (primary, fallback): PlayOrigins<'_>,
+    origins: PlayOrigins<'_>,
 ) -> AppResult<usize> {
     let vids: Vec<String> = mixed_video_id_map
         .values()
@@ -471,7 +477,7 @@ async fn fetch_play_batch_at(
     let new_payload = serde_json::to_vec(&crate::params::saas_model_payload(mixed_video_id_map))
         .map_err(|e| AppError::Media(e.to_string()))?;
     let primary_value = match crate::client::api_call_model_light(
-        primary,
+        origins.saas,
         crate::params::MODEL_LIGHT_PATH,
         new_payload,
         env,
@@ -500,7 +506,7 @@ async fn fetch_play_batch_at(
             missing.values().map(Vec::len).sum::<usize>(),
             vids.len()
         );
-        match fallback_player_model(&missing, env, primary)
+        match fallback_player_model(&missing, env, origins.player)
             .await
             .and_then(|bytes| parse_model_response(&bytes))
         {
@@ -513,7 +519,7 @@ async fn fetch_play_batch_at(
     }
     let missing = missing_groups(mixed_video_id_map, &plays);
     if !missing.is_empty() {
-        match fallback_model_light(&missing, env, fallback)
+        match fallback_model_light(&missing, env, origins.light)
             .await
             .and_then(|bytes| parse_model_response(&bytes))
         {
@@ -650,9 +656,9 @@ mod probes {
             }
         };
         let home = "7703109289593818136";
-        let payload = serde_json::to_vec(&crate::params::single_model_payload(home)).unwrap();
+        let payload = serde_json::to_vec(&crate::params::single_model_payload(home, 1004)).unwrap();
         let bytes = match crate::client::api_call_model_light(
-            crate::client::READING_API_ORIGIN,
+            crate::client::SINFONLINEA_API_ORIGIN,
             crate::params::SINGLE_MODEL_PATH,
             payload,
             &env,

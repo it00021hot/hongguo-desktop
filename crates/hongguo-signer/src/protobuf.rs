@@ -100,6 +100,55 @@ pub fn proto(fields: &[(u32, FieldValue, FieldType)]) -> Vec<u8> {
     out
 }
 
+/// 只读 Protobuf wire 字段，保留 repeated 字段顺序和显式空值。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WireValue<'a> {
+    Varint(u64),
+    Bytes(&'a [u8]),
+    Fixed32([u8; 4]),
+    Fixed64([u8; 8]),
+}
+
+pub fn read_field<'a>(input: &mut &'a [u8]) -> Option<(u32, WireValue<'a>)> {
+    let tag = read_varint(input)?;
+    let field = u32::try_from(tag >> 3)
+        .ok()
+        .filter(|field| (1..1 << 29).contains(field))?;
+    let value = match tag & 7 {
+        0 => WireValue::Varint(read_varint(input)?),
+        1 => WireValue::Fixed64(read_bytes(input, 8)?.try_into().ok()?),
+        2 => {
+            let length = usize::try_from(read_varint(input)?).ok()?;
+            WireValue::Bytes(read_bytes(input, length)?)
+        }
+        5 => WireValue::Fixed32(read_bytes(input, 4)?.try_into().ok()?),
+        _ => return None,
+    };
+    Some((field, value))
+}
+
+fn read_bytes<'a>(input: &mut &'a [u8], length: usize) -> Option<&'a [u8]> {
+    let (value, remainder) = input.split_at_checked(length)?;
+    *input = remainder;
+    Some(value)
+}
+
+fn read_varint(input: &mut &[u8]) -> Option<u64> {
+    let mut value = 0;
+    for shift in (0..=63).step_by(7) {
+        let (byte, rest) = input.split_first()?;
+        *input = rest;
+        if shift == 63 && *byte > 1 {
+            return None;
+        }
+        value |= u64::from(byte & 127) << shift;
+        if byte & 128 == 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,8 @@
 - 轻量索引（方法/域名/路径/状态/类型/长度）：所有域名，写 MITM_INDEX_OUT。
   用于发现目标名单外的域名（如图片上传、第三方 GIF 源），确认后再补进 TARGETS 重抓。
 """
+from __future__ import annotations
+
 import json
 import os
 import time
@@ -20,6 +22,8 @@ INDEX_OUT = os.environ.get("MITM_INDEX_OUT", OUT.replace(".jsonl", "-index.jsonl
 TARGETS = ("snssdk.com", "fqnovel.com", "byteoversea.com", "toutiao.com", "zjcdn.com",
            "ixigua.com", "pstatp.com", "zijieapi.com", "bytedance.com", "ibytedtos.com",
            "byteimg.com", "bytegoofy.com", "bytedapm.com", "gifshow.com", "amemv.com")
+REQUEST_BODY_LIMIT = 200000
+RESPONSE_BODY_LIMIT = 500000
 
 
 def response(flow):
@@ -42,21 +46,41 @@ def response(flow):
         except UnicodeDecodeError:
             return "b64:" + base64.b64encode(raw).decode("ascii")
 
-    req_body = safe_text(flow.request.raw_content)
-    resp_body = safe_text(flow.response.raw_content)
+    req_raw = flow.request.raw_content
+    resp_raw = flow.response.raw_content
+    req_body = safe_text(req_raw)
+    resp_body = safe_text(resp_raw)
+    resp_headers = list(flow.response.headers.items(True))
     # Set-Cookie 是身份票（ttreq/odin_tt）下发的唯一观测点，必须落盘
-    set_cookies = [v for k, v in flow.response.headers.items(True) if k.lower() == "set-cookie"]
+    set_cookies = [v for k, v in resp_headers if k.lower() == "set-cookie"]
     entry = {
         "t": time.time(),
         "method": flow.request.method,
         "host": host,
         "path": flow.request.path,
         "req_headers": dict(flow.request.headers.items()),
-        "req_body": req_body[:200000],
+        "req_body": req_body[:REQUEST_BODY_LIMIT],
+        "req_raw_bytes": len(req_raw) if req_raw is not None else None,
+        "req_body_truncated": len(req_body) > REQUEST_BODY_LIMIT if req_raw is not None else None,
         "status": flow.response.status_code,
         "set_cookies": set_cookies,
-        "resp_body": resp_body[:500000],
+        "resp_headers": resp_headers,
+        "resp_body": resp_body[:RESPONSE_BODY_LIMIT],
+        "resp_raw_bytes": len(resp_raw) if resp_raw is not None else None,
+        "resp_body_truncated": len(resp_body) > RESPONSE_BODY_LIMIT if resp_raw is not None else None,
     }
+    content_encodings = [value.strip().lower() for name, value in resp_headers
+                         if name.lower() == "content-encoding"]
+    if resp_raw and any(encoding not in {"", "identity", "gzip"} for encoding in content_encodings):
+        try:
+            decoded = flow.response.content
+        except ValueError:
+            decoded = None
+        if decoded is not None:
+            decoded_body = safe_text(decoded)
+            entry["resp_decoded_body"] = decoded_body[:RESPONSE_BODY_LIMIT]
+            entry["resp_decoded_bytes"] = len(decoded)
+            entry["resp_decoded_body_truncated"] = len(decoded_body) > RESPONSE_BODY_LIMIT
     with open(OUT, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
