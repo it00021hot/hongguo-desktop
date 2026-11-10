@@ -27,6 +27,11 @@ pub fn transcode_bytevc2(req: &PlatformRequest<'_>) -> AppResult<()> {
     }
 }
 
+/// 解码线程最多领先编码多少帧。够吸收编码器的瞬时抖动即可；1080p 一帧约 3 MB，
+/// 队列再深只是多占内存。
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+const DECODE_QUEUE_FRAMES: usize = 8;
+
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
 struct LiveFile<'a> {
     writer: Option<GrowingH264>,
@@ -88,11 +93,17 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
             req,
             started,
         };
-        source.decode(|frame| {
-            ready.push(frame);
-            frames += feed_ready(&mut pass, &mut ready, &slot_times, &mut slot)?;
-            Ok(())
-        })?;
+        // 解码与编码各占一个线程：解码线程只管出帧，本线程（平台编码器要求的线程）送编码并封装。
+        // 原来两者在同一个回调里串行，编码器吃帧时解码核的线程池是空转的。
+        pump(
+            DECODE_QUEUE_FRAMES,
+            |emit| source.decode(emit),
+            |frame| {
+                ready.push(frame);
+                frames += feed_ready(&mut pass, &mut ready, &slot_times, &mut slot)?;
+                Ok(())
+            },
+        )?;
         ready
             .sort_by_key(|frame| hongguo_bytevc2::presentation_tick(frame.pts.unwrap_or(f64::MAX)));
         frames += feed_sorted(&mut pass, &mut ready)?;
@@ -127,12 +138,12 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
     };
     let decoder = hongguo_bytevc2::active_decoder_name();
     if let Some(path) = stage_log {
+        // 解码已挪到独立线程，这个值现在是「主循环里没花在送编码上的时间」（等帧 + 封装），
+        // 不再等于纯解码耗时；字段名保留以兼容既有的阶段日志读取方。
         let decode_ns = loop_ns.saturating_sub(push_ns);
         let body = format!(
             "{{\"frames\":{frames},\"width\":{width},\"height\":{height},\"fps\":{fps},\"decoder\":\"{decoder}\",\"media_secs\":{media_secs:.6},\"realtime_x\":{realtime_x:.4},\"loop_ns\":{loop_ns},\"decode_ns\":{decode_ns},\"encode_push_ns\":{push_ns},\"encode_flush_ns\":{flush_ns},\"mux_ns\":{mux_ns},\"prefix_ready_ns\":{},\"prefix_video_samples\":{},\"prefix_bytes\":{},\"wall_ns\":{wall_ns}}}\n",
-            live.ready_ns,
-            live.prefix_samples,
-            live.prefix_bytes,
+            live.ready_ns, live.prefix_samples, live.prefix_bytes,
         );
         hongguo_common::offline_qa::qa_write(std::path::Path::new(&path), body.as_bytes())
             .map_err(|e| AppError::Io(format!("阶段日志写入失败: {e}")))?;
@@ -142,6 +153,42 @@ fn drive(req: &PlatformRequest<'_>) -> AppResult<()> {
         started.elapsed()
     );
     Ok(())
+}
+
+/// 在独立线程上跑 `produce`，本线程按产出顺序逐个 `consume`，中间是深度 `depth` 的有界队列。
+///
+/// - `consume` 出错：停止接收，`produce` 的下一次 `emit` 得到 `Cancelled` 而收手，返回 `consume` 的错误。
+/// - `produce` 出错：先把已入队的帧消费完，再返回它的错误。
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+fn pump<T: Send>(
+    depth: usize,
+    produce: impl FnOnce(&mut dyn FnMut(T) -> AppResult<()>) -> AppResult<()> + Send,
+    mut consume: impl FnMut(T) -> AppResult<()>,
+) -> AppResult<()> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<T>(depth);
+    std::thread::scope(|scope| {
+        let producer = std::thread::Builder::new()
+            .name("bytevc2-decode".into())
+            .spawn_scoped(scope, move || {
+                produce(&mut |item| tx.send(item).map_err(|_| AppError::Cancelled))
+            })
+            .map_err(|e| AppError::Media(format!("ByteVC2 解码线程起不来: {e}")))?;
+        let mut consumed: AppResult<()> = Ok(());
+        for item in &rx {
+            if let Err(e) = consume(item) {
+                consumed = Err(e);
+                break;
+            }
+        }
+        // 先放掉接收端再等线程：否则生产方可能永远堵在满队列的 send 上。
+        drop(rx);
+        let produced = producer
+            .join()
+            .map_err(|_| AppError::Media("ByteVC2 解码线程异常退出".into()))?;
+        // 消费侧的错误是真因；此时生产侧报的只是「接收端没了」。
+        consumed?;
+        produced
+    })
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
@@ -237,9 +284,12 @@ fn drain_gops(pass: &mut Pass<'_, '_>) -> AppResult<()> {
     }
     loop {
         let first = pass.live.writer.is_none();
-        let need = if first { FIRST_PUBLISH_FRAMES } else { PUBLISH_FRAMES };
-        let Some((gop, next_pts)) = pass.encoder.take_publish_run(need, first)
-        else {
+        let need = if first {
+            FIRST_PUBLISH_FRAMES
+        } else {
+            PUBLISH_FRAMES
+        };
+        let Some((gop, next_pts)) = pass.encoder.take_publish_run(need, first) else {
             break;
         };
         // next_pts 为空只表示「当前缓冲里没有下一帧」，不是整片结束；
@@ -341,4 +391,97 @@ fn timeline_secs(
         .and_then(|track| track.samples.last().map(|(pts, _)| *pts))
         .unwrap_or(0.0);
     video_end.max(audio_end).max(frame_dur)
+}
+
+#[cfg(all(
+    test,
+    any(target_os = "macos", target_os = "windows", target_os = "android")
+))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn pump_delivers_every_item_in_order() {
+        let mut got = Vec::new();
+        pump(
+            2,
+            |emit| {
+                for i in 0..200u32 {
+                    emit(i)?;
+                }
+                Ok(())
+            },
+            |i| {
+                got.push(i);
+                Ok(())
+            },
+        )
+        .expect("全部送达");
+        assert_eq!(got, (0..200).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn pump_consumer_error_stops_the_producer_without_deadlock() {
+        // 队列深度 1、生产方想发 1000 个：消费方第 3 个就报错，生产方必须很快收手而不是堵死。
+        let emitted = AtomicUsize::new(0);
+        let err = pump(
+            1,
+            |emit| {
+                for i in 0..1000u32 {
+                    emit(i)?;
+                    emitted.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(())
+            },
+            |i| {
+                if i == 2 {
+                    return Err(AppError::Media("编码失败".into()));
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Media(ref m) if m == "编码失败"),
+            "实际 {err}"
+        );
+        assert!(emitted.load(Ordering::SeqCst) < 10, "生产方应随即停下");
+    }
+
+    #[test]
+    fn pump_cancellation_from_the_consumer_is_reported_as_cancelled() {
+        let err = pump(
+            4,
+            |emit| loop {
+                emit(0u8)?;
+            },
+            |_| Err(AppError::Cancelled),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Cancelled), "实际 {err}");
+    }
+
+    #[test]
+    fn pump_producer_error_surfaces_after_queued_items_are_consumed() {
+        let mut got = Vec::new();
+        let err = pump(
+            8,
+            |emit| {
+                emit(1u32)?;
+                emit(2)?;
+                Err(AppError::Media("码流损坏".into()))
+            },
+            |i| {
+                got.push(i);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(got, [1, 2], "出错前已解出的帧不能丢");
+        assert!(
+            matches!(err, AppError::Media(ref m) if m == "码流损坏"),
+            "实际 {err}"
+        );
+    }
 }

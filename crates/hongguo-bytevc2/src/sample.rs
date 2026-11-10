@@ -5,8 +5,15 @@ const START_CODE: [u8; 4] = [0, 0, 0, 1];
 /// 把一个 MP4 样本（长度前缀 NAL 串）转成 Annex-B。
 /// `length_size` 来自 [`super::length_size_from_extradata`]；未知时传 4（librempeg 默认）。
 pub fn sample_to_annexb(sample: &[u8], length_size: usize) -> Vec<u8> {
-    let length_size = length_size.max(1);
     let mut out = Vec::with_capacity(sample.len().saturating_add(16));
+    append_annexb(sample, length_size, &mut out);
+    out
+}
+
+/// 同 [`sample_to_annexb`]，但追加到调用方的缓冲末尾（不清空），解码循环用它复用一块缓冲。
+pub(crate) fn append_annexb(sample: &[u8], length_size: usize, out: &mut Vec<u8>) {
+    let length_size = length_size.max(1);
+    out.reserve(sample.len().saturating_add(16));
     let mut pos = 0usize;
     while pos + length_size <= sample.len() {
         let mut len = 0usize;
@@ -21,7 +28,6 @@ pub fn sample_to_annexb(sample: &[u8], length_size: usize) -> Vec<u8> {
         out.extend_from_slice(&sample[pos..pos + len]);
         pos += len;
     }
-    out
 }
 
 #[cfg(test)]
@@ -37,5 +43,15 @@ mod tests {
         sample.extend_from_slice(&[0xaa, 0xbb]);
         let out = sample_to_annexb(&sample, 4);
         assert_eq!(out, [0, 0, 0, 1, 0x11, 0x22, 0x33, 0, 0, 0, 1, 0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn append_keeps_existing_prefix() {
+        let mut sample = Vec::new();
+        sample.extend_from_slice(&1u32.to_be_bytes());
+        sample.push(0x7f);
+        let mut out = vec![9u8, 9];
+        append_annexb(&sample, 4, &mut out);
+        assert_eq!(out, [9, 9, 0, 0, 0, 1, 0x7f]);
     }
 }

@@ -5,7 +5,7 @@ use hongguo_media_platform_api::video::{RateProfile, bitrate_for_profile};
 use hongguo_media_platform_api::{EncodedVideo, I420View};
 
 use super::encode::Compressor;
-use super::pixel::{Pb, Transfer};
+use super::pixel::{Nv12Pool, Pb, Transfer};
 
 /// 把显示序 I420 编成 H.264 Annex-B。
 pub struct YuvEncoder {
@@ -14,6 +14,8 @@ pub struct YuvEncoder {
     rate: RateProfile,
     compressor: Option<Compressor>,
     transfer: Option<Transfer>,
+    /// 源分辨率的 NV12 缓冲池（首帧建）。
+    pool: Option<Nv12Pool>,
     out_dims: Option<(usize, usize)>,
     units: Vec<(f64, Vec<u8>, bool)>,
     /// 下一帧强制关键帧（首帧起播 / 重新开片段）
@@ -28,6 +30,7 @@ impl YuvEncoder {
             rate,
             compressor: None,
             transfer: None,
+            pool: None,
             out_dims: None,
             units: Vec::new(),
             force_next_keyframe: true,
@@ -36,7 +39,13 @@ impl YuvEncoder {
 
     pub fn push(&mut self, frame: &I420View<'_>) -> AppResult<()> {
         self.ensure_session(frame.width, frame.height)?;
-        let pb = unsafe { Pb::from_i420(frame.y, frame.u, frame.v, frame.width, frame.height)? };
+        let pb = match self.pool.as_ref() {
+            Some(pool) if pool.dims() == (frame.width, frame.height) => unsafe {
+                pool.nv12_of(frame.y, frame.u, frame.v, frame.width, frame.height)?
+            },
+            // 中途变分辨率或池没建成：退回逐帧新建，行为与原来一致。
+            _ => unsafe { Pb::from_i420(frame.y, frame.u, frame.v, frame.width, frame.height)? },
+        };
         let frame_pb = match self.transfer.as_ref() {
             Some(transfer) => unsafe { transfer.scale(&pb)? },
             None => pb,
@@ -100,9 +109,11 @@ impl YuvEncoder {
         let low_latency = self.rate == RateProfile::Playback;
         self.compressor = Some(unsafe { Compressor::new(out_w, out_h, bitrate, low_latency)? });
         self.out_dims = Some((out_w, out_h));
-        log::info!(
-            "[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h} low_latency={low_latency}"
-        );
+        match unsafe { Nv12Pool::new(width, height) } {
+            Ok(pool) => self.pool = Some(pool),
+            Err(e) => log::warn!("[ByteVC2] NV12 缓冲池建不出来，逐帧新建缓冲: {e}"),
+        }
+        log::info!("[ByteVC2] VideoToolbox 编码会话 {out_w}x{out_h} low_latency={low_latency}");
         Ok(())
     }
 
