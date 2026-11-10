@@ -1,10 +1,12 @@
+//! Requires `HONGGUO_ALLOW_FFMPEG=1` (ffmpeg debug fallback is off by default).
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 fn main() {
     let input = Path::new("/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4");
-    let output = Path::new("/Users/milo/qa-hongguo-offline-data/compat-cache/p03-ffmpeg-grow.play.mp4");
+    let output =
+        Path::new("/Users/milo/qa-hongguo-offline-data/compat-cache/p03-ffmpeg-grow.play.mp4");
     let _ = std::fs::remove_file(output);
     let t0 = Instant::now();
     let first = AtomicU64::new(0);
