@@ -122,10 +122,10 @@ pub fn sized_cache_path(remote: &str, edge: u32) -> std::path::PathBuf {
 /// 确保某一档封面在磁盘上并返回路径：磁盘命中直接返回，否则下载 → HEIC 转码 → 缩到该档尺寸 → 落盘。
 pub fn ensure_sized_cached(remote: &str, edge: u32) -> Result<std::path::PathBuf, String> {
     let path = sized_cache_path(remote, edge);
-    if let Ok(bound) = hongguo_store::paths::prepare_qa_io(&path) {
-        if hongguo_store::paths::qa_read(&bound).is_ok() {
-            return Ok(bound);
-        }
+    if let Ok(bound) = hongguo_store::paths::prepare_qa_io(&path)
+        && hongguo_store::paths::qa_read(&bound).is_ok()
+    {
+        return Ok(bound);
     }
     let (bytes, _) = acquire_renderable(remote)?;
     let sized = resize_to(&bytes, edge)?;

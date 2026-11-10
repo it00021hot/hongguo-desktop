@@ -154,11 +154,11 @@ fn decode_track(
 
 #[cfg(feature = "vvdec")]
 fn vvdec_thread_count() -> i32 {
-    if let Ok(raw) = std::env::var("HONGGUO_BYTEVC2_VVDEC_THREADS") {
-        if let Ok(n) = raw.parse::<i32>() {
-            // -1 = VVdeC auto；0/正数按库语义。
-            return n;
-        }
+    if let Ok(raw) = std::env::var("HONGGUO_BYTEVC2_VVDEC_THREADS")
+        && let Ok(n) = raw.parse::<i32>()
+    {
+        // -1 = VVdeC auto；0/正数按库语义。
+        return n;
     }
     // 默认 capped，避免与 UI/播放器抢满核；自测可抬高。
     std::thread::available_parallelism()

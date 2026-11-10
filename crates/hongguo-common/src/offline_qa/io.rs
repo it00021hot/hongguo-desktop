@@ -11,14 +11,17 @@ use std::sync::Mutex;
 static EXTRA_PRODUCTION_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 #[cfg(test)]
-static BETWEEN_PREPARE_AND_SYSCALL: Mutex<Option<Box<dyn Fn(&Path) + Send>>> = Mutex::new(None);
+type BeforeSyscallHook = Box<dyn Fn(&Path) + Send>;
+
+#[cfg(test)]
+static BETWEEN_PREPARE_AND_SYSCALL: Mutex<Option<BeforeSyscallHook>> = Mutex::new(None);
 
 #[cfg(test)]
 fn run_between_prepare_and_syscall(path: &Path) {
-    if let Ok(guard) = BETWEEN_PREPARE_AND_SYSCALL.lock() {
-        if let Some(hook) = guard.as_ref() {
-            hook(path);
-        }
+    if let Ok(guard) = BETWEEN_PREPARE_AND_SYSCALL.lock()
+        && let Some(hook) = guard.as_ref()
+    {
+        hook(path);
     }
 }
 
@@ -99,16 +102,14 @@ pub fn qa_remove_dir_all(path: &Path) -> std::io::Result<()> {
             "离线 QA 拒绝对非目录执行 remove_dir_all",
         ));
     }
-    if super::enabled() {
-        if let Ok(root) = isolation_root() {
-            let canon = std::fs::canonicalize(&path)?;
-            if canon == root {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "离线 QA 拒绝删除隔离根本身",
-                ));
-            }
-        }
+    if super::enabled()
+        && let Ok(root) = isolation_root()
+        && std::fs::canonicalize(&path)? == root
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "离线 QA 拒绝删除隔离根本身",
+        ));
     }
     std::fs::remove_dir_all(path)
 }
@@ -419,7 +420,7 @@ mod tests {
         let base = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or_else(|| std::env::temp_dir());
+            .unwrap_or_else(std::env::temp_dir);
         base.join("hg-offline-qa-io-unit").join(name)
     }
 

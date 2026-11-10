@@ -17,7 +17,7 @@ async fn main() {
         std::env::set_var("HONGGUO_DATA_DIR", &dir);
         std::env::remove_var("HONGGUO_OFFLINE_QA");
     }
-    let store = Store::open(&std::path::Path::new(&dir).join("hongguo.db")).unwrap();
+    let store = Store::open(std::path::Path::new(&dir).join("hongguo.db")).unwrap();
     let anon = anonymous_profile(&fresh_cdid());
     store.save_device_profile(&anon).unwrap();
     write_meta(&store, &BootstrapMeta::default());
