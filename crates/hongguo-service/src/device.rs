@@ -1471,10 +1471,15 @@ mod tests {
         let loaded = read_meta(&reopened);
         assert!(loaded.register_block_unknown);
         assert!(registration_blocked(&loaded, now_ms()));
-        let mode = std::fs::metadata(&side).unwrap().permissions().readonly();
-        let mut perms = std::fs::metadata(&side).unwrap().permissions();
-        perms.set_readonly(true);
-        std::fs::set_permissions(&side, perms).unwrap();
+        #[cfg(windows)]
+        let exclusive_sidecar = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&side)
+                .unwrap()
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1484,12 +1489,16 @@ mod tests {
         }
         assert!(
             std::fs::read_to_string(&side).is_err(),
-            "当前用户应读不了旁文件，readonly={mode}"
+            "测试必须让旁文件读取实际失败"
         );
-        assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        let unreadable = read_meta(&reopened);
+        assert!(unreadable.register_block_unknown);
+        assert!(registration_blocked(&unreadable, now_ms()));
         FAIL_SIDECAR_DELETES.store(1, Ordering::Relaxed);
         assert!(clear_register_block(&reopened).is_err());
         assert!(registration_blocked(&read_meta(&reopened), now_ms()));
+        #[cfg(windows)]
+        drop(exclusive_sidecar);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
