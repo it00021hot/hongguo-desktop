@@ -36,7 +36,37 @@ struct Host {
     content: *mut AnyObject,
     view: *mut AnyObject,
     player_layer: *mut AnyObject,
+    /// 叠在播放层上面的画面层（内置软解直播放的 `AVSampleBufferDisplayLayer`），没有为空。
+    /// 由宿主 layer 的 sublayers 持有；换播放器时换掉或摘掉。
+    overlay: *mut AnyObject,
     last_frame: Option<(f64, f64, f64, f64)>,
+}
+
+/// 换上（或摘掉）叠加画面层，几何与播放层一致。主线程调用。
+fn set_overlay(host: &mut Host, overlay: Option<&AnyObject>) {
+    let wanted = overlay.map_or(std::ptr::null_mut(), |layer| {
+        layer as *const AnyObject as *mut AnyObject
+    });
+    if wanted == host.overlay {
+        return;
+    }
+    // SAFETY: 两个 layer 都是有效 ObjC 对象；addSublayer 增加引用，removeFromSuperlayer 释放宿主那一份。
+    unsafe {
+        without_implicit_actions(|| {
+            if !host.overlay.is_null() {
+                let _: () = msg_send![host.overlay, removeFromSuperlayer];
+            }
+            if let Some(layer) = overlay {
+                let frame: NSRect = msg_send![host.player_layer, frame];
+                let gravity: *mut AnyObject = msg_send![host.player_layer, videoGravity];
+                let _: () = msg_send![layer, setFrame: frame];
+                let _: () = msg_send![layer, setVideoGravity: gravity];
+                let host_layer: *mut AnyObject = msg_send![host.view, layer];
+                let _: () = msg_send![host_layer, addSublayer: layer];
+            }
+        });
+    }
+    host.overlay = wanted;
 }
 
 // SAFETY: 只在主线程访问，且指针指向的对象由 AppKit 视图树持有。
@@ -202,8 +232,9 @@ pub fn prepare_window(host: &HostWindow) {
     log_composition("prepare");
 }
 
-/// 挂上/切换当前播放器；返回 false 表示窗口不可用。
-pub fn ensure(host: &HostWindow, player: &AnyObject) -> bool {
+/// 挂上/切换当前播放器；返回 false 表示窗口不可用。`overlay` 是叠在播放层上的画面层
+/// （内置软解直播放），普通系统播放传 `None`，顺带摘掉上一集留下的叠加层。
+pub fn ensure(host: &HostWindow, player: &AnyObject, overlay: Option<&AnyObject>) -> bool {
     let Some(view) = ns_view(host) else {
         log::warn!("[AvPresenter] ensure: 取不到 NSView");
         return false;
@@ -218,9 +249,10 @@ pub fn ensure(host: &HostWindow, player: &AnyObject) -> bool {
     };
     let content_ptr = Retained::as_ptr(&content) as *mut AnyObject;
     let mut host = HOST.lock().expect("视频宿主锁 poisoned");
-    if let Some(host) = host.as_ref() {
+    if let Some(host) = host.as_mut() {
         // 复用宿主，换播放器即可——切集不重建 NSView。
         let _: () = unsafe { msg_send![host.player_layer, setPlayer: player] };
+        set_overlay(host, overlay);
         let _: () = unsafe { msg_send![host.view, setHidden: false] };
         return true;
     }
@@ -271,12 +303,14 @@ pub fn ensure(host: &HostWindow, player: &AnyObject) -> bool {
             ];
         });
     }
-    *host = Some(Host {
+    let created = host.insert(Host {
         content: content_ptr,
         view: host_view,
         player_layer: Retained::as_ptr(&player_layer) as *mut AnyObject,
+        overlay: std::ptr::null_mut(),
         last_frame: None,
     });
+    set_overlay(created, overlay);
     // player_layer 由 host_layer 的 sublayers 持有；我们的 Retained 可安全释放。
     drop(player_layer);
     drop(host);
@@ -324,6 +358,10 @@ pub fn submit(bounds: Option<PresenterBounds>, fit: PresenterFit, visible: bool)
                 let _: () = msg_send![host.view, setFrame: frame];
                 let _: () = msg_send![host.player_layer, setFrame: inner];
                 let _: () = msg_send![host.player_layer, setVideoGravity: &*gravity];
+                if !host.overlay.is_null() {
+                    let _: () = msg_send![host.overlay, setFrame: inner];
+                    let _: () = msg_send![host.overlay, setVideoGravity: &*gravity];
+                }
                 let _: () = msg_send![host.view, setHidden: !visible];
             });
             let key = (

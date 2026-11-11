@@ -14,6 +14,8 @@ export const playResponseSchema = z.object({
   online: z.boolean(),
   resumeAt: z.number().nonnegative(),
   error: z.string(),
+  /** `error` 非空时它的种类（Rust `AppError` 的 i18n key），否则为空串。 */
+  errorKind: z.string().default(''),
   // 实际生效的档位与本集可选的全部档位。
   // 本地文件播放时 definitions 为空数组，前端据此隐藏切换菜单。
   definition: z.number().int().nonnegative(),
@@ -21,8 +23,8 @@ export const playResponseSchema = z.object({
   definitions: z.array(videoDefinitionSchema),
   /** 选中流编码，本地探测失败时为空串。 */
   codec: z.string().default(''),
-  /** 历史字段名，标识应走 ByteVC2 直播放。 */
-  needsCompat: z.boolean().default(false),
+  /** 这条流交给内置软解直播放（HEVC / ByteVC1 / ByteVC2），而不是喂给 `<video>`。 */
+  direct: z.boolean().default(false),
 });
 
 export const decodeCapabilitySchema = z.object({
@@ -48,31 +50,4 @@ export const onlineProgressSchema = z.object({
 
 export type OnlineProgress = z.infer<typeof onlineProgressSchema>;
 
-/** 播放兼容兜底的转码进度。 */
-export const compatProgressSchema = z.object({
-  /** 缓存键，格式 {seriesId}:{vidIndex} */
-  key: z.string(),
-  percent: z.number(),
-  /** downloading | transcoding | ready | completed | failed */
-  phase: z.enum(['downloading', 'transcoding', 'ready', 'completed', 'failed']),
-});
-
-export type CompatProgress = z.infer<typeof compatProgressSchema>;
-
 export type DecodeCapability = z.infer<typeof decodeCapabilitySchema>;
-
-/** 本机 WebView2 能否解 HEVC（决定无扩展机器的选流与扩展安装引导）。 */
-export const playbackCapabilitySchema = z.boolean();
-
-/** HEVC 扩展安装结果：安装后的能力重探值。 */
-export const hevcInstallResultSchema = z.boolean();
-
-/** 播放链路的转码决策结果（本地直读 / 缓存命中 / 实时转码）。 */
-export const transcodePlaybackSchema = z.object({
-  url: z.string(),
-  cached: z.boolean(),
-  backend: z.string(),
-  elapsedMs: z.number(),
-  /** 首段已可播，后续字节还在同一地址上增长 */
-  progressive: z.boolean().default(false),
-});

@@ -125,6 +125,13 @@ pub(super) async fn select(
     let cap = crate::device::stream_cap();
     let (stamp, mut candidates) = hongguo_api::play_url::playback_candidates(vid, cap)
         .ok_or_else(|| AppError::Media("播放选档缺少有效流表".into()))?;
+    if candidates.is_empty()
+        && let Some(offered) = hongguo_api::play_url::refused_codecs(vid, cap)
+    {
+        return Err(AppError::CodecUnsupported(format!(
+            "vid={vid} 只提供 {offered}"
+        )));
+    }
     // getSupportResolutions 按 Resolution 枚举次序返回，与 video_list 的码率顺序无关。
     candidates.sort_by_key(|value| value.definition);
     let (series, episode) = progress_key.split_once(':').unwrap_or((progress_key, ""));

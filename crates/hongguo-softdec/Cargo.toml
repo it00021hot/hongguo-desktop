@@ -1,0 +1,20 @@
+[package]
+name = "hongguo-softdec"
+description = "进程内软解直播放会话：MP4 索引、关键帧跳转、音轨视图与解核分派（HEVC / ByteVC2）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+hongguo-common = { path = "../hongguo-common" }
+# 样本表与时间轴。
+hongguo-video = { path = "../hongguo-video" }
+# hvcC 参数集与长度前缀 → Annex-B。
+hongguo-media = { path = "../hongguo-media" }
+# ByteVC2 找轨与 vvdec 解核，以及两种解核共用的帧与缓冲池。
+hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
+# HEVC / ByteVC1 解核（纯 Rust，Apache-2.0）。与 hongguo-media 的封面软解是同一个包；
+# 钉死版本：这个库还在 0.x，小版本间有破坏性改动，升级必须重跑对拍测试。
+rusty_h265 = "=0.7.1"

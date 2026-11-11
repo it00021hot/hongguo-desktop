@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import {
-  compatProgressSchema,
   downloadProgressSchema,
   downloadTaskSchema,
   followNoticesEventSchema,
@@ -28,7 +27,6 @@ const EVENT_PAYLOADS = {
   'merge-completed': mergeTaskSchema,
   'merge-failed': mergeTaskSchema,
   'online-play-progress': onlineProgressSchema,
-  'compat-play-progress': compatProgressSchema,
   'login-mfa-state': loginMfaStateSchema,
   'follow-notices': followNoticesEventSchema,
   /** 设备注册换档完成：载荷 = 新 install_id（身份敏感数据应重拉） */

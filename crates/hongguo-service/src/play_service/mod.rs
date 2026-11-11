@@ -2,7 +2,6 @@
 
 use crate::app_state::AppState;
 
-pub mod compat_play;
 mod feed;
 pub mod local;
 pub mod online;
@@ -17,7 +16,7 @@ pub(crate) use prefetch::PrefetchCache;
 pub use prefetch::prefetch_budget;
 
 /// 当前在线集起播后，向后铺同一部剧的后续集。两个壳从同一入口调度：
-/// 在线预取按动态字节预算铺媒体，兼容转码由实际选中的分集触发。
+/// 在线预取按动态字节预算铺媒体。
 pub fn schedule_following_episodes(state: &AppState, series_id: &str, current_vid_index: u32) {
     let online_state = state.clone();
     let sid = series_id.to_string();

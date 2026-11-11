@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useRef } from 'react';
-import { DirectBytevc2Player } from './direct-bytevc2';
+import { DirectVideoPlayer } from './direct-video';
 
-export function useDirectBytevc2({
+export function useDirectVideo({
   source,
   videoRef,
   canvasRef,
@@ -18,7 +18,7 @@ export function useDirectBytevc2({
   onWaiting: (waiting: boolean) => void;
   onError: (error: unknown) => void;
 }) {
-  const playerRef = useRef<DirectBytevc2Player | null>(null);
+  const playerRef = useRef<DirectVideoPlayer | null>(null);
   const firstFrame = useEffectEvent(onFirstFrame);
   const waiting = useEffectEvent(onWaiting);
   const failed = useEffectEvent(onError);
@@ -27,9 +27,9 @@ export function useDirectBytevc2({
     const audio = videoRef.current;
     const canvas = canvasRef.current;
     if (!source || !audio || !canvas) return;
-    let player: DirectBytevc2Player;
+    let player: DirectVideoPlayer;
     try {
-      player = new DirectBytevc2Player(
+      player = new DirectVideoPlayer(
         source,
         audio,
         canvas,

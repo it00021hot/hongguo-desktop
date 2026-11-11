@@ -17,6 +17,9 @@ log = "0.4"
 tokio = { version = "1", features = ["sync"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# 内置软解直播放（默认关闭，见 src/direct.rs）：建索引、解码、I420→BGRA；错误类型随它走。
+hongguo-common = { path = "../hongguo-common" }
+hongguo-softdec = { path = "../hongguo-softdec" }
 # 宿主窗口句柄（契约层传进来的 RawWindowHandle）。
 raw-window-handle = "0.6"
 # Media Foundation（Media Engine frame-server / IMFByteStream）与 D3D11 帧纹理。

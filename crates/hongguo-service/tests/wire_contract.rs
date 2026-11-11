@@ -10,9 +10,6 @@ use hongguo_service::download_service::events::{
 };
 use hongguo_service::follow_service::events::FollowNoticesEvent;
 use hongguo_service::login_service::events::LoginMfaStateEvent;
-use hongguo_service::play_service::compat_play::{
-    CompatPhase, CompatPlayResult, CompatProgressEvent,
-};
 use hongguo_service::play_service::online::OnlineProgressEvent;
 use serde_json::json;
 
@@ -125,65 +122,6 @@ fn follow_notices_event_shape() {
                 "at": 1_792_041_548i64,
                 "read": false
             }]
-        })
-    );
-}
-
-/// 兼容转码进度事件的 wire 形状（前端 `compatProgressSchema` 镜像）。
-/// 架构二期把本类型自 tauri 命令移入 service，断言逐步沿用。
-#[test]
-fn compat_progress_event_shape() {
-    let v = serde_json::to_value(CompatProgressEvent {
-        key: "1:2".into(),
-        percent: 42.5,
-        phase: CompatPhase::Transcoding,
-    })
-    .unwrap();
-    assert_eq!(
-        v,
-        json!({ "key": "1:2", "percent": 42.5, "phase": "transcoding" })
-    );
-}
-
-#[test]
-fn compat_phase_serializes_lowercase() {
-    assert_eq!(
-        serde_json::to_string(&CompatPhase::Downloading).unwrap(),
-        "\"downloading\""
-    );
-    assert_eq!(
-        serde_json::to_string(&CompatPhase::Ready).unwrap(),
-        "\"ready\""
-    );
-    assert_eq!(
-        serde_json::to_string(&CompatPhase::Completed).unwrap(),
-        "\"completed\""
-    );
-    assert_eq!(
-        serde_json::to_string(&CompatPhase::Failed).unwrap(),
-        "\"failed\""
-    );
-}
-
-/// 兜底转码的返回形状（前端 `compatPlayResultSchema` 镜像）。
-#[test]
-fn compat_play_result_shape() {
-    let v = serde_json::to_value(CompatPlayResult {
-        url: "hongguo-local://stream/1".into(),
-        cached: true,
-        backend: "VT".into(),
-        elapsed_ms: 0,
-        progressive: false,
-    })
-    .unwrap();
-    assert_eq!(
-        v,
-        json!({
-            "url": "hongguo-local://stream/1",
-            "cached": true,
-            "backend": "VT",
-            "elapsedMs": 0,
-            "progressive": false,
         })
     );
 }

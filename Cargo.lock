@@ -4502,7 +4502,9 @@ dependencies = [
 name = "hongguo-player-macos"
 version = "0.6.6"
 dependencies = [
+ "hongguo-common",
  "hongguo-player-api",
+ "hongguo-softdec",
  "hongguo-stream",
  "log",
  "objc2 0.6.5",
@@ -4520,7 +4522,9 @@ name = "hongguo-player-windows"
 version = "0.6.6"
 dependencies = [
  "gpui-pre-windows",
+ "hongguo-common",
  "hongguo-player-api",
+ "hongguo-softdec",
  "hongguo-stream",
  "log",
  "raw-window-handle",
@@ -4589,6 +4593,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hongguo-softdec"
+version = "0.6.6"
+dependencies = [
+ "hongguo-bytevc2",
+ "hongguo-common",
+ "hongguo-media",
+ "hongguo-video",
+ "rusty_h265",
+]
+
+[[package]]
 name = "hongguo-store"
 version = "0.6.6"
 dependencies = [
@@ -4621,13 +4636,13 @@ dependencies = [
  "chrono",
  "env_logger",
  "hongguo-api",
- "hongguo-bytevc2",
  "hongguo-common",
  "hongguo-media",
  "hongguo-media-platform",
  "hongguo-protocol",
  "hongguo-service",
  "hongguo-signer",
+ "hongguo-softdec",
  "hongguo-store",
  "hongguo-stream",
  "hongguo-video",

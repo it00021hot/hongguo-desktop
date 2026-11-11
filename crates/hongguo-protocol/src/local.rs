@@ -14,9 +14,6 @@ const ALLOWED: &[&str] = &["mp4", "mkv", "webm", "mov", "m4v"];
 /// 供给本地文件，返回 `(HTTP 状态码, 响应头, 响应体)`。
 pub fn serve(raw_path: &str, range_header: Option<&str>) -> Result<ProtocolResponse, String> {
     let path = resolve_path(raw_path)?;
-    if let Some(response) = crate::grow::serve_if_registered(&path, range_header) {
-        return response;
-    }
     let total = std::fs::metadata(&path)
         .map_err(|e| format!("读取文件信息失败: {e}"))?
         .len();

@@ -10,6 +10,9 @@ pub struct DecoderCapability {
     pub hevc: bool,
     /// 内置 Rust ByteVC2 解码器可用：`bytevc2` 可经转码播放。
     pub bytevc2: bool,
+    /// 只让内置软解器能解的编码参赛（HEVC 系与 ByteVC2）。开着时 H.264、没标编码、
+    /// 认不出的编码一律不选——播放不靠系统解码器，也不转码，选了就是播不出来。
+    pub builtin_only: bool,
 }
 
 impl DecoderCapability {
@@ -18,6 +21,7 @@ impl DecoderCapability {
         Self {
             hevc: true,
             bytevc2: false,
+            builtin_only: false,
         }
     }
 
@@ -26,6 +30,16 @@ impl DecoderCapability {
         Self {
             hevc: false,
             bytevc2: false,
+            builtin_only: false,
+        }
+    }
+
+    /// 内置软解直播放：HEVC 系与 ByteVC2 都由进程内解码器解，与系统装没装 HEVC 无关。
+    pub const fn builtin() -> Self {
+        Self {
+            hevc: true,
+            bytevc2: true,
+            builtin_only: true,
         }
     }
 
@@ -34,12 +48,17 @@ impl DecoderCapability {
         Self {
             hevc: playable,
             bytevc2: false,
+            builtin_only: false,
         }
     }
 
     /// 按本机 HEVC + ByteVC2 探测结论选模式。
     pub fn from_probes(hevc: bool, bytevc2: bool) -> Self {
-        Self { hevc, bytevc2 }
+        Self {
+            hevc,
+            bytevc2,
+            builtin_only: false,
+        }
     }
 
     pub fn with_bytevc2(mut self, ok: bool) -> Self {

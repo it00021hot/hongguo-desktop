@@ -17,7 +17,7 @@ import type { EnhancementSettings } from '@/utils/playback-prefs';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 import type { MessageKey } from '@/locales';
-import { DIRECT_BYTEVC2_FRAME } from '../hooks/direct-bytevc2';
+import { DIRECT_VIDEO_FRAME } from '../hooks/direct-video';
 
 /** 失败码 → 说明词条。每条路径都要说明「发生了什么 + 已退回原画 + 替代档」。 */
 const ERROR_MESSAGE_KEYS: Record<EnhancementErrorCode, MessageKey> = {
@@ -215,7 +215,7 @@ export function EnhancementLayer({
       void draw();
     };
     const events = ['loadeddata', 'seeked', 'play', 'pause', 'ended', 'resize'] as const;
-    if (directCanvas) directCanvas.addEventListener(DIRECT_BYTEVC2_FRAME, onDirectFrame);
+    if (directCanvas) directCanvas.addEventListener(DIRECT_VIDEO_FRAME, onDirectFrame);
     else events.forEach((event) => video.addEventListener(event, refresh));
     video.addEventListener('seeking', invalidate);
     video.addEventListener('emptied', invalidate);
@@ -227,7 +227,7 @@ export function EnhancementLayer({
       renderer?.dispose();
       rendererRef.current = null;
       canvas.style.visibility = 'hidden';
-      directCanvas?.removeEventListener(DIRECT_BYTEVC2_FRAME, onDirectFrame);
+      directCanvas?.removeEventListener(DIRECT_VIDEO_FRAME, onDirectFrame);
       events.forEach((event) => video.removeEventListener(event, refresh));
       video.removeEventListener('seeking', invalidate);
       video.removeEventListener('emptied', invalidate);

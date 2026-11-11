@@ -24,6 +24,8 @@ pub(super) struct NotifyShared {
     started: AtomicBool,
     /// 缓冲状态机去重：连续同类事件只发一次。
     buffering: AtomicBool,
+    /// 由引擎报首帧。内置软解直播放的引擎只放声音，首帧由解码侧报（带真实尺寸）。
+    report_first_frame: bool,
 }
 
 impl NotifyShared {
@@ -32,6 +34,15 @@ impl NotifyShared {
             events: Mutex::new(Some(events)),
             started: AtomicBool::new(false),
             buffering: AtomicBool::new(false),
+            report_first_frame: true,
+        }
+    }
+
+    /// 只放声音的引擎（内置软解直播放）：首帧不归它报。
+    pub(super) fn audio_only(events: mpsc::Sender<PlayerEvent>) -> Self {
+        Self {
+            report_first_frame: false,
+            ..Self::new(events)
         }
     }
 
@@ -44,7 +55,7 @@ impl NotifyShared {
     }
 
     fn first_frame(&self) {
-        if !self.started.swap(true, Ordering::SeqCst) {
+        if self.report_first_frame && !self.started.swap(true, Ordering::SeqCst) {
             // MediaEngine 的事件不带尺寸；壳侧 system 分支只用它置「画面已就绪」，
             // 真实尺寸在 `PlayerLike::dims` 里另外查引擎。
             self.send(PlayerEvent::FirstFrame {

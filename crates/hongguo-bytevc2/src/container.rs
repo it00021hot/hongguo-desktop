@@ -27,7 +27,8 @@ pub fn open_track(path: &Path) -> AppResult<Bytevc2Track> {
     track_from_moov(&moov)
 }
 
-pub(crate) fn track_from_moov(moov: &[u8]) -> AppResult<Bytevc2Track> {
+/// 从已读入内存的 `moov` 取 ByteVC2 轨（在线流没有文件可开，直播放索引用这个形态）。
+pub fn track_from_moov(moov: &[u8]) -> AppResult<Bytevc2Track> {
     let tracks = collect_tracks(moov)?;
     let info = tracks
         .into_iter()
@@ -56,7 +57,9 @@ fn read_moov(path: &Path) -> AppResult<Vec<u8>> {
     .map(|(_, moov)| moov)
 }
 
-pub(crate) fn read_moov_at(
+/// 用回调逐个读顶层 box 头，找到 `moov` 后整块读入，返回 `(moov 的文件偏移, moov 字节)`。
+/// `moov` 在文件头或尾都能找到；不依赖数据来源，也不依赖编码。
+pub fn read_moov_at(
     file_size: u64,
     mut read: impl FnMut(u64, u64, &mut Vec<u8>) -> AppResult<()>,
 ) -> AppResult<(u64, Vec<u8>)> {

@@ -55,7 +55,6 @@ impl HomeView {
             | ServiceEvent::MergeProgress(_)
             | ServiceEvent::MergeCompleted(_)
             | ServiceEvent::MergeFailed(_) => {}
-            ServiceEvent::CompatProgress(_) => {}
             // 注册换档完成：启动时顶栏请求可能先于注册（匿名身份只下发
             // 推荐单 tab），重拉顶栏拿完整列表；失败页对齐 Tauri 自动重试
             ServiceEvent::DeviceRegistered(_) => {

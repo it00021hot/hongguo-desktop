@@ -83,15 +83,7 @@ export {
   useMergeActions,
   useMergeEvents,
 } from './merge';
-export {
-  usePlay,
-  useSavePosition,
-  useDecodeCapability,
-  usePlaybackCapability,
-  useInstallHevcExtension,
-  useRedetectCapability,
-  useCompatPlayback,
-} from './play';
+export { usePlay, useSavePosition, useDecodeCapability, useRedetectCapability } from './play';
 export {
   useStorageUsage,
   useStorageSeries,

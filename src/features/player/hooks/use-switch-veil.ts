@@ -10,9 +10,8 @@ export function useSwitchVeil(params: {
   /** 播放侧真值（定义见 player-page）：新集画面已出画。 */
   videoLive: boolean;
   error: string | null;
-  compatActive: boolean;
 }) {
-  const { seriesId, episodeKey, videoLive, error, compatActive } = params;
+  const { seriesId, episodeKey, videoLive, error } = params;
   /** 拉幕中的目标集（'' = 无幕）。收口即复位，同 key 再次切集仍能重新拉幕。 */
   const [veiledFor, setVeiledFor] = useState('');
   const prevTargetRef = useRef<{ seriesId: string | null; episodeKey: string }>({
@@ -29,8 +28,8 @@ export function useSwitchVeil(params: {
     if (seriesId && prev.seriesId === seriesId) setVeiledFor(episodeKey);
   }, [seriesId, episodeKey]);
 
-  // 在幕 = 拉给当前集且未收口（画面出画/取流失败/兜底转码）；渲染期派生，条件在重渲染后自然为假不循环
-  const veiled = veiledFor === episodeKey && !videoLive && !error && !compatActive;
+  // 在幕 = 拉给当前集且未收口（画面出画/取流失败）；渲染期派生，条件在重渲染后自然为假不循环
+  const veiled = veiledFor === episodeKey && !videoLive && !error;
   // 收口即复位，否则上一次切集的幕会误盖到后续的清晰度切换上
   if (veiledFor !== '' && !veiled) setVeiledFor('');
 

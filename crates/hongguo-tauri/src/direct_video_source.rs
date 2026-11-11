@@ -32,7 +32,7 @@ impl Source {
             let path = hongguo_store::paths::prepare_qa_io(&path).map_err(AppError::InvalidArgs)?;
             let metadata = std::fs::metadata(&path).map_err(media_io)?;
             if !metadata.is_file() {
-                return Err(AppError::InvalidArgs("ByteVC2 输入必须是文件".into()));
+                return Err(AppError::InvalidArgs("直播放输入必须是文件".into()));
             }
             return Ok(Self::Local {
                 path,
@@ -53,7 +53,7 @@ impl Source {
                 .parse::<u32>()
                 .ok()
                 .filter(|value| *value > 0)
-                .ok_or_else(|| AppError::InvalidArgs("无效的 ByteVC2 档位".into()))?,
+                .ok_or_else(|| AppError::InvalidArgs("无效的直播放档位".into()))?,
             vid: vid.to_owned(),
         })
     }
@@ -67,7 +67,7 @@ impl Source {
             },
         };
         if length == 0 {
-            return Err(AppError::StreamMiss("ByteVC2 输入为空或尚未就绪".into()));
+            return Err(AppError::StreamMiss("直播放输入为空或尚未就绪".into()));
         }
         Ok(length)
     }
@@ -98,14 +98,14 @@ impl SourceReader<'_> {
             Self::Online { definition, vid } => {
                 let chunk = read_online(vid, *definition, offset, length, cancelled)?;
                 if chunk.bytes.len() as u64 != length {
-                    return Err(AppError::Media("ByteVC2 字节范围被截断".into()));
+                    return Err(AppError::Media("直播放字节范围被截断".into()));
                 }
                 *bytes = chunk.bytes;
                 Ok(())
             }
             Self::Local(file) => {
                 let length = usize::try_from(length)
-                    .map_err(|_| AppError::Media("ByteVC2 字节范围过大".into()))?;
+                    .map_err(|_| AppError::Media("直播放字节范围过大".into()))?;
                 file.seek(SeekFrom::Start(offset)).map_err(media_io)?;
                 bytes.resize(length, 0);
                 file.read_exact(bytes).map_err(media_io)
