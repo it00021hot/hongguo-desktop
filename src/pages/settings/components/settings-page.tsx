@@ -36,6 +36,8 @@ import { AccountCard } from './account-card';
 import { ShortcutCard } from './shortcut-card';
 import { BossKeyCard, resolveBossKeyConflicts } from './boss-key-card';
 import { ToggleRow } from './toggle-row';
+import { offlineQa } from '@/utils/offline-qa';
+import { OfflineQaLocalPlayPanel } from '@/features/offline-qa/local-play-panel';
 
 /** ffmpeg 安装路径随平台：Windows 走 winget + gyan 构建，macOS 走
  *  Homebrew + 官方下载页（官方页列有各 mac 构建源）。 */
@@ -138,6 +140,8 @@ export function SettingsPage() {
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
       {/* 账户（短信登录） */}
       <AccountCard account={current.account ?? null} onChanged={() => void refetchSettings()} />
+
+      {offlineQa() ? <OfflineQaLocalPlayPanel /> : null}
 
       {/* 目录 */}
       <Card>
@@ -284,26 +288,6 @@ export function SettingsPage() {
             onChange={(v) => patch({ pauseOnMinimize: v })}
           />
 
-          {/* 连播预取集数（issue #6）：0=关闭；保存即生效于下一次起播 */}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="prefetch-episodes">
-              {t('settings.prefetchEpisodes')} —{' '}
-              {current.prefetchEpisodes === 0
-                ? t('settings.prefetchOff')
-                : current.prefetchEpisodes}
-            </Label>
-            <Input
-              id="prefetch-episodes"
-              type="range"
-              min={0}
-              max={10}
-              step={1}
-              value={current.prefetchEpisodes}
-              onChange={(e) => patch({ prefetchEpisodes: Number(e.target.value) })}
-            />
-            <p className="text-muted-foreground text-xs">{t('settings.prefetchEpisodesDesc')}</p>
-          </div>
-
           {/* 老板键已独立成卡（全局快捷键 ≠ 播放器快捷键），见 BossKeyCard */}
 
           <div className="bg-muted/50 flex flex-wrap items-center gap-2 rounded-md p-3 text-sm">
@@ -426,14 +410,18 @@ export function SettingsPage() {
               : t('common.loading')}
           </p>
           {/* 磁盘清理只在存储页提供，这里只读占用与缓存清理。
-              三处缓存（在线内存流 / 转码 / 封面）合成一个入口：此前两个按钮
-              都不报大小，cover-cache 更是从未有清理入口——封面图片只进不出。
+              各处缓存统一清理。
               点击必须有回音：成功报清理条数与释放量，失败弹错误。 */}
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm tabular-nums">
               {cacheUsage
                 ? tf('settings.cacheUsage', {
-                    size: formatBytes(cacheUsage.compat.bytes + cacheUsage.cover.bytes),
+                    size: formatBytes(
+                      cacheUsage.onlineDisk.bytes +
+                        cacheUsage.compat.bytes +
+                        cacheUsage.cover.bytes,
+                    ),
+                    onlineDisk: formatBytes(cacheUsage.onlineDisk.bytes),
                     compat: formatBytes(cacheUsage.compat.bytes),
                     cover: formatBytes(cacheUsage.cover.bytes),
                     online: cacheUsage.online.files,

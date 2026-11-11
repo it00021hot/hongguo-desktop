@@ -44,19 +44,19 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
 /// 追加一行到崩溃文件；超限清空重写；一切失败静默放弃。
 fn append_line(path: &Path, line: &str) {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = hongguo_common::offline_qa::qa_create_dir_all(parent);
     }
+    let Ok(path) = hongguo_common::offline_qa::prepare_qa_io(path) else {
+        return;
+    };
     // 超限则整文件重写：保最近现场，防崩溃风暴写满磁盘。不能在 append 句柄上
     // set_len(0) 续写——Windows 的写入位置仍指旧文件末尾，会垫 NUL 到旧长度再写；关掉句柄直接覆盖，语义就是「只剩最新一条」。
-    if matches!(std::fs::metadata(path), Ok(meta) if meta.len() > CRASH_LOG_MAX_BYTES) {
-        let _ = std::fs::write(path, line.as_bytes());
+    if matches!(std::fs::symlink_metadata(&path), Ok(meta) if meta.file_type().is_file() && meta.len() > CRASH_LOG_MAX_BYTES)
+    {
+        let _ = hongguo_common::offline_qa::qa_write(&path, line.as_bytes());
         return;
     }
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
+    let Ok(mut file) = hongguo_common::offline_qa::qa_open_append(&path) else {
         return;
     };
     let _ = file.write_all(line.as_bytes());

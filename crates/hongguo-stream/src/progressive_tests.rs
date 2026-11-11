@@ -149,8 +149,7 @@ fn progressive_fixture(vid: &str, def: u32) -> (Arc<SparseBuffer>, Vec<u8>, Vec<
     let (_plain, cipher, key) = assemble(true);
     let reference = decrypt_mp4_buffer(&cipher, &key).expect("参照明文应可得");
     let len = cipher.len() as u64;
-    let (abs, size) =
-        hongguo_video::streaming::locate_moov(&cipher, 0, len).expect("应定位 moov");
+    let (abs, size) = hongguo_video::streaming::locate_moov(&cipher, 0, len).expect("应定位 moov");
     let region = &cipher[abs as usize..(abs + size) as usize];
     let plan = StreamingPlan::build(region, abs, len, &key).expect("计划应构建成功");
     let plain_len = plan.plain_len();
@@ -161,6 +160,7 @@ fn progressive_fixture(vid: &str, def: u32) -> (Arc<SparseBuffer>, Vec<u8>, Vec<
         plain_len,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     let c = crate::cache();
@@ -230,6 +230,7 @@ fn progressive_identity_stream_serves_raw_bytes() {
         plain_len: data.len() as u64,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     c.remove("v-prog-raw", 720);
@@ -319,6 +320,7 @@ fn progressive_is_reported_ready_before_any_data() {
         plain_len: 16,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     assert!(c.begin_fetch("v-prog-ready", 720));
@@ -337,6 +339,7 @@ fn progressive_registration_does_not_resurrect_an_evicted_entry() {
         plain_len: 16,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     assert!(!c.set_progressive("v-prog-gone", 720, Arc::new(prog)));
@@ -353,6 +356,7 @@ fn set_progressive_yields_to_whole_mode_data() {
         plain_len: 4,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     assert!(!c.set_progressive("v-race", 720, Arc::new(prog)));
@@ -474,6 +478,7 @@ fn byte_reads_identity_progressive_stream() {
         plain_len: data.len() as u64,
         demand: ReaderDemand::new(),
         cdn_url: "https://cdn/example.mp4".into(),
+        media_cache_key: None,
         proxy: Default::default(),
     };
     c.remove("v-bytes-raw", 720);

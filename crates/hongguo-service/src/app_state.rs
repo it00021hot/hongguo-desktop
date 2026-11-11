@@ -24,6 +24,8 @@ pub struct AppStateInner {
     /// 设备代次：每次 `replace_device` 递增。壳的视图用它感知「注册换档已发生」，
     /// 触发身份敏感的数据（顶栏 tab 等）重拉。
     device_generation: AtomicU64,
+    pub(crate) prefetch_policy: crate::play_service::PrefetchCache,
+    pub(crate) playback_resolution: crate::play_service::resolution::ResolutionState,
     /// 登录流程的 csrf 凭据（send_code 下发，sms_login 消费后清除）。
     /// 不落库：发码会话本身分钟级有效，重启即重新发码。
     pub login_csrf: RwLock<Option<String>>,
@@ -53,17 +55,57 @@ impl AppStateInner {
     /// [`AppStateInner::with_db`] 的带设备版本（启动装配时传入库里
     /// 装载好的档案；测试与默认路径用匿名档案）。
     pub fn with_device(store: Store, device: hongguo_signer::device::DeviceProfile) -> Self {
+        if store.db_path() != std::path::Path::new(":memory:") {
+            hongguo_api::metasec::configure_app(
+                store.db_path(),
+                Arc::new(SdkSessionStore(store.clone())),
+            );
+        }
         Self {
             store,
             settings: RwLock::new(Settings::default()),
             device: RwLock::new(device),
             device_generation: AtomicU64::new(0),
+            prefetch_policy: Default::default(),
+            playback_resolution: Default::default(),
             login_csrf: RwLock::new(None),
             login_mfa: RwLock::new(None),
             queue: RwLock::new(Arc::new(DownloadQueue::new())),
             scheduler: RwLock::new(Arc::new(DownloadScheduler::new())),
             events: ServiceEvents::new(),
         }
+    }
+}
+
+struct SdkSessionStore(Store);
+
+impl hongguo_api::metasec::SessionStore for SdkSessionStore {
+    fn load(
+        &self,
+        profile_key: &str,
+    ) -> hongguo_common::AppResult<Option<hongguo_api::metasec::sdi::SdiToken>> {
+        let Some(record) = self.0.sdk_session()? else {
+            return Ok(None);
+        };
+        if record.get("profile").and_then(serde_json::Value::as_str) != Some(profile_key) {
+            return Ok(None);
+        }
+        match serde_json::from_value(record.get("token").cloned().unwrap_or_default()) {
+            Ok(token) => Ok(Some(token)),
+            Err(_) => {
+                log::warn!("[MetaSec] 本机会话缓存格式不兼容，将重新交换");
+                Ok(None)
+            }
+        }
+    }
+
+    fn save(
+        &self,
+        profile_key: &str,
+        token: &hongguo_api::metasec::sdi::SdiToken,
+    ) -> hongguo_common::AppResult<()> {
+        self.0
+            .save_sdk_session(serde_json::json!({"profile": profile_key, "token": token}))
     }
 }
 
@@ -112,8 +154,7 @@ impl AppStateInner {
         self.device.read().clone()
     }
 
-    /// 整体替换设备档案（bootstrap 健康探针判定死设备后的轮换、
-    /// 手动重注册成功）。下一次 `api_env()` 起全部请求即用新档。
+    /// 注册成功后整体替换设备档案。下一次 `api_env()` 起全部请求即用新档。
     pub fn replace_device(&self, device: hongguo_signer::device::DeviceProfile) {
         *self.device.write() = device;
         self.device_generation.fetch_add(1, Ordering::Relaxed);
@@ -182,6 +223,28 @@ fn merge_session_cookie(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hongguo_api::metasec::SessionStore as _;
+
+    #[test]
+    fn incompatible_sdk_session_is_a_cache_miss() {
+        let store = Store::open_memory().unwrap();
+        let sessions = SdkSessionStore(store.clone());
+        let token = hongguo_api::metasec::sdi::SdiToken {
+            status: 200,
+            value: "test-session".into(),
+        };
+        sessions.save("active", &token).unwrap();
+        assert_eq!(sessions.load("active").unwrap().unwrap().status, 200);
+        assert!(sessions.load("other").unwrap().is_none());
+
+        store
+            .save_sdk_session(serde_json::json!({
+                "profile": "active",
+                "token": {"status": 200}
+            }))
+            .unwrap();
+        assert!(sessions.load("active").unwrap().is_none());
+    }
 
     #[test]
     fn merge_cookie_anonymous_only_when_no_account() {

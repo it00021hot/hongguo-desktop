@@ -12,6 +12,40 @@ use super::{col_text, map_db_err};
 const DEVICE_ROW_ACTIVE: i64 = 1;
 const DEVICE_ROW_BACKUP: i64 = 2;
 const DEVICE_ROW_META: i64 = 10;
+const DEVICE_ROW_SDK_SESSION: i64 = 11;
+
+pub async fn sdk_session(db: &Db) -> AppResult<Option<serde_json::Value>> {
+    let mut rows = db
+        .conn()
+        .query(
+            "SELECT json FROM device_profile WHERE id = ?1",
+            [Value::Integer(DEVICE_ROW_SDK_SESSION)],
+        )
+        .await
+        .map_err(map_db_err)?;
+    let Some(row) = rows.next().await.map_err(map_db_err)? else {
+        return Ok(None);
+    };
+    match serde_json::from_str(&col_text(&row, 0)?) {
+        Ok(session) => Ok(Some(session)),
+        Err(_) => {
+            log::warn!("[MetaSec] 本机会话缓存无法解析，将重新交换");
+            Ok(None)
+        }
+    }
+}
+
+pub async fn save_sdk_session(db: &Db, session: &serde_json::Value) -> AppResult<()> {
+    let json = serde_json::to_string(session)
+        .map_err(|_| AppError::StoreCorrupt("cannot encode MetaSec session storage".into()))?;
+    db.execute(
+        "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+         ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+        [Value::Integer(DEVICE_ROW_SDK_SESSION), Value::Text(json)],
+    )
+    .await?;
+    Ok(())
+}
 
 /// 读设备档案。从未注册过（表空）返回 None，调用方用静态兜底档案。
 pub async fn device_profile(db: &Db) -> AppResult<Option<hongguo_signer::device::DeviceProfile>> {
@@ -105,6 +139,64 @@ pub async fn device_meta_get(db: &Db) -> AppResult<Option<serde_json::Value>> {
         .map_err(|e| AppError::StoreCorrupt(format!("设备元数据反序列化失败: {e}")))
 }
 
+/// 现役、备份、元数据一次提交。中途失败由调用方的事务回滚，不会留下半套档案。
+pub async fn commit_device_swap(db: &Db, profile_json: &str, meta_json: &str) -> AppResult<()> {
+    commit_device_swap_at(db, profile_json, meta_json, None).await
+}
+
+/// `fail_after` 为 1/2/3 时在对应写入后返回错误，供隔离库故障注入。生产路径传 `None`。
+pub async fn commit_device_swap_at(
+    db: &Db,
+    profile_json: &str,
+    meta_json: &str,
+    fail_after: Option<u8>,
+) -> AppResult<()> {
+    let profile_json = profile_json.to_string();
+    let meta_json = meta_json.to_string();
+    db.with_tx(move |conn| {
+        let profile_json = profile_json.clone();
+        let meta_json = meta_json.clone();
+        async move {
+            conn.execute(
+                "INSERT INTO device_profile (id, json)
+                 SELECT ?1, json FROM device_profile WHERE id = ?2
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [
+                    Value::Integer(DEVICE_ROW_BACKUP),
+                    Value::Integer(DEVICE_ROW_ACTIVE),
+                ],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(1) {
+                return Err(AppError::StoreCorrupt("故障注入：备份之后".into()));
+            }
+            conn.execute(
+                "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [Value::Integer(DEVICE_ROW_ACTIVE), Value::Text(profile_json)],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(2) {
+                return Err(AppError::StoreCorrupt("故障注入：现役之后".into()));
+            }
+            conn.execute(
+                "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+                [Value::Integer(DEVICE_ROW_META), Value::Text(meta_json)],
+            )
+            .await
+            .map_err(map_db_err)?;
+            if fail_after == Some(3) {
+                return Err(AppError::StoreCorrupt("故障注入：元数据之后".into()));
+            }
+            Ok(())
+        }
+    })
+    .await
+}
+
 /// 写 bootstrap 元数据文档（整文档覆盖）。
 pub async fn device_meta_set(db: &Db, meta: &serde_json::Value) -> AppResult<()> {
     let json = serde_json::to_string(meta)
@@ -113,6 +205,36 @@ pub async fn device_meta_set(db: &Db, meta: &serde_json::Value) -> AppResult<()>
         "INSERT INTO device_profile (id, json) VALUES (?1, ?2)
          ON CONFLICT(id) DO UPDATE SET json = excluded.json",
         [Value::Integer(DEVICE_ROW_META), Value::Text(json)],
+    )
+    .await?;
+    Ok(())
+}
+
+/// 初始化时要求设备表为空，或仅包含此前核对过的旧匿名档案。
+pub async fn initialize_device_meta(
+    db: &Db,
+    meta: &serde_json::Value,
+    legacy: Option<&hongguo_signer::device::DeviceProfile>,
+) -> AppResult<()> {
+    let json = serde_json::to_string(meta)
+        .map_err(|e| AppError::StoreCorrupt(format!("设备元数据序列化失败: {e}")))?;
+    let expected_active = legacy
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| AppError::StoreCorrupt(format!("旧设备档案序列化失败: {e}")))?;
+    let expected_rows = i64::from(expected_active.is_some());
+    db.execute(
+        "INSERT INTO device_profile (id, json)
+         SELECT ?1, ?2 WHERE (SELECT COUNT(*) FROM device_profile) = ?3
+           AND (?3 = 0 OR EXISTS (SELECT 1 FROM device_profile WHERE id = ?4 AND json = ?5))
+         ON CONFLICT(id) DO NOTHING",
+        [
+            Value::Integer(DEVICE_ROW_META),
+            Value::Text(json),
+            Value::Integer(expected_rows),
+            Value::Integer(DEVICE_ROW_ACTIVE),
+            expected_active.map_or(Value::Null, Value::Text),
+        ],
     )
     .await?;
     Ok(())

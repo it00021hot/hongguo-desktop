@@ -139,8 +139,8 @@ fn store(mode: Mode, g: Geometry) {
         return;
     };
     let tmp = path().with_extension("tmp");
-    if std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, path()))
+    if hongguo_common::offline_qa::qa_write(&tmp, text.as_bytes())
+        .and_then(|_| hongguo_common::offline_qa::qa_rename(&tmp, &path()))
         .is_err()
     {
         log::warn!("[Window] 窗口几何写盘失败（下次启动回默认）");

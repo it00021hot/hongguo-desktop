@@ -293,6 +293,8 @@ unsafe extern "C" {
     pub static kVTCompressionPropertyKey_ProfileLevel: CFStringRef;
     pub static kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder: CFStringRef;
     pub static kVTCompressionPropertyKey_RealTime: CFStringRef;
+    /// 单帧属性：强制本帧为关键帧（首帧起播 / 片段起点）。
+    pub static kVTEncodeFrameOptionKey_ForceKeyFrame: CFStringRef;
     pub static kVTProfileLevel_H264_High_AutoLevel: CFStringRef;
 
     pub fn VTSessionCopyProperty(

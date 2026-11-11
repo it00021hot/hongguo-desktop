@@ -1,9 +1,9 @@
 /**
  * 观看历史上报节拍（纯判定）。不挂在 5 秒落盘节流上——那会让首报量化到 5-10 秒、60 秒节拍恒不成立。
- * 规则对齐 docs/hongguo-api-endpoints.md §9.4.2：新剧 5 秒首报 / 同剧切集立即报 / 每 60 秒一条、回跳超容差立即补 / 暂停不计时。
+ * 现有桌面规则见 docs/hongguo-api-endpoints.md §9.4.2。
  */
 
-/** 首报门槛（毫秒）：官方客户端起播 5 秒首报。 */
+/** 桌面历史首报门槛（毫秒）。 */
 export const FIRST_REPORT_MS = 5_000;
 
 /** 中途更新节拍（毫秒）：按播放位置计，暂停不计时。 */
@@ -30,9 +30,16 @@ export class HistoryCadence {
     return this.reported?.episodeKey === episodeKey;
   }
 
-  /** 记一条已上报的位置（force 上报后调用），节拍从它重新计时。 */
-  note(next: EpisodePosition): void {
+  /** 记一条收尾位置；同一集的同一个位置只发送一次。 */
+  note(next: EpisodePosition): boolean {
+    if (
+      this.reported?.episodeKey === next.episodeKey &&
+      this.reported.positionMs === next.positionMs
+    ) {
+      return false;
+    }
     this.reported = next;
+    return true;
   }
 
   /** 现在该不该上报；true 时内部已记账，调用方负责真的发出去。 */

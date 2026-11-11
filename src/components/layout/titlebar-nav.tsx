@@ -35,8 +35,7 @@ export function TitlebarNav() {
   void locationKey;
   const idx = historyIdx();
   const canBack = idx > 0 || !!returnTo;
-  const canForward =
-    typeof window !== 'undefined' && idx < Math.max(0, window.history.length - 1);
+  const canForward = typeof window !== 'undefined' && idx < Math.max(0, window.history.length - 1);
 
   const goBack = useCallback(() => {
     const target = usePlayerStore.getState().returnTo;

@@ -274,8 +274,7 @@ impl super::HomeView {
         const PICKER_PAD: f32 = 16.0;
         const GRID_COLS: f32 = 8.0;
         const GRID_GAP: f32 = 8.0;
-        let cell_w =
-            (PICKER_WIDTH - PICKER_PAD * 2.0 - GRID_GAP * (GRID_COLS - 1.0)) / GRID_COLS;
+        let cell_w = (PICKER_WIDTH - PICKER_PAD * 2.0 - GRID_GAP * (GRID_COLS - 1.0)) / GRID_COLS;
         let grid = div()
             .flex()
             .flex_wrap()
@@ -374,7 +373,7 @@ impl super::HomeView {
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
             // 滚轮拦下：浮层自己滚，不冒泡成舞台切剧
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(
                 v_flex()
                     .w_full()

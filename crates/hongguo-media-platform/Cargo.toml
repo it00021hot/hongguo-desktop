@@ -14,8 +14,10 @@ hongguo-common = { path = "../hongguo-common" }
 hongguo-media-platform-api = { path = "../hongguo-media-platform-api" }
 # 纯 Rust 编解码核心：Backend 标识与能力探测口径（capability 聚合用）。
 hongguo-media = { path = "../hongguo-media" }
+# ByteVC2 识别（四字码 / 线名）；解码能力探测在 capability::bytevc2。
+hongguo-bytevc2 = { path = "../hongguo-bytevc2" }
 log = "0.4"
-parking_lot = "0.12"
+parking_lot = "0.13"
 # DecodeCapability 序列化给前端徽标。
 serde = { version = "1", features = ["derive"] }
 

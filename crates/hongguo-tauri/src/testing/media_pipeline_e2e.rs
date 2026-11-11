@@ -451,6 +451,9 @@ fn platform_pipeline_produces_playable_h264() {
             scale_to: None,
             rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
+            on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}
@@ -511,6 +514,9 @@ fn platform_transcode_produces_playable_h264() {
             scale_to: None,
             rate: hongguo_media_platform::RateProfile::Archive,
             on_progress: None,
+            on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: None,
         },
     ) {
         Some(Ok(())) => {}

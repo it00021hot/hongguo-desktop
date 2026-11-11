@@ -1,5 +1,5 @@
-//! ffmpeg 可选加速（分流链的第二层）：完整分流顺序见壳内 `service::transcode_service::pipeline`——**平台硬编（`platform`）→ ffmpeg**。
-//! 有 ffmpeg：HEVC → H.264 转码交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码接近实时，触发点只有「兼容合并」与「播放兼容兜底」两个；无 ffmpeg：**没有兜底层了**——平台编码器也没有时转码做不了，直接报错。
+//! ffmpeg 可选加速（分流链的调试层）：完整分流顺序见壳内 `service::transcode_service::pipeline`——**平台硬编（`platform`）→（仅当显式 `HONGGUO_ALLOW_FFMPEG=1`）ffmpeg**。
+//! 默认关闭外部 ffmpeg 进程。打开调试开关后：HEVC → H.264 转码可交给 ffmpeg，可用 NVENC/QSV/AMF/MF 硬编码接近实时；未打开且平台编码器也没有时转码做不了，直接报错。
 //! 快速合并**不经过这里**（走 `hongguo_media::remux` 的纯 Rust 索引重写拼接，任何后端都不调它）。探测结果全局缓存，只查一次。
 
 use std::path::PathBuf;
@@ -17,6 +17,8 @@ const EXTRA_PATHS: &[&str] = &[
 
 #[cfg(target_os = "macos")]
 const EXTRA_PATHS: &[&str] = &[
+    // librempeg（带 bvc2）优先于 Homebrew 原版 ffmpeg
+    "/opt/librempeg/bin/ffmpeg",
     "/opt/homebrew/bin/ffmpeg",
     "/usr/local/bin/ffmpeg",
     "/usr/bin/ffmpeg",
@@ -36,11 +38,66 @@ const SOFTWARE_ENCODERS: &[&str] = &["libx264", "h264_mf"];
 #[cfg(target_os = "windows")]
 const WINGET_SCAN_DEPTH: usize = 6;
 
+/// 外部 ffmpeg 调试 fallback 是否打开。
+///
+/// 默认关闭：默认播放和倍速不拉起外部 ffmpeg 进程。仅当显式设置
+/// `HONGGUO_ALLOW_FFMPEG`（非空，且不是 `0` / `false` / `off` / `no`），
+/// 并且未设置 `HONGGUO_NO_FFMPEG` 时为真。`HONGGUO_NO_FFMPEG` 仍强制关闭，
+/// 兼容此前无 ffmpeg 验收开关。
+pub fn ffmpeg_explicitly_allowed() -> bool {
+    ffmpeg_allowed_from(
+        std::env::var_os("HONGGUO_ALLOW_FFMPEG"),
+        std::env::var_os("HONGGUO_NO_FFMPEG"),
+    )
+}
+
+fn env_flag_on(value: Option<&std::ffi::OsStr>) -> bool {
+    let Some(raw) = value else {
+        return false;
+    };
+    let Some(s) = raw.to_str() else {
+        // 非 UTF-8：按「已设置」处理，与其余 HONGGUO_* 的 is_some 约定一致。
+        return true;
+    };
+    let t = s.trim();
+    !t.is_empty()
+        && t != "0"
+        && !t.eq_ignore_ascii_case("false")
+        && !t.eq_ignore_ascii_case("off")
+        && !t.eq_ignore_ascii_case("no")
+}
+
+fn ffmpeg_allowed_from(
+    allow: Option<impl AsRef<std::ffi::OsStr>>,
+    no_ffmpeg: Option<impl AsRef<std::ffi::OsStr>>,
+) -> bool {
+    if no_ffmpeg.is_some() {
+        return false;
+    }
+    env_flag_on(allow.as_ref().map(|v| v.as_ref()))
+}
+
 fn detect() -> Option<PathBuf> {
-    // 调试/测试开关：强制按「未安装」处理（验证安装引导、无后端与无 ffmpeg 各分支），与 HONGGUO_DATA_DIR 同一套环境变量约定
-    if std::env::var_os("HONGGUO_NO_FFMPEG").is_some() {
-        log::info!("[FFmpeg] HONGGUO_NO_FFMPEG 已设置，本次按未安装处理");
+    // 默认关闭外部 ffmpeg：默认播放/倍速走进程内 vvdec 或平台编码器。
+    // 调试 fallback 必须显式 HONGGUO_ALLOW_FFMPEG=1；HONGGUO_NO_FFMPEG 仍强制关闭。
+    if !ffmpeg_explicitly_allowed() {
+        log::info!(
+            "[FFmpeg] 默认关闭外部 ffmpeg 进程；调试 fallback 需显式设置 HONGGUO_ALLOW_FFMPEG=1"
+        );
         return None;
+    }
+    // 0) 显式覆盖 / 用户级 librempeg（带 bvc2）
+    if let Some(p) = std::env::var_os("HONGGUO_FFMPEG") {
+        let path = PathBuf::from(p);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let local = PathBuf::from(home).join(".local/librempeg/bin/ffmpeg");
+        if local.exists() {
+            return Some(local);
+        }
     }
     // 1) PATH
     if let Some(p) = probe_command("ffmpeg") {
@@ -319,6 +376,48 @@ mod tests {
             "探测到的 ffmpeg 跑不起来: {}",
             p.display()
         );
+    }
+
+    #[test]
+    fn ffmpeg_is_off_by_default_and_requires_explicit_allow() {
+        assert!(
+            !ffmpeg_allowed_from(None::<&str>, None::<&str>),
+            "默认不得打开外部 ffmpeg"
+        );
+        assert!(
+            ffmpeg_allowed_from(Some("1"), None::<&str>),
+            "HONGGUO_ALLOW_FFMPEG=1 应打开调试 fallback"
+        );
+        assert!(
+            ffmpeg_allowed_from(Some("yes"), None::<&str>),
+            "非空真值应打开"
+        );
+        assert!(
+            !ffmpeg_allowed_from(Some(""), None::<&str>),
+            "空字符串不算打开"
+        );
+        assert!(!ffmpeg_allowed_from(Some("0"), None::<&str>));
+        assert!(!ffmpeg_allowed_from(Some("false"), None::<&str>));
+        assert!(!ffmpeg_allowed_from(Some("OFF"), None::<&str>));
+        assert!(!ffmpeg_allowed_from(Some("no"), None::<&str>));
+        assert!(
+            !ffmpeg_allowed_from(Some("1"), Some("1")),
+            "HONGGUO_NO_FFMPEG 必须压过允许开关"
+        );
+        assert!(
+            !ffmpeg_allowed_from(Some("1"), Some("")),
+            "HONGGUO_NO_FFMPEG 只要存在就强制关闭"
+        );
+    }
+
+    #[test]
+    fn ffmpeg_path_is_none_on_the_default_path() {
+        // 本机即使装着 ffmpeg / librempeg，默认探测也必须是 None。
+        // 测试进程若已显式打开开关则跳过，以免误伤调试环境。
+        if ffmpeg_explicitly_allowed() {
+            return;
+        }
+        assert!(ffmpeg_path().is_none(), "默认路径不得暴露外部 ffmpeg");
     }
 
     /// winget 扫描：包目录里 ffmpeg 埋在两层下必须能挖出来；不走真实 `%LOCALAPPDATA%`（取决于装没装），自己搭目录树验扫描逻辑本身。

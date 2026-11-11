@@ -63,4 +63,12 @@ describe('HistoryCadence', () => {
     expect(cadence.hasReported('s1:7')).toBe(false);
     expect(cadence.due(at('s1:8', 's1', 2_000 + PERIODIC_REPORT_MS))).toBe(true);
   });
+
+  it('暂停和切集读到同一个位置时只发送一次收尾', () => {
+    const cadence = new HistoryCadence();
+    expect(cadence.note(at('s1:1', 's1', 11_234))).toBe(true);
+    expect(cadence.note(at('s1:1', 's1', 11_234))).toBe(false);
+    expect(cadence.note(at('s1:1', 's1', 11_470))).toBe(true);
+    expect(cadence.note(at('s1:2', 's1', 11_470))).toBe(true);
+  });
 });

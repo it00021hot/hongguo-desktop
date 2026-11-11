@@ -38,6 +38,17 @@ describe('decideCompatPlayback', () => {
       decideCompatPlayback({ hevcPlayable: true, android: false, compatAuthorized: true }),
     ).toEqual({ forceCompat: false, holdNative: false });
   });
+
+  it('keeps direct ByteVC2 out of compatibility playback', () => {
+    expect(
+      decideCompatPlayback({
+        hevcPlayable: false,
+        android: false,
+        compatAuthorized: true,
+        directPlayback: true,
+      }),
+    ).toEqual({ forceCompat: false, holdNative: false });
+  });
 });
 
 describe('resolvePlayBaseSrc', () => {

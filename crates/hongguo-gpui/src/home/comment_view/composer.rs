@@ -312,7 +312,7 @@ impl HomeView {
                 // 滚轮纪律（Tauri data-wheel-block 同款）：光标在面板上滚动
                 // 只归面板（网格滚 / 到边即停），不许穿透到面板后面的评论
                 // 列表把整页带着滚。
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                .on_scroll(cx.listener(|_, _, _, cx| cx.stop_propagation()))
                 .on_mouse_down(
                     gpui_kit::MouseButton::Left,
                     cx.listener(|_, _, _, cx| cx.stop_propagation()),

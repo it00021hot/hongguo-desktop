@@ -50,6 +50,7 @@ export function PlayerStageChrome({
   pinned,
   togglePinned,
   activeDefinition,
+  automaticDefinition,
   definitions,
   onDefinitionChange,
   playSrc,
@@ -103,6 +104,7 @@ export function PlayerStageChrome({
   pinned: boolean;
   togglePinned: () => void;
   activeDefinition: number;
+  automaticDefinition: boolean;
   definitions: VideoDefinition[];
   onDefinitionChange: (d: number | undefined) => void;
   playSrc: string | null;
@@ -176,6 +178,7 @@ export function PlayerStageChrome({
             vidIndex={vidIndex}
             episodeCount={episodeCount}
             definition={activeDefinition}
+            automaticDefinition={automaticDefinition}
             definitions={definitions}
             onDefinitionChange={onDefinitionChange}
             danmakuOn={danmakuOn}
@@ -204,6 +207,7 @@ export function PlayerStageChrome({
             }}
             episodeCount={episodeCount}
             definition={activeDefinition}
+            automaticDefinition={automaticDefinition}
             definitions={definitions}
             onDefinitionChange={onDefinitionChange}
             danmakuOn={danmakuOn}
@@ -236,6 +240,7 @@ export function PlayerStageChrome({
             }}
             episodeCount={episodeCount}
             definition={activeDefinition}
+            automaticDefinition={automaticDefinition}
             definitions={definitions}
             onDefinitionChange={onDefinitionChange}
             danmakuOn={danmakuOn}
@@ -299,6 +304,7 @@ export function PlayerStageChrome({
       incognito={incognitoOn}
       onToggleIncognito={toggleIncognito}
       definition={activeDefinition}
+      automaticDefinition={automaticDefinition}
       definitions={definitions}
       onDefinitionChange={onDefinitionChange}
       src={playSrc}

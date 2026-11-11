@@ -32,8 +32,7 @@ function detect(): Locale {
   } catch {
     /* 隐私模式 / 无 DOM 的测试环境 */
   }
-  const lang =
-    typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : 'zh-cn';
+  const lang = typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : 'zh-cn';
   return lang.startsWith('zh') ? 'zh-CN' : 'en-US';
 }
 

@@ -3,6 +3,7 @@
 //! 本 crate 不依赖 tauri：供数函数只产出 `(状态码, 响应头, 响应体)` 元组，HTTP 组装与 Builder 注册是壳层职责；[`pool`] 的工作池与 catch_unwind 是协议路径的执行纪律。
 
 pub mod cover;
+pub mod grow;
 pub mod local;
 pub mod pool;
 pub mod serve;

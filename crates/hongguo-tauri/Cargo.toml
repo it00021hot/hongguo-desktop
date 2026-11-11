@@ -31,13 +31,14 @@ tauri-plugin-process = "2.4.0"
 # 由 lib.rs 里 `#[cfg(debug_assertions)]` 的注册点保证，release 不注册即无端口，
 # 未引用的代码随后被 lto+strip 剔除。驱动脚本见 scripts/webdriver.mjs，
 # 说明见 docs/webview-cdp-testing.md。
-tauri-plugin-webdriver = "0.2"
+tauri-plugin-webdriver = "0.2.4"
 # 业务编排层（AppState、各域 service，以及 device 模块）。
 hongguo-service = { path = "../hongguo-service" }
 # 自定义 URI 协议供数逻辑（本 crate 只做 Builder 注册胶水与 HTTP 组装）。
 hongguo-protocol = { path = "../hongguo-protocol" }
 # 流线格式（协议胶水把元组产物组装成响应时引用类型）。
 hongguo-stream = { path = "../hongguo-stream" }
+hongguo-bytevc2 = { path = "../hongguo-bytevc2", default-features = false, features = ["vvdec"] }
 # 共用底座（AppError / scheme 常量）与持久化（开库与锁重试）。
 hongguo-common = { path = "../hongguo-common" }
 hongguo-store = { path = "../hongguo-store" }
@@ -66,9 +67,14 @@ tauri-plugin-global-shortcut = "2"
 # 评论附图 / 上传自定义表情的系统文件面板：WKWebView 对 `<input type=file>`
 # 不弹选择面板（真实点击到达 input 也不调 runOpenPanel 委托，实测
 # 2026-10-26，WebView2 无此问题），选图改走 Rust 原生对话框。
-rfd = "0.15"
+# 0.18 的图片筛选调用 macOS 11 的 UniformTypeIdentifiers。
+rfd = "0.17.2"
 # 小窗模式的鼠标出界检测（incognito_cmd）。
 mouse_position = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.39.1"
+windows-core = "0.62.2"
 
 # macOS 原生红绿灯的藏/显（小屏模式，app_cmd）：直接对三颗 NSWindowButton
 # setHidden，而不是 set_decorations 切 borderless——tao 的 set_decorations 是

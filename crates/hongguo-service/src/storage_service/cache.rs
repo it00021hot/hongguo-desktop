@@ -1,5 +1,4 @@
-//! 缓存占用统计与一键清理：在线内存流、兼容转码产物（`compat-cache/`）、封面/头像转码产物
-//!（`cover-cache/`）三处缓存在此汇成一个入口；统计口径与清理口径一致，避免「清完数字不变」的假清理。
+//! 缓存占用统计与一键清理：在线内存流、在线媒体区间、兼容转码及封面转码。
 
 use serde::Serialize;
 
@@ -14,12 +13,14 @@ pub struct CachePart {
     pub bytes: u64,
 }
 
-/// 三处缓存的占用总览（前端直接消费）。
+/// 缓存占用总览（前端直接消费）。
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheUsage {
     /// 在线流缓存：在内存里，不占磁盘。
     pub online: CachePart,
+    /// 在线加密媒体区间。
+    pub online_disk: CachePart,
     /// 兼容转码缓存：磁盘 `compat-cache/`，只统计 `.mp4`（与清理口径一致）。
     pub compat: CachePart,
     /// 封面/头像转码缓存：磁盘 `cover-cache/`。
@@ -27,19 +28,24 @@ pub struct CacheUsage {
 }
 
 impl CacheUsage {
-    /// 磁盘占用合计。在线流活在内存里，重启即消失，不混进磁盘数字。
+    /// 磁盘占用合计。
     pub fn disk_bytes(&self) -> u64 {
-        self.compat.bytes + self.cover.bytes
+        self.online_disk.bytes + self.compat.bytes + self.cover.bytes
     }
 }
 
 /// 当前占用总览。
 pub fn usage() -> CacheUsage {
     let (files, bytes) = crate::play_service::online::status();
+    let (disk_files, disk_bytes) = crate::play_service::online::disk::usage();
     CacheUsage {
         online: CachePart {
             files: files as u64,
             bytes,
+        },
+        online_disk: CachePart {
+            files: disk_files,
+            bytes: disk_bytes,
         },
         compat: dir_part(&compat_cache_dir(), Some("mp4")),
         cover: dir_part(&cover_cache_dir(), None),
@@ -56,22 +62,23 @@ pub struct CacheClearResult {
     pub bytes: u64,
 }
 
-/// 一键清空三处缓存。
+/// 一键清空缓存。
 pub fn clear() -> CacheClearResult {
     let before = usage();
     let online = crate::play_service::online::clear();
+    let (disk_files, disk_bytes) = crate::play_service::online::disk::clear();
     let compat = crate::transcode_service::cache::clear();
     let cover = clear_dir(&cover_cache_dir());
     CacheClearResult {
-        items: online as u64 + compat as u64 + cover,
-        bytes: before.disk_bytes(),
+        items: online as u64 + disk_files + compat as u64 + cover,
+        bytes: disk_bytes + before.compat.bytes + before.cover.bytes,
     }
 }
 
 /// 目录占用；`ext` 给定时只统计该扩展名的文件（与清理口径一致）。
 fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
     let mut part = CachePart::default();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) else {
         return part;
     };
     for e in entries.flatten() {
@@ -94,9 +101,9 @@ fn dir_part(dir: &std::path::Path, ext: Option<&str>) -> CachePart {
 /// 清空目录下全部文件，返回删掉的个数。目录不存在按空处理。
 fn clear_dir(dir: &std::path::Path) -> u64 {
     let mut n = 0;
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    if let Ok(entries) = hongguo_store::paths::qa_read_dir(dir) {
         for e in entries.flatten() {
-            if std::fs::remove_file(e.path()).is_ok() {
+            if hongguo_store::paths::qa_remove_file(&e.path()).is_ok() {
                 n += 1;
             }
         }
@@ -133,7 +140,7 @@ struct CacheFile {
 fn collect_files() -> Vec<CacheFile> {
     let mut out = Vec::new();
     let dir = cover_cache_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let Ok(entries) = hongguo_store::paths::qa_read_dir(&dir) else {
         return out;
     };
     for entry in entries.flatten() {
@@ -185,7 +192,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
             }
         }
         for file in expired {
-            if std::fs::remove_file(&file.path).is_ok() {
+            if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
                 removed += 1;
                 freed += file.bytes;
             }
@@ -201,7 +208,7 @@ pub fn auto_clean(policy: AutoCleanPolicy, now: std::time::SystemTime) -> CacheC
                 if total <= policy.limit_bytes {
                     break;
                 }
-                if std::fs::remove_file(&file.path).is_ok() {
+                if hongguo_store::paths::qa_remove_file(&file.path).is_ok() {
                     removed += 1;
                     freed += file.bytes;
                     total = total.saturating_sub(file.bytes);
@@ -415,5 +422,44 @@ mod tests {
             compat.join("series_001.mp4").exists(),
             "兼容转码产物不能被自动清理删掉（会断正在播的集）"
         );
+    }
+
+    #[test]
+    fn qa_cleanup_does_not_follow_a_cache_directory_symlink() {
+        let root = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.qa-a-io-scratch")
+            })
+            .join(format!("clear-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let isolated = root.join("isolated");
+        let outside = root.join("mock-prod");
+        std::fs::create_dir_all(&isolated).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let sentinel = outside.join("SENTINEL");
+        std::fs::write(&sentinel, b"KEEP").unwrap();
+        let _scope = hongguo_store::paths::ScopedDataDir::new(&isolated);
+        let previous = std::env::var_os(hongguo_common::offline_qa::ENV);
+        unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, "1") };
+        let cover = cover_cache_dir();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &cover).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside, &cover).unwrap();
+        assert_eq!(clear_dir(&cover), 0);
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"KEEP");
+        assert!(
+            std::fs::symlink_metadata(&cover)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        match previous {
+            Some(value) => unsafe { std::env::set_var(hongguo_common::offline_qa::ENV, value) },
+            None => unsafe { std::env::remove_var(hongguo_common::offline_qa::ENV) },
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

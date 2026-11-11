@@ -16,6 +16,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 dirs = "7"
+# 与 reqwest 同一套 WHATWG URL 解析。离线门控不再手写 authority。
+url = "2.5"
 
 # Android 的 TLS 证书来源（utils/tls.rs）：reqwest("rustls") 默认的
 # rustls-platform-verifier 在 Android 需要 JNI 初始化才可用，缺失时全部
@@ -30,3 +32,6 @@ rustls = { version = "0.23", default-features = false, features = [
     "tls12",
 ] }
 webpki-roots = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

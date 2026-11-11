@@ -23,12 +23,14 @@ mod pipeline;
 mod probe;
 mod sample;
 mod scaler;
+mod yuv_encode;
 
 pub use pipeline::transcode_h264;
 #[cfg(any(test, feature = "test-support"))]
 pub use pipeline::transcode_h264_for_tests;
 pub use probe::hevc_decoder_present;
 pub use probe::{clear_probe_cache, h264_hw_encoder_available, h264_sw_encoder_available};
+pub use yuv_encode::{YuvEncoder, with_encoder_thread};
 
 // 下方 tests 原样保留，引用的跨子模块名字由此供给。
 #[cfg(test)]
@@ -65,6 +67,9 @@ mod tests {
                 scale_to: None,
                 rate: hongguo_media_platform_api::RateProfile::Archive,
                 on_progress: None,
+                on_playable_prefix: None,
+                on_committed: None,
+                is_cancelled: None,
             })
             .expect("应可转码")
             .expect("应成功");
@@ -82,6 +87,9 @@ mod tests {
             scale_to: None,
             rate: hongguo_media_platform_api::RateProfile::Archive,
             on_progress: None,
+            on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: None,
         })
         .expect("硬编应可用")
         .expect("应成功");
@@ -95,6 +103,15 @@ mod tests {
     #[test]
     fn probe_never_panics_without_a_gpu() {
         let _ = h264_hw_encoder_available();
+    }
+
+    #[test]
+    #[ignore = "需要支持 H.264 硬编的 Windows 真机"]
+    fn hardware_probe_requires_a_real_encoded_sample() {
+        assert!(
+            h264_hw_encoder_available(),
+            "硬编探测应拿到实际编码的 H.264 样本"
+        );
     }
 
     #[test]

@@ -44,11 +44,7 @@ impl Default for StreamEntry {
 /// 预算逐出也会偏松）；整集模式按落盘明文计。
 fn entry_weight(e: &StreamEntry) -> u64 {
     if let Some(p) = &*e.progressive.lock() {
-        let plan = p
-            .plan
-            .as_ref()
-            .map(|pl| pl.footprint_bytes())
-            .unwrap_or(0);
+        let plan = p.plan.as_ref().map(|pl| pl.footprint_bytes()).unwrap_or(0);
         p.sparse.allocated() + plan
     } else {
         *e.size.lock()
@@ -83,12 +79,12 @@ pub struct StreamCache {
 /// 挂载在 `<video>` 上的流永远比「当前目标」旧一到两拍，只保当前集会把正在被读的流逐掉。
 const KEEP_RECENT: usize = 3;
 
-/// 预取标记的上限。标记豁免字节预算且各带一条预取头部（整集的 20%），
+/// 预取标记的上限。标记豁免字节预算且各带一条预取头部，
 /// 无界会净占上百 MB 内存；16 个足够覆盖连播/换剧两路满档的常用量。
 const MAX_PREFETCH_MARKS: usize = 16;
 
 /// 在线流缓存的总字节预算，计入的是整集明文长度（保守口径）。
-/// 超预算时从最旧的非当前条目逐出；预取条目豁免——标记有上限且只填头部 20%。
+/// 超预算时从最旧的非当前条目逐出；预取条目有独立的标记和填充上限。
 const RETAIN_BUDGET_BYTES: u64 = 48 * 1024 * 1024;
 
 impl StreamCache {
@@ -123,6 +119,16 @@ impl StreamCache {
             *e.last_used.lock() = std::time::Instant::now();
         }
         entry
+    }
+
+    pub fn cached_bytes(&self, vid: &str, definition: u32) -> u64 {
+        let Some(entry) = self.get(vid, definition) else {
+            return 0;
+        };
+        if let Some(stream) = entry.progressive.lock().as_ref() {
+            return stream.sparse.downloaded();
+        }
+        *entry.filled.lock()
     }
 
     /// 这一档的条目是否还在（取流失败会被删掉）。

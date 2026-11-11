@@ -88,8 +88,8 @@ export function EpisodePicker({ seriesId, currentIndex, onSelect, onClose, embed
     [offlineReservations],
   );
   const switchSeason = (item: RelatedItem) => {
-    // 统一首页播放：点名跳新季并锁连播（选了某一季 = 追这一季）
-    requestGoto(item.seriesId, 1);
+    // 只点名剧，集号由首页续播决策填入。
+    requestGoto(item.seriesId, 0);
     setBinge(item.seriesId);
     onClose();
   };

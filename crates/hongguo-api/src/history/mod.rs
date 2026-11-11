@@ -8,15 +8,34 @@ pub use model::{WatchHistoryItem, WatchHistoryPage};
 
 use serde_json::Value;
 
-use super::client::{ApiEnv, api_call_reading};
+use super::client::{ApiEnv, SINFONLINEA_API_ORIGIN, api_call_playback_v5, api_call_reading};
 use super::danmaku::LQ_API_ORIGIN;
+use hongguo_common::model::LocalHistoryItem;
 use hongguo_common::utils::json::{check_code, str_field};
 use hongguo_common::utils::time::now_ms;
 use hongguo_common::{AppError, AppResult};
 
 pub const READ_HISTORY_LIST_PATH: &str = "/reading/bookapi/read_history/list/v";
-const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
-const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
+pub(crate) const READ_HISTORY_UPDATE_PATH: &str = "/reading/bookapi/read_history/update/v";
+pub(crate) const READ_PROGRESS_UPLOAD_PATH: &str = "/reading/bookapi/read_progress/upload/v";
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestPlaybackReport {
+    pub cumulative_ms: i64,
+    pub observed_at_ms: i64,
+    pub progress: Vec<GuestProgressItem>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuestProgressItem {
+    pub series_id: String,
+    pub vid: String,
+    pub position_ms: i64,
+    pub cumulative_ms: i64,
+    pub observed_at_ms: i64,
+}
 
 /// 拉一页云端观看历史。
 pub async fn fetch_watch_history(offset: i64, env: &ApiEnv) -> AppResult<WatchHistoryPage> {
@@ -113,8 +132,7 @@ fn num_to_string(v: &Value) -> String {
     }
 }
 
-/// vid_index 基准换算：领域值（前端/本地存储）1 基，官方线上协议一律 0 基
-///（官方第 1 集 vid_index=0）。1 基直发会导致跨端续播差一集，写侧统一在此换算。
+/// 历史删除沿用 0 基索引。
 fn wire_vid_index(domain: i64) -> i64 {
     (domain - 1).max(0)
 }
@@ -180,8 +198,7 @@ pub async fn delete_watch_history(items: &[(String, String, i64)], env: &ApiEnv)
     Ok(())
 }
 
-/// 观看进度上报（官方双接口 read_history/update + read_progress/upload，约每分钟 + 切集触发）。
-/// 两接口字段形态刻意不同（update 的 id 是数字、upload 是字符串）；`vid_index` 收 1 基领域值、线上按 0 基发送。
+/// 历史更新发送 1 基集号，进度上传通过 `item_id` 识别集。
 pub async fn report_watch_progress(
     series_id: &str,
     vid: &str,
@@ -189,66 +206,12 @@ pub async fn report_watch_progress(
     position_ms: i64,
     env: &ApiEnv,
 ) -> AppResult<()> {
-    let now = now_ms();
-    let book_num = str_or_num(series_id);
-    let vid_num = str_or_num(vid);
-    let update_body = serde_json::json!({
-        "update_datas": [{
-            "book_id": book_num,
-            "book_type": 2,
-            "chapter_index": 0,
-            "current_play_position": position_ms,
-            "digged_count": 0,
-            "duration": 0,
-            "episode_cnt": 0,
-            "is_delete": false,
-            "is_interactive_game": false,
-            "is_listen_mode": false,
-            "is_multi_season": 0,
-            "meet_guide_comment_tag": false,
-            "origin_novel_book_id": 0,
-            "player_accumulate_total_time": position_ms,
-            "read_timestamp_ms": now,
-            "recent_reads": 0,
-            "retain_video_play_time": 0,
-            "season_index": 0,
-            "series_play_cnt": 0,
-            "tone_id": 0,
-            "update_timestamp_ms": now,
-            "use_soft_delete": false,
-            "user_digg": false,
-            "user_playlet_comment_flag": false,
-            "vid": vid_num,
-            "vid_index": wire_vid_index(vid_index),
-        }],
-    });
-    let upload_body = serde_json::json!({
-        "books": [{
-            "book_id": series_id,
-            "book_type": 2,
-            "channel_id": 0,
-            "check_timestamp": false,
-            "cur_channel_id": 0,
-            "current_play_time": position_ms,
-            "is_listen_mode": false,
-            "is_local_book": false,
-            "item_id": vid,
-            "listen_and_read": false,
-            "page_index": 0,
-            "page_progress_rate": 0,
-            "paragraph_offset": 0,
-            "player_cumulative_total_duration": position_ms,
-            "progress_type": 0,
-            "read_timestamp_ms": now,
-            "tone_id": 0,
-            "vid_index": wire_vid_index(vid_index),
-        }],
-    });
-
+    let (update_body, upload_body) =
+        watch_progress_bodies(series_id, vid, vid_index, position_ms, now_ms());
     let update_raw = serde_json::to_vec(&update_body)
         .map_err(|e| AppError::Media(format!("构造历史上报失败: {e}")))?;
     let bytes = api_call_reading(
-        LQ_API_ORIGIN,
+        SINFONLINEA_API_ORIGIN,
         READ_HISTORY_UPDATE_PATH,
         Some(update_raw),
         &[],
@@ -263,7 +226,7 @@ pub async fn report_watch_progress(
     let upload_raw = serde_json::to_vec(&upload_body)
         .map_err(|e| AppError::Media(format!("构造进度上传失败: {e}")))?;
     let bytes = api_call_reading(
-        LQ_API_ORIGIN,
+        SINFONLINEA_API_ORIGIN,
         READ_PROGRESS_UPLOAD_PATH,
         Some(upload_raw),
         &[],
@@ -274,6 +237,151 @@ pub async fn report_watch_progress(
         .map_err(|e| AppError::Media(format!("解析进度上传响应失败: {e}")))?;
     check_code(&v)?;
     Ok(())
+}
+
+/// 官方匿名播放在原设备会话下更新当前一集的历史。
+pub async fn report_guest_watch_progress(
+    item: &LocalHistoryItem,
+    report: Option<&GuestPlaybackReport>,
+    env: &ApiEnv,
+) -> AppResult<()> {
+    let body = history_update_body(
+        &item.series_id,
+        &item.vid,
+        i64::from(item.vid_index),
+        item.position_ms,
+        report.map_or(item.position_ms, |sample| sample.cumulative_ms),
+        report.map_or(item.updated_at_ms, |sample| sample.observed_at_ms),
+        0,
+    );
+    let update = send_guest_report(READ_HISTORY_UPDATE_PATH, body, env).await;
+    if update.is_ok() {
+        log::debug!("[History] 匿名历史更新成功，集号 {}", item.vid_index);
+    }
+    let Some(report) = report.filter(|sample| !sample.progress.is_empty()) else {
+        return update;
+    };
+    let books: Vec<_> = report.progress.iter().map(guest_progress_item).collect();
+    let progress = send_guest_report(
+        READ_PROGRESS_UPLOAD_PATH,
+        serde_json::json!({"books": books}),
+        env,
+    )
+    .await;
+    if progress.is_ok() {
+        log::debug!("[History] 匿名进度上传成功，共 {} 集", books.len());
+    }
+    update.and(progress)
+}
+
+async fn send_guest_report(path: &str, body: Value, env: &ApiEnv) -> AppResult<()> {
+    let raw = serde_json::to_vec(&body)
+        .map_err(|e| AppError::Media(format!("构造匿名播放上报失败: {e}")))?;
+    let bytes = api_call_playback_v5(SINFONLINEA_API_ORIGIN, path, raw, env).await?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Media(format!("解析匿名播放上报响应失败: {e}")))?;
+    check_code(&value)?;
+    check_update_fails(&value)
+}
+
+fn watch_progress_bodies(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    now: i64,
+) -> (Value, Value) {
+    let update_body = history_update_body(
+        series_id,
+        vid,
+        vid_index,
+        position_ms,
+        position_ms,
+        now,
+        now,
+    );
+    let upload_body = serde_json::json!({"books": [progress_upload_item(series_id, vid, position_ms, position_ms, now)]});
+    (update_body, upload_body)
+}
+
+fn history_update_body(
+    series_id: &str,
+    vid: &str,
+    vid_index: i64,
+    position_ms: i64,
+    cumulative_ms: i64,
+    now: i64,
+    update_timestamp: i64,
+) -> Value {
+    serde_json::json!({
+        "update_datas": [{
+            "book_id": str_or_num(series_id),
+            "book_type": 2,
+            "chapter_index": 0,
+            "current_play_position": position_ms,
+            "digged_count": 0,
+            "duration": 0,
+            "episode_cnt": 0,
+            "is_delete": false,
+            "is_interactive_game": false,
+            "is_listen_mode": false,
+            "is_multi_season": 0,
+            "meet_guide_comment_tag": false,
+            "origin_novel_book_id": 0,
+            "player_accumulate_total_time": cumulative_ms,
+            "read_timestamp_ms": now,
+            "recent_reads": 0,
+            "retain_video_play_time": 0,
+            "season_index": 0,
+            "series_play_cnt": 0,
+            "tone_id": 0,
+            "update_timestamp_ms": update_timestamp,
+            "use_soft_delete": false,
+            "user_digg": false,
+            "user_playlet_comment_flag": false,
+            "vid": str_or_num(vid),
+            "vid_index": vid_index,
+        }],
+    })
+}
+
+fn guest_progress_item(sample: &GuestProgressItem) -> Value {
+    progress_upload_item(
+        &sample.series_id,
+        &sample.vid,
+        sample.position_ms,
+        sample.cumulative_ms,
+        sample.observed_at_ms,
+    )
+}
+
+fn progress_upload_item(
+    series_id: &str,
+    vid: &str,
+    position_ms: i64,
+    cumulative_ms: i64,
+    now: i64,
+) -> Value {
+    serde_json::json!({
+            "book_id": series_id,
+            "book_type": 2,
+            "channel_id": 0,
+            "check_timestamp": false,
+            "cur_channel_id": 0,
+            "current_play_time": position_ms,
+            "is_listen_mode": false,
+            "is_local_book": false,
+            "item_id": vid,
+            "listen_and_read": false,
+            "page_index": 0,
+            "page_progress_rate": 0,
+            "paragraph_offset": 0,
+            "player_cumulative_total_duration": cumulative_ms,
+            "progress_type": 0,
+            "read_timestamp_ms": now,
+            "tone_id": 0,
+            "vid_index": 0,
+    })
 }
 
 /// 数字型 id 字段：可解析就发 JSON 数字（对齐官方），否则原样字符串。
@@ -303,7 +411,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wire_vid_index_converts_domain_to_zero_based() {
+    fn progress_report_uses_the_episode_index_only_in_history_update() {
+        let series_id = "7697459724635098174";
+        for (episode, vid) in [(1, 7697465535398677529_u64), (13, 7697465038512065561)] {
+            let (update, upload) =
+                watch_progress_bodies(series_id, &vid.to_string(), episode, 5000, 1);
+            assert_eq!(update["update_datas"][0]["vid_index"], episode);
+            assert_eq!(update["update_datas"][0]["vid"], vid);
+            assert_eq!(upload["books"][0]["vid_index"], 0);
+            assert_eq!(upload["books"][0]["item_id"], vid.to_string());
+        }
+    }
+
+    #[test]
+    fn guest_reports_keep_cumulative_playback_separate_from_episode_position() {
+        let update = history_update_body("100", "113", 13, 0, 15_559, 1000, 0);
+        assert_eq!(update["update_datas"][0]["current_play_position"], 0);
+        assert_eq!(
+            update["update_datas"][0]["player_accumulate_total_time"],
+            15_559
+        );
+        assert_eq!(update["update_datas"][0]["update_timestamp_ms"], 0);
+
+        let progress = guest_progress_item(&GuestProgressItem {
+            series_id: "100".into(),
+            vid: "113".into(),
+            position_ms: 40_522,
+            cumulative_ms: 72_097,
+            observed_at_ms: 2000,
+        });
+        assert_eq!(progress["item_id"], "113");
+        assert_eq!(progress["current_play_time"], 40_522);
+        assert_eq!(progress["player_cumulative_total_duration"], 72_097);
+        assert_eq!(progress["read_timestamp_ms"], 2000);
+    }
+
+    #[test]
+    fn history_delete_converts_domain_to_zero_based() {
         assert_eq!(wire_vid_index(1), 0, "第 1 集 → 线上 0");
         assert_eq!(wire_vid_index(8), 7);
         assert_eq!(wire_vid_index(0), 0, "0/负值护栏");

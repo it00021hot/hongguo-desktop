@@ -8,6 +8,47 @@ use hongguo_common::model::PlaybackPosition;
 
 use super::{col_f64, col_i64, map_db_err};
 
+pub async fn playback_definition(db: &Db, scope: &str) -> AppResult<Option<u32>> {
+    let mut rows = db
+        .conn()
+        .query(
+            "SELECT definition FROM playback_definition WHERE scope = ?1",
+            [Value::Text(scope.to_owned())],
+        )
+        .await
+        .map_err(map_db_err)?;
+    rows.next()
+        .await
+        .map_err(map_db_err)?
+        .map(|row| col_i64(&row, 0).map(|value| value as u32))
+        .transpose()
+}
+
+pub async fn save_playback_definition(
+    db: &Db,
+    scope: &str,
+    definition: Option<u32>,
+) -> AppResult<()> {
+    if let Some(definition) = definition {
+        db.execute(
+            "INSERT INTO playback_definition(scope, definition) VALUES(?1, ?2)
+            ON CONFLICT(scope) DO UPDATE SET definition=excluded.definition",
+            [
+                Value::Text(scope.to_owned()),
+                Value::Integer(i64::from(definition)),
+            ],
+        )
+        .await?;
+    } else {
+        db.execute(
+            "DELETE FROM playback_definition WHERE scope=?1",
+            [Value::Text(scope.to_owned())],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// 读单集位置。
 pub async fn playback_position(
     db: &Db,
@@ -93,6 +134,24 @@ pub async fn save_playback_position(
 mod tests {
     use super::*;
     use crate::entity::{mem_db, rt};
+
+    #[test]
+    fn definition_memory_has_independent_scopes_and_can_be_cleared() {
+        let db = mem_db();
+        rt().block_on(async {
+            assert_eq!(playback_definition(&db, "").await.unwrap(), None);
+            save_playback_definition(&db, "", Some(1080)).await.unwrap();
+            save_playback_definition(&db, "series", Some(540))
+                .await
+                .unwrap();
+            save_playback_definition(&db, "", Some(720)).await.unwrap();
+            assert_eq!(playback_definition(&db, "series").await.unwrap(), Some(540));
+            assert_eq!(playback_definition(&db, "").await.unwrap(), Some(720));
+            save_playback_definition(&db, "", None).await.unwrap();
+            assert_eq!(playback_definition(&db, "").await.unwrap(), None);
+            assert_eq!(playback_definition(&db, "series").await.unwrap(), Some(540));
+        });
+    }
 
     #[test]
     fn playback_upsert_is_per_episode() {

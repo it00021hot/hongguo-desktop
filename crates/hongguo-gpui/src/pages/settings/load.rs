@@ -92,9 +92,6 @@ impl super::SettingsView {
                 let concurrency = settings.max_concurrency as f32;
                 view.concurrency
                     .update(cx, |state, cx| state.set_value(concurrency, window, cx));
-                let prefetch = settings.prefetch_episodes as f32;
-                view.prefetch
-                    .update(cx, |state, cx| state.set_value(prefetch, window, cx));
                 if let Some(account) = &settings.account
                     && !account.avatar_url.is_empty()
                 {
@@ -125,6 +122,10 @@ impl super::SettingsView {
         });
         self.cache_usage = Some(CacheUsage {
             online: CachePart { files: 3, bytes: 0 },
+            online_disk: CachePart {
+                files: 8,
+                bytes: 5_200_000,
+            },
             compat: CachePart {
                 files: 2,
                 bytes: 736_000_000,

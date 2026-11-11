@@ -5,18 +5,46 @@ use std::cmp::Ordering;
 /// 本机解码能力对选流的约束（语义对齐官方 TTVideoEngine `CodecStrategy`：
 /// 能力决定「谁参赛、怎么排」，不把解不了的流硬喂给解码器）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecoderCapability {
-    /// 系统 HEVC 解码在位：现状行为，清晰度优先。
-    Full,
-    /// 无 HEVC 解码（Windows 缺「HEVC 视频扩展」）：h264 最优先、未知编码次之、
-    /// HEVC 系末选；整集只有 HEVC 时仍取流，黑屏后由转码兜底接住。
-    NoHevc,
+pub struct DecoderCapability {
+    /// 系统 HEVC 可解（WebView / 系统播放器可直喂 `h265`/`bytevc1`）。
+    pub hevc: bool,
+    /// 内置 Rust ByteVC2 解码器可用：`bytevc2` 可经转码播放。
+    pub bytevc2: bool,
 }
 
 impl DecoderCapability {
-    /// 按本机探测结论选模式（`true` = 系统 HEVC 解码在位）。
+    /// 全能力、无 bytevc2（单测与下载路径默认）。
+    pub const fn full() -> Self {
+        Self {
+            hevc: true,
+            bytevc2: false,
+        }
+    }
+
+    /// 无 HEVC、无 bytevc2。
+    pub const fn no_hevc() -> Self {
+        Self {
+            hevc: false,
+            bytevc2: false,
+        }
+    }
+
+    /// 仅按 HEVC 探测构造（bytevc2 默认关；生产请用 [`Self::from_probes`]）。
     pub fn from_hevc(playable: bool) -> Self {
-        if playable { Self::Full } else { Self::NoHevc }
+        Self {
+            hevc: playable,
+            bytevc2: false,
+        }
+    }
+
+    /// 按本机 HEVC + ByteVC2 探测结论选模式。
+    pub fn from_probes(hevc: bool, bytevc2: bool) -> Self {
+        Self { hevc, bytevc2 }
+    }
+
+    pub fn with_bytevc2(mut self, ok: bool) -> Self {
+        self.bytevc2 = ok;
+        self
     }
 }
 
@@ -26,7 +54,7 @@ pub struct StreamScore {
     pub def_num: u32,
     /// 像素数
     pub pixels: u32,
-    /// 编码器偏好（**越小越优先**：h265/h264 系 > bytevc1 > 其它）
+    /// 编码器偏好（**越小越优先**：h265/h264 系 > bytevc1 > bytevc2 > 其它）
     pub codec_rank: u8,
     /// 码率
     pub bitrate: u32,
@@ -67,6 +95,7 @@ impl PartialOrd for StreamScore {
 /// 挑到的一条流。
 pub struct PlayStream {
     pub url: String,
+    pub file_hash: Option<String>,
     pub spade: String,
     pub codec: Option<String>,
     /// 实际选中的档位。发生回退时它是自动挑的那档，不是请求的那档。

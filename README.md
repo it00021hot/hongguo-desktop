@@ -122,12 +122,12 @@ Tauri 2 + React 19 WebView 壳与 GPUI 原生壳 · 两壳共用 hongguo-service
 
 ### 内核（Rust）
 
-| 层     | 选型                                                                                            |
-| ------ | ----------------------------------------------------------------------------------------------- |
-| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store` |
-| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                     |
-| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`） |
-| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                          |
+| 层     | 选型                                                                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 桌面壳 | [Tauri 2](https://tauri.app) + React 19 WebView 壳，以及 GPUI 原生壳；共用 `hongguo-service` / `hongguo-api` / `hongguo-store`                         |
+| 语言   | Rust 2024 edition · tokio · reqwest(rustls)                                                                                                            |
+| 存储   | [Turso](https://turso.tech) 内嵌数据库（纯 Rust，`hongguo.db`，schema v7，`SCHEMA_VERSION = 7`）                                                       |
+| 解密   | aes / ctr / sm3 / md-5 等纯 Rust crate（CENC-AES-CTR）                                                                                                 |
 | 编解码 | 视频 remux / MP4 封装为纯 Rust；`rusty_h265` 只做 HEIF 封面软解，不是主视频路径；HEVC→H.264 为平台硬编（VideoToolbox / Media Foundation）再回落 ffmpeg |
 
 ### 前端（仅 Tauri WebView 壳）

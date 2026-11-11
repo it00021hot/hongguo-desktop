@@ -31,7 +31,7 @@ pub fn compat_merge(
 
     let settings = state.settings();
     let output = super::output_file(&settings, output_name);
-    std::fs::create_dir_all(output.parent().expect("产物必有父目录"))
+    hongguo_store::paths::qa_create_dir_all(output.parent().expect("产物必有父目录"))
         .map_err(|e| AppError::Io(e.to_string()))?;
     let total = inputs.len();
 
@@ -138,12 +138,12 @@ pub fn compat_merge(
                             );
                             let cb: &(dyn Fn(f64) + Send + Sync) = &on_eps;
                             let r = pipeline::transcode(
-                                series_id,
-                                *vid_index,
                                 source,
+                                &cache::cache_file(series_id, *vid_index),
                                 scale_to,
                                 hongguo_media_platform::RateProfile::Archive,
                                 Some(cb),
+                                pipeline::TranscodeHooks::default(),
                             );
                             // 会话超订的信号：预期硬编却落在软路——收敛并行度，
                             // 后续集不再超订（偶发回落多收敛一次，代价只是保守些）。
@@ -197,14 +197,14 @@ pub fn compat_merge(
     // 产物必须自己解得开才叫成功：流复制拼接漏检一个条件就会得到
     // 「能打开、但只播得动前几秒」的文件，用户只会觉得「合并功能有问题」。
     let verified = hongguo_media::demux::demux_file(&output).map_err(|e| {
-        let _ = std::fs::remove_file(&output);
+        let _ = hongguo_store::paths::qa_remove_file(&output);
         AppError::Media(format!("合并产物校验失败，已删除该文件: {e}"))
     })?;
     if !verified
         .video_track()
         .is_some_and(|t| !t.info.samples.is_empty())
     {
-        let _ = std::fs::remove_file(&output);
+        let _ = hongguo_store::paths::qa_remove_file(&output);
         return Err(AppError::Media(
             "合并产物里没有可用的视频样本，已删除该文件".into(),
         ));
@@ -219,7 +219,7 @@ pub fn compat_merge(
     // 文件就地删除，不等下一轮 trim（校验失败的分支不删——重试还能命中缓存）。
     let mut cleaned = 0usize;
     for p in &transcoded {
-        if std::fs::remove_file(p).is_ok() {
+        if hongguo_store::paths::qa_remove_file(p).is_ok() {
             cleaned += 1;
         }
     }

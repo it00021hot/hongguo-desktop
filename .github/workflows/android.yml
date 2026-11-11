@@ -23,13 +23,13 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v6.1.1
         with:
-          version: 12.17.0
+          version: 12.18.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 26.13.0
           cache: pnpm
@@ -39,12 +39,12 @@ jobs:
           targets: aarch64-linux-android
 
       # 与桌面 CI 的缓存分 key：android 目标的依赖编译产物独立成桶
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           key: android-aarch64
 
       # AGP 对 compileSdk 37 需要 JDK 17+；gradle 依赖缓存进 ~/.gradle
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6.2.0
         with:
           distribution: temurin
           java-version: 17
@@ -72,7 +72,7 @@ jobs:
         run: pnpm tauri android build --apk --target aarch64
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: hongguo-android-apk
           path: crates/hongguo-tauri-app/gen/android/app/build/outputs/apk/**/*.apk

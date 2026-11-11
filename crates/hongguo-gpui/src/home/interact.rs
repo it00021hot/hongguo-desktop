@@ -395,7 +395,7 @@ impl super::HomeView {
             .gap_4()
             // 滚轮拦下（Tauri interaction-rail data-wheel-block 同款）：
             // 悬在互动键上滚不切剧
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(self.rail_item(
                 "collect",
                 RailItem {
@@ -546,14 +546,11 @@ impl super::HomeView {
             )
             .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
             .on_click(on_click)
-            .child(
-                icon.size(gpui_kit::px(icon_px))
-                    .text_color(if active {
-                        active_color
-                    } else {
-                        gpui_kit::rgb(0xffffff)
-                    }),
-            )
+            .child(icon.size(gpui_kit::px(icon_px)).text_color(if active {
+                active_color
+            } else {
+                gpui_kit::rgb(0xffffff)
+            }))
             .children((count > 0).then(|| {
                 div()
                     .text_xs()

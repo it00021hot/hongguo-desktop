@@ -34,7 +34,12 @@ import { useIncognitoMode } from './incognito';
 import { useMinimizeAutoPause } from '../hooks/use-minimize-pause';
 import { usePlaybackSource } from '../hooks/use-playback-source';
 import { useTranscodeFallback } from '../hooks/use-transcode-fallback';
+import { useGrowingCompat } from '../hooks/use-growing-compat';
+import { directBytevc2Audio, directBytevc2Source } from '../hooks/direct-bytevc2';
+import { useDirectBytevc2 } from '../hooks/use-direct-bytevc2';
+import { visibleCompatProgress } from '../hooks/growing-fallback';
 import { useFrameHold } from '../hooks/use-frame-hold';
+import { useSwitchSilence } from '../hooks/use-switch-silence';
 import { useSwitchVeil } from '../hooks/use-switch-veil';
 import { usePlaybackProgress } from '../hooks/use-playback-progress';
 import { useDanmakuSettings } from '../hooks/use-danmaku-settings';
@@ -85,6 +90,7 @@ export function PlayerView({
   const setVolumeOpen = usePlayerStore((s) => s.setVolumeOpen);
   const setSeriesPanelOpen = usePlayerStore((s) => s.setSeriesPanelOpen);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const directCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const {
     quietStart,
@@ -124,10 +130,13 @@ export function PlayerView({
     setSrcKey,
     srcKeyRef,
     lastKnownRef,
+    pendingSeek: pendingSeekRef,
     buffering,
     setDefinition,
     activeDefinition,
+    automaticDefinition,
     definitions,
+    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
@@ -151,14 +160,15 @@ export function PlayerView({
   const currentEpisode = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
   const currentVidKey = currentVid ? `${currentVid}:${seriesId}` : '';
 
-  const { danmakuItems, handleLoadedMetadataWithDanmaku, videoPortrait } = useDanmakuWindow({
-    videoRef,
-    currentVid,
-    seriesId,
-    duration: currentEpisode?.duration ?? 0,
-    onLoadedMetadata: handleLoadedMetadata,
-    episodeKey,
-  });
+  const { danmakuItems, handleLoadedMetadataWithDanmaku, noteVideoSize, videoPortrait } =
+    useDanmakuWindow({
+      videoRef,
+      currentVid,
+      seriesId,
+      duration: currentEpisode?.duration ?? 0,
+      onLoadedMetadata: handleLoadedMetadata,
+      episodeKey,
+    });
 
   const { data: hevcPlayable } = usePlaybackCapability();
   const { danmakuOn, danmakuDisplay, updateDanmakuDisplay, toggleDanmaku } = useDanmakuSettings();
@@ -171,7 +181,20 @@ export function PlayerView({
 
   // 转码兜底：onDecodeFailure 代理须先于 hook 创建
   const { onDecodeFailure, onDecodeFailureRef } = useDecodeFailureProxy();
-  const { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat } = useTranscodeFallback({
+  const sourceReady = srcKey === episodeKey && Boolean(src);
+  const directSource = directBytevc2Source(src, isBytevc2);
+  const compatDefinition = sourceReady && activeDefinition > 0 ? activeDefinition : undefined;
+  const {
+    compatSrc,
+    compat: compatProgress,
+    playSrc,
+    streamKey,
+    startCompat,
+    forceCompat,
+    progressive,
+    showCompleteSrc,
+    noteGrowingUnavailable,
+  } = useTranscodeFallback({
     videoRef,
     seriesId,
     vidIndex,
@@ -180,14 +203,47 @@ export function PlayerView({
     src,
     retryTick,
     srcKeyRef,
+    pendingSeekRef,
     setSrcKey,
     currentSeries,
     hevcPlayable,
     android: isAndroid(),
+    directPlayback: isBytevc2,
+    definition: compatDefinition,
+    sourceReady,
     onDecodeFailure,
   });
+  const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
+  const handleDirectError = (reason: unknown) => {
+    const detail = reason instanceof Error ? reason.message : String(reason);
+    setError(`${t('error.media')}（ByteVC2: ${detail}）`);
+  };
+  const isDirectBuffering = useDirectBytevc2({
+    source: sourceReady && !error ? directSource : null,
+    videoRef,
+    canvasRef: directCanvasRef,
+    pendingSeekRef,
+    onFirstFrame: (width, height) => {
+      noteVideoSize(width, height);
+      markLive();
+      onFirstFrame?.();
+    },
+    onWaiting: markStalled,
+    onError: handleDirectError,
+  });
+  const compat = visibleCompatProgress(compatProgress, videoLive);
+  useGrowingCompat(
+    videoRef,
+    progressive ? playSrc : null,
+    seriesId,
+    vidIndex,
+    noteGrowingUnavailable,
+    compatDefinition,
+  );
   /** 切换在途：目标已是新的一集，元素里还是上一条流（play 请求未返回） */
   const switching = srcKey !== episodeKey;
+  // 切换在途时旧流闭嘴（封面已接管画面，声音不能继续压在新剧上）
+  const { isSwitchPause, holdIfSwitching } = useSwitchSilence({ videoRef, switching });
 
   const { decodeBlocking, handleVideoError, clearDecodeBlocked } = useMediaRecovery({
     videoRef,
@@ -252,7 +308,6 @@ export function PlayerView({
 
   /** 简介展开态：切剧重挂载自然收回。 */
   const [introExpanded, setIntroExpanded] = useState(false);
-  const { videoLive, videoStalled, markLive, markStalled } = useVideoLive(streamKey);
 
   // 同剧切集黑幕暗转：置位/收口在 use-switch-veil，显隐真值表在 use-frame-hold
   const { veiled } = useSwitchVeil({
@@ -269,6 +324,7 @@ export function PlayerView({
     capture: captureFrame,
   } = useFrameHold({
     videoRef,
+    canvasRef: directCanvasRef,
     seriesId,
     episodeKey,
     videoLive,
@@ -304,7 +360,7 @@ export function PlayerView({
     [onStageClick],
   );
 
-  const { persist, report } = usePlaybackProgress({
+  const { persist, report, seeking } = usePlaybackProgress({
     videoRef,
     seriesId,
     vidIndex,
@@ -433,47 +489,78 @@ export function PlayerView({
                 <video
                   key={playSrc}
                   ref={videoRef}
-                  src={playSrc}
+                  src={
+                    directSource
+                      ? directBytevc2Audio(directSource)
+                      : showCompleteSrc
+                        ? playSrc
+                        : undefined
+                  }
                   crossOrigin="anonymous"
                   className={cn(
                     'absolute inset-0 size-full',
                     coverFill ? 'object-cover' : 'object-contain',
+                    directSource && 'opacity-0',
                   )}
-                  autoPlay
-                  onLoadedMetadata={handleLoadedMetadataWithDanmaku}
-                  onPlay={() => {
+                  autoPlay={!directSource}
+                  onLoadedMetadata={() => handleLoadedMetadataWithDanmaku(!directSource)}
+                  onPlay={(e) => {
+                    if (holdIfSwitching(e.currentTarget)) return;
                     markPlayed();
                     setPaused(false);
                   }}
-                  onPlaying={() => {
-                    markLive();
+                  onPlaying={(event) => {
+                    if (!directSource) markLive();
                     markStalled(false);
-                    onFirstFrame?.();
+                    report(event.currentTarget.currentTime);
+                    if (!directSource) onFirstFrame?.();
                   }}
                   onPause={(e) => {
+                    if (isSwitchPause(e.currentTarget)) return;
+                    if (isDirectBuffering()) return;
                     if (!playedOnceRef.current) return;
                     setPaused(true);
                     persist(e.currentTarget.currentTime, true);
                   }}
-                  onLoadedData={() => markLive()}
+                  onLoadedData={() => {
+                    if (!directSource) markLive();
+                  }}
                   onWaiting={() => markStalled(true)}
-                  onCanPlay={() => markStalled(false)}
+                  onSeeking={seeking}
+                  onCanPlay={() => {
+                    if (!isDirectBuffering()) markStalled(false);
+                  }}
                   onTimeUpdate={(e) => {
-                    if (e.currentTarget.currentTime > 0.1) {
+                    if (!directSource && e.currentTarget.currentTime > 0.1) {
                       markLive();
                       onFirstFrame?.();
                     }
-                    markStalled(false);
+                    if (!isDirectBuffering()) markStalled(false);
                     persist(e.currentTarget.currentTime);
                     report(e.currentTarget.currentTime);
                   }}
                   onEnded={handleEnded}
                   onRateChange={handleRateChange}
                   onVolumeChange={handleVolumeChange}
-                  onError={handleVideoError}
+                  onError={(event) => {
+                    if (directSource)
+                      handleDirectError(event.currentTarget.error?.message || t('error.media'));
+                    else handleVideoError();
+                  }}
                 />
+                {directSource && (
+                  <canvas
+                    ref={directCanvasRef}
+                    data-bytevc2-direct=""
+                    className={cn(
+                      'pointer-events-none absolute inset-0 size-full',
+                      coverFill ? 'object-cover' : 'object-contain',
+                    )}
+                  />
+                )}
                 <EnhancementLayer
                   videoRef={videoRef}
+                  directCanvasRef={directSource ? directCanvasRef : undefined}
                   src={playSrc}
                   available={videoLive}
                   cover={coverFill}
@@ -523,17 +610,12 @@ export function PlayerView({
                 )}
                 {paused && !error && !miniScreen && !portrait && !narrow && <KeyboardHint />}
                 {commentPanelOpen && !miniScreen && (
-                  <CommentPanel
-                    vid={currentVidKey}
-                    onClose={() => setCommentPanelOpen(false)}
-                  />
+                  <CommentPanel vid={currentVidKey} onClose={() => setCommentPanelOpen(false)} />
                 )}
                 <InteractionRail
                   seriesId={seriesId}
                   vid={currentVidKey}
-                  visible={
-                    chromeShown && !commentPanelOpen && !miniScreen && !landscapeWatch
-                  }
+                  visible={chromeShown && !commentPanelOpen && !miniScreen && !landscapeWatch}
                   title={currentSeries?.title}
                   commentCount={currentEpisode?.commentCount}
                   diggCount={currentEpisode?.diggCount}
@@ -589,6 +671,7 @@ export function PlayerView({
                   pinned={pinned}
                   togglePinned={togglePinned}
                   activeDefinition={activeDefinition}
+                  automaticDefinition={automaticDefinition}
                   definitions={definitions}
                   onDefinitionChange={handleDefinitionChange}
                   playSrc={playSrc}

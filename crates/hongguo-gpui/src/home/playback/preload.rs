@@ -27,16 +27,17 @@ impl super::HomeView {
             return;
         }
         self.system_preload_pending = Some(vid.clone());
-        // 先在主线程同步落「下一集」标记：连播预取可能已经开跑，晚一步它
-        // 就会在头部预算处收工，再由 ensure 唤醒已经来不及。
-        hongguo_stream::cache().mark_next(&vid, definition);
         let player = Arc::clone(player);
         let state = Arc::clone(&self.state);
         let progress_key = format!("{series_id}:{next_index}");
         let ready_vid = vid.clone();
         let ready_key = progress_key.clone();
         let done = bridge::spawn(async move {
-            ensure_stream_ready(&state, &ready_vid, definition, &ready_key).await
+            let budget = hongguo_service::play_service::prefetch_budget(&state).await;
+            if budget.count == 0 || budget.bytes == 0 {
+                return false;
+            }
+            ensure_stream_ready(&state, &ready_vid, definition, &ready_key, budget.bytes).await
         });
         cx.spawn(async move |this, cx| {
             let ready = done.await.expect("tokio 桥不会丢弃发送端");
@@ -44,14 +45,14 @@ impl super::HomeView {
                 if view.system_preload_pending.as_deref() == Some(vid.as_str()) {
                     view.system_preload_pending = None;
                 }
+                if !ready {
+                    return;
+                }
                 let still_next = view.now.as_ref().is_some_and(|now| {
                     now.series_id == series_id && now.vid_index + 1 == next_index
                 });
                 if !still_next {
                     return;
-                }
-                if !ready {
-                    log::warn!("[Home] 第 {next_index} 集流 5s 内未注册，预加载继续由 loader 等待");
                 }
                 let stall_state = Arc::clone(&view.state);
                 let stall_vid = vid.clone();
@@ -60,9 +61,7 @@ impl super::HomeView {
                     resume_fill(&stall_state, &stall_vid, definition, &stall_key);
                 }));
                 if player.preload_next(&vid, definition, on_stall) {
-                    log::info!(
-                        "[Home] 已预加载第 {next_index} 集（{vid}@{definition}，流已注册={ready}）"
-                    );
+                    log::info!("[Home] 已预加载第 {next_index} 集（{vid}@{definition}）");
                 }
                 cx.notify();
             });
@@ -122,17 +121,12 @@ impl super::HomeView {
         .detach();
     }
 
-    /// 首帧出画：预取信息流后续 B 部的流（每部一次；Tauri 首帧发令同款）。
-    /// B = `Settings.prefetch_episodes`（0=全关，含换剧预取）——快滑时
-    /// 每一部都有头部缓存可接，不再是只有紧邻下一部热、其余全冷启动。
+    /// 首帧出画后把首页候选交给共用的预取策略。
     pub(in crate::home) fn prefetch_next_stream(&mut self, cx: &mut Context<Self>) {
-        let breadth = self.state.settings().prefetch_episodes;
-        if breadth == 0 {
-            return;
-        }
+        let breadth = hongguo_service::play_service::DEFAULT_PREFETCH_COUNT;
         let items = self.display_items();
         let cursor = self.cursor();
-        let mut launched = 0usize;
+        let mut candidates = Vec::new();
         for offset in 1..=breadth as usize {
             let Some(next) = items.get(cursor + offset).cloned() else {
                 break;
@@ -144,72 +138,34 @@ impl super::HomeView {
             if next.series_id.is_empty() || !self.stream_prefetched.insert(next.series_id.clone()) {
                 continue;
             }
-            launched += 1;
-            let state = Arc::clone(&self.state);
-            let history = self.history.clone().unwrap_or_default();
-            // 整条取流链跑在 tokio 桥里（reqwest/定时器要 reactor）；GPUI 侧只接结果
-            let done = bridge::spawn(Self::prefetch_stream_task(
-                state,
-                next.series_id.clone(),
-                history,
-            ));
-            cx.spawn(async move |this, cx| {
-                if let Err(e) = done.await.expect("tokio 桥不会丢弃发送端") {
-                    // 失败不算数：下次再成为「后续部」时允许重试
-                    let _ = this.update(cx, |view, _| {
-                        view.stream_prefetched.remove(&next.series_id);
-                    });
-                    log::info!("[Home] 预取后续部流失败（忽略）: {e}");
+            candidates.push(next.series_id);
+        }
+        if candidates.is_empty() {
+            return;
+        }
+        let requested = candidates.clone();
+        let state = Arc::clone(&self.state);
+        let history = self.history.clone().unwrap_or_default();
+        let done = bridge::spawn(async move {
+            hongguo_service::play_service::prefetch_feed(&state, requested, &history).await
+        });
+        cx.spawn(async move |this, cx| {
+            let scheduled = done
+                .await
+                .expect("tokio 桥不会丢弃发送端")
+                .unwrap_or_else(|error| {
+                    log::debug!("[Home] 预取后续部流失败: {error}");
+                    Vec::new()
+                });
+            let _ = this.update(cx, |view, _| {
+                for id in candidates {
+                    if !scheduled.contains(&id) {
+                        view.stream_prefetched.remove(&id);
+                    }
                 }
-            })
-            .detach();
-        }
-        if launched > 0 {
-            log::info!("[Home] 沉浸流预取铺 {launched} 部");
-        }
-    }
-
-    async fn prefetch_stream_task(
-        state: Arc<AppStateInner>,
-        series_id: String,
-        history: Vec<WatchHistoryItem>,
-    ) -> AppResult<()> {
-        if history
-            .iter()
-            .find(|h| h.series_id == series_id)
-            .is_some_and(WatchHistoryItem::is_finished)
-        {
-            log::info!("[Home] 预取跳过已看完《{series_id}》");
-            return Ok(());
-        }
-        let env = state.api_env();
-        let series = match state.store.series_by_id(&series_id)? {
-            Some(s) if !s.episodes.is_empty() => s,
-            _ => {
-                let s = hongguo_service::series_service::resolver::resolve_series(&series_id, &env)
-                    .await?;
-                state.store.upsert_series(&s)?;
-                s
-            }
-        };
-        let (vid_index, _) = hongguo_service::play_service::resume::resolve_entry(
-            &state.store,
-            &series_id,
-            &history,
-        )?;
-        // 入口集不在分集表（下架/重排）回落第 1 集
-        let entry = if series.episodes.iter().any(|e| e.vid_index == vid_index) {
-            vid_index
-        } else {
-            1
-        };
-        // 每部只铺入口集（只填开头一段，转正当前集才续满整集）；同剧
-        // 后续集的连播铺集由起播的 schedule_following_episodes 负责，
-        // 这里不重复——铺多了就是把带宽从当前集嘴里抢走
-        hongguo_service::play_service::online::schedule_next_episode_prefetch(
-            state, &series_id, entry,
-        );
-        Ok(())
+            });
+        })
+        .detach();
     }
 
     /// 相邻剧分集档案预取（换剧时 resolve 秒回）。

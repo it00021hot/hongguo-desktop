@@ -22,6 +22,22 @@ export type WatchHistoryItem = z.infer<typeof watchHistoryItemSchema>;
 export const localHistoryItemSchema = watchHistoryItemSchema;
 export type LocalHistoryItem = z.infer<typeof localHistoryItemSchema>;
 
+export const guestPlaybackReportSchema = z.object({
+  cumulativeMs: z.number(),
+  observedAtMs: z.number(),
+  progress: z.array(
+    z.object({
+      seriesId: z.string(),
+      vid: z.string(),
+      positionMs: z.number(),
+      cumulativeMs: z.number(),
+      observedAtMs: z.number(),
+    }),
+  ),
+});
+
+export type GuestPlaybackReport = z.infer<typeof guestPlaybackReportSchema>;
+
 export const watchHistoryPageSchema = z.object({
   items: z.array(watchHistoryItemSchema),
   hasMore: z.boolean(),
@@ -48,9 +64,10 @@ const cachePartSchema = z.object({
   bytes: z.number().nonnegative(),
 });
 
-/** 三处缓存（在线内存流 / 兼容转码 / 封面转码）的占用总览。 */
+/** 缓存占用总览。 */
 export const cacheUsageSchema = z.object({
   online: cachePartSchema,
+  onlineDisk: cachePartSchema,
   compat: cachePartSchema,
   cover: cachePartSchema,
 });

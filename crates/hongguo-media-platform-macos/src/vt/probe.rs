@@ -65,9 +65,9 @@ pub fn clear_probe_cache() {
 /// 生产 1080p 会话 CPU 8% 跑 2× 实时/路，明显是硬件）；分辨率下限的教训与 ffmpeg 侧 nvenc（64×64 误判不可用）同源：探测形状要贴近真实使用。
 unsafe fn probe_reports_hardware() -> AppResult<bool> {
     unsafe {
-        let mut c = Compressor::new(1920, 1080, 6_000_000)?;
+        let mut c = Compressor::new(1920, 1080, 6_000_000, false)?;
         let frame = make_test_frame(1920)?;
-        c.encode(&frame, 0.0, 1.0 / 30.0)?;
+        c.encode(&frame, 0.0, 1.0 / 30.0, true)?;
         c.finish()?;
         let outputs = c.take_outputs();
         drop(outputs);

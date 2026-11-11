@@ -466,8 +466,8 @@ fn build_app_state() -> Arc<AppStateInner> {
     // 缓存自动清理（上限 + TTL）：启动即跑一轮，之后每小时一轮；策略每轮
     // 现读设置，改了下轮就生效。
     hongguo_service::storage_service::cache::start_auto_clean_loop(state.clone());
-    // 设备生命周期：匿名/死档案自动注册，失败 24h 退避。匿名可读不可播，
-    // 注册成功才有取流。
+    // 已有设备身份直接复用，匿名档案注册成功后放行取流。
+    hongguo_service::device::arm_cold_start();
     hongguo_service::runtime::spawn({
         let state = state.clone();
         async move { hongguo_service::device::ensure_registered(&state).await }
@@ -476,5 +476,5 @@ fn build_app_state() -> Arc<AppStateInner> {
 }
 
 fn open_store_with_lock_retry() -> hongguo_common::AppResult<Store> {
-    Store::open_with_lock_retry(hongguo_store::paths::db_file())
+    hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())
 }

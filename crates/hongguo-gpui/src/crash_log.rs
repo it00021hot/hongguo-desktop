@@ -42,11 +42,7 @@ static CRASH_FILE: OnceLock<std::fs::File> = OnceLock::new();
 pub(crate) fn install() {
     let dir = hongguo_store::paths::data_dir();
     let path = dir.join("crash.log");
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    match hongguo_common::offline_qa::qa_open_append(&path) {
         Ok(file) => {
             let _ = CRASH_FILE.set(file);
         }

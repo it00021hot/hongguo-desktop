@@ -1,5 +1,6 @@
 //! 转码流水线编排。分流策略（媒体层的关键决策）：平台原生硬编可用 → 用平台；
-//! 装了 ffmpeg → 用 ffmpeg（有硬件编码器时接近实时）；都没有 → 直接报错。
+//! 仅当显式打开 `HONGGUO_ALLOW_FFMPEG=1` 时才用 ffmpeg（有硬件编码器时接近实时）；
+//! 都没有 → 直接报错。默认播放不拉起外部 ffmpeg 进程。
 //! 两条路都产出 H.264 MP4，上游失败自动落回下一条；实际走了哪条由
 //! [`hongguo_media::Backend`] 报告，谁都不许再拿字符串猜。
 
@@ -18,16 +19,26 @@ const PLAYBACK_MAX_LONG_EDGE: u32 = 1280;
 ///
 /// `scale_to` 给出时把画面统一到该分辨率——短剧各集由平台分别编码，混着不同
 /// 分辨率是常态，不统一的话转码产物依然规格不一，拼接那一步照样过不去。
-/// `rate` 区分合并归档与兼容播放；播放档会走更轻的码率与（ffmpeg 软编）更快 preset。
+/// `rate` 区分合并归档与兼容播放；播放档会走更轻的码率与（若打开 ffmpeg 调试 fallback，软编）更快 preset。
 /// `on_progress` 收到已编码秒数，用于把进度从「第 N/M 集」细化到集内百分比。
+/// 播放档边写边读的回调。合并路径保持默认空。
+#[derive(Clone, Copy, Default)]
+pub struct TranscodeHooks<'a> {
+    pub on_committed: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    pub is_cancelled: Option<&'a (dyn Fn() -> bool + Send + Sync)>,
+}
+
 pub fn transcode(
-    series_id: &str,
-    vid_index: u32,
     source: &Path,
+    target: &Path,
     scale_to: Option<(u32, u32)>,
     rate: RateProfile,
     on_progress: Option<&(dyn Fn(f64) + Send + Sync)>,
+    hooks: TranscodeHooks<'_>,
 ) -> AppResult<TranscodeResult> {
+    if hooks.is_cancelled.is_some_and(|cancelled| cancelled()) {
+        return Err(hongguo_common::AppError::Cancelled);
+    }
     if !source.exists() {
         return Err(hongguo_common::AppError::NotFound(
             source.display().to_string(),
@@ -35,36 +46,103 @@ pub fn transcode(
     }
 
     // 命中缓存直接返回（播放/合并各用各的文件名，互不踩）
-    if let Some(cached) = cache::cached_path_for(series_id, vid_index, rate) {
+    if cache::is_complete(target) {
         return Ok(TranscodeResult {
-            output_path: cached.to_string_lossy().to_string(),
+            output_path: target.to_string_lossy().to_string(),
             backend: hongguo_media_platform::capability::selected_backend(),
         });
     }
 
-    let target = cache::cache_file_for(series_id, vid_index, rate);
+    // ByteVC2：默认走进程内 vvdec + 平台 H.264，不拉起外部 ffmpeg。
+    // ffmpeg/librempeg 仅在 HONGGUO_ALLOW_FFMPEG=1 时作为调试 fallback，
+    // 且只在内置路径失败并清掉产物之后才尝试，避免 grow 前缀已交付又换生产者。
+    if is_bytevc2_source(source) {
+        let platform_req = hongguo_media_platform::platform::PlatformRequest {
+            input: source,
+            output: target,
+            scale_to,
+            rate,
+            on_progress,
+            on_playable_prefix: None,
+            on_committed: hooks.on_committed,
+            is_cancelled: hooks.is_cancelled,
+        };
+        log::info!("[Transcode] ByteVC2 内置解码: {}", target.display());
+        let builtin = hongguo_media_platform::transcode_bytevc2(&platform_req);
+        if builtin.is_ok() && output_is_playable(target) {
+            return Ok(TranscodeResult {
+                output_path: target.to_string_lossy().to_string(),
+                backend: Some(hongguo_media::Backend::Platform),
+            });
+        }
+        let builtin_err = match builtin {
+            Ok(()) => {
+                let _ = hongguo_store::paths::qa_remove_file(target);
+                hongguo_common::AppError::Media("ByteVC2 解码产物无法播放".into())
+            }
+            Err(err) => {
+                let _ = hongguo_store::paths::qa_remove_file(target);
+                err
+            }
+        };
+        if let Some(ff) = hongguo_media_platform::ffmpeg::try_transcode_bytevc2(&platform_req) {
+            return match ff {
+                Ok(()) if output_is_playable(target) => {
+                    let encoder = hongguo_media_platform::ffmpeg::h264_encoder();
+                    let backend = if encoder.is_some_and(|e| e.hardware) {
+                        hongguo_media::Backend::FfmpegHw
+                    } else {
+                        hongguo_media::Backend::FfmpegSw
+                    };
+                    log::info!(
+                        "[Transcode] ByteVC2 走 ffmpeg 调试 fallback（{}）: {}",
+                        backend.decoder_label(),
+                        target.display()
+                    );
+                    Ok(TranscodeResult {
+                        output_path: target.to_string_lossy().to_string(),
+                        backend: Some(backend),
+                    })
+                }
+                Ok(()) => {
+                    let _ = hongguo_store::paths::qa_remove_file(target);
+                    Err(hongguo_common::AppError::Media(
+                        "ByteVC2 ffmpeg 产物无法播放".into(),
+                    ))
+                }
+                Err(err) => {
+                    let _ = hongguo_store::paths::qa_remove_file(target);
+                    Err(err)
+                }
+            };
+        }
+        return Err(builtin_err);
+    }
 
-    // 分流 1：平台原生编码，不依赖用户装任何东西；失败静默落回 ffmpeg。
+    // 分流 1：平台原生编码，不依赖用户装任何东西；失败后仅在显式允许时落回 ffmpeg。
     let mut backend: Option<hongguo_media::Backend> = None;
     // 两条路都失败时，最后一个真实原因要透给用户——吞掉它就只剩一句「没找到 ffmpeg」的假话。
     let mut last_error: Option<String> = None;
     if let Some(done) = hongguo_media_platform::platform::transcode_h264(
         &hongguo_media_platform::platform::PlatformRequest {
             input: source,
-            output: &target,
+            output: target,
             scale_to,
             rate,
             on_progress,
+            on_playable_prefix: None,
+            on_committed: None,
+            is_cancelled: hooks.is_cancelled,
         },
     ) {
         match done {
             Ok(()) => {
-                if output_is_playable(&target) {
+                if output_is_playable(target) {
                     backend = Some(hongguo_media::Backend::Platform);
                 } else {
                     log::warn!("[Transcode] 平台硬编产物校验未通过，删除后尝试下一条路");
                     last_error = Some("平台编码器产出的文件无法播放".to_string());
-                    let _ = std::fs::remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                 }
             }
             Err(e) => {
@@ -74,13 +152,13 @@ pub fn transcode(
         }
     }
 
-    // 分流 2：ffmpeg（含硬编码器）
+    // 分流 2：ffmpeg 调试 fallback（含硬编码器；默认关闭，见 HONGGUO_ALLOW_FFMPEG）
     if backend.is_none()
         && let Some(encoder) = hongguo_media_platform::ffmpeg::h264_encoder()
     {
         let req = hongguo_media_platform::ffmpeg::TranscodeRequest {
             input: source,
-            output: &target,
+            output: target,
             scale_to,
             rate,
             on_progress,
@@ -89,7 +167,7 @@ pub fn transcode(
             Ok(()) => {
                 // 退出码 0 不等于文件可播（磁盘写满截断、被杀毒软件半路锁文件），
                 // 与合并那头的产物校验对齐同一道闸。
-                if output_is_playable(&target) {
+                if output_is_playable(target) {
                     backend = Some(if encoder.hardware {
                         hongguo_media::Backend::FfmpegHw
                     } else {
@@ -98,7 +176,7 @@ pub fn transcode(
                 } else {
                     log::warn!("[Transcode] ffmpeg 产物校验未通过，删除产物");
                     last_error = Some("ffmpeg 产出的文件无法播放".to_string());
-                    let _ = std::fs::remove_file(&target);
+                    let _ = hongguo_store::paths::qa_remove_file(target);
                 }
             }
             Err(e) => {
@@ -112,20 +190,31 @@ pub fn transcode(
         return Err(match last_error {
             Some(e) => hongguo_common::AppError::Media(format!("转码失败：{e}")),
             None => hongguo_common::AppError::Media(
-                "没有可用的转码后端：系统编码器不可用，且未找到 ffmpeg。请安装 ffmpeg 后重试。"
+                "没有可用的转码后端：系统编码器不可用，且未启用 ffmpeg 调试 fallback（需显式设置 HONGGUO_ALLOW_FFMPEG=1）。"
                     .into(),
             ),
         });
     };
 
     log::info!(
-        "[Transcode] {series_id} 第 {vid_index} 集完成，后端 {}",
-        backend.decoder_label()
+        "[Transcode] 转码完成，后端 {}: {}",
+        backend.decoder_label(),
+        target.display()
     );
     Ok(TranscodeResult {
         output_path: target.to_string_lossy().to_string(),
         backend: Some(backend),
     })
+}
+
+fn is_bytevc2_source(path: &Path) -> bool {
+    hongguo_media::demux::demux_file(path)
+        .ok()
+        .and_then(|d| {
+            d.video_track()
+                .map(|t| hongguo_bytevc2::is_bytevc2(&t.info.codec))
+        })
+        .unwrap_or(false)
 }
 
 /// 某个文件的目标分辨率（宽高）。读不出来返回 `None`。
@@ -164,19 +253,42 @@ pub fn episode_seconds(path: &Path) -> Option<f64> {
 
 /// 转码产物是否真的可播：能解复用且有视频样本（与合并产物校验同一口径）。
 fn output_is_playable(path: &Path) -> bool {
-    match hongguo_media::demux::demux_file(path) {
-        Ok(d) => d.video_track().is_some_and(|t| !t.info.samples.is_empty()),
-        // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
-        Err(e) => {
-            log::warn!("[Transcode] 产物校验：解复用失败: {e}");
-            false
-        }
+    let demuxed = hongguo_media::demux::demux_file(path);
+    if demuxed
+        .as_ref()
+        .ok()
+        .and_then(|d| d.video_track())
+        .is_some_and(|t| !t.info.samples.is_empty())
+    {
+        return true;
     }
+    if hongguo_media::mux::prefix_is_independently_decodable(path) {
+        return true;
+    }
+    // 校验失败必须留痕：平台层产物被拒后静默落 ffmpeg，没有这行日志就查不出「为什么没用上硬编」。
+    if let Err(e) = demuxed {
+        log::warn!("[Transcode] 产物校验：解复用失败: {e}");
+    }
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bytevc2_fourcc_is_recognized_as_its_own_source() {
+        use hongguo_video::fixtures::{TrackSpec, mp4};
+        let dir = std::env::temp_dir().join(format!("hg-bvc2-src-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("b.mp4");
+        std::fs::write(&path, mp4(&[TrackSpec::video(1, b"bvc2", 64, 64)])).unwrap();
+        assert!(is_bytevc2_source(&path));
+        let h264 = dir.join("a.mp4");
+        std::fs::write(&h264, mp4(&[TrackSpec::video(1, b"avc1", 64, 64)])).unwrap();
+        assert!(!is_bytevc2_source(&h264));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn playback_scale_caps_1080p_to_720p_long_edge() {

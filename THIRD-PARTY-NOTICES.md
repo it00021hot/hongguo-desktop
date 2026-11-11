@@ -66,7 +66,15 @@ remain with their respective authors. This project itself is licensed under
 | [zod](https://zod.dev)                                              | 运行时类型校验                         | MIT        |
 | [anime4k-webgpu](https://github.com/Anime4KWebBoost/Anime4K-WebGPU) | 画质增强（Anime4K CNN 2× 着色器）      | MIT        |
 
-## 六、构建工具 / Build Tooling
+## 六、媒体解码核 / Media Decoders
+
+| 组件                                                                  | 用途                                                  | 许可                                                         |
+| --------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
+| [Fraunhofer VVdeC / libvvdec](https://github.com/fraunhoferhhi/vvdec) | ByteVC2/H.266 软解主核（经 `vvdec`/`vvdec-sys` 嵌入） | BSD-3-Clause-Clear（**不含专利授权**；产品已确认可嵌入发版） |
+| [vvdec / vvdec-sys](https://github.com/cadubentzen/vvdec-rs)          | libvvdec 的 Rust 绑定                                 | BSD-3-Clause-Clear                                           |
+| [oxideav-h266](https://crates.io/crates/oxideav-h266)                 | ByteVC2/H.266 纯 Rust 解核回退 / 测试夹具             | MIT                                                          |
+
+## 七、构建工具 / Build Tooling
 
 | 组件                                         | 用途           | 许可       |
 | -------------------------------------------- | -------------- | ---------- |
@@ -77,7 +85,7 @@ remain with their respective authors. This project itself is licensed under
 | [Prettier](https://prettier.io)              | 格式化         | MIT        |
 | [knip](https://github.com/webpro-nl/knip)    | 未使用依赖检测 | MIT        |
 
-## 七、签名算法来源 / Signature Algorithm Origin
+## 八、签名算法来源 / Signature Algorithm Origin
 
 | 来源                                                                | 说明                                        | 许可    |
 | ------------------------------------------------------------------- | ------------------------------------------- | ------- |
@@ -90,7 +98,7 @@ remain with their respective authors. This project itself is licensed under
 
 ---
 
-## 八、随软件分发的许可文本 / License Texts
+## 九、随软件分发的许可文本 / License Texts
 
 本项目为源码分发。以下许可文本可从各组件的官方仓库获取：
 
@@ -98,5 +106,6 @@ remain with their respective authors. This project itself is licensed under
 - MIT：https://opensource.org/licenses/MIT
 - BSD-2-Clause：https://opensource.org/licenses/BSD-2-Clause
 - ISC：https://opensource.org/licenses/ISC-0BSD
+- BSD-3-Clause-Clear：https://spdx.org/licenses/BSD-3-Clause-Clear.html
 
 本项目自身许可文本见 `LICENSE`，项目声明与免责条款见 `NOTICE`。

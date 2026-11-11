@@ -17,6 +17,7 @@ import type { EnhancementSettings } from '@/utils/playback-prefs';
 import { t } from '@/locales';
 import { cn } from '@/lib/utils';
 import type { MessageKey } from '@/locales';
+import { DIRECT_BYTEVC2_FRAME } from '../hooks/direct-bytevc2';
 
 /** 失败码 → 说明词条。每条路径都要说明「发生了什么 + 已退回原画 + 替代档」。 */
 const ERROR_MESSAGE_KEYS: Record<EnhancementErrorCode, MessageKey> = {
@@ -34,6 +35,7 @@ const ERROR_MESSAGE_KEYS: Record<EnhancementErrorCode, MessageKey> = {
 
 interface Props {
   videoRef: RefObject<HTMLVideoElement | null>;
+  directCanvasRef?: RefObject<HTMLCanvasElement | null>;
   /**
    * 播放地址。`<video>` 以它为 key 重建，本层 effect 跟着重建——渲染器
    * 绑的是旧元素，不重建就会一直读已卸载元素的画面。
@@ -47,7 +49,15 @@ interface Props {
   onStatus: Dispatch<SetStateAction<EnhancementStatus>>;
 }
 
-export function EnhancementLayer({ videoRef, src, available, cover, settings, onStatus }: Props) {
+export function EnhancementLayer({
+  videoRef,
+  directCanvasRef,
+  src,
+  available,
+  cover,
+  settings,
+  onStatus,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** 活着的 Anime4K 渲染器（若开）：强度变化经它直写 uniform，不重建 */
   const rendererRef = useRef<Anime4KRenderer | null>(null);
@@ -58,7 +68,9 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    const directCanvas = directCanvasRef?.current;
+    const source = directCanvasRef ? directCanvas : video;
+    if (!video || !canvas || !source) return;
     canvas.style.visibility = 'hidden';
     onStatus({ state: 'idle', message: '' });
     if (!available || !src || !settings.anime4kOn) return;
@@ -80,7 +92,7 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
       frameId = rafId = null;
     };
     const fail = (error: unknown) => {
-      if (abort.signal.aborted || failed) return;
+      if (abort.signal.aborted || failed || document.hidden) return;
       failed = true;
       cancelFrame();
       canvas.style.visibility = 'hidden';
@@ -131,6 +143,7 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
       if (
         abort.signal.aborted ||
         failed ||
+        directCanvas ||
         document.hidden ||
         video.paused ||
         video.ended ||
@@ -156,15 +169,16 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
         renderer ||
         failed ||
         abort.signal.aborted ||
-        video.readyState < 2 ||
-        !video.videoWidth
+        (directCanvas
+          ? !directCanvas.dataset.renderedFrames
+          : video.readyState < 2 || !video.videoWidth)
       ) {
         return;
       }
       pending = true;
       onStatus({ state: 'loading', message: t('player.enhancePreparing') });
       try {
-        const next = await createAnime4KRenderer(video, canvas, {
+        const next = await createAnime4KRenderer(source, canvas, {
           signal: abort.signal,
           onError: fail,
           sharpen: settings.sharpenOn ? settings.strength : 0,
@@ -197,8 +211,12 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
       if (document.hidden) invalidate();
       else refresh();
     };
+    const onDirectFrame = () => {
+      void draw();
+    };
     const events = ['loadeddata', 'seeked', 'play', 'pause', 'ended', 'resize'] as const;
-    events.forEach((event) => video.addEventListener(event, refresh));
+    if (directCanvas) directCanvas.addEventListener(DIRECT_BYTEVC2_FRAME, onDirectFrame);
+    else events.forEach((event) => video.addEventListener(event, refresh));
     video.addEventListener('seeking', invalidate);
     video.addEventListener('emptied', invalidate);
     document.addEventListener('visibilitychange', visibilityChange);
@@ -209,6 +227,7 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
       renderer?.dispose();
       rendererRef.current = null;
       canvas.style.visibility = 'hidden';
+      directCanvas?.removeEventListener(DIRECT_BYTEVC2_FRAME, onDirectFrame);
       events.forEach((event) => video.removeEventListener(event, refresh));
       video.removeEventListener('seeking', invalidate);
       video.removeEventListener('emptied', invalidate);
@@ -217,26 +236,35 @@ export function EnhancementLayer({ videoRef, src, available, cover, settings, on
     // 初始锐化值随建随用；开关/力度的后续变化走 setSharpen effect 直写
     // uniform（刻意不进依赖——进来了每次拖滑条都重建渲染器白吃一次 warm-up）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoRef, src, available, settings.anime4kOn, filterId, onStatus]);
+  }, [videoRef, directCanvasRef, src, available, settings.anime4kOn, filterId, onStatus]);
 
   // 纯 SVG 锐化（Anime4K 关时）：滤镜打到 <video> 上。Anime4K 开着时
   // 锐化走显示着色器，这条路径必须让位（双重锐化=振铃）。
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    const source = directCanvasRef ? directCanvasRef.current : videoRef.current;
+    if (!source) return;
     const active = available && settings.sharpenOn && !settings.anime4kOn;
-    const originalFilter = video.style.filter;
+    const originalFilter = source.style.filter;
     if (active) {
-      video.style.filter = `url(#${filterId})`;
+      source.style.filter = `url(#${filterId})`;
       onStatus({ state: 'ready', message: t('player.enhanceSharpenOn') });
     } else if (!settings.anime4kOn) {
       // 只在 Anime4K 关时接管状态行——开着时状态归渲染循环
       onStatus({ state: 'idle', message: '' });
     }
     return () => {
-      video.style.filter = originalFilter;
+      source.style.filter = originalFilter;
     };
-  }, [videoRef, available, settings.sharpenOn, settings.anime4kOn, filterId, onStatus]);
+  }, [
+    videoRef,
+    directCanvasRef,
+    src,
+    available,
+    settings.sharpenOn,
+    settings.anime4kOn,
+    filterId,
+    onStatus,
+  ]);
 
   // 强度/锐化开关变化直写 uniform：渲染器若活着立刻生效，拖滑条不闪不断
   useEffect(() => {

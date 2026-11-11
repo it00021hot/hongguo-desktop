@@ -50,8 +50,9 @@ mod settings;
 mod task;
 
 pub use device::{
-    backup_device_profile, device_meta_get, device_meta_set, device_profile, device_profile_backup,
-    save_device_profile,
+    backup_device_profile, commit_device_swap, commit_device_swap_at, device_meta_get,
+    device_meta_set, device_profile, device_profile_backup, initialize_device_meta,
+    save_device_profile, save_sdk_session, sdk_session,
 };
 pub use follow::{
     baseline_delete, baseline_get, baseline_set, notice_insert, notices_clear, notices_list,
@@ -62,7 +63,10 @@ pub use local_history::{
     upsert_local_history,
 };
 pub use merge::{delete_merge_task, merge_tasks, upsert_merge_task};
-pub use playback::{playback_position, save_playback_position, series_last_position};
+pub use playback::{
+    playback_definition, playback_position, save_playback_definition, save_playback_position,
+    series_last_position,
+};
 pub use series::{series_all, series_by_id, upsert_series};
 pub use settings::{save_settings, settings};
 pub use task::{replace_tasks, tasks};

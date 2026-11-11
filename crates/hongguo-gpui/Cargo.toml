@@ -141,11 +141,11 @@ perf-probe = ["dep:gpui-pre", "gpui-pre/profiler"]
 [dependencies]
 # GPUI Kit（longbridge/gpui-kit）：gpui-base + gpui-component 聚合，桌面壳按
 # .agents/skills/gpui-ui-design 的设计/编码规范构建（组件系统 + 主题令牌）。
-gpui-kit = "0.8.0"
+gpui-kit = "0.9.1"
 # 仅 `screenshot` feature 用：同版本的 gpui-pre / 平台层，为开 test-support
 # （`render_to_image` 的实现就门控在这两处）。版本必须与 gpui-kit 钉的一致。
-gpui-pre = { version = "=0.3.9", package = "gpui-pre", optional = true }
-gpui-pre-platform = { version = "=0.3.9", package = "gpui-pre-platform", optional = true }
+gpui-pre = { version = "=0.3.12", package = "gpui-pre", optional = true }
+gpui-pre-platform = { version = "=0.3.12", package = "gpui-pre-platform", optional = true }
 # 与 Tauri 壳同一业务面。
 hongguo-service = { path = "../hongguo-service" }
 hongguo-api = { path = "../hongguo-api" }
@@ -158,6 +158,7 @@ hongguo-stream = { path = "../hongguo-stream" }
 # hongguo-player-* crate）：壳只认契约，不写平台分支，也不直接摸平台依赖。
 hongguo-player = { path = "../hongguo-player" }
 hongguo-media = { path = "../hongguo-media" }
+hongguo-bytevc2 = { path = "../hongguo-bytevc2" }
 # 设置页的转码能力探测（ffmpeg/硬件编码）：与 Tauri 的 decode_capability
 # command 同一段（probe::detect / redetect）。
 hongguo-media-platform = { path = "../hongguo-media-platform" }
@@ -177,7 +178,7 @@ anyhow = "1"
 # gif 给评论附图的本地图解码（Tauri 侧浏览器解码天然支持）。
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # 评论附图 / 上传自定义表情的系统文件面板。
-rfd = "0.15"
+rfd = "0.18"
 smallvec = "1"
 log = "0.4"
 env_logger = "0.11"

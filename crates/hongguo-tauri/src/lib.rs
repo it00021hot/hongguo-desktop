@@ -5,6 +5,8 @@
 pub mod bootstrap;
 pub mod commands;
 mod diagnostics;
+mod direct_bytevc2;
+mod direct_bytevc2_source;
 mod events;
 mod protocol;
 #[cfg(test)]
@@ -28,6 +30,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         bring_back_active_window(app);
     }));
+    let builder = builder.plugin(OfflineQaInit);
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -51,6 +54,10 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
 
     builder
         .setup(|app| {
+            if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
+                log::error!("[OfflineQA] {msg}");
+                return Err(std::io::Error::other(msg).into());
+            }
             // Android 没有桌面数据目录语义（dirs::data_dir() 返回 None），不注入数据根会落到不可写的 /data/local/tmp；必须在 build_app_state 之前钉到 app 私有目录
             #[cfg(target_os = "android")]
             {
@@ -60,7 +67,7 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
                 // tempfile 在 Unix 只认 TMPDIR（Android 缺省 /tmp 不存在且 app 无权写，迁移 SQL 直接 I/O error 被误报「数据损坏」；
                 // SQLITE_TMPDIR 是 SQLite C 库的约定，turso 不读），钉到 app 私有 tmp 目录
                 let tmpdir = root.join("tmp");
-                let _ = std::fs::create_dir_all(&tmpdir);
+                let _ = hongguo_common::offline_qa::qa_create_dir_all(&tmpdir);
                 // SAFETY: setup 在主线程、任何并发读 env 的线程尚未启动，set_var 的多线程 UB 条件不成立；tempfile 建临时目录时读 TMPDIR，必须在首次开库前设置
                 unsafe {
                     std::env::set_var("TMPDIR", &tmpdir);
@@ -78,16 +85,21 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             bootstrap::device::init(app.handle())?;
             bootstrap::events::init(app.handle())?;
             bootstrap::rescan::init(app.handle())?;
-            bootstrap::downloader::init(app.handle())?;
-            bootstrap::transcoder::init()?;
+            if hongguo_common::offline_qa::enabled() {
+                log::info!("[OfflineQA] 跳过下载续跑、转码预热、追更轮询与历史补传");
+            } else {
+                bootstrap::downloader::init(app.handle())?;
+                bootstrap::transcoder::init()?;
+            }
             bootstrap::status_log::init()?;
-            // 追更更新检查：启动查一轮 + 每 20 分钟一轮（未登录空转，登录后自动生效）
-            hongguo_service::follow_service::start_notice_loop(app_state.clone());
+            if !hongguo_common::offline_qa::enabled() {
+                hongguo_service::follow_service::start_notice_loop(app_state.clone());
+            }
             // 老板键按持久化设置注册（被占用只记日志，不拦启动）
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             commands::boss_key_cmd::init(app.handle(), &app_state.settings().boss_key);
             // 本地观看历史补传（issue #10）：带账号启动时把离线攒下的行推云端
-            if app_state.settings().account.is_some() {
+            if app_state.settings().account.is_some() && !hongguo_common::offline_qa::enabled() {
                 let st = app_state.clone();
                 hongguo_service::runtime::spawn(async move {
                     hongguo_service::history_service::upload_pending(&st).await;
@@ -308,6 +320,8 @@ pub fn prepare() -> tauri::Builder<tauri::Wry> {
             commands::transcode_cmd::decode_capability,
             commands::transcode_cmd::redetect_capability,
             commands::transcode_cmd::transcode_for_playback,
+            commands::transcode_cmd::cancel_compat_playback,
+            commands::transcode_cmd::qa_offline_local_play,
             // 存储
             commands::storage_cmd::get_storage_usage,
             commands::storage_cmd::get_storage_series,
@@ -361,8 +375,7 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
             std::process::exit(1);
         }
     };
-    // 设备档案：库里没有就落一份静态兜底档案；旧档案的版本身份要对齐到当前客户端版本——服务端按自报 version_code 分发功能 schema
-    // （排行榜选项表在老版本号下退化为扁平结构）。阵亡名单淘汰重铺与启动后的健康探针、失效轮换在 [`bootstrap::device`]。
+    // 本地装载设备档案并对齐版本，缺失身份由 bootstrap::device 注册。
     let (device, device_source) = hongguo_service::device::adopt_sync(&db);
     log::info!(
         "[Device] 现役档案 iid={}（{device_source}）",
@@ -372,7 +385,28 @@ fn build_app_state() -> std::sync::Arc<hongguo_service::AppStateInner> {
 }
 
 fn open_store_with_lock_retry() -> AppResult<hongguo_store::Store> {
-    hongguo_store::Store::open_with_lock_retry(hongguo_store::paths::db_file())
+    if let Err(msg) = hongguo_store::paths::offline_qa_data_dir_ok() {
+        return Err(AppError::InvalidArgs(msg));
+    }
+    hongguo_service::device::open_application_store(&hongguo_store::paths::db_file())
+}
+
+/// 页面脚本运行前写入与 Rust 相同的开关值。未设置、空串、`0` 都写成空串。
+struct OfflineQaInit;
+
+impl<R: tauri::Runtime> tauri::plugin::Plugin<R> for OfflineQaInit {
+    fn name(&self) -> &'static str {
+        "hongguo-offline-qa"
+    }
+
+    fn initialization_script(&self) -> Option<String> {
+        let flag = if hongguo_common::offline_qa::enabled() {
+            "1"
+        } else {
+            ""
+        };
+        Some(format!("window.__HONGGUO_OFFLINE_QA={flag:?};"))
+    }
 }
 
 /// 并发分配压力测试：与业务无关的纯 alloc/free 风暴——它若崩，先怀疑分配/并发本身，别在业务代码里找。

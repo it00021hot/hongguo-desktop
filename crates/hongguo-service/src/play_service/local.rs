@@ -1,41 +1,19 @@
-//! 播放地址解析：本地成品优先，其次在线流。
+//! 播放地址解析：显式文件、本地播放与在线清晰度选择。
 
 use super::{online, position};
 use crate::app_state::AppState;
+use hongguo_api::params::PlayerModelScene;
 use hongguo_common::model::{PlayRequest, PlayResponse};
 use hongguo_common::{AppError, AppResult};
 use hongguo_store::Store;
 
-/// 解析播放请求。`preferOnline` 只在**本地没有这一集**时才起作用：
-/// 已下好的文件永远走 `hongguo-local://`，没必要重新下一遍。
+/// 显式文件路径优先；`preferOnline` 起播返回在线流及可选档位。
 pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<PlayResponse> {
     let resume_at = position::load(state, &request.series_id, request.vid_index)?;
-    // 本地文件只有一版，谈不上切清晰度：菜单会拿到空列表而自动隐藏
-    let local_response = |url: String, online: bool| PlayResponse {
-        url,
-        online,
-        resume_at,
-        error: String::new(),
-        definition: 0,
-        definitions: Vec::new(),
-    };
-
-    // 调用方直接给了路径就用它
-    if !request.file_path.trim().is_empty() {
-        let url = hongguo_protocol::local::local_play_url(&request.file_path)
+    if let Some(path) = local_playback_path(state, request) {
+        let url = hongguo_protocol::local::local_play_url(&path)
             .ok_or_else(|| AppError::InvalidArgs("文件路径无效".into()))?;
-        return Ok(local_response(url, false));
-    }
-
-    // 已下载的那一集走本地协议
-    let local = state
-        .queue()
-        .completed_path(&request.series_id, request.vid_index);
-
-    if let Some(path) = local
-        && let Some(url) = hongguo_protocol::local::local_play_url(&path)
-    {
-        return Ok(local_response(url, false));
+        return Ok(local_file_response(&path, url, resume_at));
     }
 
     if !request.prefer_online {
@@ -77,24 +55,35 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
         }
     }
 
+    warm_episode_window(state, &request.series_id, request.vid_index).await;
+
     // 进度事件的 key 用前端认的 `{seriesId}:{vidIndex}` 形态
     let progress_key = format!("{}:{}", request.series_id, request.vid_index);
+    super::resolution::remember(
+        state,
+        &request.series_id,
+        request.definition,
+        request.reset_definition,
+    )
+    .await?;
     match online::prepare(state, &vid, &progress_key, request.definition).await {
         Ok(prepared) => {
-            // 连播向后预取：流预取与无 HEVC 机器的预转共用 Settings.prefetch_episodes 档
-            //（0=关闭）；幂等/去重/礼让在各 prefetch 内，越界集号由 episode_vid 兜住。
             crate::play_service::schedule_following_episodes(
                 state,
                 &request.series_id,
                 request.vid_index,
             );
+            let needs_compat = hongguo_bytevc2::is_bytevc2(&prepared.codec);
             Ok(PlayResponse {
                 url: prepared.url,
                 online: true,
                 resume_at,
                 error: String::new(),
                 definition: prepared.definition,
+                automatic_definition: prepared.automatic_definition,
                 definitions: prepared.definitions,
+                codec: prepared.codec,
+                needs_compat,
             })
         }
         Err(e) => Ok(PlayResponse {
@@ -103,13 +92,95 @@ pub async fn resolve_play(state: &AppState, request: &PlayRequest) -> AppResult<
             resume_at,
             error: e.to_string(),
             definition: 0,
+            automatic_definition: false,
             definitions: Vec::new(),
+            codec: String::new(),
+            needs_compat: false,
         }),
     }
 }
 
-/// 从剧集档案的分集表里取某一集的 vid。剧集档案是分集目录的唯一权威来源
-///（`resolve_series` 拉到的分集含 vid 会写进数据库）；下载任务表只记进度，未下载的集没有记录。
+fn local_playback_path(state: &AppState, request: &PlayRequest) -> Option<String> {
+    if !request.file_path.trim().is_empty() {
+        return Some(request.file_path.clone());
+    }
+    if request.prefer_online {
+        return None;
+    }
+    state
+        .queue()
+        .completed_path(&request.series_id, request.vid_index)
+}
+
+/// 本地成品和显式 filePath 都探测编码，以便选中 ByteVC2 直播放。
+fn local_file_response(path: &str, url: String, resume_at: f64) -> PlayResponse {
+    let (codec, needs_compat) = probe_local_codec(path);
+    PlayResponse {
+        url,
+        online: false,
+        resume_at,
+        error: String::new(),
+        definition: 0,
+        automatic_definition: false,
+        definitions: Vec::new(),
+        codec,
+        needs_compat,
+    }
+}
+
+fn probe_local_codec(path: &str) -> (String, bool) {
+    let Ok(demuxed) = hongguo_media::demux::demux_file(std::path::Path::new(path)) else {
+        return (String::new(), false);
+    };
+    let Some(track) = demuxed.video_track() else {
+        return (String::new(), false);
+    };
+    let codec = track.info.codec.clone();
+    let needs_compat = hongguo_bytevc2::is_bytevc2(&codec);
+    (codec, needs_compat)
+}
+
+/// 首集预热只取该集模型。
+pub async fn warm_episode_window(state: &AppState, series_id: &str, vid_index: u32) {
+    if vid_index == 1 {
+        prefetch_episode_models(state, series_id, 1..=1, PlayerModelScene::Preload).await;
+    }
+}
+
+pub(super) async fn prefetch_episode_models(
+    state: &AppState,
+    series_id: &str,
+    episodes: std::ops::RangeInclusive<u32>,
+    scene: PlayerModelScene,
+) {
+    let store = state.store.clone();
+    let id = series_id.to_owned();
+    let Ok(Ok(Some(series))) =
+        crate::runtime::spawn_blocking(move || store.series_by_id(&id)).await
+    else {
+        return;
+    };
+    if series.content_type == 0 {
+        return;
+    }
+    let vids: Vec<_> = series
+        .episodes
+        .into_iter()
+        .filter(|ep| episodes.contains(&ep.vid_index))
+        .map(|ep| ep.vid)
+        .collect();
+    let map = std::collections::BTreeMap::from([(series.content_type.to_string(), vids)]);
+    crate::cold_start::wait().await;
+    let env = state.api_env();
+    if let Err(error) =
+        hongguo_api::play_url::fetch_play_scene(&map, scene, crate::device::stream_cap(), &env)
+            .await
+    {
+        log::warn!("[Play] {scene:?} 模型预取失败: {error}");
+    }
+}
+
+/// 未下载集的 vid 也来自剧集档案。
 pub(crate) fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Option<String> {
     store
         .series_by_id(series_id)
@@ -126,6 +197,42 @@ pub(crate) fn episode_vid(store: &Store, series_id: &str, vid_index: u32) -> Opt
 mod tests {
     use super::*;
     use hongguo_common::model::{Episode, Series};
+
+    #[test]
+    fn online_playback_keeps_quality_selection_when_the_episode_is_downloaded() {
+        let state = std::sync::Arc::new(crate::app_state::AppStateInner::default());
+        let mut task = hongguo_common::model::DownloadTask::new("series", "剧集", 1, "vid", "");
+        task.mark_completed("/downloads/episode.mp4", 1);
+        state.queue().enqueue(task);
+        let mut request = PlayRequest {
+            series_id: "series".into(),
+            vid_index: 1,
+            file_path: String::new(),
+            prefer_online: true,
+            definition: None,
+            reset_definition: false,
+        };
+
+        assert_eq!(local_playback_path(&state, &request), None);
+        request.definition = Some(720);
+        assert_eq!(local_playback_path(&state, &request), None);
+        request.prefer_online = false;
+        request.definition = None;
+        assert_eq!(
+            local_playback_path(&state, &request).as_deref(),
+            Some("/downloads/episode.mp4")
+        );
+        request.prefer_online = true;
+        request.file_path = "/chosen/episode.mp4".into();
+        assert_eq!(
+            local_playback_path(&state, &request).as_deref(),
+            Some("/chosen/episode.mp4")
+        );
+        request.file_path.clear();
+        request.prefer_online = false;
+        request.vid_index = 2;
+        assert_eq!(local_playback_path(&state, &request), None);
+    }
 
     fn store_with(episodes: Vec<Episode>) -> Store {
         let store = Store::open_memory().expect("测试内存库");
@@ -184,5 +291,39 @@ mod tests {
     fn unknown_series_is_none() {
         let store = store_with(vec![]);
         assert!(episode_vid(&store, "nope", 1).is_none());
+    }
+
+    #[test]
+    fn local_bytevc2_file_marks_needs_compat() {
+        let plain = std::path::PathBuf::from(
+            "/Users/milo/qa-hongguo-offline-data/inputs/hg-bytevc2-plain.mp4",
+        );
+        if !plain.is_file() {
+            eprintln!("skip: sample missing");
+            return;
+        }
+        let path = plain.to_string_lossy().to_string();
+        let url = hongguo_protocol::local::local_play_url(&path).expect("url");
+        let resp = super::local_file_response(&path, url, 0.0);
+        assert!(resp.needs_compat, "bytevc2 本地文件必须 needs_compat");
+        assert!(
+            hongguo_bytevc2::is_bytevc2(&resp.codec),
+            "codec={}",
+            resp.codec
+        );
+        assert!(!resp.online);
+        assert!(resp.error.is_empty());
+    }
+
+    #[test]
+    fn local_missing_file_does_not_force_compat() {
+        let resp = super::local_file_response(
+            "/tmp/hongguo-definitely-missing-local-play.mp4",
+            "hongguo-local://x".into(),
+            1.5,
+        );
+        assert!(!resp.needs_compat);
+        assert!(resp.codec.is_empty());
+        assert_eq!(resp.resume_at, 1.5);
     }
 }

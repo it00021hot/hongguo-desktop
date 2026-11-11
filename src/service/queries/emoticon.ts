@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { pageImageSrc } from '@/utils/offline-qa';
 import { emoticon as emoticonCmd } from '../commands';
 import type { Emoticon, EmoticonCollectInput } from '../schema';
 import { keys } from './common';
@@ -96,5 +97,6 @@ export function useDeleteEmoticon() {
 
 /** 表情图片的展示 URL：动图优先用 `dynamicUrl`（官方动图表情会动）。 */
 export function emoticonPreviewUrl(item: Emoticon): string {
-  return item.dynamicUrl && item.imageType === 2 ? item.dynamicUrl : item.webUri;
+  const url = item.dynamicUrl && item.imageType === 2 ? item.dynamicUrl : item.webUri;
+  return pageImageSrc(url);
 }

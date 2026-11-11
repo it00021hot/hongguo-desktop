@@ -82,6 +82,7 @@ interface Props {
   onDownloadingChange: (open: boolean) => void;
   /** 当前实际生效的清晰度档位。0 = 本地文件或尚未取到 */
   definition: number;
+  automaticDefinition: boolean;
   /** 本集提供的全部档位。只有一档时不渲染切换菜单 */
   definitions: VideoDefinition[];
   /**
@@ -89,7 +90,7 @@ interface Props {
    * 控件 effect 的依赖键：地址变了事件监听跟着重建，绑在旧元素上新元素的 play 事件收不到。
    */
   src: string | null;
-  /** 选清晰度。`undefined` 表示交回后端自动取最高档 */
+  /** 选清晰度。`undefined` 表示交回后端自动策略。 */
   onDefinitionChange: (definition: number | undefined) => void;
   /** 步进一集：-1 上一集，+1 下一集（与 `↑` `↓` 快捷键同一逻辑） */
   onStepEpisode: (delta: number) => void;
@@ -132,6 +133,7 @@ export function PlayerControls({
   downloading,
   onDownloadingChange,
   definition,
+  automaticDefinition,
   definitions,
   onDefinitionChange,
   src,
@@ -403,17 +405,26 @@ export function PlayerControls({
                 size="sm"
                 className={cn(CHROME_BUTTON, 'font-mono')}
                 disabled={definitions.length === 0}
-                title={definitions.length === 0 ? t('player.definitionLocalOnly') : undefined}
+                aria-label={t('player.definition')}
+                title={
+                  definitions.length === 0
+                    ? t('player.definitionLocalOnly')
+                    : automaticDefinition && definition > 0
+                      ? `${t('player.definitionAuto')} · ${definition}P`
+                      : undefined
+                }
               >
                 <MonitorPlay className="size-4" />
-                {definition > 0 ? `${definition}P` : t('player.definitionAuto')}
+                {automaticDefinition || definition === 0
+                  ? t('player.definitionAuto')
+                  : `${definition}P`}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" data-wheel-block>
               <DropdownMenuLabel>{t('player.definition')}</DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => onDefinitionChange(undefined)}>
                 {t('player.definitionAuto')}
-                {definition === 0 && <span className="ml-auto text-xs">✓</span>}
+                {automaticDefinition && <span className="ml-auto text-xs">✓</span>}
               </DropdownMenuItem>
               {definitions.map((d) => (
                 <DropdownMenuItem
@@ -429,7 +440,9 @@ export function PlayerControls({
                       </span>
                     )}
                   </span>
-                  {definition === d.value && <span className="ml-auto text-xs">✓</span>}
+                  {!automaticDefinition && definition === d.value && (
+                    <span className="ml-auto text-xs">✓</span>
+                  )}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

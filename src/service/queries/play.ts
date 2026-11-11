@@ -4,8 +4,8 @@ import { capability, play, transcode } from '../commands';
 import { keys } from './common';
 
 /**
- * 起播：preferOnline 恒为 true（已下载的那集后端仍优先走本地文件，没下载的走在线流）。
- * `definition` 不传取平台最高档，传了没有该档时后端自动回退——响应里的 definition 是实际生效档，菜单以它为准。
+ * 在线起播返回完整档位列表，已下载的同集不会覆盖清晰度选择。
+ * 未指定档位时按官方动态策略选档；响应里的 definition 是实际生效档。
  */
 export function usePlay() {
   return useMutation({
@@ -13,11 +13,13 @@ export function usePlay() {
       seriesId,
       vidIndex,
       definition,
+      resetDefinition,
     }: {
       seriesId: string;
       vidIndex: number;
       definition?: number;
-    }) => play.series(seriesId, vidIndex, '', true, definition),
+      resetDefinition?: boolean;
+    }) => play.series(seriesId, vidIndex, '', true, definition, resetDefinition),
   });
 }
 

@@ -168,8 +168,8 @@ impl gpui_kit::Render for HomeView {
                         cx.notify();
                     }
                 }))
-                .on_scroll_wheel(cx.listener(
-                    |this, ev: &gpui_kit::ScrollWheelEvent, window, cx| {
+                .on_scroll(cx.listener(
+                    |this, ev: &gpui_kit::ScrollEvent, window, cx| {
                         // 小屏里滚轮不切剧（纯播放器语义，同 ↑↓ 守卫）
                         if this.mini.is_some() {
                             return;

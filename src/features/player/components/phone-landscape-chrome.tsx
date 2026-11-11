@@ -23,6 +23,7 @@ export function PhoneLandscapeChrome({
   vidIndex,
   episodeCount,
   definition,
+  automaticDefinition,
   definitions,
   onDefinitionChange,
   danmakuOn,
@@ -40,6 +41,7 @@ export function PhoneLandscapeChrome({
   vidIndex: number;
   episodeCount: number;
   definition: number;
+  automaticDefinition: boolean;
   definitions: VideoDefinition[];
   onDefinitionChange: (definition: number | undefined) => void;
   danmakuOn: boolean;
@@ -103,14 +105,14 @@ export function PhoneLandscapeChrome({
   const cycleDefinition = () => {
     if (definitions.length === 0) return;
     const values = [0, ...definitions.map((d) => d.value)];
-    const cur = definition > 0 ? definition : 0;
+    const cur = automaticDefinition ? 0 : definition;
     const idx = values.indexOf(cur);
     const next = values[(idx + 1) % values.length] ?? 0;
     onDefinitionChange(next === 0 ? undefined : next);
   };
 
   const definitionLabel =
-    definition > 0 ? `${definition}P` : t('player.definitionAuto');
+    automaticDefinition || definition === 0 ? t('player.definitionAuto') : `${definition}P`;
 
   const submit = () => {
     const content = text.trim();
@@ -159,10 +161,7 @@ export function PhoneLandscapeChrome({
         <div className="min-w-0 flex-1 truncate text-sm font-medium drop-shadow-md">
           {title ?? ''}
           {vidIndex > 0 && (
-            <span className="text-white/75">
-              {' '}
-              {tf('player.episodeNo', { index: vidIndex })}
-            </span>
+            <span className="text-white/75"> {tf('player.episodeNo', { index: vidIndex })}</span>
           )}
         </div>
       </ChromeSurface>

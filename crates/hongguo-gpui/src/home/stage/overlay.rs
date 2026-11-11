@@ -73,7 +73,7 @@ impl HomeView {
                 // 一截、横条会整体变矮；钉回默认行高才与原 div 像素一致。
                 .line_height(gpui_kit::phi())
                 .focus_visible(|s| s.shadow(crate::home::skin_focus::skin_focus_ring()))
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.enter_binge(cx);
                     cx.stop_propagation();

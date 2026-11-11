@@ -9,6 +9,7 @@ use hongguo_common::model::Settings;
 use hongguo_common::{AppError, AppResult};
 use hongguo_stream::{ProgressiveStream, StreamCache, cache};
 
+use super::disk::MediaCache;
 use super::plain::fetch_plain_with;
 use super::progress::{ProgressReporter, event_sink};
 use crate::app_state::AppState;
@@ -18,7 +19,7 @@ use crate::app_state::AppState;
 static FILL_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// 下载一集、解密、整段推进缓存：先渐进（首帧不等整集），计划构建失败回落整集；数据填充段经
-/// [`FILL_GATE`] 全局串行，条目被逐出立即中止让位；预算=当前集整集、其余只填头部 [`NON_CURRENT_HEAD_PERCENT`]%。
+/// [`FILL_GATE`] 串行填充；当前集可填整集，其他集受预取预算限制。
 #[expect(
     clippy::too_many_arguments,
     reason = "参数表与平台 C API（虚表/会话属性）一一对应，硬拆参数结构反而失真"
@@ -31,8 +32,9 @@ pub(super) async fn fill(
     definition: u32,
     play: &hongguo_api::play_url::PlayInfo,
     settings: &Settings,
-    prefetch: bool,
+    prefetch_bytes: Option<u64>,
 ) -> AppResult<()> {
+    let prefetch = prefetch_bytes.is_some();
     // 让位规则：用户滚走后条目虽被保留（弹回来秒切），但它的下载必须立即让位——
     // 串行队列只有一路，被切走剧的整集下载拖住队头，当前剧就只能干等。预取（有界头部）除外。
     let cancelled = || {
@@ -45,7 +47,21 @@ pub(super) async fn fill(
     }
     let reporter = ProgressReporter::new(event_sink(state.events()), progress_key.to_string());
 
-    match build_progressive(play, settings, &|r, t| reporter.report(r, t, "downloading")).await {
+    let disk = play
+        .file_hash
+        .as_deref()
+        .filter(|_| play.encrypted)
+        .and_then(|hash| MediaCache::new(&state.device(), vid, definition, hash));
+    let source = MediaSource {
+        url: &play.url,
+        disk: disk.as_ref(),
+    };
+    let probe_budget = || prefetch_bytes.filter(|_| c.current() != vid);
+    match build_progressive(play, &source, settings, &probe_budget, &|r, t| {
+        reporter.report(r, t, "downloading")
+    })
+    .await
+    {
         Ok((sparse, prog)) => {
             if cancelled() || !c.set_progressive(vid, definition, prog.clone()) {
                 log::info!("[Online] {vid} 档位 {definition} 条目已失效，渐进填充取消");
@@ -64,19 +80,18 @@ pub(super) async fn fill(
             }
             // CDN 抖动（短读/断流）是常态，整体重试而不是一次失败就停在前沿。
             // 预算闭包逐决策点求值：正在播的那一集无界，其余只填开头一段。
-            let cap: Box<dyn Fn() -> FillBudget + Send + Sync> = {
-                let key = vid.to_string();
-                let prog_cap = prog.clone();
-                Box::new(move || fill_budget(cache(), &key, &prog_cap))
-            };
+            let cap = || fill_budget(c, vid, &prog, prefetch_bytes);
+            let client = hongguo_api::client::build_client(&settings.proxy)?;
             let mut last_err = None;
             for attempt in 0..STREAM_RETRY_ATTEMPTS {
                 if cancelled() {
                     log::info!("[Online] {vid} 已被切走，中止填充");
                     return Ok(());
                 }
-                match fill_remaining(&sparse, &prog, play, settings, &reporter, &cancelled, &cap)
-                    .await
+                match fill_remaining_with_client(
+                    &client, &sparse, &prog, &source, &reporter, &cancelled, &cap,
+                )
+                .await
                 {
                     Ok(()) => {
                         last_err = None;
@@ -107,6 +122,9 @@ pub(super) async fn fill(
             Ok(())
         }
         Err(e) => {
+            if prefetch && c.current() != vid {
+                return Err(e);
+            }
             log::info!("[Online] {vid} 渐进取流不可用（{e}），回落整集路径");
             // 整集下载是流量最大的一档，进门闸串行
             let _gate = FILL_GATE.acquire().await;
@@ -133,25 +151,22 @@ pub(super) async fn fill(
     }
 }
 
-/// 非当前集只缓存开头这么多百分比：下一集、连播预取的后续集、换剧预取的后续部都算「其余」，转正后按整集续满。
-/// 用比例而非固定字节：短剧单集 6-10MB（长的 30-80MB），比例口径对长短集一致。
-const NON_CURRENT_HEAD_PERCENT: u64 = 20;
-
-/// 非当前集的头部上限（字节）：整集的 [`NON_CURRENT_HEAD_PERCENT`]%。
-fn head_limit(prog: &ProgressiveStream) -> u64 {
-    prog.sparse.len().saturating_mul(NON_CURRENT_HEAD_PERCENT) / 100
-}
-
-/// 填充预算决策（逐决策点求值）：正在播的那一集（或本流已有读者在等）→ 无上限整集；
-/// 当前集（**另一条**流）的读者在等数据 → 立刻让位收工；其余 → 只填开头 [`NON_CURRENT_HEAD_PERCENT`]%。
-fn fill_budget(c: &StreamCache, vid: &str, prog: &ProgressiveStream) -> FillBudget {
-    if c.current() == vid || prog.demand.has_waiters() {
+/// 当前集无上限。系统播放器可提前读取下一集，但读取需求仍受预取预算约束。
+fn fill_budget(
+    c: &StreamCache,
+    vid: &str,
+    prog: &ProgressiveStream,
+    prefetch_bytes: Option<u64>,
+) -> FillBudget {
+    if c.current() == vid || (prefetch_bytes.is_none() && prog.demand.has_waiters()) {
         return FillBudget::Unbounded;
     }
     if c.current_has_waiters() {
         return FillBudget::Yield;
     }
-    FillBudget::Bounded(head_limit(prog))
+    prefetch_bytes.map_or(FillBudget::Yield, |bytes| {
+        FillBudget::Bounded(bytes.min(prog.sparse.len()))
+    })
 }
 
 /// 填充调度器一次容量决策的结果：`Unbounded` 填满整集（已升格当前集或本流读者在等）、
@@ -208,6 +223,7 @@ fn resume_fill_inner(
     let state = state.clone();
     let owned = vid.to_string();
     let owned_key = progress_key.to_string();
+    let disk = prog.media_cache_key.clone().map(MediaCache::for_key);
     // 同步入口，可能被协议/回调线程调用：必须用共用任务运行时（红线）。
     crate::runtime::spawn(async move {
         let reporter = ProgressReporter::new(event_sink(state.events()), owned_key);
@@ -224,13 +240,19 @@ fn resume_fill_inner(
             }
         };
         // 预算与预填同一套规则：转正后（当前集）无上限填满；尚未转正的（下一集提前续填）仍只填头部。
-        let cap: Box<dyn Fn() -> FillBudget + Send + Sync> = {
-            let key = owned.clone();
-            let prog_cap = prog.clone();
-            Box::new(move || fill_budget(cache(), &key, &prog_cap))
+        let prefetch_bytes = if c.current() == owned {
+            None
+        } else {
+            let budget = crate::play_service::prefetch_budget(&state).await;
+            Some(if budget.count == 0 { 0 } else { budget.bytes })
+        };
+        let cap = || fill_budget(c, &owned, &prog, prefetch_bytes);
+        let source = MediaSource {
+            url: &cdn_url,
+            disk: disk.as_ref(),
         };
         let result = fill_remaining_with_client(
-            &client, &sparse, &prog, &cdn_url, &reporter, &cancelled, &cap,
+            &client, &sparse, &prog, &source, &reporter, &cancelled, &cap,
         )
         .await;
         c.end_fetch(&owned, definition);
@@ -243,24 +265,71 @@ fn resume_fill_inner(
 
 /// 渐进路径第一阶段：首探头部 256KB、盒游走定位 moov（64KB 步进、最多 4 轮）、精确补齐、建计划、注册协议层。
 /// 不做固定尾部预取——多下的字节在 moov 拉完前纯属浪费首帧时间；`Err` 一律回落整集路径，此阶段错误无半成品要清理。
+struct MediaSource<'a> {
+    url: &'a str,
+    disk: Option<&'a MediaCache>,
+}
+
+impl MediaSource<'_> {
+    async fn fetch(
+        &self,
+        client: &reqwest::Client,
+        sparse: &hongguo_video::streaming::SparseBuffer,
+        start: u64,
+        end: u64,
+    ) -> AppResult<Vec<u8>> {
+        if sparse.covers(start, end) {
+            return Ok(sparse_snapshot(sparse, start, end));
+        }
+        let bytes = hongguo_api::client::get_video_range(client, self.url, start, end - 1).await?;
+        sparse.write(start, &bytes);
+        if let Some(disk) = self.disk {
+            return Ok(disk.remember(sparse.len(), start, bytes).await);
+        }
+        Ok(bytes)
+    }
+}
+
 async fn build_progressive(
     play: &hongguo_api::play_url::PlayInfo,
+    source: &MediaSource<'_>,
     settings: &Settings,
+    budget: &(dyn Fn() -> Option<u64> + Sync),
     report: &(dyn Fn(u64, u64) + Sync),
 ) -> AppResult<(
     Arc<hongguo_video::streaming::SparseBuffer>,
     Arc<ProgressiveStream>,
 )> {
-    use hongguo_api::client::{get_video_range, probe_video_len};
+    use hongguo_api::client::probe_video_len;
     use hongguo_video::streaming::{SparseBuffer, StreamingPlan, locate_moov, top_boxes_end};
 
     let client = hongguo_api::client::build_client(&settings.proxy)?;
-    let total = probe_video_len(&client, &play.url).await?;
-    let sparse = SparseBuffer::new(total);
+    let cached = match source.disk {
+        Some(cache) => cache.load().await,
+        None => None,
+    };
+    let sparse = if let Some(cached) = cached {
+        log::debug!("[Online] 复用磁盘媒体区间 {} 字节", cached.downloaded());
+        cached
+    } else {
+        SparseBuffer::new(probe_video_len(&client, source.url).await?)
+    };
+    let total = sparse.len();
+    let probe = |start, end| {
+        let (client, sparse) = (&client, &sparse);
+        async move {
+            if let Some(bytes) = budget()
+                && !sparse.covers(start, end)
+                && end - start > bytes.saturating_sub(sparse.downloaded())
+            {
+                return Err(AppError::Media("预取预算不足以读取媒体元数据".into()));
+            }
+            source.fetch(client, sparse, start, end).await
+        }
+    };
 
     let head_len = HEAD_BYTES.min(total);
-    let head = get_video_range(&client, &play.url, 0, head_len - 1).await?;
-    sparse.write(0, &head);
+    let head = probe(0, head_len).await?;
     report(sparse.downloaded(), total);
 
     // moov 定位：先看首探（head 布局），没有就盒游走（tail 布局常态第一轮命中）
@@ -273,8 +342,7 @@ async fn build_progressive(
                 break;
             }
             let seg_end = (from + BOX_WALK_STEP).min(total);
-            let seg = get_video_range(&client, &play.url, from, seg_end - 1).await?;
-            sparse.write(from, &seg);
+            let seg = probe(from, seg_end).await?;
             report(sparse.downloaded(), total);
             if let Some(found) = locate_moov(&seg, from, total) {
                 located = Some(found);
@@ -291,9 +359,7 @@ async fn build_progressive(
     };
     // 精确补齐 moov 本体（首探/游走段只保证拿到它的头）
     if !sparse.covers(moov_start, moov_start + moov_size) {
-        let extra =
-            get_video_range(&client, &play.url, moov_start, moov_start + moov_size - 1).await?;
-        sparse.write(moov_start, &extra);
+        probe(moov_start, moov_start + moov_size).await?;
         report(sparse.downloaded(), total);
     }
     let region = sparse_snapshot(&sparse, moov_start, moov_start + moov_size);
@@ -311,6 +377,7 @@ async fn build_progressive(
             plain_len,
             demand: Default::default(),
             cdn_url: play.url.clone(),
+            media_cache_key: source.disk.map(|cache| cache.key().to_owned()),
             proxy: settings.proxy.clone(),
         })
     } else {
@@ -321,34 +388,11 @@ async fn build_progressive(
             plain_len: total,
             demand: Default::default(),
             cdn_url: play.url.clone(),
+            media_cache_key: None,
             proxy: settings.proxy.clone(),
         })
     };
     Ok((sparse, prog))
-}
-
-/// 渐进路径第二阶段：把余下字节填满，期间响应读者需求。`is_cancelled` 在每个分块边界检查
-///（条目被逐出 = 用户切走，立即收工让出串行队列）；`cap` 逐决策点求值，形态可自动切换。
-async fn fill_remaining(
-    sparse: &Arc<hongguo_video::streaming::SparseBuffer>,
-    prog: &Arc<ProgressiveStream>,
-    play: &hongguo_api::play_url::PlayInfo,
-    settings: &Settings,
-    reporter: &ProgressReporter,
-    is_cancelled: &(dyn Fn() -> bool + Send + Sync),
-    cap: &(dyn Fn() -> FillBudget + Send + Sync),
-) -> AppResult<()> {
-    let client = hongguo_api::client::build_client(&settings.proxy)?;
-    fill_remaining_with_client(
-        &client,
-        sparse,
-        prog,
-        &play.url,
-        reporter,
-        is_cancelled,
-        cap,
-    )
-    .await
 }
 
 enum Decision {
@@ -377,12 +421,11 @@ async fn fill_remaining_with_client(
     client: &reqwest::Client,
     sparse: &Arc<hongguo_video::streaming::SparseBuffer>,
     prog: &Arc<ProgressiveStream>,
-    cdn_url: &str,
+    source: &MediaSource<'_>,
     reporter: &ProgressReporter,
     is_cancelled: &(dyn Fn() -> bool + Send + Sync),
     cap: &(dyn Fn() -> FillBudget + Send + Sync),
 ) -> AppResult<()> {
-    use hongguo_api::client::get_video_range;
     let total = sparse.len();
     let mut frontier = 0u64; // 顺序填充的前沿（密文偏移）
     loop {
@@ -395,34 +438,30 @@ async fn fill_remaining_with_client(
             return Ok(());
         }
 
-        // 决策 1：需求优先——跳到最早等待读者的第一个洞，前沿随之跟随
-        let wanted = prog.demand.first_wanted(sparse);
-        if let Some(want) = wanted {
+        let remaining = match cap() {
+            FillBudget::Yield => {
+                log::info!("[Online] 当前集读者在等数据，预取让位收工，余下等转正续填");
+                return Ok(());
+            }
+            FillBudget::Bounded(limit) => limit.saturating_sub(sparse.downloaded()),
+            FillBudget::Unbounded => total,
+        };
+        if remaining == 0 {
+            log::info!(
+                "[Online] 预填达到上限（{}/{total} 字节），余下等转正续填",
+                sparse.downloaded()
+            );
+            return Ok(());
+        }
+
+        // 需求优先，在预算内跳到最早等待读者的第一个洞。
+        if let Some(want) = prog.demand.first_wanted(sparse) {
             if want != frontier {
                 log::info!(
                     "[Online] 读者需求优先：{want} 起有洞（顺序前沿在 {frontier}），跳转填充"
                 );
             }
             frontier = want;
-        } else {
-            // 决策 2 的容量形态（预取）：没有读者在等时按预算走，逐决策点求值。
-            match cap() {
-                FillBudget::Yield => {
-                    log::info!("[Online] 当前集读者在等数据，预取让位收工，余下等转正续填");
-                    return Ok(());
-                }
-                FillBudget::Bounded(limit) => {
-                    // 按顺序填充前沿判，不按已下载总量：头部探测与 moov 也计入已下载，
-                    // 短集上它们就能把预算吃光；前沿才是「开头填到了哪儿」的真值。
-                    if frontier >= limit.min(total) {
-                        log::info!(
-                            "[Online] 预填达到上限（顺序填到 {limit}/{total} 字节），余下等转正续填"
-                        );
-                        return Ok(());
-                    }
-                }
-                FillBudget::Unbounded => {}
-            }
         }
 
         let (gap_start, gap_end) = match next_target(sparse, frontier) {
@@ -441,11 +480,11 @@ async fn fill_remaining_with_client(
                 return Ok(());
             }
         };
-        let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start);
+        let fetch_end = gap_start + FETCH_CHUNK.min(gap_end - gap_start).min(remaining);
         // 探针（排查填充停摆用）：区间请求的始末都留痕，卡在哪一段一目了然
         let probe_at = std::time::Instant::now();
         log::debug!("[Online][probe] 区间 {gap_start}-{fetch_end} 请求开始");
-        let bytes = match get_video_range(client, cdn_url, gap_start, fetch_end - 1).await {
+        let bytes = match source.fetch(client, sparse, gap_start, fetch_end).await {
             Ok(b) => b,
             Err(e) => {
                 log::warn!("[Online][probe] 区间 {gap_start}-{fetch_end} 失败({e:?})");
@@ -469,7 +508,6 @@ async fn fill_remaining_with_client(
         if got != want {
             log::info!("[Online] 填充区间 {gap_start}-{fetch_end} 短读：要 {want} 字节拿到 {got}");
         }
-        sparse.write(gap_start, &bytes);
         let done = sparse.downloaded();
         log::debug!(
             "[Online] 填充区间 {gap_start}-{} 完成（累计 {done}/{total}）",
@@ -514,6 +552,7 @@ mod scheduler_tests {
             plain_len: total,
             demand: Default::default(),
             cdn_url: String::new(),
+            media_cache_key: None,
             proxy: hongguo_common::model::ProxyConfig::default(),
         })
     }
@@ -521,26 +560,35 @@ mod scheduler_tests {
     #[test]
     fn only_the_playing_episode_is_cached_whole() {
         const TOTAL: u64 = 10_000_000;
+        const DYNAMIC_BYTES: u64 = 5 * 1024 * 1024;
         let c = StreamCache::default();
         let prog = progressive_of(TOTAL);
 
         assert!(
             matches!(
-                fill_budget(&c, "v-prefetch", &prog),
-                FillBudget::Bounded(2_000_000)
+                fill_budget(&c, "v-prefetch", &prog, None),
+                FillBudget::Yield
             ),
-            "非当前集应只填开头 20%"
+            "没有预取预算的非当前集应让位"
         );
+        assert!(matches!(
+            fill_budget(&c, "v-prefetch", &prog, Some(DYNAMIC_BYTES)),
+            FillBudget::Bounded(DYNAMIC_BYTES)
+        ));
 
         c.set_current("v-playing");
         assert!(matches!(
-            fill_budget(&c, "v-playing", &prog),
+            fill_budget(&c, "v-playing", &prog, None),
             FillBudget::Unbounded
         ));
 
         prog.demand.register(&[(0, 10)]);
         assert!(matches!(
-            fill_budget(&c, "v-watched", &prog),
+            fill_budget(&c, "v-prefetch", &prog, Some(DYNAMIC_BYTES)),
+            FillBudget::Bounded(DYNAMIC_BYTES)
+        ));
+        assert!(matches!(
+            fill_budget(&c, "v-watched", &prog, None),
             FillBudget::Unbounded
         ));
     }
@@ -556,7 +604,10 @@ mod scheduler_tests {
 
         let other = progressive_of(10_000_000);
         assert!(
-            matches!(fill_budget(&c, "v-other", &other), FillBudget::Yield),
+            matches!(
+                fill_budget(&c, "v-other", &other, Some(1024)),
+                FillBudget::Yield
+            ),
             "在播的那一路在等数据时，其余的流该让位"
         );
     }

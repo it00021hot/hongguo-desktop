@@ -26,44 +26,42 @@
 | cookie | 必须零 cookie（自报未知 install_id 反而被拒） | `install_id={iid}; ttreq={票}`（同源，注册响应 Set-Cookie 下发） |
 | 能力 | 信息流/搜索/详情可读，**不可取流**（顶栏 tab 面不同，feed 无短剧 tab） | 全量可用（含取流，见「取流端点」节） |
 
-**设备注册 `POST log5-applog-lf.fqnovel.com/service/2/device_register/`**（实现
-`hongguo-api::register`，版本身份钉注册口径 `REGISTER_VERSION_*`，
-`new_user:1` 实测通过。**2026-11-02 起为 applog 裸形态：无签名五件套**——
-此前 log.snssdk.com + 40 参 query + 五件套签名形态实测新注册设备取流
-0/10 出票（读接口全通、唯取流被拒），同日裸形态 11/11 全发货（1080p），
-含前形态被拒的同一 vid；官方注册由 applog SDK 发出、本不带业务签名，
-五件套拿无 device_id 档案参与运算是官方不会产生的组合）：
+**设备注册 `POST log5-applog.fqnovel.com/service/2/device_register/`**（实现
+`hongguo-api::register`；TNC 把字面量 `log.snssdk.com` 派发到
+`log5-applog.fqnovel.com`。版本身份钉 `REGISTER_VERSION_*`，代际标记
+`REGISTER_REGIME = "74332:4.3.2-rc.44"`。**applog 裸形态：无签名五件套**——
+官方由 bdinstall SDK 发出、本不带业务签名）：
 
-- 入参 query：固定 4 参 `tt_data=a, cronet_version=8d40f833_2026-03-03,
-  ttnet_version=4.2.243.31-douyin, use_store_region_cookie=1`——指纹身份
-  全部在加密 body 里。
-- 入参头：`User-Agent: {register_ua()}`（Cronet 尾段 + 注册版本身份 +
-  指纹机型）+ `accept: application/json` +
-  `content-type: application/octet-stream;tt-data=a` + `lc: 101` +
-  `log-encode-type: gzip` + `x-ss-dp: 8662` + `x-ss-req-ticket: {ms}` +
-  `sdk-version: 2` + `passport-sdk-version: 5051452` +
+- 入参 query（2026-11-10 官方 7.4.3.32 实抓）：依次为 `req_id`、
+  `tt_data=a`、`cronet_version=8d40f833_2026-03-03`、
+  `ttnet_version=4.2.243.31-douyin`、`use_store_region_cookie=1`。
+  同一次注册重试沿用 URL 和加密 body 内的 `req_id`。
+- 入参头：`User-Agent: {register_ua()}` +
+  `content-type: application/octet-stream;tt-data=a` +
+  `log-encode-type: gzip` + `x-ss-req-ticket: {ms}` +
   `x-vc-bdturing-sdk-version: 4.0.3.cn` +
   `x-neptune: -8|50:51:59:30:40:47:49:39` + `x-ss-stub: {body MD5 大写}`；
-  零 cookie；8 秒超时。
+  零 cookie；8 秒超时。bdinstall 本体只强制 `Content-Type`，其余由 TTNet
+  拦截层补。
 - 入参 body：TT-Encrypt V5 包注册口径指纹 JSON。加密格式（实现
   `tt_encrypt_v5_full`，逐字节锁 `tt_v5_reproduces_accepted_body`）：
   - `packet = magic("tc\x05\x10\x00\x00") ‖ salt(32 随机) ‖ AES-128-CBC(PKCS7(payload))`
   - `derive(salt) = sha512(sha512(salt) ‖ ORD_LIST(64))`；`key =
     derive[0..16]`、`iv = derive[16..32]`（**包内无 IV 字段，iv 不上线**）
   - `payload = sha512(gz) 完整 64 字节 ‖ gz`；gzip 头 XFL/OS 覆写 `00/00`
-- 注册 JSON 关键字段（全表见 `register_json_str`）：版本身份钉注册口径
-  `73932/7.3.9.32`；bdinstall SDK 代际五件 `sdk_version:
-  "3.7.3-rc.116-douyin"`、`sdk_target_version: 29`、`git_hash: "fe95b95"`、
-  `sdk_flavor: "china"`、无 `scene` 键（2026-11-01 竞品实流注册密文体
-  逐字段解密对齐）；`sig_hash: aea615ab…`、`display_name: "红果短剧"`、
-  机型耦合字段取自指纹池（`fingerprint_for_cdid`，cdid 确定性派生）、
-  `custom.client_ipv4 = "116.130.x.x" 随机伪值`
-  （服务端不校验真实出口 IP）。身份字段生成规则：
-  - `cdid` / `clientudid` / `req_id`：各自独立 UUIDv4。
-  - `openudid`：16 位随机 hex。
-  - `apk_first_install_time = now_ms − 300_000`。
+- 注册 JSON 关键字段（全表见 `register_json_str`；**7.4.3.32 APK 实值**）：
+  版本身份 `74332/7.4.3.32`；bdinstall `h90.j`：`sdk_version: "4.3.2-rc.44"`、
+  `sdk_version_code: 4030294`、`sdk_target_version: 30`、`git_hash: "27660d0"`、
+  `sdk_flavor: "cnInner"`、`not_request_sender: 1`；`assets/ss.properties`：
+  `release_build: "652bb85_20261028"`；`sig_hash` =
+  `md5(cert_der) = 56a962410c494bbaf0b58dba20cae56f`、`display_name:
+  "红果免费短剧"`；无 `scene` 键。机型耦合字段取自指纹池
+  （`fingerprint_for_cdid`）。身份字段：`cdid`/`clientudid`/`req_id` 各自
+  UUIDv4；`openudid` 16 位随机 hex；`apk_first_install_time` 按 cdid
+  确定性回拨 1~30 天。
 - 出参：`{"server_time","device_id","install_id","new_user","device_id_str",
-  "install_id_str","device_token"}` + Set-Cookie `install_id` / `ttreq`。
+  "install_id_str","device_token","klink_egdi"}` + Set-Cookie `install_id` / `ttreq`。
+  `klink_egdi` 随当前档案存储，由同一身份的业务请求使用。
   `device_id: 0` = 被静默拒（格式或指纹有变）。
 
 **官方设备身份的确定性**：cdid/openudid 由 ANDROID_ID 等设备种子派生
@@ -95,83 +93,26 @@ host_abi=arm64-v8a, _rticket={ms}, …`（即设备档案全量字段 + 时间�
 `type=1` 能发码但被服务端按「换绑」场景处理（目标号已绑定其它账号时
 报 1001），短信登录发码场景是 `type=3731`。
 
-**取流端点**（对齐 `params.rs` 路径常量与 `play_url.rs` 选路。三路都走
-`hongguo-api::client::api_call_model_light`，签名经
-`hongguo_signer::ticket::sign_request_with`）：
+**桌面取流端点**统一使用当前设备的 MetaSec v5 会话和 Cronet 六头。首次在线取流自动准备并验证所需的官方发行包片段。
 
 ```
-# 批量 fetch_play_batch：主路径；空响应或请求失败回退下一行
-POST https://reading.snssdk.com/novel/player/multi_video_model/player/v1
-    # PLAYER_MODEL_PATH，无尾斜杠
-POST https://api5-normal-lq.fqnovel.com/novel/player/multi_video_model/v1/
-    # MODEL_LIGHT_PATH，尾斜杠是端点身份的一部分
-
-# 单集 fetch_play_url：批量暂存未命中后的主路径；空/失败回退 MODEL_LIGHT_PATH
-POST https://reading.snssdk.com/novel/player/video_model/v1/
-    # SINGLE_MODEL_PATH，尾斜杠是端点身份的一部分
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/preload/v1
+POST https://api5-normal-sinfonlinea.fqnovel.com/novel/player/multi_video_model/player/v1
 ```
 
-- 选路：`fetch_play_url` 先取批量暂存（命中且未过 10 分钟 TTL 则 pop
-  直接用）。批量 `fetch_play_batch` 打 `PLAYER_MODEL_PATH`
-  （`READING_API_ORIGIN` = `reading.snssdk.com`），空字节、请求失败、响应不可用
-  （解析失败 / 非 0 错误信封）或条目无可播放流时回退
-  `MODEL_LIGHT_PATH`（`LQ_API_ORIGIN` = `api5-normal-lq.fqnovel.com`），
-  仅补取未命中的 vid，两个通道都无可播放流则静默 0 条。单集打
-  `SINGLE_MODEL_PATH`（同一 reading 域），空/请求失败/响应不可用/无可播放流回退同一条 light；
-  两个通道都无可播放流归 `StreamMiss`。
-  `player/v1` 与 `video_model/v1/` 是当前主路径。
-- ⚠️ **签名五件套必带**：无签名一律 `200 + 0 字节` 静默丢弃（signer
-  模块文档描述的同款症状）。签名头：UA / accept / x-ss-req-ticket /
-  x-khronos / x-ladon / x-argus / x-gorgon / x-helios / x-medusa，
-  `x-ss-stub` 对 **gzip 后** body 取 MD5。另加 `x-ss-dp + lc` +
-  `x-tt-store-region`（`cn-gd`）+ `x-tt-store-region-src=did` +
-  `Content-Encoding: gzip` + 档案 cookie。登录态带 `x-tt-token` 前
-  56 字符；缺了按匿名配额处理。
-  「签名在不在场都与发货无关」系 2026-11-01 的旧口径，已作废。
-- query：`sign_request_with` 先铺设备档案全字段（含 `openudid`），再接
-  `api_call_model_light` 的业务 query（档案字段去掉 `openudid` +
-  `need_personal_recommend=1`），最后 `ts` + `_rticket`。`_rticket`
-  逐毫秒抖动，**避开** x-argus branch=1（该档服务端不受理，同样 200+0）。
-- body 三套，都是 gzip JSON：
-  - 批量主路径 `player_model_payload`：`biz_param` 十字段
-    （`device_level:3`、`use_server_dns:true`、
-    `use_server_dns_scene:"cold_start_stage"`、`video_platform:1024`，
-    含 `disable_video_relate_book`）+ `dr_scene:"player"` +
-    `mixed_video_id_map`。
-  - 单集主路径 `single_model_payload`：`biz_param` 同多集，仅
-    `video_platform:3`；顶层 `content_type` + `video_id`（无
-    `mixed_video_id_map`、无 `dr_scene`）。
-  - 回退 `model_light_payload`：`biz_param` 八字段（`device_level:4`、
-    `use_server_dns:false`、`video_platform:1024`，**无** `dr_scene` /
-    `disable_video_relate_book` / `use_server_dns_scene`）+
-    `mixed_video_id_map`。key 是条目 content_type 的原样字符串
-    （错配不发货：漫剧 1004→`"1004"`、真人剧 1→`"1"`、书城 1001→`"1001"`）。
-- 域名：新通道 `https://reading.snssdk.com`，回退
-  `https://api5-normal-lq.fqnovel.com`。TTNet 会整体迁域，下次「全量
-  200+0」先怀疑 origin 迁移，重抓包对齐。空响应不重试，交给上面的回退。
-- 响应：`data.{vid}.video_model` 是 JSON 字符串，批量一次回多集；单集
-  新通道另兼容 `/data/video_model`。错误信封是 base 族（`Code` 大写 +
-  `BaseResp`）；新通道非 0 / 解析失败先回退旧通道，旧通道仍失败才归
-  `StreamMiss`（reading 系小写 `code` 另走 `check_code`）。
-- **2026-11-04 可播性回退取证**：同一登录设备、同一漫剧第 9 集，单集与
-  多集新通道均返回 `code=0`、完整 `video_model` 和 5 档 `bytevc2`，
-  同时旧通道返回 5 档 `bytevc1`。`bytevc2` 是本机播放器不支持的私有编码，
-  响应非空不等于取流成功；单集必须选到可用流才停止回退，批量只向旧通道
-  补取缺失或不可播的 vid，并保留新通道已命中的条目。
-- ⚠️ 注册形态底线不变：注册 JSON 版本身份（73932/7.3.9.32）与
-  bdinstall SDK 代际成套（详见设备注册节），App 身份字段
-  （display_name/sig_hash/构建渠道/代际 flavor）2026-11-02 起钉
-  **官方实值**（红果免费短剧/56a96241…证书/fanqie-xiaoshuo 代际，
-  此前建模的是竞品形态）。
-- ⚠️ **200+0 的两种成因都要分清**（2026-11-02 深夜定案）：①无签名
-  ——任何内容都拒；②**匿名观看配额耗尽**——官方 App 匿名播到
-  第 9 集同样 200+0 并弹登录引导（官方登录设备 x-tt-token 整晚
-  24/24 全发货）。可持续形态 = 登录（账号授权），换新注册只是
-  重置匿名配额的应急手段：登录态禁换；匿名态连续 4 次 `StreamMiss`
-  且距上次换新 ≥180s 才换设备
-  （实现 `hongguo_service::device::note_stream_miss`），启动取流
-  探针已撤（探针 miss = 上场配额耗尽，据它换注册会让每次重启
-  白烧一台设备）。
+- 点播先查有效的模型缓存，未命中发单集请求。首页和首集预取走 `preload/v1`，同剧后续预取走 `player/v1`。
+- 签名头为 `x-khronos`、`x-ladon`、`x-argus`、`x-gorgon`、`x-helios`、`x-medusa`。签名使用最终 URL 和 gzip 后的 body。带 `x-ss-stub`、`x-ss-dp`、`lc`、`x-tt-store-region`、`x-tt-store-region-src`、`Content-Encoding: gzip` 与档案 cookie。实抓 query 将 `_rticket` 放在第 4 项。
+- 批量场景体使用 `device_level:3`、`use_server_dns:false`、`video_platform:1024` 与对应的 `dr_scene`。按条目 `content_type` 原样分组到 `mixed_video_id_map`。
+- 单集体顶层为 `biz_param`、`content_type`、`video_id`。实抓跳集口径用 `source:4`、`video_platform:3`、`need_all_video_definition:true`、`use_os_player:false`、`use_server_dns:false`。
+- `data.{vid}.video_model` 是 JSON 字符串，单集也支持 `data.video_model`。单集 HTTP 200 空体归 `EmptyResponse`，有包无可用流及 base 族非零错误归 `StreamMiss`。reading 系小写 `code` 走 `check_code`。Windows Tauri 在线 ByteVC2 由内置解码器解帧后直接显示。其余兼容播放路径仍转成 H.264 供系统播放器使用。验证范围见 [播放对齐交接](./req-hg-003-playback-parity.md#windows-tauri-在线-bytevc2-直播放)。
+- 原档案验证、配置方式与历史端点证据见 [REQ-HG-003 播放对齐交接](./req-hg-003-playback-parity.md)。
+
+### 预取动态配置
+
+- `GET https://abtest3-misc-lq.zijieapi.com/common` 带 `cj_pay_sdk_version=8.1.7`、`ecomterm_sdk_version=44900`、`account_region=cn-gd`。`code=0` 时读取 `data.<配置名>.val`，包括 `peak_time_v629` 和 `peak_time_video_preload_opt_v605`。
+- `POST https://is-lq.snssdk.com/service/settings/v3/` 使用 `Content-Type: application/json` 和单字节请求体 `0x00`。实抓业务参数含 `app=1`、`settings_time`、`font_scale=100`、WiFi 的 `network_type=4`、`account_region=cn-gd`。响应的 `data.settings_time` 供下次增量刷新，`data.settings.video_preload_prepare_v619` 提供候选数、字节预算和压制档。压制档每项采用 `集数x字节数`。
+- 官方先读 AB 实验，再读普通设置，最后用内置默认值。原档案的实读结果见 [播放对齐交接](./req-hg-003-playback-parity.md#首页预取与媒体磁盘缓存)。
 
 ## 1. 排行榜（内容 tab × 子榜 × 筛选面板 × 月榜）
 ```
@@ -949,7 +890,8 @@ user_info.base_info.{user_id 数字, user_name, expand_user_avatar}}`、
   以容错解析为准——series_id/book_id/item_id 任一命中即认）
 
 ### 9.4.1 观看进度云上报
-官方客户端播片时同时打两个接口（约每分钟 + 切集时）：
+2026-11-10 官方 APK 的《全球死考》匿名观看上报均走
+`api5-normal-sinfonlinea.fqnovel.com`。触发事件见 9.4.2。
 
 **`POST /reading/bookapi/read_history/update/v`** —— `book_id`/`vid` 是
 JSON **数字**（精度内直接发数字）：
@@ -983,7 +925,7 @@ JSON **数字**（精度内直接发数字）：
       "user_digg": false,
       "user_playlet_comment_flag": false,
       "vid": 7690802329313872921,
-      "vid_index": 0
+      "vid_index": 1
     }
   ]
 }
@@ -1019,15 +961,11 @@ JSON **数字**（精度内直接发数字）：
 }
 ```
 
-- 官方传 0 的字段（duration/retain/episode_cnt 等）照抄 0；
-  `player_accumulate_total_time` 样本里等于当时进度，我们同用 position_ms
-- 我们实现：`history.rs report_watch_progress` 一次打双接口；**触发在播放器
-  的上报心跳里**（`history-cadence.ts` / `history_cadence.rs` 两壳同规则，
-  见 §9.4.2），匿名后端静默跳过。
-  ⚠️ **vid_index 基准**：线上协议是 **0 基**（第 1 集 = 0），
-  域值（前端/本地存储）是 1 基——写侧统一 -1 换算
-  （`wire_vid_index`，删除形态同源），读侧 +1 转回。1 基直发
-  会与官方 App 会话混存后跨端续播差一集
+- `read_history/update` 的观看进度形态发送 **1 基集号**。实抓首集、ep13 分别为 1、13。
+  `read_progress/upload` 通过 `item_id` 标识短剧分集，实抓首集与 ep13–21 的
+  `vid_index` 都是 0。历史列表与删除沿用原有 0 基契约。
+- 两条匿名请求都用当前设备的 MetaSec v5 会话和 Cronet 六头，`read_history/update` 的 `update_timestamp_ms` 为 0。片内位置与累计播放时长分别记账。
+- 官方匿名切到《全球死考》第 13 集时曾上报当前位置 0、累计 20,563 毫秒。连续复测同样在位置 0 上报累计 15,559 毫秒；回到第 13 集时上报已保存的位置 40,522 毫秒，累计为 72,097 毫秒。
 
 ### 9.5 互动状态列表 `GET /reading/ugc/action/mget/v`
 query 业务参数：`action_type=3, count=100, offset=0,
@@ -1148,7 +1086,15 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   纯图片评论的 `text` 为空串（`content_type=2`）
 
 ### 9.4.2 上报时机与历史页口径
-`read_history/update` + `read_progress/upload` 的触发点：
+官方 APK 7.4.3.32 匿名会话，实测《全球死考》第一季第 1、13、14 集及第二季首集：
+
+- 首次进剧发 `read_history/update` 和一集的 `read_progress/upload`，位置与累计都可为 0。
+- 切集、回访只更新新集历史，起点可以是 0 或该集已保存位置。回到第 13 集没有再次请求单集模型。
+- 暂停、恢复、打开选集面板、拖动及连续播放 65 秒期间没有出现额外的历史或进度请求。播放累计时长随实际播放增加，跳转目标位置单独处理。
+- 播放一段后离开播放器，先更新当前集历史，再把已看过的各集最新进度合批发送。实测长播退出发了 3 集，约 9 秒退出发了 2 集，约 3 秒回访退出没有新增请求。Tauri 用 5 秒实际播放作为短退出门槛，精确边界尚未实测。
+- 用「系列剧」切到另一季，先更新旧季当前集历史，再更新新季选中集历史，最后上传进度批包，新季在前，旧季在后。新季初播的位置与累计均为 0。切回原季时续播第 14 集的 15,514 毫秒位置，累计 197,722 毫秒。两个方向的请求均返回 `code=0`。
+
+以下节拍来自参考桌面端 v1.1.6（提交 `7800cf43f`），仍用在桌面原有登录态逻辑中：
 
 - **起播 5s 首报**：成对双接口，`current_play_position` 恰为 5000；
 - **每 ~60s 播放时长**：仅 `read_progress/upload`（暂停期间不计时）；
@@ -1157,13 +1103,12 @@ body（**扁平** JSON，6 个字段恒在场；gzip；官方按 key 字母序�
   自己的 5s 里程碑再报；
 - **关窗口不上报**（最后一条流量就是最后事件的上报，无 close flush）。
 
-本项目口径（两壳同规则：
+原有桌面节拍（
 `src/features/player/hooks/history-cadence.ts` ↔
 `crates/hongguo-gpui/src/home/history_cadence.rs`）：**上报心跳与 5 秒落盘
 节流解耦**，按播放位置判定节拍——新剧起播 5s 首报；**同剧切集立即报新集**
-（历史行按剧聚合，切集后还显示上一集就是错的，比官方节奏激进一步，官方要
-等新集自己的 5s 里程碑）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
-的前跳）立即补；暂停/切集/退出 force 收尾（仍守 <5 秒不建行的噪点门槛）。
+（历史行按剧聚合）；之后每 60s 一拍（暂停不计时）；回跳（以及 >60s
+的前跳）立即补；暂停、切集和退出收尾（仍守 <5 秒不建行的门槛）。Tauri 匿名会话使用上面的 APK 实测口径。两种模式都保留每次播放位置采样，落盘独立节流。
 上报落定后把 `watch-history` / `local-history` 查询标记过期但**不立刻重拉**
 （`refetchType: 'none'`：首页「你的内容」种子吃同一份缓存，播放中重排会把
 游标指到别的剧），历史页下次打开必拉新行。

@@ -12,6 +12,7 @@ const HOLD_FADE_MS = 350;
  */
 export function useFrameHold(params: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   seriesId: string | null;
   episodeKey: string;
   /** 播放侧真值（定义见 player-page）：出画 / 切换在途 / 流指纹。 */
@@ -26,6 +27,7 @@ export function useFrameHold(params: {
 }) {
   const {
     videoRef,
+    canvasRef,
     seriesId,
     episodeKey,
     videoLive,
@@ -50,16 +52,22 @@ export function useFrameHold(params: {
   /** 把当前画面定格成一张 canvas（拿不到画面就清空，回落封面）。 */
   const capture = useCallback(() => {
     const video = videoRef.current;
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+    const direct = canvasRef.current;
+    const source = video?.videoWidth
+      ? video
+      : direct?.dataset.videoPts !== undefined
+        ? direct
+        : null;
+    if (!source) {
       setHeld(null);
       return;
     }
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    canvas.width = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
+    canvas.height = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
+    canvas.getContext('2d')?.drawImage(source, 0, 0);
     setHeld({ canvas, fromStream: streamKey });
-  }, [videoRef, streamKey]);
+  }, [videoRef, canvasRef, streamKey]);
 
   useLayoutEffect(() => {
     const prev = prevTargetRef.current;

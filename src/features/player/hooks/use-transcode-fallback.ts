@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { compatMediaMode, compatPlaybackKey, mergeCompatProgress } from './growing-fallback';
 import { toast } from 'sonner';
 import { useCompatPlayback } from '@/service/queries';
 import { useEvent } from '@/service/tauri/events';
@@ -24,12 +25,16 @@ export function useTranscodeFallback(params: {
   src: string | null;
   retryTick: number;
   srcKeyRef: React.RefObject<string>;
+  pendingSeekRef: React.RefObject<number>;
   setSrcKey: (key: string) => void;
   currentSeries?: Series;
   /** 后端 HEVC 可播结论；`undefined` = 探测未返回 */
   hevcPlayable: boolean | undefined;
   /** Android：无扩展安装路径，软解判假即强制兼容 */
   android: boolean;
+  directPlayback: boolean;
+  definition?: number;
+  sourceReady: boolean;
   /**
    * 解码失败的裁决入口（轮询命中后调用）：父层据此决定直接兜底转码，
    * 还是先弹「装扩展 vs 转兼容」的主卡（无 HEVC 机器）。
@@ -45,31 +50,43 @@ export function useTranscodeFallback(params: {
     src,
     retryTick,
     srcKeyRef,
+    pendingSeekRef,
     setSrcKey,
     currentSeries,
     hevcPlayable,
     android,
+    directPlayback,
+    definition,
+    sourceReady,
     onDecodeFailure,
   } = params;
   const compatPlay = useCompatPlayback();
   /** mutate 引用恒定；整个 mutation 对象每渲染都是新的，进依赖会重置探测计时 */
   const mutateCompat = compatPlay.mutate;
 
-  const [compatResult, setCompatResult] = useState<{ key: string; url: string } | null>(null);
+  const [compatResult, setCompatResult] = useState<{
+    key: string;
+    url: string;
+    progressive: boolean;
+  } | null>(null);
   const [compatProgress, setCompatProgress] = useState<CompatProgress | null>(null);
-  /** 同一集只兜底一次：失败后允许重试，成功后不再触发 */
+  const [waitingFor, setWaitingFor] = useState<string | null>(null);
+  const compatKey = sourceReady && !directPlayback ? compatPlaybackKey(episodeKey, definition) : '';
+  const waitingWholeFile = waitingFor === compatKey;
+  const activeCompatKey = useRef(compatKey);
   const compatStarted = useRef(false);
 
   const { forceCompat, holdNative } = decideCompatPlayback({
     hevcPlayable,
     android,
     compatAuthorized: hevcSession.compatAuthorized(),
+    directPlayback,
   });
 
-  /** 兜底产物地址，只认当前这一集 */
-  const compatSrc = compatResult?.key === episodeKey ? compatResult.url : null;
-  /** 兜底进度，只认当前这一集 */
-  const compat = compatProgress?.key === episodeKey ? compatProgress : null;
+  const compatSrc = compatResult?.key === compatKey ? compatResult.url : null;
+  const progressive = compatResult?.key === compatKey && compatResult.progressive;
+  const compat = compatProgress?.key === compatKey ? compatProgress : null;
+  const mediaMode = compatMediaMode(progressive, waitingWholeFile, compat?.phase);
   /** 实际喂给 `<video>` 的地址：有兜底产物就用它；主动兼容途中不喂原生 HEVC */
   const baseSrc = resolvePlayBaseSrc(src, compatSrc, holdNative);
   /**
@@ -85,23 +102,35 @@ export function useTranscodeFallback(params: {
 
   useEvent(
     EVENTS.compatPlayProgress,
-    useCallback((p: CompatProgress) => {
-      setCompatProgress(p);
-    }, []),
+    useCallback(
+      (p: CompatProgress) => {
+        if (p.key !== compatKey) return;
+        if (p.phase === 'failed') {
+          setCompatResult((prev) => (prev && prev.key === compatKey ? null : prev));
+          setWaitingFor(null);
+          setCompatProgress(null);
+          return;
+        }
+        setCompatProgress((prev) => mergeCompatProgress(prev, p));
+      },
+      [compatKey],
+    ),
   );
 
   const startCompat = useCallback(() => {
-    if (!seriesId || !vidIndex || compatStarted.current) return;
+    if (directPlayback || !seriesId || !vidIndex || !compatKey || compatStarted.current) return;
     compatStarted.current = true;
-    setCompatProgress({ key: episodeKey, percent: 0, phase: 'downloading' });
+    setCompatProgress({ key: compatKey, percent: 0, phase: 'downloading' });
     const ep = currentSeries?.episodes.find((e) => e.vidIndex === vidIndex);
     mutateCompat(
-      { seriesId, vidIndex, vid: ep?.vid },
+      { seriesId, vidIndex, vid: ep?.vid, definition },
       {
         onSuccess: (r) => {
+          if (activeCompatKey.current !== compatKey) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
-          setCompatResult({ key: episodeKey, url: r.url });
+          setCompatResult({ key: compatKey, url: r.url, progressive: r.progressive });
+          if (r.progressive) return;
           setCompatProgress(null);
           // 主动兼容 + 缓存命中是预期路径（软解机连播），不再每集弹 toast 打扰
           if (r.cached) {
@@ -116,6 +145,7 @@ export function useTranscodeFallback(params: {
           }
         },
         onError: (e) => {
+          if (activeCompatKey.current !== compatKey) return;
           setCompatProgress(null);
           compatStarted.current = false;
           toast.error(tf('player.compatFailed', { reason: e.message }));
@@ -127,17 +157,27 @@ export function useTranscodeFallback(params: {
     seriesId,
     vidIndex,
     episodeKey,
+    compatKey,
+    definition,
     currentSeries,
     mutateCompat,
     srcKeyRef,
     setSrcKey,
     forceCompat,
+    directPlayback,
   ]);
 
-  // 换集先清「已兜底」记号，必须排在主动兼容 effect 之前——否则同 commit 里先 start 再被清掉会丢闸
+  // 换集或档位后先更新任务身份，再由下一段 effect 启动兼容。
   useEffect(() => {
+    activeCompatKey.current = compatKey;
     compatStarted.current = false;
-  }, [episodeKey]);
+  }, [compatKey]);
+
+  const noteGrowingUnavailable = useCallback(() => {
+    const position = videoRef.current?.currentTime;
+    if (position !== undefined && position > 0) pendingSeekRef.current = position;
+    setWaitingFor(compatKey);
+  }, [compatKey, pendingSeekRef, videoRef]);
 
   // 已知不可解：起播前主动转兼容（Android 软解 / 本会话已选转兼容），省掉首集黑屏等待
   useEffect(() => {
@@ -149,7 +189,7 @@ export function useTranscodeFallback(params: {
   // 解码失败探测：播放在走、画面出不来、时间在推进，三个条件缺一不可（刚起播 videoWidth 本来就是 0）；
   // 命中走 onDecodeFailure 裁决：无 HEVC 机器先问「装扩展还是转兼容」，其余直接兜底转码
   useEffect(() => {
-    if (!playSrc || compatSrc || error || forceCompat) return;
+    if (!playSrc || compatSrc || error || forceCompat || directPlayback) return;
     const v = videoRef.current;
     if (!v) return;
     const timer = setInterval(() => {
@@ -159,7 +199,17 @@ export function useTranscodeFallback(params: {
       }
     }, 1200);
     return () => clearInterval(timer);
-  }, [playSrc, compatSrc, error, forceCompat, onDecodeFailure, videoRef]);
+  }, [playSrc, compatSrc, error, forceCompat, directPlayback, onDecodeFailure, videoRef]);
 
-  return { compatSrc, compat, playSrc, streamKey, startCompat, forceCompat };
+  return {
+    compatSrc,
+    compat,
+    playSrc,
+    streamKey,
+    startCompat,
+    forceCompat,
+    progressive: mediaMode === 'growing',
+    showCompleteSrc: mediaMode === 'file',
+    noteGrowingUnavailable,
+  };
 }

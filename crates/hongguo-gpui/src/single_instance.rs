@@ -39,14 +39,17 @@ pub(crate) fn claim() -> bool {
         use std::io::Write as _;
         use std::os::unix::net::{UnixListener, UnixStream};
 
-        let path = socket_path();
+        let Ok(path) = hongguo_common::offline_qa::prepare_qa_io(&socket_path()) else {
+            log::warn!("[Shell] 单实例套接字不在离线隔离目录内，不创建");
+            return true;
+        };
         // 先试连：连得上 = 已有实例在跑，写一个字节请它前置后退出
         if let Ok(mut stream) = UnixStream::connect(&path) {
             let _ = stream.write_all(b"focus");
             let _ = stream.flush();
             return false;
         }
-        // 连不上（没有实例 / 崩溃残留）：清掉陈档再 bind
+        // 连不上（没有实例 / 崩溃残留）：清掉陈档再 bind。上面的解析失败已经返回，不会删外面的文件。
         let _ = std::fs::remove_file(&path);
         match UnixListener::bind(&path) {
             Ok(listener) => {

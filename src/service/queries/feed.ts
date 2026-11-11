@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { discover } from '../commands';
+import { offlineQa } from '@/utils/offline-qa';
 import type { FeedItem, FeedPage } from '../schema';
 import { dedupBy, fuzzyStaleTime, keys, useInfiniteStream } from './common';
 
@@ -32,6 +33,7 @@ export function useFeed(tab: string) {
     },
     // 失败 home-page 就地给 ErrorState + 重试，全局不再弹
     meta: { silentOnError: true },
+    enabled: !offlineQa(),
     staleTime: fuzzyStaleTime(keys.feed(tab)),
   });
   const stream = useInfiniteStream(query, feedItems);
@@ -47,6 +49,7 @@ export function useFeedTabs() {
   return useQuery({
     queryKey: keys.feedTabs,
     queryFn: () => discover.recommendTabs(),
+    enabled: !offlineQa(),
     staleTime: fuzzyStaleTime(keys.feedTabs),
     meta: { silentOnError: true },
   });

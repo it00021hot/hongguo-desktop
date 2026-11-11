@@ -372,7 +372,6 @@ pub async fn delete_comment(comment_id: &str, service_id: i64, env: &ApiEnv) -> 
     check_interact_code(&value)
 }
 
-
 mod action;
 mod list;
 

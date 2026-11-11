@@ -2,14 +2,20 @@
 //! 服务端按加密 body 的指纹发放 device_id/install_id（播放取流需要服务端「认识」的设备）；
 //! TT-Encrypt V5 线上格式与 applog 裸形态详见 docs/hongguo-api-endpoints.md。
 
+mod attempt;
 mod model;
 
+pub use attempt::{
+    RegisterAttemptError, RegisterBlock, RegisterMaterial, block_from_retry_after,
+    load_reuse_profile, register_device, register_http_sends, register_material, register_retrying,
+    reset_register_http_sends, reuse_json_path,
+};
 pub use model::RegisterResult;
 
 use serde_json::{Value, json};
 
-use super::client::{ApiEnv, build_client};
 use hongguo_common::{AppError, AppResult};
+use hongguo_signer::device::DeviceProfile;
 
 pub const REGISTER_ORIGIN: &str = "https://log5-applog.fqnovel.com";
 pub const REGISTER_PATH: &str = "/service/2/device_register/";
@@ -205,13 +211,25 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     } else {
         install_id
     };
-    if device_id.is_empty() {
-        return Err(AppError::Media("注册响应缺少 device_id".into()));
+    if device_id == "0" {
+        return Err(AppError::Media(
+            "注册被服务端静默拒绝（device_id=0）".into(),
+        ));
+    }
+    for (field, value) in [("device_id", &device_id), ("install_id", &install_id)] {
+        if !is_registered_id(value) {
+            return Err(AppError::Media(format!("注册响应缺少有效的 {field}")));
+        }
     }
     Ok(RegisterResult {
         device_id,
         install_id,
         device_token: get_str("device_token"),
+        klink_egdi: v
+            .get("klink_egdi")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
         server_time: v.get("server_time").and_then(Value::as_i64).unwrap_or(0),
         new_user: match v.get("new_user") {
             Some(Value::Bool(b)) => *b,
@@ -225,75 +243,48 @@ pub(crate) fn parse_register(bytes: &[u8]) -> AppResult<RegisterResult> {
     })
 }
 
-/// 注册 query 固定 3 参：只带 `okhttp_version`（cronet/ttnet 两参是竞品形态），指纹全在加密 body。
-fn register_query() -> Vec<(String, String)> {
-    [
-        ("tt_data", "a"),
-        ("okhttp_version", "4.2.243.31-douyin"),
-        ("use_store_region_cookie", "1"),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect()
+pub fn has_registered_ids(profile: &DeviceProfile) -> bool {
+    is_registered_id(profile.get("device_id")) && is_registered_id(profile.get("iid"))
 }
 
-/// 新设备指纹：cdid / openudid / clientudid / req_id 一次生成。
-struct FreshIdentity {
-    cdid: String,
-    openudid: String,
-    clientudid: String,
-    req_id: String,
+fn is_registered_id(value: &str) -> bool {
+    value.bytes().all(|byte| byte.is_ascii_digit()) && !value.trim_start_matches('0').is_empty()
 }
 
-fn fresh_identity() -> FreshIdentity {
-    fn uuid_v4() -> String {
-        let b: [u8; 16] = rand::random();
-        format!(
-            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0],
-            b[1],
-            b[2],
-            b[3],
-            b[4],
-            b[5],
-            b[6] & 0x0f | 0x40,
-            b[7],
-            b[8] & 0x3f | 0x80,
-            b[9],
-            b[10],
-            b[11],
-            b[12],
-            b[13],
-            b[14],
-            b[15]
-        )
-    }
-    FreshIdentity {
-        cdid: uuid_v4(),
-        openudid: {
-            let b: [u8; 8] = rand::random();
-            b.iter().map(|x| format!("{x:02x}")).collect()
-        },
-        clientudid: uuid_v4(),
-        req_id: uuid_v4(),
-    }
+fn register_query(req_id: &str) -> String {
+    hongguo_signer::ticket::encode_query(&[
+        ("req_id", req_id.into()),
+        ("tt_data", "a".into()),
+        ("cronet_version", "8d40f833_2026-03-03".into()),
+        ("ttnet_version", "4.2.243.31-douyin".into()),
+        ("use_store_region_cookie", "1".into()),
+    ])
 }
 
 /// 首次安装时间回拨天数上限：真实安装都是过去时（pm clear 不清 firstInstallTime），按 cdid 确定性取 1~30 天。
 const FIRST_INSTALL_BACK_MAX_DAYS: u64 = 30;
 
-/// 官方 App 身份字段（官方注册密文体逐字段对齐；`sig_hash` = `md5(cert_der)`）。
+/// 官方 App 身份字段（7.4.3.32 APK 实值；`sig_hash` = `md5(cert_der)`）。
+/// bdinstall：`h90.j`（`sdk_version`/`git_hash`/`sdk_flavor`/`sdk_target_version`/
+/// `sdk_version_code`）+ `assets/ss.properties` 的 `release_build`。
 const OFFICIAL_DISPLAY_NAME: &str = "红果免费短剧";
 const OFFICIAL_SIG_HASH: &str = "56a962410c494bbaf0b58dba20cae56f";
-const OFFICIAL_GIT_HASH: &str = "3a88f4e";
-const OFFICIAL_SDK_VERSION: &str = "3.7.0-rc.34-fanqie-xiaoshuo";
-const OFFICIAL_RELEASE_BUILD: &str = "b5e187f";
+const OFFICIAL_GIT_HASH: &str = "27660d0";
+const OFFICIAL_SDK_VERSION: &str = "4.3.2-rc.44";
+const OFFICIAL_SDK_VERSION_CODE: i64 = 4_030_294;
+const OFFICIAL_SDK_TARGET_VERSION: i64 = 30;
+const OFFICIAL_SDK_FLAVOR: &str = "cnInner";
+const OFFICIAL_RELEASE_BUILD: &str = "652bb85_20261028";
+
+/// 注册代际：`version_code` + bdinstall SDK 指纹。SDK 常量变更时 bump，
+/// 触发库内档案按全新安装语义迁移（旧指纹注册的设备会被静默拒发货）。
+pub const REGISTER_REGIME: &str = "74332:4.3.2-rc.44";
 
 /// 构造 AppLog 注册 JSON 明文（官方实流密文体逐字段对齐）。设备耦合字段
 /// 取池指纹；App 身份字段钉官方实值；`ipv6_list` 与首次安装时间按 cdid 确定性生成。
 fn register_json_str(
     fp: &hongguo_signer::device::RegisterFingerprint,
-    id: &FreshIdentity,
+    id: &RegisterMaterial,
     now_ms: u64,
 ) -> String {
     let seed = hongguo_signer::md5_hex_upper(id.cdid.as_bytes()).into_bytes();
@@ -365,7 +356,8 @@ fn register_json_str(
         json!(hongguo_signer::REGISTER_VERSION_CODE),
     );
     h.insert("mcc_mnc".into(), json!("46000"));
-    h.insert("not_request_sender".into(), json!(0));
+    // h90.g：`not_request_sender = 1`（bdinstall 默认）
+    h.insert("not_request_sender".into(), json!(1));
     h.insert("oaid_may_support".into(), json!(false));
     h.insert("openudid".into(), json!(id.openudid));
     h.insert("os".into(), json!("Android"));
@@ -379,9 +371,13 @@ fn register_json_str(
     h.insert("resolution".into(), json!(fp.resolution_hxw()));
     h.insert("rom".into(), json!(fp.rom));
     h.insert("rom_version".into(), json!(fp.rom_version));
-    h.insert("sdk_flavor".into(), json!("china"));
-    h.insert("sdk_target_version".into(), json!(29));
+    h.insert("sdk_flavor".into(), json!(OFFICIAL_SDK_FLAVOR));
+    h.insert(
+        "sdk_target_version".into(),
+        json!(OFFICIAL_SDK_TARGET_VERSION),
+    );
     h.insert("sdk_version".into(), json!(OFFICIAL_SDK_VERSION));
+    h.insert("sdk_version_code".into(), json!(OFFICIAL_SDK_VERSION_CODE));
     h.insert("sig_hash".into(), json!(OFFICIAL_SIG_HASH));
     h.insert("sim_region".into(), json!("cn"));
     h.insert("sim_serial_number".into(), json!([]));
@@ -401,89 +397,6 @@ fn register_json_str(
     o.insert("header".into(), Value::Object(h));
     o.insert("_gen_time".into(), json!(now_ms));
     Value::Object(o).to_string()
-}
-
-/// 注册一台全新设备（applog 裸形态）：无签名头族 + TT-Encrypt V5 加密指纹 JSON。
-/// `env` 只取代理设置；响应 Set-Cookie 的 ttreq 票随 [`RegisterResult`] 带回。
-pub async fn register_device(env: &ApiEnv) -> AppResult<RegisterResult> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let id = fresh_identity();
-    // 机型指纹由 cdid 确定性派生：注册 JSON、UA、产物档案同源
-    let fp = hongguo_signer::device::fingerprint_for_cdid(&id.cdid);
-
-    let body = tt_encrypt_v5(register_json_str(fp, &id, now_ms).as_bytes());
-    // debug dump（定位指纹/加密差异用，TT_DEBUG=1 时开启）
-    if std::env::var("TT_DEBUG").is_ok() {
-        let dir = super::capture_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        let plain = register_json_str(fp, &id, now_ms);
-        let _ = std::fs::write(dir.join("rust_reg_plain.json"), &plain);
-        let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
-        let _ = std::fs::write(dir.join("rust_reg_body.hex"), &hex);
-        let meta = serde_json::json!({"cdid": id.cdid, "openudid": id.openudid, "clientudid": id.clientudid, "req_id": id.req_id});
-        let _ = std::fs::write(
-            dir.join("rust_reg_meta.json"),
-            serde_json::to_string(&meta).unwrap(),
-        );
-    }
-
-    // applog 裸形态直发：零 cookie、零签名，头族只保留官方实发的；
-    // 响应 Set-Cookie 下发本设备的 ttreq 票（按新 install_id 发放），随档案长期携带
-    let query = register_query()
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    let response = build_client(&env.proxy)?
-        .post(format!("{REGISTER_ORIGIN}{REGISTER_PATH}?{query}"))
-        .timeout(std::time::Duration::from_secs(REGISTER_TIMEOUT_SECS))
-        .header("User-Agent", fp.register_ua())
-        .header("Content-Type", "application/octet-stream;tt-data=a")
-        .header("log-encode-type", "gzip")
-        .header("x-ss-req-ticket", now_ms.to_string())
-        .header("x-vc-bdturing-sdk-version", "4.0.3.cn")
-        .header("x-neptune", "-8|50:51:59:30:40:47:49:39")
-        .header("x-ss-stub", hongguo_signer::md5_hex_upper(&body))
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?;
-    if !response.status().is_success() {
-        return Err(AppError::Network(format!("HTTP {}", response.status())));
-    }
-    let set_cookies: Vec<String> = response
-        .headers()
-        .get_all(reqwest::header::SET_COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok().map(str::to_string))
-        .collect();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| AppError::Network(e.to_string()))?
-        .to_vec();
-
-    let mut result = parse_register(&bytes)?;
-    result.cdid = id.cdid.clone();
-    result.openudid = id.openudid.clone();
-    result.ttreq = set_cookies
-        .iter()
-        .find_map(|c| {
-            let head = c.split(';').next()?.trim();
-            head.strip_prefix("ttreq=").map(|s| s.to_string())
-        })
-        .unwrap_or_default();
-    if result.device_id == "0" {
-        let text = String::from_utf8_lossy(&bytes);
-        return Err(AppError::Media(format!(
-            "注册被服务端静默拒绝（device_id=0），加密或指纹形态可能过期；原始响应: {}",
-            &text[..text.len().min(400)]
-        )));
-    }
-    Ok(result)
 }
 
 #[cfg(test)]
@@ -536,6 +449,36 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_registration_does_not_produce_an_identity() {
+        for (response, field) in [
+            (json!({"device_id": 123}), "install_id"),
+            (json!({"device_id": 123, "install_id": 0}), "install_id"),
+            (json!({"device_id": 0, "install_id": 456}), "device_id"),
+            (
+                json!({"device_id": "invalid", "install_id": 456}),
+                "device_id",
+            ),
+        ] {
+            let error = parse_register(response.to_string().as_bytes()).unwrap_err();
+            assert!(error.to_string().contains(field), "{error}");
+        }
+    }
+
+    #[test]
+    fn parses_optional_klink_egdi_from_register_response() {
+        let mut response =
+            json!({ "device_id": 123, "install_id": 456, "klink_egdi": "test-egdi" });
+        let parsed = parse_register(response.to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.klink_egdi.as_deref(), Some("test-egdi"));
+
+        for value in [json!(null), json!(""), json!(123)] {
+            response["klink_egdi"] = value;
+            let parsed = parse_register(response.to_string().as_bytes()).unwrap();
+            assert!(parsed.klink_egdi.is_none());
+        }
+    }
+
+    #[test]
     fn error_code_is_surfaced() {
         let raw = br#"{"code":110,"message":"ILLEGAL_ACCESS"}"#;
         let err = parse_register(raw).unwrap_err();
@@ -544,26 +487,14 @@ mod tests {
 
     #[test]
     fn register_identity_pins_register_regime() {
-        assert_eq!(
-            register_query(),
-            vec![
-                ("tt_data".to_string(), "a".to_string()),
-                (
-                    "okhttp_version".to_string(),
-                    "4.2.243.31-douyin".to_string()
-                ),
-                ("use_store_region_cookie".to_string(), "1".to_string()),
-            ]
+        let id = RegisterMaterial::from_parts(
+            "cdid-uuid",
+            "openudid-hex",
+            "clientudid-uuid",
+            "req-id-uuid",
         );
-
-        let id = FreshIdentity {
-            cdid: "cdid-uuid".into(),
-            openudid: "openudid-hex".into(),
-            clientudid: "clientudid-uuid".into(),
-            req_id: "req-id-uuid".into(),
-        };
         let v: Value = serde_json::from_str(&register_json_str(
-            hongguo_signer::device::fingerprint_for_cdid(&id.cdid),
+            hongguo_signer::device::fingerprint_for_cdid(id.cdid()),
             &id,
             1_760_000_000_000,
         ))
@@ -597,18 +528,22 @@ mod tests {
         );
         assert_eq!(h["custom"]["account_region"], "cn");
 
-        assert_eq!(h["git_hash"], "3a88f4e");
-        assert_eq!(h["sdk_flavor"], "china");
-        assert_eq!(h["sdk_target_version"], 29);
-        assert_eq!(h["sdk_version"], "3.7.0-rc.34-fanqie-xiaoshuo");
+        assert_eq!(h["git_hash"], "27660d0");
+        assert_eq!(h["sdk_flavor"], "cnInner");
+        assert_eq!(h["sdk_target_version"], 30);
+        assert_eq!(h["sdk_version"], "4.3.2-rc.44");
+        assert_eq!(h["sdk_version_code"], 4_030_294);
+        assert_eq!(h["not_request_sender"], 1);
+        assert_eq!(h["release_build"], "652bb85_20261028");
         assert!(h.get("scene").is_none(), "实流注册 JSON 无 scene 键");
+        assert_eq!(REGISTER_REGIME, "74332:4.3.2-rc.44");
     }
 
     /// 注册端点存活性诊断：真机试注，device_id=0 / 报错即形态有变。
     #[tokio::test]
     #[ignore = "直连真实接口的探测用例"]
     async fn probe_register_live() {
-        let env = ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
+        let env = crate::client::ApiEnv::anonymous(hongguo_common::model::ProxyConfig::default());
         match register_device(&env).await {
             Ok(r) => println!(
                 "[register-live] device_id={} install_id={} new_user={} ttreq={}",

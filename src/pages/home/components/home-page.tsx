@@ -15,7 +15,6 @@ import {
   usePrefetchSeriesEpisodes,
   useSeriesEpisodes,
   useSeriesProgress,
-  useSettings,
   useWatchHistory,
 } from '@/service/queries';
 import { enhancedCover, isRenderableCover } from '@/utils/cover';
@@ -28,6 +27,7 @@ import { t } from '@/locales';
 const FEED_STALE_MS = 5 * 60_000;
 /** 首帧未出画时兜底预取下一部流前的等待（毫秒）：给当前剧起播让路。 */
 const PREFETCH_FALLBACK_DELAY_MS = 8_000;
+const HOME_PREFETCH_COUNT = 3;
 import type { Series } from '@/service/schema';
 import { RECOMMEND_TAB_TYPE, buildTabList } from './home-tabs';
 import { decideStartPoint } from './start-point';
@@ -91,9 +91,10 @@ export function HomePage() {
   const [pinHold, setPinHold] = useState(true);
 
   const feed = useFeed(source);
-  const prefetchEpisodes = usePrefetchSeriesEpisodes();
+  const prefetchArchive = usePrefetchSeriesEpisodes();
   const setTarget = usePlayerStore((s) => s.setTarget);
   const playingId = usePlayerStore((s) => s.seriesId);
+  const bingeSeriesId = usePlayerStore((s) => s.bingeSeriesId);
   // store 目标的集号（0 = 只点名了剧，集号待本组件的起点决策补上）
   const storeVidIndex = usePlayerStore((s) => s.vidIndex);
   const setResumeHint = usePlayerStore((s) => s.setResumeHint);
@@ -288,7 +289,7 @@ export function HomePage() {
       lastIndexRef.current = index;
       cursorMovedRef.current = true;
     }
-    if (progressQuery.isPending || historyPending) return;
+    if (progressQuery.isPending || progressQuery.isFetching || historyPending) return;
 
     const decision = decideStartPoint({
       pinHold,
@@ -343,6 +344,7 @@ export function HomePage() {
     storeVidIndex,
     localProgress,
     progressQuery.isPending,
+    progressQuery.isFetching,
     historyItems,
     historyPending,
     setTarget,
@@ -362,29 +364,37 @@ export function HomePage() {
   const nextItem = displayItems[index + 1];
   const prevItem = displayItems[index - 1];
   useEffect(() => {
-    if (nextItem) prefetchEpisodes(nextItem.seriesId);
-  }, [nextItem, prefetchEpisodes]);
+    if (nextItem) prefetchArchive(nextItem.seriesId);
+  }, [nextItem, prefetchArchive]);
   useEffect(() => {
-    if (prevItem) prefetchEpisodes(prevItem.seriesId);
-  }, [prevItem, prefetchEpisodes]);
+    if (prevItem) prefetchArchive(prevItem.seriesId);
+  }, [prevItem, prefetchArchive]);
 
   // 预取下一部剧续播集的流：触发时机 = 当前剧首帧一出画（在播站稳了带宽才让给铺垫）；
-  // 起播被卡住时兜底定时照发。广度 = 预取档位；同一部只取一次，失败不算数下次重试
-  const { data: settings } = useSettings();
-  const prefetchBreadth = settings?.prefetchEpisodes ?? 3;
+  // 起播被卡住时兜底定时照发。同一部只取一次，失败不算数下次重试。
   const streamPrefetched = useRef(new Set<string>());
-  const prefetchStream = useCallback((id: string) => {
-    if (streamPrefetched.current.has(id)) return;
-    streamPrefetched.current.add(id);
-    void play.prefetch(id).catch(() => streamPrefetched.current.delete(id));
+  const prefetchStream = useCallback((ids: string[]) => {
+    const pending = ids.filter((id) => !streamPrefetched.current.has(id));
+    if (pending.length === 0) return;
+    for (const id of pending) streamPrefetched.current.add(id);
+    void play
+      .prefetch(pending)
+      .catch((): string[] => [])
+      .then((scheduled) => {
+        for (const id of pending) {
+          if (!scheduled.includes(id)) streamPrefetched.current.delete(id);
+        }
+      });
   }, []);
   const upcomingIds = useMemo(
     () =>
-      displayItems
-        .slice(index + 1, index + 1 + prefetchBreadth)
-        .map((it) => it.seriesId)
-        .filter(Boolean),
-    [displayItems, index, prefetchBreadth],
+      bingeSeriesId === currentId
+        ? []
+        : displayItems
+            .slice(index + 1, index + 1 + HOME_PREFETCH_COUNT)
+            .map((it) => it.seriesId)
+            .filter(Boolean),
+    [bingeSeriesId, currentId, displayItems, index],
   );
   const upcomingKey = upcomingIds.join(',');
   /** 当前剧是否已出画：PlayerView 首帧回调记下是哪部剧出的画（渲染期对号，切剧瞬间自动回到「未出画」）。 */
@@ -392,16 +402,13 @@ export function HomePage() {
   const stageLive = current !== undefined && firstFrameFor === current.seriesId;
   useEffect(() => {
     if (!stageLive) return;
-    upcomingIds.forEach((id) => prefetchStream(id));
+    prefetchStream(upcomingIds);
     // upcomingIds 随 items/游标重算，用拼串做稳定依赖，避免每帧重发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageLive, upcomingKey, prefetchStream]);
   useEffect(() => {
     if (stageLive || upcomingIds.length === 0) return;
-    const timer = setTimeout(
-      () => upcomingIds.forEach((id) => prefetchStream(id)),
-      PREFETCH_FALLBACK_DELAY_MS,
-    );
+    const timer = setTimeout(() => prefetchStream(upcomingIds), PREFETCH_FALLBACK_DELAY_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageLive, upcomingKey, prefetchStream]);

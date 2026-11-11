@@ -17,7 +17,12 @@ export const playResponseSchema = z.object({
   // 实际生效的档位与本集可选的全部档位。
   // 本地文件播放时 definitions 为空数组，前端据此隐藏切换菜单。
   definition: z.number().int().nonnegative(),
+  automaticDefinition: z.boolean(),
   definitions: z.array(videoDefinitionSchema),
+  /** 选中流编码，本地探测失败时为空串。 */
+  codec: z.string().default(''),
+  /** 历史字段名，标识应走 ByteVC2 直播放。 */
+  needsCompat: z.boolean().default(false),
 });
 
 export const decodeCapabilitySchema = z.object({
@@ -48,8 +53,8 @@ export const compatProgressSchema = z.object({
   /** 缓存键，格式 {seriesId}:{vidIndex} */
   key: z.string(),
   percent: z.number(),
-  /** downloading | transcoding | ready */
-  phase: z.enum(['downloading', 'transcoding', 'ready']),
+  /** downloading | transcoding | ready | completed | failed */
+  phase: z.enum(['downloading', 'transcoding', 'ready', 'completed', 'failed']),
 });
 
 export type CompatProgress = z.infer<typeof compatProgressSchema>;
@@ -68,4 +73,6 @@ export const transcodePlaybackSchema = z.object({
   cached: z.boolean(),
   backend: z.string(),
   elapsedMs: z.number(),
+  /** 首段已可播，后续字节还在同一地址上增长 */
+  progressive: z.boolean().default(false),
 });

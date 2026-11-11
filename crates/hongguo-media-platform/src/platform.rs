@@ -29,11 +29,7 @@ pub fn transcode_h264(req: &PlatformRequest<'_>) -> Option<AppResult<()>> {
     {
         imp::transcode_h264(req)
     }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "android"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
     {
         let _ = req;
         None
@@ -50,11 +46,7 @@ pub fn h264_hw_encoder_available() -> bool {
     {
         imp::h264_hw_encoder_available()
     }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "android"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
     {
         false
     }
@@ -70,11 +62,7 @@ pub fn encoder_available() -> bool {
     {
         imp::encoder_available()
     }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "android"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
     {
         false
     }
@@ -112,6 +100,16 @@ pub fn disabled_by_env() -> bool {
     std::env::var_os("HONGGUO_NO_PLATFORM").is_some()
 }
 
+/// ByteVC2 解帧后的 I420 编码会话。只在有平台编码器的目标上存在。
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+pub(crate) use imp::YuvEncoder;
+
+/// 把闭包放到平台编码器要求的线程上执行。macOS / Android 就是调用线程。
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "android"))]
+pub(crate) fn imp_thread<T: Send>(f: impl FnOnce() -> AppResult<T> + Send) -> AppResult<T> {
+    imp::with_encoder_thread(f)
+}
+
 /// 仅测试构建：跑完整平台链路（解码/Annex-B/封装/时间戳），让没有硬编的机器（含 CI）也能验证管线本身。
 /// macOS / Android 生产入口直接走正式路径；Windows 分发到 `_for_tests`（强制 in-box 软编）。
 /// e2e 统一从这里走，不直接引用 `vt::`/`mf::`/`mc::`（否则另一平台的测试构建编不过）；门控 `test-support`——跨 crate 后 `pub(crate)` 够不着。
@@ -121,11 +119,7 @@ pub fn transcode_h264_for_tests(req: &PlatformRequest<'_>) -> Option<AppResult<(
     {
         imp::transcode_h264_for_tests(req)
     }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "android"
-    )))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
     {
         let _ = req;
         None

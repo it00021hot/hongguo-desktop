@@ -48,6 +48,9 @@ export default defineConfig({
     },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
+  define: {
+    'import.meta.env.VITE_HONGGUO_OFFLINE_QA': JSON.stringify(process.env.HONGGUO_OFFLINE_QA ?? ''),
+  },
   build: {
     target: 'esnext',
     sourcemap: false,

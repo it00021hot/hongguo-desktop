@@ -13,7 +13,7 @@ export function useDanmakuWindow(params: {
   /** 本集时长（秒），喂给滚窗协议 */
   duration: number;
   /** metadata 回调之外还需叠加的副作用（竖屏判定等） */
-  onLoadedMetadata?: () => void;
+  onLoadedMetadata?: (autoplay?: boolean) => void;
   episodeKey: string;
 }) {
   const { videoRef, currentVid, seriesId, duration, onLoadedMetadata, episodeKey } = params;
@@ -33,14 +33,24 @@ export function useDanmakuWindow(params: {
   });
   const videoPortrait = portraitByKey.key === episodeKey && portraitByKey.on;
 
-  const handleLoadedMetadataWithDanmaku = useCallback(() => {
-    onLoadedMetadata?.();
-    const video = videoRef.current;
-    if (video && video.videoWidth > 0 && video.videoHeight > 0 && episodeKey) {
-      setPortraitByKey({ key: episodeKey, on: video.videoHeight >= video.videoWidth });
-    }
-    setDanmakuStartSecs(Math.floor(video?.currentTime ?? 0));
-  }, [onLoadedMetadata, videoRef, episodeKey]);
+  const noteVideoSize = useCallback(
+    (width: number, height: number) => {
+      if (width > 0 && height > 0 && episodeKey) {
+        setPortraitByKey({ key: episodeKey, on: height >= width });
+      }
+    },
+    [episodeKey],
+  );
+
+  const handleLoadedMetadataWithDanmaku = useCallback(
+    (autoplay = true) => {
+      onLoadedMetadata?.(autoplay);
+      const video = videoRef.current;
+      if (video) noteVideoSize(video.videoWidth, video.videoHeight);
+      setDanmakuStartSecs(Math.floor(video?.currentTime ?? 0));
+    },
+    [onLoadedMetadata, videoRef, noteVideoSize],
+  );
 
   const danmakuQuery = useDanmaku(
     currentVid ? `${currentVid}:${seriesId}` : '',
@@ -81,6 +91,7 @@ export function useDanmakuWindow(params: {
   return {
     danmakuItems,
     handleLoadedMetadataWithDanmaku,
+    noteVideoSize,
     videoPortrait,
   };
 }

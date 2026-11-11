@@ -1,5 +1,6 @@
 /** 设置域 zod schema（与 Rust serde 模型对应）。 */
 import { z } from 'zod';
+import { pageImageSrc } from '@/utils/offline-qa';
 
 const namingTemplateSchema = z.enum(['titleIndex', 'titleIndexEpisode', 'onlyTitle']);
 
@@ -16,7 +17,7 @@ export const accountStateSchema = z.object({
   cookies: z.string(),
   userName: z.string(),
   // 旧库/旧后端无此字段：宽松兜空串
-  avatarUrl: z.string().catch(''),
+  avatarUrl: z.string().catch('').transform(pageImageSrc),
   userId: z.string(),
   loginAt: z.number(),
   /** x-tt-token 长凭据（旧账号为空） */
@@ -44,8 +45,6 @@ export const settingsSchema = z.object({
   autoNextEpisode: z.boolean(),
   // 后端 serde(default)：旧库无此字段，前端宽松接收
   pauseOnMinimize: z.boolean().catch(true),
-  /** 连播预取集数（0=关闭，上限 10；Rust clamp_prefetch_episodes） */
-  prefetchEpisodes: z.number().int().min(0).max(10).catch(3),
   /** 老板键全局快捷键（tauri accelerator 形态；空 = 未启用） */
   bossKey: z.string().catch(''),
   theme: z.string(),

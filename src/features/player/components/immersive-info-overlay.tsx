@@ -178,10 +178,7 @@ export function ImmersiveInfoOverlay({
           // ~400px）：之前跟着容器吃到 62%，两行密文糊满左下角。
           // 容器吃掉点击（防触发舞台暂停/继续），展开交互只在按钮上
           <div
-            className={cn(
-              'mt-1 flex items-end gap-2',
-              narrow ? 'max-w-full' : 'max-w-[36%]',
-            )}
+            className={cn('mt-1 flex items-end gap-2', narrow ? 'max-w-full' : 'max-w-[36%]')}
             onClick={(e) => e.stopPropagation()}
           >
             <p

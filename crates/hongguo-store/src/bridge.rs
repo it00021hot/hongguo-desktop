@@ -2,7 +2,9 @@
 //!
 //! 门面方法**阻塞**调用方线程直到该批 SQL 完成（本地内嵌库单条语句微秒到毫秒级）；`Store` 是通道发送端的 `Arc`，最后一个克隆 drop 后通道关闭，线程跑完手头的活自然退出。
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use futures_util::future::BoxFuture;
 
@@ -21,6 +23,9 @@ type Job = Box<dyn FnOnce(Db) -> BoxFuture<'static, ()> + Send + 'static>;
 #[derive(Clone)]
 pub struct Store {
     tx: Arc<tokio::sync::mpsc::UnboundedSender<Job>>,
+    path: Arc<PathBuf>,
+    meta_faults: Arc<AtomicU32>,
+    swap_fault: Arc<AtomicU8>,
 }
 
 impl std::fmt::Debug for Store {
@@ -30,9 +35,24 @@ impl std::fmt::Debug for Store {
 }
 
 impl Store {
+    pub fn playback_definition(&self, scope: &str) -> AppResult<Option<u32>> {
+        let scope = scope.to_owned();
+        self.exec(move |db| Box::pin(async move { entity::playback_definition(db, &scope).await }))
+    }
+
+    pub fn save_playback_definition(&self, scope: &str, definition: Option<u32>) -> AppResult<()> {
+        let scope = scope.to_owned();
+        self.exec(move |db| {
+            Box::pin(async move { entity::save_playback_definition(db, &scope, definition).await })
+        })
+    }
     /// 打开文件库（含 schema 迁移）。
     pub fn open(path: impl AsRef<std::path::Path>) -> AppResult<Self> {
-        Self::spawn_open(path.as_ref().to_string_lossy().into_owned())
+        let path = path.as_ref();
+        if let Err(msg) = crate::paths::refuse_offline_store_open(path) {
+            return Err(AppError::InvalidArgs(msg));
+        }
+        Self::spawn_open(path.to_string_lossy().into_owned())
     }
 
     /// 开库；被锁时稍等重试一次（覆盖两实例几乎同时启动、败者尚未退出的窗口期）。
@@ -54,6 +74,7 @@ impl Store {
     }
 
     fn spawn_open(path: String) -> AppResult<Self> {
+        let path_buf = PathBuf::from(&path);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Job>();
         let (init_tx, init_rx) = std::sync::mpsc::channel::<AppResult<()>>();
         std::thread::Builder::new()
@@ -87,7 +108,26 @@ impl Store {
         init_rx
             .recv()
             .map_err(|_| AppError::StoreCorrupt("DB 线程初始化无响应".into()))??;
-        Ok(Self { tx: Arc::new(tx) })
+        Ok(Self {
+            tx: Arc::new(tx),
+            path: Arc::new(path_buf),
+            meta_faults: Arc::new(AtomicU32::new(0)),
+            swap_fault: Arc::new(AtomicU8::new(0)),
+        })
+    }
+
+    pub fn db_path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// 下一次元数据写入直接失败，不碰库。用来验证限制落盘失败时不会当成没限制。
+    pub fn fail_next_meta_writes(&self, count: u32) {
+        self.meta_faults.store(count, Ordering::Relaxed);
+    }
+
+    /// 下一次换档事务在第 `after_step` 步（1 备份 / 2 现役 / 3 元数据）之后回滚。
+    pub fn fail_next_device_swap(&self, after_step: u8) {
+        self.swap_fault.store(after_step, Ordering::Relaxed);
     }
 
     /// 投递一个活并阻塞等结果；通道断开（线程已退出）按存储故障上报。闭包签名是显式 HRTB：实体层的 future 借用 `&Db`，生命周期与本次调用绑定，不能写成 `'static`。
@@ -280,6 +320,35 @@ impl Store {
         self.exec(move |db| Box::pin(async move { entity::save_device_profile(db, &p).await }))
     }
 
+    /// 备份现役、写入新现役、写入元数据，三者同一事务。失败则库内仍是旧档。
+    pub fn commit_device_swap(&self, profile_json: &str, meta_json: &str) -> AppResult<()> {
+        let step = self.swap_fault.swap(0, Ordering::Relaxed);
+        if step > 0 {
+            return self.commit_device_swap_fault(profile_json, meta_json, step);
+        }
+        let profile_json = profile_json.to_string();
+        let meta_json = meta_json.to_string();
+        self.exec(move |db| {
+            Box::pin(async move { entity::commit_device_swap(db, &profile_json, &meta_json).await })
+        })
+    }
+
+    /// 隔离库故障注入：`fail_after` 为 1/2/3 时在该步之后回滚。
+    pub fn commit_device_swap_fault(
+        &self,
+        profile_json: &str,
+        meta_json: &str,
+        fail_after: u8,
+    ) -> AppResult<()> {
+        let profile_json = profile_json.to_string();
+        let meta_json = meta_json.to_string();
+        self.exec(move |db| {
+            Box::pin(async move {
+                entity::commit_device_swap_at(db, &profile_json, &meta_json, Some(fail_after)).await
+            })
+        })
+    }
+
     /// 换档前把现役档案复制到备份行（见 [`entity::backup_device_profile`]）。
     pub fn backup_device_profile(&self) -> AppResult<bool> {
         self.exec(|db| Box::pin(entity::backup_device_profile(db)))
@@ -297,10 +366,34 @@ impl Store {
         self.exec(|db| Box::pin(entity::device_meta_get(db)))
     }
 
+    pub fn sdk_session(&self) -> AppResult<Option<serde_json::Value>> {
+        self.exec(|db| Box::pin(entity::sdk_session(db)))
+    }
+
+    pub fn save_sdk_session(&self, session: serde_json::Value) -> AppResult<()> {
+        self.exec(move |db| Box::pin(async move { entity::save_sdk_session(db, &session).await }))
+    }
+
     /// 写 bootstrap 元数据（整文档覆盖）。
     pub fn device_meta_set(&self, meta: &serde_json::Value) -> AppResult<()> {
+        if self.meta_faults.load(Ordering::Relaxed) > 0 {
+            self.meta_faults.fetch_sub(1, Ordering::Relaxed);
+            return Err(AppError::StoreCorrupt("故障注入：元数据写入".into()));
+        }
         let meta = meta.clone();
         self.exec(move |db| Box::pin(async move { entity::device_meta_set(db, &meta).await }))
+    }
+
+    pub fn initialize_device_meta(
+        &self,
+        meta: serde_json::Value,
+        legacy: Option<hongguo_signer::device::DeviceProfile>,
+    ) -> AppResult<()> {
+        self.exec(move |db| {
+            Box::pin(
+                async move { entity::initialize_device_meta(db, &meta, legacy.as_ref()).await },
+            )
+        })
     }
 }
 

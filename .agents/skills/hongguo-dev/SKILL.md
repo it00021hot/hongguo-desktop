@@ -17,7 +17,7 @@ when_to_use: 在本仓库做任何开发（新增功能、修 bug、写组件/ho
 | 你要做的事                                                | 先读                                                                                                                              |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **任何开发动作（通用工程宪法）**                          | 用户级 `dev-habits` skill——做事方式/代码质量/测试/安全/传输契约/日志/性能并发的门禁表在其 SKILL.md，先读它再读本表                 |
-| **GPUI 壳**：界面 / 视图 / 主题 / 交互 / 壳装配（crates/hongguo-gpui） | `references/gpui.md`；**动可见界面前必须先经 Skill 工具调用 gpui-ui-design skill**（红线 15）                                      |
+| **GPUI 壳**：界面 / 视图 / 主题 / 交互 / 壳装配（crates/hongguo-gpui） | `references/gpui.md`；**动可见界面前必须先经 Skill 工具调用 gpui-kit-design-guides skill**（红线 15）                                      |
 | **Tauri 壳前端**：组件、hooks、查询、store、样式、i18n、路由 | `references/frontend.md`                                                                                                          |
 | 新增（或改动）IPC 命令、事件、外部 API 端点               | `references/ipc.md`（IPC / 协议是 Tauri 壳专属；外部 API 端点两壳共用）                                                           |
 | 写后端：command、service、store、迁移、测试               | `references/backend.md`（command 层仅 Tauri；service/store 两壳共用）                                                             |
@@ -63,7 +63,7 @@ make release      # 打包发布版（Tauri 壳）
 
 ### GPUI 壳专属
 
-15. **动 GPUI 壳可见界面前，必须先经 Skill 工具调用 `gpui-ui-design` skill**（按其指引读 design-guides——表格单元格里的「另见」不会触发调用，必须显式 invoke）；界面改动的验收一律 `make gpui-preview` 离屏预览矩阵逐张目检。壳内其余纪律（语义令牌、RenderImage、preview 矩阵扩展三步、cargo test 与 bin）见 `references/gpui.md`。
+15. **动 GPUI 壳可见界面前，必须先经 Skill 工具调用 `gpui-kit-design-guides` skill**（按其指引读 design-guides——表格单元格里的「另见」不会触发调用，必须显式 invoke）；界面改动的验收一律 `make gpui-preview` 离屏预览矩阵逐张目检。壳内其余纪律（语义令牌、RenderImage、preview 矩阵扩展三步、cargo test 与 bin）见 `references/gpui.md`。
 
 ## 目录归属（结构规范）
 

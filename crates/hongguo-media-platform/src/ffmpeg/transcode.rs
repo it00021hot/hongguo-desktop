@@ -33,9 +33,12 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
     };
 
     if let Some(parent) = req.output.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::Io(e.to_string()))?;
+        hongguo_common::offline_qa::qa_create_dir_all(parent)
+            .map_err(|e| AppError::Io(e.to_string()))?;
     }
     let temp = hongguo_common::utils::path::temp_path_for(req.output);
+    let temp = hongguo_common::offline_qa::prepare_qa_io(&temp).map_err(AppError::Io)?;
+    hongguo_common::offline_qa::prepare_qa_io(req.output).map_err(AppError::Io)?;
 
     let args = build_args(req, encoder, &temp);
 
@@ -77,11 +80,11 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
             }
         });
         let out = child.wait_with_output().map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
+            let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
             AppError::Media(format!("等待 ffmpeg 失败: {e}"))
         })?;
         if !out.status.success() {
-            let _ = std::fs::remove_file(&temp);
+            let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
             return Err(AppError::Media(format!(
                 "ffmpeg 转码失败: {}",
                 String::from_utf8_lossy(&out.stderr)
@@ -90,8 +93,8 @@ pub fn transcode_with_ffmpeg(req: &TranscodeRequest<'_>, encoder: &Encoder) -> A
         Ok(())
     })?;
 
-    std::fs::rename(&temp, req.output).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
+    hongguo_common::offline_qa::qa_rename(&temp, req.output).map_err(|e| {
+        let _ = hongguo_common::offline_qa::qa_remove_file(&temp);
         AppError::Io(format!("原子替换失败: {e}"))
     })?;
     Ok(())
@@ -107,9 +110,12 @@ fn build_args(req: &TranscodeRequest<'_>, encoder: &Encoder, temp: &Path) -> Vec
         "-i".into(),
         req.input.display().to_string(),
     ];
-    args.extend(quality_args(encoder, req.rate));
+    args.extend(quality_args_for(encoder, req.rate));
 
-    let scale = req.scale_to.filter(|(w, h)| *w > 0 && *h > 0).map(|(w, h)| (even(w), even(h)));
+    let scale = req
+        .scale_to
+        .filter(|(w, h)| *w > 0 && *h > 0)
+        .map(|(w, h)| (even(w), even(h)));
     if let Some((w, h)) = scale {
         // H.264 要求宽高为偶数，否则 ffmpeg 直接拒绝
         args.extend(["-vf".to_string(), format!("scale={w}:{h}")]);
@@ -159,13 +165,27 @@ fn even(v: u32) -> u32 {
 /// 编码器专属质量参数。归档档对齐 crf 23；播放档对齐 crf 28 / 更快 preset——
 /// 兼容兜底以体积与耗时优先，软编（libx264）差一档观感可接受。
 /// MediaFoundation 质量位 0–100 且**越高越好**：归档 60（≈crf23 VMAF 实测），播放 40。
-fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
+pub(crate) fn quality_args_for(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
     let owned: &[&str] = match (encoder.name, rate) {
         ("h264_nvenc", RateProfile::Archive) => &[
-            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-b:v", "0",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p4",
+            "-cq",
+            "23",
+            "-b:v",
+            "0",
         ],
         ("h264_nvenc", RateProfile::Playback) => &[
-            "-c:v", "h264_nvenc", "-preset", "p1", "-cq", "28", "-b:v", "0",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p1",
+            "-cq",
+            "28",
+            "-b:v",
+            "0",
         ],
         ("h264_qsv", RateProfile::Archive) => &["-c:v", "h264_qsv", "-global_quality", "23"],
         ("h264_qsv", RateProfile::Playback) => &["-c:v", "h264_qsv", "-global_quality", "28"],
@@ -176,10 +196,20 @@ fn quality_args(encoder: &Encoder, rate: RateProfile) -> Vec<String> {
             "-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28",
         ],
         ("h264_mf", RateProfile::Archive) => &[
-            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "60",
+            "-c:v",
+            "h264_mf",
+            "-rate_control",
+            "quality",
+            "-quality",
+            "60",
         ],
         ("h264_mf", RateProfile::Playback) => &[
-            "-c:v", "h264_mf", "-rate_control", "quality", "-quality", "40",
+            "-c:v",
+            "h264_mf",
+            "-rate_control",
+            "quality",
+            "-quality",
+            "40",
         ],
         (_, RateProfile::Archive) => &[
             "-c:v",

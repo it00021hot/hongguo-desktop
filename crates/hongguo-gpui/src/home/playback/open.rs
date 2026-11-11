@@ -137,25 +137,68 @@ impl super::HomeView {
                 )
             }
             None => {
-                let prepared =
-                    prepare(&state, &ep.vid, &progress_key, preferred_definition).await?;
-                // 与 Tauri `play_service::local::resolve_play` 共用同一调度：
-                // 在线起播后把本剧后续 1..=prefetch_episodes 集同时排进流
-                // 预取与（无 HEVC 时的）兼容预转。GPUI 自己起播曾漏掉这步，
-                // 只预取了信息流下一部剧，自动连播到下一集仍然冷启动。
+                // 与 Tauri 共用起播模型预热策略。
+                hongguo_service::play_service::local::warm_episode_window(
+                    &state,
+                    &item.series_id,
+                    ep.vid_index,
+                )
+                .await;
+                let prepared = prepare(
+                    &state,
+                    &ep.vid,
+                    &progress_key,
+                    preferred_definition,
+                )
+                .await?;
+                // 在线起播后按两壳共用的动态策略预取后续集。
                 hongguo_service::play_service::schedule_following_episodes(
                     &state,
                     &item.series_id,
                     ep.vid_index,
                 );
-                (
-                    hongguo_player::PlaySource::Online {
-                        vid: ep.vid.clone(),
-                        definition: prepared.definition,
-                    },
-                    prepared.definitions,
-                    prepared.definition,
-                )
+                if hongguo_bytevc2::is_bytevc2(&prepared.codec) {
+                    // 系统播放器不解 bvc2：先兼容转成 H.264 再走本地源（对齐 Tauri needsCompat）。
+                    log::info!(
+                        "[Home] {} 第 {} 集 codec={}，走兼容转码",
+                        item.series_id,
+                        ep.vid_index,
+                        prepared.codec
+                    );
+                    let compat = hongguo_service::play_service::compat_play::compat_for_playback(
+                        &state,
+                        &item.series_id,
+                        ep.vid_index,
+                        Some(ep.vid.clone()),
+                        Some(prepared.definition),
+                    )
+                    .await?;
+                    let path = hongguo_service::transcode_service::cache::playback_file(
+                        &item.series_id,
+                        ep.vid_index,
+                        Some(prepared.definition),
+                    );
+                    if !path.is_file() {
+                        return Err(hongguo_common::AppError::Media(format!(
+                            "兼容转码完成但缓存未命中（{}）",
+                            compat.url
+                        )));
+                    }
+                    (
+                        hongguo_player::PlaySource::Local { path },
+                        prepared.definitions,
+                        prepared.definition,
+                    )
+                } else {
+                    (
+                        hongguo_player::PlaySource::Online {
+                            vid: ep.vid.clone(),
+                            definition: prepared.definition,
+                        },
+                        prepared.definitions,
+                        prepared.definition,
+                    )
+                }
             }
         };
         let on_stall: Option<Arc<dyn Fn() + Send + Sync>> = {

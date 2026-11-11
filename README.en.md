@@ -151,12 +151,12 @@ no external binaries.**
 
 ### Core (Rust)
 
-| Layer    | Choice                                                                                          |
-| -------- | ----------------------------------------------------------------------------------------------- |
-| Shell    | [Tauri 2](https://tauri.app) + React 19 WebView shell, plus a GPUI native shell; shared `hongguo-service` / `hongguo-api` / `hongguo-store` |
-| Language | Rust 2024 edition · tokio · reqwest (rustls)                                                    |
-| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v7, `SCHEMA_VERSION = 7`) |
-| Crypto   | aes / ctr / sm3 / md-5 and other pure-Rust crates (CENC-AES-CTR)                                |
+| Layer    | Choice                                                                                                                                                                                   |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell    | [Tauri 2](https://tauri.app) + React 19 WebView shell, plus a GPUI native shell; shared `hongguo-service` / `hongguo-api` / `hongguo-store`                                              |
+| Language | Rust 2024 edition · tokio · reqwest (rustls)                                                                                                                                             |
+| Storage  | [Turso](https://turso.tech) embedded database (pure Rust, `hongguo.db`, schema v7, `SCHEMA_VERSION = 7`)                                                                                 |
+| Crypto   | aes / ctr / sm3 / md-5 and other pure-Rust crates (CENC-AES-CTR)                                                                                                                         |
 | Codecs   | Video remux / MP4 mux is pure Rust; `rusty_h265` is HEIF cover soft-decode only, not the main video path; HEVC→H.264 is platform hardware (VideoToolbox / Media Foundation), then ffmpeg |
 
 ### Frontend (Tauri WebView shell only)

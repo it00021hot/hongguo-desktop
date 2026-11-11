@@ -19,7 +19,9 @@ export function decideCompatPlayback(input: {
   hevcPlayable: boolean | undefined;
   android: boolean;
   compatAuthorized: boolean;
+  directPlayback?: boolean;
 }): CompatPlaybackDecision {
+  if (input.directPlayback) return { forceCompat: false, holdNative: false };
   const { hevcPlayable, android, compatAuthorized } = input;
   const knownUnplayable = hevcPlayable === false;
   const forceCompat = knownUnplayable && (android || compatAuthorized);

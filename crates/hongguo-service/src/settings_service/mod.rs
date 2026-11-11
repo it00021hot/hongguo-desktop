@@ -40,7 +40,7 @@ pub fn apply_cache_root(settings: &Settings) {
     );
 }
 
-/// 未配置 `cache_dir` 时的缓存位置：跟随数据目录（其下再分 `compat-cache/` 与 `cover-cache/`）。
+/// 未配置 `cache_dir` 时，各类缓存共用数据目录作为根目录。
 /// 设置页留空时要把实际路径显示出来；两壳共用这一段解析，别在各自壳里拼路径。
 pub fn default_cache_dir() -> String {
     hongguo_store::paths::data_dir().display().to_string()
@@ -51,7 +51,6 @@ pub fn default_cache_dir() -> String {
 pub fn normalize(settings: Settings) -> AppResult<Settings> {
     let mut settings = settings;
     settings.clamp_concurrency();
-    settings.clamp_prefetch_episodes();
     settings.download_dir = settings.download_dir.trim().to_string();
     if settings.download_dir.is_empty() {
         settings.download_dir = Settings::default().download_dir;
@@ -85,16 +84,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(n.max_concurrency, 10);
-    }
-
-    #[test]
-    fn normalize_clamps_prefetch_episodes() {
-        let n = normalize(Settings {
-            prefetch_episodes: 99,
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(n.prefetch_episodes, 10, "预取集数上限 10，0=关闭也是合法值");
     }
 
     #[test]

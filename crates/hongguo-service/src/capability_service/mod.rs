@@ -34,7 +34,7 @@ pub async fn install_hevc_extension(proxy: ProxyConfig) -> AppResult<bool> {
         .await
         .map_err(|e| AppError::Media(format!("HEVC 扩展安装任务异常: {e}")))?;
     // 成败都清临时文件；安装失败时错误向上抛给前端展示
-    let _ = std::fs::remove_file(&path);
+    let _ = hongguo_store::paths::qa_remove_file(&path);
     installed?;
 
     Ok(hongguo_media_platform::capability::playback::redetect())
@@ -43,12 +43,13 @@ pub async fn install_hevc_extension(proxy: ProxyConfig) -> AppResult<bool> {
 fn temp_path() -> AppResult<PathBuf> {
     let mut p = std::env::temp_dir();
     p.push("hongguo-hevc-extension.appx");
-    let _ = std::fs::remove_file(&p);
+    let _ = hongguo_store::paths::qa_remove_file(&p);
     Ok(p)
 }
 
 async fn download(path: &Path, proxy: ProxyConfig) -> AppResult<()> {
     // 复用应用的代理配置：微软源/镜像源在部分网络下同样需要代理
+    hongguo_api::client::refuse_external_send(HEVC_APPX_URL)?;
     let client = hongguo_api::client::build_client(&proxy)?;
     let bytes = client
         .get(HEVC_APPX_URL)
@@ -60,7 +61,7 @@ async fn download(path: &Path, proxy: ProxyConfig) -> AppResult<()> {
         .bytes()
         .await
         .map_err(|e| AppError::Network(format!("下载 HEVC 扩展失败: {e}")))?;
-    std::fs::write(path, &bytes).map_err(|e| AppError::Io(e.to_string()))
+    hongguo_store::paths::qa_write(path, &bytes).map_err(|e| AppError::Io(e.to_string()))
 }
 
 fn verify_and_install(path: &Path) -> AppResult<()> {

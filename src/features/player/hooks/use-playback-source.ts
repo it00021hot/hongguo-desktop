@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { usePlay } from '@/service/queries';
 import { usePlayerStore } from '@/stores/player';
 import { useEvent } from '@/service/tauri/events';
+import { isAppInvokeError } from '@/service/tauri/invoke';
 import { EVENTS } from '@/service/tauri/types';
 import { t } from '@/locales';
 import {
@@ -45,6 +46,7 @@ export function usePlaybackSource(params: {
   const clearResumeHint = usePlayerStore((s) => s.setResumeHint);
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [playbackMaterialsError, setPlaybackMaterialsError] = useState(false);
   /**
    * srcKeyRef 的 state 镜像（同点写入）：渲染期据此判定「切换在途」——
    * 目标已变、新流未到时新剧的封面+加载胶囊立即接管，否则用户看到「切了没反应」。
@@ -59,14 +61,25 @@ export function usePlaybackSource(params: {
   const retryTick = retry.key === episodeKey ? retry.tick : 0;
   /** 在线取流/解密进度：播未下载的集时显示「正在缓存 45%（54/120MB）」。 */
   const [buffering, setBuffering] = useState<OnlineProgress | null>(null);
-  /**
-   * 用户选的清晰度，`undefined` = 后端取平台最高档。存组件不存 store：
-   * 切集应回到「自动最高档」，把上一集档位带过去多半触发回退。
-   */
-  const [definition, setDefinition] = useState<number | undefined>(undefined);
+  // 切集后的手选记忆由后端按官方作用域管理；自动选择需要显式清除该记忆。
+  const [choice, setChoice] = useState<{ key: string; value?: number; reset: boolean }>({
+    key: episodeKey,
+    reset: false,
+  });
+  if (choice.key !== episodeKey) setChoice({ key: episodeKey, reset: false });
+  const definition = choice.key === episodeKey ? choice.value : undefined;
+  const resetDefinition = choice.key === episodeKey && choice.reset;
+  const setDefinition = useCallback(
+    (value: number | undefined) => {
+      setChoice({ key: episodeKey, value, reset: value === undefined });
+    },
+    [episodeKey],
+  );
   /** 本集实际生效的档位与全部可选档位，由起播响应带回。 */
   const [activeDefinition, setActiveDefinition] = useState(0);
+  const [automaticDefinition, setAutomaticDefinition] = useState(true);
   const [definitions, setDefinitions] = useState<VideoDefinition[]>([]);
+  const [isBytevc2, setIsBytevc2] = useState(false);
 
   const { mutate: play } = usePlay();
 
@@ -82,10 +95,10 @@ export function usePlaybackSource(params: {
   useEvent(
     EVENTS.deviceRegistered,
     useCallback(() => {
-      if (!error) return;
+      if (!error || playbackMaterialsError) return;
       toast.info(t('player.deviceSwappedRetry'));
       retryOnline();
-    }, [error, retryOnline]),
+    }, [error, playbackMaterialsError, retryOnline]),
   );
 
   // 取流失败自动重试：按退避节奏自动重取并显示进度，耗尽才退回手动重试；
@@ -96,7 +109,7 @@ export function usePlaybackSource(params: {
     if (autoRetryRef.current.key !== episodeKey) {
       autoRetryRef.current = { key: episodeKey, attempt: 0 };
     }
-    if (!error) {
+    if (!error || playbackMaterialsError) {
       queueMicrotask(() => setAutoRetry(null));
       return;
     }
@@ -115,7 +128,7 @@ export function usePlaybackSource(params: {
       retryOnline();
     }, delay);
     return () => clearTimeout(timer);
-  }, [error, episodeKey, retryOnline]);
+  }, [error, episodeKey, playbackMaterialsError, retryOnline]);
 
   // 在线取流进度：只认当前这一集，换集后清掉。
   useEvent(
@@ -132,6 +145,7 @@ export function usePlaybackSource(params: {
   // 当前位置先存 pendingSeek，否则从 10 分钟处切 720p 会被弹回片头
   useEffect(() => {
     if (!seriesId || !vidIndex) return;
+    let active = true;
 
     const video = videoRef.current;
     // 只在元素里还是这一集的流时才续点；信息流切剧时元素里是上一部剧的画面，读它就串剧
@@ -151,15 +165,19 @@ export function usePlaybackSource(params: {
       hint && hint.seriesId === seriesId && hint.vidIndex === vidIndex ? hint.positionMs / 1000 : 0;
 
     play(
-      { seriesId, vidIndex, definition },
+      { seriesId, vidIndex, definition, resetDefinition },
       {
         onSuccess: (res) => {
+          if (!active) return;
           srcKeyRef.current = episodeKey;
           setSrcKey(episodeKey);
+          setPlaybackMaterialsError(false);
           setError(res.error || null);
           setSrc(res.error ? null : res.url);
           setActiveDefinition(res.definition);
+          setAutomaticDefinition(res.automaticDefinition);
           setDefinitions(res.definitions);
+          setIsBytevc2(res.needsCompat);
           // 续播位置在 metadata 加载后 seek，优先级：本会话播放点 > 本地 resumeAt > 云端历史提示
           pendingSeek.current = res.error
             ? 0
@@ -171,18 +189,26 @@ export function usePlaybackSource(params: {
           if (!res.error && hintMs > 0) clearResumeHint(null);
         },
         onError: (e) => {
+          if (!active) return;
           srcKeyRef.current = '';
           setSrcKey('');
+          setPlaybackMaterialsError(isAppInvokeError(e) && e.kind === 'error.playbackMaterials');
           setError(e.message);
           setSrc(null);
+          setIsBytevc2(false);
         },
       },
     );
+    return () => {
+      active = false;
+    };
     // ref 形参按仓库惯例写进依赖（身份恒定，见 use-playback-progress）
   }, [
     seriesId,
     vidIndex,
     definition,
+    choice,
+    resetDefinition,
     episodeKey,
     play,
     retryTick,
@@ -193,16 +219,19 @@ export function usePlaybackSource(params: {
     lastKnownRef,
   ]);
 
-  const handleLoadedMetadata = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (pendingSeek.current > 0 && pendingSeek.current < video.duration) {
-      video.currentTime = pendingSeek.current;
-    }
-    pendingSeek.current = 0;
-    // metadata 就绪后再显式播一次：autoPlay 属性带声音时会被 WebView 拦下，只靠属性就是「自动播一下就停住」
-    void video.play().catch(() => undefined);
-  }, [videoRef, pendingSeek]);
+  const handleLoadedMetadata = useCallback(
+    (autoplay = true) => {
+      const video = videoRef.current;
+      if (!video) return;
+      if (pendingSeek.current > 0 && pendingSeek.current < video.duration) {
+        video.currentTime = pendingSeek.current;
+      }
+      pendingSeek.current = 0;
+      // metadata 就绪后再显式播一次：autoPlay 属性带声音时会被 WebView 拦下，只靠属性就是「自动播一下就停住」
+      if (autoplay) void video.play().catch(() => undefined);
+    },
+    [videoRef, pendingSeek],
+  );
 
   // 每次渲染后把倍速/音量/静音贴回当前元素；依赖故意留空——元素重建的时机（切集/加载/转码）不由本组件依赖决定。
   // 必须读 prefs 镜像（不是仅靠 ratechange 回写的 ref）：Android WebView 程序化改倍速常不派发事件。
@@ -251,11 +280,14 @@ export function usePlaybackSource(params: {
     setSrcKey,
     srcKeyRef,
     lastKnownRef,
+    pendingSeek,
     buffering,
     definition,
     setDefinition,
     activeDefinition,
+    automaticDefinition,
     definitions,
+    isBytevc2,
     retryOnline,
     handleLoadedMetadata,
     handleRateChange,
