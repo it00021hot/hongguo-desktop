@@ -34,6 +34,8 @@ Makefile 是入口（`make help` 看全量）：
 - macOS 双目标交叉 clippy（`--target aarch64-apple-darwin` / `x86_64-apple-darwin`）只守平台链正清单（Makefile `MAC_CROSS_CRATES`）：VT 等 cfg 门后的代码 Windows 宿主看不见，v0.0.1 就是它带着 125 条警告上了 CI；全图交叉会拖进 aws-lc-sys（要真 macOS SDK 的 Darwin libc 头，本地生不出来），全图覆盖在 CI 的 macOS 原生 runner。交叉的 C 工具链是真 clang（LLVM，前置 `winget install LLVM.LLVM`）：交叉链上有真编 C/C++ 的 build script，早年占位 `CC_*=true` 的「假成功」口径已失效；路径必须 `C:/` 短路径形态（cc 拆带空格路径）。
 - `-D clippy::allow_attributes`：`#[allow]` 直接拒；确需断言用 `#[expect(reason)]`——lint 不再触发时编译失败，杜绝过期放行。
 - 别用 `-` 前缀或 `|| true` 吞失败；每行独立 shell，`cd` 只对本行有效。
+- VVdeC 的 CI 与 Release 都需设置 `SYSTEM_DEPS_LIBVVDEC_BUILD_INTERNAL=always`，Intel Mac 交叉构建还需 `PKG_CONFIG_ALLOW_CROSS_x86_64_apple_darwin=1`；Windows 必须先安装 pkgconf。本机装有 libvvdec 不代表干净 runner 可构建（v0.6.6 三平台发版失败的根因）。
+- 修复发版环境后补发原 tag：从已修复的 `main` 手动触发 Release 并传 `tag`；各 job 的 checkout 必须读取该 tag，保留原 tag 对应的应用源码。直接重跑旧 run 仍会使用旧 workflow。
 
 ## 调试
 
